@@ -1,0 +1,3 @@
+seedwalk $WORK/stores
+kanonarion walk-list --store-root=$WORK/stores --limit=1 --status=succeeded
+stdout '01ARZ3NDEKTSV4RRFFQ69G5FBB'

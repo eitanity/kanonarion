@@ -1,0 +1,17 @@
+mkdir $WORK/stores
+seedwalk $WORK/stores
+seedvulnforwalk $WORK/stores
+
+# --affected-only includes modules with an Affected VulnerabilityRecord
+kanonarion context --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FBB --affected-only --store-root=$WORK/stores --json
+stdout '"path".*"example.com/app"'
+
+# --affected-only also includes modules in the scan run that lack a VulnerabilityRecord
+kanonarion context --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FBB --affected-only --store-root=$WORK/stores --json
+stdout '"path".*"example.com/dep"'
+
+# --affected-only excludes modules absent from the scan run's PerModuleResults.
+# Use "module":{"path" to distinguish a top-level entry from a nested dependency
+# reference (example.com/new appears as a dep inside example.com/app's context).
+kanonarion context --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FBB --affected-only --store-root=$WORK/stores --json
+! stdout '"module":\{"path":"example.com/new"'

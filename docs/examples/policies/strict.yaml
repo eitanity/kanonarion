@@ -1,0 +1,19 @@
+# Strict reproducibility policy - ignores replace directives so the graph
+# reflects the declared (unreplaced) coordinates. Useful when replace
+# directives are considered environment-specific overrides that should not
+# propagate into the mirror's fact records.
+version: "1"
+
+stages:
+  fetch:
+    max_depth: 0
+
+    # follow_replace: false - replace directives in the target's go.mod are
+    # ignored. The original declared coordinates are fetched instead.
+    # Use with care: if the target relies on replace directives for correctness,
+    # some fetches may fail or resolve unexpected versions.
+    follow_replace: false
+
+    follow_test: false
+
+    follow_indirect: true

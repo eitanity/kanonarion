@@ -1,0 +1,7 @@
+// Package main carries a red-tier //go:debug setting: tlsrsakex
+// re-enables RSA key exchange, weakening TLS. Default policy flags this.
+//
+//go:debug tlsrsakex=1
+package main
+
+func main() {}

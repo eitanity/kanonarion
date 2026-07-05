@@ -1,0 +1,37 @@
+mkdir $WORK/stores
+seedwalk $WORK/stores
+seedlicense $WORK/stores
+
+# --gomod and a positional module argument are mutually exclusive
+! kanonarion context --gomod $WORK/myapp.mod example.com/app@v1.0.0 --store-root=$WORK/stores
+stderr 'mutually exclusive'
+
+# --gomod and --walk-id are mutually exclusive
+! kanonarion context --gomod $WORK/myapp.mod --walk-id 01ARZ3NDEKTSV4RRFFQ69G5FBB --store-root=$WORK/stores
+stderr 'mutually exclusive'
+
+# The code scope is the project's own import closure (go list -deps ./...). This
+# fixture dir has no Go packages, so the scope is empty and context says so and
+# exits 0 — the same outcome inspect produces for the same scope.
+kanonarion context --gomod $WORK/empty.mod --store-root=$WORK/stores
+stdout 'no code dependencies found'
+
+# --tool and --project select the other two consistent scopes; with no packages
+# or tool directives they are likewise empty.
+kanonarion context --gomod $WORK/empty.mod --tool --store-root=$WORK/stores
+stdout 'no tool dependencies found'
+
+# --tool and --project are mutually exclusive scopes.
+! kanonarion context --gomod $WORK/empty.mod --tool --project --store-root=$WORK/stores
+stderr 'mutually exclusive'
+
+# help documents the no-arg ./go.mod default for both commands
+kanonarion context --help
+stdout 'defaults to --gomod \./go\.mod'
+kanonarion inspect --help
+stdout 'defaults to --gomod \./go\.mod'
+
+-- empty.mod --
+module example.com/empty
+
+go 1.21

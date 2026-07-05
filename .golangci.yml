@@ -1,0 +1,58 @@
+version: "2"
+
+run:
+  timeout: 5m
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - errorlint
+    - nilerr
+    - wrapcheck
+    - contextcheck
+    - gocritic
+    - govet
+    - staticcheck
+    - ineffassign
+    - gosec
+    - gocyclo
+    - forbidigo
+
+settings:
+  errcheck:
+    # No exclude-functions — plan requires zero exclusions.
+    check-blank: true
+    check-type-assertions: true
+    exclude-functions: []
+  govet:
+    enable:
+      - shadow
+  wrapcheck:
+    # Only errors from outside this module need wrapping.
+    ignorePackageGlobs:
+      - "github.com/eitanity/kanonarion/*"
+  gocyclo:
+    min-complexity: 15
+  forbidigo:
+    # wall-clock access in the application or domain layer must go through the 
+    # injected Clock (record timestamps) or Stopwatch (latency metrics), never
+    # a direct time.Now/time.Since read. Scoped to application/domain via the
+    # issues.exclude-rules below.
+    forbid:
+      - pattern: '^time\.Now$'
+        msg: "no time.Now() in application/domain — inject clock.Clock (record timestamps) or a Stopwatch (latency)"
+      - pattern: '^time\.Since$'
+        msg: "no time.Since() in application/domain — measure elapsed time via an injected Stopwatch"
+
+issues:
+  exclude-rules:
+    # forbidigo (time.Now/time.Since ban) applies ONLY to the application and
+    # domain layers. Wall-clock reads are legitimate in adapters, the CLI,
+    # cmd, the sqlitestore, and in tests. Path segments are exact, so
+    # internal/<ctx>/application and internal/<ctx>/domain are never excluded
+    # while every adapters/cli/cmd/sqlitestore path is.
+    - linters: [forbidigo]
+      path: '(^|/)(adapters|cli|cmd|sqlitestore)(/|$)'
+    - linters: [forbidigo]
+      path: '_test\.go$'

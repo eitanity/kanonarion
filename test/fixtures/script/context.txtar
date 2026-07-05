@@ -1,0 +1,89 @@
+mkdir $WORK/stores
+seedwalk $WORK/stores
+seedlicense $WORK/stores
+seediface $WORK/stores
+seedexamples $WORK/stores
+
+# text output: full content rendered for each section
+kanonarion context example.com/app@v1.0.0 --store-root=$WORK/stores --full
+stdout 'example.com/app@v1.0.0'
+stdout '=== Verification ==='
+stdout 'Status:.*Verified'
+stdout '=== Dependencies ==='
+stdout 'example.com/dep@v1.1.0'
+stdout 'example.com/new@v1.0.0'
+stdout '=== License ==='
+stdout 'SPDX:.*MIT'
+stdout '=== Interface ==='
+stdout 'example.com/app'
+stdout 'func Main'
+stdout 'type Config'
+stdout '=== Examples ==='
+stdout 'ExampleMain'
+stdout 'fmt.Println'
+stdout '=== Call Graph ==='
+stdout 'not run'
+stdout '=== Vulnerabilities ==='
+stdout 'not run'
+
+# JSON output: check key fields
+kanonarion context example.com/app@v1.0.0 --store-root=$WORK/stores --json
+stdout '"path".*example.com/app'
+stdout '"spdx".*MIT'
+stdout '"status".*Extracted'
+stdout '"name".*ExampleMain'
+stdout '"body"'
+stdout '"extracted_at"'
+
+# JSON output: dependencies section present with direct deps from most recent walk
+kanonarion context example.com/app@v1.0.0 --store-root=$WORK/stores --json
+stdout '"dependencies"'
+stdout '"count":.*2'
+stdout '"path".*example.com/dep'
+stdout '"version".*v1.1.0'
+stdout '"path".*example.com/new'
+stdout '"version".*v1.0.0'
+
+# JSON output: sections always present, absent sections show not_run
+kanonarion context example.com/app@v1.0.0 --store-root=$WORK/stores --json
+stdout '"status".*not_run'
+
+# --package filter: matching package is included
+kanonarion context example.com/app@v1.0.0 --store-root=$WORK/stores --package=example.com/app --full
+stdout 'example.com/app'
+stdout 'func Main'
+
+# --package filter: non-matching package produces empty interface section (no error)
+kanonarion context example.com/app@v1.0.0 --store-root=$WORK/stores --package=example.com/other
+! stdout 'func Main'
+
+# --package filter in JSON: only matching package present
+kanonarion context example.com/app@v1.0.0 --store-root=$WORK/stores --json --package=example.com/app
+stdout '"import_path".*example.com/app'
+
+# missing module returns all sections as not-found gracefully
+kanonarion context example.com/missing@v1.0.0 --store-root=$WORK/stores
+stdout 'not fetched'
+stdout 'not run'
+
+# --size-only: reports estimated token count and bytes from the full JSON document
+kanonarion context example.com/app@v1.0.0 --store-root=$WORK/stores --size-only
+stdout '~\d+ tokens \(\d+ bytes\)'
+
+# --size-only --json: emits structured JSON with estimated_tokens and byte_count
+kanonarion context example.com/app@v1.0.0 --store-root=$WORK/stores --size-only --json
+stdout '"estimated_tokens"'
+stdout '"byte_count"'
+
+# bare `context` defaults --gomod to ./go.mod (the symlinked project
+# go.mod here) and routes into the go.mod scan — it must not fail with a usage
+# error. This working dir has no Go packages, so the code scope is empty;
+# reporting that (exit 0) confirms it reached runContextGoMod.
+kanonarion context
+! stdout 'panic'
+! stderr 'invalid arguments'
+stdout 'no code dependencies found'
+
+# invalid coordinate returns error
+! kanonarion context example.com/app
+stderr 'expected module@version'

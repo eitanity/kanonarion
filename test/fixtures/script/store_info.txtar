@@ -1,0 +1,19 @@
+# store info: not initialised yet
+! kanonarion store info
+stderr 'store not found'
+stderr 'run a kanonarion command'
+
+# Initialise the store by running a command that creates mirror.db.
+# extract list creates the DB with its migration subset.
+kanonarion extract list
+
+# store info now reports the schema state.
+kanonarion store info
+stdout 'binary expects: v44'
+stdout 'status:'
+
+# JSON output contains the required fields.
+kanonarion store info --json
+stdout '"applied"'
+stdout '"expected"'
+stdout '"status"'

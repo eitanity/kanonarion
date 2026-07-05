@@ -1,0 +1,34 @@
+mkdir $WORK/stores
+kanonarion fetch github.com/spf13/cobra@v1.8.1 --store-root=$WORK/stores --json
+stdout '"module_path": "github.com/spf13/cobra"'
+stdout '"module_version": "v1.8.1"'
+stdout '"verification_status": "Verified"'
+
+# Test re-fetch from cache
+kanonarion fetch github.com/spf13/cobra@v1.8.1 --store-root=$WORK/stores
+stdout 'github.com/spf13/cobra@v1.8.1: Verified \(cached\)'
+
+# Test fetch with --strict (already verified)
+kanonarion fetch github.com/spf13/cobra@v1.8.1 --store-root=$WORK/stores --strict
+stdout 'Verified'
+
+# Test fetch error (missing version)
+! kanonarion fetch invalid
+stderr 'version required'
+
+# Test fetch with --log-level
+kanonarion fetch github.com/spf13/cobra@v1.8.1 --store-root=$WORK/stores --log-level=info
+stderr 'level=INFO'
+
+# Test fetch with --insecure (though it might not change output much without real proxy)
+kanonarion fetch github.com/spf13/cobra@v1.8.1 --store-root=$WORK/stores --insecure
+stdout 'Verified'
+
+# Test fetch with --force
+kanonarion fetch github.com/spf13/cobra@v1.8.1 --store-root=$WORK/stores --force
+stdout 'Verified'
+! stdout 'cached'
+
+# Test fetch with --log-level error
+kanonarion fetch github.com/spf13/cobra@v1.8.1 --store-root=$WORK/stores --log-level=error
+! stderr 'INFO'

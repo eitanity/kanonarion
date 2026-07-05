@@ -1,0 +1,9 @@
+seedwalk $WORK/stores
+kanonarion walk-show --store-root=$WORK/stores 01ARZ3NDEKTSV4RRFFQ69G5FAV
+stdout '01ARZ3NDEKTSV4RRFFQ69G5FAV'
+seedwalk $WORK/stores
+kanonarion walk-show --store-root=$WORK/stores --json 01ARZ3NDEKTSV4RRFFQ69G5FAV
+stdout '01ARZ3NDEKTSV4RRFFQ69G5FAV'
+mkdir $WORK/stores
+! kanonarion walk-show --store-root=$WORK/stores NOT_A_ULID
+stderr 'not found'

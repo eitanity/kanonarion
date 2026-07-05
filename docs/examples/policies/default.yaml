@@ -1,0 +1,23 @@
+# Default depth policy - equivalent to running kanonarion with no policy file.
+# All dependencies are traversed without limit; replace directives are
+# honoured; indirect requirements are followed.
+version: "1"
+
+stages:
+  fetch:
+    # max_depth: 0 means unlimited - traverse the full transitive closure.
+    max_depth: 0
+
+    # follow_replace: apply replace directives from the target's go.mod.
+    # Set to false in strict reproducibility environments where replace
+    # directives should be ignored (see strict.yaml).
+    follow_replace: true
+
+    # follow_test: include test-only dependencies. Currently a no-op because
+    # go.mod carries no explicit test-only marker; reserved for future use.
+    follow_test: false
+
+    # follow_indirect: follow requirements marked // indirect in go.mod.
+    # In Go 1.17+, indirect requirements include transitive dependencies of
+    # direct deps. Setting false restricts the graph to direct imports only.
+    follow_indirect: true

@@ -1,0 +1,48 @@
+mkdir $WORK/stores
+seedwalk $WORK/stores
+
+# Test walk-list
+kanonarion walk-list --store-root=$WORK/stores
+stdout 'example.com/app@v1.0.0'
+stdout 'succeeded'
+
+# Test walk-show with JSON
+kanonarion walk-show 01ARZ3NDEKTSV4RRFFQ69G5FAV --store-root=$WORK/stores --json
+stdout '"id":"01ARZ3NDEKTSV4RRFFQ69G5FAV"'
+stdout '"overall_status":0'
+
+# Test walk-diff (no changes)
+kanonarion walk-diff 01ARZ3NDEKTSV4RRFFQ69G5FAV 01ARZ3NDEKTSV4RRFFQ69G5FAV --store-root=$WORK/stores
+stdout 'diff 01ARZ3NDEKTSV4RRFFQ69G5FAV..01ARZ3NDEKTSV4RRFFQ69G5FAV'
+
+# Test walk command error (missing version)
+! kanonarion walk invalid
+stderr 'version required'
+
+# Test walk-list with status filter
+kanonarion walk-list --store-root=$WORK/stores --status=succeeded
+stdout 'example.com/app@v1.0.0'
+
+# Test walk with allow-partial (skipped due to cache)
+kanonarion walk example.com/app@v1.0.0 --store-root=$WORK/stores --allow-partial
+stdout 'walk .* succeeded'
+
+# Test walk-show
+kanonarion walk-show 01ARZ3NDEKTSV4RRFFQ69G5FAV --store-root=$WORK/stores
+stdout 'Walk 01ARZ3NDEKTSV4RRFFQ69G5FAV'
+stdout 'Target: example.com/app@v1.0.0'
+stdout 'Status: succeeded'
+
+# Test walk-list with no records
+mkdir $WORK/empty
+kanonarion walk-list --store-root=$WORK/empty
+stdout 'no walk records found'
+
+# Test walk-diff with JSON
+kanonarion walk-diff 01ARZ3NDEKTSV4RRFFQ69G5FAV 01ARZ3NDEKTSV4RRFFQ69G5FBB --store-root=$WORK/stores --json
+stdout '"walk_a": "01ARZ3NDEKTSV4RRFFQ69G5FAV"'
+stdout '"walk_b": "01ARZ3NDEKTSV4RRFFQ69G5FBB"'
+stdout '"added":'
+stdout '"upgraded":'
+stdout '"license_regressions":'
+stdout '"new_reachable_cves":'

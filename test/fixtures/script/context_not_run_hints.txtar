@@ -1,0 +1,19 @@
+mkdir $WORK/stores
+seedwalk $WORK/stores
+
+# After seedwalk, walk + fetch records exist but license/iface/callgraph/examples
+# have NOT been extracted. All (not run) sections should show actionable hints.
+
+kanonarion context example.com/app@v1.0.0 --store-root=$WORK/stores
+stdout 'License:.*not run.*run: kanonarion license'
+stdout 'Interface:.*not run.*run: kanonarion interface-show'
+stdout 'Call Graph:.*not run.*run: kanonarion callgraph-show'
+stdout 'Examples:.*not run.*run: kanonarion examples'
+stdout 'Vulnerabilities:.*not run.*run: kanonarion'
+
+# In --full mode the same hints appear in section bodies
+kanonarion context example.com/app@v1.0.0 --store-root=$WORK/stores --full
+stdout 'not run.*run: kanonarion license'
+stdout 'not run.*run: kanonarion interface-show'
+stdout 'not run.*run: kanonarion callgraph-show'
+stdout 'not run.*run: kanonarion examples'

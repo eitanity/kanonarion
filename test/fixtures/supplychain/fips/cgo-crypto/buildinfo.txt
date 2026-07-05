@@ -1,0 +1,5 @@
+GoVersion: go1.23.4 X:boringcrypto
+Path: example.com/supplychain/fips/cgo-crypto
+# Recognised toolchain but a vendored dep links a cgo crypto library →
+# The fixture expects assessment to be "limited" (cgo gap) and the finding
+# category to be fips_unknown rather than silently compliant.

@@ -1,0 +1,36 @@
+[!exec:govulncheck] skip 'govulncheck not in PATH'
+
+mkdir $WORK/stores
+seedwalk $WORK/stores
+seedvulnforwalk $WORK/stores
+
+# --- TEXT MODE ---
+# stdout: findings summary + "Scan completed"; no progress lines
+# stderr: progress lines; no JSON
+
+kanonarion vuln-scan 01ARZ3NDEKTSV4RRFFQ69G5FBB --store-root=$WORK/stores
+
+stdout 'Scan completed'
+! stdout 'Scanning walk'
+stderr 'Scanning walk'
+! stderr '^\{'
+
+# --- JSON MODE ---
+# stdout: JSON object; no progress lines
+# stderr: progress lines (logger switches to JSON format in --json mode)
+
+kanonarion vuln-scan 01ARZ3NDEKTSV4RRFFQ69G5FBB --store-root=$WORK/stores --json
+
+stdout '^\{'
+! stdout 'Scanning walk'
+stderr 'Scanning walk'
+
+# --- --json=false (explicit false) ---
+# behaves identically to text mode
+
+kanonarion vuln-scan 01ARZ3NDEKTSV4RRFFQ69G5FBB --store-root=$WORK/stores --json=false
+
+stdout 'Scan completed'
+! stdout 'Scanning walk'
+stderr 'Scanning walk'
+! stderr '^\{'

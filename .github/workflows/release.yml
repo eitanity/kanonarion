@@ -1,0 +1,123 @@
+name: release
+
+# Builds, self-SBOMs, signs (keyless), and publishes release artifacts when a
+# vX.Y.Z tag is pushed. Signing uses Sigstore/cosign keyless OIDC — no secrets
+# to manage; the signature is bound to this repo+workflow identity. SLSA
+# build-provenance and SBOM attestations are emitted for every binary.
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  contents: write      # create the GitHub Release
+  id-token: write      # keyless cosign signing + attestations (OIDC)
+  attestations: write  # actions/attest-*
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ github.ref_name }}
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0  # tags + full history so build-info version stamps correctly
+
+      - uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+
+      - name: Install govulncheck (audit's vulnerability scanner)
+        run: |
+          set -euo pipefail
+          # Build the version pinned in go.mod's tool block (reproducible), not @latest.
+          BIN="$(go env GOPATH)/bin"
+          mkdir -p "$BIN"
+          go build -o "$BIN/govulncheck" golang.org/x/vuln/cmd/govulncheck
+          echo "$BIN" >> "$GITHUB_PATH"
+
+      - name: Build release binaries
+        env:
+          CGO_ENABLED: '0'
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          for t in darwin/amd64 darwin/arm64 windows/amd64 windows/arm64 linux/amd64 linux/arm64 linux/arm; do
+            os=${t%/*}; arch=${t#*/}; ext=""
+            [ "$os" = windows ] && ext=.exe
+            echo "building $t"
+            GOOS=$os GOARCH=$arch go build \
+              -trimpath \
+              -ldflags "-s -w -X github.com/eitanity/kanonarion/internal/cli.version=${VERSION}" \
+              -o "dist/kanonarion_${os}_${arch}${ext}" ./cmd/kanonarion
+          done
+
+      - name: Self-audit report
+        run: |
+          set -euo pipefail
+          # kanonarion audits its own dependencies: fetch + licence extraction +
+          # vulnerability scanning in one call, emitting a machine-readable
+          # compliance report. --fresh fetches the OSV snapshot (clean runner has
+          # none cached). Hyphenated name stays out of the kanonarion_* binary glob.
+          ./dist/kanonarion_linux_amd64 audit --fresh --json > "dist/kanonarion-audit-${VERSION}.json"
+
+      - name: Self-SBOM (binary-scoped)
+        run: |
+          set -euo pipefail
+          # 'sbom --package' bootstraps its own prerequisites on a cold store:
+          # it builds the project walk over ./go.mod and runs licence extraction
+          # before generating the SBOM, so the clean runner needs no explicit
+          # walk/extract steps. It also exits non-zero if any linked module has
+          # no licence record, so 'set -e' gates the release on complete
+          # licensing rather than publishing a licence-less artefact.
+          ./dist/kanonarion_linux_amd64 sbom \
+            --package ./cmd/kanonarion \
+            --format cyclonedx-1.5 \
+            --output "dist/kanonarion-${VERSION}.cdx.json"
+
+      - name: Checksums
+        run: |
+          set -euo pipefail
+          cd dist
+          sha256sum kanonarion_* "kanonarion-${VERSION}.cdx.json" "kanonarion-audit-${VERSION}.json" > checksums.txt
+          cat checksums.txt
+
+      # Attestations run BEFORE signing so the kanonarion_* glob resolves to
+      # binaries only (no .sig/.pem present yet).
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/kanonarion_*
+
+      - name: Attest SBOM
+        uses: actions/attest-sbom@v2
+        with:
+          subject-path: dist/kanonarion_*
+          sbom-path: dist/kanonarion-${{ github.ref_name }}.cdx.json
+
+      - name: Install cosign
+        uses: sigstore/cosign-installer@v3
+
+      - name: Sign artifacts (keyless)
+        run: |
+          set -euo pipefail
+          cd dist
+          # Sign every binary, the SBOM, and the checksums file. Keyless: cosign
+          # picks up the ambient GitHub OIDC token; --yes disables the prompt.
+          for f in kanonarion_* "kanonarion-${VERSION}.cdx.json" "kanonarion-audit-${VERSION}.json" checksums.txt; do
+            cosign sign-blob --yes \
+              --output-signature "${f}.sig" \
+              --output-certificate "${f}.pem" \
+              "$f"
+          done
+
+      - name: Create GitHub Release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          gh release create "${VERSION}" \
+            --title "Kanonarion ${VERSION}" \
+            --generate-notes \
+            dist/*

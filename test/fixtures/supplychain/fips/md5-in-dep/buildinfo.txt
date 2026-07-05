@@ -1,0 +1,5 @@
+GoVersion: go1.23.4 X:boringcrypto
+Path: example.com/supplychain/fips/md5-in-dep
+# Recognised toolchain, but a vendored dependency imports crypto/md5 →
+# The fixture expects: toolchain capable, algorithm deviation flagged with
+# module=example.com/dep and source=vendor/example.com/dep/hash.go.txt.

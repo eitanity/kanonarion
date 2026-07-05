@@ -1,0 +1,65 @@
+# vendor command — reconciliation findings, JSON section, CI gate
+# exit code, vendor-only flag, and the not-vendored path.
+
+mkdir $WORK/stores
+
+# A non-vendored project: informational, exits 0 (not a violation).
+kanonarion vendor --gomod $WORK/plain/go.mod --store-root=$WORK/stores
+stdout 'not vendored'
+
+# modules.txt lists a module with no files under vendor/ → inconsistency
+# (missing_from_vendor). Default policy flags it: exit 20, JSON section.
+! kanonarion vendor --gomod $WORK/missing/go.mod --store-root=$WORK/stores --vendor-only --json
+stdout '"kind": "missing_from_vendor"'
+stdout '"module": "example.com/dep"'
+stdout '"overall_status": "findings"'
+stdout '"vendor_only": true'
+stdout '"schema_version": "2"'
+stdout '"ecosystem": "go"'
+stderr 'vendor policy: .* violate policy'
+
+# A vendored module whose go.sum checksum cannot match the recomputed tree
+# hash → drift, both hashes reported, exit 20.
+! kanonarion vendor --gomod $WORK/drift/go.mod --store-root=$WORK/stores --json
+stdout '"kind": "drift"'
+stdout '"expected": "h1:AAAAdefinitelyNotTheRealTreeHashAAAAAAAAAAAAA="'
+stdout '"actual": "h1:'
+stderr 'vendor policy: .* violate policy'
+
+-- plain/go.mod --
+module example.com/plain
+
+go 1.23
+
+-- missing/go.mod --
+module example.com/missing
+
+go 1.23
+
+require example.com/dep v1.2.0
+
+-- missing/vendor/modules.txt --
+# example.com/dep v1.2.0
+## explicit
+example.com/dep
+
+-- drift/go.mod --
+module example.com/drift
+
+go 1.23
+
+require example.com/dep v1.2.0
+
+-- drift/go.sum --
+example.com/dep v1.2.0 h1:AAAAdefinitelyNotTheRealTreeHashAAAAAAAAAAAAA=
+example.com/dep v1.2.0/go.mod h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
+
+-- drift/vendor/modules.txt --
+# example.com/dep v1.2.0
+## explicit
+example.com/dep
+
+-- drift/vendor/example.com/dep/dep.go --
+package dep
+
+const Version = "v1.2.0"

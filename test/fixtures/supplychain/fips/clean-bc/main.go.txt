@@ -1,0 +1,13 @@
+package main
+
+import (
+	"crypto/rand"
+	"crypto/sha256"
+	"fmt"
+)
+
+func main() {
+	buf := make([]byte, 16)
+	_, _ = rand.Read(buf)
+	fmt.Printf("%x\n", sha256.Sum256(buf))
+}

@@ -1,0 +1,39 @@
+{
+  "version": "2024-06-01",
+  "comment": "Versioned GODEBUG / //go:debug risk taxonomy. Maintained as a data file so adding a setting as Go ships one is a one-line edit, never a code change. Sources: Go runtime GODEBUG history (go.dev/doc/godebug) and the Go security release notes. red = security-weakening; amber = behaviour-modifying with security implications; green = benign GC/debug logging.",
+  "settings": {
+    "tlsrsakex": "red",
+    "tls10server": "red",
+    "tls3des": "red",
+    "tlssha1": "red",
+    "tlsmaxrsasize": "red",
+    "tlsunsafeekm": "red",
+    "x509ignoreCN": "red",
+    "x509negativeserial": "red",
+    "x509usepolicies": "red",
+    "tarinsecurepath": "red",
+    "zipinsecurepath": "red",
+    "winsymlink": "red",
+    "winreadlinkvolume": "red",
+
+    "http2client": "amber",
+    "http2server": "amber",
+    "http2debug": "amber",
+    "multipathtcp": "amber",
+    "multipartmaxparts": "amber",
+    "multipartmaxheaders": "amber",
+    "randautoseed": "amber",
+    "panicnil": "amber",
+    "netedns0": "amber",
+    "httplaxcontentlength": "amber",
+    "httpmuxgo121": "amber",
+    "tlskyber": "amber",
+
+    "asynctimerchan": "green",
+    "gotypesalias": "green",
+    "gocachetest": "green",
+    "gocachehash": "green",
+    "installgoroot": "green",
+    "dataindependenttiming": "green"
+  }
+}

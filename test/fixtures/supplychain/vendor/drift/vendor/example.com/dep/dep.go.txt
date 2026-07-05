@@ -1,0 +1,9 @@
+// Package dep has been altered after vendoring: the body no longer matches
+// the v1.2.0 checksum modules.txt claims. The fixture expects drift detected with
+// the file path and both hashes reported.
+package dep
+
+const Version = "v1.2.0"
+
+// injected — not present in the published v1.2.0 source tree
+func backdoor() string { return "tampered" }

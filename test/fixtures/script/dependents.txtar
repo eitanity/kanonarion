@@ -1,0 +1,54 @@
+mkdir $WORK/stores
+seedwalk $WORK/stores
+
+# Walk A has one edge: app (root) -> dep@v1.0.0
+# Without --include-root the walk root is excluded, so no results
+kanonarion dependents example.com/dep@v1.0.0 --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FAV --store-root=$WORK/stores
+stdout 'No modules in walk 01ARZ3NDEKTSV4RRFFQ69G5FAV depend on example.com/dep@v1.0.0'
+
+# With --include-root the walk root appears annotated as [root]
+kanonarion dependents example.com/dep@v1.0.0 --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FAV --store-root=$WORK/stores --include-root
+stdout '1 module\(s\) in walk 01ARZ3NDEKTSV4RRFFQ69G5FAV depend on example.com/dep@v1.0.0'
+stdout 'example.com/app@v1.0.0.*\[root\]'
+
+# JSON includes root and direct fields
+kanonarion dependents example.com/dep@v1.0.0 --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FAV --store-root=$WORK/stores --include-root --json
+stdout '"walk_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV"'
+stdout '"target": "example.com/dep@v1.0.0"'
+stdout '"module": "example.com/app"'
+stdout '"root": true'
+stdout '"direct": false'
+
+# --direct-only without --include-root: root excluded, no results
+kanonarion dependents example.com/dep@v1.0.0 --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FAV --store-root=$WORK/stores --direct-only
+stdout 'No direct modules in walk 01ARZ3NDEKTSV4RRFFQ69G5FAV depend on example.com/dep@v1.0.0'
+
+# --direct-only --include-root: root passes the direct filter and shows as [root]
+kanonarion dependents example.com/dep@v1.0.0 --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FAV --store-root=$WORK/stores --direct-only --include-root
+stdout '1 direct module\(s\) in walk 01ARZ3NDEKTSV4RRFFQ69G5FAV depend on example.com/dep@v1.0.0'
+stdout 'example.com/app@v1.0.0.*\[root\]'
+
+# Walk B: dep upgraded to v1.1.0; dep@v1.0.0 has no dependents in walk B
+kanonarion dependents example.com/dep@v1.0.0 --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FBB --store-root=$WORK/stores --include-root
+stdout 'No modules in walk 01ARZ3NDEKTSV4RRFFQ69G5FBB depend on example.com/dep@v1.0.0'
+
+# Walk B: dep@v1.1.0 is depended on by the root (app)
+kanonarion dependents example.com/dep@v1.1.0 --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FBB --store-root=$WORK/stores --include-root
+stdout '1 module\(s\) in walk 01ARZ3NDEKTSV4RRFFQ69G5FBB depend on example.com/dep@v1.1.0'
+stdout 'example.com/app@v1.0.0.*\[root\]'
+
+# Missing walk ID errors
+! kanonarion dependents example.com/dep@v1.0.0 --walk-id=NOSUCHID --store-root=$WORK/stores
+stderr 'not found'
+
+# Without --walk-id, auto-resolves to the most recent walk containing the module
+kanonarion dependents example.com/dep@v1.0.0 --store-root=$WORK/stores --include-root
+stdout 'example.com/app@v1.0.0'
+
+# Without --walk-id, module not in any walk returns a clear error
+! kanonarion dependents example.com/notpresent@v9.9.9 --store-root=$WORK/stores
+stderr 'no walk found containing'
+
+# Invalid coordinate errors
+! kanonarion dependents nodot --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FAV --store-root=$WORK/stores
+stderr 'invalid'

@@ -1,0 +1,66 @@
+# godebug command — taxonomy classification, JSON section, CI gate
+# exit code, and the not-applied dependency contract.
+
+mkdir $WORK/stores
+
+# A main package carrying a red-tier //go:debug (tlsrsakex) must classify red,
+# be blocked by the default policy, and exit 20 (ExitConfig) as a CI gate.
+! kanonarion godebug --gomod $WORK/red/go.mod --store-root=$WORK/stores --json
+stdout '"setting": "tlsrsakex"'
+stdout '"classification": "red"'
+stdout '"applied": true'
+stdout '"policy_outcome": "warn"'
+stdout '"policy_blocking": true'
+stdout '"schema_version": "2"'
+stdout '"ecosystem": "go"'
+stdout '"taxonomy_version":'
+stderr 'godebug policy: .* violate policy'
+
+# A clean module (no //go:debug) exits 0 with an empty setting set.
+kanonarion godebug --gomod $WORK/clean/go.mod --store-root=$WORK/stores --json
+stdout '"settings": \[\]'
+
+# A //go:debug in a vendored dependency is recorded but not-applied, so it is
+# surfaced (never silently dropped) yet does NOT gate the build: exit 0.
+kanonarion godebug --gomod $WORK/dep/go.mod --store-root=$WORK/stores --json
+stdout '"setting": "tlsrsakex"'
+stdout '"classification": "red"'
+stdout '"applied": false'
+stdout '"policy_blocking": false'
+
+-- red/go.mod --
+module example.com/red
+
+go 1.23
+
+-- red/main.go --
+//go:debug tlsrsakex=1
+package main
+
+func main() {}
+
+-- clean/go.mod --
+module example.com/clean
+
+go 1.23
+
+-- clean/main.go --
+package main
+
+func main() {}
+
+-- dep/go.mod --
+module example.com/dep
+
+go 1.23
+
+-- dep/main.go --
+package main
+
+func main() {}
+
+-- dep/vendor/example.com/weak/main.go --
+//go:debug tlsrsakex=1
+package main
+
+func main() {}

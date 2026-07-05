@@ -1,0 +1,5 @@
+// Package dep is the pristine vendored copy — matches modules.txt, so the fixture
+// expects a clean verdict.
+package dep
+
+const Version = "v1.2.0"

@@ -1,0 +1,18 @@
+# Shallow policy - limits traversal to 2 hops from the target and skips
+# indirect (transitive) requirements. Useful for a quick first pass or
+# for modules whose full closure is very large.
+version: "1"
+
+stages:
+  fetch:
+    # Stop after 2 hops: target (depth 0) → direct deps (depth 1) → their
+    # direct deps (depth 2). Anything deeper is registered but not fetched.
+    max_depth: 2
+
+    follow_replace: true
+
+    follow_test: false
+
+    # Indirect requirements are transitive deps added by Go 1.17+ to go.mod
+    # for reproducibility. Skipping them gives a smaller, direct-only graph.
+    follow_indirect: false

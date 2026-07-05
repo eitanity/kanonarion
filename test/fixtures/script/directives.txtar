@@ -1,0 +1,38 @@
+# directives command — classification, JSON section, CI gate exit code.
+
+mkdir $WORK/stores
+
+# A go.mod with a local-path replace (highest risk; default policy = warn) and
+# an exclude must exit 20 (ExitConfig) and emit the deterministic section.
+! kanonarion directives --gomod $WORK/proj/go.mod --store-root=$WORK/stores --json
+stdout '"kind": "replace"'
+stdout '"classification": "highest"'
+stdout '"policy_outcome": "warn"'
+stdout '"policy_blocking": true'
+stdout '"reachability_target": "../local/dep"'
+stdout '"kind": "exclude"'
+stdout '"schema_version": "2"'
+stdout '"ecosystem": "go"'
+stderr 'directive policy: .* violate policy'
+
+# A clean go.mod (no directives) exits 0 with an empty directive set.
+kanonarion directives --gomod $WORK/clean/go.mod --store-root=$WORK/stores --json
+stdout '"directives": \[\]'
+
+-- proj/go.mod --
+module example.com/proj
+
+go 1.23
+
+require example.com/dep v1.2.0
+
+replace example.com/dep => ../local/dep
+
+exclude example.com/dep v1.3.0
+
+-- clean/go.mod --
+module example.com/clean
+
+go 1.23
+
+require example.com/dep v1.2.0

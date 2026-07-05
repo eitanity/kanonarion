@@ -1,0 +1,20 @@
+mkdir $WORK/stores
+seedcallgraph $WORK/stores
+
+# callgraph extract hits cache (fetch record + callgraph record already seeded)
+kanonarion callgraph example.com/app@v1.0.0 --store-root=$WORK/stores
+stdout 'example.com/app@v1.0.0'
+stdout 'Extracted'
+
+# second call hits fromCache=true branch
+kanonarion callgraph example.com/app@v1.0.0 --store-root=$WORK/stores
+stdout '\(cached\)'
+
+# callgraph extract JSON output via cache
+kanonarion callgraph example.com/app@v1.0.0 --store-root=$WORK/stores --json
+stdout '"coordinate"'
+stdout 'Extracted'
+
+# callgraph extract error path (no blobs available for unknown module)
+! kanonarion callgraph github.com/gorilla/mux@v1.8.1
+stderr 'extracting call graph'

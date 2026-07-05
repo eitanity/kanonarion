@@ -1,0 +1,4 @@
+GoVersion: go1.23.4
+Path: example.com/supplychain/fips/stock
+# Stock upstream Go: no FIPS-validated crypto. The fixture expects
+# toolchain_fips_capable=false.

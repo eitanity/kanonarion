@@ -1,0 +1,67 @@
+mkdir $WORK/stores
+seedwalk $WORK/stores
+seedlicense $WORK/stores
+seediface $WORK/stores
+seedexamples $WORK/stores
+
+# --stream without --walk-id returns an error
+! kanonarion context example.com/app@v1.0.0 --stream --store-root=$WORK/stores
+stderr '--stream requires --walk-id'
+
+# --walk-id with a positional module argument is rejected
+! kanonarion context example.com/app@v1.0.0 --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FBB --store-root=$WORK/stores
+stderr 'mutually exclusive'
+
+# --size-only with --walk-id: emits total + per-module breakdown
+kanonarion context --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FBB --size-only --store-root=$WORK/stores
+stdout 'Total: ~\d+ tokens \(\d+ bytes\) across \d+ modules'
+stdout 'Per-module breakdown:'
+stdout 'example.com/app@v1.0.0'
+
+# --size-only --walk-id --json: emits JSON size report
+kanonarion context --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FBB --size-only --json --store-root=$WORK/stores
+stdout '"estimated_tokens"'
+stdout '"byte_count"'
+stdout '"module_count"'
+stdout '"modules"'
+
+# --walk-id emits NDJSON: one object per graph node (no --stream required)
+kanonarion context --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FBB --store-root=$WORK/stores --json
+stdout '"path".*example.com/app'
+stdout '"path".*example.com/dep'
+stdout '"path".*example.com/new'
+
+# each output line begins with a JSON object (compact, not pretty-printed)
+kanonarion context --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FBB --store-root=$WORK/stores --json
+stdout '{"module"'
+
+# --stream is accepted alongside --walk-id (backwards compatible)
+kanonarion context --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FBB --stream --store-root=$WORK/stores
+stdout '"path".*example.com/app'
+
+# --compact flag is honoured in walk streaming mode
+kanonarion context --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FBB --compact --store-root=$WORK/stores --json
+stdout '"path".*example.com/app'
+
+# --direct-only: emit only direct dependencies, not the walk root
+kanonarion context --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FBB --direct-only --store-root=$WORK/stores --json
+stdout 'example.com/dep'
+! stdout '"path".*"example.com/app"'
+
+# --direct-only on walk A: only dep@v1.0.0 is direct
+kanonarion context --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FAV --direct-only --store-root=$WORK/stores --json
+stdout 'example.com/dep@v1.0.0'
+! stdout '"path".*"example.com/app"'
+
+# --modules: emit only modules listed in file
+kanonarion context --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FBB --modules=modules.txt --store-root=$WORK/stores --json
+stdout 'example.com/dep'
+! stdout 'example.com/app'
+! stdout 'example.com/new'
+
+# unknown walk ID returns a clear error
+! kanonarion context --walk-id=unknownid --store-root=$WORK/stores
+stderr 'walk unknownid not found'
+
+-- modules.txt --
+example.com/dep@v1.1.0

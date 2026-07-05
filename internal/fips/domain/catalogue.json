@@ -1,0 +1,23 @@
+{
+  "version": "2026-05-20",
+  "comment": "Versioned FIPS catalogue. Maintained as a data file so adding a recognised toolchain variant or non-FIPS algorithm is a one-line edit, never a code change. Sources: BoringCrypto Go docs, Microsoft Go FIPS notes (microsoft.com/openatmicrosoft/go), Red Hat go-toolset/OpenSSL release notes, AWS Go FIPS docs. The toolchain detector matches each pattern against the raw toolchain string read from go.mod / runtime/debug.BuildInfo (GoVersion). Non-FIPS algorithm packages: an import of any path below classifies as a deviation.",
+  "toolchains": [
+    {"name": "boringcrypto", "match_contains": "X:boringcrypto"},
+    {"name": "microsoft-fipscapable", "match_contains": "X:fipscapable"},
+    {"name": "redhat-fips", "match_contains": "rh-fips"},
+    {"name": "aws-fips", "match_contains": "X:awsfips"}
+  ],
+  "non_fips_algorithm_packages": [
+    "crypto/md5",
+    "crypto/rc4",
+    "crypto/des",
+    "crypto/dsa",
+    "golang.org/x/crypto/md4",
+    "golang.org/x/crypto/blowfish",
+    "golang.org/x/crypto/ripemd160",
+    "golang.org/x/crypto/cast5",
+    "golang.org/x/crypto/twofish",
+    "golang.org/x/crypto/tea",
+    "golang.org/x/crypto/xtea"
+  ]
+}

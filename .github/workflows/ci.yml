@@ -1,0 +1,139 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main, dev]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Test (Go ${{ matrix.go }})
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        go: ["1.26.x"]
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version: ${{ matrix.go }}
+          cache: true
+
+      - name: Run tests
+        run: go test -race -count=1 ./...
+
+  coverage:
+    name: Coverage
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run tests with coverage
+        run: |
+          go test -race -count=1 \
+            -coverprofile=coverage.out \
+            -covermode=atomic \
+            -coverpkg=./... \
+            ./...
+
+      - name: Report and enforce coverage floor
+        run: |
+          go tool cover -func=coverage.out | tee /tmp/coverage.txt
+          {
+            echo "## Coverage (All packages)"
+            echo '```'
+            cat /tmp/coverage.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+          TOTAL=$(grep "^total:" /tmp/coverage.txt | awk '{print $3}' | tr -d '%')
+          FLOOR=75
+          if awk -v t="$TOTAL" -v f="$FLOOR" 'BEGIN { if (t+0 < f+0) exit 0; exit 1 }'; then
+            echo "::error::Coverage ${TOTAL}% is below baseline floor ${FLOOR}% — fix regressions before merging"
+            exit 1
+          fi
+          echo "Coverage ${TOTAL}% meets baseline floor ${FLOOR}%"
+
+      - name: Upload coverage artifact
+        uses: actions/upload-artifact@v6
+        with:
+          name: coverage
+          path: coverage.out
+          retention-days: 7
+
+  lint:
+    name: Lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Install golangci-lint
+        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+
+      - name: golangci-lint
+        run: golangci-lint run ./...
+
+  restricted_imports:
+    name: Restricted Imports Check
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Check for restricted imports in extraction packages
+        run: |
+          RESTRICTED="os/exec|plugin|syscall|unsafe"
+          PACKAGES="./internal/license/... ./internal/iface/... ./internal/callgraph/... ./internal/example/..."
+          FOUND=$(go list -f '{{.ImportPath}} {{join .Imports " "}}' $PACKAGES | grep -E " ($RESTRICTED)" || true)
+          if [ -n "$FOUND" ]; then
+            echo "::error::Restricted imports found in extraction packages:"
+            echo "$FOUND"
+            exit 1
+          fi
+          echo "No restricted imports found."
+
+  benchmarks:
+    name: Resource Benchmarks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+      - name: Run benchmarks
+        run: |
+          go test -bench . -benchmem ./internal/iface/... ./internal/callgraph/... | tee /tmp/bench.txt
+      - name: Summary
+        run: |
+          {
+            echo "## Resource Benchmarks"
+            echo '```'
+            cat /tmp/bench.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"

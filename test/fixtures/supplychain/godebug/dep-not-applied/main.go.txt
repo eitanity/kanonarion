@@ -1,0 +1,6 @@
+// Package main has no //go:debug of its own — the only directive in this
+// fixture lives in a vendored dependency, which does not take effect
+// in the current build and must be recorded not-applied.
+package main
+
+func main() {}

@@ -1,0 +1,51 @@
+# A go.mod walk produces one project-rooted record (root = local main module,
+# version=local). The dependency scope is consistent with every go.mod command:
+# default = code, --tool = tooling, --project = complete. --analyse-root attaches
+# to the code/complete project walk.
+
+# --analyse-root is rejected with --tool: a tool walk does not cover the
+# project's own packages.
+! kanonarion walk --gomod $WORK/proj/go.mod --analyse-root --tool --store-root=$WORK/stores0
+stderr 'a --tool walk does not cover'
+
+# --shallow is a positional-only depth lens, not a go.mod scope.
+! kanonarion walk --gomod $WORK/proj/go.mod --shallow --store-root=$WORK/stores0b
+stderr 'positional module walk'
+
+# A dependency-free project walk with --analyse-root runs fully offline: the
+# root is ingested from the working tree and promoted to local_analysed.
+kanonarion walk --gomod $WORK/proj/go.mod --analyse-root --json --store-root=$WORK/stores
+stdout 'local_analysed'
+stdout '"overall_status":0'
+
+# Default (code scope): without --analyse-root the root stays the unfetched local
+# main module.
+mkdir $WORK/stores2
+kanonarion walk --gomod $WORK/proj/go.mod --json --store-root=$WORK/stores2
+stdout 'local_main_module'
+! stdout 'local_analysed'
+
+# --tool scopes to the tooling supply chain; this project declares no tool
+# directives, so the record is just the project anchor and still succeeds.
+kanonarion walk --gomod $WORK/proj/go.mod --tool --json --store-root=$WORK/stores3
+stdout 'local_main_module'
+stdout '"overall_status":0'
+
+# --project scopes to the complete build list (build + tooling).
+kanonarion walk --gomod $WORK/proj/go.mod --project --json --store-root=$WORK/stores4
+stdout 'local_main_module'
+stdout '"overall_status":0'
+
+-- proj/go.mod --
+module example.test/proj
+
+go 1.22
+-- proj/lib.go --
+// Package proj is a dependency-free project root.
+package proj
+
+// Answer returns 42.
+func Answer() int { return 42 }
+-- proj/LICENSE --
+Proprietary. All rights reserved.
+Copyright (c) 2026 Proj Owner Inc.

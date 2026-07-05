@@ -1,0 +1,22 @@
+mkdir $WORK/stores
+seedexamples $WORK/stores
+
+# examples extract hits cache (fetch record + example record already seeded)
+kanonarion examples example.com/app@v1.0.0 --store-root=$WORK/stores
+stdout 'example.com/app@v1.0.0'
+stdout 'Found'
+stdout '\[validated\]'
+stdout '\[parse failure\]'
+
+# second call hits cache path (fromCache=true)
+kanonarion examples example.com/app@v1.0.0 --store-root=$WORK/stores
+stdout '\(cached\)'
+
+# examples extract JSON output via cache
+kanonarion examples example.com/app@v1.0.0 --store-root=$WORK/stores --json
+stdout '"Coordinate"'
+stdout '"OverallStatus"'
+
+# examples extract error path (no blobs available for unknown module)
+! kanonarion examples github.com/gorilla/mux@v1.8.1
+stderr 'extracting examples'

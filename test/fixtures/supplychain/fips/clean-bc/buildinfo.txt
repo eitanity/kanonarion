@@ -1,0 +1,4 @@
+GoVersion: go1.23.4 X:boringcrypto
+Path: example.com/supplychain/fips/clean-bc
+# Recognised FIPS-capable toolchain with no non-FIPS algorithm imports and
+# no cgo crypto deps. The fixture expects "eligible" (with the validation caveat).

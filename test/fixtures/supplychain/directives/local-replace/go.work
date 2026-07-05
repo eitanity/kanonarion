@@ -1,0 +1,7 @@
+go 1.23
+
+use .
+
+// Workspace replace overriding the module replace — the scan records both and
+// notes precedence (go.work wins in workspace builds).
+replace example.com/dep => ../../../local/dep-ws

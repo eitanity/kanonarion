@@ -1,0 +1,4 @@
+// Package main has no //go:debug directive — the fixture expects a clean verdict.
+package main
+
+func main() {}

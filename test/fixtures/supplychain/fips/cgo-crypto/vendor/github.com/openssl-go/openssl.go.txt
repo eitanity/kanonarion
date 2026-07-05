@@ -1,0 +1,7 @@
+package opensslgo
+
+// #cgo LDFLAGS: -lssl -lcrypto
+// #include <openssl/sha.h>
+import "C"
+
+func SHA256(_ []byte) []byte { return nil }

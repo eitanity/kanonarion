@@ -1,0 +1,11 @@
+package dep
+
+import (
+	"crypto/md5"
+	"fmt"
+)
+
+func Hash(b []byte) string {
+	s := md5.Sum(b)
+	return fmt.Sprintf("%x", s)
+}

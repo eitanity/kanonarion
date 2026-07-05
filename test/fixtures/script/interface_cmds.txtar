@@ -1,0 +1,58 @@
+mkdir $WORK/stores
+seediface $WORK/stores
+
+# Test interface list
+kanonarion interface-list --store-root=$WORK/stores
+stdout 'example.com/app@v1.0.0'
+
+# Test interface show
+kanonarion interface-show example.com/app@v1.0.0 --store-root=$WORK/stores
+stdout 'example.com/app'
+stdout 'func Main'
+stdout 'type Config'
+
+# Test interface show with JSON
+kanonarion interface-show example.com/app@v1.0.0 --store-root=$WORK/stores --json
+stdout '"import_path": "example.com/app"'
+stdout '"name": "Config"'
+
+# Test symbol find
+kanonarion symbol-find Main --store-root=$WORK/stores
+stdout 'example.com/app'
+stdout 'Main'
+
+# Test interface list for a module
+kanonarion interface-list example.com/app@v1.0.0 --store-root=$WORK/stores
+stdout 'example.com/app'
+stdout '1T 1F 0C 0V'
+
+# Test interface list for a module with JSON output
+kanonarion interface-list example.com/app@v1.0.0 --store-root=$WORK/stores --json
+stdout '"ImportPath": "example.com/app"'
+stdout '"Types": 1'
+stdout '"Funcs": 1'
+stdout '"Consts": 0'
+stdout '"Vars": 0'
+
+# Test interface show with filters
+kanonarion interface-show example.com/app@v1.0.0 --store-root=$WORK/stores --package=example.com/app --symbol=Config
+stdout 'type Config'
+! stdout 'func Main'
+
+# Test interface show with no record
+! kanonarion interface-show non-existent@v1.0.0 --store-root=$WORK/stores
+stderr 'no interface record'
+
+# Test symbol find with JSON output
+kanonarion symbol-find Main --store-root=$WORK/stores --json
+stdout '"symbol_name": "Main"'
+stdout '"symbol_kind": "func"'
+stdout '"module_path": "example.com/app"'
+
+# Test symbol find --json with no results returns empty array
+kanonarion symbol-find NoSuchSymbol --store-root=$WORK/stores --json
+stdout '\[\]'
+
+# Test symbol find with no results
+kanonarion symbol-find NoSuchSymbol --store-root=$WORK/stores
+stdout 'no exports found for symbol "NoSuchSymbol"'

@@ -1,0 +1,196 @@
+{
+  "$schema": "http://cyclonedx.org/schema/bom-1.5.schema.json",
+  "bomFormat": "CycloneDX",
+  "components": [
+    {
+      "bom-ref": "pkg:golang/github.com/example/aaa@v0.4.0",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/example/aaa"
+        },
+        {
+          "type": "distribution",
+          "url": "https://proxy.golang.org/github.com/example/aaa/@v/v0.4.0.zip"
+        }
+      ],
+      "name": "github.com/example/aaa",
+      "properties": [
+        {
+          "name": "kanonarion:ecosystem",
+          "value": "go"
+        },
+        {
+          "name": "kanonarion:pipeline_version",
+          "value": "0.3.0-test"
+        }
+      ],
+      "purl": "pkg:golang/github.com/example/aaa@v0.4.0",
+      "type": "library",
+      "version": "v0.4.0"
+    },
+    {
+      "bom-ref": "pkg:golang/github.com/example/app@v1.2.0",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/example/app"
+        },
+        {
+          "type": "distribution",
+          "url": "https://proxy.golang.org/github.com/example/app/@v/v1.2.0.zip"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "name": "github.com/example/app",
+      "properties": [
+        {
+          "name": "kanonarion:ecosystem",
+          "value": "go"
+        },
+        {
+          "name": "kanonarion:pipeline_version",
+          "value": "0.3.0-test"
+        }
+      ],
+      "purl": "pkg:golang/github.com/example/app@v1.2.0",
+      "type": "library",
+      "version": "v1.2.0"
+    },
+    {
+      "bom-ref": "pkg:golang/github.com/example/zzz@v2.0.0",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/example/zzz"
+        },
+        {
+          "type": "distribution",
+          "url": "https://proxy.golang.org/github.com/example/zzz/@v/v2.0.0.zip"
+        }
+      ],
+      "name": "github.com/example/zzz",
+      "properties": [
+        {
+          "name": "kanonarion:ecosystem",
+          "value": "go"
+        },
+        {
+          "name": "kanonarion:pipeline_version",
+          "value": "0.3.0-test"
+        }
+      ],
+      "purl": "pkg:golang/github.com/example/zzz@v2.0.0",
+      "type": "library",
+      "version": "v2.0.0"
+    }
+  ],
+  "metadata": {
+    "component": {
+      "bom-ref": "pkg:golang/github.com/example/app@v1.2.0",
+      "externalReferences": [
+        {
+          "type": "vcs",
+          "url": "https://github.com/example/app"
+        },
+        {
+          "type": "distribution",
+          "url": "https://proxy.golang.org/github.com/example/app/@v/v1.2.0.zip"
+        }
+      ],
+      "licenses": [
+        {
+          "license": {
+            "id": "Apache-2.0"
+          }
+        }
+      ],
+      "name": "github.com/example/app",
+      "properties": [
+        {
+          "name": "kanonarion:ecosystem",
+          "value": "go"
+        },
+        {
+          "name": "kanonarion:pipeline_version",
+          "value": "0.3.0-test"
+        }
+      ],
+      "purl": "pkg:golang/github.com/example/app@v1.2.0",
+      "type": "library",
+      "version": "v1.2.0"
+    },
+    "timestamp": "2026-03-02T12:30:00Z",
+    "tools": {
+      "components": [
+        {
+          "name": "kanonarion",
+          "type": "application",
+          "version": "0.3.0-test"
+        }
+      ]
+    }
+  },
+  "serialNumber": "urn:uuid:70864a8d-7abf-fbd7-c0a3-f1c60a1cbebb",
+  "specVersion": "1.5",
+  "version": 1,
+  "vulnerabilities": [
+    {
+      "affects": [
+        {
+          "ref": "pkg:golang/github.com/example/aaa@v0.4.0"
+        }
+      ],
+      "bom-ref": "GHSA-aonly",
+      "description": "a only",
+      "id": "GHSA-aonly",
+      "ratings": [
+        {
+          "method": "other",
+          "severity": "unknown"
+        }
+      ]
+    },
+    {
+      "affects": [
+        {
+          "ref": "pkg:golang/github.com/example/aaa@v0.4.0"
+        },
+        {
+          "ref": "pkg:golang/github.com/example/zzz@v2.0.0"
+        }
+      ],
+      "bom-ref": "GHSA-shared",
+      "description": "shared across modules",
+      "id": "GHSA-shared",
+      "ratings": [
+        {
+          "method": "other",
+          "severity": "high"
+        }
+      ]
+    },
+    {
+      "affects": [
+        {
+          "ref": "pkg:golang/github.com/example/zzz@v2.0.0"
+        }
+      ],
+      "bom-ref": "GHSA-zonly",
+      "description": "z only",
+      "id": "GHSA-zonly",
+      "ratings": [
+        {
+          "method": "other",
+          "severity": "low"
+        }
+      ]
+    }
+  ]
+}

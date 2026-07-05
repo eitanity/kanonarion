@@ -1,0 +1,9 @@
+// Package main is a vendored dependency carrying a red-tier //go:debug
+// setting. Because `//go:debug` only takes effect in the main
+// package of the *main* module, this directive does not apply to the current
+// build — the scan records it Applied=false, never silently dropped.
+//
+//go:debug tlsrsakex=1
+package main
+
+func main() {}

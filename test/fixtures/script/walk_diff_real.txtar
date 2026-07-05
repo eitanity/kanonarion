@@ -1,0 +1,14 @@
+seedwalk $WORK/stores
+kanonarion walk-diff --store-root=$WORK/stores 01ARZ3NDEKTSV4RRFFQ69G5FAV 01ARZ3NDEKTSV4RRFFQ69G5FBB
+stdout 'example.com/new@v1.0.0'
+seedwalk $WORK/stores
+kanonarion walk-diff --store-root=$WORK/stores --json 01ARZ3NDEKTSV4RRFFQ69G5FAV 01ARZ3NDEKTSV4RRFFQ69G5FBB
+stdout '"walk_a": "01ARZ3NDEKTSV4RRFFQ69G5FAV"'
+stdout '"walk_b": "01ARZ3NDEKTSV4RRFFQ69G5FBB"'
+stdout '"example.com/new@v1.0.0"'
+stdout '"module": "example.com/dep"'
+stdout '"from": "v1.0.0"'
+stdout '"to": "v1.1.0"'
+stdout '"fixed_cves": \[\]'
+stdout '"license_regressions": \[\]'
+stdout '"new_reachable_cves": \[\]'

@@ -1,0 +1,85 @@
+name: Fuzz
+
+# Continuous fuzzing. The in-tree f.Add seeds are the
+# persistent seed corpora; any crasher Go discovers is written to
+# testdata/fuzz/<FuzzName>/<id>. Download the crasher artifact, commit it, and
+# the existing `test` job replays it forever as a regression case.
+
+on:
+  schedule:
+    # 03:17 UTC daily — off-peak, avoids the top-of-hour runner contention.
+    - cron: "17 3 * * *"
+  workflow_dispatch:
+    inputs:
+      fuzztime:
+        description: "Per-target fuzz budget (Go duration, e.g. 5m)"
+        required: false
+        default: "5m"
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  discover:
+    name: Discover fuzz packages
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.find.outputs.matrix }}
+    steps:
+      - uses: actions/checkout@v6
+      - id: find
+        name: Enumerate packages with fuzz targets
+        run: |
+          pkgs=$(git grep -l '^func Fuzz' \
+            | xargs -n1 dirname | sort -u | sed 's#^#./#')
+          json=$(printf '%s\n' "$pkgs" | jq -R . | jq -cs '{pkg: .}')
+          echo "matrix=$json" >> "$GITHUB_OUTPUT"
+          echo "Fuzzing packages:" && printf '%s\n' "$pkgs"
+
+  fuzz:
+    name: Fuzz ${{ matrix.pkg }}
+    needs: discover
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix: ${{ fromJson(needs.discover.outputs.matrix) }}
+    steps:
+      - uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v6
+        with:
+          go-version-file: go.mod
+          cache: true
+
+      - name: Run every fuzz target in the package
+        env:
+          FUZZTIME: ${{ github.event.inputs.fuzztime || '5m' }}
+        run: |
+          failed=""
+          for fn in $(go test -list '^Fuzz' "${{ matrix.pkg }}" | grep '^Fuzz'); do
+            echo "::group::${{ matrix.pkg }} $fn (fuzztime=$FUZZTIME)"
+            if ! go test -run='^$' -fuzz="^$fn$" -fuzztime="$FUZZTIME" \
+                -test.timeout=20m "${{ matrix.pkg }}"; then
+              failed="$failed $fn"
+            fi
+            echo "::endgroup::"
+          done
+          if [ -n "$failed" ]; then
+            echo "::error::fuzz failures in ${{ matrix.pkg }}:$failed"
+            exit 1
+          fi
+
+      - name: Upload discovered crashers
+        if: failure()
+        uses: actions/upload-artifact@v6
+        with:
+          name: fuzz-crashers-${{ strategy.job-index }}
+          path: |
+            **/testdata/fuzz/**
+          if-no-files-found: ignore
+          retention-days: 30

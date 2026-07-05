@@ -1,0 +1,27 @@
+mkdir $WORK/stores
+mkdir $WORK/modcache
+seedwalk $WORK/stores
+
+# Default behavior: non-recursive (only copies target)
+kanonarion use example.com/app@v1.0.0 --store-root=$WORK/stores --mod-cache=$WORK/modcache
+stdout 'Copied example.com/app@v1.0.0'
+! stdout 'example.com/dep'
+
+# Verify files exist in modcache
+exists $WORK/modcache/cache/download/example.com/app/@v/v1.0.0.zip
+exists $WORK/modcache/cache/download/example.com/app/@v/v1.0.0.mod
+exists $WORK/modcache/cache/download/example.com/app/@v/v1.0.0.info
+
+# Recursive behavior: copies target and dependencies
+kanonarion use example.com/app@v1.0.0 --store-root=$WORK/stores --mod-cache=$WORK/modcache --recursive
+stdout 'Copied example.com/app@v1.0.0'
+stdout 'Copied example.com/dep@v1.1.0'
+stdout 'Copied example.com/new@v1.0.0'
+
+exists $WORK/modcache/cache/download/example.com/dep/@v/v1.1.0.zip
+exists $WORK/modcache/cache/download/example.com/new/@v/v1.0.0.zip
+
+# No-overwrite behavior: if files exist, it doesn't fail but skips
+# (We can't easily see "skipping" in output without debug logs, but we can check if it still succeeds)
+kanonarion use example.com/app@v1.0.0 --store-root=$WORK/stores --mod-cache=$WORK/modcache
+stdout 'Copied example.com/app@v1.0.0'

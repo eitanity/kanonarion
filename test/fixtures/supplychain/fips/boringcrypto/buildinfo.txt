@@ -1,0 +1,5 @@
+GoVersion: go1.23.4 X:boringcrypto
+Path: example.com/supplychain/fips/boringcrypto
+Setting: GOEXPERIMENT=boringcrypto
+# BoringCrypto variant. The fixture expects toolchain_fips_capable=true (with the
+# eligibility-vs-CMVP-validation caveat in the assessment text).

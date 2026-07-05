@@ -1,0 +1,19 @@
+mkdir $WORK/stores
+seedwalk $WORK/stores
+seedcallgraph $WORK/stores
+
+# run extract with only the callgraph stage; walk A has two modules:
+#   example.com/app@v1.0.0  — callgraph record seeded, subprocess hits cache
+#   example.com/dep@v1.0.0  — no seeded callgraph record; subprocess may fail gracefully
+kanonarion extract 01ARZ3NDEKTSV4RRFFQ69G5FAV --stages callgraph --store-root=$WORK/stores
+stdout 'Extraction run .* completed'
+
+# the callgraph record for app is readable after the subprocess path persisted it
+kanonarion callgraph-show example.com/app@v1.0.0 --store-root=$WORK/stores --json
+stdout '"overall_status"'
+stdout 'Extracted'
+
+# extract list shows the run
+kanonarion extract list --store-root=$WORK/stores --json
+stdout '"walk_id"'
+stdout '01ARZ3NDEKTSV4RRFFQ69G5FAV'
