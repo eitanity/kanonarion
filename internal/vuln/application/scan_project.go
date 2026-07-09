@@ -44,15 +44,17 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 		return
 	}
 
-	// Stdlib advisories are the project toolchain's, not a dependency's; attribute
-	// them to the project root record.
-	stdlibFindings := result.FindingsByModule[fetchdomain.ModuleCoordinate{Path: domain.StdlibModulePath}]
-
 	for _, coord := range allCoords {
-		findings := copyFindings(projectFindingsFor(result.FindingsByModule, coord))
-		if coord == root {
-			findings = append(findings, stdlibFindings...)
+		// The synthetic standard-library node owns the toolchain's stdlib
+		// advisories. Resolve them from OSV metadata by coordinate rather than from
+		// the project scan's reachable set, so the stdlib verdict is the complete
+		// advisory set for the build toolchain — reachability-independent and
+		// identical to what the isolated per-module path reports for stdlib.
+		if coord.Path == domain.StdlibModulePath {
+			out[coord] = moduleResult{coord: coord, record: uc.stdlibProjectRecord(ctx, coord, params, snapshot)}
+			continue
 		}
+		findings := copyFindings(projectFindingsFor(result.FindingsByModule, coord))
 		status := domain.StatusClean
 		if len(findings) > 0 {
 			status = domain.StatusAffected
@@ -60,6 +62,29 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 		rec := uc.persistProjectRecord(ctx, coord, findings, status, "", "", "", params, snapshot)
 		out[coord] = moduleResult{coord: coord, record: rec}
 	}
+}
+
+// stdlibProjectRecord builds the standard-library node's record for a
+// project-rooted scan from OSV advisory metadata. Any advisory affecting the
+// pinned toolchain version is a finding; none means Clean. On a metadata lookup
+// error the node degrades to Clean with the error recorded, mirroring how the
+// project scan surfaces a fault without dropping the row.
+func (uc *ScanWalkUseCase) stdlibProjectRecord(
+	ctx context.Context,
+	coord fetchdomain.ModuleCoordinate,
+	params ScanWalkParams,
+	snapshot *domain.DatabaseSnapshot,
+) domain.VulnerabilityRecord {
+	findings, err := uc.moduleScanner.database.LookupFindings(ctx, coord)
+	if err != nil {
+		uc.logger.Warn("project-rooted scan: stdlib metadata lookup failed", "coordinate", coord, "error", err)
+		return uc.persistProjectRecord(ctx, coord, nil, domain.StatusClean, "", "", err.Error(), params, snapshot)
+	}
+	status := domain.StatusClean
+	if len(findings) > 0 {
+		status = domain.StatusAffected
+	}
+	return uc.persistProjectRecord(ctx, coord, findings, status, "", "", "", params, snapshot)
 }
 
 // projectFindingsFor returns the findings a project scan attributed to coord.

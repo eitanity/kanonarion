@@ -2,6 +2,7 @@ package domain
 
 import (
 	"sort"
+	"strings"
 	"time"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
@@ -43,7 +44,58 @@ const (
 	// the local-FS fetcher. Downstream stages (extract, vuln-scan) treat these
 	// nodes the same as ResolutionMVS nodes.
 	ResolutionLocalAnalysed ResolutionSource = "local_analysed"
+	// ResolutionStdlib marks the synthetic Go standard-library node injected into a
+	// project walk. The standard library is a genuine build dependency — the code
+	// links against it — but it ships with the toolchain rather than as a fetchable
+	// module, so `go list -m all` never lists it. The node's Coordinate is
+	// {StdlibModulePath, v<toolchain-version>}; it is never fetched or extracted
+	// (like ResolutionLocalMainModule) and vuln-scan resolves its advisories from
+	// OSV metadata by coordinate. Without it, stdlib advisories for the build
+	// toolchain are invisible to both vuln-scan and the SBOM.
+	ResolutionStdlib ResolutionSource = "stdlib"
 )
+
+// StdlibModulePath is the module path used for the synthetic standard-library
+// node. It matches govulncheck's / the Go vulnerability database's pseudo-module
+// path for standard-library advisories, so an OSV coordinate lookup for this path
+// resolves the stdlib advisory set directly.
+const StdlibModulePath = "stdlib"
+
+// NormaliseStdlibVersion converts a Go toolchain version string into the
+// v-prefixed semver form the module coordinate and the OSV version comparison
+// both require. It accepts the forms the toolchain and go.mod directives produce:
+// "go1.26.4" (go env GOVERSION / a `toolchain` directive) and "1.26.4" (a `go`
+// directive). A leading "go" is stripped and a leading "v" ensured, yielding
+// "v1.26.4". An input that is already v-prefixed is returned unchanged, and an
+// empty input yields "" so callers can detect an undeterminable toolchain.
+func NormaliseStdlibVersion(v string) string {
+	v = strings.TrimSpace(v)
+	if v == "" {
+		return ""
+	}
+	v = strings.TrimPrefix(v, "go")
+	if !strings.HasPrefix(v, "v") {
+		v = "v" + v
+	}
+	return v
+}
+
+// StdlibNode builds the synthetic standard-library graph node for a build
+// toolchain at goVersion (any form NormaliseStdlibVersion accepts). The returned
+// node is a direct dependency of the project root with ResolutionStdlib. The bool
+// is false when goVersion does not yield a usable version, so the caller can skip
+// injection rather than emit a node with an empty coordinate.
+func StdlibNode(goVersion string) (GraphNode, bool) {
+	version := NormaliseStdlibVersion(goVersion)
+	if version == "" {
+		return GraphNode{}, false
+	}
+	return GraphNode{
+		Coordinate:       fetchdomain.ModuleCoordinate{Path: StdlibModulePath, Version: version},
+		DirectDependency: true,
+		ResolutionSource: ResolutionStdlib,
+	}, true
+}
 
 // Graph is the resolved transitive dependency closure for a target module.
 // It is produced by GraphResolver and immutable once Sort has been called.
@@ -74,6 +126,32 @@ type Graph struct {
 	// are recorded but not followed, since local paths have no standalone fetch
 	// semantics.
 	HasLocalReplace bool
+	// BuildEnv records the Go toolchain environment that resolved this graph:
+	// GOOS/GOARCH/GOVERSION. The target platform is not incidental — build
+	// constraints select which files (and therefore which imports and modules)
+	// compile, so the same go.mod can resolve a different graph per platform. It
+	// is captured so a downstream SBOM states the platform its component set is
+	// valid for. Zero value for records created before the field existed.
+	BuildEnv BuildEnv
+}
+
+// BuildEnv is the Go build environment a project walk was resolved under. It is
+// a property of the whole graph, not any single node, because GOOS/GOARCH gate
+// build-constraint file selection across every module in the closure.
+type BuildEnv struct {
+	// GOOS is the target operating system (e.g. "linux"), from `go env GOOS`.
+	GOOS string
+	// GOARCH is the target architecture (e.g. "amd64"), from `go env GOARCH`.
+	GOARCH string
+	// GoVersion is the effective toolchain version (e.g. "go1.26.4"), from
+	// `go env GOVERSION` — the version that actually compiles the project.
+	GoVersion string
+}
+
+// IsZero reports whether no build environment was captured, so serialisers can
+// omit an empty BuildEnv and keep hashes stable for pre-BuildEnv records.
+func (e BuildEnv) IsZero() bool {
+	return e.GOOS == "" && e.GOARCH == "" && e.GoVersion == ""
 }
 
 // GraphNode is a single module in the dependency graph.

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"runtime"
 	"strings"
 
 	"github.com/eitanity/kanonarion/internal/adapters/ziparchive"
@@ -53,7 +54,15 @@ import (
 // reachable from the go.mod tool-directive roots over the dependency graph —
 // rather than an independent unpruned walk per tool directive. The default
 // (production) project walk is unchanged: the whole build list.
-const PipelineVersion = "1.5.0"
+//
+// 1.6.0: a project walk injects the Go standard library as a first-class
+// dependency node (ResolutionStdlib) pinned to the build toolchain version, and
+// records the resolved build environment (GOOS/GOARCH/GOVERSION) on the graph.
+// The stdlib node makes standard-library advisories visible to vuln-scan and the
+// SBOM; the build environment states the platform the resolved module set is
+// valid for. Both change the graph structure, so cached 1.5.0 walks are
+// re-resolved rather than served without the stdlib node or platform.
+const PipelineVersion = "1.6.0"
 
 // GraphResolver resolves the transitive dependency graph for a target module.
 // It is safe for concurrent use once constructed.
@@ -188,7 +197,7 @@ func (r *GraphResolver) Resolve(ctx context.Context, target domain2.ModuleCoordi
 // the set of module paths (the build-list subset the caller computed via the Go
 // toolchain — code or tool scope) to retain, alongside the main anchor. A nil
 // scopeModules keeps the whole build list (the complete scope).
-func (r *GraphResolver) ResolveProject(ctx context.Context, target domain2.ModuleCoordinate, goModBytes []byte, projectDir string, depth domain3.StageDepth, scopeModules []string) (domain3.Graph, error) {
+func (r *GraphResolver) ResolveProject(ctx context.Context, target domain2.ModuleCoordinate, goModBytes []byte, projectDir string, depth domain3.StageDepth, scopeModules []string, stdlibFromGoMod bool) (domain3.Graph, error) {
 	r.logger.InfoContext(ctx, "walk.resolve_project.start",
 		slog.String("module.path", target.Path),
 		slog.String("module.version", target.Version),
@@ -228,7 +237,76 @@ func (r *GraphResolver) ResolveProject(ctx context.Context, target domain2.Modul
 			slog.Int("node_count", len(g.Nodes)),
 		)
 	}
+
+	// Inject the standard library as a first-class dependency node. Done after
+	// scope filtering because the stdlib is a universal build input — every scope
+	// links against it — so it must never be filtered out with the out-of-scope
+	// modules. Skipped silently when no toolchain version can be determined.
+	r.injectStdlib(ctx, &g, target, goModBytes, stdlibFromGoMod)
+
 	return g, nil
+}
+
+// injectStdlib adds the synthetic standard-library node and a root→stdlib edge to
+// g in place, then re-sorts. The version defaults to the resolved build
+// toolchain (g.BuildEnv.GoVersion, from `go env GOVERSION`); when fromGoMod is
+// set, or no toolchain version was captured, it falls back to the project
+// go.mod's `toolchain`/`go` directive. When neither yields a version the stdlib
+// node is omitted (a best-effort coverage gap, never a fatal error).
+func (r *GraphResolver) injectStdlib(ctx context.Context, g *domain3.Graph, target domain2.ModuleCoordinate, goModBytes []byte, fromGoMod bool) {
+	version := g.BuildEnv.GoVersion
+	if fromGoMod || version == "" {
+		if directive := r.goModDirectiveVersion(goModBytes); directive != "" {
+			version = directive
+		}
+	}
+
+	node, ok := domain3.StdlibNode(version)
+	if !ok {
+		r.logger.InfoContext(ctx, "walk.stdlib.skipped",
+			slog.String("module.path", target.Path),
+			slog.String("reason", "toolchain version undeterminable"),
+		)
+		return
+	}
+
+	// Guard against a duplicate if a future build list ever lists stdlib directly.
+	for _, existing := range g.Nodes {
+		if existing.Coordinate.Path == domain3.StdlibModulePath {
+			return
+		}
+	}
+
+	g.Nodes = append(g.Nodes, node)
+	g.Edges = append(g.Edges, domain3.GraphEdge{From: target, To: node.Coordinate})
+	g.Sort()
+
+	r.logger.InfoContext(ctx, "walk.stdlib.injected",
+		slog.String("module.path", target.Path),
+		slog.String("stdlib.version", node.Coordinate.Version),
+		slog.Bool("from_gomod", fromGoMod),
+	)
+}
+
+// goModDirectiveVersion returns the project's declared toolchain version from its
+// go.mod, preferring the explicit `toolchain` directive (e.g. "go1.26.4") over the
+// `go` directive minimum (e.g. "1.26"). It returns "" when go.mod cannot be parsed
+// or declares neither — the caller then omits the stdlib node.
+func (r *GraphResolver) goModDirectiveVersion(goModBytes []byte) string {
+	parsed, err := r.parser.Parse("go.mod", goModBytes)
+	if err != nil {
+		return ""
+	}
+	return goModDirective(parsed)
+}
+
+// goModDirective returns the toolchain version a parsed go.mod declares,
+// preferring the explicit `toolchain` directive over the `go` directive minimum.
+func goModDirective(parsed domain3.ParsedGoMod) string {
+	if parsed.Toolchain != "" {
+		return parsed.Toolchain
+	}
+	return parsed.GoVersion
 }
 
 // buildListApproxReason is recorded on a project graph whose module set was
@@ -250,6 +328,16 @@ func (r *GraphResolver) resolveProjectFallback(ctx context.Context, target domai
 	// The main module is local and unpublished, so it is never retracted and
 	// carries no fetch record.
 	g := r.resolveFromParsed(ctx, target, parsed, domain3.ResolutionLocalMainModule, false, depth)
+
+	// Without the toolchain build list there is no `go env` probe, so record the
+	// host platform kanonarion runs on (the default target for a local project
+	// resolved without cross-compilation) and the go.mod directive as the
+	// toolchain version — the best available build-environment signal.
+	g.BuildEnv = domain3.BuildEnv{
+		GOOS:      runtime.GOOS,
+		GOARCH:    runtime.GOARCH,
+		GoVersion: goModDirective(parsed),
+	}
 
 	if r.buildList != nil {
 		g.Partial = true
@@ -363,6 +451,11 @@ func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target domain2
 		Partial:         st.partial,
 		PartialReason:   st.partialReason,
 		HasLocalReplace: st.hasLocalReplace,
+		BuildEnv: domain3.BuildEnv{
+			GOOS:      bl.GOOS,
+			GOARCH:    bl.GOARCH,
+			GoVersion: bl.GoVersion,
+		},
 	}
 	for _, node := range st.nodes {
 		g.Nodes = append(g.Nodes, node)

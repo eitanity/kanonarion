@@ -114,11 +114,29 @@ func (g *Generator) buildBOM(
 		},
 		Component: moduleComponent(walk.Graph.Target, licenses, req.PipelineVersion),
 	}
+	// Record the build environment the graph was resolved for. GOOS/GOARCH gate
+	// build-constraint file selection, so the component set is only valid for this
+	// platform; a consumer must know it to reproduce or trust the SBOM.
+	if props := buildEnvProperties(walk.Graph.BuildEnv); props != nil {
+		bom.Metadata.Properties = props
+	}
 
 	// Components — assembly policy (inclusion, license attach, ordering,
 	// incomplete-license determination) lives in sbom/domain.
 	inputs := make([]domain.ComponentInput, 0, len(walk.Graph.Nodes))
 	for _, node := range walk.Graph.Nodes {
+		// The standard library ships with the toolchain under the Go project's
+		// BSD-3-Clause licence and has no fetched licence record, so attribute it
+		// directly. Without this it would be counted as an unknown-licence gap and
+		// wrongly flag the whole SBOM licences-incomplete.
+		if node.ResolutionSource == walkdomain.ResolutionStdlib {
+			inputs = append(inputs, domain.ComponentInput{
+				Module:      moduleRef(node.Coordinate),
+				HasLicense:  true,
+				PrimarySPDX: stdlibLicenseSPDX,
+			})
+			continue
+		}
 		lic, hasLic := licenses[node.Coordinate]
 		inputs = append(inputs, domain.ComponentInput{
 			Module:      moduleRef(node.Coordinate),
@@ -167,6 +185,9 @@ func moduleRef(coord fetchdomain.ModuleCoordinate) domain.ModuleRef {
 
 // buildComponent maps an assembled domain Component to a CycloneDX Component.
 func buildComponent(mod domain.ModuleRef, spdx, copyright, pipelineVersion string) cdx.Component {
+	if mod.Path == walkdomain.StdlibModulePath {
+		return buildStdlibComponent(mod, spdx, pipelineVersion)
+	}
 	purl := modulePURL(mod)
 	comp := cdx.Component{
 		BOMRef:     purl,
@@ -204,6 +225,71 @@ func buildComponent(mod domain.ModuleRef, spdx, copyright, pipelineVersion strin
 	}
 
 	return comp
+}
+
+// stdlibLicenseSPDX is the SPDX identifier for the Go standard library. The Go
+// project (and therefore the standard library that ships with the toolchain) is
+// distributed under BSD-3-Clause, so the synthetic stdlib component carries it
+// rather than being reported as an unknown-licence coverage gap.
+const stdlibLicenseSPDX = "BSD-3-Clause"
+
+// buildStdlibComponent builds the CycloneDX component for the synthetic
+// standard-library node. It differs from an ordinary module component: the
+// stdlib is not a proxy artefact, so it carries the real Go source repository as
+// its VCS reference and no proxy-zip distribution URL (which would 404), and it
+// defaults to the Go BSD-3-Clause licence when none was supplied.
+func buildStdlibComponent(mod domain.ModuleRef, spdx, pipelineVersion string) cdx.Component {
+	purl := modulePURL(mod)
+	if spdx == "" {
+		spdx = stdlibLicenseSPDX
+	}
+	comp := cdx.Component{
+		BOMRef:     purl,
+		Type:       cdx.ComponentTypeLibrary,
+		Name:       mod.Path,
+		Version:    mod.Version,
+		PackageURL: purl,
+		Description: "Go standard library (toolchain-provided); not a fetched module. " +
+			"Included so vulnerability and platform coverage span the standard library.",
+		ExternalReferences: &[]cdx.ExternalReference{
+			{
+				Type: cdx.ERTypeVCS,
+				URL:  "https://go.googlesource.com/go",
+			},
+			{
+				Type: cdx.ERTypeWebsite,
+				URL:  "https://go.dev/",
+			},
+		},
+		Properties: &[]cdx.Property{
+			{Name: "kanonarion:ecosystem", Value: domain.EcosystemGo},
+			{Name: "kanonarion:pipeline_version", Value: pipelineVersion},
+			{Name: "kanonarion:component:stdlib", Value: "true"},
+		},
+	}
+	comp.Licenses = &cdx.Licenses{cdx.LicenseChoice{License: &cdx.License{ID: spdx}}}
+	return comp
+}
+
+// buildEnvProperties renders the resolved build environment as CycloneDX
+// metadata properties, emitting only the values that were captured so a record
+// with no build environment (a non-project walk, or a pre-BuildEnv record)
+// produces no properties block. The ordering is fixed (goos, goarch, go_version)
+// for deterministic output.
+func buildEnvProperties(env walkdomain.BuildEnv) *[]cdx.Property {
+	var props []cdx.Property
+	add := func(key, value string) {
+		if value != "" {
+			props = append(props, cdx.Property{Name: "kanonarion:build:" + key, Value: value})
+		}
+	}
+	add("goos", env.GOOS)
+	add("goarch", env.GOARCH)
+	add("go_version", env.GoVersion)
+	if len(props) == 0 {
+		return nil
+	}
+	return &props
 }
 
 // moduleComponent builds the metadata primary component for the walk target.

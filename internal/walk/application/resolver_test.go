@@ -1336,7 +1336,7 @@ replace example.com/dep => ../local/dep
 `
 
 	r := newResolver(fetcher, blobs)
-	g, err := r.ResolveProject(context.Background(), coord("example.com/project", domain2.LocalVersion), []byte(mainGoMod), "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil)
+	g, err := r.ResolveProject(context.Background(), coord("example.com/project", domain2.LocalVersion), []byte(mainGoMod), "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false)
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
@@ -1403,7 +1403,7 @@ require example.com/dep/one v1.2.3
 	target := coord("example.com/project", domain2.LocalVersion)
 
 	r := newResolver(fetcher, blobs)
-	g, err := r.ResolveProject(context.Background(), target, mainGoMod, "", domain3.DefaultDepthPolicy().FetchStage(), nil)
+	g, err := r.ResolveProject(context.Background(), target, mainGoMod, "", domain3.DefaultDepthPolicy().FetchStage(), nil, false)
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
@@ -1438,8 +1438,16 @@ require example.com/dep/one v1.2.3
 	if _, ok := byPath["example.com/dep/two"]; !ok {
 		t.Errorf("transitive example.com/dep/two missing from closure")
 	}
-	if len(g.Nodes) != 3 {
-		t.Errorf("node count = %d, want 3 (main + one + two)", len(g.Nodes))
+	// A project walk injects the synthetic standard-library node from the go.mod
+	// directive (no toolchain build list is wired in this test).
+	std, hasStd := byPath[domain3.StdlibModulePath]
+	if !hasStd {
+		t.Errorf("stdlib node missing from project closure")
+	} else if std.ResolutionSource != domain3.ResolutionStdlib {
+		t.Errorf("stdlib node source = %s, want stdlib", std.ResolutionSource)
+	}
+	if len(g.Nodes) != 4 {
+		t.Errorf("node count = %d, want 4 (main + one + two + stdlib)", len(g.Nodes))
 	}
 }
 
@@ -1451,7 +1459,7 @@ func TestResolveProject_UnparseableGoModErrors(t *testing.T) {
 	target := coord("example.com/project", domain2.LocalVersion)
 
 	r := newResolver(fetcher, blobs)
-	_, err := r.ResolveProject(context.Background(), target, []byte("this is not a go.mod"), "", domain3.DefaultDepthPolicy().FetchStage(), nil)
+	_, err := r.ResolveProject(context.Background(), target, []byte("this is not a go.mod"), "", domain3.DefaultDepthPolicy().FetchStage(), nil, false)
 	if err == nil {
 		t.Fatalf("ResolveProject: expected error for malformed go.mod, got nil")
 	}

@@ -36,6 +36,7 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
 	var analyseLocal bool
 	var projectComplete bool
 	var analyseRoot bool
+	var stdlibFromGoMod bool
 	var noProgress bool
 
 	cmd := &cobra.Command{
@@ -122,7 +123,7 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
 			defer func() { _ = cleanup() }()
 			progress := newWalkProgressReporter(stderr, noProgress, activeConfig, logLevel)
 			if isGoMod {
-				return runWalkProject(cmd.Context(), gomodPath, f, force, allowPartial, workerCount, operator, policyPath, skipVCSVerify, scope, depth, localReplaceBase, analyseRoot, progress, ctr.ExecuteWalk, stdout, stderr)
+				return runWalkProject(cmd.Context(), gomodPath, f, force, allowPartial, workerCount, operator, policyPath, skipVCSVerify, scope, depth, localReplaceBase, analyseRoot, stdlibFromGoMod, progress, ctr.ExecuteWalk, stdout, stderr)
 			}
 			return runWalk(cmd.Context(), args[0], f, force, allowPartial, workerCount, operator, policyPath, skipVCSVerify, domain.WalkScopeCode, depth, localReplaceBase, progress, ctr.ExecuteWalk, stdout, stderr)
 		},
@@ -141,6 +142,7 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().BoolVar(&shallow, "shallow", false, "fetch only the target module; list go.mod require entries as unresolved nodes (positional module walk only)")
 	cmd.Flags().BoolVar(&analyseLocal, "analyse-local", false, "ingest local-replace targets from disk so callgraph/iface/license analyse them (requires --gomod)")
 	cmd.Flags().BoolVar(&analyseRoot, "analyse-root", false, "ingest the project's own working tree so all extraction stages analyse the project's own packages; re-reads the tree fresh on every run (requires a go.mod walk)")
+	cmd.Flags().BoolVar(&stdlibFromGoMod, "stdlib-from-gomod", false, "pin the stdlib node to the go.mod toolchain/go directive instead of the effective build toolchain (go env GOVERSION)")
 	cmd.Flags().BoolVar(&noProgress, "no-progress", false, "suppress the stderr fetch-progress heartbeat (default: heartbeat on for long runs)")
 	return cmd
 }
@@ -169,6 +171,7 @@ func runWalkProject(
 	depth domain.WalkDepth,
 	localReplaceBase string,
 	analyseRoot bool,
+	stdlibFromGoMod bool,
 	progress walkports.ProgressReporter,
 	uc ExecuteWalkUseCase,
 	stdout, stderr io.Writer,
@@ -229,6 +232,7 @@ func runWalkProject(
 		MainModuleGoMod:  goModBytes,
 		AnalyseLocalRoot: analyseRoot,
 		ProjectDir:       projectDir,
+		StdlibFromGoMod:  stdlibFromGoMod,
 		Progress:         progress,
 	})
 	if err != nil {

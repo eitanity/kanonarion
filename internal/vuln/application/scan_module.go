@@ -223,8 +223,14 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 		// and nil Reachable, signalling that call-graph analysis was not performed.
 		// A coordinate with no matching advisory is a real answer here, so the
 		// empty status is Clean.
-		return uc.scanMetadataOnly(ctx, params, snapshot,
-			"metadata-only: module not fetched (shallow walk)", "", domain.StatusClean)
+		note := "metadata-only: module not fetched (shallow walk)"
+		if params.Coordinate.Path == domain.StdlibModulePath {
+			// The standard library is toolchain-provided, never fetched as a module.
+			// Its advisories are resolved from OSV metadata by coordinate — the
+			// definitive verdict for stdlib, not a coverage-gap fallback.
+			note = "Go standard library (toolchain-provided); advisories resolved from OSV metadata by coordinate"
+		}
+		return uc.scanMetadataOnly(ctx, params, snapshot, note, "", domain.StatusClean)
 	}
 
 	// 3.5 Metadata-based Filtering (Optimization)

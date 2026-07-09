@@ -161,6 +161,12 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 			if node.ResolutionSource == walkdomain.ResolutionLocalReplace {
 				continue
 			}
+			// The synthetic standard-library node ships with the toolchain and has
+			// no proxy artefact; it is scanned from advisory metadata, so exclude it
+			// from the module cache prefetch/populate.
+			if node.ResolutionSource == walkdomain.ResolutionStdlib {
+				continue
+			}
 			// The local main module (a project walk's root) has no proxy artefact
 			// to populate the cache with; the project-rooted scan reads its live
 			// working tree, not a stored blob. Skip it so pre-fetch does not

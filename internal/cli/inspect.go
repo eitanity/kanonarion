@@ -244,7 +244,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 
 	var nodeFails int
 	progress := newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
-	if werr := runWalkProject(ctx, f.gomodPath, wf, f.force, true, 0, "", "", f.skipVCS, scope, domain.WalkDepthFull, "", false, progress, ctr.ExecuteWalk, io.Discard, stderr); werr != nil {
+	if werr := runWalkProject(ctx, f.gomodPath, wf, f.force, true, 0, "", "", f.skipVCS, scope, domain.WalkDepthFull, "", false, false, progress, ctr.ExecuteWalk, io.Discard, stderr); werr != nil {
 		_, _ = fmt.Fprintf(stderr, "walk: %v\n", werr)
 		nodeFails = 1
 	}

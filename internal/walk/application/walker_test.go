@@ -1227,7 +1227,26 @@ func TestWalker_ProjectMode_RootsAtLocalMainModule(t *testing.T) {
 	if _, ok := outcome.PerNodeResults[coord("example.com/dep", "v1.0.0")]; !ok {
 		t.Errorf("require example.com/dep missing from closure")
 	}
-	if len(outcome.Graph.Nodes) != 2 {
-		t.Errorf("node count = %d, want 2 (main module + dep)", len(outcome.Graph.Nodes))
+	// The project walk injects the synthetic standard-library node, recorded as a
+	// succeeded node with no fetch record (it is toolchain-provided, never fetched).
+	var stdCoord domain.GraphNode
+	foundStd := false
+	for _, n := range outcome.Graph.Nodes {
+		if n.ResolutionSource == domain.ResolutionStdlib {
+			stdCoord, foundStd = n, true
+		}
+	}
+	if !foundStd {
+		t.Fatalf("stdlib node absent from project graph")
+	}
+	sr := outcome.PerNodeResults[stdCoord.Coordinate]
+	if sr.Status != domain.NodeSucceeded {
+		t.Errorf("stdlib node status = %s, want succeeded", sr.Status)
+	}
+	if sr.FetchRecord != nil {
+		t.Errorf("stdlib node carries a fetch record, want none (toolchain-provided)")
+	}
+	if len(outcome.Graph.Nodes) != 3 {
+		t.Errorf("node count = %d, want 3 (main module + dep + stdlib)", len(outcome.Graph.Nodes))
 	}
 }

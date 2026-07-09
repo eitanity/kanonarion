@@ -197,7 +197,7 @@ func auditScope(
 	_, _ = fmt.Fprintf(stderr, "==> audit: walking project %s (%d %s dependencies)\n", f.gomodPath, len(coords), scope)
 
 	progress := newWalkProgressReporter(stderr, false, activeConfig, logLevel)
-	if werr := runWalkProject(ctx, f.gomodPath, wf, f.force, true, 0, "", "", f.skipVCSVerify, scope, walkdomain.WalkDepthFull, "", false, progress, ctr.ExecuteWalk, io.Discard, stderr); werr != nil {
+	if werr := runWalkProject(ctx, f.gomodPath, wf, f.force, true, 0, "", "", f.skipVCSVerify, scope, walkdomain.WalkDepthFull, "", false, false, progress, ctr.ExecuteWalk, io.Discard, stderr); werr != nil {
 		// A partial walk is tolerated (allowPartial=true above): individual
 		// unfetchable nodes surface as "(not fetched)" rows. Only a hard walk
 		// failure or cancellation leaves no usable record.

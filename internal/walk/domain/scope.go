@@ -23,6 +23,10 @@ func FilterGraphToScope(g Graph, mainPath string, keep []string) Graph {
 		Partial:         g.Partial,
 		PartialReason:   g.PartialReason,
 		HasLocalReplace: g.HasLocalReplace,
+		// The build environment is a property of the whole resolution, not of any
+		// node, so it survives scope filtering — a code- or tool-scoped SBOM states
+		// the same platform as the complete-scope one.
+		BuildEnv: g.BuildEnv,
 	}
 	for _, n := range g.Nodes {
 		if keepSet[n.Coordinate.Path] {
