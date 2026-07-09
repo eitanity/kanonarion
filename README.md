@@ -1,19 +1,33 @@
 # Kanonarion
 **Dependency assurance software for Go.**
 
-Kanonarion is a deterministic, local source of truth about your dependencies — what's in them, how they're licensed, how to call them, and which known vulnerabilities your code actually reaches. Developers query it from the CLI with human-readable output; AI coding agents get JSON. Both get the same answer, computed from your real dependency tree - not a model's best guess. The questions you would answer by hand, burn through tokens, or skip are answered quickly and correctly.
+Kanonarion is a deterministic, local source of truth about your dependencies -
+what's in them, how they're licensed, how to call them, and which known
+vulnerabilities your code actually reaches. Developers query it from the CLI
+with human-readable output; AI coding agents get JSON. Both get the same answer,
+computed from your real dependency tree - not a model's best guess. The questions
+you would answer by hand, burn through tokens, or skip are answered quickly and
+correctly.
 
-It surfaces evidence, not verdicts. Where the answer is uncertain, it says so, and in what way it is uncertain — never collapsing uncertainty into "safe."
+It surfaces evidence, not verdicts. Where the answer is uncertain, it says so,
+and in what way it is uncertain — never collapsing uncertainty into "safe."
 
-A single binary. SQLite-backed local store. No SaaS, no account, no proprietary scanner deciding for you. The facts are public; the judgment is local and yours.
+A single binary. SQLite-backed local store. No SaaS, no account, no proprietary
+scanner deciding for you. The facts are public; the judgment is local and yours.
 
 ---
 
 ## Why Kanonarion?
 
-Modern AI coding agents (Claude, Copilot, Cursor, Junie) should be asking questions about dependencies constantly - what's the API, is this CVE reachable, can I use this licence commercially, how do I call this function. Without a local fact store, the agent usually doesn't ask at all - it guesses. That's what I found writing Kanonarion. When you force the agent to find the answers you pay in tokens and latency.
+Modern AI coding agents (Claude, Copilot, Cursor, Junie) should be asking questions
+about dependencies constantly - what's the API, is this CVE reachable, can I use
+this license commercially, how do I call this function. Without a local fact store,
+the agent usually doesn't ask at all - it guesses. That's what I found writing
+Kanonarion. When you force the agent to find the answers you pay in tokens and latency.
 
-Kanonarion solves this by running a **walk → extract → query** pipeline once per dependency set, then serving all facts locally at query time. The agent asks Kanonarion instead of guessing. The answers are deterministic and reproducible.
+Kanonarion solves this by running a **walk → extract → query** pipeline once per
+dependency set, then serving all facts locally at query time. The agent asks Kanonarion
+instead of guessing. The answers are deterministic and reproducible.
 
 ---
 

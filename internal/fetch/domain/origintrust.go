@@ -13,11 +13,21 @@ import (
 // superset of the forges inferRepoURL can construct URLs for: it also includes
 // go.googlesource.com so the golang.org/x and google.golang.org ecosystem keeps
 // full VCS cross-verification rather than degrading to checksum-DB-only.
+//
+// codeberg.org (Forgejo) and gopkg.in (git-serving version redirector) are
+// added because real dependency graphs resolve modules there — without them a
+// self-audit emits origin_rejected and silently drops to checksum-DB-only for
+// those modules instead of cross-verifying the repo against go.sum. Any host
+// added here must stay in sync with the harden-runner egress allowlist in
+// .github/workflows/release.yml, or the release-time self-audit can resolve
+// the Origin but not reach it.
 var allowedVCSHosts = map[string]bool{
 	"github.com":          true,
 	"gitlab.com":          true,
 	"bitbucket.org":       true,
 	"go.googlesource.com": true,
+	"codeberg.org":        true,
+	"gopkg.in":            true,
 }
 
 // IsAllowedVCSHost reports whether host is on the VCS forge allowlist.
