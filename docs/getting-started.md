@@ -156,7 +156,7 @@ reference project:
 | Run | Measured | What dominates |
 |---|---|---|
 | First run (empty store) | ~16 min | resolving the require graph (~470 module metadata fetches) and downloading + verifying the 21 build-list zips and extracting; fetching the vulnerability DB snapshot and scanning. Scales with dependency count and bandwidth. |
-| Re-run (warm store) | ~3 s | Cache checks only - every walk logs `cached successful walk exists` |
+| Re-run (warm store) | walk ~3 s **+ vuln scan** | The walk/extract stages are cache checks only (every walk logs `cached successful walk exists`), but `inspect` is project-rooted, so the vulnerability scan re-runs `govulncheck` over the live working tree every time - it is never cached (see the `audit` section below for the same behaviour and its ~2 min reference cost). |
 
 These are for the 21-module reference project. Cost scales with closure size,
 and not gently. A **large project** measured end-to-end (velociraptor,
@@ -255,9 +255,11 @@ audits the tooling supply chain (the `go.mod` `tool` directives' closure) and
 **Duration:** dominated by the vuln leg. The vulnerability verdict is
 **project-rooted** - one `govulncheck` over the project's live working tree - and
 is recomputed fresh every run (the working tree mutates, so it is never served
-from a cache), which took ~2 min on the reference project. Walk, licence, and
-staleness columns are cached (the *first* `audit`'s staleness lookup resolves
-each module's latest version over the network, ~35 s, cached afterwards).
+from a cache), which took ~2 min on the reference project. Walk and licence
+columns are cached, but the staleness column is **not**: every run resolves each
+module's latest version live from the module proxy (a `@latest` request per
+module, ~35 s on the reference project), so a warm `audit` always makes those
+outbound calls.
 
 ### 5. Drill-downs
 

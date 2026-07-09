@@ -208,7 +208,14 @@ tools. Have these on `PATH`:
 Network access is needed for the **first** run of a given module set only
 (module downloads, checksum database, VCS cross-verification, vulnerability
 database snapshot). Every query afterwards is served from the local store at
-`~/.kanonarion`.
+`~/.kanonarion` with no network calls. Note that project rooted commands
+(audit, inspect, vuln-scan --gomod) still re-run the vulnerability scan over
+your live working tree using the cached modules and vulnerability database.
+`audit` also resolves each module's latest version live from the module proxy on
+every run (the staleness column), so it always makes those outbound calls even on
+a warm store.
+The flag --fresh re-downloads the vulnerability database snapshot and --force
+forces a re-fetch of the module set. 
 
 ## Building from source
 
