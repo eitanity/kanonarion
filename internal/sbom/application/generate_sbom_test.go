@@ -354,6 +354,41 @@ func TestGenerateSBOM_AllowList(t *testing.T) {
 	}
 }
 
+// The synthetic stdlib node is a universal build input that no `go list -deps`
+// closure reports, so it is never in a --package allow-list. The scoped filter
+// must keep it anyway; otherwise a --package SBOM silently omits the standard
+// library (and the --stdlib-from-gomod-pinned Go version the release depends on).
+func TestGenerateSBOM_AllowListKeepsStdlibNode(t *testing.T) {
+	coordA, _ := fetchdomain.NewModuleCoordinate("example.com/a", "v1.0.0")
+	stdlib, _ := fetchdomain.NewModuleCoordinate(walkdomain.StdlibModulePath, "v1.22")
+
+	// Walk carries A, the stdlib node, and a root->stdlib edge, mirroring what
+	// injectStdlib produces. The allow-list holds only A (stdlib is never listed).
+	walk := makeMultiNodeWalk("walk-1", []fetchdomain.ModuleCoordinate{coordA, stdlib})
+	walk.Graph.Edges = []walkdomain.GraphEdge{{From: coordA, To: stdlib}}
+	ws := &fakeWalkStore{walk: walk}
+	gen := &fakeSBOMGenerator{record: domain.SBOMRecord{ID: "sbom-scoped", WalkID: "walk-1", Content: []byte(`{}`)}}
+	uc := makeUC(ws, &fakeVulnStore{}, &fakeSBOMStore{}, gen)
+
+	if _, err := uc.Generate(t.Context(), application.SBOMRequest{
+		WalkID:    "walk-1",
+		AllowList: []fetchdomain.ModuleCoordinate{coordA},
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := map[fetchdomain.ModuleCoordinate]bool{}
+	for _, n := range gen.capturedNodes {
+		got[n.Coordinate] = true
+	}
+	if !got[coordA] {
+		t.Errorf("allowed module A must be present, got %v", gen.capturedNodes)
+	}
+	if !got[stdlib] {
+		t.Errorf("stdlib node must survive the allow-list filter, got %v", gen.capturedNodes)
+	}
+}
+
 // Licence records persist under the licence extraction pipeline version, not
 // the SBOM's own pipeline version. The lookup must use the former: when the
 // two diverge, looking up under the SBOM version misses every record and the

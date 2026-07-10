@@ -80,6 +80,7 @@ the install command.
 | `--project` | `false` | Scope to the complete set: the project's code **and** tooling (the full Go build list). Mutually exclusive with `--tool` |
 | `--force` | `false` | Re-fetch and re-scan even if cached records exist |
 | `--fresh` | `false` | Fetch a fresh vulnerability database snapshot from the network |
+| `--stdlib-from-gomod` | `false` | Version the `stdlib` node from the `go.mod` directive, not the live toolchain. See [Standard-library version](walk.md#standard-library-version---stdlib-from-gomod). |
 | `--skip-vcs-verify` | `false` | Skip git cross-verification; the checksum-database check still runs. A sumdb-attested module then reports `VerifiedBySumDBOnly`, never the strongest `Verified` (the git leg never ran). Useful when auditing a large closure where git operations are rate-limited or unavailable |
 | `--goproxy` | `$GOPROXY` | Override the Go module proxy |
 | `--json` | `false` | Emit output as a JSON array |
@@ -184,10 +185,12 @@ dependency:
 4. Staleness check - query the proxy for the latest version of each module
 5. Query and report - iterate the walk's dependency nodes (every graph node bar the local root) and join fetch, license, vuln, and staleness into one line each
 
-Walk, licence extraction, and staleness use cached results on subsequent runs
-unless `--force` is passed. The project-rooted vuln scan is **always recomputed
-fresh**: the working tree mutates between runs, so its verdict is live and never
-served from a coordinate cache.
+Walk and licence extraction use cached results on subsequent runs unless
+`--force` is passed. Two stages always do work on every run, warm store or not:
+the project-rooted vuln scan is **always recomputed fresh** (the working tree
+mutates between runs, so its verdict is live and never served from a coordinate
+cache), and the **staleness check queries the module proxy** for each module's
+latest version on every run - a live `@latest` request per module, never cached.
 
 ### Precursor to `sbom --package`
 
@@ -202,9 +205,18 @@ kanonarion sbom --package ./cmd/kanonarion   # reuses audit's project walk
 
 ## Caching
 
-`audit` is safe to re-run. Each stage checks whether a valid cached record
-exists before doing network I/O. On a warm store, `audit` is a fast read-only
-query with no outbound requests.
+`audit` is safe to re-run, but a warm re-run is **not** fully offline. The walk,
+licence, and vulnerability-database stages are cached and do no network I/O on a
+warm store (`--force` re-fetches the modules and re-runs the scan; `--fresh`
+re-downloads the vulnerability database). Two stages always do work on every run:
+
+- **Staleness** - `audit` queries the module proxy for each module's latest
+  version (`@latest`) on every run. This is a live network call per module and
+  is never cached.
+- **Project-rooted vuln scan** - `govulncheck` re-runs over the live working
+  tree every time (never served from a coordinate cache - see Pipeline above).
+  This is local CPU work, not a network fetch, and reuses the cached
+  vulnerability database unless `--fresh` is passed.
 
 ## See also
 

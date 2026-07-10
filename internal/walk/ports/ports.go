@@ -112,6 +112,20 @@ type BuildListEdge struct {
 type BuildList struct {
 	Modules []BuildListModule
 	Edges   []BuildListEdge
+	// GoVersion is the effective Go toolchain version that computed this build
+	// list, as reported by `go env GOVERSION` (e.g. "go1.26.4") — the version that
+	// actually compiles the project, not the go.mod `go` directive minimum. It
+	// pins the synthetic standard-library node so vuln-scan matches stdlib
+	// advisories against the toolchain the build really uses. Empty when the
+	// toolchain did not report a version.
+	GoVersion string
+	// GOOS and GOARCH are the target platform the build list was resolved for
+	// (`go env GOOS`/`GOARCH`). Build constraints select files per platform, so
+	// the resolved module set is platform-specific; these are recorded so a
+	// downstream SBOM states the platform its components are valid for. Empty when
+	// the toolchain did not report them.
+	GOOS   string
+	GOARCH string
 }
 
 // BuildListResolver computes the authoritative build list for a project from the

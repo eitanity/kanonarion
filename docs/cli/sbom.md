@@ -39,6 +39,7 @@ re-run when `--force` is passed.
 | `--output <path>` | _(stdout)_ | Write SBOM content to a file |
 | `--force` | `false` | Re-generate even if a cached SBOM exists |
 | `--operator` | _(empty)_ | Identity of the operator requesting generation |
+| `--stdlib-from-gomod` | `false` | Version the `stdlib` component from the `go.mod` directive, not the live toolchain (applies when `sbom` builds a project walk, e.g. `--package`). See [Standard-library version](walk.md#standard-library-version---stdlib-from-gomod). |
 | `--package <pattern>` | _(none)_ | Go package pattern (e.g. `./cmd/foo`); scopes `components` to modules in that binary's import closure |
 | `--log-level` | `warn` | Log level (`debug`, `info`, `warn`, `error`) |
 | `--log-json` | `false` | Emit logs as JSON |

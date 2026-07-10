@@ -20,18 +20,19 @@ import (
 )
 
 type inspectFlags struct {
-	goproxy   string
-	goBinary  string
-	gomodPath string
-	tool      bool
-	project   bool
-	force     bool
-	fresh     bool
-	reachable bool
-	skipVCS    bool
-	sizeOnly   bool
-	full       bool
-	noProgress bool
+	goproxy         string
+	goBinary        string
+	gomodPath       string
+	tool            bool
+	project         bool
+	force           bool
+	fresh           bool
+	reachable       bool
+	skipVCS         bool
+	sizeOnly        bool
+	full            bool
+	noProgress      bool
+	stdlibFromGoMod bool
 }
 
 func newInspectCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -91,6 +92,7 @@ tooling).`,
 	cmd.Flags().BoolVar(&f.tool, "tool", false, "scope to the tooling supply chain (the go.mod tool directives' closure)")
 	cmd.Flags().BoolVar(&f.project, "project", false, "scope to the complete set: the project's code AND tooling")
 	cmd.Flags().BoolVar(&f.noProgress, "no-progress", false, "suppress the stderr fetch-progress heartbeat (default: heartbeat on for long runs)")
+	registerStdlibFromGoModFlag(cmd, &f.stdlibFromGoMod)
 
 	return cmd
 }
@@ -244,7 +246,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 
 	var nodeFails int
 	progress := newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
-	if werr := runWalkProject(ctx, f.gomodPath, wf, f.force, true, 0, "", "", f.skipVCS, scope, domain.WalkDepthFull, "", false, progress, ctr.ExecuteWalk, io.Discard, stderr); werr != nil {
+	if werr := runWalkProject(ctx, f.gomodPath, wf, f.force, true, 0, "", "", f.skipVCS, scope, domain.WalkDepthFull, "", false, f.stdlibFromGoMod, progress, ctr.ExecuteWalk, io.Discard, stderr); werr != nil {
 		_, _ = fmt.Fprintf(stderr, "walk: %v\n", werr)
 		nodeFails = 1
 	}

@@ -9,22 +9,74 @@ on:
     tags:
       - 'v*'
 
-permissions:
-  contents: write      # create the GitHub Release
-  id-token: write      # keyless cosign signing + attestations (OIDC)
-  attestations: write  # actions/attest-*
+# Serialize releases per ref but never cancel one in flight: a half-signed,
+# half-published release is worse than a queued one, so cancel-in-progress is
+# deliberately false here (unlike ci.yml/fuzz.yml, which do cancel).
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+# No token scopes by default; the single release job opts into exactly what it
+# needs below. Third-party actions are pinned to full commit SHAs (trailing
+# '# vX' is the tag the SHA resolved from) so a moved tag cannot change what
+# runs. harden-runner runs in 'block' mode with the allowlist below: the
+# release egress (Sigstore Fulcio/Rekor/TUF, OIDC, GitHub uploads, the OSV
+# snapshot) is broad but bounded, and the allowlist must also cover the hosts
+# kanonarion's self-audit reaches — it cross-verifies each dependency's repo
+# against go.sum at that repo's real VCS host (resolved from the proxy's Origin
+# metadata: github.com, go.googlesource.com for golang.org/x, gitlab.com for
+# modernc.org, codeberg.org, gopkg.in — not the vanity-import hosts, which are
+# never contacted). The observed set was captured from a cold-store audit run;
+# see docs/ci-hardening.md.
+permissions: {}
 
 jobs:
   release:
     runs-on: ubuntu-latest
+    permissions:
+      contents: write      # create the GitHub Release
+      id-token: write      # keyless cosign signing + attestations (OIDC)
+      attestations: write  # actions/attest-*
     env:
       VERSION: ${{ github.ref_name }}
     steps:
-      - uses: actions/checkout@v6
+      - name: Harden the runner
+        uses: step-security/harden-runner@bf7454d06d71f1098171f2acdf0cd4708d7b5920 # v2
+        with:
+          egress-policy: block
+          # Endpoints below the '# --- GitHub Actions ---' line serve the
+          # workflow itself (checkout, action tarballs, gh release upload,
+          # Sigstore keyless signing). Endpoints below '# --- kanonarion
+          # self-audit ---' are the exact hosts the audit/sbom steps contact,
+          # observed by capturing egress from a cold-store 'audit --fresh' run:
+          # each module's real VCS host (resolved from the proxy's Origin
+          # metadata, not a vanity-import host), the Go proxy/checksum-db, and
+          # the OSV database. The VCS hosts here must stay in sync with
+          # allowedVCSHosts in internal/fetch/domain/origintrust.go.
+          allowed-endpoints: >
+            github.com:443
+            api.github.com:443
+            codeload.github.com:443
+            uploads.github.com:443
+            objects.githubusercontent.com:443
+            release-assets.githubusercontent.com:443
+            fulcio.sigstore.dev:443
+            rekor.sigstore.dev:443
+            tuf-repo-cdn.sigstore.dev:443
+            proxy.golang.org:443
+            sum.golang.org:443
+            storage.googleapis.com:443
+            vuln.go.dev:443
+            go.googlesource.com:443
+            gitlab.com:443
+            codeberg.org:443
+            gopkg.in:443
+
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10 # v6
         with:
           fetch-depth: 0  # tags + full history so build-info version stamps correctly
 
-      - uses: actions/setup-go@v6
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16 # v6
         with:
           go-version-file: go.mod
 
@@ -53,51 +105,152 @@ jobs:
               -o "dist/kanonarion_${os}_${arch}${ext}" ./cmd/kanonarion
           done
 
-      - name: Self-audit report
+      - name: Self-audit report (per-target)
         run: |
           set -euo pipefail
-          # kanonarion audits its own dependencies: fetch + licence extraction +
-          # vulnerability scanning in one call, emitting a machine-readable
-          # compliance report. --fresh fetches the OSV snapshot (clean runner has
-          # none cached). Hyphenated name stays out of the kanonarion_* binary glob.
-          ./dist/kanonarion_linux_amd64 audit --fresh --json > "dist/kanonarion-audit-${VERSION}.json"
+          # One audit per released binary. Like the SBOM, audit's dependency set
+          # is the platform's import graph (go list -deps against GOOS/GOARCH),
+          # and govulncheck reachability is GOOS/GOARCH-sensitive too — so a
+          # single linux/amd64 audit misses modules present only on other targets
+          # (e.g. github.com/inconshreveable/mousetrap on windows) and their
+          # vulns. Each iteration exports the target pair, inherited by the
+          # 'go list' the CLI shells out to. Hyphenated names stay out of the
+          # kanonarion_* binary glob used for provenance/signing.
+          #
+          # No --force here (unlike the SBOM step): audit builds a fresh project
+          # walk on every invocation and reports from it, so sequential per-target
+          # runs in one store do not cross-contaminate — verified locally, a
+          # linux run then a windows run yield each platform's own dependency set.
+          # --fresh only on the first target fetches the OSV snapshot into the
+          # store; the rest reuse that one cached snapshot, which also keeps the
+          # vulnerability DB identical across every target in a single release.
+          for t in darwin/amd64 darwin/arm64 windows/amd64 windows/arm64 linux/amd64 linux/arm64 linux/arm; do
+            os=${t%/*}; arch=${t#*/}
+            fresh=""; [ "$t" = darwin/amd64 ] && fresh="--fresh"
+            echo "audit for $t"
+            # --stdlib-from-gomod pins the synthetic stdlib node to the go.mod
+            # toolchain/go directive rather than the runner's go env GOVERSION,
+            # so the reported stdlib version is deterministic and matched to the
+            # source tree regardless of which toolchain executes the binary.
+            GOOS=$os GOARCH=$arch ./dist/kanonarion_linux_amd64 audit $fresh --json \
+              --stdlib-from-gomod \
+              > "dist/kanonarion-audit-${VERSION}-${os}-${arch}.json"
+          done
 
-      - name: Self-SBOM (binary-scoped)
+          # Drift guard: one audit report per released binary (see the SBOM step).
+          bins=$(ls dist/kanonarion_* | wc -l)
+          audits=$(ls dist/kanonarion-audit-${VERSION}-*.json | wc -l)
+          if [ "$bins" -ne "$audits" ]; then
+            echo "audit/binary count mismatch: $bins binaries, $audits audit reports" >&2
+            exit 1
+          fi
+
+      - name: Self-SBOM (per-target, binary-scoped)
         run: |
           set -euo pipefail
-          # 'sbom --package' bootstraps its own prerequisites on a cold store:
-          # it builds the project walk over ./go.mod and runs licence extraction
-          # before generating the SBOM, so the clean runner needs no explicit
-          # walk/extract steps. It also exits non-zero if any linked module has
-          # no licence record, so 'set -e' gates the release on complete
-          # licensing rather than publishing a licence-less artefact.
-          ./dist/kanonarion_linux_amd64 sbom \
-            --package ./cmd/kanonarion \
-            --format cyclonedx-1.5 \
-            --output "dist/kanonarion-${VERSION}.cdx.json"
+          # One SBOM per released binary. A '--package' SBOM's component set is
+          # the binary's import closure, which the Go toolchain resolves against
+          # GOOS/GOARCH and build constraints — so a single linux/amd64 SBOM does
+          # NOT describe the windows or arm binaries. Each iteration exports the
+          # target pair (inherited by the 'go list' the CLI shells out to for both
+          # the package allow-list and the project walk) so the closure matches
+          # that binary.
+          #
+          # --force is required for correctness, not speed: without it
+          # 'sbom --package' reuses the latest succeeded project walk in the store
+          # (the one the audit step built for linux/amd64), pinning every SBOM to
+          # that platform's dependency graph. Filtering a linux walk to a windows
+          # allow-list cannot surface windows-only modules. --force rebuilds the
+          # project walk under the current GOOS/GOARCH so walk and allow-list agree.
+          #
+          # 'sbom --package' bootstraps its own prerequisites (project walk +
+          # licence extraction) and exits non-zero if any linked module has no
+          # licence record, so 'set -e' gates the release on complete licensing
+          # per target rather than publishing a licence-less artefact.
+          for t in darwin/amd64 darwin/arm64 windows/amd64 windows/arm64 linux/amd64 linux/arm64 linux/arm; do
+            os=${t%/*}; arch=${t#*/}
+            echo "sbom for $t"
+            # --stdlib-from-gomod pins the stdlib component to the go.mod
+            # toolchain/go directive (deterministic, source-matched) instead of
+            # the runner's effective go env GOVERSION.
+            GOOS=$os GOARCH=$arch ./dist/kanonarion_linux_amd64 sbom \
+              --package ./cmd/kanonarion \
+              --force \
+              --stdlib-from-gomod \
+              --format cyclonedx-1.5 \
+              --output "dist/kanonarion-${VERSION}-${os}-${arch}.cdx.json"
+          done
+
+          # Drift guard: every released binary must have exactly one SBOM. A
+          # target added to the build loop but not here (or vice versa) would
+          # otherwise ship a binary with no bill of materials, or an orphan SBOM.
+          bins=$(ls dist/kanonarion_* | wc -l)
+          sboms=$(ls dist/kanonarion-${VERSION}-*.cdx.json | wc -l)
+          if [ "$bins" -ne "$sboms" ]; then
+            echo "SBOM/binary count mismatch: $bins binaries, $sboms SBOMs" >&2
+            exit 1
+          fi
 
       - name: Checksums
         run: |
           set -euo pipefail
           cd dist
-          sha256sum kanonarion_* "kanonarion-${VERSION}.cdx.json" "kanonarion-audit-${VERSION}.json" > checksums.txt
+          sha256sum kanonarion_* kanonarion-${VERSION}-*.cdx.json kanonarion-audit-${VERSION}-*.json > checksums.txt
           cat checksums.txt
 
       # Attestations run BEFORE signing so the kanonarion_* glob resolves to
       # binaries only (no .sig/.pem present yet).
       - name: Attest build provenance
-        uses: actions/attest-build-provenance@v2
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
         with:
           subject-path: dist/kanonarion_*
 
-      - name: Attest SBOM
-        uses: actions/attest-sbom@v2
+      # One SBOM attestation per binary: each binary's SBOM describes that
+      # binary's own GOOS/GOARCH import closure (see the per-target Self-SBOM
+      # step), so binding one SBOM to all binaries would misattribute the
+      # dependency set. actions/attest-sbom is a `uses:` action and cannot loop,
+      # so there is one step per target. The target list here MUST stay in sync
+      # with the build and Self-SBOM loops above; a target added there without a
+      # matching attestation ships an un-attested SBOM. Windows subjects carry
+      # the .exe suffix to match the built binary name.
+      - name: Attest SBOM (darwin/amd64)
+        uses: actions/attest-sbom@bd218ad0dbcb3e146bd073d1d9c6d78e08aa8a0b # v2
         with:
-          subject-path: dist/kanonarion_*
-          sbom-path: dist/kanonarion-${{ github.ref_name }}.cdx.json
+          subject-path: dist/kanonarion_darwin_amd64
+          sbom-path: dist/kanonarion-${{ github.ref_name }}-darwin-amd64.cdx.json
+      - name: Attest SBOM (darwin/arm64)
+        uses: actions/attest-sbom@bd218ad0dbcb3e146bd073d1d9c6d78e08aa8a0b # v2
+        with:
+          subject-path: dist/kanonarion_darwin_arm64
+          sbom-path: dist/kanonarion-${{ github.ref_name }}-darwin-arm64.cdx.json
+      - name: Attest SBOM (windows/amd64)
+        uses: actions/attest-sbom@bd218ad0dbcb3e146bd073d1d9c6d78e08aa8a0b # v2
+        with:
+          subject-path: dist/kanonarion_windows_amd64.exe
+          sbom-path: dist/kanonarion-${{ github.ref_name }}-windows-amd64.cdx.json
+      - name: Attest SBOM (windows/arm64)
+        uses: actions/attest-sbom@bd218ad0dbcb3e146bd073d1d9c6d78e08aa8a0b # v2
+        with:
+          subject-path: dist/kanonarion_windows_arm64.exe
+          sbom-path: dist/kanonarion-${{ github.ref_name }}-windows-arm64.cdx.json
+      - name: Attest SBOM (linux/amd64)
+        uses: actions/attest-sbom@bd218ad0dbcb3e146bd073d1d9c6d78e08aa8a0b # v2
+        with:
+          subject-path: dist/kanonarion_linux_amd64
+          sbom-path: dist/kanonarion-${{ github.ref_name }}-linux-amd64.cdx.json
+      - name: Attest SBOM (linux/arm64)
+        uses: actions/attest-sbom@bd218ad0dbcb3e146bd073d1d9c6d78e08aa8a0b # v2
+        with:
+          subject-path: dist/kanonarion_linux_arm64
+          sbom-path: dist/kanonarion-${{ github.ref_name }}-linux-arm64.cdx.json
+      - name: Attest SBOM (linux/arm)
+        uses: actions/attest-sbom@bd218ad0dbcb3e146bd073d1d9c6d78e08aa8a0b # v2
+        with:
+          subject-path: dist/kanonarion_linux_arm
+          sbom-path: dist/kanonarion-${{ github.ref_name }}-linux-arm.cdx.json
 
       - name: Install cosign
-        uses: sigstore/cosign-installer@v3
+        uses: sigstore/cosign-installer@398d4b0eeef1380460a10c8013a76f728fb906ac # v3
 
       - name: Sign artifacts (keyless)
         run: |
@@ -105,7 +258,7 @@ jobs:
           cd dist
           # Sign every binary, the SBOM, and the checksums file. Keyless: cosign
           # picks up the ambient GitHub OIDC token; --yes disables the prompt.
-          for f in kanonarion_* "kanonarion-${VERSION}.cdx.json" "kanonarion-audit-${VERSION}.json" checksums.txt; do
+          for f in kanonarion_* kanonarion-${VERSION}-*.cdx.json kanonarion-audit-${VERSION}-*.json checksums.txt; do
             cosign sign-blob --yes \
               --output-signature "${f}.sig" \
               --output-certificate "${f}.pem" \

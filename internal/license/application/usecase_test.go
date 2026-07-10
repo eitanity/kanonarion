@@ -392,6 +392,90 @@ func TestExecute_HyphenatedLicenceFilenames(t *testing.T) {
 	}
 }
 
+// TestExecute_DottedLicenceFilename is a regression test for LICENSE.<variant>
+// filenames (LICENSE.MIT) that carry an SPDX variant rather than a plain file
+// extension. Before the fix isLicenceFilename only recognised a fixed set of
+// extensions (.txt/.md/.rst), so go-errors/errors@v1.0.2 (LICENSE.MIT) was
+// reported as unknown despite carrying a license file.
+func TestExecute_DottedLicenceFilename(t *testing.T) {
+	coord := mustCoord(t, "example.com/dotted", "v1.0.0")
+	blobStore := &fakeBlobStore{}
+	factStore := &fakeFactStore{}
+	licenceStore := &fakeLicenseStore{}
+
+	zipData := buildModuleZip(t, coord, map[string]string{
+		"LICENSE.MIT": "MIT License text",
+	})
+	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
+	if err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	putFactWithBlob(t, factStore, coord, string(handle))
+
+	detector := &fakeDetector{match: ports.LicenseMatch{SPDX: "MIT", Confidence: 0.98}}
+	uc := buildUseCaseWithDetector(t, factStore, blobStore, licenceStore, detector)
+	result, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.Record.OverallStatus != domain2.LicenseStatusDetected {
+		t.Errorf("OverallStatus: got %v, want Detected", result.Record.OverallStatus)
+	}
+	if result.Record.PrimarySPDX != "MIT" {
+		t.Errorf("PrimarySPDX: got %q, want MIT", result.Record.PrimarySPDX)
+	}
+	if len(result.Record.LicenseFiles) != 1 {
+		t.Fatalf("LicenseFiles: got %d, want 1", len(result.Record.LicenseFiles))
+	}
+	if result.Record.LicenseFiles[0].Path != "LICENSE.MIT" {
+		t.Errorf("LicenseFile path: got %q, want LICENSE.MIT", result.Record.LicenseFiles[0].Path)
+	}
+}
+
+// TestExecute_DottedMultiLicenceFilenames mirrors cyphar/filepath-securejoin,
+// which dual-licenses via LICENSE.MPL-2.0 and LICENSE.BSD (plus an explanatory
+// COPYING.md). All three must be recognised as license files so the module
+// resolves to a Multiple status rather than unknown.
+func TestExecute_DottedMultiLicenceFilenames(t *testing.T) {
+	coord := mustCoord(t, "example.com/dualdotted", "v1.0.0")
+	blobStore := &fakeBlobStore{}
+	factStore := &fakeFactStore{}
+	licenceStore := &fakeLicenseStore{}
+
+	zipData := buildModuleZip(t, coord, map[string]string{
+		"LICENSE.MPL-2.0": "MPL text",
+		"LICENSE.BSD":     "BSD text",
+		"COPYING.md":      "This project is dual licensed.",
+	})
+	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
+	if err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	putFactWithBlob(t, factStore, coord, string(handle))
+
+	call := 0
+	detector := &callCountDetector{
+		results: []ports.LicenseMatch{
+			// Sorted by path: COPYING.md, LICENSE.BSD, LICENSE.MPL-2.0.
+			{},
+			{SPDX: "BSD-3-Clause", Confidence: 0.97},
+			{SPDX: "MPL-2.0", Confidence: 0.96},
+		},
+		call: &call,
+	}
+	uc := buildUseCaseWithDetector(t, factStore, blobStore, licenceStore, detector)
+	result, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(result.Record.LicenseFiles) != 3 {
+		t.Fatalf("LicenseFiles: got %d, want 3", len(result.Record.LicenseFiles))
+	}
+	if result.Record.OverallStatus != domain2.LicenseStatusMultiple {
+		t.Errorf("OverallStatus: got %v, want Multiple", result.Record.OverallStatus)
+	}
+}
+
 // TestExecute_PerFile_SPDXHeader checks that when a module has no
 // dedicated license file but root-level.go files carry SPDX-License-Identifier
 // headers, enabling --per-file yields OverallStatus=PerFile with the correct

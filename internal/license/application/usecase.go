@@ -721,9 +721,14 @@ func parseSPDXHeader(content []byte) string {
 // isLicenceFilename reports whether the base name of relPath is a recognised
 // license filename. Comparison is case-insensitive.
 //
-// Exact matches cover the most common names. Prefix matching covers
-// LICENSE-MIT / LICENSE-BSD / COPYING-APACHE style filenames used by
-// dual-licensed modules.
+// The common license stems (LICENSE, LICENCE, COPYING, UNLICENSE) are matched
+// when they stand alone, carry a hyphenated variant suffix (LICENSE-MIT), or
+// carry a dotted suffix of any form (LICENSE.txt, LICENSE.MIT, LICENSE.MPL-2.0,
+// LICENSE.code, COPYING.md). The dotted form covers both file extensions and
+// the per-license naming (LICENSE.<spdx>) used by dual-licensed modules such
+// as go-errors/errors (LICENSE.MIT) and spdx/tools-golang (LICENSE.code,
+// LICENSE.docs). COPYRIGHT, NOTICE, and the GPLv2/GPLv3 shorthands are matched
+// verbatim only.
 func isLicenceFilename(relPath string) bool {
 	base := relPath
 	if idx := strings.LastIndex(relPath, "/"); idx >= 0 {
@@ -731,14 +736,13 @@ func isLicenceFilename(relPath string) bool {
 	}
 	upper := strings.ToUpper(base)
 	switch upper {
-	case "LICENSE", "LICENCE", "COPYING", "COPYRIGHT", "NOTICE",
-		"UNLICENSE", "LICENSE.TXT", "LICENCE.TXT", "COPYING.TXT",
-		"LICENSE.MD", "LICENCE.MD", "LICENSE.RST", "LICENCE.RST",
-		"GPLV2", "GPLV3":
+	case "COPYRIGHT", "NOTICE", "GPLV2", "GPLV3":
 		return true
 	}
-	for _, prefix := range []string{"LICENSE-", "LICENCE-", "COPYING-", "UNLICENSE-"} {
-		if strings.HasPrefix(upper, prefix) {
+	for _, stem := range []string{"LICENSE", "LICENCE", "COPYING", "UNLICENSE"} {
+		if upper == stem ||
+			strings.HasPrefix(upper, stem+"-") ||
+			strings.HasPrefix(upper, stem+".") {
 			return true
 		}
 	}

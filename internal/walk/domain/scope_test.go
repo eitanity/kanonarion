@@ -90,3 +90,18 @@ func TestFilterGraphToScope_PreservesGraphMetadata(t *testing.T) {
 		t.Errorf("metadata not preserved: %+v", got)
 	}
 }
+
+// TestFilterGraphToScope_PreservesBuildEnv verifies the build environment (a
+// property of the whole resolution, not any node) survives scope filtering, so a
+// code- or tool-scoped SBOM records the same platform as the complete scope.
+func TestFilterGraphToScope_PreservesBuildEnv(t *testing.T) {
+	in := Graph{
+		Target:   c("example.com/main", "local"),
+		Nodes:    []GraphNode{{Coordinate: c("example.com/main", "local")}},
+		BuildEnv: BuildEnv{GOOS: "linux", GOARCH: "amd64", GoVersion: "go1.26.4"},
+	}
+	out := FilterGraphToScope(in, "example.com/main", nil)
+	if out.BuildEnv != in.BuildEnv {
+		t.Errorf("BuildEnv after scope filter = %+v, want %+v", out.BuildEnv, in.BuildEnv)
+	}
+}

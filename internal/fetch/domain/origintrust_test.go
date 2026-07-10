@@ -17,6 +17,14 @@ func TestValidateOriginForCheckout_AcceptsHTTPSAllowlistedHost(t *testing.T) {
 	if err := ValidateOriginForCheckout("https://go.googlesource.com/mod", "", commit); err != nil {
 		t.Fatalf("expected go.googlesource.com Origin to validate, got %v", err)
 	}
+	// codeberg.org (Forgejo) and gopkg.in (git-serving redirector) appear as
+	// resolved Origins in real dependency graphs and must cross-verify.
+	if err := ValidateOriginForCheckout("https://codeberg.org/foo/bar", "", commit); err != nil {
+		t.Fatalf("expected codeberg.org Origin to validate, got %v", err)
+	}
+	if err := ValidateOriginForCheckout("https://gopkg.in/ini.v1", "", commit); err != nil {
+		t.Fatalf("expected gopkg.in Origin to validate, got %v", err)
+	}
 }
 
 func TestValidateOriginForCheckout_RejectsDangerousTransports(t *testing.T) {

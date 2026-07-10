@@ -20,7 +20,7 @@ func TestSBOMGenerateWith_Stdout(t *testing.T) {
 		Result: sbomdomain.SBOMRecord{ID: "S1", Content: []byte("<bom/>")},
 	}}
 	var stdout bytes.Buffer
-	err := sbomGenerateWith(context.Background(), ctr, "W1", "", nil, "cyclonedx-json", "", false, "tester", &stdout, io.Discard)
+	err := sbomGenerateWith(context.Background(), ctr, "W1", "", nil, "cyclonedx-json", "", false, false, "tester", &stdout, io.Discard)
 	if err != nil {
 		t.Fatalf("sbomGenerateWith: %v", err)
 	}
@@ -43,7 +43,7 @@ func TestSBOMGenerateWith_FileOutputComplete(t *testing.T) {
 		},
 	}}
 	var stdout bytes.Buffer
-	err := sbomGenerateWith(context.Background(), ctr, "W1", "", nil, "cyclonedx-json", dst, false, "tester", &stdout, io.Discard)
+	err := sbomGenerateWith(context.Background(), ctr, "W1", "", nil, "cyclonedx-json", dst, false, false, "tester", &stdout, io.Discard)
 	if err != nil {
 		t.Fatalf("sbomGenerateWith: %v", err)
 	}
@@ -73,7 +73,7 @@ func TestSBOMGenerateWith_FileOutputIncompleteLicencesFailsLoud(t *testing.T) {
 		},
 	}}
 	var stdout bytes.Buffer
-	err := sbomGenerateWith(context.Background(), ctr, "W1", "", nil, "cyclonedx-json", dst, false, "tester", &stdout, io.Discard)
+	err := sbomGenerateWith(context.Background(), ctr, "W1", "", nil, "cyclonedx-json", dst, false, false, "tester", &stdout, io.Discard)
 	assertIncompleteLicenceExit(t, err)
 
 	got, rerr := os.ReadFile(dst) // #nosec G304 -- dst is a test-controlled t.TempDir() path
@@ -106,7 +106,7 @@ func TestSBOMGenerateWith_StdoutIncompleteLicencesFailsLoud(t *testing.T) {
 		},
 	}}
 	var stdout bytes.Buffer
-	err := sbomGenerateWith(context.Background(), ctr, "W1", "", nil, "cyclonedx-json", "", false, "tester", &stdout, io.Discard)
+	err := sbomGenerateWith(context.Background(), ctr, "W1", "", nil, "cyclonedx-json", "", false, false, "tester", &stdout, io.Discard)
 	assertIncompleteLicenceExit(t, err)
 
 	if stdout.String() != "<bom/>" {
@@ -118,7 +118,7 @@ func TestSBOMGenerateWith_StdoutIncompleteLicencesFailsLoud(t *testing.T) {
 func TestSBOMGenerateWith_GenerateError(t *testing.T) {
 	ctr := &Container{GenerateSBOM: &testfakes.FakeGenerateSBOM{Err: errors.New("boom")}}
 	var stdout bytes.Buffer
-	err := sbomGenerateWith(context.Background(), ctr, "W1", "", nil, "cyclonedx-json", "", false, "tester", &stdout, io.Discard)
+	err := sbomGenerateWith(context.Background(), ctr, "W1", "", nil, "cyclonedx-json", "", false, false, "tester", &stdout, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "generating sbom") {
 		t.Fatalf("want wrapped generation error, got: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestSBOMGenerateWith_FileWriteError(t *testing.T) {
 		Result: sbomdomain.SBOMRecord{ID: "S1", Content: []byte("<bom/>")},
 	}}
 	var stdout bytes.Buffer
-	err := sbomGenerateWith(context.Background(), ctr, "W1", "", nil, "cyclonedx-json", dst, false, "tester", &stdout, io.Discard)
+	err := sbomGenerateWith(context.Background(), ctr, "W1", "", nil, "cyclonedx-json", dst, false, false, "tester", &stdout, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "writing sbom to") {
 		t.Fatalf("want file-write error, got: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestSBOMGenerateWith_StdoutWriteError(t *testing.T) {
 	ctr := &Container{GenerateSBOM: &testfakes.FakeGenerateSBOM{
 		Result: sbomdomain.SBOMRecord{ID: "S1", Content: []byte("<bom/>")},
 	}}
-	err := sbomGenerateWith(context.Background(), ctr, "W1", "", nil, "cyclonedx-json", "", false, "tester", failWriter{}, io.Discard)
+	err := sbomGenerateWith(context.Background(), ctr, "W1", "", nil, "cyclonedx-json", "", false, false, "tester", failWriter{}, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "writing sbom to stdout") {
 		t.Fatalf("want stdout write error, got: %v", err)
 	}

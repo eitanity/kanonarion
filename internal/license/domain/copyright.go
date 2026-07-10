@@ -78,14 +78,19 @@ var (
 	// copyright notice, where consecutive lines are joined by such words.
 	trailingConjunctionRe = regexp.MustCompile(`(?i)\s+(?:or|and)$`)
 
-	// placeholderRe matches an unfilled template placeholder token — an
-	// angle-bracket span whose inner text is bare words with none of the
-	// punctuation a URL or email carries (@, :, /, .). The GPL/AGPL/LGPL
-	// "How to Apply These Terms" appendix ships literal scaffold such as
-	// "Copyright (C) <year>  <name of author>"; those tokens are never a real
-	// holder. A URL or email in angle brackets (e.g. "<https://fsf.org/>",
-	// "<me@example.com>") carries excluded punctuation and is spared.
-	placeholderRe = regexp.MustCompile(`<[^>@:/.]+>`)
+	// placeholderRe matches an unfilled template placeholder token — a
+	// bracketed span (angle <>, square [], or curly {}) whose inner text is
+	// bare words with none of the punctuation a URL or email carries
+	// (@, :, /, .). License "how to apply" scaffolds ship these literally and
+	// they are never a real holder:
+	//   - GPL/AGPL/LGPL:      "Copyright (C) <year>  <name of author>"
+	//   - Apache-2.0 appendix: "Copyright [yyyy] [name of copyright owner]"
+	//   - MIT/ISC/BSD:         "Copyright (c) [year] [fullname]"
+	//   - curly-brace variants: "Copyright {yyyy} {name of copyright owner}"
+	// A URL or email inside brackets (e.g. "<https://fsf.org/>",
+	// "<me@example.com>") carries excluded punctuation and is spared, so a real
+	// holder that lists its homepage or contact still extracts.
+	placeholderRe = regexp.MustCompile(`<[^<>@:/.]+>|\[[^\[\]@:/.]+\]|\{[^{}@:/.]+\}`)
 
 	// fsfLicenseCopyrightRe matches the Free Software Foundation's copyright on
 	// the GPL/AGPL/LGPL license *document* itself (e.g. "Copyright (C) 2007

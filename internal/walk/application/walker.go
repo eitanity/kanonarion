@@ -121,6 +121,10 @@ type WalkRequest struct {
 	// also where AnalyseLocalRoot reads the project's own packages. Set whenever
 	// ProjectMode is true.
 	ProjectDir string
+	// StdlibFromGoMod pins the synthetic standard-library node to the project
+	// go.mod's `toolchain`/`go` directive instead of the effective build toolchain
+	// (`go env GOVERSION`, the default). Only honoured in ProjectMode.
+	StdlibFromGoMod bool
 	// Progress receives fetch-phase progress so a long, otherwise silent walk can
 	// show proof of life. nil disables reporting. The reporter is invoked once per
 	// distinct module fetched during resolution.
@@ -225,7 +229,7 @@ func (w *Walker) Walk(ctx context.Context, req WalkRequest) (domain2.WalkOutcome
 		// Project mode: root at the local main module. Its go.mod is read from
 		// the working tree, not fetched, so the closure is the union of all
 		// require directives rooted at the project itself.
-		g, perr := resolver.ResolveProject(ctx, req.Target, req.MainModuleGoMod, req.ProjectDir, policy.FetchStage(), req.ScopeModules)
+		g, perr := resolver.ResolveProject(ctx, req.Target, req.MainModuleGoMod, req.ProjectDir, policy.FetchStage(), req.ScopeModules, req.StdlibFromGoMod)
 		if perr != nil {
 			// The local go.mod could not be parsed — terminal, like a target
 			// fetch failure.
@@ -293,6 +297,15 @@ func (w *Walker) Walk(ctx context.Context, req WalkRequest) (domain2.WalkOutcome
 			continue
 		}
 		switch node.ResolutionSource {
+		case domain2.ResolutionStdlib:
+			// The synthetic standard-library node has no fetchable artefact — it
+			// ships with the toolchain. Record it as succeeded (no fetch record) so
+			// it anchors the graph for the SBOM and vuln-scan without a spurious
+			// fetch-failure that would partial-ise the walk.
+			outcome.PerNodeResults[node.Coordinate] = domain2.NodeResult{
+				Coordinate: node.Coordinate,
+				Status:     domain2.NodeSucceeded,
+			}
 		case domain2.ResolutionFetchFailed, domain2.ResolutionParseFailed:
 			// Preserve panic-vs-regular-failure distinction: a transitive that
 			// panicked during fetch is recorded by the recorder with panicked=true

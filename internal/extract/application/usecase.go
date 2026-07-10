@@ -93,6 +93,8 @@ func unfetchableReason(node walkdomain.GraphNode) (string, bool) {
 		return "local replace at " + node.LocalPath, true
 	case walkdomain.ResolutionLocalMainModule:
 		return "local main module (project-walk root); has no fetched artefact — analyse its own source with the local call-graph command", true
+	case walkdomain.ResolutionStdlib:
+		return "Go standard library (toolchain-provided); has no fetched module artefact — vulnerabilities are resolved from advisory metadata by coordinate", true
 	default:
 		return "", false
 	}

@@ -1,19 +1,33 @@
 # Kanonarion
 **Dependency assurance software for Go.**
 
-Kanonarion is a deterministic, local source of truth about your dependencies — what's in them, how they're licensed, how to call them, and which known vulnerabilities your code actually reaches. Developers query it from the CLI with human-readable output; AI coding agents get JSON. Both get the same answer, computed from your real dependency tree - not a model's best guess. The questions you would answer by hand, burn through tokens, or skip are answered quickly and correctly.
+Kanonarion is a deterministic, local source of truth about your dependencies -
+what's in them, how they're licensed, how to call them, and which known
+vulnerabilities your code actually reaches. Developers query it from the CLI
+with human-readable output; AI coding agents get JSON. Both get the same answer,
+computed from your real dependency tree - not a model's best guess. The questions
+you would answer by hand, burn through tokens, or skip are answered quickly and
+correctly.
 
-It surfaces evidence, not verdicts. Where the answer is uncertain, it says so, and in what way it is uncertain — never collapsing uncertainty into "safe."
+It surfaces evidence, not verdicts. Where the answer is uncertain, it says so,
+and in what way it is uncertain — never collapsing uncertainty into "safe."
 
-A single binary. SQLite-backed local store. No SaaS, no account, no proprietary scanner deciding for you. The facts are public; the judgment is local and yours.
+A single binary. SQLite-backed local store. No SaaS, no account, no proprietary
+scanner deciding for you. The facts are public; the judgment is local and yours.
 
 ---
 
 ## Why Kanonarion?
 
-Modern AI coding agents (Claude, Copilot, Cursor, Junie) should be asking questions about dependencies constantly - what's the API, is this CVE reachable, can I use this licence commercially, how do I call this function. Without a local fact store, the agent usually doesn't ask at all - it guesses. That's what I found writing Kanonarion. When you force the agent to find the answers you pay in tokens and latency.
+Modern AI coding agents (Claude, Copilot, Cursor, Junie) should be asking questions
+about dependencies constantly - what's the API, is this CVE reachable, can I use
+this license commercially, how do I call this function. Without a local fact store,
+the agent usually doesn't ask at all - it guesses. That's what I found writing
+Kanonarion. When you force the agent to find the answers you pay in tokens and latency.
 
-Kanonarion solves this by running a **walk → extract → query** pipeline once per dependency set, then serving all facts locally at query time. The agent asks Kanonarion instead of guessing. The answers are deterministic and reproducible.
+Kanonarion solves this by running a **walk → extract → query** pipeline once per
+dependency set, then serving all facts locally at query time. The agent asks Kanonarion
+instead of guessing. The answers are deterministic and reproducible.
 
 ---
 
@@ -146,7 +160,7 @@ All query commands support `--json` for machine-readable output, making them eas
 - **Call graph.** Intra-module call graph for impact analysis and reachability queries.
 - **Usage examples.** Verified code snippets extracted from module test files, so the agent codes against patterns that actually work.
 - **Policy gates.** Walk-traversal rules in YAML - max depth, and whether replace directives and indirect requirements are followed - validated with `policy validate`.
-- **SBOM generation.** CycloneDX-compatible software bill of materials from any walk.
+- **SBOM generation.** CycloneDX-compatible software bill of materials from any walk. The Go standard library is a first-class component; `--stdlib-from-gomod` pins its version to the `go.mod` directive for reproducible release artifacts.
 - **Auditable evidence chain.** Every fetch, every verification, every policy decision is recorded in an append-only `audit.jsonl`. Reproducible, time-stamped evidence of what kanonarion did and when - useful for CI investigation, compliance reporting, or understanding why a build failed.
 
 ---
@@ -208,7 +222,14 @@ tools. Have these on `PATH`:
 Network access is needed for the **first** run of a given module set only
 (module downloads, checksum database, VCS cross-verification, vulnerability
 database snapshot). Every query afterwards is served from the local store at
-`~/.kanonarion`.
+`~/.kanonarion` with no network calls. Note that project rooted commands
+(audit, inspect, vuln-scan --gomod) still re-run the vulnerability scan over
+your live working tree using the cached modules and vulnerability database.
+`audit` also resolves each module's latest version live from the module proxy on
+every run (the staleness column), so it always makes those outbound calls even on
+a warm store.
+The flag --fresh re-downloads the vulnerability database snapshot and --force
+forces a re-fetch of the module set. 
 
 ## Building from source
 

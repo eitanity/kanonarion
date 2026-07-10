@@ -115,16 +115,24 @@ func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (d
 		for _, c := range req.AllowList {
 			allowed[c] = true
 		}
-		filtered := make([]walkdomain.GraphNode, 0, len(req.AllowList))
+		// The synthetic stdlib node is a universal build input — every binary
+		// links against it — but it is not a module `go list -deps` reports, so
+		// it never appears in the package allow-list. Keep it regardless, mirroring
+		// the walk resolver's injectStdlib, so a --package SBOM still records the
+		// standard-library component (and its --stdlib-from-gomod-pinned version).
+		keep := func(c fetchdomain.ModuleCoordinate) bool {
+			return allowed[c] || c.Path == walkdomain.StdlibModulePath
+		}
+		filtered := make([]walkdomain.GraphNode, 0, len(req.AllowList)+1)
 		for _, n := range walk.Graph.Nodes {
-			if allowed[n.Coordinate] {
+			if keep(n.Coordinate) {
 				filtered = append(filtered, n)
 			}
 		}
 		walk.Graph.Nodes = filtered
 		filteredEdges := make([]walkdomain.GraphEdge, 0)
 		for _, e := range walk.Graph.Edges {
-			if allowed[e.From] && allowed[e.To] {
+			if keep(e.From) && keep(e.To) {
 				filteredEdges = append(filteredEdges, e)
 			}
 		}

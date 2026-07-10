@@ -194,7 +194,7 @@ func TestResolveProject_BuildListDeterministicAndConcurrent(t *testing.T) {
 	seqFetcher := build()
 	seq, err := newResolverWithFetcher(seqFetcher, newFakeBlobStore()).
 		WithBuildListResolver(bl).WithWorkers(1).
-		ResolveProject(context.Background(), target, nil, "/proj", depth, nil)
+		ResolveProject(context.Background(), target, nil, "/proj", depth, nil, false)
 	if err != nil {
 		t.Fatalf("sequential ResolveProject: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestResolveProject_BuildListDeterministicAndConcurrent(t *testing.T) {
 	tracker := &concurrencyTracker{inner: build(), delay: 5 * time.Millisecond}
 	par, err := newResolverWithFetcher(tracker, newFakeBlobStore()).
 		WithBuildListResolver(bl).WithWorkers(8).
-		ResolveProject(context.Background(), target, nil, "/proj", depth, nil)
+		ResolveProject(context.Background(), target, nil, "/proj", depth, nil, false)
 	if err != nil {
 		t.Fatalf("parallel ResolveProject: %v", err)
 	}

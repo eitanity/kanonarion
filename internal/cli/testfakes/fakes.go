@@ -77,13 +77,17 @@ func (f *FakeQueryFetch) GetFetchRecord(_ context.Context, coord fetchdomain.Mod
 
 // ---- walk context ----
 
-// FakeExecuteWalk implements cli.ExecuteWalkUseCase.
+// FakeExecuteWalk implements cli.ExecuteWalkUseCase. LastRequest captures the
+// most recent request so tests can assert how the CLI translated flags into a
+// WalkRequest.
 type FakeExecuteWalk struct {
-	Err    error
-	Result walkapp.ExecuteWalkResult
+	Err         error
+	Result      walkapp.ExecuteWalkResult
+	LastRequest walkapp.WalkRequest
 }
 
-func (f *FakeExecuteWalk) Execute(_ context.Context, _ walkapp.WalkRequest) (walkapp.ExecuteWalkResult, error) {
+func (f *FakeExecuteWalk) Execute(_ context.Context, req walkapp.WalkRequest) (walkapp.ExecuteWalkResult, error) {
+	f.LastRequest = req
 	return f.Result, f.Err
 }
 

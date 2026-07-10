@@ -356,6 +356,99 @@ func TestExtractCopyright_GenuineCopyrightStillExtractedAlongsideTemplate(t *tes
 	}
 }
 
+// TestExtractCopyright_SquareBracketTemplatesDropped covers the Apache-2.0
+// appendix and the MIT/ISC/BSD "how to apply" templates, all of which use
+// SQUARE-bracket placeholders. Each must be dropped rather than emitted as a
+// bogus copyright (the oklog/ulid defect: "Copyright [yyyy] [name of copyright
+// owner]" leaking into the SBOM).
+func TestExtractCopyright_SquareBracketTemplatesDropped(t *testing.T) {
+	lines := []string{
+		"Copyright [yyyy] [name of copyright owner]", // Apache-2.0 appendix
+		"Copyright (c) [year] [fullname]",            // MIT / ISC / BSD template
+		"Copyright (C) [year] [name of author]",
+	}
+	for _, line := range lines {
+		t.Run(line, func(t *testing.T) {
+			got := domain.ExtractCopyright("LICENSE", []byte(line+"\n"))
+			if len(got) != 0 {
+				t.Fatalf("expected 0 statements for square-bracket template, got %d: %+v", len(got), got)
+			}
+		})
+	}
+}
+
+// TestExtractCopyright_CurlyBraceTemplateDropped covers curly-brace placeholder
+// variants some templates ship.
+func TestExtractCopyright_CurlyBraceTemplateDropped(t *testing.T) {
+	content := []byte("Copyright {yyyy} {name of copyright owner}\n")
+	got := domain.ExtractCopyright("LICENSE", content)
+	if len(got) != 0 {
+		t.Fatalf("expected 0 statements for curly-brace template, got %d: %+v", len(got), got)
+	}
+}
+
+// TestExtractCopyright_OklogUlidApacheCorpus reproduces the exact module that
+// surfaced this defect: oklog/ulid ships a stock Apache-2.0 LICENSE whose only
+// column-0 "Copyright" line is the appendix template. Extraction must yield
+// zero statements rather than the placeholder.
+func TestExtractCopyright_OklogUlidApacheCorpus(t *testing.T) {
+	content := []byte(`   APPENDIX: How to apply the Apache License to your work.
+
+      To apply the Apache License to your work, attach the following
+      boilerplate notice, with the fields enclosed by brackets "[]"
+      replaced with your own identifying information. (Don't include
+      the brackets!)  The text should be enclosed in the appropriate
+      comment syntax for the file format. We also recommend that a
+      file or class name and description of purpose be included on the
+      same "printed page" as the copyright notice for easier
+      identification within third-party archives.
+
+   Copyright [yyyy] [name of copyright owner]
+
+   Licensed under the Apache License, Version 2.0 (the "License");
+`)
+	got := domain.ExtractCopyright("LICENSE", content)
+	if len(got) != 0 {
+		verbatims := make([]string, len(got))
+		for i, s := range got {
+			verbatims[i] = s.Verbatim
+		}
+		t.Fatalf("expected 0 statements (only the appendix template present), got %d: %v", len(got), verbatims)
+	}
+}
+
+// TestExtractCopyright_GenuineExtractedAlongsideSquareTemplate verifies a real
+// holder is still captured when a square-bracket template line sits alongside
+// it, mirroring the angle-bracket pairing test.
+func TestExtractCopyright_GenuineExtractedAlongsideSquareTemplate(t *testing.T) {
+	content := []byte("Copyright [yyyy] [name of copyright owner]\nCopyright 2020 Acme\n")
+	got := domain.ExtractCopyright("LICENSE", content)
+	if len(got) != 1 {
+		verbatims := make([]string, len(got))
+		for i, s := range got {
+			verbatims[i] = s.Verbatim
+		}
+		t.Fatalf("expected 1 statement (the genuine declaration), got %d: %v", len(got), verbatims)
+	}
+	if got[0].Verbatim != "Copyright 2020 Acme" {
+		t.Errorf("Verbatim = %q; want %q", got[0].Verbatim, "Copyright 2020 Acme")
+	}
+}
+
+// TestExtractCopyright_URLInSquareBracketsNotTemplate guards the sparing logic
+// for square brackets: a real holder that lists a bracketed URL or email must
+// still extract, just as the angle-bracket case does.
+func TestExtractCopyright_URLInSquareBracketsNotTemplate(t *testing.T) {
+	content := []byte("Copyright 2020 Acme Corp [https://acme.example/]\n")
+	got := domain.ExtractCopyright("LICENSE", content)
+	if len(got) != 1 {
+		t.Fatalf("expected 1 statement, got %d: %+v", len(got), got)
+	}
+	if got[0].Verbatim != "Copyright 2020 Acme Corp [https://acme.example/]" {
+		t.Errorf("Verbatim = %q; want the URL-bearing declaration preserved", got[0].Verbatim)
+	}
+}
+
 // TestExtractCopyright_URLInAngleBracketsNotTemplate verifies the placeholder
 // filter is narrow: a holder that carries a URL or email in angle brackets is a
 // real declaration, not a template scaffold, and must still extract.

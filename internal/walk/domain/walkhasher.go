@@ -52,6 +52,9 @@ type canonicalStageDepth struct {
 }
 
 type canonicalWalkGraph struct {
+	// BuildEnv is omitempty so records created before the field existed continue
+	// to hash and verify identically (a nil pointer is absent from the JSON).
+	BuildEnv        *canonicalBuildEnv  `json:"build_env,omitempty"`
 	Edges           []canonicalWalkEdge `json:"edges"`
 	HasLocalReplace bool                `json:"has_local_replace"`
 	Nodes           []canonicalWalkNode `json:"nodes"`
@@ -60,6 +63,14 @@ type canonicalWalkGraph struct {
 	PipelineVersion string              `json:"pipeline_version"`
 	ResolvedAt      string              `json:"resolved_at"`
 	Target          canonicalWalkCoord  `json:"target"`
+}
+
+// canonicalBuildEnv is the fixed-field-order form of BuildEnv, in sorted
+// JSON-key order.
+type canonicalBuildEnv struct {
+	GOARCH    string `json:"goarch"`
+	GOOS      string `json:"goos"`
+	GoVersion string `json:"go_version"`
 }
 
 type canonicalWalkNode struct {
@@ -174,6 +185,7 @@ func marshalCanonicalWalk(r WalkRecord) ([]byte, error) {
 		Depth:       depth,
 		Ecosystem:   r.Ecosystem,
 		Graph: canonicalWalkGraph{
+			BuildEnv:        toCanonicalBuildEnv(r.Graph.BuildEnv),
 			Edges:           edges,
 			HasLocalReplace: r.Graph.HasLocalReplace,
 			Nodes:           nodes,
@@ -206,6 +218,30 @@ func marshalCanonicalWalk(r WalkRecord) ([]byte, error) {
 
 func toCanonicalCoord(c domain2.ModuleCoordinate) canonicalWalkCoord {
 	return canonicalWalkCoord{Path: c.Path, Version: c.Version}
+}
+
+// fromCanonicalBuildEnv is the inverse of toCanonicalBuildEnv: a nil canonical
+// pointer (absent from the JSON) yields the zero BuildEnv.
+func fromCanonicalBuildEnv(c *canonicalBuildEnv) BuildEnv {
+	if c == nil {
+		return BuildEnv{}
+	}
+	return BuildEnv{GOOS: c.GOOS, GOARCH: c.GOARCH, GoVersion: c.GoVersion}
+}
+
+// toCanonicalBuildEnv converts a BuildEnv into its canonical pointer form,
+// returning nil for the zero value so the field is omitted from the hash of a
+// record that captured no build environment (pre-BuildEnv records and non-project
+// walks hash identically to before).
+func toCanonicalBuildEnv(e BuildEnv) *canonicalBuildEnv {
+	if e.IsZero() {
+		return nil
+	}
+	return &canonicalBuildEnv{
+		GOARCH:    e.GOARCH,
+		GOOS:      e.GOOS,
+		GoVersion: e.GoVersion,
+	}
 }
 
 // canonicalWalkNodes converts graph nodes into canonical form. The hasher
@@ -420,6 +456,7 @@ func (WalkRecordHasher) Unmarshal(data []byte) (WalkRecord, error) {
 			Partial:         c.Graph.Partial,
 			PartialReason:   c.Graph.PartialReason,
 			HasLocalReplace: c.Graph.HasLocalReplace,
+			BuildEnv:        fromCanonicalBuildEnv(c.Graph.BuildEnv),
 		},
 		PerNodeResults:  perNode,
 		StartedAt:       startedAt.UTC(),
