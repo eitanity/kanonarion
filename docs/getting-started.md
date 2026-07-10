@@ -252,6 +252,12 @@ audits the tooling supply chain (the `go.mod` `tool` directives' closure) and
 `--project` audits the complete set (code + tooling). Statuses like
 `ScanFailed` are surfaced in the relevant line, never hidden behind a roll-up.
 
+The report includes the Go standard library as a `stdlib` row, so a toolchain CVE
+is triaged like any dependency's. Its version defaults to the live toolchain
+(`go env GOVERSION`); `--stdlib-from-gomod` pins it to the `go.mod` directive
+instead, making `audit` and `sbom` reproducible in CI. The release pipeline sets
+it on both.
+
 **Duration:** dominated by the vuln leg. The vulnerability verdict is
 **project-rooted** - one `govulncheck` over the project's live working tree - and
 is recomputed fresh every run (the working tree mutates, so it is never served

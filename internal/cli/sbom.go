@@ -27,6 +27,7 @@ func newSBOMCmd(stdout, stderr io.Writer) *cobra.Command {
 	var operator string
 	var logJSON bool
 	var packagePattern string
+	var stdlibFromGoMod bool
 
 	cmd := &cobra.Command{
 		Use:   "sbom [<walk-id>]",
@@ -50,7 +51,7 @@ func newSBOMCmd(stdout, stderr io.Writer) *cobra.Command {
 				scanRunPtr = &scanRunID
 			}
 			logger := buildLogger(logLevel, stderr)
-			return runSBOMGenerate(cmd.Context(), walkID, storeRoot, packagePattern, scanRunPtr, format, output, force, operator, logger, stdout, stderr)
+			return runSBOMGenerate(cmd.Context(), walkID, storeRoot, packagePattern, scanRunPtr, format, output, force, stdlibFromGoMod, operator, logger, stdout, stderr)
 		},
 	}
 
@@ -61,6 +62,7 @@ func newSBOMCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&operator, "operator", "", "operator identifier (defaults to $USER)")
 	cmd.Flags().BoolVar(&logJSON, "log-json", false, "emit logs as JSON")
 	cmd.Flags().StringVar(&packagePattern, "package", "", "Go package pattern (e.g. ./cmd/kanonarion); scopes components to that binary's import closure")
+	registerStdlibFromGoModFlag(cmd, &stdlibFromGoMod)
 	return cmd
 }
 
@@ -102,6 +104,7 @@ func runSBOMGenerate(
 	scanRunID *string,
 	format, output string,
 	force bool,
+	stdlibFromGoMod bool,
 	operator string,
 	logger *slog.Logger,
 	stdout, stderr io.Writer,
@@ -112,7 +115,7 @@ func runSBOMGenerate(
 	}
 	defer func() { _ = cleanup() }()
 
-	return sbomGenerateWith(ctx, ctr, walkID, packagePattern, scanRunID, format, output, force, operator, stdout, stderr)
+	return sbomGenerateWith(ctx, ctr, walkID, packagePattern, scanRunID, format, output, force, stdlibFromGoMod, operator, stdout, stderr)
 }
 
 // sbomGenerateWith holds the sbom-generate logic over an injected Container:
@@ -128,6 +131,7 @@ func sbomGenerateWith(
 	scanRunID *string,
 	format, output string,
 	force bool,
+	stdlibFromGoMod bool,
 	operator string,
 	stdout, stderr io.Writer,
 ) error {
@@ -140,7 +144,7 @@ func sbomGenerateWith(
 			return aerr
 		}
 		if walkID == "" {
-			walkID, err = ensureProjectWalkForSBOM(ctx, ctr, force, stderr)
+			walkID, err = ensureProjectWalkForSBOM(ctx, ctr, force, stdlibFromGoMod, stderr)
 			if err != nil {
 				return err
 			}
@@ -328,7 +332,7 @@ var errNoProjectWalk = errors.New("no succeeded project walk found")
 // equivalent to 'walk --gomod ./go.mod', then a licence-extraction stage over
 // that walk, equivalent to 'extract <walk-id> --stages license'. So a bare
 // 'sbom --package' on a clean store yields a fully-licenced artifact.
-func ensureProjectWalkForSBOM(ctx context.Context, ctr *Container, force bool, stderr io.Writer) (string, error) {
+func ensureProjectWalkForSBOM(ctx context.Context, ctr *Container, force, stdlibFromGoMod bool, stderr io.Writer) (string, error) {
 	gomodPath, err := resolveGoModPath("")
 	if err != nil {
 		return "", fmt.Errorf("locating go.mod for project walk: %w", err)
@@ -351,7 +355,7 @@ func ensureProjectWalkForSBOM(ctx context.Context, ctr *Container, force bool, s
 	// unfetchable node does not abort the SBOM; the SBOM records what resolved.
 	progress := newWalkProgressReporter(stderr, false, activeConfig, logLevel)
 	_, _ = fmt.Fprintf(stderr, "==> sbom: building project walk for %s\n", modulePath)
-	if werr := runWalkProject(ctx, gomodPath, commonWalkFlags{}, force, true, 0, "", "", false, scopeCode, walkdomain.WalkDepthFull, "", false, false, progress, ctr.ExecuteWalk, io.Discard, stderr); werr != nil {
+	if werr := runWalkProject(ctx, gomodPath, commonWalkFlags{}, force, true, 0, "", "", false, scopeCode, walkdomain.WalkDepthFull, "", false, stdlibFromGoMod, progress, ctr.ExecuteWalk, io.Discard, stderr); werr != nil {
 		return "", fmt.Errorf("building project walk: %w", werr)
 	}
 

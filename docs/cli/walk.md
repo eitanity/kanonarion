@@ -57,6 +57,7 @@ kanonarion walk --gomod ./go.mod [flags]
 | `--skip-vcs-verify` | `false` | Skip git cross-verification (checksum still runs) |
 | `--analyse-local` | `false` | Ingest `replace` targets that point to local directories so callgraph/iface/license can analyse them (requires `--gomod`) |
 | `--analyse-root` | `false` | Ingest the project's own working tree so all extraction stages analyse the project's own packages. Re-reads the tree fresh on every run. Requires a `go.mod` walk; incompatible with `--tool` (a tool walk does not cover the project's own packages). See [Analysing the project root](#analysing-the-project-root---analyse-root). |
+| `--stdlib-from-gomod` | `false` | Version the `stdlib` node from the `go.mod` directive, not the live toolchain. See [Standard-library version](#standard-library-version---stdlib-from-gomod). |
 | `--json` | `false` | Emit the walk record as JSON |
 
 ### `walk-list`
@@ -180,6 +181,21 @@ toolchain selects - including the full lint/tool dependency tree pinned by `go
 mod tidy`, and, for any shared transitive, the version the build actually
 selects. Those new coordinates download and verify once; subsequent runs are
 fully cached.
+
+## Standard-library version (`--stdlib-from-gomod`)
+
+A project walk injects the Go standard library as a first-class node (`stdlib`),
+so vuln-scan, `sbom`, and `audit` cover it. Its version comes from:
+
+| Source | When | Example |
+|--------|------|---------|
+| Live toolchain (`go env GOVERSION`) | Default | 1.26.5 toolchain → `stdlib@v1.26.5` |
+| `go.mod` `toolchain`/`go` directive | `--stdlib-from-gomod` | `go 1.22` → `stdlib@v1.22` |
+
+The default reflects what compiled the code; `--stdlib-from-gomod` makes it
+deterministic and source-matched (depends only on the checked-in `go.mod`) - what
+release SBOMs and audits want. Shared verbatim by `walk`, `sbom`, `audit`, and
+`inspect`. If neither source yields a version the node is omitted.
 
 ## Scope and depth
 

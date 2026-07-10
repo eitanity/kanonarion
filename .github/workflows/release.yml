@@ -128,7 +128,12 @@ jobs:
             os=${t%/*}; arch=${t#*/}
             fresh=""; [ "$t" = darwin/amd64 ] && fresh="--fresh"
             echo "audit for $t"
+            # --stdlib-from-gomod pins the synthetic stdlib node to the go.mod
+            # toolchain/go directive rather than the runner's go env GOVERSION,
+            # so the reported stdlib version is deterministic and matched to the
+            # source tree regardless of which toolchain executes the binary.
             GOOS=$os GOARCH=$arch ./dist/kanonarion_linux_amd64 audit $fresh --json \
+              --stdlib-from-gomod \
               > "dist/kanonarion-audit-${VERSION}-${os}-${arch}.json"
           done
 
@@ -165,9 +170,13 @@ jobs:
           for t in darwin/amd64 darwin/arm64 windows/amd64 windows/arm64 linux/amd64 linux/arm64 linux/arm; do
             os=${t%/*}; arch=${t#*/}
             echo "sbom for $t"
+            # --stdlib-from-gomod pins the stdlib component to the go.mod
+            # toolchain/go directive (deterministic, source-matched) instead of
+            # the runner's effective go env GOVERSION.
             GOOS=$os GOARCH=$arch ./dist/kanonarion_linux_amd64 sbom \
               --package ./cmd/kanonarion \
               --force \
+              --stdlib-from-gomod \
               --format cyclonedx-1.5 \
               --output "dist/kanonarion-${VERSION}-${os}-${arch}.cdx.json"
           done

@@ -80,6 +80,7 @@ the install command.
 | `--project` | `false` | Scope to the complete set: the project's code **and** tooling (the full Go build list). Mutually exclusive with `--tool` |
 | `--force` | `false` | Re-fetch and re-scan even if cached records exist |
 | `--fresh` | `false` | Fetch a fresh vulnerability database snapshot from the network |
+| `--stdlib-from-gomod` | `false` | Version the `stdlib` node from the `go.mod` directive, not the live toolchain. See [Standard-library version](walk.md#standard-library-version---stdlib-from-gomod). |
 | `--skip-vcs-verify` | `false` | Skip git cross-verification; the checksum-database check still runs. A sumdb-attested module then reports `VerifiedBySumDBOnly`, never the strongest `Verified` (the git leg never ran). Useful when auditing a large closure where git operations are rate-limited or unavailable |
 | `--goproxy` | `$GOPROXY` | Override the Go module proxy |
 | `--json` | `false` | Emit output as a JSON array |

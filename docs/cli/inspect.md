@@ -76,6 +76,7 @@ kanonarion inspect github.com/spf13/cobra@v1.8.1 --json
 | `--gomod` | _(none; `./go.mod` when no positional module)_ | Run the pipeline over a project-rooted walk and print a summary |
 | `--tool` | `false` | Scope the `go.mod` run to the tooling supply chain. Mutually exclusive with `--project` |
 | `--project` | `false` | Scope the `go.mod` run to the complete set: code **and** tooling. Mutually exclusive with `--tool` |
+| `--stdlib-from-gomod` | `false` | Version the `stdlib` node from the `go.mod` directive, not the live toolchain (project-mode `--gomod` run). See [Standard-library version](walk.md#standard-library-version---stdlib-from-gomod). |
 | `--log-level` | `warn` | Log level: `debug`, `info`, `warn`, `error` |
 
 **Example output:**
