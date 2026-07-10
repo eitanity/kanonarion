@@ -19,6 +19,7 @@ import (
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	walkadapterpolicy "github.com/eitanity/kanonarion/internal/walk/adapters/policy/localfile"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
 // parseModuleArg splits "module[@version]" into path and version without
@@ -589,4 +590,22 @@ func ExitCodeFromError(err error) (int, bool) {
 		return ee.code, true
 	}
 	return 0, false
+}
+
+// ExitCodeForError maps a Run error onto the process exit code. It honours an
+// explicit exit-code carrier on the chain first (so categories like ExitNotFound
+// survive), then the walk-integrity sentinel, and otherwise falls back to
+// ExitConfig. Shared by every main package so the binary's exit semantics are
+// defined once here rather than duplicated per entry point.
+func ExitCodeForError(err error) int {
+	if err == nil {
+		return ExitOK
+	}
+	if code, ok := ExitCodeFromError(err); ok {
+		return code
+	}
+	if errors.Is(err, walkports.ErrWalkIntegrity) {
+		return ExitIntegrity
+	}
+	return ExitConfig
 }

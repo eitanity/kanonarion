@@ -28,6 +28,8 @@ func newSBOMCmd(stdout, stderr io.Writer) *cobra.Command {
 	var logJSON bool
 	var packagePattern string
 	var stdlibFromGoMod bool
+	var mainVersion string
+	var mainLicense string
 
 	cmd := &cobra.Command{
 		Use:   "sbom [<walk-id>]",
@@ -51,7 +53,7 @@ func newSBOMCmd(stdout, stderr io.Writer) *cobra.Command {
 				scanRunPtr = &scanRunID
 			}
 			logger := buildLogger(logLevel, stderr)
-			return runSBOMGenerate(cmd.Context(), walkID, storeRoot, packagePattern, scanRunPtr, format, output, force, stdlibFromGoMod, operator, logger, stdout, stderr)
+			return runSBOMGenerate(cmd.Context(), walkID, storeRoot, packagePattern, scanRunPtr, format, output, force, stdlibFromGoMod, mainVersion, mainLicense, operator, logger, stdout, stderr)
 		},
 	}
 
@@ -62,6 +64,8 @@ func newSBOMCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&operator, "operator", "", "operator identifier (defaults to $USER)")
 	cmd.Flags().BoolVar(&logJSON, "log-json", false, "emit logs as JSON")
 	cmd.Flags().StringVar(&packagePattern, "package", "", "Go package pattern (e.g. ./cmd/kanonarion); scopes components to that binary's import closure")
+	cmd.Flags().StringVar(&mainVersion, "main-version", "", "version to stamp on the SBOM subject (metadata.component) instead of the synthetic \"local\"; use a release tag (e.g. v0.1.1) so the subject is a resolvable coordinate")
+	cmd.Flags().StringVar(&mainLicense, "main-license", "", "SPDX id/expression (e.g. Apache-2.0) to attach to the SBOM subject, which has no fetched licence record of its own")
 	registerStdlibFromGoModFlag(cmd, &stdlibFromGoMod)
 	return cmd
 }
@@ -105,6 +109,7 @@ func runSBOMGenerate(
 	format, output string,
 	force bool,
 	stdlibFromGoMod bool,
+	mainVersion, mainLicense string,
 	operator string,
 	logger *slog.Logger,
 	stdout, stderr io.Writer,
@@ -115,7 +120,7 @@ func runSBOMGenerate(
 	}
 	defer func() { _ = cleanup() }()
 
-	return sbomGenerateWith(ctx, ctr, walkID, packagePattern, scanRunID, format, output, force, stdlibFromGoMod, operator, stdout, stderr)
+	return sbomGenerateWith(ctx, ctr, walkID, packagePattern, scanRunID, format, output, force, stdlibFromGoMod, mainVersion, mainLicense, operator, stdout, stderr)
 }
 
 // sbomGenerateWith holds the sbom-generate logic over an injected Container:
@@ -132,6 +137,7 @@ func sbomGenerateWith(
 	format, output string,
 	force bool,
 	stdlibFromGoMod bool,
+	mainVersion, mainLicense string,
 	operator string,
 	stdout, stderr io.Writer,
 ) error {
@@ -152,12 +158,14 @@ func sbomGenerateWith(
 	}
 
 	req := application.SBOMRequest{
-		WalkID:        walkID,
-		WalkScanRunID: scanRunID,
-		Format:        domain.SBOMFormat(format),
-		Force:         force,
-		Operator:      operator,
-		AllowList:     allowList,
+		WalkID:               walkID,
+		WalkScanRunID:        scanRunID,
+		Format:               domain.SBOMFormat(format),
+		Force:                force,
+		Operator:             operator,
+		AllowList:            allowList,
+		MainComponentVersion: mainVersion,
+		MainComponentLicense: mainLicense,
 	}
 
 	record, err := ctr.GenerateSBOM.Generate(ctx, req)

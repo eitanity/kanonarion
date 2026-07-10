@@ -119,7 +119,17 @@ jobs:
           cache: true
 
       - name: Install golangci-lint
-        run: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@latest
+        run: |
+          set -euo pipefail
+          # Build the version pinned in go.mod's tool block (reproducible), not
+          # @latest — a floating @latest is the one unpinned pipeline dependency
+          # and would let a new golangci-lint release change CI results (or ship
+          # compromised code) without a reviewed go.mod bump. Mirrors the
+          # govulncheck install in release.yml.
+          BIN="$(go env GOPATH)/bin"
+          mkdir -p "$BIN"
+          go build -o "$BIN/golangci-lint" github.com/golangci/golangci-lint/v2/cmd/golangci-lint
+          echo "$BIN" >> "$GITHUB_PATH"
 
       - name: golangci-lint
         run: golangci-lint run ./...

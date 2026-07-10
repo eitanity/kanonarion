@@ -98,7 +98,7 @@ after - is the point to internalise.
 ### 1. Install kanonarion
 
 ```bash
-go install github.com/eitanity/kanonarion/cmd/kanonarion@latest
+go install github.com/eitanity/kanonarion@latest
 ```
 
 This puts a `kanonarion` binary on your `PATH` (under `$(go env GOBIN)`, or

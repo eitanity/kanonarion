@@ -646,6 +646,10 @@ func TestProjectWalkSubjectIsLocalModule(t *testing.T) {
 	if primary["name"] != "example.com/project" {
 		t.Errorf("metadata.component name = %v, want example.com/project", primary["name"])
 	}
+	// The local main module is a compiled binary, not a dependency library.
+	if primary["type"] != "application" {
+		t.Errorf("metadata.component type = %v, want application", primary["type"])
+	}
 
 	// components carry the full require closure.
 	components, _ := bom["components"].([]any)
@@ -660,5 +664,96 @@ func TestProjectWalkSubjectIsLocalModule(t *testing.T) {
 		if !gotPURLs[want] {
 			t.Errorf("components missing %q", want)
 		}
+	}
+}
+
+// TestMainComponentOverrides verifies that MainComponentVersion and
+// MainComponentLicense stamp a resolvable version (version, PURL, distribution
+// URL) and a licence onto the local main-module subject, which otherwise ships
+// at the synthetic "local" version with no licence record.
+func TestMainComponentOverrides(t *testing.T) {
+	mainModule := mustCoord(t, "example.com/project", fetchdomain.LocalVersion)
+	walk := makeWalk(t, []fetchdomain.ModuleCoordinate{mainModule})
+	gen := cyclonedx.New(testPipelineVersion)
+
+	req := makeGenReq(nil)
+	req.MainComponentVersion = "v1.2.3"
+	req.MainComponentLicense = "Apache-2.0"
+
+	rec, err := gen.Generate(t.Context(), walk, nil, nil, req)
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	var bom map[string]any
+	if err := json.Unmarshal(rec.Content, &bom); err != nil {
+		t.Fatalf("unmarshal bom: %v", err)
+	}
+	meta, _ := bom["metadata"].(map[string]any)
+	primary, ok := meta["component"].(map[string]any)
+	if !ok {
+		t.Fatalf("metadata.component absent")
+	}
+
+	if primary["version"] != "v1.2.3" {
+		t.Errorf("version = %v, want v1.2.3", primary["version"])
+	}
+	if primary["purl"] != "pkg:golang/example.com/project@v1.2.3" {
+		t.Errorf("purl = %v, want pkg:golang/example.com/project@v1.2.3", primary["purl"])
+	}
+	if primary["type"] != "application" {
+		t.Errorf("type = %v, want application", primary["type"])
+	}
+	// distribution externalReference must name the overridden version, not "local".
+	refs, _ := primary["externalReferences"].([]any)
+	var distURL string
+	for _, r := range refs {
+		rm, _ := r.(map[string]any)
+		if rm["type"] == "distribution" {
+			distURL, _ = rm["url"].(string)
+		}
+	}
+	if distURL != "https://proxy.golang.org/example.com/project/@v/v1.2.3.zip" {
+		t.Errorf("distribution url = %q, want .../@v/v1.2.3.zip", distURL)
+	}
+	// licence attached from the override.
+	lics, _ := primary["licenses"].([]any)
+	if len(lics) == 0 {
+		t.Fatalf("licenses absent; want Apache-2.0")
+	}
+	lic0, _ := lics[0].(map[string]any)
+	licObj, _ := lic0["license"].(map[string]any)
+	if licObj["id"] != "Apache-2.0" {
+		t.Errorf("license id = %v, want Apache-2.0", licObj["id"])
+	}
+}
+
+// TestMainComponentOverridesIgnoredForPublishedTarget verifies the overrides
+// apply only to the local main module: a walk rooted at a published module keeps
+// its real version and library type, untouched by the override fields.
+func TestMainComponentOverridesIgnoredForPublishedTarget(t *testing.T) {
+	target := mustCoord(t, "example.com/lib", "v3.0.0")
+	walk := makeWalk(t, []fetchdomain.ModuleCoordinate{target})
+	gen := cyclonedx.New(testPipelineVersion)
+
+	req := makeGenReq(nil)
+	req.MainComponentVersion = "v9.9.9"
+	req.MainComponentLicense = "MIT"
+
+	rec, err := gen.Generate(t.Context(), walk, nil, nil, req)
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	var bom map[string]any
+	if err := json.Unmarshal(rec.Content, &bom); err != nil {
+		t.Fatalf("unmarshal bom: %v", err)
+	}
+	meta, _ := bom["metadata"].(map[string]any)
+	primary, _ := meta["component"].(map[string]any)
+	if primary["version"] != "v3.0.0" {
+		t.Errorf("version = %v, want v3.0.0 (override must not apply)", primary["version"])
+	}
+	if primary["type"] != "library" {
+		t.Errorf("type = %v, want library (override must not apply)", primary["type"])
 	}
 }

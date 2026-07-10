@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
 // TestStoreIsolation_NotProductionUnderTest guards the package-cli
@@ -546,6 +548,31 @@ func TestExitCodeFromError(t *testing.T) {
 			seen[c.code] = c.name
 		}
 	})
+}
+
+// ExitCodeForError maps a Run error onto the process exit code: nil is ExitOK, an
+// explicit exit-code carrier wins over everything, the walk-integrity sentinel
+// maps to ExitIntegrity, and anything else falls back to ExitConfig. Shared by
+// every main entry point, so its precedence is pinned here.
+func TestExitCodeForError(t *testing.T) {
+	cases := []struct {
+		name string
+		err  error
+		want int
+	}{
+		{"nil is OK", nil, ExitOK},
+		{"exitError carrier wins", &exitError{code: ExitNotFound, msg: "x"}, ExitNotFound},
+		{"wrapped exitError carrier wins", fmt.Errorf("ctx: %w", &exitError{code: ExitNotFound, msg: "x"}), ExitNotFound},
+		{"walk integrity maps to ExitIntegrity", fmt.Errorf("verifying: %w", walkports.ErrWalkIntegrity), ExitIntegrity},
+		{"generic falls back to ExitConfig", errors.New("boom"), ExitConfig},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			if got := ExitCodeForError(c.err); got != c.want {
+				t.Errorf("ExitCodeForError(%v) = %d, want %d", c.err, got, c.want)
+			}
+		})
+	}
 }
 
 // TestReadPackageModules runs against the real kanonarion module in this repo.
