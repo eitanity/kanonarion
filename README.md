@@ -57,7 +57,7 @@ Vulnerabilities are **reachable**, **not reachable**, or **unknown** - the last 
 
 ```bash
 # Install (puts `kanonarion` on your PATH)
-go install github.com/eitanity/kanonarion/cmd/kanonarion@latest
+go install github.com/eitanity/kanonarion@latest
 
 # Analyse a single module end to end (walk → extract → vuln-scan → context).
 # One module = a result you can read and sanity-check on one screen.

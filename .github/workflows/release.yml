@@ -173,10 +173,18 @@ jobs:
             # --stdlib-from-gomod pins the stdlib component to the go.mod
             # toolchain/go directive (deterministic, source-matched) instead of
             # the runner's effective go env GOVERSION.
+            # --main-version stamps the release tag on the SBOM subject
+            # (metadata.component) in place of the build-time placeholder
+            # "local", so the subject's version/PURL/distribution URL name the
+            # published artifact rather than a coordinate that 404s on the proxy.
+            # --main-license attaches kanonarion's own licence to the subject,
+            # which is never proxy-fetched and so carries no extracted record.
             GOOS=$os GOARCH=$arch ./dist/kanonarion_linux_amd64 sbom \
               --package ./cmd/kanonarion \
               --force \
               --stdlib-from-gomod \
+              --main-version "${VERSION}" \
+              --main-license Apache-2.0 \
               --format cyclonedx-1.5 \
               --output "dist/kanonarion-${VERSION}-${os}-${arch}.cdx.json"
           done

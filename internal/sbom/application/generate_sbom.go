@@ -74,6 +74,14 @@ type SBOMRequest struct {
 	// typically the import closure of a single binary (sbom --package).
 	// When non-empty the result is ephemeral: cache and persistence are skipped.
 	AllowList []fetchdomain.ModuleCoordinate
+	// MainComponentVersion overrides the version stamped on the SBOM subject
+	// (metadata.component) when it is the local main module; empty leaves the
+	// synthetic "local". A release passes its tag so the subject is a resolvable
+	// coordinate rather than the build-time placeholder.
+	MainComponentVersion string
+	// MainComponentLicense is the SPDX id/expression attached to the subject when
+	// it is the local main module and carries no fetched licence record.
+	MainComponentLicense string
 }
 
 // ErrWalkScanRunNotFound is returned when the requested scan run does not exist.
@@ -170,10 +178,12 @@ func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (d
 
 	// 4. Generate.
 	genReq := ports.GenerateRequest{
-		WalkScanRunID:   req.WalkScanRunID,
-		Format:          format,
-		PipelineVersion: uc.pipelineVersion,
-		Operator:        req.Operator,
+		WalkScanRunID:        req.WalkScanRunID,
+		Format:               format,
+		PipelineVersion:      uc.pipelineVersion,
+		Operator:             req.Operator,
+		MainComponentVersion: req.MainComponentVersion,
+		MainComponentLicense: req.MainComponentLicense,
 	}
 	record, err := uc.generator.Generate(ctx, walk, licenses, vulnRecords, genReq)
 	if err != nil {

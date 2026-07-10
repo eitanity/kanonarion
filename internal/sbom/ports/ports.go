@@ -43,6 +43,18 @@ type GenerateRequest struct {
 	Format          domain.SBOMFormat
 	PipelineVersion string
 	Operator        string
+	// MainComponentVersion overrides the version stamped on the subject
+	// (metadata.component) of a project SBOM. The subject's graph target is the
+	// local main module at the synthetic version "local", which is not a
+	// resolvable coordinate; a release passes its tag here (e.g. "v0.1.1") so the
+	// subject's version, PURL and distribution URL name the published artifact.
+	// Ignored unless the subject is the local main module; empty leaves "local".
+	MainComponentVersion string
+	// MainComponentLicense is the SPDX id/expression attached to the subject when
+	// it carries no fetched licence record (the local main module is never
+	// proxy-fetched, so it has none). Ignored unless the subject is the local
+	// main module and has no existing licence; empty leaves it unlicensed.
+	MainComponentLicense string
 }
 
 // SBOMStore is the port for persisting and retrieving SBOM records.

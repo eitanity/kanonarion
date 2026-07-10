@@ -112,7 +112,13 @@ func (g *Generator) buildBOM(
 				},
 			},
 		},
-		Component: moduleComponent(walk.Graph.Target, licenses, req.PipelineVersion),
+		Component: moduleComponent(walk.Graph.Target, licenses, req.PipelineVersion, mainComponentOptionsFor(walk.Graph.Target, req)),
+	}
+	// Record the build environment the graph was resolved for. GOOS/GOARCH gate
+	// build-constraint file selection, so the component set is only valid for this
+	// platform; a consumer must know it to reproduce or trust the SBOM.
+	if props := buildEnvProperties(walk.Graph.BuildEnv); props != nil {
+		bom.Metadata.Properties = props
 	}
 	// Record the build environment the graph was resolved for. GOOS/GOARCH gate
 	// build-constraint file selection, so the component set is only valid for this
@@ -292,14 +298,61 @@ func buildEnvProperties(env walkdomain.BuildEnv) *[]cdx.Property {
 	return &props
 }
 
-// moduleComponent builds the metadata primary component for the walk target.
+// mainComponentOptions carries the subject-specific overrides applied to the
+// SBOM's primary component (metadata.component). They are meaningful only for a
+// project SBOM whose subject is the local main module — a compiled binary at the
+// synthetic version "local" with no fetched licence record.
+type mainComponentOptions struct {
+	// versionOverride replaces the subject's "local" version (and the PURL and
+	// distribution URL derived from it) with a resolvable coordinate, e.g. a
+	// release tag. Empty leaves the graph version untouched.
+	versionOverride string
+	// licenseSPDX is attached to the subject when it has no fetched licence
+	// record. Empty leaves the subject unlicensed.
+	licenseSPDX string
+	// isApplication marks the subject as a compiled application rather than a
+	// library — CycloneDX's expected type for a top-level binary.
+	isApplication bool
+}
+
+// mainComponentOptionsFor derives the subject overrides for a walk. Overrides
+// apply only when the subject is the local main module (a project SBOM): its
+// synthetic "local" version is the reliable signal, since a walk rooted at a
+// published module carries a real semver target and is left as a library at its
+// own version. A subject that is the local main module is always an application;
+// version and licence overrides are applied only when the caller supplied them.
+func mainComponentOptionsFor(target fetchdomain.ModuleCoordinate, req ports.GenerateRequest) mainComponentOptions {
+	if target.Version != fetchdomain.LocalVersion {
+		return mainComponentOptions{}
+	}
+	return mainComponentOptions{
+		versionOverride: req.MainComponentVersion,
+		licenseSPDX:     req.MainComponentLicense,
+		isApplication:   true,
+	}
+}
+
+// moduleComponent builds the metadata primary component for the walk target,
+// applying any subject-specific overrides (version, licence, application type).
 func moduleComponent(
 	coord fetchdomain.ModuleCoordinate,
 	licenses map[fetchdomain.ModuleCoordinate]licensedomain.LicenseRecord,
 	pipelineVersion string,
+	opts mainComponentOptions,
 ) *cdx.Component {
 	lic, hasLic := licenses[coord]
-	comp := buildComponent(moduleRef(coord), domain.LicenseClause(hasLic, lic.PrimarySPDX, lic.Expression), copyrightString(lic), pipelineVersion)
+	ref := moduleRef(coord)
+	if opts.versionOverride != "" {
+		ref.Version = opts.versionOverride
+	}
+	spdx := domain.LicenseClause(hasLic, lic.PrimarySPDX, lic.Expression)
+	if spdx == "" {
+		spdx = opts.licenseSPDX
+	}
+	comp := buildComponent(ref, spdx, copyrightString(lic), pipelineVersion)
+	if opts.isApplication {
+		comp.Type = cdx.ComponentTypeApplication
+	}
 	return &comp
 }
 
