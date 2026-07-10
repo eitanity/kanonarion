@@ -178,37 +178,9 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 		}
 	}
 
-	// 2. Cache Check (T1: Memoization). A local coordinate (the project-walk
-	// root) is never served from cache: the working tree mutates between runs,
-	// so its records are recomputed fresh every time.
-	// ScanFailed is also never served from cache: it represents a transient
-	// infrastructure failure (govulncheck crash, temp dir cleaned up, network
-	// blip) not a stable analysis verdict. Caching it would permanently block
-	// retry without --force.
-	if !params.Force && !params.Coordinate.IsLocal() {
-		if rec, ok, err := uc.vulnStore.GetVulnerabilityRecord(ctx, params.Coordinate, uc.pipelineVersion, snapshot); err == nil && ok {
-			if rec.OverallStatus == domain.StatusScanFailed {
-				uc.logger.Debug("vulnerability scan cache miss: stored result is ScanFailed, retrying", "coordinate", params.Coordinate)
-			} else {
-				uc.logger.Debug("vulnerability scan cache hit, re-attributing to current run", "coordinate", params.Coordinate, "status", rec.OverallStatus)
-				// The cached verdict is reused, but its provenance must follow the
-				// run the user actually invoked: re-stamp the walk reference and
-				// scan time so a later query reflects this run, never the unrelated
-				// earlier walk that first produced the record. The analysis result
-				// is unchanged; only walk_id and scanned_at move forward. ContentHash
-				// is cleared before recompute so it is hashed over an empty hash field,
-				// matching how fresh records are hashed below.
-				rec.WalkID = params.WalkID
-				rec.ScannedAt = uc.clock.Now()
-				rec.ContentHash = ""
-				rec.ContentHash = uc.computeContentHash(rec)
-				if perr := uc.vulnStore.PutVulnerabilityRecord(ctx, rec); perr != nil {
-					return domain.VulnerabilityRecord{}, fmt.Errorf("re-attributing reused vulnerability record: %w", perr)
-				}
-				rec.Reused = true
-				return rec, nil
-			}
-		}
+	// 2. Cache Check (T1: Memoization).
+	if rec, handled, err := uc.tryReuseCachedRecord(ctx, params, snapshot); handled || err != nil {
+		return rec, err
 	}
 
 	// 3. Dependency Check (T2: Structural Dependency)
@@ -341,6 +313,46 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 	}
 
 	return record, nil
+}
+
+// tryReuseCachedRecord serves a memoized record for this coordinate/snapshot
+// when a usable one exists. handled is true when the caller should return
+// (rec, err) directly; false means proceed with a fresh scan.
+//
+// A local coordinate (the project-walk root) is never served from cache: the
+// working tree mutates between runs, so its records are recomputed fresh every
+// time. ScanFailed is also never served from cache: it represents a transient
+// infrastructure failure (govulncheck crash, temp dir cleaned up, network blip)
+// not a stable analysis verdict — caching it would permanently block retry
+// without --force. A store lookup error is treated as a cache miss.
+func (uc *ScanModuleUseCase) tryReuseCachedRecord(ctx context.Context, params ScanModuleParams, snapshot domain.DatabaseSnapshot) (domain.VulnerabilityRecord, bool, error) {
+	if params.Force || params.Coordinate.IsLocal() {
+		return domain.VulnerabilityRecord{}, false, nil
+	}
+	rec, ok, err := uc.vulnStore.GetVulnerabilityRecord(ctx, params.Coordinate, uc.pipelineVersion, snapshot)
+	if err != nil || !ok {
+		return domain.VulnerabilityRecord{}, false, nil //nolint:nilerr // a lookup failure is treated as a cache miss; the scan proceeds fresh
+	}
+	if rec.OverallStatus == domain.StatusScanFailed {
+		uc.logger.Debug("vulnerability scan cache miss: stored result is ScanFailed, retrying", "coordinate", params.Coordinate)
+		return domain.VulnerabilityRecord{}, false, nil
+	}
+	uc.logger.Debug("vulnerability scan cache hit, re-attributing to current run", "coordinate", params.Coordinate, "status", rec.OverallStatus)
+	// The cached verdict is reused, but its provenance must follow the run the
+	// user actually invoked: re-stamp the walk reference and scan time so a later
+	// query reflects this run, never the unrelated earlier walk that first
+	// produced the record. The analysis result is unchanged; only walk_id and
+	// scanned_at move forward. ContentHash is cleared before recompute so it is
+	// hashed over an empty hash field, matching how fresh records are hashed.
+	rec.WalkID = params.WalkID
+	rec.ScannedAt = uc.clock.Now()
+	rec.ContentHash = ""
+	rec.ContentHash = uc.computeContentHash(rec)
+	if perr := uc.vulnStore.PutVulnerabilityRecord(ctx, rec); perr != nil {
+		return domain.VulnerabilityRecord{}, false, fmt.Errorf("re-attributing reused vulnerability record: %w", perr)
+	}
+	rec.Reused = true
+	return rec, true, nil
 }
 
 // logMetadataFallback records a source-mode-to-metadata fallback. An
