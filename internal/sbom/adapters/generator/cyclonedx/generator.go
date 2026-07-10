@@ -120,6 +120,12 @@ func (g *Generator) buildBOM(
 	if props := buildEnvProperties(walk.Graph.BuildEnv); props != nil {
 		bom.Metadata.Properties = props
 	}
+	// Record the build environment the graph was resolved for. GOOS/GOARCH gate
+	// build-constraint file selection, so the component set is only valid for this
+	// platform; a consumer must know it to reproduce or trust the SBOM.
+	if props := buildEnvProperties(walk.Graph.BuildEnv); props != nil {
+		bom.Metadata.Properties = props
+	}
 
 	// Components — assembly policy (inclusion, license attach, ordering,
 	// incomplete-license determination) lives in sbom/domain.
