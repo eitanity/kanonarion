@@ -30,6 +30,7 @@ func newSBOMCmd(stdout, stderr io.Writer) *cobra.Command {
 	var stdlibFromGoMod bool
 	var mainVersion string
 	var mainLicense string
+	var fromModcache string
 
 	cmd := &cobra.Command{
 		Use:   "sbom [<walk-id>]",
@@ -47,6 +48,15 @@ func newSBOMCmd(stdout, stderr io.Writer) *cobra.Command {
 			}
 			if walkID == "" && packagePattern == "" {
 				return fmt.Errorf("a walk ID argument or --package is required")
+			}
+			if fromModcache != "" {
+				gomodPath, gerr := resolveGoModPath("")
+				if gerr != nil {
+					return fmt.Errorf("--from-modcache: locating go.mod: %w", gerr)
+				}
+				if merr := resolveModcacheMode(fromModcache, gomodPath); merr != nil {
+					return merr
+				}
 			}
 			var scanRunPtr *string
 			if scanRunID != "" {
@@ -67,6 +77,7 @@ func newSBOMCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&mainVersion, "main-version", "", "version to stamp on the SBOM subject (metadata.component) instead of the synthetic \"local\"; use a release tag (e.g. v0.1.1) so the subject is a resolvable coordinate")
 	cmd.Flags().StringVar(&mainLicense, "main-license", "", "SPDX id/expression (e.g. Apache-2.0) to attach to the SBOM subject, which has no fetched licence record of its own")
 	registerStdlibFromGoModFlag(cmd, &stdlibFromGoMod)
+	registerFromModcacheFlag(cmd, &fromModcache)
 	return cmd
 }
 
@@ -365,6 +376,24 @@ func ensureProjectWalkForSBOM(ctx context.Context, ctr *Container, force, stdlib
 	_, _ = fmt.Fprintf(stderr, "==> sbom: building project walk for %s\n", modulePath)
 	if werr := runWalkProject(ctx, gomodPath, commonWalkFlags{}, force, true, 0, "", "", false, scopeCode, walkdomain.WalkDepthFull, "", false, stdlibFromGoMod, progress, ctr.ExecuteWalk, io.Discard, stderr); werr != nil {
 		return "", fmt.Errorf("building project walk: %w", werr)
+	}
+
+	// In --from-modcache mode a go.sum verification failure surfaces as a
+	// fetch-failed node; fail the SBOM rather than emitting one that silently
+	// omits the unverifiable module.
+	if modcacheMode {
+		localCoord := fetchdomain.ModuleCoordinate{Path: modulePath, Version: fetchdomain.LocalVersion}
+		walkID, werr := latestProjectWalkByScope(ctx, ctr.QueryWalks, modulePath, walkdomain.WalkScopeCode)
+		if werr != nil {
+			return "", werr
+		}
+		walkRec, werr := ctr.QueryWalks.GetWalk(ctx, walkID)
+		if werr != nil {
+			return "", fmt.Errorf("loading project walk %s: %w", walkID, werr)
+		}
+		if gateErr := modcacheWalkGate(walkRec, localCoord); gateErr != nil {
+			return "", gateErr
+		}
 	}
 
 	return extractLicencesForProjectWalk(ctx, ctr.QueryWalks, ctr.Extract, modulePath, force, stderr)

@@ -31,6 +31,7 @@ type auditFlags struct {
 	project         bool
 	skipVCSVerify   bool
 	stdlibFromGoMod bool
+	fromModcache    string
 }
 
 func newAuditCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -72,6 +73,7 @@ project's own build dependencies (the code your packages import, incl. tests);
 	cmd.Flags().BoolVar(&f.project, "project", false, "scope to the complete set: the project's code AND tooling")
 	cmd.Flags().BoolVar(&f.skipVCSVerify, "skip-vcs-verify", false, "skip git cross-verification; sumdb verification still runs")
 	registerStdlibFromGoModFlag(cmd, &f.stdlibFromGoMod)
+	registerFromModcacheFlag(cmd, &f.fromModcache)
 
 	return cmd
 }
@@ -122,6 +124,10 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	}
 	f.gomodPath = gomodPath
 
+	if err := resolveModcacheMode(f.fromModcache, gomodPath); err != nil {
+		return err
+	}
+
 	scope, err := scopeFromFlags(f.tool, f.project)
 	if err != nil {
 		return err
@@ -142,9 +148,15 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	}
 	defer func() { _ = cleanup() }()
 
-	proxy, err := proxyadapter.New(f.goproxy, false)
-	if err != nil {
-		return fmt.Errorf("creating proxy adapter: %w", err)
+	// The staleness column consults the network proxy for each module's latest
+	// version. In --from-modcache mode the run is fully offline, so the proxy is
+	// left nil and staleness is reported as "current".
+	var proxy *proxyadapter.Proxy
+	if !modcacheMode {
+		proxy, err = proxyadapter.New(f.goproxy, false)
+		if err != nil {
+			return fmt.Errorf("creating proxy adapter: %w", err)
+		}
 	}
 
 	results, err := auditScope(ctx, coords, scope, f, proxy, ctr, stderr)
@@ -223,6 +235,13 @@ func auditScope(
 		return nil, fmt.Errorf("loading project walk %s: %w", walkID, gerr)
 	}
 
+	// In --from-modcache mode a module that fails go.sum verification is a hard
+	// error: stop before extract/scan and exit non-zero rather than reporting a
+	// row for it.
+	if gateErr := modcacheWalkGate(rec, localCoord); gateErr != nil {
+		return nil, gateErr
+	}
+
 	_, _ = fmt.Fprintf(stderr, "==> audit: extracting licenses for walk %s\n", walkID)
 	ef := extractFlags{stages: []string{"license"}, force: f.force}
 	if eerr := runExtract(ctx, walkID, ef, io.Discard, stderr); eerr != nil {
@@ -287,11 +306,13 @@ func buildAuditResult(ctx context.Context, coordStr, walkID, scope string, overr
 		IsLatest:      true,
 	}
 
-	if info, lerr := proxy.LatestInfo(ctx, coord.Path); lerr == nil && info.Version != coord.Version {
-		res.IsLatest = false
-		res.LatestVersion = info.Version
-		if !info.Time.IsZero() {
-			res.DaysBehind = int(time.Since(info.Time).Hours() / 24)
+	if proxy != nil {
+		if info, lerr := proxy.LatestInfo(ctx, coord.Path); lerr == nil && info.Version != coord.Version {
+			res.IsLatest = false
+			res.LatestVersion = info.Version
+			if !info.Time.IsZero() {
+				res.DaysBehind = int(time.Since(info.Time).Hours() / 24)
+			}
 		}
 	}
 

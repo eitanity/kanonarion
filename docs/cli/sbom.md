@@ -41,6 +41,7 @@ re-run when `--force` is passed.
 | `--operator` | _(empty)_ | Identity of the operator requesting generation |
 | `--stdlib-from-gomod` | `false` | Version the `stdlib` component from the `go.mod` directive, not the live toolchain (applies when `sbom` builds a project walk, e.g. `--package`). See [Standard-library version](walk.md#standard-library-version---stdlib-from-gomod). |
 | `--package <pattern>` | _(none)_ | Go package pattern (e.g. `./cmd/foo`); scopes `components` to modules in that binary's import closure |
+| `--from-modcache[=dir]` | _(off)_ | When `sbom` builds a project walk (e.g. `--package` on a cold store), source modules from an existing Go module cache instead of the network proxy and verify each against the local `go.sum`. Passed bare it uses `go env GOMODCACHE`; an optional value names the cache directory. A `go.sum` mismatch or missing entry fails the command (exit code `10`). See [`audit --from-modcache`](audit.md#sourcing-from-an-existing-module-cache-from-modcache) for the full semantics. |
 | `--log-level` | `warn` | Log level (`debug`, `info`, `warn`, `error`) |
 | `--log-json` | `false` | Emit logs as JSON |
 

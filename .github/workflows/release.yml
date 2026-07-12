@@ -137,7 +137,17 @@ jobs:
             # toolchain/go directive rather than the runner's go env GOVERSION,
             # so the reported stdlib version is deterministic and matched to the
             # source tree regardless of which toolchain executes the binary.
+            #
+            # --from-modcache sources every module from the GOMODCACHE the build
+            # step above already populated and verified against go.sum, instead
+            # of re-downloading each .mod/.zip from the proxy and cross-verifying
+            # against the VCS host. The build has cross-checked go.sum, so audit
+            # verifies each module's h1 against the local go.sum (a mismatch or
+            # missing entry hard-fails the release) and contacts neither
+            # proxy.golang.org, sum.golang.org, nor any VCS host — only the OSV
+            # database (vuln.go.dev) for the vulnerability scan.
             GOOS=$os GOARCH=$arch ./dist/kanonarion_linux_amd64 audit $fresh \
+              --from-modcache \
               --stdlib-from-gomod
           done
 
@@ -175,8 +185,12 @@ jobs:
             # published artifact rather than a coordinate that 404s on the proxy.
             # --main-license attaches kanonarion's own licence to the subject,
             # which is never proxy-fetched and so carries no extracted record.
+            # --from-modcache sources modules from the build-populated GOMODCACHE
+            # and verifies against the local go.sum, so the SBOM build is offline
+            # w.r.t. the module proxy/checksum-db/VCS (matching the audit step).
             GOOS=$os GOARCH=$arch ./dist/kanonarion_linux_amd64 sbom \
               --package ./cmd/kanonarion \
+              --from-modcache \
               --force \
               --stdlib-from-gomod \
               --main-version "${VERSION}" \

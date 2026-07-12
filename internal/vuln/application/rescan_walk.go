@@ -23,6 +23,7 @@ type RescanWalkUseCase struct {
 	pipelineVersion string
 	logger          *slog.Logger
 	audit           ports.AuditSink // optional; propagated to the delegated scan
+	realModcacheDir string          // --from-modcache; propagated to the delegated scan
 }
 
 // NewRescanWalkUseCase returns a new RescanWalkUseCase.
@@ -51,6 +52,15 @@ func NewRescanWalkUseCase(
 // for chaining.
 func (uc *RescanWalkUseCase) WithAudit(sink ports.AuditSink) *RescanWalkUseCase {
 	uc.audit = sink
+	return uc
+}
+
+// WithRealModcache propagates --from-modcache to the delegated walk scan, so the
+// re-scan reads govulncheck's dependencies from the existing module cache at dir
+// instead of a blob-store-populated temp cache. Empty (the default) keeps the
+// blob-store path. Returns the receiver for chaining.
+func (uc *RescanWalkUseCase) WithRealModcache(dir string) *RescanWalkUseCase {
+	uc.realModcacheDir = dir
 	return uc
 }
 
@@ -100,7 +110,7 @@ func (uc *RescanWalkUseCase) Rescan(ctx context.Context, req RescanRequest) (dom
 		uc.clock,
 		uc.pipelineVersion,
 		uc.logger,
-	).WithAudit(uc.audit)
+	).WithAudit(uc.audit).WithRealModcache(uc.realModcacheDir)
 
 	run, err := scanWalk.Scan(ctx, ScanWalkParams{
 		WalkID:             req.WalkID,

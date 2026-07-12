@@ -82,7 +82,8 @@ the install command.
 | `--fresh` | `false` | Fetch a fresh vulnerability database snapshot from the network |
 | `--stdlib-from-gomod` | `false` | Version the `stdlib` node from the `go.mod` directive, not the live toolchain. See [Standard-library version](walk.md#standard-library-version---stdlib-from-gomod). |
 | `--skip-vcs-verify` | `false` | Skip git cross-verification; the checksum-database check still runs. A sumdb-attested module then reports `VerifiedBySumDBOnly`, never the strongest `Verified` (the git leg never ran). Useful when auditing a large closure where git operations are rate-limited or unavailable |
-| `--goproxy` | `$GOPROXY` | Override the Go module proxy |
+| `--from-modcache[=dir]` | _(off)_ | Source modules from an existing Go module cache instead of the network proxy, verifying each against the local `go.sum`. Passed bare it uses `go env GOMODCACHE`; an optional value names the cache directory. See [Sourcing from an existing module cache](#sourcing-from-an-existing-module-cache-from-modcache) |
+| `--goproxy` | `$GOPROXY` | Override the Go module proxy (ignored under `--from-modcache`) |
 | `--json` | `false` | Emit output as a JSON array |
 | `--store-root` | `~/.kanonarion` | Path to fact store root (or `KANONARION_STORE` env var) |
 | `--log-level` | `warn` | Log level: `debug`, `info`, `warn`, `error` |
@@ -217,6 +218,43 @@ re-downloads the vulnerability database). Two stages always do work on every run
   tree every time (never served from a coordinate cache - see Pipeline above).
   This is local CPU work, not a network fetch, and reuses the cached
   vulnerability database unless `--fresh` is passed.
+
+## Sourcing from an existing module cache (`--from-modcache`)
+
+In a build pipeline the modules are already on disk: `go build` populates
+`$GOMODCACHE` with each dependency's `.mod`/`.zip` (the module-proxy protocol on
+disk) and verifies them against `go.sum`. `--from-modcache` makes `audit` treat
+that cache as the source of truth instead of re-downloading everything from the
+proxy.
+
+In this mode `audit`:
+
+- **Reads module bytes from the module cache** (`go env GOMODCACHE`, or the
+  directory you name with `--from-modcache=/path`). A module missing from the
+  cache is fetched into it with `go mod download`; nothing is written to
+  kanonarion's blob store.
+- **Verifies each module's `h1` hash against the local `go.sum`**, fully offline
+  - no `sum.golang.org`. A hash that does not match, or a module with no `go.sum`
+  entry, is a **hard failure**: `audit` exits non-zero (code `10`) naming the
+  offending modules. Verified modules report `VerifiedBySumDBOnly` (VCS
+  cross-verification is skipped in this mode).
+- **Skips the staleness check** (the per-module `@latest` proxy query), so the
+  run makes **zero** network calls to `proxy.golang.org`/`sum.golang.org`. The
+  vulnerability scan still reads the OSV database (`--fresh` to refresh it).
+
+```bash
+# After `go build ./...` has populated the module cache:
+kanonarion audit --from-modcache
+
+# Or point at a specific cache directory:
+kanonarion audit --from-modcache=/path/to/gomodcache
+```
+
+This is the mode the release pipeline uses (see
+[`docs/ci-hardening.md`](../ci-hardening.md)): the build step populates the
+cache, then `audit` and `sbom --package` consume it without a second trip to the
+network. Default (no-flag) behaviour is unchanged - the network proxy, the
+checksum database, and VCS cross-verification all run as before.
 
 ## See also
 

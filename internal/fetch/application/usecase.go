@@ -45,6 +45,11 @@ type FetchModuleUseCase struct {
 	// unchanged. Set via WithSigner.
 	signer       ports.Signer
 	attestations ports.AttestationStore
+
+	// modcache is the optional --from-modcache seam. When non-nil, Execute reads
+	// bytes from the module cache, verifies against local go.sum, and records
+	// coordinate-derived handles instead of writing blobs. Set via WithModcache.
+	modcache ModcacheHandleDeriver
 }
 
 // WithSigner injects a Signer and the store its attestations persist to,
@@ -108,6 +113,10 @@ type FetchResult struct {
 // Verification failures (UnverifiedX statuses) do not fail Execute; they are
 // recorded in the FactRecord. Proxy, VCS, and storage errors do fail Execute.
 func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ FetchResult, retErr error) {
+	if uc.modcache != nil {
+		return uc.executeModcache(ctx, req)
+	}
+
 	traceID := ulid.Make().String()
 	lap := uc.stopwatch.Start()
 

@@ -42,6 +42,12 @@ type ScanWalkUseCase struct {
 	pipelineVersion string
 	logger          *slog.Logger
 	audit           ports.AuditSink // optional; nil disables audit emission
+
+	// realModcacheDir, when set (--from-modcache mode), is an existing Go module
+	// cache that already holds every dependency verified against go.sum at build
+	// time. The scan points GOMODCACHE straight at it and skips the temp-cache
+	// prefetch/populate, so govulncheck runs fully offline with no blob reads.
+	realModcacheDir string
 }
 
 // NewScanWalkUseCase returns a new ScanWalkUseCase.
@@ -71,6 +77,15 @@ func NewScanWalkUseCase(
 // receiver for chaining, mirroring the other optional-dependency builders.
 func (uc *ScanWalkUseCase) WithAudit(sink ports.AuditSink) *ScanWalkUseCase {
 	uc.audit = sink
+	return uc
+}
+
+// WithRealModcache switches the scan into --from-modcache mode: govulncheck runs
+// with GOMODCACHE pointed at dir, an already-populated module cache, instead of
+// materialising a temp cache from the blob store. A nil/empty dir (the default)
+// keeps the blob-store-populated path. Returns the receiver for chaining.
+func (uc *ScanWalkUseCase) WithRealModcache(dir string) *ScanWalkUseCase {
+	uc.realModcacheDir = dir
 	return uc
 }
 
@@ -140,7 +155,13 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	// 3b. Pre-populate a shared GOMODCACHE from the blob store so govulncheck workers
 	// don't need to download dependencies from the network.
 	goModCache := ""
-	if cacheDir, err := os.MkdirTemp("", "kanonarion-modcache-*"); err != nil {
+	if uc.realModcacheDir != "" {
+		// --from-modcache: the caller's Go module cache already holds every
+		// dependency (verified against go.sum by the build). Point govulncheck at
+		// it directly — no temp cache, no blob reads, no network.
+		goModCache = uc.realModcacheDir
+		uc.logger.Info("using existing GOMODCACHE for scan", "dir", goModCache)
+	} else if cacheDir, err := os.MkdirTemp("", "kanonarion-modcache-*"); err != nil {
 		uc.logger.Warn("failed to create temp GOMODCACHE, govulncheck will download dependencies", "error", err)
 	} else {
 		// govulncheck workers run with GOMODCACHE=cacheDir and the Go toolchain

@@ -12,6 +12,7 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/spf13/cobra"
 	"golang.org/x/mod/modfile"
 
 	configstore "github.com/eitanity/kanonarion/internal/config/adapters/store/yaml"
@@ -505,6 +506,117 @@ var jsonOut bool
 // Loaded in PersistentPreRunE after store-root is resolved.
 // Flag values override the corresponding config fields (flag > config > default).
 var activeConfig domain.Config
+
+// modcacheMode, modcacheDir, and goSumPath carry --from-modcache state across
+// the audit/sbom orchestration. They are process-wide because a single audit
+// or sbom invocation builds several Containers (walk, extract, vuln-scan), each
+// through NewContainer, and every one must wire the same module-cache adapters.
+// modcacheMode is false by default, leaving the network+blobstore path
+// byte-for-byte unchanged.
+var (
+	modcacheMode bool
+	modcacheDir  string
+	goSumPath    string
+)
+
+// modcacheFlagSentinel is the NoOptDefVal for --from-modcache: it distinguishes
+// "flag passed with no value" (use `go env GOMODCACHE`) from "flag absent"
+// (empty string, mode off) and from an explicit directory value.
+const modcacheFlagSentinel = "\x00from-modcache-default"
+
+// registerFromModcacheFlag adds --from-modcache[=dir] to cmd, binding it to
+// target. Passed bare it resolves the cache dir from `go env GOMODCACHE`; passed
+// a value it names the directory. Absent, the flag leaves target empty.
+func registerFromModcacheFlag(cmd *cobra.Command, target *string) {
+	cmd.Flags().StringVar(target, "from-modcache", "",
+		"source modules from an existing Go module cache instead of the network: verify against local go.sum and bypass the blob store (optional dir; defaults to `go env GOMODCACHE`)")
+	cmd.Flags().Lookup("from-modcache").NoOptDefVal = modcacheFlagSentinel
+}
+
+// resolveModcacheMode configures the process-wide --from-modcache state from a
+// flag value. flagVal is "" when the flag was absent (mode stays off), the
+// sentinel when passed bare (dir resolves from `go env GOMODCACHE`), or an
+// explicit cache directory. gomodPath locates the sibling go.sum used for
+// hash verification. It is idempotent and safe to call once per invocation.
+func resolveModcacheMode(flagVal, gomodPath string) error {
+	if flagVal == "" {
+		return nil // flag absent — keep the network + blob-store path
+	}
+	dir := flagVal
+	if dir == modcacheFlagSentinel {
+		resolved, err := goEnvGOMODCACHE()
+		if err != nil {
+			return fmt.Errorf("--from-modcache: %w", err)
+		}
+		dir = resolved
+	}
+	if dir == "" {
+		return fmt.Errorf("--from-modcache: could not determine module cache directory")
+	}
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		return fmt.Errorf("--from-modcache: module cache %q is not an accessible directory", dir)
+	}
+	goSum := filepath.Join(filepath.Dir(gomodPath), "go.sum")
+	if _, err := os.Stat(goSum); err != nil {
+		return fmt.Errorf("--from-modcache: go.sum not found at %s (required for hash verification): %w", goSum, err)
+	}
+	modcacheMode = true
+	modcacheDir = dir
+	goSumPath = goSum
+	return nil
+}
+
+// modcacheWalkGate turns a partial walk caused by module-cache/go.sum failures
+// into a hard, non-zero exit. In --from-modcache mode the fetch pipeline fails a
+// module whose h1 does not match go.sum, or which is absent from go.sum or the
+// cache; the walker records that as a fetch_failed (or parse_failed) node rather
+// than aborting. This gate collects those nodes and returns an ExitIntegrity
+// error naming them, so `audit`/`sbom --package` exit non-zero on any
+// verification failure. It is a no-op when mode is off or the walk is clean.
+func modcacheWalkGate(rec walkdomain.WalkRecord, local fetchdomain.ModuleCoordinate) error {
+	if !modcacheMode {
+		return nil
+	}
+	var failed []string
+	for _, node := range rec.Graph.Nodes {
+		if node.Coordinate == local {
+			continue
+		}
+		switch node.ResolutionSource {
+		case walkdomain.ResolutionFetchFailed, walkdomain.ResolutionParseFailed:
+			msg := node.Coordinate.String()
+			if node.ErrorDetail != "" {
+				msg += ": " + node.ErrorDetail
+			}
+			failed = append(failed, msg)
+		}
+	}
+	if len(failed) == 0 {
+		return nil
+	}
+	return &exitError{code: ExitIntegrity, msg: fmt.Sprintf(
+		"--from-modcache: %d module(s) failed go.sum verification or could not be sourced from the module cache:\n  %s",
+		len(failed), strings.Join(failed, "\n  "))}
+}
+
+// goEnvGOMODCACHE returns the effective module cache directory reported by
+// `go env GOMODCACHE`.
+func goEnvGOMODCACHE() (string, error) {
+	cmd := exec.Command("go", "env", "GOMODCACHE") // #nosec G204 -- fixed, argument-free go invocation
+	out, err := cmd.Output()
+	if err != nil {
+		if errors.Is(err, exec.ErrNotFound) {
+			return "", fmt.Errorf("go toolchain not found on PATH: required to resolve GOMODCACHE")
+		}
+		var ee *exec.ExitError
+		if errors.As(err, &ee) && len(ee.Stderr) > 0 {
+			return "", fmt.Errorf("go env GOMODCACHE: %s", strings.TrimSpace(string(ee.Stderr)))
+		}
+		return "", fmt.Errorf("go env GOMODCACHE: %w", err)
+	}
+	return strings.TrimSpace(string(out)), nil
+}
 
 // loadStoreConfig loads and returns the parsed Config from
 // <storeRoot>/config.yaml. It never creates or modifies that file: an absent
