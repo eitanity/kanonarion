@@ -261,6 +261,21 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	if modcacheDeriver != nil {
 		fetchUC = fetchUC.WithModcache(modcacheDeriver)
 	}
+	// KN-404: on the normal network path, layer the walk root's local go.sum on
+	// as an additional, always-on integrity anchor when one is present. It is a
+	// cheap offline complement to the network checksum database — not a
+	// replacement — so a module whose fetched h1 disagrees with go.sum fails
+	// hard, while an absent entry falls through to network sumdb verification.
+	// In --from-modcache mode go.sum is already the sole anchor (via sumdb), so
+	// this is skipped.
+	if !modcacheMode && projectGoSumPath != "" {
+		gsClient, gerr := gosumfile.New(projectGoSumPath)
+		if gerr != nil {
+			_ = dbHandle.Close()
+			return nil, nil, fmt.Errorf("loading project go.sum for verification: %w", gerr)
+		}
+		fetchUC = fetchUC.WithProjectGoSum(gsClient)
+	}
 	queryFetchUC := fetchapp.NewQueryFetchUseCase(factStore)
 
 	// ---- walk pipeline ----

@@ -26,7 +26,8 @@ For each module in the scope, `audit` emits a single line containing:
 
 - **Coordinate** - `module@version`
 - **Verification** - outcome of sumdb/VCS cross-verification (`Verified`,
-  `VerifiedBySumDBOnly`, `UnverifiedNoSumDB`, etc.)
+  `VerifiedBySumDBOnly`, `VerifiedByGoSum`, `UnverifiedNoSumDB`, etc.). See
+  [Local `go.sum` verification](#local-gosum-verification) for `VerifiedByGoSum`.
 - **License** - primary SPDX identifier; annotated with status when ambiguous
   (e.g. `Apache-2.0 [Multiple]`)
 - **Staleness** - `current` when the pinned version is the latest published, or
@@ -218,6 +219,33 @@ re-downloads the vulnerability database). Two stages always do work on every run
   tree every time (never served from a coordinate cache - see Pipeline above).
   This is local CPU work, not a network fetch, and reuses the cached
   vulnerability database unless `--fresh` is passed.
+
+## Local `go.sum` verification
+
+On the **normal** (network) path, whenever the project's `go.sum` is present next
+to the walked `go.mod`, `audit` layers it on as an always-on, offline integrity
+check that **complements** the network checksum database. It costs nothing extra:
+the module `h1` hashes are already computed during download, so the check is just
+a lookup and compare - no extra hashing, no network round-trip. For each fetched
+module `audit`:
+
+- **Matches `go.sum` (zip and `/go.mod`)** - a positive signal. If the network
+  checksum database also verified the module, the stronger `Verified` /
+  `VerifiedBySumDBOnly` stands. If the checksum database was **unavailable**
+  (offline, `GOSUMDB=off`, or no entry), the module reports **`VerifiedByGoSum`**
+  instead of `UnverifiedNoSumDB` - `go.sum` is itself populated under a prior
+  `sum.golang.org` check, so this is a genuine offline anchor.
+- **Disagrees with `go.sum`** - tamper-evidence. `audit` **fails hard**, exiting
+  non-zero (code `10`) and naming the offending module. A `go.sum` mismatch is
+  never silently downgraded.
+- **Absent from `go.sum`** - not a failure (a `go.sum` legitimately omits some
+  transitively-cached entries); the module falls through to the network checksum
+  database as before.
+
+Because the check reads only the local `go.sum`, it still fires when
+`sum.golang.org` is unreachable - a working offline integrity signal. This is
+distinct from `--from-modcache` below, where `go.sum` is the *sole* anchor and an
+absent entry *is* a hard failure.
 
 ## Sourcing from an existing module cache (`--from-modcache`)
 

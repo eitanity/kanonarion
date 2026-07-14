@@ -18,6 +18,7 @@ func resetModcacheGlobals(t *testing.T) {
 		modcacheMode = false
 		modcacheDir = ""
 		goSumPath = ""
+		projectGoSumPath = ""
 	})
 }
 

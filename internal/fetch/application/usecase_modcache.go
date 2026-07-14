@@ -13,10 +13,18 @@ import (
 	"github.com/oklog/ulid/v2"
 )
 
-// ErrGoSumVerification marks a hard verification failure in --from-modcache
-// mode: a module whose computed h1 hash does not match its local go.sum entry,
-// or which is absent from go.sum entirely. Callers match it with errors.Is to
-// distinguish a tamper/missing-entry failure from an ordinary fetch error.
+// ErrGoSumVerification marks a hard go.sum verification failure. It is raised
+// in two places, both tamper-evidence:
+//   - --from-modcache mode, where go.sum is the sole anchor: a module whose
+//     computed h1 does not match its go.sum entry, OR which is absent from
+//     go.sum entirely (see verifyAgainstGoSum).
+//   - the normal network path, where a project go.sum is an additional anchor
+//     layered onto network sumdb verification: a module present in go.sum whose
+//     computed zip/go.mod h1 disagrees (see checkProjectGoSum). Absence from
+//     go.sum is NOT a failure there — it falls through to network sumdb.
+//
+// Callers match it with errors.Is to distinguish a tamper failure from an
+// ordinary fetch error.
 var ErrGoSumVerification = errors.New("go.sum verification failed")
 
 // ModcacheHandleDeriver derives deterministic blob handles for a coordinate so

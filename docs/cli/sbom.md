@@ -91,6 +91,12 @@ tool dependencies in `go.mod` should be excluded from the SBOM.
 - Multiple binaries require multiple `sbom` invocations, one per executable.
   The shared project walk is built once and reused across them.
 - Scoped SBOMs are **ephemeral**: they are not cached or persisted to the store.
+- When the project walk is built here, each fetched module's `h1` is
+  cross-checked against the project's local `go.sum` (a cheap, offline complement
+  to the network checksum database). A module whose hash **disagrees** with its
+  `go.sum` entry is tamper-evidence: `sbom --package` **fails hard** rather than
+  emitting an SBOM that silently omits it. See
+  [`audit` › Local `go.sum` verification](audit.md#local-gosum-verification).
 
 ### Caching
 

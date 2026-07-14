@@ -125,6 +125,14 @@ func runSBOMGenerate(
 	logger *slog.Logger,
 	stdout, stderr io.Writer,
 ) error {
+	// --package builds (or reuses) a project walk, so a local go.sum can anchor
+	// each fetched module's integrity on the normal path (KN-404). Resolve it
+	// before the container so the fetch use case is wired with the verifier.
+	if packagePattern != "" {
+		if gomodPath, gerr := resolveGoModPath(""); gerr == nil {
+			resolveProjectGoSum(gomodPath)
+		}
+	}
 	ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
@@ -378,22 +386,24 @@ func ensureProjectWalkForSBOM(ctx context.Context, ctr *Container, force, stdlib
 		return "", fmt.Errorf("building project walk: %w", werr)
 	}
 
-	// In --from-modcache mode a go.sum verification failure surfaces as a
-	// fetch-failed node; fail the SBOM rather than emitting one that silently
-	// omits the unverifiable module.
-	if modcacheMode {
-		localCoord := fetchdomain.ModuleCoordinate{Path: modulePath, Version: fetchdomain.LocalVersion}
-		walkID, werr := latestProjectWalkByScope(ctx, ctr.QueryWalks, modulePath, walkdomain.WalkScopeCode)
-		if werr != nil {
-			return "", werr
-		}
-		walkRec, werr := ctr.QueryWalks.GetWalk(ctx, walkID)
-		if werr != nil {
-			return "", fmt.Errorf("loading project walk %s: %w", walkID, werr)
-		}
-		if gateErr := modcacheWalkGate(walkRec, localCoord); gateErr != nil {
-			return "", gateErr
-		}
+	// A go.sum verification failure surfaces as a fetch-failed node. Fail the
+	// SBOM rather than emitting one that silently omits the unverifiable module:
+	// --from-modcache mode fails on any such node (go.sum is the sole anchor),
+	// and the normal network path fails on a go.sum-mismatch node (KN-404).
+	localCoord := fetchdomain.ModuleCoordinate{Path: modulePath, Version: fetchdomain.LocalVersion}
+	walkID, werr := latestProjectWalkByScope(ctx, ctr.QueryWalks, modulePath, walkdomain.WalkScopeCode)
+	if werr != nil {
+		return "", werr
+	}
+	walkRec, werr := ctr.QueryWalks.GetWalk(ctx, walkID)
+	if werr != nil {
+		return "", fmt.Errorf("loading project walk %s: %w", walkID, werr)
+	}
+	if gateErr := modcacheWalkGate(walkRec, localCoord); gateErr != nil {
+		return "", gateErr
+	}
+	if gateErr := goSumWalkGate(walkRec, localCoord); gateErr != nil {
+		return "", gateErr
 	}
 
 	return extractLicencesForProjectWalk(ctx, ctr.QueryWalks, ctr.Extract, modulePath, force, stderr)

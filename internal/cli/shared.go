@@ -17,6 +17,7 @@ import (
 
 	configstore "github.com/eitanity/kanonarion/internal/config/adapters/store/yaml"
 	"github.com/eitanity/kanonarion/internal/config/domain"
+	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	walkadapterpolicy "github.com/eitanity/kanonarion/internal/walk/adapters/policy/localfile"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -519,6 +520,32 @@ var (
 	goSumPath    string
 )
 
+// projectGoSumPath is the walk root's go.sum path for the NORMAL (network)
+// fetch path. When set and the file exists, NewContainer layers a local go.sum
+// verifier onto the fetch use case as an always-on, offline complement to the
+// network checksum database (KN-404). Empty leaves the network path's
+// verification unchanged. It is process-wide for the same reason modcacheMode
+// is: a single audit/sbom invocation builds several Containers, each of which
+// must wire the same verifier. Distinct from --from-modcache (goSumPath), where
+// go.sum is the sole anchor.
+var projectGoSumPath string
+
+// resolveProjectGoSum records the walk root's go.sum path for the normal fetch
+// path, derived from the resolved gomodPath. A missing go.sum leaves the path
+// empty: on the normal path go.sum is an optional complement, so its absence
+// simply means the cross-check never fires (unlike --from-modcache, where a
+// missing go.sum is a hard error). It is a no-op in --from-modcache mode, which
+// threads go.sum via resolveModcacheMode/goSumPath instead. Idempotent.
+func resolveProjectGoSum(gomodPath string) {
+	if modcacheMode {
+		return
+	}
+	goSum := filepath.Join(filepath.Dir(gomodPath), "go.sum")
+	if _, err := os.Stat(goSum); err == nil {
+		projectGoSumPath = goSum
+	}
+}
+
 // modcacheFlagSentinel is the NoOptDefVal for --from-modcache: it distinguishes
 // "flag passed with no value" (use `go env GOMODCACHE`) from "flag absent"
 // (empty string, mode off) and from an explicit directory value.
@@ -597,6 +624,47 @@ func modcacheWalkGate(rec walkdomain.WalkRecord, local fetchdomain.ModuleCoordin
 	}
 	return &exitError{code: ExitIntegrity, msg: fmt.Sprintf(
 		"--from-modcache: %d module(s) failed go.sum verification or could not be sourced from the module cache:\n  %s",
+		len(failed), strings.Join(failed, "\n  "))}
+}
+
+// goSumWalkGate turns a go.sum tamper detected on the NORMAL (network) walk
+// path into a hard, non-zero exit (KN-404). When a project go.sum is present,
+// the fetch pipeline fails a module whose fetched h1 disagrees with its go.sum
+// entry; the walker records that as a fetch_failed node (with the tamper detail)
+// rather than aborting. This gate scans for such nodes and returns an
+// ExitIntegrity error naming them, so `audit`/`sbom --package` exit non-zero on
+// a go.sum mismatch. Unlike modcacheWalkGate it fires ONLY on go.sum-mismatch
+// failures, never on ordinary network fetch failures, which stay tolerated as a
+// partial walk. It is a no-op in --from-modcache mode (modcacheWalkGate covers
+// that path) and when the walk is clean.
+func goSumWalkGate(rec walkdomain.WalkRecord, local fetchdomain.ModuleCoordinate) error {
+	if modcacheMode {
+		return nil
+	}
+	var failed []string
+	for _, node := range rec.Graph.Nodes {
+		if node.Coordinate == local {
+			continue
+		}
+		if node.ResolutionSource != walkdomain.ResolutionFetchFailed {
+			continue
+		}
+		// Only go.sum tamper failures are hard; match the shared sentinel so an
+		// ordinary network fetch failure does not fail the command.
+		if !strings.Contains(node.ErrorDetail, fetchapp.ErrGoSumVerification.Error()) {
+			continue
+		}
+		msg := node.Coordinate.String()
+		if node.ErrorDetail != "" {
+			msg += ": " + node.ErrorDetail
+		}
+		failed = append(failed, msg)
+	}
+	if len(failed) == 0 {
+		return nil
+	}
+	return &exitError{code: ExitIntegrity, msg: fmt.Sprintf(
+		"%d module(s) failed local go.sum verification (tamper-evidence):\n  %s",
 		len(failed), strings.Join(failed, "\n  "))}
 }
 

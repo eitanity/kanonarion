@@ -50,6 +50,26 @@ type FetchModuleUseCase struct {
 	// bytes from the module cache, verifies against local go.sum, and records
 	// coordinate-derived handles instead of writing blobs. Set via WithModcache.
 	modcache ModcacheHandleDeriver
+
+	// goSum is the optional walk-root go.sum verifier for the normal network
+	// path. When non-nil, Execute cross-checks each fetched module's computed h1
+	// against the local go.sum as a cheap, offline complement to the network
+	// checksum database: a present-but-mismatched entry is a hard tamper failure,
+	// a matching entry a positive signal, an absent entry a fall-through. It is
+	// distinct from modcache mode, where go.sum is the sole anchor. Set via
+	// WithProjectGoSum; nil leaves the network path byte-for-byte unchanged.
+	goSum ports.SumDBClient
+}
+
+// WithProjectGoSum layers a walk-root go.sum verifier onto the normal network
+// fetch path (KN-404). It is additive: the network checksum-database check and
+// VCS cross-verification still run. A nil client (the default) disables the
+// cross-check entirely, so the unshared network path is unchanged. Has no
+// effect in --from-modcache mode, which anchors on go.sum via the sumdb field
+// already. Returns uc for chaining.
+func (uc *FetchModuleUseCase) WithProjectGoSum(goSum ports.SumDBClient) *FetchModuleUseCase {
+	uc.goSum = goSum
+	return uc
 }
 
 // WithSigner injects a Signer and the store its attestations persist to,
@@ -179,6 +199,17 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 	}
 	log.InfoContext(ctx, "download_ok", slog.Int("zip_bytes", len(zipData)))
 
+	// Step 3.5: cheap, offline local go.sum cross-check (KN-404). It uses the
+	// h1 hashes already computed during download — no extra hashing, no network
+	// round-trip — and runs before the blob store and the network sumdb lookup
+	// so a tampered module fails fast, with no blob written and no record
+	// persisted. A matching entry becomes a positive signal folded into the
+	// verification status below; an absent entry falls through unchanged.
+	goSumMatched, err := uc.checkProjectGoSum(ctx, log, req.Coordinate, dl)
+	if err != nil {
+		return FetchResult{}, err
+	}
+
 	// Step 4: store zip + go.mod in BlobStore.
 	blobHandle, err := uc.blobs.Put(ctx, newReader(zipData))
 	if err != nil {
@@ -193,7 +224,7 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 	log.InfoContext(ctx, "go_mod_blob_stored", slog.String("handle", string(goModHandle)))
 
 	// Step 5: run verification pipeline, accumulating status.
-	verStatus, verDetail, gitRef, retracted := uc.verify(ctx, log, req.Coordinate, dl, zipData, goModData, info, req.SkipVCSVerify)
+	verStatus, verDetail, gitRef, retracted := uc.verify(ctx, log, req.Coordinate, dl, zipData, goModData, info, req.SkipVCSVerify, goSumMatched)
 
 	// Sign-on-process call site 1: fetch-receive. Sign the received blob over
 	// its canonical content digest, after verification.
@@ -295,6 +326,10 @@ func (uc *FetchModuleUseCase) sign(ctx context.Context, log *slog.Logger, coord 
 // 5. Checksum database lookup (T1/T6)
 // 6. VCS cross-verify (T2/T3)
 // 7. Final status synthesis
+// goSumMatched reports that the module's h1 already matched the walk root's
+// local go.sum (checked cheaply before this call). It only elevates the
+// no-network-sumdb outcome: when the network checksum database is unavailable
+// but go.sum agreed, the result is VerifiedByGoSum rather than UnverifiedNoSumDB.
 func (uc *FetchModuleUseCase) verify(
 	ctx context.Context,
 	log *slog.Logger,
@@ -303,6 +338,7 @@ func (uc *FetchModuleUseCase) verify(
 	zipData, goModData []byte,
 	info ports.ModuleInfo,
 	skipVCSVerify bool,
+	goSumMatched bool,
 ) (domain2.VerificationStatus, string, domain2.GitReference, bool) {
 
 	var earlyStatus domain2.VerificationStatus
@@ -352,8 +388,17 @@ func (uc *FetchModuleUseCase) verify(
 			}
 		} else {
 			log.InfoContext(ctx, "sumdb_unavailable", slog.String("reason", sumdbResult.Reason))
-			earlyStatus = domain2.UnverifiedNoSumDB
-			earlyDetail = sumdbResult.Reason
+			if goSumMatched {
+				// Network sumdb is unreachable/absent, but the walk root's local
+				// go.sum (itself populated under a prior transparency-log check)
+				// confirmed the h1. A positive offline integrity signal, not an
+				// un-analysed outcome.
+				earlyStatus = domain2.VerifiedByGoSum
+				earlyDetail = "verified against local go.sum; network checksum database unavailable: " + sumdbResult.Reason
+			} else {
+				earlyStatus = domain2.UnverifiedNoSumDB
+				earlyDetail = sumdbResult.Reason
+			}
 		}
 	}
 
@@ -404,6 +449,45 @@ func (uc *FetchModuleUseCase) verify(
 	}
 	// sumdb passed but VCS was not available or missing.
 	return domain2.VerifiedBySumDBOnly, vcsDetail, gitRef, retracted
+}
+
+// checkProjectGoSum cross-checks the module's already-computed h1 hashes
+// against the walk root's local go.sum, when a project go.sum verifier is
+// configured (KN-404). It is a cheap, offline complement to the network
+// checksum-database check and adds no hashing or network calls. The outcomes:
+//
+//   - no verifier configured, or the coordinate is absent from go.sum →
+//     (false, nil): the module falls through to network sumdb verification.
+//     go.sum legitimately omits some transitively-cached entries, so absence is
+//     not a failure on the normal path (contrast --from-modcache).
+//   - entry present and both zip and go.mod h1 match → (true, nil): a positive
+//     offline integrity signal that elevates a no-network-sumdb outcome to
+//     VerifiedByGoSum.
+//   - entry present and either h1 disagrees → (false, ErrGoSumVerification): a
+//     hard tamper failure. The caller aborts with no blob stored and no record
+//     persisted; a go.sum mismatch must never be silently downgraded.
+func (uc *FetchModuleUseCase) checkProjectGoSum(ctx context.Context, log *slog.Logger, coord domain2.ModuleCoordinate, dl ports.ModuleDownload) (bool, error) {
+	if uc.goSum == nil {
+		return false, nil
+	}
+	res := uc.goSum.Lookup(ctx, coord)
+	if !res.Available {
+		// Absent from go.sum — fall through to network sumdb verification.
+		return false, nil
+	}
+	if !res.ZipHash.Equal(dl.ZipHash) {
+		return false, fmt.Errorf("%w: %s: local go.sum expects zip %s but computed %s",
+			ErrGoSumVerification, coord, res.ZipHash, dl.ZipHash)
+	}
+	// The go.mod hash is checked only when go.sum records one (it always does for
+	// module-era dependencies). A zero recorded hash means go.sum has no /go.mod
+	// line — do not manufacture a mismatch from its absence.
+	if !res.GoModHash.IsZero() && !res.GoModHash.Equal(dl.GoModHash) {
+		return false, fmt.Errorf("%w: %s: local go.sum expects go.mod %s but computed %s",
+			ErrGoSumVerification, coord, res.GoModHash, dl.GoModHash)
+	}
+	log.InfoContext(ctx, "project_gosum_verified", slog.String("zip_hash", dl.ZipHash.String()))
+	return true, nil
 }
 
 // resolveGitRef determines the GitReference for the module.

@@ -330,6 +330,21 @@ With `--allow-partial`, a `partial` walk still exits `0`; otherwise it exits
 non-zero. A failed-target walk is still persisted and is readable via
 `walk-show` / `walk-list`.
 
+## Local `go.sum` verification (project walks)
+
+A **project walk** (`walk --gomod`) has the project's `go.sum` on disk. When it
+is present, each fetched module's computed `h1` (zip and `/go.mod`) is also
+cross-checked against the local `go.sum` - a cheap, offline complement to the
+network checksum database that reuses the hashes already computed during
+download. A module that **matches** `go.sum` but whose network checksum lookup
+was unavailable reports `VerifiedByGoSum` (a positive offline anchor) rather than
+`UnverifiedNoSumDB`; a module that **disagrees** with its `go.sum` entry is
+tamper-evidence and records a fetch failure with the mismatch detail. A module
+**absent** from `go.sum` simply falls through to the network checksum database.
+See [`audit` › Local `go.sum` verification](audit.md#local-gosum-verification)
+for the full behaviour, which `audit` and `sbom --package` promote to a hard,
+non-zero exit.
+
 ## Storage
 
 Walk records are stored in `<store-root>/mirror.db` (SQLite). The walk schema

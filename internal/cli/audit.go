@@ -127,6 +127,9 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	if err := resolveModcacheMode(f.fromModcache, gomodPath); err != nil {
 		return err
 	}
+	// On the normal network path, layer the project go.sum on as an always-on
+	// offline integrity check (KN-404). No-op in --from-modcache mode.
+	resolveProjectGoSum(gomodPath)
 
 	scope, err := scopeFromFlags(f.tool, f.project)
 	if err != nil {
@@ -239,6 +242,11 @@ func auditScope(
 	// error: stop before extract/scan and exit non-zero rather than reporting a
 	// row for it.
 	if gateErr := modcacheWalkGate(rec, localCoord); gateErr != nil {
+		return nil, gateErr
+	}
+	// On the normal path, a local go.sum mismatch is tamper-evidence: fail hard
+	// before extract/scan rather than reporting a row for the tampered module.
+	if gateErr := goSumWalkGate(rec, localCoord); gateErr != nil {
 		return nil, gateErr
 	}
 
