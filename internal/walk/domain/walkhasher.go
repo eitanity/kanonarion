@@ -88,12 +88,30 @@ type canonicalWalkNode struct {
 	OriginalCoordinate *canonicalWalkCoord `json:"original_coordinate,omitempty"`
 	ResolutionSource   string              `json:"resolution_source"`
 	Retracted          bool                `json:"retracted"`
+	// Stdlib carries the standard-library chain-of-custody facts. Pointer +
+	// omitempty so every non-stdlib node (and a stdlib node acquired before this
+	// field existed) hashes identically to before; when present it is covered by
+	// the walk hash.
+	Stdlib *canonicalStdlibFacts `json:"stdlib,omitempty"`
 	// Raw artefact digests. omitempty so nodes without digests (the local main
-	// module, the synthetic stdlib node, legacy pre-digest records) hash
-	// identically to before; when present they are covered by the walk hash.
+	// module, legacy pre-digest records) hash identically to before; when present
+	// they are covered by the walk hash.
 	ZipSHA256 string `json:"zip_sha256,omitempty"`
 	ZipSHA384 string `json:"zip_sha384,omitempty"`
 	ZipSHA512 string `json:"zip_sha512,omitempty"`
+}
+
+// canonicalStdlibFacts is the fixed-field-order form of StdlibFacts, in sorted
+// JSON-key order.
+type canonicalStdlibFacts struct {
+	LicenseSPDX        string `json:"license_spdx"`
+	PublishedSHA256    string `json:"published_sha256"`
+	SourceURL          string `json:"source_url"`
+	VCSCommit          string `json:"vcs_commit"`
+	VCSRef             string `json:"vcs_ref"`
+	VCSURL             string `json:"vcs_url"`
+	VerificationDetail string `json:"verification_detail"`
+	VerificationStatus string `json:"verification_status"`
 }
 
 type canonicalWalkEdge struct {
@@ -281,8 +299,44 @@ func canonicalWalkNodes(nodes []GraphNode) []canonicalWalkNode {
 			c := toCanonicalCoord(n.OriginalCoordinate)
 			out[i].OriginalCoordinate = &c
 		}
+		out[i].Stdlib = toCanonicalStdlibFacts(n.Stdlib)
 	}
 	return out
+}
+
+// toCanonicalStdlibFacts converts stdlib facts into canonical pointer form,
+// returning nil for a nil input so non-stdlib nodes omit the field from the hash.
+func toCanonicalStdlibFacts(f *StdlibFacts) *canonicalStdlibFacts {
+	if f == nil {
+		return nil
+	}
+	return &canonicalStdlibFacts{
+		LicenseSPDX:        f.LicenseSPDX,
+		PublishedSHA256:    f.PublishedSHA256,
+		SourceURL:          f.SourceURL,
+		VCSCommit:          f.VCSCommit,
+		VCSRef:             f.VCSRef,
+		VCSURL:             f.VCSURL,
+		VerificationDetail: f.VerificationDetail,
+		VerificationStatus: f.VerificationStatus,
+	}
+}
+
+// fromCanonicalStdlibFacts is the inverse of toCanonicalStdlibFacts.
+func fromCanonicalStdlibFacts(c *canonicalStdlibFacts) *StdlibFacts {
+	if c == nil {
+		return nil
+	}
+	return &StdlibFacts{
+		LicenseSPDX:        c.LicenseSPDX,
+		VerificationStatus: c.VerificationStatus,
+		VerificationDetail: c.VerificationDetail,
+		PublishedSHA256:    c.PublishedSHA256,
+		SourceURL:          c.SourceURL,
+		VCSURL:             c.VCSURL,
+		VCSRef:             c.VCSRef,
+		VCSCommit:          c.VCSCommit,
+	}
 }
 
 // canonicalWalkEdges converts graph edges into canonical form, sorting by
@@ -397,6 +451,7 @@ func (WalkRecordHasher) Unmarshal(data []byte) (WalkRecord, error) {
 				SHA384: n.ZipSHA384,
 				SHA512: n.ZipSHA512,
 			},
+			Stdlib: fromCanonicalStdlibFacts(n.Stdlib),
 		}
 		if n.OriginalCoordinate != nil {
 			oc, oerr := domain2.NewModuleCoordinate(n.OriginalCoordinate.Path, n.OriginalCoordinate.Version)

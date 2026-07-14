@@ -197,6 +197,17 @@ deterministic and source-matched (depends only on the checked-in `go.mod`) - wha
 release SBOMs and audits want. Shared verbatim by `walk`, `sbom`, `audit`, and
 `inspect`. If neither source yields a version the node is omitted.
 
+During a project walk the `stdlib` node also gains a **chain of custody**: the
+canonical `go{VERSION}.src.tar.gz` is acquired from `go.dev/dl`, its `SHA-256`
+matched against Go's published checksum, its `SHA-256`/`SHA-384`/`SHA-512`
+digests and `go.googlesource.com/go` tag → commit recorded, and its
+`BSD-3-Clause` licence extracted from the tarball's `LICENSE`. These facts flow
+into `audit` and `sbom`. The tarball is cached per Go version; `--force`
+re-acquires and re-verifies it, and `--skip-vcs-verify` omits the commit anchor
+(the checksum verification still runs). A fully offline run (`--from-modcache`)
+leaves the node without the custody chain. See [SBOM standard-library chain of
+custody](sbom.md#standard-library-chain-of-custody).
+
 ## Scope and depth
 
 | Field | Values | Meaning |

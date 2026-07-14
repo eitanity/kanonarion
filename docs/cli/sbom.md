@@ -21,9 +21,41 @@ in addition to the flat component list, carries:
   `SHA-256`, `SHA-384` and `SHA-512` `hashes`, computed from the module zip bytes
   at download time (the same bytes the `h1` dirhash is taken over — the SBOM never
   recomputes them). The superseded MD5 and SHA-1 algorithms are never emitted.
-  Components that are **not** fetched artefacts carry no hashes: the local main
-  component (the SBOM subject) and — for now — the synthetic `stdlib` node. A
-  missing hash block is never an error.
+  The **`stdlib` component** carries the same three hashes, taken over the Go
+  source tarball rather than a module zip (see below). Only the local main
+  component (the SBOM subject) carries no hashes; a missing hash block is never an
+  error.
+
+### Standard-library chain of custody
+
+The synthetic `stdlib` component is toolchain-provided, not a proxy module, so it
+can never carry a module's `h1`/sumdb custody. kanonarion establishes an
+equivalent, necessarily different-anchored chain and emits it on the component:
+
+- **`hashes`** — `SHA-256`/`SHA-384`/`SHA-512` over the canonical
+  `go{VERSION}.src.tar.gz` acquired from `https://go.dev/dl/`. The `SHA-256`
+  equals the checksum Go publishes for that tarball.
+- **`externalReferences`** — the `go.dev/dl` source tarball (`distribution`), the
+  `go.googlesource.com/go` repository (`vcs`), and a second `vcs` reference whose
+  comment records the release tag → commit.
+- **`licenses`** — `BSD-3-Clause`, **extracted from the tarball's `LICENSE`
+  file**, not asserted from a constant.
+- **`properties`** — `kanonarion:stdlib:verification`
+  (`VerifiedGoDevChecksum` when the tarball SHA-256 matched the published
+  checksum), `kanonarion:stdlib:verification_detail`,
+  `kanonarion:stdlib:published_sha256`, and `kanonarion:stdlib:anchor_limitation`.
+
+The `anchor_limitation` property states the honest ceiling: this anchor is a
+**published checksum plus a source-repo tag/commit**, weaker than a module's
+sumdb transparency-log entry, and it never appears in the project's `go.sum`. The
+verification status is deliberately distinct from the module sumdb statuses so
+the two are never read as equivalent.
+
+The tarball is acquired once per Go version and cached; `--force` re-acquires and
+re-verifies it. On a fully offline run (`--from-modcache`) the acquirer is not
+wired and the `stdlib` component is emitted without the custody chain (a
+best-effort coverage gap, never a failure). Skipping VCS cross-verification
+(`--skip-vcs-verify`) omits the commit anchor but keeps the checksum verification.
 
 ---
 

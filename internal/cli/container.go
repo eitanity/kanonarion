@@ -23,6 +23,8 @@ import (
 	cgsqlite "github.com/eitanity/kanonarion/internal/callgraph/adapters/store/sqlite"
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 
+	"github.com/eitanity/kanonarion/internal/composition"
+
 	dirxmod "github.com/eitanity/kanonarion/internal/directive/adapters/parser/xmod"
 	dirsqlite "github.com/eitanity/kanonarion/internal/directive/adapters/store/sqlite"
 	dirapp "github.com/eitanity/kanonarion/internal/directive/application"
@@ -284,6 +286,13 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	localFetcher := walklocalfs.New(blobs, factStore, clk)
 	resolver := walkapp.NewGraphResolver(parser, fetcher, blobs, clk, "", logger).
 		WithBuildListResolver(walkbuildlist.New(goBinary, logger))
+	// The stdlib chain of custody needs network access to go.dev/dl and
+	// googlesource. In --from-modcache mode the run is fully offline, so the
+	// acquirer is left unwired and the stdlib node stays a bare coverage node.
+	if !modcacheMode {
+		resolver = resolver.WithStdlibAcquirer(
+			composition.NewStdlibAcquirer(dbHandle, blobs, clk, logger), skipVCSVerify)
+	}
 	walker := walkapp.NewWalker(resolver, fetcher, localFetcher, clk, stopwatch, 0, logger)
 
 	executeWalkUC := walkapp.NewExecuteWalkUseCase(walker, walkStore, "", "", logger).WithAudit(factStore)
@@ -402,7 +411,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	diffScanRunsUC := vulnapp.NewDiffScanRunsUseCase(vulnStore)
 
 	// ---- sbom use cases ----
-	const sbomPipelineVersion = "0.4.0"
+	const sbomPipelineVersion = "0.5.0"
 	generateSBOMUC := sbomapp.NewGenerateSBOMUseCase(
 		walkStore, licStore, vulnStore, sbomStore,
 		sbomcdx.New(sbomPipelineVersion),

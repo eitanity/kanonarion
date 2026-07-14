@@ -272,7 +272,7 @@ func auditScope(
 	depNodes := auditDependencyNodes(rec, localCoord)
 	results := make([]auditModuleResult, 0, len(depNodes))
 	for _, node := range depNodes {
-		res, rerr := buildAuditResult(ctx, node.Coordinate.String(), walkID, string(walkScope), overrides, proxy, ctr)
+		res, rerr := buildAuditResult(ctx, node, walkID, string(walkScope), overrides, proxy, ctr)
 		if rerr != nil {
 			return nil, rerr
 		}
@@ -299,10 +299,19 @@ func auditDependencyNodes(rec walkdomain.WalkRecord, local fetchdomain.ModuleCoo
 	return nodes
 }
 
-func buildAuditResult(ctx context.Context, coordStr, walkID, scope string, overrides licdomain.LicenseOverrideSet, proxy *proxyadapter.Proxy, ctr *Container) (auditModuleResult, error) {
+func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, scope string, overrides licdomain.LicenseOverrideSet, proxy *proxyadapter.Proxy, ctr *Container) (auditModuleResult, error) {
+	coordStr := node.Coordinate.String()
 	coord, err := parseCoordinate(coordStr)
 	if err != nil {
 		return auditModuleResult{}, fmt.Errorf("invalid coordinate %q: %w", coordStr, err)
+	}
+
+	// The standard library is toolchain-provided, not a proxy artefact: it has no
+	// fetch/licence/vuln records to look up and no proxy "latest" to compare
+	// against. Its custody chain (verification status, extracted licence) rides on
+	// the graph node, so it is reported from there rather than the record stores.
+	if node.ResolutionSource == walkdomain.ResolutionStdlib {
+		return buildStdlibAuditResult(ctx, coord, node, scope, walkID, ctr), nil
 	}
 
 	res := auditModuleResult{
@@ -396,6 +405,61 @@ func buildAuditResult(ctx context.Context, coordStr, walkID, scope string, overr
 	}
 
 	return res, nil
+}
+
+// buildStdlibAuditResult reports the standard-library node's custody chain from
+// the facts carried on the graph node: the go.dev/dl verification status and the
+// licence extracted from the source tarball, with the licence policy evaluated
+// against that SPDX. It still consults the vuln store — the stdlib node exists so
+// standard-library advisories are scanned — but skips the fetch/licence record
+// lookups and the proxy staleness check, which do not apply to a toolchain
+// artefact. A nil Stdlib (an offline walk that could not acquire the chain)
+// degrades to "(custody unavailable)" rather than an error.
+func buildStdlibAuditResult(ctx context.Context, coord fetchdomain.ModuleCoordinate, node walkdomain.GraphNode, scope, walkID string, ctr *Container) auditModuleResult {
+	res := auditModuleResult{
+		Coordinate:    coord.String(),
+		Verification:  "(custody unavailable)",
+		License:       "(not run)",
+		LicenseStatus: "(not run)",
+		VulnStatus:    "(not scanned)",
+		IsLatest:      true, // pinned to the build toolchain; no proxy "latest" applies
+	}
+
+	var resolvedSPDX string
+	uncertaintyReason := "no_record"
+	if node.Stdlib != nil {
+		if node.Stdlib.VerificationStatus != "" {
+			res.Verification = node.Stdlib.VerificationStatus
+		}
+		res.LicenseSource = "stdlib-tarball"
+		if node.Stdlib.LicenseSPDX != "" {
+			res.License = node.Stdlib.LicenseSPDX
+			res.LicenseStatus = "Detected"
+			resolvedSPDX = node.Stdlib.LicenseSPDX
+			uncertaintyReason = ""
+		}
+	}
+
+	eval := activeConfig.LicensePolicy.EvaluateLicense(resolvedSPDX, scope)
+	res.LicenseCategory = eval.Category
+	res.PolicyOutcome = string(eval.Outcome)
+	res.LicenseResolved = !eval.Uncertain
+	res.PolicyBlocking = eval.Blocking
+	if eval.Uncertain {
+		res.LicenseUncertainty = uncertaintyReason
+	}
+
+	if vrec, found, verr := ctr.QueryVuln.GetLatestRecordForWalk(ctx, coord, vulnPipelineVersion, walkID); verr == nil && found {
+		res.VulnStatus = string(vrec.OverallStatus)
+		res.VulnFindings = len(vrec.Findings)
+		switch vrec.OverallStatus {
+		case vulndomain.StatusScanFailed:
+			res.VulnReason = vrec.ErrorDetail
+		case vulndomain.StatusUnscannable:
+			res.VulnReason = vrec.UnscannableReason
+		}
+	}
+	return res
 }
 
 // auditBlockingErr returns a non-nil error when any result is a hard

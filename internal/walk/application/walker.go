@@ -229,7 +229,7 @@ func (w *Walker) Walk(ctx context.Context, req WalkRequest) (domain2.WalkOutcome
 		// Project mode: root at the local main module. Its go.mod is read from
 		// the working tree, not fetched, so the closure is the union of all
 		// require directives rooted at the project itself.
-		g, perr := resolver.ResolveProject(ctx, req.Target, req.MainModuleGoMod, req.ProjectDir, policy.FetchStage(), req.ScopeModules, req.StdlibFromGoMod)
+		g, perr := resolver.ResolveProject(ctx, req.Target, req.MainModuleGoMod, req.ProjectDir, policy.FetchStage(), req.ScopeModules, req.StdlibFromGoMod, req.Force)
 		if perr != nil {
 			// The local go.mod could not be parsed — terminal, like a target
 			// fetch failure.

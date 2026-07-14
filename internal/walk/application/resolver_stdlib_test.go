@@ -41,7 +41,7 @@ func TestResolveProject_Stdlib_FromToolchain(t *testing.T) {
 	// go.mod declares an OLDER directive than the toolchain; the default must
 	// track the toolchain (v1.26.4), not the directive (v1.21).
 	goMod := []byte("module example.com/project\n\ngo 1.21\n")
-	g, err := r.ResolveProject(context.Background(), target, goMod, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false)
+	g, err := r.ResolveProject(context.Background(), target, goMod, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false, false)
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
@@ -63,6 +63,77 @@ func TestResolveProject_Stdlib_FromToolchain(t *testing.T) {
 	}
 }
 
+// fakeStdlibAcquirer records its call and returns canned custody facts.
+type fakeStdlibAcquirer struct {
+	facts      domain3.StdlibFacts
+	digests    domain2.ArtifactDigests
+	err        error
+	gotVersion string
+	gotForce   bool
+	gotSkipVCS bool
+	calls      int
+}
+
+func (f *fakeStdlibAcquirer) AcquireStdlib(_ context.Context, goVersion string, force, skipVCS bool) (domain3.StdlibFacts, domain2.ArtifactDigests, error) {
+	f.calls++
+	f.gotVersion = goVersion
+	f.gotForce = force
+	f.gotSkipVCS = skipVCS
+	return f.facts, f.digests, f.err
+}
+
+// TestResolveProject_Stdlib_CustodyAttached verifies a wired acquirer's facts and
+// digests are attached to the stdlib node, and that force/skipVCS are threaded.
+func TestResolveProject_Stdlib_CustodyAttached(t *testing.T) {
+	r, _ := buildListResolver(t, &fakeBuildListResolver{list: buildListWithEnv()})
+	acq := &fakeStdlibAcquirer{
+		facts:   domain3.StdlibFacts{LicenseSPDX: "BSD-3-Clause", VerificationStatus: "VerifiedGoDevChecksum", VCSCommit: "c1"},
+		digests: domain2.ArtifactDigests{SHA256: "a", SHA384: "b", SHA512: "c"},
+	}
+	r = r.WithStdlibAcquirer(acq, true)
+	target := coord("example.com/project", domain2.LocalVersion)
+
+	goMod := []byte("module example.com/project\n\ngo 1.21\n")
+	g, err := r.ResolveProject(context.Background(), target, goMod, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false, true)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+	node := stdlibNode(t, g)
+	if node.Stdlib == nil || node.Stdlib.LicenseSPDX != "BSD-3-Clause" {
+		t.Errorf("stdlib facts not attached: %+v", node.Stdlib)
+	}
+	if node.Digests != acq.digests {
+		t.Errorf("stdlib digests = %+v, want %+v", node.Digests, acq.digests)
+	}
+	if acq.gotVersion != "go1.26.4" {
+		t.Errorf("acquirer got version %q, want go1.26.4", acq.gotVersion)
+	}
+	if !acq.gotForce || !acq.gotSkipVCS {
+		t.Errorf("force/skipVCS not threaded: force=%v skipVCS=%v", acq.gotForce, acq.gotSkipVCS)
+	}
+}
+
+// TestResolveProject_Stdlib_CustodyBestEffort verifies an acquirer error leaves
+// the stdlib node present but bare, never failing the walk.
+func TestResolveProject_Stdlib_CustodyBestEffort(t *testing.T) {
+	r, _ := buildListResolver(t, &fakeBuildListResolver{list: buildListWithEnv()})
+	acq := &fakeStdlibAcquirer{err: context.DeadlineExceeded}
+	r = r.WithStdlibAcquirer(acq, false)
+	target := coord("example.com/project", domain2.LocalVersion)
+
+	g, err := r.ResolveProject(context.Background(), target, nil, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false, false)
+	if err != nil {
+		t.Fatalf("ResolveProject should tolerate acquirer failure: %v", err)
+	}
+	node := stdlibNode(t, g)
+	if node.Stdlib != nil {
+		t.Errorf("expected bare stdlib node on acquirer error, got %+v", node.Stdlib)
+	}
+	if node.Digests != (domain2.ArtifactDigests{}) {
+		t.Errorf("expected no digests on acquirer error, got %+v", node.Digests)
+	}
+}
+
 // TestResolveProject_Stdlib_FromGoModOverride verifies the opt-in override pins
 // the stdlib node to the go.mod directive instead of the toolchain.
 func TestResolveProject_Stdlib_FromGoModOverride(t *testing.T) {
@@ -70,7 +141,7 @@ func TestResolveProject_Stdlib_FromGoModOverride(t *testing.T) {
 	target := coord("example.com/project", domain2.LocalVersion)
 
 	goMod := []byte("module example.com/project\n\ngo 1.21\n\ntoolchain go1.24.2\n")
-	g, err := r.ResolveProject(context.Background(), target, goMod, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, true)
+	g, err := r.ResolveProject(context.Background(), target, goMod, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, true, false)
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
@@ -88,7 +159,7 @@ func TestResolveProject_BuildEnvCaptured(t *testing.T) {
 	r, _ := buildListResolver(t, &fakeBuildListResolver{list: buildListWithEnv()})
 	target := coord("example.com/project", domain2.LocalVersion)
 
-	g, err := r.ResolveProject(context.Background(), target, nil, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false)
+	g, err := r.ResolveProject(context.Background(), target, nil, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false, false)
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
@@ -107,7 +178,7 @@ func TestResolveProject_Stdlib_NoVersion(t *testing.T) {
 
 	// go.mod with no go/toolchain directive, and a build list with no GoVersion.
 	goMod := []byte("module example.com/project\n")
-	g, err := r.ResolveProject(context.Background(), target, goMod, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false)
+	g, err := r.ResolveProject(context.Background(), target, goMod, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false, false)
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}

@@ -1372,7 +1372,7 @@ replace example.com/dep => ../local/dep
 `
 
 	r := newResolver(fetcher, blobs)
-	g, err := r.ResolveProject(context.Background(), coord("example.com/project", domain2.LocalVersion), []byte(mainGoMod), "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false)
+	g, err := r.ResolveProject(context.Background(), coord("example.com/project", domain2.LocalVersion), []byte(mainGoMod), "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false, false)
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
@@ -1439,7 +1439,7 @@ require example.com/dep/one v1.2.3
 	target := coord("example.com/project", domain2.LocalVersion)
 
 	r := newResolver(fetcher, blobs)
-	g, err := r.ResolveProject(context.Background(), target, mainGoMod, "", domain3.DefaultDepthPolicy().FetchStage(), nil, false)
+	g, err := r.ResolveProject(context.Background(), target, mainGoMod, "", domain3.DefaultDepthPolicy().FetchStage(), nil, false, false)
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
@@ -1495,7 +1495,7 @@ func TestResolveProject_UnparseableGoModErrors(t *testing.T) {
 	target := coord("example.com/project", domain2.LocalVersion)
 
 	r := newResolver(fetcher, blobs)
-	_, err := r.ResolveProject(context.Background(), target, []byte("this is not a go.mod"), "", domain3.DefaultDepthPolicy().FetchStage(), nil, false)
+	_, err := r.ResolveProject(context.Background(), target, []byte("this is not a go.mod"), "", domain3.DefaultDepthPolicy().FetchStage(), nil, false, false)
 	if err == nil {
 		t.Fatalf("ResolveProject: expected error for malformed go.mod, got nil")
 	}

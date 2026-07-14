@@ -74,7 +74,7 @@ func TestResolveProject_BuildList_NodeMapping(t *testing.T) {
 	r, _ := buildListResolver(t, &fakeBuildListResolver{list: sampleBuildList()})
 	target := coord("example.com/project", domain2.LocalVersion)
 
-	g, err := r.ResolveProject(context.Background(), target, nil, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false)
+	g, err := r.ResolveProject(context.Background(), target, nil, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false, false)
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestResolveProject_BuildList_Edges(t *testing.T) {
 	r, _ := buildListResolver(t, &fakeBuildListResolver{list: sampleBuildList()})
 	target := coord("example.com/project", domain2.LocalVersion)
 
-	g, err := r.ResolveProject(context.Background(), target, nil, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false)
+	g, err := r.ResolveProject(context.Background(), target, nil, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false, false)
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
@@ -177,7 +177,7 @@ func TestResolveProject_BuildList_FetchFailureIsPartial(t *testing.T) {
 	r, _ := buildListResolver(t, bl)
 	target := coord("example.com/project", domain2.LocalVersion)
 
-	g, err := r.ResolveProject(context.Background(), target, nil, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false)
+	g, err := r.ResolveProject(context.Background(), target, nil, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false, false)
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
@@ -207,7 +207,7 @@ func TestResolveProject_BuildList_Deterministic(t *testing.T) {
 
 	run := func() domain3.Graph {
 		r, _ := buildListResolver(t, &fakeBuildListResolver{list: sampleBuildList()})
-		g, err := r.ResolveProject(context.Background(), target, nil, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false)
+		g, err := r.ResolveProject(context.Background(), target, nil, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false, false)
 		if err != nil {
 			t.Fatalf("ResolveProject: %v", err)
 		}
@@ -236,7 +236,7 @@ func TestResolveProject_BuildList_FallbackOnToolchainError(t *testing.T) {
 	target := coord("example.com/project", domain2.LocalVersion)
 
 	mainGoMod := []byte("module example.com/project\n\ngo 1.21\n\nrequire example.com/dep v1.0.0\n")
-	g, err := r.ResolveProject(context.Background(), target, mainGoMod, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false)
+	g, err := r.ResolveProject(context.Background(), target, mainGoMod, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false, false)
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
@@ -297,7 +297,7 @@ func TestResolveProject_ToolScope_RestrictsToToolClosure(t *testing.T) {
 	// The caller (CLI) resolves the tool scope's module set via the toolchain;
 	// here it is the tool directive's closure.
 	toolSet := []string{"example.com/tool", "example.com/toolsub", "example.com/shared"}
-	g, err := r.ResolveProject(context.Background(), target, goMod, "/proj", domain3.DefaultDepthPolicy().FetchStage(), toolSet, false)
+	g, err := r.ResolveProject(context.Background(), target, goMod, "/proj", domain3.DefaultDepthPolicy().FetchStage(), toolSet, false, false)
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
@@ -329,7 +329,7 @@ func TestResolveProject_ProductionScope_KeepsWholeBuildList(t *testing.T) {
 	target := coord("example.com/project", domain2.LocalVersion)
 
 	goMod := []byte("module example.com/project\n\ngo 1.24\n\ntool example.com/tool/cmd/lint\n")
-	g, err := r.ResolveProject(context.Background(), target, goMod, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false)
+	g, err := r.ResolveProject(context.Background(), target, goMod, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false, false)
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
@@ -366,7 +366,7 @@ func TestResolveProject_NoBuildListResolver_NoCaveat(t *testing.T) {
 	target := coord("example.com/project", domain2.LocalVersion)
 	mainGoMod := []byte("module example.com/project\n\ngo 1.21\n\nrequire example.com/dep v1.0.0\n")
 
-	g, err := r.ResolveProject(context.Background(), target, mainGoMod, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false)
+	g, err := r.ResolveProject(context.Background(), target, mainGoMod, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false, false)
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}

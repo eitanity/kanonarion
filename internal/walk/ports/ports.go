@@ -53,6 +53,21 @@ type ModuleFetcher interface {
 	EnsureFetched(ctx context.Context, coord domain.ModuleCoordinate) (ModuleFetchResult, error)
 }
 
+// StdlibAcquirer establishes the standard library's chain of custody: it
+// acquires and verifies the canonical Go source tarball for a toolchain version
+// and returns the facts (digests, verification status, licence, VCS anchor) the
+// resolver attaches to the synthetic stdlib node. It abstracts the stdlib
+// bounded context so the walk application layer does not depend on it directly;
+// a nil acquirer (offline / --from-modcache) simply leaves the node bare.
+type StdlibAcquirer interface {
+	// AcquireStdlib returns the chain-of-custody facts for the standard library
+	// at goVersion (any toolchain form). force re-acquires past the cache;
+	// skipVCS skips the googlesource commit anchor. The digests are returned
+	// separately so the resolver can set them on the node alongside every other
+	// node's digests, uniform with the module SBOM hash path.
+	AcquireStdlib(ctx context.Context, goVersion string, force, skipVCS bool) (domain2.StdlibFacts, domain.ArtifactDigests, error)
+}
+
 // ProgressReporter receives walk fetch-phase progress so a long, otherwise
 // silent run can show proof of life. The walker calls Advance once per distinct
 // module as it is fetched (cache hits included), passing the running total. The

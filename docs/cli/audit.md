@@ -43,6 +43,18 @@ For each module in the scope, `audit` emits a single line containing:
   un-analysable merely because its isolated build would select a version the
   project never uses.
 
+The scope always includes the **Go standard library** as a first-class row
+(`stdlib@vX.Y.Z`), so standard-library advisories are audited alongside module
+dependencies. Its **Verification** column reports the toolchain-specific chain of
+custody — `VerifiedGoDevChecksum` when the canonical `go{VERSION}.src.tar.gz`
+acquired from `go.dev/dl` matched Go's published checksum — which is deliberately
+distinct from the module sumdb statuses (it is a published checksum plus a
+`go.googlesource.com/go` tag/commit, never a `go.sum` entry). Its **License** is
+`BSD-3-Clause` extracted from the tarball's `LICENSE` file. On a fully offline
+run (`--from-modcache`) the chain cannot be established and the row reads
+`(custody unavailable)`. See [SBOM standard-library chain of
+custody](sbom.md#standard-library-chain-of-custody) for the full evidence set.
+
 The scope is an **import closure**, not a `require`-line listing: the `code`
 scope is every module the project's packages (and their tests) actually import,
 so indirect modules that are genuinely used are included and `require` entries
