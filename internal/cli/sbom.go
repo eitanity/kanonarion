@@ -68,7 +68,7 @@ func newSBOMCmd(stdout, stderr io.Writer) *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&scanRunID, "scan", "", "include vulnerabilities from this scan run ID")
-	cmd.Flags().StringVar(&format, "format", "cyclonedx-1.5", "SBOM format (cyclonedx-1.5)")
+	cmd.Flags().StringVar(&format, "format", "cyclonedx-1.6", "SBOM format (cyclonedx-1.6)")
 	cmd.Flags().StringVar(&output, "output", "", "write SBOM content to this file (default: stdout)")
 	cmd.Flags().BoolVar(&force, "force", false, "re-generate even if cached")
 	cmd.Flags().StringVar(&operator, "operator", "", "operator identifier (defaults to $USER)")

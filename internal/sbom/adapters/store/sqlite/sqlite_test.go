@@ -27,7 +27,7 @@ func makeRecord(id, walkID string, scanRunID *string) domain.SBOMRecord {
 		Ecosystem:       domain.EcosystemGo,
 		WalkID:          walkID,
 		WalkScanRunID:   scanRunID,
-		Format:          domain.CycloneDX15,
+		Format:          domain.CycloneDX16,
 		Content:         []byte(`{"bomFormat":"CycloneDX"}`),
 		ContentHash:     "abc123",
 		GeneratedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
@@ -148,7 +148,7 @@ func TestFindSBOMRecordNilScanRun(t *testing.T) {
 		t.Fatalf("PutSBOMRecord: %v", err)
 	}
 
-	found, ok, err := s.FindSBOMRecord(t.Context(), "walk-001", nil, domain.CycloneDX15, "0.3.0")
+	found, ok, err := s.FindSBOMRecord(t.Context(), "walk-001", nil, domain.CycloneDX16, "0.3.0")
 	if err != nil {
 		t.Fatalf("FindSBOMRecord: %v", err)
 	}
@@ -168,7 +168,7 @@ func TestFindSBOMRecordWithScanRun(t *testing.T) {
 		t.Fatalf("PutSBOMRecord: %v", err)
 	}
 
-	found, ok, err := s.FindSBOMRecord(t.Context(), "walk-001", &scanRunID, domain.CycloneDX15, "0.3.0")
+	found, ok, err := s.FindSBOMRecord(t.Context(), "walk-001", &scanRunID, domain.CycloneDX16, "0.3.0")
 	if err != nil {
 		t.Fatalf("FindSBOMRecord: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestFindSBOMRecordWithScanRun(t *testing.T) {
 func TestFindSBOMRecordMiss(t *testing.T) {
 	s := openTestStore(t)
 
-	_, ok, err := s.FindSBOMRecord(t.Context(), "walk-999", nil, domain.CycloneDX15, "0.3.0")
+	_, ok, err := s.FindSBOMRecord(t.Context(), "walk-999", nil, domain.CycloneDX16, "0.3.0")
 	if err != nil {
 		t.Fatalf("FindSBOMRecord: %v", err)
 	}

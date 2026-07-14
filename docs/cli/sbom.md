@@ -1,13 +1,29 @@
 # SBOM Commands
 
 Generate and inspect Software Bills of Materials (SBOMs) for walks.
-SBOMs are produced in CycloneDX 1.5 JSON format and are deterministic:
+SBOMs are produced in CycloneDX 1.6 JSON format and are deterministic:
 the same walk and scan inputs always produce byte-identical output.
 
 > **Go-only scope.** kanonarion analyses Go modules exclusively. Every
 > component in an emitted SBOM uses a `pkg:golang/…` Package URL, and
 > each component's `properties` block includes `kanonarion:ecosystem = go`
 > so that consumers do not have to infer the ecosystem from the module path.
+
+### Document structure
+
+The emitted document validates against the CycloneDX **1.6** JSON schema and,
+in addition to the flat component list, carries:
+
+- **A `dependencies` graph.** Every component (plus the root `metadata.component`)
+  gets an entry, with `dependsOn` populated from the resolved module graph and
+  ordered deterministically. Leaf components carry an empty relationship.
+- **Per-component artefact hashes.** Each fetched library component carries
+  `SHA-256`, `SHA-384` and `SHA-512` `hashes`, computed from the module zip bytes
+  at download time (the same bytes the `h1` dirhash is taken over — the SBOM never
+  recomputes them). The superseded MD5 and SHA-1 algorithms are never emitted.
+  Components that are **not** fetched artefacts carry no hashes: the local main
+  component (the SBOM subject) and — for now — the synthetic `stdlib` node. A
+  missing hash block is never an error.
 
 ---
 
@@ -35,7 +51,7 @@ re-run when `--force` is passed.
 |---|---|---|
 | `--store-root` | `~/.kanonarion` | Path to fact store root (or `KANONARION_STORE` env var) |
 | `--scan <id>` | _(none)_ | Include vulnerabilities from this scan run ID |
-| `--format` | `cyclonedx-1.5` | SBOM format |
+| `--format` | `cyclonedx-1.6` | SBOM format |
 | `--output <path>` | _(stdout)_ | Write SBOM content to a file |
 | `--force` | `false` | Re-generate even if a cached SBOM exists |
 | `--operator` | _(empty)_ | Identity of the operator requesting generation |

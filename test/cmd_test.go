@@ -156,7 +156,7 @@ func cmdSeedWalk(args []string) {
 			Ecosystem:          fetchdomain.EcosystemGo,
 			ModulePath:         node.Coordinate.Path,
 			ModuleVersion:      node.Coordinate.Version,
-			PipelineVersion:    "0.3.0", // Use latest pipeline version
+			PipelineVersion:    fetchapp.PipelineVersion, // track the live fetch pipeline version
 			ContentLocation:    string(zipHandle),
 			GoModLocation:      string(modHandle),
 			ModuleHash:         zipHash,

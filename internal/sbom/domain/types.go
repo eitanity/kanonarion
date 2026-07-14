@@ -23,8 +23,8 @@ var ErrNonGoComponent = errors.New("non-Go component: purl must start with pkg:g
 type SBOMFormat string
 
 const (
-	// CycloneDX15 is CycloneDX JSON version 1.5.
-	CycloneDX15 SBOMFormat = "cyclonedx-1.5"
+	// CycloneDX16 is CycloneDX JSON version 1.6.
+	CycloneDX16 SBOMFormat = "cyclonedx-1.6"
 )
 
 // SBOMRecord is the aggregate root for a generated SBOM.

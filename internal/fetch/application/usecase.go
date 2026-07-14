@@ -22,7 +22,7 @@ import (
 // PipelineVersion identifies this release of the fetch pipeline. Bump this
 // constant whenever any stage logic changes to ensure old cached records are
 // not confused with new ones.
-const PipelineVersion = "0.3.0"
+const PipelineVersion = "0.4.0"
 
 // FetchModuleUseCase orchestrates fetching, verification, and persistence of
 // a single Go module at a pinned version.
@@ -238,6 +238,7 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 		Coordinate:         req.Coordinate,
 		ModuleHash:         dl.ZipHash,
 		GoModHash:          dl.GoModHash,
+		Digests:            dl.Digests,
 		GitReference:       gitRef,
 		VerificationStatus: verStatus,
 		VerificationDetail: verDetail,

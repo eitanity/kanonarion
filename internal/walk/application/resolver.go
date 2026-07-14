@@ -62,7 +62,12 @@ import (
 // SBOM; the build environment states the platform the resolved module set is
 // valid for. Both change the graph structure, so cached 1.5.0 walks are
 // re-resolved rather than served without the stdlib node or platform.
-const PipelineVersion = "1.6.0"
+//
+// 1.7.0: each fetched node carries the module zip's raw SHA-256/384/512 digests
+// (from the fetch fact record) so the SBOM can emit per-component <hashes>. The
+// node shape changed, so cached 1.6.0 walks are re-resolved rather than served
+// without digests.
+const PipelineVersion = "1.7.0"
 
 // GraphResolver resolves the transitive dependency graph for a target module.
 // It is safe for concurrent use once constructed.
@@ -419,6 +424,7 @@ func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target domain2
 			node.ErrorDetail = err.Error()
 		} else {
 			node.Retracted = results[i].record.Retracted
+			st.recordDigests(t.coord.Path, domain2.RecordDigests(results[i].record))
 		}
 		st.nodes[t.coord.Path] = node
 	}
@@ -460,6 +466,7 @@ func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target domain2
 	for _, node := range st.nodes {
 		g.Nodes = append(g.Nodes, node)
 	}
+	g.Nodes = st.applyDigests(g.Nodes)
 	g.Edges = st.edges
 	g.Sort()
 
@@ -750,6 +757,7 @@ func (r *GraphResolver) resolveFromParsed(
 	for _, node := range st.nodes {
 		g.Nodes = append(g.Nodes, node)
 	}
+	g.Nodes = st.applyDigests(g.Nodes)
 	g.Edges = st.edges
 	g.Sort()
 
@@ -824,6 +832,7 @@ func (r *GraphResolver) ResolveShallow(ctx context.Context, target domain2.Modul
 	for _, node := range st.nodes {
 		g.Nodes = append(g.Nodes, node)
 	}
+	g.Nodes = st.applyDigests(g.Nodes)
 	g.Edges = st.edges
 	g.Sort()
 
@@ -1050,6 +1059,7 @@ func (r *GraphResolver) applyFetchParse(ctx context.Context, out fetchParseOutco
 		Retracted:          out.record.Retracted,
 		OriginalCoordinate: existing.OriginalCoordinate,
 	}
+	st.recordDigests(coord.Path, domain2.RecordDigests(out.record))
 
 	if out.extractErr != nil {
 		r.logger.WarnContext(ctx, "walk.gomod.extract.failed",
@@ -1334,6 +1344,36 @@ type resolveState struct {
 	partial         bool
 	partialReason   string
 	hasLocalReplace bool
+	// digests holds the raw artefact digests for each fetched module, keyed by
+	// module path (matching the nodes map key). Collected as fetch results are
+	// folded in and applied to nodes when the graph is drained, decoupling the
+	// digest carry from the many node-rebuild sites.
+	digests map[string]domain2.ArtifactDigests
+}
+
+// recordDigests stores the artefact digests from a fetched module's fact record,
+// keyed by path, when they are present. Lazily allocates the map.
+func (s *resolveState) recordDigests(path string, d domain2.ArtifactDigests) {
+	if d.IsZero() {
+		return
+	}
+	if s.digests == nil {
+		s.digests = map[string]domain2.ArtifactDigests{}
+	}
+	s.digests[path] = d
+}
+
+// applyDigests sets node.Digests for every node from the collected fetch
+// results, returning the enriched slice. Nodes with no recorded digests (the
+// local main module, the stdlib node, fetch failures) are left with the zero
+// value so the SBOM omits their <hashes>.
+func (s *resolveState) applyDigests(nodes []domain3.GraphNode) []domain3.GraphNode {
+	for i := range nodes {
+		if d, ok := s.digests[nodes[i].Coordinate.Path]; ok {
+			nodes[i].Digests = d
+		}
+	}
+	return nodes
 }
 
 // parsedRequires is the cached parse outcome needed to expand a module's

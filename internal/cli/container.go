@@ -402,7 +402,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	diffScanRunsUC := vulnapp.NewDiffScanRunsUseCase(vulnStore)
 
 	// ---- sbom use cases ----
-	const sbomPipelineVersion = "0.3.0"
+	const sbomPipelineVersion = "0.4.0"
 	generateSBOMUC := sbomapp.NewGenerateSBOMUseCase(
 		walkStore, licStore, vulnStore, sbomStore,
 		sbomcdx.New(sbomPipelineVersion),

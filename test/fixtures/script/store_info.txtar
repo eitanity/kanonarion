@@ -9,7 +9,7 @@ kanonarion extract list
 
 # store info now reports the schema state.
 kanonarion store info
-stdout 'binary expects: v44'
+stdout 'binary expects: v45'
 stdout 'status:'
 
 # JSON output contains the required fields.

@@ -91,6 +91,10 @@ type ModuleDownload struct {
 	ZipHash           domain2.ModuleHash
 	GoModHash         domain2.ModuleHash
 	InsecureTransport bool
+	// Digests are the raw SHA-256/384/512 hashes of the zip bytes, computed by
+	// the adapter from the same bytes as ZipHash. They are carried into the SBOM
+	// as the component's <hashes>; the SBOM never recomputes them.
+	Digests domain2.ArtifactDigests
 }
 
 // VCSClient performs git operations on source repositories.

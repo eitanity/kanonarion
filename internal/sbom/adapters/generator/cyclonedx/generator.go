@@ -1,4 +1,4 @@
-// Package cyclonedx implements ports.SBOMGenerator producing CycloneDX 1.5 JSON.
+// Package cyclonedx implements ports.SBOMGenerator producing CycloneDX 1.6 JSON.
 // Output is deterministic: identical inputs always produce byte-identical documents.
 package cyclonedx
 
@@ -9,6 +9,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
+	"sort"
 	"strings"
 	"time"
 
@@ -28,7 +29,7 @@ const (
 	timestampFormat = time.RFC3339
 )
 
-// Generator produces CycloneDX 1.5 JSON SBOMs.
+// Generator produces CycloneDX 1.6 JSON SBOMs.
 type Generator struct {
 	pipelineVersion string
 }
@@ -74,7 +75,7 @@ func (g *Generator) Generate(
 		Ecosystem:          domain.EcosystemGo,
 		WalkID:             walk.ID,
 		WalkScanRunID:      req.WalkScanRunID,
-		Format:             domain.CycloneDX15,
+		Format:             domain.CycloneDX16,
 		Content:            content,
 		ContentHash:        contentHash,
 		GeneratedAt:        deterministicTimestamp(walk, licenses),
@@ -93,8 +94,8 @@ func (g *Generator) buildBOM(
 ) (*cdx.BOM, bool, error) {
 	bom := &cdx.BOM{
 		BOMFormat:    "CycloneDX",
-		SpecVersion:  cdx.SpecVersion1_5,
-		JSONSchema:   "http://cyclonedx.org/schema/bom-1.5.schema.json",
+		SpecVersion:  cdx.SpecVersion1_6,
+		JSONSchema:   "http://cyclonedx.org/schema/bom-1.6.schema.json",
 		Version:      1,
 		SerialNumber: "urn:uuid:" + deterministicUUID(walk.ID, req.WalkScanRunID, req.PipelineVersion),
 	}
@@ -120,11 +121,16 @@ func (g *Generator) buildBOM(
 	if props := buildEnvProperties(walk.Graph.BuildEnv); props != nil {
 		bom.Metadata.Properties = props
 	}
-	// Record the build environment the graph was resolved for. GOOS/GOARCH gate
-	// build-constraint file selection, so the component set is only valid for this
-	// platform; a consumer must know it to reproduce or trust the SBOM.
-	if props := buildEnvProperties(walk.Graph.BuildEnv); props != nil {
-		bom.Metadata.Properties = props
+
+	// Artefact digests are carried on the graph nodes (from the fetch fact
+	// record), keyed here by component identity so the assembled components can
+	// emit their <hashes>. Nodes without digests (local main, stdlib, legacy or
+	// failed fetches) simply have no entry and emit no hashes.
+	digestsByRef := make(map[domain.ModuleRef]fetchdomain.ArtifactDigests, len(walk.Graph.Nodes))
+	for _, node := range walk.Graph.Nodes {
+		if !node.Digests.IsZero() {
+			digestsByRef[moduleRef(node.Coordinate)] = node.Digests
+		}
 	}
 
 	// Components — assembly policy (inclusion, license attach, ordering,
@@ -155,13 +161,19 @@ func (g *Generator) buildBOM(
 	assembled, licensesIncomplete := domain.AssembleComponents(inputs)
 	components := make([]cdx.Component, 0, len(assembled))
 	for _, c := range assembled {
-		comp := buildComponent(c.Module, c.License, c.Copyright, req.PipelineVersion)
+		comp := buildComponent(c.Module, c.License, c.Copyright, req.PipelineVersion, digestsByRef[c.Module])
 		if !strings.HasPrefix(comp.PackageURL, "pkg:"+purlTypeGolang+"/") {
 			return nil, false, fmt.Errorf("%w: %q", domain.ErrNonGoComponent, comp.PackageURL)
 		}
 		components = append(components, comp)
 	}
 	bom.Components = &components
+
+	// Dependency graph — an entry per component with the root at the metadata
+	// component. Edges come from the resolved walk graph (From → To), already
+	// deterministic. bom-refs are the component purls.
+	deps := buildDependencies(components, bom.Metadata.Component, walk.Graph)
+	bom.Dependencies = &deps
 
 	// Vulnerabilities — dedup/aggregation policy lives in sbom/domain.
 	if len(vulnerabilities) > 0 {
@@ -190,7 +202,10 @@ func moduleRef(coord fetchdomain.ModuleCoordinate) domain.ModuleRef {
 }
 
 // buildComponent maps an assembled domain Component to a CycloneDX Component.
-func buildComponent(mod domain.ModuleRef, spdx, copyright, pipelineVersion string) cdx.Component {
+// digests, when present, are emitted as the component's <hashes>; a zero value
+// (local main, legacy or failed fetch) yields no hashes rather than fabricated
+// ones.
+func buildComponent(mod domain.ModuleRef, spdx, copyright, pipelineVersion string, digests fetchdomain.ArtifactDigests) cdx.Component {
 	if mod.Path == walkdomain.StdlibModulePath {
 		return buildStdlibComponent(mod, spdx, pipelineVersion)
 	}
@@ -217,6 +232,9 @@ func buildComponent(mod domain.ModuleRef, spdx, copyright, pipelineVersion strin
 		},
 	}
 
+	if hashes := digestHashes(digests); hashes != nil {
+		comp.Hashes = hashes
+	}
 	if spdx != "" {
 		choice := cdx.LicenseChoice{}
 		if isSPDXExpression(spdx) {
@@ -231,6 +249,78 @@ func buildComponent(mod domain.ModuleRef, spdx, copyright, pipelineVersion strin
 	}
 
 	return comp
+}
+
+// digestHashes renders artefact digests as CycloneDX hashes in fixed algorithm
+// order (SHA-256, SHA-384, SHA-512). Only the recommended SHA-2 family is
+// emitted — never MD5 or SHA-1. Returns nil when no digests are present so the
+// caller omits the <hashes> block entirely.
+func digestHashes(d fetchdomain.ArtifactDigests) *[]cdx.Hash {
+	if d.IsZero() {
+		return nil
+	}
+	var hashes []cdx.Hash
+	if d.SHA256 != "" {
+		hashes = append(hashes, cdx.Hash{Algorithm: cdx.HashAlgoSHA256, Value: d.SHA256})
+	}
+	if d.SHA384 != "" {
+		hashes = append(hashes, cdx.Hash{Algorithm: cdx.HashAlgoSHA384, Value: d.SHA384})
+	}
+	if d.SHA512 != "" {
+		hashes = append(hashes, cdx.Hash{Algorithm: cdx.HashAlgoSHA512, Value: d.SHA512})
+	}
+	if len(hashes) == 0 {
+		return nil
+	}
+	return &hashes
+}
+
+// buildDependencies emits a CycloneDX dependencies array: one entry per
+// component plus the metadata (root) component, with dependsOn populated from
+// the resolved graph edges. Every entry carries a (possibly empty) dependsOn —
+// an allowed CDX pattern — and entries are sorted by ref for determinism. The
+// root's edges are those leaving the walk target coordinate, which may differ
+// from the metadata component's own bom-ref when a version override is applied.
+func buildDependencies(components []cdx.Component, root *cdx.Component, graph walkdomain.Graph) []cdx.Dependency {
+	adjacency := make(map[string]map[string]struct{})
+	for _, e := range graph.Edges {
+		from := modulePURL(moduleRef(e.From))
+		to := modulePURL(moduleRef(e.To))
+		if adjacency[from] == nil {
+			adjacency[from] = make(map[string]struct{})
+		}
+		adjacency[from][to] = struct{}{}
+	}
+	dependsOn := func(adjKey string) *[]string {
+		on := make([]string, 0, len(adjacency[adjKey]))
+		for ref := range adjacency[adjKey] {
+			on = append(on, ref)
+		}
+		sort.Strings(on)
+		return &on
+	}
+
+	deps := make([]cdx.Dependency, 0, len(components)+1)
+	seen := make(map[string]struct{}, len(components)+1)
+	add := func(ref, adjKey string) {
+		if ref == "" {
+			return
+		}
+		if _, dup := seen[ref]; dup {
+			return
+		}
+		seen[ref] = struct{}{}
+		deps = append(deps, cdx.Dependency{Ref: ref, Dependencies: dependsOn(adjKey)})
+	}
+
+	if root != nil {
+		add(root.BOMRef, modulePURL(moduleRef(graph.Target)))
+	}
+	for _, c := range components {
+		add(c.BOMRef, c.BOMRef)
+	}
+	sort.Slice(deps, func(i, j int) bool { return deps[i].Ref < deps[j].Ref })
+	return deps
 }
 
 // stdlibLicenseSPDX is the SPDX identifier for the Go standard library. The Go
@@ -349,7 +439,9 @@ func moduleComponent(
 	if spdx == "" {
 		spdx = opts.licenseSPDX
 	}
-	comp := buildComponent(ref, spdx, copyrightString(lic), pipelineVersion)
+	// The metadata (root) component is the compiled subject, not a fetched
+	// artefact, so it carries no zip digests.
+	comp := buildComponent(ref, spdx, copyrightString(lic), pipelineVersion, fetchdomain.ArtifactDigests{})
 	if opts.isApplication {
 		comp.Type = cdx.ComponentTypeApplication
 	}
@@ -495,7 +587,7 @@ func marshalBOM(bom *cdx.BOM) ([]byte, error) {
 	var buf bytes.Buffer
 	enc := cdx.NewBOMEncoder(&buf, cdx.BOMFileFormatJSON)
 	enc.SetPretty(true)
-	if err := enc.EncodeVersion(bom, cdx.SpecVersion1_5); err != nil {
+	if err := enc.EncodeVersion(bom, cdx.SpecVersion1_6); err != nil {
 		return nil, fmt.Errorf("encoding cyclonedx bom: %w", err)
 	}
 

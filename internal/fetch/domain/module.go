@@ -91,6 +91,12 @@ type FetchedModule struct {
 	// GoModHash is the h1 hash of the go.mod file, as reported by the proxy.
 	GoModHash ModuleHash
 
+	// Digests are the raw SHA-256/384/512 hashes of the module zip bytes,
+	// computed at download from the same bytes as ModuleHash. They become the
+	// SBOM component's <hashes>. Zero value when the artefact was not downloaded
+	// (e.g. a local source).
+	Digests ArtifactDigests
+
 	// GitReference is the resolved git provenance. May be zero-value when
 	// VerificationStatus is UnverifiedMissingOrigin.
 	GitReference GitReference

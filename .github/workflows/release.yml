@@ -195,7 +195,7 @@ jobs:
               --stdlib-from-gomod \
               --main-version "${VERSION}" \
               --main-license Apache-2.0 \
-              --format cyclonedx-1.5 \
+              --format cyclonedx-1.6 \
               --output "dist/kanonarion-${VERSION}-${os}-${arch}.cdx.json"
           done
 

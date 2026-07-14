@@ -34,16 +34,32 @@ func TestGoldenByteLock(t *testing.T) {
 	target := mc("github.com/example/app", "v1.2.0")
 	depA := mc("github.com/example/aaa", "v0.4.0")
 	depB := mc("github.com/example/zzz", "v2.0.0")
-	nodes := []fetchdomain.ModuleCoordinate{target, depB, depA}
-	gn := make([]walkdomain.GraphNode, len(nodes))
-	for i, c := range nodes {
-		gn[i] = walkdomain.GraphNode{Coordinate: c, DirectDependency: i == 0, ResolutionSource: walkdomain.ResolutionTarget}
+	dig := func(seed string) fetchdomain.ArtifactDigests {
+		return fetchdomain.ArtifactDigests{
+			SHA256: seed + "256",
+			SHA384: seed + "384",
+			SHA512: seed + "512",
+		}
+	}
+	gn := []walkdomain.GraphNode{
+		// Target carries no digests (a subject/root component emits no <hashes>);
+		// the two deps carry digests so the fixture locks the <hashes> block.
+		{Coordinate: target, DirectDependency: true, ResolutionSource: walkdomain.ResolutionTarget},
+		{Coordinate: depB, ResolutionSource: walkdomain.ResolutionMVS, Digests: dig("zzz")},
+		{Coordinate: depA, ResolutionSource: walkdomain.ResolutionMVS, Digests: dig("aaa")},
 	}
 	walk := walkdomain.WalkRecord{
 		ID: "walk-golden-001",
 		Graph: walkdomain.Graph{
-			Target:     target,
-			Nodes:      gn,
+			Target: target,
+			Nodes:  gn,
+			// Directed edges: target → both deps, and aaa → zzz. Locks the
+			// dependencies array (root entry, per-component entries, dependsOn).
+			Edges: []walkdomain.GraphEdge{
+				{From: target, To: depA},
+				{From: target, To: depB},
+				{From: depA, To: depB},
+			},
 			ResolvedAt: time.Date(2026, 3, 2, 10, 0, 0, 0, time.UTC),
 		},
 	}
@@ -66,10 +82,17 @@ func TestGoldenByteLock(t *testing.T) {
 	}
 	gen := cyclonedx.New("0.3.0-test")
 	rec, err := gen.Generate(t.Context(), walk, licenses, vulns, ports.GenerateRequest{
-		WalkScanRunID: &scan, Format: domain.CycloneDX15, PipelineVersion: "0.3.0-test", Operator: "golden",
+		WalkScanRunID: &scan, Format: domain.CycloneDX16, PipelineVersion: "0.3.0-test", Operator: "golden",
 	})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
+	}
+
+	if os.Getenv("UPDATE_GOLDEN") == "1" {
+		if werr := os.WriteFile("testdata/golden_sbom.json", rec.Content, 0o600); werr != nil {
+			t.Fatalf("writing golden: %v", werr)
+		}
+		t.Log("golden file updated")
 	}
 
 	want, err := os.ReadFile("testdata/golden_sbom.json")

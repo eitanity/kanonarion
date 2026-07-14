@@ -1,5 +1,5 @@
 {
-  "$schema": "http://cyclonedx.org/schema/bom-1.5.schema.json",
+  "$schema": "http://cyclonedx.org/schema/bom-1.6.schema.json",
   "bomFormat": "CycloneDX",
   "components": [
     {
@@ -12,6 +12,20 @@
         {
           "type": "distribution",
           "url": "https://proxy.golang.org/github.com/example/aaa/@v/v0.4.0.zip"
+        }
+      ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "aaa256"
+        },
+        {
+          "alg": "SHA-384",
+          "content": "aaa384"
+        },
+        {
+          "alg": "SHA-512",
+          "content": "aaa512"
         }
       ],
       "name": "github.com/example/aaa",
@@ -75,6 +89,20 @@
           "url": "https://proxy.golang.org/github.com/example/zzz/@v/v2.0.0.zip"
         }
       ],
+      "hashes": [
+        {
+          "alg": "SHA-256",
+          "content": "zzz256"
+        },
+        {
+          "alg": "SHA-384",
+          "content": "zzz384"
+        },
+        {
+          "alg": "SHA-512",
+          "content": "zzz512"
+        }
+      ],
       "name": "github.com/example/zzz",
       "properties": [
         {
@@ -89,6 +117,24 @@
       "purl": "pkg:golang/github.com/example/zzz@v2.0.0",
       "type": "library",
       "version": "v2.0.0"
+    }
+  ],
+  "dependencies": [
+    {
+      "dependsOn": [
+        "pkg:golang/github.com/example/zzz@v2.0.0"
+      ],
+      "ref": "pkg:golang/github.com/example/aaa@v0.4.0"
+    },
+    {
+      "dependsOn": [
+        "pkg:golang/github.com/example/aaa@v0.4.0",
+        "pkg:golang/github.com/example/zzz@v2.0.0"
+      ],
+      "ref": "pkg:golang/github.com/example/app@v1.2.0"
+    },
+    {
+      "ref": "pkg:golang/github.com/example/zzz@v2.0.0"
     }
   ],
   "metadata": {
@@ -138,7 +184,7 @@
     }
   },
   "serialNumber": "urn:uuid:70864a8d-7abf-fbd7-c0a3-f1c60a1cbebb",
-  "specVersion": "1.5",
+  "specVersion": "1.6",
   "version": 1,
   "vulnerabilities": [
     {

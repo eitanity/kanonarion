@@ -142,6 +142,7 @@ func (uc *FetchModuleUseCase) executeModcache(ctx context.Context, req FetchRequ
 		Coordinate:         req.Coordinate,
 		ModuleHash:         dl.ZipHash,
 		GoModHash:          dl.GoModHash,
+		Digests:            dl.Digests,
 		VerificationStatus: domain2.VerifiedBySumDBOnly,
 		VerificationDetail: "verified against local go.sum (modcache mode); VCS cross-verification skipped",
 		FetchedAt:          uc.clock.Now().UTC(),

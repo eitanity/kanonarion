@@ -160,7 +160,7 @@ All query commands support `--json` for machine-readable output, making them eas
 - **Call graph.** Intra-module call graph for impact analysis and reachability queries.
 - **Usage examples.** Verified code snippets extracted from module test files, so the agent codes against patterns that actually work.
 - **Policy gates.** Walk-traversal rules in YAML - max depth, and whether replace directives and indirect requirements are followed - validated with `policy validate`.
-- **SBOM generation.** CycloneDX-compatible software bill of materials from any walk. The Go standard library is a first-class component; `--stdlib-from-gomod` pins its version to the `go.mod` directive for reproducible release artifacts.
+- **SBOM generation.** CycloneDX 1.6 software bill of materials from any walk, with a full dependency graph and per-component `SHA-256/384/512` artefact hashes computed at download. The Go standard library is a first-class component; `--stdlib-from-gomod` pins its version to the `go.mod` directive for reproducible release artifacts.
 - **Auditable evidence chain.** Every fetch, every verification, every policy decision is recorded in an append-only `audit.jsonl`. Reproducible, time-stamped evidence of what kanonarion did and when - useful for CI investigation, compliance reporting, or understanding why a build failed.
 
 ---

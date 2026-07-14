@@ -88,6 +88,12 @@ type canonicalWalkNode struct {
 	OriginalCoordinate *canonicalWalkCoord `json:"original_coordinate,omitempty"`
 	ResolutionSource   string              `json:"resolution_source"`
 	Retracted          bool                `json:"retracted"`
+	// Raw artefact digests. omitempty so nodes without digests (the local main
+	// module, the synthetic stdlib node, legacy pre-digest records) hash
+	// identically to before; when present they are covered by the walk hash.
+	ZipSHA256 string `json:"zip_sha256,omitempty"`
+	ZipSHA384 string `json:"zip_sha384,omitempty"`
+	ZipSHA512 string `json:"zip_sha512,omitempty"`
 }
 
 type canonicalWalkEdge struct {
@@ -267,6 +273,9 @@ func canonicalWalkNodes(nodes []GraphNode) []canonicalWalkNode {
 			LocalPath:        n.LocalPath,
 			ResolutionSource: string(n.ResolutionSource),
 			Retracted:        n.Retracted,
+			ZipSHA256:        n.Digests.SHA256,
+			ZipSHA384:        n.Digests.SHA384,
+			ZipSHA512:        n.Digests.SHA512,
 		}
 		if n.OriginalCoordinate.Path != "" || n.OriginalCoordinate.Version != "" {
 			c := toCanonicalCoord(n.OriginalCoordinate)
@@ -383,6 +392,11 @@ func (WalkRecordHasher) Unmarshal(data []byte) (WalkRecord, error) {
 			ErrorDetail:      n.ErrorDetail,
 			Retracted:        n.Retracted,
 			LocalPath:        n.LocalPath,
+			Digests: domain2.ArtifactDigests{
+				SHA256: n.ZipSHA256,
+				SHA384: n.ZipSHA384,
+				SHA512: n.ZipSHA512,
+			},
 		}
 		if n.OriginalCoordinate != nil {
 			oc, oerr := domain2.NewModuleCoordinate(n.OriginalCoordinate.Path, n.OriginalCoordinate.Version)
