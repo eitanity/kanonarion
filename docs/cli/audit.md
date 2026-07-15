@@ -55,6 +55,18 @@ run (`--from-modcache`) the chain cannot be established and the row reads
 `(custody unavailable)`. See [SBOM standard-library chain of
 custody](sbom.md#standard-library-chain-of-custody) for the full evidence set.
 
+Its **Vulnerability** column is **call-graph-analysed against the build
+toolchain**, not resolved from advisory metadata by coordinate: the same
+project-rooted `govulncheck` run that analyses the dependency graph also reasons
+over standard-library symbols, so a surfaced stdlib finding carries a populated
+`Reachable` verdict and `AffectedSymbols` exactly as a module finding does. A
+standard-library advisory that affects the pinned toolchain version but whose
+vulnerable symbols are **not reached** from the project therefore reads `Clean`,
+consistent with how an unreachable advisory in a fetched module is reported —
+reachability is decided by the call graph, not by whether the enclosing symbol is
+linked into the binary. Query a specific verdict with `kanonarion reachability
+stdlib@vX.Y.Z --vuln <id>`.
+
 The scope is an **import closure**, not a `require`-line listing: the `code`
 scope is every module the project's packages (and their tests) actually import,
 so indirect modules that are genuinely used are included and `require` entries
