@@ -211,7 +211,7 @@ jobs:
           fi
 
       # Attestations run BEFORE signing so the kanonarion_* glob resolves to
-      # binaries only (no .sig/.pem present yet).
+      # binaries only (no .sigstore.json bundles present yet).
       - name: Attest build provenance
         uses: actions/attest-build-provenance@0f67c3f4856b2e3261c31976d6725780e5e4c373 # v4.1.1
         with:
@@ -220,43 +220,43 @@ jobs:
       # One SBOM attestation per binary: each binary's SBOM describes that
       # binary's own GOOS/GOARCH import closure (see the per-target Self-SBOM
       # step), so binding one SBOM to all binaries would misattribute the
-      # dependency set. actions/attest-sbom is a `uses:` action and cannot loop,
+      # dependency set. actions/attest is a `uses:` action and cannot loop,
       # so there is one step per target. The target list here MUST stay in sync
       # with the build and Self-SBOM loops above; a target added there without a
       # matching attestation ships an un-attested SBOM. Windows subjects carry
       # the .exe suffix to match the built binary name.
       - name: Attest SBOM (darwin/amd64)
-        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
         with:
           subject-path: dist/kanonarion_darwin_amd64
           sbom-path: dist/kanonarion-${{ github.ref_name }}-darwin-amd64.cdx.json
       - name: Attest SBOM (darwin/arm64)
-        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
         with:
           subject-path: dist/kanonarion_darwin_arm64
           sbom-path: dist/kanonarion-${{ github.ref_name }}-darwin-arm64.cdx.json
       - name: Attest SBOM (windows/amd64)
-        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
         with:
           subject-path: dist/kanonarion_windows_amd64.exe
           sbom-path: dist/kanonarion-${{ github.ref_name }}-windows-amd64.cdx.json
       - name: Attest SBOM (windows/arm64)
-        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
         with:
           subject-path: dist/kanonarion_windows_arm64.exe
           sbom-path: dist/kanonarion-${{ github.ref_name }}-windows-arm64.cdx.json
       - name: Attest SBOM (linux/amd64)
-        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
         with:
           subject-path: dist/kanonarion_linux_amd64
           sbom-path: dist/kanonarion-${{ github.ref_name }}-linux-amd64.cdx.json
       - name: Attest SBOM (linux/arm64)
-        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
         with:
           subject-path: dist/kanonarion_linux_arm64
           sbom-path: dist/kanonarion-${{ github.ref_name }}-linux-arm64.cdx.json
       - name: Attest SBOM (linux/arm)
-        uses: actions/attest-sbom@c604332985a26aa8cf1bdc465b92731239ec6b9e # v4.1.0
+        uses: actions/attest@a1948c3f048ba23858d222213b7c278aabede763 # v4.1.1
         with:
           subject-path: dist/kanonarion_linux_arm
           sbom-path: dist/kanonarion-${{ github.ref_name }}-linux-arm.cdx.json
@@ -268,15 +268,18 @@ jobs:
         run: |
           set -euo pipefail
           cd dist
-          # Sign each per-target SBOM so its cosign .sig/.pem sidecars can be
+          # Sign each per-target SBOM so its cosign Sigstore bundle can be
           # bundled into the SBOM zip below. Keyless: cosign picks up the ambient
-          # GitHub OIDC token; --yes disables the prompt. Binaries and checksums.txt
-          # are signed later (once the bundle and checksums.txt exist), so the
-          # kanonarion_* glob there still resolves to binaries only.
+          # GitHub OIDC token; --yes disables the prompt. cosign 3.x defaults to
+          # the new bundle format, so signature+certificate are written to a single
+          # .sigstore.json bundle via --bundle (the old --output-signature/
+          # --output-certificate sidecar flags are deprecated and ignored under
+          # that format). Binaries and checksums.txt are signed later (once the
+          # bundle and checksums.txt exist), so the kanonarion_* glob there still
+          # resolves to binaries only.
           for f in kanonarion-${VERSION}-*.cdx.json; do
             cosign sign-blob --yes \
-              --output-signature "${f}.sig" \
-              --output-certificate "${f}.pem" \
+              --bundle "${f}.sigstore.json" \
               "$f"
           done
 
@@ -284,19 +287,17 @@ jobs:
         run: |
           set -euo pipefail
           cd dist
-          # Collapse the 7 per-target SBOMs and their cosign .sig/.pem sidecars into
-          # a single release asset to declutter the release page. -j flattens (store
-          # bare filenames, no dir paths). The loose family files are then removed so
-          # the zip REPLACES them on the release rather than adding to them; the SBOM
-          # attestations (already published to the attestation store) and the
-          # binaries are untouched.
+          # Collapse the 7 per-target SBOMs and their cosign .sigstore.json bundles
+          # into a single release asset to declutter the release page. -j flattens
+          # (store bare filenames, no dir paths). The loose family files are then
+          # removed so the zip REPLACES them on the release rather than adding to
+          # them; the SBOM attestations (already published to the attestation store)
+          # and the binaries are untouched.
           zip -j "kanonarion-sboms-${VERSION}.zip" \
             kanonarion-${VERSION}-*.cdx.json \
-            kanonarion-${VERSION}-*.cdx.json.sig \
-            kanonarion-${VERSION}-*.cdx.json.pem
+            kanonarion-${VERSION}-*.cdx.json.sigstore.json
           rm kanonarion-${VERSION}-*.cdx.json \
-             kanonarion-${VERSION}-*.cdx.json.sig \
-             kanonarion-${VERSION}-*.cdx.json.pem
+             kanonarion-${VERSION}-*.cdx.json.sigstore.json
 
       - name: Checksums
         run: |
@@ -314,15 +315,15 @@ jobs:
         run: |
           set -euo pipefail
           cd dist
-          # Sign each binary and the checksums file. The cdx.json sidecars are now
+          # Sign each binary and the checksums file. The cdx.json SBOMs are now
           # inside the SBOM zip and removed from dist, so kanonarion_* resolves to
-          # binaries only here. The SBOM zip itself is not signed: its members are
-          # individually signed within it, and the zip is covered by the signed
-          # checksums.txt.
+          # binaries only here. Each signature+certificate is written to a single
+          # .sigstore.json bundle (cosign 3.x new bundle format; see the Sign SBOMs
+          # step). The SBOM zip itself is not signed: its members are individually
+          # signed within it, and the zip is covered by the signed checksums.txt.
           for f in kanonarion_* checksums.txt; do
             cosign sign-blob --yes \
-              --output-signature "${f}.sig" \
-              --output-certificate "${f}.pem" \
+              --bundle "${f}.sigstore.json" \
               "$f"
           done
 
