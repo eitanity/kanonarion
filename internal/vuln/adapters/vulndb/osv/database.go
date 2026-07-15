@@ -349,6 +349,77 @@ func (d *Database) CheckVulnerable(ctx context.Context, modules []fetchdomain.Mo
 	return res, nil
 }
 
+// advisoryAffects reports whether coord's version falls within the affected
+// SEMVER ranges of the advisory block matching coord's module path. Unlike the
+// coarse index/modules.json fixed-version field — which collapses an advisory's
+// per-branch backports to a single (highest) fixed version — this evaluates the
+// full affected[].ranges introduced/fixed event list, so a version patched on an
+// older branch (below the highest fix) is correctly cleared instead of
+// over-reported. When no affected block matches the module path, or a matched
+// block carries no comparable SEMVER range, it stays conservative and reports
+// true so a known-affected module is never silently dropped.
+func advisoryAffects(coord fetchdomain.ModuleCoordinate, adv *osvAdvisory) bool {
+	matched := false
+	for _, a := range adv.Affected {
+		if a.Package.Name != coord.Path {
+			continue
+		}
+		matched = true
+		if versionInAffectedRanges(coord.Version, a.Ranges) {
+			return true
+		}
+	}
+	// No block names this module path: the advisory cannot refine the coarse
+	// index verdict, so keep it (conservative — never drop a known-affected hit).
+	return !matched
+}
+
+// versionInAffectedRanges reports whether version lies within any affected
+// interval described by the OSV SEMVER ranges. An unparseable version, or a set
+// of ranges with no comparable SEMVER entry, is treated as affected so the
+// precise check never turns a coarse-index hit into a false clear.
+func versionInAffectedRanges(version string, ranges []osvRange) bool {
+	v := vPrefix(version)
+	if !semver.IsValid(v) {
+		return true
+	}
+	sawSemver := false
+	for _, r := range ranges {
+		if r.Type != "" && r.Type != "SEMVER" {
+			continue // only SEMVER ranges are version-comparable
+		}
+		sawSemver = true
+		if semverRangeContains(v, r.Events) {
+			return true
+		}
+	}
+	return !sawSemver
+}
+
+// semverRangeContains walks a range's flat introduced/fixed event list as a
+// sequence of half-open intervals [introduced, fixed) and reports whether v
+// falls in any of them. A trailing introduced with no matching fixed is an
+// open-ended interval [introduced, +inf). The special introduced "0" is the
+// zero version, so it opens an interval with no lower bound. v is expected
+// v-prefixed and valid.
+func semverRangeContains(v string, events []osvEvent) bool {
+	open := false  // inside an interval awaiting its fixed bound
+	lowOK := false // v is at or above the current interval's lower bound
+	for _, ev := range events {
+		switch {
+		case ev.Introduced != "":
+			open = true
+			lowOK = ev.Introduced == "0" || semver.Compare(v, vPrefix(ev.Introduced)) >= 0
+		case ev.Fixed != "":
+			if open && lowOK && semver.Compare(v, vPrefix(ev.Fixed)) < 0 {
+				return true
+			}
+			open = false
+		}
+	}
+	return open && lowOK
+}
+
 // isAffectedVersion reports whether version is affected by a vulnerability
 // whose minimum fixed version is fixed. An empty fixed means no patch exists
 // yet (all versions affected). semver.Compare requires 'v' prefix; we
@@ -435,17 +506,34 @@ func (d *Database) LookupFindings(ctx context.Context, coord fetchdomain.ModuleC
 
 	var findings []domain.VulnerabilityFinding
 	for _, e := range entries {
+		// Coarse pre-filter: the index fixed version is the advisory's single
+		// highest fix, so it only ever over-includes (a version below any real
+		// fix). It never wrongly excludes, making it a safe cheap skip before the
+		// per-advisory fetch.
 		if !isAffectedVersion(coord.Version, e.fixed) {
 			continue
 		}
 		finding := domain.VulnerabilityFinding{ID: e.id, FixedIn: normaliseFixed(e.fixed)}
 		adv, err := d.fetchAdvisory(ctx, e.id)
 		if err != nil {
+			// Enrichment failed: we cannot refine against the full ranges, so keep
+			// the conservative coarse-index verdict rather than dropping a
+			// known-affected hit. The finding degrades to its bare ID + index fix.
 			d.logger.Warn("vuln metadata: advisory enrichment failed",
 				"advisory", e.id, "coordinate", coord, "error", err)
-		} else {
-			enrichFinding(&finding, coord.Path, adv)
+			findings = append(findings, finding)
+			continue
 		}
+		// Precise multi-range match: index/modules.json collapses per-branch
+		// backports to one highest fixed, over-reporting a version patched on an
+		// older branch (KN-411). Re-evaluate against the advisory's full affected
+		// range set and drop the finding when this version is truly not affected.
+		if !advisoryAffects(coord, adv) {
+			d.logger.Debug("vuln metadata: version cleared by full-range match",
+				"advisory", e.id, "coordinate", coord)
+			continue
+		}
+		enrichFinding(&finding, coord.Path, adv)
 		findings = append(findings, finding)
 	}
 	domain.SortFindings(findings)
