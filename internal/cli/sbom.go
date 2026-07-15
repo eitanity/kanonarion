@@ -30,6 +30,7 @@ func newSBOMCmd(stdout, stderr io.Writer) *cobra.Command {
 	var stdlibFromGoMod bool
 	var mainVersion string
 	var mainLicense string
+	var fromModcache string
 
 	cmd := &cobra.Command{
 		Use:   "sbom [<walk-id>]",
@@ -48,6 +49,15 @@ func newSBOMCmd(stdout, stderr io.Writer) *cobra.Command {
 			if walkID == "" && packagePattern == "" {
 				return fmt.Errorf("a walk ID argument or --package is required")
 			}
+			if fromModcache != "" {
+				gomodPath, gerr := resolveGoModPath("")
+				if gerr != nil {
+					return fmt.Errorf("--from-modcache: locating go.mod: %w", gerr)
+				}
+				if merr := resolveModcacheMode(fromModcache, gomodPath); merr != nil {
+					return merr
+				}
+			}
 			var scanRunPtr *string
 			if scanRunID != "" {
 				scanRunPtr = &scanRunID
@@ -58,7 +68,7 @@ func newSBOMCmd(stdout, stderr io.Writer) *cobra.Command {
 	}
 
 	cmd.Flags().StringVar(&scanRunID, "scan", "", "include vulnerabilities from this scan run ID")
-	cmd.Flags().StringVar(&format, "format", "cyclonedx-1.5", "SBOM format (cyclonedx-1.5)")
+	cmd.Flags().StringVar(&format, "format", "cyclonedx-1.6", "SBOM format (cyclonedx-1.6)")
 	cmd.Flags().StringVar(&output, "output", "", "write SBOM content to this file (default: stdout)")
 	cmd.Flags().BoolVar(&force, "force", false, "re-generate even if cached")
 	cmd.Flags().StringVar(&operator, "operator", "", "operator identifier (defaults to $USER)")
@@ -67,6 +77,7 @@ func newSBOMCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&mainVersion, "main-version", "", "version to stamp on the SBOM subject (metadata.component) instead of the synthetic \"local\"; use a release tag (e.g. v0.1.1) so the subject is a resolvable coordinate")
 	cmd.Flags().StringVar(&mainLicense, "main-license", "", "SPDX id/expression (e.g. Apache-2.0) to attach to the SBOM subject, which has no fetched licence record of its own")
 	registerStdlibFromGoModFlag(cmd, &stdlibFromGoMod)
+	registerFromModcacheFlag(cmd, &fromModcache)
 	return cmd
 }
 
@@ -114,6 +125,14 @@ func runSBOMGenerate(
 	logger *slog.Logger,
 	stdout, stderr io.Writer,
 ) error {
+	// --package builds (or reuses) a project walk, so a local go.sum can anchor
+	// each fetched module's integrity on the normal path (KN-404). Resolve it
+	// before the container so the fetch use case is wired with the verifier.
+	if packagePattern != "" {
+		if gomodPath, gerr := resolveGoModPath(""); gerr == nil {
+			resolveProjectGoSum(gomodPath)
+		}
+	}
 	ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
@@ -365,6 +384,26 @@ func ensureProjectWalkForSBOM(ctx context.Context, ctr *Container, force, stdlib
 	_, _ = fmt.Fprintf(stderr, "==> sbom: building project walk for %s\n", modulePath)
 	if werr := runWalkProject(ctx, gomodPath, commonWalkFlags{}, force, true, 0, "", "", false, scopeCode, walkdomain.WalkDepthFull, "", false, stdlibFromGoMod, progress, ctr.ExecuteWalk, io.Discard, stderr); werr != nil {
 		return "", fmt.Errorf("building project walk: %w", werr)
+	}
+
+	// A go.sum verification failure surfaces as a fetch-failed node. Fail the
+	// SBOM rather than emitting one that silently omits the unverifiable module:
+	// --from-modcache mode fails on any such node (go.sum is the sole anchor),
+	// and the normal network path fails on a go.sum-mismatch node (KN-404).
+	localCoord := fetchdomain.ModuleCoordinate{Path: modulePath, Version: fetchdomain.LocalVersion}
+	walkID, werr := latestProjectWalkByScope(ctx, ctr.QueryWalks, modulePath, walkdomain.WalkScopeCode)
+	if werr != nil {
+		return "", werr
+	}
+	walkRec, werr := ctr.QueryWalks.GetWalk(ctx, walkID)
+	if werr != nil {
+		return "", fmt.Errorf("loading project walk %s: %w", walkID, werr)
+	}
+	if gateErr := modcacheWalkGate(walkRec, localCoord); gateErr != nil {
+		return "", gateErr
+	}
+	if gateErr := goSumWalkGate(walkRec, localCoord); gateErr != nil {
+		return "", gateErr
 	}
 
 	return extractLicencesForProjectWalk(ctx, ctr.QueryWalks, ctr.Extract, modulePath, force, stderr)

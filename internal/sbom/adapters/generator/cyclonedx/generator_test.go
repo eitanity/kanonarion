@@ -54,7 +54,7 @@ func makeWalk(t *testing.T, nodes []fetchdomain.ModuleCoordinate) walkdomain.Wal
 func makeGenReq(scanRunID *string) ports.GenerateRequest {
 	return ports.GenerateRequest{
 		WalkScanRunID:   scanRunID,
-		Format:          domain.CycloneDX15,
+		Format:          domain.CycloneDX16,
 		PipelineVersion: testPipelineVersion,
 		Operator:        "test",
 	}
@@ -220,7 +220,7 @@ func TestWithLicenseComplete(t *testing.T) {
 	}
 }
 
-// TestValidCycloneDXStructure verifies the output has required CycloneDX 1.5 top-level fields.
+// TestValidCycloneDXStructure verifies the output has required CycloneDX 1.6 top-level fields.
 func TestValidCycloneDXStructure(t *testing.T) {
 	coord := mustCoord(t, "github.com/example/foo", "v1.0.0")
 	walk := makeWalk(t, []fetchdomain.ModuleCoordinate{coord})
@@ -244,8 +244,8 @@ func TestValidCycloneDXStructure(t *testing.T) {
 	if bom["bomFormat"] != "CycloneDX" {
 		t.Errorf("bomFormat = %q, want CycloneDX", bom["bomFormat"])
 	}
-	if bom["specVersion"] != "1.5" {
-		t.Errorf("specVersion = %q, want 1.5", bom["specVersion"])
+	if bom["specVersion"] != "1.6" {
+		t.Errorf("specVersion = %q, want 1.6", bom["specVersion"])
 	}
 }
 

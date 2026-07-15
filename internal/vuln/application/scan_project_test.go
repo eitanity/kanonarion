@@ -197,6 +197,160 @@ func TestScanWalk_ProjectRooted_GenuineFaultSurfaces(t *testing.T) {
 	}
 }
 
+// stdlibProjectFixture wires a project walk whose graph carries the synthetic
+// standard-library node alongside a root and one dependency, so a test can drive
+// the project-rooted path and inspect the verdict derived for stdlib.
+type stdlibProjectFixture struct {
+	walkUC    *application.ScanWalkUseCase
+	scanner   *fakeScanner
+	vulnStore *fakeVulnStore
+	std       fetchdomain.ModuleCoordinate
+	walkID    string
+}
+
+func newStdlibProjectFixture(t *testing.T, scanner *fakeScanner) stdlibProjectFixture {
+	t.Helper()
+	ctx := t.Context()
+	now := time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)
+	walkID := "walk-stdlib"
+
+	root := fetchdomain.ModuleCoordinate{Path: "github.com/example/proj", Version: fetchdomain.LocalVersion}
+	dep := fetchdomain.ModuleCoordinate{Path: "gopkg.in/yaml.v3", Version: "v3.0.1"}
+	// The stdlib node carries a concrete toolchain version; the grouped parse
+	// attributes its findings to the version-less {stdlib, ""} key.
+	std := fetchdomain.ModuleCoordinate{Path: domain.StdlibModulePath, Version: "v1.26.4"}
+
+	walk := walkdomain.WalkRecord{
+		ID:     walkID,
+		Target: root,
+		Graph: walkdomain.Graph{
+			Target: root,
+			Nodes: []walkdomain.GraphNode{
+				{Coordinate: root, ResolutionSource: walkdomain.ResolutionLocalMainModule},
+				{Coordinate: dep, DirectDependency: true, ResolutionSource: walkdomain.ResolutionMVS},
+				{Coordinate: std, DirectDependency: true, ResolutionSource: walkdomain.ResolutionStdlib},
+			},
+		},
+	}
+
+	walkStore := newFakeWalkStore()
+	if err := walkStore.PutWalk(ctx, walk); err != nil {
+		t.Fatalf("PutWalk: %v", err)
+	}
+
+	facts := newFakeFacts()
+	blobs := newFakeBlob()
+	vulnStore := newFakeVulnStore()
+	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1"}}
+	clock := fixedClock{t: now}
+
+	// Root and dep need a fetch record; stdlib is never fetched.
+	for _, c := range []fetchdomain.ModuleCoordinate{root, dep} {
+		h, _ := blobs.Put(ctx, strings.NewReader("zip-"+c.Path))
+		if err := facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
+			ModulePath: c.Path, ModuleVersion: c.Version, PipelineVersion: "v1", ContentLocation: string(h),
+		}); err != nil {
+			t.Fatalf("PutFetchRecord %s: %v", c, err)
+		}
+	}
+
+	moduleUC := application.NewScanModuleUseCase(
+		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+	)
+	walkUC := application.NewScanWalkUseCase(
+		walkStore, vulnStore, moduleUC, nil, clock, "v1", slog.Default(),
+	)
+
+	return stdlibProjectFixture{walkUC: walkUC, scanner: scanner, vulnStore: vulnStore, std: std, walkID: walkID}
+}
+
+// TestScanWalk_ProjectRooted_StdlibCarriesReachability asserts that
+// a stdlib advisory reached from the project's call graph is attributed to the
+// synthetic stdlib node carrying Reachable and AffectedSymbols — call-graph
+// analysed against the build toolchain, not reachability-independent metadata.
+func TestScanWalk_ProjectRooted_StdlibCarriesReachability(t *testing.T) {
+	ctx := t.Context()
+	scanner := &fakeScanner{}
+	f := newStdlibProjectFixture(t, scanner)
+
+	// The project-rooted scan reaches a stdlib symbol; the grouped parse files it
+	// under the version-less {stdlib, ""} key with reachability populated.
+	scanner.projectFindings = map[fetchdomain.ModuleCoordinate][]domain.VulnerabilityFinding{
+		{Path: domain.StdlibModulePath}: {{
+			ID:              "GO-2026-4970",
+			Summary:         "Root escape via symlink in os",
+			AffectedSymbols: []string{"Root.Lstat"},
+			Reachable:       &domain.ReachabilityResult{IsReachable: true, Confidence: domain.ConfidenceHigh},
+		}},
+	}
+
+	run, err := f.walkUC.Scan(ctx, application.ScanWalkParams{WalkID: f.walkID, Operator: "tester", ProjectDir: "/fake/project"})
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+
+	if scanner.scanCalls != 0 {
+		t.Errorf("stdlib must never be built in isolation, got %d isolated scans", scanner.scanCalls)
+	}
+	if run.OverallStatus != domain.WalkStatusAffected {
+		t.Errorf("overall status = %s, want Affected", run.OverallStatus)
+	}
+
+	rec, ok, err := f.vulnStore.GetLatestVulnerabilityRecordForWalk(ctx, f.std, "v1", f.walkID)
+	if err != nil || !ok {
+		t.Fatalf("stdlib record missing: ok=%v err=%v", ok, err)
+	}
+	if rec.OverallStatus != domain.StatusAffected {
+		t.Fatalf("stdlib status = %s, want Affected", rec.OverallStatus)
+	}
+	if len(rec.Findings) != 1 {
+		t.Fatalf("stdlib findings = %d, want 1", len(rec.Findings))
+	}
+	got := rec.Findings[0]
+	if got.Reachable == nil {
+		t.Fatalf("stdlib finding has nil Reachable; want a populated reachability verdict, not metadata-only")
+	}
+	if !got.Reachable.IsReachable {
+		t.Errorf("stdlib finding IsReachable = false, want true")
+	}
+	if len(got.AffectedSymbols) == 0 {
+		t.Errorf("stdlib finding has no AffectedSymbols; want the reached symbol recorded")
+	}
+}
+
+// TestScanWalk_ProjectRooted_StdlibUnreachableIsClean verifies that when the
+// project reaches no stdlib symbol, the stdlib node reads Clean — analysed and
+// not reachable — consistent with how a fetched module with no reachable finding
+// is reported, rather than surfacing every toolchain advisory as Affected.
+func TestScanWalk_ProjectRooted_StdlibUnreachableIsClean(t *testing.T) {
+	ctx := t.Context()
+	scanner := &fakeScanner{}
+	f := newStdlibProjectFixture(t, scanner)
+
+	// A dependency has a reachable finding, but nothing in stdlib is reached.
+	scanner.projectFindings = map[fetchdomain.ModuleCoordinate][]domain.VulnerabilityFinding{
+		{Path: "gopkg.in/yaml.v3", Version: "v3.0.1"}: {{
+			ID:        "GO-2024-0001",
+			Reachable: &domain.ReachabilityResult{IsReachable: true, Confidence: domain.ConfidenceHigh},
+		}},
+	}
+
+	if _, err := f.walkUC.Scan(ctx, application.ScanWalkParams{WalkID: f.walkID, Operator: "tester", ProjectDir: "/fake/project"}); err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+
+	rec, ok, err := f.vulnStore.GetLatestVulnerabilityRecordForWalk(ctx, f.std, "v1", f.walkID)
+	if err != nil || !ok {
+		t.Fatalf("stdlib record missing: ok=%v err=%v", ok, err)
+	}
+	if rec.OverallStatus != domain.StatusClean {
+		t.Errorf("stdlib status = %s, want Clean when no stdlib symbol is reached", rec.OverallStatus)
+	}
+	if len(rec.Findings) != 0 {
+		t.Errorf("stdlib findings = %d, want 0 when unreachable", len(rec.Findings))
+	}
+}
+
 func assertModuleStatus(t *testing.T, ctx context.Context, vs *fakeVulnStore, walkID string, coord fetchdomain.ModuleCoordinate, want domain.VulnerabilityStatus) {
 	t.Helper()
 	rec, ok, err := vs.GetLatestVulnerabilityRecordForWalk(ctx, coord, "v1", walkID)

@@ -176,6 +176,17 @@ type GraphNode struct {
 	// LocalPath is the filesystem target of a local-path replace directive.
 	// Non-empty only when ResolutionSource is ResolutionLocalReplace.
 	LocalPath string
+	// Digests are the raw SHA-256/384/512 hashes of the module zip (or, for the
+	// stdlib node, the source tarball), carried from the fetch fact record or the
+	// stdlib acquirer so the SBOM can emit component <hashes>. Zero value for the
+	// local main module and nodes that could not be fetched — the SBOM omits
+	// <hashes> rather than fabricating.
+	Digests fetchdomain.ArtifactDigests
+	// Stdlib is the standard library's chain-of-custody evidence, set only on the
+	// synthetic stdlib node (ResolutionStdlib) when acquisition succeeded. Nil on
+	// every other node, and nil on a stdlib node whose facts could not be
+	// acquired (an offline run) — a best-effort coverage gap, not an error.
+	Stdlib *StdlibFacts
 }
 
 // GraphEdge is a directed dependency relationship between two modules.

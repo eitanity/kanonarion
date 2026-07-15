@@ -31,6 +31,7 @@ type auditFlags struct {
 	project         bool
 	skipVCSVerify   bool
 	stdlibFromGoMod bool
+	fromModcache    string
 }
 
 func newAuditCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -72,6 +73,7 @@ project's own build dependencies (the code your packages import, incl. tests);
 	cmd.Flags().BoolVar(&f.project, "project", false, "scope to the complete set: the project's code AND tooling")
 	cmd.Flags().BoolVar(&f.skipVCSVerify, "skip-vcs-verify", false, "skip git cross-verification; sumdb verification still runs")
 	registerStdlibFromGoModFlag(cmd, &f.stdlibFromGoMod)
+	registerFromModcacheFlag(cmd, &f.fromModcache)
 
 	return cmd
 }
@@ -122,6 +124,13 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	}
 	f.gomodPath = gomodPath
 
+	if err := resolveModcacheMode(f.fromModcache, gomodPath); err != nil {
+		return err
+	}
+	// On the normal network path, layer the project go.sum on as an always-on
+	// offline integrity check (KN-404). No-op in --from-modcache mode.
+	resolveProjectGoSum(gomodPath)
+
 	scope, err := scopeFromFlags(f.tool, f.project)
 	if err != nil {
 		return err
@@ -142,9 +151,15 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	}
 	defer func() { _ = cleanup() }()
 
-	proxy, err := proxyadapter.New(f.goproxy, false)
-	if err != nil {
-		return fmt.Errorf("creating proxy adapter: %w", err)
+	// The staleness column consults the network proxy for each module's latest
+	// version. In --from-modcache mode the run is fully offline, so the proxy is
+	// left nil and staleness is reported as "current".
+	var proxy *proxyadapter.Proxy
+	if !modcacheMode {
+		proxy, err = proxyadapter.New(f.goproxy, false)
+		if err != nil {
+			return fmt.Errorf("creating proxy adapter: %w", err)
+		}
 	}
 
 	results, err := auditScope(ctx, coords, scope, f, proxy, ctr, stderr)
@@ -223,6 +238,18 @@ func auditScope(
 		return nil, fmt.Errorf("loading project walk %s: %w", walkID, gerr)
 	}
 
+	// In --from-modcache mode a module that fails go.sum verification is a hard
+	// error: stop before extract/scan and exit non-zero rather than reporting a
+	// row for it.
+	if gateErr := modcacheWalkGate(rec, localCoord); gateErr != nil {
+		return nil, gateErr
+	}
+	// On the normal path, a local go.sum mismatch is tamper-evidence: fail hard
+	// before extract/scan rather than reporting a row for the tampered module.
+	if gateErr := goSumWalkGate(rec, localCoord); gateErr != nil {
+		return nil, gateErr
+	}
+
 	_, _ = fmt.Fprintf(stderr, "==> audit: extracting licenses for walk %s\n", walkID)
 	ef := extractFlags{stages: []string{"license"}, force: f.force}
 	if eerr := runExtract(ctx, walkID, ef, io.Discard, stderr); eerr != nil {
@@ -245,7 +272,7 @@ func auditScope(
 	depNodes := auditDependencyNodes(rec, localCoord)
 	results := make([]auditModuleResult, 0, len(depNodes))
 	for _, node := range depNodes {
-		res, rerr := buildAuditResult(ctx, node.Coordinate.String(), walkID, string(walkScope), overrides, proxy, ctr)
+		res, rerr := buildAuditResult(ctx, node, walkID, string(walkScope), overrides, proxy, ctr)
 		if rerr != nil {
 			return nil, rerr
 		}
@@ -272,10 +299,19 @@ func auditDependencyNodes(rec walkdomain.WalkRecord, local fetchdomain.ModuleCoo
 	return nodes
 }
 
-func buildAuditResult(ctx context.Context, coordStr, walkID, scope string, overrides licdomain.LicenseOverrideSet, proxy *proxyadapter.Proxy, ctr *Container) (auditModuleResult, error) {
+func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, scope string, overrides licdomain.LicenseOverrideSet, proxy *proxyadapter.Proxy, ctr *Container) (auditModuleResult, error) {
+	coordStr := node.Coordinate.String()
 	coord, err := parseCoordinate(coordStr)
 	if err != nil {
 		return auditModuleResult{}, fmt.Errorf("invalid coordinate %q: %w", coordStr, err)
+	}
+
+	// The standard library is toolchain-provided, not a proxy artefact: it has no
+	// fetch/licence/vuln records to look up and no proxy "latest" to compare
+	// against. Its custody chain (verification status, extracted licence) rides on
+	// the graph node, so it is reported from there rather than the record stores.
+	if node.ResolutionSource == walkdomain.ResolutionStdlib {
+		return buildStdlibAuditResult(ctx, coord, node, scope, walkID, ctr), nil
 	}
 
 	res := auditModuleResult{
@@ -287,11 +323,13 @@ func buildAuditResult(ctx context.Context, coordStr, walkID, scope string, overr
 		IsLatest:      true,
 	}
 
-	if info, lerr := proxy.LatestInfo(ctx, coord.Path); lerr == nil && info.Version != coord.Version {
-		res.IsLatest = false
-		res.LatestVersion = info.Version
-		if !info.Time.IsZero() {
-			res.DaysBehind = int(time.Since(info.Time).Hours() / 24)
+	if proxy != nil {
+		if info, lerr := proxy.LatestInfo(ctx, coord.Path); lerr == nil && info.Version != coord.Version {
+			res.IsLatest = false
+			res.LatestVersion = info.Version
+			if !info.Time.IsZero() {
+				res.DaysBehind = int(time.Since(info.Time).Hours() / 24)
+			}
 		}
 	}
 
@@ -367,6 +405,61 @@ func buildAuditResult(ctx context.Context, coordStr, walkID, scope string, overr
 	}
 
 	return res, nil
+}
+
+// buildStdlibAuditResult reports the standard-library node's custody chain from
+// the facts carried on the graph node: the go.dev/dl verification status and the
+// licence extracted from the source tarball, with the licence policy evaluated
+// against that SPDX. It still consults the vuln store — the stdlib node exists so
+// standard-library advisories are scanned — but skips the fetch/licence record
+// lookups and the proxy staleness check, which do not apply to a toolchain
+// artefact. A nil Stdlib (an offline walk that could not acquire the chain)
+// degrades to "(custody unavailable)" rather than an error.
+func buildStdlibAuditResult(ctx context.Context, coord fetchdomain.ModuleCoordinate, node walkdomain.GraphNode, scope, walkID string, ctr *Container) auditModuleResult {
+	res := auditModuleResult{
+		Coordinate:    coord.String(),
+		Verification:  "(custody unavailable)",
+		License:       "(not run)",
+		LicenseStatus: "(not run)",
+		VulnStatus:    "(not scanned)",
+		IsLatest:      true, // pinned to the build toolchain; no proxy "latest" applies
+	}
+
+	var resolvedSPDX string
+	uncertaintyReason := "no_record"
+	if node.Stdlib != nil {
+		if node.Stdlib.VerificationStatus != "" {
+			res.Verification = node.Stdlib.VerificationStatus
+		}
+		res.LicenseSource = "stdlib-tarball"
+		if node.Stdlib.LicenseSPDX != "" {
+			res.License = node.Stdlib.LicenseSPDX
+			res.LicenseStatus = "Detected"
+			resolvedSPDX = node.Stdlib.LicenseSPDX
+			uncertaintyReason = ""
+		}
+	}
+
+	eval := activeConfig.LicensePolicy.EvaluateLicense(resolvedSPDX, scope)
+	res.LicenseCategory = eval.Category
+	res.PolicyOutcome = string(eval.Outcome)
+	res.LicenseResolved = !eval.Uncertain
+	res.PolicyBlocking = eval.Blocking
+	if eval.Uncertain {
+		res.LicenseUncertainty = uncertaintyReason
+	}
+
+	if vrec, found, verr := ctr.QueryVuln.GetLatestRecordForWalk(ctx, coord, vulnPipelineVersion, walkID); verr == nil && found {
+		res.VulnStatus = string(vrec.OverallStatus)
+		res.VulnFindings = len(vrec.Findings)
+		switch vrec.OverallStatus {
+		case vulndomain.StatusScanFailed:
+			res.VulnReason = vrec.ErrorDetail
+		case vulndomain.StatusUnscannable:
+			res.VulnReason = vrec.UnscannableReason
+		}
+	}
+	return res
 }
 
 // auditBlockingErr returns a non-nil error when any result is a hard

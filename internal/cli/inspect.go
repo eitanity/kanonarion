@@ -229,6 +229,10 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 		}
 	}
 
+	// A project walk has a local go.sum available: layer it on as an always-on
+	// offline integrity check (KN-404).
+	resolveProjectGoSum(f.gomodPath)
+
 	logger := buildLogger(logLevel, stderr)
 	ctr, cleanup, err := NewContainer(storeRoot, f.goproxy, f.goBinary, f.skipVCS, activeConfig, logger)
 	if err != nil {

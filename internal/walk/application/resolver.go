@@ -62,7 +62,19 @@ import (
 // SBOM; the build environment states the platform the resolved module set is
 // valid for. Both change the graph structure, so cached 1.5.0 walks are
 // re-resolved rather than served without the stdlib node or platform.
-const PipelineVersion = "1.6.0"
+//
+// 1.7.0: each fetched node carries the module zip's raw SHA-256/384/512 digests
+// (from the fetch fact record) so the SBOM can emit per-component <hashes>. The
+// node shape changed, so cached 1.6.0 walks are re-resolved rather than served
+// without digests.
+//
+// 1.8.0: the synthetic stdlib node carries a chain of custody (StdlibFacts): the
+// source tarball is acquired from go.dev/dl and verified against Go's published
+// checksum, its SHA-256/384/512 digests and googlesource tag/commit are
+// recorded, and its BSD-3-Clause licence is extracted from the tarball. The node
+// shape changed, so cached 1.7.0 walks are re-resolved rather than served with a
+// bare stdlib node.
+const PipelineVersion = "1.8.0"
 
 // GraphResolver resolves the transitive dependency graph for a target module.
 // It is safe for concurrent use once constructed.
@@ -72,6 +84,8 @@ type GraphResolver struct {
 	blobs           fetchports.BlobStore
 	clock           fetchports.Clock
 	buildList       walkports.BuildListResolver // nil = internal resolver only
+	stdlib          walkports.StdlibAcquirer    // nil = stdlib node carries no custody chain
+	skipVCSVerify   bool                        // skip the stdlib googlesource commit anchor
 	pipelineVersion string
 	workerCount     int // bounded fetch concurrency; ≤0 = defaultWorkerCount
 	logger          *slog.Logger
@@ -107,6 +121,19 @@ func NewGraphResolver(
 func (r *GraphResolver) WithBuildListResolver(bl walkports.BuildListResolver) *GraphResolver {
 	clone := *r
 	clone.buildList = bl
+	return &clone
+}
+
+// WithStdlibAcquirer returns a shallow copy of the resolver with a standard
+// library acquirer attached, so a project walk establishes the stdlib chain of
+// custody and attaches it to the injected stdlib node. skipVCS suppresses the
+// googlesource commit anchor (consistent with the fetcher's --skip-vcs-verify).
+// The original resolver is unmodified, and a subsequent WithFetcher/WithWorkers
+// clone preserves the attached acquirer.
+func (r *GraphResolver) WithStdlibAcquirer(acq walkports.StdlibAcquirer, skipVCS bool) *GraphResolver {
+	clone := *r
+	clone.stdlib = acq
+	clone.skipVCSVerify = skipVCS
 	return &clone
 }
 
@@ -197,7 +224,7 @@ func (r *GraphResolver) Resolve(ctx context.Context, target domain2.ModuleCoordi
 // the set of module paths (the build-list subset the caller computed via the Go
 // toolchain — code or tool scope) to retain, alongside the main anchor. A nil
 // scopeModules keeps the whole build list (the complete scope).
-func (r *GraphResolver) ResolveProject(ctx context.Context, target domain2.ModuleCoordinate, goModBytes []byte, projectDir string, depth domain3.StageDepth, scopeModules []string, stdlibFromGoMod bool) (domain3.Graph, error) {
+func (r *GraphResolver) ResolveProject(ctx context.Context, target domain2.ModuleCoordinate, goModBytes []byte, projectDir string, depth domain3.StageDepth, scopeModules []string, stdlibFromGoMod, force bool) (domain3.Graph, error) {
 	r.logger.InfoContext(ctx, "walk.resolve_project.start",
 		slog.String("module.path", target.Path),
 		slog.String("module.version", target.Version),
@@ -242,7 +269,7 @@ func (r *GraphResolver) ResolveProject(ctx context.Context, target domain2.Modul
 	// scope filtering because the stdlib is a universal build input — every scope
 	// links against it — so it must never be filtered out with the out-of-scope
 	// modules. Skipped silently when no toolchain version can be determined.
-	r.injectStdlib(ctx, &g, target, goModBytes, stdlibFromGoMod)
+	r.injectStdlib(ctx, &g, target, goModBytes, stdlibFromGoMod, force)
 
 	return g, nil
 }
@@ -253,7 +280,7 @@ func (r *GraphResolver) ResolveProject(ctx context.Context, target domain2.Modul
 // set, or no toolchain version was captured, it falls back to the project
 // go.mod's `toolchain`/`go` directive. When neither yields a version the stdlib
 // node is omitted (a best-effort coverage gap, never a fatal error).
-func (r *GraphResolver) injectStdlib(ctx context.Context, g *domain3.Graph, target domain2.ModuleCoordinate, goModBytes []byte, fromGoMod bool) {
+func (r *GraphResolver) injectStdlib(ctx context.Context, g *domain3.Graph, target domain2.ModuleCoordinate, goModBytes []byte, fromGoMod, force bool) {
 	version := g.BuildEnv.GoVersion
 	if fromGoMod || version == "" {
 		if directive := r.goModDirectiveVersion(goModBytes); directive != "" {
@@ -277,6 +304,12 @@ func (r *GraphResolver) injectStdlib(ctx context.Context, g *domain3.Graph, targ
 		}
 	}
 
+	// Establish the chain of custody: acquire and verify the source tarball, then
+	// attach the digests and facts to the node. Best-effort — an acquisition
+	// failure (offline, missing toolchain release) leaves the node present but
+	// bare, never failing the walk.
+	r.acquireStdlibCustody(ctx, &node, version, force)
+
 	g.Nodes = append(g.Nodes, node)
 	g.Edges = append(g.Edges, domain3.GraphEdge{From: target, To: node.Coordinate})
 	g.Sort()
@@ -285,7 +318,29 @@ func (r *GraphResolver) injectStdlib(ctx context.Context, g *domain3.Graph, targ
 		slog.String("module.path", target.Path),
 		slog.String("stdlib.version", node.Coordinate.Version),
 		slog.Bool("from_gomod", fromGoMod),
+		slog.Bool("custody", node.Stdlib != nil),
 	)
+}
+
+// acquireStdlibCustody establishes the standard library's chain of custody via
+// the wired acquirer and sets node.Digests and node.Stdlib in place. It is a
+// no-op when no acquirer is wired (an offline / --from-modcache run). An
+// acquisition error is logged and swallowed — the stdlib node remains a
+// best-effort coverage node rather than a walk failure.
+func (r *GraphResolver) acquireStdlibCustody(ctx context.Context, node *domain3.GraphNode, version string, force bool) {
+	if r.stdlib == nil {
+		return
+	}
+	facts, digests, err := r.stdlib.AcquireStdlib(ctx, version, force, r.skipVCSVerify)
+	if err != nil {
+		r.logger.WarnContext(ctx, "walk.stdlib.custody_unavailable",
+			slog.String("stdlib.version", node.Coordinate.Version),
+			slog.String("error", err.Error()),
+		)
+		return
+	}
+	node.Digests = digests
+	node.Stdlib = &facts
 }
 
 // goModDirectiveVersion returns the project's declared toolchain version from its
@@ -419,6 +474,7 @@ func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target domain2
 			node.ErrorDetail = err.Error()
 		} else {
 			node.Retracted = results[i].record.Retracted
+			st.recordDigests(t.coord.Path, domain2.RecordDigests(results[i].record))
 		}
 		st.nodes[t.coord.Path] = node
 	}
@@ -460,6 +516,7 @@ func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target domain2
 	for _, node := range st.nodes {
 		g.Nodes = append(g.Nodes, node)
 	}
+	g.Nodes = st.applyDigests(g.Nodes)
 	g.Edges = st.edges
 	g.Sort()
 
@@ -750,6 +807,7 @@ func (r *GraphResolver) resolveFromParsed(
 	for _, node := range st.nodes {
 		g.Nodes = append(g.Nodes, node)
 	}
+	g.Nodes = st.applyDigests(g.Nodes)
 	g.Edges = st.edges
 	g.Sort()
 
@@ -824,6 +882,7 @@ func (r *GraphResolver) ResolveShallow(ctx context.Context, target domain2.Modul
 	for _, node := range st.nodes {
 		g.Nodes = append(g.Nodes, node)
 	}
+	g.Nodes = st.applyDigests(g.Nodes)
 	g.Edges = st.edges
 	g.Sort()
 
@@ -1050,6 +1109,7 @@ func (r *GraphResolver) applyFetchParse(ctx context.Context, out fetchParseOutco
 		Retracted:          out.record.Retracted,
 		OriginalCoordinate: existing.OriginalCoordinate,
 	}
+	st.recordDigests(coord.Path, domain2.RecordDigests(out.record))
 
 	if out.extractErr != nil {
 		r.logger.WarnContext(ctx, "walk.gomod.extract.failed",
@@ -1334,6 +1394,36 @@ type resolveState struct {
 	partial         bool
 	partialReason   string
 	hasLocalReplace bool
+	// digests holds the raw artefact digests for each fetched module, keyed by
+	// module path (matching the nodes map key). Collected as fetch results are
+	// folded in and applied to nodes when the graph is drained, decoupling the
+	// digest carry from the many node-rebuild sites.
+	digests map[string]domain2.ArtifactDigests
+}
+
+// recordDigests stores the artefact digests from a fetched module's fact record,
+// keyed by path, when they are present. Lazily allocates the map.
+func (s *resolveState) recordDigests(path string, d domain2.ArtifactDigests) {
+	if d.IsZero() {
+		return
+	}
+	if s.digests == nil {
+		s.digests = map[string]domain2.ArtifactDigests{}
+	}
+	s.digests[path] = d
+}
+
+// applyDigests sets node.Digests for every node from the collected fetch
+// results, returning the enriched slice. Nodes with no recorded digests (the
+// local main module, the stdlib node, fetch failures) are left with the zero
+// value so the SBOM omits their <hashes>.
+func (s *resolveState) applyDigests(nodes []domain3.GraphNode) []domain3.GraphNode {
+	for i := range nodes {
+		if d, ok := s.digests[nodes[i].Coordinate.Path]; ok {
+			nodes[i].Digests = d
+		}
+	}
+	return nodes
 }
 
 // parsedRequires is the cached parse outcome needed to expand a module's

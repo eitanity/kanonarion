@@ -125,6 +125,11 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
 				localReplaceBase = filepath.Dir(gomodPath)
 			}
 
+			// A go.mod (project) walk has a local go.sum available: layer it on as
+			// an always-on offline integrity check (KN-404).
+			if isGoMod {
+				resolveProjectGoSum(gomodPath)
+			}
 			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, f.goproxy, "", skipVCSVerify, activeConfig, logger)
 			if err != nil {

@@ -40,6 +40,13 @@ type canonicalRecord struct {
 	SchemaVersion      string `json:"schema_version"`
 	VerificationDetail string `json:"verification_detail"`
 	VerificationStatus string `json:"verification_status"`
+	// Raw artefact digests. omitempty keeps the canonical bytes — and therefore
+	// the content hash — identical to a pre-digest record when unset, so legacy
+	// records still verify; when present they are covered by the hash and thus
+	// tamper-evident like every other field.
+	ZipSHA256 string `json:"zip_sha256,omitempty"`
+	ZipSHA384 string `json:"zip_sha384,omitempty"`
+	ZipSHA512 string `json:"zip_sha512,omitempty"`
 }
 
 // SetContentHash computes the canonical hash of r (with ContentHash zeroed),
@@ -93,6 +100,9 @@ func marshalCanonical(r FactRecord) ([]byte, error) {
 		SchemaVersion:      r.SchemaVersion,
 		VerificationDetail: r.VerificationDetail,
 		VerificationStatus: r.VerificationStatus,
+		ZipSHA256:          r.ZipSHA256,
+		ZipSHA384:          r.ZipSHA384,
+		ZipSHA512:          r.ZipSHA512,
 	}
 	b, err := json.Marshal(c)
 	if err != nil {
@@ -138,5 +148,8 @@ func (CanonicalHasher) Unmarshal(data []byte) (FactRecord, error) {
 		ContentLocation:    c.ContentLocation,
 		ContentHash:        c.ContentHash,
 		Retracted:          c.Retracted,
+		ZipSHA256:          c.ZipSHA256,
+		ZipSHA384:          c.ZipSHA384,
+		ZipSHA512:          c.ZipSHA512,
 	}, nil
 }

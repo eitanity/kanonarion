@@ -9,16 +9,21 @@ import (
 	"github.com/eitanity/kanonarion/internal/config/domain"
 
 	blobstore "github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
+	mcblobstore "github.com/eitanity/kanonarion/internal/adapters/blobstore/modcache"
 	"github.com/eitanity/kanonarion/internal/adapters/clock"
 	fetchsqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
 	fetchproxy "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
+	mcproxy "github.com/eitanity/kanonarion/internal/adapters/proxy/modcache"
 	noopsigner "github.com/eitanity/kanonarion/internal/adapters/signer/noop"
 	fetchsumdb "github.com/eitanity/kanonarion/internal/adapters/sumdb/gosum"
+	gosumfile "github.com/eitanity/kanonarion/internal/adapters/sumdb/gosumfile"
 	fetchvcs "github.com/eitanity/kanonarion/internal/adapters/vcs/gitexec"
 
 	cganalyser "github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha"
 	cgsqlite "github.com/eitanity/kanonarion/internal/callgraph/adapters/store/sqlite"
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
+
+	"github.com/eitanity/kanonarion/internal/composition"
 
 	dirxmod "github.com/eitanity/kanonarion/internal/directive/adapters/parser/xmod"
 	dirsqlite "github.com/eitanity/kanonarion/internal/directive/adapters/store/sqlite"
@@ -191,19 +196,45 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	clk := clock.System{}
 	stopwatch := clock.Monotonic{}
 	signer := noopsigner.New()
-	blobs := blobstore.New(storeRoot)
-	if n, err := blobs.CleanOrphanedTemps(); err != nil {
+	localBlobs := blobstore.New(storeRoot)
+	if n, err := localBlobs.CleanOrphanedTemps(); err != nil {
 		logger.Warn("failed to clean orphaned blob temp files", "error", err)
 	} else if n > 0 {
 		logger.Debug("cleaned orphaned blob temp files", "count", n)
 	}
-	sumdb := fetchsumdb.New(filepath.Join(storeRoot, "sumdb"))
 	vcs := fetchvcs.New()
 
-	proxyAdapter, err := fetchproxy.New(goproxy, false)
-	if err != nil {
-		_ = dbHandle.Close()
-		return nil, nil, fmt.Errorf("creating proxy adapter: %w", err)
+	// Adapter selection. In the default path the network proxy, the network
+	// checksum-database client, and the content-addressed blob store are wired.
+	// In --from-modcache mode three adapters are swapped for module-cache-backed
+	// equivalents: bytes are read from $GOMODCACHE, verification is against the
+	// local go.sum, and the fetch pipeline records coordinate-derived handles
+	// instead of writing blobs.
+	var (
+		blobs           fetchports.BlobStore = localBlobs
+		sumdb           fetchports.SumDBClient
+		proxyAdapter    fetchports.ModuleProxy
+		modcacheDeriver fetchapp.ModcacheHandleDeriver
+	)
+	if modcacheMode {
+		mcBlobs := mcblobstore.New(modcacheDir, localBlobs)
+		blobs = mcBlobs
+		modcacheDeriver = mcBlobs
+		proxyAdapter = mcproxy.New(modcacheDir, goBinary, filepath.Dir(goSumPath), logger)
+		gsClient, gerr := gosumfile.New(goSumPath)
+		if gerr != nil {
+			_ = dbHandle.Close()
+			return nil, nil, fmt.Errorf("loading go.sum for modcache mode: %w", gerr)
+		}
+		sumdb = gsClient
+	} else {
+		sumdb = fetchsumdb.New(filepath.Join(storeRoot, "sumdb"))
+		dp, perr := fetchproxy.New(goproxy, false)
+		if perr != nil {
+			_ = dbHandle.Close()
+			return nil, nil, fmt.Errorf("creating proxy adapter: %w", perr)
+		}
+		proxyAdapter = dp
 	}
 
 	// ---- factstore (auditing) ----
@@ -229,6 +260,24 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		proxyAdapter, vcs, blobs, factStore,
 		sumdb, clk, stopwatch, "", logger,
 	).WithSigner(signer, factStore)
+	if modcacheDeriver != nil {
+		fetchUC = fetchUC.WithModcache(modcacheDeriver)
+	}
+	// KN-404: on the normal network path, layer the walk root's local go.sum on
+	// as an additional, always-on integrity anchor when one is present. It is a
+	// cheap offline complement to the network checksum database — not a
+	// replacement — so a module whose fetched h1 disagrees with go.sum fails
+	// hard, while an absent entry falls through to network sumdb verification.
+	// In --from-modcache mode go.sum is already the sole anchor (via sumdb), so
+	// this is skipped.
+	if !modcacheMode && projectGoSumPath != "" {
+		gsClient, gerr := gosumfile.New(projectGoSumPath)
+		if gerr != nil {
+			_ = dbHandle.Close()
+			return nil, nil, fmt.Errorf("loading project go.sum for verification: %w", gerr)
+		}
+		fetchUC = fetchUC.WithProjectGoSum(gsClient)
+	}
 	queryFetchUC := fetchapp.NewQueryFetchUseCase(factStore)
 
 	// ---- walk pipeline ----
@@ -237,6 +286,13 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	localFetcher := walklocalfs.New(blobs, factStore, clk)
 	resolver := walkapp.NewGraphResolver(parser, fetcher, blobs, clk, "", logger).
 		WithBuildListResolver(walkbuildlist.New(goBinary, logger))
+	// The stdlib chain of custody needs network access to go.dev/dl and
+	// googlesource. In --from-modcache mode the run is fully offline, so the
+	// acquirer is left unwired and the stdlib node stays a bare coverage node.
+	if !modcacheMode {
+		resolver = resolver.WithStdlibAcquirer(
+			composition.NewStdlibAcquirer(dbHandle, blobs, clk, logger), skipVCSVerify)
+	}
 	walker := walkapp.NewWalker(resolver, fetcher, localFetcher, clk, stopwatch, 0, logger)
 
 	executeWalkUC := walkapp.NewExecuteWalkUseCase(walker, walkStore, "", "", logger).WithAudit(factStore)
@@ -344,12 +400,18 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		vulnfetch.NewFetchModuleAdapter(fetchUC),
 		clk, vulnapp.PipelineVersion, logger,
 	).WithAudit(factStore)
+	if modcacheMode {
+		// --from-modcache: govulncheck reads the caller's existing module cache
+		// directly instead of a blob-store-populated temp cache.
+		walkScannerUC = walkScannerUC.WithRealModcache(modcacheDir)
+		rescanWalkUC = rescanWalkUC.WithRealModcache(modcacheDir)
+	}
 	queryVulnUC := vulnapp.NewQueryVulnUseCase(vulnStore)
 	queryScanRunsUC := vulnapp.NewQueryScanRunsUseCase(vulnStore)
 	diffScanRunsUC := vulnapp.NewDiffScanRunsUseCase(vulnStore)
 
 	// ---- sbom use cases ----
-	const sbomPipelineVersion = "0.3.0"
+	const sbomPipelineVersion = "0.5.0"
 	generateSBOMUC := sbomapp.NewGenerateSBOMUseCase(
 		walkStore, licStore, vulnStore, sbomStore,
 		sbomcdx.New(sbomPipelineVersion),

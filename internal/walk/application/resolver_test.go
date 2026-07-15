@@ -268,6 +268,42 @@ go 1.21
 	}
 }
 
+func TestResolve_carriesDigestsToNodes(t *testing.T) {
+	blobs := newFakeBlobStore()
+	fetcher := newFakeFetcher()
+	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+
+go 1.21
+
+require github.com/dep/one v1.2.3
+`, blobs)
+	// The dependency's fact record carries artefact digests; the resolver must
+	// copy them onto the graph node so the SBOM can emit component hashes.
+	depRec := makeFactRecord("github.com/dep/one", "v1.2.3")
+	depRec.ZipSHA256 = "dep256"
+	depRec.ZipSHA384 = "dep384"
+	depRec.ZipSHA512 = "dep512"
+	fetcher.records[coord("github.com/dep/one", "v1.2.3").String()] = depRec
+	blobs.data["github.com/dep/one@v1.2.3"] = buildFakeZip("github.com/dep/one", "v1.2.3", "module github.com/dep/one\n\ngo 1.21\n")
+
+	r := newResolver(fetcher, blobs)
+	g, err := r.Resolve(context.Background(), coord("example.com/target", "v1.0.0"), domain3.DefaultDepthPolicy().FetchStage())
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	depNode := findNode(t, g.Nodes, "github.com/dep/one")
+	want := domain2.ArtifactDigests{SHA256: "dep256", SHA384: "dep384", SHA512: "dep512"}
+	if depNode.Digests != want {
+		t.Errorf("dep node digests = %+v, want %+v", depNode.Digests, want)
+	}
+	// The target record has no digests, so its node stays zero (no fabricated hashes).
+	targetNode := findNode(t, g.Nodes, "example.com/target")
+	if !targetNode.Digests.IsZero() {
+		t.Errorf("target node digests = %+v, want zero", targetNode.Digests)
+	}
+}
+
 func TestResolve_diamond_MVS(t *testing.T) {
 	// A(target) → B@v1.0, C@v1.0
 	// B@v1.0 → D@v1.1
@@ -1336,7 +1372,7 @@ replace example.com/dep => ../local/dep
 `
 
 	r := newResolver(fetcher, blobs)
-	g, err := r.ResolveProject(context.Background(), coord("example.com/project", domain2.LocalVersion), []byte(mainGoMod), "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false)
+	g, err := r.ResolveProject(context.Background(), coord("example.com/project", domain2.LocalVersion), []byte(mainGoMod), "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false, false)
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
@@ -1403,7 +1439,7 @@ require example.com/dep/one v1.2.3
 	target := coord("example.com/project", domain2.LocalVersion)
 
 	r := newResolver(fetcher, blobs)
-	g, err := r.ResolveProject(context.Background(), target, mainGoMod, "", domain3.DefaultDepthPolicy().FetchStage(), nil, false)
+	g, err := r.ResolveProject(context.Background(), target, mainGoMod, "", domain3.DefaultDepthPolicy().FetchStage(), nil, false, false)
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
@@ -1459,7 +1495,7 @@ func TestResolveProject_UnparseableGoModErrors(t *testing.T) {
 	target := coord("example.com/project", domain2.LocalVersion)
 
 	r := newResolver(fetcher, blobs)
-	_, err := r.ResolveProject(context.Background(), target, []byte("this is not a go.mod"), "", domain3.DefaultDepthPolicy().FetchStage(), nil, false)
+	_, err := r.ResolveProject(context.Background(), target, []byte("this is not a go.mod"), "", domain3.DefaultDepthPolicy().FetchStage(), nil, false, false)
 	if err == nil {
 		t.Fatalf("ResolveProject: expected error for malformed go.mod, got nil")
 	}

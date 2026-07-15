@@ -45,15 +45,14 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 	}
 
 	for _, coord := range allCoords {
-		// The synthetic standard-library node owns the toolchain's stdlib
-		// advisories. Resolve them from OSV metadata by coordinate rather than from
-		// the project scan's reachable set, so the stdlib verdict is the complete
-		// advisory set for the build toolchain — reachability-independent and
-		// identical to what the isolated per-module path reports for stdlib.
-		if coord.Path == domain.StdlibModulePath {
-			out[coord] = moduleResult{coord: coord, record: uc.stdlibProjectRecord(ctx, coord, params, snapshot)}
-			continue
-		}
+		// The synthetic standard-library node is analysed like any other module:
+		// govulncheck already reasons over standard-library symbols when run against
+		// the project, so the grouped parse attributes reachable stdlib advisories —
+		// carrying Reachable and AffectedSymbols — to the {stdlib, ""} key.
+		// projectFindingsFor resolves the node's toolchain-versioned coordinate to
+		// that key, so the stdlib verdict is call-graph-analysed against the build,
+		// consistent with fetched modules, rather than reachability-independent OSV
+		// metadata.
 		findings := copyFindings(projectFindingsFor(result.FindingsByModule, coord))
 		status := domain.StatusClean
 		if len(findings) > 0 {
@@ -64,35 +63,17 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 	}
 }
 
-// stdlibProjectRecord builds the standard-library node's record for a
-// project-rooted scan from OSV advisory metadata. Any advisory affecting the
-// pinned toolchain version is a finding; none means Clean. On a metadata lookup
-// error the node degrades to Clean with the error recorded, mirroring how the
-// project scan surfaces a fault without dropping the row.
-func (uc *ScanWalkUseCase) stdlibProjectRecord(
-	ctx context.Context,
-	coord fetchdomain.ModuleCoordinate,
-	params ScanWalkParams,
-	snapshot *domain.DatabaseSnapshot,
-) domain.VulnerabilityRecord {
-	findings, err := uc.moduleScanner.database.LookupFindings(ctx, coord)
-	if err != nil {
-		uc.logger.Warn("project-rooted scan: stdlib metadata lookup failed", "coordinate", coord, "error", err)
-		return uc.persistProjectRecord(ctx, coord, nil, domain.StatusClean, "", "", err.Error(), params, snapshot)
-	}
-	status := domain.StatusClean
-	if len(findings) > 0 {
-		status = domain.StatusAffected
-	}
-	return uc.persistProjectRecord(ctx, coord, findings, status, "", "", "", params, snapshot)
-}
-
 // projectFindingsFor returns the findings a project scan attributed to coord.
-// An exact coordinate match wins; a path-only match is the fallback for the rare
+// The synthetic stdlib node is resolved to the version-less {stdlib, ""} key the
+// grouped parse collapses every toolchain-tagged stdlib frame onto. Otherwise an
+// exact coordinate match wins; a path-only match is the fallback for the rare
 // case where govulncheck reports a version string that differs cosmetically from
 // the walk node's (a pruned build carries one version per path, so this cannot
 // mis-attribute between two versions of the same module).
 func projectFindingsFor(byModule map[fetchdomain.ModuleCoordinate][]domain.VulnerabilityFinding, coord fetchdomain.ModuleCoordinate) []domain.VulnerabilityFinding {
+	if coord.Path == domain.StdlibModulePath {
+		return byModule[fetchdomain.ModuleCoordinate{Path: domain.StdlibModulePath}]
+	}
 	if fs, ok := byModule[coord]; ok {
 		return fs
 	}

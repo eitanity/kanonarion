@@ -32,6 +32,7 @@ import (
 	extstore "github.com/eitanity/kanonarion/internal/extract/adapters/store/sqlite"
 	extractapp "github.com/eitanity/kanonarion/internal/extract/application"
 	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
+	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	fipssqlite "github.com/eitanity/kanonarion/internal/fips/adapters/store/sqlite"
 	fipsapp "github.com/eitanity/kanonarion/internal/fips/application"
 	gdsqlite "github.com/eitanity/kanonarion/internal/godebug/adapters/store/sqlite"
@@ -45,6 +46,12 @@ import (
 	sbomstore "github.com/eitanity/kanonarion/internal/sbom/adapters/store/sqlite"
 	sbomapp "github.com/eitanity/kanonarion/internal/sbom/application"
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
+	stdlibgodev "github.com/eitanity/kanonarion/internal/stdlib/adapters/godev"
+	stdlibgit "github.com/eitanity/kanonarion/internal/stdlib/adapters/gitlsremote"
+	stdliblic "github.com/eitanity/kanonarion/internal/stdlib/adapters/licenseident"
+	stdlibsqlite "github.com/eitanity/kanonarion/internal/stdlib/adapters/store/sqlite"
+	stdlibbridge "github.com/eitanity/kanonarion/internal/stdlib/adapters/walkbridge"
+	stdlibapp "github.com/eitanity/kanonarion/internal/stdlib/application"
 	vensqlite "github.com/eitanity/kanonarion/internal/vendortree/adapters/store/sqlite"
 	venapp "github.com/eitanity/kanonarion/internal/vendortree/application"
 	vulnsqlite "github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
@@ -75,7 +82,26 @@ func Migrations() []sqlitestore.Migration {
 	m = append(m, gdsqlite.Migrations()...)
 	m = append(m, vensqlite.Migrations()...)
 	m = append(m, fipssqlite.Migrations()...)
+	m = append(m, stdlibsqlite.Migrations()...)
 	return m
+}
+
+// NewStdlibAcquirer wires the standard-library chain-of-custody acquirer over
+// the shared DB and blob store: the go.dev/dl manifest+tarball client, the
+// googlesource commit resolver, the licence detector, and the version-keyed
+// fact cache. It is returned as a walk StdlibAcquirer via the bridge so the
+// resolver depends only on the narrow port. Both composition roots (the driver
+// here and the CLI container) share it so stdlib custody behaves identically.
+func NewStdlibAcquirer(db sqlitestore.DB, blobs fetchports.BlobStore, clk fetchports.Clock, logger *slog.Logger) *stdlibbridge.Bridge {
+	godev := stdlibgodev.New()
+	acquirer := stdlibapp.NewAcquirer(
+		godev, godev,
+		stdlibgit.New(),
+		stdliblic.New(licdet.New()),
+		stdlibsqlite.New(db),
+		blobs, clk, logger,
+	)
+	return stdlibbridge.New(acquirer)
 }
 
 // Queries is the read-only consumption surface: every Query* use case the public
@@ -259,7 +285,8 @@ func newLocalWalkExtract(
 	fetcher := walkfetcher.New(fetchUC, false)
 	localFetcher := walklocalfs.New(blobs, factStore, clk)
 	resolver := walkapp.NewGraphResolver(walkgomod.New(), fetcher, blobs, clk, "", logger).
-		WithBuildListResolver(walkbuildlist.New("", logger))
+		WithBuildListResolver(walkbuildlist.New("", logger)).
+		WithStdlibAcquirer(NewStdlibAcquirer(db, blobs, clk, logger), false)
 	walker := walkapp.NewWalker(resolver, fetcher, localFetcher, clk, stopwatch, 0, logger)
 	executeWalkUC := walkapp.NewExecuteWalkUseCase(walker, walkStore, "", "", logger)
 

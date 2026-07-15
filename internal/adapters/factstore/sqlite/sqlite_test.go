@@ -44,6 +44,29 @@ func sampleRecord(path, version, pipelineVersion string) domain2.FactRecord {
 	return r
 }
 
+func TestPutGetFetchRecord_DigestsRoundTrip(t *testing.T) {
+	s := openMemStore(t)
+	ctx := context.Background()
+
+	r := sampleRecord("github.com/foo/bar", "v2.0.0", "0.4.0")
+	r.ZipSHA256 = "2222222222222222222222222222222222222222222222222222222222222222"
+	r.ZipSHA384 = "333333333333333333333333333333333333333333333333"
+	r.ZipSHA512 = "5555555555555555555555555555555555555555555555555555555555555555"
+	var h domain2.CanonicalHasher
+	r, _ = h.SetContentHash(r)
+
+	if err := s.PutFetchRecord(ctx, r); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	got, ok, err := s.GetFetchRecord(ctx, domain2.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}, r.PipelineVersion)
+	if err != nil || !ok {
+		t.Fatalf("Get: ok=%v err=%v", ok, err)
+	}
+	if domain2.RecordDigests(got) != domain2.RecordDigests(r) {
+		t.Errorf("digests did not round-trip: got %+v want %+v", domain2.RecordDigests(got), domain2.RecordDigests(r))
+	}
+}
+
 func TestPutGetFetchRecord(t *testing.T) {
 	s := openMemStore(t)
 	ctx := context.Background()

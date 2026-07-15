@@ -339,17 +339,21 @@ type fakeScanner struct {
 	// call counters let tests assert which path a walk took.
 	scanCalls    int
 	projectCalls int
+	// gotModCache records the GOMODCACHE dir the last Scan was invoked with, so a
+	// test can assert --from-modcache threaded the real cache dir through.
+	gotModCache string
 }
 
 func (f *fakeScanner) Preflight(_ context.Context) error { return f.preflightErr }
 
-func (f *fakeScanner) Scan(_ context.Context, coord fetchdomain.ModuleCoordinate, _ io.Reader, snapshot domain.DatabaseSnapshot, _ string, _ string, _ domain.ScanMode) (domain.VulnerabilityRecord, error) {
+func (f *fakeScanner) Scan(_ context.Context, coord fetchdomain.ModuleCoordinate, _ io.Reader, snapshot domain.DatabaseSnapshot, goModCache string, _ string, _ domain.ScanMode) (domain.VulnerabilityRecord, error) {
 	if f.err != nil {
 		return domain.VulnerabilityRecord{}, f.err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.scanCalls++
+	f.gotModCache = goModCache
 	res, ok := f.results[coord.String()]
 	if !ok {
 		return domain.VulnerabilityRecord{

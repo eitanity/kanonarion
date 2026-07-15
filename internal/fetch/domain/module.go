@@ -16,6 +16,15 @@ const (
 	// The record is authentic with respect to the transparency log.
 	VerifiedBySumDBOnly VerificationStatus = "VerifiedBySumDBOnly"
 
+	// VerifiedByGoSum means the module's computed zip (and go.mod) h1 matched
+	// the walk root's local go.sum, but the network checksum database was
+	// unavailable (offline, disabled, or without an entry). go.sum is itself
+	// populated under a prior sum.golang.org transparency-log check, so this is
+	// a positive, offline integrity signal — weaker than a live sumdb query
+	// (VerifiedBySumDBOnly) yet stronger than no anchor at all
+	// (UnverifiedNoSumDB). It complements, never replaces, the network path.
+	VerifiedByGoSum VerificationStatus = "VerifiedByGoSum"
+
 	// UnverifiedNoSumDB means the checksum database was disabled, unreachable,
 	// or had no entry for this module version. No transparency-log guarantee.
 	UnverifiedNoSumDB VerificationStatus = "UnverifiedNoSumDB"
@@ -61,7 +70,7 @@ const (
 // hard mismatch is never conflated with an un-analysed outcome.
 func (s VerificationStatus) IsVerified() bool {
 	switch s {
-	case Verified, VerifiedBySumDBOnly, LocalSource:
+	case Verified, VerifiedBySumDBOnly, VerifiedByGoSum, LocalSource:
 		return true
 	default:
 		return false
@@ -81,6 +90,12 @@ type FetchedModule struct {
 
 	// GoModHash is the h1 hash of the go.mod file, as reported by the proxy.
 	GoModHash ModuleHash
+
+	// Digests are the raw SHA-256/384/512 hashes of the module zip bytes,
+	// computed at download from the same bytes as ModuleHash. They become the
+	// SBOM component's <hashes>. Zero value when the artefact was not downloaded
+	// (e.g. a local source).
+	Digests ArtifactDigests
 
 	// GitReference is the resolved git provenance. May be zero-value when
 	// VerificationStatus is UnverifiedMissingOrigin.

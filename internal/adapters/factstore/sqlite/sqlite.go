@@ -54,6 +54,10 @@ func Migrations() []sqlitestore.Migration {
             signed_at         TEXT NOT NULL,
             PRIMARY KEY (module_path, module_version, pipeline_version, subject_kind, subject_digest)
         )`},
+		{Module: "fetch", Version: 6, SQL: `
+            ALTER TABLE fetch_records ADD COLUMN zip_sha256 TEXT NOT NULL DEFAULT '';
+            ALTER TABLE fetch_records ADD COLUMN zip_sha384 TEXT NOT NULL DEFAULT '';
+            ALTER TABLE fetch_records ADD COLUMN zip_sha512 TEXT NOT NULL DEFAULT '';`},
 	}
 }
 
@@ -94,8 +98,9 @@ INSERT INTO fetch_records (
     schema_version, ecosystem, module_hash, go_mod_hash,
     git_url, git_ref, git_commit_hash,
     verification_status, verification_detail,
-    fetched_at, content_location, go_mod_location, content_hash, retracted
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    fetched_at, content_location, go_mod_location, content_hash, retracted,
+    zip_sha256, zip_sha384, zip_sha512
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (module_path, module_version, pipeline_version)
 DO UPDATE SET
     schema_version      = excluded.schema_version,
@@ -111,7 +116,10 @@ DO UPDATE SET
     content_location    = excluded.content_location,
     go_mod_location     = excluded.go_mod_location,
     content_hash        = excluded.content_hash,
-    retracted           = excluded.retracted`
+    retracted           = excluded.retracted,
+    zip_sha256          = excluded.zip_sha256,
+    zip_sha384          = excluded.zip_sha384,
+    zip_sha512          = excluded.zip_sha512`
 
 	_, err := s.db.DB().ExecContext(ctx, q,
 		r.ModulePath, r.ModuleVersion, r.PipelineVersion,
@@ -120,6 +128,7 @@ DO UPDATE SET
 		r.VerificationStatus, r.VerificationDetail,
 		r.FetchedAt.UTC().Format(time.RFC3339),
 		r.ContentLocation, r.GoModLocation, r.ContentHash, r.Retracted,
+		r.ZipSHA256, r.ZipSHA384, r.ZipSHA512,
 	)
 	if err != nil {
 		return fmt.Errorf("inserting fetch record: %w", err)
@@ -136,7 +145,8 @@ func (s *Store) GetFetchRecord(ctx context.Context, coord domain2.ModuleCoordina
 SELECT schema_version, ecosystem, module_path, module_version, pipeline_version,
        module_hash, go_mod_hash, git_url, git_ref, git_commit_hash,
        verification_status, verification_detail,
-       fetched_at, content_location, go_mod_location, content_hash, retracted
+       fetched_at, content_location, go_mod_location, content_hash, retracted,
+       zip_sha256, zip_sha384, zip_sha512
 FROM fetch_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 
@@ -148,6 +158,7 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 		&r.ModuleHash, &r.GoModHash, &r.GitURL, &r.GitRef, &r.GitCommitHash,
 		&r.VerificationStatus, &r.VerificationDetail,
 		&fetchedAt, &r.ContentLocation, &r.GoModLocation, &r.ContentHash, &r.Retracted,
+		&r.ZipSHA256, &r.ZipSHA384, &r.ZipSHA512,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain2.FactRecord{}, false, nil

@@ -2,80 +2,36 @@
 
 ## Why this matters
 
-AI coding assistants - and our own memories - work from information that is
-often out of date for a specific project: dependency versions have moved on,
-APIs have changed, advisories have been published, and licences may differ from
-what we assume. Code written on those stale assumptions is wrong in ways that
-surface late - in review, in the build pipeline, or after release - and then
-has to be redone. Kanonarion replaces the guesswork with current, verified
-facts about the modules a project *actually* depends on, so the code is right
-before it reaches the pipeline. Reducing that rework is the point; the security
-and licence answers below are what you get once the facts are accurate.
+A Go project's security and legal surface lives in the dependency graph behind
+`go.mod` - the direct and transitive modules, most of which nobody on the team
+has read. AI assistants and our own memories work from stale assumptions about
+it: versions have moved on, APIs have changed, advisories have been published,
+licences differ from what we guess. Code built on those assumptions is wrong in
+ways that surface late - in review, in the pipeline, after release - and has to
+be redone. Kanonarion turns the dependency graph into current, deterministic,
+auditable facts - what you depend on, who published it, under which licence, with
+which known vulnerabilities, and whether the vulnerable code is reachable from the
+binary you ship - so the code is right before it reaches your pipeline. It is a
+developer tool you run while you work, not a pipeline component.
 
-A Go project's security and legal surface lives in its *dependencies* - the
-transitive closure of modules behind `go.mod`, most of which nobody on the team
-has read. Kanonarion turns that closure into deterministic, auditable facts:
-what you depend on, who published it, under which licence, with which known
-vulnerabilities, and whether the vulnerable code is reachable from the binary
-you ship.
-
-You run Kanonarion while you work - when adding or updating a dependency, or
-before submitting a change - so that what reaches your build pipeline is already
-correct. It is a developer tool, not a pipeline component.
-
-**If you write Go**, the outcome is one repeatable analysis in place of several
-manual steps. Instead of assembling `go list` queries or inspecting the module
-cache by hand, you get licences, the public interface, call graphs, how up to
-date each dependency is, and vulnerability findings for the *whole* closure -
-direct and transitive - as stable JSON you can script and compare. That means
-fewer unexpected problems from the hundreds of modules you did not choose
-directly.
-
-**If you work in a regulated industry** (finance, healthcare, public sector,
-defence), the outcome is the evidence an auditor asks for: a licence and policy
-result for every module across the closure (not only direct dependencies), an
-SBOM backed by content-addressed archives and an append-only audit record, and
-a vulnerability status you can reproduce exactly and compare over time to
-establish when a finding was introduced or resolved. Uncertainty is stated, not
-concealed - an undetermined licence or an un-analysed module is reported as
-*unknown*, never presented as acceptable, so you see the problem while you work
-rather than passing an unverified result downstream.
-
-**If you ship software into the EU**, this is becoming a requirement rather than
-a choice. The Cyber Resilience Act (CRA - Regulation (EU) 2024/2847) applies to
-nearly all commercial products with digital elements placed on the EU market -
-not only security products - so it reaches a large share of European software
-suppliers and the teams that supply them. Its core obligations apply from
-**11 December 2027** and they extend to the components you ship, not only the
-code you wrote: maintain an SBOM, exercise supply chain due diligence, and
-handle and remediate vulnerabilities across a defined support period. Building
-on open source does not remove that responsibility once you commercialise - you
-remain accountable for what your dependency closure introduces. Kanonarion
-produces the underlying evidence - an SBOM, vulnerability and licence facts
-across the closure, module provenance, and reproducible analyses - that such a
-process relies on.
+For everyday Go work that is one repeatable analysis, as stable JSON you can
+script and compare, in place of hand-rolled `go list` queries and module-cache
+spelunking across the whole dependency graph. In a regulated setting (finance, healthcare,
+public sector, defence) it is the evidence an auditor asks for - a licence and
+policy result for every module, a content-addressed SBOM, an append-only audit
+record, and a reproducible vulnerability history - with uncertainty stated as
+*unknown*, never concealed. If you ship into the EU, it is the underlying
+evidence a process like the Cyber Resilience Act relies on.
 
 > Kanonarion reports facts and clearly qualified inferences, not compliance
-> verdicts. It produces evidence a CRA or audit process relies on; it does not
-> certify conformance, and this material is not legal advice.
+> verdicts. It does not certify conformance, and this material is not legal advice.
 
-This guide takes you from a fresh checkout of a Go project you know nothing
-about to per-module dependency answers (licences, API surface,
-vulnerabilities), using only the kanonarion CLI. No prior kanonarion
-knowledge is assumed.
-
-Part 1 is a walkthrough for a human at a terminal. Part 2 is a
-copy-pasteable prompt for an AI coding agent so it uses kanonarion instead
-of hand-rolling `go list` and module-cache scans.
-
-All durations below were measured against a real mid-sized project:
-kanonarion's own `go.mod` (11 direct dependencies; the code-scope build list
-resolves to 21 modules, and first-run graph resolution touches roughly 470
-modules' metadata across the require graph; the resulting store is ~490 MB),
-on a developer
-workstation with a fast network connection. Your numbers will scale with
-dependency count and bandwidth, but the *shape* - slow once, fast forever
-after - is the point to internalise.
+This guide takes you from a fresh checkout of an unfamiliar Go project to
+per-module answers (licences, API surface, vulnerabilities) using only the CLI.
+Part 1 is a human walkthrough; Part 2 is a copy-pasteable prompt for an AI agent.
+Durations below were measured against kanonarion's own `go.mod` on a developer
+workstation; your numbers scale with dependency count and bandwidth, but the
+*shape* - slow once, fast forever - is the point.
 
 ---
 
@@ -240,9 +196,10 @@ One line per module in the code-scope build list: coordinate, verification
 status, SPDX licence, version staleness, vulnerability status, policy outcome:
 
 ```
-github.com/spf13/cobra@v1.10.2     Verified  Apache-2.0    current                        Clean  allow [permissive]
-golang.org/x/mod@v0.36.0           Verified  BSD-3-Clause  latest: v0.37.0 (9 days ago)   Clean  allow [permissive]
-modernc.org/sqlite@v1.50.1         Verified  BSD-3-Clause  latest: v1.52.0 (11 days ago)  Clean  allow [permissive]
+github.com/spf13/cobra@v1.10.2     Verified               Apache-2.0    current                        Clean  allow [permissive]
+golang.org/x/mod@v0.36.0           Verified               BSD-3-Clause  latest: v0.37.0 (9 days ago)   Clean  allow [permissive]
+modernc.org/sqlite@v1.50.1         Verified               BSD-3-Clause  latest: v1.52.0 (11 days ago)  Clean  allow [permissive]
+stdlib@v1.26.5                     VerifiedGoDevChecksum   BSD-3-Clause  current                        Clean  allow [permissive]
 ...
 ```
 
@@ -253,10 +210,13 @@ audits the tooling supply chain (the `go.mod` `tool` directives' closure) and
 `ScanFailed` are surfaced in the relevant line, never hidden behind a roll-up.
 
 The report includes the Go standard library as a `stdlib` row, so a toolchain CVE
-is triaged like any dependency's. Its version defaults to the live toolchain
-(`go env GOVERSION`); `--stdlib-from-gomod` pins it to the `go.mod` directive
-instead, making `audit` and `sbom` reproducible in CI. The release pipeline sets
-it on both.
+is triaged like any dependency's. It is verified like one too: its source tarball
+is fetched from `go.dev/dl` and checked against Go's published checksum (the
+`VerifiedGoDevChecksum` status), with `BSD-3-Clause` read from the tarball itself
+- see [the SBOM standard-library chain of custody](cli/sbom.md#standard-library-chain-of-custody).
+Its version defaults to the live toolchain (`go env GOVERSION`);
+`--stdlib-from-gomod` pins it to the `go.mod` directive instead, making `audit`
+and `sbom` reproducible in CI. The release pipeline sets it on both.
 
 **Duration:** dominated by the vuln leg. The vulnerability verdict is
 **project-rooted** - one `govulncheck` over the project's live working tree - and

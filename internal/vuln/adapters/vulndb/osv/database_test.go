@@ -675,3 +675,157 @@ func TestLookupFindings_PreVPrefixedVersions(t *testing.T) {
 		t.Errorf("AffectedRange = %q, want %q", f.AffectedRange, ">= v1.0.0, < v1.5.0")
 	}
 }
+
+// TestLookupFindings_MultiRangeBackport is the KN-411 regression: an advisory
+// with per-branch backports lists multiple introduced/fixed pairs, but
+// index/modules.json collapses them to the single highest fixed. A
+// coordinate-only match against that collapsed fixed over-reports a version
+// patched on an older branch. LookupFindings must instead evaluate the full
+// affected[].ranges event list, so only versions truly inside an affected
+// interval are flagged. Mirrors GO-2026-5856 (stdlib): the 1.26 branch is fixed
+// at 1.26.5 even though the highest fix is 1.27.0-rc.2.
+func TestLookupFindings_MultiRangeBackport(t *testing.T) {
+	// Three affected intervals: [0, 1.25.12), [1.26.0-0, 1.26.5),
+	// [1.27.0-0, 1.27.0-rc.2). modules.json collapses to the highest fix.
+	advisory := `{
+		"id": "GO-2026-5856",
+		"summary": "stdlib multi-branch backport",
+		"affected": [{
+			"package": {"ecosystem": "Go", "name": "stdlib"},
+			"ranges": [{"type": "SEMVER", "events": [
+				{"introduced": "0"}, {"fixed": "1.25.12"},
+				{"introduced": "1.26.0-0"}, {"fixed": "1.26.5"},
+				{"introduced": "1.27.0-0"}, {"fixed": "1.27.0-rc.2"}
+			]}],
+			"ecosystem_specific": {"imports": [{"path": "crypto/tls", "symbols": ["Conn.Handshake"]}]}
+		}]
+	}`
+	mux := advisoryMux(t,
+		[]map[string]any{{"path": "stdlib", "vulns": []map[string]any{{"id": "GO-2026-5856", "fixed": "1.27.0-rc.2"}}}},
+		map[string]string{"GO-2026-5856": advisory},
+	)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
+
+	cases := []struct {
+		version  string
+		affected bool
+	}{
+		{"v1.24.0", true},       // base branch, before first fix
+		{"v1.25.11", true},      // base branch, one below first fix
+		{"v1.25.12", false},     // base branch fixed
+		{"v1.25.13", false},     // above base fix, below 1.26 introduced
+		{"v1.26.4", true},       // 1.26 branch, unpatched
+		{"v1.26.5", false},      // 1.26 branch fixed (the ticket case)
+		{"v1.26.6", false},      // above 1.26 fix, below 1.27 introduced
+		{"v1.27.0-rc.1", true},  // 1.27 branch, unpatched pre-release
+		{"v1.27.0-rc.2", false}, // 1.27 branch fixed
+		{"v1.27.0", false},      // final release, past all fixes
+	}
+	for _, tc := range cases {
+		t.Run(tc.version, func(t *testing.T) {
+			coord := fetchdomain.ModuleCoordinate{Path: "stdlib", Version: tc.version}
+			findings, err := db.LookupFindings(t.Context(), coord)
+			if err != nil {
+				t.Fatalf("LookupFindings: %v", err)
+			}
+			got := len(findings) > 0
+			if got != tc.affected {
+				t.Fatalf("version %s: affected = %v, want %v (findings=%d)", tc.version, got, tc.affected, len(findings))
+			}
+			if tc.affected && findings[0].ID != "GO-2026-5856" {
+				t.Errorf("version %s: finding ID = %q, want GO-2026-5856", tc.version, findings[0].ID)
+			}
+		})
+	}
+}
+
+// TestLookupFindings_MultiRangeConservativeOnPackageMismatch confirms the
+// full-range refinement never drops a coarse-index hit it cannot evaluate: when
+// no affected block names the module path, the finding is kept rather than
+// silently cleared.
+func TestLookupFindings_MultiRangeConservativeOnPackageMismatch(t *testing.T) {
+	// The advisory's affected block names a different package than the coordinate,
+	// so the range check has nothing to evaluate against and must stay conservative.
+	advisory := `{
+		"id": "GO-2026-4970",
+		"summary": "mismatched package block",
+		"affected": [{
+			"package": {"ecosystem": "Go", "name": "some/other/module"},
+			"ranges": [{"type": "SEMVER", "events": [{"introduced": "0"}, {"fixed": "1.0.0"}]}]
+		}]
+	}`
+	mux := advisoryMux(t,
+		[]map[string]any{{"path": "github.com/foo/bar", "vulns": []map[string]any{{"id": "GO-2026-4970", "fixed": "2.0.0"}}}},
+		map[string]string{"GO-2026-4970": advisory},
+	)
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
+	coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.5.0"}
+
+	findings, err := db.LookupFindings(t.Context(), coord)
+	if err != nil {
+		t.Fatalf("LookupFindings: %v", err)
+	}
+	if len(findings) != 1 {
+		t.Fatalf("expected 1 conservatively-kept finding, got %d", len(findings))
+	}
+}
+
+// TestLookupFindings_ConservativeWhenUnrefinable exercises the two remaining
+// conservative branches of the full-range check: an affected block whose ranges
+// are not version-comparable SEMVER, and a coordinate whose version cannot be
+// parsed. In both cases the coarse-index hit must be kept, never cleared.
+func TestLookupFindings_ConservativeWhenUnrefinable(t *testing.T) {
+	cases := []struct {
+		name    string
+		version string
+		ranges  string
+	}{
+		{
+			name:    "non-semver range",
+			version: "v1.0.0",
+			ranges:  `[{"type": "GIT", "events": [{"introduced": "0"}, {"fixed": "abc123"}]}]`,
+		},
+		{
+			name:    "unparseable version",
+			version: "not-a-version",
+			ranges:  `[{"type": "SEMVER", "events": [{"introduced": "0"}, {"fixed": "1.0.0"}]}]`,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			advisory := fmt.Sprintf(`{
+				"id": "GO-2026-0001",
+				"summary": "unrefinable",
+				"affected": [{
+					"package": {"ecosystem": "Go", "name": "github.com/foo/bar"},
+					"ranges": %s
+				}]
+			}`, tc.ranges)
+			// Empty fixed in the index => the coarse pre-filter treats every version
+			// as affected, so the request reaches the full-range refinement.
+			mux := advisoryMux(t,
+				[]map[string]any{{"path": "github.com/foo/bar", "vulns": []map[string]any{{"id": "GO-2026-0001"}}}},
+				map[string]string{"GO-2026-0001": advisory},
+			)
+			srv := httptest.NewServer(mux)
+			defer srv.Close()
+
+			db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
+			coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: tc.version}
+
+			findings, err := db.LookupFindings(t.Context(), coord)
+			if err != nil {
+				t.Fatalf("LookupFindings: %v", err)
+			}
+			if len(findings) != 1 {
+				t.Fatalf("expected 1 conservatively-kept finding, got %d", len(findings))
+			}
+		})
+	}
+}

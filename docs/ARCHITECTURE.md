@@ -64,6 +64,7 @@ in a use case.
 |-------|---------|---------|----------------|
 | Ingest | fetch | `internal/fetch` | Fetch and verify a single module version |
 | Ingest | walk | `internal/walk` | Resolve and fetch the full transitive closure |
+| Ingest | stdlib | `internal/stdlib` | Establish the Go standard library's chain of custody (go.dev/dl tarball, checksum, VCS anchor, licence) |
 | Extract | extract | `internal/extract` | Orchestrate per-module extraction stages |
 | Extract | iface | `internal/iface` | Extract the public API surface |
 | Extract | callgraph | `internal/callgraph` | Build the intra-module call graph |
@@ -99,6 +100,19 @@ fetch use case, keeping the dependency at the port boundary), then persists a
 Partial and cancelled walks are surfaced explicitly and still persisted.
 *Adapters:* `gomod/xmod`, `fetcher/local`, `buildlist/gotoolchain`,
 `policy/localfile`, `walks/sqlite`.
+
+**stdlib** - establishes the Go standard library's chain of custody, the
+toolchain-provided analogue of a module's proxy→sumdb custody. Its `Acquirer`
+downloads the canonical `go{VERSION}.src.tar.gz` from `go.dev/dl`, matches its
+`SHA-256` against Go's published release manifest, resolves the
+`go.googlesource.com/go` tag → commit, computes the `SHA-256`/`SHA-384`/`SHA-512`
+digests, and extracts the `BSD-3-Clause` licence from the tarball's `LICENSE`.
+The facts are cached per Go version and attached to the synthetic `stdlib` walk
+node (via the `walkports.StdlibAcquirer` port and the `walkbridge` adapter, so
+the walk context never imports stdlib), where `audit` and `sbom` read them. The
+anchor is deliberately weaker than a sumdb transparency-log entry and recorded as
+such. *Adapters:* `godev` (manifest + tarball), `gitlsremote` (commit),
+`licenseident` (SPDX), `store/sqlite`, `walkbridge`.
 
 ### Extract
 

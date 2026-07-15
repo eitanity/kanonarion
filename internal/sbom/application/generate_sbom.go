@@ -95,7 +95,7 @@ var ErrWalkScanRunNotFound = errors.New("walk scan run not found")
 func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (domain.SBOMRecord, error) {
 	format := req.Format
 	if format == "" {
-		format = domain.CycloneDX15
+		format = domain.CycloneDX16
 	}
 
 	// Package-scoped requests are ephemeral: skip cache entirely.

@@ -26,7 +26,8 @@ For each module in the scope, `audit` emits a single line containing:
 
 - **Coordinate** - `module@version`
 - **Verification** - outcome of sumdb/VCS cross-verification (`Verified`,
-  `VerifiedBySumDBOnly`, `UnverifiedNoSumDB`, etc.)
+  `VerifiedBySumDBOnly`, `VerifiedByGoSum`, `UnverifiedNoSumDB`, etc.). See
+  [Local `go.sum` verification](#local-gosum-verification) for `VerifiedByGoSum`.
 - **License** - primary SPDX identifier; annotated with status when ambiguous
   (e.g. `Apache-2.0 [Multiple]`)
 - **Staleness** - `current` when the pinned version is the latest published, or
@@ -41,6 +42,30 @@ For each module in the scope, `audit` emits a single line containing:
   no dependency is re-resolved on its own, a module can never be reported
   un-analysable merely because its isolated build would select a version the
   project never uses.
+
+The scope always includes the **Go standard library** as a first-class row
+(`stdlib@vX.Y.Z`), so standard-library advisories are audited alongside module
+dependencies. Its **Verification** column reports the toolchain-specific chain of
+custody — `VerifiedGoDevChecksum` when the canonical `go{VERSION}.src.tar.gz`
+acquired from `go.dev/dl` matched Go's published checksum — which is deliberately
+distinct from the module sumdb statuses (it is a published checksum plus a
+`go.googlesource.com/go` tag/commit, never a `go.sum` entry). Its **License** is
+`BSD-3-Clause` extracted from the tarball's `LICENSE` file. On a fully offline
+run (`--from-modcache`) the chain cannot be established and the row reads
+`(custody unavailable)`. See [SBOM standard-library chain of
+custody](sbom.md#standard-library-chain-of-custody) for the full evidence set.
+
+Its **Vulnerability** column is **call-graph-analysed against the build
+toolchain**, not resolved from advisory metadata by coordinate: the same
+project-rooted `govulncheck` run that analyses the dependency graph also reasons
+over standard-library symbols, so a surfaced stdlib finding carries a populated
+`Reachable` verdict and `AffectedSymbols` exactly as a module finding does. A
+standard-library advisory that affects the pinned toolchain version but whose
+vulnerable symbols are **not reached** from the project therefore reads `Clean`,
+consistent with how an unreachable advisory in a fetched module is reported —
+reachability is decided by the call graph, not by whether the enclosing symbol is
+linked into the binary. Query a specific verdict with `kanonarion reachability
+stdlib@vX.Y.Z --vuln <id>`.
 
 The scope is an **import closure**, not a `require`-line listing: the `code`
 scope is every module the project's packages (and their tests) actually import,
@@ -82,7 +107,8 @@ the install command.
 | `--fresh` | `false` | Fetch a fresh vulnerability database snapshot from the network |
 | `--stdlib-from-gomod` | `false` | Version the `stdlib` node from the `go.mod` directive, not the live toolchain. See [Standard-library version](walk.md#standard-library-version---stdlib-from-gomod). |
 | `--skip-vcs-verify` | `false` | Skip git cross-verification; the checksum-database check still runs. A sumdb-attested module then reports `VerifiedBySumDBOnly`, never the strongest `Verified` (the git leg never ran). Useful when auditing a large closure where git operations are rate-limited or unavailable |
-| `--goproxy` | `$GOPROXY` | Override the Go module proxy |
+| `--from-modcache[=dir]` | _(off)_ | Source modules from an existing Go module cache instead of the network proxy, verifying each against the local `go.sum`. Passed bare it uses `go env GOMODCACHE`; an optional value names the cache directory. See [Sourcing from an existing module cache](#sourcing-from-an-existing-module-cache-from-modcache) |
+| `--goproxy` | `$GOPROXY` | Override the Go module proxy (ignored under `--from-modcache`) |
 | `--json` | `false` | Emit output as a JSON array |
 | `--store-root` | `~/.kanonarion` | Path to fact store root (or `KANONARION_STORE` env var) |
 | `--log-level` | `warn` | Log level: `debug`, `info`, `warn`, `error` |
@@ -217,6 +243,70 @@ re-downloads the vulnerability database). Two stages always do work on every run
   tree every time (never served from a coordinate cache - see Pipeline above).
   This is local CPU work, not a network fetch, and reuses the cached
   vulnerability database unless `--fresh` is passed.
+
+## Local `go.sum` verification
+
+On the **normal** (network) path, whenever the project's `go.sum` is present next
+to the walked `go.mod`, `audit` layers it on as an always-on, offline integrity
+check that **complements** the network checksum database. It costs nothing extra:
+the module `h1` hashes are already computed during download, so the check is just
+a lookup and compare - no extra hashing, no network round-trip. For each fetched
+module `audit`:
+
+- **Matches `go.sum` (zip and `/go.mod`)** - a positive signal. If the network
+  checksum database also verified the module, the stronger `Verified` /
+  `VerifiedBySumDBOnly` stands. If the checksum database was **unavailable**
+  (offline, `GOSUMDB=off`, or no entry), the module reports **`VerifiedByGoSum`**
+  instead of `UnverifiedNoSumDB` - `go.sum` is itself populated under a prior
+  `sum.golang.org` check, so this is a genuine offline anchor.
+- **Disagrees with `go.sum`** - tamper-evidence. `audit` **fails hard**, exiting
+  non-zero (code `10`) and naming the offending module. A `go.sum` mismatch is
+  never silently downgraded.
+- **Absent from `go.sum`** - not a failure (a `go.sum` legitimately omits some
+  transitively-cached entries); the module falls through to the network checksum
+  database as before.
+
+Because the check reads only the local `go.sum`, it still fires when
+`sum.golang.org` is unreachable - a working offline integrity signal. This is
+distinct from `--from-modcache` below, where `go.sum` is the *sole* anchor and an
+absent entry *is* a hard failure.
+
+## Sourcing from an existing module cache (`--from-modcache`)
+
+In a build pipeline the modules are already on disk: `go build` populates
+`$GOMODCACHE` with each dependency's `.mod`/`.zip` (the module-proxy protocol on
+disk) and verifies them against `go.sum`. `--from-modcache` makes `audit` treat
+that cache as the source of truth instead of re-downloading everything from the
+proxy.
+
+In this mode `audit`:
+
+- **Reads module bytes from the module cache** (`go env GOMODCACHE`, or the
+  directory you name with `--from-modcache=/path`). A module missing from the
+  cache is fetched into it with `go mod download`; nothing is written to
+  kanonarion's blob store.
+- **Verifies each module's `h1` hash against the local `go.sum`**, fully offline
+  - no `sum.golang.org`. A hash that does not match, or a module with no `go.sum`
+  entry, is a **hard failure**: `audit` exits non-zero (code `10`) naming the
+  offending modules. Verified modules report `VerifiedBySumDBOnly` (VCS
+  cross-verification is skipped in this mode).
+- **Skips the staleness check** (the per-module `@latest` proxy query), so the
+  run makes **zero** network calls to `proxy.golang.org`/`sum.golang.org`. The
+  vulnerability scan still reads the OSV database (`--fresh` to refresh it).
+
+```bash
+# After `go build ./...` has populated the module cache:
+kanonarion audit --from-modcache
+
+# Or point at a specific cache directory:
+kanonarion audit --from-modcache=/path/to/gomodcache
+```
+
+This is the mode the release pipeline uses (see
+[`docs/ci-hardening.md`](../ci-hardening.md)): the build step populates the
+cache, then `audit` and `sbom --package` consume it without a second trip to the
+network. Default (no-flag) behaviour is unchanged - the network proxy, the
+checksum database, and VCS cross-verification all run as before.
 
 ## See also
 

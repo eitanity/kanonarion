@@ -286,6 +286,8 @@ func (p *Proxy) Download(ctx context.Context, coord domain2.ModuleCoordinate) (p
 		ZipHash:           zipHash,
 		GoModHash:         goModHash,
 		InsecureTransport: p.insecure,
+		// Raw digests over the same zip bytes used for the h1 hash, for the SBOM.
+		Digests: domain2.ComputeArtifactDigests(zipBytes),
 	}, nil
 }
 

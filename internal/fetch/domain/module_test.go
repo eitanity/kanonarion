@@ -10,6 +10,7 @@ func TestVerificationStatus_IsVerified(t *testing.T) {
 	verified := []domain.VerificationStatus{
 		domain.Verified,
 		domain.VerifiedBySumDBOnly,
+		domain.VerifiedByGoSum,
 		domain.LocalSource,
 	}
 	for _, s := range verified {

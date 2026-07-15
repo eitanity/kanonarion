@@ -4,7 +4,7 @@ import "time"
 
 // SchemaVersion is the version of the FactRecord JSON schema. Bump when
 // the serialisation format changes in a backwards-incompatible way.
-const SchemaVersion = "3"
+const SchemaVersion = "4"
 
 // EcosystemGo is the only ecosystem kanonarion records describe. The
 // ecosystem field declares the schema's scope — kanonarion is fitted for
@@ -29,6 +29,9 @@ type FactRecord struct {
 	ModuleVersion      string    `json:"module_version"`
 	ModuleHash         string    `json:"module_hash"`
 	GoModHash          string    `json:"go_mod_hash"`
+	ZipSHA256          string    `json:"zip_sha256"`
+	ZipSHA384          string    `json:"zip_sha384"`
+	ZipSHA512          string    `json:"zip_sha512"`
 	GitURL             string    `json:"git_url"`
 	GitRef             string    `json:"git_ref"`
 	GitCommitHash      string    `json:"git_commit_hash"`
@@ -52,6 +55,9 @@ func NewFactRecord(m FetchedModule) FactRecord {
 		ModuleVersion:      m.Coordinate.Version,
 		ModuleHash:         m.ModuleHash.String(),
 		GoModHash:          m.GoModHash.String(),
+		ZipSHA256:          m.Digests.SHA256,
+		ZipSHA384:          m.Digests.SHA384,
+		ZipSHA512:          m.Digests.SHA512,
 		GitURL:             m.GitReference.URL,
 		GitRef:             m.GitReference.Ref,
 		GitCommitHash:      m.GitReference.CommitHash,
@@ -68,4 +74,13 @@ func NewFactRecord(m FetchedModule) FactRecord {
 // Coordinate returns the ModuleCoordinate this record describes.
 func (r FactRecord) Coordinate() ModuleCoordinate {
 	return ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}
+}
+
+// RecordDigests projects a fact record's persisted digest fields onto an
+// ArtifactDigests value. It is a free function rather than a method so the
+// graduated read-shaped result alias does not grow behaviour. The zero value is
+// returned when no digests were captured (a record produced before digests
+// existed, or a local source).
+func RecordDigests(r FactRecord) ArtifactDigests {
+	return ArtifactDigests{SHA256: r.ZipSHA256, SHA384: r.ZipSHA384, SHA512: r.ZipSHA512}
 }

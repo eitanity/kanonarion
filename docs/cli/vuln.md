@@ -395,6 +395,23 @@ requires the call-graph that source analysis would have produced. An empty
 `fixed_in` on an enriched finding is the actionable "no fix exists yet" state,
 not missing data.
 
+Coordinate matching on this path evaluates the advisory's **full multi-range
+affected set**, not the single collapsed fixed version from the database's
+`index/modules.json`. That coarse index lists one (highest) fixed version per
+advisory; for an advisory backported across several release branches it names
+only the newest branch's fix. Matching against it alone over-reports a version
+that was patched on an *older* branch below that highest fix. kanonarion instead
+reads each candidate advisory's own `affected[].ranges` `introduced`/`fixed`
+event list and flags a coordinate only when its version falls inside a genuine
+affected interval. For example the stdlib advisory whose affected set is
+`[0, 1.25.12)`, `[1.26.0-0, 1.26.5)`, `[1.27.0-0, 1.27.0-rc.2)` collapses in the
+index to `fixed 1.27.0-rc.2`; `go1.26.5` is **not** flagged (the 1.26 branch is
+fixed at 1.26.5), matching the full-range verdict `govulncheck` produces on the
+project-rooted path. The coarse index is still used as a cheap pre-filter - it
+only ever over-includes, never wrongly excludes - and when a candidate
+advisory's record cannot be fetched the finding falls back to the conservative
+index verdict rather than being dropped.
+
 ---
 
 ### `vuln-by-id`
