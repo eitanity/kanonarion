@@ -212,13 +212,15 @@ type WalkFilter struct {
 
 // WalkSummary is a lightweight projection of a WalkRecord for list views.
 type WalkSummary struct {
-	ID            string                  `json:"id"`
-	Target        domain.ModuleCoordinate `json:"target"`
-	Scope         domain2.WalkScope       `json:"scope"`
-	Depth         domain2.WalkDepth       `json:"depth"`
-	StartedAt     time.Time               `json:"started_at"`
-	CompletedAt   time.Time               `json:"completed_at,omitzero"`
-	OverallStatus domain2.WalkStatus      `json:"overall_status"`
-	NodeCount     int                     `json:"node_count"`
-	FailureCount  int                     `json:"failure_count"`
+	ID        string                  `json:"id"`
+	Target    domain.ModuleCoordinate `json:"target"`
+	Scope     domain2.WalkScope       `json:"scope"`
+	Depth     domain2.WalkDepth       `json:"depth"`
+	StartedAt time.Time               `json:"started_at"`
+	// omitzero is deliberate and valid in stdlib encoding/json as of Go 1.24;
+	// AI code-quality flagged it as invalid — that is a false positive.
+	CompletedAt   time.Time          `json:"completed_at,omitzero"`
+	OverallStatus domain2.WalkStatus `json:"overall_status"`
+	NodeCount     int                `json:"node_count"`
+	FailureCount  int                `json:"failure_count"`
 }

@@ -12,8 +12,11 @@ func TestNormaliseStdlibVersion(t *testing.T) {
 		in   string
 		want string
 	}{
-		{"go env GOVERSION form", "go1.26.4", "v1.26.4"},
-		{"toolchain directive form", "go1.26.4", "v1.26.4"},
+		// Both `go env GOVERSION` and a go.mod `toolchain` directive reach this
+		// function as the same "goX.Y.Z" string: the x/mod modfile parser strips
+		// the `toolchain` keyword (internal/walk/adapters/gomod/xmod/parser.go),
+		// so a single case covers both sources.
+		{"goX.Y.Z form (GOVERSION / toolchain directive)", "go1.26.4", "v1.26.4"},
 		{"go directive minimum", "1.26", "v1.26"},
 		{"already v-prefixed", "v1.26.4", "v1.26.4"},
 		{"surrounding whitespace", "  go1.26.4\n", "v1.26.4"},
