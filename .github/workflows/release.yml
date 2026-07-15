@@ -63,6 +63,7 @@ jobs:
             fulcio.sigstore.dev:443
             rekor.sigstore.dev:443
             tuf-repo-cdn.sigstore.dev:443
+            timestamp.sigstore.dev:443
             proxy.golang.org:443
             sum.golang.org:443
             storage.googleapis.com:443
