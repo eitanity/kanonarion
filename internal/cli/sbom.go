@@ -126,7 +126,7 @@ func runSBOMGenerate(
 	stdout, stderr io.Writer,
 ) error {
 	// --package builds (or reuses) a project walk, so a local go.sum can anchor
-	// each fetched module's integrity on the normal path (KN-404). Resolve it
+	// each fetched module's integrity on the normal path. Resolve it
 	// before the container so the fetch use case is wired with the verifier.
 	if packagePattern != "" {
 		if gomodPath, gerr := resolveGoModPath(""); gerr == nil {
@@ -389,7 +389,7 @@ func ensureProjectWalkForSBOM(ctx context.Context, ctr *Container, force, stdlib
 	// A go.sum verification failure surfaces as a fetch-failed node. Fail the
 	// SBOM rather than emitting one that silently omits the unverifiable module:
 	// --from-modcache mode fails on any such node (go.sum is the sole anchor),
-	// and the normal network path fails on a go.sum-mismatch node (KN-404).
+	// and the normal network path fails on a go.sum-mismatch node.
 	localCoord := fetchdomain.ModuleCoordinate{Path: modulePath, Version: fetchdomain.LocalVersion}
 	walkID, werr := latestProjectWalkByScope(ctx, ctr.QueryWalks, modulePath, walkdomain.WalkScopeCode)
 	if werr != nil {

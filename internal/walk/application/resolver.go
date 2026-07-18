@@ -245,7 +245,7 @@ func (r *GraphResolver) ResolveProject(ctx context.Context, target domain2.Modul
 				return domain3.Graph{}, err
 			}
 		} else {
-			g = r.resolveFromBuildList(ctx, target, bl)
+			g = r.resolveFromBuildList(ctx, target, bl, scopeModules)
 		}
 	} else {
 		var err error
@@ -411,7 +411,15 @@ func (r *GraphResolver) resolveProjectFallback(ctx context.Context, target domai
 // resolution source is derived from the toolchain's replace information. Edges come
 // from `go mod graph`, with endpoints normalised to the selected (build-list)
 // coordinates and the go/toolchain pseudo-nodes excluded.
-func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target domain2.ModuleCoordinate, bl walkports.BuildList) domain3.Graph {
+//
+// scopeModules narrows the fetch set to the requested scope: when non-nil, only
+// nodes whose selected module path is in scopeModules (the same key
+// FilterGraphToScope keeps) are fetched and go.sum-verified — the out-of-scope
+// remainder is in the graph for structure (edges) but is discarded by
+// FilterGraphToScope afterwards, so fetching it is pure wasted work and log noise.
+// A nil scopeModules (complete-scope walk) fetches the whole build list. Out-of-scope
+// nodes are never fetched, so they never mark the graph Partial.
+func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target domain2.ModuleCoordinate, bl walkports.BuildList, scopeModules []string) domain3.Graph {
 	st := &resolveState{
 		selected: map[string]string{target.Path: target.Version},
 		nodes:    map[string]domain3.GraphNode{},
@@ -426,6 +434,18 @@ func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target domain2
 		Coordinate:       target,
 		DirectDependency: false,
 		ResolutionSource: domain3.ResolutionLocalMainModule,
+	}
+
+	// A scoped walk fetches only the modules FilterGraphToScope will keep; nil
+	// (complete scope) fetches everything. The set is keyed by the selected
+	// (post-replace) module path — the same key FilterGraphToScope matches on — so
+	// the fetched set and the retained set coincide exactly.
+	var scopeSet map[string]bool
+	if scopeModules != nil {
+		scopeSet = make(map[string]bool, len(scopeModules))
+		for _, p := range scopeModules {
+			scopeSet[p] = true
+		}
 	}
 
 	// Phase 1 (sequential): build every node skeleton and settle selection, then
@@ -447,7 +467,11 @@ func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target domain2
 		node, needFetch := r.buildListNodeSkeleton(m, st)
 		st.nodes[node.Coordinate.Path] = node
 		nodeByPath[m.Path] = node.Coordinate
-		if needFetch {
+		// Skip the fetch for modules the scope filter will discard: the graph keeps
+		// the node for edge structure, but fetching + go.sum-verifying it is wasted
+		// work that floods scoped runs with walk.fetch.failed warnings for modules in
+		// the pruned graph but never built.
+		if needFetch && (scopeSet == nil || scopeSet[node.Coordinate.Path]) {
 			fetchTasks = append(fetchTasks, blFetch{path: m.Path, coord: node.Coordinate})
 		}
 	}
@@ -786,6 +810,15 @@ func (r *GraphResolver) resolveFromParsed(
 				)
 			}
 		}
+	}
+
+	// A depth bound that actually truncated the closure marks the graph Partial
+	// with a distinct reason, so downstream audit/vuln/licence/sbom consumers see
+	// the bounded closure as incomplete rather than authoritative. Folded in after
+	// the BFS (alongside any fetch/parse failure tokens) so a combined bound + fetch
+	// failure carries both tokens.
+	if st.depthTruncated {
+		st.markPartial(domain3.DepthBoundedReason(depth.MaxDepth))
 	}
 
 	// Step 6: post-process edges — update To.Version to MVS-selected version.
@@ -1328,6 +1361,11 @@ func enqueueTransitive(
 	})
 
 	if atMaxDepth {
+		// Reaching here means the parent hit the depth bound yet still has this
+		// requirement: a real requirement the bound stops us from following. Record
+		// the boundary node but flag the closure as truncated so the graph is marked
+		// Partial and never consumed as a complete audit.
+		st.depthTruncated = true
 		if st.selected[effective.Path] == "" {
 			st.selected[effective.Path] = effective.Version
 			st.nodes[effective.Path] = domain3.GraphNode{
@@ -1394,6 +1432,12 @@ type resolveState struct {
 	partial         bool
 	partialReason   string
 	hasLocalReplace bool
+	// depthTruncated is set when the BFS actually truncated the closure at the
+	// depth bound: a node hit max_depth AND had unenqueued requirements. It is
+	// distinct from partial so it fires only on real truncation, not merely when
+	// MaxDepth > 0 — a bound larger than the graph's actual depth truncates
+	// nothing. The caller folds it into partialReason once resolution completes.
+	depthTruncated bool
 	// digests holds the raw artefact digests for each fetched module, keyed by
 	// module path (matching the nodes map key). Collected as fetch results are
 	// folded in and applied to nodes when the graph is drained, decoupling the

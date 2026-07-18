@@ -138,7 +138,7 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord fetchdo
 		}
 	})
 
-	prog, targetSSAPkgs, allLoadErrs, err := a.loadAndBuildSSA(ctx, fset, tempDir, coord, targetPkgPaths)
+	prog, targetSSAPkgs, allLoadErrs, failedPkgs, err := a.loadAndBuildSSA(ctx, fset, tempDir, coord, targetPkgPaths)
 	if err != nil {
 		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, err.Error()), nil
 	}
@@ -189,7 +189,18 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord fetchdo
 
 	nodes, edges, overallStatus := a.walkGraph(ctx, cg, moduleNodes, coord, fset, tempDir)
 
-	if len(allLoadErrs) > 0 && overallStatus == domain.CallGraphStatusExtracted {
+	// Attach body-level capability facts. These are properties of a
+	// function's own body — unsafe.Pointer conversions, assembly/linkname
+	// leaves — that the call graph and package sink map cannot witness. Scan
+	// only the packages that appear as graph nodes so the extra syntax load is
+	// bounded by the graph rather than the full dependency set.
+	a.attachBodyFacts(ctx, nodes, tempDir)
+
+	// A failed package (or any load error) means the graph is incomplete;
+	// never report Extracted when some target package did not resolve. Keeping
+	// FailedPackages and the Partial status in lock-step is what lets the query
+	// layer trust FailedPackages as the completeness signal.
+	if (len(allLoadErrs) > 0 || len(failedPkgs) > 0) && overallStatus == domain.CallGraphStatusExtracted {
 		overallStatus = domain.CallGraphStatusPartial
 	}
 
@@ -208,6 +219,10 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord fetchdo
 	if len(allLoadErrs) > 0 {
 		rec.FailureDetail = joinFirst(allLoadErrs, 3)
 	}
+	// FailedPackages scopes the incompleteness to the exact packages that did
+	// not typecheck, so callers/callees/reachability verdicts over this Partial
+	// graph can be caveated per package rather than by node/edge totals.
+	rec.FailedPackages = failedPkgs
 	rec.Sort()
 	return rec, nil
 }

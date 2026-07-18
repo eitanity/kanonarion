@@ -43,6 +43,14 @@ func newCallersCmd(stdout, stderr io.Writer) *cobra.Command {
 }
 
 func runCallers(ctx context.Context, symbolID string, jsonOut bool, uc QueryCallGraphUseCase, stdout io.Writer) error {
+	failedPkg, isPartial, failedList, err := rootPartialStatus(ctx, symbolID, uc)
+	if err != nil {
+		return err
+	}
+	if failedPkg != "" {
+		return partialUnresolvedError("callers", symbolID, failedPkg)
+	}
+
 	refs, err := uc.FindCallers(ctx, symbolID, cgapp.PipelineVersion)
 	if err != nil {
 		return fmt.Errorf("finding callers: %w", err)
@@ -51,6 +59,12 @@ func runCallers(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 	if len(refs) == 0 {
 		if cerr := classifyEmptyEdgeResult(ctx, symbolID, uc); cerr != nil {
 			return cerr
+		}
+	}
+
+	if isPartial && !jsonOut {
+		if err := writePartialNotice(stdout, "callers", symbolID, failedList); err != nil {
+			return err
 		}
 	}
 
@@ -89,6 +103,14 @@ func newCalleesCmd(stdout, stderr io.Writer) *cobra.Command {
 }
 
 func runCallees(ctx context.Context, symbolID string, jsonOut bool, uc QueryCallGraphUseCase, stdout io.Writer) error {
+	failedPkg, isPartial, failedList, err := rootPartialStatus(ctx, symbolID, uc)
+	if err != nil {
+		return err
+	}
+	if failedPkg != "" {
+		return partialUnresolvedError("callees", symbolID, failedPkg)
+	}
+
 	refs, err := uc.FindCallees(ctx, symbolID, cgapp.PipelineVersion)
 	if err != nil {
 		return fmt.Errorf("finding callees: %w", err)
@@ -97,6 +119,12 @@ func runCallees(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 	if len(refs) == 0 {
 		if cerr := classifyEmptyEdgeResult(ctx, symbolID, uc); cerr != nil {
 			return cerr
+		}
+	}
+
+	if isPartial && !jsonOut {
+		if err := writePartialNotice(stdout, "callees", symbolID, failedList); err != nil {
+			return err
 		}
 	}
 
@@ -178,17 +206,41 @@ type transitiveResult struct {
 }
 
 func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, jsonOut bool, uc QueryCallGraphUseCase, stdout io.Writer) error {
+	failedPkg, isPartial, failedList, err := rootPartialStatus(ctx, symbolID, uc)
+	if err != nil {
+		return err
+	}
+	if failedPkg != "" {
+		return partialUnresolvedError("transitive callers", symbolID, failedPkg)
+	}
 	edges, nodes, err := uc.TraverseCallers(ctx, symbolID, cgapp.PipelineVersion, maxDepth)
 	if err != nil {
 		return fmt.Errorf("traversing callers: %w", err)
+	}
+	if isPartial && !jsonOut {
+		if err := writePartialNotice(stdout, "transitive callers", symbolID, failedList); err != nil {
+			return err
+		}
 	}
 	return printTransitiveResult("callers", symbolID, maxDepth, nodes, edges, jsonOut, stdout)
 }
 
 func runCalleesTransitive(ctx context.Context, symbolID string, maxDepth int, jsonOut bool, uc QueryCallGraphUseCase, stdout io.Writer) error {
+	failedPkg, isPartial, failedList, err := rootPartialStatus(ctx, symbolID, uc)
+	if err != nil {
+		return err
+	}
+	if failedPkg != "" {
+		return partialUnresolvedError("transitive callees", symbolID, failedPkg)
+	}
 	edges, nodes, err := uc.TraverseCallees(ctx, symbolID, cgapp.PipelineVersion, maxDepth)
 	if err != nil {
 		return fmt.Errorf("traversing callees: %w", err)
+	}
+	if isPartial && !jsonOut {
+		if err := writePartialNotice(stdout, "transitive callees", symbolID, failedList); err != nil {
+			return err
+		}
 	}
 	return printTransitiveResult("callees", symbolID, maxDepth, nodes, edges, jsonOut, stdout)
 }

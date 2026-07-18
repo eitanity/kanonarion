@@ -111,6 +111,7 @@ type callGraphRecordJSON struct {
 	Edges           []callEdgeJSON `json:"edges"`
 	OverallStatus   string         `json:"overall_status"`
 	FailureDetail   string         `json:"failure_detail,omitempty"`
+	FailedPackages  []string       `json:"failed_packages,omitempty"`
 	ExclusionReason string         `json:"exclusion_reason,omitempty"`
 	ExclusionList   []string       `json:"exclusion_list,omitempty"`
 	NodeCount       int            `json:"node_count"`
@@ -164,6 +165,7 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 		Edges:           edges,
 		OverallStatus:   r.OverallStatus.String(),
 		FailureDetail:   r.FailureDetail,
+		FailedPackages:  r.FailedPackages,
 		ExclusionReason: r.ExclusionReason,
 		ExclusionList:   r.ExclusionList,
 		NodeCount:       r.NodeCount,
@@ -217,6 +219,9 @@ func printCallGraphRecord(r domain.CallGraphRecord, limitNodes, limitEdges int, 
 		if _, err := fmt.Fprintf(stdout, "  failure: %s\n", r.FailureDetail); err != nil {
 			return fmt.Errorf("writing failure detail: %w", err)
 		}
+	}
+	if err := writeFailedPackages(stdout, r); err != nil {
+		return err
 	}
 	if err := writeExclusionInfo(stdout, r); err != nil {
 		return err

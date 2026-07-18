@@ -19,7 +19,7 @@ var (
 )
 
 // projectGoSum builds a use case whose network sumdb is disabled but whose
-// walk-root go.sum verifier returns res for every coordinate (KN-404).
+// walk-root go.sum verifier returns res for every coordinate.
 func projectGoSum(t *testing.T, res ports.SumDBResult) (*application.FetchModuleUseCase, *fakeFacts) {
 	t.Helper()
 	proxy := &fakeProxy{}

@@ -853,3 +853,156 @@ func TestUnresolvedSymbolMessage_IntentAware(t *testing.T) {
 		t.Errorf("empty local module must fall back to consumer-mode, got: %q", noMod)
 	}
 }
+
+// --- Partial-graph verdict soundness ---
+
+// partialAppCoord and the two helpers below build a fake store whose call graph
+// for example.com/app is Partial, with example.com/app/broken having failed to
+// typecheck.
+func setupPartialStore(t *testing.T, callers []cgports.CallEdgeRef) *testfakes.FakeQueryCallGraph {
+	t.Helper()
+	uc := testfakes.NewFakeQueryCallGraph()
+	coord := fetchdomain.ModuleCoordinate{Path: "example.com/app", Version: "v1.0.0"}
+	uc.SetList([]cgports.CallGraphSummary{
+		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: "0.2.0"},
+	})
+	uc.AddRecord(coord, "0.2.0", cgdomain.CallGraphRecord{
+		OverallStatus:  cgdomain.CallGraphStatusPartial,
+		FailedPackages: []string{"example.com/app/broken"},
+		// The clean helper is a node; the broken package produced none.
+		Nodes: []cgdomain.CallNode{{ID: "example.com/app.Helper", Package: "example.com/app"}},
+	})
+	if callers != nil {
+		uc.SetCallers(callers)
+	}
+	return uc
+}
+
+func TestRunCallers_RootInFailedPackage_Unresolved(t *testing.T) {
+	// The query root lives in a package that did not typecheck, so its edges
+	// were dropped. A bare "no callers" would be a false negative; the command
+	// must downgrade to a directing unresolved error instead.
+	uc := setupPartialStore(t, nil)
+	var buf bytes.Buffer
+	err := runCallers(context.Background(), "example.com/app/broken.Broken", false, uc, &buf)
+	if err == nil {
+		t.Fatal("expected unresolved error for a root in a failed package, got nil")
+	}
+	if !strings.Contains(err.Error(), "unresolved") ||
+		!strings.Contains(err.Error(), "example.com/app/broken") ||
+		!strings.Contains(err.Error(), "did not typecheck") {
+		t.Errorf("expected unresolved-partial diagnostic naming the package, got: %v", err)
+	}
+	if buf.Len() != 0 {
+		t.Errorf("expected no result output on unresolved, got: %q", buf.String())
+	}
+}
+
+func TestRunCallees_RootInFailedPackage_Unresolved(t *testing.T) {
+	uc := setupPartialStore(t, nil)
+	var buf bytes.Buffer
+	err := runCallees(context.Background(), "example.com/app/broken.Broken", false, uc, &buf)
+	if err == nil {
+		t.Fatal("expected unresolved error for a root in a failed package, got nil")
+	}
+	if !strings.Contains(err.Error(), "unresolved") || !strings.Contains(err.Error(), "example.com/app/broken") {
+		t.Errorf("expected unresolved-partial diagnostic, got: %v", err)
+	}
+}
+
+func TestRunCallersTransitive_RootInFailedPackage_Unresolved(t *testing.T) {
+	uc := setupPartialStore(t, nil)
+	var buf bytes.Buffer
+	err := runCallersTransitive(context.Background(), "example.com/app/broken.Broken", 0, false, uc, &buf)
+	if err == nil {
+		t.Fatal("expected unresolved error for a transitive root in a failed package, got nil")
+	}
+	if !strings.Contains(err.Error(), "unresolved") || !strings.Contains(err.Error(), "transitive callers") {
+		t.Errorf("expected unresolved transitive diagnostic, got: %v", err)
+	}
+}
+
+func TestRunCallers_PartialGraph_CleanRoot_Caveat(t *testing.T) {
+	// The root package typechecked, but the overall graph is Partial. The result
+	// is shown, prefixed with a caveat so it is never read as an Extracted-graph
+	// answer.
+	uc := setupPartialStore(t, []cgports.CallEdgeRef{
+		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", FromID: "example.com/app.Main", ToID: "example.com/app.Helper"},
+	})
+	var buf bytes.Buffer
+	if err := runCallers(context.Background(), "example.com/app.Helper", false, uc, &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "notice: call graph is Partial") || !strings.Contains(out, "example.com/app/broken") {
+		t.Errorf("expected Partial caveat naming the failed package, got: %q", out)
+	}
+	if !strings.Contains(out, "example.com/app.Main") {
+		t.Errorf("expected the caller to still be shown, got: %q", out)
+	}
+}
+
+func TestRunCallers_PartialGraph_JSON_NoCaveatLine(t *testing.T) {
+	// In JSON mode the caveat must not corrupt the array output; the hard-error
+	// case is still an error, but a clean-root Partial result stays valid JSON.
+	uc := setupPartialStore(t, []cgports.CallEdgeRef{
+		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", FromID: "example.com/app.Main", ToID: "example.com/app.Helper"},
+	})
+	var buf bytes.Buffer
+	if err := runCallers(context.Background(), "example.com/app.Helper", true, uc, &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(buf.String(), "notice:") {
+		t.Errorf("JSON output must not contain the text caveat, got: %q", buf.String())
+	}
+	var refs []map[string]any
+	if err := json.Unmarshal(buf.Bytes(), &refs); err != nil {
+		t.Errorf("JSON output not parseable: %v (%q)", err, buf.String())
+	}
+}
+
+func TestRunCallers_ExtractedGraph_NoCaveat(t *testing.T) {
+	// An Extracted graph must never carry a Partial caveat.
+	uc := testfakes.NewFakeQueryCallGraph()
+	coord := fetchdomain.ModuleCoordinate{Path: "example.com/app", Version: "v1.0.0"}
+	uc.SetList([]cgports.CallGraphSummary{
+		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: "0.2.0"},
+	})
+	uc.AddRecord(coord, "0.2.0", cgdomain.CallGraphRecord{
+		OverallStatus: cgdomain.CallGraphStatusExtracted,
+		Nodes:         []cgdomain.CallNode{{ID: "example.com/app.Helper", Package: "example.com/app"}},
+	})
+	uc.SetCallers([]cgports.CallEdgeRef{
+		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", FromID: "example.com/app.Main", ToID: "example.com/app.Helper"},
+	})
+	var buf bytes.Buffer
+	if err := runCallers(context.Background(), "example.com/app.Helper", false, uc, &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(buf.String(), "notice:") {
+		t.Errorf("Extracted graph must not carry a Partial caveat, got: %q", buf.String())
+	}
+}
+
+func TestSymbolFailedPackage(t *testing.T) {
+	failed := []string{"example.com/app/broken", "example.com/app/other"}
+	cases := []struct {
+		symbol string
+		want   string
+	}{
+		{"example.com/app/broken.Broken", "example.com/app/broken"},
+		{"example.com/app/broken.(*T).M", "example.com/app/broken"},
+		{"example.com/app/broken/sub.Fn", ""}, // sub-package is a different package
+		{"example.com/app.Clean", ""},
+		{"example.com/app/brokenish.Fn", ""}, // prefix but not a package boundary
+	}
+	for _, tc := range cases {
+		got, hit := symbolFailedPackage(tc.symbol, failed)
+		if tc.want == "" && hit {
+			t.Errorf("symbolFailedPackage(%q) = %q, want no hit", tc.symbol, got)
+		}
+		if tc.want != "" && got != tc.want {
+			t.Errorf("symbolFailedPackage(%q) = %q, want %q", tc.symbol, got, tc.want)
+		}
+	}
+}

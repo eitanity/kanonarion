@@ -43,6 +43,7 @@ depth policy, store layout, and exit codes - see
 
 - [`vuln-scan`](vuln.md) - scan all modules in a walk for vulnerabilities (and all `vuln-*` companions)
 - [`reachability`](reachability.md) - determine whether CVE-affected symbols are reachable in the shipped binary
+- [`capability`](capability.md) - report the sensitive capabilities a module's reachable code can use (also diffs two versions)
 - [`rescan`](rescan.md) - re-scan an existing walk against a fresh vulnerability snapshot
 - [`sbom`](sbom.md) - generate a Software Bill of Materials for a walk
 

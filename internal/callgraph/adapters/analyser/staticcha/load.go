@@ -9,6 +9,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
@@ -16,8 +17,19 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tempDir string, coord fetchdomain.ModuleCoordinate, targetPkgPaths []string) (prog *ssa.Program, targetSSAPkgs []*ssa.Package, allLoadErrs []string, err error) {
+func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tempDir string, coord fetchdomain.ModuleCoordinate, targetPkgPaths []string) (prog *ssa.Program, targetSSAPkgs []*ssa.Package, allLoadErrs []string, failedPkgs []string, err error) {
 	prog = ssa.NewProgram(fset, ssa.BuilderMode(0))
+
+	// failedSet accumulates target package import paths whose typecheck or SSA
+	// construction failed. It is the machine-readable companion to allLoadErrs:
+	// verdicts over the resulting Partial graph are caveated per package, not by
+	// node/edge totals.
+	failedSet := make(map[string]bool)
+	markFailed := func(pkgPath string) {
+		if pkgPath != "" {
+			failedSet[pkgPath] = true
+		}
+	}
 
 	// Step 2: Load ALL types.Packages (NeedTypes) but NO ASTs.
 	cfgTypes := &packages.Config{
@@ -27,7 +39,7 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 		Tests:   false,
 	}
 	if _, err := packages.Load(cfgTypes, "./..."); err != nil {
-		return nil, nil, nil, fmt.Errorf("types load: %w", err)
+		return nil, nil, nil, nil, fmt.Errorf("types load: %w", err)
 	}
 	a.logMem(ctx, "types_loaded")
 
@@ -56,6 +68,11 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 
 		if bErr != nil {
 			allLoadErrs = append(allLoadErrs, fmt.Sprintf("batch %d load failed: %v", i/batchSize, bErr))
+			// The whole batch failed to load, so every target package in it is
+			// unresolved; record each so verdicts touching them are caveated.
+			for _, pkgPath := range batchPatterns {
+				markFailed(pkgPath)
+			}
 			continue
 		}
 
@@ -63,8 +80,12 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 			for _, e := range p.Errors {
 				allLoadErrs = append(allLoadErrs, e.Error())
 			}
+			if len(p.Errors) > 0 {
+				markFailed(p.PkgPath)
+			}
 
 			if p.Types == nil {
+				markFailed(p.PkgPath)
 				continue
 			}
 
@@ -82,6 +103,7 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 			ssaPkg, berr := createAndBuildSSAPackageSafe(prog, p)
 			if berr != nil {
 				allLoadErrs = append(allLoadErrs, fmt.Sprintf("SSA construction panic for %s: %v", p.PkgPath, berr))
+				markFailed(p.PkgPath)
 				continue
 			}
 			if ssaPkg == nil {
@@ -98,7 +120,15 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 		a.logMem(ctx, fmt.Sprintf("batch_%d_processed", i/batchSize))
 	}
 
-	return prog, targetSSAPkgs, allLoadErrs, nil
+	if len(failedSet) > 0 {
+		failedPkgs = make([]string, 0, len(failedSet))
+		for p := range failedSet {
+			failedPkgs = append(failedPkgs, p)
+		}
+		sort.Strings(failedPkgs)
+	}
+
+	return prog, targetSSAPkgs, allLoadErrs, failedPkgs, nil
 }
 
 // extractModuleZip extracts files from a Go module proxy zip to destDir,

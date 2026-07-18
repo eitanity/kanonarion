@@ -263,7 +263,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	if modcacheDeriver != nil {
 		fetchUC = fetchUC.WithModcache(modcacheDeriver)
 	}
-	// KN-404: on the normal network path, layer the walk root's local go.sum on
+	// On the normal network path, layer the walk root's local go.sum on
 	// as an additional, always-on integrity anchor when one is present. It is a
 	// cheap offline complement to the network checksum database — not a
 	// replacement — so a module whose fetched h1 disagrees with go.sum fails
@@ -286,10 +286,15 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	localFetcher := walklocalfs.New(blobs, factStore, clk)
 	resolver := walkapp.NewGraphResolver(parser, fetcher, blobs, clk, "", logger).
 		WithBuildListResolver(walkbuildlist.New(goBinary, logger))
-	// The stdlib chain of custody needs network access to go.dev/dl and
-	// googlesource. In --from-modcache mode the run is fully offline, so the
-	// acquirer is left unwired and the stdlib node stays a bare coverage node.
-	if !modcacheMode {
+	// The stdlib chain of custody has two anchors. On the network path it uses
+	// go.dev/dl's published checksum plus a googlesource commit. In --from-modcache
+	// mode the run is fully offline, so it anchors instead to the local toolchain
+	// ($GOROOT/src + $GOROOT/LICENSE), recorded as VerifiedLocalToolchain — no
+	// network I/O either way leaves the stdlib node populated.
+	if modcacheMode {
+		resolver = resolver.WithStdlibAcquirer(
+			composition.NewOfflineStdlibAcquirer(dbHandle, goBinary, clk, logger), skipVCSVerify)
+	} else {
 		resolver = resolver.WithStdlibAcquirer(
 			composition.NewStdlibAcquirer(dbHandle, blobs, clk, logger), skipVCSVerify)
 	}

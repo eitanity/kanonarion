@@ -178,6 +178,16 @@ Node IDs follow the SSA function naming convention:
 | Method (pointer receiver) | `import/path.(*TypeName).MethodName` |
 | Method (value receiver) | `import/path.(TypeName).MethodName` |
 
+## Node body-level facts
+
+Each node records two facts derived from the function's own body, used by
+[`capability`](capability.md) analysis:
+
+| Field | Meaning |
+|-------|---------|
+| `UsesUnsafePointer` | The function body performs an `unsafe.Pointer` conversion |
+| `IsAssemblyOrLinkname` | The function has no Go body (assembly or `//go:linkname`) |
+
 ## Edge confidence
 
 | Value | Meaning |
@@ -208,7 +218,7 @@ tables:
   - `callgraph_edges_from_idx ON (from_id, pipeline_version)` - used by `callees`
 
 The callgraph schema is tracked in the shared `schema_migrations` table under
-module key `callgraph` (current version: 2).
+module key `callgraph` (current version: 5).
 
 ## Relation to other stages
 

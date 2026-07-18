@@ -135,6 +135,7 @@ Kanonarion is designed to be called directly from agent tool-use. The recommende
 | "How do I use X?"                          | `examples-find <symbol>` then `examples-show` |
 | "Which library should I use for X?"        | `symbol-find <Name>` |
 | "Is this library safe?"                    | `vuln-scan --module <module@version> --reachability` |
+| "What can this dependency actually do?"    | `capability <module@version>` |
 | "Can I use this commercially?"             | `license <module@version>` |
 | "Is my dependency closure licence-compatible?" | `license-compat <module@version>` |
 | Generate a third-party attribution / NOTICE file | `notice --package ./cmd/<binary>` |

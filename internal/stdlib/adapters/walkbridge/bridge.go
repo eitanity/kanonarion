@@ -14,15 +14,15 @@ import (
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
-// Bridge wraps the stdlib Acquirer and satisfies walkports.StdlibAcquirer,
-// mapping the acquired facts onto the walk-domain shape the resolver attaches to
-// the stdlib node.
+// Bridge wraps a stdlib Acquisition (the online go.dev/dl Acquirer or the offline
+// LocalAcquirer) and satisfies walkports.StdlibAcquirer, mapping the acquired
+// facts onto the walk-domain shape the resolver attaches to the stdlib node.
 type Bridge struct {
-	acquirer *stdlibapp.Acquirer
+	acquirer stdlibapp.Acquisition
 }
 
-// New wraps an Acquirer as a walk StdlibAcquirer.
-func New(acquirer *stdlibapp.Acquirer) *Bridge { return &Bridge{acquirer: acquirer} }
+// New wraps an Acquisition as a walk StdlibAcquirer.
+func New(acquirer stdlibapp.Acquisition) *Bridge { return &Bridge{acquirer: acquirer} }
 
 // AcquireStdlib acquires the chain of custody and returns the walk-domain facts
 // and the tarball digests separately, matching the resolver's expectation that

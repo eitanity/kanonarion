@@ -49,7 +49,9 @@ import (
 	stdlibgodev "github.com/eitanity/kanonarion/internal/stdlib/adapters/godev"
 	stdlibgit "github.com/eitanity/kanonarion/internal/stdlib/adapters/gitlsremote"
 	stdliblic "github.com/eitanity/kanonarion/internal/stdlib/adapters/licenseident"
+	stdliblocalsrc "github.com/eitanity/kanonarion/internal/stdlib/adapters/localsource"
 	stdlibsqlite "github.com/eitanity/kanonarion/internal/stdlib/adapters/store/sqlite"
+	stdlibtoolchain "github.com/eitanity/kanonarion/internal/stdlib/adapters/toolchainenv"
 	stdlibbridge "github.com/eitanity/kanonarion/internal/stdlib/adapters/walkbridge"
 	stdlibapp "github.com/eitanity/kanonarion/internal/stdlib/application"
 	vensqlite "github.com/eitanity/kanonarion/internal/vendortree/adapters/store/sqlite"
@@ -100,6 +102,24 @@ func NewStdlibAcquirer(db sqlitestore.DB, blobs fetchports.BlobStore, clk fetchp
 		stdliblic.New(licdet.New()),
 		stdlibsqlite.New(db),
 		blobs, clk, logger,
+	)
+	return stdlibbridge.New(acquirer)
+}
+
+// NewOfflineStdlibAcquirer wires the offline standard-library chain-of-custody
+// acquirer used in --from-modcache runs. It anchors to the local toolchain
+// instead of go.dev/dl: the `go env GOROOT GOVERSION` inspector locates the
+// toolchain, the local source reader exposes $GOROOT/src and $GOROOT/LICENSE, and
+// the same licence detector and version-keyed fact cache the online path uses
+// classify and persist the result. No network client is wired — the offline path
+// performs no I/O beyond the local filesystem. goBinary may be empty (PATH "go").
+func NewOfflineStdlibAcquirer(db sqlitestore.DB, goBinary string, clk fetchports.Clock, logger *slog.Logger) *stdlibbridge.Bridge {
+	acquirer := stdlibapp.NewLocalAcquirer(
+		stdlibtoolchain.New(goBinary, logger),
+		stdliblocalsrc.New(),
+		stdliblic.New(licdet.New()),
+		stdlibsqlite.New(db),
+		clk, logger,
 	)
 	return stdlibbridge.New(acquirer)
 }

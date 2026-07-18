@@ -79,14 +79,16 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 	nodes := make([]CallNode, len(c.Nodes))
 	for i, cn := range c.Nodes {
 		nodes[i] = CallNode{
-			ID:            cn.ID,
-			Module:        cn.Module,
-			Package:       cn.Package,
-			Symbol:        cn.Symbol,
-			Receiver:      cn.Receiver,
-			IsExternal:    cn.IsExternal,
-			IsExportedAPI: cn.IsExportedAPI,
-			Position:      SourcePosition{File: cn.Position.File, Line: cn.Position.Line},
+			ID:                   cn.ID,
+			Module:               cn.Module,
+			Package:              cn.Package,
+			Symbol:               cn.Symbol,
+			Receiver:             cn.Receiver,
+			IsExternal:           cn.IsExternal,
+			IsExportedAPI:        cn.IsExportedAPI,
+			Position:             SourcePosition{File: cn.Position.File, Line: cn.Position.Line},
+			UsesUnsafePointer:    cn.UsesUnsafePointer,
+			IsAssemblyOrLinkname: cn.IsAssemblyOrLinkname,
 		}
 	}
 	edges := make([]CallEdge, len(c.Edges))
@@ -107,6 +109,7 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 		Edges:           edges,
 		OverallStatus:   CallGraphStatus(c.OverallStatus),
 		FailureDetail:   c.FailureDetail,
+		FailedPackages:  c.FailedPackages,
 		ExclusionReason: c.ExclusionReason,
 		ExclusionList:   c.ExclusionList,
 		NodeCount:       c.NodeCount,
@@ -161,14 +164,16 @@ type canonicalPos struct {
 }
 
 type canonicalNode struct {
-	ID            string       `json:"id"`
-	IsExportedAPI bool         `json:"is_exported_api"`
-	IsExternal    bool         `json:"is_external"`
-	Module        string       `json:"module"`
-	Package       string       `json:"package"`
-	Position      canonicalPos `json:"position"`
-	Receiver      string       `json:"receiver"`
-	Symbol        string       `json:"symbol"`
+	ID                   string       `json:"id"`
+	IsAssemblyOrLinkname bool         `json:"is_assembly_or_linkname"`
+	IsExportedAPI        bool         `json:"is_exported_api"`
+	IsExternal           bool         `json:"is_external"`
+	Module               string       `json:"module"`
+	Package              string       `json:"package"`
+	Position             canonicalPos `json:"position"`
+	Receiver             string       `json:"receiver"`
+	Symbol               string       `json:"symbol"`
+	UsesUnsafePointer    bool         `json:"uses_unsafe_pointer"`
 }
 
 type canonicalEdge struct {
@@ -188,6 +193,7 @@ type canonicalRecord struct {
 	ExclusionList   []string        `json:"exclusion_list,omitempty"`
 	ExclusionReason string          `json:"exclusion_reason,omitempty"`
 	ExtractedAt     string          `json:"extracted_at"`
+	FailedPackages  []string        `json:"failed_packages,omitempty"`
 	FailureDetail   string          `json:"failure_detail"`
 	NodeCount       int             `json:"node_count"`
 	Nodes           []canonicalNode `json:"nodes"`
@@ -219,14 +225,16 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 	cNodes := make([]canonicalNode, len(nodes))
 	for i, n := range nodes {
 		cNodes[i] = canonicalNode{
-			ID:            n.ID,
-			IsExportedAPI: n.IsExportedAPI,
-			IsExternal:    n.IsExternal,
-			Module:        n.Module,
-			Package:       n.Package,
-			Position:      canonicalPos{File: n.Position.File, Line: n.Position.Line},
-			Receiver:      n.Receiver,
-			Symbol:        n.Symbol,
+			ID:                   n.ID,
+			IsAssemblyOrLinkname: n.IsAssemblyOrLinkname,
+			IsExportedAPI:        n.IsExportedAPI,
+			IsExternal:           n.IsExternal,
+			Module:               n.Module,
+			Package:              n.Package,
+			Position:             canonicalPos{File: n.Position.File, Line: n.Position.Line},
+			Receiver:             n.Receiver,
+			Symbol:               n.Symbol,
+			UsesUnsafePointer:    n.UsesUnsafePointer,
 		}
 	}
 	cEdges := make([]canonicalEdge, len(edges))
@@ -246,6 +254,13 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 		sort.Strings(exclusions)
 	}
 
+	var failedPkgs []string
+	if len(r.FailedPackages) > 0 {
+		failedPkgs = make([]string, len(r.FailedPackages))
+		copy(failedPkgs, r.FailedPackages)
+		sort.Strings(failedPkgs)
+	}
+
 	c := canonicalRecord{
 		Algorithm:       string(r.Algorithm),
 		ContentHash:     r.ContentHash,
@@ -256,6 +271,7 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 		ExclusionList:   exclusions,
 		ExclusionReason: r.ExclusionReason,
 		ExtractedAt:     r.ExtractedAt.UTC().Format(time.RFC3339),
+		FailedPackages:  failedPkgs,
 		FailureDetail:   r.FailureDetail,
 		NodeCount:       r.NodeCount,
 		Nodes:           cNodes,

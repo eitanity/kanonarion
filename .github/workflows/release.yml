@@ -26,8 +26,7 @@ concurrency:
 # against go.sum at that repo's real VCS host (resolved from the proxy's Origin
 # metadata: github.com, go.googlesource.com for golang.org/x, gitlab.com for
 # modernc.org, codeberg.org, gopkg.in — not the vanity-import hosts, which are
-# never contacted). The observed set was captured from a cold-store audit run;
-# see docs/ci-hardening.md.
+# never contacted). The observed set was captured from a cold-store audit run.
 permissions: {}
 
 jobs:

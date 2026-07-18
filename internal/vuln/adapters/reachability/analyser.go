@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 
+	callgraphdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
@@ -90,15 +91,22 @@ func buildTargetSet(cg ports.CallGraphProjection, targets []ports.SymbolReferenc
 	return ids
 }
 
-// collectEntryPoints returns IDs of exported, non-external nodes (the public API surface).
+// collectEntryPoints returns the reachability roots for the projection: the
+// module's exported API plus its package init functions, falling back to all
+// owned nodes when neither exists. It delegates to the shared callgraph-domain
+// selector so vuln reachability and capability analysis root traversal
+// identically and can never drift.
 func collectEntryPoints(cg ports.CallGraphProjection) []string {
-	var eps []string
+	candidates := make([]callgraphdomain.RootCandidate, 0, len(cg.Nodes))
 	for _, node := range cg.Nodes {
-		if node.IsExportedAPI && !node.IsExternal {
-			eps = append(eps, node.ID)
-		}
+		candidates = append(candidates, callgraphdomain.RootCandidate{
+			ID:            node.ID,
+			Symbol:        node.Symbol,
+			IsExternal:    node.IsExternal,
+			IsExportedAPI: node.IsExportedAPI,
+		})
 	}
-	return eps
+	return callgraphdomain.SelectReachabilityRoots(candidates)
 }
 
 // bfsPath performs a BFS from entryPoints following call edges and returns the

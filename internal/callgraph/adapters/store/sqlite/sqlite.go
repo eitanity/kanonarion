@@ -84,6 +84,14 @@ CREATE INDEX IF NOT EXISTS callgraph_edges_from_idx ON callgraph_edges(from_id, 
 		// rows; they are regenerable by re-extracting.
 		{Module: "callgraph", Version: 4, SQL: `DELETE FROM callgraph_records;
 DELETE FROM callgraph_edges`},
+		// Migration v5: per-node body-level facts (uses_unsafe_pointer,
+		// is_assembly_or_linkname) joined the canonical node schema and bumped the
+		// schema version. Pre-existing blobs lack these fields, so capability
+		// analysis would silently under-report UNSAFE_POINTER and
+		// ARBITRARY_EXECUTION over them. Purge the legacy rows; re-extraction
+		// repopulates them with the new facts.
+		{Module: "callgraph", Version: 5, SQL: `DELETE FROM callgraph_records;
+DELETE FROM callgraph_edges`},
 	}
 }
 

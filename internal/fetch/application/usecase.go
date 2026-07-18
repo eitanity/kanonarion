@@ -62,7 +62,7 @@ type FetchModuleUseCase struct {
 }
 
 // WithProjectGoSum layers a walk-root go.sum verifier onto the normal network
-// fetch path (KN-404). It is additive: the network checksum-database check and
+// fetch path. It is additive: the network checksum-database check and
 // VCS cross-verification still run. A nil client (the default) disables the
 // cross-check entirely, so the unshared network path is unchanged. Has no
 // effect in --from-modcache mode, which anchors on go.sum via the sumdb field
@@ -199,7 +199,7 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 	}
 	log.InfoContext(ctx, "download_ok", slog.Int("zip_bytes", len(zipData)))
 
-	// Step 3.5: cheap, offline local go.sum cross-check (KN-404). It uses the
+	// Step 3.5: cheap, offline local go.sum cross-check. It uses the
 	// h1 hashes already computed during download — no extra hashing, no network
 	// round-trip — and runs before the blob store and the network sumdb lookup
 	// so a tampered module fails fast, with no blob written and no record
@@ -454,7 +454,7 @@ func (uc *FetchModuleUseCase) verify(
 
 // checkProjectGoSum cross-checks the module's already-computed h1 hashes
 // against the walk root's local go.sum, when a project go.sum verifier is
-// configured (KN-404). It is a cheap, offline complement to the network
+// configured. It is a cheap, offline complement to the network
 // checksum-database check and adds no hashing or network calls. The outcomes:
 //
 //   - no verifier configured, or the coordinate is absent from go.sum →

@@ -523,7 +523,7 @@ var (
 // projectGoSumPath is the walk root's go.sum path for the NORMAL (network)
 // fetch path. When set and the file exists, NewContainer layers a local go.sum
 // verifier onto the fetch use case as an always-on, offline complement to the
-// network checksum database (KN-404). Empty leaves the network path's
+// network checksum database. Empty leaves the network path's
 // verification unchanged. It is process-wide for the same reason modcacheMode
 // is: a single audit/sbom invocation builds several Containers, each of which
 // must wire the same verifier. Distinct from --from-modcache (goSumPath), where
@@ -628,7 +628,7 @@ func modcacheWalkGate(rec walkdomain.WalkRecord, local fetchdomain.ModuleCoordin
 }
 
 // goSumWalkGate turns a go.sum tamper detected on the NORMAL (network) walk
-// path into a hard, non-zero exit (KN-404). When a project go.sum is present,
+// path into a hard, non-zero exit. When a project go.sum is present,
 // the fetch pipeline fails a module whose fetched h1 disagrees with its go.sum
 // entry; the walker records that as a fetch_failed node (with the tamper detail)
 // rather than aborting. This gate scans for such nodes and returns an
