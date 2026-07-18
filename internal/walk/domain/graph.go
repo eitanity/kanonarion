@@ -1,12 +1,24 @@
 package domain
 
 import (
+	"fmt"
 	"sort"
 	"strings"
 	"time"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
+
+// DepthBoundedReason is the PartialReason token recorded when a coordinate-rooted
+// walk truncates its dependency closure at max_depth. It is distinct from the
+// failure reasons (fetch_failed, parse_failed, cancelled) so a deliberately
+// bounded graph is never conflated with one that failed to resolve, while still
+// marking the closure incomplete — a truncated graph is incomplete for
+// audit/vuln/licence/sbom purposes regardless of why. maxDepth is embedded so the
+// bound is recoverable from the reason string alone.
+func DepthBoundedReason(maxDepth int) string {
+	return fmt.Sprintf("depth_bounded: max_depth=%d", maxDepth)
+}
 
 // ResolutionSource describes how a node's version was selected during MVS resolution.
 type ResolutionSource string

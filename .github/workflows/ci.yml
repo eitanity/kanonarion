@@ -14,7 +14,7 @@ concurrency:
 # what it needs. Third-party actions are pinned to full commit SHAs (the
 # trailing '# vX' is the human-readable tag the SHA resolved from) so a moved
 # tag can never silently change what runs. Dependabot's github-actions
-# ecosystem (KN-160) keeps these SHAs current.
+# ecosystem keeps these SHAs current.
 permissions: {}
 
 jobs:

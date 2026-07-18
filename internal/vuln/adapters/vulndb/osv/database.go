@@ -526,7 +526,7 @@ func (d *Database) LookupFindings(ctx context.Context, coord fetchdomain.ModuleC
 		}
 		// Precise multi-range match: index/modules.json collapses per-branch
 		// backports to one highest fixed, over-reporting a version patched on an
-		// older branch (KN-411). Re-evaluate against the advisory's full affected
+		// older branch. Re-evaluate against the advisory's full affected
 		// range set and drop the finding when this version is truly not affected.
 		if !advisoryAffects(coord, adv) {
 			d.logger.Debug("vuln metadata: version cleared by full-range match",

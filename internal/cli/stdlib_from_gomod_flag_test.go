@@ -17,7 +17,7 @@ import (
 )
 
 // TestStdlibFromGoModFlag_RegisteredOnAllProjectCommands guards the parity the
-// KN-399 refactor introduced: walk, sbom, audit, and inspect all drive a
+// shared-flag refactor introduced: walk, sbom, audit, and inspect all drive a
 // project walk that injects the synthetic stdlib node, so every one of them must
 // expose --stdlib-from-gomod, defaulting to false, with an identical help
 // string. Sharing registerStdlibFromGoModFlag is what keeps them from drifting;

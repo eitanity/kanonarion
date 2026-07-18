@@ -45,13 +45,29 @@ func makeFactRecord(path, version string) domain2.FactRecord {
 type fakeModuleFetcher struct {
 	records map[string]domain2.FactRecord
 	errors  map[string]error
+
+	mu        sync.Mutex
+	requested map[string]bool // coordinates EnsureFetched was called for
 }
 
 func newFakeFetcher() *fakeModuleFetcher {
 	return &fakeModuleFetcher{
-		records: make(map[string]domain2.FactRecord),
-		errors:  make(map[string]error),
+		records:   make(map[string]domain2.FactRecord),
+		errors:    make(map[string]error),
+		requested: make(map[string]bool),
 	}
+}
+
+// fetched reports whether EnsureFetched was ever called for module path.
+func (f *fakeModuleFetcher) fetched(path string) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for key := range f.requested {
+		if strings.HasPrefix(key, path+"@") {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *fakeModuleFetcher) add(path, version, goModContent string, blobs *fakeBlobStore) {
@@ -75,6 +91,9 @@ func (f *fakeModuleFetcher) addError(path, version string, err error) {
 
 func (f *fakeModuleFetcher) EnsureFetched(_ context.Context, c domain2.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
 	key := c.String()
+	f.mu.Lock()
+	f.requested[key] = true
+	f.mu.Unlock()
 	if err, ok := f.errors[key]; ok {
 		return walkports.ModuleFetchResult{}, err
 	}
@@ -1115,6 +1134,133 @@ require example.com/dep3 v1.0.0
 		if n.Coordinate.Path == "example.com/dep2" && n.ResolutionSource == domain3.ResolutionFetchFailed {
 			t.Error("dep2 should not be fetch_failed; it was registered but not enqueued for fetch")
 		}
+	}
+}
+
+func TestResolve_MaxDepth_Truncation_MarksPartial(t *testing.T) {
+	// target → dep1 → dep2 → dep3. MaxDepth=1 stops after dep1, leaving dep1's
+	// requirement (dep2) unfollowed — a real truncation, so the graph must be
+	// Partial with a depth_bounded reason that carries the bound.
+	blobs := newFakeBlobStore()
+	fetcher := newFakeFetcher()
+	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+go 1.21
+require example.com/dep1 v1.0.0
+`, blobs)
+	fetcher.add("example.com/dep1", "v1.0.0", `module example.com/dep1
+go 1.21
+require example.com/dep2 v1.0.0
+`, blobs)
+	fetcher.add("example.com/dep2", "v1.0.0", `module example.com/dep2
+go 1.21
+require example.com/dep3 v1.0.0
+`, blobs)
+
+	r := newResolver(fetcher, blobs)
+	depth := domain3.StageDepth{MaxDepth: 1, FollowReplace: true, FollowIndirect: true}
+	g, err := r.Resolve(context.Background(), coord("example.com/target", "v1.0.0"), depth)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	if !g.Partial {
+		t.Fatal("expected Partial=true when MaxDepth truncates the closure")
+	}
+	if !strings.Contains(g.PartialReason, "depth_bounded") {
+		t.Errorf("PartialReason = %q, want it to contain %q", g.PartialReason, "depth_bounded")
+	}
+	if !strings.Contains(g.PartialReason, "max_depth=1") {
+		t.Errorf("PartialReason = %q, want it to carry the bound %q", g.PartialReason, "max_depth=1")
+	}
+}
+
+func TestResolve_MaxDepth_LargerThanGraph_NotPartial(t *testing.T) {
+	// target → dep1 (actual depth 1). MaxDepth=5 truncates nothing, so the graph
+	// must not be flagged partial for the depth bound.
+	blobs := newFakeBlobStore()
+	fetcher := newFakeFetcher()
+	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+go 1.21
+require example.com/dep1 v1.0.0
+`, blobs)
+	fetcher.add("example.com/dep1", "v1.0.0", `module example.com/dep1
+go 1.21
+`, blobs)
+
+	r := newResolver(fetcher, blobs)
+	depth := domain3.StageDepth{MaxDepth: 5, FollowReplace: true, FollowIndirect: true}
+	g, err := r.Resolve(context.Background(), coord("example.com/target", "v1.0.0"), depth)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	if g.Partial {
+		t.Errorf("expected Partial=false when MaxDepth exceeds the graph depth; PartialReason=%q", g.PartialReason)
+	}
+}
+
+func TestResolve_MaxDepth_Zero_NotPartial(t *testing.T) {
+	// MaxDepth=0 (unlimited) fully resolves target → dep1 → dep2, so no
+	// depth_bounded partial marking fires.
+	blobs := newFakeBlobStore()
+	fetcher := newFakeFetcher()
+	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+go 1.21
+require example.com/dep1 v1.0.0
+`, blobs)
+	fetcher.add("example.com/dep1", "v1.0.0", `module example.com/dep1
+go 1.21
+require example.com/dep2 v1.0.0
+`, blobs)
+	fetcher.add("example.com/dep2", "v1.0.0", `module example.com/dep2
+go 1.21
+`, blobs)
+
+	r := newResolver(fetcher, blobs)
+	depth := domain3.StageDepth{MaxDepth: 0, FollowReplace: true, FollowIndirect: true}
+	g, err := r.Resolve(context.Background(), coord("example.com/target", "v1.0.0"), depth)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	if g.Partial {
+		t.Errorf("expected Partial=false for unlimited walk; PartialReason=%q", g.PartialReason)
+	}
+}
+
+func TestResolve_MaxDepth_And_FetchFailure_CarriesBothTokens(t *testing.T) {
+	// A direct dep that fails to fetch AND a depth-bound truncation must produce a
+	// PartialReason carrying both the fetch_failed and depth_bounded tokens.
+	blobs := newFakeBlobStore()
+	fetcher := newFakeFetcher()
+	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+go 1.21
+require (
+	example.com/dep1 v1.0.0
+	example.com/bad v1.0.0
+)
+`, blobs)
+	fetcher.add("example.com/dep1", "v1.0.0", `module example.com/dep1
+go 1.21
+require example.com/dep2 v1.0.0
+`, blobs)
+	fetcher.addError("example.com/bad", "v1.0.0", errors.New("network unreachable"))
+
+	r := newResolver(fetcher, blobs)
+	depth := domain3.StageDepth{MaxDepth: 1, FollowReplace: true, FollowIndirect: true}
+	g, err := r.Resolve(context.Background(), coord("example.com/target", "v1.0.0"), depth)
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	if !g.Partial {
+		t.Fatal("expected Partial=true")
+	}
+	if !strings.Contains(g.PartialReason, "fetch_failed") {
+		t.Errorf("PartialReason = %q, want it to contain %q", g.PartialReason, "fetch_failed")
+	}
+	if !strings.Contains(g.PartialReason, "depth_bounded") {
+		t.Errorf("PartialReason = %q, want it to contain %q", g.PartialReason, "depth_bounded")
 	}
 }
 

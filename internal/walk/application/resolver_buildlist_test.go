@@ -316,6 +316,53 @@ func TestResolveProject_ToolScope_RestrictsToToolClosure(t *testing.T) {
 	}
 }
 
+// A scoped walk must not fetch or go.sum-verify modules outside the requested
+// scope: they are in the build-list graph for structure but FilterGraphToScope
+// discards them, so fetching them is wasted work and floods the log with
+// walk.fetch.failed warnings. example.com/prod is production-only and
+// out of the tool scope; it has no fake fetch record, so a stray fetch would both
+// be observable via fetcher.fetched and mark the graph Partial.
+func TestResolveProject_ScopedWalk_SkipsOutOfScopeFetch(t *testing.T) {
+	blobs := newFakeBlobStore()
+	fetcher := newFakeFetcher()
+	// Only the in-scope modules have fetch records; example.com/prod deliberately
+	// has none so any attempt to fetch it would fail.
+	fetcher.add("example.com/tool", "v2.0.0", "module example.com/tool\n", blobs)
+	fetcher.add("example.com/toolsub", "v1.0.0", "module example.com/toolsub\n", blobs)
+	fetcher.add("example.com/shared", "v1.0.0", "module example.com/shared\n", blobs)
+	r := newResolver(fetcher, blobs).WithBuildListResolver(&fakeBuildListResolver{list: toolScopeBuildList()})
+	target := coord("example.com/project", domain2.LocalVersion)
+
+	goMod := []byte("module example.com/project\n\ngo 1.24\n\ntool example.com/tool/cmd/lint\n")
+	toolSet := []string{"example.com/tool", "example.com/toolsub", "example.com/shared"}
+	g, err := r.ResolveProject(context.Background(), target, goMod, "/proj", domain3.DefaultDepthPolicy().FetchStage(), toolSet, false, false)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+
+	// No fetch was attempted for the out-of-scope production module.
+	if fetcher.fetched("example.com/prod") {
+		t.Errorf("out-of-scope example.com/prod must not be fetched")
+	}
+	// In-scope modules were fetched.
+	for _, want := range []string{"example.com/tool", "example.com/toolsub", "example.com/shared"} {
+		if !fetcher.fetched(want) {
+			t.Errorf("in-scope %s should have been fetched", want)
+		}
+	}
+	// The graph is not Partial: the only unfetchable module is out of scope, and
+	// out-of-scope modules must never taint the resolution status.
+	if g.Partial {
+		t.Errorf("scoped walk should not be Partial from out-of-scope modules: %s", g.PartialReason)
+	}
+	// The out-of-scope module was filtered out of the final graph entirely.
+	for _, n := range g.Nodes {
+		if n.Coordinate.Path == "example.com/prod" {
+			t.Errorf("out-of-scope example.com/prod must not survive scope filtering")
+		}
+	}
+}
+
 // The default (production) scope keeps the whole build list, including tool deps
 // — it is the project's complete build-dependency set.
 func TestResolveProject_ProductionScope_KeepsWholeBuildList(t *testing.T) {

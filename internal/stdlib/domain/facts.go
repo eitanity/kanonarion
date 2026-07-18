@@ -31,9 +31,21 @@ const (
 	// (offline, or the version is absent from go.dev/dl), so the tarball checksum
 	// could not be matched against a published value.
 	UnverifiedGoDevUnavailable VerificationStatus = "UnverifiedGoDevUnavailable"
+
+	// VerifiedLocalToolchain means the chain of custody was established from the
+	// local Go toolchain ($GOROOT/src and $GOROOT/LICENSE) in an offline
+	// (--from-modcache) run — the artefact digests are over the on-disk source and
+	// the licence is extracted from it, but go.dev/dl's published checksum was
+	// deliberately NOT consulted (no network). It is a real anchor to the exact
+	// toolchain that compiles the project, distinct from and never equivalent to
+	// VerifiedGoDevChecksum: it makes no claim about the published checksum.
+	VerifiedLocalToolchain VerificationStatus = "VerifiedLocalToolchain"
 )
 
 // Verified reports whether the tarball checksum matched the published manifest.
+// It is deliberately false for VerifiedLocalToolchain: that anchor establishes
+// custody from the local toolchain without consulting the published checksum, so
+// it must never read as a go.dev/dl checksum match.
 func (s VerificationStatus) Verified() bool { return s == VerifiedGoDevChecksum }
 
 // Facts is the persisted chain-of-custody evidence for one Go standard-library

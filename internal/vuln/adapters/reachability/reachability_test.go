@@ -167,8 +167,42 @@ func TestAnalyse_NotReachable_DisconnectedGraph(t *testing.T) {
 	}
 }
 
-func TestAnalyse_NoEntryPoints_HighConfidenceNotReachable(t *testing.T) {
-	// Graph has only internal non-exported nodes — no public API surface.
+func TestAnalyse_ReachableViaInitRoot(t *testing.T) {
+	// The vulnerable function is reachable ONLY through a package init chain,
+	// with no exported-API path. An exported node is present so the owned-node
+	// fallback does not fire — this isolates init as a reachability root.
+	a := reachability.New()
+	coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+
+	loader := &fakeLoader{record: ports.CallGraphProjection{
+		Nodes: []ports.CallGraphNode{
+			{ID: "github.com/foo/bar.Exported", Module: "github.com/foo/bar", Symbol: "Exported", IsExportedAPI: true, IsExternal: false},
+			{ID: "github.com/foo/bar.init", Module: "github.com/foo/bar", Symbol: "init", IsExportedAPI: false, IsExternal: false},
+			{ID: "github.com/foo/bar.Vuln", Module: "github.com/foo/bar", Symbol: "Vuln", IsExportedAPI: false, IsExternal: false},
+		},
+		Edges: []ports.CallGraphEdge{
+			// Only the init chain reaches Vuln; Exported reaches nothing.
+			{FromID: "github.com/foo/bar.init", ToID: "github.com/foo/bar.Vuln"},
+		},
+	}}
+	symbols := []ports.SymbolReference{{Module: "github.com/foo/bar", Symbol: "Vuln"}}
+
+	result, err := a.Analyse(t.Context(), coord, symbols, loader)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsReachable {
+		t.Error("expected reachable via package init root")
+	}
+	if len(result.ExamplePaths) == 0 || result.ExamplePaths[0][0] != "github.com/foo/bar.init" {
+		t.Errorf("expected witness path rooted at init, got %v", result.ExamplePaths)
+	}
+}
+
+func TestAnalyse_NoExportedOrInit_FallsBackToOwnedRoots(t *testing.T) {
+	// Graph has only internal non-exported, non-init nodes. With no exported API
+	// or init to root at, the shared selector falls back to every owned node, so
+	// the vulnerable owned node is itself a root and reports reachable.
 	a := reachability.New()
 	coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 
@@ -184,8 +218,8 @@ func TestAnalyse_NoEntryPoints_HighConfidenceNotReachable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if result.IsReachable {
-		t.Error("expected not reachable with no entry points")
+	if !result.IsReachable {
+		t.Error("expected reachable via owned-node fallback root")
 	}
 	if result.Confidence != domain.ConfidenceHigh {
 		t.Errorf("confidence: got %s, want High", result.Confidence)

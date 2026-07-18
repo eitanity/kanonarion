@@ -128,7 +128,7 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 		return err
 	}
 	// On the normal network path, layer the project go.sum on as an always-on
-	// offline integrity check (KN-404). No-op in --from-modcache mode.
+	// offline integrity check. No-op in --from-modcache mode.
 	resolveProjectGoSum(gomodPath)
 
 	scope, err := scopeFromFlags(f.tool, f.project)

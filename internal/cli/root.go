@@ -83,6 +83,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 		newCallGraphListCmd(stdout, stderr),
 		newCallersCmd(stdout, stderr),
 		newCalleesCmd(stdout, stderr),
+		newCapabilityCmd(stdout, stderr),
 		newDependentsCmd(stdout, stderr),
 		NewExtractCmd(stdout, stderr),
 		newVulnCmd(stdout, stderr),

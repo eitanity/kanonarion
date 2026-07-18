@@ -108,8 +108,25 @@ func printCallGraphSummary(r domain.CallGraphRecord, fromCache bool, jsonOut boo
 			return fmt.Errorf("writing failure detail: %w", err)
 		}
 	}
+	if err := writeFailedPackages(stdout, r); err != nil {
+		return err
+	}
 	if err := writeExclusionInfo(stdout, r); err != nil {
 		return err
+	}
+	return nil
+}
+
+// writeFailedPackages lists the packages that failed to typecheck (Partial
+// graphs only). It scopes the graph's incompleteness to exact packages so a
+// reader never infers completeness from the node/edge totals on the line above.
+func writeFailedPackages(stdout io.Writer, r domain.CallGraphRecord) error {
+	if len(r.FailedPackages) == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintf(stdout, "  failed packages (%d): %s\n",
+		len(r.FailedPackages), strings.Join(r.FailedPackages, ", ")); err != nil {
+		return fmt.Errorf("writing failed packages: %w", err)
 	}
 	return nil
 }

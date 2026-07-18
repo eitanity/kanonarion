@@ -2,6 +2,7 @@ package domain_test
 
 import (
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 
@@ -49,6 +50,46 @@ func TestHasherRoundTrip(t *testing.T) {
 	}
 	if len(restored.Edges) != len(hashed.Edges) {
 		t.Errorf("edge count mismatch: got %d, want %d", len(restored.Edges), len(hashed.Edges))
+	}
+}
+
+func TestHasherRoundTripFailedPackages(t *testing.T) {
+	var h domain2.CallGraphRecordHasher
+	r := makeTestRecord()
+	r.OverallStatus = domain2.CallGraphStatusPartial
+	// Deliberately unsorted to confirm the canonical form is order-independent.
+	r.FailedPackages = []string{"example.com/mod/z", "example.com/mod/a"}
+
+	hashed, err := h.SetContentHash(r)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	blob, err := h.Marshal(hashed)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	restored, err := h.Unmarshal(blob)
+	if err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if len(restored.FailedPackages) != 2 ||
+		!slices.Contains(restored.FailedPackages, "example.com/mod/a") ||
+		!slices.Contains(restored.FailedPackages, "example.com/mod/z") {
+		t.Errorf("FailedPackages not preserved across round-trip: %v", restored.FailedPackages)
+	}
+	if err := h.VerifyContentHash(restored); err != nil {
+		t.Errorf("VerifyContentHash after round-trip: %v", err)
+	}
+	// The content hash must not depend on the input ordering of FailedPackages.
+	r2 := makeTestRecord()
+	r2.OverallStatus = domain2.CallGraphStatusPartial
+	r2.FailedPackages = []string{"example.com/mod/a", "example.com/mod/z"}
+	hashed2, err := h.SetContentHash(r2)
+	if err != nil {
+		t.Fatalf("SetContentHash (reordered): %v", err)
+	}
+	if hashed.ContentHash != hashed2.ContentHash {
+		t.Errorf("content hash depends on FailedPackages order: %q vs %q", hashed.ContentHash, hashed2.ContentHash)
 	}
 }
 

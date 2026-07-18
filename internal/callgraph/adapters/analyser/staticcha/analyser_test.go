@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 	"os"
+	"slices"
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha"
@@ -438,6 +439,54 @@ func(  // intentional syntax error
 		rec.OverallStatus, len(rec.Nodes), len(rec.Edges), rec.FailureDetail)
 }
 
+// TestAnalyse_FailedPackagesRecordedOnTypecheckError is the partial-graph
+// regression fixture. It reproduces the observed real-world shape with a
+// purpose-built module (no third-party code): one sub-package fails to
+// typecheck (an undefined symbol,
+// which parses cleanly but does not type-check), while the root package
+// compiles. The record must be Partial and must name exactly the failing
+// package in FailedPackages, so verdicts can be scoped to it rather than
+// inferred from node/edge totals.
+func TestAnalyse_FailedPackagesRecordedOnTypecheckError(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/cgtestmod\n\ngo 1.21\n",
+		"cgtestmod.go": `package cgtestmod
+
+// Good compiles cleanly and calls a local helper.
+func Good() { helper() }
+
+func helper() {}
+`,
+		// broken parses fine but fails type checking: notDefined is undefined.
+		// This is the moral equivalent of the sqlc DBTX interface mismatch —
+		// a real type error localised to one package.
+		"broken/broken.go": `package broken
+
+// Broken references an undefined symbol, so this package does not typecheck.
+func Broken() int { return notDefined() }
+`,
+	}
+	a := staticcha.New("0.1.0", "", slog.Default())
+	zipData := makeZip(t, testCoord, files)
+	zipPath := writeZipToTemp(t, zipData)
+	rec, err := a.Analyse(context.Background(), zipPath, testCoord)
+	if err != nil {
+		t.Fatalf("Analyse: %v", err)
+	}
+
+	if rec.OverallStatus != domain.CallGraphStatusPartial {
+		t.Fatalf("expected Partial status, got %s (detail=%s)", rec.OverallStatus, rec.FailureDetail)
+	}
+	const wantPkg = "example.com/cgtestmod/broken"
+	if !slices.Contains(rec.FailedPackages, wantPkg) {
+		t.Errorf("expected FailedPackages to contain %q, got %v", wantPkg, rec.FailedPackages)
+	}
+	// The clean root package must not be flagged as failed.
+	if slices.Contains(rec.FailedPackages, "example.com/cgtestmod") {
+		t.Errorf("root package must not be reported as failed; FailedPackages=%v", rec.FailedPackages)
+	}
+}
+
 func TestAnalyse_ContextCancellation(t *testing.T) {
 	a := staticcha.New("0.1.0", "", slog.Default())
 	zipData := makeZip(t, testCoord, testModuleFiles)
@@ -458,6 +507,80 @@ func TestAnalyse_ContextCancellation(t *testing.T) {
 		// go/packages returned before context was checked — also acceptable
 	default:
 		t.Errorf("unexpected status for cancelled context: %s", rec.OverallStatus)
+	}
+}
+
+func TestAnalyse_BodyLevelFacts(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/cgtestmod\n\ngo 1.21\n",
+		"facts.go": `package cgtestmod
+
+import "unsafe"
+
+// nanotime has no Go body — it is provided via //go:linkname, so it is an
+// ARBITRARY_EXECUTION leaf.
+//
+//go:linkname nanotime runtime.nanotime
+func nanotime() int64
+
+// UsesUnsafe performs an unsafe.Pointer conversion in its body.
+func UsesUnsafe(p *int) uintptr {
+	return uintptr(unsafe.Pointer(p))
+}
+
+// Safe touches neither fact.
+func Safe() int { return 1 }
+
+// Root reaches both fact-bearing functions.
+func Root() {
+	_ = nanotime()
+	_ = UsesUnsafe(nil)
+	_ = Safe()
+}
+`,
+	}
+	a := staticcha.New("0.1.0", "", slog.Default())
+	zipData := makeZip(t, testCoord, files)
+	zipPath := writeZipToTemp(t, zipData)
+	rec, err := a.Analyse(context.Background(), zipPath, testCoord)
+	if err != nil {
+		t.Fatalf("Analyse: %v", err)
+	}
+	if rec.OverallStatus == domain.CallGraphStatusLoadFailed {
+		t.Skipf("go/packages load failed; skipping body-facts test: %s", rec.FailureDetail)
+	}
+
+	bySymbol := make(map[string]domain.CallNode)
+	for _, n := range rec.Nodes {
+		bySymbol[n.Symbol] = n
+	}
+
+	unsafeFn, ok := bySymbol["UsesUnsafe"]
+	if !ok {
+		t.Fatalf("UsesUnsafe node not found; nodes: %v", rec.Nodes)
+	}
+	if !unsafeFn.UsesUnsafePointer {
+		t.Error("UsesUnsafe should have UsesUnsafePointer=true")
+	}
+	if unsafeFn.IsAssemblyOrLinkname {
+		t.Error("UsesUnsafe has a Go body; IsAssemblyOrLinkname should be false")
+	}
+
+	nano, ok := bySymbol["nanotime"]
+	if !ok {
+		t.Fatalf("nanotime node not found; nodes: %v", rec.Nodes)
+	}
+	if !nano.IsAssemblyOrLinkname {
+		t.Error("nanotime has no Go body; IsAssemblyOrLinkname should be true")
+	}
+	if nano.UsesUnsafePointer {
+		t.Error("nanotime should not use unsafe.Pointer")
+	}
+
+	if safe, ok := bySymbol["Safe"]; ok {
+		if safe.UsesUnsafePointer || safe.IsAssemblyOrLinkname {
+			t.Errorf("Safe should carry no body facts, got %+v", safe)
+		}
 	}
 }
 

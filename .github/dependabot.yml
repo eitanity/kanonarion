@@ -5,8 +5,8 @@
 # release.yml. Dependabot preserves that hash-lock: it bumps the SHA and the
 # version comment together in a reviewed PR, so updates stay pinned rather than
 # drifting to a floating tag. This is the "pinned dependency automation" half of
-# KN-160; branch protection and the signed-commit policy are configured out of
-# band on the repo settings.
+# the CI hardening; branch protection and the signed-commit policy are configured
+# out of band on the repo settings.
 version: 2
 updates:
   - package-ecosystem: "github-actions"

@@ -676,7 +676,7 @@ func TestLookupFindings_PreVPrefixedVersions(t *testing.T) {
 	}
 }
 
-// TestLookupFindings_MultiRangeBackport is the KN-411 regression: an advisory
+// TestLookupFindings_MultiRangeBackport is the multi-range backport regression: an advisory
 // with per-branch backports lists multiple introduced/fixed pairs, but
 // index/modules.json collapses them to the single highest fixed. A
 // coordinate-only match against that collapsed fixed over-reports a version

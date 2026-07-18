@@ -302,8 +302,7 @@ kanonarion audit --from-modcache
 kanonarion audit --from-modcache=/path/to/gomodcache
 ```
 
-This is the mode the release pipeline uses (see
-[`docs/ci-hardening.md`](../ci-hardening.md)): the build step populates the
+This is the mode the release pipeline uses: the build step populates the
 cache, then `audit` and `sbom --package` consume it without a second trip to the
 network. Default (no-flag) behaviour is unchanged - the network proxy, the
 checksum database, and VCS cross-verification all run as before.

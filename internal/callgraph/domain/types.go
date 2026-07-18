@@ -9,8 +9,12 @@ import (
 
 // CallGraphSchemaVersion is the version of the CallGraphRecord JSON schema.
 // Bump when the serialisation format changes in a backwards-incompatible way.
-// v4 adds the ecosystem scope marker.
-const CallGraphSchemaVersion = "4"
+// v4 adds the ecosystem scope marker. v5 adds the per-node body-level fact
+// fields (UsesUnsafePointer, IsAssemblyOrLinkname) used by capability analysis.
+// v6 adds FailedPackages: the machine-readable set of packages that failed to
+// typecheck, so verdicts over a Partial graph can be scoped to the exact
+// packages whose edges were dropped rather than inferred from node/edge totals.
+const CallGraphSchemaVersion = "6"
 
 // ExclusionReasonConfig is the CallGraphRecord.ExclusionReason value used when
 // a module was skipped because its path is listed in callgraph.exclude.
@@ -114,6 +118,18 @@ type CallNode struct {
 	IsExternal    bool   // true if this node is outside the analysed module
 	IsExportedAPI bool   // true if this node is part of the module's public API
 	Position      SourcePosition
+	// UsesUnsafePointer is true when the function's own body performs an
+	// unsafe.Pointer conversion. This is a body-level capability fact that a
+	// callee-identity sink map cannot witness (the unsafe package exposes no
+	// callable functions), so it is captured at extraction time and treated as
+	// an UNSAFE_POINTER sink during capability analysis.
+	UsesUnsafePointer bool
+	// IsAssemblyOrLinkname is true when the function has no Go body — it is
+	// implemented in assembly or provided via //go:linkname. Such functions are
+	// call-graph leaves with no edges into them, so this fact is captured at
+	// extraction time and treated as an ARBITRARY_EXECUTION sink during
+	// capability analysis.
+	IsAssemblyOrLinkname bool
 }
 
 // CallEdge is a directed call relationship between two nodes.
@@ -136,6 +152,14 @@ type CallGraphRecord struct {
 	Edges         []CallEdge
 	OverallStatus CallGraphStatus
 	FailureDetail string
+	// FailedPackages is the sorted, deduplicated set of import paths within the
+	// analysed module that failed to typecheck (or failed SSA construction).
+	// It is populated when OverallStatus is Partial and drives sound verdict
+	// caveating: a reachability / callers / callees query whose root or reached
+	// nodes fall in one of these packages is under-resolved (edges were dropped)
+	// and must be reported as unresolved rather than a confident "none".
+	// FailureDetail is the human-readable companion; this is the machine set.
+	FailedPackages []string
 	// ExclusionReason is non-empty when the module was skipped rather than
 	// analysed; currently always ExclusionReasonConfig.
 	ExclusionReason string
@@ -154,6 +178,7 @@ type CallGraphRecord struct {
 // Must be called before hashing.
 func (r *CallGraphRecord) Sort() {
 	sort.Strings(r.ExclusionList)
+	sort.Strings(r.FailedPackages)
 	sort.Slice(r.Nodes, func(i, j int) bool {
 		return r.Nodes[i].ID < r.Nodes[j].ID
 	})
