@@ -2,7 +2,6 @@ package staticcha
 
 import (
 	"context"
-	"fmt"
 	"go/token"
 
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
@@ -64,11 +63,10 @@ func (a *Analyser) walkGraph(
 			}
 		}
 
-		edgeKey := callerNode.ID + "\x00" + calleeNode.ID + "\x00" +
-			sitePosFile + "\x00" + fmt.Sprintf("%d", sitePosLine)
+		ek := edgeKey(callerNode.ID, calleeNode.ID, sitePosFile, sitePosLine)
 
-		if _, dup := seenEdges[edgeKey]; !dup {
-			seenEdges[edgeKey] = struct{}{}
+		if _, dup := seenEdges[ek]; !dup {
+			seenEdges[ek] = struct{}{}
 			edges = append(edges, domain.CallEdge{
 				FromID: callerNode.ID,
 				ToID:   calleeNode.ID,

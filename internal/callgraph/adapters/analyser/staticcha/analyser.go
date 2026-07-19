@@ -196,6 +196,12 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord fetchdo
 	// bounded by the graph rather than the full dependency set.
 	a.attachBodyFacts(ctx, nodes, tempDir)
 
+	// Recover client-side interface-dispatch edges CHA drops when the sole
+	// implementer's body was never built into SSA (type-only dep / unbuilt
+	// package). Runs after body facts so those only scan built module bodies;
+	// devirtualized leaf targets carry no onward edges (KN-425/KN-427).
+	nodes, edges = a.devirtualizeSingleImplementer(ctx, prog, coord, fset, tempDir, nodes, edges)
+
 	// A failed package (or any load error) means the graph is incomplete;
 	// never report Extracted when some target package did not resolve. Keeping
 	// FailedPackages and the Partial status in lock-step is what lets the query
