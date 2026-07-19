@@ -73,7 +73,17 @@ func runCallers(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 		}
 	}
 
-	return printEdgeRefs("callers", symbolID, refs, jsonOut, stdout)
+	if err := printEdgeRefs("callers", symbolID, refs, jsonOut, stdout); err != nil {
+		return err
+	}
+	if len(refs) == 0 && !jsonOut {
+		v, verr := negativeCallVerdict(ctx, symbolID, true, uc)
+		if verr != nil {
+			return verr
+		}
+		return writeCallVerdict(stdout, "callers", symbolID, v)
+	}
+	return nil
 }
 
 func newCalleesCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -138,7 +148,17 @@ func runCallees(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 		}
 	}
 
-	return printEdgeRefs("callees", symbolID, refs, jsonOut, stdout)
+	if err := printEdgeRefs("callees", symbolID, refs, jsonOut, stdout); err != nil {
+		return err
+	}
+	if len(refs) == 0 && !jsonOut {
+		v, verr := negativeCallVerdict(ctx, symbolID, false, uc)
+		if verr != nil {
+			return verr
+		}
+		return writeCallVerdict(stdout, "callees", symbolID, v)
+	}
+	return nil
 }
 
 // callEdgeRefJSON is the curated snake_case shape of a stored call edge,
@@ -237,7 +257,17 @@ func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, js
 			return err
 		}
 	}
-	return printTransitiveResult("callers", symbolID, maxDepth, nodes, edges, jsonOut, stdout)
+	if err := printTransitiveResult("callers", symbolID, maxDepth, nodes, edges, jsonOut, stdout); err != nil {
+		return err
+	}
+	if len(nodes) == 0 && !jsonOut {
+		v, verr := negativeCallVerdict(ctx, symbolID, true, uc)
+		if verr != nil {
+			return verr
+		}
+		return writeCallVerdict(stdout, "transitive callers", symbolID, v)
+	}
+	return nil
 }
 
 func runCalleesTransitive(ctx context.Context, symbolID string, maxDepth int, jsonOut bool, uc QueryCallGraphUseCase, stdout io.Writer) error {
@@ -262,7 +292,17 @@ func runCalleesTransitive(ctx context.Context, symbolID string, maxDepth int, js
 			return err
 		}
 	}
-	return printTransitiveResult("callees", symbolID, maxDepth, nodes, edges, jsonOut, stdout)
+	if err := printTransitiveResult("callees", symbolID, maxDepth, nodes, edges, jsonOut, stdout); err != nil {
+		return err
+	}
+	if len(nodes) == 0 && !jsonOut {
+		v, verr := negativeCallVerdict(ctx, symbolID, false, uc)
+		if verr != nil {
+			return verr
+		}
+		return writeCallVerdict(stdout, "transitive callees", symbolID, v)
+	}
+	return nil
 }
 
 func printTransitiveResult(direction, root string, maxDepth int, nodes []string, edges []ports.CallEdgeRef, jsonOut bool, stdout io.Writer) error {

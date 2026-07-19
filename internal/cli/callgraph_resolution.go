@@ -147,6 +147,102 @@ func rootCompletenessCaveat(ctx context.Context, symbolID string, uc QueryCallGr
 	return "", nil
 }
 
+// negativeCallVerdict classifies an empty callers/callees answer for symbolID
+// into RESOLVED-ABSENT or UNRESOLVED, per the dispatch/edge-level soundness gate
+// (see domain.ClassifyNegativeVerdict). It loads the owning module's record(s) to
+// read the queried node's leaf facts, the module's completeness level, and — for
+// a callers query (scanDispatch) — the module edges scanned for unresolved
+// interface invoke sites that dispatch on the queried method's name.
+//
+// It is only meaningful once classifyEmptyEdgeResult has confirmed the symbol is
+// a known node in an analysed module; a symbol whose module was never analysed is
+// reported as an error there, not downgraded here.
+func negativeCallVerdict(ctx context.Context, symbolID string, scanDispatch bool, uc QueryCallGraphUseCase) (domain.Verdict, error) {
+	sums, err := uc.ListCallGraphRecords(ctx, ports.CallGraphFilter{})
+	if err != nil {
+		return domain.Verdict{}, fmt.Errorf("listing analysed modules: %w", err)
+	}
+	paths := make([]string, 0, len(sums))
+	for _, s := range sums {
+		paths = append(paths, s.ModulePath)
+	}
+	modulePath, ok := domain.ResolveSymbolModule(symbolID, paths)
+	if !ok {
+		// Unreachable in practice (the caller resolves the module first); a
+		// module we cannot resolve carries no dispatch signal, so it is absent.
+		return domain.Verdict{Outcome: domain.VerdictResolvedAbsent}, nil
+	}
+
+	owning := make([]ports.CallGraphSummary, 0, len(sums))
+	for _, s := range sums {
+		if s.ModulePath == modulePath {
+			owning = append(owning, s)
+		}
+	}
+	sort.Slice(owning, func(i, j int) bool { return owning[i].ModuleVersion < owning[j].ModuleVersion })
+
+	in := domain.NegativeVerdictInputs{
+		MethodName:   domain.SymbolMethodName(symbolID),
+		NodesByID:    map[string]domain.CallNode{},
+		ScanDispatch: scanDispatch,
+	}
+	belowFull := domain.CompletenessUnknown
+	for _, s := range owning {
+		coord := fetchdomain.ModuleCoordinate{Path: s.ModulePath, Version: s.ModuleVersion}
+		rec, found, gerr := uc.GetCallGraphRecord(ctx, coord, s.PipelineVersion)
+		if gerr != nil {
+			return domain.Verdict{}, fmt.Errorf("loading call graph for %s: %w", coord, gerr)
+		}
+		if !found {
+			continue
+		}
+		in.Edges = append(in.Edges, rec.Edges...)
+		for i := range rec.Nodes {
+			n := rec.Nodes[i]
+			in.NodesByID[n.ID] = n
+			if n.ID == symbolID {
+				in.QueriedNode = n
+				in.Found = true
+				in.ModuleLevel = rec.Completeness
+			}
+		}
+		if belowFull == domain.CompletenessUnknown &&
+			rec.Completeness != domain.CompletenessUnknown && !rec.Completeness.IsBuiltWithBodies() {
+			belowFull = rec.Completeness
+		}
+	}
+	// When the symbol is not itself a node (e.g. its package was built type-only
+	// so it produced no SSA node), fall back to the least-complete level seen so a
+	// below-full module still downgrades the verdict.
+	if !in.Found {
+		in.ModuleLevel = belowFull
+	}
+
+	return domain.ClassifyNegativeVerdict(in), nil
+}
+
+// writeCallVerdict prints, in text mode, the three-valued verdict for an empty
+// callers/callees answer: a confident RESOLVED-ABSENT, or an UNRESOLVED verdict
+// with the soundness sinks named so a reviewer can act on them. kind is
+// "callers", "callees", or the transitive variants.
+func writeCallVerdict(stdout io.Writer, kind, symbolID string, v domain.Verdict) error {
+	switch v.Outcome {
+	case domain.VerdictUnresolved:
+		if _, err := fmt.Fprintf(stdout,
+			"verdict: UNRESOLVED — %s of %s cannot be confirmed absent: %s\n",
+			kind, symbolID, v.Reason()); err != nil {
+			return fmt.Errorf("writing verdict: %w", err)
+		}
+	default:
+		if _, err := fmt.Fprintf(stdout,
+			"verdict: RESOLVED-ABSENT — no %s of %s across a fully-built path\n",
+			kind, symbolID); err != nil {
+			return fmt.Errorf("writing verdict: %w", err)
+		}
+	}
+	return nil
+}
+
 // symbolFailedPackage reports whether symbolID belongs to one of failedPkgs,
 // matching by import path. A symbol "<pkg>.<Name>" (or "<pkg>.(*T).M") belongs
 // to package pkg exactly when the character after the package path is '.', so a
