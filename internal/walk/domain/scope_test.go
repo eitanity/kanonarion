@@ -53,6 +53,49 @@ func TestFilterGraphToScope_KeepsSetDropsRest(t *testing.T) {
 	}
 }
 
+// A module-replaced dependency (Coordinate = replacement path, OriginalCoordinate
+// = original require path) is in scope when its ORIGINAL path is kept — the keep
+// set is built from require/import paths, which never surface the replacement.
+// Matching only Coordinate.Path would drop it, losing the replaced module's
+// entire surface (regression: mattn/go-sqlite3 => rqlite/go-sqlite3 vanished from
+// the walk though it is linked into the binary).
+func TestFilterGraphToScope_KeepsModuleReplaceByOriginalPath(t *testing.T) {
+	main := c("example.com/project", fetchdomain.LocalVersion)
+	replaced := GraphNode{
+		Coordinate:         c("example.com/fork", "v1.47.0"), // replacement (what compiles)
+		OriginalCoordinate: c("example.com/orig", "v1.14.0"), // require path (in keep)
+		ResolutionSource:   ResolutionReplace,
+		DirectDependency:   true,
+	}
+	g := Graph{
+		Target: main,
+		Nodes: []GraphNode{
+			{Coordinate: main, ResolutionSource: ResolutionLocalMainModule},
+			replaced,
+		},
+		// go mod graph keys the edge by the original require path; nodeByPath may
+		// normalise it to the replacement — the filter must keep it either way.
+		Edges: []GraphEdge{
+			{From: main, To: c("example.com/orig", "v1.14.0")},
+			{From: main, To: c("example.com/fork", "v1.47.0")},
+		},
+	}
+
+	// keep carries the ORIGINAL path only, exactly as `go list -deps` reports it.
+	got := FilterGraphToScope(g, main.Path, []string{"example.com/orig"})
+
+	paths := map[string]bool{}
+	for _, n := range got.Nodes {
+		paths[n.Coordinate.Path] = true
+	}
+	if !paths["example.com/fork"] {
+		t.Fatalf("module-replace node dropped; scope kept %v", paths)
+	}
+	if len(got.Edges) != 2 {
+		t.Errorf("edge count = %d, want 2 (edge keyed by either original or replacement path must survive)", len(got.Edges))
+	}
+}
+
 // An empty keep-set leaves only the main anchor — never the whole graph, so a
 // scope can never be silently widened to everything.
 func TestFilterGraphToScope_EmptyKeepsOnlyMain(t *testing.T) {
