@@ -15,12 +15,14 @@ import (
 // bodyFacts captures per-function properties derived from a function's own
 // source body rather than from its callee identity. These are the capability
 // witnesses that a call graph plus a package/function sink map structurally
-// cannot detect: the unsafe package exposes no callable functions, and
+// cannot detect: the unsafe package exposes no callable functions,
 // assembly / //go:linkname functions have no Go body and thus no call edges
-// into them.
+// into them, and a plugin.Open / Lookup boundary loads code that is resolved at
+// runtime and never appears in the static graph.
 type bodyFacts struct {
 	usesUnsafePointer    bool
 	isAssemblyOrLinkname bool
+	usesPlugin           bool
 }
 
 // attachBodyFacts scans the packages present in nodes for body-level capability
@@ -37,7 +39,7 @@ func (a *Analyser) attachBodyFacts(ctx context.Context, nodes []domain.CallNode,
 		return
 	}
 
-	var unsafeCount, asmCount int
+	var unsafeCount, asmCount, pluginCount int
 	for i := range nodes {
 		f, ok := facts[nodes[i].ID]
 		if !ok {
@@ -45,11 +47,15 @@ func (a *Analyser) attachBodyFacts(ctx context.Context, nodes []domain.CallNode,
 		}
 		nodes[i].UsesUnsafePointer = f.usesUnsafePointer
 		nodes[i].IsAssemblyOrLinkname = f.isAssemblyOrLinkname
+		nodes[i].UsesPlugin = f.usesPlugin
 		if f.usesUnsafePointer {
 			unsafeCount++
 		}
 		if f.isAssemblyOrLinkname {
 			asmCount++
+		}
+		if f.usesPlugin {
+			pluginCount++
 		}
 	}
 
@@ -57,6 +63,7 @@ func (a *Analyser) attachBodyFacts(ctx context.Context, nodes []domain.CallNode,
 		slog.Int("scanned_packages", len(pkgPaths)),
 		slog.Int("uses_unsafe_pointer", unsafeCount),
 		slog.Int("assembly_or_linkname", asmCount),
+		slog.Int("uses_plugin", pluginCount),
 	)
 }
 
@@ -135,6 +142,7 @@ func scanPackageFacts(p *packages.Package, facts map[string]bodyFacts) {
 	}
 	for _, file := range p.Syntax {
 		importsUnsafe := fileImportsUnsafe(file)
+		importsPlugin := fileImportsPlugin(file)
 		for _, decl := range file.Decls {
 			fd, ok := decl.(*ast.FuncDecl)
 			if !ok {
@@ -152,6 +160,9 @@ func scanPackageFacts(p *packages.Package, facts map[string]bodyFacts) {
 			}
 			if importsUnsafe && fd.Body != nil && bodyUsesUnsafePointer(fd.Body) {
 				f.usesUnsafePointer = true
+			}
+			if importsPlugin && fd.Body != nil && bodyUsesPlugin(fd.Body) {
+				f.usesPlugin = true
 			}
 			facts[id] = f
 		}
@@ -183,6 +194,43 @@ func bodyUsesUnsafePointer(body *ast.BlockStmt) bool {
 		}
 		pkg, ok := sel.X.(*ast.Ident)
 		if ok && pkg.Name == "unsafe" && sel.Sel.Name == "Pointer" {
+			found = true
+			return false
+		}
+		return true
+	})
+	return found
+}
+
+// fileImportsPlugin reports whether file imports the plugin package, a
+// prerequisite for any plugin-package reference in its declarations.
+func fileImportsPlugin(file *ast.File) bool {
+	for _, imp := range file.Imports {
+		if imp.Path != nil && imp.Path.Value == `"plugin"` {
+			return true
+		}
+	}
+	return false
+}
+
+// bodyUsesPlugin reports whether body references the plugin package qualifier
+// (e.g. plugin.Open, plugin.Plugin), which witnesses a runtime plugin-load
+// boundary whose loaded targets are absent from the static graph. Detection is
+// package-qualified so any use of the plugin API — not only Open — is a witness;
+// a subsequent (*Plugin).Lookup runs on a value that necessarily references the
+// qualifier at the load site.
+func bodyUsesPlugin(body *ast.BlockStmt) bool {
+	found := false
+	ast.Inspect(body, func(n ast.Node) bool {
+		if found {
+			return false
+		}
+		sel, ok := n.(*ast.SelectorExpr)
+		if !ok {
+			return true
+		}
+		pkg, ok := sel.X.(*ast.Ident)
+		if ok && pkg.Name == "plugin" {
 			found = true
 			return false
 		}

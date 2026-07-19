@@ -12,7 +12,6 @@ import (
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"golang.org/x/tools/go/callgraph"
 	"golang.org/x/tools/go/callgraph/cha"
 	"golang.org/x/tools/go/packages"
 )
@@ -172,22 +171,14 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord fetchdo
 	// Ensure GC can reclaim memory before starting walk
 	runtime.GC()
 
-	// Pre-filter nodes to those in the current module to save memory during walk
-	moduleNodes := make(map[*callgraph.Node]bool)
-	for fn, node := range cg.Nodes {
-		if fn == nil || fn.Package() == nil {
-			continue
-		}
-		pkgPath := fn.Package().Pkg.Path()
-		if pkgPath == coord.Path || strings.HasPrefix(pkgPath, coord.Path+"/") {
-			moduleNodes[node] = true
-		}
-	}
+	// Pre-filter to the caller nodes walkGraph records — module functions plus
+	// dependency functions built with real bodies — to save memory during walk.
+	recordedCallers := recordedCallerNodes(cg, coord)
 
 	// Ensure GC can reclaim memory before starting walk
 	runtime.GC()
 
-	nodes, edges, overallStatus := a.walkGraph(ctx, cg, moduleNodes, coord, fset, tempDir)
+	nodes, edges, overallStatus := a.walkGraph(ctx, cg, recordedCallers, coord, fset, tempDir)
 
 	// Attach body-level capability facts. These are properties of a
 	// function's own body — unsafe.Pointer conversions, assembly/linkname

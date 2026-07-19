@@ -71,6 +71,10 @@ const (
 	// SinkAssemblyOrLinknameLeaf is a node implemented in assembly or via
 	// //go:linkname: it has no Go body, so no edges out of it are visible.
 	SinkAssemblyOrLinknameLeaf SinkKind = "assembly-or-linkname-leaf"
+	// SinkPluginLeaf is a node whose body loads code through the Go plugin
+	// package (plugin.Open / (*Plugin).Lookup): the loaded targets are resolved
+	// at runtime and are never present in the static graph.
+	SinkPluginLeaf SinkKind = "plugin-leaf"
 )
 
 // SoundnessSink is a single reason an empty verdict was downgraded to
@@ -202,6 +206,9 @@ func leafSinks(n CallNode) []SoundnessSink {
 	}
 	if n.IsAssemblyOrLinkname {
 		out = append(out, SoundnessSink{Kind: SinkAssemblyOrLinknameLeaf, Site: n.ID})
+	}
+	if n.UsesPlugin {
+		out = append(out, SoundnessSink{Kind: SinkPluginLeaf, Site: n.ID})
 	}
 	return out
 }

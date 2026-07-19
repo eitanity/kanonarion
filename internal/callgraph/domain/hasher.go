@@ -89,6 +89,7 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 			Position:             SourcePosition{File: cn.Position.File, Line: cn.Position.Line},
 			UsesUnsafePointer:    cn.UsesUnsafePointer,
 			IsAssemblyOrLinkname: cn.IsAssemblyOrLinkname,
+			UsesPlugin:           cn.UsesPlugin,
 		}
 	}
 	edges := make([]CallEdge, len(c.Edges))
@@ -175,6 +176,7 @@ type canonicalNode struct {
 	Position             canonicalPos `json:"position"`
 	Receiver             string       `json:"receiver"`
 	Symbol               string       `json:"symbol"`
+	UsesPlugin           bool         `json:"uses_plugin"`
 	UsesUnsafePointer    bool         `json:"uses_unsafe_pointer"`
 }
 
@@ -238,6 +240,7 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 			Position:             canonicalPos{File: n.Position.File, Line: n.Position.Line},
 			Receiver:             n.Receiver,
 			Symbol:               n.Symbol,
+			UsesPlugin:           n.UsesPlugin,
 			UsesUnsafePointer:    n.UsesUnsafePointer,
 		}
 	}

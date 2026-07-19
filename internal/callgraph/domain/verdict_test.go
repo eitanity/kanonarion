@@ -150,6 +150,7 @@ func TestClassifyNegativeVerdict_LeafSinks(t *testing.T) {
 			ID: "m.Leaf", Symbol: "Leaf",
 			UsesUnsafePointer:    true,
 			IsAssemblyOrLinkname: true,
+			UsesPlugin:           true,
 		},
 		Found:       true,
 		ModuleLevel: domain.CompletenessBuiltWithBodies,
@@ -162,14 +163,45 @@ func TestClassifyNegativeVerdict_LeafSinks(t *testing.T) {
 	for _, s := range v.Sinks {
 		kinds[s.Kind] = true
 	}
-	if !kinds[domain.SinkUnsafePointerLeaf] || !kinds[domain.SinkAssemblyOrLinknameLeaf] {
-		t.Errorf("expected both leaf sinks, got %+v", v.Sinks)
+	if !kinds[domain.SinkUnsafePointerLeaf] || !kinds[domain.SinkAssemblyOrLinknameLeaf] || !kinds[domain.SinkPluginLeaf] {
+		t.Errorf("expected all three leaf sinks, got %+v", v.Sinks)
 	}
 
 	// The same facts on a not-found node are ignored (there is no node to inspect).
 	in.Found = false
 	if got := domain.ClassifyNegativeVerdict(in).Outcome; got != domain.VerdictResolvedAbsent {
 		t.Errorf("leaf facts on absent node must be ignored, got %s", got)
+	}
+}
+
+// TestClassifyNegativeVerdict_PluginLeafSink covers a node whose only sink is a
+// plugin-load boundary: an empty verdict over it must be UNRESOLVED with the
+// plugin site named, since the loaded targets are absent from the static graph.
+func TestClassifyNegativeVerdict_PluginLeafSink(t *testing.T) {
+	in := domain.NegativeVerdictInputs{
+		MethodName: "Load",
+		QueriedNode: domain.CallNode{
+			ID: "m.Load", Symbol: "Load",
+			UsesPlugin: true,
+		},
+		Found:       true,
+		ModuleLevel: domain.CompletenessBuiltWithBodies,
+	}
+	v := domain.ClassifyNegativeVerdict(in)
+	if v.Outcome != domain.VerdictUnresolved {
+		t.Fatalf("outcome=%s, want UNRESOLVED", v.Outcome)
+	}
+	found := false
+	for _, s := range v.Sinks {
+		if s.Kind == domain.SinkPluginLeaf {
+			if s.Site != "m.Load" {
+				t.Errorf("plugin sink site=%q, want m.Load", s.Site)
+			}
+			found = true
+		}
+	}
+	if !found {
+		t.Errorf("expected a plugin leaf sink, got %+v", v.Sinks)
 	}
 }
 

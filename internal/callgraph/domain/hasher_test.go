@@ -128,6 +128,41 @@ func TestHasherRoundTripCompleteness(t *testing.T) {
 	}
 }
 
+func TestHasherRoundTripUsesPlugin(t *testing.T) {
+	var h domain2.CallGraphRecordHasher
+	r := makeTestRecord()
+	r.Nodes[0].UsesPlugin = true
+
+	hashed, err := h.SetContentHash(r)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	blob, err := h.Marshal(hashed)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	restored, err := h.Unmarshal(blob)
+	if err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if !restored.Nodes[0].UsesPlugin {
+		t.Error("UsesPlugin not preserved across round-trip")
+	}
+	if err := h.VerifyContentHash(restored); err != nil {
+		t.Errorf("VerifyContentHash after round-trip: %v", err)
+	}
+	// The fact is part of node identity: flipping it must change the hash.
+	r2 := makeTestRecord()
+	r2.Nodes[0].UsesPlugin = false
+	hashed2, err := h.SetContentHash(r2)
+	if err != nil {
+		t.Fatalf("SetContentHash (no plugin): %v", err)
+	}
+	if hashed.ContentHash == hashed2.ContentHash {
+		t.Error("content hash must depend on the UsesPlugin fact")
+	}
+}
+
 func TestHasherUnmarshalRejectsBadExtractedAt(t *testing.T) {
 	var h domain2.CallGraphRecordHasher
 	blob := mustMarshal(t, h)

@@ -10,10 +10,32 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
+// recordedCallerNodes returns the callgraph nodes whose outgoing edges walkGraph
+// records: every module function plus every dependency function whose real
+// source body was built into SSA. Dependencies are registered type-only by
+// default, so the dependency set is empty until the dependency-body tier builds
+// their syntax; recording their internal edges then needs no further change
+// here. A dependency-internal edge recovered this way belongs to the dependency
+// module's own completeness accounting, not the target module's — the target's
+// completeness is fixed by its own build fidelity and is unaffected by which
+// caller nodes are recorded here.
+func recordedCallerNodes(cg *callgraph.Graph, coord fetchdomain.ModuleCoordinate) map[*callgraph.Node]bool {
+	recorded := make(map[*callgraph.Node]bool)
+	for fn, node := range cg.Nodes {
+		if fn == nil {
+			continue
+		}
+		if fnInModule(fn, coord) || fnHasRealBody(fn) {
+			recorded[node] = true
+		}
+	}
+	return recorded
+}
+
 func (a *Analyser) walkGraph(
 	ctx context.Context,
 	cg *callgraph.Graph,
-	moduleNodes map[*callgraph.Node]bool,
+	recordedCallers map[*callgraph.Node]bool,
 	coord fetchdomain.ModuleCoordinate,
 	fset *token.FileSet,
 	tempDir string,
@@ -33,8 +55,9 @@ func (a *Analyser) walkGraph(
 			return nil
 		}
 
-		// Only interested in edges originating from the current module
-		if !moduleNodes[edge.Caller] {
+		// Record edges from module callers and from dependency callers whose
+		// body was built into SSA; skip everything else.
+		if !recordedCallers[edge.Caller] {
 			return nil
 		}
 

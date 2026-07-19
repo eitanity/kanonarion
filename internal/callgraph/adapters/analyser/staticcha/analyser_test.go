@@ -535,7 +535,10 @@ func TestAnalyse_BodyLevelFacts(t *testing.T) {
 		"go.mod": "module example.com/cgtestmod\n\ngo 1.21\n",
 		"facts.go": `package cgtestmod
 
-import "unsafe"
+import (
+	"plugin"
+	"unsafe"
+)
 
 // nanotime has no Go body — it is provided via //go:linkname, so it is an
 // ARBITRARY_EXECUTION leaf.
@@ -548,13 +551,21 @@ func UsesUnsafe(p *int) uintptr {
 	return uintptr(unsafe.Pointer(p))
 }
 
+// LoadsPlugin opens a plugin — a runtime code-load boundary the static graph
+// cannot follow.
+func LoadsPlugin(path string) error {
+	_, err := plugin.Open(path)
+	return err
+}
+
 // Safe touches neither fact.
 func Safe() int { return 1 }
 
-// Root reaches both fact-bearing functions.
+// Root reaches every fact-bearing function.
 func Root() {
 	_ = nanotime()
 	_ = UsesUnsafe(nil)
+	_ = LoadsPlugin("")
 	_ = Safe()
 }
 `,
@@ -597,8 +608,19 @@ func Root() {
 		t.Error("nanotime should not use unsafe.Pointer")
 	}
 
+	pluginFn, ok := bySymbol["LoadsPlugin"]
+	if !ok {
+		t.Fatalf("LoadsPlugin node not found; nodes: %v", rec.Nodes)
+	}
+	if !pluginFn.UsesPlugin {
+		t.Error("LoadsPlugin should have UsesPlugin=true")
+	}
+	if unsafeFn.UsesPlugin {
+		t.Error("UsesUnsafe does not touch the plugin package; UsesPlugin should be false")
+	}
+
 	if safe, ok := bySymbol["Safe"]; ok {
-		if safe.UsesUnsafePointer || safe.IsAssemblyOrLinkname {
+		if safe.UsesUnsafePointer || safe.IsAssemblyOrLinkname || safe.UsesPlugin {
 			t.Errorf("Safe should carry no body facts, got %+v", safe)
 		}
 	}

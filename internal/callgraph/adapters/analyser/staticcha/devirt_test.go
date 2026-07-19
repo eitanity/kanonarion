@@ -109,6 +109,45 @@ func (Client) Run() {}
 	}
 }
 
+// TestDevirt_TargetCompletenessUnaffectedByWidening pins the review-resolution
+// invariant: recovering dependency-facing dispatch must not shift the target
+// module's per-module completeness tier. The target module built with bodies, so
+// its completeness stays BUILT_WITH_BODIES regardless of the widened sweep — a
+// dependency-internal edge belongs to the dependency module's own accounting,
+// never the target's.
+func TestDevirt_TargetCompletenessUnaffectedByWidening(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/cgtestmod\n\ngo 1.21\n\nrequire example.com/dep v0.0.0\n\nreplace example.com/dep => ./dep\n",
+		"cgtestmod.go": `package cgtestmod
+
+import "example.com/dep"
+
+type Runner interface {
+	Run()
+}
+
+func Drive(r Runner) {
+	r.Run()
+}
+
+var _ = dep.Client{}
+`,
+		"dep/go.mod": "module example.com/dep\n\ngo 1.21\n",
+		"dep/dep.go": `package dep
+
+type Client struct{}
+
+func (Client) Run() {}
+`,
+	}
+	rec := analyseFiles(t, files)
+
+	if rec.Completeness != domain.CompletenessBuiltWithBodies {
+		t.Errorf("target module completeness = %q, want %q (widening must not shift it)",
+			rec.Completeness, domain.CompletenessBuiltWithBodies)
+	}
+}
+
 // TestDevirt_SingleImplementer_BuiltBody covers the sole implementer with a
 // built body: the edge targets the real SSA node (CHA already reaches it; the
 // devirt pass must not duplicate or corrupt it).

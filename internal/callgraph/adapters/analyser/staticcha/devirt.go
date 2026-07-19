@@ -21,9 +21,11 @@ import (
 // one type that implements an interface lives in a package that was registered
 // type-only, CHA emits no edge at all.
 //
-// For each invoke site i.M() inside the analysed module, this pass computes the
-// implementers of the interface over the full type-checked package set (whose
-// types.Packages persist even for unbuilt packages). When exactly one concrete
+// For each invoke site i.M() inside a built body — a module function, or a
+// dependency function once the dependency-body tier builds its syntax — this
+// pass computes the implementers of the interface over the full type-checked
+// package set (whose types.Packages persist even for unbuilt packages). When
+// exactly one concrete
 // type implements it, an edge to that type's M is added: if M has a built SSA
 // function the edge targets that node; otherwise a leaf node is synthesised so
 // the edge — and the completeness signal it carries — still exists. Onward
@@ -72,7 +74,12 @@ func (a *Analyser) devirtualizeSingleImplementer(
 		if ctx.Err() != nil {
 			break
 		}
-		if !fnInModule(fn, coord) {
+		// Sweep invoke sites in module bodies and in any dependency body that
+		// was actually built into SSA. Dependencies are registered type-only by
+		// default, so the dependency set is empty until the dependency-body tier
+		// builds their syntax; the same single-implementer rule then recovers
+		// their internal dispatch with no further change here.
+		if !fnInModule(fn, coord) && !fnHasRealBody(fn) {
 			continue
 		}
 
@@ -321,6 +328,17 @@ func leafNodeFromFunc(
 		IsExportedAPI: !isExternal && token.IsExported(symbol) && !isInternalPkg(pkgPath),
 		Position:      pos,
 	}
+}
+
+// fnHasRealBody reports whether fn carries a real (non-synthetic) SSA body —
+// the test for "this function's own source was built into SSA". Synthetic
+// wrappers (method-value thunks, value/pointer method wrappers) set
+// fn.Synthetic and are excluded; they are not real dispatch sites. It is true
+// for built module functions and, once the dependency-body tier builds
+// dependency syntax, for dependency functions; it is false for the type-only
+// dependencies the loader registers by default (they have no blocks).
+func fnHasRealBody(fn *ssa.Function) bool {
+	return fn != nil && fn.Synthetic == "" && len(fn.Blocks) > 0
 }
 
 // fnInModule reports whether fn belongs to a package in the analysed module.

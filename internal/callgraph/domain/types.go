@@ -21,7 +21,10 @@ import (
 // TYPE_ONLY, METADATA_ONLY, FAILED, VERSION_NOT_IN_TOOLCHAIN) so a before/after
 // diff can assert completeness parity rather than read a "resolved"/"unaffected"
 // verdict off an asymmetric comparison.
-const CallGraphSchemaVersion = "8"
+// v9 adds UsesPlugin: the per-node body-level fact that a function references the
+// Go plugin package (plugin.Open / (*Plugin).Lookup), a soundness leaf sink that
+// loads code the static graph never sees.
+const CallGraphSchemaVersion = "9"
 
 // ExclusionReasonConfig is the CallGraphRecord.ExclusionReason value used when
 // a module was skipped because its path is listed in callgraph.exclude.
@@ -168,6 +171,14 @@ type CallNode struct {
 	// extraction time and treated as an ARBITRARY_EXECUTION sink during
 	// capability analysis.
 	IsAssemblyOrLinkname bool
+	// UsesPlugin is true when the function's own body references the Go plugin
+	// package (plugin.Open / (*Plugin).Lookup). A plugin boundary loads code the
+	// static call graph never sees, so an empty callers/callees answer over such
+	// a node cannot be trusted as a negative — this fact is captured at extraction
+	// time and treated as a leaf soundness sink that downgrades a negative verdict
+	// to UNRESOLVED. Capability analysis already witnesses plugin use via the
+	// package-import sink map, so this fact is verdict-layer only.
+	UsesPlugin bool
 }
 
 // CallEdge is a directed call relationship between two nodes.
