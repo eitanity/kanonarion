@@ -25,11 +25,11 @@ kanonarion vuln-scan-rescan <walk-id> [flags]
 |---|---|---|
 | `--store-root` | `~/.kanonarion` | Path to fact store root (or `KANONARION_STORE` env var) |
 | `--reachability` | `false` | Enable call-graph reachability analysis |
+| `--go-binary` | _(from `PATH`)_ | Path to the `go` binary if not on `PATH` (used by on-demand callgraph extraction) |
 | `--operator` | `$USER` | Operator name recorded in the scan run |
 | `--snapshot-source` | _(fresh)_ | Pin to a specific snapshot source (requires `--snapshot-version`) |
 | `--snapshot-version` | _(fresh)_ | Pin to a specific snapshot version (requires `--snapshot-source`) |
 | `--log-level` | `warn` | Log level: `debug\|info\|warn\|error` |
-| `--log-json` | `false` | Emit logs as JSON |
 
 **Examples**
 

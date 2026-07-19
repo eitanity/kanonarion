@@ -43,7 +43,6 @@ kanonarion walk --gomod ./go.mod [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Root directory for blobs and SQLite |
-| `--pipeline-version` | _(compiled-in)_ | Override the pipeline version |
 | `--goproxy` | `$GOPROXY` or `proxy.golang.org` | Override the module proxy |
 | `--force` | `false` | Re-fetch and re-verify every module in the closure, bypassing the fact-store cache. Wall time scales with the closure size; `per_node_results[].from_cache` will be `false` for every node. |
 | `--allow-partial` | `false` | Exit 0 even when the walk status is partial |
@@ -72,7 +71,15 @@ kanonarion walk-list [--scope code|tool|complete] [--json]
 
 | Flag | Default | Description |
 |------|---------|-------------|
+| `--target` | _(all)_ | Filter by target `module@version` |
+| `--since` | _(none)_ | Filter by start time (RFC3339) |
+| `--status` | _(all)_ | Filter by overall status (`succeeded`, `partial`, `failed`, or `cancelled`) |
 | `--scope` | _(all)_ | Filter by walk scope (`code`, `tool`, or `complete`) |
+| `--tool` | `false` | Shorthand for `--scope tool` |
+| `--limit` | `20` | Maximum number of results to return (`0` = unlimited) |
+| `--walk-id` | _(none)_ | Fetch a single walk summary by ID |
+| `--latest` | `false` | Return only the latest unique `(target, scope)` combination |
+| `--latest-success` | `false` | Return only the single most recent succeeded walk (as a JSON object, not an array) |
 | `--json` | `false` | Emit the list as JSON |
 
 ### `walk-show`
