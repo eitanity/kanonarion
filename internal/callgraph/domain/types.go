@@ -17,7 +17,11 @@ import (
 // v7 redesigns the edge confidence vocabulary (Direct, CHA-overapprox, VTA,
 // Framework, Unknown), folds reflect-dispatched edges into Unknown, and records
 // the reflect origin as the per-edge ReflectDispatch attribute.
-const CallGraphSchemaVersion = "7"
+// v8 adds Completeness: the per-module fidelity level (BUILT_WITH_BODIES,
+// TYPE_ONLY, METADATA_ONLY, FAILED, VERSION_NOT_IN_TOOLCHAIN) so a before/after
+// diff can assert completeness parity rather than read a "resolved"/"unaffected"
+// verdict off an asymmetric comparison.
+const CallGraphSchemaVersion = "8"
 
 // ExclusionReasonConfig is the CallGraphRecord.ExclusionReason value used when
 // a module was skipped because its path is listed in callgraph.exclude.
@@ -188,6 +192,12 @@ type CallGraphRecord struct {
 	Ecosystem     string
 	Coordinate    fetchdomain.ModuleCoordinate
 	Algorithm     CallGraphAlgorithm
+	// Completeness is the per-module fidelity level at which this graph was
+	// analysed (BUILT_WITH_BODIES down to FAILED/VERSION_NOT_IN_TOOLCHAIN),
+	// derived from the build outcome at extraction time. It is the machine
+	// signal a diff keys completeness-parity off, and the per-module phase
+	// caveat keys off, so neither has to infer fidelity from node/edge totals.
+	Completeness  CompletenessLevel
 	Nodes         []CallNode
 	Edges         []CallEdge
 	OverallStatus CallGraphStatus

@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"fmt"
 	"slices"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
@@ -29,11 +30,25 @@ func DiffScanRuns(runA, runB WalkScanRun, recsA, recsB []VulnerabilityRecord) Sc
 				// Both runs have this finding — check for reachability change.
 				fA, ok := findByID(recA.Findings, fB.ID)
 				if ok && reachabilityChanged(fA, fB) {
+					wasReachable, isReachable := reachableFlag(fA), reachableFlag(fB)
+					// A reachable→not-reachable flip is a green "now unaffected"
+					// verdict. If the two runs analysed the module at unequal
+					// fidelity, that flip may be an artefact of dropped fidelity,
+					// not a fix — hold it back as UNRESOLVED. The reverse flip
+					// (newly reachable) is not a green result, so it stands.
+					if wasReachable && !isReachable {
+						if mismatch, reason := completenessMismatch(recA, recB); mismatch {
+							diff.UnresolvedFindings = append(diff.UnresolvedFindings, UnresolvedFinding{
+								Coordinate: coord, Finding: fB, Kind: UnresolvedKindReachability, Reason: reason,
+							})
+							continue
+						}
+					}
 					diff.ReachabilityChanges = append(diff.ReachabilityChanges, ReachabilityChange{
 						Coordinate:   coord,
 						Finding:      fB,
-						WasReachable: reachableFlag(fA),
-						IsReachable:  reachableFlag(fB),
+						WasReachable: wasReachable,
+						IsReachable:  isReachable,
 					})
 				}
 			}
@@ -45,6 +60,20 @@ func DiffScanRuns(runA, runB WalkScanRun, recsA, recsB []VulnerabilityRecord) Sc
 		recB, inB := indexB[coord]
 		for _, fA := range recA.Findings {
 			if !inB || !containsFinding(recB.Findings, fA.ID) {
+				// A finding that disappears from a module still present in B is a
+				// green "resolved" verdict. If B analysed the module at lower
+				// fidelity than A, the finding may have vanished because the scan
+				// saw less, not because it was fixed — hold it back as UNRESOLVED.
+				// When the module is absent from B entirely there is no B-side
+				// fidelity to compare, so that coverage change stays resolved.
+				if inB {
+					if mismatch, reason := completenessMismatch(recA, recB); mismatch {
+						diff.UnresolvedFindings = append(diff.UnresolvedFindings, UnresolvedFinding{
+							Coordinate: coord, Finding: fA, Kind: UnresolvedKindResolved, Reason: reason,
+						})
+						continue
+					}
+				}
 				diff.ResolvedFindings = append(diff.ResolvedFindings, FindingDelta{Coordinate: coord, Finding: fA})
 			}
 		}
@@ -53,6 +82,15 @@ func DiffScanRuns(runA, runB WalkScanRun, recsA, recsB []VulnerabilityRecord) Sc
 	// Sort for deterministic output.
 	slices.SortFunc(diff.NewFindings, CompareFindingDelta)
 	slices.SortFunc(diff.ResolvedFindings, CompareFindingDelta)
+	// A given (coordinate, finding) is either "in both runs" or "in A only", never
+	// both, so it can produce at most one UnresolvedFinding — ordering by
+	// coordinate+finding is already total and deterministic.
+	slices.SortFunc(diff.UnresolvedFindings, func(a, b UnresolvedFinding) int {
+		return CompareFindingDelta(
+			FindingDelta{Coordinate: a.Coordinate, Finding: a.Finding},
+			FindingDelta{Coordinate: b.Coordinate, Finding: b.Finding},
+		)
+	})
 	slices.SortFunc(diff.ReachabilityChanges, func(a, b ReachabilityChange) int {
 		return CompareFindingDelta(
 			FindingDelta{Coordinate: a.Coordinate, Finding: a.Finding},
@@ -81,6 +119,32 @@ func findByID(findings []VulnerabilityFinding, id string) (VulnerabilityFinding,
 		return VulnerabilityFinding{}, false
 	}
 	return findings[idx], true
+}
+
+// completenessMismatch reports whether two records analysed their module at
+// unequal call-graph fidelity, and names the differing axis. It compares the
+// completeness level and the algorithm/devirt tier — together "same completeness
+// level, same in-toolchain status, same algorithm/devirt tier", since the
+// VERSION_NOT_IN_TOOLCHAIN level folds in in-toolchain status. Two records that
+// both consulted no call graph (both empty) are trivially in parity.
+func completenessMismatch(a, b VulnerabilityRecord) (bool, string) {
+	if a.CallGraphCompleteness != b.CallGraphCompleteness {
+		return true, fmt.Sprintf("completeness level differs: before=%s after=%s",
+			completenessName(a.CallGraphCompleteness), completenessName(b.CallGraphCompleteness))
+	}
+	if a.CallGraphAlgorithm != b.CallGraphAlgorithm {
+		return true, fmt.Sprintf("algorithm/devirt tier differs: before=%s after=%s",
+			completenessName(a.CallGraphAlgorithm), completenessName(b.CallGraphAlgorithm))
+	}
+	return false, ""
+}
+
+// completenessName renders an empty fidelity string as "Unknown" for messages.
+func completenessName(s string) string {
+	if s == "" {
+		return "Unknown"
+	}
+	return s
 }
 
 func reachabilityChanged(a, b VulnerabilityFinding) bool {

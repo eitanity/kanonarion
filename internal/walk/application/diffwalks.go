@@ -28,6 +28,13 @@ type WalkDiff struct {
 	Removed        []fetchdomain.ModuleCoordinate // modules present in A but not B (by path)
 	VersionChanged []VersionChange
 	StatusChanged  []StatusChange
+	// CompletenessMismatch is non-empty when the two walks were resolved at
+	// unequal completeness — a different scope or traversal depth — so their
+	// Added/Removed/VersionChanged sets are not a clean before/after. A module in
+	// Removed may merely be out of the narrower walk's scope rather than genuinely
+	// gone, so the delta must be read as UNRESOLVED, not a confident resolution.
+	// It names the differing axis for the operator.
+	CompletenessMismatch string
 }
 
 // VersionChange records a module whose MVS-selected version changed.
@@ -106,13 +113,52 @@ func diffRecords(a, b domain.WalkRecord) WalkDiff {
 	})
 
 	return WalkDiff{
-		WalkA:          a.ID,
-		WalkB:          b.ID,
-		Added:          added,
-		Removed:        removed,
-		VersionChanged: versionChanged,
-		StatusChanged:  statusChanged,
+		WalkA:                a.ID,
+		WalkB:                b.ID,
+		Added:                added,
+		Removed:              removed,
+		VersionChanged:       versionChanged,
+		StatusChanged:        statusChanged,
+		CompletenessMismatch: walkCompletenessMismatch(a, b),
 	}
+}
+
+// walkCompletenessMismatch reports whether two walks were resolved at unequal
+// completeness — a different scope or traversal depth — which makes their
+// module-set delta (Added/Removed/VersionChanged) an asymmetric comparison
+// rather than a clean before/after. It returns the differing axis, or "" when
+// the walks are completeness-comparable.
+func walkCompletenessMismatch(a, b domain.WalkRecord) string {
+	if a.Scope != b.Scope {
+		return fmt.Sprintf("walk scope differs: %s vs %s", scopeName(a.Scope), scopeName(b.Scope))
+	}
+	// WalkDepthFull is the default and serialises as "" (omitempty), so an empty
+	// depth and an explicit "full" are the same completeness — normalise before
+	// comparing so they are not read as a mismatch.
+	if normalizeDepth(a.Depth) != normalizeDepth(b.Depth) {
+		return fmt.Sprintf("walk depth differs: %s vs %s", depthName(a.Depth), depthName(b.Depth))
+	}
+	return ""
+}
+
+func scopeName(s domain.WalkScope) string {
+	if s == "" {
+		return "unspecified"
+	}
+	return string(s)
+}
+
+func depthName(d domain.WalkDepth) string {
+	return string(normalizeDepth(d))
+}
+
+// normalizeDepth folds the empty (default) depth onto WalkDepthFull so the two
+// spellings of "full traversal" compare equal.
+func normalizeDepth(d domain.WalkDepth) domain.WalkDepth {
+	if d == "" {
+		return domain.WalkDepthFull
+	}
+	return d
 }
 
 func nodesByPath(nodes []domain.GraphNode) map[string]domain.GraphNode {

@@ -20,6 +20,7 @@ func TestCallGraphStatusString(t *testing.T) {
 		{domain.CallGraphStatusOutOfMemory, "OutOfMemory"},
 		{domain.CallGraphStatusCancelled, "Cancelled"},
 		{domain.CallGraphStatusExtractionFailed, "ExtractionFailed"},
+		{domain.CallGraphStatusExcludedByConfig, "ExcludedByConfig"},
 		{domain.CallGraphStatus(99), "Unknown"},
 	}
 	for _, tc := range cases {

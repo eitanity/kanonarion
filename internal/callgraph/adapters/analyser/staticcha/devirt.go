@@ -27,12 +27,13 @@ import (
 // type implements it, an edge to that type's M is added: if M has a built SSA
 // function the edge targets that node; otherwise a leaf node is synthesised so
 // the edge — and the completeness signal it carries — still exists. Onward
-// edges from an unbuilt body are out of scope (KN-425/KN-427).
+// edges from an unbuilt body are out of scope; reasoning through an unbuilt
+// body is a completeness/verdict concern, not this pass's.
 //
 // The pass is additive and sound: it only adds edges the type hierarchy permits
 // and that CHA would itself have added had the body been built, so it cannot
-// reduce soundness. Multi-implementer sites are left to CHA/VTA (KN-424). Because
-// the interface site resolves to a single concrete implementer, the added edges
+// reduce soundness. Multi-implementer sites are left to CHA and the precision
+// tier. Because the interface site resolves to a single concrete implementer, the added edges
 // name a unique callee and are tagged Direct — no over-approximation remains.
 // Determinism comes from the caller's final Sort; the set of added edges is
 // independent of traversal order.
@@ -262,7 +263,7 @@ func implementerMethod(named *types.Named, ifaceMethod *types.Func) *types.Func 
 // devirtTargetNode returns the graph node for methodObj: the existing SSA node
 // when the method body was built, or a synthesised leaf node when it was not
 // (type-only dependency / unbuilt package). The leaf carries no onward edges —
-// that is the completeness/verdict concern (KN-425/KN-427).
+// that is the completeness/verdict concern, not this pass's.
 func (a *Analyser) devirtTargetNode(
 	prog *ssa.Program,
 	methodObj *types.Func,

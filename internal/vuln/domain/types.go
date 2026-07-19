@@ -194,7 +194,17 @@ type VulnerabilityRecord struct {
 	// identity deterministic across re-validation.
 	FirstScannedAt  time.Time `json:"first_scanned_at,omitzero"`
 	PipelineVersion string    `json:"pipeline_version"`
-	ContentHash     string    `json:"content_hash"`
+	// CallGraphCompleteness records the per-module call-graph fidelity level that
+	// backed this record's reachability determinations (BUILT_WITH_BODIES down to
+	// FAILED / VERSION_NOT_IN_TOOLCHAIN), and CallGraphAlgorithm the algorithm/
+	// devirt tier. Both are empty when no call graph was consulted. A scan-run
+	// diff that produces a "resolved"/"unaffected" verdict across two records of
+	// unequal fidelity is unsound — the finding or its reachability may have
+	// changed because fidelity dropped, not because a fix landed — so the diff
+	// downgrades such a verdict to UNRESOLVED with the mismatch named.
+	CallGraphCompleteness string `json:"callgraph_completeness,omitempty"`
+	CallGraphAlgorithm    string `json:"callgraph_algorithm,omitempty"`
+	ContentHash           string `json:"content_hash"`
 	// Reused is true when this record was served from the per-module cache for
 	// the current call rather than freshly scanned (the same module/version was
 	// already scanned under this snapshot by an earlier run). It is call-scoped

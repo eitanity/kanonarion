@@ -91,6 +91,12 @@ func TestAnalyse_BasicCallGraph(t *testing.T) {
 		t.Fatalf("unexpected status %s: %s", rec.OverallStatus, rec.FailureDetail)
 	}
 
+	// A clean extraction is built with bodies, the only level a confident
+	// negative verdict may rest on.
+	if rec.Completeness != domain.CompletenessBuiltWithBodies {
+		t.Errorf("expected Completeness BUILT_WITH_BODIES, got %s", rec.Completeness)
+	}
+
 	if len(rec.Nodes) == 0 {
 		t.Error("expected at least one node in the call graph")
 	}
@@ -492,6 +498,12 @@ func Broken() int { return notDefined() }
 	// The clean root package must not be flagged as failed.
 	if slices.Contains(rec.FailedPackages, "example.com/cgtestmod") {
 		t.Errorf("root package must not be reported as failed; FailedPackages=%v", rec.FailedPackages)
+	}
+	// The root package was built into SSA with bodies, so the module-level
+	// fidelity is BUILT_WITH_BODIES even though one sub-package failed — the
+	// per-package failure lives in FailedPackages, not the completeness level.
+	if rec.Completeness != domain.CompletenessBuiltWithBodies {
+		t.Errorf("expected Completeness BUILT_WITH_BODIES, got %s", rec.Completeness)
 	}
 }
 

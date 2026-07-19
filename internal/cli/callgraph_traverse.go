@@ -67,6 +67,11 @@ func runCallers(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 			return err
 		}
 	}
+	if !jsonOut {
+		if err := writeCompletenessNotice(ctx, symbolID, uc, stdout); err != nil {
+			return err
+		}
+	}
 
 	return printEdgeRefs("callers", symbolID, refs, jsonOut, stdout)
 }
@@ -124,6 +129,11 @@ func runCallees(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 
 	if isPartial && !jsonOut {
 		if err := writePartialNotice(stdout, "callees", symbolID, failedList); err != nil {
+			return err
+		}
+	}
+	if !jsonOut {
+		if err := writeCompletenessNotice(ctx, symbolID, uc, stdout); err != nil {
 			return err
 		}
 	}
@@ -222,6 +232,11 @@ func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, js
 			return err
 		}
 	}
+	if !jsonOut {
+		if err := writeCompletenessNotice(ctx, symbolID, uc, stdout); err != nil {
+			return err
+		}
+	}
 	return printTransitiveResult("callers", symbolID, maxDepth, nodes, edges, jsonOut, stdout)
 }
 
@@ -239,6 +254,11 @@ func runCalleesTransitive(ctx context.Context, symbolID string, maxDepth int, js
 	}
 	if isPartial && !jsonOut {
 		if err := writePartialNotice(stdout, "transitive callees", symbolID, failedList); err != nil {
+			return err
+		}
+	}
+	if !jsonOut {
+		if err := writeCompletenessNotice(ctx, symbolID, uc, stdout); err != nil {
 			return err
 		}
 	}

@@ -193,10 +193,18 @@ type CallGraphLoader interface {
 }
 
 // CallGraphProjection is the minimal view of a call graph the reachability
-// analyser consumes: the nodes and the directed call edges between them.
+// analyser consumes: the nodes and the directed call edges between them, plus
+// the fidelity signature that backed them.
 type CallGraphProjection struct {
 	Nodes []CallGraphNode
 	Edges []CallGraphEdge
+	// Completeness and Algorithm carry the per-module fidelity level and the
+	// algorithm/devirt tier the graph was built at, as opaque strings so this
+	// port stays free of the callgraph domain. A reachability determination is
+	// only as sound as this fidelity, so a diff records it on the resulting
+	// verdict and checks completeness parity before trusting a green result.
+	Completeness string
+	Algorithm    string
 }
 
 // CallGraphNode is the subset of a call graph node the analyser needs.

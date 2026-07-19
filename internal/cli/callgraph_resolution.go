@@ -105,6 +105,48 @@ func rootPartialStatus(ctx context.Context, symbolID string, uc QueryCallGraphUs
 	return symbolFailedPkg, isPartial, failedPkgs, nil
 }
 
+// rootCompletenessCaveat returns a phase-appropriate caveat when the module
+// owning symbolID was analysed below full fidelity (not BUILT_WITH_BODIES), or
+// "" when it was built with bodies (or is not resolvable / not stored). It is
+// the completeness sibling of rootPartialStatus: the Partial notice covers a
+// package that failed to typecheck, this covers a module built type-only /
+// metadata-only, where dispatch edges are simply absent. The query commands run
+// in the coding phase, so a below-full module is an instruction to rebuild.
+func rootCompletenessCaveat(ctx context.Context, symbolID string, uc QueryCallGraphUseCase, phase domain.AnalysisPhase) (string, error) {
+	sums, err := uc.ListCallGraphRecords(ctx, ports.CallGraphFilter{})
+	if err != nil {
+		return "", fmt.Errorf("listing analysed modules: %w", err)
+	}
+	paths := make([]string, 0, len(sums))
+	for _, s := range sums {
+		paths = append(paths, s.ModulePath)
+	}
+	modulePath, ok := domain.ResolveSymbolModule(symbolID, paths)
+	if !ok {
+		return "", nil
+	}
+	for _, s := range sums {
+		if s.ModulePath != modulePath {
+			continue
+		}
+		coord := fetchdomain.ModuleCoordinate{Path: s.ModulePath, Version: s.ModuleVersion}
+		rec, found, gerr := uc.GetCallGraphRecord(ctx, coord, s.PipelineVersion)
+		if gerr != nil {
+			return "", fmt.Errorf("loading call graph for %s: %w", coord, gerr)
+		}
+		// Only a definite below-full level warrants a caveat. Unknown (a legacy
+		// record, or one from a path that recorded no level) and BuiltWithBodies
+		// both stay silent — we never invent a caveat we cannot substantiate.
+		if !found || rec.Completeness == domain.CompletenessUnknown || rec.Completeness.IsBuiltWithBodies() {
+			continue
+		}
+		if caveat := domain.CompletenessCaveat(rec.Completeness, phase); caveat != "" {
+			return caveat, nil
+		}
+	}
+	return "", nil
+}
+
 // symbolFailedPackage reports whether symbolID belongs to one of failedPkgs,
 // matching by import path. A symbol "<pkg>.<Name>" (or "<pkg>.(*T).M") belongs
 // to package pkg exactly when the character after the package path is '.', so a
@@ -152,6 +194,24 @@ func writePartialNotice(stdout io.Writer, kind, symbolID string, failedPkgs []st
 		"notice: call graph is Partial — %s did not typecheck; %s of %s may be incomplete (edges in the failed package(s) were dropped)\n",
 		pkgs, kind, symbolID); err != nil {
 		return fmt.Errorf("writing partial notice: %w", err)
+	}
+	return nil
+}
+
+// writeCompletenessNotice prints, in text mode, the coding-phase caveat for a
+// queried module analysed below full fidelity, or nothing when it was built with
+// bodies. It rides alongside any Partial notice: the two describe different
+// gaps (a failed package vs a module built type-/metadata-only).
+func writeCompletenessNotice(ctx context.Context, symbolID string, uc QueryCallGraphUseCase, stdout io.Writer) error {
+	caveat, err := rootCompletenessCaveat(ctx, symbolID, uc, domain.PhaseCoding)
+	if err != nil {
+		return err
+	}
+	if caveat == "" {
+		return nil
+	}
+	if _, werr := fmt.Fprintf(stdout, "notice: %s\n", caveat); werr != nil {
+		return fmt.Errorf("writing completeness notice: %w", werr)
 	}
 	return nil
 }
