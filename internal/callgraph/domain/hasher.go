@@ -94,10 +94,11 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 	edges := make([]CallEdge, len(c.Edges))
 	for i, ce := range c.Edges {
 		edges[i] = CallEdge{
-			FromID:     ce.FromID,
-			ToID:       ce.ToID,
-			CallSite:   SourcePosition{File: ce.CallSite.File, Line: ce.CallSite.Line},
-			Confidence: EdgeConfidence(ce.Confidence),
+			FromID:          ce.FromID,
+			ToID:            ce.ToID,
+			CallSite:        SourcePosition{File: ce.CallSite.File, Line: ce.CallSite.Line},
+			Confidence:      EdgeConfidence(ce.Confidence),
+			ReflectDispatch: ce.ReflectDispatch,
 		}
 	}
 	return CallGraphRecord{
@@ -177,10 +178,11 @@ type canonicalNode struct {
 }
 
 type canonicalEdge struct {
-	CallSite   canonicalPos `json:"call_site"`
-	Confidence string       `json:"confidence"`
-	FromID     string       `json:"from_id"`
-	ToID       string       `json:"to_id"`
+	CallSite        canonicalPos `json:"call_site"`
+	Confidence      string       `json:"confidence"`
+	FromID          string       `json:"from_id"`
+	ReflectDispatch bool         `json:"reflect_dispatch"`
+	ToID            string       `json:"to_id"`
 }
 
 type canonicalRecord struct {
@@ -240,10 +242,11 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 	cEdges := make([]canonicalEdge, len(edges))
 	for i, e := range edges {
 		cEdges[i] = canonicalEdge{
-			CallSite:   canonicalPos{File: e.CallSite.File, Line: e.CallSite.Line},
-			Confidence: string(e.Confidence),
-			FromID:     e.FromID,
-			ToID:       e.ToID,
+			CallSite:        canonicalPos{File: e.CallSite.File, Line: e.CallSite.Line},
+			Confidence:      string(e.Confidence),
+			FromID:          e.FromID,
+			ReflectDispatch: e.ReflectDispatch,
+			ToID:            e.ToID,
 		}
 	}
 

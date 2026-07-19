@@ -29,6 +29,33 @@ func TestCallGraphStatusString(t *testing.T) {
 	}
 }
 
+func TestMigrateConfidence(t *testing.T) {
+	cases := []struct {
+		name        string
+		stored      string
+		want        domain.EdgeConfidence
+		wantReflect bool
+	}{
+		{"legacy dynamic dispatch folds to CHA-overapprox", "DynamicDispatch", domain.ConfidenceCHAOverapprox, false},
+		{"legacy reflection folds to Unknown with reflect origin", "Reflection", domain.ConfidenceUnknown, true},
+		{"direct passes through", "Direct", domain.ConfidenceDirect, false},
+		{"CHA-overapprox passes through", "CHA-overapprox", domain.ConfidenceCHAOverapprox, false},
+		{"VTA passes through", "VTA", domain.ConfidenceVTA, false},
+		{"framework passes through", "Framework", domain.ConfidenceFramework, false},
+		{"unknown passes through", "Unknown", domain.ConfidenceUnknown, false},
+		{"unrecognised value passes through verbatim", "Something", domain.EdgeConfidence("Something"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, gotReflect := domain.MigrateConfidence(tc.stored)
+			if got != tc.want || gotReflect != tc.wantReflect {
+				t.Errorf("MigrateConfidence(%q) = (%q, %t), want (%q, %t)",
+					tc.stored, got, gotReflect, tc.want, tc.wantReflect)
+			}
+		})
+	}
+}
+
 func TestCallGraphRecordSort(t *testing.T) {
 	coord, _ := fetchdomain.NewModuleCoordinate("example.com/mod", "v1.0.0")
 	r := domain.CallGraphRecord{

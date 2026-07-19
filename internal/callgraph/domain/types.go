@@ -14,7 +14,10 @@ import (
 // v6 adds FailedPackages: the machine-readable set of packages that failed to
 // typecheck, so verdicts over a Partial graph can be scoped to the exact
 // packages whose edges were dropped rather than inferred from node/edge totals.
-const CallGraphSchemaVersion = "6"
+// v7 redesigns the edge confidence vocabulary (Direct, CHA-overapprox, VTA,
+// Framework, Unknown), folds reflect-dispatched edges into Unknown, and records
+// the reflect origin as the per-edge ReflectDispatch attribute.
+const CallGraphSchemaVersion = "7"
 
 // ExclusionReasonConfig is the CallGraphRecord.ExclusionReason value used when
 // a module was skipped because its path is listed in callgraph.exclude.
@@ -85,20 +88,51 @@ const (
 	AlgorithmStatic CallGraphAlgorithm = "Static"
 )
 
-// EdgeConfidence describes how certain the analyser is about a call edge.
+// EdgeConfidence describes how a call edge was resolved, so consumers can weight
+// edges by resolution tier and the verdict layer can key soundness decisions off
+// the tag. The vocabulary is ordered from most to least precise: a Direct edge
+// names a unique concrete callee; CHA-overapprox and VTA are progressively
+// refined interface-dispatch resolutions; Framework is bound by a framework
+// model; Unknown is an unresolved edge that must flag verdicts as UNRESOLVED.
 type EdgeConfidence string
 
 const (
-	// ConfidenceDirect is a statically-known call to a concrete function.
+	// ConfidenceDirect is a statically-known call to a unique concrete callee,
+	// including an interface site devirtualised to its sole implementer.
 	ConfidenceDirect EdgeConfidence = "Direct"
-	// ConfidenceDynamicDispatch is a call through an interface or function
-	// value; the exact callee is resolved by the algorithm.
-	ConfidenceDynamicDispatch EdgeConfidence = "DynamicDispatch"
-	// ConfidenceReflection is a call via the reflect package.
-	ConfidenceReflection EdgeConfidence = "Reflection"
-	// ConfidenceUnknown is used when the analyser cannot classify the edge.
+	// ConfidenceCHAOverapprox is an unrefined Class Hierarchy Analysis
+	// over-approximation of an interface dispatch: every type-compatible method
+	// is a possible callee.
+	ConfidenceCHAOverapprox EdgeConfidence = "CHA-overapprox"
+	// ConfidenceVTA is an interface dispatch resolved by the Variable Type
+	// Analysis tier, narrowing the CHA over-approximation to the types that
+	// actually flow to the call site.
+	ConfidenceVTA EdgeConfidence = "VTA"
+	// ConfidenceFramework is an edge bound by a framework model or thunk rather
+	// than observed in the analysed source.
+	ConfidenceFramework EdgeConfidence = "Framework"
+	// ConfidenceUnknown is an edge the analyser cannot resolve, including
+	// reflect-dispatched calls (see CallEdge.ReflectDispatch). It is a soundness
+	// sink: verdicts reaching such an edge must be reported as UNRESOLVED.
 	ConfidenceUnknown EdgeConfidence = "Unknown"
 )
+
+// MigrateConfidence maps a legacy stored confidence string onto the current
+// vocabulary, deterministically. The pre-v7 values DynamicDispatch and
+// Reflection are folded: DynamicDispatch becomes CHA-overapprox, and Reflection
+// becomes Unknown with the reflect-origin flag set so the reflect provenance is
+// preserved as an edge attribute. All current values pass through unchanged.
+// The boolean result reports whether the edge originated from a reflect call.
+func MigrateConfidence(stored string) (EdgeConfidence, bool) {
+	switch stored {
+	case "DynamicDispatch":
+		return ConfidenceCHAOverapprox, false
+	case "Reflection":
+		return ConfidenceUnknown, true
+	default:
+		return EdgeConfidence(stored), false
+	}
+}
 
 // SourcePosition identifies a location in a source file.
 type SourcePosition struct {
@@ -138,6 +172,12 @@ type CallEdge struct {
 	ToID       string
 	CallSite   SourcePosition
 	Confidence EdgeConfidence
+	// ReflectDispatch is true when the edge was resolved through a reflect
+	// call. Such edges carry ConfidenceUnknown — reflection is not a distinct
+	// confidence rank — but the reflect provenance is recorded here so the
+	// verdict-soundness layer can attribute the UNRESOLVED signal to reflection
+	// specifically rather than a generic unresolved dispatch.
+	ReflectDispatch bool
 }
 
 // CallGraphRecord is the aggregate root for a module's call graph extraction

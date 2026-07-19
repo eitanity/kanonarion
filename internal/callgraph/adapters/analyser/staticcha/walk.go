@@ -67,6 +67,7 @@ func (a *Analyser) walkGraph(
 
 		if _, dup := seenEdges[ek]; !dup {
 			seenEdges[ek] = struct{}{}
+			confidence, reflectDispatch := classifyConfidence(edge)
 			edges = append(edges, domain.CallEdge{
 				FromID: callerNode.ID,
 				ToID:   calleeNode.ID,
@@ -74,7 +75,8 @@ func (a *Analyser) walkGraph(
 					File: sitePosFile,
 					Line: sitePosLine,
 				},
-				Confidence: classifyConfidence(edge),
+				Confidence:      confidence,
+				ReflectDispatch: reflectDispatch,
 			})
 		}
 

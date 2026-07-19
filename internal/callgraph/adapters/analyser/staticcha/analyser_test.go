@@ -147,7 +147,7 @@ func TestAnalyse_DirectConfidence(t *testing.T) {
 			continue
 		}
 		if e.Confidence != domain.ConfidenceDirect &&
-			e.Confidence != domain.ConfidenceDynamicDispatch {
+			e.Confidence != domain.ConfidenceCHAOverapprox {
 			t.Errorf("unexpected confidence %q for edge %s→%s", e.Confidence, e.FromID, e.ToID)
 		}
 	}
@@ -182,16 +182,16 @@ func CallDoer(d Doer) {
 		t.Skip("go/packages load failed; skipping interface dispatch test")
 	}
 
-	// CHA should produce at least one DynamicDispatch edge for d.Do.
+	// CHA should produce at least one CHA-overapprox edge for d.Do.
 	var gotDynamic bool
 	for _, e := range rec.Edges {
-		if e.Confidence == domain.ConfidenceDynamicDispatch {
+		if e.Confidence == domain.ConfidenceCHAOverapprox {
 			gotDynamic = true
 			break
 		}
 	}
 	if !gotDynamic {
-		t.Errorf("expected at least one DynamicDispatch edge; edges: %v", rec.Edges)
+		t.Errorf("expected at least one CHA-overapprox edge; edges: %v", rec.Edges)
 	}
 }
 
@@ -355,8 +355,16 @@ func UseReflect(v any) string {
 	if rec.OverallStatus == domain.CallGraphStatusLoadFailed {
 		t.Skip("go/packages load failed; skipping reflection test")
 	}
-	// We don't assert Reflection confidence specifically since CHA may not
-	// classify reflect calls as Reflection — just verify no crash.
+	// Reflection is no longer a distinct confidence rank: reflect-dispatched
+	// edges fold into Unknown and carry the ReflectDispatch attribute. CHA may
+	// not resolve a static callee into the reflect package here, so we don't
+	// require a reflect edge — but any edge flagged ReflectDispatch must be
+	// tagged Unknown, never a distinct Reflection value.
+	for _, e := range rec.Edges {
+		if e.ReflectDispatch && e.Confidence != domain.ConfidenceUnknown {
+			t.Errorf("reflect-dispatched edge %s→%s has confidence %q, want Unknown", e.FromID, e.ToID, e.Confidence)
+		}
+	}
 	t.Logf("status=%s nodes=%d edges=%d", rec.OverallStatus, len(rec.Nodes), len(rec.Edges))
 }
 

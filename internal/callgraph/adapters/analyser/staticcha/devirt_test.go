@@ -104,8 +104,8 @@ func (Client) Run() {}
 	if !ok {
 		t.Fatalf("expected devirtualized edge Drive→%s; edges: %v", targetID, rec.Edges)
 	}
-	if edge.Confidence != domain.ConfidenceDynamicDispatch {
-		t.Errorf("devirtualized edge confidence = %q, want DynamicDispatch", edge.Confidence)
+	if edge.Confidence != domain.ConfidenceDirect {
+		t.Errorf("devirtualized edge confidence = %q, want Direct", edge.Confidence)
 	}
 }
 

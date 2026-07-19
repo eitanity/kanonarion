@@ -92,6 +92,15 @@ DELETE FROM callgraph_edges`},
 		// repopulates them with the new facts.
 		{Module: "callgraph", Version: 5, SQL: `DELETE FROM callgraph_records;
 DELETE FROM callgraph_edges`},
+		// Migration v6: the edge confidence vocabulary was redesigned
+		// (DynamicDispatch -> CHA-overapprox, Reflection folded into Unknown) and
+		// the per-edge reflect_dispatch attribute joined the canonical edge hash,
+		// bumping the schema version. Pre-existing blobs carry stale hashes and the
+		// old vocabulary, so purge the legacy rows — they are regenerable by
+		// re-extracting — and add the reflect_dispatch column for new records.
+		{Module: "callgraph", Version: 6, SQL: `DELETE FROM callgraph_records;
+DELETE FROM callgraph_edges;
+ALTER TABLE callgraph_edges ADD COLUMN reflect_dispatch INTEGER NOT NULL DEFAULT 0`},
 	}
 }
 
@@ -185,8 +194,8 @@ ON CONFLICT (module_path, module_version, pipeline_version) DO UPDATE SET
 INSERT OR IGNORE INTO callgraph_edges (
     from_module, from_version, pipeline_version,
     from_id, to_id, confidence,
-    call_site_file, call_site_line
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    call_site_file, call_site_line, reflect_dispatch
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	stmtEdge, err := tx.PrepareContext(ctx, qEdge)
 	if err != nil {
@@ -198,7 +207,7 @@ INSERT OR IGNORE INTO callgraph_edges (
 		if _, err := stmtEdge.ExecContext(ctx,
 			r.Coordinate.Path, r.Coordinate.Version, r.PipelineVersion,
 			e.FromID, e.ToID, string(e.Confidence),
-			e.CallSite.File, e.CallSite.Line,
+			e.CallSite.File, e.CallSite.Line, e.ReflectDispatch,
 		); err != nil {
 			return fmt.Errorf("inserting callgraph edge %s→%s: %w", e.FromID, e.ToID, err)
 		}
@@ -267,7 +276,7 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 // fetchEdges queries callgraph_edges for all edges belonging to a record,
 // returning them in canonical sort order (from_id, to_id, call_site_file, call_site_line).
 func (s *Store) fetchEdges(ctx context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string) ([]domain2.CallEdge, error) {
-	const q = `SELECT from_id, to_id, confidence, call_site_file, call_site_line
+	const q = `SELECT from_id, to_id, confidence, call_site_file, call_site_line, reflect_dispatch
 	    FROM callgraph_edges
 	    WHERE from_module = ? AND from_version = ? AND pipeline_version = ?
 	    ORDER BY from_id, to_id, call_site_file, call_site_line`
@@ -284,10 +293,14 @@ func (s *Store) fetchEdges(ctx context.Context, coord fetchdomain.ModuleCoordina
 	for rows.Next() {
 		var e domain2.CallEdge
 		var conf string
-		if serr := rows.Scan(&e.FromID, &e.ToID, &conf, &e.CallSite.File, &e.CallSite.Line); serr != nil {
+		var reflectDispatch bool
+		if serr := rows.Scan(&e.FromID, &e.ToID, &conf, &e.CallSite.File, &e.CallSite.Line, &reflectDispatch); serr != nil {
 			return nil, fmt.Errorf("scanning callgraph edge: %w", serr)
 		}
-		e.Confidence = domain2.EdgeConfidence(conf)
+		// Normalise any legacy vocabulary lingering in the table; a stored
+		// Reflection string also implies the reflect origin.
+		e.Confidence, e.ReflectDispatch = domain2.MigrateConfidence(conf)
+		e.ReflectDispatch = e.ReflectDispatch || reflectDispatch
 		edges = append(edges, e)
 	}
 	if err := rows.Err(); err != nil {
@@ -409,7 +422,9 @@ func (s *Store) queryEdges(ctx context.Context, q, symbolID, pipelineVersion str
 		); serr != nil {
 			return nil, fmt.Errorf("scanning callgraph edge ref: %w", serr)
 		}
-		ref.Confidence = domain2.EdgeConfidence(conf)
+		// Normalise any legacy vocabulary lingering in the table so query
+		// consumers only ever see the current confidence tags.
+		ref.Confidence, _ = domain2.MigrateConfidence(conf)
 		out = append(out, ref)
 	}
 	if err := rows.Err(); err != nil {

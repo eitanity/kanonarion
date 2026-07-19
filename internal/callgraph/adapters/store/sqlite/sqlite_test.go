@@ -54,10 +54,17 @@ func makeRecord(coord fetchdomain.ModuleCoordinate, pv string) domain2.CallGraph
 				CallSite:   domain2.SourcePosition{File: "foo.go", Line: 10},
 				Confidence: domain2.ConfidenceDirect,
 			},
+			{
+				FromID:          "example.com/mod.Foo",
+				ToID:            "example.com/mod.Baz",
+				CallSite:        domain2.SourcePosition{File: "foo.go", Line: 12},
+				Confidence:      domain2.ConfidenceUnknown,
+				ReflectDispatch: true,
+			},
 		},
 		OverallStatus:   domain2.CallGraphStatusExtracted,
 		NodeCount:       1,
-		EdgeCount:       1,
+		EdgeCount:       2,
 		ExtractedAt:     testTime,
 		PipelineVersion: pv,
 	}
@@ -90,8 +97,23 @@ func TestPutAndGet(t *testing.T) {
 	if len(got.Nodes) != 1 {
 		t.Errorf("node count: got %d, want 1", len(got.Nodes))
 	}
-	if len(got.Edges) != 1 {
-		t.Errorf("edge count: got %d, want 1", len(got.Edges))
+	if len(got.Edges) != 2 {
+		t.Errorf("edge count: got %d, want 2", len(got.Edges))
+	}
+	// The reflect-dispatched edge's provenance must survive the round trip
+	// through the callgraph_edges table.
+	var reflectEdge *domain2.CallEdge
+	for i := range got.Edges {
+		if got.Edges[i].ToID == "example.com/mod.Baz" {
+			reflectEdge = &got.Edges[i]
+		}
+	}
+	if reflectEdge == nil {
+		t.Fatal("reflect-dispatched edge missing after round trip")
+	}
+	if !reflectEdge.ReflectDispatch || reflectEdge.Confidence != domain2.ConfidenceUnknown {
+		t.Errorf("reflect edge round trip = {reflect:%t conf:%q}, want {true Unknown}",
+			reflectEdge.ReflectDispatch, reflectEdge.Confidence)
 	}
 }
 
@@ -211,16 +233,18 @@ func TestFindCallees(t *testing.T) {
 		t.Fatalf("put: %v", err)
 	}
 
-	// The edge is Foo→Bar. FindCallees of Foo should return Bar.
+	// Foo calls Bar (Direct) and Baz (reflect-dispatched Unknown); FindCallees
+	// of Foo should return both, ordered by ToID.
 	callees, err := s.FindCallees(ctx, "example.com/mod.Foo", "0.1.0")
 	if err != nil {
 		t.Fatalf("FindCallees: %v", err)
 	}
-	if len(callees) != 1 {
-		t.Errorf("expected 1 callee, got %d: %v", len(callees), callees)
+	if len(callees) != 2 {
+		t.Fatalf("expected 2 callees, got %d: %v", len(callees), callees)
 	}
-	if len(callees) > 0 && callees[0].ToID != "example.com/mod.Bar" {
-		t.Errorf("callee ToID = %q, want example.com/mod.Bar", callees[0].ToID)
+	if callees[0].ToID != "example.com/mod.Bar" || callees[1].ToID != "example.com/mod.Baz" {
+		t.Errorf("callee ToIDs = [%q %q], want [example.com/mod.Bar example.com/mod.Baz]",
+			callees[0].ToID, callees[1].ToID)
 	}
 }
 

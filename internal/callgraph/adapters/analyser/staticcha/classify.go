@@ -94,24 +94,29 @@ func extractReceiverName(fn *ssa.Function) string {
 	}
 	return recvTypeStr(sig.Recv().Type())
 }
-func classifyConfidence(edge *callgraph.Edge) domain.EdgeConfidence {
+// classifyConfidence resolves an edge's confidence tag. The second result
+// reports whether the edge originated from a reflect call; such edges are folded
+// into ConfidenceUnknown but carry the reflect provenance as an edge attribute.
+func classifyConfidence(edge *callgraph.Edge) (domain.EdgeConfidence, bool) {
 	if edge.Site == nil {
-		return domain.ConfidenceUnknown
+		return domain.ConfidenceUnknown, false
 	}
 	common := edge.Site.Common()
 	if common.IsInvoke() {
-		return domain.ConfidenceDynamicDispatch
+		// An unrefined CHA interface over-approximation.
+		return domain.ConfidenceCHAOverapprox, false
 	}
 	if common.StaticCallee() != nil {
-		// Check for reflection-based calls.
+		// Reflect-dispatched calls are unresolved edges tagged with the reflect
+		// origin, not a distinct confidence rank.
 		if edge.Callee.Func != nil && edge.Callee.Func.Package() != nil {
 			if edge.Callee.Func.Package().Pkg.Path() == "reflect" {
-				return domain.ConfidenceReflection
+				return domain.ConfidenceUnknown, true
 			}
 		}
-		return domain.ConfidenceDirect
+		return domain.ConfidenceDirect, false
 	}
-	return domain.ConfidenceUnknown
+	return domain.ConfidenceUnknown, false
 }
 func isInternalPkg(path string) bool {
 	return strings.Contains(path, "/internal/") ||

@@ -31,10 +31,11 @@ import (
 //
 // The pass is additive and sound: it only adds edges the type hierarchy permits
 // and that CHA would itself have added had the body been built, so it cannot
-// reduce soundness. Multi-implementer sites are left to CHA/VTA (KN-424). Added
-// edges are tagged DynamicDispatch pending the confidence-tag redesign
-// (KN-423). Determinism comes from the caller's final Sort; the set of added
-// edges is independent of traversal order.
+// reduce soundness. Multi-implementer sites are left to CHA/VTA (KN-424). Because
+// the interface site resolves to a single concrete implementer, the added edges
+// name a unique callee and are tagged Direct — no over-approximation remains.
+// Determinism comes from the caller's final Sort; the set of added edges is
+// independent of traversal order.
 func (a *Analyser) devirtualizeSingleImplementer(
 	ctx context.Context,
 	prog *ssa.Program,
@@ -126,7 +127,7 @@ func (a *Analyser) devirtualizeSingleImplementer(
 						File: siteFile,
 						Line: siteLine,
 					},
-					Confidence: domain.ConfidenceDynamicDispatch,
+					Confidence: domain.ConfidenceDirect,
 				})
 				addedEdges++
 				a.logger.DebugContext(ctx, "callgraph_devirtualized_edge",
