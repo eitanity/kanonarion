@@ -3,6 +3,8 @@ package domain
 import (
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
@@ -51,24 +53,24 @@ const (
 // preventing circular self-reference.
 // - SchemaVersion is always present.
 type WalkRecord struct {
-	SchemaVersion string                       `json:"schema_version"`
-	Ecosystem     string                       `json:"ecosystem"`
-	ID            string                       `json:"id"`
-	Target        fetchdomain.ModuleCoordinate `json:"target"`
-	Scope         WalkScope                    `json:"scope"`
+	SchemaVersion string                      `json:"schema_version"`
+	Ecosystem     string                      `json:"ecosystem"`
+	ID            string                      `json:"id"`
+	Target        coordinate.ModuleCoordinate `json:"target"`
+	Scope         WalkScope                   `json:"scope"`
 	// Depth is omitted from JSON when WalkDepthFull so existing records remain valid.
-	Depth           WalkDepth                                   `json:"depth,omitempty"`
-	Graph           Graph                                       `json:"graph"`
-	PerNodeResults  map[fetchdomain.ModuleCoordinate]NodeResult `json:"per_node_results"`
-	StartedAt       time.Time                                   `json:"started_at"`
-	CompletedAt     time.Time                                   `json:"completed_at"`
-	OverallStatus   WalkStatus                                  `json:"overall_status"`
-	PipelineVersion string                                      `json:"pipeline_version"`
-	PolicyVersion   string                                      `json:"policy_version"`
-	PolicyHash      string                                      `json:"policy_hash"`
-	StageDepths     map[string]StageDepth                       `json:"stage_depths"`
-	Operator        string                                      `json:"operator"`
-	ContentHash     string                                      `json:"content_hash"`
+	Depth           WalkDepth                                  `json:"depth,omitempty"`
+	Graph           Graph                                      `json:"graph"`
+	PerNodeResults  map[coordinate.ModuleCoordinate]NodeResult `json:"per_node_results"`
+	StartedAt       time.Time                                  `json:"started_at"`
+	CompletedAt     time.Time                                  `json:"completed_at"`
+	OverallStatus   WalkStatus                                 `json:"overall_status"`
+	PipelineVersion string                                     `json:"pipeline_version"`
+	PolicyVersion   string                                     `json:"policy_version"`
+	PolicyHash      string                                     `json:"policy_hash"`
+	StageDepths     map[string]StageDepth                      `json:"stage_depths"`
+	Operator        string                                     `json:"operator"`
+	ContentHash     string                                     `json:"content_hash"`
 }
 
 // NewWalkRecord constructs a WalkRecord from a WalkOutcome. ContentHash is

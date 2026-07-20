@@ -8,9 +8,11 @@ import (
 	"reflect"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	extractapp "github.com/eitanity/kanonarion/internal/extract/application"
 	extractdomain "github.com/eitanity/kanonarion/internal/extract/domain"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	walkapp "github.com/eitanity/kanonarion/internal/walk/application"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
@@ -81,8 +83,8 @@ func TestRun_HappyPath(t *testing.T) {
 	if w.gotReq.Target.Path != "example.com/widget" {
 		t.Errorf("walk target path = %q, want example.com/widget", w.gotReq.Target.Path)
 	}
-	if w.gotReq.Target.Version != fetchdomain.LocalVersion {
-		t.Errorf("walk target version = %q, want %q", w.gotReq.Target.Version, fetchdomain.LocalVersion)
+	if w.gotReq.Target.Version != coordinate.LocalVersion {
+		t.Errorf("walk target version = %q, want %q", w.gotReq.Target.Version, coordinate.LocalVersion)
 	}
 	if !w.gotReq.ProjectMode {
 		t.Error("walk request should set ProjectMode")

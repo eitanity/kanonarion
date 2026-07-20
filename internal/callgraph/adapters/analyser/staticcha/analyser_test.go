@@ -10,12 +10,13 @@ import (
 	"slices"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha"
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
-func makeZip(t testing.TB, coord fetchdomain.ModuleCoordinate, files map[string]string) []byte {
+func makeZip(t testing.TB, coord coordinate.ModuleCoordinate, files map[string]string) []byte {
 	t.Helper()
 	prefix := coord.Path + "@" + coord.Version + "/"
 	var buf bytes.Buffer
@@ -35,7 +36,7 @@ func makeZip(t testing.TB, coord fetchdomain.ModuleCoordinate, files map[string]
 	return buf.Bytes()
 }
 
-var testCoord, _ = fetchdomain.NewModuleCoordinate("example.com/cgtestmod", "v1.0.0")
+var testCoord, _ = coordinate.NewModuleCoordinate("example.com/cgtestmod", "v1.0.0")
 
 // testModule is a minimal Go module with no external dependencies.
 var testModuleFiles = map[string]string{

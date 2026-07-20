@@ -4,8 +4,9 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 // FetchModuleAdapter wraps a fetch.FetchModuleUseCase to satisfy ports.ModuleFetcher.
@@ -19,7 +20,7 @@ func NewFetchModuleAdapter(uc *fetchapp.FetchModuleUseCase) *FetchModuleAdapter 
 }
 
 // FetchModule fetches a single module, ignoring the result beyond success/failure.
-func (a *FetchModuleAdapter) FetchModule(ctx context.Context, coord fetchdomain.ModuleCoordinate) error {
+func (a *FetchModuleAdapter) FetchModule(ctx context.Context, coord coordinate.ModuleCoordinate) error {
 	_, err := a.uc.Execute(ctx, fetchapp.FetchRequest{Coordinate: coord})
 	if err != nil {
 		return fmt.Errorf("fetching %s: %w", coord, err)

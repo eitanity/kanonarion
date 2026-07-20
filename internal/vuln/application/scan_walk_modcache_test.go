@@ -8,6 +8,8 @@ import (
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 
@@ -23,7 +25,7 @@ func TestScanWalk_WithRealModcache_UsesProvidedDir(t *testing.T) {
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	clock := fixedClock{t: now}
 
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/example/mod", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/example/mod", Version: "v1.0.0"}
 	walkStore := newFakeWalkStore()
 	if err := walkStore.PutWalk(ctx, walkdomain.WalkRecord{
 		ID: "w1",
@@ -47,7 +49,7 @@ func TestScanWalk_WithRealModcache_UsesProvidedDir(t *testing.T) {
 	// thus the GOMODCACHE argument — is actually exercised.
 	db := &fakeDatabase{
 		snapshot:    domain.DatabaseSnapshot{Source: "test", Version: "v1"},
-		vulnerables: map[fetchdomain.ModuleCoordinate][]string{coord: {"GO-VULN-ID"}},
+		vulnerables: map[coordinate.ModuleCoordinate][]string{coord: {"GO-VULN-ID"}},
 	}
 	vulnStore := newFakeVulnStore()
 	scanner := &fakeScanner{}

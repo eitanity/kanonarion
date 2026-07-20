@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/driver"
 	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
@@ -97,7 +98,7 @@ func TestValidateIngest_RoundTripAndFailClosed(t *testing.T) {
 
 	ctx := context.Background()
 	uc := d.ValidateIngest
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.2.3"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.2.3"}
 	rec, err := fetchdomain.CanonicalHasher{}.SetContentHash(fetchdomain.FactRecord{
 		SchemaVersion:   fetchdomain.SchemaVersion,
 		Ecosystem:       fetchdomain.EcosystemGo,

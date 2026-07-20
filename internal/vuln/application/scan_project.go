@@ -3,6 +3,8 @@ package application
 import (
 	"context"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -22,11 +24,11 @@ import (
 func (uc *ScanWalkUseCase) scanProjectRooted(
 	ctx context.Context,
 	walk walkdomain.WalkRecord,
-	allCoords []fetchdomain.ModuleCoordinate,
+	allCoords []coordinate.ModuleCoordinate,
 	params ScanWalkParams,
 	snapshot *domain.DatabaseSnapshot,
 	vulnDBDir string,
-	out map[fetchdomain.ModuleCoordinate]moduleResult,
+	out map[coordinate.ModuleCoordinate]moduleResult,
 ) {
 	root := walk.Target
 
@@ -70,9 +72,9 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 // case where govulncheck reports a version string that differs cosmetically from
 // the walk node's (a pruned build carries one version per path, so this cannot
 // mis-attribute between two versions of the same module).
-func projectFindingsFor(byModule map[fetchdomain.ModuleCoordinate][]domain.VulnerabilityFinding, coord fetchdomain.ModuleCoordinate) []domain.VulnerabilityFinding {
+func projectFindingsFor(byModule map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding, coord coordinate.ModuleCoordinate) []domain.VulnerabilityFinding {
 	if coord.Path == domain.StdlibModulePath {
-		return byModule[fetchdomain.ModuleCoordinate{Path: domain.StdlibModulePath}]
+		return byModule[coordinate.ModuleCoordinate{Path: domain.StdlibModulePath}]
 	}
 	if fs, ok := byModule[coord]; ok {
 		return fs
@@ -101,10 +103,10 @@ func copyFindings(in []domain.VulnerabilityFinding) []domain.VulnerabilityFindin
 // is visible per row rather than silently dropped.
 func (uc *ScanWalkUseCase) fillProjectFault(
 	ctx context.Context,
-	allCoords []fetchdomain.ModuleCoordinate,
+	allCoords []coordinate.ModuleCoordinate,
 	params ScanWalkParams,
 	snapshot *domain.DatabaseSnapshot,
-	out map[fetchdomain.ModuleCoordinate]moduleResult,
+	out map[coordinate.ModuleCoordinate]moduleResult,
 	status domain.VulnerabilityStatus,
 	unscanReason domain.UnscanReason,
 	unscannableReason, errorDetail string,
@@ -121,7 +123,7 @@ func (uc *ScanWalkUseCase) fillProjectFault(
 // downstream tally, run persistence and queries treat both paths uniformly.
 func (uc *ScanWalkUseCase) persistProjectRecord(
 	ctx context.Context,
-	coord fetchdomain.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 	findings []domain.VulnerabilityFinding,
 	status domain.VulnerabilityStatus,
 	unscanReason domain.UnscanReason,
@@ -145,7 +147,11 @@ func (uc *ScanWalkUseCase) persistProjectRecord(
 		PipelineVersion:   uc.pipelineVersion,
 	}
 	domain.SortFindings(rec.Findings)
-	rec.ContentHash = uc.moduleScanner.computeContentHash(rec)
+	if hash, err := uc.moduleScanner.computeContentHash(rec); err != nil {
+		uc.logger.Error("project-rooted scan: failed to compute content hash", "coordinate", coord, "error", err)
+	} else {
+		rec.ContentHash = hash
+	}
 	if perr := uc.vulnStore.PutVulnerabilityRecord(ctx, rec); perr != nil {
 		uc.logger.Error("project-rooted scan: failed to persist record", "coordinate", coord, "error", perr)
 	}

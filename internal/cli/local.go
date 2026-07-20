@@ -6,10 +6,11 @@ import (
 	"io"
 	"path/filepath"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/spf13/cobra"
 
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 // localCallGraphVersion is the synthetic module version used for the local
@@ -69,7 +70,7 @@ func runLocalCallGraph(ctx context.Context, dir string, f localFlags, stdout, st
 		return fmt.Errorf("reading module path: %w", err)
 	}
 
-	coord, err := fetchdomain.NewModuleCoordinate(modulePath, localCallGraphVersion)
+	coord, err := coordinate.NewModuleCoordinate(modulePath, localCallGraphVersion)
 	if err != nil {
 		return fmt.Errorf("constructing local coordinate: %w", err)
 	}

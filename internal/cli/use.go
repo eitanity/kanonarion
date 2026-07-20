@@ -11,10 +11,12 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
 	factstoresqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
 	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
 	walksqlite "github.com/eitanity/kanonarion/internal/walk/adapters/walks/sqlite"
@@ -103,7 +105,7 @@ func runUse(ctx context.Context, f useFlags, targetArg string, stdout, stderr io
 	)
 
 	// 2. Identify modules to copy.
-	var modules []fetchdomain.ModuleCoordinate
+	var modules []coordinate.ModuleCoordinate
 	if f.recursive {
 		for _, node := range walk.Graph.Nodes {
 			modules = append(modules, node.Coordinate)
@@ -138,7 +140,7 @@ func runUse(ctx context.Context, f useFlags, targetArg string, stdout, stderr io
 
 func copyToModCache(
 	ctx context.Context,
-	coord fetchdomain.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 	facts ports.FactStore,
 	blobs ports.BlobStore,
 	modCache string,

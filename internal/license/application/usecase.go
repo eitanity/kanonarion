@@ -14,6 +14,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/adapters/ziparchive"
 	"github.com/eitanity/kanonarion/internal/audit"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	domain2 "github.com/eitanity/kanonarion/internal/license/domain"
@@ -107,7 +108,7 @@ const copyrightMaxFiles = 200
 
 // ExtractRequest is the input to Execute.
 type ExtractRequest struct {
-	Coordinate domain.ModuleCoordinate
+	Coordinate coordinate.ModuleCoordinate
 	// Force re-extracts even if a record for this pipeline version exists.
 	Force bool
 	// PerFile enables a second-pass scan of root-level.go source files when
@@ -276,7 +277,7 @@ func licenseExtractedEvent(record domain2.LicenseRecord) audit.Event {
 // Returns ErrModuleNotFetched if no record is found.
 func (uc *ExtractLicenseUseCase) requireFetchRecord(
 	ctx context.Context,
-	coord domain.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 ) (domain.FactRecord, error) {
 	versions := []string{uc.fetchPipelineVersion, uc.localFetchPipelineVersion, uc.pipelineVersion}
 	seen := map[string]bool{}
@@ -303,7 +304,7 @@ func (uc *ExtractLicenseUseCase) requireFetchRecord(
 func (uc *ExtractLicenseUseCase) extractFromZip(
 	ctx context.Context,
 	log *slog.Logger,
-	coord domain.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 	zipData []byte,
 	perFile bool,
 ) (domain2.LicenseRecord, error) {
@@ -550,7 +551,7 @@ func deriveCopyrightStatus(entries []domain2.LicenseFileEntry) domain2.Copyright
 func (uc *ExtractLicenseUseCase) scanSourceFiles(
 	ctx context.Context,
 	log *slog.Logger,
-	coord domain.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 	archive *ziparchive.Archive,
 ) []domain2.LicenseFileEntry {
 	modulePrefix := coord.Path + "@" + coord.Version + "/"
@@ -637,7 +638,7 @@ func (uc *ExtractLicenseUseCase) scanSourceFiles(
 // deterministic across runs rather than dependent on archive ordering.
 func (uc *ExtractLicenseUseCase) backfillCopyrightFromSource(
 	ctx context.Context,
-	coord domain.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 	archive *ziparchive.Archive,
 	entries []domain2.LicenseFileEntry,
 ) {
@@ -746,6 +747,11 @@ func parseSPDXHeader(content []byte) string {
 // as go-errors/errors (LICENSE.MIT) and spdx/tools-golang (LICENSE.code,
 // LICENSE.docs). COPYRIGHT, NOTICE, and the GPLv2/GPLv3 shorthands are matched
 // verbatim only.
+//
+// The dotted suffix is rejected when it is a known source-code extension
+// (e.g. LICENSE.go): a Go source file is never the license grant for a
+// module, even when its base name happens to start with a license stem
+// (github.com/google/licensecheck's license.go is such a file).
 func isLicenceFilename(relPath string) bool {
 	base := relPath
 	if idx := strings.LastIndex(relPath, "/"); idx >= 0 {
@@ -757,10 +763,11 @@ func isLicenceFilename(relPath string) bool {
 		return true
 	}
 	for _, stem := range []string{"LICENSE", "LICENCE", "COPYING", "UNLICENSE"} {
-		if upper == stem ||
-			strings.HasPrefix(upper, stem+"-") ||
-			strings.HasPrefix(upper, stem+".") {
+		if upper == stem || strings.HasPrefix(upper, stem+"-") {
 			return true
+		}
+		if strings.HasPrefix(upper, stem+".") {
+			return upper[len(stem)+1:] != "GO"
 		}
 	}
 	return false

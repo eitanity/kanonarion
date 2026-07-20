@@ -26,6 +26,8 @@ import (
 	"path/filepath"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 	"golang.org/x/mod/module"
@@ -59,7 +61,7 @@ func New(dir, goBinary, projectDir string, logger *slog.Logger) *Proxy {
 // Info returns the .info metadata for a module version, fetching it into the
 // cache first if absent. Origin is always nil: VCS provenance is not tracked in
 // module-cache mode.
-func (p *Proxy) Info(ctx context.Context, coord domain2.ModuleCoordinate) (ports.ModuleInfo, error) {
+func (p *Proxy) Info(ctx context.Context, coord coordinate.ModuleCoordinate) (ports.ModuleInfo, error) {
 	base, err := p.entryBase(coord)
 	if err != nil {
 		return ports.ModuleInfo{}, err
@@ -84,7 +86,7 @@ func (p *Proxy) Info(ctx context.Context, coord domain2.ModuleCoordinate) (ports
 
 // Download reads the module zip and go.mod from the cache (fetching them first
 // if absent) and returns them with h1 hashes computed from the bytes.
-func (p *Proxy) Download(ctx context.Context, coord domain2.ModuleCoordinate) (ports.ModuleDownload, error) {
+func (p *Proxy) Download(ctx context.Context, coord coordinate.ModuleCoordinate) (ports.ModuleDownload, error) {
 	base, err := p.entryBase(coord)
 	if err != nil {
 		return ports.ModuleDownload{}, err
@@ -133,7 +135,7 @@ func (p *Proxy) Download(ctx context.Context, coord domain2.ModuleCoordinate) (p
 
 // entryBase returns the "@v/<version>" path prefix for a coordinate inside the
 // module cache. Callers append the entry suffix (.info, .mod, .zip).
-func (p *Proxy) entryBase(coord domain2.ModuleCoordinate) (string, error) {
+func (p *Proxy) entryBase(coord coordinate.ModuleCoordinate) (string, error) {
 	escapedPath, err := module.EscapePath(coord.Path)
 	if err != nil {
 		return "", fmt.Errorf("escaping module path %q: %w", coord.Path, err)
@@ -148,7 +150,7 @@ func (p *Proxy) entryBase(coord domain2.ModuleCoordinate) (string, error) {
 // readOrDownload reads path from the cache. On a cache miss it runs
 // `go mod download` for the coordinate — populating the cache and verifying
 // against go.sum — then reads again.
-func (p *Proxy) readOrDownload(ctx context.Context, coord domain2.ModuleCoordinate, path string) ([]byte, error) {
+func (p *Proxy) readOrDownload(ctx context.Context, coord coordinate.ModuleCoordinate, path string) ([]byte, error) {
 	data, err := os.ReadFile(path) // #nosec G304 -- path derived from an escaped module coordinate under the cache dir
 	if err == nil {
 		return data, nil
@@ -169,7 +171,7 @@ func (p *Proxy) readOrDownload(ctx context.Context, coord domain2.ModuleCoordina
 // download shells out to `go mod download` to populate the module cache with
 // the coordinate. GOMODCACHE is pinned to the adapter's cache directory so the
 // download lands where the reads expect it.
-func (p *Proxy) download(ctx context.Context, coord domain2.ModuleCoordinate) error {
+func (p *Proxy) download(ctx context.Context, coord coordinate.ModuleCoordinate) error {
 	goBin := p.goBinary
 	if goBin == "" {
 		goBin = "go"

@@ -6,9 +6,10 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	callgraphdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 // CallGraphStoreAdapter adapts a cgports.CallGraphStore to the
@@ -25,7 +26,7 @@ func New(store cgports.CallGraphStore) *CallGraphStoreAdapter {
 // LoadCallGraphRecords fetches the callgraph record for each coordinate from
 // the global store at the given pipeline version. Coordinates that have no
 // stored record are silently omitted from the result.
-func (a *CallGraphStoreAdapter) LoadCallGraphRecords(ctx context.Context, coords []fetchdomain.ModuleCoordinate, pipelineVersion string) ([]callgraphdomain.CallGraphRecord, error) {
+func (a *CallGraphStoreAdapter) LoadCallGraphRecords(ctx context.Context, coords []coordinate.ModuleCoordinate, pipelineVersion string) ([]callgraphdomain.CallGraphRecord, error) {
 	records := make([]callgraphdomain.CallGraphRecord, 0, len(coords))
 	for _, coord := range coords {
 		rec, found, err := a.store.GetCallGraphRecord(ctx, coord, pipelineVersion)

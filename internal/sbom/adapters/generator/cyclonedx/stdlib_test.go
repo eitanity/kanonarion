@@ -6,9 +6,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/sbom/adapters/generator/cyclonedx"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
@@ -64,7 +65,7 @@ func TestGenerate_StdlibComponent(t *testing.T) {
 	walk := walkWithStdlibAndEnv(t)
 	// Licence the project root so the only node without a fetched licence record
 	// is the stdlib — isolating whether stdlib itself flags incompleteness.
-	licenses := map[fetchdomain.ModuleCoordinate]licensedomain.LicenseRecord{
+	licenses := map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord{
 		walk.Graph.Target: {PrimarySPDX: "MIT"},
 	}
 	gen := cyclonedx.New(testPipelineVersion)
@@ -139,7 +140,7 @@ func TestGenerate_BuildEnvProperties(t *testing.T) {
 // environment (a non-project walk, or a pre-BuildEnv record) emits no build
 // properties, preserving backward-compatible output.
 func TestGenerate_NoBuildEnv_NoProperties(t *testing.T) {
-	walk := makeWalk(t, []fetchdomain.ModuleCoordinate{mustCoord(t, "example.com/a", "v1.0.0")})
+	walk := makeWalk(t, []coordinate.ModuleCoordinate{mustCoord(t, "example.com/a", "v1.0.0")})
 	gen := cyclonedx.New(testPipelineVersion)
 	rec, err := gen.Generate(t.Context(), walk, nil, nil, makeGenReq(nil))
 	if err != nil {

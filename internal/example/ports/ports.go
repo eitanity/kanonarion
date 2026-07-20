@@ -11,8 +11,9 @@ import (
 	"errors"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/example/domain"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 // ErrModuleNotFetched is returned when extraction is attempted for a module
@@ -43,7 +44,7 @@ type ExampleStore interface {
 	// GetExampleRecord retrieves the record for the given coordinate and
 	// pipeline version. Returns (zero, false, nil) if not found.
 	// Returns ErrExampleIntegrity if the stored hash does not verify.
-	GetExampleRecord(ctx context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string) (domain.ExampleRecord, bool, error)
+	GetExampleRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain.ExampleRecord, bool, error)
 
 	// ListExampleRecords returns summaries matching the filter, ordered by
 	// extracted_at descending.
@@ -56,7 +57,7 @@ type ExampleStore interface {
 	// FindBySymbolInModule returns index entries for examples associated with
 	// the given symbol within a specific module@version. This is the scoped
 	// form used by symbol-context to avoid flooding results from unrelated modules.
-	FindBySymbolInModule(ctx context.Context, coord fetchdomain.ModuleCoordinate, symbol string, pipelineVersion string) ([]ExampleRef, error)
+	FindBySymbolInModule(ctx context.Context, coord coordinate.ModuleCoordinate, symbol string, pipelineVersion string) ([]ExampleRef, error)
 }
 
 // ExampleFilter constrains ListExampleRecords results.

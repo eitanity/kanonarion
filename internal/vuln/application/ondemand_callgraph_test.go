@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -17,7 +19,7 @@ import (
 
 // helpers shared across this file
 
-func newAffectedScannerFor(coord fetchdomain.ModuleCoordinate, findingID string, symbols []string) *fakeScanner {
+func newAffectedScannerFor(coord coordinate.ModuleCoordinate, findingID string, symbols []string) *fakeScanner {
 	return &fakeScanner{
 		results: map[string]domain.VulnerabilityRecord{
 			coord.String(): {
@@ -31,7 +33,7 @@ func newAffectedScannerFor(coord fetchdomain.ModuleCoordinate, findingID string,
 	}
 }
 
-func seedFact(t *testing.T, facts *fakeFacts, blobs *fakeBlob, coord fetchdomain.ModuleCoordinate) {
+func seedFact(t *testing.T, facts *fakeFacts, blobs *fakeBlob, coord coordinate.ModuleCoordinate) {
 	t.Helper()
 	handle, err := blobs.Put(t.Context(), strings.NewReader("zip"))
 	if err != nil {
@@ -75,7 +77,7 @@ func newScanUCWith(
 // and reachability.Analyse is called on success.
 func TestOnDemandCallGraph_SpawnedOnMiss(t *testing.T) {
 	ctx := t.Context()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
@@ -87,7 +89,7 @@ func TestOnDemandCallGraph_SpawnedOnMiss(t *testing.T) {
 
 	db := &fakeDatabase{
 		snapshot:    snap,
-		vulnerables: map[fetchdomain.ModuleCoordinate][]string{coord: {"GO-2024-0001"}},
+		vulnerables: map[coordinate.ModuleCoordinate][]string{coord: {"GO-2024-0001"}},
 	}
 	scanner := newAffectedScannerFor(coord, "GO-2024-0001", []string{"Vuln"})
 
@@ -128,7 +130,7 @@ func TestOnDemandCallGraph_SpawnedOnMiss(t *testing.T) {
 // in the store, the spawner is NOT invoked.
 func TestOnDemandCallGraph_CacheHit(t *testing.T) {
 	ctx := t.Context()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
@@ -140,7 +142,7 @@ func TestOnDemandCallGraph_CacheHit(t *testing.T) {
 
 	db := &fakeDatabase{
 		snapshot:    snap,
-		vulnerables: map[fetchdomain.ModuleCoordinate][]string{coord: {"GO-2024-0001"}},
+		vulnerables: map[coordinate.ModuleCoordinate][]string{coord: {"GO-2024-0001"}},
 	}
 	scanner := newAffectedScannerFor(coord, "GO-2024-0001", []string{"Vuln"})
 	reach := &fakeReachabilityAnalyser{}
@@ -173,7 +175,7 @@ func TestOnDemandCallGraph_CacheHit(t *testing.T) {
 // record are still persisted with StatusAffected.
 func TestOnDemandCallGraph_SpawnFailureSetsNote(t *testing.T) {
 	ctx := t.Context()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
@@ -185,7 +187,7 @@ func TestOnDemandCallGraph_SpawnFailureSetsNote(t *testing.T) {
 
 	db := &fakeDatabase{
 		snapshot:    snap,
-		vulnerables: map[fetchdomain.ModuleCoordinate][]string{coord: {"GO-2024-0002"}},
+		vulnerables: map[coordinate.ModuleCoordinate][]string{coord: {"GO-2024-0002"}},
 	}
 	scanner := newAffectedScannerFor(coord, "GO-2024-0002", []string{"Vuln"})
 	reach := &fakeReachabilityAnalyser{}
@@ -246,7 +248,7 @@ func TestOnDemandCallGraph_SpawnFailureSetsNote(t *testing.T) {
 // even when a callgraph record already exists in the store.
 func TestOnDemandCallGraph_ForceBypassesCache(t *testing.T) {
 	ctx := t.Context()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
@@ -258,7 +260,7 @@ func TestOnDemandCallGraph_ForceBypassesCache(t *testing.T) {
 
 	db := &fakeDatabase{
 		snapshot:    snap,
-		vulnerables: map[fetchdomain.ModuleCoordinate][]string{coord: {"GO-2024-0003"}},
+		vulnerables: map[coordinate.ModuleCoordinate][]string{coord: {"GO-2024-0003"}},
 	}
 	scanner := newAffectedScannerFor(coord, "GO-2024-0003", []string{"Vuln"})
 	reach := &fakeReachabilityAnalyser{}
@@ -288,7 +290,7 @@ func TestOnDemandCallGraph_ForceBypassesCache(t *testing.T) {
 // never trigger a subprocess.
 func TestOnDemandCallGraph_NoSpawnForClean(t *testing.T) {
 	ctx := t.Context()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/clean", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/clean", Version: "v1.0.0"}
 
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
@@ -328,7 +330,7 @@ func TestOnDemandCallGraph_NoSpawnForClean(t *testing.T) {
 // AffectedSymbols (metadata-only) never trigger a subprocess.
 func TestOnDemandCallGraph_NoSpawnWhenSymbolsEmpty(t *testing.T) {
 	ctx := t.Context()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
@@ -340,7 +342,7 @@ func TestOnDemandCallGraph_NoSpawnWhenSymbolsEmpty(t *testing.T) {
 
 	db := &fakeDatabase{
 		snapshot:    snap,
-		vulnerables: map[fetchdomain.ModuleCoordinate][]string{coord: {"GO-2024-0004"}},
+		vulnerables: map[coordinate.ModuleCoordinate][]string{coord: {"GO-2024-0004"}},
 	}
 	// Scanner returns a finding with NO AffectedSymbols (metadata-only finding).
 	scanner := &fakeScanner{
@@ -386,8 +388,8 @@ func TestOnDemandCallGraph_NoSpawnWhenSymbolsEmpty(t *testing.T) {
 func TestOnDemandCallGraph_SemaphoreSerialises(t *testing.T) {
 	ctx := t.Context()
 
-	coordA := fetchdomain.ModuleCoordinate{Path: "github.com/foo/a", Version: "v1.0.0"}
-	coordB := fetchdomain.ModuleCoordinate{Path: "github.com/foo/b", Version: "v1.0.0"}
+	coordA := coordinate.ModuleCoordinate{Path: "github.com/foo/a", Version: "v1.0.0"}
+	coordB := coordinate.ModuleCoordinate{Path: "github.com/foo/b", Version: "v1.0.0"}
 
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
@@ -400,7 +402,7 @@ func TestOnDemandCallGraph_SemaphoreSerialises(t *testing.T) {
 
 	db := &fakeDatabase{
 		snapshot: snap,
-		vulnerables: map[fetchdomain.ModuleCoordinate][]string{
+		vulnerables: map[coordinate.ModuleCoordinate][]string{
 			coordA: {"GO-A"},
 			coordB: {"GO-B"},
 		},
@@ -439,9 +441,9 @@ func TestOnDemandCallGraph_SemaphoreSerialises(t *testing.T) {
 	sem := make(chan struct{}, 1) // callgraph-workers = 1
 
 	var wg sync.WaitGroup
-	for _, coord := range []fetchdomain.ModuleCoordinate{coordA, coordB} {
+	for _, coord := range []coordinate.ModuleCoordinate{coordA, coordB} {
 		wg.Add(1)
-		go func(c fetchdomain.ModuleCoordinate) {
+		go func(c coordinate.ModuleCoordinate) {
 			defer wg.Done()
 			_, _ = uc.Scan(ctx, application.ScanModuleParams{
 				Coordinate:         c,

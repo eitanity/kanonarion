@@ -7,6 +7,7 @@ import (
 	callgraphdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	configdomain "github.com/eitanity/kanonarion/internal/config/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	directivedomain "github.com/eitanity/kanonarion/internal/directive/domain"
 	exapp "github.com/eitanity/kanonarion/internal/example/application"
 	exampledomain "github.com/eitanity/kanonarion/internal/example/domain"
@@ -41,7 +42,7 @@ type FetchModuleUseCase interface {
 
 // QueryFetchUseCase is the interface for querying fetch records.
 type QueryFetchUseCase interface {
-	GetFetchRecord(ctx context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string) (fetchdomain.FactRecord, bool, error)
+	GetFetchRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (fetchdomain.FactRecord, bool, error)
 }
 
 // --- walk context ---
@@ -85,9 +86,9 @@ type ExtractLicenseUseCase interface {
 
 // QueryLicenseUseCase is the interface for querying license records.
 type QueryLicenseUseCase interface {
-	GetLicenseRecord(ctx context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string) (licensedomain.LicenseRecord, bool, error)
+	GetLicenseRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (licensedomain.LicenseRecord, bool, error)
 	ListLicenseRecords(ctx context.Context, filter licenseports.LicenseFilter) ([]licenseports.LicenseSummary, error)
-	ResolveForWalk(ctx context.Context, walkID string, target fetchdomain.ModuleCoordinate, extractFn func(context.Context, fetchdomain.ModuleCoordinate) (licensedomain.LicenseRecord, error)) ([]licapp.DepLicenseResult, error)
+	ResolveForWalk(ctx context.Context, walkID string, target coordinate.ModuleCoordinate, extractFn func(context.Context, coordinate.ModuleCoordinate) (licensedomain.LicenseRecord, error)) ([]licapp.DepLicenseResult, error)
 }
 
 // GenerateNoticeUseCase is the interface for generating THIRD-PARTY-LICENSES attribution documents.
@@ -97,12 +98,12 @@ type GenerateNoticeUseCase interface {
 
 // CheckCompatibilityUseCase is the interface for the license compatibility engine.
 type CheckCompatibilityUseCase interface {
-	CheckCompatibilityForWalk(ctx context.Context, walkID string, root fetchdomain.ModuleCoordinate, targetSPDX string) (licensedomain.ClosureCompatibilityReport, error)
+	CheckCompatibilityForWalk(ctx context.Context, walkID string, root coordinate.ModuleCoordinate, targetSPDX string) (licensedomain.ClosureCompatibilityReport, error)
 }
 
 // DiffLicenseUseCase is the interface for diffing two stored license records.
 type DiffLicenseUseCase interface {
-	Diff(ctx context.Context, coordA, coordB fetchdomain.ModuleCoordinate) (licensedomain.LicenseDiff, error)
+	Diff(ctx context.Context, coordA, coordB coordinate.ModuleCoordinate) (licensedomain.LicenseDiff, error)
 }
 
 // QueryDirectivesUseCase is the interface for reading stored directive scans.
@@ -125,7 +126,7 @@ type ExtractInterfaceUseCase interface {
 
 // QueryInterfaceUseCase is the interface for querying interface records.
 type QueryInterfaceUseCase interface {
-	GetInterfaceRecord(ctx context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string) (ifacedomain.InterfaceRecord, bool, error)
+	GetInterfaceRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (ifacedomain.InterfaceRecord, bool, error)
 	ListInterfaceRecords(ctx context.Context, filter ifaceports.InterfaceFilter) ([]ifaceports.InterfaceSummary, error)
 	FindSymbol(ctx context.Context, symbolName, pipelineVersion string) ([]ifaceports.SymbolRef, error)
 }
@@ -145,7 +146,7 @@ type ExtractLocalCallGraphUseCase interface {
 
 // QueryCallGraphUseCase is the interface for querying call graph records.
 type QueryCallGraphUseCase interface {
-	GetCallGraphRecord(ctx context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string) (callgraphdomain.CallGraphRecord, bool, error)
+	GetCallGraphRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (callgraphdomain.CallGraphRecord, bool, error)
 	ListCallGraphRecords(ctx context.Context, filter cgports.CallGraphFilter) ([]cgports.CallGraphSummary, error)
 	FindCallers(ctx context.Context, symbolID, pipelineVersion string) ([]cgports.CallEdgeRef, error)
 	FindCallees(ctx context.Context, symbolID, pipelineVersion string) ([]cgports.CallEdgeRef, error)
@@ -162,10 +163,10 @@ type ExtractExampleUseCase interface {
 
 // QueryExamplesUseCase is the interface for querying example records.
 type QueryExamplesUseCase interface {
-	GetExampleRecord(ctx context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string) (exampledomain.ExampleRecord, bool, error)
+	GetExampleRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (exampledomain.ExampleRecord, bool, error)
 	ListExampleRecords(ctx context.Context, filter exampleports.ExampleFilter) ([]exampleports.ExampleSummary, error)
 	FindBySymbol(ctx context.Context, symbol, pipelineVersion string) ([]exampleports.ExampleRef, error)
-	FindBySymbolInModule(ctx context.Context, coord fetchdomain.ModuleCoordinate, symbol, pipelineVersion string) ([]exampleports.ExampleRef, error)
+	FindBySymbolInModule(ctx context.Context, coord coordinate.ModuleCoordinate, symbol, pipelineVersion string) ([]exampleports.ExampleRef, error)
 }
 
 // --- vuln context ---
@@ -187,10 +188,10 @@ type RescanWalkUseCase interface {
 
 // QueryVulnUseCase is the interface for querying vulnerability records.
 type QueryVulnUseCase interface {
-	GetRecord(ctx context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string, snapshot vulndomain.DatabaseSnapshot) (vulndomain.VulnerabilityRecord, bool, error)
-	GetLatestRecord(ctx context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string) (vulndomain.VulnerabilityRecord, bool, error)
-	GetLatestRecordForWalk(ctx context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string, walkID string) (vulndomain.VulnerabilityRecord, bool, error)
-	ListRecordsForModule(ctx context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string) ([]vulndomain.VulnerabilityRecord, error)
+	GetRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, snapshot vulndomain.DatabaseSnapshot) (vulndomain.VulnerabilityRecord, bool, error)
+	GetLatestRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (vulndomain.VulnerabilityRecord, bool, error)
+	GetLatestRecordForWalk(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, walkID string) (vulndomain.VulnerabilityRecord, bool, error)
+	ListRecordsForModule(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]vulndomain.VulnerabilityRecord, error)
 	ListRecordsByFindingID(ctx context.Context, findingID string) ([]vulndomain.VulnerabilityRecord, error)
 }
 

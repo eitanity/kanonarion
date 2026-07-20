@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/fetch/application"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
@@ -22,7 +23,7 @@ func TestNewFetchModuleUseCase_DefaultPipelineVersion(t *testing.T) {
 }
 
 func TestExecute_GitlabModule(t *testing.T) {
-	coord := domain2.ModuleCoordinate{Path: "gitlab.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "gitlab.com/foo/bar", Version: "v1.0.0"}
 	proxy := &fakeProxy{}
 	vcs := &fakeVCS{resolveErr: errors.New("simulated failure")}
 	blobs := newFakeBlob()
@@ -39,7 +40,7 @@ func TestExecute_GitlabModule(t *testing.T) {
 }
 
 func TestExecute_BitbucketModule(t *testing.T) {
-	coord := domain2.ModuleCoordinate{Path: "bitbucket.org/user/repo", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "bitbucket.org/user/repo", Version: "v1.0.0"}
 	proxy := &fakeProxy{}
 	vcs := &fakeVCS{}
 	blobs := newFakeBlob()
@@ -58,7 +59,7 @@ func TestExecute_BitbucketModule(t *testing.T) {
 func TestExecute_CrossVerify_HashMismatch(t *testing.T) {
 	// Proxy returns origin with commit → crossVerify called.
 	// VCS checkout succeeds but dir hash won't match fake zip hash.
-	coord := domain2.ModuleCoordinate{Path: "github.com/gorilla/mux", Version: "v1.8.1"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/gorilla/mux", Version: "v1.8.1"}
 	proxy := &fakeProxy{
 		infos: map[string]ports.ModuleInfo{
 			coord.String(): {
@@ -91,7 +92,7 @@ func TestExecute_CrossVerify_HashMismatch(t *testing.T) {
 func TestExecute_ShortPathModule(t *testing.T) {
 	// A module path with only one segment — URL can't be inferred; sumdb disabled.
 	// Expect UnverifiedNoSumDB (sumdb is the primary check and it's disabled).
-	coord := domain2.ModuleCoordinate{Path: "example.com", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com", Version: "v1.0.0"}
 	proxy := &fakeProxy{}
 	vcs := &fakeVCS{}
 	blobs := newFakeBlob()

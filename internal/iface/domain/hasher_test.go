@@ -6,13 +6,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	domain2 "github.com/eitanity/kanonarion/internal/iface/domain"
 )
 
 func makeTestRecord(t *testing.T) domain2.InterfaceRecord {
 	t.Helper()
-	coord, err := fetchdomain.NewModuleCoordinate("example.com/mod", "v1.2.3")
+	coord, err := coordinate.NewModuleCoordinate("example.com/mod", "v1.2.3")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -37,13 +39,25 @@ func makeTestRecord(t *testing.T) domain2.InterfaceRecord {
 						Methods: []domain2.MethodDecl{
 							{Name: "Do", Signature: "func (c *Client) Do(req *Request) (*Response, error)", PtrReceiver: true},
 						},
+						// TypeParams exercises the generic-type-parameter round-trip.
+						TypeParams: []domain2.TypeParam{{Name: "T", Constraint: "any"}},
 					},
 				},
 				Funcs: []domain2.FuncDecl{
-					{Name: "New", Signature: "func New() *Client"},
+					// TypeParams exercises the generic-func-parameter round-trip.
+					{Name: "New", Signature: "func New[T any]() *Client[T]", TypeParams: []domain2.TypeParam{{Name: "T", Constraint: "any"}}},
 				},
 				Consts: []domain2.ValueDecl{{Name: "DefaultTimeout", Type: "time.Duration"}},
 				Vars:   []domain2.ValueDecl{{Name: "ErrClosed", Type: "error"}},
+				ParseFailures: []domain2.ParseFailure{
+					{File: "broken.go", Error: "syntax error"},
+				},
+			},
+			// A second package, with a different ImportPath, exercises the
+			// cross-package sort comparator in marshalCanonical.
+			{
+				ImportPath: "example.com/mod/sub",
+				Name:       "sub",
 			},
 		},
 		OverallStatus:   domain2.InterfaceStatusExtracted,
@@ -154,11 +168,15 @@ func TestHasher_VerifyBlobHash(t *testing.T) {
 	if err := h.VerifyBlobHash([]byte(`{"no_hash_field":"x"}`), r.ContentHash); err == nil {
 		t.Error("VerifyBlobHash should fail when content_hash field is absent")
 	}
+
+	if err := h.VerifyBlobHash([]byte(`{"content_hash":"unterminated`), r.ContentHash); err == nil {
+		t.Error("VerifyBlobHash should fail when the content_hash value is not quote-terminated")
+	}
 }
 
 func TestHasher_EmptyRecord(t *testing.T) {
 	var h domain2.InterfaceRecordHasher
-	coord, _ := fetchdomain.NewModuleCoordinate("example.com/m", "v0.0.1")
+	coord, _ := coordinate.NewModuleCoordinate("example.com/m", "v0.0.1")
 	r := domain2.InterfaceRecord{
 		SchemaVersion:   domain2.InterfaceSchemaVersion,
 		Ecosystem:       fetchdomain.EcosystemGo,
@@ -218,5 +236,44 @@ func TestHasher_RejectsForeignEcosystem(t *testing.T) {
 	}
 	if _, err := h.Unmarshal(blob); !errors.Is(err, fetchdomain.ErrUnsupportedEcosystem) {
 		t.Errorf("expected ErrUnsupportedEcosystem, got %v", err)
+	}
+}
+
+func TestHasher_Unmarshal_InvalidJSON(t *testing.T) {
+	var h domain2.InterfaceRecordHasher
+	if _, err := h.Unmarshal([]byte("not json")); err == nil {
+		t.Error("Unmarshal() error = nil, want a JSON syntax error")
+	}
+}
+
+func TestHasher_Unmarshal_MalformedExtractedAt(t *testing.T) {
+	var h domain2.InterfaceRecordHasher
+	hashed, err := h.SetContentHash(makeTestRecord(t))
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	blob, err := h.Marshal(hashed)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	tampered := strings.Replace(string(blob), `"extracted_at":"2026-01-15T10:00:00Z"`, `"extracted_at":"not-a-time"`, 1)
+	if _, err := h.Unmarshal([]byte(tampered)); err == nil {
+		t.Error("Unmarshal() error = nil, want a parse error for malformed extracted_at")
+	}
+}
+
+func TestHasher_Unmarshal_MalformedCoordinate(t *testing.T) {
+	var h domain2.InterfaceRecordHasher
+	hashed, err := h.SetContentHash(makeTestRecord(t))
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	blob, err := h.Marshal(hashed)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	tampered := strings.Replace(string(blob), `"path":"example.com/mod"`, `"path":""`, 1)
+	if _, err := h.Unmarshal([]byte(tampered)); err == nil {
+		t.Error("Unmarshal() error = nil, want a parse error for an invalid coordinate")
 	}
 }

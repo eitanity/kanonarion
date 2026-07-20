@@ -1,6 +1,6 @@
 package domain
 
-import fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+import "github.com/eitanity/kanonarion/internal/coordinate"
 
 // FilterGraph selects the nodes of g for which inScope accepts either the node's
 // replacement coordinate (Coordinate) or its original require coordinate
@@ -23,8 +23,8 @@ import fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 // carrying graph metadata, and sorting.
 func FilterGraph[K comparable](
 	g Graph,
-	inScope func(fetchdomain.ModuleCoordinate) bool,
-	id func(fetchdomain.ModuleCoordinate) K,
+	inScope func(coordinate.ModuleCoordinate) bool,
+	id func(coordinate.ModuleCoordinate) K,
 	seed ...K,
 ) (nodes []GraphNode, edges []GraphEdge) {
 	effectiveKeep := make(map[K]bool, len(g.Nodes)+len(seed))
@@ -82,8 +82,8 @@ func FilterGraphToScope(g Graph, mainPath string, keep []string) Graph {
 	}
 	out.Nodes, out.Edges = FilterGraph(
 		g,
-		func(c fetchdomain.ModuleCoordinate) bool { return inScope[c.Path] },
-		func(c fetchdomain.ModuleCoordinate) string { return c.Path },
+		func(c coordinate.ModuleCoordinate) bool { return inScope[c.Path] },
+		func(c coordinate.ModuleCoordinate) string { return c.Path },
 		mainPath,
 	)
 	out.Sort()

@@ -5,8 +5,9 @@ import (
 	"errors"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/extract/domain"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 var (
@@ -43,7 +44,7 @@ type ExtractionRunSummary struct {
 // routes by stage name to concrete use cases; a gRPC implementation would
 // delegate to a remote service.
 type Extractor interface {
-	Extract(ctx context.Context, coord fetchdomain.ModuleCoordinate, stage string, force bool) (StageResult, error)
+	Extract(ctx context.Context, coord coordinate.ModuleCoordinate, stage string, force bool) (StageResult, error)
 }
 
 // StageRegistry knows which extraction stages exist and their canonical

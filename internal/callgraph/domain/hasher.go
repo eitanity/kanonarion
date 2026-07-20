@@ -9,6 +9,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
@@ -72,7 +74,7 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 	if err != nil {
 		return CallGraphRecord{}, fmt.Errorf("parsing extracted_at %q: %w", c.ExtractedAt, err)
 	}
-	coord, err := fetchdomain.NewModuleCoordinate(c.Coordinate.Path, c.Coordinate.Version)
+	coord, err := coordinate.NewModuleCoordinate(c.Coordinate.Path, c.Coordinate.Version)
 	if err != nil {
 		return CallGraphRecord{}, fmt.Errorf("parsing coordinate: %w", err)
 	}
@@ -291,9 +293,17 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 		PipelineVersion: r.PipelineVersion,
 		SchemaVersion:   r.SchemaVersion,
 	}
-	b, err := json.Marshal(c)
+	b, err := canonicalMarshal(c)
 	if err != nil {
 		return nil, fmt.Errorf("marshalling canonical callgraph record: %w", err)
 	}
 	return b, nil
 }
+
+// canonicalMarshal is a seam over json.Marshal used to test the
+// marshal-failure guard's wrapping and propagation logic. No field in
+// canonicalRecord can currently make json.Marshal fail (no NaN/Inf floats,
+// no unsupported types), so this proves the guard's error handling is
+// correct, not that the guard is reachable with a real value today — it
+// exists for the never-silent-failure invariant, not a known failure mode.
+var canonicalMarshal = json.Marshal

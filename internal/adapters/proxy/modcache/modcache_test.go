@@ -9,13 +9,14 @@ import (
 	"path/filepath"
 	"testing"
 
-	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"golang.org/x/mod/sumdb/dirhash"
 )
 
-func newCoord(t *testing.T, path, version string) domain2.ModuleCoordinate {
+func newCoord(t *testing.T, path, version string) coordinate.ModuleCoordinate {
 	t.Helper()
-	c, err := domain2.NewModuleCoordinate(path, version)
+	c, err := coordinate.NewModuleCoordinate(path, version)
 	if err != nil {
 		t.Fatalf("NewModuleCoordinate: %v", err)
 	}
@@ -24,7 +25,7 @@ func newCoord(t *testing.T, path, version string) domain2.ModuleCoordinate {
 
 // buildModuleZip returns a minimal but valid module zip for coord, containing a
 // single go.mod entry under the canonical module@version/ prefix.
-func buildModuleZip(t *testing.T, coord domain2.ModuleCoordinate, goMod []byte) []byte {
+func buildModuleZip(t *testing.T, coord coordinate.ModuleCoordinate, goMod []byte) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
@@ -41,7 +42,7 @@ func buildModuleZip(t *testing.T, coord domain2.ModuleCoordinate, goMod []byte) 
 	return buf.Bytes()
 }
 
-func seedEntry(t *testing.T, dir string, coord domain2.ModuleCoordinate, ext string, content []byte) string {
+func seedEntry(t *testing.T, dir string, coord coordinate.ModuleCoordinate, ext string, content []byte) string {
 	t.Helper()
 	base := filepath.Join(dir, "cache", "download", filepath.FromSlash(coord.Path), "@v")
 	if err := os.MkdirAll(base, 0o750); err != nil {

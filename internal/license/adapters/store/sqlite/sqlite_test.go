@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	licensesqlite "github.com/eitanity/kanonarion/internal/license/adapters/store/sqlite"
 	domain2 "github.com/eitanity/kanonarion/internal/license/domain"
@@ -26,16 +28,16 @@ func openTestStore(t *testing.T) *licensesqlite.Store {
 	return s
 }
 
-func mustCoord(t *testing.T, path, version string) fetchdomain.ModuleCoordinate {
+func mustCoord(t *testing.T, path, version string) coordinate.ModuleCoordinate {
 	t.Helper()
-	c, err := fetchdomain.NewModuleCoordinate(path, version)
+	c, err := coordinate.NewModuleCoordinate(path, version)
 	if err != nil {
 		t.Fatalf("NewModuleCoordinate: %v", err)
 	}
 	return c
 }
 
-func buildRecord(t *testing.T, coord fetchdomain.ModuleCoordinate, spdx string, status domain2.LicenseStatus) domain2.LicenseRecord {
+func buildRecord(t *testing.T, coord coordinate.ModuleCoordinate, spdx string, status domain2.LicenseStatus) domain2.LicenseRecord {
 	t.Helper()
 	r := domain2.LicenseRecord{
 		SchemaVersion:     domain2.LicenseSchemaVersion,

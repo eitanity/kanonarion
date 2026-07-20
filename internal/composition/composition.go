@@ -46,8 +46,8 @@ import (
 	sbomstore "github.com/eitanity/kanonarion/internal/sbom/adapters/store/sqlite"
 	sbomapp "github.com/eitanity/kanonarion/internal/sbom/application"
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
-	stdlibgodev "github.com/eitanity/kanonarion/internal/stdlib/adapters/godev"
 	stdlibgit "github.com/eitanity/kanonarion/internal/stdlib/adapters/gitlsremote"
+	stdlibgodev "github.com/eitanity/kanonarion/internal/stdlib/adapters/godev"
 	stdliblic "github.com/eitanity/kanonarion/internal/stdlib/adapters/licenseident"
 	stdliblocalsrc "github.com/eitanity/kanonarion/internal/stdlib/adapters/localsource"
 	stdlibsqlite "github.com/eitanity/kanonarion/internal/stdlib/adapters/store/sqlite"
@@ -335,7 +335,7 @@ func newLocalWalkExtract(
 	extractUC := extractapp.NewExtractUseCase(extractapp.Config{
 		Runs:      extStore,
 		Walks:     walkStore,
-		Extractor: extextractor.NewAdapterExtractor(licExtractUC, ifaceExtractUC, cgSubprocessExec, cgStore, cgapp.PipelineVersion, exExtractUC),
+		Extractor: extextractor.NewAdapterExtractor(licExtractUC, ifaceExtractUC, cgSubprocessExec, cgStore, cgapp.PipelineVersion, nil, exExtractUC),
 		Stages:    stages,
 		Clock:     clk,
 		Stopwatch: stopwatch,

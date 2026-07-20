@@ -6,7 +6,8 @@ import (
 	"testing"
 	"time"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/walk/adapters/walks/sqlite"
 	"github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -26,8 +27,8 @@ func openMemStore(t *testing.T) *sqlite.Store {
 	return s
 }
 
-func mustCoord(path, version string) fetchdomain.ModuleCoordinate {
-	c, err := fetchdomain.NewModuleCoordinate(path, version)
+func mustCoord(path, version string) coordinate.ModuleCoordinate {
+	c, err := coordinate.NewModuleCoordinate(path, version)
 	if err != nil {
 		panic(err)
 	}
@@ -54,7 +55,7 @@ func buildWalkRecord(id string) domain.WalkRecord {
 	outcome := domain.WalkOutcome{
 		Target: target,
 		Graph:  graph,
-		PerNodeResults: map[fetchdomain.ModuleCoordinate]domain.NodeResult{
+		PerNodeResults: map[coordinate.ModuleCoordinate]domain.NodeResult{
 			target: {
 				Coordinate: target,
 				Status:     domain.NodeSucceeded,
@@ -334,7 +335,7 @@ func buildWalkRecordWithScope(id string, scope domain.WalkScope) domain.WalkReco
 	outcome := domain.WalkOutcome{
 		Target:         target,
 		Graph:          domain.Graph{Target: target, ResolvedAt: fixedTime, PipelineVersion: "0.3.0"},
-		PerNodeResults: map[fetchdomain.ModuleCoordinate]domain.NodeResult{},
+		PerNodeResults: map[coordinate.ModuleCoordinate]domain.NodeResult{},
 		StartedAt:      fixedTime,
 		CompletedAt:    fixedTime.Add(100 * time.Millisecond),
 		OverallStatus:  domain.WalkSucceeded,

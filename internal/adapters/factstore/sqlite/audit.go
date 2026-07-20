@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/audit"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
@@ -165,7 +166,7 @@ func (s *AuditingStore) PutFetchRecord(ctx context.Context, r domain2.FactRecord
 }
 
 // GetFetchRecord delegates to the inner store.
-func (s *AuditingStore) GetFetchRecord(ctx context.Context, coord domain2.ModuleCoordinate, pv string) (domain2.FactRecord, bool, error) {
+func (s *AuditingStore) GetFetchRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pv string) (domain2.FactRecord, bool, error) {
 	return s.inner.GetFetchRecord(ctx, coord, pv)
 }
 
@@ -176,7 +177,7 @@ func (s *AuditingStore) PutAttestation(ctx context.Context, r domain2.Attestatio
 }
 
 // ListAttestations delegates to the inner store.
-func (s *AuditingStore) ListAttestations(ctx context.Context, coord domain2.ModuleCoordinate, pv string) ([]domain2.AttestationRecord, error) {
+func (s *AuditingStore) ListAttestations(ctx context.Context, coord coordinate.ModuleCoordinate, pv string) ([]domain2.AttestationRecord, error) {
 	return s.inner.ListAttestations(ctx, coord, pv)
 }
 

@@ -5,9 +5,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"math"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/application"
@@ -17,7 +20,7 @@ import (
 
 func TestScanModule_NewScan(t *testing.T) {
 	ctx := t.Context()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	facts := newFakeFacts()
@@ -94,7 +97,7 @@ func TestScanModule_NewScan(t *testing.T) {
 // and scan time, and the result is flagged as reuse rather than a fresh scan.
 func TestScanModule_ReuseReattributesToCurrentRun(t *testing.T) {
 	ctx := t.Context()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 	snapshot := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
 	earlier := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := time.Date(2024, 6, 17, 0, 0, 0, 0, time.UTC)
@@ -171,7 +174,7 @@ func TestScanModule_ContentHashExcludesFirstScannedAt(t *testing.T) {
 	)
 	base := domain.VulnerabilityRecord{
 		Ecosystem:        fetchdomain.EcosystemGo,
-		Coordinate:       fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"},
+		Coordinate:       coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"},
 		WalkID:           "walk-1",
 		OverallStatus:    domain.StatusClean,
 		DatabaseSnapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1"},
@@ -186,8 +189,35 @@ func TestScanModule_ContentHashExcludesFirstScannedAt(t *testing.T) {
 	// The first-seen anchor is provenance, not verdict: records that differ only
 	// in FirstScannedAt must hash identically so reuse re-attribution keeps a
 	// stable identity.
-	if h1, h2 := uc.ComputeContentHash(withAnchor), uc.ComputeContentHash(movedAnchor); h1 != h2 {
+	h1, err := uc.ComputeContentHash(withAnchor)
+	if err != nil {
+		t.Fatalf("ComputeContentHash(withAnchor): %v", err)
+	}
+	h2, err := uc.ComputeContentHash(movedAnchor)
+	if err != nil {
+		t.Fatalf("ComputeContentHash(movedAnchor): %v", err)
+	}
+	if h1 != h2 {
 		t.Errorf("content hash changed with FirstScannedAt: %s vs %s", h1, h2)
+	}
+}
+
+// TestComputeContentHash_MarshalFailure exercises the marshal-failure guard
+// with a genuinely unmarshalable value — encoding/json rejects NaN/Inf floats
+// — rather than an injected fake, so it proves the guard is actually
+// reachable in production (a finding's CVSS Severity.Score is a plain
+// float64), not just that the wrapping code is well-formed.
+func TestComputeContentHash_MarshalFailure(t *testing.T) {
+	uc := application.NewScanModuleUseCase(
+		nil, nil, nil, nil, nil, nil, nil, fixedClock{}, "v1", "v1", slog.Default(),
+	)
+	rec := domain.VulnerabilityRecord{
+		Findings: []domain.VulnerabilityFinding{
+			{ID: "GO-2024-0001", Severity: &domain.Severity{Score: math.NaN()}},
+		},
+	}
+	if _, err := uc.ComputeContentHash(rec); err == nil {
+		t.Fatal("ComputeContentHash() error = nil, want a marshal error for a NaN severity score")
 	}
 }
 
@@ -201,9 +231,9 @@ func TestScanModule_MetadataFilter_UsesGraphEdges(t *testing.T) {
 	ctx := t.Context()
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	coordA := fetchdomain.ModuleCoordinate{Path: "github.com/example/a", Version: "v1.0.0"}
-	coordB := fetchdomain.ModuleCoordinate{Path: "github.com/example/b", Version: "v1.0.0"}
-	coordC := fetchdomain.ModuleCoordinate{Path: "github.com/example/c", Version: "v1.0.0"}
+	coordA := coordinate.ModuleCoordinate{Path: "github.com/example/a", Version: "v1.0.0"}
+	coordB := coordinate.ModuleCoordinate{Path: "github.com/example/b", Version: "v1.0.0"}
+	coordC := coordinate.ModuleCoordinate{Path: "github.com/example/c", Version: "v1.0.0"}
 
 	// Walk: A→B, C is a separate root (no edge from A).
 	walk := walkdomain.WalkRecord{
@@ -244,7 +274,7 @@ func TestScanModule_MetadataFilter_UsesGraphEdges(t *testing.T) {
 	// Only C is vulnerable — A and B are clean.
 	db := &fakeDatabase{
 		snapshot:    snap,
-		vulnerables: map[fetchdomain.ModuleCoordinate][]string{coordC: {"GO-TEST-0001"}},
+		vulnerables: map[coordinate.ModuleCoordinate][]string{coordC: {"GO-TEST-0001"}},
 	}
 
 	var scannerCalled bool
@@ -277,7 +307,7 @@ func TestScanModule_MetadataFilter_UsesGraphEdges(t *testing.T) {
 // ecosystem" errors for freshly scanned modules.
 func TestScanModule_HeavyScanRecordSurvivesReadGate(t *testing.T) {
 	ctx := t.Context()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	facts := newFakeFacts()
@@ -289,7 +319,7 @@ func TestScanModule_HeavyScanRecordSurvivesReadGate(t *testing.T) {
 	scanner := &fakeScanner{}
 	db := &fakeDatabase{
 		snapshot:    domain.DatabaseSnapshot{Source: "test", Version: "v1", RetrievedAt: now},
-		vulnerables: map[fetchdomain.ModuleCoordinate][]string{coord: {"GO-VULN-ID"}},
+		vulnerables: map[coordinate.ModuleCoordinate][]string{coord: {"GO-VULN-ID"}},
 	}
 	clock := fixedClock{t: now}
 
@@ -334,7 +364,7 @@ func TestScanModule_HeavyScanRecordSurvivesReadGate(t *testing.T) {
 
 func TestScanModule_ScanFailure(t *testing.T) {
 	ctx := t.Context()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	facts := newFakeFacts()
@@ -343,7 +373,7 @@ func TestScanModule_ScanFailure(t *testing.T) {
 	scanner := &fakeScanner{err: fmt.Errorf("scan failed")}
 	db := &fakeDatabase{
 		snapshot:    domain.DatabaseSnapshot{Version: "v1"},
-		vulnerables: map[fetchdomain.ModuleCoordinate][]string{coord: {"GO-VULN-ID"}},
+		vulnerables: map[coordinate.ModuleCoordinate][]string{coord: {"GO-VULN-ID"}},
 	}
 	clock := fixedClock{t: now}
 
@@ -381,7 +411,7 @@ func TestScanModule_ScanFailure(t *testing.T) {
 // attributed (metadata-only, no reachability).
 func TestScanModule_BuildIncompatibility_FallsBackToMetadata(t *testing.T) {
 	ctx := t.Context()
-	coord := fetchdomain.ModuleCoordinate{Path: "golang.org/x/text", Version: "v0.19.0"}
+	coord := coordinate.ModuleCoordinate{Path: "golang.org/x/text", Version: "v0.19.0"}
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	facts := newFakeFacts()
@@ -390,7 +420,7 @@ func TestScanModule_BuildIncompatibility_FallsBackToMetadata(t *testing.T) {
 	scanner := &fakeScanner{err: fmt.Errorf("govulncheck: loading packages: invalid array length -delta * delta")}
 	db := &fakeDatabase{
 		snapshot:    domain.DatabaseSnapshot{Version: "v1"},
-		vulnerables: map[fetchdomain.ModuleCoordinate][]string{coord: {"GO-2024-0001"}},
+		vulnerables: map[coordinate.ModuleCoordinate][]string{coord: {"GO-2024-0001"}},
 	}
 	clock := fixedClock{t: now}
 
@@ -427,7 +457,7 @@ func TestScanModule_BuildIncompatibility_FallsBackToMetadata(t *testing.T) {
 // leaving the tool.
 func TestScanModule_MetadataPath_PersistsEnrichedFindings(t *testing.T) {
 	ctx := t.Context()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/gorilla/csrf", Version: "v1.7.3"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/gorilla/csrf", Version: "v1.7.3"}
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	facts := newFakeFacts()
@@ -443,7 +473,7 @@ func TestScanModule_MetadataPath_PersistsEnrichedFindings(t *testing.T) {
 	}
 	db := &fakeDatabase{
 		snapshot: domain.DatabaseSnapshot{Version: "v1"},
-		findings: map[fetchdomain.ModuleCoordinate][]domain.VulnerabilityFinding{coord: {enriched}},
+		findings: map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding{coord: {enriched}},
 	}
 	clock := fixedClock{t: now}
 
@@ -489,7 +519,7 @@ func TestScanModule_MetadataPath_PersistsEnrichedFindings(t *testing.T) {
 // produce a fresh result (StatusClean in this case).
 func TestScanModule_ScanFailed_NotServedFromCache(t *testing.T) {
 	ctx := t.Context()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 	snapshot := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
@@ -520,7 +550,7 @@ func TestScanModule_ScanFailed_NotServedFromCache(t *testing.T) {
 
 	db := &fakeDatabase{
 		snapshot: snapshot,
-		vulnerables: map[fetchdomain.ModuleCoordinate][]string{
+		vulnerables: map[coordinate.ModuleCoordinate][]string{
 			coord: {"CVE-2024-12345"},
 		},
 	}
@@ -553,7 +583,7 @@ func TestScanModule_ScanFailed_NotServedFromCache(t *testing.T) {
 // build incompatibilities.
 func TestScanModule_GeneratedAssetsMissing_UnscanReason(t *testing.T) {
 	ctx := t.Context()
-	coord := fetchdomain.ModuleCoordinate{Path: "www.velocidex.com/golang/velociraptor", Version: "v0.76.6"}
+	coord := coordinate.ModuleCoordinate{Path: "www.velocidex.com/golang/velociraptor", Version: "v0.76.6"}
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	facts := newFakeFacts()
@@ -594,7 +624,7 @@ func TestScanModule_GeneratedAssetsMissing_UnscanReason(t *testing.T) {
 // coverage gap — never a confident clean.
 func TestScanModule_BuildIncompatibility_NoAdvisory_IsUnscannable(t *testing.T) {
 	ctx := t.Context()
-	coord := fetchdomain.ModuleCoordinate{Path: "golang.org/x/tools", Version: "v0.26.0"}
+	coord := coordinate.ModuleCoordinate{Path: "golang.org/x/tools", Version: "v0.26.0"}
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	facts := newFakeFacts()
@@ -633,7 +663,7 @@ func TestScanModule_BuildIncompatibility_NoAdvisory_IsUnscannable(t *testing.T) 
 // scannerUnscannableReason returns a fakeScanner whose Scan reports a module the
 // scanner itself could not analyse, mirroring the real govulncheck adapter:
 // StatusUnscannable with the given reason, no findings, nil error.
-func scannerUnscannableReason(coord fetchdomain.ModuleCoordinate, reason domain.UnscanReason, detail string) *fakeScanner {
+func scannerUnscannableReason(coord coordinate.ModuleCoordinate, reason domain.UnscanReason, detail string) *fakeScanner {
 	return &fakeScanner{results: map[string]domain.VulnerabilityRecord{
 		coord.String(): {
 			Coordinate:        coord,
@@ -647,7 +677,7 @@ func scannerUnscannableReason(coord fetchdomain.ModuleCoordinate, reason domain.
 
 // scannerUnscannable is the no-go.mod variant used by the bulk of the routing
 // tests.
-func scannerUnscannable(coord fetchdomain.ModuleCoordinate) *fakeScanner {
+func scannerUnscannable(coord coordinate.ModuleCoordinate) *fakeScanner {
 	return scannerUnscannableReason(coord, domain.UnscanReasonNoGoMod, "no go.mod found in module zip")
 }
 
@@ -658,7 +688,7 @@ func scannerUnscannable(coord fetchdomain.ModuleCoordinate) *fakeScanner {
 // absence-as-answer regression pair.
 func TestScanModule_ScannerUnscannable_MetadataAttributesAdvisories(t *testing.T) {
 	ctx := t.Context()
-	coord := fetchdomain.ModuleCoordinate{Path: "golang.org/x/text", Version: "v0.3.0"}
+	coord := coordinate.ModuleCoordinate{Path: "golang.org/x/text", Version: "v0.3.0"}
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	facts := newFakeFacts()
@@ -667,7 +697,7 @@ func TestScanModule_ScannerUnscannable_MetadataAttributesAdvisories(t *testing.T
 	scanner := scannerUnscannable(coord)
 	db := &fakeDatabase{
 		snapshot: domain.DatabaseSnapshot{Version: "v1"},
-		findings: map[fetchdomain.ModuleCoordinate][]domain.VulnerabilityFinding{
+		findings: map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding{
 			coord: {
 				{ID: "GO-2020-0015", Summary: "unicode issue", FixedIn: "v0.3.3", AffectedSymbols: []string{"Transform"}},
 				{ID: "GO-2021-0113", Summary: "index oob", FixedIn: "v0.3.7"},
@@ -711,7 +741,7 @@ func TestScanModule_ScannerUnscannable_MetadataAttributesAdvisories(t *testing.T
 // never a silent clean. This is the genuine-zero half of the regression pair.
 func TestScanModule_ScannerUnscannable_NoAdvisory_IsUnscannable(t *testing.T) {
 	ctx := t.Context()
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/nogomod", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/nogomod", Version: "v1.0.0"}
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	facts := newFakeFacts()
@@ -753,7 +783,7 @@ func TestScanModule_ScannerUnscannable_NoAdvisory_IsUnscannable(t *testing.T) {
 // matching advisory surfaces it while preserving the oom-killed caveat.
 func TestScanModule_ScannerUnscannable_OOMKilled_RoutesToMetadata(t *testing.T) {
 	ctx := t.Context()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/big/module", Version: "v2.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/big/module", Version: "v2.0.0"}
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	facts := newFakeFacts()
@@ -762,7 +792,7 @@ func TestScanModule_ScannerUnscannable_OOMKilled_RoutesToMetadata(t *testing.T) 
 	scanner := scannerUnscannableReason(coord, domain.UnscanReasonOOMKilled, "govulncheck was killed (likely OOM)")
 	db := &fakeDatabase{
 		snapshot: domain.DatabaseSnapshot{Version: "v1"},
-		findings: map[fetchdomain.ModuleCoordinate][]domain.VulnerabilityFinding{
+		findings: map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding{
 			coord: {{ID: "GO-2024-0001", Summary: "boom", FixedIn: "v2.0.1"}},
 		},
 	}

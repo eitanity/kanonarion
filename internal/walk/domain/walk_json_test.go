@@ -5,7 +5,8 @@ import (
 	"strings"
 	"testing"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
@@ -59,7 +60,7 @@ func TestWalkStatus_UnmarshalJSON_Invalid(t *testing.T) {
 }
 
 func TestModuleCoordinate_MarshalJSON_FlatString(t *testing.T) {
-	c := fetchdomain.ModuleCoordinate{Path: "example.com/mod", Version: "v1.2.3"}
+	c := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.2.3"}
 	b, err := json.Marshal(c)
 	if err != nil {
 		t.Fatalf("json.Marshal: %v", err)
@@ -77,12 +78,12 @@ func TestModuleCoordinate_MarshalJSON_FlatString(t *testing.T) {
 }
 
 func TestModuleCoordinate_RoundTrip(t *testing.T) {
-	orig := fetchdomain.ModuleCoordinate{Path: "example.com/mod", Version: "v1.2.3"}
+	orig := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.2.3"}
 	b, err := json.Marshal(orig)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	var got fetchdomain.ModuleCoordinate
+	var got coordinate.ModuleCoordinate
 	if err := json.Unmarshal(b, &got); err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}

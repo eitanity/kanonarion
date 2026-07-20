@@ -8,6 +8,7 @@ import (
 	"io"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/example/domain"
 	"github.com/eitanity/kanonarion/internal/example/ports"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
@@ -45,7 +46,7 @@ func (s *fakeFactStore) PutFetchRecord(_ context.Context, r domain2.FactRecord) 
 	return nil
 }
 
-func (s *fakeFactStore) GetFetchRecord(_ context.Context, coord domain2.ModuleCoordinate, pv string) (domain2.FactRecord, bool, error) {
+func (s *fakeFactStore) GetFetchRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (domain2.FactRecord, bool, error) {
 	if s.records == nil {
 		return domain2.FactRecord{}, false, nil
 	}
@@ -120,7 +121,7 @@ func (s *fakeExampleStore) PutExampleRecord(_ context.Context, r domain.ExampleR
 	return nil
 }
 
-func (s *fakeExampleStore) GetExampleRecord(_ context.Context, coord domain2.ModuleCoordinate, pv string) (domain.ExampleRecord, bool, error) {
+func (s *fakeExampleStore) GetExampleRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (domain.ExampleRecord, bool, error) {
 	if s.records == nil {
 		return domain.ExampleRecord{}, false, nil
 	}
@@ -136,7 +137,7 @@ func (s *fakeExampleStore) FindBySymbol(_ context.Context, _ string, _ string) (
 	return nil, nil
 }
 
-func (s *fakeExampleStore) FindBySymbolInModule(_ context.Context, _ domain2.ModuleCoordinate, _ string, _ string) ([]ports.ExampleRef, error) {
+func (s *fakeExampleStore) FindBySymbolInModule(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ string) ([]ports.ExampleRef, error) {
 	return nil, nil
 }
 

@@ -7,12 +7,13 @@ import (
 	"io"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/spf13/cobra"
 
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	capapp "github.com/eitanity/kanonarion/internal/capability/application"
 	capdomain "github.com/eitanity/kanonarion/internal/capability/domain"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 func newCapabilityCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -62,8 +63,8 @@ It reads stored call graphs; run 'kanonarion callgraph <module>@<version>' first
 // capabilityAnalyser is the behaviour runCapability/runCapabilityDiff need,
 // extracted so the commands are unit-testable with a fake.
 type capabilityAnalyser interface {
-	Analyse(ctx context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string) (capdomain.CapabilityReport, error)
-	Diff(ctx context.Context, from, to fetchdomain.ModuleCoordinate, pipelineVersion string) (capdomain.CapabilityReport, capdomain.CapabilityReport, capdomain.CapabilityDiff, error)
+	Analyse(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (capdomain.CapabilityReport, error)
+	Diff(ctx context.Context, from, to coordinate.ModuleCoordinate, pipelineVersion string) (capdomain.CapabilityReport, capdomain.CapabilityReport, capdomain.CapabilityDiff, error)
 }
 
 func runCapability(ctx context.Context, arg string, uc capabilityAnalyser, jsonOut bool, stdout io.Writer) error {
@@ -138,7 +139,7 @@ type capabilityDiffJSON struct {
 	Common   []string             `json:"common"`
 }
 
-func capabilityReportToJSON(coord fetchdomain.ModuleCoordinate, r capdomain.CapabilityReport) capabilityReportJSON {
+func capabilityReportToJSON(coord coordinate.ModuleCoordinate, r capdomain.CapabilityReport) capabilityReportJSON {
 	findings := make([]capabilityFindingJSON, 0, len(r.Findings))
 	for _, f := range r.Findings {
 		findings = append(findings, capabilityFindingJSON{
@@ -159,7 +160,7 @@ func capabilityReportToJSON(coord fetchdomain.ModuleCoordinate, r capdomain.Capa
 	}
 }
 
-func capabilityDiffToJSON(from, to fetchdomain.ModuleCoordinate, fromReport, toReport capdomain.CapabilityReport, diff capdomain.CapabilityDiff) capabilityDiffJSON {
+func capabilityDiffToJSON(from, to coordinate.ModuleCoordinate, fromReport, toReport capdomain.CapabilityReport, diff capdomain.CapabilityDiff) capabilityDiffJSON {
 	return capabilityDiffJSON{
 		From:     capabilityReportToJSON(from, fromReport),
 		To:       capabilityReportToJSON(to, toReport),
@@ -181,7 +182,7 @@ func capsToStrings(caps []capdomain.Capability) []string {
 
 // -- text rendering --
 
-func printCapabilityReport(stdout io.Writer, coord fetchdomain.ModuleCoordinate, r capdomain.CapabilityReport) error {
+func printCapabilityReport(stdout io.Writer, coord coordinate.ModuleCoordinate, r capdomain.CapabilityReport) error {
 	if _, err := fmt.Fprintf(stdout, "%s@%s capabilities:\n", coord.Path, coord.Version); err != nil {
 		return fmt.Errorf("writing header: %w", err)
 	}
@@ -208,7 +209,7 @@ func printCapabilityReport(stdout io.Writer, coord fetchdomain.ModuleCoordinate,
 	return nil
 }
 
-func printCapabilityDiff(stdout io.Writer, from, to fetchdomain.ModuleCoordinate, diff capdomain.CapabilityDiff) error {
+func printCapabilityDiff(stdout io.Writer, from, to coordinate.ModuleCoordinate, diff capdomain.CapabilityDiff) error {
 	if _, err := fmt.Fprintf(stdout, "capability diff %s@%s → %s@%s:\n",
 		from.Path, from.Version, to.Path, to.Version); err != nil {
 		return fmt.Errorf("writing header: %w", err)

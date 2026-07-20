@@ -5,10 +5,11 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/example/application"
 	"github.com/eitanity/kanonarion/internal/example/domain"
 	exampleports "github.com/eitanity/kanonarion/internal/example/ports"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 // queryExFakeStore is a minimal ExampleStore for QueryExamplesUseCase tests.
@@ -31,7 +32,7 @@ func (s *queryExFakeStore) PutExampleRecord(_ context.Context, r domain.ExampleR
 	return nil
 }
 
-func (s *queryExFakeStore) GetExampleRecord(_ context.Context, coord fetchdomain.ModuleCoordinate, pv string) (domain.ExampleRecord, bool, error) {
+func (s *queryExFakeStore) GetExampleRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (domain.ExampleRecord, bool, error) {
 	if s.getErr != nil {
 		return domain.ExampleRecord{}, false, s.getErr
 	}
@@ -47,7 +48,7 @@ func (s *queryExFakeStore) FindBySymbol(_ context.Context, _ string, _ string) (
 	return s.exampleRefs, s.findErr
 }
 
-func (s *queryExFakeStore) FindBySymbolInModule(_ context.Context, coord fetchdomain.ModuleCoordinate, _ string, _ string) ([]exampleports.ExampleRef, error) {
+func (s *queryExFakeStore) FindBySymbolInModule(_ context.Context, coord coordinate.ModuleCoordinate, _ string, _ string) ([]exampleports.ExampleRef, error) {
 	if s.findErr != nil {
 		return nil, s.findErr
 	}
@@ -63,7 +64,7 @@ func (s *queryExFakeStore) FindBySymbolInModule(_ context.Context, coord fetchdo
 var _ exampleports.ExampleStore = (*queryExFakeStore)(nil)
 
 func TestQueryExamplesUseCase_GetExampleRecord(t *testing.T) {
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
 	store := &queryExFakeStore{}
 	_ = store.PutExampleRecord(context.Background(), domain.ExampleRecord{
 		Coordinate:      coord,
@@ -85,7 +86,7 @@ func TestQueryExamplesUseCase_GetExampleRecord(t *testing.T) {
 }
 
 func TestQueryExamplesUseCase_GetExampleRecord_NotFound(t *testing.T) {
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
 	uc := application.NewQueryExamplesUseCase(&queryExFakeStore{})
 
 	_, found, err := uc.GetExampleRecord(context.Background(), coord, "0.1.0")
@@ -101,7 +102,7 @@ func TestQueryExamplesUseCase_GetExampleRecord_StoreError(t *testing.T) {
 	storeErr := errors.New("db failure")
 	uc := application.NewQueryExamplesUseCase(&queryExFakeStore{getErr: storeErr})
 
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
 	_, _, err := uc.GetExampleRecord(context.Background(), coord, "0.1.0")
 	if !errors.Is(err, storeErr) {
 		t.Errorf("got %v, want wrapping %v", err, storeErr)
@@ -153,8 +154,8 @@ func TestQueryExamplesUseCase_FindBySymbol_Error(t *testing.T) {
 }
 
 func TestQueryExamplesUseCase_FindBySymbolInModule(t *testing.T) {
-	coordA := fetchdomain.ModuleCoordinate{Path: "example.com/a", Version: "v1.0.0"}
-	coordB := fetchdomain.ModuleCoordinate{Path: "example.com/b", Version: "v1.0.0"}
+	coordA := coordinate.ModuleCoordinate{Path: "example.com/a", Version: "v1.0.0"}
+	coordB := coordinate.ModuleCoordinate{Path: "example.com/b", Version: "v1.0.0"}
 	store := &queryExFakeStore{
 		exampleRefs: []exampleports.ExampleRef{
 			{ModulePath: coordA.Path, ModuleVersion: coordA.Version, ExampleName: "ExampleMarshal"},
@@ -179,7 +180,7 @@ func TestQueryExamplesUseCase_FindBySymbolInModule_Error(t *testing.T) {
 	findErr := errors.New("index failure")
 	uc := application.NewQueryExamplesUseCase(&queryExFakeStore{findErr: findErr})
 
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
 	_, err := uc.FindBySymbolInModule(context.Background(), coord, "Marshal", "0.1.0")
 	if !errors.Is(err, findErr) {
 		t.Errorf("got %v, want wrapping %v", err, findErr)

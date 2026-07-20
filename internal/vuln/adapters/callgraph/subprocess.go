@@ -6,7 +6,8 @@ import (
 	"os/exec"
 	"time"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
 )
 
@@ -31,7 +32,7 @@ func NewOsCallGraphSpawner(binary string) *OsCallGraphSpawner {
 // Spawn runs `<binary> callgraph <module@version> [--force]` as a child process under
 // a 10-minute timeout. It captures stderr and returns it alongside any exec error.
 // A non-zero exit, timeout, or OOM kill results in a non-nil error.
-func (s *OsCallGraphSpawner) Spawn(ctx context.Context, coord fetchdomain.ModuleCoordinate, force bool) ([]byte, error) {
+func (s *OsCallGraphSpawner) Spawn(ctx context.Context, coord coordinate.ModuleCoordinate, force bool) ([]byte, error) {
 	spawnCtx, cancel := context.WithTimeout(ctx, spawnTimeout)
 	defer cancel()
 

@@ -21,6 +21,6 @@
 // define how two runs differ, independent of storage or presentation.
 //
 // The package is pure: no I/O, no clock, no execution of scanned code. It
-// reuses fetch/domain.ModuleCoordinate as the module identity rather than
+// reuses coordinate.ModuleCoordinate as the module identity rather than
 // redefining it.
 package domain

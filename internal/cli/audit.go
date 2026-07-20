@@ -10,11 +10,13 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/spf13/cobra"
 
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
 	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
 	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -222,7 +224,7 @@ func auditScope(
 	}
 
 	// The project walk's target is the local main module; find its record.
-	localCoord := fetchdomain.ModuleCoordinate{Path: modulePath, Version: fetchdomain.LocalVersion}
+	localCoord := coordinate.ModuleCoordinate{Path: modulePath, Version: coordinate.LocalVersion}
 	walkScope := walkdomain.WalkScope(scope)
 	walks, qerr := ctr.QueryWalks.ListWalks(ctx, walkports.WalkFilter{Target: &localCoord, Scope: &walkScope, Limit: 1})
 	if qerr != nil {
@@ -288,7 +290,7 @@ func auditScope(
 // audit rows are deterministic. Both direct and transitive dependencies are
 // returned; the scope restriction was applied when the walk was built, so the
 // graph already holds exactly the audited module set plus the root.
-func auditDependencyNodes(rec walkdomain.WalkRecord, local fetchdomain.ModuleCoordinate) []walkdomain.GraphNode {
+func auditDependencyNodes(rec walkdomain.WalkRecord, local coordinate.ModuleCoordinate) []walkdomain.GraphNode {
 	nodes := make([]walkdomain.GraphNode, 0, len(rec.Graph.Nodes))
 	for _, node := range rec.Graph.Nodes {
 		if node.Coordinate == local {
@@ -415,7 +417,7 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, sc
 // lookups and the proxy staleness check, which do not apply to a toolchain
 // artefact. A nil Stdlib (an offline walk that could not acquire the chain)
 // degrades to "(custody unavailable)" rather than an error.
-func buildStdlibAuditResult(ctx context.Context, coord fetchdomain.ModuleCoordinate, node walkdomain.GraphNode, scope, walkID string, ctr *Container) auditModuleResult {
+func buildStdlibAuditResult(ctx context.Context, coord coordinate.ModuleCoordinate, node walkdomain.GraphNode, scope, walkID string, ctr *Container) auditModuleResult {
 	res := auditModuleResult{
 		Coordinate:    coord.String(),
 		Verification:  "(custody unavailable)",

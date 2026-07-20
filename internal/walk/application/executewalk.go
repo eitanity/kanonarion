@@ -6,8 +6,10 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/audit"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	"github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 	"github.com/oklog/ulid/v2"
@@ -177,7 +179,7 @@ func walkCompletedEvent(rec domain.WalkRecord) audit.Event {
 // resolveWalkID returns the walk ID to use. If the most recent stored walk for
 // target and scope has status partial or cancelled, its ID is returned with resuming=true
 // so the record is updated in-place. Otherwise a fresh ULID is generated.
-func (uc *ExecuteWalkUseCase) resolveWalkID(ctx context.Context, target fetchdomain.ModuleCoordinate, scope domain.WalkScope) (id string, resuming bool) {
+func (uc *ExecuteWalkUseCase) resolveWalkID(ctx context.Context, target coordinate.ModuleCoordinate, scope domain.WalkScope) (id string, resuming bool) {
 	summaries, err := uc.store.ListWalks(ctx, walkports.WalkFilter{Target: &target, Scope: &scope, Limit: 1})
 	if err == nil && len(summaries) > 0 {
 		if s := summaries[0]; s.OverallStatus == domain.WalkPartial || s.OverallStatus == domain.WalkCancelled {

@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	"golang.org/x/mod/modfile"
 	"golang.org/x/mod/semver"
@@ -42,7 +43,7 @@ func (p *Parser) Parse(filename string, data []byte) (walkdomain.ParsedGoMod, er
 
 	out.Require = make([]walkdomain.Requirement, 0, len(f.Require))
 	for _, r := range f.Require {
-		c, err := fetchdomain.NewModuleCoordinate(r.Mod.Path, r.Mod.Version)
+		c, err := coordinate.NewModuleCoordinate(r.Mod.Path, r.Mod.Version)
 		if err != nil {
 			return walkdomain.ParsedGoMod{}, fmt.Errorf("invalid require %s@%s in %s: %w",
 				r.Mod.Path, r.Mod.Version, filename, err)
@@ -74,7 +75,7 @@ func (p *Parser) Parse(filename string, data []byte) (walkdomain.ParsedGoMod, er
 
 	out.Exclude = make([]walkdomain.Exclusion, 0, len(f.Exclude))
 	for _, e := range f.Exclude {
-		c, err := fetchdomain.NewModuleCoordinate(e.Mod.Path, e.Mod.Version)
+		c, err := coordinate.NewModuleCoordinate(e.Mod.Path, e.Mod.Version)
 		if err != nil {
 			return walkdomain.ParsedGoMod{}, fmt.Errorf("invalid exclude %s@%s in %s: %w",
 				e.Mod.Path, e.Mod.Version, filename, err)
@@ -115,15 +116,15 @@ func isLocalPath(path string) bool {
 // empty (or invalid) but the path looks like a module (not local), the
 // coordinate is returned with an empty Version — the canonical form for a
 // path-only replace target — and the caller decides how to handle it.
-func newCoordinateFromReplace(path, version, filename string) (fetchdomain.ModuleCoordinate, error) {
+func newCoordinateFromReplace(path, version, filename string) (coordinate.ModuleCoordinate, error) {
 	if version == "" || !semver.IsValid(version) {
 		// Replace pointing to a module path without a valid version is unusual;
 		// store path with empty version so the caller can decide what to do.
-		return fetchdomain.ModuleCoordinate{Path: path, Version: version}, nil
+		return coordinate.ModuleCoordinate{Path: path, Version: version}, nil
 	}
-	c, err := fetchdomain.NewModuleCoordinate(path, version)
+	c, err := coordinate.NewModuleCoordinate(path, version)
 	if err != nil {
-		return fetchdomain.ModuleCoordinate{}, fmt.Errorf("invalid replace new-coord %s@%s in %s: %w",
+		return coordinate.ModuleCoordinate{}, fmt.Errorf("invalid replace new-coord %s@%s in %s: %w",
 			path, version, filename, err)
 	}
 	return c, nil

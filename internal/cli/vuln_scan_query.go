@@ -9,7 +9,8 @@ import (
 	"strings"
 	"time"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/spf13/cobra"
 )
@@ -116,17 +117,17 @@ type scanAffectedModule struct {
 }
 
 type scanShowJSON struct {
-	ID               string                                  `json:"id"`
-	WalkID           string                                  `json:"walk_id"`
-	Snapshot         vuldomain.DatabaseSnapshot              `json:"snapshot"`
-	PerModuleResults map[fetchdomain.ModuleCoordinate]string `json:"per_module_results"`
-	StartedAt        time.Time                               `json:"started_at"`
-	CompletedAt      time.Time                               `json:"completed_at"`
-	OverallStatus    vuldomain.WalkScanStatus                `json:"overall_status"`
-	PipelineVersion  string                                  `json:"pipeline_version"`
-	Operator         string                                  `json:"operator"`
-	ContentHash      string                                  `json:"content_hash"`
-	AffectedModules  []scanAffectedModule                    `json:"affected_modules,omitempty"`
+	ID               string                                 `json:"id"`
+	WalkID           string                                 `json:"walk_id"`
+	Snapshot         vuldomain.DatabaseSnapshot             `json:"snapshot"`
+	PerModuleResults map[coordinate.ModuleCoordinate]string `json:"per_module_results"`
+	StartedAt        time.Time                              `json:"started_at"`
+	CompletedAt      time.Time                              `json:"completed_at"`
+	OverallStatus    vuldomain.WalkScanStatus               `json:"overall_status"`
+	PipelineVersion  string                                 `json:"pipeline_version"`
+	Operator         string                                 `json:"operator"`
+	ContentHash      string                                 `json:"content_hash"`
+	AffectedModules  []scanAffectedModule                   `json:"affected_modules,omitempty"`
 }
 
 func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QueryScanRunsUseCase, ucVuln QueryVulnUseCase, stdout io.Writer) error {
@@ -196,7 +197,7 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 // project's build (an expected coverage gap, not a fault) so the detail view can
 // explain a Partial status and direct to the whole-build analysis.
 func buildScanAffectedModules(ctx context.Context, run vuldomain.WalkScanRun, uc QueryVulnUseCase) ([]scanAffectedModule, []string) {
-	coords := make([]fetchdomain.ModuleCoordinate, 0, len(run.PerModuleResults))
+	coords := make([]coordinate.ModuleCoordinate, 0, len(run.PerModuleResults))
 	for coord := range run.PerModuleResults {
 		coords = append(coords, coord)
 	}

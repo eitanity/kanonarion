@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -30,7 +32,7 @@ func makeScanWalkUC(t *testing.T, walkStore *fakeWalkStore, vulnStore *fakeVulnS
 	return application.NewScanWalkUseCase(walkStore, vulnStore, moduleUC, nil, clock, "v1", slog.Default())
 }
 
-func seedWalk(t *testing.T, walkStore *fakeWalkStore, walkID string, coords ...fetchdomain.ModuleCoordinate) {
+func seedWalk(t *testing.T, walkStore *fakeWalkStore, walkID string, coords ...coordinate.ModuleCoordinate) {
 	t.Helper()
 	nodes := make([]walkdomain.GraphNode, len(coords))
 	for i, c := range coords {
@@ -61,7 +63,7 @@ func TestScanWalk_GetWalkError(t *testing.T) {
 
 func TestScanWalk_GetLatestSnapshotError(t *testing.T) {
 	walkStore := newFakeWalkStore()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/a/b", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/a/b", Version: "v1.0.0"}
 	seedWalk(t, walkStore, "w1", coord)
 
 	vulnStore := newFakeVulnStore()
@@ -77,7 +79,7 @@ func TestScanWalk_GetLatestSnapshotError(t *testing.T) {
 
 func TestScanWalk_DatabaseSnapshotFetchError(t *testing.T) {
 	walkStore := newFakeWalkStore()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/a/b", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/a/b", Version: "v1.0.0"}
 	seedWalk(t, walkStore, "w1", coord)
 
 	vulnStore := newFakeVulnStore()
@@ -92,7 +94,7 @@ func TestScanWalk_DatabaseSnapshotFetchError(t *testing.T) {
 
 func TestScanWalk_PutSnapshotError(t *testing.T) {
 	walkStore := newFakeWalkStore()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/a/b", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/a/b", Version: "v1.0.0"}
 	seedWalk(t, walkStore, "w1", coord)
 
 	vulnStore := newFakeVulnStore()
@@ -108,7 +110,7 @@ func TestScanWalk_PutSnapshotError(t *testing.T) {
 
 func TestScanWalk_PutWalkScanRunError(t *testing.T) {
 	walkStore := newFakeWalkStore()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/a/b", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/a/b", Version: "v1.0.0"}
 	seedWalk(t, walkStore, "w1", coord)
 
 	vulnStore := newFakeVulnStore()
@@ -141,7 +143,7 @@ func TestScanWalk_PutWalkScanRunError(t *testing.T) {
 
 func TestRescan_DatabaseSnapshotFetchError(t *testing.T) {
 	walkStore := newFakeWalkStore()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/a/b", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/a/b", Version: "v1.0.0"}
 	seedWalk(t, walkStore, "w1", coord)
 
 	vulnStore := newFakeVulnStore()
@@ -264,8 +266,8 @@ func TestDiff_SortingMultipleFindings(t *testing.T) {
 	snap := domain.DatabaseSnapshot{Source: "s", Version: "v1"}
 	vulnStore := newFakeVulnStore()
 
-	coordA := fetchdomain.ModuleCoordinate{Path: "github.com/z/z", Version: "v1.0.0"}
-	coordB := fetchdomain.ModuleCoordinate{Path: "github.com/a/a", Version: "v1.0.0"}
+	coordA := coordinate.ModuleCoordinate{Path: "github.com/z/z", Version: "v1.0.0"}
+	coordB := coordinate.ModuleCoordinate{Path: "github.com/a/a", Version: "v1.0.0"}
 
 	runA := makeRun("run-a", "walk-1", snap)
 	runB := makeRun("run-b", "walk-1", snap)
@@ -306,7 +308,7 @@ func TestScanModule_ModuleNotFetched(t *testing.T) {
 	uc := application.NewScanModuleUseCase(
 		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", "v1", slog.Default(),
 	)
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/missing/mod", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/missing/mod", Version: "v1.0.0"}
 	rec, err := uc.Scan(t.Context(), application.ScanModuleParams{
 		Coordinate: coord,
 		WalkID:     "w1",
@@ -333,10 +335,10 @@ func TestScanModule_MetadataOnly_WithVulns(t *testing.T) {
 	clock := fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}
 	snap := domain.DatabaseSnapshot{Source: "osv", Version: "v2"}
 
-	modCoord := fetchdomain.ModuleCoordinate{Path: "github.com/vuln/mod", Version: "v1.0.0"}
+	modCoord := coordinate.ModuleCoordinate{Path: "github.com/vuln/mod", Version: "v1.0.0"}
 	db := &fakeDatabase{
 		snapshot: snap,
-		vulnerables: map[fetchdomain.ModuleCoordinate][]string{
+		vulnerables: map[coordinate.ModuleCoordinate][]string{
 			modCoord: {"GO-2024-0001", "GO-2024-0002"},
 		},
 	}
@@ -376,7 +378,7 @@ func TestScanModule_MetadataOnly_Clean(t *testing.T) {
 	uc := application.NewScanModuleUseCase(
 		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", "v1", slog.Default(),
 	)
-	modCoord := fetchdomain.ModuleCoordinate{Path: "github.com/clean/mod", Version: "v1.0.0"}
+	modCoord := coordinate.ModuleCoordinate{Path: "github.com/clean/mod", Version: "v1.0.0"}
 	rec, err := uc.Scan(t.Context(), application.ScanModuleParams{
 		Coordinate: modCoord,
 		WalkID:     "w1",
@@ -399,7 +401,7 @@ func TestScanModule_PutVulnerabilityRecordError(t *testing.T) {
 	vulnStore.errOnPutRecord = errStore
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/a/b", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/a/b", Version: "v1.0.0"}
 	h, _ := blobs.Put(t.Context(), strings.NewReader("zip"))
 	if err := facts.PutFetchRecord(t.Context(), fetchdomain.FactRecord{
 		ModulePath: coord.Path, ModuleVersion: coord.Version, PipelineVersion: "v1", ContentLocation: string(h),
@@ -428,7 +430,7 @@ func TestScanModule_PutVulnerabilityRecordError(t *testing.T) {
 
 func TestScanWalk_ProgressCallback(t *testing.T) {
 	walkStore := newFakeWalkStore()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/a/b", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/a/b", Version: "v1.0.0"}
 	seedWalk(t, walkStore, "w1", coord)
 
 	vulnStore := newFakeVulnStore()
@@ -453,7 +455,7 @@ func TestScanWalk_ProgressCallback(t *testing.T) {
 	_, err := uc.Scan(t.Context(), application.ScanWalkParams{
 		WalkID:   "w1",
 		Snapshot: &snap,
-		Progress: func(_ fetchdomain.ModuleCoordinate, _ domain.VulnerabilityRecord, current, total int) {
+		Progress: func(_ coordinate.ModuleCoordinate, _ domain.VulnerabilityRecord, current, total int) {
 			called++
 		},
 	})
@@ -472,7 +474,7 @@ func TestDiff_SortingSamePathDifferentIDs(t *testing.T) {
 	snap := domain.DatabaseSnapshot{Source: "s", Version: "v1"}
 	vulnStore := newFakeVulnStore()
 
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/a/a", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/a/a", Version: "v1.0.0"}
 	runA := makeRun("run-a", "walk-1", snap)
 	runB := makeRun("run-b", "walk-1", snap)
 	seedScanRun(t, ctx, vulnStore, runA, nil)
@@ -503,7 +505,7 @@ func TestDiff_ReachabilityNilToNonNil(t *testing.T) {
 	snapB := domain.DatabaseSnapshot{Source: "s", Version: "v2"}
 	vulnStore := newFakeVulnStore()
 
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/a/b", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/a/b", Version: "v1.0.0"}
 	finding := makeFinding("CVE-1", "some vuln")
 
 	runA := makeRun("run-a", "walk-1", snapA)

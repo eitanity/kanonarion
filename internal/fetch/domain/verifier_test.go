@@ -6,12 +6,13 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/adapters/ziparchive"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 func TestVerifier_HashDirAsModuleZip(t *testing.T) {
 	dir := t.TempDir()
-	coord := domain2.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
 
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/m\n\ngo 1.21\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
@@ -39,7 +40,7 @@ func TestVerifier_HashDirAsModuleZip(t *testing.T) {
 
 func TestVerifier_HashDirAsModuleZip_Deterministic(t *testing.T) {
 	dir := t.TempDir()
-	coord := domain2.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
 
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/m\n\ngo 1.21\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
@@ -64,7 +65,7 @@ func TestVerifier_HashDirAsModuleZip_Deterministic(t *testing.T) {
 // matching the proxy zip rules that cause hash mismatches when using dirhash.HashDir.
 func TestVerifier_HashDirAsModuleZip_ExcludesNestedModule(t *testing.T) {
 	dir := t.TempDir()
-	coord := domain2.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
 
 	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte("module example.com/m\n\ngo 1.21\n"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
@@ -110,7 +111,7 @@ func TestVerifier_HashDirAsModuleZip_ExcludesNestedModule(t *testing.T) {
 }
 
 func TestVerifier_VerifyPseudoVersionCommit(t *testing.T) {
-	coord := domain2.ModuleCoordinate{
+	coord := coordinate.ModuleCoordinate{
 		Path:    "example.com/m",
 		Version: "v0.0.0-20210101120000-abcdefabcdef",
 	}
@@ -135,7 +136,7 @@ func TestVerifier_VerifyPseudoVersionCommit(t *testing.T) {
 	}
 
 	// Non-pseudo-version.
-	tagged := domain2.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
+	tagged := coordinate.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
 	if err := v.VerifyPseudoVersionCommit(tagged, fullCommit); err == nil {
 		t.Error("expected error for non-pseudo-version")
 	}

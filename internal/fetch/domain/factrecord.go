@@ -1,6 +1,10 @@
 package domain
 
-import "time"
+import (
+	"time"
+
+	"github.com/eitanity/kanonarion/internal/coordinate"
+)
 
 // SchemaVersion is the version of the FactRecord JSON schema. Bump when
 // the serialisation format changes in a backwards-incompatible way.
@@ -72,8 +76,8 @@ func NewFactRecord(m FetchedModule) FactRecord {
 }
 
 // Coordinate returns the ModuleCoordinate this record describes.
-func (r FactRecord) Coordinate() ModuleCoordinate {
-	return ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}
+func (r FactRecord) Coordinate() coordinate.ModuleCoordinate {
+	return coordinate.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}
 }
 
 // RecordDigests projects a fact record's persisted digest fields onto an

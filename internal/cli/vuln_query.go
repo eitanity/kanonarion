@@ -8,7 +8,8 @@ import (
 	"strings"
 	"time"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/spf13/cobra"
@@ -111,7 +112,7 @@ func runVulnShow(ctx context.Context, arg, walkID string, jsonOut, history bool,
 	return nil
 }
 
-func runVulnShowHistory(ctx context.Context, coord fetchdomain.ModuleCoordinate, jsonOut bool, uc QueryVulnUseCase, stdout io.Writer) error {
+func runVulnShowHistory(ctx context.Context, coord coordinate.ModuleCoordinate, jsonOut bool, uc QueryVulnUseCase, stdout io.Writer) error {
 	recs, err := uc.ListRecordsForModule(ctx, coord, vulnPipelineVersion)
 	if err != nil {
 		return fmt.Errorf("listing vulnerability history: %w", err)

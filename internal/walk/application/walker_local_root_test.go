@@ -5,7 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	application2 "github.com/eitanity/kanonarion/internal/walk/application"
 	"github.com/eitanity/kanonarion/internal/walk/domain"
 )
@@ -22,10 +23,10 @@ func TestWalker_ProjectMode_AnalyseLocalRoot_PromotesRootToLocalAnalysed(t *test
 	wf.addRecord("example.com/dep", "v1.0.0")
 
 	lf := newFakeLocalFetcher()
-	lf.addRecord("example.com/project", domain2.LocalVersion)
+	lf.addRecord("example.com/project", coordinate.LocalVersion)
 
 	mainGoMod := []byte("module example.com/project\ngo 1.21\nrequire example.com/dep v1.0.0\n")
-	target := domain2.ModuleCoordinate{Path: "example.com/project", Version: domain2.LocalVersion}
+	target := coordinate.ModuleCoordinate{Path: "example.com/project", Version: coordinate.LocalVersion}
 
 	w := buildWalkerWithLocal(rf, wf, lf, blobs, 2)
 	outcome, err := w.Walk(context.Background(), application2.WalkRequest{
@@ -80,10 +81,10 @@ func TestWalker_ProjectMode_AnalyseLocalRoot_IngestFailureFailsWalk(t *testing.T
 	wf.addRecord("example.com/dep", "v1.0.0")
 
 	lf := newFakeLocalFetcher()
-	lf.addError("example.com/project", domain2.LocalVersion, errors.New("zip create failed"))
+	lf.addError("example.com/project", coordinate.LocalVersion, errors.New("zip create failed"))
 
 	mainGoMod := []byte("module example.com/project\ngo 1.21\nrequire example.com/dep v1.0.0\n")
-	target := domain2.ModuleCoordinate{Path: "example.com/project", Version: domain2.LocalVersion}
+	target := coordinate.ModuleCoordinate{Path: "example.com/project", Version: coordinate.LocalVersion}
 
 	w := buildWalkerWithLocal(rf, wf, lf, blobs, 2)
 	outcome, err := w.Walk(context.Background(), application2.WalkRequest{
@@ -119,7 +120,7 @@ func TestWalker_ProjectMode_AnalyseLocalRoot_MissingProjectDirFailsWalk(t *testi
 	wf.addRecord("example.com/dep", "v1.0.0")
 
 	mainGoMod := []byte("module example.com/project\ngo 1.21\nrequire example.com/dep v1.0.0\n")
-	target := domain2.ModuleCoordinate{Path: "example.com/project", Version: domain2.LocalVersion}
+	target := coordinate.ModuleCoordinate{Path: "example.com/project", Version: coordinate.LocalVersion}
 
 	w := buildWalkerWithLocal(rf, wf, newFakeLocalFetcher(), blobs, 2)
 	outcome, err := w.Walk(context.Background(), application2.WalkRequest{

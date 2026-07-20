@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	"github.com/eitanity/kanonarion/internal/adapters/ziparchive"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
@@ -52,7 +53,7 @@ func (uc *GenerateNoticeUseCase) WithLocalFetchPipelineVersion(v string) *Genera
 
 // NoticeRequest is the input to Generate.
 type NoticeRequest struct {
-	Coordinates []fetchdomain.ModuleCoordinate
+	Coordinates []coordinate.ModuleCoordinate
 }
 
 // NoticeResult is the output of Generate.
@@ -84,7 +85,7 @@ func (uc *GenerateNoticeUseCase) Generate(ctx context.Context, req NoticeRequest
 
 func (uc *GenerateNoticeUseCase) processModule(
 	ctx context.Context,
-	coord fetchdomain.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 ) (*licensedomain.NoticeEntry, *licensedomain.ReviewItem, error) {
 	rec, found, err := uc.licenses.GetLicenseRecord(ctx, coord, uc.pipelineVersion)
 	if err != nil {
@@ -159,7 +160,7 @@ func (uc *GenerateNoticeUseCase) processModule(
 
 func (uc *GenerateNoticeUseCase) readLicenseTexts(
 	ctx context.Context,
-	coord fetchdomain.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 	rec licensedomain.LicenseRecord,
 ) ([]licensedomain.NoticeLicenseFile, []licensedomain.NoticeEmbeddedComponent, error) {
 	factRecord, err := uc.noticeRequireFetchRecord(ctx, coord)
@@ -305,7 +306,7 @@ func ambiguousReason(rec licensedomain.LicenseRecord) string {
 // the license pipeline version.
 func (uc *GenerateNoticeUseCase) noticeRequireFetchRecord(
 	ctx context.Context,
-	coord fetchdomain.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 ) (fetchdomain.FactRecord, error) {
 	seen := map[string]bool{}
 	for _, v := range []string{uc.fetchPipelineVersion, uc.localFetchPipelineVersion, uc.pipelineVersion} {

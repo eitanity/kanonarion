@@ -59,8 +59,8 @@ type fakeLicense struct {
 func (f fakeLicense) Identify(context.Context, []byte) (string, error) { return f.spdx, f.err }
 
 type memStore struct {
-	m     map[string]domain.Facts
-	puts  int
+	m      map[string]domain.Facts
+	puts   int
 	getErr error
 }
 
@@ -88,9 +88,11 @@ func (b *memBlobs) Put(_ context.Context, r io.Reader) (fetchports.BlobHandle, e
 	sum := sha256.Sum256(data)
 	return fetchports.BlobHandle("sha256:" + hex.EncodeToString(sum[:])), nil
 }
-func (b *memBlobs) Get(context.Context, fetchports.BlobHandle) (io.ReadCloser, error) { return nil, nil }
-func (b *memBlobs) Exists(context.Context, fetchports.BlobHandle) (bool, error)       { return false, nil }
-func (b *memBlobs) GetPath(context.Context, fetchports.BlobHandle) (string, error)    { return "", nil }
+func (b *memBlobs) Get(context.Context, fetchports.BlobHandle) (io.ReadCloser, error) {
+	return nil, nil
+}
+func (b *memBlobs) Exists(context.Context, fetchports.BlobHandle) (bool, error)    { return false, nil }
+func (b *memBlobs) GetPath(context.Context, fetchports.BlobHandle) (string, error) { return "", nil }
 
 type fixedClock struct{ t time.Time }
 

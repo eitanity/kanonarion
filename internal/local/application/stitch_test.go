@@ -5,8 +5,10 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	callgraphdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	"github.com/eitanity/kanonarion/internal/local/application"
 	"github.com/eitanity/kanonarion/internal/local/ports"
 )
@@ -17,7 +19,7 @@ type fakeDependencyLoader struct {
 	err     error
 }
 
-func (f *fakeDependencyLoader) LoadCallGraphRecords(_ context.Context, coords []fetchdomain.ModuleCoordinate, _ string) ([]callgraphdomain.CallGraphRecord, error) {
+func (f *fakeDependencyLoader) LoadCallGraphRecords(_ context.Context, coords []coordinate.ModuleCoordinate, _ string) ([]callgraphdomain.CallGraphRecord, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -33,9 +35,9 @@ func (f *fakeDependencyLoader) LoadCallGraphRecords(_ context.Context, coords []
 // Compile-time interface check.
 var _ ports.DependencyLoader = (*fakeDependencyLoader)(nil)
 
-func coord(t *testing.T, path, ver string) fetchdomain.ModuleCoordinate {
+func coord(t *testing.T, path, ver string) coordinate.ModuleCoordinate {
 	t.Helper()
-	c, err := fetchdomain.NewModuleCoordinate(path, ver)
+	c, err := coordinate.NewModuleCoordinate(path, ver)
 	if err != nil {
 		t.Fatalf("NewModuleCoordinate: %v", err)
 	}
@@ -56,7 +58,7 @@ func TestLoadDependenciesUseCase_Execute_LoadsSession(t *testing.T) {
 		},
 	}
 	uc := application.NewLoadDependenciesUseCase(loader, "0.1.0")
-	session, err := uc.Execute(context.Background(), []fetchdomain.ModuleCoordinate{c})
+	session, err := uc.Execute(context.Background(), []coordinate.ModuleCoordinate{c})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -72,7 +74,7 @@ func TestLoadDependenciesUseCase_Execute_SilentlySkipsMissingCoords(t *testing.T
 	loader := &fakeDependencyLoader{records: map[string]callgraphdomain.CallGraphRecord{}}
 	uc := application.NewLoadDependenciesUseCase(loader, "0.1.0")
 
-	coords := []fetchdomain.ModuleCoordinate{
+	coords := []coordinate.ModuleCoordinate{
 		coord(t, "example.com/missing", "v1.0.0"),
 	}
 	session, err := uc.Execute(context.Background(), coords)
@@ -101,7 +103,7 @@ func TestLoadDependenciesUseCase_Execute_LoaderError(t *testing.T) {
 	loader := &fakeDependencyLoader{err: loaderErr}
 	uc := application.NewLoadDependenciesUseCase(loader, "0.1.0")
 
-	_, err := uc.Execute(context.Background(), []fetchdomain.ModuleCoordinate{
+	_, err := uc.Execute(context.Background(), []coordinate.ModuleCoordinate{
 		coord(t, "example.com/dep", "v1.0.0"),
 	})
 	if err == nil {
@@ -122,7 +124,7 @@ func TestLoadDependenciesUseCase_Execute_MultipleModules(t *testing.T) {
 		},
 	}
 	uc := application.NewLoadDependenciesUseCase(loader, "0.1.0")
-	session, err := uc.Execute(context.Background(), []fetchdomain.ModuleCoordinate{cA, cB})
+	session, err := uc.Execute(context.Background(), []coordinate.ModuleCoordinate{cA, cB})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}

@@ -6,9 +6,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/extract/domain"
 	"github.com/eitanity/kanonarion/internal/extract/ports"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -94,11 +96,11 @@ type mockExtractor struct {
 }
 
 type extractorCall struct {
-	coord fetchdomain.ModuleCoordinate
+	coord coordinate.ModuleCoordinate
 	stage string
 }
 
-func (m *mockExtractor) Extract(ctx context.Context, coord fetchdomain.ModuleCoordinate, stage string, force bool) (ports.StageResult, error) {
+func (m *mockExtractor) Extract(ctx context.Context, coord coordinate.ModuleCoordinate, stage string, force bool) (ports.StageResult, error) {
 	if m.onExtract != nil {
 		m.onExtract()
 	}
@@ -117,7 +119,7 @@ func (m *mockExtractor) Extract(ctx context.Context, coord fetchdomain.ModuleCoo
 
 func TestExtractUseCase_Execute(t *testing.T) {
 	ctx := t.Context()
-	coord1, _ := fetchdomain.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
+	coord1, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
 	walkID := "walk-123"
 
 	walk := walkdomain.WalkRecord{
@@ -303,7 +305,7 @@ func TestExtractUseCase_Execute(t *testing.T) {
 	})
 
 	t.Run("Unexpected error", func(t *testing.T) {
-		coord2, _ := fetchdomain.NewModuleCoordinate("github.com/foo/baz", "v2.0.0")
+		coord2, _ := coordinate.NewModuleCoordinate("github.com/foo/baz", "v2.0.0")
 		walks.walks["unexpected-walk"] = walkdomain.WalkRecord{
 			Target: coord2,
 			Graph: walkdomain.Graph{
@@ -356,8 +358,8 @@ func TestExtractUseCase_Execute(t *testing.T) {
 // ErrModuleNotFetched).
 func TestExtractUseCase_localReplaceNodesSkipped(t *testing.T) {
 	ctx := t.Context()
-	target, _ := fetchdomain.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
-	localDep, _ := fetchdomain.NewModuleCoordinate("example.com/dep", "v1.0.0")
+	target, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
+	localDep, _ := coordinate.NewModuleCoordinate("example.com/dep", "v1.0.0")
 	walkID := "walk-localreplace"
 
 	walk := walkdomain.WalkRecord{
@@ -427,8 +429,8 @@ func TestExtractUseCase_localReplaceNodesSkipped(t *testing.T) {
 // partial.
 func TestExtractUseCase_localMainModuleRootSkippedNotFailed(t *testing.T) {
 	ctx := t.Context()
-	root := fetchdomain.ModuleCoordinate{Path: "example.com/project", Version: fetchdomain.LocalVersion}
-	dep, _ := fetchdomain.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
+	root := coordinate.ModuleCoordinate{Path: "example.com/project", Version: coordinate.LocalVersion}
+	dep, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
 	walkID := "walk-localroot"
 
 	walk := walkdomain.WalkRecord{

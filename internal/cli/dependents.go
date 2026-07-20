@@ -7,9 +7,10 @@ import (
 	"io"
 	"sort"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/spf13/cobra"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
@@ -120,7 +121,7 @@ func runDependents(ctx context.Context, moduleArg, storeRoot, walkID string, jso
 
 // dependentResult holds a single module that depends on the queried target.
 type dependentResult struct {
-	Coord  fetchdomain.ModuleCoordinate
+	Coord  coordinate.ModuleCoordinate
 	Direct bool // true when this module is a direct dep of the walk root (GraphNode.DirectDependency)
 	Root   bool // true when this module IS the walk root
 }
@@ -130,15 +131,15 @@ type dependentResult struct {
 // includeRoot is true, the walk root is included if it has such an edge and
 // is annotated with Root=true. Direct is set from GraphNode.DirectDependency
 // and is never true for the walk root (the root is not a dependency of itself).
-func walkDependents(rec walkdomain.WalkRecord, coord fetchdomain.ModuleCoordinate, includeRoot bool) []dependentResult {
-	directDeps := make(map[fetchdomain.ModuleCoordinate]bool)
+func walkDependents(rec walkdomain.WalkRecord, coord coordinate.ModuleCoordinate, includeRoot bool) []dependentResult {
+	directDeps := make(map[coordinate.ModuleCoordinate]bool)
 	for _, n := range rec.Graph.Nodes {
 		if n.DirectDependency {
 			directDeps[n.Coordinate] = true
 		}
 	}
 
-	seen := make(map[fetchdomain.ModuleCoordinate]bool)
+	seen := make(map[coordinate.ModuleCoordinate]bool)
 	var out []dependentResult
 
 	for _, edge := range rec.Graph.Edges {
@@ -211,7 +212,7 @@ func writeDependentsJSON(w io.Writer, walkID, target string, deps []dependentRes
 
 // findWalkContaining returns the ID of the most recent walk (by started_at) that
 // contains coord as a node in its graph. Returns an error if no such walk exists.
-func findWalkContaining(ctx context.Context, uc QueryWalksUseCase, coord fetchdomain.ModuleCoordinate) (string, error) {
+func findWalkContaining(ctx context.Context, uc QueryWalksUseCase, coord coordinate.ModuleCoordinate) (string, error) {
 	const searchLimit = 50
 	summaries, err := uc.ListWalks(ctx, walkports.WalkFilter{Limit: searchLimit})
 	if err != nil {

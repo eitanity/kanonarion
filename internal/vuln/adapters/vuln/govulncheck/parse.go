@@ -11,7 +11,8 @@ import (
 	"runtime/debug"
 	"time"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 )
 
@@ -263,6 +264,7 @@ func (s *Scanner) parseResults(ctx context.Context, r io.Reader, scannedModule s
 
 	return findings, nil
 }
+
 // moduleFindings accumulates the findings attributed to one module during a
 // grouped (project-rooted) parse, mirroring the single-module parse state but
 // scoped to a coordinate key.
@@ -277,7 +279,7 @@ type moduleFindings struct {
 // what lets one project-rooted scan derive a per-module verdict for the whole
 // build. Stdlib advisories are normalised to the {stdlib, ""} key so the caller
 // can attribute them to the project root deterministically.
-func (s *Scanner) processFindingGrouped(raw []byte, byModule map[fetchdomain.ModuleCoordinate]*moduleFindings, intern func(string) string) {
+func (s *Scanner) processFindingGrouped(raw []byte, byModule map[coordinate.ModuleCoordinate]*moduleFindings, intern func(string) string) {
 	if !bytes.Contains(raw, []byte("\"finding\":")) {
 		return
 	}
@@ -316,7 +318,7 @@ func (s *Scanner) processFindingGrouped(raw []byte, byModule map[fetchdomain.Mod
 		return
 	}
 
-	key := fetchdomain.ModuleCoordinate{Path: intern(vuln.Module), Version: intern(vuln.Version)}
+	key := coordinate.ModuleCoordinate{Path: intern(vuln.Module), Version: intern(vuln.Version)}
 	if key.Path == domain.StdlibModulePath {
 		// Collapse every toolchain-version-tagged stdlib frame onto one key.
 		key.Version = ""
@@ -365,9 +367,9 @@ func (s *Scanner) processFindingGrouped(raw []byte, byModule map[fetchdomain.Mod
 // deterministic finding order match, so a per-module verdict built from this map
 // is identical to what a coordinate scan of that module would report for the
 // same reachable findings.
-func (s *Scanner) parseResultsByModule(ctx context.Context, r io.Reader) (map[fetchdomain.ModuleCoordinate][]domain.VulnerabilityFinding, error) {
+func (s *Scanner) parseResultsByModule(ctx context.Context, r io.Reader) (map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding, error) {
 	osvs := make(map[string]*OSV)
-	byModule := make(map[fetchdomain.ModuleCoordinate]*moduleFindings)
+	byModule := make(map[coordinate.ModuleCoordinate]*moduleFindings)
 
 	internPool := make(map[string]string)
 	intern := func(s string) string {
@@ -407,7 +409,7 @@ func (s *Scanner) parseResultsByModule(ctx context.Context, r io.Reader) (map[fe
 		return nil, fmt.Errorf("scan govulncheck output: %w", err)
 	}
 
-	out := make(map[fetchdomain.ModuleCoordinate][]domain.VulnerabilityFinding, len(byModule))
+	out := make(map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding, len(byModule))
 	for coord, mf := range byModule {
 		for i := range mf.findings {
 			f := &mf.findings[i]

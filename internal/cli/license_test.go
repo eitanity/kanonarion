@@ -8,8 +8,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	domain "github.com/eitanity/kanonarion/internal/license/domain"
 	licenseports "github.com/eitanity/kanonarion/internal/license/ports"
@@ -19,9 +21,9 @@ import (
 
 var errTest = errors.New("test error")
 
-func makeLicenseCoord(t *testing.T) fetchdomain.ModuleCoordinate {
+func makeLicenseCoord(t *testing.T) coordinate.ModuleCoordinate {
 	t.Helper()
-	c, err := fetchdomain.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	c, err := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -148,7 +150,7 @@ func TestPrintLicenseRecursive_AllSameLicense(t *testing.T) {
 		{ID: "WALK001", Target: coord, StartedAt: time.Now(), OverallStatus: walkdomain.WalkSucceeded},
 	})
 
-	dep, _ := fetchdomain.NewModuleCoordinate("example.com/dep", "v1.0.0")
+	dep, _ := coordinate.NewModuleCoordinate("example.com/dep", "v1.0.0")
 	queryUC := testfakes.NewFakeQueryLicense()
 	queryUC.AddRecord(coord, licapp.PipelineVersion, domain.LicenseRecord{
 		Coordinate:    coord,
@@ -177,7 +179,7 @@ func TestPrintLicenseRecursive_DifferentLicenses(t *testing.T) {
 		{ID: "WALK001", Target: coord, StartedAt: time.Now(), OverallStatus: walkdomain.WalkSucceeded},
 	})
 
-	dep, _ := fetchdomain.NewModuleCoordinate("example.com/dep", "v1.0.0")
+	dep, _ := coordinate.NewModuleCoordinate("example.com/dep", "v1.0.0")
 	queryUC := testfakes.NewFakeQueryLicense()
 	queryUC.AddRecord(coord, licapp.PipelineVersion, domain.LicenseRecord{
 		Coordinate: coord, OverallStatus: domain.LicenseStatusDetected, PrimarySPDX: "MIT",
@@ -204,7 +206,7 @@ func TestPrintLicenseRecursive_AllFlag(t *testing.T) {
 		{ID: "WALK001", Target: coord, StartedAt: time.Now(), OverallStatus: walkdomain.WalkSucceeded},
 	})
 
-	dep, _ := fetchdomain.NewModuleCoordinate("example.com/dep", "v1.0.0")
+	dep, _ := coordinate.NewModuleCoordinate("example.com/dep", "v1.0.0")
 	queryUC := testfakes.NewFakeQueryLicense()
 	queryUC.SetResolveResult([]licapp.DepLicenseResult{
 		{Coordinate: dep, PrimarySPDX: "MIT"},
@@ -228,7 +230,7 @@ func TestPrintLicenseRecursive_AllFlagWithError(t *testing.T) {
 		{ID: "WALK001", Target: coord, StartedAt: time.Now(), OverallStatus: walkdomain.WalkSucceeded},
 	})
 
-	dep, _ := fetchdomain.NewModuleCoordinate("example.com/failing", "v1.0.0")
+	dep, _ := coordinate.NewModuleCoordinate("example.com/failing", "v1.0.0")
 	queryUC := testfakes.NewFakeQueryLicense()
 	queryUC.SetResolveResult([]licapp.DepLicenseResult{
 		{Coordinate: dep, Err: errTest},

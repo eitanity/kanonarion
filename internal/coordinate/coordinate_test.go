@@ -1,9 +1,9 @@
-package domain_test
+package coordinate_test
 
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 )
 
 func TestNewModuleCoordinate(t *testing.T) {
@@ -18,11 +18,11 @@ func TestNewModuleCoordinate(t *testing.T) {
 		{"empty path", "", "v1.0.0", true},
 		{"empty version", "github.com/foo/bar", "", true},
 		{"invalid semver", "github.com/foo/bar", "1.0.0", true},
-		{"synthetic local main module", "example.com/project", domain.LocalVersion, false},
+		{"synthetic local main module", "example.com/project", coordinate.LocalVersion, false},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			c, err := domain.NewModuleCoordinate(tt.path, tt.version)
+			c, err := coordinate.NewModuleCoordinate(tt.path, tt.version)
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("NewModuleCoordinate(%q, %q) err=%v, wantErr=%v", tt.path, tt.version, err, tt.wantErr)
 			}
@@ -36,7 +36,7 @@ func TestNewModuleCoordinate(t *testing.T) {
 }
 
 func TestModuleCoordinate_String(t *testing.T) {
-	c := domain.ModuleCoordinate{Path: "github.com/gorilla/mux", Version: "v1.8.1"}
+	c := coordinate.ModuleCoordinate{Path: "github.com/gorilla/mux", Version: "v1.8.1"}
 	want := "github.com/gorilla/mux@v1.8.1"
 	if got := c.String(); got != want {
 		t.Errorf("String() = %q, want %q", got, want)
@@ -55,7 +55,7 @@ func TestModuleCoordinate_IsPseudoVersion(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.version, func(t *testing.T) {
-			c := domain.ModuleCoordinate{Path: "example.com/m", Version: tt.version}
+			c := coordinate.ModuleCoordinate{Path: "example.com/m", Version: tt.version}
 			if got := c.IsPseudoVersion(); got != tt.want {
 				t.Errorf("IsPseudoVersion() = %v, want %v", got, tt.want)
 			}
@@ -75,7 +75,7 @@ func TestModuleCoordinate_ExtractCommitPrefix(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.version, func(t *testing.T) {
-			c := domain.ModuleCoordinate{Path: "example.com/m", Version: tt.version}
+			c := coordinate.ModuleCoordinate{Path: "example.com/m", Version: tt.version}
 			got, err := c.ExtractCommitPrefix()
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("ExtractCommitPrefix() err=%v, wantErr=%v", err, tt.wantErr)
@@ -88,7 +88,7 @@ func TestModuleCoordinate_ExtractCommitPrefix(t *testing.T) {
 }
 
 func TestModuleCoordinate_UnmarshalJSON_StringForm(t *testing.T) {
-	var c domain.ModuleCoordinate
+	var c coordinate.ModuleCoordinate
 	if err := c.UnmarshalJSON([]byte(`"example.com/m@v1.0.0"`)); err != nil {
 		t.Fatalf("UnmarshalJSON string form: %v", err)
 	}
@@ -98,7 +98,7 @@ func TestModuleCoordinate_UnmarshalJSON_StringForm(t *testing.T) {
 }
 
 func TestModuleCoordinate_UnmarshalJSON_ObjectForm(t *testing.T) {
-	var c domain.ModuleCoordinate
+	var c coordinate.ModuleCoordinate
 	if err := c.UnmarshalJSON([]byte(`{"Path":"example.com/m","Version":"v1.0.0"}`)); err != nil {
 		t.Fatalf("UnmarshalJSON object form: %v", err)
 	}
@@ -108,14 +108,14 @@ func TestModuleCoordinate_UnmarshalJSON_ObjectForm(t *testing.T) {
 }
 
 func TestModuleCoordinate_UnmarshalJSON_InvalidString(t *testing.T) {
-	var c domain.ModuleCoordinate
+	var c coordinate.ModuleCoordinate
 	if err := c.UnmarshalJSON([]byte(`"notavalidcoord"`)); err == nil {
 		t.Fatal("expected error for invalid coordinate string")
 	}
 }
 
 func TestModuleCoordinate_UnmarshalJSON_InvalidJSON(t *testing.T) {
-	var c domain.ModuleCoordinate
+	var c coordinate.ModuleCoordinate
 	if err := c.UnmarshalJSON([]byte(`{invalid`)); err == nil {
 		t.Fatal("expected error for invalid JSON object")
 	}

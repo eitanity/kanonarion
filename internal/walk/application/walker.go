@@ -6,7 +6,8 @@ import (
 	"log/slog"
 	"path/filepath"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	domain2 "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -71,7 +72,7 @@ func NewWalker(
 
 // WalkRequest is the input to Walk.
 type WalkRequest struct {
-	Target      fetchdomain.ModuleCoordinate
+	Target      coordinate.ModuleCoordinate
 	Force       bool // re-fetch every module, ignoring the cache
 	WorkerCount int  // 0 = use the Walker's default
 	// SkipVCSVerify skips git cross-verification for every module in the walk.
@@ -98,7 +99,7 @@ type WalkRequest struct {
 	// are joined with this base to form the absolute filesystem location.
 	LocalReplaceBase string
 	// ProjectMode roots the walk at the local main module rather than fetching
-	// Target. Target carries the main module path at fetchdomain.LocalVersion,
+	// Target. Target carries the main module path at coordinate.LocalVersion,
 	// and MainModuleGoMod holds the working tree's go.mod. The resulting record
 	// has a single root whose closure is the union of all require directives, so
 	// downstream consumers (notably SBOM metadata.component) describe the project
@@ -155,7 +156,7 @@ func (w *Walker) Walk(ctx context.Context, req WalkRequest) (domain2.WalkOutcome
 		// requires a non-empty Graph.Target. Overwritten wholesale by the
 		// resolver's graph on the success paths.
 		Graph:          domain2.Graph{Target: req.Target},
-		PerNodeResults: make(map[fetchdomain.ModuleCoordinate]domain2.NodeResult),
+		PerNodeResults: make(map[coordinate.ModuleCoordinate]domain2.NodeResult),
 		StartedAt:      startedAt,
 	}
 
@@ -520,7 +521,7 @@ func (w *Walker) ingestProjectRoot(
 func (w *Walker) fetchOne(
 	ctx context.Context,
 	rec *recordingFetcher,
-	c fetchdomain.ModuleCoordinate,
+	c coordinate.ModuleCoordinate,
 	force bool,
 	_ *slog.Logger,
 ) domain2.NodeResult {
@@ -556,8 +557,8 @@ func (w *Walker) fetchOne(
 // aggregateStatus derives the WalkStatus from the per-node results map.
 func aggregateStatus(
 	ctx context.Context,
-	results map[fetchdomain.ModuleCoordinate]domain2.NodeResult,
-	target fetchdomain.ModuleCoordinate,
+	results map[coordinate.ModuleCoordinate]domain2.NodeResult,
+	target coordinate.ModuleCoordinate,
 ) domain2.WalkStatus {
 	if ctx.Err() != nil {
 		return domain2.WalkCancelled

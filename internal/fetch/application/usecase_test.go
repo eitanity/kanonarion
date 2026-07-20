@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/fetch/application"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
@@ -16,7 +17,7 @@ import (
 
 var (
 	fixedTime  = time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
-	testCoord  = domain2.ModuleCoordinate{Path: "github.com/gorilla/mux", Version: "v1.8.1"}
+	testCoord  = coordinate.ModuleCoordinate{Path: "github.com/gorilla/mux", Version: "v1.8.1"}
 	discardLog = slog.New(slog.NewTextHandler(noopWriter{}, nil))
 )
 
@@ -351,7 +352,7 @@ func TestExecute_UnverifiedHashMismatch_SumDB(t *testing.T) {
 
 func TestExecute_UnverifiedNoSumDB_NonGitHub(t *testing.T) {
 	// gopkg.in module: can't infer VCS URL; sumdb disabled → UnverifiedNoSumDB.
-	coord := domain2.ModuleCoordinate{Path: "gopkg.in/yaml.v3", Version: "v3.0.1"}
+	coord := coordinate.ModuleCoordinate{Path: "gopkg.in/yaml.v3", Version: "v3.0.1"}
 	proxy := &fakeProxy{}
 	vcs := &fakeVCS{}
 	blobs := newFakeBlob()

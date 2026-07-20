@@ -6,7 +6,7 @@ import (
 	"time"
 	"unicode"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 )
 
 // ExampleSchemaVersion is the version of the ExampleRecord JSON schema. Bump
@@ -80,7 +80,7 @@ type ExampleRecord struct {
 	SchemaVersion string
 	// Ecosystem declares the schema's scope; always fetchdomain.EcosystemGo.
 	Ecosystem       string
-	Coordinate      fetchdomain.ModuleCoordinate
+	Coordinate      coordinate.ModuleCoordinate
 	Examples        []ExampleEntry // sorted by (Package, AssociatedSymbol, Name)
 	ParseFailures   []ParseFailure // files that failed AST parsing
 	OverallStatus   ExampleStatus

@@ -9,10 +9,12 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/spf13/cobra"
 
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	vendports "github.com/eitanity/kanonarion/internal/vendortree/ports"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	domain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -164,21 +166,21 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 }
 
 // resolveCoordForInspect parses the module arg, resolving @latest if needed.
-func resolveCoordForInspect(ctx context.Context, arg, _, goproxy string, stderr io.Writer) (fetchdomain.ModuleCoordinate, error) {
+func resolveCoordForInspect(ctx context.Context, arg, _, goproxy string, stderr io.Writer) (coordinate.ModuleCoordinate, error) {
 	path, version, err := parseModuleArg(arg)
 	if err != nil {
-		return fetchdomain.ModuleCoordinate{}, fmt.Errorf("invalid argument %q: %w", arg, err)
+		return coordinate.ModuleCoordinate{}, fmt.Errorf("invalid argument %q: %w", arg, err)
 	}
 	if version == "latest" {
 		proxy, err := proxyadapter.New(goproxy, false)
 		if err != nil {
-			return fetchdomain.ModuleCoordinate{}, fmt.Errorf("creating proxy: %w", err)
+			return coordinate.ModuleCoordinate{}, fmt.Errorf("creating proxy: %w", err)
 		}
 		return resolveLatest(ctx, path, proxy, stderr)
 	}
-	coord, err := fetchdomain.NewModuleCoordinate(path, version)
+	coord, err := coordinate.NewModuleCoordinate(path, version)
 	if err != nil {
-		return fetchdomain.ModuleCoordinate{}, fmt.Errorf("invalid coordinate %q: %w", arg, err)
+		return coordinate.ModuleCoordinate{}, fmt.Errorf("invalid coordinate %q: %w", arg, err)
 	}
 	return coord, nil
 }
@@ -256,7 +258,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 	}
 
 	// Look up the project walk record for its ID and node counts.
-	localCoord := fetchdomain.ModuleCoordinate{Path: modulePath, Version: fetchdomain.LocalVersion}
+	localCoord := coordinate.ModuleCoordinate{Path: modulePath, Version: coordinate.LocalVersion}
 	walkScope := domain.WalkScope(scope)
 	walks, qerr := ctr.QueryWalks.ListWalks(ctx, walkports.WalkFilter{Target: &localCoord, Scope: &walkScope, Limit: 1})
 	if qerr != nil {
@@ -374,7 +376,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 }
 
 // latestWalkIDForCoord returns the ID of the most recent walk for the given coordinate.
-func latestWalkIDForCoord(ctx context.Context, uc QueryWalksUseCase, coord fetchdomain.ModuleCoordinate) (string, error) {
+func latestWalkIDForCoord(ctx context.Context, uc QueryWalksUseCase, coord coordinate.ModuleCoordinate) (string, error) {
 	walks, err := uc.ListWalks(ctx, walkports.WalkFilter{Target: &coord, Limit: 1})
 	if err != nil {
 		return "", fmt.Errorf("listing walks for %s: %w", coord, err)
@@ -387,7 +389,7 @@ func latestWalkIDForCoord(ctx context.Context, uc QueryWalksUseCase, coord fetch
 
 // latestWalkIDForCoordScope returns the ID of the most recent walk for the given
 // coordinate and scope.
-func latestWalkIDForCoordScope(ctx context.Context, uc QueryWalksUseCase, coord fetchdomain.ModuleCoordinate, scope domain.WalkScope) (string, error) {
+func latestWalkIDForCoordScope(ctx context.Context, uc QueryWalksUseCase, coord coordinate.ModuleCoordinate, scope domain.WalkScope) (string, error) {
 	walks, err := uc.ListWalks(ctx, walkports.WalkFilter{Target: &coord, Scope: &scope, Limit: 1})
 	if err != nil {
 		return "", fmt.Errorf("listing walks for %s: %w", coord, err)

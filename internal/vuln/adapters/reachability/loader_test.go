@@ -5,9 +5,11 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	callgraphdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	"github.com/eitanity/kanonarion/internal/vuln/adapters/reachability"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
 )
@@ -20,7 +22,7 @@ type fakeStore struct {
 	err    error
 }
 
-func (s *fakeStore) GetCallGraphRecord(_ context.Context, _ fetchdomain.ModuleCoordinate, _ string) (callgraphdomain.CallGraphRecord, bool, error) {
+func (s *fakeStore) GetCallGraphRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string) (callgraphdomain.CallGraphRecord, bool, error) {
 	return s.record, s.found, s.err
 }
 
@@ -40,7 +42,7 @@ func (s *fakeStore) FindCallees(context.Context, string, string) ([]cgports.Call
 	return nil, nil
 }
 
-var loaderCoord = fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+var loaderCoord = coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 
 func TestLoad_ProjectsRecord(t *testing.T) {
 	rec := callgraphdomain.CallGraphRecord{

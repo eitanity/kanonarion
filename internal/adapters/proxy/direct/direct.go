@@ -17,6 +17,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 	"golang.org/x/mod/module"
@@ -76,7 +78,7 @@ func resolveProxy() string {
 }
 
 // Info fetches the.info endpoint for the module version.
-func (p *Proxy) Info(ctx context.Context, coord domain2.ModuleCoordinate) (_ ports.ModuleInfo, retErr error) {
+func (p *Proxy) Info(ctx context.Context, coord coordinate.ModuleCoordinate) (_ ports.ModuleInfo, retErr error) {
 	escapedPath, err := module.EscapePath(coord.Path)
 	if err != nil {
 		return ports.ModuleInfo{}, fmt.Errorf("escaping module path %q: %w", coord.Path, err)
@@ -171,14 +173,14 @@ type LatestVersionInfo struct {
 // Latest fetches the /@latest endpoint and returns the resolved coordinate.
 // The proxy resolves "latest" as the highest tagged release, or the highest
 // pre-release if no release exists.
-func (p *Proxy) Latest(ctx context.Context, path string) (_ domain2.ModuleCoordinate, retErr error) {
+func (p *Proxy) Latest(ctx context.Context, path string) (_ coordinate.ModuleCoordinate, retErr error) {
 	info, err := p.LatestInfo(ctx, path)
 	if err != nil {
-		return domain2.ModuleCoordinate{}, err
+		return coordinate.ModuleCoordinate{}, err
 	}
-	coord, err := domain2.NewModuleCoordinate(path, info.Version)
+	coord, err := coordinate.NewModuleCoordinate(path, info.Version)
 	if err != nil {
-		return domain2.ModuleCoordinate{}, fmt.Errorf("proxy returned invalid version %q for %s: %w", info.Version, path, err)
+		return coordinate.ModuleCoordinate{}, fmt.Errorf("proxy returned invalid version %q for %s: %w", info.Version, path, err)
 	}
 	return coord, nil
 }
@@ -216,7 +218,7 @@ func (p *Proxy) LatestInfo(ctx context.Context, path string) (_ LatestVersionInf
 // Download fetches the module zip and go.mod. ZipHash and GoModHash are always
 // computed from the received bytes — the proxy's own.ziphash claim is not
 // trusted. Returns an error if the download exceeds maxZipBytes.
-func (p *Proxy) Download(ctx context.Context, coord domain2.ModuleCoordinate) (ports.ModuleDownload, error) {
+func (p *Proxy) Download(ctx context.Context, coord coordinate.ModuleCoordinate) (ports.ModuleDownload, error) {
 	escapedPath, err := module.EscapePath(coord.Path)
 	if err != nil {
 		return ports.ModuleDownload{}, fmt.Errorf("escaping module path: %w", err)

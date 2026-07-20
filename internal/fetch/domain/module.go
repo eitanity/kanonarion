@@ -1,6 +1,10 @@
 package domain
 
-import "time"
+import (
+	"time"
+
+	"github.com/eitanity/kanonarion/internal/coordinate"
+)
 
 // VerificationStatus describes the outcome of cross-verifying a module zip
 // against the checksum database and its git source.
@@ -83,7 +87,7 @@ func (s VerificationStatus) IsVerified() bool {
 // verification outcome.
 type FetchedModule struct {
 	// Coordinate identifies the module and version.
-	Coordinate ModuleCoordinate
+	Coordinate coordinate.ModuleCoordinate
 
 	// ModuleHash is the h1 hash of the module zip, as reported by the proxy.
 	ModuleHash ModuleHash

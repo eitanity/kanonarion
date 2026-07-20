@@ -5,6 +5,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
@@ -58,7 +59,7 @@ func TestMigrateConfidence(t *testing.T) {
 }
 
 func TestCallGraphRecordSort(t *testing.T) {
-	coord, _ := fetchdomain.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	coord, _ := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
 	r := domain.CallGraphRecord{
 		Coordinate: coord,
 		Nodes: []domain.CallNode{
@@ -90,7 +91,7 @@ func TestCallGraphRecordSort(t *testing.T) {
 }
 
 func makeTestRecord() domain.CallGraphRecord {
-	coord, _ := fetchdomain.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	coord, _ := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
 	return domain.CallGraphRecord{
 		SchemaVersion: domain.CallGraphSchemaVersion,
 		Ecosystem:     fetchdomain.EcosystemGo,

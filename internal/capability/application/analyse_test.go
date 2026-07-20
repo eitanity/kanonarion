@@ -5,9 +5,10 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	capdomain "github.com/eitanity/kanonarion/internal/capability/domain"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 type fakeSource struct {
@@ -15,7 +16,7 @@ type fakeSource struct {
 	err     error
 }
 
-func (f fakeSource) GetCallGraphRecord(_ context.Context, coord fetchdomain.ModuleCoordinate, _ string) (cgdomain.CallGraphRecord, bool, error) {
+func (f fakeSource) GetCallGraphRecord(_ context.Context, coord coordinate.ModuleCoordinate, _ string) (cgdomain.CallGraphRecord, bool, error) {
 	if f.err != nil {
 		return cgdomain.CallGraphRecord{}, false, f.err
 	}
@@ -23,9 +24,9 @@ func (f fakeSource) GetCallGraphRecord(_ context.Context, coord fetchdomain.Modu
 	return rec, ok, nil
 }
 
-func coord(t *testing.T, path, version string) fetchdomain.ModuleCoordinate {
+func coord(t *testing.T, path, version string) coordinate.ModuleCoordinate {
 	t.Helper()
-	c, err := fetchdomain.NewModuleCoordinate(path, version)
+	c, err := coordinate.NewModuleCoordinate(path, version)
 	if err != nil {
 		t.Fatal(err)
 	}

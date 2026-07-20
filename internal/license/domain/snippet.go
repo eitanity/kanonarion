@@ -7,7 +7,7 @@ import (
 	"sort"
 	"strings"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 )
 
 // Third-party code is sometimes transcribed into first-party source rather
@@ -40,7 +40,7 @@ type SnippetAttribution struct {
 	// origin coordinate when the tag is absent.
 	Name string
 	// Coordinate is the canonical origin extracted from SPDX-SnippetComment.
-	Coordinate fetchdomain.ModuleCoordinate
+	Coordinate coordinate.ModuleCoordinate
 	// SPDX is a single SPDX identifier; compound expressions are rejected.
 	SPDX string
 	// Copyright is the verbatim notice from SPDX-SnippetCopyrightText.
@@ -56,7 +56,7 @@ type SnippetAttribution struct {
 // The character class stops at whitespace and at punctuation that commonly
 // trails a coordinate in prose (comma, semicolon), so "…capslock@v0.3.2,
 // interesting/interesting.cm" yields the coordinate and not the prose after
-// it. The token is then validated by fetchdomain.ParseModuleCoordinate, so
+// it. The token is then validated by coordinate.ParseModuleCoordinate, so
 // this regex only has to find a candidate, not decide it is well-formed.
 var coordinateInComment = regexp.MustCompile(`[A-Za-z0-9._~/-]+@v[0-9][A-Za-z0-9.+\-]*`)
 
@@ -138,7 +138,7 @@ func parseSnippetBlock(sourcePath string, lines []string, start int) (SnippetAtt
 	if coordStr == "" {
 		return fail("%s contains no module@version origin coordinate: %q", tagComment, comment)
 	}
-	coord, err := fetchdomain.ParseModuleCoordinate(coordStr)
+	coord, err := coordinate.ParseModuleCoordinate(coordStr)
 	if err != nil {
 		return fail("invalid origin coordinate %q: %v", coordStr, err)
 	}

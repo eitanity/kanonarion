@@ -71,8 +71,8 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
 
-	vulnfetch "github.com/eitanity/kanonarion/internal/vuln/adapters/fetch"
 	vulncallgraph "github.com/eitanity/kanonarion/internal/vuln/adapters/callgraph"
+	vulnfetch "github.com/eitanity/kanonarion/internal/vuln/adapters/fetch"
 	"github.com/eitanity/kanonarion/internal/vuln/adapters/reachability"
 	vulnsqlite "github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
 	govulncheck "github.com/eitanity/kanonarion/internal/vuln/adapters/vuln/govulncheck"
@@ -343,7 +343,16 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		return nil, nil, fmt.Errorf("resolving executable path for callgraph subprocess: %w", err)
 	}
 	cgSubprocessExec := extextractor.NewOsSubprocessExecutor(kanonarionBinary)
-	adapterExtractor := extextractor.NewAdapterExtractor(licExtractUC, ifaceExtractUC, cgSubprocessExec, cgStore, cgapp.PipelineVersion, exExtractUC)
+	// The callgraph stage runs as a fresh subprocess (see NewAdapterExtractor),
+	// which does not inherit this process's --store-root/--from-modcache
+	// state. Without these the child falls back to the default store root and
+	// the plain content-addressed blob store, and a modcache-sourced module
+	// (a "modcache:zip:" blob handle) fails to resolve.
+	cgExtraArgs := []string{"--store-root=" + storeRoot}
+	if modcacheMode {
+		cgExtraArgs = append(cgExtraArgs, "--from-modcache="+modcacheDir)
+	}
+	adapterExtractor := extextractor.NewAdapterExtractor(licExtractUC, ifaceExtractUC, cgSubprocessExec, cgStore, cgapp.PipelineVersion, cgExtraArgs, exExtractUC)
 	pipelineVersions := map[string]string{
 		"license":   "0.1.0",
 		"interface": "0.1.0",

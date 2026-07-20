@@ -3,17 +3,17 @@ package domain
 import (
 	"testing"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 )
 
-func c(path, version string) fetchdomain.ModuleCoordinate {
-	return fetchdomain.ModuleCoordinate{Path: path, Version: version}
+func c(path, version string) coordinate.ModuleCoordinate {
+	return coordinate.ModuleCoordinate{Path: path, Version: version}
 }
 
 // FilterGraphToScope keeps the main anchor plus the kept module paths, drops the
 // rest, and retains only edges whose endpoints both survive.
 func TestFilterGraphToScope_KeepsSetDropsRest(t *testing.T) {
-	main := c("example.com/project", fetchdomain.LocalVersion)
+	main := c("example.com/project", coordinate.LocalVersion)
 	g := Graph{
 		Target: main,
 		Nodes: []GraphNode{
@@ -60,7 +60,7 @@ func TestFilterGraphToScope_KeepsSetDropsRest(t *testing.T) {
 // entire surface (regression: mattn/go-sqlite3 => rqlite/go-sqlite3 vanished from
 // the walk though it is linked into the binary).
 func TestFilterGraphToScope_KeepsModuleReplaceByOriginalPath(t *testing.T) {
-	main := c("example.com/project", fetchdomain.LocalVersion)
+	main := c("example.com/project", coordinate.LocalVersion)
 	replaced := GraphNode{
 		Coordinate:         c("example.com/fork", "v1.47.0"), // replacement (what compiles)
 		OriginalCoordinate: c("example.com/orig", "v1.14.0"), // require path (in keep)
@@ -99,7 +99,7 @@ func TestFilterGraphToScope_KeepsModuleReplaceByOriginalPath(t *testing.T) {
 // An empty keep-set leaves only the main anchor — never the whole graph, so a
 // scope can never be silently widened to everything.
 func TestFilterGraphToScope_EmptyKeepsOnlyMain(t *testing.T) {
-	main := c("example.com/project", fetchdomain.LocalVersion)
+	main := c("example.com/project", coordinate.LocalVersion)
 	g := Graph{
 		Target: main,
 		Nodes: []GraphNode{
@@ -119,7 +119,7 @@ func TestFilterGraphToScope_EmptyKeepsOnlyMain(t *testing.T) {
 
 // Partial/metadata fields are carried through the filter unchanged.
 func TestFilterGraphToScope_PreservesGraphMetadata(t *testing.T) {
-	main := c("example.com/project", fetchdomain.LocalVersion)
+	main := c("example.com/project", coordinate.LocalVersion)
 	g := Graph{
 		Target:          main,
 		PipelineVersion: "1.5.0",

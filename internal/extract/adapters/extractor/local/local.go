@@ -7,9 +7,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/extract/domain"
 	"github.com/eitanity/kanonarion/internal/extract/ports"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	exapp "github.com/eitanity/kanonarion/internal/example/application"
@@ -43,7 +44,7 @@ type SubprocessExecutor interface {
 // CallGraphReader reads a persisted call graph record from the store.
 // It is satisfied by [*cgapp.QueryCallGraphUseCase].
 type CallGraphReader interface {
-	GetCallGraphRecord(ctx context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string) (cgdomain.CallGraphRecord, bool, error)
+	GetCallGraphRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (cgdomain.CallGraphRecord, bool, error)
 }
 
 type ExampleUseCase interface {
@@ -59,7 +60,12 @@ type AdapterExtractor struct {
 	cgExec            SubprocessExecutor
 	cgReader          CallGraphReader
 	cgPipelineVersion string
-	example           ExampleUseCase
+	// cgExtraArgs is appended to the "callgraph" subprocess invocation, after
+	// the coordinate and before --force. It carries CLI state that is
+	// process-global in the parent (e.g. --store-root, --from-modcache) and
+	// therefore does not otherwise cross the subprocess boundary.
+	cgExtraArgs []string
+	example     ExampleUseCase
 }
 
 func NewAdapterExtractor(
@@ -68,6 +74,7 @@ func NewAdapterExtractor(
 	cgExec SubprocessExecutor,
 	cgReader CallGraphReader,
 	cgPipelineVersion string,
+	cgExtraArgs []string,
 	ex ExampleUseCase,
 ) *AdapterExtractor {
 	return &AdapterExtractor{
@@ -76,11 +83,12 @@ func NewAdapterExtractor(
 		cgExec:            cgExec,
 		cgReader:          cgReader,
 		cgPipelineVersion: cgPipelineVersion,
+		cgExtraArgs:       cgExtraArgs,
 		example:           ex,
 	}
 }
 
-func (a *AdapterExtractor) Extract(ctx context.Context, coord fetchdomain.ModuleCoordinate, stage string, force bool) (ports.StageResult, error) {
+func (a *AdapterExtractor) Extract(ctx context.Context, coord coordinate.ModuleCoordinate, stage string, force bool) (ports.StageResult, error) {
 	switch stage {
 	case "license":
 		res, err := a.license.Execute(ctx, licapp.ExtractRequest{Coordinate: coord, Force: force})
@@ -141,11 +149,12 @@ func (a *AdapterExtractor) Extract(ctx context.Context, coord fetchdomain.Module
 // extractCallgraphSubprocess runs the callgraph stage by spawning a child
 // process. The child runs the full callgraph extraction and persists the record
 // to the store. The parent reads the record back on success.
-func (a *AdapterExtractor) extractCallgraphSubprocess(ctx context.Context, coord fetchdomain.ModuleCoordinate, force bool) (ports.StageResult, error) {
+func (a *AdapterExtractor) extractCallgraphSubprocess(ctx context.Context, coord coordinate.ModuleCoordinate, force bool) (ports.StageResult, error) {
 	cgCtx, cancel := context.WithTimeout(ctx, callgraphSubprocessTimeout)
 	defer cancel()
 
 	args := []string{"callgraph", coord.String()}
+	args = append(args, a.cgExtraArgs...)
 	if force {
 		args = append(args, "--force")
 	}

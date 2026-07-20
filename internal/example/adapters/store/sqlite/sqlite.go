@@ -11,10 +11,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
 	domain2 "github.com/eitanity/kanonarion/internal/example/domain"
 	"github.com/eitanity/kanonarion/internal/example/ports"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
 )
 
@@ -178,7 +180,7 @@ INSERT INTO example_index (
 // GetExampleRecord retrieves and tamper-checks the example record for the
 // given coordinate and pipeline version. Returns (zero, false, nil) if not
 // found. Returns (zero, false, ErrExampleIntegrity) on hash mismatch.
-func (s *Store) GetExampleRecord(ctx context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string) (domain2.ExampleRecord, bool, error) {
+func (s *Store) GetExampleRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain2.ExampleRecord, bool, error) {
 	const q = `SELECT serialised, content_hash FROM example_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 
@@ -319,7 +321,7 @@ func (s *Store) FindBySymbol(ctx context.Context, symbol string, pipelineVersion
 // FindBySymbolInModule returns index entries for examples associated with the
 // given symbol within a specific module@version. Applies the same
 // package-qualification stripping as FindBySymbol.
-func (s *Store) FindBySymbolInModule(ctx context.Context, coord fetchdomain.ModuleCoordinate, symbol string, pipelineVersion string) ([]ports.ExampleRef, error) {
+func (s *Store) FindBySymbolInModule(ctx context.Context, coord coordinate.ModuleCoordinate, symbol string, pipelineVersion string) ([]ports.ExampleRef, error) {
 	lookup := symbol
 	if idx := strings.Index(symbol, "."); idx >= 0 {
 		pkg := symbol[:idx]

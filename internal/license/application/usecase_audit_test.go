@@ -5,8 +5,10 @@ import (
 	"context"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/audit"
-	"github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	"github.com/eitanity/kanonarion/internal/license/application"
 	domain2 "github.com/eitanity/kanonarion/internal/license/domain"
 	"github.com/eitanity/kanonarion/internal/license/ports"
@@ -37,7 +39,7 @@ func (s *recordingAuditSink) ofType(t audit.EventType) []audit.Event {
 // module zip carrying the given files, then runs extraction with det.
 func extractWithAudit(
 	t *testing.T,
-	coord domain.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 	files map[string]string,
 	det ports.LicenseDetector,
 	sink ports.AuditSink,
@@ -101,7 +103,7 @@ func TestExecute_EmitsLicenseExtracted(t *testing.T) {
 func assertOneLicenseEvent(
 	t *testing.T,
 	sink *recordingAuditSink,
-	coord domain.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 	wantSPDX string,
 	wantStatus domain2.LicenseStatus,
 ) {

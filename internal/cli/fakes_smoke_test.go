@@ -14,6 +14,7 @@ import (
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
 	configdomain "github.com/eitanity/kanonarion/internal/config/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	exapp "github.com/eitanity/kanonarion/internal/example/application"
 	exdomain "github.com/eitanity/kanonarion/internal/example/domain"
 	exports "github.com/eitanity/kanonarion/internal/example/ports"
@@ -36,9 +37,9 @@ import (
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
-func coord(t *testing.T, path, version string) fetchdomain.ModuleCoordinate {
+func coord(t *testing.T, path, version string) coordinate.ModuleCoordinate {
 	t.Helper()
-	c, err := fetchdomain.NewModuleCoordinate(path, version)
+	c, err := coordinate.NewModuleCoordinate(path, version)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -353,7 +354,7 @@ func TestFakeQueryVuln_AllMethods(t *testing.T) {
 		t.Fatalf("ListRecordsByFindingID: %v %v", byID, err)
 	}
 
-	empty, _ := fetchdomain.NewModuleCoordinate("example.com/z", "v1.0.0")
+	empty, _ := coordinate.NewModuleCoordinate("example.com/z", "v1.0.0")
 	list2, err := f.ListRecordsForModule(context.Background(), empty, "0.1.0")
 	if err != nil || list2 != nil {
 		t.Fatalf("empty ListRecordsForModule: %v %v", list2, err)

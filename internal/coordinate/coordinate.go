@@ -1,4 +1,4 @@
-package domain
+package coordinate
 
 import (
 	"encoding/json"

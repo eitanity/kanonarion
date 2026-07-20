@@ -3,8 +3,10 @@ package ports
 import (
 	"context"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	callgraphdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	"github.com/eitanity/kanonarion/internal/local/domain"
 )
 
@@ -30,7 +32,7 @@ type VulnFindingLoader interface {
 	// LoadFindings returns all stored CVE findings for each coordinate that has
 	// at least one finding. Coordinates with no findings are omitted from the
 	// result; errors for individual modules are surfaced in the error return.
-	LoadFindings(ctx context.Context, coords []fetchdomain.ModuleCoordinate) (map[fetchdomain.ModuleCoordinate][]VulnFinding, error)
+	LoadFindings(ctx context.Context, coords []coordinate.ModuleCoordinate) (map[coordinate.ModuleCoordinate][]VulnFinding, error)
 }
 
 // SymbolProbeResult is returned by SymbolTableProber.Probe.
@@ -67,7 +69,7 @@ type DependencyLoader interface {
 	// from the global store at the given pipeline version. Coordinates that
 	// have no stored record are silently omitted from the result — the caller
 	// decides how to handle gaps in coverage.
-	LoadCallGraphRecords(ctx context.Context, coords []fetchdomain.ModuleCoordinate, pipelineVersion string) ([]callgraphdomain.CallGraphRecord, error)
+	LoadCallGraphRecords(ctx context.Context, coords []coordinate.ModuleCoordinate, pipelineVersion string) ([]callgraphdomain.CallGraphRecord, error)
 }
 
 // WorkspaceInfo carries the parsed metadata extracted from a Snapshot.

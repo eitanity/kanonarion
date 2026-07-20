@@ -5,8 +5,10 @@ import (
 	"errors"
 	"io"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/audit"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 )
 
@@ -31,7 +33,7 @@ type VulnerabilityStore interface {
 	// GetVulnerabilityRecord retrieves a record by coordinate, pipeline version, and snapshot.
 	GetVulnerabilityRecord(
 		ctx context.Context,
-		coord fetchdomain.ModuleCoordinate,
+		coord coordinate.ModuleCoordinate,
 		pipelineVersion string,
 		snapshot domain.DatabaseSnapshot,
 	) (domain.VulnerabilityRecord, bool, error)
@@ -41,7 +43,7 @@ type VulnerabilityStore interface {
 	// Returns (zero, false, nil) if no record exists.
 	GetLatestVulnerabilityRecord(
 		ctx context.Context,
-		coord fetchdomain.ModuleCoordinate,
+		coord coordinate.ModuleCoordinate,
 		pipelineVersion string,
 	) (domain.VulnerabilityRecord, bool, error)
 
@@ -50,7 +52,7 @@ type VulnerabilityStore interface {
 	// Returns (zero, false, nil) if no record exists for that walk.
 	GetLatestVulnerabilityRecordForWalk(
 		ctx context.Context,
-		coord fetchdomain.ModuleCoordinate,
+		coord coordinate.ModuleCoordinate,
 		pipelineVersion string,
 		walkID string,
 	) (domain.VulnerabilityRecord, bool, error)
@@ -92,7 +94,7 @@ type VulnerabilityStore interface {
 	// by scanned_at descending (most recent first).
 	ListVulnerabilityRecordsForModule(
 		ctx context.Context,
-		coord fetchdomain.ModuleCoordinate,
+		coord coordinate.ModuleCoordinate,
 		pipelineVersion string,
 	) ([]domain.VulnerabilityRecord, error)
 }
@@ -106,7 +108,7 @@ type VulnerabilityScanner interface {
 	Preflight(ctx context.Context) error
 	Scan(
 		ctx context.Context,
-		coord fetchdomain.ModuleCoordinate,
+		coord coordinate.ModuleCoordinate,
 		moduleSource io.Reader,
 		snapshot domain.DatabaseSnapshot,
 		goModCache string, // pre-populated GOMODCACHE dir; empty = govulncheck downloads as needed
@@ -149,7 +151,7 @@ type VulnerabilityDatabase interface {
 
 	// CheckVulnerable checks if the given modules at specific versions have any known
 	// vulnerabilities in the database. This is a lightweight metadata check.
-	CheckVulnerable(ctx context.Context, modules []fetchdomain.ModuleCoordinate) (map[fetchdomain.ModuleCoordinate][]string, error)
+	CheckVulnerable(ctx context.Context, modules []coordinate.ModuleCoordinate) (map[coordinate.ModuleCoordinate][]string, error)
 
 	// LookupFindings returns enriched advisory metadata for every known
 	// vulnerability affecting coord, sourced from the per-advisory OSV records:
@@ -158,20 +160,20 @@ type VulnerabilityDatabase interface {
 	// module cannot be scanned from source so each finding still answers "will a
 	// version bump fix it?" and "which symbol is at risk?" without the user
 	// leaving the tool to query the advisory database directly.
-	LookupFindings(ctx context.Context, coord fetchdomain.ModuleCoordinate) ([]domain.VulnerabilityFinding, error)
+	LookupFindings(ctx context.Context, coord coordinate.ModuleCoordinate) ([]domain.VulnerabilityFinding, error)
 }
 
 // ModuleFetcher is a narrow port used by ScanWalkUseCase to pre-fetch modules
 // that are missing from the fact store before populating the GOMODCACHE.
 type ModuleFetcher interface {
-	FetchModule(ctx context.Context, coord fetchdomain.ModuleCoordinate) error
+	FetchModule(ctx context.Context, coord coordinate.ModuleCoordinate) error
 }
 
 // ReachabilityAnalyser defines the port for call-graph-based reachability analysis.
 type ReachabilityAnalyser interface {
 	Analyse(
 		ctx context.Context,
-		targetCoord fetchdomain.ModuleCoordinate,
+		targetCoord coordinate.ModuleCoordinate,
 		targetSymbols []SymbolReference,
 		callGraphLoader CallGraphLoader,
 	) (domain.ReachabilityResult, error)
@@ -189,7 +191,7 @@ type SymbolReference struct {
 // so a callgraph schema change does not ripple into this port; the mapping
 // lives in the reachability adapter.
 type CallGraphLoader interface {
-	Load(ctx context.Context, coord fetchdomain.ModuleCoordinate) (CallGraphProjection, error)
+	Load(ctx context.Context, coord coordinate.ModuleCoordinate) (CallGraphProjection, error)
 }
 
 // CallGraphProjection is the minimal view of a call graph the reachability
@@ -235,5 +237,5 @@ type CallGraphEdge struct {
 // the CallGraphLoader. The raw stderr and any exec error are returned so the
 // caller can compose an actionable ReachabilityNote.
 type CallGraphSpawner interface {
-	Spawn(ctx context.Context, coord fetchdomain.ModuleCoordinate, force bool) (stderr []byte, err error)
+	Spawn(ctx context.Context, coord coordinate.ModuleCoordinate, force bool) (stderr []byte, err error)
 }

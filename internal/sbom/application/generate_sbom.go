@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	licenseports "github.com/eitanity/kanonarion/internal/license/ports"
 	"github.com/eitanity/kanonarion/internal/sbom/domain"
@@ -13,7 +15,6 @@ import (
 	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
 	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -73,7 +74,7 @@ type SBOMRequest struct {
 	// AllowList restricts the component list to a specific set of modules —
 	// typically the import closure of a single binary (sbom --package).
 	// When non-empty the result is ephemeral: cache and persistence are skipped.
-	AllowList []fetchdomain.ModuleCoordinate
+	AllowList []coordinate.ModuleCoordinate
 	// MainComponentVersion overrides the version stamped on the SBOM subject
 	// (metadata.component) when it is the local main module; empty leaves the
 	// synthetic "local". A release passes its tag so the subject is a resolvable
@@ -119,7 +120,7 @@ func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (d
 
 	// 1a. Apply allowlist: restrict nodes/edges to the binary's import closure.
 	if scoped {
-		allowed := make(map[fetchdomain.ModuleCoordinate]bool, len(req.AllowList))
+		allowed := make(map[coordinate.ModuleCoordinate]bool, len(req.AllowList))
 		for _, c := range req.AllowList {
 			allowed[c] = true
 		}
@@ -134,18 +135,18 @@ func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (d
 		// standard-library component (and its --stdlib-from-gomod-pinned version).
 		// The allow-list is version-sensitive, so match and key edges on the full
 		// coordinate rather than the bare path.
-		inScope := func(c fetchdomain.ModuleCoordinate) bool {
+		inScope := func(c coordinate.ModuleCoordinate) bool {
 			return allowed[c] || c.Path == walkdomain.StdlibModulePath
 		}
 		walk.Graph.Nodes, walk.Graph.Edges = walkdomain.FilterGraph(
 			walk.Graph,
 			inScope,
-			func(c fetchdomain.ModuleCoordinate) fetchdomain.ModuleCoordinate { return c },
+			func(c coordinate.ModuleCoordinate) coordinate.ModuleCoordinate { return c },
 		)
 	}
 
 	// 2. Load licence records for all modules.
-	licenses := make(map[fetchdomain.ModuleCoordinate]licensedomain.LicenseRecord, len(walk.Graph.Nodes))
+	licenses := make(map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord, len(walk.Graph.Nodes))
 	for _, node := range walk.Graph.Nodes {
 		rec, ok, lerr := uc.licenseStore.GetLicenseRecord(ctx, node.Coordinate, uc.licensePipelineVersion)
 		if lerr != nil {

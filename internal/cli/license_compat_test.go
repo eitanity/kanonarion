@@ -7,7 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/license/domain"
 )
 
@@ -28,7 +29,7 @@ func TestPrintCompatReportText_Clean(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer
 	report := makeCompatReport(true)
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/root", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/root", Version: "v1.0.0"}
 	printCompatReportText(report, coord, &buf)
 	out := buf.String()
 	if !strings.Contains(out, "compatible with Apache-2.0") {
@@ -52,7 +53,7 @@ func TestPrintCompatReportText_IncompatibleConflict(t *testing.T) {
 		Verdict:       domain.VerdictIncompatible,
 		Kind:          domain.ConflictCopyleftPropagation,
 	})
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/root", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/root", Version: "v1.0.0"}
 	printCompatReportText(report, coord, &buf)
 	out := buf.String()
 	if !strings.Contains(out, "Incompatible") {
@@ -82,7 +83,7 @@ func TestPrintCompatReportText_UnknownWithNoRecord(t *testing.T) {
 		Verdict:       domain.VerdictUnknownPair,
 		Kind:          domain.ConflictUnknownPair,
 	})
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/root", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/root", Version: "v1.0.0"}
 	printCompatReportText(report, coord, &buf)
 	out := buf.String()
 	if !strings.Contains(out, "no license detected") {
@@ -108,7 +109,7 @@ func TestPrintCompatReportText_UnknownNamedSPDX(t *testing.T) {
 		Verdict:       domain.VerdictUnknownPair,
 		Kind:          domain.ConflictUnknownPair,
 	})
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/root", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/root", Version: "v1.0.0"}
 	printCompatReportText(report, coord, &buf)
 	out := buf.String()
 	if strings.Contains(out, "kanonarion extract") {

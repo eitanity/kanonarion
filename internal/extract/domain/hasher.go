@@ -8,6 +8,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
@@ -96,9 +98,9 @@ func (ExtractionRunHasher) Unmarshal(data []byte) (ExtractionRun, error) {
 		return ExtractionRun{}, fmt.Errorf("parsing completed_at %q: %w", c.CompletedAt, err)
 	}
 
-	perModule := make(map[fetchdomain.ModuleCoordinate]ModuleExtractionResult)
+	perModule := make(map[coordinate.ModuleCoordinate]ModuleExtractionResult)
 	for _, cm := range c.PerModuleResults {
-		coord, err := fetchdomain.NewModuleCoordinate(cm.Coordinate.Path, cm.Coordinate.Version)
+		coord, err := coordinate.NewModuleCoordinate(cm.Coordinate.Path, cm.Coordinate.Version)
 		if err != nil {
 			return ExtractionRun{}, fmt.Errorf("parsing coordinate: %w", err)
 		}
@@ -138,7 +140,7 @@ func marshalCanonicalRun(r ExtractionRun) ([]byte, error) {
 	copy(requested, r.RequestedStages)
 	sort.Strings(requested)
 
-	coords := make([]fetchdomain.ModuleCoordinate, 0, len(r.PerModuleResults))
+	coords := make([]coordinate.ModuleCoordinate, 0, len(r.PerModuleResults))
 	for c := range r.PerModuleResults {
 		coords = append(coords, c)
 	}
@@ -190,9 +192,17 @@ func marshalCanonicalRun(r ExtractionRun) ([]byte, error) {
 		WalkID:           r.WalkID,
 	}
 
-	data, err := json.Marshal(c)
+	data, err := canonicalMarshal(c)
 	if err != nil {
 		return nil, fmt.Errorf("failed to marshal canonical run: %w", err)
 	}
 	return data, nil
 }
+
+// canonicalMarshal is a seam over json.Marshal used to test the
+// marshal-failure guard's wrapping and propagation logic. No field in
+// canonicalExtractionRun can currently make json.Marshal fail (no NaN/Inf
+// floats, no unsupported types), so this proves the guard's error handling
+// is correct, not that the guard is reachable with a real value today — it
+// exists for the never-silent-failure invariant, not a known failure mode.
+var canonicalMarshal = json.Marshal

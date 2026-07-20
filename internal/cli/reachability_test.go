@@ -4,7 +4,8 @@ import (
 	"strings"
 	"testing"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	localdomain "github.com/eitanity/kanonarion/internal/local/domain"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 )
@@ -91,7 +92,7 @@ func TestReachabilityResultToOutput_Empty(t *testing.T) {
 	}
 }
 
-var reachCoord = fetchdomain.ModuleCoordinate{Path: "golang.org/x/text", Version: "v0.3.7"}
+var reachCoord = coordinate.ModuleCoordinate{Path: "golang.org/x/text", Version: "v0.3.7"}
 
 func scannedRecord(status vuldomain.VulnerabilityStatus, findings ...vuldomain.VulnerabilityFinding) vuldomain.VulnerabilityRecord {
 	return vuldomain.VulnerabilityRecord{

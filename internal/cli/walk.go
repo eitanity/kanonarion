@@ -7,8 +7,10 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchadapterproxy "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	"github.com/eitanity/kanonarion/internal/walk/application"
 	"github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -213,7 +215,7 @@ func runWalkProject(
 	// The main module is local and unpublished; pin it at the synthetic
 	// LocalVersion rather than a semver. NewModuleCoordinate is bypassed because
 	// "local" is not valid semver — the constant is the one exception it allows.
-	target := fetchdomain.ModuleCoordinate{Path: modulePath, Version: fetchdomain.LocalVersion}
+	target := coordinate.ModuleCoordinate{Path: modulePath, Version: coordinate.LocalVersion}
 
 	policy, policyHash, err := loadPolicy(ctx, policyPath, logger)
 	if err != nil {
@@ -309,7 +311,7 @@ func runWalk(
 		return fmt.Errorf("version required: use %s@<version> or %s@latest", path, path)
 	}
 
-	var coord fetchdomain.ModuleCoordinate
+	var coord coordinate.ModuleCoordinate
 	if version == "latest" {
 		proxy, proxyErr := fetchadapterproxy.New(f.goproxy, false)
 		if proxyErr != nil {
@@ -320,7 +322,7 @@ func runWalk(
 			return err
 		}
 	} else {
-		coord, err = fetchdomain.NewModuleCoordinate(path, version)
+		coord, err = coordinate.NewModuleCoordinate(path, version)
 		if err != nil {
 			return fmt.Errorf("invalid coordinate %q: %w", arg, err)
 		}

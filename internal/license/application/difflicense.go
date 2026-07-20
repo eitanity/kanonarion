@@ -4,7 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/license/domain"
 	licenseports "github.com/eitanity/kanonarion/internal/license/ports"
 )
@@ -26,7 +27,7 @@ func NewDiffLicenseUseCase(store licenseports.LicenseStore) *DiffLicenseUseCase 
 // has no license record in the store. It is a sentinel so CLI callers can map
 // to a deterministic exit code.
 type ErrLicenseRecordNotFound struct {
-	Coordinate fetchdomain.ModuleCoordinate
+	Coordinate coordinate.ModuleCoordinate
 }
 
 func (e *ErrLicenseRecordNotFound) Error() string {
@@ -38,7 +39,7 @@ func (e *ErrLicenseRecordNotFound) Error() string {
 // the store; a missing coordinate yields *ErrLicenseRecordNotFound.
 func (uc *DiffLicenseUseCase) Diff(
 	ctx context.Context,
-	coordA, coordB fetchdomain.ModuleCoordinate,
+	coordA, coordB coordinate.ModuleCoordinate,
 ) (domain.LicenseDiff, error) {
 	a, foundA, err := uc.store.GetLicenseRecord(ctx, coordA, uc.pipelineVersion)
 	if err != nil {

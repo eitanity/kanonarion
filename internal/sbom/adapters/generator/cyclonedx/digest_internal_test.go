@@ -5,6 +5,8 @@ import (
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
@@ -48,8 +50,8 @@ func TestDigestHashes(t *testing.T) {
 }
 
 func TestBuildDependencies(t *testing.T) {
-	mc := func(p, v string) fetchdomain.ModuleCoordinate {
-		c, _ := fetchdomain.NewModuleCoordinate(p, v)
+	mc := func(p, v string) coordinate.ModuleCoordinate {
+		c, _ := coordinate.NewModuleCoordinate(p, v)
 		return c
 	}
 	target := mc("example.com/app", "v1.0.0")

@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/extract/domain"
 	"github.com/eitanity/kanonarion/internal/extract/ports"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
@@ -26,7 +27,7 @@ func TestStore(t *testing.T) {
 		t.Fatalf("failed to open store: %v", err)
 	}
 
-	coord, _ := fetchdomain.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
+	coord, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
 	hasher := domain.ExtractionRunHasher{}
 
 	run := domain.ExtractionRun{
@@ -35,7 +36,7 @@ func TestStore(t *testing.T) {
 		ID:              "run-1",
 		WalkID:          "walk-1",
 		RequestedStages: []string{"license"},
-		PerModuleResults: map[fetchdomain.ModuleCoordinate]domain.ModuleExtractionResult{
+		PerModuleResults: map[coordinate.ModuleCoordinate]domain.ModuleExtractionResult{
 			coord: {
 				Coordinate: coord,
 				Stages: map[string]domain.StageResult{

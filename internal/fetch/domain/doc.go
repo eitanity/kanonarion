@@ -1,7 +1,6 @@
 // Package domain contains the core model for the fetch bounded context.
 //
 // Invariants:
-// - ModuleCoordinate is immutable once constructed; use NewModuleCoordinate.
 // - FactRecord.ContentHash must be zeroed before computing the canonical hash
 // (see CanonicalHasher); storing it with a hash over itself would be circular.
 // - VerificationStatus is set by the application layer after cross-verification;

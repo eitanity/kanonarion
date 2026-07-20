@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/modcache"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 )
@@ -24,7 +25,7 @@ func (s *fakeFactStore) PutFetchRecord(_ context.Context, r fetchdomain.FactReco
 	return nil
 }
 
-func (s *fakeFactStore) GetFetchRecord(_ context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string) (fetchdomain.FactRecord, bool, error) {
+func (s *fakeFactStore) GetFetchRecord(_ context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (fetchdomain.FactRecord, bool, error) {
 	rec, ok := s.records[coord.Path+"@"+coord.Version+"|"+pipelineVersion]
 	return rec, ok, nil
 }
@@ -67,9 +68,9 @@ func min(a, b int) int {
 	return b
 }
 
-func newCoord(t *testing.T, path, version string) fetchdomain.ModuleCoordinate {
+func newCoord(t *testing.T, path, version string) coordinate.ModuleCoordinate {
 	t.Helper()
-	c, err := fetchdomain.NewModuleCoordinate(path, version)
+	c, err := coordinate.NewModuleCoordinate(path, version)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,7 +100,7 @@ func TestPopulate_WritesExpectedFiles(t *testing.T) {
 	cacheDir := t.TempDir()
 	coord := newCoord(t, "example.com/mod", "v1.0.0")
 
-	if err := modcache.Populate(context.Background(), facts, blobs, cacheDir, []fetchdomain.ModuleCoordinate{coord}, "0.1.0"); err != nil {
+	if err := modcache.Populate(context.Background(), facts, blobs, cacheDir, []coordinate.ModuleCoordinate{coord}, "0.1.0"); err != nil {
 		t.Fatalf("Populate: %v", err)
 	}
 
@@ -136,7 +137,7 @@ func TestPopulate_IdempotentSecondCall(t *testing.T) {
 	coord := newCoord(t, "example.com/mod", "v1.0.0")
 
 	for i := range 2 {
-		if err := modcache.Populate(context.Background(), facts, blobs, cacheDir, []fetchdomain.ModuleCoordinate{coord}, "0.1.0"); err != nil {
+		if err := modcache.Populate(context.Background(), facts, blobs, cacheDir, []coordinate.ModuleCoordinate{coord}, "0.1.0"); err != nil {
 			t.Fatalf("call %d: %v", i+1, err)
 		}
 	}
@@ -149,7 +150,7 @@ func TestPopulate_MissingRecordSkipped(t *testing.T) {
 	blobs := &fakeBlobStore{blobs: map[fetchports.BlobHandle][]byte{}}
 	coord := newCoord(t, "example.com/missing", "v1.0.0")
 
-	if err := modcache.Populate(context.Background(), facts, blobs, t.TempDir(), []fetchdomain.ModuleCoordinate{coord}, "0.1.0"); err != nil {
+	if err := modcache.Populate(context.Background(), facts, blobs, t.TempDir(), []coordinate.ModuleCoordinate{coord}, "0.1.0"); err != nil {
 		t.Fatalf("Populate must not error for missing records: %v", err)
 	}
 }
@@ -194,7 +195,7 @@ func TestPopulate_SymlinksWhenPathAvailable(t *testing.T) {
 	cacheDir := t.TempDir()
 	coord := newCoord(t, "example.com/mod", "v1.0.0")
 
-	if err := modcache.Populate(context.Background(), facts, blobs, cacheDir, []fetchdomain.ModuleCoordinate{coord}, "0.1.0"); err != nil {
+	if err := modcache.Populate(context.Background(), facts, blobs, cacheDir, []coordinate.ModuleCoordinate{coord}, "0.1.0"); err != nil {
 		t.Fatalf("Populate: %v", err)
 	}
 
@@ -235,7 +236,7 @@ func TestPopulate_WithGoModBlob(t *testing.T) {
 	cacheDir := t.TempDir()
 	coord := newCoord(t, "example.com/mod", "v1.0.0")
 
-	if err := modcache.Populate(context.Background(), facts, blobs, cacheDir, []fetchdomain.ModuleCoordinate{coord}, "0.1.0"); err != nil {
+	if err := modcache.Populate(context.Background(), facts, blobs, cacheDir, []coordinate.ModuleCoordinate{coord}, "0.1.0"); err != nil {
 		t.Fatalf("Populate: %v", err)
 	}
 
@@ -267,7 +268,7 @@ func TestPopulateGoMod_WritesModNotZip(t *testing.T) {
 	cacheDir := t.TempDir()
 	c := newCoord(t, "github.com/go-logr/logr", "v1.2.2")
 
-	if err := modcache.PopulateGoMod(context.Background(), facts, blobs, cacheDir, []fetchdomain.ModuleCoordinate{c}, "0.3.0"); err != nil {
+	if err := modcache.PopulateGoMod(context.Background(), facts, blobs, cacheDir, []coordinate.ModuleCoordinate{c}, "0.3.0"); err != nil {
 		t.Fatalf("PopulateGoMod: %v", err)
 	}
 
@@ -305,7 +306,7 @@ func TestPopulateGoMod_SkipsRecordWithoutGoMod(t *testing.T) {
 	cacheDir := t.TempDir()
 	c := newCoord(t, "example.com/mod", "v1.0.0")
 
-	if err := modcache.PopulateGoMod(context.Background(), facts, blobs, cacheDir, []fetchdomain.ModuleCoordinate{c}, "0.3.0"); err != nil {
+	if err := modcache.PopulateGoMod(context.Background(), facts, blobs, cacheDir, []coordinate.ModuleCoordinate{c}, "0.3.0"); err != nil {
 		t.Fatalf("PopulateGoMod must not error for a record without a go.mod blob: %v", err)
 	}
 	base := filepath.Join(cacheDir, "cache", "download", "example.com", "mod", "@v", "v1.0.0")
@@ -321,7 +322,7 @@ func TestPopulateGoMod_MissingRecordSkipped(t *testing.T) {
 	blobs := &fakeBlobStore{blobs: map[fetchports.BlobHandle][]byte{}}
 	c := newCoord(t, "example.com/missing", "v1.0.0")
 
-	if err := modcache.PopulateGoMod(context.Background(), facts, blobs, t.TempDir(), []fetchdomain.ModuleCoordinate{c}, "0.3.0"); err != nil {
+	if err := modcache.PopulateGoMod(context.Background(), facts, blobs, t.TempDir(), []coordinate.ModuleCoordinate{c}, "0.3.0"); err != nil {
 		t.Fatalf("PopulateGoMod must not error for missing records: %v", err)
 	}
 }

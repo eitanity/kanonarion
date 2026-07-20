@@ -3,8 +3,9 @@ package domain_test
 import (
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/example/domain"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 func TestExampleStatusString(t *testing.T) {
@@ -86,9 +87,9 @@ func TestDeriveAssociatedSymbol(t *testing.T) {
 	}
 }
 
-func mustCoord(t *testing.T, path, version string) fetchdomain.ModuleCoordinate {
+func mustCoord(t *testing.T, path, version string) coordinate.ModuleCoordinate {
 	t.Helper()
-	c, err := fetchdomain.NewModuleCoordinate(path, version)
+	c, err := coordinate.NewModuleCoordinate(path, version)
 	if err != nil {
 		t.Fatalf("NewModuleCoordinate(%q, %q): %v", path, version, err)
 	}

@@ -16,5 +16,5 @@
 // sbom-domain-owned input types so no foreign context leaks in.
 //
 // The package is pure: no I/O, no clock, no CycloneDX types. It reuses
-// fetch/domain.ModuleCoordinate as the module identity.
+// coordinate.ModuleCoordinate as the module identity.
 package domain

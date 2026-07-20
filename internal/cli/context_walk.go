@@ -10,7 +10,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -124,7 +125,7 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 func filterContextWalkNodes(
 	ctx context.Context,
 	nodes []walkdomain.GraphNode,
-	root fetchdomain.ModuleCoordinate,
+	root coordinate.ModuleCoordinate,
 	f contextFlags,
 	vulnUC QueryVulnUseCase,
 	runsUC QueryScanRunsUseCase,
@@ -150,7 +151,7 @@ func filterContextWalkNodes(
 	// walk. Resolving from PerModuleResults (always populated after a scan) avoids
 	// silently dropping modules that are Affected in the scan but lack an extracted
 	// VulnerabilityRecord in the store.
-	var affectedSet map[fetchdomain.ModuleCoordinate]struct{}
+	var affectedSet map[coordinate.ModuleCoordinate]struct{}
 	if f.affectedOnly && f.walkID != "" {
 		var err error
 		affectedSet, err = buildAffectedSetForWalk(ctx, runsUC, vulnUC, f.walkID, vulnBatch)
@@ -191,7 +192,7 @@ func filterContextWalkNodes(
 // Affected in the most recent scan run for the given walk. It resolves module
 // status from the scan run's PerModuleResults so that modules affected at the
 // scan level are included even when no VulnerabilityRecord was extracted.
-func buildAffectedSetForWalk(ctx context.Context, runsUC QueryScanRunsUseCase, vulnUC QueryVulnUseCase, walkID string, batch *vulnBatchCtx) (map[fetchdomain.ModuleCoordinate]struct{}, error) {
+func buildAffectedSetForWalk(ctx context.Context, runsUC QueryScanRunsUseCase, vulnUC QueryVulnUseCase, walkID string, batch *vulnBatchCtx) (map[coordinate.ModuleCoordinate]struct{}, error) {
 
 	// Prefer the in-memory batch to avoid an extra DB round-trip.
 	runs := batch.runs[walkID]
@@ -203,12 +204,12 @@ func buildAffectedSetForWalk(ctx context.Context, runsUC QueryScanRunsUseCase, v
 		}
 	}
 	if len(runs) == 0 {
-		return map[fetchdomain.ModuleCoordinate]struct{}{}, nil
+		return map[coordinate.ModuleCoordinate]struct{}{}, nil
 	}
 
 	// runs[0] is the most recent (ListWalkScanRuns returns DESC by started_at).
 	run := runs[0]
-	affected := make(map[fetchdomain.ModuleCoordinate]struct{}, len(run.PerModuleResults))
+	affected := make(map[coordinate.ModuleCoordinate]struct{}, len(run.PerModuleResults))
 	for coord := range run.PerModuleResults {
 		// Use the walk-scoped lookup (snapshot-agnostic) so snapshot mismatches
 		// don't hide records that were stored under a different snapshot.

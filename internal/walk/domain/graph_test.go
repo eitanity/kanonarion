@@ -4,12 +4,13 @@ import (
 	"testing"
 	"time"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
-func coord(path, version string) fetchdomain.ModuleCoordinate {
-	return fetchdomain.ModuleCoordinate{Path: path, Version: version}
+func coord(path, version string) coordinate.ModuleCoordinate {
+	return coordinate.ModuleCoordinate{Path: path, Version: version}
 }
 
 func TestGraphSort_nodes(t *testing.T) {
@@ -226,7 +227,7 @@ func TestGraphReachableFrom_selfEdge(t *testing.T) {
 	}
 }
 
-func keysOf(m map[fetchdomain.ModuleCoordinate]struct{}) []string {
+func keysOf(m map[coordinate.ModuleCoordinate]struct{}) []string {
 	out := make([]string, 0, len(m))
 	for c := range m {
 		out = append(out, c.String())
@@ -340,12 +341,12 @@ func TestSupersededRequirements_emptyWhenFullyPrunedSelected(t *testing.T) {
 
 func TestPrePruning(t *testing.T) {
 	cases := map[string]bool{
-		"":       true,  // no go directive → pre-modules, unpruned
-		"1.16":   true,  // below the pruning boundary
-		"1.16.5": true,
-		"1.17":   false, // pruning boundary
-		"1.21":   false,
-		"1.24.0": false,
+		"":        true, // no go directive → pre-modules, unpruned
+		"1.16":    true, // below the pruning boundary
+		"1.16.5":  true,
+		"1.17":    false, // pruning boundary
+		"1.21":    false,
+		"1.24.0":  false,
 		"garbage": true, // unparseable → treat as pre-pruning
 	}
 	for version, want := range cases {

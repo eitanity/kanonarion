@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
@@ -140,7 +142,7 @@ DO UPDATE SET
 // coordinate and pipeline version. Returns (zero, false, nil) if not found or
 // if the content hash does not match (treated as cache miss, triggering
 // re-fetch). Returns (zero, false, error) on DB error.
-func (s *Store) GetFetchRecord(ctx context.Context, coord domain2.ModuleCoordinate, pipelineVersion string) (domain2.FactRecord, bool, error) {
+func (s *Store) GetFetchRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain2.FactRecord, bool, error) {
 	const q = `
 SELECT schema_version, ecosystem, module_path, module_version, pipeline_version,
        module_hash, go_mod_hash, git_url, git_ref, git_commit_hash,
@@ -208,7 +210,7 @@ DO UPDATE SET
 
 // ListAttestations returns all attestations for a coordinate and pipeline
 // version in deterministic order.
-func (s *Store) ListAttestations(ctx context.Context, coord domain2.ModuleCoordinate, pipelineVersion string) ([]domain2.AttestationRecord, error) {
+func (s *Store) ListAttestations(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain2.AttestationRecord, error) {
 	const q = `
 SELECT subject_kind, subject_algorithm, subject_digest, bundle, signed_at
 FROM fetch_attestations

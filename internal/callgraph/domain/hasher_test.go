@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
@@ -343,7 +344,7 @@ func TestHasherMarshalRoundTrip_ManyNodes(t *testing.T) {
 }
 
 func TestSortEdgeTieBreaking(t *testing.T) {
-	coord, _ := fetchdomain.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	coord, _ := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
 	r := domain2.CallGraphRecord{
 		Coordinate: coord,
 		Edges: []domain2.CallEdge{
@@ -362,7 +363,7 @@ func TestSortEdgeTieBreaking(t *testing.T) {
 }
 
 func TestSortEdgeSameFromDifferentTo(t *testing.T) {
-	coord, _ := fetchdomain.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	coord, _ := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
 	r := domain2.CallGraphRecord{
 		Coordinate: coord,
 		Edges: []domain2.CallEdge{
@@ -381,7 +382,7 @@ func TestSortEdgeSameFromDifferentTo(t *testing.T) {
 // only in FromID, ToID, File, and Line respectively.
 func TestMarshalCanonical_AllEdgeSortBranches(t *testing.T) {
 	var h domain2.CallGraphRecordHasher
-	coord, _ := fetchdomain.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	coord, _ := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
 	r := domain2.CallGraphRecord{
 		SchemaVersion:   domain2.CallGraphSchemaVersion,
 		Ecosystem:       fetchdomain.EcosystemGo,

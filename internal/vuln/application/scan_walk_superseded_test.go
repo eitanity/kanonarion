@@ -5,6 +5,8 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -13,7 +15,7 @@ import (
 // seedFactNode records a node's zip and go.mod (declaring goVersion) in the
 // fact/blob stores under the "v1" fetch pipeline version, so a scan finds it
 // present and can read its declared go version.
-func seedFactNode(ctx context.Context, facts *fakeFacts, blobs *fakeBlob, coord fetchdomain.ModuleCoordinate, goVersion string) {
+func seedFactNode(ctx context.Context, facts *fakeFacts, blobs *fakeBlob, coord coordinate.ModuleCoordinate, goVersion string) {
 	zipHandle, _ := blobs.Put(ctx, strings.NewReader("zip-"+coord.Path+"-"+coord.Version))
 	goMod := "module " + coord.Path + "\n\ngo " + goVersion + "\n"
 	modHandle, _ := blobs.Put(ctx, strings.NewReader(goMod))
@@ -29,10 +31,10 @@ func seedFactNode(ctx context.Context, facts *fakeFacts, blobs *fakeBlob, coord 
 // version: stdr requires logr@v1.2.2 but MVS selected logr@v1.4.3. Each node's
 // declared go version — which gates the superseded-go.mod population — is set
 // separately via seedFactNode.
-func supersededGraph(walkID string) (walkdomain.WalkRecord, fetchdomain.ModuleCoordinate) {
-	logrSelected := fetchdomain.ModuleCoordinate{Path: "github.com/go-logr/logr", Version: "v1.4.3"}
-	stdr := fetchdomain.ModuleCoordinate{Path: "github.com/go-logr/stdr", Version: "v1.2.2"}
-	supersededLogr := fetchdomain.ModuleCoordinate{Path: "github.com/go-logr/logr", Version: "v1.2.2"}
+func supersededGraph(walkID string) (walkdomain.WalkRecord, coordinate.ModuleCoordinate) {
+	logrSelected := coordinate.ModuleCoordinate{Path: "github.com/go-logr/logr", Version: "v1.4.3"}
+	stdr := coordinate.ModuleCoordinate{Path: "github.com/go-logr/stdr", Version: "v1.2.2"}
+	supersededLogr := coordinate.ModuleCoordinate{Path: "github.com/go-logr/logr", Version: "v1.2.2"}
 
 	rec := walkdomain.WalkRecord{
 		ID: walkID,

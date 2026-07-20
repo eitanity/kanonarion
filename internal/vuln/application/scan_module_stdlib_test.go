@@ -5,7 +5,8 @@ import (
 	"testing"
 	"time"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 )
@@ -15,7 +16,7 @@ import (
 // coordinate and reports Affected when the toolchain version is vulnerable.
 func TestScanModule_Stdlib_MetadataAffected(t *testing.T) {
 	ctx := t.Context()
-	std := fetchdomain.ModuleCoordinate{Path: domain.StdlibModulePath, Version: "v1.26.4"}
+	std := coordinate.ModuleCoordinate{Path: domain.StdlibModulePath, Version: "v1.26.4"}
 	now := time.Date(2026, 7, 9, 0, 0, 0, 0, time.UTC)
 
 	facts := newFakeFacts() // no fetch record for stdlib — it is never fetched
@@ -24,7 +25,7 @@ func TestScanModule_Stdlib_MetadataAffected(t *testing.T) {
 	scanner := &fakeScanner{} // must never be invoked for the stdlib node
 	db := &fakeDatabase{
 		snapshot: domain.DatabaseSnapshot{Version: "v1"},
-		findings: map[fetchdomain.ModuleCoordinate][]domain.VulnerabilityFinding{
+		findings: map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding{
 			std: {
 				{ID: "GO-2026-4970", FixedIn: "v1.26.5", Summary: "Root escape via symlink in os"},
 				{ID: "GO-2026-5856", FixedIn: "v1.26.5", Summary: "ECH privacy leak in crypto/tls"},
@@ -56,7 +57,7 @@ func TestScanModule_Stdlib_MetadataAffected(t *testing.T) {
 // toolchain (no matching advisory) reports Clean, not Unscannable.
 func TestScanModule_Stdlib_MetadataClean(t *testing.T) {
 	ctx := t.Context()
-	std := fetchdomain.ModuleCoordinate{Path: domain.StdlibModulePath, Version: "v1.26.5"}
+	std := coordinate.ModuleCoordinate{Path: domain.StdlibModulePath, Version: "v1.26.5"}
 	now := time.Date(2026, 7, 9, 0, 0, 0, 0, time.UTC)
 
 	uc := application.NewScanModuleUseCase(

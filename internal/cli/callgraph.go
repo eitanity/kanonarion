@@ -14,8 +14,9 @@ import (
 )
 
 type cgFlags struct {
-	goBinary string
-	force    bool
+	goBinary     string
+	force        bool
+	fromModcache string
 }
 
 func newCallGraphCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -43,6 +44,19 @@ func newCallGraphCmd(stdout, stderr io.Writer) *cobra.Command {
 			if len(args) > 1 {
 				return fmt.Errorf("accepts 1 arg, received %d", len(args))
 			}
+			// A module fetched via --from-modcache is stored under a
+			// "modcache:zip:" blob handle, not a content-addressed one; the
+			// call-graph extractor needs the same modcache-aware blob store
+			// that fetched it, or blob resolution fails.
+			if f.fromModcache != "" {
+				gomodPath, gerr := resolveGoModPath("")
+				if gerr != nil {
+					return fmt.Errorf("--from-modcache: locating go.mod: %w", gerr)
+				}
+				if merr := resolveModcacheMode(f.fromModcache, gomodPath); merr != nil {
+					return merr
+				}
+			}
 			return runCallGraphExtract(cmd.Context(), args[0], f, stdout, stderr)
 		},
 	}
@@ -51,6 +65,7 @@ func newCallGraphCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().BoolVar(&f.force, "force", false, "re-extract even if cached")
 	cmd.Flags().BoolVar(&localShim, "local", false, "")
 	_ = cmd.Flags().MarkHidden("local")
+	registerFromModcacheFlag(cmd, &f.fromModcache)
 
 	return cmd
 }

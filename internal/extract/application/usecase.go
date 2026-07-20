@@ -10,6 +10,7 @@ import (
 
 	"github.com/oklog/ulid/v2"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/extract/domain"
 	"github.com/eitanity/kanonarion/internal/extract/ports"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
@@ -121,7 +122,7 @@ func (uc *ExtractUseCase) Execute(ctx context.Context, req ExtractRequest) (doma
 		ID:               runID,
 		WalkID:           req.WalkID,
 		RequestedStages:  req.Stages,
-		PerModuleResults: make(map[fetchdomain.ModuleCoordinate]domain.ModuleExtractionResult),
+		PerModuleResults: make(map[coordinate.ModuleCoordinate]domain.ModuleExtractionResult),
 		StartedAt:        uc.clock.Now().UTC(),
 		PipelineVersions: uc.pipelineVersions,
 		OverallStatus:    domain.ExtractionRunSucceeded,
@@ -151,7 +152,7 @@ func (uc *ExtractUseCase) Execute(ctx context.Context, req ExtractRequest) (doma
 	}
 
 	type outcome struct {
-		coord  fetchdomain.ModuleCoordinate
+		coord  coordinate.ModuleCoordinate
 		result domain.ModuleExtractionResult
 		set    bool
 	}

@@ -2,6 +2,7 @@ package domain_test
 
 import (
 	"errors"
+	"math"
 	"strings"
 	"testing"
 	"time"
@@ -28,6 +29,13 @@ func TestRoundTrip(t *testing.T) {
 				FileHash:   "sha256:abc123",
 				FileSize:   1073,
 				IsVendored: false,
+				// Two entries with different Verbatim, one with nil Holders and
+				// one with Holders set, exercise the sort comparator and both
+				// branches of the nil-Holders normalisation.
+				CopyrightStatements: []domain2.CopyrightStatement{
+					{Verbatim: "Copyright 2020 Jane Doe", Holders: []string{"Jane Doe"}, Years: "2020", Source: "LICENSE"},
+					{Verbatim: "Copyright 2019 Acme Corp", Years: "2019", Source: "LICENSE"},
+				},
 			},
 			{
 				Path:       "vendor/dep/COPYING",
@@ -36,10 +44,16 @@ func TestRoundTrip(t *testing.T) {
 				FileHash:   "sha256:def456",
 				FileSize:   2384,
 				IsVendored: true,
+				// Two entries with different Confidence exercise the
+				// descending-confidence sort comparator.
 				AltMatches: []domain2.AltMatch{
 					{SPDX: "Apache-1.1", Confidence: 0.30},
+					{SPDX: "BSD-3-Clause", Confidence: 0.10},
 				},
 			},
+		},
+		Provenance: domain2.ProvenanceSummary{
+			Signals: []domain2.ProvenanceSignal{domain2.ProvenanceSignalAuthorsFile},
 		},
 		OverallStatus:   domain2.LicenseStatusDetected,
 		ExtractedAt:     now,
@@ -394,4 +408,72 @@ func TestHasher_RoleRoundTripsAndIsHashed(t *testing.T) {
 	if err := h.VerifyContentHash(got); err == nil {
 		t.Error("VerifyContentHash passed after clearing Role; Role is not covered by the hash")
 	}
+}
+
+// TestSetContentHash_MarshalFailure exercises the marshal-failure guard with a
+// genuinely unmarshalable value — encoding/json rejects NaN/Inf floats — rather
+// than an injected fake, so it proves the guard is actually reachable in
+// production, not just that the wrapping code is well-formed.
+func TestSetContentHash_MarshalFailure(t *testing.T) {
+	rec := domain2.LicenseRecord{PrimaryConfidence: math.NaN()}
+	_, err := (domain2.LicenseRecordHasher{}).SetContentHash(rec)
+	if err == nil {
+		t.Fatal("SetContentHash() error = nil, want a marshal error for a NaN confidence value")
+	}
+	if !strings.Contains(err.Error(), "canonical license record") {
+		t.Errorf("SetContentHash() error = %q, want it to name the record being marshalled", err.Error())
+	}
+}
+
+// TestVerifyContentHash_MarshalFailure mirrors TestSetContentHash_MarshalFailure
+// for the verification path, which re-marshals independently.
+func TestVerifyContentHash_MarshalFailure(t *testing.T) {
+	rec := domain2.LicenseRecord{PrimaryConfidence: math.NaN()}
+	err := (domain2.LicenseRecordHasher{}).VerifyContentHash(rec)
+	if err == nil {
+		t.Fatal("VerifyContentHash() error = nil, want a marshal error for a NaN confidence value")
+	}
+	if !strings.Contains(err.Error(), "canonical license record") {
+		t.Errorf("VerifyContentHash() error = %q, want it to name the record being marshalled", err.Error())
+	}
+}
+
+func TestUnmarshal_MalformedInputs(t *testing.T) {
+	var h domain2.LicenseRecordHasher
+	coord := mustCoord(t, "example.com/mod", "v1.0.0")
+	rec := domain2.LicenseRecord{
+		SchemaVersion:   domain2.LicenseSchemaVersion,
+		Ecosystem:       fetchdomain.EcosystemGo,
+		Coordinate:      coord,
+		PrimarySPDX:     "MIT",
+		OverallStatus:   domain2.LicenseStatusDetected,
+		ExtractedAt:     time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+		PipelineVersion: "0.1.0",
+	}
+	hashed, err := h.SetContentHash(rec)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	blob, err := h.Marshal(hashed)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	t.Run("invalid JSON", func(t *testing.T) {
+		if _, err := h.Unmarshal([]byte("not json")); err == nil {
+			t.Error("Unmarshal() error = nil, want a JSON syntax error")
+		}
+	})
+	t.Run("malformed extracted_at", func(t *testing.T) {
+		tampered := strings.Replace(string(blob), `"extracted_at":"2025-01-01T00:00:00Z"`, `"extracted_at":"not-a-time"`, 1)
+		if _, err := h.Unmarshal([]byte(tampered)); err == nil {
+			t.Error("Unmarshal() error = nil, want a parse error for malformed extracted_at")
+		}
+	})
+	t.Run("malformed coordinate", func(t *testing.T) {
+		tampered := strings.Replace(string(blob), `"path":"example.com/mod"`, `"path":""`, 1)
+		if _, err := h.Unmarshal([]byte(tampered)); err == nil {
+			t.Error("Unmarshal() error = nil, want a parse error for an invalid coordinate")
+		}
+	})
 }

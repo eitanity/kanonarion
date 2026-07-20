@@ -4,7 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/license/domain"
 	licenseports "github.com/eitanity/kanonarion/internal/license/ports"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -12,7 +13,7 @@ import (
 
 // DepLicenseResult holds the license outcome for a single dependency module.
 type DepLicenseResult struct {
-	Coordinate  fetchdomain.ModuleCoordinate
+	Coordinate  coordinate.ModuleCoordinate
 	PrimarySPDX string
 	Err         error
 }
@@ -35,7 +36,7 @@ func NewQueryLicenseUseCaseWithWalks(store licenseports.LicenseStore, walks walk
 }
 
 // GetLicenseRecord retrieves the license record for a module coordinate.
-func (uc *QueryLicenseUseCase) GetLicenseRecord(ctx context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string) (domain.LicenseRecord, bool, error) {
+func (uc *QueryLicenseUseCase) GetLicenseRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain.LicenseRecord, bool, error) {
 	rec, found, err := uc.store.GetLicenseRecord(ctx, coord, pipelineVersion)
 	if err != nil {
 		return domain.LicenseRecord{}, false, fmt.Errorf("getting license record for %s: %w", coord, err)
@@ -59,8 +60,8 @@ func (uc *QueryLicenseUseCase) ListLicenseRecords(ctx context.Context, filter li
 func (uc *QueryLicenseUseCase) ResolveForWalk(
 	ctx context.Context,
 	walkID string,
-	target fetchdomain.ModuleCoordinate,
-	extractFn func(context.Context, fetchdomain.ModuleCoordinate) (domain.LicenseRecord, error),
+	target coordinate.ModuleCoordinate,
+	extractFn func(context.Context, coordinate.ModuleCoordinate) (domain.LicenseRecord, error),
 ) ([]DepLicenseResult, error) {
 	if uc.walks == nil {
 		return nil, fmt.Errorf("QueryLicenseUseCase: walks store not configured; use NewQueryLicenseUseCaseWithWalks")

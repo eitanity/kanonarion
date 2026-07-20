@@ -15,6 +15,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 	"golang.org/x/mod/sumdb"
@@ -72,7 +74,7 @@ func New(cacheDir string) *Client {
 // Lookup queries the checksum database for the given module version.
 // All failures (disabled, not found, network error, security error) are
 // returned as Available=false so the caller can decide the verification policy.
-func (c *Client) Lookup(_ context.Context, coord domain2.ModuleCoordinate) ports.SumDBResult {
+func (c *Client) Lookup(_ context.Context, coord coordinate.ModuleCoordinate) ports.SumDBResult {
 	if c.disabled {
 		return ports.SumDBResult{Available: false, Reason: "GOSUMDB=off"}
 	}

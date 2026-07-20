@@ -10,9 +10,10 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/spf13/cobra"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	localimporter "github.com/eitanity/kanonarion/internal/local/adapters/importer/golist"
 	localprober "github.com/eitanity/kanonarion/internal/local/adapters/probe/builder"
 	localsnapshot "github.com/eitanity/kanonarion/internal/local/adapters/snapshot/walkdir"
@@ -177,7 +178,7 @@ type vulnReachabilityQuery struct {
 // distinctions are unit-testable from constructed records. It returns either a
 // confident result (reachable / not_reachable / not_affected) for exit 0, or a
 // directing error for the cases where the answer is genuinely unknown.
-func vulnReachabilityVerdict(coord fetchdomain.ModuleCoordinate, rec vuldomain.VulnerabilityRecord, found bool, vulnID string) (vulnReachabilityQuery, error) {
+func vulnReachabilityVerdict(coord coordinate.ModuleCoordinate, rec vuldomain.VulnerabilityRecord, found bool, vulnID string) (vulnReachabilityQuery, error) {
 	if !found {
 		return vulnReachabilityQuery{}, fmt.Errorf(
 			"no vulnerability record for %s: the module has not been vuln-scanned. Run:\n  kanonarion vuln-scan %s --reachability",

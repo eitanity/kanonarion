@@ -10,8 +10,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	domain2 "github.com/eitanity/kanonarion/internal/license/domain"
 	"github.com/eitanity/kanonarion/internal/license/ports"
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
@@ -132,7 +134,7 @@ ON CONFLICT (module_path, module_version, pipeline_version) DO UPDATE SET
 // GetLicenceRecord retrieves and tamper-checks the license record for the
 // given coordinate and pipeline version. Returns (zero, false, nil) if not
 // found. Returns (zero, false, ErrLicenceIntegrity) on hash mismatch.
-func (s *Store) GetLicenseRecord(ctx context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string) (domain2.LicenseRecord, bool, error) {
+func (s *Store) GetLicenseRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain2.LicenseRecord, bool, error) {
 	const q = `SELECT serialised, content_hash FROM licence_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 

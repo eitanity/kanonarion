@@ -12,8 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
-	"github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 func fakeInfoJSON(version string, origin *struct {
@@ -107,7 +108,7 @@ func TestProxy_Info(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	coord := domain.ModuleCoordinate{Path: "github.com/gorilla/mux", Version: "v1.8.1"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/gorilla/mux", Version: "v1.8.1"}
 
 	info, err := p.Info(context.Background(), coord)
 	if err != nil {
@@ -134,7 +135,7 @@ func TestProxy_Download(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	coord := domain.ModuleCoordinate{Path: modPath, Version: version}
+	coord := coordinate.ModuleCoordinate{Path: modPath, Version: version}
 
 	dl, err := p.Download(context.Background(), coord)
 	if err != nil {
@@ -180,7 +181,7 @@ func TestProxy_NotFound(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	coord := domain.ModuleCoordinate{Path: "example.com/foo", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/foo", Version: "v1.0.0"}
 	_, err = p.Info(context.Background(), coord)
 	if err == nil || !strings.Contains(err.Error(), "not found") {
 		t.Errorf("expected not found error, got: %v", err)
@@ -197,7 +198,7 @@ func TestProxy_ErrorResponse(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	coord := domain.ModuleCoordinate{Path: "example.com/foo", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/foo", Version: "v1.0.0"}
 	_, err = p.Info(context.Background(), coord)
 	if err == nil || !strings.Contains(err.Error(), "HTTP 500") {
 		t.Errorf("expected 500 error, got: %v", err)
@@ -247,7 +248,7 @@ func TestProxy_DownloadLimit(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	coord := domain.ModuleCoordinate{Path: "example.com/too-big", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/too-big", Version: "v1.0.0"}
 	_, err = p.Download(context.Background(), coord)
 	if err == nil || !strings.Contains(err.Error(), "exceeds 0 MB limit") {
 		t.Errorf("expected limit error, got: %v", err)

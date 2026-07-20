@@ -3,7 +3,8 @@ package domain_test
 import (
 	"testing"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/iface/domain"
 )
 
@@ -46,7 +47,7 @@ func TestTypeKind_String(t *testing.T) {
 }
 
 func TestInterfaceRecord_Sort_Deterministic(t *testing.T) {
-	coord, _ := fetchdomain.NewModuleCoordinate("example.com/m", "v1.0.0")
+	coord, _ := coordinate.NewModuleCoordinate("example.com/m", "v1.0.0")
 
 	r := domain.InterfaceRecord{
 		Coordinate: coord,
@@ -91,7 +92,7 @@ func TestInterfaceRecord_Sort_Deterministic(t *testing.T) {
 }
 
 func TestInterfaceRecord_Sort_Methods(t *testing.T) {
-	coord, _ := fetchdomain.NewModuleCoordinate("example.com/m", "v1.0.0")
+	coord, _ := coordinate.NewModuleCoordinate("example.com/m", "v1.0.0")
 
 	r := domain.InterfaceRecord{
 		Coordinate: coord,

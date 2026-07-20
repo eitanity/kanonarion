@@ -6,8 +6,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
@@ -59,7 +61,7 @@ func TestResolveProjectGoSum_NoopInModcacheMode(t *testing.T) {
 
 func TestGoSumWalkGate_FailsOnGoSumMismatchNode(t *testing.T) {
 	resetModcacheGlobals(t)
-	local := fetchdomain.ModuleCoordinate{Path: "example.com/proj", Version: fetchdomain.LocalVersion}
+	local := coordinate.ModuleCoordinate{Path: "example.com/proj", Version: coordinate.LocalVersion}
 	rec := walkdomain.WalkRecord{Graph: walkdomain.Graph{Nodes: []walkdomain.GraphNode{
 		{Coordinate: local, ResolutionSource: walkdomain.ResolutionLocalMainModule},
 		makeNode("github.com/good/dep", "v1.0.0", walkdomain.ResolutionMVS, ""),
@@ -79,7 +81,7 @@ func TestGoSumWalkGate_FailsOnGoSumMismatchNode(t *testing.T) {
 
 func TestGoSumWalkGate_ToleratesOrdinaryFetchFailure(t *testing.T) {
 	resetModcacheGlobals(t)
-	local := fetchdomain.ModuleCoordinate{Path: "example.com/proj", Version: fetchdomain.LocalVersion}
+	local := coordinate.ModuleCoordinate{Path: "example.com/proj", Version: coordinate.LocalVersion}
 	rec := walkdomain.WalkRecord{Graph: walkdomain.Graph{Nodes: []walkdomain.GraphNode{
 		// An ordinary network fetch failure (not a go.sum tamper) stays tolerated
 		// as a partial walk — the gate must not fire on it.
@@ -93,7 +95,7 @@ func TestGoSumWalkGate_ToleratesOrdinaryFetchFailure(t *testing.T) {
 func TestGoSumWalkGate_NoopInModcacheMode(t *testing.T) {
 	resetModcacheGlobals(t)
 	modcacheMode = true
-	local := fetchdomain.ModuleCoordinate{Path: "example.com/proj", Version: fetchdomain.LocalVersion}
+	local := coordinate.ModuleCoordinate{Path: "example.com/proj", Version: coordinate.LocalVersion}
 	rec := walkdomain.WalkRecord{Graph: walkdomain.Graph{Nodes: []walkdomain.GraphNode{
 		makeNode("github.com/bad/dep", "v2.0.0", walkdomain.ResolutionFetchFailed,
 			fetchapp.ErrGoSumVerification.Error()),
@@ -107,7 +109,7 @@ func TestGoSumWalkGate_NoopInModcacheMode(t *testing.T) {
 
 func TestGoSumWalkGate_CleanWalkPasses(t *testing.T) {
 	resetModcacheGlobals(t)
-	local := fetchdomain.ModuleCoordinate{Path: "example.com/proj", Version: fetchdomain.LocalVersion}
+	local := coordinate.ModuleCoordinate{Path: "example.com/proj", Version: coordinate.LocalVersion}
 	rec := walkdomain.WalkRecord{Graph: walkdomain.Graph{Nodes: []walkdomain.GraphNode{
 		makeNode("github.com/good/dep", "v1.0.0", walkdomain.ResolutionMVS, ""),
 	}}}

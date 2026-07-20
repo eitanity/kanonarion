@@ -15,6 +15,7 @@ import (
 	noopsigner "github.com/eitanity/kanonarion/internal/adapters/signer/noop"
 	"github.com/eitanity/kanonarion/internal/adapters/sumdb/gosum"
 	"github.com/eitanity/kanonarion/internal/adapters/vcs/gitexec"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/fetch/application"
 	"github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/spf13/cobra"
@@ -133,14 +134,14 @@ func runFetch(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.W
 		return fmt.Errorf("version required: use %s@<version> or %s@latest", path, path)
 	}
 
-	var coord domain.ModuleCoordinate
+	var coord coordinate.ModuleCoordinate
 	if version == "latest" {
 		coord, err = resolveLatest(ctx, path, proxyAdapter, stderr)
 		if err != nil {
 			return err
 		}
 	} else {
-		coord, err = domain.NewModuleCoordinate(path, version)
+		coord, err = coordinate.NewModuleCoordinate(path, version)
 		if err != nil {
 			return fmt.Errorf("invalid coordinate %q: %w", arg, err)
 		}
@@ -254,7 +255,7 @@ func runFetch(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.W
 // concrete proxy adapter satisfies it; narrowing the dependency here lets the
 // resolution logic be tested without a live proxy.
 type latestResolver interface {
-	Latest(ctx context.Context, path string) (domain.ModuleCoordinate, error)
+	Latest(ctx context.Context, path string) (coordinate.ModuleCoordinate, error)
 }
 
 // versionLister lists a module path's published versions. The concrete proxy
@@ -266,13 +267,13 @@ type versionLister interface {
 // resolveLatest calls the proxy to resolve @latest to a pinned coordinate,
 // prints the resolution to stderr, and returns the pinned coordinate.
 // It is called by both fetch and walk before any store operations.
-func resolveLatest(ctx context.Context, path string, proxy latestResolver, stderr io.Writer) (domain.ModuleCoordinate, error) {
+func resolveLatest(ctx context.Context, path string, proxy latestResolver, stderr io.Writer) (coordinate.ModuleCoordinate, error) {
 	coord, err := proxy.Latest(ctx, path)
 	if err != nil {
-		return domain.ModuleCoordinate{}, fmt.Errorf("resolving %s@latest: %w", path, err)
+		return coordinate.ModuleCoordinate{}, fmt.Errorf("resolving %s@latest: %w", path, err)
 	}
 	if _, wErr := fmt.Fprintf(stderr, "resolved %s@latest → %s\n", path, coord.Version); wErr != nil {
-		return domain.ModuleCoordinate{}, fmt.Errorf("writing output: %w", wErr)
+		return coordinate.ModuleCoordinate{}, fmt.Errorf("writing output: %w", wErr)
 	}
 	return coord, nil
 }

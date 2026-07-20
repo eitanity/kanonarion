@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	domain3 "github.com/eitanity/kanonarion/internal/walk/domain"
 )
@@ -15,7 +17,7 @@ func TestWalkRecordHasher_StdlibFactsRoundTrip(t *testing.T) {
 	hasher := domain3.WalkRecordHasher{}
 	rec := domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(), domain3.DefaultDepthPolicy(), "")
 
-	std, err := fetchdomain.NewModuleCoordinate(domain3.StdlibModulePath, "v1.26.4")
+	std, err := coordinate.NewModuleCoordinate(domain3.StdlibModulePath, "v1.26.4")
 	if err != nil {
 		t.Fatal(err)
 	}

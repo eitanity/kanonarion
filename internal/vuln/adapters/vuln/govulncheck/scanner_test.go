@@ -13,7 +13,8 @@ import (
 	"strings"
 	"testing"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 )
 
@@ -344,7 +345,7 @@ func TestScan_GovulncheckExitErrorLogsAtDebugNotWarn(t *testing.T) {
 		"example.com/mod@v1.0.0/go.mod": "module example.com/mod\n\ngo 1.21\n",
 		"example.com/mod@v1.0.0/mod.go": "package mod\n",
 	})
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
 
 	// govulncheck exits non-zero with a scary stderr dump, as it does for an
 	// out-of-toolchain module.
@@ -394,7 +395,7 @@ func TestScan_GoModDownloadFailureLogsAtDebugNotWarn(t *testing.T) {
 		"example.com/mod@v1.0.0/go.mod": "module example.com/mod\n\ngo 1.21\n\nrequire example.invalid/missing v1.0.0\n",
 		"example.com/mod@v1.0.0/mod.go": "package mod\n",
 	})
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
 	// Empty cache dir makes scanEnv pin GOPROXY=off, so the unresolvable require
 	// fails `go mod download` offline. govulncheck itself exits 0 (clean) so this
 	// message is the only error-path log under test.
@@ -445,9 +446,9 @@ func TestScanner_ParseResultsByModule_GroupsAllModules(t *testing.T) {
 		t.Fatalf("parseResultsByModule failed: %v", err)
 	}
 
-	crypto := fetchdomain.ModuleCoordinate{Path: "golang.org/x/crypto", Version: "v0.24.0"}
-	net := fetchdomain.ModuleCoordinate{Path: "golang.org/x/net", Version: "v0.26.0"}
-	stdlib := fetchdomain.ModuleCoordinate{Path: "stdlib"}
+	crypto := coordinate.ModuleCoordinate{Path: "golang.org/x/crypto", Version: "v0.24.0"}
+	net := coordinate.ModuleCoordinate{Path: "golang.org/x/net", Version: "v0.26.0"}
+	stdlib := coordinate.ModuleCoordinate{Path: "stdlib"}
 
 	if len(byModule[crypto]) != 1 || byModule[crypto][0].ID != "GO-SELF-0001" {
 		t.Errorf("x/crypto findings = %+v, want GO-SELF-0001", byModule[crypto])

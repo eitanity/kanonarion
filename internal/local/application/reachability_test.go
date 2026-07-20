@@ -5,7 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/local/application"
 	"github.com/eitanity/kanonarion/internal/local/domain"
 	"github.com/eitanity/kanonarion/internal/local/ports"
@@ -36,11 +37,11 @@ func (f *fakeImportAnalyser) AnalyseImports(_ context.Context, _ string) ([]doma
 var _ ports.ImportAnalyser = (*fakeImportAnalyser)(nil)
 
 type fakeVulnLoader struct {
-	findings map[fetchdomain.ModuleCoordinate][]ports.VulnFinding
+	findings map[coordinate.ModuleCoordinate][]ports.VulnFinding
 	err      error
 }
 
-func (f *fakeVulnLoader) LoadFindings(_ context.Context, _ []fetchdomain.ModuleCoordinate) (map[fetchdomain.ModuleCoordinate][]ports.VulnFinding, error) {
+func (f *fakeVulnLoader) LoadFindings(_ context.Context, _ []coordinate.ModuleCoordinate) (map[coordinate.ModuleCoordinate][]ports.VulnFinding, error) {
 	return f.findings, f.err
 }
 
@@ -68,9 +69,9 @@ func makeSnap(modulePath string) domain.Snapshot {
 	})
 }
 
-func mustCoord(t *testing.T, path, ver string) fetchdomain.ModuleCoordinate {
+func mustCoord(t *testing.T, path, ver string) coordinate.ModuleCoordinate {
 	t.Helper()
-	c, err := fetchdomain.NewModuleCoordinate(path, ver)
+	c, err := coordinate.NewModuleCoordinate(path, ver)
 	if err != nil {
 		t.Fatalf("NewModuleCoordinate(%q, %q): %v", path, ver, err)
 	}
@@ -116,7 +117,7 @@ func TestLocalReachability_SymbolPresent(t *testing.T) {
 		&fakeImportAnalyser{modules: []domain.ImportedModule{
 			{Path: "example.com/dep", Version: "v1.0.0"},
 		}},
-		&fakeVulnLoader{findings: map[fetchdomain.ModuleCoordinate][]ports.VulnFinding{
+		&fakeVulnLoader{findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
 			coord: {{ID: "GHSA-0001", AffectedSymbols: []string{"Vulnerable"}}},
 		}},
 		&fakeProber{result: ports.SymbolProbeResult{
@@ -155,7 +156,7 @@ func TestLocalReachability_SymbolAbsent(t *testing.T) {
 		&fakeImportAnalyser{modules: []domain.ImportedModule{
 			{Path: "example.com/dep", Version: "v1.0.0"},
 		}},
-		&fakeVulnLoader{findings: map[fetchdomain.ModuleCoordinate][]ports.VulnFinding{
+		&fakeVulnLoader{findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
 			coord: {{ID: "GHSA-0002", AffectedSymbols: []string{"Vulnerable"}}},
 		}},
 		&fakeProber{result: ports.SymbolProbeResult{
@@ -184,7 +185,7 @@ func TestLocalReachability_NoAffectedSymbols_UnknownVerdict(t *testing.T) {
 		&fakeImportAnalyser{modules: []domain.ImportedModule{
 			{Path: "example.com/dep", Version: "v1.0.0"},
 		}},
-		&fakeVulnLoader{findings: map[fetchdomain.ModuleCoordinate][]ports.VulnFinding{
+		&fakeVulnLoader{findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
 			coord: {{ID: "GHSA-0003", AffectedSymbols: nil}},
 		}},
 		&fakeProber{result: ports.SymbolProbeResult{
@@ -212,7 +213,7 @@ func TestLocalReachability_SubpackageSymbolPresent(t *testing.T) {
 		&fakeImportAnalyser{modules: []domain.ImportedModule{
 			{Path: "github.com/foo/bar", Version: "v1.0.0"},
 		}},
-		&fakeVulnLoader{findings: map[fetchdomain.ModuleCoordinate][]ports.VulnFinding{
+		&fakeVulnLoader{findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
 			coord: {{ID: "GHSA-0004", AffectedSymbols: []string{"(*Form).Transform"}}},
 		}},
 		&fakeProber{result: ports.SymbolProbeResult{
@@ -244,7 +245,7 @@ func TestLocalReachability_DeepSubpackageSymbolPresent(t *testing.T) {
 		&fakeImportAnalyser{modules: []domain.ImportedModule{
 			{Path: "github.com/foo/bar", Version: "v1.0.0"},
 		}},
-		&fakeVulnLoader{findings: map[fetchdomain.ModuleCoordinate][]ports.VulnFinding{
+		&fakeVulnLoader{findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
 			coord: {{ID: "GHSA-0005", AffectedSymbols: []string{"Func"}}},
 		}},
 		&fakeProber{result: ports.SymbolProbeResult{
@@ -270,7 +271,7 @@ func TestLocalReachability_UnrelatedSymbolNotMatched(t *testing.T) {
 		&fakeImportAnalyser{modules: []domain.ImportedModule{
 			{Path: "example.com/dep", Version: "v1.0.0"},
 		}},
-		&fakeVulnLoader{findings: map[fetchdomain.ModuleCoordinate][]ports.VulnFinding{
+		&fakeVulnLoader{findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
 			coord: {{ID: "GHSA-0006", AffectedSymbols: []string{"Vulnerable"}}},
 		}},
 		&fakeProber{result: ports.SymbolProbeResult{
@@ -298,7 +299,7 @@ func TestLocalReachability_MultipleSymbolsOnePresent(t *testing.T) {
 		&fakeImportAnalyser{modules: []domain.ImportedModule{
 			{Path: "example.com/dep", Version: "v1.0.0"},
 		}},
-		&fakeVulnLoader{findings: map[fetchdomain.ModuleCoordinate][]ports.VulnFinding{
+		&fakeVulnLoader{findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
 			coord: {{
 				ID:              "GHSA-0007",
 				AffectedSymbols: []string{"Gone", "StillHere"},
@@ -335,7 +336,7 @@ func TestLocalReachability_ModulesAreSorted(t *testing.T) {
 			{Path: "example.com/zzz", Version: "v1.0.0"},
 			{Path: "example.com/aaa", Version: "v1.0.0"},
 		}},
-		&fakeVulnLoader{findings: map[fetchdomain.ModuleCoordinate][]ports.VulnFinding{
+		&fakeVulnLoader{findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
 			coordZ: {{ID: "GHSA-Z", AffectedSymbols: []string{"Z"}}},
 			coordA: {{ID: "GHSA-A", AffectedSymbols: []string{"A"}}},
 		}},
@@ -364,7 +365,7 @@ func TestLocalReachability_ResultFieldsPopulated(t *testing.T) {
 		&fakeImportAnalyser{modules: []domain.ImportedModule{
 			{Path: "example.com/dep", Version: "v1.0.0"},
 		}},
-		&fakeVulnLoader{findings: map[fetchdomain.ModuleCoordinate][]ports.VulnFinding{
+		&fakeVulnLoader{findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
 			coord: {{
 				ID:              "GHSA-0008",
 				Aliases:         []string{"CVE-2024-0001"},
@@ -457,7 +458,7 @@ func TestLocalReachability_ProberError(t *testing.T) {
 		&fakeImportAnalyser{modules: []domain.ImportedModule{
 			{Path: "example.com/dep", Version: "v1.0.0"},
 		}},
-		&fakeVulnLoader{findings: map[fetchdomain.ModuleCoordinate][]ports.VulnFinding{
+		&fakeVulnLoader{findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
 			coord: {{ID: "GHSA-X", AffectedSymbols: []string{"Sym"}}},
 		}},
 		&fakeProber{err: probeErr},

@@ -7,11 +7,12 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
 	exapp "github.com/eitanity/kanonarion/internal/example/application"
 	exdomain "github.com/eitanity/kanonarion/internal/example/domain"
 	exports "github.com/eitanity/kanonarion/internal/example/ports"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 func TestExamplesListCmd_EmptyStore(t *testing.T) {
@@ -38,9 +39,9 @@ func TestExamplesFindCmd_EmptyStore(t *testing.T) {
 	}
 }
 
-func makeExampleCoord(t *testing.T) fetchdomain.ModuleCoordinate {
+func makeExampleCoord(t *testing.T) coordinate.ModuleCoordinate {
 	t.Helper()
-	c, err := fetchdomain.NewModuleCoordinate("example.com/app", "v1.0.0")
+	c, err := coordinate.NewModuleCoordinate("example.com/app", "v1.0.0")
 	if err != nil {
 		t.Fatal(err)
 	}

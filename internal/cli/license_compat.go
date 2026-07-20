@@ -7,7 +7,8 @@ import (
 	"fmt"
 	"io"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	"github.com/eitanity/kanonarion/internal/license/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -73,7 +74,7 @@ func runLicenseCompat(ctx context.Context, arg, targetSPDX string, stdout, stder
 // clean/conflict/unknown verdict to exit codes, and renders the report. Split
 // from runLicenseCompat so the exit-code and diagnostic decisions are testable
 // without a live store.
-func licenseCompatWith(ctx context.Context, ctr *Container, coord fetchdomain.ModuleCoordinate, targetSPDX string, stdout io.Writer) error {
+func licenseCompatWith(ctx context.Context, ctr *Container, coord coordinate.ModuleCoordinate, targetSPDX string, stdout io.Writer) error {
 	// Require an existing walk record for the root module.
 	target := coord
 	summaries, err := ctr.QueryWalks.ListWalks(ctx, walkports.WalkFilter{Target: &target, Limit: 1})
@@ -164,7 +165,7 @@ func printCompatReportJSON(report domain.ClosureCompatibilityReport, stdout io.W
 	return nil
 }
 
-func printCompatReportText(report domain.ClosureCompatibilityReport, root fetchdomain.ModuleCoordinate, stdout io.Writer) {
+func printCompatReportText(report domain.ClosureCompatibilityReport, root coordinate.ModuleCoordinate, stdout io.Writer) {
 	if report.Clean {
 		_, _ = fmt.Fprintf(stdout, "%s: closure is compatible with %s (data v%s)\n",
 			root, report.TargetSPDX, report.DataVersion)

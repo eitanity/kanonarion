@@ -6,7 +6,7 @@ import (
 	"path/filepath"
 	"testing"
 
-	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 )
 
 const sampleGoSum = `github.com/example/mod v1.2.3 h1:ziphashvalue=
@@ -24,9 +24,9 @@ func writeGoSum(t *testing.T, content string) string {
 	return path
 }
 
-func coord(t *testing.T, path, version string) domain2.ModuleCoordinate {
+func coord(t *testing.T, path, version string) coordinate.ModuleCoordinate {
 	t.Helper()
-	c, err := domain2.NewModuleCoordinate(path, version)
+	c, err := coordinate.NewModuleCoordinate(path, version)
 	if err != nil {
 		t.Fatalf("NewModuleCoordinate(%s, %s): %v", path, version, err)
 	}

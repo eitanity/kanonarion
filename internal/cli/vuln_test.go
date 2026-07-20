@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/config/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 
@@ -23,7 +24,7 @@ import (
 // TestVulnScanProgressScanFailedReason verifies that the progress callback
 // prints a reason sub-line when ErrorDetail is set on a ScanFailed record.
 func TestVulnScanProgressScanFailedReason(t *testing.T) {
-	coord, _ := fetchdomain.NewModuleCoordinate("example.com/app", "v1.0.0")
+	coord, _ := coordinate.NewModuleCoordinate("example.com/app", "v1.0.0")
 	record := vuldomain.VulnerabilityRecord{
 		Coordinate:    coord,
 		OverallStatus: vuldomain.StatusScanFailed,
@@ -49,7 +50,7 @@ func TestVulnScanProgressScanFailedReason(t *testing.T) {
 // TestVulnScanProgressUnscannableReason verifies that the progress callback
 // prints a reason sub-line when UnscannableReason is set.
 func TestVulnScanProgressUnscannableReason(t *testing.T) {
-	coord, _ := fetchdomain.NewModuleCoordinate("example.com/nogomod", "v1.0.0")
+	coord, _ := coordinate.NewModuleCoordinate("example.com/nogomod", "v1.0.0")
 	record := vuldomain.VulnerabilityRecord{
 		Coordinate:        coord,
 		OverallStatus:     vuldomain.StatusUnscannable,
@@ -74,7 +75,7 @@ func TestVulnScanProgressUnscannableReason(t *testing.T) {
 // TestVulnScanProgressNoReasonWhenEmpty verifies that no reason sub-line is
 // printed when ErrorDetail / UnscannableReason is empty.
 func TestVulnScanProgressNoReasonWhenEmpty(t *testing.T) {
-	coord, _ := fetchdomain.NewModuleCoordinate("example.com/app", "v1.0.0")
+	coord, _ := coordinate.NewModuleCoordinate("example.com/app", "v1.0.0")
 
 	for _, status := range []vuldomain.VulnerabilityStatus{
 		vuldomain.StatusScanFailed,
@@ -277,9 +278,9 @@ func TestVulnScanProgress_OutOfToolchainReadsAsExpected(t *testing.T) {
 
 // ---- test helpers -------------------------------------------------------
 
-func mustVulnCoord(t *testing.T, path, version string) fetchdomain.ModuleCoordinate {
+func mustVulnCoord(t *testing.T, path, version string) coordinate.ModuleCoordinate {
 	t.Helper()
-	c, err := fetchdomain.NewModuleCoordinate(path, version)
+	c, err := coordinate.NewModuleCoordinate(path, version)
 	if err != nil {
 		t.Fatalf("NewModuleCoordinate(%q, %q): %v", path, version, err)
 	}
@@ -328,7 +329,7 @@ func fixtureRunAndRec(t *testing.T) (vuldomain.WalkScanRun, vuldomain.Vulnerabil
 		ID:       fixtureScanID,
 		WalkID:   fixtureWalkID,
 		Snapshot: fixtureSnap,
-		PerModuleResults: map[fetchdomain.ModuleCoordinate]string{
+		PerModuleResults: map[coordinate.ModuleCoordinate]string{
 			app: vulnRec.ContentHash,
 		},
 		StartedAt:       scannedAt,
@@ -792,7 +793,7 @@ func TestRunScanDiff_Success(t *testing.T) {
 		ID:               "01JSCANRUN0000000000000002",
 		WalkID:           fixtureWalkID,
 		Snapshot:         fixtureSnap,
-		PerModuleResults: map[fetchdomain.ModuleCoordinate]string{},
+		PerModuleResults: map[coordinate.ModuleCoordinate]string{},
 		StartedAt:        time.Date(2025, 1, 1, 13, 0, 0, 0, time.UTC),
 		CompletedAt:      time.Date(2025, 1, 1, 13, 0, 1, 0, time.UTC),
 		OverallStatus:    vuldomain.WalkStatusAllClean,

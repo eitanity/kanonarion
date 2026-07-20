@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/audit"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 )
@@ -68,7 +69,7 @@ type fakeDownload struct {
 	goModHash domain2.ModuleHash
 }
 
-func (f *fakeProxy) Info(_ context.Context, coord domain2.ModuleCoordinate) (ports.ModuleInfo, error) {
+func (f *fakeProxy) Info(_ context.Context, coord coordinate.ModuleCoordinate) (ports.ModuleInfo, error) {
 	if f.infoErr != nil {
 		return ports.ModuleInfo{}, f.infoErr
 	}
@@ -82,7 +83,7 @@ func (f *fakeProxy) Info(_ context.Context, coord domain2.ModuleCoordinate) (por
 }
 
 //goland:noinspection GrazieInspectionRunner
-func (f *fakeProxy) Download(_ context.Context, coord domain2.ModuleCoordinate) (ports.ModuleDownload, error) {
+func (f *fakeProxy) Download(_ context.Context, coord coordinate.ModuleCoordinate) (ports.ModuleDownload, error) {
 	if f.dlErr != nil {
 		return ports.ModuleDownload{}, f.dlErr
 	}
@@ -187,7 +188,7 @@ func (f *fakeFacts) PutFetchRecord(_ context.Context, r domain2.FactRecord) erro
 	return nil
 }
 
-func (f *fakeFacts) GetFetchRecord(_ context.Context, coord domain2.ModuleCoordinate, pv string) (domain2.FactRecord, bool, error) {
+func (f *fakeFacts) GetFetchRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (domain2.FactRecord, bool, error) {
 	key := coord.Path + "@" + coord.Version + "#" + pv
 	f.mu.Lock()
 	r, ok := f.records[key]
@@ -214,7 +215,7 @@ type fakeSumDB struct {
 	result ports.SumDBResult
 }
 
-func (f *fakeSumDB) Lookup(_ context.Context, _ domain2.ModuleCoordinate) ports.SumDBResult {
+func (f *fakeSumDB) Lookup(_ context.Context, _ coordinate.ModuleCoordinate) ports.SumDBResult {
 	return f.result
 }
 

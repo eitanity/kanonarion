@@ -5,6 +5,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
@@ -21,8 +23,8 @@ func newTestStore(t *testing.T) *sqlite.Store {
 	return sqlite.New(db)
 }
 
-func coord(path, version string) fetchdomain.ModuleCoordinate {
-	return fetchdomain.ModuleCoordinate{Path: path, Version: version}
+func coord(path, version string) coordinate.ModuleCoordinate {
+	return coordinate.ModuleCoordinate{Path: path, Version: version}
 }
 
 func snap(source, version string) domain.DatabaseSnapshot {
@@ -308,7 +310,7 @@ func TestListVulnerabilityRecords(t *testing.T) {
 
 	// Put two vulnerability records and collect their coordinates.
 	modules := []string{"github.com/foo/bar", "github.com/baz/qux"}
-	perModule := make(map[fetchdomain.ModuleCoordinate]string, len(modules))
+	perModule := make(map[coordinate.ModuleCoordinate]string, len(modules))
 	for _, path := range modules {
 		c := coord(path, "v1.0.0")
 		rec := domain.VulnerabilityRecord{

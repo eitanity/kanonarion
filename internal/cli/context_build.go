@@ -7,6 +7,7 @@ import (
 	"time"
 
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	exapp "github.com/eitanity/kanonarion/internal/example/application"
 	exdomain "github.com/eitanity/kanonarion/internal/example/domain"
 	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
@@ -17,7 +18,7 @@ import (
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
-func buildCommandsWithWalk(coord fetchdomain.ModuleCoordinate, walkID string) contextCommands {
+func buildCommandsWithWalk(coord coordinate.ModuleCoordinate, walkID string) contextCommands {
 	mod := coord.Path + "@" + coord.Version
 	vulnCmd := "kanonarion vuln-show " + mod
 	if walkID != "" {
@@ -41,7 +42,7 @@ func isoTime(t time.Time) string {
 	return t.UTC().Format(time.RFC3339)
 }
 
-func buildVerification(ctx context.Context, coord fetchdomain.ModuleCoordinate, uc QueryFetchUseCase) contextVerification {
+func buildVerification(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryFetchUseCase) contextVerification {
 	rec, found, err := uc.GetFetchRecord(ctx, coord, fetchapp.PipelineVersion)
 	if err != nil {
 		return contextVerification{Status: sectionStatusReadError, Error: err.Error()}
@@ -60,7 +61,7 @@ func buildVerification(ctx context.Context, coord fetchdomain.ModuleCoordinate, 
 // buildProvenance runs the name-path fork heuristic over the module path.
 // The heuristic is a pure function of the coordinate, so the section is
 // always analysed here — its status is never "not_analysed".
-func buildProvenance(coord fetchdomain.ModuleCoordinate) contextProvenance {
+func buildProvenance(coord coordinate.ModuleCoordinate) contextProvenance {
 	fp := fetchdomain.InferForkProvenance(coord.Path)
 	out := contextForkHeuristic{
 		Status:           fp.Status.String(),
@@ -75,7 +76,7 @@ func buildProvenance(coord fetchdomain.ModuleCoordinate) contextProvenance {
 	return contextProvenance{ForkHeuristic: out}
 }
 
-func buildDependencies(ctx context.Context, coord fetchdomain.ModuleCoordinate, walkUC QueryWalksUseCase) contextDependencies {
+func buildDependencies(ctx context.Context, coord coordinate.ModuleCoordinate, walkUC QueryWalksUseCase) contextDependencies {
 	walks, err := walkUC.ListWalks(ctx, walkports.WalkFilter{Target: &coord, Limit: 1})
 	if err != nil {
 		return contextDependencies{Status: sectionStatusReadError, Error: err.Error()}
@@ -110,7 +111,7 @@ func buildDependencies(ctx context.Context, coord fetchdomain.ModuleCoordinate, 
 	}
 }
 
-func buildLicense(ctx context.Context, coord fetchdomain.ModuleCoordinate, uc QueryLicenseUseCase) contextLicense {
+func buildLicense(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryLicenseUseCase) contextLicense {
 	rec, found, err := uc.GetLicenseRecord(ctx, coord, licapp.PipelineVersion)
 	if err != nil {
 		return contextLicense{Status: sectionStatusReadError, Error: err.Error()}
@@ -176,7 +177,7 @@ func buildLicense(ctx context.Context, coord fetchdomain.ModuleCoordinate, uc Qu
 	return l
 }
 
-func buildInterface(ctx context.Context, coord fetchdomain.ModuleCoordinate, uc QueryInterfaceUseCase, compact bool, pkgFilter string) contextInterface {
+func buildInterface(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryInterfaceUseCase, compact bool, pkgFilter string) contextInterface {
 	rec, found, err := uc.GetInterfaceRecord(ctx, coord, ifaceapp.PipelineVersion)
 	if err != nil {
 		return contextInterface{Status: sectionStatusReadError, Error: err.Error()}
@@ -230,7 +231,7 @@ func buildInterface(ctx context.Context, coord fetchdomain.ModuleCoordinate, uc 
 	return out
 }
 
-func buildCallGraph(ctx context.Context, coord fetchdomain.ModuleCoordinate, uc QueryCallGraphUseCase, entryPointsFull bool, pkgFilter string) contextCallGraph {
+func buildCallGraph(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryCallGraphUseCase, entryPointsFull bool, pkgFilter string) contextCallGraph {
 	rec, found, err := uc.GetCallGraphRecord(ctx, coord, cgapp.PipelineVersion)
 	if err != nil {
 		return contextCallGraph{Status: sectionStatusReadError, Error: err.Error()}
@@ -286,7 +287,7 @@ func buildCallGraph(ctx context.Context, coord fetchdomain.ModuleCoordinate, uc 
 
 const compactExampleBodyLimit = 500
 
-func buildExamples(ctx context.Context, coord fetchdomain.ModuleCoordinate, uc QueryExamplesUseCase, compact bool, pkgFilter string) contextExamples {
+func buildExamples(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryExamplesUseCase, compact bool, pkgFilter string) contextExamples {
 	rec, found, err := uc.GetExampleRecord(ctx, coord, exapp.PipelineVersion)
 	if err != nil {
 		return contextExamples{Status: sectionStatusReadError, Error: err.Error()}

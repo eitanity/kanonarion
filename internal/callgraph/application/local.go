@@ -5,9 +5,11 @@ import (
 	"fmt"
 	"log/slog"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
-	"github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
@@ -57,7 +59,7 @@ type LocalExtractRequest struct {
 	Dir string
 	// Coordinate.Path must be the module path declared in Dir/go.mod;
 	// Coordinate.Version is a synthetic local version (e.g. "v0.0.0").
-	Coordinate domain.ModuleCoordinate
+	Coordinate coordinate.ModuleCoordinate
 }
 
 // Execute runs local call graph extraction and persists the record.

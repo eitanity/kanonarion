@@ -6,13 +6,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
-func makeWalkWithModules(t *testing.T, coords ...fetchdomain.ModuleCoordinate) (walkdomain.WalkRecord, *fakeWalkStore, *fakeFacts, *fakeBlob) {
+func makeWalkWithModules(t *testing.T, coords ...coordinate.ModuleCoordinate) (walkdomain.WalkRecord, *fakeWalkStore, *fakeFacts, *fakeBlob) {
 	t.Helper()
 	ctx := t.Context()
 	walkID := "walk-rescan-1"
@@ -44,7 +46,7 @@ func TestRescan_ProducesNewScanRun(t *testing.T) {
 	ctx := t.Context()
 	now := time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC)
 
-	target := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	target := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 	walk, ws, facts, blobs := makeWalkWithModules(t, target)
 
 	vulnStore := newFakeVulnStore()
@@ -107,7 +109,7 @@ func TestRescan_FreshSnapshotFetched(t *testing.T) {
 	ctx := t.Context()
 	now := time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC)
 
-	target := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	target := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 	walk, ws, facts, blobs := makeWalkWithModules(t, target)
 
 	vulnStore := newFakeVulnStore()
@@ -135,7 +137,7 @@ func TestRescan_PinnedSnapshot(t *testing.T) {
 	ctx := t.Context()
 	now := time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC)
 
-	target := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	target := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 	walk, ws, facts, blobs := makeWalkWithModules(t, target)
 
 	vulnStore := newFakeVulnStore()

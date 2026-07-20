@@ -11,14 +11,15 @@ import (
 	"strings"
 	"time"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 )
 
 // Scan performs a vulnerability scan on a module.
 func (s *Scanner) Scan(
 	ctx context.Context,
-	coord fetchdomain.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 	moduleSource io.Reader,
 	snapshot domain.DatabaseSnapshot,
 	goModCache string,

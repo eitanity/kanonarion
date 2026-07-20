@@ -6,9 +6,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/extract/domain"
 	"github.com/eitanity/kanonarion/internal/extract/ports"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
@@ -17,7 +19,7 @@ type slowExtractor struct {
 	delay time.Duration
 }
 
-func (s *slowExtractor) Extract(_ context.Context, _ fetchdomain.ModuleCoordinate, stage string, _ bool) (ports.StageResult, error) {
+func (s *slowExtractor) Extract(_ context.Context, _ coordinate.ModuleCoordinate, stage string, _ bool) (ports.StageResult, error) {
 	time.Sleep(s.delay)
 	return ports.StageResult{Status: domain.StageSucceeded, RecordID: "rec-" + stage}, nil
 }
@@ -25,7 +27,7 @@ func (s *slowExtractor) Extract(_ context.Context, _ fetchdomain.ModuleCoordinat
 func buildBenchWalk(n int) walkdomain.WalkRecord {
 	nodes := make([]walkdomain.GraphNode, n)
 	for i := range n {
-		c, _ := fetchdomain.NewModuleCoordinate(fmt.Sprintf("github.com/pkg/m%d", i), "v1.0.0")
+		c, _ := coordinate.NewModuleCoordinate(fmt.Sprintf("github.com/pkg/m%d", i), "v1.0.0")
 		nodes[i] = walkdomain.GraphNode{Coordinate: c}
 	}
 	return walkdomain.WalkRecord{

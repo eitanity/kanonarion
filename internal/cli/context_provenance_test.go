@@ -4,11 +4,13 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 func TestBuildProvenance_ForkShapedPath(t *testing.T) {
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/someuser/cobra", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/someuser/cobra", Version: "v1.0.0"}
 
 	got := buildProvenance(coord)
 
@@ -31,7 +33,7 @@ func TestBuildProvenance_ForkShapedPath(t *testing.T) {
 }
 
 func TestBuildProvenance_UnrelatedPathIsAnalysedNone(t *testing.T) {
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/some/app", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/some/app", Version: "v1.0.0"}
 
 	got := buildProvenance(coord)
 
@@ -52,7 +54,7 @@ func TestBuildProvenance_UnrelatedPathIsAnalysedNone(t *testing.T) {
 
 func TestPrintContextSummary_ProvenancePathMatch(t *testing.T) {
 	out := makeNotRunOutput(contextCommands{})
-	out.Provenance = buildProvenance(fetchdomain.ModuleCoordinate{Path: "github.com/someuser/cobra", Version: "v1.0.0"})
+	out.Provenance = buildProvenance(coordinate.ModuleCoordinate{Path: "github.com/someuser/cobra", Version: "v1.0.0"})
 
 	var buf strings.Builder
 	if err := printContextText(out, true, &buf); err != nil {
@@ -67,7 +69,7 @@ func TestPrintContextSummary_ProvenancePathMatch(t *testing.T) {
 
 func TestPrintContextSummary_ProvenanceNone(t *testing.T) {
 	out := makeNotRunOutput(contextCommands{})
-	out.Provenance = buildProvenance(fetchdomain.ModuleCoordinate{Path: "example.com/some/app", Version: "v1.0.0"})
+	out.Provenance = buildProvenance(coordinate.ModuleCoordinate{Path: "example.com/some/app", Version: "v1.0.0"})
 
 	var buf strings.Builder
 	if err := printContextText(out, true, &buf); err != nil {
@@ -101,7 +103,7 @@ func TestPrintContextSummary_ProvenanceNotAnalysedZeroValue(t *testing.T) {
 
 func TestPrintContextFull_ProvenanceSection(t *testing.T) {
 	out := makeNotRunOutput(contextCommands{})
-	out.Provenance = buildProvenance(fetchdomain.ModuleCoordinate{Path: "gitlab.com/mirrors/logrus", Version: "v1.0.0"})
+	out.Provenance = buildProvenance(coordinate.ModuleCoordinate{Path: "gitlab.com/mirrors/logrus", Version: "v1.0.0"})
 
 	var buf strings.Builder
 	if err := printContextFull(out, &buf); err != nil {

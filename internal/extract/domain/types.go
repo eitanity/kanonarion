@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 )
 
 // ExtractionRunStatus summarises the overall outcome of an ExtractionRun.
@@ -111,8 +111,8 @@ func (s *StageStatus) UnmarshalJSON(data []byte) error {
 
 // ModuleExtractionResult summarizes which stages were run for a single module.
 type ModuleExtractionResult struct {
-	Coordinate fetchdomain.ModuleCoordinate `json:"coordinate"`
-	Stages     map[string]StageResult       `json:"stages"`
+	Coordinate coordinate.ModuleCoordinate `json:"coordinate"`
+	Stages     map[string]StageResult      `json:"stages"`
 }
 
 // StageResult captures the outcome and record ID of a single stage.
@@ -131,17 +131,17 @@ const ExtractionRunSchemaVersion = "2"
 type ExtractionRun struct {
 	SchemaVersion string `json:"schema_version"`
 	// Ecosystem declares the schema's scope; always fetchdomain.EcosystemGo.
-	Ecosystem        string                                                  `json:"ecosystem"`
-	ID               string                                                  `json:"id"`
-	WalkID           string                                                  `json:"walk_id"`
-	RequestedStages  []string                                                `json:"requested_stages"`
-	PerModuleResults map[fetchdomain.ModuleCoordinate]ModuleExtractionResult `json:"per_module_results"`
-	StartedAt        time.Time                                               `json:"started_at"`
-	CompletedAt      time.Time                                               `json:"completed_at"`
-	OverallStatus    ExtractionRunStatus                                     `json:"overall_status"`
-	PipelineVersions map[string]string                                       `json:"pipeline_versions"`
-	Operator         string                                                  `json:"operator"`
-	ContentHash      string                                                  `json:"content_hash"`
+	Ecosystem        string                                                 `json:"ecosystem"`
+	ID               string                                                 `json:"id"`
+	WalkID           string                                                 `json:"walk_id"`
+	RequestedStages  []string                                               `json:"requested_stages"`
+	PerModuleResults map[coordinate.ModuleCoordinate]ModuleExtractionResult `json:"per_module_results"`
+	StartedAt        time.Time                                              `json:"started_at"`
+	CompletedAt      time.Time                                              `json:"completed_at"`
+	OverallStatus    ExtractionRunStatus                                    `json:"overall_status"`
+	PipelineVersions map[string]string                                      `json:"pipeline_versions"`
+	Operator         string                                                 `json:"operator"`
+	ContentHash      string                                                 `json:"content_hash"`
 }
 
 // MarshalJSON implements json.Marshaler for ExtractionRun.

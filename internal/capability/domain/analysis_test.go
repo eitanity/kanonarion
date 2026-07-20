@@ -39,7 +39,7 @@ func richGraph() cgdomain.CallGraphRecord {
 			edge("m.Root", "m.Mid", cgdomain.ConfidenceDirect),
 			edge("m.Root", "m.Mid", cgdomain.ConfidenceCHAOverapprox), // adjacency tiebreak
 			edge("m.Mid", "net/http.Get", cgdomain.ConfidenceDirect),
-			edge("m.Root", "net.Dial", cgdomain.ConfidenceUnknown),  // weaker NETWORK witness
+			edge("m.Root", "net.Dial", cgdomain.ConfidenceUnknown), // weaker NETWORK witness
 			edge("m.Root", "os/exec.Command", cgdomain.ConfidenceCHAOverapprox),
 			edge("m.Mid", "reflect.ValueOf", cgdomain.ConfidenceUnknown),
 			edge("m.Root", "syscall.Syscall", cgdomain.ConfidenceUnknown),
@@ -162,10 +162,10 @@ func TestAnalyseWitnessesCapabilitiesWithWeakestEdge(t *testing.T) {
 	}
 
 	want := map[Capability]cgdomain.EdgeConfidence{
-		CapabilityNetwork:     cgdomain.ConfidenceDirect,         // via m.Mid → net/http.Get, all Direct
-		CapabilityExec:        cgdomain.ConfidenceCHAOverapprox,  // root → os/exec.Command
-		CapabilityReflect:     cgdomain.ConfidenceUnknown,        // reflect edge folds to Unknown
-		CapabilitySystemCalls: cgdomain.ConfidenceUnknown,        // Unknown edge
+		CapabilityNetwork:     cgdomain.ConfidenceDirect,        // via m.Mid → net/http.Get, all Direct
+		CapabilityExec:        cgdomain.ConfidenceCHAOverapprox, // root → os/exec.Command
+		CapabilityReflect:     cgdomain.ConfidenceUnknown,       // reflect edge folds to Unknown
+		CapabilitySystemCalls: cgdomain.ConfidenceUnknown,       // Unknown edge
 	}
 	if len(report.Findings) != len(want) {
 		t.Fatalf("got %d findings, want %d: %+v", len(report.Findings), len(want), report.Capabilities())
@@ -261,8 +261,8 @@ func TestAnalyseWitnessesInitOnlyCapability(t *testing.T) {
 	rec := cgdomain.CallGraphRecord{
 		OverallStatus: cgdomain.CallGraphStatusExtracted,
 		Nodes: []cgdomain.CallNode{
-			node("m.init", "m", "init", false, false),         // owned init, not exported
-			node("m.Exported", "m", "Exported", false, true),  // exported, reaches no sink
+			node("m.init", "m", "init", false, false),        // owned init, not exported
+			node("m.Exported", "m", "Exported", false, true), // exported, reaches no sink
 			node("net/http.Get", "net/http", "Get", true, false),
 		},
 		Edges: []cgdomain.CallEdge{

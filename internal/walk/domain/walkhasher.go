@@ -8,7 +8,9 @@ import (
 	"sort"
 	"time"
 
-	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
+	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 // WalkRecordHasher computes and embeds a content hash into a WalkRecord.
@@ -233,14 +235,22 @@ func marshalCanonicalWalk(r WalkRecord) ([]byte, error) {
 		Target:          toCanonicalCoord(r.Target),
 	}
 
-	b, err := json.Marshal(c)
+	b, err := canonicalMarshal(c)
 	if err != nil {
 		return nil, fmt.Errorf("marshalling canonical walk record: %w", err)
 	}
 	return b, nil
 }
 
-func toCanonicalCoord(c domain2.ModuleCoordinate) canonicalWalkCoord {
+// canonicalMarshal is a seam over json.Marshal used to test the
+// marshal-failure guard's wrapping and propagation logic. No field in
+// canonicalWalkRecord can currently make json.Marshal fail (no NaN/Inf
+// floats, no unsupported types), so this proves the guard's error handling
+// is correct, not that the guard is reachable with a real value today — it
+// exists for the never-silent-failure invariant, not a known failure mode.
+var canonicalMarshal = json.Marshal
+
+func toCanonicalCoord(c coordinate.ModuleCoordinate) canonicalWalkCoord {
 	return canonicalWalkCoord{Path: c.Path, Version: c.Version}
 }
 
@@ -371,8 +381,8 @@ func canonicalWalkEdges(edges []GraphEdge) []canonicalWalkEdge {
 
 // canonicalNodeResults converts the per-node results map into a sorted slice
 // so the serialised form is independent of map iteration order.
-func canonicalNodeResults(results map[domain2.ModuleCoordinate]NodeResult) ([]canonicalNodeEntry, error) {
-	keys := make([]domain2.ModuleCoordinate, 0, len(results))
+func canonicalNodeResults(results map[coordinate.ModuleCoordinate]NodeResult) ([]canonicalNodeEntry, error) {
+	keys := make([]coordinate.ModuleCoordinate, 0, len(results))
 	for k := range results {
 		keys = append(keys, k)
 	}
@@ -401,8 +411,8 @@ func (WalkRecordHasher) Unmarshal(data []byte) (WalkRecord, error) {
 	if err := json.Unmarshal(data, &c); err != nil {
 		return WalkRecord{}, fmt.Errorf("unmarshalling canonical walk record: %w", err)
 	}
-	if c.Ecosystem != domain2.EcosystemGo {
-		return WalkRecord{}, fmt.Errorf("%w: got %q, want %q", domain2.ErrUnsupportedEcosystem, c.Ecosystem, domain2.EcosystemGo)
+	if c.Ecosystem != fetchdomain.EcosystemGo {
+		return WalkRecord{}, fmt.Errorf("%w: got %q, want %q", fetchdomain.ErrUnsupportedEcosystem, c.Ecosystem, fetchdomain.EcosystemGo)
 	}
 
 	startedAt, err := time.Parse(time.RFC3339, c.StartedAt)
@@ -418,16 +428,16 @@ func (WalkRecordHasher) Unmarshal(data []byte) (WalkRecord, error) {
 		return WalkRecord{}, fmt.Errorf("parsing graph.resolved_at %q: %w", c.Graph.ResolvedAt, err)
 	}
 
-	target, err := domain2.NewModuleCoordinate(c.Target.Path, c.Target.Version)
+	target, err := coordinate.NewModuleCoordinate(c.Target.Path, c.Target.Version)
 	if err != nil {
 		return WalkRecord{}, fmt.Errorf("parsing target coordinate: %w", err)
 	}
 	// A walk that failed before the graph was resolved legitimately has no
 	// graph target. Treat a fully-empty coordinate as the zero value rather
 	// than a fatal parse error, so failed-walk records remain readable.
-	var graphTarget domain2.ModuleCoordinate
+	var graphTarget coordinate.ModuleCoordinate
 	if c.Graph.Target.Path != "" || c.Graph.Target.Version != "" {
-		graphTarget, err = domain2.NewModuleCoordinate(c.Graph.Target.Path, c.Graph.Target.Version)
+		graphTarget, err = coordinate.NewModuleCoordinate(c.Graph.Target.Path, c.Graph.Target.Version)
 		if err != nil {
 			return WalkRecord{}, fmt.Errorf("parsing graph target coordinate: %w", err)
 		}
@@ -435,7 +445,7 @@ func (WalkRecordHasher) Unmarshal(data []byte) (WalkRecord, error) {
 
 	nodes := make([]GraphNode, len(c.Graph.Nodes))
 	for i, n := range c.Graph.Nodes {
-		coord, nerr := domain2.NewModuleCoordinate(n.Coordinate.Path, n.Coordinate.Version)
+		coord, nerr := coordinate.NewModuleCoordinate(n.Coordinate.Path, n.Coordinate.Version)
 		if nerr != nil {
 			return WalkRecord{}, fmt.Errorf("parsing node %d coordinate: %w", i, nerr)
 		}
@@ -446,7 +456,7 @@ func (WalkRecordHasher) Unmarshal(data []byte) (WalkRecord, error) {
 			ErrorDetail:      n.ErrorDetail,
 			Retracted:        n.Retracted,
 			LocalPath:        n.LocalPath,
-			Digests: domain2.ArtifactDigests{
+			Digests: fetchdomain.ArtifactDigests{
 				SHA256: n.ZipSHA256,
 				SHA384: n.ZipSHA384,
 				SHA512: n.ZipSHA512,
@@ -454,7 +464,7 @@ func (WalkRecordHasher) Unmarshal(data []byte) (WalkRecord, error) {
 			Stdlib: fromCanonicalStdlibFacts(n.Stdlib),
 		}
 		if n.OriginalCoordinate != nil {
-			oc, oerr := domain2.NewModuleCoordinate(n.OriginalCoordinate.Path, n.OriginalCoordinate.Version)
+			oc, oerr := coordinate.NewModuleCoordinate(n.OriginalCoordinate.Path, n.OriginalCoordinate.Version)
 			if oerr != nil {
 				return WalkRecord{}, fmt.Errorf("parsing node %d original coordinate: %w", i, oerr)
 			}
@@ -464,20 +474,20 @@ func (WalkRecordHasher) Unmarshal(data []byte) (WalkRecord, error) {
 
 	edges := make([]GraphEdge, len(c.Graph.Edges))
 	for i, e := range c.Graph.Edges {
-		from, ferr := domain2.NewModuleCoordinate(e.From.Path, e.From.Version)
+		from, ferr := coordinate.NewModuleCoordinate(e.From.Path, e.From.Version)
 		if ferr != nil {
 			return WalkRecord{}, fmt.Errorf("parsing edge %d from coordinate: %w", i, ferr)
 		}
-		to, terr := domain2.NewModuleCoordinate(e.To.Path, e.To.Version)
+		to, terr := coordinate.NewModuleCoordinate(e.To.Path, e.To.Version)
 		if terr != nil {
 			return WalkRecord{}, fmt.Errorf("parsing edge %d to coordinate: %w", i, terr)
 		}
 		edges[i] = GraphEdge{From: from, To: to, ConstraintVersion: e.ConstraintVersion}
 	}
 
-	perNode := make(map[domain2.ModuleCoordinate]NodeResult, len(c.PerNodeResults))
+	perNode := make(map[coordinate.ModuleCoordinate]NodeResult, len(c.PerNodeResults))
 	for _, entry := range c.PerNodeResults {
-		coord, cerr := domain2.NewModuleCoordinate(entry.Coordinate.Path, entry.Coordinate.Version)
+		coord, cerr := coordinate.NewModuleCoordinate(entry.Coordinate.Path, entry.Coordinate.Version)
 		if cerr != nil {
 			return WalkRecord{}, fmt.Errorf("parsing per_node_results coordinate: %w", cerr)
 		}
@@ -540,7 +550,7 @@ func (WalkRecordHasher) Unmarshal(data []byte) (WalkRecord, error) {
 	}, nil
 }
 
-func unmarshalNodeResult(coord domain2.ModuleCoordinate, entry canonicalNodeEntry) (NodeResult, error) {
+func unmarshalNodeResult(coord coordinate.ModuleCoordinate, entry canonicalNodeEntry) (NodeResult, error) {
 	nr := NodeResult{
 		Coordinate: coord,
 		Status:     NodeStatus(entry.Status),
@@ -551,7 +561,7 @@ func unmarshalNodeResult(coord domain2.ModuleCoordinate, entry canonicalNodeEntr
 		nr.Error = &StoredError{Type: entry.Error.Type, Message: entry.Error.Message}
 	}
 	if entry.FetchRecord != nil && string(entry.FetchRecord) != "null" {
-		rec, err := domain2.CanonicalHasher{}.Unmarshal(entry.FetchRecord)
+		rec, err := fetchdomain.CanonicalHasher{}.Unmarshal(entry.FetchRecord)
 		if err != nil {
 			return NodeResult{}, fmt.Errorf("unmarshalling fetch record: %w", err)
 		}
@@ -560,10 +570,17 @@ func unmarshalNodeResult(coord domain2.ModuleCoordinate, entry canonicalNodeEntr
 	return nr, nil
 }
 
-func toCanonicalNodeEntry(coord domain2.ModuleCoordinate, r NodeResult) (canonicalNodeEntry, error) {
+func toCanonicalNodeEntry(coord coordinate.ModuleCoordinate, r NodeResult) (canonicalNodeEntry, error) {
 	var fetchRaw json.RawMessage
 	if r.FetchRecord != nil {
-		b, err := domain2.CanonicalHasher{}.Marshal(*r.FetchRecord)
+		// This error path (and its propagation up through canonicalNodeResults
+		// and SetContentHash) is untested: it only fires if fetch/domain's own
+		// marshal-failure guard fires, which is already proven unreachable with
+		// real FactRecord data (no float/unsupported-type fields), and fetch's
+		// test-only seam for it (canonicalMarshal) is invisible outside that
+		// package — reaching it from here would require permanent, production
+		// public API on fetch/domain for a branch nothing can currently trigger.
+		b, err := fetchdomain.CanonicalHasher{}.Marshal(*r.FetchRecord)
 		if err != nil {
 			return canonicalNodeEntry{}, fmt.Errorf("marshalling fetch record: %w", err)
 		}

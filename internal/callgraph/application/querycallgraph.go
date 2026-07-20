@@ -5,9 +5,10 @@ import (
 	"fmt"
 	"sort"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 // QueryCallGraphUseCase provides read-only access to stored call graph records.
@@ -21,7 +22,7 @@ func NewQueryCallGraphUseCase(store cgports.CallGraphStore) *QueryCallGraphUseCa
 }
 
 // GetCallGraphRecord retrieves the call graph record for a module coordinate.
-func (uc *QueryCallGraphUseCase) GetCallGraphRecord(ctx context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string) (domain.CallGraphRecord, bool, error) {
+func (uc *QueryCallGraphUseCase) GetCallGraphRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain.CallGraphRecord, bool, error) {
 	rec, found, err := uc.store.GetCallGraphRecord(ctx, coord, pipelineVersion)
 	if err != nil {
 		return domain.CallGraphRecord{}, false, fmt.Errorf("getting call graph record for %s: %w", coord, err)

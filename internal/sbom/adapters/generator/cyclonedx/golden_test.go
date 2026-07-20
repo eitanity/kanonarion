@@ -10,6 +10,8 @@ import (
 	"github.com/eitanity/kanonarion/internal/sbom/domain"
 	"github.com/eitanity/kanonarion/internal/sbom/ports"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
 	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -24,8 +26,8 @@ import (
 // vulnerability finding shared across two modules (cross-module dedup with
 // first-occurrence summary/severity).
 func TestGoldenByteLock(t *testing.T) {
-	mc := func(p, v string) fetchdomain.ModuleCoordinate {
-		c, err := fetchdomain.NewModuleCoordinate(p, v)
+	mc := func(p, v string) coordinate.ModuleCoordinate {
+		c, err := coordinate.NewModuleCoordinate(p, v)
 		if err != nil {
 			t.Fatal(err)
 		}
@@ -63,7 +65,7 @@ func TestGoldenByteLock(t *testing.T) {
 			ResolvedAt: time.Date(2026, 3, 2, 10, 0, 0, 0, time.UTC),
 		},
 	}
-	licenses := map[fetchdomain.ModuleCoordinate]licensedomain.LicenseRecord{
+	licenses := map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord{
 		target: {PrimarySPDX: "Apache-2.0", ExtractedAt: time.Date(2026, 3, 2, 12, 30, 0, 0, time.UTC)},
 		depA:   {PrimarySPDX: "", ExtractedAt: time.Date(2026, 3, 2, 11, 0, 0, 0, time.UTC)},
 		// depB intentionally absent -> licensesIncomplete

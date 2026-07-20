@@ -4,8 +4,10 @@ import (
 	"context"
 	"go/token"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	"golang.org/x/tools/go/callgraph"
 	"golang.org/x/tools/go/ssa"
 )
@@ -19,7 +21,7 @@ import (
 // module's own completeness accounting, not the target module's — the target's
 // completeness is fixed by its own build fidelity and is unaffected by which
 // caller nodes are recorded here.
-func recordedCallerNodes(cg *callgraph.Graph, coord fetchdomain.ModuleCoordinate) map[*callgraph.Node]bool {
+func recordedCallerNodes(cg *callgraph.Graph, coord coordinate.ModuleCoordinate) map[*callgraph.Node]bool {
 	recorded := make(map[*callgraph.Node]bool)
 	for fn, node := range cg.Nodes {
 		if fn == nil {
@@ -36,7 +38,7 @@ func (a *Analyser) walkGraph(
 	ctx context.Context,
 	cg *callgraph.Graph,
 	recordedCallers map[*callgraph.Node]bool,
-	coord fetchdomain.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 	fset *token.FileSet,
 	tempDir string,
 ) ([]domain.CallNode, []domain.CallEdge, domain.CallGraphStatus) {

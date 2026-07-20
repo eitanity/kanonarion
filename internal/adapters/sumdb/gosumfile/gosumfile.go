@@ -15,6 +15,8 @@ import (
 	"os"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 )
@@ -92,7 +94,7 @@ func (c *Client) parse(content string) error {
 // Lookup returns the h1 hashes recorded in go.sum for the coordinate. A module
 // with no zip entry in go.sum reports Available=false with a "not in go.sum"
 // reason; the caller's --from-modcache policy turns that into a hard failure.
-func (c *Client) Lookup(_ context.Context, coord domain2.ModuleCoordinate) ports.SumDBResult {
+func (c *Client) Lookup(_ context.Context, coord coordinate.ModuleCoordinate) ports.SumDBResult {
 	k := key(coord.Path, coord.Version)
 	zipHash, ok := c.zip[k]
 	if !ok {

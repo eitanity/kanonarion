@@ -10,6 +10,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 )
@@ -43,7 +44,7 @@ func (s *fakeFactStore) PutFetchRecord(_ context.Context, r domain2.FactRecord) 
 	return nil
 }
 
-func (s *fakeFactStore) GetFetchRecord(_ context.Context, coord domain2.ModuleCoordinate, pv string) (domain2.FactRecord, bool, error) {
+func (s *fakeFactStore) GetFetchRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (domain2.FactRecord, bool, error) {
 	if s.records == nil {
 		return domain2.FactRecord{}, false, nil
 	}
@@ -124,7 +125,7 @@ func (s *fakeCallGraphStore) PutCallGraphRecord(_ context.Context, r domain.Call
 	return nil
 }
 
-func (s *fakeCallGraphStore) GetCallGraphRecord(_ context.Context, coord domain2.ModuleCoordinate, pv string) (domain.CallGraphRecord, bool, error) {
+func (s *fakeCallGraphStore) GetCallGraphRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (domain.CallGraphRecord, bool, error) {
 	if s.getErr != nil {
 		return domain.CallGraphRecord{}, false, s.getErr
 	}
@@ -158,7 +159,7 @@ func (f *fakeAnalyser) AnalyserMetadata() ports.AnalyserMetadata {
 	return ports.AnalyserMetadata{Algorithm: domain.AlgorithmCHA, Version: "test"}
 }
 
-func (f *fakeAnalyser) Analyse(_ context.Context, _ string, coord domain2.ModuleCoordinate) (domain.CallGraphRecord, error) {
+func (f *fakeAnalyser) Analyse(_ context.Context, _ string, coord coordinate.ModuleCoordinate) (domain.CallGraphRecord, error) {
 	if f.err != nil {
 		return domain.CallGraphRecord{}, f.err
 	}
@@ -169,7 +170,7 @@ func (f *fakeAnalyser) Analyse(_ context.Context, _ string, coord domain2.Module
 
 // AnalyseDir lets fakeAnalyser double as a ports.LocalCallGraphAnalyser.
 // dir is recorded so tests can assert it was forwarded.
-func (f *fakeAnalyser) AnalyseDir(_ context.Context, dir string, coord domain2.ModuleCoordinate) (domain.CallGraphRecord, error) {
+func (f *fakeAnalyser) AnalyseDir(_ context.Context, dir string, coord coordinate.ModuleCoordinate) (domain.CallGraphRecord, error) {
 	f.lastDir = dir
 	f.calls++
 	if f.err != nil {

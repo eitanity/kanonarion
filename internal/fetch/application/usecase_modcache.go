@@ -7,6 +7,8 @@ import (
 	"io"
 	"log/slog"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 
@@ -34,8 +36,8 @@ var ErrGoSumVerification = errors.New("go.sum verification failed")
 // never touch the filesystem — so a handle can be recorded before (or without)
 // the corresponding bytes being read.
 type ModcacheHandleDeriver interface {
-	ZipHandle(coord domain2.ModuleCoordinate) (ports.BlobHandle, error)
-	GoModHandle(coord domain2.ModuleCoordinate) (ports.BlobHandle, error)
+	ZipHandle(coord coordinate.ModuleCoordinate) (ports.BlobHandle, error)
+	GoModHandle(coord coordinate.ModuleCoordinate) (ports.BlobHandle, error)
 }
 
 // WithModcache switches the use case into --from-modcache mode. In this mode
@@ -178,7 +180,7 @@ func (uc *FetchModuleUseCase) executeModcache(ctx context.Context, req FetchRequ
 // verifyAgainstGoSum checks the module's computed h1 hashes against the local
 // go.sum entries surfaced by the SumDBClient. A module absent from go.sum, or
 // whose zip/go.mod hash disagrees, yields ErrGoSumVerification.
-func (uc *FetchModuleUseCase) verifyAgainstGoSum(ctx context.Context, coord domain2.ModuleCoordinate, dl ports.ModuleDownload) error {
+func (uc *FetchModuleUseCase) verifyAgainstGoSum(ctx context.Context, coord coordinate.ModuleCoordinate, dl ports.ModuleDownload) error {
 	res := uc.sumdb.Lookup(ctx, coord)
 	if !res.Available {
 		return fmt.Errorf("%w: %s: %s", ErrGoSumVerification, coord, res.Reason)

@@ -8,6 +8,8 @@ import (
 	"io"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/license/domain"
@@ -45,7 +47,7 @@ func (s *fakeFactStore) PutFetchRecord(_ context.Context, r domain2.FactRecord) 
 	return nil
 }
 
-func (s *fakeFactStore) GetFetchRecord(_ context.Context, coord domain2.ModuleCoordinate, pv string) (domain2.FactRecord, bool, error) {
+func (s *fakeFactStore) GetFetchRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (domain2.FactRecord, bool, error) {
 	if s.records == nil {
 		return domain2.FactRecord{}, false, nil
 	}
@@ -116,7 +118,7 @@ func (s *fakeLicenseStore) PutLicenseRecord(_ context.Context, r domain.LicenseR
 	return nil
 }
 
-func (s *fakeLicenseStore) GetLicenseRecord(_ context.Context, coord domain2.ModuleCoordinate, pv string) (domain.LicenseRecord, bool, error) {
+func (s *fakeLicenseStore) GetLicenseRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (domain.LicenseRecord, bool, error) {
 	if s.records == nil {
 		return domain.LicenseRecord{}, false, nil
 	}

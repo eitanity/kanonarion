@@ -6,8 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
@@ -51,7 +53,7 @@ type latestNotFoundQueryVuln struct {
 	*testfakes.FakeQueryVuln
 }
 
-func (f latestNotFoundQueryVuln) GetLatestRecord(_ context.Context, _ fetchdomain.ModuleCoordinate, _ string) (vuldomain.VulnerabilityRecord, bool, error) {
+func (f latestNotFoundQueryVuln) GetLatestRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string) (vuldomain.VulnerabilityRecord, bool, error) {
 	return vuldomain.VulnerabilityRecord{}, false, nil
 }
 
@@ -61,7 +63,7 @@ func TestBuildVulnerabilities_BatchReadErrorSurvivesFallbackMiss(t *testing.T) {
 	inner.Err = errors.New("record unreadable")
 	batch := &vulnBatchCtx{
 		runs: map[string][]vuldomain.WalkScanRun{
-			"walk-1": {{PerModuleResults: map[fetchdomain.ModuleCoordinate]string{coord: ""}}},
+			"walk-1": {{PerModuleResults: map[coordinate.ModuleCoordinate]string{coord: ""}}},
 		},
 	}
 
@@ -76,12 +78,12 @@ func TestBuildVulnerabilities_BatchReadErrorSurvivesFallbackMiss(t *testing.T) {
 }
 
 // cln builds a Clean vuln record for a coordinate.
-func cln(c fetchdomain.ModuleCoordinate) vuldomain.VulnerabilityRecord {
+func cln(c coordinate.ModuleCoordinate) vuldomain.VulnerabilityRecord {
 	return vuldomain.VulnerabilityRecord{Coordinate: c, OverallStatus: vuldomain.StatusClean}
 }
 
 // aff builds an Affected vuln record for a coordinate.
-func aff(c fetchdomain.ModuleCoordinate) vuldomain.VulnerabilityRecord {
+func aff(c coordinate.ModuleCoordinate) vuldomain.VulnerabilityRecord {
 	return vuldomain.VulnerabilityRecord{Coordinate: c, OverallStatus: vuldomain.StatusAffected}
 }
 
@@ -91,10 +93,10 @@ func aff(c fetchdomain.ModuleCoordinate) vuldomain.VulnerabilityRecord {
 // subject has no edge to peer, so peer is NOT in subject's closure.
 func walkAffectedFixture(t *testing.T, subjectEdges []walkdomain.GraphEdge, records ...vuldomain.VulnerabilityRecord) (*vulnBatchCtx, *testfakes.FakeQueryVuln) {
 	t.Helper()
-	root := fetchdomain.ModuleCoordinate{Path: "example.com/root", Version: "local"}
+	root := coordinate.ModuleCoordinate{Path: "example.com/root", Version: "local"}
 
 	vuln := testfakes.NewFakeQueryVuln()
-	perModule := map[fetchdomain.ModuleCoordinate]string{}
+	perModule := map[coordinate.ModuleCoordinate]string{}
 	for _, r := range records {
 		vuln.AddRecord(r.Coordinate, r)
 		perModule[r.Coordinate] = ""
@@ -117,7 +119,7 @@ func walkAffectedFixture(t *testing.T, subjectEdges []walkdomain.GraphEdge, reco
 		},
 		walkUC:        walks,
 		graphCache:    map[string]*walkdomain.Graph{},
-		affectedCache: map[string]map[fetchdomain.ModuleCoordinate]struct{}{},
+		affectedCache: map[string]map[coordinate.ModuleCoordinate]struct{}{},
 	}
 	return batch, vuln
 }
@@ -127,9 +129,9 @@ func walkAffectedFixture(t *testing.T, subjectEdges []walkdomain.GraphEdge, reco
 // annotation, while one whose closure contains an affected peer names it.
 
 func TestBuildVulnerabilities_WalkAffectedPeerNotInClosure_Suppressed(t *testing.T) {
-	root := fetchdomain.ModuleCoordinate{Path: "example.com/root", Version: "local"}
+	root := coordinate.ModuleCoordinate{Path: "example.com/root", Version: "local"}
 	subject := mustContextCoord(t) // example.com/mod@v1.0.0, clean
-	peer := fetchdomain.ModuleCoordinate{Path: "example.com/peer", Version: "v2.0.0"}
+	peer := coordinate.ModuleCoordinate{Path: "example.com/peer", Version: "v2.0.0"}
 
 	// root → subject ; root → peer. subject has no path to peer.
 	edges := []walkdomain.GraphEdge{
@@ -149,9 +151,9 @@ func TestBuildVulnerabilities_WalkAffectedPeerNotInClosure_Suppressed(t *testing
 }
 
 func TestBuildVulnerabilities_WalkAffectedPeerInClosure_Named(t *testing.T) {
-	root := fetchdomain.ModuleCoordinate{Path: "example.com/root", Version: "local"}
+	root := coordinate.ModuleCoordinate{Path: "example.com/root", Version: "local"}
 	subject := mustContextCoord(t) // example.com/mod@v1.0.0, clean
-	peer := fetchdomain.ModuleCoordinate{Path: "example.com/peer", Version: "v2.0.0"}
+	peer := coordinate.ModuleCoordinate{Path: "example.com/peer", Version: "v2.0.0"}
 
 	// root → subject → peer. peer IS in subject's transitive closure.
 	edges := []walkdomain.GraphEdge{
@@ -172,7 +174,7 @@ func TestBuildVulnerabilities_WalkAffectedPeerInClosure_Named(t *testing.T) {
 
 func TestBuildVulnerabilities_WalkGraphUnavailable_KeepsGenericAnnotation(t *testing.T) {
 	subject := mustContextCoord(t)
-	peer := fetchdomain.ModuleCoordinate{Path: "example.com/peer", Version: "v2.0.0"}
+	peer := coordinate.ModuleCoordinate{Path: "example.com/peer", Version: "v2.0.0"}
 
 	// No walkUC / graphCache wired → graph cannot be loaded, so the generic
 	// walk annotation is preserved rather than silently dropped.
@@ -184,7 +186,7 @@ func TestBuildVulnerabilities_WalkGraphUnavailable_KeepsGenericAnnotation(t *tes
 			"walk-1": {{
 				WalkID:           "walk-1",
 				OverallStatus:    vuldomain.WalkStatusAffected,
-				PerModuleResults: map[fetchdomain.ModuleCoordinate]string{subject: "", peer: ""},
+				PerModuleResults: map[coordinate.ModuleCoordinate]string{subject: "", peer: ""},
 			}},
 		},
 	}

@@ -3,14 +3,16 @@ package domain_test
 import (
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	callgraphdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	"github.com/eitanity/kanonarion/internal/local/domain"
 )
 
 func makeRecord(t *testing.T, modPath, modVer string, nodes []callgraphdomain.CallNode, edges []callgraphdomain.CallEdge) callgraphdomain.CallGraphRecord {
 	t.Helper()
-	coord, err := fetchdomain.NewModuleCoordinate(modPath, modVer)
+	coord, err := coordinate.NewModuleCoordinate(modPath, modVer)
 	if err != nil {
 		t.Fatalf("NewModuleCoordinate: %v", err)
 	}

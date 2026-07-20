@@ -6,7 +6,8 @@ import (
 	"context"
 	"fmt"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/local/ports"
 	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
 )
@@ -25,8 +26,8 @@ func New(store vulnports.VulnerabilityStore, pipelineVersion string) *VulnStoreA
 
 // LoadFindings queries the latest stored vulnerability record for each
 // coordinate and returns only coordinates that have at least one finding.
-func (a *VulnStoreAdapter) LoadFindings(ctx context.Context, coords []fetchdomain.ModuleCoordinate) (map[fetchdomain.ModuleCoordinate][]ports.VulnFinding, error) {
-	result := make(map[fetchdomain.ModuleCoordinate][]ports.VulnFinding)
+func (a *VulnStoreAdapter) LoadFindings(ctx context.Context, coords []coordinate.ModuleCoordinate) (map[coordinate.ModuleCoordinate][]ports.VulnFinding, error) {
+	result := make(map[coordinate.ModuleCoordinate][]ports.VulnFinding)
 	for _, coord := range coords {
 		rec, found, err := a.store.GetLatestVulnerabilityRecord(ctx, coord, a.pipelineVersion)
 		if err != nil {

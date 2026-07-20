@@ -7,7 +7,8 @@ import (
 	"fmt"
 	"io"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	"github.com/eitanity/kanonarion/internal/license/domain"
 	"github.com/spf13/cobra"
@@ -63,7 +64,7 @@ func runLicenseDiff(ctx context.Context, argA, argB string, stdout, stderr io.Wr
 // never reported as "no change"), and selects JSON vs text rendering. Split
 // from runLicenseDiff so the not-found contract and render selection are
 // testable without a live store.
-func licenseDiffWith(ctx context.Context, ctr *Container, coordA, coordB fetchdomain.ModuleCoordinate, stdout io.Writer) error {
+func licenseDiffWith(ctx context.Context, ctr *Container, coordA, coordB coordinate.ModuleCoordinate, stdout io.Writer) error {
 	diff, err := ctr.DiffLicense.Diff(ctx, coordA, coordB)
 	if err != nil {
 		var notFound *licapp.ErrLicenseRecordNotFound

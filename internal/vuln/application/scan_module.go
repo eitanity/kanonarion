@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -116,7 +118,7 @@ func (uc *ScanModuleUseCase) WithLocalFetchPipelineVersion(v string) *ScanModule
 // getFetchRecord looks up the FactRecord for coord under the fetch pipeline
 // version first (a proxy-verified record always wins), then the local-ingest
 // pipeline version.
-func (uc *ScanModuleUseCase) getFetchRecord(ctx context.Context, coord fetchdomain.ModuleCoordinate) (fetchdomain.FactRecord, bool, error) {
+func (uc *ScanModuleUseCase) getFetchRecord(ctx context.Context, coord coordinate.ModuleCoordinate) (fetchdomain.FactRecord, bool, error) {
 	for _, v := range []string{uc.fetchPipelineVersion, uc.localFetchPipelineVersion} {
 		if v == "" {
 			continue
@@ -143,7 +145,7 @@ func (uc *ScanModuleUseCase) Preflight(ctx context.Context) error {
 
 // ScanModuleParams defines the input for a module scan.
 type ScanModuleParams struct {
-	Coordinate         fetchdomain.ModuleCoordinate
+	Coordinate         coordinate.ModuleCoordinate
 	WalkID             string
 	Snapshot           *domain.DatabaseSnapshot // nil = use latest
 	Force              bool
@@ -224,7 +226,11 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 				FirstScannedAt:   now,
 				PipelineVersion:  uc.pipelineVersion,
 			}
-			record.ContentHash = uc.computeContentHash(record)
+			hash, err := uc.computeContentHash(record)
+			if err != nil {
+				return domain.VulnerabilityRecord{}, fmt.Errorf("hashing clean record: %w", err)
+			}
+			record.ContentHash = hash
 			if err := uc.vulnStore.PutVulnerabilityRecord(ctx, record); err != nil {
 				return domain.VulnerabilityRecord{}, fmt.Errorf("persisting clean record: %w", err)
 			}
@@ -310,7 +316,11 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 	}
 
 	// 7. Deterministic Identity (T5: Hash-based Identity)
-	record.ContentHash = uc.computeContentHash(record)
+	hash, err := uc.computeContentHash(record)
+	if err != nil {
+		return domain.VulnerabilityRecord{}, fmt.Errorf("hashing vulnerability record: %w", err)
+	}
+	record.ContentHash = hash
 
 	// 8. Durability (T6: Aggregate Persistence)
 	if err := uc.vulnStore.PutVulnerabilityRecord(ctx, record); err != nil {
@@ -352,7 +362,11 @@ func (uc *ScanModuleUseCase) tryReuseCachedRecord(ctx context.Context, params Sc
 	rec.WalkID = params.WalkID
 	rec.ScannedAt = uc.clock.Now()
 	rec.ContentHash = ""
-	rec.ContentHash = uc.computeContentHash(rec)
+	hash, err := uc.computeContentHash(rec)
+	if err != nil {
+		return domain.VulnerabilityRecord{}, false, fmt.Errorf("hashing reused vulnerability record: %w", err)
+	}
+	rec.ContentHash = hash
 	if perr := uc.vulnStore.PutVulnerabilityRecord(ctx, rec); perr != nil {
 		return domain.VulnerabilityRecord{}, false, fmt.Errorf("re-attributing reused vulnerability record: %w", perr)
 	}
@@ -364,7 +378,7 @@ func (uc *ScanModuleUseCase) tryReuseCachedRecord(ctx context.Context, params Sc
 // out-of-toolchain module is the expected outcome of a hermetic scan, not a
 // coverage fault, so it logs at info level (and names reachability --local, the
 // project-rooted answer); genuine build incompatibilities stay at warn.
-func (uc *ScanModuleUseCase) logMetadataFallback(coord fetchdomain.ModuleCoordinate, reason domain.UnscanReason, category, detail string) {
+func (uc *ScanModuleUseCase) logMetadataFallback(coord coordinate.ModuleCoordinate, reason domain.UnscanReason, category, detail string) {
 	if reason.ExpectedOutOfToolchain() {
 		uc.logger.Info("vuln-scan: metadata-only, version outside the project build (expected); use reachability --local for project-rooted reachability",
 			"coordinate", coord)
@@ -409,23 +423,30 @@ func (uc *ScanModuleUseCase) scanMetadataOnly(ctx context.Context, params ScanMo
 		FirstScannedAt:    now,
 		PipelineVersion:   uc.pipelineVersion,
 	}
-	record.ContentHash = uc.computeContentHash(record)
+	hash, err := uc.computeContentHash(record)
+	if err != nil {
+		return domain.VulnerabilityRecord{}, fmt.Errorf("hashing metadata-only record: %w", err)
+	}
+	record.ContentHash = hash
 	if perr := uc.vulnStore.PutVulnerabilityRecord(ctx, record); perr != nil {
 		return domain.VulnerabilityRecord{}, fmt.Errorf("persisting metadata-only record: %w", perr)
 	}
 	return record, nil
 }
 
-func (uc *ScanModuleUseCase) computeContentHash(r domain.VulnerabilityRecord) string {
+func (uc *ScanModuleUseCase) computeContentHash(r domain.VulnerabilityRecord) (string, error) {
 	// FirstScannedAt is first-seen provenance, not part of the verdict, so it is
 	// excluded from the canonical hash: a reused record whose ScannedAt advances
 	// must not change identity on account of an anchor that never moves. r is a
 	// value copy, so zeroing it here does not affect the persisted record.
 	r.FirstScannedAt = time.Time{}
 	// Canonical JSON hashing
-	data, _ := json.Marshal(r)
+	data, err := json.Marshal(r)
+	if err != nil {
+		return "", fmt.Errorf("marshalling vulnerability record for content hash: %w", err)
+	}
 	hash := sha256.Sum256(data)
-	return hex.EncodeToString(hash[:])
+	return hex.EncodeToString(hash[:]), nil
 }
 
 // applyReachability runs reachability analysis for each finding that has
@@ -544,11 +565,11 @@ func buildSymbolRefs(module string, affectedSymbols []string) []ports.SymbolRefe
 	return refs
 }
 
-func (uc *ScanModuleUseCase) checkVulnerabilities(ctx context.Context, coord fetchdomain.ModuleCoordinate, fact fetchdomain.FactRecord, walkID string) (bool, error) {
+func (uc *ScanModuleUseCase) checkVulnerabilities(ctx context.Context, coord coordinate.ModuleCoordinate, fact fetchdomain.FactRecord, walkID string) (bool, error) {
 	// If walkID is empty, we can't look up dependencies in a walk graph.
 	// This might happen during direct module scans outside a walk context.
 	if walkID == "" || uc.walkStore == nil {
-		vulns, err := uc.database.CheckVulnerable(ctx, []fetchdomain.ModuleCoordinate{coord})
+		vulns, err := uc.database.CheckVulnerable(ctx, []coordinate.ModuleCoordinate{coord})
 		if err != nil {
 			return true, fmt.Errorf("checking vulnerabilities: %w", err)
 		}
@@ -563,8 +584,8 @@ func (uc *ScanModuleUseCase) checkVulnerabilities(ctx context.Context, coord fet
 
 	// BFS from coord through graph edges to collect only the transitive
 	// dependencies of this module, not every node in the walk.
-	visited := map[fetchdomain.ModuleCoordinate]bool{coord: true}
-	queue := []fetchdomain.ModuleCoordinate{coord}
+	visited := map[coordinate.ModuleCoordinate]bool{coord: true}
+	queue := []coordinate.ModuleCoordinate{coord}
 	for len(queue) > 0 {
 		curr := queue[0]
 		queue = queue[1:]
@@ -575,7 +596,7 @@ func (uc *ScanModuleUseCase) checkVulnerabilities(ctx context.Context, coord fet
 			}
 		}
 	}
-	deps := make([]fetchdomain.ModuleCoordinate, 0, len(visited))
+	deps := make([]coordinate.ModuleCoordinate, 0, len(visited))
 	for c := range visited {
 		deps = append(deps, c)
 	}

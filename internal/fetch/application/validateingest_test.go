@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/audit"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/fetch/application"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
@@ -15,7 +16,7 @@ import (
 func validRecord(t *testing.T) domain2.FactRecord {
 	t.Helper()
 	r := domain2.NewFactRecord(domain2.FetchedModule{
-		Coordinate:         domain2.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.2.3"},
+		Coordinate:         coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.2.3"},
 		ModuleHash:         domain2.ModuleHash{Algorithm: "h1", Value: "abc=="},
 		GoModHash:          domain2.ModuleHash{Algorithm: "h1", Value: "def=="},
 		VerificationStatus: domain2.Verified,
@@ -36,7 +37,7 @@ type boomFacts struct{ err error }
 
 func (b boomFacts) PutFetchRecord(context.Context, domain2.FactRecord) error { return b.err }
 
-func (b boomFacts) GetFetchRecord(context.Context, domain2.ModuleCoordinate, string) (domain2.FactRecord, bool, error) {
+func (b boomFacts) GetFetchRecord(context.Context, coordinate.ModuleCoordinate, string) (domain2.FactRecord, bool, error) {
 	return domain2.FactRecord{}, false, b.err
 }
 
@@ -108,7 +109,7 @@ func TestValidateAndIngest_ReadVerified_Valid(t *testing.T) {
 func TestValidateAndIngest_ReadVerified_Absent(t *testing.T) {
 	uc := application.NewValidateAndIngestUseCase(newFakeFacts())
 
-	rec, found, err := uc.ReadVerified(context.Background(), domain2.ModuleCoordinate{Path: "x", Version: "v1"}, "0.1.0")
+	rec, found, err := uc.ReadVerified(context.Background(), coordinate.ModuleCoordinate{Path: "x", Version: "v1"}, "0.1.0")
 	if err != nil {
 		t.Fatalf("absent read must not error: %v", err)
 	}
@@ -200,7 +201,7 @@ func TestValidateAndIngest_ReadVerified_Absent_NoAudit(t *testing.T) {
 	sink := newFakeAudit()
 	uc := application.NewValidateAndIngestUseCase(newFakeFacts()).WithAudit(sink)
 
-	_, found, err := uc.ReadVerified(context.Background(), domain2.ModuleCoordinate{Path: "x", Version: "v1"}, "0.1.0")
+	_, found, err := uc.ReadVerified(context.Background(), coordinate.ModuleCoordinate{Path: "x", Version: "v1"}, "0.1.0")
 	if err != nil || found {
 		t.Fatalf("absent read: found=%v err=%v", found, err)
 	}
@@ -258,7 +259,7 @@ func TestValidateAndIngest_ReadVerified_StoreError(t *testing.T) {
 	sentinel := errors.New("db closed")
 	uc := application.NewValidateAndIngestUseCase(boomFacts{err: sentinel})
 
-	_, found, err := uc.ReadVerified(context.Background(), domain2.ModuleCoordinate{Path: "x", Version: "v1"}, "0.1.0")
+	_, found, err := uc.ReadVerified(context.Background(), coordinate.ModuleCoordinate{Path: "x", Version: "v1"}, "0.1.0")
 	if !errors.Is(err, sentinel) {
 		t.Fatalf("want store error, got %v", err)
 	}

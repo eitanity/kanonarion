@@ -58,7 +58,10 @@ func buildExampleRecord(t *testing.T) domain2.ExampleRecord {
 			},
 		},
 		ParseFailures: []domain2.ParseFailure{
+			// Two entries with different File to exercise the sort comparator
+			// in marshalCanonicalExample.
 			{File: "broken_test.go", Error: "syntax error"},
+			{File: "another_test.go", Error: "unexpected EOF"},
 		},
 		OverallStatus:   domain2.ExampleStatusFound,
 		ExtractedAt:     time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
@@ -220,5 +223,33 @@ func TestHasher_RejectsForeignEcosystem(t *testing.T) {
 	}
 	if _, err := h.Unmarshal(blob); !errors.Is(err, fetchdomain.ErrUnsupportedEcosystem) {
 		t.Errorf("expected ErrUnsupportedEcosystem, got %v", err)
+	}
+}
+
+func TestHasher_Unmarshal_MalformedExtractedAt(t *testing.T) {
+	var h domain2.ExampleRecordHasher
+	r := buildExampleRecord(t)
+	hashed, _ := h.SetContentHash(r)
+	blob, err := h.Marshal(hashed)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	tampered := strings.Replace(string(blob), `"extracted_at":"2025-01-01T00:00:00Z"`, `"extracted_at":"not-a-time"`, 1)
+	if _, err := h.Unmarshal([]byte(tampered)); err == nil {
+		t.Error("Unmarshal() error = nil, want a parse error for malformed extracted_at")
+	}
+}
+
+func TestHasher_Unmarshal_MalformedCoordinate(t *testing.T) {
+	var h domain2.ExampleRecordHasher
+	r := buildExampleRecord(t)
+	hashed, _ := h.SetContentHash(r)
+	blob, err := h.Marshal(hashed)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	tampered := strings.Replace(string(blob), `"path":"example.com/mod"`, `"path":""`, 1)
+	if _, err := h.Unmarshal([]byte(tampered)); err == nil {
+		t.Error("Unmarshal() error = nil, want a parse error for an invalid coordinate")
 	}
 }
