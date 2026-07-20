@@ -46,7 +46,6 @@ github.com/spf13/cobra@v1.8.1: Found - 42 example(s)
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Root directory for blobs and SQLite |
-| `--pipeline-version` | compiled-in | Override pipeline version |
 | `--force` | false | Re-extract even if a cached record exists |
 | `--json` | false | Emit full `ExampleRecord` as JSON |
 | `--log-level` | `warn` | Log level: `debug\|info\|warn\|error` |
@@ -62,7 +61,6 @@ kanonarion examples-show github.com/spf13/cobra@v1.8.1 ExampleCommand_Execute
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Root directory |
-| `--pipeline-version` | compiled-in | Pipeline version to query |
 | `--json` | false | Emit entry as JSON |
 
 ### `examples-find` - find all examples for a symbol
@@ -80,7 +78,6 @@ kanonarion examples-find Marshal
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Root directory |
-| `--pipeline-version` | compiled-in | Pipeline version to query |
 
 ### `examples-list` - list modules with harvested example records
 

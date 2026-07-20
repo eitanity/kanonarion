@@ -163,10 +163,10 @@ fresh each time and is not served from the coordinate cache.
 | `--fresh` | `false` | Fetch a fresh vulnerability database snapshot from the network |
 | `--reachability` | `false` | Enable call-graph reachability analysis; spawns `kanonarion callgraph` on demand for modules with findings but no cached callgraph |
 | `--callgraph-workers` | `1` | Maximum number of concurrent on-demand callgraph subprocesses (SSA builds are memory-heavy; keep low) |
+| `--go-binary` | _(from `PATH`)_ | Path to the `go` binary if not on `PATH` (used by on-demand callgraph extraction) |
 | `--binary-pre-pass` | `false` | Fast binary-mode pre-pass; source mode only for affected modules |
 | `--operator` | `$USER` | Operator name recorded in the scan run |
 | `--log-level` | `warn` | Log level: `debug`, `info`, `warn`, `error` |
-| `--log-json` | `false` | Emit logs as JSON |
 
 **Examples:**
 
@@ -270,7 +270,6 @@ vulnerability database snapshot predated it.
 | `--store-root` | `~/.kanonarion` | Path to fact store root |
 | `--walk-id` | _(none)_ | Walk ID the scan was performed under (optional) |
 | `--history` | `false` | List all scan records across walks and snapshots |
-| `--pipeline-version` | `v2` | Pipeline version to query |
 | `--json` | `false` | Emit record as JSON |
 
 Each finding answers the two questions a finding exists to answer - *will a

@@ -37,11 +37,11 @@ func richGraph() cgdomain.CallGraphRecord {
 		},
 		Edges: []cgdomain.CallEdge{
 			edge("m.Root", "m.Mid", cgdomain.ConfidenceDirect),
-			edge("m.Root", "m.Mid", cgdomain.ConfidenceDynamicDispatch), // adjacency tiebreak
+			edge("m.Root", "m.Mid", cgdomain.ConfidenceCHAOverapprox), // adjacency tiebreak
 			edge("m.Mid", "net/http.Get", cgdomain.ConfidenceDirect),
 			edge("m.Root", "net.Dial", cgdomain.ConfidenceUnknown),  // weaker NETWORK witness
-			edge("m.Root", "os/exec.Command", cgdomain.ConfidenceDynamicDispatch),
-			edge("m.Mid", "reflect.ValueOf", cgdomain.ConfidenceReflection),
+			edge("m.Root", "os/exec.Command", cgdomain.ConfidenceCHAOverapprox),
+			edge("m.Mid", "reflect.ValueOf", cgdomain.ConfidenceUnknown),
 			edge("m.Root", "syscall.Syscall", cgdomain.ConfidenceUnknown),
 			edge("m.Mid", "missing.Node", cgdomain.ConfidenceDirect), // ToID not in nodes
 		},
@@ -81,7 +81,7 @@ func TestAnalyseWitnessesBodyLevelCapabilities(t *testing.T) {
 		},
 		Edges: []cgdomain.CallEdge{
 			edge("m.Root", "goja/unistring.(String).AsUtf16", cgdomain.ConfidenceDirect),
-			edge("m.Root", "xxhash.writeBlocks", cgdomain.ConfidenceDynamicDispatch),
+			edge("m.Root", "xxhash.writeBlocks", cgdomain.ConfidenceCHAOverapprox),
 		},
 	}
 
@@ -102,8 +102,8 @@ func TestAnalyseWitnessesBodyLevelCapabilities(t *testing.T) {
 	if !ok {
 		t.Fatalf("ARBITRARY_EXECUTION not witnessed; got %v", report.Capabilities())
 	}
-	if ae.WeakestConfidence != cgdomain.ConfidenceDynamicDispatch {
-		t.Errorf("ARBITRARY_EXECUTION weakest = %q, want DynamicDispatch", ae.WeakestConfidence)
+	if ae.WeakestConfidence != cgdomain.ConfidenceCHAOverapprox {
+		t.Errorf("ARBITRARY_EXECUTION weakest = %q, want CHA-overapprox", ae.WeakestConfidence)
 	}
 
 	// Control: strip the body facts and the two capabilities vanish — proving
@@ -163,8 +163,8 @@ func TestAnalyseWitnessesCapabilitiesWithWeakestEdge(t *testing.T) {
 
 	want := map[Capability]cgdomain.EdgeConfidence{
 		CapabilityNetwork:     cgdomain.ConfidenceDirect,         // via m.Mid → net/http.Get, all Direct
-		CapabilityExec:        cgdomain.ConfidenceDynamicDispatch, // root → os/exec.Command
-		CapabilityReflect:     cgdomain.ConfidenceReflection,     // weakest edge is Reflection
+		CapabilityExec:        cgdomain.ConfidenceCHAOverapprox,  // root → os/exec.Command
+		CapabilityReflect:     cgdomain.ConfidenceUnknown,        // reflect edge folds to Unknown
 		CapabilitySystemCalls: cgdomain.ConfidenceUnknown,        // Unknown edge
 	}
 	if len(report.Findings) != len(want) {
@@ -287,6 +287,62 @@ func TestAnalyseWitnessesInitOnlyCapability(t *testing.T) {
 	}
 }
 
+// dynamicSinkGraph is a module with an exported API and, separately, an
+// unexported non-init function that reaches a capability sink and is entered
+// only by runtime dispatch (a gRPC handler, a registered callback). No edge
+// leads to it from the exported API, so it is the exact shape that made
+// handler-only capabilities false-negatives.
+func dynamicSinkGraph() cgdomain.CallGraphRecord {
+	return cgdomain.CallGraphRecord{
+		OverallStatus: cgdomain.CallGraphStatusExtracted,
+		Nodes: []cgdomain.CallNode{
+			node("m.Exported", "m", "Exported", false, true),
+			node("m.handler", "m", "handler", false, false),
+			node("os/exec.Command", "os/exec", "Command", true, false),
+		},
+		Edges: []cgdomain.CallEdge{
+			edge("m.handler", "os/exec.Command", cgdomain.ConfidenceDirect),
+		},
+	}
+}
+
+func TestAnalyseWitnessesDynamicallyDispatchedSinkInApplication(t *testing.T) {
+	rec := dynamicSinkGraph()
+	rec.ArtifactKind = cgdomain.ArtifactApplication
+
+	report := Analyse(rec, SelectRoots(rec))
+
+	f, ok := findingFor(report, CapabilityExec)
+	if !ok {
+		t.Fatalf("EXEC not witnessed in application artifact; got %v", report.Capabilities())
+	}
+	if f.SinkSymbol != "Command" {
+		t.Errorf("EXEC sink symbol = %q, want Command", f.SinkSymbol)
+	}
+}
+
+func TestAnalyseSkipsDynamicallyDispatchedSinkInLibrary(t *testing.T) {
+	// The same graph as a library: a consumer can only call the exported API, and
+	// nothing exported reaches the sink, so it is correctly not reported. This
+	// pins the library side of the switch — dependency rooting is unchanged.
+	rec := dynamicSinkGraph()
+	rec.ArtifactKind = cgdomain.ArtifactLibrary
+
+	if got := Analyse(rec, SelectRoots(rec)); len(got.Findings) != 0 {
+		t.Errorf("library artifact witnessed %v, want none", got.Capabilities())
+	}
+}
+
+func TestSelectRootsApplicationIncludesUnexportedNonInit(t *testing.T) {
+	rec := dynamicSinkGraph()
+	rec.ArtifactKind = cgdomain.ArtifactApplication
+
+	got := SelectRoots(rec)
+	if want := []string{"m.Exported", "m.handler"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("SelectRoots = %v, want %v", got, want)
+	}
+}
+
 func TestSelectRootsIncludesInit(t *testing.T) {
 	rec := cgdomain.CallGraphRecord{Nodes: []cgdomain.CallNode{
 		node("m.Exported", "m", "Exported", false, true),
@@ -338,9 +394,10 @@ func TestConfRankAndBack(t *testing.T) {
 		c    cgdomain.EdgeConfidence
 		rank int
 	}{
-		{cgdomain.ConfidenceDirect, 3},
-		{cgdomain.ConfidenceDynamicDispatch, 2},
-		{cgdomain.ConfidenceReflection, 1},
+		{cgdomain.ConfidenceDirect, 4},
+		{cgdomain.ConfidenceVTA, 3},
+		{cgdomain.ConfidenceFramework, 2},
+		{cgdomain.ConfidenceCHAOverapprox, 1},
 		{cgdomain.ConfidenceUnknown, 0},
 		{cgdomain.EdgeConfidence("weird"), 0},
 	}
@@ -353,11 +410,14 @@ func TestConfRankAndBack(t *testing.T) {
 	if confidenceForRank(rankInf) != cgdomain.ConfidenceDirect {
 		t.Error("rankInf should map to Direct")
 	}
-	if confidenceForRank(2) != cgdomain.ConfidenceDynamicDispatch {
-		t.Error("rank 2 should map to DynamicDispatch")
+	if confidenceForRank(3) != cgdomain.ConfidenceVTA {
+		t.Error("rank 3 should map to VTA")
 	}
-	if confidenceForRank(1) != cgdomain.ConfidenceReflection {
-		t.Error("rank 1 should map to Reflection")
+	if confidenceForRank(2) != cgdomain.ConfidenceFramework {
+		t.Error("rank 2 should map to Framework")
+	}
+	if confidenceForRank(1) != cgdomain.ConfidenceCHAOverapprox {
+		t.Error("rank 1 should map to CHA-overapprox")
 	}
 	if confidenceForRank(0) != cgdomain.ConfidenceUnknown {
 		t.Error("rank 0 should map to Unknown")

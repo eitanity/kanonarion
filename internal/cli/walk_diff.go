@@ -55,6 +55,11 @@ func runWalkDiff(ctx context.Context, f commonWalkFlags, idA, idB string, uc Dif
 	if _, pErr := fmt.Fprintf(stdout, "diff %s..%s\n", idA, idB); pErr != nil {
 		return fmt.Errorf("writing output: %w", pErr)
 	}
+	if diff.CompletenessMismatch != "" {
+		if _, pErr := fmt.Fprintf(stdout, "UNRESOLVED: %s — added/removed below is an asymmetric comparison, not a confident resolution\n", diff.CompletenessMismatch); pErr != nil {
+			return fmt.Errorf("writing output: %w", pErr)
+		}
+	}
 	for _, c := range diff.Added {
 		if _, pErr := fmt.Fprintf(stdout, "+ %s\n", c.String()); pErr != nil {
 			return fmt.Errorf("writing output: %w", pErr)
@@ -88,6 +93,10 @@ type walkDiffJSON struct {
 	Upgraded           []upgradeEntry `json:"upgraded"`
 	LicenseRegressions []string       `json:"license_regressions"`
 	NewReachableCVEs   []string       `json:"new_reachable_cves"`
+	// Unresolved names a completeness mismatch (differing scope/depth) that makes
+	// the added/removed sets an asymmetric comparison; empty when the walks are
+	// completeness-comparable.
+	Unresolved string `json:"unresolved,omitempty"`
 }
 type upgradeEntry struct {
 	Module    string   `json:"module"`
@@ -122,5 +131,6 @@ func toWalkDiffJSON(d application.WalkDiff) walkDiffJSON {
 		Upgraded:           upgraded,
 		LicenseRegressions: []string{},
 		NewReachableCVEs:   []string{},
+		Unresolved:         d.CompletenessMismatch,
 	}
 }

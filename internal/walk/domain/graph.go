@@ -248,10 +248,25 @@ func (g *Graph) Sort() {
 // The selected-version cache omits them, so an offline resolution needs them
 // supplied separately. The result is deduplicated and deterministically sorted;
 // the empty constraint (a main-module edge) is skipped.
+//
+// Edges whose target is a module-replace node are skipped: there, To.Path is the
+// replacement path but ConstraintVersion is the ORIGINAL required module's
+// version, so pairing them fabricates a coordinate that never existed (e.g.
+// rqlite/go-sqlite3 at the mattn/go-sqlite3 version). A replaced module is pinned
+// by its replace directive and has no superseded intermediate version to read.
 func (g Graph) SupersededRequirements() []fetchdomain.ModuleCoordinate {
+	replaced := make(map[string]bool)
+	for _, n := range g.Nodes {
+		if n.OriginalCoordinate.Path != "" {
+			replaced[n.Coordinate.Path] = true
+		}
+	}
 	seen := make(map[fetchdomain.ModuleCoordinate]struct{})
 	for _, e := range g.Edges {
 		if e.ConstraintVersion == "" || e.ConstraintVersion == e.To.Version {
+			continue
+		}
+		if replaced[e.To.Path] {
 			continue
 		}
 		coord := fetchdomain.ModuleCoordinate{Path: e.To.Path, Version: e.ConstraintVersion}

@@ -280,6 +280,30 @@ func TestSupersededRequirements_returnsIntermediateVersions(t *testing.T) {
 	}
 }
 
+func TestSupersededRequirements_skipsModuleReplaceTarget(t *testing.T) {
+	// mattn/go-sqlite3@v1.14.44 is replaced by rqlite/go-sqlite3@v1.47.0. The
+	// edge To is normalised to the replacement path but keeps the original
+	// require version as its constraint. Pairing To.Path (rqlite) with the
+	// constraint (v1.14.44) would fabricate rqlite/go-sqlite3@v1.14.44, a
+	// coordinate that never existed. The replace node must be recognised and the
+	// edge skipped.
+	g := domain.Graph{
+		Nodes: []domain.GraphNode{
+			{
+				Coordinate:         coord("github.com/rqlite/go-sqlite3", "v1.47.0"),
+				OriginalCoordinate: coord("github.com/mattn/go-sqlite3", "v1.14.44"),
+				ResolutionSource:   domain.ResolutionReplace,
+			},
+		},
+		Edges: []domain.GraphEdge{
+			{From: coord("github.com/rqlite/rqlite/v10", "v10.2.0"), To: coord("github.com/rqlite/go-sqlite3", "v1.47.0"), ConstraintVersion: "v1.14.44"},
+		},
+	}
+	if got := g.SupersededRequirements(); len(got) != 0 {
+		t.Fatalf("SupersededRequirements() = %v, want empty (replace target must be skipped)", got)
+	}
+}
+
 func TestSupersededRequirements_dedupesAndSorts(t *testing.T) {
 	g := domain.Graph{
 		Edges: []domain.GraphEdge{

@@ -13,14 +13,21 @@ const rankInf = 1 << 30
 
 // confRank ranks an edge confidence from strongest (Direct) to weakest
 // (Unknown). It is the ordering used to pick the most-confident witnessing path
-// for a capability and to report that path's weakest edge.
+// for a capability and to report that path's weakest edge. The tiers follow the
+// resolution vocabulary: a Direct edge names a unique callee; VTA is a
+// source-derived refinement of an interface dispatch; Framework is a specific
+// model-asserted binding; CHA-overapprox is a coarse over-approximation that may
+// include spurious callees; Unknown (including reflect-dispatched edges) is
+// unresolved.
 func confRank(c cgdomain.EdgeConfidence) int {
 	switch c {
 	case cgdomain.ConfidenceDirect:
+		return 4
+	case cgdomain.ConfidenceVTA:
 		return 3
-	case cgdomain.ConfidenceDynamicDispatch:
+	case cgdomain.ConfidenceFramework:
 		return 2
-	case cgdomain.ConfidenceReflection:
+	case cgdomain.ConfidenceCHAOverapprox:
 		return 1
 	default: // ConfidenceUnknown or any unrecognised value
 		return 0
@@ -32,12 +39,14 @@ func confRank(c cgdomain.EdgeConfidence) int {
 // analysed code itself, not reached through a weaker edge.
 func confidenceForRank(rank int) cgdomain.EdgeConfidence {
 	switch {
-	case rank >= 3:
+	case rank >= 4:
 		return cgdomain.ConfidenceDirect
+	case rank == 3:
+		return cgdomain.ConfidenceVTA
 	case rank == 2:
-		return cgdomain.ConfidenceDynamicDispatch
+		return cgdomain.ConfidenceFramework
 	case rank == 1:
-		return cgdomain.ConfidenceReflection
+		return cgdomain.ConfidenceCHAOverapprox
 	default:
 		return cgdomain.ConfidenceUnknown
 	}
@@ -84,13 +93,12 @@ func (r CapabilityReport) Capabilities() []Capability {
 	return caps
 }
 
-// SelectRoots returns the reachability roots for a library-style analysis: the
-// module's own exported API plus its package init functions (init runs
-// unconditionally at package load, so init-reachable capabilities are witnessed
-// too). When no node qualifies (typically a main-package binary with no
-// exported API), it falls back to every node owned by the module so the report
-// still witnesses capabilities from the analysed code. Delegates to the shared
-// callgraph-domain selector so it can never drift from vuln reachability.
+// SelectRoots returns the reachability roots for the record's capability
+// analysis, conditioned on the record's artifact kind: an application roots all
+// of its own code (a capability present in owned code is a capability of that
+// code however the function is entered), a library roots its exported API plus
+// package init. Delegates to the shared callgraph-domain selector so it can
+// never drift from vuln reachability.
 func SelectRoots(rec cgdomain.CallGraphRecord) []string {
 	candidates := make([]cgdomain.RootCandidate, 0, len(rec.Nodes))
 	for _, n := range rec.Nodes {
@@ -101,7 +109,7 @@ func SelectRoots(rec cgdomain.CallGraphRecord) []string {
 			IsExportedAPI: n.IsExportedAPI,
 		})
 	}
-	return cgdomain.SelectReachabilityRoots(candidates)
+	return cgdomain.SelectReachabilityRoots(candidates, rec.ArtifactKind)
 }
 
 // Analyse computes the capability report for rec, treating the given node IDs

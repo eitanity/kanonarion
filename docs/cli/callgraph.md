@@ -38,7 +38,7 @@ kanonarion callgraph <module>@<version> [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Root directory for blobs and SQLite |
-| `--pipeline-version` | _(compiled-in)_ | Override the pipeline version |
+| `--go-binary` | _(from `PATH`)_ | Path to the `go` binary if not on `PATH` |
 | `--force` | `false` | Re-extract even if a cached record exists |
 | `--json` | `false` | Emit the full record as JSON to stdout |
 | `--log-level` | `warn` | Log level: `debug`, `info`, `warn`, `error` |
@@ -74,10 +74,9 @@ kanonarion callgraph-show <module>@<version> [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Root directory for blobs and SQLite |
-| `--pipeline-version` | _(current)_ | Pipeline version to query |
 | `--node` | _(all)_ | Filter to nodes/edges containing this symbol substring |
-| `--limit-nodes` | `0` | Maximum nodes to show (`0` = unlimited) |
-| `--limit-edges` | `0` | Maximum edges to show (`0` = unlimited) |
+| `--limit-nodes` | `50` | Maximum nodes to show (`0` = unlimited) |
+| `--limit-edges` | `100` | Maximum edges to show (`0` = unlimited) |
 
 **Example:**
 
@@ -107,7 +106,8 @@ The optional `<module>` argument filters results to a specific module path.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Root directory for blobs and SQLite |
-| `--limit` | `50` | Maximum records to show (`0` = unlimited) |
+| `--limit` | `20` | Maximum records to show (`0` = unlimited) |
+| `--offset` | `0` | Skip this many records before listing |
 
 **Example:**
 
@@ -137,7 +137,8 @@ kanonarion callers <symbolID> [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Root directory for blobs and SQLite |
-| `--pipeline-version` | _(current)_ | Pipeline version to query |
+| `--transitive` | `false` | Follow reachable edges transitively instead of only direct call sites |
+| `--depth` | `0` | Maximum traversal depth for `--transitive` (`0` = unlimited) |
 
 **Example:**
 
@@ -159,7 +160,8 @@ kanonarion callees <symbolID> [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Root directory for blobs and SQLite |
-| `--pipeline-version` | _(current)_ | Pipeline version to query |
+| `--transitive` | `false` | Follow reachable edges transitively instead of only direct call sites |
+| `--depth` | `0` | Maximum traversal depth for `--transitive` (`0` = unlimited) |
 
 **Example:**
 
@@ -204,8 +206,10 @@ Each node records two facts derived from the function's own body, used by
 | `Extracted` | All packages loaded and graph built successfully |
 | `Partial` | Some packages loaded with errors; graph may be incomplete |
 | `LoadFailed` | `go/packages` failed; no graph produced |
+| `OutOfMemory` | Extraction hit the configured memory limit |
 | `ExtractionFailed` | Infrastructure error (zip extraction, temp dir) |
 | `Cancelled` | Context cancelled before or during extraction |
+| `ExcludedByConfig` | Module skipped because it matches a `callgraph.exclude` policy entry |
 
 ## Storage
 

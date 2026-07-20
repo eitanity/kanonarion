@@ -54,7 +54,7 @@ func newWalkListCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&target, "target", "", "filter by target module@version")
 	cmd.Flags().StringVar(&since, "since", "", "filter by start time (RFC3339)")
 	cmd.Flags().StringVar(&statusStr, "status", "", "filter by overall status (succeeded|partial|failed|cancelled)")
-	cmd.Flags().StringVar(&scopeStr, "scope", "", "filter by walk scope (production|tool)")
+	cmd.Flags().StringVar(&scopeStr, "scope", "", "filter by walk scope (code|tool|complete)")
 	cmd.Flags().BoolVar(&tool, "tool", false, "shorthand for --scope tool")
 	cmd.Flags().IntVar(&limit, "limit", 20, "maximum number of results to return (0 = unlimited)")
 	cmd.Flags().StringVar(&walkID, "walk-id", "", "fetch a single walk summary by ID")

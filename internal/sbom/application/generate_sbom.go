@@ -123,28 +123,25 @@ func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (d
 		for _, c := range req.AllowList {
 			allowed[c] = true
 		}
-		// The synthetic stdlib node is a universal build input — every binary
-		// links against it — but it is not a module `go list -deps` reports, so
-		// it never appears in the package allow-list. Keep it regardless, mirroring
-		// the walk resolver's injectStdlib, so a --package SBOM still records the
+		// The allow-list is keyed by require/import coordinates (`go list -deps`
+		// reports a replaced module at its original path@version, never the
+		// replacement — that lives under .Module.Replace), so a replace-to-fork node
+		// is matched via its OriginalCoordinate; FilterGraph tests both identities.
+		// The synthetic stdlib node is a universal build input — every binary links
+		// against it — but it is not a module `go list -deps` reports, so it never
+		// appears in the allow-list. Keep it regardless, mirroring the walk
+		// resolver's injectStdlib, so a --package SBOM still records the
 		// standard-library component (and its --stdlib-from-gomod-pinned version).
-		keep := func(c fetchdomain.ModuleCoordinate) bool {
+		// The allow-list is version-sensitive, so match and key edges on the full
+		// coordinate rather than the bare path.
+		inScope := func(c fetchdomain.ModuleCoordinate) bool {
 			return allowed[c] || c.Path == walkdomain.StdlibModulePath
 		}
-		filtered := make([]walkdomain.GraphNode, 0, len(req.AllowList)+1)
-		for _, n := range walk.Graph.Nodes {
-			if keep(n.Coordinate) {
-				filtered = append(filtered, n)
-			}
-		}
-		walk.Graph.Nodes = filtered
-		filteredEdges := make([]walkdomain.GraphEdge, 0)
-		for _, e := range walk.Graph.Edges {
-			if keep(e.From) && keep(e.To) {
-				filteredEdges = append(filteredEdges, e)
-			}
-		}
-		walk.Graph.Edges = filteredEdges
+		walk.Graph.Nodes, walk.Graph.Edges = walkdomain.FilterGraph(
+			walk.Graph,
+			inScope,
+			func(c fetchdomain.ModuleCoordinate) fetchdomain.ModuleCoordinate { return c },
+		)
 	}
 
 	// 2. Load licence records for all modules.

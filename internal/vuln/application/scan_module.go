@@ -301,7 +301,12 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 
 	// 6. Reachability Analysis (T4: Conditional Static Analysis)
 	if params.EnableReachability && uc.reachability != nil && uc.callGraphLoader != nil && len(record.Findings) > 0 {
-		uc.applyReachability(ctx, params, record.Findings)
+		completeness, algorithm := uc.applyReachability(ctx, params, record.Findings)
+		// Stamp the fidelity that backed these reachability verdicts so a later
+		// scan-run diff can assert completeness parity before reporting a finding
+		// resolved or a reachability flip as unaffected.
+		record.CallGraphCompleteness = completeness
+		record.CallGraphAlgorithm = algorithm
 	}
 
 	// 7. Deterministic Identity (T5: Hash-based Identity)
@@ -426,8 +431,20 @@ func (uc *ScanModuleUseCase) computeContentHash(r domain.VulnerabilityRecord) st
 // applyReachability runs reachability analysis for each finding that has
 // AffectedSymbols, spawning a callgraph subprocess on demand when needed.
 // Findings with no AffectedSymbols are left untouched.
-func (uc *ScanModuleUseCase) applyReachability(ctx context.Context, params ScanModuleParams, findings []domain.VulnerabilityFinding) {
+// applyReachability returns the call-graph fidelity (completeness level and
+// algorithm/devirt tier) that backed the reachability verdicts, so the caller
+// can record it for later diff-parity checks. Both are empty when no graph was
+// consulted (spawn failed, or no finding carried symbols).
+func (uc *ScanModuleUseCase) applyReachability(ctx context.Context, params ScanModuleParams, findings []domain.VulnerabilityFinding) (completeness, algorithm string) {
 	spawnNote := uc.maybeEnsureCallGraph(ctx, params, findings)
+
+	// Read the fidelity signature once from the projection; a reachability
+	// verdict is only ever as sound as the graph it was computed over.
+	if spawnNote == "" {
+		if proj, lerr := uc.callGraphLoader.Load(ctx, params.Coordinate); lerr == nil {
+			completeness, algorithm = proj.Completeness, proj.Algorithm
+		}
+	}
 
 	for i, finding := range findings {
 		syms := buildSymbolRefs(params.Coordinate.Path, finding.AffectedSymbols)
@@ -445,6 +462,7 @@ func (uc *ScanModuleUseCase) applyReachability(ctx context.Context, params ScanM
 		}
 		findings[i].Reachable = &result
 	}
+	return completeness, algorithm
 }
 
 // maybeEnsureCallGraph ensures a callgraph record is present in the store for

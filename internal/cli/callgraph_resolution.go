@@ -105,6 +105,144 @@ func rootPartialStatus(ctx context.Context, symbolID string, uc QueryCallGraphUs
 	return symbolFailedPkg, isPartial, failedPkgs, nil
 }
 
+// rootCompletenessCaveat returns a phase-appropriate caveat when the module
+// owning symbolID was analysed below full fidelity (not BUILT_WITH_BODIES), or
+// "" when it was built with bodies (or is not resolvable / not stored). It is
+// the completeness sibling of rootPartialStatus: the Partial notice covers a
+// package that failed to typecheck, this covers a module built type-only /
+// metadata-only, where dispatch edges are simply absent. The query commands run
+// in the coding phase, so a below-full module is an instruction to rebuild.
+func rootCompletenessCaveat(ctx context.Context, symbolID string, uc QueryCallGraphUseCase, phase domain.AnalysisPhase) (string, error) {
+	sums, err := uc.ListCallGraphRecords(ctx, ports.CallGraphFilter{})
+	if err != nil {
+		return "", fmt.Errorf("listing analysed modules: %w", err)
+	}
+	paths := make([]string, 0, len(sums))
+	for _, s := range sums {
+		paths = append(paths, s.ModulePath)
+	}
+	modulePath, ok := domain.ResolveSymbolModule(symbolID, paths)
+	if !ok {
+		return "", nil
+	}
+	for _, s := range sums {
+		if s.ModulePath != modulePath {
+			continue
+		}
+		coord := fetchdomain.ModuleCoordinate{Path: s.ModulePath, Version: s.ModuleVersion}
+		rec, found, gerr := uc.GetCallGraphRecord(ctx, coord, s.PipelineVersion)
+		if gerr != nil {
+			return "", fmt.Errorf("loading call graph for %s: %w", coord, gerr)
+		}
+		// Only a definite below-full level warrants a caveat. Unknown (a legacy
+		// record, or one from a path that recorded no level) and BuiltWithBodies
+		// both stay silent — we never invent a caveat we cannot substantiate.
+		if !found || rec.Completeness == domain.CompletenessUnknown || rec.Completeness.IsBuiltWithBodies() {
+			continue
+		}
+		if caveat := domain.CompletenessCaveat(rec.Completeness, phase); caveat != "" {
+			return caveat, nil
+		}
+	}
+	return "", nil
+}
+
+// negativeCallVerdict classifies an empty callers/callees answer for symbolID
+// into RESOLVED-ABSENT or UNRESOLVED, per the dispatch/edge-level soundness gate
+// (see domain.ClassifyNegativeVerdict). It loads the owning module's record(s) to
+// read the queried node's leaf facts, the module's completeness level, and — for
+// a callers query (scanDispatch) — the module edges scanned for unresolved
+// interface invoke sites that dispatch on the queried method's name.
+//
+// It is only meaningful once classifyEmptyEdgeResult has confirmed the symbol is
+// a known node in an analysed module; a symbol whose module was never analysed is
+// reported as an error there, not downgraded here.
+func negativeCallVerdict(ctx context.Context, symbolID string, scanDispatch bool, uc QueryCallGraphUseCase) (domain.Verdict, error) {
+	sums, err := uc.ListCallGraphRecords(ctx, ports.CallGraphFilter{})
+	if err != nil {
+		return domain.Verdict{}, fmt.Errorf("listing analysed modules: %w", err)
+	}
+	paths := make([]string, 0, len(sums))
+	for _, s := range sums {
+		paths = append(paths, s.ModulePath)
+	}
+	modulePath, ok := domain.ResolveSymbolModule(symbolID, paths)
+	if !ok {
+		// Unreachable in practice (the caller resolves the module first); a
+		// module we cannot resolve carries no dispatch signal, so it is absent.
+		return domain.Verdict{Outcome: domain.VerdictResolvedAbsent}, nil
+	}
+
+	owning := make([]ports.CallGraphSummary, 0, len(sums))
+	for _, s := range sums {
+		if s.ModulePath == modulePath {
+			owning = append(owning, s)
+		}
+	}
+	sort.Slice(owning, func(i, j int) bool { return owning[i].ModuleVersion < owning[j].ModuleVersion })
+
+	in := domain.NegativeVerdictInputs{
+		MethodName:   domain.SymbolMethodName(symbolID),
+		NodesByID:    map[string]domain.CallNode{},
+		ScanDispatch: scanDispatch,
+	}
+	belowFull := domain.CompletenessUnknown
+	for _, s := range owning {
+		coord := fetchdomain.ModuleCoordinate{Path: s.ModulePath, Version: s.ModuleVersion}
+		rec, found, gerr := uc.GetCallGraphRecord(ctx, coord, s.PipelineVersion)
+		if gerr != nil {
+			return domain.Verdict{}, fmt.Errorf("loading call graph for %s: %w", coord, gerr)
+		}
+		if !found {
+			continue
+		}
+		in.Edges = append(in.Edges, rec.Edges...)
+		for i := range rec.Nodes {
+			n := rec.Nodes[i]
+			in.NodesByID[n.ID] = n
+			if n.ID == symbolID {
+				in.QueriedNode = n
+				in.Found = true
+				in.ModuleLevel = rec.Completeness
+			}
+		}
+		if belowFull == domain.CompletenessUnknown &&
+			rec.Completeness != domain.CompletenessUnknown && !rec.Completeness.IsBuiltWithBodies() {
+			belowFull = rec.Completeness
+		}
+	}
+	// When the symbol is not itself a node (e.g. its package was built type-only
+	// so it produced no SSA node), fall back to the least-complete level seen so a
+	// below-full module still downgrades the verdict.
+	if !in.Found {
+		in.ModuleLevel = belowFull
+	}
+
+	return domain.ClassifyNegativeVerdict(in), nil
+}
+
+// writeCallVerdict prints, in text mode, the three-valued verdict for an empty
+// callers/callees answer: a confident RESOLVED-ABSENT, or an UNRESOLVED verdict
+// with the soundness sinks named so a reviewer can act on them. kind is
+// "callers", "callees", or the transitive variants.
+func writeCallVerdict(stdout io.Writer, kind, symbolID string, v domain.Verdict) error {
+	switch v.Outcome {
+	case domain.VerdictUnresolved:
+		if _, err := fmt.Fprintf(stdout,
+			"verdict: UNRESOLVED — %s of %s cannot be confirmed absent: %s\n",
+			kind, symbolID, v.Reason()); err != nil {
+			return fmt.Errorf("writing verdict: %w", err)
+		}
+	default:
+		if _, err := fmt.Fprintf(stdout,
+			"verdict: RESOLVED-ABSENT — no %s of %s across a fully-built path\n",
+			kind, symbolID); err != nil {
+			return fmt.Errorf("writing verdict: %w", err)
+		}
+	}
+	return nil
+}
+
 // symbolFailedPackage reports whether symbolID belongs to one of failedPkgs,
 // matching by import path. A symbol "<pkg>.<Name>" (or "<pkg>.(*T).M") belongs
 // to package pkg exactly when the character after the package path is '.', so a
@@ -152,6 +290,24 @@ func writePartialNotice(stdout io.Writer, kind, symbolID string, failedPkgs []st
 		"notice: call graph is Partial — %s did not typecheck; %s of %s may be incomplete (edges in the failed package(s) were dropped)\n",
 		pkgs, kind, symbolID); err != nil {
 		return fmt.Errorf("writing partial notice: %w", err)
+	}
+	return nil
+}
+
+// writeCompletenessNotice prints, in text mode, the coding-phase caveat for a
+// queried module analysed below full fidelity, or nothing when it was built with
+// bodies. It rides alongside any Partial notice: the two describe different
+// gaps (a failed package vs a module built type-/metadata-only).
+func writeCompletenessNotice(ctx context.Context, symbolID string, uc QueryCallGraphUseCase, stdout io.Writer) error {
+	caveat, err := rootCompletenessCaveat(ctx, symbolID, uc, domain.PhaseCoding)
+	if err != nil {
+		return err
+	}
+	if caveat == "" {
+		return nil
+	}
+	if _, werr := fmt.Fprintf(stdout, "notice: %s\n", caveat); werr != nil {
+		return fmt.Errorf("writing completeness notice: %w", werr)
 	}
 	return nil
 }

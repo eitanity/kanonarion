@@ -38,8 +38,11 @@ func (l *CallGraphStoreLoader) Load(ctx context.Context, coord fetchdomain.Modul
 // vuln-local projection the reachability analyser consumes.
 func projectCallGraph(rec callgraphdomain.CallGraphRecord) ports.CallGraphProjection {
 	proj := ports.CallGraphProjection{
-		Nodes: make([]ports.CallGraphNode, 0, len(rec.Nodes)),
-		Edges: make([]ports.CallGraphEdge, 0, len(rec.Edges)),
+		Nodes:        make([]ports.CallGraphNode, 0, len(rec.Nodes)),
+		Edges:        make([]ports.CallGraphEdge, 0, len(rec.Edges)),
+		Completeness: string(rec.Completeness),
+		Algorithm:    string(rec.Algorithm),
+		ArtifactKind: string(rec.ArtifactKind),
 	}
 	for _, n := range rec.Nodes {
 		proj.Nodes = append(proj.Nodes, ports.CallGraphNode{

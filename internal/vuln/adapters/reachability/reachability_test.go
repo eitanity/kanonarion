@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"testing"
 
+	callgraphdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/adapters/reachability"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -104,6 +105,55 @@ func TestAnalyse_Reachable_DirectEntryPoint(t *testing.T) {
 	}
 	if len(result.ExamplePaths) == 0 || len(result.ExamplePaths[0]) == 0 {
 		t.Error("expected non-empty example path")
+	}
+}
+
+// dynamicSinkProjection mirrors the capability-domain fixture: an exported API
+// plus an unexported, non-init function that reaches the vulnerable symbol and
+// is entered only by runtime dispatch. Nothing exported calls it.
+func dynamicSinkProjection(kind string) ports.CallGraphProjection {
+	return ports.CallGraphProjection{
+		Nodes: []ports.CallGraphNode{
+			{ID: "github.com/foo/bar.Exported", Module: "github.com/foo/bar", Symbol: "Exported", IsExportedAPI: true},
+			{ID: "github.com/foo/bar.handler", Module: "github.com/foo/bar", Symbol: "handler"},
+			{ID: "github.com/foo/bar.Vuln", Module: "github.com/foo/bar", Symbol: "Vuln"},
+		},
+		Edges: []ports.CallGraphEdge{
+			{FromID: "github.com/foo/bar.handler", ToID: "github.com/foo/bar.Vuln"},
+		},
+		ArtifactKind: kind,
+	}
+}
+
+func TestAnalyse_Application_ReachesDynamicallyDispatchedSymbol(t *testing.T) {
+	a := reachability.New()
+	coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	loader := &fakeLoader{record: dynamicSinkProjection(string(callgraphdomain.ArtifactApplication))}
+	symbols := []ports.SymbolReference{{Module: "github.com/foo/bar", Symbol: "Vuln"}}
+
+	result, err := a.Analyse(t.Context(), coord, symbols, loader)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !result.IsReachable {
+		t.Error("expected reachable: the handler is application code whatever dispatches it")
+	}
+}
+
+func TestAnalyse_Library_DoesNotReachDynamicallyDispatchedSymbol(t *testing.T) {
+	// The library side of the same switch: a consumer can only enter through the
+	// exported API, which does not reach the vulnerable symbol.
+	a := reachability.New()
+	coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	loader := &fakeLoader{record: dynamicSinkProjection(string(callgraphdomain.ArtifactLibrary))}
+	symbols := []ports.SymbolReference{{Module: "github.com/foo/bar", Symbol: "Vuln"}}
+
+	result, err := a.Analyse(t.Context(), coord, symbols, loader)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if result.IsReachable {
+		t.Error("expected not reachable from a library's exported API")
 	}
 }
 

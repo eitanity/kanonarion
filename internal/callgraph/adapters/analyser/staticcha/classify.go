@@ -35,8 +35,18 @@ func buildNode(fn *ssa.Function, coord fetchdomain.ModuleCoordinate, fset *token
 		}
 	}
 
+	// A function with an enclosing function is never public API: no consumer can
+	// name a closure, only reach it by calling what encloses it. token.IsExported
+	// inspects the first rune only, and an anonymous function's name is the
+	// enclosing function's name plus the SSA anon marker ("Method$1"), so without
+	// this guard every closure inside an exported function reads as exported and
+	// becomes a library reachability root that cannot actually be triggered.
+	// The "$" test covers the same way for bound-method and thunk wrappers.
+	isSynthetic := fn.Parent() != nil || strings.Contains(symbol, "$")
+
 	isExportedAPI := !isExternal &&
 		len(symbol) > 0 &&
+		!isSynthetic &&
 		token.IsExported(symbol) &&
 		!isInternalPkg(pkgPath) &&
 		!isMainPkg(fn)
@@ -59,10 +69,26 @@ func buildNode(fn *ssa.Function, coord fetchdomain.ModuleCoordinate, fset *token
 }
 
 // nodeID returns a stable, unique identifier for an SSA function.
-// Format: "pkg/path.FuncName" or "pkg/path.(*RecvType).MethodName".
+// Format: "pkg/path.FuncName", "pkg/path.(*RecvType).MethodName", or, for an
+// anonymous function, the enclosing function's identifier plus the SSA anon
+// suffix: "pkg/path.(*RecvType).MethodName$1".
+//
+// A closure is identified through its parent rather than its own signature. Its
+// signature has no receiver even when it is declared inside a method, and
+// ssa.Function.Name() renders only the enclosing function's *simple* name, so
+// deriving the ID from the closure alone drops the receiver — and two same-named
+// methods on different receivers then collide on one ID, merging the edge sets
+// of unrelated functions.
 func nodeID(fn *ssa.Function) string {
 	if fn.Package() == nil {
 		return fn.String()
+	}
+	// Anonymous functions carry a parent; qualify them with its full ID so the
+	// receiver is preserved. Recursion composes nested closures.
+	if parent := fn.Parent(); parent != nil {
+		if suffix, ok := anonSuffix(fn.Name(), parent.Name()); ok {
+			return nodeID(parent) + suffix
+		}
 	}
 	pkgPath := fn.Package().Pkg.Path()
 	sig := fn.Signature
@@ -71,6 +97,21 @@ func nodeID(fn *ssa.Function) string {
 		return pkgPath + ".(" + recvTyp + ")." + fn.Name()
 	}
 	return pkgPath + "." + fn.Name()
+}
+
+// anonSuffix returns the SSA anon marker that distinguishes a closure's name
+// from its parent's (e.g. "$1"), and whether the name had the expected shape.
+// A name that does not extend the parent's is left to the caller to handle
+// rather than being mangled by a blind trim.
+func anonSuffix(name, parentName string) (string, bool) {
+	if parentName == "" || !strings.HasPrefix(name, parentName) {
+		return "", false
+	}
+	suffix := name[len(parentName):]
+	if suffix == "" || !strings.HasPrefix(suffix, "$") {
+		return "", false
+	}
+	return suffix, true
 }
 
 // recvTypeStr returns a concise representation of a receiver type.
@@ -94,24 +135,29 @@ func extractReceiverName(fn *ssa.Function) string {
 	}
 	return recvTypeStr(sig.Recv().Type())
 }
-func classifyConfidence(edge *callgraph.Edge) domain.EdgeConfidence {
+// classifyConfidence resolves an edge's confidence tag. The second result
+// reports whether the edge originated from a reflect call; such edges are folded
+// into ConfidenceUnknown but carry the reflect provenance as an edge attribute.
+func classifyConfidence(edge *callgraph.Edge) (domain.EdgeConfidence, bool) {
 	if edge.Site == nil {
-		return domain.ConfidenceUnknown
+		return domain.ConfidenceUnknown, false
 	}
 	common := edge.Site.Common()
 	if common.IsInvoke() {
-		return domain.ConfidenceDynamicDispatch
+		// An unrefined CHA interface over-approximation.
+		return domain.ConfidenceCHAOverapprox, false
 	}
 	if common.StaticCallee() != nil {
-		// Check for reflection-based calls.
+		// Reflect-dispatched calls are unresolved edges tagged with the reflect
+		// origin, not a distinct confidence rank.
 		if edge.Callee.Func != nil && edge.Callee.Func.Package() != nil {
 			if edge.Callee.Func.Package().Pkg.Path() == "reflect" {
-				return domain.ConfidenceReflection
+				return domain.ConfidenceUnknown, true
 			}
 		}
-		return domain.ConfidenceDirect
+		return domain.ConfidenceDirect, false
 	}
-	return domain.ConfidenceUnknown
+	return domain.ConfidenceUnknown, false
 }
 func isInternalPkg(path string) bool {
 	return strings.Contains(path, "/internal/") ||

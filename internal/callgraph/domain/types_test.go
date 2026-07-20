@@ -20,12 +20,40 @@ func TestCallGraphStatusString(t *testing.T) {
 		{domain.CallGraphStatusOutOfMemory, "OutOfMemory"},
 		{domain.CallGraphStatusCancelled, "Cancelled"},
 		{domain.CallGraphStatusExtractionFailed, "ExtractionFailed"},
+		{domain.CallGraphStatusExcludedByConfig, "ExcludedByConfig"},
 		{domain.CallGraphStatus(99), "Unknown"},
 	}
 	for _, tc := range cases {
 		if got := tc.status.String(); got != tc.want {
 			t.Errorf("CallGraphStatus(%d).String() = %q, want %q", int(tc.status), got, tc.want)
 		}
+	}
+}
+
+func TestMigrateConfidence(t *testing.T) {
+	cases := []struct {
+		name        string
+		stored      string
+		want        domain.EdgeConfidence
+		wantReflect bool
+	}{
+		{"legacy dynamic dispatch folds to CHA-overapprox", "DynamicDispatch", domain.ConfidenceCHAOverapprox, false},
+		{"legacy reflection folds to Unknown with reflect origin", "Reflection", domain.ConfidenceUnknown, true},
+		{"direct passes through", "Direct", domain.ConfidenceDirect, false},
+		{"CHA-overapprox passes through", "CHA-overapprox", domain.ConfidenceCHAOverapprox, false},
+		{"VTA passes through", "VTA", domain.ConfidenceVTA, false},
+		{"framework passes through", "Framework", domain.ConfidenceFramework, false},
+		{"unknown passes through", "Unknown", domain.ConfidenceUnknown, false},
+		{"unrecognised value passes through verbatim", "Something", domain.EdgeConfidence("Something"), false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, gotReflect := domain.MigrateConfidence(tc.stored)
+			if got != tc.want || gotReflect != tc.wantReflect {
+				t.Errorf("MigrateConfidence(%q) = (%q, %t), want (%q, %t)",
+					tc.stored, got, gotReflect, tc.want, tc.wantReflect)
+			}
+		})
 	}
 }
 

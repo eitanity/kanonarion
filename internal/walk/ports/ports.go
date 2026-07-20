@@ -13,7 +13,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/audit"
 	"github.com/eitanity/kanonarion/internal/fetch/domain"
-	domain2 "github.com/eitanity/kanonarion/internal/walk/domain"
+	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
 // AuditSink appends an audit event to the assurance log. The shared JSONL
@@ -36,7 +36,7 @@ var ErrWalkIntegrity = errors.New("walk record integrity check failed")
 // The filename parameter is used only for error message context.
 // Adapter: adapters/gomod/xmod using golang.org/x/mod/modfile.
 type GoModParser interface {
-	Parse(filename string, data []byte) (domain2.ParsedGoMod, error)
+	Parse(filename string, data []byte) (walkdomain.ParsedGoMod, error)
 }
 
 // ModuleFetchResult is the result of a ModuleFetcher.EnsureFetched call.
@@ -65,7 +65,7 @@ type StdlibAcquirer interface {
 	// skipVCS skips the googlesource commit anchor. The digests are returned
 	// separately so the resolver can set them on the node alongside every other
 	// node's digests, uniform with the module SBOM hash path.
-	AcquireStdlib(ctx context.Context, goVersion string, force, skipVCS bool) (domain2.StdlibFacts, domain.ArtifactDigests, error)
+	AcquireStdlib(ctx context.Context, goVersion string, force, skipVCS bool) (walkdomain.StdlibFacts, domain.ArtifactDigests, error)
 }
 
 // ProgressReporter receives walk fetch-phase progress so a long, otherwise
@@ -168,7 +168,7 @@ type LocalModuleFetcher interface {
 
 // PolicyLoadResult is the output of PolicyStore.LoadPolicy.
 type PolicyLoadResult struct {
-	Policy      domain2.DepthPolicy
+	Policy      walkdomain.DepthPolicy
 	ContentHash string // "sha256:<hex>" of the raw source bytes
 	Source      string // human-readable identifier: file path or "defaults"
 }
@@ -185,12 +185,12 @@ type PolicyStore interface {
 type WalkStore interface {
 	// PutWalk persists a walk record. The record's ContentHash is verified
 	// before storage; a mismatch returns an error. Idempotent on ID.
-	PutWalk(ctx context.Context, rec domain2.WalkRecord) error
+	PutWalk(ctx context.Context, rec walkdomain.WalkRecord) error
 
 	// GetWalk retrieves the walk record with the given ID. Returns
 	// ErrWalkNotFound if not found, ErrWalkIntegrity if the stored hash
 	// does not match.
-	GetWalk(ctx context.Context, id string) (domain2.WalkRecord, error)
+	GetWalk(ctx context.Context, id string) (walkdomain.WalkRecord, error)
 
 	// ListWalks returns summaries matching the filter, ordered by started_at
 	// descending. Pagination is via Limit and Offset.
@@ -202,9 +202,9 @@ type WalkFilter struct {
 	Target        *domain.ModuleCoordinate // nil = any target
 	Since         *time.Time               // nil = no lower bound on started_at
 	Until         *time.Time               // nil = no upper bound on started_at
-	OverallStatus *domain2.WalkStatus      // nil = any status
-	Scope         *domain2.WalkScope       // nil = any scope
-	Depth         *domain2.WalkDepth       // nil = any depth
+	OverallStatus *walkdomain.WalkStatus      // nil = any status
+	Scope         *walkdomain.WalkScope       // nil = any scope
+	Depth         *walkdomain.WalkDepth       // nil = any depth
 	Limit         int                      // 0 = no limit
 	Offset        int
 	LatestOnly    bool // true: return only the latest unique (target, scope) combination
@@ -214,13 +214,13 @@ type WalkFilter struct {
 type WalkSummary struct {
 	ID        string                  `json:"id"`
 	Target    domain.ModuleCoordinate `json:"target"`
-	Scope     domain2.WalkScope       `json:"scope"`
-	Depth     domain2.WalkDepth       `json:"depth"`
+	Scope     walkdomain.WalkScope       `json:"scope"`
+	Depth     walkdomain.WalkDepth       `json:"depth"`
 	StartedAt time.Time               `json:"started_at"`
 	// omitzero is deliberate and valid in stdlib encoding/json as of Go 1.24;
 	// AI code-quality flagged it as invalid — that is a false positive.
 	CompletedAt   time.Time          `json:"completed_at,omitzero"`
-	OverallStatus domain2.WalkStatus `json:"overall_status"`
+	OverallStatus walkdomain.WalkStatus `json:"overall_status"`
 	NodeCount     int                `json:"node_count"`
 	FailureCount  int                `json:"failure_count"`
 }

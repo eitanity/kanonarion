@@ -6,10 +6,12 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/license/adapters/snippetscan"
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
 )
@@ -29,9 +31,15 @@ func newNoticeCmd(stdout, stderr io.Writer) *cobra.Command {
 The document includes per-module: module coordinate, SPDX identifier, verbatim
 license text, and verbatim copyright notices.
 
+Third-party code copied into first-party source is covered too. Such code has
+no go.mod entry, so it is invisible to module license extraction; notice scans
+first-party Go source for SPDX snippet tags (SPDX-SnippetBegin..SnippetEnd) and
+renders each block as a first-class attribution entry.
+
 Modules with Ambiguous or Multiple license status, or a missing copyright
 notice, are reported on stderr and cause a non-zero exit — they require human
-review before the document can be published.
+review before the document can be published. A malformed SPDX snippet block, or
+one citing an SPDX identifier with no embedded license text, is the same gate.
 
 Use --package to scope the document to the modules actually linked into a
 specific binary. This excludes dev tools, linters, and test-only dependencies
@@ -60,7 +68,7 @@ that appear in go.mod but are never distributed.`,
 					return rerr
 				}
 			}
-			return runNotice(cmd.Context(), walkID, gomodPath, packagePattern, stdout, stderr)
+			return runNotice(cmd.Context(), walkID, gomodPath, packagePattern, snippetRoot(gomodPath), stdout, stderr)
 		},
 	}
 
@@ -70,7 +78,23 @@ that appear in go.mod but are never distributed.`,
 	return cmd
 }
 
-func runNotice(ctx context.Context, walkID, gomodPath, packagePattern string, stdout, stderr io.Writer) error {
+// snippetRoot returns the first-party module directory to scan for SPDX
+// snippet blocks. It is the directory holding the resolved go.mod. When no
+// go.mod can be resolved — a --walk-id run outside a project checkout — it
+// returns "", and the scan is skipped: there is no first-party tree to read.
+func snippetRoot(gomodPath string) string {
+	resolved, err := resolveGoModPath(gomodPath)
+	if err != nil {
+		return ""
+	}
+	dir := filepath.Dir(resolved)
+	if abs, aerr := filepath.Abs(dir); aerr == nil {
+		return abs
+	}
+	return dir
+}
+
+func runNotice(ctx context.Context, walkID, gomodPath, packagePattern, snippetDir string, stdout, stderr io.Writer) error {
 	logger := buildLogger(logLevel, stderr)
 
 	dbPath := filepath.Join(storeRoot, "mirror.db")
@@ -84,7 +108,7 @@ func runNotice(ctx context.Context, walkID, gomodPath, packagePattern string, st
 	}
 	defer func() { _ = cleanup() }()
 
-	return noticeWith(ctx, ctr, walkID, gomodPath, packagePattern, stdout, stderr)
+	return noticeWith(ctx, ctr, walkID, gomodPath, packagePattern, snippetDir, stdout, stderr)
 }
 
 // noticeWith holds the notice logic over an injected Container: it resolves the
@@ -92,12 +116,22 @@ func runNotice(ctx context.Context, walkID, gomodPath, packagePattern string, st
 // review (failing loudly to stderr with a non-nil error rather than publishing
 // an incomplete NOTICE), and otherwise writes the attribution document. Split
 // from runNotice so the review-gate contract is testable without a live store.
-func noticeWith(ctx context.Context, ctr *Container, walkID, gomodPath, packagePattern string, stdout, stderr io.Writer) error {
+func noticeWith(ctx context.Context, ctr *Container, walkID, gomodPath, packagePattern, snippetDir string, stdout, stderr io.Writer) error {
 	coords, err := resolveNoticeCoords(ctx, walkID, gomodPath, packagePattern, ctr)
 	if err != nil {
 		return err
 	}
-	if len(coords) == 0 {
+
+	// Third-party code copied into first-party source carries its licence in
+	// SPDX snippet tags, not in go.mod. Scan for it before the module-count
+	// short-circuit below: a project with no dependencies can still redistribute
+	// copied source, and omitting it is exactly the gap this closes.
+	snippetEntries, err := collectSnippetEntries(snippetDir)
+	if err != nil {
+		return err
+	}
+
+	if len(coords) == 0 && len(snippetEntries) == 0 {
 		if _, werr := fmt.Fprintln(stderr, "no modules found"); werr != nil {
 			return fmt.Errorf("writing output: %w", werr)
 		}
@@ -122,7 +156,31 @@ func noticeWith(ctx context.Context, ctr *Container, walkID, gomodPath, packageP
 		return fmt.Errorf("%d module(s) require review", len(result.ReviewItems))
 	}
 
-	return writeNoticeDocument(result.Entries, stdout)
+	entries := append(append([]licensedomain.NoticeEntry{}, result.Entries...), snippetEntries...)
+	licensedomain.SortNoticeEntries(entries)
+	return writeNoticeDocument(entries, stdout)
+}
+
+// collectSnippetEntries scans the first-party tree for SPDX snippet blocks and
+// converts them to notice entries. A malformed block or an SPDX identifier with
+// no embedded licence text is fatal — the same gate a module with a missing
+// copyright notice hits.
+func collectSnippetEntries(snippetDir string) ([]licensedomain.NoticeEntry, error) {
+	if snippetDir == "" {
+		return nil, nil
+	}
+	atts, err := snippetscan.New(snippetDir).Scan()
+	if err != nil {
+		return nil, fmt.Errorf("scanning first-party source for SPDX snippets: %w", err)
+	}
+	if len(atts) == 0 {
+		return nil, nil
+	}
+	entries, err := licensedomain.NoticeEntriesFromSnippets(atts)
+	if err != nil {
+		return nil, fmt.Errorf("building copied-source attribution: %w", err)
+	}
+	return entries, nil
 }
 
 func resolveNoticeCoords(
@@ -178,7 +236,16 @@ func writeNoticeDocument(entries []licensedomain.NoticeEntry, w io.Writer) error
 
 	for _, e := range entries {
 		ew.printf("%s\n", noticeDiv)
-		ew.printf("Module:  %s\n", e.Coordinate)
+		if e.EffectiveSource() == licensedomain.NoticeSourceCopied {
+			// Copied source is not a linked module: label it so a reader can
+			// tell transcribed code from a dependency, and name the first-party
+			// files carrying it.
+			ew.printf("Copied source: %s\n", e.Name)
+			ew.printf("Origin:  %s\n", e.Coordinate)
+			ew.printf("Used in: %s\n", strings.Join(e.SourcePaths, ", "))
+		} else {
+			ew.printf("Module:  %s\n", e.Coordinate)
+		}
 		ew.printf("License: %s\n", e.SPDX)
 		if len(e.Copyrights) > 0 {
 			ew.printf("\nCopyright notices:\n")
@@ -187,7 +254,11 @@ func writeNoticeDocument(entries []licensedomain.NoticeEntry, w io.Writer) error
 			}
 		}
 		for _, lf := range e.LicenseTexts {
-			ew.printf("\n%s (%s):\n\n", e.SPDX, lf.Path)
+			if lf.Path == "" {
+				ew.printf("\n%s:\n\n", e.SPDX)
+			} else {
+				ew.printf("\n%s (%s):\n\n", e.SPDX, lf.Path)
+			}
 			ew.printf("%s\n", lf.Content)
 		}
 		for _, comp := range e.EmbeddedComponents {

@@ -144,6 +144,71 @@ func TestResolveProject_BuildList_NodeMapping(t *testing.T) {
 	}
 }
 
+// TestResolveProject_BuildList_ScopeParityWithBuildList is the end-to-end parity
+// guard. After code-scope filtering, the walk's module set
+// (replace-normalised) must equal the toolchain's build-list module set — the
+// same set a built binary reports via `go version -m`. The scope keep-list is
+// built from require/import paths, under which a module-replaced dependency
+// appears at its ORIGINAL path, never the replacement (exactly how `go list
+// -deps` / `go list -m all` and `go version -m` name it). A module in the build
+// list (hence linked into the artifact) must never be absent from the walk.
+//
+// With the pre-fix scope filter — which matched a node's replacement
+// Coordinate.Path against a keep-list of original paths — example.com/forked
+// (in scope, original path) never matched its node example.com/fork (replacement
+// path) and was dropped: an under-inclusion this guard catches.
+func TestResolveProject_BuildList_ScopeParityWithBuildList(t *testing.T) {
+	bl := sampleBuildList()
+	r, _ := buildListResolver(t, &fakeBuildListResolver{list: bl})
+	target := coord("example.com/project", domain2.LocalVersion)
+
+	// The toolchain's module set: every non-main build-list module by its
+	// require/import (pre-replace) path — the identity go list and go version -m
+	// use, and the identity the scope keep-list carries.
+	toolchainSet := map[string]bool{}
+	var scope []string
+	for _, m := range bl.Modules {
+		if m.Main {
+			continue
+		}
+		toolchainSet[m.Path] = true
+		scope = append(scope, m.Path)
+	}
+
+	g, err := r.ResolveProject(context.Background(), target, nil, "/proj",
+		domain3.DefaultDepthPolicy().FetchStage(), scope, false, false)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+
+	// The walk's module set, replace-normalised back to the require identity the
+	// toolchain set is keyed by.
+	walkSet := map[string]bool{}
+	for _, n := range g.Nodes {
+		if n.Coordinate.Path == target.Path {
+			continue // main anchor, not a dependency
+		}
+		id := n.Coordinate.Path
+		if n.OriginalCoordinate.Path != "" {
+			id = n.OriginalCoordinate.Path
+		}
+		walkSet[id] = true
+	}
+
+	// Parity, both directions: no build-list (linked) module missing from the
+	// walk, and none extra (over-inclusion).
+	for path := range toolchainSet {
+		if !walkSet[path] {
+			t.Errorf("module %q is in the build list but absent from the scoped walk (under-inclusion)", path)
+		}
+	}
+	for path := range walkSet {
+		if !toolchainSet[path] {
+			t.Errorf("module %q is in the walk but not the build list (over-inclusion)", path)
+		}
+	}
+}
+
 func TestResolveProject_BuildList_Edges(t *testing.T) {
 	r, _ := buildListResolver(t, &fakeBuildListResolver{list: sampleBuildList()})
 	target := coord("example.com/project", domain2.LocalVersion)

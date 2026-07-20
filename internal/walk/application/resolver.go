@@ -437,9 +437,12 @@ func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target domain2
 	}
 
 	// A scoped walk fetches only the modules FilterGraphToScope will keep; nil
-	// (complete scope) fetches everything. The set is keyed by the selected
-	// (post-replace) module path — the same key FilterGraphToScope matches on — so
-	// the fetched set and the retained set coincide exactly.
+	// (complete scope) fetches everything. The set is keyed by require/import
+	// paths (how the toolchain reports the scope), under which a module-replaced
+	// dependency appears at its original path, not the replacement. The fetch gate
+	// below therefore tests both a node's replacement and original identity, the
+	// same way FilterGraphToScope decides retention — so the fetched set and the
+	// retained set coincide exactly, including for replace-to-fork modules.
 	var scopeSet map[string]bool
 	if scopeModules != nil {
 		scopeSet = make(map[string]bool, len(scopeModules))
@@ -471,7 +474,7 @@ func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target domain2
 		// the node for edge structure, but fetching + go.sum-verifying it is wasted
 		// work that floods scoped runs with walk.fetch.failed warnings for modules in
 		// the pruned graph but never built.
-		if needFetch && (scopeSet == nil || scopeSet[node.Coordinate.Path]) {
+		if needFetch && inFetchScope(scopeSet, node) {
 			fetchTasks = append(fetchTasks, blFetch{path: m.Path, coord: node.Coordinate})
 		}
 	}
@@ -555,6 +558,23 @@ func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target domain2
 
 // buildListNodeSkeleton turns one (non-main) build-list module into a GraphNode
 // and settles its selection against the shared state, returning whether the node
+// inFetchScope reports whether a node is inside the fetch scope. A nil scopeSet
+// is the complete scope (fetch everything). Otherwise the set is keyed by
+// require/import paths, so a module-replace node matches on its original require
+// path (OriginalCoordinate) as well as its replacement path (Coordinate) —
+// mirroring FilterGraphToScope so a replace-to-fork dependency is fetched, not
+// retained-but-unfetched.
+func inFetchScope(scopeSet map[string]bool, node domain3.GraphNode) bool {
+	if scopeSet == nil {
+		return true
+	}
+	if scopeSet[node.Coordinate.Path] {
+		return true
+	}
+	orig := node.OriginalCoordinate.Path
+	return orig != "" && scopeSet[orig]
+}
+
 // still needs a remote fetch. A filesystem replacement yields an unfetched
 // ResolutionLocalReplace node (needFetch=false); a module replacement yields a
 // ResolutionReplace node to be fetched at the replacement coordinate; otherwise a

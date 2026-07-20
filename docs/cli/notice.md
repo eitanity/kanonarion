@@ -8,6 +8,10 @@ Modules with an ambiguous or multiple licence status, or with no copyright
 notice, are reported on stderr and cause a non-zero exit - they require human
 review before the document can be published.
 
+The document also covers third-party code **copied into first-party source**,
+which has no `go.mod` entry and so is invisible to module licence extraction.
+See [Copied-source attribution](#copied-source-attribution).
+
 ## Prerequisites
 
 All modules in scope must have been fetched and have a stored licence record.
@@ -159,6 +163,112 @@ record but are not reproduced in the NOTICE document - add a licence override in
 **No new extraction step is required.** `EffectiveSet` is derived from the
 existing `LicenseFiles` on every record load, so modules extracted before the
 field existed benefit automatically once their licence record is loaded.
+
+## Copied-source attribution
+
+Third-party code is sometimes transcribed into first-party source rather than
+imported as a module - a table of constants, a classification map, a small
+algorithm. It carries its licence in a comment header, never appears in
+`go.mod`, and is therefore invisible to module licence extraction. Omitting it
+from `THIRD-PARTY-LICENSES` is an attribution gap.
+
+`notice` scans the project's first-party Go source for SPDX snippet tags
+(REUSE 3.0 / SPDX `SnippetBegin`..`SnippetEnd`) and renders each block as a
+first-class attribution entry. Detection is **exactly** these tags - there are
+no free-text heuristics, so annotating a block is a deliberate act by the
+author, who is responsible for the identifier being correct.
+
+### Annotating a block
+
+```go
+// SPDX-SnippetBegin
+// SPDX-SnippetCopyrightText: Copyright 2023 Google LLC
+// SPDX-License-Identifier: BSD-3-Clause
+// SPDX-SnippetName: Capslock stdlib capability classification data
+// SPDX-SnippetComment: Transcribed from github.com/google/capslock@v0.3.2, interesting/interesting.cm
+
+var funcSinks = map[string]Capability{ /* ... */ }
+
+// SPDX-SnippetEnd
+```
+
+| Tag | Required | Meaning |
+|-----|----------|---------|
+| `SPDX-SnippetBegin` / `SPDX-SnippetEnd` | yes | Block delimiters. One block is one attribution record |
+| `SPDX-License-Identifier:` | yes | A **single** SPDX identifier. Compound expressions (`MIT OR Apache-2.0`) are rejected |
+| `SPDX-SnippetCopyrightText:` | yes | The verbatim copyright notice, reproduced as-is |
+| `SPDX-SnippetComment:` | yes | Free text that must contain the origin coordinate in `module@version` form |
+| `SPDX-SnippetName:` | no | Display name; defaults to the origin coordinate |
+
+### Scope of the scan
+
+Scanned: every `.go` file under the module root, resolved from `--gomod` or the
+auto-discovered `go.mod`. Reads are confined to that root.
+
+Not scanned: `_test.go` files (not distributed in the binary), files carrying a
+`// Code generated` marker, and the `vendor/`, `testdata/`, `node_modules/` and
+dot-directories. With `--walk-id` outside a project checkout there is no
+first-party tree, and the scan is skipped.
+
+### Output
+
+Copied-source entries interleave with module entries in the same coordinate
+sort, and are labelled so a reader can tell transcribed code from a dependency:
+
+```
+================================================================================
+Copied source: Capslock stdlib capability classification data
+Origin:  github.com/google/capslock@v0.3.2
+Used in: internal/capability/domain/sinks.go
+License: BSD-3-Clause
+
+Copyright notices:
+  Copyright 2023 Google LLC
+
+BSD-3-Clause:
+
+Redistribution and use in source and binary forms, with or without
+   ...BSD-3-Clause text...
+================================================================================
+```
+
+Several blocks citing the same origin **and** the same licence collapse into one
+entry listing every contributing path under `Used in:`.
+
+### Licence text resolution
+
+A copied snippet has no module zip to read a `LICENSE` file from, so its
+verbatim text comes from a table of licence texts embedded in the binary,
+keyed by SPDX identifier. Covered identifiers:
+
+`Apache-2.0`, `BSD-2-Clause`, `BSD-3-Clause`, `BSL-1.0`, `CC0-1.0`, `GPL-2.0`,
+`GPL-3.0`, `ISC`, `LGPL-2.1`, `LGPL-3.0`, `MIT`, `MPL-2.0`, `Unlicense`, `Zlib`
+
+Identifiers are matched exactly and case-sensitively. For templated licences
+(the BSD family, ISC, MIT, Zlib) the table stores the licence **body** with the
+generic placeholder wording - the per-snippet copyright comes from
+`SPDX-SnippetCopyrightText` and is rendered separately.
+
+An identifier outside this set is a hard error naming the known set, not a
+partial record: a NOTICE entry without its licence text looks complete while
+understating what the project redistributes. To cover a further identifier, add
+`internal/license/domain/spdxtexts/spdx-<identifier>.txt`; it is a data asset,
+not a code change. A test re-classifies every stored text through the same
+detector the licence pipeline uses for module `LICENSE` files, so a wrong,
+truncated or misnamed text fails the build.
+
+### Failure modes
+
+A block that opts in must be complete. Each of these is a hard error naming the
+offending `file:line`, on the same gate as a module with a missing copyright:
+
+- a missing required tag;
+- an unterminated block, or a nested `SPDX-SnippetBegin`;
+- a compound licence expression;
+- a `SPDX-SnippetComment:` with no `module@version` coordinate, or an invalid one;
+- an SPDX identifier with no embedded licence text;
+- two blocks citing the same origin under **conflicting** licences - one
+  attribution would have to be dropped and there is no safe way to choose.
 
 ## Review failures
 

@@ -93,6 +93,154 @@ func TestHasherRoundTripFailedPackages(t *testing.T) {
 	}
 }
 
+func TestHasherRoundTripCompleteness(t *testing.T) {
+	var h domain2.CallGraphRecordHasher
+	r := makeTestRecord()
+	r.Completeness = domain2.CompletenessMetadataOnly
+
+	hashed, err := h.SetContentHash(r)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	blob, err := h.Marshal(hashed)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	restored, err := h.Unmarshal(blob)
+	if err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if restored.Completeness != domain2.CompletenessMetadataOnly {
+		t.Errorf("Completeness not preserved across round-trip: got %q", restored.Completeness)
+	}
+	if err := h.VerifyContentHash(restored); err != nil {
+		t.Errorf("VerifyContentHash after round-trip: %v", err)
+	}
+	// The level is part of identity: a different level must change the hash.
+	r2 := makeTestRecord()
+	r2.Completeness = domain2.CompletenessBuiltWithBodies
+	hashed2, err := h.SetContentHash(r2)
+	if err != nil {
+		t.Fatalf("SetContentHash (other level): %v", err)
+	}
+	if hashed.ContentHash == hashed2.ContentHash {
+		t.Error("content hash must depend on the completeness level")
+	}
+}
+
+func TestHasherRoundTripArtifactKind(t *testing.T) {
+	var h domain2.CallGraphRecordHasher
+	r := makeTestRecord()
+	r.ArtifactKind = domain2.ArtifactApplication
+
+	hashed, err := h.SetContentHash(r)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	blob, err := h.Marshal(hashed)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	restored, err := h.Unmarshal(blob)
+	if err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if restored.ArtifactKind != domain2.ArtifactApplication {
+		t.Errorf("ArtifactKind not preserved across round-trip: got %q", restored.ArtifactKind)
+	}
+	if err := h.VerifyContentHash(restored); err != nil {
+		t.Errorf("VerifyContentHash after round-trip: %v", err)
+	}
+	// The kind decides how the graph is rooted, so it is part of identity: the
+	// same nodes and edges classified differently must not share a hash.
+	r2 := makeTestRecord()
+	r2.ArtifactKind = domain2.ArtifactLibrary
+	hashed2, err := h.SetContentHash(r2)
+	if err != nil {
+		t.Fatalf("SetContentHash (library): %v", err)
+	}
+	if hashed.ContentHash == hashed2.ContentHash {
+		t.Error("content hash must depend on the artifact kind")
+	}
+}
+
+func TestHasherRoundTripUsesPlugin(t *testing.T) {
+	var h domain2.CallGraphRecordHasher
+	r := makeTestRecord()
+	r.Nodes[0].UsesPlugin = true
+
+	hashed, err := h.SetContentHash(r)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	blob, err := h.Marshal(hashed)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	restored, err := h.Unmarshal(blob)
+	if err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if !restored.Nodes[0].UsesPlugin {
+		t.Error("UsesPlugin not preserved across round-trip")
+	}
+	if err := h.VerifyContentHash(restored); err != nil {
+		t.Errorf("VerifyContentHash after round-trip: %v", err)
+	}
+	// The fact is part of node identity: flipping it must change the hash.
+	r2 := makeTestRecord()
+	r2.Nodes[0].UsesPlugin = false
+	hashed2, err := h.SetContentHash(r2)
+	if err != nil {
+		t.Fatalf("SetContentHash (no plugin): %v", err)
+	}
+	if hashed.ContentHash == hashed2.ContentHash {
+		t.Error("content hash must depend on the UsesPlugin fact")
+	}
+}
+
+func TestHasherUnmarshalRejectsBadExtractedAt(t *testing.T) {
+	var h domain2.CallGraphRecordHasher
+	blob := mustMarshal(t, h)
+	corrupt := strings.Replace(string(blob), `"extracted_at":"`, `"extracted_at":"not-a-time`, 1)
+	if _, err := h.Unmarshal([]byte(corrupt)); err == nil {
+		t.Fatal("Unmarshal should reject an unparseable extracted_at")
+	}
+}
+
+func TestHasherUnmarshalRejectsBadCoordinate(t *testing.T) {
+	var h domain2.CallGraphRecordHasher
+	blob := mustMarshal(t, h)
+	// An empty module path is an invalid coordinate.
+	corrupt := strings.Replace(string(blob), `"path":"example.com/mod"`, `"path":""`, 1)
+	if _, err := h.Unmarshal([]byte(corrupt)); err == nil {
+		t.Fatal("Unmarshal should reject an invalid coordinate")
+	}
+}
+
+func TestHasherVerifyBlobHashRejectsUnterminatedHash(t *testing.T) {
+	var h domain2.CallGraphRecordHasher
+	// A content_hash value with no closing quote must be rejected, not panic.
+	blob := []byte(`{"content_hash":"sha256:deadbeef`)
+	if err := h.VerifyBlobHash(blob, "sha256:deadbeef"); err == nil {
+		t.Fatal("VerifyBlobHash should reject an unterminated content_hash value")
+	}
+}
+
+// mustMarshal builds and marshals a hashed test record, failing the test on error.
+func mustMarshal(t *testing.T, h domain2.CallGraphRecordHasher) []byte {
+	t.Helper()
+	hashed, err := h.SetContentHash(makeTestRecord())
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	blob, err := h.Marshal(hashed)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	return blob
+}
+
 func TestHasherVerifyDetectsTampering(t *testing.T) {
 	var h domain2.CallGraphRecordHasher
 	r := makeTestRecord()

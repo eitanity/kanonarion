@@ -389,6 +389,48 @@ func TestGenerateSBOM_AllowListKeepsStdlibNode(t *testing.T) {
 	}
 }
 
+// A module-replace-to-fork node is keyed by its replacement coordinate in
+// Coordinate, but `go list -deps` reports the dependency at its original
+// require coordinate, so the --package allow-list only ever holds the original.
+// The scoped filter must keep such a node via its OriginalCoordinate; matching
+// only Coordinate silently drops the fork (e.g. mattn/go-sqlite3 =>
+// rqlite/go-sqlite3), losing its whole capability and licence surface even
+// though it is linked into the binary.
+func TestGenerateSBOM_AllowListKeepsReplaceToForkNode(t *testing.T) {
+	orig, _ := fetchdomain.NewModuleCoordinate("github.com/mattn/go-sqlite3", "v1.14.44")
+	fork, _ := fetchdomain.NewModuleCoordinate("github.com/rqlite/go-sqlite3", "v1.47.0")
+	rootDep, _ := fetchdomain.NewModuleCoordinate("example.com/a", "v1.0.0")
+
+	// The graph carries the fork node keyed by its replacement coordinate, with
+	// the original require coordinate in OriginalCoordinate, plus an edge from a
+	// root dep keyed by the replacement path (how the resolver records edges).
+	walk := makeMultiNodeWalk("walk-1", []fetchdomain.ModuleCoordinate{rootDep, fork})
+	walk.Graph.Nodes[1].OriginalCoordinate = orig
+	walk.Graph.Edges = []walkdomain.GraphEdge{{From: rootDep, To: fork}}
+	ws := &fakeWalkStore{walk: walk}
+	gen := &fakeSBOMGenerator{record: domain.SBOMRecord{ID: "sbom-scoped", WalkID: "walk-1", Content: []byte(`{}`)}}
+	uc := makeUC(ws, &fakeVulnStore{}, &fakeSBOMStore{}, gen)
+
+	// The allow-list holds the ORIGINAL coordinate, as `go list -deps` reports it.
+	if _, err := uc.Generate(t.Context(), application.SBOMRequest{
+		WalkID:    "walk-1",
+		AllowList: []fetchdomain.ModuleCoordinate{rootDep, orig},
+	}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	got := map[fetchdomain.ModuleCoordinate]bool{}
+	for _, n := range gen.capturedNodes {
+		got[n.Coordinate] = true
+	}
+	if !got[fork] {
+		t.Errorf("replace-to-fork node %s must survive the allow-list via its original coordinate, got %v", fork, gen.capturedNodes)
+	}
+	if len(gen.capturedEdges) != 1 {
+		t.Errorf("edge to the retained fork node must survive, got %v", gen.capturedEdges)
+	}
+}
+
 // Licence records persist under the licence extraction pipeline version, not
 // the SBOM's own pipeline version. The lookup must use the former: when the
 // two diverge, looking up under the SBOM version misses every record and the

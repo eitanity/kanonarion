@@ -14,7 +14,46 @@ import (
 // v6 adds FailedPackages: the machine-readable set of packages that failed to
 // typecheck, so verdicts over a Partial graph can be scoped to the exact
 // packages whose edges were dropped rather than inferred from node/edge totals.
-const CallGraphSchemaVersion = "6"
+// v7 redesigns the edge confidence vocabulary (Direct, CHA-overapprox, VTA,
+// Framework, Unknown), folds reflect-dispatched edges into Unknown, and records
+// the reflect origin as the per-edge ReflectDispatch attribute.
+// v8 adds Completeness: the per-module fidelity level (BUILT_WITH_BODIES,
+// TYPE_ONLY, METADATA_ONLY, FAILED, VERSION_NOT_IN_TOOLCHAIN) so a before/after
+// diff can assert completeness parity rather than read a "resolved"/"unaffected"
+// verdict off an asymmetric comparison.
+// v9 adds UsesPlugin: the per-node body-level fact that a function references the
+// Go plugin package (plugin.Open / (*Plugin).Lookup), a soundness leaf sink that
+// loads code the static graph never sees.
+// v10 adds ArtifactKind: whether the analysed module builds a command
+// (application) or is consumed as a library. Reachability roots are conditioned
+// on it, so an application roots all of its own code and capability sinks the
+// runtime dispatches to dynamically are no longer false-negatives.
+// v11 qualifies anonymous-function node IDs with their enclosing function's
+// identifier, so a closure declared in a method keeps that method's receiver.
+// Previously closures in same-named methods on different receivers collapsed
+// onto one ID and merged the edge sets of unrelated functions. Node IDs are
+// persisted and hashed, so the identities themselves change.
+// v12 stops flagging closures and other SSA-synthetic functions as
+// IsExportedAPI. A closure is not nameable by a consumer, so rooting library
+// reachability at one asserts a path that cannot be triggered.
+const CallGraphSchemaVersion = "12"
+
+// ArtifactKind describes what the analysed module is, which decides how
+// reachability roots are chosen. An application's code all runs under entry
+// points the analysis cannot enumerate (framework dispatch, registered
+// callbacks, goroutine entries), so every owned function is a root; a library is
+// only exercised through what a consumer can call.
+type ArtifactKind string
+
+const (
+	// ArtifactLibrary is a module with no command: it is reached only through
+	// its exported API and package init. It is the zero value, so a record
+	// persisted before this field existed keeps the pre-existing behaviour.
+	ArtifactLibrary ArtifactKind = ""
+	// ArtifactApplication is a module that builds a command — it contains a
+	// package main defining func main.
+	ArtifactApplication ArtifactKind = "Application"
+)
 
 // ExclusionReasonConfig is the CallGraphRecord.ExclusionReason value used when
 // a module was skipped because its path is listed in callgraph.exclude.
@@ -85,20 +124,51 @@ const (
 	AlgorithmStatic CallGraphAlgorithm = "Static"
 )
 
-// EdgeConfidence describes how certain the analyser is about a call edge.
+// EdgeConfidence describes how a call edge was resolved, so consumers can weight
+// edges by resolution tier and the verdict layer can key soundness decisions off
+// the tag. The vocabulary is ordered from most to least precise: a Direct edge
+// names a unique concrete callee; CHA-overapprox and VTA are progressively
+// refined interface-dispatch resolutions; Framework is bound by a framework
+// model; Unknown is an unresolved edge that must flag verdicts as UNRESOLVED.
 type EdgeConfidence string
 
 const (
-	// ConfidenceDirect is a statically-known call to a concrete function.
+	// ConfidenceDirect is a statically-known call to a unique concrete callee,
+	// including an interface site devirtualised to its sole implementer.
 	ConfidenceDirect EdgeConfidence = "Direct"
-	// ConfidenceDynamicDispatch is a call through an interface or function
-	// value; the exact callee is resolved by the algorithm.
-	ConfidenceDynamicDispatch EdgeConfidence = "DynamicDispatch"
-	// ConfidenceReflection is a call via the reflect package.
-	ConfidenceReflection EdgeConfidence = "Reflection"
-	// ConfidenceUnknown is used when the analyser cannot classify the edge.
+	// ConfidenceCHAOverapprox is an unrefined Class Hierarchy Analysis
+	// over-approximation of an interface dispatch: every type-compatible method
+	// is a possible callee.
+	ConfidenceCHAOverapprox EdgeConfidence = "CHA-overapprox"
+	// ConfidenceVTA is an interface dispatch resolved by the Variable Type
+	// Analysis tier, narrowing the CHA over-approximation to the types that
+	// actually flow to the call site.
+	ConfidenceVTA EdgeConfidence = "VTA"
+	// ConfidenceFramework is an edge bound by a framework model or thunk rather
+	// than observed in the analysed source.
+	ConfidenceFramework EdgeConfidence = "Framework"
+	// ConfidenceUnknown is an edge the analyser cannot resolve, including
+	// reflect-dispatched calls (see CallEdge.ReflectDispatch). It is a soundness
+	// sink: verdicts reaching such an edge must be reported as UNRESOLVED.
 	ConfidenceUnknown EdgeConfidence = "Unknown"
 )
+
+// MigrateConfidence maps a legacy stored confidence string onto the current
+// vocabulary, deterministically. The pre-v7 values DynamicDispatch and
+// Reflection are folded: DynamicDispatch becomes CHA-overapprox, and Reflection
+// becomes Unknown with the reflect-origin flag set so the reflect provenance is
+// preserved as an edge attribute. All current values pass through unchanged.
+// The boolean result reports whether the edge originated from a reflect call.
+func MigrateConfidence(stored string) (EdgeConfidence, bool) {
+	switch stored {
+	case "DynamicDispatch":
+		return ConfidenceCHAOverapprox, false
+	case "Reflection":
+		return ConfidenceUnknown, true
+	default:
+		return EdgeConfidence(stored), false
+	}
+}
 
 // SourcePosition identifies a location in a source file.
 type SourcePosition struct {
@@ -130,6 +200,14 @@ type CallNode struct {
 	// extraction time and treated as an ARBITRARY_EXECUTION sink during
 	// capability analysis.
 	IsAssemblyOrLinkname bool
+	// UsesPlugin is true when the function's own body references the Go plugin
+	// package (plugin.Open / (*Plugin).Lookup). A plugin boundary loads code the
+	// static call graph never sees, so an empty callers/callees answer over such
+	// a node cannot be trusted as a negative — this fact is captured at extraction
+	// time and treated as a leaf soundness sink that downgrades a negative verdict
+	// to UNRESOLVED. Capability analysis already witnesses plugin use via the
+	// package-import sink map, so this fact is verdict-layer only.
+	UsesPlugin bool
 }
 
 // CallEdge is a directed call relationship between two nodes.
@@ -138,6 +216,12 @@ type CallEdge struct {
 	ToID       string
 	CallSite   SourcePosition
 	Confidence EdgeConfidence
+	// ReflectDispatch is true when the edge was resolved through a reflect
+	// call. Such edges carry ConfidenceUnknown — reflection is not a distinct
+	// confidence rank — but the reflect provenance is recorded here so the
+	// verdict-soundness layer can attribute the UNRESOLVED signal to reflection
+	// specifically rather than a generic unresolved dispatch.
+	ReflectDispatch bool
 }
 
 // CallGraphRecord is the aggregate root for a module's call graph extraction
@@ -148,6 +232,19 @@ type CallGraphRecord struct {
 	Ecosystem     string
 	Coordinate    fetchdomain.ModuleCoordinate
 	Algorithm     CallGraphAlgorithm
+	// Completeness is the per-module fidelity level at which this graph was
+	// analysed (BUILT_WITH_BODIES down to FAILED/VERSION_NOT_IN_TOOLCHAIN),
+	// derived from the build outcome at extraction time. It is the machine
+	// signal a diff keys completeness-parity off, and the per-module phase
+	// caveat keys off, so neither has to infer fidelity from node/edge totals.
+	Completeness  CompletenessLevel
+	// ArtifactKind is what the analysed module is — an application that builds a
+	// command, or a library. Reachability roots are conditioned on it: an
+	// application roots every owned node, because code the runtime dispatches to
+	// dynamically is still the application's own code and its capabilities are
+	// really exercised. Empty means library, so pre-v10 records keep their
+	// original rooting.
+	ArtifactKind  ArtifactKind
 	Nodes         []CallNode
 	Edges         []CallEdge
 	OverallStatus CallGraphStatus

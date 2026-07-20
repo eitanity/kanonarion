@@ -54,10 +54,17 @@ func makeRecord(coord fetchdomain.ModuleCoordinate, pv string) domain2.CallGraph
 				CallSite:   domain2.SourcePosition{File: "foo.go", Line: 10},
 				Confidence: domain2.ConfidenceDirect,
 			},
+			{
+				FromID:          "example.com/mod.Foo",
+				ToID:            "example.com/mod.Baz",
+				CallSite:        domain2.SourcePosition{File: "foo.go", Line: 12},
+				Confidence:      domain2.ConfidenceUnknown,
+				ReflectDispatch: true,
+			},
 		},
 		OverallStatus:   domain2.CallGraphStatusExtracted,
 		NodeCount:       1,
-		EdgeCount:       1,
+		EdgeCount:       2,
 		ExtractedAt:     testTime,
 		PipelineVersion: pv,
 	}
@@ -90,8 +97,23 @@ func TestPutAndGet(t *testing.T) {
 	if len(got.Nodes) != 1 {
 		t.Errorf("node count: got %d, want 1", len(got.Nodes))
 	}
-	if len(got.Edges) != 1 {
-		t.Errorf("edge count: got %d, want 1", len(got.Edges))
+	if len(got.Edges) != 2 {
+		t.Errorf("edge count: got %d, want 2", len(got.Edges))
+	}
+	// The reflect-dispatched edge's provenance must survive the round trip
+	// through the callgraph_edges table.
+	var reflectEdge *domain2.CallEdge
+	for i := range got.Edges {
+		if got.Edges[i].ToID == "example.com/mod.Baz" {
+			reflectEdge = &got.Edges[i]
+		}
+	}
+	if reflectEdge == nil {
+		t.Fatal("reflect-dispatched edge missing after round trip")
+	}
+	if !reflectEdge.ReflectDispatch || reflectEdge.Confidence != domain2.ConfidenceUnknown {
+		t.Errorf("reflect edge round trip = {reflect:%t conf:%q}, want {true Unknown}",
+			reflectEdge.ReflectDispatch, reflectEdge.Confidence)
 	}
 }
 
@@ -211,16 +233,18 @@ func TestFindCallees(t *testing.T) {
 		t.Fatalf("put: %v", err)
 	}
 
-	// The edge is Foo→Bar. FindCallees of Foo should return Bar.
+	// Foo calls Bar (Direct) and Baz (reflect-dispatched Unknown); FindCallees
+	// of Foo should return both, ordered by ToID.
 	callees, err := s.FindCallees(ctx, "example.com/mod.Foo", "0.1.0")
 	if err != nil {
 		t.Fatalf("FindCallees: %v", err)
 	}
-	if len(callees) != 1 {
-		t.Errorf("expected 1 callee, got %d: %v", len(callees), callees)
+	if len(callees) != 2 {
+		t.Fatalf("expected 2 callees, got %d: %v", len(callees), callees)
 	}
-	if len(callees) > 0 && callees[0].ToID != "example.com/mod.Bar" {
-		t.Errorf("callee ToID = %q, want example.com/mod.Bar", callees[0].ToID)
+	if callees[0].ToID != "example.com/mod.Bar" || callees[1].ToID != "example.com/mod.Baz" {
+		t.Errorf("callee ToIDs = [%q %q], want [example.com/mod.Bar example.com/mod.Baz]",
+			callees[0].ToID, callees[1].ToID)
 	}
 }
 
@@ -334,5 +358,58 @@ func TestMigrateIdempotent(t *testing.T) {
 	}
 	if err := s2.Close(); err != nil {
 		t.Errorf("close s2: %v", err)
+	}
+}
+
+// TestGetStaleSchemaRecordTreatedAsAbsent is the cache-invalidation regression.
+// A record written at an older schema decodes with every later field at its zero
+// value, and the caller cannot tell "absent because the code has none" from
+// "absent because this record predates the field". Reporting it as not-found
+// routes the caller down the re-extraction path it already has, which is what
+// makes a schema bump actually invalidate the cache rather than merely claim to.
+func TestGetStaleSchemaRecordTreatedAsAbsent(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	var h domain2.CallGraphRecordHasher
+	stale := makeRecord(testCoord, "0.1.0")
+	stale.SchemaVersion = "9" // any version other than the current one
+	stale.ContentHash = ""
+	rehashed, err := h.SetContentHash(stale)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	if err := s.PutCallGraphRecord(ctx, rehashed); err != nil {
+		t.Fatalf("PutCallGraphRecord: %v", err)
+	}
+
+	got, found, err := s.GetCallGraphRecord(ctx, testCoord, "0.1.0")
+	if err != nil {
+		t.Fatalf("GetCallGraphRecord: %v", err)
+	}
+	if found {
+		t.Errorf("stale-schema record was served: schema %q, want it treated as absent", got.SchemaVersion)
+	}
+}
+
+// TestGetCurrentSchemaRecordStillServed is the companion control: the staleness
+// gate must not reject records at the current schema.
+func TestGetCurrentSchemaRecordStillServed(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	rec := makeRecord(testCoord, "0.1.0")
+	if err := s.PutCallGraphRecord(ctx, rec); err != nil {
+		t.Fatalf("PutCallGraphRecord: %v", err)
+	}
+	got, found, err := s.GetCallGraphRecord(ctx, testCoord, "0.1.0")
+	if err != nil {
+		t.Fatalf("GetCallGraphRecord: %v", err)
+	}
+	if !found {
+		t.Fatal("current-schema record not served")
+	}
+	if got.SchemaVersion != domain2.CallGraphSchemaVersion {
+		t.Errorf("SchemaVersion = %q, want %q", got.SchemaVersion, domain2.CallGraphSchemaVersion)
 	}
 }

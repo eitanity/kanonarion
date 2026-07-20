@@ -36,7 +36,6 @@ kanonarion interface <module>@<version> [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Root directory for blobs and SQLite |
-| `--pipeline-version` | _(compiled-in)_ | Override the pipeline version |
 | `--force` | `false` | Re-extract even if a cached record exists |
 | `--json` | `false` | Emit the full record as JSON to stdout |
 | `--log-level` | `warn` | Log level: `debug`, `info`, `warn`, `error` |
@@ -74,7 +73,6 @@ kanonarion interface-show <module>@<version> [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Root directory for blobs and SQLite |
-| `--pipeline-version` | _(current)_ | Pipeline version to query |
 | `--package` | _(all)_ | Filter to a specific import path |
 | `--symbol` | _(all)_ | Filter to a specific symbol name (case-insensitive) |
 | `--json` | `false` | Emit record as JSON |
@@ -129,7 +127,6 @@ kanonarion symbol-find <name> [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Root directory for blobs and SQLite |
-| `--pipeline-version` | _(current)_ | Pipeline version to query |
 
 **Example:**
 

@@ -58,7 +58,6 @@ kanonarion fetch <module>@<version> [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Root directory for blobs and SQLite |
-| `--pipeline-version` | _(compiled-in)_ | Override the pipeline version |
 | `--force` | `false` | Re-fetch even if a cached record exists |
 | `--strict` | `false` | Exit non-zero on verification failure |
 | `--insecure` | `false` | Allow plain HTTP proxy URLs (forces unverified status) |

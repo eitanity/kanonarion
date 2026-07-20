@@ -26,14 +26,25 @@ func IsInitSymbol(symbol string) bool {
 }
 
 // SelectReachabilityRoots returns the reachability roots for an analysis over a
-// call graph: every module-owned (non-external) node that is either part of the
-// public API or a package init function. Package init runs whenever the package
-// is loaded, so init-reachable code is reachable in any real execution and must
-// root the traversal too; omitting it makes init-only sinks a false-"safe"
-// under-approximation. When no node qualifies — typically a main-package binary
-// with no exported API — it falls back to every owned node so the analysis still
-// reasons about the analysed code. Results are sorted for determinism.
-func SelectReachabilityRoots(candidates []RootCandidate) []string {
+// call graph, conditioned on what the analysed module is.
+//
+// For an application (kind ArtifactApplication) every module-owned (non-external)
+// node is a root. An application's functions are entered in ways no static
+// analysis can enumerate — framework dispatch, registered callbacks, goroutine
+// entry functions — so rooting only the exported API would leave those subgraphs
+// dark and under-report the capabilities the shipped code really exercises.
+// Whole-graph rooting witnesses them with zero framework knowledge.
+//
+// For a library it is every owned node that is either part of the public API or
+// a package init function: a library only runs what its consumer can reach.
+// Package init runs whenever the package is loaded, so init-reachable code is
+// reachable in any real execution and must root the traversal too; omitting it
+// makes init-only sinks a false-"safe" under-approximation. When no node
+// qualifies it falls back to every owned node so the analysis still reasons
+// about the analysed code.
+//
+// Results are sorted for determinism.
+func SelectReachabilityRoots(candidates []RootCandidate, kind ArtifactKind) []string {
 	var roots, owned []string
 	for _, c := range candidates {
 		if c.IsExternal {
@@ -43,6 +54,10 @@ func SelectReachabilityRoots(candidates []RootCandidate) []string {
 		if c.IsExportedAPI || IsInitSymbol(c.Symbol) {
 			roots = append(roots, c.ID)
 		}
+	}
+	if kind == ArtifactApplication {
+		sort.Strings(owned)
+		return owned
 	}
 	if len(roots) > 0 {
 		sort.Strings(roots)

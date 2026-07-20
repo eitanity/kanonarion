@@ -201,7 +201,7 @@ var permissiveTargets = map[string]struct{}{
 // CopyleftStrengthOf returns the copyleft strength for a known SPDX identifier.
 // If the identifier is not in the dataset, the second return value is false.
 func CopyleftStrengthOf(spdx string) (CopyleftStrength, bool) {
-	s, ok := copyleftStrengths[spdx]
+	s, ok := copyleftStrengths[CanonicalSPDXID(spdx)]
 	return s, ok
 }
 

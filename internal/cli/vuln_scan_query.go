@@ -328,7 +328,7 @@ func runScanDiff(ctx context.Context, runIDA, runIDB string, jsonOut bool, ucDif
 	_, _ = fmt.Fprintf(stdout, "Diff: %s → %s\n", runIDA, runIDB)
 	_, _ = fmt.Fprintf(stdout, "Walk: %s\n\n", diff.RunA.WalkID)
 
-	if len(diff.NewFindings) == 0 && len(diff.ResolvedFindings) == 0 && len(diff.ReachabilityChanges) == 0 {
+	if len(diff.NewFindings) == 0 && len(diff.ResolvedFindings) == 0 && len(diff.ReachabilityChanges) == 0 && len(diff.UnresolvedFindings) == 0 {
 		_, _ = fmt.Fprintln(stdout, "No differences.")
 		return nil
 	}
@@ -361,6 +361,15 @@ func runScanDiff(ctx context.Context, runIDA, runIDB string, jsonOut bool, ucDif
 				now = "reachable"
 			}
 			_, _ = fmt.Fprintf(stdout, "  ~ %s  %s@%s  %s → %s\n", c.Finding.ID, c.Coordinate.Path, c.Coordinate.Version, was, now)
+		}
+		_, _ = fmt.Fprintln(stdout)
+	}
+
+	if len(diff.UnresolvedFindings) > 0 {
+		_, _ = fmt.Fprintf(stdout, "UNRESOLVED (%d) — completeness parity mismatch, verdict withheld:\n", len(diff.UnresolvedFindings))
+		for _, u := range diff.UnresolvedFindings {
+			_, _ = fmt.Fprintf(stdout, "  ? %s  %s@%s  would-be %s but %s\n",
+				u.Finding.ID, u.Coordinate.Path, u.Coordinate.Version, u.Kind, u.Reason)
 		}
 	}
 

@@ -91,6 +91,18 @@ func TestAnalyse_BasicCallGraph(t *testing.T) {
 		t.Fatalf("unexpected status %s: %s", rec.OverallStatus, rec.FailureDetail)
 	}
 
+	// A clean extraction is built with bodies, the only level a confident
+	// negative verdict may rest on.
+	if rec.Completeness != domain.CompletenessBuiltWithBodies {
+		t.Errorf("expected Completeness BUILT_WITH_BODIES, got %s", rec.Completeness)
+	}
+
+	// This fixture module declares no command, so it is a library and keeps
+	// exported-API-plus-init rooting.
+	if rec.ArtifactKind != domain.ArtifactLibrary {
+		t.Errorf("ArtifactKind = %q, want library", rec.ArtifactKind)
+	}
+
 	if len(rec.Nodes) == 0 {
 		t.Error("expected at least one node in the call graph")
 	}
@@ -147,7 +159,7 @@ func TestAnalyse_DirectConfidence(t *testing.T) {
 			continue
 		}
 		if e.Confidence != domain.ConfidenceDirect &&
-			e.Confidence != domain.ConfidenceDynamicDispatch {
+			e.Confidence != domain.ConfidenceCHAOverapprox {
 			t.Errorf("unexpected confidence %q for edge %s→%s", e.Confidence, e.FromID, e.ToID)
 		}
 	}
@@ -182,16 +194,16 @@ func CallDoer(d Doer) {
 		t.Skip("go/packages load failed; skipping interface dispatch test")
 	}
 
-	// CHA should produce at least one DynamicDispatch edge for d.Do.
+	// CHA should produce at least one CHA-overapprox edge for d.Do.
 	var gotDynamic bool
 	for _, e := range rec.Edges {
-		if e.Confidence == domain.ConfidenceDynamicDispatch {
+		if e.Confidence == domain.ConfidenceCHAOverapprox {
 			gotDynamic = true
 			break
 		}
 	}
 	if !gotDynamic {
-		t.Errorf("expected at least one DynamicDispatch edge; edges: %v", rec.Edges)
+		t.Errorf("expected at least one CHA-overapprox edge; edges: %v", rec.Edges)
 	}
 }
 
@@ -291,6 +303,11 @@ func greet() {
 	if rec.OverallStatus == domain.CallGraphStatusLoadFailed {
 		t.Skip("go/packages load failed; skipping main package test")
 	}
+	// A module that builds a command is an application, so reachability roots at
+	// all of its own code rather than only its (here empty) exported API.
+	if rec.ArtifactKind != domain.ArtifactApplication {
+		t.Errorf("ArtifactKind = %q, want %q", rec.ArtifactKind, domain.ArtifactApplication)
+	}
 	// Nodes in a main package should not be marked IsExportedAPI.
 	for _, n := range rec.Nodes {
 		if !n.IsExternal && n.IsExportedAPI {
@@ -355,8 +372,16 @@ func UseReflect(v any) string {
 	if rec.OverallStatus == domain.CallGraphStatusLoadFailed {
 		t.Skip("go/packages load failed; skipping reflection test")
 	}
-	// We don't assert Reflection confidence specifically since CHA may not
-	// classify reflect calls as Reflection — just verify no crash.
+	// Reflection is no longer a distinct confidence rank: reflect-dispatched
+	// edges fold into Unknown and carry the ReflectDispatch attribute. CHA may
+	// not resolve a static callee into the reflect package here, so we don't
+	// require a reflect edge — but any edge flagged ReflectDispatch must be
+	// tagged Unknown, never a distinct Reflection value.
+	for _, e := range rec.Edges {
+		if e.ReflectDispatch && e.Confidence != domain.ConfidenceUnknown {
+			t.Errorf("reflect-dispatched edge %s→%s has confidence %q, want Unknown", e.FromID, e.ToID, e.Confidence)
+		}
+	}
 	t.Logf("status=%s nodes=%d edges=%d", rec.OverallStatus, len(rec.Nodes), len(rec.Edges))
 }
 
@@ -485,6 +510,12 @@ func Broken() int { return notDefined() }
 	if slices.Contains(rec.FailedPackages, "example.com/cgtestmod") {
 		t.Errorf("root package must not be reported as failed; FailedPackages=%v", rec.FailedPackages)
 	}
+	// The root package was built into SSA with bodies, so the module-level
+	// fidelity is BUILT_WITH_BODIES even though one sub-package failed — the
+	// per-package failure lives in FailedPackages, not the completeness level.
+	if rec.Completeness != domain.CompletenessBuiltWithBodies {
+		t.Errorf("expected Completeness BUILT_WITH_BODIES, got %s", rec.Completeness)
+	}
 }
 
 func TestAnalyse_ContextCancellation(t *testing.T) {
@@ -515,7 +546,10 @@ func TestAnalyse_BodyLevelFacts(t *testing.T) {
 		"go.mod": "module example.com/cgtestmod\n\ngo 1.21\n",
 		"facts.go": `package cgtestmod
 
-import "unsafe"
+import (
+	"plugin"
+	"unsafe"
+)
 
 // nanotime has no Go body — it is provided via //go:linkname, so it is an
 // ARBITRARY_EXECUTION leaf.
@@ -528,13 +562,21 @@ func UsesUnsafe(p *int) uintptr {
 	return uintptr(unsafe.Pointer(p))
 }
 
+// LoadsPlugin opens a plugin — a runtime code-load boundary the static graph
+// cannot follow.
+func LoadsPlugin(path string) error {
+	_, err := plugin.Open(path)
+	return err
+}
+
 // Safe touches neither fact.
 func Safe() int { return 1 }
 
-// Root reaches both fact-bearing functions.
+// Root reaches every fact-bearing function.
 func Root() {
 	_ = nanotime()
 	_ = UsesUnsafe(nil)
+	_ = LoadsPlugin("")
 	_ = Safe()
 }
 `,
@@ -577,8 +619,19 @@ func Root() {
 		t.Error("nanotime should not use unsafe.Pointer")
 	}
 
+	pluginFn, ok := bySymbol["LoadsPlugin"]
+	if !ok {
+		t.Fatalf("LoadsPlugin node not found; nodes: %v", rec.Nodes)
+	}
+	if !pluginFn.UsesPlugin {
+		t.Error("LoadsPlugin should have UsesPlugin=true")
+	}
+	if unsafeFn.UsesPlugin {
+		t.Error("UsesUnsafe does not touch the plugin package; UsesPlugin should be false")
+	}
+
 	if safe, ok := bySymbol["Safe"]; ok {
-		if safe.UsesUnsafePointer || safe.IsAssemblyOrLinkname {
+		if safe.UsesUnsafePointer || safe.IsAssemblyOrLinkname || safe.UsesPlugin {
 			t.Errorf("Safe should carry no body facts, got %+v", safe)
 		}
 	}
@@ -593,4 +646,184 @@ func hasSuffix(s, suffix string) bool {
 	}
 	// Check ".Suffix" suffix.
 	return s[len(s)-len(suffix)-1:] == "."+suffix
+}
+
+// TestAnalyse_ClosureIDsKeepEnclosingReceiver is the node-identity regression.
+// Two methods share the simple name Run on different receivers, and each
+// contains a closure. Identifying a closure by its own signature loses the
+// receiver — a closure has none even inside a method — so both would land on
+// "…closureid.Run$1" and merge the edge sets of two unrelated functions.
+func TestAnalyse_ClosureIDsKeepEnclosingReceiver(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/cgtestmod\n\ngo 1.21\n",
+		"closureid/closureid.go": `package closureid
+
+type A struct{}
+type B struct{}
+
+func sinkA() {}
+func sinkB() {}
+
+func (a *A) Run() { func() { sinkA() }() }
+func (b *B) Run() { func() { sinkB() }() }
+`,
+	}
+	a := staticcha.New("0.1.0", "", slog.Default())
+	zipPath := writeZipToTemp(t, makeZip(t, testCoord, files))
+	rec, err := a.Analyse(context.Background(), zipPath, testCoord)
+	if err != nil {
+		t.Fatalf("Analyse: %v", err)
+	}
+	if rec.OverallStatus == domain.CallGraphStatusLoadFailed {
+		t.Skip("go/packages load failed; skipping closure identity test")
+	}
+
+	const pkg = "example.com/cgtestmod/closureid"
+	wantA := pkg + ".(*A).Run$1"
+	wantB := pkg + ".(*B).Run$1"
+	ids := make(map[string]bool, len(rec.Nodes))
+	for _, n := range rec.Nodes {
+		ids[n.ID] = true
+	}
+	for _, want := range []string{wantA, wantB} {
+		if !ids[want] {
+			t.Errorf("missing closure node %q; nodes: %v", want, sortedIDs(rec))
+		}
+	}
+	// The pre-fix collapsed identity must not appear at all.
+	if ids[pkg+".Run$1"] {
+		t.Errorf("receiver-stripped closure ID %q present: the two closures collided", pkg+".Run$1")
+	}
+
+	// Each closure must reach only its own sink. A merged node would carry both.
+	callees := func(id string) []string {
+		var out []string
+		for _, e := range rec.Edges {
+			if e.FromID == id {
+				out = append(out, e.ToID)
+			}
+		}
+		slices.Sort(out)
+		return out
+	}
+	for id, wantSink := range map[string]string{wantA: pkg + ".sinkA", wantB: pkg + ".sinkB"} {
+		got := callees(id)
+		if !slices.Contains(got, wantSink) {
+			t.Errorf("closure %q callees = %v, want to contain %q", id, got, wantSink)
+		}
+		otherSink := pkg + ".sinkB"
+		if wantSink == otherSink {
+			otherSink = pkg + ".sinkA"
+		}
+		if slices.Contains(got, otherSink) {
+			t.Errorf("closure %q reaches %q: edge sets merged across receivers", id, otherSink)
+		}
+	}
+}
+
+// TestAnalyse_NestedClosureIDsCompose checks that the receiver survives more
+// than one level of nesting, since the identifier is built recursively.
+func TestAnalyse_NestedClosureIDsCompose(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/cgtestmod\n\ngo 1.21\n",
+		"nested/nested.go": `package nested
+
+type C struct{}
+
+func deep() {}
+
+func (c *C) Work() {
+	func() {
+		func() { deep() }()
+	}()
+}
+`,
+	}
+	a := staticcha.New("0.1.0", "", slog.Default())
+	zipPath := writeZipToTemp(t, makeZip(t, testCoord, files))
+	rec, err := a.Analyse(context.Background(), zipPath, testCoord)
+	if err != nil {
+		t.Fatalf("Analyse: %v", err)
+	}
+	if rec.OverallStatus == domain.CallGraphStatusLoadFailed {
+		t.Skip("go/packages load failed; skipping nested closure test")
+	}
+	want := "example.com/cgtestmod/nested.(*C).Work$1$1"
+	for _, n := range rec.Nodes {
+		if n.ID == want {
+			return
+		}
+	}
+	t.Errorf("missing nested closure node %q; nodes: %v", want, sortedIDs(rec))
+}
+
+func sortedIDs(rec domain.CallGraphRecord) []string {
+	ids := make([]string, 0, len(rec.Nodes))
+	for _, n := range rec.Nodes {
+		ids = append(ids, n.ID)
+	}
+	slices.Sort(ids)
+	return ids
+}
+
+// TestAnalyse_ClosuresAreNotExportedAPI is the library-rooting regression. A
+// closure inside an exported method of an exported package is not public API:
+// no consumer can name it. Flagging it IsExportedAPI makes it a library
+// reachability root, asserting a path no caller can trigger.
+func TestAnalyse_ClosuresAreNotExportedAPI(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/cgtestmod\n\ngo 1.21\n",
+		"api/api.go": `package api
+
+type Engine struct{}
+
+func helper() {}
+
+// Exported is public API; the closure inside it is not.
+func (e *Engine) Exported() { func() { helper() }() }
+`,
+	}
+	a := staticcha.New("0.1.0", "", slog.Default())
+	zipPath := writeZipToTemp(t, makeZip(t, testCoord, files))
+	rec, err := a.Analyse(context.Background(), zipPath, testCoord)
+	if err != nil {
+		t.Fatalf("Analyse: %v", err)
+	}
+	if rec.OverallStatus == domain.CallGraphStatusLoadFailed {
+		t.Skip("go/packages load failed; skipping exported-API closure test")
+	}
+
+	const pkg = "example.com/cgtestmod/api"
+	var sawMethod bool
+	for _, n := range rec.Nodes {
+		switch n.ID {
+		case pkg + ".(*Engine).Exported":
+			sawMethod = true
+			if !n.IsExportedAPI {
+				t.Error("the exported method itself must remain IsExportedAPI")
+			}
+		case pkg + ".(*Engine).Exported$1":
+			if n.IsExportedAPI {
+				t.Errorf("closure %q flagged IsExportedAPI: it would become a library root", n.ID)
+			}
+		}
+	}
+	if !sawMethod {
+		t.Fatalf("fixture did not produce the exported method; nodes: %v", sortedIDs(rec))
+	}
+
+	// Library rooting must not select the closure. It is still analysed, being
+	// reached through the enclosing method rather than rooted directly.
+	roots := make([]domain.RootCandidate, 0, len(rec.Nodes))
+	for _, n := range rec.Nodes {
+		roots = append(roots, domain.RootCandidate{
+			ID: n.ID, Symbol: n.Symbol,
+			IsExternal: n.IsExternal, IsExportedAPI: n.IsExportedAPI,
+		})
+	}
+	for _, id := range domain.SelectReachabilityRoots(roots, domain.ArtifactLibrary) {
+		if id == pkg+".(*Engine).Exported$1" {
+			t.Error("closure selected as a library reachability root")
+		}
+	}
 }

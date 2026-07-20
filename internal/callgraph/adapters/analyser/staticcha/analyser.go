@@ -12,9 +12,9 @@ import (
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"golang.org/x/tools/go/callgraph"
 	"golang.org/x/tools/go/callgraph/cha"
 	"golang.org/x/tools/go/packages"
+	"golang.org/x/tools/go/ssa"
 )
 
 const analyserVersion = "0.1.0"
@@ -71,12 +71,12 @@ func (a *Analyser) Analyse(ctx context.Context, zipPath string, coord fetchdomai
 
 	modulePrefix := coord.Path + "@" + coord.Version + "/"
 	if err := extractModuleZip(zipPath, modulePrefix, tempDir); err != nil {
-		return a.failRecord(coord, domain.CallGraphStatusLoadFailed,
+		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed,
 			"extracting module zip: "+err.Error()), nil
 	}
 
 	if ctx.Err() != nil {
-		return a.failRecord(coord, domain.CallGraphStatusCancelled, "cancelled before load"), nil
+		return a.failRecord(coord, domain.CallGraphStatusCancelled, domain.CompletenessUnknown, "cancelled before load"), nil
 	}
 
 	return a.analyseDir(ctx, tempDir, coord)
@@ -104,7 +104,7 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord fetchdo
 
 	envCleanup, err := a.setupGoEnv(ctx, tempDir)
 	if err != nil {
-		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, err.Error()), nil
+		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed, err.Error()), nil
 	}
 	defer envCleanup()
 
@@ -120,12 +120,12 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord fetchdo
 
 	pkgsMeta, err := packages.Load(cfgMeta, "./...")
 	if err != nil {
-		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, "meta load: "+err.Error()), nil
+		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed, "meta load: "+err.Error()), nil
 	}
 	a.logMem(ctx, "meta_loaded")
 
 	if len(pkgsMeta) == 0 {
-		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, "no packages found"), nil
+		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed, "no packages found"), nil
 	}
 
 	// New Architecture: Streaming SSA Construction.
@@ -140,7 +140,7 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord fetchdo
 
 	prog, targetSSAPkgs, allLoadErrs, failedPkgs, err := a.loadAndBuildSSA(ctx, fset, tempDir, coord, targetPkgPaths)
 	if err != nil {
-		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, err.Error()), nil
+		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed, err.Error()), nil
 	}
 
 	// Step 4: Final Cleanup and Call Graph Construction
@@ -152,11 +152,11 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord fetchdo
 		if len(allLoadErrs) > 0 {
 			detail = joinFirst(allLoadErrs, 3)
 		}
-		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, detail), nil
+		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessMetadataOnly, detail), nil
 	}
 
 	if ctx.Err() != nil {
-		return a.failRecord(coord, domain.CallGraphStatusCancelled, "cancelled after streaming load"), nil
+		return a.failRecord(coord, domain.CallGraphStatusCancelled, domain.CompletenessUnknown, "cancelled after streaming load"), nil
 	}
 
 	a.logger.InfoContext(ctx, "callgraph_streaming_load_completed",
@@ -172,22 +172,14 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord fetchdo
 	// Ensure GC can reclaim memory before starting walk
 	runtime.GC()
 
-	// Pre-filter nodes to those in the current module to save memory during walk
-	moduleNodes := make(map[*callgraph.Node]bool)
-	for fn, node := range cg.Nodes {
-		if fn == nil || fn.Package() == nil {
-			continue
-		}
-		pkgPath := fn.Package().Pkg.Path()
-		if pkgPath == coord.Path || strings.HasPrefix(pkgPath, coord.Path+"/") {
-			moduleNodes[node] = true
-		}
-	}
+	// Pre-filter to the caller nodes walkGraph records — module functions plus
+	// dependency functions built with real bodies — to save memory during walk.
+	recordedCallers := recordedCallerNodes(cg, coord)
 
 	// Ensure GC can reclaim memory before starting walk
 	runtime.GC()
 
-	nodes, edges, overallStatus := a.walkGraph(ctx, cg, moduleNodes, coord, fset, tempDir)
+	nodes, edges, overallStatus := a.walkGraph(ctx, cg, recordedCallers, coord, fset, tempDir)
 
 	// Attach body-level capability facts. These are properties of a
 	// function's own body — unsafe.Pointer conversions, assembly/linkname
@@ -195,6 +187,12 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord fetchdo
 	// only the packages that appear as graph nodes so the extra syntax load is
 	// bounded by the graph rather than the full dependency set.
 	a.attachBodyFacts(ctx, nodes, tempDir)
+
+	// Recover client-side interface-dispatch edges CHA drops when the sole
+	// implementer's body was never built into SSA (type-only dep / unbuilt
+	// package). Runs after body facts so those only scan built module bodies;
+	// devirtualized leaf targets carry no onward edges.
+	nodes, edges = a.devirtualizeSingleImplementer(ctx, prog, coord, fset, tempDir, nodes, edges)
 
 	// A failed package (or any load error) means the graph is incomplete;
 	// never report Extracted when some target package did not resolve. Keeping
@@ -205,10 +203,15 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord fetchdo
 	}
 
 	rec := domain.CallGraphRecord{
-		SchemaVersion:   domain.CallGraphSchemaVersion,
-		Ecosystem:       fetchdomain.EcosystemGo,
-		Coordinate:      coord,
-		Algorithm:       domain.AlgorithmCHA,
+		SchemaVersion: domain.CallGraphSchemaVersion,
+		Ecosystem:     fetchdomain.EcosystemGo,
+		Coordinate:    coord,
+		Algorithm:     domain.AlgorithmCHA,
+		// Reaching here means at least one target package was built into SSA with
+		// bodies. Per-package build failures are carried in FailedPackages (and
+		// force Partial below); the module-level fidelity is still bodies-built.
+		Completeness:    domain.CompletenessBuiltWithBodies,
+		ArtifactKind:    artifactKind(targetSSAPkgs),
 		Nodes:           nodes,
 		Edges:           edges,
 		OverallStatus:   overallStatus,
@@ -227,12 +230,34 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord fetchdo
 	return rec, nil
 }
 
-func (a *Analyser) failRecord(coord fetchdomain.ModuleCoordinate, status domain.CallGraphStatus, detail string) domain.CallGraphRecord {
+// artifactKind classifies the analysed module from the packages it owns: it is
+// an application as soon as one of them is a package main defining func main,
+// otherwise a library. The distinction cannot be recovered from an import path,
+// so it is captured here, at load time, and carried on the record — reachability
+// rooting depends on it.
+func artifactKind(targetPkgs []*ssa.Package) domain.ArtifactKind {
+	for _, p := range targetPkgs {
+		if p == nil || p.Pkg == nil {
+			continue
+		}
+		if p.Pkg.Name() == "main" && p.Func("main") != nil {
+			return domain.ArtifactApplication
+		}
+	}
+	return domain.ArtifactLibrary
+}
+
+// failRecord builds a no-graph record for a fatal extraction outcome. completeness
+// is the fidelity the module reached before failing: FAILED when nothing usable
+// loaded, METADATA_ONLY when package metadata loaded but no SSA was built, and
+// Unknown for a transient outcome (cancellation) that makes no fidelity claim.
+func (a *Analyser) failRecord(coord fetchdomain.ModuleCoordinate, status domain.CallGraphStatus, completeness domain.CompletenessLevel, detail string) domain.CallGraphRecord {
 	return domain.CallGraphRecord{
 		SchemaVersion:   domain.CallGraphSchemaVersion,
 		Ecosystem:       fetchdomain.EcosystemGo,
 		Coordinate:      coord,
 		Algorithm:       domain.AlgorithmCHA,
+		Completeness:    completeness,
 		OverallStatus:   status,
 		FailureDetail:   detail,
 		PipelineVersion: a.pipelineVersion,

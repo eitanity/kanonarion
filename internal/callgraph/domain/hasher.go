@@ -89,15 +89,17 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 			Position:             SourcePosition{File: cn.Position.File, Line: cn.Position.Line},
 			UsesUnsafePointer:    cn.UsesUnsafePointer,
 			IsAssemblyOrLinkname: cn.IsAssemblyOrLinkname,
+			UsesPlugin:           cn.UsesPlugin,
 		}
 	}
 	edges := make([]CallEdge, len(c.Edges))
 	for i, ce := range c.Edges {
 		edges[i] = CallEdge{
-			FromID:     ce.FromID,
-			ToID:       ce.ToID,
-			CallSite:   SourcePosition{File: ce.CallSite.File, Line: ce.CallSite.Line},
-			Confidence: EdgeConfidence(ce.Confidence),
+			FromID:          ce.FromID,
+			ToID:            ce.ToID,
+			CallSite:        SourcePosition{File: ce.CallSite.File, Line: ce.CallSite.Line},
+			Confidence:      EdgeConfidence(ce.Confidence),
+			ReflectDispatch: ce.ReflectDispatch,
 		}
 	}
 	return CallGraphRecord{
@@ -105,6 +107,8 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 		Ecosystem:       c.Ecosystem,
 		Coordinate:      coord,
 		Algorithm:       CallGraphAlgorithm(c.Algorithm),
+		ArtifactKind:    ArtifactKind(c.ArtifactKind),
+		Completeness:    CompletenessLevel(c.Completeness),
 		Nodes:           nodes,
 		Edges:           edges,
 		OverallStatus:   CallGraphStatus(c.OverallStatus),
@@ -173,18 +177,22 @@ type canonicalNode struct {
 	Position             canonicalPos `json:"position"`
 	Receiver             string       `json:"receiver"`
 	Symbol               string       `json:"symbol"`
+	UsesPlugin           bool         `json:"uses_plugin"`
 	UsesUnsafePointer    bool         `json:"uses_unsafe_pointer"`
 }
 
 type canonicalEdge struct {
-	CallSite   canonicalPos `json:"call_site"`
-	Confidence string       `json:"confidence"`
-	FromID     string       `json:"from_id"`
-	ToID       string       `json:"to_id"`
+	CallSite        canonicalPos `json:"call_site"`
+	Confidence      string       `json:"confidence"`
+	FromID          string       `json:"from_id"`
+	ReflectDispatch bool         `json:"reflect_dispatch"`
+	ToID            string       `json:"to_id"`
 }
 
 type canonicalRecord struct {
 	Algorithm       string          `json:"algorithm"`
+	ArtifactKind    string          `json:"artifact_kind,omitempty"`
+	Completeness    string          `json:"completeness,omitempty"`
 	ContentHash     string          `json:"content_hash"`
 	Coordinate      canonicalCoord  `json:"coordinate"`
 	Ecosystem       string          `json:"ecosystem"`
@@ -234,16 +242,18 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 			Position:             canonicalPos{File: n.Position.File, Line: n.Position.Line},
 			Receiver:             n.Receiver,
 			Symbol:               n.Symbol,
+			UsesPlugin:           n.UsesPlugin,
 			UsesUnsafePointer:    n.UsesUnsafePointer,
 		}
 	}
 	cEdges := make([]canonicalEdge, len(edges))
 	for i, e := range edges {
 		cEdges[i] = canonicalEdge{
-			CallSite:   canonicalPos{File: e.CallSite.File, Line: e.CallSite.Line},
-			Confidence: string(e.Confidence),
-			FromID:     e.FromID,
-			ToID:       e.ToID,
+			CallSite:        canonicalPos{File: e.CallSite.File, Line: e.CallSite.Line},
+			Confidence:      string(e.Confidence),
+			FromID:          e.FromID,
+			ReflectDispatch: e.ReflectDispatch,
+			ToID:            e.ToID,
 		}
 	}
 
@@ -263,6 +273,8 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 
 	c := canonicalRecord{
 		Algorithm:       string(r.Algorithm),
+		ArtifactKind:    string(r.ArtifactKind),
+		Completeness:    string(r.Completeness),
 		ContentHash:     r.ContentHash,
 		Coordinate:      canonicalCoord{Path: r.Coordinate.Path, Version: r.Coordinate.Version},
 		Ecosystem:       r.Ecosystem,
