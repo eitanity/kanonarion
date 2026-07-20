@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	domain3 "github.com/eitanity/kanonarion/internal/walk/domain"
 )
@@ -33,8 +35,8 @@ var (
 	}
 )
 
-func mustCoord(path, version string) domain2.ModuleCoordinate {
-	c, err := domain2.NewModuleCoordinate(path, version)
+func mustCoord(path, version string) coordinate.ModuleCoordinate {
+	c, err := coordinate.NewModuleCoordinate(path, version)
 	if err != nil {
 		panic(err)
 	}
@@ -59,7 +61,7 @@ func buildOutcome() domain3.WalkOutcome {
 	return domain3.WalkOutcome{
 		Target: targetCoord,
 		Graph:  graph,
-		PerNodeResults: map[domain2.ModuleCoordinate]domain3.NodeResult{
+		PerNodeResults: map[coordinate.ModuleCoordinate]domain3.NodeResult{
 			targetCoord: {
 				Coordinate:  targetCoord,
 				FetchRecord: &rec,
@@ -263,14 +265,14 @@ func TestWalkRecordHasher_NodeResultsOrdering(t *testing.T) {
 		ContentHash:        "sha256:aabbcc",
 	}
 
-	makeOutcome := func(order1, order2 domain2.ModuleCoordinate) domain3.WalkOutcome {
+	makeOutcome := func(order1, order2 coordinate.ModuleCoordinate) domain3.WalkOutcome {
 		return domain3.WalkOutcome{
 			Target:        targetCoord,
 			Graph:         domain3.Graph{Target: targetCoord, ResolvedAt: fixedTime, PipelineVersion: "0.2.0"},
 			StartedAt:     fixedTime,
 			CompletedAt:   fixedTime.Add(time.Second),
 			OverallStatus: domain3.WalkSucceeded,
-			PerNodeResults: map[domain2.ModuleCoordinate]domain3.NodeResult{
+			PerNodeResults: map[coordinate.ModuleCoordinate]domain3.NodeResult{
 				order1: {Coordinate: order1, FetchRecord: &rec, Status: domain3.NodeSucceeded},
 				order2: {Coordinate: order2, FetchRecord: &rec, Status: domain3.NodeSucceeded},
 			},
@@ -393,7 +395,7 @@ func TestWalkRecordHasher_Unmarshal_FailedWalkEmptyGraphTarget(t *testing.T) {
 		StartedAt:     fixedTime,
 		CompletedAt:   fixedTime.Add(time.Second),
 		OverallStatus: domain3.WalkFailed,
-		PerNodeResults: map[domain2.ModuleCoordinate]domain3.NodeResult{
+		PerNodeResults: map[coordinate.ModuleCoordinate]domain3.NodeResult{
 			targetCoord: {
 				Coordinate: targetCoord,
 				Status:     domain3.NodeFetchFailed,
@@ -416,7 +418,7 @@ func TestWalkRecordHasher_Unmarshal_FailedWalkEmptyGraphTarget(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unmarshal of failed-walk record must succeed, got: %v", err)
 	}
-	if (got.Graph.Target != domain2.ModuleCoordinate{}) {
+	if (got.Graph.Target != coordinate.ModuleCoordinate{}) {
 		t.Errorf("Graph.Target: got %+v, want zero coordinate", got.Graph.Target)
 	}
 	if got.OverallStatus != domain3.WalkFailed {
@@ -489,7 +491,7 @@ func TestWalkRecordHasher_MultiEdge_Sorting(t *testing.T) {
 	outcome := domain3.WalkOutcome{
 		Target: a,
 		Graph:  graph,
-		PerNodeResults: map[domain2.ModuleCoordinate]domain3.NodeResult{
+		PerNodeResults: map[coordinate.ModuleCoordinate]domain3.NodeResult{
 			a: {Coordinate: a, Status: domain3.NodeSucceeded},
 			b: {Coordinate: b, Status: domain3.NodeSucceeded},
 		},
@@ -669,7 +671,7 @@ func TestWalkRecordHasher_EdgeSort_SameFromDifferentVersion(t *testing.T) {
 	outcome := domain3.WalkOutcome{
 		Target: a1,
 		Graph:  graph,
-		PerNodeResults: map[domain2.ModuleCoordinate]domain3.NodeResult{
+		PerNodeResults: map[coordinate.ModuleCoordinate]domain3.NodeResult{
 			a1: {Coordinate: a1, Status: domain3.NodeSucceeded},
 		},
 		StartedAt:     fixedTime,
@@ -718,7 +720,7 @@ func TestWalkRecordHasher_EdgeSort_SameFromSameToDiffVersion(t *testing.T) {
 	outcome := domain3.WalkOutcome{
 		Target: a,
 		Graph:  graph,
-		PerNodeResults: map[domain2.ModuleCoordinate]domain3.NodeResult{
+		PerNodeResults: map[coordinate.ModuleCoordinate]domain3.NodeResult{
 			a: {Coordinate: a, Status: domain3.NodeSucceeded},
 		},
 		StartedAt:     fixedTime,
@@ -774,7 +776,7 @@ func TestWalkRecordHasher_LocalReplaceRoundTrip(t *testing.T) {
 		StartedAt:     fixedTime,
 		CompletedAt:   fixedTime.Add(time.Second),
 		OverallStatus: domain3.WalkSucceeded,
-		PerNodeResults: map[domain2.ModuleCoordinate]domain3.NodeResult{
+		PerNodeResults: map[coordinate.ModuleCoordinate]domain3.NodeResult{
 			targetCoord: {Coordinate: targetCoord, Status: domain3.NodeSucceeded},
 			originalCoord: {
 				Coordinate: originalCoord,
@@ -857,7 +859,7 @@ func TestWalkRecordHasher_NilFetchRecord(t *testing.T) {
 	outcome := domain3.WalkOutcome{
 		Target: targetCoord,
 		Graph:  domain3.Graph{Target: targetCoord, ResolvedAt: fixedTime, PipelineVersion: "0.2.0"},
-		PerNodeResults: map[domain2.ModuleCoordinate]domain3.NodeResult{
+		PerNodeResults: map[coordinate.ModuleCoordinate]domain3.NodeResult{
 			targetCoord: {
 				Coordinate: targetCoord,
 				Status:     domain3.NodeFetchFailed,
@@ -910,7 +912,7 @@ func buildRichWalkRecord(t *testing.T) domain3.WalkRecord {
 			ResolvedAt:      fixedTime.Add(30 * time.Minute),
 			PipelineVersion: "0.2.0",
 		},
-		PerNodeResults: map[domain2.ModuleCoordinate]domain3.NodeResult{
+		PerNodeResults: map[coordinate.ModuleCoordinate]domain3.NodeResult{
 			perNodeA: {Coordinate: perNodeA, FetchRecord: &rec, Status: domain3.NodeSucceeded},
 			perNodeB: {Coordinate: perNodeB, Status: domain3.NodeFetchFailed},
 		},

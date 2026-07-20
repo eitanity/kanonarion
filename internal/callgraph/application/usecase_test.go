@@ -14,12 +14,13 @@ import (
 	"github.com/eitanity/kanonarion/internal/callgraph/application"
 	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
 var (
-	testCoord, _  = domain.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	testCoord, _  = coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
 	testPipelineV = "0.1.0"
 	testFetchPipV = "0.1.0"
 	testTime      = time.Date(2025, 6, 1, 12, 0, 0, 0, time.UTC)
@@ -39,7 +40,7 @@ func buildUseCase(facts *fakeFactStore, blobs *fakeBlobStore, store *fakeCallGra
 	})
 }
 
-func storeFetchRecord(facts *fakeFactStore, blobs *fakeBlobStore, coord domain.ModuleCoordinate) fetchports.BlobHandle {
+func storeFetchRecord(facts *fakeFactStore, blobs *fakeBlobStore, coord coordinate.ModuleCoordinate) fetchports.BlobHandle {
 	// Create a minimal zip blob.
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
@@ -518,7 +519,7 @@ func (a *pathReadingAnalyser) AnalyserMetadata() ports.AnalyserMetadata {
 	return ports.AnalyserMetadata{Algorithm: domain2.AlgorithmCHA, Version: "test"}
 }
 
-func (a *pathReadingAnalyser) Analyse(_ context.Context, path string, coord domain.ModuleCoordinate) (domain2.CallGraphRecord, error) {
+func (a *pathReadingAnalyser) Analyse(_ context.Context, path string, coord coordinate.ModuleCoordinate) (domain2.CallGraphRecord, error) {
 	a.gotPath = path
 	b, err := os.ReadFile(path) // #nosec G304 -- path produced by the use case from a temp file
 	if err != nil {

@@ -11,8 +11,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	walkapp "github.com/eitanity/kanonarion/internal/walk/application"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -141,7 +143,7 @@ func TestRunWalkList_Empty(t *testing.T) {
 
 func TestRunWalkList_WithSummaries(t *testing.T) {
 	uc := testfakes.NewFakeQueryWalks()
-	coord, _ := fetchdomain.NewModuleCoordinate("example.com/pkg", "v1.0.0")
+	coord, _ := coordinate.NewModuleCoordinate("example.com/pkg", "v1.0.0")
 	uc.SetSummaries([]walkports.WalkSummary{
 		{
 			ID:            "WALK001",
@@ -176,13 +178,13 @@ func TestRunWalkList_ByID_NotFound(t *testing.T) {
 
 func TestRunWalkList_ByID_Found(t *testing.T) {
 	uc := testfakes.NewFakeQueryWalks()
-	coord, _ := fetchdomain.NewModuleCoordinate("example.com/app", "v2.0.0")
+	coord, _ := coordinate.NewModuleCoordinate("example.com/app", "v2.0.0")
 	rec := walkdomain.WalkRecord{
 		ID:             "WALK002",
 		Target:         coord,
 		StartedAt:      time.Now(),
 		OverallStatus:  walkdomain.WalkSucceeded,
-		PerNodeResults: map[fetchdomain.ModuleCoordinate]walkdomain.NodeResult{coord: {Status: walkdomain.NodeSucceeded}},
+		PerNodeResults: map[coordinate.ModuleCoordinate]walkdomain.NodeResult{coord: {Status: walkdomain.NodeSucceeded}},
 	}
 	uc.AddWalk(rec)
 
@@ -224,13 +226,13 @@ func TestRunWalkShow_NotFound(t *testing.T) {
 
 func TestRunWalkShow_Found(t *testing.T) {
 	uc := testfakes.NewFakeQueryWalks()
-	coord, _ := fetchdomain.NewModuleCoordinate("example.com/thing", "v0.1.0")
+	coord, _ := coordinate.NewModuleCoordinate("example.com/thing", "v0.1.0")
 	rec := walkdomain.WalkRecord{
 		ID:             "WALK003",
 		Target:         coord,
 		StartedAt:      time.Now(),
 		OverallStatus:  walkdomain.WalkSucceeded,
-		PerNodeResults: map[fetchdomain.ModuleCoordinate]walkdomain.NodeResult{},
+		PerNodeResults: map[coordinate.ModuleCoordinate]walkdomain.NodeResult{},
 	}
 	uc.AddWalk(rec)
 
@@ -339,8 +341,8 @@ func TestRunWalkList_ToolScope_Empty(t *testing.T) {
 
 func TestRunWalkList_ToolScope_FiltersMixedScopes(t *testing.T) {
 	uc := testfakes.NewFakeQueryWalks()
-	prod, _ := fetchdomain.NewModuleCoordinate("example.com/app", "v1.0.0")
-	tool, _ := fetchdomain.NewModuleCoordinate("golang.org/x/tools", "v0.30.0")
+	prod, _ := coordinate.NewModuleCoordinate("example.com/app", "v1.0.0")
+	tool, _ := coordinate.NewModuleCoordinate("golang.org/x/tools", "v0.30.0")
 	uc.SetSummaries([]walkports.WalkSummary{
 		{ID: "PROD001", Target: prod, Scope: walkdomain.WalkScopeCode, OverallStatus: walkdomain.WalkSucceeded},
 		{ID: "TOOL001", Target: tool, Scope: walkdomain.WalkScopeTool, OverallStatus: walkdomain.WalkSucceeded},
@@ -362,7 +364,7 @@ func TestRunWalkList_ToolScope_FiltersMixedScopes(t *testing.T) {
 
 func buildFixtureWalkSummaries(t *testing.T) []walkports.WalkSummary {
 	t.Helper()
-	app, err := fetchdomain.NewModuleCoordinate("example.com/app", "v1.0.0")
+	app, err := coordinate.NewModuleCoordinate("example.com/app", "v1.0.0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -504,8 +506,8 @@ func TestRunWalkList_FilterStatusFailed(t *testing.T) {
 
 func buildFixtureWalkRecordA(t *testing.T) walkdomain.WalkRecord {
 	t.Helper()
-	app, _ := fetchdomain.NewModuleCoordinate("example.com/app", "v1.0.0")
-	dep, _ := fetchdomain.NewModuleCoordinate("example.com/dep", "v1.0.0")
+	app, _ := coordinate.NewModuleCoordinate("example.com/app", "v1.0.0")
+	dep, _ := coordinate.NewModuleCoordinate("example.com/dep", "v1.0.0")
 	startA := time.Date(2025, 1, 15, 12, 0, 0, 0, time.UTC)
 	outcome := walkdomain.WalkOutcome{
 		Target: app,
@@ -514,7 +516,7 @@ func buildFixtureWalkRecordA(t *testing.T) walkdomain.WalkRecord {
 			Nodes:  []walkdomain.GraphNode{{Coordinate: app}, {Coordinate: dep, DirectDependency: true}},
 			Edges:  []walkdomain.GraphEdge{{From: app, To: dep, ConstraintVersion: "v1.0.0"}},
 		},
-		PerNodeResults: map[fetchdomain.ModuleCoordinate]walkdomain.NodeResult{
+		PerNodeResults: map[coordinate.ModuleCoordinate]walkdomain.NodeResult{
 			app: {Coordinate: app, Status: walkdomain.NodeSucceeded},
 			dep: {Coordinate: dep, Status: walkdomain.NodeSucceeded},
 		},
@@ -552,13 +554,13 @@ func TestRunWalkShow_JSONOutput(t *testing.T) {
 }
 
 func TestRunWalkDiff_TextOutput(t *testing.T) {
-	app, _ := fetchdomain.NewModuleCoordinate("example.com/app", "v1.0.0")
-	newDep, _ := fetchdomain.NewModuleCoordinate("example.com/new", "v1.0.0")
+	app, _ := coordinate.NewModuleCoordinate("example.com/app", "v1.0.0")
+	newDep, _ := coordinate.NewModuleCoordinate("example.com/new", "v1.0.0")
 	uc := &testfakes.FakeDiffWalks{
 		Result: walkapp.WalkDiff{
 			WalkA:          "01ARZ3NDEKTSV4RRFFQ69G5FAV",
 			WalkB:          "01ARZ3NDEKTSV4RRFFQ69G5FBB",
-			Added:          []fetchdomain.ModuleCoordinate{newDep},
+			Added:          []coordinate.ModuleCoordinate{newDep},
 			VersionChanged: []walkapp.VersionChange{{Path: "example.com/dep", VersionA: "v1.0.0", VersionB: "v1.1.0"}},
 			StatusChanged:  []walkapp.StatusChange{{Coordinate: app, StatusA: walkdomain.NodeSucceeded, StatusB: walkdomain.NodeSucceeded}},
 		},
@@ -583,12 +585,12 @@ func TestRunWalkDiff_TextOutput(t *testing.T) {
 func TestRunWalkDiff_JSONOutput(t *testing.T) {
 	jsonOut = true
 	t.Cleanup(func() { jsonOut = false })
-	newDep, _ := fetchdomain.NewModuleCoordinate("example.com/new", "v1.0.0")
+	newDep, _ := coordinate.NewModuleCoordinate("example.com/new", "v1.0.0")
 	uc := &testfakes.FakeDiffWalks{
 		Result: walkapp.WalkDiff{
 			WalkA:          "01ARZ3NDEKTSV4RRFFQ69G5FAV",
 			WalkB:          "01ARZ3NDEKTSV4RRFFQ69G5FBB",
-			Added:          []fetchdomain.ModuleCoordinate{newDep},
+			Added:          []coordinate.ModuleCoordinate{newDep},
 			VersionChanged: []walkapp.VersionChange{{Path: "example.com/dep", VersionA: "v1.0.0", VersionB: "v1.1.0"}},
 		},
 	}

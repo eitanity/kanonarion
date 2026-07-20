@@ -9,11 +9,12 @@ import (
 	"github.com/eitanity/kanonarion/internal/callgraph/adapters/store/sqlite"
 	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 var (
-	testCoord, _ = fetchdomain.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	testCoord, _ = coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
 	testTime     = time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
 )
 
@@ -31,7 +32,7 @@ func openTestStore(t *testing.T) *sqlite.Store {
 	return s
 }
 
-func makeRecord(coord fetchdomain.ModuleCoordinate, pv string) domain2.CallGraphRecord {
+func makeRecord(coord coordinate.ModuleCoordinate, pv string) domain2.CallGraphRecord {
 	var h domain2.CallGraphRecordHasher
 	r := domain2.CallGraphRecord{
 		SchemaVersion: domain2.CallGraphSchemaVersion,
@@ -173,7 +174,7 @@ func TestListCallGraphRecords(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
 
-	coord2, _ := fetchdomain.NewModuleCoordinate("example.com/other", "v2.0.0")
+	coord2, _ := coordinate.NewModuleCoordinate("example.com/other", "v2.0.0")
 	r1 := makeRecord(testCoord, "0.1.0")
 	r2 := makeRecord(coord2, "0.1.0")
 
@@ -265,9 +266,9 @@ func TestListCallGraphRecords_LimitOffset(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
 
-	coords := []fetchdomain.ModuleCoordinate{}
+	coords := []coordinate.ModuleCoordinate{}
 	for _, path := range []string{"example.com/a", "example.com/b", "example.com/c"} {
-		c, _ := fetchdomain.NewModuleCoordinate(path, "v1.0.0")
+		c, _ := coordinate.NewModuleCoordinate(path, "v1.0.0")
 		coords = append(coords, c)
 	}
 	for _, c := range coords {

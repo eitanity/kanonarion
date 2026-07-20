@@ -42,8 +42,8 @@ func buildTarball(t *testing.T, entries map[string]string) []byte {
 func TestExtractLicense_Found(t *testing.T) {
 	const license = "Copyright (c) 2009 The Go Authors. All rights reserved.\nBSD-3-Clause text ..."
 	tb := buildTarball(t, map[string]string{
-		"go/README.md": "readme",
-		"go/LICENSE":   license,
+		"go/README.md":        "readme",
+		"go/LICENSE":          license,
 		"go/src/fmt/print.go": "package fmt",
 	})
 	got, err := domain.ExtractLicense(tb)

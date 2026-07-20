@@ -15,6 +15,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/iface/domain"
 )
@@ -32,7 +34,7 @@ func New(pipelineVersion string, clock interface{ Now() time.Time }) *Extractor 
 
 // Extract walks sourceTree, parses every non-test.go file per package
 // directory, and produces an InterfaceRecord.
-func (e *Extractor) Extract(ctx context.Context, sourceTree fs.FS, coord fetchdomain.ModuleCoordinate) (domain.InterfaceRecord, error) {
+func (e *Extractor) Extract(ctx context.Context, sourceTree fs.FS, coord coordinate.ModuleCoordinate) (domain.InterfaceRecord, error) {
 	dirs, err := collectPackageDirs(sourceTree)
 	if err != nil {
 		return domain.InterfaceRecord{}, fmt.Errorf("collecting package directories: %w", err)
@@ -126,7 +128,7 @@ func packageImportPath(modulePath, dir string) string {
 
 // parsePackageDir parses all non-test.go files in dir within fsys and
 // returns a PackageInterface.
-func parsePackageDir(fsys fs.FS, dir string, coord fetchdomain.ModuleCoordinate) (domain.PackageInterface, error) {
+func parsePackageDir(fsys fs.FS, dir string, coord coordinate.ModuleCoordinate) (domain.PackageInterface, error) {
 	entries, err := fs.ReadDir(fsys, dir)
 	if err != nil {
 		return domain.PackageInterface{}, fmt.Errorf("reading dir %s: %w", dir, err)

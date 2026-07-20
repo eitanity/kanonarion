@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/walk/adapters/localfs"
@@ -80,7 +82,7 @@ func (f *fakeFacts) PutFetchRecord(_ context.Context, r fetchdomain.FactRecord) 
 	return nil
 }
 
-func (f *fakeFacts) GetFetchRecord(_ context.Context, coord fetchdomain.ModuleCoordinate, pv string) (fetchdomain.FactRecord, bool, error) {
+func (f *fakeFacts) GetFetchRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (fetchdomain.FactRecord, bool, error) {
 	key := coord.Path + "@" + coord.Version + "#" + pv
 	f.mu.Lock()
 	r, ok := f.records[key]
@@ -112,7 +114,7 @@ func writeLocalModule(t *testing.T, dir, modulePath, version string) {
 
 func TestEnsureFetchedFromPath_OK(t *testing.T) {
 	dir := t.TempDir()
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/local", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/local", Version: "v1.0.0"}
 	writeLocalModule(t, dir, coord.Path, coord.Version)
 
 	blobs := newFakeBlob()
@@ -160,7 +162,7 @@ func TestEnsureFetchedFromPath_OK(t *testing.T) {
 
 func TestEnsureFetchedFromPath_Cache(t *testing.T) {
 	dir := t.TempDir()
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/local", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/local", Version: "v1.0.0"}
 	writeLocalModule(t, dir, coord.Path, coord.Version)
 
 	blobs := newFakeBlob()
@@ -190,7 +192,7 @@ func TestEnsureFetchedFromPath_Cache(t *testing.T) {
 
 func TestEnsureFetchedFromPath_MissingGoMod(t *testing.T) {
 	dir := t.TempDir()
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/local", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/local", Version: "v1.0.0"}
 	// Do NOT write go.mod.
 
 	f := localfs.New(newFakeBlob(), newFakeFacts(), fixedClock{t: time.Now()})
@@ -201,7 +203,7 @@ func TestEnsureFetchedFromPath_MissingGoMod(t *testing.T) {
 }
 
 func TestEnsureFetchedFromPath_NonexistentDir(t *testing.T) {
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/local", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/local", Version: "v1.0.0"}
 	f := localfs.New(newFakeBlob(), newFakeFacts(), fixedClock{t: time.Now()})
 	_, err := f.EnsureFetchedFromPath(context.Background(), coord, "/nonexistent/does/not/exist")
 	if err == nil {
@@ -211,7 +213,7 @@ func TestEnsureFetchedFromPath_NonexistentDir(t *testing.T) {
 
 func TestEnsureFetchedFromPath_HashStability(t *testing.T) {
 	dir := t.TempDir()
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/local", Version: "v1.2.3"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/local", Version: "v1.2.3"}
 	writeLocalModule(t, dir, coord.Path, coord.Version)
 
 	clk := fixedClock{t: time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)}
@@ -238,7 +240,7 @@ func TestEnsureFetchedFromPath_HashStability(t *testing.T) {
 // calls is reflected in the second record.
 func TestEnsureFetchedFromPath_LocalVersionIsNeverServedFromCache(t *testing.T) {
 	dir := t.TempDir()
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/project", Version: fetchdomain.LocalVersion}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/project", Version: coordinate.LocalVersion}
 	writeLocalModule(t, dir, coord.Path, coord.Version)
 
 	blobs := newFakeBlob()
@@ -272,7 +274,7 @@ func TestEnsureFetchedFromPath_LocalVersionIsNeverServedFromCache(t *testing.T) 
 // (license, interface, callgraph, example, vuln) can read the archive.
 func TestEnsureFetchedFromPath_LocalVersionZipUsesLocalPrefix(t *testing.T) {
 	dir := t.TempDir()
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/project", Version: fetchdomain.LocalVersion}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/project", Version: coordinate.LocalVersion}
 	writeLocalModule(t, dir, coord.Path, coord.Version)
 
 	blobs := newFakeBlob()

@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/audit"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
@@ -35,7 +36,7 @@ type SumDBClient interface {
 	// Lookup returns the hash entries recorded in the transparency log for
 	// the given module version. If sumdb is disabled, not found, or
 	// unreachable, Available is false and Reason describes why.
-	Lookup(ctx context.Context, coord domain2.ModuleCoordinate) SumDBResult
+	Lookup(ctx context.Context, coord coordinate.ModuleCoordinate) SumDBResult
 }
 
 // SumDBResult is the outcome of a checksum database lookup.
@@ -55,11 +56,11 @@ type SumDBResult struct {
 type ModuleProxy interface {
 	// Info returns the.info JSON for a module version, including the
 	// Origin block if the proxy populates it.
-	Info(ctx context.Context, coord domain2.ModuleCoordinate) (ModuleInfo, error)
+	Info(ctx context.Context, coord coordinate.ModuleCoordinate) (ModuleInfo, error)
 
 	// Download fetches the module zip and go.mod, returning readers and
 	// the h1 hashes the proxy reports. Callers must close the readers.
-	Download(ctx context.Context, coord domain2.ModuleCoordinate) (ModuleDownload, error)
+	Download(ctx context.Context, coord coordinate.ModuleCoordinate) (ModuleDownload, error)
 }
 
 // ModuleInfo is the parsed response from a proxy.info endpoint.
@@ -199,7 +200,7 @@ type FactStore interface {
 
 	// GetFetchRecord retrieves the fact record for the given coordinate and
 	// pipeline version. The bool is false if no record exists.
-	GetFetchRecord(ctx context.Context, coord domain2.ModuleCoordinate, pipelineVersion string) (domain2.FactRecord, bool, error)
+	GetFetchRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain2.FactRecord, bool, error)
 }
 
 // AttestationStore persists provenance attestations additively, separate from
@@ -213,7 +214,7 @@ type AttestationStore interface {
 
 	// ListAttestations returns all attestations for a coordinate and pipeline
 	// version, in deterministic order. Empty (not an error) when none exist.
-	ListAttestations(ctx context.Context, coord domain2.ModuleCoordinate, pipelineVersion string) ([]domain2.AttestationRecord, error)
+	ListAttestations(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain2.AttestationRecord, error)
 }
 
 // Clock is injected wherever wall-clock time is needed, so that tests can

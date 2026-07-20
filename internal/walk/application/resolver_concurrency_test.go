@@ -10,7 +10,8 @@ import (
 	"testing"
 	"time"
 
-	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/walk/adapters/gomod/xmod"
 	"github.com/eitanity/kanonarion/internal/walk/application"
 	domain3 "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -29,7 +30,7 @@ type concurrencyTracker struct {
 	maxSeen  int
 }
 
-func (c *concurrencyTracker) EnsureFetched(ctx context.Context, coord domain2.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
+func (c *concurrencyTracker) EnsureFetched(ctx context.Context, coord coordinate.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
 	c.mu.Lock()
 	c.inFlight++
 	if c.inFlight > c.maxSeen {
@@ -171,7 +172,7 @@ func TestResolve_DeterministicAcrossWorkerCounts(t *testing.T) {
 // genuinely concurrent: a sequential and a parallel resolve produce identical
 // graphs, and the parallel resolve overlaps fetches.
 func TestResolveProject_BuildListDeterministicAndConcurrent(t *testing.T) {
-	target := coord("example.com/project", domain2.LocalVersion)
+	target := coord("example.com/project", coordinate.LocalVersion)
 
 	// A build list with eight independent fetchable modules off the main module.
 	mods := []walkports.BuildListModule{{Path: "example.com/project", Main: true}}

@@ -9,8 +9,10 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/audit"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	application2 "github.com/eitanity/kanonarion/internal/walk/application"
 	"github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -588,7 +590,7 @@ func TestExecuteWalkUseCase_ShallowRecordHasShallowDepth(t *testing.T) {
 
 // ---- helpers ----
 
-func buildShallowRecord(id string, target fetchdomain.ModuleCoordinate) domain.WalkRecord {
+func buildShallowRecord(id string, target coordinate.ModuleCoordinate) domain.WalkRecord {
 	now := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	outcome := domain.WalkOutcome{
 		Target: target,
@@ -600,7 +602,7 @@ func buildShallowRecord(id string, target fetchdomain.ModuleCoordinate) domain.W
 			ResolvedAt:      now,
 			PipelineVersion: "0.3.0",
 		},
-		PerNodeResults: map[fetchdomain.ModuleCoordinate]domain.NodeResult{
+		PerNodeResults: map[coordinate.ModuleCoordinate]domain.NodeResult{
 			target: {Coordinate: target, Status: domain.NodeSucceeded},
 		},
 		StartedAt:     now,
@@ -616,7 +618,7 @@ func buildShallowRecord(id string, target fetchdomain.ModuleCoordinate) domain.W
 	return rec
 }
 
-func buildMinimalRecord(id string, target fetchdomain.ModuleCoordinate) domain.WalkRecord {
+func buildMinimalRecord(id string, target coordinate.ModuleCoordinate) domain.WalkRecord {
 	now := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	outcome := domain.WalkOutcome{
 		Target: target,
@@ -626,7 +628,7 @@ func buildMinimalRecord(id string, target fetchdomain.ModuleCoordinate) domain.W
 			ResolvedAt:      now,
 			PipelineVersion: "0.3.0",
 		},
-		PerNodeResults: map[fetchdomain.ModuleCoordinate]domain.NodeResult{
+		PerNodeResults: map[coordinate.ModuleCoordinate]domain.NodeResult{
 			target: {Coordinate: target, Status: domain.NodeSucceeded},
 		},
 		StartedAt:     now,
@@ -642,7 +644,7 @@ func buildMinimalRecord(id string, target fetchdomain.ModuleCoordinate) domain.W
 	return rec
 }
 
-func buildRecordWithDep(id string, target, dep fetchdomain.ModuleCoordinate) domain.WalkRecord {
+func buildRecordWithDep(id string, target, dep coordinate.ModuleCoordinate) domain.WalkRecord {
 	now := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	outcome := domain.WalkOutcome{
 		Target: target,
@@ -656,7 +658,7 @@ func buildRecordWithDep(id string, target, dep fetchdomain.ModuleCoordinate) dom
 			ResolvedAt:      now,
 			PipelineVersion: "0.3.0",
 		},
-		PerNodeResults: map[fetchdomain.ModuleCoordinate]domain.NodeResult{
+		PerNodeResults: map[coordinate.ModuleCoordinate]domain.NodeResult{
 			target: {Coordinate: target, Status: domain.NodeSucceeded},
 			dep:    {Coordinate: dep, Status: domain.NodeSucceeded},
 		},
@@ -673,7 +675,7 @@ func buildRecordWithDep(id string, target, dep fetchdomain.ModuleCoordinate) dom
 	return rec
 }
 
-func buildRecordWithFailedDep(id string, target, dep fetchdomain.ModuleCoordinate) domain.WalkRecord {
+func buildRecordWithFailedDep(id string, target, dep coordinate.ModuleCoordinate) domain.WalkRecord {
 	now := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	outcome := domain.WalkOutcome{
 		Target: target,
@@ -687,7 +689,7 @@ func buildRecordWithFailedDep(id string, target, dep fetchdomain.ModuleCoordinat
 			ResolvedAt:      now,
 			PipelineVersion: "0.3.0",
 		},
-		PerNodeResults: map[fetchdomain.ModuleCoordinate]domain.NodeResult{
+		PerNodeResults: map[coordinate.ModuleCoordinate]domain.NodeResult{
 			target: {Coordinate: target, Status: domain.NodeSucceeded},
 			dep: {
 				Coordinate: dep,
@@ -708,9 +710,9 @@ func buildRecordWithFailedDep(id string, target, dep fetchdomain.ModuleCoordinat
 	return rec
 }
 
-func buildPartialRecord(id string, target fetchdomain.ModuleCoordinate) domain.WalkRecord {
+func buildPartialRecord(id string, target coordinate.ModuleCoordinate) domain.WalkRecord {
 	now := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
-	dep := fetchdomain.ModuleCoordinate{Path: "github.com/example/dep", Version: "v1.0.0"}
+	dep := coordinate.ModuleCoordinate{Path: "github.com/example/dep", Version: "v1.0.0"}
 	outcome := domain.WalkOutcome{
 		Target: target,
 		Graph: domain.Graph{
@@ -722,7 +724,7 @@ func buildPartialRecord(id string, target fetchdomain.ModuleCoordinate) domain.W
 			ResolvedAt:      now,
 			PipelineVersion: "0.3.0",
 		},
-		PerNodeResults: map[fetchdomain.ModuleCoordinate]domain.NodeResult{
+		PerNodeResults: map[coordinate.ModuleCoordinate]domain.NodeResult{
 			target: {Coordinate: target, Status: domain.NodeSucceeded},
 			dep:    {Coordinate: dep, Status: domain.NodeFetchFailed, Error: &domain.StoredError{Type: "fetch_failed", Message: "git rate limit"}},
 		},
@@ -739,7 +741,7 @@ func buildPartialRecord(id string, target fetchdomain.ModuleCoordinate) domain.W
 	return rec
 }
 
-func buildCancelledRecord(id string, target fetchdomain.ModuleCoordinate) domain.WalkRecord {
+func buildCancelledRecord(id string, target coordinate.ModuleCoordinate) domain.WalkRecord {
 	now := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
 	outcome := domain.WalkOutcome{
 		Target: target,
@@ -749,7 +751,7 @@ func buildCancelledRecord(id string, target fetchdomain.ModuleCoordinate) domain
 			ResolvedAt:      now,
 			PipelineVersion: "0.3.0",
 		},
-		PerNodeResults: map[fetchdomain.ModuleCoordinate]domain.NodeResult{
+		PerNodeResults: map[coordinate.ModuleCoordinate]domain.NodeResult{
 			target: {Coordinate: target, Status: domain.NodeSucceeded},
 		},
 		StartedAt:     now,

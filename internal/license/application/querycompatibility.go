@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"sort"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/license/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
@@ -33,7 +34,7 @@ type CheckCompatibilityUseCase struct {
 // licenseStoreReader is the read-only license store interface the use case
 // needs. Satisfied by licenseports.LicenseStore.
 type licenseStoreReader interface {
-	GetLicenseRecord(ctx context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string) (domain.LicenseRecord, bool, error)
+	GetLicenseRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain.LicenseRecord, bool, error)
 }
 
 // NewCheckCompatibilityUseCase constructs a CheckCompatibilityUseCase.
@@ -57,7 +58,7 @@ func NewCheckCompatibilityUseCase(store licenseStoreReader, walks walkports.Walk
 func (uc *CheckCompatibilityUseCase) CheckCompatibilityForWalk(
 	ctx context.Context,
 	walkID string,
-	root fetchdomain.ModuleCoordinate,
+	root coordinate.ModuleCoordinate,
 	targetSPDX string,
 ) (domain.ClosureCompatibilityReport, error) {
 	if targetSPDX == "" {
@@ -75,8 +76,8 @@ func (uc *CheckCompatibilityUseCase) CheckCompatibilityForWalk(
 
 	// Collect unique coordinates (walk graph may list a module multiple times
 	// at different depths).
-	seen := make(map[fetchdomain.ModuleCoordinate]struct{})
-	var coords []fetchdomain.ModuleCoordinate
+	seen := make(map[coordinate.ModuleCoordinate]struct{})
+	var coords []coordinate.ModuleCoordinate
 	for _, node := range walk.Graph.Nodes {
 		if node.Coordinate == root {
 			continue
@@ -126,7 +127,7 @@ func (uc *CheckCompatibilityUseCase) CheckCompatibilityForWalk(
 // PrimarySPDX) is the project's declared outbound licence.
 func (uc *CheckCompatibilityUseCase) resolveRootTarget(
 	ctx context.Context,
-	root fetchdomain.ModuleCoordinate,
+	root coordinate.ModuleCoordinate,
 ) (string, error) {
 	rec, found, err := uc.store.GetLicenseRecord(ctx, root, PipelineVersion)
 	if err != nil {
@@ -148,7 +149,7 @@ func (uc *CheckCompatibilityUseCase) resolveRootTarget(
 // from its EffectiveSet (root + embedded components). Falls back to a single
 // expression/primary SPDX for records that predate. Returns nil when
 // the record is absent or an error occurs — the caller treats nil as unknown
-func resolveEffectiveSPDXs(ctx context.Context, store licenseStoreReader, coord fetchdomain.ModuleCoordinate) []string {
+func resolveEffectiveSPDXs(ctx context.Context, store licenseStoreReader, coord coordinate.ModuleCoordinate) []string {
 	rec, found, err := store.GetLicenseRecord(ctx, coord, PipelineVersion)
 	if err != nil || !found {
 		return nil

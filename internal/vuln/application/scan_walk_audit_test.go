@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/audit"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -42,8 +43,8 @@ func TestScanWalk_EmitsAuditEvents(t *testing.T) {
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	walkID := "walk-audit"
 
-	affected := fetchdomain.ModuleCoordinate{Path: "github.com/lib/baz", Version: "v2.0.0"}
-	clean := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	affected := coordinate.ModuleCoordinate{Path: "github.com/lib/baz", Version: "v2.0.0"}
+	clean := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 
 	walkStore := newFakeWalkStore()
 	if err := walkStore.PutWalk(ctx, walkdomain.WalkRecord{
@@ -59,7 +60,7 @@ func TestScanWalk_EmitsAuditEvents(t *testing.T) {
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
 	vulnStore := newFakeVulnStore()
-	for _, c := range []fetchdomain.ModuleCoordinate{clean, affected} {
+	for _, c := range []coordinate.ModuleCoordinate{clean, affected} {
 		h, _ := blobs.Put(ctx, strings.NewReader("zip-"+c.Path))
 		if err := facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
 			ModulePath: c.Path, ModuleVersion: c.Version, PipelineVersion: "v1", ContentLocation: string(h),
@@ -82,7 +83,7 @@ func TestScanWalk_EmitsAuditEvents(t *testing.T) {
 	}
 	db := &fakeDatabase{
 		snapshot:    domain.DatabaseSnapshot{Source: "test", Version: "v1"},
-		vulnerables: map[fetchdomain.ModuleCoordinate][]string{affected: {"GO-VULN-ID"}},
+		vulnerables: map[coordinate.ModuleCoordinate][]string{affected: {"GO-VULN-ID"}},
 	}
 	clock := fixedClock{t: now}
 
@@ -162,7 +163,7 @@ func TestRescan_EmitsAuditEvents(t *testing.T) {
 	ctx := t.Context()
 	now := time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC)
 
-	affected := fetchdomain.ModuleCoordinate{Path: "github.com/lib/baz", Version: "v2.0.0"}
+	affected := coordinate.ModuleCoordinate{Path: "github.com/lib/baz", Version: "v2.0.0"}
 	walk, ws, facts, blobs := makeWalkWithModules(t, affected)
 
 	vulnStore := newFakeVulnStore()
@@ -208,7 +209,7 @@ func TestScanWalk_NilAuditSink(t *testing.T) {
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	walkID := "walk-noaudit"
 
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 	walkStore := newFakeWalkStore()
 	if err := walkStore.PutWalk(ctx, walkdomain.WalkRecord{
 		ID:    walkID,

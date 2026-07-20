@@ -15,5 +15,5 @@
 // independently by callers.
 //
 // The package is pure: no I/O, no clock, no stage execution. It reuses
-// fetch/domain.ModuleCoordinate as the module identity.
+// coordinate.ModuleCoordinate as the module identity.
 package domain

@@ -3,12 +3,13 @@ package domain_test
 import (
 	"testing"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/license/domain"
 )
 
-func coord(path, ver string) fetchdomain.ModuleCoordinate {
-	return fetchdomain.ModuleCoordinate{Path: path, Version: ver}
+func coord(path, ver string) coordinate.ModuleCoordinate {
+	return coordinate.ModuleCoordinate{Path: path, Version: ver}
 }
 
 func makeRecord(path, ver, spdx string, status domain.LicenseStatus, files ...domain.LicenseFileEntry) domain.LicenseRecord {

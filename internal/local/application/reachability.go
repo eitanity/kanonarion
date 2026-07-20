@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"strings"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/local/domain"
 	"github.com/eitanity/kanonarion/internal/local/ports"
 )
@@ -59,9 +60,9 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 	}
 
 	// Build coordinate list for vuln lookup.
-	coords := make([]fetchdomain.ModuleCoordinate, 0, len(importedMods))
+	coords := make([]coordinate.ModuleCoordinate, 0, len(importedMods))
 	for _, m := range importedMods {
-		coord, cerr := fetchdomain.NewModuleCoordinate(m.Path, m.Version)
+		coord, cerr := coordinate.NewModuleCoordinate(m.Path, m.Version)
 		if cerr != nil {
 			continue
 		}

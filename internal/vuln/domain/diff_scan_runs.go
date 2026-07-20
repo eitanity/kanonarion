@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"slices"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 )
 
 // DiffScanRuns compares two scan runs of the same walk and returns the delta.
@@ -101,8 +101,8 @@ func DiffScanRuns(runA, runB WalkScanRun, recsA, recsB []VulnerabilityRecord) Sc
 	return diff
 }
 
-func indexByCoordinate(recs []VulnerabilityRecord) map[fetchdomain.ModuleCoordinate]VulnerabilityRecord {
-	m := make(map[fetchdomain.ModuleCoordinate]VulnerabilityRecord, len(recs))
+func indexByCoordinate(recs []VulnerabilityRecord) map[coordinate.ModuleCoordinate]VulnerabilityRecord {
+	m := make(map[coordinate.ModuleCoordinate]VulnerabilityRecord, len(recs))
 	for _, r := range recs {
 		m[r.Coordinate] = r
 	}

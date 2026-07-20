@@ -4,7 +4,7 @@ import (
 	"sort"
 	"time"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 )
 
 // InterfaceSchemaVersion is the version of the InterfaceRecord JSON schema.
@@ -168,7 +168,7 @@ type InterfaceRecord struct {
 	SchemaVersion string
 	// Ecosystem declares the schema's scope; always fetchdomain.EcosystemGo.
 	Ecosystem       string
-	Coordinate      fetchdomain.ModuleCoordinate
+	Coordinate      coordinate.ModuleCoordinate
 	Packages        []PackageInterface // sorted by ImportPath
 	OverallStatus   InterfaceStatus
 	FailureDetail   string

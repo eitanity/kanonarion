@@ -7,7 +7,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/walk/adapters/policy/localfile"
 	domain2 "github.com/eitanity/kanonarion/internal/walk/domain"
 )
@@ -138,11 +139,11 @@ func TestWalkRecord_PolicyRoundTrip(t *testing.T) {
 		t.Errorf("MaxDepth = %d, want 2", p.Stages["fetch"].MaxDepth)
 	}
 
-	target := fetchdomain.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
+	target := coordinate.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
 	outcome := domain2.WalkOutcome{
 		Target:         target,
 		Graph:          domain2.Graph{Target: target},
-		PerNodeResults: map[fetchdomain.ModuleCoordinate]domain2.NodeResult{},
+		PerNodeResults: map[coordinate.ModuleCoordinate]domain2.NodeResult{},
 		OverallStatus:  domain2.WalkSucceeded,
 	}
 	rec := domain2.NewWalkRecord("TEST-POLICY-001", "bot", "1.0.0", domain2.WalkScopeCode, domain2.WalkDepthFull, outcome, p, "sha256:abc")

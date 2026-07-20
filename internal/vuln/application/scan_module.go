@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -116,7 +118,7 @@ func (uc *ScanModuleUseCase) WithLocalFetchPipelineVersion(v string) *ScanModule
 // getFetchRecord looks up the FactRecord for coord under the fetch pipeline
 // version first (a proxy-verified record always wins), then the local-ingest
 // pipeline version.
-func (uc *ScanModuleUseCase) getFetchRecord(ctx context.Context, coord fetchdomain.ModuleCoordinate) (fetchdomain.FactRecord, bool, error) {
+func (uc *ScanModuleUseCase) getFetchRecord(ctx context.Context, coord coordinate.ModuleCoordinate) (fetchdomain.FactRecord, bool, error) {
 	for _, v := range []string{uc.fetchPipelineVersion, uc.localFetchPipelineVersion} {
 		if v == "" {
 			continue
@@ -143,7 +145,7 @@ func (uc *ScanModuleUseCase) Preflight(ctx context.Context) error {
 
 // ScanModuleParams defines the input for a module scan.
 type ScanModuleParams struct {
-	Coordinate         fetchdomain.ModuleCoordinate
+	Coordinate         coordinate.ModuleCoordinate
 	WalkID             string
 	Snapshot           *domain.DatabaseSnapshot // nil = use latest
 	Force              bool
@@ -376,7 +378,7 @@ func (uc *ScanModuleUseCase) tryReuseCachedRecord(ctx context.Context, params Sc
 // out-of-toolchain module is the expected outcome of a hermetic scan, not a
 // coverage fault, so it logs at info level (and names reachability --local, the
 // project-rooted answer); genuine build incompatibilities stay at warn.
-func (uc *ScanModuleUseCase) logMetadataFallback(coord fetchdomain.ModuleCoordinate, reason domain.UnscanReason, category, detail string) {
+func (uc *ScanModuleUseCase) logMetadataFallback(coord coordinate.ModuleCoordinate, reason domain.UnscanReason, category, detail string) {
 	if reason.ExpectedOutOfToolchain() {
 		uc.logger.Info("vuln-scan: metadata-only, version outside the project build (expected); use reachability --local for project-rooted reachability",
 			"coordinate", coord)
@@ -563,11 +565,11 @@ func buildSymbolRefs(module string, affectedSymbols []string) []ports.SymbolRefe
 	return refs
 }
 
-func (uc *ScanModuleUseCase) checkVulnerabilities(ctx context.Context, coord fetchdomain.ModuleCoordinate, fact fetchdomain.FactRecord, walkID string) (bool, error) {
+func (uc *ScanModuleUseCase) checkVulnerabilities(ctx context.Context, coord coordinate.ModuleCoordinate, fact fetchdomain.FactRecord, walkID string) (bool, error) {
 	// If walkID is empty, we can't look up dependencies in a walk graph.
 	// This might happen during direct module scans outside a walk context.
 	if walkID == "" || uc.walkStore == nil {
-		vulns, err := uc.database.CheckVulnerable(ctx, []fetchdomain.ModuleCoordinate{coord})
+		vulns, err := uc.database.CheckVulnerable(ctx, []coordinate.ModuleCoordinate{coord})
 		if err != nil {
 			return true, fmt.Errorf("checking vulnerabilities: %w", err)
 		}
@@ -582,8 +584,8 @@ func (uc *ScanModuleUseCase) checkVulnerabilities(ctx context.Context, coord fet
 
 	// BFS from coord through graph edges to collect only the transitive
 	// dependencies of this module, not every node in the walk.
-	visited := map[fetchdomain.ModuleCoordinate]bool{coord: true}
-	queue := []fetchdomain.ModuleCoordinate{coord}
+	visited := map[coordinate.ModuleCoordinate]bool{coord: true}
+	queue := []coordinate.ModuleCoordinate{coord}
 	for len(queue) > 0 {
 		curr := queue[0]
 		queue = queue[1:]
@@ -594,7 +596,7 @@ func (uc *ScanModuleUseCase) checkVulnerabilities(ctx context.Context, coord fet
 			}
 		}
 	}
-	deps := make([]fetchdomain.ModuleCoordinate, 0, len(visited))
+	deps := make([]coordinate.ModuleCoordinate, 0, len(visited))
 	for c := range visited {
 		deps = append(deps, c)
 	}

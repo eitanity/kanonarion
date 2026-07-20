@@ -17,6 +17,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/adapters/modcache"
 	"github.com/eitanity/kanonarion/internal/adapters/ziparchive"
 	"github.com/eitanity/kanonarion/internal/audit"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -27,7 +28,7 @@ import (
 
 // moduleResult holds the outcome of a single module scan dispatched by a worker pool.
 type moduleResult struct {
-	coord  fetchdomain.ModuleCoordinate
+	coord  coordinate.ModuleCoordinate
 	record domain.VulnerabilityRecord
 	err    error
 }
@@ -114,7 +115,7 @@ type ScanWalkParams struct {
 	// isolation. Empty on a coordinate-keyed walk, where the isolated path runs.
 	ProjectDir string
 	// Progress is called after each module is scanned. It may be nil.
-	Progress func(coord fetchdomain.ModuleCoordinate, record domain.VulnerabilityRecord, current, total int)
+	Progress func(coord coordinate.ModuleCoordinate, record domain.VulnerabilityRecord, current, total int)
 }
 
 // Scan performs the walk-wide scan.
@@ -136,7 +137,7 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 		ID:               fmt.Sprintf("vscan-%s-%d", params.WalkID, uc.clock.Now().Unix()),
 		WalkID:           params.WalkID,
 		StartedAt:        uc.clock.Now(),
-		PerModuleResults: make(map[fetchdomain.ModuleCoordinate]string),
+		PerModuleResults: make(map[coordinate.ModuleCoordinate]string),
 		PipelineVersion:  uc.pipelineVersion,
 		Operator:         params.Operator,
 	}
@@ -177,7 +178,7 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 		// modcache with; exclude them from prefetch and Populate.
 		// local_analysed nodes DO have a FactRecord (local FS zip) and
 		// are included so their source can be scanned.
-		coords := make([]fetchdomain.ModuleCoordinate, 0, len(walk.Graph.Nodes))
+		coords := make([]coordinate.ModuleCoordinate, 0, len(walk.Graph.Nodes))
 		for _, node := range walk.Graph.Nodes {
 			if node.ResolutionSource == walkdomain.ResolutionLocalReplace {
 				continue
@@ -221,7 +222,7 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	// nodes are extracted upfront so the scan pool only processes
 	// modules govulncheck can actually open. Local-analysed nodes
 	// have a real FactRecord zip and are treated as normal scannable modules.
-	allCoords := make([]fetchdomain.ModuleCoordinate, 0, len(walk.Graph.Nodes))
+	allCoords := make([]coordinate.ModuleCoordinate, 0, len(walk.Graph.Nodes))
 	localReplaceNodes := make([]walkdomain.GraphNode, 0)
 	for _, node := range walk.Graph.Nodes {
 		if node.ResolutionSource == walkdomain.ResolutionLocalReplace {
@@ -249,12 +250,12 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	}
 	cgSem := make(chan struct{}, cgWorkers)
 
-	scanPool := func(coordSlice []fetchdomain.ModuleCoordinate, scanMode domain.ScanMode) []moduleResult {
+	scanPool := func(coordSlice []coordinate.ModuleCoordinate, scanMode domain.ScanMode) []moduleResult {
 		return uc.runScanPool(ctx, coordSlice, workers, cgSem, params, snapshot, goModCache, vulnDBDir, scanMode)
 	}
 
 	// finalResults maps each coordinate to its definitive scan result.
-	finalResults := make(map[fetchdomain.ModuleCoordinate]moduleResult, total)
+	finalResults := make(map[coordinate.ModuleCoordinate]moduleResult, total)
 
 	switch {
 	case walk.Target.IsLocal() && params.ProjectDir != "":
@@ -271,7 +272,7 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 		pass1 := scanPool(allCoords, domain.ScanModeBinary)
 
 		// Modules flagged Affected by binary mode need source-mode re-scan for call-graph precision.
-		var needSourceScan []fetchdomain.ModuleCoordinate
+		var needSourceScan []coordinate.ModuleCoordinate
 		for _, r := range pass1 {
 			if r.err == nil && r.record.OverallStatus == domain.StatusAffected {
 				needSourceScan = append(needSourceScan, r.coord)
@@ -338,8 +339,8 @@ type scanCounts struct {
 // accumulating the status breakdown. It advances *progressCount in place.
 func (uc *ScanWalkUseCase) tallyModuleResults(
 	ctx context.Context,
-	allCoords []fetchdomain.ModuleCoordinate,
-	finalResults map[fetchdomain.ModuleCoordinate]moduleResult,
+	allCoords []coordinate.ModuleCoordinate,
+	finalResults map[coordinate.ModuleCoordinate]moduleResult,
 	run *domain.WalkScanRun,
 	params ScanWalkParams,
 	snapshot *domain.DatabaseSnapshot,
@@ -399,8 +400,8 @@ func (uc *ScanWalkUseCase) tallyModuleResults(
 // are Unscannable and carry no findings, so they contribute only to the count.
 func (uc *ScanWalkUseCase) emitAuditEvents(
 	run domain.WalkScanRun,
-	allCoords []fetchdomain.ModuleCoordinate,
-	finalResults map[fetchdomain.ModuleCoordinate]moduleResult,
+	allCoords []coordinate.ModuleCoordinate,
+	finalResults map[coordinate.ModuleCoordinate]moduleResult,
 	counts scanCounts,
 ) error {
 	if uc.audit == nil {
@@ -443,7 +444,7 @@ func scanCompletedEvent(run domain.WalkScanRun, counts scanCounts) audit.Event {
 }
 
 // findingObservedEvent builds the envelope for a single observed finding.
-func findingObservedEvent(coord fetchdomain.ModuleCoordinate, vulnID string, status domain.VulnerabilityStatus) audit.Event {
+func findingObservedEvent(coord coordinate.ModuleCoordinate, vulnID string, status domain.VulnerabilityStatus) audit.Event {
 	return audit.Event{
 		Type: audit.EventVulnFindingObserved,
 		Payload: map[string]any{
@@ -498,7 +499,7 @@ func (uc *ScanWalkUseCase) recordLocalReplaceUnscannable(
 // cgSem is a shared semaphore that limits concurrent callgraph subprocess spawns.
 func (uc *ScanWalkUseCase) runScanPool(
 	ctx context.Context,
-	coordSlice []fetchdomain.ModuleCoordinate,
+	coordSlice []coordinate.ModuleCoordinate,
 	workers int,
 	cgSem chan struct{},
 	params ScanWalkParams,
@@ -506,7 +507,7 @@ func (uc *ScanWalkUseCase) runScanPool(
 	goModCache, vulnDBDir string,
 	scanMode domain.ScanMode,
 ) []moduleResult {
-	ch := make(chan fetchdomain.ModuleCoordinate, len(coordSlice))
+	ch := make(chan coordinate.ModuleCoordinate, len(coordSlice))
 	for _, c := range coordSlice {
 		ch <- c
 	}
@@ -547,7 +548,7 @@ func (uc *ScanWalkUseCase) runScanPool(
 
 // prefetchMissing fetches any coordinates that are absent from the fact store.
 // Errors are logged as warnings; individual failures do not abort the scan.
-func (uc *ScanWalkUseCase) prefetchMissing(ctx context.Context, coords []fetchdomain.ModuleCoordinate) {
+func (uc *ScanWalkUseCase) prefetchMissing(ctx context.Context, coords []coordinate.ModuleCoordinate) {
 	if uc.fetcher == nil {
 		return
 	}
@@ -622,7 +623,7 @@ func (uc *ScanWalkUseCase) graphHasPrePruningModule(ctx context.Context, graph w
 // false when no go.mod could be read; it is true (with a possibly empty version)
 // when the go.mod was read, so a module with no go directive is reported as an
 // empty version — which PrePruning treats as pre-pruning.
-func (uc *ScanWalkUseCase) nodeGoVersion(ctx context.Context, coord fetchdomain.ModuleCoordinate) (string, bool) {
+func (uc *ScanWalkUseCase) nodeGoVersion(ctx context.Context, coord coordinate.ModuleCoordinate) (string, bool) {
 	fact, ok, err := uc.moduleScanner.getFetchRecord(ctx, coord)
 	if err != nil || !ok || fact.GoModLocation == "" {
 		return "", false

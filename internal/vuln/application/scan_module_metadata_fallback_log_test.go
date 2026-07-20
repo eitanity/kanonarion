@@ -7,6 +7,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -19,7 +21,7 @@ import (
 // outcome at info, while a genuine build incompatibility still surfaces a warn.
 func TestScanModule_MetadataFallbackLogLevelByReason(t *testing.T) {
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
 
 	const (
 		infoMsg = "vuln-scan: metadata-only, version outside the project build"

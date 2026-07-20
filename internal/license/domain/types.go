@@ -4,7 +4,7 @@ import (
 	"sort"
 	"time"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 )
 
 // LicenseSchemaVersion is the version of the LicenseRecord JSON schema. Bump
@@ -143,7 +143,7 @@ type LicenseRecord struct {
 	SchemaVersion string
 	// Ecosystem declares the schema's scope; always fetchdomain.EcosystemGo.
 	Ecosystem  string
-	Coordinate fetchdomain.ModuleCoordinate
+	Coordinate coordinate.ModuleCoordinate
 	// Role distinguishes what the extracted facts MEAN for the subject.
 	// Empty for a dependency (inbound obligations);
 	// LicenseRoleRootDeclaration for the project-walk root (outbound

@@ -12,11 +12,13 @@ import (
 	"os"
 	"path/filepath"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"golang.org/x/mod/modfile"
 
 	extractapp "github.com/eitanity/kanonarion/internal/extract/application"
 	extractdomain "github.com/eitanity/kanonarion/internal/extract/domain"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	walkapp "github.com/eitanity/kanonarion/internal/walk/application"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
@@ -105,7 +107,7 @@ func (uc *LocalWalkExtractUseCase) Run(ctx context.Context, req LocalWalkExtract
 
 	// The main module is local and unpublished; pin it at the synthetic
 	// LocalVersion rather than a semver, matching the default project go.mod walk.
-	target := fetchdomain.ModuleCoordinate{Path: modulePath, Version: fetchdomain.LocalVersion}
+	target := coordinate.ModuleCoordinate{Path: modulePath, Version: coordinate.LocalVersion}
 	var projectDir string
 	if req.AnalyseLocalRoot {
 		projectDir, err = filepath.Abs(dir)

@@ -4,9 +4,11 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	callgraphdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
 )
 
@@ -23,7 +25,7 @@ func NewCallGraphStoreLoader(store cgports.CallGraphStore, pipelineVersion strin
 
 // Load retrieves the stored call graph record for coord and maps it to the
 // vuln-local projection so callgraph/domain stays confined to this adapter.
-func (l *CallGraphStoreLoader) Load(ctx context.Context, coord fetchdomain.ModuleCoordinate) (ports.CallGraphProjection, error) {
+func (l *CallGraphStoreLoader) Load(ctx context.Context, coord coordinate.ModuleCoordinate) (ports.CallGraphProjection, error) {
 	rec, ok, err := l.store.GetCallGraphRecord(ctx, coord, l.pipelineVersion)
 	if err != nil {
 		return ports.CallGraphProjection{}, fmt.Errorf("loading call graph for %s: %w", coord, err)

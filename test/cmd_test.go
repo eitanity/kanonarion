@@ -18,6 +18,7 @@ import (
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/cli"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	exsqlite "github.com/eitanity/kanonarion/internal/example/adapters/store/sqlite"
 	exapp "github.com/eitanity/kanonarion/internal/example/application"
 	exdomain "github.com/eitanity/kanonarion/internal/example/domain"
@@ -209,7 +210,7 @@ func buildFixtureWalkRecords() []domain.WalkRecord {
 	outcomeA := domain.WalkOutcome{
 		Target: app,
 		Graph:  graphA,
-		PerNodeResults: map[fetchdomain.ModuleCoordinate]domain.NodeResult{
+		PerNodeResults: map[coordinate.ModuleCoordinate]domain.NodeResult{
 			app:   {Coordinate: app, Status: domain.NodeSucceeded, DurationMs: 10},
 			dep10: {Coordinate: dep10, Status: domain.NodeSucceeded, DurationMs: 5},
 		},
@@ -220,7 +221,7 @@ func buildFixtureWalkRecords() []domain.WalkRecord {
 	outcomeB := domain.WalkOutcome{
 		Target: app,
 		Graph:  graphB,
-		PerNodeResults: map[fetchdomain.ModuleCoordinate]domain.NodeResult{
+		PerNodeResults: map[coordinate.ModuleCoordinate]domain.NodeResult{
 			app:    {Coordinate: app, Status: domain.NodeSucceeded, DurationMs: 10},
 			dep11:  {Coordinate: dep11, Status: domain.NodeSucceeded, DurationMs: 5},
 			newDep: {Coordinate: newDep, Status: domain.NodeSucceeded, DurationMs: 3},
@@ -527,7 +528,7 @@ func cmdSeedVuln(args []string) {
 		ID:       runID1,
 		WalkID:   walkID,
 		Snapshot: snap,
-		PerModuleResults: map[fetchdomain.ModuleCoordinate]string{
+		PerModuleResults: map[coordinate.ModuleCoordinate]string{
 			app: vulnRec.ContentHash,
 		},
 		StartedAt:       scannedAt,
@@ -546,11 +547,11 @@ func cmdSeedVuln(args []string) {
 		ID:               runID2,
 		WalkID:           walkID,
 		Snapshot:         snap,
-		PerModuleResults: map[fetchdomain.ModuleCoordinate]string{},
+		PerModuleResults: map[coordinate.ModuleCoordinate]string{},
 		StartedAt:        scannedAt.Add(time.Hour),
 		CompletedAt:      scannedAt.Add(time.Hour + time.Second),
 		OverallStatus:    vuldomain.WalkStatusAllClean,
-		PipelineVersion: vulnapp.PipelineVersion,
+		PipelineVersion:  vulnapp.PipelineVersion,
 		Operator:         "test",
 		ContentHash:      "sha256:run2",
 	}
@@ -633,7 +634,7 @@ func cmdSeedVulnPartial(args []string) {
 		ID:       "01JSCANRUN0PARTIAL0000001",
 		WalkID:   walkID,
 		Snapshot: snap,
-		PerModuleResults: map[fetchdomain.ModuleCoordinate]string{
+		PerModuleResults: map[coordinate.ModuleCoordinate]string{
 			clean:  cleanRec.ContentHash,
 			failed: failedRec.ContentHash,
 			unscan: unscanRec.ContentHash,
@@ -726,7 +727,7 @@ func cmdSeedVulnForWalk(args []string) {
 		ID:       "01JSCANRUN00WALKFIX0000001",
 		WalkID:   walkID,
 		Snapshot: snap,
-		PerModuleResults: map[fetchdomain.ModuleCoordinate]string{
+		PerModuleResults: map[coordinate.ModuleCoordinate]string{
 			app: vulnRec.ContentHash,
 			dep: "sha256:dep-norecord", // record was never stored
 		},
@@ -745,8 +746,8 @@ func cmdSeedVulnForWalk(args []string) {
 	_ = db.Close()
 }
 
-func mustFixtureCoord(path, version string) fetchdomain.ModuleCoordinate {
-	c, err := fetchdomain.NewModuleCoordinate(path, version)
+func mustFixtureCoord(path, version string) coordinate.ModuleCoordinate {
+	c, err := coordinate.NewModuleCoordinate(path, version)
 	if err != nil {
 		panic(err)
 	}

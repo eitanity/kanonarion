@@ -7,7 +7,8 @@ import (
 	"testing"
 	"time"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
@@ -35,21 +36,21 @@ func (s *queryVulnFakeStore) PutVulnerabilityRecord(_ context.Context, _ domain.
 	return nil
 }
 
-func (s *queryVulnFakeStore) GetVulnerabilityRecord(_ context.Context, _ fetchdomain.ModuleCoordinate, _ string, _ domain.DatabaseSnapshot) (domain.VulnerabilityRecord, bool, error) {
+func (s *queryVulnFakeStore) GetVulnerabilityRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ domain.DatabaseSnapshot) (domain.VulnerabilityRecord, bool, error) {
 	if s.storeErr != nil {
 		return domain.VulnerabilityRecord{}, false, s.storeErr
 	}
 	return s.record, s.recordFound, nil
 }
 
-func (s *queryVulnFakeStore) GetLatestVulnerabilityRecord(_ context.Context, _ fetchdomain.ModuleCoordinate, _ string) (domain.VulnerabilityRecord, bool, error) {
+func (s *queryVulnFakeStore) GetLatestVulnerabilityRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string) (domain.VulnerabilityRecord, bool, error) {
 	if s.storeErr != nil {
 		return domain.VulnerabilityRecord{}, false, s.storeErr
 	}
 	return s.latestRecord, s.latestFound, nil
 }
 
-func (s *queryVulnFakeStore) GetLatestVulnerabilityRecordForWalk(_ context.Context, _ fetchdomain.ModuleCoordinate, _ string, _ string) (domain.VulnerabilityRecord, bool, error) {
+func (s *queryVulnFakeStore) GetLatestVulnerabilityRecordForWalk(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ string) (domain.VulnerabilityRecord, bool, error) {
 	if s.storeErr != nil {
 		return domain.VulnerabilityRecord{}, false, s.storeErr
 	}
@@ -99,7 +100,7 @@ func (s *queryVulnFakeStore) ListVulnerabilityRecords(_ context.Context, _ strin
 	return nil, nil
 }
 
-func (s *queryVulnFakeStore) ListVulnerabilityRecordsForModule(_ context.Context, _ fetchdomain.ModuleCoordinate, _ string) ([]domain.VulnerabilityRecord, error) {
+func (s *queryVulnFakeStore) ListVulnerabilityRecordsForModule(_ context.Context, _ coordinate.ModuleCoordinate, _ string) ([]domain.VulnerabilityRecord, error) {
 	return s.moduleRecords, s.storeErr
 }
 
@@ -108,7 +109,7 @@ var _ vulnports.VulnerabilityStore = (*queryVulnFakeStore)(nil)
 // --- QueryVulnUseCase tests ---
 
 func TestQueryVulnUseCase_GetRecord(t *testing.T) {
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
 	want := domain.VulnerabilityRecord{Coordinate: coord, OverallStatus: domain.StatusClean}
 	uc := application.NewQueryVulnUseCase(&queryVulnFakeStore{record: want, recordFound: true})
 
@@ -128,14 +129,14 @@ func TestQueryVulnUseCase_GetRecord_Error(t *testing.T) {
 	storeErr := errors.New("db failure")
 	uc := application.NewQueryVulnUseCase(&queryVulnFakeStore{storeErr: storeErr})
 
-	_, _, err := uc.GetRecord(context.Background(), fetchdomain.ModuleCoordinate{}, "v1", domain.DatabaseSnapshot{})
+	_, _, err := uc.GetRecord(context.Background(), coordinate.ModuleCoordinate{}, "v1", domain.DatabaseSnapshot{})
 	if !errors.Is(err, storeErr) {
 		t.Errorf("got %v, want wrapping %v", err, storeErr)
 	}
 }
 
 func TestQueryVulnUseCase_GetLatestRecord(t *testing.T) {
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
 	want := domain.VulnerabilityRecord{Coordinate: coord}
 	uc := application.NewQueryVulnUseCase(&queryVulnFakeStore{latestRecord: want, latestFound: true})
 
@@ -152,7 +153,7 @@ func TestQueryVulnUseCase_GetLatestRecord(t *testing.T) {
 }
 
 func TestQueryVulnUseCase_GetLatestRecordForWalk(t *testing.T) {
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
 	want := domain.VulnerabilityRecord{Coordinate: coord, WalkID: "walk-1"}
 	uc := application.NewQueryVulnUseCase(&queryVulnFakeStore{latestForWalk: want, latestForWalkOK: true})
 
@@ -169,7 +170,7 @@ func TestQueryVulnUseCase_GetLatestRecordForWalk(t *testing.T) {
 }
 
 func TestQueryVulnUseCase_ListRecordsForModule(t *testing.T) {
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
 	recs := []domain.VulnerabilityRecord{{Coordinate: coord}, {Coordinate: coord}}
 	uc := application.NewQueryVulnUseCase(&queryVulnFakeStore{moduleRecords: recs})
 
@@ -183,7 +184,7 @@ func TestQueryVulnUseCase_ListRecordsForModule(t *testing.T) {
 }
 
 func TestQueryVulnUseCase_ListRecordsByFindingID(t *testing.T) {
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
 	recs := []domain.VulnerabilityRecord{{Coordinate: coord}}
 	uc := application.NewQueryVulnUseCase(&queryVulnFakeStore{findingRecords: recs})
 

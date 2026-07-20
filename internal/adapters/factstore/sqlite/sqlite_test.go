@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
@@ -58,7 +59,7 @@ func TestPutGetFetchRecord_DigestsRoundTrip(t *testing.T) {
 	if err := s.PutFetchRecord(ctx, r); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	got, ok, err := s.GetFetchRecord(ctx, domain2.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}, r.PipelineVersion)
+	got, ok, err := s.GetFetchRecord(ctx, coordinate.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}, r.PipelineVersion)
 	if err != nil || !ok {
 		t.Fatalf("Get: ok=%v err=%v", ok, err)
 	}
@@ -76,7 +77,7 @@ func TestPutGetFetchRecord(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	got, ok, err := s.GetFetchRecord(ctx, domain2.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}, r.PipelineVersion)
+	got, ok, err := s.GetFetchRecord(ctx, coordinate.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}, r.PipelineVersion)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -95,7 +96,7 @@ func TestGetFetchRecord_NotFound(t *testing.T) {
 	s := openMemStore(t)
 	ctx := context.Background()
 
-	_, ok, err := s.GetFetchRecord(ctx, domain2.ModuleCoordinate{Path: "x", Version: "v1.0.0"}, "0.1.0")
+	_, ok, err := s.GetFetchRecord(ctx, coordinate.ModuleCoordinate{Path: "x", Version: "v1.0.0"}, "0.1.0")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -122,7 +123,7 @@ func TestPutFetchRecord_Idempotent(t *testing.T) {
 		t.Fatalf("second Put: %v", err)
 	}
 
-	got, ok, err := s.GetFetchRecord(ctx, domain2.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}, r.PipelineVersion)
+	got, ok, err := s.GetFetchRecord(ctx, coordinate.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}, r.PipelineVersion)
 	if err != nil || !ok {
 		t.Fatalf("Get: err=%v ok=%v", err, ok)
 	}
@@ -149,7 +150,7 @@ func TestGetFetchRecord_IntegrityError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, ok, err := s.GetFetchRecord(ctx, domain2.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}, r.PipelineVersion)
+	_, ok, err := s.GetFetchRecord(ctx, coordinate.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}, r.PipelineVersion)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -171,7 +172,7 @@ func TestGetFetchRecord_Retracted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, ok, err := s.GetFetchRecord(ctx, domain2.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}, r.PipelineVersion)
+	got, ok, err := s.GetFetchRecord(ctx, coordinate.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}, r.PipelineVersion)
 	if err != nil || !ok {
 		t.Fatalf("Get: err=%v ok=%v", err, ok)
 	}

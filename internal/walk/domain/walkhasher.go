@@ -8,6 +8,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
@@ -248,7 +250,7 @@ func marshalCanonicalWalk(r WalkRecord) ([]byte, error) {
 // exists for the never-silent-failure invariant, not a known failure mode.
 var canonicalMarshal = json.Marshal
 
-func toCanonicalCoord(c fetchdomain.ModuleCoordinate) canonicalWalkCoord {
+func toCanonicalCoord(c coordinate.ModuleCoordinate) canonicalWalkCoord {
 	return canonicalWalkCoord{Path: c.Path, Version: c.Version}
 }
 
@@ -379,8 +381,8 @@ func canonicalWalkEdges(edges []GraphEdge) []canonicalWalkEdge {
 
 // canonicalNodeResults converts the per-node results map into a sorted slice
 // so the serialised form is independent of map iteration order.
-func canonicalNodeResults(results map[fetchdomain.ModuleCoordinate]NodeResult) ([]canonicalNodeEntry, error) {
-	keys := make([]fetchdomain.ModuleCoordinate, 0, len(results))
+func canonicalNodeResults(results map[coordinate.ModuleCoordinate]NodeResult) ([]canonicalNodeEntry, error) {
+	keys := make([]coordinate.ModuleCoordinate, 0, len(results))
 	for k := range results {
 		keys = append(keys, k)
 	}
@@ -426,16 +428,16 @@ func (WalkRecordHasher) Unmarshal(data []byte) (WalkRecord, error) {
 		return WalkRecord{}, fmt.Errorf("parsing graph.resolved_at %q: %w", c.Graph.ResolvedAt, err)
 	}
 
-	target, err := fetchdomain.NewModuleCoordinate(c.Target.Path, c.Target.Version)
+	target, err := coordinate.NewModuleCoordinate(c.Target.Path, c.Target.Version)
 	if err != nil {
 		return WalkRecord{}, fmt.Errorf("parsing target coordinate: %w", err)
 	}
 	// A walk that failed before the graph was resolved legitimately has no
 	// graph target. Treat a fully-empty coordinate as the zero value rather
 	// than a fatal parse error, so failed-walk records remain readable.
-	var graphTarget fetchdomain.ModuleCoordinate
+	var graphTarget coordinate.ModuleCoordinate
 	if c.Graph.Target.Path != "" || c.Graph.Target.Version != "" {
-		graphTarget, err = fetchdomain.NewModuleCoordinate(c.Graph.Target.Path, c.Graph.Target.Version)
+		graphTarget, err = coordinate.NewModuleCoordinate(c.Graph.Target.Path, c.Graph.Target.Version)
 		if err != nil {
 			return WalkRecord{}, fmt.Errorf("parsing graph target coordinate: %w", err)
 		}
@@ -443,7 +445,7 @@ func (WalkRecordHasher) Unmarshal(data []byte) (WalkRecord, error) {
 
 	nodes := make([]GraphNode, len(c.Graph.Nodes))
 	for i, n := range c.Graph.Nodes {
-		coord, nerr := fetchdomain.NewModuleCoordinate(n.Coordinate.Path, n.Coordinate.Version)
+		coord, nerr := coordinate.NewModuleCoordinate(n.Coordinate.Path, n.Coordinate.Version)
 		if nerr != nil {
 			return WalkRecord{}, fmt.Errorf("parsing node %d coordinate: %w", i, nerr)
 		}
@@ -462,7 +464,7 @@ func (WalkRecordHasher) Unmarshal(data []byte) (WalkRecord, error) {
 			Stdlib: fromCanonicalStdlibFacts(n.Stdlib),
 		}
 		if n.OriginalCoordinate != nil {
-			oc, oerr := fetchdomain.NewModuleCoordinate(n.OriginalCoordinate.Path, n.OriginalCoordinate.Version)
+			oc, oerr := coordinate.NewModuleCoordinate(n.OriginalCoordinate.Path, n.OriginalCoordinate.Version)
 			if oerr != nil {
 				return WalkRecord{}, fmt.Errorf("parsing node %d original coordinate: %w", i, oerr)
 			}
@@ -472,20 +474,20 @@ func (WalkRecordHasher) Unmarshal(data []byte) (WalkRecord, error) {
 
 	edges := make([]GraphEdge, len(c.Graph.Edges))
 	for i, e := range c.Graph.Edges {
-		from, ferr := fetchdomain.NewModuleCoordinate(e.From.Path, e.From.Version)
+		from, ferr := coordinate.NewModuleCoordinate(e.From.Path, e.From.Version)
 		if ferr != nil {
 			return WalkRecord{}, fmt.Errorf("parsing edge %d from coordinate: %w", i, ferr)
 		}
-		to, terr := fetchdomain.NewModuleCoordinate(e.To.Path, e.To.Version)
+		to, terr := coordinate.NewModuleCoordinate(e.To.Path, e.To.Version)
 		if terr != nil {
 			return WalkRecord{}, fmt.Errorf("parsing edge %d to coordinate: %w", i, terr)
 		}
 		edges[i] = GraphEdge{From: from, To: to, ConstraintVersion: e.ConstraintVersion}
 	}
 
-	perNode := make(map[fetchdomain.ModuleCoordinate]NodeResult, len(c.PerNodeResults))
+	perNode := make(map[coordinate.ModuleCoordinate]NodeResult, len(c.PerNodeResults))
 	for _, entry := range c.PerNodeResults {
-		coord, cerr := fetchdomain.NewModuleCoordinate(entry.Coordinate.Path, entry.Coordinate.Version)
+		coord, cerr := coordinate.NewModuleCoordinate(entry.Coordinate.Path, entry.Coordinate.Version)
 		if cerr != nil {
 			return WalkRecord{}, fmt.Errorf("parsing per_node_results coordinate: %w", cerr)
 		}
@@ -548,7 +550,7 @@ func (WalkRecordHasher) Unmarshal(data []byte) (WalkRecord, error) {
 	}, nil
 }
 
-func unmarshalNodeResult(coord fetchdomain.ModuleCoordinate, entry canonicalNodeEntry) (NodeResult, error) {
+func unmarshalNodeResult(coord coordinate.ModuleCoordinate, entry canonicalNodeEntry) (NodeResult, error) {
 	nr := NodeResult{
 		Coordinate: coord,
 		Status:     NodeStatus(entry.Status),
@@ -568,7 +570,7 @@ func unmarshalNodeResult(coord fetchdomain.ModuleCoordinate, entry canonicalNode
 	return nr, nil
 }
 
-func toCanonicalNodeEntry(coord fetchdomain.ModuleCoordinate, r NodeResult) (canonicalNodeEntry, error) {
+func toCanonicalNodeEntry(coord coordinate.ModuleCoordinate, r NodeResult) (canonicalNodeEntry, error) {
 	var fetchRaw json.RawMessage
 	if r.FetchRecord != nil {
 		// This error path (and its propagation up through canonicalNodeResults

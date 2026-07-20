@@ -10,8 +10,10 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	domain2 "github.com/eitanity/kanonarion/internal/iface/domain"
 	"github.com/eitanity/kanonarion/internal/iface/ports"
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
@@ -203,7 +205,7 @@ INSERT OR IGNORE INTO interface_symbols (
 // GetInterfaceRecord retrieves and tamper-checks the interface record.
 // Returns (zero, false, nil) if not found.
 // Returns (zero, false, ErrInterfaceIntegrity) on hash mismatch.
-func (s *Store) GetInterfaceRecord(ctx context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string) (domain2.InterfaceRecord, bool, error) {
+func (s *Store) GetInterfaceRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain2.InterfaceRecord, bool, error) {
 	const q = `SELECT serialised, content_hash FROM interface_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/fetch/application"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
@@ -24,7 +25,7 @@ func (r *recordingAttestations) PutAttestation(_ context.Context, rec domain2.At
 	return nil
 }
 
-func (r *recordingAttestations) ListAttestations(_ context.Context, _ domain2.ModuleCoordinate, _ string) ([]domain2.AttestationRecord, error) {
+func (r *recordingAttestations) ListAttestations(_ context.Context, _ coordinate.ModuleCoordinate, _ string) ([]domain2.AttestationRecord, error) {
 	return r.records, nil
 }
 

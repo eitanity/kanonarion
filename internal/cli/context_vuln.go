@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"sort"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -25,7 +26,7 @@ type vulnBatchCtx struct {
 	// so a missing/broken walk is not re-fetched per module.
 	graphCache map[string]*walkdomain.Graph
 	// affectedCache memoises the affected-module set per walkID.
-	affectedCache map[string]map[fetchdomain.ModuleCoordinate]struct{}
+	affectedCache map[string]map[coordinate.ModuleCoordinate]struct{}
 }
 
 func loadVulnBatchCtx(ctx context.Context, runsUC QueryScanRunsUseCase, walkUC QueryWalksUseCase) (*vulnBatchCtx, error) {
@@ -55,7 +56,7 @@ func loadVulnBatchCtx(ctx context.Context, runsUC QueryScanRunsUseCase, walkUC Q
 		runs:          runsMap,
 		walkUC:        walkUC,
 		graphCache:    make(map[string]*walkdomain.Graph),
-		affectedCache: make(map[string]map[fetchdomain.ModuleCoordinate]struct{}),
+		affectedCache: make(map[string]map[coordinate.ModuleCoordinate]struct{}),
 	}, nil
 }
 
@@ -83,7 +84,7 @@ func (b *vulnBatchCtx) graphFor(ctx context.Context, walkID string) (*walkdomain
 // Affected in the most recent scan run for walkID. A module whose record is
 // unreadable is included conservatively: it was part of the scan but cannot be
 // confirmed Clean (absence is never presented as a confident negative).
-func (b *vulnBatchCtx) affectedFor(ctx context.Context, walkID string, vulnUC QueryVulnUseCase) map[fetchdomain.ModuleCoordinate]struct{} {
+func (b *vulnBatchCtx) affectedFor(ctx context.Context, walkID string, vulnUC QueryVulnUseCase) map[coordinate.ModuleCoordinate]struct{} {
 	if b.affectedCache == nil {
 		return nil
 	}
@@ -91,7 +92,7 @@ func (b *vulnBatchCtx) affectedFor(ctx context.Context, walkID string, vulnUC Qu
 		return s
 	}
 	runs := b.runs[walkID]
-	affected := make(map[fetchdomain.ModuleCoordinate]struct{})
+	affected := make(map[coordinate.ModuleCoordinate]struct{})
 	if len(runs) > 0 {
 		run := runs[0] // most recent (DESC by started_at)
 		for coord := range run.PerModuleResults {
@@ -119,7 +120,7 @@ func (b *vulnBatchCtx) affectedFor(ctx context.Context, walkID string, vulnUC Qu
 // than affected peers, so they are left untouched. The annotation is also left
 // intact when the module's own status already matches the walk status (nothing
 // to filter) or when the graph cannot be loaded (no basis to narrow it).
-func (b *vulnBatchCtx) filterWalkAnnotation(ctx context.Context, result *contextVulnerabilities, coord fetchdomain.ModuleCoordinate, run vuldomain.WalkScanRun, vulnUC QueryVulnUseCase) {
+func (b *vulnBatchCtx) filterWalkAnnotation(ctx context.Context, result *contextVulnerabilities, coord coordinate.ModuleCoordinate, run vuldomain.WalkScanRun, vulnUC QueryVulnUseCase) {
 	if result.WalkStatus == "" || result.WalkStatus == result.Status {
 		return
 	}
@@ -154,7 +155,7 @@ func (b *vulnBatchCtx) filterWalkAnnotation(ctx context.Context, result *context
 	result.WalkAffected = peers
 }
 
-func buildVulnerabilitiesFromBatch(ctx context.Context, coord fetchdomain.ModuleCoordinate, vulnUC QueryVulnUseCase, batch *vulnBatchCtx) contextVulnerabilities {
+func buildVulnerabilitiesFromBatch(ctx context.Context, coord coordinate.ModuleCoordinate, vulnUC QueryVulnUseCase, batch *vulnBatchCtx) contextVulnerabilities {
 	// A store read failure must surface as read_error like every other
 	// section — analysed-but-unreadable presented as not_run is the
 	// absence-as-answer defect class. A later run may still read

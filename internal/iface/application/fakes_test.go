@@ -9,6 +9,8 @@ import (
 	"io/fs"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/iface/domain"
@@ -46,7 +48,7 @@ func (s *fakeFactStore) PutFetchRecord(_ context.Context, r domain2.FactRecord) 
 	return nil
 }
 
-func (s *fakeFactStore) GetFetchRecord(_ context.Context, coord domain2.ModuleCoordinate, pv string) (domain2.FactRecord, bool, error) {
+func (s *fakeFactStore) GetFetchRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (domain2.FactRecord, bool, error) {
 	if s.records == nil {
 		return domain2.FactRecord{}, false, nil
 	}
@@ -125,7 +127,7 @@ func (s *fakeInterfaceStore) PutInterfaceRecord(_ context.Context, r domain.Inte
 	return nil
 }
 
-func (s *fakeInterfaceStore) GetInterfaceRecord(_ context.Context, coord domain2.ModuleCoordinate, pv string) (domain.InterfaceRecord, bool, error) {
+func (s *fakeInterfaceStore) GetInterfaceRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (domain.InterfaceRecord, bool, error) {
 	if s.records == nil {
 		return domain.InterfaceRecord{}, false, nil
 	}
@@ -147,7 +149,7 @@ type fakeExtractor struct {
 	err    error
 }
 
-func (f *fakeExtractor) Extract(_ context.Context, _ fs.FS, coord domain2.ModuleCoordinate) (domain.InterfaceRecord, error) {
+func (f *fakeExtractor) Extract(_ context.Context, _ fs.FS, coord coordinate.ModuleCoordinate) (domain.InterfaceRecord, error) {
 	if f.err != nil {
 		return domain.InterfaceRecord{}, f.err
 	}

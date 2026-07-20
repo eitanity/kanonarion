@@ -6,8 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -52,8 +54,8 @@ func TestPrintDirectivesTable_Populated(t *testing.T) {
 	got := buf.String()
 	for _, want := range []string{
 		"KIND", "replace", "go.mod:5",
-		"example.com/old@v1.0.0",  // OLD composed from path@version
-		"example.com/new@v1.2.0",  // TARGET composed from path@version
+		"example.com/old@v1.0.0", // OLD composed from path@version
+		"example.com/new@v1.2.0", // TARGET composed from path@version
 		"version-replace", "warn",
 	} {
 		if !strings.Contains(got, want) {
@@ -181,7 +183,7 @@ func TestPrintVendorTable_WithFindings(t *testing.T) {
 
 func TestWriteNoticeDocument_FullEntry(t *testing.T) {
 	entries := []licensedomain.NoticeEntry{{
-		Coordinate:   fetchdomain.ModuleCoordinate{Path: "example.com/x", Version: "v1.0.0"},
+		Coordinate:   coordinate.ModuleCoordinate{Path: "example.com/x", Version: "v1.0.0"},
 		SPDX:         "MIT",
 		Copyrights:   []string{"Copyright 2026 Acme"},
 		LicenseTexts: []licensedomain.NoticeLicenseFile{{Path: "LICENSE", Content: "MIT license body"}},
@@ -229,12 +231,12 @@ func TestWriteNoticeDocument_Empty(t *testing.T) {
 
 // -- walk-id resolution --
 
-func walkSummary(id string, coord fetchdomain.ModuleCoordinate, scope walkdomain.WalkScope) walkports.WalkSummary {
+func walkSummary(id string, coord coordinate.ModuleCoordinate, scope walkdomain.WalkScope) walkports.WalkSummary {
 	return walkports.WalkSummary{ID: id, Target: coord, Scope: scope}
 }
 
 func TestLatestWalkIDForCoord_Found(t *testing.T) {
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
 	fake := testfakes.NewFakeQueryWalks()
 	fake.SetSummaries([]walkports.WalkSummary{
 		walkSummary("WALK-1", coord, walkdomain.WalkScopeCode),
@@ -250,7 +252,7 @@ func TestLatestWalkIDForCoord_Found(t *testing.T) {
 }
 
 func TestLatestWalkIDForCoord_NotFound(t *testing.T) {
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
 	fake := testfakes.NewFakeQueryWalks() // no summaries => empty result
 
 	if _, err := latestWalkIDForCoord(context.Background(), fake, coord); err == nil {
@@ -261,7 +263,7 @@ func TestLatestWalkIDForCoord_NotFound(t *testing.T) {
 }
 
 func TestLatestWalkIDForCoord_ListError(t *testing.T) {
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
 	fake := testfakes.NewFakeQueryWalks()
 	fake.ListErr = context.DeadlineExceeded
 
@@ -273,7 +275,7 @@ func TestLatestWalkIDForCoord_ListError(t *testing.T) {
 // Scope-aware resolution must ignore walks of a different scope even when their
 // coordinate matches.
 func TestLatestWalkIDForCoordScope_FiltersByScope(t *testing.T) {
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
 	fake := testfakes.NewFakeQueryWalks()
 	fake.SetSummaries([]walkports.WalkSummary{
 		walkSummary("TOOL-WALK", coord, walkdomain.WalkScopeTool),
@@ -292,7 +294,7 @@ func TestLatestWalkIDForCoordScope_FiltersByScope(t *testing.T) {
 // A coordinate that exists only under a different scope resolves to not-found,
 // not to the wrong-scope walk.
 func TestLatestWalkIDForCoordScope_NotFoundForScope(t *testing.T) {
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
 	fake := testfakes.NewFakeQueryWalks()
 	fake.SetSummaries([]walkports.WalkSummary{
 		walkSummary("TOOL-WALK", coord, walkdomain.WalkScopeTool),

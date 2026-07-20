@@ -6,7 +6,8 @@ import (
 	"testing"
 	"time"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	"github.com/eitanity/kanonarion/internal/walk/ports"
 )
@@ -15,7 +16,7 @@ func TestWalkSummaryJSONSnakeCase(t *testing.T) {
 	now := time.Date(2026, 1, 2, 3, 4, 5, 0, time.UTC)
 	s := ports.WalkSummary{
 		ID:            "abc123",
-		Target:        fetchdomain.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"},
+		Target:        coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"},
 		StartedAt:     now,
 		CompletedAt:   now.Add(time.Minute),
 		OverallStatus: walkdomain.WalkSucceeded,
@@ -47,14 +48,14 @@ func TestWalkSummarySliceJSONSnakeCase(t *testing.T) {
 	summaries := []ports.WalkSummary{
 		{
 			ID:            "id1",
-			Target:        fetchdomain.ModuleCoordinate{Path: "example.com/a", Version: "v1.0.0"},
+			Target:        coordinate.ModuleCoordinate{Path: "example.com/a", Version: "v1.0.0"},
 			StartedAt:     now,
 			OverallStatus: walkdomain.WalkSucceeded,
 			NodeCount:     3,
 		},
 		{
 			ID:            "id2",
-			Target:        fetchdomain.ModuleCoordinate{Path: "example.com/b", Version: "v2.0.0"},
+			Target:        coordinate.ModuleCoordinate{Path: "example.com/b", Version: "v2.0.0"},
 			StartedAt:     now,
 			OverallStatus: walkdomain.WalkFailed,
 			NodeCount:     1,

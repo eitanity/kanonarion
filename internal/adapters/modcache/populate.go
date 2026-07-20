@@ -9,7 +9,8 @@ import (
 	"path/filepath"
 	"time"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	"golang.org/x/mod/module"
 )
@@ -27,7 +28,7 @@ func Populate(
 	facts fetchports.FactStore,
 	blobs fetchports.BlobStore,
 	cacheDir string,
-	coords []fetchdomain.ModuleCoordinate,
+	coords []coordinate.ModuleCoordinate,
 	pipelineVersion string,
 ) error {
 	for _, coord := range coords {
@@ -42,7 +43,7 @@ func populateOne(
 	facts fetchports.FactStore,
 	blobs fetchports.BlobStore,
 	cacheDir string,
-	coord fetchdomain.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 	pipelineVersion string,
 ) error {
 	record, ok, err := facts.GetFetchRecord(ctx, coord, pipelineVersion)
@@ -98,7 +99,7 @@ func PopulateGoMod(
 	facts fetchports.FactStore,
 	blobs fetchports.BlobStore,
 	cacheDir string,
-	coords []fetchdomain.ModuleCoordinate,
+	coords []coordinate.ModuleCoordinate,
 	pipelineVersion string,
 ) error {
 	for _, coord := range coords {
@@ -112,7 +113,7 @@ func populateGoModOne(
 	facts fetchports.FactStore,
 	blobs fetchports.BlobStore,
 	cacheDir string,
-	coord fetchdomain.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 	pipelineVersion string,
 ) error {
 	record, ok, err := facts.GetFetchRecord(ctx, coord, pipelineVersion)
@@ -147,7 +148,7 @@ func populateGoModOne(
 // cacheEntryBase returns the "@v/<version>" path prefix for a coordinate inside
 // a GOMODCACHE-layout directory, creating the parent directory. Callers append
 // the entry suffix (.zip, .mod, .info, …).
-func cacheEntryBase(cacheDir string, coord fetchdomain.ModuleCoordinate) (string, error) {
+func cacheEntryBase(cacheDir string, coord coordinate.ModuleCoordinate) (string, error) {
 	escapedPath, err := module.EscapePath(coord.Path)
 	if err != nil {
 		return "", fmt.Errorf("escaping module path %q: %w", coord.Path, err)

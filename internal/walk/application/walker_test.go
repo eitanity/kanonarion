@@ -11,6 +11,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/walk/adapters/gomod/xmod"
 	application2 "github.com/eitanity/kanonarion/internal/walk/application"
@@ -81,7 +83,7 @@ func (f *walkerFakeFetcher) addGate(path, version string) chan struct{} {
 	return ch
 }
 
-func (f *walkerFakeFetcher) EnsureFetched(ctx context.Context, c domain2.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
+func (f *walkerFakeFetcher) EnsureFetched(ctx context.Context, c coordinate.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
 	k := wkey(c.Path, c.Version)
 
 	f.mu.Lock()
@@ -183,7 +185,7 @@ func (f *fakeLocalFetcher) addError(path, version string, err error) {
 	f.errors[wkey(path, version)] = err
 }
 
-func (f *fakeLocalFetcher) EnsureFetchedFromPath(_ context.Context, c domain2.ModuleCoordinate, _ string) (walkports.LocalModuleFetchResult, error) {
+func (f *fakeLocalFetcher) EnsureFetchedFromPath(_ context.Context, c coordinate.ModuleCoordinate, _ string) (walkports.LocalModuleFetchResult, error) {
 	k := wkey(c.Path, c.Version)
 	f.mu.Lock()
 	rec, hasRec := f.records[k]
@@ -593,7 +595,7 @@ replace example.com/dep => ../local/dep
 
 	w := buildWalker(rf, wf, blobs, 1)
 	outcome, err := w.Walk(context.Background(), application2.WalkRequest{
-		Target:          coord("example.com/project", domain2.LocalVersion),
+		Target:          coord("example.com/project", coordinate.LocalVersion),
 		ProjectMode:     true,
 		MainModuleGoMod: mainGoMod,
 		ProjectDir:      "/work/project",
@@ -665,7 +667,7 @@ replace example.com/dep => ../local/dep
 
 	w := buildWalkerWithLocal(rf, wf, lf, blobs, 1)
 	outcome, err := w.Walk(context.Background(), application2.WalkRequest{
-		Target:           coord("example.com/project", domain2.LocalVersion),
+		Target:           coord("example.com/project", coordinate.LocalVersion),
 		ProjectMode:      true,
 		MainModuleGoMod:  mainGoMod,
 		ProjectDir:       "/work/project",
@@ -728,7 +730,7 @@ replace example.com/dep => ../local/dep
 
 	w := buildWalkerWithLocal(rf, wf, lf, blobs, 1)
 	outcome, err := w.Walk(context.Background(), application2.WalkRequest{
-		Target:           coord("example.com/project", domain2.LocalVersion),
+		Target:           coord("example.com/project", coordinate.LocalVersion),
 		ProjectMode:      true,
 		MainModuleGoMod:  mainGoMod,
 		ProjectDir:       "/work/project",
@@ -773,7 +775,7 @@ replace example.com/dep => ../local/dep
 
 	w := buildWalkerWithLocal(rf, wf, lf, blobs, 1)
 	outcome, err := w.Walk(context.Background(), application2.WalkRequest{
-		Target:          coord("example.com/project", domain2.LocalVersion),
+		Target:          coord("example.com/project", coordinate.LocalVersion),
 		ProjectMode:     true,
 		MainModuleGoMod: mainGoMod,
 		ProjectDir:      "/work/project",
@@ -815,7 +817,7 @@ replace example.com/dep => ../local/dep
 
 	w := buildWalker(rf, wf, blobs, 1) // nil localFetcher
 	outcome, err := w.Walk(context.Background(), application2.WalkRequest{
-		Target:           coord("example.com/project", domain2.LocalVersion),
+		Target:           coord("example.com/project", coordinate.LocalVersion),
 		ProjectMode:      true,
 		MainModuleGoMod:  mainGoMod,
 		ProjectDir:       "/work/project",
@@ -872,7 +874,7 @@ func (f *productionCacheFetcher) callCount(path, version string) int {
 	return f.seen[wkey(path, version)]
 }
 
-func (f *productionCacheFetcher) EnsureFetched(_ context.Context, c domain2.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
+func (f *productionCacheFetcher) EnsureFetched(_ context.Context, c coordinate.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
 	k := wkey(c.Path, c.Version)
 	f.mu.Lock()
 	rec, ok := f.records[k]
@@ -1007,7 +1009,7 @@ func (f *forcingProductionFetcher) WithForce(force bool) walkports.ModuleFetcher
 	return &forcingProductionFetcher{productionCacheFetcher: f.productionCacheFetcher, force: force}
 }
 
-func (f *forcingProductionFetcher) EnsureFetched(ctx context.Context, c domain2.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
+func (f *forcingProductionFetcher) EnsureFetched(ctx context.Context, c coordinate.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
 	fr, err := f.productionCacheFetcher.EnsureFetched(ctx, c)
 	if err != nil {
 		return fr, err
@@ -1181,7 +1183,7 @@ func TestWalker_ProjectMode_RootsAtLocalMainModule(t *testing.T) {
 	wf.addRecord("example.com/dep", "v1.0.0")
 
 	mainGoMod := []byte("module example.com/project\ngo 1.21\nrequire example.com/dep v1.0.0\n")
-	target := domain2.ModuleCoordinate{Path: "example.com/project", Version: domain2.LocalVersion}
+	target := coordinate.ModuleCoordinate{Path: "example.com/project", Version: coordinate.LocalVersion}
 
 	w := buildWalker(rf, wf, blobs, 2)
 	outcome, err := w.Walk(context.Background(), application2.WalkRequest{

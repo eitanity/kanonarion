@@ -7,7 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/walk/application"
 	domain3 "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -72,7 +73,7 @@ func buildListResolver(t *testing.T, bl *fakeBuildListResolver) (*application.Gr
 
 func TestResolveProject_BuildList_NodeMapping(t *testing.T) {
 	r, _ := buildListResolver(t, &fakeBuildListResolver{list: sampleBuildList()})
-	target := coord("example.com/project", domain2.LocalVersion)
+	target := coord("example.com/project", coordinate.LocalVersion)
 
 	g, err := r.ResolveProject(context.Background(), target, nil, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false, false)
 	if err != nil {
@@ -160,7 +161,7 @@ func TestResolveProject_BuildList_NodeMapping(t *testing.T) {
 func TestResolveProject_BuildList_ScopeParityWithBuildList(t *testing.T) {
 	bl := sampleBuildList()
 	r, _ := buildListResolver(t, &fakeBuildListResolver{list: bl})
-	target := coord("example.com/project", domain2.LocalVersion)
+	target := coord("example.com/project", coordinate.LocalVersion)
 
 	// The toolchain's module set: every non-main build-list module by its
 	// require/import (pre-replace) path — the identity go list and go version -m
@@ -211,7 +212,7 @@ func TestResolveProject_BuildList_ScopeParityWithBuildList(t *testing.T) {
 
 func TestResolveProject_BuildList_Edges(t *testing.T) {
 	r, _ := buildListResolver(t, &fakeBuildListResolver{list: sampleBuildList()})
-	target := coord("example.com/project", domain2.LocalVersion)
+	target := coord("example.com/project", coordinate.LocalVersion)
 
 	g, err := r.ResolveProject(context.Background(), target, nil, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false, false)
 	if err != nil {
@@ -240,7 +241,7 @@ func TestResolveProject_BuildList_FetchFailureIsPartial(t *testing.T) {
 	// buildListResolver seeds the common fixtures but not example.com/missing, so
 	// EnsureFetched fails for it.
 	r, _ := buildListResolver(t, bl)
-	target := coord("example.com/project", domain2.LocalVersion)
+	target := coord("example.com/project", coordinate.LocalVersion)
 
 	g, err := r.ResolveProject(context.Background(), target, nil, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false, false)
 	if err != nil {
@@ -268,7 +269,7 @@ func TestResolveProject_BuildList_FetchFailureIsPartial(t *testing.T) {
 }
 
 func TestResolveProject_BuildList_Deterministic(t *testing.T) {
-	target := coord("example.com/project", domain2.LocalVersion)
+	target := coord("example.com/project", coordinate.LocalVersion)
 
 	run := func() domain3.Graph {
 		r, _ := buildListResolver(t, &fakeBuildListResolver{list: sampleBuildList()})
@@ -298,7 +299,7 @@ func TestResolveProject_BuildList_FallbackOnToolchainError(t *testing.T) {
 
 	bl := &fakeBuildListResolver{err: errors.New("exec: \"go\": executable file not found in $PATH")}
 	r := newResolver(fetcher, blobs).WithBuildListResolver(bl)
-	target := coord("example.com/project", domain2.LocalVersion)
+	target := coord("example.com/project", coordinate.LocalVersion)
 
 	mainGoMod := []byte("module example.com/project\n\ngo 1.21\n\nrequire example.com/dep v1.0.0\n")
 	g, err := r.ResolveProject(context.Background(), target, mainGoMod, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false, false)
@@ -356,7 +357,7 @@ func TestResolveProject_ToolScope_RestrictsToToolClosure(t *testing.T) {
 	fetcher.add("example.com/toolsub", "v1.0.0", "module example.com/toolsub\n", blobs)
 	fetcher.add("example.com/shared", "v1.0.0", "module example.com/shared\n", blobs)
 	r := newResolver(fetcher, blobs).WithBuildListResolver(&fakeBuildListResolver{list: toolScopeBuildList()})
-	target := coord("example.com/project", domain2.LocalVersion)
+	target := coord("example.com/project", coordinate.LocalVersion)
 
 	goMod := []byte("module example.com/project\n\ngo 1.24\n\ntool example.com/tool/cmd/lint\n")
 	// The caller (CLI) resolves the tool scope's module set via the toolchain;
@@ -396,7 +397,7 @@ func TestResolveProject_ScopedWalk_SkipsOutOfScopeFetch(t *testing.T) {
 	fetcher.add("example.com/toolsub", "v1.0.0", "module example.com/toolsub\n", blobs)
 	fetcher.add("example.com/shared", "v1.0.0", "module example.com/shared\n", blobs)
 	r := newResolver(fetcher, blobs).WithBuildListResolver(&fakeBuildListResolver{list: toolScopeBuildList()})
-	target := coord("example.com/project", domain2.LocalVersion)
+	target := coord("example.com/project", coordinate.LocalVersion)
 
 	goMod := []byte("module example.com/project\n\ngo 1.24\n\ntool example.com/tool/cmd/lint\n")
 	toolSet := []string{"example.com/tool", "example.com/toolsub", "example.com/shared"}
@@ -438,7 +439,7 @@ func TestResolveProject_ProductionScope_KeepsWholeBuildList(t *testing.T) {
 	fetcher.add("example.com/toolsub", "v1.0.0", "module example.com/toolsub\n", blobs)
 	fetcher.add("example.com/shared", "v1.0.0", "module example.com/shared\n", blobs)
 	r := newResolver(fetcher, blobs).WithBuildListResolver(&fakeBuildListResolver{list: toolScopeBuildList()})
-	target := coord("example.com/project", domain2.LocalVersion)
+	target := coord("example.com/project", coordinate.LocalVersion)
 
 	goMod := []byte("module example.com/project\n\ngo 1.24\n\ntool example.com/tool/cmd/lint\n")
 	g, err := r.ResolveProject(context.Background(), target, goMod, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false, false)
@@ -475,7 +476,7 @@ func TestResolveProject_NoBuildListResolver_NoCaveat(t *testing.T) {
 	fetcher.add("example.com/dep", "v1.0.0", "module example.com/dep\n\ngo 1.21\n", blobs)
 
 	r := newResolver(fetcher, blobs) // no WithBuildListResolver
-	target := coord("example.com/project", domain2.LocalVersion)
+	target := coord("example.com/project", coordinate.LocalVersion)
 	mainGoMod := []byte("module example.com/project\n\ngo 1.21\n\nrequire example.com/dep v1.0.0\n")
 
 	g, err := r.ResolveProject(context.Background(), target, mainGoMod, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false, false)

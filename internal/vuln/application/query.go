@@ -4,7 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
 )
@@ -22,7 +23,7 @@ func NewQueryVulnUseCase(store ports.VulnerabilityStore) *QueryVulnUseCase {
 // GetRecord retrieves a vulnerability record by coordinate, pipeline version, and snapshot.
 func (uc *QueryVulnUseCase) GetRecord(
 	ctx context.Context,
-	coord fetchdomain.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 	pipelineVersion string,
 	snapshot domain.DatabaseSnapshot,
 ) (domain.VulnerabilityRecord, bool, error) {
@@ -36,7 +37,7 @@ func (uc *QueryVulnUseCase) GetRecord(
 // GetLatestRecord returns the most recently scanned record for a coordinate and pipeline version.
 func (uc *QueryVulnUseCase) GetLatestRecord(
 	ctx context.Context,
-	coord fetchdomain.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 	pipelineVersion string,
 ) (domain.VulnerabilityRecord, bool, error) {
 	rec, found, err := uc.store.GetLatestVulnerabilityRecord(ctx, coord, pipelineVersion)
@@ -49,7 +50,7 @@ func (uc *QueryVulnUseCase) GetLatestRecord(
 // GetLatestRecordForWalk returns the most recently scanned record for a coordinate, pipeline version, and walk ID.
 func (uc *QueryVulnUseCase) GetLatestRecordForWalk(
 	ctx context.Context,
-	coord fetchdomain.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 	pipelineVersion string,
 	walkID string,
 ) (domain.VulnerabilityRecord, bool, error) {
@@ -63,7 +64,7 @@ func (uc *QueryVulnUseCase) GetLatestRecordForWalk(
 // ListRecordsForModule returns all stored scan records for a coordinate and pipeline version.
 func (uc *QueryVulnUseCase) ListRecordsForModule(
 	ctx context.Context,
-	coord fetchdomain.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 	pipelineVersion string,
 ) ([]domain.VulnerabilityRecord, error) {
 	recs, err := uc.store.ListVulnerabilityRecordsForModule(ctx, coord, pipelineVersion)

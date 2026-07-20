@@ -6,6 +6,7 @@ import (
 	"io"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/fetch/application"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
@@ -15,11 +16,11 @@ import (
 // --from-modcache mode, standing in for the module-cache blob store.
 type fakeDeriver struct{}
 
-func (fakeDeriver) ZipHandle(c domain2.ModuleCoordinate) (ports.BlobHandle, error) {
+func (fakeDeriver) ZipHandle(c coordinate.ModuleCoordinate) (ports.BlobHandle, error) {
 	return ports.BlobHandle("modcache:zip:" + c.String()), nil
 }
 
-func (fakeDeriver) GoModHandle(c domain2.ModuleCoordinate) (ports.BlobHandle, error) {
+func (fakeDeriver) GoModHandle(c coordinate.ModuleCoordinate) (ports.BlobHandle, error) {
 	return ports.BlobHandle("modcache:mod:" + c.String()), nil
 }
 
@@ -39,9 +40,9 @@ func (b noPutBlob) GetPath(context.Context, ports.BlobHandle) (string, error) {
 	return "", errors.New("unexpected GetPath")
 }
 
-func modcacheCoord(t *testing.T) domain2.ModuleCoordinate {
+func modcacheCoord(t *testing.T) coordinate.ModuleCoordinate {
 	t.Helper()
-	c, err := domain2.NewModuleCoordinate("github.com/example/mod", "v1.2.3")
+	c, err := coordinate.NewModuleCoordinate("github.com/example/mod", "v1.2.3")
 	if err != nil {
 		t.Fatalf("NewModuleCoordinate: %v", err)
 	}
@@ -49,7 +50,7 @@ func modcacheCoord(t *testing.T) domain2.ModuleCoordinate {
 }
 
 // downloadWithHashes builds a fakeProxy whose Download reports the given hashes.
-func downloadWithHashes(coord domain2.ModuleCoordinate, zip, gomod domain2.ModuleHash) *fakeProxy {
+func downloadWithHashes(coord coordinate.ModuleCoordinate, zip, gomod domain2.ModuleHash) *fakeProxy {
 	return &fakeProxy{
 		downloads: map[string]fakeDownload{
 			coord.String(): {

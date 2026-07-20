@@ -1,6 +1,6 @@
 package domain
 
-import fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+import "github.com/eitanity/kanonarion/internal/coordinate"
 
 // LicenseOverride is an operator-supplied correction for a single module's
 // detected license. It carries enough provenance for callers to indicate that
@@ -41,7 +41,7 @@ func NewLicenseOverrideSet(entries map[string]string) LicenseOverrideSet {
 // entry ("path@version") takes precedence over a module-level entry ("path"),
 // which applies to all versions. An entry with an empty SPDX value is treated
 // as no override (a present-but-blank correction is meaningless).
-func (s LicenseOverrideSet) Resolve(coord fetchdomain.ModuleCoordinate) (LicenseOverride, bool) {
+func (s LicenseOverrideSet) Resolve(coord coordinate.ModuleCoordinate) (LicenseOverride, bool) {
 	if len(s.entries) == 0 {
 		return LicenseOverride{}, false
 	}

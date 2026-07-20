@@ -5,8 +5,10 @@ import (
 	"fmt"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	callgraphdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	"github.com/eitanity/kanonarion/internal/vuln/adapters/reachability"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
@@ -18,13 +20,13 @@ type fakeLoader struct {
 	err    error
 }
 
-func (f *fakeLoader) Load(_ context.Context, _ fetchdomain.ModuleCoordinate) (ports.CallGraphProjection, error) {
+func (f *fakeLoader) Load(_ context.Context, _ coordinate.ModuleCoordinate) (ports.CallGraphProjection, error) {
 	return f.record, f.err
 }
 
 func TestAnalyse_NoCallGraph_ReturnsUnknown(t *testing.T) {
 	a := reachability.New()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 	symbols := []ports.SymbolReference{{Module: "github.com/foo/bar", Package: "bar", Symbol: "Vulnerable"}}
 
 	result, err := a.Analyse(t.Context(), coord, symbols, nil)
@@ -41,7 +43,7 @@ func TestAnalyse_NoCallGraph_ReturnsUnknown(t *testing.T) {
 
 func TestAnalyse_EmptySymbols_NotReachable(t *testing.T) {
 	a := reachability.New()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 
 	result, err := a.Analyse(t.Context(), coord, nil, nil)
 	if err != nil {
@@ -54,7 +56,7 @@ func TestAnalyse_EmptySymbols_NotReachable(t *testing.T) {
 
 func TestAnalyse_ReturnsUnknownConfidence(t *testing.T) {
 	a := reachability.New()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 	symbols := []ports.SymbolReference{
 		{Module: "github.com/foo/bar", Package: "bar", Symbol: "DoSomething"},
 		{Module: "github.com/foo/bar", Package: "bar", Symbol: "DoSomethingElse"},
@@ -71,7 +73,7 @@ func TestAnalyse_ReturnsUnknownConfidence(t *testing.T) {
 
 func TestAnalyse_LoadError_ReturnsError(t *testing.T) {
 	a := reachability.New()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 	symbols := []ports.SymbolReference{{Module: "github.com/foo/bar", Symbol: "Vuln"}}
 	loader := &fakeLoader{err: fmt.Errorf("store unavailable")}
 
@@ -84,7 +86,7 @@ func TestAnalyse_LoadError_ReturnsError(t *testing.T) {
 func TestAnalyse_Reachable_DirectEntryPoint(t *testing.T) {
 	// The vulnerable function IS an exported entry point — trivially reachable.
 	a := reachability.New()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 
 	loader := &fakeLoader{record: ports.CallGraphProjection{
 		Nodes: []ports.CallGraphNode{
@@ -127,7 +129,7 @@ func dynamicSinkProjection(kind string) ports.CallGraphProjection {
 
 func TestAnalyse_Application_ReachesDynamicallyDispatchedSymbol(t *testing.T) {
 	a := reachability.New()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 	loader := &fakeLoader{record: dynamicSinkProjection(string(callgraphdomain.ArtifactApplication))}
 	symbols := []ports.SymbolReference{{Module: "github.com/foo/bar", Symbol: "Vuln"}}
 
@@ -144,7 +146,7 @@ func TestAnalyse_Library_DoesNotReachDynamicallyDispatchedSymbol(t *testing.T) {
 	// The library side of the same switch: a consumer can only enter through the
 	// exported API, which does not reach the vulnerable symbol.
 	a := reachability.New()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 	loader := &fakeLoader{record: dynamicSinkProjection(string(callgraphdomain.ArtifactLibrary))}
 	symbols := []ports.SymbolReference{{Module: "github.com/foo/bar", Symbol: "Vuln"}}
 
@@ -160,7 +162,7 @@ func TestAnalyse_Library_DoesNotReachDynamicallyDispatchedSymbol(t *testing.T) {
 func TestAnalyse_Reachable_TransitiveCall(t *testing.T) {
 	// Entry → Intermediate → Vulnerable
 	a := reachability.New()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 
 	loader := &fakeLoader{record: ports.CallGraphProjection{
 		Nodes: []ports.CallGraphNode{
@@ -194,7 +196,7 @@ func TestAnalyse_Reachable_TransitiveCall(t *testing.T) {
 func TestAnalyse_NotReachable_DisconnectedGraph(t *testing.T) {
 	// Entry exists, Vulnerable exists, but no edge connecting them.
 	a := reachability.New()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 
 	loader := &fakeLoader{record: ports.CallGraphProjection{
 		Nodes: []ports.CallGraphNode{
@@ -222,7 +224,7 @@ func TestAnalyse_ReachableViaInitRoot(t *testing.T) {
 	// with no exported-API path. An exported node is present so the owned-node
 	// fallback does not fire — this isolates init as a reachability root.
 	a := reachability.New()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 
 	loader := &fakeLoader{record: ports.CallGraphProjection{
 		Nodes: []ports.CallGraphNode{
@@ -254,7 +256,7 @@ func TestAnalyse_NoExportedOrInit_FallsBackToOwnedRoots(t *testing.T) {
 	// or init to root at, the shared selector falls back to every owned node, so
 	// the vulnerable owned node is itself a root and reports reachable.
 	a := reachability.New()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 
 	loader := &fakeLoader{record: ports.CallGraphProjection{
 		Nodes: []ports.CallGraphNode{
@@ -279,7 +281,7 @@ func TestAnalyse_NoExportedOrInit_FallsBackToOwnedRoots(t *testing.T) {
 func TestAnalyse_SymbolNotInGraph_HighConfidenceNotReachable(t *testing.T) {
 	// Symbol doesn't appear in the call graph at all.
 	a := reachability.New()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 
 	loader := &fakeLoader{record: ports.CallGraphProjection{
 		Nodes: []ports.CallGraphNode{
@@ -303,7 +305,7 @@ func TestAnalyse_SymbolNotInGraph_HighConfidenceNotReachable(t *testing.T) {
 func TestAnalyse_MethodSymbol_MatchedByReceiverDotName(t *testing.T) {
 	// govulncheck emits method symbols as "(*T).Method"; match against receiver.symbol.
 	a := reachability.New()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 
 	loader := &fakeLoader{record: ports.CallGraphProjection{
 		Nodes: []ports.CallGraphNode{

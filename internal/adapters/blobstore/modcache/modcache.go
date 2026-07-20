@@ -27,7 +27,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 	"golang.org/x/mod/module"
 )
@@ -73,29 +74,29 @@ func New(dir string, delegate Delegate) *Store {
 // ZipHandle returns the deterministic module-cache handle for a coordinate's
 // zip. It never touches the filesystem, so the fetch pipeline can record it
 // without a Put.
-func ZipHandle(coord domain.ModuleCoordinate) (ports.BlobHandle, error) {
+func ZipHandle(coord coordinate.ModuleCoordinate) (ports.BlobHandle, error) {
 	return deriveHandle(kindZip, coord)
 }
 
 // GoModHandle returns the deterministic module-cache handle for a coordinate's
 // standalone go.mod.
-func GoModHandle(coord domain.ModuleCoordinate) (ports.BlobHandle, error) {
+func GoModHandle(coord coordinate.ModuleCoordinate) (ports.BlobHandle, error) {
 	return deriveHandle(kindGoMod, coord)
 }
 
 // ZipHandle satisfies the fetch pipeline's ModcacheHandleDeriver so the Store
 // can be injected as both the blob adapter and the handle source in
 // --from-modcache mode.
-func (s *Store) ZipHandle(coord domain.ModuleCoordinate) (ports.BlobHandle, error) {
+func (s *Store) ZipHandle(coord coordinate.ModuleCoordinate) (ports.BlobHandle, error) {
 	return ZipHandle(coord)
 }
 
 // GoModHandle satisfies the fetch pipeline's ModcacheHandleDeriver.
-func (s *Store) GoModHandle(coord domain.ModuleCoordinate) (ports.BlobHandle, error) {
+func (s *Store) GoModHandle(coord coordinate.ModuleCoordinate) (ports.BlobHandle, error) {
 	return GoModHandle(coord)
 }
 
-func deriveHandle(kind string, coord domain.ModuleCoordinate) (ports.BlobHandle, error) {
+func deriveHandle(kind string, coord coordinate.ModuleCoordinate) (ports.BlobHandle, error) {
 	escapedPath, err := module.EscapePath(coord.Path)
 	if err != nil {
 		return "", fmt.Errorf("escaping module path %q: %w", coord.Path, err)

@@ -3,7 +3,8 @@ package domain_test
 import (
 	"testing"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/license/domain"
 )
 
@@ -62,9 +63,9 @@ func TestSortFiles(t *testing.T) {
 	}
 }
 
-func mustCoord(t *testing.T, path, version string) fetchdomain.ModuleCoordinate {
+func mustCoord(t *testing.T, path, version string) coordinate.ModuleCoordinate {
 	t.Helper()
-	c, err := fetchdomain.NewModuleCoordinate(path, version)
+	c, err := coordinate.NewModuleCoordinate(path, version)
 	if err != nil {
 		t.Fatalf("NewModuleCoordinate(%q, %q): %v", path, version, err)
 	}

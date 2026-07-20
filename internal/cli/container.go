@@ -71,8 +71,8 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
 
-	vulnfetch "github.com/eitanity/kanonarion/internal/vuln/adapters/fetch"
 	vulncallgraph "github.com/eitanity/kanonarion/internal/vuln/adapters/callgraph"
+	vulnfetch "github.com/eitanity/kanonarion/internal/vuln/adapters/fetch"
 	"github.com/eitanity/kanonarion/internal/vuln/adapters/reachability"
 	vulnsqlite "github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
 	govulncheck "github.com/eitanity/kanonarion/internal/vuln/adapters/vuln/govulncheck"

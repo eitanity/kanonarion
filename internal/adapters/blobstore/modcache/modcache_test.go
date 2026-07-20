@@ -9,14 +9,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	localfs "github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
-	"github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
-func newCoord(t *testing.T, path, version string) domain.ModuleCoordinate {
+func newCoord(t *testing.T, path, version string) coordinate.ModuleCoordinate {
 	t.Helper()
-	c, err := domain.NewModuleCoordinate(path, version)
+	c, err := coordinate.NewModuleCoordinate(path, version)
 	if err != nil {
 		t.Fatalf("NewModuleCoordinate(%s, %s): %v", path, version, err)
 	}
@@ -25,7 +27,7 @@ func newCoord(t *testing.T, path, version string) domain.ModuleCoordinate {
 
 // seedCacheEntry writes bytes to the module-cache path for coord + ext, mirroring
 // the on-disk layout `go mod download` produces.
-func seedCacheEntry(t *testing.T, dir string, coord domain.ModuleCoordinate, ext string, content []byte) {
+func seedCacheEntry(t *testing.T, dir string, coord coordinate.ModuleCoordinate, ext string, content []byte) {
 	t.Helper()
 	base := filepath.Join(dir, "cache", "download", filepath.FromSlash(coord.Path), "@v")
 	if err := os.MkdirAll(base, 0o750); err != nil {

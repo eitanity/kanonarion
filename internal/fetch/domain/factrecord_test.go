@@ -4,12 +4,14 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 func TestNewFactRecord(t *testing.T) {
 	m := domain2.FetchedModule{
-		Coordinate:         domain2.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"},
+		Coordinate:         coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"},
 		ModuleHash:         domain2.ModuleHash{Algorithm: "h1", Value: "abc=="},
 		GoModHash:          domain2.ModuleHash{Algorithm: "h1", Value: "def=="},
 		GitReference:       domain2.GitReference{URL: "https://github.com/foo/bar", Ref: "refs/tags/v1.0.0", CommitHash: "aabbcc00000000000000000000000000000000"},

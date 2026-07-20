@@ -6,6 +6,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/iface/adapters/store/sqlite"
 	domain2 "github.com/eitanity/kanonarion/internal/iface/domain"
@@ -24,7 +26,7 @@ func openStore(t *testing.T) *sqlite.Store {
 
 func makeRecord(t *testing.T) domain2.InterfaceRecord {
 	t.Helper()
-	coord, err := fetchdomain.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	coord, err := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -88,7 +90,7 @@ func TestStore_PutGet_RoundTrip(t *testing.T) {
 
 func TestStore_GetNotFound(t *testing.T) {
 	s := openStore(t)
-	coord, _ := fetchdomain.NewModuleCoordinate("example.com/missing", "v1.0.0")
+	coord, _ := coordinate.NewModuleCoordinate("example.com/missing", "v1.0.0")
 	_, found, err := s.GetInterfaceRecord(context.Background(), coord, "0.1.0")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -249,7 +251,7 @@ func TestStore_FindSymbol_MultiPackage_Disambiguates(t *testing.T) {
 	s := openStore(t)
 
 	// Two packages in the same module both export "Marshal".
-	coord, _ := fetchdomain.NewModuleCoordinate("example.com/multi", "v1.0.0")
+	coord, _ := coordinate.NewModuleCoordinate("example.com/multi", "v1.0.0")
 	r := domain2.InterfaceRecord{
 		SchemaVersion: domain2.InterfaceSchemaVersion,
 		Ecosystem:     fetchdomain.EcosystemGo,

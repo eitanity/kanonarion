@@ -5,6 +5,8 @@ import (
 	"encoding/hex"
 	"sort"
 	"time"
+
+	"github.com/eitanity/kanonarion/internal/coordinate"
 )
 
 // SubjectKind names what a signature attests over. Sign-on-process produces one
@@ -29,7 +31,7 @@ const (
 // It records the canonical digest that was signed (algorithm + hex) rather than
 // re-deriving one, so the signature can never drift from core's digest.
 type AttestationRecord struct {
-	Coordinate       ModuleCoordinate
+	Coordinate       coordinate.ModuleCoordinate
 	PipelineVersion  string
 	SubjectKind      SubjectKind
 	SubjectAlgorithm string

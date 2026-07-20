@@ -6,7 +6,8 @@ import (
 	"io"
 	"testing"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/local/adapters/vulnfindings/store"
 	"github.com/eitanity/kanonarion/internal/local/ports"
 	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -20,7 +21,7 @@ type fakeVulnStore struct {
 	err     error
 }
 
-func (s *fakeVulnStore) GetLatestVulnerabilityRecord(_ context.Context, coord fetchdomain.ModuleCoordinate, _ string) (vulndomain.VulnerabilityRecord, bool, error) {
+func (s *fakeVulnStore) GetLatestVulnerabilityRecord(_ context.Context, coord coordinate.ModuleCoordinate, _ string) (vulndomain.VulnerabilityRecord, bool, error) {
 	if s.err != nil {
 		return vulndomain.VulnerabilityRecord{}, false, s.err
 	}
@@ -32,10 +33,10 @@ func (s *fakeVulnStore) GetLatestVulnerabilityRecord(_ context.Context, coord fe
 func (s *fakeVulnStore) PutVulnerabilityRecord(_ context.Context, _ vulndomain.VulnerabilityRecord) error {
 	panic("unexpected call: PutVulnerabilityRecord")
 }
-func (s *fakeVulnStore) GetVulnerabilityRecord(_ context.Context, _ fetchdomain.ModuleCoordinate, _ string, _ vulndomain.DatabaseSnapshot) (vulndomain.VulnerabilityRecord, bool, error) {
+func (s *fakeVulnStore) GetVulnerabilityRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ vulndomain.DatabaseSnapshot) (vulndomain.VulnerabilityRecord, bool, error) {
 	panic("unexpected call: GetVulnerabilityRecord")
 }
-func (s *fakeVulnStore) GetLatestVulnerabilityRecordForWalk(_ context.Context, _ fetchdomain.ModuleCoordinate, _ string, _ string) (vulndomain.VulnerabilityRecord, bool, error) {
+func (s *fakeVulnStore) GetLatestVulnerabilityRecordForWalk(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ string) (vulndomain.VulnerabilityRecord, bool, error) {
 	panic("unexpected call: GetLatestVulnerabilityRecordForWalk")
 }
 func (s *fakeVulnStore) PutWalkScanRun(_ context.Context, _ vulndomain.WalkScanRun) error {
@@ -68,7 +69,7 @@ func (s *fakeVulnStore) ListVulnerabilityRecordsByFindingID(_ context.Context, _
 func (s *fakeVulnStore) ListVulnerabilityRecords(_ context.Context, _ string) ([]vulndomain.VulnerabilityRecord, error) {
 	panic("unexpected call: ListVulnerabilityRecords")
 }
-func (s *fakeVulnStore) ListVulnerabilityRecordsForModule(_ context.Context, _ fetchdomain.ModuleCoordinate, _ string) ([]vulndomain.VulnerabilityRecord, error) {
+func (s *fakeVulnStore) ListVulnerabilityRecordsForModule(_ context.Context, _ coordinate.ModuleCoordinate, _ string) ([]vulndomain.VulnerabilityRecord, error) {
 	panic("unexpected call: ListVulnerabilityRecordsForModule")
 }
 
@@ -76,9 +77,9 @@ var _ vulnports.VulnerabilityStore = (*fakeVulnStore)(nil)
 
 // -- helpers --
 
-func mustCoord(t *testing.T, path, ver string) fetchdomain.ModuleCoordinate {
+func mustCoord(t *testing.T, path, ver string) coordinate.ModuleCoordinate {
 	t.Helper()
-	c, err := fetchdomain.NewModuleCoordinate(path, ver)
+	c, err := coordinate.NewModuleCoordinate(path, ver)
 	if err != nil {
 		t.Fatalf("NewModuleCoordinate(%q, %q): %v", path, ver, err)
 	}
@@ -106,7 +107,7 @@ func TestLoadFindings_MapsFields(t *testing.T) {
 	}
 	adapter := store.New(s, "v1")
 
-	result, err := adapter.LoadFindings(context.Background(), []fetchdomain.ModuleCoordinate{coord})
+	result, err := adapter.LoadFindings(context.Background(), []coordinate.ModuleCoordinate{coord})
 	if err != nil {
 		t.Fatalf("LoadFindings: %v", err)
 	}
@@ -137,7 +138,7 @@ func TestLoadFindings_OmitsCoordWithNoRecord(t *testing.T) {
 	s := &fakeVulnStore{records: map[string]vulndomain.VulnerabilityRecord{}} // no records
 	adapter := store.New(s, "v1")
 
-	result, err := adapter.LoadFindings(context.Background(), []fetchdomain.ModuleCoordinate{coord})
+	result, err := adapter.LoadFindings(context.Background(), []coordinate.ModuleCoordinate{coord})
 	if err != nil {
 		t.Fatalf("LoadFindings: %v", err)
 	}
@@ -155,7 +156,7 @@ func TestLoadFindings_OmitsCoordWithEmptyFindings(t *testing.T) {
 	}
 	adapter := store.New(s, "v1")
 
-	result, err := adapter.LoadFindings(context.Background(), []fetchdomain.ModuleCoordinate{coord})
+	result, err := adapter.LoadFindings(context.Background(), []coordinate.ModuleCoordinate{coord})
 	if err != nil {
 		t.Fatalf("LoadFindings: %v", err)
 	}
@@ -182,7 +183,7 @@ func TestLoadFindings_MultipleCoords(t *testing.T) {
 	}
 	adapter := store.New(s, "v1")
 
-	result, err := adapter.LoadFindings(context.Background(), []fetchdomain.ModuleCoordinate{coordA, coordB, coordC})
+	result, err := adapter.LoadFindings(context.Background(), []coordinate.ModuleCoordinate{coordA, coordB, coordC})
 	if err != nil {
 		t.Fatalf("LoadFindings: %v", err)
 	}
@@ -206,7 +207,7 @@ func TestLoadFindings_StoreError_Propagates(t *testing.T) {
 	s := &fakeVulnStore{err: storeErr}
 	adapter := store.New(s, "v1")
 
-	_, err := adapter.LoadFindings(context.Background(), []fetchdomain.ModuleCoordinate{coord})
+	_, err := adapter.LoadFindings(context.Background(), []coordinate.ModuleCoordinate{coord})
 	if !errors.Is(err, storeErr) {
 		t.Errorf("error = %v, want wrapping %v", err, storeErr)
 	}

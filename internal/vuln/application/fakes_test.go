@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -113,7 +115,7 @@ func (f *fakeFacts) PutFetchRecord(_ context.Context, r fetchdomain.FactRecord) 
 	return nil
 }
 
-func (f *fakeFacts) GetFetchRecord(_ context.Context, coord fetchdomain.ModuleCoordinate, pv string) (fetchdomain.FactRecord, bool, error) {
+func (f *fakeFacts) GetFetchRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (fetchdomain.FactRecord, bool, error) {
 	key := coord.Path + "@" + coord.Version + "#" + pv
 	f.mu.Lock()
 	r, ok := f.records[key]
@@ -164,7 +166,7 @@ func (f *fakeVulnStore) PutVulnerabilityRecord(_ context.Context, record domain.
 	return nil
 }
 
-func (f *fakeVulnStore) GetVulnerabilityRecord(_ context.Context, coord fetchdomain.ModuleCoordinate, pv string, snapshot domain.DatabaseSnapshot) (domain.VulnerabilityRecord, bool, error) {
+func (f *fakeVulnStore) GetVulnerabilityRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string, snapshot domain.DatabaseSnapshot) (domain.VulnerabilityRecord, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	key := f.recordKey(coord, pv, snapshot)
@@ -172,7 +174,7 @@ func (f *fakeVulnStore) GetVulnerabilityRecord(_ context.Context, coord fetchdom
 	return rec, ok, nil
 }
 
-func (f *fakeVulnStore) GetLatestVulnerabilityRecord(_ context.Context, coord fetchdomain.ModuleCoordinate, pv string) (domain.VulnerabilityRecord, bool, error) {
+func (f *fakeVulnStore) GetLatestVulnerabilityRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (domain.VulnerabilityRecord, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, rec := range f.records {
@@ -183,7 +185,7 @@ func (f *fakeVulnStore) GetLatestVulnerabilityRecord(_ context.Context, coord fe
 	return domain.VulnerabilityRecord{}, false, nil
 }
 
-func (f *fakeVulnStore) GetLatestVulnerabilityRecordForWalk(_ context.Context, coord fetchdomain.ModuleCoordinate, pv string, walkID string) (domain.VulnerabilityRecord, bool, error) {
+func (f *fakeVulnStore) GetLatestVulnerabilityRecordForWalk(_ context.Context, coord coordinate.ModuleCoordinate, pv string, walkID string) (domain.VulnerabilityRecord, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, rec := range f.records {
@@ -194,7 +196,7 @@ func (f *fakeVulnStore) GetLatestVulnerabilityRecordForWalk(_ context.Context, c
 	return domain.VulnerabilityRecord{}, false, nil
 }
 
-func (f *fakeVulnStore) ListVulnerabilityRecordsForModule(_ context.Context, coord fetchdomain.ModuleCoordinate, pv string) ([]domain.VulnerabilityRecord, error) {
+func (f *fakeVulnStore) ListVulnerabilityRecordsForModule(_ context.Context, coord coordinate.ModuleCoordinate, pv string) ([]domain.VulnerabilityRecord, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []domain.VulnerabilityRecord
@@ -206,7 +208,7 @@ func (f *fakeVulnStore) ListVulnerabilityRecordsForModule(_ context.Context, coo
 	return out, nil
 }
 
-func (f *fakeVulnStore) recordKey(coord fetchdomain.ModuleCoordinate, pv string, snapshot domain.DatabaseSnapshot) string {
+func (f *fakeVulnStore) recordKey(coord coordinate.ModuleCoordinate, pv string, snapshot domain.DatabaseSnapshot) string {
 	return coord.String() + "|" + pv + "|" + snapshot.Source + "@" + snapshot.Version
 }
 
@@ -332,7 +334,7 @@ type fakeScanner struct {
 	err          error
 	preflightErr error
 	// project-rooted scan controls (ScanProject).
-	projectFindings map[fetchdomain.ModuleCoordinate][]domain.VulnerabilityFinding
+	projectFindings map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding
 	projectStatus   domain.VulnerabilityStatus
 	projectReason   string
 	projectErr      error
@@ -346,7 +348,7 @@ type fakeScanner struct {
 
 func (f *fakeScanner) Preflight(_ context.Context) error { return f.preflightErr }
 
-func (f *fakeScanner) Scan(_ context.Context, coord fetchdomain.ModuleCoordinate, _ io.Reader, snapshot domain.DatabaseSnapshot, goModCache string, _ string, _ domain.ScanMode) (domain.VulnerabilityRecord, error) {
+func (f *fakeScanner) Scan(_ context.Context, coord coordinate.ModuleCoordinate, _ io.Reader, snapshot domain.DatabaseSnapshot, goModCache string, _ string, _ domain.ScanMode) (domain.VulnerabilityRecord, error) {
 	if f.err != nil {
 		return domain.VulnerabilityRecord{}, f.err
 	}
@@ -397,12 +399,12 @@ func (f *fakeScanner) ScannerMetadata() ports.ScannerMetadata {
 type fakeDatabase struct {
 	snapshot    domain.DatabaseSnapshot
 	content     string
-	vulnerables map[fetchdomain.ModuleCoordinate][]string
+	vulnerables map[coordinate.ModuleCoordinate][]string
 	// findings, when set for a coordinate, is returned verbatim by
 	// LookupFindings; otherwise LookupFindings synthesises bare findings from
 	// the vulnerables IDs so tests that only populate vulnerables still exercise
 	// the metadata path.
-	findings map[fetchdomain.ModuleCoordinate][]domain.VulnerabilityFinding
+	findings map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding
 	err      error
 }
 
@@ -420,11 +422,11 @@ func (f *fakeDatabase) GetSnapshot(_ context.Context, identity domain.DatabaseSn
 	return nil, io.EOF
 }
 
-func (f *fakeDatabase) CheckVulnerable(_ context.Context, modules []fetchdomain.ModuleCoordinate) (map[fetchdomain.ModuleCoordinate][]string, error) {
+func (f *fakeDatabase) CheckVulnerable(_ context.Context, modules []coordinate.ModuleCoordinate) (map[coordinate.ModuleCoordinate][]string, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
-	res := make(map[fetchdomain.ModuleCoordinate][]string)
+	res := make(map[coordinate.ModuleCoordinate][]string)
 	for _, m := range modules {
 		if vulns, ok := f.vulnerables[m]; ok {
 			res[m] = vulns
@@ -433,7 +435,7 @@ func (f *fakeDatabase) CheckVulnerable(_ context.Context, modules []fetchdomain.
 	return res, nil
 }
 
-func (f *fakeDatabase) LookupFindings(_ context.Context, coord fetchdomain.ModuleCoordinate) ([]domain.VulnerabilityFinding, error) {
+func (f *fakeDatabase) LookupFindings(_ context.Context, coord coordinate.ModuleCoordinate) ([]domain.VulnerabilityFinding, error) {
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -465,7 +467,7 @@ func (s *callCountingScanner) Preflight(ctx context.Context) error {
 	return nil
 }
 
-func (s *callCountingScanner) Scan(ctx context.Context, coord fetchdomain.ModuleCoordinate, src io.Reader, snap domain.DatabaseSnapshot, goModCache string, dbDir string, scanMode domain.ScanMode) (domain.VulnerabilityRecord, error) {
+func (s *callCountingScanner) Scan(ctx context.Context, coord coordinate.ModuleCoordinate, src io.Reader, snap domain.DatabaseSnapshot, goModCache string, dbDir string, scanMode domain.ScanMode) (domain.VulnerabilityRecord, error) {
 	*s.called = true
 	rec, err := s.inner.Scan(ctx, coord, src, snap, goModCache, dbDir, scanMode)
 	if err != nil {
@@ -500,7 +502,7 @@ func (f *fakeCallGraphLoader) setPresent(v bool) {
 	f.mu.Unlock()
 }
 
-func (f *fakeCallGraphLoader) Load(_ context.Context, _ fetchdomain.ModuleCoordinate) (ports.CallGraphProjection, error) {
+func (f *fakeCallGraphLoader) Load(_ context.Context, _ coordinate.ModuleCoordinate) (ports.CallGraphProjection, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.loadErr != nil {
@@ -515,14 +517,14 @@ func (f *fakeCallGraphLoader) Load(_ context.Context, _ fetchdomain.ModuleCoordi
 // fakeCallGraphSpawner implements ports.CallGraphSpawner and records all invocations.
 type fakeCallGraphSpawner struct {
 	mu     sync.Mutex
-	calls  []fetchdomain.ModuleCoordinate
+	calls  []coordinate.ModuleCoordinate
 	err    error
 	stderr []byte
 	// onSpawn is called just before returning, allowing the test to mutate loader state.
 	onSpawn func()
 }
 
-func (f *fakeCallGraphSpawner) Spawn(_ context.Context, coord fetchdomain.ModuleCoordinate, _ bool) ([]byte, error) {
+func (f *fakeCallGraphSpawner) Spawn(_ context.Context, coord coordinate.ModuleCoordinate, _ bool) ([]byte, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, coord)
 	onSpawn := f.onSpawn
@@ -541,13 +543,13 @@ func (f *fakeCallGraphSpawner) callCount() int {
 
 // fakeReachabilityAnalyser implements ports.ReachabilityAnalyser and records invocations.
 type fakeReachabilityAnalyser struct {
-	mu      sync.Mutex
-	calls   int
-	result  domain.ReachabilityResult
-	err     error
+	mu     sync.Mutex
+	calls  int
+	result domain.ReachabilityResult
+	err    error
 }
 
-func (f *fakeReachabilityAnalyser) Analyse(_ context.Context, _ fetchdomain.ModuleCoordinate, _ []ports.SymbolReference, _ ports.CallGraphLoader) (domain.ReachabilityResult, error) {
+func (f *fakeReachabilityAnalyser) Analyse(_ context.Context, _ coordinate.ModuleCoordinate, _ []ports.SymbolReference, _ ports.CallGraphLoader) (domain.ReachabilityResult, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.calls++

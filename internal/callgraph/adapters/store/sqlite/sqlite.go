@@ -10,10 +10,12 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
 	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
 )
 
@@ -223,7 +225,7 @@ INSERT OR IGNORE INTO callgraph_edges (
 // GetCallGraphRecord retrieves and tamper-checks the call graph record.
 // Returns (zero, false, nil) if not found.
 // Returns (zero, false, ErrCallGraphIntegrity) on hash mismatch.
-func (s *Store) GetCallGraphRecord(ctx context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string) (domain2.CallGraphRecord, bool, error) {
+func (s *Store) GetCallGraphRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain2.CallGraphRecord, bool, error) {
 	const q = `SELECT serialised, content_hash FROM callgraph_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 
@@ -277,7 +279,7 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 
 // fetchEdges queries callgraph_edges for all edges belonging to a record,
 // returning them in canonical sort order (from_id, to_id, call_site_file, call_site_line).
-func (s *Store) fetchEdges(ctx context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string) ([]domain2.CallEdge, error) {
+func (s *Store) fetchEdges(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain2.CallEdge, error) {
 	const q = `SELECT from_id, to_id, confidence, call_site_file, call_site_line, reflect_dispatch
 	    FROM callgraph_edges
 	    WHERE from_module = ? AND from_version = ? AND pipeline_version = ?

@@ -8,8 +8,9 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	capdomain "github.com/eitanity/kanonarion/internal/capability/domain"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 type fakeCapAnalyser struct {
@@ -20,11 +21,11 @@ type fakeCapAnalyser struct {
 	err        error
 }
 
-func (f fakeCapAnalyser) Analyse(context.Context, fetchdomain.ModuleCoordinate, string) (capdomain.CapabilityReport, error) {
+func (f fakeCapAnalyser) Analyse(context.Context, coordinate.ModuleCoordinate, string) (capdomain.CapabilityReport, error) {
 	return f.report, f.err
 }
 
-func (f fakeCapAnalyser) Diff(context.Context, fetchdomain.ModuleCoordinate, fetchdomain.ModuleCoordinate, string) (capdomain.CapabilityReport, capdomain.CapabilityReport, capdomain.CapabilityDiff, error) {
+func (f fakeCapAnalyser) Diff(context.Context, coordinate.ModuleCoordinate, coordinate.ModuleCoordinate, string) (capdomain.CapabilityReport, capdomain.CapabilityReport, capdomain.CapabilityDiff, error) {
 	return f.fromReport, f.toReport, f.diff, f.err
 }
 

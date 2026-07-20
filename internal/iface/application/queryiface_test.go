@@ -5,7 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/iface/application"
 	"github.com/eitanity/kanonarion/internal/iface/domain"
 	ifaceports "github.com/eitanity/kanonarion/internal/iface/ports"
@@ -31,7 +32,7 @@ func (s *queryFakeStore) PutInterfaceRecord(_ context.Context, r domain.Interfac
 	return nil
 }
 
-func (s *queryFakeStore) GetInterfaceRecord(_ context.Context, coord fetchdomain.ModuleCoordinate, pv string) (domain.InterfaceRecord, bool, error) {
+func (s *queryFakeStore) GetInterfaceRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (domain.InterfaceRecord, bool, error) {
 	if s.getErr != nil {
 		return domain.InterfaceRecord{}, false, s.getErr
 	}
@@ -50,7 +51,7 @@ func (s *queryFakeStore) FindSymbol(_ context.Context, _ string, _ string) ([]if
 var _ ifaceports.InterfaceStore = (*queryFakeStore)(nil)
 
 func TestQueryInterfaceUseCase_GetInterfaceRecord(t *testing.T) {
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
 	store := &queryFakeStore{}
 	_ = store.PutInterfaceRecord(context.Background(), domain.InterfaceRecord{
 		Coordinate:      coord,
@@ -72,7 +73,7 @@ func TestQueryInterfaceUseCase_GetInterfaceRecord(t *testing.T) {
 }
 
 func TestQueryInterfaceUseCase_GetInterfaceRecord_NotFound(t *testing.T) {
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
 	uc := application.NewQueryInterfaceUseCase(&queryFakeStore{})
 
 	_, found, err := uc.GetInterfaceRecord(context.Background(), coord, "0.1.0")
@@ -88,7 +89,7 @@ func TestQueryInterfaceUseCase_GetInterfaceRecord_StoreError(t *testing.T) {
 	storeErr := errors.New("db failure")
 	uc := application.NewQueryInterfaceUseCase(&queryFakeStore{getErr: storeErr})
 
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
 	_, _, err := uc.GetInterfaceRecord(context.Background(), coord, "0.1.0")
 	if !errors.Is(err, storeErr) {
 		t.Errorf("got %v, want wrapping %v", err, storeErr)

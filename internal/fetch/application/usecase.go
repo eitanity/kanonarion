@@ -12,6 +12,7 @@ import (
 	"strings"
 
 	"github.com/eitanity/kanonarion/internal/adapters/ziparchive"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 	"golang.org/x/mod/modfile"
@@ -114,7 +115,7 @@ func NewFetchModuleUseCase(
 
 // FetchRequest is the input to Execute.
 type FetchRequest struct {
-	Coordinate domain2.ModuleCoordinate
+	Coordinate coordinate.ModuleCoordinate
 	// Force re-fetches even if a record for this pipeline version exists.
 	Force bool
 	// SkipVCSVerify skips the git cross-verification step; sumdb verification
@@ -279,7 +280,7 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 // is configured or the signer yields no attestation (the OSS no-op default), so
 // the unsigned path is byte-for-byte unchanged. A signer that yields an
 // attestation but no attestation store is a wiring error.
-func (uc *FetchModuleUseCase) sign(ctx context.Context, log *slog.Logger, coord domain2.ModuleCoordinate, kind domain2.SubjectKind, subjectHash string) error {
+func (uc *FetchModuleUseCase) sign(ctx context.Context, log *slog.Logger, coord coordinate.ModuleCoordinate, kind domain2.SubjectKind, subjectHash string) error {
 	if uc.signer == nil {
 		return nil
 	}
@@ -334,7 +335,7 @@ func (uc *FetchModuleUseCase) sign(ctx context.Context, log *slog.Logger, coord 
 func (uc *FetchModuleUseCase) verify(
 	ctx context.Context,
 	log *slog.Logger,
-	coord domain2.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 	dl ports.ModuleDownload,
 	zipData, goModData []byte,
 	info ports.ModuleInfo,
@@ -467,7 +468,7 @@ func (uc *FetchModuleUseCase) verify(
 //   - entry present and either h1 disagrees → (false, ErrGoSumVerification): a
 //     hard tamper failure. The caller aborts with no blob stored and no record
 //     persisted; a go.sum mismatch must never be silently downgraded.
-func (uc *FetchModuleUseCase) checkProjectGoSum(ctx context.Context, log *slog.Logger, coord domain2.ModuleCoordinate, dl ports.ModuleDownload) (bool, error) {
+func (uc *FetchModuleUseCase) checkProjectGoSum(ctx context.Context, log *slog.Logger, coord coordinate.ModuleCoordinate, dl ports.ModuleDownload) (bool, error) {
 	if uc.goSum == nil {
 		return false, nil
 	}
@@ -495,7 +496,7 @@ func (uc *FetchModuleUseCase) checkProjectGoSum(ctx context.Context, log *slog.L
 func (uc *FetchModuleUseCase) resolveGitRef(
 	ctx context.Context,
 	log *slog.Logger,
-	coord domain2.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 	info ports.ModuleInfo,
 ) (domain2.GitReference, domain2.VerificationStatus, string) {
 	var originRejected string
@@ -541,7 +542,7 @@ func (uc *FetchModuleUseCase) resolveGitRef(
 func (uc *FetchModuleUseCase) resolveInferredGitRef(
 	ctx context.Context,
 	log *slog.Logger,
-	coord domain2.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 ) (domain2.GitReference, domain2.VerificationStatus, string) {
 	if coord.IsPseudoVersion() {
 		prefix, err := coord.ExtractCommitPrefix()
@@ -589,7 +590,7 @@ func (uc *FetchModuleUseCase) resolveInferredGitRef(
 func (uc *FetchModuleUseCase) crossVerify(
 	ctx context.Context,
 	log *slog.Logger,
-	coord domain2.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 	repoURL, commit string,
 	proxyZipHash domain2.ModuleHash,
 ) (domain2.VerificationStatus, string) {
@@ -654,7 +655,7 @@ func (uc *FetchModuleUseCase) crossVerify(
 // expected module@version/ prefix (T7). Returns a non-empty detail on failure.
 // Returns empty string when the zip is invalid — that will be caught by hash
 // verification against the checksum database.
-func checkZipVersionPrefix(data []byte, coord domain2.ModuleCoordinate) string {
+func checkZipVersionPrefix(data []byte, coord coordinate.ModuleCoordinate) string {
 	archive, err := ziparchive.New(data)
 	if err != nil {
 		return ""
@@ -671,7 +672,7 @@ func checkZipVersionPrefix(data []byte, coord domain2.ModuleCoordinate) string {
 // checkGoModConsistency verifies that the standalone go.mod bytes match the
 // go.mod embedded inside the zip (T11). Returns a non-empty detail on failure.
 // Returns empty string when the zip is invalid — hash verification catches that.
-func checkGoModConsistency(zipData, standaloneGoMod []byte, coord domain2.ModuleCoordinate) string {
+func checkGoModConsistency(zipData, standaloneGoMod []byte, coord coordinate.ModuleCoordinate) string {
 	archive, err := ziparchive.New(zipData)
 	if err != nil {
 		return ""

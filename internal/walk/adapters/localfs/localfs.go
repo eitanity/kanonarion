@@ -16,6 +16,7 @@ import (
 	"strings"
 
 	"github.com/eitanity/kanonarion/internal/adapters/ziparchive"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -54,7 +55,7 @@ func New(blobs fetchports.BlobStore, facts fetchports.FactStore, clock fetchport
 // coordinates and remain cacheable.
 func (f *Fetcher) EnsureFetchedFromPath(
 	ctx context.Context,
-	coord fetchdomain.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 	absPath string,
 ) (walkports.LocalModuleFetchResult, error) {
 	if !coord.IsLocal() {

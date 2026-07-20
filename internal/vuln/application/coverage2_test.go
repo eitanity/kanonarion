@@ -5,7 +5,8 @@ import (
 	"testing"
 	"time"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 )
@@ -15,7 +16,7 @@ import (
 // error when the module has no fetch record.
 func TestScanWalk_ProgressOnScanFailure(t *testing.T) {
 	walkStore := newFakeWalkStore()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/a/b", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/a/b", Version: "v1.0.0"}
 	seedWalk(t, walkStore, "w1", coord)
 
 	vulnStore := newFakeVulnStore()
@@ -35,7 +36,7 @@ func TestScanWalk_ProgressOnScanFailure(t *testing.T) {
 	_, _ = uc.Scan(t.Context(), application.ScanWalkParams{
 		WalkID:   "w1",
 		Snapshot: &snap,
-		Progress: func(_ fetchdomain.ModuleCoordinate, _ domain.VulnerabilityRecord, _, _ int) {
+		Progress: func(_ coordinate.ModuleCoordinate, _ domain.VulnerabilityRecord, _, _ int) {
 			progressCalled++
 		},
 	})
@@ -47,7 +48,7 @@ func TestScanWalk_ProgressOnScanFailure(t *testing.T) {
 // TestRescan_PutSnapshotError covers rescan_walk.go line 74-76.
 func TestRescan_PutSnapshotError(t *testing.T) {
 	walkStore := newFakeWalkStore()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/a/b", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/a/b", Version: "v1.0.0"}
 	seedWalk(t, walkStore, "w1", coord)
 
 	vulnStore := newFakeVulnStore()
@@ -71,7 +72,7 @@ func TestRescan_PutSnapshotError(t *testing.T) {
 // TestScanWalk_PutFreshSnapshotError covers scan_walk.go line 80-83.
 func TestScanWalk_PutFreshSnapshotError(t *testing.T) {
 	walkStore := newFakeWalkStore()
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/a/b", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/a/b", Version: "v1.0.0"}
 	seedWalk(t, walkStore, "w1", coord)
 
 	vulnStore := newFakeVulnStore()

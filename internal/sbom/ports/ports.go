@@ -4,7 +4,8 @@ import (
 	"context"
 	"errors"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
 	"github.com/eitanity/kanonarion/internal/sbom/domain"
 	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -28,7 +29,7 @@ type SBOMGenerator interface {
 	Generate(
 		ctx context.Context,
 		walk walkdomain.WalkRecord,
-		licenses map[fetchdomain.ModuleCoordinate]licensedomain.LicenseRecord,
+		licenses map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord,
 		vulnerabilities []vulndomain.VulnerabilityRecord,
 		req GenerateRequest,
 	) (domain.SBOMRecord, error)

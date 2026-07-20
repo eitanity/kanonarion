@@ -6,13 +6,15 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	"golang.org/x/tools/go/callgraph"
 	"golang.org/x/tools/go/ssa"
 )
 
-func buildNode(fn *ssa.Function, coord fetchdomain.ModuleCoordinate, fset *token.FileSet, tempDir string) domain.CallNode {
+func buildNode(fn *ssa.Function, coord coordinate.ModuleCoordinate, fset *token.FileSet, tempDir string) domain.CallNode {
 	pkgPath := ""
 	isExternal := true
 	if fn.Package() != nil {
@@ -135,6 +137,7 @@ func extractReceiverName(fn *ssa.Function) string {
 	}
 	return recvTypeStr(sig.Recv().Type())
 }
+
 // classifyConfidence resolves an edge's confidence tag. The second result
 // reports whether the edge originated from a reflect call; such edges are folded
 // into ConfidenceUnknown but carry the reflect provenance as an edge attribute.

@@ -1,7 +1,7 @@
 package domain
 
 import (
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 )
 
 // ScanRunDiff is the result of comparing two WalkScanRuns of the same walk.
@@ -27,13 +27,13 @@ type ScanRunDiff struct {
 
 // FindingDelta associates a vulnerability finding with the module it affects.
 type FindingDelta struct {
-	Coordinate fetchdomain.ModuleCoordinate
+	Coordinate coordinate.ModuleCoordinate
 	Finding    VulnerabilityFinding
 }
 
 // ReachabilityChange records a finding whose reachability status changed.
 type ReachabilityChange struct {
-	Coordinate fetchdomain.ModuleCoordinate
+	Coordinate coordinate.ModuleCoordinate
 	Finding    VulnerabilityFinding
 	// WasReachable is the reachability in run A; IsReachable is the reachability in run B.
 	WasReachable bool
@@ -43,7 +43,7 @@ type ReachabilityChange struct {
 // UnresolvedFinding is a would-be green verdict withheld because the two runs
 // analysed the finding's module at unequal call-graph fidelity.
 type UnresolvedFinding struct {
-	Coordinate fetchdomain.ModuleCoordinate
+	Coordinate coordinate.ModuleCoordinate
 	Finding    VulnerabilityFinding
 	// Kind names the verdict that was withheld: "resolved" (the finding
 	// disappeared from run B) or "reachability" (it became not-reachable in B).

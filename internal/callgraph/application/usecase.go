@@ -10,6 +10,7 @@ import (
 
 	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 )
@@ -77,7 +78,7 @@ func NewExtractCallGraphUseCase(cfg Config) *ExtractCallGraphUseCase {
 
 // ExtractRequest is the input to Execute.
 type ExtractRequest struct {
-	Coordinate domain.ModuleCoordinate
+	Coordinate coordinate.ModuleCoordinate
 	// Force re-extracts even if a record for this pipeline version exists.
 	Force bool
 }
@@ -193,7 +194,7 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 
 func (uc *ExtractCallGraphUseCase) requireFetchRecord(
 	ctx context.Context,
-	coord domain.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 ) (domain.FactRecord, error) {
 	versions := []string{uc.fetchPipelineVersion, uc.localFetchPipelineVersion, uc.pipelineVersion}
 	seen := map[string]bool{}

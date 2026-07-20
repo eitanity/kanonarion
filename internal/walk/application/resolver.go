@@ -9,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/eitanity/kanonarion/internal/adapters/ziparchive"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	domain3 "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -177,7 +178,7 @@ func (r *GraphResolver) workers() int {
 // its go.mod cannot be extracted and parsed. Per-dependency failures produce a
 // partial graph; the failed nodes carry ErrorDetail and the graph's Partial flag
 // is set.
-func (r *GraphResolver) Resolve(ctx context.Context, target domain2.ModuleCoordinate, depth domain3.StageDepth) (domain3.Graph, error) {
+func (r *GraphResolver) Resolve(ctx context.Context, target coordinate.ModuleCoordinate, depth domain3.StageDepth) (domain3.Graph, error) {
 	r.logger.InfoContext(ctx, "walk.resolve.start",
 		slog.String("module.path", target.Path),
 		slog.String("module.version", target.Version),
@@ -224,7 +225,7 @@ func (r *GraphResolver) Resolve(ctx context.Context, target domain2.ModuleCoordi
 // the set of module paths (the build-list subset the caller computed via the Go
 // toolchain — code or tool scope) to retain, alongside the main anchor. A nil
 // scopeModules keeps the whole build list (the complete scope).
-func (r *GraphResolver) ResolveProject(ctx context.Context, target domain2.ModuleCoordinate, goModBytes []byte, projectDir string, depth domain3.StageDepth, scopeModules []string, stdlibFromGoMod, force bool) (domain3.Graph, error) {
+func (r *GraphResolver) ResolveProject(ctx context.Context, target coordinate.ModuleCoordinate, goModBytes []byte, projectDir string, depth domain3.StageDepth, scopeModules []string, stdlibFromGoMod, force bool) (domain3.Graph, error) {
 	r.logger.InfoContext(ctx, "walk.resolve_project.start",
 		slog.String("module.path", target.Path),
 		slog.String("module.version", target.Version),
@@ -280,7 +281,7 @@ func (r *GraphResolver) ResolveProject(ctx context.Context, target domain2.Modul
 // set, or no toolchain version was captured, it falls back to the project
 // go.mod's `toolchain`/`go` directive. When neither yields a version the stdlib
 // node is omitted (a best-effort coverage gap, never a fatal error).
-func (r *GraphResolver) injectStdlib(ctx context.Context, g *domain3.Graph, target domain2.ModuleCoordinate, goModBytes []byte, fromGoMod, force bool) {
+func (r *GraphResolver) injectStdlib(ctx context.Context, g *domain3.Graph, target coordinate.ModuleCoordinate, goModBytes []byte, fromGoMod, force bool) {
 	version := g.BuildEnv.GoVersion
 	if fromGoMod || version == "" {
 		if directive := r.goModDirectiveVersion(goModBytes); directive != "" {
@@ -374,7 +375,7 @@ const buildListApproxReason = "build_list_approximate: go toolchain unavailable,
 // Partial with buildListApproxReason so the approximate set is never presented as
 // authoritative. When no BuildListResolver is configured at all, this is simply
 // the legacy resolution path and no caveat is added.
-func (r *GraphResolver) resolveProjectFallback(ctx context.Context, target domain2.ModuleCoordinate, goModBytes []byte, depth domain3.StageDepth) (domain3.Graph, error) {
+func (r *GraphResolver) resolveProjectFallback(ctx context.Context, target coordinate.ModuleCoordinate, goModBytes []byte, depth domain3.StageDepth) (domain3.Graph, error) {
 	parsed, err := r.parser.Parse("go.mod", goModBytes)
 	if err != nil {
 		return domain3.Graph{}, fmt.Errorf("parsing project go.mod for %s: %w", target, err)
@@ -419,7 +420,7 @@ func (r *GraphResolver) resolveProjectFallback(ctx context.Context, target domai
 // FilterGraphToScope afterwards, so fetching it is pure wasted work and log noise.
 // A nil scopeModules (complete-scope walk) fetches the whole build list. Out-of-scope
 // nodes are never fetched, so they never mark the graph Partial.
-func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target domain2.ModuleCoordinate, bl walkports.BuildList, scopeModules []string) domain3.Graph {
+func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target coordinate.ModuleCoordinate, bl walkports.BuildList, scopeModules []string) domain3.Graph {
 	st := &resolveState{
 		selected: map[string]string{target.Path: target.Version},
 		nodes:    map[string]domain3.GraphNode{},
@@ -428,7 +429,7 @@ func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target domain2
 	// nodeByPath maps a build-list module's own path to the coordinate of the node
 	// representing it (the replacement coordinate when a module replace applies, the
 	// anchor for the main module). Used to normalise `go mod graph` endpoints.
-	nodeByPath := map[string]domain2.ModuleCoordinate{target.Path: target}
+	nodeByPath := map[string]coordinate.ModuleCoordinate{target.Path: target}
 
 	st.nodes[target.Path] = domain3.GraphNode{
 		Coordinate:       target,
@@ -456,7 +457,7 @@ func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target domain2
 	// known up front (no BFS discovery), so all fetches are independent.
 	type blFetch struct {
 		path  string // the module's own (pre-replace) path, for nodeByPath
-		coord domain2.ModuleCoordinate
+		coord coordinate.ModuleCoordinate
 	}
 	var fetchTasks []blFetch
 	for _, m := range bl.Modules {
@@ -480,7 +481,7 @@ func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target domain2
 	}
 
 	// Phase 2 (concurrent): fetch the listed modules under a bounded worker pool.
-	coords := make([]domain2.ModuleCoordinate, len(fetchTasks))
+	coords := make([]coordinate.ModuleCoordinate, len(fetchTasks))
 	for i, t := range fetchTasks {
 		coords[i] = t.coord
 	}
@@ -583,7 +584,7 @@ func inFetchScope(scopeSet map[string]bool, node domain3.GraphNode) bool {
 // list can run concurrently. Must run sequentially (mutates st.selected).
 func (r *GraphResolver) buildListNodeSkeleton(m walkports.BuildListModule, st *resolveState) (domain3.GraphNode, bool) {
 	direct := !m.Indirect
-	orig := domain2.ModuleCoordinate{Path: m.Path, Version: m.Version}
+	orig := coordinate.ModuleCoordinate{Path: m.Path, Version: m.Version}
 
 	// Filesystem replacement: a directory target with no version. Not fetchable —
 	// recorded as a local-replace node for downstream skip-with-reason.
@@ -601,9 +602,9 @@ func (r *GraphResolver) buildListNodeSkeleton(m walkports.BuildListModule, st *r
 
 	effective := orig
 	source := domain3.ResolutionMVS
-	var original domain2.ModuleCoordinate
+	var original coordinate.ModuleCoordinate
 	if m.Replace != nil {
-		effective = domain2.ModuleCoordinate{Path: m.Replace.Path, Version: m.Replace.Version}
+		effective = coordinate.ModuleCoordinate{Path: m.Replace.Path, Version: m.Replace.Version}
 		source = domain3.ResolutionReplace
 		original = orig
 	}
@@ -628,7 +629,7 @@ type fetchResult struct {
 // stays deterministic. It touches no shared state; per-coordinate errors are
 // captured in the result rather than returned, so the group only unwinds on
 // context cancellation. workers≤0 falls back to sequential processing.
-func (r *GraphResolver) fetchLevel(ctx context.Context, coords []domain2.ModuleCoordinate, workers int) []fetchResult {
+func (r *GraphResolver) fetchLevel(ctx context.Context, coords []coordinate.ModuleCoordinate, workers int) []fetchResult {
 	results := make([]fetchResult, len(coords))
 	if len(coords) == 0 {
 		return results
@@ -651,17 +652,17 @@ func (r *GraphResolver) fetchLevel(ctx context.Context, coords []domain2.ModuleC
 // parseGraphToken parses a `go mod graph` endpoint token into a coordinate.
 // "path@version" splits on the last "@"; a bare "path" (the main module) yields an
 // empty version.
-func parseGraphToken(tok string) domain2.ModuleCoordinate {
+func parseGraphToken(tok string) coordinate.ModuleCoordinate {
 	if i := strings.LastIndex(tok, "@"); i >= 0 {
-		return domain2.ModuleCoordinate{Path: tok[:i], Version: tok[i+1:]}
+		return coordinate.ModuleCoordinate{Path: tok[:i], Version: tok[i+1:]}
 	}
-	return domain2.ModuleCoordinate{Path: tok}
+	return coordinate.ModuleCoordinate{Path: tok}
 }
 
 // normaliseEndpoint parses a graph endpoint token and, when its path is a known
 // build-list module, rewrites it to that module's selected coordinate so edges
 // connect the same nodes the build list produced.
-func normaliseEndpoint(tok string, nodeByPath map[string]domain2.ModuleCoordinate) domain2.ModuleCoordinate {
+func normaliseEndpoint(tok string, nodeByPath map[string]coordinate.ModuleCoordinate) coordinate.ModuleCoordinate {
 	raw := parseGraphToken(tok)
 	if c, ok := nodeByPath[raw.Path]; ok {
 		return c
@@ -683,7 +684,7 @@ func isPseudoNode(path string) bool {
 // flag with the reason recorded on the relevant node.
 func (r *GraphResolver) resolveFromParsed(
 	ctx context.Context,
-	target domain2.ModuleCoordinate,
+	target coordinate.ModuleCoordinate,
 	targetParsed domain3.ParsedGoMod,
 	targetSource domain3.ResolutionSource,
 	targetRetracted bool,
@@ -773,7 +774,7 @@ func (r *GraphResolver) resolveFromParsed(
 		for _, item := range wave {
 			coord := item.coord
 			if sel := st.selected[coord.Path]; sel != coord.Version {
-				coord = domain2.ModuleCoordinate{Path: coord.Path, Version: sel}
+				coord = coordinate.ModuleCoordinate{Path: coord.Path, Version: sel}
 			}
 			key := coord.String()
 
@@ -880,7 +881,7 @@ func (r *GraphResolver) resolveFromParsed(
 // The returned graph has Partial=true and PartialReason="shallow" to signal
 // that transitive deps are absent. Only the target node is fetched; dep nodes
 // carry ResolutionSource=ResolutionMVS with no fetch record.
-func (r *GraphResolver) ResolveShallow(ctx context.Context, target domain2.ModuleCoordinate) (domain3.Graph, error) {
+func (r *GraphResolver) ResolveShallow(ctx context.Context, target coordinate.ModuleCoordinate) (domain3.Graph, error) {
 	r.logger.InfoContext(ctx, "walk.resolve_shallow.start",
 		slog.String("module.path", target.Path),
 		slog.String("module.version", target.Version),
@@ -950,13 +951,13 @@ func (r *GraphResolver) ResolveShallow(ctx context.Context, target domain2.Modul
 // seedDirectDeps enqueues the direct dependencies of the target and adds their
 // initial GraphNode entries. It returns the initial work queue.
 func (r *GraphResolver) seedDirectDeps(
-	target domain2.ModuleCoordinate,
+	target coordinate.ModuleCoordinate,
 	requires []domain3.Requirement,
 	replaceMap map[replaceKey]domain3.Replacement,
 	excludeSet map[excludeKey]bool,
 	st *resolveState,
-) []domain2.ModuleCoordinate {
-	queue := make([]domain2.ModuleCoordinate, 0, len(requires))
+) []coordinate.ModuleCoordinate {
+	queue := make([]coordinate.ModuleCoordinate, 0, len(requires))
 	for _, req := range requires {
 		out := applyReplace(req.Coordinate, replaceMap)
 		if out.localReplace {
@@ -994,7 +995,7 @@ func (r *GraphResolver) seedDirectDeps(
 			ConstraintVersion: req.Coordinate.Version,
 		})
 
-		var original domain2.ModuleCoordinate
+		var original coordinate.ModuleCoordinate
 		if out.replaced {
 			original = req.Coordinate
 		}
@@ -1012,7 +1013,7 @@ func (r *GraphResolver) seedDirectDeps(
 			queue = append(queue, effective)
 		case versionGT(effective.Version, currentSel):
 			st.selected[effective.Path] = effective.Version
-			newCoord := domain2.ModuleCoordinate{Path: effective.Path, Version: effective.Version}
+			newCoord := coordinate.ModuleCoordinate{Path: effective.Path, Version: effective.Version}
 			prev := st.nodes[effective.Path]
 			st.nodes[effective.Path] = domain3.GraphNode{
 				Coordinate:         newCoord,
@@ -1042,7 +1043,7 @@ func (r *GraphResolver) seedDirectDeps(
 // already been resolved against the shared state, so fetch+parse and expansion
 // can be split across the concurrent and sequential phases of a level.
 type bfsItem struct {
-	coord      domain2.ModuleCoordinate
+	coord      coordinate.ModuleCoordinate
 	key        string // coord.String() (the selected coordinate)
 	depth      int
 	atMaxDepth bool
@@ -1053,7 +1054,7 @@ type bfsItem struct {
 // Exactly one of the error fields is set on failure; on success goModBytes is
 // nil for a pre-modules leaf and parsed holds the requirements otherwise.
 type fetchParseOutcome struct {
-	coord      domain2.ModuleCoordinate
+	coord      coordinate.ModuleCoordinate
 	key        string
 	record     domain2.FactRecord
 	fetchErr   error
@@ -1093,7 +1094,7 @@ func (r *GraphResolver) fetchParseLevel(ctx context.Context, items []bfsItem, wo
 // fetchAndParseModule fetches coord and parses its go.mod without touching the
 // shared resolve state, so it is safe to run concurrently across a BFS level.
 // The returned outcome is folded into the state by applyFetchParse.
-func (r *GraphResolver) fetchAndParseModule(ctx context.Context, coord domain2.ModuleCoordinate, key string) fetchParseOutcome {
+func (r *GraphResolver) fetchAndParseModule(ctx context.Context, coord coordinate.ModuleCoordinate, key string) fetchParseOutcome {
 	out := fetchParseOutcome{coord: coord, key: key}
 
 	fetchResult, fetchErr := r.fetcher.EnsureFetched(ctx, coord)
@@ -1292,7 +1293,7 @@ func (r *GraphResolver) readBlob(ctx context.Context, handle string) (_ []byte, 
 // several paths is expanded if any path sets expand; a non-expanding visit
 // still contributes the node, only its deeper requirements are withheld.
 type queueItem struct {
-	coord  domain2.ModuleCoordinate
+	coord  coordinate.ModuleCoordinate
 	depth  int
 	expand bool
 }
@@ -1323,7 +1324,7 @@ func filterRequires(reqs []domain3.Requirement, followIndirect bool) []domain3.R
 // path qualifies it, so an expand-worthy path is never lost to discovery order.
 func enqueueTransitive(
 	req domain3.Requirement,
-	fromCoord domain2.ModuleCoordinate,
+	fromCoord coordinate.ModuleCoordinate,
 	currentDepth int,
 	atMaxDepth bool,
 	parentPrePruning bool,
@@ -1369,7 +1370,7 @@ func enqueueTransitive(
 	if out.replaced {
 		source = domain3.ResolutionReplace
 	}
-	var original domain2.ModuleCoordinate
+	var original coordinate.ModuleCoordinate
 	if out.replaced {
 		original = req.Coordinate
 	}
@@ -1411,7 +1412,7 @@ func enqueueTransitive(
 		depthQueue = append(depthQueue, queueItem{coord: effective, depth: currentDepth + 1, expand: expand})
 	case versionGT(effective.Version, currentSel):
 		st.selected[effective.Path] = effective.Version
-		newCoord := domain2.ModuleCoordinate{Path: effective.Path, Version: effective.Version}
+		newCoord := coordinate.ModuleCoordinate{Path: effective.Path, Version: effective.Version}
 		prev := st.nodes[effective.Path]
 		st.nodes[effective.Path] = domain3.GraphNode{
 			Coordinate:         newCoord,
@@ -1427,7 +1428,7 @@ func enqueueTransitive(
 		// requirements are followed — discovery order must not strand an
 		// expand-worthy path.
 		if expand {
-			selCoord := domain2.ModuleCoordinate{Path: effective.Path, Version: currentSel}
+			selCoord := coordinate.ModuleCoordinate{Path: effective.Path, Version: currentSel}
 			if !st.expandedKeys[selCoord.String()] {
 				depthQueue = append(depthQueue, queueItem{coord: selCoord, depth: currentDepth + 1, expand: true})
 			}
@@ -1585,7 +1586,7 @@ type replaceOutcome struct {
 	// For local replaces, it is the original require coordinate (no fetchable
 	// version exists; the local path is recorded separately).
 	// For no replace, it is the original require coordinate.
-	effective domain2.ModuleCoordinate
+	effective coordinate.ModuleCoordinate
 	// replaced is true when a non-local replace rewrote the coordinate.
 	replaced bool
 	// localReplace is true when a local-path replace applies.
@@ -1598,7 +1599,7 @@ type replaceOutcome struct {
 // replacements now produce a graph node rather than being silently dropped
 // the caller checks o.localReplace to give them their own resolution
 // source and to skip fetch.
-func applyReplace(coord domain2.ModuleCoordinate, replaceMap map[replaceKey]domain3.Replacement) replaceOutcome {
+func applyReplace(coord coordinate.ModuleCoordinate, replaceMap map[replaceKey]domain3.Replacement) replaceOutcome {
 	// Check version-specific replacement first (higher priority).
 	if r, ok := replaceMap[replaceKey{coord.Path, coord.Version}]; ok {
 		if r.IsLocal {
@@ -1617,7 +1618,7 @@ func applyReplace(coord domain2.ModuleCoordinate, replaceMap map[replaceKey]doma
 }
 
 // isExcluded reports whether coord is covered by an exclude directive.
-func isExcluded(coord domain2.ModuleCoordinate, excludeSet map[excludeKey]bool) bool {
+func isExcluded(coord coordinate.ModuleCoordinate, excludeSet map[excludeKey]bool) bool {
 	return excludeSet[excludeKey{coord.Path, coord.Version}]
 }
 

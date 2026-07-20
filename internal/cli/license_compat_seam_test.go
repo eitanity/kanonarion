@@ -7,8 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -26,13 +28,13 @@ func requireExit(t *testing.T, err error, code int) {
 	}
 }
 
-func compatCoord() fetchdomain.ModuleCoordinate {
-	return fetchdomain.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
+func compatCoord() coordinate.ModuleCoordinate {
+	return coordinate.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
 }
 
 // containerWithWalk returns a Container whose walk store holds one walk for
 // coord and whose compatibility check returns the given report/err.
-func containerWithWalk(coord fetchdomain.ModuleCoordinate, report licdomain.ClosureCompatibilityReport, checkErr error) *Container {
+func containerWithWalk(coord coordinate.ModuleCoordinate, report licdomain.ClosureCompatibilityReport, checkErr error) *Container {
 	fqw := testfakes.NewFakeQueryWalks()
 	fqw.SetSummaries([]walkports.WalkSummary{{ID: "W1", Target: coord}})
 	return &Container{

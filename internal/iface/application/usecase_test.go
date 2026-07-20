@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/ziparchive"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	godocextractor "github.com/eitanity/kanonarion/internal/iface/adapters/extractor/godoc"
@@ -451,9 +452,9 @@ func testStrippedFS_ReadFileError(t *testing.T, fsys fs.FS) {
 
 // -- helpers --
 
-func mustCoord(t *testing.T, path, version string) domain2.ModuleCoordinate {
+func mustCoord(t *testing.T, path, version string) coordinate.ModuleCoordinate {
 	t.Helper()
-	c, err := domain2.NewModuleCoordinate(path, version)
+	c, err := coordinate.NewModuleCoordinate(path, version)
 	if err != nil {
 		t.Fatalf("NewModuleCoordinate: %v", err)
 	}
@@ -497,12 +498,12 @@ func buildUseCase(
 	})
 }
 
-func putFact(t *testing.T, s *fakeFactStore, coord domain2.ModuleCoordinate, blobHandle string) {
+func putFact(t *testing.T, s *fakeFactStore, coord coordinate.ModuleCoordinate, blobHandle string) {
 	t.Helper()
 	putFactWithBlob(t, s, coord, blobHandle)
 }
 
-func putFactWithBlob(t *testing.T, s *fakeFactStore, coord domain2.ModuleCoordinate, blobHandle string) {
+func putFactWithBlob(t *testing.T, s *fakeFactStore, coord coordinate.ModuleCoordinate, blobHandle string) {
 	t.Helper()
 	r := domain2.FactRecord{
 		SchemaVersion:      "2",
@@ -518,7 +519,7 @@ func putFactWithBlob(t *testing.T, s *fakeFactStore, coord domain2.ModuleCoordin
 	}
 }
 
-func buildModuleZip(t *testing.T, coord domain2.ModuleCoordinate, files map[string]string) []byte {
+func buildModuleZip(t *testing.T, coord coordinate.ModuleCoordinate, files map[string]string) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)

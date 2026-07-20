@@ -5,7 +5,8 @@ import (
 	"fmt"
 	"sort"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
@@ -22,10 +23,10 @@ func NewDiffWalksUseCase(store walkports.WalkStore) *DiffWalksUseCase {
 
 // WalkDiff is the result of comparing two walk records.
 type WalkDiff struct {
-	WalkA          string                         // ID of the base walk
-	WalkB          string                         // ID of the comparison walk
-	Added          []fetchdomain.ModuleCoordinate // modules present in B but not A (by path)
-	Removed        []fetchdomain.ModuleCoordinate // modules present in A but not B (by path)
+	WalkA          string                        // ID of the base walk
+	WalkB          string                        // ID of the comparison walk
+	Added          []coordinate.ModuleCoordinate // modules present in B but not A (by path)
+	Removed        []coordinate.ModuleCoordinate // modules present in A but not B (by path)
 	VersionChanged []VersionChange
 	StatusChanged  []StatusChange
 	// CompletenessMismatch is non-empty when the two walks were resolved at
@@ -46,7 +47,7 @@ type VersionChange struct {
 
 // StatusChange records a module whose node status changed.
 type StatusChange struct {
-	Coordinate fetchdomain.ModuleCoordinate
+	Coordinate coordinate.ModuleCoordinate
 	StatusA    domain.NodeStatus
 	StatusB    domain.NodeStatus
 }
@@ -70,7 +71,7 @@ func diffRecords(a, b domain.WalkRecord) WalkDiff {
 	nodesA := nodesByPath(a.Graph.Nodes)
 	nodesB := nodesByPath(b.Graph.Nodes)
 
-	var added, removed []fetchdomain.ModuleCoordinate
+	var added, removed []coordinate.ModuleCoordinate
 	var versionChanged []VersionChange
 	var statusChanged []StatusChange
 

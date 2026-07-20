@@ -4,6 +4,8 @@ import (
 	"context"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	domain3 "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -36,7 +38,7 @@ func buildListWithEnv() walkports.BuildList {
 // root→stdlib edge is recorded.
 func TestResolveProject_Stdlib_FromToolchain(t *testing.T) {
 	r, _ := buildListResolver(t, &fakeBuildListResolver{list: buildListWithEnv()})
-	target := coord("example.com/project", domain2.LocalVersion)
+	target := coord("example.com/project", coordinate.LocalVersion)
 
 	// go.mod declares an OLDER directive than the toolchain; the default must
 	// track the toolchain (v1.26.4), not the directive (v1.21).
@@ -91,7 +93,7 @@ func TestResolveProject_Stdlib_CustodyAttached(t *testing.T) {
 		digests: domain2.ArtifactDigests{SHA256: "a", SHA384: "b", SHA512: "c"},
 	}
 	r = r.WithStdlibAcquirer(acq, true)
-	target := coord("example.com/project", domain2.LocalVersion)
+	target := coord("example.com/project", coordinate.LocalVersion)
 
 	goMod := []byte("module example.com/project\n\ngo 1.21\n")
 	g, err := r.ResolveProject(context.Background(), target, goMod, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false, true)
@@ -119,7 +121,7 @@ func TestResolveProject_Stdlib_CustodyBestEffort(t *testing.T) {
 	r, _ := buildListResolver(t, &fakeBuildListResolver{list: buildListWithEnv()})
 	acq := &fakeStdlibAcquirer{err: context.DeadlineExceeded}
 	r = r.WithStdlibAcquirer(acq, false)
-	target := coord("example.com/project", domain2.LocalVersion)
+	target := coord("example.com/project", coordinate.LocalVersion)
 
 	g, err := r.ResolveProject(context.Background(), target, nil, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false, false)
 	if err != nil {
@@ -138,7 +140,7 @@ func TestResolveProject_Stdlib_CustodyBestEffort(t *testing.T) {
 // the stdlib node to the go.mod directive instead of the toolchain.
 func TestResolveProject_Stdlib_FromGoModOverride(t *testing.T) {
 	r, _ := buildListResolver(t, &fakeBuildListResolver{list: buildListWithEnv()})
-	target := coord("example.com/project", domain2.LocalVersion)
+	target := coord("example.com/project", coordinate.LocalVersion)
 
 	goMod := []byte("module example.com/project\n\ngo 1.21\n\ntoolchain go1.24.2\n")
 	g, err := r.ResolveProject(context.Background(), target, goMod, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, true, false)
@@ -157,7 +159,7 @@ func TestResolveProject_Stdlib_FromGoModOverride(t *testing.T) {
 // the platform the component set is valid for.
 func TestResolveProject_BuildEnvCaptured(t *testing.T) {
 	r, _ := buildListResolver(t, &fakeBuildListResolver{list: buildListWithEnv()})
-	target := coord("example.com/project", domain2.LocalVersion)
+	target := coord("example.com/project", coordinate.LocalVersion)
 
 	g, err := r.ResolveProject(context.Background(), target, nil, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false, false)
 	if err != nil {
@@ -174,7 +176,7 @@ func TestResolveProject_BuildEnvCaptured(t *testing.T) {
 // gap, never a fatal error).
 func TestResolveProject_Stdlib_NoVersion(t *testing.T) {
 	r, _ := buildListResolver(t, &fakeBuildListResolver{list: sampleBuildList()})
-	target := coord("example.com/project", domain2.LocalVersion)
+	target := coord("example.com/project", coordinate.LocalVersion)
 
 	// go.mod with no go/toolchain directive, and a build list with no GoVersion.
 	goMod := []byte("module example.com/project\n")

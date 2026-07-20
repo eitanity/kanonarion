@@ -10,7 +10,7 @@
 // what makes hop-by-hop traversal in the application possible without
 // loading a whole record.
 //
-// The callgraph context reuses fetch/domain.ModuleCoordinate as the module
+// The callgraph context reuses coordinate.ModuleCoordinate as the module
 // identity and BlobStore from fetch/ports (injected in the application
 // Config); neither is re-declared here.
 package ports

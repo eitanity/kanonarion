@@ -5,8 +5,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
 )
@@ -609,9 +611,9 @@ func TestBuildCallGraphGroupsByPackage(t *testing.T) {
 	}
 }
 
-func mustContextCoord(t *testing.T) fetchdomain.ModuleCoordinate {
+func mustContextCoord(t *testing.T) coordinate.ModuleCoordinate {
 	t.Helper()
-	c, err := fetchdomain.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	c, err := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -11,8 +11,10 @@ import (
 	"errors"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/audit"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	"github.com/eitanity/kanonarion/internal/license/domain"
 )
 
@@ -78,7 +80,7 @@ type LicenseStore interface {
 	// GetLicenceRecord retrieves the record for the given coordinate and
 	// pipeline version. Returns (zero, false, nil) if not found.
 	// Returns ErrLicenceIntegrity if the stored hash does not verify.
-	GetLicenseRecord(ctx context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string) (domain.LicenseRecord, bool, error)
+	GetLicenseRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain.LicenseRecord, bool, error)
 
 	// ListLicenceRecords returns summaries matching the filter, ordered by
 	// extracted_at descending.

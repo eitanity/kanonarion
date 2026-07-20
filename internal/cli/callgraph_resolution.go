@@ -8,9 +8,10 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 // classifyEmptyEdgeResult turns an empty callers/callees result into either
@@ -79,7 +80,7 @@ func rootPartialStatus(ctx context.Context, symbolID string, uc QueryCallGraphUs
 		if s.ModulePath != modulePath {
 			continue
 		}
-		coord := fetchdomain.ModuleCoordinate{Path: s.ModulePath, Version: s.ModuleVersion}
+		coord := coordinate.ModuleCoordinate{Path: s.ModulePath, Version: s.ModuleVersion}
 		rec, found, gerr := uc.GetCallGraphRecord(ctx, coord, s.PipelineVersion)
 		if gerr != nil {
 			return "", false, nil, fmt.Errorf("loading call graph for %s: %w", coord, gerr)
@@ -129,7 +130,7 @@ func rootCompletenessCaveat(ctx context.Context, symbolID string, uc QueryCallGr
 		if s.ModulePath != modulePath {
 			continue
 		}
-		coord := fetchdomain.ModuleCoordinate{Path: s.ModulePath, Version: s.ModuleVersion}
+		coord := coordinate.ModuleCoordinate{Path: s.ModulePath, Version: s.ModuleVersion}
 		rec, found, gerr := uc.GetCallGraphRecord(ctx, coord, s.PipelineVersion)
 		if gerr != nil {
 			return "", fmt.Errorf("loading call graph for %s: %w", coord, gerr)
@@ -188,7 +189,7 @@ func negativeCallVerdict(ctx context.Context, symbolID string, scanDispatch bool
 	}
 	belowFull := domain.CompletenessUnknown
 	for _, s := range owning {
-		coord := fetchdomain.ModuleCoordinate{Path: s.ModulePath, Version: s.ModuleVersion}
+		coord := coordinate.ModuleCoordinate{Path: s.ModulePath, Version: s.ModuleVersion}
 		rec, found, gerr := uc.GetCallGraphRecord(ctx, coord, s.PipelineVersion)
 		if gerr != nil {
 			return domain.Verdict{}, fmt.Errorf("loading call graph for %s: %w", coord, gerr)
@@ -319,7 +320,7 @@ func symbolIsKnownNode(ctx context.Context, uc QueryCallGraphUseCase, symbolID, 
 		if s.ModulePath != modulePath {
 			continue
 		}
-		coord := fetchdomain.ModuleCoordinate{Path: s.ModulePath, Version: s.ModuleVersion}
+		coord := coordinate.ModuleCoordinate{Path: s.ModulePath, Version: s.ModuleVersion}
 		rec, found, err := uc.GetCallGraphRecord(ctx, coord, s.PipelineVersion)
 		if err != nil {
 			return false, fmt.Errorf("loading call graph for %s: %w", coord, err)

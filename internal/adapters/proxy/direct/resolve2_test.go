@@ -4,8 +4,9 @@ import (
 	"context"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
-	"github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 func TestNew_GOPROXY_CommaSeparated(t *testing.T) {
@@ -18,7 +19,7 @@ func TestNew_GOPROXY_CommaSeparated(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	coord := domain.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
 	_, _ = p.Info(context.Background(), coord)
 }
 
@@ -28,7 +29,7 @@ func TestProxy_InvalidURL(t *testing.T) {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	coord := domain.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
 	if _, err := p.Info(context.Background(), coord); err == nil {
 		t.Error("expected connection refused error")
 	}

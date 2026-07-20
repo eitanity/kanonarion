@@ -5,7 +5,7 @@ import (
 	"go/types"
 	"testing"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 )
 
 // makeMethod builds a *types.Func for a method "Run" on a named struct type
@@ -29,7 +29,7 @@ func makeMethod(pkgPath string, pointerRecv bool) *types.Func {
 // package). The ID and metadata must match what buildNode would have produced
 // for the same method.
 func TestLeafNodeFromFunc(t *testing.T) {
-	coord, err := fetchdomain.NewModuleCoordinate("example.com/analysed", "v1.0.0")
+	coord, err := coordinate.NewModuleCoordinate("example.com/analysed", "v1.0.0")
 	if err != nil {
 		t.Fatalf("coord: %v", err)
 	}

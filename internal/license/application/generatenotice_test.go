@@ -5,7 +5,8 @@ import (
 	"context"
 	"testing"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/license/application"
 	"github.com/eitanity/kanonarion/internal/license/domain"
 )
@@ -42,7 +43,7 @@ func seedModule(
 	facts *fakeFactStore,
 	blobs *fakeBlobStore,
 	licences *fakeLicenseStore,
-	coord fetchdomain.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 	spdx string,
 	copyright string,
 	licenseText string,
@@ -109,7 +110,7 @@ func TestGenerateNotice_HappyPath(t *testing.T) {
 
 	uc := buildNoticeUseCase(t, facts, blobs, licences)
 	result, err := uc.Generate(context.Background(), application.NoticeRequest{
-		Coordinates: []fetchdomain.ModuleCoordinate{coordB, coordA},
+		Coordinates: []coordinate.ModuleCoordinate{coordB, coordA},
 	})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
@@ -160,7 +161,7 @@ func TestGenerateNotice_AmbiguousTriggersReview(t *testing.T) {
 
 	uc := buildNoticeUseCase(t, facts, blobs, licences)
 	result, err := uc.Generate(context.Background(), application.NoticeRequest{
-		Coordinates: []fetchdomain.ModuleCoordinate{coord},
+		Coordinates: []coordinate.ModuleCoordinate{coord},
 	})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
@@ -191,7 +192,7 @@ func TestGenerateNotice_MultipleProducesEntry(t *testing.T) {
 
 	uc := buildNoticeUseCase(t, facts, blobs, licences)
 	result, err := uc.Generate(context.Background(), application.NoticeRequest{
-		Coordinates: []fetchdomain.ModuleCoordinate{coord},
+		Coordinates: []coordinate.ModuleCoordinate{coord},
 	})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
@@ -217,7 +218,7 @@ func TestGenerateNotice_MissingCopyrightTriggersReview(t *testing.T) {
 
 	uc := buildNoticeUseCase(t, facts, blobs, licences)
 	result, err := uc.Generate(context.Background(), application.NoticeRequest{
-		Coordinates: []fetchdomain.ModuleCoordinate{coord},
+		Coordinates: []coordinate.ModuleCoordinate{coord},
 	})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
@@ -237,7 +238,7 @@ func TestGenerateNotice_MissingRecord(t *testing.T) {
 	coord := mustCoord(t, "example.com/unanalysed", "v1.0.0")
 
 	result, err := uc.Generate(context.Background(), application.NoticeRequest{
-		Coordinates: []fetchdomain.ModuleCoordinate{coord},
+		Coordinates: []coordinate.ModuleCoordinate{coord},
 	})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
@@ -305,7 +306,7 @@ func TestGenerateNotice_EmbeddedComponentTexts(t *testing.T) {
 
 	uc := buildNoticeUseCase(t, facts, blobs, licences)
 	result, err := uc.Generate(context.Background(), application.NoticeRequest{
-		Coordinates: []fetchdomain.ModuleCoordinate{coord},
+		Coordinates: []coordinate.ModuleCoordinate{coord},
 	})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
@@ -348,7 +349,7 @@ func TestGenerateNotice_Deterministic(t *testing.T) {
 	blobs := &fakeBlobStore{}
 	licences := &fakeLicenseStore{}
 
-	coords := []fetchdomain.ModuleCoordinate{
+	coords := []coordinate.ModuleCoordinate{
 		mustCoord(t, "example.com/z", "v1.0.0"),
 		mustCoord(t, "example.com/a", "v1.0.0"),
 		mustCoord(t, "example.com/m", "v1.0.0"),

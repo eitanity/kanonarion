@@ -5,6 +5,8 @@ import (
 	"fmt"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"golang.org/x/mod/module"
 	modzip "golang.org/x/mod/zip"
 )
@@ -32,7 +34,7 @@ func NewVerifier(hasher ModuleZipHasher) Verifier {
 // golang.org/x/mod/zip rules (excludes vendor/, nested modules, symlinks,
 // etc.) and returns its h1 hash. This matches what the proxy/sumdb hash
 // covers, unlike dirhash.HashDir which hashes every file in the tree.
-func (v Verifier) HashDirAsModuleZip(dir string, coord ModuleCoordinate) (ModuleHash, error) {
+func (v Verifier) HashDirAsModuleZip(dir string, coord coordinate.ModuleCoordinate) (ModuleHash, error) {
 	var buf bytes.Buffer
 	mv := module.Version{Path: coord.Path, Version: coord.Version}
 	if err := modzip.CreateFromDir(&buf, mv, dir); err != nil {
@@ -47,10 +49,10 @@ func (v Verifier) HashDirAsModuleZip(dir string, coord ModuleCoordinate) (Module
 
 // VerifyPseudoVersionCommit checks that a pseudo-version's embedded commit
 // prefix matches the first 12 chars of the resolved commit hash.
-func (Verifier) VerifyPseudoVersionCommit(coord ModuleCoordinate, commitHash string) error {
+func (Verifier) VerifyPseudoVersionCommit(coord coordinate.ModuleCoordinate, commitHash string) error {
 	prefix, err := coord.ExtractCommitPrefix()
 	if err != nil {
-		return err
+		return fmt.Errorf("extracting commit prefix: %w", err)
 	}
 	if len(commitHash) < 12 {
 		return fmt.Errorf("commit hash too short: %q", commitHash)

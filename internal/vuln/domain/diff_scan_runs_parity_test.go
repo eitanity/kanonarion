@@ -4,14 +4,16 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	callgraphdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 )
 
 // recordFidelity is `record` with a call-graph fidelity signature stamped, so a
 // diff can assert completeness parity across the two runs.
-func recordFidelity(c fetchdomain.ModuleCoordinate, completeness string, findings ...domain.VulnerabilityFinding) domain.VulnerabilityRecord {
+func recordFidelity(c coordinate.ModuleCoordinate, completeness string, findings ...domain.VulnerabilityFinding) domain.VulnerabilityRecord {
 	r := record(c, findings...)
 	r.CallGraphCompleteness = completeness
 	r.CallGraphAlgorithm = string(callgraphdomain.AlgorithmCHA)

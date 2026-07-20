@@ -8,7 +8,7 @@ import (
 	"net/http"
 	"testing"
 
-	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 )
 
 // fuzzRT returns the same fuzzer-controlled body (HTTP 200) for every request,
@@ -73,7 +73,7 @@ func FuzzProxyResponses(f *testing.F) {
 	// Truncated zip header.
 	f.Add([]byte("PK\x03\x04 truncated"))
 
-	coord, err := domain2.NewModuleCoordinate("rsc.io/quote", "v1.5.2")
+	coord, err := coordinate.NewModuleCoordinate("rsc.io/quote", "v1.5.2")
 	if err != nil {
 		f.Fatal(err)
 	}

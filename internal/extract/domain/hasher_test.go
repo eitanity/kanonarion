@@ -7,15 +7,17 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 func TestExtractionRunHasher(t *testing.T) {
-	coord1, _ := fetchdomain.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
-	coord2, _ := fetchdomain.NewModuleCoordinate("github.com/baz/qux", "v2.0.0")
+	coord1, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
+	coord2, _ := coordinate.NewModuleCoordinate("github.com/baz/qux", "v2.0.0")
 	// Same Path as coord1, different Version: exercises the Version-comparison
 	// branch of marshalCanonicalRun's coordinate sort when Path is equal.
-	coord3, _ := fetchdomain.NewModuleCoordinate("github.com/foo/bar", "v1.1.0")
+	coord3, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.1.0")
 
 	run := ExtractionRun{
 		SchemaVersion:   ExtractionRunSchemaVersion,
@@ -23,7 +25,7 @@ func TestExtractionRunHasher(t *testing.T) {
 		ID:              "test-run-id",
 		WalkID:          "test-walk-id",
 		RequestedStages: []string{"license", "interface"},
-		PerModuleResults: map[fetchdomain.ModuleCoordinate]ModuleExtractionResult{
+		PerModuleResults: map[coordinate.ModuleCoordinate]ModuleExtractionResult{
 			coord1: {
 				Coordinate: coord1,
 				Stages: map[string]StageResult{
@@ -192,12 +194,12 @@ func TestVerifyContentHash_MarshalFailure(t *testing.T) {
 
 func TestUnmarshal_MalformedInputs(t *testing.T) {
 	hasher := ExtractionRunHasher{}
-	coord, _ := fetchdomain.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
+	coord, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
 	run := ExtractionRun{
 		SchemaVersion: ExtractionRunSchemaVersion,
 		Ecosystem:     fetchdomain.EcosystemGo,
 		ID:            "run-id",
-		PerModuleResults: map[fetchdomain.ModuleCoordinate]ModuleExtractionResult{
+		PerModuleResults: map[coordinate.ModuleCoordinate]ModuleExtractionResult{
 			coord: {Coordinate: coord, Stages: map[string]StageResult{"license": {Status: StageSucceeded}}},
 		},
 		StartedAt:   time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC),

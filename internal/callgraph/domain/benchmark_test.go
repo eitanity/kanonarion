@@ -5,14 +5,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	domain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 // makeLargeRecord builds a record with n nodes and n edges to simulate a
 // large module like x/tools.
 func makeLargeRecord(n int) domain.CallGraphRecord {
-	coord, _ := fetchdomain.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	coord, _ := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
 	nodes := make([]domain.CallNode, n)
 	edges := make([]domain.CallEdge, n)
 	for i := range nodes {

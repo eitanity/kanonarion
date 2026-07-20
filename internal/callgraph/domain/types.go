@@ -4,7 +4,7 @@ import (
 	"sort"
 	"time"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 )
 
 // CallGraphSchemaVersion is the version of the CallGraphRecord JSON schema.
@@ -229,15 +229,15 @@ type CallEdge struct {
 type CallGraphRecord struct {
 	SchemaVersion string
 	// Ecosystem declares the schema's scope; always fetchdomain.EcosystemGo.
-	Ecosystem     string
-	Coordinate    fetchdomain.ModuleCoordinate
-	Algorithm     CallGraphAlgorithm
+	Ecosystem  string
+	Coordinate coordinate.ModuleCoordinate
+	Algorithm  CallGraphAlgorithm
 	// Completeness is the per-module fidelity level at which this graph was
 	// analysed (BUILT_WITH_BODIES down to FAILED/VERSION_NOT_IN_TOOLCHAIN),
 	// derived from the build outcome at extraction time. It is the machine
 	// signal a diff keys completeness-parity off, and the per-module phase
 	// caveat keys off, so neither has to infer fidelity from node/edge totals.
-	Completeness  CompletenessLevel
+	Completeness CompletenessLevel
 	// ArtifactKind is what the analysed module is — an application that builds a
 	// command, or a library. Reachability roots are conditioned on it: an
 	// application roots every owned node, because code the runtime dispatches to

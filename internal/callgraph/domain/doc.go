@@ -16,5 +16,5 @@
 // recomputed canonical hash matches the stored ContentHash.
 //
 // The package is pure: no I/O, no toolchain invocation, no clock. It reuses
-// fetch/domain.ModuleCoordinate as the module identity.
+// coordinate.ModuleCoordinate as the module identity.
 package domain

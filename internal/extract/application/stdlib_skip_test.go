@@ -3,7 +3,8 @@ package application
 import (
 	"testing"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/extract/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
@@ -14,9 +15,9 @@ import (
 // normally.
 func TestExtractUseCase_stdlibNodeSkippedNotFailed(t *testing.T) {
 	ctx := t.Context()
-	root := fetchdomain.ModuleCoordinate{Path: "example.com/project", Version: fetchdomain.LocalVersion}
-	std := fetchdomain.ModuleCoordinate{Path: walkdomain.StdlibModulePath, Version: "v1.26.4"}
-	dep, _ := fetchdomain.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
+	root := coordinate.ModuleCoordinate{Path: "example.com/project", Version: coordinate.LocalVersion}
+	std := coordinate.ModuleCoordinate{Path: walkdomain.StdlibModulePath, Version: "v1.26.4"}
+	dep, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
 	walkID := "walk-stdlib"
 
 	walk := walkdomain.WalkRecord{

@@ -6,13 +6,15 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	domain2 "github.com/eitanity/kanonarion/internal/iface/domain"
 )
 
 func makeTestRecord(t *testing.T) domain2.InterfaceRecord {
 	t.Helper()
-	coord, err := fetchdomain.NewModuleCoordinate("example.com/mod", "v1.2.3")
+	coord, err := coordinate.NewModuleCoordinate("example.com/mod", "v1.2.3")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -174,7 +176,7 @@ func TestHasher_VerifyBlobHash(t *testing.T) {
 
 func TestHasher_EmptyRecord(t *testing.T) {
 	var h domain2.InterfaceRecordHasher
-	coord, _ := fetchdomain.NewModuleCoordinate("example.com/m", "v0.0.1")
+	coord, _ := coordinate.NewModuleCoordinate("example.com/m", "v0.0.1")
 	r := domain2.InterfaceRecord{
 		SchemaVersion:   domain2.InterfaceSchemaVersion,
 		Ecosystem:       fetchdomain.EcosystemGo,

@@ -10,7 +10,8 @@ import (
 	"io"
 	"time"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
@@ -381,7 +382,7 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 // GetVulnerabilityRecord retrieves a vulnerability record.
 func (s *Store) GetVulnerabilityRecord(
 	ctx context.Context,
-	coord fetchdomain.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 	pipelineVersion string,
 	snapshot domain.DatabaseSnapshot,
 ) (domain.VulnerabilityRecord, bool, error) {
@@ -413,7 +414,7 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 // coordinate and pipeline version, regardless of snapshot or walk ID.
 func (s *Store) GetLatestVulnerabilityRecord(
 	ctx context.Context,
-	coord fetchdomain.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 	pipelineVersion string,
 ) (domain.VulnerabilityRecord, bool, error) {
 	const q = `
@@ -444,7 +445,7 @@ ORDER BY scanned_at DESC LIMIT 1`
 // of the given walk, regardless of snapshot.
 func (s *Store) GetLatestVulnerabilityRecordForWalk(
 	ctx context.Context,
-	coord fetchdomain.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 	pipelineVersion string,
 	walkID string,
 ) (domain.VulnerabilityRecord, bool, error) {
@@ -812,7 +813,7 @@ ORDER BY vr.module_path, vr.module_version`
 // coordinate and pipeline version across all walks and snapshots, newest first.
 func (s *Store) ListVulnerabilityRecordsForModule(
 	ctx context.Context,
-	coord fetchdomain.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 	pipelineVersion string,
 ) ([]domain.VulnerabilityRecord, error) {
 	const q = `

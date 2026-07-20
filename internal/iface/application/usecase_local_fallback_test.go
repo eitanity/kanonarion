@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/iface/application"
 	domain3 "github.com/eitanity/kanonarion/internal/iface/domain"
@@ -72,7 +74,7 @@ func TestExecute_FindsFactRecordUnderLocalIngestPipelineVersion(t *testing.T) {
 // served — the working tree is re-analysed fresh on every run.
 func TestExecute_LocalCoordinateBypassesRecordCache(t *testing.T) {
 	const localPipeline = "local-0.1.0"
-	coord := mustCoord(t, "example.com/project", domain2.LocalVersion)
+	coord := mustCoord(t, "example.com/project", coordinate.LocalVersion)
 	facts := &fakeFactStore{}
 	blobs := &fakeBlobStore{}
 	store := &fakeInterfaceStore{}

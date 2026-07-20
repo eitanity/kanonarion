@@ -9,11 +9,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/sbom/adapters/generator/cyclonedx"
 	"github.com/eitanity/kanonarion/internal/sbom/domain"
 	"github.com/eitanity/kanonarion/internal/sbom/ports"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
 	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -21,16 +22,16 @@ import (
 
 const testPipelineVersion = "0.3.0-test"
 
-func mustCoord(t *testing.T, path, version string) fetchdomain.ModuleCoordinate {
+func mustCoord(t *testing.T, path, version string) coordinate.ModuleCoordinate {
 	t.Helper()
-	c, err := fetchdomain.NewModuleCoordinate(path, version)
+	c, err := coordinate.NewModuleCoordinate(path, version)
 	if err != nil {
 		t.Fatalf("NewModuleCoordinate(%q, %q): %v", path, version, err)
 	}
 	return c
 }
 
-func makeWalk(t *testing.T, nodes []fetchdomain.ModuleCoordinate) walkdomain.WalkRecord {
+func makeWalk(t *testing.T, nodes []coordinate.ModuleCoordinate) walkdomain.WalkRecord {
 	t.Helper()
 	target := nodes[0]
 	graphNodes := make([]walkdomain.GraphNode, len(nodes))
@@ -63,7 +64,7 @@ func makeGenReq(scanRunID *string) ports.GenerateRequest {
 // TestGenerateOneModule verifies a walk with one module produces one component.
 func TestGenerateOneModule(t *testing.T) {
 	coord := mustCoord(t, "github.com/example/foo", "v1.0.0")
-	walk := makeWalk(t, []fetchdomain.ModuleCoordinate{coord})
+	walk := makeWalk(t, []coordinate.ModuleCoordinate{coord})
 	gen := cyclonedx.New(testPipelineVersion)
 
 	rec, err := gen.Generate(t.Context(), walk, nil, nil, makeGenReq(nil))
@@ -86,7 +87,7 @@ func TestGenerateOneModule(t *testing.T) {
 
 // TestComponentsSortedByPURL verifies components are sorted lexicographically by purl.
 func TestComponentsSortedByPURL(t *testing.T) {
-	coords := []fetchdomain.ModuleCoordinate{
+	coords := []coordinate.ModuleCoordinate{
 		mustCoord(t, "github.com/zzz/last", "v1.0.0"),
 		mustCoord(t, "github.com/aaa/first", "v1.0.0"),
 		mustCoord(t, "github.com/mmm/middle", "v1.0.0"),
@@ -118,7 +119,7 @@ func TestComponentsSortedByPURL(t *testing.T) {
 // TestVulnerabilitiesSortedByID verifies vulnerabilities are sorted by ID.
 func TestVulnerabilitiesSortedByID(t *testing.T) {
 	coord := mustCoord(t, "github.com/example/foo", "v1.0.0")
-	walk := makeWalk(t, []fetchdomain.ModuleCoordinate{coord})
+	walk := makeWalk(t, []coordinate.ModuleCoordinate{coord})
 
 	vulnRecords := []vulndomain.VulnerabilityRecord{
 		{
@@ -159,8 +160,8 @@ func TestVulnerabilitiesSortedByID(t *testing.T) {
 // TestDeterminism verifies that two generations from the same inputs produce byte-identical SBOMs.
 func TestDeterminism(t *testing.T) {
 	coord := mustCoord(t, "github.com/example/foo", "v1.0.0")
-	walk := makeWalk(t, []fetchdomain.ModuleCoordinate{coord})
-	licenses := map[fetchdomain.ModuleCoordinate]licensedomain.LicenseRecord{
+	walk := makeWalk(t, []coordinate.ModuleCoordinate{coord})
+	licenses := map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord{
 		coord: {PrimarySPDX: "MIT", ExtractedAt: time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)},
 	}
 	gen := cyclonedx.New(testPipelineVersion)
@@ -189,7 +190,7 @@ func TestDeterminism(t *testing.T) {
 // TestMissingLicenseIncomplete verifies that a module without licence data sets LicensesIncomplete.
 func TestMissingLicenseIncomplete(t *testing.T) {
 	coord := mustCoord(t, "github.com/example/foo", "v1.0.0")
-	walk := makeWalk(t, []fetchdomain.ModuleCoordinate{coord})
+	walk := makeWalk(t, []coordinate.ModuleCoordinate{coord})
 	gen := cyclonedx.New(testPipelineVersion)
 
 	// No licenses provided.
@@ -205,8 +206,8 @@ func TestMissingLicenseIncomplete(t *testing.T) {
 // TestWithLicenseComplete verifies that a module with licence data does not set LicensesIncomplete.
 func TestWithLicenseComplete(t *testing.T) {
 	coord := mustCoord(t, "github.com/example/foo", "v1.0.0")
-	walk := makeWalk(t, []fetchdomain.ModuleCoordinate{coord})
-	licenses := map[fetchdomain.ModuleCoordinate]licensedomain.LicenseRecord{
+	walk := makeWalk(t, []coordinate.ModuleCoordinate{coord})
+	licenses := map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord{
 		coord: {PrimarySPDX: "Apache-2.0"},
 	}
 	gen := cyclonedx.New(testPipelineVersion)
@@ -223,7 +224,7 @@ func TestWithLicenseComplete(t *testing.T) {
 // TestValidCycloneDXStructure verifies the output has required CycloneDX 1.6 top-level fields.
 func TestValidCycloneDXStructure(t *testing.T) {
 	coord := mustCoord(t, "github.com/example/foo", "v1.0.0")
-	walk := makeWalk(t, []fetchdomain.ModuleCoordinate{coord})
+	walk := makeWalk(t, []coordinate.ModuleCoordinate{coord})
 	gen := cyclonedx.New(testPipelineVersion)
 
 	rec, err := gen.Generate(t.Context(), walk, nil, nil, makeGenReq(nil))
@@ -253,7 +254,7 @@ func TestValidCycloneDXStructure(t *testing.T) {
 // differ only in the vulnerabilities array.
 func TestWithAndWithoutVulnsOnlyDifferInVulnerabilities(t *testing.T) {
 	coord := mustCoord(t, "github.com/example/foo", "v1.0.0")
-	walk := makeWalk(t, []fetchdomain.ModuleCoordinate{coord})
+	walk := makeWalk(t, []coordinate.ModuleCoordinate{coord})
 	gen := cyclonedx.New(testPipelineVersion)
 
 	recNoVulns, err := gen.Generate(t.Context(), walk, nil, nil, makeGenReq(nil))
@@ -330,7 +331,7 @@ func TestGeneratorMetadata(t *testing.T) {
 
 func TestMapSeverity_ViaGenerate(t *testing.T) {
 	coord := mustCoord(t, "github.com/example/severity", "v1.0.0")
-	walk := makeWalk(t, []fetchdomain.ModuleCoordinate{coord})
+	walk := makeWalk(t, []coordinate.ModuleCoordinate{coord})
 
 	sev := func(label string) *vulndomain.Severity { return &vulndomain.Severity{Label: label, Score: 9.0} }
 
@@ -371,9 +372,9 @@ func TestCopyrightField(t *testing.T) {
 	withCopyright := mustCoord(t, "github.com/example/licensed", "v1.0.0")
 	noCopyright := mustCoord(t, "github.com/example/nocopyright", "v2.0.0")
 
-	walk := makeWalk(t, []fetchdomain.ModuleCoordinate{withCopyright, noCopyright})
+	walk := makeWalk(t, []coordinate.ModuleCoordinate{withCopyright, noCopyright})
 
-	licenses := map[fetchdomain.ModuleCoordinate]licensedomain.LicenseRecord{
+	licenses := map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord{
 		withCopyright: {
 			PrimarySPDX:     "MIT",
 			CopyrightStatus: licensedomain.CopyrightStatusFound,
@@ -440,9 +441,9 @@ func TestCopyrightField(t *testing.T) {
 // appearing in more than one licence file collapses to a single line.
 func TestCopyrightDeduplicates(t *testing.T) {
 	coord := mustCoord(t, "github.com/example/dup", "v1.0.0")
-	walk := makeWalk(t, []fetchdomain.ModuleCoordinate{coord})
+	walk := makeWalk(t, []coordinate.ModuleCoordinate{coord})
 	dup := "Copyright 2023 Acme Inc."
-	licenses := map[fetchdomain.ModuleCoordinate]licensedomain.LicenseRecord{
+	licenses := map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord{
 		coord: {
 			PrimarySPDX:     "MIT",
 			CopyrightStatus: licensedomain.CopyrightStatusFound,
@@ -477,8 +478,8 @@ func TestCopyrightDeduplicates(t *testing.T) {
 // TestCopyrightDeterminism verifies that copyright is stable across multiple generations.
 func TestCopyrightDeterminism(t *testing.T) {
 	coord := mustCoord(t, "github.com/example/foo", "v1.0.0")
-	walk := makeWalk(t, []fetchdomain.ModuleCoordinate{coord})
-	licenses := map[fetchdomain.ModuleCoordinate]licensedomain.LicenseRecord{
+	walk := makeWalk(t, []coordinate.ModuleCoordinate{coord})
+	licenses := map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord{
 		coord: {
 			PrimarySPDX:     "MIT",
 			CopyrightStatus: licensedomain.CopyrightStatusFound,
@@ -513,7 +514,7 @@ func TestCopyrightDeterminism(t *testing.T) {
 // TestAllComponentsHaveGoPURL asserts that every component and the metadata
 // primary component carry a purl starting with "pkg:golang/".
 func TestAllComponentsHaveGoPURL(t *testing.T) {
-	coords := []fetchdomain.ModuleCoordinate{
+	coords := []coordinate.ModuleCoordinate{
 		mustCoord(t, "github.com/example/target", "v1.0.0"),
 		mustCoord(t, "github.com/example/dep-a", "v0.5.0"),
 		mustCoord(t, "github.com/example/dep-b", "v2.1.0"),
@@ -554,7 +555,7 @@ func TestAllComponentsHaveGoPURL(t *testing.T) {
 // TestComponentsHaveEcosystemProperty asserts that every component carries a
 // "kanonarion:ecosystem" property with value "go".
 func TestComponentsHaveEcosystemProperty(t *testing.T) {
-	coords := []fetchdomain.ModuleCoordinate{
+	coords := []coordinate.ModuleCoordinate{
 		mustCoord(t, "github.com/example/target", "v1.0.0"),
 		mustCoord(t, "github.com/example/dep", "v0.1.0"),
 	}
@@ -614,8 +615,8 @@ func mustTime(s string) time.Time {
 // primary component is that local module, and the require closure appears in
 // components. The local module's "local" purl satisfies the Go-only invariant.
 func TestProjectWalkSubjectIsLocalModule(t *testing.T) {
-	mainModule := mustCoord(t, "example.com/project", fetchdomain.LocalVersion)
-	coords := []fetchdomain.ModuleCoordinate{
+	mainModule := mustCoord(t, "example.com/project", coordinate.LocalVersion)
+	coords := []coordinate.ModuleCoordinate{
 		mainModule,
 		mustCoord(t, "github.com/example/dep-a", "v0.5.0"),
 		mustCoord(t, "github.com/example/dep-b", "v2.1.0"),
@@ -672,8 +673,8 @@ func TestProjectWalkSubjectIsLocalModule(t *testing.T) {
 // URL) and a licence onto the local main-module subject, which otherwise ships
 // at the synthetic "local" version with no licence record.
 func TestMainComponentOverrides(t *testing.T) {
-	mainModule := mustCoord(t, "example.com/project", fetchdomain.LocalVersion)
-	walk := makeWalk(t, []fetchdomain.ModuleCoordinate{mainModule})
+	mainModule := mustCoord(t, "example.com/project", coordinate.LocalVersion)
+	walk := makeWalk(t, []coordinate.ModuleCoordinate{mainModule})
 	gen := cyclonedx.New(testPipelineVersion)
 
 	req := makeGenReq(nil)
@@ -733,7 +734,7 @@ func TestMainComponentOverrides(t *testing.T) {
 // its real version and library type, untouched by the override fields.
 func TestMainComponentOverridesIgnoredForPublishedTarget(t *testing.T) {
 	target := mustCoord(t, "example.com/lib", "v3.0.0")
-	walk := makeWalk(t, []fetchdomain.ModuleCoordinate{target})
+	walk := makeWalk(t, []coordinate.ModuleCoordinate{target})
 	gen := cyclonedx.New(testPipelineVersion)
 
 	req := makeGenReq(nil)

@@ -7,8 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
 )
@@ -29,7 +31,7 @@ func repoRoot(t *testing.T) string {
 // classification data, which is not a go.mod dependency and so never appears in
 // the module set. It must still reach THIRD-PARTY-LICENSES.
 func TestNoticeWith_IncludesCopiedSourceAttribution(t *testing.T) {
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/dep", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/dep", Version: "v1.0.0"}
 	ctr := &Container{
 		QueryWalks: walksWithNodes("W1", coord),
 		GenerateNotice: &testfakes.FakeGenerateNotice{Result: licapp.NoticeResult{
@@ -64,8 +66,8 @@ func TestNoticeWith_IncludesCopiedSourceAttribution(t *testing.T) {
 // Copied-source entries interleave with module entries by coordinate sort, so
 // the document is byte-stable regardless of scan order.
 func TestNoticeWith_CopiedSourceSortsWithModules(t *testing.T) {
-	before := fetchdomain.ModuleCoordinate{Path: "a.example.com/dep", Version: "v1.0.0"}
-	after := fetchdomain.ModuleCoordinate{Path: "z.example.com/dep", Version: "v1.0.0"}
+	before := coordinate.ModuleCoordinate{Path: "a.example.com/dep", Version: "v1.0.0"}
+	after := coordinate.ModuleCoordinate{Path: "z.example.com/dep", Version: "v1.0.0"}
 	ctr := &Container{
 		QueryWalks: walksWithNodes("W1", before, after),
 		GenerateNotice: &testfakes.FakeGenerateNotice{Result: licapp.NoticeResult{

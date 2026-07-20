@@ -5,15 +5,17 @@ import (
 	"context"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
 )
 
-func diffCoords() (fetchdomain.ModuleCoordinate, fetchdomain.ModuleCoordinate) {
-	return fetchdomain.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"},
-		fetchdomain.ModuleCoordinate{Path: "example.com/m", Version: "v2.0.0"}
+func diffCoords() (coordinate.ModuleCoordinate, coordinate.ModuleCoordinate) {
+	return coordinate.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"},
+		coordinate.ModuleCoordinate{Path: "example.com/m", Version: "v2.0.0"}
 }
 
 // A missing record on either side => ExitNotFound (absence surfaced, never

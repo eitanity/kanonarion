@@ -11,6 +11,7 @@ import (
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	configdomain "github.com/eitanity/kanonarion/internal/config/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	directivedomain "github.com/eitanity/kanonarion/internal/directive/domain"
 	exapp "github.com/eitanity/kanonarion/internal/example/application"
 	exdomain "github.com/eitanity/kanonarion/internal/example/domain"
@@ -59,13 +60,13 @@ func NewFakeQueryFetch() *FakeQueryFetch {
 	return &FakeQueryFetch{records: make(map[string]fetchdomain.FactRecord)}
 }
 
-func (f *FakeQueryFetch) Add(coord fetchdomain.ModuleCoordinate, pipelineVersion string, rec fetchdomain.FactRecord) {
+func (f *FakeQueryFetch) Add(coord coordinate.ModuleCoordinate, pipelineVersion string, rec fetchdomain.FactRecord) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.records[coord.String()+"|"+pipelineVersion] = rec
 }
 
-func (f *FakeQueryFetch) GetFetchRecord(_ context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string) (fetchdomain.FactRecord, bool, error) {
+func (f *FakeQueryFetch) GetFetchRecord(_ context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (fetchdomain.FactRecord, bool, error) {
 	if f.Err != nil {
 		return fetchdomain.FactRecord{}, false, f.Err
 	}
@@ -263,7 +264,7 @@ func NewFakeQueryLicense() *FakeQueryLicense {
 	return &FakeQueryLicense{records: make(map[string]licensedomain.LicenseRecord)}
 }
 
-func (f *FakeQueryLicense) AddRecord(coord fetchdomain.ModuleCoordinate, pipelineVersion string, rec licensedomain.LicenseRecord) {
+func (f *FakeQueryLicense) AddRecord(coord coordinate.ModuleCoordinate, pipelineVersion string, rec licensedomain.LicenseRecord) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.records[coord.String()+"|"+pipelineVersion] = rec
@@ -281,7 +282,7 @@ func (f *FakeQueryLicense) SetResolveResult(results []licapp.DepLicenseResult) {
 	f.resolveResult = results
 }
 
-func (f *FakeQueryLicense) GetLicenseRecord(_ context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string) (licensedomain.LicenseRecord, bool, error) {
+func (f *FakeQueryLicense) GetLicenseRecord(_ context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (licensedomain.LicenseRecord, bool, error) {
 	if f.Err != nil {
 		return licensedomain.LicenseRecord{}, false, f.Err
 	}
@@ -300,7 +301,7 @@ func (f *FakeQueryLicense) ListLicenseRecords(_ context.Context, _ licenseports.
 	return f.list, nil
 }
 
-func (f *FakeQueryLicense) ResolveForWalk(_ context.Context, _ string, _ fetchdomain.ModuleCoordinate, _ func(context.Context, fetchdomain.ModuleCoordinate) (licensedomain.LicenseRecord, error)) ([]licapp.DepLicenseResult, error) {
+func (f *FakeQueryLicense) ResolveForWalk(_ context.Context, _ string, _ coordinate.ModuleCoordinate, _ func(context.Context, coordinate.ModuleCoordinate) (licensedomain.LicenseRecord, error)) ([]licapp.DepLicenseResult, error) {
 	if f.Err != nil {
 		return nil, f.Err
 	}
@@ -315,7 +316,7 @@ type FakeCheckCompatibility struct {
 	Err    error
 }
 
-func (f *FakeCheckCompatibility) CheckCompatibilityForWalk(_ context.Context, _ string, _ fetchdomain.ModuleCoordinate, _ string) (licensedomain.ClosureCompatibilityReport, error) {
+func (f *FakeCheckCompatibility) CheckCompatibilityForWalk(_ context.Context, _ string, _ coordinate.ModuleCoordinate, _ string) (licensedomain.ClosureCompatibilityReport, error) {
 	return f.Report, f.Err
 }
 
@@ -325,7 +326,7 @@ type FakeDiffLicense struct {
 	Err    error
 }
 
-func (f *FakeDiffLicense) Diff(_ context.Context, _, _ fetchdomain.ModuleCoordinate) (licensedomain.LicenseDiff, error) {
+func (f *FakeDiffLicense) Diff(_ context.Context, _, _ coordinate.ModuleCoordinate) (licensedomain.LicenseDiff, error) {
 	return f.Result, f.Err
 }
 
@@ -396,7 +397,7 @@ func NewFakeQueryInterface() *FakeQueryInterface {
 	return &FakeQueryInterface{records: make(map[string]ifacedomain.InterfaceRecord)}
 }
 
-func (f *FakeQueryInterface) GetInterfaceRecord(_ context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string) (ifacedomain.InterfaceRecord, bool, error) {
+func (f *FakeQueryInterface) GetInterfaceRecord(_ context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (ifacedomain.InterfaceRecord, bool, error) {
 	if f.Err != nil {
 		return ifacedomain.InterfaceRecord{}, false, f.Err
 	}
@@ -454,7 +455,7 @@ func NewFakeQueryCallGraph() *FakeQueryCallGraph {
 	return &FakeQueryCallGraph{records: make(map[string]cgdomain.CallGraphRecord)}
 }
 
-func (f *FakeQueryCallGraph) AddRecord(coord fetchdomain.ModuleCoordinate, pipelineVersion string, rec cgdomain.CallGraphRecord) {
+func (f *FakeQueryCallGraph) AddRecord(coord coordinate.ModuleCoordinate, pipelineVersion string, rec cgdomain.CallGraphRecord) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.records[coord.String()+"|"+pipelineVersion] = rec
@@ -466,7 +467,7 @@ func (f *FakeQueryCallGraph) SetList(summaries []cgports.CallGraphSummary) {
 	f.list = summaries
 }
 
-func (f *FakeQueryCallGraph) GetCallGraphRecord(_ context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string) (cgdomain.CallGraphRecord, bool, error) {
+func (f *FakeQueryCallGraph) GetCallGraphRecord(_ context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (cgdomain.CallGraphRecord, bool, error) {
 	if f.Err != nil {
 		return cgdomain.CallGraphRecord{}, false, f.Err
 	}
@@ -572,7 +573,7 @@ func NewFakeQueryExamples() *FakeQueryExamples {
 	return &FakeQueryExamples{records: make(map[string]exdomain.ExampleRecord)}
 }
 
-func (f *FakeQueryExamples) AddRecord(coord fetchdomain.ModuleCoordinate, pipelineVersion string, rec exdomain.ExampleRecord) {
+func (f *FakeQueryExamples) AddRecord(coord coordinate.ModuleCoordinate, pipelineVersion string, rec exdomain.ExampleRecord) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.records[coord.String()+"|"+pipelineVersion] = rec
@@ -590,7 +591,7 @@ func (f *FakeQueryExamples) SetRefs(refs []exports.ExampleRef) {
 	f.refs = refs
 }
 
-func (f *FakeQueryExamples) GetExampleRecord(_ context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string) (exdomain.ExampleRecord, bool, error) {
+func (f *FakeQueryExamples) GetExampleRecord(_ context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (exdomain.ExampleRecord, bool, error) {
 	if f.Err != nil {
 		return exdomain.ExampleRecord{}, false, f.Err
 	}
@@ -618,7 +619,7 @@ func (f *FakeQueryExamples) FindBySymbol(_ context.Context, _, _ string) ([]expo
 	return f.refs, nil
 }
 
-func (f *FakeQueryExamples) FindBySymbolInModule(_ context.Context, coord fetchdomain.ModuleCoordinate, _, _ string) ([]exports.ExampleRef, error) {
+func (f *FakeQueryExamples) FindBySymbolInModule(_ context.Context, coord coordinate.ModuleCoordinate, _, _ string) ([]exports.ExampleRef, error) {
 	if f.Err != nil {
 		return nil, f.Err
 	}
@@ -648,8 +649,8 @@ func (f *FakeScanModule) Scan(_ context.Context, _ vulnapp.ScanModuleParams) (vu
 
 // FakeScanWalk implements cli.ScanWalkUseCase.
 type FakeScanWalk struct {
-	Err             error
-	Result          vulndomain.WalkScanRun
+	Err    error
+	Result vulndomain.WalkScanRun
 	// ProgressRecords are delivered to the Progress callback (if set) before
 	// the result is returned. Use this to test output routing in callers.
 	ProgressRecords []FakeScanWalkProgress
@@ -657,7 +658,7 @@ type FakeScanWalk struct {
 
 // FakeScanWalkProgress is one entry delivered to the Progress callback.
 type FakeScanWalkProgress struct {
-	Coord  fetchdomain.ModuleCoordinate
+	Coord  coordinate.ModuleCoordinate
 	Record vulndomain.VulnerabilityRecord
 	Index  int // 1-based; 0 means use slice position
 	Total  int // 0 means use len(ProgressRecords)
@@ -707,13 +708,13 @@ func NewFakeQueryVuln() *FakeQueryVuln {
 	return &FakeQueryVuln{records: make(map[string]vulndomain.VulnerabilityRecord)}
 }
 
-func (f *FakeQueryVuln) AddRecord(coord fetchdomain.ModuleCoordinate, rec vulndomain.VulnerabilityRecord) {
+func (f *FakeQueryVuln) AddRecord(coord coordinate.ModuleCoordinate, rec vulndomain.VulnerabilityRecord) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.records[coord.String()] = rec
 }
 
-func (f *FakeQueryVuln) GetRecord(_ context.Context, coord fetchdomain.ModuleCoordinate, _ string, _ vulndomain.DatabaseSnapshot) (vulndomain.VulnerabilityRecord, bool, error) {
+func (f *FakeQueryVuln) GetRecord(_ context.Context, coord coordinate.ModuleCoordinate, _ string, _ vulndomain.DatabaseSnapshot) (vulndomain.VulnerabilityRecord, bool, error) {
 	if f.Err != nil {
 		return vulndomain.VulnerabilityRecord{}, false, f.Err
 	}
@@ -723,7 +724,7 @@ func (f *FakeQueryVuln) GetRecord(_ context.Context, coord fetchdomain.ModuleCoo
 	return rec, ok, nil
 }
 
-func (f *FakeQueryVuln) GetLatestRecord(_ context.Context, coord fetchdomain.ModuleCoordinate, _ string) (vulndomain.VulnerabilityRecord, bool, error) {
+func (f *FakeQueryVuln) GetLatestRecord(_ context.Context, coord coordinate.ModuleCoordinate, _ string) (vulndomain.VulnerabilityRecord, bool, error) {
 	if f.Err != nil {
 		return vulndomain.VulnerabilityRecord{}, false, f.Err
 	}
@@ -733,7 +734,7 @@ func (f *FakeQueryVuln) GetLatestRecord(_ context.Context, coord fetchdomain.Mod
 	return rec, ok, nil
 }
 
-func (f *FakeQueryVuln) GetLatestRecordForWalk(_ context.Context, coord fetchdomain.ModuleCoordinate, _, _ string) (vulndomain.VulnerabilityRecord, bool, error) {
+func (f *FakeQueryVuln) GetLatestRecordForWalk(_ context.Context, coord coordinate.ModuleCoordinate, _, _ string) (vulndomain.VulnerabilityRecord, bool, error) {
 	if f.Err != nil {
 		return vulndomain.VulnerabilityRecord{}, false, f.Err
 	}
@@ -746,7 +747,7 @@ func (f *FakeQueryVuln) GetLatestRecordForWalk(_ context.Context, coord fetchdom
 	return rec, ok, nil
 }
 
-func (f *FakeQueryVuln) ListRecordsForModule(_ context.Context, coord fetchdomain.ModuleCoordinate, _ string) ([]vulndomain.VulnerabilityRecord, error) {
+func (f *FakeQueryVuln) ListRecordsForModule(_ context.Context, coord coordinate.ModuleCoordinate, _ string) ([]vulndomain.VulnerabilityRecord, error) {
 	if f.Err != nil {
 		return nil, f.Err
 	}

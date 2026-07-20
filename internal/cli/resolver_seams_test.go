@@ -7,17 +7,17 @@ import (
 	"strings"
 	"testing"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 )
 
 // -- proxy seam fakes --
 
 type fakeLatest struct {
-	coord fetchdomain.ModuleCoordinate
+	coord coordinate.ModuleCoordinate
 	err   error
 }
 
-func (f fakeLatest) Latest(_ context.Context, _ string) (fetchdomain.ModuleCoordinate, error) {
+func (f fakeLatest) Latest(_ context.Context, _ string) (coordinate.ModuleCoordinate, error) {
 	return f.coord, f.err
 }
 
@@ -33,7 +33,7 @@ func (f fakeVersions) ListVersions(_ context.Context, _ string) ([]string, error
 // -- resolveLatest --
 
 func TestResolveLatest_Success(t *testing.T) {
-	want := fetchdomain.ModuleCoordinate{Path: "example.com/m", Version: "v1.2.3"}
+	want := coordinate.ModuleCoordinate{Path: "example.com/m", Version: "v1.2.3"}
 	var stderr bytes.Buffer
 
 	got, err := resolveLatest(context.Background(), "example.com/m", fakeLatest{coord: want}, &stderr)
@@ -131,7 +131,7 @@ func TestResolveCoordForInspect_PinnedVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveCoordForInspect: %v", err)
 	}
-	want := fetchdomain.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
+	want := coordinate.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
 	if got != want {
 		t.Errorf("want %+v, got %+v", want, got)
 	}

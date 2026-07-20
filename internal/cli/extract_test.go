@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	domain "github.com/eitanity/kanonarion/internal/extract/domain"
 )
@@ -83,7 +83,7 @@ func TestExtractCmd_StatusPreambleGoesToStderr(t *testing.T) {
 
 func TestPrintExtractionFailures_NoFailures(t *testing.T) {
 	run := domain.ExtractionRun{
-		PerModuleResults: map[fetchdomain.ModuleCoordinate]domain.ModuleExtractionResult{
+		PerModuleResults: map[coordinate.ModuleCoordinate]domain.ModuleExtractionResult{
 			{Path: "example.com/mod", Version: "v1.0.0"}: {
 				Stages: map[string]domain.StageResult{
 					"license": {Status: domain.StageSucceeded},
@@ -100,7 +100,7 @@ func TestPrintExtractionFailures_NoFailures(t *testing.T) {
 
 func TestPrintExtractionFailures_WithFailures(t *testing.T) {
 	run := domain.ExtractionRun{
-		PerModuleResults: map[fetchdomain.ModuleCoordinate]domain.ModuleExtractionResult{
+		PerModuleResults: map[coordinate.ModuleCoordinate]domain.ModuleExtractionResult{
 			{Path: "example.com/mod", Version: "v1.0.0"}: {
 				Stages: map[string]domain.StageResult{
 					"license":   {Status: domain.StageSucceeded},
@@ -134,7 +134,7 @@ func TestPrintExtractionFailures_WithFailures(t *testing.T) {
 
 func TestPrintExtractionFailures_SortedOutput(t *testing.T) {
 	run := domain.ExtractionRun{
-		PerModuleResults: map[fetchdomain.ModuleCoordinate]domain.ModuleExtractionResult{
+		PerModuleResults: map[coordinate.ModuleCoordinate]domain.ModuleExtractionResult{
 			{Path: "example.com/z", Version: "v1.0.0"}: {
 				Stages: map[string]domain.StageResult{
 					"license": {Status: domain.StageFailed},

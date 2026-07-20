@@ -6,6 +6,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
@@ -103,7 +105,7 @@ func StdlibNode(goVersion string) (GraphNode, bool) {
 		return GraphNode{}, false
 	}
 	return GraphNode{
-		Coordinate:       fetchdomain.ModuleCoordinate{Path: StdlibModulePath, Version: version},
+		Coordinate:       coordinate.ModuleCoordinate{Path: StdlibModulePath, Version: version},
 		DirectDependency: true,
 		ResolutionSource: ResolutionStdlib,
 	}, true
@@ -115,7 +117,7 @@ func StdlibNode(goVersion string) (GraphNode, bool) {
 // Identified by (Target, PipelineVersion, ResolvedAt).
 type Graph struct {
 	// Target is the module whose dependency closure this graph represents.
-	Target fetchdomain.ModuleCoordinate
+	Target coordinate.ModuleCoordinate
 	// Nodes contains every module in the closure, including the target itself.
 	// Sorted lexicographically by (Path, Version) after Sort.
 	Nodes []GraphNode
@@ -169,7 +171,7 @@ func (e BuildEnv) IsZero() bool {
 // GraphNode is a single module in the dependency graph.
 type GraphNode struct {
 	// Coordinate is the module path and MVS-selected version.
-	Coordinate fetchdomain.ModuleCoordinate
+	Coordinate coordinate.ModuleCoordinate
 	// DirectDependency is true when this module appears directly in the target's
 	// go.mod (as opposed to being a transitive dependency).
 	DirectDependency bool
@@ -184,7 +186,7 @@ type GraphNode struct {
 	// OriginalCoordinate is the require entry that produced this node before
 	// a replace directive rewrote it. Zero value when ResolutionSource is not
 	// ResolutionReplace or ResolutionLocalReplace.
-	OriginalCoordinate fetchdomain.ModuleCoordinate
+	OriginalCoordinate coordinate.ModuleCoordinate
 	// LocalPath is the filesystem target of a local-path replace directive.
 	// Non-empty only when ResolutionSource is ResolutionLocalReplace.
 	LocalPath string
@@ -204,9 +206,9 @@ type GraphNode struct {
 // GraphEdge is a directed dependency relationship between two modules.
 type GraphEdge struct {
 	// From is the module that declares the dependency.
-	From fetchdomain.ModuleCoordinate
+	From coordinate.ModuleCoordinate
 	// To is the dependency at its MVS-selected version.
-	To fetchdomain.ModuleCoordinate
+	To coordinate.ModuleCoordinate
 	// ConstraintVersion is the version string appearing in From's go.mod before
 	// MVS resolution. It may differ from To.Version when MVS selects a higher version.
 	ConstraintVersion string
@@ -254,14 +256,14 @@ func (g *Graph) Sort() {
 // version, so pairing them fabricates a coordinate that never existed (e.g.
 // rqlite/go-sqlite3 at the mattn/go-sqlite3 version). A replaced module is pinned
 // by its replace directive and has no superseded intermediate version to read.
-func (g Graph) SupersededRequirements() []fetchdomain.ModuleCoordinate {
+func (g Graph) SupersededRequirements() []coordinate.ModuleCoordinate {
 	replaced := make(map[string]bool)
 	for _, n := range g.Nodes {
 		if n.OriginalCoordinate.Path != "" {
 			replaced[n.Coordinate.Path] = true
 		}
 	}
-	seen := make(map[fetchdomain.ModuleCoordinate]struct{})
+	seen := make(map[coordinate.ModuleCoordinate]struct{})
 	for _, e := range g.Edges {
 		if e.ConstraintVersion == "" || e.ConstraintVersion == e.To.Version {
 			continue
@@ -269,10 +271,10 @@ func (g Graph) SupersededRequirements() []fetchdomain.ModuleCoordinate {
 		if replaced[e.To.Path] {
 			continue
 		}
-		coord := fetchdomain.ModuleCoordinate{Path: e.To.Path, Version: e.ConstraintVersion}
+		coord := coordinate.ModuleCoordinate{Path: e.To.Path, Version: e.ConstraintVersion}
 		seen[coord] = struct{}{}
 	}
-	out := make([]fetchdomain.ModuleCoordinate, 0, len(seen))
+	out := make([]coordinate.ModuleCoordinate, 0, len(seen))
 	for c := range seen {
 		out = append(out, c)
 	}
@@ -293,15 +295,15 @@ func (g Graph) SupersededRequirements() []fetchdomain.ModuleCoordinate {
 // A coordinate absent from the graph's edges yields an empty set; callers
 // distinguish "no dependencies" from "module not in this graph" via the node
 // list, not this result.
-func (g Graph) ReachableFrom(origin fetchdomain.ModuleCoordinate) map[fetchdomain.ModuleCoordinate]struct{} {
+func (g Graph) ReachableFrom(origin coordinate.ModuleCoordinate) map[coordinate.ModuleCoordinate]struct{} {
 	// Adjacency: From → its direct dependencies.
-	adj := make(map[fetchdomain.ModuleCoordinate][]fetchdomain.ModuleCoordinate)
+	adj := make(map[coordinate.ModuleCoordinate][]coordinate.ModuleCoordinate)
 	for _, e := range g.Edges {
 		adj[e.From] = append(adj[e.From], e.To)
 	}
 
-	reached := make(map[fetchdomain.ModuleCoordinate]struct{})
-	stack := append([]fetchdomain.ModuleCoordinate(nil), adj[origin]...)
+	reached := make(map[coordinate.ModuleCoordinate]struct{})
+	stack := append([]coordinate.ModuleCoordinate(nil), adj[origin]...)
 	for len(stack) > 0 {
 		cur := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]

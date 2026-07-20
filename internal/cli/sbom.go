@@ -9,10 +9,12 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/spf13/cobra"
 
 	extractapp "github.com/eitanity/kanonarion/internal/extract/application"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	"github.com/eitanity/kanonarion/internal/sbom/application"
 	"github.com/eitanity/kanonarion/internal/sbom/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -161,7 +163,7 @@ func sbomGenerateWith(
 	stdout, stderr io.Writer,
 ) error {
 	var err error
-	var allowList []fetchdomain.ModuleCoordinate
+	var allowList []coordinate.ModuleCoordinate
 	if packagePattern != "" {
 		var aerr error
 		allowList, aerr = buildPackageAllowList(packagePattern)
@@ -330,12 +332,12 @@ func runSBOMList(ctx context.Context, storeRoot, walkID string, jsonOut bool, st
 
 // buildPackageAllowList resolves the module coordinates for the binary's import
 // closure via go list -deps and returns them as a parsed AllowList.
-func buildPackageAllowList(packagePattern string) ([]fetchdomain.ModuleCoordinate, error) {
+func buildPackageAllowList(packagePattern string) ([]coordinate.ModuleCoordinate, error) {
 	coordStrs, err := readPackageModules(packagePattern)
 	if err != nil {
 		return nil, fmt.Errorf("resolving package modules for %q: %w", packagePattern, err)
 	}
-	allowList := make([]fetchdomain.ModuleCoordinate, 0, len(coordStrs))
+	allowList := make([]coordinate.ModuleCoordinate, 0, len(coordStrs))
 	for _, s := range coordStrs {
 		coord, cerr := parseCoordinate(s)
 		if cerr != nil {
@@ -390,7 +392,7 @@ func ensureProjectWalkForSBOM(ctx context.Context, ctr *Container, force, stdlib
 	// SBOM rather than emitting one that silently omits the unverifiable module:
 	// --from-modcache mode fails on any such node (go.sum is the sole anchor),
 	// and the normal network path fails on a go.sum-mismatch node.
-	localCoord := fetchdomain.ModuleCoordinate{Path: modulePath, Version: fetchdomain.LocalVersion}
+	localCoord := coordinate.ModuleCoordinate{Path: modulePath, Version: coordinate.LocalVersion}
 	walkID, werr := latestProjectWalkByScope(ctx, ctr.QueryWalks, modulePath, walkdomain.WalkScopeCode)
 	if werr != nil {
 		return "", werr
@@ -456,7 +458,7 @@ func extractLicencesForProjectWalk(ctx context.Context, qw QueryWalksUseCase, ex
 // and every project scope's set contains the binary's modules. Returns
 // errNoProjectWalk when no succeeded walk exists.
 func findLatestProjectWalk(ctx context.Context, qw QueryWalksUseCase, modulePath string) (string, error) {
-	coord, err := fetchdomain.NewModuleCoordinate(modulePath, fetchdomain.LocalVersion)
+	coord, err := coordinate.NewModuleCoordinate(modulePath, coordinate.LocalVersion)
 	if err != nil {
 		return "", fmt.Errorf("building project coordinate: %w", err)
 	}
@@ -480,7 +482,7 @@ func findLatestProjectWalk(ctx context.Context, qw QueryWalksUseCase, modulePath
 // straight after building a walk, where a partial result is still usable and a
 // succeeded-only lookup would find nothing.
 func latestProjectWalkByScope(ctx context.Context, qw QueryWalksUseCase, modulePath string, scope walkdomain.WalkScope) (string, error) {
-	coord, err := fetchdomain.NewModuleCoordinate(modulePath, fetchdomain.LocalVersion)
+	coord, err := coordinate.NewModuleCoordinate(modulePath, coordinate.LocalVersion)
 	if err != nil {
 		return "", fmt.Errorf("building project coordinate: %w", err)
 	}

@@ -8,10 +8,12 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/spf13/cobra"
 
 	exapp "github.com/eitanity/kanonarion/internal/example/application"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
 	ifacedomain "github.com/eitanity/kanonarion/internal/iface/domain"
 	ifaceports "github.com/eitanity/kanonarion/internal/iface/ports"
@@ -201,7 +203,7 @@ func buildSymbolContextEntries(ctx context.Context, ctr *Container, refs []iface
 
 	entries := make([]symbolContextEntry, 0, len(refs))
 	for _, mk := range order {
-		coord := fetchdomain.ModuleCoordinate{Path: mk.path, Version: mk.version}
+		coord := coordinate.ModuleCoordinate{Path: mk.path, Version: mk.version}
 
 		// Best-effort: missing interface record means empty doc.
 		ifaceRec, _, _ := ctr.QueryInterface.GetInterfaceRecord(ctx, coord, pipelineVersion)

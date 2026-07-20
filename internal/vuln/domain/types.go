@@ -6,6 +6,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
@@ -136,19 +138,19 @@ type ReachabilityResult struct {
 
 // VulnerabilityFinding represents a single vulnerability affecting a module.
 type VulnerabilityFinding struct {
-	ID              string              `json:"id"`
-	Aliases         []string            `json:"aliases,omitzero"`
-	Summary         string              `json:"summary"`
-	Details         string              `json:"details,omitzero"`
-	AffectedRange   string              `json:"affected_range"`
-	FixedIn         string              `json:"fixed_in,omitzero"`
-	Severity        *Severity           `json:"severity,omitzero"`
+	ID               string              `json:"id"`
+	Aliases          []string            `json:"aliases,omitzero"`
+	Summary          string              `json:"summary"`
+	Details          string              `json:"details,omitzero"`
+	AffectedRange    string              `json:"affected_range"`
+	FixedIn          string              `json:"fixed_in,omitzero"`
+	Severity         *Severity           `json:"severity,omitzero"`
 	AffectedSymbols  []string            `json:"affected_symbols,omitzero"`
 	Reachable        *ReachabilityResult `json:"reachable,omitzero"`
 	ReachabilityNote string              `json:"reachability_note,omitzero"`
 	References       []string            `json:"references,omitzero"`
-	PublishedAt     time.Time           `json:"published_at"`
-	ModifiedAt      time.Time           `json:"modified_at"`
+	PublishedAt      time.Time           `json:"published_at"`
+	ModifiedAt       time.Time           `json:"modified_at"`
 }
 
 // FixDisplay renders a finding's remediation state for human-facing output.
@@ -175,16 +177,16 @@ func SortFindings(findings []VulnerabilityFinding) {
 // VulnerabilityRecord is the aggregate root for a module's vulnerability scan.
 type VulnerabilityRecord struct {
 	// Ecosystem declares the schema's scope; always fetchdomain.EcosystemGo.
-	Ecosystem         string                       `json:"ecosystem"`
-	Coordinate        fetchdomain.ModuleCoordinate `json:"coordinate"`
-	WalkID            string                       `json:"walk_id"`
-	Findings          []VulnerabilityFinding       `json:"findings,omitzero"`
-	OverallStatus     VulnerabilityStatus          `json:"overall_status"`
-	UnscanReason      UnscanReason                 `json:"unscan_reason,omitempty"`
-	UnscannableReason string                       `json:"unscannable_reason,omitempty"`
-	ErrorDetail       string                       `json:"error_detail,omitempty"`
-	DatabaseSnapshot  DatabaseSnapshot             `json:"database_snapshot"`
-	ScannedAt         time.Time                    `json:"scanned_at"`
+	Ecosystem         string                      `json:"ecosystem"`
+	Coordinate        coordinate.ModuleCoordinate `json:"coordinate"`
+	WalkID            string                      `json:"walk_id"`
+	Findings          []VulnerabilityFinding      `json:"findings,omitzero"`
+	OverallStatus     VulnerabilityStatus         `json:"overall_status"`
+	UnscanReason      UnscanReason                `json:"unscan_reason,omitempty"`
+	UnscannableReason string                      `json:"unscannable_reason,omitempty"`
+	ErrorDetail       string                      `json:"error_detail,omitempty"`
+	DatabaseSnapshot  DatabaseSnapshot            `json:"database_snapshot"`
+	ScannedAt         time.Time                   `json:"scanned_at"`
 	// FirstScannedAt anchors when this verdict was first established for the
 	// (module, version, pipeline, snapshot) tuple. Unlike ScannedAt — which
 	// moves forward to the run that last validated the verdict — it is set once
@@ -243,7 +245,7 @@ type ProjectScanResult struct {
 	// caller marks it StatusClean. Stdlib advisories key on the "stdlib"
 	// pseudo-module coordinate (empty version); the caller attributes them to
 	// the project root.
-	FindingsByModule map[fetchdomain.ModuleCoordinate][]VulnerabilityFinding
+	FindingsByModule map[coordinate.ModuleCoordinate][]VulnerabilityFinding
 	// Status is the scan-level outcome. StatusClean or StatusAffected when the
 	// project built and was analysed; StatusUnscannable or StatusScanFailed when
 	// the project itself could not be analysed (no go.mod, OOM, a real build
@@ -274,14 +276,14 @@ const (
 
 // WalkScanRun records the aggregate results of scanning every module in a walk.
 type WalkScanRun struct {
-	ID               string                                  `json:"id"`
-	WalkID           string                                  `json:"walk_id"`
-	Snapshot         DatabaseSnapshot                        `json:"snapshot"`
-	PerModuleResults map[fetchdomain.ModuleCoordinate]string `json:"per_module_results"` // Maps coordinate to VulnerabilityRecord ContentHash
-	StartedAt        time.Time                               `json:"started_at"`
-	CompletedAt      time.Time                               `json:"completed_at"`
-	OverallStatus    WalkScanStatus                          `json:"overall_status"`
-	PipelineVersion  string                                  `json:"pipeline_version"`
-	Operator         string                                  `json:"operator"`
-	ContentHash      string                                  `json:"content_hash"`
+	ID               string                                 `json:"id"`
+	WalkID           string                                 `json:"walk_id"`
+	Snapshot         DatabaseSnapshot                       `json:"snapshot"`
+	PerModuleResults map[coordinate.ModuleCoordinate]string `json:"per_module_results"` // Maps coordinate to VulnerabilityRecord ContentHash
+	StartedAt        time.Time                              `json:"started_at"`
+	CompletedAt      time.Time                              `json:"completed_at"`
+	OverallStatus    WalkScanStatus                         `json:"overall_status"`
+	PipelineVersion  string                                 `json:"pipeline_version"`
+	Operator         string                                 `json:"operator"`
+	ContentHash      string                                 `json:"content_hash"`
 }

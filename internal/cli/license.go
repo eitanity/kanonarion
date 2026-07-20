@@ -8,7 +8,8 @@ import (
 	"sort"
 	"strings"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	"github.com/eitanity/kanonarion/internal/license/domain"
 	"github.com/eitanity/kanonarion/internal/license/ports"
@@ -91,7 +92,7 @@ func runLicenseExtract(ctx context.Context, arg string, f licenseFlags, stdout, 
 
 func printLicenseRecursive(
 	ctx context.Context,
-	target fetchdomain.ModuleCoordinate,
+	target coordinate.ModuleCoordinate,
 	walksUC QueryWalksUseCase,
 	extractUC ExtractLicenseUseCase,
 	queryUC QueryLicenseUseCase,
@@ -106,7 +107,7 @@ func printLicenseRecursive(
 		return fmt.Errorf("no walk record found for %s — run 'kanonarion walk' first", target)
 	}
 
-	extractFn := func(ctx context.Context, coord fetchdomain.ModuleCoordinate) (domain.LicenseRecord, error) {
+	extractFn := func(ctx context.Context, coord coordinate.ModuleCoordinate) (domain.LicenseRecord, error) {
 		res, err := extractUC.Execute(ctx, licapp.ExtractRequest{Coordinate: coord, Force: f.force})
 		if err != nil {
 			return domain.LicenseRecord{}, fmt.Errorf("extracting license for %s: %w", coord, err)
@@ -469,7 +470,7 @@ func runLicenseList(ctx context.Context, spdx, copyright string, limit int, uc Q
 	if copyright != "" {
 		var matched []ports.LicenseSummary
 		for _, s := range sums {
-			coord := fetchdomain.ModuleCoordinate{Path: s.ModulePath, Version: s.ModuleVersion}
+			coord := coordinate.ModuleCoordinate{Path: s.ModulePath, Version: s.ModuleVersion}
 			rec, found, rerr := uc.GetLicenseRecord(ctx, coord, s.PipelineVersion)
 			if rerr != nil || !found {
 				continue
@@ -497,7 +498,7 @@ func runLicenseList(ctx context.Context, spdx, copyright string, limit int, uc Q
 			license := s.PrimarySPDX
 			expr := s.Expression
 			source := "scanner"
-			if ov, ok := overrides.Resolve(fetchdomain.ModuleCoordinate{Path: s.ModulePath, Version: s.ModuleVersion}); ok {
+			if ov, ok := overrides.Resolve(coordinate.ModuleCoordinate{Path: s.ModulePath, Version: s.ModuleVersion}); ok {
 				license = ov.SPDX
 				expr = ""
 				source = "override"
@@ -523,7 +524,7 @@ func runLicenseList(ctx context.Context, spdx, copyright string, limit int, uc Q
 			license = s.Expression
 		}
 		source := "scanner"
-		if ov, ok := overrides.Resolve(fetchdomain.ModuleCoordinate{Path: s.ModulePath, Version: s.ModuleVersion}); ok {
+		if ov, ok := overrides.Resolve(coordinate.ModuleCoordinate{Path: s.ModulePath, Version: s.ModuleVersion}); ok {
 			license = ov.SPDX
 			source = "override"
 		}

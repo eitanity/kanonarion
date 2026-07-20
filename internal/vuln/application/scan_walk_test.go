@@ -8,6 +8,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -67,8 +69,8 @@ func TestScanWalk(t *testing.T) {
 	walkID := "walk-1"
 
 	// 1. Setup Walk
-	target := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
-	dep := fetchdomain.ModuleCoordinate{Path: "github.com/lib/baz", Version: "v2.0.0"}
+	target := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	dep := coordinate.ModuleCoordinate{Path: "github.com/lib/baz", Version: "v2.0.0"}
 
 	walk := walkdomain.WalkRecord{
 		ID: walkID,
@@ -102,7 +104,7 @@ func TestScanWalk(t *testing.T) {
 	}
 	db := &fakeDatabase{
 		snapshot:    domain.DatabaseSnapshot{Source: "test", Version: "v1"},
-		vulnerables: map[fetchdomain.ModuleCoordinate][]string{dep: {"GO-VULN-ID"}},
+		vulnerables: map[coordinate.ModuleCoordinate][]string{dep: {"GO-VULN-ID"}},
 	}
 	clock := fixedClock{t: now}
 
@@ -167,7 +169,7 @@ func TestScanWalk_SnapshotPersisted(t *testing.T) {
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	walkID := "walk-snap"
 
-	coord := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 	walkStore := newFakeWalkStore()
 	if err := walkStore.PutWalk(ctx, walkdomain.WalkRecord{
 		ID:    walkID,
@@ -223,8 +225,8 @@ func TestScanWalk_OverallStatus(t *testing.T) {
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	clock := fixedClock{t: now}
 
-	coord1 := fetchdomain.ModuleCoordinate{Path: "m1", Version: "v1"}
-	coord2 := fetchdomain.ModuleCoordinate{Path: "m2", Version: "v1"}
+	coord1 := coordinate.ModuleCoordinate{Path: "m1", Version: "v1"}
+	coord2 := coordinate.ModuleCoordinate{Path: "m2", Version: "v1"}
 
 	tests := []struct {
 		name     string
@@ -295,7 +297,7 @@ func TestScanWalk_OverallStatus(t *testing.T) {
 
 			facts := newFakeFacts()
 			blobs := newFakeBlob()
-			for _, c := range []fetchdomain.ModuleCoordinate{coord1, coord2} {
+			for _, c := range []coordinate.ModuleCoordinate{coord1, coord2} {
 				h, _ := blobs.Put(ctx, strings.NewReader("zip"))
 				if err := facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
 					ModulePath: c.Path, ModuleVersion: c.Version, PipelineVersion: "v1", ContentLocation: string(h),
@@ -305,10 +307,10 @@ func TestScanWalk_OverallStatus(t *testing.T) {
 			}
 
 			scanner := &fakeScanner{results: tt.results}
-			var vulnerables map[fetchdomain.ModuleCoordinate][]string
+			var vulnerables map[coordinate.ModuleCoordinate][]string
 			if tt.expected != domain.WalkStatusAllClean {
 				// If we expect anything other than Clean, we must trigger the heavy scanner
-				vulnerables = map[fetchdomain.ModuleCoordinate][]string{
+				vulnerables = map[coordinate.ModuleCoordinate][]string{
 					coord1: {"GO-VULN-ID"},
 					coord2: {"GO-VULN-ID"},
 				}
@@ -322,7 +324,7 @@ func TestScanWalk_OverallStatus(t *testing.T) {
 				// to no matching advisory so an Unscannable module stays Unscannable in
 				// the aggregation here, exercising the status rollup rather than the
 				// advisory-attribution path covered by the scan_module tests.
-				findings: map[fetchdomain.ModuleCoordinate][]domain.VulnerabilityFinding{
+				findings: map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding{
 					coord1: {},
 					coord2: {},
 				},
@@ -352,7 +354,7 @@ func TestScanWalk_FreshFetch(t *testing.T) {
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	clock := fixedClock{t: now}
 
-	coord := fetchdomain.ModuleCoordinate{Path: "m1", Version: "v1"}
+	coord := coordinate.ModuleCoordinate{Path: "m1", Version: "v1"}
 	walkStore := newFakeWalkStore()
 	_ = walkStore.PutWalk(ctx, walkdomain.WalkRecord{
 		ID:    "w1",
@@ -419,8 +421,8 @@ func TestScanWalk_LocalReplaceUnscannable(t *testing.T) {
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	walkID := "walk-localreplace"
 
-	target := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
-	localDep := fetchdomain.ModuleCoordinate{Path: "example.com/dep", Version: "v1.0.0"}
+	target := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	localDep := coordinate.ModuleCoordinate{Path: "example.com/dep", Version: "v1.0.0"}
 
 	walk := walkdomain.WalkRecord{
 		ID: walkID,

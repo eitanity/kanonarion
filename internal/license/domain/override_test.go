@@ -3,11 +3,11 @@ package domain
 import (
 	"testing"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 )
 
-func coord(path, version string) fetchdomain.ModuleCoordinate {
-	return fetchdomain.ModuleCoordinate{Path: path, Version: version}
+func coord(path, version string) coordinate.ModuleCoordinate {
+	return coordinate.ModuleCoordinate{Path: path, Version: version}
 }
 
 func TestLicenseOverrideSet_Resolve(t *testing.T) {

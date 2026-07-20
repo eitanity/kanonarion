@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/license/application"
@@ -1031,9 +1033,9 @@ func TestExecute_Provenance_AuthorsFile_MediumConfidence(t *testing.T) {
 
 // -- helpers --
 
-func mustCoord(t *testing.T, path, version string) domain.ModuleCoordinate {
+func mustCoord(t *testing.T, path, version string) coordinate.ModuleCoordinate {
 	t.Helper()
-	c, err := domain.NewModuleCoordinate(path, version)
+	c, err := coordinate.NewModuleCoordinate(path, version)
 	if err != nil {
 		t.Fatalf("NewModuleCoordinate(%q, %q): %v", path, version, err)
 	}
@@ -1069,12 +1071,12 @@ func buildUseCaseWithDetector(t *testing.T, facts *fakeFactStore, blobs *fakeBlo
 	return application.NewExtractLicenseUseCase(cfg)
 }
 
-func putFact(t *testing.T, s *fakeFactStore, coord domain.ModuleCoordinate, blobHandle string) {
+func putFact(t *testing.T, s *fakeFactStore, coord coordinate.ModuleCoordinate, blobHandle string) {
 	t.Helper()
 	putFactWithBlob(t, s, coord, blobHandle)
 }
 
-func putFactWithBlob(t *testing.T, s *fakeFactStore, coord domain.ModuleCoordinate, blobHandle string) {
+func putFactWithBlob(t *testing.T, s *fakeFactStore, coord coordinate.ModuleCoordinate, blobHandle string) {
 	t.Helper()
 	r := domain.FactRecord{
 		SchemaVersion:      "2",
@@ -1090,7 +1092,7 @@ func putFactWithBlob(t *testing.T, s *fakeFactStore, coord domain.ModuleCoordina
 	}
 }
 
-func buildModuleZip(t *testing.T, coord domain.ModuleCoordinate, files map[string]string) []byte {
+func buildModuleZip(t *testing.T, coord coordinate.ModuleCoordinate, files map[string]string) []byte {
 	t.Helper()
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)

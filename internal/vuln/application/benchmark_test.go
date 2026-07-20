@@ -9,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -21,7 +23,7 @@ type slowScanner struct {
 	delay time.Duration
 }
 
-func (s *slowScanner) Scan(_ context.Context, coord fetchdomain.ModuleCoordinate, _ io.Reader, snap domain.DatabaseSnapshot, _ string, _ string, _ domain.ScanMode) (domain.VulnerabilityRecord, error) {
+func (s *slowScanner) Scan(_ context.Context, coord coordinate.ModuleCoordinate, _ io.Reader, snap domain.DatabaseSnapshot, _ string, _ string, _ domain.ScanMode) (domain.VulnerabilityRecord, error) {
 	time.Sleep(s.delay)
 	return domain.VulnerabilityRecord{
 		Coordinate:       coord,
@@ -41,11 +43,11 @@ func (s *slowScanner) ScannerMetadata() ports.ScannerMetadata {
 	return ports.ScannerMetadata{Name: "slow-fake", Version: "v0"}
 }
 
-func buildBenchScanWalk(n int) (walkdomain.WalkRecord, []fetchdomain.ModuleCoordinate) {
+func buildBenchScanWalk(n int) (walkdomain.WalkRecord, []coordinate.ModuleCoordinate) {
 	nodes := make([]walkdomain.GraphNode, n)
-	coords := make([]fetchdomain.ModuleCoordinate, n)
+	coords := make([]coordinate.ModuleCoordinate, n)
 	for i := range n {
-		c := fetchdomain.ModuleCoordinate{Path: fmt.Sprintf("github.com/pkg/m%d", i), Version: "v1.0.0"}
+		c := coordinate.ModuleCoordinate{Path: fmt.Sprintf("github.com/pkg/m%d", i), Version: "v1.0.0"}
 		nodes[i] = walkdomain.GraphNode{Coordinate: c}
 		coords[i] = c
 	}
@@ -69,7 +71,7 @@ func BenchmarkVulnScan_Sequential_vs_Parallel(b *testing.B) {
 		walk, coords := buildBenchScanWalk(n)
 
 		// Mark all modules as potentially vulnerable so the slow scanner is invoked.
-		vulnerables := make(map[fetchdomain.ModuleCoordinate][]string, n)
+		vulnerables := make(map[coordinate.ModuleCoordinate][]string, n)
 		for _, c := range coords {
 			vulnerables[c] = []string{"GO-BENCH-VULN"}
 		}

@@ -6,8 +6,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -15,7 +17,7 @@ import (
 
 // walksWithNodes returns a FakeQueryWalks holding one walk (id) whose graph has
 // a node for each coord — the shape resolveNoticeCoords reads in walkID mode.
-func walksWithNodes(id string, coords ...fetchdomain.ModuleCoordinate) *testfakes.FakeQueryWalks {
+func walksWithNodes(id string, coords ...coordinate.ModuleCoordinate) *testfakes.FakeQueryWalks {
 	nodes := make([]walkdomain.GraphNode, 0, len(coords))
 	for _, c := range coords {
 		nodes = append(nodes, walkdomain.GraphNode{Coordinate: c})
@@ -29,7 +31,7 @@ func walksWithNodes(id string, coords ...fetchdomain.ModuleCoordinate) *testfake
 // emit the document — it fails loudly with a non-nil error and writes nothing
 // to stdout. Publishing an incomplete NOTICE would be the failure mode.
 func TestNoticeWith_ReviewItemsFailLoud(t *testing.T) {
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/dep", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/dep", Version: "v1.0.0"}
 	ctr := &Container{
 		QueryWalks: walksWithNodes("W1", coord),
 		GenerateNotice: &testfakes.FakeGenerateNotice{Result: licapp.NoticeResult{
@@ -67,7 +69,7 @@ func TestNoticeWith_NoModules(t *testing.T) {
 
 // With no review items, the document is written to stdout.
 func TestNoticeWith_WritesDocument(t *testing.T) {
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/dep", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/dep", Version: "v1.0.0"}
 	ctr := &Container{
 		QueryWalks: walksWithNodes("W1", coord),
 		GenerateNotice: &testfakes.FakeGenerateNotice{Result: licapp.NoticeResult{

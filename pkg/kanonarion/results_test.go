@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	callgraphdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	directivedomain "github.com/eitanity/kanonarion/internal/directive/domain"
 	exampledomain "github.com/eitanity/kanonarion/internal/example/domain"
 	extractdomain "github.com/eitanity/kanonarion/internal/extract/domain"
@@ -31,8 +32,8 @@ import (
 // type (e.g. a struct copy that could silently drift from its JSON projection),
 // these stop compiling.
 var (
-	_ kanonarion.ModuleCoordinate     = fetchdomain.ModuleCoordinate{}
-	_ fetchdomain.ModuleCoordinate    = kanonarion.ModuleCoordinate{}
+	_ kanonarion.ModuleCoordinate     = coordinate.ModuleCoordinate{}
+	_ coordinate.ModuleCoordinate     = kanonarion.ModuleCoordinate{}
 	_ kanonarion.FactRecord           = fetchdomain.FactRecord{}
 	_ fetchdomain.FactRecord          = kanonarion.FactRecord{}
 	_ kanonarion.WalkRecord           = walkdomain.WalkRecord{}

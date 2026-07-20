@@ -7,6 +7,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	examplesqlite "github.com/eitanity/kanonarion/internal/example/adapters/store/sqlite"
 	domain2 "github.com/eitanity/kanonarion/internal/example/domain"
 	"github.com/eitanity/kanonarion/internal/example/ports"
@@ -27,16 +28,16 @@ func openTestStore(t *testing.T) *examplesqlite.Store {
 	return s
 }
 
-func mustCoord(t *testing.T, path, version string) fetchdomain.ModuleCoordinate {
+func mustCoord(t *testing.T, path, version string) coordinate.ModuleCoordinate {
 	t.Helper()
-	c, err := fetchdomain.NewModuleCoordinate(path, version)
+	c, err := coordinate.NewModuleCoordinate(path, version)
 	if err != nil {
 		t.Fatalf("NewModuleCoordinate: %v", err)
 	}
 	return c
 }
 
-func buildRecord(t *testing.T, coord fetchdomain.ModuleCoordinate, count int, status domain2.ExampleStatus) domain2.ExampleRecord {
+func buildRecord(t *testing.T, coord coordinate.ModuleCoordinate, count int, status domain2.ExampleStatus) domain2.ExampleRecord {
 	t.Helper()
 	var examples []domain2.ExampleEntry
 	for i := 0; i < count; i++ {
@@ -244,7 +245,7 @@ func TestFindBySymbolInModule_Scoped(t *testing.T) {
 	coordB := mustCoord(t, "example.com/mod-b", "v1.0.0")
 
 	// Both modules have an example for the same symbol.
-	makeRecord := func(coord fetchdomain.ModuleCoordinate, name string) domain2.ExampleRecord {
+	makeRecord := func(coord coordinate.ModuleCoordinate, name string) domain2.ExampleRecord {
 		r := domain2.ExampleRecord{
 			SchemaVersion: domain2.ExampleSchemaVersion,
 			Ecosystem:     fetchdomain.EcosystemGo,

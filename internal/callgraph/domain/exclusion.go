@@ -4,6 +4,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
@@ -51,7 +53,7 @@ func IsModuleExcluded(modulePath string, exclude []string) bool {
 // skipped because it is listed in callgraph.exclude. It has no nodes or edges;
 // the caller still sets ExtractedAt, PipelineVersion, and the content hash.
 // exclusionList must already be normalised (see NormaliseExclusions).
-func NewExcludedRecord(coord fetchdomain.ModuleCoordinate, algorithm CallGraphAlgorithm, exclusionList []string) CallGraphRecord {
+func NewExcludedRecord(coord coordinate.ModuleCoordinate, algorithm CallGraphAlgorithm, exclusionList []string) CallGraphRecord {
 	return CallGraphRecord{
 		SchemaVersion:   CallGraphSchemaVersion,
 		Ecosystem:       fetchdomain.EcosystemGo,

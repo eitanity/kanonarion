@@ -9,7 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	application2 "github.com/eitanity/kanonarion/internal/vuln/application"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -108,7 +109,7 @@ func runVulnScanScope(ctx context.Context, gomodPath string, scope depScope, for
 		}
 	}()
 
-	coord, err := fetchdomain.NewModuleCoordinate(modulePath, fetchdomain.LocalVersion)
+	coord, err := coordinate.NewModuleCoordinate(modulePath, coordinate.LocalVersion)
 	if err != nil {
 		return fmt.Errorf("building project coordinate: %w", err)
 	}
@@ -196,7 +197,7 @@ func runVulnScan(ctx context.Context, walkID string, f commonWalkFlags, force, f
 		BinaryModePrePass:  binaryModePrePass,
 		Operator:           operator,
 		ProjectDir:         projectDir,
-		Progress: func(coord fetchdomain.ModuleCoordinate, record vuldomain.VulnerabilityRecord, current, total int) {
+		Progress: func(coord coordinate.ModuleCoordinate, record vuldomain.VulnerabilityRecord, current, total int) {
 			writeVulnScanProgress(record, coord, current, total, stderr)
 			switch {
 			case record.OverallStatus == vuldomain.StatusScanFailed:
@@ -238,7 +239,7 @@ func vulnScanStatusLabel(record vuldomain.VulnerabilityRecord) string {
 // reason) to w, which must be stderr. It is the single place the progress
 // callback writes so tests can verify the routing without going through
 // NewContainer.
-func writeVulnScanProgress(record vuldomain.VulnerabilityRecord, coord fetchdomain.ModuleCoordinate, current, total int, w io.Writer) {
+func writeVulnScanProgress(record vuldomain.VulnerabilityRecord, coord coordinate.ModuleCoordinate, current, total int, w io.Writer) {
 	status := vulnScanStatusLabel(record)
 	if record.Reused {
 		// A reused record was served from the cache, not freshly scanned; label

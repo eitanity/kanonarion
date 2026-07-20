@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/walk/adapters/gomod/xmod"
@@ -25,8 +27,8 @@ import (
 
 var fixedNow = time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
-func coord(path, version string) domain2.ModuleCoordinate {
-	return domain2.ModuleCoordinate{Path: path, Version: version}
+func coord(path, version string) coordinate.ModuleCoordinate {
+	return coordinate.ModuleCoordinate{Path: path, Version: version}
 }
 
 // makeFactRecord builds a minimal FactRecord whose ContentLocation is "path@version".
@@ -89,7 +91,7 @@ func (f *fakeModuleFetcher) addError(path, version string, err error) {
 	f.errors[coord(path, version).String()] = err
 }
 
-func (f *fakeModuleFetcher) EnsureFetched(_ context.Context, c domain2.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
+func (f *fakeModuleFetcher) EnsureFetched(_ context.Context, c coordinate.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
 	key := c.String()
 	f.mu.Lock()
 	f.requested[key] = true
@@ -1518,7 +1520,7 @@ replace example.com/dep => ../local/dep
 `
 
 	r := newResolver(fetcher, blobs)
-	g, err := r.ResolveProject(context.Background(), coord("example.com/project", domain2.LocalVersion), []byte(mainGoMod), "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false, false)
+	g, err := r.ResolveProject(context.Background(), coord("example.com/project", coordinate.LocalVersion), []byte(mainGoMod), "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false, false)
 	if err != nil {
 		t.Fatalf("ResolveProject: %v", err)
 	}
@@ -1582,7 +1584,7 @@ go 1.21
 
 require example.com/dep/one v1.2.3
 `)
-	target := coord("example.com/project", domain2.LocalVersion)
+	target := coord("example.com/project", coordinate.LocalVersion)
 
 	r := newResolver(fetcher, blobs)
 	g, err := r.ResolveProject(context.Background(), target, mainGoMod, "", domain3.DefaultDepthPolicy().FetchStage(), nil, false, false)
@@ -1638,7 +1640,7 @@ require example.com/dep/one v1.2.3
 func TestResolveProject_UnparseableGoModErrors(t *testing.T) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	target := coord("example.com/project", domain2.LocalVersion)
+	target := coord("example.com/project", coordinate.LocalVersion)
 
 	r := newResolver(fetcher, blobs)
 	_, err := r.ResolveProject(context.Background(), target, []byte("this is not a go.mod"), "", domain3.DefaultDepthPolicy().FetchStage(), nil, false, false)

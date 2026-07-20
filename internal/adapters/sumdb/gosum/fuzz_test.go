@@ -7,7 +7,8 @@ import (
 	"net/http"
 	"testing"
 
-	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"golang.org/x/mod/sumdb"
 )
 
@@ -56,7 +57,7 @@ func FuzzSumDBNote(f *testing.F) {
 	// Missing separator line.
 	f.Add([]byte("go.sum database tree\n1\nhash\n— sum.golang.org+033de0ae+sig\n"))
 
-	coord, err := domain2.NewModuleCoordinate("rsc.io/quote", "v1.5.2")
+	coord, err := coordinate.NewModuleCoordinate("rsc.io/quote", "v1.5.2")
 	if err != nil {
 		f.Fatal(err)
 	}

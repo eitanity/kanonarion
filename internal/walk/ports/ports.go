@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/audit"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/fetch/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
@@ -50,7 +51,7 @@ type ModuleFetchResult struct {
 // It abstracts the fetch bounded context's FetchModuleUseCase so that the
 // walk application layer does not depend on fetch/application directly.
 type ModuleFetcher interface {
-	EnsureFetched(ctx context.Context, coord domain.ModuleCoordinate) (ModuleFetchResult, error)
+	EnsureFetched(ctx context.Context, coord coordinate.ModuleCoordinate) (ModuleFetchResult, error)
 }
 
 // StdlibAcquirer establishes the standard library's chain of custody: it
@@ -163,7 +164,7 @@ type LocalModuleFetchResult struct {
 // of fetching from a module proxy. Used when a go.mod replace directive points
 // to an on-disk source tree and local analysis is enabled.
 type LocalModuleFetcher interface {
-	EnsureFetchedFromPath(ctx context.Context, coord domain.ModuleCoordinate, absPath string) (LocalModuleFetchResult, error)
+	EnsureFetchedFromPath(ctx context.Context, coord coordinate.ModuleCoordinate, absPath string) (LocalModuleFetchResult, error)
 }
 
 // PolicyLoadResult is the output of PolicyStore.LoadPolicy.
@@ -199,28 +200,28 @@ type WalkStore interface {
 
 // WalkFilter constrains ListWalks results.
 type WalkFilter struct {
-	Target        *domain.ModuleCoordinate // nil = any target
-	Since         *time.Time               // nil = no lower bound on started_at
-	Until         *time.Time               // nil = no upper bound on started_at
-	OverallStatus *walkdomain.WalkStatus      // nil = any status
-	Scope         *walkdomain.WalkScope       // nil = any scope
-	Depth         *walkdomain.WalkDepth       // nil = any depth
-	Limit         int                      // 0 = no limit
+	Target        *coordinate.ModuleCoordinate // nil = any target
+	Since         *time.Time                   // nil = no lower bound on started_at
+	Until         *time.Time                   // nil = no upper bound on started_at
+	OverallStatus *walkdomain.WalkStatus       // nil = any status
+	Scope         *walkdomain.WalkScope        // nil = any scope
+	Depth         *walkdomain.WalkDepth        // nil = any depth
+	Limit         int                          // 0 = no limit
 	Offset        int
 	LatestOnly    bool // true: return only the latest unique (target, scope) combination
 }
 
 // WalkSummary is a lightweight projection of a WalkRecord for list views.
 type WalkSummary struct {
-	ID        string                  `json:"id"`
-	Target    domain.ModuleCoordinate `json:"target"`
-	Scope     walkdomain.WalkScope       `json:"scope"`
-	Depth     walkdomain.WalkDepth       `json:"depth"`
-	StartedAt time.Time               `json:"started_at"`
+	ID        string                      `json:"id"`
+	Target    coordinate.ModuleCoordinate `json:"target"`
+	Scope     walkdomain.WalkScope        `json:"scope"`
+	Depth     walkdomain.WalkDepth        `json:"depth"`
+	StartedAt time.Time                   `json:"started_at"`
 	// omitzero is deliberate and valid in stdlib encoding/json as of Go 1.24;
 	// AI code-quality flagged it as invalid — that is a false positive.
-	CompletedAt   time.Time          `json:"completed_at,omitzero"`
+	CompletedAt   time.Time             `json:"completed_at,omitzero"`
 	OverallStatus walkdomain.WalkStatus `json:"overall_status"`
-	NodeCount     int                `json:"node_count"`
-	FailureCount  int                `json:"failure_count"`
+	NodeCount     int                   `json:"node_count"`
+	FailureCount  int                   `json:"failure_count"`
 }

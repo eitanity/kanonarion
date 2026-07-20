@@ -16,7 +16,8 @@ import (
 	"sync"
 	"time"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
 	"golang.org/x/mod/semver"
@@ -322,7 +323,7 @@ func (d *Database) ensureIndex(ctx context.Context) error {
 // CheckVulnerable checks if the given modules at specific versions have any known
 // vulnerabilities in the database. This is a lightweight metadata check that
 // uses the modules index fixed-version field to exclude already-patched versions.
-func (d *Database) CheckVulnerable(ctx context.Context, modules []fetchdomain.ModuleCoordinate) (map[fetchdomain.ModuleCoordinate][]string, error) {
+func (d *Database) CheckVulnerable(ctx context.Context, modules []coordinate.ModuleCoordinate) (map[coordinate.ModuleCoordinate][]string, error) {
 	if err := d.ensureIndex(ctx); err != nil {
 		return nil, err
 	}
@@ -330,7 +331,7 @@ func (d *Database) CheckVulnerable(ctx context.Context, modules []fetchdomain.Mo
 	d.mu.RLock()
 	defer d.mu.RUnlock()
 
-	res := make(map[fetchdomain.ModuleCoordinate][]string)
+	res := make(map[coordinate.ModuleCoordinate][]string)
 	for _, m := range modules {
 		entries, ok := d.moduleIndex[m.Path]
 		if !ok {
@@ -358,7 +359,7 @@ func (d *Database) CheckVulnerable(ctx context.Context, modules []fetchdomain.Mo
 // over-reported. When no affected block matches the module path, or a matched
 // block carries no comparable SEMVER range, it stays conservative and reports
 // true so a known-affected module is never silently dropped.
-func advisoryAffects(coord fetchdomain.ModuleCoordinate, adv *osvAdvisory) bool {
+func advisoryAffects(coord coordinate.ModuleCoordinate, adv *osvAdvisory) bool {
 	matched := false
 	for _, a := range adv.Affected {
 		if a.Package.Name != coord.Path {
@@ -495,7 +496,7 @@ type osvImport struct {
 // fixed version and at-risk symbols. When a single advisory's enrichment fetch
 // fails the finding degrades to its bare ID and known fixed version rather than
 // disappearing — the module is still known-affected — and the failure is logged.
-func (d *Database) LookupFindings(ctx context.Context, coord fetchdomain.ModuleCoordinate) ([]domain.VulnerabilityFinding, error) {
+func (d *Database) LookupFindings(ctx context.Context, coord coordinate.ModuleCoordinate) ([]domain.VulnerabilityFinding, error) {
 	if err := d.ensureIndex(ctx); err != nil {
 		return nil, err
 	}

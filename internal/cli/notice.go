@@ -8,9 +8,10 @@ import (
 	"path/filepath"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/spf13/cobra"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/license/adapters/snippetscan"
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
@@ -187,13 +188,13 @@ func resolveNoticeCoords(
 	ctx context.Context,
 	walkID, gomodPath, packagePattern string,
 	ctr *Container,
-) ([]fetchdomain.ModuleCoordinate, error) {
+) ([]coordinate.ModuleCoordinate, error) {
 	if walkID != "" {
 		rec, err := ctr.QueryWalks.GetWalk(ctx, walkID)
 		if err != nil {
 			return nil, fmt.Errorf("loading walk %s: %w", walkID, err)
 		}
-		coords := make([]fetchdomain.ModuleCoordinate, 0, len(rec.Graph.Nodes))
+		coords := make([]coordinate.ModuleCoordinate, 0, len(rec.Graph.Nodes))
 		for _, n := range rec.Graph.Nodes {
 			coords = append(coords, n.Coordinate)
 		}
@@ -215,7 +216,7 @@ func resolveNoticeCoords(
 	if err != nil {
 		return nil, err
 	}
-	coords := make([]fetchdomain.ModuleCoordinate, 0, len(coordStrs))
+	coords := make([]coordinate.ModuleCoordinate, 0, len(coordStrs))
 	for _, s := range coordStrs {
 		coord, cerr := parseCoordinate(s)
 		if cerr != nil {

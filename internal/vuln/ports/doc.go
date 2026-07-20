@@ -10,7 +10,7 @@
 // - ReachabilityAnalyser — decides whether a finding is reachable.
 // - CallGraphLoader — supplies the call graph for reachability.
 //
-// Boundary rationale: the vuln context reuses fetch/domain.ModuleCoordinate
+// Boundary rationale: the vuln context reuses coordinate.ModuleCoordinate
 // directly; it does not re-declare module identity. CallGraphLoader returns a
 // local CallGraphProjection rather than callgraph/domain.CallGraphRecord, so a
 // callgraph schema change cannot ripple into this context — the mapping is the

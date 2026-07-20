@@ -7,6 +7,7 @@ import (
 	"io"
 	"log/slog"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	domain2 "github.com/eitanity/kanonarion/internal/example/domain"
 	"github.com/eitanity/kanonarion/internal/example/ports"
 	"github.com/eitanity/kanonarion/internal/fetch/domain"
@@ -72,7 +73,7 @@ func NewExtractExampleUseCase(cfg Config) *ExtractExampleUseCase {
 
 // ExtractRequest is the input to Execute.
 type ExtractRequest struct {
-	Coordinate domain.ModuleCoordinate
+	Coordinate coordinate.ModuleCoordinate
 	// Force re-extracts even if a record for this pipeline version exists.
 	Force bool
 }
@@ -176,7 +177,7 @@ func (uc *ExtractExampleUseCase) Execute(ctx context.Context, req ExtractRequest
 
 func (uc *ExtractExampleUseCase) requireFetchRecord(
 	ctx context.Context,
-	coord domain.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 ) (domain.FactRecord, error) {
 	versions := []string{uc.fetchPipelineVersion, uc.localFetchPipelineVersion, uc.pipelineVersion}
 	seen := map[string]bool{}
@@ -199,7 +200,7 @@ func (uc *ExtractExampleUseCase) requireFetchRecord(
 func (uc *ExtractExampleUseCase) extractFromZip(
 	ctx context.Context,
 	log *slog.Logger,
-	coord domain.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 	zipData []byte,
 ) (domain2.ExampleRecord, error) {
 	if ctxErr := ctx.Err(); ctxErr != nil {

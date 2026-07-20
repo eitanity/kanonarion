@@ -12,12 +12,13 @@ import (
 	"sort"
 	"strings"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
 )
 
-func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tempDir string, coord fetchdomain.ModuleCoordinate, targetPkgPaths []string) (prog *ssa.Program, targetSSAPkgs []*ssa.Package, allLoadErrs []string, failedPkgs []string, err error) {
+func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tempDir string, coord coordinate.ModuleCoordinate, targetPkgPaths []string) (prog *ssa.Program, targetSSAPkgs []*ssa.Package, allLoadErrs []string, failedPkgs []string, err error) {
 	prog = ssa.NewProgram(fset, ssa.BuilderMode(0))
 
 	// failedSet accumulates target package import paths whose typecheck or SSA

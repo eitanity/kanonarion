@@ -5,9 +5,11 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	callgraphdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	"github.com/eitanity/kanonarion/internal/local/adapters/dependencies/store"
 	"github.com/eitanity/kanonarion/internal/local/ports"
 )
@@ -28,7 +30,7 @@ func (s *fakeCallGraphStore) PutCallGraphRecord(_ context.Context, r callgraphdo
 	return nil
 }
 
-func (s *fakeCallGraphStore) GetCallGraphRecord(_ context.Context, coord fetchdomain.ModuleCoordinate, pv string) (callgraphdomain.CallGraphRecord, bool, error) {
+func (s *fakeCallGraphStore) GetCallGraphRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (callgraphdomain.CallGraphRecord, bool, error) {
 	if s.getErr != nil {
 		return callgraphdomain.CallGraphRecord{}, false, s.getErr
 	}
@@ -55,9 +57,9 @@ func (s *fakeCallGraphStore) FindCallees(_ context.Context, _ string, _ string) 
 var _ cgports.CallGraphStore = (*fakeCallGraphStore)(nil)
 var _ ports.DependencyLoader = (*store.CallGraphStoreAdapter)(nil)
 
-func coord(t *testing.T, path, ver string) fetchdomain.ModuleCoordinate {
+func coord(t *testing.T, path, ver string) coordinate.ModuleCoordinate {
 	t.Helper()
-	c, err := fetchdomain.NewModuleCoordinate(path, ver)
+	c, err := coordinate.NewModuleCoordinate(path, ver)
 	if err != nil {
 		t.Fatalf("NewModuleCoordinate: %v", err)
 	}
@@ -77,7 +79,7 @@ func TestAdapter_LoadCallGraphRecords_Found(t *testing.T) {
 	}
 
 	a := store.New(fs)
-	got, err := a.LoadCallGraphRecords(context.Background(), []fetchdomain.ModuleCoordinate{c}, "0.1.0")
+	got, err := a.LoadCallGraphRecords(context.Background(), []coordinate.ModuleCoordinate{c}, "0.1.0")
 	if err != nil {
 		t.Fatalf("LoadCallGraphRecords: %v", err)
 	}
@@ -91,7 +93,7 @@ func TestAdapter_LoadCallGraphRecords_Found(t *testing.T) {
 
 func TestAdapter_LoadCallGraphRecords_NotFound_Omitted(t *testing.T) {
 	a := store.New(&fakeCallGraphStore{})
-	got, err := a.LoadCallGraphRecords(context.Background(), []fetchdomain.ModuleCoordinate{
+	got, err := a.LoadCallGraphRecords(context.Background(), []coordinate.ModuleCoordinate{
 		coord(t, "example.com/missing", "v1.0.0"),
 	}, "0.1.0")
 	if err != nil {
@@ -106,7 +108,7 @@ func TestAdapter_LoadCallGraphRecords_StoreError(t *testing.T) {
 	storeErr := errors.New("database locked")
 	fs := &fakeCallGraphStore{getErr: storeErr}
 	a := store.New(fs)
-	_, err := a.LoadCallGraphRecords(context.Background(), []fetchdomain.ModuleCoordinate{
+	_, err := a.LoadCallGraphRecords(context.Background(), []coordinate.ModuleCoordinate{
 		coord(t, "example.com/dep", "v1.0.0"),
 	}, "0.1.0")
 	if err == nil {
@@ -143,7 +145,7 @@ func TestAdapter_LoadCallGraphRecords_MixedFoundAndMissing(t *testing.T) {
 	}
 
 	a := store.New(fs)
-	got, err := a.LoadCallGraphRecords(context.Background(), []fetchdomain.ModuleCoordinate{cFound, cMissing}, "0.1.0")
+	got, err := a.LoadCallGraphRecords(context.Background(), []coordinate.ModuleCoordinate{cFound, cMissing}, "0.1.0")
 	if err != nil {
 		t.Fatalf("LoadCallGraphRecords: %v", err)
 	}

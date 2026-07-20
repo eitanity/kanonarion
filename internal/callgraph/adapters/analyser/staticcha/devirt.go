@@ -8,8 +8,10 @@ import (
 	"log/slog"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
 )
@@ -42,7 +44,7 @@ import (
 func (a *Analyser) devirtualizeSingleImplementer(
 	ctx context.Context,
 	prog *ssa.Program,
-	coord fetchdomain.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 	fset *token.FileSet,
 	tempDir string,
 	nodes []domain.CallNode,
@@ -274,7 +276,7 @@ func implementerMethod(named *types.Named, ifaceMethod *types.Func) *types.Func 
 func (a *Analyser) devirtTargetNode(
 	prog *ssa.Program,
 	methodObj *types.Func,
-	coord fetchdomain.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 	fset *token.FileSet,
 	tempDir string,
 ) domain.CallNode {
@@ -289,7 +291,7 @@ func (a *Analyser) devirtTargetNode(
 // buildNode would have produced for the same method.
 func leafNodeFromFunc(
 	methodObj *types.Func,
-	coord fetchdomain.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 	fset *token.FileSet,
 	tempDir string,
 ) domain.CallNode {
@@ -342,7 +344,7 @@ func fnHasRealBody(fn *ssa.Function) bool {
 }
 
 // fnInModule reports whether fn belongs to a package in the analysed module.
-func fnInModule(fn *ssa.Function, coord fetchdomain.ModuleCoordinate) bool {
+func fnInModule(fn *ssa.Function, coord coordinate.ModuleCoordinate) bool {
 	if fn.Package() == nil || fn.Package().Pkg == nil {
 		return false
 	}

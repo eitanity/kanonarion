@@ -5,7 +5,8 @@ import (
 	"errors"
 	"testing"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/license/application"
 	"github.com/eitanity/kanonarion/internal/license/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -18,7 +19,7 @@ type compatFakeLicenseStore struct {
 	records map[string]domain.LicenseRecord // key = path@version
 }
 
-func (s *compatFakeLicenseStore) GetLicenseRecord(_ context.Context, coord fetchdomain.ModuleCoordinate, _ string) (domain.LicenseRecord, bool, error) {
+func (s *compatFakeLicenseStore) GetLicenseRecord(_ context.Context, coord coordinate.ModuleCoordinate, _ string) (domain.LicenseRecord, bool, error) {
 	key := coord.Path + "@" + coord.Version
 	r, ok := s.records[key]
 	return r, ok, nil
@@ -45,8 +46,8 @@ var _ walkports.WalkStore = (*compatFakeWalkStore)(nil)
 
 // -- tests --
 
-func makeCoord(path, version string) fetchdomain.ModuleCoordinate {
-	return fetchdomain.ModuleCoordinate{Path: path, Version: version}
+func makeCoord(path, version string) coordinate.ModuleCoordinate {
+	return coordinate.ModuleCoordinate{Path: path, Version: version}
 }
 
 // TestCheckCompatibilityForWalk_WalkNotFound verifies the resolved-vs-zero
@@ -358,7 +359,7 @@ func TestCheckCompatibilityForWalk_DeduplicatesWalkNodes(t *testing.T) {
 // outbound licence) as the implicit compatibility target.
 func TestCheckCompatibilityForWalk_EmptyTargetAdoptsRootLicence(t *testing.T) {
 	t.Parallel()
-	root := makeCoord("example.com/project", fetchdomain.LocalVersion)
+	root := makeCoord("example.com/project", coordinate.LocalVersion)
 	dep := makeCoord("example.com/dep", "v1.0.0")
 
 	walkStore := &compatFakeWalkStore{
@@ -408,7 +409,7 @@ func TestCheckCompatibilityForWalk_EmptyTargetAdoptsRootLicence(t *testing.T) {
 // zero result: it must fail with a recognisable error.
 func TestCheckCompatibilityForWalk_EmptyTargetWithoutRootRecordErrs(t *testing.T) {
 	t.Parallel()
-	root := makeCoord("example.com/project", fetchdomain.LocalVersion)
+	root := makeCoord("example.com/project", coordinate.LocalVersion)
 	uc := application.NewCheckCompatibilityUseCase(
 		&compatFakeLicenseStore{},
 		&compatFakeWalkStore{},
@@ -424,7 +425,7 @@ func TestCheckCompatibilityForWalk_EmptyTargetWithoutRootRecordErrs(t *testing.T
 // pass --target explicitly.
 func TestCheckCompatibilityForWalk_EmptyTargetWithUnclassifiedRootErrs(t *testing.T) {
 	t.Parallel()
-	root := makeCoord("example.com/project", fetchdomain.LocalVersion)
+	root := makeCoord("example.com/project", coordinate.LocalVersion)
 	licStore := &compatFakeLicenseStore{records: map[string]domain.LicenseRecord{
 		root.Path + "@" + root.Version: {
 			Coordinate:    root,

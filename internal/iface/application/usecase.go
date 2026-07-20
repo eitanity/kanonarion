@@ -8,6 +8,7 @@ import (
 	"log/slog"
 
 	"github.com/eitanity/kanonarion/internal/adapters/ziparchive"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	domain3 "github.com/eitanity/kanonarion/internal/iface/domain"
@@ -73,7 +74,7 @@ func NewExtractInterfaceUseCase(cfg Config) *ExtractInterfaceUseCase {
 
 // ExtractRequest is the input to Execute.
 type ExtractRequest struct {
-	Coordinate domain2.ModuleCoordinate
+	Coordinate coordinate.ModuleCoordinate
 	// Force re-extracts even if a record for this pipeline version exists.
 	Force bool
 }
@@ -179,7 +180,7 @@ func (uc *ExtractInterfaceUseCase) Execute(ctx context.Context, req ExtractReque
 
 func (uc *ExtractInterfaceUseCase) requireFetchRecord(
 	ctx context.Context,
-	coord domain2.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 ) (domain2.FactRecord, error) {
 	versions := []string{uc.fetchPipelineVersion, uc.localFetchPipelineVersion, uc.pipelineVersion}
 	seen := map[string]bool{}
@@ -202,7 +203,7 @@ func (uc *ExtractInterfaceUseCase) requireFetchRecord(
 func (uc *ExtractInterfaceUseCase) extractFromZip(
 	ctx context.Context,
 	log *slog.Logger,
-	coord domain2.ModuleCoordinate,
+	coord coordinate.ModuleCoordinate,
 	zipData []byte,
 ) (domain3.InterfaceRecord, error) {
 	if ctxErr := ctx.Err(); ctxErr != nil {

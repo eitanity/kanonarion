@@ -9,8 +9,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/extract/domain"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	exapp "github.com/eitanity/kanonarion/internal/example/application"
@@ -50,10 +51,10 @@ func (m *mockExampleUseCase) Execute(ctx context.Context, req exapp.ExtractReque
 
 // fakeSubprocessExecutor is a controllable SubprocessExecutor for tests.
 type fakeSubprocessExecutor struct {
-	mu       sync.Mutex
-	calls    [][]string // recorded arg slices per call
-	stderr   []byte
-	err      error
+	mu        sync.Mutex
+	calls     [][]string // recorded arg slices per call
+	stderr    []byte
+	err       error
 	onExecute func(args []string) // optional hook called under mu
 }
 
@@ -76,7 +77,7 @@ type fakeCallGraphReader struct {
 	err   error
 }
 
-func (f *fakeCallGraphReader) GetCallGraphRecord(ctx context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string) (cgdomain.CallGraphRecord, bool, error) {
+func (f *fakeCallGraphReader) GetCallGraphRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (cgdomain.CallGraphRecord, bool, error) {
 	return f.rec, f.found, f.err
 }
 
@@ -86,7 +87,7 @@ func newCallgraphAdapter(exec SubprocessExecutor, reader CallGraphReader) *Adapt
 
 func TestAdapterExtractor_Extract_License(t *testing.T) {
 	ctx := t.Context()
-	coord, _ := fetchdomain.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
+	coord, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
 
 	t.Run("license success", func(t *testing.T) {
 		lic := &mockLicenseUseCase{
@@ -176,7 +177,7 @@ func TestAdapterExtractor_Extract_License(t *testing.T) {
 
 func TestAdapterExtractor_Extract_Interface(t *testing.T) {
 	ctx := t.Context()
-	coord, _ := fetchdomain.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
+	coord, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
 
 	t.Run("interface success", func(t *testing.T) {
 		iface := &mockInterfaceUseCase{
@@ -263,7 +264,7 @@ func TestAdapterExtractor_Extract_Interface(t *testing.T) {
 
 func TestAdapterExtractor_Extract_CallGraph(t *testing.T) {
 	ctx := t.Context()
-	coord, _ := fetchdomain.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
+	coord, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
 
 	t.Run("exit 0 reads record and marks succeeded", func(t *testing.T) {
 		exec := &fakeSubprocessExecutor{}
@@ -480,7 +481,7 @@ func TestAdapterExtractor_CallGraph_WorkerConcurrency(t *testing.T) {
 			defer wg.Done()
 			sem <- struct{}{}
 			defer func() { <-sem }()
-			coord, _ := fetchdomain.NewModuleCoordinate("github.com/foo/mod", "v1.0.0")
+			coord, _ := coordinate.NewModuleCoordinate("github.com/foo/mod", "v1.0.0")
 			res, err := adapter.Extract(t.Context(), coord, "callgraph", false)
 			if err != nil {
 				t.Errorf("Extract failed: %v", err)
@@ -506,7 +507,7 @@ func TestAdapterExtractor_CallGraph_WorkerConcurrency(t *testing.T) {
 
 func TestAdapterExtractor_Extract_Example(t *testing.T) {
 	ctx := t.Context()
-	coord, _ := fetchdomain.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
+	coord, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
 
 	t.Run("example success", func(t *testing.T) {
 		ex := &mockExampleUseCase{
@@ -580,7 +581,7 @@ func TestAdapterExtractor_Extract_Example(t *testing.T) {
 // blank.
 func TestAdapterExtractor_FailureReason_Propagation(t *testing.T) {
 	ctx := t.Context()
-	coord, _ := fetchdomain.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
+	coord, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
 
 	t.Run("license failed with detail propagates detail", func(t *testing.T) {
 		lic := &mockLicenseUseCase{
@@ -794,7 +795,7 @@ func contains(s, sub string) bool { return strings.Contains(s, sub) }
 
 func TestAdapterExtractor_Extract_Misc(t *testing.T) {
 	ctx := t.Context()
-	coord, _ := fetchdomain.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
+	coord, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
 
 	t.Run("unknown stage", func(t *testing.T) {
 		adapter := NewAdapterExtractor(nil, nil, nil, nil, "", nil)

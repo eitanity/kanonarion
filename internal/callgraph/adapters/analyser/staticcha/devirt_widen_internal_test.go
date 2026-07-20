@@ -8,8 +8,10 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	"golang.org/x/tools/go/callgraph/cha"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
@@ -133,7 +135,7 @@ func TestDevirt_WidensToBuiltDependencyBody(t *testing.T) {
 	prog, fset := buildDepWidenProg(t, true)
 
 	a := New("0.1.0", "", slog.Default())
-	coord, err := fetchdomain.NewModuleCoordinate("example.com/analysed", "v0.0.0")
+	coord, err := coordinate.NewModuleCoordinate("example.com/analysed", "v0.0.0")
 	if err != nil {
 		t.Fatalf("coord: %v", err)
 	}
@@ -170,7 +172,7 @@ func TestDevirt_NoOpWhenDependencyBodyUnbuilt(t *testing.T) {
 	prog, fset := buildDepWidenProg(t, false)
 
 	a := New("0.1.0", "", slog.Default())
-	coord, err := fetchdomain.NewModuleCoordinate("example.com/analysed", "v0.0.0")
+	coord, err := coordinate.NewModuleCoordinate("example.com/analysed", "v0.0.0")
 	if err != nil {
 		t.Fatalf("coord: %v", err)
 	}
@@ -222,7 +224,7 @@ func TestRecordedCallerNodes(t *testing.T) {
 	prog, _ := buildDepWidenProg(t, true)
 	cg := cha.CallGraph(prog)
 
-	coord, err := fetchdomain.NewModuleCoordinate("example.com/analysed", "v0.0.0")
+	coord, err := coordinate.NewModuleCoordinate("example.com/analysed", "v0.0.0")
 	if err != nil {
 		t.Fatalf("coord: %v", err)
 	}

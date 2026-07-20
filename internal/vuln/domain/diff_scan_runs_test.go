@@ -3,15 +3,16 @@ package domain_test
 import (
 	"testing"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 )
 
-func coord(path string) fetchdomain.ModuleCoordinate {
-	return fetchdomain.ModuleCoordinate{Path: path, Version: "v1.0.0"}
+func coord(path string) coordinate.ModuleCoordinate {
+	return coordinate.ModuleCoordinate{Path: path, Version: "v1.0.0"}
 }
 
-func record(c fetchdomain.ModuleCoordinate, findings ...domain.VulnerabilityFinding) domain.VulnerabilityRecord {
+func record(c coordinate.ModuleCoordinate, findings ...domain.VulnerabilityFinding) domain.VulnerabilityRecord {
 	return domain.VulnerabilityRecord{Coordinate: c, WalkID: "walk-1", Findings: findings}
 }
 
@@ -121,7 +122,7 @@ func TestDiffScanRuns_PresentAndUnchanged(t *testing.T) {
 func TestCompareFindingDelta_VersionTiebreak(t *testing.T) {
 	mk := func(path, version, id string) domain.FindingDelta {
 		return domain.FindingDelta{
-			Coordinate: fetchdomain.ModuleCoordinate{Path: path, Version: version},
+			Coordinate: coordinate.ModuleCoordinate{Path: path, Version: version},
 			Finding:    domain.VulnerabilityFinding{ID: id},
 		}
 	}
@@ -152,8 +153,8 @@ func TestDiffScanRuns_SameModuleTwoVersionsStableOrder(t *testing.T) {
 	runA := domain.WalkScanRun{ID: "a", WalkID: "walk-1"}
 	runB := domain.WalkScanRun{ID: "b", WalkID: "walk-1"}
 
-	v2 := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v2.0.0"}
-	v1 := fetchdomain.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	v2 := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v2.0.0"}
+	v1 := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 
 	diff := domain.DiffScanRuns(runA, runB,
 		[]domain.VulnerabilityRecord{},

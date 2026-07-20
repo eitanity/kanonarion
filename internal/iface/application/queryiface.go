@@ -4,7 +4,8 @@ import (
 	"context"
 	"fmt"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/iface/domain"
 	ifaceports "github.com/eitanity/kanonarion/internal/iface/ports"
 )
@@ -20,7 +21,7 @@ func NewQueryInterfaceUseCase(store ifaceports.InterfaceStore) *QueryInterfaceUs
 }
 
 // GetInterfaceRecord retrieves the interface record for a module coordinate.
-func (uc *QueryInterfaceUseCase) GetInterfaceRecord(ctx context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string) (domain.InterfaceRecord, bool, error) {
+func (uc *QueryInterfaceUseCase) GetInterfaceRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain.InterfaceRecord, bool, error) {
 	rec, found, err := uc.store.GetInterfaceRecord(ctx, coord, pipelineVersion)
 	if err != nil {
 		return domain.InterfaceRecord{}, false, fmt.Errorf("getting interface record for %s: %w", coord, err)

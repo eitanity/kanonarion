@@ -4,9 +4,10 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/example/domain"
 	exampleports "github.com/eitanity/kanonarion/internal/example/ports"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 // QueryExamplesUseCase provides read-only access to stored example records.
@@ -20,7 +21,7 @@ func NewQueryExamplesUseCase(store exampleports.ExampleStore) *QueryExamplesUseC
 }
 
 // GetExampleRecord retrieves the example record for a module coordinate.
-func (uc *QueryExamplesUseCase) GetExampleRecord(ctx context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string) (domain.ExampleRecord, bool, error) {
+func (uc *QueryExamplesUseCase) GetExampleRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain.ExampleRecord, bool, error) {
 	rec, found, err := uc.store.GetExampleRecord(ctx, coord, pipelineVersion)
 	if err != nil {
 		return domain.ExampleRecord{}, false, fmt.Errorf("getting example record for %s: %w", coord, err)
@@ -47,7 +48,7 @@ func (uc *QueryExamplesUseCase) FindBySymbol(ctx context.Context, symbol, pipeli
 }
 
 // FindBySymbolInModule returns examples for a symbol scoped to a specific module@version.
-func (uc *QueryExamplesUseCase) FindBySymbolInModule(ctx context.Context, coord fetchdomain.ModuleCoordinate, symbol, pipelineVersion string) ([]exampleports.ExampleRef, error) {
+func (uc *QueryExamplesUseCase) FindBySymbolInModule(ctx context.Context, coord coordinate.ModuleCoordinate, symbol, pipelineVersion string) ([]exampleports.ExampleRef, error) {
 	refs, err := uc.store.FindBySymbolInModule(ctx, coord, symbol, pipelineVersion)
 	if err != nil {
 		return nil, fmt.Errorf("finding examples for symbol %q in %s: %w", symbol, coord, err)

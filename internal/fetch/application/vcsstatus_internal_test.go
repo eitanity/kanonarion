@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/adapters/ziparchive"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 )
@@ -42,7 +43,7 @@ func (genericFailVCS) CheckoutToDir(context.Context, string, string, string) err
 // "tool missing" status, not the generic "checkout could not run" status.
 func TestResolveGitRef_ToolMissing(t *testing.T) {
 	uc := &FetchModuleUseCase{vcs: toolMissingVCS{}}
-	coord := domain2.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 
 	_, status, _ := uc.resolveGitRef(context.Background(), slog.Default(), coord, ports.ModuleInfo{})
 	if status != domain2.UnverifiedVCSToolMissing {
@@ -52,7 +53,7 @@ func TestResolveGitRef_ToolMissing(t *testing.T) {
 
 func TestResolveGitRef_GenericFailureStaysNoVCS(t *testing.T) {
 	uc := &FetchModuleUseCase{vcs: genericFailVCS{}}
-	coord := domain2.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 
 	_, status, _ := uc.resolveGitRef(context.Background(), slog.Default(), coord, ports.ModuleInfo{})
 	if status != domain2.UnverifiedNoVCS {
@@ -65,7 +66,7 @@ func TestResolveGitRef_GenericFailureStaysNoVCS(t *testing.T) {
 // inferred-URL path, where the tool-less fake reports the absence honestly.
 func TestResolveGitRef_RejectsMaliciousOrigin(t *testing.T) {
 	uc := &FetchModuleUseCase{vcs: toolMissingVCS{}}
-	coord := domain2.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 	info := ports.ModuleInfo{Origin: &ports.ModuleOrigin{
 		URL:  `ext::sh -c "touch /tmp/pwned"`,
 		Hash: "--upload-pack=touch",
@@ -89,7 +90,7 @@ func TestResolveGitRef_RejectsMaliciousOrigin(t *testing.T) {
 // A well-formed proxy Origin on an allowlisted https host is still trusted.
 func TestResolveGitRef_AcceptsValidOrigin(t *testing.T) {
 	uc := &FetchModuleUseCase{vcs: toolMissingVCS{}}
-	coord := domain2.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 	info := ports.ModuleInfo{Origin: &ports.ModuleOrigin{
 		URL:  "https://github.com/foo/bar",
 		Ref:  "refs/tags/v1.0.0",
@@ -109,7 +110,7 @@ func TestResolveGitRef_AcceptsValidOrigin(t *testing.T) {
 // missing" status, and the detail carries the actionable message.
 func TestCrossVerify_ToolMissing(t *testing.T) {
 	uc := &FetchModuleUseCase{vcs: toolMissingVCS{}}
-	coord := domain2.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 
 	status, detail := uc.crossVerify(context.Background(), slog.Default(),
 		coord, "https://github.com/foo/bar", strings.Repeat("a", 40), domain2.ModuleHash{})
@@ -123,7 +124,7 @@ func TestCrossVerify_ToolMissing(t *testing.T) {
 
 func TestCrossVerify_GenericFailureStaysNoVCS(t *testing.T) {
 	uc := &FetchModuleUseCase{vcs: genericFailVCS{}}
-	coord := domain2.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 
 	status, _ := uc.crossVerify(context.Background(), slog.Default(),
 		coord, "https://github.com/foo/bar", strings.Repeat("a", 40), domain2.ModuleHash{})
@@ -152,18 +153,23 @@ func (v subdirLayoutVCS) ResolveTag(_ context.Context, _, _ string) (string, err
 
 func (v subdirLayoutVCS) CheckoutToDir(_ context.Context, _, _, dir string) error {
 	rootGoMod := "module " + v.rootModule + "\ngo 1.20\n"
-	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(rootGoMod), 0o600); err != nil {		return fmt.Errorf("writing root go.mod: %w", err)
+	if err := os.WriteFile(filepath.Join(dir, "go.mod"), []byte(rootGoMod), 0o600); err != nil {
+		return fmt.Errorf("writing root go.mod: %w", err)
 	}
 	// Root-level LICENSE (no LICENSE in subdir — proxy copies this into the zip).
-	if err := os.WriteFile(filepath.Join(dir, "LICENSE"), []byte("MIT License\n"), 0o600); err != nil {		return fmt.Errorf("writing root LICENSE: %w", err)
+	if err := os.WriteFile(filepath.Join(dir, "LICENSE"), []byte("MIT License\n"), 0o600); err != nil {
+		return fmt.Errorf("writing root LICENSE: %w", err)
 	}
 	sub := filepath.Join(dir, v.subdir)
-	if err := os.MkdirAll(sub, 0o750); err != nil {		return fmt.Errorf("creating subdir: %w", err)
+	if err := os.MkdirAll(sub, 0o750); err != nil {
+		return fmt.Errorf("creating subdir: %w", err)
 	}
 	subGoMod := "module " + v.subModule + "\ngo 1.20\n"
-	if err := os.WriteFile(filepath.Join(sub, "go.mod"), []byte(subGoMod), 0o600); err != nil {		return fmt.Errorf("writing sub go.mod: %w", err)
+	if err := os.WriteFile(filepath.Join(sub, "go.mod"), []byte(subGoMod), 0o600); err != nil {
+		return fmt.Errorf("writing sub go.mod: %w", err)
 	}
-	if err := os.WriteFile(filepath.Join(sub, "foo.go"), []byte("package foo\n"), 0o600); err != nil {		return fmt.Errorf("writing stub go file: %w", err)
+	if err := os.WriteFile(filepath.Join(sub, "foo.go"), []byte("package foo\n"), 0o600); err != nil {
+		return fmt.Errorf("writing stub go file: %w", err)
 	}
 	return nil
 }
@@ -176,7 +182,7 @@ func (v subdirLayoutVCS) CheckoutToDir(_ context.Context, _, _, dir string) erro
 // mirroring the modernc.org/gc/v3 layout where the proxy copies the root
 // LICENSE into the module zip via CreateFromVCS behaviour.
 func TestCrossVerify_MajorVersionSubdir_Verified(t *testing.T) {
-	coord := domain2.ModuleCoordinate{Path: "example.com/foo/v3", Version: "v3.1.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/foo/v3", Version: "v3.1.0"}
 
 	// Build a fixture directory that matches what subdirLayoutVCS.CheckoutToDir
 	// will write, then compute the expected hash from the subdir WITH the copied
@@ -213,7 +219,7 @@ func TestCrossVerify_MajorVersionSubdir_Verified(t *testing.T) {
 // directory hash differs from the expected (proxy) hash, proving the regression
 // test would have caught the bug before the fix.
 func TestCrossVerify_MajorVersionSubdir_RootHashMismatch(t *testing.T) {
-	coord := domain2.ModuleCoordinate{Path: "example.com/foo/v3", Version: "v3.1.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/foo/v3", Version: "v3.1.0"}
 
 	fixtureDir := t.TempDir()
 	vcs := subdirLayoutVCS{rootModule: "example.com/foo", subModule: coord.Path, subdir: "v3"}

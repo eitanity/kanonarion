@@ -8,7 +8,8 @@ import (
 	"testing/fstest"
 	"time"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/iface/adapters/extractor/godoc"
 	domain2 "github.com/eitanity/kanonarion/internal/iface/domain"
 )
@@ -21,9 +22,9 @@ func makeExtractor() *godoc.Extractor {
 	return godoc.New("0.1.0", fixedClock{t: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)})
 }
 
-func coord(t testing.TB) fetchdomain.ModuleCoordinate {
+func coord(t testing.TB) coordinate.ModuleCoordinate {
 	t.Helper()
-	c, err := fetchdomain.NewModuleCoordinate("example.com/m", "v1.0.0")
+	c, err := coordinate.NewModuleCoordinate("example.com/m", "v1.0.0")
 	if err != nil {
 		t.Fatal(err)
 	}

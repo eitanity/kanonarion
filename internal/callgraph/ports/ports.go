@@ -5,8 +5,9 @@ import (
 	"errors"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 // ErrModuleNotFetched is returned when extraction is attempted for a module
@@ -39,7 +40,7 @@ type CallGraphAnalyser interface {
 	// Failures that are a property of the module (load errors, partial parse)
 	// are returned in the record's OverallStatus; only infrastructure errors
 	// return a non-nil error.
-	Analyse(ctx context.Context, zipPath string, coord fetchdomain.ModuleCoordinate) (domain.CallGraphRecord, error)
+	Analyse(ctx context.Context, zipPath string, coord coordinate.ModuleCoordinate) (domain.CallGraphRecord, error)
 
 	// AnalyserMetadata returns the algorithm and version of this implementation.
 	AnalyserMetadata() AnalyserMetadata
@@ -53,7 +54,7 @@ type LocalCallGraphAnalyser interface {
 	// module path from the directory's go.mod. Module-property failures are
 	// reported via the record's OverallStatus; only infrastructure errors
 	// return a non-nil error.
-	AnalyseDir(ctx context.Context, dir string, coord fetchdomain.ModuleCoordinate) (domain.CallGraphRecord, error)
+	AnalyseDir(ctx context.Context, dir string, coord coordinate.ModuleCoordinate) (domain.CallGraphRecord, error)
 
 	// AnalyserMetadata returns the algorithm and version of this implementation.
 	AnalyserMetadata() AnalyserMetadata
@@ -68,7 +69,7 @@ type CallGraphStore interface {
 	// GetCallGraphRecord retrieves the record for the given coordinate and
 	// pipeline version. Returns (zero, false, nil) if not found.
 	// Returns ErrCallGraphIntegrity if the stored hash does not verify.
-	GetCallGraphRecord(ctx context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string) (domain.CallGraphRecord, bool, error)
+	GetCallGraphRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain.CallGraphRecord, bool, error)
 
 	// ListCallGraphRecords returns summaries matching the filter, ordered by
 	// extracted_at descending.

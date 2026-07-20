@@ -12,13 +12,15 @@ import (
 	"sort"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/spf13/cobra"
 	"golang.org/x/mod/modfile"
 
 	configstore "github.com/eitanity/kanonarion/internal/config/adapters/store/yaml"
 	"github.com/eitanity/kanonarion/internal/config/domain"
 	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	walkadapterpolicy "github.com/eitanity/kanonarion/internal/walk/adapters/policy/localfile"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -42,16 +44,16 @@ func parseModuleArg(arg string) (path, version string, err error) {
 	return arg[:at], arg[at+1:], nil
 }
 
-func parseCoordinate(arg string) (fetchdomain.ModuleCoordinate, error) {
+func parseCoordinate(arg string) (coordinate.ModuleCoordinate, error) {
 	at := strings.LastIndex(arg, "@")
 	if at < 0 {
-		return fetchdomain.ModuleCoordinate{}, fmt.Errorf("expected module@version, got %q", arg)
+		return coordinate.ModuleCoordinate{}, fmt.Errorf("expected module@version, got %q", arg)
 	}
 	path := arg[:at]
 	version := arg[at+1:]
-	coord, err := fetchdomain.NewModuleCoordinate(path, version)
+	coord, err := coordinate.NewModuleCoordinate(path, version)
 	if err != nil {
-		return fetchdomain.ModuleCoordinate{}, fmt.Errorf("invalid module coordinate: %w", err)
+		return coordinate.ModuleCoordinate{}, fmt.Errorf("invalid module coordinate: %w", err)
 	}
 	return coord, nil
 }
@@ -130,7 +132,6 @@ func findPolicyFile() string {
 		dir = parent
 	}
 }
-
 
 // readPackageModules runs "go list -deps" over pattern and returns the module
 // coordinates ("path@version") of every non-standard-library package reachable
@@ -601,7 +602,7 @@ func resolveModcacheMode(flagVal, gomodPath string) error {
 // than aborting. This gate collects those nodes and returns an ExitIntegrity
 // error naming them, so `audit`/`sbom --package` exit non-zero on any
 // verification failure. It is a no-op when mode is off or the walk is clean.
-func modcacheWalkGate(rec walkdomain.WalkRecord, local fetchdomain.ModuleCoordinate) error {
+func modcacheWalkGate(rec walkdomain.WalkRecord, local coordinate.ModuleCoordinate) error {
 	if !modcacheMode {
 		return nil
 	}
@@ -637,7 +638,7 @@ func modcacheWalkGate(rec walkdomain.WalkRecord, local fetchdomain.ModuleCoordin
 // failures, never on ordinary network fetch failures, which stay tolerated as a
 // partial walk. It is a no-op in --from-modcache mode (modcacheWalkGate covers
 // that path) and when the walk is clean.
-func goSumWalkGate(rec walkdomain.WalkRecord, local fetchdomain.ModuleCoordinate) error {
+func goSumWalkGate(rec walkdomain.WalkRecord, local coordinate.ModuleCoordinate) error {
 	if modcacheMode {
 		return nil
 	}

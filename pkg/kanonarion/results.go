@@ -2,6 +2,7 @@ package kanonarion
 
 import (
 	callgraphdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	directivedomain "github.com/eitanity/kanonarion/internal/directive/domain"
 	exampledomain "github.com/eitanity/kanonarion/internal/example/domain"
 	extractdomain "github.com/eitanity/kanonarion/internal/extract/domain"
@@ -31,7 +32,7 @@ import (
 // Stability: result type (received by consumers); unstable pre-v1. Fields may
 // be added within a major; consumers must not assume field exhaustiveness
 // (§4).
-type ModuleCoordinate = fetchdomain.ModuleCoordinate
+type ModuleCoordinate = coordinate.ModuleCoordinate
 
 // FactRecord is the persisted, tamper-evident fetch result for a module: its
 // hashes, git provenance, and verification outcome. It is the read-shaped,

@@ -5,6 +5,7 @@ import (
 	"fmt"
 
 	"github.com/eitanity/kanonarion/internal/audit"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 )
@@ -47,7 +48,7 @@ func (uc *ServeModuleUseCase) WithAudit(sink ports.AuditSink) *ServeModuleUseCas
 // ServeRequest is the input to Serve.
 type ServeRequest struct {
 	// Coordinate is the module to resolve and serve.
-	Coordinate domain2.ModuleCoordinate
+	Coordinate coordinate.ModuleCoordinate
 	// SkipVCSVerify skips the git cross-verification step on a fetch; sumdb
 	// verification still runs. Forwarded to the fetch pipeline unchanged.
 	SkipVCSVerify bool

@@ -5,14 +5,15 @@ import (
 	"strings"
 	"testing"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	ifacedomain "github.com/eitanity/kanonarion/internal/iface/domain"
 	ifaceports "github.com/eitanity/kanonarion/internal/iface/ports"
 )
 
-func makeIfaceCoord(t *testing.T) fetchdomain.ModuleCoordinate {
+func makeIfaceCoord(t *testing.T) coordinate.ModuleCoordinate {
 	t.Helper()
-	c, err := fetchdomain.NewModuleCoordinate("example.com/iface", "v2.0.0")
+	c, err := coordinate.NewModuleCoordinate("example.com/iface", "v2.0.0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -236,7 +237,7 @@ func TestPrintSymbolRefs_NoSignature(t *testing.T) {
 }
 
 func TestPrintRecordText_Full(t *testing.T) {
-	coord, _ := fetchdomain.NewModuleCoordinate("example.com/iface", "v1.0.0")
+	coord, _ := coordinate.NewModuleCoordinate("example.com/iface", "v1.0.0")
 	r := ifacedomain.InterfaceRecord{
 		Coordinate: coord,
 		Packages: []ifacedomain.PackageInterface{

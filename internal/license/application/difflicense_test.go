@@ -5,13 +5,14 @@ import (
 	"errors"
 	"testing"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/license/application"
 	"github.com/eitanity/kanonarion/internal/license/domain"
 )
 
-func diffCoord(path, ver string) fetchdomain.ModuleCoordinate {
-	return fetchdomain.ModuleCoordinate{Path: path, Version: ver}
+func diffCoord(path, ver string) coordinate.ModuleCoordinate {
+	return coordinate.ModuleCoordinate{Path: path, Version: ver}
 }
 
 func seedDiffRecord(t *testing.T, store *fakeLicenseStore, path, ver, spdx string, files ...domain.LicenseFileEntry) {

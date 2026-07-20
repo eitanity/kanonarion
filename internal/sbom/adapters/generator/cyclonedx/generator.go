@@ -15,6 +15,8 @@ import (
 
 	cdx "github.com/CycloneDX/cyclonedx-go"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
 	"github.com/eitanity/kanonarion/internal/sbom/domain"
@@ -51,7 +53,7 @@ func (g *Generator) GeneratorMetadata() ports.GeneratorMetadata {
 func (g *Generator) Generate(
 	ctx context.Context,
 	walk walkdomain.WalkRecord,
-	licenses map[fetchdomain.ModuleCoordinate]licensedomain.LicenseRecord,
+	licenses map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord,
 	vulnerabilities []vulndomain.VulnerabilityRecord,
 	req ports.GenerateRequest,
 ) (domain.SBOMRecord, error) {
@@ -88,7 +90,7 @@ func (g *Generator) Generate(
 // buildBOM constructs the CycloneDX BOM document from the supplied facts.
 func (g *Generator) buildBOM(
 	walk walkdomain.WalkRecord,
-	licenses map[fetchdomain.ModuleCoordinate]licensedomain.LicenseRecord,
+	licenses map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord,
 	vulnerabilities []vulndomain.VulnerabilityRecord,
 	req ports.GenerateRequest,
 ) (*cdx.BOM, bool, error) {
@@ -202,7 +204,7 @@ func (g *Generator) buildBOM(
 }
 
 // moduleRef projects a fetch ModuleCoordinate onto the sbom-domain identity.
-func moduleRef(coord fetchdomain.ModuleCoordinate) domain.ModuleRef {
+func moduleRef(coord coordinate.ModuleCoordinate) domain.ModuleRef {
 	return domain.ModuleRef{Path: coord.Path, Version: coord.Version}
 }
 
@@ -480,8 +482,8 @@ type mainComponentOptions struct {
 // published module carries a real semver target and is left as a library at its
 // own version. A subject that is the local main module is always an application;
 // version and licence overrides are applied only when the caller supplied them.
-func mainComponentOptionsFor(target fetchdomain.ModuleCoordinate, req ports.GenerateRequest) mainComponentOptions {
-	if target.Version != fetchdomain.LocalVersion {
+func mainComponentOptionsFor(target coordinate.ModuleCoordinate, req ports.GenerateRequest) mainComponentOptions {
+	if target.Version != coordinate.LocalVersion {
 		return mainComponentOptions{}
 	}
 	return mainComponentOptions{
@@ -494,8 +496,8 @@ func mainComponentOptionsFor(target fetchdomain.ModuleCoordinate, req ports.Gene
 // moduleComponent builds the metadata primary component for the walk target,
 // applying any subject-specific overrides (version, licence, application type).
 func moduleComponent(
-	coord fetchdomain.ModuleCoordinate,
-	licenses map[fetchdomain.ModuleCoordinate]licensedomain.LicenseRecord,
+	coord coordinate.ModuleCoordinate,
+	licenses map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord,
 	pipelineVersion string,
 	opts mainComponentOptions,
 ) *cdx.Component {
@@ -607,7 +609,7 @@ func modulePURL(mod domain.ModuleRef) string {
 // deterministic GeneratedAt rather than the zero time.
 func deterministicTimestamp(
 	walk walkdomain.WalkRecord,
-	licenses map[fetchdomain.ModuleCoordinate]licensedomain.LicenseRecord,
+	licenses map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord,
 ) time.Time {
 	var t time.Time
 	for _, lic := range licenses {

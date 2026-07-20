@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	callgraphdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
 )
@@ -27,7 +29,7 @@ func New() *Analyser {
 // whether the symbol was found reachable).
 func (a *Analyser) Analyse(
 	ctx context.Context,
-	targetCoord fetchdomain.ModuleCoordinate,
+	targetCoord coordinate.ModuleCoordinate,
 	targetSymbols []ports.SymbolReference,
 	callGraphLoader ports.CallGraphLoader,
 ) (domain.ReachabilityResult, error) {

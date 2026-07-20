@@ -9,7 +9,8 @@ import (
 	"testing"
 	"time"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
 	licenseports "github.com/eitanity/kanonarion/internal/license/ports"
 	"github.com/eitanity/kanonarion/internal/sbom/application"
@@ -43,7 +44,7 @@ const testLicensePipelineVersion = "1.0.0"
 type fakeLicenseStore struct {
 	// records is keyed by coordinate; entries are only served when the lookup
 	// names pipelineVersion, mirroring the real store's exact-match semantics.
-	records         map[fetchdomain.ModuleCoordinate]licensedomain.LicenseRecord
+	records         map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord
 	pipelineVersion string
 	err             error
 }
@@ -51,7 +52,7 @@ type fakeLicenseStore struct {
 func (f *fakeLicenseStore) PutLicenseRecord(_ context.Context, _ licensedomain.LicenseRecord) error {
 	return nil
 }
-func (f *fakeLicenseStore) GetLicenseRecord(_ context.Context, coord fetchdomain.ModuleCoordinate, pv string) (licensedomain.LicenseRecord, bool, error) {
+func (f *fakeLicenseStore) GetLicenseRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (licensedomain.LicenseRecord, bool, error) {
 	if f.err != nil {
 		return licensedomain.LicenseRecord{}, false, f.err
 	}
@@ -76,7 +77,7 @@ type fakeVulnStore struct {
 func (f *fakeVulnStore) PutVulnerabilityRecord(_ context.Context, _ vulndomain.VulnerabilityRecord) error {
 	return nil
 }
-func (f *fakeVulnStore) GetVulnerabilityRecord(_ context.Context, _ fetchdomain.ModuleCoordinate, _ string, _ vulndomain.DatabaseSnapshot) (vulndomain.VulnerabilityRecord, bool, error) {
+func (f *fakeVulnStore) GetVulnerabilityRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ vulndomain.DatabaseSnapshot) (vulndomain.VulnerabilityRecord, bool, error) {
 	return vulndomain.VulnerabilityRecord{}, false, nil
 }
 func (f *fakeVulnStore) ListVulnerabilityRecordsByFindingID(_ context.Context, _ string) ([]vulndomain.VulnerabilityRecord, error) {
@@ -109,13 +110,13 @@ func (f *fakeVulnStore) GetLatestDatabaseSnapshot(_ context.Context) (vulndomain
 func (f *fakeVulnStore) ListDatabaseSnapshots(_ context.Context) ([]vulndomain.DatabaseSnapshot, error) {
 	return nil, nil
 }
-func (f *fakeVulnStore) GetLatestVulnerabilityRecord(_ context.Context, _ fetchdomain.ModuleCoordinate, _ string) (vulndomain.VulnerabilityRecord, bool, error) {
+func (f *fakeVulnStore) GetLatestVulnerabilityRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string) (vulndomain.VulnerabilityRecord, bool, error) {
 	return vulndomain.VulnerabilityRecord{}, false, nil
 }
-func (f *fakeVulnStore) GetLatestVulnerabilityRecordForWalk(_ context.Context, _ fetchdomain.ModuleCoordinate, _ string, _ string) (vulndomain.VulnerabilityRecord, bool, error) {
+func (f *fakeVulnStore) GetLatestVulnerabilityRecordForWalk(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ string) (vulndomain.VulnerabilityRecord, bool, error) {
 	return vulndomain.VulnerabilityRecord{}, false, nil
 }
-func (f *fakeVulnStore) ListVulnerabilityRecordsForModule(_ context.Context, _ fetchdomain.ModuleCoordinate, _ string) ([]vulndomain.VulnerabilityRecord, error) {
+func (f *fakeVulnStore) ListVulnerabilityRecordsForModule(_ context.Context, _ coordinate.ModuleCoordinate, _ string) ([]vulndomain.VulnerabilityRecord, error) {
 	return nil, nil
 }
 
@@ -146,10 +147,10 @@ type fakeSBOMGenerator struct {
 	err              error
 	capturedNodes    []walkdomain.GraphNode
 	capturedEdges    []walkdomain.GraphEdge
-	capturedLicenses map[fetchdomain.ModuleCoordinate]licensedomain.LicenseRecord
+	capturedLicenses map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord
 }
 
-func (f *fakeSBOMGenerator) Generate(_ context.Context, walk walkdomain.WalkRecord, licenses map[fetchdomain.ModuleCoordinate]licensedomain.LicenseRecord, _ []vulndomain.VulnerabilityRecord, _ ports.GenerateRequest) (domain.SBOMRecord, error) {
+func (f *fakeSBOMGenerator) Generate(_ context.Context, walk walkdomain.WalkRecord, licenses map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord, _ []vulndomain.VulnerabilityRecord, _ ports.GenerateRequest) (domain.SBOMRecord, error) {
 	f.capturedNodes = walk.Graph.Nodes
 	f.capturedEdges = walk.Graph.Edges
 	f.capturedLicenses = licenses
@@ -166,7 +167,7 @@ func (f fakeClock) Now() time.Time { return time.Date(2026, 1, 1, 0, 0, 0, 0, ti
 // ---- helpers ----
 
 func makeWalk(id string) walkdomain.WalkRecord {
-	coord, _ := fetchdomain.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	coord, _ := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
 	return walkdomain.WalkRecord{
 		ID: id,
 		Graph: walkdomain.Graph{
@@ -176,7 +177,7 @@ func makeWalk(id string) walkdomain.WalkRecord {
 	}
 }
 
-func makeMultiNodeWalk(id string, coords []fetchdomain.ModuleCoordinate) walkdomain.WalkRecord {
+func makeMultiNodeWalk(id string, coords []coordinate.ModuleCoordinate) walkdomain.WalkRecord {
 	nodes := make([]walkdomain.GraphNode, len(coords))
 	for i, c := range coords {
 		nodes[i] = walkdomain.GraphNode{Coordinate: c}
@@ -311,12 +312,12 @@ func TestGenerateSBOM_Force(t *testing.T) {
 // binary's import closure: only listed modules reach the generator, the cache is
 // bypassed, and the scoped result is not persisted.
 func TestGenerateSBOM_AllowList(t *testing.T) {
-	coordA, _ := fetchdomain.NewModuleCoordinate("example.com/a", "v1.0.0")
-	coordB, _ := fetchdomain.NewModuleCoordinate("example.com/b", "v2.0.0")
-	coordC, _ := fetchdomain.NewModuleCoordinate("example.com/c", "v3.0.0")
+	coordA, _ := coordinate.NewModuleCoordinate("example.com/a", "v1.0.0")
+	coordB, _ := coordinate.NewModuleCoordinate("example.com/b", "v2.0.0")
+	coordC, _ := coordinate.NewModuleCoordinate("example.com/c", "v3.0.0")
 
 	// Walk has three modules; only A and B are in the binary's import closure.
-	ws := &fakeWalkStore{walk: makeMultiNodeWalk("walk-1", []fetchdomain.ModuleCoordinate{coordA, coordB, coordC})}
+	ws := &fakeWalkStore{walk: makeMultiNodeWalk("walk-1", []coordinate.ModuleCoordinate{coordA, coordB, coordC})}
 
 	// Cache has a hit — AllowList should bypass it.
 	cached := domain.SBOMRecord{ID: "sbom-cached", WalkID: "walk-1"}
@@ -327,7 +328,7 @@ func TestGenerateSBOM_AllowList(t *testing.T) {
 
 	_, err := uc.Generate(t.Context(), application.SBOMRequest{
 		WalkID:    "walk-1",
-		AllowList: []fetchdomain.ModuleCoordinate{coordA, coordB},
+		AllowList: []coordinate.ModuleCoordinate{coordA, coordB},
 	})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -337,7 +338,7 @@ func TestGenerateSBOM_AllowList(t *testing.T) {
 	if len(gen.capturedNodes) != 2 {
 		t.Fatalf("generator received %d nodes, want 2", len(gen.capturedNodes))
 	}
-	nodeCoords := map[fetchdomain.ModuleCoordinate]bool{}
+	nodeCoords := map[coordinate.ModuleCoordinate]bool{}
 	for _, n := range gen.capturedNodes {
 		nodeCoords[n.Coordinate] = true
 	}
@@ -359,12 +360,12 @@ func TestGenerateSBOM_AllowList(t *testing.T) {
 // must keep it anyway; otherwise a --package SBOM silently omits the standard
 // library (and the --stdlib-from-gomod-pinned Go version the release depends on).
 func TestGenerateSBOM_AllowListKeepsStdlibNode(t *testing.T) {
-	coordA, _ := fetchdomain.NewModuleCoordinate("example.com/a", "v1.0.0")
-	stdlib, _ := fetchdomain.NewModuleCoordinate(walkdomain.StdlibModulePath, "v1.22")
+	coordA, _ := coordinate.NewModuleCoordinate("example.com/a", "v1.0.0")
+	stdlib, _ := coordinate.NewModuleCoordinate(walkdomain.StdlibModulePath, "v1.22")
 
 	// Walk carries A, the stdlib node, and a root->stdlib edge, mirroring what
 	// injectStdlib produces. The allow-list holds only A (stdlib is never listed).
-	walk := makeMultiNodeWalk("walk-1", []fetchdomain.ModuleCoordinate{coordA, stdlib})
+	walk := makeMultiNodeWalk("walk-1", []coordinate.ModuleCoordinate{coordA, stdlib})
 	walk.Graph.Edges = []walkdomain.GraphEdge{{From: coordA, To: stdlib}}
 	ws := &fakeWalkStore{walk: walk}
 	gen := &fakeSBOMGenerator{record: domain.SBOMRecord{ID: "sbom-scoped", WalkID: "walk-1", Content: []byte(`{}`)}}
@@ -372,12 +373,12 @@ func TestGenerateSBOM_AllowListKeepsStdlibNode(t *testing.T) {
 
 	if _, err := uc.Generate(t.Context(), application.SBOMRequest{
 		WalkID:    "walk-1",
-		AllowList: []fetchdomain.ModuleCoordinate{coordA},
+		AllowList: []coordinate.ModuleCoordinate{coordA},
 	}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	got := map[fetchdomain.ModuleCoordinate]bool{}
+	got := map[coordinate.ModuleCoordinate]bool{}
 	for _, n := range gen.capturedNodes {
 		got[n.Coordinate] = true
 	}
@@ -397,14 +398,14 @@ func TestGenerateSBOM_AllowListKeepsStdlibNode(t *testing.T) {
 // rqlite/go-sqlite3), losing its whole capability and licence surface even
 // though it is linked into the binary.
 func TestGenerateSBOM_AllowListKeepsReplaceToForkNode(t *testing.T) {
-	orig, _ := fetchdomain.NewModuleCoordinate("github.com/mattn/go-sqlite3", "v1.14.44")
-	fork, _ := fetchdomain.NewModuleCoordinate("github.com/rqlite/go-sqlite3", "v1.47.0")
-	rootDep, _ := fetchdomain.NewModuleCoordinate("example.com/a", "v1.0.0")
+	orig, _ := coordinate.NewModuleCoordinate("github.com/mattn/go-sqlite3", "v1.14.44")
+	fork, _ := coordinate.NewModuleCoordinate("github.com/rqlite/go-sqlite3", "v1.47.0")
+	rootDep, _ := coordinate.NewModuleCoordinate("example.com/a", "v1.0.0")
 
 	// The graph carries the fork node keyed by its replacement coordinate, with
 	// the original require coordinate in OriginalCoordinate, plus an edge from a
 	// root dep keyed by the replacement path (how the resolver records edges).
-	walk := makeMultiNodeWalk("walk-1", []fetchdomain.ModuleCoordinate{rootDep, fork})
+	walk := makeMultiNodeWalk("walk-1", []coordinate.ModuleCoordinate{rootDep, fork})
 	walk.Graph.Nodes[1].OriginalCoordinate = orig
 	walk.Graph.Edges = []walkdomain.GraphEdge{{From: rootDep, To: fork}}
 	ws := &fakeWalkStore{walk: walk}
@@ -414,12 +415,12 @@ func TestGenerateSBOM_AllowListKeepsReplaceToForkNode(t *testing.T) {
 	// The allow-list holds the ORIGINAL coordinate, as `go list -deps` reports it.
 	if _, err := uc.Generate(t.Context(), application.SBOMRequest{
 		WalkID:    "walk-1",
-		AllowList: []fetchdomain.ModuleCoordinate{rootDep, orig},
+		AllowList: []coordinate.ModuleCoordinate{rootDep, orig},
 	}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	got := map[fetchdomain.ModuleCoordinate]bool{}
+	got := map[coordinate.ModuleCoordinate]bool{}
 	for _, n := range gen.capturedNodes {
 		got[n.Coordinate] = true
 	}
@@ -436,11 +437,11 @@ func TestGenerateSBOM_AllowListKeepsReplaceToForkNode(t *testing.T) {
 // two diverge, looking up under the SBOM version misses every record and the
 // generated SBOM silently carries no licences.
 func TestGenerateSBOM_LooksUpLicencesUnderLicencePipelineVersion(t *testing.T) {
-	coord, _ := fetchdomain.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	coord, _ := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
 	ws := &fakeWalkStore{walk: makeWalk("walk-1")}
 	ls := &fakeLicenseStore{
 		pipelineVersion: testLicensePipelineVersion,
-		records: map[fetchdomain.ModuleCoordinate]licensedomain.LicenseRecord{
+		records: map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord{
 			coord: {Coordinate: coord, PrimarySPDX: "MIT", PipelineVersion: testLicensePipelineVersion},
 		},
 	}
@@ -463,10 +464,10 @@ func TestGenerateSBOM_LooksUpLicencesUnderLicencePipelineVersion(t *testing.T) {
 // A scoped request prunes edges whose endpoints fall outside the allow-list,
 // so the generated graph never references a component that was filtered out.
 func TestGenerateSBOM_AllowListPrunesDanglingEdges(t *testing.T) {
-	coordA, _ := fetchdomain.NewModuleCoordinate("example.com/a", "v1.0.0")
-	coordB, _ := fetchdomain.NewModuleCoordinate("example.com/b", "v2.0.0")
+	coordA, _ := coordinate.NewModuleCoordinate("example.com/a", "v1.0.0")
+	coordB, _ := coordinate.NewModuleCoordinate("example.com/b", "v2.0.0")
 
-	walk := makeMultiNodeWalk("walk-1", []fetchdomain.ModuleCoordinate{coordA, coordB})
+	walk := makeMultiNodeWalk("walk-1", []coordinate.ModuleCoordinate{coordA, coordB})
 	// A depends on B; scoping to {A} must drop both node B and the A->B edge.
 	walk.Graph.Edges = []walkdomain.GraphEdge{{From: coordA, To: coordB}}
 	ws := &fakeWalkStore{walk: walk}
@@ -475,7 +476,7 @@ func TestGenerateSBOM_AllowListPrunesDanglingEdges(t *testing.T) {
 
 	if _, err := uc.Generate(t.Context(), application.SBOMRequest{
 		WalkID:    "walk-1",
-		AllowList: []fetchdomain.ModuleCoordinate{coordA},
+		AllowList: []coordinate.ModuleCoordinate{coordA},
 	}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

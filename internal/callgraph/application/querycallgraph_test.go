@@ -5,10 +5,11 @@ import (
 	"errors"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/callgraph/application"
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 // queryCGFakeStore is a minimal CallGraphStore for QueryCallGraphUseCase tests.
@@ -32,7 +33,7 @@ func (s *queryCGFakeStore) PutCallGraphRecord(_ context.Context, r domain.CallGr
 	return nil
 }
 
-func (s *queryCGFakeStore) GetCallGraphRecord(_ context.Context, coord fetchdomain.ModuleCoordinate, pv string) (domain.CallGraphRecord, bool, error) {
+func (s *queryCGFakeStore) GetCallGraphRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (domain.CallGraphRecord, bool, error) {
 	if s.getErr != nil {
 		return domain.CallGraphRecord{}, false, s.getErr
 	}
@@ -61,7 +62,7 @@ func (s *queryCGFakeStore) FindCallees(_ context.Context, sym, _ string) ([]cgpo
 var _ cgports.CallGraphStore = (*queryCGFakeStore)(nil)
 
 func TestQueryCallGraphUseCase_GetCallGraphRecord(t *testing.T) {
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
 	store := &queryCGFakeStore{}
 	_ = store.PutCallGraphRecord(context.Background(), domain.CallGraphRecord{
 		Coordinate:      coord,
@@ -83,7 +84,7 @@ func TestQueryCallGraphUseCase_GetCallGraphRecord(t *testing.T) {
 }
 
 func TestQueryCallGraphUseCase_GetCallGraphRecord_NotFound(t *testing.T) {
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
 	uc := application.NewQueryCallGraphUseCase(&queryCGFakeStore{})
 
 	_, found, err := uc.GetCallGraphRecord(context.Background(), coord, "0.1.0")
@@ -99,7 +100,7 @@ func TestQueryCallGraphUseCase_GetCallGraphRecord_StoreError(t *testing.T) {
 	storeErr := errors.New("db failure")
 	uc := application.NewQueryCallGraphUseCase(&queryCGFakeStore{getErr: storeErr})
 
-	coord := fetchdomain.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
 	_, _, err := uc.GetCallGraphRecord(context.Background(), coord, "0.1.0")
 	if !errors.Is(err, storeErr) {
 		t.Errorf("got %v, want wrapping %v", err, storeErr)

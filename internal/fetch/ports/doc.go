@@ -11,5 +11,5 @@
 // fetch is the root context: BlobStore, FactStore, and Clock are *defined*
 // here and reused by the other contexts (iface, callgraph, example, license,
 // extract, vuln, sbom) rather than re-declared in their own ports packages.
-// Module identity is fetch/domain.ModuleCoordinate.
+// Module identity is coordinate.ModuleCoordinate.
 package ports

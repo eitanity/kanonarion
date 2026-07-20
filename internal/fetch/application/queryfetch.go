@@ -4,6 +4,8 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 )
@@ -19,7 +21,7 @@ func NewQueryFetchUseCase(store ports.FactStore) *QueryFetchUseCase {
 }
 
 // GetFetchRecord retrieves the fact record for the given coordinate and pipeline version.
-func (uc *QueryFetchUseCase) GetFetchRecord(ctx context.Context, coord domain.ModuleCoordinate, pipelineVersion string) (domain.FactRecord, bool, error) {
+func (uc *QueryFetchUseCase) GetFetchRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain.FactRecord, bool, error) {
 	rec, found, err := uc.store.GetFetchRecord(ctx, coord, pipelineVersion)
 	if err != nil {
 		return domain.FactRecord{}, false, fmt.Errorf("getting fetch record for %s: %w", coord, err)

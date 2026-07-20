@@ -11,6 +11,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"golang.org/x/tools/go/callgraph/cha"
 	"golang.org/x/tools/go/packages"
@@ -54,7 +55,7 @@ func (a *Analyser) logMem(ctx context.Context, phase string) {
 }
 
 // Analyse extracts the call graph from a module zip using CHA.
-func (a *Analyser) Analyse(ctx context.Context, zipPath string, coord fetchdomain.ModuleCoordinate) (domain.CallGraphRecord, error) {
+func (a *Analyser) Analyse(ctx context.Context, zipPath string, coord coordinate.ModuleCoordinate) (domain.CallGraphRecord, error) {
 	a.logMem(ctx, "start")
 	tempDir, err := os.MkdirTemp("", "kanonarion-cg-*")
 	if err != nil {
@@ -88,7 +89,7 @@ func (a *Analyser) Analyse(ctx context.Context, zipPath string, coord fetchdomai
 // callers/callees for its own internal packages. coord.Path must be the
 // module path declared in the directory's go.mod; coord.Version is a
 // synthetic local version (e.g. "v0.0.0").
-func (a *Analyser) AnalyseDir(ctx context.Context, dir string, coord fetchdomain.ModuleCoordinate) (domain.CallGraphRecord, error) {
+func (a *Analyser) AnalyseDir(ctx context.Context, dir string, coord coordinate.ModuleCoordinate) (domain.CallGraphRecord, error) {
 	a.logMem(ctx, "start")
 	// Cancellation is observed inside analyseDir (packages.Load honours ctx,
 	// plus explicit ctx.Err checkpoints), so no pre-check is needed here.
@@ -99,7 +100,7 @@ func (a *Analyser) AnalyseDir(ctx context.Context, dir string, coord fetchdomain
 // packages from dir, build SSA, run CHA, and walk the graph into a
 // CallGraphRecord. dir is either an extracted-zip temp dir (Analyse) or a
 // local working tree (AnalyseDir).
-func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord fetchdomain.ModuleCoordinate) (domain.CallGraphRecord, error) {
+func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord coordinate.ModuleCoordinate) (domain.CallGraphRecord, error) {
 	fset := token.NewFileSet()
 
 	envCleanup, err := a.setupGoEnv(ctx, tempDir)
@@ -251,7 +252,7 @@ func artifactKind(targetPkgs []*ssa.Package) domain.ArtifactKind {
 // is the fidelity the module reached before failing: FAILED when nothing usable
 // loaded, METADATA_ONLY when package metadata loaded but no SSA was built, and
 // Unknown for a transient outcome (cancellation) that makes no fidelity claim.
-func (a *Analyser) failRecord(coord fetchdomain.ModuleCoordinate, status domain.CallGraphStatus, completeness domain.CompletenessLevel, detail string) domain.CallGraphRecord {
+func (a *Analyser) failRecord(coord coordinate.ModuleCoordinate, status domain.CallGraphStatus, completeness domain.CompletenessLevel, detail string) domain.CallGraphRecord {
 	return domain.CallGraphRecord{
 		SchemaVersion:   domain.CallGraphSchemaVersion,
 		Ecosystem:       fetchdomain.EcosystemGo,

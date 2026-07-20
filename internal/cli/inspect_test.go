@@ -15,9 +15,9 @@ import (
 // clean verdict is the absence-as-answer defect class.
 func TestInspectSummaryStatus_FailuresAreNeverAllClean(t *testing.T) {
 	cases := []struct {
-		name                                          string
+		name                                         string
 		nodeFails, extractFails, scanFails, affected int
-		want                                          string
+		want                                         string
 	}{
 		{"all stages clean", 0, 0, 0, 0, "AllClean"},
 		{"findings without failures", 0, 0, 0, 2, "Affected"},
@@ -57,7 +57,6 @@ func TestInspectCmd_GomodAllIndirect(t *testing.T) {
 	}
 }
 
-
 // inspectSummary must not contain walk_count (removed with the per-module
 // model) and must contain node_fails (added to reflect per-node failures
 // within the single project walk).
@@ -85,4 +84,3 @@ func TestInspectSummary_JSONShape(t *testing.T) {
 		}
 	}
 }
-

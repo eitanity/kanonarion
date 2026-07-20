@@ -7,8 +7,10 @@ import (
 	"context"
 	"fmt"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchapplication "github.com/eitanity/kanonarion/internal/fetch/application"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
@@ -38,7 +40,7 @@ func (f *Fetcher) WithForce(force bool) walkports.ModuleFetcher {
 	return &clone
 }
 
-func (f *Fetcher) EnsureFetched(ctx context.Context, coord fetchdomain.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
+func (f *Fetcher) EnsureFetched(ctx context.Context, coord coordinate.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
 	result, err := f.uc.Execute(ctx, fetchapplication.FetchRequest{
 		Coordinate:    coord,
 		SkipVCSVerify: f.skipVCSVerify,

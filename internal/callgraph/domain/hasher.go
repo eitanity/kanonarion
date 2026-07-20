@@ -9,6 +9,8 @@ import (
 	"sort"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
@@ -72,7 +74,7 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 	if err != nil {
 		return CallGraphRecord{}, fmt.Errorf("parsing extracted_at %q: %w", c.ExtractedAt, err)
 	}
-	coord, err := fetchdomain.NewModuleCoordinate(c.Coordinate.Path, c.Coordinate.Version)
+	coord, err := coordinate.NewModuleCoordinate(c.Coordinate.Path, c.Coordinate.Version)
 	if err != nil {
 		return CallGraphRecord{}, fmt.Errorf("parsing coordinate: %w", err)
 	}

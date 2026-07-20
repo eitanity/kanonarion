@@ -7,8 +7,10 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
@@ -17,7 +19,7 @@ import (
 
 func TestFindLatestProjectWalk_Found(t *testing.T) {
 	qw := testfakes.NewFakeQueryWalks()
-	coord, _ := fetchdomain.NewModuleCoordinate("example.com/myapp", fetchdomain.LocalVersion)
+	coord, _ := coordinate.NewModuleCoordinate("example.com/myapp", coordinate.LocalVersion)
 	qw.SetSummaries([]walkports.WalkSummary{
 		{ID: "walk-proj-1", Target: coord, Scope: walkdomain.WalkScopeCode, OverallStatus: walkdomain.WalkSucceeded},
 	})
@@ -34,7 +36,7 @@ func TestFindLatestProjectWalk_Found(t *testing.T) {
 func TestFindLatestProjectWalk_NotFound(t *testing.T) {
 	qw := testfakes.NewFakeQueryWalks()
 	// Store has walks, but none matching this module.
-	other, _ := fetchdomain.NewModuleCoordinate("example.com/other", fetchdomain.LocalVersion)
+	other, _ := coordinate.NewModuleCoordinate("example.com/other", coordinate.LocalVersion)
 	qw.SetSummaries([]walkports.WalkSummary{
 		{ID: "walk-other", Target: other, Scope: walkdomain.WalkScopeCode, OverallStatus: walkdomain.WalkSucceeded},
 	})
@@ -60,7 +62,7 @@ func TestFindLatestProjectWalk_ListError(t *testing.T) {
 
 func TestFindLatestProjectWalk_ExcludesFailedWalks(t *testing.T) {
 	qw := testfakes.NewFakeQueryWalks()
-	coord, _ := fetchdomain.NewModuleCoordinate("example.com/myapp", fetchdomain.LocalVersion)
+	coord, _ := coordinate.NewModuleCoordinate("example.com/myapp", coordinate.LocalVersion)
 	// Only a failed walk is present.
 	qw.SetSummaries([]walkports.WalkSummary{
 		{ID: "walk-failed", Target: coord, Scope: walkdomain.WalkScopeCode, OverallStatus: walkdomain.WalkFailed},
@@ -76,7 +78,7 @@ func TestFindLatestProjectWalk_ExcludesFailedWalks(t *testing.T) {
 
 func TestProjectWalkToReuse_ReusesSucceededWalk(t *testing.T) {
 	qw := testfakes.NewFakeQueryWalks()
-	coord, _ := fetchdomain.NewModuleCoordinate("example.com/myapp", fetchdomain.LocalVersion)
+	coord, _ := coordinate.NewModuleCoordinate("example.com/myapp", coordinate.LocalVersion)
 	qw.SetSummaries([]walkports.WalkSummary{
 		{ID: "walk-1", Target: coord, Scope: walkdomain.WalkScopeCode, OverallStatus: walkdomain.WalkSucceeded},
 	})
@@ -106,7 +108,7 @@ func TestProjectWalkToReuse_ColdStoreSignalsBuild(t *testing.T) {
 // --force never reuses, even when a succeeded walk exists.
 func TestProjectWalkToReuse_ForceAlwaysBuilds(t *testing.T) {
 	qw := testfakes.NewFakeQueryWalks()
-	coord, _ := fetchdomain.NewModuleCoordinate("example.com/myapp", fetchdomain.LocalVersion)
+	coord, _ := coordinate.NewModuleCoordinate("example.com/myapp", coordinate.LocalVersion)
 	qw.SetSummaries([]walkports.WalkSummary{
 		{ID: "walk-1", Target: coord, Scope: walkdomain.WalkScopeCode, OverallStatus: walkdomain.WalkSucceeded},
 	})
@@ -140,7 +142,7 @@ func TestProjectWalkToReuse_ListErrorPropagates(t *testing.T) {
 // resolved nodes get licensed.
 func TestLatestProjectWalkByScope_FindsPartialWalk(t *testing.T) {
 	qw := testfakes.NewFakeQueryWalks()
-	coord, _ := fetchdomain.NewModuleCoordinate("example.com/myapp", fetchdomain.LocalVersion)
+	coord, _ := coordinate.NewModuleCoordinate("example.com/myapp", coordinate.LocalVersion)
 	qw.SetSummaries([]walkports.WalkSummary{
 		{ID: "walk-partial", Target: coord, Scope: walkdomain.WalkScopeCode, OverallStatus: walkdomain.WalkPartial},
 	})
@@ -169,7 +171,7 @@ func TestLatestProjectWalkByScope_NoRecord(t *testing.T) {
 // threaded through, and its ID returned.
 func TestExtractLicencesForProjectWalk_RunsLicenceStage(t *testing.T) {
 	qw := testfakes.NewFakeQueryWalks()
-	coord, _ := fetchdomain.NewModuleCoordinate("example.com/myapp", fetchdomain.LocalVersion)
+	coord, _ := coordinate.NewModuleCoordinate("example.com/myapp", coordinate.LocalVersion)
 	qw.SetSummaries([]walkports.WalkSummary{
 		{ID: "walk-1", Target: coord, Scope: walkdomain.WalkScopeCode, OverallStatus: walkdomain.WalkSucceeded},
 	})
@@ -200,7 +202,7 @@ func TestExtractLicencesForProjectWalk_RunsLicenceStage(t *testing.T) {
 // A failing extraction surfaces wrapped, never swallowed.
 func TestExtractLicencesForProjectWalk_ExtractError(t *testing.T) {
 	qw := testfakes.NewFakeQueryWalks()
-	coord, _ := fetchdomain.NewModuleCoordinate("example.com/myapp", fetchdomain.LocalVersion)
+	coord, _ := coordinate.NewModuleCoordinate("example.com/myapp", coordinate.LocalVersion)
 	qw.SetSummaries([]walkports.WalkSummary{
 		{ID: "walk-1", Target: coord, Scope: walkdomain.WalkScopeCode, OverallStatus: walkdomain.WalkSucceeded},
 	})

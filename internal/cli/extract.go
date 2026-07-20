@@ -186,12 +186,12 @@ func newExtractListCmd(stdout, stderr io.Writer) *cobra.Command {
 
 			if jsonOut {
 				type runJSON struct {
-					ID            string                     `json:"id"`
-					WalkID        string                     `json:"walk_id"`
-					Status        domain.ExtractionRunStatus `json:"status"`
-					ModuleCount   int                        `json:"module_count"`
-					StartedAt     time.Time                  `json:"started_at"`
-					CompletedAt   time.Time                  `json:"completed_at"`
+					ID          string                     `json:"id"`
+					WalkID      string                     `json:"walk_id"`
+					Status      domain.ExtractionRunStatus `json:"status"`
+					ModuleCount int                        `json:"module_count"`
+					StartedAt   time.Time                  `json:"started_at"`
+					CompletedAt time.Time                  `json:"completed_at"`
 				}
 				out := make([]runJSON, len(runs))
 				for i, r := range runs {

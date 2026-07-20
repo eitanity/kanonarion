@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"sort"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 )
 
 // NoticeSource records where an attribution record came from, so the document
@@ -28,7 +28,7 @@ type NoticeEntry struct {
 	Source             NoticeSource
 	Name               string // display name; set for copied source, empty for modules
 	SourcePaths        []string
-	Coordinate         fetchdomain.ModuleCoordinate
+	Coordinate         coordinate.ModuleCoordinate
 	SPDX               string
 	LicenseTexts       []NoticeLicenseFile       // root-level non-vendored license files, sorted by Path
 	Copyrights         []string                  // verbatim copyright statements, deduped, sorted
@@ -52,7 +52,7 @@ type NoticeEmbeddedComponent struct {
 // ReviewItem records a module that cannot be automatically included in the
 // THIRD-PARTY-LICENSES document and requires human review.
 type ReviewItem struct {
-	Coordinate fetchdomain.ModuleCoordinate
+	Coordinate coordinate.ModuleCoordinate
 	Reason     string
 }
 
@@ -96,11 +96,11 @@ func NoticeEntriesFromSnippets(atts []SnippetAttribution) ([]NoticeEntry, error)
 		}
 		srcPaths := dedupeSorted(paths[a.Coordinate.String()+" "+a.SPDX])
 		out = append(out, NoticeEntry{
-			Source:       NoticeSourceCopied,
-			Name:         a.Name,
-			SourcePaths:  srcPaths,
-			Coordinate:   a.Coordinate,
-			SPDX:         a.SPDX,
+			Source:      NoticeSourceCopied,
+			Name:        a.Name,
+			SourcePaths: srcPaths,
+			Coordinate:  a.Coordinate,
+			SPDX:        a.SPDX,
 			// No Path: the text comes from the embedded SPDX table, not from a
 			// file in a module archive, so there is no path to cite.
 			LicenseTexts: []NoticeLicenseFile{{Content: text}},

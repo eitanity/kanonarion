@@ -8,6 +8,8 @@ import (
 	"runtime/debug"
 	"sync"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -36,11 +38,11 @@ type recordingFetcher struct {
 	inner      walkports.ModuleFetcher
 	stopwatch  fetchports.Stopwatch
 	logger     *slog.Logger
-	walkTarget fetchdomain.ModuleCoordinate
+	walkTarget coordinate.ModuleCoordinate
 	progress   walkports.ProgressReporter // nil = no progress reporting
 
 	mu       sync.Mutex
-	outcomes map[fetchdomain.ModuleCoordinate]fetchOutcome
+	outcomes map[coordinate.ModuleCoordinate]fetchOutcome
 }
 
 // fetchOutcome is the captured result of a single EnsureFetched call. Carries
@@ -66,7 +68,7 @@ func newRecordingFetcher(
 	inner walkports.ModuleFetcher,
 	stopwatch fetchports.Stopwatch,
 	logger *slog.Logger,
-	walkTarget fetchdomain.ModuleCoordinate,
+	walkTarget coordinate.ModuleCoordinate,
 	progress walkports.ProgressReporter,
 ) *recordingFetcher {
 	return &recordingFetcher{
@@ -75,14 +77,14 @@ func newRecordingFetcher(
 		logger:     logger,
 		walkTarget: walkTarget,
 		progress:   progress,
-		outcomes:   make(map[fetchdomain.ModuleCoordinate]fetchOutcome),
+		outcomes:   make(map[coordinate.ModuleCoordinate]fetchOutcome),
 	}
 }
 
 // EnsureFetched delegates to the inner fetcher on the first call per coordinate
 // and records the outcome. Subsequent calls for the same coordinate return the
 // recorded outcome without re-calling the inner fetcher.
-func (r *recordingFetcher) EnsureFetched(ctx context.Context, c fetchdomain.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
+func (r *recordingFetcher) EnsureFetched(ctx context.Context, c coordinate.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
 	r.mu.Lock()
 	if existing, ok := r.outcomes[c]; ok {
 		r.mu.Unlock()
@@ -154,7 +156,7 @@ func (r *recordingFetcher) EnsureFetched(ctx context.Context, c fetchdomain.Modu
 // callWithRecover invokes the inner fetcher and converts any panic into a
 // *panicError so it propagates as a regular fetch error (with stack info)
 // instead of crashing the walk.
-func (r *recordingFetcher) callWithRecover(ctx context.Context, c fetchdomain.ModuleCoordinate) (fr walkports.ModuleFetchResult, err error) {
+func (r *recordingFetcher) callWithRecover(ctx context.Context, c coordinate.ModuleCoordinate) (fr walkports.ModuleFetchResult, err error) {
 	defer func() {
 		if rec := recover(); rec != nil {
 			stack := debug.Stack()
@@ -177,7 +179,7 @@ func (r *recordingFetcher) callWithRecover(ctx context.Context, c fetchdomain.Mo
 
 // outcomeFor returns the recorded outcome for c, or (zero, false) if none was
 // recorded (i.e. the resolver never fetched c).
-func (r *recordingFetcher) outcomeFor(c fetchdomain.ModuleCoordinate) (fetchOutcome, bool) {
+func (r *recordingFetcher) outcomeFor(c coordinate.ModuleCoordinate) (fetchOutcome, bool) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
 	out, ok := r.outcomes[c]

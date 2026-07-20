@@ -10,6 +10,8 @@ import (
 	"sync"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 )
@@ -20,7 +22,7 @@ import (
 // "fact record not found" failure for walks whose fetch records live
 // under a non-default PV (e.g. after a PV bump).
 func TestCopyToModCache_PipelineVersionBinding(t *testing.T) {
-	c, err := fetchdomain.NewModuleCoordinate("example.com/m", "v1.0.0")
+	c, err := coordinate.NewModuleCoordinate("example.com/m", "v1.0.0")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -72,7 +74,7 @@ func (f *pvFakeFacts) PutFetchRecord(_ context.Context, r fetchdomain.FactRecord
 	return nil
 }
 
-func (f *pvFakeFacts) GetFetchRecord(_ context.Context, coord fetchdomain.ModuleCoordinate, pv string) (fetchdomain.FactRecord, bool, error) {
+func (f *pvFakeFacts) GetFetchRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (fetchdomain.FactRecord, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	r, ok := f.records[coord.Path+"@"+coord.Version+"#"+pv]

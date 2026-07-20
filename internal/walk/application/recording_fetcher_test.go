@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -64,7 +66,7 @@ func (f *recorderFakeFetcher) callCount(path, version string) int {
 	return f.calls[path+"@"+version]
 }
 
-func (f *recorderFakeFetcher) EnsureFetched(_ context.Context, c fetchdomain.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
+func (f *recorderFakeFetcher) EnsureFetched(_ context.Context, c coordinate.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
 	k := c.Path + "@" + c.Version
 	f.mu.Lock()
 	f.calls[k]++
@@ -114,13 +116,13 @@ func newRecorderForTestWithProgress(inner walkports.ModuleFetcher, progress walk
 		inner,
 		&fakeStopwatch2{},
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		fetchdomain.ModuleCoordinate{Path: "example.com/target", Version: "v1.0.0"},
+		coordinate.ModuleCoordinate{Path: "example.com/target", Version: "v1.0.0"},
 		progress,
 	)
 }
 
-func rcoord(path, version string) fetchdomain.ModuleCoordinate {
-	return fetchdomain.ModuleCoordinate{Path: path, Version: version}
+func rcoord(path, version string) coordinate.ModuleCoordinate {
+	return coordinate.ModuleCoordinate{Path: path, Version: version}
 }
 
 func TestRecordingFetcher_RecordsFirstCallOutcome(t *testing.T) {

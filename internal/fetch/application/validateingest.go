@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"github.com/eitanity/kanonarion/internal/audit"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 )
@@ -76,7 +77,7 @@ func (uc *ValidateAndIngestUseCase) Ingest(ctx context.Context, record domain.Fa
 //
 // The caller treats any non-nil error as unavailable (non-zero exit per
 // ); only (false, nil) means the record genuinely does not exist.
-func (uc *ValidateAndIngestUseCase) ReadVerified(ctx context.Context, coord domain.ModuleCoordinate, pipelineVersion string) (domain.FactRecord, bool, error) {
+func (uc *ValidateAndIngestUseCase) ReadVerified(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain.FactRecord, bool, error) {
 	rec, found, err := uc.store.GetFetchRecord(ctx, coord, pipelineVersion)
 	if err != nil {
 		return domain.FactRecord{}, false, fmt.Errorf("reading record for %s: %w", coord, err)
@@ -105,7 +106,7 @@ func (uc *ValidateAndIngestUseCase) ReadVerified(ctx context.Context, coord doma
 // emit failure is returned so a successful read is never presented without its
 // log entry, and a rejected read never loses the fact that it was rejected.
 func (uc *ValidateAndIngestUseCase) recordEvent(
-	t audit.EventType, coord domain.ModuleCoordinate, pipelineVersion string,
+	t audit.EventType, coord coordinate.ModuleCoordinate, pipelineVersion string,
 	rec domain.FactRecord, reason error,
 ) error {
 	if uc.audit == nil {

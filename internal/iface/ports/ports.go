@@ -6,7 +6,8 @@ import (
 	"io/fs"
 	"time"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"github.com/eitanity/kanonarion/internal/iface/domain"
 )
 
@@ -27,7 +28,7 @@ type InterfaceExtractor interface {
 	// Extract parses the module source tree and returns an InterfaceRecord.
 	// The record may have OverallStatus == Partial if some files failed to
 	// parse; only fatal errors return a non-nil error.
-	Extract(ctx context.Context, sourceTree fs.FS, coord fetchdomain.ModuleCoordinate) (domain.InterfaceRecord, error)
+	Extract(ctx context.Context, sourceTree fs.FS, coord coordinate.ModuleCoordinate) (domain.InterfaceRecord, error)
 }
 
 // InterfaceStore persists InterfaceRecords and supports queries.
@@ -39,7 +40,7 @@ type InterfaceStore interface {
 	// GetInterfaceRecord retrieves the record for the given coordinate and
 	// pipeline version. Returns (zero, false, nil) if not found.
 	// Returns ErrInterfaceIntegrity if the stored hash does not verify.
-	GetInterfaceRecord(ctx context.Context, coord fetchdomain.ModuleCoordinate, pipelineVersion string) (domain.InterfaceRecord, bool, error)
+	GetInterfaceRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain.InterfaceRecord, bool, error)
 
 	// ListInterfaceRecords returns summaries matching the filter, ordered by
 	// extracted_at descending.

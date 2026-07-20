@@ -1,7 +1,8 @@
 package domain
 
 import (
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+
 	"golang.org/x/mod/semver"
 )
 
@@ -47,7 +48,7 @@ type ParsedGoMod struct {
 
 // Requirement is a single require directive entry.
 type Requirement struct {
-	Coordinate fetchdomain.ModuleCoordinate
+	Coordinate coordinate.ModuleCoordinate
 	// Indirect is true when the entry is marked // indirect in go.mod.
 	Indirect bool
 }
@@ -63,12 +64,12 @@ type Replacement struct {
 	IsLocal    bool
 	LocalPath  string
 	// NewCoordinate is the replacement module coordinate. Zero when IsLocal is true.
-	NewCoordinate fetchdomain.ModuleCoordinate
+	NewCoordinate coordinate.ModuleCoordinate
 }
 
 // Exclusion is a single exclude directive entry.
 type Exclusion struct {
-	Coordinate fetchdomain.ModuleCoordinate
+	Coordinate coordinate.ModuleCoordinate
 }
 
 // RetractRange is a single retract directive entry covering a version range.
