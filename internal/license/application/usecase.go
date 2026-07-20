@@ -98,6 +98,13 @@ const (
 	perFileConfThreshold = 0.85     // minimum detector confidence to record a match
 )
 
+// copyrightMaxFiles bounds the copyright header backfill, which walks the whole
+// module tree rather than just its root. It is deliberately separate from
+// perFileMaxFiles: that limit governs the full-detector scan, which is orders of
+// magnitude more expensive per file than reading a 4 KB prefix and running a
+// handful of regexes.
+const copyrightMaxFiles = 200
+
 // ExtractRequest is the input to Execute.
 type ExtractRequest struct {
 	Coordinate domain.ModuleCoordinate
@@ -613,14 +620,21 @@ func (uc *ExtractLicenseUseCase) scanSourceFiles(
 	return entries
 }
 
-// backfillCopyrightFromSource scans root-level.go files for copyright headers
-// and appends found statements to the first non-vendored root license entry.
-// This handles modules that carry copyright only in source file headers (e.g.
-// cobra, which puts "Copyright 2013-2023 The Cobra Authors" in every.go file
-// but not in LICENSE.txt).
+// backfillCopyrightFromSource scans .go files for copyright headers and appends
+// found statements to the first non-vendored root license entry. This handles
+// modules that carry copyright only in source file headers (e.g. cobra, which
+// puts "Copyright 2013-2023 The Cobra Authors" in every .go file but not in
+// LICENSE.txt).
+//
+// The whole module tree is walked, not just its root: nested layouts are the
+// norm, and restricting to root-level files reported "none found" for any module
+// whose packages all live under subdirectories. Vendored paths are excluded —
+// their copyright belongs to the vendored dependency, not to this module.
 //
 // Statements are deduplicated across files; only unique Verbatim lines are kept.
-// At most perFileMaxFiles.go files are read to bound the cost.
+// At most copyrightMaxFiles .go files are read to bound the cost. Names are
+// walked in sorted order so that which files fall inside that bound is
+// deterministic across runs rather than dependent on archive ordering.
 func (uc *ExtractLicenseUseCase) backfillCopyrightFromSource(
 	ctx context.Context,
 	coord domain.ModuleCoordinate,
@@ -632,15 +646,18 @@ func (uc *ExtractLicenseUseCase) backfillCopyrightFromSource(
 	var collected []domain2.CopyrightStatement
 	fileCount := 0
 
-	for _, name := range archive.Names() {
-		if fileCount >= perFileMaxFiles {
+	names := append([]string(nil), archive.Names()...)
+	sort.Strings(names)
+
+	for _, name := range names {
+		if fileCount >= copyrightMaxFiles {
 			break
 		}
 		if !strings.HasPrefix(name, modulePrefix) {
 			continue
 		}
 		relPath := strings.TrimPrefix(name, modulePrefix)
-		if !isRootLevel(relPath) || !strings.HasSuffix(relPath, ".go") {
+		if !strings.HasSuffix(relPath, ".go") || isVendored(relPath) {
 			continue
 		}
 		if ctxErr := ctx.Err(); ctxErr != nil {

@@ -7,7 +7,7 @@ import (
 
 // ObligationCatalogueVersion identifies the version of the static obligations
 // catalogue. Bump deliberately when entries are added or corrected.
-const ObligationCatalogueVersion = "1.1.0"
+const ObligationCatalogueVersion = "1.2.0"
 
 // ObligationStatus distinguishes a researched catalogue entry from an absent one.
 // Per, an unknown SPDX identifier must never be treated as "no obligations".
@@ -218,16 +218,6 @@ var obligationsCatalogue = map[string]Obligations{
 		SameLicense:         CopyleftWeak,
 		ExplicitPatentGrant: true,
 	},
-	// LGPL-3.0: deprecated SPDX 2.x identifier; equivalent to LGPL-3.0-only.
-	"LGPL-3.0": {
-		Status:              ObligationStatusKnown,
-		IncludeNotice:       true,
-		IncludeLicenseText:  true,
-		StateChanges:        true,
-		DiscloseSource:      true,
-		SameLicense:         CopyleftWeak,
-		ExplicitPatentGrant: true,
-	},
 	"EPL-1.0": {
 		Status:              ObligationStatusKnown,
 		IncludeNotice:       true,
@@ -293,25 +283,6 @@ var obligationsCatalogue = map[string]Obligations{
 		ExplicitPatentGrant: true, // §11
 	},
 	"GPL-3.0-or-later": {
-		Status:              ObligationStatusKnown,
-		IncludeNotice:       true,
-		IncludeLicenseText:  true,
-		StateChanges:        true,
-		DiscloseSource:      true,
-		SameLicense:         CopyleftStrong,
-		ExplicitPatentGrant: true,
-	},
-	// GPL-2.0 / GPL-3.0: deprecated SPDX 2.x identifiers; equivalent to the
-	// -only variants. Still emitted by some detectors.
-	"GPL-2.0": {
-		Status:             ObligationStatusKnown,
-		IncludeNotice:      true,
-		IncludeLicenseText: true,
-		StateChanges:       true,
-		DiscloseSource:     true,
-		SameLicense:        CopyleftStrong,
-	},
-	"GPL-3.0": {
 		Status:              ObligationStatusKnown,
 		IncludeNotice:       true,
 		IncludeLicenseText:  true,
@@ -394,7 +365,7 @@ var obligationsCatalogue = map[string]Obligations{
 // Status == ObligationStatusUnknown. Per callers must never treat an
 // unknown identifier as having no obligations.
 func LookupObligations(spdxID string) Obligations {
-	if o, ok := obligationsCatalogue[spdxID]; ok {
+	if o, ok := obligationsCatalogue[CanonicalSPDXID(spdxID)]; ok {
 		return o
 	}
 	return Obligations{Status: ObligationStatusUnknown}
