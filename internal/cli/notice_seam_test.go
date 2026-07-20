@@ -37,7 +37,7 @@ func TestNoticeWith_ReviewItemsFailLoud(t *testing.T) {
 		}},
 	}
 	var stdout, stderr bytes.Buffer
-	err := noticeWith(context.Background(), ctr, "W1", "", "", &stdout, &stderr)
+	err := noticeWith(context.Background(), ctr, "W1", "", "", "", &stdout, &stderr)
 	if err == nil || !strings.Contains(err.Error(), "require review") {
 		t.Fatalf("expected a review-required error, got: %v", err)
 	}
@@ -57,7 +57,7 @@ func TestNoticeWith_NoModules(t *testing.T) {
 		GenerateNotice: &testfakes.FakeGenerateNotice{},
 	}
 	var stdout, stderr bytes.Buffer
-	if err := noticeWith(context.Background(), ctr, "W2", "", "", &stdout, &stderr); err != nil {
+	if err := noticeWith(context.Background(), ctr, "W2", "", "", "", &stdout, &stderr); err != nil {
 		t.Fatalf("empty module set should exit 0, got: %v", err)
 	}
 	if !strings.Contains(stderr.String(), "no modules found") {
@@ -75,7 +75,7 @@ func TestNoticeWith_WritesDocument(t *testing.T) {
 		}},
 	}
 	var stdout, stderr bytes.Buffer
-	if err := noticeWith(context.Background(), ctr, "W1", "", "", &stdout, &stderr); err != nil {
+	if err := noticeWith(context.Background(), ctr, "W1", "", "", "", &stdout, &stderr); err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
 	if !strings.Contains(stdout.String(), "THIRD-PARTY-LICENSES") {
