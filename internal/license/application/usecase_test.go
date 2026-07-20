@@ -434,6 +434,41 @@ func TestExecute_DottedLicenceFilename(t *testing.T) {
 	}
 }
 
+// TestExecute_ExcludesGoSourceFromLicenceFilenames is a regression test for
+// KN-444: license.go from github.com/google/licensecheck@v0.3.1 has a base
+// name that satisfies the LICENSE.<suffix> dotted-form rule (LICENSE.GO), so
+// its full Go source was embedded as a root-level license file alongside
+// LICENSE. A .go file is never the license grant for a module.
+func TestExecute_ExcludesGoSourceFromLicenceFilenames(t *testing.T) {
+	coord := mustCoord(t, "example.com/gosource", "v1.0.0")
+	blobStore := &fakeBlobStore{}
+	factStore := &fakeFactStore{}
+	licenceStore := &fakeLicenseStore{}
+
+	zipData := buildModuleZip(t, coord, map[string]string{
+		"LICENSE":    "BSD-3-Clause License text",
+		"license.go": "// Copyright 2019 The Go Authors. All rights reserved.\npackage licensecheck",
+	})
+	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
+	if err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+	putFactWithBlob(t, factStore, coord, string(handle))
+
+	detector := &fakeDetector{match: ports.LicenseMatch{SPDX: "BSD-3-Clause", Confidence: 0.98}}
+	uc := buildUseCaseWithDetector(t, factStore, blobStore, licenceStore, detector)
+	result, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(result.Record.LicenseFiles) != 1 {
+		t.Fatalf("LicenseFiles: got %d, want 1", len(result.Record.LicenseFiles))
+	}
+	if result.Record.LicenseFiles[0].Path != "LICENSE" {
+		t.Errorf("LicenseFile path: got %q, want LICENSE", result.Record.LicenseFiles[0].Path)
+	}
+}
+
 // TestExecute_DottedMultiLicenceFilenames mirrors cyphar/filepath-securejoin,
 // which dual-licenses via LICENSE.MPL-2.0 and LICENSE.BSD (plus an explanatory
 // COPYING.md). All three must be recognised as license files so the module

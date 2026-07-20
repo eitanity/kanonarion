@@ -747,6 +747,11 @@ func parseSPDXHeader(content []byte) string {
 // as go-errors/errors (LICENSE.MIT) and spdx/tools-golang (LICENSE.code,
 // LICENSE.docs). COPYRIGHT, NOTICE, and the GPLv2/GPLv3 shorthands are matched
 // verbatim only.
+//
+// The dotted suffix is rejected when it is a known source-code extension
+// (e.g. LICENSE.go): a Go source file is never the license grant for a
+// module, even when its base name happens to start with a license stem
+// (github.com/google/licensecheck's license.go is such a file).
 func isLicenceFilename(relPath string) bool {
 	base := relPath
 	if idx := strings.LastIndex(relPath, "/"); idx >= 0 {
@@ -758,10 +763,11 @@ func isLicenceFilename(relPath string) bool {
 		return true
 	}
 	for _, stem := range []string{"LICENSE", "LICENCE", "COPYING", "UNLICENSE"} {
-		if upper == stem ||
-			strings.HasPrefix(upper, stem+"-") ||
-			strings.HasPrefix(upper, stem+".") {
+		if upper == stem || strings.HasPrefix(upper, stem+"-") {
 			return true
+		}
+		if strings.HasPrefix(upper, stem+".") {
+			return upper[len(stem)+1:] != "GO"
 		}
 	}
 	return false
