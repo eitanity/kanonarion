@@ -85,7 +85,7 @@ func TestNoticeWith_CopiedSourceSortsWithModules(t *testing.T) {
 	if first < 0 || capslock < 0 || last < 0 {
 		t.Fatalf("expected all three entries, got:\n%s", doc)
 	}
-	if !(first < capslock && capslock < last) {
+	if first >= capslock || capslock >= last {
 		t.Errorf("copied source should sort by coordinate between the modules (a=%d capslock=%d z=%d)", first, capslock, last)
 	}
 }

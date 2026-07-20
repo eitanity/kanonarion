@@ -145,7 +145,7 @@ func TestResolveProject_BuildList_NodeMapping(t *testing.T) {
 }
 
 // TestResolveProject_BuildList_ScopeParityWithBuildList is the end-to-end parity
-// guard for KN-434. After code-scope filtering, the walk's module set
+// guard. After code-scope filtering, the walk's module set
 // (replace-normalised) must equal the toolchain's build-list module set — the
 // same set a built binary reports via `go version -m`. The scope keep-list is
 // built from require/import paths, under which a module-replaced dependency
@@ -196,7 +196,7 @@ func TestResolveProject_BuildList_ScopeParityWithBuildList(t *testing.T) {
 	}
 
 	// Parity, both directions: no build-list (linked) module missing from the
-	// walk (under-inclusion — the KN-434 defect), and none extra (over-inclusion).
+	// walk, and none extra (over-inclusion).
 	for path := range toolchainSet {
 		if !walkSet[path] {
 			t.Errorf("module %q is in the build list but absent from the scoped walk (under-inclusion)", path)

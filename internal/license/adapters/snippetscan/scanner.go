@@ -67,13 +67,13 @@ func (s *Scanner) Scan() ([]licensedomain.SnippetAttribution, error) {
 
 		atts, perr := licensedomain.ParseSnippets(rel, content)
 		if perr != nil {
-			return perr
+			return fmt.Errorf("parsing snippets in %s: %w", rel, perr)
 		}
 		out = append(out, atts...)
 		return nil
 	})
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("walking %s: %w", s.root, err)
 	}
 	return out, nil
 }

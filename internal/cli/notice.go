@@ -156,7 +156,7 @@ func noticeWith(ctx context.Context, ctr *Container, walkID, gomodPath, packageP
 		return fmt.Errorf("%d module(s) require review", len(result.ReviewItems))
 	}
 
-	entries := append(result.Entries, snippetEntries...)
+	entries := append(append([]licensedomain.NoticeEntry{}, result.Entries...), snippetEntries...)
 	licensedomain.SortNoticeEntries(entries)
 	return writeNoticeDocument(entries, stdout)
 }
