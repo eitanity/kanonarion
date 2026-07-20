@@ -91,11 +91,11 @@ func buildTargetSet(cg ports.CallGraphProjection, targets []ports.SymbolReferenc
 	return ids
 }
 
-// collectEntryPoints returns the reachability roots for the projection: the
-// module's exported API plus its package init functions, falling back to all
-// owned nodes when neither exists. It delegates to the shared callgraph-domain
-// selector so vuln reachability and capability analysis root traversal
-// identically and can never drift.
+// collectEntryPoints returns the reachability roots for the projection,
+// conditioned on the projection's artifact kind: all owned nodes for an
+// application, the exported API plus package init for a library. It delegates to
+// the shared callgraph-domain selector so vuln reachability and capability
+// analysis root traversal identically and can never drift.
 func collectEntryPoints(cg ports.CallGraphProjection) []string {
 	candidates := make([]callgraphdomain.RootCandidate, 0, len(cg.Nodes))
 	for _, node := range cg.Nodes {
@@ -106,7 +106,7 @@ func collectEntryPoints(cg ports.CallGraphProjection) []string {
 			IsExportedAPI: node.IsExportedAPI,
 		})
 	}
-	return callgraphdomain.SelectReachabilityRoots(candidates)
+	return callgraphdomain.SelectReachabilityRoots(candidates, callgraphdomain.ArtifactKind(cg.ArtifactKind))
 }
 
 // bfsPath performs a BFS from entryPoints following call edges and returns the

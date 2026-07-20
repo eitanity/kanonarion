@@ -128,6 +128,42 @@ func TestHasherRoundTripCompleteness(t *testing.T) {
 	}
 }
 
+func TestHasherRoundTripArtifactKind(t *testing.T) {
+	var h domain2.CallGraphRecordHasher
+	r := makeTestRecord()
+	r.ArtifactKind = domain2.ArtifactApplication
+
+	hashed, err := h.SetContentHash(r)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	blob, err := h.Marshal(hashed)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	restored, err := h.Unmarshal(blob)
+	if err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if restored.ArtifactKind != domain2.ArtifactApplication {
+		t.Errorf("ArtifactKind not preserved across round-trip: got %q", restored.ArtifactKind)
+	}
+	if err := h.VerifyContentHash(restored); err != nil {
+		t.Errorf("VerifyContentHash after round-trip: %v", err)
+	}
+	// The kind decides how the graph is rooted, so it is part of identity: the
+	// same nodes and edges classified differently must not share a hash.
+	r2 := makeTestRecord()
+	r2.ArtifactKind = domain2.ArtifactLibrary
+	hashed2, err := h.SetContentHash(r2)
+	if err != nil {
+		t.Fatalf("SetContentHash (library): %v", err)
+	}
+	if hashed.ContentHash == hashed2.ContentHash {
+		t.Error("content hash must depend on the artifact kind")
+	}
+}
+
 func TestHasherRoundTripUsesPlugin(t *testing.T) {
 	var h domain2.CallGraphRecordHasher
 	r := makeTestRecord()

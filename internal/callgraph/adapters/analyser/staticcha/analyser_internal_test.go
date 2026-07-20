@@ -2,11 +2,13 @@ package staticcha
 
 import (
 	"go/token"
+	"go/types"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
 )
@@ -123,5 +125,30 @@ func Get() pkgb.Value { return 42 }
 	}
 	if ssaPkg == nil {
 		t.Fatal("expected non-nil SSA package")
+	}
+}
+
+// TestArtifactKind_SkipsIncompletePackages covers the defensive guards in
+// artifactKind: a batch of SSA packages can contain a nil entry (a package that
+// failed to build) and a partially-initialised one. Neither may panic, and
+// neither counts as evidence of a command.
+func TestArtifactKind_SkipsIncompletePackages(t *testing.T) {
+	if got := artifactKind(nil); got != domain.ArtifactLibrary {
+		t.Errorf("artifactKind(nil) = %q, want library", got)
+	}
+	pkgs := []*ssa.Package{nil, {}}
+	if got := artifactKind(pkgs); got != domain.ArtifactLibrary {
+		t.Errorf("artifactKind = %q, want library", got)
+	}
+}
+
+// TestArtifactKind_MainPackageWithoutMainFunc pins the "defines func main"
+// half of the rule: a package merely named main is not a command until it has
+// a main function to enter.
+func TestArtifactKind_MainPackageWithoutMainFunc(t *testing.T) {
+	prog := ssa.NewProgram(token.NewFileSet(), ssa.BuilderMode(0))
+	pkg := prog.CreatePackage(types.NewPackage("example.com/cmd/x", "main"), nil, nil, false)
+	if got := artifactKind([]*ssa.Package{pkg}); got != domain.ArtifactLibrary {
+		t.Errorf("artifactKind = %q, want library for a main package with no func main", got)
 	}
 }

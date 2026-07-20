@@ -247,30 +247,32 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 		return domain2.CallGraphRecord{}, false, fmt.Errorf("unmarshalling callgraph record: %w", err)
 	}
 
-	switch rec.SchemaVersion {
-	case "1":
-		// v1 blobs contain edges; verify via the fast in-place blob hash.
-		if verr := h.VerifyBlobHash(blob, storedHash); verr != nil {
-			return domain2.CallGraphRecord{}, false, fmt.Errorf("%w: %w", ports.ErrCallGraphIntegrity, verr)
-		}
-		return rec, true, nil
-	default:
-		// v2+ blobs omit edges; reconstruct them from callgraph_edges and
-		// verify the hash over the full reconstructed record.
-		if rec.ContentHash != storedHash {
-			return domain2.CallGraphRecord{}, false, fmt.Errorf("%w: embedded hash %q does not match stored %q",
-				ports.ErrCallGraphIntegrity, rec.ContentHash, storedHash)
-		}
-		edges, fetchErr := s.fetchEdges(ctx, coord, pipelineVersion)
-		if fetchErr != nil {
-			return domain2.CallGraphRecord{}, false, fetchErr
-		}
-		rec.Edges = edges
-		if verr := h.VerifyContentHash(rec); verr != nil {
-			return domain2.CallGraphRecord{}, false, fmt.Errorf("%w: %w", ports.ErrCallGraphIntegrity, verr)
-		}
-		return rec, true, nil
+	// The schema version is part of a record's identity, not just a hint about
+	// how to verify it. A record written at an older schema decodes with every
+	// later field at its zero value, and the caller cannot tell "absent because
+	// the analysed code has none" from "absent because this record predates the
+	// field". Treating a stale record as not-found routes the caller down the
+	// path it already has for a missing record — re-extraction — which is what
+	// makes a schema bump self-enforcing rather than a claim in a comment.
+	if rec.SchemaVersion != domain2.CallGraphSchemaVersion {
+		return domain2.CallGraphRecord{}, false, nil
 	}
+
+	// Current-schema blobs omit edges; reconstruct them from callgraph_edges and
+	// verify the hash over the full reconstructed record.
+	if rec.ContentHash != storedHash {
+		return domain2.CallGraphRecord{}, false, fmt.Errorf("%w: embedded hash %q does not match stored %q",
+			ports.ErrCallGraphIntegrity, rec.ContentHash, storedHash)
+	}
+	edges, fetchErr := s.fetchEdges(ctx, coord, pipelineVersion)
+	if fetchErr != nil {
+		return domain2.CallGraphRecord{}, false, fetchErr
+	}
+	rec.Edges = edges
+	if verr := h.VerifyContentHash(rec); verr != nil {
+		return domain2.CallGraphRecord{}, false, fmt.Errorf("%w: %w", ports.ErrCallGraphIntegrity, verr)
+	}
+	return rec, true, nil
 }
 
 // fetchEdges queries callgraph_edges for all edges belonging to a record,

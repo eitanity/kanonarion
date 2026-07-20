@@ -24,7 +24,36 @@ import (
 // v9 adds UsesPlugin: the per-node body-level fact that a function references the
 // Go plugin package (plugin.Open / (*Plugin).Lookup), a soundness leaf sink that
 // loads code the static graph never sees.
-const CallGraphSchemaVersion = "9"
+// v10 adds ArtifactKind: whether the analysed module builds a command
+// (application) or is consumed as a library. Reachability roots are conditioned
+// on it, so an application roots all of its own code and capability sinks the
+// runtime dispatches to dynamically are no longer false-negatives.
+// v11 qualifies anonymous-function node IDs with their enclosing function's
+// identifier, so a closure declared in a method keeps that method's receiver.
+// Previously closures in same-named methods on different receivers collapsed
+// onto one ID and merged the edge sets of unrelated functions. Node IDs are
+// persisted and hashed, so the identities themselves change.
+// v12 stops flagging closures and other SSA-synthetic functions as
+// IsExportedAPI. A closure is not nameable by a consumer, so rooting library
+// reachability at one asserts a path that cannot be triggered.
+const CallGraphSchemaVersion = "12"
+
+// ArtifactKind describes what the analysed module is, which decides how
+// reachability roots are chosen. An application's code all runs under entry
+// points the analysis cannot enumerate (framework dispatch, registered
+// callbacks, goroutine entries), so every owned function is a root; a library is
+// only exercised through what a consumer can call.
+type ArtifactKind string
+
+const (
+	// ArtifactLibrary is a module with no command: it is reached only through
+	// its exported API and package init. It is the zero value, so a record
+	// persisted before this field existed keeps the pre-existing behaviour.
+	ArtifactLibrary ArtifactKind = ""
+	// ArtifactApplication is a module that builds a command — it contains a
+	// package main defining func main.
+	ArtifactApplication ArtifactKind = "Application"
+)
 
 // ExclusionReasonConfig is the CallGraphRecord.ExclusionReason value used when
 // a module was skipped because its path is listed in callgraph.exclude.
@@ -209,6 +238,13 @@ type CallGraphRecord struct {
 	// signal a diff keys completeness-parity off, and the per-module phase
 	// caveat keys off, so neither has to infer fidelity from node/edge totals.
 	Completeness  CompletenessLevel
+	// ArtifactKind is what the analysed module is — an application that builds a
+	// command, or a library. Reachability roots are conditioned on it: an
+	// application roots every owned node, because code the runtime dispatches to
+	// dynamically is still the application's own code and its capabilities are
+	// really exercised. Empty means library, so pre-v10 records keep their
+	// original rooting.
+	ArtifactKind  ArtifactKind
 	Nodes         []CallNode
 	Edges         []CallEdge
 	OverallStatus CallGraphStatus

@@ -107,6 +107,7 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 		Ecosystem:       c.Ecosystem,
 		Coordinate:      coord,
 		Algorithm:       CallGraphAlgorithm(c.Algorithm),
+		ArtifactKind:    ArtifactKind(c.ArtifactKind),
 		Completeness:    CompletenessLevel(c.Completeness),
 		Nodes:           nodes,
 		Edges:           edges,
@@ -190,6 +191,7 @@ type canonicalEdge struct {
 
 type canonicalRecord struct {
 	Algorithm       string          `json:"algorithm"`
+	ArtifactKind    string          `json:"artifact_kind,omitempty"`
 	Completeness    string          `json:"completeness,omitempty"`
 	ContentHash     string          `json:"content_hash"`
 	Coordinate      canonicalCoord  `json:"coordinate"`
@@ -271,6 +273,7 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 
 	c := canonicalRecord{
 		Algorithm:       string(r.Algorithm),
+		ArtifactKind:    string(r.ArtifactKind),
 		Completeness:    string(r.Completeness),
 		ContentHash:     r.ContentHash,
 		Coordinate:      canonicalCoord{Path: r.Coordinate.Path, Version: r.Coordinate.Version},

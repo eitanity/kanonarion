@@ -287,6 +287,62 @@ func TestAnalyseWitnessesInitOnlyCapability(t *testing.T) {
 	}
 }
 
+// dynamicSinkGraph is a module with an exported API and, separately, an
+// unexported non-init function that reaches a capability sink and is entered
+// only by runtime dispatch (a gRPC handler, a registered callback). No edge
+// leads to it from the exported API, so it is the exact shape that made
+// handler-only capabilities false-negatives.
+func dynamicSinkGraph() cgdomain.CallGraphRecord {
+	return cgdomain.CallGraphRecord{
+		OverallStatus: cgdomain.CallGraphStatusExtracted,
+		Nodes: []cgdomain.CallNode{
+			node("m.Exported", "m", "Exported", false, true),
+			node("m.handler", "m", "handler", false, false),
+			node("os/exec.Command", "os/exec", "Command", true, false),
+		},
+		Edges: []cgdomain.CallEdge{
+			edge("m.handler", "os/exec.Command", cgdomain.ConfidenceDirect),
+		},
+	}
+}
+
+func TestAnalyseWitnessesDynamicallyDispatchedSinkInApplication(t *testing.T) {
+	rec := dynamicSinkGraph()
+	rec.ArtifactKind = cgdomain.ArtifactApplication
+
+	report := Analyse(rec, SelectRoots(rec))
+
+	f, ok := findingFor(report, CapabilityExec)
+	if !ok {
+		t.Fatalf("EXEC not witnessed in application artifact; got %v", report.Capabilities())
+	}
+	if f.SinkSymbol != "Command" {
+		t.Errorf("EXEC sink symbol = %q, want Command", f.SinkSymbol)
+	}
+}
+
+func TestAnalyseSkipsDynamicallyDispatchedSinkInLibrary(t *testing.T) {
+	// The same graph as a library: a consumer can only call the exported API, and
+	// nothing exported reaches the sink, so it is correctly not reported. This
+	// pins the library side of the switch — dependency rooting is unchanged.
+	rec := dynamicSinkGraph()
+	rec.ArtifactKind = cgdomain.ArtifactLibrary
+
+	if got := Analyse(rec, SelectRoots(rec)); len(got.Findings) != 0 {
+		t.Errorf("library artifact witnessed %v, want none", got.Capabilities())
+	}
+}
+
+func TestSelectRootsApplicationIncludesUnexportedNonInit(t *testing.T) {
+	rec := dynamicSinkGraph()
+	rec.ArtifactKind = cgdomain.ArtifactApplication
+
+	got := SelectRoots(rec)
+	if want := []string{"m.Exported", "m.handler"}; !reflect.DeepEqual(got, want) {
+		t.Errorf("SelectRoots = %v, want %v", got, want)
+	}
+}
+
 func TestSelectRootsIncludesInit(t *testing.T) {
 	rec := cgdomain.CallGraphRecord{Nodes: []cgdomain.CallNode{
 		node("m.Exported", "m", "Exported", false, true),

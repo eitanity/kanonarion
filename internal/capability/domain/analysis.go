@@ -93,13 +93,12 @@ func (r CapabilityReport) Capabilities() []Capability {
 	return caps
 }
 
-// SelectRoots returns the reachability roots for a library-style analysis: the
-// module's own exported API plus its package init functions (init runs
-// unconditionally at package load, so init-reachable capabilities are witnessed
-// too). When no node qualifies (typically a main-package binary with no
-// exported API), it falls back to every node owned by the module so the report
-// still witnesses capabilities from the analysed code. Delegates to the shared
-// callgraph-domain selector so it can never drift from vuln reachability.
+// SelectRoots returns the reachability roots for the record's capability
+// analysis, conditioned on the record's artifact kind: an application roots all
+// of its own code (a capability present in owned code is a capability of that
+// code however the function is entered), a library roots its exported API plus
+// package init. Delegates to the shared callgraph-domain selector so it can
+// never drift from vuln reachability.
 func SelectRoots(rec cgdomain.CallGraphRecord) []string {
 	candidates := make([]cgdomain.RootCandidate, 0, len(rec.Nodes))
 	for _, n := range rec.Nodes {
@@ -110,7 +109,7 @@ func SelectRoots(rec cgdomain.CallGraphRecord) []string {
 			IsExportedAPI: n.IsExportedAPI,
 		})
 	}
-	return cgdomain.SelectReachabilityRoots(candidates)
+	return cgdomain.SelectReachabilityRoots(candidates, rec.ArtifactKind)
 }
 
 // Analyse computes the capability report for rec, treating the given node IDs

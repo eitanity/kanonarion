@@ -14,6 +14,7 @@ import (
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"golang.org/x/tools/go/callgraph/cha"
 	"golang.org/x/tools/go/packages"
+	"golang.org/x/tools/go/ssa"
 )
 
 const analyserVersion = "0.1.0"
@@ -210,6 +211,7 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord fetchdo
 		// bodies. Per-package build failures are carried in FailedPackages (and
 		// force Partial below); the module-level fidelity is still bodies-built.
 		Completeness:    domain.CompletenessBuiltWithBodies,
+		ArtifactKind:    artifactKind(targetSSAPkgs),
 		Nodes:           nodes,
 		Edges:           edges,
 		OverallStatus:   overallStatus,
@@ -226,6 +228,23 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord fetchdo
 	rec.FailedPackages = failedPkgs
 	rec.Sort()
 	return rec, nil
+}
+
+// artifactKind classifies the analysed module from the packages it owns: it is
+// an application as soon as one of them is a package main defining func main,
+// otherwise a library. The distinction cannot be recovered from an import path,
+// so it is captured here, at load time, and carried on the record — reachability
+// rooting depends on it.
+func artifactKind(targetPkgs []*ssa.Package) domain.ArtifactKind {
+	for _, p := range targetPkgs {
+		if p == nil || p.Pkg == nil {
+			continue
+		}
+		if p.Pkg.Name() == "main" && p.Func("main") != nil {
+			return domain.ArtifactApplication
+		}
+	}
+	return domain.ArtifactLibrary
 }
 
 // failRecord builds a no-graph record for a fatal extraction outcome. completeness

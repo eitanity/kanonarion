@@ -360,3 +360,56 @@ func TestMigrateIdempotent(t *testing.T) {
 		t.Errorf("close s2: %v", err)
 	}
 }
+
+// TestGetStaleSchemaRecordTreatedAsAbsent is the cache-invalidation regression.
+// A record written at an older schema decodes with every later field at its zero
+// value, and the caller cannot tell "absent because the code has none" from
+// "absent because this record predates the field". Reporting it as not-found
+// routes the caller down the re-extraction path it already has, which is what
+// makes a schema bump actually invalidate the cache rather than merely claim to.
+func TestGetStaleSchemaRecordTreatedAsAbsent(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	var h domain2.CallGraphRecordHasher
+	stale := makeRecord(testCoord, "0.1.0")
+	stale.SchemaVersion = "9" // any version other than the current one
+	stale.ContentHash = ""
+	rehashed, err := h.SetContentHash(stale)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	if err := s.PutCallGraphRecord(ctx, rehashed); err != nil {
+		t.Fatalf("PutCallGraphRecord: %v", err)
+	}
+
+	got, found, err := s.GetCallGraphRecord(ctx, testCoord, "0.1.0")
+	if err != nil {
+		t.Fatalf("GetCallGraphRecord: %v", err)
+	}
+	if found {
+		t.Errorf("stale-schema record was served: schema %q, want it treated as absent", got.SchemaVersion)
+	}
+}
+
+// TestGetCurrentSchemaRecordStillServed is the companion control: the staleness
+// gate must not reject records at the current schema.
+func TestGetCurrentSchemaRecordStillServed(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	rec := makeRecord(testCoord, "0.1.0")
+	if err := s.PutCallGraphRecord(ctx, rec); err != nil {
+		t.Fatalf("PutCallGraphRecord: %v", err)
+	}
+	got, found, err := s.GetCallGraphRecord(ctx, testCoord, "0.1.0")
+	if err != nil {
+		t.Fatalf("GetCallGraphRecord: %v", err)
+	}
+	if !found {
+		t.Fatal("current-schema record not served")
+	}
+	if got.SchemaVersion != domain2.CallGraphSchemaVersion {
+		t.Errorf("SchemaVersion = %q, want %q", got.SchemaVersion, domain2.CallGraphSchemaVersion)
+	}
+}

@@ -42,6 +42,7 @@ func projectCallGraph(rec callgraphdomain.CallGraphRecord) ports.CallGraphProjec
 		Edges:        make([]ports.CallGraphEdge, 0, len(rec.Edges)),
 		Completeness: string(rec.Completeness),
 		Algorithm:    string(rec.Algorithm),
+		ArtifactKind: string(rec.ArtifactKind),
 	}
 	for _, n := range rec.Nodes {
 		proj.Nodes = append(proj.Nodes, ports.CallGraphNode{

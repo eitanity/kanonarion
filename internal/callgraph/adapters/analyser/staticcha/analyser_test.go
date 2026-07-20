@@ -97,6 +97,12 @@ func TestAnalyse_BasicCallGraph(t *testing.T) {
 		t.Errorf("expected Completeness BUILT_WITH_BODIES, got %s", rec.Completeness)
 	}
 
+	// This fixture module declares no command, so it is a library and keeps
+	// exported-API-plus-init rooting.
+	if rec.ArtifactKind != domain.ArtifactLibrary {
+		t.Errorf("ArtifactKind = %q, want library", rec.ArtifactKind)
+	}
+
 	if len(rec.Nodes) == 0 {
 		t.Error("expected at least one node in the call graph")
 	}
@@ -296,6 +302,11 @@ func greet() {
 	}
 	if rec.OverallStatus == domain.CallGraphStatusLoadFailed {
 		t.Skip("go/packages load failed; skipping main package test")
+	}
+	// A module that builds a command is an application, so reachability roots at
+	// all of its own code rather than only its (here empty) exported API.
+	if rec.ArtifactKind != domain.ArtifactApplication {
+		t.Errorf("ArtifactKind = %q, want %q", rec.ArtifactKind, domain.ArtifactApplication)
 	}
 	// Nodes in a main package should not be marked IsExportedAPI.
 	for _, n := range rec.Nodes {
@@ -635,4 +646,184 @@ func hasSuffix(s, suffix string) bool {
 	}
 	// Check ".Suffix" suffix.
 	return s[len(s)-len(suffix)-1:] == "."+suffix
+}
+
+// TestAnalyse_ClosureIDsKeepEnclosingReceiver is the node-identity regression.
+// Two methods share the simple name Run on different receivers, and each
+// contains a closure. Identifying a closure by its own signature loses the
+// receiver — a closure has none even inside a method — so both would land on
+// "…closureid.Run$1" and merge the edge sets of two unrelated functions.
+func TestAnalyse_ClosureIDsKeepEnclosingReceiver(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/cgtestmod\n\ngo 1.21\n",
+		"closureid/closureid.go": `package closureid
+
+type A struct{}
+type B struct{}
+
+func sinkA() {}
+func sinkB() {}
+
+func (a *A) Run() { func() { sinkA() }() }
+func (b *B) Run() { func() { sinkB() }() }
+`,
+	}
+	a := staticcha.New("0.1.0", "", slog.Default())
+	zipPath := writeZipToTemp(t, makeZip(t, testCoord, files))
+	rec, err := a.Analyse(context.Background(), zipPath, testCoord)
+	if err != nil {
+		t.Fatalf("Analyse: %v", err)
+	}
+	if rec.OverallStatus == domain.CallGraphStatusLoadFailed {
+		t.Skip("go/packages load failed; skipping closure identity test")
+	}
+
+	const pkg = "example.com/cgtestmod/closureid"
+	wantA := pkg + ".(*A).Run$1"
+	wantB := pkg + ".(*B).Run$1"
+	ids := make(map[string]bool, len(rec.Nodes))
+	for _, n := range rec.Nodes {
+		ids[n.ID] = true
+	}
+	for _, want := range []string{wantA, wantB} {
+		if !ids[want] {
+			t.Errorf("missing closure node %q; nodes: %v", want, sortedIDs(rec))
+		}
+	}
+	// The pre-fix collapsed identity must not appear at all.
+	if ids[pkg+".Run$1"] {
+		t.Errorf("receiver-stripped closure ID %q present: the two closures collided", pkg+".Run$1")
+	}
+
+	// Each closure must reach only its own sink. A merged node would carry both.
+	callees := func(id string) []string {
+		var out []string
+		for _, e := range rec.Edges {
+			if e.FromID == id {
+				out = append(out, e.ToID)
+			}
+		}
+		slices.Sort(out)
+		return out
+	}
+	for id, wantSink := range map[string]string{wantA: pkg + ".sinkA", wantB: pkg + ".sinkB"} {
+		got := callees(id)
+		if !slices.Contains(got, wantSink) {
+			t.Errorf("closure %q callees = %v, want to contain %q", id, got, wantSink)
+		}
+		otherSink := pkg + ".sinkB"
+		if wantSink == otherSink {
+			otherSink = pkg + ".sinkA"
+		}
+		if slices.Contains(got, otherSink) {
+			t.Errorf("closure %q reaches %q: edge sets merged across receivers", id, otherSink)
+		}
+	}
+}
+
+// TestAnalyse_NestedClosureIDsCompose checks that the receiver survives more
+// than one level of nesting, since the identifier is built recursively.
+func TestAnalyse_NestedClosureIDsCompose(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/cgtestmod\n\ngo 1.21\n",
+		"nested/nested.go": `package nested
+
+type C struct{}
+
+func deep() {}
+
+func (c *C) Work() {
+	func() {
+		func() { deep() }()
+	}()
+}
+`,
+	}
+	a := staticcha.New("0.1.0", "", slog.Default())
+	zipPath := writeZipToTemp(t, makeZip(t, testCoord, files))
+	rec, err := a.Analyse(context.Background(), zipPath, testCoord)
+	if err != nil {
+		t.Fatalf("Analyse: %v", err)
+	}
+	if rec.OverallStatus == domain.CallGraphStatusLoadFailed {
+		t.Skip("go/packages load failed; skipping nested closure test")
+	}
+	want := "example.com/cgtestmod/nested.(*C).Work$1$1"
+	for _, n := range rec.Nodes {
+		if n.ID == want {
+			return
+		}
+	}
+	t.Errorf("missing nested closure node %q; nodes: %v", want, sortedIDs(rec))
+}
+
+func sortedIDs(rec domain.CallGraphRecord) []string {
+	ids := make([]string, 0, len(rec.Nodes))
+	for _, n := range rec.Nodes {
+		ids = append(ids, n.ID)
+	}
+	slices.Sort(ids)
+	return ids
+}
+
+// TestAnalyse_ClosuresAreNotExportedAPI is the library-rooting regression. A
+// closure inside an exported method of an exported package is not public API:
+// no consumer can name it. Flagging it IsExportedAPI makes it a library
+// reachability root, asserting a path no caller can trigger.
+func TestAnalyse_ClosuresAreNotExportedAPI(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/cgtestmod\n\ngo 1.21\n",
+		"api/api.go": `package api
+
+type Engine struct{}
+
+func helper() {}
+
+// Exported is public API; the closure inside it is not.
+func (e *Engine) Exported() { func() { helper() }() }
+`,
+	}
+	a := staticcha.New("0.1.0", "", slog.Default())
+	zipPath := writeZipToTemp(t, makeZip(t, testCoord, files))
+	rec, err := a.Analyse(context.Background(), zipPath, testCoord)
+	if err != nil {
+		t.Fatalf("Analyse: %v", err)
+	}
+	if rec.OverallStatus == domain.CallGraphStatusLoadFailed {
+		t.Skip("go/packages load failed; skipping exported-API closure test")
+	}
+
+	const pkg = "example.com/cgtestmod/api"
+	var sawMethod bool
+	for _, n := range rec.Nodes {
+		switch n.ID {
+		case pkg + ".(*Engine).Exported":
+			sawMethod = true
+			if !n.IsExportedAPI {
+				t.Error("the exported method itself must remain IsExportedAPI")
+			}
+		case pkg + ".(*Engine).Exported$1":
+			if n.IsExportedAPI {
+				t.Errorf("closure %q flagged IsExportedAPI: it would become a library root", n.ID)
+			}
+		}
+	}
+	if !sawMethod {
+		t.Fatalf("fixture did not produce the exported method; nodes: %v", sortedIDs(rec))
+	}
+
+	// Library rooting must not select the closure. It is still analysed, being
+	// reached through the enclosing method rather than rooted directly.
+	roots := make([]domain.RootCandidate, 0, len(rec.Nodes))
+	for _, n := range rec.Nodes {
+		roots = append(roots, domain.RootCandidate{
+			ID: n.ID, Symbol: n.Symbol,
+			IsExternal: n.IsExternal, IsExportedAPI: n.IsExportedAPI,
+		})
+	}
+	for _, id := range domain.SelectReachabilityRoots(roots, domain.ArtifactLibrary) {
+		if id == pkg+".(*Engine).Exported$1" {
+			t.Error("closure selected as a library reachability root")
+		}
+	}
 }

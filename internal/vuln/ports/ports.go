@@ -205,6 +205,11 @@ type CallGraphProjection struct {
 	// verdict and checks completeness parity before trusting a green result.
 	Completeness string
 	Algorithm    string
+	// ArtifactKind is what the analysed module is (application or library), as an
+	// opaque string for the same reason. Reachability roots are conditioned on
+	// it: an application's own code is all reachable, because functions the
+	// runtime dispatches to dynamically are still shipped code.
+	ArtifactKind string
 }
 
 // CallGraphNode is the subset of a call graph node the analyser needs.
