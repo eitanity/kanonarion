@@ -5,7 +5,7 @@ import (
 	"fmt"
 	"time"
 
-	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 // WalkStatus summarises the overall outcome of a Walk operation.
@@ -111,8 +111,8 @@ func (e *StoredError) Error() string {
 
 // NodeResult is the per-module outcome of a Walk operation.
 type NodeResult struct {
-	Coordinate  domain2.ModuleCoordinate
-	FetchRecord *domain2.FactRecord // nil on failure
+	Coordinate  fetchdomain.ModuleCoordinate
+	FetchRecord *fetchdomain.FactRecord // nil on failure
 	Status      NodeStatus
 	Error       *StoredError // nil on success
 	FromCache   bool
@@ -121,9 +121,9 @@ type NodeResult struct {
 
 // WalkOutcome is the complete result of a Walk operation.
 type WalkOutcome struct {
-	Target         domain2.ModuleCoordinate
+	Target         fetchdomain.ModuleCoordinate
 	Graph          Graph
-	PerNodeResults map[domain2.ModuleCoordinate]NodeResult
+	PerNodeResults map[fetchdomain.ModuleCoordinate]NodeResult
 	StartedAt      time.Time
 	CompletedAt    time.Time
 	OverallStatus  WalkStatus

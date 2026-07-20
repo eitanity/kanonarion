@@ -224,7 +224,11 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 				FirstScannedAt:   now,
 				PipelineVersion:  uc.pipelineVersion,
 			}
-			record.ContentHash = uc.computeContentHash(record)
+			hash, err := uc.computeContentHash(record)
+			if err != nil {
+				return domain.VulnerabilityRecord{}, fmt.Errorf("hashing clean record: %w", err)
+			}
+			record.ContentHash = hash
 			if err := uc.vulnStore.PutVulnerabilityRecord(ctx, record); err != nil {
 				return domain.VulnerabilityRecord{}, fmt.Errorf("persisting clean record: %w", err)
 			}
@@ -310,7 +314,11 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 	}
 
 	// 7. Deterministic Identity (T5: Hash-based Identity)
-	record.ContentHash = uc.computeContentHash(record)
+	hash, err := uc.computeContentHash(record)
+	if err != nil {
+		return domain.VulnerabilityRecord{}, fmt.Errorf("hashing vulnerability record: %w", err)
+	}
+	record.ContentHash = hash
 
 	// 8. Durability (T6: Aggregate Persistence)
 	if err := uc.vulnStore.PutVulnerabilityRecord(ctx, record); err != nil {
@@ -352,7 +360,11 @@ func (uc *ScanModuleUseCase) tryReuseCachedRecord(ctx context.Context, params Sc
 	rec.WalkID = params.WalkID
 	rec.ScannedAt = uc.clock.Now()
 	rec.ContentHash = ""
-	rec.ContentHash = uc.computeContentHash(rec)
+	hash, err := uc.computeContentHash(rec)
+	if err != nil {
+		return domain.VulnerabilityRecord{}, false, fmt.Errorf("hashing reused vulnerability record: %w", err)
+	}
+	rec.ContentHash = hash
 	if perr := uc.vulnStore.PutVulnerabilityRecord(ctx, rec); perr != nil {
 		return domain.VulnerabilityRecord{}, false, fmt.Errorf("re-attributing reused vulnerability record: %w", perr)
 	}
@@ -409,23 +421,30 @@ func (uc *ScanModuleUseCase) scanMetadataOnly(ctx context.Context, params ScanMo
 		FirstScannedAt:    now,
 		PipelineVersion:   uc.pipelineVersion,
 	}
-	record.ContentHash = uc.computeContentHash(record)
+	hash, err := uc.computeContentHash(record)
+	if err != nil {
+		return domain.VulnerabilityRecord{}, fmt.Errorf("hashing metadata-only record: %w", err)
+	}
+	record.ContentHash = hash
 	if perr := uc.vulnStore.PutVulnerabilityRecord(ctx, record); perr != nil {
 		return domain.VulnerabilityRecord{}, fmt.Errorf("persisting metadata-only record: %w", perr)
 	}
 	return record, nil
 }
 
-func (uc *ScanModuleUseCase) computeContentHash(r domain.VulnerabilityRecord) string {
+func (uc *ScanModuleUseCase) computeContentHash(r domain.VulnerabilityRecord) (string, error) {
 	// FirstScannedAt is first-seen provenance, not part of the verdict, so it is
 	// excluded from the canonical hash: a reused record whose ScannedAt advances
 	// must not change identity on account of an anchor that never moves. r is a
 	// value copy, so zeroing it here does not affect the persisted record.
 	r.FirstScannedAt = time.Time{}
 	// Canonical JSON hashing
-	data, _ := json.Marshal(r)
+	data, err := json.Marshal(r)
+	if err != nil {
+		return "", fmt.Errorf("marshalling vulnerability record for content hash: %w", err)
+	}
 	hash := sha256.Sum256(data)
-	return hex.EncodeToString(hash[:])
+	return hex.EncodeToString(hash[:]), nil
 }
 
 // applyReachability runs reachability analysis for each finding that has

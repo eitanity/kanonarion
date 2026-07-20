@@ -13,6 +13,9 @@ import (
 func TestExtractionRunHasher(t *testing.T) {
 	coord1, _ := fetchdomain.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
 	coord2, _ := fetchdomain.NewModuleCoordinate("github.com/baz/qux", "v2.0.0")
+	// Same Path as coord1, different Version: exercises the Version-comparison
+	// branch of marshalCanonicalRun's coordinate sort when Path is equal.
+	coord3, _ := fetchdomain.NewModuleCoordinate("github.com/foo/bar", "v1.1.0")
 
 	run := ExtractionRun{
 		SchemaVersion:   ExtractionRunSchemaVersion,
@@ -32,6 +35,12 @@ func TestExtractionRunHasher(t *testing.T) {
 				Stages: map[string]StageResult{
 					"license":   {Status: StageSucceeded, DurationMs: 150},
 					"interface": {Status: StageFailed, Error: "failed", DurationMs: 200},
+				},
+			},
+			coord3: {
+				Coordinate: coord3,
+				Stages: map[string]StageResult{
+					"license": {Status: StageSucceeded, DurationMs: 120},
 				},
 			},
 		},
@@ -147,6 +156,83 @@ func TestExtractionRunHasher(t *testing.T) {
 		}
 		if _, err := hasher.Unmarshal(data); !errors.Is(err, fetchdomain.ErrUnsupportedEcosystem) {
 			t.Errorf("expected ErrUnsupportedEcosystem, got %v", err)
+		}
+	})
+}
+
+func TestMarshalCanonicalRun_MarshalFailure(t *testing.T) {
+	original := canonicalMarshal
+	t.Cleanup(func() { canonicalMarshal = original })
+	injected := errors.New("injected marshal failure")
+	canonicalMarshal = func(any) ([]byte, error) { return nil, injected }
+
+	_, err := ExtractionRunHasher{}.SetContentHash(ExtractionRun{})
+	if err == nil {
+		t.Fatal("SetContentHash() error = nil, want wrapped marshal error")
+	}
+	if !errors.Is(err, injected) {
+		t.Errorf("SetContentHash() error = %v, want it to wrap the injected error", err)
+	}
+	if !strings.Contains(err.Error(), "canonical run") {
+		t.Errorf("SetContentHash() error = %q, want it to name the record being marshalled", err.Error())
+	}
+}
+
+func TestVerifyContentHash_MarshalFailure(t *testing.T) {
+	original := canonicalMarshal
+	t.Cleanup(func() { canonicalMarshal = original })
+	injected := errors.New("injected marshal failure")
+	canonicalMarshal = func(any) ([]byte, error) { return nil, injected }
+
+	err := ExtractionRunHasher{}.VerifyContentHash(ExtractionRun{})
+	if !errors.Is(err, injected) {
+		t.Errorf("VerifyContentHash() error = %v, want it to wrap the injected error", err)
+	}
+}
+
+func TestUnmarshal_MalformedInputs(t *testing.T) {
+	hasher := ExtractionRunHasher{}
+	coord, _ := fetchdomain.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
+	run := ExtractionRun{
+		SchemaVersion: ExtractionRunSchemaVersion,
+		Ecosystem:     fetchdomain.EcosystemGo,
+		ID:            "run-id",
+		PerModuleResults: map[fetchdomain.ModuleCoordinate]ModuleExtractionResult{
+			coord: {Coordinate: coord, Stages: map[string]StageResult{"license": {Status: StageSucceeded}}},
+		},
+		StartedAt:   time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC),
+		CompletedAt: time.Date(2023, 1, 1, 1, 0, 0, 0, time.UTC),
+	}
+	hashed, err := hasher.SetContentHash(run)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	data, err := hasher.Marshal(hashed)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+
+	t.Run("invalid JSON", func(t *testing.T) {
+		if _, err := hasher.Unmarshal([]byte("not json")); err == nil {
+			t.Error("Unmarshal() error = nil, want a JSON syntax error")
+		}
+	})
+	t.Run("malformed started_at", func(t *testing.T) {
+		tampered := strings.Replace(string(data), `"started_at":"2023-01-01T00:00:00Z"`, `"started_at":"not-a-time"`, 1)
+		if _, err := hasher.Unmarshal([]byte(tampered)); err == nil {
+			t.Error("Unmarshal() error = nil, want a parse error for malformed started_at")
+		}
+	})
+	t.Run("malformed completed_at", func(t *testing.T) {
+		tampered := strings.Replace(string(data), `"completed_at":"2023-01-01T01:00:00Z"`, `"completed_at":"not-a-time"`, 1)
+		if _, err := hasher.Unmarshal([]byte(tampered)); err == nil {
+			t.Error("Unmarshal() error = nil, want a parse error for malformed completed_at")
+		}
+	})
+	t.Run("malformed per-module coordinate", func(t *testing.T) {
+		tampered := strings.Replace(string(data), `"path":"github.com/foo/bar"`, `"path":""`, 1)
+		if _, err := hasher.Unmarshal([]byte(tampered)); err == nil {
+			t.Error("Unmarshal() error = nil, want a parse error for an invalid per-module coordinate")
 		}
 	})
 }

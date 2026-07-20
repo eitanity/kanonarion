@@ -145,7 +145,11 @@ func (uc *ScanWalkUseCase) persistProjectRecord(
 		PipelineVersion:   uc.pipelineVersion,
 	}
 	domain.SortFindings(rec.Findings)
-	rec.ContentHash = uc.moduleScanner.computeContentHash(rec)
+	if hash, err := uc.moduleScanner.computeContentHash(rec); err != nil {
+		uc.logger.Error("project-rooted scan: failed to compute content hash", "coordinate", coord, "error", err)
+	} else {
+		rec.ContentHash = hash
+	}
 	if perr := uc.vulnStore.PutVulnerabilityRecord(ctx, rec); perr != nil {
 		uc.logger.Error("project-rooted scan: failed to persist record", "coordinate", coord, "error", perr)
 	}

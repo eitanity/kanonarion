@@ -133,3 +133,26 @@ func TestCanonicalHasher_RejectsAbsentEcosystem(t *testing.T) {
 		t.Errorf("expected ErrUnsupportedEcosystem for absent field, got %v", err)
 	}
 }
+
+func TestCanonicalHasher_Unmarshal_InvalidJSON(t *testing.T) {
+	h := domain2.CanonicalHasher{}
+	if _, err := h.Unmarshal([]byte("not json")); err == nil {
+		t.Error("Unmarshal() error = nil, want a JSON syntax error")
+	}
+}
+
+func TestCanonicalHasher_Unmarshal_MalformedFetchedAt(t *testing.T) {
+	h := domain2.CanonicalHasher{}
+	r, err := h.SetContentHash(sampleRecord())
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	data, err := h.Marshal(r)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	tampered := bytes.Replace(data, []byte(`"fetched_at":"2024-01-01T00:00:00Z"`), []byte(`"fetched_at":"not-a-time"`), 1)
+	if _, err := h.Unmarshal(tampered); err == nil {
+		t.Error("Unmarshal() error = nil, want a parse error for malformed fetched_at")
+	}
+}

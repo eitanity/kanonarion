@@ -307,7 +307,11 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	)
 
 	// 6. Hash & Persist
-	run.ContentHash = uc.computeContentHash(run)
+	hash, err := uc.computeContentHash(run)
+	if err != nil {
+		return domain.WalkScanRun{}, fmt.Errorf("hashing walk scan run: %w", err)
+	}
+	run.ContentHash = hash
 	if err := uc.vulnStore.PutWalkScanRun(ctx, run); err != nil {
 		return domain.WalkScanRun{}, fmt.Errorf("persisting walk scan run: %w", err)
 	}
@@ -710,8 +714,19 @@ func (uc *ScanWalkUseCase) preExtractVulnDB(ctx context.Context, snapshot *domai
 	return dbDir, cleanup
 }
 
-func (uc *ScanWalkUseCase) computeContentHash(r domain.WalkScanRun) string {
-	data, _ := json.Marshal(r)
+func (uc *ScanWalkUseCase) computeContentHash(r domain.WalkScanRun) (string, error) {
+	data, err := walkScanRunMarshal(r)
+	if err != nil {
+		return "", fmt.Errorf("marshalling walk scan run for content hash: %w", err)
+	}
 	hash := sha256.Sum256(data)
-	return hex.EncodeToString(hash[:])
+	return hex.EncodeToString(hash[:]), nil
 }
+
+// walkScanRunMarshal is a seam over json.Marshal used to test the
+// marshal-failure guard's wrapping and propagation logic. No field in
+// WalkScanRun can currently make json.Marshal fail (no NaN/Inf floats, no
+// unsupported types), so this proves the guard's error handling is correct,
+// not that the guard is reachable with a real value today — it exists for
+// the never-silent-failure invariant, not a known failure mode.
+var walkScanRunMarshal = json.Marshal

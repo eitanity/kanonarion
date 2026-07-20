@@ -878,3 +878,142 @@ func TestWalkRecordHasher_NilFetchRecord(t *testing.T) {
 		t.Fatalf("VerifyContentHash: %v", err)
 	}
 }
+
+// buildRichWalkRecord builds a WalkRecord with every optional shape populated
+// (a replace-originated node, an edge, two PerNodeResults sharing a Path but
+// differing by Version, and a populated FetchRecord) so Unmarshal's tampered-
+// field tests below can exercise every coordinate/timestamp parse branch.
+func buildRichWalkRecord(t *testing.T) domain3.WalkRecord {
+	t.Helper()
+	rootTarget := mustCoord("root.example/mod", "v1.0.0")
+	graphTarget := mustCoord("graphtarget.example/mod", "v1.0.0")
+	node0Coord := mustCoord("node0.example/mod", "v1.0.0")
+	node0Original := mustCoord("node0original.example/mod", "v0.9.0")
+	node1Coord := mustCoord("node1.example/mod", "v1.0.0")
+	perNodeA := mustCoord("pernode.example/mod", "v1.0.0")
+	perNodeB := mustCoord("pernode.example/mod", "v2.0.0")
+
+	rec := sampleFactRecord
+	outcome := domain3.WalkOutcome{
+		Target: rootTarget,
+		Graph: domain3.Graph{
+			Target: graphTarget,
+			Nodes: []domain3.GraphNode{
+				{
+					Coordinate:         node0Coord,
+					ResolutionSource:   domain3.ResolutionReplace,
+					OriginalCoordinate: node0Original,
+				},
+				{Coordinate: node1Coord, DirectDependency: true, ResolutionSource: domain3.ResolutionMVS},
+			},
+			Edges:           []domain3.GraphEdge{{From: node0Coord, To: node1Coord, ConstraintVersion: "v1.0.0"}},
+			ResolvedAt:      fixedTime.Add(30 * time.Minute),
+			PipelineVersion: "0.2.0",
+		},
+		PerNodeResults: map[domain2.ModuleCoordinate]domain3.NodeResult{
+			perNodeA: {Coordinate: perNodeA, FetchRecord: &rec, Status: domain3.NodeSucceeded},
+			perNodeB: {Coordinate: perNodeB, Status: domain3.NodeFetchFailed},
+		},
+		StartedAt:     fixedTime,
+		CompletedAt:   fixedTime.Add(time.Hour),
+		OverallStatus: domain3.WalkPartial,
+	}
+	return domain3.NewWalkRecord("RICHRICHRICHRICHRICHRICH", "bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, outcome, domain3.DefaultDepthPolicy(), "")
+}
+
+func TestWalkRecordHasher_Unmarshal_MalformedInputs(t *testing.T) {
+	hasher := domain3.WalkRecordHasher{}
+	hashed, err := hasher.SetContentHash(buildRichWalkRecord(t))
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	blob, err := hasher.Marshal(hashed)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	base := string(blob)
+
+	cases := []struct {
+		name string
+		from string
+		to   string
+	}{
+		{"invalid JSON", "", ""}, // handled separately below
+		{"malformed started_at", `"started_at":"2025-01-15T12:00:00Z"`, `"started_at":"not-a-time"`},
+		{"malformed completed_at", `"completed_at":"2025-01-15T13:00:00Z"`, `"completed_at":"not-a-time"`},
+		{"malformed graph.resolved_at", `"resolved_at":"2025-01-15T12:30:00Z"`, `"resolved_at":"not-a-time"`},
+		{"malformed target coordinate", `"path":"root.example/mod"`, `"path":""`},
+		{"malformed graph target coordinate", `"path":"graphtarget.example/mod"`, `"path":""`},
+		{"malformed node coordinate", `"coordinate":{"path":"node0.example/mod"`, `"coordinate":{"path":""`},
+		{"malformed node original coordinate", `"path":"node0original.example/mod"`, `"path":""`},
+		{"malformed edge from coordinate", `"from":{"path":"node0.example/mod"`, `"from":{"path":""`},
+		{"malformed edge to coordinate", `"to":{"path":"node1.example/mod"`, `"to":{"path":""`},
+		{"malformed per_node_results coordinate", `"path":"pernode.example/mod","version":"v1.0.0"`, `"path":"","version":"v1.0.0"`},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.name == "invalid JSON" {
+				if _, err := hasher.Unmarshal([]byte("not json")); err == nil {
+					t.Error("Unmarshal() error = nil, want a JSON syntax error")
+				}
+				return
+			}
+			tampered := strings.Replace(base, tc.from, tc.to, 1)
+			if tampered == base {
+				t.Fatalf("tamper string %q not found in canonical JSON", tc.from)
+			}
+			if _, err := hasher.Unmarshal([]byte(tampered)); err == nil {
+				t.Errorf("Unmarshal() error = nil, want a parse error for %s", tc.name)
+			}
+		})
+	}
+
+	t.Run("malformed fetch_record in per_node_results", func(t *testing.T) {
+		// Target the ecosystem field inside the embedded fetch_record object
+		// specifically (identified via ContentLocation, unique to that nested
+		// object) so the outer WalkRecord's own "ecosystem":"go" is untouched.
+		tampered := strings.Replace(base, `"content_location":"blobs/ab/abcdef","ecosystem":"go"`, `"content_location":"blobs/ab/abcdef","ecosystem":"npm"`, 1)
+		if tampered == base {
+			t.Fatal("tamper string not found in canonical JSON")
+		}
+		if _, err := hasher.Unmarshal([]byte(tampered)); err == nil {
+			t.Error("Unmarshal() error = nil, want a parse error for a malformed fetch_record")
+		}
+	})
+}
+
+func TestWalkRecordHasher_Unmarshal_DefaultsEmptyScope(t *testing.T) {
+	// A legacy record serialised before Scope existed has an empty scope
+	// field; Unmarshal must default it to WalkScopeCode rather than leaving
+	// it blank.
+	hasher := domain3.WalkRecordHasher{}
+	rec := domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(), domain3.DefaultDepthPolicy(), "")
+	hashed, err := hasher.SetContentHash(rec)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	blob, err := hasher.Marshal(hashed)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	tampered := strings.Replace(string(blob), `"scope":"code"`, `"scope":""`, 1)
+	if tampered == string(blob) {
+		t.Fatal(`tamper string "scope":"code" not found in canonical JSON`)
+	}
+	got, err := hasher.Unmarshal([]byte(tampered))
+	if err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	if got.Scope != domain3.WalkScopeCode {
+		t.Errorf("Scope = %q, want default %q for an absent/empty scope field", got.Scope, domain3.WalkScopeCode)
+	}
+}
+
+func TestNewWalkRecord_DefaultsEmptyScope(t *testing.T) {
+	outcome := buildOutcome()
+	rec := domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", "", domain3.WalkDepthFull, outcome, domain3.DefaultDepthPolicy(), "")
+	if rec.Scope != domain3.WalkScopeCode {
+		t.Errorf("Scope = %q, want default %q when passed empty", rec.Scope, domain3.WalkScopeCode)
+	}
+}
