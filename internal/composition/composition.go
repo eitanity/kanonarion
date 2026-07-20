@@ -335,7 +335,7 @@ func newLocalWalkExtract(
 	extractUC := extractapp.NewExtractUseCase(extractapp.Config{
 		Runs:      extStore,
 		Walks:     walkStore,
-		Extractor: extextractor.NewAdapterExtractor(licExtractUC, ifaceExtractUC, cgSubprocessExec, cgStore, cgapp.PipelineVersion, exExtractUC),
+		Extractor: extextractor.NewAdapterExtractor(licExtractUC, ifaceExtractUC, cgSubprocessExec, cgStore, cgapp.PipelineVersion, nil, exExtractUC),
 		Stages:    stages,
 		Clock:     clk,
 		Stopwatch: stopwatch,

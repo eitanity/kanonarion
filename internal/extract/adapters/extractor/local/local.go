@@ -60,7 +60,12 @@ type AdapterExtractor struct {
 	cgExec            SubprocessExecutor
 	cgReader          CallGraphReader
 	cgPipelineVersion string
-	example           ExampleUseCase
+	// cgExtraArgs is appended to the "callgraph" subprocess invocation, after
+	// the coordinate and before --force. It carries CLI state that is
+	// process-global in the parent (e.g. --store-root, --from-modcache) and
+	// therefore does not otherwise cross the subprocess boundary.
+	cgExtraArgs []string
+	example     ExampleUseCase
 }
 
 func NewAdapterExtractor(
@@ -69,6 +74,7 @@ func NewAdapterExtractor(
 	cgExec SubprocessExecutor,
 	cgReader CallGraphReader,
 	cgPipelineVersion string,
+	cgExtraArgs []string,
 	ex ExampleUseCase,
 ) *AdapterExtractor {
 	return &AdapterExtractor{
@@ -77,6 +83,7 @@ func NewAdapterExtractor(
 		cgExec:            cgExec,
 		cgReader:          cgReader,
 		cgPipelineVersion: cgPipelineVersion,
+		cgExtraArgs:       cgExtraArgs,
 		example:           ex,
 	}
 }
@@ -147,6 +154,7 @@ func (a *AdapterExtractor) extractCallgraphSubprocess(ctx context.Context, coord
 	defer cancel()
 
 	args := []string{"callgraph", coord.String()}
+	args = append(args, a.cgExtraArgs...)
 	if force {
 		args = append(args, "--force")
 	}
