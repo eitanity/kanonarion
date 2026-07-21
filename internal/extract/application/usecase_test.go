@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"errors"
+	"sync"
 	"testing"
 	"time"
 
@@ -91,6 +92,7 @@ func (m *mockWalkStore) ListWalks(ctx context.Context, filter walkports.WalkFilt
 }
 
 type mockExtractor struct {
+	mu        sync.Mutex
 	calls     []extractorCall
 	onExtract func()
 }
@@ -104,7 +106,9 @@ func (m *mockExtractor) Extract(ctx context.Context, coord coordinate.ModuleCoor
 	if m.onExtract != nil {
 		m.onExtract()
 	}
+	m.mu.Lock()
 	m.calls = append(m.calls, extractorCall{coord, stage})
+	m.mu.Unlock()
 	if stage == "license" && force {
 		return ports.StageResult{Status: domain.StageFailed, Error: "forced failure"}, nil
 	}
@@ -494,5 +498,88 @@ func TestExtractUseCase_localMainModuleRootSkippedNotFailed(t *testing.T) {
 
 	if run.OverallStatus != domain.ExtractionRunSucceeded {
 		t.Errorf("OverallStatus = %v, want succeeded (an un-fetchable root is a skip, not a failure)", run.OverallStatus)
+	}
+}
+
+// fakeProgressReporter records every Advance call. Execute drives it from
+// concurrent worker goroutines, so calls are guarded by a mutex.
+type fakeProgressReporter struct {
+	mu    sync.Mutex
+	calls []int
+}
+
+func (f *fakeProgressReporter) Advance(done int) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.calls = append(f.calls, done)
+}
+
+// TestExtractUseCase_Execute_ReportsProgress guards against the extract stage
+// going silent for the whole run: Execute must call Progress.Advance once per
+// completed module, including modules skipped as unfetchable, so a CLI-side
+// heartbeat has something to report on a long or cold run.
+func TestExtractUseCase_Execute_ReportsProgress(t *testing.T) {
+	ctx := t.Context()
+	coordA, _ := coordinate.NewModuleCoordinate("github.com/foo/a", "v1.0.0")
+	coordB, _ := coordinate.NewModuleCoordinate("github.com/foo/b", "v1.0.0")
+	coordC, _ := coordinate.NewModuleCoordinate("github.com/foo/c", "v1.0.0")
+	walkID := "walk-progress"
+
+	walk := walkdomain.WalkRecord{
+		Target: coordA,
+		Graph: walkdomain.Graph{
+			Nodes: []walkdomain.GraphNode{
+				{Coordinate: coordA},
+				{Coordinate: coordB},
+				// A local-replace node is skipped as unfetchable, not extracted —
+				// it must still advance progress, or a walk with such nodes would
+				// under-report and never reach "total".
+				{Coordinate: coordC, ResolutionSource: walkdomain.ResolutionLocalReplace, LocalPath: "../c"},
+			},
+		},
+	}
+
+	runs := &mockExtractionStore{runs: make(map[string]domain.ExtractionRun)}
+	walks := &mockWalkStore{walks: map[string]walkdomain.WalkRecord{walkID: walk}}
+	extractor := &mockExtractor{}
+
+	uc := NewExtractUseCase(Config{
+		Runs:      runs,
+		Walks:     walks,
+		Extractor: extractor,
+		Stages:    mockStageRegistry{},
+		Clock:     fakeClock{t: testClockTime},
+		Stopwatch: fakeStopwatch{},
+	})
+
+	reporter := &fakeProgressReporter{}
+	req := ExtractRequest{
+		WalkID:   walkID,
+		Stages:   []string{"license"},
+		Progress: reporter,
+	}
+
+	if _, err := uc.Execute(ctx, req); err != nil {
+		t.Fatalf("Execute failed: %v", err)
+	}
+
+	reporter.mu.Lock()
+	calls := append([]int(nil), reporter.calls...)
+	reporter.mu.Unlock()
+
+	if len(calls) != len(walk.Graph.Nodes) {
+		t.Fatalf("Advance called %d times, want %d (one per module)", len(calls), len(walk.Graph.Nodes))
+	}
+
+	// Workers run concurrently, so call order isn't guaranteed, but the set of
+	// reported counts must be exactly 1..N with no gaps or duplicates.
+	seen := make(map[int]bool, len(calls))
+	for _, c := range calls {
+		seen[c] = true
+	}
+	for i := 1; i <= len(walk.Graph.Nodes); i++ {
+		if !seen[i] {
+			t.Errorf("Advance never reported count %d; got calls %v", i, calls)
+		}
 	}
 }

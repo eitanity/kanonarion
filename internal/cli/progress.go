@@ -8,6 +8,7 @@ import (
 	"time"
 
 	configdomain "github.com/eitanity/kanonarion/internal/config/domain"
+	extractports "github.com/eitanity/kanonarion/internal/extract/ports"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
@@ -35,7 +36,22 @@ func newWalkProgressReporter(stderr io.Writer, noProgress bool, cfg configdomain
 	case "info", "debug":
 		return nil
 	}
-	return newStderrProgressReporter(stderr, progressInterval, time.Now)
+	return newStderrProgressReporter(stderr, progressInterval, time.Now, "walk progress: %d modules fetched (%s elapsed)\n")
+}
+
+// newExtractProgressReporter mirrors newWalkProgressReporter for the extract
+// stage, which otherwise has no output at all between "Starting extraction"
+// and completion — a multi-minute cold or large run looks hung with nothing
+// to show it is still making progress.
+func newExtractProgressReporter(stderr io.Writer, noProgress bool, cfg configdomain.Config, level string) extractports.ProgressReporter {
+	if noProgress || !cfg.Preferences.Progress {
+		return nil
+	}
+	switch strings.ToLower(level) {
+	case "info", "debug":
+		return nil
+	}
+	return newStderrProgressReporter(stderr, progressInterval, time.Now, "extract progress: %d modules processed (%s elapsed)\n")
 }
 
 // stderrProgressReporter writes a single throttled progress line to an output
@@ -45,18 +61,20 @@ type stderrProgressReporter struct {
 	w        io.Writer
 	interval time.Duration
 	now      func() time.Time
+	format   string
 
 	mu       sync.Mutex
 	start    time.Time
 	lastEmit time.Time
 }
 
-func newStderrProgressReporter(w io.Writer, interval time.Duration, now func() time.Time) *stderrProgressReporter {
+func newStderrProgressReporter(w io.Writer, interval time.Duration, now func() time.Time, format string) *stderrProgressReporter {
 	t := now()
 	return &stderrProgressReporter{
 		w:        w,
 		interval: interval,
 		now:      now,
+		format:   format,
 		start:    t,
 		lastEmit: t,
 	}
@@ -74,5 +92,5 @@ func (p *stderrProgressReporter) Advance(done int) {
 	}
 	p.lastEmit = t
 	elapsed := t.Sub(p.start).Round(time.Second)
-	_, _ = fmt.Fprintf(p.w, "walk progress: %d modules fetched (%s elapsed)\n", done, elapsed)
+	_, _ = fmt.Fprintf(p.w, p.format, done, elapsed)
 }

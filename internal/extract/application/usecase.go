@@ -67,6 +67,9 @@ type ExtractRequest struct {
 	Force  bool
 	// Workers overrides the use case's default concurrency when non-zero.
 	Workers int
+	// Progress receives a call after each module completes all requested
+	// stages. Nil disables reporting.
+	Progress ports.ProgressReporter
 }
 
 func resolveWorkers(reqWorkers, ucWorkers, nodeCount int) int {
@@ -165,6 +168,7 @@ func (uc *ExtractUseCase) Execute(ctx context.Context, req ExtractRequest) (doma
 
 	outcomes := make([]outcome, len(nodes))
 	var partial, cancelled atomic.Bool
+	var completed atomic.Int64
 
 	var wg sync.WaitGroup
 	for w := 0; w < workers; w++ {
@@ -199,6 +203,9 @@ func (uc *ExtractUseCase) Execute(ctx context.Context, req ExtractRequest) (doma
 						}
 					}
 					outcomes[j.idx] = outcome{coord: j.node.Coordinate, result: modRes, set: true}
+					if req.Progress != nil {
+						req.Progress.Advance(int(completed.Add(1)))
+					}
 					continue
 				}
 
@@ -233,6 +240,9 @@ func (uc *ExtractUseCase) Execute(ctx context.Context, req ExtractRequest) (doma
 				}
 
 				outcomes[j.idx] = outcome{coord: j.node.Coordinate, result: modRes, set: true}
+				if req.Progress != nil {
+					req.Progress.Advance(int(completed.Add(1)))
+				}
 			}
 		}()
 	}

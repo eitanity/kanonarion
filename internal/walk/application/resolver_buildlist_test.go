@@ -487,3 +487,80 @@ func TestResolveProject_NoBuildListResolver_NoCaveat(t *testing.T) {
 		t.Errorf("legacy path should not be partial: %s", g.PartialReason)
 	}
 }
+
+// The toolchain hands over a build list that already distinguishes a replaced
+// entry from an independent requirement on the same target path:
+//
+//	example.com/forked v1.0.0 => example.com/fork v1.2.0
+//	example.com/fork   v1.5.0
+//
+// Keying nodes by the replacement path filed both under example.com/fork, so the
+// later build-list entry silently overwrote the earlier one and a module that is
+// genuinely in the build vanished from the project graph — and with it from SBOM,
+// licence, vuln and audit output. This is the project-walk (`--gomod`, audit,
+// sbom) counterpart of the MVS-path regression.
+func TestResolveProject_BuildList_ReplaceTargetAlsoRequiredIndependently(t *testing.T) {
+	bl := walkports.BuildList{
+		Modules: []walkports.BuildListModule{
+			{Path: "example.com/project", Main: true},
+			{
+				Path: "example.com/forked", Version: "v1.0.0",
+				Replace: &walkports.BuildListReplace{Path: "example.com/fork", Version: "v1.2.0"},
+			},
+			{Path: "example.com/fork", Version: "v1.5.0"},
+		},
+		Edges: []walkports.BuildListEdge{
+			{From: "example.com/project", To: "example.com/forked@v1.0.0"},
+			{From: "example.com/project", To: "example.com/fork@v1.5.0"},
+		},
+	}
+
+	blobs := newFakeBlobStore()
+	fetcher := newFakeFetcher()
+	fetcher.add("example.com/fork", "v1.2.0", "module example.com/fork\n", blobs)
+	fetcher.add("example.com/fork", "v1.5.0", "module example.com/fork\n", blobs)
+	r := newResolver(fetcher, blobs).WithBuildListResolver(&fakeBuildListResolver{list: bl})
+
+	g, err := r.ResolveProject(context.Background(), coord("example.com/project", coordinate.LocalVersion),
+		nil, "/proj", domain3.DefaultDepthPolicy().FetchStage(), nil, false, false)
+	if err != nil {
+		t.Fatalf("ResolveProject: %v", err)
+	}
+
+	var replaced, independent *domain3.GraphNode
+	for i := range g.Nodes {
+		n := &g.Nodes[i]
+		if n.Coordinate.Path != "example.com/fork" {
+			continue
+		}
+		if n.OriginalCoordinate.Path != "" {
+			replaced = n
+		} else {
+			independent = n
+		}
+	}
+
+	if replaced == nil {
+		t.Fatalf("replace-pinned node example.com/fork@v1.2.0 missing; nodes: %+v", g.Nodes)
+	}
+	if replaced.Coordinate.Version != "v1.2.0" || replaced.ResolutionSource != domain3.ResolutionReplace {
+		t.Errorf("replaced node = %+v, want example.com/fork@v1.2.0 source=replace", *replaced)
+	}
+	if replaced.OriginalCoordinate != coord("example.com/forked", "v1.0.0") {
+		t.Errorf("replaced OriginalCoordinate = %s, want example.com/forked@v1.0.0", replaced.OriginalCoordinate)
+	}
+
+	if independent == nil {
+		t.Fatalf("independent node example.com/fork@v1.5.0 missing; nodes: %+v", g.Nodes)
+	}
+	if independent.Coordinate.Version != "v1.5.0" || independent.ResolutionSource != domain3.ResolutionMVS {
+		t.Errorf("independent node = %+v, want example.com/fork@v1.5.0 source=mvs", *independent)
+	}
+
+	// Both artefacts must be fetched and carry their OWN digests: the digest map
+	// used to be keyed by module path, so one version's hashes could be stamped
+	// onto the other version's node.
+	if replaced.Digests == independent.Digests && !replaced.Digests.IsZero() {
+		t.Errorf("the two fork nodes share digests %+v; digests must follow the fetched coordinate", replaced.Digests)
+	}
+}

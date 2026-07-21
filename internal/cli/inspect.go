@@ -137,9 +137,10 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 		return fmt.Errorf("writing output: %w", err)
 	}
 	ef := extractFlags{
-		goBinary: f.goBinary,
-		stages:   []string{"license", "interface", "callgraph", "example"},
-		force:    f.force,
+		goBinary:   f.goBinary,
+		stages:     []string{"license", "interface", "callgraph", "example"},
+		force:      f.force,
+		noProgress: f.noProgress,
 	}
 	if err := runExtract(ctx, walkID, ef, io.Discard, stderr); err != nil {
 		return fmt.Errorf("extract: %w", err)
@@ -204,10 +205,13 @@ type inspectSummary struct {
 // Any failed stage — walk, extract, or vuln-scan — means part of the
 // dependency set was not analysed, so the result must surface as partial
 // rather than a confident AllClean: an unscanned set presented as clean is
-// the absence-as-answer defect class.
-func inspectSummaryStatus(nodeFails, extractFails, scanFails, affectedCount int) string {
+// the absence-as-answer defect class. scanPartial carries forward the
+// underlying vuln-scan run's own WalkStatusPartial verdict (e.g. metadata-only
+// coverage gaps from out-of-toolchain modules) — that verdict must not be
+// discarded just because it didn't also produce a hard stage failure.
+func inspectSummaryStatus(nodeFails, extractFails, scanFails, affectedCount int, scanPartial bool) string {
 	switch {
-	case nodeFails > 0 || extractFails > 0 || scanFails > 0:
+	case nodeFails > 0 || extractFails > 0 || scanFails > 0 || scanPartial:
 		return string(vuldomain.WalkStatusPartial)
 	case affectedCount > 0:
 		return string(vuldomain.WalkStatusAffected)
@@ -279,9 +283,10 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 	if walkID != "" {
 		_, _ = fmt.Fprintf(stderr, "==> inspect --gomod: extracting walk %s\n", walkID)
 		ef := extractFlags{
-			goBinary: f.goBinary,
-			stages:   []string{"license", "interface", "callgraph", "example"},
-			force:    f.force,
+			goBinary:   f.goBinary,
+			stages:     []string{"license", "interface", "callgraph", "example"},
+			force:      f.force,
+			noProgress: f.noProgress,
 		}
 		if eerr := runExtract(ctx, walkID, ef, io.Discard, stderr); eerr != nil {
 			_, _ = fmt.Fprintf(stderr, "extract: %v\n", eerr)
@@ -297,11 +302,15 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 
 	var affectedCount int
 	var snapshotVersion string
+	var scanPartial bool
 	if walkID != "" {
 		runs, rerr := ctr.QueryScanRuns.ListRunsForWalk(ctx, walkID)
 		if rerr == nil && len(runs) > 0 {
-			if runs[0].OverallStatus == vuldomain.WalkStatusAffected {
+			switch runs[0].OverallStatus {
+			case vuldomain.WalkStatusAffected:
 				affectedCount = 1
+			case vuldomain.WalkStatusPartial:
+				scanPartial = true
 			}
 			snapshotVersion = runs[0].Snapshot.Version
 		}
@@ -312,7 +321,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 		walkIDs = []string{walkID}
 	}
 
-	overallStatus := inspectSummaryStatus(nodeFails, extractFails, scanFails, affectedCount)
+	overallStatus := inspectSummaryStatus(nodeFails, extractFails, scanFails, affectedCount, scanPartial)
 
 	if jsonOut {
 		var directives *directivesSection

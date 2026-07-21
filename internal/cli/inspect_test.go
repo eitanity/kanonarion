@@ -17,22 +17,24 @@ func TestInspectSummaryStatus_FailuresAreNeverAllClean(t *testing.T) {
 	cases := []struct {
 		name                                         string
 		nodeFails, extractFails, scanFails, affected int
+		scanPartial                                  bool
 		want                                         string
 	}{
-		{"all stages clean", 0, 0, 0, 0, "AllClean"},
-		{"findings without failures", 0, 0, 0, 2, "Affected"},
-		{"every scan failed", 0, 0, 11, 0, "Partial"},
-		{"one scan failed", 0, 0, 1, 0, "Partial"},
-		{"extract failed", 0, 1, 0, 0, "Partial"},
-		{"node failures", 1, 0, 0, 0, "Partial"},
-		{"failures alongside findings", 0, 0, 3, 2, "Partial"},
+		{"all stages clean", 0, 0, 0, 0, false, "AllClean"},
+		{"findings without failures", 0, 0, 0, 2, false, "Affected"},
+		{"every scan failed", 0, 0, 11, 0, false, "Partial"},
+		{"one scan failed", 0, 0, 1, 0, false, "Partial"},
+		{"extract failed", 0, 1, 0, 0, false, "Partial"},
+		{"node failures", 1, 0, 0, 0, false, "Partial"},
+		{"failures alongside findings", 0, 0, 3, 2, false, "Partial"},
+		{"scan run itself Partial (metadata-only coverage gap)", 0, 0, 0, 0, true, "Partial"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := inspectSummaryStatus(tc.nodeFails, tc.extractFails, tc.scanFails, tc.affected)
+			got := inspectSummaryStatus(tc.nodeFails, tc.extractFails, tc.scanFails, tc.affected, tc.scanPartial)
 			if got != tc.want {
-				t.Errorf("inspectSummaryStatus(%d, %d, %d, %d) = %q, want %q",
-					tc.nodeFails, tc.extractFails, tc.scanFails, tc.affected, got, tc.want)
+				t.Errorf("inspectSummaryStatus(%d, %d, %d, %d, %v) = %q, want %q",
+					tc.nodeFails, tc.extractFails, tc.scanFails, tc.affected, tc.scanPartial, got, tc.want)
 			}
 		})
 	}

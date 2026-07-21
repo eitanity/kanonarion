@@ -434,11 +434,11 @@ func TestExecute_DottedLicenceFilename(t *testing.T) {
 	}
 }
 
-// TestExecute_ExcludesGoSourceFromLicenceFilenames is a regression test for
-// KN-444: license.go from github.com/google/licensecheck@v0.3.1 has a base
-// name that satisfies the LICENSE.<suffix> dotted-form rule (LICENSE.GO), so
-// its full Go source was embedded as a root-level license file alongside
-// LICENSE. A .go file is never the license grant for a module.
+// TestExecute_ExcludesGoSourceFromLicenceFilenames is a regression test:
+// license.go from github.com/google/licensecheck@v0.3.1 has a base name that
+// satisfies the LICENSE.<suffix> dotted-form rule (LICENSE.GO), so its full Go
+// source was embedded as a root-level license file alongside LICENSE. A .go
+// file is never the license grant for a module.
 func TestExecute_ExcludesGoSourceFromLicenceFilenames(t *testing.T) {
 	coord := mustCoord(t, "example.com/gosource", "v1.0.0")
 	blobStore := &fakeBlobStore{}

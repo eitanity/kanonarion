@@ -600,7 +600,7 @@ func buildShallowRecord(id string, target coordinate.ModuleCoordinate) domain.Wa
 			Partial:         true,
 			PartialReason:   "shallow",
 			ResolvedAt:      now,
-			PipelineVersion: "0.3.0",
+			PipelineVersion: application2.PipelineVersion,
 		},
 		PerNodeResults: map[coordinate.ModuleCoordinate]domain.NodeResult{
 			target: {Coordinate: target, Status: domain.NodeSucceeded},
@@ -626,7 +626,7 @@ func buildMinimalRecord(id string, target coordinate.ModuleCoordinate) domain.Wa
 			Target:          target,
 			Nodes:           []domain.GraphNode{{Coordinate: target, ResolutionSource: domain.ResolutionTarget}},
 			ResolvedAt:      now,
-			PipelineVersion: "0.3.0",
+			PipelineVersion: application2.PipelineVersion,
 		},
 		PerNodeResults: map[coordinate.ModuleCoordinate]domain.NodeResult{
 			target: {Coordinate: target, Status: domain.NodeSucceeded},
@@ -656,7 +656,7 @@ func buildRecordWithDep(id string, target, dep coordinate.ModuleCoordinate) doma
 			},
 			Edges:           []domain.GraphEdge{{From: target, To: dep, ConstraintVersion: dep.Version}},
 			ResolvedAt:      now,
-			PipelineVersion: "0.3.0",
+			PipelineVersion: application2.PipelineVersion,
 		},
 		PerNodeResults: map[coordinate.ModuleCoordinate]domain.NodeResult{
 			target: {Coordinate: target, Status: domain.NodeSucceeded},
@@ -687,7 +687,7 @@ func buildRecordWithFailedDep(id string, target, dep coordinate.ModuleCoordinate
 			},
 			Edges:           []domain.GraphEdge{{From: target, To: dep, ConstraintVersion: dep.Version}},
 			ResolvedAt:      now,
-			PipelineVersion: "0.3.0",
+			PipelineVersion: application2.PipelineVersion,
 		},
 		PerNodeResults: map[coordinate.ModuleCoordinate]domain.NodeResult{
 			target: {Coordinate: target, Status: domain.NodeSucceeded},
@@ -722,7 +722,7 @@ func buildPartialRecord(id string, target coordinate.ModuleCoordinate) domain.Wa
 				{Coordinate: dep, DirectDependency: true, ResolutionSource: domain.ResolutionMVS},
 			},
 			ResolvedAt:      now,
-			PipelineVersion: "0.3.0",
+			PipelineVersion: application2.PipelineVersion,
 		},
 		PerNodeResults: map[coordinate.ModuleCoordinate]domain.NodeResult{
 			target: {Coordinate: target, Status: domain.NodeSucceeded},
@@ -749,7 +749,7 @@ func buildCancelledRecord(id string, target coordinate.ModuleCoordinate) domain.
 			Target:          target,
 			Nodes:           []domain.GraphNode{{Coordinate: target, ResolutionSource: domain.ResolutionTarget}},
 			ResolvedAt:      now,
-			PipelineVersion: "0.3.0",
+			PipelineVersion: application2.PipelineVersion,
 		},
 		PerNodeResults: map[coordinate.ModuleCoordinate]domain.NodeResult{
 			target: {Coordinate: target, Status: domain.NodeSucceeded},
@@ -765,4 +765,55 @@ func buildCancelledRecord(id string, target coordinate.ModuleCoordinate) domain.
 		panic(err)
 	}
 	return rec
+}
+
+// A cached walk resolved by superseded graph logic must be re-resolved, not
+// served. The pipeline version is what lets a corrected resolver take effect on
+// its own; without this gate a graph known to be incomplete (for instance one
+// that predates require-path node keying, which dropped a replaced module that
+// shares its target path with an independent requirement) would keep being
+// handed out as authoritative until someone happened to pass --force.
+func TestExecuteWalkUseCase_StalePipelineVersionIsReresolved(t *testing.T) {
+	walker := buildMinimalWalker("github.com/example/m", "v1.0.0")
+	store := newFakeWalkStore()
+	target := coord("github.com/example/m", "v1.0.0")
+
+	priorID := "01JZZZZZZZZZZZZZZZZZZZZZZA"
+	stale := buildMinimalRecord(priorID, target) // WalkSucceeded
+	stale.Graph.PipelineVersion = "0.0.1-superseded"
+	store.walks[priorID] = stale
+
+	uc := application2.NewExecuteWalkUseCase(walker, store, "test-op", "", discardLogger())
+
+	result, err := uc.Execute(context.Background(), application2.WalkRequest{Target: target})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.Record.ID == priorID {
+		t.Fatalf("stale-pipeline walk %q was served from cache; it must be re-resolved", priorID)
+	}
+	if got := result.Record.Graph.PipelineVersion; got != application2.PipelineVersion {
+		t.Errorf("re-resolved graph pipeline version = %q, want %q", got, application2.PipelineVersion)
+	}
+}
+
+// The gate must not re-resolve a walk that is already current — that would
+// discard the cache entirely and make every run pay for a full re-walk.
+func TestExecuteWalkUseCase_CurrentPipelineVersionStillCached(t *testing.T) {
+	walker := buildMinimalWalker("github.com/example/m", "v1.0.0")
+	store := newFakeWalkStore()
+	target := coord("github.com/example/m", "v1.0.0")
+
+	priorID := "01JZZZZZZZZZZZZZZZZZZZZZZA"
+	store.walks[priorID] = buildMinimalRecord(priorID, target) // current PipelineVersion
+
+	uc := application2.NewExecuteWalkUseCase(walker, store, "test-op", "", discardLogger())
+
+	result, err := uc.Execute(context.Background(), application2.WalkRequest{Target: target})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.Record.ID != priorID {
+		t.Errorf("current-pipeline walk should be served from cache; got %q want %q", result.Record.ID, priorID)
+	}
 }

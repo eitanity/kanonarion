@@ -92,16 +92,35 @@ func (uc *ExecuteWalkUseCase) Execute(ctx context.Context, req WalkRequest) (Exe
 		cacheUsable := s.OverallStatus == domain.WalkSucceeded &&
 			(depth == domain.WalkDepthShallow || s.Depth != domain.WalkDepthShallow)
 		if !req.Force && cacheUsable {
-			uc.logger.InfoContext(ctx, "walk_skipped",
-				slog.String("walk_id", s.ID),
-				slog.String("target", req.Target.String()),
-				slog.String("reason", "cached successful walk exists"),
-			)
-			fullRec, err := uc.store.GetWalk(ctx, s.ID)
-			if err == nil {
+			fullRec, gerr := uc.store.GetWalk(ctx, s.ID)
+			// A stored walk resolved by superseded graph logic must not be served.
+			// The pipeline version is what makes a corrected resolver take effect on
+			// its own, rather than every caller having to know to pass --force;
+			// serving a stale graph presents a known-incomplete dependency set as
+			// authoritative. The version is read from the graph, not the walk record:
+			// the record's own pipeline version is left unset by the current
+			// composition, while the graph's always reflects the resolver that
+			// produced it.
+			current := uc.walker.graphPipelineVersion()
+			switch {
+			case gerr != nil:
+				// Fall through and re-walk if GetWalk fails for some reason.
+			case fullRec.Graph.PipelineVersion != current:
+				uc.logger.InfoContext(ctx, "walk_cache_stale",
+					slog.String("walk_id", s.ID),
+					slog.String("target", req.Target.String()),
+					slog.String("stored_pipeline_version", fullRec.Graph.PipelineVersion),
+					slog.String("current_pipeline_version", current),
+					slog.String("reason", "graph pipeline version superseded; re-resolving"),
+				)
+			default:
+				uc.logger.InfoContext(ctx, "walk_skipped",
+					slog.String("walk_id", s.ID),
+					slog.String("target", req.Target.String()),
+					slog.String("reason", "cached successful walk exists"),
+				)
 				return ExecuteWalkResult{Record: fullRec}, nil
 			}
-			// Fall through if GetWalk fails for some reason
 		}
 	}
 

@@ -34,6 +34,11 @@ type forceCapable interface {
 // are cache hits in the subsequent concurrent fetch phase.
 //
 // Walker is safe for concurrent use once constructed.
+// graphPipelineVersion reports the pipeline version the walker's resolver stamps
+// on the graphs it produces, so cache-reuse decisions can compare a stored walk
+// against the logic that would resolve it today.
+func (w *Walker) graphPipelineVersion() string { return w.resolver.pipelineVersion }
+
 type Walker struct {
 	resolver     *GraphResolver
 	fetcher      walkports.ModuleFetcher

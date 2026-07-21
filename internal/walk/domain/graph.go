@@ -257,10 +257,14 @@ func (g *Graph) Sort() {
 // rqlite/go-sqlite3 at the mattn/go-sqlite3 version). A replaced module is pinned
 // by its replace directive and has no superseded intermediate version to read.
 func (g Graph) SupersededRequirements() []coordinate.ModuleCoordinate {
+	// Keyed by the full replacement COORDINATE, not its path: the same path can
+	// carry both a replaced entry and an independent requirement at another
+	// version, and keying by path would suppress the independent one's genuine
+	// superseded versions along with the replaced one's fabricated pairing.
 	replaced := make(map[string]bool)
 	for _, n := range g.Nodes {
 		if n.OriginalCoordinate.Path != "" {
-			replaced[n.Coordinate.Path] = true
+			replaced[n.Coordinate.String()] = true
 		}
 	}
 	seen := make(map[coordinate.ModuleCoordinate]struct{})
@@ -268,7 +272,7 @@ func (g Graph) SupersededRequirements() []coordinate.ModuleCoordinate {
 		if e.ConstraintVersion == "" || e.ConstraintVersion == e.To.Version {
 			continue
 		}
-		if replaced[e.To.Path] {
+		if replaced[e.To.String()] {
 			continue
 		}
 		coord := coordinate.ModuleCoordinate{Path: e.To.Path, Version: e.ConstraintVersion}
