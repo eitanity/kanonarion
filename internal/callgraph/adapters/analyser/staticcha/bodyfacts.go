@@ -113,6 +113,7 @@ func scanBodyFacts(ctx context.Context, dir string, pkgPaths []string) map[strin
 			Mode:    packages.NeedName | packages.NeedSyntax | packages.NeedFiles | packages.NeedCompiledGoFiles,
 			Dir:     dir,
 			Context: ctx,
+			Env:     isolatedModuleEnv(),
 			Fset:    token.NewFileSet(),
 			Tests:   false,
 		}

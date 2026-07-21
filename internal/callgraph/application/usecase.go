@@ -16,8 +16,17 @@ import (
 )
 
 // PipelineVersion identifies this release of the call graph extraction
-// pipeline. Bump whenever extraction logic changes.
-const PipelineVersion = "0.1.0"
+// pipeline. Bump whenever extraction logic changes. It is the sole key for
+// record reuse, so a record produced by older logic is only re-derived when this
+// changes.
+//
+// Bumped to "0.2.0" when package loading began disabling Go workspace mode. A
+// module shipping a go.work in its published zip previously put the loader into
+// workspace mode, which then failed on sibling modules absent from the zip, and
+// the module was stored as a LoadFailed record with an empty graph. Those
+// records are indistinguishable from a genuine load failure once written, so
+// they must be re-derived rather than served.
+const PipelineVersion = "0.2.0"
 
 // ExtractCallGraphUseCase extracts the call graph of a module and persists a
 // CallGraphRecord.
