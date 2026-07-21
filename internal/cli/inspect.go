@@ -202,21 +202,36 @@ type inspectSummary struct {
 }
 
 // inspectSummaryStatus derives the aggregate status for inspect's summary.
-// Any failed stage — walk, extract, or vuln-scan — means part of the
-// dependency set was not analysed, so the result must surface as partial
-// rather than a confident AllClean: an unscanned set presented as clean is
-// the absence-as-answer defect class. scanPartial carries forward the
-// underlying vuln-scan run's own WalkStatusPartial verdict (e.g. metadata-only
-// coverage gaps from out-of-toolchain modules) — that verdict must not be
-// discarded just because it didn't also produce a hard stage failure.
-func inspectSummaryStatus(nodeFails, extractFails, scanFails, affectedCount int, scanPartial bool) string {
+//
+// Any failed stage — walk, extract, or vuln-scan — means part of the dependency
+// set was not analysed, so the result must surface as partial rather than a
+// confident AllClean: an unscanned set presented as clean is the
+// absence-as-answer defect class.
+//
+// scanStatus is the underlying vuln-scan run's own verdict, which must be
+// carried forward rather than re-derived: a run can be Partial (metadata-only
+// or unscannable modules) or ScanFailed (every module failed, or the walk had
+// no modules at all) without producing any stage failure here.
+//
+// The rule is deliberately inverted — AllClean is returned only when the scan
+// run positively says AllClean. An empty scanStatus (no run recorded, or the
+// run could not be read) and any status not enumerated here both fall through
+// to Partial. Enumerating the non-clean statuses instead would silently report
+// AllClean for a status added to the enum later, which is the same defect this
+// function exists to prevent.
+func inspectSummaryStatus(nodeFails, extractFails, scanFails, affectedCount int, scanStatus vuldomain.WalkScanStatus) string {
 	switch {
-	case nodeFails > 0 || extractFails > 0 || scanFails > 0 || scanPartial:
+	case scanStatus == vuldomain.WalkStatusFailed:
+		return string(vuldomain.WalkStatusFailed)
+	case nodeFails > 0 || extractFails > 0 || scanFails > 0:
 		return string(vuldomain.WalkStatusPartial)
-	case affectedCount > 0:
+	case affectedCount > 0 || scanStatus == vuldomain.WalkStatusAffected:
 		return string(vuldomain.WalkStatusAffected)
+	case scanStatus == vuldomain.WalkStatusAllClean:
+		return string(vuldomain.WalkStatusAllClean)
+	default:
+		return string(vuldomain.WalkStatusPartial)
 	}
-	return string(vuldomain.WalkStatusAllClean)
 }
 
 // runInspectGoMod runs the full pipeline for the local project using a single
@@ -302,15 +317,21 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 
 	var affectedCount int
 	var snapshotVersion string
-	var scanPartial bool
+	// scanStatus stays empty when the run cannot be read or none was recorded.
+	// That is reported, not swallowed: inspectSummaryStatus treats an unknown
+	// scan outcome as not-clean rather than assuming the best.
+	var scanStatus vuldomain.WalkScanStatus
 	if walkID != "" {
 		runs, rerr := ctr.QueryScanRuns.ListRunsForWalk(ctx, walkID)
-		if rerr == nil && len(runs) > 0 {
-			switch runs[0].OverallStatus {
-			case vuldomain.WalkStatusAffected:
+		switch {
+		case rerr != nil:
+			_, _ = fmt.Fprintf(stderr, "==> inspect: reading scan run for walk %s: %v\n", walkID, rerr)
+		case len(runs) == 0:
+			_, _ = fmt.Fprintf(stderr, "==> inspect: no scan run recorded for walk %s\n", walkID)
+		default:
+			scanStatus = runs[0].OverallStatus
+			if scanStatus == vuldomain.WalkStatusAffected {
 				affectedCount = 1
-			case vuldomain.WalkStatusPartial:
-				scanPartial = true
 			}
 			snapshotVersion = runs[0].Snapshot.Version
 		}
@@ -321,7 +342,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 		walkIDs = []string{walkID}
 	}
 
-	overallStatus := inspectSummaryStatus(nodeFails, extractFails, scanFails, affectedCount, scanPartial)
+	overallStatus := inspectSummaryStatus(nodeFails, extractFails, scanFails, affectedCount, scanStatus)
 
 	if jsonOut {
 		var directives *directivesSection

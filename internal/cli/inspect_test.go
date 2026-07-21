@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	"os"
 	"path/filepath"
 	"strings"
@@ -17,24 +18,34 @@ func TestInspectSummaryStatus_FailuresAreNeverAllClean(t *testing.T) {
 	cases := []struct {
 		name                                         string
 		nodeFails, extractFails, scanFails, affected int
-		scanPartial                                  bool
+		scanStatus                                   vuldomain.WalkScanStatus
 		want                                         string
 	}{
-		{"all stages clean", 0, 0, 0, 0, false, "AllClean"},
-		{"findings without failures", 0, 0, 0, 2, false, "Affected"},
-		{"every scan failed", 0, 0, 11, 0, false, "Partial"},
-		{"one scan failed", 0, 0, 1, 0, false, "Partial"},
-		{"extract failed", 0, 1, 0, 0, false, "Partial"},
-		{"node failures", 1, 0, 0, 0, false, "Partial"},
-		{"failures alongside findings", 0, 0, 3, 2, false, "Partial"},
-		{"scan run itself Partial (metadata-only coverage gap)", 0, 0, 0, 0, true, "Partial"},
+		{"all stages clean", 0, 0, 0, 0, vuldomain.WalkStatusAllClean, "AllClean"},
+		{"findings without failures", 0, 0, 0, 2, vuldomain.WalkStatusAffected, "Affected"},
+		{"every scan failed", 0, 0, 11, 0, vuldomain.WalkStatusFailed, "ScanFailed"},
+		{"one scan failed", 0, 0, 1, 0, vuldomain.WalkStatusAllClean, "Partial"},
+		{"extract failed", 0, 1, 0, 0, vuldomain.WalkStatusAllClean, "Partial"},
+		{"node failures", 1, 0, 0, 0, vuldomain.WalkStatusAllClean, "Partial"},
+		{"failures alongside findings", 0, 0, 3, 2, vuldomain.WalkStatusAffected, "Partial"},
+		{"scan run itself Partial (metadata-only coverage gap)", 0, 0, 0, 0, vuldomain.WalkStatusPartial, "Partial"},
+		// The scan run's own ScanFailed verdict must surface: every module failed
+		// (or the walk had no modules), which produced no stage failure here and
+		// previously fell through to a confident AllClean.
+		{"scan run ScanFailed with no stage failure", 0, 0, 0, 0, vuldomain.WalkStatusFailed, "ScanFailed"},
+		// An unreadable or absent scan run is an unknown outcome, never a clean one.
+		{"no scan run recorded", 0, 0, 0, 0, "", "Partial"},
+		// A status added to the enum later must not degrade to AllClean.
+		{"unrecognised future status", 0, 0, 0, 0, vuldomain.WalkScanStatus("SomethingNew"), "Partial"},
+		// The run says Affected even though the per-run count was not set.
+		{"affected from run status only", 0, 0, 0, 0, vuldomain.WalkStatusAffected, "Affected"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := inspectSummaryStatus(tc.nodeFails, tc.extractFails, tc.scanFails, tc.affected, tc.scanPartial)
+			got := inspectSummaryStatus(tc.nodeFails, tc.extractFails, tc.scanFails, tc.affected, tc.scanStatus)
 			if got != tc.want {
-				t.Errorf("inspectSummaryStatus(%d, %d, %d, %d, %v) = %q, want %q",
-					tc.nodeFails, tc.extractFails, tc.scanFails, tc.affected, tc.scanPartial, got, tc.want)
+				t.Errorf("inspectSummaryStatus(%d, %d, %d, %d, %q) = %q, want %q",
+					tc.nodeFails, tc.extractFails, tc.scanFails, tc.affected, tc.scanStatus, got, tc.want)
 			}
 		})
 	}
