@@ -6,6 +6,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -100,8 +101,8 @@ func TestPopulate_WritesExpectedFiles(t *testing.T) {
 	cacheDir := t.TempDir()
 	coord := newCoord(t, "example.com/mod", "v1.0.0")
 
-	if err := modcache.Populate(context.Background(), facts, blobs, cacheDir, []coordinate.ModuleCoordinate{coord}, "0.1.0"); err != nil {
-		t.Fatalf("Populate: %v", err)
+	if report := modcache.Populate(context.Background(), facts, blobs, cacheDir, []coordinate.ModuleCoordinate{coord}, "0.1.0"); !report.Complete() {
+		t.Fatalf("Populate: %s", report.FailureSummary(0))
 	}
 
 	base := filepath.Join(cacheDir, "cache", "download", "example.com", "mod", "@v", "v1.0.0")
@@ -137,21 +138,34 @@ func TestPopulate_IdempotentSecondCall(t *testing.T) {
 	coord := newCoord(t, "example.com/mod", "v1.0.0")
 
 	for i := range 2 {
-		if err := modcache.Populate(context.Background(), facts, blobs, cacheDir, []coordinate.ModuleCoordinate{coord}, "0.1.0"); err != nil {
-			t.Fatalf("call %d: %v", i+1, err)
+		if report := modcache.Populate(context.Background(), facts, blobs, cacheDir, []coordinate.ModuleCoordinate{coord}, "0.1.0"); !report.Complete() {
+			t.Fatalf("call %d: %s", i+1, report.FailureSummary(0))
 		}
 	}
 }
 
-// TestPopulate_MissingRecordSkipped: a coordinate with no stored fact record
-// is skipped silently — Populate never errors for individual misses.
-func TestPopulate_MissingRecordSkipped(t *testing.T) {
+// TestPopulate_MissingRecordIsReportedNotSwallowed: a coordinate with no stored
+// fact record does not abort the batch — but it is named in the report. A
+// populate that wrote nothing must not be indistinguishable from one that wrote
+// everything, which is what discarding the per-coordinate error produced.
+func TestPopulate_MissingRecordIsReportedNotSwallowed(t *testing.T) {
 	facts := &fakeFactStore{records: map[string]fetchdomain.FactRecord{}}
 	blobs := &fakeBlobStore{blobs: map[fetchports.BlobHandle][]byte{}}
 	coord := newCoord(t, "example.com/missing", "v1.0.0")
 
-	if err := modcache.Populate(context.Background(), facts, blobs, t.TempDir(), []coordinate.ModuleCoordinate{coord}, "0.1.0"); err != nil {
-		t.Fatalf("Populate must not error for missing records: %v", err)
+	report := modcache.Populate(context.Background(), facts, blobs, t.TempDir(), []coordinate.ModuleCoordinate{coord}, "0.1.0")
+
+	if report.Written != 0 || report.Requested != 1 {
+		t.Errorf("written/requested = %d/%d, want 0/1", report.Written, report.Requested)
+	}
+	if report.Complete() {
+		t.Fatal("a coordinate with no fact record must be reported as a failure, not silently skipped")
+	}
+	if len(report.Failures) != 1 || report.Failures[0].Coordinate != coord {
+		t.Fatalf("failures = %+v, want exactly the missing coordinate", report.Failures)
+	}
+	if summary := report.FailureSummary(10); !strings.Contains(summary, "example.com/missing") {
+		t.Errorf("FailureSummary = %q, want it to name the coordinate", summary)
 	}
 }
 
@@ -195,8 +209,8 @@ func TestPopulate_SymlinksWhenPathAvailable(t *testing.T) {
 	cacheDir := t.TempDir()
 	coord := newCoord(t, "example.com/mod", "v1.0.0")
 
-	if err := modcache.Populate(context.Background(), facts, blobs, cacheDir, []coordinate.ModuleCoordinate{coord}, "0.1.0"); err != nil {
-		t.Fatalf("Populate: %v", err)
+	if report := modcache.Populate(context.Background(), facts, blobs, cacheDir, []coordinate.ModuleCoordinate{coord}, "0.1.0"); !report.Complete() {
+		t.Fatalf("Populate: %s", report.FailureSummary(0))
 	}
 
 	zipPath := filepath.Join(cacheDir, "cache", "download", "example.com", "mod", "@v", "v1.0.0.zip")
@@ -236,8 +250,8 @@ func TestPopulate_WithGoModBlob(t *testing.T) {
 	cacheDir := t.TempDir()
 	coord := newCoord(t, "example.com/mod", "v1.0.0")
 
-	if err := modcache.Populate(context.Background(), facts, blobs, cacheDir, []coordinate.ModuleCoordinate{coord}, "0.1.0"); err != nil {
-		t.Fatalf("Populate: %v", err)
+	if report := modcache.Populate(context.Background(), facts, blobs, cacheDir, []coordinate.ModuleCoordinate{coord}, "0.1.0"); !report.Complete() {
+		t.Fatalf("Populate: %s", report.FailureSummary(0))
 	}
 
 	base := filepath.Join(cacheDir, "cache", "download", "example.com", "mod", "@v", "v1.0.0")
@@ -268,8 +282,8 @@ func TestPopulateGoMod_WritesModNotZip(t *testing.T) {
 	cacheDir := t.TempDir()
 	c := newCoord(t, "github.com/go-logr/logr", "v1.2.2")
 
-	if err := modcache.PopulateGoMod(context.Background(), facts, blobs, cacheDir, []coordinate.ModuleCoordinate{c}, "0.3.0"); err != nil {
-		t.Fatalf("PopulateGoMod: %v", err)
+	if report := modcache.PopulateGoMod(context.Background(), facts, blobs, cacheDir, []coordinate.ModuleCoordinate{c}, "0.3.0"); !report.Complete() {
+		t.Fatalf("PopulateGoMod: %s", report.FailureSummary(0))
 	}
 
 	base := filepath.Join(cacheDir, "cache", "download", "github.com", "go-logr", "logr", "@v", "v1.2.2")
@@ -293,7 +307,9 @@ func TestPopulateGoMod_WritesModNotZip(t *testing.T) {
 }
 
 // TestPopulateGoMod_SkipsRecordWithoutGoMod: a fact record with no standalone
-// go.mod blob is skipped without error, and no cache entry is created.
+// go.mod blob writes no cache entry, and the skip is reported rather than
+// swallowed — under GOPROXY=off a missing entry decides whether a module
+// resolves at all.
 func TestPopulateGoMod_SkipsRecordWithoutGoMod(t *testing.T) {
 	facts := &fakeFactStore{records: map[string]fetchdomain.FactRecord{
 		"example.com/mod@v1.0.0|0.3.0": {
@@ -306,8 +322,9 @@ func TestPopulateGoMod_SkipsRecordWithoutGoMod(t *testing.T) {
 	cacheDir := t.TempDir()
 	c := newCoord(t, "example.com/mod", "v1.0.0")
 
-	if err := modcache.PopulateGoMod(context.Background(), facts, blobs, cacheDir, []coordinate.ModuleCoordinate{c}, "0.3.0"); err != nil {
-		t.Fatalf("PopulateGoMod must not error for a record without a go.mod blob: %v", err)
+	report := modcache.PopulateGoMod(context.Background(), facts, blobs, cacheDir, []coordinate.ModuleCoordinate{c}, "0.3.0")
+	if report.Complete() {
+		t.Fatal("a record carrying no go.mod blob must be reported as a failure")
 	}
 	base := filepath.Join(cacheDir, "cache", "download", "example.com", "mod", "@v", "v1.0.0")
 	if _, err := os.Stat(base + ".mod"); err == nil {
@@ -316,13 +333,119 @@ func TestPopulateGoMod_SkipsRecordWithoutGoMod(t *testing.T) {
 }
 
 // TestPopulateGoMod_MissingRecordSkipped: a coordinate absent from the fact
-// store is skipped silently.
+// store does not abort the batch, and is named in the report.
 func TestPopulateGoMod_MissingRecordSkipped(t *testing.T) {
 	facts := &fakeFactStore{records: map[string]fetchdomain.FactRecord{}}
 	blobs := &fakeBlobStore{blobs: map[fetchports.BlobHandle][]byte{}}
 	c := newCoord(t, "example.com/missing", "v1.0.0")
 
-	if err := modcache.PopulateGoMod(context.Background(), facts, blobs, t.TempDir(), []coordinate.ModuleCoordinate{c}, "0.3.0"); err != nil {
-		t.Fatalf("PopulateGoMod must not error for missing records: %v", err)
+	report := modcache.PopulateGoMod(context.Background(), facts, blobs, t.TempDir(), []coordinate.ModuleCoordinate{c}, "0.3.0")
+	if report.Complete() || report.Written != 0 {
+		t.Fatalf("a coordinate absent from the fact store must be reported: %+v", report)
+	}
+}
+
+// goModFact builds a fact record whose go.mod blob is the given source, wired
+// into the two fakes so PopulateGoModClosure can resolve the coordinate.
+func goModFact(path, version, gomod string, facts *fakeFactStore, blobs *fakeBlobStore) {
+	handle := fetchports.BlobHandle("mod:" + path + "@" + version)
+	facts.records[path+"@"+version+"|0.3.0"] = fetchdomain.FactRecord{
+		ModulePath: path, ModuleVersion: version, PipelineVersion: "0.3.0",
+		FetchedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+		// ContentLocation is never read on the go.mod-only path.
+		ContentLocation: "fake:zip", GoModLocation: string(handle),
+	}
+	blobs.blobs[handle] = []byte(gomod)
+}
+
+// TestPopulateGoModClosure_FollowsRequirementsTransitively is the regression
+// guard for a pre-pruning module graph. The seed's go.mod requires a version
+// whose own go.mod requires a third, which requires a fourth. A one-level
+// population writes only the seed; the toolchain then fails offline on the
+// second, which is how a scannable module was being recorded as a coverage gap.
+// Every level must land in the cache.
+func TestPopulateGoModClosure_FollowsRequirementsTransitively(t *testing.T) {
+	facts := &fakeFactStore{records: map[string]fetchdomain.FactRecord{}}
+	blobs := &fakeBlobStore{blobs: map[fetchports.BlobHandle][]byte{}}
+
+	goModFact("example.com/seed", "v1.0.0",
+		"module example.com/seed\n\ngo 1.16\n\nrequire example.com/mid v0.5.0\n", facts, blobs)
+	goModFact("example.com/mid", "v0.5.0",
+		"module example.com/mid\n\ngo 1.16\n\nrequire example.com/deep v0.2.0 // indirect\n", facts, blobs)
+	goModFact("example.com/deep", "v0.2.0",
+		"module example.com/deep\n\ngo 1.16\n\nrequire (\n\texample.com/leaf v0.1.0\n)\n", facts, blobs)
+	goModFact("example.com/leaf", "v0.1.0", "module example.com/leaf\n\ngo 1.16\n", facts, blobs)
+
+	cacheDir := t.TempDir()
+	seed := newCoord(t, "example.com/seed", "v1.0.0")
+
+	var ensured []coordinate.ModuleCoordinate
+	report := modcache.PopulateGoModClosure(
+		context.Background(), facts, blobs, cacheDir,
+		[]coordinate.ModuleCoordinate{seed}, "0.3.0",
+		func(_ context.Context, batch []coordinate.ModuleCoordinate) { ensured = append(ensured, batch...) },
+	)
+
+	if !report.Complete() {
+		t.Fatalf("closure incomplete: %s", report.FailureSummary(0))
+	}
+	if report.Written != 4 {
+		t.Errorf("written = %d, want 4 (seed + three levels below it)", report.Written)
+	}
+	for _, want := range []struct{ path, version string }{
+		{"seed", "v1.0.0"}, {"mid", "v0.5.0"}, {"deep", "v0.2.0"}, {"leaf", "v0.1.0"},
+	} {
+		p := filepath.Join(cacheDir, "cache", "download", "example.com", want.path, "@v", want.version+".mod")
+		if _, err := os.Stat(p); err != nil {
+			t.Errorf("missing cache entry for example.com/%s@%s: %v", want.path, want.version, err)
+		}
+	}
+	// Versions discovered below the seed must be offered to the fetch hook:
+	// a version reachable only through another superseded go.mod may not be in
+	// the store yet, and under GOPROXY=off there is no second chance.
+	if len(ensured) != 4 {
+		t.Errorf("ensure hook saw %d coordinates, want all 4 levels: %v", len(ensured), ensured)
+	}
+}
+
+// TestPopulateGoModClosure_TerminatesOnRequirementCycle guards that a cycle
+// between two go.mod files (legal across module versions) does not loop.
+func TestPopulateGoModClosure_TerminatesOnRequirementCycle(t *testing.T) {
+	facts := &fakeFactStore{records: map[string]fetchdomain.FactRecord{}}
+	blobs := &fakeBlobStore{blobs: map[fetchports.BlobHandle][]byte{}}
+	goModFact("example.com/a", "v1.0.0",
+		"module example.com/a\n\ngo 1.16\n\nrequire example.com/b v1.0.0\n", facts, blobs)
+	goModFact("example.com/b", "v1.0.0",
+		"module example.com/b\n\ngo 1.16\n\nrequire example.com/a v1.0.0\n", facts, blobs)
+
+	report := modcache.PopulateGoModClosure(
+		context.Background(), facts, blobs, t.TempDir(),
+		[]coordinate.ModuleCoordinate{newCoord(t, "example.com/a", "v1.0.0")}, "0.3.0", nil,
+	)
+
+	if report.Written != 2 {
+		t.Errorf("written = %d, want 2 with each coordinate visited once", report.Written)
+	}
+}
+
+// TestPopulateGoModClosure_ReportsUnreachableLevel guards that a hole partway
+// down the closure is named rather than passed off as a complete population —
+// the caller has to be able to say which version is missing.
+func TestPopulateGoModClosure_ReportsUnreachableLevel(t *testing.T) {
+	facts := &fakeFactStore{records: map[string]fetchdomain.FactRecord{}}
+	blobs := &fakeBlobStore{blobs: map[fetchports.BlobHandle][]byte{}}
+	goModFact("example.com/seed", "v1.0.0",
+		"module example.com/seed\n\ngo 1.16\n\nrequire example.com/absent v1.9.9\n", facts, blobs)
+
+	report := modcache.PopulateGoModClosure(
+		context.Background(), facts, blobs, t.TempDir(),
+		[]coordinate.ModuleCoordinate{newCoord(t, "example.com/seed", "v1.0.0")}, "0.3.0", nil,
+	)
+
+	if report.Complete() {
+		t.Fatal("a requirement missing from the fact store must be reported")
+	}
+	if summary := report.FailureSummary(10); !strings.Contains(summary, "example.com/absent@v1.9.9") {
+		t.Errorf("FailureSummary = %q, want it to name the unreachable version", summary)
 	}
 }

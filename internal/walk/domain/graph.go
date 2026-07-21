@@ -257,6 +257,22 @@ func (g *Graph) Sort() {
 // rqlite/go-sqlite3 at the mattn/go-sqlite3 version). A replaced module is pinned
 // by its replace directive and has no superseded intermediate version to read.
 func (g Graph) SupersededRequirements() []coordinate.ModuleCoordinate {
+	return g.supersededRequirements(nil)
+}
+
+// SupersededRequirementsFrom is SupersededRequirements restricted to edges
+// originating at one of the given modules. Only a pre-pruning main module makes
+// the toolchain read a superseded go.mod, so a caller supplying those versions
+// to an offline cache needs the ones those modules require — not every
+// superseded version in the walk, most of which belong to modules that load a
+// pruned graph and never read them.
+func (g Graph) SupersededRequirementsFrom(from map[coordinate.ModuleCoordinate]struct{}) []coordinate.ModuleCoordinate {
+	return g.supersededRequirements(from)
+}
+
+// supersededRequirements collects the superseded constraint versions on the
+// graph's edges. A nil from-set means every edge qualifies.
+func (g Graph) supersededRequirements(from map[coordinate.ModuleCoordinate]struct{}) []coordinate.ModuleCoordinate {
 	// Keyed by the full replacement COORDINATE, not its path: the same path can
 	// carry both a replaced entry and an independent requirement at another
 	// version, and keying by path would suppress the independent one's genuine
@@ -269,6 +285,11 @@ func (g Graph) SupersededRequirements() []coordinate.ModuleCoordinate {
 	}
 	seen := make(map[coordinate.ModuleCoordinate]struct{})
 	for _, e := range g.Edges {
+		if from != nil {
+			if _, ok := from[e.From]; !ok {
+				continue
+			}
+		}
 		if e.ConstraintVersion == "" || e.ConstraintVersion == e.To.Version {
 			continue
 		}
@@ -289,6 +310,29 @@ func (g Graph) SupersededRequirements() []coordinate.ModuleCoordinate {
 		return out[i].Version < out[j].Version
 	})
 	return out
+}
+
+// KnownVersions returns the module versions this walk resolved and supplies as
+// source: its nodes, plus the coordinate a replaced node stands in for.
+//
+// Superseded requirement versions are deliberately excluded even though the
+// graph records them. The walk knows such a version exists as a fact about some
+// module's go.mod, but the project never builds it, so its source is not
+// fetched and not meant to be. A module scanned in isolation that re-selects one
+// is reaching outside the project's toolchain — the expected consequence of
+// hermetic per-module scanning — whereas failing to resolve a SELECTED version
+// means the scan cache is missing something the walk undertook to supply. Only
+// the latter is a fault, so only the latter belongs here.
+func (g Graph) KnownVersions() map[coordinate.ModuleCoordinate]struct{} {
+	known := make(map[coordinate.ModuleCoordinate]struct{}, len(g.Nodes))
+	for _, n := range g.Nodes {
+		known[n.Coordinate] = struct{}{}
+		// A replaced node is also referred to by the coordinate it replaced.
+		if n.OriginalCoordinate.Path != "" {
+			known[n.OriginalCoordinate] = struct{}{}
+		}
+	}
+	return known
 }
 
 // ReachableFrom returns the set of module coordinates transitively reachable

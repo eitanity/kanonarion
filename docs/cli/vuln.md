@@ -329,13 +329,15 @@ field with a machine-readable cause code alongside the human-readable `unscannab
 | `unscan_reason` | Cause |
 |---|---|
 | `generated-assets-missing` | Module zip is missing source files produced by a code-generation step |
-| `package-declarations-missing` | A package's declarations are absent because every file that would declare them is excluded by build constraints — most often a host Go toolchain newer than the range the module supports. Nothing is missing from the zip, so there is no code-generation step to run |
 | `go-work-monorepo` | Module references sibling modules via `go.work` not present in the zip |
+| `workspace-mode` | The Go toolchain entered workspace mode during an isolated scan (a `go.work` shipped in the module zip or inherited from the environment); the scanner sets `GOWORK=off`, so this indicates a misconfigured scan environment rather than a module that fails to build |
 | `relative-replace-directive` | Module uses a `replace` directive pointing to a sibling directory |
 | `windows-only` | Module only builds on Windows |
 | `c-headers-missing` | Module requires C system headers not available on the scanning host |
 | `missing-go-sum` | `go.sum` entry absent; module cannot be resolved without network access |
 | `version-not-in-toolchain` | Scanned in isolation the module re-selects a dependency version the project's build list never resolved; the scan is pinned to the verified store (`GOPROXY=off`), so that out-of-toolchain version is deliberately absent rather than fetched from the network |
+| `incomplete-scan-cache` | An offline resolution failed on a version the walk graph itself records (a node, or a superseded requirement on one of its edges). Unlike `version-not-in-toolchain` this is a fault: the version was one kanonarion undertook to supply to the hermetic cache. `error_detail` names the version |
+| `package-declarations-missing` | A package's declarations are absent because every file that would declare them is excluded by build constraints — most often a host Go toolchain newer than the range the module supports. Nothing is missing from the zip, so there is no code-generation step to run |
 | `build-incompatible` | Build fails for an unrecognised reason |
 | `oom-killed` | `govulncheck` was killed by the OS (likely OOM); retryable on a host with more memory |
 | `no-go-mod` | Module zip does not contain a `go.mod` file |

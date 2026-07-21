@@ -3,6 +3,8 @@ package domain
 import (
 	"strings"
 	"testing"
+
+	"github.com/eitanity/kanonarion/internal/coordinate"
 )
 
 func TestIsBuildIncompatibility(t *testing.T) {
@@ -40,6 +42,14 @@ func TestStructuredUnscanReason(t *testing.T) {
 			name:   "go.work mono-repo",
 			detail: "go: cannot load module accessapproval listed in go.work file: open accessapproval/go.mod: no such file or directory",
 			want:   UnscanReasonGoWorkMonorepo,
+		},
+		{
+			// Workspace mode is a scan-environment fault, distinct from the
+			// mono-repo case where the workspace names siblings absent from the
+			// zip. It must not collapse into the build-incompatible catch-all.
+			name:   "workspace mode rejects -mod=mod (sonic pattern)",
+			detail: "govulncheck: loading packages: err: exit status 1: stderr: go: -mod may only be set to readonly or vendor when in workspace mode, but it is set to \"mod\"\n\tor set GOWORK=off to disable workspace mode.",
+			want:   UnscanReasonWorkspaceMode,
 		},
 		{
 			name:   "relative replace directive",
@@ -111,6 +121,15 @@ func TestClassifyBuildIncompatibility(t *testing.T) {
 			wantContain: "go.work mono-repo",
 		},
 		{
+			// A module shipping a go.work in its zip puts the toolchain into
+			// workspace mode; the reason must name that rather than fall through
+			// to the generic "does not build" default, which misdiagnoses a
+			// scan-environment problem as a broken module.
+			name:        "workspace mode rejects -mod=mod (sonic pattern)",
+			detail:      "govulncheck: loading packages: err: exit status 1: stderr: go: -mod may only be set to readonly or vendor when in workspace mode, but it is set to \"mod\"\n\tRemove the -mod flag to use the default readonly value,\n\tor set GOWORK=off to disable workspace mode.",
+			wantContain: "workspace mode",
+		},
+		{
 			name:        "relative replace directive",
 			detail:      "reading metric/go.mod: replacement directory ../../metric does not exist",
 			wantContain: "relative replace directive",
@@ -153,6 +172,102 @@ func TestClassifyBuildIncompatibility(t *testing.T) {
 				t.Errorf("ClassifyBuildIncompatibility(%q) = %q, want it to contain %q", tc.detail, got, tc.wantContain)
 			}
 		})
+	}
+}
+
+func TestUnresolvedCoordinate(t *testing.T) {
+	cases := []struct {
+		name        string
+		detail      string
+		wantPath    string
+		wantVersion string
+		wantOK      bool
+	}{
+		{
+			name:        "requires chain names the unresolvable version",
+			detail:      "go: github.com/bytedance/sonic/loader@v0.1.1 requires\n\tgithub.com/cloudwego/iasm@v0.2.0 requires\n\tgithub.com/stretchr/testify@v1.7.0: module lookup disabled by GOPROXY=off",
+			wantPath:    "github.com/stretchr/testify",
+			wantVersion: "v1.7.0",
+			wantOK:      true,
+		},
+		{
+			name:        "single line",
+			detail:      "go: github.com/bytedance/sonic/loader@v0.1.1: module lookup disabled by GOPROXY=off",
+			wantPath:    "github.com/bytedance/sonic/loader",
+			wantVersion: "v0.1.1",
+			wantOK:      true,
+		},
+		{
+			// Attributed to a source position, not a module. Nothing to name, so
+			// the caller must keep its conservative classification.
+			name:   "source position names no module",
+			detail: "govulncheck: loading packages: stdr.go:25:2: module lookup disabled by GOPROXY=off",
+			wantOK: false,
+		},
+		{
+			name:   "unrelated failure",
+			detail: "build constraints exclude all Go files in /tmp/x",
+			wantOK: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := UnresolvedCoordinate(tc.detail)
+			if ok != tc.wantOK {
+				t.Fatalf("ok = %v, want %v (got %+v)", ok, tc.wantOK, got)
+			}
+			if !ok {
+				return
+			}
+			if got.Path != tc.wantPath || got.Version != tc.wantVersion {
+				t.Errorf("coordinate = %s@%s, want %s@%s", got.Path, got.Version, tc.wantPath, tc.wantVersion)
+			}
+		})
+	}
+}
+
+// TestRefineOfflineResolutionReason is the guard against a scan-cache hole
+// being filed as an expected out-of-toolchain outcome. A version the walk graph
+// itself records is one kanonarion undertook to supply; failing to resolve it is
+// a fault, and must not inherit ExpectedOutOfToolchain.
+func TestRefineOfflineResolutionReason(t *testing.T) {
+	known := map[coordinate.ModuleCoordinate]struct{}{
+		{Path: "github.com/stretchr/testify", Version: "v1.7.0"}: {},
+	}
+	inClosure := "go: github.com/cloudwego/iasm@v0.2.0 requires\n\tgithub.com/stretchr/testify@v1.7.0: module lookup disabled by GOPROXY=off"
+	outsideClosure := "go: example.com/other@v3.0.0: module lookup disabled by GOPROXY=off"
+
+	if got := RefineOfflineResolutionReason(UnscanReasonVersionNotInToolchain, inClosure, known); got != UnscanReasonIncompleteScanCache {
+		t.Errorf("version inside the walk closure = %q, want %q", got, UnscanReasonIncompleteScanCache)
+	}
+	if got := RefineOfflineResolutionReason(UnscanReasonVersionNotInToolchain, outsideClosure, known); got != UnscanReasonVersionNotInToolchain {
+		t.Errorf("version outside the walk closure = %q, want it left as out-of-toolchain", got)
+	}
+	// No graph to compare against: keep the conservative existing reading.
+	if got := RefineOfflineResolutionReason(UnscanReasonVersionNotInToolchain, inClosure, nil); got != UnscanReasonVersionNotInToolchain {
+		t.Errorf("with no known set = %q, want it left untouched", got)
+	}
+	// Unrelated reasons are never rewritten.
+	if got := RefineOfflineResolutionReason(UnscanReasonWindowsOnly, inClosure, known); got != UnscanReasonWindowsOnly {
+		t.Errorf("unrelated reason = %q, want it left untouched", got)
+	}
+}
+
+// TestIncompleteScanCacheReason_NamesMissingVersion guards that the operator is
+// told which version was missing, not merely that one was.
+func TestIncompleteScanCacheReason_NamesMissingVersion(t *testing.T) {
+	got := IncompleteScanCacheReason("go: github.com/stretchr/testify@v1.7.0: module lookup disabled by GOPROXY=off")
+	if !strings.Contains(got, "github.com/stretchr/testify@v1.7.0") {
+		t.Errorf("reason = %q, want it to name the missing version", got)
+	}
+}
+
+// TestUnscanReason_IncompleteScanCacheIsAFault guards that the new reason does
+// not read as an expected consequence of hermetic scanning — that
+// misclassification is what hid it.
+func TestUnscanReason_IncompleteScanCacheIsAFault(t *testing.T) {
+	if UnscanReasonIncompleteScanCache.ExpectedOutOfToolchain() {
+		t.Error("incomplete-scan-cache is a fault kanonarion can fix; it must not be marked expected")
 	}
 }
 

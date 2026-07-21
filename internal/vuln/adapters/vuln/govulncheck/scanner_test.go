@@ -229,6 +229,30 @@ func TestScanEnv_PopulatedModcacheRunsHermetic(t *testing.T) {
 	}
 }
 
+// TestScanEnv_DisablesWorkspaceMode guards that GOWORK=off is set on every scan,
+// with or without a populated cache. A module may ship a go.work in its
+// published zip (github.com/bytedance/sonic@v1.11.6 does); left on, the
+// toolchain discovers it in the extract dir and enters workspace mode, which
+// rejects -mod=mod and gets misreported as a module that does not build.
+func TestScanEnv_DisablesWorkspaceMode(t *testing.T) {
+	for _, modcache := range []string{"/tmp/kanonarion-modcache", ""} {
+		got := envMap(scanEnv([]string{"PATH=/usr/bin"}, modcache))
+		if got["GOWORK"] != "off" {
+			t.Errorf("scanEnv(modcache=%q) GOWORK = %q, want off", modcache, got["GOWORK"])
+		}
+	}
+}
+
+// TestScanEnv_LastValueWinsOverInheritedWorkspace guards that an ambient GOWORK
+// pointing at a workspace file cannot leak into an isolated single-module scan.
+func TestScanEnv_LastValueWinsOverInheritedWorkspace(t *testing.T) {
+	got := envMap(scanEnv([]string{"GOWORK=/home/dev/go.work"}, "/tmp/kanonarion-modcache"))
+
+	if got["GOWORK"] != "off" {
+		t.Errorf("GOWORK = %q, want off to override the inherited workspace file", got["GOWORK"])
+	}
+}
+
 // TestScanEnv_LastValueWinsOverInheritedFlags guards that the offline overrides
 // take effect even when the ambient environment already pins conflicting
 // values — exec.Cmd honours the last value for a duplicate key.

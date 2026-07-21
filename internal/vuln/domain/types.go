@@ -44,6 +44,13 @@ const (
 	// UnscanReasonGoWorkMonorepo indicates the module references siblings via a
 	// go.work file that are not present in the module zip.
 	UnscanReasonGoWorkMonorepo UnscanReason = "go-work-monorepo"
+	// UnscanReasonWorkspaceMode indicates the Go toolchain entered workspace mode
+	// while scanning the module in isolation — a go.work was discovered in the
+	// extracted module directory or inherited from the environment — and rejected
+	// the scan environment. Workspace mode is dev-time configuration that does not
+	// apply to an isolated single-module scan, so this names a misconfigured scan
+	// environment rather than a module that fails to build.
+	UnscanReasonWorkspaceMode UnscanReason = "workspace-mode"
 	// UnscanReasonRelativeReplace indicates the module uses a replace directive
 	// pointing to a sibling directory not included in the module zip.
 	UnscanReasonRelativeReplace UnscanReason = "relative-replace-directive"
@@ -69,6 +76,14 @@ const (
 	// supports. Distinct from generated-assets-missing: nothing is missing from
 	// the module zip, so there is no code-generation step to run.
 	UnscanReasonPackageDeclarationsMissing UnscanReason = "package-declarations-missing"
+	// UnscanReasonIncompleteScanCache indicates the isolated scan failed to
+	// resolve a module version offline that the walk graph itself knows about —
+	// a node, or a superseded requirement recorded on one of its edges. Unlike
+	// version-not-in-toolchain, nothing about this is expected: kanonarion
+	// undertook to supply that version to the hermetic cache and did not, so the
+	// module is a coverage gap that a fix can close rather than an inherent
+	// consequence of scanning modules in isolation.
+	UnscanReasonIncompleteScanCache UnscanReason = "incomplete-scan-cache"
 	// UnscanReasonBuildIncompatible is the catch-all for build failures that do
 	// not match a more specific pattern.
 	UnscanReasonBuildIncompatible UnscanReason = "build-incompatible"

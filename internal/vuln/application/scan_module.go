@@ -41,8 +41,19 @@ import (
 // resolved, never a version fetched fresh from the network. Modules whose
 // isolated build re-selects an out-of-toolchain version flip from a
 // network-fabricated verdict to a truthful Unscannable (version-not-in-toolchain),
-// so "v4" records must be re-scanned rather than served stale.
-const PipelineVersion = "v5"
+// so "v4" records must be re-scanned rather than served stale. It was bumped to
+// "v6" when the scan environment began setting GOWORK=off: a module shipping a
+// go.work in its published zip put the toolchain into workspace mode, which
+// rejects the scan's -mod=mod and was recorded under "v5" as a misdiagnosed
+// Unscannable/build-incompatible. Those modules now scan from source, so "v5"
+// records must be re-scanned rather than served stale. It was bumped to "v7"
+// when the hermetic cache began carrying the full transitive closure of
+// superseded go.mod files: a pre-pruning (go<1.17) module needs that closure to
+// load its module graph offline, and without it such modules were recorded under
+// "v6" as metadata-only coverage gaps when they are in fact scannable from
+// source. The same bump covers metadata-only records now retaining the
+// originating toolchain error in error_detail, which "v6" records dropped.
+const PipelineVersion = "v7"
 
 // ScanModuleUseCase orchestrates a single module's vulnerability scan.
 type ScanModuleUseCase struct {
@@ -156,6 +167,17 @@ type ScanModuleParams struct {
 	// CallGraphSem is a shared semaphore that limits concurrent callgraph subprocess
 	// spawns across all module scans in the same walk. nil means no concurrency limit.
 	CallGraphSem chan struct{}
+	// KnownVersions is the set of module versions the walk knows this scan may
+	// need: its nodes plus the superseded requirements recorded on its edges. It
+	// discriminates the two ways an offline resolution can fail. A version in
+	// this set was one kanonarion undertook to supply, so failing to resolve it
+	// is an incomplete scan cache — a fault. A version outside it was selected by
+	// the module's own isolated build and never belonged to the project's
+	// toolchain, which is the expected consequence of hermetic scanning. Built
+	// once per walk and read concurrently; never written during a scan. A nil map
+	// disables the discrimination and every failure reads as out-of-toolchain,
+	// preserving the behaviour of callers that scan without a graph.
+	KnownVersions map[coordinate.ModuleCoordinate]struct{}
 }
 
 // Scan performs the scan.
@@ -204,7 +226,7 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 			// definitive verdict for stdlib, not a coverage-gap fallback.
 			note = "Go standard library (toolchain-provided); advisories resolved from OSV metadata by coordinate"
 		}
-		return uc.scanMetadataOnly(ctx, params, snapshot, note, "", domain.StatusClean)
+		return uc.scanMetadataOnly(ctx, params, snapshot, note, "", "", domain.StatusClean)
 	}
 
 	// 3.5 Metadata-based Filtering (Optimization)
@@ -282,9 +304,15 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 	if record.OverallStatus == domain.StatusScanFailed && domain.IsBuildIncompatibility(record.ErrorDetail) {
 		category := domain.ClassifyBuildIncompatibility(record.ErrorDetail)
 		reason := domain.StructuredUnscanReason(record.ErrorDetail)
+		// An offline resolution failure naming a version the walk itself records
+		// is a hole in the scan cache, not a module reaching outside the project.
+		if refined := domain.RefineOfflineResolutionReason(reason, record.ErrorDetail, params.KnownVersions); refined != reason {
+			reason = refined
+			category = domain.IncompleteScanCacheReason(record.ErrorDetail)
+		}
 		uc.logMetadataFallback(params.Coordinate, reason, category, record.ErrorDetail)
 		note := "source analysis unavailable: " + category + "; results are metadata-only with no reachability"
-		return uc.scanMetadataOnly(ctx, params, snapshot, note, reason, domain.StatusUnscannable)
+		return uc.scanMetadataOnly(ctx, params, snapshot, note, reason, record.ErrorDetail, domain.StatusUnscannable)
 	}
 
 	// 5c. Scanner-side coverage gap: the scanner itself declared the module
@@ -302,7 +330,7 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 		}
 		uc.logger.Warn("vuln-scan: scanner reported unscannable, falling back to metadata",
 			"coordinate", params.Coordinate, "reason", record.UnscanReason)
-		return uc.scanMetadataOnly(ctx, params, snapshot, note, record.UnscanReason, domain.StatusUnscannable)
+		return uc.scanMetadataOnly(ctx, params, snapshot, note, record.UnscanReason, record.ErrorDetail, domain.StatusUnscannable)
 	}
 
 	// 6. Reachability Analysis (T4: Conditional Static Analysis)
@@ -378,10 +406,17 @@ func (uc *ScanModuleUseCase) tryReuseCachedRecord(ctx context.Context, params Sc
 // out-of-toolchain module is the expected outcome of a hermetic scan, not a
 // coverage fault, so it logs at info level (and names reachability --local, the
 // project-rooted answer); genuine build incompatibilities stay at warn.
+//
+// Both branches carry the category and detail. The level says how alarmed to be;
+// it must not decide whether the evidence survives. An "expected" verdict whose
+// supporting error has been deleted cannot be checked by anyone — which is how a
+// scan cache that was quietly failing to resolve versions the walk knew about
+// went unnoticed, since the toolchain's message naming the missing version was
+// discarded on exactly this path.
 func (uc *ScanModuleUseCase) logMetadataFallback(coord coordinate.ModuleCoordinate, reason domain.UnscanReason, category, detail string) {
 	if reason.ExpectedOutOfToolchain() {
 		uc.logger.Info("vuln-scan: metadata-only, version outside the project build (expected); use reachability --local for project-rooted reachability",
-			"coordinate", coord)
+			"coordinate", coord, "category", category, "detail", detail)
 		return
 	}
 	uc.logger.Warn("vuln-scan: source analysis unavailable, falling back to metadata",
@@ -397,7 +432,7 @@ func (uc *ScanModuleUseCase) logMetadataFallback(coord coordinate.ModuleCoordina
 // emptyStatus is the status when no advisory matches: Clean when that is a
 // genuine answer, or Unscannable when metadata is a fallback for a module that
 // could not be analysed from source (a coverage gap, not a clean).
-func (uc *ScanModuleUseCase) scanMetadataOnly(ctx context.Context, params ScanModuleParams, snapshot domain.DatabaseSnapshot, note string, unscanReason domain.UnscanReason, emptyStatus domain.VulnerabilityStatus) (domain.VulnerabilityRecord, error) {
+func (uc *ScanModuleUseCase) scanMetadataOnly(ctx context.Context, params ScanModuleParams, snapshot domain.DatabaseSnapshot, note string, unscanReason domain.UnscanReason, errorDetail string, emptyStatus domain.VulnerabilityStatus) (domain.VulnerabilityRecord, error) {
 	uc.logger.Info("vuln-scan: metadata-only", "coordinate", params.Coordinate, "reason", note)
 	findings, err := uc.database.LookupFindings(ctx, params.Coordinate)
 	if err != nil {
@@ -418,10 +453,15 @@ func (uc *ScanModuleUseCase) scanMetadataOnly(ctx context.Context, params ScanMo
 		OverallStatus:     status,
 		UnscanReason:      unscanReason,
 		UnscannableReason: note,
-		DatabaseSnapshot:  snapshot,
-		ScannedAt:         now,
-		FirstScannedAt:    now,
-		PipelineVersion:   uc.pipelineVersion,
+		// The originating toolchain error is carried onto the metadata-only
+		// record. Without it the record states a verdict and destroys the
+		// evidence for it, leaving an operator no way to tell a module that
+		// genuinely cannot be analysed from one the scanner failed to set up.
+		ErrorDetail:      errorDetail,
+		DatabaseSnapshot: snapshot,
+		ScannedAt:        now,
+		FirstScannedAt:   now,
+		PipelineVersion:  uc.pipelineVersion,
 	}
 	hash, err := uc.computeContentHash(record)
 	if err != nil {

@@ -355,3 +355,48 @@ func TestPrePruning(t *testing.T) {
 		}
 	}
 }
+
+// TestKnownVersions_coversSelectedVersionsOnly guards the set used to tell an
+// offline resolution failure kanonarion caused from one inherent to scanning a
+// module in isolation. Only selected versions belong: those are the ones the
+// walk supplies as source. A superseded version is recorded by the graph but
+// never built by the project, so a module re-selecting one in isolation has
+// reached outside the toolchain — including it here would file that expected
+// outcome as a scan-cache fault.
+func TestKnownVersions_coversSelectedVersionsOnly(t *testing.T) {
+	g := domain.Graph{
+		Nodes: []domain.GraphNode{
+			{Coordinate: coord("github.com/go-logr/logr", "v1.4.3")},
+			{Coordinate: coord("github.com/go-logr/stdr", "v1.2.2")},
+			{
+				Coordinate:         coord("github.com/rqlite/go-sqlite3", "v1.47.0"),
+				OriginalCoordinate: coord("github.com/mattn/go-sqlite3", "v1.14.44"),
+			},
+		},
+		Edges: []domain.GraphEdge{
+			{From: coord("github.com/go-logr/stdr", "v1.2.2"), To: coord("github.com/go-logr/logr", "v1.4.3"), ConstraintVersion: "v1.2.2"},
+		},
+	}
+
+	known := g.KnownVersions()
+
+	for _, want := range []coordinate.ModuleCoordinate{
+		coord("github.com/go-logr/logr", "v1.4.3"),       // selected node
+		coord("github.com/go-logr/stdr", "v1.2.2"),       // selected node
+		coord("github.com/rqlite/go-sqlite3", "v1.47.0"), // replacement
+		coord("github.com/mattn/go-sqlite3", "v1.14.44"), // the coordinate it replaced
+	} {
+		if _, ok := known[want]; !ok {
+			t.Errorf("KnownVersions() is missing %s", want)
+		}
+	}
+	if _, ok := known[coord("example.com/never", "v1.0.0")]; ok {
+		t.Error("KnownVersions() must not contain a coordinate the graph never records")
+	}
+	// The superseded requirement on the stdr -> logr edge. The project builds
+	// logr@v1.4.3; a module that re-selects v1.2.2 in isolation is out of the
+	// toolchain, not evidence of a cache kanonarion failed to fill.
+	if _, ok := known[coord("github.com/go-logr/logr", "v1.2.2")]; ok {
+		t.Error("KnownVersions() must exclude superseded versions the project never builds")
+	}
+}

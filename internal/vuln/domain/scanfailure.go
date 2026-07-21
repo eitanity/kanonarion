@@ -1,6 +1,10 @@
 package domain
 
-import "strings"
+import (
+	"strings"
+
+	"github.com/eitanity/kanonarion/internal/coordinate"
+)
 
 // IsBuildIncompatibility reports whether a scan-failure detail indicates the
 // module could not be loaded or built under the host Go toolchain — for
@@ -30,6 +34,8 @@ func IsBuildIncompatibility(detail string) bool {
 func ClassifyBuildIncompatibility(detail string) string {
 	d := strings.ToLower(detail)
 	switch {
+	case isWorkspaceModeFailure(d):
+		return "scan environment entered Go workspace mode: a go.work applied to a module scanned in isolation"
 	case strings.Contains(d, "go.work file") && (strings.Contains(d, "no such file or directory") || strings.Contains(d, "cannot load module")):
 		return "go.work mono-repo: sibling modules not present in module zip"
 	case strings.Contains(d, "replacement directory") && strings.Contains(d, "does not exist"):
@@ -49,6 +55,98 @@ func ClassifyBuildIncompatibility(detail string) string {
 	default:
 		return "module does not build under the host Go toolchain"
 	}
+}
+
+// isWorkspaceModeFailure reports whether an already-lowercased error detail is
+// the toolchain refusing to proceed because it is in workspace mode. It is
+// matched ahead of the go.work mono-repo case: that one names a module whose
+// workspace genuinely references absent siblings, whereas this one names a scan
+// environment that let workspace mode apply at all, which the scanner disables
+// (GOWORK=off). Seeing it means the environment is misconfigured, not that the
+// module fails to build, so it must not fall through to the generic default.
+func isWorkspaceModeFailure(d string) bool {
+	return strings.Contains(d, "in workspace mode") || strings.Contains(d, "gowork=off to disable workspace mode")
+}
+
+// goProxyOffMarker is the toolchain's wording when an offline resolution needs a
+// module version the cache does not hold.
+const goProxyOffMarker = "module lookup disabled by goproxy=off"
+
+// UnresolvedCoordinate returns the module version named by an offline
+// resolution failure, if the error names one. The toolchain reports the failure
+// as "<path>@<version>: module lookup disabled by GOPROXY=off", sometimes as the
+// last line of a "requires" chain. Not every occurrence names a module: a failure
+// attributed to a source position ("stdr.go:25:2: module lookup disabled by
+// GOPROXY=off") names none, and the second return value is false.
+//
+// Knowing which version is missing is what separates a cache kanonarion failed to
+// fill from a version the project genuinely never resolved, so this parse is the
+// input to that distinction rather than a convenience for log prose.
+func UnresolvedCoordinate(detail string) (coordinate.ModuleCoordinate, bool) {
+	for _, line := range strings.Split(detail, "\n") {
+		idx := strings.Index(strings.ToLower(line), goProxyOffMarker)
+		if idx < 0 {
+			continue
+		}
+		prefix := strings.TrimSpace(line[:idx])
+		prefix = strings.TrimSuffix(prefix, ":")
+		fields := strings.Fields(prefix)
+		if len(fields) == 0 {
+			continue
+		}
+		token := strings.TrimSuffix(fields[len(fields)-1], ":")
+		at := strings.LastIndex(token, "@")
+		if at <= 0 || at == len(token)-1 {
+			continue
+		}
+		path, version := token[:at], token[at+1:]
+		// A version always starts with "v"; without that check a source position
+		// or an arbitrary token containing "@" would be read as a coordinate.
+		if !strings.HasPrefix(version, "v") {
+			continue
+		}
+		return coordinate.ModuleCoordinate{Path: path, Version: version}, true
+	}
+	return coordinate.ModuleCoordinate{}, false
+}
+
+// RefineOfflineResolutionReason downgrades a version-not-in-toolchain verdict to
+// incomplete-scan-cache when the version the toolchain could not resolve is one
+// the walk already knows about. known is the walk's node and superseded-edge
+// coordinate set; a nil or empty set leaves the reason untouched, so a caller
+// scanning without a graph keeps the conservative out-of-toolchain reading.
+//
+// Without this, every offline resolution failure lands in a bucket marked
+// expected, and a cache kanonarion failed to fill is indistinguishable from a
+// module whose isolated build reaches outside the project — the first is a bug,
+// the second is by design.
+func RefineOfflineResolutionReason(
+	reason UnscanReason,
+	detail string,
+	known map[coordinate.ModuleCoordinate]struct{},
+) UnscanReason {
+	if reason != UnscanReasonVersionNotInToolchain || len(known) == 0 {
+		return reason
+	}
+	coord, ok := UnresolvedCoordinate(detail)
+	if !ok {
+		return reason
+	}
+	if _, isKnown := known[coord]; isKnown {
+		return UnscanReasonIncompleteScanCache
+	}
+	return reason
+}
+
+// IncompleteScanCacheReason returns the human-readable category for an
+// incomplete-scan-cache outcome, naming the version that was missing when the
+// error identifies one.
+func IncompleteScanCacheReason(detail string) string {
+	const base = "incomplete scan cache: a module version the walk graph records could not be resolved offline"
+	if coord, ok := UnresolvedCoordinate(detail); ok {
+		return base + " (" + coord.String() + ")"
+	}
+	return base
 }
 
 // hasQualifiedUndefinedSymbol reports whether an already-lowercased detail names
@@ -100,6 +198,8 @@ func LocalReplaceUnscannableReason(localPath string) string {
 func StructuredUnscanReason(detail string) UnscanReason {
 	d := strings.ToLower(detail)
 	switch {
+	case isWorkspaceModeFailure(d):
+		return UnscanReasonWorkspaceMode
 	case strings.Contains(d, "go.work file") && (strings.Contains(d, "no such file or directory") || strings.Contains(d, "cannot load module")):
 		return UnscanReasonGoWorkMonorepo
 	case strings.Contains(d, "replacement directory") && strings.Contains(d, "does not exist"):

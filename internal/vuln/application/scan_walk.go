@@ -26,6 +26,12 @@ import (
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
+// populateFailureLogLimit bounds how many individual coordinate failures a
+// cache-population warning names before collapsing the rest into a count. The
+// failures are named rather than counted alone because the operator needs to
+// know which version is missing, not merely that something is.
+const populateFailureLogLimit = 10
+
 // moduleResult holds the outcome of a single module scan dispatched by a worker pool.
 type moduleResult struct {
 	coord  coordinate.ModuleCoordinate
@@ -155,68 +161,8 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 
 	// 3b. Pre-populate a shared GOMODCACHE from the blob store so govulncheck workers
 	// don't need to download dependencies from the network.
-	goModCache := ""
-	if uc.realModcacheDir != "" {
-		// --from-modcache: the caller's Go module cache already holds every
-		// dependency (verified against go.sum by the build). Point govulncheck at
-		// it directly — no temp cache, no blob reads, no network.
-		goModCache = uc.realModcacheDir
-		uc.logger.Info("using existing GOMODCACHE for scan", "dir", goModCache)
-	} else if cacheDir, err := os.MkdirTemp("", "kanonarion-modcache-*"); err != nil {
-		uc.logger.Warn("failed to create temp GOMODCACHE, govulncheck will download dependencies", "error", err)
-	} else {
-		// govulncheck workers run with GOMODCACHE=cacheDir and the Go toolchain
-		// writes any downloaded entries read-only; modcache.Remove restores write
-		// permission before deleting so the (potentially multi-GB) tree does not
-		// leak in TMPDIR. Surface a removal failure rather than discarding it.
-		defer func() {
-			if rerr := modcache.Remove(cacheDir); rerr != nil {
-				uc.logger.Warn("failed to remove temp GOMODCACHE", "error", rerr, "dir", cacheDir)
-			}
-		}()
-		// local-replace nodes have no remote artefact to populate the
-		// modcache with; exclude them from prefetch and Populate.
-		// local_analysed nodes DO have a FactRecord (local FS zip) and
-		// are included so their source can be scanned.
-		coords := make([]coordinate.ModuleCoordinate, 0, len(walk.Graph.Nodes))
-		for _, node := range walk.Graph.Nodes {
-			if node.ResolutionSource == walkdomain.ResolutionLocalReplace {
-				continue
-			}
-			// The synthetic standard-library node ships with the toolchain and has
-			// no proxy artefact; it is scanned from advisory metadata, so exclude it
-			// from the module cache prefetch/populate.
-			if node.ResolutionSource == walkdomain.ResolutionStdlib {
-				continue
-			}
-			// The local main module (a project walk's root) has no proxy artefact
-			// to populate the cache with; the project-rooted scan reads its live
-			// working tree, not a stored blob. Skip it so pre-fetch does not
-			// pointlessly query the proxy for an unpublishable @local coordinate.
-			if node.Coordinate.IsLocal() {
-				continue
-			}
-			coords = append(coords, node.Coordinate)
-		}
-
-		// Pre-fetch any modules that are missing from the fact store so Populate
-		// has a complete set of blobs. Errors are logged as warnings to preserve
-		// best-effort semantics.
-		uc.prefetchMissing(ctx, coords)
-
-		if err := modcache.Populate(ctx, uc.moduleScanner.factStore, uc.moduleScanner.blobs, cacheDir, coords, uc.moduleScanner.fetchPipelineVersion); err != nil {
-			uc.logger.Warn("failed to pre-populate GOMODCACHE, govulncheck will download dependencies", "error", err)
-		} else {
-			goModCache = cacheDir
-			uc.logger.Info("pre-populated GOMODCACHE from blob store", "modules", len(coords), "dir", cacheDir)
-			// A graph containing a pre-pruning (go<1.17) module makes the
-			// toolchain read the go.mod of superseded intermediate versions to
-			// rebuild the module graph; the selected-version cache above omits
-			// them. Supply them (go.mod only) so the scan resolves fully offline
-			// instead of falling back to the network for graph bookkeeping.
-			uc.populateSupersededGoMods(ctx, walk.Graph, cacheDir)
-		}
-	}
+	goModCache, releaseModCache := uc.prepareModCache(ctx, walk)
+	defer releaseModCache()
 
 	// 4. Scan modules with a bounded worker pool. Unanalysed local-replace
 	// nodes are extracted upfront so the scan pool only processes
@@ -250,8 +196,13 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	}
 	cgSem := make(chan struct{}, cgWorkers)
 
+	// Built once and shared read-only across workers: the versions this walk
+	// records, used to tell an offline resolution failure kanonarion caused from
+	// one inherent to scanning a module in isolation.
+	knownVersions := walk.Graph.KnownVersions()
+
 	scanPool := func(coordSlice []coordinate.ModuleCoordinate, scanMode domain.ScanMode) []moduleResult {
-		return uc.runScanPool(ctx, coordSlice, workers, cgSem, params, snapshot, goModCache, vulnDBDir, scanMode)
+		return uc.runScanPool(ctx, coordSlice, workers, cgSem, params, snapshot, goModCache, vulnDBDir, scanMode, knownVersions)
 	}
 
 	// finalResults maps each coordinate to its definitive scan result.
@@ -506,6 +457,7 @@ func (uc *ScanWalkUseCase) runScanPool(
 	snapshot *domain.DatabaseSnapshot,
 	goModCache, vulnDBDir string,
 	scanMode domain.ScanMode,
+	knownVersions map[coordinate.ModuleCoordinate]struct{},
 ) []moduleResult {
 	ch := make(chan coordinate.ModuleCoordinate, len(coordSlice))
 	for _, c := range coordSlice {
@@ -530,6 +482,7 @@ func (uc *ScanWalkUseCase) runScanPool(
 					VulnDBDir:          vulnDBDir,
 					ScanMode:           scanMode,
 					CallGraphSem:       cgSem,
+					KnownVersions:      knownVersions,
 				})
 				out <- moduleResult{coord: coord, record: rec, err: scanErr}
 			}
@@ -571,52 +524,81 @@ func (uc *ScanWalkUseCase) prefetchMissing(ctx context.Context, coords []coordin
 	}
 }
 
-// populateSupersededGoMods supplies the go.mod files of superseded intermediate
-// versions to the scan cache so the toolchain can rebuild the module graph
-// offline. It is a no-op unless the graph both (a) names at least one superseded
-// requirement and (b) contains a pre-pruning (go<1.17) module — only then does
-// the toolchain read a discarded version's go.mod, so a fully pruned graph pays
-// nothing. Missing versions are fetched (and fetch-verified) into the store
-// first; then only their go.mod is written to the cache — a superseded version
-// is never compiled, so its zip is never needed. Best-effort throughout: a
-// failure degrades to the toolchain resolving that version elsewhere.
-func (uc *ScanWalkUseCase) populateSupersededGoMods(ctx context.Context, graph walkdomain.Graph, cacheDir string) {
-	superseded := graph.SupersededRequirements()
-	if len(superseded) == 0 {
-		return
-	}
-	if !uc.graphHasPrePruningModule(ctx, graph) {
-		uc.logger.Debug("no pre-pruning module in graph; skipping superseded go.mod population",
-			"superseded_count", len(superseded))
+// populatePrePruningGoMods supplies the go.mod files a pre-pruning module needs
+// to rebuild its module graph offline.
+//
+// The traversal is rooted at the pre-pruning (go<1.17) nodes and follows their
+// requirements transitively, writing the go.mod of any version the cache does
+// not already hold. Rooting is the whole point. Only a pre-pruning MAIN module
+// makes the toolchain load the complete, unpruned module graph; a module on
+// go1.17 or later reads a pruned graph that the selected versions already
+// satisfy. Seeding instead from the walk's superseded requirements and expanding
+// outwards has no root and no stopping condition tied to what any module
+// actually reads: on a 285-node graph that reaches 2431 versions and fetches
+// 2345, where rooting at the 136 pre-pruning modules needs 249.
+//
+// Traversal continues THROUGH versions already in the cache, because a selected
+// version's go.mod is how a deeper missing version is reached; it is simply not
+// rewritten. Only go.mod files are written, never zips — a version reached this
+// way is read for module-graph arithmetic and never compiled.
+//
+// Best-effort throughout: a failure degrades to that one version being
+// unresolvable offline, which is reported rather than swallowed.
+func (uc *ScanWalkUseCase) populatePrePruningGoMods(ctx context.Context, graph walkdomain.Graph, cacheDir string) {
+	roots := uc.prePruningNodes(ctx, graph)
+	if len(roots) == 0 {
+		uc.logger.Debug("no pre-pruning module in graph; skipping module-graph go.mod population",
+			"nodes", len(graph.Nodes))
 		return
 	}
 
-	// Fetch the superseded versions missing from the store, then write their
-	// go.mod (only) into the cache under the fetch pipeline version.
-	uc.prefetchMissing(ctx, superseded)
-	if err := modcache.PopulateGoMod(ctx, uc.moduleScanner.factStore, uc.moduleScanner.blobs, cacheDir, superseded, uc.moduleScanner.fetchPipelineVersion); err != nil {
-		uc.logger.Warn("failed to populate superseded go.mod files; offline graph resolution may fall back to the network", "error", err)
-		return
+	// Seed with the superseded versions those modules require, alongside the
+	// modules themselves. The walk's edges record that requirement independently
+	// of the go.mod text, so a root whose go.mod is unreadable still contributes
+	// the versions the walk already knows it needs.
+	rootSet := make(map[coordinate.ModuleCoordinate]struct{}, len(roots))
+	for _, r := range roots {
+		rootSet[r] = struct{}{}
 	}
-	uc.logger.Info("populated superseded go.mod files for offline module-graph resolution", "count", len(superseded))
+	edgeSeeds := graph.SupersededRequirementsFrom(rootSet)
+	seeds := make([]coordinate.ModuleCoordinate, 0, len(roots)+len(edgeSeeds))
+	seeds = append(seeds, roots...)
+	seeds = append(seeds, edgeSeeds...)
+
+	report := modcache.PopulateGoModClosure(
+		ctx, uc.moduleScanner.factStore, uc.moduleScanner.blobs, cacheDir,
+		seeds, uc.moduleScanner.fetchPipelineVersion,
+		func(ctx context.Context, batch []coordinate.ModuleCoordinate) { uc.prefetchMissing(ctx, batch) },
+	)
+	uc.logger.Info("populated pre-pruning module-graph go.mod files for offline resolution",
+		"written", report.Written, "reached", report.Requested, "roots", len(roots))
+	if !report.Complete() {
+		// Under GOPROXY=off there is no network fallback, so a hole here is the
+		// difference between a module that resolves and one that is recorded as
+		// a coverage gap. Name it rather than leaving the gap to be rediscovered
+		// later as an unexplained resolution failure.
+		uc.logger.Warn("incomplete pre-pruning go.mod set; modules needing these versions will fail to resolve offline",
+			"written", report.Written, "reached", report.Requested,
+			"failures", report.FailureSummary(populateFailureLogLimit))
+	}
 }
 
-// graphHasPrePruningModule reports whether any node in the graph declares a
-// pre-pruning (go<1.17) go version, reading each node's go.mod from the fact
-// store. It short-circuits on the first match. Nodes with no readable go.mod
-// (unfetched, fetch-failed) are skipped rather than assumed pre-pruning, so the
-// gate only fires on positive evidence.
-func (uc *ScanWalkUseCase) graphHasPrePruningModule(ctx context.Context, graph walkdomain.Graph) bool {
+// prePruningNodes returns the graph's nodes that declare a pre-pruning (go<1.17)
+// go directive — the modules whose isolated scan makes the toolchain load the
+// full, unpruned module graph. Nodes with no readable go.mod are skipped rather
+// than assumed pre-pruning, so the set rests on positive evidence.
+func (uc *ScanWalkUseCase) prePruningNodes(ctx context.Context, graph walkdomain.Graph) []coordinate.ModuleCoordinate {
+	var roots []coordinate.ModuleCoordinate
 	for _, node := range graph.Nodes {
 		goVersion, ok := uc.nodeGoVersion(ctx, node.Coordinate)
 		if !ok {
 			continue
 		}
 		if walkdomain.PrePruning(goVersion) {
-			return true
+			roots = append(roots, node.Coordinate)
 		}
 	}
-	return false
+	return roots
 }
 
 // nodeGoVersion reads the go directive from a node's stored go.mod. The bool is
@@ -731,3 +713,82 @@ func (uc *ScanWalkUseCase) computeContentHash(r domain.WalkScanRun) (string, err
 // not that the guard is reachable with a real value today — it exists for
 // the never-silent-failure invariant, not a known failure mode.
 var walkScanRunMarshal = json.Marshal
+
+// prepareModCache resolves the GOMODCACHE the scan's govulncheck runs against
+// and returns it with a release function the caller must defer. An empty
+// directory means no cache could be prepared and the toolchain will download
+// what it needs; release is always non-nil.
+func (uc *ScanWalkUseCase) prepareModCache(ctx context.Context, walk walkdomain.WalkRecord) (string, func()) {
+	goModCache := ""
+	release := func() {}
+	if uc.realModcacheDir != "" {
+		// --from-modcache: the caller's Go module cache already holds every
+		// dependency (verified against go.sum by the build). Point govulncheck at
+		// it directly — no temp cache, no blob reads, no network.
+		goModCache = uc.realModcacheDir
+		uc.logger.Info("using existing GOMODCACHE for scan", "dir", goModCache)
+	} else if cacheDir, err := os.MkdirTemp("", "kanonarion-modcache-*"); err != nil {
+		uc.logger.Warn("failed to create temp GOMODCACHE, govulncheck will download dependencies", "error", err)
+	} else {
+		// govulncheck workers run with GOMODCACHE=cacheDir and the Go toolchain
+		// writes any downloaded entries read-only; modcache.Remove restores write
+		// permission before deleting so the (potentially multi-GB) tree does not
+		// leak in TMPDIR. Surface a removal failure rather than discarding it.
+		release = func() {
+			if rerr := modcache.Remove(cacheDir); rerr != nil {
+				uc.logger.Warn("failed to remove temp GOMODCACHE", "error", rerr, "dir", cacheDir)
+			}
+		}
+		// local-replace nodes have no remote artefact to populate the
+		// modcache with; exclude them from prefetch and Populate.
+		// local_analysed nodes DO have a FactRecord (local FS zip) and
+		// are included so their source can be scanned.
+		coords := make([]coordinate.ModuleCoordinate, 0, len(walk.Graph.Nodes))
+		for _, node := range walk.Graph.Nodes {
+			if node.ResolutionSource == walkdomain.ResolutionLocalReplace {
+				continue
+			}
+			// The synthetic standard-library node ships with the toolchain and has
+			// no proxy artefact; it is scanned from advisory metadata, so exclude it
+			// from the module cache prefetch/populate.
+			if node.ResolutionSource == walkdomain.ResolutionStdlib {
+				continue
+			}
+			// The local main module (a project walk's root) has no proxy artefact
+			// to populate the cache with; the project-rooted scan reads its live
+			// working tree, not a stored blob. Skip it so pre-fetch does not
+			// pointlessly query the proxy for an unpublishable @local coordinate.
+			if node.Coordinate.IsLocal() {
+				continue
+			}
+			coords = append(coords, node.Coordinate)
+		}
+
+		// Pre-fetch any modules that are missing from the fact store so Populate
+		// has a complete set of blobs. Errors are logged as warnings to preserve
+		// best-effort semantics.
+		uc.prefetchMissing(ctx, coords)
+
+		report := modcache.Populate(ctx, uc.moduleScanner.factStore, uc.moduleScanner.blobs, cacheDir, coords, uc.moduleScanner.fetchPipelineVersion)
+		if report.Written == 0 && report.Requested > 0 {
+			uc.logger.Warn("failed to pre-populate GOMODCACHE, govulncheck will download dependencies",
+				"requested", report.Requested, "failures", report.FailureSummary(populateFailureLogLimit))
+		} else {
+			goModCache = cacheDir
+			uc.logger.Info("pre-populated GOMODCACHE from blob store",
+				"modules", report.Written, "requested", report.Requested, "dir", cacheDir)
+			if !report.Complete() {
+				uc.logger.Warn("some modules could not be populated into the scan cache; their scans may fail to resolve offline",
+					"written", report.Written, "requested", report.Requested,
+					"failures", report.FailureSummary(populateFailureLogLimit))
+			}
+			// A pre-pruning (go<1.17) module makes the toolchain load its full,
+			// unpruned module graph, reading go.mod files the selected-version
+			// cache above omits. Supply those, rooted at the pre-pruning modules,
+			// so the scan resolves fully offline instead of falling back to the
+			// network for graph bookkeeping.
+			uc.populatePrePruningGoMods(ctx, walk.Graph, cacheDir)
+		}
+	}
+	return goModCache, release
+}

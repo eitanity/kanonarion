@@ -291,14 +291,24 @@ func (s *Scanner) prepareDBArg(ctx context.Context, snapshot domain.DatabaseSnap
 // Unscannable (version-not-in-toolchain), never papered over with a network
 // fetch. Without a modcache the default (network-backed) resolution is untouched.
 //
+// GOWORK=off is set unconditionally. A module is scanned in isolation as its
+// own main module, so a go.work shipped in its published zip is dev-time
+// configuration that does not apply here — exactly as its own filesystem
+// replace directives do not (neutraliseLocalReplaces). Left on, the toolchain
+// discovers ./go.work in the extract dir and enters workspace mode, which both
+// rejects -mod=mod outright and would resolve against sibling modules the zip
+// does not contain. Disabling it is the same normalisation applied to the same
+// class of dev-time metadata; without it such a module is misreported as not
+// building under the host toolchain.
+//
 // Duplicate keys are appended rather than replaced because exec.Cmd honours the
 // last value for a repeated key, so these overrides win over any inherited
-// GOFLAGS/GOSUMDB/GOPROXY.
+// GOWORK/GOFLAGS/GOSUMDB/GOPROXY.
 func scanEnv(base []string, goModCache string) []string {
 	// Copy rather than append onto base so a caller's slice is never mutated.
-	env := make([]string, len(base), len(base)+5)
+	env := make([]string, len(base), len(base)+6)
 	copy(env, base)
-	env = append(env, "GOGC=30")
+	env = append(env, "GOGC=30", "GOWORK=off")
 	if goModCache != "" {
 		env = append(env,
 			"GOMODCACHE="+goModCache,
