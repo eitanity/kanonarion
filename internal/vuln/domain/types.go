@@ -63,6 +63,12 @@ const (
 	// fetched from the network — which would analyse a dependency graph the
 	// project never builds. Surfaced as a coverage gap, never a confident clean.
 	UnscanReasonVersionNotInToolchain UnscanReason = "version-not-in-toolchain"
+	// UnscanReasonPackageDeclarationsMissing indicates a package's declarations
+	// are absent because every file that would declare them is excluded by build
+	// constraints — most often a host Go toolchain outside the range the module
+	// supports. Distinct from generated-assets-missing: nothing is missing from
+	// the module zip, so there is no code-generation step to run.
+	UnscanReasonPackageDeclarationsMissing UnscanReason = "package-declarations-missing"
 	// UnscanReasonBuildIncompatible is the catch-all for build failures that do
 	// not match a more specific pattern.
 	UnscanReasonBuildIncompatible UnscanReason = "build-incompatible"

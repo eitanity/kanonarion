@@ -42,10 +42,45 @@ func ClassifyBuildIncompatibility(detail string) string {
 		return "missing go.sum entry: module cannot be resolved without network access"
 	case strings.Contains(d, "module lookup disabled by goproxy=off"):
 		return "requires a module version outside the analysed project toolchain: scanned in isolation it selects a dependency version the project's build list never resolved, so it is absent from the verified store"
-	case strings.Contains(d, "undefined:"):
+	case hasQualifiedUndefinedSymbol(d):
 		return "missing generated or embedded assets (module requires a code-generation step not present in the module zip)"
+	case strings.Contains(d, "undefined:"):
+		return "package declarations missing: files excluded by build constraints, commonly a host Go version outside the range the module supports"
 	default:
 		return "module does not build under the host Go toolchain"
+	}
+}
+
+// hasQualifiedUndefinedSymbol reports whether an already-lowercased detail names
+// at least one undefined symbol that is package-qualified ("undefined:
+// assets.ReadFile") rather than a bare identifier ("undefined: moduledata").
+//
+// The distinction separates two failures the toolchain words identically. A
+// qualified name means the import resolved but does not export that symbol,
+// which is what an absent generated file looks like. A bare identifier means the
+// declaration is missing from the package itself — the signature of every file
+// that would declare it being excluded by build constraints, as happens when the
+// host Go toolchain is outside the range the module supports.
+//
+// A detail mixing both reads as qualified: a genuinely missing generated file
+// explains bare and qualified symbols alike, whereas build-constraint exclusion
+// cannot produce a qualified one.
+func hasQualifiedUndefinedSymbol(d string) bool {
+	const marker = "undefined: "
+	rest := d
+	for {
+		i := strings.Index(rest, marker)
+		if i < 0 {
+			return false
+		}
+		rest = rest[i+len(marker):]
+		symbol := rest
+		if cut := strings.IndexAny(symbol, " \t\n("); cut >= 0 {
+			symbol = symbol[:cut]
+		}
+		if strings.Contains(symbol, ".") {
+			return true
+		}
 	}
 }
 
@@ -77,8 +112,10 @@ func StructuredUnscanReason(detail string) UnscanReason {
 		return UnscanReasonMissingGoSum
 	case strings.Contains(d, "module lookup disabled by goproxy=off"):
 		return UnscanReasonVersionNotInToolchain
-	case strings.Contains(d, "undefined:"):
+	case hasQualifiedUndefinedSymbol(d):
 		return UnscanReasonGeneratedAssets
+	case strings.Contains(d, "undefined:"):
+		return UnscanReasonPackageDeclarationsMissing
 	default:
 		return UnscanReasonBuildIncompatible
 	}

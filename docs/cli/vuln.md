@@ -329,6 +329,7 @@ field with a machine-readable cause code alongside the human-readable `unscannab
 | `unscan_reason` | Cause |
 |---|---|
 | `generated-assets-missing` | Module zip is missing source files produced by a code-generation step |
+| `package-declarations-missing` | A package's declarations are absent because every file that would declare them is excluded by build constraints — most often a host Go toolchain newer than the range the module supports. Nothing is missing from the zip, so there is no code-generation step to run |
 | `go-work-monorepo` | Module references sibling modules via `go.work` not present in the zip |
 | `relative-replace-directive` | Module uses a `replace` directive pointing to a sibling directory |
 | `windows-only` | Module only builds on Windows |

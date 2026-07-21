@@ -155,3 +155,36 @@ func TestClassifyBuildIncompatibility(t *testing.T) {
 		})
 	}
 }
+
+// TestUndefinedSymbolSplit guards the two failures the toolchain words
+// identically. A qualified symbol means the import resolved but lacks the name —
+// an absent generated file. A bare identifier means the declaration is missing
+// from the package itself, which is what build-constraint exclusion looks like
+// when the host Go toolchain is outside the module's supported range. Reporting
+// the second as the first sends the operator hunting for a code-generation step
+// in a zip where nothing is missing.
+func TestUndefinedSymbolSplit(t *testing.T) {
+	const generated = "govulncheck: loading packages:\n/tmp/scan/velociraptor/utils/reflect.go:11:22: undefined: assets.ReadFile\n/tmp/scan/velociraptor/vql/unimplemented.go:176:44: undefined: assets.FileDocsReferencesVqlYaml"
+	// sonic/loader@v0.1.1 caps every funcdata variant below go1.23; on a newer
+	// host no file is selected and the package's own types are undeclared.
+	const constraints = "govulncheck: loading packages: \nThere are errors with the provided package patterns:\n\n/tmp/x/github.com/bytedance/sonic/loader@v0.1.1/funcdata.go:37:32: undefined: _func\n/tmp/x/github.com/bytedance/sonic/loader@v0.1.1/funcdata.go:74:12: undefined: moduledata"
+
+	if got := StructuredUnscanReason(generated); got != UnscanReasonGeneratedAssets {
+		t.Errorf("qualified symbol = %q, want %q", got, UnscanReasonGeneratedAssets)
+	}
+	if got := StructuredUnscanReason(constraints); got != UnscanReasonPackageDeclarationsMissing {
+		t.Errorf("bare identifier = %q, want %q", got, UnscanReasonPackageDeclarationsMissing)
+	}
+	if got := ClassifyBuildIncompatibility(constraints); !strings.Contains(got, "build constraints") {
+		t.Errorf("category = %q, want it to name build constraints", got)
+	}
+	if got := ClassifyBuildIncompatibility(generated); !strings.Contains(got, "generated or embedded assets") {
+		t.Errorf("category = %q, want the generated-assets wording retained", got)
+	}
+	// Mixed evidence reads as generated assets: a missing generated file explains
+	// bare and qualified symbols alike, build-constraint exclusion cannot produce
+	// a qualified one.
+	if got := StructuredUnscanReason(constraints + "\n" + generated); got != UnscanReasonGeneratedAssets {
+		t.Errorf("mixed = %q, want the qualified reading to win", got)
+	}
+}
