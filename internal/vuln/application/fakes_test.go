@@ -348,7 +348,8 @@ type fakeScanner struct {
 
 func (f *fakeScanner) Preflight(_ context.Context) error { return f.preflightErr }
 
-func (f *fakeScanner) Scan(_ context.Context, coord coordinate.ModuleCoordinate, _ io.Reader, snapshot domain.DatabaseSnapshot, goModCache string, _ string, _ domain.ScanMode) (domain.VulnerabilityRecord, error) {
+func (f *fakeScanner) Scan(_ context.Context, req ports.ScanRequest) (domain.VulnerabilityRecord, error) {
+	coord, snapshot, goModCache := req.Coordinate, req.Snapshot, req.GoModCache
 	if f.err != nil {
 		return domain.VulnerabilityRecord{}, f.err
 	}
@@ -467,9 +468,9 @@ func (s *callCountingScanner) Preflight(ctx context.Context) error {
 	return nil
 }
 
-func (s *callCountingScanner) Scan(ctx context.Context, coord coordinate.ModuleCoordinate, src io.Reader, snap domain.DatabaseSnapshot, goModCache string, dbDir string, scanMode domain.ScanMode) (domain.VulnerabilityRecord, error) {
+func (s *callCountingScanner) Scan(ctx context.Context, req ports.ScanRequest) (domain.VulnerabilityRecord, error) {
 	*s.called = true
-	rec, err := s.inner.Scan(ctx, coord, src, snap, goModCache, dbDir, scanMode)
+	rec, err := s.inner.Scan(ctx, req)
 	if err != nil {
 		return domain.VulnerabilityRecord{}, fmt.Errorf("inner scan: %w", err)
 	}

@@ -335,6 +335,34 @@ func (g Graph) KnownVersions() map[coordinate.ModuleCoordinate]struct{} {
 	return known
 }
 
+// SelectedVersions returns the module versions this walk actually fetched: one
+// coordinate per node, always the version the project's build selected.
+//
+// It is deliberately narrower than KnownVersions, which also carries the
+// coordinate a replaced node stands in for. That extra coordinate is a name the
+// walk recognises, not a module with source behind it — when a replace
+// redirects to a different module, only the replacement is fetched. So the two
+// answer different questions: KnownVersions asks "did we undertake to supply
+// this version?", which is about classifying a resolution failure, while this
+// asks "which versions can actually be resolved offline?", which is what a
+// synthesised go.mod's require directives must name. Requiring a replaced-from
+// coordinate would demand source that was never fetched and fail every scan
+// that depends on it.
+// The synthetic standard-library node and a project walk's local root are
+// excluded for the same reason: neither has a proxy artefact behind it, so
+// neither can be resolved from the store — matching the set the scan's
+// GOMODCACHE is populated from.
+func (g Graph) SelectedVersions() map[coordinate.ModuleCoordinate]struct{} {
+	selected := make(map[coordinate.ModuleCoordinate]struct{}, len(g.Nodes))
+	for _, n := range g.Nodes {
+		if n.ResolutionSource == ResolutionStdlib || n.Coordinate.IsLocal() {
+			continue
+		}
+		selected[n.Coordinate] = struct{}{}
+	}
+	return selected
+}
+
 // ReachableFrom returns the set of module coordinates transitively reachable
 // from origin by following directed edges — origin's full dependency closure.
 // The origin itself is never included in the result. The traversal is purely

@@ -200,9 +200,13 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	// records, used to tell an offline resolution failure kanonarion caused from
 	// one inherent to scanning a module in isolation.
 	knownVersions := walk.Graph.KnownVersions()
+	// The versions actually fetched, which is what a synthesised go.mod may
+	// require. Narrower than knownVersions: a replaced-from coordinate is a name
+	// the walk recognises, not source it holds.
+	selectedVersions := walk.Graph.SelectedVersions()
 
 	scanPool := func(coordSlice []coordinate.ModuleCoordinate, scanMode domain.ScanMode) []moduleResult {
-		return uc.runScanPool(ctx, coordSlice, workers, cgSem, params, snapshot, goModCache, vulnDBDir, scanMode, knownVersions)
+		return uc.runScanPool(ctx, coordSlice, workers, cgSem, params, snapshot, goModCache, vulnDBDir, scanMode, knownVersions, selectedVersions)
 	}
 
 	// finalResults maps each coordinate to its definitive scan result.
@@ -458,6 +462,7 @@ func (uc *ScanWalkUseCase) runScanPool(
 	goModCache, vulnDBDir string,
 	scanMode domain.ScanMode,
 	knownVersions map[coordinate.ModuleCoordinate]struct{},
+	selectedVersions map[coordinate.ModuleCoordinate]struct{},
 ) []moduleResult {
 	ch := make(chan coordinate.ModuleCoordinate, len(coordSlice))
 	for _, c := range coordSlice {
@@ -483,6 +488,7 @@ func (uc *ScanWalkUseCase) runScanPool(
 					ScanMode:           scanMode,
 					CallGraphSem:       cgSem,
 					KnownVersions:      knownVersions,
+					SelectedVersions:   selectedVersions,
 				})
 				out <- moduleResult{coord: coord, record: rec, err: scanErr}
 			}

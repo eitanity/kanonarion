@@ -99,6 +99,29 @@ type VulnerabilityStore interface {
 	) ([]domain.VulnerabilityRecord, error)
 }
 
+// ScanRequest carries the inputs for one isolated per-module scan.
+type ScanRequest struct {
+	Coordinate   coordinate.ModuleCoordinate
+	ModuleSource io.Reader
+	Snapshot     domain.DatabaseSnapshot
+	// GoModCache is a pre-populated GOMODCACHE dir; empty lets govulncheck
+	// download as needed.
+	GoModCache string
+	// DBDir is a pre-extracted vuln DB dir; empty extracts from the store on
+	// each call.
+	DBDir string
+	// ScanMode selects source or binary analysis; empty defaults to source.
+	ScanMode domain.ScanMode
+	// BuildList is the set of module versions the walk resolved and supplies as
+	// source. A module zip published before Go modules carries no go.mod, so one
+	// is synthesised in the scan's scratch directory and these become its
+	// require directives — letting the isolated scan resolve the versions the
+	// project actually built instead of whatever a network tidy would pick.
+	// Empty means the module is scanned against its own zip alone, which is
+	// sufficient whenever it imports nothing outside the standard library.
+	BuildList map[coordinate.ModuleCoordinate]struct{}
+}
+
 // VulnerabilityScanner defines the port for a vulnerability scanner implementation.
 type VulnerabilityScanner interface {
 	// Preflight verifies the scanner's external prerequisites are available
@@ -106,15 +129,7 @@ type VulnerabilityScanner interface {
 	// actionable error before any expensive scan setup. It returns nil when
 	// the scanner is ready to run.
 	Preflight(ctx context.Context) error
-	Scan(
-		ctx context.Context,
-		coord coordinate.ModuleCoordinate,
-		moduleSource io.Reader,
-		snapshot domain.DatabaseSnapshot,
-		goModCache string, // pre-populated GOMODCACHE dir; empty = govulncheck downloads as needed
-		dbDir string, // pre-extracted vuln DB dir; empty = extract from store on each call
-		scanMode domain.ScanMode, // source or binary; empty defaults to source
-	) (domain.VulnerabilityRecord, error)
+	Scan(ctx context.Context, req ScanRequest) (domain.VulnerabilityRecord, error)
 	// ScanProject runs one project-rooted scan over the project's live working
 	// tree (the local main module a project walk is rooted at) and returns every
 	// reachable finding grouped by the module that owns the vulnerable symbol.

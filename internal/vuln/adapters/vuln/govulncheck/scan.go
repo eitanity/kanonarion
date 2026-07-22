@@ -11,21 +11,14 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/ports"
 )
 
 // Scan performs a vulnerability scan on a module.
-func (s *Scanner) Scan(
-	ctx context.Context,
-	coord coordinate.ModuleCoordinate,
-	moduleSource io.Reader,
-	snapshot domain.DatabaseSnapshot,
-	goModCache string,
-	dbDir string, // pre-extracted vuln DB dir; empty = extract from store on each call
-	scanMode domain.ScanMode, // source or binary; empty defaults to source
-) (domain.VulnerabilityRecord, error) {
+func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (domain.VulnerabilityRecord, error) {
+	coord, moduleSource, snapshot := req.Coordinate, req.ModuleSource, req.Snapshot
+	goModCache, dbDir, scanMode := req.GoModCache, req.DBDir, req.ScanMode
 	s.logMem(ctx, "start")
 	// 1. Prepare temporary directory
 	tmpDir, err := os.MkdirTemp("", "kanonarion-vuln-scan-*")
@@ -43,23 +36,42 @@ func (s *Scanner) Scan(
 	}
 	s.logMem(ctx, "module_extracted")
 
+	env := scanEnv(os.Environ(), goModCache)
+
 	// 2.5 Find where go.mod is. mirror-fetch zips typically have a prefix like "github.com/gin-gonic/gin@v1.6.2/"
 	scanDir, foundGoMod := locateGoMod(tmpDir)
 
 	if !foundGoMod {
-		s.logger.Warn("vuln-scan: go.mod not found, marking unscannable", "module", coord.Path)
-		// If go.mod is not found, we can't run govulncheck.
-		// We return StatusUnscannable instead of an error to indicate it's not a failure of the scanner itself.
-		return domain.VulnerabilityRecord{
-			Coordinate:        coord,
-			Findings:          nil,
-			OverallStatus:     domain.StatusUnscannable,
-			UnscanReason:      domain.UnscanReasonNoGoMod,
-			UnscannableReason: "no go.mod found in module zip",
-			DatabaseSnapshot:  snapshot,
-			ScannedAt:         time.Now(),
-			PipelineVersion:   s.pipelineVersion,
-		}, nil
+		// A module zip published before Go modules carries no go.mod and never
+		// will, but govulncheck's refusal is a precondition on the directory it
+		// is pointed at, not on the artefact: it checks for the file before
+		// loading any package and its own diagnostic says to create one. Supply
+		// it here, in the scratch directory the zip was just extracted into. The
+		// zip itself is immutable and checksum-verified; nothing about custody
+		// changes, exactly as for the replace directives rewritten below.
+		//
+		// Abandoning the scan instead would record a coverage gap that is not
+		// real: the module is analysable, and treating it as permanently
+		// unscannable would leave its advisories matched by coordinate alone,
+		// with no reachability, for a condition kanonarion can lift.
+		root, werr := writeSynthesisedGoMod(scanDir, coord, toolchainGoVersion(ctx, env), req.BuildList)
+		if werr != nil {
+			s.logger.Warn("vuln-scan: could not synthesise go.mod, marking unscannable",
+				"module", coord.Path, "error", werr)
+			return domain.VulnerabilityRecord{
+				Coordinate:        coord,
+				Findings:          nil,
+				OverallStatus:     domain.StatusUnscannable,
+				UnscanReason:      domain.UnscanReasonNoGoMod,
+				UnscannableReason: "no go.mod in module zip and none could be synthesised: " + werr.Error(),
+				DatabaseSnapshot:  snapshot,
+				ScannedAt:         time.Now(),
+				PipelineVersion:   s.pipelineVersion,
+			}, nil
+		}
+		scanDir = root
+		s.logger.Info("vuln-scan: no go.mod in module zip, synthesised one for isolated scan",
+			"module", coord.Path, "dir", scanDir)
 	}
 
 	// 2.6 Neutralise the module's own filesystem replace directives. A module is
@@ -82,8 +94,6 @@ func (s *Scanner) Scan(
 	if err != nil {
 		return domain.VulnerabilityRecord{}, err
 	}
-
-	env := scanEnv(os.Environ(), goModCache)
 
 	// 4. Mode dispatch: binary mode builds a test binary first for a fast symbol-table
 	// scan; source mode does the full SSA + call-graph analysis.

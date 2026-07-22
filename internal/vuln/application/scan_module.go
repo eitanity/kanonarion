@@ -52,8 +52,13 @@ import (
 // load its module graph offline, and without it such modules were recorded under
 // "v6" as metadata-only coverage gaps when they are in fact scannable from
 // source. The same bump covers metadata-only records now retaining the
-// originating toolchain error in error_detail, which "v6" records dropped.
-const PipelineVersion = "v7"
+// originating toolchain error in error_detail, which "v6" records dropped. It
+// was bumped to "v8" when a module zip carrying no go.mod began being scanned
+// against a synthesised one: govulncheck's refusal is a precondition on the
+// scan directory, not a property of the artefact, so modules recorded under
+// "v7" as Unscannable/no-go-mod are in fact scannable from source and must be
+// re-scanned rather than served stale.
+const PipelineVersion = "v8"
 
 // ScanModuleUseCase orchestrates a single module's vulnerability scan.
 type ScanModuleUseCase struct {
@@ -178,6 +183,14 @@ type ScanModuleParams struct {
 	// disables the discrimination and every failure reads as out-of-toolchain,
 	// preserving the behaviour of callers that scan without a graph.
 	KnownVersions map[coordinate.ModuleCoordinate]struct{}
+	// SelectedVersions is the set of module versions the walk actually fetched —
+	// one per node, always the version the project's build selected. It seeds the
+	// require directives of a go.mod synthesised for a module zip published
+	// before Go modules, so the isolated scan resolves the project's own
+	// versions. It is deliberately not KnownVersions: that set also carries the
+	// coordinate a replaced node stands in for, which names a module whose source
+	// was never fetched, and requiring it would fail every scan that used it.
+	SelectedVersions map[coordinate.ModuleCoordinate]struct{}
 }
 
 // Scan performs the scan.
@@ -272,7 +285,18 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 	defer func() { _ = blob.Close() }()
 
 	// 5. Execution (T3: Deterministic Scan)
-	record, err := uc.scanner.Scan(ctx, params.Coordinate, blob, snapshot, params.GoModCache, params.VulnDBDir, params.ScanMode)
+	record, err := uc.scanner.Scan(ctx, ports.ScanRequest{
+		Coordinate:   params.Coordinate,
+		ModuleSource: blob,
+		Snapshot:     snapshot,
+		GoModCache:   params.GoModCache,
+		DBDir:        params.VulnDBDir,
+		ScanMode:     params.ScanMode,
+		// The walk's own build list. A module zip with no go.mod gets one
+		// synthesised from these, so its isolated scan resolves the versions the
+		// project selected rather than whatever a network tidy would pick.
+		BuildList: params.SelectedVersions,
+	})
 	if err != nil {
 		uc.logger.Error("vulnerability scan failed", "coordinate", params.Coordinate, "error", err)
 		record = domain.VulnerabilityRecord{

@@ -400,3 +400,41 @@ func TestKnownVersions_coversSelectedVersionsOnly(t *testing.T) {
 		t.Error("KnownVersions() must exclude superseded versions the project never builds")
 	}
 }
+
+// SelectedVersions must not carry a replaced node's original coordinate. When a
+// replace redirects to a different module only the replacement is fetched, so
+// requiring the original would demand source that never existed — the failure
+// that made every synthesised go.mod depend on the completeness of an identity
+// set rather than of the store.
+func TestSelectedVersions_ExcludesReplacedFromCoordinate(t *testing.T) {
+	g := domain.Graph{Nodes: []domain.GraphNode{{
+		Coordinate:         coordinate.ModuleCoordinate{Path: "github.com/hashicorp/go-metrics", Version: "v0.5.1"},
+		OriginalCoordinate: coordinate.ModuleCoordinate{Path: "github.com/armon/go-metrics", Version: "v0.5.4"},
+	}}}
+	sel := g.SelectedVersions()
+	if _, ok := sel[coordinate.ModuleCoordinate{Path: "github.com/hashicorp/go-metrics", Version: "v0.5.1"}]; !ok {
+		t.Error("the fetched replacement must be selected")
+	}
+	if _, ok := sel[coordinate.ModuleCoordinate{Path: "github.com/armon/go-metrics", Version: "v0.5.4"}]; ok {
+		t.Error("the replaced-from coordinate must not be selected: it was never fetched")
+	}
+	// KnownVersions keeps both, because it answers a different question.
+	if _, ok := g.KnownVersions()[coordinate.ModuleCoordinate{Path: "github.com/armon/go-metrics", Version: "v0.5.4"}]; !ok {
+		t.Error("KnownVersions must still recognise the replaced-from coordinate")
+	}
+}
+
+func TestSelectedVersions_ExcludesStdlibAndLocalNodes(t *testing.T) {
+	g := domain.Graph{Nodes: []domain.GraphNode{
+		{Coordinate: coordinate.ModuleCoordinate{Path: "stdlib", Version: "v1.26.5"}, ResolutionSource: domain.ResolutionStdlib},
+		{Coordinate: coordinate.ModuleCoordinate{Path: "example.com/root", Version: coordinate.LocalVersion}},
+		{Coordinate: coordinate.ModuleCoordinate{Path: "example.com/dep", Version: "v1.0.0"}},
+	}}
+	sel := g.SelectedVersions()
+	if len(sel) != 1 {
+		t.Fatalf("SelectedVersions() has %d entries, want 1: %v", len(sel), sel)
+	}
+	if _, ok := sel[coordinate.ModuleCoordinate{Path: "example.com/dep", Version: "v1.0.0"}]; !ok {
+		t.Error("the ordinary fetched dependency must be selected")
+	}
+}
