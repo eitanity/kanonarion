@@ -820,3 +820,176 @@ func TestScanModule_ScannerUnscannable_OOMKilled_RoutesToMetadata(t *testing.T) 
 		t.Errorf("UnscanReason = %q, want %q (oom-killed caveat preserved)", res.UnscanReason, domain.UnscanReasonOOMKilled)
 	}
 }
+
+// scanModuleFixture wires a fetched module and the use case, so a test can vary
+// only the scanner verdict and the advisory database.
+func scanModuleFixture(t *testing.T, coord coordinate.ModuleCoordinate, scanner *fakeScanner, db *fakeDatabase) (*application.ScanModuleUseCase, *fakeVulnStore) {
+	t.Helper()
+	ctx := t.Context()
+	facts := newFakeFacts()
+	blobs := newFakeBlob()
+	vulnStore := newFakeVulnStore()
+	handle, err := blobs.Put(ctx, strings.NewReader("zip content"))
+	if err != nil {
+		t.Fatalf("blobs.Put: %v", err)
+	}
+	if err := facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
+		ModulePath:      coord.Path,
+		ModuleVersion:   coord.Version,
+		PipelineVersion: "v1",
+		ContentLocation: string(handle),
+	}); err != nil {
+		t.Fatalf("PutFetchRecord: %v", err)
+	}
+	uc := application.NewScanModuleUseCase(
+		facts, blobs, vulnStore, nil, scanner, db, nil,
+		fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}, "v1", "v1", slog.Default(),
+	)
+	return uc, vulnStore
+}
+
+// A module scanned in isolation is govulncheck's main module, and a main module
+// has no version, so version-range advisory matching can never report an
+// advisory about the module itself. A successful source scan therefore returns
+// no findings for it, and before this guard that was recorded as Clean — a false
+// negative that got MORE likely as scanning improved, because the advisory set
+// was consulted only when the scan failed.
+func TestScanModule_SuccessfulSourceScanStillMatchesOwnAdvisories(t *testing.T) {
+	ctx := t.Context()
+	coord := coordinate.ModuleCoordinate{Path: "github.com/gomarkdown/markdown", Version: "v1.0.0"}
+	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+
+	// The source scan succeeds and reports nothing, exactly as it does for a
+	// module in the main-module position.
+	scanner := &fakeScanner{results: map[string]domain.VulnerabilityRecord{
+		coord.String(): {Coordinate: coord, OverallStatus: domain.StatusClean},
+	}}
+	db := &fakeDatabase{
+		snapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1", RetrievedAt: now},
+		content:  "vulndb content",
+		findings: map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding{
+			coord: {{ID: "GO-2024-3205", Summary: "Infinite loop", AffectedRange: "< v1.1.0", FixedIn: "v1.1.0"}},
+		},
+	}
+	uc, vulnStore := scanModuleFixture(t, coord, scanner, db)
+
+	// Force skips the CheckVulnerable pre-filter at step 3.5 and runs the heavy
+	// scan — the path every --force walk takes, and the one that produced Clean
+	// records never checked against the advisory database.
+	res, err := uc.Scan(ctx, application.ScanModuleParams{Coordinate: coord, WalkID: "walk-1", Force: true})
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if res.OverallStatus != domain.StatusAffected {
+		t.Fatalf("OverallStatus = %s, want %s: a clean source scan must not suppress a coordinate-matched advisory",
+			res.OverallStatus, domain.StatusAffected)
+	}
+	if len(res.Findings) != 1 || res.Findings[0].ID != "GO-2024-3205" {
+		t.Fatalf("Findings = %+v, want the coordinate-matched advisory", res.Findings)
+	}
+	// Reachability was not determined by the source scan, and that must be
+	// visible rather than defaulted to "not reachable".
+	if res.Findings[0].Reachable != nil {
+		t.Errorf("Reachable = %+v, want nil when the source scan could not report the advisory", res.Findings[0].Reachable)
+	}
+	persisted, ok, err := vulnStore.GetVulnerabilityRecord(ctx, coord, "v1", db.snapshot)
+	if err != nil || !ok {
+		t.Fatal("record not persisted")
+	}
+	if persisted.OverallStatus != domain.StatusAffected {
+		t.Errorf("persisted OverallStatus = %s, want %s", persisted.OverallStatus, domain.StatusAffected)
+	}
+}
+
+// A Clean verdict must mean "advisories were matched and none applied".
+func TestScanModule_CleanVerdictMeansAdvisoriesWereMatched(t *testing.T) {
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	scanner := &fakeScanner{results: map[string]domain.VulnerabilityRecord{
+		coord.String(): {Coordinate: coord, OverallStatus: domain.StatusClean},
+	}}
+	db := &fakeDatabase{
+		snapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1", RetrievedAt: now},
+		content:  "vulndb content",
+	}
+	uc, _ := scanModuleFixture(t, coord, scanner, db)
+	res, err := uc.Scan(t.Context(), application.ScanModuleParams{Coordinate: coord, WalkID: "walk-1", Force: true})
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if res.OverallStatus != domain.StatusClean {
+		t.Errorf("OverallStatus = %s, want %s", res.OverallStatus, domain.StatusClean)
+	}
+	if len(res.Findings) != 0 {
+		t.Errorf("Findings = %+v, want none", res.Findings)
+	}
+}
+
+// The source analysis knows reachability the coordinate match cannot, so where
+// both report the same advisory the source finding must survive intact.
+func TestScanModule_SourceFindingWinsOverCoordinateMatch(t *testing.T) {
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	reachable := &domain.ReachabilityResult{IsReachable: true}
+	scanner := &fakeScanner{results: map[string]domain.VulnerabilityRecord{
+		coord.String(): {
+			Coordinate:    coord,
+			OverallStatus: domain.StatusAffected,
+			Findings: []domain.VulnerabilityFinding{
+				{ID: "GO-2024-0001", Summary: "from source", Reachable: reachable},
+			},
+		},
+	}}
+	db := &fakeDatabase{
+		snapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1", RetrievedAt: now},
+		content:  "vulndb content",
+		findings: map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding{
+			coord: {{ID: "GO-2024-0001", Summary: "from coordinate"}},
+		},
+	}
+	uc, _ := scanModuleFixture(t, coord, scanner, db)
+	res, err := uc.Scan(t.Context(), application.ScanModuleParams{Coordinate: coord, WalkID: "walk-1", Force: true})
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if len(res.Findings) != 1 {
+		t.Fatalf("Findings = %d, want 1 (the advisory must not be duplicated)", len(res.Findings))
+	}
+	if res.Findings[0].Reachable == nil || !res.Findings[0].Reachable.IsReachable {
+		t.Errorf("source reachability was lost: %+v", res.Findings[0])
+	}
+	if res.Findings[0].Summary != "from source" {
+		t.Errorf("Summary = %q, want the source analysis finding to win", res.Findings[0].Summary)
+	}
+}
+
+// The sharpest form of the defect: the CheckVulnerable pre-filter at step 3.5
+// establishes that this module has a known advisory, which is why the heavy scan
+// runs at all — and then the source analysis, which cannot match an advisory
+// about its own main module, overrides that with Clean. The scan discards a
+// verdict the pipeline had already established.
+func TestScanModule_PrefilterVulnerableIsNotOverriddenByCleanSourceScan(t *testing.T) {
+	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	scanner := &fakeScanner{results: map[string]domain.VulnerabilityRecord{
+		coord.String(): {Coordinate: coord, OverallStatus: domain.StatusClean},
+	}}
+	db := &fakeDatabase{
+		snapshot:    domain.DatabaseSnapshot{Source: "test", Version: "v1", RetrievedAt: now},
+		content:     "vulndb content",
+		vulnerables: map[coordinate.ModuleCoordinate][]string{coord: {"GO-2024-0002"}},
+	}
+	uc, _ := scanModuleFixture(t, coord, scanner, db)
+
+	res, err := uc.Scan(t.Context(), application.ScanModuleParams{Coordinate: coord, WalkID: "walk-1"})
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if res.OverallStatus != domain.StatusAffected {
+		t.Fatalf("OverallStatus = %s, want %s: the pre-filter established this module is affected and the source scan must not erase it",
+			res.OverallStatus, domain.StatusAffected)
+	}
+	if len(res.Findings) != 1 || res.Findings[0].ID != "GO-2024-0002" {
+		t.Errorf("Findings = %+v, want the advisory the pre-filter matched", res.Findings)
+	}
+}

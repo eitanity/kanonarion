@@ -165,11 +165,11 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (domain.Vulne
 	}()
 
 	s.logger.Info("vuln-scan: parsing govulncheck output")
-	findings, err := s.parseResults(ctx, pr, coord.Path)
-	if err != nil {
-		_ = pr.Close()
-		return domain.VulnerabilityRecord{}, fmt.Errorf("parse govulncheck output for %s@%s: %w", coord.Path, coord.Version, err)
-	}
+	findings, parseErr := s.parseResults(ctx, pr, coord.Path)
+	// Drain before closing so the writer goroutine reaches cmd.Wait() and waitErr
+	// is settled: a scan that died mid-stream must be classified as the failure it
+	// is, not as the truncated parse it also produced.
+	_, _ = io.Copy(io.Discard, pr)
 	_ = pr.Close()
 	s.logMem(ctx, "output_parsed")
 	if waitErr != nil {
@@ -193,6 +193,9 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (domain.Vulne
 			ScannedAt:         time.Now(),
 			PipelineVersion:   s.pipelineVersion,
 		}, nil
+	}
+	if parseErr != nil {
+		return domain.VulnerabilityRecord{}, fmt.Errorf("parse govulncheck output for %s@%s: %w", coord.Path, coord.Version, parseErr)
 	}
 	s.logger.Info("vuln-scan: govulncheck finished", "findings", len(findings))
 

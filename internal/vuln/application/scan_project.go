@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"fmt"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -56,6 +57,18 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 		// consistent with fetched modules, rather than reachability-independent OSV
 		// metadata.
 		findings := copyFindings(projectFindingsFor(result.FindingsByModule, coord))
+
+		findings, err := uc.mergeCoordinateFindings(ctx, coord, findings)
+		if err != nil {
+			// A coordinate whose advisory set could not be read has not been
+			// checked. Reporting it Clean would be the exact false negative this
+			// path is being fixed for, so it carries the fault instead.
+			uc.logger.Error("project-rooted scan: advisory match by coordinate failed", "coordinate", coord, "error", err)
+			rec := uc.persistProjectRecord(ctx, coord, nil, domain.StatusScanFailed, "", "", err.Error(), params, snapshot)
+			out[coord] = moduleResult{coord: coord, record: rec}
+			continue
+		}
+
 		status := domain.StatusClean
 		if len(findings) > 0 {
 			status = domain.StatusAffected
@@ -63,6 +76,57 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 		rec := uc.persistProjectRecord(ctx, coord, findings, status, "", "", "", params, snapshot)
 		out[coord] = moduleResult{coord: coord, record: rec}
 	}
+}
+
+// mergeCoordinateFindings matches coord's advisory set from the pinned snapshot
+// and merges it with what the project-rooted analysis attributed to that module.
+//
+// It runs for every module in the build, unconditionally. Without it a Clean
+// verdict on this path means only "the grouped parse attributed nothing here",
+// which is indistinguishable from "the grouped parse dropped it" — one
+// attribution failure silently converts an affected module into a clean one, and
+// the run reads AllClean. With it, Clean means "advisories were matched and none
+// applied", the same guarantee the isolated path gives, and the project-rooted
+// analysis contributes reachability to the findings rather than deciding whether
+// they are looked for at all.
+//
+// A finding the project analysis reported wins: it carries the call path and
+// symbols that whole-build analysis alone can establish. A coordinate match the
+// analysis did not report is added as not-reachable with high confidence — the
+// project-rooted scan succeeded and examined the build's real import graph from
+// its real entry points, so its silence about a symbol is an answer, not an
+// absence of one. Findings are never dropped in either direction.
+func (uc *ScanWalkUseCase) mergeCoordinateFindings(
+	ctx context.Context,
+	coord coordinate.ModuleCoordinate,
+	reported []domain.VulnerabilityFinding,
+) ([]domain.VulnerabilityFinding, error) {
+	matched, err := uc.moduleScanner.database.LookupFindings(ctx, coord)
+	if err != nil {
+		return nil, fmt.Errorf("coordinate advisory match for %s: %w", coord, err)
+	}
+	seen := make(map[string]struct{}, len(reported))
+	for _, f := range reported {
+		seen[f.ID] = struct{}{}
+	}
+	added := 0
+	for _, f := range matched {
+		if _, ok := seen[f.ID]; ok {
+			continue
+		}
+		f.Reachable = &domain.ReachabilityResult{IsReachable: false, Confidence: domain.ConfidenceHigh}
+		reported = append(reported, f)
+		added++
+	}
+	if added > 0 {
+		uc.logger.Info("project-rooted scan: advisories matched by coordinate the build analysis did not reach",
+			"coordinate", coord, "matched", added, "reported_by_analysis", len(seen))
+		// Record identity hashes over the findings, so a merged set must be
+		// ordered rather than left as "whatever the analysis reported, then
+		// whatever the coordinate match added".
+		domain.SortFindings(reported)
+	}
+	return reported, nil
 }
 
 // projectFindingsFor returns the findings a project scan attributed to coord.

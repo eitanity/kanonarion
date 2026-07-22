@@ -136,6 +136,11 @@ type fakeVulnStore struct {
 	errOnGetLatestSnap error
 	errOnPutSnap       error
 	errOnPutRecord     error
+	// dropRecordFor is the fault seam for a silently lost verdict: a put for
+	// this coordinate reports success and stores nothing, reproducing a module
+	// that produces a progress line and leaves no record behind. The zero
+	// coordinate never matches a real one, so the seam is off by default.
+	dropRecordFor coordinate.ModuleCoordinate
 }
 
 func newFakeVulnStore() *fakeVulnStore {
@@ -160,6 +165,9 @@ func (f *fakeVulnStore) PutVulnerabilityRecord(_ context.Context, record domain.
 	defer f.mu.Unlock()
 	if f.errOnPutRecord != nil {
 		return f.errOnPutRecord
+	}
+	if record.Coordinate == f.dropRecordFor {
+		return nil
 	}
 	key := f.recordKey(record.Coordinate, record.PipelineVersion, record.DatabaseSnapshot)
 	f.records[key] = record
@@ -407,6 +415,9 @@ type fakeDatabase struct {
 	// the metadata path.
 	findings map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding
 	err      error
+	// errOnLookup fails only LookupFindings, leaving snapshot resolution intact
+	// so a test can isolate an unreadable advisory set from an unusable database.
+	errOnLookup error
 }
 
 func (f *fakeDatabase) Snapshot(_ context.Context) (domain.DatabaseSnapshot, io.ReadCloser, error) {
@@ -437,6 +448,9 @@ func (f *fakeDatabase) CheckVulnerable(_ context.Context, modules []coordinate.M
 }
 
 func (f *fakeDatabase) LookupFindings(_ context.Context, coord coordinate.ModuleCoordinate) ([]domain.VulnerabilityFinding, error) {
+	if f.errOnLookup != nil {
+		return nil, f.errOnLookup
+	}
 	if f.err != nil {
 		return nil, f.err
 	}

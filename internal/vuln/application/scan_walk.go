@@ -256,6 +256,13 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	// local-replace node so absence isn't silently dropped.
 	counts.unscannable += uc.recordLocalReplaceUnscannable(ctx, localReplaceNodes, &run, params, snapshot, &progressCount, len(walk.Graph.Nodes))
 
+	// 4b. Every coordinate the run reported a verdict for must have that verdict
+	// in the store. A module that produced a progress line and no record is a
+	// verdict the run claims to have made and did not keep.
+	if err := uc.verifyRecordsPersisted(ctx, walk, params, snapshot); err != nil {
+		return domain.WalkScanRun{}, err
+	}
+
 	// 5. Overall Status Determination
 	run.CompletedAt = uc.clock.Now()
 	run.OverallStatus = domain.DetermineWalkScanStatus(
@@ -280,6 +287,58 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	}
 
 	return run, nil
+}
+
+// missingRecordLogLimit bounds how many coordinates a persistence-gap error
+// names before collapsing the rest into a count, so the message stays readable
+// while still identifying which modules were lost.
+const missingRecordLogLimit = 10
+
+// verifyRecordsPersisted reads back every scanned coordinate and fails the run
+// when any of them has no stored record for this walk.
+//
+// The scan reports one progress line per module in the graph, so the run asserts
+// a verdict for each. Persistence, though, was best-effort: a failed
+// PutVulnerabilityRecord was logged and the run carried on, so a module could
+// produce a progress line and leave nothing behind — a verdict the run claims to
+// have made and did not store, discoverable only by querying the store
+// afterwards. Counting what the scan intended to write is not enough to catch
+// that; the check has to be a read-back, so the run's own claim is verified
+// against what the store actually holds.
+//
+// A gap fails the run rather than being logged: an incomplete record set silently
+// under-reports the build, which is the same class of defect as a false clean.
+func (uc *ScanWalkUseCase) verifyRecordsPersisted(
+	ctx context.Context,
+	walk walkdomain.WalkRecord,
+	params ScanWalkParams,
+	snapshot *domain.DatabaseSnapshot,
+) error {
+	var missing []coordinate.ModuleCoordinate
+	for _, node := range walk.Graph.Nodes {
+		// Read back by the store's own record identity rather than through the
+		// per-run module index: that index is written by PutWalkScanRun, which has
+		// not run yet, so querying it here would answer for previous runs of this
+		// walk instead of this one.
+		rec, ok, err := uc.vulnStore.GetVulnerabilityRecord(ctx, node.Coordinate, uc.pipelineVersion, *snapshot)
+		if err != nil {
+			return fmt.Errorf("verifying persisted vulnerability record for %s: %w", node.Coordinate, err)
+		}
+		if !ok || rec.WalkID != params.WalkID {
+			missing = append(missing, node.Coordinate)
+		}
+	}
+	if len(missing) == 0 {
+		return nil
+	}
+	named := missing
+	if len(named) > missingRecordLogLimit {
+		named = named[:missingRecordLogLimit]
+	}
+	return fmt.Errorf(
+		"vuln scan of walk %s reported a verdict for %d modules but stored only %d: no record persisted for %v (and %d more)",
+		params.WalkID, len(walk.Graph.Nodes), len(walk.Graph.Nodes)-len(missing), named, len(missing)-len(named),
+	)
 }
 
 // scanCounts is the overall module-count breakdown recorded on a

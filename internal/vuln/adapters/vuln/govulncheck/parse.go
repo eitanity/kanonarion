@@ -1,10 +1,10 @@
 package govulncheck
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"runtime"
@@ -43,6 +43,70 @@ type Frame struct {
 	Package  string `json:"package,omitempty"`
 	Function string `json:"function,omitempty"`
 	Receiver string `json:"receiver,omitempty"`
+}
+
+// newInternPool returns a string-interning function that collapses the many
+// repeated module paths, versions and symbol names a govulncheck stream carries
+// onto one copy each, so parsing a large stream does not allocate a distinct
+// string per occurrence.
+func newInternPool() func(string) string {
+	pool := make(map[string]string)
+	return func(s string) string {
+		if s == "" {
+			return ""
+		}
+		if v, ok := pool[s]; ok {
+			return v
+		}
+		pool[s] = s
+		return s
+	}
+}
+
+// streamMessages frames a govulncheck -json stream into whole messages and hands
+// each one, complete, to fn.
+//
+// Framing is by JSON value, not by newline. govulncheck writes its messages
+// indent-formatted: a single finding message spans dozens of lines and no line
+// carries a whole message. Every finding parser here opens with byte-level gates
+// that must see the message as one unit — `"finding":` together with
+// `"function"` — and an OSV message is only decodable whole. Read line by line,
+// those gates can never match: on a real project stream, 10 finding messages
+// produced 10 lines containing `"finding":` and 73 lines containing
+// `"function"`, and zero lines containing both. Every finding was silently
+// discarded and a vulnerable build parsed as clean. A json.Decoder over the
+// concatenated message stream restores the unit the parsers were written for.
+//
+// A decode error is returned rather than swallowed: a truncated stream is a
+// parse that saw less than govulncheck emitted, which is exactly the condition
+// that must never be reported as a clean verdict. Callers classify a non-zero
+// govulncheck exit first, so a stream cut short by a failing scan surfaces as
+// that failure rather than as a parse error.
+func (s *Scanner) streamMessages(ctx context.Context, r io.Reader, memLabel string, fn func(raw []byte)) error {
+	dec := json.NewDecoder(r)
+	count := 0
+	for {
+		var raw json.RawMessage
+		if err := dec.Decode(&raw); err != nil {
+			if errors.Is(err, io.EOF) {
+				return nil
+			}
+			return fmt.Errorf("decode govulncheck message %d: %w", count+1, err)
+		}
+		if len(raw) == 0 {
+			continue
+		}
+		count++
+		if count%50 == 0 {
+			s.logMem(ctx, fmt.Sprintf("%s_%d", memLabel, count))
+			// Trigger GC periodically during large stream parsing.
+			runtime.GC()
+			if count%100 == 0 {
+				debug.FreeOSMemory()
+			}
+		}
+		fn(raw)
+	}
 }
 
 func (s *Scanner) processMessage(raw []byte, msg *Message, osvs map[string]*OSV, intern func(string) string) {
@@ -200,47 +264,14 @@ func (s *Scanner) parseResults(ctx context.Context, r io.Reader, scannedModule s
 	// Track which vuln IDs have symbol-level (reachable) findings.
 	reachableIDs := make(map[string]bool)
 
-	// String interning pool to reduce object count
-	internPool := make(map[string]string)
-	intern := func(s string) string {
-		if s == "" {
-			return ""
-		}
-		if v, ok := internPool[s]; ok {
-			return v
-		}
-		internPool[s] = s
-		return s
-	}
-
-	count := 0
-	buf := make([]byte, 1024*1024) // 1MB buffer for lines
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(buf, 10*1024*1024) // Allow up to 10MB lines if needed
+	intern := newInternPool()
 
 	var msg Message
-	for scanner.Scan() {
-		raw := scanner.Bytes()
-		if len(raw) == 0 {
-			continue
-		}
-
-		count++
-		if count%50 == 0 {
-			s.logMem(ctx, fmt.Sprintf("parsing_stream_%d", count))
-			// Trigger GC periodically during large stream parsing
-			runtime.GC()
-			if count%100 == 0 {
-				debug.FreeOSMemory()
-			}
-		}
-
+	if err := s.streamMessages(ctx, r, "parsing_stream", func(raw []byte) {
 		s.processMessage(raw, &msg, osvs, intern)
 		s.processFinding(raw, &findings, findingIndex, reachableIDs, intern, scannedModule)
-	}
-
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scan govulncheck output: %w", err)
+	}); err != nil {
+		return nil, err
 	}
 	s.logMem(ctx, "parse_decoded_stream")
 
@@ -371,42 +402,14 @@ func (s *Scanner) parseResultsByModule(ctx context.Context, r io.Reader) (map[co
 	osvs := make(map[string]*OSV)
 	byModule := make(map[coordinate.ModuleCoordinate]*moduleFindings)
 
-	internPool := make(map[string]string)
-	intern := func(s string) string {
-		if s == "" {
-			return ""
-		}
-		if v, ok := internPool[s]; ok {
-			return v
-		}
-		internPool[s] = s
-		return s
-	}
-
-	count := 0
-	buf := make([]byte, 1024*1024)
-	scanner := bufio.NewScanner(r)
-	scanner.Buffer(buf, 10*1024*1024)
+	intern := newInternPool()
 
 	var msg Message
-	for scanner.Scan() {
-		raw := scanner.Bytes()
-		if len(raw) == 0 {
-			continue
-		}
-		count++
-		if count%50 == 0 {
-			s.logMem(ctx, fmt.Sprintf("parsing_project_stream_%d", count))
-			runtime.GC()
-			if count%100 == 0 {
-				debug.FreeOSMemory()
-			}
-		}
+	if err := s.streamMessages(ctx, r, "parsing_project_stream", func(raw []byte) {
 		s.processMessage(raw, &msg, osvs, intern)
 		s.processFindingGrouped(raw, byModule, intern)
-	}
-	if err := scanner.Err(); err != nil {
-		return nil, fmt.Errorf("scan govulncheck output: %w", err)
+	}); err != nil {
+		return nil, err
 	}
 
 	out := make(map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding, len(byModule))

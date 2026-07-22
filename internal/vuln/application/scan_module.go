@@ -57,8 +57,22 @@ import (
 // against a synthesised one: govulncheck's refusal is a precondition on the
 // scan directory, not a property of the artefact, so modules recorded under
 // "v7" as Unscannable/no-go-mod are in fact scannable from source and must be
-// re-scanned rather than served stale.
-const PipelineVersion = "v8"
+// re-scanned rather than served stale. It was bumped to "v9" when advisory
+// matching by coordinate became unconditional rather than a fallback from scan
+// failure: a module scanned in isolation is govulncheck's main module and a main
+// module has no version, so a successful source scan could never match an
+// advisory about the module itself. Every "v8" Clean record produced by a
+// successful scan is therefore an unchecked verdict rather than a confirmed one
+// and must be re-scanned. It was bumped to "v10" when govulncheck's JSON stream
+// began being framed by JSON value instead of by newline: govulncheck writes its
+// messages indent-formatted, so a line-framed parse could never see a whole
+// finding message and discarded every one of them. Every "v9" record was
+// produced by a parse that reported no source findings at all — Clean verdicts
+// that were never checked, and Affected verdicts missing their reachability and
+// symbols — so all of them must be re-scanned. The same bump covers the
+// project-rooted path, where advisory matching by coordinate is now
+// unconditional rather than absent.
+const PipelineVersion = "v10"
 
 // ScanModuleUseCase orchestrates a single module's vulnerability scan.
 type ScanModuleUseCase struct {
@@ -320,41 +334,34 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 	record.FirstScannedAt = now
 	record.PipelineVersion = uc.pipelineVersion
 
-	// 5b. Coverage recovery: a source-mode failure caused by the module not
-	// building under the host toolchain is not a scanner fault and must not be
-	// left as a bare failure. Fall back to metadata-only matching so known
-	// advisories are still attributed; when none match, record an Unscannable
-	// coverage gap (never a clean) so the limitation is visible in roll-ups.
-	if record.OverallStatus == domain.StatusScanFailed && domain.IsBuildIncompatibility(record.ErrorDetail) {
-		category := domain.ClassifyBuildIncompatibility(record.ErrorDetail)
-		reason := domain.StructuredUnscanReason(record.ErrorDetail)
-		// An offline resolution failure naming a version the walk itself records
-		// is a hole in the scan cache, not a module reaching outside the project.
-		if refined := domain.RefineOfflineResolutionReason(reason, record.ErrorDetail, params.KnownVersions); refined != reason {
-			reason = refined
-			category = domain.IncompleteScanCacheReason(record.ErrorDetail)
-		}
-		uc.logMetadataFallback(params.Coordinate, reason, category, record.ErrorDetail)
-		note := "source analysis unavailable: " + category + "; results are metadata-only with no reachability"
-		return uc.scanMetadataOnly(ctx, params, snapshot, note, reason, record.ErrorDetail, domain.StatusUnscannable)
+	// 5b/5c. Coverage recovery: route a scan that could not analyse the source to
+	// metadata-only matching rather than leaving it a bare failure or a confident
+	// "no findings".
+	if rec, handled, ferr := uc.routeCoverageFallback(ctx, params, snapshot, record); handled || ferr != nil {
+		return rec, ferr
 	}
 
-	// 5c. Scanner-side coverage gap: the scanner itself declared the module
-	// Unscannable (no go.mod in the zip, OOM kill, …) and returned no findings.
-	// Mirror the build-incompatibility fallback above so known advisories are
-	// still attributed from OSV metadata rather than silently dropped — without
-	// this routing, a no-go.mod module persists as a confident "no findings"
-	// even when matching advisories exist. The empty status stays Unscannable
-	// (a coverage gap, never a clean) so the missing-reachability caveat is
-	// preserved, and the scanner's UnscanReason carries through unchanged.
-	if record.OverallStatus == domain.StatusUnscannable {
-		note := record.UnscannableReason
-		if note == "" {
-			note = "source analysis unavailable; results are metadata-only with no reachability"
-		}
-		uc.logger.Warn("vuln-scan: scanner reported unscannable, falling back to metadata",
-			"coordinate", params.Coordinate, "reason", record.UnscanReason)
-		return uc.scanMetadataOnly(ctx, params, snapshot, note, record.UnscanReason, record.ErrorDetail, domain.StatusUnscannable)
+	// 5d. Coordinate-based detection, run unconditionally rather than as a
+	// fallback from failure.
+	//
+	// A module scanned in isolation is govulncheck's MAIN module, and a main
+	// module has no version — `go list -m` in the extracted directory prints the
+	// path alone, while the same module seen as a dependency prints its version.
+	// OSV matching is version-range based, so the source analysis is structurally
+	// incapable of reporting an advisory about the very module it was asked to
+	// scan. Without this step a module that builds and scans successfully reports
+	// Clean whether or not it is vulnerable, and its advisory set is consulted
+	// only when the scan FAILS — so improving scan success silently removes
+	// detection.
+	//
+	// Matching by coordinate every time makes the source analysis contribute
+	// reachability to the findings rather than decide whether they are looked for
+	// at all. A Clean verdict then means "advisories were matched and none
+	// applied", never "no advisories could have been matched". This runs before
+	// reachability so a coordinate-matched finding is still eligible for the
+	// call-graph analysis below.
+	if err := uc.attributeCoordinateFindings(ctx, &record, params.Coordinate); err != nil {
+		return domain.VulnerabilityRecord{}, err
 	}
 
 	// 6. Reachability Analysis (T4: Conditional Static Analysis)
@@ -445,6 +452,102 @@ func (uc *ScanModuleUseCase) logMetadataFallback(coord coordinate.ModuleCoordina
 	}
 	uc.logger.Warn("vuln-scan: source analysis unavailable, falling back to metadata",
 		"coordinate", coord, "category", category, "detail", detail)
+}
+
+// routeCoverageFallback sends a record that carries no usable source analysis to
+// metadata-only matching. handled is true when the caller should return
+// (rec, err) directly; false means the source verdict stands and the scan
+// continues.
+//
+// Two shapes reach it. A source-mode failure caused by the module not building
+// under the host toolchain is not a scanner fault, so known advisories are still
+// attributed rather than the module being left a bare failure. And a module the
+// scanner itself declared Unscannable (no go.mod in the zip, OOM kill, …) must
+// not persist as a confident "no findings" when matching advisories exist. In
+// both, the empty status stays Unscannable — a coverage gap, never a clean — so
+// the missing-reachability caveat survives into roll-ups.
+func (uc *ScanModuleUseCase) routeCoverageFallback(
+	ctx context.Context,
+	params ScanModuleParams,
+	snapshot domain.DatabaseSnapshot,
+	record domain.VulnerabilityRecord,
+) (domain.VulnerabilityRecord, bool, error) {
+	if record.OverallStatus == domain.StatusScanFailed && domain.IsBuildIncompatibility(record.ErrorDetail) {
+		category := domain.ClassifyBuildIncompatibility(record.ErrorDetail)
+		reason := domain.StructuredUnscanReason(record.ErrorDetail)
+		// An offline resolution failure naming a version the walk itself records
+		// is a hole in the scan cache, not a module reaching outside the project.
+		if refined := domain.RefineOfflineResolutionReason(reason, record.ErrorDetail, params.KnownVersions); refined != reason {
+			reason = refined
+			category = domain.IncompleteScanCacheReason(record.ErrorDetail)
+		}
+		uc.logMetadataFallback(params.Coordinate, reason, category, record.ErrorDetail)
+		note := "source analysis unavailable: " + category + "; results are metadata-only with no reachability"
+		rec, err := uc.scanMetadataOnly(ctx, params, snapshot, note, reason, record.ErrorDetail, domain.StatusUnscannable)
+		return rec, true, err
+	}
+
+	if record.OverallStatus == domain.StatusUnscannable {
+		note := record.UnscannableReason
+		if note == "" {
+			note = "source analysis unavailable; results are metadata-only with no reachability"
+		}
+		uc.logger.Warn("vuln-scan: scanner reported unscannable, falling back to metadata",
+			"coordinate", params.Coordinate, "reason", record.UnscanReason)
+		rec, err := uc.scanMetadataOnly(ctx, params, snapshot, note, record.UnscanReason, record.ErrorDetail, domain.StatusUnscannable)
+		return rec, true, err
+	}
+
+	return domain.VulnerabilityRecord{}, false, nil
+}
+
+// attributeCoordinateFindings matches the module's advisory set from the pinned
+// database by coordinate and merges it into a record produced by source
+// analysis.
+//
+// It applies only to a record that carries a scan verdict. A ScanFailed record
+// is a fault to be retried, not a verdict to enrich, and the Unscannable and
+// build-incompatibility paths already route through scanMetadataOnly, which
+// performs the same coordinate match.
+//
+// A finding the source analysis already reported wins, because it carries
+// call-graph reachability the coordinate match cannot know. A coordinate match
+// the source analysis did not report is added with a nil Reachable: the advisory
+// applies to this version, and whether it is reachable is decided by the
+// reachability step that follows, or left undetermined. Findings are never
+// dropped in either direction.
+func (uc *ScanModuleUseCase) attributeCoordinateFindings(ctx context.Context, record *domain.VulnerabilityRecord, coord coordinate.ModuleCoordinate) error {
+	if record.OverallStatus != domain.StatusClean && record.OverallStatus != domain.StatusAffected {
+		return nil
+	}
+	matched, err := uc.database.LookupFindings(ctx, coord)
+	if err != nil {
+		return fmt.Errorf("coordinate advisory match for %s: %w", coord, err)
+	}
+	reported := make(map[string]struct{}, len(record.Findings))
+	for _, f := range record.Findings {
+		reported[f.ID] = struct{}{}
+	}
+	added := 0
+	for _, f := range matched {
+		if _, ok := reported[f.ID]; ok {
+			continue
+		}
+		record.Findings = append(record.Findings, f)
+		added++
+	}
+	if added > 0 {
+		uc.logger.Info("vuln-scan: advisories matched by coordinate that source analysis cannot report",
+			"coordinate", coord, "matched", added, "reported_by_source", len(reported))
+		// Record identity hashes over the findings, so a merged set must be
+		// ordered rather than left as "whatever the source reported, then
+		// whatever the coordinate match added".
+		domain.SortFindings(record.Findings)
+	}
+	if len(record.Findings) > 0 {
+		record.OverallStatus = domain.StatusAffected
+	}
+	return nil
 }
 
 // scanMetadataOnly performs an OSV metadata-only vulnerability check by module

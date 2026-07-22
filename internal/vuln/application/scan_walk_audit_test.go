@@ -108,11 +108,14 @@ func TestScanWalk_EmitsAuditEvents(t *testing.T) {
 	}
 
 	// One vuln_finding_observed per finding, in deterministic (module, id) order.
+	// Three findings, not the scanner's two: GO-VULN-ID is matched by coordinate
+	// from the advisory database, which the source analysis cannot report for the
+	// module it is scanning as its own main module.
 	findings := sink.ofType(audit.EventVulnFindingObserved)
-	if len(findings) != 2 {
-		t.Fatalf("expected 2 vuln_finding_observed events, got %d", len(findings))
+	if len(findings) != 3 {
+		t.Fatalf("expected 3 vuln_finding_observed events, got %d", len(findings))
 	}
-	wantIDs := []string{"GO-2024-0001", "GO-2024-0002"}
+	wantIDs := []string{"GO-2024-0001", "GO-2024-0002", "GO-VULN-ID"}
 	for i, e := range findings {
 		if got := e.Payload["module"]; got != affected.Path {
 			t.Errorf("finding[%d] module = %v, want %v", i, got, affected.Path)
