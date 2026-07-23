@@ -220,7 +220,7 @@ func buildScanAffectedModules(ctx context.Context, run vuldomain.WalkScanRun, uc
 			continue
 		}
 		if rec.OverallStatus == vuldomain.StatusUnscannable {
-			unscannable.add(rec.UnscanReason, coord.String())
+			unscannable.add(rec.UnscanReason, coord.String(), rec.UnscannableReason)
 			continue
 		}
 		if rec.OverallStatus != vuldomain.StatusAffected {

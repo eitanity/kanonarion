@@ -95,14 +95,14 @@ func TestUnscanDisplayFor_UnmappedReasonIsLoud(t *testing.T) {
 // list is still printed rather than dropped.
 func TestUnscannableRollup_SectionsAreStableAndComplete(t *testing.T) {
 	r := newUnscannableRollup()
-	r.add(vuldomain.UnscanReasonCHeadersMissing, "example.com/c@v1.0.0")
+	r.add(vuldomain.UnscanReasonCHeadersMissing, "example.com/c@v1.0.0", "")
 	// Two unlisted reasons, added out of order, so the tail's own ordering is
 	// exercised rather than assumed.
-	r.add(vuldomain.UnscanReason("zz-unknown-reason"), "example.com/z@v1.0.0")
-	r.add(vuldomain.UnscanReason("aa-unknown-reason"), "example.com/u@v1.0.0")
-	r.add(vuldomain.UnscanReasonVersionNotInToolchain, "example.com/a@v1.0.0")
-	r.add(vuldomain.UnscanReasonPackageDeclarationsMissing, "example.com/p@v1.0.0")
-	r.add(vuldomain.UnscanReasonVersionNotInToolchain, "example.com/b@v1.0.0")
+	r.add(vuldomain.UnscanReason("zz-unknown-reason"), "example.com/z@v1.0.0", "")
+	r.add(vuldomain.UnscanReason("aa-unknown-reason"), "example.com/u@v1.0.0", "")
+	r.add(vuldomain.UnscanReasonVersionNotInToolchain, "example.com/a@v1.0.0", "")
+	r.add(vuldomain.UnscanReasonPackageDeclarationsMissing, "example.com/p@v1.0.0", "")
+	r.add(vuldomain.UnscanReasonVersionNotInToolchain, "example.com/b@v1.0.0", "")
 
 	if r.total() != 6 {
 		t.Errorf("total = %d, want 6", r.total())
@@ -138,10 +138,10 @@ func TestUnscannableRollup_SectionsAreStableAndComplete(t *testing.T) {
 // progress line.
 func TestWriteUnscannableRollup_EveryReasonAppears(t *testing.T) {
 	r := newUnscannableRollup()
-	r.add(vuldomain.UnscanReasonPackageDeclarationsMissing, "github.com/bytedance/sonic/loader@v0.1.1")
-	r.add(vuldomain.UnscanReasonPackageDeclarationsMissing, "github.com/cloudwego/base64x@v0.1.4")
-	r.add(vuldomain.UnscanReasonCHeadersMissing, "gopkg.in/mgo.v2@v2.0.0")
-	r.add(vuldomain.UnscanReasonVersionNotInToolchain, "cel.dev/expr@v0.25.1")
+	r.add(vuldomain.UnscanReasonPackageDeclarationsMissing, "github.com/bytedance/sonic/loader@v0.1.1", "")
+	r.add(vuldomain.UnscanReasonPackageDeclarationsMissing, "github.com/cloudwego/base64x@v0.1.4", "")
+	r.add(vuldomain.UnscanReasonCHeadersMissing, "gopkg.in/mgo.v2@v2.0.0", "")
+	r.add(vuldomain.UnscanReasonVersionNotInToolchain, "cel.dev/expr@v0.25.1", "")
 
 	var out strings.Builder
 	writeUnscannableRollup(r, &out)

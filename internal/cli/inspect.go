@@ -150,7 +150,13 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 	if _, err := fmt.Fprintf(stderr, "==> inspect: scanning vulnerabilities for walk %s\n", walkID); err != nil {
 		return fmt.Errorf("writing output: %w", err)
 	}
-	if err := runVulnScan(ctx, walkID, commonWalkFlags{}, f.force, f.fresh, f.reachable, 1, false, false, f.goBinary, os.Getenv("USER"), "", io.Discard, stderr); err != nil {
+	// The scan's result channel goes to stderr, not io.Discard: it carries the
+	// grouped roll-up (one heading per category, one line per coordinate) that
+	// the per-module stream deliberately does not repeat. Discarding it left the
+	// reader with the repetitive half of the presentation and threw away the
+	// concise half. stdout stays the clean data channel because inspect always
+	// scans with jsonOut=false, so nothing machine-readable is written here.
+	if err := runVulnScan(ctx, walkID, commonWalkFlags{}, f.force, f.fresh, f.reachable, 1, false, false, f.goBinary, os.Getenv("USER"), "", stderr, stderr); err != nil {
 		return fmt.Errorf("vuln-scan: %w", err)
 	}
 
@@ -309,7 +315,10 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 		}
 
 		_, _ = fmt.Fprintf(stderr, "==> inspect --gomod: vuln-scanning walk %s\n", walkID)
-		if verr := runVulnScan(ctx, walkID, commonWalkFlags{}, f.force, f.fresh, f.reachable, 1, false, false, f.goBinary, os.Getenv("USER"), filepath.Dir(f.gomodPath), io.Discard, stderr); verr != nil {
+		// stderr, not io.Discard — see the note on the same call in runInspect:
+		// the grouped roll-up is the concise presentation and belongs to the
+		// reader, while stdout stays reserved for the context output.
+		if verr := runVulnScan(ctx, walkID, commonWalkFlags{}, f.force, f.fresh, f.reachable, 1, false, false, f.goBinary, os.Getenv("USER"), filepath.Dir(f.gomodPath), stderr, stderr); verr != nil {
 			_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", verr)
 			scanFails = 1
 		}

@@ -14,16 +14,24 @@ func sortUnscanReasons(rs []vuldomain.UnscanReason) {
 
 // unscanDisplay is the human presentation of one UnscanReason: the label that
 // replaces a bare "Unscannable" on a per-module line, the heading of the
-// end-of-run roll-up section that collects modules carrying that reason, and an
-// optional next-step direction.
+// end-of-run roll-up section that collects modules carrying that reason, the
+// explanation of what that category means, and an optional next-step direction.
+//
+// label is the only part that belongs on a per-module line, because it is the
+// only part that varies with the module. explanation and hint are properties of
+// the reason, identical for every module carrying it, so they are printed once
+// per run in the roll-up section — printing them per module produced hundreds of
+// byte-identical lines that trained the reader to skim exactly the region where
+// the one-off lines live.
 //
 // hint is set only where an operator action on this host changes the outcome.
 // A toolchain or host limitation gets none, because inventing a direction that
 // cannot help reads as an instruction and wastes the reader's attention.
 type unscanDisplay struct {
-	label   string
-	heading string
-	hint    string
+	label       string
+	heading     string
+	explanation string
+	hint        string
 }
 
 // metadataOnlyNote and notScannedNote name the two shapes an Unscannable record
@@ -47,8 +55,9 @@ const (
 // instead of being discovered in a scan log.
 var unscanDisplays = map[vuldomain.UnscanReason]unscanDisplay{
 	vuldomain.UnscanReasonVersionNotInToolchain: {
-		label:   metadataOnlyNote + " (version not in project build)",
-		heading: metadataOnlyNote + " — version not in project build",
+		label:       metadataOnlyNote + " (version not in project build)",
+		heading:     metadataOnlyNote + " — version not in project build",
+		explanation: "scanned in isolation these modules resolve a dependency version the project's build never selected; advisories matched, reachability not computed here",
 		// The only reason with a direction: the module is analysable, just not in
 		// isolation, and the whole-build analysis answers the question properly.
 		hint: reachabilityLocalHint,
@@ -149,15 +158,44 @@ func unscanDisplayFor(reason vuldomain.UnscanReason) unscanDisplay {
 // same roll-up regardless of scan scheduling.
 type unscannableRollup struct {
 	byReason map[vuldomain.UnscanReason][]string
+	// detailsByReason holds the distinct free-text reasons seen under each reason
+	// code, in first-appearance order, with a count each. The scanner's detail
+	// text is very often constant across every module carrying a reason ("no
+	// go.mod found in module zip", 30 times), so it is collected here and printed
+	// once per distinct text rather than once per module. Collecting the distinct
+	// set rather than the first text keeps a detail that genuinely varies visible.
+	detailsByReason map[vuldomain.UnscanReason][]unscanDetail
+}
+
+// unscanDetail is one distinct free-text reason and how many modules carried it.
+type unscanDetail struct {
+	text  string
+	count int
 }
 
 func newUnscannableRollup() *unscannableRollup {
-	return &unscannableRollup{byReason: map[vuldomain.UnscanReason][]string{}}
+	return &unscannableRollup{
+		byReason:        map[vuldomain.UnscanReason][]string{},
+		detailsByReason: map[vuldomain.UnscanReason][]unscanDetail{},
+	}
 }
 
-// add records one Unscannable coordinate under its reason.
-func (r *unscannableRollup) add(reason vuldomain.UnscanReason, coord string) {
+// add records one Unscannable coordinate under its reason, together with the
+// record's free-text detail (empty when none was recorded).
+func (r *unscannableRollup) add(reason vuldomain.UnscanReason, coord, detail string) {
 	r.byReason[reason] = append(r.byReason[reason], coord)
+	if detail == "" {
+		return
+	}
+	details := r.detailsByReason[reason]
+	for i := range details {
+		if details[i].text == detail {
+			details[i].count++
+			r.detailsByReason[reason] = details
+			return
+		}
+	}
+	r.detailsByReason[reason] = append(details, unscanDetail{text: detail, count: 1})
 }
 
 func (r *unscannableRollup) empty() bool { return len(r.byReason) == 0 }
@@ -166,6 +204,19 @@ func (r *unscannableRollup) empty() bool { return len(r.byReason) == 0 }
 type unscannableSection struct {
 	display unscanDisplay
 	coords  []string
+	details []unscanDetail
+}
+
+// detailsToPrint returns the distinct scanner texts worth showing for this
+// section. A reason with a curated explanation already states the category in
+// the heading, and the scanner's own wording of the same thing adds length
+// without adding information, so it is dropped there and kept everywhere else —
+// where it is the only description the reader gets.
+func (s unscannableSection) detailsToPrint() []unscanDetail {
+	if s.display.explanation != "" {
+		return nil
+	}
+	return s.details
 }
 
 // sections returns the non-empty sections in a stable order: the known reasons
@@ -181,7 +232,11 @@ func (r *unscannableRollup) sections() []unscannableSection {
 	for _, reason := range vuldomain.AllUnscanReasons() {
 		seen[reason] = true
 		if coords := r.byReason[reason]; len(coords) > 0 {
-			out = append(out, unscannableSection{display: unscanDisplayFor(reason), coords: coords})
+			out = append(out, unscannableSection{
+				display: unscanDisplayFor(reason),
+				coords:  coords,
+				details: r.detailsByReason[reason],
+			})
 		}
 	}
 	rest := make([]vuldomain.UnscanReason, 0)
@@ -192,7 +247,11 @@ func (r *unscannableRollup) sections() []unscannableSection {
 	}
 	sortUnscanReasons(rest)
 	for _, reason := range rest {
-		out = append(out, unscannableSection{display: unscanDisplayFor(reason), coords: r.byReason[reason]})
+		out = append(out, unscannableSection{
+			display: unscanDisplayFor(reason),
+			coords:  r.byReason[reason],
+			details: r.detailsByReason[reason],
+		})
 	}
 	return out
 }

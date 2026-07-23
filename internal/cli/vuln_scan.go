@@ -209,7 +209,7 @@ func runVulnScan(ctx context.Context, walkID string, f commonWalkFlags, force, f
 			// appeared in no roll-up was being hidden from the reader on the
 			// strength of its reason code alone.
 			case vuldomain.StatusUnscannable:
-				unscannable.add(record.UnscanReason, coord.Path+"@"+coord.Version)
+				unscannable.add(record.UnscanReason, coord.Path+"@"+coord.Version, record.UnscannableReason)
 			}
 		},
 	})
@@ -239,10 +239,17 @@ func vulnScanStatusLabel(record vuldomain.VulnerabilityRecord) string {
 	return string(record.OverallStatus)
 }
 
-// writeVulnScanProgress writes one per-module progress line (and optional
-// reason) to w, which must be stderr. It is the single place the progress
-// callback writes so tests can verify the routing without going through
-// NewContainer.
+// writeVulnScanProgress writes one per-module progress line (and, for a scan
+// fault, its reason) to w, which must be stderr. It is the single place the
+// progress callback writes so tests can verify the routing without going
+// through NewContainer.
+//
+// An Unscannable module contributes only its status line here. The explanation,
+// the direction, and the scanner's free-text reason are properties of the reason
+// code, byte-identical for every module carrying it, so they are printed once in
+// the end-of-run roll-up instead of once per module. A scan fault keeps its
+// per-module reason: that text is the one genuinely per-module signal in the
+// stream, and it was the text being buried by the repeated boilerplate.
 func writeVulnScanProgress(record vuldomain.VulnerabilityRecord, coord coordinate.ModuleCoordinate, current, total int, w io.Writer) {
 	status := vulnScanStatusLabel(record)
 	if record.Reused {
@@ -251,20 +258,8 @@ func writeVulnScanProgress(record vuldomain.VulnerabilityRecord, coord coordinat
 		status += " (reused — same snapshot)"
 	}
 	_, _ = fmt.Fprintf(w, "  [%d/%d] %s@%s — %s\n", current, total, coord.Path, coord.Version, status)
-	switch record.OverallStatus {
-	case vuldomain.StatusScanFailed:
-		if record.ErrorDetail != "" {
-			_, _ = fmt.Fprintf(w, "      reason: %s\n", record.ErrorDetail)
-		}
-	case vuldomain.StatusUnscannable:
-		if record.UnscanReason.ExpectedOutOfToolchain() {
-			// Expected: name the cause plainly and direct to the whole-build
-			// analysis instead of leaving an alarming bare reason.
-			_, _ = fmt.Fprintf(w, "      metadata-only: scanned in isolation the module resolves a dependency version the project's build never selected; advisories matched, reachability not computed here\n")
-			_, _ = fmt.Fprintf(w, "      → %s\n", reachabilityLocalHint)
-		} else if record.UnscannableReason != "" {
-			_, _ = fmt.Fprintf(w, "      reason: %s\n", record.UnscannableReason)
-		}
+	if record.OverallStatus == vuldomain.StatusScanFailed && record.ErrorDetail != "" {
+		_, _ = fmt.Fprintf(w, "      reason: %s\n", record.ErrorDetail)
 	}
 }
 
@@ -340,14 +335,34 @@ func printVulnScanResult(run vuldomain.WalkScanRun, affected []vulnScanAffected,
 }
 
 // writeUnscannableRollup prints one section per Unscannable reason present in
-// the run: a heading carrying the count, the coordinates, and the reason's
+// the run: a heading carrying the count and the reason's explanation, the
+// distinct scanner reasons behind it, the coordinates, and the reason's
 // direction line where one exists.
+//
+// This section is where the once-per-reason text lives. The per-module stream
+// carries only the varying part — the status label and the progress counter —
+// so the explanation, the scanner detail and the direction each appear once per
+// run however many modules carry the reason.
 func writeUnscannableRollup(rollup *unscannableRollup, w io.Writer) {
 	if rollup == nil || rollup.empty() {
 		return
 	}
 	for _, section := range rollup.sections() {
-		_, _ = fmt.Fprintf(w, "%s (%d):\n", section.display.heading, len(section.coords))
+		heading := fmt.Sprintf("%s (%d):", section.display.heading, len(section.coords))
+		if section.display.explanation != "" {
+			heading += " " + section.display.explanation
+		}
+		_, _ = fmt.Fprintf(w, "%s\n", heading)
+		// The scanner's free text is printed only where the reason has no curated
+		// explanation. Where one exists it says the same thing in fewer words, and
+		// printing both restores the redundancy this roll-up exists to remove.
+		for _, d := range section.detailsToPrint() {
+			if d.count > 1 {
+				_, _ = fmt.Fprintf(w, "  reason: %s (%d modules)\n", d.text, d.count)
+			} else {
+				_, _ = fmt.Fprintf(w, "  reason: %s\n", d.text)
+			}
+		}
 		for _, c := range section.coords {
 			_, _ = fmt.Fprintf(w, "  %s\n", c)
 		}
