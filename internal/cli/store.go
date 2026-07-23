@@ -62,12 +62,21 @@ Safe to run while kanonarion is idle. Do not run while other kanonarion
 processes are actively scanning.`,
 		Args: cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
-			return runStoreClean(storeRoot, stdout)
+			return runStoreClean(storeRoot, os.TempDir(), stdout)
 		},
 	}
 }
 
-func runStoreClean(root string, stdout io.Writer) error {
+// runStoreClean removes orphaned blob temp files under root, and kanonarion-owned
+// temp entries directly under tmpDir.
+//
+// tmpDir is a parameter rather than a call to os.TempDir inside the sweep so that
+// tests can point it at a directory of their own. The sweep deletes by prefix and
+// does not check whether an entry is in use, so running it against the real shared
+// temp directory destroys the working files of any kanonarion process scanning on
+// the same machine — which is what the command's own help warns about. A test that
+// called os.TempDir() would do exactly that to a concurrent scan, and did.
+func runStoreClean(root, tmpDir string, stdout io.Writer) error {
 	total := 0
 
 	// 1. Orphaned blob temp files.
@@ -81,8 +90,7 @@ func runStoreClean(root string, stdout io.Writer) error {
 		total += n
 	}
 
-	// 2. Scan and analysis temp dirs/files in os.TempDir.
-	tmpDir := os.TempDir()
+	// 2. Scan and analysis temp dirs/files in tmpDir.
 	entries, err := os.ReadDir(tmpDir)
 	if err != nil {
 		return fmt.Errorf("reading temp dir %s: %w", tmpDir, err)

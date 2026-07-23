@@ -27,11 +27,19 @@ func sortUnscanReasons(rs []vuldomain.UnscanReason) {
 // hint is set only where an operator action on this host changes the outcome.
 // A toolchain or host limitation gets none, because inventing a direction that
 // cannot help reads as an instruction and wastes the reader's attention.
+// oneFault marks a reason that describes a single fault fanned out across the
+// whole build list rather than N independent module problems. ScanWalkUseCase's
+// fillProjectFault stamps one project-rooted failure onto every coordinate in
+// the walk, so a roll-up that listed each coordinate would report one fact N
+// times and read as N findings. Such a section states the fault once and counts
+// the modules it took down; the coordinates remain in the per-module progress
+// stream, so naming them is redundant here, not lost.
 type unscanDisplay struct {
 	label       string
 	heading     string
 	explanation string
 	hint        string
+	oneFault    bool
 }
 
 // metadataOnlyNote and notScannedNote name the two shapes an Unscannable record
@@ -119,12 +127,14 @@ var unscanDisplays = map[vuldomain.UnscanReason]unscanDisplay{
 	// (ScanWalkUseCase.fillProjectFault), so a heading that read as N independent
 	// module problems would misstate the cause by the width of the build list.
 	vuldomain.UnscanReasonProjectNoGoMod: {
-		label:   notScannedNote + " (project directory has no go.mod)",
-		heading: notScannedNote + " — one project-level fault: the project directory has no go.mod, so no module was scanned",
+		label:    notScannedNote + " (project directory has no go.mod)",
+		heading:  notScannedNote + " — one project-level fault: the project directory has no go.mod, so no module was scanned",
+		oneFault: true,
 	},
 	vuldomain.UnscanReasonProjectDirUnavailable: {
-		label:   notScannedNote + " (project directory not accessible)",
-		heading: notScannedNote + " — one project-level fault: the project directory could not be read, so no module was scanned",
+		label:    notScannedNote + " (project directory not accessible)",
+		heading:  notScannedNote + " — one project-level fault: the project directory could not be read, so no module was scanned",
+		oneFault: true,
 	},
 }
 

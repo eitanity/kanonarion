@@ -348,6 +348,17 @@ func writeUnscannableRollup(rollup *unscannableRollup, w io.Writer) {
 		return
 	}
 	for _, section := range rollup.sections() {
+		// A fanned-out project fault is one condition, not one per module. State
+		// it once with the count of modules it took down and print no coordinate
+		// list: N coordinates under a heading reads as N findings, which is the
+		// opposite of what a single operator-side input fault is.
+		if section.display.oneFault {
+			_, _ = fmt.Fprintf(w, "%s; all %d modules unscannable\n", section.display.heading, len(section.coords))
+			for _, d := range section.detailsToPrint() {
+				_, _ = fmt.Fprintf(w, "  reason: %s\n", d.text)
+			}
+			continue
+		}
 		heading := fmt.Sprintf("%s (%d):", section.display.heading, len(section.coords))
 		if section.display.explanation != "" {
 			heading += " " + section.display.explanation
@@ -356,20 +367,38 @@ func writeUnscannableRollup(rollup *unscannableRollup, w io.Writer) {
 		// The scanner's free text is printed only where the reason has no curated
 		// explanation. Where one exists it says the same thing in fewer words, and
 		// printing both restores the redundancy this roll-up exists to remove.
+		//
+		// Detail and direction precede the coordinates. They belong to the heading
+		// and are read with it; printing the direction past a hundred coordinates
+		// orphans it from the explanation it answers.
 		for _, d := range section.detailsToPrint() {
-			if d.count > 1 {
-				_, _ = fmt.Fprintf(w, "  reason: %s (%d modules)\n", d.text, d.count)
+			// The count is given only when this text covers part of the section.
+			// Where one text covers every coordinate the heading has already stated
+			// the number, and repeating it three words later says nothing new.
+			if d.count < len(section.coords) {
+				_, _ = fmt.Fprintf(w, "  reason: %s (%s)\n", d.text, pluralModules(d.count))
 			} else {
 				_, _ = fmt.Fprintf(w, "  reason: %s\n", d.text)
 			}
 		}
-		for _, c := range section.coords {
-			_, _ = fmt.Fprintf(w, "  %s\n", c)
-		}
 		if section.display.hint != "" {
 			_, _ = fmt.Fprintf(w, "  → %s\n", section.display.hint)
 		}
+		for _, c := range section.coords {
+			_, _ = fmt.Fprintf(w, "  %s\n", c)
+		}
 	}
+}
+
+// pluralModules renders a module count for a roll-up detail line. A section
+// whose modules split across several scanner messages needs the count on each,
+// and "1 modules" in that list reads as a defect in the tool rather than a
+// property of the run.
+func pluralModules(n int) string {
+	if n == 1 {
+		return "1 module"
+	}
+	return fmt.Sprintf("%d modules", n)
 }
 
 func runVulnScanByModule(ctx context.Context, moduleCoord string, f commonWalkFlags, force, fresh, enableReachability bool, callGraphWorkers int, jsonOut bool, goBinary, operator string, stdout, stderr io.Writer) error {

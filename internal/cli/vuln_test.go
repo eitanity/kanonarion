@@ -304,8 +304,14 @@ func TestVulnScanProgress_SharedTextIsNotRepeatedPerModule(t *testing.T) {
 	if n := strings.Count(summary.String(), "no go.mod found in module zip"); n != 1 {
 		t.Errorf("shared scanner reason appears %d times in the roll-up, want exactly 1; got:\n%s", n, summary.String())
 	}
-	if !strings.Contains(summary.String(), fmt.Sprintf("(%d modules)", modules)) {
-		t.Errorf("roll-up must say how many modules shared the reason; got:\n%s", summary.String())
+	// The heading carries the count. The detail line does not repeat it: one
+	// scanner message covering every module in the section adds nothing by
+	// restating the number three words later.
+	if !strings.Contains(summary.String(), fmt.Sprintf("(%d):", modules)) {
+		t.Errorf("roll-up heading must carry the module count; got:\n%s", summary.String())
+	}
+	if strings.Contains(summary.String(), fmt.Sprintf("(%d modules)", modules)) {
+		t.Errorf("detail line must not restate the heading's count; got:\n%s", summary.String())
 	}
 }
 
@@ -356,6 +362,61 @@ func TestVulnScanProgress_OutOfToolchainExplanationIsOncePerRun(t *testing.T) {
 	}
 }
 
+// TestWriteUnscannableRollup_ProjectFaultCountsNotCoordinates covers the
+// fan-out case. fillProjectFault stamps one project-rooted fault onto every
+// coordinate in the walk, so a roll-up listing each coordinate would render one
+// operator-side input fault as N module problems. The section must state the
+// fault once and count the modules it took down.
+func TestWriteUnscannableRollup_ProjectFaultCountsNotCoordinates(t *testing.T) {
+	const modules = 107
+
+	r := newUnscannableRollup()
+	for i := 0; i < modules; i++ {
+		r.add(vuldomain.UnscanReasonProjectNoGoMod,
+			fmt.Sprintf("example.com/mod%d@v1.0.0", i),
+			"no go.mod in project directory /home/u/proj")
+	}
+
+	var out strings.Builder
+	writeUnscannableRollup(r, &out)
+	got := out.String()
+
+	if !strings.Contains(got, fmt.Sprintf("all %d modules unscannable", modules)) {
+		t.Errorf("project fault must be counted as one fault over N modules; got:\n%s", got)
+	}
+	if strings.Contains(got, "example.com/mod") {
+		t.Errorf("project fault must not list coordinates — N rows read as N findings; got:\n%s", got)
+	}
+	if n := strings.Count(got, "no go.mod in project directory"); n != 1 {
+		t.Errorf("the fault's detail appears %d times, want exactly 1; got:\n%s", n, got)
+	}
+	if n := strings.Count(got, "\n"); n != 2 {
+		t.Errorf("project fault section is %d lines, want 2 (fault + reason); got:\n%s", n, got)
+	}
+}
+
+// TestWriteUnscannableRollup_NonProjectReasonsStillListCoordinates pins the
+// boundary: only the fanned-out project faults collapse to a count. A per-module
+// reason names its modules, because there the coordinates are N distinct facts.
+func TestWriteUnscannableRollup_NonProjectReasonsStillListCoordinates(t *testing.T) {
+	r := newUnscannableRollup()
+	r.add(vuldomain.UnscanReasonCHeadersMissing, "gopkg.in/mgo.v2@v2.0.0", "")
+	r.add(vuldomain.UnscanReasonCHeadersMissing, "example.com/cgo@v1.2.3", "")
+
+	var out strings.Builder
+	writeUnscannableRollup(r, &out)
+	got := out.String()
+
+	for _, want := range []string{"gopkg.in/mgo.v2@v2.0.0", "example.com/cgo@v1.2.3", "(2):"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("per-module reason must still name its coordinates, missing %q; got:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "modules unscannable") {
+		t.Errorf("only project faults use the one-fault phrasing; got:\n%s", got)
+	}
+}
+
 // TestUnscannableRollup_DistinctDetailsAllSurvive guards the other side of the
 // dedup: collapsing repeated text must not collapse text that genuinely differs,
 // or a per-module scanner message would be lost rather than merely de-repeated.
@@ -372,11 +433,13 @@ func TestUnscannableRollup_DistinctDetailsAllSurvive(t *testing.T) {
 	if !strings.Contains(got, "reason: undefined: syscall.Mount (2 modules)") {
 		t.Errorf("repeated detail must be counted, not repeated; got:\n%s", got)
 	}
-	if !strings.Contains(got, "reason: cannot find package foo\n") {
-		t.Errorf("a distinct detail must survive the roll-up; got:\n%s", got)
+	// Both counts are given because neither text covers the whole section: the
+	// reader needs to know the 3 split 2/1, which the heading alone cannot say.
+	if !strings.Contains(got, "reason: cannot find package foo (1 module)") {
+		t.Errorf("a distinct detail must survive the roll-up with its count; got:\n%s", got)
 	}
-	if strings.Contains(got, "cannot find package foo (") {
-		t.Errorf("a single-module detail must not carry a count; got:\n%s", got)
+	if strings.Contains(got, "1 modules") {
+		t.Errorf("a one-module count must not read as \"1 modules\"; got:\n%s", got)
 	}
 }
 
