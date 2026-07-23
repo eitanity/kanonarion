@@ -19,6 +19,8 @@ func TestUnscanReason_ExpectedOutOfToolchain(t *testing.T) {
 	}
 	for _, r := range []domain.UnscanReason{
 		domain.UnscanReasonNoGoMod,
+		domain.UnscanReasonProjectNoGoMod,
+		domain.UnscanReasonProjectDirUnavailable,
 		domain.UnscanReason(""),
 	} {
 		if r.ExpectedOutOfToolchain() {

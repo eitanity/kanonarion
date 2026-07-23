@@ -54,7 +54,14 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (domain.Vulne
 		// real: the module is analysable, and treating it as permanently
 		// unscannable would leave its advisories matched by coordinate alone,
 		// with no reachability, for a condition kanonarion can lift.
-		root, werr := writeSynthesisedGoMod(scanDir, coord, toolchainGoVersion(ctx, env), req.BuildList)
+		root, skipped, werr := writeSynthesisedGoMod(scanDir, coord, toolchainGoVersion(ctx, env), req.BuildList)
+		if len(skipped) > 0 {
+			// The require set was assembled from less than the whole module. Name
+			// the files so a later unresolved-package failure is attributable here
+			// rather than appearing as an unexplained resolution error.
+			s.logger.Warn("vuln-scan: some source files could not be read while synthesising go.mod; the require set may be incomplete",
+				"module", coord.Path, "skipped_files", strings.Join(skipped, ", "), "skipped_count", len(skipped))
+		}
 		if werr != nil {
 			s.logger.Warn("vuln-scan: could not synthesise go.mod, marking unscannable",
 				"module", coord.Path, "error", werr)

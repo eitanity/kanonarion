@@ -1,6 +1,8 @@
 package govulncheck
 
 import (
+	"go/ast"
+	"go/token"
 	"os"
 	"path/filepath"
 	"strings"
@@ -62,12 +64,15 @@ func TestWriteSynthesisedGoMod_WritesToTheModuleRoot(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	coord := coordinate.ModuleCoordinate{Path: "github.com/boltdb/bolt", Version: "v1.3.1"}
-	dir, err := writeSynthesisedGoMod(root, coord, "go1.26.5", map[coordinate.ModuleCoordinate]struct{}{
+	dir, skipped, err := writeSynthesisedGoMod(root, coord, "go1.26.5", map[coordinate.ModuleCoordinate]struct{}{
 		{Path: "example.com/dep", Version: "v0.3.0"}:    {},
 		{Path: "example.com/unused", Version: "v9.9.9"}: {},
 	})
 	if err != nil {
 		t.Fatalf("writeSynthesisedGoMod: %v", err)
+	}
+	if len(skipped) != 0 {
+		t.Errorf("skipped = %v, want none: every file in this fixture parses", skipped)
 	}
 	if dir != src {
 		t.Errorf("returned scan dir = %q, want %q", dir, src)
@@ -100,7 +105,7 @@ func TestWriteSynthesisedGoMod_RefusesToOverwriteAnExistingGoMod(t *testing.T) {
 		t.Fatalf("write: %v", err)
 	}
 	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
-	if _, err := writeSynthesisedGoMod(root, coord, "go1.26.5", nil); err == nil {
+	if _, _, err := writeSynthesisedGoMod(root, coord, "go1.26.5", nil); err == nil {
 		t.Fatal("expected an error when a go.mod already exists")
 	}
 	after, err := os.ReadFile(filepath.Join(src, "go.mod")) //nolint:gosec // path built from t.TempDir
@@ -130,7 +135,10 @@ func TestCollectImports_SkipsStdlibAndTestFiles(t *testing.T) {
 	// fail a module whose real packages resolve.
 	write("a_test.go", "package a\n\nimport \"gotest.tools/v3/assert\"\n")
 
-	got := collectImports(root)
+	got, skipped := collectImports(root)
+	if len(skipped) != 0 {
+		t.Errorf("skipped = %v, want none: every file in this fixture parses", skipped)
+	}
 	want := []string{"github.com/gorilla/css/scanner", "golang.org/x/net/html"}
 	if len(got) != len(want) {
 		t.Fatalf("collectImports() = %v, want %v", got, want)
@@ -142,8 +150,9 @@ func TestCollectImports_SkipsStdlibAndTestFiles(t *testing.T) {
 	}
 }
 
-// An unparseable file must not fail the scan; it contributes no imports and the
-// toolchain names whatever it cannot resolve.
+// An unparseable file must not fail the scan: it contributes no imports, the
+// rest of the module still does, and the file is returned so the caller can
+// report that the require set was built from less than the whole module.
 func TestCollectImports_ToleratesUnparseableFile(t *testing.T) {
 	root := t.TempDir()
 	if err := os.WriteFile(filepath.Join(root, "broken.go"), []byte("this is not go"), 0o600); err != nil {
@@ -152,8 +161,36 @@ func TestCollectImports_ToleratesUnparseableFile(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "ok.go"), []byte("package a\n\nimport \"example.com/dep\"\n"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	got := collectImports(root)
+	got, skipped := collectImports(root)
 	if len(got) != 1 || got[0] != "example.com/dep" {
 		t.Errorf("collectImports() = %v, want [example.com/dep]", got)
+	}
+	if len(skipped) != 1 || filepath.Base(skipped[0]) != "broken.go" {
+		t.Errorf("skipped = %v, want the unparseable broken.go reported, not dropped", skipped)
+	}
+}
+
+// TestImportPathsFromFile_UnquotableLiteralIsReported is the regression for the
+// last silent drop in the import collector. A parsed file's import path is
+// normally a valid Go string literal, so this branch is defensive — but a path
+// that cannot be unquoted removes a requirement from the synthesised go.mod
+// exactly as an unparseable file does, and must be reported for the same reason:
+// the resulting resolution failure has to be attributable to a named cause.
+func TestImportPathsFromFile_UnquotableLiteralIsReported(t *testing.T) {
+	f := &ast.File{
+		Name: ast.NewIdent("a"),
+		Imports: []*ast.ImportSpec{
+			{Path: &ast.BasicLit{Kind: token.STRING, Value: `"example.com/good"`}},
+			{Path: &ast.BasicLit{Kind: token.STRING, Value: `"example.com/bad\q"`}},
+			{Path: &ast.BasicLit{Kind: token.STRING, Value: `"fmt"`}},
+		},
+	}
+
+	paths, bad := importPathsFromFile(f)
+	if len(paths) != 1 || paths[0] != "example.com/good" {
+		t.Errorf("paths = %v, want just the readable non-stdlib import", paths)
+	}
+	if len(bad) != 1 || !strings.Contains(bad[0], "bad") {
+		t.Errorf("unreadable = %v, want the unquotable literal reported, not dropped", bad)
 	}
 }

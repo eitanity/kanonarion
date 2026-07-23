@@ -205,6 +205,21 @@ func TestUnresolvedCoordinate(t *testing.T) {
 			wantOK: false,
 		},
 		{
+			// The marker with nothing before it: there is no token to read a
+			// coordinate from, so the line must be skipped rather than indexed into.
+			name:   "marker with no prefix names no module",
+			detail: "module lookup disabled by GOPROXY=off",
+			wantOK: false,
+		},
+		{
+			// A token containing "@" whose right-hand side is not a version — an
+			// email address, a VCS ref. Reading it as a coordinate would invent a
+			// version the walk graph could then be asked about.
+			name:   "at-sign without a version is not a coordinate",
+			detail: "go: example.com/mod@deadbeef: module lookup disabled by GOPROXY=off",
+			wantOK: false,
+		},
+		{
 			name:   "unrelated failure",
 			detail: "build constraints exclude all Go files in /tmp/x",
 			wantOK: false,
@@ -251,6 +266,13 @@ func TestRefineOfflineResolutionReason(t *testing.T) {
 	if got := RefineOfflineResolutionReason(UnscanReasonWindowsOnly, inClosure, known); got != UnscanReasonWindowsOnly {
 		t.Errorf("unrelated reason = %q, want it left untouched", got)
 	}
+	// A failure that names no coordinate at all cannot be checked against the
+	// graph, so the conservative reading stands rather than being upgraded to a
+	// fault on no evidence.
+	noCoordinate := "govulncheck: loading packages: stdr.go:25:2: module lookup disabled by GOPROXY=off"
+	if got := RefineOfflineResolutionReason(UnscanReasonVersionNotInToolchain, noCoordinate, known); got != UnscanReasonVersionNotInToolchain {
+		t.Errorf("unnamed coordinate = %q, want it left as out-of-toolchain", got)
+	}
 }
 
 // TestIncompleteScanCacheReason_NamesMissingVersion guards that the operator is
@@ -259,6 +281,15 @@ func TestIncompleteScanCacheReason_NamesMissingVersion(t *testing.T) {
 	got := IncompleteScanCacheReason("go: github.com/stretchr/testify@v1.7.0: module lookup disabled by GOPROXY=off")
 	if !strings.Contains(got, "github.com/stretchr/testify@v1.7.0") {
 		t.Errorf("reason = %q, want it to name the missing version", got)
+	}
+	// When the error names no version, the category still states the condition
+	// rather than trailing an empty parenthesis or going silent.
+	base := IncompleteScanCacheReason("govulncheck: loading packages: stdr.go:25:2: module lookup disabled by GOPROXY=off")
+	if !strings.Contains(base, "incomplete scan cache") {
+		t.Errorf("reason = %q, want it to still name the condition", base)
+	}
+	if strings.Contains(base, "(") {
+		t.Errorf("reason = %q, want no empty coordinate parenthesis when none was named", base)
 	}
 }
 

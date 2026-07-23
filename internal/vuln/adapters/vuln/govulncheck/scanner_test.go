@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"errors"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -562,5 +563,38 @@ func TestScan_ExistingGoModIsNotReplacedBySynthesis(t *testing.T) {
 	}
 	if strings.Contains(buf.String(), "synthesised one for isolated scan") {
 		t.Errorf("synthesis ran for a module that ships its own go.mod; logs:\n%s", buf.String())
+	}
+}
+
+// TestScanProject_InputFaultsCarryDistinctReasons pins the taxonomy of the two
+// project-directory input faults: an unreadable directory and a directory with
+// no go.mod are separate conditions, and neither is the module-zip no-go-mod
+// reason, which names a property of a published artefact instead.
+func TestScanProject_InputFaultsCarryDistinctReasons(t *testing.T) {
+	s := New("v1", nil)
+	s.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+	res, err := s.ScanProject(t.Context(), missing, domain.DatabaseSnapshot{}, "")
+	if err != nil {
+		t.Fatalf("ScanProject on a missing directory must not error: %v", err)
+	}
+	if res.Status != domain.StatusUnscannable {
+		t.Errorf("Status = %q, want %q", res.Status, domain.StatusUnscannable)
+	}
+	if res.UnscanReason != domain.UnscanReasonProjectDirUnavailable {
+		t.Errorf("UnscanReason = %q, want %q", res.UnscanReason, domain.UnscanReasonProjectDirUnavailable)
+	}
+
+	empty := t.TempDir()
+	res, err = s.ScanProject(t.Context(), empty, domain.DatabaseSnapshot{}, "")
+	if err != nil {
+		t.Fatalf("ScanProject on a go.mod-less directory must not error: %v", err)
+	}
+	if res.Status != domain.StatusUnscannable {
+		t.Errorf("Status = %q, want %q", res.Status, domain.StatusUnscannable)
+	}
+	if res.UnscanReason != domain.UnscanReasonProjectNoGoMod {
+		t.Errorf("UnscanReason = %q, want %q", res.UnscanReason, domain.UnscanReasonProjectNoGoMod)
 	}
 }

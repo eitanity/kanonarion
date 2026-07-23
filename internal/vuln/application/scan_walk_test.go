@@ -274,12 +274,16 @@ func TestScanWalk_OverallStatus(t *testing.T) {
 			expected: domain.WalkStatusPartial,
 		},
 		{
-			name: "Affected wins over Unscannable",
+			// Incomplete coverage outranks a finding. A run that found something
+			// and also could not analyse a module is not a complete run, and
+			// reporting Affected concealed the unscanned module from the stored
+			// status and the JSON. The findings themselves are still listed.
+			name: "Unscannable wins over Affected: the run is not complete",
 			results: map[string]domain.VulnerabilityRecord{
 				"m1@v1": {Coordinate: coord1, OverallStatus: domain.StatusUnscannable},
 				"m2@v1": {Coordinate: coord2, OverallStatus: domain.StatusAffected},
 			},
-			expected: domain.WalkStatusAffected,
+			expected: domain.WalkStatusPartial,
 		},
 	}
 

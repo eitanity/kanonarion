@@ -42,14 +42,14 @@ func (s *Scanner) ScanProject(
 	if _, err := os.Stat(projectDir); err != nil {
 		return domain.ProjectScanResult{
 			Status:            domain.StatusUnscannable,
-			UnscanReason:      domain.UnscanReasonNoGoMod,
+			UnscanReason:      domain.UnscanReasonProjectDirUnavailable,
 			UnscannableReason: "project directory not accessible: " + err.Error(),
 		}, nil
 	}
 	if _, err := os.Stat(projectDir + "/go.mod"); err != nil {
 		return domain.ProjectScanResult{
 			Status:            domain.StatusUnscannable,
-			UnscanReason:      domain.UnscanReasonNoGoMod,
+			UnscanReason:      domain.UnscanReasonProjectNoGoMod,
 			UnscannableReason: "no go.mod in the project directory",
 		}, nil
 	}

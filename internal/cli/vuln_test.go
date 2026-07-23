@@ -253,7 +253,7 @@ func TestVulnScanProgress_OutOfToolchainReadsAsExpected(t *testing.T) {
 		}
 	})
 
-	t.Run("genuine unscannable keeps the failure presentation", func(t *testing.T) {
+	t.Run("another reason is named, not left bare, and keeps its own presentation", func(t *testing.T) {
 		rec := vuldomain.VulnerabilityRecord{
 			Coordinate:        coord,
 			OverallStatus:     vuldomain.StatusUnscannable,
@@ -264,14 +264,20 @@ func TestVulnScanProgress_OutOfToolchainReadsAsExpected(t *testing.T) {
 		writeVulnScanProgress(rec, coord, 1, 1, &stderr)
 		out := stderr.String()
 
-		if !strings.Contains(out, "— Unscannable") {
-			t.Errorf("genuine unscannable must still read as Unscannable, got: %q", out)
+		if !strings.Contains(out, "Metadata-only (builds on Windows only)") {
+			t.Errorf("windows-only must render its own label, got: %q", out)
+		}
+		if strings.Contains(out, "— Unscannable") {
+			t.Errorf("a mapped reason must not render as a bare Unscannable, got: %q", out)
 		}
 		if strings.Contains(out, "Metadata-only (version not in project build)") {
-			t.Errorf("genuine failure must not borrow the expected metadata-only label, got: %q", out)
+			t.Errorf("this reason must not borrow the out-of-toolchain label, got: %q", out)
 		}
 		if strings.Contains(out, "reachability --local") {
-			t.Errorf("genuine failure must not point at reachability --local, got: %q", out)
+			t.Errorf("only the out-of-toolchain reason carries the reachability direction, got: %q", out)
+		}
+		if !strings.Contains(out, "Windows-only package: not buildable on Linux") {
+			t.Errorf("the per-module reason line must survive, got: %q", out)
 		}
 	})
 }

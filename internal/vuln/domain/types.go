@@ -90,14 +90,58 @@ const (
 	// UnscanReasonOOMKilled indicates govulncheck was killed by the OS (OOM or
 	// SIGKILL / exit 137). The scan is retryable on a host with more memory.
 	UnscanReasonOOMKilled UnscanReason = "oom-killed"
-	// UnscanReasonNoGoMod indicates the module zip does not contain a go.mod
-	// file, so govulncheck cannot be run.
+	// UnscanReasonNoGoMod indicates the fetched module zip does not contain a
+	// go.mod file and none could be synthesised, so govulncheck cannot be run
+	// over it as its own main module. It names a property of the published
+	// artefact, not an operator-side input fault.
 	UnscanReasonNoGoMod UnscanReason = "no-go-mod"
+	// UnscanReasonProjectNoGoMod indicates the project directory supplied for a
+	// project-rooted scan contains no go.mod, so there is no main module to root
+	// the analysis at. It names an operator-side input fault — the wrong
+	// directory, or one that is not a Go module — not a property of any
+	// artefact, and is remediable by pointing the scan at a real module root.
+	UnscanReasonProjectNoGoMod UnscanReason = "project-no-go-mod"
+	// UnscanReasonProjectDirUnavailable indicates the project directory supplied
+	// for a project-rooted scan could not be stat'ed at all — it does not exist,
+	// or is not readable. It names an operator-side input fault, not a property
+	// of any artefact, and says nothing about whether that directory is a Go
+	// module: the scan never got far enough to look.
+	UnscanReasonProjectDirUnavailable UnscanReason = "project-dir-unavailable"
 	// UnscanReasonLocalReplace indicates the module is a local filesystem
 	// replacement (a replace directive pointing at a working-tree path) rather
 	// than a fetched, versioned module, so there is no fetched source to scan.
 	UnscanReasonLocalReplace UnscanReason = "local-replace"
 )
+
+// AllUnscanReasons returns every defined UnscanReason, in a stable order.
+//
+// It exists so a consumer that must handle every reason — a display mapping, a
+// roll-up bucket, a severity table — can be proved exhaustive by test rather
+// than by inspection. A reason code is an open string type, so the compiler
+// cannot enforce that; a reason absent from a display table would otherwise
+// render as a bare status with no explanation, which is exactly the silence the
+// codebase forbids. A test asserts this list matches the declared constants, so
+// adding a reason without adding it here fails rather than degrading quietly.
+func AllUnscanReasons() []UnscanReason {
+	return []UnscanReason{
+		UnscanReasonVersionNotInToolchain,
+		UnscanReasonPackageDeclarationsMissing,
+		UnscanReasonCHeadersMissing,
+		UnscanReasonGeneratedAssets,
+		UnscanReasonGoWorkMonorepo,
+		UnscanReasonWorkspaceMode,
+		UnscanReasonRelativeReplace,
+		UnscanReasonWindowsOnly,
+		UnscanReasonMissingGoSum,
+		UnscanReasonIncompleteScanCache,
+		UnscanReasonBuildIncompatible,
+		UnscanReasonOOMKilled,
+		UnscanReasonNoGoMod,
+		UnscanReasonLocalReplace,
+		UnscanReasonProjectNoGoMod,
+		UnscanReasonProjectDirUnavailable,
+	}
+}
 
 // ExpectedOutOfToolchain reports whether an Unscannable reason is the expected
 // consequence of hermetic per-module scanning rather than a genuine scan fault.

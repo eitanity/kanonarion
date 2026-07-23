@@ -393,20 +393,42 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, sc
 		res.LicenseUncertainty = uncertaintyReason
 	}
 
-	if vrec, found, verr := ctr.QueryVuln.GetLatestRecordForWalk(ctx, coord, vulnPipelineVersion, walkID); verr == nil && found {
-		res.VulnStatus = string(vrec.OverallStatus)
-		res.VulnFindings = len(vrec.Findings)
-		switch vrec.OverallStatus {
-		case vulndomain.StatusScanFailed:
-			res.VulnReason = vrec.ErrorDetail
-		case vulndomain.StatusUnscannable:
-			res.VulnReason = vrec.UnscannableReason
-		}
-	} else if !found {
-		res.VulnStatus = "(not scanned)"
-	}
+	vrec, found, verr := ctr.QueryVuln.GetLatestRecordForWalk(ctx, coord, vulnPipelineVersion, walkID)
+	res.VulnStatus, res.VulnReason, res.VulnFindings = vulnAuditStatus(vrec, found, verr)
 
 	return res, nil
+}
+
+// vulnAuditStatus renders the vulnerability columns of an audit row from a
+// record lookup: the status, the reason prose, and the finding count.
+//
+// A read error is reported as a read error. Previously an errored lookup either
+// fell into the not-found branch and rendered "(not scanned)" — telling the
+// operator the module was never scanned when in truth the store could not be
+// read — or, when a record came back alongside the error, left the column blank
+// with nothing said at all. Absence and unreadability are different facts about
+// a module, and only one of them is a reason to stop asking.
+//
+// A record returned alongside an error is not trusted: the error is the more
+// reliable of the two signals, so the row names the failure rather than
+// reporting a status derived from a value the store could not vouch for.
+//
+// Both audit paths share this so they cannot drift into disagreeing about the
+// same condition, which is how one of them came to have no error branch at all.
+func vulnAuditStatus(rec vulndomain.VulnerabilityRecord, found bool, err error) (status, reason string, findings int) {
+	if err != nil {
+		return "(scan record unreadable)", "reading vulnerability record: " + err.Error(), 0
+	}
+	if !found {
+		return "(not scanned)", "", 0
+	}
+	switch rec.OverallStatus {
+	case vulndomain.StatusScanFailed:
+		reason = rec.ErrorDetail
+	case vulndomain.StatusUnscannable:
+		reason = rec.UnscannableReason
+	}
+	return string(rec.OverallStatus), reason, len(rec.Findings)
 }
 
 // buildStdlibAuditResult reports the standard-library node's custody chain from
@@ -451,16 +473,8 @@ func buildStdlibAuditResult(ctx context.Context, coord coordinate.ModuleCoordina
 		res.LicenseUncertainty = uncertaintyReason
 	}
 
-	if vrec, found, verr := ctr.QueryVuln.GetLatestRecordForWalk(ctx, coord, vulnPipelineVersion, walkID); verr == nil && found {
-		res.VulnStatus = string(vrec.OverallStatus)
-		res.VulnFindings = len(vrec.Findings)
-		switch vrec.OverallStatus {
-		case vulndomain.StatusScanFailed:
-			res.VulnReason = vrec.ErrorDetail
-		case vulndomain.StatusUnscannable:
-			res.VulnReason = vrec.UnscannableReason
-		}
-	}
+	vrec, found, verr := ctr.QueryVuln.GetLatestRecordForWalk(ctx, coord, vulnPipelineVersion, walkID)
+	res.VulnStatus, res.VulnReason, res.VulnFindings = vulnAuditStatus(vrec, found, verr)
 	return res
 }
 
