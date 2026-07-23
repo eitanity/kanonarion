@@ -71,8 +71,15 @@ import (
 // that were never checked, and Affected verdicts missing their reachability and
 // symbols — so all of them must be re-scanned. The same bump covers the
 // project-rooted path, where advisory matching by coordinate is now
-// unconditional rather than absent.
-const PipelineVersion = "v10"
+// unconditional rather than absent. It was bumped to "v11" when a
+// coordinate-keyed walk began deriving its verdicts from a single scan rooted at
+// the walk target instead of scanning each dependency in isolation: an isolated
+// scan points `./...` at the dependency, loading every package it contains
+// including ones no consumer can import, so a "v10" record could be a coverage
+// gap caused by a package the target never builds, and its reachability was
+// rooted at packages no consumer can reach. Every "v10" record on that path
+// describes a different analysis and must be re-scanned.
+const PipelineVersion = "v11"
 
 // ScanModuleUseCase orchestrates a single module's vulnerability scan.
 type ScanModuleUseCase struct {

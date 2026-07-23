@@ -531,7 +531,7 @@ func TestScan_NoGoModInZipIsSynthesisedNotAbandoned(t *testing.T) {
 	if rec.OverallStatus == domain.StatusUnscannable {
 		t.Errorf("OverallStatus = %s, want a scanned verdict\nlogs:\n%s", rec.OverallStatus, buf.String())
 	}
-	if !strings.Contains(buf.String(), "synthesised one for isolated scan") {
+	if !strings.Contains(buf.String(), "synthesised one for the scan") {
 		t.Errorf("expected the synthesis to be recorded in the log, got:\n%s", buf.String())
 	}
 }
@@ -561,7 +561,7 @@ func TestScan_ExistingGoModIsNotReplacedBySynthesis(t *testing.T) {
 	}); err != nil {
 		t.Fatalf("Scan returned a hard error: %v", err)
 	}
-	if strings.Contains(buf.String(), "synthesised one for isolated scan") {
+	if strings.Contains(buf.String(), "synthesised one for the scan") {
 		t.Errorf("synthesis ran for a module that ships its own go.mod; logs:\n%s", buf.String())
 	}
 }

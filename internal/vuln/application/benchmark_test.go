@@ -37,6 +37,16 @@ func (s *slowScanner) ScanProject(_ context.Context, _ string, _ domain.Database
 	return domain.ProjectScanResult{Status: domain.StatusClean}, nil
 }
 
+// ScanTargetModule reports a fault so the benchmark keeps measuring the
+// isolated per-module pool it exists to measure, rather than collapsing to one
+// target-rooted scan.
+func (s *slowScanner) ScanTargetModule(_ context.Context, _ ports.TargetScanRequest) (domain.ProjectScanResult, error) {
+	return domain.ProjectScanResult{
+		Status:            domain.StatusUnscannable,
+		UnscannableReason: "slow-fake: target-rooted scanning not benchmarked",
+	}, nil
+}
+
 func (s *slowScanner) Preflight(_ context.Context) error { return nil }
 
 func (s *slowScanner) ScannerMetadata() ports.ScannerMetadata {

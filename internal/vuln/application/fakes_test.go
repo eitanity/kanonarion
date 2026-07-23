@@ -346,9 +346,23 @@ type fakeScanner struct {
 	projectStatus   domain.VulnerabilityStatus
 	projectReason   string
 	projectErr      error
+	// target-rooted scan controls (ScanTargetModule). targetRooted must be opted
+	// into: a coordinate-keyed walk tries the target-rooted path first, and a fake
+	// that silently succeeded there would take every isolated-path test off the
+	// path it is exercising. Left false, the fake reports the same
+	// could-not-analyse fault a real unbuildable target does, so the walk falls
+	// back to isolated scanning.
+	targetRooted    bool
+	targetFindings  map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding
+	targetStatus    domain.VulnerabilityStatus
+	targetReason    string
+	targetErr       error
+	gotTargetCoord  coordinate.ModuleCoordinate
+	gotTargetCache  string
 	// call counters let tests assert which path a walk took.
 	scanCalls    int
 	projectCalls int
+	targetCalls  int
 	// gotModCache records the GOMODCACHE dir the last Scan was invoked with, so a
 	// test can assert --from-modcache threaded the real cache dir through.
 	gotModCache string
@@ -399,6 +413,37 @@ func (f *fakeScanner) ScanProject(_ context.Context, _ string, _ domain.Database
 		status = domain.StatusAffected
 	}
 	return domain.ProjectScanResult{FindingsByModule: f.projectFindings, Status: status}, nil
+}
+
+// ScanTargetModule stands in for the target-rooted scan of a coordinate-keyed
+// walk. See the targetRooted field for why the default is a fault.
+func (f *fakeScanner) ScanTargetModule(_ context.Context, req ports.TargetScanRequest) (domain.ProjectScanResult, error) {
+	if f.targetErr != nil {
+		return domain.ProjectScanResult{}, f.targetErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.targetCalls++
+	f.gotTargetCoord = req.Coordinate
+	f.gotTargetCache = req.GoModCache
+	if !f.targetRooted {
+		return domain.ProjectScanResult{
+			Status:            domain.StatusUnscannable,
+			UnscannableReason: "fake scanner: target-rooted scanning not enabled for this test",
+		}, nil
+	}
+	if f.targetStatus == domain.StatusUnscannable || f.targetStatus == domain.StatusScanFailed {
+		return domain.ProjectScanResult{
+			Status:            f.targetStatus,
+			UnscannableReason: f.targetReason,
+			ErrorDetail:       f.targetReason,
+		}, nil
+	}
+	status := domain.StatusClean
+	if len(f.targetFindings) > 0 {
+		status = domain.StatusAffected
+	}
+	return domain.ProjectScanResult{FindingsByModule: f.targetFindings, Status: status}, nil
 }
 
 func (f *fakeScanner) ScannerMetadata() ports.ScannerMetadata {
@@ -495,6 +540,14 @@ func (s *callCountingScanner) ScanProject(ctx context.Context, dir string, snap 
 	res, err := s.inner.ScanProject(ctx, dir, snap, dbDir)
 	if err != nil {
 		return domain.ProjectScanResult{}, fmt.Errorf("inner scan project: %w", err)
+	}
+	return res, nil
+}
+
+func (s *callCountingScanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequest) (domain.ProjectScanResult, error) {
+	res, err := s.inner.ScanTargetModule(ctx, req)
+	if err != nil {
+		return domain.ProjectScanResult{}, fmt.Errorf("inner scan target: %w", err)
 	}
 	return res, nil
 }

@@ -118,7 +118,8 @@ type ScanWalkParams struct {
 	// When set and the walk is rooted at the local main module, the scan is
 	// project-rooted: one govulncheck over the live tree derives a per-module
 	// verdict for the whole build, instead of scanning each dependency in
-	// isolation. Empty on a coordinate-keyed walk, where the isolated path runs.
+	// isolation. Empty on a coordinate-keyed walk, which roots the same kind of
+	// single analysis at the walk target's own zip instead.
 	ProjectDir string
 	// Progress is called after each module is scanned. It may be nil.
 	Progress func(coord coordinate.ModuleCoordinate, record domain.VulnerabilityRecord, current, total int)
@@ -212,6 +213,20 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	// finalResults maps each coordinate to its definitive scan result.
 	finalResults := make(map[coordinate.ModuleCoordinate]moduleResult, total)
 
+	// A coordinate-keyed walk has no project working tree, but it does have a
+	// root: the target module itself. Rooting the analysis there makes every
+	// dependency's package set import-driven — the packages the target's build
+	// reaches — instead of `./...` over each dependency in isolation, which loads
+	// commands and library packages no consumer can reach and records a coverage
+	// gap when their imports demand versions the build never selected. It falls
+	// back to the isolated pool rather than failing the walk when the target
+	// cannot be analysed as a whole.
+	targetRooted := false
+	if !walk.Target.IsLocal() {
+		uc.logger.Info("target-rooted vuln scan", "walk_id", params.WalkID, "root", walk.Target)
+		targetRooted = uc.scanTargetRooted(ctx, walk, allCoords, params, snapshot, vulnDBDir, goModCache, selectedVersions, finalResults)
+	}
+
 	switch {
 	case walk.Target.IsLocal() && params.ProjectDir != "":
 		// A project walk is rooted at the local main module. Its verdict is the
@@ -221,6 +236,8 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 		// builds and reports a self-inflicted version-not-in-toolchain gap).
 		uc.logger.Info("project-rooted vuln scan", "walk_id", params.WalkID, "root", walk.Target, "project_dir", params.ProjectDir)
 		uc.scanProjectRooted(ctx, walk, allCoords, params, snapshot, vulnDBDir, finalResults)
+	case targetRooted:
+		// Verdicts already derived from the target-rooted analysis.
 	case params.BinaryModePrePass:
 		// Pass 1: fast binary-mode scan across all modules.
 		uc.logger.Info("binary pre-pass: scanning all modules in binary mode", "count", total)
