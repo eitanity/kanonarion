@@ -19,9 +19,10 @@ import (
 
 // fakeFetcher is a minimal ModuleFetcher that records which coordinates were fetched.
 type fakeFetcher struct {
-	mu      sync.Mutex
-	fetched []coordinate.ModuleCoordinate
-	err     error
+	mu        sync.Mutex
+	fetched   []coordinate.ModuleCoordinate
+	goModOnly []coordinate.ModuleCoordinate
+	err       error
 }
 
 func (f *fakeFetcher) FetchModule(_ context.Context, coord coordinate.ModuleCoordinate) error {
@@ -32,6 +33,27 @@ func (f *fakeFetcher) FetchModule(_ context.Context, coord coordinate.ModuleCoor
 	f.fetched = append(f.fetched, coord)
 	f.mu.Unlock()
 	return nil
+}
+
+func (f *fakeFetcher) FetchModuleGoMod(_ context.Context, coord coordinate.ModuleCoordinate) error {
+	if f.err != nil {
+		return f.err
+	}
+	f.mu.Lock()
+	f.goModOnly = append(f.goModOnly, coord)
+	f.mu.Unlock()
+	return nil
+}
+
+func (f *fakeFetcher) wasFetchedGoModOnly(coord coordinate.ModuleCoordinate) bool {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, c := range f.goModOnly {
+		if c == coord {
+			return true
+		}
+	}
+	return false
 }
 
 func (f *fakeFetcher) wasFetched(coord coordinate.ModuleCoordinate) bool {
@@ -113,6 +135,50 @@ func TestPrefetchMissing_FetchesMissingModules(t *testing.T) {
 	}
 	if fetcher.wasFetched(present) {
 		t.Errorf("FetchModule should not be called for %s (already in fact store)", present)
+	}
+}
+
+// TestPrefetchMissing_RefetchesGoModOnlyRecord verifies that a go.mod-only
+// record (no zip) does not satisfy the source a scan needs: prefetchMissing must
+// re-fetch the full artefact for it, and the scan must not error trying to read
+// a missing zip — it falls back to metadata-only.
+func TestPrefetchMissing_RefetchesGoModOnlyRecord(t *testing.T) {
+	ctx := t.Context()
+	walkID := "wgomod"
+
+	node := coordinate.ModuleCoordinate{Path: "github.com/gomod/only", Version: "v1.0.0"}
+
+	walkStore := newFakeWalkStore()
+	_ = walkStore.PutWalk(ctx, walkdomain.WalkRecord{
+		ID:    walkID,
+		Graph: walkdomain.Graph{Nodes: []walkdomain.GraphNode{{Coordinate: node}}},
+	})
+
+	facts := newFakeFacts()
+	blobs := newFakeBlob()
+
+	// Seed a go.mod-only record: GoModLocation set, ContentLocation empty.
+	gh, _ := blobs.Put(ctx, strings.NewReader("module github.com/gomod/only"))
+	_ = facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
+		ModulePath: node.Path, ModuleVersion: node.Version,
+		PipelineVersion: "v1", GoModLocation: string(gh),
+	})
+
+	vulnStore := newFakeVulnStore()
+	fetcher := &fakeFetcher{}
+
+	uc := makePrefetchScanWalkUC(t, walkStore, vulnStore, facts, blobs, fetcher)
+
+	_, err := uc.Scan(ctx, application.ScanWalkParams{WalkID: walkID})
+	if err != nil {
+		t.Fatalf("Scan over a go.mod-only record: %v", err)
+	}
+
+	if !fetcher.wasFetched(node) {
+		t.Errorf("expected FetchModule to re-fetch the full artefact for the go.mod-only node %s", node)
+	}
+	if fetcher.wasFetchedGoModOnly(node) {
+		t.Errorf("prefetchMissing must use the full fetch, not the go.mod-only path, for node %s", node)
 	}
 }
 

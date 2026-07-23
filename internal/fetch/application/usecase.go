@@ -121,6 +121,15 @@ type FetchRequest struct {
 	// SkipVCSVerify skips the git cross-verification step; sumdb verification
 	// still runs. Useful when GitHub rate limits make git operations unreliable.
 	SkipVCSVerify bool
+	// GoModOnly acquires only the module's go.mod, not its zip. It fetches the
+	// .mod from the proxy, verifies its h1 against the checksum database go.mod
+	// hash, and persists a record with GoModLocation set and ContentLocation
+	// empty (a go.mod-only record, see domain.FactRecord.IsGoModOnly). It exists
+	// for module-graph resolution — reading a superseded version's requirements
+	// while rebuilding the graph — where the zip is never read. Such a record
+	// must never satisfy a scan that needs source; the full path re-fetches over
+	// it when a zip is required.
+	GoModOnly bool
 }
 
 // FetchResult is the output of Execute.
@@ -136,6 +145,9 @@ type FetchResult struct {
 func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ FetchResult, retErr error) {
 	if uc.modcache != nil {
 		return uc.executeModcache(ctx, req)
+	}
+	if req.GoModOnly {
+		return uc.executeGoModOnly(ctx, req)
 	}
 
 	traceID := ulid.Make().String()
@@ -155,15 +167,20 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 		)
 	}()
 
-	// Step 1: cache check.
+	// Step 1: cache check. A go.mod-only record does not satisfy the full path —
+	// this call needs the zip, so re-fetch over it and let PutFetchRecord upgrade
+	// the record in place. Any record with a zip is a hit.
 	if !req.Force {
 		existing, ok, err := uc.facts.GetFetchRecord(ctx, req.Coordinate, uc.pipelineVersion)
 		if err != nil {
 			return FetchResult{}, fmt.Errorf("checking cache: %w", err)
 		}
-		if ok {
+		if ok && !existing.IsGoModOnly() {
 			log.InfoContext(ctx, "cache_hit")
 			return FetchResult{Record: existing, FromCache: true}, nil
+		}
+		if ok {
+			log.InfoContext(ctx, "cache_upgrade_gomod_only_to_full")
 		}
 	}
 
@@ -273,6 +290,200 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 	}
 
 	return FetchResult{Record: record, FromCache: false}, nil
+}
+
+// executeGoModOnly is the go.mod-only counterpart to Execute: it fetches only
+// the module's go.mod, verifies its h1 against the checksum database go.mod hash
+// (the same anchor the full path uses for the zip), and persists a record whose
+// GoModLocation is set and whose ContentLocation is empty. No zip is downloaded,
+// hashed, stored, or VCS cross-verified — the version exists in the scan cache
+// purely so the toolchain can read its requirements while rebuilding a module
+// graph, never to be compiled or analysed. Verification is not optional: the
+// go.mod-only record carries the same chain of custody as a full one.
+func (uc *FetchModuleUseCase) executeGoModOnly(ctx context.Context, req FetchRequest) (_ FetchResult, retErr error) {
+	traceID := ulid.Make().String()
+	lap := uc.stopwatch.Start()
+
+	log := uc.logger.With(
+		slog.String("module_path", req.Coordinate.Path),
+		slog.String("module_version", req.Coordinate.Version),
+		slog.String("pipeline_version", uc.pipelineVersion),
+		slog.String("trace_id", traceID),
+		slog.Bool("go_mod_only", true),
+	)
+	log.InfoContext(ctx, "fetch_start")
+	defer func() {
+		log.InfoContext(ctx, "fetch_end", slog.Duration("duration", lap.Elapsed()))
+	}()
+
+	// Step 1: cache check. Any existing record — full or go.mod-only — already
+	// carries a verified go.mod, which is all this path needs.
+	if !req.Force {
+		existing, ok, err := uc.facts.GetFetchRecord(ctx, req.Coordinate, uc.pipelineVersion)
+		if err != nil {
+			return FetchResult{}, fmt.Errorf("checking cache: %w", err)
+		}
+		if ok {
+			log.InfoContext(ctx, "cache_hit")
+			return FetchResult{Record: existing, FromCache: true}, nil
+		}
+	}
+
+	// Step 2: download the go.mod alone — never the zip.
+	dl, err := uc.proxy.DownloadGoMod(ctx, req.Coordinate)
+	if err != nil {
+		return FetchResult{}, fmt.Errorf("proxy download go.mod: %w", err)
+	}
+	defer func() {
+		if cerr := dl.GoMod.Close(); cerr != nil && retErr == nil {
+			retErr = fmt.Errorf("closing go.mod reader: %w", cerr)
+		}
+	}()
+	goModData, err := io.ReadAll(dl.GoMod)
+	if err != nil {
+		return FetchResult{}, fmt.Errorf("reading go.mod: %w", err)
+	}
+	log.InfoContext(ctx, "download_ok", slog.Int("go_mod_bytes", len(goModData)))
+
+	// Step 2.5: cheap offline local go.sum cross-check of the go.mod hash. A
+	// present-but-disagreeing entry is a hard tamper failure with no blob stored
+	// and no record persisted, mirroring the full path.
+	goSumMatched, err := uc.checkProjectGoSumGoMod(ctx, log, req.Coordinate, dl)
+	if err != nil {
+		return FetchResult{}, err
+	}
+
+	// Step 3: store the go.mod blob (no zip blob).
+	goModHandle, err := uc.blobs.Put(ctx, newReader(goModData))
+	if err != nil {
+		return FetchResult{}, fmt.Errorf("storing go.mod blob: %w", err)
+	}
+	log.InfoContext(ctx, "go_mod_blob_stored", slog.String("handle", string(goModHandle)))
+
+	// Step 4: verify the go.mod h1 against the checksum database.
+	verStatus, verDetail, retracted := uc.verifyGoModOnly(ctx, log, req.Coordinate, dl, goModData, goSumMatched)
+
+	// Sign the received go.mod over its canonical content digest, after
+	// verification. There is no zip to sign; the go.mod is the artefact received.
+	if err := uc.sign(ctx, log, req.Coordinate, domain2.SubjectBlob, domain2.ContentDigest(goModData)); err != nil {
+		return FetchResult{}, err
+	}
+
+	// Step 5: construct the go.mod-only FactRecord. ModuleHash, Digests, git
+	// provenance, and ContentLocation are deliberately zero/empty.
+	m := domain2.FetchedModule{
+		Coordinate:         req.Coordinate,
+		GoModHash:          dl.GoModHash,
+		VerificationStatus: verStatus,
+		VerificationDetail: verDetail,
+		FetchedAt:          uc.clock.Now().UTC(),
+		PipelineVersion:    uc.pipelineVersion,
+		GoModLocation:      string(goModHandle),
+		Retracted:          retracted,
+	}
+	record := domain2.NewFactRecord(m)
+
+	record, err = uc.hasher.SetContentHash(record)
+	if err != nil {
+		return FetchResult{}, fmt.Errorf("computing content hash: %w", err)
+	}
+
+	// Step 6: persist. Idempotent on (path, version, pipeline): a later full
+	// fetch overwrites this record in place.
+	if err := uc.facts.PutFetchRecord(ctx, record); err != nil {
+		return FetchResult{}, fmt.Errorf("persisting fact record: %w", err)
+	}
+	log.InfoContext(ctx, "record_persisted",
+		slog.String("verification_status", string(verStatus)),
+		slog.String("content_hash", record.ContentHash),
+	)
+
+	if err := uc.sign(ctx, log, req.Coordinate, domain2.SubjectFact, record.ContentHash); err != nil {
+		return FetchResult{}, err
+	}
+
+	return FetchResult{Record: record, FromCache: false}, nil
+}
+
+// verifyGoModOnly verifies a go.mod-only fetch's h1 against the checksum
+// database, the go.mod-only analogue of verify. There is no zip, no
+// version-prefix check, and no VCS cross-verification (nothing to reproduce);
+// the anchor is the checksum database "<version>/go.mod" hash, elevated to
+// VerifiedByGoSum when the network database is unavailable but the walk root's
+// local go.sum already confirmed the go.mod.
+func (uc *FetchModuleUseCase) verifyGoModOnly(
+	ctx context.Context,
+	log *slog.Logger,
+	coord coordinate.ModuleCoordinate,
+	dl ports.GoModDownload,
+	goModData []byte,
+	goSumMatched bool,
+) (domain2.VerificationStatus, string, bool) {
+	retracted := parseRetracted(goModData, coord.Version)
+	if retracted {
+		log.InfoContext(ctx, "retracted_version_detected")
+	}
+
+	if dl.InsecureTransport {
+		return domain2.UnverifiedNoSumDB,
+			"go.mod-only fetch; insecure transport (HTTP proxy); integrity guarantees are weakened",
+			retracted
+	}
+
+	res := uc.sumdb.Lookup(ctx, coord)
+	if res.Available {
+		log.InfoContext(ctx, "sumdb_ok",
+			slog.String("sumdb_go_mod_hash", res.GoModHash.String()),
+			slog.String("computed_go_mod_hash", dl.GoModHash.String()),
+		)
+		switch {
+		case res.GoModHash.IsZero():
+			// The database returned no go.mod hash line (rare). Fall back to the
+			// local go.sum signal rather than manufacturing a pass from absence.
+			if goSumMatched {
+				return domain2.VerifiedByGoSum,
+					"go.mod-only fetch; go.mod verified against local go.sum; checksum database returned no go.mod hash",
+					retracted
+			}
+			return domain2.UnverifiedNoSumDB,
+				"go.mod-only fetch; checksum database returned no go.mod hash", retracted
+		case !res.GoModHash.Equal(dl.GoModHash):
+			return domain2.UnverifiedHashMismatch,
+				fmt.Sprintf("go.mod-only fetch; sumdb expects go.mod %s but computed %s", res.GoModHash, dl.GoModHash),
+				retracted
+		default:
+			return domain2.VerifiedBySumDBOnly,
+				"go.mod-only fetch; go.mod h1 matches checksum database (zip not fetched)", retracted
+		}
+	}
+
+	log.InfoContext(ctx, "sumdb_unavailable", slog.String("reason", res.Reason))
+	if goSumMatched {
+		return domain2.VerifiedByGoSum,
+			"go.mod-only fetch; go.mod verified against local go.sum; network checksum database unavailable: "+res.Reason,
+			retracted
+	}
+	return domain2.UnverifiedNoSumDB, "go.mod-only fetch; "+res.Reason, retracted
+}
+
+// checkProjectGoSumGoMod cross-checks a go.mod-only fetch's go.mod h1 against
+// the walk root's local go.sum, the go.mod-only analogue of checkProjectGoSum.
+// A present entry whose go.mod hash disagrees is a hard tamper failure; an
+// absent entry (or no verifier) falls through to network checksum verification.
+func (uc *FetchModuleUseCase) checkProjectGoSumGoMod(ctx context.Context, log *slog.Logger, coord coordinate.ModuleCoordinate, dl ports.GoModDownload) (bool, error) {
+	if uc.goSum == nil {
+		return false, nil
+	}
+	res := uc.goSum.Lookup(ctx, coord)
+	if !res.Available {
+		return false, nil
+	}
+	if !res.GoModHash.IsZero() && !res.GoModHash.Equal(dl.GoModHash) {
+		return false, fmt.Errorf("%w: %s: local go.sum expects go.mod %s but computed %s",
+			ErrGoSumVerification, coord, res.GoModHash, dl.GoModHash)
+	}
+	log.InfoContext(ctx, "project_gosum_verified", slog.String("go_mod_hash", dl.GoModHash.String()))
+	return true, nil
 }
 
 // sign invokes the injected Signer over a "sha256:<hex>" subject digest and

@@ -96,6 +96,60 @@ func TestExecuteModcache_SuccessRecordsDerivedHandles(t *testing.T) {
 	}
 }
 
+func TestExecuteGoModOnlyModcache_RecordsGoModOnly(t *testing.T) {
+	coord := modcacheCoord(t)
+	goModHash := domain2.ModuleHash{Algorithm: "h1", Value: "mod-abc="}
+
+	facts := newFakeFacts()
+	uc := newUseCaseWithSumDB(
+		downloadWithHashes(coord, domain2.ModuleHash{Algorithm: "h1", Value: "zip-unused="}, goModHash),
+		&fakeVCS{}, noPutBlob{t}, facts,
+		// modcache verification consults only the go.mod hash on this path.
+		&fakeSumDB{result: ports.SumDBResult{Available: true, GoModHash: goModHash}},
+	).WithModcache(fakeDeriver{})
+
+	res, err := uc.Execute(context.Background(), application.FetchRequest{Coordinate: coord, GoModOnly: true})
+	if err != nil {
+		t.Fatalf("Execute go.mod-only (modcache): %v", err)
+	}
+	if !res.Record.IsGoModOnly() {
+		t.Errorf("expected a go.mod-only record, got ContentLocation=%q GoModLocation=%q",
+			res.Record.ContentLocation, res.Record.GoModLocation)
+	}
+	if res.Record.ContentLocation != "" {
+		t.Errorf("go.mod-only record must have empty ContentLocation, got %q", res.Record.ContentLocation)
+	}
+	if got, want := res.Record.GoModLocation, "modcache:mod:"+coord.String(); got != want {
+		t.Errorf("GoModLocation = %q, want %q", got, want)
+	}
+	if got, want := res.Record.VerificationStatus, string(domain2.VerifiedBySumDBOnly); got != want {
+		t.Errorf("VerificationStatus = %q, want %q", got, want)
+	}
+	if _, ok, _ := facts.GetFetchRecord(context.Background(), coord, "test-0.1.0"); !ok {
+		t.Errorf("fact record was not persisted")
+	}
+}
+
+func TestExecuteGoModOnlyModcache_GoModHashMismatchHardFails(t *testing.T) {
+	coord := modcacheCoord(t)
+	goModHash := domain2.ModuleHash{Algorithm: "h1", Value: "mod-abc="}
+	facts := newFakeFacts()
+	uc := newUseCaseWithSumDB(
+		downloadWithHashes(coord, domain2.ModuleHash{Algorithm: "h1", Value: "zip-unused="}, goModHash),
+		&fakeVCS{}, noPutBlob{t}, facts,
+		// go.sum records a different go.mod hash → hard tamper failure, no record.
+		&fakeSumDB{result: ports.SumDBResult{Available: true, GoModHash: domain2.ModuleHash{Algorithm: "h1", Value: "different=="}}},
+	).WithModcache(fakeDeriver{})
+
+	_, err := uc.Execute(context.Background(), application.FetchRequest{Coordinate: coord, GoModOnly: true})
+	if !errors.Is(err, application.ErrGoSumVerification) {
+		t.Fatalf("expected ErrGoSumVerification on go.mod hash mismatch, got %v", err)
+	}
+	if _, ok, _ := facts.GetFetchRecord(context.Background(), coord, "test-0.1.0"); ok {
+		t.Errorf("a record must not be persisted when go.sum verification fails")
+	}
+}
+
 func TestExecuteModcache_ZipHashMismatchHardFails(t *testing.T) {
 	coord := modcacheCoord(t)
 	computed := domain2.ModuleHash{Algorithm: "h1", Value: "computed="}

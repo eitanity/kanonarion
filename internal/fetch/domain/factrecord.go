@@ -80,6 +80,20 @@ func (r FactRecord) Coordinate() coordinate.ModuleCoordinate {
 	return coordinate.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}
 }
 
+// IsGoModOnly reports whether this record was produced by the go.mod-only
+// acquisition path: its go.mod is stored and verified but its module zip was
+// never fetched, so ContentLocation is empty while GoModLocation is set.
+//
+// Such a record exists purely so the toolchain can read a superseded version's
+// requirements while rebuilding a module graph; the version is never compiled
+// and its source is never analysed. It therefore satisfies a caller that reads
+// only go.mod (module-graph resolution) but MUST NOT satisfy a scan that needs
+// source — a consumer of ContentLocation must treat it as absent and re-fetch
+// the full artefact rather than silently degrade the scan to metadata-only.
+func (r FactRecord) IsGoModOnly() bool {
+	return r.ContentLocation == "" && r.GoModLocation != ""
+}
+
 // RecordDigests projects a fact record's persisted digest fields onto an
 // ArtifactDigests value. It is a free function rather than a method so the
 // graduated read-shaped result alias does not grow behaviour. The zero value is

@@ -133,6 +133,34 @@ func (p *Proxy) Download(ctx context.Context, coord coordinate.ModuleCoordinate)
 	}, nil
 }
 
+// DownloadGoMod reads only the module's go.mod from the cache (fetching it
+// first if absent) and returns it with the h1 hash computed from the bytes. It
+// is the go.mod-only counterpart to Download: it never reads or hashes the zip.
+func (p *Proxy) DownloadGoMod(ctx context.Context, coord coordinate.ModuleCoordinate) (ports.GoModDownload, error) {
+	base, err := p.entryBase(coord)
+	if err != nil {
+		return ports.GoModDownload{}, err
+	}
+	goModBytes, err := p.readOrDownload(ctx, coord, base+".mod")
+	if err != nil {
+		return ports.GoModDownload{}, fmt.Errorf("reading module-cache go.mod for %s: %w", coord, err)
+	}
+	goModHashStr, err := dirhash.Hash1([]string{"go.mod"}, func(string) (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(goModBytes)), nil
+	})
+	if err != nil {
+		return ports.GoModDownload{}, fmt.Errorf("computing go.mod hash for %s: %w", coord, err)
+	}
+	goModHash, err := domain2.ParseModuleHash(goModHashStr)
+	if err != nil {
+		return ports.GoModDownload{}, fmt.Errorf("parsing go.mod hash for %s: %w", coord, err)
+	}
+	return ports.GoModDownload{
+		GoMod:     io.NopCloser(bytes.NewReader(goModBytes)),
+		GoModHash: goModHash,
+	}, nil
+}
+
 // entryBase returns the "@v/<version>" path prefix for a coordinate inside the
 // module cache. Callers append the entry suffix (.info, .mod, .zip).
 func (p *Proxy) entryBase(coord coordinate.ModuleCoordinate) (string, error) {

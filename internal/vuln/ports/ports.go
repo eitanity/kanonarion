@@ -210,7 +210,15 @@ type VulnerabilityDatabase interface {
 // ModuleFetcher is a narrow port used by ScanWalkUseCase to pre-fetch modules
 // that are missing from the fact store before populating the GOMODCACHE.
 type ModuleFetcher interface {
+	// FetchModule acquires the full module artefact (zip + go.mod), the source a
+	// scan analyses.
 	FetchModule(ctx context.Context, coord coordinate.ModuleCoordinate) error
+	// FetchModuleGoMod acquires only the module's go.mod, persisting a go.mod-only
+	// record (see fetch domain FactRecord.IsGoModOnly). It is used to populate the
+	// go.mod closure a pre-pruning module reads while rebuilding its module graph:
+	// those versions are never compiled, so downloading their zips is discarded
+	// work.
+	FetchModuleGoMod(ctx context.Context, coord coordinate.ModuleCoordinate) error
 }
 
 // ReachabilityAnalyser defines the port for call-graph-based reachability analysis.

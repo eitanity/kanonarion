@@ -27,3 +27,13 @@ func (a *FetchModuleAdapter) FetchModule(ctx context.Context, coord coordinate.M
 	}
 	return nil
 }
+
+// FetchModuleGoMod acquires only the module's go.mod, ignoring the result beyond
+// success/failure. It persists a go.mod-only record for module-graph resolution.
+func (a *FetchModuleAdapter) FetchModuleGoMod(ctx context.Context, coord coordinate.ModuleCoordinate) error {
+	_, err := a.uc.Execute(ctx, fetchapp.FetchRequest{Coordinate: coord, GoModOnly: true})
+	if err != nil {
+		return fmt.Errorf("fetching go.mod for %s: %w", coord, err)
+	}
+	return nil
+}

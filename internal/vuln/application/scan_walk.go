@@ -591,17 +591,51 @@ func (uc *ScanWalkUseCase) prefetchMissing(ctx context.Context, coords []coordin
 		if ctx.Err() != nil {
 			return
 		}
-		_, ok, err := uc.moduleScanner.getFetchRecord(ctx, coord)
+		fact, ok, err := uc.moduleScanner.getFetchRecord(ctx, coord)
 		if err != nil {
 			uc.logger.Warn("pre-fetch: error checking fact store", "module", coord, "error", err)
 			continue
 		}
-		if ok {
+		// A go.mod-only record holds no zip, so it does not satisfy the source a
+		// scan needs. Re-fetch the full artefact; Execute upgrades the record in
+		// place. Only a record with a zip lets us skip the fetch.
+		if ok && !fact.IsGoModOnly() {
 			continue
 		}
 		uc.logger.Info("pre-fetch: fetching missing module", "module", coord)
 		if ferr := uc.fetcher.FetchModule(ctx, coord); ferr != nil {
 			uc.logger.Warn("pre-fetch: failed to fetch module", "module", coord, "error", ferr)
+		}
+	}
+}
+
+// prefetchGoModOnly fetches the go.mod — and only the go.mod — of any coordinate
+// absent from the fact store. It is the go.mod closure's fetch callback: those
+// versions exist in the scan cache purely so the toolchain can read their
+// requirements while rebuilding a module graph, never to be compiled, so
+// downloading their zips (as prefetchMissing does) is discarded work. Any
+// existing record — full or go.mod-only — already carries the go.mod, so its
+// coordinate is skipped. Errors are logged as warnings; individual failures do
+// not abort the scan.
+func (uc *ScanWalkUseCase) prefetchGoModOnly(ctx context.Context, coords []coordinate.ModuleCoordinate) {
+	if uc.fetcher == nil {
+		return
+	}
+	for _, coord := range coords {
+		if ctx.Err() != nil {
+			return
+		}
+		_, ok, err := uc.moduleScanner.getFetchRecord(ctx, coord)
+		if err != nil {
+			uc.logger.Warn("pre-fetch(go.mod-only): error checking fact store", "module", coord, "error", err)
+			continue
+		}
+		if ok {
+			continue
+		}
+		uc.logger.Info("pre-fetch(go.mod-only): fetching missing module go.mod", "module", coord)
+		if ferr := uc.fetcher.FetchModuleGoMod(ctx, coord); ferr != nil {
+			uc.logger.Warn("pre-fetch(go.mod-only): failed to fetch module go.mod", "module", coord, "error", ferr)
 		}
 	}
 }
@@ -650,7 +684,7 @@ func (uc *ScanWalkUseCase) populatePrePruningGoMods(ctx context.Context, graph w
 	report := modcache.PopulateGoModClosure(
 		ctx, uc.moduleScanner.factStore, uc.moduleScanner.blobs, cacheDir,
 		seeds, uc.moduleScanner.fetchPipelineVersion,
-		func(ctx context.Context, batch []coordinate.ModuleCoordinate) { uc.prefetchMissing(ctx, batch) },
+		func(ctx context.Context, batch []coordinate.ModuleCoordinate) { uc.prefetchGoModOnly(ctx, batch) },
 	)
 	uc.logger.Info("populated pre-pruning module-graph go.mod files for offline resolution",
 		"written", report.Written, "reached", report.Requested, "roots", len(roots))

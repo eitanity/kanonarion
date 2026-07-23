@@ -143,7 +143,7 @@ func TestResultTypes_TableNamesUnique(t *testing.T) {
 // behaviourMethodMarkers rejects outright regardless of this list).
 var allowedResultMethods = map[string][]string{
 	"ModuleCoordinate":    {"ExtractCommitPrefix", "IsLocal", "IsPseudoVersion", "MarshalJSON", "MarshalText", "String", "UnmarshalJSON", "UnmarshalText"},
-	"FactRecord":          {"Coordinate"},
+	"FactRecord":          {"Coordinate", "IsGoModOnly"},
 	"WalkRecord":          {},
 	"LicenseRecord":       {"SortFiles"},
 	"InterfaceRecord":     {"Sort"},

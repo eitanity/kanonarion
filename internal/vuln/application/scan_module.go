@@ -160,6 +160,21 @@ func (uc *ScanModuleUseCase) WithLocalFetchPipelineVersion(v string) *ScanModule
 	return uc
 }
 
+// metadataOnlyNote returns the note recorded on a metadata-only scan, naming why
+// no source was analysed: the stdlib is toolchain-provided and resolved by
+// coordinate; a go.mod-only record carries no source; otherwise the module was
+// never fetched (a shallow walk).
+func metadataOnlyNote(coord coordinate.ModuleCoordinate, goModOnly bool) string {
+	switch {
+	case coord.Path == domain.StdlibModulePath:
+		return "Go standard library (toolchain-provided); advisories resolved from OSV metadata by coordinate"
+	case goModOnly:
+		return "metadata-only: only go.mod fetched for module-graph resolution; module source not retrieved"
+	default:
+		return "metadata-only: module not fetched (shallow walk)"
+	}
+}
+
 // getFetchRecord looks up the FactRecord for coord under the fetch pipeline
 // version first (a proxy-verified record always wins), then the local-ingest
 // pipeline version.
@@ -254,20 +269,19 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 	if err != nil {
 		return domain.VulnerabilityRecord{}, fmt.Errorf("getting fetch record: %w", err)
 	}
-	if !ok {
-		// Module not in the blob store (e.g. a node from a shallow walk).
-		// Fall back to OSV metadata: check module coordinates against the vuln DB
-		// without govulncheck. Records marked metadata-only have no AffectedSymbols
-		// and nil Reachable, signalling that call-graph analysis was not performed.
-		// A coordinate with no matching advisory is a real answer here, so the
-		// empty status is Clean.
-		note := "metadata-only: module not fetched (shallow walk)"
-		if params.Coordinate.Path == domain.StdlibModulePath {
-			// The standard library is toolchain-provided, never fetched as a module.
-			// Its advisories are resolved from OSV metadata by coordinate — the
-			// definitive verdict for stdlib, not a coverage-gap fallback.
-			note = "Go standard library (toolchain-provided); advisories resolved from OSV metadata by coordinate"
-		}
+	// A go.mod-only record holds no zip; using it as source would silently
+	// degrade this scan to metadata-only. It must not satisfy the source path —
+	// treat it like an absent record so the fallback is explicit rather than a
+	// scan that quietly analysed nothing. The full path re-fetches the zip (see
+	// prefetchMissing) before a node is scanned, so this is a defensive guard.
+	if !ok || fact.IsGoModOnly() {
+		// Module not in the blob store (e.g. a node from a shallow walk), or held
+		// only as a go.mod (module-graph resolution). Fall back to OSV metadata:
+		// check module coordinates against the vuln DB without govulncheck. Records
+		// marked metadata-only have no AffectedSymbols and nil Reachable, signalling
+		// that call-graph analysis was not performed. A coordinate with no matching
+		// advisory is a real answer here, so the empty status is Clean.
+		note := metadataOnlyNote(params.Coordinate, ok && fact.IsGoModOnly())
 		return uc.scanMetadataOnly(ctx, params, snapshot, note, "", "", domain.StatusClean)
 	}
 

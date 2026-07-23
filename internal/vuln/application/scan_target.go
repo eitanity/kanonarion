@@ -57,10 +57,11 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 			"target", target, "error", err)
 		return false
 	}
-	if !ok {
+	if !ok || fact.IsGoModOnly() {
 		// A shallow walk holds no zip for the target, so there is nothing to root
-		// the analysis at. The isolated path is the honest answer here.
-		uc.logger.Info("target-rooted scan: target module not in the blob store, falling back to isolated scans",
+		// the analysis at. A go.mod-only record likewise carries no source. Either
+		// way the isolated path is the honest answer here.
+		uc.logger.Info("target-rooted scan: target module has no source in the blob store, falling back to isolated scans",
 			"target", target)
 		return false
 	}

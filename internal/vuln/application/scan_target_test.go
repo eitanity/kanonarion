@@ -21,6 +21,7 @@ type targetScanFixture struct {
 	scanner   *fakeScanner
 	vulnStore *fakeVulnStore
 	db        *fakeDatabase
+	facts     *fakeFacts
 	target    coordinate.ModuleCoordinate
 	depA      coordinate.ModuleCoordinate
 	depB      coordinate.ModuleCoordinate
@@ -81,7 +82,7 @@ func newTargetScanFixture(t *testing.T, scanner *fakeScanner, fetchedCoords ...c
 	)
 
 	return targetScanFixture{
-		walkUC: walkUC, scanner: scanner, vulnStore: vulnStore, db: db,
+		walkUC: walkUC, scanner: scanner, vulnStore: vulnStore, db: db, facts: facts,
 		target: target, depA: depA, depB: depB, walkID: walkID,
 	}
 }
@@ -372,6 +373,36 @@ func TestScanWalk_CoordinateKeyed_FallsBackWhenTargetSourceIsAbsent(t *testing.T
 	}
 	if scanner.scanCalls == 0 {
 		t.Error("expected the isolated path to answer when the target's source is absent")
+	}
+}
+
+// TestScanWalk_CoordinateKeyed_FallsBackWhenTargetIsGoModOnly covers a target
+// held only as a go.mod (no zip): its record carries no source, so the
+// target-rooted scan must not be attempted — the isolated path answers instead,
+// exactly as for an absent target.
+func TestScanWalk_CoordinateKeyed_FallsBackWhenTargetIsGoModOnly(t *testing.T) {
+	ctx := t.Context()
+	scanner := &fakeScanner{targetRooted: true}
+	f := newTargetScanFixture(t, scanner)
+	f.markAllVulnerable()
+
+	// Overwrite the target's record with a go.mod-only one: GoModLocation set,
+	// ContentLocation empty.
+	if err := f.facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
+		ModulePath: f.target.Path, ModuleVersion: f.target.Version,
+		PipelineVersion: "v1", GoModLocation: "gomod-only-handle",
+	}); err != nil {
+		t.Fatalf("PutFetchRecord: %v", err)
+	}
+
+	if _, err := f.walkUC.Scan(ctx, application.ScanWalkParams{WalkID: f.walkID, Operator: "tester"}); err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if scanner.targetCalls != 0 {
+		t.Errorf("target-rooted scan was attempted against a go.mod-only target; calls = %d", scanner.targetCalls)
+	}
+	if scanner.scanCalls == 0 {
+		t.Error("expected the isolated path to answer when the target has no source")
 	}
 }
 

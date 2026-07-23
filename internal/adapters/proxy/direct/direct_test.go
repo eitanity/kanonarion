@@ -6,6 +6,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -158,6 +159,58 @@ func TestProxy_Download(t *testing.T) {
 	}
 	if dl.GoModHash.Algorithm != "h1" || dl.GoModHash.Value == "" {
 		t.Errorf("GoModHash = %v, want non-empty h1 hash", dl.GoModHash)
+	}
+}
+
+func TestProxy_DownloadGoMod_FetchesOnlyGoMod(t *testing.T) {
+	modPath, version := "github.com/gorilla/mux", "v1.8.1"
+	goModContent := fmt.Sprintf("module %s\n\ngo 1.13\n", modPath)
+
+	var zipHits, modHits int
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch {
+		case matchSuffix(r.URL.Path, ".mod"):
+			modHits++
+			if _, err := fmt.Fprint(w, goModContent); err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+			}
+		case matchSuffix(r.URL.Path, ".zip"):
+			zipHits++
+			http.Error(w, "go.mod-only path must not fetch the zip", http.StatusInternalServerError)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	p, err := proxyadapter.New(srv.URL, true)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	coord := coordinate.ModuleCoordinate{Path: modPath, Version: version}
+
+	dl, err := p.DownloadGoMod(context.Background(), coord)
+	if err != nil {
+		t.Fatalf("DownloadGoMod: %v", err)
+	}
+	defer func() {
+		if err := dl.GoMod.Close(); err != nil {
+			t.Errorf("GoMod.Close: %v", err)
+		}
+	}()
+
+	if zipHits != 0 {
+		t.Errorf("zip endpoint was hit %d times; the go.mod-only path must never fetch the zip", zipHits)
+	}
+	if modHits != 1 {
+		t.Errorf(".mod endpoint hit %d times, want 1", modHits)
+	}
+	if dl.GoModHash.Algorithm != "h1" || dl.GoModHash.Value == "" {
+		t.Errorf("GoModHash = %v, want non-empty h1 hash", dl.GoModHash)
+	}
+	body, _ := io.ReadAll(dl.GoMod)
+	if string(body) != goModContent {
+		t.Errorf("go.mod bytes = %q, want %q", body, goModContent)
 	}
 }
 
