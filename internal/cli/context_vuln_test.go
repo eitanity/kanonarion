@@ -82,6 +82,27 @@ func cln(c coordinate.ModuleCoordinate) vuldomain.VulnerabilityRecord {
 	return vuldomain.VulnerabilityRecord{Coordinate: c, OverallStatus: vuldomain.StatusClean}
 }
 
+// TestVulnRecordToContext_CarriesScanProvenance pins that the snapshot and
+// pipeline versions that produced a verdict reach the context struct, so every
+// rendering surface can name the data and the analysis behind the verdict.
+func TestVulnRecordToContext_CarriesScanProvenance(t *testing.T) {
+	rec := vuldomain.VulnerabilityRecord{
+		Coordinate:       mustContextCoord(t),
+		OverallStatus:    vuldomain.StatusClean,
+		PipelineVersion:  "0.10.0",
+		DatabaseSnapshot: vuldomain.DatabaseSnapshot{Version: "2026-07-08T17:05:00Z"},
+	}
+
+	v := vulnRecordToContext(&rec, "")
+
+	if v.SnapshotVersion != "2026-07-08T17:05:00Z" {
+		t.Errorf("SnapshotVersion = %q, want %q", v.SnapshotVersion, "2026-07-08T17:05:00Z")
+	}
+	if v.PipelineVersion != "0.10.0" {
+		t.Errorf("PipelineVersion = %q, want %q", v.PipelineVersion, "0.10.0")
+	}
+}
+
 // aff builds an Affected vuln record for a coordinate.
 func aff(c coordinate.ModuleCoordinate) vuldomain.VulnerabilityRecord {
 	return vuldomain.VulnerabilityRecord{Coordinate: c, OverallStatus: vuldomain.StatusAffected}

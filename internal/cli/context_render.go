@@ -244,9 +244,28 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 			line += " " + ann
 		}
 		w.printf("  Vulnerabilities: %s\n", line)
+		printScanProvenance(w, out.Vulnerabilities)
 	}
 
 	return w.err
+}
+
+// printScanProvenance names the advisory snapshot and the vuln-scan pipeline
+// behind the verdict on the line beneath it. A verdict is only meaningful
+// relative to the database and the analysis that produced it — "Clean" against
+// a stale snapshot, or from a pipeline that reported no source findings, is a
+// different claim from "Clean" today. Each fact is printed only when present,
+// so a scan that recorded neither stays silent rather than showing empty
+// fields.
+func printScanProvenance(w *errWriter, v contextVulnerabilities) {
+	switch {
+	case v.SnapshotVersion != "" && v.PipelineVersion != "":
+		w.printf("  Snapshot:        %s (pipeline %s)\n", v.SnapshotVersion, v.PipelineVersion)
+	case v.SnapshotVersion != "":
+		w.printf("  Snapshot:        %s\n", v.SnapshotVersion)
+	case v.PipelineVersion != "":
+		w.printf("  Pipeline:        %s\n", v.PipelineVersion)
+	}
 }
 
 // walkAnnotation renders the inline walk-level note appended to a module's

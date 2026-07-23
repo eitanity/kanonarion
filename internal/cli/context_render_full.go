@@ -284,6 +284,9 @@ func printFullVulnerabilities(w *errWriter, v contextVulnerabilities, cmd contex
 		if v.SnapshotVersion != "" {
 			w.printf("Snapshot:     %s\n", v.SnapshotVersion)
 		}
+		if v.PipelineVersion != "" {
+			w.printf("Pipeline:     %s\n", v.PipelineVersion)
+		}
 		if v.SnapshotRetrievedAt != "" {
 			w.printf("Snapshot Age: retrieved %s (%d day(s) old at validation)\n", v.SnapshotRetrievedAt, v.SnapshotAgeDays)
 		}

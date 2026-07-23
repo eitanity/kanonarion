@@ -205,6 +205,7 @@ func vulnRecordToContext(rec *vuldomain.VulnerabilityRecord, walkStatus string) 
 		WalkID:          rec.WalkID,
 		LastValidatedAt: isoTime(rec.ScannedAt),
 		SnapshotVersion: rec.DatabaseSnapshot.Version,
+		PipelineVersion: rec.PipelineVersion,
 	}
 	if !rec.FirstScannedAt.IsZero() {
 		out.FirstValidatedAt = isoTime(rec.FirstScannedAt)
