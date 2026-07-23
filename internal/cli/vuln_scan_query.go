@@ -15,7 +15,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newVulnScanListCmd(stdout, _ io.Writer) *cobra.Command {
+func newVulnScanListCmd(stdout, stderr io.Writer) *cobra.Command {
 	var limit int
 
 	cmd := &cobra.Command{
@@ -29,7 +29,7 @@ func newVulnScanListCmd(stdout, _ io.Writer) *cobra.Command {
 			if len(args) == 1 {
 				walkID = args[0]
 			}
-			logger := buildLogger(logLevel, stdout)
+			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
@@ -89,7 +89,7 @@ func runScanList(ctx context.Context, walkID string, limit int, uc QueryScanRuns
 	return nil
 }
 
-func newVulnScanShowCmd(stdout, _ io.Writer) *cobra.Command {
+func newVulnScanShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "vuln-scan-show <run-id>",
 		Short: "Show details of a walk scan run",
@@ -97,7 +97,7 @@ func newVulnScanShowCmd(stdout, _ io.Writer) *cobra.Command {
   kanonarion vuln-scan-show 01KQDBVW092ER1HNXZ60X27CMD --json`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			logger := buildLogger(logLevel, stdout)
+			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
@@ -236,7 +236,7 @@ func buildScanAffectedModules(ctx context.Context, run vuldomain.WalkScanRun, uc
 }
 
 // newVulnScanHistoryCmd returns the vuln-scan-history command.
-func newVulnScanHistoryCmd(stdout, _ io.Writer) *cobra.Command {
+func newVulnScanHistoryCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "vuln-scan-history <walk-id>",
 		Short: "List every scan run for a walk in chronological order",
@@ -244,7 +244,7 @@ func newVulnScanHistoryCmd(stdout, _ io.Writer) *cobra.Command {
   kanonarion vuln-scan-history 01KQDBVW092ER1HNXZ60X27CMD --json`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			logger := buildLogger(logLevel, stdout)
+			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
@@ -262,17 +262,23 @@ func runScanHistory(ctx context.Context, walkID string, jsonOut bool, uc QuerySc
 	if err != nil {
 		return fmt.Errorf("listing scan runs: %w", err)
 	}
-	if len(runs) == 0 {
-		_, _ = fmt.Fprintf(stdout, "no scan runs found for walk %s\n", walkID)
-		return nil
-	}
-
+	// The empty case is answered on the caller's own channel: under --json an
+	// empty array, never a human sentence that fails to parse. Only the text
+	// path gets the prose.
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
+		if runs == nil {
+			runs = []vuldomain.WalkScanRun{}
+		}
 		if err := enc.Encode(runs); err != nil {
 			return fmt.Errorf("encoding scan runs: %w", err)
 		}
+		return nil
+	}
+
+	if len(runs) == 0 {
+		_, _ = fmt.Fprintf(stdout, "no scan runs found for walk %s\n", walkID)
 		return nil
 	}
 
@@ -290,7 +296,7 @@ func runScanHistory(ctx context.Context, walkID string, jsonOut bool, uc QuerySc
 }
 
 // newVulnScanDiffCmd returns the vuln-scan-diff command.
-func newVulnScanDiffCmd(stdout, _ io.Writer) *cobra.Command {
+func newVulnScanDiffCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "vuln-scan-diff <run-id-a> <run-id-b>",
 		Short: "Compare two scan runs of the same walk",
@@ -302,7 +308,7 @@ func newVulnScanDiffCmd(stdout, _ io.Writer) *cobra.Command {
   kanonarion vuln-scan-diff vscan-01ABC vscan-01DEF --json`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			logger := buildLogger(logLevel, stdout)
+			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)

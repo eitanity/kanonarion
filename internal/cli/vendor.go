@@ -52,6 +52,30 @@ type vendorSection struct {
 	Findings        []vendorFinding `json:"findings"`
 }
 
+// vendorStatusNotVendored is the overall status for a project with no vendor
+// tree. It is deliberately distinct from the domain's "clean" and "findings":
+// those both mean reconciliation ran, and reporting an absent vendor tree as
+// clean would present a gap as a verified result.
+const vendorStatusNotVendored = "not_vendored"
+
+// notVendoredSection is the section emitted when the project has no
+// vendor/modules.txt. Modules and Findings are empty arrays rather than nil so
+// the document a caller parses has the same shape as a populated one, and
+// neither collection decodes as null. Project is left empty because the scan
+// never established the module path — stating a value here would be inventing
+// one.
+func notVendoredSection(vendorOnly bool) vendorSection {
+	return vendorSection{
+		SchemaVersion:   vendomain.VendorSchemaVersion,
+		Ecosystem:       vendomain.EcosystemGo,
+		PipelineVersion: vendomain.PipelineVersion,
+		VendorOnly:      vendorOnly,
+		OverallStatus:   vendorStatusNotVendored,
+		Modules:         []vendorModule{},
+		Findings:        []vendorFinding{},
+	}
+}
+
 // toVendorSection projects a domain record into the JSON section. Shared by
 // the `vendor` command and the `inspect` aggregate.
 func toVendorSection(rec vendomain.Record) vendorSection {
@@ -134,6 +158,19 @@ func runVendor(ctx context.Context, gomodFlag string, vendorOnly bool, stdout, s
 	rec, err := ctr.ExtractVendor.Extract(ctx, gomodPath, vendorOnly, activeConfig.VendorPolicy)
 	if err != nil {
 		if errors.Is(err, vendports.ErrNotVendored) {
+			// An unvendored project is its own answer, and it is answered on
+			// the caller's own channel: a section under --json, prose only on
+			// the text path. The status is not "clean" — clean asserts that
+			// reconciliation ran and found nothing, which would present an
+			// absent vendor tree as a verified one.
+			if jsonOut {
+				enc := json.NewEncoder(stdout)
+				enc.SetIndent("", "  ")
+				if encErr := enc.Encode(notVendoredSection(vendorOnly)); encErr != nil {
+					return fmt.Errorf("encoding vendor: %w", encErr)
+				}
+				return nil
+			}
 			_, _ = fmt.Fprintf(stdout, "project is not vendored (no vendor/modules.txt); nothing to reconcile\n")
 			return nil
 		}

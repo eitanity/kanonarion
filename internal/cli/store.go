@@ -195,7 +195,7 @@ type configCGResult struct {
 	Exclude []string `json:"exclude"`
 }
 
-func newStoreConfigShowCmd(stdout, _ io.Writer) *cobra.Command {
+func newStoreConfigShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	return &cobra.Command{
 		Use:   "show",
 		Short: "Show the effective configuration for this store",

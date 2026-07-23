@@ -141,7 +141,19 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	if err != nil {
 		return fmt.Errorf("resolving %s scope: %w", scope, err)
 	}
+	// An empty scope is a valid answer, not an error, and it is answered on
+	// the caller's own channel: an empty array under --json, prose only on the
+	// text path. Answered here, before the store and proxy are opened, because
+	// there is nothing to audit either way.
 	if len(coords) == 0 {
+		if jsonOut {
+			enc := json.NewEncoder(stdout)
+			enc.SetIndent("", "  ")
+			if err := enc.Encode([]auditModuleResult{}); err != nil {
+				return fmt.Errorf("encoding results: %w", err)
+			}
+			return nil
+		}
 		_, _ = fmt.Fprintf(stdout, "no %s dependencies found in %s\n", scope, f.gomodPath)
 		return nil
 	}

@@ -88,6 +88,11 @@ func TestQueryCommands_EmptyIsArrayNotNull(t *testing.T) {
 	// TestRunCallers_GenuineZeroJSON_IsEmptyArrayNotNull.
 	for _, args := range [][]string{
 		{"vuln-by-id", "GO-9999-0000"},
+		// Both of these once returned a human sentence from their
+		// empty-result branch before reaching the JSON encoder, so --json
+		// emitted unparseable prose on the data channel.
+		{"vuln-snapshot-list"},
+		{"vuln-scan-history", "absent-walk-id"},
 	} {
 		t.Run(args[0], func(t *testing.T) {
 			var stdout, stderr bytes.Buffer

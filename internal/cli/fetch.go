@@ -285,17 +285,23 @@ func runListVersions(ctx context.Context, path string, jsonOut bool, proxy versi
 	if err != nil {
 		return fmt.Errorf("listing versions for %s: %w", path, err)
 	}
-	if len(versions) == 0 {
-		if _, wErr := fmt.Fprintf(stdout, "no versions found for %s\n", path); wErr != nil {
-			return fmt.Errorf("writing output: %w", wErr)
-		}
-		return nil
-	}
+	// The empty case is answered on the caller's own channel: under --json an
+	// empty array, never a human sentence that fails to parse. Only the text
+	// path gets the prose.
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
+		if versions == nil {
+			versions = []string{}
+		}
 		if encErr := enc.Encode(versions); encErr != nil {
 			return fmt.Errorf("encoding JSON: %w", encErr)
+		}
+		return nil
+	}
+	if len(versions) == 0 {
+		if _, wErr := fmt.Fprintf(stdout, "no versions found for %s\n", path); wErr != nil {
+			return fmt.Errorf("writing output: %w", wErr)
 		}
 		return nil
 	}

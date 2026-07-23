@@ -90,7 +90,7 @@ func newSBOMShowCmd(stdout, stderr io.Writer) *cobra.Command {
 		Example: `  kanonarion sbom-show sbom-abc123`,
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSBOMShow(cmd.Context(), args[0], storeRoot, jsonOut, stdout)
+			return runSBOMShow(cmd.Context(), args[0], storeRoot, jsonOut, stdout, stderr)
 		},
 	}
 
@@ -106,7 +106,7 @@ func newSBOMListCmd(stdout, stderr io.Writer) *cobra.Command {
 		Example: `  kanonarion sbom-list --walk 01KQDBVW092ER1HNXZ60X27CMD`,
 		Args:    cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runSBOMList(cmd.Context(), storeRoot, walkID, jsonOut, stdout)
+			return runSBOMList(cmd.Context(), storeRoot, walkID, jsonOut, stdout, stderr)
 		},
 	}
 
@@ -217,8 +217,8 @@ func sbomGenerateWith(
 	return nil
 }
 
-func runSBOMShow(ctx context.Context, id, storeRoot string, jsonOut bool, stdout io.Writer) error {
-	logger := buildLogger(logLevel, stdout)
+func runSBOMShow(ctx context.Context, id, storeRoot string, jsonOut bool, stdout, stderr io.Writer) error {
+	logger := buildLogger(logLevel, stderr)
 	ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
@@ -269,8 +269,8 @@ func runSBOMShow(ctx context.Context, id, storeRoot string, jsonOut bool, stdout
 	return nil
 }
 
-func runSBOMList(ctx context.Context, storeRoot, walkID string, jsonOut bool, stdout io.Writer) error {
-	logger := buildLogger(logLevel, stdout)
+func runSBOMList(ctx context.Context, storeRoot, walkID string, jsonOut bool, stdout, stderr io.Writer) error {
+	logger := buildLogger(logLevel, stderr)
 	ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)

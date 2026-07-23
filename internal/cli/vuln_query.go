@@ -21,7 +21,7 @@ import (
 // single source of truth instead of duplicating the literal at each call site.
 const vulnPipelineVersion = vulnapp.PipelineVersion
 
-func newVulnShowCmd(stdout, _ io.Writer) *cobra.Command {
+func newVulnShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	var walkID string
 	var history bool
 
@@ -44,7 +44,7 @@ or was absent because the vulnerability database snapshot predated it.`,
   kanonarion vuln-show github.com/gin-gonic/gin@v1.6.2 --walk-id 01KQDBVW092ER1HNXZ60X27CMD --json`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			logger := buildLogger(logLevel, stdout)
+			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
@@ -151,7 +151,7 @@ func runVulnShowHistory(ctx context.Context, coord coordinate.ModuleCoordinate, 
 	return nil
 }
 
-func newVulnByIDCmd(stdout, _ io.Writer) *cobra.Command {
+func newVulnByIDCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "vuln-by-id <finding-id>",
 		Short: "Find all modules affected by a specific vulnerability ID",
@@ -159,7 +159,7 @@ func newVulnByIDCmd(stdout, _ io.Writer) *cobra.Command {
   kanonarion vuln-by-id CVE-2023-12345 --json`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			logger := buildLogger(logLevel, stdout)
+			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)

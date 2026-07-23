@@ -15,7 +15,7 @@ import (
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
-func newDependentsCmd(stdout, _ io.Writer) *cobra.Command {
+func newDependentsCmd(stdout, stderr io.Writer) *cobra.Command {
 	var walkID string
 	var directOnly, includeRoot bool
 
@@ -59,7 +59,7 @@ Flag combinations:
 			if len(args) != 1 {
 				return usageErr(cmd)
 			}
-			return runDependents(cmd.Context(), args[0], storeRoot, walkID, jsonOut, directOnly, includeRoot, stdout)
+			return runDependents(cmd.Context(), args[0], storeRoot, walkID, jsonOut, directOnly, includeRoot, stdout, stderr)
 		},
 	}
 
@@ -70,13 +70,13 @@ Flag combinations:
 	return cmd
 }
 
-func runDependents(ctx context.Context, moduleArg, storeRoot, walkID string, jsonOut, directOnly, includeRoot bool, stdout io.Writer) error {
+func runDependents(ctx context.Context, moduleArg, storeRoot, walkID string, jsonOut, directOnly, includeRoot bool, stdout, stderr io.Writer) error {
 	coord, err := parseCoordinate(moduleArg)
 	if err != nil {
 		return fmt.Errorf("invalid module coordinate %q: %w", moduleArg, err)
 	}
 
-	logger := buildLogger(logLevel, stdout)
+	logger := buildLogger(logLevel, stderr)
 	ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)

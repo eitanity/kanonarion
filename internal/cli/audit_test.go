@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"io"
 	"os"
 	"path/filepath"
@@ -420,5 +421,33 @@ func TestAuditCmd_EmptyCodeScope(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "no code dependencies found") {
 		t.Errorf("expected empty-scope message, got: %q", stdout.String())
+	}
+}
+
+// TestAuditCmd_EmptyCodeScopeJSON guards that the empty-scope answer reaches
+// a --json caller as an empty array. The empty-scope branch used to return
+// above the jsonOut check, so it wrote the human sentence onto the data
+// channel and exited 0, leaving the caller a parse error as its only signal.
+func TestAuditCmd_EmptyCodeScopeJSON(t *testing.T) {
+	gomod := "module example.com/myapp\n\ngo 1.21\n"
+	dir := t.TempDir()
+	path := filepath.Join(dir, "go.mod")
+	if err := os.WriteFile(path, []byte(gomod), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if err := Run([]string{"audit", "--gomod", path, "--json"}, &stdout, &stderr); err != nil {
+		t.Fatalf("unexpected error: %v (stderr=%q)", err, stderr.String())
+	}
+	out := strings.TrimSpace(stdout.String())
+	var results []auditModuleResult
+	if err := json.Unmarshal([]byte(out), &results); err != nil {
+		t.Fatalf("--json empty scope did not emit JSON: %q", out)
+	}
+	if results == nil {
+		t.Errorf("--json empty scope emitted null, not []: %q", out)
+	}
+	if len(results) != 0 {
+		t.Errorf("expected no results for an empty scope, got %d", len(results))
 	}
 }

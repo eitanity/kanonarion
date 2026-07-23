@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
@@ -115,5 +116,61 @@ func TestRunFetchScope_NoToolDirectives(t *testing.T) {
 	}
 	if !strings.Contains(stdout.String(), "no tool dependencies found") {
 		t.Errorf("expected 'no tool dependencies found', got: %q", stdout.String())
+	}
+}
+
+// fakeVersionLister returns a fixed version list, so runListVersions can be
+// exercised at its seam without reaching the network proxy.
+type fakeVersionLister struct{ versions []string }
+
+func (f fakeVersionLister) ListVersions(context.Context, string) ([]string, error) {
+	return f.versions, nil
+}
+
+// TestRunListVersions_EmptyJSONIsArrayNotProse guards that a module with no
+// known versions is reported to a --json caller as an empty array. The
+// empty-result branch used to return above the jsonOut check, so it wrote a
+// human sentence onto the data channel and exited 0.
+func TestRunListVersions_EmptyJSONIsArrayNotProse(t *testing.T) {
+	for _, tc := range []struct {
+		name     string
+		versions []string
+	}{
+		{"nil slice", nil},
+		{"empty slice", []string{}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			err := runListVersions(context.Background(), "example.com/mod", true,
+				fakeVersionLister{versions: tc.versions}, &stdout)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			out := strings.TrimSpace(stdout.String())
+			var got []string
+			if uerr := json.Unmarshal([]byte(out), &got); uerr != nil {
+				t.Fatalf("--json emitted non-JSON: %q", out)
+			}
+			if got == nil {
+				t.Errorf("--json emitted null, not []: %q", out)
+			}
+			if len(got) != 0 {
+				t.Errorf("expected no versions, got %d", len(got))
+			}
+		})
+	}
+}
+
+// TestRunListVersions_EmptyTextKeepsProse guards that the human path still
+// says so in words: routing the empty case to JSON must not silently drop the
+// text answer.
+func TestRunListVersions_EmptyTextKeepsProse(t *testing.T) {
+	var stdout bytes.Buffer
+	if err := runListVersions(context.Background(), "example.com/mod", false,
+		fakeVersionLister{}, &stdout); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "no versions found for example.com/mod") {
+		t.Errorf("expected the empty-result sentence, got: %q", stdout.String())
 	}
 }

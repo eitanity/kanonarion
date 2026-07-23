@@ -11,7 +11,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newVulnCmd(stdout, _ io.Writer) *cobra.Command {
+func newVulnCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "vuln <module>@<version>",
 		Short: "Show the vulnerability record for a module",
@@ -19,7 +19,7 @@ func newVulnCmd(stdout, _ io.Writer) *cobra.Command {
   kanonarion vuln github.com/gin-gonic/gin@v1.6.2 --json`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			logger := buildLogger(logLevel, stdout)
+			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
