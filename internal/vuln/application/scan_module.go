@@ -78,8 +78,16 @@ import (
 // including ones no consumer can import, so a "v10" record could be a coverage
 // gap caused by a package the target never builds, and its reachability was
 // rooted at packages no consumer can reach. Every "v10" record on that path
-// describes a different analysis and must be re-scanned.
-const PipelineVersion = "v11"
+// describes a different analysis and must be re-scanned. It was bumped to "v12"
+// to correct the reachability of an advisory matched by coordinate on the walk
+// target itself: the target is the versionless main module of the target-rooted
+// analysis, which OSV matching structurally cannot reach a verdict on, so such a
+// finding is now recorded with no reachability rather than a fabricated
+// not-reachable/high-confidence. A "v11" record whose target is itself a
+// vulnerable library carries that fabricated verdict and must be re-scanned; a
+// walk whose target carries no advisory about itself is unaffected in content
+// but re-scans under the new version like any other.
+const PipelineVersion = "v12"
 
 // ScanModuleUseCase orchestrates a single module's vulnerability scan.
 type ScanModuleUseCase struct {

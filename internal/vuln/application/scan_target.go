@@ -99,7 +99,14 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 		// analysis alone could never match an advisory about the target itself; and
 		// for any module, a Clean verdict must mean "advisories were matched and
 		// none applied" rather than "the grouped parse attributed nothing here".
-		findings, err := uc.mergeCoordinateFindings(ctx, coord, findings)
+		//
+		// Reachability is answerable for every module except the target. A
+		// dependency was analysed at its real version from the target's entry
+		// points, so a coordinate match the analysis did not report was genuinely
+		// not reached. The target itself was the versionless main module, which
+		// OSV matching structurally cannot reach a verdict on, so its coordinate
+		// matches carry no reachability rather than a fabricated not-reachable.
+		findings, err := uc.mergeCoordinateFindings(ctx, coord, findings, coord != target)
 		if err != nil {
 			// A coordinate whose advisory set could not be read has not been
 			// checked. Recording it Clean would be a false negative, so it carries

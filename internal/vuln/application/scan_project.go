@@ -58,7 +58,11 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 		// metadata.
 		findings := copyFindings(projectFindingsFor(result.FindingsByModule, coord))
 
-		findings, err := uc.mergeCoordinateFindings(ctx, coord, findings)
+		// Every module here is a dependency of the live project: the analysis
+		// examined it at its real version, so its silence is a reachability
+		// answer. The project's own main module is versioned "(devel)" and never
+		// coordinate-matches an advisory, so it does not reach the false case.
+		findings, err := uc.mergeCoordinateFindings(ctx, coord, findings, true)
 		if err != nil {
 			// A coordinate whose advisory set could not be read has not been
 			// checked. Reporting it Clean would be the exact false negative this
@@ -90,16 +94,23 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 // analysis contributes reachability to the findings rather than deciding whether
 // they are looked for at all.
 //
-// A finding the project analysis reported wins: it carries the call path and
-// symbols that whole-build analysis alone can establish. A coordinate match the
-// analysis did not report is added as not-reachable with high confidence — the
-// project-rooted scan succeeded and examined the build's real import graph from
-// its real entry points, so its silence about a symbol is an answer, not an
-// absence of one. Findings are never dropped in either direction.
+// A finding the analysis reported wins: it carries the call path and symbols
+// that whole-build analysis alone can establish. A coordinate match the analysis
+// did not report is handled per reachabilityAnswerable. When true — the analysis
+// examined this module at its real version from real entry points, as it does for
+// every dependency — its silence about a symbol is an answer, so the match is
+// added as not-reachable with high confidence. When false, the analysis could not
+// have reported this advisory at all, so reachability was not computed and the
+// match is added with a nil Reachable rather than a fabricated verdict. The only
+// module where it is false is the analysis's own main module: a main module has
+// no version, so version-range OSV matching never fires on it and its silence is
+// structural inability, not a reachability answer. Findings are never dropped in
+// either direction.
 func (uc *ScanWalkUseCase) mergeCoordinateFindings(
 	ctx context.Context,
 	coord coordinate.ModuleCoordinate,
 	reported []domain.VulnerabilityFinding,
+	reachabilityAnswerable bool,
 ) ([]domain.VulnerabilityFinding, error) {
 	matched, err := uc.moduleScanner.database.LookupFindings(ctx, coord)
 	if err != nil {
@@ -114,7 +125,9 @@ func (uc *ScanWalkUseCase) mergeCoordinateFindings(
 		if _, ok := seen[f.ID]; ok {
 			continue
 		}
-		f.Reachable = &domain.ReachabilityResult{IsReachable: false, Confidence: domain.ConfidenceHigh}
+		if reachabilityAnswerable {
+			f.Reachable = &domain.ReachabilityResult{IsReachable: false, Confidence: domain.ConfidenceHigh}
+		}
 		reported = append(reported, f)
 		added++
 	}

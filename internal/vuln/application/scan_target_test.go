@@ -268,10 +268,56 @@ func TestScanWalk_CoordinateKeyed_TargetAdvisoriesAreMatchedByCoordinate(t *test
 		t.Fatalf("target = %v, want Affected: a successful target-rooted scan must not hide the target's own advisory", rec.OverallStatus)
 	}
 	if len(rec.Findings) != 1 || rec.Findings[0].ID != "GO-2024-3205" {
-		t.Errorf("target findings = %+v, want GO-2024-3205", rec.Findings)
+		t.Fatalf("target findings = %+v, want GO-2024-3205", rec.Findings)
+	}
+	// The target is the versionless main module of its own analysis, which OSV
+	// matching cannot reach a verdict on, so its reachability was not computed.
+	// Recording it not-reachable/high-confidence would assert a verdict that was
+	// never established — the isolated path this replaced left it nil, and so
+	// must this one.
+	if r := rec.Findings[0].Reachable; r != nil {
+		t.Errorf("target advisory reachability = %+v, want nil (not computed) rather than a fabricated verdict", r)
 	}
 	if run.OverallStatus != domain.WalkStatusAffected {
 		t.Errorf("OverallStatus = %v, want Affected", run.OverallStatus)
+	}
+}
+
+// TestScanWalk_CoordinateKeyed_DependencyCoordinateMatchIsNotReachableWithConfidence
+// is the counterpart: a dependency's coordinate match the analysis did not
+// report DID have its reachability answered — the dependency was analysed at its
+// real version from the target's entry points — so its silence is a
+// high-confidence not-reachable answer, not the nil the target gets. This pins
+// that the target's nil is specific to the main-module position, not a blanket
+// downgrade of every coordinate match on the path.
+func TestScanWalk_CoordinateKeyed_DependencyCoordinateMatchIsNotReachableWithConfidence(t *testing.T) {
+	ctx := t.Context()
+	scanner := &fakeScanner{targetRooted: true}
+	f := newTargetScanFixture(t, scanner)
+
+	// The analysis reports nothing for depA, while the snapshot knows it carries
+	// an advisory — the same attribution-gap shape, but for a dependency.
+	f.db.findings = map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding{
+		f.depA: {{ID: "GO-2024-0001", Summary: "bad"}},
+	}
+
+	if _, err := f.walkUC.Scan(ctx, application.ScanWalkParams{WalkID: f.walkID, Operator: "tester"}); err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+
+	rec, ok, err := f.vulnStore.GetLatestVulnerabilityRecordForWalk(ctx, f.depA, "v1", f.walkID)
+	if err != nil || !ok {
+		t.Fatalf("record for depA: ok=%v err=%v", ok, err)
+	}
+	if len(rec.Findings) != 1 {
+		t.Fatalf("depA findings = %+v, want one", rec.Findings)
+	}
+	r := rec.Findings[0].Reachable
+	if r == nil {
+		t.Fatal("depA advisory reachability = nil; a dependency analysed at its real version has an answer, not an absence of one")
+	}
+	if r.IsReachable || r.Confidence != domain.ConfidenceHigh {
+		t.Errorf("depA reachability = %+v, want not-reachable/high-confidence", r)
 	}
 }
 
