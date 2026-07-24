@@ -3,6 +3,8 @@ package domain
 import (
 	"strings"
 
+	"golang.org/x/mod/module"
+
 	"github.com/eitanity/kanonarion/internal/coordinate"
 )
 
@@ -205,20 +207,59 @@ func failurePosition(prefix string) string {
 }
 
 // positionMatchesAny reports whether pos names the same source position as any
-// entry in positions. The two lines of an offline-resolution pair report the
-// position at different path depths — one a bare filename, the other an absolute
-// path — so equality alone would miss the pair; a suffix match on a path
-// boundary ties "/tmp/x/rich_url.go:7:2" to "rich_url.go:7:2".
+// entry in positions. Two adjustments make the real pairing robust. The lines
+// report the position at different path depths — one a bare filename, the other
+// an absolute path — so equality alone would miss the pair; a suffix match on a
+// path boundary ties "/tmp/x/rich_url.go:7:2" to "rich_url.go:7:2". And the two
+// diagnostics of a single import sit on the same source line but at different
+// columns — the import keyword versus the import path — so the comparison is on
+// file:line, with the column dropped first (positionLine); matching on the full
+// file:line:col leaves the pair unlinked and recovers no package.
 func positionMatchesAny(pos string, positions []string) bool {
 	if pos == "" {
 		return false
 	}
+	pos = positionLine(pos)
 	for _, p := range positions {
+		p = positionLine(p)
 		if pos == p || strings.HasSuffix(pos, "/"+p) || strings.HasSuffix(p, "/"+pos) {
 			return true
 		}
 	}
 	return false
+}
+
+// positionLine drops the trailing ":<column>" from a "file:line:col" position so
+// two diagnostics that share a source line but differ only in column compare
+// equal. A position already at "file:line" (a single numeric tail), or with no
+// numeric tail at all, is returned unchanged — the strip only fires when both the
+// last and second-last colon-separated fields are integers.
+func positionLine(pos string) string {
+	last := strings.LastIndexByte(pos, ':')
+	if last <= 0 {
+		return pos
+	}
+	prev := strings.LastIndexByte(pos[:last], ':')
+	if prev < 0 {
+		return pos
+	}
+	if !isAllDigits(pos[last+1:]) || !isAllDigits(pos[prev+1:last]) {
+		return pos
+	}
+	return pos[:last]
+}
+
+// isAllDigits reports whether s is a non-empty run of ASCII digits.
+func isAllDigits(s string) bool {
+	if s == "" {
+		return false
+	}
+	for i := 0; i < len(s); i++ {
+		if s[i] < '0' || s[i] > '9' {
+			return false
+		}
+	}
+	return true
 }
 
 // looksLikeImportPath reports whether p is a plausible Go import path: its first
@@ -235,6 +276,77 @@ func looksLikeImportPath(p string) bool {
 		first = p[:i]
 	}
 	return strings.Contains(first, ".")
+}
+
+// ImportSiteModule returns the module coordinate whose source contains the
+// failing import, when the offline-resolution error attributes it to a file
+// inside a cached dependency ("…/<module>@<version>/pkg/file.go: could not
+// import <importPath>"). The unimportable package is frequently provided by
+// neither the scanned module nor the walk at a single version — the version was
+// selected by the go.mod of the *dependency* doing the importing, and that
+// dependency is the module the failing file path names. The caller reads that
+// module's go.mod to recover the version the toolchain could not resolve, which
+// is the coordinate the verdict must be checked against.
+//
+// ok is false when no could-not-import line for importPath carries a
+// module@version file path — the import came from the scanned module's own
+// freshly extracted source, whose go.mod the caller already consulted.
+func ImportSiteModule(detail, importPath string) (coordinate.ModuleCoordinate, bool) {
+	for _, line := range strings.Split(detail, "\n") {
+		mi := strings.Index(strings.ToLower(line), couldNotImportMarker)
+		if mi < 0 {
+			continue
+		}
+		fields := strings.Fields(strings.TrimSpace(line[mi+len(couldNotImportMarker):]))
+		if len(fields) == 0 || strings.TrimSuffix(fields[0], ":") != importPath {
+			continue
+		}
+		if coord, ok := moduleFromCachePath(failurePosition(line[:mi])); ok {
+			return coord, true
+		}
+	}
+	return coordinate.ModuleCoordinate{}, false
+}
+
+// moduleFromCachePath extracts the module coordinate embedded in a module-cache
+// or extraction file position, "…/<module-path>@<version>/relpath/file.go:11:2".
+// The version is the token from "@" to the next slash; the module path is the
+// longest cache-relative prefix before "@" that is a valid module path, which
+// strips the temp-root prefix without the caller knowing its length. Both the
+// filesystem-escaped form the shared module cache uses ("!paessler!a!g/…") and
+// the literal form a scanned module's own extraction uses are accepted. ok is
+// false when the position embeds no "@version" segment.
+func moduleFromCachePath(pos string) (coordinate.ModuleCoordinate, bool) {
+	at := strings.IndexByte(pos, '@')
+	if at <= 0 {
+		return coordinate.ModuleCoordinate{}, false
+	}
+	rest := pos[at+1:]
+	slash := strings.IndexByte(rest, '/')
+	if slash <= 0 {
+		return coordinate.ModuleCoordinate{}, false
+	}
+	version := rest[:slash]
+	if !strings.HasPrefix(version, "v") {
+		return coordinate.ModuleCoordinate{}, false
+	}
+	// Try progressively shorter prefixes; the first that is a valid module path is
+	// the longest one, which is the module — every longer candidate carries the
+	// temp-root prefix and fails validation.
+	segs := strings.Split(pos[:at], "/")
+	for i := range segs {
+		cand := strings.Join(segs[i:], "/")
+		if cand == "" {
+			continue
+		}
+		if unescaped, err := module.UnescapePath(cand); err == nil && module.CheckPath(unescaped) == nil {
+			return coordinate.ModuleCoordinate{Path: unescaped, Version: version}, true
+		}
+		if module.CheckPath(cand) == nil {
+			return coordinate.ModuleCoordinate{Path: cand, Version: version}, true
+		}
+	}
+	return coordinate.ModuleCoordinate{}, false
 }
 
 // LongestModulePrefix returns the longest module path in modulePaths that is a

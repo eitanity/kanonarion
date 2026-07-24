@@ -576,39 +576,87 @@ func (uc *ScanModuleUseCase) verifyOfflineResolution(ctx context.Context, params
 // verdict its own. ok is false when no path can be recovered or the module does
 // not require it.
 func (uc *ScanModuleUseCase) recoverUnresolvedCoordinate(ctx context.Context, params ScanModuleParams, detail string) (coordinate.ModuleCoordinate, bool) {
-	modulePath, ok := uc.unresolvedModulePath(params, detail)
+	// Direct coordinate shape: the error names "<path>@<version>". The version is
+	// re-derived from the scanned module's own go.mod, not read from the error, so
+	// a version an unrelated build-list entry demanded cannot sustain a verdict
+	// about the module being scanned; a path the module does not require yields no
+	// coordinate.
+	if coord, ok := domain.UnresolvedCoordinate(detail); ok {
+		return uc.requiredCoordinate(ctx, params.Coordinate, coord.Path)
+	}
+
+	// Source-position shape: the error names an unimportable package but no
+	// coordinate. Resolve it to the version the toolchain could not fetch.
+	importPath, ok := domain.UnresolvedImportPath(detail)
 	if !ok {
 		return coordinate.ModuleCoordinate{}, false
 	}
-	return uc.requiredCoordinate(ctx, params.Coordinate, modulePath)
+	// First against the scanned module's own build list: the package's module is
+	// often one the walk never built (a test/tool/example dependency), so it is
+	// invisible to a match against the walk's node paths alone and recoverable
+	// only from the scanned module's own go.mod requires.
+	if coord, ok := uc.resolveImportInModule(ctx, params.Coordinate, importPath, modulePaths(params.KnownVersions)); ok {
+		return coord, true
+	}
+	// Then against the dependency whose source contains the import: the failing
+	// file path names a cached module, and the version it selects for the package
+	// — not any version the scanned module or the walk pins — is the one that was
+	// missing. This is the parent/ancestor-module source case.
+	if site, ok := domain.ImportSiteModule(detail, importPath); ok && site != params.Coordinate {
+		if coord, ok := uc.resolveImportInModule(ctx, site, importPath, nil); ok {
+			return coord, true
+		}
+	}
+	return coordinate.ModuleCoordinate{}, false
 }
 
-// unresolvedModulePath returns the module path an offline resolution failure
-// concerns, from whichever shape the error takes: the coordinate the direct
-// shape names, or the module the source-position shape's unimportable package
-// resolves to by longest-prefix match against the walk's module paths.
-func (uc *ScanModuleUseCase) unresolvedModulePath(params ScanModuleParams, detail string) (string, bool) {
-	if coord, ok := domain.UnresolvedCoordinate(detail); ok {
-		return coord.Path, true
-	}
-	importPath, ok := domain.UnresolvedImportPath(detail)
+// resolveImportInModule maps an unimportable package to the coordinate the
+// module at coord selects for it, reading that module's go.mod. The package is
+// resolved to a module path by longest-prefix match over the module's own
+// require paths, unioned with extra (the walk's known paths, when the scanned
+// module is being consulted). ok is false when the go.mod cannot be read or
+// requires no module covering the package — membership in the module's own
+// require closure is what ties the version to it rather than to an unrelated
+// build-list entry.
+func (uc *ScanModuleUseCase) resolveImportInModule(
+	ctx context.Context,
+	coord coordinate.ModuleCoordinate,
+	importPath string,
+	extra map[string]struct{},
+) (coordinate.ModuleCoordinate, bool) {
+	f, ok := uc.scannedGoMod(ctx, coord)
 	if !ok {
-		return "", false
+		return coordinate.ModuleCoordinate{}, false
 	}
-	return domain.LongestModulePrefix(importPath, modulePaths(params.KnownVersions))
+	universe := goModModulePaths(f)
+	for p := range extra {
+		universe[p] = struct{}{}
+	}
+	modulePath, ok := domain.LongestModulePrefix(importPath, universe)
+	if !ok {
+		return coordinate.ModuleCoordinate{}, false
+	}
+	return coordinateFromModFile(f, modulePath)
 }
 
 // requiredCoordinate returns the coordinate the scanned module's own go.mod
 // selects for modulePath — the version its isolated build, running MVS as its
 // own main module, would resolve. ok is false when the go.mod cannot be read or
-// does not require modulePath, in which case no coordinate can be established:
-// the require-closure membership is what ties the version to the scanned module
-// rather than to an unrelated build-list entry.
+// does not require modulePath, in which case no coordinate can be established.
 func (uc *ScanModuleUseCase) requiredCoordinate(ctx context.Context, scanned coordinate.ModuleCoordinate, modulePath string) (coordinate.ModuleCoordinate, bool) {
 	f, ok := uc.scannedGoMod(ctx, scanned)
 	if !ok {
 		return coordinate.ModuleCoordinate{}, false
 	}
+	return coordinateFromModFile(f, modulePath)
+}
+
+// coordinateFromModFile returns the coordinate a parsed go.mod selects for
+// modulePath: the required version, redirected through a module-to-module
+// replace that applies to it. ok is false when the go.mod does not require
+// modulePath — the require-closure membership is what ties the version to this
+// module rather than to an unrelated build-list entry.
+func coordinateFromModFile(f *modfile.File, modulePath string) (coordinate.ModuleCoordinate, bool) {
 	version, found := "", false
 	for _, r := range f.Require {
 		if r.Mod.Path == modulePath {
@@ -633,6 +681,20 @@ func (uc *ScanModuleUseCase) requiredCoordinate(ctx context.Context, scanned coo
 		}
 	}
 	return coordinate.ModuleCoordinate{Path: modulePath, Version: version}, true
+}
+
+// goModModulePaths returns the set of module paths a parsed go.mod requires —
+// the universe an unimportable package is resolved against by longest-prefix
+// match. Both direct and indirect requirements are included, since either can be
+// the module whose version the toolchain could not fetch offline.
+func goModModulePaths(f *modfile.File) map[string]struct{} {
+	paths := make(map[string]struct{}, len(f.Require))
+	for _, r := range f.Require {
+		if r != nil && r.Mod.Path != "" {
+			paths[r.Mod.Path] = struct{}{}
+		}
+	}
+	return paths
 }
 
 // scannedGoMod reads and parses the scanned module's own go.mod from the blob

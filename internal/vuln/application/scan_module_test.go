@@ -628,6 +628,176 @@ func TestScanModule_OfflineResolution_DirectShapeGatedOnRequireClosure(t *testin
 	}
 }
 
+// TestScanModule_OfflineResolution_ColumnMismatchRecovers guards the
+// column-pairing fix end to end. Real govulncheck emits the GOPROXY=off line and
+// the could-not-import line on the same source line but at different columns
+// (:7:8 vs :7:13). The scanned module's own go.mod requires testify at a version
+// the walk never built (v1.7.0 vs the walk's v1.9.0), so once the pair links and
+// the import resolves against the module's own go.mod, the verdict is a verified
+// out-of-toolchain naming that coordinate rather than the ambiguous unverified
+// bucket.
+func TestScanModule_OfflineResolution_ColumnMismatchRecovers(t *testing.T) {
+	ctx := t.Context()
+	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	coord := coordinate.ModuleCoordinate{Path: "github.com/cortezaproject/goqu/v9", Version: "v9.18.4"}
+	const goMod = "module github.com/cortezaproject/goqu/v9\n\ngo 1.16\n\n" +
+		"require github.com/stretchr/testify v1.7.0\n"
+	scannerErr := "govulncheck: loading packages: \n" +
+		"mocks/SQLDialect.go:7:8: module lookup disabled by GOPROXY=off\n" +
+		"/tmp/x/github.com/cortezaproject/goqu/v9@v9.18.4/mocks/SQLDialect.go:7:13: " +
+		"could not import github.com/stretchr/testify/mock (invalid package name: \"\")"
+
+	facts := newFakeFacts()
+	blobs := newFakeBlob()
+	vulnStore := newFakeVulnStore()
+	scanner := &fakeScanner{err: fmt.Errorf("%s", scannerErr)}
+	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Version: "v1"}}
+	clock := fixedClock{t: now}
+
+	goModHandle, _ := blobs.Put(ctx, strings.NewReader(goMod))
+	zipHandle, _ := blobs.Put(ctx, strings.NewReader("zip content"))
+	if err := facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
+		ModulePath: coord.Path, ModuleVersion: coord.Version, PipelineVersion: "v1",
+		ContentLocation: string(zipHandle), GoModLocation: string(goModHandle),
+	}); err != nil {
+		t.Fatalf("PutFetchRecord: %v", err)
+	}
+
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	res, err := uc.Scan(ctx, application.ScanModuleParams{
+		Coordinate: coord, WalkID: "walk-1", Force: true,
+		KnownVersions: map[coordinate.ModuleCoordinate]struct{}{{Path: "github.com/stretchr/testify", Version: "v1.9.0"}: {}},
+	})
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if res.UnscanReason != domain.UnscanReasonVersionNotInToolchain {
+		t.Errorf("UnscanReason = %q, want verified version-not-in-toolchain", res.UnscanReason)
+	}
+	if !strings.Contains(res.UnscannableReason, "github.com/stretchr/testify@v1.7.0") {
+		t.Errorf("UnscannableReason = %q, want it to name the recovered coordinate testify@v1.7.0", res.UnscannableReason)
+	}
+}
+
+// TestScanModule_OfflineResolution_OwnGoModWhenPackageOutsideWalk guards the
+// item-3 fix: the unimportable package's module is absent from the walk's node
+// set entirely (the walk never built stretchr/objx), so a longest-prefix match
+// against the walk paths alone recovers nothing and the module drops into the
+// unverified bucket. The scanned module's own go.mod does require it, so folding
+// the module's own requires into the search universe recovers the coordinate and
+// verifies the out-of-toolchain verdict.
+func TestScanModule_OfflineResolution_OwnGoModWhenPackageOutsideWalk(t *testing.T) {
+	ctx := t.Context()
+	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	coord := coordinate.ModuleCoordinate{Path: "github.com/stretchr/testify", Version: "v1.9.0"}
+	const goMod = "module github.com/stretchr/testify\n\ngo 1.17\n\n" +
+		"require github.com/stretchr/objx v0.5.2\n"
+	scannerErr := "govulncheck: loading packages: \n" +
+		"mock/mock.go:16:2: module lookup disabled by GOPROXY=off\n" +
+		"/tmp/x/github.com/stretchr/testify@v1.9.0/mock/mock.go:16:2: " +
+		"could not import github.com/stretchr/objx (invalid package name: \"\")"
+
+	facts := newFakeFacts()
+	blobs := newFakeBlob()
+	vulnStore := newFakeVulnStore()
+	scanner := &fakeScanner{err: fmt.Errorf("%s", scannerErr)}
+	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Version: "v1"}}
+	clock := fixedClock{t: now}
+
+	goModHandle, _ := blobs.Put(ctx, strings.NewReader(goMod))
+	zipHandle, _ := blobs.Put(ctx, strings.NewReader("zip content"))
+	if err := facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
+		ModulePath: coord.Path, ModuleVersion: coord.Version, PipelineVersion: "v1",
+		ContentLocation: string(zipHandle), GoModLocation: string(goModHandle),
+	}); err != nil {
+		t.Fatalf("PutFetchRecord: %v", err)
+	}
+
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	res, err := uc.Scan(ctx, application.ScanModuleParams{
+		Coordinate: coord, WalkID: "walk-1", Force: true,
+		// The walk built testify itself but never objx; objx is off-graph.
+		KnownVersions: map[coordinate.ModuleCoordinate]struct{}{{Path: "github.com/stretchr/testify", Version: "v1.9.0"}: {}},
+	})
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if res.UnscanReason != domain.UnscanReasonVersionNotInToolchain {
+		t.Errorf("UnscanReason = %q, want verified version-not-in-toolchain", res.UnscanReason)
+	}
+	if !strings.Contains(res.UnscannableReason, "github.com/stretchr/objx@v0.5.2") {
+		t.Errorf("UnscannableReason = %q, want it to name objx@v0.5.2 recovered from the module's own go.mod", res.UnscannableReason)
+	}
+}
+
+// TestScanModule_OfflineResolution_ImportSiteDependencyGoMod guards the
+// parent-module recovery: the unimportable package is imported from a
+// *dependency's* source, not the scanned module's own code. matttproud's pbutil
+// imports google.golang.org/protobuf via golang/protobuf's proto package, and
+// matttproud's own go.mod names no protobuf requirement — so the coordinate is
+// recoverable only from the import-site module (golang/protobuf@v1.5.3, named by
+// the failing file path), whose go.mod selects protobuf@v1.26.0. That version is
+// not the one the walk built (v1.32.0), so the verdict is verified out-of-toolchain.
+func TestScanModule_OfflineResolution_ImportSiteDependencyGoMod(t *testing.T) {
+	ctx := t.Context()
+	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	coord := coordinate.ModuleCoordinate{Path: "github.com/matttproud/golang_protobuf_extensions", Version: "v1.0.1"}
+	// The scanned module's own go.mod requires no protobuf module at all.
+	const goMod = "module github.com/matttproud/golang_protobuf_extensions\n\ngo 1.9\n"
+	// The import site is golang/protobuf@v1.5.3, a dependency whose go.mod selects
+	// the missing protobuf version.
+	site := coordinate.ModuleCoordinate{Path: "github.com/golang/protobuf", Version: "v1.5.3"}
+	const siteGoMod = "module github.com/golang/protobuf\n\ngo 1.9\n\n" +
+		"require google.golang.org/protobuf v1.26.0\n"
+	scannerErr := "govulncheck: loading packages: \n" +
+		"/tmp/kanonarion-modcache-1/github.com/golang/protobuf@v1.5.3/proto/buffer.go:11:2: module lookup disabled by GOPROXY=off\n" +
+		"/tmp/kanonarion-modcache-1/github.com/golang/protobuf@v1.5.3/proto/buffer.go:11:2: " +
+		"could not import google.golang.org/protobuf/proto (invalid package name: \"\")"
+
+	facts := newFakeFacts()
+	blobs := newFakeBlob()
+	vulnStore := newFakeVulnStore()
+	scanner := &fakeScanner{err: fmt.Errorf("%s", scannerErr)}
+	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Version: "v1"}}
+	clock := fixedClock{t: now}
+
+	goModHandle, _ := blobs.Put(ctx, strings.NewReader(goMod))
+	zipHandle, _ := blobs.Put(ctx, strings.NewReader("zip content"))
+	if err := facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
+		ModulePath: coord.Path, ModuleVersion: coord.Version, PipelineVersion: "v1",
+		ContentLocation: string(zipHandle), GoModLocation: string(goModHandle),
+	}); err != nil {
+		t.Fatalf("PutFetchRecord: %v", err)
+	}
+	// Seed the import-site dependency's go.mod so its protobuf selection is readable.
+	siteModHandle, _ := blobs.Put(ctx, strings.NewReader(siteGoMod))
+	siteZipHandle, _ := blobs.Put(ctx, strings.NewReader("zip content"))
+	if err := facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
+		ModulePath: site.Path, ModuleVersion: site.Version, PipelineVersion: "v1",
+		ContentLocation: string(siteZipHandle), GoModLocation: string(siteModHandle),
+	}); err != nil {
+		t.Fatalf("PutFetchRecord(site): %v", err)
+	}
+
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	res, err := uc.Scan(ctx, application.ScanModuleParams{
+		Coordinate: coord, WalkID: "walk-1", Force: true,
+		KnownVersions: map[coordinate.ModuleCoordinate]struct{}{
+			{Path: "google.golang.org/protobuf", Version: "v1.32.0"}: {},
+			{Path: "github.com/golang/protobuf", Version: "v1.5.3"}:  {},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if res.UnscanReason != domain.UnscanReasonVersionNotInToolchain {
+		t.Errorf("UnscanReason = %q, want verified version-not-in-toolchain", res.UnscanReason)
+	}
+	if !strings.Contains(res.UnscannableReason, "google.golang.org/protobuf@v1.26.0") {
+		t.Errorf("UnscannableReason = %q, want it to name protobuf@v1.26.0 recovered from the import-site go.mod", res.UnscannableReason)
+	}
+}
+
 // TestScanModule_OfflineResolution_VersionedReplaceScoping guards that a
 // versioned replace only redirects the version it names. The module requires
 // x/text v0.3.8 and carries a replace scoped to a *different* version; the

@@ -359,6 +359,84 @@ func TestUnresolvedImportPath(t *testing.T) {
 	}
 }
 
+// TestUnresolvedImportPath_ColumnMismatchStillPairs guards the real govulncheck
+// shape: the "module lookup disabled" diagnostic and its paired
+// "could not import" diagnostic sit on the same source line but at different
+// columns — the import keyword versus the import path. Pairing on the whole
+// file:line:col position leaves them unpaired and recovers no package, dropping
+// the module into the ambiguous unverified bucket; pairing on file:line recovers
+// it. goqu (:7:8 / :7:13), httperr (:8:2 / :8:12) and client_model (:8:2 / :8:8)
+// all take this shape.
+func TestUnresolvedImportPath_ColumnMismatchStillPairs(t *testing.T) {
+	detail := "govulncheck: loading packages: \n" +
+		"mocks/SQLDialect.go:7:8: module lookup disabled by GOPROXY=off\n" +
+		"/tmp/kanonarion-vuln-scan-321908063/github.com/cortezaproject/goqu/v9@v9.18.4/mocks/SQLDialect.go:7:13: " +
+		"could not import github.com/stretchr/testify/mock (invalid package name: \"\")"
+	got, ok := UnresolvedImportPath(detail)
+	if !ok {
+		t.Fatalf("ok = false, want the import path recovered from a same-line/different-column pair")
+	}
+	if got != "github.com/stretchr/testify/mock" {
+		t.Errorf("import path = %q, want github.com/stretchr/testify/mock", got)
+	}
+}
+
+// TestImportSiteModule recovers the dependency module whose source contains the
+// failing import, from the cached file path the could-not-import line names.
+func TestImportSiteModule(t *testing.T) {
+	cases := []struct {
+		name       string
+		detail     string
+		importPath string
+		wantCoord  coordinate.ModuleCoordinate
+		wantOK     bool
+	}{
+		{
+			name: "cached dependency source names the module and version",
+			detail: "/tmp/kanonarion-modcache-1/github.com/golang/protobuf@v1.5.3/proto/buffer.go:11:2: " +
+				"could not import google.golang.org/protobuf/proto (invalid package name: \"\")",
+			importPath: "google.golang.org/protobuf/proto",
+			wantCoord:  coordinate.ModuleCoordinate{Path: "github.com/golang/protobuf", Version: "v1.5.3"},
+			wantOK:     true,
+		},
+		{
+			name: "filesystem-escaped module path is unescaped",
+			detail: "/tmp/kanonarion-modcache-1/github.com/!paessler!a!g/jsonpath@v0.1.1/jsonpath.go:17:2: " +
+				"could not import github.com/PaesslerAG/gval (invalid package name: \"\")",
+			importPath: "github.com/PaesslerAG/gval",
+			wantCoord:  coordinate.ModuleCoordinate{Path: "github.com/PaesslerAG/jsonpath", Version: "v0.1.1"},
+			wantOK:     true,
+		},
+		{
+			// A position with no "@version" segment is the scanned module's own
+			// freshly extracted source, not a cached dependency.
+			name:       "no version segment yields no site module",
+			detail:     "inliner/element.go:6:2: could not import github.com/PuerkitoBio/goquery (invalid package name: \"\")",
+			importPath: "github.com/PuerkitoBio/goquery",
+			wantOK:     false,
+		},
+		{
+			// The could-not-import line must name this import path to be paired.
+			name: "different import path is not matched",
+			detail: "/tmp/x/github.com/golang/protobuf@v1.5.3/proto/buffer.go:11:2: " +
+				"could not import google.golang.org/protobuf/proto (invalid package name: \"\")",
+			importPath: "github.com/other/pkg",
+			wantOK:     false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := ImportSiteModule(tc.detail, tc.importPath)
+			if ok != tc.wantOK {
+				t.Fatalf("ok = %v, want %v (got %v)", ok, tc.wantOK, got)
+			}
+			if ok && got != tc.wantCoord {
+				t.Errorf("coord = %v, want %v", got, tc.wantCoord)
+			}
+		})
+	}
+}
+
 // TestUnresolvedImportPath_EdgeShapes covers the degenerate lines the pairing
 // must reject rather than read a coordinate out of noise: a marker with no
 // source position, a could-not-import line at column start, and one naming no
