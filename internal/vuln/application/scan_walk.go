@@ -10,6 +10,7 @@ import (
 	"log/slog"
 	"os"
 	"runtime"
+	"strings"
 	"sync"
 
 	"golang.org/x/mod/modfile"
@@ -699,6 +700,150 @@ func (uc *ScanWalkUseCase) populatePrePruningGoMods(ctx context.Context, graph w
 	}
 }
 
+// populateScannedBuildListDeps supplies the module-graph metadata a scannable
+// node's own isolated build list needs but the walk graph does not record.
+//
+// A node scanned in isolation is its own main module, and the toolchain rebuilds
+// that module's build list from its published go.mod. That go.mod names versions
+// the walk's MVS superseded or pruned away — golang.org/x/oauth2, for instance,
+// requires cloud.google.com/go/compute v1.20.1 as an indirect dependency while
+// the walk selected no cloud.google.com/go/compute node at all. The walk graph
+// carries an edge only between selected nodes, so neither Populate nor
+// populatePrePruningGoMods reaches these versions, and under GOPROXY=off the
+// isolated scan then fails to resolve a version the store already holds.
+//
+// Two kinds of entry are supplied, matching exactly what the toolchain reads:
+//
+//   - the go.mod of every module a scannable node directly requires, for the
+//     -mod=mod module-graph reconstruction: a pruned main module reads the
+//     go.mod of each entry in its own require block (direct and indirect) to
+//     rebuild the pruned graph; and
+//   - the full source of any required module whose path is a proper ancestor of
+//     another path in the node's build list — either another required module
+//     (sibling-nested: cloud.google.com/go/compute is an ancestor of the also-
+//     required cloud.google.com/go/compute/metadata) or the scanned node's own
+//     module path (self-nested: google.golang.org/genproto is an ancestor of the
+//     scanned google.golang.org/genproto/googleapis/rpc). Resolving an import
+//     under the nested path makes the toolchain read the ancestor module's
+//     source to confirm the ancestor does not itself provide the package, so the
+//     ancestor needs its zip, not merely its go.mod. This is why an isolated
+//     oauth2 scan fails naming the metadata import even though metadata's own
+//     source is cached: the absent source is the parent module the toolchain
+//     consults to disambiguate.
+//
+// Populates are idempotent — a coordinate already written as a selected node is
+// skipped — so the common case where a required version is itself a selected
+// node costs a stat, not a rewrite. Best-effort throughout: a version whose fact
+// record or blob is missing degrades to that one version being unresolvable
+// offline, which the population report names rather than swallows.
+func (uc *ScanWalkUseCase) populateScannedBuildListDeps(ctx context.Context, coords []coordinate.ModuleCoordinate, cacheDir string) {
+	goModSet := make(map[coordinate.ModuleCoordinate]struct{})
+	sourceSet := make(map[coordinate.ModuleCoordinate]struct{})
+	for _, node := range coords {
+		requires, ok := uc.nodeGoModRequires(ctx, node)
+		if !ok {
+			continue
+		}
+		for _, r := range requires {
+			goModSet[r] = struct{}{}
+		}
+		// A required module whose path is a proper ancestor of another path in
+		// the build list needs its source, not just its go.mod: resolving an
+		// import under the nested path makes the toolchain read the ancestor's
+		// source to confirm the ancestor does not itself provide the package.
+		// The nested descendant can be another required module (sibling-nested,
+		// e.g. grpc requiring both cloud.google.com/go/compute and
+		// .../compute/metadata) or the scanned node's own module path
+		// (self-nested, e.g. google.golang.org/genproto/googleapis/rpc requiring
+		// its own ancestor google.golang.org/genproto). Both make the toolchain
+		// read the ancestor's source, so both seed the source set.
+		for _, a := range requires {
+			if strings.HasPrefix(node.Path, a.Path+"/") {
+				sourceSet[a] = struct{}{}
+			}
+			for _, b := range requires {
+				if a != b && strings.HasPrefix(b.Path, a.Path+"/") {
+					sourceSet[a] = struct{}{}
+				}
+			}
+		}
+	}
+	// A module supplied as source already carries its go.mod, so drop it from the
+	// go.mod-only set rather than populate it twice.
+	for c := range sourceSet {
+		delete(goModSet, c)
+	}
+	if len(goModSet) == 0 && len(sourceSet) == 0 {
+		return
+	}
+
+	if len(sourceSet) > 0 {
+		src := coordSetSlice(sourceSet)
+		uc.prefetchMissing(ctx, src)
+		report := modcache.Populate(ctx, uc.moduleScanner.factStore, uc.moduleScanner.blobs, cacheDir, src, uc.moduleScanner.fetchPipelineVersion)
+		uc.logger.Info("populated nested-ancestor module sources for offline resolution",
+			"written", report.Written, "requested", report.Requested)
+		if !report.Complete() {
+			uc.logger.Warn("some nested-ancestor sources could not be populated; imports under those paths may fail to resolve offline",
+				"written", report.Written, "requested", report.Requested,
+				"failures", report.FailureSummary(populateFailureLogLimit))
+		}
+	}
+	if len(goModSet) > 0 {
+		mods := coordSetSlice(goModSet)
+		uc.prefetchGoModOnly(ctx, mods)
+		report := modcache.PopulateGoMod(ctx, uc.moduleScanner.factStore, uc.moduleScanner.blobs, cacheDir, mods, uc.moduleScanner.fetchPipelineVersion)
+		uc.logger.Info("populated scanned-node build-list go.mod files for offline resolution",
+			"written", report.Written, "requested", report.Requested)
+		if !report.Complete() {
+			uc.logger.Warn("some build-list go.mod files could not be populated; modules requiring these versions may fail to resolve offline",
+				"written", report.Written, "requested", report.Requested,
+				"failures", report.FailureSummary(populateFailureLogLimit))
+		}
+	}
+}
+
+// nodeGoModRequires reads the require directives from a node's stored go.mod.
+// The bool is false when no go.mod could be read or parsed; both direct and
+// indirect requirements are returned, since a pruned main module's graph load
+// reads the go.mod of every entry in its require block regardless of block.
+func (uc *ScanWalkUseCase) nodeGoModRequires(ctx context.Context, coord coordinate.ModuleCoordinate) ([]coordinate.ModuleCoordinate, bool) {
+	fact, ok, err := uc.moduleScanner.getFetchRecord(ctx, coord)
+	if err != nil || !ok || fact.GoModLocation == "" {
+		return nil, false
+	}
+	rc, err := uc.moduleScanner.blobs.Get(ctx, fetchports.BlobHandle(fact.GoModLocation))
+	if err != nil {
+		return nil, false
+	}
+	defer func() { _ = rc.Close() }()
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		return nil, false
+	}
+	f, err := modfile.Parse("go.mod", data, nil)
+	if err != nil {
+		return nil, false
+	}
+	out := make([]coordinate.ModuleCoordinate, 0, len(f.Require))
+	for _, req := range f.Require {
+		if req == nil || req.Mod.Path == "" || req.Mod.Version == "" {
+			continue
+		}
+		out = append(out, coordinate.ModuleCoordinate{Path: req.Mod.Path, Version: req.Mod.Version})
+	}
+	return out, true
+}
+
+// coordSetSlice flattens a coordinate set into a slice for the populate helpers.
+func coordSetSlice(set map[coordinate.ModuleCoordinate]struct{}) []coordinate.ModuleCoordinate {
+	out := make([]coordinate.ModuleCoordinate, 0, len(set))
+	for c := range set {
+		out = append(out, c)
+	}
+	return out
+}
+
 // prePruningNodes returns the graph's nodes that declare a pre-pruning (go<1.17)
 // go directive — the modules whose isolated scan makes the toolchain load the
 // full, unpruned module graph. Nodes with no readable go.mod are skipped rather
@@ -904,6 +1049,12 @@ func (uc *ScanWalkUseCase) prepareModCache(ctx context.Context, walk walkdomain.
 			// so the scan resolves fully offline instead of falling back to the
 			// network for graph bookkeeping.
 			uc.populatePrePruningGoMods(ctx, walk.Graph, cacheDir)
+
+			// A pruned (go>=1.17) node scanned in isolation still reads its OWN
+			// go.mod's require block, which names versions the walk's MVS
+			// superseded or pruned away and that the graph records no edge to.
+			// Supply those so the isolated scan resolves them offline.
+			uc.populateScannedBuildListDeps(ctx, coords, cacheDir)
 		}
 	}
 	return goModCache, release
