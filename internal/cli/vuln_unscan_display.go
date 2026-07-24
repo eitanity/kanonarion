@@ -70,6 +70,16 @@ var unscanDisplays = map[vuldomain.UnscanReason]unscanDisplay{
 		// isolation, and the whole-build analysis answers the question properly.
 		hint: reachabilityLocalHint,
 	},
+	vuldomain.UnscanReasonVersionNotInToolchainUnverified: {
+		label:   metadataOnlyNote + " (offline resolution failed, version unidentified)",
+		heading: metadataOnlyNote + " — offline resolution failed, version could not be identified",
+		explanation: "an offline module lookup failed but the toolchain error named no version, " +
+			"so whether these modules reach outside the project build or the scan cache is incomplete is unverified; " +
+			"advisories matched, reachability not computed here",
+		// The whole-build analysis both resolves reachability and, by rooting at
+		// the project, avoids the isolated re-resolution that produced this at all.
+		hint: reachabilityLocalHint,
+	},
 	vuldomain.UnscanReasonPackageDeclarationsMissing: {
 		label:   metadataOnlyNote + " (no buildable files for this toolchain)",
 		heading: metadataOnlyNote + " — no buildable files for this toolchain",

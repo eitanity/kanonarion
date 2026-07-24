@@ -220,6 +220,14 @@ func TestUnresolvedCoordinate(t *testing.T) {
 			wantOK: false,
 		},
 		{
+			// An absolute modcache path whose file position embeds "mod@version"
+			// must not be split on that "@" into a /tmp path and a version that
+			// carries the file:line:col — it is a source position, not a coordinate.
+			name:   "modcache source position is not a coordinate",
+			detail: "/tmp/kanonarion-modcache-1/github.com/prometheus/client_golang@v1.12.1/prometheus/desc.go:22:2: module lookup disabled by GOPROXY=off",
+			wantOK: false,
+		},
+		{
 			name:   "unrelated failure",
 			detail: "build constraints exclude all Go files in /tmp/x",
 			wantOK: false,
@@ -241,37 +249,215 @@ func TestUnresolvedCoordinate(t *testing.T) {
 	}
 }
 
-// TestRefineOfflineResolutionReason is the guard against a scan-cache hole
-// being filed as an expected out-of-toolchain outcome. A version the walk graph
-// itself records is one kanonarion undertook to supply; failing to resolve it is
-// a fault, and must not inherit ExpectedOutOfToolchain.
-func TestRefineOfflineResolutionReason(t *testing.T) {
+// TestClassifyOfflineResolution is the guard against a scan-cache hole being
+// filed as an expected out-of-toolchain outcome, and against an out-of-toolchain
+// verdict being asserted with no version behind it. The classifier maps the
+// recovered coordinate and the walk's known set onto the reason and prose the
+// evidence supports.
+func TestClassifyOfflineResolution(t *testing.T) {
 	known := map[coordinate.ModuleCoordinate]struct{}{
 		{Path: "github.com/stretchr/testify", Version: "v1.7.0"}: {},
 	}
-	inClosure := "go: github.com/cloudwego/iasm@v0.2.0 requires\n\tgithub.com/stretchr/testify@v1.7.0: module lookup disabled by GOPROXY=off"
-	outsideClosure := "go: example.com/other@v3.0.0: module lookup disabled by GOPROXY=off"
+	inClosure := coordinate.ModuleCoordinate{Path: "github.com/stretchr/testify", Version: "v1.7.0"}
+	outside := coordinate.ModuleCoordinate{Path: "example.com/other", Version: "v3.0.0"}
+	detail := "govulncheck: loading packages: stdr.go:25:2: module lookup disabled by GOPROXY=off"
 
-	if got := RefineOfflineResolutionReason(UnscanReasonVersionNotInToolchain, inClosure, known); got != UnscanReasonIncompleteScanCache {
-		t.Errorf("version inside the walk closure = %q, want %q", got, UnscanReasonIncompleteScanCache)
+	// A version the walk records: a fault, not an expected outcome, and the prose
+	// names the missing coordinate.
+	reason, category := ClassifyOfflineResolution(detail, inClosure, true, known)
+	if reason != UnscanReasonIncompleteScanCache {
+		t.Errorf("version inside the walk closure reason = %q, want %q", reason, UnscanReasonIncompleteScanCache)
 	}
-	if got := RefineOfflineResolutionReason(UnscanReasonVersionNotInToolchain, outsideClosure, known); got != UnscanReasonVersionNotInToolchain {
-		t.Errorf("version outside the walk closure = %q, want it left as out-of-toolchain", got)
+	if !strings.Contains(category, inClosure.String()) {
+		t.Errorf("incomplete-scan-cache prose = %q, want it to name %s", category, inClosure)
 	}
+
+	// A version confirmed outside the set: out-of-toolchain stands, and the prose
+	// names the coordinate that proves it.
+	reason, category = ClassifyOfflineResolution(detail, outside, true, known)
+	if reason != UnscanReasonVersionNotInToolchain {
+		t.Errorf("version outside the walk closure reason = %q, want it left as out-of-toolchain", reason)
+	}
+	if !strings.Contains(category, outside.String()) {
+		t.Errorf("verified out-of-toolchain prose = %q, want it to name %s", category, outside)
+	}
+
+	// No coordinate recovered: the reason must state the cause is unverified
+	// rather than assert an out-of-toolchain re-selection.
+	reason, category = ClassifyOfflineResolution(detail, coordinate.ModuleCoordinate{}, false, known)
+	if reason != UnscanReasonVersionNotInToolchainUnverified {
+		t.Errorf("unrecovered reason = %q, want %q", reason, UnscanReasonVersionNotInToolchainUnverified)
+	}
+	if !strings.Contains(category, "unverified") {
+		t.Errorf("unverified prose = %q, want it to state the cause is unverified", category)
+	}
+
 	// No graph to compare against: keep the conservative existing reading.
-	if got := RefineOfflineResolutionReason(UnscanReasonVersionNotInToolchain, inClosure, nil); got != UnscanReasonVersionNotInToolchain {
-		t.Errorf("with no known set = %q, want it left untouched", got)
+	reason, _ = ClassifyOfflineResolution(detail, inClosure, true, nil)
+	if reason != UnscanReasonVersionNotInToolchain {
+		t.Errorf("with no known set reason = %q, want the conservative out-of-toolchain reading", reason)
 	}
-	// Unrelated reasons are never rewritten.
-	if got := RefineOfflineResolutionReason(UnscanReasonWindowsOnly, inClosure, known); got != UnscanReasonWindowsOnly {
-		t.Errorf("unrelated reason = %q, want it left untouched", got)
+}
+
+// TestUnscanReason_VersionNotInToolchainUnverifiedIsAFault guards that the
+// unverified reason does not inherit the confident, informational reading a
+// recovered-and-confirmed one earns — that misclassification is what would let a
+// scan-cache hole hide as expected.
+func TestUnscanReason_VersionNotInToolchainUnverifiedIsAFault(t *testing.T) {
+	if UnscanReasonVersionNotInToolchainUnverified.ExpectedOutOfToolchain() {
+		t.Error("version-not-in-toolchain-unverified is an unverified claim; it must not be marked expected")
 	}
-	// A failure that names no coordinate at all cannot be checked against the
-	// graph, so the conservative reading stands rather than being upgraded to a
-	// fault on no evidence.
-	noCoordinate := "govulncheck: loading packages: stdr.go:25:2: module lookup disabled by GOPROXY=off"
-	if got := RefineOfflineResolutionReason(UnscanReasonVersionNotInToolchain, noCoordinate, known); got != UnscanReasonVersionNotInToolchain {
-		t.Errorf("unnamed coordinate = %q, want it left as out-of-toolchain", got)
+}
+
+// TestUnresolvedImportPath recovers the unimportable package from the
+// source-position error shape — the dominant shape that names no coordinate.
+func TestUnresolvedImportPath(t *testing.T) {
+	cases := []struct {
+		name     string
+		detail   string
+		wantPath string
+		wantOK   bool
+	}{
+		{
+			name: "paired source position names the package",
+			detail: "rich_url.go:7:2: module lookup disabled by GOPROXY=off\n" +
+				"/tmp/x/github.com/Shopify/goreferrer@v0.0.0/rich_url.go:7:2: could not import golang.org/x/net/publicsuffix (invalid package name: \"\")",
+			wantPath: "golang.org/x/net/publicsuffix",
+			wantOK:   true,
+		},
+		{
+			// A coordinate-naming failure is UnresolvedCoordinate's to read; this
+			// must not also recover a package from it.
+			name:   "coordinate shape yields no import path",
+			detail: "go: github.com/bytedance/sonic/loader@v0.1.1: module lookup disabled by GOPROXY=off",
+			wantOK: false,
+		},
+		{
+			// A could-not-import line at an unrelated position is not the offline
+			// resolution failure and must not be paired with it.
+			name: "unrelated could-not-import position is not paired",
+			detail: "rich_url.go:7:2: module lookup disabled by GOPROXY=off\n" +
+				"other.go:3:1: could not import example.com/unrelated (some other reason)",
+			wantOK: false,
+		},
+		{
+			name:   "no offline failure at all",
+			detail: "build constraints exclude all Go files in /tmp/x",
+			wantOK: false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got, ok := UnresolvedImportPath(tc.detail)
+			if ok != tc.wantOK {
+				t.Fatalf("ok = %v, want %v (got %q)", ok, tc.wantOK, got)
+			}
+			if ok && got != tc.wantPath {
+				t.Errorf("import path = %q, want %q", got, tc.wantPath)
+			}
+		})
+	}
+}
+
+// TestUnresolvedImportPath_EdgeShapes covers the degenerate lines the pairing
+// must reject rather than read a coordinate out of noise: a marker with no
+// source position, a could-not-import line at column start, and one naming no
+// package.
+func TestUnresolvedImportPath_EdgeShapes(t *testing.T) {
+	cases := []struct {
+		name   string
+		detail string
+	}{
+		{
+			// The GOPROXY=off line has nothing before the marker, so it names no
+			// position and cannot be paired.
+			name:   "marker with no source position",
+			detail: "module lookup disabled by GOPROXY=off\nx.go:1:1: could not import example.com/foo/bar (reason)",
+		},
+		{
+			// The could-not-import line has nothing before the marker, so its
+			// position is empty and matches no offline-failure position.
+			name:   "could-not-import at column start",
+			detail: "x.go:1:1: module lookup disabled by GOPROXY=off\ncould not import example.com/foo/bar",
+		},
+		{
+			// The paired could-not-import line names no package after the marker.
+			name:   "could-not-import names no package",
+			detail: "x.go:1:1: module lookup disabled by GOPROXY=off\nx.go:1:1: could not import ",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got, ok := UnresolvedImportPath(tc.detail); ok {
+				t.Errorf("ok = true (got %q), want false for a degenerate pair", got)
+			}
+		})
+	}
+}
+
+// TestFailurePosition covers the position extractor directly, including the
+// empty-prefix case a marker at column start produces.
+func TestFailurePosition(t *testing.T) {
+	if got := failurePosition("/tmp/x/rich_url.go:7:2: "); got != "/tmp/x/rich_url.go:7:2" {
+		t.Errorf("position = %q, want /tmp/x/rich_url.go:7:2", got)
+	}
+	if got := failurePosition("   "); got != "" {
+		t.Errorf("empty prefix position = %q, want empty", got)
+	}
+}
+
+// TestPositionMatchesAny covers the empty-position guard and the no-match tail.
+func TestPositionMatchesAny(t *testing.T) {
+	positions := []string{"rich_url.go:7:2"}
+	if positionMatchesAny("", positions) {
+		t.Error("an empty position matches nothing")
+	}
+	if !positionMatchesAny("/tmp/x/rich_url.go:7:2", positions) {
+		t.Error("a full path sharing the suffix must match the bare filename")
+	}
+	if positionMatchesAny("other.go:1:1", positions) {
+		t.Error("an unrelated position must not match")
+	}
+}
+
+// TestLooksLikeImportPath covers the shapes the recovery accepts and rejects.
+func TestLooksLikeImportPath(t *testing.T) {
+	cases := map[string]bool{
+		"golang.org/x/net/publicsuffix": true,
+		"example.com":                   true, // dotted single segment
+		"":                              false,
+		"internalpkg":                   false, // no dot in the first segment
+		"cmd/compile":                   false,
+	}
+	for p, want := range cases {
+		if got := looksLikeImportPath(p); got != want {
+			t.Errorf("looksLikeImportPath(%q) = %v, want %v", p, got, want)
+		}
+	}
+}
+
+// TestLongestModulePrefix resolves a package to the most specific module that
+// provides it, never a shorter prefix that happens to match.
+func TestLongestModulePrefix(t *testing.T) {
+	paths := map[string]struct{}{
+		"":                 {}, // an empty entry is skipped, never matched
+		"golang.org/x":     {},
+		"golang.org/x/net": {},
+	}
+	got, ok := LongestModulePrefix("golang.org/x/net/publicsuffix", paths)
+	if !ok || got != "golang.org/x/net" {
+		t.Errorf("module = %q (ok=%v), want golang.org/x/net", got, ok)
+	}
+	// An exact match (the package is the module root) resolves to the module.
+	if got, ok := LongestModulePrefix("golang.org/x/net", paths); !ok || got != "golang.org/x/net" {
+		t.Errorf("exact match module = %q (ok=%v), want golang.org/x/net", got, ok)
+	}
+	if _, ok := LongestModulePrefix("example.com/absent/pkg", paths); ok {
+		t.Error("no module path covers the package; want ok=false")
+	}
+	// A prefix that is not on a path boundary must not match.
+	if _, ok := LongestModulePrefix("golang.org/xtra/pkg", paths); ok {
+		t.Error("golang.org/x is not a path-boundary prefix of golang.org/xtra; want ok=false")
 	}
 }
 

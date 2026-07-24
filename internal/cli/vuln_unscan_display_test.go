@@ -38,14 +38,20 @@ func TestUnscanDisplays_CoversEveryReason(t *testing.T) {
 	}
 }
 
-// TestUnscanDisplays_OnlyOutOfToolchainCarriesADirection pins the one reason
-// that gets a next-step line. The reachability --local direction answers a
-// project-rooted question for a module whose isolated build re-resolved
-// versions; it is the wrong remedy for a toolchain or host limitation, where no
-// operator action on this host changes the outcome.
+// TestUnscanDisplays_OnlyOutOfToolchainCarriesADirection pins the reasons that
+// get a next-step line. The reachability --local direction answers a
+// project-rooted question for a module whose isolated build re-resolved versions
+// — both the confirmed out-of-toolchain case and its unverified sibling, which
+// is the same isolated-resolution class with the version unrecovered. It is the
+// wrong remedy for a toolchain or host limitation, where no operator action on
+// this host changes the outcome.
 func TestUnscanDisplays_OnlyOutOfToolchainCarriesADirection(t *testing.T) {
+	directionReasons := map[vuldomain.UnscanReason]bool{
+		vuldomain.UnscanReasonVersionNotInToolchain:           true,
+		vuldomain.UnscanReasonVersionNotInToolchainUnverified: true,
+	}
 	for reason, d := range unscanDisplays {
-		wantHint := reason == vuldomain.UnscanReasonVersionNotInToolchain
+		wantHint := directionReasons[reason]
 		if wantHint && d.hint == "" {
 			t.Errorf("reason %q must keep the reachability direction", reason)
 		}

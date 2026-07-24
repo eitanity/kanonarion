@@ -450,6 +450,234 @@ func TestScanModule_BuildIncompatibility_FallsBackToMetadata(t *testing.T) {
 	}
 }
 
+// TestScanModule_OfflineResolution_SourcePositionShapeIsVerified is the guard
+// against an unverified out-of-toolchain verdict: an offline resolution failure
+// attributed to a source position names no coordinate in its own text, so the
+// incomplete-scan-cache check used
+// to silently never run and every such module kept version-not-in-toolchain by
+// default. The recovery now resolves the unimportable package to its module and
+// reads the version the scanned module's own go.mod selects, then verifies it
+// against the walk's known set.
+func TestScanModule_OfflineResolution_SourcePositionShapeIsVerified(t *testing.T) {
+	const goMod = "module github.com/shopify/goreferrer\n\ngo 1.12\n\n" +
+		"require golang.org/x/net v0.0.0-20180218175443-cbe0f9307d01\n"
+	// The dominant shape: a GOPROXY=off line and a could-not-import line sharing
+	// one source position, naming a package but no coordinate.
+	scannerErr := "govulncheck: loading packages: \n" +
+		"rich_url.go:7:2: module lookup disabled by GOPROXY=off\n" +
+		"/tmp/x/github.com/shopify/goreferrer@v0.0.0/rich_url.go:7:2: could not import golang.org/x/net/publicsuffix (invalid package name: \"\")"
+	coord := coordinate.ModuleCoordinate{Path: "github.com/shopify/goreferrer", Version: "v0.0.0"}
+	recovered := coordinate.ModuleCoordinate{Path: "golang.org/x/net", Version: "v0.0.0-20180218175443-cbe0f9307d01"}
+
+	cases := []struct {
+		name       string
+		known      map[coordinate.ModuleCoordinate]struct{}
+		wantReason domain.UnscanReason
+		wantInNote string
+	}{
+		{
+			// The recovered version is not the one the project builds, so the
+			// out-of-toolchain verdict is confirmed — and the prose names it.
+			name:       "recovered version outside the walk is verified out-of-toolchain",
+			known:      map[coordinate.ModuleCoordinate]struct{}{{Path: "golang.org/x/net", Version: "v0.55.0"}: {}},
+			wantReason: domain.UnscanReasonVersionNotInToolchain,
+			wantInNote: recovered.String(),
+		},
+		{
+			// The recovered version is one the walk records: a scan-cache hole,
+			// not a module reaching outside the project.
+			name:       "recovered version inside the walk is an incomplete scan cache",
+			known:      map[coordinate.ModuleCoordinate]struct{}{recovered: {}},
+			wantReason: domain.UnscanReasonIncompleteScanCache,
+			wantInNote: recovered.String(),
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			ctx := t.Context()
+			now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+			facts := newFakeFacts()
+			blobs := newFakeBlob()
+			vulnStore := newFakeVulnStore()
+			scanner := &fakeScanner{err: fmt.Errorf("%s", scannerErr)}
+			db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Version: "v1"}}
+			clock := fixedClock{t: now}
+
+			goModHandle, _ := blobs.Put(ctx, strings.NewReader(goMod))
+			zipHandle, _ := blobs.Put(ctx, strings.NewReader("zip content"))
+			if err := facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
+				ModulePath: coord.Path, ModuleVersion: coord.Version, PipelineVersion: "v1",
+				ContentLocation: string(zipHandle), GoModLocation: string(goModHandle),
+			}); err != nil {
+				t.Fatalf("PutFetchRecord: %v", err)
+			}
+
+			uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+			res, err := uc.Scan(ctx, application.ScanModuleParams{
+				Coordinate: coord, WalkID: "walk-1", Force: true, KnownVersions: tc.known,
+			})
+			if err != nil {
+				t.Fatalf("Scan: %v", err)
+			}
+			if res.UnscanReason != tc.wantReason {
+				t.Errorf("UnscanReason = %q, want %q", res.UnscanReason, tc.wantReason)
+			}
+			if !strings.Contains(res.UnscannableReason, tc.wantInNote) {
+				t.Errorf("UnscannableReason = %q, want it to name %q", res.UnscannableReason, tc.wantInNote)
+			}
+		})
+	}
+}
+
+// TestScanModule_OfflineResolution_UnrecoverableIsMarkedUnverified guards the
+// second half of the fix: when no version can be recovered from the error, the
+// reason must state the cause is unverified rather than assert an out-of-toolchain
+// re-selection nothing established. Here the module's go.mod names no requirement
+// for the unimportable package's module, so recovery fails.
+func TestScanModule_OfflineResolution_UnrecoverableIsMarkedUnverified(t *testing.T) {
+	ctx := t.Context()
+	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	coord := coordinate.ModuleCoordinate{Path: "github.com/shopify/goreferrer", Version: "v0.0.0"}
+	// go.mod requires no golang.org/x/net, so the recovered module path resolves
+	// to no version and the coordinate cannot be established.
+	const goMod = "module github.com/shopify/goreferrer\n\ngo 1.12\n"
+	scannerErr := "govulncheck: loading packages: \n" +
+		"rich_url.go:7:2: module lookup disabled by GOPROXY=off\n" +
+		"/tmp/x/rich_url.go:7:2: could not import golang.org/x/net/publicsuffix (invalid package name: \"\")"
+
+	facts := newFakeFacts()
+	blobs := newFakeBlob()
+	vulnStore := newFakeVulnStore()
+	scanner := &fakeScanner{err: fmt.Errorf("%s", scannerErr)}
+	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Version: "v1"}}
+	clock := fixedClock{t: now}
+
+	goModHandle, _ := blobs.Put(ctx, strings.NewReader(goMod))
+	zipHandle, _ := blobs.Put(ctx, strings.NewReader("zip content"))
+	if err := facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
+		ModulePath: coord.Path, ModuleVersion: coord.Version, PipelineVersion: "v1",
+		ContentLocation: string(zipHandle), GoModLocation: string(goModHandle),
+	}); err != nil {
+		t.Fatalf("PutFetchRecord: %v", err)
+	}
+
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	res, err := uc.Scan(ctx, application.ScanModuleParams{
+		Coordinate: coord, WalkID: "walk-1", Force: true,
+		KnownVersions: map[coordinate.ModuleCoordinate]struct{}{{Path: "golang.org/x/net", Version: "v0.55.0"}: {}},
+	})
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if res.UnscanReason != domain.UnscanReasonVersionNotInToolchainUnverified {
+		t.Errorf("UnscanReason = %q, want %q", res.UnscanReason, domain.UnscanReasonVersionNotInToolchainUnverified)
+	}
+	if res.UnscanReason.ExpectedOutOfToolchain() {
+		t.Error("an unverified reason must not be marked expected out-of-toolchain")
+	}
+}
+
+// TestScanModule_OfflineResolution_DirectShapeGatedOnRequireClosure guards
+// against a coordinate the toolchain names but the scanned module does not
+// require sustaining a verified out-of-toolchain verdict. A synthesised go.mod
+// requiring the whole build list makes MVS name a version an unrelated entry
+// demanded; that says nothing about the module being scanned, so a coordinate
+// absent from the module's own require closure must fall back to unverified.
+func TestScanModule_OfflineResolution_DirectShapeGatedOnRequireClosure(t *testing.T) {
+	ctx := t.Context()
+	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	coord := coordinate.ModuleCoordinate{Path: "example.com/scanned", Version: "v1.0.0"}
+	// The module requires only x/text; it never requires fsnotify. The direct
+	// shape names fsnotify@v1.7.0 (an unrelated build-list upgrade).
+	const goMod = "module example.com/scanned\n\ngo 1.19\n\nrequire golang.org/x/text v0.3.8\n"
+	scannerErr := "govulncheck: loading packages: \n" +
+		"go: example.com/scanned imports\n\tgithub.com/fsnotify/fsnotify@v1.7.0: module lookup disabled by GOPROXY=off"
+
+	facts := newFakeFacts()
+	blobs := newFakeBlob()
+	vulnStore := newFakeVulnStore()
+	scanner := &fakeScanner{err: fmt.Errorf("%s", scannerErr)}
+	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Version: "v1"}}
+	clock := fixedClock{t: now}
+
+	goModHandle, _ := blobs.Put(ctx, strings.NewReader(goMod))
+	zipHandle, _ := blobs.Put(ctx, strings.NewReader("zip content"))
+	if err := facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
+		ModulePath: coord.Path, ModuleVersion: coord.Version, PipelineVersion: "v1",
+		ContentLocation: string(zipHandle), GoModLocation: string(goModHandle),
+	}); err != nil {
+		t.Fatalf("PutFetchRecord: %v", err)
+	}
+
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	res, err := uc.Scan(ctx, application.ScanModuleParams{
+		Coordinate: coord, WalkID: "walk-1", Force: true,
+		// fsnotify@v1.7.0 is outside the walk's known set, so the un-gated code
+		// would report a confident verified out-of-toolchain naming it.
+		KnownVersions: map[coordinate.ModuleCoordinate]struct{}{{Path: "github.com/fsnotify/fsnotify", Version: "v1.4.9"}: {}},
+	})
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if res.UnscanReason != domain.UnscanReasonVersionNotInToolchainUnverified {
+		t.Errorf("UnscanReason = %q, want %q (a coordinate the module does not require must not be verified)",
+			res.UnscanReason, domain.UnscanReasonVersionNotInToolchainUnverified)
+	}
+	if strings.Contains(res.UnscannableReason, "fsnotify") {
+		t.Errorf("prose must not name fsnotify as an established out-of-toolchain coordinate: %q", res.UnscannableReason)
+	}
+}
+
+// TestScanModule_OfflineResolution_VersionedReplaceScoping guards that a
+// versioned replace only redirects the version it names. The module requires
+// x/text v0.3.8 and carries a replace scoped to a *different* version; the
+// recovered coordinate must therefore be the required version, not the replace
+// target.
+func TestScanModule_OfflineResolution_VersionedReplaceScoping(t *testing.T) {
+	ctx := t.Context()
+	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	coord := coordinate.ModuleCoordinate{Path: "example.com/scanned", Version: "v1.0.0"}
+	// The replace targets x/text v0.9.9, but the require selects v0.3.8, so the
+	// replace does not apply and must not be read as if it did.
+	const goMod = "module example.com/scanned\n\ngo 1.19\n\n" +
+		"require golang.org/x/text v0.3.8\n\n" +
+		"replace golang.org/x/text v0.9.9 => golang.org/x/text v0.9.9\n"
+	scannerErr := "govulncheck: loading packages: \n" +
+		"main.go:3:2: module lookup disabled by GOPROXY=off\n" +
+		"/tmp/x/main.go:3:2: could not import golang.org/x/text/language (invalid package name: \"\")"
+
+	facts := newFakeFacts()
+	blobs := newFakeBlob()
+	vulnStore := newFakeVulnStore()
+	scanner := &fakeScanner{err: fmt.Errorf("%s", scannerErr)}
+	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Version: "v1"}}
+	clock := fixedClock{t: now}
+
+	goModHandle, _ := blobs.Put(ctx, strings.NewReader(goMod))
+	zipHandle, _ := blobs.Put(ctx, strings.NewReader("zip content"))
+	if err := facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
+		ModulePath: coord.Path, ModuleVersion: coord.Version, PipelineVersion: "v1",
+		ContentLocation: string(zipHandle), GoModLocation: string(goModHandle),
+	}); err != nil {
+		t.Fatalf("PutFetchRecord: %v", err)
+	}
+
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	res, err := uc.Scan(ctx, application.ScanModuleParams{
+		Coordinate: coord, WalkID: "walk-1", Force: true,
+		KnownVersions: map[coordinate.ModuleCoordinate]struct{}{{Path: "golang.org/x/text", Version: "v0.21.0"}: {}},
+	})
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if res.UnscanReason != domain.UnscanReasonVersionNotInToolchain {
+		t.Fatalf("UnscanReason = %q, want verified version-not-in-toolchain", res.UnscanReason)
+	}
+	if !strings.Contains(res.UnscannableReason, "golang.org/x/text@v0.3.8") {
+		t.Errorf("recovered coordinate = %q, want the required v0.3.8, not the out-of-scope replace target v0.9.9", res.UnscannableReason)
+	}
+}
+
 // TestScanModule_MetadataPath_PersistsEnrichedFindings is the round-trip guard:
 // when a module falls back to the metadata path, the advisory's summary,
 // affected range, fixed version and at-risk symbols flow through the scan into

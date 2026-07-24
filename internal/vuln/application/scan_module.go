@@ -12,6 +12,8 @@ import (
 	"strings"
 	"time"
 
+	"golang.org/x/mod/modfile"
+
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
@@ -86,8 +88,17 @@ import (
 // not-reachable/high-confidence. A "v11" record whose target is itself a
 // vulnerable library carries that fabricated verdict and must be re-scanned; a
 // walk whose target carries no advisory about itself is unaffected in content
-// but re-scans under the new version like any other.
-const PipelineVersion = "v12"
+// but re-scans under the new version like any other. It was bumped to "v13" when
+// a version-not-in-toolchain verdict began being verified rather than asserted:
+// the offline resolution failure's dominant shape attributes the failure to a
+// source position and names no coordinate, so the incomplete-scan-cache check
+// silently never ran and the reason was kept by default. Recovery now resolves
+// the unimportable package to its module and reads the version the scanned
+// module's own go.mod selects, and a failure whose version cannot be recovered
+// is recorded as version-not-in-toolchain-unverified rather than an asserted
+// out-of-toolchain outcome. A "v12" record on that path carries the unverified
+// reason as if established and must be re-scanned.
+const PipelineVersion = "v13"
 
 // ScanModuleUseCase orchestrates a single module's vulnerability scan.
 type ScanModuleUseCase struct {
@@ -504,11 +515,12 @@ func (uc *ScanModuleUseCase) routeCoverageFallback(
 	if record.OverallStatus == domain.StatusScanFailed && domain.IsBuildIncompatibility(record.ErrorDetail) {
 		category := domain.ClassifyBuildIncompatibility(record.ErrorDetail)
 		reason := domain.StructuredUnscanReason(record.ErrorDetail)
-		// An offline resolution failure naming a version the walk itself records
-		// is a hole in the scan cache, not a module reaching outside the project.
-		if refined := domain.RefineOfflineResolutionReason(reason, record.ErrorDetail, params.KnownVersions); refined != reason {
-			reason = refined
-			category = domain.IncompleteScanCacheReason(record.ErrorDetail)
+		// An offline resolution failure must be established, not asserted: the
+		// version the toolchain could not resolve decides whether this is a scan
+		// cache the walk should have filled or a module reaching outside the
+		// project, and one recovered as neither leaves the reason unverified.
+		if reason == domain.UnscanReasonVersionNotInToolchain {
+			reason, category = uc.verifyOfflineResolution(ctx, params, record.ErrorDetail)
 		}
 		uc.logMetadataFallback(params.Coordinate, reason, category, record.ErrorDetail)
 		note := "source analysis unavailable: " + category + "; results are metadata-only with no reachability"
@@ -528,6 +540,133 @@ func (uc *ScanModuleUseCase) routeCoverageFallback(
 	}
 
 	return domain.VulnerabilityRecord{}, false, nil
+}
+
+// verifyOfflineResolution establishes the reason and category prose for a
+// version-not-in-toolchain failure by recovering the version the toolchain could
+// not resolve and handing the evidence to domain.ClassifyOfflineResolution.
+// Recovery — which reads the scanned module's go.mod for the source-position
+// shape — runs only when there is a walk graph to verify against; a bare
+// per-module scan skips it and keeps the conservative reading.
+func (uc *ScanModuleUseCase) verifyOfflineResolution(ctx context.Context, params ScanModuleParams, detail string) (domain.UnscanReason, string) {
+	var (
+		coord     coordinate.ModuleCoordinate
+		recovered bool
+	)
+	if len(params.KnownVersions) > 0 {
+		coord, recovered = uc.recoverUnresolvedCoordinate(ctx, params, detail)
+	}
+	return domain.ClassifyOfflineResolution(detail, coord, recovered, params.KnownVersions)
+}
+
+// recoverUnresolvedCoordinate identifies the module version an offline
+// resolution failure could not resolve, across both error shapes, and
+// establishes it against the scanned module's own dependencies rather than
+// asserting it from the error text.
+//
+// Both shapes first yield a module path — the direct shape names it in a
+// coordinate, the source-position shape via longest-prefix match of the
+// unimportable package against the walk's module paths. That path is then
+// resolved to a version through the scanned module's own go.mod. A coordinate
+// the scanned module does not require in its own closure cannot sustain a
+// verdict about that module: the toolchain can name a version an unrelated
+// build-list entry demanded (a synthesised go.mod requiring the whole walk is
+// the case that produced this), which says nothing about the module being
+// scanned. Reading the version the module itself selects is what makes the
+// verdict its own. ok is false when no path can be recovered or the module does
+// not require it.
+func (uc *ScanModuleUseCase) recoverUnresolvedCoordinate(ctx context.Context, params ScanModuleParams, detail string) (coordinate.ModuleCoordinate, bool) {
+	modulePath, ok := uc.unresolvedModulePath(params, detail)
+	if !ok {
+		return coordinate.ModuleCoordinate{}, false
+	}
+	return uc.requiredCoordinate(ctx, params.Coordinate, modulePath)
+}
+
+// unresolvedModulePath returns the module path an offline resolution failure
+// concerns, from whichever shape the error takes: the coordinate the direct
+// shape names, or the module the source-position shape's unimportable package
+// resolves to by longest-prefix match against the walk's module paths.
+func (uc *ScanModuleUseCase) unresolvedModulePath(params ScanModuleParams, detail string) (string, bool) {
+	if coord, ok := domain.UnresolvedCoordinate(detail); ok {
+		return coord.Path, true
+	}
+	importPath, ok := domain.UnresolvedImportPath(detail)
+	if !ok {
+		return "", false
+	}
+	return domain.LongestModulePrefix(importPath, modulePaths(params.KnownVersions))
+}
+
+// requiredCoordinate returns the coordinate the scanned module's own go.mod
+// selects for modulePath — the version its isolated build, running MVS as its
+// own main module, would resolve. ok is false when the go.mod cannot be read or
+// does not require modulePath, in which case no coordinate can be established:
+// the require-closure membership is what ties the version to the scanned module
+// rather than to an unrelated build-list entry.
+func (uc *ScanModuleUseCase) requiredCoordinate(ctx context.Context, scanned coordinate.ModuleCoordinate, modulePath string) (coordinate.ModuleCoordinate, bool) {
+	f, ok := uc.scannedGoMod(ctx, scanned)
+	if !ok {
+		return coordinate.ModuleCoordinate{}, false
+	}
+	version, found := "", false
+	for _, r := range f.Require {
+		if r.Mod.Path == modulePath {
+			version, found = r.Mod.Version, true
+			break
+		}
+	}
+	if !found {
+		return coordinate.ModuleCoordinate{}, false
+	}
+	// A module-to-module replace redirects the selection. A versioned replace
+	// ("foo v1 => bar v2") applies only to that exact version; an unversioned one
+	// ("foo => bar v2") applies to every version. Honouring the same scoping the
+	// toolchain's MVS does keeps a replace that does not apply to the required
+	// version from being read as if it did.
+	for _, r := range f.Replace {
+		if r.Old.Path != modulePath || r.New.Version == "" {
+			continue
+		}
+		if r.Old.Version == "" || r.Old.Version == version {
+			return coordinate.ModuleCoordinate{Path: r.New.Path, Version: r.New.Version}, true
+		}
+	}
+	return coordinate.ModuleCoordinate{Path: modulePath, Version: version}, true
+}
+
+// scannedGoMod reads and parses the scanned module's own go.mod from the blob
+// store. ok is false when no go.mod is recorded for it or it cannot be read or
+// parsed — treated as a recovery miss, never a fabricated requirement.
+func (uc *ScanModuleUseCase) scannedGoMod(ctx context.Context, scanned coordinate.ModuleCoordinate) (*modfile.File, bool) {
+	fact, ok, err := uc.getFetchRecord(ctx, scanned)
+	if err != nil || !ok || fact.GoModLocation == "" {
+		return nil, false
+	}
+	rc, err := uc.blobs.Get(ctx, fetchports.BlobHandle(fact.GoModLocation))
+	if err != nil {
+		return nil, false
+	}
+	defer func() { _ = rc.Close() }()
+	data, err := io.ReadAll(rc)
+	if err != nil {
+		return nil, false
+	}
+	f, err := modfile.Parse("go.mod", data, nil)
+	if err != nil {
+		return nil, false
+	}
+	return f, true
+}
+
+// modulePaths projects a set of coordinates onto their distinct module paths,
+// the universe LongestModulePrefix resolves an unimportable package against.
+func modulePaths(known map[coordinate.ModuleCoordinate]struct{}) map[string]struct{} {
+	paths := make(map[string]struct{}, len(known))
+	for coord := range known {
+		paths[coord.Path] = struct{}{}
+	}
+	return paths
 }
 
 // attributeCoordinateFindings matches the module's advisory set from the pinned

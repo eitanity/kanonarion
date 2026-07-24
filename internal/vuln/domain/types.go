@@ -70,6 +70,17 @@ const (
 	// fetched from the network — which would analyse a dependency graph the
 	// project never builds. Surfaced as a coverage gap, never a confident clean.
 	UnscanReasonVersionNotInToolchain UnscanReason = "version-not-in-toolchain"
+	// UnscanReasonVersionNotInToolchainUnverified indicates an offline resolution
+	// failed with the shape of version-not-in-toolchain, but the version the
+	// toolchain could not resolve could not be recovered from the error — so the
+	// out-of-toolchain cause is asserted by the error's shape alone, never checked
+	// against the walk's known set. It is deliberately not marked
+	// ExpectedOutOfToolchain: an unverified claim must not inherit the confident,
+	// informational reading a recovered-and-confirmed one earns, because a genuine
+	// scan-cache hole produces the same wording and would otherwise be filed as
+	// expected and never investigated — the precise failure this discrimination
+	// exists to prevent.
+	UnscanReasonVersionNotInToolchainUnverified UnscanReason = "version-not-in-toolchain-unverified"
 	// UnscanReasonPackageDeclarationsMissing indicates a package's declarations
 	// are absent because every file that would declare them is excluded by build
 	// constraints — most often a host Go toolchain outside the range the module
@@ -125,6 +136,7 @@ const (
 func AllUnscanReasons() []UnscanReason {
 	return []UnscanReason{
 		UnscanReasonVersionNotInToolchain,
+		UnscanReasonVersionNotInToolchainUnverified,
 		UnscanReasonPackageDeclarationsMissing,
 		UnscanReasonCHeadersMissing,
 		UnscanReasonGeneratedAssets,
