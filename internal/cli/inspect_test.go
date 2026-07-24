@@ -2,12 +2,16 @@ package cli
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
-	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/eitanity/kanonarion/internal/cli/testfakes"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 )
 
 // A summary over a dependency set where any stage failed must never report
@@ -48,6 +52,42 @@ func TestInspectSummaryStatus_FailuresAreNeverAllClean(t *testing.T) {
 					tc.nodeFails, tc.extractFails, tc.scanFails, tc.affected, tc.scanStatus, got, tc.want)
 			}
 		})
+	}
+}
+
+// The inspect summary's affected count must be the real number of modules
+// whose per-module verdict is Affected, not a 0/1 flag off OverallStatus: a run
+// with several affected modules must count every one of them. Modules whose
+// record is unavailable are counted conservatively (their Clean status cannot
+// be confirmed).
+func TestAffectedSetForRun_CountsEveryAffectedModule(t *testing.T) {
+	aff1 := coordinate.ModuleCoordinate{Path: "example.com/a", Version: "v1.0.0"}
+	aff2 := coordinate.ModuleCoordinate{Path: "example.com/b", Version: "v1.0.0"}
+	aff3 := coordinate.ModuleCoordinate{Path: "example.com/c", Version: "v1.0.0"}
+	clean := coordinate.ModuleCoordinate{Path: "example.com/d", Version: "v1.0.0"}
+	missing := coordinate.ModuleCoordinate{Path: "example.com/e", Version: "v1.0.0"}
+
+	vuln := testfakes.NewFakeQueryVuln()
+	vuln.AddRecord(aff1, aff(aff1))
+	vuln.AddRecord(aff2, aff(aff2))
+	vuln.AddRecord(aff3, aff(aff3))
+	vuln.AddRecord(clean, cln(clean))
+	// `missing` is present in the run but has no record → counted conservatively.
+
+	run := vuldomain.WalkScanRun{
+		WalkID:        "walk-1",
+		OverallStatus: vuldomain.WalkStatusAffected,
+		PerModuleResults: map[coordinate.ModuleCoordinate]string{
+			aff1: "", aff2: "", aff3: "", clean: "", missing: "",
+		},
+	}
+
+	got := affectedSetForRun(context.Background(), vuln, run)
+	if len(got) != 4 {
+		t.Errorf("affected count = %d, want 4 (three Affected records + one unreadable); got set %v", len(got), got)
+	}
+	if _, ok := got[clean]; ok {
+		t.Errorf("clean module %v must not be counted as affected", clean)
 	}
 }
 

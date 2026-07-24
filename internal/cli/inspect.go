@@ -339,9 +339,10 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 			_, _ = fmt.Fprintf(stderr, "==> inspect: no scan run recorded for walk %s\n", walkID)
 		default:
 			scanStatus = runs[0].OverallStatus
-			if scanStatus == vuldomain.WalkStatusAffected {
-				affectedCount = 1
-			}
+			// Count the modules whose per-module verdict is Affected rather than
+			// collapsing to a 0/1 flag off OverallStatus — a walk with 100
+			// affected modules must report 100, not 1.
+			affectedCount = len(affectedSetForRun(ctx, ctr.QueryVuln, runs[0]))
 			snapshotVersion = runs[0].Snapshot.Version
 		}
 	}

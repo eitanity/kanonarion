@@ -208,7 +208,14 @@ func buildAffectedSetForWalk(ctx context.Context, runsUC QueryScanRunsUseCase, v
 	}
 
 	// runs[0] is the most recent (ListWalkScanRuns returns DESC by started_at).
-	run := runs[0]
+	return affectedSetForRun(ctx, vulnUC, runs[0]), nil
+}
+
+// affectedSetForRun resolves the set of module coordinates that are Affected in
+// a single scan run, reading each module's per-module verdict from its
+// VulnerabilityRecord. Modules whose record is unavailable are included
+// conservatively, since their Clean status cannot be confirmed.
+func affectedSetForRun(ctx context.Context, vulnUC QueryVulnUseCase, run vuldomain.WalkScanRun) map[coordinate.ModuleCoordinate]struct{} {
 	affected := make(map[coordinate.ModuleCoordinate]struct{}, len(run.PerModuleResults))
 	for coord := range run.PerModuleResults {
 		// Use the walk-scoped lookup (snapshot-agnostic) so snapshot mismatches
@@ -224,7 +231,7 @@ func buildAffectedSetForWalk(ctx context.Context, runsUC QueryScanRunsUseCase, v
 			affected[coord] = struct{}{}
 		}
 	}
-	return affected, nil
+	return affected
 }
 
 type walkModuleSize struct {
