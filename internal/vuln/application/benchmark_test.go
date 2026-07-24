@@ -23,18 +23,28 @@ type slowScanner struct {
 	delay time.Duration
 }
 
-func (s *slowScanner) Scan(_ context.Context, coord coordinate.ModuleCoordinate, _ io.Reader, snap domain.DatabaseSnapshot, _ string, _ string, _ domain.ScanMode) (domain.VulnerabilityRecord, error) {
+func (s *slowScanner) Scan(_ context.Context, req ports.ScanRequest) (domain.VulnerabilityRecord, error) {
 	time.Sleep(s.delay)
 	return domain.VulnerabilityRecord{
-		Coordinate:       coord,
+		Coordinate:       req.Coordinate,
 		OverallStatus:    domain.StatusClean,
-		DatabaseSnapshot: snap,
+		DatabaseSnapshot: req.Snapshot,
 	}, nil
 }
 
 func (s *slowScanner) ScanProject(_ context.Context, _ string, _ domain.DatabaseSnapshot, _ string) (domain.ProjectScanResult, error) {
 	time.Sleep(s.delay)
 	return domain.ProjectScanResult{Status: domain.StatusClean}, nil
+}
+
+// ScanTargetModule reports a fault so the benchmark keeps measuring the
+// isolated per-module pool it exists to measure, rather than collapsing to one
+// target-rooted scan.
+func (s *slowScanner) ScanTargetModule(_ context.Context, _ ports.TargetScanRequest) (domain.ProjectScanResult, error) {
+	return domain.ProjectScanResult{
+		Status:            domain.StatusUnscannable,
+		UnscannableReason: "slow-fake: target-rooted scanning not benchmarked",
+	}, nil
 }
 
 func (s *slowScanner) Preflight(_ context.Context) error { return nil }

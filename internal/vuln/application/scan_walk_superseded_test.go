@@ -77,8 +77,13 @@ func TestScan_PopulatesSupersededGoMod_WhenPrePruningPresent(t *testing.T) {
 		t.Fatalf("Scan: %v", err)
 	}
 
-	if !fetcher.wasFetched(superseded) {
-		t.Errorf("expected superseded go.mod version %s to be fetched for offline resolution, but it was not", superseded)
+	// The superseded version is read only for its requirements, so it is acquired
+	// through the go.mod-only path — never the full zip fetch.
+	if !fetcher.wasFetchedGoModOnly(superseded) {
+		t.Errorf("expected superseded go.mod version %s to be fetched (go.mod-only) for offline resolution, but it was not", superseded)
+	}
+	if fetcher.wasFetched(superseded) {
+		t.Errorf("superseded go.mod version %s must not trigger a full zip fetch; its source is never analysed", superseded)
 	}
 }
 
@@ -107,7 +112,7 @@ func TestScan_SkipsSupersededGoMod_WhenFullyPruned(t *testing.T) {
 		t.Fatalf("Scan: %v", err)
 	}
 
-	if fetcher.wasFetched(superseded) {
+	if fetcher.wasFetched(superseded) || fetcher.wasFetchedGoModOnly(superseded) {
 		t.Errorf("fully pruned graph must not fetch the superseded go.mod %s, but it did", superseded)
 	}
 }

@@ -136,11 +136,14 @@ peaked at **~13 GB**. Provision for *your* closure, not the 3-4 GB reference
 figure; under-budgeting does not fail the run, it silently turns scans into
 `Unscannable` results. Warm re-runs are cheap.
 
-**Progress output.** During the (long) walk phase, `inspect` prints a
-throttled **progress heartbeat** to stderr - about one line every 20 s, e.g.
-`walk progress: 142 modules fetched (3m20s elapsed)` - so you can tell a
-healthy run from a hang without drowning in per-module output. The heartbeat
-goes to stderr only; stdout (and `--json`) is never touched. Suppress it with
+**Progress output.** During the (long) walk and extract phases, `inspect`
+prints a throttled **progress heartbeat** to stderr - about one line every
+20 s, e.g. `walk progress: 142 modules fetched (3m20s elapsed)` during the
+walk and `extract progress: 89 modules processed (1m40s elapsed)` during
+extraction - so you can tell a healthy run from a hang without drowning in
+per-module output. (The vuln-scan phase already prints its own `[n/total]`
+line per module, so it needs no separate heartbeat.) The heartbeat goes to
+stderr only; stdout (and `--json`) is never touched. Suppress it with
 `--no-progress` (or `kanonarion config set preferences.progress false`); a warm
 re-run shorter than the interval prints nothing at all. For full per-module
 detail (`fetch_start`, `fetch_end`, `cache_hit`, extraction lines, and the
@@ -326,8 +329,9 @@ closure that size, but BOTH scale sharply with closure size: a 594-module
 project measured ~1.5 h and ~13 GB peak. Set the timeout and memory limit
 from YOUR closure size, generously, e.g. 30+ minutes, and do NOT kill it. It
 prints a throttled
-progress heartbeat to stderr during the walk phase (about one line every 20s,
-e.g. `walk progress: 142 modules fetched (3m20s elapsed)`); read stdout for the
+progress heartbeat to stderr during the walk and extract phases (about one
+line every 20s, e.g. `walk progress: 142 modules fetched (3m20s elapsed)` or
+`extract progress: 89 modules processed (1m40s elapsed)`); read stdout for the
 result. A gap between heartbeats is normal, not a hang. Use `--no-progress` to
 silence the heartbeat, or `--log-level info` for full per-module detail).
 Re-runs on a warm store take seconds:

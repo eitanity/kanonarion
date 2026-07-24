@@ -10,7 +10,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newWalkDiffCmd(stdout, _ io.Writer) *cobra.Command {
+func newWalkDiffCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f commonWalkFlags
 
 	cmd := &cobra.Command{
@@ -20,7 +20,7 @@ func newWalkDiffCmd(stdout, _ io.Writer) *cobra.Command {
 			if len(args) != 2 {
 				return usageErr(cmd)
 			}
-			logger := buildLogger(logLevel, stdout)
+			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)

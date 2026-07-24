@@ -7,15 +7,17 @@ import (
 	"io"
 	"time"
 
+	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+
 	"github.com/spf13/cobra"
 )
 
-func newVulnSnapshotListCmd(stdout, _ io.Writer) *cobra.Command {
+func newVulnSnapshotListCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "vuln-snapshot-list",
 		Short: "List stored vulnerability database snapshots",
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			logger := buildLogger(logLevel, stdout)
+			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
@@ -33,17 +35,23 @@ func runSnapshotList(ctx context.Context, jsonOut bool, uc QueryScanRunsUseCase,
 	if err != nil {
 		return fmt.Errorf("listing snapshots: %w", err)
 	}
-	if len(snapshots) == 0 {
-		_, _ = fmt.Fprintln(stdout, "no snapshots found")
-		return nil
-	}
-
+	// The empty case is answered on the caller's own channel: under --json an
+	// empty array, never a human sentence that fails to parse. Only the text
+	// path gets the prose.
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
+		if snapshots == nil {
+			snapshots = []vuldomain.DatabaseSnapshot{}
+		}
 		if err := enc.Encode(snapshots); err != nil {
 			return fmt.Errorf("encoding snapshots: %w", err)
 		}
+		return nil
+	}
+
+	if len(snapshots) == 0 {
+		_, _ = fmt.Fprintln(stdout, "no snapshots found")
 		return nil
 	}
 
@@ -54,7 +62,7 @@ func runSnapshotList(ctx context.Context, jsonOut bool, uc QueryScanRunsUseCase,
 	return nil
 }
 
-func newVulnSnapshotShowCmd(stdout, _ io.Writer) *cobra.Command {
+func newVulnSnapshotShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "vuln-snapshot-show <source> <version>",
 		Short: "Show metadata for a specific vulnerability database snapshot",
@@ -62,7 +70,7 @@ func newVulnSnapshotShowCmd(stdout, _ io.Writer) *cobra.Command {
   kanonarion vuln-snapshot-show govulndb v2024-01-01T00-00-00 --json`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			logger := buildLogger(logLevel, stdout)
+			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)

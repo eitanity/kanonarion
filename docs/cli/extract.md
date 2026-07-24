@@ -33,6 +33,7 @@ kanonarion extract 01J1Z... --force
 | `--workers` | `runtime.NumCPU()` | Number of modules to process concurrently |
 | `--json` | false | Output extraction run record as JSON |
 | `--go-binary` | | Path to `go` binary (used for callgraph stage) |
+| `--no-progress` | false | Suppress the stderr extraction-progress heartbeat |
 
 > **Note:** `callgraph` is not run by default. It loads each module's full
 > transitive dependency closure into SSA and will exhaust available RAM on
@@ -103,6 +104,19 @@ kanonarion extract 01J1Z... --stages callgraph --workers 1
 A timed-out subprocess produces a `StageFailed` record with
 `error_detail: subprocess timed out after 10m0s`. A module can be retried via
 `extract <walk-id> --stages callgraph --force`.
+
+## Progress output
+
+A long extraction run prints a throttled **progress heartbeat** to stderr -
+about one line every 20 s, e.g.
+`extract progress: 89 modules processed (1m40s elapsed)` - so a large or cold
+walk is visibly alive rather than silent between "Starting extraction..." and
+completion. It is written to stderr only, so stdout (and `--json`) is
+unaffected. Disable it with `--no-progress` or
+`kanonarion config set preferences.progress false`; a warm run shorter than
+the interval prints nothing. For full per-module detail pass `--log-level info`
+to stream per-stage `*_extract_start`/`*_cache_hit`/`*_extract_end` lines
+(which suppresses the heartbeat, since the stream already shows liveness).
 
 ## Caching
 

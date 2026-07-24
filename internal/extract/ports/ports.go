@@ -63,3 +63,11 @@ type StageResult struct {
 	Error      string
 	DurationMs int64
 }
+
+// ProgressReporter receives extraction progress so a long, otherwise silent
+// run can surface proof of life. done is the count of modules that have
+// completed all requested stages so far. Implementations must be safe for
+// concurrent use: Execute calls Advance from multiple worker goroutines.
+type ProgressReporter interface {
+	Advance(done int)
+}

@@ -37,6 +37,7 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 		Mode:    packages.NeedName | packages.NeedTypes | packages.NeedImports | packages.NeedDeps,
 		Dir:     tempDir,
 		Context: ctx,
+		Env:     isolatedModuleEnv(),
 		Tests:   false,
 	}
 	if _, err := packages.Load(cfgTypes, "./..."); err != nil {
@@ -57,6 +58,7 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 			Mode:    packages.NeedName | packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedFiles | packages.NeedImports | packages.NeedDeps,
 			Dir:     tempDir,
 			Context: ctx,
+			Env:     isolatedModuleEnv(),
 			Fset:    fset,
 			Tests:   false,
 		}

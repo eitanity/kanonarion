@@ -281,6 +281,85 @@ func TestPrintContextSummary_ErrorBranches(t *testing.T) {
 	}
 }
 
+// TestPrintContextSummary_ScanProvenance pins that the compact context block
+// names the advisory snapshot and the pipeline that produced a vulnerability
+// verdict, so "Clean" carries the qualifier that bounds it. The provenance
+// line is emitted only from the facts that are present: a section that never
+// ran stays silent rather than printing empty fields.
+func TestPrintContextSummary_ScanProvenance(t *testing.T) {
+	tests := []struct {
+		name     string
+		v        contextVulnerabilities
+		wants    []string
+		notWants []string
+	}{
+		{
+			name: "snapshot and pipeline",
+			v: contextVulnerabilities{
+				Status:          "Clean",
+				SnapshotVersion: "2026-07-08T17:05:00Z",
+				PipelineVersion: "0.10.0",
+			},
+			wants: []string{
+				"Vulnerabilities: Clean",
+				"Snapshot:        2026-07-08T17:05:00Z (pipeline 0.10.0)",
+			},
+		},
+		{
+			name: "snapshot only",
+			v: contextVulnerabilities{
+				Status:          "Clean",
+				SnapshotVersion: "2026-07-08T17:05:00Z",
+			},
+			wants:    []string{"Snapshot:        2026-07-08T17:05:00Z"},
+			notWants: []string{"pipeline"},
+		},
+		{
+			name: "pipeline only",
+			v: contextVulnerabilities{
+				Status:          "Clean",
+				PipelineVersion: "0.10.0",
+			},
+			wants:    []string{"Pipeline:        0.10.0"},
+			notWants: []string{"Snapshot:"},
+		},
+		{
+			name:     "no provenance facts",
+			v:        contextVulnerabilities{Status: "Clean"},
+			wants:    []string{"Vulnerabilities: Clean"},
+			notWants: []string{"Snapshot:", "Pipeline:"},
+		},
+		{
+			name:     "section not run",
+			v:        contextVulnerabilities{Status: sectionStatusNotRun},
+			notWants: []string{"Snapshot:", "Pipeline:"},
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			out := contextOutput{
+				Module:          contextModuleInfo{Path: "example.com/app", Version: "v1.0.0"},
+				Vulnerabilities: tc.v,
+			}
+			var buf strings.Builder
+			if err := printContextSummary(out, &buf); err != nil {
+				t.Fatal(err)
+			}
+			got := buf.String()
+			for _, want := range tc.wants {
+				if !strings.Contains(got, want) {
+					t.Errorf("missing %q in summary output:\n%s", want, got)
+				}
+			}
+			for _, notWant := range tc.notWants {
+				if strings.Contains(got, notWant) {
+					t.Errorf("unexpected %q in summary output:\n%s", notWant, got)
+				}
+			}
+		})
+	}
+}
+
 func TestPrintFullVerification_Populated(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -514,6 +593,7 @@ func TestPrintFullVulnerabilities_Populated(t *testing.T) {
 				ExtractedAt:     "2024-01-01T00:00:00Z",
 				WalkID:          "01JWALK000000000000001",
 				SnapshotVersion: "v2024.01",
+				PipelineVersion: "0.10.0",
 				Findings: []contextCVE{
 					{
 						ID:        "GO-2024-0001",
@@ -527,7 +607,7 @@ func TestPrintFullVulnerabilities_Populated(t *testing.T) {
 			},
 			wants: []string{
 				"Affected", "Complete", "binary missing", "2024-01-01",
-				"01JWALK000000000000001", "v2024.01",
+				"01JWALK000000000000001", "v2024.01", "Pipeline:     0.10.0",
 				"GO-2024-0001", "CVE-2024-1234", "heap overflow", "v1.2.3", "9.8", "true",
 			},
 		},

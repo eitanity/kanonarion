@@ -186,7 +186,7 @@ func runVulnScan(ctx context.Context, walkID string, f commonWalkFlags, force, f
 
 	var affected []vulnScanAffected
 	var failedCoords []string
-	var metadataOnlyCoords []string
+	unscannable := newUnscannableRollup()
 
 	run, err := ctr.ScanWalk.Scan(ctx, application2.ScanWalkParams{
 		WalkID:             walkID,
@@ -199,13 +199,17 @@ func runVulnScan(ctx context.Context, walkID string, f commonWalkFlags, force, f
 		ProjectDir:         projectDir,
 		Progress: func(coord coordinate.ModuleCoordinate, record vuldomain.VulnerabilityRecord, current, total int) {
 			writeVulnScanProgress(record, coord, current, total, stderr)
-			switch {
-			case record.OverallStatus == vuldomain.StatusScanFailed:
+			switch record.OverallStatus {
+			case vuldomain.StatusScanFailed:
 				failedCoords = append(failedCoords, coord.Path+"@"+coord.Version)
-			case record.OverallStatus == vuldomain.StatusAffected:
+			case vuldomain.StatusAffected:
 				affected = append(affected, vulnScanAffected{coord: coord.Path + "@" + coord.Version, record: record})
-			case record.OverallStatus == vuldomain.StatusUnscannable && record.UnscanReason.ExpectedOutOfToolchain():
-				metadataOnlyCoords = append(metadataOnlyCoords, coord.Path+"@"+coord.Version)
+			// Every Unscannable is bucketed, not just the out-of-toolchain one:
+			// the same advisory matching ran for all of them, so a record that
+			// appeared in no roll-up was being hidden from the reader on the
+			// strength of its reason code alone.
+			case vuldomain.StatusUnscannable:
+				unscannable.add(record.UnscanReason, coord.Path+"@"+coord.Version, record.UnscannableReason)
 			}
 		},
 	})
@@ -213,7 +217,7 @@ func runVulnScan(ctx context.Context, walkID string, f commonWalkFlags, force, f
 		return fmt.Errorf("vuln scan failed: %w", err)
 	}
 
-	return printVulnScanResult(run, affected, failedCoords, metadataOnlyCoords, jsonOut, stdout)
+	return printVulnScanResult(run, affected, failedCoords, unscannable, jsonOut, stdout)
 }
 
 // reachabilityLocalHint is the intent-aware direction shown for modules that are
@@ -223,22 +227,29 @@ func runVulnScan(ctx context.Context, walkID string, f commonWalkFlags, force, f
 const reachabilityLocalHint = "for project-rooted reachability, run: kanonarion reachability --local <project-dir>"
 
 // vulnScanStatusLabel returns the human display label for a per-module scan
-// line. An out-of-toolchain coverage gap reads as an informational metadata-only
-// outcome rather than a bare "Unscannable": the version resolved when the module
-// is scanned in isolation is simply not the one the project builds, so this is
-// expected, not a fault. The stored status and JSON stay Unscannable; only the
-// human label changes.
+// line. Every Unscannable reason resolves through the display table rather than
+// falling through to the raw status string: the same advisory matching ran for
+// all of them, so telling the reader nothing for one module and explaining
+// another is a difference in presentation that no difference in analysis backs.
+// The stored status and JSON stay Unscannable; only the human label changes.
 func vulnScanStatusLabel(record vuldomain.VulnerabilityRecord) string {
-	if record.OverallStatus == vuldomain.StatusUnscannable && record.UnscanReason.ExpectedOutOfToolchain() {
-		return "Metadata-only (version not in project build)"
+	if record.OverallStatus == vuldomain.StatusUnscannable {
+		return unscanDisplayFor(record.UnscanReason).label
 	}
 	return string(record.OverallStatus)
 }
 
-// writeVulnScanProgress writes one per-module progress line (and optional
-// reason) to w, which must be stderr. It is the single place the progress
-// callback writes so tests can verify the routing without going through
-// NewContainer.
+// writeVulnScanProgress writes one per-module progress line (and, for a scan
+// fault, its reason) to w, which must be stderr. It is the single place the
+// progress callback writes so tests can verify the routing without going
+// through NewContainer.
+//
+// An Unscannable module contributes only its status line here. The explanation,
+// the direction, and the scanner's free-text reason are properties of the reason
+// code, byte-identical for every module carrying it, so they are printed once in
+// the end-of-run roll-up instead of once per module. A scan fault keeps its
+// per-module reason: that text is the one genuinely per-module signal in the
+// stream, and it was the text being buried by the repeated boilerplate.
 func writeVulnScanProgress(record vuldomain.VulnerabilityRecord, coord coordinate.ModuleCoordinate, current, total int, w io.Writer) {
 	status := vulnScanStatusLabel(record)
 	if record.Reused {
@@ -247,20 +258,8 @@ func writeVulnScanProgress(record vuldomain.VulnerabilityRecord, coord coordinat
 		status += " (reused — same snapshot)"
 	}
 	_, _ = fmt.Fprintf(w, "  [%d/%d] %s@%s — %s\n", current, total, coord.Path, coord.Version, status)
-	switch record.OverallStatus {
-	case vuldomain.StatusScanFailed:
-		if record.ErrorDetail != "" {
-			_, _ = fmt.Fprintf(w, "      reason: %s\n", record.ErrorDetail)
-		}
-	case vuldomain.StatusUnscannable:
-		if record.UnscanReason.ExpectedOutOfToolchain() {
-			// Expected: name the cause plainly and direct to the whole-build
-			// analysis instead of leaving an alarming bare reason.
-			_, _ = fmt.Fprintf(w, "      metadata-only: scanned in isolation the module resolves a dependency version the project's build never selected; advisories matched, reachability not computed here\n")
-			_, _ = fmt.Fprintf(w, "      → %s\n", reachabilityLocalHint)
-		} else if record.UnscannableReason != "" {
-			_, _ = fmt.Fprintf(w, "      reason: %s\n", record.UnscannableReason)
-		}
+	if record.OverallStatus == vuldomain.StatusScanFailed && record.ErrorDetail != "" {
+		_, _ = fmt.Fprintf(w, "      reason: %s\n", record.ErrorDetail)
 	}
 }
 
@@ -275,7 +274,7 @@ type vulnScanAffected struct {
 // already been written to stderr by the Progress callback. This function owns
 // only the final result channel: JSON under --json, or a findings summary
 // followed by the status line in text mode.
-func printVulnScanResult(run vuldomain.WalkScanRun, affected []vulnScanAffected, failedCoords, metadataOnlyCoords []string, jsonOut bool, stdout io.Writer) error {
+func printVulnScanResult(run vuldomain.WalkScanRun, affected []vulnScanAffected, failedCoords []string, unscannable *unscannableRollup, jsonOut bool, stdout io.Writer) error {
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
@@ -313,24 +312,93 @@ func printVulnScanResult(run vuldomain.WalkScanRun, affected []vulnScanAffected,
 	}
 
 	_, _ = fmt.Fprintf(stdout, "Scan completed: %s  Run ID: %s\n", run.OverallStatus, run.ID)
-	if run.OverallStatus == vuldomain.WalkStatusPartial && len(failedCoords) > 0 {
+	// Listed whenever any module failed, not only on a Partial run. A run is
+	// Affected as soon as one module has findings and Failed when every module
+	// failed, so gating on Partial dropped the failed list from the summary in
+	// exactly the two runs where a scan fault matters most — the same "appears in
+	// no roll-up" defect the Unscannable sections below fix.
+	if len(failedCoords) > 0 {
 		_, _ = fmt.Fprintf(stdout, "Failed modules (%d):\n", len(failedCoords))
 		for _, c := range failedCoords {
 			_, _ = fmt.Fprintf(stdout, "  %s\n", c)
 		}
 	}
 	// A Partial run is often caused only by out-of-toolchain modules, which are
-	// expected, not failures. Name them and direct to the whole-build analysis so
-	// the Partial status does not read as a fault with no explanation.
-	if len(metadataOnlyCoords) > 0 {
-		_, _ = fmt.Fprintf(stdout, "Metadata-only — version not in project build (%d):\n", len(metadataOnlyCoords))
-		for _, c := range metadataOnlyCoords {
-			_, _ = fmt.Fprintf(stdout, "  %s\n", c)
-		}
-		_, _ = fmt.Fprintf(stdout, "  → %s\n", reachabilityLocalHint)
-	}
+	// expected, not failures. One section per reason names every Unscannable
+	// module, so the counts are readable without scrolling the progress stream
+	// and no record is left out of the summary for want of a display mapping.
+	// Sections stay separate rather than merged because the direction line
+	// belongs to one reason only.
+	writeUnscannableRollup(unscannable, stdout)
 
 	return nil
+}
+
+// writeUnscannableRollup prints one section per Unscannable reason present in
+// the run: a heading carrying the count and the reason's explanation, the
+// distinct scanner reasons behind it, the coordinates, and the reason's
+// direction line where one exists.
+//
+// This section is where the once-per-reason text lives. The per-module stream
+// carries only the varying part — the status label and the progress counter —
+// so the explanation, the scanner detail and the direction each appear once per
+// run however many modules carry the reason.
+func writeUnscannableRollup(rollup *unscannableRollup, w io.Writer) {
+	if rollup == nil || rollup.empty() {
+		return
+	}
+	for _, section := range rollup.sections() {
+		// A fanned-out project fault is one condition, not one per module. State
+		// it once with the count of modules it took down and print no coordinate
+		// list: N coordinates under a heading reads as N findings, which is the
+		// opposite of what a single operator-side input fault is.
+		if section.display.oneFault {
+			_, _ = fmt.Fprintf(w, "%s; all %d modules unscannable\n", section.display.heading, len(section.coords))
+			for _, d := range section.detailsToPrint() {
+				_, _ = fmt.Fprintf(w, "  reason: %s\n", d.text)
+			}
+			continue
+		}
+		heading := fmt.Sprintf("%s (%d):", section.display.heading, len(section.coords))
+		if section.display.explanation != "" {
+			heading += " " + section.display.explanation
+		}
+		_, _ = fmt.Fprintf(w, "%s\n", heading)
+		// The scanner's free text is printed only where the reason has no curated
+		// explanation. Where one exists it says the same thing in fewer words, and
+		// printing both restores the redundancy this roll-up exists to remove.
+		//
+		// Detail and direction precede the coordinates. They belong to the heading
+		// and are read with it; printing the direction past a hundred coordinates
+		// orphans it from the explanation it answers.
+		for _, d := range section.detailsToPrint() {
+			// The count is given only when this text covers part of the section.
+			// Where one text covers every coordinate the heading has already stated
+			// the number, and repeating it three words later says nothing new.
+			if d.count < len(section.coords) {
+				_, _ = fmt.Fprintf(w, "  reason: %s (%s)\n", d.text, pluralModules(d.count))
+			} else {
+				_, _ = fmt.Fprintf(w, "  reason: %s\n", d.text)
+			}
+		}
+		if section.display.hint != "" {
+			_, _ = fmt.Fprintf(w, "  → %s\n", section.display.hint)
+		}
+		for _, c := range section.coords {
+			_, _ = fmt.Fprintf(w, "  %s\n", c)
+		}
+	}
+}
+
+// pluralModules renders a module count for a roll-up detail line. A section
+// whose modules split across several scanner messages needs the count on each,
+// and "1 modules" in that list reads as a defect in the tool rather than a
+// property of the run.
+func pluralModules(n int) string {
+	if n == 1 {
+		return "1 module"
+	}
+	return fmt.Sprintf("%d modules", n)
 }
 
 func runVulnScanByModule(ctx context.Context, moduleCoord string, f commonWalkFlags, force, fresh, enableReachability bool, callGraphWorkers int, jsonOut bool, goBinary, operator string, stdout, stderr io.Writer) error {

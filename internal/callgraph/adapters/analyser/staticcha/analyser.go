@@ -116,6 +116,7 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord coordin
 		Mode:    packages.NeedName | packages.NeedImports | packages.NeedDeps,
 		Dir:     tempDir,
 		Context: ctx,
+		Env:     isolatedModuleEnv(),
 		Tests:   false,
 	}
 

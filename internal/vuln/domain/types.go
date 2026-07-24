@@ -44,6 +44,13 @@ const (
 	// UnscanReasonGoWorkMonorepo indicates the module references siblings via a
 	// go.work file that are not present in the module zip.
 	UnscanReasonGoWorkMonorepo UnscanReason = "go-work-monorepo"
+	// UnscanReasonWorkspaceMode indicates the Go toolchain entered workspace mode
+	// while scanning the module in isolation — a go.work was discovered in the
+	// extracted module directory or inherited from the environment — and rejected
+	// the scan environment. Workspace mode is dev-time configuration that does not
+	// apply to an isolated single-module scan, so this names a misconfigured scan
+	// environment rather than a module that fails to build.
+	UnscanReasonWorkspaceMode UnscanReason = "workspace-mode"
 	// UnscanReasonRelativeReplace indicates the module uses a replace directive
 	// pointing to a sibling directory not included in the module zip.
 	UnscanReasonRelativeReplace UnscanReason = "relative-replace-directive"
@@ -63,20 +70,90 @@ const (
 	// fetched from the network — which would analyse a dependency graph the
 	// project never builds. Surfaced as a coverage gap, never a confident clean.
 	UnscanReasonVersionNotInToolchain UnscanReason = "version-not-in-toolchain"
+	// UnscanReasonVersionNotInToolchainUnverified indicates an offline resolution
+	// failed with the shape of version-not-in-toolchain, but the version the
+	// toolchain could not resolve could not be recovered from the error — so the
+	// out-of-toolchain cause is asserted by the error's shape alone, never checked
+	// against the walk's known set. It is deliberately not marked
+	// ExpectedOutOfToolchain: an unverified claim must not inherit the confident,
+	// informational reading a recovered-and-confirmed one earns, because a genuine
+	// scan-cache hole produces the same wording and would otherwise be filed as
+	// expected and never investigated — the precise failure this discrimination
+	// exists to prevent.
+	UnscanReasonVersionNotInToolchainUnverified UnscanReason = "version-not-in-toolchain-unverified"
+	// UnscanReasonPackageDeclarationsMissing indicates a package's declarations
+	// are absent because every file that would declare them is excluded by build
+	// constraints — most often a host Go toolchain outside the range the module
+	// supports. Distinct from generated-assets-missing: nothing is missing from
+	// the module zip, so there is no code-generation step to run.
+	UnscanReasonPackageDeclarationsMissing UnscanReason = "package-declarations-missing"
+	// UnscanReasonIncompleteScanCache indicates the isolated scan failed to
+	// resolve a module version offline that the walk graph itself knows about —
+	// a node, or a superseded requirement recorded on one of its edges. Unlike
+	// version-not-in-toolchain, nothing about this is expected: kanonarion
+	// undertook to supply that version to the hermetic cache and did not, so the
+	// module is a coverage gap that a fix can close rather than an inherent
+	// consequence of scanning modules in isolation.
+	UnscanReasonIncompleteScanCache UnscanReason = "incomplete-scan-cache"
 	// UnscanReasonBuildIncompatible is the catch-all for build failures that do
 	// not match a more specific pattern.
 	UnscanReasonBuildIncompatible UnscanReason = "build-incompatible"
 	// UnscanReasonOOMKilled indicates govulncheck was killed by the OS (OOM or
 	// SIGKILL / exit 137). The scan is retryable on a host with more memory.
 	UnscanReasonOOMKilled UnscanReason = "oom-killed"
-	// UnscanReasonNoGoMod indicates the module zip does not contain a go.mod
-	// file, so govulncheck cannot be run.
+	// UnscanReasonNoGoMod indicates the fetched module zip does not contain a
+	// go.mod file and none could be synthesised, so govulncheck cannot be run
+	// over it as its own main module. It names a property of the published
+	// artefact, not an operator-side input fault.
 	UnscanReasonNoGoMod UnscanReason = "no-go-mod"
+	// UnscanReasonProjectNoGoMod indicates the project directory supplied for a
+	// project-rooted scan contains no go.mod, so there is no main module to root
+	// the analysis at. It names an operator-side input fault — the wrong
+	// directory, or one that is not a Go module — not a property of any
+	// artefact, and is remediable by pointing the scan at a real module root.
+	UnscanReasonProjectNoGoMod UnscanReason = "project-no-go-mod"
+	// UnscanReasonProjectDirUnavailable indicates the project directory supplied
+	// for a project-rooted scan could not be stat'ed at all — it does not exist,
+	// or is not readable. It names an operator-side input fault, not a property
+	// of any artefact, and says nothing about whether that directory is a Go
+	// module: the scan never got far enough to look.
+	UnscanReasonProjectDirUnavailable UnscanReason = "project-dir-unavailable"
 	// UnscanReasonLocalReplace indicates the module is a local filesystem
 	// replacement (a replace directive pointing at a working-tree path) rather
 	// than a fetched, versioned module, so there is no fetched source to scan.
 	UnscanReasonLocalReplace UnscanReason = "local-replace"
 )
+
+// AllUnscanReasons returns every defined UnscanReason, in a stable order.
+//
+// It exists so a consumer that must handle every reason — a display mapping, a
+// roll-up bucket, a severity table — can be proved exhaustive by test rather
+// than by inspection. A reason code is an open string type, so the compiler
+// cannot enforce that; a reason absent from a display table would otherwise
+// render as a bare status with no explanation, which is exactly the silence the
+// codebase forbids. A test asserts this list matches the declared constants, so
+// adding a reason without adding it here fails rather than degrading quietly.
+func AllUnscanReasons() []UnscanReason {
+	return []UnscanReason{
+		UnscanReasonVersionNotInToolchain,
+		UnscanReasonVersionNotInToolchainUnverified,
+		UnscanReasonPackageDeclarationsMissing,
+		UnscanReasonCHeadersMissing,
+		UnscanReasonGeneratedAssets,
+		UnscanReasonGoWorkMonorepo,
+		UnscanReasonWorkspaceMode,
+		UnscanReasonRelativeReplace,
+		UnscanReasonWindowsOnly,
+		UnscanReasonMissingGoSum,
+		UnscanReasonIncompleteScanCache,
+		UnscanReasonBuildIncompatible,
+		UnscanReasonOOMKilled,
+		UnscanReasonNoGoMod,
+		UnscanReasonLocalReplace,
+		UnscanReasonProjectNoGoMod,
+		UnscanReasonProjectDirUnavailable,
+	}
+}
 
 // ExpectedOutOfToolchain reports whether an Unscannable reason is the expected
 // consequence of hermetic per-module scanning rather than a genuine scan fault.

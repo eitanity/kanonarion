@@ -243,15 +243,9 @@ func (p *Proxy) Download(ctx context.Context, coord coordinate.ModuleCoordinate)
 	}
 
 	// Compute go.mod hash from the actual bytes using the canonical algorithm.
-	goModHashStr, err := dirhash.Hash1([]string{"go.mod"}, func(string) (io.ReadCloser, error) {
-		return io.NopCloser(bytes.NewReader(goModBytes)), nil
-	})
+	goModHash, err := hashGoModBytes(goModBytes)
 	if err != nil {
-		return ports.ModuleDownload{}, fmt.Errorf("computing go.mod hash: %w", err)
-	}
-	goModHash, err := domain2.ParseModuleHash(goModHashStr)
-	if err != nil {
-		return ports.ModuleDownload{}, fmt.Errorf("parsing go.mod hash: %w", err)
+		return ports.ModuleDownload{}, err
 	}
 
 	// Fetch zip; enforce size limit to guard against resource exhaustion (T12).
@@ -291,6 +285,62 @@ func (p *Proxy) Download(ctx context.Context, coord coordinate.ModuleCoordinate)
 		// Raw digests over the same zip bytes used for the h1 hash, for the SBOM.
 		Digests: domain2.ComputeArtifactDigests(zipBytes),
 	}, nil
+}
+
+// DownloadGoMod fetches only the standalone go.mod for a module version. It
+// hits the proxy's /@v/<version>.mod endpoint and never the .zip endpoint, so
+// it does none of the zip download or hashing work Download performs. GoModHash
+// is computed from the received bytes — the proxy's own claim is not trusted.
+func (p *Proxy) DownloadGoMod(ctx context.Context, coord coordinate.ModuleCoordinate) (ports.GoModDownload, error) {
+	escapedPath, err := module.EscapePath(coord.Path)
+	if err != nil {
+		return ports.GoModDownload{}, fmt.Errorf("escaping module path: %w", err)
+	}
+	escapedVersion, err := module.EscapeVersion(coord.Version)
+	if err != nil {
+		return ports.GoModDownload{}, fmt.Errorf("escaping version: %w", err)
+	}
+
+	modURL := fmt.Sprintf("%s/%s/@v/%s.mod", p.baseURL, escapedPath, escapedVersion)
+	modBody, err := p.get(ctx, modURL)
+	if err != nil {
+		return ports.GoModDownload{}, fmt.Errorf("fetching go.mod: %w", err)
+	}
+	goModBytes, readErr := io.ReadAll(modBody)
+	if cerr := modBody.Close(); cerr != nil {
+		return ports.GoModDownload{}, fmt.Errorf("closing go.mod response: %w", cerr)
+	}
+	if readErr != nil {
+		return ports.GoModDownload{}, fmt.Errorf("reading go.mod: %w", readErr)
+	}
+
+	goModHash, err := hashGoModBytes(goModBytes)
+	if err != nil {
+		return ports.GoModDownload{}, err
+	}
+
+	return ports.GoModDownload{
+		GoMod:             io.NopCloser(bytes.NewReader(goModBytes)),
+		GoModHash:         goModHash,
+		InsecureTransport: p.insecure,
+	}, nil
+}
+
+// hashGoModBytes computes the h1 hash of a standalone go.mod using the canonical
+// dirhash algorithm. The result matches the "<version>/go.mod" line go.sum and
+// the checksum database record.
+func hashGoModBytes(data []byte) (domain2.ModuleHash, error) {
+	hashStr, err := dirhash.Hash1([]string{"go.mod"}, func(string) (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(data)), nil
+	})
+	if err != nil {
+		return domain2.ModuleHash{}, fmt.Errorf("computing go.mod hash: %w", err)
+	}
+	hash, err := domain2.ParseModuleHash(hashStr)
+	if err != nil {
+		return domain2.ModuleHash{}, fmt.Errorf("parsing go.mod hash: %w", err)
+	}
+	return hash, nil
 }
 
 // hashZipBytes computes the h1 hash of a module zip's contents using the

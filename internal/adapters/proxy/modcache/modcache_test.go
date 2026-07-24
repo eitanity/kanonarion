@@ -113,6 +113,36 @@ func TestDownload_ComputesHashesFromBytes(t *testing.T) {
 	}
 }
 
+func TestDownloadGoMod_ReadsOnlyGoMod(t *testing.T) {
+	dir := t.TempDir()
+	coord := newCoord(t, "github.com/example/mod", "v1.2.3")
+	goMod := []byte("module github.com/example/mod\n\ngo 1.21\n")
+	// Deliberately seed ONLY the .mod, no .zip: the go.mod-only path must not
+	// need the zip. A missing zip that this call still succeeds against proves it.
+	seedEntry(t, dir, coord, ".mod", goMod)
+
+	p := New(dir, "/bin/false", t.TempDir(), nil) // failing go binary: any download attempt would error
+	dl, err := p.DownloadGoMod(context.Background(), coord)
+	if err != nil {
+		t.Fatalf("DownloadGoMod: %v", err)
+	}
+	defer func() { _ = dl.GoMod.Close() }()
+
+	wantMod, err := dirhash.Hash1([]string{"go.mod"}, func(string) (io.ReadCloser, error) {
+		return io.NopCloser(bytes.NewReader(goMod)), nil
+	})
+	if err != nil {
+		t.Fatalf("dirhash.Hash1: %v", err)
+	}
+	if dl.GoModHash.String() != wantMod {
+		t.Errorf("GoModHash = %q, want %q", dl.GoModHash, wantMod)
+	}
+	gotMod, _ := io.ReadAll(dl.GoMod)
+	if !bytes.Equal(gotMod, goMod) {
+		t.Errorf("returned go.mod bytes = %q, want %q", gotMod, goMod)
+	}
+}
+
 func TestDownload_CacheMissInvokesGoAndReportsFailure(t *testing.T) {
 	dir := t.TempDir()
 	coord := newCoord(t, "github.com/example/mod", "v1.2.3")

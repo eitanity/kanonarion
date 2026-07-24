@@ -75,19 +75,22 @@ func diffRecords(a, b domain.WalkRecord) WalkDiff {
 	var versionChanged []VersionChange
 	var statusChanged []StatusChange
 
-	for path, nodeB := range nodesB {
-		if nodeA, ok := nodesA[path]; !ok {
+	// Identity is the require path (map key); the reported Path stays the
+	// coordinate that actually compiles, which for a replaced module is its
+	// replacement rather than the require it was reached by.
+	for key, nodeB := range nodesB {
+		if nodeA, ok := nodesA[key]; !ok {
 			added = append(added, nodeB.Coordinate)
 		} else if nodeA.Coordinate.Version != nodeB.Coordinate.Version {
 			versionChanged = append(versionChanged, VersionChange{
-				Path:     path,
+				Path:     nodeB.Coordinate.Path,
 				VersionA: nodeA.Coordinate.Version,
 				VersionB: nodeB.Coordinate.Version,
 			})
 		}
 	}
-	for path, nodeA := range nodesA {
-		if _, ok := nodesB[path]; !ok {
+	for key, nodeA := range nodesA {
+		if _, ok := nodesB[key]; !ok {
 			removed = append(removed, nodeA.Coordinate)
 		}
 	}
@@ -162,10 +165,19 @@ func normalizeDepth(d domain.WalkDepth) domain.WalkDepth {
 	return d
 }
 
+// nodesByPath indexes nodes by build-list identity: a module's own (pre-replace)
+// require path. A module replaced to a path that is also required independently
+// yields two distinct participants sharing one replacement path, so keying by
+// Coordinate.Path would collapse them and make the diff report a spurious
+// add/remove (or miss a real version change) for whichever lost the slot.
 func nodesByPath(nodes []domain.GraphNode) map[string]domain.GraphNode {
 	m := make(map[string]domain.GraphNode, len(nodes))
 	for _, n := range nodes {
-		m[n.Coordinate.Path] = n
+		key := n.Coordinate.Path
+		if n.OriginalCoordinate.Path != "" {
+			key = n.OriginalCoordinate.Path
+		}
+		m[key] = n
 	}
 	return m
 }

@@ -330,14 +330,19 @@ field with a machine-readable cause code alongside the human-readable `unscannab
 |---|---|
 | `generated-assets-missing` | Module zip is missing source files produced by a code-generation step |
 | `go-work-monorepo` | Module references sibling modules via `go.work` not present in the zip |
+| `workspace-mode` | The Go toolchain entered workspace mode during an isolated scan (a `go.work` shipped in the module zip or inherited from the environment); the scanner sets `GOWORK=off`, so this indicates a misconfigured scan environment rather than a module that fails to build |
 | `relative-replace-directive` | Module uses a `replace` directive pointing to a sibling directory |
 | `windows-only` | Module only builds on Windows |
 | `c-headers-missing` | Module requires C system headers not available on the scanning host |
 | `missing-go-sum` | `go.sum` entry absent; module cannot be resolved without network access |
 | `version-not-in-toolchain` | Scanned in isolation the module re-selects a dependency version the project's build list never resolved; the scan is pinned to the verified store (`GOPROXY=off`), so that out-of-toolchain version is deliberately absent rather than fetched from the network |
+| `incomplete-scan-cache` | An offline resolution failed on a version the walk graph itself records (a node, or a superseded requirement on one of its edges). Unlike `version-not-in-toolchain` this is a fault: the version was one kanonarion undertook to supply to the hermetic cache. `error_detail` names the version |
+| `package-declarations-missing` | A package's declarations are absent because every file that would declare them is excluded by build constraints — most often a host Go toolchain newer than the range the module supports. Nothing is missing from the zip, so there is no code-generation step to run |
 | `build-incompatible` | Build fails for an unrecognised reason |
 | `oom-killed` | `govulncheck` was killed by the OS (likely OOM); retryable on a host with more memory |
-| `no-go-mod` | Module zip does not contain a `go.mod` file |
+| `no-go-mod` | Fetched module zip does not contain a `go.mod` file and none could be synthesised — a property of the published artefact |
+| `project-no-go-mod` | The project directory supplied for a project-rooted scan contains no `go.mod`, so there is no main module to root the analysis at — an operator-side input fault, not a property of any artefact |
+| `project-dir-unavailable` | The project directory supplied for a project-rooted scan could not be stat'ed (missing or unreadable) — an operator-side input fault; the scan never got far enough to check for a `go.mod` |
 | `local-replace` | Node is a local filesystem replacement (a `replace` pointing at a working-tree path), not a fetched version, so there is no fetched source to scan; `unscannable_reason` retains the local path |
 
 On the **coordinate-keyed path** (`--module` and a positional walk-id) each
@@ -384,6 +389,36 @@ genuine build incompatibility that still falls back to metadata logs at `warn`,
 and a hard scanner fault logs at `error`. Nothing is dumped as a warning per
 out-of-toolchain module. Run with `--log-level debug` to see the raw
 `govulncheck` stderr behind an `Unscannable` verdict.
+
+### How an `Unscannable` module is displayed
+
+Every reason code has an explicit display treatment; none falls through to a
+bare `Unscannable`. The per-module progress line carries a label naming the
+cause, and the end-of-run summary prints one section per reason with its count
+and its coordinates, so a reason's population is readable without scrolling the
+progress stream. `vuln-scan-show` prints the same categories as one line each.
+
+Two families of label appear, and the difference is what the run actually
+learned about the module:
+
+- **`Metadata-only (…)`** - the isolated scan could not analyse the source, but
+  the module's advisory set was still matched by coordinate. The verdict is
+  real; only reachability is absent.
+- **`Not scanned (…)`** - no advisory match was performed at all. A local
+  filesystem replace has no fetched source, and a project-rooted scan that could
+  not start never reached any module. The two project-directory reasons are a
+  *single* fault stamped onto every coordinate in the walk, so their headings say
+  so rather than reading as N independent module problems.
+
+Only `version-not-in-toolchain` carries a next-step direction (`kanonarion
+reachability --local`), because it is the only reason where the module is
+analysable and an operator action changes the outcome. A toolchain or host
+limitation gets no direction: none would help. This is why sections are printed
+per reason rather than merged.
+
+A reason with no entry in the display table is a test failure
+(`TestUnscanDisplays_CoversEveryReason`), not a silent bare status; the runtime
+fallback still names the unmapped reason rather than hiding it.
 
 `Unscannable` records with findings indicate that OSV coordinate matching found
 advisories even though source-level analysis was not possible. Such findings are

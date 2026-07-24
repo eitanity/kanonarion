@@ -22,6 +22,7 @@ type projectScanFixture struct {
 	walkUC    *application.ScanWalkUseCase
 	scanner   *fakeScanner
 	vulnStore *fakeVulnStore
+	db        *fakeDatabase
 	root      coordinate.ModuleCoordinate
 	depA      coordinate.ModuleCoordinate
 	depB      coordinate.ModuleCoordinate
@@ -81,7 +82,7 @@ func newProjectScanFixture(t *testing.T, scanner *fakeScanner) projectScanFixtur
 	)
 
 	return projectScanFixture{
-		walkUC: walkUC, scanner: scanner, vulnStore: vulnStore,
+		walkUC: walkUC, scanner: scanner, vulnStore: vulnStore, db: db,
 		root: root, depA: depA, depB: depB, walkID: walkID,
 	}
 }

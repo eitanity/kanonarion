@@ -32,11 +32,7 @@ func TestVulnScanProgressScanFailedReason(t *testing.T) {
 	}
 
 	var buf strings.Builder
-	// Simulate what the progress callback in runVulnScan does.
-	_, _ = fmt.Fprintf(&buf, "  [1/1] %s@%s — %s\n", coord.Path, coord.Version, record.OverallStatus)
-	if record.OverallStatus == vuldomain.StatusScanFailed && record.ErrorDetail != "" {
-		_, _ = fmt.Fprintf(&buf, "      reason: %s\n", record.ErrorDetail)
-	}
+	writeVulnScanProgress(record, coord, 1, 1, &buf)
 
 	got := buf.String()
 	if !strings.Contains(got, "ScanFailed") {
@@ -47,28 +43,28 @@ func TestVulnScanProgressScanFailedReason(t *testing.T) {
 	}
 }
 
-// TestVulnScanProgressUnscannableReason verifies that the progress callback
-// prints a reason sub-line when UnscannableReason is set.
+// TestVulnScanProgressUnscannableReason verifies that the per-module line for an
+// Unscannable record carries the reason's label and not its free text. The free
+// text is constant across every module carrying the reason, so it belongs to the
+// end-of-run roll-up; the label is the part that varies per module and stays.
 func TestVulnScanProgressUnscannableReason(t *testing.T) {
 	coord, _ := coordinate.NewModuleCoordinate("example.com/nogomod", "v1.0.0")
 	record := vuldomain.VulnerabilityRecord{
 		Coordinate:        coord,
 		OverallStatus:     vuldomain.StatusUnscannable,
+		UnscanReason:      vuldomain.UnscanReasonNoGoMod,
 		UnscannableReason: "no go.mod found in module zip",
 	}
 
 	var buf strings.Builder
-	_, _ = fmt.Fprintf(&buf, "  [1/1] %s@%s — %s\n", coord.Path, coord.Version, record.OverallStatus)
-	if record.OverallStatus == vuldomain.StatusUnscannable && record.UnscannableReason != "" {
-		_, _ = fmt.Fprintf(&buf, "      reason: %s\n", record.UnscannableReason)
-	}
+	writeVulnScanProgress(record, coord, 1, 1, &buf)
 
 	got := buf.String()
-	if !strings.Contains(got, "Unscannable") {
-		t.Errorf("expected Unscannable in output, got:\n%s", got)
+	if !strings.Contains(got, "Metadata-only (module zip has no go.mod") {
+		t.Errorf("expected the reason's label on the per-module line, got:\n%s", got)
 	}
-	if !strings.Contains(got, "reason: no go.mod found") {
-		t.Errorf("expected unscannable reason in output, got:\n%s", got)
+	if strings.Contains(got, "reason: no go.mod found") {
+		t.Errorf("shared free-text reason must not be repeated per module, got:\n%s", got)
 	}
 }
 
@@ -83,13 +79,7 @@ func TestVulnScanProgressNoReasonWhenEmpty(t *testing.T) {
 	} {
 		record := vuldomain.VulnerabilityRecord{Coordinate: coord, OverallStatus: status}
 		var buf strings.Builder
-		_, _ = fmt.Fprintf(&buf, "  [1/1] %s@%s — %s\n", coord.Path, coord.Version, record.OverallStatus)
-		if record.OverallStatus == vuldomain.StatusScanFailed && record.ErrorDetail != "" {
-			_, _ = fmt.Fprintf(&buf, "      reason: %s\n", record.ErrorDetail)
-		}
-		if record.OverallStatus == vuldomain.StatusUnscannable && record.UnscannableReason != "" {
-			_, _ = fmt.Fprintf(&buf, "      reason: %s\n", record.UnscannableReason)
-		}
+		writeVulnScanProgress(record, coord, 1, 1, &buf)
 		if strings.Contains(buf.String(), "reason:") {
 			t.Errorf("status %s: unexpected reason line when detail is empty:\n%s", status, buf.String())
 		}
@@ -226,8 +216,10 @@ func TestVulnScanProgressToStderr(t *testing.T) {
 
 // TestVulnScanProgress_OutOfToolchainReadsAsExpected verifies that an
 // out-of-toolchain module (version-not-in-toolchain) renders as an
-// informational metadata-only outcome with a pointer to reachability --local,
-// while a genuine Unscannable failure keeps the plain failure presentation.
+// informational metadata-only outcome, while a genuine Unscannable failure keeps
+// its own label. The per-module line carries the label and nothing else: the
+// explanation and the direction are properties of the reason, not the module,
+// and are printed once per run by the roll-up.
 func TestVulnScanProgress_OutOfToolchainReadsAsExpected(t *testing.T) {
 	coord := mustVulnCoord(t, "example.com/pkg", "v1.0.0")
 
@@ -245,15 +237,12 @@ func TestVulnScanProgress_OutOfToolchainReadsAsExpected(t *testing.T) {
 		if !strings.Contains(out, "Metadata-only (version not in project build)") {
 			t.Errorf("expected metadata-only label, got: %q", out)
 		}
-		if !strings.Contains(out, "reachability --local") {
-			t.Errorf("expected reachability --local pointer, got: %q", out)
-		}
 		if strings.Contains(out, "— Unscannable") {
 			t.Errorf("out-of-toolchain line must not read as a bare Unscannable failure, got: %q", out)
 		}
 	})
 
-	t.Run("genuine unscannable keeps the failure presentation", func(t *testing.T) {
+	t.Run("another reason is named, not left bare, and keeps its own presentation", func(t *testing.T) {
 		rec := vuldomain.VulnerabilityRecord{
 			Coordinate:        coord,
 			OverallStatus:     vuldomain.StatusUnscannable,
@@ -264,16 +253,194 @@ func TestVulnScanProgress_OutOfToolchainReadsAsExpected(t *testing.T) {
 		writeVulnScanProgress(rec, coord, 1, 1, &stderr)
 		out := stderr.String()
 
-		if !strings.Contains(out, "— Unscannable") {
-			t.Errorf("genuine unscannable must still read as Unscannable, got: %q", out)
+		if !strings.Contains(out, "Metadata-only (builds on Windows only)") {
+			t.Errorf("windows-only must render its own label, got: %q", out)
+		}
+		if strings.Contains(out, "— Unscannable") {
+			t.Errorf("a mapped reason must not render as a bare Unscannable, got: %q", out)
 		}
 		if strings.Contains(out, "Metadata-only (version not in project build)") {
-			t.Errorf("genuine failure must not borrow the expected metadata-only label, got: %q", out)
-		}
-		if strings.Contains(out, "reachability --local") {
-			t.Errorf("genuine failure must not point at reachability --local, got: %q", out)
+			t.Errorf("this reason must not borrow the out-of-toolchain label, got: %q", out)
 		}
 	})
+}
+
+// TestVulnScanProgress_SharedTextIsNotRepeatedPerModule pins the fix for the
+// repetition defect: on a walk where many modules carry the same Unscannable
+// reason, the explanation, the direction and the scanner's free-text reason are
+// identical for every one of them, so the per-module stream must not carry them
+// at all. What the stream keeps is the part that varies — the counter and the
+// status label — because removing those would trade noise for silence.
+func TestVulnScanProgress_SharedTextIsNotRepeatedPerModule(t *testing.T) {
+	const modules = 40
+
+	var stream strings.Builder
+	rollup := newUnscannableRollup()
+	for i := 0; i < modules; i++ {
+		coord := mustVulnCoord(t, fmt.Sprintf("example.com/mod%d", i), "v1.0.0")
+		rec := vuldomain.VulnerabilityRecord{
+			Coordinate:        coord,
+			OverallStatus:     vuldomain.StatusUnscannable,
+			UnscanReason:      vuldomain.UnscanReasonNoGoMod,
+			UnscannableReason: "no go.mod found in module zip",
+		}
+		writeVulnScanProgress(rec, coord, i+1, modules, &stream)
+		rollup.add(rec.UnscanReason, coord.String(), rec.UnscannableReason)
+	}
+
+	streamed := stream.String()
+	if n := strings.Count(streamed, "no go.mod found in module zip"); n != 0 {
+		t.Errorf("shared scanner reason appears %d times in the per-module stream, want 0; got:\n%s", n, streamed)
+	}
+	if n := strings.Count(streamed, "Metadata-only (module zip has no go.mod"); n != modules {
+		t.Errorf("per-module status label appears %d times, want %d (one per module)", n, modules)
+	}
+	if n := strings.Count(streamed, "\n"); n != modules {
+		t.Errorf("per-module stream is %d lines, want exactly %d (one per module):\n%s", n, modules, streamed)
+	}
+
+	var summary strings.Builder
+	writeUnscannableRollup(rollup, &summary)
+	if n := strings.Count(summary.String(), "no go.mod found in module zip"); n != 1 {
+		t.Errorf("shared scanner reason appears %d times in the roll-up, want exactly 1; got:\n%s", n, summary.String())
+	}
+	// The heading carries the count. The detail line does not repeat it: one
+	// scanner message covering every module in the section adds nothing by
+	// restating the number three words later.
+	if !strings.Contains(summary.String(), fmt.Sprintf("(%d):", modules)) {
+		t.Errorf("roll-up heading must carry the module count; got:\n%s", summary.String())
+	}
+	if strings.Contains(summary.String(), fmt.Sprintf("(%d modules)", modules)) {
+		t.Errorf("detail line must not restate the heading's count; got:\n%s", summary.String())
+	}
+}
+
+// TestVulnScanProgress_OutOfToolchainExplanationIsOncePerRun is the same rule
+// for the reason that carries both an explanation and a direction: 116 modules
+// produced 116 identical explanation lines and 117 identical hint lines, which
+// is the condition under which the one real fault in the same stream is missed.
+func TestVulnScanProgress_OutOfToolchainExplanationIsOncePerRun(t *testing.T) {
+	const modules = 25
+
+	var stream strings.Builder
+	rollup := newUnscannableRollup()
+	for i := 0; i < modules; i++ {
+		coord := mustVulnCoord(t, fmt.Sprintf("example.com/mod%d", i), "v1.0.0")
+		rec := vuldomain.VulnerabilityRecord{
+			Coordinate:        coord,
+			OverallStatus:     vuldomain.StatusUnscannable,
+			UnscanReason:      vuldomain.UnscanReasonVersionNotInToolchain,
+			UnscannableReason: "source analysis unavailable: requires a module version outside the analysed project toolchain",
+		}
+		writeVulnScanProgress(rec, coord, i+1, modules, &stream)
+		rollup.add(rec.UnscanReason, coord.String(), rec.UnscannableReason)
+	}
+
+	if n := strings.Count(stream.String(), reachabilityLocalHint); n != 0 {
+		t.Errorf("direction appears %d times in the per-module stream, want 0", n)
+	}
+	if n := strings.Count(stream.String(), "advisories matched, reachability not computed here"); n != 0 {
+		t.Errorf("explanation appears %d times in the per-module stream, want 0", n)
+	}
+
+	var summary strings.Builder
+	writeUnscannableRollup(rollup, &summary)
+	got := summary.String()
+	if n := strings.Count(got, reachabilityLocalHint); n != 1 {
+		t.Errorf("direction appears %d times in the roll-up, want exactly 1; got:\n%s", n, got)
+	}
+	if n := strings.Count(got, "advisories matched, reachability not computed here"); n != 1 {
+		t.Errorf("explanation appears %d times in the roll-up, want exactly 1; got:\n%s", n, got)
+	}
+	if !strings.Contains(got, fmt.Sprintf("version not in project build (%d):", modules)) {
+		t.Errorf("roll-up heading must carry the count; got:\n%s", got)
+	}
+	// The curated explanation supersedes the scanner's own wording of the same
+	// category; printing both would put the redundancy back one level up.
+	if strings.Contains(got, "source analysis unavailable: requires a module version") {
+		t.Errorf("scanner free text must not restate the curated explanation; got:\n%s", got)
+	}
+}
+
+// TestWriteUnscannableRollup_ProjectFaultCountsNotCoordinates covers the
+// fan-out case. fillProjectFault stamps one project-rooted fault onto every
+// coordinate in the walk, so a roll-up listing each coordinate would render one
+// operator-side input fault as N module problems. The section must state the
+// fault once and count the modules it took down.
+func TestWriteUnscannableRollup_ProjectFaultCountsNotCoordinates(t *testing.T) {
+	const modules = 107
+
+	r := newUnscannableRollup()
+	for i := 0; i < modules; i++ {
+		r.add(vuldomain.UnscanReasonProjectNoGoMod,
+			fmt.Sprintf("example.com/mod%d@v1.0.0", i),
+			"no go.mod in project directory /home/u/proj")
+	}
+
+	var out strings.Builder
+	writeUnscannableRollup(r, &out)
+	got := out.String()
+
+	if !strings.Contains(got, fmt.Sprintf("all %d modules unscannable", modules)) {
+		t.Errorf("project fault must be counted as one fault over N modules; got:\n%s", got)
+	}
+	if strings.Contains(got, "example.com/mod") {
+		t.Errorf("project fault must not list coordinates — N rows read as N findings; got:\n%s", got)
+	}
+	if n := strings.Count(got, "no go.mod in project directory"); n != 1 {
+		t.Errorf("the fault's detail appears %d times, want exactly 1; got:\n%s", n, got)
+	}
+	if n := strings.Count(got, "\n"); n != 2 {
+		t.Errorf("project fault section is %d lines, want 2 (fault + reason); got:\n%s", n, got)
+	}
+}
+
+// TestWriteUnscannableRollup_NonProjectReasonsStillListCoordinates pins the
+// boundary: only the fanned-out project faults collapse to a count. A per-module
+// reason names its modules, because there the coordinates are N distinct facts.
+func TestWriteUnscannableRollup_NonProjectReasonsStillListCoordinates(t *testing.T) {
+	r := newUnscannableRollup()
+	r.add(vuldomain.UnscanReasonCHeadersMissing, "gopkg.in/mgo.v2@v2.0.0", "")
+	r.add(vuldomain.UnscanReasonCHeadersMissing, "example.com/cgo@v1.2.3", "")
+
+	var out strings.Builder
+	writeUnscannableRollup(r, &out)
+	got := out.String()
+
+	for _, want := range []string{"gopkg.in/mgo.v2@v2.0.0", "example.com/cgo@v1.2.3", "(2):"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("per-module reason must still name its coordinates, missing %q; got:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "modules unscannable") {
+		t.Errorf("only project faults use the one-fault phrasing; got:\n%s", got)
+	}
+}
+
+// TestUnscannableRollup_DistinctDetailsAllSurvive guards the other side of the
+// dedup: collapsing repeated text must not collapse text that genuinely differs,
+// or a per-module scanner message would be lost rather than merely de-repeated.
+func TestUnscannableRollup_DistinctDetailsAllSurvive(t *testing.T) {
+	r := newUnscannableRollup()
+	r.add(vuldomain.UnscanReasonBuildIncompatible, "example.com/a@v1.0.0", "undefined: syscall.Mount")
+	r.add(vuldomain.UnscanReasonBuildIncompatible, "example.com/b@v1.0.0", "undefined: syscall.Mount")
+	r.add(vuldomain.UnscanReasonBuildIncompatible, "example.com/c@v1.0.0", "cannot find package foo")
+
+	var out strings.Builder
+	writeUnscannableRollup(r, &out)
+	got := out.String()
+
+	if !strings.Contains(got, "reason: undefined: syscall.Mount (2 modules)") {
+		t.Errorf("repeated detail must be counted, not repeated; got:\n%s", got)
+	}
+	// Both counts are given because neither text covers the whole section: the
+	// reader needs to know the 3 split 2/1, which the heading alone cannot say.
+	if !strings.Contains(got, "reason: cannot find package foo (1 module)") {
+		t.Errorf("a distinct detail must survive the roll-up with its count; got:\n%s", got)
+	}
+	if strings.Contains(got, "1 modules") {
+		t.Errorf("a one-module count must not read as \"1 modules\"; got:\n%s", got)
+	}
 }
 
 // ---- test helpers -------------------------------------------------------

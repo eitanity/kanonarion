@@ -12,20 +12,14 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
-
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/ports"
 )
 
 // Scan performs a vulnerability scan on a module.
-func (s *Scanner) Scan(
-	ctx context.Context,
-	coord coordinate.ModuleCoordinate,
-	moduleSource io.Reader,
-	snapshot domain.DatabaseSnapshot,
-	goModCache string,
-	dbDir string, // pre-extracted vuln DB dir; empty = extract from store on each call
-	scanMode domain.ScanMode, // source or binary; empty defaults to source
-) (domain.VulnerabilityRecord, error) {
+func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (domain.VulnerabilityRecord, error) {
+	coord, moduleSource, snapshot := req.Coordinate, req.ModuleSource, req.Snapshot
+	goModCache, dbDir, scanMode := req.GoModCache, req.DBDir, req.ScanMode
 	s.logMem(ctx, "start")
 	// 1. Prepare temporary directory
 	tmpDir, err := os.MkdirTemp("", "kanonarion-vuln-scan-*")
@@ -36,45 +30,26 @@ func (s *Scanner) Scan(
 
 	s.logger.Info("vuln-scan: starting", "module", coord.Path, "version", coord.Version)
 
-	// 2. Extract module source (zip) to temp directory
-	s.logger.Info("vuln-scan: extracting module zip", "module", coord.Path)
-	if err := s.extractZip(ctx, moduleSource, tmpDir); err != nil {
-		return domain.VulnerabilityRecord{}, fmt.Errorf("extract module: %w", err)
+	env := scanEnv(os.Environ(), goModCache)
+
+	scanDir, fault, err := s.prepareScanDir(ctx, tmpDir, coord, moduleSource, env, req.BuildList)
+	if err != nil {
+		return domain.VulnerabilityRecord{}, err
 	}
-	s.logMem(ctx, "module_extracted")
-
-	// 2.5 Find where go.mod is. mirror-fetch zips typically have a prefix like "github.com/gin-gonic/gin@v1.6.2/"
-	scanDir, foundGoMod := locateGoMod(tmpDir)
-
-	if !foundGoMod {
-		s.logger.Warn("vuln-scan: go.mod not found, marking unscannable", "module", coord.Path)
-		// If go.mod is not found, we can't run govulncheck.
-		// We return StatusUnscannable instead of an error to indicate it's not a failure of the scanner itself.
+	if fault != nil {
 		return domain.VulnerabilityRecord{
 			Coordinate:        coord,
 			Findings:          nil,
 			OverallStatus:     domain.StatusUnscannable,
-			UnscanReason:      domain.UnscanReasonNoGoMod,
-			UnscannableReason: "no go.mod found in module zip",
+			UnscanReason:      fault.unscanReason,
+			UnscannableReason: fault.reason,
 			DatabaseSnapshot:  snapshot,
 			ScannedAt:         time.Now(),
 			PipelineVersion:   s.pipelineVersion,
 		}, nil
 	}
 
-	// 2.6 Neutralise the module's own filesystem replace directives. A module is
-	// scanned in isolation as its own main module, so govulncheck honours them;
-	// a multi-module member's dev-time `replace ... => ../` points outside the
-	// published zip and would fail the build. Dropping them matches a consumer's
-	// view, where a dependency's replaces are ignored and siblings resolve from
-	// GOMODCACHE.
-	if changed, nerr := neutraliseLocalReplaces(filepath.Join(scanDir, "go.mod")); nerr != nil {
-		s.logger.Warn("vuln-scan: failed to neutralise local replaces", "module", coord.Path, "error", nerr)
-	} else if changed {
-		s.logger.Info("vuln-scan: dropped filesystem replace directives for isolated scan", "module", coord.Path)
-	}
-
-	// 3. Prepare vulnerability database argument.
+	// 2. Prepare vulnerability database argument.
 	dbArg, dbCleanup := s.prepareDBArg(ctx, snapshot, dbDir)
 	defer dbCleanup()
 
@@ -83,9 +58,7 @@ func (s *Scanner) Scan(
 		return domain.VulnerabilityRecord{}, err
 	}
 
-	env := scanEnv(os.Environ(), goModCache)
-
-	// 4. Mode dispatch: binary mode builds a test binary first for a fast symbol-table
+	// 3. Mode dispatch: binary mode builds a test binary first for a fast symbol-table
 	// scan; source mode does the full SSA + call-graph analysis.
 	var cmd *exec.Cmd
 	if scanMode == domain.ScanModeBinary {
@@ -137,7 +110,7 @@ func (s *Scanner) Scan(
 	}
 	cmd.Env = env
 
-	// 5. Stream govulncheck JSON output and parse results.
+	// 4. Stream govulncheck JSON output and parse results.
 	stderr := &limitWriter{limit: 2048}
 	cmd.Stderr = stderr
 	pr, pw := io.Pipe()
@@ -155,11 +128,11 @@ func (s *Scanner) Scan(
 	}()
 
 	s.logger.Info("vuln-scan: parsing govulncheck output")
-	findings, err := s.parseResults(ctx, pr, coord.Path)
-	if err != nil {
-		_ = pr.Close()
-		return domain.VulnerabilityRecord{}, fmt.Errorf("parse govulncheck output for %s@%s: %w", coord.Path, coord.Version, err)
-	}
+	findings, parseErr := s.parseResults(ctx, pr, coord.Path)
+	// Drain before closing so the writer goroutine reaches cmd.Wait() and waitErr
+	// is settled: a scan that died mid-stream must be classified as the failure it
+	// is, not as the truncated parse it also produced.
+	_, _ = io.Copy(io.Discard, pr)
 	_ = pr.Close()
 	s.logMem(ctx, "output_parsed")
 	if waitErr != nil {
@@ -184,6 +157,9 @@ func (s *Scanner) Scan(
 			PipelineVersion:   s.pipelineVersion,
 		}, nil
 	}
+	if parseErr != nil {
+		return domain.VulnerabilityRecord{}, fmt.Errorf("parse govulncheck output for %s@%s: %w", coord.Path, coord.Version, parseErr)
+	}
 	s.logger.Info("vuln-scan: govulncheck finished", "findings", len(findings))
 
 	// Aggressive cleanup after parsing
@@ -203,6 +179,86 @@ func (s *Scanner) Scan(
 		ScannedAt:        time.Now(),
 		PipelineVersion:  s.pipelineVersion,
 	}, nil
+}
+
+// prepareFault is a condition that leaves a module unanalysable before
+// govulncheck is ever started, carried as data so each caller can render it in
+// the result shape it owns rather than the preparation step deciding.
+type prepareFault struct {
+	unscanReason domain.UnscanReason
+	reason       string
+}
+
+// prepareScanDir extracts a module zip into tmpDir and returns the directory
+// govulncheck should be pointed at: the module root, with a go.mod present and
+// its dev-time filesystem replace directives neutralised.
+//
+// It is shared by the isolated per-module scan and the target-rooted scan of a
+// coordinate-keyed walk. Both extract the same published zip and need the same
+// directory preconditions; only what they do with the resulting analysis
+// differs, so the preparation is one step and the divergence is downstream.
+func (s *Scanner) prepareScanDir(
+	ctx context.Context,
+	tmpDir string,
+	coord coordinate.ModuleCoordinate,
+	moduleSource io.Reader,
+	env []string,
+	buildList map[coordinate.ModuleCoordinate]struct{},
+) (string, *prepareFault, error) {
+	s.logger.Info("vuln-scan: extracting module zip", "module", coord.Path)
+	if err := s.extractZip(ctx, moduleSource, tmpDir); err != nil {
+		return "", nil, fmt.Errorf("extract module: %w", err)
+	}
+	s.logMem(ctx, "module_extracted")
+
+	// mirror-fetch zips typically have a prefix like "github.com/gin-gonic/gin@v1.6.2/"
+	scanDir, foundGoMod := locateGoMod(tmpDir)
+
+	if !foundGoMod {
+		// A module zip published before Go modules carries no go.mod and never
+		// will, but govulncheck's refusal is a precondition on the directory it
+		// is pointed at, not on the artefact: it checks for the file before
+		// loading any package and its own diagnostic says to create one. Supply
+		// it here, in the scratch directory the zip was just extracted into. The
+		// zip itself is immutable and checksum-verified; nothing about custody
+		// changes, exactly as for the replace directives rewritten below.
+		//
+		// Abandoning the scan instead would record a coverage gap that is not
+		// real: the module is analysable, and treating it as permanently
+		// unscannable would leave its advisories matched by coordinate alone,
+		// with no reachability, for a condition kanonarion can lift.
+		root, skipped, werr := writeSynthesisedGoMod(scanDir, coord, toolchainGoVersion(ctx, env), buildList)
+		if len(skipped) > 0 {
+			// The require set was assembled from less than the whole module. Name
+			// the files so a later unresolved-package failure is attributable here
+			// rather than appearing as an unexplained resolution error.
+			s.logger.Warn("vuln-scan: some source files could not be read while synthesising go.mod; the require set may be incomplete",
+				"module", coord.Path, "skipped_files", strings.Join(skipped, ", "), "skipped_count", len(skipped))
+		}
+		if werr != nil {
+			s.logger.Warn("vuln-scan: could not synthesise go.mod, marking unscannable",
+				"module", coord.Path, "error", werr)
+			return "", &prepareFault{
+				unscanReason: domain.UnscanReasonNoGoMod,
+				reason:       "no go.mod in module zip and none could be synthesised: " + werr.Error(),
+			}, nil
+		}
+		scanDir = root
+		s.logger.Info("vuln-scan: no go.mod in module zip, synthesised one for the scan",
+			"module", coord.Path, "dir", scanDir)
+	}
+
+	// Neutralise the module's own filesystem replace directives. The module is
+	// the main module of this scan, so govulncheck honours them; a multi-module
+	// member's dev-time `replace ... => ../` points outside the published zip and
+	// would fail the build. Dropping them matches a consumer's view, where a
+	// dependency's replaces are ignored and siblings resolve from GOMODCACHE.
+	if changed, nerr := neutraliseLocalReplaces(filepath.Join(scanDir, "go.mod")); nerr != nil {
+		s.logger.Warn("vuln-scan: failed to neutralise local replaces", "module", coord.Path, "error", nerr)
+	} else if changed {
+		s.logger.Info("vuln-scan: dropped filesystem replace directives for the scan", "module", coord.Path)
+	}
+	return scanDir, nil, nil
 }
 
 // locateGoMod finds the directory containing the first go.mod under root.
@@ -291,14 +347,24 @@ func (s *Scanner) prepareDBArg(ctx context.Context, snapshot domain.DatabaseSnap
 // Unscannable (version-not-in-toolchain), never papered over with a network
 // fetch. Without a modcache the default (network-backed) resolution is untouched.
 //
+// GOWORK=off is set unconditionally. A module is scanned in isolation as its
+// own main module, so a go.work shipped in its published zip is dev-time
+// configuration that does not apply here — exactly as its own filesystem
+// replace directives do not (neutraliseLocalReplaces). Left on, the toolchain
+// discovers ./go.work in the extract dir and enters workspace mode, which both
+// rejects -mod=mod outright and would resolve against sibling modules the zip
+// does not contain. Disabling it is the same normalisation applied to the same
+// class of dev-time metadata; without it such a module is misreported as not
+// building under the host toolchain.
+//
 // Duplicate keys are appended rather than replaced because exec.Cmd honours the
 // last value for a repeated key, so these overrides win over any inherited
-// GOFLAGS/GOSUMDB/GOPROXY.
+// GOWORK/GOFLAGS/GOSUMDB/GOPROXY.
 func scanEnv(base []string, goModCache string) []string {
 	// Copy rather than append onto base so a caller's slice is never mutated.
-	env := make([]string, len(base), len(base)+5)
+	env := make([]string, len(base), len(base)+6)
 	copy(env, base)
-	env = append(env, "GOGC=30")
+	env = append(env, "GOGC=30", "GOWORK=off")
 	if goModCache != "" {
 		env = append(env,
 			"GOMODCACHE="+goModCache,

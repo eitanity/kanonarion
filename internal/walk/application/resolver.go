@@ -75,7 +75,13 @@ import (
 // recorded, and its BSD-3-Clause licence is extracted from the tarball. The node
 // shape changed, so cached 1.7.0 walks are re-resolved rather than served with a
 // bare stdlib node.
-const PipelineVersion = "1.8.0"
+// 1.9.0: graph nodes are keyed by a module's own require path rather than the
+// path a replace directive points at. A module replaced to a path that is also
+// required independently used to collide with it and be dropped, so a module
+// genuinely linked into the build was absent from the graph — and from every
+// downstream stage. Cached 1.8.0 walks carry that hole and are re-resolved
+// rather than served.
+const PipelineVersion = "1.9.0"
 
 // GraphResolver resolves the transitive dependency graph for a target module.
 // It is safe for concurrent use once constructed.
@@ -469,7 +475,10 @@ func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target coordin
 			continue
 		}
 		node, needFetch := r.buildListNodeSkeleton(m, st)
-		st.nodes[node.Coordinate.Path] = node
+		// Keyed by the module's own path, not node.Coordinate.Path: a module
+		// replaced to a path that is ALSO required independently would otherwise
+		// share one slot with it and silently overwrite it (see resolveState).
+		st.nodes[m.Path] = node
 		nodeByPath[m.Path] = node.Coordinate
 		// Skip the fetch for modules the scope filter will discard: the graph keeps
 		// the node for edge structure, but fetching + go.sum-verifying it is wasted
@@ -488,8 +497,11 @@ func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target coordin
 	results := r.fetchLevel(ctx, coords, r.workers())
 
 	// Phase 3 (sequential): fold each fetch result into its node, in task order.
+	// Nodes are addressed by the module's own path (t.path), not the fetched
+	// coordinate's path, so two build participants sharing a replacement target
+	// path fold into their own nodes instead of clobbering each other.
 	for i, t := range fetchTasks {
-		node := st.nodes[t.coord.Path]
+		node := st.nodes[t.path]
 		if err := results[i].err; err != nil {
 			r.logger.WarnContext(ctx, "walk.fetch.failed",
 				slog.String("module.path", t.coord.Path),
@@ -502,9 +514,9 @@ func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target coordin
 			node.ErrorDetail = err.Error()
 		} else {
 			node.Retracted = results[i].record.Retracted
-			st.recordDigests(t.coord.Path, domain2.RecordDigests(results[i].record))
+			st.recordDigests(t.coord, domain2.RecordDigests(results[i].record))
 		}
-		st.nodes[t.coord.Path] = node
+		st.nodes[t.path] = node
 	}
 
 	// Edges: normalise endpoints, drop pseudo-nodes, dedupe.
@@ -541,10 +553,7 @@ func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target coordin
 			GoVersion: bl.GoVersion,
 		},
 	}
-	for _, node := range st.nodes {
-		g.Nodes = append(g.Nodes, node)
-	}
-	g.Nodes = st.applyDigests(g.Nodes)
+	g.Nodes = st.drainNodes()
 	g.Edges = st.edges
 	g.Sort()
 
@@ -608,7 +617,10 @@ func (r *GraphResolver) buildListNodeSkeleton(m walkports.BuildListModule, st *r
 		source = domain3.ResolutionReplace
 		original = orig
 	}
-	st.selected[effective.Path] = effective.Version
+	// Selection is tracked under the module's own path — the toolchain already
+	// settled MVS, and a replacement target's version belongs to the replaced
+	// entry, not to any independent requirement on that same path.
+	st.selected[orig.Path] = orig.Version
 
 	return domain3.GraphNode{
 		Coordinate:         effective,
@@ -734,15 +746,10 @@ func (r *GraphResolver) resolveFromParsed(
 		Retracted:        targetRetracted,
 	}
 
-	// Step 4: seed queue with target's direct dependencies.
-	queue := r.seedDirectDeps(target, filterRequires(targetParsed.Require, depth.FollowIndirect), replaceMap, excludeSet, st)
-
-	// Seeded coordinates are the target's own requirements, i.e. roots, so each
-	// expands. Deeper expansion is decided per child during the BFS.
-	depthQueue := make([]queueItem, len(queue))
-	for i, c := range queue {
-		depthQueue[i] = queueItem{coord: c, depth: 1, expand: true}
-	}
+	// Step 4: seed queue with target's direct dependencies. Seeded items are the
+	// target's own requirements, i.e. roots, so each expands (seedDirectDeps sets
+	// depth 1 / expand). Deeper expansion is decided per child during the BFS.
+	depthQueue := r.seedDirectDeps(target, filterRequires(targetParsed.Require, depth.FollowIndirect), replaceMap, excludeSet, st)
 
 	// Step 5: BFS over transitive dependencies, one level at a time. Within a
 	// level every module is independent — a module's go.mod parse only gates the
@@ -773,8 +780,14 @@ func (r *GraphResolver) resolveFromParsed(
 		expandQueued := make(map[string]bool)
 		for _, item := range wave {
 			coord := item.coord
-			if sel := st.selected[coord.Path]; sel != coord.Version {
-				coord = coordinate.ModuleCoordinate{Path: coord.Path, Version: sel}
+			// Coerce to the MVS-selected version of this item's own require path.
+			// A pinned (replaced) module is exempt: its coordinate is fixed by the
+			// replace directive, and the selected version tracked under its require
+			// path belongs to that path, not to the replacement target.
+			if !item.pinned {
+				if sel := st.selected[item.nodeKey]; sel != "" && sel != coord.Version {
+					coord = coordinate.ModuleCoordinate{Path: coord.Path, Version: sel}
+				}
 			}
 			key := coord.String()
 
@@ -783,7 +796,7 @@ func (r *GraphResolver) resolveFromParsed(
 				continue
 			}
 			atMaxDepth := depth.MaxDepth > 0 && item.depth >= depth.MaxDepth
-			bi := bfsItem{coord: coord, key: key, depth: item.depth, atMaxDepth: atMaxDepth}
+			bi := bfsItem{coord: coord, key: key, nodeKey: item.nodeKey, depth: item.depth, atMaxDepth: atMaxDepth}
 
 			if !alreadyProcessed {
 				st.processed[key] = true
@@ -843,7 +856,20 @@ func (r *GraphResolver) resolveFromParsed(
 	}
 
 	// Step 6: post-process edges — update To.Version to MVS-selected version.
+	// An edge into a replaced module already carries that module's pinned
+	// replacement coordinate; MVS never raises it, and the selected version under
+	// the replacement path belongs to a different build participant, so coercing
+	// it would retarget the edge onto the wrong node.
+	pinnedTargets := make(map[string]bool, len(st.nodes))
+	for _, n := range st.nodes {
+		if n.OriginalCoordinate.Path != "" {
+			pinnedTargets[n.Coordinate.String()] = true
+		}
+	}
 	for i := range st.edges {
+		if pinnedTargets[st.edges[i].To.String()] {
+			continue
+		}
 		if sel, ok := st.selected[st.edges[i].To.Path]; ok {
 			st.edges[i].To.Version = sel
 		}
@@ -858,10 +884,7 @@ func (r *GraphResolver) resolveFromParsed(
 		PartialReason:   st.partialReason,
 		HasLocalReplace: st.hasLocalReplace,
 	}
-	for _, node := range st.nodes {
-		g.Nodes = append(g.Nodes, node)
-	}
-	g.Nodes = st.applyDigests(g.Nodes)
+	g.Nodes = st.drainNodes()
 	g.Edges = st.edges
 	g.Sort()
 
@@ -933,10 +956,7 @@ func (r *GraphResolver) ResolveShallow(ctx context.Context, target coordinate.Mo
 		PartialReason:   "shallow",
 		HasLocalReplace: st.hasLocalReplace,
 	}
-	for _, node := range st.nodes {
-		g.Nodes = append(g.Nodes, node)
-	}
-	g.Nodes = st.applyDigests(g.Nodes)
+	g.Nodes = st.drainNodes()
 	g.Edges = st.edges
 	g.Sort()
 
@@ -949,17 +969,21 @@ func (r *GraphResolver) ResolveShallow(ctx context.Context, target coordinate.Mo
 }
 
 // seedDirectDeps enqueues the direct dependencies of the target and adds their
-// initial GraphNode entries. It returns the initial work queue.
+// initial GraphNode entries. It returns the initial work queue, whose items are
+// all roots (they are the target's own requirements) and so always expand.
 func (r *GraphResolver) seedDirectDeps(
 	target coordinate.ModuleCoordinate,
 	requires []domain3.Requirement,
 	replaceMap map[replaceKey]domain3.Replacement,
 	excludeSet map[excludeKey]bool,
 	st *resolveState,
-) []coordinate.ModuleCoordinate {
-	queue := make([]coordinate.ModuleCoordinate, 0, len(requires))
+) []queueItem {
+	queue := make([]queueItem, 0, len(requires))
 	for _, req := range requires {
 		out := applyReplace(req.Coordinate, replaceMap)
+		// Every build participant is keyed by its own require path, never by a
+		// replacement target path (see resolveState).
+		key := req.Coordinate.Path
 		if out.localReplace {
 			st.hasLocalReplace = true
 			st.edges = append(st.edges, domain3.GraphEdge{
@@ -967,9 +991,9 @@ func (r *GraphResolver) seedDirectDeps(
 				To:                out.effective,
 				ConstraintVersion: req.Coordinate.Version,
 			})
-			if _, exists := st.nodes[out.effective.Path]; !exists {
-				st.selected[out.effective.Path] = out.effective.Version
-				st.nodes[out.effective.Path] = domain3.GraphNode{
+			if _, exists := st.nodes[key]; !exists {
+				st.selected[key] = out.effective.Version
+				st.nodes[key] = domain3.GraphNode{
 					Coordinate:         out.effective,
 					DirectDependency:   true,
 					ResolutionSource:   domain3.ResolutionLocalReplace,
@@ -1000,40 +1024,35 @@ func (r *GraphResolver) seedDirectDeps(
 			original = req.Coordinate
 		}
 
-		currentSel := st.selected[effective.Path]
+		// MVS selects over the REQUIRE path's versions. For an unreplaced module
+		// that is the coordinate itself; for a replaced one the require version is
+		// what competes, while the node's coordinate stays the pinned replacement.
+		currentSel := st.selected[key]
 		switch {
-		case currentSel == "":
-			st.selected[effective.Path] = effective.Version
-			st.nodes[effective.Path] = domain3.GraphNode{
+		case currentSel == "" || versionGT(req.Coordinate.Version, currentSel):
+			st.selected[key] = req.Coordinate.Version
+			prev := st.nodes[key]
+			st.nodes[key] = domain3.GraphNode{
 				Coordinate:         effective,
 				DirectDependency:   true,
 				ResolutionSource:   source,
-				OriginalCoordinate: original,
-			}
-			queue = append(queue, effective)
-		case versionGT(effective.Version, currentSel):
-			st.selected[effective.Path] = effective.Version
-			newCoord := coordinate.ModuleCoordinate{Path: effective.Path, Version: effective.Version}
-			prev := st.nodes[effective.Path]
-			st.nodes[effective.Path] = domain3.GraphNode{
-				Coordinate:         newCoord,
-				DirectDependency:   prev.DirectDependency || true,
-				ResolutionSource:   source,
-				OriginalCoordinate: original,
-			}
-			queue = append(queue, newCoord)
-		default:
-			// currentSel >= effective.Version — mark as direct dep but keep higher version.
-			prev := st.nodes[effective.Path]
-			st.nodes[effective.Path] = domain3.GraphNode{
-				Coordinate:         prev.Coordinate,
-				DirectDependency:   true,
-				ResolutionSource:   prev.ResolutionSource,
 				ErrorDetail:        prev.ErrorDetail,
 				Retracted:          prev.Retracted,
-				OriginalCoordinate: prev.OriginalCoordinate,
-				LocalPath:          prev.LocalPath,
+				OriginalCoordinate: original,
 			}
+			queue = append(queue, queueItem{
+				coord:   effective,
+				nodeKey: key,
+				pinned:  out.replaced,
+				depth:   1,
+				expand:  true,
+			})
+		default:
+			// currentSel >= this require — mark as direct dep but keep the
+			// higher selection and the node it resolved to.
+			prev := st.nodes[key]
+			prev.DirectDependency = true
+			st.nodes[key] = prev
 		}
 	}
 	return queue
@@ -1045,6 +1064,7 @@ func (r *GraphResolver) seedDirectDeps(
 type bfsItem struct {
 	coord      coordinate.ModuleCoordinate
 	key        string // coord.String() (the selected coordinate)
+	nodeKey    string // resolve-state node key: the module's own (pre-replace) path
 	depth      int
 	atMaxDepth bool
 }
@@ -1054,8 +1074,12 @@ type bfsItem struct {
 // Exactly one of the error fields is set on failure; on success goModBytes is
 // nil for a pre-modules leaf and parsed holds the requirements otherwise.
 type fetchParseOutcome struct {
-	coord      coordinate.ModuleCoordinate
-	key        string
+	coord coordinate.ModuleCoordinate
+	key   string
+	// nodeKey is the resolve-state key of the node this fetch belongs to: the
+	// module's own (pre-replace) path, which is not coord.Path for a replaced
+	// module. See resolveState.
+	nodeKey    string
 	record     domain2.FactRecord
 	fetchErr   error
 	extractErr error
@@ -1081,7 +1105,9 @@ func (r *GraphResolver) fetchParseLevel(ctx context.Context, items []bfsItem, wo
 	}
 	for i, item := range items {
 		g.Go(func() error {
-			outcomes[i] = r.fetchAndParseModule(gctx, item.coord, item.key)
+			out := r.fetchAndParseModule(gctx, item.coord, item.key)
+			out.nodeKey = item.nodeKey
+			outcomes[i] = out
 			return nil
 		})
 	}
@@ -1133,6 +1159,9 @@ func (r *GraphResolver) fetchAndParseModule(ctx context.Context, coord coordinat
 // so the expansion step finds no requirements to enqueue. Must run sequentially.
 func (r *GraphResolver) applyFetchParse(ctx context.Context, out fetchParseOutcome, followIndirect bool, st *resolveState) {
 	coord := out.coord
+	// Nodes are keyed by the module's own require path, which is not
+	// coord.Path for a module replaced to a different path.
+	nodeKey := out.nodeKey
 
 	if out.fetchErr != nil {
 		r.logger.WarnContext(ctx, "walk.fetch.failed",
@@ -1142,8 +1171,8 @@ func (r *GraphResolver) applyFetchParse(ctx context.Context, out fetchParseOutco
 			slog.String("error", out.fetchErr.Error()),
 		)
 		st.markPartial("fetch_failed")
-		existing := st.nodes[coord.Path]
-		st.nodes[coord.Path] = domain3.GraphNode{
+		existing := st.nodes[nodeKey]
+		st.nodes[nodeKey] = domain3.GraphNode{
 			Coordinate:         coord,
 			DirectDependency:   existing.DirectDependency,
 			ResolutionSource:   domain3.ResolutionFetchFailed,
@@ -1155,15 +1184,15 @@ func (r *GraphResolver) applyFetchParse(ctx context.Context, out fetchParseOutco
 
 	// Update node with retraction info; preserve the ResolutionSource set when the
 	// node was first enqueued (which already accounts for replace directives).
-	existing := st.nodes[coord.Path]
-	st.nodes[coord.Path] = domain3.GraphNode{
+	existing := st.nodes[nodeKey]
+	st.nodes[nodeKey] = domain3.GraphNode{
 		Coordinate:         coord,
 		DirectDependency:   existing.DirectDependency,
 		ResolutionSource:   existing.ResolutionSource,
 		Retracted:          out.record.Retracted,
 		OriginalCoordinate: existing.OriginalCoordinate,
 	}
-	st.recordDigests(coord.Path, domain2.RecordDigests(out.record))
+	st.recordDigests(coord, domain2.RecordDigests(out.record))
 
 	if out.extractErr != nil {
 		r.logger.WarnContext(ctx, "walk.gomod.extract.failed",
@@ -1172,8 +1201,8 @@ func (r *GraphResolver) applyFetchParse(ctx context.Context, out fetchParseOutco
 			slog.String("error", out.extractErr.Error()),
 		)
 		st.markPartial("parse_failed")
-		prev := st.nodes[coord.Path]
-		st.nodes[coord.Path] = domain3.GraphNode{
+		prev := st.nodes[nodeKey]
+		st.nodes[nodeKey] = domain3.GraphNode{
 			Coordinate:         coord,
 			DirectDependency:   prev.DirectDependency,
 			ResolutionSource:   domain3.ResolutionParseFailed,
@@ -1187,8 +1216,8 @@ func (r *GraphResolver) applyFetchParse(ctx context.Context, out fetchParseOutco
 			slog.String("module.path", coord.Path),
 			slog.String("module.version", coord.Version),
 		)
-		prev := st.nodes[coord.Path]
-		st.nodes[coord.Path] = domain3.GraphNode{
+		prev := st.nodes[nodeKey]
+		st.nodes[nodeKey] = domain3.GraphNode{
 			Coordinate:         coord,
 			DirectDependency:   prev.DirectDependency,
 			ResolutionSource:   prev.ResolutionSource,
@@ -1205,11 +1234,13 @@ func (r *GraphResolver) applyFetchParse(ctx context.Context, out fetchParseOutco
 			slog.String("error", out.parseErr.Error()),
 		)
 		st.markPartial("parse_failed")
-		st.nodes[coord.Path] = domain3.GraphNode{
-			Coordinate:       coord,
-			DirectDependency: st.nodes[coord.Path].DirectDependency,
-			ResolutionSource: domain3.ResolutionParseFailed,
-			ErrorDetail:      out.parseErr.Error(),
+		prev := st.nodes[nodeKey]
+		st.nodes[nodeKey] = domain3.GraphNode{
+			Coordinate:         coord,
+			DirectDependency:   prev.DirectDependency,
+			ResolutionSource:   domain3.ResolutionParseFailed,
+			ErrorDetail:        out.parseErr.Error(),
+			OriginalCoordinate: prev.OriginalCoordinate,
 		}
 		return
 	}
@@ -1293,7 +1324,14 @@ func (r *GraphResolver) readBlob(ctx context.Context, handle string) (_ []byte, 
 // several paths is expanded if any path sets expand; a non-expanding visit
 // still contributes the node, only its deeper requirements are withheld.
 type queueItem struct {
-	coord  coordinate.ModuleCoordinate
+	coord coordinate.ModuleCoordinate
+	// nodeKey is the resolve-state key for this build participant: the module's
+	// own (pre-replace) path. See resolveState.
+	nodeKey string
+	// pinned marks a module replaced to a different path. Its coordinate is
+	// fixed by the replace directive, so it must never be MVS-coerced to the
+	// selected version of the replacement path.
+	pinned bool
 	depth  int
 	expand bool
 }
@@ -1318,8 +1356,9 @@ func filterRequires(reqs []domain3.Requirement, followIndirect bool) []domain3.R
 // requirement unless atMaxDepth. Returns the (possibly updated) depthQueue.
 //
 // The enqueued item's expand flag follows the propagation rule: the requirement
-// expands its own requirements iff it is a root (roots[effective.Path]) or its
-// parent is an expanded pre-pruning module (parentPrePruning). A requirement
+// expands its own requirements iff it is a root (roots[req.Coordinate.Path], the
+// require path — a replaced module is not a root under its replacement path) or
+// its parent is an expanded pre-pruning module (parentPrePruning). A requirement
 // already seen on a non-expanding path is re-enqueued for expansion when this
 // path qualifies it, so an expand-worthy path is never lost to discovery order.
 func enqueueTransitive(
@@ -1336,6 +1375,9 @@ func enqueueTransitive(
 	depthQueue []queueItem,
 ) []queueItem {
 	out := applyReplace(req.Coordinate, replaceMap)
+	// Every build participant is keyed by its own require path, never by a
+	// replacement target path (see resolveState).
+	key := req.Coordinate.Path
 	if out.localReplace {
 		if followReplace {
 			st.hasLocalReplace = true
@@ -1344,9 +1386,9 @@ func enqueueTransitive(
 				To:                out.effective,
 				ConstraintVersion: req.Coordinate.Version,
 			})
-			if _, exists := st.nodes[out.effective.Path]; !exists {
-				st.selected[out.effective.Path] = out.effective.Version
-				st.nodes[out.effective.Path] = domain3.GraphNode{
+			if _, exists := st.nodes[key]; !exists {
+				st.selected[key] = out.effective.Version
+				st.nodes[key] = domain3.GraphNode{
 					Coordinate:         out.effective,
 					DirectDependency:   false,
 					ResolutionSource:   domain3.ResolutionLocalReplace,
@@ -1363,8 +1405,10 @@ func enqueueTransitive(
 	}
 
 	// A requirement expands its own requirements iff it is a root or its parent
-	// is an expanded pre-pruning module.
-	expand := roots[effective.Path] || parentPrePruning
+	// is an expanded pre-pruning module. roots is keyed by the target's require
+	// paths, so a replaced module must be tested under its require path — testing
+	// the replacement target path would never match and would strand its subtree.
+	expand := roots[req.Coordinate.Path] || parentPrePruning
 
 	source := domain3.ResolutionMVS
 	if out.replaced {
@@ -1387,9 +1431,9 @@ func enqueueTransitive(
 		// the boundary node but flag the closure as truncated so the graph is marked
 		// Partial and never consumed as a complete audit.
 		st.depthTruncated = true
-		if st.selected[effective.Path] == "" {
-			st.selected[effective.Path] = effective.Version
-			st.nodes[effective.Path] = domain3.GraphNode{
+		if st.selected[key] == "" {
+			st.selected[key] = req.Coordinate.Version
+			st.nodes[key] = domain3.GraphNode{
 				Coordinate:         effective,
 				DirectDependency:   false,
 				ResolutionSource:   source,
@@ -1399,38 +1443,44 @@ func enqueueTransitive(
 		return depthQueue
 	}
 
-	currentSel := st.selected[effective.Path]
+	// MVS selects over the REQUIRE path's versions. For an unreplaced module that
+	// is the coordinate itself; for a replaced one the require version is what
+	// competes, while the node's coordinate stays the pinned replacement.
+	currentSel := st.selected[key]
 	switch {
-	case currentSel == "":
-		st.selected[effective.Path] = effective.Version
-		st.nodes[effective.Path] = domain3.GraphNode{
+	case currentSel == "" || versionGT(req.Coordinate.Version, currentSel):
+		st.selected[key] = req.Coordinate.Version
+		prev := st.nodes[key]
+		st.nodes[key] = domain3.GraphNode{
 			Coordinate:         effective,
-			DirectDependency:   false,
-			ResolutionSource:   source,
-			OriginalCoordinate: original,
-		}
-		depthQueue = append(depthQueue, queueItem{coord: effective, depth: currentDepth + 1, expand: expand})
-	case versionGT(effective.Version, currentSel):
-		st.selected[effective.Path] = effective.Version
-		newCoord := coordinate.ModuleCoordinate{Path: effective.Path, Version: effective.Version}
-		prev := st.nodes[effective.Path]
-		st.nodes[effective.Path] = domain3.GraphNode{
-			Coordinate:         newCoord,
 			DirectDependency:   prev.DirectDependency,
 			ResolutionSource:   source,
 			OriginalCoordinate: original,
 		}
-		depthQueue = append(depthQueue, queueItem{coord: newCoord, depth: currentDepth + 1, expand: expand})
+		depthQueue = append(depthQueue, queueItem{
+			coord:   effective,
+			nodeKey: key,
+			pinned:  out.replaced,
+			depth:   currentDepth + 1,
+			expand:  expand,
+		})
 	default:
 		// Already selected at this version or higher, so the node and its MVS
 		// version stand. But if this path qualifies the module for expansion and
-		// it has not yet expanded, re-enqueue the selected coordinate so its
+		// it has not yet expanded, re-enqueue the node's own coordinate so its
 		// requirements are followed — discovery order must not strand an
-		// expand-worthy path.
+		// expand-worthy path. The stored node coordinate is used rather than a
+		// path+version pair, so a replaced node re-enqueues its replacement.
 		if expand {
-			selCoord := coordinate.ModuleCoordinate{Path: effective.Path, Version: currentSel}
-			if !st.expandedKeys[selCoord.String()] {
-				depthQueue = append(depthQueue, queueItem{coord: selCoord, depth: currentDepth + 1, expand: true})
+			prev := st.nodes[key]
+			if !st.expandedKeys[prev.Coordinate.String()] {
+				depthQueue = append(depthQueue, queueItem{
+					coord:   prev.Coordinate,
+					nodeKey: key,
+					pinned:  prev.OriginalCoordinate.Path != "",
+					depth:   currentDepth + 1,
+					expand:  true,
+				})
 			}
 		}
 	}
@@ -1438,6 +1488,16 @@ func enqueueTransitive(
 }
 
 // resolveState holds mutable BFS state. It is not safe for concurrent use.
+//
+// nodes and selected are keyed by a build participant's own (pre-replace) module
+// path — its require path — never by the path a replace directive points at.
+// `replace A => B vX` and an independent requirement on B are two distinct
+// entries in Go's build list; keying both under B collapses them and silently
+// drops one, so a module that is linked into the artefact disappears from the
+// graph. selected therefore holds the MVS-selected version of the REQUIRE path,
+// while the node's Coordinate carries the replacement. A versioned replace
+// target is pinned — Go never MVS-upgrades it — so versions must only ever be
+// compared between entries sharing a require path, never across a replace.
 type resolveState struct {
 	selected  map[string]string
 	processed map[string]bool
@@ -1460,22 +1520,51 @@ type resolveState struct {
 	// nothing. The caller folds it into partialReason once resolution completes.
 	depthTruncated bool
 	// digests holds the raw artefact digests for each fetched module, keyed by
-	// module path (matching the nodes map key). Collected as fetch results are
-	// folded in and applied to nodes when the graph is drained, decoupling the
-	// digest carry from the many node-rebuild sites.
+	// the fetched COORDINATE (path@version), not by module path. Two build
+	// participants can share a module path at different versions (an independent
+	// requirement and another module's replace target), and stamping a node with
+	// another version's hashes would misreport its provenance. Collected as fetch
+	// results are folded in and applied to nodes when the graph is drained,
+	// decoupling the digest carry from the many node-rebuild sites.
 	digests map[string]domain2.ArtifactDigests
 }
 
 // recordDigests stores the artefact digests from a fetched module's fact record,
-// keyed by path, when they are present. Lazily allocates the map.
-func (s *resolveState) recordDigests(path string, d domain2.ArtifactDigests) {
+// keyed by the fetched coordinate, when they are present. Lazily allocates the map.
+func (s *resolveState) recordDigests(coord coordinate.ModuleCoordinate, d domain2.ArtifactDigests) {
 	if d.IsZero() {
 		return
 	}
 	if s.digests == nil {
 		s.digests = map[string]domain2.ArtifactDigests{}
 	}
-	s.digests[path] = d
+	s.digests[coord.String()] = d
+}
+
+// drainNodes returns the resolved nodes as a slice, with digests applied.
+//
+// Nodes are keyed by require path, so a module replaced to a path that is also
+// required independently yields two entries — which is correct whenever they
+// resolve to different versions, and is exactly the case the path keying used to
+// lose. When both resolve to the SAME coordinate the two entries describe one
+// artefact, so they are collapsed to avoid emitting a duplicate component. The
+// survivor is the entry carrying OriginalCoordinate, because scope filters match
+// on Coordinate OR OriginalCoordinate and it therefore satisfies both identities.
+func (s *resolveState) drainNodes() []domain3.GraphNode {
+	byCoord := make(map[string]int, len(s.nodes))
+	out := make([]domain3.GraphNode, 0, len(s.nodes))
+	for _, node := range s.nodes {
+		ck := node.Coordinate.String()
+		if i, seen := byCoord[ck]; seen {
+			if out[i].OriginalCoordinate.Path == "" && node.OriginalCoordinate.Path != "" {
+				out[i] = node
+			}
+			continue
+		}
+		byCoord[ck] = len(out)
+		out = append(out, node)
+	}
+	return s.applyDigests(out)
 }
 
 // applyDigests sets node.Digests for every node from the collected fetch
@@ -1484,7 +1573,7 @@ func (s *resolveState) recordDigests(path string, d domain2.ArtifactDigests) {
 // value so the SBOM omits their <hashes>.
 func (s *resolveState) applyDigests(nodes []domain3.GraphNode) []domain3.GraphNode {
 	for i := range nodes {
-		if d, ok := s.digests[nodes[i].Coordinate.Path]; ok {
+		if d, ok := s.digests[nodes[i].Coordinate.String()]; ok {
 			nodes[i].Digests = d
 		}
 	}

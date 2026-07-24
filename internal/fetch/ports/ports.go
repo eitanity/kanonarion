@@ -61,6 +61,27 @@ type ModuleProxy interface {
 	// Download fetches the module zip and go.mod, returning readers and
 	// the h1 hashes the proxy reports. Callers must close the readers.
 	Download(ctx context.Context, coord coordinate.ModuleCoordinate) (ModuleDownload, error)
+
+	// DownloadGoMod fetches only the standalone go.mod for a module version —
+	// the go.mod-only counterpart to Download for callers that read a module's
+	// requirements without ever compiling or analysing its source (module-graph
+	// resolution). It returns the go.mod reader and the h1 hash computed from the
+	// received bytes; the caller must close GoMod. It never fetches the zip, so
+	// it does not spend the network (or module-cache) work the full Download
+	// spends downloading and hashing the zip blob.
+	DownloadGoMod(ctx context.Context, coord coordinate.ModuleCoordinate) (GoModDownload, error)
+}
+
+// GoModDownload carries the standalone go.mod artefact from a proxy go.mod-only
+// download. Callers must close GoMod.
+//
+// GoModHash is always computed by the adapter from the actual downloaded bytes,
+// never taken from a proxy-reported value. InsecureTransport is true when the
+// connection used plain HTTP.
+type GoModDownload struct {
+	GoMod             io.ReadCloser
+	GoModHash         domain2.ModuleHash
+	InsecureTransport bool
 }
 
 // ModuleInfo is the parsed response from a proxy.info endpoint.

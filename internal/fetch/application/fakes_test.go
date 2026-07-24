@@ -55,11 +55,12 @@ type testingT interface {
 
 // fakeProxy implements ports.ModuleProxy in memory.
 type fakeProxy struct {
-	mu        sync.Mutex
-	infos     map[string]ports.ModuleInfo
-	downloads map[string]fakeDownload
-	infoErr   error
-	dlErr     error
+	mu           sync.Mutex
+	infos        map[string]ports.ModuleInfo
+	downloads    map[string]fakeDownload
+	infoErr      error
+	dlErr        error
+	zipDownloads int // count of full Download (zip) calls
 }
 
 type fakeDownload struct {
@@ -89,6 +90,7 @@ func (f *fakeProxy) Download(_ context.Context, coord coordinate.ModuleCoordinat
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.zipDownloads++
 	dl, ok := f.downloads[coord.String()]
 	if !ok {
 		dl = fakeDownload{
@@ -102,6 +104,25 @@ func (f *fakeProxy) Download(_ context.Context, coord coordinate.ModuleCoordinat
 		Zip:       io.NopCloser(strings.NewReader(dl.zipData)),
 		GoMod:     io.NopCloser(strings.NewReader(dl.goModData)),
 		ZipHash:   dl.zipHash,
+		GoModHash: dl.goModHash,
+	}, nil
+}
+
+func (f *fakeProxy) DownloadGoMod(_ context.Context, coord coordinate.ModuleCoordinate) (ports.GoModDownload, error) {
+	if f.dlErr != nil {
+		return ports.GoModDownload{}, f.dlErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	dl, ok := f.downloads[coord.String()]
+	if !ok {
+		dl = fakeDownload{
+			goModData: "module " + coord.Path,
+			goModHash: domain2.ModuleHash{Algorithm: "h1", Value: "fakegomodhash=="},
+		}
+	}
+	return ports.GoModDownload{
+		GoMod:     io.NopCloser(strings.NewReader(dl.goModData)),
 		GoModHash: dl.goModHash,
 	}, nil
 }

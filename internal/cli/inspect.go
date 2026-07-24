@@ -137,9 +137,10 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 		return fmt.Errorf("writing output: %w", err)
 	}
 	ef := extractFlags{
-		goBinary: f.goBinary,
-		stages:   []string{"license", "interface", "callgraph", "example"},
-		force:    f.force,
+		goBinary:   f.goBinary,
+		stages:     []string{"license", "interface", "callgraph", "example"},
+		force:      f.force,
+		noProgress: f.noProgress,
 	}
 	if err := runExtract(ctx, walkID, ef, io.Discard, stderr); err != nil {
 		return fmt.Errorf("extract: %w", err)
@@ -149,7 +150,13 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 	if _, err := fmt.Fprintf(stderr, "==> inspect: scanning vulnerabilities for walk %s\n", walkID); err != nil {
 		return fmt.Errorf("writing output: %w", err)
 	}
-	if err := runVulnScan(ctx, walkID, commonWalkFlags{}, f.force, f.fresh, f.reachable, 1, false, false, f.goBinary, os.Getenv("USER"), "", io.Discard, stderr); err != nil {
+	// The scan's result channel goes to stderr, not io.Discard: it carries the
+	// grouped roll-up (one heading per category, one line per coordinate) that
+	// the per-module stream deliberately does not repeat. Discarding it left the
+	// reader with the repetitive half of the presentation and threw away the
+	// concise half. stdout stays the clean data channel because inspect always
+	// scans with jsonOut=false, so nothing machine-readable is written here.
+	if err := runVulnScan(ctx, walkID, commonWalkFlags{}, f.force, f.fresh, f.reachable, 1, false, false, f.goBinary, os.Getenv("USER"), "", stderr, stderr); err != nil {
 		return fmt.Errorf("vuln-scan: %w", err)
 	}
 
@@ -201,18 +208,36 @@ type inspectSummary struct {
 }
 
 // inspectSummaryStatus derives the aggregate status for inspect's summary.
-// Any failed stage — walk, extract, or vuln-scan — means part of the
-// dependency set was not analysed, so the result must surface as partial
-// rather than a confident AllClean: an unscanned set presented as clean is
-// the absence-as-answer defect class.
-func inspectSummaryStatus(nodeFails, extractFails, scanFails, affectedCount int) string {
+//
+// Any failed stage — walk, extract, or vuln-scan — means part of the dependency
+// set was not analysed, so the result must surface as partial rather than a
+// confident AllClean: an unscanned set presented as clean is the
+// absence-as-answer defect class.
+//
+// scanStatus is the underlying vuln-scan run's own verdict, which must be
+// carried forward rather than re-derived: a run can be Partial (metadata-only
+// or unscannable modules) or ScanFailed (every module failed, or the walk had
+// no modules at all) without producing any stage failure here.
+//
+// The rule is deliberately inverted — AllClean is returned only when the scan
+// run positively says AllClean. An empty scanStatus (no run recorded, or the
+// run could not be read) and any status not enumerated here both fall through
+// to Partial. Enumerating the non-clean statuses instead would silently report
+// AllClean for a status added to the enum later, which is the same defect this
+// function exists to prevent.
+func inspectSummaryStatus(nodeFails, extractFails, scanFails, affectedCount int, scanStatus vuldomain.WalkScanStatus) string {
 	switch {
+	case scanStatus == vuldomain.WalkStatusFailed:
+		return string(vuldomain.WalkStatusFailed)
 	case nodeFails > 0 || extractFails > 0 || scanFails > 0:
 		return string(vuldomain.WalkStatusPartial)
-	case affectedCount > 0:
+	case affectedCount > 0 || scanStatus == vuldomain.WalkStatusAffected:
 		return string(vuldomain.WalkStatusAffected)
+	case scanStatus == vuldomain.WalkStatusAllClean:
+		return string(vuldomain.WalkStatusAllClean)
+	default:
+		return string(vuldomain.WalkStatusPartial)
 	}
-	return string(vuldomain.WalkStatusAllClean)
 }
 
 // runInspectGoMod runs the full pipeline for the local project using a single
@@ -279,9 +304,10 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 	if walkID != "" {
 		_, _ = fmt.Fprintf(stderr, "==> inspect --gomod: extracting walk %s\n", walkID)
 		ef := extractFlags{
-			goBinary: f.goBinary,
-			stages:   []string{"license", "interface", "callgraph", "example"},
-			force:    f.force,
+			goBinary:   f.goBinary,
+			stages:     []string{"license", "interface", "callgraph", "example"},
+			force:      f.force,
+			noProgress: f.noProgress,
 		}
 		if eerr := runExtract(ctx, walkID, ef, io.Discard, stderr); eerr != nil {
 			_, _ = fmt.Fprintf(stderr, "extract: %v\n", eerr)
@@ -289,7 +315,10 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 		}
 
 		_, _ = fmt.Fprintf(stderr, "==> inspect --gomod: vuln-scanning walk %s\n", walkID)
-		if verr := runVulnScan(ctx, walkID, commonWalkFlags{}, f.force, f.fresh, f.reachable, 1, false, false, f.goBinary, os.Getenv("USER"), filepath.Dir(f.gomodPath), io.Discard, stderr); verr != nil {
+		// stderr, not io.Discard — see the note on the same call in runInspect:
+		// the grouped roll-up is the concise presentation and belongs to the
+		// reader, while stdout stays reserved for the context output.
+		if verr := runVulnScan(ctx, walkID, commonWalkFlags{}, f.force, f.fresh, f.reachable, 1, false, false, f.goBinary, os.Getenv("USER"), filepath.Dir(f.gomodPath), stderr, stderr); verr != nil {
 			_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", verr)
 			scanFails = 1
 		}
@@ -297,10 +326,20 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 
 	var affectedCount int
 	var snapshotVersion string
+	// scanStatus stays empty when the run cannot be read or none was recorded.
+	// That is reported, not swallowed: inspectSummaryStatus treats an unknown
+	// scan outcome as not-clean rather than assuming the best.
+	var scanStatus vuldomain.WalkScanStatus
 	if walkID != "" {
 		runs, rerr := ctr.QueryScanRuns.ListRunsForWalk(ctx, walkID)
-		if rerr == nil && len(runs) > 0 {
-			if runs[0].OverallStatus == vuldomain.WalkStatusAffected {
+		switch {
+		case rerr != nil:
+			_, _ = fmt.Fprintf(stderr, "==> inspect: reading scan run for walk %s: %v\n", walkID, rerr)
+		case len(runs) == 0:
+			_, _ = fmt.Fprintf(stderr, "==> inspect: no scan run recorded for walk %s\n", walkID)
+		default:
+			scanStatus = runs[0].OverallStatus
+			if scanStatus == vuldomain.WalkStatusAffected {
 				affectedCount = 1
 			}
 			snapshotVersion = runs[0].Snapshot.Version
@@ -312,7 +351,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 		walkIDs = []string{walkID}
 	}
 
-	overallStatus := inspectSummaryStatus(nodeFails, extractFails, scanFails, affectedCount)
+	overallStatus := inspectSummaryStatus(nodeFails, extractFails, scanFails, affectedCount, scanStatus)
 
 	if jsonOut {
 		var directives *directivesSection

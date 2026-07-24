@@ -42,14 +42,14 @@ func (s *Scanner) ScanProject(
 	if _, err := os.Stat(projectDir); err != nil {
 		return domain.ProjectScanResult{
 			Status:            domain.StatusUnscannable,
-			UnscanReason:      domain.UnscanReasonNoGoMod,
+			UnscanReason:      domain.UnscanReasonProjectDirUnavailable,
 			UnscannableReason: "project directory not accessible: " + err.Error(),
 		}, nil
 	}
 	if _, err := os.Stat(projectDir + "/go.mod"); err != nil {
 		return domain.ProjectScanResult{
 			Status:            domain.StatusUnscannable,
-			UnscanReason:      domain.UnscanReasonNoGoMod,
+			UnscanReason:      domain.UnscanReasonProjectNoGoMod,
 			UnscannableReason: "no go.mod in the project directory",
 		}, nil
 	}
@@ -84,10 +84,10 @@ func (s *Scanner) ScanProject(
 	}()
 
 	byModule, perr := s.parseResultsByModule(ctx, pr)
-	if perr != nil {
-		_ = pr.Close()
-		return domain.ProjectScanResult{}, fmt.Errorf("parse project govulncheck output: %w", perr)
-	}
+	// Drain before closing so the writer goroutine reaches cmd.Wait() and waitErr
+	// is settled: a scan that died mid-stream must be classified as the failure it
+	// is, not as the truncated parse it also produced.
+	_, _ = io.Copy(io.Discard, pr)
 	_ = pr.Close()
 
 	if waitErr != nil {
@@ -100,6 +100,10 @@ func (s *Scanner) ScanProject(
 			ErrorDetail:       errorDetail,
 			UnscannableReason: unscannableReason,
 		}, nil
+	}
+
+	if perr != nil {
+		return domain.ProjectScanResult{}, fmt.Errorf("parse project govulncheck output: %w", perr)
 	}
 
 	status := domain.StatusClean

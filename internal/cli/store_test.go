@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"fmt"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -144,45 +143,71 @@ func TestRunStoreConfigShow_Text_MissingFile(t *testing.T) {
 	}
 }
 
+// The clean tests sweep a temp directory of their own, never os.TempDir. The
+// sweep deletes by prefix without checking whether an entry is in use, so
+// pointing it at the shared system temp directory deletes the working files of
+// any kanonarion process scanning on the same machine — a `make test` run then
+// corrupts a concurrent scan, which is how a measurement run was lost. Owning
+// the directory also lets these assert exactly, instead of accepting any
+// outcome because another process might have raced them.
+
 func TestRunStoreClean_NothingToClean(t *testing.T) {
-	dir := t.TempDir()
 	var buf bytes.Buffer
-	if err := runStoreClean(dir, &buf); err != nil {
+	if err := runStoreClean(t.TempDir(), t.TempDir(), &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	// runStoreClean also scans os.TempDir for orphaned kanonarion-* entries
-	// left by other tests or processes, so we can't assert "nothing to clean"
-	// unconditionally — accept either outcome as long as it doesn't error.
+	if got := buf.String(); !strings.Contains(got, "nothing to clean") {
+		t.Errorf("empty store and empty temp dir must report nothing to clean, got: %q", got)
+	}
 }
 
 func TestRunStoreClean_RemovesTempFiles(t *testing.T) {
-	dir := t.TempDir()
+	tmpDir := t.TempDir()
 
-	// Create a temp dir with a kanonarion-owned prefix in os.TempDir so the
-	// clean function will find and remove it.
-	prefix := "kanonarion-vuln-scan-"
-	tmpTarget, err := os.MkdirTemp("", fmt.Sprintf("%stest-", prefix))
-	if err != nil {
-		t.Fatalf("MkdirTemp: %v", err)
+	target := filepath.Join(tmpDir, "kanonarion-vuln-scan-test-1")
+	if err := os.MkdirAll(filepath.Join(target, "nested"), 0o750); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
 	}
-	// If the clean runs, it will remove the dir; if not, clean it up ourselves.
-	defer func() { _ = os.RemoveAll(tmpTarget) }()
 
 	var buf bytes.Buffer
-	if err := runStoreClean(dir, &buf); err != nil {
+	if err := runStoreClean(t.TempDir(), tmpDir, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	out := buf.String()
-	if strings.Contains(out, "nothing to clean") && !strings.Contains(out, "nothing") {
-		// Acceptable: temp dir may have been cleaned by another process.
-		return
+	if _, err := os.Stat(target); !os.IsNotExist(err) {
+		t.Errorf("kanonarion-owned temp dir survived the clean (stat err = %v)", err)
 	}
-	// Either the file was removed (reported in output) or there was nothing else to find.
-	if _, statErr := os.Stat(tmpTarget); statErr == nil {
-		// Dir still exists — cleanup didn't run for it; ensure it gets removed.
-		_ = os.RemoveAll(tmpTarget)
-		t.Log("temp dir was not cleaned (may have been skipped); manually removed")
+	if got := buf.String(); !strings.Contains(got, "cleaned 1 item(s)") {
+		t.Errorf("clean must report what it removed, got: %q", got)
+	}
+}
+
+// TestRunStoreClean_LeavesForeignEntries pins the blast radius: the sweep
+// removes only kanonarion-owned prefixes, so an unrelated neighbour in the same
+// directory survives. Without this the prefix list could widen unnoticed into
+// deleting other processes' temp files.
+func TestRunStoreClean_LeavesForeignEntries(t *testing.T) {
+	tmpDir := t.TempDir()
+
+	foreign := filepath.Join(tmpDir, "someone-elses-work")
+	if err := os.MkdirAll(foreign, 0o750); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	owned := filepath.Join(tmpDir, "kanonarion-cg-1")
+	if err := os.MkdirAll(owned, 0o750); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+
+	var buf bytes.Buffer
+	if err := runStoreClean(t.TempDir(), tmpDir, &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if _, err := os.Stat(foreign); err != nil {
+		t.Errorf("clean removed an entry it does not own: %v", err)
+	}
+	if _, err := os.Stat(owned); !os.IsNotExist(err) {
+		t.Errorf("kanonarion-owned entry survived (stat err = %v)", err)
 	}
 }
 

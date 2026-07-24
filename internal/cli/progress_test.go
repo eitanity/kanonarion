@@ -13,7 +13,7 @@ func TestStderrProgressReporter_ThrottlesByInterval(t *testing.T) {
 	var buf bytes.Buffer
 	base := time.Unix(1_000, 0)
 	now := base
-	r := newStderrProgressReporter(&buf, 20*time.Second, func() time.Time { return now })
+	r := newStderrProgressReporter(&buf, 20*time.Second, func() time.Time { return now }, "walk progress: %d modules fetched (%s elapsed)\n")
 
 	// First call lands at t≈start: within the interval, so silent.
 	r.Advance(1)
@@ -76,6 +76,36 @@ func TestNewWalkProgressReporter_Enablement(t *testing.T) {
 			got := newWalkProgressReporter(&buf, tt.noProgress, tt.cfg, tt.level)
 			if (got == nil) != tt.wantNil {
 				t.Errorf("newWalkProgressReporter nil=%v, want nil=%v", got == nil, tt.wantNil)
+			}
+		})
+	}
+}
+
+// newExtractProgressReporter shares its enablement rules with
+// newWalkProgressReporter (same gating: --no-progress, preferences.progress,
+// and info/debug log levels that already stream per-module lines).
+func TestNewExtractProgressReporter_Enablement(t *testing.T) {
+	on := configdomain.Config{Preferences: configdomain.Preferences{Progress: true}}
+	off := configdomain.Config{Preferences: configdomain.Preferences{Progress: false}}
+
+	tests := []struct {
+		name       string
+		noProgress bool
+		cfg        configdomain.Config
+		level      string
+		wantNil    bool
+	}{
+		{"default on", false, on, "warn", false},
+		{"no-progress flag", true, on, "warn", true},
+		{"preference disabled", false, off, "warn", true},
+		{"debug streams already", false, on, "debug", true},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			got := newExtractProgressReporter(&buf, tt.noProgress, tt.cfg, tt.level)
+			if (got == nil) != tt.wantNil {
+				t.Errorf("newExtractProgressReporter nil=%v, want nil=%v", got == nil, tt.wantNil)
 			}
 		})
 	}

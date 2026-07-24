@@ -20,7 +20,7 @@ type provenanceOutput struct {
 	ForkHeuristic contextForkHeuristic `json:"fork_heuristic"`
 }
 
-func newProvenanceCmd(stdout, _ io.Writer) *cobra.Command {
+func newProvenanceCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "provenance <module[@version]>",
 		Short: "Show fork/copy provenance facts for a module path (name-path heuristic)",

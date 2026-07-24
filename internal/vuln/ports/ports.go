@@ -99,6 +99,49 @@ type VulnerabilityStore interface {
 	) ([]domain.VulnerabilityRecord, error)
 }
 
+// ScanRequest carries the inputs for one isolated per-module scan.
+type ScanRequest struct {
+	Coordinate   coordinate.ModuleCoordinate
+	ModuleSource io.Reader
+	Snapshot     domain.DatabaseSnapshot
+	// GoModCache is a pre-populated GOMODCACHE dir; empty lets govulncheck
+	// download as needed.
+	GoModCache string
+	// DBDir is a pre-extracted vuln DB dir; empty extracts from the store on
+	// each call.
+	DBDir string
+	// ScanMode selects source or binary analysis; empty defaults to source.
+	ScanMode domain.ScanMode
+	// BuildList is the set of module versions the walk resolved and supplies as
+	// source. A module zip published before Go modules carries no go.mod, so one
+	// is synthesised in the scan's scratch directory and these become its
+	// require directives — letting the isolated scan resolve the versions the
+	// project actually built instead of whatever a network tidy would pick.
+	// Empty means the module is scanned against its own zip alone, which is
+	// sufficient whenever it imports nothing outside the standard library.
+	BuildList map[coordinate.ModuleCoordinate]struct{}
+}
+
+// TargetScanRequest carries the inputs for one target-rooted scan of a walk
+// whose root is a published module rather than a local project. The target's
+// own zip is the main module of the analysis, and every dependency is reached
+// through the target's import graph rather than scanned in isolation.
+type TargetScanRequest struct {
+	// Coordinate is the walk target: the module the analysis is rooted at.
+	Coordinate   coordinate.ModuleCoordinate
+	ModuleSource io.Reader
+	Snapshot     domain.DatabaseSnapshot
+	// GoModCache is the walk's pre-populated GOMODCACHE, holding the versions the
+	// target's build selects, so the scan resolves them offline rather than
+	// re-resolving against the network.
+	GoModCache string
+	// DBDir is a pre-extracted vuln DB dir; empty extracts from the store.
+	DBDir string
+	// BuildList is the set of module versions the walk resolved, used only to
+	// synthesise a go.mod when the target's own zip predates Go modules.
+	BuildList map[coordinate.ModuleCoordinate]struct{}
+}
+
 // VulnerabilityScanner defines the port for a vulnerability scanner implementation.
 type VulnerabilityScanner interface {
 	// Preflight verifies the scanner's external prerequisites are available
@@ -106,15 +149,7 @@ type VulnerabilityScanner interface {
 	// actionable error before any expensive scan setup. It returns nil when
 	// the scanner is ready to run.
 	Preflight(ctx context.Context) error
-	Scan(
-		ctx context.Context,
-		coord coordinate.ModuleCoordinate,
-		moduleSource io.Reader,
-		snapshot domain.DatabaseSnapshot,
-		goModCache string, // pre-populated GOMODCACHE dir; empty = govulncheck downloads as needed
-		dbDir string, // pre-extracted vuln DB dir; empty = extract from store on each call
-		scanMode domain.ScanMode, // source or binary; empty defaults to source
-	) (domain.VulnerabilityRecord, error)
+	Scan(ctx context.Context, req ScanRequest) (domain.VulnerabilityRecord, error)
 	// ScanProject runs one project-rooted scan over the project's live working
 	// tree (the local main module a project walk is rooted at) and returns every
 	// reachable finding grouped by the module that owns the vulnerable symbol.
@@ -129,6 +164,15 @@ type VulnerabilityScanner interface {
 		snapshot domain.DatabaseSnapshot,
 		dbDir string, // pre-extracted vuln DB dir; empty = extract from store on each call
 	) (domain.ProjectScanResult, error)
+	// ScanTargetModule runs one target-rooted scan for a walk whose root is a
+	// published module, returning every finding grouped by the module that owns
+	// the vulnerable symbol. It is the coordinate-keyed counterpart of
+	// ScanProject: the target's zip stands in for the project working tree, so
+	// each dependency contributes the packages the target's build imports instead
+	// of every package it contains. A genuine fault is carried in the result's
+	// Status so the caller can fall back to isolated per-module scanning; the
+	// error return is reserved for infrastructure failures.
+	ScanTargetModule(ctx context.Context, req TargetScanRequest) (domain.ProjectScanResult, error)
 	ScannerMetadata() ScannerMetadata
 }
 
@@ -166,7 +210,15 @@ type VulnerabilityDatabase interface {
 // ModuleFetcher is a narrow port used by ScanWalkUseCase to pre-fetch modules
 // that are missing from the fact store before populating the GOMODCACHE.
 type ModuleFetcher interface {
+	// FetchModule acquires the full module artefact (zip + go.mod), the source a
+	// scan analyses.
 	FetchModule(ctx context.Context, coord coordinate.ModuleCoordinate) error
+	// FetchModuleGoMod acquires only the module's go.mod, persisting a go.mod-only
+	// record (see fetch domain FactRecord.IsGoModOnly). It is used to populate the
+	// go.mod closure a pre-pruning module reads while rebuilding its module graph:
+	// those versions are never compiled, so downloading their zips is discarded
+	// work.
+	FetchModuleGoMod(ctx context.Context, coord coordinate.ModuleCoordinate) error
 }
 
 // ReachabilityAnalyser defines the port for call-graph-based reachability analysis.

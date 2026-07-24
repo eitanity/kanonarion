@@ -4,6 +4,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"errors"
+	"io"
 	"log/slog"
 	"os"
 	"os/exec"
@@ -16,6 +17,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/ports"
 )
 
 func TestPreflight_AbsentReturnsActionableError(t *testing.T) {
@@ -229,6 +231,30 @@ func TestScanEnv_PopulatedModcacheRunsHermetic(t *testing.T) {
 	}
 }
 
+// TestScanEnv_DisablesWorkspaceMode guards that GOWORK=off is set on every scan,
+// with or without a populated cache. A module may ship a go.work in its
+// published zip (github.com/bytedance/sonic@v1.11.6 does); left on, the
+// toolchain discovers it in the extract dir and enters workspace mode, which
+// rejects -mod=mod and gets misreported as a module that does not build.
+func TestScanEnv_DisablesWorkspaceMode(t *testing.T) {
+	for _, modcache := range []string{"/tmp/kanonarion-modcache", ""} {
+		got := envMap(scanEnv([]string{"PATH=/usr/bin"}, modcache))
+		if got["GOWORK"] != "off" {
+			t.Errorf("scanEnv(modcache=%q) GOWORK = %q, want off", modcache, got["GOWORK"])
+		}
+	}
+}
+
+// TestScanEnv_LastValueWinsOverInheritedWorkspace guards that an ambient GOWORK
+// pointing at a workspace file cannot leak into an isolated single-module scan.
+func TestScanEnv_LastValueWinsOverInheritedWorkspace(t *testing.T) {
+	got := envMap(scanEnv([]string{"GOWORK=/home/dev/go.work"}, "/tmp/kanonarion-modcache"))
+
+	if got["GOWORK"] != "off" {
+		t.Errorf("GOWORK = %q, want off to override the inherited workspace file", got["GOWORK"])
+	}
+}
+
 // TestScanEnv_LastValueWinsOverInheritedFlags guards that the offline overrides
 // take effect even when the ambient environment already pins conflicting
 // values — exec.Cmd honours the last value for a duplicate key.
@@ -354,7 +380,7 @@ func TestScan_GovulncheckExitErrorLogsAtDebugNotWarn(t *testing.T) {
 	t.Run("default warn level omits the error-path message", func(t *testing.T) {
 		var buf bytes.Buffer
 		s := capturingScanner(&buf, slog.LevelWarn)
-		rec, err := s.Scan(t.Context(), coord, bytes.NewReader(zipBytes), domain.DatabaseSnapshot{}, "", "", "")
+		rec, err := s.Scan(t.Context(), ports.ScanRequest{Coordinate: coord, ModuleSource: bytes.NewReader(zipBytes), Snapshot: domain.DatabaseSnapshot{}, GoModCache: "", DBDir: "", ScanMode: ""})
 		if err != nil {
 			t.Fatalf("Scan returned a hard error: %v", err)
 		}
@@ -369,7 +395,7 @@ func TestScan_GovulncheckExitErrorLogsAtDebugNotWarn(t *testing.T) {
 	t.Run("debug level still carries the error-path message and stderr", func(t *testing.T) {
 		var buf bytes.Buffer
 		s := capturingScanner(&buf, slog.LevelDebug)
-		if _, err := s.Scan(t.Context(), coord, bytes.NewReader(zipBytes), domain.DatabaseSnapshot{}, "", "", ""); err != nil {
+		if _, err := s.Scan(t.Context(), ports.ScanRequest{Coordinate: coord, ModuleSource: bytes.NewReader(zipBytes), Snapshot: domain.DatabaseSnapshot{}, GoModCache: "", DBDir: "", ScanMode: ""}); err != nil {
 			t.Fatalf("Scan returned a hard error: %v", err)
 		}
 		if !strings.Contains(buf.String(), msg) {
@@ -405,7 +431,7 @@ func TestScan_GoModDownloadFailureLogsAtDebugNotWarn(t *testing.T) {
 	t.Run("default warn level omits the download-failure message", func(t *testing.T) {
 		var buf bytes.Buffer
 		s := capturingScanner(&buf, slog.LevelWarn)
-		if _, err := s.Scan(t.Context(), coord, bytes.NewReader(zipBytes), domain.DatabaseSnapshot{}, emptyCache, "", ""); err != nil {
+		if _, err := s.Scan(t.Context(), ports.ScanRequest{Coordinate: coord, ModuleSource: bytes.NewReader(zipBytes), Snapshot: domain.DatabaseSnapshot{}, GoModCache: emptyCache, DBDir: "", ScanMode: ""}); err != nil {
 			t.Fatalf("Scan returned a hard error: %v", err)
 		}
 		if strings.Contains(buf.String(), msg) {
@@ -416,7 +442,7 @@ func TestScan_GoModDownloadFailureLogsAtDebugNotWarn(t *testing.T) {
 	t.Run("debug level still carries the download-failure message", func(t *testing.T) {
 		var buf bytes.Buffer
 		s := capturingScanner(&buf, slog.LevelDebug)
-		if _, err := s.Scan(t.Context(), coord, bytes.NewReader(zipBytes), domain.DatabaseSnapshot{}, emptyCache, "", ""); err != nil {
+		if _, err := s.Scan(t.Context(), ports.ScanRequest{Coordinate: coord, ModuleSource: bytes.NewReader(zipBytes), Snapshot: domain.DatabaseSnapshot{}, GoModCache: emptyCache, DBDir: "", ScanMode: ""}); err != nil {
 			t.Fatalf("Scan returned a hard error: %v", err)
 		}
 		if !strings.Contains(buf.String(), msg) {
@@ -465,5 +491,110 @@ func TestScanner_ParseResultsByModule_GroupsAllModules(t *testing.T) {
 	// analysis is itself the reachability answer.
 	if r := byModule[net][0].Reachable; r == nil || !r.IsReachable {
 		t.Errorf("x/net finding reachable = %+v, want reachable=true", r)
+	}
+}
+
+// TestScan_NoGoModInZipIsSynthesisedNotAbandoned is the regression guard for a
+// module zip published before Go modules. govulncheck refuses source analysis
+// when the directory it is pointed at has no go.mod, but that is a precondition
+// on the scan directory rather than a property of the artefact: supplying one in
+// the scratch directory makes the module analysable. Returning Unscannable here
+// would record a coverage gap that is not real and would deny the module any
+// reachability verdict.
+func TestScan_NoGoModInZipIsSynthesisedNotAbandoned(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go toolchain not available")
+	}
+	fakeGovulncheckOnPath(t, 0, "")
+	zipBytes := makeModuleZip(t, map[string]string{
+		"github.com/boltdb/bolt@v1.3.1/db.go": "package bolt\n\nfunc Open() {}\n",
+	})
+	coord := coordinate.ModuleCoordinate{Path: "github.com/boltdb/bolt", Version: "v1.3.1"}
+
+	var buf bytes.Buffer
+	s := capturingScanner(&buf, slog.LevelInfo)
+	rec, err := s.Scan(t.Context(), ports.ScanRequest{
+		Coordinate:   coord,
+		ModuleSource: bytes.NewReader(zipBytes),
+		Snapshot:     domain.DatabaseSnapshot{},
+		BuildList: map[coordinate.ModuleCoordinate]struct{}{
+			{Path: "example.com/dep", Version: "v0.3.0"}: {},
+		},
+	})
+	if err != nil {
+		t.Fatalf("Scan returned a hard error: %v", err)
+	}
+	if rec.UnscanReason == domain.UnscanReasonNoGoMod {
+		t.Errorf("module was abandoned as %s; it should have been scanned with a synthesised go.mod\nlogs:\n%s",
+			domain.UnscanReasonNoGoMod, buf.String())
+	}
+	if rec.OverallStatus == domain.StatusUnscannable {
+		t.Errorf("OverallStatus = %s, want a scanned verdict\nlogs:\n%s", rec.OverallStatus, buf.String())
+	}
+	if !strings.Contains(buf.String(), "synthesised one for the scan") {
+		t.Errorf("expected the synthesis to be recorded in the log, got:\n%s", buf.String())
+	}
+}
+
+// A zip that does carry its own go.mod must not be touched: the published
+// requirements are the module's own and synthesis must never displace them.
+func TestScan_ExistingGoModIsNotReplacedBySynthesis(t *testing.T) {
+	if _, err := exec.LookPath("go"); err != nil {
+		t.Skip("go toolchain not available")
+	}
+	fakeGovulncheckOnPath(t, 0, "")
+	zipBytes := makeModuleZip(t, map[string]string{
+		"example.com/mod@v1.0.0/go.mod": "module example.com/mod\n\ngo 1.21\n",
+		"example.com/mod@v1.0.0/m.go":   "package mod\n",
+	})
+	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+
+	var buf bytes.Buffer
+	s := capturingScanner(&buf, slog.LevelInfo)
+	if _, err := s.Scan(t.Context(), ports.ScanRequest{
+		Coordinate:   coord,
+		ModuleSource: bytes.NewReader(zipBytes),
+		Snapshot:     domain.DatabaseSnapshot{},
+		BuildList: map[coordinate.ModuleCoordinate]struct{}{
+			{Path: "example.com/dep", Version: "v0.3.0"}: {},
+		},
+	}); err != nil {
+		t.Fatalf("Scan returned a hard error: %v", err)
+	}
+	if strings.Contains(buf.String(), "synthesised one for the scan") {
+		t.Errorf("synthesis ran for a module that ships its own go.mod; logs:\n%s", buf.String())
+	}
+}
+
+// TestScanProject_InputFaultsCarryDistinctReasons pins the taxonomy of the two
+// project-directory input faults: an unreadable directory and a directory with
+// no go.mod are separate conditions, and neither is the module-zip no-go-mod
+// reason, which names a property of a published artefact instead.
+func TestScanProject_InputFaultsCarryDistinctReasons(t *testing.T) {
+	s := New("v1", nil)
+	s.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	missing := filepath.Join(t.TempDir(), "does-not-exist")
+	res, err := s.ScanProject(t.Context(), missing, domain.DatabaseSnapshot{}, "")
+	if err != nil {
+		t.Fatalf("ScanProject on a missing directory must not error: %v", err)
+	}
+	if res.Status != domain.StatusUnscannable {
+		t.Errorf("Status = %q, want %q", res.Status, domain.StatusUnscannable)
+	}
+	if res.UnscanReason != domain.UnscanReasonProjectDirUnavailable {
+		t.Errorf("UnscanReason = %q, want %q", res.UnscanReason, domain.UnscanReasonProjectDirUnavailable)
+	}
+
+	empty := t.TempDir()
+	res, err = s.ScanProject(t.Context(), empty, domain.DatabaseSnapshot{}, "")
+	if err != nil {
+		t.Fatalf("ScanProject on a go.mod-less directory must not error: %v", err)
+	}
+	if res.Status != domain.StatusUnscannable {
+		t.Errorf("Status = %q, want %q", res.Status, domain.StatusUnscannable)
+	}
+	if res.UnscanReason != domain.UnscanReasonProjectNoGoMod {
+		t.Errorf("UnscanReason = %q, want %q", res.UnscanReason, domain.UnscanReasonProjectNoGoMod)
 	}
 }

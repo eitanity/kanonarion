@@ -1993,3 +1993,126 @@ go 1.16
 		t.Errorf("c version = %q, want v1.1.0 (MVS selected)", cNode.Coordinate.Version)
 	}
 }
+
+// A replace whose TARGET path is also required independently must produce TWO
+// build participants, exactly as `go list -m` reports them:
+//
+//	example.com/forked v1.0.0 => example.com/fork v1.2.0
+//	example.com/fork   v1.5.0
+//
+// Keying graph nodes by the replacement path collapsed the two into one slot and
+// MVS-max silently discarded the replace-pinned entry, deleting a module that is
+// genuinely linked into the build from the graph — and therefore from SBOM,
+// licence, vuln and audit output. A versioned replace target is pinned, so it
+// must never be raised to the selected version of the path it points at.
+func TestResolve_ReplaceTargetAlsoRequiredIndependently(t *testing.T) {
+	blobs := newFakeBlobStore()
+	fetcher := newFakeFetcher()
+	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+
+go 1.21
+
+require (
+	example.com/forked v1.0.0
+	example.com/fork v1.5.0
+)
+
+replace example.com/forked => example.com/fork v1.2.0
+`, blobs)
+	fetcher.add("example.com/fork", "v1.2.0", "module example.com/fork\n\ngo 1.21\n", blobs)
+	fetcher.add("example.com/fork", "v1.5.0", "module example.com/fork\n\ngo 1.21\n", blobs)
+
+	r := newResolver(fetcher, blobs)
+	g, err := r.Resolve(context.Background(), coord("example.com/target", "v1.0.0"), domain3.DefaultDepthPolicy().FetchStage())
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	var replaced, independent *domain3.GraphNode
+	for i := range g.Nodes {
+		n := &g.Nodes[i]
+		if n.Coordinate.Path != "example.com/fork" {
+			continue
+		}
+		if n.OriginalCoordinate.Path != "" {
+			replaced = n
+		} else {
+			independent = n
+		}
+	}
+
+	if replaced == nil {
+		t.Fatalf("replace-pinned node example.com/fork@v1.2.0 missing from graph; nodes: %+v", g.Nodes)
+	}
+	if replaced.Coordinate.Version != "v1.2.0" {
+		t.Errorf("replaced node version = %q, want v1.2.0 (a versioned replace target is pinned, never MVS-raised)", replaced.Coordinate.Version)
+	}
+	if replaced.ResolutionSource != domain3.ResolutionReplace {
+		t.Errorf("replaced node source = %q, want replace", replaced.ResolutionSource)
+	}
+	if replaced.OriginalCoordinate != coord("example.com/forked", "v1.0.0") {
+		t.Errorf("replaced node OriginalCoordinate = %s, want example.com/forked@v1.0.0", replaced.OriginalCoordinate)
+	}
+
+	if independent == nil {
+		t.Fatalf("independent node example.com/fork@v1.5.0 missing from graph; nodes: %+v", g.Nodes)
+	}
+	if independent.Coordinate.Version != "v1.5.0" {
+		t.Errorf("independent node version = %q, want v1.5.0", independent.Coordinate.Version)
+	}
+	if independent.ResolutionSource != domain3.ResolutionMVS {
+		t.Errorf("independent node source = %q, want mvs", independent.ResolutionSource)
+	}
+
+	// The pinned edge must still point at v1.2.0: edge post-processing must not
+	// retarget it onto the independently selected v1.5.0 node.
+	var sawPinnedEdge bool
+	for _, e := range g.Edges {
+		if e.To == coord("example.com/fork", "v1.2.0") {
+			sawPinnedEdge = true
+		}
+	}
+	if !sawPinnedEdge {
+		t.Errorf("no edge points at the pinned replacement example.com/fork@v1.2.0; edges: %+v", g.Edges)
+	}
+}
+
+// When the replace target resolves to the same coordinate that is independently
+// selected, the two entries describe one artefact and collapse to a single node
+// — which must retain OriginalCoordinate so scope filters matching on either
+// identity still keep it.
+func TestResolve_ReplaceTargetSameCoordinateCollapses(t *testing.T) {
+	blobs := newFakeBlobStore()
+	fetcher := newFakeFetcher()
+	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+
+go 1.21
+
+require (
+	example.com/forked v1.0.0
+	example.com/fork v1.2.0
+)
+
+replace example.com/forked => example.com/fork v1.2.0
+`, blobs)
+	fetcher.add("example.com/fork", "v1.2.0", "module example.com/fork\n\ngo 1.21\n", blobs)
+
+	r := newResolver(fetcher, blobs)
+	g, err := r.Resolve(context.Background(), coord("example.com/target", "v1.0.0"), domain3.DefaultDepthPolicy().FetchStage())
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+
+	var forks []domain3.GraphNode
+	for _, n := range g.Nodes {
+		if n.Coordinate.Path == "example.com/fork" {
+			forks = append(forks, n)
+		}
+	}
+	if len(forks) != 1 {
+		t.Fatalf("want exactly 1 example.com/fork node when both resolve to v1.2.0, got %d: %+v", len(forks), forks)
+	}
+	if forks[0].OriginalCoordinate.Path != "example.com/forked" {
+		t.Errorf("collapsed node must keep OriginalCoordinate so scope filters match either identity, got %+v", forks[0])
+	}
+}

@@ -44,6 +44,28 @@ func TestFactRecord_Coordinate(t *testing.T) {
 	}
 }
 
+func TestFactRecord_IsGoModOnly(t *testing.T) {
+	cases := []struct {
+		name            string
+		contentLocation string
+		goModLocation   string
+		want            bool
+	}{
+		{"go.mod-only", "", "sha256:gomod", true},
+		{"full record", "sha256:zip", "sha256:gomod", false},
+		{"no artefacts", "", "", false},
+		{"zip only (never produced, defensive)", "sha256:zip", "", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			r := domain2.FactRecord{ContentLocation: tc.contentLocation, GoModLocation: tc.goModLocation}
+			if got := r.IsGoModOnly(); got != tc.want {
+				t.Errorf("IsGoModOnly() = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestModuleHash_IsZero(t *testing.T) {
 	var h domain2.ModuleHash
 	if !h.IsZero() {

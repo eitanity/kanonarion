@@ -29,7 +29,7 @@ func newPolicyCmd(stdout, stderr io.Writer) *cobra.Command {
 
 // ---- policy validate ----
 
-func newPolicyValidateCmd(stdout, _ io.Writer) *cobra.Command {
+func newPolicyValidateCmd(stdout, stderr io.Writer) *cobra.Command {
 	return &cobra.Command{
 		Use:   "validate <path>",
 		Short: "Validate a depth-policy or governance policy YAML file against its schema",

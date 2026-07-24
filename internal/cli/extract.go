@@ -16,10 +16,11 @@ import (
 )
 
 type extractFlags struct {
-	goBinary string
-	stages   []string
-	force    bool
-	workers  int
+	goBinary   string
+	stages     []string
+	force      bool
+	workers    int
+	noProgress bool
 }
 
 func NewExtractCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -37,6 +38,7 @@ func NewExtractCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().StringSliceVar(&f.stages, "stages", []string{"license", "interface", "example"}, "Comma-separated list of stages to run (callgraph is excluded by default: it loads each module's full transitive dependency closure into SSA and OOMs on large walks; pass explicitly when needed)")
 	cmd.Flags().BoolVar(&f.force, "force", false, "re-extract even if cached")
 	cmd.Flags().IntVar(&f.workers, "workers", 0, "parallel module extraction workers (0 = number of CPUs; reduce to limit memory use)")
+	cmd.Flags().BoolVar(&f.noProgress, "no-progress", false, "suppress the stderr extraction-progress heartbeat (default: heartbeat on for long runs)")
 
 	cmd.AddCommand(newExtractShowCmd(stdout, stderr))
 	cmd.AddCommand(newExtractListCmd(stdout, stderr))
@@ -58,10 +60,11 @@ func runExtract(ctx context.Context, walkID string, f extractFlags, stdout, stde
 	// preamble line breaks parsing.
 	_, _ = fmt.Fprintf(stderr, "Starting extraction for walk %s...\n", walkID)
 	run, err := ctr.Extract.Execute(ctx, extractapp.ExtractRequest{
-		WalkID:  walkID,
-		Stages:  f.stages,
-		Force:   f.force,
-		Workers: f.workers,
+		WalkID:   walkID,
+		Stages:   f.stages,
+		Force:    f.force,
+		Workers:  f.workers,
+		Progress: newExtractProgressReporter(stderr, f.noProgress, activeConfig, logLevel),
 	})
 	if err != nil {
 		return fmt.Errorf("extraction execution failed: %w", err)

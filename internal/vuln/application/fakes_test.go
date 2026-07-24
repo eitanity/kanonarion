@@ -136,6 +136,11 @@ type fakeVulnStore struct {
 	errOnGetLatestSnap error
 	errOnPutSnap       error
 	errOnPutRecord     error
+	// dropRecordFor is the fault seam for a silently lost verdict: a put for
+	// this coordinate reports success and stores nothing, reproducing a module
+	// that produces a progress line and leaves no record behind. The zero
+	// coordinate never matches a real one, so the seam is off by default.
+	dropRecordFor coordinate.ModuleCoordinate
 }
 
 func newFakeVulnStore() *fakeVulnStore {
@@ -160,6 +165,9 @@ func (f *fakeVulnStore) PutVulnerabilityRecord(_ context.Context, record domain.
 	defer f.mu.Unlock()
 	if f.errOnPutRecord != nil {
 		return f.errOnPutRecord
+	}
+	if record.Coordinate == f.dropRecordFor {
+		return nil
 	}
 	key := f.recordKey(record.Coordinate, record.PipelineVersion, record.DatabaseSnapshot)
 	f.records[key] = record
@@ -338,9 +346,23 @@ type fakeScanner struct {
 	projectStatus   domain.VulnerabilityStatus
 	projectReason   string
 	projectErr      error
+	// target-rooted scan controls (ScanTargetModule). targetRooted must be opted
+	// into: a coordinate-keyed walk tries the target-rooted path first, and a fake
+	// that silently succeeded there would take every isolated-path test off the
+	// path it is exercising. Left false, the fake reports the same
+	// could-not-analyse fault a real unbuildable target does, so the walk falls
+	// back to isolated scanning.
+	targetRooted    bool
+	targetFindings  map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding
+	targetStatus    domain.VulnerabilityStatus
+	targetReason    string
+	targetErr       error
+	gotTargetCoord  coordinate.ModuleCoordinate
+	gotTargetCache  string
 	// call counters let tests assert which path a walk took.
 	scanCalls    int
 	projectCalls int
+	targetCalls  int
 	// gotModCache records the GOMODCACHE dir the last Scan was invoked with, so a
 	// test can assert --from-modcache threaded the real cache dir through.
 	gotModCache string
@@ -348,7 +370,8 @@ type fakeScanner struct {
 
 func (f *fakeScanner) Preflight(_ context.Context) error { return f.preflightErr }
 
-func (f *fakeScanner) Scan(_ context.Context, coord coordinate.ModuleCoordinate, _ io.Reader, snapshot domain.DatabaseSnapshot, goModCache string, _ string, _ domain.ScanMode) (domain.VulnerabilityRecord, error) {
+func (f *fakeScanner) Scan(_ context.Context, req ports.ScanRequest) (domain.VulnerabilityRecord, error) {
+	coord, snapshot, goModCache := req.Coordinate, req.Snapshot, req.GoModCache
 	if f.err != nil {
 		return domain.VulnerabilityRecord{}, f.err
 	}
@@ -392,6 +415,37 @@ func (f *fakeScanner) ScanProject(_ context.Context, _ string, _ domain.Database
 	return domain.ProjectScanResult{FindingsByModule: f.projectFindings, Status: status}, nil
 }
 
+// ScanTargetModule stands in for the target-rooted scan of a coordinate-keyed
+// walk. See the targetRooted field for why the default is a fault.
+func (f *fakeScanner) ScanTargetModule(_ context.Context, req ports.TargetScanRequest) (domain.ProjectScanResult, error) {
+	if f.targetErr != nil {
+		return domain.ProjectScanResult{}, f.targetErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.targetCalls++
+	f.gotTargetCoord = req.Coordinate
+	f.gotTargetCache = req.GoModCache
+	if !f.targetRooted {
+		return domain.ProjectScanResult{
+			Status:            domain.StatusUnscannable,
+			UnscannableReason: "fake scanner: target-rooted scanning not enabled for this test",
+		}, nil
+	}
+	if f.targetStatus == domain.StatusUnscannable || f.targetStatus == domain.StatusScanFailed {
+		return domain.ProjectScanResult{
+			Status:            f.targetStatus,
+			UnscannableReason: f.targetReason,
+			ErrorDetail:       f.targetReason,
+		}, nil
+	}
+	status := domain.StatusClean
+	if len(f.targetFindings) > 0 {
+		status = domain.StatusAffected
+	}
+	return domain.ProjectScanResult{FindingsByModule: f.targetFindings, Status: status}, nil
+}
+
 func (f *fakeScanner) ScannerMetadata() ports.ScannerMetadata {
 	return ports.ScannerMetadata{Name: "fake-scanner", Version: "v1.0.0"}
 }
@@ -406,6 +460,9 @@ type fakeDatabase struct {
 	// the metadata path.
 	findings map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding
 	err      error
+	// errOnLookup fails only LookupFindings, leaving snapshot resolution intact
+	// so a test can isolate an unreadable advisory set from an unusable database.
+	errOnLookup error
 }
 
 func (f *fakeDatabase) Snapshot(_ context.Context) (domain.DatabaseSnapshot, io.ReadCloser, error) {
@@ -436,6 +493,9 @@ func (f *fakeDatabase) CheckVulnerable(_ context.Context, modules []coordinate.M
 }
 
 func (f *fakeDatabase) LookupFindings(_ context.Context, coord coordinate.ModuleCoordinate) ([]domain.VulnerabilityFinding, error) {
+	if f.errOnLookup != nil {
+		return nil, f.errOnLookup
+	}
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -467,9 +527,9 @@ func (s *callCountingScanner) Preflight(ctx context.Context) error {
 	return nil
 }
 
-func (s *callCountingScanner) Scan(ctx context.Context, coord coordinate.ModuleCoordinate, src io.Reader, snap domain.DatabaseSnapshot, goModCache string, dbDir string, scanMode domain.ScanMode) (domain.VulnerabilityRecord, error) {
+func (s *callCountingScanner) Scan(ctx context.Context, req ports.ScanRequest) (domain.VulnerabilityRecord, error) {
 	*s.called = true
-	rec, err := s.inner.Scan(ctx, coord, src, snap, goModCache, dbDir, scanMode)
+	rec, err := s.inner.Scan(ctx, req)
 	if err != nil {
 		return domain.VulnerabilityRecord{}, fmt.Errorf("inner scan: %w", err)
 	}
@@ -480,6 +540,14 @@ func (s *callCountingScanner) ScanProject(ctx context.Context, dir string, snap 
 	res, err := s.inner.ScanProject(ctx, dir, snap, dbDir)
 	if err != nil {
 		return domain.ProjectScanResult{}, fmt.Errorf("inner scan project: %w", err)
+	}
+	return res, nil
+}
+
+func (s *callCountingScanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequest) (domain.ProjectScanResult, error) {
+	res, err := s.inner.ScanTargetModule(ctx, req)
+	if err != nil {
+		return domain.ProjectScanResult{}, fmt.Errorf("inner scan target: %w", err)
 	}
 	return res, nil
 }

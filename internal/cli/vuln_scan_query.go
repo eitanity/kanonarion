@@ -15,7 +15,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-func newVulnScanListCmd(stdout, _ io.Writer) *cobra.Command {
+func newVulnScanListCmd(stdout, stderr io.Writer) *cobra.Command {
 	var limit int
 
 	cmd := &cobra.Command{
@@ -29,7 +29,7 @@ func newVulnScanListCmd(stdout, _ io.Writer) *cobra.Command {
 			if len(args) == 1 {
 				walkID = args[0]
 			}
-			logger := buildLogger(logLevel, stdout)
+			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
@@ -89,7 +89,7 @@ func runScanList(ctx context.Context, walkID string, limit int, uc QueryScanRuns
 	return nil
 }
 
-func newVulnScanShowCmd(stdout, _ io.Writer) *cobra.Command {
+func newVulnScanShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "vuln-scan-show <run-id>",
 		Short: "Show details of a walk scan run",
@@ -97,7 +97,7 @@ func newVulnScanShowCmd(stdout, _ io.Writer) *cobra.Command {
   kanonarion vuln-scan-show 01KQDBVW092ER1HNXZ60X27CMD --json`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			logger := buildLogger(logLevel, stdout)
+			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
@@ -139,7 +139,7 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 		return fmt.Errorf("scan run not found: %s", runID)
 	}
 
-	affected, metadataOnly := buildScanAffectedModules(ctx, run, ucVuln)
+	affected, unscannable := buildScanAffectedModules(ctx, run, ucVuln)
 
 	if jsonOut {
 		out := scanShowJSON{
@@ -171,11 +171,15 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 	_, _ = fmt.Fprintf(stdout, "Completed:   %s\n", run.CompletedAt.UTC().Format(time.RFC3339))
 	_, _ = fmt.Fprintf(stdout, "Snapshot:    %s@%s\n", run.Snapshot.Source, run.Snapshot.Version)
 	_, _ = fmt.Fprintf(stdout, "Modules:     %d\n", len(run.PerModuleResults))
-	if len(metadataOnly) > 0 {
-		// Expected coverage note, not a fault: name the out-of-toolchain modules
-		// and direct to the whole-build analysis so a Partial run is explained.
-		_, _ = fmt.Fprintf(stdout, "Metadata-only (version not in project build): %d — %s\n",
-			len(metadataOnly), reachabilityLocalHint)
+	// One line per reason rather than one for the out-of-toolchain set alone, so
+	// a Partial run is explained whichever reason produced it and no Unscannable
+	// module is absent from the detail view.
+	for _, section := range unscannable.sections() {
+		line := fmt.Sprintf("%s: %d", section.display.heading, len(section.coords))
+		if section.display.hint != "" {
+			line += " — " + section.display.hint
+		}
+		_, _ = fmt.Fprintf(stdout, "%s\n", line)
 	}
 	if len(affected) > 0 {
 		_, _ = fmt.Fprintf(stdout, "\nAffected modules (%d):\n", len(affected))
@@ -192,11 +196,11 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 
 // buildScanAffectedModules looks up VulnerabilityRecords for each module in
 // the scan run and returns entries where findings were present.
-// It also returns, as a second value, the coordinates of modules that are
-// metadata-only because their isolated build resolved a version outside the
-// project's build (an expected coverage gap, not a fault) so the detail view can
-// explain a Partial status and direct to the whole-build analysis.
-func buildScanAffectedModules(ctx context.Context, run vuldomain.WalkScanRun, uc QueryVulnUseCase) ([]scanAffectedModule, []string) {
+// It also returns, as a second value, every Unscannable module collected by
+// reason, so the detail view carries the same categories the scan output does.
+// Previously only the out-of-toolchain reason was collected and every other
+// Unscannable record was dropped from the query output entirely.
+func buildScanAffectedModules(ctx context.Context, run vuldomain.WalkScanRun, uc QueryVulnUseCase) ([]scanAffectedModule, *unscannableRollup) {
 	coords := make([]coordinate.ModuleCoordinate, 0, len(run.PerModuleResults))
 	for coord := range run.PerModuleResults {
 		coords = append(coords, coord)
@@ -208,15 +212,15 @@ func buildScanAffectedModules(ctx context.Context, run vuldomain.WalkScanRun, uc
 		return coords[i].Version < coords[j].Version
 	})
 
-	var out []scanAffectedModule
-	var metadataOnly []string
+	out := []scanAffectedModule(nil)
+	unscannable := newUnscannableRollup()
 	for _, coord := range coords {
 		rec, found, err := uc.GetRecord(ctx, coord, vulnPipelineVersion, run.Snapshot)
 		if err != nil || !found {
 			continue
 		}
-		if rec.OverallStatus == vuldomain.StatusUnscannable && rec.UnscanReason.ExpectedOutOfToolchain() {
-			metadataOnly = append(metadataOnly, coord.String())
+		if rec.OverallStatus == vuldomain.StatusUnscannable {
+			unscannable.add(rec.UnscanReason, coord.String(), rec.UnscannableReason)
 			continue
 		}
 		if rec.OverallStatus != vuldomain.StatusAffected {
@@ -228,11 +232,11 @@ func buildScanAffectedModules(ctx context.Context, run vuldomain.WalkScanRun, uc
 			Findings:   rec.Findings,
 		})
 	}
-	return out, metadataOnly
+	return out, unscannable
 }
 
 // newVulnScanHistoryCmd returns the vuln-scan-history command.
-func newVulnScanHistoryCmd(stdout, _ io.Writer) *cobra.Command {
+func newVulnScanHistoryCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "vuln-scan-history <walk-id>",
 		Short: "List every scan run for a walk in chronological order",
@@ -240,7 +244,7 @@ func newVulnScanHistoryCmd(stdout, _ io.Writer) *cobra.Command {
   kanonarion vuln-scan-history 01KQDBVW092ER1HNXZ60X27CMD --json`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			logger := buildLogger(logLevel, stdout)
+			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
@@ -258,17 +262,23 @@ func runScanHistory(ctx context.Context, walkID string, jsonOut bool, uc QuerySc
 	if err != nil {
 		return fmt.Errorf("listing scan runs: %w", err)
 	}
-	if len(runs) == 0 {
-		_, _ = fmt.Fprintf(stdout, "no scan runs found for walk %s\n", walkID)
-		return nil
-	}
-
+	// The empty case is answered on the caller's own channel: under --json an
+	// empty array, never a human sentence that fails to parse. Only the text
+	// path gets the prose.
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
+		if runs == nil {
+			runs = []vuldomain.WalkScanRun{}
+		}
 		if err := enc.Encode(runs); err != nil {
 			return fmt.Errorf("encoding scan runs: %w", err)
 		}
+		return nil
+	}
+
+	if len(runs) == 0 {
+		_, _ = fmt.Fprintf(stdout, "no scan runs found for walk %s\n", walkID)
 		return nil
 	}
 
@@ -286,7 +296,7 @@ func runScanHistory(ctx context.Context, walkID string, jsonOut bool, uc QuerySc
 }
 
 // newVulnScanDiffCmd returns the vuln-scan-diff command.
-func newVulnScanDiffCmd(stdout, _ io.Writer) *cobra.Command {
+func newVulnScanDiffCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "vuln-scan-diff <run-id-a> <run-id-b>",
 		Short: "Compare two scan runs of the same walk",
@@ -298,7 +308,7 @@ func newVulnScanDiffCmd(stdout, _ io.Writer) *cobra.Command {
   kanonarion vuln-scan-diff vscan-01ABC vscan-01DEF --json`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			logger := buildLogger(logLevel, stdout)
+			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)

@@ -222,9 +222,14 @@ type contextVulnerabilities struct {
 	// re-validated, and how old the database snapshot behind it was at that
 	// validation. Stated for the consumer to judge; kanonarion renders no
 	// verdict on acceptability.
-	FirstValidatedAt    string `json:"first_validated_at,omitempty"`
-	LastValidatedAt     string `json:"last_validated_at,omitempty"`
-	SnapshotVersion     string `json:"snapshot_version,omitempty"`
+	FirstValidatedAt string `json:"first_validated_at,omitempty"`
+	LastValidatedAt  string `json:"last_validated_at,omitempty"`
+	SnapshotVersion  string `json:"snapshot_version,omitempty"`
+	// PipelineVersion names the vuln-scan pipeline that produced the verdict.
+	// It bounds the verdict as much as the snapshot does: a "Clean" from a
+	// pipeline whose parse reported no source findings is a different claim
+	// from a "Clean" from one that analysed sources.
+	PipelineVersion     string `json:"pipeline_version,omitempty"`
 	SnapshotRetrievedAt string `json:"snapshot_retrieved_at,omitempty"`
 	SnapshotAgeDays     int    `json:"snapshot_age_days,omitempty"`
 	Error               string `json:"error,omitempty"`
