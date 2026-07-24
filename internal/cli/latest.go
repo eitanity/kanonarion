@@ -174,6 +174,16 @@ func runLatestGomod(ctx context.Context, gomodPath string, scope depScope, proxy
 		return fmt.Errorf("resolving %s scope: %w", scope, err)
 	}
 	if len(coords) == 0 {
+		// JSON array output: the empty answer is [], keeping the empty and
+		// populated results the same type. Prose stays on the text path only.
+		if jsonOut {
+			enc := json.NewEncoder(stdout)
+			enc.SetIndent("", "  ")
+			if err := enc.Encode([]latestResult{}); err != nil {
+				return fmt.Errorf("encoding JSON: %w", err)
+			}
+			return nil
+		}
 		_, _ = fmt.Fprintf(stdout, "no %s dependencies found in %s\n", scope, gomodPath)
 		return nil
 	}

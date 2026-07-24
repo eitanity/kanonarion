@@ -240,6 +240,28 @@ func inspectSummaryStatus(nodeFails, extractFails, scanFails, affectedCount int,
 	}
 }
 
+// writeEmptyInspectScope emits inspect's answer for a scope that resolved to no
+// dependencies, in the active output format. Under --json it is an
+// inspectSummary object with zeroed counts and no walks — the same type the
+// populated path emits, with status derived the same way a zero-module run
+// derives it — so empty and populated results decode alike. On the text path it
+// is the human sentence.
+func writeEmptyInspectScope(scope depScope, gomodPath string, stdout io.Writer) error {
+	if jsonOut {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(inspectSummary{
+			OverallStatus: inspectSummaryStatus(0, 0, 0, 0, ""),
+			WalkIDs:       []string{},
+		}); err != nil {
+			return fmt.Errorf("encoding summary: %w", err)
+		}
+		return nil
+	}
+	_, _ = fmt.Fprintf(stdout, "no %s dependencies found in %s\n", scope, gomodPath)
+	return nil
+}
+
 // runInspectGoMod runs the full pipeline for the local project using a single
 // project-rooted walk. The walk resolves Go's pruned module graph (the same
 // validated build inputs every other go.mod command uses), then extract and
@@ -251,8 +273,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 	if scope != scopeComplete {
 		coords, cerr := resolveScopeModules(f.gomodPath, scope)
 		if cerr == nil && len(coords) == 0 {
-			_, _ = fmt.Fprintf(stdout, "no %s dependencies found in %s\n", scope, f.gomodPath)
-			return nil
+			return writeEmptyInspectScope(scope, f.gomodPath, stdout)
 		}
 	}
 

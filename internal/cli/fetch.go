@@ -96,7 +96,9 @@ func runFetchScope(ctx context.Context, gomodPath string, scope depScope, f fetc
 		return fmt.Errorf("resolving %s scope: %w", scope, err)
 	}
 	if len(coords) == 0 {
-		_, _ = fmt.Fprintf(stdout, "no %s dependencies found in %s\n", scope, gomodPath)
+		// Diagnostic, not data: keep stdout clean so a --json caller reading
+		// the per-module object stream is not handed prose on an empty scope.
+		_, _ = fmt.Fprintf(stderr, "no %s dependencies found in %s\n", scope, gomodPath)
 		return nil
 	}
 	_, _ = fmt.Fprintf(stderr, "fetching %d %s modules from %s\n", len(coords), scope, gomodPath)

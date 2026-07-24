@@ -88,8 +88,13 @@ func TestFetchCmd_ToolNoToolDirectives(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "no tool dependencies found") {
-		t.Errorf("expected 'no tool dependencies found' in output, got: %q", stdout.String())
+	// The empty-scope notice is a diagnostic and belongs on stderr, so stdout
+	// stays clean for a --json caller reading the per-module object stream.
+	if !strings.Contains(stderr.String(), "no tool dependencies found") {
+		t.Errorf("expected 'no tool dependencies found' on stderr, got: %q", stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("expected empty stdout, got: %q", stdout.String())
 	}
 }
 
@@ -109,13 +114,33 @@ func TestRunFetchScope_NoToolDirectives(t *testing.T) {
 		t.Fatal(err)
 	}
 
+	// Text mode: the notice goes to stderr, and stdout must stay empty.
 	var stdout, stderr bytes.Buffer
 	err := runFetchScope(context.TODO(), gomodPath, scopeTool, fetchFlags{}, &stdout, &stderr)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "no tool dependencies found") {
-		t.Errorf("expected 'no tool dependencies found', got: %q", stdout.String())
+	if !strings.Contains(stderr.String(), "no tool dependencies found") {
+		t.Errorf("expected 'no tool dependencies found' on stderr, got: %q", stderr.String())
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("expected empty stdout in text mode, got: %q", stdout.String())
+	}
+
+	// --json mode: an empty scope must not put prose on the data channel;
+	// fetch's --json contract is the per-module object stream, so the correct
+	// empty output is zero stdout bytes.
+	jsonOut = true
+	defer func() { jsonOut = false }()
+	var jstdout, jstderr bytes.Buffer
+	if err := runFetchScope(context.TODO(), gomodPath, scopeTool, fetchFlags{}, &jstdout, &jstderr); err != nil {
+		t.Fatalf("unexpected error under --json: %v", err)
+	}
+	if jstdout.Len() != 0 {
+		t.Errorf("empty scope wrote to stdout under --json: %q", jstdout.String())
+	}
+	if !strings.Contains(jstderr.String(), "no tool dependencies found") {
+		t.Errorf("expected 'no tool dependencies found' on stderr under --json, got: %q", jstderr.String())
 	}
 }
 
