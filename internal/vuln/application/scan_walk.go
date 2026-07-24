@@ -281,11 +281,24 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 		return domain.WalkScanRun{}, err
 	}
 
-	// 5. Overall Status Determination
+	// 5. Status determination. The two axes are stored separately so a run that
+	// both found something and left part of the build list unanalysed keeps both
+	// facts; OverallStatus is the derived compatibility summary that collapses
+	// them into one word.
 	run.CompletedAt = uc.clock.Now()
+	nodeCount := len(walk.Graph.Nodes)
 	run.OverallStatus = domain.DetermineWalkScanStatus(
-		counts.failed, counts.affected, counts.unscannable, len(walk.Graph.Nodes),
+		counts.failed, counts.affected, counts.unscannable, nodeCount,
 	)
+	run.CoverageStatus = domain.DetermineCoverageStatus(counts.failed, counts.unscannable, nodeCount)
+	run.FindingsStatus = domain.DetermineFindingsStatus(counts.affected)
+	run.Counts = domain.WalkScanCounts{
+		Total:       nodeCount,
+		Analysed:    counts.clean + counts.affected,
+		Affected:    counts.affected,
+		Unscannable: counts.unscannable,
+		Failed:      counts.failed,
+	}
 
 	// 6. Hash & Persist
 	hash, err := uc.computeContentHash(run)
@@ -417,6 +430,17 @@ func (uc *ScanWalkUseCase) tallyModuleResults(
 			counts.unscannable++
 		case domain.StatusClean:
 			counts.clean++
+		default:
+			// A status outside the known set must not vanish from the counts. The
+			// coverage axis and the "N of T unanalysed" summary derive from
+			// affected+clean+unscannable+failed == total, so a dropped module would
+			// silently understate the analysed count and let the run over-claim
+			// completeness. Surface it and count it as failed: the run cannot vouch
+			// for a verdict it does not understand, and an unaccounted module must
+			// degrade coverage rather than disappear.
+			uc.logger.Error("module scan produced an unrecognised status",
+				"walk_id", params.WalkID, "module", r.coord, "status", r.record.OverallStatus)
+			counts.failed++
 		}
 		if params.Progress != nil {
 			params.Progress(r.coord, r.record, *progressCount, total)

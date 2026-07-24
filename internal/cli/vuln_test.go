@@ -126,8 +126,10 @@ func TestPrintVulnScanResult_FindingsOnStdout(t *testing.T) {
 // produces no "Findings" block on stdout — only the status line.
 func TestPrintVulnScanResult_CleanWalkNoFindingsBlock(t *testing.T) {
 	run := vuldomain.WalkScanRun{
-		ID:            "run-002",
-		OverallStatus: vuldomain.WalkStatusAllClean,
+		ID:             "run-002",
+		OverallStatus:  vuldomain.WalkStatusAllClean,
+		CoverageStatus: vuldomain.CoverageComplete,
+		FindingsStatus: vuldomain.FindingsClean,
 	}
 
 	var stdout bytes.Buffer
@@ -139,8 +141,64 @@ func TestPrintVulnScanResult_CleanWalkNoFindingsBlock(t *testing.T) {
 	if strings.Contains(out, "Findings") {
 		t.Errorf("clean walk must not emit a Findings block, got: %q", out)
 	}
-	if !strings.Contains(out, "AllClean") {
-		t.Errorf("expected status in stdout, got: %q", out)
+	// Both axes are stated: complete coverage, no findings.
+	if !strings.Contains(out, "Complete, Clean") {
+		t.Errorf("expected two-axis status in stdout, got: %q", out)
+	}
+}
+
+// TestScanCompletionSummary renders both scan axes: coverage names the
+// unanalysed count unless Complete, findings names the affected count unless
+// Clean, and a run that is both Partial and Affected reports both.
+func TestScanCompletionSummary(t *testing.T) {
+	tests := []struct {
+		name string
+		run  vuldomain.WalkScanRun
+		want string
+	}{
+		{
+			"partial and affected names both counts",
+			vuldomain.WalkScanRun{
+				CoverageStatus: vuldomain.CoveragePartial,
+				FindingsStatus: vuldomain.FindingsAffected,
+				Counts:         vuldomain.WalkScanCounts{Total: 285, Unscannable: 112, Affected: 7},
+			},
+			"Partial coverage (112 of 285 unanalysed), Affected (7)",
+		},
+		{
+			"complete and affected",
+			vuldomain.WalkScanRun{
+				CoverageStatus: vuldomain.CoverageComplete,
+				FindingsStatus: vuldomain.FindingsAffected,
+				Counts:         vuldomain.WalkScanCounts{Total: 285, Affected: 7},
+			},
+			"Complete, Affected (7)",
+		},
+		{
+			"complete and clean",
+			vuldomain.WalkScanRun{
+				CoverageStatus: vuldomain.CoverageComplete,
+				FindingsStatus: vuldomain.FindingsClean,
+				Counts:         vuldomain.WalkScanCounts{Total: 285},
+			},
+			"Complete, Clean",
+		},
+		{
+			"failed coverage counts failed among unanalysed",
+			vuldomain.WalkScanRun{
+				CoverageStatus: vuldomain.CoverageFailed,
+				FindingsStatus: vuldomain.FindingsClean,
+				Counts:         vuldomain.WalkScanCounts{Total: 4, Failed: 4},
+			},
+			"Failed coverage (4 of 4 unanalysed), Clean",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := scanCompletionSummary(tt.run); got != tt.want {
+				t.Errorf("scanCompletionSummary() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 

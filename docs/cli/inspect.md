@@ -89,7 +89,7 @@ github.com/spf13/cobra@v1.8.1
   Interface:       2 package(s), 66 symbol(s) (Extracted)
   Call Graph:      1192 nodes, 3463 edges (Extracted)
   Examples:        2 (Found)
-  Vulnerabilities: Clean [walk: AllClean]
+  Vulnerabilities: Clean
 
 Context size: ~90 tokens  (use --full for complete docs, --json for machine-readable)
 ```
@@ -149,6 +149,12 @@ Walk ID:  01KQDBVW092ER1HNXZ60X27CMD
 
 To get module context: kanonarion context --gomod ./go.mod
 ```
+
+`Status` is the coverage word (`AllClean` / `Affected` / `Partial` /
+`ScanFailed`) and `Affected` is the findings count; the two are independent
+axes. A run left `Partial` by an unscannable module still reports its real
+`Affected` count on its own line rather than collapsing it to zero — the
+coverage gap does not hide the findings, and neither hides the other.
 
 **Example JSON output:**
 

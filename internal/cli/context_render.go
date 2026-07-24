@@ -269,27 +269,36 @@ func printScanProvenance(w *errWriter, v contextVulnerabilities) {
 }
 
 // walkAnnotation renders the inline walk-level note appended to a module's
-// vulnerability line. When affected peers in the module's transitive closure
-// are known, it names them so the reader can act ("affected via x@v"); a long
-// list collapses to the first peer plus a count.
+// vulnerability line. It carries two independent axes and prints each when it
+// says something this module's own line does not, together when both do:
 //
-// Otherwise it surfaces only walk statuses that say something this module's own
-// line does not: Partial / ScanFailed warn that the broader scan is incomplete.
-// A fully-clean walk (AllClean) adds nothing to a Clean module and an Affected
-// walk with no peer in this module's closure is irrelevant to it, so both yield
-// no annotation — the walk note appears only when it is actionable here.
+//   - findings: affected peers in the module's transitive closure are named so
+//     the reader can act ("affected via x@v"); a long list collapses to the
+//     first peer plus a count.
+//   - coverage: a Partial / Failed walk warns that the broader scan is
+//     incomplete.
+//
+// The two answer different questions, so neither suppresses the other — a Partial
+// run that also carries an affected peer prints both. A run with no affected peer
+// in this module's closure and complete coverage yields no annotation.
 func walkAnnotation(v contextVulnerabilities) string {
+	var parts []string
 	switch n := len(v.WalkAffected); {
 	case n == 1:
-		return fmt.Sprintf("[walk: affected via %s]", v.WalkAffected[0])
+		parts = append(parts, fmt.Sprintf("[walk: affected via %s]", v.WalkAffected[0]))
 	case n > 1:
-		return fmt.Sprintf("[walk: affected via %s +%d more]", v.WalkAffected[0], n-1)
+		parts = append(parts, fmt.Sprintf("[walk: affected via %s +%d more]", v.WalkAffected[0], n-1))
 	}
-	switch vuldomain.WalkScanStatus(v.WalkStatus) {
-	case vuldomain.WalkStatusPartial:
-		return "[walk coverage: Partial — other modules unscanned]"
-	case vuldomain.WalkStatusFailed:
-		return "[walk coverage: ScanFailed — other modules failed]"
+	switch vuldomain.CoverageStatus(v.WalkCoverage) {
+	case vuldomain.CoveragePartial:
+		parts = append(parts, "[walk coverage: Partial — other modules unscanned]")
+	case vuldomain.CoverageFailed:
+		parts = append(parts, "[walk coverage: Failed — other modules failed]")
 	}
-	return ""
+	if v.WalkError != "" {
+		// A peer verdict could not be read: state the uncertainty rather than
+		// implying the affected-peer set is complete.
+		parts = append(parts, "[walk: affected-peer status unavailable]")
+	}
+	return strings.Join(parts, " ")
 }

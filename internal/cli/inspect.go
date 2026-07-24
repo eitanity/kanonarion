@@ -225,13 +225,21 @@ type inspectSummary struct {
 // to Partial. Enumerating the non-clean statuses instead would silently report
 // AllClean for a status added to the enum later, which is the same defect this
 // function exists to prevent.
-func inspectSummaryStatus(nodeFails, extractFails, scanFails, affectedCount int, scanStatus vuldomain.WalkScanStatus) string {
+//
+// The word is coverage-first and is not promoted to Affected by the finding
+// count: scanStatus already collapses coverage over findings (a run left Partial
+// by an unscannable module reports Partial even with findings), and the affected
+// count is presented on its own line. Keying the word on the count instead would
+// flip such a run's word to Affected and hide the coverage gap — the same
+// two-axis collapse this cluster removes, and it would make inspect disagree with
+// vuln-scan about the same run.
+func inspectSummaryStatus(nodeFails, extractFails, scanFails int, scanStatus vuldomain.WalkScanStatus) string {
 	switch {
 	case scanStatus == vuldomain.WalkStatusFailed:
 		return string(vuldomain.WalkStatusFailed)
 	case nodeFails > 0 || extractFails > 0 || scanFails > 0:
 		return string(vuldomain.WalkStatusPartial)
-	case affectedCount > 0 || scanStatus == vuldomain.WalkStatusAffected:
+	case scanStatus == vuldomain.WalkStatusAffected:
 		return string(vuldomain.WalkStatusAffected)
 	case scanStatus == vuldomain.WalkStatusAllClean:
 		return string(vuldomain.WalkStatusAllClean)
@@ -251,7 +259,7 @@ func writeEmptyInspectScope(scope depScope, gomodPath string, stdout io.Writer) 
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(inspectSummary{
-			OverallStatus: inspectSummaryStatus(0, 0, 0, 0, ""),
+			OverallStatus: inspectSummaryStatus(0, 0, 0, ""),
 			WalkIDs:       []string{},
 		}); err != nil {
 			return fmt.Errorf("encoding summary: %w", err)
@@ -369,10 +377,15 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 			_, _ = fmt.Fprintf(stderr, "==> inspect: no scan run recorded for walk %s\n", walkID)
 		default:
 			scanStatus = runs[0].OverallStatus
-			// Count the modules whose per-module verdict is Affected rather than
-			// collapsing to a 0/1 flag off OverallStatus — a walk with 100
-			// affected modules must report 100, not 1.
-			affectedCount = len(affectedSetForRun(ctx, ctr.QueryVuln, runs[0]))
+			// Key the affected count on the findings axis, not the collapsed
+			// OverallStatus: a run left Partial by an unscannable module still
+			// reports FindingsStatus == Affected, so keying on OverallStatus made
+			// the count 0 over real findings. Read the real count from the
+			// run's stored counts rather than re-deriving it — a walk with 100
+			// affected modules must report 100, not a 0/1 flag.
+			if runs[0].FindingsStatus == vuldomain.FindingsAffected {
+				affectedCount = runs[0].Counts.Affected
+			}
 			snapshotVersion = runs[0].Snapshot.Version
 		}
 	}
@@ -382,7 +395,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 		walkIDs = []string{walkID}
 	}
 
-	overallStatus := inspectSummaryStatus(nodeFails, extractFails, scanFails, affectedCount, scanStatus)
+	overallStatus := inspectSummaryStatus(nodeFails, extractFails, scanFails, scanStatus)
 
 	if jsonOut {
 		var directives *directivesSection

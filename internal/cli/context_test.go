@@ -222,8 +222,9 @@ func TestPrintContextSummary_Populated(t *testing.T) {
 		},
 		Vulnerabilities: contextVulnerabilities{
 			Status:     "Affected",
-			WalkStatus: "Partial",
-			Findings:   []contextCVE{{ID: "GO-2024-0001"}},
+			WalkStatus:   "Partial",
+			WalkCoverage: "Partial",
+			Findings:     []contextCVE{{ID: "GO-2024-0001"}},
 		},
 	}
 

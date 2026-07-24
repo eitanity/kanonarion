@@ -14,9 +14,11 @@
 // - Finding ordering is canonical and deterministic — findings are sorted by
 // a single domain comparator (ID, then a semantic-version tiebreak), so
 // two scans of the same inputs produce byte-identical records and hashes.
-// - WalkScanRun.OverallStatus is never assembled ad hoc by callers; it is
-// derived solely via DetermineWalkScanStatus from the (failed, affected,
-// unscannable, total) counts.
+// - WalkScanRun's verdict fields are never assembled ad hoc by callers. Its two
+// independent axes are derived solely via DetermineCoverageStatus and
+// DetermineFindingsStatus from the module counts, and OverallStatus — a stored
+// compatibility summary that collapses both into one word — via
+// DetermineWalkScanStatus from the same counts.
 // - Scan-run comparison is domain logic: DiffScanRuns / CompareFindingDelta
 // define how two runs differ, independent of storage or presentation.
 //

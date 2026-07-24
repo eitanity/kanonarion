@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -20,36 +21,40 @@ import (
 // clean verdict is the absence-as-answer defect class.
 func TestInspectSummaryStatus_FailuresAreNeverAllClean(t *testing.T) {
 	cases := []struct {
-		name                                         string
-		nodeFails, extractFails, scanFails, affected int
-		scanStatus                                   vuldomain.WalkScanStatus
-		want                                         string
+		name                               string
+		nodeFails, extractFails, scanFails int
+		scanStatus                         vuldomain.WalkScanStatus
+		want                               string
 	}{
-		{"all stages clean", 0, 0, 0, 0, vuldomain.WalkStatusAllClean, "AllClean"},
-		{"findings without failures", 0, 0, 0, 2, vuldomain.WalkStatusAffected, "Affected"},
-		{"every scan failed", 0, 0, 11, 0, vuldomain.WalkStatusFailed, "ScanFailed"},
-		{"one scan failed", 0, 0, 1, 0, vuldomain.WalkStatusAllClean, "Partial"},
-		{"extract failed", 0, 1, 0, 0, vuldomain.WalkStatusAllClean, "Partial"},
-		{"node failures", 1, 0, 0, 0, vuldomain.WalkStatusAllClean, "Partial"},
-		{"failures alongside findings", 0, 0, 3, 2, vuldomain.WalkStatusAffected, "Partial"},
-		{"scan run itself Partial (metadata-only coverage gap)", 0, 0, 0, 0, vuldomain.WalkStatusPartial, "Partial"},
+		{"all stages clean", 0, 0, 0, vuldomain.WalkStatusAllClean, "AllClean"},
+		{"findings without failures", 0, 0, 0, vuldomain.WalkStatusAffected, "Affected"},
+		{"every scan failed", 0, 0, 11, vuldomain.WalkStatusFailed, "ScanFailed"},
+		{"one scan failed", 0, 0, 1, vuldomain.WalkStatusAllClean, "Partial"},
+		{"extract failed", 0, 1, 0, vuldomain.WalkStatusAllClean, "Partial"},
+		{"node failures", 1, 0, 0, vuldomain.WalkStatusAllClean, "Partial"},
+		{"failures alongside findings", 0, 0, 3, vuldomain.WalkStatusAffected, "Partial"},
+		// A Partial scan run stays Partial. This holds whether or not the run also
+		// has findings: the word is coverage-first (findings are shown on their own
+		// line), so it does not take a finding count as input and cannot be flipped
+		// to Affected — which would hide the coverage gap and make inspect disagree
+		// with vuln-scan's "Partial coverage, Affected (N)".
+		{"scan run itself Partial (metadata-only coverage gap)", 0, 0, 0, vuldomain.WalkStatusPartial, "Partial"},
 		// The scan run's own ScanFailed verdict must surface: every module failed
 		// (or the walk had no modules), which produced no stage failure here and
 		// previously fell through to a confident AllClean.
-		{"scan run ScanFailed with no stage failure", 0, 0, 0, 0, vuldomain.WalkStatusFailed, "ScanFailed"},
+		{"scan run ScanFailed with no stage failure", 0, 0, 0, vuldomain.WalkStatusFailed, "ScanFailed"},
 		// An unreadable or absent scan run is an unknown outcome, never a clean one.
-		{"no scan run recorded", 0, 0, 0, 0, "", "Partial"},
+		{"no scan run recorded", 0, 0, 0, "", "Partial"},
 		// A status added to the enum later must not degrade to AllClean.
-		{"unrecognised future status", 0, 0, 0, 0, vuldomain.WalkScanStatus("SomethingNew"), "Partial"},
-		// The run says Affected even though the per-run count was not set.
-		{"affected from run status only", 0, 0, 0, 0, vuldomain.WalkStatusAffected, "Affected"},
+		{"unrecognised future status", 0, 0, 0, vuldomain.WalkScanStatus("SomethingNew"), "Partial"},
+		{"affected from run status", 0, 0, 0, vuldomain.WalkStatusAffected, "Affected"},
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			got := inspectSummaryStatus(tc.nodeFails, tc.extractFails, tc.scanFails, tc.affected, tc.scanStatus)
+			got := inspectSummaryStatus(tc.nodeFails, tc.extractFails, tc.scanFails, tc.scanStatus)
 			if got != tc.want {
-				t.Errorf("inspectSummaryStatus(%d, %d, %d, %d, %q) = %q, want %q",
-					tc.nodeFails, tc.extractFails, tc.scanFails, tc.affected, tc.scanStatus, got, tc.want)
+				t.Errorf("inspectSummaryStatus(%d, %d, %d, %q) = %q, want %q",
+					tc.nodeFails, tc.extractFails, tc.scanFails, tc.scanStatus, got, tc.want)
 			}
 		})
 	}
@@ -57,9 +62,9 @@ func TestInspectSummaryStatus_FailuresAreNeverAllClean(t *testing.T) {
 
 // The inspect summary's affected count must be the real number of modules
 // whose per-module verdict is Affected, not a 0/1 flag off OverallStatus: a run
-// with several affected modules must count every one of them. Modules whose
-// record is unavailable are counted conservatively (their Clean status cannot
-// be confirmed).
+// with several affected modules must count every one of them. A not-found record
+// is a coverage gap, not an affected verdict, so it is excluded rather than
+// fabricated into the set.
 func TestAffectedSetForRun_CountsEveryAffectedModule(t *testing.T) {
 	aff1 := coordinate.ModuleCoordinate{Path: "example.com/a", Version: "v1.0.0"}
 	aff2 := coordinate.ModuleCoordinate{Path: "example.com/b", Version: "v1.0.0"}
@@ -72,7 +77,8 @@ func TestAffectedSetForRun_CountsEveryAffectedModule(t *testing.T) {
 	vuln.AddRecord(aff2, aff(aff2))
 	vuln.AddRecord(aff3, aff(aff3))
 	vuln.AddRecord(clean, cln(clean))
-	// `missing` is present in the run but has no record → counted conservatively.
+	// `missing` is present in the run but has no record → a coverage gap, not
+	// evidence of Affected, so it is excluded.
 
 	run := vuldomain.WalkScanRun{
 		WalkID:        "walk-1",
@@ -82,12 +88,41 @@ func TestAffectedSetForRun_CountsEveryAffectedModule(t *testing.T) {
 		},
 	}
 
-	got := affectedSetForRun(context.Background(), vuln, run)
-	if len(got) != 4 {
-		t.Errorf("affected count = %d, want 4 (three Affected records + one unreadable); got set %v", len(got), got)
+	got, err := affectedSetForRun(context.Background(), vuln, run)
+	if err != nil {
+		t.Fatalf("affectedSetForRun returned error: %v", err)
+	}
+	if len(got) != 3 {
+		t.Errorf("affected count = %d, want 3 (only the three Affected records); got set %v", len(got), got)
 	}
 	if _, ok := got[clean]; ok {
 		t.Errorf("clean module %v must not be counted as affected", clean)
+	}
+	if _, ok := got[missing]; ok {
+		t.Errorf("not-found module %v is a coverage gap, must not be fabricated into the affected set", missing)
+	}
+}
+
+// A store read error must not be fabricated into an affected verdict: presenting
+// a peer as affected when the store could only not be read is the error-as-answer
+// defect. affectedSetForRun propagates the fault instead.
+func TestAffectedSetForRun_ReadErrorPropagatedNotFabricated(t *testing.T) {
+	coord := coordinate.ModuleCoordinate{Path: "example.com/a", Version: "v1.0.0"}
+	vuln := testfakes.NewFakeQueryVuln()
+	vuln.Err = errors.New("store unreadable")
+
+	run := vuldomain.WalkScanRun{
+		WalkID:           "walk-1",
+		OverallStatus:    vuldomain.WalkStatusAffected,
+		PerModuleResults: map[coordinate.ModuleCoordinate]string{coord: ""},
+	}
+
+	got, err := affectedSetForRun(context.Background(), vuln, run)
+	if err == nil {
+		t.Fatalf("affectedSetForRun = %v, nil; want a propagated read error, not a fabricated affected set", got)
+	}
+	if !strings.Contains(err.Error(), "store unreadable") {
+		t.Errorf("error = %v, want it to wrap the store read error", err)
 	}
 }
 

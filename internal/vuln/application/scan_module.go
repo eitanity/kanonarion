@@ -97,8 +97,16 @@ import (
 // module's own go.mod selects, and a failure whose version cannot be recovered
 // is recorded as version-not-in-toolchain-unverified rather than an asserted
 // out-of-toolchain outcome. A "v12" record on that path carries the unverified
-// reason as if established and must be re-scanned.
-const PipelineVersion = "v13"
+// reason as if established and must be re-scanned. It was bumped to "v14" when
+// the walk-scan aggregate gained separate coverage and findings axes: a
+// WalkScanRun now stores CoverageStatus, FindingsStatus and the module counts
+// alongside the collapsed OverallStatus, and a run recorded before the split
+// carries neither axis, so a consumer that reads FindingsStatus off it silently
+// loses the finding. The per-module record content is unchanged by this bump;
+// the version moves so a walk scanned in the collapsed-status era re-runs as a
+// whole and produces a run carrying both axes, rather than reusing cached
+// per-module verdicts under a run that has neither.
+const PipelineVersion = "v14"
 
 // ScanModuleUseCase orchestrates a single module's vulnerability scan.
 type ScanModuleUseCase struct {

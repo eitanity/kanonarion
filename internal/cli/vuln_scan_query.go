@@ -135,8 +135,8 @@ type scanShowJSON struct {
 
 // scanRecordFault is a coordinate whose VulnerabilityRecord could not be read,
 // paired with the store error. A read error is not absence: reporting the module
-// as unscanned when the store could not be read is the misattribution KN-455
-// removed from audit.go via vulnAuditStatus, and it must not reappear here.
+// as unscanned when the store could not be read is the misattribution
+// audit.go's vulnAuditStatus removes, and it must not reappear here.
 type scanRecordFault struct {
 	Coordinate string `json:"coordinate"`
 	Error      string `json:"error"`
@@ -150,7 +150,7 @@ type scanRecordFault struct {
 // Neither may leave the module out of the summary silently. The header prints a
 // module count from len(PerModuleResults), so a coordinate that resolves to no
 // section would make the output claim more modules than it accounts for — the
-// "appears in no roll-up" defect KN-455 fixed one function above this one.
+// "appears in no roll-up" defect fixed one function above this one.
 type scanShowSummary struct {
 	affected    []scanAffectedModule
 	unscannable *unscannableRollup

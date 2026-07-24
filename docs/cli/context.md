@@ -304,22 +304,33 @@ the coverage it saw, never a confident SPDX it cannot stand behind.
 | `findings[].fixed_in` | string | Earliest version with a fix |
 | `findings[].score` | float | CVSS score |
 | `findings[].reachable` | bool | Reachability verdict (null if not analysed) |
-| `walk_status` | string | Walk-wide scan status, set only when it adds information this module's own `status` does not (e.g. `Partial` when the walk scan was incomplete) |
+| `walk_status` | string | The walk run's collapsed `overall_status` (`AllClean` / `Affected` / `Partial` / `ScanFailed`), carried as a compatibility summary. It collapses two independent axes into one word, so read `walk_coverage` for coverage rather than deriving it here |
+| `walk_coverage` | string | The coverage axis of the walk run, set only when the run left modules unanalysed (`Partial` or `Failed`). Independent of findings: it surfaces alongside `walk_affected`, so an incomplete-coverage run that also carries an affected peer states both |
 | `walk_affected` | array | Affected walk peers (`module@version`) that lie in **this module's own transitive dependency closure**, sorted; empty/omitted when no affected peer is reachable from this module |
+| `walk_error` | string | Set when a walk-peer's verdict could not be read from the store while resolving `walk_affected`. The peer set may be incomplete; the fault is surfaced rather than fabricated into an affected verdict or misattributed to this module's own status |
 | `walk_id` | string | Walk used for reachability analysis |
 | `snapshot_version` | string | Vulnerability database snapshot date |
 | `extracted_at` | string | RFC3339 scan timestamp |
 | `error` | string | Set when `status` is `read_error` |
 
-The walk-level annotation is **filtered by the module's transitive dependency
-closure**. A clean module is only flagged when an affected peer is actually
-reachable from it through the stored walk graph - the annotation then names the
-specific coordinate(s) (`[walk: affected via x@v]`, or `+N more` when several).
-A module with no affected peer in its closure shows no walk annotation at all,
-rather than a generic walk-wide warning that implies a relationship which does
-not exist. A fully-clean walk likewise adds no annotation to a clean module;
-only incompleteness statuses (`Partial`, `ScanFailed`) still surface, since
-they warn that the broader scan could not confirm the peers.
+The walk-level annotation carries two independent axes and prints each when it
+says something this module's own line does not, together when both do:
+
+- **Findings** are **filtered by the module's transitive dependency closure**. A
+  clean module is only flagged when an affected peer is actually reachable from
+  it through the stored walk graph - the annotation then names the specific
+  coordinate(s) (`[walk: affected via x@v]`, or `+N more` when several). A module
+  with no affected peer in its closure shows no findings annotation, rather than
+  a generic walk-wide warning that implies a relationship which does not exist.
+  This is driven by the run's findings axis, not its collapsed status, so a run
+  left `Partial` by an unscannable module still names a reachable affected peer.
+- **Coverage** surfaces `Partial` / `Failed` runs
+  (`[walk coverage: Partial — other modules unscanned]`), warning that the
+  broader scan could not confirm the peers.
+
+The two answer different questions, so neither suppresses the other: a `Partial`
+run that also carries an affected peer in this module's closure prints both. A
+fully-clean, complete walk adds no annotation to a clean module.
 
 ## Flags
 

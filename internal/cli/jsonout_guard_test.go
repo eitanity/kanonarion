@@ -10,7 +10,7 @@ import (
 )
 
 // TestNoCommandWritesProseToStdoutBeforeCheckingJSON guards the whole
-// empty-result defect family (KN-458, KN-473): a command that supports --json
+// empty-result defect family: a command that supports --json
 // must not write a human sentence to stdout on a path reached before it
 // consults jsonOut. Such a sentence lands on the data channel under --json and
 // the caller gets unparseable prose with exit 0, the same failure mode that let
