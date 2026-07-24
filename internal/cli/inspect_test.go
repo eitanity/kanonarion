@@ -91,6 +91,30 @@ func TestAffectedSetForRun_CountsEveryAffectedModule(t *testing.T) {
 	}
 }
 
+// --gomod --reachability roots at the dependency closure, not the project's own
+// code. The disclosure banner must make that unmistakable: it names the closure
+// rooting, states the app->dependency edge is absent, and points the reader to
+// `kanonarion local` to root at the application.
+func TestReachabilityClosureBanner_DisclosesClosureRooting(t *testing.T) {
+	var buf bytes.Buffer
+	printReachabilityClosureBanner(&buf, "/home/user/proj/go.mod")
+	out := buf.String()
+
+	for _, want := range []string{
+		"DEPENDENCY CLOSURE",
+		"consumer-mode",
+		"kanonarion local /home/user/proj",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("banner missing %q:\n%s", want, out)
+		}
+	}
+	// It must not claim to be rooted at the project entrypoints.
+	if strings.Contains(out, "rooted at the project entrypoint") && !strings.Contains(out, "one hop") {
+		t.Errorf("banner must not imply app-rooted reachability:\n%s", out)
+	}
+}
+
 // A module with no Go source files produces an empty code scope; inspect
 // reports that and exits cleanly without spinning up the project walk.
 func TestInspectCmd_GomodAllIndirect(t *testing.T) {

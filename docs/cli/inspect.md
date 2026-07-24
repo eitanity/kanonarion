@@ -66,7 +66,7 @@ kanonarion inspect github.com/spf13/cobra@v1.8.1 --json
 | `--store-root` | `~/.kanonarion` | Path to fact store root (or `KANONARION_STORE` env var) |
 | `--force` | `false` | Re-fetch and re-extract even if cached records exist |
 | `--fresh` | `false` | Fetch a fresh vulnerability database snapshot from the network |
-| `--reachability` | `false` | Enable call-graph reachability analysis during vuln-scan |
+| `--reachability` | `false` | Enable call-graph reachability analysis during vuln-scan. For `--gomod`, reachability roots at the dependency closure, not the project's own code (see the note under [`inspect --gomod`](#inspect---gomod-path)) |
 | `--skip-vcs-verify` | `false` | Skip git cross-verification; sumdb verification still runs |
 | `--goproxy` | `$GOPROXY` | Override the Go module proxy |
 | `--go-binary` | | Path to `go` binary if not in `$PATH` |
@@ -128,6 +128,15 @@ the pair composes with no `not_fetched`/`not_run` gaps.
 
 The `Walk ID` in the output is the project walk record. It can be passed
 directly to `sbom`, `extract`, `vuln-scan`, and `walk-show`.
+
+> **Reachability roots at the dependency closure, not the project's own code.**
+> With `--reachability`, the project walk analyses the consumer module in
+> consumer-mode, so its call graph is not loaded into the store. A `reachable`
+> verdict therefore means "reachable from the closure roots", one hop short of
+> "reachable from a project entrypoint" - the final application-to-dependency
+> edge is absent. `inspect --gomod --reachability` prints an explicit banner to
+> stderr stating this. To root reachability at the application, run
+> [`kanonarion local <dir>`](local.md), which ingests the target graph.
 
 **Example output:**
 

@@ -86,7 +86,7 @@ tooling).`,
 	cmd.Flags().StringVar(&f.goBinary, "go-binary", "", "path to 'go' binary if not in PATH")
 	cmd.Flags().BoolVar(&f.force, "force", false, "re-fetch and re-extract even if cached records exist")
 	cmd.Flags().BoolVar(&f.fresh, "fresh", false, "fetch fresh vulnerability database snapshot from network")
-	cmd.Flags().BoolVar(&f.reachable, "reachability", false, "enable call-graph reachability analysis during vuln-scan")
+	cmd.Flags().BoolVar(&f.reachable, "reachability", false, "enable call-graph reachability analysis during vuln-scan (--gomod: roots at the dependency closure, not the project's own code; use 'kanonarion local' to root at the app)")
 	cmd.Flags().BoolVar(&f.skipVCS, "skip-vcs-verify", false, "skip git cross-verification; sumdb verification still runs")
 	cmd.Flags().BoolVar(&f.sizeOnly, "size-only", false, "print estimated token count and byte size of the context, then exit")
 	cmd.Flags().BoolVar(&f.full, "full", false, "include full doc comments and complete example bodies (overrides --compact)")
@@ -314,6 +314,15 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 			extractFails = 1
 		}
 
+		// The project walk roots at the consumer module but analyses its own code
+		// in consumer-mode, so the target's call graph is never loaded into the
+		// store. Reachability therefore roots at the dependency closure, one hop
+		// short of the project entrypoints. Disclose that up front so a reader
+		// cannot mistake a dep-closure verdict for an app-rooted one.
+		if f.reachable {
+			printReachabilityClosureBanner(stderr, f.gomodPath)
+		}
+
 		_, _ = fmt.Fprintf(stderr, "==> inspect --gomod: vuln-scanning walk %s\n", walkID)
 		// stderr, not io.Discard — see the note on the same call in runInspect:
 		// the grouped roll-up is the concise presentation and belongs to the
@@ -413,6 +422,23 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 		_, _ = fmt.Fprintf(stdout, "\nTo get module context: kanonarion context --gomod %s\n", f.gomodPath)
 	}
 	return nil
+}
+
+// printReachabilityClosureBanner discloses that --gomod reachability roots at
+// the dependency closure rather than the project's own entrypoints. The
+// consumer module is walked but analysed in consumer-mode, so its call graph is
+// not in the store; a reachable verdict therefore means "reachable from the
+// closure roots", one hop short of "reachable from a project entrypoint". This
+// must be stated explicitly so the two cannot be confused. Directs the reader
+// to `kanonarion local`, which ingests the target graph and roots at the app.
+func printReachabilityClosureBanner(w io.Writer, gomodPath string) {
+	projectDir := filepath.Dir(gomodPath)
+	_, _ = fmt.Fprintln(w, "==> NOTE: reachability is rooted at the DEPENDENCY CLOSURE, not the project's own code.")
+	_, _ = fmt.Fprintln(w, "    The consumer module is analysed in consumer-mode, so its call graph is not")
+	_, _ = fmt.Fprintln(w, "    loaded: a 'reachable' verdict means reachable from the closure roots, one hop")
+	_, _ = fmt.Fprintln(w, "    short of reachable from a project entrypoint. The final app->dependency edge")
+	_, _ = fmt.Fprintln(w, "    is absent from this analysis.")
+	_, _ = fmt.Fprintf(w, "    To root reachability at the application, run: kanonarion local %s\n", projectDir)
 }
 
 // latestWalkIDForCoord returns the ID of the most recent walk for the given coordinate.
