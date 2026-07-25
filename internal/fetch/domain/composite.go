@@ -79,11 +79,6 @@ func Compose(records []FactRecord) (CompositeRecord, error) {
 		return CompositeRecord{}, ErrNoRecordsToCompose
 	}
 
-	identity, err := ArtefactIdentityOf(records[0])
-	if err != nil {
-		return CompositeRecord{}, err
-	}
-
 	var served FactRecord
 	if records[0].Coordinate().IsLocal() {
 		// A local version pins no content — the working tree behind it is
@@ -104,18 +99,21 @@ func Compose(records []FactRecord) (CompositeRecord, error) {
 				served = r
 			}
 		}
-		// The identity is the served measurement's own: successive measurements of
-		// a working tree describe different artefacts, so there is no shared
-		// identity to take from the first record.
-		identity, err = ArtefactIdentityOf(served)
-		if err != nil {
-			return CompositeRecord{}, err
-		}
 	} else {
 		ordered := make([]FactRecord, len(records))
 		copy(ordered, records)
 		sort.SliceStable(ordered, func(i, j int) bool { return servesBefore(ordered[i], ordered[j]) })
 		served = ordered[0]
+	}
+
+	// The identity describes the record actually SERVED, never the first one
+	// listed. A coordinate can hold measurements at two depths — a go.mod-only
+	// record and a full one — and those carry different identities, so taking the
+	// first record's would have the composite claim an identity that does not
+	// describe the record it hands back.
+	identity, err := ArtefactIdentityOf(served)
+	if err != nil {
+		return CompositeRecord{}, err
 	}
 
 	first, latest := records[0].FetchedAt, records[0].FetchedAt
@@ -246,6 +244,24 @@ func (h CanonicalHasher) UnmarshalComposite(data []byte) (CompositeRecord, error
 func servesBefore(a, b FactRecord) bool {
 	if ea, eb := RecordIsCacheable(a), RecordIsCacheable(b); ea != eb {
 		return ea
+	}
+	// ARTEFACT COVERAGE outranks anchor strength. A coordinate can hold a
+	// go.mod-only measurement and a full one; they describe one artefact at two
+	// depths, joined on the go.mod hash, and the full record subsumes the
+	// shallower one.
+	//
+	// Ordering on the anchor first would serve a go.mod-only record whenever it
+	// happened to carry the stronger status — handing back a record with no zip
+	// while the zip sits in the store, so a consumer that needs source re-fetches
+	// what is already held. A stronger anchor over less artefact is not a better
+	// answer to "give me this module"; it is an answer to a smaller question.
+	//
+	// This mirrors the write side, which has always exempted an artefact upgrade
+	// from the anchor comparison (see persistRecord's addsArtefactCoverage). The
+	// read side lacked the same exemption, so the two disagreed about which
+	// record was authoritative.
+	if ga, gb := a.IsGoModOnly(), b.IsGoModOnly(); ga != gb {
+		return !ga
 	}
 	if sa, sb := verificationStrength(VerificationStatus(a.VerificationStatus)), verificationStrength(VerificationStatus(b.VerificationStatus)); sa != sb {
 		return sa > sb

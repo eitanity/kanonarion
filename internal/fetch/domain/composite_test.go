@@ -225,6 +225,68 @@ func TestCompose_InheritedLegNamesItsSource(t *testing.T) {
 	}
 }
 
+// A coordinate can hold a go.mod-only measurement AND a full one. Composition
+// must serve the FULL record even when the shallower one carries the stronger
+// verification anchor.
+//
+// This was wrong when the ledger first shipped. The ordering ran eligibility ->
+// anchor strength -> recency with no term for artefact coverage, so a
+// go.mod-only record that happened to carry the stronger status was served while
+// the zip sat in the store — and a consumer needing source would re-fetch what
+// was already held. The write side had always exempted an artefact upgrade from
+// the anchor comparison; the read side did not, so the two disagreed about which
+// record was authoritative.
+func TestCompose_FullRecordOutranksGoModOnlyEvenWithAWeakerAnchor(t *testing.T) {
+	shallow := fetchtest.Record(t,
+		fetchtest.Coordinate(composeCoord),
+		fetchtest.GoModOnly("m"),
+		fetchtest.GoModHash(fetchtest.H1("mod==")),
+		fetchtest.Status(domain.VerifiedBySumDBOnly), // the STRONGER anchor
+		fetchtest.FetchedAt(at(1)),
+	)
+	full := fetchtest.Record(t,
+		fetchtest.Coordinate(composeCoord),
+		fetchtest.ModuleHash(fetchtest.H1("zip==")),
+		fetchtest.GoModHash(fetchtest.H1("mod==")),
+		fetchtest.Status(domain.VerifiedByGoSum), // weaker anchor, MORE artefact
+		fetchtest.FetchedAt(at(2)),
+	)
+
+	// Both orderings, so the result cannot depend on which was listed first.
+	for _, tc := range []struct {
+		name    string
+		records []domain.FactRecord
+	}{
+		{"shallow first", []domain.FactRecord{shallow, full}},
+		{"full first", []domain.FactRecord{full, shallow}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got, err := domain.Compose(tc.records)
+			if err != nil {
+				t.Fatalf("Compose: %v", err)
+			}
+			if got.IsGoModOnly() {
+				t.Error("served the go.mod-only measurement while a full record exists; a consumer needing source would re-fetch bytes already held")
+			}
+			if got.ContentHash != full.ContentHash {
+				t.Errorf("served %q, want the full record %q", got.ContentHash, full.ContentHash)
+			}
+			// The identity must describe the record actually served, not whichever
+			// was listed first — the two depths carry different identities.
+			wantID, err := domain.ArtefactIdentityOf(got.FactRecord)
+			if err != nil {
+				t.Fatalf("ArtefactIdentityOf: %v", err)
+			}
+			if !got.Identity.Equal(wantID) {
+				t.Errorf("Identity = %s, does not describe the served record (%s)", got.Identity, wantID)
+			}
+			if got.Identity.GoModOnly {
+				t.Error("Identity reports go.mod-only while serving a full record")
+			}
+		})
+	}
+}
+
 // Compose refuses to answer for no records rather than inventing an empty
 // composition: absence is the store's answer, not composition's.
 func TestCompose_NoRecordsIsAnError(t *testing.T) {
