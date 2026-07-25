@@ -50,8 +50,13 @@ jobs:
           # observed by capturing egress from a cold-store 'audit --fresh' run:
           # each module's real VCS host (resolved from the proxy's Origin
           # metadata, not a vanity-import host), the Go proxy/checksum-db, and
-          # the OSV database. The VCS hosts here must stay in sync with
-          # allowedVCSHosts in internal/fetch/domain/origintrust.go.
+          # the OSV database. The VCS hosts here must stay in sync with the
+          # POLICY-RESOLVED forge allowlist, not with the code default: the
+          # fetch stage's allowed_vcs_hosts can widen or narrow the built-in set
+          # in internal/fetch/domain/origintrust.go without a rebuild. Print the
+          # effective set with 'kanonarion policy show | jq -r
+          # .effective_vcs_hosts[]'. This release runs with no policy file, so
+          # the effective set is the built-in default.
           allowed-endpoints: >
             github.com:443
             api.github.com:443

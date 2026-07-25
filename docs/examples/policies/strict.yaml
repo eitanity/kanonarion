@@ -17,3 +17,12 @@ stages:
     follow_test: false
 
     follow_indirect: true
+
+    # A strict-reproducibility run often has narrow egress. Pinning the trusted
+    # forges keeps the set kanonarion claims to VCS-verify aligned with the
+    # hosts the runner can actually reach; modules on any other forge degrade to
+    # checksum-database verification and say so. Omit this field to keep the
+    # built-in set. See docs/cli/policy.md.
+    #
+    # allowed_vcs_hosts:
+    #   - github.com

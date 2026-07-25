@@ -54,3 +54,47 @@ func TestDepthPolicy_FetchStage_Absent(t *testing.T) {
 		t.Errorf("FetchStage() = %+v, want default %+v", sd, defaults)
 	}
 }
+
+func TestStageDepth_VCSHostAllowlist_AbsentFieldYieldsBuiltInDefault(t *testing.T) {
+	// The default policy does not pin the trust list, so every stage resolves to
+	// the built-in set — the behaviour every pre-existing policy file relies on.
+	hosts, err := domain.DefaultDepthPolicy().FetchStage().VCSHostAllowlist()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !hosts.IsDefault() {
+		t.Errorf("expected the built-in default set, got %v", hosts.Hosts())
+	}
+}
+
+func TestStageDepth_VCSHostAllowlist_PresentFieldOverrides(t *testing.T) {
+	hostList := []string{"github.com"}
+	sd := domain.StageDepth{AllowedVCSHosts: &hostList}
+	hosts, err := sd.VCSHostAllowlist()
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !hosts.IsAllowed("github.com") {
+		t.Error("the configured forge should be allowed")
+	}
+	if hosts.IsAllowed("gitlab.com") {
+		t.Error("a forge left out of the override must not be allowed")
+	}
+}
+
+func TestStageDepth_VCSHostAllowlist_UnusableListIsAnErrorNotAFallback(t *testing.T) {
+	// Falling back to the default would verify against a forge set the operator
+	// did not authorise and report the run as clean.
+	for name, hostList := range map[string][]string{
+		"empty":     {},
+		"malformed": {"https://github.com"},
+	} {
+		t.Run(name, func(t *testing.T) {
+			list := hostList
+			sd := domain.StageDepth{AllowedVCSHosts: &list}
+			if _, err := sd.VCSHostAllowlist(); err == nil {
+				t.Fatal("expected an unusable allowed_vcs_hosts list to error")
+			}
+		})
+	}
+}

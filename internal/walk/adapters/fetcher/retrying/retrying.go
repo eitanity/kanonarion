@@ -49,6 +49,14 @@ type forceCapable interface {
 	WithForce(bool) walkports.ModuleFetcher
 }
 
+// vcsHostCapable mirrors the walker's per-walk VCS-forge-allowlist interface,
+// declared here for the same reason as forceCapable: the capability is passed
+// through only when the wrapped fetcher genuinely has it, so a policy's
+// allowed_vcs_hosts can never be silently dropped by the retry decorator.
+type vcsHostCapable interface {
+	WithVCSHosts(fetchdomain.VCSHostAllowlist) walkports.ModuleFetcher
+}
+
 // Fetcher wraps a ModuleFetcher and retries transient fetch failures.
 type Fetcher struct {
 	inner     walkports.ModuleFetcher
@@ -63,11 +71,25 @@ type Fetcher struct {
 }
 
 // forcingFetcher is the variant returned when the wrapped fetcher supports
-// force mode. Keeping WithForce off the base type matters: the walker decides
-// whether --force is honoured by type-asserting its fetcher, so a decorator
-// that always advertised the capability would turn --force into a silent no-op
-// over a fetcher that cannot do it.
+// force mode only. Keeping WithForce off the base type matters: the walker
+// decides whether --force is honoured by type-asserting its fetcher, so a
+// decorator that always advertised the capability would turn --force into a
+// silent no-op over a fetcher that cannot do it. The same reasoning applies to
+// the VCS-allowlist variants below, hence one type per capability combination
+// rather than one type advertising everything.
 type forcingFetcher struct {
+	*Fetcher
+}
+
+// vcsFetcher is the variant returned when the wrapped fetcher accepts a VCS
+// forge allowlist but not force mode.
+type vcsFetcher struct {
+	*Fetcher
+}
+
+// forcingVCSFetcher is the variant returned when the wrapped fetcher supports
+// both capabilities — the production case (adapters/fetcher/local).
+type forcingVCSFetcher struct {
 	*Fetcher
 }
 
@@ -107,10 +129,52 @@ func New(inner walkports.ModuleFetcher, logger *slog.Logger, opts ...Option) wal
 	for _, opt := range opts {
 		opt(f)
 	}
-	if _, ok := inner.(forceCapable); ok {
+	return wrap(f)
+}
+
+// wrap returns the decorator variant advertising exactly the capabilities the
+// wrapped fetcher has — no more (which would make a flag a silent no-op) and no
+// fewer (which would drop an operator's policy on the floor).
+func wrap(f *Fetcher) walkports.ModuleFetcher {
+	_, force := f.inner.(forceCapable)
+	_, vcs := f.inner.(vcsHostCapable)
+	switch {
+	case force && vcs:
+		return &forcingVCSFetcher{Fetcher: f}
+	case force:
 		return &forcingFetcher{Fetcher: f}
+	case vcs:
+		return &vcsFetcher{Fetcher: f}
+	default:
+		return f
 	}
-	return f
+}
+
+// withForce clones f with force mode applied to the wrapped fetcher, keeping
+// the retry behaviour in front of the force-mode clone and re-deriving the
+// variant so no capability is lost across the call. self is returned unchanged
+// when the wrapped fetcher lost the capability — only reachable by constructing
+// a variant directly.
+func withForce(self walkports.ModuleFetcher, f *Fetcher, force bool) walkports.ModuleFetcher {
+	fc, ok := f.inner.(forceCapable)
+	if !ok {
+		return self
+	}
+	clone := *f
+	clone.inner = fc.WithForce(force)
+	return wrap(&clone)
+}
+
+// withVCSHosts clones f with the VCS forge allowlist applied to the wrapped
+// fetcher, on the same terms as withForce.
+func withVCSHosts(self walkports.ModuleFetcher, f *Fetcher, hosts fetchdomain.VCSHostAllowlist) walkports.ModuleFetcher {
+	vc, ok := f.inner.(vcsHostCapable)
+	if !ok {
+		return self
+	}
+	clone := *f
+	clone.inner = vc.WithVCSHosts(hosts)
+	return wrap(&clone)
 }
 
 // EnsureFetched delegates to the wrapped fetcher, retrying transient failures
@@ -194,13 +258,24 @@ func (f *Fetcher) EnsureFetched(ctx context.Context, coord coordinate.ModuleCoor
 // WithForce passes force mode through to the wrapped fetcher, keeping the retry
 // behaviour in front of the force-mode clone.
 func (f *forcingFetcher) WithForce(force bool) walkports.ModuleFetcher {
-	fc, ok := f.inner.(forceCapable)
-	if !ok {
-		return f
-	}
-	clone := *f.Fetcher
-	clone.inner = fc.WithForce(force)
-	return &forcingFetcher{Fetcher: &clone}
+	return withForce(f, f.Fetcher, force)
+}
+
+// WithForce passes force mode through, preserving the VCS-allowlist capability.
+func (f *forcingVCSFetcher) WithForce(force bool) walkports.ModuleFetcher {
+	return withForce(f, f.Fetcher, force)
+}
+
+// WithVCSHosts passes the per-walk VCS forge allowlist through to the wrapped
+// fetcher, preserving force capability.
+func (f *forcingVCSFetcher) WithVCSHosts(hosts fetchdomain.VCSHostAllowlist) walkports.ModuleFetcher {
+	return withVCSHosts(f, f.Fetcher, hosts)
+}
+
+// WithVCSHosts passes the per-walk VCS forge allowlist through to the wrapped
+// fetcher.
+func (f *vcsFetcher) WithVCSHosts(hosts fetchdomain.VCSHostAllowlist) walkports.ModuleFetcher {
+	return withVCSHosts(f, f.Fetcher, hosts)
 }
 
 // backoffFor returns the pre-jitter interval before the given attempt's retry:

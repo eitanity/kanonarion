@@ -45,7 +45,7 @@ func TestResolveGitRef_ToolMissing(t *testing.T) {
 	uc := &FetchModuleUseCase{vcs: toolMissingVCS{}}
 	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 
-	_, status, _ := uc.resolveGitRef(context.Background(), slog.Default(), coord, ports.ModuleInfo{})
+	_, status, _ := uc.resolveGitRef(context.Background(), slog.Default(), coord, ports.ModuleInfo{}, domain2.DefaultVCSHostAllowlist())
 	if status != domain2.UnverifiedVCSToolMissing {
 		t.Errorf("status = %q, want UnverifiedVCSToolMissing", status)
 	}
@@ -55,7 +55,7 @@ func TestResolveGitRef_GenericFailureStaysNoVCS(t *testing.T) {
 	uc := &FetchModuleUseCase{vcs: genericFailVCS{}}
 	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
 
-	_, status, _ := uc.resolveGitRef(context.Background(), slog.Default(), coord, ports.ModuleInfo{})
+	_, status, _ := uc.resolveGitRef(context.Background(), slog.Default(), coord, ports.ModuleInfo{}, domain2.DefaultVCSHostAllowlist())
 	if status != domain2.UnverifiedNoVCS {
 		t.Errorf("status = %q, want UnverifiedNoVCS", status)
 	}
@@ -72,7 +72,7 @@ func TestResolveGitRef_RejectsMaliciousOrigin(t *testing.T) {
 		Hash: "--upload-pack=touch",
 	}}
 
-	gitRef, status, detail := uc.resolveGitRef(context.Background(), slog.Default(), coord, info)
+	gitRef, status, detail := uc.resolveGitRef(context.Background(), slog.Default(), coord, info, domain2.DefaultVCSHostAllowlist())
 	if status == domain2.Verified {
 		t.Fatal("malicious Origin must not be trusted as Verified")
 	}
@@ -97,7 +97,7 @@ func TestResolveGitRef_AcceptsValidOrigin(t *testing.T) {
 		Hash: strings.Repeat("a", 40),
 	}}
 
-	gitRef, status, _ := uc.resolveGitRef(context.Background(), slog.Default(), coord, info)
+	gitRef, status, _ := uc.resolveGitRef(context.Background(), slog.Default(), coord, info, domain2.DefaultVCSHostAllowlist())
 	if status != domain2.Verified {
 		t.Fatalf("valid Origin should resolve Verified, got %q", status)
 	}

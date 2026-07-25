@@ -34,6 +34,7 @@ type auditFlags struct {
 	skipVCSVerify   bool
 	stdlibFromGoMod bool
 	fromModcache    string
+	policyPath      string
 }
 
 func newAuditCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -74,6 +75,7 @@ project's own build dependencies (the code your packages import, incl. tests);
 	cmd.Flags().BoolVar(&f.tool, "tool", false, "scope to the tooling supply chain (the go.mod tool directives' closure)")
 	cmd.Flags().BoolVar(&f.project, "project", false, "scope to the complete set: the project's code AND tooling")
 	cmd.Flags().BoolVar(&f.skipVCSVerify, "skip-vcs-verify", false, "skip git cross-verification; sumdb verification still runs")
+	cmd.Flags().StringVar(&f.policyPath, "policy", "", "path to depth policy YAML (default: search for .kanonarion/policy.yaml)")
 	registerStdlibFromGoModFlag(cmd, &f.stdlibFromGoMod)
 	registerFromModcacheFlag(cmd, &f.fromModcache)
 
@@ -228,7 +230,7 @@ func auditScope(
 	_, _ = fmt.Fprintf(stderr, "==> audit: walking project %s (%d %s dependencies)\n", f.gomodPath, len(coords), scope)
 
 	progress := newWalkProgressReporter(stderr, false, activeConfig, logLevel)
-	if werr := runWalkProject(ctx, f.gomodPath, wf, f.force, true, 0, "", "", f.skipVCSVerify, scope, walkdomain.WalkDepthFull, "", false, f.stdlibFromGoMod, progress, ctr.ExecuteWalk, io.Discard, stderr); werr != nil {
+	if werr := runWalkProject(ctx, f.gomodPath, wf, f.force, true, 0, "", f.policyPath, f.skipVCSVerify, scope, walkdomain.WalkDepthFull, "", false, f.stdlibFromGoMod, progress, ctr.ExecuteWalk, io.Discard, stderr); werr != nil {
 		// A partial walk is tolerated (allowPartial=true above): individual
 		// unfetchable nodes surface as "(not fetched)" rows. Only a hard walk
 		// failure or cancellation leaves no usable record.

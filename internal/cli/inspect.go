@@ -35,6 +35,7 @@ type inspectFlags struct {
 	full            bool
 	noProgress      bool
 	stdlibFromGoMod bool
+	policyPath      string
 }
 
 func newInspectCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -88,6 +89,7 @@ tooling).`,
 	cmd.Flags().BoolVar(&f.fresh, "fresh", false, "fetch fresh vulnerability database snapshot from network")
 	cmd.Flags().BoolVar(&f.reachable, "reachability", false, "enable call-graph reachability analysis during vuln-scan (--gomod: roots at the dependency closure, not the project's own code; use 'kanonarion local' to root at the app)")
 	cmd.Flags().BoolVar(&f.skipVCS, "skip-vcs-verify", false, "skip git cross-verification; sumdb verification still runs")
+	cmd.Flags().StringVar(&f.policyPath, "policy", "", "path to depth policy YAML (default: search for .kanonarion/policy.yaml)")
 	cmd.Flags().BoolVar(&f.sizeOnly, "size-only", false, "print estimated token count and byte size of the context, then exit")
 	cmd.Flags().BoolVar(&f.full, "full", false, "include full doc comments and complete example bodies (overrides --compact)")
 	cmd.Flags().StringVar(&f.gomodPath, "gomod", "", "path to a go.mod file; run the pipeline over the project's code dependencies and print a summary (default: ./go.mod)")
@@ -116,7 +118,7 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 		return fmt.Errorf("writing output: %w", err)
 	}
 	progress := newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
-	if err := runWalk(ctx, arg, wf, f.force, true, 0, "", "", f.skipVCS, domain.WalkScopeCode, domain.WalkDepthFull, "", progress, ctr.ExecuteWalk, io.Discard, stderr); err != nil {
+	if err := runWalk(ctx, arg, wf, f.force, true, 0, "", f.policyPath, f.skipVCS, domain.WalkScopeCode, domain.WalkDepthFull, "", progress, ctr.ExecuteWalk, io.Discard, stderr); err != nil {
 		return fmt.Errorf("walk: %w", err)
 	}
 
@@ -306,7 +308,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 
 	var nodeFails int
 	progress := newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
-	if werr := runWalkProject(ctx, f.gomodPath, wf, f.force, true, 0, "", "", f.skipVCS, scope, domain.WalkDepthFull, "", false, f.stdlibFromGoMod, progress, ctr.ExecuteWalk, io.Discard, stderr); werr != nil {
+	if werr := runWalkProject(ctx, f.gomodPath, wf, f.force, true, 0, "", f.policyPath, f.skipVCS, scope, domain.WalkDepthFull, "", false, f.stdlibFromGoMod, progress, ctr.ExecuteWalk, io.Discard, stderr); werr != nil {
 		_, _ = fmt.Fprintf(stderr, "walk: %v\n", werr)
 		nodeFails = 1
 	}

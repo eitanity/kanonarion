@@ -68,6 +68,7 @@ kanonarion inspect github.com/spf13/cobra@v1.8.1 --json
 | `--fresh` | `false` | Fetch a fresh vulnerability database snapshot from the network |
 | `--reachability` | `false` | Enable call-graph reachability analysis during vuln-scan. For `--gomod`, reachability roots at the dependency closure, not the project's own code (see the note under [`inspect --gomod`](#inspect---gomod-path)) |
 | `--skip-vcs-verify` | `false` | Skip git cross-verification; sumdb verification still runs |
+| `--policy` | _(auto-discover `.kanonarion/policy.yaml`)_ | Depth policy file; its fetch stage governs traversal and the `allowed_vcs_hosts` forge allowlist |
 | `--goproxy` | `$GOPROXY` | Override the Go module proxy |
 | `--go-binary` | | Path to `go` binary if not in `$PATH` |
 | `--json` | `false` | Emit final context as JSON |

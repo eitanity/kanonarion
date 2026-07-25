@@ -352,13 +352,13 @@ type fakeScanner struct {
 	// path it is exercising. Left false, the fake reports the same
 	// could-not-analyse fault a real unbuildable target does, so the walk falls
 	// back to isolated scanning.
-	targetRooted    bool
-	targetFindings  map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding
-	targetStatus    domain.VulnerabilityStatus
-	targetReason    string
-	targetErr       error
-	gotTargetCoord  coordinate.ModuleCoordinate
-	gotTargetCache  string
+	targetRooted   bool
+	targetFindings map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding
+	targetStatus   domain.VulnerabilityStatus
+	targetReason   string
+	targetErr      error
+	gotTargetCoord coordinate.ModuleCoordinate
+	gotTargetCache string
 	// call counters let tests assert which path a walk took.
 	scanCalls    int
 	projectCalls int

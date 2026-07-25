@@ -52,6 +52,10 @@ type ServeRequest struct {
 	// SkipVCSVerify skips the git cross-verification step on a fetch; sumdb
 	// verification still runs. Forwarded to the fetch pipeline unchanged.
 	SkipVCSVerify bool
+	// VCSHosts is the effective VCS forge allowlist for a fetch-on-miss,
+	// forwarded to the fetch pipeline unchanged. The zero value enforces the
+	// built-in default set.
+	VCSHosts domain2.VCSHostAllowlist
 }
 
 // ServeResult is the output of Serve.
@@ -81,6 +85,7 @@ func (uc *ServeModuleUseCase) Serve(ctx context.Context, req ServeRequest) (Serv
 	res, err := uc.fetch.Execute(ctx, FetchRequest{
 		Coordinate:    req.Coordinate,
 		SkipVCSVerify: req.SkipVCSVerify,
+		VCSHosts:      req.VCSHosts,
 	})
 	if err != nil {
 		return ServeResult{}, fmt.Errorf("fetch-on-miss for %s: %w", req.Coordinate, err)
@@ -99,6 +104,7 @@ func (uc *ServeModuleUseCase) Serve(ctx context.Context, req ServeRequest) (Serv
 				Coordinate:    req.Coordinate,
 				Force:         true,
 				SkipVCSVerify: req.SkipVCSVerify,
+				VCSHosts:      req.VCSHosts,
 			})
 			if err != nil {
 				return ServeResult{}, fmt.Errorf("re-fetch of evicted %s: %w", req.Coordinate, err)

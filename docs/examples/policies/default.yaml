@@ -21,3 +21,23 @@ stages:
     # In Go 1.17+, indirect requirements include transitive dependencies of
     # direct deps. Setting false restricts the graph to direct imports only.
     follow_indirect: true
+
+    # allowed_vcs_hosts: the forges the fetch stage may clone from when
+    # cross-verifying a module's repository against its proxy zip. Omitted
+    # here, which means the built-in set applies:
+    #
+    #   bitbucket.org  codeberg.org  github.com
+    #   gitlab.com     go.googlesource.com  gopkg.in
+    #
+    # Unlike the booleans above, this field keys on PRESENCE, not on its zero
+    # value: omitting it leaves the built-in set in force rather than emptying
+    # the list, so an unrelated edit to this stage can never silently weaken
+    # verification. Setting it replaces the built-in set wholesale (it does not
+    # merge). An explicitly empty list is a load error - to turn the git leg off
+    # entirely use --skip-vcs-verify, which still runs checksum verification.
+    # The key belongs to the fetch stage only (that is where cross-verification
+    # runs); under any other stage it is a load error rather than a silent no-op.
+    #
+    # allowed_vcs_hosts:
+    #   - github.com
+    #   - git.example.org

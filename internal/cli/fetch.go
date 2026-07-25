@@ -31,6 +31,11 @@ type fetchFlags struct {
 	tool          bool
 	project       bool
 	gomod         string
+	policyPath    string
+	// vcsHosts is the effective VCS forge allowlist, resolved once from the
+	// depth policy before any fetch runs. The zero value enforces the built-in
+	// default set.
+	vcsHosts domain.VCSHostAllowlist
 }
 
 func newFetchCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -47,6 +52,15 @@ func newFetchCmd(stdout, stderr io.Writer) *cobra.Command {
   kanonarion fetch --gomod ./go.mod
   kanonarion fetch --gomod ./go.mod --tool`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// The fetch stage's allowed_vcs_hosts governs which forges this
+			// command may cross-verify against, so resolve the policy once here
+			// rather than per module in the scope loop.
+			hosts, herr := resolveFetchVCSHosts(cmd.Context(), f.policyPath, stderr)
+			if herr != nil {
+				return herr
+			}
+			f.vcsHosts = hosts
+
 			goModScope := f.gomod != "" || f.tool || f.project
 			if goModScope {
 				if len(args) > 0 {
@@ -84,8 +98,27 @@ func newFetchCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().BoolVar(&f.tool, "tool", false, "fetch the tooling supply chain (the go.mod tool directives' closure) instead of a positional module@version")
 	cmd.Flags().BoolVar(&f.project, "project", false, "fetch the complete set: the project's code AND tooling")
 	cmd.Flags().StringVar(&f.gomod, "gomod", "", "path to a go.mod file to fetch a dependency scope from (default: search upward from cwd)")
+	cmd.Flags().StringVar(&f.policyPath, "policy", "", "path to depth policy YAML (default: search for .kanonarion/policy.yaml)")
 
 	return cmd
+}
+
+// resolveFetchVCSHosts resolves the effective VCS forge allowlist for a fetch
+// from the depth policy's fetch stage. An absent policy, or a policy without
+// allowed_vcs_hosts, yields the built-in default set; a malformed list is an
+// error rather than a silent fall-back to the default, which would verify
+// against forges the operator did not authorise.
+func resolveFetchVCSHosts(ctx context.Context, policyPath string, stderr io.Writer) (domain.VCSHostAllowlist, error) {
+	logger := buildLogger(logLevel, stderr)
+	policy, _, err := loadPolicy(ctx, policyPath, logger)
+	if err != nil {
+		return domain.VCSHostAllowlist{}, fmt.Errorf("loading policy: %w", err)
+	}
+	hosts, err := policy.FetchStage().VCSHostAllowlist()
+	if err != nil {
+		return domain.VCSHostAllowlist{}, fmt.Errorf("resolving fetch-stage VCS host allowlist: %w", err)
+	}
+	return hosts, nil
 }
 
 // runFetchScope fetches every module in a go.mod's dependency scope (default
@@ -182,6 +215,7 @@ func runFetch(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.W
 		Coordinate:    coord,
 		Force:         f.force,
 		SkipVCSVerify: f.skipVCSVerify,
+		VCSHosts:      f.vcsHosts,
 	})
 	if err != nil {
 		return fmt.Errorf("fetching module: %w", err)

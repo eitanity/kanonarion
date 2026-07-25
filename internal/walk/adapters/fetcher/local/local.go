@@ -10,6 +10,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	fetchapplication "github.com/eitanity/kanonarion/internal/fetch/application"
+	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
@@ -19,6 +20,7 @@ type Fetcher struct {
 	uc            *fetchapplication.FetchModuleUseCase
 	skipVCSVerify bool
 	force         bool
+	vcsHosts      fetchdomain.VCSHostAllowlist
 }
 
 // New constructs a Fetcher. When skipVCSVerify is true the underlying fetch
@@ -40,11 +42,24 @@ func (f *Fetcher) WithForce(force bool) walkports.ModuleFetcher {
 	return &clone
 }
 
+// WithVCSHosts returns a shallow copy of the fetcher that hands the given VCS
+// forge allowlist to every fetch. The original fetcher is unchanged. The walker
+// uses this per-walk with the allowlist resolved from the walk's fetch-stage
+// policy, so an operator's allowed_vcs_hosts governs which forges the run is
+// willing to clone from. The return type is walkports.ModuleFetcher so the
+// walker's capability interface can declare it without importing this package.
+func (f *Fetcher) WithVCSHosts(hosts fetchdomain.VCSHostAllowlist) walkports.ModuleFetcher {
+	clone := *f
+	clone.vcsHosts = hosts
+	return &clone
+}
+
 func (f *Fetcher) EnsureFetched(ctx context.Context, coord coordinate.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
 	result, err := f.uc.Execute(ctx, fetchapplication.FetchRequest{
 		Coordinate:    coord,
 		SkipVCSVerify: f.skipVCSVerify,
 		Force:         f.force,
+		VCSHosts:      f.vcsHosts,
 	})
 	if err != nil {
 		return walkports.ModuleFetchResult{}, fmt.Errorf("fetching module: %w", err)

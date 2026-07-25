@@ -130,6 +130,13 @@ type FetchRequest struct {
 	// must never satisfy a scan that needs source; the full path re-fetches over
 	// it when a zip is required.
 	GoModOnly bool
+	// VCSHosts is the effective VCS forge allowlist for this fetch: which https
+	// hosts may be handed to a git subprocess for cross-verification. It is
+	// resolved from the caller's fetch-stage policy (allowed_vcs_hosts) and the
+	// zero value enforces the built-in default set, so a caller that does not
+	// set it behaves exactly as before. It never governs WHETHER git runs —
+	// that is SkipVCSVerify.
+	VCSHosts domain2.VCSHostAllowlist
 }
 
 // FetchResult is the output of Execute.
@@ -242,7 +249,7 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 	log.InfoContext(ctx, "go_mod_blob_stored", slog.String("handle", string(goModHandle)))
 
 	// Step 5: run verification pipeline, accumulating status.
-	verStatus, verDetail, gitRef, retracted := uc.verify(ctx, log, req.Coordinate, dl, zipData, goModData, info, req.SkipVCSVerify, goSumMatched)
+	verStatus, verDetail, gitRef, retracted := uc.verify(ctx, log, req.Coordinate, dl, zipData, goModData, info, req.SkipVCSVerify, goSumMatched, req.VCSHosts)
 
 	// Sign-on-process call site 1: fetch-receive. Sign the received blob over
 	// its canonical content digest, after verification.
@@ -460,10 +467,10 @@ func (uc *FetchModuleUseCase) verifyGoModOnly(
 	log.InfoContext(ctx, "sumdb_unavailable", slog.String("reason", res.Reason))
 	if goSumMatched {
 		return domain2.VerifiedByGoSum,
-			"go.mod-only fetch; go.mod verified against local go.sum; network checksum database unavailable: "+res.Reason,
+			"go.mod-only fetch; go.mod verified against local go.sum; network checksum database unavailable: " + res.Reason,
 			retracted
 	}
-	return domain2.UnverifiedNoSumDB, "go.mod-only fetch; "+res.Reason, retracted
+	return domain2.UnverifiedNoSumDB, "go.mod-only fetch; " + res.Reason, retracted
 }
 
 // checkProjectGoSumGoMod cross-checks a go.mod-only fetch's go.mod h1 against
@@ -552,6 +559,7 @@ func (uc *FetchModuleUseCase) verify(
 	info ports.ModuleInfo,
 	skipVCSVerify bool,
 	goSumMatched bool,
+	vcsHosts domain2.VCSHostAllowlist,
 ) (domain2.VerificationStatus, string, domain2.GitReference, bool) {
 
 	var earlyStatus domain2.VerificationStatus
@@ -619,7 +627,7 @@ func (uc *FetchModuleUseCase) verify(
 	// Verified meaning "git ref resolved, ready to cross-verify" — not that the
 	// zip was reproduced from the git tree. crossVerify is what actually
 	// reproduces it, and it is the only step skipVCSVerify gates.
-	gitRef, vcsStatus, vcsDetail := uc.resolveGitRef(ctx, log, coord, info)
+	gitRef, vcsStatus, vcsDetail := uc.resolveGitRef(ctx, log, coord, info, vcsHosts)
 	switch {
 	case skipVCSVerify:
 		// Cross-verify is skipped (e.g. when GitHub rate limits make git
@@ -709,6 +717,7 @@ func (uc *FetchModuleUseCase) resolveGitRef(
 	log *slog.Logger,
 	coord coordinate.ModuleCoordinate,
 	info ports.ModuleInfo,
+	vcsHosts domain2.VCSHostAllowlist,
 ) (domain2.GitReference, domain2.VerificationStatus, string) {
 	var originRejected string
 	if info.Origin != nil && info.Origin.URL != "" && info.Origin.Hash != "" {
@@ -716,7 +725,7 @@ func (uc *FetchModuleUseCase) resolveGitRef(
 		// Validate the URL/ref/commit before any of it reaches a git subprocess;
 		// a failing claim is treated as a missing Origin (fall through to the
 		// inferred-URL path below), never trusted as Verified.
-		if err := domain2.ValidateOriginForCheckout(info.Origin.URL, info.Origin.Ref, info.Origin.Hash); err != nil {
+		if err := vcsHosts.ValidateOriginForCheckout(info.Origin.URL, info.Origin.Ref, info.Origin.Hash); err != nil {
 			log.WarnContext(ctx, "origin_rejected",
 				slog.String("url", info.Origin.URL),
 				slog.String("error", err.Error()))
@@ -733,7 +742,7 @@ func (uc *FetchModuleUseCase) resolveGitRef(
 		}
 	}
 
-	gitRef, status, detail := uc.resolveInferredGitRef(ctx, log, coord)
+	gitRef, status, detail := uc.resolveInferredGitRef(ctx, log, coord, vcsHosts)
 	// A rejected Origin that the inferred path also could not verify must
 	// surface the rejection as the primary, actionable cause: the
 	// status degraded because we refused untrusted Origin metadata, not merely
@@ -754,6 +763,7 @@ func (uc *FetchModuleUseCase) resolveInferredGitRef(
 	ctx context.Context,
 	log *slog.Logger,
 	coord coordinate.ModuleCoordinate,
+	vcsHosts domain2.VCSHostAllowlist,
 ) (domain2.GitReference, domain2.VerificationStatus, string) {
 	if coord.IsPseudoVersion() {
 		prefix, err := coord.ExtractCommitPrefix()
@@ -761,10 +771,9 @@ func (uc *FetchModuleUseCase) resolveInferredGitRef(
 			return domain2.GitReference{}, domain2.UnverifiedMissingOrigin,
 				fmt.Sprintf("could not extract commit prefix from pseudo-version: %v", err)
 		}
-		repoURL := inferRepoURL(coord.Path)
+		repoURL, detail := inferAllowedRepoURL(coord.Path, vcsHosts)
 		if repoURL == "" {
-			return domain2.GitReference{}, domain2.UnverifiedMissingOrigin,
-				fmt.Sprintf("could not infer VCS URL for %s", coord.Path)
+			return domain2.GitReference{}, domain2.UnverifiedMissingOrigin, detail
 		}
 		log.InfoContext(ctx, "pseudo_version_resolve", slog.String("prefix", prefix), slog.String("url", repoURL))
 		return domain2.GitReference{
@@ -773,10 +782,9 @@ func (uc *FetchModuleUseCase) resolveInferredGitRef(
 		}, domain2.Verified, ""
 	}
 
-	repoURL := inferRepoURL(coord.Path)
+	repoURL, detail := inferAllowedRepoURL(coord.Path, vcsHosts)
 	if repoURL == "" {
-		return domain2.GitReference{}, domain2.UnverifiedMissingOrigin,
-			fmt.Sprintf("could not infer VCS URL for %s", coord.Path)
+		return domain2.GitReference{}, domain2.UnverifiedMissingOrigin, detail
 	}
 	ref := "refs/tags/" + coord.Version
 	commit, err := uc.vcs.ResolveTag(ctx, repoURL, ref)
@@ -1007,6 +1015,24 @@ func goModMatchesPath(goModPath, modulePath string) bool {
 		return false
 	}
 	return f.Module != nil && f.Module.Mod.Path == modulePath
+}
+
+// inferAllowedRepoURL infers a clone URL from a module path and puts it through
+// the same host gate a proxy-supplied Origin faces. An inferred URL is
+// kanonarion's own guess rather than untrusted proxy metadata, but it is still
+// handed to a git subprocess, so a policy that narrows the forge allowlist must
+// govern it too — otherwise "trust github.com only" would still clone gitlab.
+// Returns ("", reason) when no URL can be inferred or the inferred host is off
+// the allowlist; the reason is recorded as the verification detail.
+func inferAllowedRepoURL(modulePath string, vcsHosts domain2.VCSHostAllowlist) (string, string) {
+	repoURL := inferRepoURL(modulePath)
+	if repoURL == "" {
+		return "", fmt.Sprintf("could not infer VCS URL for %s", modulePath)
+	}
+	if err := vcsHosts.ValidateCloneURL(repoURL); err != nil {
+		return "", fmt.Sprintf("inferred VCS URL %s refused: %v", repoURL, err)
+	}
+	return repoURL, ""
 }
 
 // inferRepoURL guesses a git clone URL from a Go module path.

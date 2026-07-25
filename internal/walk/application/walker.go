@@ -8,6 +8,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
+	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	domain2 "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -23,6 +24,17 @@ const defaultWorkerCount = 16
 // rather than silently mis-reporting cached fetches as fresh.
 type forceCapable interface {
 	WithForce(bool) walkports.ModuleFetcher
+}
+
+// vcsHostCapable is implemented by ModuleFetcher adapters that can produce a
+// clone carrying a per-walk VCS forge allowlist — the set of https hosts the
+// fetch stage may hand to git for cross-verification, resolved from the walk's
+// policy. The walker type-asserts against it only when the policy actually
+// overrides the built-in set; a fetcher that cannot accept the override fails
+// the walk rather than quietly cross-verifying against forges the operator
+// excluded (or skipping ones they added).
+type vcsHostCapable interface {
+	WithVCSHosts(fetchdomain.VCSHostAllowlist) walkports.ModuleFetcher
 }
 
 // Walker orchestrates dependency graph resolution and concurrent module fetching.
@@ -172,18 +184,16 @@ func (w *Walker) Walk(ctx context.Context, req WalkRequest) (domain2.WalkOutcome
 	)
 	log.InfoContext(ctx, "walker.start")
 
-	// Resolve the per-walk fetcher. When req.Force is set, swap to a force-mode
-	// clone if the underlying adapter supports it — otherwise the
-	// fact-store cache short-circuits the fetch and --force is a no-op.
-	innerFetcher := w.fetcher
-	if req.Force {
-		if ff, ok := innerFetcher.(forceCapable); ok {
-			innerFetcher = ff.WithForce(true)
-		} else {
-			log.WarnContext(ctx, "walker.force.unsupported",
-				slog.String("reason", "underlying fetcher does not implement WithForce; --force has no effect"),
-			)
-		}
+	// The policy governs both graph traversal (below) and which VCS forges the
+	// fetch stage may cross-verify against, so resolve it before the fetcher.
+	policy := domain2.DefaultDepthPolicy()
+	if req.Policy != nil {
+		policy = *req.Policy
+	}
+
+	innerFetcher, err := w.perWalkFetcher(ctx, log, policy, req.Force)
+	if err != nil {
+		return domain2.WalkOutcome{}, err
 	}
 
 	// All fetches in this walk go through a recorder so per-node FromCache and
@@ -225,11 +235,6 @@ func (w *Walker) Walk(ctx context.Context, req WalkRequest) (domain2.WalkOutcome
 	// Resolve the dependency graph. The resolver shares the recording fetcher
 	// with the walker, so every fetch is observed exactly once with accurate
 	// FromCache and duration_ms.
-	policy := domain2.DefaultDepthPolicy()
-	if req.Policy != nil {
-		policy = *req.Policy
-	}
-
 	var graph domain2.Graph
 	if req.ProjectMode {
 		// Project mode: root at the local main module. Its go.mod is read from
@@ -460,6 +465,54 @@ func (w *Walker) Walk(ctx context.Context, req WalkRequest) (domain2.WalkOutcome
 // On failure the root's synthesised success is replaced with a fetch-failed
 // result, failing the walk: the caller explicitly asked for root analysis, so
 // silently keeping the skip-with-reason root would misreport what ran.
+// perWalkFetcher derives the fetcher this walk will use from the shared
+// adapter: a force-mode clone when --force is set, and a clone carrying the
+// policy's VCS forge allowlist when the policy overrides the built-in set.
+//
+// The default allowlist needs no clone — it is what an unconfigured fetcher
+// already enforces — so only a real override touches the fetcher, and an
+// override the adapter cannot accept is an error rather than a silently ignored
+// security setting. --force is the opposite call: an adapter that cannot force
+// warns and continues, because the walk still produces correct (if cached)
+// results, whereas verifying against forges the operator excluded would report
+// an unauthorised run as clean.
+func (w *Walker) perWalkFetcher(
+	ctx context.Context,
+	log *slog.Logger,
+	policy domain2.DepthPolicy,
+	force bool,
+) (walkports.ModuleFetcher, error) {
+	vcsHosts, err := policy.FetchStage().VCSHostAllowlist()
+	if err != nil {
+		return nil, fmt.Errorf("resolving fetch-stage VCS host allowlist: %w", err)
+	}
+
+	fetcher := w.fetcher
+	if force {
+		if ff, ok := fetcher.(forceCapable); ok {
+			fetcher = ff.WithForce(true)
+		} else {
+			log.WarnContext(ctx, "walker.force.unsupported",
+				slog.String("reason", "underlying fetcher does not implement WithForce; --force has no effect"),
+			)
+		}
+	}
+
+	if !vcsHosts.IsDefault() {
+		vc, ok := fetcher.(vcsHostCapable)
+		if !ok {
+			return nil, fmt.Errorf(
+				"policy sets allowed_vcs_hosts but the module fetcher cannot apply it: %T does not implement WithVCSHosts",
+				fetcher)
+		}
+		fetcher = vc.WithVCSHosts(vcsHosts)
+		log.InfoContext(ctx, "walker.vcs_hosts.override",
+			slog.Any("hosts", vcsHosts.Hosts()),
+		)
+	}
+	return fetcher, nil
+}
+
 func (w *Walker) ingestProjectRoot(
 	ctx context.Context,
 	req WalkRequest,

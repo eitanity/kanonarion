@@ -85,8 +85,8 @@ import (
 	walkretry "github.com/eitanity/kanonarion/internal/walk/adapters/fetcher/retrying"
 	walkgomod "github.com/eitanity/kanonarion/internal/walk/adapters/gomod/xmod"
 	walksqlite "github.com/eitanity/kanonarion/internal/walk/adapters/walks/sqlite"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 	walkapp "github.com/eitanity/kanonarion/internal/walk/application"
+	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
 // Container is the composition root for the CLI. It opens a single mirror.db

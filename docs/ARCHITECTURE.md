@@ -313,12 +313,20 @@ Two distinct mechanisms, deliberately separate:
 
 - **Depth policy** (`DepthPolicy`) - a versioned value object controlling how
   each pipeline stage traverses the graph (`max_depth`, `follow_replace`,
-  `follow_test`, `follow_indirect`). It is loaded once per invocation from a
-  `.kanonarion/policy.yaml` searched upward from the working directory, and
-  snapshotted into every `WalkRecord` that applies it (`PolicyVersion`,
-  `PolicyHash`, `StageDepths`), making each record self-describing and
-  reproducible. It is kept separate from per-invocation parameters (`Force`,
-  `WorkerCount`) because it is organisational and version-controlled.
+  `follow_test`, `follow_indirect`), plus the fetch stage's
+  `allowed_vcs_hosts` - the forge allowlist VCS cross-verification may clone
+  from. It is loaded once per invocation from a `.kanonarion/policy.yaml`
+  searched upward from the working directory, and snapshotted into every
+  `WalkRecord` that applies it (`PolicyVersion`, `PolicyHash`, `StageDepths`),
+  making each record self-describing and reproducible. It is kept separate from
+  per-invocation parameters (`Force`, `WorkerCount`) because it is
+  organisational and version-controlled.
+  `allowed_vcs_hosts` is the one field keyed on presence rather than its zero
+  value (`*[]string`, nil = absent): zero-value-on-omit is safe for a traversal
+  toggle and unsafe for a trust list, where an unrelated edit to the stage must
+  never silently weaken verification. Absent resolves to the built-in set; an
+  explicitly empty list is a load error, because turning verification off is
+  the orthogonal `--skip-vcs-verify`, not a value of the allowlist.
 - **Governance configuration** (the config context) - the licence, directive,
   godebug, vendor, and FIPS policies plus output preferences, a sparse overlay
   on built-in defaults in `<store-root>/config.yaml`. Governance outcomes are

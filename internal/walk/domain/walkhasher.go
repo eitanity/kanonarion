@@ -46,11 +46,18 @@ type canonicalWalkRecord struct {
 
 // canonicalStageDepth is the fixed-field-order form of StageDepth.
 // Fields are in sorted JSON-key order.
+//
+// AllowedVCSHosts is omitempty so a policy that does not override the VCS forge
+// allowlist — every policy authored before the field existed, and every policy
+// that leaves the default in place — hashes exactly as it did before. When an
+// override IS configured it is covered by the walk hash, so the record says
+// which forges the run was willing to cross-verify against.
 type canonicalStageDepth struct {
-	FollowIndirect bool `json:"follow_indirect"`
-	FollowReplace  bool `json:"follow_replace"`
-	FollowTest     bool `json:"follow_test"`
-	MaxDepth       int  `json:"max_depth"`
+	AllowedVCSHosts []string `json:"allowed_vcs_hosts,omitempty"`
+	FollowIndirect  bool     `json:"follow_indirect"`
+	FollowReplace   bool     `json:"follow_replace"`
+	FollowTest      bool     `json:"follow_test"`
+	MaxDepth        int      `json:"max_depth"`
 }
 
 type canonicalWalkGraph struct {
@@ -192,10 +199,11 @@ func marshalCanonicalWalk(r WalkRecord) ([]byte, error) {
 	stageDepths := make(map[string]canonicalStageDepth, len(r.StageDepths))
 	for k, v := range r.StageDepths {
 		stageDepths[k] = canonicalStageDepth{
-			FollowIndirect: v.FollowIndirect,
-			FollowReplace:  v.FollowReplace,
-			FollowTest:     v.FollowTest,
-			MaxDepth:       v.MaxDepth,
+			AllowedVCSHosts: canonicalVCSHosts(v.AllowedVCSHosts),
+			FollowIndirect:  v.FollowIndirect,
+			FollowReplace:   v.FollowReplace,
+			FollowTest:      v.FollowTest,
+			MaxDepth:        v.MaxDepth,
 		}
 	}
 
@@ -249,6 +257,29 @@ func marshalCanonicalWalk(r WalkRecord) ([]byte, error) {
 // is correct, not that the guard is reachable with a real value today — it
 // exists for the never-silent-failure invariant, not a known failure mode.
 var canonicalMarshal = json.Marshal
+
+// canonicalVCSHosts flattens the presence-keyed AllowedVCSHosts pointer into
+// the canonical slice: nil (field absent) and an empty list both serialise as
+// absent. An empty list cannot reach here — the policy loader rejects it — so
+// the two collapse without losing a distinguishable state.
+func canonicalVCSHosts(hosts *[]string) []string {
+	if hosts == nil || len(*hosts) == 0 {
+		return nil
+	}
+	out := make([]string, len(*hosts))
+	copy(out, *hosts)
+	return out
+}
+
+// fromCanonicalVCSHosts is the inverse of canonicalVCSHosts.
+func fromCanonicalVCSHosts(hosts []string) *[]string {
+	if len(hosts) == 0 {
+		return nil
+	}
+	out := make([]string, len(hosts))
+	copy(out, hosts)
+	return &out
+}
 
 func toCanonicalCoord(c coordinate.ModuleCoordinate) canonicalWalkCoord {
 	return canonicalWalkCoord{Path: c.Path, Version: c.Version}
@@ -501,10 +532,11 @@ func (WalkRecordHasher) Unmarshal(data []byte) (WalkRecord, error) {
 	stageDepths := make(map[string]StageDepth, len(c.StageDepths))
 	for k, v := range c.StageDepths {
 		stageDepths[k] = StageDepth{
-			MaxDepth:       v.MaxDepth,
-			FollowReplace:  v.FollowReplace,
-			FollowTest:     v.FollowTest,
-			FollowIndirect: v.FollowIndirect,
+			MaxDepth:        v.MaxDepth,
+			FollowReplace:   v.FollowReplace,
+			FollowTest:      v.FollowTest,
+			FollowIndirect:  v.FollowIndirect,
+			AllowedVCSHosts: fromCanonicalVCSHosts(v.AllowedVCSHosts),
 		}
 	}
 

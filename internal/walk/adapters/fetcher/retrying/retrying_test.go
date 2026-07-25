@@ -80,6 +80,10 @@ func baseOf(f walkports.ModuleFetcher) *Fetcher {
 	switch v := f.(type) {
 	case *forcingFetcher:
 		return v.Fetcher
+	case *vcsFetcher:
+		return v.Fetcher
+	case *forcingVCSFetcher:
+		return v.Fetcher
 	case *Fetcher:
 		return v
 	default:
@@ -407,5 +411,126 @@ func TestDefaultSeamsWait(t *testing.T) {
 	}
 	if elapsed := time.Since(start); elapsed < 10*time.Millisecond {
 		t.Errorf("elapsed %v, want at least the jittered floor of 10ms", elapsed)
+	}
+}
+
+// vcsScriptedFetcher is a scriptedFetcher that also accepts a per-walk VCS
+// forge allowlist.
+type vcsScriptedFetcher struct {
+	*scriptedFetcher
+	hosts *fetchdomain.VCSHostAllowlist
+}
+
+func (f *vcsScriptedFetcher) WithVCSHosts(hosts fetchdomain.VCSHostAllowlist) walkports.ModuleFetcher {
+	f.hosts = &hosts
+	return f
+}
+
+// bothScriptedFetcher has both optional capabilities, like the production
+// adapters/fetcher/local fetcher.
+type bothScriptedFetcher struct {
+	*vcsScriptedFetcher
+}
+
+func (f *bothScriptedFetcher) WithForce(force bool) walkports.ModuleFetcher {
+	f.forced = &force
+	return f
+}
+
+// Declared on the outer type so the clone keeps both capabilities; the embedded
+// vcsScriptedFetcher's method would return the inner type and drop WithForce.
+func (f *bothScriptedFetcher) WithVCSHosts(hosts fetchdomain.VCSHostAllowlist) walkports.ModuleFetcher {
+	f.hosts = &hosts
+	return f
+}
+
+type vcsCapableCheck interface {
+	WithVCSHosts(fetchdomain.VCSHostAllowlist) walkports.ModuleFetcher
+}
+
+type forceCapableCheckIface interface {
+	WithForce(bool) walkports.ModuleFetcher
+}
+
+// The decorator must advertise the VCS-allowlist capability exactly when the
+// wrapped fetcher has it: advertising it over a fetcher that lacks it would
+// drop an operator's allowed_vcs_hosts silently.
+func TestVCSHostCapabilityMirrorsWrappedFetcher(t *testing.T) {
+	plain := New(&scriptedFetcher{}, slog.New(slog.DiscardHandler))
+	if _, ok := plain.(vcsCapableCheck); ok {
+		t.Error("decorator advertises a VCS allowlist over a fetcher that lacks it")
+	}
+
+	inner := &vcsScriptedFetcher{scriptedFetcher: &scriptedFetcher{}}
+	wrapped := New(inner, slog.New(slog.DiscardHandler))
+	vc, ok := wrapped.(vcsCapableCheck)
+	if !ok {
+		t.Fatal("decorator dropped the wrapped fetcher's VCS-allowlist capability")
+	}
+	if _, ok := wrapped.(forceCapableCheckIface); ok {
+		t.Error("decorator advertises force mode over a fetcher that only takes hosts")
+	}
+
+	want, err := fetchdomain.NewVCSHostAllowlist([]string{"github.com"})
+	if err != nil {
+		t.Fatalf("building allowlist: %v", err)
+	}
+	clone := vc.WithVCSHosts(want)
+	if inner.hosts == nil {
+		t.Fatal("WithVCSHosts not passed through to the wrapped fetcher")
+	}
+	if inner.hosts.IsAllowed("gitlab.com") {
+		t.Error("the wrapped fetcher received the wrong allowlist")
+	}
+	if _, ok := clone.(vcsCapableCheck); !ok {
+		t.Error("the clone lost the VCS-allowlist capability")
+	}
+}
+
+// A fetcher with both capabilities must keep both across either clone, so
+// --force and allowed_vcs_hosts compose instead of cancelling each other.
+func TestBothCapabilitiesSurviveEitherClone(t *testing.T) {
+	inner := &bothScriptedFetcher{vcsScriptedFetcher: &vcsScriptedFetcher{scriptedFetcher: &scriptedFetcher{}}}
+	wrapped := New(inner, slog.New(slog.DiscardHandler))
+
+	fc, ok := wrapped.(forceCapableCheckIface)
+	if !ok {
+		t.Fatal("decorator dropped force capability")
+	}
+	hosts, err := fetchdomain.NewVCSHostAllowlist([]string{"github.com"})
+	if err != nil {
+		t.Fatalf("building allowlist: %v", err)
+	}
+	forced := fc.WithForce(true)
+	vc, ok := forced.(vcsCapableCheck)
+	if !ok {
+		t.Fatal("the force clone lost the VCS-allowlist capability")
+	}
+	both := vc.WithVCSHosts(hosts)
+	if _, ok := both.(forceCapableCheckIface); !ok {
+		t.Error("the allowlist clone lost force capability")
+	}
+	if inner.forced == nil || !*inner.forced {
+		t.Error("force not passed through")
+	}
+	if inner.hosts == nil || inner.hosts.IsAllowed("gitlab.com") {
+		t.Error("allowlist not passed through")
+	}
+}
+
+// The variants whose inner lost a capability (only reachable by constructing
+// one directly) return themselves rather than panicking.
+func TestCapabilityCloneOverIncapableInnerReturnsSelf(t *testing.T) {
+	base := baseOf(New(&scriptedFetcher{}, slog.New(slog.DiscardHandler)))
+	v := &vcsFetcher{Fetcher: base}
+	if got := v.WithVCSHosts(fetchdomain.DefaultVCSHostAllowlist()); got != walkports.ModuleFetcher(v) {
+		t.Error("WithVCSHosts over an incapable inner did not return the decorator unchanged")
+	}
+	fv := &forcingVCSFetcher{Fetcher: base}
+	if got := fv.WithVCSHosts(fetchdomain.DefaultVCSHostAllowlist()); got != walkports.ModuleFetcher(fv) {
+		t.Error("WithVCSHosts over an incapable inner did not return the decorator unchanged")
+	}
+	if got := fv.WithForce(true); got != walkports.ModuleFetcher(fv) {
+		t.Error("WithForce over an incapable inner did not return the decorator unchanged")
 	}
 }

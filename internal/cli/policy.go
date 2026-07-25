@@ -155,14 +155,25 @@ func runPolicyShow(ctx context.Context, policyPath string, stdout, stderr io.Wri
 }
 
 func writePolicyJSON(w io.Writer, policy walkdomain.DepthPolicy, hash string) error {
+	// The effective VCS forge allowlist is reported explicitly, resolved rather
+	// than as authored: a policy that omits allowed_vcs_hosts still verifies
+	// against the built-in set, and an operator syncing an egress allowlist
+	// (e.g. harden-runner) needs the set that will actually be contacted, not
+	// the absence of a field.
+	vcsHosts, err := policy.FetchStage().VCSHostAllowlist()
+	if err != nil {
+		return fmt.Errorf("resolving fetch-stage VCS host allowlist: %w", err)
+	}
 	out := struct {
-		Version     string                           `json:"version"`
-		PolicyHash  string                           `json:"policy_hash,omitempty"`
-		StageDepths map[string]walkdomain.StageDepth `json:"stage_depths"`
+		Version           string                           `json:"version"`
+		PolicyHash        string                           `json:"policy_hash,omitempty"`
+		StageDepths       map[string]walkdomain.StageDepth `json:"stage_depths"`
+		EffectiveVCSHosts []string                         `json:"effective_vcs_hosts"`
 	}{
-		Version:     policy.Version,
-		PolicyHash:  hash,
-		StageDepths: policy.Stages,
+		Version:           policy.Version,
+		PolicyHash:        hash,
+		StageDepths:       policy.Stages,
+		EffectiveVCSHosts: vcsHosts.Hosts(),
 	}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")

@@ -91,4 +91,3 @@ func TestDetermineStatus_AxesIndependent(t *testing.T) {
 		t.Errorf("findings = %q, want Affected — the fact the collapsed word discards", got)
 	}
 }
-
