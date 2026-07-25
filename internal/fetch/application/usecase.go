@@ -215,17 +215,36 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 		}
 	}
 
-	// Step 2: proxy info.
+	// Step 1b: a forced run re-measures, which does not mean it must re-transfer.
+	// When the artefacts are already held and still hash to what was recorded,
+	// the bytes are re-established locally and only the network anchors are
+	// re-queried, so the record carries the same class of anchor as a fresh
+	// acquisition without spending the download. It falls through to the proxy
+	// when there is nothing to revalidate against, when the artefacts are gone,
+	// or when the held bytes disagree with the record — see tryRevalidate.
+	revalidated, err := uc.revalidateIfForced(ctx, log, req)
+	if err != nil {
+		return FetchResult{}, err
+	}
+
+	// Step 2: proxy info. Still queried when revalidating: the origin block is
+	// part of the measurement, not part of the bytes.
 	info, err := uc.proxy.Info(ctx, req.Coordinate)
 	if err != nil {
 		return FetchResult{}, fmt.Errorf("proxy info: %w", err)
 	}
 	log.InfoContext(ctx, "proxy_info_ok", slog.String("version", info.Version))
 
-	// Step 3: download zip + go.mod. Hashes are computed from bytes by adapter.
-	dl, err := uc.proxy.Download(ctx, req.Coordinate)
-	if err != nil {
-		return FetchResult{}, fmt.Errorf("proxy download: %w", err)
+	// Step 3: obtain zip + go.mod — from the store when revalidating, otherwise
+	// from the proxy. Hashes are computed from the bytes either way.
+	dl := ports.ModuleDownload{}
+	if revalidated != nil {
+		dl = revalidated.download
+	} else {
+		dl, err = uc.proxy.Download(ctx, req.Coordinate)
+		if err != nil {
+			return FetchResult{}, fmt.Errorf("proxy download: %w", err)
+		}
 	}
 	defer func() {
 		if cerr := dl.Zip.Close(); cerr != nil && retErr == nil {
@@ -263,17 +282,24 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 	// does not choose the address: the same artefact acquired by any route lands
 	// at the same place, which is what makes a module-cache measurement and a
 	// network measurement describe one artefact instead of two.
+	//
+	// A revalidating run stores NOTHING. The bytes came out of the store and were
+	// just shown to be the recorded ones, so there is nothing to write; a Put
+	// here would be a no-op that obscures whether a forced run transferred
+	// anything at all.
 	zipIdentity := ports.BlobIdentity{Kind: ports.BlobKindZip, Hash: dl.ZipHash}
-	if err := uc.blobs.Put(ctx, zipIdentity, newReader(zipData)); err != nil {
-		return FetchResult{}, fmt.Errorf("storing zip blob: %w", err)
-	}
-	log.InfoContext(ctx, "blob_stored", slog.String("identity", zipIdentity.String()))
-
 	goModIdentity := ports.BlobIdentity{Kind: ports.BlobKindGoMod, Hash: dl.GoModHash}
-	if err := uc.blobs.Put(ctx, goModIdentity, newReader(goModData)); err != nil {
-		return FetchResult{}, fmt.Errorf("storing go.mod blob: %w", err)
+	if revalidated == nil {
+		if err := uc.blobs.Put(ctx, zipIdentity, newReader(zipData)); err != nil {
+			return FetchResult{}, fmt.Errorf("storing zip blob: %w", err)
+		}
+		log.InfoContext(ctx, "blob_stored", slog.String("identity", zipIdentity.String()))
+
+		if err := uc.blobs.Put(ctx, goModIdentity, newReader(goModData)); err != nil {
+			return FetchResult{}, fmt.Errorf("storing go.mod blob: %w", err)
+		}
+		log.InfoContext(ctx, "go_mod_blob_stored", slog.String("identity", goModIdentity.String()))
 	}
-	log.InfoContext(ctx, "go_mod_blob_stored", slog.String("identity", goModIdentity.String()))
 
 	// Step 5: run verification pipeline, accumulating status.
 	verStatus, verDetail, gitRef, retracted, sumdbLookupFailed := uc.verify(ctx, log, req.Coordinate, dl, zipData, goModData, info, req.SkipVCSVerify, goSumMatched, req.VCSHosts)
@@ -301,7 +327,7 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 		Retracted:          retracted,
 		SumDBLookupFailed:  sumdbLookupFailed,
 		AcquisitionMode:    domain2.AcquisitionProxy,
-		MeasurementKind:    domain2.MeasurementAcquired,
+		MeasurementKind:    measurementKind(revalidated != nil),
 		SumDBCheck:         domain2.LegRechecked,
 		VCSCheck:           vcsLeg(req.SkipVCSVerify),
 	}
@@ -502,6 +528,17 @@ func (uc *FetchModuleUseCase) cachedArtefactsReadable(ctx context.Context, log *
 		}
 	}
 	return true
+}
+
+// measurementKind names what a measurement did: revalidated when the artefact
+// was already held and re-hashed to the recorded digest, acquired when the bytes
+// were transferred. It is the difference between a run that spent the network on
+// bytes and one that spent it only on anchors.
+func measurementKind(revalidated bool) domain2.MeasurementKind {
+	if revalidated {
+		return domain2.MeasurementRevalidated
+	}
+	return domain2.MeasurementAcquired
 }
 
 // vcsLeg reports how this measurement came by its VCS cross-verification leg. A

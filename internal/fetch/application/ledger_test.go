@@ -1,14 +1,21 @@
 package application_test
 
 import (
+	"archive/zip"
+	"bytes"
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
+	"github.com/eitanity/kanonarion/internal/adapters/ziparchive"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/fetch/application"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
+	"golang.org/x/mod/sumdb/dirhash"
 )
 
 // A --skip-vcs --force run INHERITS the VCS leg an earlier measurement
@@ -152,6 +159,158 @@ func TestExecute_ForceAppendsWithoutDestroyingTheEarlierMeasurement(t *testing.T
 	if !forced.Record.FirstFetchedAt.Equal(first.Record.FirstFetchedAt) {
 		t.Errorf("a forced re-measurement moved first-seen from %v to %v; the artefact was first seen when it was first seen",
 			first.Record.FirstFetchedAt, forced.Record.FirstFetchedAt)
+	}
+}
+
+// realZipProxy is a fake proxy serving a genuine module zip whose reported h1 is
+// the zip's actual hash. Revalidation re-hashes the bytes it holds, so a proxy
+// serving placeholder bytes cannot exercise it — the placeholder fails to hash
+// and the run correctly declines to revalidate.
+func realZipProxy(t *testing.T, coord coordinateFor) (*fakeProxy, []byte) {
+	t.Helper()
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+	f, err := zw.Create(coord.Path + "@" + coord.Version + "/go.mod")
+	if err != nil {
+		t.Fatalf("creating zip entry: %v", err)
+	}
+	if _, err := io.WriteString(f, "module "+coord.Path+"\n"); err != nil {
+		t.Fatalf("writing zip entry: %v", err)
+	}
+	if err := zw.Close(); err != nil {
+		t.Fatalf("closing zip: %v", err)
+	}
+	zipData := buf.Bytes()
+
+	zipHashStr, err := ziparchive.HashModuleZip(zipData)
+	if err != nil {
+		t.Fatalf("hashing test zip: %v", err)
+	}
+	zipHash, err := domain2.ParseModuleHash(zipHashStr)
+	if err != nil {
+		t.Fatalf("parsing test zip hash: %v", err)
+	}
+	goMod := "module " + coord.Path + "\n"
+	goModHashStr, err := dirhash.Hash1([]string{"go.mod"}, func(string) (io.ReadCloser, error) {
+		return io.NopCloser(strings.NewReader(goMod)), nil
+	})
+	if err != nil {
+		t.Fatalf("hashing test go.mod: %v", err)
+	}
+	goModHash, err := domain2.ParseModuleHash(goModHashStr)
+	if err != nil {
+		t.Fatalf("parsing test go.mod hash: %v", err)
+	}
+
+	p := newProxyWithOrigin()
+	p.downloads = map[string]fakeDownload{
+		coord.String(): {
+			zipData:   string(zipData),
+			goModData: goMod,
+			zipHash:   zipHash,
+			goModHash: goModHash,
+		},
+	}
+	return p, zipData
+}
+
+// coordinateFor names the coordinate type the helper takes, so its signature
+// reads the same as the port it feeds.
+type coordinateFor = coordinate.ModuleCoordinate
+
+// countingBlob counts writes so a test can assert a forced run transferred
+// nothing.
+type countingBlob struct {
+	*fakeBlob
+	puts int
+}
+
+func (b *countingBlob) Put(ctx context.Context, identity ports.BlobIdentity, r io.Reader) error {
+	b.puts++
+	return b.fakeBlob.Put(ctx, identity, r)
+}
+
+// A forced run over intact artefacts REVALIDATES: it re-queries the network
+// anchors but does not re-download the bytes, and it writes no blob.
+//
+// A forced run means "re-measure this module now". The decisive part of a
+// measurement is the anchors — the checksum database and the VCS cross-check —
+// and those are re-queried either way. Re-transferring bytes that are already
+// held and still hash to what was recorded re-establishes locally-establishable
+// facts at network cost, and storing them again is a no-op that hides whether
+// the run transferred anything at all.
+func TestExecute_ForceOverIntactArtefactsRevalidatesWithoutTransferring(t *testing.T) {
+	facts := newFakeFacts()
+	blobs := &countingBlob{fakeBlob: newFakeBlob()}
+	proxy, _ := realZipProxy(t, testCoord)
+	uc := newUseCase(proxy, &fakeVCS{}, blobs, facts)
+	ctx := context.Background()
+
+	if _, err := uc.Execute(ctx, application.FetchRequest{Coordinate: testCoord}); err != nil {
+		t.Fatalf("first Execute: %v", err)
+	}
+	putsAfterAcquire, zipsAfterAcquire := blobs.puts, proxy.zipDownloads
+	if putsAfterAcquire == 0 {
+		t.Fatal("the acquiring run stored no artefacts")
+	}
+
+	forced, err := uc.Execute(ctx, application.FetchRequest{Coordinate: testCoord, Force: true})
+	if err != nil {
+		t.Fatalf("forced Execute: %v", err)
+	}
+
+	if got := forced.Record.MeasurementKind; got != string(domain2.MeasurementRevalidated) {
+		t.Errorf("MeasurementKind = %q, want %q: the forced run re-transferred instead of revalidating",
+			got, domain2.MeasurementRevalidated)
+	}
+	if blobs.puts != putsAfterAcquire {
+		t.Errorf("a revalidating run wrote %d blob(s); it must write none, the bytes were already there",
+			blobs.puts-putsAfterAcquire)
+	}
+	if proxy.zipDownloads != zipsAfterAcquire {
+		t.Errorf("a revalidating run downloaded %d zip(s); intact bytes must not be re-transferred",
+			proxy.zipDownloads-zipsAfterAcquire)
+	}
+	// The anchors ARE re-queried, so the record carries the same class of anchor
+	// as a fresh acquisition.
+	if domain2.LegProvenance(forced.Record.SumDBCheck) != domain2.LegRechecked {
+		t.Errorf("sumdb leg = %q, want rechecked: a revalidation must still query the anchors",
+			forced.Record.SumDBCheck)
+	}
+}
+
+// When the held bytes do NOT match the record describing them, the run
+// downloads a clean copy rather than trusting them — a contradiction is a
+// finding, not a cache hit.
+func TestExecute_ForceOverCorruptedArtefactsDownloadsInstead(t *testing.T) {
+	facts := newFakeFacts()
+	blobs := &countingBlob{fakeBlob: newFakeBlob()}
+	proxy, _ := realZipProxy(t, testCoord)
+	uc := newUseCase(proxy, &fakeVCS{}, blobs, facts)
+	ctx := context.Background()
+
+	first, err := uc.Execute(ctx, application.FetchRequest{Coordinate: testCoord})
+	if err != nil {
+		t.Fatalf("first Execute: %v", err)
+	}
+	zipsAfterAcquire := proxy.zipDownloads
+
+	// Replace the held zip with bytes that do not hash to the record.
+	identity := fetchtest.ZipIdentity(t, first.Record.FactRecord)
+	if err := blobs.fakeBlob.Put(ctx, identity, strings.NewReader("not the recorded bytes")); err != nil {
+		t.Fatalf("corrupting the held artefact: %v", err)
+	}
+
+	forced, err := uc.Execute(ctx, application.FetchRequest{Coordinate: testCoord, Force: true})
+	if err != nil {
+		t.Fatalf("forced Execute: %v", err)
+	}
+	if got := forced.Record.MeasurementKind; got != string(domain2.MeasurementAcquired) {
+		t.Errorf("MeasurementKind = %q, want %q: corrupted bytes must not be revalidated",
+			got, domain2.MeasurementAcquired)
+	}
+	if proxy.zipDownloads == zipsAfterAcquire {
+		t.Error("no zip was downloaded after the held bytes disagreed with the record")
 	}
 }
 
