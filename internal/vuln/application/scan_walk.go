@@ -833,10 +833,14 @@ func (uc *ScanWalkUseCase) populateScannedBuildListDeps(ctx context.Context, coo
 // reads the go.mod of every entry in its require block regardless of block.
 func (uc *ScanWalkUseCase) nodeGoModRequires(ctx context.Context, coord coordinate.ModuleCoordinate) ([]coordinate.ModuleCoordinate, bool) {
 	fact, ok, err := uc.moduleScanner.getFetchRecord(ctx, coord)
-	if err != nil || !ok || fact.GoModLocation == "" {
+	if err != nil || !ok {
 		return nil, false
 	}
-	rc, err := uc.moduleScanner.blobs.Get(ctx, fetchports.BlobHandle(fact.GoModLocation))
+	goModIdentity, hasGoMod, err := fetchports.GoModIdentity(fact)
+	if err != nil || !hasGoMod {
+		return nil, false
+	}
+	rc, err := uc.moduleScanner.blobs.Get(ctx, goModIdentity)
 	if err != nil {
 		return nil, false
 	}
@@ -892,10 +896,14 @@ func (uc *ScanWalkUseCase) prePruningNodes(ctx context.Context, graph walkdomain
 // empty version — which PrePruning treats as pre-pruning.
 func (uc *ScanWalkUseCase) nodeGoVersion(ctx context.Context, coord coordinate.ModuleCoordinate) (string, bool) {
 	fact, ok, err := uc.moduleScanner.getFetchRecord(ctx, coord)
-	if err != nil || !ok || fact.GoModLocation == "" {
+	if err != nil || !ok {
 		return "", false
 	}
-	rc, err := uc.moduleScanner.blobs.Get(ctx, fetchports.BlobHandle(fact.GoModLocation))
+	goModIdentity, hasGoMod, err := fetchports.GoModIdentity(fact)
+	if err != nil || !hasGoMod {
+		return "", false
+	}
+	rc, err := uc.moduleScanner.blobs.Get(ctx, goModIdentity)
 	if err != nil {
 		return "", false
 	}

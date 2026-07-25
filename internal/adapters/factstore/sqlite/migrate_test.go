@@ -24,7 +24,7 @@ func TestOpen_FileDB(t *testing.T) {
 
 	// Verify the schema is usable.
 	r := sampleRecord(t, "github.com/test/pkg", "v1.0.0", "0.1.0")
-	if err := s.PutFetchRecord(context.Background(), r); err != nil {
+	if err := s.PutFetchRecord(context.Background(), mustSeal(t, r)); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 }
@@ -52,7 +52,7 @@ func TestOpen_ReopenMigration(t *testing.T) {
 
 	// Should be functional.
 	r := sampleRecord(t, "example.com/x", "v1.0.0", "0.1.0")
-	if err := s2.PutFetchRecord(context.Background(), r); err != nil {
+	if err := s2.PutFetchRecord(context.Background(), mustSeal(t, r)); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 }
@@ -65,10 +65,10 @@ func TestGetFetchRecord_MultiplePipelineVersions(t *testing.T) {
 	r2 := sampleRecord(t, "example.com/m", "v1.0.0", "0.2.0")
 	// r2 has a different pipeline version so its content hash differs automatically.
 
-	if err := s.PutFetchRecord(ctx, r1); err != nil {
+	if err := s.PutFetchRecord(ctx, mustSeal(t, r1)); err != nil {
 		t.Fatal(err)
 	}
-	if err := s.PutFetchRecord(ctx, r2); err != nil {
+	if err := s.PutFetchRecord(ctx, mustSeal(t, r2)); err != nil {
 		t.Fatal(err)
 	}
 

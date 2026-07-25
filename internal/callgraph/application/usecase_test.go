@@ -15,6 +15,7 @@ import (
 	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 )
@@ -40,22 +41,30 @@ func buildUseCase(facts *fakeFactStore, blobs *fakeBlobStore, store *fakeCallGra
 	})
 }
 
-func storeFetchRecord(t testing.TB, facts *fakeFactStore, blobs *fakeBlobStore, coord coordinate.ModuleCoordinate) fetchports.BlobHandle {
+func storeFetchRecord(t testing.TB, facts *fakeFactStore, blobs *fakeBlobStore, coord coordinate.ModuleCoordinate) fetchports.BlobIdentity {
 	// Create a minimal zip blob.
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	zw.Close() //nolint:errcheck,gosec
-	handle := fetchports.BlobHandle("blob:test")
-	blobs.blobs = map[fetchports.BlobHandle][]byte{handle: buf.Bytes()}
 
 	r := fetchtest.Record(
 		t,
 		fetchtest.Coordinate(coord),
 		fetchtest.PipelineVersion(testFetchPipV),
-		fetchtest.Content(string(handle)),
+		fetchtest.Content("blob:test"),
 	)
-	facts.PutFetchRecord(context.Background(), r) //nolint:errcheck,gosec
-	return handle
+	// Key the blob by the artefact identity the record carries: that is the
+	// address production asks the store for, and no other address resolves.
+	identity := fetchtest.ZipIdentity(t, r)
+	blobs.blobs = map[string][]byte{identity.String(): buf.Bytes()}
+
+	facts.PutFetchRecord(context.Background(), fetchtest.Sealed( //nolint:errcheck,gosec
+		t,
+		fetchtest.Coordinate(coord),
+		fetchtest.PipelineVersion(testFetchPipV),
+		fetchtest.Content("blob:test"),
+	))
+	return identity
 }
 
 func TestExecute_CacheHit(t *testing.T) {
@@ -283,12 +292,12 @@ func TestExecute_SameFetchAndCallgraphPipelineVersion(t *testing.T) {
 	// Use identical pipeline versions — requireFetchRecord should de-duplicate.
 	const samePV = "0.1.0"
 	r := fetchtest.Record(t, fetchtest.Coordinate(testCoord), fetchtest.PipelineVersion(samePV), fetchtest.Content("blob:test"))
-	facts.PutFetchRecord(context.Background(), r) //nolint:errcheck,gosec
+	facts.PutFetchRecord(context.Background(), fetchtest.Sealed(t, fetchtest.Coordinate(testCoord), fetchtest.PipelineVersion(samePV), fetchtest.Content("blob:test"))) //nolint:errcheck,gosec
 
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	zw.Close() //nolint:errcheck,gosec
-	blobs.blobs = map[fetchports.BlobHandle][]byte{"blob:test": buf.Bytes()}
+	blobs.blobs = map[string][]byte{fetchtest.ZipIdentity(t, r).String(): buf.Bytes()}
 
 	analyser := &fakeAnalyser{
 		record: domain2.CallGraphRecord{
@@ -346,12 +355,16 @@ func TestExecute_EmptyFetchPipelineVersion(t *testing.T) {
 		fetchtest.PipelineVersion(testPipelineV),
 		fetchtest.Content("blob:test"),
 	)
-	facts.PutFetchRecord(context.Background(), r) //nolint:errcheck,gosec
+	sealed, serr := fetchdomain.Rehydrate(r)
+	if serr != nil {
+		t.Fatalf("sealing record: %v", serr)
+	}
+	facts.PutFetchRecord(context.Background(), sealed) //nolint:errcheck,gosec
 
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	zw.Close() //nolint:errcheck,gosec
-	blobs.blobs = map[fetchports.BlobHandle][]byte{"blob:test": buf.Bytes()}
+	blobs.blobs = map[string][]byte{fetchtest.ZipIdentity(t, r).String(): buf.Bytes()}
 
 	analyser := &fakeAnalyser{
 		record: domain2.CallGraphRecord{
@@ -473,32 +486,31 @@ func TestExecute_ExcludedByConfig(t *testing.T) {
 // modelling an object-store backend. It forces the use case to materialise the
 // blob to a temp file before handing a path to the analyser.
 type pathlessBlobStore struct {
-	blobs map[fetchports.BlobHandle][]byte
+	blobs map[string][]byte
 }
 
-func (s *pathlessBlobStore) Put(_ context.Context, r io.Reader) (fetchports.BlobHandle, error) {
+func (s *pathlessBlobStore) Put(_ context.Context, identity fetchports.BlobIdentity, r io.Reader) error {
 	data, err := io.ReadAll(r)
 	if err != nil {
-		return "", err //nolint:wrapcheck // test fake
+		return err //nolint:wrapcheck // test fake
 	}
-	h := fetchports.BlobHandle("blob:test")
 	if s.blobs == nil {
-		s.blobs = map[fetchports.BlobHandle][]byte{}
+		s.blobs = map[string][]byte{}
 	}
-	s.blobs[h] = data
-	return h, nil
+	s.blobs[identity.String()] = data
+	return nil
 }
 
-func (s *pathlessBlobStore) Get(_ context.Context, h fetchports.BlobHandle) (io.ReadCloser, error) {
-	data, ok := s.blobs[h]
+func (s *pathlessBlobStore) Get(_ context.Context, identity fetchports.BlobIdentity) (io.ReadCloser, error) {
+	data, ok := s.blobs[identity.String()]
 	if !ok {
 		return nil, errBlobNotFound
 	}
 	return io.NopCloser(bytes.NewReader(data)), nil
 }
 
-func (s *pathlessBlobStore) Exists(_ context.Context, h fetchports.BlobHandle) (bool, error) {
-	_, ok := s.blobs[h]
+func (s *pathlessBlobStore) Exists(_ context.Context, identity fetchports.BlobIdentity) (bool, error) {
+	_, ok := s.blobs[identity.String()]
 	return ok, nil
 }
 
@@ -544,15 +556,17 @@ func TestExecute_MaterialisesBlobWhenNoPathOptimizer(t *testing.T) {
 	}
 	zipBytes := buf.Bytes()
 
-	handle := fetchports.BlobHandle("blob:test")
-	blobs := &pathlessBlobStore{blobs: map[fetchports.BlobHandle][]byte{handle: zipBytes}}
-	facts := &fakeFactStore{}
-	facts.PutFetchRecord(context.Background(), fetchtest.Record( //nolint:errcheck,gosec
-		t,
+	opts := []fetchtest.Option{
 		fetchtest.Coordinate(testCoord),
 		fetchtest.PipelineVersion(testFetchPipV),
-		fetchtest.Content(string(handle)),
-	))
+		fetchtest.Content("blob:test"),
+	}
+	rec := fetchtest.Record(t, opts...)
+	blobs := &pathlessBlobStore{blobs: map[string][]byte{
+		fetchtest.ZipIdentity(t, rec).String(): zipBytes,
+	}}
+	facts := &fakeFactStore{}
+	facts.PutFetchRecord(context.Background(), fetchtest.Sealed(t, opts...)) //nolint:errcheck,gosec
 	analyser := &pathReadingAnalyser{record: domain2.CallGraphRecord{
 		SchemaVersion: domain2.CallGraphSchemaVersion,
 		Algorithm:     domain2.AlgorithmCHA,

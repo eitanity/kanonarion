@@ -33,6 +33,33 @@ func coord(path, version string) coordinate.ModuleCoordinate {
 }
 
 // makeFactRecord builds a minimal FactRecord whose ContentLocation is "path@version".
+// makeComposite is what a fetcher hands back: the artefact as the ledger knows
+// it, composed from its measurements.
+func makeComposite(t testing.TB, path, version string) domain2.CompositeRecord {
+	c, err := domain2.Compose([]domain2.FactRecord{makeFactRecord(t, path, version)})
+	if err != nil {
+		t.Fatalf("composing fetch record: %v", err)
+	}
+	return c
+}
+
+// mustComposeOne is the composed view of a single measurement, for tests that
+// build a record by hand and hand it to a fetcher.
+func mustComposeOne(t testing.TB, r domain2.FactRecord) domain2.CompositeRecord {
+	t.Helper()
+	c, err := domain2.Compose([]domain2.FactRecord{r})
+	if err != nil {
+		t.Fatalf("composing fetch record: %v", err)
+	}
+	return c
+}
+
+// seedZipBlob stores a module zip under the artefact identity the record
+// carries, which is the only address the resolver asks for.
+func seedZipBlob(t testing.TB, blobs *fakeBlobStore, rec domain2.FactRecord, zip []byte) {
+	blobs.data[fetchtest.ZipIdentity(t, rec).String()] = zip
+}
+
 func makeFactRecord(t testing.TB, path, version string) domain2.FactRecord {
 	return fetchtest.Record(
 		t,
@@ -46,7 +73,7 @@ func makeFactRecord(t testing.TB, path, version string) domain2.FactRecord {
 // ---- fake implementations ----
 
 type fakeModuleFetcher struct {
-	records map[string]domain2.FactRecord
+	records map[string]domain2.CompositeRecord
 	errors  map[string]error
 
 	mu        sync.Mutex
@@ -55,7 +82,7 @@ type fakeModuleFetcher struct {
 
 func newFakeFetcher() *fakeModuleFetcher {
 	return &fakeModuleFetcher{
-		records:   make(map[string]domain2.FactRecord),
+		records:   make(map[string]domain2.CompositeRecord),
 		errors:    make(map[string]error),
 		requested: make(map[string]bool),
 	}
@@ -76,16 +103,26 @@ func (f *fakeModuleFetcher) fetched(path string) bool {
 func (f *fakeModuleFetcher) add(t testing.TB, path, version, goModContent string, blobs *fakeBlobStore) {
 	c := coord(path, version)
 	rec := makeFactRecord(t, path, version)
-	f.records[c.String()] = rec
-	blobs.data[path+"@"+version] = buildFakeZip(path, version, goModContent)
+	f.records[c.String()] = makeComposite(t, path, version)
+	seedZipBlob(t, blobs, rec, buildFakeZip(path, version, goModContent))
 }
 
 func (f *fakeModuleFetcher) addRetracted(t testing.TB, path, version, goModContent string, blobs *fakeBlobStore) {
 	c := coord(path, version)
 	rec := makeFactRecord(t, path, version)
 	rec.Retracted = true
-	f.records[c.String()] = rec
-	blobs.data[path+"@"+version] = buildFakeZip(path, version, goModContent)
+	// Re-seal: Retracted is covered by the content hash, so a record mutated
+	// after sealing no longer verifies and composition would refuse it.
+	resealed, err := domain2.CanonicalHasher{}.SetContentHash(rec)
+	if err != nil {
+		t.Fatalf("re-sealing retracted record: %v", err)
+	}
+	composed, cerr := domain2.Compose([]domain2.FactRecord{resealed})
+	if cerr != nil {
+		t.Fatalf("composing retracted record: %v", cerr)
+	}
+	f.records[c.String()] = composed
+	seedZipBlob(t, blobs, resealed, buildFakeZip(path, version, goModContent))
 }
 
 func (f *fakeModuleFetcher) addError(path, version string, err error) {
@@ -131,29 +168,29 @@ func newFakeBlobStore() *fakeBlobStore {
 	return &fakeBlobStore{data: make(map[string][]byte)}
 }
 
-func (b *fakeBlobStore) Put(_ context.Context, _ io.Reader) (fetchports.BlobHandle, error) {
-	return "", errors.New("fakeBlobStore.Put not implemented")
+func (b *fakeBlobStore) Put(_ context.Context, identity fetchports.BlobIdentity, _ io.Reader) error {
+	return errors.New("fakeBlobStore.Put not implemented")
 }
 
-func (b *fakeBlobStore) Get(_ context.Context, handle fetchports.BlobHandle) (io.ReadCloser, error) {
-	d, ok := b.data[string(handle)]
+func (b *fakeBlobStore) Get(_ context.Context, identity fetchports.BlobIdentity) (io.ReadCloser, error) {
+	d, ok := b.data[identity.String()]
 	if !ok {
-		return nil, fmt.Errorf("blob not found: %s", handle)
+		return nil, fmt.Errorf("blob not found: %s", identity)
 	}
 	return io.NopCloser(bytes.NewReader(d)), nil
 }
 
-func (b *fakeBlobStore) Exists(_ context.Context, handle fetchports.BlobHandle) (bool, error) {
-	_, ok := b.data[string(handle)]
+func (b *fakeBlobStore) Exists(_ context.Context, identity fetchports.BlobIdentity) (bool, error) {
+	_, ok := b.data[identity.String()]
 	return ok, nil
 }
 
-func (b *fakeBlobStore) GetPath(_ context.Context, handle fetchports.BlobHandle) (string, error) {
-	_, ok := b.data[string(handle)]
+func (b *fakeBlobStore) GetPath(_ context.Context, identity fetchports.BlobIdentity) (string, error) {
+	_, ok := b.data[identity.String()]
 	if !ok {
-		return "", fmt.Errorf("blob not found: %s", handle)
+		return "", fmt.Errorf("blob not found: %s", identity)
 	}
-	return "/fake/path/" + string(handle), nil
+	return "/fake/path/" + identity.String(), nil
 }
 
 type fixedClock struct{ t time.Time }
@@ -305,8 +342,8 @@ require github.com/dep/one v1.2.3
 	depRec.ZipSHA256 = "dep256"
 	depRec.ZipSHA384 = "dep384"
 	depRec.ZipSHA512 = "dep512"
-	fetcher.records[coord("github.com/dep/one", "v1.2.3").String()] = depRec
-	blobs.data["github.com/dep/one@v1.2.3"] = buildFakeZip("github.com/dep/one", "v1.2.3", "module github.com/dep/one\n\ngo 1.21\n")
+	fetcher.records[coord("github.com/dep/one", "v1.2.3").String()] = mustComposeOne(t, depRec)
+	seedZipBlob(t, blobs, depRec, buildFakeZip("github.com/dep/one", "v1.2.3", "module github.com/dep/one\n\ngo 1.21\n"))
 
 	r := newResolver(fetcher, blobs)
 	g, err := r.Resolve(context.Background(), coord("example.com/target", "v1.0.0"), domain3.DefaultDepthPolicy().FetchStage())
@@ -554,8 +591,8 @@ require example.com/bad v1.0.0
 `, blobs)
 	// Register a FactRecord but put invalid go.mod content in the zip.
 	rec := makeFactRecord(t, "example.com/bad", "v1.0.0")
-	fetcher.records["example.com/bad@v1.0.0"] = rec
-	blobs.data["example.com/bad@v1.0.0"] = buildFakeZip("example.com/bad", "v1.0.0", "this is not valid go.mod ;;;")
+	fetcher.records["example.com/bad@v1.0.0"] = mustComposeOne(t, rec)
+	seedZipBlob(t, blobs, rec, buildFakeZip("example.com/bad", "v1.0.0", "this is not valid go.mod ;;;"))
 
 	r := newResolver(fetcher, blobs)
 	g, err := r.Resolve(context.Background(), coord("example.com/target", "v1.0.0"), domain3.DefaultDepthPolicy().FetchStage())
@@ -844,8 +881,8 @@ require (
 	fetcher.addError("example.com/fetchfail", "v1.0.0", errors.New("simulated network error"))
 	// Register parsefail fact but put invalid go.mod content in the zip.
 	rec := makeFactRecord(t, "example.com/parsefail", "v1.0.0")
-	fetcher.records["example.com/parsefail@v1.0.0"] = rec
-	blobs.data["example.com/parsefail@v1.0.0"] = buildFakeZip("example.com/parsefail", "v1.0.0", "this is not valid go.mod ;;;")
+	fetcher.records["example.com/parsefail@v1.0.0"] = mustComposeOne(t, rec)
+	seedZipBlob(t, blobs, rec, buildFakeZip("example.com/parsefail", "v1.0.0", "this is not valid go.mod ;;;"))
 
 	r := newResolver(fetcher, blobs)
 	g, err := r.Resolve(context.Background(), coord("example.com/target", "v1.0.0"), domain3.DefaultDepthPolicy().FetchStage())
@@ -875,7 +912,7 @@ go 1.21
 require example.com/dep v1.0.0
 `, blobs)
 	// Register fact but do NOT add zip to blobs.
-	fetcher.records["example.com/dep@v1.0.0"] = makeFactRecord(t, "example.com/dep", "v1.0.0")
+	fetcher.records["example.com/dep@v1.0.0"] = makeComposite(t, "example.com/dep", "v1.0.0")
 
 	r := newResolver(fetcher, blobs)
 	g, err := r.Resolve(context.Background(), coord("example.com/target", "v1.0.0"), domain3.DefaultDepthPolicy().FetchStage())
@@ -983,7 +1020,7 @@ go 1.21
 require example.com/dep v1.0.0
 `, blobs)
 	rec := makeFactRecord(t, "example.com/dep", "v1.0.0")
-	fetcher.records["example.com/dep@v1.0.0"] = rec
+	fetcher.records["example.com/dep@v1.0.0"] = mustComposeOne(t, rec)
 	blobs.data["example.com/dep@v1.0.0"] = []byte("this is not a valid zip file")
 
 	r := newResolver(fetcher, blobs)
@@ -1011,7 +1048,7 @@ go 1.21
 require example.com/dep v1.0.0
 `, blobs)
 	rec := makeFactRecord(t, "example.com/dep", "v1.0.0")
-	fetcher.records["example.com/dep@v1.0.0"] = rec
+	fetcher.records["example.com/dep@v1.0.0"] = mustComposeOne(t, rec)
 	// Build a zip that contains something else, but not go.mod.
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)
@@ -1025,7 +1062,7 @@ require example.com/dep v1.0.0
 	if err := w.Close(); err != nil {
 		t.Fatalf("closing zip: %v", err)
 	}
-	blobs.data["example.com/dep@v1.0.0"] = buf.Bytes()
+	seedZipBlob(t, blobs, rec, buf.Bytes())
 
 	r := newResolver(fetcher, blobs)
 	g, err := r.Resolve(context.Background(), coord("example.com/target", "v1.0.0"), domain3.DefaultDepthPolicy().FetchStage())

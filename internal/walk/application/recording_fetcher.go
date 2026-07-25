@@ -49,7 +49,7 @@ type recordingFetcher struct {
 // enough information for the walker to construct a NodeResult without
 // re-fetching the module.
 type fetchOutcome struct {
-	record     fetchdomain.FactRecord
+	record     fetchdomain.CompositeRecord
 	fromCache  bool
 	durationMs int64
 	err        error

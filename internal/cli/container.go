@@ -214,15 +214,12 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// local go.sum, and the fetch pipeline records coordinate-derived handles
 	// instead of writing blobs.
 	var (
-		blobs           fetchports.BlobStore = localBlobs
-		sumdb           fetchports.SumDBClient
-		proxyAdapter    fetchports.ModuleProxy
-		modcacheDeriver fetchapp.ModcacheHandleDeriver
+		blobs        fetchports.BlobStore = localBlobs
+		sumdb        fetchports.SumDBClient
+		proxyAdapter fetchports.ModuleProxy
 	)
 	if modcacheMode {
-		mcBlobs := mcblobstore.New(modcacheDir, localBlobs)
-		blobs = mcBlobs
-		modcacheDeriver = mcBlobs
+		blobs = mcblobstore.New(modcacheDir, localBlobs)
 		proxyAdapter = mcproxy.New(modcacheDir, goBinary, filepath.Dir(goSumPath), logger)
 		gsClient, gerr := gosumfile.New(goSumPath)
 		if gerr != nil {
@@ -254,6 +251,13 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		return nil, nil, fmt.Errorf("creating auditing fetch store: %w", err)
 	}
 
+	// Re-address artefacts written under the old store-chosen blob handles so an
+	// existing store survives the change to identity addressing. Runs once,
+	// guarded by a marker file.
+	if err := adoptLegacyBlobs(dbHandle, localBlobs, storeRoot, logger); err != nil {
+		logger.Warn("could not re-address existing blobs by artefact identity", "error", err)
+	}
+
 	// ---- store adapters (all share dbHandle) ----
 	walkStore := walksqlite.New(dbHandle)
 	extStore := extsqlite.New(dbHandle)
@@ -274,8 +278,8 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		// the permitted downgrade) into the same append-only log the writes go to.
 		WithAudit(factStore).
 		WithAllowVerificationDowngrade(allowVerificationDowngrade)
-	if modcacheDeriver != nil {
-		fetchUC = fetchUC.WithModcache(modcacheDeriver)
+	if modcacheMode {
+		fetchUC = fetchUC.WithModcacheMode()
 	}
 	// On the normal network path, layer the walk root's local go.sum on
 	// as an additional, always-on integrity anchor when one is present. It is a

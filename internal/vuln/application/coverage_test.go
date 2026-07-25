@@ -119,8 +119,11 @@ func TestScanWalk_PutWalkScanRunError(t *testing.T) {
 
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
-	h, _ := blobs.Put(t.Context(), strings.NewReader("zip"))
-	if err := facts.PutFetchRecord(t.Context(), fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content(string(h)))); err != nil {
+	rec := fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip"))
+	if err := blobs.Put(t.Context(), fetchtest.ZipIdentity(t, rec), strings.NewReader("zip")); err != nil {
+		t.Fatalf("Put blob: %v", err)
+	}
+	if err := facts.PutFetchRecord(t.Context(), fetchtest.Sealed(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip"))); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 	scanner := &fakeScanner{results: map[string]domain.VulnerabilityRecord{}}
@@ -400,8 +403,11 @@ func TestScanModule_PutVulnerabilityRecordError(t *testing.T) {
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
 	coord := coordinate.ModuleCoordinate{Path: "github.com/a/b", Version: "v1.0.0"}
-	h, _ := blobs.Put(t.Context(), strings.NewReader("zip"))
-	if err := facts.PutFetchRecord(t.Context(), fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content(string(h)))); err != nil {
+	rec := fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip"))
+	if err := blobs.Put(t.Context(), fetchtest.ZipIdentity(t, rec), strings.NewReader("zip")); err != nil {
+		t.Fatalf("Put blob: %v", err)
+	}
+	if err := facts.PutFetchRecord(t.Context(), fetchtest.Sealed(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip"))); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 	scanner := &fakeScanner{results: map[string]domain.VulnerabilityRecord{}}
@@ -432,8 +438,11 @@ func TestScanWalk_ProgressCallback(t *testing.T) {
 	vulnStore := newFakeVulnStore()
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
-	h, _ := blobs.Put(t.Context(), strings.NewReader("zip"))
-	if err := facts.PutFetchRecord(t.Context(), fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content(string(h)))); err != nil {
+	rec := fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip"))
+	if err := blobs.Put(t.Context(), fetchtest.ZipIdentity(t, rec), strings.NewReader("zip")); err != nil {
+		t.Fatalf("Put blob: %v", err)
+	}
+	if err := facts.PutFetchRecord(t.Context(), fetchtest.Sealed(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip"))); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 	scanner := &fakeScanner{results: map[string]domain.VulnerabilityRecord{}}

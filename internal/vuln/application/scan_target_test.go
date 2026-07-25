@@ -66,8 +66,11 @@ func newTargetScanFixture(t *testing.T, scanner *fakeScanner, fetchedCoords ...c
 		fetchedCoords = []coordinate.ModuleCoordinate{target, depA, depB}
 	}
 	for _, c := range fetchedCoords {
-		h, _ := blobs.Put(ctx, strings.NewReader("zip-"+c.Path))
-		if err := facts.PutFetchRecord(ctx, fetchtest.Record(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content(string(h)))); err != nil {
+		seedRec := fetchtest.Record(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path))
+		if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip-"+c.Path)); err != nil {
+			t.Fatalf("Put blob: %v", err)
+		}
+		if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path))); err != nil {
 			t.Fatalf("PutFetchRecord %s: %v", c, err)
 		}
 	}
@@ -386,7 +389,7 @@ func TestScanWalk_CoordinateKeyed_FallsBackWhenTargetIsGoModOnly(t *testing.T) {
 
 	// Overwrite the target's record with a go.mod-only one: GoModLocation set,
 	// ContentLocation empty.
-	if err := f.facts.PutFetchRecord(ctx, fetchtest.Record(
+	if err := f.facts.PutFetchRecord(ctx, fetchtest.Sealed(
 		t,
 		fetchtest.Coordinate(f.target),
 		fetchtest.PipelineVersion("v1"),

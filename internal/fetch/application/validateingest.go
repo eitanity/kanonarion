@@ -56,11 +56,17 @@ func (uc *ValidateAndIngestUseCase) WithAudit(sink ports.AuditSink) *ValidateAnd
 // returned error wraps ErrVerificationFailed and nothing is written, so a
 // tampered import cannot enter the store masquerading as a confident fact. An
 // infrastructure failure from the store is returned without the sentinel.
+// It deliberately keeps accepting a plain FactRecord. This is the boundary an
+// external caller hands an imported record across, and asking it for a
+// SealedRecord would mean asking it to assert the very property this function
+// exists to check. Rehydrate is where the assertion is made: it verifies the
+// record and either yields the sealed value the store will accept, or fails.
 func (uc *ValidateAndIngestUseCase) Ingest(ctx context.Context, record domain.FactRecord) error {
-	if err := domain.VerifyFactRecord(record); err != nil {
+	sealed, err := domain.Rehydrate(record)
+	if err != nil {
 		return fmt.Errorf("%w: %s: %w", ErrVerificationFailed, record.Coordinate(), err)
 	}
-	if err := uc.store.PutFetchRecord(ctx, record); err != nil {
+	if err := uc.store.PutFetchRecord(ctx, sealed); err != nil {
 		return fmt.Errorf("ingesting record for %s: %w", record.Coordinate(), err)
 	}
 	return nil
@@ -77,25 +83,25 @@ func (uc *ValidateAndIngestUseCase) Ingest(ctx context.Context, record domain.Fa
 //
 // The caller treats any non-nil error as unavailable (non-zero exit per
 // ); only (false, nil) means the record genuinely does not exist.
-func (uc *ValidateAndIngestUseCase) ReadVerified(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain.FactRecord, bool, error) {
+func (uc *ValidateAndIngestUseCase) ReadVerified(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain.CompositeRecord, bool, error) {
 	rec, found, err := uc.store.GetFetchRecord(ctx, coord, pipelineVersion)
 	if err != nil {
-		return domain.FactRecord{}, false, fmt.Errorf("reading record for %s: %w", coord, err)
+		return domain.CompositeRecord{}, false, fmt.Errorf("reading record for %s: %w", coord, err)
 	}
 	if !found {
-		return domain.FactRecord{}, false, nil
+		return domain.CompositeRecord{}, false, nil
 	}
-	if verr := domain.VerifyFactRecord(rec); verr != nil {
+	if verr := domain.VerifyFactRecord(rec.FactRecord); verr != nil {
 		failed := fmt.Errorf("%w: %s: %w", ErrVerificationFailed, coord, verr)
-		if aerr := uc.recordEvent(audit.EventVerificationFailed, coord, pipelineVersion, rec, verr); aerr != nil {
+		if aerr := uc.recordEvent(audit.EventVerificationFailed, coord, pipelineVersion, rec.FactRecord, verr); aerr != nil {
 			// Fail-closed still holds: preserve the verification sentinel while
 			// surfacing the assurance-log failure rather than swallowing it.
-			return domain.FactRecord{}, false, errors.Join(failed, aerr)
+			return domain.CompositeRecord{}, false, errors.Join(failed, aerr)
 		}
-		return domain.FactRecord{}, false, failed
+		return domain.CompositeRecord{}, false, failed
 	}
-	if aerr := uc.recordEvent(audit.EventRecordReadVerified, coord, pipelineVersion, rec, nil); aerr != nil {
-		return domain.FactRecord{}, false, aerr
+	if aerr := uc.recordEvent(audit.EventRecordReadVerified, coord, pipelineVersion, rec.FactRecord, nil); aerr != nil {
+		return domain.CompositeRecord{}, false, aerr
 	}
 	return rec, true, nil
 }

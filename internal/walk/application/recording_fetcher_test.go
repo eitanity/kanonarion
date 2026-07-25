@@ -24,7 +24,7 @@ import (
 // through Walker.Walk).
 type recorderFakeFetcher struct {
 	mu        sync.Mutex
-	records   map[string]fetchdomain.FactRecord
+	records   map[string]fetchdomain.CompositeRecord
 	fromCache map[string]bool
 	errors    map[string]error
 	panicOn   map[string]bool
@@ -33,7 +33,7 @@ type recorderFakeFetcher struct {
 
 func newRecorderFakeFetcher() *recorderFakeFetcher {
 	return &recorderFakeFetcher{
-		records:   make(map[string]fetchdomain.FactRecord),
+		records:   make(map[string]fetchdomain.CompositeRecord),
 		fromCache: make(map[string]bool),
 		errors:    make(map[string]error),
 		panicOn:   make(map[string]bool),
@@ -45,7 +45,7 @@ func (f *recorderFakeFetcher) add(t testing.TB, path, version string, fromCache 
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	k := path + "@" + version
-	f.records[k] = fetchtest.Record(t, fetchtest.Module(path, version))
+	f.records[k] = fetchtest.Composite(t, fetchtest.Module(path, version))
 	f.fromCache[k] = fromCache
 }
 

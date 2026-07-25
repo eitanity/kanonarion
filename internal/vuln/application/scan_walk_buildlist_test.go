@@ -16,15 +16,16 @@ import (
 // fact/blob stores under the "v1" fetch pipeline version, so a scan finds the
 // node present and reads the exact require directives given.
 func seedFactNodeGoMod(t testing.TB, ctx context.Context, facts *fakeFacts, blobs *fakeBlob, coord coordinate.ModuleCoordinate, goMod string) {
-	zipHandle, _ := blobs.Put(ctx, strings.NewReader("zip-"+coord.Path+"-"+coord.Version))
-	modHandle, _ := blobs.Put(ctx, strings.NewReader(goMod))
-	_ = facts.PutFetchRecord(ctx, fetchtest.Record(
-		t,
+	opts := []fetchtest.Option{
 		fetchtest.Coordinate(coord),
 		fetchtest.PipelineVersion("v1"),
-		fetchtest.Content(string(zipHandle)),
-		fetchtest.GoMod(string(modHandle)),
-	))
+		fetchtest.Content("zip-" + coord.Path + "-" + coord.Version),
+		fetchtest.GoMod("gomod-" + coord.Path + "-" + coord.Version),
+	}
+	rec := fetchtest.Record(t, opts...)
+	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, rec), strings.NewReader("zip-"+coord.Path+"-"+coord.Version))
+	_ = blobs.Put(ctx, fetchtest.GoModIdentity(t, rec), strings.NewReader(goMod))
+	_ = facts.PutFetchRecord(ctx, fetchtest.Sealed(t, opts...))
 }
 
 // TestScan_PopulatesScannedNodeBuildListDeps verifies that a scannable node's own

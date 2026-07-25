@@ -35,10 +35,10 @@ func TestScanModule_NewScan(t *testing.T) {
 	clock := fixedClock{t: now}
 
 	// Setup: module must be fetched first
-	if err := facts.PutFetchRecord(ctx, fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"))); err != nil {
+	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"))); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
-	if _, err := blobs.Put(ctx, strings.NewReader("zip content")); err != nil { // Handle will be fake:zip content
+	if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip content"))), strings.NewReader("zip content")); err != nil {
 		t.Fatalf("blobs.Put: %v", err)
 	}
 
@@ -46,10 +46,11 @@ func TestScanModule_NewScan(t *testing.T) {
 		facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default(),
 	)
 
-	// In the fakeBlob, handle is "fake:" + data
-	// So we need to match the ContentLocation in FactRecord with what Put returns
-	handle, _ := blobs.Put(ctx, strings.NewReader("zip content"))
-	if err := facts.PutFetchRecord(ctx, fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content(string(handle)))); err != nil {
+	seedRec := fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip content"))
+	if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content")); err != nil {
+		t.Fatalf("blobs.Put: %v", err)
+	}
+	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip content"))); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
@@ -247,8 +248,11 @@ func TestScanModule_MetadataFilter_UsesGraphEdges(t *testing.T) {
 
 	blobs := newFakeBlob()
 	facts := newFakeFacts()
-	handle, _ := blobs.Put(ctx, strings.NewReader("zip"))
-	if err := facts.PutFetchRecord(ctx, fetchtest.Record(t, fetchtest.Coordinate(coordA), fetchtest.PipelineVersion("v1"), fetchtest.Content(string(handle)))); err != nil {
+	seedRec := fetchtest.Record(t, fetchtest.Coordinate(coordA), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip"))
+	if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip")); err != nil {
+		t.Fatalf("blobs.Put: %v", err)
+	}
+	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(coordA), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip"))); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
@@ -308,8 +312,11 @@ func TestScanModule_HeavyScanRecordSurvivesReadGate(t *testing.T) {
 	}
 	clock := fixedClock{t: now}
 
-	handle, _ := blobs.Put(ctx, strings.NewReader("zip content"))
-	if err := facts.PutFetchRecord(ctx, fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content(string(handle)))); err != nil {
+	seedRec := fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip content"))
+	if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content")); err != nil {
+		t.Fatalf("blobs.Put: %v", err)
+	}
+	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip content"))); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
@@ -357,8 +364,11 @@ func TestScanModule_ScanFailure(t *testing.T) {
 	}
 	clock := fixedClock{t: now}
 
-	handle, _ := blobs.Put(ctx, strings.NewReader("zip content"))
-	if err := facts.PutFetchRecord(ctx, fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content(string(handle)))); err != nil {
+	seedRec := fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip content"))
+	if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content")); err != nil {
+		t.Fatalf("blobs.Put: %v", err)
+	}
+	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip content"))); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
@@ -399,8 +409,11 @@ func TestScanModule_BuildIncompatibility_FallsBackToMetadata(t *testing.T) {
 	}
 	clock := fixedClock{t: now}
 
-	handle, _ := blobs.Put(ctx, strings.NewReader("zip content"))
-	if err := facts.PutFetchRecord(ctx, fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content(string(handle)))); err != nil {
+	seedRec := fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip content"))
+	if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content")); err != nil {
+		t.Fatalf("blobs.Put: %v", err)
+	}
+	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip content"))); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
@@ -476,14 +489,20 @@ func TestScanModule_OfflineResolution_SourcePositionShapeIsVerified(t *testing.T
 			db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Version: "v1"}}
 			clock := fixedClock{t: now}
 
-			goModHandle, _ := blobs.Put(ctx, strings.NewReader(goMod))
-			zipHandle, _ := blobs.Put(ctx, strings.NewReader("zip content"))
-			if err := facts.PutFetchRecord(ctx, fetchtest.Record(
+			seedRec := fetchtest.Record(t,
+				fetchtest.Coordinate(coord),
+				fetchtest.PipelineVersion("v1"),
+				fetchtest.Content("zip content"),
+				fetchtest.GoMod("gomod"),
+			)
+			_ = blobs.Put(ctx, fetchtest.GoModIdentity(t, seedRec), strings.NewReader(goMod))
+			_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content"))
+			if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(
 				t,
 				fetchtest.Coordinate(coord),
 				fetchtest.PipelineVersion("v1"),
-				fetchtest.Content(string(zipHandle)),
-				fetchtest.GoMod(string(goModHandle)),
+				fetchtest.Content("zip content"),
+				fetchtest.GoMod("gomod"),
 			)); err != nil {
 				t.Fatalf("PutFetchRecord: %v", err)
 			}
@@ -528,14 +547,20 @@ func TestScanModule_OfflineResolution_UnrecoverableIsMarkedUnverified(t *testing
 	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Version: "v1"}}
 	clock := fixedClock{t: now}
 
-	goModHandle, _ := blobs.Put(ctx, strings.NewReader(goMod))
-	zipHandle, _ := blobs.Put(ctx, strings.NewReader("zip content"))
-	if err := facts.PutFetchRecord(ctx, fetchtest.Record(
+	seedRec := fetchtest.Record(t,
+		fetchtest.Coordinate(coord),
+		fetchtest.PipelineVersion("v1"),
+		fetchtest.Content("zip content"),
+		fetchtest.GoMod("gomod"),
+	)
+	_ = blobs.Put(ctx, fetchtest.GoModIdentity(t, seedRec), strings.NewReader(goMod))
+	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content"))
+	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(
 		t,
 		fetchtest.Coordinate(coord),
 		fetchtest.PipelineVersion("v1"),
-		fetchtest.Content(string(zipHandle)),
-		fetchtest.GoMod(string(goModHandle)),
+		fetchtest.Content("zip content"),
+		fetchtest.GoMod("gomod"),
 	)); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
@@ -579,14 +604,20 @@ func TestScanModule_OfflineResolution_DirectShapeGatedOnRequireClosure(t *testin
 	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Version: "v1"}}
 	clock := fixedClock{t: now}
 
-	goModHandle, _ := blobs.Put(ctx, strings.NewReader(goMod))
-	zipHandle, _ := blobs.Put(ctx, strings.NewReader("zip content"))
-	if err := facts.PutFetchRecord(ctx, fetchtest.Record(
+	seedRec := fetchtest.Record(t,
+		fetchtest.Coordinate(coord),
+		fetchtest.PipelineVersion("v1"),
+		fetchtest.Content("zip content"),
+		fetchtest.GoMod("gomod"),
+	)
+	_ = blobs.Put(ctx, fetchtest.GoModIdentity(t, seedRec), strings.NewReader(goMod))
+	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content"))
+	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(
 		t,
 		fetchtest.Coordinate(coord),
 		fetchtest.PipelineVersion("v1"),
-		fetchtest.Content(string(zipHandle)),
-		fetchtest.GoMod(string(goModHandle)),
+		fetchtest.Content("zip content"),
+		fetchtest.GoMod("gomod"),
 	)); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
@@ -636,14 +667,20 @@ func TestScanModule_OfflineResolution_ColumnMismatchRecovers(t *testing.T) {
 	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Version: "v1"}}
 	clock := fixedClock{t: now}
 
-	goModHandle, _ := blobs.Put(ctx, strings.NewReader(goMod))
-	zipHandle, _ := blobs.Put(ctx, strings.NewReader("zip content"))
-	if err := facts.PutFetchRecord(ctx, fetchtest.Record(
+	seedRec := fetchtest.Record(t,
+		fetchtest.Coordinate(coord),
+		fetchtest.PipelineVersion("v1"),
+		fetchtest.Content("zip content"),
+		fetchtest.GoMod("gomod"),
+	)
+	_ = blobs.Put(ctx, fetchtest.GoModIdentity(t, seedRec), strings.NewReader(goMod))
+	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content"))
+	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(
 		t,
 		fetchtest.Coordinate(coord),
 		fetchtest.PipelineVersion("v1"),
-		fetchtest.Content(string(zipHandle)),
-		fetchtest.GoMod(string(goModHandle)),
+		fetchtest.Content("zip content"),
+		fetchtest.GoMod("gomod"),
 	)); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
@@ -689,14 +726,20 @@ func TestScanModule_OfflineResolution_OwnGoModWhenPackageOutsideWalk(t *testing.
 	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Version: "v1"}}
 	clock := fixedClock{t: now}
 
-	goModHandle, _ := blobs.Put(ctx, strings.NewReader(goMod))
-	zipHandle, _ := blobs.Put(ctx, strings.NewReader("zip content"))
-	if err := facts.PutFetchRecord(ctx, fetchtest.Record(
+	seedRec := fetchtest.Record(t,
+		fetchtest.Coordinate(coord),
+		fetchtest.PipelineVersion("v1"),
+		fetchtest.Content("zip content"),
+		fetchtest.GoMod("gomod"),
+	)
+	_ = blobs.Put(ctx, fetchtest.GoModIdentity(t, seedRec), strings.NewReader(goMod))
+	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content"))
+	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(
 		t,
 		fetchtest.Coordinate(coord),
 		fetchtest.PipelineVersion("v1"),
-		fetchtest.Content(string(zipHandle)),
-		fetchtest.GoMod(string(goModHandle)),
+		fetchtest.Content("zip content"),
+		fetchtest.GoMod("gomod"),
 	)); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
@@ -749,26 +792,38 @@ func TestScanModule_OfflineResolution_ImportSiteDependencyGoMod(t *testing.T) {
 	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Version: "v1"}}
 	clock := fixedClock{t: now}
 
-	goModHandle, _ := blobs.Put(ctx, strings.NewReader(goMod))
-	zipHandle, _ := blobs.Put(ctx, strings.NewReader("zip content"))
-	if err := facts.PutFetchRecord(ctx, fetchtest.Record(
+	seedRec := fetchtest.Record(t,
+		fetchtest.Coordinate(coord),
+		fetchtest.PipelineVersion("v1"),
+		fetchtest.Content("zip content"),
+		fetchtest.GoMod("gomod"),
+	)
+	_ = blobs.Put(ctx, fetchtest.GoModIdentity(t, seedRec), strings.NewReader(goMod))
+	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content"))
+	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(
 		t,
 		fetchtest.Coordinate(coord),
 		fetchtest.PipelineVersion("v1"),
-		fetchtest.Content(string(zipHandle)),
-		fetchtest.GoMod(string(goModHandle)),
+		fetchtest.Content("zip content"),
+		fetchtest.GoMod("gomod"),
 	)); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 	// Seed the import-site dependency's go.mod so its protobuf selection is readable.
-	siteModHandle, _ := blobs.Put(ctx, strings.NewReader(siteGoMod))
-	siteZipHandle, _ := blobs.Put(ctx, strings.NewReader("zip content"))
-	if err := facts.PutFetchRecord(ctx, fetchtest.Record(
+	siteRec := fetchtest.Record(t,
+		fetchtest.Coordinate(site),
+		fetchtest.PipelineVersion("v1"),
+		fetchtest.Content("zip content"),
+		fetchtest.GoMod("site-gomod"),
+	)
+	_ = blobs.Put(ctx, fetchtest.GoModIdentity(t, siteRec), strings.NewReader(siteGoMod))
+	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, siteRec), strings.NewReader("zip content"))
+	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(
 		t,
 		fetchtest.Coordinate(site),
 		fetchtest.PipelineVersion("v1"),
-		fetchtest.Content(string(siteZipHandle)),
-		fetchtest.GoMod(string(siteModHandle)),
+		fetchtest.Content("zip content"),
+		fetchtest.GoMod("site-gomod"),
 	)); err != nil {
 		t.Fatalf("PutFetchRecord(site): %v", err)
 	}
@@ -817,14 +872,20 @@ func TestScanModule_OfflineResolution_VersionedReplaceScoping(t *testing.T) {
 	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Version: "v1"}}
 	clock := fixedClock{t: now}
 
-	goModHandle, _ := blobs.Put(ctx, strings.NewReader(goMod))
-	zipHandle, _ := blobs.Put(ctx, strings.NewReader("zip content"))
-	if err := facts.PutFetchRecord(ctx, fetchtest.Record(
+	seedRec := fetchtest.Record(t,
+		fetchtest.Coordinate(coord),
+		fetchtest.PipelineVersion("v1"),
+		fetchtest.Content("zip content"),
+		fetchtest.GoMod("gomod"),
+	)
+	_ = blobs.Put(ctx, fetchtest.GoModIdentity(t, seedRec), strings.NewReader(goMod))
+	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content"))
+	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(
 		t,
 		fetchtest.Coordinate(coord),
 		fetchtest.PipelineVersion("v1"),
-		fetchtest.Content(string(zipHandle)),
-		fetchtest.GoMod(string(goModHandle)),
+		fetchtest.Content("zip content"),
+		fetchtest.GoMod("gomod"),
 	)); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
@@ -872,8 +933,11 @@ func TestScanModule_MetadataPath_PersistsEnrichedFindings(t *testing.T) {
 	}
 	clock := fixedClock{t: now}
 
-	handle, _ := blobs.Put(ctx, strings.NewReader("zip content"))
-	if err := facts.PutFetchRecord(ctx, fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content(string(handle)))); err != nil {
+	seedRec := fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip content"))
+	if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content")); err != nil {
+		t.Fatalf("blobs.Put: %v", err)
+	}
+	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip content"))); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
@@ -931,8 +995,11 @@ func TestScanModule_ScanFailed_NotServedFromCache(t *testing.T) {
 
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
-	handle, _ := blobs.Put(ctx, strings.NewReader("zip content"))
-	if err := facts.PutFetchRecord(ctx, fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content(string(handle)))); err != nil {
+	seedRec := fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip content"))
+	if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content")); err != nil {
+		t.Fatalf("blobs.Put: %v", err)
+	}
+	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip content"))); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
@@ -984,8 +1051,11 @@ func TestScanModule_GeneratedAssetsMissing_UnscanReason(t *testing.T) {
 	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Version: "v1"}}
 	clock := fixedClock{t: now}
 
-	handle, _ := blobs.Put(ctx, strings.NewReader("zip content"))
-	if err := facts.PutFetchRecord(ctx, fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content(string(handle)))); err != nil {
+	seedRec := fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip content"))
+	if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content")); err != nil {
+		t.Fatalf("blobs.Put: %v", err)
+	}
+	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip content"))); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
@@ -1020,8 +1090,11 @@ func TestScanModule_BuildIncompatibility_NoAdvisory_IsUnscannable(t *testing.T) 
 	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Version: "v1"}} // no advisories
 	clock := fixedClock{t: now}
 
-	handle, _ := blobs.Put(ctx, strings.NewReader("zip content"))
-	if err := facts.PutFetchRecord(ctx, fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content(string(handle)))); err != nil {
+	seedRec := fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip content"))
+	if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content")); err != nil {
+		t.Fatalf("blobs.Put: %v", err)
+	}
+	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip content"))); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
@@ -1091,8 +1164,11 @@ func TestScanModule_ScannerUnscannable_MetadataAttributesAdvisories(t *testing.T
 	}
 	clock := fixedClock{t: now}
 
-	handle, _ := blobs.Put(ctx, strings.NewReader("zip content"))
-	if err := facts.PutFetchRecord(ctx, fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content(string(handle)))); err != nil {
+	seedRec := fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip content"))
+	if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content")); err != nil {
+		t.Fatalf("blobs.Put: %v", err)
+	}
+	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip content"))); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
@@ -1133,8 +1209,11 @@ func TestScanModule_ScannerUnscannable_NoAdvisory_IsUnscannable(t *testing.T) {
 	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Version: "v1"}} // no advisories
 	clock := fixedClock{t: now}
 
-	handle, _ := blobs.Put(ctx, strings.NewReader("zip content"))
-	if err := facts.PutFetchRecord(ctx, fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content(string(handle)))); err != nil {
+	seedRec := fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip content"))
+	if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content")); err != nil {
+		t.Fatalf("blobs.Put: %v", err)
+	}
+	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip content"))); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
@@ -1178,8 +1257,11 @@ func TestScanModule_ScannerUnscannable_OOMKilled_RoutesToMetadata(t *testing.T) 
 	}
 	clock := fixedClock{t: now}
 
-	handle, _ := blobs.Put(ctx, strings.NewReader("zip content"))
-	if err := facts.PutFetchRecord(ctx, fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content(string(handle)))); err != nil {
+	seedRec := fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip content"))
+	if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content")); err != nil {
+		t.Fatalf("blobs.Put: %v", err)
+	}
+	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip content"))); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
@@ -1207,11 +1289,11 @@ func scanModuleFixture(t *testing.T, coord coordinate.ModuleCoordinate, scanner 
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
 	vulnStore := newFakeVulnStore()
-	handle, err := blobs.Put(ctx, strings.NewReader("zip content"))
-	if err != nil {
+	seedRec := fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip content"))
+	if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip content")); err != nil {
 		t.Fatalf("blobs.Put: %v", err)
 	}
-	if err := facts.PutFetchRecord(ctx, fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content(string(handle)))); err != nil {
+	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip content"))); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 	uc := application.NewScanModuleUseCase(

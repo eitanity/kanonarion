@@ -137,4 +137,18 @@ type FetchedModule struct {
 	// AcquisitionMode names the path these bytes arrived by (proxy, modcache, or
 	// local). See FactRecord.AcquisitionMode.
 	AcquisitionMode AcquisitionMode
+
+	// MeasurementKind says whether this measurement fetched the bytes or
+	// revalidated bytes already held. See FactRecord.MeasurementKind.
+	MeasurementKind MeasurementKind
+
+	// SumDBCheck and VCSCheck say how this measurement came by each validation
+	// leg, and the Source fields name the content hash of the record a leg was
+	// inherited from. The zero value (LegAbsent) means the check was neither
+	// performed nor carried forward — a --skip-vcs run leaves the VCS pair zero,
+	// recording the absence of the check rather than a negative result.
+	SumDBCheck       LegProvenance
+	SumDBCheckSource string
+	VCSCheck         LegProvenance
+	VCSCheckSource   string
 }

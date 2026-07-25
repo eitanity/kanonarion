@@ -25,6 +25,18 @@ func openMemStore(t *testing.T) *sqlite.Store {
 	return s
 }
 
+// mustSeal wraps a record in the SealedRecord the store accepts for writing.
+// The store takes only sealed records, so a test that seeds one goes through
+// here rather than reaching past the guard the ledger depends on.
+func mustSeal(t testing.TB, r domain2.FactRecord) domain2.SealedRecord {
+	t.Helper()
+	sealed, err := domain2.Rehydrate(r)
+	if err != nil {
+		t.Fatalf("sealing record: %v", err)
+	}
+	return sealed
+}
+
 func sampleRecord(t testing.TB, path, version, pipelineVersion string, opts ...fetchtest.Option) domain2.FactRecord {
 	return fetchtest.Record(t, append([]fetchtest.Option{
 		fetchtest.Module(path, version),
@@ -48,15 +60,15 @@ func TestPutGetFetchRecord_DigestsRoundTrip(t *testing.T) {
 		SHA512: "5555555555555555555555555555555555555555555555555555555555555555",
 	}))
 
-	if err := s.PutFetchRecord(ctx, r); err != nil {
+	if err := s.PutFetchRecord(ctx, mustSeal(t, r)); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	got, ok, err := s.GetFetchRecord(ctx, coordinate.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}, r.PipelineVersion)
 	if err != nil || !ok {
 		t.Fatalf("Get: ok=%v err=%v", ok, err)
 	}
-	if domain2.RecordDigests(got) != domain2.RecordDigests(r) {
-		t.Errorf("digests did not round-trip: got %+v want %+v", domain2.RecordDigests(got), domain2.RecordDigests(r))
+	if domain2.RecordDigests(got.FactRecord) != domain2.RecordDigests(r) {
+		t.Errorf("digests did not round-trip: got %+v want %+v", domain2.RecordDigests(got.FactRecord), domain2.RecordDigests(r))
 	}
 }
 
@@ -65,7 +77,7 @@ func TestPutGetFetchRecord(t *testing.T) {
 	ctx := context.Background()
 
 	r := sampleRecord(t, "github.com/foo/bar", "v1.0.0", "0.1.0")
-	if err := s.PutFetchRecord(ctx, r); err != nil {
+	if err := s.PutFetchRecord(ctx, mustSeal(t, r)); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 
@@ -97,40 +109,87 @@ func TestGetFetchRecord_NotFound(t *testing.T) {
 	}
 }
 
-func TestPutFetchRecord_Idempotent(t *testing.T) {
+// TestPutFetchRecord_AppendsRatherThanOverwrites is the deliberate inversion of
+// what this test used to assert. It used to check that a second write REPLACED
+// the first — the behaviour that let the store contradict its own audit log,
+// which recorded fifteen writes for a coordinate while the store kept one, and
+// destroyed the evidence an investigation into a verification demotion needed.
+//
+// Both measurements now survive, and a reader gets the composition of them.
+func TestPutFetchRecord_AppendsRatherThanOverwrites(t *testing.T) {
+	s := openMemStore(t)
+	ctx := context.Background()
+
+	first := sampleRecord(t, "github.com/foo/bar", "v1.0.0", "0.1.0")
+	if err := s.PutFetchRecord(ctx, mustSeal(t, first)); err != nil {
+		t.Fatalf("first Put: %v", err)
+	}
+
+	// A second measurement of the same artefact, differing in a hashed field, so
+	// it is genuinely a different record. It shares an instant with the first —
+	// a fixed clock, as a coarse one would produce — which the key must still
+	// keep apart.
+	second := sampleRecord(t, "github.com/foo/bar", "v1.0.0", "0.1.0", fetchtest.Detail("re-measured"))
+	if err := s.PutFetchRecord(ctx, mustSeal(t, second)); err != nil {
+		t.Fatalf("second Put: %v", err)
+	}
+
+	coord := coordinate.ModuleCoordinate{Path: first.ModulePath, Version: first.ModuleVersion}
+	held, err := s.ListFetchRecords(ctx, coord, first.PipelineVersion)
+	if err != nil {
+		t.Fatalf("ListFetchRecords: %v", err)
+	}
+	if len(held) != 2 {
+		t.Fatalf("ledger holds %d measurements, want 2: the first was overwritten", len(held))
+	}
+
+	got, ok, err := s.GetFetchRecord(ctx, coord, first.PipelineVersion)
+	if err != nil || !ok {
+		t.Fatalf("Get: err=%v ok=%v", err, ok)
+	}
+	if got.MeasurementCount != 2 {
+		t.Errorf("MeasurementCount = %d, want 2", got.MeasurementCount)
+	}
+}
+
+// The same record written twice is one measurement, not two, so it is a no-op
+// rather than either a duplicate row or an error. A retried write must not fail
+// a run that already succeeded.
+func TestPutFetchRecord_IdenticalRewriteIsANoOp(t *testing.T) {
 	s := openMemStore(t)
 	ctx := context.Background()
 
 	r := sampleRecord(t, "github.com/foo/bar", "v1.0.0", "0.1.0")
-	if err := s.PutFetchRecord(ctx, r); err != nil {
-		t.Fatalf("first Put: %v", err)
+	for i := range 2 {
+		if err := s.PutFetchRecord(ctx, mustSeal(t, r)); err != nil {
+			t.Fatalf("Put %d: %v", i+1, err)
+		}
 	}
 
-	// Update a field for a valid second write.
-	r = sampleRecord(t, "github.com/foo/bar", "v1.0.0", "0.1.0", fetchtest.Detail("updated"))
-
-	if err := s.PutFetchRecord(ctx, r); err != nil {
-		t.Fatalf("second Put: %v", err)
+	held, err := s.ListFetchRecords(ctx,
+		coordinate.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}, r.PipelineVersion)
+	if err != nil {
+		t.Fatalf("ListFetchRecords: %v", err)
 	}
-
-	got, ok, err := s.GetFetchRecord(ctx, coordinate.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}, r.PipelineVersion)
-	if err != nil || !ok {
-		t.Fatalf("Get: err=%v ok=%v", err, ok)
-	}
-	if got.VerificationDetail != "updated" {
-		t.Errorf("expected updated detail, got %q", got.VerificationDetail)
-	}
-	if got.ContentHash != r.ContentHash {
-		t.Errorf("ContentHash mismatch: %q vs %q", got.ContentHash, r.ContentHash)
+	if len(held) != 1 {
+		t.Errorf("ledger holds %d measurements, want 1: an identical rewrite is the same measurement", len(held))
 	}
 }
 
+// TestGetFetchRecord_IntegrityError is the deliberate inversion of what this
+// test used to assert. It used to require (zero, false, nil) on a tampered
+// content hash — a detected tamper reported as a plain absence, which the caller
+// then treated as a cache miss and re-fetched, overwriting the very evidence
+// that something had been tampered with. The loudest signal the store can
+// produce was its quietest path.
+//
+// It is now an error, so the read fails closed and the operator sees it.
 func TestGetFetchRecord_IntegrityError(t *testing.T) {
 	s := openMemStore(t)
 	ctx := context.Background()
 
 	r := sampleRecord(t, "github.com/foo/bar", "v1.0.0", "0.1.0")
-	if err := s.PutFetchRecord(ctx, r); err != nil {
+	if err := s.PutFetchRecord(ctx, mustSeal(t, r)); err != nil {
 		t.Fatal(err)
 	}
 
@@ -141,11 +200,11 @@ func TestGetFetchRecord_IntegrityError(t *testing.T) {
 	}
 
 	_, ok, err := s.GetFetchRecord(ctx, coordinate.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}, r.PipelineVersion)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	if err == nil {
+		t.Fatal("a tampered record was reported without error; a detected tamper must never read as absence")
 	}
 	if ok {
-		t.Error("expected GetFetchRecord to return ok=false due to tampered hash")
+		t.Error("a tampered record must not be reported as found")
 	}
 }
 
@@ -155,7 +214,7 @@ func TestGetFetchRecord_Retracted(t *testing.T) {
 
 	r := sampleRecord(t, "github.com/foo/bar", "v1.0.0", "0.1.0", fetchtest.Retracted(true))
 
-	if err := s.PutFetchRecord(ctx, r); err != nil {
+	if err := s.PutFetchRecord(ctx, mustSeal(t, r)); err != nil {
 		t.Fatal(err)
 	}
 

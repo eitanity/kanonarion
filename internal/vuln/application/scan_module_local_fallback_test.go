@@ -32,16 +32,20 @@ func TestScanModule_FindsFactRecordUnderLocalIngestPipelineVersion(t *testing.T)
 		content:  "vulndb content",
 	}
 
-	handle, err := blobs.Put(ctx, strings.NewReader("zip content"))
-	if err != nil {
+	localRec := fetchtest.Record(t,
+		fetchtest.Coordinate(coord),
+		fetchtest.PipelineVersion(localPipeline),
+		fetchtest.Content("zip content"),
+	)
+	if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, localRec), strings.NewReader("zip content")); err != nil {
 		t.Fatalf("blobs.Put: %v", err)
 	}
 	// The record exists ONLY under the local-ingest pipeline version.
-	if err := facts.PutFetchRecord(ctx, fetchtest.Record(
+	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(
 		t,
 		fetchtest.Coordinate(coord),
 		fetchtest.PipelineVersion(localPipeline),
-		fetchtest.Content(string(handle)),
+		fetchtest.Content("zip content"),
 	)); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}

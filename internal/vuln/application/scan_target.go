@@ -66,7 +66,13 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 		return false
 	}
 
-	blob, err := uc.moduleScanner.blobs.Get(ctx, fetchports.BlobHandle(fact.ContentLocation))
+	zipIdentity, hasZip, err := fetchports.ZipIdentity(fact)
+	if err != nil || !hasZip {
+		uc.logger.Info("target-rooted scan: the target's fact record names no module zip, falling back to isolated scans",
+			"target", target)
+		return false
+	}
+	blob, err := uc.moduleScanner.blobs.Get(ctx, zipIdentity)
 	if err != nil {
 		uc.logger.Warn("target-rooted scan: could not retrieve the target's module content, falling back to isolated scans",
 			"target", target, "error", err)

@@ -30,41 +30,54 @@ func (uc *FetchModuleUseCase) WithAllowVerificationDowngrade(allow bool) *FetchM
 	return uc
 }
 
-// persistRecord writes record unless doing so would trade a stronger
-// verification anchor for a weaker one, and returns the record that is now
-// authoritative for the coordinate.
+// persistRecord seals a measurement and appends it to the ledger, returning the
+// composed view of the artefact afterwards.
 //
-// A fact record is keyed on (module path, version, pipeline version) alone, so
-// every re-measurement overwrites its predecessor in place — including one made
-// in a mode that cannot reach the same anchor. The --from-modcache path tops out
-// at VerifiedBySumDBOnly and records mode-locked "modcache:zip:<coord>" handles;
-// letting it replace a network run's Verified record demoted the module's chain
-// of custody and left behind a handle the default blob store cannot resolve.
+// It appends. Nothing is overwritten and nothing is deduplicated: the ledger key
+// carries the artefact hash and the time of measurement, so every measurement
+// that passes is its own row and its predecessors survive to be composed with
+// it. That is the whole point — an overwriting store destroyed the evidence an
+// investigation into a verification demotion needed, and could not corroborate
+// its own audit log.
 //
-// A refusal is not an error: the fetch succeeded, the measurement simply did not
-// improve on what is stored. The existing record is returned as the fetch result
-// and one WARN names both statuses and both acquisition modes, so a
-// --from-modcache run over a network-verified store is visibly a no-op rather
-// than a silent demotion. An equal-or-stronger measurement overwrites exactly as
-// before, so a genuine re-verification and a status upgrade still land.
+// Before sealing, a validation leg this measurement did not perform is inherited
+// from an earlier measurement of the same artefact, naming the record it came
+// from. A --skip-vcs run records no VCS leg at all; a later --force performs the
+// check; a later --skip-vcs --force transfers the earlier result forward rather
+// than discarding evidence the store already holds.
 //
-// The guard applies to forced runs too — see WithAllowVerificationDowngrade.
-func (uc *FetchModuleUseCase) persistRecord(ctx context.Context, log *slog.Logger, req FetchRequest, record domain2.FactRecord) (domain2.FactRecord, error) {
-	existing, ok, err := uc.facts.GetFetchRecord(ctx, record.Coordinate(), record.PipelineVersion)
+// The verification-strength guard is retained unchanged. It is no longer load
+// bearing — a weaker measurement can no longer destroy a stronger one, because
+// nothing is destroyed — but retiring it is a deliberate follow-up so this
+// change does one thing.
+func (uc *FetchModuleUseCase) persistRecord(ctx context.Context, log *slog.Logger, req FetchRequest, m domain2.FetchedModule) (domain2.CompositeRecord, error) {
+	existing, ok, err := uc.facts.GetFetchRecord(ctx, m.Coordinate, m.PipelineVersion)
 	if err != nil {
-		// Not readable means not decidable: overwriting here could demote a record
-		// this run never saw, so the fetch fails rather than guessing.
-		return domain2.FactRecord{}, fmt.Errorf("reading existing record before overwrite: %w", err)
+		// Not readable means not decidable, and a bad run writes nothing: a store
+		// that cannot be read may hold a tamper or a divergence, and appending on
+		// top of it would add a measurement to evidence nobody has checked.
+		return domain2.CompositeRecord{}, fmt.Errorf("reading existing records before append: %w", err)
 	}
 
-	// A full record replacing a go.mod-only one is an artefact upgrade, not a
+	m, err = uc.inheritLegs(ctx, log, m)
+	if err != nil {
+		return domain2.CompositeRecord{}, err
+	}
+
+	sealed, err := domain2.Seal(m)
+	if err != nil {
+		return domain2.CompositeRecord{}, fmt.Errorf("sealing measurement of %s: %w", m.Coordinate, err)
+	}
+	record := sealed.Record()
+
+	// A full record following a go.mod-only one is an artefact upgrade, not a
 	// demotion: the stored record described a version whose zip was never fetched,
 	// and refusing the upgrade would leave every consumer that needs source
 	// starved while the fetch reported success. The anchor comparison does not see
 	// that dimension, so it is exempted here rather than folded into the ranking.
 	addsArtefactCoverage := ok && existing.IsGoModOnly() && !record.IsGoModOnly()
 
-	weakens := ok && !addsArtefactCoverage && domain2.ReplacementWeakensAnchor(existing, record)
+	weakens := ok && !addsArtefactCoverage && domain2.ReplacementWeakensAnchor(existing.FactRecord, record)
 	if weakens {
 		attrs := []slog.Attr{
 			slog.String("existing_verification_status", existing.VerificationStatus),
@@ -75,38 +88,124 @@ func (uc *FetchModuleUseCase) persistRecord(ctx context.Context, log *slog.Logge
 		}
 		if !uc.allowVerificationDowngrade {
 			log.LogAttrs(ctx, slog.LevelWarn, "record_write_refused_weaker_verification", attrs...)
-			if aerr := uc.recordOverwriteEvent(audit.EventFactRecordWriteRefused, existing, record, req.Force); aerr != nil {
-				return domain2.FactRecord{}, aerr
+			if aerr := uc.recordOverwriteEvent(audit.EventFactRecordWriteRefused, existing.FactRecord, record, req.Force); aerr != nil {
+				return domain2.CompositeRecord{}, aerr
 			}
-			if uc.cachedArtefactsReadable(ctx, log, existing) {
+			if uc.cachedArtefactsReadable(ctx, log, existing.FactRecord) {
 				return existing, nil
 			}
-			// The kept record is the stronger fact, but this run cannot resolve its
-			// artefacts — the very reason the cache check re-fetched. Handing it back
-			// would return a handle the caller cannot read, trading one half of the fix
-			// for the other. The store keeps the stronger fact; this run gets the
-			// artefacts it just measured, unpersisted.
+			// The composed record is the stronger fact, but this run cannot resolve
+			// its artefacts — the very reason the cache check re-fetched. Handing it
+			// back would return an address the caller cannot read, trading one half
+			// of the fix for the other. The store keeps the stronger fact; this run
+			// gets the artefacts it just measured, unpersisted.
 			log.InfoContext(ctx, "kept_record_unreadable_returning_measured_artefacts",
 				slog.String("kept_content_location", existing.ContentLocation),
 				slog.String("measured_content_location", record.ContentLocation),
 			)
-			return record, nil
+			measured, cerr := domain2.Compose([]domain2.FactRecord{record})
+			if cerr != nil {
+				return domain2.CompositeRecord{}, fmt.Errorf("composing the unpersisted measurement of %s: %w", m.Coordinate, cerr)
+			}
+			return measured, nil
 		}
 		log.LogAttrs(ctx, slog.LevelWarn, "record_downgraded_by_operator_request", attrs...)
-		if aerr := uc.recordOverwriteEvent(audit.EventFactRecordDowngraded, existing, record, req.Force); aerr != nil {
-			return domain2.FactRecord{}, aerr
+		if aerr := uc.recordOverwriteEvent(audit.EventFactRecordDowngraded, existing.FactRecord, record, req.Force); aerr != nil {
+			return domain2.CompositeRecord{}, aerr
 		}
 	}
 
-	if err := uc.facts.PutFetchRecord(ctx, record); err != nil {
-		return domain2.FactRecord{}, fmt.Errorf("persisting fact record: %w", err)
+	if err := uc.facts.PutFetchRecord(ctx, sealed); err != nil {
+		return domain2.CompositeRecord{}, fmt.Errorf("appending fact record: %w", err)
 	}
-	log.InfoContext(ctx, "record_persisted",
+	log.InfoContext(ctx, "record_appended",
 		slog.String("verification_status", record.VerificationStatus),
 		slog.String("content_hash", record.ContentHash),
 		slog.String("acquisition_mode", record.AcquisitionMode),
+		slog.String("measurement_kind", record.MeasurementKind),
 	)
-	return record, nil
+
+	// Re-read so the caller receives the artefact as the ledger now knows it —
+	// including the measurement just appended, and including a first-seen date
+	// that predates this run when the artefact was already held.
+	composed, found, err := uc.facts.GetFetchRecord(ctx, m.Coordinate, m.PipelineVersion)
+	if err != nil {
+		return domain2.CompositeRecord{}, fmt.Errorf("composing records after append: %w", err)
+	}
+	if !found {
+		// The row was appended a moment ago; its absence means the store is not
+		// answering for what it was just told, which is not something to paper over.
+		return domain2.CompositeRecord{}, fmt.Errorf("appended fact record for %s is absent from the store", m.Coordinate)
+	}
+	return composed, nil
+}
+
+// inheritLegs transfers a validation leg this measurement did not perform from
+// an earlier measurement of the same artefact, marking it inherited and naming
+// the record it came from.
+//
+// The name is what makes the copy falsifiable. Without it, "inherited" is an
+// unfalsifiable claim sitting on a tamper-evident record, and a reader cannot
+// tell evidence carried forward from evidence that was never established at all.
+//
+// Inheritance must not launder evidence, so the source record is verified before
+// anything is taken from it. The store's list read rehydrates every row it
+// returns and fails closed, so a bad source aborts the run rather than being
+// quietly skipped in favour of an older one.
+//
+// A store that does not offer the list capability simply inherits nothing: the
+// legs this run performed are recorded, the ones it did not are absent, and
+// absence is an honest answer.
+func (uc *FetchModuleUseCase) inheritLegs(ctx context.Context, log *slog.Logger, m domain2.FetchedModule) (domain2.FetchedModule, error) {
+	if m.SumDBCheck != domain2.LegAbsent && m.VCSCheck != domain2.LegAbsent {
+		return m, nil
+	}
+	lister, ok := uc.facts.(ports.FactRecordLister)
+	if !ok {
+		return m, nil
+	}
+	prior, err := lister.ListFetchRecords(ctx, m.Coordinate, m.PipelineVersion)
+	if err != nil {
+		return domain2.FetchedModule{}, fmt.Errorf("reading earlier measurements to inherit validation legs: %w", err)
+	}
+
+	identity := domain2.ArtefactIdentity{Hash: m.ModuleHash}
+	if m.ModuleHash.IsZero() {
+		identity = domain2.ArtefactIdentity{Hash: m.GoModHash, GoModOnly: true}
+	}
+
+	// Latest first: the most recent establishment of a leg is the one worth
+	// carrying forward.
+	for i := len(prior) - 1; i >= 0; i-- {
+		r := prior[i]
+		priorIdentity, ierr := domain2.ArtefactIdentityOf(r)
+		if ierr != nil {
+			return domain2.FetchedModule{}, fmt.Errorf("reading the identity of an earlier measurement of %s: %w", m.Coordinate, ierr)
+		}
+		if !priorIdentity.Equal(identity) {
+			continue
+		}
+		if m.SumDBCheck == domain2.LegAbsent && r.SumDBCheck != string(domain2.LegAbsent) {
+			m.SumDBCheck = domain2.LegInherited
+			m.SumDBCheckSource = r.ContentHash
+			log.InfoContext(ctx, "validation_leg_inherited",
+				slog.String("leg", string(domain2.LegSumDB)),
+				slog.String("source_content_hash", r.ContentHash),
+			)
+		}
+		if m.VCSCheck == domain2.LegAbsent && r.VCSCheck != string(domain2.LegAbsent) {
+			m.VCSCheck = domain2.LegInherited
+			m.VCSCheckSource = r.ContentHash
+			log.InfoContext(ctx, "validation_leg_inherited",
+				slog.String("leg", string(domain2.LegVCS)),
+				slog.String("source_content_hash", r.ContentHash),
+			)
+		}
+		if m.SumDBCheck != domain2.LegAbsent && m.VCSCheck != domain2.LegAbsent {
+			break
+		}
+	}
+	return m, nil
 }
 
 // recordOverwriteEvent appends the assurance-log entry for a refused or

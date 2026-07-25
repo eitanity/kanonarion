@@ -27,7 +27,7 @@ import (
 // concurrency and supports controlled gates, errors, and panic injection.
 type walkerFakeFetcher struct {
 	mu        sync.Mutex
-	records   map[string]domain2.FactRecord
+	records   map[string]domain2.CompositeRecord
 	fromCache map[string]bool
 	errors    map[string]error
 	panicOn   map[string]bool
@@ -39,7 +39,7 @@ type walkerFakeFetcher struct {
 
 func newWalkerFetcher() *walkerFakeFetcher {
 	return &walkerFakeFetcher{
-		records:   make(map[string]domain2.FactRecord),
+		records:   make(map[string]domain2.CompositeRecord),
 		fromCache: make(map[string]bool),
 		errors:    make(map[string]error),
 		panicOn:   make(map[string]bool),
@@ -50,14 +50,14 @@ func newWalkerFetcher() *walkerFakeFetcher {
 func (f *walkerFakeFetcher) addRecord(t testing.TB, path, version string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.records[wkey(path, version)] = makeFactRecord(t, path, version)
+	f.records[wkey(path, version)] = makeComposite(t, path, version)
 }
 
 func (f *walkerFakeFetcher) addCached(t testing.TB, path, version string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	k := wkey(path, version)
-	f.records[k] = makeFactRecord(t, path, version)
+	f.records[k] = makeComposite(t, path, version)
 	f.fromCache[k] = true
 }
 
@@ -162,13 +162,13 @@ func newXmodParser() walkports.GoModParser { return xmod.New() }
 // fakeLocalFetcher implements walkports.LocalModuleFetcher for tests.
 type fakeLocalFetcher struct {
 	mu      sync.Mutex
-	records map[string]domain2.FactRecord // key: path@version
+	records map[string]domain2.CompositeRecord // key: path@version
 	errors  map[string]error
 }
 
 func newFakeLocalFetcher() *fakeLocalFetcher {
 	return &fakeLocalFetcher{
-		records: make(map[string]domain2.FactRecord),
+		records: make(map[string]domain2.CompositeRecord),
 		errors:  make(map[string]error),
 	}
 }
@@ -176,7 +176,7 @@ func newFakeLocalFetcher() *fakeLocalFetcher {
 func (f *fakeLocalFetcher) addRecord(t testing.TB, path, version string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.records[wkey(path, version)] = makeFactRecord(t, path, version)
+	f.records[wkey(path, version)] = makeComposite(t, path, version)
 }
 
 func (f *fakeLocalFetcher) addError(path, version string, err error) {
@@ -849,14 +849,14 @@ replace example.com/dep => ../local/dep
 // re-fetched them after the resolver had already populated the cache.
 type productionCacheFetcher struct {
 	mu      sync.Mutex
-	records map[string]domain2.FactRecord
+	records map[string]domain2.CompositeRecord
 	seen    map[string]int // call count per key
 	blobs   *fakeBlobStore
 }
 
 func newProductionCacheFetcher(blobs *fakeBlobStore) *productionCacheFetcher {
 	return &productionCacheFetcher{
-		records: make(map[string]domain2.FactRecord),
+		records: make(map[string]domain2.CompositeRecord),
 		seen:    make(map[string]int),
 		blobs:   blobs,
 	}
@@ -864,8 +864,9 @@ func newProductionCacheFetcher(blobs *fakeBlobStore) *productionCacheFetcher {
 
 func (f *productionCacheFetcher) add(t testing.TB, path, version, goMod string) {
 	k := wkey(path, version)
-	f.records[k] = makeFactRecord(t, path, version)
-	f.blobs.data[path+"@"+version] = buildFakeZip(path, version, goMod)
+	rec := makeFactRecord(t, path, version)
+	f.records[k] = mustComposeOne(t, rec)
+	seedZipBlob(t, f.blobs, rec, buildFakeZip(path, version, goMod))
 }
 
 func (f *productionCacheFetcher) callCount(path, version string) int {

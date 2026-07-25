@@ -134,7 +134,7 @@ func TestExecute_NoSignerLeavesOutputUnchanged(t *testing.T) {
 		if err != nil {
 			t.Fatalf("Execute: %v", err)
 		}
-		return res.Record
+		return res.Record.FactRecord
 	}
 	if run(false).ContentHash != run(true).ContentHash {
 		t.Error("no-op signer changed the produced record's content hash")

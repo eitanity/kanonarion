@@ -82,17 +82,16 @@ func (s *memStore) Put(_ context.Context, f domain.Facts) error {
 
 type memBlobs struct{ puts int }
 
-func (b *memBlobs) Put(_ context.Context, r io.Reader) (fetchports.BlobHandle, error) {
+func (b *memBlobs) Put(_ context.Context, identity fetchports.BlobIdentity, r io.Reader) error {
 	b.puts++
-	data, _ := io.ReadAll(r)
-	sum := sha256.Sum256(data)
-	return fetchports.BlobHandle("sha256:" + hex.EncodeToString(sum[:])), nil
+	_, _ = io.ReadAll(r)
+	return nil
 }
-func (b *memBlobs) Get(context.Context, fetchports.BlobHandle) (io.ReadCloser, error) {
+func (b *memBlobs) Get(context.Context, fetchports.BlobIdentity) (io.ReadCloser, error) {
 	return nil, nil
 }
-func (b *memBlobs) Exists(context.Context, fetchports.BlobHandle) (bool, error)    { return false, nil }
-func (b *memBlobs) GetPath(context.Context, fetchports.BlobHandle) (string, error) { return "", nil }
+func (b *memBlobs) Exists(context.Context, fetchports.BlobIdentity) (bool, error)    { return false, nil }
+func (b *memBlobs) GetPath(context.Context, fetchports.BlobIdentity) (string, error) { return "", nil }
 
 type fixedClock struct{ t time.Time }
 

@@ -66,8 +66,11 @@ func newProjectScanFixture(t *testing.T, scanner *fakeScanner) projectScanFixtur
 	// Every in-build node needs a fetch record so the root source (and, on the
 	// isolated path, each dependency) can be located.
 	for _, c := range []coordinate.ModuleCoordinate{root, depA, depB} {
-		h, _ := blobs.Put(ctx, strings.NewReader("zip-"+c.Path))
-		if err := facts.PutFetchRecord(ctx, fetchtest.Record(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content(string(h)))); err != nil {
+		seedRec := fetchtest.Record(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path))
+		if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip-"+c.Path)); err != nil {
+			t.Fatalf("Put blob: %v", err)
+		}
+		if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path))); err != nil {
 			t.Fatalf("PutFetchRecord %s: %v", c, err)
 		}
 	}
@@ -247,8 +250,11 @@ func newStdlibProjectFixture(t *testing.T, scanner *fakeScanner) stdlibProjectFi
 
 	// Root and dep need a fetch record; stdlib is never fetched.
 	for _, c := range []coordinate.ModuleCoordinate{root, dep} {
-		h, _ := blobs.Put(ctx, strings.NewReader("zip-"+c.Path))
-		if err := facts.PutFetchRecord(ctx, fetchtest.Record(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content(string(h)))); err != nil {
+		seedRec := fetchtest.Record(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path))
+		if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip-"+c.Path)); err != nil {
+			t.Fatalf("Put blob: %v", err)
+		}
+		if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path))); err != nil {
 			t.Fatalf("PutFetchRecord %s: %v", c, err)
 		}
 	}

@@ -593,7 +593,7 @@ func unmarshalNodeResult(coord coordinate.ModuleCoordinate, entry canonicalNodeE
 		nr.Error = &StoredError{Type: entry.Error.Type, Message: entry.Error.Message}
 	}
 	if entry.FetchRecord != nil && string(entry.FetchRecord) != "null" {
-		rec, err := fetchdomain.CanonicalHasher{}.Unmarshal(entry.FetchRecord)
+		rec, err := fetchdomain.CanonicalHasher{}.UnmarshalComposite(entry.FetchRecord)
 		if err != nil {
 			return NodeResult{}, fmt.Errorf("unmarshalling fetch record: %w", err)
 		}
@@ -612,7 +612,7 @@ func toCanonicalNodeEntry(coord coordinate.ModuleCoordinate, r NodeResult) (cano
 		// test-only seam for it (canonicalMarshal) is invisible outside that
 		// package — reaching it from here would require permanent, production
 		// public API on fetch/domain for a branch nothing can currently trigger.
-		b, err := fetchdomain.CanonicalHasher{}.Marshal(*r.FetchRecord)
+		b, err := fetchdomain.CanonicalHasher{}.MarshalComposite(*r.FetchRecord)
 		if err != nil {
 			return canonicalNodeEntry{}, fmt.Errorf("marshalling fetch record: %w", err)
 		}

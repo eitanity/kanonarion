@@ -16,6 +16,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/walk/adapters/localfs"
 )
@@ -24,43 +25,42 @@ import (
 
 type fakeBlob struct {
 	mu   sync.Mutex
-	data map[fetchports.BlobHandle][]byte
+	data map[string][]byte
 }
 
-func newFakeBlob() *fakeBlob { return &fakeBlob{data: make(map[fetchports.BlobHandle][]byte)} }
+func newFakeBlob() *fakeBlob { return &fakeBlob{data: make(map[string][]byte)} }
 
-func (f *fakeBlob) Put(_ context.Context, content io.Reader) (fetchports.BlobHandle, error) {
+func (f *fakeBlob) Put(_ context.Context, identity fetchports.BlobIdentity, content io.Reader) error {
 	b, err := io.ReadAll(content)
 	if err != nil {
-		return "", fmt.Errorf("reading content: %w", err)
+		return fmt.Errorf("reading content: %w", err)
 	}
-	h := fetchports.BlobHandle(fmt.Sprintf("blob:%x", len(b)))
 	f.mu.Lock()
-	f.data[h] = b
+	f.data[identity.String()] = b
 	f.mu.Unlock()
-	return h, nil
+	return nil
 }
 
-func (f *fakeBlob) Get(_ context.Context, h fetchports.BlobHandle) (io.ReadCloser, error) {
+func (f *fakeBlob) Get(_ context.Context, identity fetchports.BlobIdentity) (io.ReadCloser, error) {
 	f.mu.Lock()
-	b := f.data[h]
+	b := f.data[identity.String()]
 	f.mu.Unlock()
 	return io.NopCloser(strings.NewReader(string(b))), nil
 }
 
-func (f *fakeBlob) GetPath(_ context.Context, h fetchports.BlobHandle) (string, error) {
+func (f *fakeBlob) GetPath(_ context.Context, identity fetchports.BlobIdentity) (string, error) {
 	f.mu.Lock()
-	_, ok := f.data[h]
+	_, ok := f.data[identity.String()]
 	f.mu.Unlock()
 	if !ok {
-		return "", fmt.Errorf("blob not found: %s", h)
+		return "", fmt.Errorf("blob not found: %s", identity)
 	}
-	return "/fake/" + string(h), nil
+	return "/fake/" + identity.String(), nil
 }
 
-func (f *fakeBlob) Exists(_ context.Context, h fetchports.BlobHandle) (bool, error) {
+func (f *fakeBlob) Exists(_ context.Context, identity fetchports.BlobIdentity) (bool, error) {
 	f.mu.Lock()
-	_, ok := f.data[h]
+	_, ok := f.data[identity.String()]
 	f.mu.Unlock()
 	return ok, nil
 }
@@ -74,7 +74,8 @@ func newFakeFacts() *fakeFacts {
 	return &fakeFacts{records: make(map[string]fetchdomain.FactRecord)}
 }
 
-func (f *fakeFacts) PutFetchRecord(_ context.Context, r fetchdomain.FactRecord) error {
+func (f *fakeFacts) PutFetchRecord(_ context.Context, sealed fetchdomain.SealedRecord) error {
+	r := sealed.Record()
 	key := r.ModulePath + "@" + r.ModuleVersion + "#" + r.PipelineVersion
 	f.mu.Lock()
 	f.records[key] = r
@@ -82,12 +83,19 @@ func (f *fakeFacts) PutFetchRecord(_ context.Context, r fetchdomain.FactRecord) 
 	return nil
 }
 
-func (f *fakeFacts) GetFetchRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (fetchdomain.FactRecord, bool, error) {
+func (f *fakeFacts) GetFetchRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (fetchdomain.CompositeRecord, bool, error) {
 	key := coord.Path + "@" + coord.Version + "#" + pv
 	f.mu.Lock()
 	r, ok := f.records[key]
 	f.mu.Unlock()
-	return r, ok, nil
+	if !ok {
+		return fetchdomain.CompositeRecord{}, false, nil
+	}
+	c, cerr := fetchdomain.Compose([]fetchdomain.FactRecord{r})
+	if cerr != nil {
+		return fetchdomain.CompositeRecord{}, false, cerr //nolint:wrapcheck // test fake
+	}
+	return c, true, nil
 }
 
 type fixedClock struct{ t time.Time }
@@ -286,7 +294,7 @@ func TestEnsureFetchedFromPath_LocalVersionZipUsesLocalPrefix(t *testing.T) {
 		t.Fatalf("EnsureFetchedFromPath: %v", err)
 	}
 
-	rc, err := blobs.Get(context.Background(), fetchports.BlobHandle(res.Record.ContentLocation))
+	rc, err := blobs.Get(context.Background(), fetchtest.ZipIdentity(t, res.Record.FactRecord))
 	if err != nil {
 		t.Fatalf("Get blob: %v", err)
 	}

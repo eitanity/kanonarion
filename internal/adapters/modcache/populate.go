@@ -115,16 +115,30 @@ func populateOne(
 	}
 
 	// Zip and go.mod — symlink first, fall back to copy.
-	if err := linkOrCopy(ctx, blobs, fetchports.BlobHandle(record.ContentLocation), base+".zip"); err != nil {
+	zipIdentity, hasZip, err := fetchports.ZipIdentity(record.FactRecord)
+	if err != nil {
+		return fmt.Errorf("deriving zip address for %s: %w", coord, err)
+	}
+	if !hasZip {
+		return fmt.Errorf("fact record for %s carries no module zip to populate the cache with", coord)
+	}
+	if err := linkOrCopy(ctx, blobs, zipIdentity, base+".zip"); err != nil {
 		return fmt.Errorf("writing zip: %w", err)
 	}
-	if record.GoModLocation != "" {
-		if err := linkOrCopy(ctx, blobs, fetchports.BlobHandle(record.GoModLocation), base+".mod"); err != nil {
+	goModIdentity, hasGoMod, err := fetchports.GoModIdentity(record.FactRecord)
+	if err != nil {
+		return fmt.Errorf("deriving go.mod address for %s: %w", coord, err)
+	}
+	if hasGoMod {
+		if err := linkOrCopy(ctx, blobs, goModIdentity, base+".mod"); err != nil {
 			return fmt.Errorf("writing mod: %w", err)
 		}
 	}
 
-	if err := writeInfo(base, coord.Version, record.FetchedAt); err != nil {
+	// The .info time is when the artefact was FIRST seen, not when the served
+	// measurement was taken. A revalidation does not make a module newer, and the
+	// module cache's .info is a fact about the module.
+	if err := writeInfo(base, coord.Version, record.FirstFetchedAt); err != nil {
 		return err
 	}
 
@@ -195,10 +209,17 @@ func populateGoModOne(
 		return err
 	}
 
-	if err := linkOrCopy(ctx, blobs, fetchports.BlobHandle(record.GoModLocation), base+".mod"); err != nil {
+	goModIdentity, hasGoMod, err := fetchports.GoModIdentity(record.FactRecord)
+	if err != nil {
+		return fmt.Errorf("deriving go.mod address for %s: %w", coord, err)
+	}
+	if !hasGoMod {
+		return fmt.Errorf("fact record for %s carries no go.mod hash", coord)
+	}
+	if err := linkOrCopy(ctx, blobs, goModIdentity, base+".mod"); err != nil {
 		return fmt.Errorf("writing mod: %w", err)
 	}
-	if err := writeInfo(base, coord.Version, record.FetchedAt); err != nil {
+	if err := writeInfo(base, coord.Version, record.FirstFetchedAt); err != nil {
 		return err
 	}
 	// .lock — empty sentinel required by the Go module cache protocol.
@@ -403,20 +424,20 @@ func writeInfo(base, version string, fetchedAt time.Time) error {
 
 // linkOrCopy creates dst as a symlink to the blob's on-disk path. If the store
 // does not expose a path or os.Symlink fails, the blob content is copied instead.
-func linkOrCopy(ctx context.Context, blobs fetchports.BlobStore, h fetchports.BlobHandle, dst string) error {
+func linkOrCopy(ctx context.Context, blobs fetchports.BlobStore, identity fetchports.BlobIdentity, dst string) error {
 	if _, err := os.Lstat(dst); err == nil {
 		return nil // already present
 	}
 
 	if opt, ok := blobs.(fetchports.BlobPathOptimizer); ok {
-		if src, err := opt.GetPath(ctx, h); err == nil {
+		if src, err := opt.GetPath(ctx, identity); err == nil {
 			if err := os.Symlink(src, dst); err == nil {
 				return nil
 			}
 		}
 	}
 
-	rc, err := blobs.Get(ctx, h)
+	rc, err := blobs.Get(ctx, identity)
 	if err != nil {
 		return fmt.Errorf("reading blob: %w", err)
 	}

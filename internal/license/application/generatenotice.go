@@ -168,8 +168,14 @@ func (uc *GenerateNoticeUseCase) readLicenseTexts(
 		return nil, nil, err
 	}
 
-	handle := fetchports.BlobHandle(factRecord.ContentLocation)
-	r, err := uc.blobs.Get(ctx, handle)
+	zipIdentity, hasZip, err := fetchports.ZipIdentity(factRecord)
+	if err != nil {
+		return nil, nil, fmt.Errorf("deriving zip address for %s: %w", coord, err)
+	}
+	if !hasZip {
+		return nil, nil, fmt.Errorf("%s carries no module zip to read licence texts from", coord)
+	}
+	r, err := uc.blobs.Get(ctx, zipIdentity)
 	if err != nil {
 		return nil, nil, fmt.Errorf("opening blob: %w", err)
 	}
@@ -319,7 +325,7 @@ func (uc *GenerateNoticeUseCase) noticeRequireFetchRecord(
 			return fetchdomain.FactRecord{}, fmt.Errorf("checking fetch record (pipeline %s): %w", v, err)
 		}
 		if ok {
-			return r, nil
+			return r.FactRecord, nil
 		}
 	}
 	return fetchdomain.FactRecord{}, fmt.Errorf("%w: %s", licenseports.ErrModuleNotFetched, coord)

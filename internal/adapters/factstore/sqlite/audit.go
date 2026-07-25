@@ -17,6 +17,16 @@ import (
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
 )
 
+// auditTimeFormat matches the fact store's persisted measurement time.
+//
+// The log is what a ledger row is correlated AGAINST, so recording it at second
+// precision would leave the correlation no better off — two writes within one
+// second would still be indistinguishable on the side of the pair that is meant
+// to explain the other. These timestamps are covered by no content hash, so
+// widening them changes nothing that has to verify, and the second-precision
+// lines already in the log stay readable by any RFC3339 parser.
+const auditTimeFormat = "2006-01-02T15:04:05.000000000Z07:00"
+
 // AuditLog writes an append-only JSONL file: one entry per fact-record write,
 // plus the generic supply-chain events other contexts emit through RecordEvent.
 // It is the durable assurance trail of what was written; it is not itself a
@@ -66,6 +76,20 @@ type auditEntry struct {
 	// wrote a record, and a run that demoted a network-verified record to a
 	// module-cache one was indistinguishable from an ordinary re-measurement.
 	AcquisitionMode string `json:"acquisition_mode,omitempty"`
+
+	// ArtefactIdentity is the h1 identity of the artefact the record describes.
+	// It is the question the ledger is keyed on, and until it was logged the
+	// audit trail could not answer it: the log recorded 44 writes of one
+	// coordinate without being able to say whether they described one artefact
+	// or 44. Without it the log cannot corroborate the store, which is exactly
+	// the failure this ledger exists to fix, relocated one layer out.
+	ArtefactIdentity string `json:"artefact_identity,omitempty"`
+
+	// MeasurementKind says what the write did — acquired or revalidated — and is
+	// additionally where "unchanged" is recorded. A cache hit writes no row at
+	// all, so a run that checked and found nothing changed leaves no trace in
+	// the store; the log is where that fact belongs.
+	MeasurementKind string `json:"measurement_kind,omitempty"`
 }
 
 // eventEnvelope is the generic JSONL shape for every non-fact event. The
@@ -80,15 +104,25 @@ type eventEnvelope struct {
 
 // Record appends an entry for r to the audit log.
 func (a *AuditLog) Record(r domain2.FactRecord) error {
+	// A malformed hash must not stop the write being logged: the log's job is to
+	// say what was written, and losing the entry because the identity could not
+	// be rendered would be the silence this log exists to prevent. The identity
+	// is simply omitted, which reads as "not recorded" rather than as absent.
+	identity, err := domain2.ArtefactIdentityOf(r)
+	if err != nil {
+		identity = domain2.ArtefactIdentity{}
+	}
 	entry := auditEntry{
 		EventType:          audit.EventFactRecordWritten,
-		Timestamp:          time.Now().UTC().Format(time.RFC3339),
+		Timestamp:          time.Now().UTC().Format(auditTimeFormat),
 		ModulePath:         r.ModulePath,
 		ModuleVersion:      r.ModuleVersion,
 		PipelineVersion:    r.PipelineVersion,
 		VerificationStatus: r.VerificationStatus,
 		ContentHash:        r.ContentHash,
 		AcquisitionMode:    r.AcquisitionMode,
+		ArtefactIdentity:   identity.String(),
+		MeasurementKind:    r.MeasurementKind,
 	}
 	line, err := json.Marshal(entry)
 	if err != nil {
@@ -106,7 +140,7 @@ func (a *AuditLog) RecordEvent(e audit.Event) error {
 	}
 	line, err := json.Marshal(eventEnvelope{
 		EventType: e.Type,
-		Timestamp: time.Now().UTC().Format(time.RFC3339),
+		Timestamp: time.Now().UTC().Format(auditTimeFormat),
 		Payload:   e.Payload,
 	})
 	if err != nil {
@@ -164,17 +198,26 @@ func (s *AuditingStore) InternalDB() sqlitestore.DB { return s.inner.InternalDB(
 // importing this adapter's concrete types.
 func (s *AuditingStore) RecordEvent(e audit.Event) error { return s.audit.RecordEvent(e) }
 
-// PutFetchRecord persists the record and appends an audit entry.
-func (s *AuditingStore) PutFetchRecord(ctx context.Context, r domain2.FactRecord) error {
-	if err := s.inner.PutFetchRecord(ctx, r); err != nil {
+// PutFetchRecord appends the measurement and mirrors it into the audit log.
+func (s *AuditingStore) PutFetchRecord(ctx context.Context, sealed domain2.SealedRecord) error {
+	if err := s.inner.PutFetchRecord(ctx, sealed); err != nil {
 		return err
 	}
-	return s.audit.Record(r)
+	return s.audit.Record(sealed.Record())
 }
 
 // GetFetchRecord delegates to the inner store.
-func (s *AuditingStore) GetFetchRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pv string) (domain2.FactRecord, bool, error) {
+func (s *AuditingStore) GetFetchRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pv string) (domain2.CompositeRecord, bool, error) {
 	return s.inner.GetFetchRecord(ctx, coord, pv)
+}
+
+// ListFetchRecords delegates to the inner store, carrying the optional
+// ports.FactRecordLister capability through the audit decorator. A decorator
+// that silently dropped it would make the write path unable to inherit
+// validation legs whenever auditing was enabled — which is always, in
+// production.
+func (s *AuditingStore) ListFetchRecords(ctx context.Context, coord coordinate.ModuleCoordinate, pv string) ([]domain2.FactRecord, error) {
+	return s.inner.ListFetchRecords(ctx, coord, pv)
 }
 
 // PutAttestation delegates to the inner store. Attestations are additive
@@ -190,5 +233,6 @@ func (s *AuditingStore) ListAttestations(ctx context.Context, coord coordinate.M
 
 var (
 	_ ports.FactStore        = (*AuditingStore)(nil)
+	_ ports.FactRecordLister = (*AuditingStore)(nil)
 	_ ports.AttestationStore = (*AuditingStore)(nil)
 )

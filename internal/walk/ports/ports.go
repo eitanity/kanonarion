@@ -42,7 +42,9 @@ type GoModParser interface {
 
 // ModuleFetchResult is the result of a ModuleFetcher.EnsureFetched call.
 type ModuleFetchResult struct {
-	Record    domain.FactRecord
+	// Record is the artefact as the ledger knows it: the composed view of every
+	// measurement of it, not any single row.
+	Record    domain.CompositeRecord
 	FromCache bool
 }
 
@@ -156,7 +158,9 @@ type BuildListResolver interface {
 
 // LocalModuleFetchResult is the result of a LocalModuleFetcher.EnsureFetchedFromPath call.
 type LocalModuleFetchResult struct {
-	Record    domain.FactRecord
+	// Record is the artefact as the ledger knows it: the composed view of every
+	// measurement of it, not any single row.
+	Record    domain.CompositeRecord
 	FromCache bool
 }
 

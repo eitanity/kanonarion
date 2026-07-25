@@ -115,8 +115,9 @@ func TestPrefetchMissing_FetchesMissingModules(t *testing.T) {
 	blobs := newFakeBlob()
 
 	// Only seed the 'present' module in the fact store and blob store.
-	h, _ := blobs.Put(ctx, strings.NewReader("zip-present"))
-	_ = facts.PutFetchRecord(ctx, fetchtest.Record(t, fetchtest.Coordinate(present), fetchtest.PipelineVersion("v1"), fetchtest.Content(string(h))))
+	presentRec := fetchtest.Record(t, fetchtest.Coordinate(present), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-present"))
+	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, presentRec), strings.NewReader("zip-present"))
+	_ = facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(present), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-present")))
 
 	vulnStore := newFakeVulnStore()
 	fetcher := &fakeFetcher{}
@@ -154,9 +155,10 @@ func TestPrefetchMissing_RefetchesGoModOnlyRecord(t *testing.T) {
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
 
-	// Seed a go.mod-only record: GoModLocation set, ContentLocation empty.
-	gh, _ := blobs.Put(ctx, strings.NewReader("module github.com/gomod/only"))
-	_ = facts.PutFetchRecord(ctx, fetchtest.Record(t, fetchtest.Coordinate(node), fetchtest.PipelineVersion("v1"), fetchtest.GoMod(string(gh))))
+	// Seed a go.mod-only record: the go.mod is held and no zip was ever fetched.
+	goModRec := fetchtest.Record(t, fetchtest.Coordinate(node), fetchtest.PipelineVersion("v1"), fetchtest.GoModOnly("gomod-only"))
+	_ = blobs.Put(ctx, fetchtest.GoModIdentity(t, goModRec), strings.NewReader("module github.com/gomod/only"))
+	_ = facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(node), fetchtest.PipelineVersion("v1"), fetchtest.GoModOnly("gomod-only")))
 
 	vulnStore := newFakeVulnStore()
 	fetcher := &fakeFetcher{}
@@ -191,8 +193,9 @@ func TestPrefetchMissing_NilFetcherIsNoop(t *testing.T) {
 
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
-	h, _ := blobs.Put(ctx, strings.NewReader("zip"))
-	_ = facts.PutFetchRecord(ctx, fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content(string(h))))
+	seedRec := fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip"))
+	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip"))
+	_ = facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip")))
 
 	vulnStore := newFakeVulnStore()
 
@@ -262,8 +265,9 @@ func TestPrefetchMissing_AllPresentSkipsFetch(t *testing.T) {
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
 	for _, c := range coords {
-		h, _ := blobs.Put(ctx, strings.NewReader("zip-"+c.Path))
-		_ = facts.PutFetchRecord(ctx, fetchtest.Record(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content(string(h))))
+		rec := fetchtest.Record(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path))
+		_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, rec), strings.NewReader("zip-"+c.Path))
+		_ = facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path)))
 	}
 
 	vulnStore := newFakeVulnStore()

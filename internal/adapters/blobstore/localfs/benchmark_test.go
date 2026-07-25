@@ -1,9 +1,13 @@
 package localfs_test
 
 import (
+	"strconv"
+
 	"bytes"
 	"context"
 	"fmt"
+	"github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/ports"
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
@@ -26,8 +30,15 @@ func BenchmarkPut(b *testing.B) {
 			store := localfs.New(dir)
 			b.SetBytes(int64(sz))
 			b.ResetTimer()
-			for range b.N {
-				if _, err := store.Put(ctx, bytes.NewReader(payload)); err != nil {
+			for i := range b.N {
+				// A distinct identity per iteration: an identity already held is a
+				// no-op, which would benchmark the existence check rather than the
+				// write.
+				identity := ports.BlobIdentity{
+					Kind: ports.BlobKindZip,
+					Hash: domain.ModuleHash{Algorithm: "h1", Value: strconv.Itoa(i)},
+				}
+				if err := store.Put(ctx, identity, bytes.NewReader(payload)); err != nil {
 					b.Fatal(err)
 				}
 			}

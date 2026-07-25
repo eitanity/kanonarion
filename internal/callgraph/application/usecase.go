@@ -163,8 +163,16 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 		return ExtractResult{Record: record, FromCache: false}, nil
 	}
 
-	blobHandle := fetchports.BlobHandle(factRecord.ContentLocation)
-	zipPath, cleanup, err := blobZipPath(ctx, uc.blobs, blobHandle)
+	// The zip is addressed by what it is, not by where some earlier measurement
+	// put it, so any store holding the artefact answers.
+	zipIdentity, hasZip, err := fetchports.ZipIdentity(factRecord)
+	if err != nil {
+		return ExtractResult{}, fmt.Errorf("deriving zip address for %s: %w", req.Coordinate, err)
+	}
+	if !hasZip {
+		return ExtractResult{}, fmt.Errorf("%w: %s carries no module zip", ports.ErrModuleNotFetched, req.Coordinate)
+	}
+	zipPath, cleanup, err := blobZipPath(ctx, uc.blobs, zipIdentity)
 	if err != nil {
 		return ExtractResult{}, fmt.Errorf("resolving blob path for %s: %w", factRecord.ContentLocation, err)
 	}
@@ -217,7 +225,7 @@ func (uc *ExtractCallGraphUseCase) requireFetchRecord(
 			return domain.FactRecord{}, fmt.Errorf("checking fetch record (pipeline %s): %w", v, err)
 		}
 		if ok {
-			return r, nil
+			return r.FactRecord, nil
 		}
 	}
 	return domain.FactRecord{}, fmt.Errorf("%w: %s", ports.ErrModuleNotFetched, coord)
@@ -232,18 +240,18 @@ func (uc *ExtractCallGraphUseCase) requireFetchRecord(
 func blobZipPath(
 	ctx context.Context,
 	blobs fetchports.BlobStore,
-	handle fetchports.BlobHandle,
+	identity fetchports.BlobIdentity,
 ) (path string, cleanup func(), err error) {
 	noop := func() {}
 	if opt, ok := blobs.(fetchports.BlobPathOptimizer); ok {
-		p, gerr := opt.GetPath(ctx, handle)
+		p, gerr := opt.GetPath(ctx, identity)
 		if gerr != nil {
 			return "", noop, fmt.Errorf("getting blob path: %w", gerr)
 		}
 		return p, noop, nil
 	}
 
-	rc, gerr := blobs.Get(ctx, handle)
+	rc, gerr := blobs.Get(ctx, identity)
 	if gerr != nil {
 		return "", noop, fmt.Errorf("opening blob: %w", gerr)
 	}

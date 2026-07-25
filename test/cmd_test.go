@@ -24,6 +24,7 @@ import (
 	exdomain "github.com/eitanity/kanonarion/internal/example/domain"
 	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	ifsqlite "github.com/eitanity/kanonarion/internal/iface/adapters/store/sqlite"
 	ifapp "github.com/eitanity/kanonarion/internal/iface/application"
 	ifdomain "github.com/eitanity/kanonarion/internal/iface/domain"
@@ -139,9 +140,6 @@ func cmdSeedWalk(args []string) {
 		zipContent := buf.Bytes()
 		modContent := []byte("module " + node.Coordinate.Path + "\n")
 
-		zipHandle, _ := blobStore.Put(context.Background(), bytes.NewReader(zipContent))
-		modHandle, _ := blobStore.Put(context.Background(), bytes.NewReader(modContent))
-
 		modHash, _ := dirhash.Hash1([]string{"go.mod"}, func(string) (io.ReadCloser, error) {
 			return io.NopCloser(bytes.NewReader(modContent)), nil
 		})
@@ -153,21 +151,43 @@ func cmdSeedWalk(args []string) {
 		zipHash, _ := dirhash.HashZip(tmpZip.Name(), dirhash.Hash1)
 		_ = os.Remove(tmpZip.Name())
 
-		fetchRec := fetchdomain.FactRecord{
-			Ecosystem:          fetchdomain.EcosystemGo,
-			ModulePath:         node.Coordinate.Path,
-			ModuleVersion:      node.Coordinate.Version,
-			PipelineVersion:    fetchapp.PipelineVersion, // track the live fetch pipeline version
-			ContentLocation:    string(zipHandle),
-			GoModLocation:      string(modHandle),
-			ModuleHash:         zipHash,
-			GoModHash:          modHash,
-			VerificationStatus: string(fetchdomain.Verified),
-			FetchedAt:          time.Now(),
+		// This is a testscript subprocess entry point: it calls os.Exit and has no
+		// testing handle, so it cannot use the fetchtest builder. It seals through
+		// domain.Seal instead, which needs none — and which is the only way to
+		// obtain the SealedRecord the store accepts.
+		parsedZipHash, zerr := fetchdomain.ParseModuleHash(zipHash)
+		parsedModHash, merr := fetchdomain.ParseModuleHash(modHash)
+		if zerr != nil || merr != nil {
+			_ = db.Close()
+			os.Exit(1)
 		}
-		var fetchHasher fetchdomain.CanonicalHasher
-		fetchRec, _ = fetchHasher.SetContentHash(fetchRec)
-		if err := factStore.PutFetchRecord(context.Background(), fetchRec); err != nil {
+		zipIdentity := fetchports.BlobIdentity{Kind: fetchports.BlobKindZip, Hash: parsedZipHash}
+		goModIdentity := fetchports.BlobIdentity{Kind: fetchports.BlobKindGoMod, Hash: parsedModHash}
+		if err := blobStore.Put(context.Background(), zipIdentity, bytes.NewReader(zipContent)); err != nil {
+			_ = db.Close()
+			os.Exit(1)
+		}
+		if err := blobStore.Put(context.Background(), goModIdentity, bytes.NewReader(modContent)); err != nil {
+			_ = db.Close()
+			os.Exit(1)
+		}
+
+		sealed, serr := fetchdomain.Seal(fetchdomain.FetchedModule{
+			Coordinate:         node.Coordinate,
+			ModuleHash:         parsedZipHash,
+			GoModHash:          parsedModHash,
+			VerificationStatus: fetchdomain.Verified,
+			FetchedAt:          time.Now(),
+			PipelineVersion:    fetchapp.PipelineVersion, // track the live fetch pipeline version
+			ContentLocation:    zipIdentity.String(),
+			GoModLocation:      goModIdentity.String(),
+			MeasurementKind:    fetchdomain.MeasurementAcquired,
+		})
+		if serr != nil {
+			_ = db.Close()
+			os.Exit(1)
+		}
+		if err := factStore.PutFetchRecord(context.Background(), sealed); err != nil {
 			_ = db.Close()
 			os.Exit(1)
 		}
@@ -285,22 +305,22 @@ func cmdSeedCallGraph(args []string) {
 		os.Exit(1)
 	}
 
-	// Seed a fetch record so the callgraph command can find the module and hit the cache.
-	fetchRec := fetchdomain.FactRecord{
-		Ecosystem:          fetchdomain.EcosystemGo,
-		ModulePath:         app.Path,
-		ModuleVersion:      app.Version,
+	// Seed a fetch record so the callgraph command can find the module and hit the
+	// cache. Sealed through domain.Seal: this entry point has no testing handle,
+	// and Seal needs none.
+	sealed, serr := fetchdomain.Seal(fetchdomain.FetchedModule{
+		Coordinate:         app,
+		ModuleHash:         fetchdomain.ModuleHash{Algorithm: "h1", Value: "fixture-zip="},
+		VerificationStatus: fetchdomain.Verified,
 		PipelineVersion:    fetchapp.PipelineVersion,
-		ContentLocation:    "fixture:blob",
-		VerificationStatus: string(fetchdomain.Verified),
-	}
-	var fetchHasher fetchdomain.CanonicalHasher
-	fetchRec, err = fetchHasher.SetContentHash(fetchRec)
-	if err != nil {
+		ContentLocation:    "zip:h1:fixture-zip=",
+		MeasurementKind:    fetchdomain.MeasurementAcquired,
+	})
+	if serr != nil {
 		_ = db.Close()
 		os.Exit(1)
 	}
-	if err := factStore.PutFetchRecord(context.Background(), fetchRec); err != nil {
+	if err := factStore.PutFetchRecord(context.Background(), sealed); err != nil {
 		_ = db.Close()
 		os.Exit(1)
 	}
@@ -442,22 +462,21 @@ func cmdSeedExamples(args []string) {
 		os.Exit(1)
 	}
 
-	// Seed a fetch record so the examples command can find the module and hit the cache.
-	exFetchRec := fetchdomain.FactRecord{
-		Ecosystem:          fetchdomain.EcosystemGo,
-		ModulePath:         app.Path,
-		ModuleVersion:      app.Version,
+	// Seed a fetch record so the examples command can find the module and hit the
+	// cache. Sealed through domain.Seal: this entry point has no testing handle.
+	exSealed, exSerr := fetchdomain.Seal(fetchdomain.FetchedModule{
+		Coordinate:         app,
+		ModuleHash:         fetchdomain.ModuleHash{Algorithm: "h1", Value: "fixture-zip="},
+		VerificationStatus: fetchdomain.Verified,
 		PipelineVersion:    exapp.PipelineVersion, // Match record.PipelineVersion
-		ContentLocation:    "fixture:blob",
-		VerificationStatus: string(fetchdomain.Verified),
-	}
-	var exFetchHasher fetchdomain.CanonicalHasher
-	exFetchRec, err = exFetchHasher.SetContentHash(exFetchRec)
-	if err != nil {
+		ContentLocation:    "zip:h1:fixture-zip=",
+		MeasurementKind:    fetchdomain.MeasurementAcquired,
+	})
+	if exSerr != nil {
 		_ = db.Close()
 		os.Exit(1)
 	}
-	if err := factStore.PutFetchRecord(context.Background(), exFetchRec); err != nil {
+	if err := factStore.PutFetchRecord(context.Background(), exSealed); err != nil {
 		_ = db.Close()
 		os.Exit(1)
 	}

@@ -30,16 +30,24 @@ func TestExecute_FindsFactRecordUnderLocalIngestPipelineVersion(t *testing.T) {
 	zipData := buildModuleZip(t, coord, map[string]string{
 		"LICENSE": "MIT License text",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	// The record exists ONLY under the local-ingest pipeline version.
-	if perr := factStore.PutFetchRecord(context.Background(), fetchtest.Record(
+	rec := fetchtest.Record(
 		t,
 		fetchtest.Coordinate(coord),
 		fetchtest.PipelineVersion(localPipeline),
-		fetchtest.Content(string(handle)),
+		fetchtest.Content("zip"),
+		fetchtest.Status(domain.LocalSource),
+	)
+	// The blob is keyed by the artefact identity the record carries, because
+	// that is how production asks the store for it.
+	if err := blobStore.Put(context.Background(), fetchtest.ZipIdentity(t, rec), bytes.NewReader(zipData)); err != nil {
+		t.Fatalf("Put blob: %v", err)
+	}
+	// The record exists ONLY under the local-ingest pipeline version.
+	if perr := factStore.PutFetchRecord(context.Background(), fetchtest.Sealed(
+		t,
+		fetchtest.Coordinate(coord),
+		fetchtest.PipelineVersion(localPipeline),
+		fetchtest.Content("zip"),
 		fetchtest.Status(domain.LocalSource),
 	)); perr != nil {
 		t.Fatalf("PutFetchRecord: %v", perr)
@@ -82,15 +90,23 @@ func TestExecute_LocalCoordinateBypassesRecordCache(t *testing.T) {
 	zipData := buildModuleZip(t, coord, map[string]string{
 		"LICENSE": "MIT License text",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	if perr := factStore.PutFetchRecord(context.Background(), fetchtest.Record(
+	rec := fetchtest.Record(
 		t,
 		fetchtest.Coordinate(coord),
 		fetchtest.PipelineVersion(localPipeline),
-		fetchtest.Content(string(handle)),
+		fetchtest.Content("zip"),
+		fetchtest.Status(domain.LocalSource),
+	)
+	// The blob is keyed by the artefact identity the record carries, because
+	// that is how production asks the store for it.
+	if err := blobStore.Put(context.Background(), fetchtest.ZipIdentity(t, rec), bytes.NewReader(zipData)); err != nil {
+		t.Fatalf("Put blob: %v", err)
+	}
+	if perr := factStore.PutFetchRecord(context.Background(), fetchtest.Sealed(
+		t,
+		fetchtest.Coordinate(coord),
+		fetchtest.PipelineVersion(localPipeline),
+		fetchtest.Content("zip"),
 		fetchtest.Status(domain.LocalSource),
 	)); perr != nil {
 		t.Fatalf("PutFetchRecord: %v", perr)
@@ -107,7 +123,7 @@ func TestExecute_LocalCoordinateBypassesRecordCache(t *testing.T) {
 		PipelineVersion: application.PipelineVersion,
 	}
 	var h domain2.LicenseRecordHasher
-	stale, err = h.SetContentHash(stale)
+	stale, err := h.SetContentHash(stale)
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
 	}

@@ -26,7 +26,7 @@ func TestAcquisitionModeRoundTripsThroughTheStore(t *testing.T) {
 		domain2.AcquisitionProxy, domain2.AcquisitionModcache, domain2.AcquisitionLocal,
 	} {
 		sealed := sampleRecord(t, "github.com/foo/"+string(mode), "v1.0.0", "0.4.0", fetchtest.AcquisitionMode(mode))
-		if err := s.PutFetchRecord(ctx, sealed); err != nil {
+		if err := s.PutFetchRecord(ctx, mustSeal(t, sealed)); err != nil {
 			t.Fatalf("Put(%s): %v", mode, err)
 		}
 		got, ok, err := s.GetFetchRecord(ctx,
@@ -54,7 +54,7 @@ func TestPreFieldRecordStillReadsBack(t *testing.T) {
 	if r.AcquisitionMode != "" {
 		t.Fatalf("fixture is not a pre-field record: mode = %q", r.AcquisitionMode)
 	}
-	if err := s.PutFetchRecord(ctx, r); err != nil {
+	if err := s.PutFetchRecord(ctx, mustSeal(t, r)); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	got, ok, err := s.GetFetchRecord(ctx,
@@ -89,7 +89,7 @@ func TestAuditEntryNamesTheAcquisitionMode(t *testing.T) {
 	}()
 
 	sealed := sampleRecord(t, "github.com/foo/bar", "v2.0.0", "0.4.0", fetchtest.AcquisitionMode(domain2.AcquisitionModcache))
-	if err := store.PutFetchRecord(context.Background(), sealed); err != nil {
+	if err := store.PutFetchRecord(context.Background(), mustSeal(t, sealed)); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
@@ -135,7 +135,7 @@ func TestAuditEntryOmitsAnUnrecordedMode(t *testing.T) {
 		}
 	}()
 
-	if err := store.PutFetchRecord(context.Background(), sampleRecord(t, "github.com/foo/bar", "v2.0.0", "0.4.0")); err != nil {
+	if err := store.PutFetchRecord(context.Background(), mustSeal(t, sampleRecord(t, "github.com/foo/bar", "v2.0.0", "0.4.0"))); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 

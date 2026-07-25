@@ -1,21 +1,27 @@
-// Package modcache implements a ports.BlobStore that resolves module bytes from
-// a Go module cache ($GOMODCACHE) instead of kanonarion's content-addressed blob
-// store. It is the blob adapter used in --from-modcache mode.
+// Package modcache implements a ports.BlobStore backed by a Go module cache
+// ($GOMODCACHE). It is the blob adapter used in --from-modcache mode.
 //
-// Two handle namespaces coexist:
+// It has no handle namespace of its own. Artefacts are addressed by identity,
+// exactly as in every other mode, and the adapter's whole job is population: it
+// brings bytes that already exist in the module cache into that address space.
+// This is the port's fourth obligation — how bytes arrive is the adapter's
+// business, and the port guarantees only that after Put, Exists(identity) is
+// true.
 //
-//   - "modcache:zip:<escapedPath>@<escapedVersion>" and
-//     "modcache:mod:<escapedPath>@<escapedVersion>" resolve to
-//     $GOMODCACHE/cache/download/<escapedPath>/@v/<escapedVersion>.{zip,mod}.
-//     These are produced by the fetch pipeline in modcache mode, which derives
-//     them from the coordinate and never calls Put.
-//   - Any other handle (a "sha256:<hex>" content address) is delegated to an
-//     underlying content-addressed store. Local modules — the project root and
-//     local-replace targets — have no module-cache entry, so their zipped bytes
-//     are still Put into and Got from the delegate.
+// Population is by hard link. A hard link survives `go clean -modcache`: the
+// toolchain unlinks its own name, the inode persists while kanonarion's link
+// holds it, and the evidence base stays intact. A soft link would dangle and the
+// bytes would be gone. That is the difference between a module-cache-primary
+// configuration being a durable evidence store with zero duplication and being a
+// space convenience whose store is not self-contained. A cross-device link falls
+// back to a copy.
 //
-// The module-cache namespace is read-only: Put only ever writes through the
-// delegate.
+// The adapter previously derived "modcache:zip:<coord>@<version>" handles and
+// wrote them into fact records. Those handles were mode-locked — only this
+// adapter could resolve them — so a coordinate measured in module-cache mode
+// produced a record the default store could not read, and a network measurement
+// of the same artefact produced an irreconcilable second record. Addressing by
+// identity is what removes that defect rather than guarding against it.
 package modcache
 
 import (
@@ -25,7 +31,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"strings"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -33,28 +38,23 @@ import (
 	"golang.org/x/mod/module"
 )
 
-// ErrBlobNotFound is returned when a module-cache handle names a file that is
-// not present in the cache directory.
+// ErrBlobNotFound is returned when an artefact is not held.
 var ErrBlobNotFound = errors.New("blob not found in module cache")
 
 const (
-	handlePrefix   = "modcache:"
-	kindZip        = "zip"
-	kindGoMod      = "mod"
 	zipExtension   = ".zip"
 	goModExtension = ".mod"
 )
 
-// Delegate is the subset of the blob-store contract the module-cache store
-// falls back to for content-addressed (non-module-cache) handles. The local
-// filesystem store satisfies it, including the optional path capability.
+// Delegate is the identity-addressed store the module-cache adapter populates
+// and reads through. The local filesystem store satisfies it, including the
+// optional path capability.
 type Delegate interface {
 	ports.BlobStore
 	ports.BlobPathOptimizer
 }
 
-// Store resolves module-cache handles from dir and delegates all other handles
-// to a content-addressed store.
+// Store populates an identity-addressed store from a Go module cache directory.
 type Store struct {
 	dir      string
 	delegate Delegate
@@ -66,37 +66,64 @@ var (
 )
 
 // New constructs a Store rooted at the module-cache directory dir (the value of
-// `go env GOMODCACHE`), delegating content-addressed handles to delegate.
+// `go env GOMODCACHE`), holding artefacts in delegate.
 func New(dir string, delegate Delegate) *Store {
 	return &Store{dir: dir, delegate: delegate}
 }
 
-// ZipHandle returns the deterministic module-cache handle for a coordinate's
-// zip. It never touches the filesystem, so the fetch pipeline can record it
-// without a Put.
-func ZipHandle(coord coordinate.ModuleCoordinate) (ports.BlobHandle, error) {
-	return deriveHandle(kindZip, coord)
+// Put stores content under identity. The delegate hard-links rather than copying
+// whenever the content is an open file, which is what makes population from a
+// module cache cost no disk.
+func (s *Store) Put(ctx context.Context, identity ports.BlobIdentity, content io.Reader) error {
+	if err := s.delegate.Put(ctx, identity, content); err != nil {
+		return fmt.Errorf("delegate put: %w", err)
+	}
+	return nil
 }
 
-// GoModHandle returns the deterministic module-cache handle for a coordinate's
-// standalone go.mod.
-func GoModHandle(coord coordinate.ModuleCoordinate) (ports.BlobHandle, error) {
-	return deriveHandle(kindGoMod, coord)
+// Get opens the artefact identified by identity.
+func (s *Store) Get(ctx context.Context, identity ports.BlobIdentity) (io.ReadCloser, error) {
+	rc, err := s.delegate.Get(ctx, identity)
+	if err != nil {
+		return nil, fmt.Errorf("delegate get: %w", err)
+	}
+	return rc, nil
 }
 
-// ZipHandle satisfies the fetch pipeline's ModcacheHandleDeriver so the Store
-// can be injected as both the blob adapter and the handle source in
-// --from-modcache mode.
-func (s *Store) ZipHandle(coord coordinate.ModuleCoordinate) (ports.BlobHandle, error) {
-	return ZipHandle(coord)
+// GetPath returns the filesystem path to the artefact identified by identity.
+func (s *Store) GetPath(ctx context.Context, identity ports.BlobIdentity) (string, error) {
+	p, err := s.delegate.GetPath(ctx, identity)
+	if err != nil {
+		return "", fmt.Errorf("delegate get path: %w", err)
+	}
+	return p, nil
 }
 
-// GoModHandle satisfies the fetch pipeline's ModcacheHandleDeriver.
-func (s *Store) GoModHandle(coord coordinate.ModuleCoordinate) (ports.BlobHandle, error) {
-	return GoModHandle(coord)
+// Exists reports whether the artefact is held.
+func (s *Store) Exists(ctx context.Context, identity ports.BlobIdentity) (bool, error) {
+	exists, err := s.delegate.Exists(ctx, identity)
+	if err != nil {
+		return false, fmt.Errorf("delegate exists: %w", err)
+	}
+	return exists, nil
 }
 
-func deriveHandle(kind string, coord coordinate.ModuleCoordinate) (ports.BlobHandle, error) {
+// OpenZip opens a coordinate's module zip in the cache directory, for the fetch
+// pipeline to hash and Put under the identity it measures. It is the population
+// source, not an address: the returned file's path is the cache's own layout and
+// is never recorded.
+func (s *Store) OpenZip(coord coordinate.ModuleCoordinate) (*os.File, error) {
+	return s.openCacheFile(coord, zipExtension)
+}
+
+// OpenGoMod opens a coordinate's standalone go.mod in the cache directory.
+func (s *Store) OpenGoMod(coord coordinate.ModuleCoordinate) (*os.File, error) {
+	return s.openCacheFile(coord, goModExtension)
+}
+
+// CachePath returns the path a coordinate's artefact occupies in the module
+// cache, without opening it.
+func (s *Store) CachePath(coord coordinate.ModuleCoordinate, ext string) (string, error) {
 	escapedPath, err := module.EscapePath(coord.Path)
 	if err != nil {
 		return "", fmt.Errorf("escaping module path %q: %w", coord.Path, err)
@@ -105,124 +132,27 @@ func deriveHandle(kind string, coord coordinate.ModuleCoordinate) (ports.BlobHan
 	if err != nil {
 		return "", fmt.Errorf("escaping module version %q: %w", coord.Version, err)
 	}
-	return ports.BlobHandle(handlePrefix + kind + ":" + escapedPath + "@" + escapedVersion), nil
+	return filepath.Join(s.dir, "cache", "download", filepath.FromSlash(escapedPath), "@v", escapedVersion+ext), nil
 }
 
-// Put stores content via the delegate and returns its content-addressed handle.
-// Module-cache entries are never written here; the fetch pipeline derives their
-// handles instead. Local modules (root, replace targets) still flow through.
-func (s *Store) Put(ctx context.Context, content io.Reader) (ports.BlobHandle, error) {
-	h, err := s.delegate.Put(ctx, content)
-	if err != nil {
-		return "", fmt.Errorf("delegate put: %w", err)
-	}
-	return h, nil
-}
+// ZipExtension and GoModExtension name the module-cache file suffixes, for
+// callers of CachePath.
+const (
+	ZipExtension   = zipExtension
+	GoModExtension = goModExtension
+)
 
-// Get opens the blob for handle. Module-cache handles resolve to a file in the
-// cache directory; all other handles are delegated.
-func (s *Store) Get(ctx context.Context, handle ports.BlobHandle) (io.ReadCloser, error) {
-	path, ok, err := s.resolve(handle)
+func (s *Store) openCacheFile(coord coordinate.ModuleCoordinate, ext string) (*os.File, error) {
+	path, err := s.CachePath(coord, ext)
 	if err != nil {
 		return nil, err
-	}
-	if !ok {
-		rc, derr := s.delegate.Get(ctx, handle)
-		if derr != nil {
-			return nil, fmt.Errorf("delegate get: %w", derr)
-		}
-		return rc, nil
 	}
 	f, err := os.Open(path) // #nosec G304 -- path derived from an escaped module coordinate under the cache dir
 	if err != nil {
 		if os.IsNotExist(err) {
-			return nil, fmt.Errorf("%w: %s", ErrBlobNotFound, handle)
+			return nil, fmt.Errorf("%w: %s%s", ErrBlobNotFound, coord, ext)
 		}
-		return nil, fmt.Errorf("opening module-cache blob %s: %w", handle, err)
+		return nil, fmt.Errorf("opening module-cache file for %s: %w", coord, err)
 	}
 	return f, nil
-}
-
-// GetPath returns the filesystem path for handle. Module-cache handles resolve
-// directly; other handles are delegated to the content-addressed store.
-func (s *Store) GetPath(ctx context.Context, handle ports.BlobHandle) (string, error) {
-	path, ok, err := s.resolve(handle)
-	if err != nil {
-		return "", err
-	}
-	if !ok {
-		p, derr := s.delegate.GetPath(ctx, handle)
-		if derr != nil {
-			return "", fmt.Errorf("delegate get path: %w", derr)
-		}
-		return p, nil
-	}
-	if _, err := os.Stat(path); err != nil {
-		if os.IsNotExist(err) {
-			return "", fmt.Errorf("%w: %s", ErrBlobNotFound, handle)
-		}
-		return "", fmt.Errorf("checking module-cache blob %s: %w", handle, err)
-	}
-	return path, nil
-}
-
-// Exists reports whether the blob for handle is present.
-func (s *Store) Exists(ctx context.Context, handle ports.BlobHandle) (bool, error) {
-	path, ok, err := s.resolve(handle)
-	if err != nil {
-		return false, err
-	}
-	if !ok {
-		exists, derr := s.delegate.Exists(ctx, handle)
-		if derr != nil {
-			return false, fmt.Errorf("delegate exists: %w", derr)
-		}
-		return exists, nil
-	}
-	_, statErr := os.Stat(path)
-	if os.IsNotExist(statErr) {
-		return false, nil
-	}
-	if statErr != nil {
-		return false, fmt.Errorf("checking module-cache blob existence: %w", statErr)
-	}
-	return true, nil
-}
-
-// resolve maps a module-cache handle to its on-disk path. ok is false when the
-// handle is not a module-cache handle (the caller then delegates).
-func (s *Store) resolve(handle ports.BlobHandle) (path string, ok bool, err error) {
-	h := string(handle)
-	if !strings.HasPrefix(h, handlePrefix) {
-		return "", false, nil
-	}
-	rest := strings.TrimPrefix(h, handlePrefix)
-	kind, coordPart, found := strings.Cut(rest, ":")
-	if !found {
-		return "", false, fmt.Errorf("malformed module-cache handle %q", handle)
-	}
-	var ext string
-	switch kind {
-	case kindZip:
-		ext = zipExtension
-	case kindGoMod:
-		ext = goModExtension
-	default:
-		return "", false, fmt.Errorf("unknown module-cache handle kind %q in %q", kind, handle)
-	}
-	escapedPath, escapedVersion, found := cutLast(coordPart, "@")
-	if !found || escapedPath == "" || escapedVersion == "" {
-		return "", false, fmt.Errorf("malformed module-cache handle %q", handle)
-	}
-	full := filepath.Join(s.dir, "cache", "download", filepath.FromSlash(escapedPath), "@v", escapedVersion+ext)
-	return full, true, nil
-}
-
-// cutLast splits s around the last instance of sep.
-func cutLast(s, sep string) (before, after string, found bool) {
-	i := strings.LastIndex(s, sep)
-	if i < 0 {
-		return s, "", false
-	}
-	return s[:i], s[i+len(sep):], true
 }

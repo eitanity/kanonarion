@@ -16,16 +16,17 @@ import (
 // fact/blob stores under the "v1" fetch pipeline version, so a scan finds it
 // present and can read its declared go version.
 func seedFactNode(t testing.TB, ctx context.Context, facts *fakeFacts, blobs *fakeBlob, coord coordinate.ModuleCoordinate, goVersion string) {
-	zipHandle, _ := blobs.Put(ctx, strings.NewReader("zip-"+coord.Path+"-"+coord.Version))
 	goMod := "module " + coord.Path + "\n\ngo " + goVersion + "\n"
-	modHandle, _ := blobs.Put(ctx, strings.NewReader(goMod))
-	_ = facts.PutFetchRecord(ctx, fetchtest.Record(
-		t,
+	opts := []fetchtest.Option{
 		fetchtest.Coordinate(coord),
 		fetchtest.PipelineVersion("v1"),
-		fetchtest.Content(string(zipHandle)),
-		fetchtest.GoMod(string(modHandle)),
-	))
+		fetchtest.Content("zip-" + coord.Path + "-" + coord.Version),
+		fetchtest.GoMod("gomod-" + coord.Path + "-" + coord.Version),
+	}
+	rec := fetchtest.Record(t, opts...)
+	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, rec), strings.NewReader("zip-"+coord.Path+"-"+coord.Version))
+	_ = blobs.Put(ctx, fetchtest.GoModIdentity(t, rec), strings.NewReader(goMod))
+	_ = facts.PutFetchRecord(ctx, fetchtest.Sealed(t, opts...))
 }
 
 // supersededGraph builds a walk whose edge names a superseded intermediate

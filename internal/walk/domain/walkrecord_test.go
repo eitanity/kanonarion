@@ -47,6 +47,10 @@ func sampleFactRecord(t testing.TB) domain2.FactRecord {
 
 func buildOutcome(t testing.TB) domain3.WalkOutcome {
 	rec := sampleFactRecord(t)
+	composed, cerr := domain2.Compose([]domain2.FactRecord{rec})
+	if cerr != nil {
+		t.Fatalf("composing fetch record: %v", cerr)
+	}
 	graph := domain3.Graph{
 		Target: targetCoord,
 		Nodes: []domain3.GraphNode{
@@ -66,7 +70,7 @@ func buildOutcome(t testing.TB) domain3.WalkOutcome {
 		PerNodeResults: map[coordinate.ModuleCoordinate]domain3.NodeResult{
 			targetCoord: {
 				Coordinate:  targetCoord,
-				FetchRecord: &rec,
+				FetchRecord: &composed,
 				Status:      domain3.NodeSucceeded,
 				FromCache:   false,
 				DurationMs:  42,
@@ -265,6 +269,10 @@ func TestWalkRecordHasher_NodeResultsOrdering(t *testing.T) {
 	)
 
 	makeOutcome := func(order1, order2 coordinate.ModuleCoordinate) domain3.WalkOutcome {
+		composed, cerr := domain2.Compose([]domain2.FactRecord{rec})
+		if cerr != nil {
+			t.Fatalf("composing fetch record: %v", cerr)
+		}
 		return domain3.WalkOutcome{
 			Target:        targetCoord,
 			Graph:         domain3.Graph{Target: targetCoord, ResolvedAt: fixedTime, PipelineVersion: "0.2.0"},
@@ -272,8 +280,8 @@ func TestWalkRecordHasher_NodeResultsOrdering(t *testing.T) {
 			CompletedAt:   fixedTime.Add(time.Second),
 			OverallStatus: domain3.WalkSucceeded,
 			PerNodeResults: map[coordinate.ModuleCoordinate]domain3.NodeResult{
-				order1: {Coordinate: order1, FetchRecord: &rec, Status: domain3.NodeSucceeded},
-				order2: {Coordinate: order2, FetchRecord: &rec, Status: domain3.NodeSucceeded},
+				order1: {Coordinate: order1, FetchRecord: &composed, Status: domain3.NodeSucceeded},
+				order2: {Coordinate: order2, FetchRecord: &composed, Status: domain3.NodeSucceeded},
 			},
 		}
 	}
@@ -895,6 +903,10 @@ func buildRichWalkRecord(t *testing.T) domain3.WalkRecord {
 	perNodeB := mustCoord("pernode.example/mod", "v2.0.0")
 
 	rec := sampleFactRecord(t)
+	composed, cerr := domain2.Compose([]domain2.FactRecord{rec})
+	if cerr != nil {
+		t.Fatalf("composing fetch record: %v", cerr)
+	}
 	outcome := domain3.WalkOutcome{
 		Target: rootTarget,
 		Graph: domain3.Graph{
@@ -912,7 +924,7 @@ func buildRichWalkRecord(t *testing.T) domain3.WalkRecord {
 			PipelineVersion: "0.2.0",
 		},
 		PerNodeResults: map[coordinate.ModuleCoordinate]domain3.NodeResult{
-			perNodeA: {Coordinate: perNodeA, FetchRecord: &rec, Status: domain3.NodeSucceeded},
+			perNodeA: {Coordinate: perNodeA, FetchRecord: &composed, Status: domain3.NodeSucceeded},
 			perNodeB: {Coordinate: perNodeB, Status: domain3.NodeFetchFailed},
 		},
 		StartedAt:     fixedTime,

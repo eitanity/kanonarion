@@ -63,7 +63,7 @@ func TestAuditingStore_RecordsOnPut(t *testing.T) {
 	}()
 
 	r := sampleRecord(t, "github.com/foo/bar", "v2.0.0", "0.1.0")
-	if err := store.PutFetchRecord(context.Background(), r); err != nil {
+	if err := store.PutFetchRecord(context.Background(), mustSeal(t, r)); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
@@ -169,7 +169,7 @@ func TestAuditingStore_GetDelegates(t *testing.T) {
 
 	ctx := context.Background()
 	r := sampleRecord(t, "example.com/m", "v1.0.0", "0.1.0")
-	if err := store.PutFetchRecord(ctx, r); err != nil {
+	if err := store.PutFetchRecord(ctx, mustSeal(t, r)); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 

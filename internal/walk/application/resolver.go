@@ -81,7 +81,15 @@ import (
 // genuinely linked into the build was absent from the graph — and from every
 // downstream stage. Cached 1.8.0 walks carry that hole and are re-resolved
 // rather than served.
-const PipelineVersion = "1.9.0"
+// 1.10.0: each node embeds the COMPOSED fetch record rather than a single fetch
+// row — the artefact identity, the date the artefact was first seen, the
+// measurement being served, and the validation legs any measurement
+// established. The fetch store became an append-only ledger, so several
+// measurements may describe one artefact and a node that embedded one row was
+// embedding an arbitrary one. The embedded shape changed, so the walk record's
+// canonical bytes changed with it; cached 1.9.0 walks are re-resolved rather
+// than read through a second shape.
+const PipelineVersion = "1.10.0"
 
 // GraphResolver resolves the transitive dependency graph for a target module.
 // It is safe for concurrent use once constructed.
@@ -198,7 +206,7 @@ func (r *GraphResolver) Resolve(ctx context.Context, target coordinate.ModuleCoo
 	}
 
 	// Step 2: extract and parse target's go.mod — fatal if this fails.
-	targetGoModBytes, err := r.extractGoMod(ctx, targetResult.Record)
+	targetGoModBytes, err := r.extractGoMod(ctx, targetResult.Record.FactRecord)
 	if err != nil {
 		return domain3.Graph{}, fmt.Errorf("extracting go.mod for target %s: %w", target, err)
 	}
@@ -514,7 +522,7 @@ func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target coordin
 			node.ErrorDetail = err.Error()
 		} else {
 			node.Retracted = results[i].record.Retracted
-			st.recordDigests(t.coord, domain2.RecordDigests(results[i].record))
+			st.recordDigests(t.coord, domain2.RecordDigests(results[i].record.FactRecord))
 		}
 		st.nodes[t.path] = node
 	}
@@ -632,7 +640,7 @@ func (r *GraphResolver) buildListNodeSkeleton(m walkports.BuildListModule, st *r
 
 // fetchResult pairs a fetched fact record with any per-coordinate fetch error.
 type fetchResult struct {
-	record domain2.FactRecord
+	record domain2.CompositeRecord
 	err    error
 }
 
@@ -915,7 +923,7 @@ func (r *GraphResolver) ResolveShallow(ctx context.Context, target coordinate.Mo
 		return domain3.Graph{}, fmt.Errorf("fetching target %s: %w", target, err)
 	}
 
-	targetGoModBytes, err := r.extractGoMod(ctx, targetResult.Record)
+	targetGoModBytes, err := r.extractGoMod(ctx, targetResult.Record.FactRecord)
 	if err != nil {
 		return domain3.Graph{}, fmt.Errorf("extracting go.mod for target %s: %w", target, err)
 	}
@@ -1080,7 +1088,7 @@ type fetchParseOutcome struct {
 	// module's own (pre-replace) path, which is not coord.Path for a replaced
 	// module. See resolveState.
 	nodeKey    string
-	record     domain2.FactRecord
+	record     domain2.CompositeRecord
 	fetchErr   error
 	extractErr error
 	parseErr   error
@@ -1132,7 +1140,7 @@ func (r *GraphResolver) fetchAndParseModule(ctx context.Context, coord coordinat
 
 	// nil bytes means the zip has no go.mod — module predates Go modules, so
 	// treat it as a leaf with no dependencies.
-	goModBytes, extractErr := r.extractGoMod(ctx, fetchResult.Record)
+	goModBytes, extractErr := r.extractGoMod(ctx, fetchResult.Record.FactRecord)
 	if extractErr != nil {
 		out.extractErr = extractErr
 		return out
@@ -1192,7 +1200,7 @@ func (r *GraphResolver) applyFetchParse(ctx context.Context, out fetchParseOutco
 		Retracted:          out.record.Retracted,
 		OriginalCoordinate: existing.OriginalCoordinate,
 	}
-	st.recordDigests(coord, domain2.RecordDigests(out.record))
+	st.recordDigests(coord, domain2.RecordDigests(out.record.FactRecord))
 
 	if out.extractErr != nil {
 		r.logger.WarnContext(ctx, "walk.gomod.extract.failed",
@@ -1260,8 +1268,12 @@ func (r *GraphResolver) applyFetchParse(ctx context.Context, out fetchParseOutco
 // fact records that predate standalone go.mod storage. nil bytes means the
 // module has no go.mod (pre-modules); callers treat it as a leaf.
 func (r *GraphResolver) extractGoMod(ctx context.Context, fact domain2.FactRecord) ([]byte, error) {
-	if fact.GoModLocation != "" {
-		data, err := r.readBlob(ctx, fact.GoModLocation)
+	goModIdentity, hasGoMod, err := fetchports.GoModIdentity(fact)
+	if err != nil {
+		return nil, fmt.Errorf("deriving go.mod address for %s@%s: %w", fact.ModulePath, fact.ModuleVersion, err)
+	}
+	if hasGoMod {
+		data, err := r.readBlob(ctx, goModIdentity)
 		if err != nil {
 			return nil, fmt.Errorf("reading go.mod blob for %s@%s: %w", fact.ModulePath, fact.ModuleVersion, err)
 		}
@@ -1273,9 +1285,16 @@ func (r *GraphResolver) extractGoMod(ctx context.Context, fact domain2.FactRecor
 		return data, nil
 	}
 
-	// Fallback: older fact records without a standalone go.mod blob — scan the
-	// module zip for the go.mod entry.
-	zipData, err := r.readBlob(ctx, fact.ContentLocation)
+	// Fallback: records with no standalone go.mod hash — scan the module zip for
+	// the go.mod entry.
+	zipIdentity, hasZip, err := fetchports.ZipIdentity(fact)
+	if err != nil {
+		return nil, fmt.Errorf("deriving zip address for %s@%s: %w", fact.ModulePath, fact.ModuleVersion, err)
+	}
+	if !hasZip {
+		return nil, nil
+	}
+	zipData, err := r.readBlob(ctx, zipIdentity)
 	if err != nil {
 		return nil, fmt.Errorf("reading blob for %s@%s: %w", fact.ModulePath, fact.ModuleVersion, err)
 	}
@@ -1299,22 +1318,22 @@ func (r *GraphResolver) extractGoMod(ctx context.Context, fact domain2.FactRecor
 	return data, nil
 }
 
-// readBlob reads the full contents of the blob identified by handle, ensuring
-// the reader is closed.
-func (r *GraphResolver) readBlob(ctx context.Context, handle string) (_ []byte, retErr error) {
-	rc, err := r.blobs.Get(ctx, fetchports.BlobHandle(handle))
+// readBlob reads the full contents of the artefact identified by identity,
+// ensuring the reader is closed.
+func (r *GraphResolver) readBlob(ctx context.Context, identity fetchports.BlobIdentity) (_ []byte, retErr error) {
+	rc, err := r.blobs.Get(ctx, identity)
 	if err != nil {
-		return nil, fmt.Errorf("getting blob %s: %w", handle, err)
+		return nil, fmt.Errorf("getting blob %s: %w", identity, err)
 	}
 	defer func() {
 		if cerr := rc.Close(); cerr != nil && retErr == nil {
-			retErr = fmt.Errorf("closing blob reader for %s: %w", handle, cerr)
+			retErr = fmt.Errorf("closing blob reader for %s: %w", identity, cerr)
 		}
 	}()
 
 	data, err := io.ReadAll(rc)
 	if err != nil {
-		return nil, fmt.Errorf("reading blob %s: %w", handle, err)
+		return nil, fmt.Errorf("reading blob %s: %w", identity, err)
 	}
 	return data, nil
 }

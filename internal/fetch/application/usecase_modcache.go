@@ -29,26 +29,22 @@ import (
 // ordinary fetch error.
 var ErrGoSumVerification = errors.New("go.sum verification failed")
 
-// ModcacheHandleDeriver derives deterministic blob handles for a coordinate so
-// the fetch pipeline can record a module's location without copying its bytes
-// into the blob store. It is the seam that puts the use case in
-// --from-modcache mode: set it via WithModcache. Both methods are pure — they
-// never touch the filesystem — so a handle can be recorded before (or without)
-// the corresponding bytes being read.
-type ModcacheHandleDeriver interface {
-	ZipHandle(coord coordinate.ModuleCoordinate) (ports.BlobHandle, error)
-	GoModHandle(coord coordinate.ModuleCoordinate) (ports.BlobHandle, error)
-}
-
-// WithModcache switches the use case into --from-modcache mode. In this mode
-// Execute reads module bytes from the module-cache-backed proxy, verifies each
+// WithModcacheMode switches the use case into --from-modcache mode. In this mode
+// Execute reads module bytes from the module-cache-backed proxy and verifies each
 // module's h1 against the local go.sum (a mismatch or missing entry is a hard
-// ErrGoSumVerification failure), and records ContentLocation/GoModLocation as
-// deterministic module-cache handles derived from the coordinate — never
-// calling blobs.Put. A nil deriver (the default) leaves the network+blobstore
-// path untouched. Returns uc for chaining.
-func (uc *FetchModuleUseCase) WithModcache(deriver ModcacheHandleDeriver) *FetchModuleUseCase {
-	uc.modcache = deriver
+// ErrGoSumVerification failure) instead of consulting the network checksum
+// database. Returns uc for chaining.
+//
+// It used to take a handle deriver, which produced "modcache:zip:<coord>"
+// addresses from the coordinate and wrote them into records instead of calling
+// blobs.Put. Those addresses were mode-locked: only the module-cache adapter
+// resolved them, so a record written here was unreadable by a later ordinary
+// run, and the same artefact measured both ways yielded two irreconcilable
+// records. The mode now stores bytes under the artefact identity it measured,
+// exactly like every other path, so nothing about the record betrays which mode
+// wrote it beyond the acquisition-mode provenance field.
+func (uc *FetchModuleUseCase) WithModcacheMode() *FetchModuleUseCase {
+	uc.modcache = true
 	return uc
 }
 
@@ -86,7 +82,7 @@ func (uc *FetchModuleUseCase) executeModcache(ctx context.Context, req FetchRequ
 			return FetchResult{}, fmt.Errorf("checking cache: %w", err)
 		}
 		switch {
-		case ok && !uc.cachedArtefactsReadable(ctx, log, existing):
+		case ok && !uc.cachedArtefactsReadable(ctx, log, existing.FactRecord):
 			// A record written by the network path points at content-addressed blobs
 			// this mode can still read through the delegate — unless the blob is gone.
 			// Re-fetch rather than serve a handle that resolves to nothing.
@@ -137,14 +133,17 @@ func (uc *FetchModuleUseCase) executeModcache(ctx context.Context, req FetchRequ
 		return FetchResult{}, err
 	}
 
-	// Step 4: derive module-cache handles from the coordinate — no blobs.Put.
-	contentLocation, err := uc.modcache.ZipHandle(req.Coordinate)
-	if err != nil {
-		return FetchResult{}, fmt.Errorf("deriving zip handle: %w", err)
+	// Step 4: store the bytes under the identities just measured. The module-cache
+	// blob adapter populates its address space by hard link where it can, so this
+	// costs no duplication, and the resulting record names the same address a
+	// network measurement of the same artefact would.
+	zipIdentity := ports.BlobIdentity{Kind: ports.BlobKindZip, Hash: dl.ZipHash}
+	if err := uc.blobs.Put(ctx, zipIdentity, newReader(zipData)); err != nil {
+		return FetchResult{}, fmt.Errorf("storing zip blob: %w", err)
 	}
-	goModLocation, err := uc.modcache.GoModHandle(req.Coordinate)
-	if err != nil {
-		return FetchResult{}, fmt.Errorf("deriving go.mod handle: %w", err)
+	goModIdentity := ports.BlobIdentity{Kind: ports.BlobKindGoMod, Hash: dl.GoModHash}
+	if err := uc.blobs.Put(ctx, goModIdentity, newReader(goModData)); err != nil {
+		return FetchResult{}, fmt.Errorf("storing go.mod blob: %w", err)
 	}
 
 	// Step 5: construct the record. Retraction is still parsed from go.mod; VCS
@@ -162,22 +161,18 @@ func (uc *FetchModuleUseCase) executeModcache(ctx context.Context, req FetchRequ
 		VerificationDetail: "verified against local go.sum (modcache mode); VCS cross-verification skipped",
 		FetchedAt:          uc.clock.Now().UTC(),
 		PipelineVersion:    uc.pipelineVersion,
-		ContentLocation:    string(contentLocation),
-		GoModLocation:      string(goModLocation),
+		ContentLocation:    zipIdentity.String(),
+		GoModLocation:      goModIdentity.String(),
 		Retracted:          retracted,
 		AcquisitionMode:    domain2.AcquisitionModcache,
-	}
-	record := domain2.NewFactRecord(m)
-
-	record, err = uc.hasher.SetContentHash(record)
-	if err != nil {
-		return FetchResult{}, fmt.Errorf("computing content hash: %w", err)
+		MeasurementKind:    domain2.MeasurementAcquired,
+		SumDBCheck:         domain2.LegRechecked,
 	}
 
-	// Step 6: persist. This mode's anchor is the local go.sum alone, so it can
-	// never beat a network run's Verified record; persistRecord keeps the
-	// stronger one and this run becomes a visible no-op rather than a demotion.
-	stored, err := uc.persistRecord(ctx, log, req, record)
+	// Step 6: seal and append. This mode's anchor is the local go.sum alone, so it
+	// can never beat a network run's Verified record; the composed read serves the
+	// stronger measurement and this run adds evidence rather than replacing any.
+	stored, err := uc.persistRecord(ctx, log, req, m)
 	if err != nil {
 		return FetchResult{}, err
 	}
@@ -218,7 +213,7 @@ func (uc *FetchModuleUseCase) executeGoModOnlyModcache(ctx context.Context, req 
 		if err != nil {
 			return FetchResult{}, fmt.Errorf("checking cache: %w", err)
 		}
-		if ok && uc.cachedArtefactsReadable(ctx, log, existing) {
+		if ok && uc.cachedArtefactsReadable(ctx, log, existing.FactRecord) {
 			log.InfoContext(ctx, "cache_hit")
 			return FetchResult{Record: existing, FromCache: true}, nil
 		}
@@ -250,10 +245,10 @@ func (uc *FetchModuleUseCase) executeGoModOnlyModcache(ctx context.Context, req 
 		return FetchResult{}, err
 	}
 
-	// Step 4: derive the go.mod handle only — no zip handle, no blobs.Put.
-	goModLocation, err := uc.modcache.GoModHandle(req.Coordinate)
-	if err != nil {
-		return FetchResult{}, fmt.Errorf("deriving go.mod handle: %w", err)
+	// Step 4: store the go.mod alone — there is no zip in a go.mod-only fetch.
+	goModIdentity := ports.BlobIdentity{Kind: ports.BlobKindGoMod, Hash: dl.GoModHash}
+	if err := uc.blobs.Put(ctx, goModIdentity, newReader(goModData)); err != nil {
+		return FetchResult{}, fmt.Errorf("storing go.mod blob: %w", err)
 	}
 
 	retracted := parseRetracted(goModData, req.Coordinate.Version)
@@ -267,18 +262,14 @@ func (uc *FetchModuleUseCase) executeGoModOnlyModcache(ctx context.Context, req 
 		VerificationDetail: "go.mod-only fetch (modcache); go.mod verified against local go.sum; zip not read",
 		FetchedAt:          uc.clock.Now().UTC(),
 		PipelineVersion:    uc.pipelineVersion,
-		GoModLocation:      string(goModLocation),
+		GoModLocation:      goModIdentity.String(),
 		Retracted:          retracted,
 		AcquisitionMode:    domain2.AcquisitionModcache,
-	}
-	record := domain2.NewFactRecord(m)
-
-	record, err = uc.hasher.SetContentHash(record)
-	if err != nil {
-		return FetchResult{}, fmt.Errorf("computing content hash: %w", err)
+		MeasurementKind:    domain2.MeasurementAcquired,
+		SumDBCheck:         domain2.LegRechecked,
 	}
 
-	stored, err := uc.persistRecord(ctx, log, req, record)
+	stored, err := uc.persistRecord(ctx, log, req, m)
 	if err != nil {
 		return FetchResult{}, err
 	}

@@ -93,7 +93,7 @@ func TestFailedSumDBLookupRecordIsReVerifiedNotServedFromCache(t *testing.T) {
 	if !first.Record.SumDBLookupFailed {
 		t.Error("SumDBLookupFailed not recorded, so the downgrade would be cached as a fact about the module")
 	}
-	if domain2.RecordIsCacheable(first.Record) {
+	if domain2.RecordIsCacheable(first.Record.FactRecord) {
 		t.Error("RecordIsCacheable reported a failed-lookup record as cacheable")
 	}
 
@@ -115,7 +115,7 @@ func TestFailedSumDBLookupRecordIsReVerifiedNotServedFromCache(t *testing.T) {
 	if got := second.Record.VerificationStatus; got == string(domain2.UnverifiedNoSumDB) {
 		t.Errorf("VerificationStatus = %q: the recovered lookup did not lift the downgrade", got)
 	}
-	if !domain2.RecordIsCacheable(second.Record) {
+	if !domain2.RecordIsCacheable(second.Record.FactRecord) {
 		t.Error("the re-verified record is still not cacheable, so every future run re-fetches")
 	}
 
@@ -229,18 +229,18 @@ type foreignHandleBlob struct {
 	foreignPrefix string
 }
 
-func (b *foreignHandleBlob) Exists(ctx context.Context, h ports.BlobHandle) (bool, error) {
-	if strings.HasPrefix(string(h), b.foreignPrefix) {
-		return false, fmt.Errorf("invalid blob handle %q: expected fake:<content>", h)
+func (b *foreignHandleBlob) Exists(ctx context.Context, identity ports.BlobIdentity) (bool, error) {
+	if strings.HasPrefix(identity.String(), b.foreignPrefix) {
+		return false, fmt.Errorf("blob store cannot resolve %q", identity)
 	}
-	return b.fakeBlob.Exists(ctx, h)
+	return b.fakeBlob.Exists(ctx, identity)
 }
 
-func (b *foreignHandleBlob) Get(ctx context.Context, h ports.BlobHandle) (io.ReadCloser, error) {
-	if strings.HasPrefix(string(h), b.foreignPrefix) {
-		return nil, fmt.Errorf("invalid blob handle %q: expected fake:<content>", h)
+func (b *foreignHandleBlob) Get(ctx context.Context, identity ports.BlobIdentity) (io.ReadCloser, error) {
+	if strings.HasPrefix(identity.String(), b.foreignPrefix) {
+		return nil, fmt.Errorf("blob store cannot resolve %q", identity)
 	}
-	return b.fakeBlob.Get(ctx, h)
+	return b.fakeBlob.Get(ctx, identity)
 }
 
 // TestCachedRecordWithUnreadableHandleIsReFetched is the regression guard for the
@@ -268,7 +268,7 @@ func TestCachedRecordWithUnreadableHandleIsReFetched(t *testing.T) {
 		fetchtest.Content("modcache:zip:github.com/gorilla/mux@v1.8.1"),
 		fetchtest.GoMod("modcache:gomod:github.com/gorilla/mux@v1.8.1"),
 	)
-	if err := facts.PutFetchRecord(context.Background(), seeded); err != nil {
+	if err := facts.PutFetchRecord(context.Background(), mustSealRecord(t, seeded)); err != nil {
 		t.Fatalf("seed record: %v", err)
 	}
 
@@ -283,7 +283,7 @@ func TestCachedRecordWithUnreadableHandleIsReFetched(t *testing.T) {
 	if res.FromCache {
 		t.Fatal("served a cached record whose blob handle this run's store cannot read")
 	}
-	present, err := blobs.Exists(context.Background(), ports.BlobHandle(res.Record.ContentLocation))
+	present, err := blobs.Exists(context.Background(), fetchtest.ZipIdentity(t, res.Record.FactRecord))
 	if err != nil || !present {
 		t.Errorf("re-fetched record's handle %q is not readable by this store (present=%v err=%v)",
 			res.Record.ContentLocation, present, err)
@@ -305,7 +305,7 @@ func TestCachedRecordWithEvictedBlobIsReFetched(t *testing.T) {
 		fetchtest.Content("fake:evicted-zip"),
 		fetchtest.GoMod("fake:evicted-gomod"),
 	)
-	if err := facts.PutFetchRecord(context.Background(), seeded); err != nil {
+	if err := facts.PutFetchRecord(context.Background(), mustSealRecord(t, seeded)); err != nil {
 		t.Fatalf("seed record: %v", err)
 	}
 
@@ -329,14 +329,6 @@ func TestCachedRecordWithReadableBlobsStillHitsTheCache(t *testing.T) {
 	blobs := &foreignHandleBlob{fakeBlob: base, foreignPrefix: "modcache:"}
 	facts := newFakeFacts()
 
-	zip, err := blobs.Put(context.Background(), strings.NewReader("cached-zip"))
-	if err != nil {
-		t.Fatalf("seed zip blob: %v", err)
-	}
-	goMod, err := blobs.Put(context.Background(), strings.NewReader("cached-gomod"))
-	if err != nil {
-		t.Fatalf("seed go.mod blob: %v", err)
-	}
 	seeded := fetchtest.Record(t,
 		fetchtest.Coordinate(testCoord),
 		fetchtest.ModuleHash(fetchtest.H1("seed==")),
@@ -344,10 +336,18 @@ func TestCachedRecordWithReadableBlobsStillHitsTheCache(t *testing.T) {
 		fetchtest.Status(domain2.Verified),
 		fetchtest.FetchedAt(fixedTime),
 		fetchtest.PipelineVersion("test-0.1.0"),
-		fetchtest.Content(string(zip)),
-		fetchtest.GoMod(string(goMod)),
+		fetchtest.Content("cached-zip"),
+		fetchtest.GoMod("cached-gomod"),
 	)
-	if err := facts.PutFetchRecord(context.Background(), seeded); err != nil {
+	// Both artefacts are held under the identities the record names, so the
+	// readability gate is satisfied.
+	if err := blobs.Put(context.Background(), fetchtest.ZipIdentity(t, seeded), strings.NewReader("cached-zip")); err != nil {
+		t.Fatalf("seed zip blob: %v", err)
+	}
+	if err := blobs.Put(context.Background(), fetchtest.GoModIdentity(t, seeded), strings.NewReader("cached-gomod")); err != nil {
+		t.Fatalf("seed go.mod blob: %v", err)
+	}
+	if err := facts.PutFetchRecord(context.Background(), mustSealRecord(t, seeded)); err != nil {
 		t.Fatalf("seed record: %v", err)
 	}
 

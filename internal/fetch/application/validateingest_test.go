@@ -45,10 +45,10 @@ func tamperedRecord(t *testing.T) domain2.FactRecord {
 // infrastructure-error path distinct from verification failure.
 type boomFacts struct{ err error }
 
-func (b boomFacts) PutFetchRecord(context.Context, domain2.FactRecord) error { return b.err }
+func (b boomFacts) PutFetchRecord(context.Context, domain2.SealedRecord) error { return b.err }
 
-func (b boomFacts) GetFetchRecord(context.Context, coordinate.ModuleCoordinate, string) (domain2.FactRecord, bool, error) {
-	return domain2.FactRecord{}, false, b.err
+func (b boomFacts) GetFetchRecord(context.Context, coordinate.ModuleCoordinate, string) (domain2.CompositeRecord, bool, error) {
+	return domain2.CompositeRecord{}, false, b.err
 }
 
 func TestValidateAndIngest_Ingest_Valid(t *testing.T) {
@@ -101,7 +101,7 @@ func TestValidateAndIngest_Ingest_StoreError(t *testing.T) {
 func TestValidateAndIngest_ReadVerified_Valid(t *testing.T) {
 	store := newFakeFacts()
 	rec := validRecord(t)
-	if err := store.PutFetchRecord(context.Background(), rec); err != nil {
+	if err := store.PutFetchRecord(context.Background(), mustSealRecord(t, rec)); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	uc := application.NewValidateAndIngestUseCase(store)
@@ -125,7 +125,7 @@ func TestValidateAndIngest_ReadVerified_Absent(t *testing.T) {
 	if found {
 		t.Fatal("found=true for an absent record")
 	}
-	if rec != (domain2.FactRecord{}) {
+	if rec.ContentHash != "" || rec.MeasurementCount != 0 {
 		t.Error("absent read returned a non-zero record")
 	}
 }
@@ -133,9 +133,7 @@ func TestValidateAndIngest_ReadVerified_Absent(t *testing.T) {
 func TestValidateAndIngest_ReadVerified_TamperedFailClosed(t *testing.T) {
 	store := newFakeFacts()
 	rec := tamperedRecord(t)
-	if err := store.PutFetchRecord(context.Background(), rec); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	store.seedRaw(rec)
 	uc := application.NewValidateAndIngestUseCase(store)
 
 	got, found, err := uc.ReadVerified(context.Background(), rec.Coordinate(), rec.PipelineVersion)
@@ -146,7 +144,7 @@ func TestValidateAndIngest_ReadVerified_TamperedFailClosed(t *testing.T) {
 	if found {
 		t.Fatal("tampered record returned as found; read is not fail-closed")
 	}
-	if got != (domain2.FactRecord{}) {
+	if got.ContentHash != "" || got.MeasurementCount != 0 {
 		t.Error("tampered read leaked the record body")
 	}
 }
@@ -154,7 +152,7 @@ func TestValidateAndIngest_ReadVerified_TamperedFailClosed(t *testing.T) {
 func TestValidateAndIngest_ReadVerified_AuditsCleanRead(t *testing.T) {
 	store := newFakeFacts()
 	rec := validRecord(t)
-	if err := store.PutFetchRecord(context.Background(), rec); err != nil {
+	if err := store.PutFetchRecord(context.Background(), mustSealRecord(t, rec)); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	sink := newFakeAudit()
@@ -182,9 +180,7 @@ func TestValidateAndIngest_ReadVerified_AuditsCleanRead(t *testing.T) {
 func TestValidateAndIngest_ReadVerified_AuditsTamperedRead(t *testing.T) {
 	store := newFakeFacts()
 	rec := tamperedRecord(t)
-	if err := store.PutFetchRecord(context.Background(), rec); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	store.seedRaw(rec)
 	sink := newFakeAudit()
 	uc := application.NewValidateAndIngestUseCase(store).WithAudit(sink)
 
@@ -226,7 +222,7 @@ func TestValidateAndIngest_ReadVerified_AuditFailureSurfaced(t *testing.T) {
 	// serving a record it could not record.
 	store := newFakeFacts()
 	rec := validRecord(t)
-	if err := store.PutFetchRecord(context.Background(), rec); err != nil {
+	if err := store.PutFetchRecord(context.Background(), mustSealRecord(t, rec)); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
 	sink := &fakeAudit{err: errors.New("log unwritable")}
@@ -246,9 +242,7 @@ func TestValidateAndIngest_ReadVerified_TamperedAuditFailureJoinsSentinel(t *tes
 	// report ErrVerificationFailed so fail-closed handling is preserved.
 	store := newFakeFacts()
 	rec := tamperedRecord(t)
-	if err := store.PutFetchRecord(context.Background(), rec); err != nil {
-		t.Fatalf("seed: %v", err)
-	}
+	store.seedRaw(rec)
 	sink := &fakeAudit{err: errors.New("log unwritable")}
 	uc := application.NewValidateAndIngestUseCase(store).WithAudit(sink)
 

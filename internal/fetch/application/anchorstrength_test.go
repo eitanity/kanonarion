@@ -18,13 +18,12 @@ import (
 )
 
 // modcacheUseCase builds a --from-modcache use case over the given fact store,
-// logging into buf. The module-cache blob store resolves only "modcache:"
-// handles, exactly as the real one does, so a record written by the network path
-// reads as unreadable here and the fetch proceeds to the write side — which is
-// the situation the strength guard exists for.
+// logging into buf. Its blob store holds nothing, so a record written by the
+// network path reads as unreadable here and the fetch proceeds to the write side
+// — which is the situation the strength guard exists for.
 func modcacheUseCase(t *testing.T, facts ports.FactStore, buf *bytes.Buffer) *application.FetchModuleUseCase {
 	t.Helper()
-	return modcacheUseCaseWithBlobs(t, facts, noPutBlob{t}, buf)
+	return modcacheUseCaseWithBlobs(t, facts, newModcacheBlob(t), buf)
 }
 
 // modcacheUseCaseWithBlobs is modcacheUseCase over an explicit blob store, so a
@@ -40,25 +39,20 @@ func modcacheUseCaseWithBlobs(t *testing.T, facts ports.FactStore, blobs ports.B
 		&fakeVCS{}, blobs, facts,
 		&fakeSumDB{result: ports.SumDBResult{Available: true, ZipHash: zipHash, GoModHash: goModHash}},
 		fixedClock{fixedTime}, fakeStopwatch{}, "test-0.1.0", log,
-	).WithModcache(fakeDeriver{})
+	).WithModcacheMode()
 }
 
-// delegatingModcacheBlobs mirrors the real module-cache blob store: it resolves
-// the coordinate-derived handles this mode writes AND delegates content-addressed
-// handles to the local store, so a record written by a network run stays readable
-// from module-cache mode.
+// delegatingModcacheBlobs used to special-case the "modcache:" handle namespace
+// the module-cache store once owned. There is no namespace left to special-case:
+// every mode addresses an artefact by the identity it measured, so a store either
+// holds those bytes or does not, and delegation is the ordinary path. It is now
+// a plain in-memory store kept under its old name so the tests below still read
+// as "the blob store module-cache mode is wired with".
 type delegatingModcacheBlobs struct{ *fakeBlob }
 
-func (b delegatingModcacheBlobs) Exists(ctx context.Context, h ports.BlobHandle) (bool, error) {
-	if strings.HasPrefix(string(h), "modcache:") {
-		return true, nil
-	}
-	return b.fakeBlob.Exists(ctx, h)
-}
-
 // seedStoredRecord stores a record for testCoord with the given status and mode,
-// pointing at handles the module-cache store cannot resolve (the shape a network
-// run leaves behind).
+// whose artefacts the blob store does not hold (the shape a network run leaves
+// behind for a module-cache run that cannot reach the same bytes).
 func seedStoredRecord(t *testing.T, facts *fakeFacts, status domain2.VerificationStatus, mode domain2.AcquisitionMode) domain2.FactRecord {
 	t.Helper()
 	sealed := fetchtest.Record(t,
@@ -72,7 +66,11 @@ func seedStoredRecord(t *testing.T, facts *fakeFacts, status domain2.Verificatio
 		fetchtest.GoMod("fake:seed-gomod"),
 		fetchtest.AcquisitionMode(mode),
 	)
-	if err := facts.PutFetchRecord(context.Background(), sealed); err != nil {
+	resealed, serr := domain2.Rehydrate(sealed)
+	if serr != nil {
+		t.Fatalf("sealing seed record: %v", serr)
+	}
+	if err := facts.PutFetchRecord(context.Background(), resealed); err != nil {
 		t.Fatalf("seeding record: %v", err)
 	}
 	return sealed
@@ -84,7 +82,7 @@ func storedRecord(t *testing.T, facts *fakeFacts) domain2.FactRecord {
 	if err != nil || !ok {
 		t.Fatalf("reading stored record: ok=%v err=%v", ok, err)
 	}
-	return r
+	return r.FactRecord
 }
 
 // TestModcacheReMeasurementNeverDemotesAStoredRecord is the regression guard for
@@ -154,10 +152,12 @@ func TestModcacheReMeasurementNeverDemotesAStoredRecord(t *testing.T) {
 				}
 				// What the refused run RETURNS depends on whether it can read the kept
 				// record's artefacts; both directions are pinned separately below. Here
-				// the seeded handles are unreadable in this mode, so the caller gets the
-				// artefacts this run measured — never the mode-locked ones.
-				if res.Record.ContentLocation != "modcache:zip:"+testCoord.String() {
-					t.Errorf("refused run returned ContentLocation %q, want the artefacts it measured", res.Record.ContentLocation)
+				// the seeded artefacts are absent from this run's store, so the caller
+				// gets the artefacts this run measured rather than an address it
+				// cannot read.
+				if res.Record.ContentLocation == seeded.ContentLocation {
+					t.Errorf("refused run returned the kept record's artefacts %q, which this run cannot read",
+						res.Record.ContentLocation)
 				}
 			})
 		}
@@ -165,19 +165,20 @@ func TestModcacheReMeasurementNeverDemotesAStoredRecord(t *testing.T) {
 }
 
 // TestRefusedDowngradeReturnsTheKeptRecordWhenItIsReadable is the ordinary
-// production shape of a refusal: the module-cache blob store delegates
-// content-addressed handles to the local store, so the kept network record is
-// fully usable by the run that was refused, and it is what the caller gets.
+// production shape of a refusal: the artefacts the network run stored are
+// addressed by identity, so the module-cache run can read them too, the kept
+// network record is fully usable by the run that was refused, and it is what the
+// caller gets.
 func TestRefusedDowngradeReturnsTheKeptRecordWhenItIsReadable(t *testing.T) {
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
-	if _, err := blobs.Put(context.Background(), strings.NewReader("seed-zip")); err != nil {
+	seeded := seedStoredRecord(t, facts, domain2.Verified, domain2.AcquisitionProxy)
+	if err := blobs.Put(context.Background(), fetchtest.ZipIdentity(t, seeded), strings.NewReader("seed-zip")); err != nil {
 		t.Fatalf("seeding zip blob: %v", err)
 	}
-	if _, err := blobs.Put(context.Background(), strings.NewReader("seed-gomod")); err != nil {
+	if err := blobs.Put(context.Background(), fetchtest.GoModIdentity(t, seeded), strings.NewReader("seed-gomod")); err != nil {
 		t.Fatalf("seeding go.mod blob: %v", err)
 	}
-	seeded := seedStoredRecord(t, facts, domain2.Verified, domain2.AcquisitionProxy)
 
 	var buf bytes.Buffer
 	uc := modcacheUseCaseWithBlobs(t, facts, delegatingModcacheBlobs{fakeBlob: blobs}, &buf)
@@ -330,14 +331,15 @@ func TestExplicitDowngradeFlagIsTheOnlyWayToWeakenAnAnchor(t *testing.T) {
 func TestNetworkRecordSurvivesAModcacheRunAndStillHitsTheCache(t *testing.T) {
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
-	// The blobs a network run would have written, so the record's handles resolve.
-	if _, err := blobs.Put(context.Background(), strings.NewReader("seed-zip")); err != nil {
+	seeded := seedStoredRecord(t, facts, domain2.Verified, domain2.AcquisitionProxy)
+	// The blobs a network run would have written, under the identities the record
+	// names, so the record's artefacts resolve.
+	if err := blobs.Put(context.Background(), fetchtest.ZipIdentity(t, seeded), strings.NewReader("seed-zip")); err != nil {
 		t.Fatalf("seeding zip blob: %v", err)
 	}
-	if _, err := blobs.Put(context.Background(), strings.NewReader("seed-gomod")); err != nil {
+	if err := blobs.Put(context.Background(), fetchtest.GoModIdentity(t, seeded), strings.NewReader("seed-gomod")); err != nil {
 		t.Fatalf("seeding go.mod blob: %v", err)
 	}
-	seeded := seedStoredRecord(t, facts, domain2.Verified, domain2.AcquisitionProxy)
 
 	// Run 2: --from-modcache. It cannot read the network handles, so it re-fetches
 	// and reaches the write side — where its weaker anchor is refused.
@@ -379,7 +381,7 @@ func TestReadFailureBeforeOverwriteFailsTheFetch(t *testing.T) {
 	if err == nil {
 		t.Fatal("a fact-store read failure before the overwrite was swallowed")
 	}
-	if !strings.Contains(err.Error(), "reading existing record before overwrite") {
+	if !strings.Contains(err.Error(), "reading existing records before append") {
 		t.Errorf("error does not name the failing step: %v", err)
 	}
 }
@@ -392,10 +394,10 @@ type readFailingFacts struct {
 	calls     int
 }
 
-func (f *readFailingFacts) GetFetchRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pv string) (domain2.FactRecord, bool, error) {
+func (f *readFailingFacts) GetFetchRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pv string) (domain2.CompositeRecord, bool, error) {
 	f.calls++
 	if f.calls > f.failAfter {
-		return domain2.FactRecord{}, false, errors.New("fact store unavailable")
+		return domain2.CompositeRecord{}, false, errors.New("fact store unavailable")
 	}
 	return f.fakeFacts.GetFetchRecord(ctx, coord, pv)
 }

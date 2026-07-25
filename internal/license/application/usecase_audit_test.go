@@ -1,7 +1,6 @@
 package application_test
 
 import (
-	"bytes"
 	"context"
 	"testing"
 
@@ -50,11 +49,7 @@ func extractWithAudit(
 	licenseStore := &fakeLicenseStore{}
 
 	zipData := buildModuleZip(t, coord, files)
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	uc := buildUseCaseWithDetector(t, factStore, blobStore, licenseStore, det).WithAudit(sink)
 	result, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
@@ -153,8 +148,9 @@ func TestExecute_NilAuditSink(t *testing.T) {
 func TestExecute_CacheHitEmitsNothing(t *testing.T) {
 	coord := mustCoord(t, "example.com/cached", "v1.0.0")
 	factStore := &fakeFactStore{}
+	blobStore := &fakeBlobStore{}
 	licenseStore := &fakeLicenseStore{}
-	putFact(t, factStore, coord, "blob:fakecontent")
+	putFact(t, factStore, blobStore, coord, []byte("blob:fakecontent"))
 
 	existing := domain2.LicenseRecord{
 		SchemaVersion:   domain2.LicenseSchemaVersion,

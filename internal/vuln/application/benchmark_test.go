@@ -93,8 +93,11 @@ func BenchmarkVulnScan_Sequential_vs_Parallel(b *testing.B) {
 		blobs := newFakeBlob()
 		facts := newFakeFacts()
 		for _, c := range coords {
-			h, _ := blobs.Put(ctx, strings.NewReader("zip"))
-			if err := facts.PutFetchRecord(ctx, fetchtest.Record(b, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content(string(h)))); err != nil {
+			rec := fetchtest.Record(b, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip"))
+			if err := blobs.Put(ctx, fetchtest.ZipIdentity(b, rec), strings.NewReader("zip")); err != nil {
+				b.Fatal(err)
+			}
+			if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(b, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip"))); err != nil {
 				b.Fatal(err)
 			}
 		}

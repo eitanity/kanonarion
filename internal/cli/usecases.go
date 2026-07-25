@@ -42,7 +42,7 @@ type FetchModuleUseCase interface {
 
 // QueryFetchUseCase is the interface for querying fetch records.
 type QueryFetchUseCase interface {
-	GetFetchRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (fetchdomain.FactRecord, bool, error)
+	GetFetchRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (fetchdomain.CompositeRecord, bool, error)
 }
 
 // --- walk context ---

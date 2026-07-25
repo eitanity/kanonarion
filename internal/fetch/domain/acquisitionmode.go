@@ -1,12 +1,17 @@
 package domain
 
-// AcquisitionMode names the path a module's bytes arrived by. It is persisted
-// on the fact record because the record's contents depend on it: the proxy path
-// writes content-addressed "sha256:<hex>" handles into the local blob store,
-// while the module-cache path derives "modcache:zip:<coord>" handles that only
-// the module-cache adapter resolves. Without the mode on the record a reader has
-// to parse the handle to learn which store can produce the bytes, and a log
-// entry cannot say which mode wrote what.
+// AcquisitionMode names the path a module's bytes arrived by. It is pure
+// provenance: which route this particular measurement took to reach the bytes.
+//
+// It was originally added for a different reason — so a reader could tell which
+// blob store resolved a record's ContentLocation, back when each store chose its
+// own handle format and a module-cache record carried a handle only the
+// module-cache adapter could read. That reason no longer applies. A blob store
+// is addressed by artefact identity, chosen by the content and never by the
+// store, so any store either holds the artefact or does not, and the same
+// artefact may legitimately be held by several at once. The mode must therefore
+// never be consulted when resolving bytes; it says where this measurement came
+// from, not where the artefact can be found.
 type AcquisitionMode string
 
 const (

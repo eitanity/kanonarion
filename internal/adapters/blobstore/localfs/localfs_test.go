@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
-	"github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
 func TestStore_PutGetExists(t *testing.T) {
@@ -16,15 +15,12 @@ func TestStore_PutGetExists(t *testing.T) {
 	ctx := context.Background()
 
 	content := "hello, blob store"
-	handle, err := store.Put(ctx, strings.NewReader(content))
-	if err != nil {
+	identity := testIdentity("put-get-exists")
+	if err := store.Put(ctx, identity, strings.NewReader(content)); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	if handle == "" {
-		t.Fatal("empty handle")
-	}
 
-	ok, err := store.Exists(ctx, handle)
+	ok, err := store.Exists(ctx, identity)
 	if err != nil {
 		t.Fatalf("Exists: %v", err)
 	}
@@ -32,7 +28,7 @@ func TestStore_PutGetExists(t *testing.T) {
 		t.Error("blob should exist after Put")
 	}
 
-	rc, err := store.Get(ctx, handle)
+	rc, err := store.Get(ctx, identity)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -50,21 +46,66 @@ func TestStore_PutGetExists(t *testing.T) {
 	}
 }
 
+// Storing the same identity twice is a no-op the second time and leaves the
+// first bytes in place. The store no longer derives an address from the bytes it
+// is handed, so idempotence is a property of the identity, not of the content.
 func TestStore_Idempotent(t *testing.T) {
 	dir := t.TempDir()
 	store := localfs.New(dir)
 	ctx := context.Background()
+	identity := testIdentity("idempotent")
 
-	h1, err := store.Put(ctx, strings.NewReader("data"))
-	if err != nil {
+	if err := store.Put(ctx, identity, strings.NewReader("data")); err != nil {
 		t.Fatalf("first Put: %v", err)
 	}
-	h2, err := store.Put(ctx, strings.NewReader("data"))
-	if err != nil {
+	if err := store.Put(ctx, identity, strings.NewReader("data")); err != nil {
 		t.Fatalf("second Put: %v", err)
 	}
-	if h1 != h2 {
-		t.Errorf("handles differ: %q vs %q", h1, h2)
+
+	rc, err := store.Get(ctx, identity)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
+	}
+	defer func() { _ = rc.Close() }()
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if string(got) != "data" {
+		t.Errorf("got %q, want %q", got, "data")
+	}
+}
+
+// The zip and the go.mod of one module can carry the same h1 value in principle,
+// so the kind must keep them apart: a store holding both must not serve one for
+// the other.
+func TestStore_KindSeparatesArtefactsOfEqualHash(t *testing.T) {
+	dir := t.TempDir()
+	store := localfs.New(dir)
+	ctx := context.Background()
+
+	zip := testIdentity("same-hash")
+	goMod := zip
+	goMod.Kind = "gomod"
+
+	if err := store.Put(ctx, zip, strings.NewReader("zip bytes")); err != nil {
+		t.Fatalf("Put zip: %v", err)
+	}
+	if err := store.Put(ctx, goMod, strings.NewReader("go.mod bytes")); err != nil {
+		t.Fatalf("Put go.mod: %v", err)
+	}
+
+	rc, err := store.Get(ctx, goMod)
+	if err != nil {
+		t.Fatalf("Get go.mod: %v", err)
+	}
+	defer func() { _ = rc.Close() }()
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if string(got) != "go.mod bytes" {
+		t.Errorf("go.mod artefact resolved to %q; the zip of equal hash was served instead", got)
 	}
 }
 
@@ -72,7 +113,7 @@ func TestStore_ExistsUnknown(t *testing.T) {
 	dir := t.TempDir()
 	store := localfs.New(dir)
 
-	ok, err := store.Exists(context.Background(), ports.BlobHandle("sha256:"+strings.Repeat("a", 64)))
+	ok, err := store.Exists(context.Background(), testIdentity("never-stored"))
 	if err != nil {
 		t.Fatalf("Exists: %v", err)
 	}
