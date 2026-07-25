@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 )
 
 // strengthOrder is the documented ranking, strongest first. The tests below
@@ -69,8 +70,8 @@ func TestReplacementWeakensAnchor_EveryStatusPair(t *testing.T) {
 			// Lower rank index means stronger, so "incoming is weaker" is a HIGHER index.
 			want := incomingRank > existingRank
 			got := domain2.ReplacementWeakensAnchor(
-				domain2.FactRecord{VerificationStatus: string(existing)},
-				domain2.FactRecord{VerificationStatus: string(incoming)},
+				fetchtest.Record(t, fetchtest.Status(existing)),
+				fetchtest.Record(t, fetchtest.Status(incoming)),
 			)
 			if got != want {
 				t.Errorf("ReplacementWeakensAnchor(existing=%q, incoming=%q) = %v, want %v",
@@ -85,7 +86,7 @@ func TestReplacementWeakensAnchor_EveryStatusPair(t *testing.T) {
 // refreshed record, a re-signed record, and a corrected detail all still land.
 func TestReplacementWeakensAnchor_EqualIsNotAWeakening(t *testing.T) {
 	for _, s := range allStatuses() {
-		r := domain2.FactRecord{VerificationStatus: string(s)}
+		r := fetchtest.Record(t, fetchtest.Status(s))
 		if domain2.ReplacementWeakensAnchor(r, r) {
 			t.Errorf("re-measuring %q as %q was treated as a weakening: same-mode refreshes would stop landing", s, s)
 		}
@@ -99,8 +100,8 @@ func TestReplacementWeakensAnchor_EqualIsNotAWeakening(t *testing.T) {
 func TestUnknownStatusNeverOutranksAVerifiedAnchor(t *testing.T) {
 	for _, unknown := range []domain2.VerificationStatus{"", "Verified ", "verified", "TotallyNewStatus"} {
 		weakens := domain2.ReplacementWeakensAnchor(
-			domain2.FactRecord{VerificationStatus: string(domain2.Verified)},
-			domain2.FactRecord{VerificationStatus: string(unknown)},
+			fetchtest.Record(t, fetchtest.Status(domain2.Verified)),
+			fetchtest.Record(t, fetchtest.Status(unknown)),
 		)
 		if !weakens {
 			t.Errorf("an unrecognised status %q was allowed to replace Verified", unknown)

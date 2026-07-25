@@ -13,6 +13,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/example/application"
 	domain2 "github.com/eitanity/kanonarion/internal/example/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 )
 
 // A module ingested from a local working tree (a local-replace target or the
@@ -33,15 +34,13 @@ func TestExecute_FindsFactRecordUnderLocalIngestPipelineVersion(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 	// The record exists ONLY under the local-ingest pipeline version.
-	if perr := facts.PutFetchRecord(context.Background(), domain.FactRecord{
-		SchemaVersion:      "2",
-		ModulePath:         coord.Path,
-		ModuleVersion:      coord.Version,
-		PipelineVersion:    localPipeline,
-		ContentLocation:    string(handle),
-		ContentHash:        "sha256:placeholder",
-		VerificationStatus: "LocalSource",
-	}); perr != nil {
+	if perr := facts.PutFetchRecord(context.Background(), fetchtest.Record(
+		t,
+		fetchtest.Coordinate(coord),
+		fetchtest.PipelineVersion(localPipeline),
+		fetchtest.Content(string(handle)),
+		fetchtest.Status(domain.LocalSource),
+	)); perr != nil {
 		t.Fatalf("PutFetchRecord: %v", perr)
 	}
 
@@ -83,15 +82,13 @@ func TestExecute_LocalCoordinateBypassesRecordCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	if perr := facts.PutFetchRecord(context.Background(), domain.FactRecord{
-		SchemaVersion:      "2",
-		ModulePath:         coord.Path,
-		ModuleVersion:      coord.Version,
-		PipelineVersion:    localPipeline,
-		ContentLocation:    string(handle),
-		ContentHash:        "sha256:placeholder",
-		VerificationStatus: "LocalSource",
-	}); perr != nil {
+	if perr := facts.PutFetchRecord(context.Background(), fetchtest.Record(
+		t,
+		fetchtest.Coordinate(coord),
+		fetchtest.PipelineVersion(localPipeline),
+		fetchtest.Content(string(handle)),
+		fetchtest.Status(domain.LocalSource),
+	)); perr != nil {
 		t.Fatalf("PutFetchRecord: %v", perr)
 	}
 

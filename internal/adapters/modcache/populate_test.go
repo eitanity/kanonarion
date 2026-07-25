@@ -13,6 +13,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/adapters/modcache"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
@@ -85,14 +86,14 @@ func TestPopulate_WritesExpectedFiles(t *testing.T) {
 	blobHandle := fetchports.BlobHandle("fake:zip")
 
 	facts := &fakeFactStore{records: map[string]fetchdomain.FactRecord{
-		"example.com/mod@v1.0.0|0.1.0": {
-			ModulePath:      "example.com/mod",
-			ModuleVersion:   "v1.0.0",
-			ModuleHash:      "h1:abcdef",
-			PipelineVersion: "0.1.0",
-			FetchedAt:       time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-			ContentLocation: string(blobHandle),
-		},
+		"example.com/mod@v1.0.0|0.1.0": fetchtest.Record(
+			t,
+			fetchtest.Module("example.com/mod", "v1.0.0"),
+			fetchtest.PipelineVersion("0.1.0"),
+			fetchtest.Content(string(blobHandle)),
+			fetchtest.ModuleHash(fetchtest.H1("abcdef")),
+			fetchtest.FetchedAt(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)),
+		),
 	}}
 	blobs := &fakeBlobStore{blobs: map[fetchports.BlobHandle][]byte{
 		blobHandle: zipContent,
@@ -127,11 +128,14 @@ func TestPopulate_WritesExpectedFiles(t *testing.T) {
 func TestPopulate_IdempotentSecondCall(t *testing.T) {
 	blobHandle := fetchports.BlobHandle("fake:zip2")
 	facts := &fakeFactStore{records: map[string]fetchdomain.FactRecord{
-		"example.com/mod@v1.0.0|0.1.0": {
-			ModulePath: "example.com/mod", ModuleVersion: "v1.0.0",
-			ModuleHash: "h1:abcdef", PipelineVersion: "0.1.0",
-			FetchedAt: time.Now(), ContentLocation: string(blobHandle),
-		},
+		"example.com/mod@v1.0.0|0.1.0": fetchtest.Record(
+			t,
+			fetchtest.Module("example.com/mod", "v1.0.0"),
+			fetchtest.PipelineVersion("0.1.0"),
+			fetchtest.Content(string(blobHandle)),
+			fetchtest.ModuleHash(fetchtest.H1("abcdef")),
+			fetchtest.FetchedAt(time.Now()),
+		),
 	}}
 	blobs := &fakeBlobStore{blobs: map[fetchports.BlobHandle][]byte{blobHandle: []byte("data")}}
 	cacheDir := t.TempDir()
@@ -196,11 +200,14 @@ func TestPopulate_SymlinksWhenPathAvailable(t *testing.T) {
 	zipContent := []byte("symlinked-zip-content")
 	blobHandle := fetchports.BlobHandle("fake:zip")
 	facts := &fakeFactStore{records: map[string]fetchdomain.FactRecord{
-		"example.com/mod@v1.0.0|0.1.0": {
-			ModulePath: "example.com/mod", ModuleVersion: "v1.0.0",
-			ModuleHash: "h1:abcdef", PipelineVersion: "0.1.0",
-			FetchedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC), ContentLocation: string(blobHandle),
-		},
+		"example.com/mod@v1.0.0|0.1.0": fetchtest.Record(
+			t,
+			fetchtest.Module("example.com/mod", "v1.0.0"),
+			fetchtest.PipelineVersion("0.1.0"),
+			fetchtest.Content(string(blobHandle)),
+			fetchtest.ModuleHash(fetchtest.H1("abcdef")),
+			fetchtest.FetchedAt(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)),
+		),
 	}}
 	blobs := &pathBlobStore{
 		fakeBlobStore: fakeBlobStore{blobs: map[fetchports.BlobHandle][]byte{blobHandle: zipContent}},
@@ -236,12 +243,15 @@ func TestPopulate_WithGoModBlob(t *testing.T) {
 	zipHandle := fetchports.BlobHandle("fake:zip3")
 	modHandle := fetchports.BlobHandle("fake:mod3")
 	facts := &fakeFactStore{records: map[string]fetchdomain.FactRecord{
-		"example.com/mod@v1.0.0|0.1.0": {
-			ModulePath: "example.com/mod", ModuleVersion: "v1.0.0",
-			ModuleHash: "h1:abc", PipelineVersion: "0.1.0",
-			FetchedAt:       time.Now(),
-			ContentLocation: string(zipHandle), GoModLocation: string(modHandle),
-		},
+		"example.com/mod@v1.0.0|0.1.0": fetchtest.Record(
+			t,
+			fetchtest.Module("example.com/mod", "v1.0.0"),
+			fetchtest.PipelineVersion("0.1.0"),
+			fetchtest.Content(string(zipHandle)),
+			fetchtest.GoMod(string(modHandle)),
+			fetchtest.ModuleHash(fetchtest.H1("abc")),
+			fetchtest.FetchedAt(time.Now()),
+		),
 	}}
 	blobs := &fakeBlobStore{blobs: map[fetchports.BlobHandle][]byte{
 		zipHandle: []byte("zip"),
@@ -268,12 +278,15 @@ func TestPopulateGoMod_WritesModNotZip(t *testing.T) {
 	zipHandle := fetchports.BlobHandle("fake:zipS")
 	modHandle := fetchports.BlobHandle("fake:modS")
 	facts := &fakeFactStore{records: map[string]fetchdomain.FactRecord{
-		"github.com/go-logr/logr@v1.2.2|0.3.0": {
-			ModulePath: "github.com/go-logr/logr", ModuleVersion: "v1.2.2",
-			ModuleHash: "h1:abc", PipelineVersion: "0.3.0",
-			FetchedAt:       time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-			ContentLocation: string(zipHandle), GoModLocation: string(modHandle),
-		},
+		"github.com/go-logr/logr@v1.2.2|0.3.0": fetchtest.Record(
+			t,
+			fetchtest.Module("github.com/go-logr/logr", "v1.2.2"),
+			fetchtest.PipelineVersion("0.3.0"),
+			fetchtest.Content(string(zipHandle)),
+			fetchtest.GoMod(string(modHandle)),
+			fetchtest.ModuleHash(fetchtest.H1("abc")),
+			fetchtest.FetchedAt(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)),
+		),
 	}}
 	blobs := &fakeBlobStore{blobs: map[fetchports.BlobHandle][]byte{
 		zipHandle: []byte("zip-should-not-be-written"),
@@ -312,11 +325,13 @@ func TestPopulateGoMod_WritesModNotZip(t *testing.T) {
 // resolves at all.
 func TestPopulateGoMod_SkipsRecordWithoutGoMod(t *testing.T) {
 	facts := &fakeFactStore{records: map[string]fetchdomain.FactRecord{
-		"example.com/mod@v1.0.0|0.3.0": {
-			ModulePath: "example.com/mod", ModuleVersion: "v1.0.0",
-			PipelineVersion: "0.3.0", FetchedAt: time.Now(),
-			ContentLocation: "fake:zip", // no GoModLocation
-		},
+		"example.com/mod@v1.0.0|0.3.0": fetchtest.Record(
+			t,
+			fetchtest.Module("example.com/mod", "v1.0.0"),
+			fetchtest.PipelineVersion("0.3.0"),
+			fetchtest.Content("fake:zip"),
+			fetchtest.FetchedAt(time.Now()),
+		),
 	}}
 	blobs := &fakeBlobStore{blobs: map[fetchports.BlobHandle][]byte{}}
 	cacheDir := t.TempDir()
@@ -347,14 +362,16 @@ func TestPopulateGoMod_MissingRecordSkipped(t *testing.T) {
 
 // goModFact builds a fact record whose go.mod blob is the given source, wired
 // into the two fakes so PopulateGoModClosure can resolve the coordinate.
-func goModFact(path, version, gomod string, facts *fakeFactStore, blobs *fakeBlobStore) {
+func goModFact(t testing.TB, path, version, gomod string, facts *fakeFactStore, blobs *fakeBlobStore) {
 	handle := fetchports.BlobHandle("mod:" + path + "@" + version)
-	facts.records[path+"@"+version+"|0.3.0"] = fetchdomain.FactRecord{
-		ModulePath: path, ModuleVersion: version, PipelineVersion: "0.3.0",
-		FetchedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-		// ContentLocation is never read on the go.mod-only path.
-		ContentLocation: "fake:zip", GoModLocation: string(handle),
-	}
+	facts.records[path+"@"+version+"|0.3.0"] = fetchtest.Record(
+		t,
+		fetchtest.Module(path, version),
+		fetchtest.PipelineVersion("0.3.0"),
+		fetchtest.Content("fake:zip"),
+		fetchtest.GoMod(string(handle)),
+		fetchtest.FetchedAt(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)),
+	)
 	blobs.blobs[handle] = []byte(gomod)
 }
 
@@ -368,13 +385,13 @@ func TestPopulateGoModClosure_FollowsRequirementsTransitively(t *testing.T) {
 	facts := &fakeFactStore{records: map[string]fetchdomain.FactRecord{}}
 	blobs := &fakeBlobStore{blobs: map[fetchports.BlobHandle][]byte{}}
 
-	goModFact("example.com/seed", "v1.0.0",
+	goModFact(t, "example.com/seed", "v1.0.0",
 		"module example.com/seed\n\ngo 1.16\n\nrequire example.com/mid v0.5.0\n", facts, blobs)
-	goModFact("example.com/mid", "v0.5.0",
+	goModFact(t, "example.com/mid", "v0.5.0",
 		"module example.com/mid\n\ngo 1.16\n\nrequire example.com/deep v0.2.0 // indirect\n", facts, blobs)
-	goModFact("example.com/deep", "v0.2.0",
+	goModFact(t, "example.com/deep", "v0.2.0",
 		"module example.com/deep\n\ngo 1.16\n\nrequire (\n\texample.com/leaf v0.1.0\n)\n", facts, blobs)
-	goModFact("example.com/leaf", "v0.1.0", "module example.com/leaf\n\ngo 1.16\n", facts, blobs)
+	goModFact(t, "example.com/leaf", "v0.1.0", "module example.com/leaf\n\ngo 1.16\n", facts, blobs)
 
 	cacheDir := t.TempDir()
 	seed := newCoord(t, "example.com/seed", "v1.0.0")
@@ -413,9 +430,9 @@ func TestPopulateGoModClosure_FollowsRequirementsTransitively(t *testing.T) {
 func TestPopulateGoModClosure_TerminatesOnRequirementCycle(t *testing.T) {
 	facts := &fakeFactStore{records: map[string]fetchdomain.FactRecord{}}
 	blobs := &fakeBlobStore{blobs: map[fetchports.BlobHandle][]byte{}}
-	goModFact("example.com/a", "v1.0.0",
+	goModFact(t, "example.com/a", "v1.0.0",
 		"module example.com/a\n\ngo 1.16\n\nrequire example.com/b v1.0.0\n", facts, blobs)
-	goModFact("example.com/b", "v1.0.0",
+	goModFact(t, "example.com/b", "v1.0.0",
 		"module example.com/b\n\ngo 1.16\n\nrequire example.com/a v1.0.0\n", facts, blobs)
 
 	report := modcache.PopulateGoModClosure(
@@ -434,7 +451,7 @@ func TestPopulateGoModClosure_TerminatesOnRequirementCycle(t *testing.T) {
 func TestPopulateGoModClosure_ReportsUnreachableLevel(t *testing.T) {
 	facts := &fakeFactStore{records: map[string]fetchdomain.FactRecord{}}
 	blobs := &fakeBlobStore{blobs: map[fetchports.BlobHandle][]byte{}}
-	goModFact("example.com/seed", "v1.0.0",
+	goModFact(t, "example.com/seed", "v1.0.0",
 		"module example.com/seed\n\ngo 1.16\n\nrequire example.com/absent v1.9.9\n", facts, blobs)
 
 	report := modcache.PopulateGoModClosure(

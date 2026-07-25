@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 )
 
 // TestRecordIsCacheable pins the cache-eligibility rule the fetch use case
@@ -29,10 +30,7 @@ func TestRecordIsCacheable(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			r := domain2.FactRecord{
-				VerificationStatus: string(tc.status),
-				SumDBLookupFailed:  tc.sumDBLookupFailed,
-			}
+			r := fetchtest.Record(t, fetchtest.Status(tc.status), fetchtest.SumDBLookupFailed(tc.sumDBLookupFailed))
 			if got := domain2.RecordIsCacheable(r); got != tc.want {
 				t.Errorf("RecordIsCacheable() = %v, want %v", got, tc.want)
 			}

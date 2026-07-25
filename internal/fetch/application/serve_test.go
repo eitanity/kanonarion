@@ -9,6 +9,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/audit"
 	"github.com/eitanity/kanonarion/internal/fetch/application"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
@@ -290,16 +291,16 @@ func seedRecord(t *testing.T, blobs ports.BlobStore, facts ports.FactStore, hand
 	if err != nil {
 		t.Fatalf("seed go.mod blob: %v", err)
 	}
-	rec := domain2.NewFactRecord(domain2.FetchedModule{
-		Coordinate:         testCoord,
-		ModuleHash:         domain2.ModuleHash{Algorithm: "h1", Value: "seed=="},
-		GoModHash:          domain2.ModuleHash{Algorithm: "h1", Value: "seedmod=="},
-		VerificationStatus: status,
-		FetchedAt:          fixedTime,
-		PipelineVersion:    "test-0.1.0",
-		ContentLocation:    string(handle),
-		GoModLocation:      string(goModHandle),
-	})
+	rec := fetchtest.Record(t,
+		fetchtest.Coordinate(testCoord),
+		fetchtest.ModuleHash(fetchtest.H1("seed==")),
+		fetchtest.GoModHash(fetchtest.H1("seedmod==")),
+		fetchtest.Status(status),
+		fetchtest.FetchedAt(fixedTime),
+		fetchtest.PipelineVersion("test-0.1.0"),
+		fetchtest.Content(string(handle)),
+		fetchtest.GoMod(string(goModHandle)),
+	)
 	if err := facts.PutFetchRecord(context.Background(), rec); err != nil {
 		t.Fatalf("seed record: %v", err)
 	}

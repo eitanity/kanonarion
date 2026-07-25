@@ -11,6 +11,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	"github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	"github.com/eitanity/kanonarion/internal/license/application"
 	domain2 "github.com/eitanity/kanonarion/internal/license/domain"
 	"github.com/eitanity/kanonarion/internal/license/ports"
@@ -34,15 +35,13 @@ func TestExecute_FindsFactRecordUnderLocalIngestPipelineVersion(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 	// The record exists ONLY under the local-ingest pipeline version.
-	if perr := factStore.PutFetchRecord(context.Background(), domain.FactRecord{
-		SchemaVersion:      "2",
-		ModulePath:         coord.Path,
-		ModuleVersion:      coord.Version,
-		PipelineVersion:    localPipeline,
-		ContentLocation:    string(handle),
-		ContentHash:        "sha256:placeholder",
-		VerificationStatus: "LocalSource",
-	}); perr != nil {
+	if perr := factStore.PutFetchRecord(context.Background(), fetchtest.Record(
+		t,
+		fetchtest.Coordinate(coord),
+		fetchtest.PipelineVersion(localPipeline),
+		fetchtest.Content(string(handle)),
+		fetchtest.Status(domain.LocalSource),
+	)); perr != nil {
 		t.Fatalf("PutFetchRecord: %v", perr)
 	}
 
@@ -87,15 +86,13 @@ func TestExecute_LocalCoordinateBypassesRecordCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	if perr := factStore.PutFetchRecord(context.Background(), domain.FactRecord{
-		SchemaVersion:      "2",
-		ModulePath:         coord.Path,
-		ModuleVersion:      coord.Version,
-		PipelineVersion:    localPipeline,
-		ContentLocation:    string(handle),
-		ContentHash:        "sha256:placeholder",
-		VerificationStatus: "LocalSource",
-	}); perr != nil {
+	if perr := factStore.PutFetchRecord(context.Background(), fetchtest.Record(
+		t,
+		fetchtest.Coordinate(coord),
+		fetchtest.PipelineVersion(localPipeline),
+		fetchtest.Content(string(handle)),
+		fetchtest.Status(domain.LocalSource),
+	)); perr != nil {
 		t.Fatalf("PutFetchRecord: %v", perr)
 	}
 

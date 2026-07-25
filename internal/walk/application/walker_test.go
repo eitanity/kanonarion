@@ -47,17 +47,17 @@ func newWalkerFetcher() *walkerFakeFetcher {
 	}
 }
 
-func (f *walkerFakeFetcher) addRecord(path, version string) {
+func (f *walkerFakeFetcher) addRecord(t testing.TB, path, version string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.records[wkey(path, version)] = makeFactRecord(path, version)
+	f.records[wkey(path, version)] = makeFactRecord(t, path, version)
 }
 
-func (f *walkerFakeFetcher) addCached(path, version string) {
+func (f *walkerFakeFetcher) addCached(t testing.TB, path, version string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	k := wkey(path, version)
-	f.records[k] = makeFactRecord(path, version)
+	f.records[k] = makeFactRecord(t, path, version)
 	f.fromCache[k] = true
 }
 
@@ -173,10 +173,10 @@ func newFakeLocalFetcher() *fakeLocalFetcher {
 	}
 }
 
-func (f *fakeLocalFetcher) addRecord(path, version string) {
+func (f *fakeLocalFetcher) addRecord(t testing.TB, path, version string) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.records[wkey(path, version)] = makeFactRecord(path, version)
+	f.records[wkey(path, version)] = makeFactRecord(t, path, version)
 }
 
 func (f *fakeLocalFetcher) addError(path, version string, err error) {
@@ -230,10 +230,10 @@ func TestMain(m *testing.M) {
 func TestWalker_NoDependencies(t *testing.T) {
 	blobs := newFakeBlobStore()
 	rf := newFakeFetcher()
-	rf.add("example.com/target", "v1.0.0", "module example.com/target\ngo 1.21\n", blobs)
+	rf.add(t, "example.com/target", "v1.0.0", "module example.com/target\ngo 1.21\n", blobs)
 
 	wf := newWalkerFetcher()
-	wf.addRecord("example.com/target", "v1.0.0")
+	wf.addRecord(t, "example.com/target", "v1.0.0")
 
 	w := buildWalker(rf, wf, blobs, 1)
 	outcome, err := w.Walk(context.Background(), application2.WalkRequest{
@@ -258,14 +258,14 @@ func TestWalker_NoDependencies(t *testing.T) {
 func TestWalker_MultipleNodes(t *testing.T) {
 	blobs := newFakeBlobStore()
 	rf := newFakeFetcher()
-	rf.add("example.com/target", "v1.0.0",
+	rf.add(t, "example.com/target", "v1.0.0",
 		"module example.com/target\ngo 1.21\nrequire example.com/dep v1.0.0\n", blobs)
-	rf.add("example.com/dep", "v1.0.0",
+	rf.add(t, "example.com/dep", "v1.0.0",
 		"module example.com/dep\ngo 1.21\n", blobs)
 
 	wf := newWalkerFetcher()
-	wf.addRecord("example.com/target", "v1.0.0")
-	wf.addRecord("example.com/dep", "v1.0.0")
+	wf.addRecord(t, "example.com/target", "v1.0.0")
+	wf.addRecord(t, "example.com/dep", "v1.0.0")
 
 	w := buildWalker(rf, wf, blobs, 2)
 	outcome, err := w.Walk(context.Background(), application2.WalkRequest{
@@ -320,12 +320,12 @@ func TestWalker_TargetFetchFails(t *testing.T) {
 func TestWalker_DependencyFetchFails(t *testing.T) {
 	blobs := newFakeBlobStore()
 	rf := newFakeFetcher()
-	rf.add("example.com/target", "v1.0.0",
+	rf.add(t, "example.com/target", "v1.0.0",
 		"module example.com/target\ngo 1.21\nrequire example.com/dep v1.0.0\n", blobs)
-	rf.add("example.com/dep", "v1.0.0", "module example.com/dep\ngo 1.21\n", blobs)
+	rf.add(t, "example.com/dep", "v1.0.0", "module example.com/dep\ngo 1.21\n", blobs)
 
 	wf := newWalkerFetcher()
-	wf.addRecord("example.com/target", "v1.0.0")
+	wf.addRecord(t, "example.com/target", "v1.0.0")
 	wf.addFetchError("example.com/dep", "v1.0.0", errors.New("dep unavailable"))
 
 	w := buildWalker(rf, wf, blobs, 2)
@@ -355,10 +355,10 @@ func TestWalker_DependencyFetchFails(t *testing.T) {
 func TestWalker_CacheHit(t *testing.T) {
 	blobs := newFakeBlobStore()
 	rf := newFakeFetcher()
-	rf.add("example.com/target", "v1.0.0", "module example.com/target\ngo 1.21\n", blobs)
+	rf.add(t, "example.com/target", "v1.0.0", "module example.com/target\ngo 1.21\n", blobs)
 
 	wf := newWalkerFetcher()
-	wf.addCached("example.com/target", "v1.0.0")
+	wf.addCached(t, "example.com/target", "v1.0.0")
 
 	w := buildWalker(rf, wf, blobs, 1)
 	outcome, err := w.Walk(context.Background(), application2.WalkRequest{
@@ -377,15 +377,15 @@ func TestWalker_CacheHit(t *testing.T) {
 func TestWalker_ContextCancellation(t *testing.T) {
 	blobs := newFakeBlobStore()
 	rf := newFakeFetcher()
-	rf.add("example.com/target", "v1.0.0",
+	rf.add(t, "example.com/target", "v1.0.0",
 		"module example.com/target\ngo 1.21\nrequire example.com/dep v1.0.0\n", blobs)
-	rf.add("example.com/dep", "v1.0.0", "module example.com/dep\ngo 1.21\n", blobs)
+	rf.add(t, "example.com/dep", "v1.0.0", "module example.com/dep\ngo 1.21\n", blobs)
 
 	wf := newWalkerFetcher()
-	wf.addRecord("example.com/target", "v1.0.0")
+	wf.addRecord(t, "example.com/target", "v1.0.0")
 	// The gate for dep is never closed — the worker must exit via ctx.Done.
 	gate := wf.addGate("example.com/dep", "v1.0.0")
-	wf.addRecord("example.com/dep", "v1.0.0")
+	wf.addRecord(t, "example.com/dep", "v1.0.0")
 	// Close the gate at test end so the goroutine can't leak if something goes wrong.
 	t.Cleanup(func() { close(gate) })
 
@@ -426,19 +426,19 @@ func TestWalker_WorkerPoolLimit(t *testing.T) {
 	for i := range depCount {
 		gomod += fmt.Sprintf("require example.com/dep%d v1.0.0\n", i)
 	}
-	rf.add("example.com/target", "v1.0.0", gomod, blobs)
+	rf.add(t, "example.com/target", "v1.0.0", gomod, blobs)
 	for i := range depCount {
 		dep := fmt.Sprintf("example.com/dep%d", i)
-		rf.add(dep, "v1.0.0", "module "+dep+"\ngo 1.21\n", blobs)
+		rf.add(t, dep, "v1.0.0", "module "+dep+"\ngo 1.21\n", blobs)
 	}
 
 	wf := newWalkerFetcher()
-	wf.addRecord("example.com/target", "v1.0.0")
+	wf.addRecord(t, "example.com/target", "v1.0.0")
 
 	gates := make([]chan struct{}, depCount)
 	for i := range depCount {
 		gates[i] = wf.addGate(fmt.Sprintf("example.com/dep%d", i), "v1.0.0")
-		wf.addRecord(fmt.Sprintf("example.com/dep%d", i), "v1.0.0")
+		wf.addRecord(t, fmt.Sprintf("example.com/dep%d", i), "v1.0.0")
 	}
 
 	// Release all gates after a short window so workers have time to pile up.
@@ -465,12 +465,12 @@ func TestWalker_WorkerPoolLimit(t *testing.T) {
 func TestWalker_PanicRecovery(t *testing.T) {
 	blobs := newFakeBlobStore()
 	rf := newFakeFetcher()
-	rf.add("example.com/target", "v1.0.0",
+	rf.add(t, "example.com/target", "v1.0.0",
 		"module example.com/target\ngo 1.21\nrequire example.com/dep v1.0.0\n", blobs)
-	rf.add("example.com/dep", "v1.0.0", "module example.com/dep\ngo 1.21\n", blobs)
+	rf.add(t, "example.com/dep", "v1.0.0", "module example.com/dep\ngo 1.21\n", blobs)
 
 	wf := newWalkerFetcher()
-	wf.addRecord("example.com/target", "v1.0.0")
+	wf.addRecord(t, "example.com/target", "v1.0.0")
 	wf.addPanic("example.com/dep", "v1.0.0")
 
 	w := buildWalker(rf, wf, blobs, 2)
@@ -498,12 +498,12 @@ func TestWalker_PanicRecovery(t *testing.T) {
 func TestWalker_Shallow_OnlyFetchesTarget(t *testing.T) {
 	blobs := newFakeBlobStore()
 	rf := newFakeFetcher()
-	rf.add("example.com/target", "v1.0.0",
+	rf.add(t, "example.com/target", "v1.0.0",
 		"module example.com/target\ngo 1.21\nrequire example.com/dep v1.0.0\n", blobs)
 	// dep is NOT added; shallow walk must not fetch it.
 
 	wf := newWalkerFetcher()
-	wf.addRecord("example.com/target", "v1.0.0")
+	wf.addRecord(t, "example.com/target", "v1.0.0")
 
 	w := buildWalker(rf, wf, blobs, 1)
 	outcome, err := w.Walk(context.Background(), application2.WalkRequest{
@@ -529,11 +529,11 @@ func TestWalker_Shallow_OnlyFetchesTarget(t *testing.T) {
 func TestWalker_Shallow_GraphIsPartial(t *testing.T) {
 	blobs := newFakeBlobStore()
 	rf := newFakeFetcher()
-	rf.add("example.com/target", "v1.0.0",
+	rf.add(t, "example.com/target", "v1.0.0",
 		"module example.com/target\ngo 1.21\nrequire example.com/dep v1.0.0\n", blobs)
 
 	wf := newWalkerFetcher()
-	wf.addRecord("example.com/target", "v1.0.0")
+	wf.addRecord(t, "example.com/target", "v1.0.0")
 
 	w := buildWalker(rf, wf, blobs, 1)
 	outcome, err := w.Walk(context.Background(), application2.WalkRequest{
@@ -623,11 +623,11 @@ replace example.com/dep => ../local/dep
 func TestWalker_Shallow_IncludesDepNodes(t *testing.T) {
 	blobs := newFakeBlobStore()
 	rf := newFakeFetcher()
-	rf.add("example.com/target", "v1.0.0",
+	rf.add(t, "example.com/target", "v1.0.0",
 		"module example.com/target\ngo 1.21\nrequire example.com/dep v1.0.0\n", blobs)
 
 	wf := newWalkerFetcher()
-	wf.addRecord("example.com/target", "v1.0.0")
+	wf.addRecord(t, "example.com/target", "v1.0.0")
 
 	w := buildWalker(rf, wf, blobs, 1)
 	outcome, err := w.Walk(context.Background(), application2.WalkRequest{
@@ -654,7 +654,7 @@ func TestWalker_ProjectLocalReplace_AnalysedFromBase(t *testing.T) {
 	wf := newWalkerFetcher()
 
 	lf := newFakeLocalFetcher()
-	lf.addRecord("example.com/dep", "v1.0.0")
+	lf.addRecord(t, "example.com/dep", "v1.0.0")
 
 	mainGoMod := []byte(`module example.com/project
 
@@ -762,7 +762,7 @@ func TestWalker_ProjectLocalReplace_SkippedWhenNoBase(t *testing.T) {
 	wf := newWalkerFetcher()
 
 	lf := newFakeLocalFetcher()
-	lf.addRecord("example.com/dep", "v1.0.0")
+	lf.addRecord(t, "example.com/dep", "v1.0.0")
 
 	mainGoMod := []byte(`module example.com/project
 
@@ -862,9 +862,9 @@ func newProductionCacheFetcher(blobs *fakeBlobStore) *productionCacheFetcher {
 	}
 }
 
-func (f *productionCacheFetcher) add(path, version, goMod string) {
+func (f *productionCacheFetcher) add(t testing.TB, path, version, goMod string) {
 	k := wkey(path, version)
-	f.records[k] = makeFactRecord(path, version)
+	f.records[k] = makeFactRecord(t, path, version)
 	f.blobs.data[path+"@"+version] = buildFakeZip(path, version, goMod)
 }
 
@@ -914,9 +914,9 @@ func buildWalkerWithProductionCache(pf *productionCacheFetcher, blobs *fakeBlobS
 func TestWalker_TransitivesReportColdFetch(t *testing.T) {
 	blobs := newFakeBlobStore()
 	pf := newProductionCacheFetcher(blobs)
-	pf.add("example.com/target", "v1.0.0",
+	pf.add(t, "example.com/target", "v1.0.0",
 		"module example.com/target\ngo 1.21\nrequire example.com/dep v1.0.0\n")
-	pf.add("example.com/dep", "v1.0.0", "module example.com/dep\ngo 1.21\n")
+	pf.add(t, "example.com/dep", "v1.0.0", "module example.com/dep\ngo 1.21\n")
 
 	w := buildWalkerWithProductionCache(pf, blobs)
 	outcome, err := w.Walk(context.Background(), application2.WalkRequest{
@@ -964,9 +964,9 @@ func TestWalker_TransitivesReportColdFetch(t *testing.T) {
 func TestWalker_WarmCacheReportsCacheHit(t *testing.T) {
 	blobs := newFakeBlobStore()
 	pf := newProductionCacheFetcher(blobs)
-	pf.add("example.com/target", "v1.0.0",
+	pf.add(t, "example.com/target", "v1.0.0",
 		"module example.com/target\ngo 1.21\nrequire example.com/dep v1.0.0\n")
-	pf.add("example.com/dep", "v1.0.0", "module example.com/dep\ngo 1.21\n")
+	pf.add(t, "example.com/dep", "v1.0.0", "module example.com/dep\ngo 1.21\n")
 
 	// Warm the cache by fetching both modules before the walk starts.
 	ctx := context.Background()
@@ -1043,9 +1043,9 @@ func buildWalkerWithForcingFetcher(pf *forcingProductionFetcher, blobs *fakeBlob
 func TestWalker_ForceReFetchesEveryNode(t *testing.T) {
 	blobs := newFakeBlobStore()
 	pf := &forcingProductionFetcher{productionCacheFetcher: newProductionCacheFetcher(blobs)}
-	pf.add("example.com/target", "v1.0.0",
+	pf.add(t, "example.com/target", "v1.0.0",
 		"module example.com/target\ngo 1.21\nrequire example.com/dep v1.0.0\n")
-	pf.add("example.com/dep", "v1.0.0", "module example.com/dep\ngo 1.21\n")
+	pf.add(t, "example.com/dep", "v1.0.0", "module example.com/dep\ngo 1.21\n")
 
 	// Warm the closure first so the cache is fully populated.
 	ctx := context.Background()
@@ -1090,7 +1090,7 @@ func TestWalker_ForceReFetchesEveryNode(t *testing.T) {
 func TestWalker_ForceNoOpForNonForceCapableFetcher(t *testing.T) {
 	blobs := newFakeBlobStore()
 	pf := newProductionCacheFetcher(blobs)
-	pf.add("example.com/target", "v1.0.0", "module example.com/target\ngo 1.21\n")
+	pf.add(t, "example.com/target", "v1.0.0", "module example.com/target\ngo 1.21\n")
 
 	w := buildWalkerWithProductionCache(pf, blobs)
 	ctx := context.Background()
@@ -1118,9 +1118,9 @@ func TestWalker_ForceNoOpForNonForceCapableFetcher(t *testing.T) {
 func TestWalker_ForceWithCleanCache(t *testing.T) {
 	blobs := newFakeBlobStore()
 	pf := &forcingProductionFetcher{productionCacheFetcher: newProductionCacheFetcher(blobs)}
-	pf.add("example.com/target", "v1.0.0",
+	pf.add(t, "example.com/target", "v1.0.0",
 		"module example.com/target\ngo 1.21\nrequire example.com/dep v1.0.0\n")
-	pf.add("example.com/dep", "v1.0.0", "module example.com/dep\ngo 1.21\n")
+	pf.add(t, "example.com/dep", "v1.0.0", "module example.com/dep\ngo 1.21\n")
 
 	w := buildWalkerWithForcingFetcher(pf, blobs)
 	outcome, err := w.Walk(context.Background(), application2.WalkRequest{
@@ -1143,9 +1143,9 @@ func TestWalker_ForceWithCleanCache(t *testing.T) {
 func TestWalker_MixedCacheState(t *testing.T) {
 	blobs := newFakeBlobStore()
 	pf := newProductionCacheFetcher(blobs)
-	pf.add("example.com/target", "v1.0.0",
+	pf.add(t, "example.com/target", "v1.0.0",
 		"module example.com/target\ngo 1.21\nrequire example.com/dep v1.0.0\n")
-	pf.add("example.com/dep", "v1.0.0", "module example.com/dep\ngo 1.21\n")
+	pf.add(t, "example.com/dep", "v1.0.0", "module example.com/dep\ngo 1.21\n")
 
 	// Warm only the dep — target is still cold.
 	ctx := context.Background()
@@ -1177,10 +1177,10 @@ func TestWalker_MixedCacheState(t *testing.T) {
 func TestWalker_ProjectMode_RootsAtLocalMainModule(t *testing.T) {
 	blobs := newFakeBlobStore()
 	rf := newFakeFetcher()
-	rf.add("example.com/dep", "v1.0.0", "module example.com/dep\ngo 1.21\n", blobs)
+	rf.add(t, "example.com/dep", "v1.0.0", "module example.com/dep\ngo 1.21\n", blobs)
 
 	wf := newWalkerFetcher()
-	wf.addRecord("example.com/dep", "v1.0.0")
+	wf.addRecord(t, "example.com/dep", "v1.0.0")
 
 	mainGoMod := []byte("module example.com/project\ngo 1.21\nrequire example.com/dep v1.0.0\n")
 	target := coordinate.ModuleCoordinate{Path: "example.com/project", Version: coordinate.LocalVersion}

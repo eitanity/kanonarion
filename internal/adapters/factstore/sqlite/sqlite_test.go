@@ -8,6 +8,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 )
 
 func openMemStore(t *testing.T) *sqlite.Store {
@@ -24,37 +25,28 @@ func openMemStore(t *testing.T) *sqlite.Store {
 	return s
 }
 
-func sampleRecord(path, version, pipelineVersion string) domain2.FactRecord {
-	r := domain2.FactRecord{
-		SchemaVersion:      domain2.SchemaVersion,
-		ModulePath:         path,
-		ModuleVersion:      version,
-		PipelineVersion:    pipelineVersion,
-		ModuleHash:         "h1:abc==",
-		GoModHash:          "h1:def==",
-		GitURL:             "https://github.com/foo/bar",
-		GitRef:             "refs/tags/" + version,
-		GitCommitHash:      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		VerificationStatus: "Verified",
-		VerificationDetail: "",
-		FetchedAt:          time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
-		ContentLocation:    "sha256:deadbeef",
-	}
-	var h domain2.CanonicalHasher
-	r, _ = h.SetContentHash(r)
-	return r
+func sampleRecord(t testing.TB, path, version, pipelineVersion string, opts ...fetchtest.Option) domain2.FactRecord {
+	return fetchtest.Record(t, append([]fetchtest.Option{
+		fetchtest.Module(path, version),
+		fetchtest.PipelineVersion(pipelineVersion),
+		fetchtest.Content("sha256:deadbeef"),
+		fetchtest.ModuleHash(fetchtest.H1("abc==")),
+		fetchtest.GoModHash(fetchtest.H1("def==")),
+		fetchtest.GitReference(domain2.GitReference{URL: "https://github.com/foo/bar", Ref: "refs/tags/" + version, CommitHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"}),
+		fetchtest.Status(domain2.Verified),
+		fetchtest.FetchedAt(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)),
+	}, opts...)...)
 }
 
 func TestPutGetFetchRecord_DigestsRoundTrip(t *testing.T) {
 	s := openMemStore(t)
 	ctx := context.Background()
 
-	r := sampleRecord("github.com/foo/bar", "v2.0.0", "0.4.0")
-	r.ZipSHA256 = "2222222222222222222222222222222222222222222222222222222222222222"
-	r.ZipSHA384 = "333333333333333333333333333333333333333333333333"
-	r.ZipSHA512 = "5555555555555555555555555555555555555555555555555555555555555555"
-	var h domain2.CanonicalHasher
-	r, _ = h.SetContentHash(r)
+	r := sampleRecord(t, "github.com/foo/bar", "v2.0.0", "0.4.0", fetchtest.Digests(domain2.ArtifactDigests{
+		SHA256: "2222222222222222222222222222222222222222222222222222222222222222",
+		SHA384: "333333333333333333333333333333333333333333333333",
+		SHA512: "5555555555555555555555555555555555555555555555555555555555555555",
+	}))
 
 	if err := s.PutFetchRecord(ctx, r); err != nil {
 		t.Fatalf("Put: %v", err)
@@ -72,7 +64,7 @@ func TestPutGetFetchRecord(t *testing.T) {
 	s := openMemStore(t)
 	ctx := context.Background()
 
-	r := sampleRecord("github.com/foo/bar", "v1.0.0", "0.1.0")
+	r := sampleRecord(t, "github.com/foo/bar", "v1.0.0", "0.1.0")
 	if err := s.PutFetchRecord(ctx, r); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
@@ -109,15 +101,13 @@ func TestPutFetchRecord_Idempotent(t *testing.T) {
 	s := openMemStore(t)
 	ctx := context.Background()
 
-	r := sampleRecord("github.com/foo/bar", "v1.0.0", "0.1.0")
+	r := sampleRecord(t, "github.com/foo/bar", "v1.0.0", "0.1.0")
 	if err := s.PutFetchRecord(ctx, r); err != nil {
 		t.Fatalf("first Put: %v", err)
 	}
 
-	// Update a field and recompute content hash for a valid second write.
-	r.VerificationDetail = "updated"
-	var h domain2.CanonicalHasher
-	r, _ = h.SetContentHash(r)
+	// Update a field for a valid second write.
+	r = sampleRecord(t, "github.com/foo/bar", "v1.0.0", "0.1.0", fetchtest.Detail("updated"))
 
 	if err := s.PutFetchRecord(ctx, r); err != nil {
 		t.Fatalf("second Put: %v", err)
@@ -139,7 +129,7 @@ func TestGetFetchRecord_IntegrityError(t *testing.T) {
 	s := openMemStore(t)
 	ctx := context.Background()
 
-	r := sampleRecord("github.com/foo/bar", "v1.0.0", "0.1.0")
+	r := sampleRecord(t, "github.com/foo/bar", "v1.0.0", "0.1.0")
 	if err := s.PutFetchRecord(ctx, r); err != nil {
 		t.Fatal(err)
 	}
@@ -163,10 +153,7 @@ func TestGetFetchRecord_Retracted(t *testing.T) {
 	s := openMemStore(t)
 	ctx := context.Background()
 
-	r := sampleRecord("github.com/foo/bar", "v1.0.0", "0.1.0")
-	r.Retracted = true
-	var h domain2.CanonicalHasher
-	r, _ = h.SetContentHash(r)
+	r := sampleRecord(t, "github.com/foo/bar", "v1.0.0", "0.1.0", fetchtest.Retracted(true))
 
 	if err := s.PutFetchRecord(ctx, r); err != nil {
 		t.Fatal(err)

@@ -13,6 +13,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/fetch/application"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
@@ -60,21 +61,17 @@ func (b delegatingModcacheBlobs) Exists(ctx context.Context, h ports.BlobHandle)
 // run leaves behind).
 func seedStoredRecord(t *testing.T, facts *fakeFacts, status domain2.VerificationStatus, mode domain2.AcquisitionMode) domain2.FactRecord {
 	t.Helper()
-	r := domain2.NewFactRecord(domain2.FetchedModule{
-		Coordinate:         testCoord,
-		ModuleHash:         domain2.ModuleHash{Algorithm: "h1", Value: "seed=="},
-		GoModHash:          domain2.ModuleHash{Algorithm: "h1", Value: "seedmod=="},
-		VerificationStatus: status,
-		FetchedAt:          fixedTime,
-		PipelineVersion:    "test-0.1.0",
-		ContentLocation:    "fake:seed-zip",
-		GoModLocation:      "fake:seed-gomod",
-		AcquisitionMode:    mode,
-	})
-	sealed, err := domain2.CanonicalHasher{}.SetContentHash(r)
-	if err != nil {
-		t.Fatalf("sealing seed record: %v", err)
-	}
+	sealed := fetchtest.Record(t,
+		fetchtest.Coordinate(testCoord),
+		fetchtest.ModuleHash(fetchtest.H1("seed==")),
+		fetchtest.GoModHash(fetchtest.H1("seedmod==")),
+		fetchtest.Status(status),
+		fetchtest.FetchedAt(fixedTime),
+		fetchtest.PipelineVersion("test-0.1.0"),
+		fetchtest.Content("fake:seed-zip"),
+		fetchtest.GoMod("fake:seed-gomod"),
+		fetchtest.AcquisitionMode(mode),
+	)
 	if err := facts.PutFetchRecord(context.Background(), sealed); err != nil {
 		t.Fatalf("seeding record: %v", err)
 	}

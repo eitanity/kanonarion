@@ -10,25 +10,35 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/fetch/application"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 )
+
+// recordOptions describes the fact record these tests ingest and read back. The
+// valid and the tampered record must differ only in the tampering, so both are
+// built from this one description.
+func recordOptions() []fetchtest.Option {
+	return []fetchtest.Option{
+		fetchtest.Module("github.com/foo/bar", "v1.2.3"),
+		fetchtest.ModuleHash(fetchtest.H1("abc==")),
+		fetchtest.GoModHash(fetchtest.H1("def==")),
+		fetchtest.Status(domain2.Verified),
+		fetchtest.FetchedAt(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)),
+		fetchtest.PipelineVersion("0.1.0"),
+		fetchtest.Content("sha256:deadbeef"),
+	}
+}
 
 // validRecord returns a fact record with a valid canonical content hash set.
 func validRecord(t *testing.T) domain2.FactRecord {
 	t.Helper()
-	r := domain2.NewFactRecord(domain2.FetchedModule{
-		Coordinate:         coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.2.3"},
-		ModuleHash:         domain2.ModuleHash{Algorithm: "h1", Value: "abc=="},
-		GoModHash:          domain2.ModuleHash{Algorithm: "h1", Value: "def=="},
-		VerificationStatus: domain2.Verified,
-		FetchedAt:          time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
-		PipelineVersion:    "0.1.0",
-		ContentLocation:    "sha256:deadbeef",
-	})
-	hashed, err := domain2.CanonicalHasher{}.SetContentHash(r)
-	if err != nil {
-		t.Fatalf("SetContentHash: %v", err)
-	}
-	return hashed
+	return fetchtest.Record(t, recordOptions()...)
+}
+
+// tamperedRecord returns the same record with its body mutated after sealing, so
+// its stored content hash no longer recomputes.
+func tamperedRecord(t *testing.T) domain2.FactRecord {
+	t.Helper()
+	return fetchtest.Tampered(t, recordOptions()...)
 }
 
 // boomFacts is a FactStore that fails every operation, to exercise the
@@ -62,8 +72,7 @@ func TestValidateAndIngest_Ingest_Valid(t *testing.T) {
 func TestValidateAndIngest_Ingest_TamperedRejectedFailClosed(t *testing.T) {
 	store := newFakeFacts()
 	uc := application.NewValidateAndIngestUseCase(store)
-	rec := validRecord(t)
-	rec.VerificationStatus = "tampered" // body mutated after hashing
+	rec := tamperedRecord(t)
 
 	err := uc.Ingest(context.Background(), rec)
 	if !errors.Is(err, application.ErrVerificationFailed) {
@@ -123,8 +132,7 @@ func TestValidateAndIngest_ReadVerified_Absent(t *testing.T) {
 
 func TestValidateAndIngest_ReadVerified_TamperedFailClosed(t *testing.T) {
 	store := newFakeFacts()
-	rec := validRecord(t)
-	rec.VerificationStatus = "tampered-on-disk" // poisoned without re-hashing
+	rec := tamperedRecord(t)
 	if err := store.PutFetchRecord(context.Background(), rec); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -173,8 +181,7 @@ func TestValidateAndIngest_ReadVerified_AuditsCleanRead(t *testing.T) {
 
 func TestValidateAndIngest_ReadVerified_AuditsTamperedRead(t *testing.T) {
 	store := newFakeFacts()
-	rec := validRecord(t)
-	rec.VerificationStatus = "tampered-on-disk" // poisoned without re-hashing
+	rec := tamperedRecord(t)
 	if err := store.PutFetchRecord(context.Background(), rec); err != nil {
 		t.Fatalf("seed: %v", err)
 	}
@@ -238,8 +245,7 @@ func TestValidateAndIngest_ReadVerified_TamperedAuditFailureJoinsSentinel(t *tes
 	// Even when the assurance log is unwritable, a tampered read must still
 	// report ErrVerificationFailed so fail-closed handling is preserved.
 	store := newFakeFacts()
-	rec := validRecord(t)
-	rec.VerificationStatus = "tampered-on-disk"
+	rec := tamperedRecord(t)
 	if err := store.PutFetchRecord(context.Background(), rec); err != nil {
 		t.Fatalf("seed: %v", err)
 	}

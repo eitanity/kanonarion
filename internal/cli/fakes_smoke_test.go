@@ -22,7 +22,7 @@ import (
 	extractdomain "github.com/eitanity/kanonarion/internal/extract/domain"
 	extractports "github.com/eitanity/kanonarion/internal/extract/ports"
 	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	fipsdomain "github.com/eitanity/kanonarion/internal/fips/domain"
 	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
 	ifacedomain "github.com/eitanity/kanonarion/internal/iface/domain"
@@ -62,7 +62,7 @@ func TestFakeFetchModule_Execute(t *testing.T) {
 func TestFakeQueryFetch_GetFetchRecord(t *testing.T) {
 	f := testfakes.NewFakeQueryFetch()
 	c := coord(t, "example.com/a", "v1.0.0")
-	f.Add(c, "0.1.0", fetchdomain.FactRecord{ModulePath: c.Path})
+	f.Add(c, "0.1.0", fetchtest.Record(t, fetchtest.Path(c.Path)))
 	rec, ok, err := f.GetFetchRecord(context.Background(), c, "0.1.0")
 	if err != nil || !ok || rec.ModulePath != c.Path {
 		t.Fatalf("expected record, got ok=%v err=%v", ok, err)

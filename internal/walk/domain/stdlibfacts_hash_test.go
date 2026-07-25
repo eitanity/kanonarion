@@ -15,7 +15,7 @@ import (
 // the content hash.
 func TestWalkRecordHasher_StdlibFactsRoundTrip(t *testing.T) {
 	hasher := domain3.WalkRecordHasher{}
-	rec := domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(), domain3.DefaultDepthPolicy(), "")
+	rec := domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(t), domain3.DefaultDepthPolicy(), "")
 
 	std, err := coordinate.NewModuleCoordinate(domain3.StdlibModulePath, "v1.26.4")
 	if err != nil {
@@ -75,7 +75,7 @@ func TestWalkRecordHasher_StdlibFactsRoundTrip(t *testing.T) {
 func TestWalkRecordHasher_NoStdlibFactsOmitted(t *testing.T) {
 	hasher := domain3.WalkRecordHasher{}
 	rec, err := hasher.SetContentHash(
-		domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(), domain3.DefaultDepthPolicy(), ""),
+		domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(t), domain3.DefaultDepthPolicy(), ""),
 	)
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)

@@ -15,7 +15,7 @@ import (
 	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
@@ -40,7 +40,7 @@ func buildUseCase(facts *fakeFactStore, blobs *fakeBlobStore, store *fakeCallGra
 	})
 }
 
-func storeFetchRecord(facts *fakeFactStore, blobs *fakeBlobStore, coord coordinate.ModuleCoordinate) fetchports.BlobHandle {
+func storeFetchRecord(t testing.TB, facts *fakeFactStore, blobs *fakeBlobStore, coord coordinate.ModuleCoordinate) fetchports.BlobHandle {
 	// Create a minimal zip blob.
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
@@ -48,12 +48,12 @@ func storeFetchRecord(facts *fakeFactStore, blobs *fakeBlobStore, coord coordina
 	handle := fetchports.BlobHandle("blob:test")
 	blobs.blobs = map[fetchports.BlobHandle][]byte{handle: buf.Bytes()}
 
-	r := domain.FactRecord{
-		ModulePath:      coord.Path,
-		ModuleVersion:   coord.Version,
-		PipelineVersion: testFetchPipV,
-		ContentLocation: string(handle),
-	}
+	r := fetchtest.Record(
+		t,
+		fetchtest.Coordinate(coord),
+		fetchtest.PipelineVersion(testFetchPipV),
+		fetchtest.Content(string(handle)),
+	)
 	facts.PutFetchRecord(context.Background(), r) //nolint:errcheck,gosec
 	return handle
 }
@@ -64,7 +64,7 @@ func TestExecute_CacheHit(t *testing.T) {
 	store := &fakeCallGraphStore{}
 	analyser := &fakeAnalyser{}
 
-	storeFetchRecord(facts, blobs, testCoord)
+	storeFetchRecord(t, facts, blobs, testCoord)
 
 	// Pre-populate the store with a cached record.
 	var h domain2.CallGraphRecordHasher
@@ -110,7 +110,7 @@ func TestExecute_AnalyserFailureRecorded(t *testing.T) {
 	blobs := &fakeBlobStore{}
 	store := &fakeCallGraphStore{}
 
-	storeFetchRecord(facts, blobs, testCoord)
+	storeFetchRecord(t, facts, blobs, testCoord)
 
 	analyser := &fakeAnalyser{
 		record: domain2.CallGraphRecord{
@@ -139,7 +139,7 @@ func TestExecute_PersistsRecord(t *testing.T) {
 	blobs := &fakeBlobStore{}
 	store := &fakeCallGraphStore{}
 
-	storeFetchRecord(facts, blobs, testCoord)
+	storeFetchRecord(t, facts, blobs, testCoord)
 
 	analyser := &fakeAnalyser{
 		record: domain2.CallGraphRecord{
@@ -185,7 +185,7 @@ func TestExecute_Force(t *testing.T) {
 	blobs := &fakeBlobStore{}
 	store := &fakeCallGraphStore{}
 
-	storeFetchRecord(facts, blobs, testCoord)
+	storeFetchRecord(t, facts, blobs, testCoord)
 
 	var h domain2.CallGraphRecordHasher
 	cached := domain2.CallGraphRecord{
@@ -222,7 +222,7 @@ func TestExecute_StoreError(t *testing.T) {
 	blobs := &fakeBlobStore{}
 	store := &fakeCallGraphStore{putErr: errors.New("disk full")}
 
-	storeFetchRecord(facts, blobs, testCoord)
+	storeFetchRecord(t, facts, blobs, testCoord)
 
 	analyser := &fakeAnalyser{
 		record: domain2.CallGraphRecord{
@@ -244,7 +244,7 @@ func TestExecute_DefaultPipelineVersion(t *testing.T) {
 	blobs := &fakeBlobStore{}
 	store := &fakeCallGraphStore{}
 
-	storeFetchRecord(facts, blobs, testCoord)
+	storeFetchRecord(t, facts, blobs, testCoord)
 
 	analyser := &fakeAnalyser{
 		record: domain2.CallGraphRecord{
@@ -282,12 +282,7 @@ func TestExecute_SameFetchAndCallgraphPipelineVersion(t *testing.T) {
 
 	// Use identical pipeline versions — requireFetchRecord should de-duplicate.
 	const samePV = "0.1.0"
-	r := domain.FactRecord{
-		ModulePath:      testCoord.Path,
-		ModuleVersion:   testCoord.Version,
-		PipelineVersion: samePV,
-		ContentLocation: "blob:test",
-	}
+	r := fetchtest.Record(t, fetchtest.Coordinate(testCoord), fetchtest.PipelineVersion(samePV), fetchtest.Content("blob:test"))
 	facts.PutFetchRecord(context.Background(), r) //nolint:errcheck,gosec
 
 	var buf bytes.Buffer
@@ -328,7 +323,7 @@ func TestExecute_AnalyserInfraError(t *testing.T) {
 	blobs := &fakeBlobStore{}
 	store := &fakeCallGraphStore{}
 
-	storeFetchRecord(facts, blobs, testCoord)
+	storeFetchRecord(t, facts, blobs, testCoord)
 
 	analyser := &fakeAnalyser{err: errors.New("analyser crashed")}
 
@@ -345,12 +340,12 @@ func TestExecute_EmptyFetchPipelineVersion(t *testing.T) {
 	store := &fakeCallGraphStore{}
 
 	// Register fetch record with one specific pipeline version.
-	r := domain.FactRecord{
-		ModulePath:      testCoord.Path,
-		ModuleVersion:   testCoord.Version,
-		PipelineVersion: testPipelineV,
-		ContentLocation: "blob:test",
-	}
+	r := fetchtest.Record(
+		t,
+		fetchtest.Coordinate(testCoord),
+		fetchtest.PipelineVersion(testPipelineV),
+		fetchtest.Content("blob:test"),
+	)
 	facts.PutFetchRecord(context.Background(), r) //nolint:errcheck,gosec
 
 	var buf bytes.Buffer
@@ -394,7 +389,7 @@ func TestExecute_StoreCheckError(t *testing.T) {
 	store := &fakeCallGraphStore{}
 	store.getErr = errors.New("store unavailable")
 
-	storeFetchRecord(facts, blobs, testCoord)
+	storeFetchRecord(t, facts, blobs, testCoord)
 
 	analyser := &fakeAnalyser{
 		record: domain2.CallGraphRecord{
@@ -423,7 +418,7 @@ func TestExecute_ExcludedByConfig(t *testing.T) {
 	// and Execute would surface this error instead of skipping cleanly.
 	analyser := &fakeAnalyser{err: errors.New("analyser must not run for excluded module")}
 
-	storeFetchRecord(facts, blobs, testCoord)
+	storeFetchRecord(t, facts, blobs, testCoord)
 
 	uc := application.NewExtractCallGraphUseCase(application.Config{
 		Facts:                facts,
@@ -552,10 +547,12 @@ func TestExecute_MaterialisesBlobWhenNoPathOptimizer(t *testing.T) {
 	handle := fetchports.BlobHandle("blob:test")
 	blobs := &pathlessBlobStore{blobs: map[fetchports.BlobHandle][]byte{handle: zipBytes}}
 	facts := &fakeFactStore{}
-	facts.PutFetchRecord(context.Background(), domain.FactRecord{ //nolint:errcheck,gosec
-		ModulePath: testCoord.Path, ModuleVersion: testCoord.Version,
-		PipelineVersion: testFetchPipV, ContentLocation: string(handle),
-	})
+	facts.PutFetchRecord(context.Background(), fetchtest.Record( //nolint:errcheck,gosec
+		t,
+		fetchtest.Coordinate(testCoord),
+		fetchtest.PipelineVersion(testFetchPipV),
+		fetchtest.Content(string(handle)),
+	))
 	analyser := &pathReadingAnalyser{record: domain2.CallGraphRecord{
 		SchemaVersion: domain2.CallGraphSchemaVersion,
 		Algorithm:     domain2.AlgorithmCHA,

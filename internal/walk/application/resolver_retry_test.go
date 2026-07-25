@@ -45,16 +45,16 @@ func (f *flakyFetcher) EnsureFetched(ctx context.Context, c coordinate.ModuleCoo
 
 // retryingResolver wires a resolver whose fetcher fails the first failures
 // attempts for example.com/flaky with err, behind the retry decorator.
-func retryingResolver(failures int, err error) (*application.GraphResolver, *flakyFetcher) {
+func retryingResolver(t testing.TB, failures int, err error) (*application.GraphResolver, *flakyFetcher) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 
 require example.com/flaky v1.0.0
 `, blobs)
-	fetcher.add("example.com/flaky", "v1.0.0", "module example.com/flaky\n\ngo 1.21\n", blobs)
+	fetcher.add(t, "example.com/flaky", "v1.0.0", "module example.com/flaky\n\ngo 1.21\n", blobs)
 
 	flaky := &flakyFetcher{inner: fetcher, path: "example.com/flaky", err: err, failures: failures}
 	// Zero base delay keeps the backoff schedule out of the test's runtime; the
@@ -73,7 +73,7 @@ require example.com/flaky v1.0.0
 func TestResolve_TransientFetchErrorIsRetriedNotRecorded(t *testing.T) {
 	streamReset := errors.New("inner fetcher: fetching module: proxy download: reading zip: " +
 		"stream error: stream ID 587; INTERNAL_ERROR; received from peer")
-	r, flaky := retryingResolver(2, streamReset)
+	r, flaky := retryingResolver(t, 2, streamReset)
 
 	g, err := r.Resolve(context.Background(), coord("example.com/target", "v1.0.0"), domain3.DefaultDepthPolicy().FetchStage())
 	if err != nil {
@@ -98,7 +98,7 @@ func TestResolve_TransientFetchErrorIsRetriedNotRecorded(t *testing.T) {
 // The control: a permanent error still fails on the first attempt and is
 // recorded exactly as before, so retries cannot mask a genuine fetch failure.
 func TestResolve_PermanentFetchErrorIsNotRetried(t *testing.T) {
-	r, flaky := retryingResolver(2, errors.New("inner fetcher: fetching module: checksum mismatch"))
+	r, flaky := retryingResolver(t, 2, errors.New("inner fetcher: fetching module: checksum mismatch"))
 
 	g, err := r.Resolve(context.Background(), coord("example.com/target", "v1.0.0"), domain3.DefaultDepthPolicy().FetchStage())
 	if err != nil {

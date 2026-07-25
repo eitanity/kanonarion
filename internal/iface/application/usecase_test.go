@@ -14,6 +14,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/adapters/ziparchive"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	godocextractor "github.com/eitanity/kanonarion/internal/iface/adapters/extractor/godoc"
 	"github.com/eitanity/kanonarion/internal/iface/application"
@@ -505,15 +506,13 @@ func putFact(t *testing.T, s *fakeFactStore, coord coordinate.ModuleCoordinate, 
 
 func putFactWithBlob(t *testing.T, s *fakeFactStore, coord coordinate.ModuleCoordinate, blobHandle string) {
 	t.Helper()
-	r := domain2.FactRecord{
-		SchemaVersion:      "2",
-		ModulePath:         coord.Path,
-		ModuleVersion:      coord.Version,
-		PipelineVersion:    application.PipelineVersion,
-		ContentLocation:    blobHandle,
-		ContentHash:        "sha256:placeholder",
-		VerificationStatus: "Verified",
-	}
+	r := fetchtest.Record(
+		t,
+		fetchtest.Coordinate(coord),
+		fetchtest.PipelineVersion(application.PipelineVersion),
+		fetchtest.Content(blobHandle),
+		fetchtest.Status(domain2.Verified),
+	)
 	if err := s.PutFetchRecord(context.Background(), r); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}

@@ -7,6 +7,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 )
 
 func TestNewFactRecord(t *testing.T) {
@@ -37,7 +38,7 @@ func TestNewFactRecord(t *testing.T) {
 }
 
 func TestFactRecord_Coordinate(t *testing.T) {
-	r := domain2.FactRecord{ModulePath: "github.com/foo/bar", ModuleVersion: "v1.0.0"}
+	r := fetchtest.Record(t, fetchtest.Module("github.com/foo/bar", "v1.0.0"))
 	c := r.Coordinate()
 	if c.Path != "github.com/foo/bar" || c.Version != "v1.0.0" {
 		t.Errorf("Coordinate() = %v", c)
@@ -58,7 +59,7 @@ func TestFactRecord_IsGoModOnly(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			r := domain2.FactRecord{ContentLocation: tc.contentLocation, GoModLocation: tc.goModLocation}
+			r := fetchtest.Record(t, fetchtest.Content(tc.contentLocation), fetchtest.GoMod(tc.goModLocation))
 			if got := r.IsGoModOnly(); got != tc.want {
 				t.Errorf("IsGoModOnly() = %v, want %v", got, tc.want)
 			}

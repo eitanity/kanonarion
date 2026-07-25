@@ -24,7 +24,7 @@ func TestWalkRecordHasher_VCSHostOverrideRoundTrip(t *testing.T) {
 	hasher := domain3.WalkRecordHasher{}
 	policy := policyWithVCSHosts([]string{"github.com", "git.example.org"})
 	rec := domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0",
-		domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(), policy, "")
+		domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(t), policy, "")
 
 	rec, err := hasher.SetContentHash(rec)
 	if err != nil {
@@ -60,7 +60,7 @@ func TestWalkRecordHasher_AbsentVCSHostsOmitted(t *testing.T) {
 	hasher := domain3.WalkRecordHasher{}
 	rec, err := hasher.SetContentHash(
 		domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0",
-			domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(), domain3.DefaultDepthPolicy(), ""),
+			domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(t), domain3.DefaultDepthPolicy(), ""),
 	)
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
@@ -89,7 +89,7 @@ func TestWalkRecordHasher_VCSHostOverrideChangesTheHash(t *testing.T) {
 	mk := func(policy domain3.DepthPolicy) string {
 		rec, err := hasher.SetContentHash(
 			domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0",
-				domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(), policy, ""),
+				domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(t), policy, ""),
 		)
 		if err != nil {
 			t.Fatalf("SetContentHash: %v", err)

@@ -10,6 +10,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/fetch/application"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
@@ -222,13 +223,15 @@ func TestExecuteModcache_CacheHitSkipsDownload(t *testing.T) {
 	).WithModcache(fakeDeriver{})
 
 	// Seed a record for this coordinate + pipeline version.
-	seeded := domain2.NewFactRecord(domain2.FetchedModule{
-		Coordinate:         coord,
-		ModuleHash:         zipHash,
-		VerificationStatus: domain2.VerifiedBySumDBOnly,
-		PipelineVersion:    "test-0.1.0",
-		ContentLocation:    "modcache:zip:" + coord.String(),
-	})
+	seeded := fetchtest.Record(t,
+		fetchtest.Coordinate(coord),
+		fetchtest.ModuleHash(zipHash),
+		// No go.mod hash was computed: production serialises the zero hash as ":".
+		fetchtest.GoModHash(domain2.ModuleHash{}),
+		fetchtest.Status(domain2.VerifiedBySumDBOnly),
+		fetchtest.PipelineVersion("test-0.1.0"),
+		fetchtest.Content("modcache:zip:"+coord.String()),
+	)
 	if err := facts.PutFetchRecord(context.Background(), seeded); err != nil {
 		t.Fatalf("seeding record: %v", err)
 	}

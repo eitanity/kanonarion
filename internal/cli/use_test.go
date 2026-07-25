@@ -13,6 +13,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
@@ -29,12 +30,7 @@ func TestCopyToModCache_PipelineVersionBinding(t *testing.T) {
 	const storedPV = "9.9.9"
 
 	facts := newPVFakeFacts()
-	_ = facts.PutFetchRecord(context.Background(), fetchdomain.FactRecord{
-		ModulePath:      c.Path,
-		ModuleVersion:   c.Version,
-		PipelineVersion: storedPV,
-		ContentLocation: "fake:zip",
-	})
+	_ = facts.PutFetchRecord(context.Background(), fetchtest.Record(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion(storedPV), fetchtest.Content("fake:zip")))
 	blobs := newPVFakeBlobs() // Get always errors — we only care about the lookup
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 

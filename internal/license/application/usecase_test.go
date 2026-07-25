@@ -13,6 +13,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	"github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/license/application"
 	domain2 "github.com/eitanity/kanonarion/internal/license/domain"
@@ -1113,15 +1114,13 @@ func putFact(t *testing.T, s *fakeFactStore, coord coordinate.ModuleCoordinate, 
 
 func putFactWithBlob(t *testing.T, s *fakeFactStore, coord coordinate.ModuleCoordinate, blobHandle string) {
 	t.Helper()
-	r := domain.FactRecord{
-		SchemaVersion:      "2",
-		ModulePath:         coord.Path,
-		ModuleVersion:      coord.Version,
-		PipelineVersion:    application.PipelineVersion,
-		ContentLocation:    blobHandle,
-		ContentHash:        "sha256:placeholder",
-		VerificationStatus: "Verified",
-	}
+	r := fetchtest.Record(
+		t,
+		fetchtest.Coordinate(coord),
+		fetchtest.PipelineVersion(application.PipelineVersion),
+		fetchtest.Content(blobHandle),
+		fetchtest.Status(domain.Verified),
+	)
 	if err := s.PutFetchRecord(context.Background(), r); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}

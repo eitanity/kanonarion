@@ -16,6 +16,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/walk/adapters/gomod/xmod"
 	"github.com/eitanity/kanonarion/internal/walk/application"
@@ -32,14 +33,14 @@ func coord(path, version string) coordinate.ModuleCoordinate {
 }
 
 // makeFactRecord builds a minimal FactRecord whose ContentLocation is "path@version".
-func makeFactRecord(path, version string) domain2.FactRecord {
-	return domain2.FactRecord{
-		SchemaVersion:   "2",
-		ModulePath:      path,
-		ModuleVersion:   version,
-		ContentLocation: path + "@" + version,
-		PipelineVersion: "1.0.0",
-	}
+func makeFactRecord(t testing.TB, path, version string) domain2.FactRecord {
+	return fetchtest.Record(
+		t,
+		fetchtest.Module(path, version),
+		fetchtest.PipelineVersion("1.0.0"),
+		fetchtest.Content(path+"@"+version),
+		fetchtest.SchemaVersion("2"),
+	)
 }
 
 // ---- fake implementations ----
@@ -72,16 +73,16 @@ func (f *fakeModuleFetcher) fetched(path string) bool {
 	return false
 }
 
-func (f *fakeModuleFetcher) add(path, version, goModContent string, blobs *fakeBlobStore) {
+func (f *fakeModuleFetcher) add(t testing.TB, path, version, goModContent string, blobs *fakeBlobStore) {
 	c := coord(path, version)
-	rec := makeFactRecord(path, version)
+	rec := makeFactRecord(t, path, version)
 	f.records[c.String()] = rec
 	blobs.data[path+"@"+version] = buildFakeZip(path, version, goModContent)
 }
 
-func (f *fakeModuleFetcher) addRetracted(path, version, goModContent string, blobs *fakeBlobStore) {
+func (f *fakeModuleFetcher) addRetracted(t testing.TB, path, version, goModContent string, blobs *fakeBlobStore) {
 	c := coord(path, version)
-	rec := makeFactRecord(path, version)
+	rec := makeFactRecord(t, path, version)
 	rec.Retracted = true
 	f.records[c.String()] = rec
 	blobs.data[path+"@"+version] = buildFakeZip(path, version, goModContent)
@@ -227,7 +228,7 @@ func newResolverWithParser(parser walkports.GoModParser, fetcher *fakeModuleFetc
 func TestResolve_noDependencies(t *testing.T) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 `, blobs)
@@ -257,13 +258,13 @@ go 1.21
 func TestResolve_singleDirectDependency(t *testing.T) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 
 require github.com/dep/one v1.2.3
 `, blobs)
-	fetcher.add("github.com/dep/one", "v1.2.3", `module github.com/dep/one
+	fetcher.add(t, "github.com/dep/one", "v1.2.3", `module github.com/dep/one
 
 go 1.21
 `, blobs)
@@ -292,7 +293,7 @@ go 1.21
 func TestResolve_carriesDigestsToNodes(t *testing.T) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 
@@ -300,7 +301,7 @@ require github.com/dep/one v1.2.3
 `, blobs)
 	// The dependency's fact record carries artefact digests; the resolver must
 	// copy them onto the graph node so the SBOM can emit component hashes.
-	depRec := makeFactRecord("github.com/dep/one", "v1.2.3")
+	depRec := makeFactRecord(t, "github.com/dep/one", "v1.2.3")
 	depRec.ZipSHA256 = "dep256"
 	depRec.ZipSHA384 = "dep384"
 	depRec.ZipSHA512 = "dep512"
@@ -332,7 +333,7 @@ func TestResolve_diamond_MVS(t *testing.T) {
 	// MVS selects D@v1.2
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/a", "v1.0.0", `module example.com/a
+	fetcher.add(t, "example.com/a", "v1.0.0", `module example.com/a
 
 go 1.21
 
@@ -341,23 +342,23 @@ require (
 	example.com/c v1.0.0
 )
 `, blobs)
-	fetcher.add("example.com/b", "v1.0.0", `module example.com/b
+	fetcher.add(t, "example.com/b", "v1.0.0", `module example.com/b
 
 go 1.21
 
 require example.com/d v1.1.0
 `, blobs)
-	fetcher.add("example.com/c", "v1.0.0", `module example.com/c
+	fetcher.add(t, "example.com/c", "v1.0.0", `module example.com/c
 
 go 1.21
 
 require example.com/d v1.2.0
 `, blobs)
-	fetcher.add("example.com/d", "v1.1.0", `module example.com/d
+	fetcher.add(t, "example.com/d", "v1.1.0", `module example.com/d
 
 go 1.21
 `, blobs)
-	fetcher.add("example.com/d", "v1.2.0", `module example.com/d
+	fetcher.add(t, "example.com/d", "v1.2.0", `module example.com/d
 
 go 1.21
 `, blobs)
@@ -398,7 +399,7 @@ func TestResolve_mvsVersionBump(t *testing.T) {
 	// MVS selects B@v1.1
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/a", "v1.0.0", `module example.com/a
+	fetcher.add(t, "example.com/a", "v1.0.0", `module example.com/a
 
 go 1.21
 
@@ -407,17 +408,17 @@ require (
 	example.com/c v1.0.0
 )
 `, blobs)
-	fetcher.add("example.com/b", "v1.0.0", `module example.com/b
+	fetcher.add(t, "example.com/b", "v1.0.0", `module example.com/b
 
 go 1.21
 
 require example.com/c v1.1.0
 `, blobs)
-	fetcher.add("example.com/c", "v1.0.0", `module example.com/c
+	fetcher.add(t, "example.com/c", "v1.0.0", `module example.com/c
 
 go 1.21
 `, blobs)
-	fetcher.add("example.com/c", "v1.1.0", `module example.com/c
+	fetcher.add(t, "example.com/c", "v1.1.0", `module example.com/c
 
 go 1.21
 `, blobs)
@@ -438,7 +439,7 @@ func TestResolve_replaceDirective(t *testing.T) {
 	// Target replaces old/pkg v1.0.0 → new/pkg v1.1.0
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 
@@ -446,7 +447,7 @@ require github.com/old/pkg v1.0.0
 
 replace github.com/old/pkg v1.0.0 => github.com/new/pkg v1.1.0
 `, blobs)
-	fetcher.add("github.com/new/pkg", "v1.1.0", `module github.com/new/pkg
+	fetcher.add(t, "github.com/new/pkg", "v1.1.0", `module github.com/new/pkg
 
 go 1.21
 `, blobs)
@@ -473,7 +474,7 @@ func TestResolve_excludeDirective(t *testing.T) {
 	// Target excludes dep/b v1.0.0 — it should not appear in the graph.
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 
@@ -484,7 +485,7 @@ require (
 
 exclude example.com/b v1.0.0
 `, blobs)
-	fetcher.add("example.com/a", "v1.0.0", `module example.com/a
+	fetcher.add(t, "example.com/a", "v1.0.0", `module example.com/a
 
 go 1.21
 `, blobs)
@@ -505,7 +506,7 @@ func TestResolve_fetchFailedTransitive(t *testing.T) {
 	// One transitive dep fails to fetch — graph is partial but other deps complete.
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 
@@ -514,7 +515,7 @@ require (
 	example.com/bad v1.0.0
 )
 `, blobs)
-	fetcher.add("example.com/good", "v1.0.0", `module example.com/good
+	fetcher.add(t, "example.com/good", "v1.0.0", `module example.com/good
 
 go 1.21
 `, blobs)
@@ -545,14 +546,14 @@ func TestResolve_parseFailedTransitive(t *testing.T) {
 	// A transitive dep's zip has a malformed go.mod — graph is partial.
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 
 require example.com/bad v1.0.0
 `, blobs)
 	// Register a FactRecord but put invalid go.mod content in the zip.
-	rec := makeFactRecord("example.com/bad", "v1.0.0")
+	rec := makeFactRecord(t, "example.com/bad", "v1.0.0")
 	fetcher.records["example.com/bad@v1.0.0"] = rec
 	blobs.data["example.com/bad@v1.0.0"] = buildFakeZip("example.com/bad", "v1.0.0", "this is not valid go.mod ;;;")
 
@@ -589,7 +590,7 @@ func TestResolve_targetFetchFails(t *testing.T) {
 func TestResolve_contextCancellation(t *testing.T) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 
@@ -601,7 +602,7 @@ require (
 `, blobs)
 	// Add only the target — other deps have no records; context will be
 	// cancelled before they're processed.
-	fetcher.add("example.com/a", "v1.0.0", `module example.com/a
+	fetcher.add(t, "example.com/a", "v1.0.0", `module example.com/a
 
 go 1.21
 `, blobs)
@@ -626,7 +627,7 @@ func TestResolve_deterministic(t *testing.T) {
 	// Running the same resolution twice must produce byte-identical node/edge ordering.
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 
@@ -637,7 +638,7 @@ require (
 )
 `, blobs)
 	for _, mod := range []string{"a", "b", "c"} {
-		fetcher.add("example.com/"+mod, "v1.0.0",
+		fetcher.add(t, "example.com/"+mod, "v1.0.0",
 			"module example.com/"+mod+"\n\ngo 1.21\n", blobs)
 	}
 
@@ -669,7 +670,7 @@ require (
 func TestResolve_FetchedTargetLocalReplaceIgnored(t *testing.T) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 
@@ -677,7 +678,7 @@ require example.com/dep v1.0.0
 
 replace example.com/dep => ./local/dep
 `, blobs)
-	fetcher.add("example.com/dep", "v1.0.0", `module example.com/dep
+	fetcher.add(t, "example.com/dep", "v1.0.0", `module example.com/dep
 
 go 1.21
 `, blobs)
@@ -706,7 +707,7 @@ go 1.21
 func TestResolve_FetchedTargetSiblingReplaceResolvesFromProxy(t *testing.T) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/otel/trace", "v1.41.0", `module example.com/otel/trace
+	fetcher.add(t, "example.com/otel/trace", "v1.41.0", `module example.com/otel/trace
 
 go 1.24
 
@@ -714,7 +715,7 @@ require example.com/otel v1.41.0
 
 replace example.com/otel => ../
 `, blobs)
-	fetcher.add("example.com/otel", "v1.41.0", "module example.com/otel\n\ngo 1.24\n", blobs)
+	fetcher.add(t, "example.com/otel", "v1.41.0", "module example.com/otel\n\ngo 1.24\n", blobs)
 
 	r := newResolver(fetcher, blobs)
 	g, err := r.Resolve(context.Background(), coord("example.com/otel/trace", "v1.41.0"), domain3.DefaultDepthPolicy().FetchStage())
@@ -736,13 +737,13 @@ replace example.com/otel => ../
 func TestResolve_retractedDepRecorded(t *testing.T) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 
 require example.com/dep v1.0.0
 `, blobs)
-	fetcher.addRetracted("example.com/dep", "v1.0.0", `module example.com/dep
+	fetcher.addRetracted(t, "example.com/dep", "v1.0.0", `module example.com/dep
 
 go 1.21
 `, blobs)
@@ -761,7 +762,7 @@ go 1.21
 func TestResolve_graphSorted(t *testing.T) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 
@@ -772,7 +773,7 @@ require (
 )
 `, blobs)
 	for _, p := range []string{"z.example.com/z", "a.example.com/a", "m.example.com/m"} {
-		fetcher.add(p, "v1.0.0", "module "+p+"\n\ngo 1.21\n", blobs)
+		fetcher.add(t, p, "v1.0.0", "module "+p+"\n\ngo 1.21\n", blobs)
 	}
 
 	r := newResolver(fetcher, blobs)
@@ -794,7 +795,7 @@ func TestResolve_replaceWildcard(t *testing.T) {
 	// Wildcard replace: replace github.com/old/pkg => github.com/new/pkg v1.1.0
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 
@@ -802,7 +803,7 @@ require github.com/old/pkg v1.0.0
 
 replace github.com/old/pkg => github.com/new/pkg v1.1.0
 `, blobs)
-	fetcher.add("github.com/new/pkg", "v1.1.0", `module github.com/new/pkg
+	fetcher.add(t, "github.com/new/pkg", "v1.1.0", `module github.com/new/pkg
 
 go 1.21
 `, blobs)
@@ -831,7 +832,7 @@ func TestResolve_multiplePartialReasons(t *testing.T) {
 	// PartialReason should contain both reasons.
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 
@@ -842,7 +843,7 @@ require (
 `, blobs)
 	fetcher.addError("example.com/fetchfail", "v1.0.0", errors.New("simulated network error"))
 	// Register parsefail fact but put invalid go.mod content in the zip.
-	rec := makeFactRecord("example.com/parsefail", "v1.0.0")
+	rec := makeFactRecord(t, "example.com/parsefail", "v1.0.0")
 	fetcher.records["example.com/parsefail@v1.0.0"] = rec
 	blobs.data["example.com/parsefail@v1.0.0"] = buildFakeZip("example.com/parsefail", "v1.0.0", "this is not valid go.mod ;;;")
 
@@ -867,14 +868,14 @@ func TestResolve_blobMissingForTransitiveDep(t *testing.T) {
 	// The dep should be marked as parse_failed (extractGoMod error).
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 
 require example.com/dep v1.0.0
 `, blobs)
 	// Register fact but do NOT add zip to blobs.
-	fetcher.records["example.com/dep@v1.0.0"] = makeFactRecord("example.com/dep", "v1.0.0")
+	fetcher.records["example.com/dep@v1.0.0"] = makeFactRecord(t, "example.com/dep", "v1.0.0")
 
 	r := newResolver(fetcher, blobs)
 	g, err := r.Resolve(context.Background(), coord("example.com/target", "v1.0.0"), domain3.DefaultDepthPolicy().FetchStage())
@@ -902,7 +903,7 @@ func TestResolve_directDepAlreadyAtHigherVersion(t *testing.T) {
 	// go.mod with duplicate require paths (higher version first, then lower).
 	// modfile.Parse allows this; go mod tidy would deduplicate, but real-world
 	// go.mod files occasionally contain such entries before tidying.
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 
@@ -911,11 +912,11 @@ require (
 	example.com/dep v1.0.0
 )
 `, blobs)
-	fetcher.add("example.com/dep", "v1.2.0", `module example.com/dep
+	fetcher.add(t, "example.com/dep", "v1.2.0", `module example.com/dep
 
 go 1.21
 `, blobs)
-	fetcher.add("example.com/dep", "v1.0.0", `module example.com/dep
+	fetcher.add(t, "example.com/dep", "v1.0.0", `module example.com/dep
 
 go 1.21
 `, blobs)
@@ -939,7 +940,7 @@ func TestResolve_directDepLowerThenHigherVersion(t *testing.T) {
 	// This triggers the versionGT branch in seedDirectDeps.
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 
@@ -948,11 +949,11 @@ require (
 	example.com/dep v1.2.0
 )
 `, blobs)
-	fetcher.add("example.com/dep", "v1.0.0", `module example.com/dep
+	fetcher.add(t, "example.com/dep", "v1.0.0", `module example.com/dep
 
 go 1.21
 `, blobs)
-	fetcher.add("example.com/dep", "v1.2.0", `module example.com/dep
+	fetcher.add(t, "example.com/dep", "v1.2.0", `module example.com/dep
 
 go 1.21
 `, blobs)
@@ -975,13 +976,13 @@ func TestResolve_corruptZipForTransitiveDep(t *testing.T) {
 	// A transitive dep's blob contains invalid zip bytes.
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 
 require example.com/dep v1.0.0
 `, blobs)
-	rec := makeFactRecord("example.com/dep", "v1.0.0")
+	rec := makeFactRecord(t, "example.com/dep", "v1.0.0")
 	fetcher.records["example.com/dep@v1.0.0"] = rec
 	blobs.data["example.com/dep@v1.0.0"] = []byte("this is not a valid zip file")
 
@@ -1003,13 +1004,13 @@ func TestResolve_zipWithoutGoMod(t *testing.T) {
 	// A transitive dep's zip is valid but contains no go.mod entry.
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 
 require example.com/dep v1.0.0
 `, blobs)
-	rec := makeFactRecord("example.com/dep", "v1.0.0")
+	rec := makeFactRecord(t, "example.com/dep", "v1.0.0")
 	fetcher.records["example.com/dep@v1.0.0"] = rec
 	// Build a zip that contains something else, but not go.mod.
 	var buf bytes.Buffer
@@ -1048,7 +1049,7 @@ require example.com/dep v1.0.0
 func TestResolve_FetchedTargetVersionSpecificLocalReplaceIgnored(t *testing.T) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 
@@ -1056,7 +1057,7 @@ require example.com/dep v1.0.0
 
 replace example.com/dep v1.0.0 => ./local/dep
 `, blobs)
-	fetcher.add("example.com/dep", "v1.0.0", "module example.com/dep\n\ngo 1.21\n", blobs)
+	fetcher.add(t, "example.com/dep", "v1.0.0", "module example.com/dep\n\ngo 1.21\n", blobs)
 
 	r := newResolver(fetcher, blobs)
 	g, err := r.Resolve(context.Background(), coord("example.com/target", "v1.0.0"), domain3.DefaultDepthPolicy().FetchStage())
@@ -1078,7 +1079,7 @@ replace example.com/dep v1.0.0 => ./local/dep
 func TestResolve_pipelineVersionDefault(t *testing.T) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 `, blobs)
@@ -1101,15 +1102,15 @@ func TestResolve_MaxDepth_Limits_Traversal(t *testing.T) {
 	// from dep1's requires but its go.mod is never parsed; dep3 is never encountered.
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 go 1.21
 require example.com/dep1 v1.0.0
 `, blobs)
-	fetcher.add("example.com/dep1", "v1.0.0", `module example.com/dep1
+	fetcher.add(t, "example.com/dep1", "v1.0.0", `module example.com/dep1
 go 1.21
 require example.com/dep2 v1.0.0
 `, blobs)
-	fetcher.add("example.com/dep2", "v1.0.0", `module example.com/dep2
+	fetcher.add(t, "example.com/dep2", "v1.0.0", `module example.com/dep2
 go 1.21
 require example.com/dep3 v1.0.0
 `, blobs)
@@ -1145,15 +1146,15 @@ func TestResolve_MaxDepth_Truncation_MarksPartial(t *testing.T) {
 	// Partial with a depth_bounded reason that carries the bound.
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 go 1.21
 require example.com/dep1 v1.0.0
 `, blobs)
-	fetcher.add("example.com/dep1", "v1.0.0", `module example.com/dep1
+	fetcher.add(t, "example.com/dep1", "v1.0.0", `module example.com/dep1
 go 1.21
 require example.com/dep2 v1.0.0
 `, blobs)
-	fetcher.add("example.com/dep2", "v1.0.0", `module example.com/dep2
+	fetcher.add(t, "example.com/dep2", "v1.0.0", `module example.com/dep2
 go 1.21
 require example.com/dep3 v1.0.0
 `, blobs)
@@ -1181,11 +1182,11 @@ func TestResolve_MaxDepth_LargerThanGraph_NotPartial(t *testing.T) {
 	// must not be flagged partial for the depth bound.
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 go 1.21
 require example.com/dep1 v1.0.0
 `, blobs)
-	fetcher.add("example.com/dep1", "v1.0.0", `module example.com/dep1
+	fetcher.add(t, "example.com/dep1", "v1.0.0", `module example.com/dep1
 go 1.21
 `, blobs)
 
@@ -1206,15 +1207,15 @@ func TestResolve_MaxDepth_Zero_NotPartial(t *testing.T) {
 	// depth_bounded partial marking fires.
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 go 1.21
 require example.com/dep1 v1.0.0
 `, blobs)
-	fetcher.add("example.com/dep1", "v1.0.0", `module example.com/dep1
+	fetcher.add(t, "example.com/dep1", "v1.0.0", `module example.com/dep1
 go 1.21
 require example.com/dep2 v1.0.0
 `, blobs)
-	fetcher.add("example.com/dep2", "v1.0.0", `module example.com/dep2
+	fetcher.add(t, "example.com/dep2", "v1.0.0", `module example.com/dep2
 go 1.21
 `, blobs)
 
@@ -1235,14 +1236,14 @@ func TestResolve_MaxDepth_And_FetchFailure_CarriesBothTokens(t *testing.T) {
 	// PartialReason carrying both the fetch_failed and depth_bounded tokens.
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 go 1.21
 require (
 	example.com/dep1 v1.0.0
 	example.com/bad v1.0.0
 )
 `, blobs)
-	fetcher.add("example.com/dep1", "v1.0.0", `module example.com/dep1
+	fetcher.add(t, "example.com/dep1", "v1.0.0", `module example.com/dep1
 go 1.21
 require example.com/dep2 v1.0.0
 `, blobs)
@@ -1269,17 +1270,17 @@ require example.com/dep2 v1.0.0
 func TestResolve_FollowIndirect_False_Skips_Indirect(t *testing.T) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 go 1.21
 require (
 	example.com/direct v1.0.0
 	example.com/indirect v1.0.0 // indirect
 )
 `, blobs)
-	fetcher.add("example.com/direct", "v1.0.0", `module example.com/direct
+	fetcher.add(t, "example.com/direct", "v1.0.0", `module example.com/direct
 go 1.21
 `, blobs)
-	fetcher.add("example.com/indirect", "v1.0.0", `module example.com/indirect
+	fetcher.add(t, "example.com/indirect", "v1.0.0", `module example.com/indirect
 go 1.21
 `, blobs)
 
@@ -1302,15 +1303,15 @@ go 1.21
 func TestResolve_FollowReplace_False_Ignores_Replace(t *testing.T) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 go 1.21
 require example.com/dep v1.0.0
 replace example.com/dep v1.0.0 => example.com/replacement v2.0.0
 `, blobs)
-	fetcher.add("example.com/dep", "v1.0.0", `module example.com/dep
+	fetcher.add(t, "example.com/dep", "v1.0.0", `module example.com/dep
 go 1.21
 `, blobs)
-	fetcher.add("example.com/replacement", "v2.0.0", `module example.com/replacement
+	fetcher.add(t, "example.com/replacement", "v2.0.0", `module example.com/replacement
 go 1.21
 `, blobs)
 
@@ -1367,7 +1368,7 @@ func nodeSet(nodes []domain3.GraphNode) map[string]bool {
 func TestResolveShallow_OnlyFetchesTarget(t *testing.T) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 
@@ -1393,7 +1394,7 @@ require (
 func TestResolveShallow_GraphIsPartial(t *testing.T) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 
@@ -1417,7 +1418,7 @@ require github.com/dep/one v1.2.3
 func TestResolveShallow_IncludesDirectRequires(t *testing.T) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 
@@ -1448,7 +1449,7 @@ require (
 func TestResolveShallow_NoDependencies(t *testing.T) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 `, blobs)
@@ -1475,7 +1476,7 @@ go 1.21
 func TestResolve_replacePreservesOriginalCoordinate(t *testing.T) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 
@@ -1483,7 +1484,7 @@ require example.com/dep v1.0.0
 
 replace example.com/dep v1.0.0 => example.com/fork v2.0.0
 `, blobs)
-	fetcher.add("example.com/fork", "v2.0.0", `module example.com/fork
+	fetcher.add(t, "example.com/fork", "v2.0.0", `module example.com/fork
 
 go 1.21
 `, blobs)
@@ -1567,13 +1568,13 @@ func TestResolveShallow_TargetFetchError(t *testing.T) {
 func TestResolveProject_RootIdentityAndClosure(t *testing.T) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/dep/one", "v1.2.3", `module example.com/dep/one
+	fetcher.add(t, "example.com/dep/one", "v1.2.3", `module example.com/dep/one
 
 go 1.21
 
 require example.com/dep/two v0.5.0
 `, blobs)
-	fetcher.add("example.com/dep/two", "v0.5.0", `module example.com/dep/two
+	fetcher.add(t, "example.com/dep/two", "v0.5.0", `module example.com/dep/two
 
 go 1.21
 `, blobs)
@@ -1660,19 +1661,19 @@ func TestResolveProject_UnparseableGoModErrors(t *testing.T) {
 func TestResolve_PrunesDeepRequiresOfGo117Module(t *testing.T) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 
 require example.com/root v1.0.0
 `, blobs)
-	fetcher.add("example.com/root", "v1.0.0", `module example.com/root
+	fetcher.add(t, "example.com/root", "v1.0.0", `module example.com/root
 
 go 1.21
 
 require example.com/mid v1.0.0
 `, blobs)
-	fetcher.add("example.com/mid", "v1.0.0", `module example.com/mid
+	fetcher.add(t, "example.com/mid", "v1.0.0", `module example.com/mid
 
 go 1.21
 
@@ -1680,7 +1681,7 @@ require example.com/deep v1.0.0
 `, blobs)
 	// A fetchable record for deep exists, so its absence proves pruning rather
 	// than an unresolvable dependency.
-	fetcher.add("example.com/deep", "v1.0.0", `module example.com/deep
+	fetcher.add(t, "example.com/deep", "v1.0.0", `module example.com/deep
 
 go 1.21
 `, blobs)
@@ -1712,25 +1713,25 @@ go 1.21
 func TestResolve_PrunesPrePruningModuleBelowGo117Boundary(t *testing.T) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 
 require example.com/root v1.0.0
 `, blobs)
-	fetcher.add("example.com/root", "v1.0.0", `module example.com/root
+	fetcher.add(t, "example.com/root", "v1.0.0", `module example.com/root
 
 go 1.21
 
 require example.com/mid v1.0.0
 `, blobs)
-	fetcher.add("example.com/mid", "v1.0.0", `module example.com/mid
+	fetcher.add(t, "example.com/mid", "v1.0.0", `module example.com/mid
 
 go 1.16
 
 require example.com/deep v1.0.0
 `, blobs)
-	fetcher.add("example.com/deep", "v1.0.0", `module example.com/deep
+	fetcher.add(t, "example.com/deep", "v1.0.0", `module example.com/deep
 
 go 1.16
 `, blobs)
@@ -1756,25 +1757,25 @@ go 1.16
 func TestResolve_ExpandsPrePruningChain(t *testing.T) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 
 require example.com/root v1.0.0
 `, blobs)
-	fetcher.add("example.com/root", "v1.0.0", `module example.com/root
+	fetcher.add(t, "example.com/root", "v1.0.0", `module example.com/root
 
 go 1.16
 
 require example.com/mid v1.0.0
 `, blobs)
-	fetcher.add("example.com/mid", "v1.0.0", `module example.com/mid
+	fetcher.add(t, "example.com/mid", "v1.0.0", `module example.com/mid
 
 go 1.16
 
 require example.com/deep v1.0.0
 `, blobs)
-	fetcher.add("example.com/deep", "v1.0.0", `module example.com/deep
+	fetcher.add(t, "example.com/deep", "v1.0.0", `module example.com/deep
 
 go 1.16
 `, blobs)
@@ -1800,25 +1801,25 @@ go 1.16
 func TestResolve_KeepsRootImmediateDepsAsNodes(t *testing.T) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 
 require example.com/root v1.0.0
 `, blobs)
-	fetcher.add("example.com/root", "v1.0.0", `module example.com/root
+	fetcher.add(t, "example.com/root", "v1.0.0", `module example.com/root
 
 go 1.21
 
 require example.com/dep v1.0.0
 `, blobs)
-	fetcher.add("example.com/dep", "v1.0.0", `module example.com/dep
+	fetcher.add(t, "example.com/dep", "v1.0.0", `module example.com/dep
 
 go 1.21
 
 require example.com/deep v1.0.0
 `, blobs)
-	fetcher.add("example.com/deep", "v1.0.0", `module example.com/deep
+	fetcher.add(t, "example.com/deep", "v1.0.0", `module example.com/deep
 
 go 1.21
 `, blobs)
@@ -1846,7 +1847,7 @@ go 1.21
 func TestResolve_ReExpandsModuleReachedFirstAsNonExpanding(t *testing.T) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 
@@ -1855,25 +1856,25 @@ require (
 	example.com/b v1.0.0
 )
 `, blobs)
-	fetcher.add("example.com/a", "v1.0.0", `module example.com/a
+	fetcher.add(t, "example.com/a", "v1.0.0", `module example.com/a
 
 go 1.21
 
 require example.com/shared v1.0.0
 `, blobs)
-	fetcher.add("example.com/b", "v1.0.0", `module example.com/b
+	fetcher.add(t, "example.com/b", "v1.0.0", `module example.com/b
 
 go 1.16
 
 require example.com/shared v1.0.0
 `, blobs)
-	fetcher.add("example.com/shared", "v1.0.0", `module example.com/shared
+	fetcher.add(t, "example.com/shared", "v1.0.0", `module example.com/shared
 
 go 1.16
 
 require example.com/deep v1.0.0
 `, blobs)
-	fetcher.add("example.com/deep", "v1.0.0", `module example.com/deep
+	fetcher.add(t, "example.com/deep", "v1.0.0", `module example.com/deep
 
 go 1.16
 `, blobs)
@@ -1900,7 +1901,7 @@ func TestResolve_sharedDepParsedOnce(t *testing.T) {
 
 	// target → a@v1 → c@v1
 	//        → b@v1 → c@v1   (c shared; should be parsed only once)
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.16
 
@@ -1909,19 +1910,19 @@ require (
 	example.com/b v1.0.0
 )
 `, blobs)
-	fetcher.add("example.com/a", "v1.0.0", `module example.com/a
+	fetcher.add(t, "example.com/a", "v1.0.0", `module example.com/a
 
 go 1.16
 
 require example.com/c v1.0.0
 `, blobs)
-	fetcher.add("example.com/b", "v1.0.0", `module example.com/b
+	fetcher.add(t, "example.com/b", "v1.0.0", `module example.com/b
 
 go 1.16
 
 require example.com/c v1.0.0
 `, blobs)
-	fetcher.add("example.com/c", "v1.0.0", `module example.com/c
+	fetcher.add(t, "example.com/c", "v1.0.0", `module example.com/c
 
 go 1.16
 `, blobs)
@@ -1947,7 +1948,7 @@ func TestResolve_supersededVersionNotParsed(t *testing.T) {
 
 	// target → a@v1.0 → c@v1.0
 	//        → b@v1.0 → c@v1.1   (MVS selects c@v1.1; c@v1.0 must not be parsed)
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.16
 
@@ -1956,23 +1957,23 @@ require (
 	example.com/b v1.0.0
 )
 `, blobs)
-	fetcher.add("example.com/a", "v1.0.0", `module example.com/a
+	fetcher.add(t, "example.com/a", "v1.0.0", `module example.com/a
 
 go 1.16
 
 require example.com/c v1.0.0
 `, blobs)
-	fetcher.add("example.com/b", "v1.0.0", `module example.com/b
+	fetcher.add(t, "example.com/b", "v1.0.0", `module example.com/b
 
 go 1.16
 
 require example.com/c v1.1.0
 `, blobs)
-	fetcher.add("example.com/c", "v1.0.0", `module example.com/c
+	fetcher.add(t, "example.com/c", "v1.0.0", `module example.com/c
 
 go 1.16
 `, blobs)
-	fetcher.add("example.com/c", "v1.1.0", `module example.com/c
+	fetcher.add(t, "example.com/c", "v1.1.0", `module example.com/c
 
 go 1.16
 `, blobs)
@@ -2008,7 +2009,7 @@ go 1.16
 func TestResolve_ReplaceTargetAlsoRequiredIndependently(t *testing.T) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 
@@ -2019,8 +2020,8 @@ require (
 
 replace example.com/forked => example.com/fork v1.2.0
 `, blobs)
-	fetcher.add("example.com/fork", "v1.2.0", "module example.com/fork\n\ngo 1.21\n", blobs)
-	fetcher.add("example.com/fork", "v1.5.0", "module example.com/fork\n\ngo 1.21\n", blobs)
+	fetcher.add(t, "example.com/fork", "v1.2.0", "module example.com/fork\n\ngo 1.21\n", blobs)
+	fetcher.add(t, "example.com/fork", "v1.5.0", "module example.com/fork\n\ngo 1.21\n", blobs)
 
 	r := newResolver(fetcher, blobs)
 	g, err := r.Resolve(context.Background(), coord("example.com/target", "v1.0.0"), domain3.DefaultDepthPolicy().FetchStage())
@@ -2084,7 +2085,7 @@ replace example.com/forked => example.com/fork v1.2.0
 func TestResolve_ReplaceTargetSameCoordinateCollapses(t *testing.T) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 
 go 1.21
 
@@ -2095,7 +2096,7 @@ require (
 
 replace example.com/forked => example.com/fork v1.2.0
 `, blobs)
-	fetcher.add("example.com/fork", "v1.2.0", "module example.com/fork\n\ngo 1.21\n", blobs)
+	fetcher.add(t, "example.com/fork", "v1.2.0", "module example.com/fork\n\ngo 1.21\n", blobs)
 
 	r := newResolver(fetcher, blobs)
 	g, err := r.Resolve(context.Background(), coord("example.com/target", "v1.0.0"), domain3.DefaultDepthPolicy().FetchStage())

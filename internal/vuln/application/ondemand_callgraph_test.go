@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 )
@@ -39,12 +39,7 @@ func seedFact(t *testing.T, facts *fakeFacts, blobs *fakeBlob, coord coordinate.
 	if err != nil {
 		t.Fatalf("blobs.Put: %v", err)
 	}
-	if err := facts.PutFetchRecord(t.Context(), fetchdomain.FactRecord{
-		ModulePath:      coord.Path,
-		ModuleVersion:   coord.Version,
-		PipelineVersion: "v1",
-		ContentLocation: string(handle),
-	}); err != nil {
+	if err := facts.PutFetchRecord(t.Context(), fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content(string(handle)))); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 }

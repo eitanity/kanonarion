@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 )
@@ -37,12 +37,12 @@ func TestScanModule_FindsFactRecordUnderLocalIngestPipelineVersion(t *testing.T)
 		t.Fatalf("blobs.Put: %v", err)
 	}
 	// The record exists ONLY under the local-ingest pipeline version.
-	if err := facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
-		ModulePath:      coord.Path,
-		ModuleVersion:   coord.Version,
-		PipelineVersion: localPipeline,
-		ContentLocation: string(handle),
-	}); err != nil {
+	if err := facts.PutFetchRecord(ctx, fetchtest.Record(
+		t,
+		fetchtest.Coordinate(coord),
+		fetchtest.PipelineVersion(localPipeline),
+		fetchtest.Content(string(handle)),
+	)); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 

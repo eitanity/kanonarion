@@ -65,9 +65,9 @@ func buildListResolver(t *testing.T, bl *fakeBuildListResolver) (*application.Gr
 	t.Helper()
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("golang.org/x/mod", "v0.35.0", "module golang.org/x/mod\n", blobs)
-	fetcher.addRetracted("golang.org/x/sys", "v0.20.0", "module golang.org/x/sys\n", blobs)
-	fetcher.add("example.com/fork", "v1.2.0", "module example.com/fork\n", blobs)
+	fetcher.add(t, "golang.org/x/mod", "v0.35.0", "module golang.org/x/mod\n", blobs)
+	fetcher.addRetracted(t, "golang.org/x/sys", "v0.20.0", "module golang.org/x/sys\n", blobs)
+	fetcher.add(t, "example.com/fork", "v1.2.0", "module example.com/fork\n", blobs)
 	return newResolver(fetcher, blobs).WithBuildListResolver(bl), fetcher
 }
 
@@ -295,7 +295,7 @@ func TestResolveProject_BuildList_Deterministic(t *testing.T) {
 func TestResolveProject_BuildList_FallbackOnToolchainError(t *testing.T) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/dep", "v1.0.0", "module example.com/dep\n\ngo 1.21\n", blobs)
+	fetcher.add(t, "example.com/dep", "v1.0.0", "module example.com/dep\n\ngo 1.21\n", blobs)
 
 	bl := &fakeBuildListResolver{err: errors.New("exec: \"go\": executable file not found in $PATH")}
 	r := newResolver(fetcher, blobs).WithBuildListResolver(bl)
@@ -352,10 +352,10 @@ func toolScopeBuildList() walkports.BuildList {
 func TestResolveProject_ToolScope_RestrictsToToolClosure(t *testing.T) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/prod", "v1.0.0", "module example.com/prod\n", blobs)
-	fetcher.add("example.com/tool", "v2.0.0", "module example.com/tool\n", blobs)
-	fetcher.add("example.com/toolsub", "v1.0.0", "module example.com/toolsub\n", blobs)
-	fetcher.add("example.com/shared", "v1.0.0", "module example.com/shared\n", blobs)
+	fetcher.add(t, "example.com/prod", "v1.0.0", "module example.com/prod\n", blobs)
+	fetcher.add(t, "example.com/tool", "v2.0.0", "module example.com/tool\n", blobs)
+	fetcher.add(t, "example.com/toolsub", "v1.0.0", "module example.com/toolsub\n", blobs)
+	fetcher.add(t, "example.com/shared", "v1.0.0", "module example.com/shared\n", blobs)
 	r := newResolver(fetcher, blobs).WithBuildListResolver(&fakeBuildListResolver{list: toolScopeBuildList()})
 	target := coord("example.com/project", coordinate.LocalVersion)
 
@@ -393,9 +393,9 @@ func TestResolveProject_ScopedWalk_SkipsOutOfScopeFetch(t *testing.T) {
 	fetcher := newFakeFetcher()
 	// Only the in-scope modules have fetch records; example.com/prod deliberately
 	// has none so any attempt to fetch it would fail.
-	fetcher.add("example.com/tool", "v2.0.0", "module example.com/tool\n", blobs)
-	fetcher.add("example.com/toolsub", "v1.0.0", "module example.com/toolsub\n", blobs)
-	fetcher.add("example.com/shared", "v1.0.0", "module example.com/shared\n", blobs)
+	fetcher.add(t, "example.com/tool", "v2.0.0", "module example.com/tool\n", blobs)
+	fetcher.add(t, "example.com/toolsub", "v1.0.0", "module example.com/toolsub\n", blobs)
+	fetcher.add(t, "example.com/shared", "v1.0.0", "module example.com/shared\n", blobs)
 	r := newResolver(fetcher, blobs).WithBuildListResolver(&fakeBuildListResolver{list: toolScopeBuildList()})
 	target := coord("example.com/project", coordinate.LocalVersion)
 
@@ -434,10 +434,10 @@ func TestResolveProject_ScopedWalk_SkipsOutOfScopeFetch(t *testing.T) {
 func TestResolveProject_ProductionScope_KeepsWholeBuildList(t *testing.T) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/prod", "v1.0.0", "module example.com/prod\n", blobs)
-	fetcher.add("example.com/tool", "v2.0.0", "module example.com/tool\n", blobs)
-	fetcher.add("example.com/toolsub", "v1.0.0", "module example.com/toolsub\n", blobs)
-	fetcher.add("example.com/shared", "v1.0.0", "module example.com/shared\n", blobs)
+	fetcher.add(t, "example.com/prod", "v1.0.0", "module example.com/prod\n", blobs)
+	fetcher.add(t, "example.com/tool", "v2.0.0", "module example.com/tool\n", blobs)
+	fetcher.add(t, "example.com/toolsub", "v1.0.0", "module example.com/toolsub\n", blobs)
+	fetcher.add(t, "example.com/shared", "v1.0.0", "module example.com/shared\n", blobs)
 	r := newResolver(fetcher, blobs).WithBuildListResolver(&fakeBuildListResolver{list: toolScopeBuildList()})
 	target := coord("example.com/project", coordinate.LocalVersion)
 
@@ -473,7 +473,7 @@ func hasStdlibNode(g domain3.Graph) bool {
 func TestResolveProject_NoBuildListResolver_NoCaveat(t *testing.T) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/dep", "v1.0.0", "module example.com/dep\n\ngo 1.21\n", blobs)
+	fetcher.add(t, "example.com/dep", "v1.0.0", "module example.com/dep\n\ngo 1.21\n", blobs)
 
 	r := newResolver(fetcher, blobs) // no WithBuildListResolver
 	target := coord("example.com/project", coordinate.LocalVersion)
@@ -517,8 +517,8 @@ func TestResolveProject_BuildList_ReplaceTargetAlsoRequiredIndependently(t *test
 
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/fork", "v1.2.0", "module example.com/fork\n", blobs)
-	fetcher.add("example.com/fork", "v1.5.0", "module example.com/fork\n", blobs)
+	fetcher.add(t, "example.com/fork", "v1.2.0", "module example.com/fork\n", blobs)
+	fetcher.add(t, "example.com/fork", "v1.5.0", "module example.com/fork\n", blobs)
 	r := newResolver(fetcher, blobs).WithBuildListResolver(&fakeBuildListResolver{list: bl})
 
 	g, err := r.ResolveProject(context.Background(), coord("example.com/project", coordinate.LocalVersion),

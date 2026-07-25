@@ -11,6 +11,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 )
 
 // TestAcquisitionModeRoundTripsThroughTheStore guards the column added with the
@@ -24,13 +25,7 @@ func TestAcquisitionModeRoundTripsThroughTheStore(t *testing.T) {
 	for _, mode := range []domain2.AcquisitionMode{
 		domain2.AcquisitionProxy, domain2.AcquisitionModcache, domain2.AcquisitionLocal,
 	} {
-		r := sampleRecord("github.com/foo/"+string(mode), "v1.0.0", "0.4.0")
-		r.AcquisitionMode = string(mode)
-		var h domain2.CanonicalHasher
-		sealed, err := h.SetContentHash(r)
-		if err != nil {
-			t.Fatalf("SetContentHash: %v", err)
-		}
+		sealed := sampleRecord(t, "github.com/foo/"+string(mode), "v1.0.0", "0.4.0", fetchtest.AcquisitionMode(mode))
 		if err := s.PutFetchRecord(ctx, sealed); err != nil {
 			t.Fatalf("Put(%s): %v", mode, err)
 		}
@@ -55,7 +50,7 @@ func TestPreFieldRecordStillReadsBack(t *testing.T) {
 	s := openMemStore(t)
 	ctx := context.Background()
 
-	r := sampleRecord("github.com/foo/legacy", "v1.0.0", "0.4.0")
+	r := sampleRecord(t, "github.com/foo/legacy", "v1.0.0", "0.4.0")
 	if r.AcquisitionMode != "" {
 		t.Fatalf("fixture is not a pre-field record: mode = %q", r.AcquisitionMode)
 	}
@@ -93,13 +88,7 @@ func TestAuditEntryNamesTheAcquisitionMode(t *testing.T) {
 		}
 	}()
 
-	r := sampleRecord("github.com/foo/bar", "v2.0.0", "0.4.0")
-	r.AcquisitionMode = string(domain2.AcquisitionModcache)
-	var h domain2.CanonicalHasher
-	sealed, err := h.SetContentHash(r)
-	if err != nil {
-		t.Fatalf("SetContentHash: %v", err)
-	}
+	sealed := sampleRecord(t, "github.com/foo/bar", "v2.0.0", "0.4.0", fetchtest.AcquisitionMode(domain2.AcquisitionModcache))
 	if err := store.PutFetchRecord(context.Background(), sealed); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
@@ -146,7 +135,7 @@ func TestAuditEntryOmitsAnUnrecordedMode(t *testing.T) {
 		}
 	}()
 
-	if err := store.PutFetchRecord(context.Background(), sampleRecord("github.com/foo/bar", "v2.0.0", "0.4.0")); err != nil {
+	if err := store.PutFetchRecord(context.Background(), sampleRecord(t, "github.com/foo/bar", "v2.0.0", "0.4.0")); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 

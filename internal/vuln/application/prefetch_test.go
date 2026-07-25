@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -116,10 +116,7 @@ func TestPrefetchMissing_FetchesMissingModules(t *testing.T) {
 
 	// Only seed the 'present' module in the fact store and blob store.
 	h, _ := blobs.Put(ctx, strings.NewReader("zip-present"))
-	_ = facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
-		ModulePath: present.Path, ModuleVersion: present.Version,
-		PipelineVersion: "v1", ContentLocation: string(h),
-	})
+	_ = facts.PutFetchRecord(ctx, fetchtest.Record(t, fetchtest.Coordinate(present), fetchtest.PipelineVersion("v1"), fetchtest.Content(string(h))))
 
 	vulnStore := newFakeVulnStore()
 	fetcher := &fakeFetcher{}
@@ -159,10 +156,7 @@ func TestPrefetchMissing_RefetchesGoModOnlyRecord(t *testing.T) {
 
 	// Seed a go.mod-only record: GoModLocation set, ContentLocation empty.
 	gh, _ := blobs.Put(ctx, strings.NewReader("module github.com/gomod/only"))
-	_ = facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
-		ModulePath: node.Path, ModuleVersion: node.Version,
-		PipelineVersion: "v1", GoModLocation: string(gh),
-	})
+	_ = facts.PutFetchRecord(ctx, fetchtest.Record(t, fetchtest.Coordinate(node), fetchtest.PipelineVersion("v1"), fetchtest.GoMod(string(gh))))
 
 	vulnStore := newFakeVulnStore()
 	fetcher := &fakeFetcher{}
@@ -198,10 +192,7 @@ func TestPrefetchMissing_NilFetcherIsNoop(t *testing.T) {
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
 	h, _ := blobs.Put(ctx, strings.NewReader("zip"))
-	_ = facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
-		ModulePath: coord.Path, ModuleVersion: coord.Version,
-		PipelineVersion: "v1", ContentLocation: string(h),
-	})
+	_ = facts.PutFetchRecord(ctx, fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content(string(h))))
 
 	vulnStore := newFakeVulnStore()
 
@@ -272,10 +263,7 @@ func TestPrefetchMissing_AllPresentSkipsFetch(t *testing.T) {
 	blobs := newFakeBlob()
 	for _, c := range coords {
 		h, _ := blobs.Put(ctx, strings.NewReader("zip-"+c.Path))
-		_ = facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
-			ModulePath: c.Path, ModuleVersion: c.Version,
-			PipelineVersion: "v1", ContentLocation: string(h),
-		})
+		_ = facts.PutFetchRecord(ctx, fetchtest.Record(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content(string(h))))
 	}
 
 	vulnStore := newFakeVulnStore()

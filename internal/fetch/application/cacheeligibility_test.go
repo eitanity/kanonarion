@@ -11,6 +11,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/fetch/application"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
@@ -257,16 +258,16 @@ func TestCachedRecordWithUnreadableHandleIsReFetched(t *testing.T) {
 
 	// Seed the record another mode would have written: a handle this run's blob
 	// store cannot resolve.
-	seeded := domain2.NewFactRecord(domain2.FetchedModule{
-		Coordinate:         testCoord,
-		ModuleHash:         domain2.ModuleHash{Algorithm: "h1", Value: "seed=="},
-		GoModHash:          domain2.ModuleHash{Algorithm: "h1", Value: "seedmod=="},
-		VerificationStatus: domain2.Verified,
-		FetchedAt:          fixedTime,
-		PipelineVersion:    "test-0.1.0",
-		ContentLocation:    "modcache:zip:github.com/gorilla/mux@v1.8.1",
-		GoModLocation:      "modcache:gomod:github.com/gorilla/mux@v1.8.1",
-	})
+	seeded := fetchtest.Record(t,
+		fetchtest.Coordinate(testCoord),
+		fetchtest.ModuleHash(fetchtest.H1("seed==")),
+		fetchtest.GoModHash(fetchtest.H1("seedmod==")),
+		fetchtest.Status(domain2.Verified),
+		fetchtest.FetchedAt(fixedTime),
+		fetchtest.PipelineVersion("test-0.1.0"),
+		fetchtest.Content("modcache:zip:github.com/gorilla/mux@v1.8.1"),
+		fetchtest.GoMod("modcache:gomod:github.com/gorilla/mux@v1.8.1"),
+	)
 	if err := facts.PutFetchRecord(context.Background(), seeded); err != nil {
 		t.Fatalf("seed record: %v", err)
 	}
@@ -294,16 +295,16 @@ func TestCachedRecordWithUnreadableHandleIsReFetched(t *testing.T) {
 // removed. Serving it would hand the caller a record pointing at nothing.
 func TestCachedRecordWithEvictedBlobIsReFetched(t *testing.T) {
 	blobs, facts := newFakeBlob(), newFakeFacts()
-	seeded := domain2.NewFactRecord(domain2.FetchedModule{
-		Coordinate:         testCoord,
-		ModuleHash:         domain2.ModuleHash{Algorithm: "h1", Value: "seed=="},
-		GoModHash:          domain2.ModuleHash{Algorithm: "h1", Value: "seedmod=="},
-		VerificationStatus: domain2.Verified,
-		FetchedAt:          fixedTime,
-		PipelineVersion:    "test-0.1.0",
-		ContentLocation:    "fake:evicted-zip",
-		GoModLocation:      "fake:evicted-gomod",
-	})
+	seeded := fetchtest.Record(t,
+		fetchtest.Coordinate(testCoord),
+		fetchtest.ModuleHash(fetchtest.H1("seed==")),
+		fetchtest.GoModHash(fetchtest.H1("seedmod==")),
+		fetchtest.Status(domain2.Verified),
+		fetchtest.FetchedAt(fixedTime),
+		fetchtest.PipelineVersion("test-0.1.0"),
+		fetchtest.Content("fake:evicted-zip"),
+		fetchtest.GoMod("fake:evicted-gomod"),
+	)
 	if err := facts.PutFetchRecord(context.Background(), seeded); err != nil {
 		t.Fatalf("seed record: %v", err)
 	}
@@ -336,16 +337,16 @@ func TestCachedRecordWithReadableBlobsStillHitsTheCache(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed go.mod blob: %v", err)
 	}
-	seeded := domain2.NewFactRecord(domain2.FetchedModule{
-		Coordinate:         testCoord,
-		ModuleHash:         domain2.ModuleHash{Algorithm: "h1", Value: "seed=="},
-		GoModHash:          domain2.ModuleHash{Algorithm: "h1", Value: "seedmod=="},
-		VerificationStatus: domain2.Verified,
-		FetchedAt:          fixedTime,
-		PipelineVersion:    "test-0.1.0",
-		ContentLocation:    string(zip),
-		GoModLocation:      string(goMod),
-	})
+	seeded := fetchtest.Record(t,
+		fetchtest.Coordinate(testCoord),
+		fetchtest.ModuleHash(fetchtest.H1("seed==")),
+		fetchtest.GoModHash(fetchtest.H1("seedmod==")),
+		fetchtest.Status(domain2.Verified),
+		fetchtest.FetchedAt(fixedTime),
+		fetchtest.PipelineVersion("test-0.1.0"),
+		fetchtest.Content(string(zip)),
+		fetchtest.GoMod(string(goMod)),
+	)
 	if err := facts.PutFetchRecord(context.Background(), seeded); err != nil {
 		t.Fatalf("seed record: %v", err)
 	}

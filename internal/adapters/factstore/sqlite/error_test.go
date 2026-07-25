@@ -24,7 +24,7 @@ func TestAuditingStore_PutError_ClosedDB(t *testing.T) {
 		t.Fatalf("Close: %v", err)
 	}
 
-	r := sampleRecord("example.com/m", "v1.0.0", "0.1.0")
+	r := sampleRecord(t, "example.com/m", "v1.0.0", "0.1.0")
 	err = store.PutFetchRecord(context.Background(), r)
 	if err == nil {
 		t.Error("expected error after Close")

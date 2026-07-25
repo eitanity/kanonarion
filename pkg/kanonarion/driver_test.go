@@ -10,6 +10,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/driver"
 	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 
 	"github.com/eitanity/kanonarion/pkg/kanonarion"
 )
@@ -99,17 +100,12 @@ func TestValidateIngest_RoundTripAndFailClosed(t *testing.T) {
 	ctx := context.Background()
 	uc := d.ValidateIngest
 	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.2.3"}
-	rec, err := fetchdomain.CanonicalHasher{}.SetContentHash(fetchdomain.FactRecord{
-		SchemaVersion:   fetchdomain.SchemaVersion,
-		Ecosystem:       fetchdomain.EcosystemGo,
-		ModulePath:      coord.Path,
-		ModuleVersion:   coord.Version,
-		PipelineVersion: "0.1.0",
-		FetchedAt:       time.Unix(0, 0).UTC(),
-	})
-	if err != nil {
-		t.Fatalf("SetContentHash: %v", err)
-	}
+	rec := fetchtest.Record(
+		t,
+		fetchtest.Coordinate(coord),
+		fetchtest.PipelineVersion("0.1.0"),
+		fetchtest.FetchedAt(time.Unix(0, 0).UTC()),
+	)
 
 	if err := uc.Ingest(ctx, rec); err != nil {
 		t.Fatalf("Ingest of a valid record: %v", err)

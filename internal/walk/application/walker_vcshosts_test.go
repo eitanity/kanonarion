@@ -56,9 +56,9 @@ func vcsHostWalkTarget() coordinate.ModuleCoordinate {
 	return coord("example.com/target", "v1.0.0")
 }
 
-func newVCSHostFetcher(blobs *fakeBlobStore) *vcsHostProductionFetcher {
+func newVCSHostFetcher(t testing.TB, blobs *fakeBlobStore) *vcsHostProductionFetcher {
 	pf := &vcsHostProductionFetcher{productionCacheFetcher: newProductionCacheFetcher(blobs)}
-	pf.add("example.com/target", "v1.0.0", "module example.com/target\ngo 1.21\n")
+	pf.add(t, "example.com/target", "v1.0.0", "module example.com/target\ngo 1.21\n")
 	return pf
 }
 
@@ -67,7 +67,7 @@ func newVCSHostFetcher(blobs *fakeBlobStore) *vcsHostProductionFetcher {
 // forge only) at the same seam.
 func TestWalker_PolicyVCSHostsReachTheFetcher(t *testing.T) {
 	blobs := newFakeBlobStore()
-	pf := newVCSHostFetcher(blobs)
+	pf := newVCSHostFetcher(t, blobs)
 	w := buildWalkerWithVCSHostFetcher(pf, blobs)
 
 	outcome, err := w.Walk(context.Background(), application2.WalkRequest{
@@ -96,7 +96,7 @@ func TestWalker_PolicyVCSHostsReachTheFetcher(t *testing.T) {
 // would make every walk look like an override in the logs.
 func TestWalker_DefaultVCSHostsDoNotTouchTheFetcher(t *testing.T) {
 	blobs := newFakeBlobStore()
-	pf := newVCSHostFetcher(blobs)
+	pf := newVCSHostFetcher(t, blobs)
 	w := buildWalkerWithVCSHostFetcher(pf, blobs)
 
 	if _, err := w.Walk(context.Background(), application2.WalkRequest{
@@ -114,7 +114,7 @@ func TestWalker_DefaultVCSHostsDoNotTouchTheFetcher(t *testing.T) {
 func TestWalker_VCSHostOverrideOnIncapableFetcherFailsTheWalk(t *testing.T) {
 	blobs := newFakeBlobStore()
 	pf := newProductionCacheFetcher(blobs)
-	pf.add("example.com/target", "v1.0.0", "module example.com/target\ngo 1.21\n")
+	pf.add(t, "example.com/target", "v1.0.0", "module example.com/target\ngo 1.21\n")
 	w := buildWalkerWithProductionCache(pf, blobs)
 
 	_, err := w.Walk(context.Background(), application2.WalkRequest{
@@ -132,7 +132,7 @@ func TestWalker_VCSHostOverrideOnIncapableFetcherFailsTheWalk(t *testing.T) {
 // An unusable trust list is a hard stop, not a fall-back to the default set.
 func TestWalker_UnusableVCSHostListFailsTheWalk(t *testing.T) {
 	blobs := newFakeBlobStore()
-	pf := newVCSHostFetcher(blobs)
+	pf := newVCSHostFetcher(t, blobs)
 	w := buildWalkerWithVCSHostFetcher(pf, blobs)
 
 	_, err := w.Walk(context.Background(), application2.WalkRequest{

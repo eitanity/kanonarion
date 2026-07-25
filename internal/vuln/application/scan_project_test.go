@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	application "github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -67,9 +67,7 @@ func newProjectScanFixture(t *testing.T, scanner *fakeScanner) projectScanFixtur
 	// isolated path, each dependency) can be located.
 	for _, c := range []coordinate.ModuleCoordinate{root, depA, depB} {
 		h, _ := blobs.Put(ctx, strings.NewReader("zip-"+c.Path))
-		if err := facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
-			ModulePath: c.Path, ModuleVersion: c.Version, PipelineVersion: "v1", ContentLocation: string(h),
-		}); err != nil {
+		if err := facts.PutFetchRecord(ctx, fetchtest.Record(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content(string(h)))); err != nil {
 			t.Fatalf("PutFetchRecord %s: %v", c, err)
 		}
 	}
@@ -250,9 +248,7 @@ func newStdlibProjectFixture(t *testing.T, scanner *fakeScanner) stdlibProjectFi
 	// Root and dep need a fetch record; stdlib is never fetched.
 	for _, c := range []coordinate.ModuleCoordinate{root, dep} {
 		h, _ := blobs.Put(ctx, strings.NewReader("zip-"+c.Path))
-		if err := facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
-			ModulePath: c.Path, ModuleVersion: c.Version, PipelineVersion: "v1", ContentLocation: string(h),
-		}); err != nil {
+		if err := facts.PutFetchRecord(ctx, fetchtest.Record(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content(string(h)))); err != nil {
 			t.Fatalf("PutFetchRecord %s: %v", c, err)
 		}
 	}

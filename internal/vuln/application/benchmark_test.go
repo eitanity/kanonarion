@@ -10,8 +10,8 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
@@ -94,9 +94,7 @@ func BenchmarkVulnScan_Sequential_vs_Parallel(b *testing.B) {
 		facts := newFakeFacts()
 		for _, c := range coords {
 			h, _ := blobs.Put(ctx, strings.NewReader("zip"))
-			if err := facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
-				ModulePath: c.Path, ModuleVersion: c.Version, PipelineVersion: "v1", ContentLocation: string(h),
-			}); err != nil {
+			if err := facts.PutFetchRecord(ctx, fetchtest.Record(b, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content(string(h)))); err != nil {
 				b.Fatal(err)
 			}
 		}

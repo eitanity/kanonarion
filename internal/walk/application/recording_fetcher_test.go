@@ -13,6 +13,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
@@ -40,11 +41,11 @@ func newRecorderFakeFetcher() *recorderFakeFetcher {
 	}
 }
 
-func (f *recorderFakeFetcher) add(path, version string, fromCache bool) {
+func (f *recorderFakeFetcher) add(t testing.TB, path, version string, fromCache bool) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	k := path + "@" + version
-	f.records[k] = fetchdomain.FactRecord{ModulePath: path, ModuleVersion: version}
+	f.records[k] = fetchtest.Record(t, fetchtest.Module(path, version))
 	f.fromCache[k] = fromCache
 }
 
@@ -127,7 +128,7 @@ func rcoord(path, version string) coordinate.ModuleCoordinate {
 
 func TestRecordingFetcher_RecordsFirstCallOutcome(t *testing.T) {
 	inner := newRecorderFakeFetcher()
-	inner.add("example.com/a", "v1.0.0", false)
+	inner.add(t, "example.com/a", "v1.0.0", false)
 	r := newRecorderForTest(inner)
 
 	fr, err := r.EnsureFetched(context.Background(), rcoord("example.com/a", "v1.0.0"))
@@ -158,7 +159,7 @@ func TestRecordingFetcher_MemoisesSubsequentCalls(t *testing.T) {
 	// Set fromCache=true so we can detect whether the inner fetcher was
 	// hit again on the second call (it must not be — the recorder should
 	// return the first-call outcome).
-	inner.add("example.com/a", "v1.0.0", false)
+	inner.add(t, "example.com/a", "v1.0.0", false)
 	r := newRecorderForTest(inner)
 
 	for range 5 {
@@ -222,8 +223,8 @@ func TestRecordingFetcher_RecoversFromPanic(t *testing.T) {
 
 func TestRecordingFetcher_PerCoordIsolation(t *testing.T) {
 	inner := newRecorderFakeFetcher()
-	inner.add("example.com/a", "v1.0.0", false)
-	inner.add("example.com/b", "v1.0.0", true) // pre-cached upstream
+	inner.add(t, "example.com/a", "v1.0.0", false)
+	inner.add(t, "example.com/b", "v1.0.0", true) // pre-cached upstream
 	r := newRecorderForTest(inner)
 
 	ctx := context.Background()
@@ -246,7 +247,7 @@ func TestRecordingFetcher_PerCoordIsolation(t *testing.T) {
 
 func TestRecordingFetcher_ConcurrentSameCoord(t *testing.T) {
 	inner := newRecorderFakeFetcher()
-	inner.add("example.com/a", "v1.0.0", false)
+	inner.add(t, "example.com/a", "v1.0.0", false)
 	r := newRecorderForTest(inner)
 
 	const n = 32
@@ -301,8 +302,8 @@ func (f *fakeProgress) snapshot() []int {
 
 func TestRecordingFetcher_ProgressAdvancesOncePerDistinctCoord(t *testing.T) {
 	inner := newRecorderFakeFetcher()
-	inner.add("example.com/a", "v1.0.0", false)
-	inner.add("example.com/b", "v1.0.0", true)
+	inner.add(t, "example.com/a", "v1.0.0", false)
+	inner.add(t, "example.com/b", "v1.0.0", true)
 	prog := &fakeProgress{}
 	r := newRecorderForTestWithProgress(inner, prog)
 	ctx := context.Background()
@@ -321,7 +322,7 @@ func TestRecordingFetcher_ProgressAdvancesOncePerDistinctCoord(t *testing.T) {
 
 func TestRecordingFetcher_NilProgressIsSafe(t *testing.T) {
 	inner := newRecorderFakeFetcher()
-	inner.add("example.com/a", "v1.0.0", false)
+	inner.add(t, "example.com/a", "v1.0.0", false)
 	r := newRecorderForTestWithProgress(inner, nil)
 	if _, err := r.EnsureFetched(context.Background(), rcoord("example.com/a", "v1.0.0")); err != nil {
 		t.Fatalf("EnsureFetched with nil progress: %v", err)

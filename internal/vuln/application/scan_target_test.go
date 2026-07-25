@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	application "github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -67,9 +67,7 @@ func newTargetScanFixture(t *testing.T, scanner *fakeScanner, fetchedCoords ...c
 	}
 	for _, c := range fetchedCoords {
 		h, _ := blobs.Put(ctx, strings.NewReader("zip-"+c.Path))
-		if err := facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
-			ModulePath: c.Path, ModuleVersion: c.Version, PipelineVersion: "v1", ContentLocation: string(h),
-		}); err != nil {
+		if err := facts.PutFetchRecord(ctx, fetchtest.Record(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content(string(h)))); err != nil {
 			t.Fatalf("PutFetchRecord %s: %v", c, err)
 		}
 	}
@@ -388,10 +386,12 @@ func TestScanWalk_CoordinateKeyed_FallsBackWhenTargetIsGoModOnly(t *testing.T) {
 
 	// Overwrite the target's record with a go.mod-only one: GoModLocation set,
 	// ContentLocation empty.
-	if err := f.facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
-		ModulePath: f.target.Path, ModuleVersion: f.target.Version,
-		PipelineVersion: "v1", GoModLocation: "gomod-only-handle",
-	}); err != nil {
+	if err := f.facts.PutFetchRecord(ctx, fetchtest.Record(
+		t,
+		fetchtest.Coordinate(f.target),
+		fetchtest.PipelineVersion("v1"),
+		fetchtest.GoMod("gomod-only-handle"),
+	)); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 

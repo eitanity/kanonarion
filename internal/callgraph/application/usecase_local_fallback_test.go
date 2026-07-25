@@ -10,7 +10,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/callgraph/application"
 	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
@@ -37,12 +37,12 @@ func TestExecute_FindsFactRecordUnderLocalIngestPipelineVersion(t *testing.T) {
 	blobs.blobs = map[fetchports.BlobHandle][]byte{handle: buf.Bytes()}
 
 	// The record exists ONLY under the local-ingest pipeline version.
-	if err := facts.PutFetchRecord(context.Background(), domain.FactRecord{
-		ModulePath:      testCoord.Path,
-		ModuleVersion:   testCoord.Version,
-		PipelineVersion: localPipeline,
-		ContentLocation: string(handle),
-	}); err != nil {
+	if err := facts.PutFetchRecord(context.Background(), fetchtest.Record(
+		t,
+		fetchtest.Coordinate(testCoord),
+		fetchtest.PipelineVersion(localPipeline),
+		fetchtest.Content(string(handle)),
+	)); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
@@ -91,12 +91,12 @@ func TestExecute_LocalCoordinateBypassesRecordCache(t *testing.T) {
 	handle := fetchports.BlobHandle("blob:localroot")
 	blobs.blobs = map[fetchports.BlobHandle][]byte{handle: buf.Bytes()}
 
-	if err := facts.PutFetchRecord(context.Background(), domain.FactRecord{
-		ModulePath:      localCoord.Path,
-		ModuleVersion:   localCoord.Version,
-		PipelineVersion: localPipeline,
-		ContentLocation: string(handle),
-	}); err != nil {
+	if err := facts.PutFetchRecord(context.Background(), fetchtest.Record(
+		t,
+		fetchtest.Coordinate(localCoord),
+		fetchtest.PipelineVersion(localPipeline),
+		fetchtest.Content(string(handle)),
+	)); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 

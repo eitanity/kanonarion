@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
@@ -15,16 +15,17 @@ import (
 // seedFactNode records a node's zip and go.mod (declaring goVersion) in the
 // fact/blob stores under the "v1" fetch pipeline version, so a scan finds it
 // present and can read its declared go version.
-func seedFactNode(ctx context.Context, facts *fakeFacts, blobs *fakeBlob, coord coordinate.ModuleCoordinate, goVersion string) {
+func seedFactNode(t testing.TB, ctx context.Context, facts *fakeFacts, blobs *fakeBlob, coord coordinate.ModuleCoordinate, goVersion string) {
 	zipHandle, _ := blobs.Put(ctx, strings.NewReader("zip-"+coord.Path+"-"+coord.Version))
 	goMod := "module " + coord.Path + "\n\ngo " + goVersion + "\n"
 	modHandle, _ := blobs.Put(ctx, strings.NewReader(goMod))
-	_ = facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
-		ModulePath: coord.Path, ModuleVersion: coord.Version,
-		PipelineVersion: "v1",
-		ContentLocation: string(zipHandle),
-		GoModLocation:   string(modHandle),
-	})
+	_ = facts.PutFetchRecord(ctx, fetchtest.Record(
+		t,
+		fetchtest.Coordinate(coord),
+		fetchtest.PipelineVersion("v1"),
+		fetchtest.Content(string(zipHandle)),
+		fetchtest.GoMod(string(modHandle)),
+	))
 }
 
 // supersededGraph builds a walk whose edge names a superseded intermediate
@@ -66,8 +67,8 @@ func TestScan_PopulatesSupersededGoMod_WhenPrePruningPresent(t *testing.T) {
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
 	// stdr is pre-pruning (go 1.16); logr's selected version is modern.
-	seedFactNode(ctx, facts, blobs, rec.Graph.Nodes[0].Coordinate, "1.20") // logr@v1.4.3
-	seedFactNode(ctx, facts, blobs, rec.Graph.Nodes[1].Coordinate, "1.16") // stdr@v1.2.2
+	seedFactNode(t, ctx, facts, blobs, rec.Graph.Nodes[0].Coordinate, "1.20") // logr@v1.4.3
+	seedFactNode(t, ctx, facts, blobs, rec.Graph.Nodes[1].Coordinate, "1.16") // stdr@v1.2.2
 
 	vulnStore := newFakeVulnStore()
 	fetcher := &fakeFetcher{}
@@ -101,8 +102,8 @@ func TestScan_SkipsSupersededGoMod_WhenFullyPruned(t *testing.T) {
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
 	// Both nodes are pruned (go >= 1.17), so no superseded go.mod is needed.
-	seedFactNode(ctx, facts, blobs, rec.Graph.Nodes[0].Coordinate, "1.20") // logr@v1.4.3
-	seedFactNode(ctx, facts, blobs, rec.Graph.Nodes[1].Coordinate, "1.20") // stdr@v1.2.2
+	seedFactNode(t, ctx, facts, blobs, rec.Graph.Nodes[0].Coordinate, "1.20") // logr@v1.4.3
+	seedFactNode(t, ctx, facts, blobs, rec.Graph.Nodes[1].Coordinate, "1.20") // stdr@v1.2.2
 
 	vulnStore := newFakeVulnStore()
 	fetcher := &fakeFetcher{}

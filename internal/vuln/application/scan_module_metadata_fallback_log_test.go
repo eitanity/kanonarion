@@ -8,8 +8,8 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 )
@@ -73,12 +73,7 @@ func TestScanModule_MetadataFallbackLogLevelByReason(t *testing.T) {
 			if err != nil {
 				t.Fatalf("blobs.Put: %v", err)
 			}
-			if err := facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
-				ModulePath:      coord.Path,
-				ModuleVersion:   coord.Version,
-				PipelineVersion: "v1",
-				ContentLocation: string(handle),
-			}); err != nil {
+			if err := facts.PutFetchRecord(ctx, fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content(string(handle)))); err != nil {
 				t.Fatalf("PutFetchRecord: %v", err)
 			}
 
