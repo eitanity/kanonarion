@@ -82,8 +82,10 @@ import (
 
 	walkbuildlist "github.com/eitanity/kanonarion/internal/walk/adapters/buildlist/gotoolchain"
 	walkfetcher "github.com/eitanity/kanonarion/internal/walk/adapters/fetcher/local"
+	walkretry "github.com/eitanity/kanonarion/internal/walk/adapters/fetcher/retrying"
 	walkgomod "github.com/eitanity/kanonarion/internal/walk/adapters/gomod/xmod"
 	walksqlite "github.com/eitanity/kanonarion/internal/walk/adapters/walks/sqlite"
+	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 	walkapp "github.com/eitanity/kanonarion/internal/walk/application"
 )
 
@@ -282,7 +284,14 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 
 	// ---- walk pipeline ----
 	parser := walkgomod.New()
-	fetcher := walkfetcher.New(fetchUC, skipVCSVerify)
+	// On the network path a transient proxy failure (HTTP/2 stream reset, connection
+	// reset, 429/5xx) is retried with bounded backoff before it can degrade a module
+	// to a fetch-failure node. In --from-modcache mode there is no network to flake,
+	// so the fetcher is left undecorated.
+	var fetcher walkports.ModuleFetcher = walkfetcher.New(fetchUC, skipVCSVerify)
+	if !modcacheMode {
+		fetcher = walkretry.New(fetcher, logger)
+	}
 	localFetcher := walklocalfs.New(blobs, factStore, clk)
 	resolver := walkapp.NewGraphResolver(parser, fetcher, blobs, clk, "", logger).
 		WithBuildListResolver(walkbuildlist.New(goBinary, logger))
