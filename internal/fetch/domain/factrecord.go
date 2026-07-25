@@ -59,6 +59,13 @@ type FactRecord struct {
 	// cache hit — see RecordIsCacheable — so the next fetch re-verifies instead of
 	// serving a downgrade produced by a bad network moment.
 	SumDBLookupFailed bool `json:"sumdb_lookup_failed"`
+
+	// AcquisitionMode names the path the module's bytes arrived by — proxy,
+	// modcache, or local. It is what makes ContentLocation readable: the handle's
+	// resolvability depends on the mode that wrote it, and without the mode a
+	// reader has to parse the handle to work out which blob store can produce the
+	// bytes. Empty on records written before the field existed.
+	AcquisitionMode string `json:"acquisition_mode,omitempty"`
 }
 
 // NewFactRecord constructs a FactRecord from a FetchedModule. ContentHash is
@@ -85,6 +92,7 @@ func NewFactRecord(m FetchedModule) FactRecord {
 		GoModLocation:      m.GoModLocation,
 		Retracted:          m.Retracted,
 		SumDBLookupFailed:  m.SumDBLookupFailed,
+		AcquisitionMode:    string(m.AcquisitionMode),
 	}
 }
 

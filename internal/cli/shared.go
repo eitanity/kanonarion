@@ -547,6 +547,24 @@ func resolveProjectGoSum(gomodPath string) {
 	}
 }
 
+// allowVerificationDowngrade carries --allow-verification-downgrade across the
+// audit/sbom/walk orchestration, process-wide for the same reason modcacheMode
+// is: one invocation builds several Containers and every fetch use case they
+// wire must agree. False by default, which is what keeps a weaker
+// re-measurement from displacing a stronger stored record.
+var allowVerificationDowngrade bool
+
+// registerAllowVerificationDowngradeFlag adds --allow-verification-downgrade to
+// cmd, binding it to the process-wide state the containers read. It is
+// deliberately a separate flag from --force: forcing means "re-measure now", and
+// overloading it with "and accept a weaker anchor" is the conflation that let a
+// --from-modcache run demote records a network run had anchored to the
+// transparency log.
+func registerAllowVerificationDowngradeFlag(cmd *cobra.Command) {
+	cmd.Flags().BoolVar(&allowVerificationDowngrade, "allow-verification-downgrade", false,
+		"permit a re-measurement to REPLACE A STRONGER VERIFICATION ANCHOR WITH A WEAKER ONE (e.g. let a --from-modcache record verified only against local go.sum overwrite one verified against the checksum-database transparency log); without this, the stronger record is kept and the run logs a warning")
+}
+
 // modcacheFlagSentinel is the NoOptDefVal for --from-modcache: it distinguishes
 // "flag passed with no value" (use `go env GOMODCACHE`) from "flag absent"
 // (empty string, mode off) and from an explicit directory value.

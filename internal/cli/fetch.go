@@ -91,6 +91,7 @@ func newFetchCmd(stdout, stderr io.Writer) *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&f.force, "force", false, "re-fetch even if cached")
+	registerAllowVerificationDowngradeFlag(cmd)
 	cmd.Flags().BoolVar(&f.strict, "strict", false, "exit non-zero on verification failure")
 	cmd.Flags().BoolVar(&f.insecure, "insecure", false, "allow plain HTTP proxy URLs (forces unverified status)")
 	cmd.Flags().BoolVar(&f.skipVCSVerify, "skip-vcs-verify", false, "skip git cross-verification; sumdb verification still runs")
@@ -212,7 +213,9 @@ func runFetch(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.W
 	uc := application.NewFetchModuleUseCase(
 		proxyAdapter, vcsClient, blobStore, factStore,
 		sumdbClient, clk, clock.Monotonic{}, "", logger,
-	).WithSigner(noopsigner.New(), factStore)
+	).WithSigner(noopsigner.New(), factStore).
+		WithAudit(factStore).
+		WithAllowVerificationDowngrade(allowVerificationDowngrade)
 
 	result, err := uc.Execute(ctx, application.FetchRequest{
 		Coordinate:    coord,

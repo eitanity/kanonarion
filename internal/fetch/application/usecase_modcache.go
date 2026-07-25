@@ -165,6 +165,7 @@ func (uc *FetchModuleUseCase) executeModcache(ctx context.Context, req FetchRequ
 		ContentLocation:    string(contentLocation),
 		GoModLocation:      string(goModLocation),
 		Retracted:          retracted,
+		AcquisitionMode:    domain2.AcquisitionModcache,
 	}
 	record := domain2.NewFactRecord(m)
 
@@ -173,21 +174,20 @@ func (uc *FetchModuleUseCase) executeModcache(ctx context.Context, req FetchRequ
 		return FetchResult{}, fmt.Errorf("computing content hash: %w", err)
 	}
 
-	// Step 6: persist.
-	if err := uc.facts.PutFetchRecord(ctx, record); err != nil {
-		return FetchResult{}, fmt.Errorf("persisting fact record: %w", err)
-	}
-	log.InfoContext(ctx, "record_persisted",
-		slog.String("verification_status", string(domain2.VerifiedBySumDBOnly)),
-		slog.String("content_hash", record.ContentHash),
-	)
-
-	// Sign-on-process call site 2: fact-produce.
-	if err := uc.sign(ctx, log, req.Coordinate, domain2.SubjectFact, record.ContentHash); err != nil {
+	// Step 6: persist. This mode's anchor is the local go.sum alone, so it can
+	// never beat a network run's Verified record; persistRecord keeps the
+	// stronger one and this run becomes a visible no-op rather than a demotion.
+	stored, err := uc.persistRecord(ctx, log, req, record)
+	if err != nil {
 		return FetchResult{}, err
 	}
 
-	return FetchResult{Record: record, FromCache: false}, nil
+	// Sign-on-process call site 2: fact-produce.
+	if err := uc.sign(ctx, log, req.Coordinate, domain2.SubjectFact, stored.ContentHash); err != nil {
+		return FetchResult{}, err
+	}
+
+	return FetchResult{Record: stored, FromCache: false}, nil
 }
 
 // executeGoModOnlyModcache is the go.mod-only counterpart to executeModcache:
@@ -269,6 +269,7 @@ func (uc *FetchModuleUseCase) executeGoModOnlyModcache(ctx context.Context, req 
 		PipelineVersion:    uc.pipelineVersion,
 		GoModLocation:      string(goModLocation),
 		Retracted:          retracted,
+		AcquisitionMode:    domain2.AcquisitionModcache,
 	}
 	record := domain2.NewFactRecord(m)
 
@@ -277,19 +278,16 @@ func (uc *FetchModuleUseCase) executeGoModOnlyModcache(ctx context.Context, req 
 		return FetchResult{}, fmt.Errorf("computing content hash: %w", err)
 	}
 
-	if err := uc.facts.PutFetchRecord(ctx, record); err != nil {
-		return FetchResult{}, fmt.Errorf("persisting fact record: %w", err)
-	}
-	log.InfoContext(ctx, "record_persisted",
-		slog.String("verification_status", string(domain2.VerifiedBySumDBOnly)),
-		slog.String("content_hash", record.ContentHash),
-	)
-
-	if err := uc.sign(ctx, log, req.Coordinate, domain2.SubjectFact, record.ContentHash); err != nil {
+	stored, err := uc.persistRecord(ctx, log, req, record)
+	if err != nil {
 		return FetchResult{}, err
 	}
 
-	return FetchResult{Record: record, FromCache: false}, nil
+	if err := uc.sign(ctx, log, req.Coordinate, domain2.SubjectFact, stored.ContentHash); err != nil {
+		return FetchResult{}, err
+	}
+
+	return FetchResult{Record: stored, FromCache: false}, nil
 }
 
 // verifyGoModAgainstGoSum checks a go.mod-only fetch's go.mod h1 against the

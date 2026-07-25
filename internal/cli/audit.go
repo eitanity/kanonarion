@@ -78,6 +78,7 @@ project's own build dependencies (the code your packages import, incl. tests);
 	cmd.Flags().StringVar(&f.policyPath, "policy", "", "path to depth policy YAML (default: search for .kanonarion/policy.yaml)")
 	registerStdlibFromGoModFlag(cmd, &f.stdlibFromGoMod)
 	registerFromModcacheFlag(cmd, &f.fromModcache)
+	registerAllowVerificationDowngradeFlag(cmd)
 
 	return cmd
 }

@@ -82,6 +82,7 @@ func newSBOMCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&mainLicense, "main-license", "", "SPDX id/expression (e.g. Apache-2.0) to attach to the SBOM subject, which has no fetched licence record of its own")
 	registerStdlibFromGoModFlag(cmd, &stdlibFromGoMod)
 	registerFromModcacheFlag(cmd, &fromModcache)
+	registerAllowVerificationDowngradeFlag(cmd)
 	return cmd
 }
 

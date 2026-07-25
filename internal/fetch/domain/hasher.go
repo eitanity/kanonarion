@@ -24,6 +24,13 @@ type CanonicalHasher struct{}
 // Fields must match FactRecord exactly but are listed in sorted key order
 // to guarantee byte-identical output regardless of Go struct field ordering.
 type canonicalRecord struct {
+	// AcquisitionMode is covered by the hash so the field that tells a reader
+	// which blob store resolves ContentLocation is as tamper-evident as the
+	// handle itself. omitempty keeps the canonical bytes — and therefore the
+	// content hash — identical to a pre-field record when unset, so records
+	// written before the field existed still verify, on the same terms as
+	// SumDBLookupFailed and the digest fields below.
+	AcquisitionMode string `json:"acquisition_mode,omitempty"`
 	ContentHash     string `json:"content_hash"`
 	ContentLocation string `json:"content_location"`
 	Ecosystem       string `json:"ecosystem"`
@@ -91,6 +98,7 @@ func (CanonicalHasher) VerifyContentHash(r FactRecord) error {
 // struct field order (which matches lexicographic key order).
 func marshalCanonical(r FactRecord) ([]byte, error) {
 	c := canonicalRecord{
+		AcquisitionMode:    r.AcquisitionMode,
 		ContentHash:        r.ContentHash,
 		ContentLocation:    r.ContentLocation,
 		Ecosystem:          r.Ecosystem,
@@ -165,6 +173,7 @@ func (CanonicalHasher) Unmarshal(data []byte) (FactRecord, error) {
 		ContentHash:        c.ContentHash,
 		Retracted:          c.Retracted,
 		SumDBLookupFailed:  c.SumDBLookupFailed,
+		AcquisitionMode:    c.AcquisitionMode,
 		ZipSHA256:          c.ZipSHA256,
 		ZipSHA384:          c.ZipSHA384,
 		ZipSHA512:          c.ZipSHA512,

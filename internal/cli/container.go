@@ -268,7 +268,12 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	fetchUC := fetchapp.NewFetchModuleUseCase(
 		proxyAdapter, vcs, blobs, factStore,
 		sumdb, clk, stopwatch, "", logger,
-	).WithSigner(signer, factStore)
+	).WithSigner(signer, factStore).
+		// The write side keeps the stronger of an existing and an incoming record
+		// unless the operator asked for the weaker one, and emits the refusal (or
+		// the permitted downgrade) into the same append-only log the writes go to.
+		WithAudit(factStore).
+		WithAllowVerificationDowngrade(allowVerificationDowngrade)
 	if modcacheDeriver != nil {
 		fetchUC = fetchUC.WithModcache(modcacheDeriver)
 	}

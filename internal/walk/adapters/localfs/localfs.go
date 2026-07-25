@@ -135,6 +135,7 @@ func (f *Fetcher) EnsureFetchedFromPath(
 		PipelineVersion:    PipelineVersion,
 		ContentLocation:    string(blobHandle),
 		GoModLocation:      string(goModHandle),
+		AcquisitionMode:    fetchdomain.AcquisitionLocal,
 	}
 	record := fetchdomain.NewFactRecord(m)
 	record, err = fetchdomain.CanonicalHasher{}.SetContentHash(record)

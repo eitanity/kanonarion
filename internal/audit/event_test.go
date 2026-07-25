@@ -9,6 +9,8 @@ import (
 func TestEventType_Known(t *testing.T) {
 	known := []audit.EventType{
 		audit.EventFactRecordWritten,
+		audit.EventFactRecordWriteRefused,
+		audit.EventFactRecordDowngraded,
 		audit.EventReplaceDirectiveObserved,
 		audit.EventExcludeDirectiveObserved,
 		audit.EventGoDebugSettingObserved,

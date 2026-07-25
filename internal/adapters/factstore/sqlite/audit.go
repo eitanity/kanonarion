@@ -60,6 +60,12 @@ type auditEntry struct {
 	PipelineVersion    string          `json:"pipeline_version"`
 	VerificationStatus string          `json:"verification_status"`
 	ContentHash        string          `json:"content_hash"`
+	// AcquisitionMode names the path the recorded bytes arrived by (proxy,
+	// modcache, local). It is additive and omitted when absent, so existing
+	// readers are unaffected; without it a log entry could not say which mode
+	// wrote a record, and a run that demoted a network-verified record to a
+	// module-cache one was indistinguishable from an ordinary re-measurement.
+	AcquisitionMode string `json:"acquisition_mode,omitempty"`
 }
 
 // eventEnvelope is the generic JSONL shape for every non-fact event. The
@@ -82,6 +88,7 @@ func (a *AuditLog) Record(r domain2.FactRecord) error {
 		PipelineVersion:    r.PipelineVersion,
 		VerificationStatus: r.VerificationStatus,
 		ContentHash:        r.ContentHash,
+		AcquisitionMode:    r.AcquisitionMode,
 	}
 	line, err := json.Marshal(entry)
 	if err != nil {

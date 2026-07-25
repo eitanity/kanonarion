@@ -60,6 +60,17 @@ type FetchModuleUseCase struct {
 	// distinct from modcache mode, where go.sum is the sole anchor. Set via
 	// WithProjectGoSum; nil leaves the network path byte-for-byte unchanged.
 	goSum ports.SumDBClient
+
+	// audit is the optional assurance-log sink the write side emits through when
+	// a re-measurement is refused for weakening a record's verification anchor,
+	// or when an operator explicitly permits that weakening. Set via WithAudit;
+	// nil emits nothing.
+	audit ports.AuditSink
+
+	// allowVerificationDowngrade permits a weaker re-measurement to replace a
+	// stronger stored record. Default false. Set via
+	// WithAllowVerificationDowngrade — deliberately not --force.
+	allowVerificationDowngrade bool
 }
 
 // WithProjectGoSum layers a walk-root go.sum verifier onto the normal network
@@ -283,6 +294,7 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 		GoModLocation:      string(goModHandle),
 		Retracted:          retracted,
 		SumDBLookupFailed:  sumdbLookupFailed,
+		AcquisitionMode:    domain2.AcquisitionProxy,
 	}
 	record := domain2.NewFactRecord(m)
 
@@ -292,22 +304,21 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 		return FetchResult{}, fmt.Errorf("computing content hash: %w", err)
 	}
 
-	// Step 8: persist.
-	if err := uc.facts.PutFetchRecord(ctx, record); err != nil {
-		return FetchResult{}, fmt.Errorf("persisting fact record: %w", err)
-	}
-	log.InfoContext(ctx, "record_persisted",
-		slog.String("verification_status", string(verStatus)),
-		slog.String("content_hash", record.ContentHash),
-	)
-
-	// Sign-on-process call site 2: fact-produce. Sign the produced FactRecord
-	// over its canonical ContentHash.
-	if err := uc.sign(ctx, log, req.Coordinate, domain2.SubjectFact, record.ContentHash); err != nil {
+	// Step 8: persist, unless this measurement would weaken the stored record's
+	// verification anchor. stored is what is authoritative afterwards: the new
+	// record on a write, the kept record on a refusal.
+	stored, err := uc.persistRecord(ctx, log, req, record)
+	if err != nil {
 		return FetchResult{}, err
 	}
 
-	return FetchResult{Record: record, FromCache: false}, nil
+	// Sign-on-process call site 2: fact-produce. Sign the produced FactRecord
+	// over its canonical ContentHash.
+	if err := uc.sign(ctx, log, req.Coordinate, domain2.SubjectFact, stored.ContentHash); err != nil {
+		return FetchResult{}, err
+	}
+
+	return FetchResult{Record: stored, FromCache: false}, nil
 }
 
 // executeGoModOnly is the go.mod-only counterpart to Execute: it fetches only
@@ -410,6 +421,7 @@ func (uc *FetchModuleUseCase) executeGoModOnly(ctx context.Context, req FetchReq
 		GoModLocation:      string(goModHandle),
 		Retracted:          retracted,
 		SumDBLookupFailed:  sumdbLookupFailed,
+		AcquisitionMode:    domain2.AcquisitionProxy,
 	}
 	record := domain2.NewFactRecord(m)
 
@@ -419,20 +431,18 @@ func (uc *FetchModuleUseCase) executeGoModOnly(ctx context.Context, req FetchReq
 	}
 
 	// Step 6: persist. Idempotent on (path, version, pipeline): a later full
-	// fetch overwrites this record in place.
-	if err := uc.facts.PutFetchRecord(ctx, record); err != nil {
-		return FetchResult{}, fmt.Errorf("persisting fact record: %w", err)
-	}
-	log.InfoContext(ctx, "record_persisted",
-		slog.String("verification_status", string(verStatus)),
-		slog.String("content_hash", record.ContentHash),
-	)
-
-	if err := uc.sign(ctx, log, req.Coordinate, domain2.SubjectFact, record.ContentHash); err != nil {
+	// fetch overwrites this record in place, unless doing so would weaken its
+	// verification anchor.
+	stored, err := uc.persistRecord(ctx, log, req, record)
+	if err != nil {
 		return FetchResult{}, err
 	}
 
-	return FetchResult{Record: record, FromCache: false}, nil
+	if err := uc.sign(ctx, log, req.Coordinate, domain2.SubjectFact, stored.ContentHash); err != nil {
+		return FetchResult{}, err
+	}
+
+	return FetchResult{Record: stored, FromCache: false}, nil
 }
 
 // cachedArtefactsReadable reports whether the artefacts a cached record points at

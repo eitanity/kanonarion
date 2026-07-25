@@ -148,6 +148,7 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
 
 	cmd.Flags().StringVar(&f.goproxy, "goproxy", "", "override GOPROXY (default: $GOPROXY or proxy.golang.org)")
 	cmd.Flags().BoolVar(&force, "force", false, "re-fetch all modules even if cached")
+	registerAllowVerificationDowngradeFlag(cmd)
 	cmd.Flags().BoolVar(&allowPartial, "allow-partial", false, "exit 0 even when walk status is partial")
 	cmd.Flags().IntVar(&workerCount, "workers", 0, "concurrent fetch workers (default: 16)")
 	cmd.Flags().StringVar(&operator, "operator", "", "operator identifier (defaults to $USER)")

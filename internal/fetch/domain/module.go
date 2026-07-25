@@ -133,4 +133,8 @@ type FetchedModule struct {
 	// VerificationStatus failed rather than answering, so the status describes the
 	// measurement and not the module. See FactRecord.SumDBLookupFailed.
 	SumDBLookupFailed bool
+
+	// AcquisitionMode names the path these bytes arrived by (proxy, modcache, or
+	// local). See FactRecord.AcquisitionMode.
+	AcquisitionMode AcquisitionMode
 }
