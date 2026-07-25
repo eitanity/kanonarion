@@ -80,7 +80,7 @@ func TestServe_CacheHitBlobPresent(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed blob: %v", err)
 	}
-	seedRecord(t, facts, handle, domain2.Verified)
+	seedRecord(t, blobs, facts, handle, domain2.Verified)
 
 	serve := newServe(blobs, facts)
 	res, err := serve.Serve(context.Background(), application.ServeRequest{Coordinate: testCoord})
@@ -103,7 +103,7 @@ func TestServe_CacheHitBlobEvictedRefetches(t *testing.T) {
 	facts := newFakeFacts()
 
 	// Seed a cached record pointing at a blob that is NOT in the store (evicted).
-	seedRecord(t, facts, ports.BlobHandle("fake:evicted"), domain2.Verified)
+	seedRecord(t, blobs, facts, ports.BlobHandle("fake:evicted"), domain2.Verified)
 
 	serve := newServe(blobs, facts)
 	res, err := serve.Serve(context.Background(), application.ServeRequest{
@@ -130,7 +130,7 @@ func TestServe_RefetchErrorPropagates(t *testing.T) {
 	facts := newFakeFacts()
 
 	// Cache hit whose blob is evicted, but the forced re-fetch fails at the proxy.
-	seedRecord(t, facts, ports.BlobHandle("fake:evicted"), domain2.Verified)
+	seedRecord(t, blobs, facts, ports.BlobHandle("fake:evicted"), domain2.Verified)
 	proxy := &fakeProxy{infoErr: errors.New("proxy down")}
 	fetch := newUseCase(proxy, &fakeVCS{}, blobs, facts)
 	serve := application.NewServeModuleUseCase(fetch, blobs)
@@ -187,7 +187,7 @@ func TestServe_ExistsErrorPropagates(t *testing.T) {
 func TestServe_CacheHitExistsErrorPropagates(t *testing.T) {
 	facts := newFakeFacts()
 	base := newFakeBlob()
-	seedRecord(t, facts, ports.BlobHandle("fake:cached"), domain2.Verified)
+	seedRecord(t, base, facts, ports.BlobHandle("fake:cached"), domain2.Verified)
 	blobs := &existsControlBlob{fakeBlob: base, existsErr: errors.New("store io error")}
 	fetch := newUseCase(&fakeProxy{}, &fakeVCS{}, blobs, facts)
 	serve := application.NewServeModuleUseCase(fetch, blobs)
@@ -205,7 +205,7 @@ func TestServe_AuditsVerifiedRead(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed blob: %v", err)
 	}
-	seedRecord(t, facts, handle, domain2.Verified)
+	seedRecord(t, blobs, facts, handle, domain2.Verified)
 
 	sink := newFakeAudit()
 	serve := newServe(blobs, facts).WithAudit(sink)
@@ -238,7 +238,7 @@ func TestServe_AuditsVerificationFailedButStillServes(t *testing.T) {
 	}
 	// A blob whose hash did not match its trust anchor: the security-relevant
 	// case. Serve does not gate — it records the rejection and still returns.
-	seedRecord(t, facts, handle, domain2.UnverifiedHashMismatch)
+	seedRecord(t, blobs, facts, handle, domain2.UnverifiedHashMismatch)
 
 	sink := newFakeAudit()
 	serve := newServe(blobs, facts).WithAudit(sink)
@@ -268,7 +268,7 @@ func TestServe_AuditEmitFailurePropagates(t *testing.T) {
 	if err != nil {
 		t.Fatalf("seed blob: %v", err)
 	}
-	seedRecord(t, facts, handle, domain2.Verified)
+	seedRecord(t, blobs, facts, handle, domain2.Verified)
 
 	sink := &fakeAudit{err: errors.New("log unwritable")}
 	serve := newServe(blobs, facts).WithAudit(sink)
@@ -279,8 +279,17 @@ func TestServe_AuditEmitFailurePropagates(t *testing.T) {
 
 // seedRecord writes a fact record for testCoord at the test pipeline version,
 // pointing at the given content handle with the given verification status.
-func seedRecord(t *testing.T, facts ports.FactStore, handle ports.BlobHandle, status domain2.VerificationStatus) {
+func seedRecord(t *testing.T, blobs ports.BlobStore, facts ports.FactStore, handle ports.BlobHandle, status domain2.VerificationStatus) {
 	t.Helper()
+	// The go.mod blob is stored for real. A record pointing at a go.mod handle the
+	// store never held is not a state the pipeline can produce, and the cache check
+	// now rejects such a record (its artefacts are unreadable) — so seeding one
+	// would test a fiction. The zip handle stays as the caller passes it, which is
+	// how the eviction tests below seed a genuinely missing zip.
+	goModHandle, err := blobs.Put(context.Background(), strings.NewReader("seed-gomod"))
+	if err != nil {
+		t.Fatalf("seed go.mod blob: %v", err)
+	}
 	rec := domain2.NewFactRecord(domain2.FetchedModule{
 		Coordinate:         testCoord,
 		ModuleHash:         domain2.ModuleHash{Algorithm: "h1", Value: "seed=="},
@@ -289,7 +298,7 @@ func seedRecord(t *testing.T, facts ports.FactStore, handle ports.BlobHandle, st
 		FetchedAt:          fixedTime,
 		PipelineVersion:    "test-0.1.0",
 		ContentLocation:    string(handle),
-		GoModLocation:      "fake:seed-gomod",
+		GoModLocation:      string(goModHandle),
 	})
 	if err := facts.PutFetchRecord(context.Background(), rec); err != nil {
 		t.Fatalf("seed record: %v", err)

@@ -128,4 +128,9 @@ type FetchedModule struct {
 	// Retracted is true if the module version carries a retract directive
 	// covering this version in its own go.mod.
 	Retracted bool
+
+	// SumDBLookupFailed reports that the checksum-database lookup behind
+	// VerificationStatus failed rather than answering, so the status describes the
+	// measurement and not the module. See FactRecord.SumDBLookupFailed.
+	SumDBLookupFailed bool
 }

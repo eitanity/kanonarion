@@ -30,7 +30,14 @@ const (
 
 // Client implements ports.SumDBClient.
 type Client struct {
-	sc       *sumdb.Client
+	// mu guards sc and ops, which are rebuilt after a failed lookup — see
+	// client/discard.
+	mu  sync.Mutex
+	sc  *sumdb.Client
+	ops *ops
+	// newOps builds a fresh ops for a rebuilt sumdb.Client.
+	newOps func() *ops
+
 	server   string
 	disabled bool
 }
@@ -59,32 +66,85 @@ func New(cacheDir string) *Client {
 		cacheDir = resolveCacheDir(server)
 	}
 
-	o := &ops{
-		server:   server,
-		key:      key,
-		cacheDir: cacheDir,
-		httpCli: &http.Client{
-			Timeout: 30 * time.Second,
-		},
+	newOps := func() *ops {
+		return &ops{
+			server:   server,
+			key:      key,
+			cacheDir: cacheDir,
+			httpCli: &http.Client{
+				Timeout: 30 * time.Second,
+			},
+		}
 	}
-	sc := sumdb.NewClient(o)
-	return &Client{sc: sc, server: server}
+	return &Client{newOps: newOps, server: server}
+}
+
+// client returns the inner sumdb client, building one on first use or after a
+// discard, together with the ops that observed its transport errors.
+func (c *Client) client() (*sumdb.Client, *ops) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.sc == nil {
+		c.ops = c.newOps()
+		c.sc = sumdb.NewClient(c.ops)
+	}
+	return c.sc, c.ops
+}
+
+// discard drops sc so the next Lookup builds a fresh sumdb client.
+//
+// This is what makes retrying a failed lookup mean anything. sumdb.Client
+// memoises every lookup in a per-client cache keyed by module@version — and the
+// memoised value includes the error, as does its tile cache. Asking the same
+// sumdb.Client again after a 503 therefore replays the recorded failure without
+// touching the network, which would turn a retry decorator into a silent no-op.
+// A rebuilt client re-fetches; the Merkle tiles it re-reads come back off the
+// on-disk cache, so the cost is a map, not a re-download of the tree.
+//
+// sc is compared identity-wise so a concurrent lookup that already rebuilt the
+// client is not discarded a second time.
+func (c *Client) discard(sc *sumdb.Client) {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	if c.sc == sc {
+		c.sc = nil
+		c.ops = nil
+	}
 }
 
 // Lookup queries the checksum database for the given module version.
 // All failures (disabled, not found, network error, security error) are
-// returned as Available=false so the caller can decide the verification policy.
+// returned as Available=false so the caller can decide the verification policy,
+// discriminated by SumDBResult.Unavailability: a deliberate policy answer versus
+// a lookup that failed and may succeed on a later attempt.
 func (c *Client) Lookup(_ context.Context, coord coordinate.ModuleCoordinate) ports.SumDBResult {
 	if c.disabled {
-		return ports.SumDBResult{Available: false, Reason: "GOSUMDB=off"}
+		return ports.SumDBResult{
+			Available:      false,
+			Reason:         "GOSUMDB=off",
+			Unavailability: ports.SumDBUnavailabilityPolicy,
+		}
 	}
 	if matchesNoSum(coord.Path) {
-		return ports.SumDBResult{Available: false, Reason: "module matches GONOSUMCHECK/GOPRIVATE pattern"}
+		return ports.SumDBResult{
+			Available:      false,
+			Reason:         "module matches GONOSUMCHECK/GOPRIVATE pattern",
+			Unavailability: ports.SumDBUnavailabilityPolicy,
+		}
 	}
 
-	lines, err := c.sc.Lookup(coord.Path, coord.Version)
+	sc, o := c.client()
+	lines, err := sc.Lookup(coord.Path, coord.Version)
 	if err != nil {
-		return ports.SumDBResult{Available: false, Reason: fmt.Sprintf("sumdb lookup: %v", err)}
+		// The failed lookup is memoised inside sc (errors included), so drop the
+		// client: a retry must reach the network, not replay this error.
+		c.discard(sc)
+		return ports.SumDBResult{
+			Available:      false,
+			Reason:         fmt.Sprintf("sumdb lookup: %v", err),
+			Unavailability: ports.SumDBUnavailabilityFailure,
+			Err:            classifiableLookupError(err, o),
+		}
 	}
 
 	var zipHash, goModHash domain2.ModuleHash
@@ -108,13 +168,54 @@ func (c *Client) Lookup(_ context.Context, coord coordinate.ModuleCoordinate) po
 	}
 
 	if zipHash.IsZero() {
-		return ports.SumDBResult{Available: false, Reason: "sumdb returned no zip hash for module"}
+		// The database answered; it simply carries no zip hash line for this
+		// version. That is a settled answer about the module, not a failed
+		// measurement, so it is policy-unavailable and retrying cannot change it.
+		return ports.SumDBResult{
+			Available:      false,
+			Reason:         "sumdb returned no zip hash for module",
+			Unavailability: ports.SumDBUnavailabilityPolicy,
+		}
 	}
 	return ports.SumDBResult{
 		Available: true,
 		ZipHash:   zipHash,
 		GoModHash: goModHash,
 	}
+}
+
+// classifiableLookupError returns the error a retry decorator should classify
+// for a failed lookup.
+//
+// sumdb.Client.Lookup annotates its error with fmt.Errorf("%s@%s: %v", …) —
+// %v, not %w — so by the time a lookup failure reaches this adapter the error
+// chain has been flattened to a string and neither errors.As nor errors.Is can
+// see the transport error underneath. Classifying on the flattened message would
+// mean pattern-matching text that x/mod is free to reword.
+//
+// Instead the transport error is captured where it is still typed, by ops, and
+// read back here. Two rules govern the read:
+//
+//   - A security error always wins. ClientOps documents that the client returns
+//     ErrSecurity from any operation that called SecurityError, so a recorded
+//     secErr is the authoritative signal even though the returned error's chain
+//     was flattened. A misbehaving-server verdict is a tamper signal about the
+//     database, and retrying it is exactly the wrong response.
+//   - Otherwise the last unrecovered transient transport failure, if any, is the
+//     error to classify. ops clears it on a later successful fetch, so a 503 on a
+//     partial tile that the full-tile fetch then satisfied does not make an
+//     unrelated verification failure look transient.
+func classifiableLookupError(err error, o *ops) error {
+	if o == nil {
+		return err
+	}
+	if secErr := o.securityError(); secErr != nil {
+		return err
+	}
+	if transient := o.lastTransportError(); transient != nil {
+		return transient
+	}
+	return err
 }
 
 // ops implements sumdb.ClientOps using the local filesystem for caching and
@@ -126,6 +227,16 @@ type ops struct {
 	httpCli  *http.Client
 	mu       sync.Mutex
 	secErr   error
+	// lastErr is the most recent unrecovered ReadRemote failure, retained with
+	// its type intact so a caller can classify it after sumdb.Client has
+	// flattened the error chain it returns. A successful fetch clears it.
+	//
+	// One ops is shared by every concurrent lookup through the same client, so a
+	// failure observed by one lookup can be read by another that failed at the
+	// same moment. The consequence is bounded — at worst one extra retry of a
+	// permanent error on a run where the network was genuinely misbehaving — and
+	// it is preferred to per-lookup plumbing that sumdb.ClientOps gives no hook for.
+	lastErr error
 }
 
 func (o *ops) ReadRemote(path string) (_ []byte, retErr error) {
@@ -136,7 +247,7 @@ func (o *ops) ReadRemote(path string) (_ []byte, retErr error) {
 	url := scheme + o.server + path
 	resp, err := o.httpCli.Get(url)
 	if err != nil {
-		return nil, fmt.Errorf("fetching %s: %w", url, err)
+		return nil, o.recordRemoteErr(fmt.Errorf("fetching %s: %w", url, err))
 	}
 	defer func() {
 		if cerr := resp.Body.Close(); cerr != nil && retErr == nil {
@@ -144,13 +255,51 @@ func (o *ops) ReadRemote(path string) (_ []byte, retErr error) {
 		}
 	}()
 	if resp.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("sumdb HTTP %d for %s", resp.StatusCode, url)
+		// Carried as a typed *ProxyStatusError, not only as message text, so the
+		// status is classifiable data: a 429 or 5xx from the checksum database is a
+		// transient condition, a 4xx its real answer. Returned bare rather than
+		// wrapped in a "sumdb HTTP %d for %s" prefix, because its own Error()
+		// already renders the status and the URL — wrapping printed both twice in
+		// the verification detail that lands on the record.
+		return nil, o.recordRemoteErr(&domain2.ProxyStatusError{StatusCode: resp.StatusCode, URL: url})
 	}
 	data, err := io.ReadAll(resp.Body)
 	if err != nil {
-		return nil, fmt.Errorf("reading sumdb response for %s: %w", path, err)
+		return nil, o.recordRemoteErr(fmt.Errorf("reading sumdb response for %s: %w", path, err))
 	}
+	o.clearRemoteErr()
 	return data, nil
+}
+
+// recordRemoteErr retains err for later classification and returns it unchanged.
+func (o *ops) recordRemoteErr(err error) error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.lastErr = err
+	return err
+}
+
+// clearRemoteErr forgets any retained failure: a fetch has since succeeded, so
+// the earlier failure was recovered and must not colour a later verdict.
+func (o *ops) clearRemoteErr() {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	o.lastErr = nil
+}
+
+// lastTransportError returns the retained unrecovered ReadRemote failure, if any.
+func (o *ops) lastTransportError() error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.lastErr
+}
+
+// securityError returns the error recorded by SecurityError, if the client
+// reported a misbehaving server.
+func (o *ops) securityError() error {
+	o.mu.Lock()
+	defer o.mu.Unlock()
+	return o.secErr
 }
 
 func (o *ops) ReadConfig(file string) ([]byte, error) {

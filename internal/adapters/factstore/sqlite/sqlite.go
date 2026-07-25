@@ -60,6 +60,12 @@ func Migrations() []sqlitestore.Migration {
             ALTER TABLE fetch_records ADD COLUMN zip_sha256 TEXT NOT NULL DEFAULT '';
             ALTER TABLE fetch_records ADD COLUMN zip_sha384 TEXT NOT NULL DEFAULT '';
             ALTER TABLE fetch_records ADD COLUMN zip_sha512 TEXT NOT NULL DEFAULT '';`},
+		// A record written before this column existed defaults to 0, which reads as
+		// "the lookup did not fail" and so stays cache-eligible. That is the honest
+		// default: those records were written by a pipeline that could not
+		// distinguish the two cases, and re-verifying every one of them on the
+		// strength of an absent column would invalidate the whole store.
+		{Module: "fetch", Version: 7, SQL: `ALTER TABLE fetch_records ADD COLUMN sumdb_lookup_failed BOOLEAN NOT NULL DEFAULT 0`},
 	}
 }
 
@@ -101,8 +107,8 @@ INSERT INTO fetch_records (
     git_url, git_ref, git_commit_hash,
     verification_status, verification_detail,
     fetched_at, content_location, go_mod_location, content_hash, retracted,
-    zip_sha256, zip_sha384, zip_sha512
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    zip_sha256, zip_sha384, zip_sha512, sumdb_lookup_failed
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (module_path, module_version, pipeline_version)
 DO UPDATE SET
     schema_version      = excluded.schema_version,
@@ -121,7 +127,8 @@ DO UPDATE SET
     retracted           = excluded.retracted,
     zip_sha256          = excluded.zip_sha256,
     zip_sha384          = excluded.zip_sha384,
-    zip_sha512          = excluded.zip_sha512`
+    zip_sha512          = excluded.zip_sha512,
+    sumdb_lookup_failed = excluded.sumdb_lookup_failed`
 
 	_, err := s.db.DB().ExecContext(ctx, q,
 		r.ModulePath, r.ModuleVersion, r.PipelineVersion,
@@ -130,7 +137,7 @@ DO UPDATE SET
 		r.VerificationStatus, r.VerificationDetail,
 		r.FetchedAt.UTC().Format(time.RFC3339),
 		r.ContentLocation, r.GoModLocation, r.ContentHash, r.Retracted,
-		r.ZipSHA256, r.ZipSHA384, r.ZipSHA512,
+		r.ZipSHA256, r.ZipSHA384, r.ZipSHA512, r.SumDBLookupFailed,
 	)
 	if err != nil {
 		return fmt.Errorf("inserting fetch record: %w", err)
@@ -148,7 +155,7 @@ SELECT schema_version, ecosystem, module_path, module_version, pipeline_version,
        module_hash, go_mod_hash, git_url, git_ref, git_commit_hash,
        verification_status, verification_detail,
        fetched_at, content_location, go_mod_location, content_hash, retracted,
-       zip_sha256, zip_sha384, zip_sha512
+       zip_sha256, zip_sha384, zip_sha512, sumdb_lookup_failed
 FROM fetch_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 
@@ -160,7 +167,7 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 		&r.ModuleHash, &r.GoModHash, &r.GitURL, &r.GitRef, &r.GitCommitHash,
 		&r.VerificationStatus, &r.VerificationDetail,
 		&fetchedAt, &r.ContentLocation, &r.GoModLocation, &r.ContentHash, &r.Retracted,
-		&r.ZipSHA256, &r.ZipSHA384, &r.ZipSHA512,
+		&r.ZipSHA256, &r.ZipSHA384, &r.ZipSHA512, &r.SumDBLookupFailed,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain2.FactRecord{}, false, nil

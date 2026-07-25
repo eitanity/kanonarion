@@ -176,17 +176,27 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 
 	// Step 1: cache check. A go.mod-only record does not satisfy the full path —
 	// this call needs the zip, so re-fetch over it and let PutFetchRecord upgrade
-	// the record in place. Any record with a zip is a hit.
+	// the record in place. Any record with a zip is a hit, unless its verification
+	// rests on a checksum-database lookup that failed rather than answered
+	// (domain.RecordIsCacheable): re-verify that one instead of serving a downgrade
+	// a single bad network moment produced.
 	if !req.Force {
 		existing, ok, err := uc.facts.GetFetchRecord(ctx, req.Coordinate, uc.pipelineVersion)
 		if err != nil {
 			return FetchResult{}, fmt.Errorf("checking cache: %w", err)
 		}
-		if ok && !existing.IsGoModOnly() {
+		switch {
+		case ok && !domain2.RecordIsCacheable(existing):
+			log.InfoContext(ctx, "cache_reverify_sumdb_lookup_failed",
+				slog.String("cached_verification_status", existing.VerificationStatus),
+			)
+		case ok && !uc.cachedArtefactsReadable(ctx, log, existing):
+			// Re-fetch rather than hand the caller a record whose blobs this run
+			// cannot read.
+		case ok && !existing.IsGoModOnly():
 			log.InfoContext(ctx, "cache_hit")
 			return FetchResult{Record: existing, FromCache: true}, nil
-		}
-		if ok {
+		case ok:
 			log.InfoContext(ctx, "cache_upgrade_gomod_only_to_full")
 		}
 	}
@@ -249,7 +259,7 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 	log.InfoContext(ctx, "go_mod_blob_stored", slog.String("handle", string(goModHandle)))
 
 	// Step 5: run verification pipeline, accumulating status.
-	verStatus, verDetail, gitRef, retracted := uc.verify(ctx, log, req.Coordinate, dl, zipData, goModData, info, req.SkipVCSVerify, goSumMatched, req.VCSHosts)
+	verStatus, verDetail, gitRef, retracted, sumdbLookupFailed := uc.verify(ctx, log, req.Coordinate, dl, zipData, goModData, info, req.SkipVCSVerify, goSumMatched, req.VCSHosts)
 
 	// Sign-on-process call site 1: fetch-receive. Sign the received blob over
 	// its canonical content digest, after verification.
@@ -272,6 +282,7 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 		ContentLocation:    string(blobHandle),
 		GoModLocation:      string(goModHandle),
 		Retracted:          retracted,
+		SumDBLookupFailed:  sumdbLookupFailed,
 	}
 	record := domain2.NewFactRecord(m)
 
@@ -330,7 +341,18 @@ func (uc *FetchModuleUseCase) executeGoModOnly(ctx context.Context, req FetchReq
 		if err != nil {
 			return FetchResult{}, fmt.Errorf("checking cache: %w", err)
 		}
-		if ok {
+		switch {
+		case ok && !domain2.RecordIsCacheable(existing):
+			// Same rule as the full path: a record whose sumdb lookup failed is not
+			// eligible as a cache hit, so this path re-verifies rather than inheriting
+			// a downgrade produced by a failed measurement.
+			log.InfoContext(ctx, "cache_reverify_sumdb_lookup_failed",
+				slog.String("cached_verification_status", existing.VerificationStatus),
+			)
+		case ok && !uc.cachedArtefactsReadable(ctx, log, existing):
+			// Re-fetch rather than hand the caller a record whose blobs this run
+			// cannot read.
+		case ok:
 			log.InfoContext(ctx, "cache_hit")
 			return FetchResult{Record: existing, FromCache: true}, nil
 		}
@@ -368,7 +390,7 @@ func (uc *FetchModuleUseCase) executeGoModOnly(ctx context.Context, req FetchReq
 	log.InfoContext(ctx, "go_mod_blob_stored", slog.String("handle", string(goModHandle)))
 
 	// Step 4: verify the go.mod h1 against the checksum database.
-	verStatus, verDetail, retracted := uc.verifyGoModOnly(ctx, log, req.Coordinate, dl, goModData, goSumMatched)
+	verStatus, verDetail, retracted, sumdbLookupFailed := uc.verifyGoModOnly(ctx, log, req.Coordinate, dl, goModData, goSumMatched)
 
 	// Sign the received go.mod over its canonical content digest, after
 	// verification. There is no zip to sign; the go.mod is the artefact received.
@@ -387,6 +409,7 @@ func (uc *FetchModuleUseCase) executeGoModOnly(ctx context.Context, req FetchReq
 		PipelineVersion:    uc.pipelineVersion,
 		GoModLocation:      string(goModHandle),
 		Retracted:          retracted,
+		SumDBLookupFailed:  sumdbLookupFailed,
 	}
 	record := domain2.NewFactRecord(m)
 
@@ -412,6 +435,57 @@ func (uc *FetchModuleUseCase) executeGoModOnly(ctx context.Context, req FetchReq
 	return FetchResult{Record: record, FromCache: false}, nil
 }
 
+// cachedArtefactsReadable reports whether the artefacts a cached record points at
+// can actually be produced by the blob store this run is wired with.
+//
+// A FactRecord is identified by (module path, version, pipeline version) — it
+// carries no acquisition-mode dimension — but ContentLocation is mode-specific:
+// the normal path stores content-addressed "sha256:<hex>" handles in the local
+// blob store, while --from-modcache derives "modcache:zip:<coord>" handles that
+// only the module-cache adapter can resolve. A --from-modcache run therefore
+// overwrites a blob-backed record in place, and a later normal run gets a cache
+// hit on a handle its blob store cannot read. Downstream that surfaced as every
+// module failing to populate the scan's GOMODCACHE, sending govulncheck to the
+// network on a run that had the bytes on disk all along.
+//
+// Asking the blob store rather than inspecting the handle keeps the mode
+// knowledge in the adapter that owns it: the module-cache store delegates handles
+// it does not recognise, so a store that can read a handle says yes regardless of
+// which mode wrote it, and only the genuinely unreadable direction re-fetches.
+//
+// An error from Exists is treated as unreadable, not propagated: a malformed or
+// foreign handle is precisely the case this guard exists for, and re-fetching is
+// the correct response either way. It is logged so the re-fetch is never silent.
+func (uc *FetchModuleUseCase) cachedArtefactsReadable(ctx context.Context, log *slog.Logger, r domain2.FactRecord) bool {
+	for _, artefact := range []struct{ kind, handle string }{
+		{"zip", r.ContentLocation},
+		{"go.mod", r.GoModLocation},
+	} {
+		if artefact.handle == "" {
+			// Absent by design (a go.mod-only record has no zip); the IsGoModOnly
+			// checks above decide whether that satisfies the caller.
+			continue
+		}
+		exists, err := uc.blobs.Exists(ctx, ports.BlobHandle(artefact.handle))
+		if err != nil {
+			log.InfoContext(ctx, "cache_reverify_blob_handle_unreadable",
+				slog.String("artefact", artefact.kind),
+				slog.String("handle", artefact.handle),
+				slog.String("error", err.Error()),
+			)
+			return false
+		}
+		if !exists {
+			log.InfoContext(ctx, "cache_reverify_blob_missing",
+				slog.String("artefact", artefact.kind),
+				slog.String("handle", artefact.handle),
+			)
+			return false
+		}
+	}
+	return true
+}
+
 // verifyGoModOnly verifies a go.mod-only fetch's h1 against the checksum
 // database, the go.mod-only analogue of verify. There is no zip, no
 // version-prefix check, and no VCS cross-verification (nothing to reproduce);
@@ -425,7 +499,7 @@ func (uc *FetchModuleUseCase) verifyGoModOnly(
 	dl ports.GoModDownload,
 	goModData []byte,
 	goSumMatched bool,
-) (domain2.VerificationStatus, string, bool) {
+) (domain2.VerificationStatus, string, bool, bool) {
 	retracted := parseRetracted(goModData, coord.Version)
 	if retracted {
 		log.InfoContext(ctx, "retracted_version_detected")
@@ -434,7 +508,7 @@ func (uc *FetchModuleUseCase) verifyGoModOnly(
 	if dl.InsecureTransport {
 		return domain2.UnverifiedNoSumDB,
 			"go.mod-only fetch; insecure transport (HTTP proxy); integrity guarantees are weakened",
-			retracted
+			retracted, false
 	}
 
 	res := uc.sumdb.Lookup(ctx, coord)
@@ -450,27 +524,36 @@ func (uc *FetchModuleUseCase) verifyGoModOnly(
 			if goSumMatched {
 				return domain2.VerifiedByGoSum,
 					"go.mod-only fetch; go.mod verified against local go.sum; checksum database returned no go.mod hash",
-					retracted
+					retracted, false
 			}
 			return domain2.UnverifiedNoSumDB,
-				"go.mod-only fetch; checksum database returned no go.mod hash", retracted
+				"go.mod-only fetch; checksum database returned no go.mod hash", retracted, false
 		case !res.GoModHash.Equal(dl.GoModHash):
 			return domain2.UnverifiedHashMismatch,
 				fmt.Sprintf("go.mod-only fetch; sumdb expects go.mod %s but computed %s", res.GoModHash, dl.GoModHash),
-				retracted
+				retracted, false
 		default:
 			return domain2.VerifiedBySumDBOnly,
-				"go.mod-only fetch; go.mod h1 matches checksum database (zip not fetched)", retracted
+				"go.mod-only fetch; go.mod h1 matches checksum database (zip not fetched)", retracted, false
 		}
 	}
 
-	log.InfoContext(ctx, "sumdb_unavailable", slog.String("reason", res.Reason))
+	// The lookup produced no hashes. Whether that is the database's settled answer
+	// or a lookup that failed decides whether the resulting record may be cached:
+	// a failure is a statement about the measurement, so the next fetch must
+	// re-verify rather than inherit this status. The retry budget is already spent
+	// by the time the result gets here.
+	lookupFailed := res.LookupFailed()
+	log.InfoContext(ctx, "sumdb_unavailable",
+		slog.String("reason", res.Reason),
+		slog.Bool("lookup_failed", lookupFailed),
+	)
 	if goSumMatched {
 		return domain2.VerifiedByGoSum,
 			"go.mod-only fetch; go.mod verified against local go.sum; network checksum database unavailable: " + res.Reason,
-			retracted
+			retracted, lookupFailed
 	}
-	return domain2.UnverifiedNoSumDB, "go.mod-only fetch; " + res.Reason, retracted
+	return domain2.UnverifiedNoSumDB, "go.mod-only fetch; " + res.Reason, retracted, lookupFailed
 }
 
 // checkProjectGoSumGoMod cross-checks a go.mod-only fetch's go.mod h1 against
@@ -560,10 +643,14 @@ func (uc *FetchModuleUseCase) verify(
 	skipVCSVerify bool,
 	goSumMatched bool,
 	vcsHosts domain2.VCSHostAllowlist,
-) (domain2.VerificationStatus, string, domain2.GitReference, bool) {
+) (domain2.VerificationStatus, string, domain2.GitReference, bool, bool) {
 
 	var earlyStatus domain2.VerificationStatus
 	var earlyDetail string
+	// sumdbLookupFailed records that the checksum-database lookup failed rather
+	// than answered, so the caller can mark the record un-cacheable and re-verify
+	// on the next fetch instead of making one bad network moment permanent.
+	var sumdbLookupFailed bool
 
 	// Insecure transport forces unverified (T4).
 	if dl.InsecureTransport {
@@ -608,7 +695,11 @@ func (uc *FetchModuleUseCase) verify(
 					sumdbResult.ZipHash, dl.ZipHash)
 			}
 		} else {
-			log.InfoContext(ctx, "sumdb_unavailable", slog.String("reason", sumdbResult.Reason))
+			sumdbLookupFailed = sumdbResult.LookupFailed()
+			log.InfoContext(ctx, "sumdb_unavailable",
+				slog.String("reason", sumdbResult.Reason),
+				slog.Bool("lookup_failed", sumdbLookupFailed),
+			)
 			if goSumMatched {
 				// Network sumdb is unreachable/absent, but the walk root's local
 				// go.sum (itself populated under a prior transparency-log check)
@@ -661,15 +752,15 @@ func (uc *FetchModuleUseCase) verify(
 		if vcsDetail != "" {
 			detail += "; vcs: " + vcsDetail
 		}
-		return earlyStatus, detail, gitRef, retracted
+		return earlyStatus, detail, gitRef, retracted, sumdbLookupFailed
 	}
 
 	// sumdb passed; combine with VCS result.
 	if vcsStatus == domain2.Verified {
-		return domain2.Verified, "", gitRef, retracted
+		return domain2.Verified, "", gitRef, retracted, sumdbLookupFailed
 	}
 	// sumdb passed but VCS was not available or missing.
-	return domain2.VerifiedBySumDBOnly, vcsDetail, gitRef, retracted
+	return domain2.VerifiedBySumDBOnly, vcsDetail, gitRef, retracted, sumdbLookupFailed
 }
 
 // checkProjectGoSum cross-checks the module's already-computed h1 hashes

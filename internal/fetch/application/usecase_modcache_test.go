@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -35,7 +36,14 @@ func (b noPutBlob) Put(context.Context, io.Reader) (ports.BlobHandle, error) {
 func (b noPutBlob) Get(context.Context, ports.BlobHandle) (io.ReadCloser, error) {
 	return nil, errors.New("unexpected Get")
 }
-func (b noPutBlob) Exists(context.Context, ports.BlobHandle) (bool, error) { return false, nil }
+
+// Exists resolves the coordinate-derived handles --from-modcache mode records,
+// as the real module-cache store does. A fake that reported every handle absent
+// would make the cache-hit tests below assert the opposite of production, since
+// the cache check re-fetches any record whose artefacts it cannot read.
+func (b noPutBlob) Exists(_ context.Context, h ports.BlobHandle) (bool, error) {
+	return strings.HasPrefix(string(h), "modcache:"), nil
+}
 func (b noPutBlob) GetPath(context.Context, ports.BlobHandle) (string, error) {
 	return "", errors.New("unexpected GetPath")
 }

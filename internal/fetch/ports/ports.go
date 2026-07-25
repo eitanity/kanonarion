@@ -39,16 +39,59 @@ type SumDBClient interface {
 	Lookup(ctx context.Context, coord coordinate.ModuleCoordinate) SumDBResult
 }
 
+// SumDBUnavailability discriminates why a checksum-database lookup produced no
+// hashes. The distinction is the difference between a measurement and a finding:
+// a policy answer is the database's real answer about the module and is stable
+// across runs, whereas a failure is a statement about the lookup, not about the
+// module, and a later attempt may well succeed. Collapsing the two lets one
+// network flake be recorded — and cached — as a property of a dependency.
+type SumDBUnavailability string
+
+const (
+	// SumDBUnavailabilityNone is the zero value, used when Available is true.
+	SumDBUnavailabilityNone SumDBUnavailability = ""
+
+	// SumDBUnavailabilityPolicy means the database was deliberately not
+	// consulted, or answered without a hash line: GOSUMDB=off, a
+	// GOPRIVATE/GONOSUMCHECK match, or a response carrying no hash for the
+	// module. It is a settled answer; callers treat it exactly as they treat
+	// any other stable verification outcome.
+	SumDBUnavailabilityPolicy SumDBUnavailability = "policy"
+
+	// SumDBUnavailabilityFailure means the lookup itself returned an error, so
+	// nothing is known about the module's transparency-log entry. Err carries
+	// the error for transient classification, and the resulting record is not
+	// eligible as a cache hit — the next fetch must re-verify rather than serve
+	// a downgrade produced by a bad network moment.
+	SumDBUnavailabilityFailure SumDBUnavailability = "failure"
+)
+
 // SumDBResult is the outcome of a checksum database lookup.
 type SumDBResult struct {
 	// Available is true when the lookup succeeded and hashes were returned.
 	Available bool
 	// Reason is set when Available is false; describes why the lookup was skipped.
 	Reason string
+	// Unavailability discriminates a policy answer from a lookup failure when
+	// Available is false; it is SumDBUnavailabilityNone when Available is true.
+	// A client that leaves it unset on an unavailable result is read as a policy
+	// answer, which is the pre-existing behaviour for every caller.
+	Unavailability SumDBUnavailability
+	// Err is the error the lookup returned when Unavailability is
+	// SumDBUnavailabilityFailure, carried as a value so a decorator can classify
+	// it (domain.IsTransientFetchError) rather than re-parse Reason. Nil for
+	// every other outcome.
+	Err error
 	// ZipHash is the h1 hash of the module zip as recorded in the transparency log.
 	ZipHash domain2.ModuleHash
 	// GoModHash is the h1 hash of the go.mod as recorded in the transparency log.
 	GoModHash domain2.ModuleHash
+}
+
+// LookupFailed reports whether the result is an unavailable-because-the-lookup-
+// failed outcome, as opposed to an available result or a settled policy answer.
+func (r SumDBResult) LookupFailed() bool {
+	return !r.Available && r.Unavailability == SumDBUnavailabilityFailure
 }
 
 // ModuleProxy retrieves modules via the Go module proxy protocol.

@@ -85,11 +85,15 @@ func (uc *FetchModuleUseCase) executeModcache(ctx context.Context, req FetchRequ
 		if err != nil {
 			return FetchResult{}, fmt.Errorf("checking cache: %w", err)
 		}
-		if ok && !existing.IsGoModOnly() {
+		switch {
+		case ok && !uc.cachedArtefactsReadable(ctx, log, existing):
+			// A record written by the network path points at content-addressed blobs
+			// this mode can still read through the delegate — unless the blob is gone.
+			// Re-fetch rather than serve a handle that resolves to nothing.
+		case ok && !existing.IsGoModOnly():
 			log.InfoContext(ctx, "cache_hit")
 			return FetchResult{Record: existing, FromCache: true}, nil
-		}
-		if ok {
+		case ok:
 			log.InfoContext(ctx, "cache_upgrade_gomod_only_to_full")
 		}
 	}
@@ -214,7 +218,7 @@ func (uc *FetchModuleUseCase) executeGoModOnlyModcache(ctx context.Context, req 
 		if err != nil {
 			return FetchResult{}, fmt.Errorf("checking cache: %w", err)
 		}
-		if ok {
+		if ok && uc.cachedArtefactsReadable(ctx, log, existing) {
 			log.InfoContext(ctx, "cache_hit")
 			return FetchResult{Record: existing, FromCache: true}, nil
 		}

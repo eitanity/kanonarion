@@ -24,20 +24,27 @@ type CanonicalHasher struct{}
 // Fields must match FactRecord exactly but are listed in sorted key order
 // to guarantee byte-identical output regardless of Go struct field ordering.
 type canonicalRecord struct {
-	ContentHash        string `json:"content_hash"`
-	ContentLocation    string `json:"content_location"`
-	Ecosystem          string `json:"ecosystem"`
-	FetchedAt          string `json:"fetched_at"`
-	GitCommitHash      string `json:"git_commit_hash"`
-	GitRef             string `json:"git_ref"`
-	GitURL             string `json:"git_url"`
-	GoModHash          string `json:"go_mod_hash"`
-	ModuleHash         string `json:"module_hash"`
-	ModulePath         string `json:"module_path"`
-	ModuleVersion      string `json:"module_version"`
-	PipelineVersion    string `json:"pipeline_version"`
-	Retracted          bool   `json:"retracted"`
-	SchemaVersion      string `json:"schema_version"`
+	ContentHash     string `json:"content_hash"`
+	ContentLocation string `json:"content_location"`
+	Ecosystem       string `json:"ecosystem"`
+	FetchedAt       string `json:"fetched_at"`
+	GitCommitHash   string `json:"git_commit_hash"`
+	GitRef          string `json:"git_ref"`
+	GitURL          string `json:"git_url"`
+	GoModHash       string `json:"go_mod_hash"`
+	ModuleHash      string `json:"module_hash"`
+	ModulePath      string `json:"module_path"`
+	ModuleVersion   string `json:"module_version"`
+	PipelineVersion string `json:"pipeline_version"`
+	Retracted       bool   `json:"retracted"`
+	SchemaVersion   string `json:"schema_version"`
+	// SumDBLookupFailed is covered by the hash so the flag that suppresses a
+	// record's cache eligibility is itself tamper-evident: without it, flipping
+	// the bit would silently promote a failed measurement back to a cache hit.
+	// omitempty keeps the canonical bytes — and therefore the content hash —
+	// identical to a pre-flag record when false, so records written before the
+	// field existed still verify, on the same terms as the digest fields below.
+	SumDBLookupFailed  bool   `json:"sumdb_lookup_failed,omitempty"`
 	VerificationDetail string `json:"verification_detail"`
 	VerificationStatus string `json:"verification_status"`
 	// Raw artefact digests. omitempty keeps the canonical bytes — and therefore
@@ -98,6 +105,7 @@ func marshalCanonical(r FactRecord) ([]byte, error) {
 		PipelineVersion:    r.PipelineVersion,
 		Retracted:          r.Retracted,
 		SchemaVersion:      r.SchemaVersion,
+		SumDBLookupFailed:  r.SumDBLookupFailed,
 		VerificationDetail: r.VerificationDetail,
 		VerificationStatus: r.VerificationStatus,
 		ZipSHA256:          r.ZipSHA256,
@@ -156,6 +164,7 @@ func (CanonicalHasher) Unmarshal(data []byte) (FactRecord, error) {
 		ContentLocation:    c.ContentLocation,
 		ContentHash:        c.ContentHash,
 		Retracted:          c.Retracted,
+		SumDBLookupFailed:  c.SumDBLookupFailed,
 		ZipSHA256:          c.ZipSHA256,
 		ZipSHA384:          c.ZipSHA384,
 		ZipSHA512:          c.ZipSHA512,

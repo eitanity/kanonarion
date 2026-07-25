@@ -14,6 +14,7 @@ import (
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
 	noopsigner "github.com/eitanity/kanonarion/internal/adapters/signer/noop"
 	"github.com/eitanity/kanonarion/internal/adapters/sumdb/gosum"
+	sumdbretry "github.com/eitanity/kanonarion/internal/adapters/sumdb/retrying"
 	"github.com/eitanity/kanonarion/internal/adapters/vcs/gitexec"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/fetch/application"
@@ -203,7 +204,9 @@ func runFetch(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.W
 		}
 	}()
 
-	sumdbClient := gosum.New(storeRoot + "/sumdb")
+	// Retry transient checksum-database failures before they can downgrade the
+	// module's verification status, matching the walk path's wiring.
+	sumdbClient := sumdbretry.New(gosum.New(storeRoot+"/sumdb"), logger)
 	clk := clock.System{}
 
 	uc := application.NewFetchModuleUseCase(

@@ -17,6 +17,7 @@ import (
 	noopsigner "github.com/eitanity/kanonarion/internal/adapters/signer/noop"
 	fetchsumdb "github.com/eitanity/kanonarion/internal/adapters/sumdb/gosum"
 	gosumfile "github.com/eitanity/kanonarion/internal/adapters/sumdb/gosumfile"
+	sumdbretry "github.com/eitanity/kanonarion/internal/adapters/sumdb/retrying"
 	fetchvcs "github.com/eitanity/kanonarion/internal/adapters/vcs/gitexec"
 
 	cganalyser "github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha"
@@ -230,7 +231,13 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		}
 		sumdb = gsClient
 	} else {
-		sumdb = fetchsumdb.New(filepath.Join(storeRoot, "sumdb"))
+		// A transient checksum-database failure (429/5xx, connection reset,
+		// truncated transfer) is retried with bounded backoff before it can
+		// downgrade a module's verification status. Only a failed lookup is retried;
+		// a policy answer (GOSUMDB=off, GOPRIVATE, no hash line) returns on the first
+		// attempt. In --from-modcache mode the go.sum adapter above reads a local
+		// file with no network to flake, so it is left undecorated.
+		sumdb = sumdbretry.New(fetchsumdb.New(filepath.Join(storeRoot, "sumdb")), logger)
 		dp, perr := fetchproxy.New(goproxy, false)
 		if perr != nil {
 			_ = dbHandle.Close()

@@ -47,6 +47,18 @@ type FactRecord struct {
 	GoModLocation      string    `json:"go_mod_location"`
 	ContentHash        string    `json:"content_hash"`
 	Retracted          bool      `json:"retracted"`
+
+	// SumDBLookupFailed reports that the checksum-database lookup behind this
+	// record's VerificationStatus failed rather than answering. It is what makes
+	// the record's status readable as a property of the measurement instead of a
+	// property of the module: the status may be UnverifiedNoSumDB, or
+	// VerifiedByGoSum where a local go.sum entry covered the gap, but in neither
+	// case did the transparency log get consulted successfully.
+	//
+	// Such a record is persisted so a walk completes, but it is not eligible as a
+	// cache hit — see RecordIsCacheable — so the next fetch re-verifies instead of
+	// serving a downgrade produced by a bad network moment.
+	SumDBLookupFailed bool `json:"sumdb_lookup_failed"`
 }
 
 // NewFactRecord constructs a FactRecord from a FetchedModule. ContentHash is
@@ -72,7 +84,29 @@ func NewFactRecord(m FetchedModule) FactRecord {
 		ContentLocation:    m.ContentLocation,
 		GoModLocation:      m.GoModLocation,
 		Retracted:          m.Retracted,
+		SumDBLookupFailed:  m.SumDBLookupFailed,
 	}
+}
+
+// RecordIsCacheable reports whether a record may satisfy a later fetch of the
+// same coordinate, or whether that fetch must re-verify instead.
+//
+// A record whose checksum-database lookup failed is not cacheable. Its
+// verification status describes a lookup that never answered, so serving it back
+// would make one transient failure permanent: the downgrade would be returned on
+// every subsequent run until --force, and the audit would keep reporting a
+// finding about the module that is really an artefact of a bad network moment.
+// Re-verifying costs one lookup on a run that would otherwise have skipped it,
+// and it is the only way the downgrade can ever be undone on its own.
+//
+// Every other record — including one whose sumdb answer was a settled policy
+// answer (GOSUMDB=off, GOPRIVATE, no hash line) — is cacheable exactly as before.
+//
+// It is a free function rather than a method, on the same terms as RecordDigests:
+// cache eligibility is fetch-pipeline policy, not the read-shape plumbing a
+// graduated result alias is allowed to carry, so it must not reach the public API.
+func RecordIsCacheable(r FactRecord) bool {
+	return !r.SumDBLookupFailed
 }
 
 // Coordinate returns the ModuleCoordinate this record describes.
