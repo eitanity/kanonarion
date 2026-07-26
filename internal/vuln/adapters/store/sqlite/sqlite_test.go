@@ -37,6 +37,28 @@ func snap(source, version string) domain.DatabaseSnapshot {
 	}
 }
 
+// seal stamps rec with its content hash, as every production write path does.
+// The store refuses an unsealed record, so a test that writes one is testing a
+// write that cannot happen.
+func seal(t *testing.T, rec domain.VulnerabilityRecord) domain.VulnerabilityRecord {
+	t.Helper()
+	sealed, err := domain.VulnerabilityRecordHasher{}.SetContentHash(rec)
+	if err != nil {
+		t.Fatalf("sealing record: %v", err)
+	}
+	return sealed
+}
+
+// sealRun is seal for a walk scan run.
+func sealRun(t *testing.T, run domain.WalkScanRun) domain.WalkScanRun {
+	t.Helper()
+	sealed, err := domain.WalkScanRunHasher{}.SetContentHash(run)
+	if err != nil {
+		t.Fatalf("sealing run: %v", err)
+	}
+	return sealed
+}
+
 func TestPutAndGetVulnerabilityRecord(t *testing.T) {
 	ctx := t.Context()
 	store := newTestStore(t)
@@ -61,7 +83,7 @@ func TestPutAndGetVulnerabilityRecord(t *testing.T) {
 		},
 	}
 
-	if err := store.PutVulnerabilityRecord(ctx, rec); err != nil {
+	if err := store.PutVulnerabilityRecord(ctx, seal(t, rec)); err != nil {
 		t.Fatalf("PutVulnerabilityRecord: %v", err)
 	}
 
@@ -102,7 +124,7 @@ func TestPutVulnerabilityRecord_FirstScannedAtImmutableOnReScan(t *testing.T) {
 		FirstScannedAt:   first,
 		PipelineVersion:  "v1",
 	}
-	if err := store.PutVulnerabilityRecord(ctx, rec); err != nil {
+	if err := store.PutVulnerabilityRecord(ctx, seal(t, rec)); err != nil {
 		t.Fatalf("first PutVulnerabilityRecord: %v", err)
 	}
 
@@ -113,7 +135,7 @@ func TestPutVulnerabilityRecord_FirstScannedAtImmutableOnReScan(t *testing.T) {
 	rescan.WalkID = "walk-2"
 	rescan.ScannedAt = later
 	rescan.FirstScannedAt = later
-	if err := store.PutVulnerabilityRecord(ctx, rescan); err != nil {
+	if err := store.PutVulnerabilityRecord(ctx, seal(t, rescan)); err != nil {
 		t.Fatalf("re-scan PutVulnerabilityRecord: %v", err)
 	}
 
@@ -170,7 +192,7 @@ func TestListVulnerabilityRecordsByFindingID(t *testing.T) {
 			},
 		},
 	}
-	if err := store.PutVulnerabilityRecord(ctx, rec); err != nil {
+	if err := store.PutVulnerabilityRecord(ctx, seal(t, rec)); err != nil {
 		t.Fatalf("PutVulnerabilityRecord: %v", err)
 	}
 
@@ -218,7 +240,7 @@ func TestPutAndGetWalkScanRun(t *testing.T) {
 		ContentHash:     "hash1",
 	}
 
-	if err := store.PutWalkScanRun(ctx, run); err != nil {
+	if err := store.PutWalkScanRun(ctx, sealRun(t, run)); err != nil {
 		t.Fatalf("PutWalkScanRun: %v", err)
 	}
 
@@ -253,7 +275,7 @@ func TestListWalkScanRuns(t *testing.T) {
 			PipelineVersion: "v1",
 			ContentHash:     "hash" + id,
 		}
-		if err := store.PutWalkScanRun(ctx, run); err != nil {
+		if err := store.PutWalkScanRun(ctx, sealRun(t, run)); err != nil {
 			t.Fatalf("PutWalkScanRun %s: %v", id, err)
 		}
 	}
@@ -323,7 +345,7 @@ func TestListVulnerabilityRecords(t *testing.T) {
 			ScannedAt:        time.Now().UTC().Truncate(time.Second),
 			PipelineVersion:  "v1",
 		}
-		if err := store.PutVulnerabilityRecord(ctx, rec); err != nil {
+		if err := store.PutVulnerabilityRecord(ctx, seal(t, rec)); err != nil {
 			t.Fatalf("PutVulnerabilityRecord %s: %v", path, err)
 		}
 		perModule[c] = "hash-" + path
@@ -342,7 +364,7 @@ func TestListVulnerabilityRecords(t *testing.T) {
 		PipelineVersion:  "v1",
 		ContentHash:      "hash1",
 	}
-	if err := store.PutWalkScanRun(ctx, run); err != nil {
+	if err := store.PutWalkScanRun(ctx, sealRun(t, run)); err != nil {
 		t.Fatalf("PutWalkScanRun: %v", err)
 	}
 

@@ -543,7 +543,7 @@ func cmdSeedVuln(args []string) {
 		PipelineVersion: vulnapp.PipelineVersion,
 		ContentHash:     "sha256:vulnrec",
 	}
-	if err := store.PutVulnerabilityRecord(ctx, vulnRec); err != nil {
+	if err := store.PutVulnerabilityRecord(ctx, sealVulnRecord(vulnRec)); err != nil {
 		_ = db.Close()
 		os.Exit(1)
 	}
@@ -562,7 +562,7 @@ func cmdSeedVuln(args []string) {
 		Operator:        "test",
 		ContentHash:     "sha256:run1",
 	}
-	if err := store.PutWalkScanRun(ctx, run1); err != nil {
+	if err := store.PutWalkScanRun(ctx, sealVulnRun(run1)); err != nil {
 		_ = db.Close()
 		os.Exit(1)
 	}
@@ -579,7 +579,7 @@ func cmdSeedVuln(args []string) {
 		Operator:         "test",
 		ContentHash:      "sha256:run2",
 	}
-	if err := store.PutWalkScanRun(ctx, run2); err != nil {
+	if err := store.PutWalkScanRun(ctx, sealVulnRun(run2)); err != nil {
 		_ = db.Close()
 		os.Exit(1)
 	}
@@ -648,7 +648,7 @@ func cmdSeedVulnPartial(args []string) {
 	}
 
 	for _, rec := range []vuldomain.VulnerabilityRecord{cleanRec, failedRec, unscanRec} {
-		if err := store.PutVulnerabilityRecord(ctx, rec); err != nil {
+		if err := store.PutVulnerabilityRecord(ctx, sealVulnRecord(rec)); err != nil {
 			_ = db.Close()
 			os.Exit(1)
 		}
@@ -670,7 +670,7 @@ func cmdSeedVulnPartial(args []string) {
 		Operator:        "test",
 		ContentHash:     "sha256:runpartial",
 	}
-	if err := store.PutWalkScanRun(ctx, run); err != nil {
+	if err := store.PutWalkScanRun(ctx, sealVulnRun(run)); err != nil {
 		_ = db.Close()
 		os.Exit(1)
 	}
@@ -740,7 +740,7 @@ func cmdSeedVulnForWalk(args []string) {
 		PipelineVersion: vulnapp.PipelineVersion,
 		ContentHash:     "sha256:vulnrec-app",
 	}
-	if err := store.PutVulnerabilityRecord(ctx, vulnRec); err != nil {
+	if err := store.PutVulnerabilityRecord(ctx, sealVulnRecord(vulnRec)); err != nil {
 		_ = db.Close()
 		os.Exit(1)
 	}
@@ -762,7 +762,7 @@ func cmdSeedVulnForWalk(args []string) {
 		Operator:        "test",
 		ContentHash:     "sha256:run-walkfix",
 	}
-	if err := store.PutWalkScanRun(ctx, run); err != nil {
+	if err := store.PutWalkScanRun(ctx, sealVulnRun(run)); err != nil {
 		_ = db.Close()
 		os.Exit(1)
 	}
@@ -776,4 +776,24 @@ func mustFixtureCoord(path, version string) coordinate.ModuleCoordinate {
 		panic(err)
 	}
 	return c
+}
+
+// sealVulnRecord stamps a seeded record with its content hash. The store
+// refuses an unsealed record, exactly as it does in production, so a fixture
+// that skipped this would be seeding a write that cannot happen.
+func sealVulnRecord(rec vuldomain.VulnerabilityRecord) vuldomain.VulnerabilityRecord {
+	sealed, err := vuldomain.VulnerabilityRecordHasher{}.SetContentHash(rec)
+	if err != nil {
+		panic("sealing seeded vulnerability record: " + err.Error())
+	}
+	return sealed
+}
+
+// sealVulnRun is sealVulnRecord for a walk scan run.
+func sealVulnRun(run vuldomain.WalkScanRun) vuldomain.WalkScanRun {
+	sealed, err := vuldomain.WalkScanRunHasher{}.SetContentHash(run)
+	if err != nil {
+		panic("sealing seeded walk scan run: " + err.Error())
+	}
+	return sealed
 }

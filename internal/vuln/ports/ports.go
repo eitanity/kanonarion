@@ -24,6 +24,17 @@ type AuditSink interface {
 // integrity failures.
 var ErrCallGraphNotFound = errors.New("call graph record not found")
 
+// ErrVulnIntegrity is returned by the vulnerability store's read paths when a
+// stored record's content hash does not describe its contents, and by the write
+// path when asked to persist a record whose hash does not describe what it is
+// about to store.
+//
+// A read reports it instead of absence deliberately: a detected tamper reported
+// as "nothing here" becomes a silent re-scan that overwrites the evidence of the
+// tamper. It lives here rather than in the adapter so a caller can match the
+// failure without importing the store.
+var ErrVulnIntegrity = errors.New("vulnerability record integrity check failed")
+
 // VulnerabilityStore defines the port for persisting vulnerability records.
 //
 // The zero coordinate is the one value the signatures cannot exclude: Go

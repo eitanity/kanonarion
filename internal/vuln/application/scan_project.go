@@ -230,11 +230,15 @@ func (uc *ScanWalkUseCase) persistProjectRecord(
 		PipelineVersion:   uc.pipelineVersion,
 	}
 	domain.SortFindings(rec.Findings)
-	if hash, err := uc.moduleScanner.computeContentHash(rec); err != nil {
-		uc.logger.Error("project-rooted scan: failed to compute content hash", "coordinate", coord, "error", err)
-	} else {
-		rec.ContentHash = hash
+	sealed, herr := domain.VulnerabilityRecordHasher{}.SetContentHash(rec)
+	if herr != nil {
+		// An unsealed record is one the store refuses, so there is nothing to
+		// persist: report the failure and return the unsealed verdict to the
+		// caller rather than following it with a write that cannot succeed.
+		uc.logger.Error("project-rooted scan: failed to compute content hash", "coordinate", coord, "error", herr)
+		return rec
 	}
+	rec = sealed
 	if perr := uc.vulnStore.PutVulnerabilityRecord(ctx, rec); perr != nil {
 		uc.logger.Error("project-rooted scan: failed to persist record", "coordinate", coord, "error", perr)
 	}

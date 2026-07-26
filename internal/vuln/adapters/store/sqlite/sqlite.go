@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -291,6 +290,39 @@ DELETE FROM walk_scan_runs;
 DELETE FROM walk_scan_run_modules;
 `,
 		},
+		{
+			Module:  "vuln",
+			Version: 9,
+			// Both legs of this store now verify a record's content hash, so a row
+			// carrying an empty one is a row no read can return. Such rows exist:
+			// the local-replace and worker-failure paths persisted records without
+			// hashing them at all, because nothing checked. They are Unscannable
+			// and ScanFailed verdicts with no findings, regenerable by re-scanning,
+			// so they are deleted rather than back-filled — computing a hash for
+			// them here would seal bytes this migration never read as evidence.
+			//
+			// This must land before the read-leg check goes live, or the first read
+			// of such a row starts failing. Their index entries go with them (an
+			// Unscannable record indexes no finding, so this is belt and braces).
+			// Their walk_scan_run_modules membership is deliberately left alone: a
+			// run that named a module it can no longer produce a record for is
+			// surfaced by the scan-show read as a verdict with nothing backing it,
+			// which is the honest report of what the deletion did.
+			SQL: `
+DELETE FROM vulnerability_findings_index
+WHERE EXISTS (
+    SELECT 1 FROM vulnerability_records r
+    WHERE r.content_hash = ''
+      AND r.module_path      = vulnerability_findings_index.module_path
+      AND r.module_version   = vulnerability_findings_index.module_version
+      AND r.pipeline_version = vulnerability_findings_index.pipeline_version
+      AND r.snapshot_source  = vulnerability_findings_index.snapshot_source
+      AND r.snapshot_version = vulnerability_findings_index.snapshot_version
+);
+
+DELETE FROM vulnerability_records WHERE content_hash = '';
+`,
+		},
 	}
 }
 
@@ -309,13 +341,25 @@ func (s *Store) PutVulnerabilityRecord(ctx context.Context, record domain.Vulner
 	if record.Coordinate.IsZero() {
 		return coordinate.ErrZeroCoordinate
 	}
+	// A record whose hash does not describe its contents is refused before it
+	// reaches the table: the hash is what every later read checks the record
+	// against, so storing one that is already wrong stores a row that can only
+	// ever be read as a tamper. It also catches the caller that forgot to seal —
+	// an empty hash never describes anything.
+	//
+	// FirstScannedAt is outside the hash, so the anchor substitution below does
+	// not disturb this verdict.
+	var h domain.VulnerabilityRecordHasher
+	if verr := h.VerifyContentHash(record); verr != nil {
+		return fmt.Errorf("%w: verifying %s before put: %w", ports.ErrVulnIntegrity, record.Coordinate, verr)
+	}
 	if existing, ok, err := s.firstScannedAt(ctx, record); err != nil {
 		return err
 	} else if ok {
 		record.FirstScannedAt = existing
 	}
 
-	serialised, err := json.Marshal(record)
+	serialised, err := h.Marshal(record)
 	if err != nil {
 		return fmt.Errorf("marshalling vulnerability record: %w", err)
 	}
@@ -443,9 +487,9 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 		return domain.VulnerabilityRecord{}, false, fmt.Errorf("querying vulnerability record: %w", err)
 	}
 
-	var record domain.VulnerabilityRecord
-	if err := json.Unmarshal(serialised, &record); err != nil {
-		return domain.VulnerabilityRecord{}, false, fmt.Errorf("unmarshalling vulnerability record: %w", err)
+	record, derr := decodeRecord(serialised)
+	if derr != nil {
+		return domain.VulnerabilityRecord{}, false, derr
 	}
 	return record, true, nil
 }
@@ -479,9 +523,9 @@ ORDER BY scanned_at DESC LIMIT 1`
 		return domain.VulnerabilityRecord{}, false, fmt.Errorf("querying latest vulnerability record: %w", err)
 	}
 
-	var record domain.VulnerabilityRecord
-	if err := json.Unmarshal(serialised, &record); err != nil {
-		return domain.VulnerabilityRecord{}, false, fmt.Errorf("unmarshalling vulnerability record: %w", err)
+	record, derr := decodeRecord(serialised)
+	if derr != nil {
+		return domain.VulnerabilityRecord{}, false, derr
 	}
 	return record, true, nil
 }
@@ -529,16 +573,22 @@ LIMIT 1`
 		return domain.VulnerabilityRecord{}, false, fmt.Errorf("querying vulnerability record for walk: %w", err)
 	}
 
-	var record domain.VulnerabilityRecord
-	if err := json.Unmarshal(serialised, &record); err != nil {
-		return domain.VulnerabilityRecord{}, false, fmt.Errorf("unmarshalling vulnerability record: %w", err)
+	record, derr := decodeRecord(serialised)
+	if derr != nil {
+		return domain.VulnerabilityRecord{}, false, derr
 	}
 	return record, true, nil
 }
 
 // PutWalkScanRun persists a walk scan run and its per-module membership index.
 func (s *Store) PutWalkScanRun(ctx context.Context, run domain.WalkScanRun) error {
-	serialised, err := json.Marshal(run)
+	// Same rule as PutVulnerabilityRecord: a run whose hash does not describe it
+	// is refused rather than stored as a row only a tamper report can read back.
+	var h domain.WalkScanRunHasher
+	if verr := h.VerifyContentHash(run); verr != nil {
+		return fmt.Errorf("%w: verifying run %s before put: %w", ports.ErrVulnIntegrity, run.ID, verr)
+	}
+	serialised, err := h.Marshal(run)
 	if err != nil {
 		return fmt.Errorf("marshalling walk scan run: %w", err)
 	}
@@ -624,9 +674,9 @@ func (s *Store) GetWalkScanRun(ctx context.Context, id string) (domain.WalkScanR
 		return domain.WalkScanRun{}, false, fmt.Errorf("querying walk scan run: %w", err)
 	}
 
-	var run domain.WalkScanRun
-	if err := json.Unmarshal(serialised, &run); err != nil {
-		return domain.WalkScanRun{}, false, fmt.Errorf("unmarshalling walk scan run: %w", err)
+	run, derr := decodeRun(serialised)
+	if derr != nil {
+		return domain.WalkScanRun{}, false, derr
 	}
 	return run, true, nil
 }
@@ -647,9 +697,9 @@ func (s *Store) ListWalkScanRuns(ctx context.Context, walkID string) ([]domain.W
 		if err := rows.Scan(&serialised); err != nil {
 			return nil, fmt.Errorf("scanning walk scan run: %w", err)
 		}
-		var run domain.WalkScanRun
-		if err := json.Unmarshal(serialised, &run); err != nil {
-			return nil, fmt.Errorf("unmarshalling walk scan run: %w", err)
+		run, derr := decodeRun(serialised)
+		if derr != nil {
+			return nil, derr
 		}
 		runs = append(runs, run)
 	}
@@ -675,9 +725,9 @@ func (s *Store) ListAllWalkScanRuns(ctx context.Context) ([]domain.WalkScanRun, 
 		if err := rows.Scan(&serialised); err != nil {
 			return nil, fmt.Errorf("scanning walk scan run: %w", err)
 		}
-		var run domain.WalkScanRun
-		if err := json.Unmarshal(serialised, &run); err != nil {
-			return nil, fmt.Errorf("unmarshalling walk scan run: %w", err)
+		run, derr := decodeRun(serialised)
+		if derr != nil {
+			return nil, derr
 		}
 		runs = append(runs, run)
 	}
@@ -815,9 +865,9 @@ ORDER BY vr.scanned_at DESC`
 		if err := rows.Scan(&serialised); err != nil {
 			return nil, fmt.Errorf("scanning vulnerability record: %w", err)
 		}
-		var rec domain.VulnerabilityRecord
-		if err := json.Unmarshal(serialised, &rec); err != nil {
-			return nil, fmt.Errorf("unmarshalling vulnerability record: %w", err)
+		rec, derr := decodeRecord(serialised)
+		if derr != nil {
+			return nil, derr
 		}
 		records = append(records, rec)
 	}
@@ -862,9 +912,9 @@ ORDER BY vr.module_path, vr.module_version`
 		if err := rows.Scan(&serialised); err != nil {
 			return nil, fmt.Errorf("scanning vulnerability record: %w", err)
 		}
-		var rec domain.VulnerabilityRecord
-		if err := json.Unmarshal(serialised, &rec); err != nil {
-			return nil, fmt.Errorf("unmarshalling vulnerability record: %w", err)
+		rec, derr := decodeRecord(serialised)
+		if derr != nil {
+			return nil, derr
 		}
 		records = append(records, rec)
 	}
@@ -904,9 +954,9 @@ ORDER BY scanned_at DESC`
 		if err := rows.Scan(&serialised); err != nil {
 			return nil, fmt.Errorf("scanning vulnerability record: %w", err)
 		}
-		var rec domain.VulnerabilityRecord
-		if err := json.Unmarshal(serialised, &rec); err != nil {
-			return nil, fmt.Errorf("unmarshalling vulnerability record: %w", err)
+		rec, derr := decodeRecord(serialised)
+		if derr != nil {
+			return nil, derr
 		}
 		records = append(records, rec)
 	}
@@ -914,6 +964,41 @@ ORDER BY scanned_at DESC`
 		return nil, fmt.Errorf("iterating vulnerability records for module: %w", err)
 	}
 	return records, nil
+}
+
+// decodeRecord parses a stored record and checks the seal it carries. Every
+// read path goes through it, not only the snapshot-keyed one: a guarantee that
+// holds on one query and not the next has a hole the size of the rest of the
+// query surface, and a caller reaching a record by any route is entitled to the
+// same answer about whether it still describes what was scanned.
+//
+// An integrity failure is reported as ErrVulnIntegrity, never as absence. A
+// detected tamper reported as "nothing here" becomes a silent re-scan that
+// overwrites the evidence of the tamper.
+func decodeRecord(serialised []byte) (domain.VulnerabilityRecord, error) {
+	var h domain.VulnerabilityRecordHasher
+	rec, err := h.Unmarshal(serialised)
+	if err != nil {
+		return domain.VulnerabilityRecord{}, fmt.Errorf("unmarshalling vulnerability record: %w", err)
+	}
+	if verr := h.VerifyContentHash(rec); verr != nil {
+		return domain.VulnerabilityRecord{}, fmt.Errorf("%w: %s: %w", ports.ErrVulnIntegrity, rec.Coordinate, verr)
+	}
+	return rec, nil
+}
+
+// decodeRun parses a stored walk scan run and checks its seal, on the same
+// terms as decodeRecord.
+func decodeRun(serialised []byte) (domain.WalkScanRun, error) {
+	var h domain.WalkScanRunHasher
+	run, err := h.Unmarshal(serialised)
+	if err != nil {
+		return domain.WalkScanRun{}, fmt.Errorf("unmarshalling walk scan run: %w", err)
+	}
+	if verr := h.VerifyContentHash(run); verr != nil {
+		return domain.WalkScanRun{}, fmt.Errorf("%w: run %s: %w", ports.ErrVulnIntegrity, run.ID, verr)
+	}
+	return run, nil
 }
 
 // InternalDB returns the underlying sqlitestore.DB for testing/wiring.

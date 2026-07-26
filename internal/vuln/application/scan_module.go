@@ -2,15 +2,11 @@ package application
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"strings"
-	"time"
 
 	"golang.org/x/mod/modfile"
 
@@ -336,7 +332,7 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 	// 3.5 Metadata-based Filtering (Optimization)
 	// Check if this module or any of its dependencies have known vulnerabilities.
 	if !params.Force {
-		isVulnerable, err := uc.checkVulnerabilities(ctx, params.Coordinate, fact, params.WalkID)
+		isVulnerable, err := uc.checkVulnerabilities(ctx, params.Coordinate, params.WalkID)
 		switch {
 		case err == nil && !isVulnerable:
 			uc.logger.Info("metadata check: no known vulnerabilities in module or dependencies, skipping heavy scan", "coordinate", params.Coordinate)
@@ -353,15 +349,14 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 				PipelineVersion:  uc.pipelineVersion,
 			}
 			derived.stamp(&record)
-			hash, err := uc.computeContentHash(record)
-			if err != nil {
-				return domain.VulnerabilityRecord{}, fmt.Errorf("hashing clean record: %w", err)
+			sealed, herr := domain.VulnerabilityRecordHasher{}.SetContentHash(record)
+			if herr != nil {
+				return domain.VulnerabilityRecord{}, fmt.Errorf("hashing clean record: %w", herr)
 			}
-			record.ContentHash = hash
-			if err := uc.vulnStore.PutVulnerabilityRecord(ctx, record); err != nil {
-				return domain.VulnerabilityRecord{}, fmt.Errorf("persisting clean record: %w", err)
+			if perr := uc.vulnStore.PutVulnerabilityRecord(ctx, sealed); perr != nil {
+				return domain.VulnerabilityRecord{}, fmt.Errorf("persisting clean record: %w", perr)
 			}
-			return record, nil
+			return sealed, nil
 		case err != nil:
 			uc.logger.Warn("metadata check failed, proceeding with full scan", "error", err)
 		case isVulnerable:
@@ -457,11 +452,10 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 	}
 
 	// 7. Deterministic Identity (T5: Hash-based Identity)
-	hash, err := uc.computeContentHash(record)
+	record, err = domain.VulnerabilityRecordHasher{}.SetContentHash(record)
 	if err != nil {
 		return domain.VulnerabilityRecord{}, fmt.Errorf("hashing vulnerability record: %w", err)
 	}
-	record.ContentHash = hash
 
 	// 8. Durability (T6: Aggregate Persistence)
 	if err := uc.vulnStore.PutVulnerabilityRecord(ctx, record); err != nil {
@@ -498,16 +492,14 @@ func (uc *ScanModuleUseCase) tryReuseCachedRecord(ctx context.Context, params Sc
 	// user actually invoked: re-stamp the walk reference and scan time so a later
 	// query reflects this run, never the unrelated earlier walk that first
 	// produced the record. The analysis result is unchanged; only walk_id and
-	// scanned_at move forward. ContentHash is cleared before recompute so it is
-	// hashed over an empty hash field, matching how fresh records are hashed.
+	// scanned_at move forward. The hasher hashes over an empty hash field, so
+	// the re-stamped record is sealed exactly as a fresh one is.
 	rec.WalkID = params.WalkID
 	rec.ScannedAt = uc.clock.Now()
-	rec.ContentHash = ""
-	hash, err := uc.computeContentHash(rec)
+	rec, err = domain.VulnerabilityRecordHasher{}.SetContentHash(rec)
 	if err != nil {
 		return domain.VulnerabilityRecord{}, false, fmt.Errorf("hashing reused vulnerability record: %w", err)
 	}
-	rec.ContentHash = hash
 	if perr := uc.vulnStore.PutVulnerabilityRecord(ctx, rec); perr != nil {
 		return domain.VulnerabilityRecord{}, false, fmt.Errorf("re-attributing reused vulnerability record: %w", perr)
 	}
@@ -878,30 +870,14 @@ func (uc *ScanModuleUseCase) scanMetadataOnly(ctx context.Context, params ScanMo
 	// Empty when the module was never fetched: a coordinate matched against the
 	// advisory database read no artefact, and must not claim to have read one.
 	derived.stamp(&record)
-	hash, err := uc.computeContentHash(record)
+	record, err = domain.VulnerabilityRecordHasher{}.SetContentHash(record)
 	if err != nil {
 		return domain.VulnerabilityRecord{}, fmt.Errorf("hashing metadata-only record: %w", err)
 	}
-	record.ContentHash = hash
 	if perr := uc.vulnStore.PutVulnerabilityRecord(ctx, record); perr != nil {
 		return domain.VulnerabilityRecord{}, fmt.Errorf("persisting metadata-only record: %w", perr)
 	}
 	return record, nil
-}
-
-func (uc *ScanModuleUseCase) computeContentHash(r domain.VulnerabilityRecord) (string, error) {
-	// FirstScannedAt is first-seen provenance, not part of the verdict, so it is
-	// excluded from the canonical hash: a reused record whose ScannedAt advances
-	// must not change identity on account of an anchor that never moves. r is a
-	// value copy, so zeroing it here does not affect the persisted record.
-	r.FirstScannedAt = time.Time{}
-	// Canonical JSON hashing
-	data, err := json.Marshal(r)
-	if err != nil {
-		return "", fmt.Errorf("marshalling vulnerability record for content hash: %w", err)
-	}
-	hash := sha256.Sum256(data)
-	return hex.EncodeToString(hash[:]), nil
 }
 
 // applyReachability runs reachability analysis for each finding that has
@@ -1020,7 +996,7 @@ func buildSymbolRefs(module string, affectedSymbols []string) []ports.SymbolRefe
 	return refs
 }
 
-func (uc *ScanModuleUseCase) checkVulnerabilities(ctx context.Context, coord coordinate.ModuleCoordinate, fact fetchdomain.FactRecord, walkID string) (bool, error) {
+func (uc *ScanModuleUseCase) checkVulnerabilities(ctx context.Context, coord coordinate.ModuleCoordinate, walkID string) (bool, error) {
 	// If walkID is empty, we can't look up dependencies in a walk graph.
 	// This might happen during direct module scans outside a walk context.
 	if walkID == "" || uc.walkStore == nil {

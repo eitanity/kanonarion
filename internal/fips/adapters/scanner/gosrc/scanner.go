@@ -60,7 +60,10 @@ func (s *Scanner) ScanProject(goModPath string) (domain.ParseResult, error) {
 	// present is honest: it is the only signal we have, and stock Go
 	// never carries a FIPS variant string so the assessment cleanly
 	// reads "not capable" rather than fabricating a verdict.
-	toolchain := readBuildInfoGoVersion(filepath.Join(root, "buildinfo.txt"))
+	toolchain, err := readBuildInfoGoVersion(filepath.Join(root, "buildinfo.txt"))
+	if err != nil {
+		return domain.ParseResult{}, err
+	}
 	if toolchain == "" {
 		if mf.Toolchain != nil {
 			toolchain = mf.Toolchain.Name
@@ -129,20 +132,29 @@ func (s *Scanner) ScanProject(goModPath string) (domain.ParseResult, error) {
 // `go version -m`-style sidecar. Returns "" when the file is absent or the
 // header is missing — both are honest signals that the scanner record will
 // carry, never silently substituted.
-func readBuildInfoGoVersion(path string) string {
+//
+// A sidecar that exists but cannot be read through is a different thing, and
+// is returned as an error rather than as "": the caller falls back to go.mod's
+// directive when the answer is "", and stock Go never carries a FIPS variant
+// string, so a truncated read of a sidecar that did name one would silently
+// downgrade the assessment to "not capable".
+func readBuildInfoGoVersion(path string) (string, error) {
 	f, err := os.Open(filepath.Clean(path)) //nolint:gosec // sidecar path is derived from the scan root
 	if err != nil {
-		return ""
+		return "", nil
 	}
 	defer func() { _ = f.Close() }()
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		if rest, ok := strings.CutPrefix(line, "GoVersion:"); ok {
-			return strings.TrimSpace(rest)
+			return strings.TrimSpace(rest), nil
 		}
 	}
-	return ""
+	if err := sc.Err(); err != nil {
+		return "", fmt.Errorf("reading buildinfo sidecar %q: %w", path, err)
+	}
+	return "", nil
 }
 
 // skipDir mirrors the godebug scanner's rules: nested modules (own go.mod),

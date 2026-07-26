@@ -2,9 +2,6 @@ package application
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"fmt"
 	"io"
 	"log/slog"
@@ -301,11 +298,10 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	}
 
 	// 6. Hash & Persist
-	hash, err := uc.computeContentHash(run)
+	run, err = domain.WalkScanRunHasher{}.SetContentHash(run)
 	if err != nil {
 		return domain.WalkScanRun{}, fmt.Errorf("hashing walk scan run: %w", err)
 	}
-	run.ContentHash = hash
 	if err := uc.vulnStore.PutWalkScanRun(ctx, run); err != nil {
 		return domain.WalkScanRun{}, fmt.Errorf("persisting walk scan run: %w", err)
 	}
@@ -412,10 +408,10 @@ func (uc *ScanWalkUseCase) tallyModuleResults(
 				ScannedAt:        uc.clock.Now(),
 				PipelineVersion:  uc.pipelineVersion,
 			}
-			if perr := uc.vulnStore.PutVulnerabilityRecord(ctx, failedRecord); perr != nil {
-				uc.logger.Error("failed to persist ScanFailed record", "module", r.coord, "error", perr)
-			} else {
-				run.PerModuleResults[r.coord] = ""
+			var stored bool
+			failedRecord, stored = uc.persistSealed(ctx, failedRecord, "ScanFailed")
+			if stored {
+				run.PerModuleResults[r.coord] = failedRecord.ContentHash
 			}
 			if params.Progress != nil {
 				params.Progress(r.coord, failedRecord, *progressCount, total)
@@ -544,10 +540,10 @@ func (uc *ScanWalkUseCase) recordLocalReplaceUnscannable(
 			ScannedAt:         uc.clock.Now(),
 			PipelineVersion:   uc.pipelineVersion,
 		}
-		if perr := uc.vulnStore.PutVulnerabilityRecord(ctx, rec); perr != nil {
-			uc.logger.Error("failed to persist local-replace Unscannable record", "module", node.Coordinate, "error", perr)
-		} else {
-			run.PerModuleResults[node.Coordinate] = ""
+		var stored bool
+		rec, stored = uc.persistSealed(ctx, rec, "local-replace Unscannable")
+		if stored {
+			run.PerModuleResults[node.Coordinate] = rec.ContentHash
 		}
 		if params.Progress != nil {
 			params.Progress(node.Coordinate, rec, *progressCount, total)
@@ -1001,22 +997,35 @@ func (uc *ScanWalkUseCase) preExtractVulnDB(ctx context.Context, snapshot *domai
 	return dbDir, cleanup
 }
 
-func (uc *ScanWalkUseCase) computeContentHash(r domain.WalkScanRun) (string, error) {
-	data, err := walkScanRunMarshal(r)
-	if err != nil {
-		return "", fmt.Errorf("marshalling walk scan run for content hash: %w", err)
+// persistSealed seals rec with its content hash and persists it, returning the
+// record that was stored. stored is false when the record could not be sealed
+// or written: the walk continues, because one module's bookkeeping failure must
+// not abort a run that has already produced verdicts for the rest, but the
+// caller must not then claim a stored verdict for that module.
+//
+// Both callers are paths that report an outcome of the run rather than a
+// reading of an artefact — a worker that failed before reaching a verdict, and
+// a local-replace node that is unscannable by construction. They seal all the
+// same: the store refuses an unsealed record, and a record nothing can check is
+// exactly the record a tamper would choose.
+func (uc *ScanWalkUseCase) persistSealed(
+	ctx context.Context,
+	rec domain.VulnerabilityRecord,
+	kind string,
+) (domain.VulnerabilityRecord, bool) {
+	sealed, herr := domain.VulnerabilityRecordHasher{}.SetContentHash(rec)
+	if herr != nil {
+		uc.logger.Error("failed to hash vulnerability record",
+			"kind", kind, "module", rec.Coordinate, "error", herr)
+		return rec, false
 	}
-	hash := sha256.Sum256(data)
-	return hex.EncodeToString(hash[:]), nil
+	if perr := uc.vulnStore.PutVulnerabilityRecord(ctx, sealed); perr != nil {
+		uc.logger.Error("failed to persist vulnerability record",
+			"kind", kind, "module", sealed.Coordinate, "error", perr)
+		return sealed, false
+	}
+	return sealed, true
 }
-
-// walkScanRunMarshal is a seam over json.Marshal used to test the
-// marshal-failure guard's wrapping and propagation logic. No field in
-// WalkScanRun can currently make json.Marshal fail (no NaN/Inf floats, no
-// unsupported types), so this proves the guard's error handling is correct,
-// not that the guard is reachable with a real value today — it exists for
-// the never-silent-failure invariant, not a known failure mode.
-var walkScanRunMarshal = json.Marshal
 
 // prepareModCache resolves the GOMODCACHE the scan's govulncheck runs against
 // and returns it with a release function the caller must defer. An empty

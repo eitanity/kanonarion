@@ -508,7 +508,91 @@ func TestScanWalk_LocalReplaceUnscannable(t *testing.T) {
 
 	// The PerModuleResults map of the run must include the local-replace
 	// coordinate so consumers (sbom, audit) iterate every walked node.
-	if _, ok := run.PerModuleResults[localDep]; !ok {
+	hash, ok := run.PerModuleResults[localDep]
+	if !ok {
 		t.Errorf("PerModuleResults missing %s; the local-replace node was silently dropped", localDep)
+	}
+
+	// This path used to persist a record with no content hash at all, which no
+	// store leg could check. It seals like every other write path now, and the
+	// run's per-module map records that hash rather than an empty string.
+	if verr := (domain.VulnerabilityRecordHasher{}).VerifyContentHash(rec); verr != nil {
+		t.Errorf("the local-replace record does not verify: %v", verr)
+	}
+	if hash != rec.ContentHash {
+		t.Errorf("PerModuleResults[%s] = %q, want the record's content hash %q", localDep, hash, rec.ContentHash)
+	}
+}
+
+// TestScanWalk_WorkerFailureRecordIsSealed covers the second write path that
+// used to persist a record with no content hash: a worker that failed before
+// reaching a verdict still records a ScanFailed verdict, and a verdict nothing
+// can check is exactly the record a tamper would choose. The store refuses an
+// unsealed record, so this also proves the failure record still reaches it.
+func TestScanWalk_WorkerFailureRecordIsSealed(t *testing.T) {
+	ctx := t.Context()
+	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	walkID := "walk-workerfail"
+
+	target := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
+	dep := coordinatetest.MustNew("example.com/dep", "v1.0.0")
+
+	walkStore := newFakeWalkStore()
+	if err := walkStore.PutWalk(ctx, walkdomain.WalkRecord{
+		ID: walkID,
+		Graph: walkdomain.Graph{Nodes: []walkdomain.GraphNode{
+			{Coordinate: target}, {Coordinate: dep},
+		}},
+	}); err != nil {
+		t.Fatalf("PutWalk: %v", err)
+	}
+
+	facts := newFakeFacts()
+	blobs := newFakeBlob()
+	vulnStore := newFakeVulnStore()
+	for _, c := range []coordinate.ModuleCoordinate{target, dep} {
+		seedRec := fetchtest.Record(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip"))
+		_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip"))
+		if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip"))); err != nil {
+			t.Fatalf("PutFetchRecord: %v", err)
+		}
+	}
+
+	// Every module scan fails, so every module takes the worker-failure path.
+	scanner := &fakeScanner{err: errors.New("scanner exploded")}
+	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1"}}
+	clock := fixedClock{t: now}
+
+	moduleUC := application.NewScanModuleUseCase(
+		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+	)
+	walkUC := application.NewScanWalkUseCase(
+		walkStore, vulnStore, moduleUC, nil, clock, "v1", slog.Default(),
+	)
+
+	// Force skips the metadata fast path, so every module reaches the scanner
+	// and takes the failure branch.
+	run, err := walkUC.Scan(ctx, application.ScanWalkParams{WalkID: walkID, Force: true})
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+
+	for _, c := range []coordinate.ModuleCoordinate{target, dep} {
+		rec, found, gerr := vulnStore.GetLatestVulnerabilityRecordForWalk(ctx, c, "v1", walkID)
+		if gerr != nil || !found {
+			t.Fatalf("no record persisted for failed module %s (found=%t err=%v)", c, found, gerr)
+		}
+		if rec.OverallStatus != domain.StatusScanFailed {
+			t.Errorf("OverallStatus for %s = %s, want ScanFailed", c, rec.OverallStatus)
+		}
+		if rec.ContentHash == "" {
+			t.Errorf("the failure record for %s carries no content hash", c)
+		}
+		if verr := (domain.VulnerabilityRecordHasher{}).VerifyContentHash(rec); verr != nil {
+			t.Errorf("the failure record for %s does not verify: %v", c, verr)
+		}
+		if got := run.PerModuleResults[c]; got != rec.ContentHash {
+			t.Errorf("PerModuleResults[%s] = %q, want the record's content hash %q", c, got, rec.ContentHash)
+		}
 	}
 }

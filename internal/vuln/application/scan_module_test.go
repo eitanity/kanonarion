@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math"
 	"strings"
 	"testing"
 	"time"
@@ -157,59 +156,6 @@ func TestScanModule_ReuseReattributesToCurrentRun(t *testing.T) {
 	}
 	if persisted.Reused {
 		t.Error("Reused is call-scoped and must never be persisted")
-	}
-}
-
-func TestScanModule_ContentHashExcludesFirstScannedAt(t *testing.T) {
-	uc := application.NewScanModuleUseCase(
-		nil, nil, nil, nil, nil, nil, nil, fixedClock{}, "v1", "v1", slog.Default(),
-	)
-	base := domain.VulnerabilityRecord{
-		Ecosystem:        fetchdomain.EcosystemGo,
-		Coordinate:       coordinatetest.MustNew("github.com/foo/bar", "v1.0.0"),
-		WalkID:           "walk-1",
-		OverallStatus:    domain.StatusClean,
-		DatabaseSnapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1"},
-		ScannedAt:        time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
-		PipelineVersion:  "v1",
-	}
-	withAnchor := base
-	withAnchor.FirstScannedAt = time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC)
-	movedAnchor := base
-	movedAnchor.FirstScannedAt = time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
-
-	// The first-seen anchor is provenance, not verdict: records that differ only
-	// in FirstScannedAt must hash identically so reuse re-attribution keeps a
-	// stable identity.
-	h1, err := uc.ComputeContentHash(withAnchor)
-	if err != nil {
-		t.Fatalf("ComputeContentHash(withAnchor): %v", err)
-	}
-	h2, err := uc.ComputeContentHash(movedAnchor)
-	if err != nil {
-		t.Fatalf("ComputeContentHash(movedAnchor): %v", err)
-	}
-	if h1 != h2 {
-		t.Errorf("content hash changed with FirstScannedAt: %s vs %s", h1, h2)
-	}
-}
-
-// TestComputeContentHash_MarshalFailure exercises the marshal-failure guard
-// with a genuinely unmarshalable value — encoding/json rejects NaN/Inf floats
-// — rather than an injected fake, so it proves the guard is actually
-// reachable in production (a finding's CVSS Severity.Score is a plain
-// float64), not just that the wrapping code is well-formed.
-func TestComputeContentHash_MarshalFailure(t *testing.T) {
-	uc := application.NewScanModuleUseCase(
-		nil, nil, nil, nil, nil, nil, nil, fixedClock{}, "v1", "v1", slog.Default(),
-	)
-	rec := domain.VulnerabilityRecord{
-		Findings: []domain.VulnerabilityFinding{
-			{ID: "GO-2024-0001", Severity: &domain.Severity{Score: math.NaN()}},
-		},
-	}
-	if _, err := uc.ComputeContentHash(rec); err == nil {
-		t.Fatal("ComputeContentHash() error = nil, want a marshal error for a NaN severity score")
 	}
 }
 

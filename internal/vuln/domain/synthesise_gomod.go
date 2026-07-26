@@ -38,14 +38,22 @@ import (
 // hold fails a module that never referenced it.
 func SynthesiseGoMod(coord coordinate.ModuleCoordinate, goVersion string, imports []string, buildList map[coordinate.ModuleCoordinate]struct{}) string {
 	var b strings.Builder
-	b.WriteString("module " + coord.Path() + "\n")
+	b.WriteString("module ")
+	b.WriteString(coord.Path())
+	b.WriteString("\n")
 	if v := strings.TrimPrefix(strings.TrimSpace(goVersion), "go"); v != "" {
-		b.WriteString("\ngo " + v + "\n")
+		b.WriteString("\ngo ")
+		b.WriteString(v)
+		b.WriteString("\n")
 	}
 	if reqs := goModRequires(coord, imports, buildList); len(reqs) > 0 {
 		b.WriteString("\nrequire (\n")
 		for _, r := range reqs {
-			b.WriteString("\t" + r.Path() + " " + r.Version() + "\n")
+			b.WriteString("\t")
+			b.WriteString(r.Path())
+			b.WriteString(" ")
+			b.WriteString(r.Version())
+			b.WriteString("\n")
 		}
 		b.WriteString(")\n")
 	}
