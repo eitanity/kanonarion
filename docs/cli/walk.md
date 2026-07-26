@@ -22,7 +22,8 @@ Each module in the closure is fetched and verified (the same checks as
 `kanonarion fetch`); `walk` therefore implicitly fetches what it resolves.
 
 A **depth policy** (`.kanonarion/policy.yaml`, searched upward from the cwd, or
-`--policy`) controls how deep the closure is resolved per module.
+`--policy`) controls how deep the closure is resolved per module, and which VCS
+forges the fetch stage may cross-verify against.
 
 ## Commands
 
@@ -347,6 +348,25 @@ only on completion.
 With `--allow-partial`, a `partial` walk still exits `0`; otherwise it exits
 non-zero. A failed-target walk is still persisted and is readable via
 `walk-show` / `walk-list`.
+
+## Trusted VCS forges
+
+Every module in the closure is cross-verified by cloning its repository, so the
+hosts that may be handed to `git` are an allowlist. By default it is the
+built-in set (`bitbucket.org`, `codeberg.org`, `github.com`, `gitlab.com`,
+`go.googlesource.com`, `gopkg.in`); a module hosted elsewhere degrades to
+checksum-database verification and records why.
+
+The fetch stage's `allowed_vcs_hosts` policy field replaces that set for the
+walk - widening it to trust an extra forge without a rebuild, or narrowing it so
+the forges kanonarion claims to verify match the egress the runner can reach.
+The resolved set is recorded in the walk record's stage depths, so a walk says
+which forges it was willing to clone from. Omitting the field leaves the
+built-in set in force; an empty list is a load error. See
+[`policy` › Trusted VCS forges](policy.md#trusted-vcs-forges-allowed_vcs_hosts).
+
+`--skip-vcs-verify` remains the way to turn the git leg off entirely; the
+allowlist governs which forges are trusted, not whether verification runs.
 
 ## Local `go.sum` verification (project walks)
 

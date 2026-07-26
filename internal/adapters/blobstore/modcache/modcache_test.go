@@ -13,6 +13,7 @@ import (
 
 	localfs "github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
 
+	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
@@ -25,156 +26,186 @@ func newCoord(t *testing.T, path, version string) coordinate.ModuleCoordinate {
 	return c
 }
 
+func identity(kind ports.BlobKind, value string) ports.BlobIdentity {
+	return ports.BlobIdentity{Kind: kind, Hash: fetchdomain.ModuleHash{Algorithm: "h1", Value: value}}
+}
+
 // seedCacheEntry writes bytes to the module-cache path for coord + ext, mirroring
 // the on-disk layout `go mod download` produces.
-func seedCacheEntry(t *testing.T, dir string, coord coordinate.ModuleCoordinate, ext string, content []byte) {
+func seedCacheEntry(t *testing.T, dir string, coord coordinate.ModuleCoordinate, ext string, content []byte) string {
 	t.Helper()
-	base := filepath.Join(dir, "cache", "download", filepath.FromSlash(coord.Path), "@v")
-	if err := os.MkdirAll(base, 0o750); err != nil {
-		t.Fatalf("mkdir cache: %v", err)
-	}
-	if err := os.WriteFile(filepath.Join(base, coord.Version+ext), content, 0o600); err != nil {
-		t.Fatalf("writing cache entry: %v", err)
-	}
-}
-
-func TestHandleDerivation(t *testing.T) {
-	coord := newCoord(t, "github.com/example/mod", "v1.2.3")
-	zh, err := ZipHandle(coord)
-	if err != nil {
-		t.Fatalf("ZipHandle: %v", err)
-	}
-	if want := ports.BlobHandle("modcache:zip:github.com/example/mod@v1.2.3"); zh != want {
-		t.Errorf("ZipHandle = %q, want %q", zh, want)
-	}
-	mh, err := GoModHandle(coord)
-	if err != nil {
-		t.Fatalf("GoModHandle: %v", err)
-	}
-	if want := ports.BlobHandle("modcache:mod:github.com/example/mod@v1.2.3"); mh != want {
-		t.Errorf("GoModHandle = %q, want %q", mh, want)
-	}
-}
-
-func TestHandleDerivation_EscapesUppercase(t *testing.T) {
-	coord := newCoord(t, "github.com/Example/Mod", "v1.0.0")
-	zh, err := ZipHandle(coord)
-	if err != nil {
-		t.Fatalf("ZipHandle: %v", err)
-	}
-	if !strings.Contains(string(zh), "!example/!mod") {
-		t.Errorf("ZipHandle = %q, want escaped uppercase (!example/!mod)", zh)
-	}
-}
-
-func TestGet_ModcacheHandleReadsFile(t *testing.T) {
-	dir := t.TempDir()
-	coord := newCoord(t, "github.com/example/mod", "v1.2.3")
-	seedCacheEntry(t, dir, coord, ".zip", []byte("zip-content"))
-	seedCacheEntry(t, dir, coord, ".mod", []byte("module github.com/example/mod\n"))
-
 	store := New(dir, localfs.New(t.TempDir()))
-
-	zh, _ := ZipHandle(coord)
-	rc, err := store.Get(context.Background(), zh)
+	path, err := store.CachePath(coord, ext)
 	if err != nil {
-		t.Fatalf("Get(zip): %v", err)
+		t.Fatalf("CachePath: %v", err)
+	}
+	if err := os.MkdirAll(filepath.Dir(path), 0o750); err != nil {
+		t.Fatalf("MkdirAll: %v", err)
+	}
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	return path
+}
+
+// The cache path is derived from the coordinate with the module-escaping rules
+// the Go toolchain uses, so an uppercase path resolves to the !-escaped
+// directory the toolchain actually wrote.
+func TestCachePath_EscapesUppercase(t *testing.T) {
+	dir := t.TempDir()
+	store := New(dir, localfs.New(t.TempDir()))
+	coord := newCoord(t, "github.com/BurntSushi/toml", "v1.2.0")
+
+	path, err := store.CachePath(coord, ZipExtension)
+	if err != nil {
+		t.Fatalf("CachePath: %v", err)
+	}
+	if !strings.Contains(path, "!burnt!sushi") {
+		t.Errorf("CachePath = %q, want the !-escaped form of BurntSushi", path)
+	}
+}
+
+// The adapter's job is population: bringing bytes that already exist in the
+// module cache into the identity-addressed space. After Put, the artefact is
+// reachable by identity alone, with no trace of the cache layout it came from.
+func TestPut_PopulatesIdentityAddressedSpace(t *testing.T) {
+	cacheDir := t.TempDir()
+	store := New(cacheDir, localfs.New(t.TempDir()))
+	ctx := context.Background()
+	coord := newCoord(t, "example.com/mod", "v1.0.0")
+	seedCacheEntry(t, cacheDir, coord, ZipExtension, []byte("zip bytes"))
+
+	f, err := store.OpenZip(coord)
+	if err != nil {
+		t.Fatalf("OpenZip: %v", err)
+	}
+	defer func() { _ = f.Close() }()
+
+	id := identity(ports.BlobKindZip, "mod-zip")
+	if err := store.Put(ctx, id, f); err != nil {
+		t.Fatalf("Put: %v", err)
+	}
+
+	exists, err := store.Exists(ctx, id)
+	if err != nil {
+		t.Fatalf("Exists: %v", err)
+	}
+	if !exists {
+		t.Fatal("artefact should be reachable by identity after Put")
+	}
+
+	rc, err := store.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("Get: %v", err)
 	}
 	defer func() { _ = rc.Close() }()
-	got, _ := io.ReadAll(rc)
-	if string(got) != "zip-content" {
-		t.Errorf("zip content = %q, want zip-content", got)
-	}
-
-	mh, _ := GoModHandle(coord)
-	rc2, err := store.Get(context.Background(), mh)
+	got, err := io.ReadAll(rc)
 	if err != nil {
-		t.Fatalf("Get(mod): %v", err)
+		t.Fatalf("ReadAll: %v", err)
 	}
-	defer func() { _ = rc2.Close() }()
-	got2, _ := io.ReadAll(rc2)
-	if string(got2) != "module github.com/example/mod\n" {
-		t.Errorf("mod content = %q", got2)
+	if string(got) != "zip bytes" {
+		t.Errorf("got %q, want %q", got, "zip bytes")
 	}
 }
 
-func TestGet_MissingModcacheEntryNotFound(t *testing.T) {
+// Population is by hard link, which is what makes a module-cache-primary
+// configuration cost no disk AND survive `go clean -modcache`: the toolchain
+// unlinks its own name and the inode persists while this link holds it. A soft
+// link would dangle and the evidence would be gone.
+func TestPut_HardLinksSoTheEvidenceSurvivesCacheCleaning(t *testing.T) {
+	cacheDir := t.TempDir()
+	blobRoot := t.TempDir()
+	store := New(cacheDir, localfs.New(blobRoot))
+	ctx := context.Background()
+	coord := newCoord(t, "example.com/mod", "v1.0.0")
+	cachePath := seedCacheEntry(t, cacheDir, coord, ZipExtension, []byte("durable bytes"))
+
+	f, err := store.OpenZip(coord)
+	if err != nil {
+		t.Fatalf("OpenZip: %v", err)
+	}
+	id := identity(ports.BlobKindZip, "durable")
+	if err := store.Put(ctx, id, f); err != nil {
+		_ = f.Close()
+		t.Fatalf("Put: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("Close: %v", err)
+	}
+
+	// Simulate `go clean -modcache`: the toolchain removes its own name.
+	if err := os.Remove(cachePath); err != nil {
+		t.Fatalf("removing cache entry: %v", err)
+	}
+
+	rc, err := store.Get(ctx, id)
+	if err != nil {
+		t.Fatalf("Get after cache clean: %v; the link did not survive", err)
+	}
+	defer func() { _ = rc.Close() }()
+	got, err := io.ReadAll(rc)
+	if err != nil {
+		t.Fatalf("ReadAll: %v", err)
+	}
+	if string(got) != "durable bytes" {
+		t.Errorf("got %q, want %q", got, "durable bytes")
+	}
+}
+
+// An artefact the cache does not hold is absence, not a failure: the fetch
+// pipeline re-acquires it.
+func TestOpenZip_MissingEntryIsNotFound(t *testing.T) {
 	store := New(t.TempDir(), localfs.New(t.TempDir()))
-	zh, _ := ZipHandle(newCoord(t, "github.com/example/mod", "v1.2.3"))
-	_, err := store.Get(context.Background(), zh)
+	_, err := store.OpenZip(newCoord(t, "example.com/absent", "v1.0.0"))
 	if !errors.Is(err, ErrBlobNotFound) {
-		t.Fatalf("err = %v, want ErrBlobNotFound", err)
+		t.Errorf("OpenZip(absent): got %v, want ErrBlobNotFound", err)
 	}
 }
 
-func TestGetPathAndExists_ModcacheHandle(t *testing.T) {
-	dir := t.TempDir()
-	coord := newCoord(t, "github.com/example/mod", "v1.2.3")
-	seedCacheEntry(t, dir, coord, ".zip", []byte("z"))
-	store := New(dir, localfs.New(t.TempDir()))
-	zh, _ := ZipHandle(coord)
+// An artefact this mode never populated is simply absent — there is no separate
+// namespace for it to be looked up in. That is the whole point of removing the
+// mode-locked handles: a record written by any mode names one address, and a
+// store either holds it or does not.
+func TestGet_UnpopulatedIdentityIsAbsent(t *testing.T) {
+	store := New(t.TempDir(), localfs.New(t.TempDir()))
+	exists, err := store.Exists(context.Background(), identity(ports.BlobKindZip, "never-put"))
+	if err != nil {
+		t.Fatalf("Exists: %v", err)
+	}
+	if exists {
+		t.Error("Exists(unpopulated) = true, want false")
+	}
+}
 
-	path, err := store.GetPath(context.Background(), zh)
+// GetPath satisfies the optional path capability, which the consumers that shell
+// out to external tools rely on.
+func TestGetPath_ReturnsAMaterialisedPath(t *testing.T) {
+	cacheDir := t.TempDir()
+	store := New(cacheDir, localfs.New(t.TempDir()))
+	ctx := context.Background()
+	coord := newCoord(t, "example.com/mod", "v1.0.0")
+	seedCacheEntry(t, cacheDir, coord, GoModExtension, []byte("module example.com/mod\n"))
+
+	f, err := store.OpenGoMod(coord)
+	if err != nil {
+		t.Fatalf("OpenGoMod: %v", err)
+	}
+	id := identity(ports.BlobKindGoMod, "mod-gomod")
+	if err := store.Put(ctx, id, f); err != nil {
+		_ = f.Close()
+		t.Fatalf("Put: %v", err)
+	}
+	_ = f.Close()
+
+	path, err := store.GetPath(ctx, id)
 	if err != nil {
 		t.Fatalf("GetPath: %v", err)
 	}
-	if !strings.HasSuffix(path, filepath.Join("@v", "v1.2.3.zip")) {
-		t.Errorf("GetPath = %q, want a .../@v/v1.2.3.zip path", path)
-	}
-
-	ok, err := store.Exists(context.Background(), zh)
-	if err != nil || !ok {
-		t.Errorf("Exists = (%v, %v), want (true, nil)", ok, err)
-	}
-
-	missing, _ := ZipHandle(newCoord(t, "github.com/example/mod", "v9.9.9"))
-	ok, err = store.Exists(context.Background(), missing)
-	if err != nil || ok {
-		t.Errorf("Exists(missing) = (%v, %v), want (false, nil)", ok, err)
-	}
-}
-
-func TestDelegation_ContentAddressedHandles(t *testing.T) {
-	delegate := localfs.New(t.TempDir())
-	store := New(t.TempDir(), delegate)
-
-	// Put flows through the delegate; the returned handle is content-addressed.
-	handle, err := store.Put(context.Background(), strings.NewReader("local-module-zip"))
+	data, err := os.ReadFile(path) // #nosec G304 -- path produced by the store under test
 	if err != nil {
-		t.Fatalf("Put: %v", err)
+		t.Fatalf("reading materialised path: %v", err)
 	}
-	if strings.HasPrefix(string(handle), handlePrefix) {
-		t.Fatalf("Put returned a module-cache handle %q; want a delegate handle", handle)
-	}
-
-	rc, err := store.Get(context.Background(), handle)
-	if err != nil {
-		t.Fatalf("Get(delegate): %v", err)
-	}
-	defer func() { _ = rc.Close() }()
-	got, _ := io.ReadAll(rc)
-	if string(got) != "local-module-zip" {
-		t.Errorf("delegate content = %q", got)
-	}
-
-	ok, err := store.Exists(context.Background(), handle)
-	if err != nil || !ok {
-		t.Errorf("Exists(delegate) = (%v, %v), want (true, nil)", ok, err)
-	}
-	if _, err := store.GetPath(context.Background(), handle); err != nil {
-		t.Errorf("GetPath(delegate): %v", err)
-	}
-}
-
-func TestGet_MalformedHandle(t *testing.T) {
-	store := New(t.TempDir(), localfs.New(t.TempDir()))
-	for _, h := range []ports.BlobHandle{
-		"modcache:zip:no-at-sign",
-		"modcache:boguskind:mod@v1",
-		"modcache:onlyprefix",
-	} {
-		if _, err := store.Get(context.Background(), h); err == nil {
-			t.Errorf("Get(%q): expected error, got nil", h)
-		}
+	if string(data) != "module example.com/mod\n" {
+		t.Errorf("materialised path holds %q, want the go.mod bytes", data)
 	}
 }

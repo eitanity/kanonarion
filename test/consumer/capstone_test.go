@@ -51,14 +51,22 @@ func factKey(coord kanonarion.ModuleCoordinate, pipelineVersion string) string {
 	return coord.Path + "@" + coord.Version + "#" + pipelineVersion
 }
 
-func (s *fakePostgresFactStore) PutFetchRecord(_ context.Context, record kanonarion.FactRecord) error {
+func (s *fakePostgresFactStore) PutFetchRecord(_ context.Context, sealed kanonarion.SealedRecord) error {
+	record := sealed.Record()
 	s.rows[factKey(record.Coordinate(), record.PipelineVersion)] = record
 	return nil
 }
 
-func (s *fakePostgresFactStore) GetFetchRecord(_ context.Context, coord kanonarion.ModuleCoordinate, pipelineVersion string) (kanonarion.FactRecord, bool, error) {
+func (s *fakePostgresFactStore) GetFetchRecord(_ context.Context, coord kanonarion.ModuleCoordinate, pipelineVersion string) (kanonarion.CompositeRecord, bool, error) {
 	rec, ok := s.rows[factKey(coord, pipelineVersion)]
-	return rec, ok, nil
+	if !ok {
+		return kanonarion.CompositeRecord{}, false, nil
+	}
+	composed, err := kanonarion.ComposeFetchRecords([]kanonarion.FactRecord{rec})
+	if err != nil {
+		return kanonarion.CompositeRecord{}, false, err //nolint:wrapcheck // test fake
+	}
+	return composed, true, nil
 }
 
 // fakeS3BlobStore stands in for an S3-style object store replacing the local
@@ -68,34 +76,35 @@ func (s *fakePostgresFactStore) GetFetchRecord(_ context.Context, coord kanonari
 // the §7 reshape — GetPath was split off so an S3 backend satisfies
 // BlobStore without faking a path.
 type fakeS3BlobStore struct {
-	objects map[kanonarion.BlobHandle][]byte
+	objects map[string][]byte
 }
 
 func newFakeS3BlobStore() *fakeS3BlobStore {
-	return &fakeS3BlobStore{objects: map[kanonarion.BlobHandle][]byte{}}
+	return &fakeS3BlobStore{objects: map[string][]byte{}}
 }
 
-func (s *fakeS3BlobStore) Put(_ context.Context, content io.Reader) (kanonarion.BlobHandle, error) {
+func (s *fakeS3BlobStore) Put(_ context.Context, identity kanonarion.BlobIdentity, content io.Reader) error {
 	data, err := io.ReadAll(content)
 	if err != nil {
-		return "", fmt.Errorf("reading blob content: %w", err)
+		return fmt.Errorf("reading blob content: %w", err)
 	}
-	// A content-addressed handle, mirroring how a real object store keys blobs.
-	handle := kanonarion.BlobHandle("s3://" + kanonarion.NewContentIdentity().CanonicalDigest(data).Hex)
-	s.objects[handle] = data
-	return handle, nil
+	// The object key is the store's own business — it may derive whatever layout
+	// it likes from the identity — but the identity is what the caller addresses
+	// by and it is never chosen here.
+	s.objects[identity.String()] = data
+	return nil
 }
 
-func (s *fakeS3BlobStore) Get(_ context.Context, handle kanonarion.BlobHandle) (io.ReadCloser, error) {
-	data, ok := s.objects[handle]
+func (s *fakeS3BlobStore) Get(_ context.Context, identity kanonarion.BlobIdentity) (io.ReadCloser, error) {
+	data, ok := s.objects[identity.String()]
 	if !ok {
 		return nil, errors.New("blob not found")
 	}
 	return io.NopCloser(bytes.NewReader(data)), nil
 }
 
-func (s *fakeS3BlobStore) Exists(_ context.Context, handle kanonarion.BlobHandle) (bool, error) {
-	_, ok := s.objects[handle]
+func (s *fakeS3BlobStore) Exists(_ context.Context, identity kanonarion.BlobIdentity) (bool, error) {
+	_, ok := s.objects[identity.String()]
 	return ok, nil
 }
 
@@ -140,8 +149,12 @@ func TestConsumer_SubstitutionPortsAreImplementable(t *testing.T) {
 
 	// The S3-shaped blob store round-trips bytes through Put/Get/Exists.
 	bs := newFakeS3BlobStore()
-	handle, err := bs.Put(ctx, strings.NewReader("module-zip-bytes"))
-	if err != nil {
+	// The caller addresses the artefact by what it is; the store never chooses.
+	handle := kanonarion.BlobIdentity{
+		Kind: kanonarion.BlobKindZip,
+		Hash: kanonarion.ModuleHash{Algorithm: "h1", Value: "capstone-zip="},
+	}
+	if err := bs.Put(ctx, handle, strings.NewReader("module-zip-bytes")); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
 	present, err := bs.Exists(ctx, handle)
@@ -406,8 +419,8 @@ func TestConsumer_VerifiedFetchServeAndAirgapRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Serve: %v", err)
 	}
-	if out.Handle == "" {
-		t.Error("Serve returned an empty blob handle for a successful fetch")
+	if out.Identity.IsZero() {
+		t.Error("Serve returned no artefact identity for a successful fetch")
 	}
 	// A gating proxy makes its own decision off the recorded status; here we only
 	// assert the strongest assurances the public path can yield for a sumdb-listed
@@ -440,7 +453,7 @@ func TestConsumer_VerifiedFetchServeAndAirgapRoundTrip(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = cleanupC() })
 
-	if err := consumer.ValidateIngest.Ingest(ctx, rec); err != nil {
+	if err := consumer.ValidateIngest.Ingest(ctx, rec.FactRecord); err != nil {
 		t.Fatalf("Ingest of a valid fetched record: %v", err)
 	}
 	got, found, err := consumer.ValidateIngest.ReadVerified(ctx, rec.Coordinate(), rec.PipelineVersion)
@@ -452,7 +465,7 @@ func TestConsumer_VerifiedFetchServeAndAirgapRoundTrip(t *testing.T) {
 	}
 
 	// A tampered copy is rejected fail-closed on import (§1,3).
-	tampered := rec
+	tampered := rec.FactRecord
 	tampered.ModuleVersion = "v9.9.9"
 	if err := consumer.ValidateIngest.Ingest(ctx, tampered); !errors.Is(err, kanonarion.ErrVerificationFailed) {
 		t.Errorf("Ingest of a tampered record: got %v, want ErrVerificationFailed", err)

@@ -11,6 +11,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	"github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	"github.com/eitanity/kanonarion/internal/license/application"
 	domain2 "github.com/eitanity/kanonarion/internal/license/domain"
 	"github.com/eitanity/kanonarion/internal/license/ports"
@@ -29,20 +30,26 @@ func TestExecute_FindsFactRecordUnderLocalIngestPipelineVersion(t *testing.T) {
 	zipData := buildModuleZip(t, coord, map[string]string{
 		"LICENSE": "MIT License text",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
+	rec := fetchtest.Record(
+		t,
+		fetchtest.Coordinate(coord),
+		fetchtest.PipelineVersion(localPipeline),
+		fetchtest.Content("zip"),
+		fetchtest.Status(domain.LocalSource),
+	)
+	// The blob is keyed by the artefact identity the record carries, because
+	// that is how production asks the store for it.
+	if err := blobStore.Put(context.Background(), fetchtest.ZipIdentity(t, rec), bytes.NewReader(zipData)); err != nil {
+		t.Fatalf("Put blob: %v", err)
 	}
 	// The record exists ONLY under the local-ingest pipeline version.
-	if perr := factStore.PutFetchRecord(context.Background(), domain.FactRecord{
-		SchemaVersion:      "2",
-		ModulePath:         coord.Path,
-		ModuleVersion:      coord.Version,
-		PipelineVersion:    localPipeline,
-		ContentLocation:    string(handle),
-		ContentHash:        "sha256:placeholder",
-		VerificationStatus: "LocalSource",
-	}); perr != nil {
+	if perr := factStore.PutFetchRecord(context.Background(), fetchtest.Sealed(
+		t,
+		fetchtest.Coordinate(coord),
+		fetchtest.PipelineVersion(localPipeline),
+		fetchtest.Content("zip"),
+		fetchtest.Status(domain.LocalSource),
+	)); perr != nil {
 		t.Fatalf("PutFetchRecord: %v", perr)
 	}
 
@@ -83,19 +90,25 @@ func TestExecute_LocalCoordinateBypassesRecordCache(t *testing.T) {
 	zipData := buildModuleZip(t, coord, map[string]string{
 		"LICENSE": "MIT License text",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
+	rec := fetchtest.Record(
+		t,
+		fetchtest.Coordinate(coord),
+		fetchtest.PipelineVersion(localPipeline),
+		fetchtest.Content("zip"),
+		fetchtest.Status(domain.LocalSource),
+	)
+	// The blob is keyed by the artefact identity the record carries, because
+	// that is how production asks the store for it.
+	if err := blobStore.Put(context.Background(), fetchtest.ZipIdentity(t, rec), bytes.NewReader(zipData)); err != nil {
+		t.Fatalf("Put blob: %v", err)
 	}
-	if perr := factStore.PutFetchRecord(context.Background(), domain.FactRecord{
-		SchemaVersion:      "2",
-		ModulePath:         coord.Path,
-		ModuleVersion:      coord.Version,
-		PipelineVersion:    localPipeline,
-		ContentLocation:    string(handle),
-		ContentHash:        "sha256:placeholder",
-		VerificationStatus: "LocalSource",
-	}); perr != nil {
+	if perr := factStore.PutFetchRecord(context.Background(), fetchtest.Sealed(
+		t,
+		fetchtest.Coordinate(coord),
+		fetchtest.PipelineVersion(localPipeline),
+		fetchtest.Content("zip"),
+		fetchtest.Status(domain.LocalSource),
+	)); perr != nil {
 		t.Fatalf("PutFetchRecord: %v", perr)
 	}
 
@@ -110,7 +123,7 @@ func TestExecute_LocalCoordinateBypassesRecordCache(t *testing.T) {
 		PipelineVersion: application.PipelineVersion,
 	}
 	var h domain2.LicenseRecordHasher
-	stale, err = h.SetContentHash(stale)
+	stale, err := h.SetContentHash(stale)
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
 	}

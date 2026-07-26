@@ -95,8 +95,10 @@ Walk ID:  01KTXYAHXB5S7JA9KFKC06NSPF
 To get module context: kanonarion context --gomod ./go.mod
 ```
 
-How to read it: `Status` is the vulnerability roll-up
-(`AllClean` / `Affected`), `Affected` is how many modules have findings,
+How to read it: `Status` is the coverage roll-up
+(`AllClean` / `Affected` / `Partial` / `ScanFailed`) and `Affected` is how many
+modules have findings — two independent facts, so a run left `Partial` by an
+unscannable module still reports its real `Affected` count rather than hiding it.
 `Snapshot` dates the vulnerability database the scan used (pass `--fresh`
 to pull a current snapshot), and the walk ID is the stored dependency
 walk you can feed to `walk-show`, `sbom`, or `context --walk-id`. With
@@ -174,7 +176,7 @@ golang.org/x/mod@v0.36.0
   Interface:       9 package(s), 159 symbol(s) (Extracted)
   Call Graph:      649 nodes, 1844 edges (Extracted)
   Examples:        3 (Found)
-  Vulnerabilities: Clean [walk: AllClean]
+  Vulnerabilities: Clean
 
 Context size: ~106 tokens  (use --full for complete docs, --json for machine-readable)
 ```

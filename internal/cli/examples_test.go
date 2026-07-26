@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
@@ -115,6 +116,58 @@ func TestRunExamplesListForModule_NotFound(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "no example record") {
 		t.Errorf("expected 'no example record' in error, got: %v", err)
+	}
+}
+
+func TestRunExamplesListForModule_JSON_WithRecord(t *testing.T) {
+	uc := testfakes.NewFakeQueryExamples()
+	rec := makeExampleRecord(t)
+	rec.Examples[0].Validates = true
+	coord := makeExampleCoord(t)
+	uc.AddRecord(coord, exapp.PipelineVersion, rec)
+	var buf bytes.Buffer
+	jsonOut = true
+	defer func() { jsonOut = false }()
+	if err := runExamplesListForModule(context.Background(), "example.com/app@v1.0.0", uc, &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := buf.String()
+	var arr []map[string]any
+	if err := json.Unmarshal([]byte(out), &arr); err != nil {
+		t.Fatalf("output is not a JSON array: %v (out=%q)", err, out)
+	}
+	if len(arr) != 1 {
+		t.Fatalf("expected 1 entry, got %d: %q", len(arr), out)
+	}
+	// curated snake_case keys, matching examples-find's shape.
+	if !strings.Contains(out, `"example_name"`) || !strings.Contains(out, `"associated_symbol"`) {
+		t.Errorf("expected snake_case JSON keys, got: %q", out)
+	}
+	if strings.Contains(out, `"ExampleName"`) || strings.Contains(out, `"AssociatedSymbol"`) {
+		t.Errorf("raw PascalCase key leaked: %q", out)
+	}
+	if strings.Contains(out, "→") {
+		t.Errorf("text table leaked into JSON output: %q", out)
+	}
+}
+
+func TestRunExamplesListForModule_JSON_Empty(t *testing.T) {
+	uc := testfakes.NewFakeQueryExamples()
+	coord := makeExampleCoord(t)
+	rec := exdomain.ExampleRecord{
+		Coordinate:      coord,
+		PipelineVersion: exapp.PipelineVersion,
+		OverallStatus:   exdomain.ExampleStatusNone,
+	}
+	uc.AddRecord(coord, exapp.PipelineVersion, rec)
+	var buf bytes.Buffer
+	jsonOut = true
+	defer func() { jsonOut = false }()
+	if err := runExamplesListForModule(context.Background(), "example.com/app@v1.0.0", uc, &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got := strings.TrimSpace(buf.String()); got != "[]" {
+		t.Errorf("expected empty JSON array [], got: %q", got)
 	}
 }
 

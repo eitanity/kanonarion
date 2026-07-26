@@ -83,7 +83,7 @@ func diamondFetcher(t *testing.T) (*fakeModuleFetcher, *fakeBlobStore) {
 	t.Helper()
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 go 1.21
 require (
 	example.com/a v1.0.0
@@ -95,29 +95,29 @@ require (
 	// exercising the expansion-propagation path the per-level concurrency must
 	// keep order-stable; shared is then reached via two versions (MVS picks the
 	// higher, v1.5.0).
-	fetcher.add("example.com/a", "v1.0.0", `module example.com/a
+	fetcher.add(t, "example.com/a", "v1.0.0", `module example.com/a
 go 1.16
 require example.com/shared v1.0.0
 `, blobs)
-	fetcher.add("example.com/b", "v1.0.0", `module example.com/b
+	fetcher.add(t, "example.com/b", "v1.0.0", `module example.com/b
 go 1.16
 require example.com/shared v1.5.0
 `, blobs)
-	fetcher.add("example.com/c", "v1.0.0", `module example.com/c
+	fetcher.add(t, "example.com/c", "v1.0.0", `module example.com/c
 go 1.16
 require example.com/leaf v1.0.0
 `, blobs)
-	fetcher.add("example.com/shared", "v1.0.0", `module example.com/shared
+	fetcher.add(t, "example.com/shared", "v1.0.0", `module example.com/shared
 go 1.16
 `, blobs)
-	fetcher.add("example.com/shared", "v1.5.0", `module example.com/shared
+	fetcher.add(t, "example.com/shared", "v1.5.0", `module example.com/shared
 go 1.16
 require example.com/deep v1.0.0
 `, blobs)
-	fetcher.add("example.com/deep", "v1.0.0", `module example.com/deep
+	fetcher.add(t, "example.com/deep", "v1.0.0", `module example.com/deep
 go 1.21
 `, blobs)
-	fetcher.add("example.com/leaf", "v1.0.0", `module example.com/leaf
+	fetcher.add(t, "example.com/leaf", "v1.0.0", `module example.com/leaf
 go 1.21
 `, blobs)
 	return fetcher, blobs
@@ -181,7 +181,7 @@ func TestResolveProject_BuildListDeterministicAndConcurrent(t *testing.T) {
 		blobs := newFakeBlobStore()
 		fetcher := newFakeFetcher()
 		for _, p := range []string{"a", "b", "c", "d", "e", "f", "g", "h"} {
-			fetcher.add("example.com/"+p, "v1.0.0", "module example.com/"+p+"\ngo 1.21\n", blobs)
+			fetcher.add(t, "example.com/"+p, "v1.0.0", "module example.com/"+p+"\ngo 1.21\n", blobs)
 		}
 		return fetcher
 	}
@@ -223,7 +223,7 @@ func TestResolve_ParallelFetchOverlaps(t *testing.T) {
 	blobs := newFakeBlobStore()
 	fetcher := newFakeFetcher()
 	// target → six independent leaf deps, all discovered in the first level.
-	fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+	fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 go 1.21
 require (
 	example.com/a v1.0.0
@@ -235,7 +235,7 @@ require (
 )
 `, blobs)
 	for _, p := range []string{"a", "b", "c", "d", "e", "f"} {
-		fetcher.add("example.com/"+p, "v1.0.0", "module example.com/"+p+"\ngo 1.21\n", blobs)
+		fetcher.add(t, "example.com/"+p, "v1.0.0", "module example.com/"+p+"\ngo 1.21\n", blobs)
 	}
 
 	tracker := &concurrencyTracker{inner: fetcher, delay: 5 * time.Millisecond}
@@ -258,7 +258,7 @@ func TestResolve_WorkerLimitRespected(t *testing.T) {
 	build := func() (*fakeModuleFetcher, *fakeBlobStore) {
 		blobs := newFakeBlobStore()
 		fetcher := newFakeFetcher()
-		fetcher.add("example.com/target", "v1.0.0", `module example.com/target
+		fetcher.add(t, "example.com/target", "v1.0.0", `module example.com/target
 go 1.21
 require (
 	example.com/a v1.0.0
@@ -270,7 +270,7 @@ require (
 )
 `, blobs)
 		for _, p := range []string{"a", "b", "c", "d", "e", "f"} {
-			fetcher.add("example.com/"+p, "v1.0.0", "module example.com/"+p+"\ngo 1.21\n", blobs)
+			fetcher.add(t, "example.com/"+p, "v1.0.0", "module example.com/"+p+"\ngo 1.21\n", blobs)
 		}
 		return fetcher, blobs
 	}

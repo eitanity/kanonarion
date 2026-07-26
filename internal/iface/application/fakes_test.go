@@ -40,7 +40,8 @@ type fakeFactStore struct {
 
 type factKey struct{ path, version, pipeline string }
 
-func (s *fakeFactStore) PutFetchRecord(_ context.Context, r domain2.FactRecord) error {
+func (s *fakeFactStore) PutFetchRecord(_ context.Context, sealed domain2.SealedRecord) error {
+	r := sealed.Record()
 	if s.records == nil {
 		s.records = make(map[factKey]domain2.FactRecord)
 	}
@@ -48,64 +49,66 @@ func (s *fakeFactStore) PutFetchRecord(_ context.Context, r domain2.FactRecord) 
 	return nil
 }
 
-func (s *fakeFactStore) GetFetchRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (domain2.FactRecord, bool, error) {
+func (s *fakeFactStore) GetFetchRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (domain2.CompositeRecord, bool, error) {
 	if s.records == nil {
-		return domain2.FactRecord{}, false, nil
+		return domain2.CompositeRecord{}, false, nil
 	}
 	r, ok := s.records[factKey{coord.Path, coord.Version, pv}]
-	return r, ok, nil
+	if !ok {
+		return domain2.CompositeRecord{}, false, nil
+	}
+	c, err := domain2.Compose([]domain2.FactRecord{r})
+	if err != nil {
+		return domain2.CompositeRecord{}, false, err //nolint:wrapcheck // test fake
+	}
+	return c, true, nil
 }
 
 // fakeBlobStore holds blobs keyed by handle.
 type fakeBlobStore struct {
-	blobs map[fetchports.BlobHandle][]byte
+	blobs map[string][]byte
 }
 
-func (s *fakeBlobStore) Put(_ context.Context, r io.Reader) (fetchports.BlobHandle, error) {
+func (s *fakeBlobStore) Put(_ context.Context, identity fetchports.BlobIdentity, r io.Reader) error {
 	data, err := io.ReadAll(r)
 	if err != nil {
-		return "", fmt.Errorf("reading blob: %w", err)
+		return fmt.Errorf("reading blob: %w", err)
 	}
-	n := len(data)
-	if n > 8 {
-		n = 8
-	}
-	h := fetchports.BlobHandle("blob:" + string(data[:n]))
 	if s.blobs == nil {
-		s.blobs = make(map[fetchports.BlobHandle][]byte)
+		s.blobs = make(map[string][]byte)
 	}
-	s.blobs[h] = data
-	return h, nil
+	s.blobs[identity.String()] = data
+	return nil
 }
 
-func (s *fakeBlobStore) Get(_ context.Context, h fetchports.BlobHandle) (io.ReadCloser, error) {
+func (s *fakeBlobStore) Get(_ context.Context, identity fetchports.BlobIdentity) (io.ReadCloser, error) {
 	if s.blobs == nil {
 		return nil, errBlobNotFound
 	}
-	data, ok := s.blobs[h]
+	data, ok := s.blobs[identity.String()]
 	if !ok {
 		return nil, errBlobNotFound
 	}
 	return io.NopCloser(bytes.NewReader(data)), nil
 }
 
-func (s *fakeBlobStore) Exists(_ context.Context, h fetchports.BlobHandle) (bool, error) {
+func (s *fakeBlobStore) Exists(_ context.Context, identity fetchports.BlobIdentity) (bool, error) {
 	if s.blobs == nil {
 		return false, nil
 	}
-	_, ok := s.blobs[h]
+	_, ok := s.blobs[identity.String()]
 	return ok, nil
 }
 
-func (s *fakeBlobStore) GetPath(_ context.Context, h fetchports.BlobHandle) (string, error) {
+func (s *fakeBlobStore) GetPath(_ context.Context, identity fetchports.BlobIdentity) (string, error) {
 	if s.blobs == nil {
 		return "", errBlobNotFound
 	}
-	_, ok := s.blobs[h]
+	_, ok := s.blobs[identity.String()]
 	if !ok {
 		return "", errBlobNotFound
 	}
-	return "/fake/path/" + string(h), nil
+	return "/fake/path/" + identity.String(), nil
 }
 
 // fakeInterfaceStore holds interface records keyed by (path, version, pipeline).

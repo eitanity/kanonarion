@@ -47,6 +47,49 @@ type FactRecord struct {
 	GoModLocation      string    `json:"go_mod_location"`
 	ContentHash        string    `json:"content_hash"`
 	Retracted          bool      `json:"retracted"`
+
+	// SumDBLookupFailed reports that the checksum-database lookup behind this
+	// record's VerificationStatus failed rather than answering. It is what makes
+	// the record's status readable as a property of the measurement instead of a
+	// property of the module: the status may be UnverifiedNoSumDB, or
+	// VerifiedByGoSum where a local go.sum entry covered the gap, but in neither
+	// case did the transparency log get consulted successfully.
+	//
+	// Such a record is persisted so a walk completes, but it is not eligible as a
+	// cache hit — see RecordIsCacheable — so the next fetch re-verifies instead of
+	// serving a downgrade produced by a bad network moment.
+	SumDBLookupFailed bool `json:"sumdb_lookup_failed"`
+
+	// AcquisitionMode names the path the module's bytes arrived by — proxy,
+	// modcache, or local. It is pure provenance: which route this particular
+	// measurement took to reach the bytes. It is deliberately not a hint about
+	// where the bytes can be found again — a blob store is addressed by artefact
+	// identity, and the same artefact may be held by several stores at once — so
+	// it must never be read as part of resolving ContentLocation. Empty on
+	// records written before the field existed.
+	AcquisitionMode string `json:"acquisition_mode,omitempty"`
+
+	// MeasurementKind says what this measurement did: MeasurementAcquired when
+	// the bytes were fetched, MeasurementRevalidated when an existing artefact
+	// was re-checked in place. "unchanged" is deliberately absent — a cache hit
+	// writes no row at all, and minting one per run would turn a per-artefact
+	// ledger into a per-run one. Empty on records written before the field
+	// existed. See MeasurementKind.
+	MeasurementKind string `json:"measurement_kind,omitempty"`
+
+	// SumDBCheck records how this measurement came by its checksum-database leg,
+	// and SumDBCheckSource names the content hash of the record it was inherited
+	// from when it was not rechecked here. See ValidationLeg.
+	SumDBCheck       string `json:"sumdb_check,omitempty"`
+	SumDBCheckSource string `json:"sumdb_check_source,omitempty"`
+
+	// VCSCheck records how this measurement came by its VCS cross-verification
+	// leg, and VCSCheckSource names the content hash of the record it was
+	// inherited from when it was not rechecked here. A --skip-vcs run leaves both
+	// empty: the leg is absent, which is a different claim from a negative
+	// result. See ValidationLeg.
+	VCSCheck       string `json:"vcs_check,omitempty"`
+	VCSCheckSource string `json:"vcs_check_source,omitempty"`
 }
 
 // NewFactRecord constructs a FactRecord from a FetchedModule. ContentHash is
@@ -72,7 +115,35 @@ func NewFactRecord(m FetchedModule) FactRecord {
 		ContentLocation:    m.ContentLocation,
 		GoModLocation:      m.GoModLocation,
 		Retracted:          m.Retracted,
+		SumDBLookupFailed:  m.SumDBLookupFailed,
+		AcquisitionMode:    string(m.AcquisitionMode),
+		MeasurementKind:    string(m.MeasurementKind),
+		SumDBCheck:         string(m.SumDBCheck),
+		SumDBCheckSource:   m.SumDBCheckSource,
+		VCSCheck:           string(m.VCSCheck),
+		VCSCheckSource:     m.VCSCheckSource,
 	}
+}
+
+// RecordIsCacheable reports whether a record may satisfy a later fetch of the
+// same coordinate, or whether that fetch must re-verify instead.
+//
+// A record whose checksum-database lookup failed is not cacheable. Its
+// verification status describes a lookup that never answered, so serving it back
+// would make one transient failure permanent: the downgrade would be returned on
+// every subsequent run until --force, and the audit would keep reporting a
+// finding about the module that is really an artefact of a bad network moment.
+// Re-verifying costs one lookup on a run that would otherwise have skipped it,
+// and it is the only way the downgrade can ever be undone on its own.
+//
+// Every other record — including one whose sumdb answer was a settled policy
+// answer (GOSUMDB=off, GOPRIVATE, no hash line) — is cacheable exactly as before.
+//
+// It is a free function rather than a method, on the same terms as RecordDigests:
+// cache eligibility is fetch-pipeline policy, not the read-shape plumbing a
+// graduated result alias is allowed to carry, so it must not reach the public API.
+func RecordIsCacheable(r FactRecord) bool {
+	return !r.SumDBLookupFailed
 }
 
 // Coordinate returns the ModuleCoordinate this record describes.
@@ -82,16 +153,40 @@ func (r FactRecord) Coordinate() coordinate.ModuleCoordinate {
 
 // IsGoModOnly reports whether this record was produced by the go.mod-only
 // acquisition path: its go.mod is stored and verified but its module zip was
-// never fetched, so ContentLocation is empty while GoModLocation is set.
+// never fetched, so the record carries no module hash.
+//
+// It is expressed on an artefact fact — the module hash is absent — and not on a
+// storage address. It used to read ContentLocation == "" && GoModLocation != "",
+// which derived a claim about what was fetched from where the bytes happened to
+// land, and so would answer differently for one artefact held in two stores. The
+// two definitions coincide exactly on existing data: the 712 records with no
+// content location are the same 712 with an absent module hash.
 //
 // Such a record exists purely so the toolchain can read a superseded version's
 // requirements while rebuilding a module graph; the version is never compiled
 // and its source is never analysed. It therefore satisfies a caller that reads
 // only go.mod (module-graph resolution) but MUST NOT satisfy a scan that needs
-// source — a consumer of ContentLocation must treat it as absent and re-fetch
-// the full artefact rather than silently degrade the scan to metadata-only.
+// source — such a consumer must treat the zip as absent and fetch the full
+// artefact rather than silently degrade the scan to metadata-only.
+//
+// It requires a go.mod hash as well as an absent module hash. A record carrying
+// neither names no artefact at all: it is degenerate rather than shallow, and
+// reporting it as go.mod-only would tell a caller a verified go.mod is available
+// when nothing is. Measured across the 6629 records in the maintainer's store,
+// no such record exists, so this distinction costs nothing on real data and
+// keeps the predicate honest about the one case that would mislead.
+//
+// A record whose hashes cannot be parsed at all is likewise not go.mod-only: it
+// is malformed, and reporting it as a shallower measurement would hide that. The
+// error path belongs to ArtefactIdentityOf, which callers on the identity path
+// use; this predicate answers the shape question only.
 func (r FactRecord) IsGoModOnly() bool {
-	return r.ContentLocation == "" && r.GoModLocation != ""
+	moduleHash, merr := StoredModuleHash(r.ModuleHash)
+	goModHash, gerr := StoredModuleHash(r.GoModHash)
+	if merr != nil || gerr != nil {
+		return false
+	}
+	return moduleHash.IsZero() && !goModHash.IsZero()
 }
 
 // RecordDigests projects a fact record's persisted digest fields onto an

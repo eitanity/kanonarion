@@ -310,6 +310,26 @@ func runExamplesListForModule(ctx context.Context, moduleArg string, uc QueryExa
 	if !found {
 		return fmt.Errorf("no example record for %s — run 'kanonarion examples %s' first", coord, moduleArg)
 	}
+	if jsonOut {
+		out := make([]exampleRefJSON, 0, len(r.Examples))
+		for _, e := range r.Examples {
+			out = append(out, exampleRefJSON{
+				ModulePath:       r.Coordinate.Path,
+				ModuleVersion:    r.Coordinate.Version,
+				PipelineVersion:  r.PipelineVersion,
+				Package:          e.Package,
+				AssociatedSymbol: e.AssociatedSymbol,
+				ExampleName:      e.Name,
+				Validates:        e.Validates,
+			})
+		}
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(out); err != nil {
+			return fmt.Errorf("encoding JSON: %w", err)
+		}
+		return nil
+	}
 	if len(r.Examples) == 0 {
 		if _, err := fmt.Fprintf(stdout, "no examples found in %s\n", moduleArg); err != nil {
 			return fmt.Errorf("writing output: %w", err)

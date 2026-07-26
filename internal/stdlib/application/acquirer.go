@@ -7,6 +7,8 @@ package application
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"errors"
 	"fmt"
 	"log/slog"
@@ -192,13 +194,20 @@ func (a *Acquirer) cacheTarball(ctx context.Context, version string, tarball []b
 	if a.blobs == nil {
 		return ""
 	}
-	handle, err := a.blobs.Put(ctx, bytes.NewReader(tarball))
-	if err != nil {
+	// The tarball is addressed by what it is. A source tarball has no module h1,
+	// so its identity is the SHA-256 of its bytes — the same digest the published
+	// checksum is compared against.
+	sum := sha256.Sum256(tarball)
+	identity := fetchports.BlobIdentity{
+		Kind: fetchports.BlobKindZip,
+		Hash: fetchdomain.ModuleHash{Algorithm: "sha256", Value: hex.EncodeToString(sum[:])},
+	}
+	if err := a.blobs.Put(ctx, identity, bytes.NewReader(tarball)); err != nil {
 		a.logger.WarnContext(ctx, "stdlib.tarball.cache_failed",
 			slog.String("go_version", version), slog.String("error", err.Error()))
 		return ""
 	}
-	return string(handle)
+	return identity.String()
 }
 
 // verifyChecksum classifies the tarball checksum against the published value and

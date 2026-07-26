@@ -126,8 +126,10 @@ func TestPrintVulnScanResult_FindingsOnStdout(t *testing.T) {
 // produces no "Findings" block on stdout — only the status line.
 func TestPrintVulnScanResult_CleanWalkNoFindingsBlock(t *testing.T) {
 	run := vuldomain.WalkScanRun{
-		ID:            "run-002",
-		OverallStatus: vuldomain.WalkStatusAllClean,
+		ID:             "run-002",
+		OverallStatus:  vuldomain.WalkStatusAllClean,
+		CoverageStatus: vuldomain.CoverageComplete,
+		FindingsStatus: vuldomain.FindingsClean,
 	}
 
 	var stdout bytes.Buffer
@@ -139,8 +141,64 @@ func TestPrintVulnScanResult_CleanWalkNoFindingsBlock(t *testing.T) {
 	if strings.Contains(out, "Findings") {
 		t.Errorf("clean walk must not emit a Findings block, got: %q", out)
 	}
-	if !strings.Contains(out, "AllClean") {
-		t.Errorf("expected status in stdout, got: %q", out)
+	// Both axes are stated: complete coverage, no findings.
+	if !strings.Contains(out, "Complete, Clean") {
+		t.Errorf("expected two-axis status in stdout, got: %q", out)
+	}
+}
+
+// TestScanCompletionSummary renders both scan axes: coverage names the
+// unanalysed count unless Complete, findings names the affected count unless
+// Clean, and a run that is both Partial and Affected reports both.
+func TestScanCompletionSummary(t *testing.T) {
+	tests := []struct {
+		name string
+		run  vuldomain.WalkScanRun
+		want string
+	}{
+		{
+			"partial and affected names both counts",
+			vuldomain.WalkScanRun{
+				CoverageStatus: vuldomain.CoveragePartial,
+				FindingsStatus: vuldomain.FindingsAffected,
+				Counts:         vuldomain.WalkScanCounts{Total: 285, Unscannable: 112, Affected: 7},
+			},
+			"Partial coverage (112 of 285 unanalysed), Affected (7)",
+		},
+		{
+			"complete and affected",
+			vuldomain.WalkScanRun{
+				CoverageStatus: vuldomain.CoverageComplete,
+				FindingsStatus: vuldomain.FindingsAffected,
+				Counts:         vuldomain.WalkScanCounts{Total: 285, Affected: 7},
+			},
+			"Complete, Affected (7)",
+		},
+		{
+			"complete and clean",
+			vuldomain.WalkScanRun{
+				CoverageStatus: vuldomain.CoverageComplete,
+				FindingsStatus: vuldomain.FindingsClean,
+				Counts:         vuldomain.WalkScanCounts{Total: 285},
+			},
+			"Complete, Clean",
+		},
+		{
+			"failed coverage counts failed among unanalysed",
+			vuldomain.WalkScanRun{
+				CoverageStatus: vuldomain.CoverageFailed,
+				FindingsStatus: vuldomain.FindingsClean,
+				Counts:         vuldomain.WalkScanCounts{Total: 4, Failed: 4},
+			},
+			"Failed coverage (4 of 4 unanalysed), Clean",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := scanCompletionSummary(tt.run); got != tt.want {
+				t.Errorf("scanCompletionSummary() = %q, want %q", got, tt.want)
+			}
+		})
 	}
 }
 
@@ -695,6 +753,91 @@ func TestRunScanShow_NotFound(t *testing.T) {
 	}
 	if !strings.Contains(err.Error(), "scan run not found") {
 		t.Errorf("expected 'scan run not found' in error, got: %v", err)
+	}
+}
+
+// A record lookup that errors is a fault, not absence: the coordinate is
+// reported under a read-error heading with the store error, and never dropped
+// from the summary or described as unscanned.
+func TestRunScanShow_ReadErrorReported(t *testing.T) {
+	run, _ := fixtureRunAndRec(t)
+
+	ucRuns := testfakes.NewFakeQueryScanRuns()
+	ucRuns.AddRun(run)
+
+	ucVuln := testfakes.NewFakeQueryVuln()
+	ucVuln.Err = errors.New("store unavailable")
+
+	var buf bytes.Buffer
+	if err := runScanShow(context.Background(), fixtureScanID, false, ucRuns, ucVuln, &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Read errors (1)") {
+		t.Errorf("expected read-error section, got: %q", out)
+	}
+	if !strings.Contains(out, "example.com/app@v1.0.0") || !strings.Contains(out, "store unavailable") {
+		t.Errorf("expected coordinate and store error named, got: %q", out)
+	}
+	if strings.Contains(out, "No scan record") {
+		t.Errorf("a read error must not be reported as an absent record, got: %q", out)
+	}
+}
+
+// A coordinate in PerModuleResults with no backing record is a coverage gap: it
+// is reported under its own heading, not silently dropped, so the module count
+// in the header stays accounted for.
+func TestRunScanShow_MissingRecordReported(t *testing.T) {
+	run, _ := fixtureRunAndRec(t)
+
+	ucRuns := testfakes.NewFakeQueryScanRuns()
+	ucRuns.AddRun(run)
+
+	// No AddRecord: the app coordinate in PerModuleResults resolves to not-found.
+	ucVuln := testfakes.NewFakeQueryVuln()
+
+	var buf bytes.Buffer
+	if err := runScanShow(context.Background(), fixtureScanID, false, ucRuns, ucVuln, &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "No scan record (1)") {
+		t.Errorf("expected coverage-gap section, got: %q", out)
+	}
+	if !strings.Contains(out, "example.com/app@v1.0.0") {
+		t.Errorf("expected the unbacked coordinate named, got: %q", out)
+	}
+	if strings.Contains(out, "Read errors") {
+		t.Errorf("a not-found record must not be reported as a read error, got: %q", out)
+	}
+}
+
+// A ScanFailed record is a fault, not a clean module: it is reported under its
+// own heading with the recorded error detail, not swallowed by the "no
+// findings" path that legitimately drops Clean modules.
+func TestRunScanShow_ScanFailedReported(t *testing.T) {
+	run, rec := fixtureRunAndRec(t)
+	rec.OverallStatus = vuldomain.StatusScanFailed
+	rec.Findings = nil
+	rec.ErrorDetail = "govulncheck exited 1"
+	app := mustVulnCoord(t, "example.com/app", "v1.0.0")
+
+	ucRuns := testfakes.NewFakeQueryScanRuns()
+	ucRuns.AddRun(run)
+
+	ucVuln := testfakes.NewFakeQueryVuln()
+	ucVuln.AddRecord(app, rec)
+
+	var buf bytes.Buffer
+	if err := runScanShow(context.Background(), fixtureScanID, false, ucRuns, ucVuln, &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "Scan failed (1)") {
+		t.Errorf("expected scan-failure section, got: %q", out)
+	}
+	if !strings.Contains(out, "example.com/app@v1.0.0") || !strings.Contains(out, "govulncheck exited 1") {
+		t.Errorf("expected coordinate and error detail named, got: %q", out)
 	}
 }
 

@@ -17,6 +17,7 @@ import (
 	noopsigner "github.com/eitanity/kanonarion/internal/adapters/signer/noop"
 	fetchsumdb "github.com/eitanity/kanonarion/internal/adapters/sumdb/gosum"
 	gosumfile "github.com/eitanity/kanonarion/internal/adapters/sumdb/gosumfile"
+	sumdbretry "github.com/eitanity/kanonarion/internal/adapters/sumdb/retrying"
 	fetchvcs "github.com/eitanity/kanonarion/internal/adapters/vcs/gitexec"
 
 	cganalyser "github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha"
@@ -82,9 +83,11 @@ import (
 
 	walkbuildlist "github.com/eitanity/kanonarion/internal/walk/adapters/buildlist/gotoolchain"
 	walkfetcher "github.com/eitanity/kanonarion/internal/walk/adapters/fetcher/local"
+	walkretry "github.com/eitanity/kanonarion/internal/walk/adapters/fetcher/retrying"
 	walkgomod "github.com/eitanity/kanonarion/internal/walk/adapters/gomod/xmod"
 	walksqlite "github.com/eitanity/kanonarion/internal/walk/adapters/walks/sqlite"
 	walkapp "github.com/eitanity/kanonarion/internal/walk/application"
+	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
 // Container is the composition root for the CLI. It opens a single mirror.db
@@ -211,15 +214,12 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// local go.sum, and the fetch pipeline records coordinate-derived handles
 	// instead of writing blobs.
 	var (
-		blobs           fetchports.BlobStore = localBlobs
-		sumdb           fetchports.SumDBClient
-		proxyAdapter    fetchports.ModuleProxy
-		modcacheDeriver fetchapp.ModcacheHandleDeriver
+		blobs        fetchports.BlobStore = localBlobs
+		sumdb        fetchports.SumDBClient
+		proxyAdapter fetchports.ModuleProxy
 	)
 	if modcacheMode {
-		mcBlobs := mcblobstore.New(modcacheDir, localBlobs)
-		blobs = mcBlobs
-		modcacheDeriver = mcBlobs
+		blobs = mcblobstore.New(modcacheDir, localBlobs)
 		proxyAdapter = mcproxy.New(modcacheDir, goBinary, filepath.Dir(goSumPath), logger)
 		gsClient, gerr := gosumfile.New(goSumPath)
 		if gerr != nil {
@@ -228,7 +228,13 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		}
 		sumdb = gsClient
 	} else {
-		sumdb = fetchsumdb.New(filepath.Join(storeRoot, "sumdb"))
+		// A transient checksum-database failure (429/5xx, connection reset,
+		// truncated transfer) is retried with bounded backoff before it can
+		// downgrade a module's verification status. Only a failed lookup is retried;
+		// a policy answer (GOSUMDB=off, GOPRIVATE, no hash line) returns on the first
+		// attempt. In --from-modcache mode the go.sum adapter above reads a local
+		// file with no network to flake, so it is left undecorated.
+		sumdb = sumdbretry.New(fetchsumdb.New(filepath.Join(storeRoot, "sumdb")), logger)
 		dp, perr := fetchproxy.New(goproxy, false)
 		if perr != nil {
 			_ = dbHandle.Close()
@@ -245,6 +251,13 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		return nil, nil, fmt.Errorf("creating auditing fetch store: %w", err)
 	}
 
+	// Re-address artefacts written under the old store-chosen blob handles so an
+	// existing store survives the change to identity addressing. Runs once,
+	// guarded by a marker file.
+	if err := adoptLegacyBlobs(dbHandle, localBlobs, storeRoot, logger); err != nil {
+		logger.Warn("could not re-address existing blobs by artefact identity", "error", err)
+	}
+
 	// ---- store adapters (all share dbHandle) ----
 	walkStore := walksqlite.New(dbHandle)
 	extStore := extsqlite.New(dbHandle)
@@ -259,9 +272,14 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	fetchUC := fetchapp.NewFetchModuleUseCase(
 		proxyAdapter, vcs, blobs, factStore,
 		sumdb, clk, stopwatch, "", logger,
-	).WithSigner(signer, factStore)
-	if modcacheDeriver != nil {
-		fetchUC = fetchUC.WithModcache(modcacheDeriver)
+	).WithSigner(signer, factStore).
+		// The write side keeps the stronger of an existing and an incoming record
+		// unless the operator asked for the weaker one, and emits the refusal (or
+		// the permitted downgrade) into the same append-only log the writes go to.
+		WithAudit(factStore).
+		WithAllowVerificationDowngrade(allowVerificationDowngrade)
+	if modcacheMode {
+		fetchUC = fetchUC.WithModcacheMode()
 	}
 	// On the normal network path, layer the walk root's local go.sum on
 	// as an additional, always-on integrity anchor when one is present. It is a
@@ -282,7 +300,14 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 
 	// ---- walk pipeline ----
 	parser := walkgomod.New()
-	fetcher := walkfetcher.New(fetchUC, skipVCSVerify)
+	// On the network path a transient proxy failure (HTTP/2 stream reset, connection
+	// reset, 429/5xx) is retried with bounded backoff before it can degrade a module
+	// to a fetch-failure node. In --from-modcache mode there is no network to flake,
+	// so the fetcher is left undecorated.
+	var fetcher walkports.ModuleFetcher = walkfetcher.New(fetchUC, skipVCSVerify)
+	if !modcacheMode {
+		fetcher = walkretry.New(fetcher, logger)
+	}
 	localFetcher := walklocalfs.New(blobs, factStore, clk)
 	resolver := walkapp.NewGraphResolver(parser, fetcher, blobs, clk, "", logger).
 		WithBuildListResolver(walkbuildlist.New(goBinary, logger))

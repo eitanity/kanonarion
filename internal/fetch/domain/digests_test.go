@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	domain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 )
 
 func TestComputeArtifactDigests_MatchesStdlib(t *testing.T) {
@@ -51,7 +52,7 @@ func TestComputeArtifactDigests_EmptyInputIsNotZero(t *testing.T) {
 }
 
 func TestRecordDigests_ProjectsFields(t *testing.T) {
-	r := domain.FactRecord{ZipSHA256: "aa", ZipSHA384: "bb", ZipSHA512: "cc"}
+	r := fetchtest.Record(t, fetchtest.Digests(domain.ArtifactDigests{SHA256: "aa", SHA384: "bb", SHA512: "cc"}))
 
 	got := domain.RecordDigests(r)
 
@@ -66,15 +67,11 @@ func TestRecordDigests_ProjectsFields(t *testing.T) {
 
 func TestCanonicalHasher_DigestsRoundTripAndCovered(t *testing.T) {
 	var h domain.CanonicalHasher
-	r := domain.FactRecord{
-		SchemaVersion: domain.SchemaVersion,
-		Ecosystem:     domain.EcosystemGo,
-		ModulePath:    "example.com/mod",
-		ModuleVersion: "v1.0.0",
-		ZipSHA256:     "sha256value",
-		ZipSHA384:     "sha384value",
-		ZipSHA512:     "sha512value",
-	}
+	r := fetchtest.Record(
+		t,
+		fetchtest.Module("example.com/mod", "v1.0.0"),
+		fetchtest.Digests(domain.ArtifactDigests{SHA256: "sha256value", SHA384: "sha384value", SHA512: "sha512value"}),
+	)
 	r, err := h.SetContentHash(r)
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)

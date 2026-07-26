@@ -1,7 +1,6 @@
 package application_test
 
 import (
-	"bytes"
 	"context"
 	"testing"
 
@@ -53,12 +52,8 @@ func seedModule(
 	t.Helper()
 
 	zipData := buildModuleZip(t, coord, map[string]string{"LICENSE": licenseText})
-	handle, err := blobs.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put blob: %v", err)
-	}
 
-	putFact(t, facts, coord, string(handle))
+	putFact(t, facts, blobs, coord, zipData)
 
 	var stmts []domain.CopyrightStatement
 	if copyright != "" {
@@ -83,7 +78,7 @@ func seedModule(
 	}
 
 	var h domain.LicenseRecordHasher
-	rec, err = h.SetContentHash(rec)
+	rec, err := h.SetContentHash(rec)
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
 	}
@@ -263,11 +258,7 @@ func TestGenerateNotice_EmbeddedComponentTexts(t *testing.T) {
 		"LICENSE": "MIT License text",
 		"vendor/github.com/google/snappy/LICENSE": "BSD-3-Clause text",
 	})
-	handle, err := blobs.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put blob: %v", err)
-	}
-	putFact(t, facts, coord, string(handle))
+	putFact(t, facts, blobs, coord, zipData)
 
 	rootStmts := domain.ExtractCopyright("LICENSE", []byte("Copyright 2020 Authors\n"))
 	licFiles := []domain.LicenseFileEntry{
@@ -296,7 +287,7 @@ func TestGenerateNotice_EmbeddedComponentTexts(t *testing.T) {
 		EffectiveSet:    domain.DeriveEffectiveLicenseSet(licFiles),
 	}
 	var h domain.LicenseRecordHasher
-	rec, err = h.SetContentHash(rec)
+	rec, err := h.SetContentHash(rec)
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
 	}

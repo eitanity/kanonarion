@@ -5,12 +5,12 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 
 	"log/slog"
@@ -38,10 +38,11 @@ func TestScanWalk_WithRealModcache_UsesProvidedDir(t *testing.T) {
 
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
-	h, _ := blobs.Put(ctx, strings.NewReader("zip"))
-	if err := facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
-		ModulePath: coord.Path, ModuleVersion: coord.Version, PipelineVersion: "v1", ContentLocation: string(h),
-	}); err != nil {
+	rec := fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip"))
+	if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, rec), strings.NewReader("zip")); err != nil {
+		t.Fatalf("Put blob: %v", err)
+	}
+	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip"))); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 

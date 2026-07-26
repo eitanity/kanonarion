@@ -9,41 +9,35 @@ import (
 	"time"
 
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 )
 
 // canonicalFixture returns the reference FactRecord for the gorilla/mux fixture.
-func canonicalFixture() domain2.FactRecord {
-	h := domain2.CanonicalHasher{}
-	r := domain2.FactRecord{
-		SchemaVersion:      domain2.SchemaVersion,
-		Ecosystem:          domain2.EcosystemGo,
-		ModulePath:         "github.com/gorilla/mux",
-		ModuleVersion:      "v1.8.1",
-		ModuleHash:         "h1:fixture-zip-hash==",
-		GoModHash:          "h1:fixture-gomod-hash==",
-		ZipSHA256:          strings.Repeat("2", 64),
-		ZipSHA384:          strings.Repeat("3", 96),
-		ZipSHA512:          strings.Repeat("5", 128),
-		GitURL:             "https://github.com/gorilla/mux",
-		GitRef:             "refs/tags/v1.8.1",
-		GitCommitHash:      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
-		VerificationStatus: "Verified",
-		VerificationDetail: "",
-		FetchedAt:          time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
-		PipelineVersion:    "0.2.0",
-		ContentLocation:    "sha256:" + strings.Repeat("a", 64),
-		Retracted:          false,
-	}
-	var err error
-	r, err = h.SetContentHash(r)
-	if err != nil {
-		panic(err)
-	}
-	return r
+func canonicalFixture(t testing.TB) domain2.FactRecord {
+	t.Helper()
+	return fetchtest.Record(t,
+		fetchtest.Module("github.com/gorilla/mux", "v1.8.1"),
+		fetchtest.PipelineVersion("0.2.0"),
+		fetchtest.Content("sha256:"+strings.Repeat("a", 64)),
+		fetchtest.ModuleHash(fetchtest.H1("fixture-zip-hash==")),
+		fetchtest.GoModHash(fetchtest.H1("fixture-gomod-hash==")),
+		fetchtest.Digests(domain2.ArtifactDigests{
+			SHA256: strings.Repeat("2", 64),
+			SHA384: strings.Repeat("3", 96),
+			SHA512: strings.Repeat("5", 128),
+		}),
+		fetchtest.GitReference(domain2.GitReference{
+			URL:        "https://github.com/gorilla/mux",
+			Ref:        "refs/tags/v1.8.1",
+			CommitHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+		}),
+		fetchtest.Status(domain2.Verified),
+		fetchtest.FetchedAt(time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)),
+	)
 }
 
 func TestGoldenFactRecord(t *testing.T) {
-	fixture := canonicalFixture()
+	fixture := canonicalFixture(t)
 
 	h := domain2.CanonicalHasher{}
 	got, err := h.Marshal(fixture)

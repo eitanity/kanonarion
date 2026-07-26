@@ -19,6 +19,15 @@ linters:
     - gocyclo
     - forbidigo
 
+# gofmt is a formatter, not a linter, so it lives in its own v2 section. It is
+# enabled because nothing else in the project verifies formatting: `make lint`
+# runs vet/staticcheck/govulncheck/gosec, none of which look at layout, so
+# unformatted code could reach a commit unnoticed. `golangci-lint fmt` rewrites;
+# `golangci-lint run` reports.
+formatters:
+  enable:
+    - gofmt
+
 settings:
   errcheck:
     # No exclude-functions — plan requires zero exclusions.

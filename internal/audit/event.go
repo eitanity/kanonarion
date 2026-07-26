@@ -26,6 +26,21 @@ const (
 	// with `event_type` added purely additively.
 	EventFactRecordWritten EventType = "fact_record_written"
 
+	// EventFactRecordWriteRefused records that a re-measurement was refused
+	// because it would have replaced a stronger verification anchor with a weaker
+	// one. The existing record is kept and returned as the fetch result. The
+	// payload names both statuses, both acquisition modes and whether the run was
+	// forced, so a demotion attempt is reconstructable from the log alone —
+	// previously a demotion appeared only as a second fact_record_written entry
+	// with no indication of what it displaced or how the run was invoked.
+	EventFactRecordWriteRefused EventType = "fact_record_write_refused"
+
+	// EventFactRecordDowngraded records that a weaker re-measurement replaced a
+	// stronger record because the operator explicitly permitted it. It is the
+	// only path by which a verification anchor can now weaken, and it carries the
+	// same payload as EventFactRecordWriteRefused so the two read as one series.
+	EventFactRecordDowngraded EventType = "fact_record_downgraded"
+
 	// EventReplaceDirectiveObserved records a go.mod/go.work `replace`
 	// directive together with its risk classification (wired by).
 	EventReplaceDirectiveObserved EventType = "replace_directive_observed"
@@ -98,6 +113,8 @@ const (
 // nothing else changes.
 var knownEventTypes = map[EventType]struct{}{
 	EventFactRecordWritten:        {},
+	EventFactRecordWriteRefused:   {},
+	EventFactRecordDowngraded:     {},
 	EventReplaceDirectiveObserved: {},
 	EventExcludeDirectiveObserved: {},
 	EventGoDebugSettingObserved:   {},

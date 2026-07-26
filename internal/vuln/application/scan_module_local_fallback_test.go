@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 )
@@ -32,17 +32,21 @@ func TestScanModule_FindsFactRecordUnderLocalIngestPipelineVersion(t *testing.T)
 		content:  "vulndb content",
 	}
 
-	handle, err := blobs.Put(ctx, strings.NewReader("zip content"))
-	if err != nil {
+	localRec := fetchtest.Record(t,
+		fetchtest.Coordinate(coord),
+		fetchtest.PipelineVersion(localPipeline),
+		fetchtest.Content("zip content"),
+	)
+	if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, localRec), strings.NewReader("zip content")); err != nil {
 		t.Fatalf("blobs.Put: %v", err)
 	}
 	// The record exists ONLY under the local-ingest pipeline version.
-	if err := facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
-		ModulePath:      coord.Path,
-		ModuleVersion:   coord.Version,
-		PipelineVersion: localPipeline,
-		ContentLocation: string(handle),
-	}); err != nil {
+	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(
+		t,
+		fetchtest.Coordinate(coord),
+		fetchtest.PipelineVersion(localPipeline),
+		fetchtest.Content("zip content"),
+	)); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 

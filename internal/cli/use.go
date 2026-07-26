@@ -176,8 +176,15 @@ func copyToModCache(
 	}
 
 	// 1. Copy ZIP
+	zipIdentity, hasZip, err := ports.ZipIdentity(record.FactRecord)
+	if err != nil {
+		return fmt.Errorf("deriving zip address for %s: %w", coord, err)
+	}
+	if !hasZip {
+		return fmt.Errorf("fact record for %s carries no module zip", coord)
+	}
 	relZipPath := filepath.Join("cache", "download", escapedPath, "@v", coord.Version+".zip")
-	if err := copyBlob(ctx, blobs, ports.BlobHandle(record.ContentLocation), root, relZipPath); err != nil {
+	if err := copyBlob(ctx, blobs, zipIdentity, root, relZipPath); err != nil {
 		return fmt.Errorf("copying zip: %w", err)
 	}
 
@@ -193,9 +200,13 @@ func copyToModCache(
 	}
 
 	// 2. Copy MOD
-	if record.GoModLocation != "" {
+	goModIdentity, hasGoMod, err := ports.GoModIdentity(record.FactRecord)
+	if err != nil {
+		return fmt.Errorf("deriving go.mod address for %s: %w", coord, err)
+	}
+	if hasGoMod {
 		relModPath := filepath.Join("cache", "download", escapedPath, "@v", coord.Version+".mod")
-		if err := copyBlob(ctx, blobs, ports.BlobHandle(record.GoModLocation), root, relModPath); err != nil {
+		if err := copyBlob(ctx, blobs, goModIdentity, root, relModPath); err != nil {
 			return fmt.Errorf("copying mod: %w", err)
 		}
 
@@ -230,7 +241,7 @@ func copyToModCache(
 		}
 	}{
 		Version: coord.Version,
-		Time:    record.FetchedAt.Format("2006-01-02T15:04:05Z"),
+		Time:    record.FirstFetchedAt.Format("2006-01-02T15:04:05Z"),
 	}
 	info.Origin.VCS = "git"
 	info.Origin.URL = record.GitURL
@@ -262,14 +273,14 @@ func copyToModCache(
 	return nil
 }
 
-func copyBlob(ctx context.Context, blobs ports.BlobStore, handle ports.BlobHandle, root *os.Root, relPath string) error {
+func copyBlob(ctx context.Context, blobs ports.BlobStore, identity ports.BlobIdentity, root *os.Root, relPath string) error {
 	_, err := root.Stat(relPath)
 	if err == nil {
 		// File already exists, skip
 		return nil
 	}
 
-	src, err := blobs.Get(ctx, handle)
+	src, err := blobs.Get(ctx, identity)
 	if err != nil {
 		return fmt.Errorf("getting blob: %w", err)
 	}

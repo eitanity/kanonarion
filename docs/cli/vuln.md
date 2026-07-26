@@ -178,9 +178,25 @@ Scanning walk 01KQDBVW092ER1HNXZ60X27CMD...
   [2/3] github.com/spf13/cobra@v1.8.1 - Clean
   [3/3] golang.org/x/net@v0.0.0-20210405180319-a5a99cb37ef4 - Affected
       GO-2022-0969 (CVE-2022-27664): HTTP/2 server DoS
-Scan completed with status: Affected
-Run ID: 01KQDBVW092ER1HNXZ60X27CME
+Scan completed: Complete, Affected (2)  Run ID: 01KQDBVW092ER1HNXZ60X27CME
 ```
+
+The completion line reports two independent axes, because a run answers two
+different questions: **coverage** — was every module in the build list analysed?
+(`Complete`, or `Partial coverage (N of T unanalysed)` / `Failed coverage (…)`) —
+and **findings** — did the analysis find vulnerabilities? (`Affected (N)` or
+`Clean`). They are independent: a run can be `Partial coverage (…), Clean` or
+`Complete, Affected (7)`, and a run that both left modules unanalysed and found
+vulnerabilities names both, so neither fact hides the other:
+
+```
+Scan completed: Partial coverage (112 of 285 unanalysed), Affected (7)  Run ID: …
+```
+
+The stored run also carries a single collapsed `overall_status`
+(`AllClean` / `Affected` / `Partial` / `ScanFailed`) for consumers that display
+only a summary word; because one word cannot carry both axes, no consumer should
+derive a findings fact from it — read `findings_status` instead.
 
 ```
 $ kanonarion vuln-scan --module github.com/gin-gonic/gin@v1.6.2

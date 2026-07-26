@@ -45,13 +45,21 @@ func isoTime(t time.Time) string {
 func buildVerification(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryFetchUseCase) contextVerification {
 	rec, found, err := uc.GetFetchRecord(ctx, coord, fetchapp.PipelineVersion)
 	if err != nil {
+		// A divergence is named as such rather than folded into a generic read
+		// error. This command inspects the store, so it reports the contradiction
+		// and still exits 0; the commands that consume the records fail closed.
+		if msg, ok := divergenceMessage(err); ok {
+			return contextVerification{Status: sectionStatusReadError, Error: msg}
+		}
 		return contextVerification{Status: sectionStatusReadError, Error: err.Error()}
 	}
 	if !found {
 		return contextVerification{Status: sectionStatusNotFetched}
 	}
 	return contextVerification{
-		ExtractedAt: isoTime(rec.FetchedAt),
+		// First seen, not last measured: a revalidation re-establishes the anchors
+		// but does not make the artefact newer.
+		ExtractedAt: isoTime(rec.FirstFetchedAt),
 		Status:      rec.VerificationStatus,
 		GitURL:      rec.GitURL,
 		Retracted:   rec.Retracted,

@@ -10,8 +10,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/callgraph/application"
 	domain2 "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/fetch/domain"
-	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 )
 
 // A module ingested from a local working tree (a local-replace target or the
@@ -33,16 +32,23 @@ func TestExecute_FindsFactRecordUnderLocalIngestPipelineVersion(t *testing.T) {
 	if err := zw.Close(); err != nil {
 		t.Fatalf("zip close: %v", err)
 	}
-	handle := fetchports.BlobHandle("blob:local")
-	blobs.blobs = map[fetchports.BlobHandle][]byte{handle: buf.Bytes()}
+	rec := fetchtest.Record(
+		t,
+		fetchtest.Coordinate(testCoord),
+		fetchtest.PipelineVersion(localPipeline),
+		fetchtest.Content("blob:local"),
+	)
+	// The blob is keyed by the artefact identity the record carries, because
+	// that is how production asks the store for it.
+	blobs.blobs = map[string][]byte{fetchtest.ZipIdentity(t, rec).String(): buf.Bytes()}
 
 	// The record exists ONLY under the local-ingest pipeline version.
-	if err := facts.PutFetchRecord(context.Background(), domain.FactRecord{
-		ModulePath:      testCoord.Path,
-		ModuleVersion:   testCoord.Version,
-		PipelineVersion: localPipeline,
-		ContentLocation: string(handle),
-	}); err != nil {
+	if err := facts.PutFetchRecord(context.Background(), fetchtest.Sealed(
+		t,
+		fetchtest.Coordinate(testCoord),
+		fetchtest.PipelineVersion(localPipeline),
+		fetchtest.Content("blob:local"),
+	)); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
@@ -88,15 +94,22 @@ func TestExecute_LocalCoordinateBypassesRecordCache(t *testing.T) {
 	if err := zw.Close(); err != nil {
 		t.Fatalf("zip close: %v", err)
 	}
-	handle := fetchports.BlobHandle("blob:localroot")
-	blobs.blobs = map[fetchports.BlobHandle][]byte{handle: buf.Bytes()}
+	rec := fetchtest.Record(
+		t,
+		fetchtest.Coordinate(localCoord),
+		fetchtest.PipelineVersion(localPipeline),
+		fetchtest.Content("blob:localroot"),
+	)
+	// The blob is keyed by the artefact identity the record carries, because
+	// that is how production asks the store for it.
+	blobs.blobs = map[string][]byte{fetchtest.ZipIdentity(t, rec).String(): buf.Bytes()}
 
-	if err := facts.PutFetchRecord(context.Background(), domain.FactRecord{
-		ModulePath:      localCoord.Path,
-		ModuleVersion:   localCoord.Version,
-		PipelineVersion: localPipeline,
-		ContentLocation: string(handle),
-	}); err != nil {
+	if err := facts.PutFetchRecord(context.Background(), fetchtest.Sealed(
+		t,
+		fetchtest.Coordinate(localCoord),
+		fetchtest.PipelineVersion(localPipeline),
+		fetchtest.Content("blob:localroot"),
+	)); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 

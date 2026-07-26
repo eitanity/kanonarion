@@ -14,6 +14,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/adapters/ziparchive"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	godocextractor "github.com/eitanity/kanonarion/internal/iface/adapters/extractor/godoc"
 	"github.com/eitanity/kanonarion/internal/iface/application"
@@ -34,9 +35,10 @@ func TestExecute_ModuleNotFetched(t *testing.T) {
 func TestExecute_CacheHit(t *testing.T) {
 	coord := mustCoord(t, "example.com/pkg", "v1.0.0")
 	factStore := &fakeFactStore{}
+	blobStore := &fakeBlobStore{}
 	ifaceStore := &fakeInterfaceStore{}
 
-	putFact(t, factStore, coord, "blob:content")
+	putFact(t, factStore, blobStore, coord, []byte("blob:content"))
 
 	existing := domain3.InterfaceRecord{
 		SchemaVersion:   domain3.InterfaceSchemaVersion,
@@ -73,11 +75,7 @@ func TestExecute_ForceBypassesCache(t *testing.T) {
 	zipData := buildModuleZip(t, coord, map[string]string{
 		"client.go": "package client\ntype Client struct{}\n",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatal(err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	existing := domain3.InterfaceRecord{
 		SchemaVersion:   domain3.InterfaceSchemaVersion,
@@ -112,11 +110,7 @@ func TestExecute_CorruptZip(t *testing.T) {
 	factStore := &fakeFactStore{}
 	ifaceStore := &fakeInterfaceStore{}
 
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader([]byte("not a zip")))
-	if err != nil {
-		t.Fatal(err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, []byte("not a zip"))
 
 	uc := buildUseCase(t, factStore, blobStore, ifaceStore, nil)
 	result, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
@@ -140,14 +134,10 @@ func TestExecute_Persists(t *testing.T) {
 	zipData := buildModuleZip(t, coord, map[string]string{
 		"client.go": "package client\ntype Client struct{}\n",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatal(err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	uc := buildUseCase(t, factStore, blobStore, ifaceStore, nil)
-	_, err = uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
+	_, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -173,11 +163,7 @@ func TestExecute_ContentHashSet(t *testing.T) {
 	zipData := buildModuleZip(t, coord, map[string]string{
 		"client.go": "package client\ntype Client struct{}\n",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatal(err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	uc := buildUseCase(t, factStore, blobStore, ifaceStore, nil)
 	result, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
@@ -199,14 +185,10 @@ func TestExecute_StorePutError(t *testing.T) {
 	zipData := buildModuleZip(t, coord, map[string]string{
 		"client.go": "package client\ntype Client struct{}\n",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatal(err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	uc := buildUseCase(t, factStore, blobStore, ifaceStore, nil)
-	_, err = uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
+	_, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
 	if !errors.Is(err, storeErr) {
 		t.Errorf("expected storeErr, got %v", err)
 	}
@@ -221,11 +203,7 @@ func TestExecute_Idempotent(t *testing.T) {
 	zipData := buildModuleZip(t, coord, map[string]string{
 		"client.go": "package client\ntype Client struct{}\n",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatal(err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	uc := buildUseCase(t, factStore, blobStore, ifaceStore, nil)
 
@@ -498,23 +476,30 @@ func buildUseCase(
 	})
 }
 
-func putFact(t *testing.T, s *fakeFactStore, coord coordinate.ModuleCoordinate, blobHandle string) {
+func putFact(t *testing.T, s *fakeFactStore, blobs *fakeBlobStore, coord coordinate.ModuleCoordinate, zipData []byte) {
 	t.Helper()
-	putFactWithBlob(t, s, coord, blobHandle)
+	putFactWithBlob(t, s, blobs, coord, zipData)
 }
 
-func putFactWithBlob(t *testing.T, s *fakeFactStore, coord coordinate.ModuleCoordinate, blobHandle string) {
+func putFactWithBlob(t *testing.T, s *fakeFactStore, blobs *fakeBlobStore, coord coordinate.ModuleCoordinate, zipData []byte) {
 	t.Helper()
-	r := domain2.FactRecord{
-		SchemaVersion:      "2",
-		ModulePath:         coord.Path,
-		ModuleVersion:      coord.Version,
-		PipelineVersion:    application.PipelineVersion,
-		ContentLocation:    blobHandle,
-		ContentHash:        "sha256:placeholder",
-		VerificationStatus: "Verified",
+	r := fetchtest.Record(
+		t,
+		fetchtest.Coordinate(coord),
+		fetchtest.PipelineVersion(application.PipelineVersion),
+		fetchtest.Content("zip"),
+		fetchtest.Status(domain2.Verified),
+	)
+	// Key the blob by the artefact identity the record carries: that is the
+	// address production asks the store for, and no other address resolves.
+	if err := blobs.Put(context.Background(), fetchtest.ZipIdentity(t, r), bytes.NewReader(zipData)); err != nil {
+		t.Fatalf("Put blob: %v", err)
 	}
-	if err := s.PutFetchRecord(context.Background(), r); err != nil {
+	sealed, serr := domain2.Rehydrate(r)
+	if serr != nil {
+		t.Fatalf("sealing record: %v", serr)
+	}
+	if err := s.PutFetchRecord(context.Background(), sealed); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 }

@@ -26,8 +26,13 @@ import (
 // hiding the cold-fetch fraction of the walk.
 //
 // recordingFetcher is safe for concurrent use; the underlying fetcher must be
-// likewise. Each coordinate is fetched at most once through this wrapper;
-// subsequent calls return the recorded outcome.
+// likewise. Each coordinate is fetched at most once through this wrapper:
+// later calls return the recorded outcome, and calls that OVERLAP the first
+// wait for it rather than starting a second fetch of their own. A coordinate
+// can reach one level twice — a module whose replace target is also an
+// independent build-list entry occupies two nodes and so two fetch tasks — and
+// without the in-flight wait both tasks would fetch, measure and append a
+// second, redundant fact record for the same artefact.
 //
 // A panic in the underlying fetcher is recovered and recorded as a fetchOutcome
 // with panicked=true. The error returned to the caller is a *panicError so the
@@ -43,13 +48,21 @@ type recordingFetcher struct {
 
 	mu       sync.Mutex
 	outcomes map[coordinate.ModuleCoordinate]fetchOutcome
+	inflight map[coordinate.ModuleCoordinate]*inflightFetch
+}
+
+// inflightFetch marks a coordinate whose fetch has started but not yet been
+// recorded. done is closed once the outcome is in outcomes, so a waiter that
+// observes the close is guaranteed to find it.
+type inflightFetch struct {
+	done chan struct{}
 }
 
 // fetchOutcome is the captured result of a single EnsureFetched call. Carries
 // enough information for the walker to construct a NodeResult without
 // re-fetching the module.
 type fetchOutcome struct {
-	record     fetchdomain.FactRecord
+	record     fetchdomain.CompositeRecord
 	fromCache  bool
 	durationMs int64
 	err        error
@@ -78,22 +91,77 @@ func newRecordingFetcher(
 		walkTarget: walkTarget,
 		progress:   progress,
 		outcomes:   make(map[coordinate.ModuleCoordinate]fetchOutcome),
+		inflight:   make(map[coordinate.ModuleCoordinate]*inflightFetch),
 	}
 }
 
 // EnsureFetched delegates to the inner fetcher on the first call per coordinate
-// and records the outcome. Subsequent calls for the same coordinate return the
-// recorded outcome without re-calling the inner fetcher.
+// and records the outcome. Later calls for the same coordinate return the
+// recorded outcome without re-calling the inner fetcher; a call that arrives
+// while the first is still running waits for it and then returns that same
+// outcome, so one coordinate is never fetched twice by one walk.
 func (r *recordingFetcher) EnsureFetched(ctx context.Context, c coordinate.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
-	r.mu.Lock()
-	if existing, ok := r.outcomes[c]; ok {
-		r.mu.Unlock()
-		if existing.err != nil {
-			return walkports.ModuleFetchResult{}, existing.err
+	for {
+		r.mu.Lock()
+		if existing, ok := r.outcomes[c]; ok {
+			r.mu.Unlock()
+			return resultOf(existing)
 		}
-		return walkports.ModuleFetchResult{Record: existing.record, FromCache: existing.fromCache}, nil
+		if wait, ok := r.inflight[c]; ok {
+			r.mu.Unlock()
+			select {
+			case <-wait.done:
+				// The outcome is recorded; re-read it on the next pass.
+				continue
+			case <-ctx.Done():
+				return walkports.ModuleFetchResult{}, fmt.Errorf("waiting for an in-flight fetch of %s: %w", c, ctx.Err())
+			}
+		}
+		lead := &inflightFetch{done: make(chan struct{})}
+		r.inflight[c] = lead
+		r.mu.Unlock()
+		return r.fetchAndRecord(ctx, c, lead)
 	}
-	r.mu.Unlock()
+}
+
+// resultOf converts a recorded outcome back into the fetcher's return pair.
+func resultOf(out fetchOutcome) (walkports.ModuleFetchResult, error) {
+	if out.err != nil {
+		return walkports.ModuleFetchResult{}, out.err
+	}
+	return walkports.ModuleFetchResult{Record: out.record, FromCache: out.fromCache}, nil
+}
+
+// fetchAndRecord performs the one real fetch for c, records its outcome and
+// releases any callers waiting on lead. The caller must have registered lead in
+// r.inflight; this method always removes it and closes lead.done, so a waiter
+// cannot be stranded even if the fetch path fails.
+func (r *recordingFetcher) fetchAndRecord(ctx context.Context, c coordinate.ModuleCoordinate, lead *inflightFetch) (walkports.ModuleFetchResult, error) {
+	out := fetchOutcome{}
+	done := 0
+	settled := false
+	settle := func() {
+		if settled {
+			return
+		}
+		settled = true
+		r.mu.Lock()
+		// Preserve first-call wins: if a concurrent call already recorded this
+		// coordinate, keep the earlier outcome (semantically equivalent since we
+		// expect EnsureFetched to be deterministic for a given coordinate, but
+		// keeps duration_ms reproducible).
+		if _, exists := r.outcomes[c]; !exists {
+			r.outcomes[c] = out
+		}
+		delete(r.inflight, c)
+		done = len(r.outcomes)
+		r.mu.Unlock()
+		close(lead.done)
+	}
+	// Waiters block on lead.done, so it must be closed on every exit — including
+	// a panic that escapes the fetch path — or the walk deadlocks instead of
+	// reporting the failure.
+	defer settle()
 
 	lap := r.stopwatch.Start()
 	r.logger.InfoContext(ctx, "walker.fetch.start",
@@ -105,7 +173,7 @@ func (r *recordingFetcher) EnsureFetched(ctx context.Context, c coordinate.Modul
 	fr, err := r.callWithRecover(ctx, c)
 	dur := lap.Elapsed().Milliseconds()
 
-	out := fetchOutcome{
+	out = fetchOutcome{
 		record:     fr.Record,
 		fromCache:  fr.FromCache,
 		durationMs: dur,
@@ -116,16 +184,9 @@ func (r *recordingFetcher) EnsureFetched(ctx context.Context, c coordinate.Modul
 		out.panicked = true
 	}
 
-	r.mu.Lock()
-	// Preserve first-call wins: if a concurrent call already recorded this
-	// coordinate, keep the earlier outcome (semantically equivalent since we
-	// expect EnsureFetched to be deterministic for a given coordinate, but
-	// keeps duration_ms reproducible).
-	if _, exists := r.outcomes[c]; !exists {
-		r.outcomes[c] = out
-	}
-	done := len(r.outcomes)
-	r.mu.Unlock()
+	// Record the outcome and release any waiters before reporting progress or
+	// logging, so a caller blocked on this coordinate is not held up by them.
+	settle()
 
 	// Report progress once per distinct fetched module. The reporter throttles
 	// and writes (e.g. a heartbeat line); reporting outside the lock keeps the

@@ -13,6 +13,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	"github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/license/application"
 	domain2 "github.com/eitanity/kanonarion/internal/license/domain"
@@ -32,9 +33,10 @@ func TestExecute_ModuleNotFetched(t *testing.T) {
 func TestExecute_CacheHit(t *testing.T) {
 	coord := mustCoord(t, "example.com/pkg", "v1.0.0")
 	factStore := &fakeFactStore{}
+	blobStore := &fakeBlobStore{}
 	licenceStore := &fakeLicenseStore{}
 
-	putFact(t, factStore, coord, "blob:fakecontent")
+	putFact(t, factStore, blobStore, coord, []byte("blob:fakecontent"))
 
 	// Pre-populate the license store with an existing record.
 	existing := domain2.LicenseRecord{
@@ -47,8 +49,7 @@ func TestExecute_CacheHit(t *testing.T) {
 		PipelineVersion:   application.PipelineVersion,
 	}
 	var h domain2.LicenseRecordHasher
-	var err error
-	existing, err = h.SetContentHash(existing)
+	existing, err := h.SetContentHash(existing)
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
 	}
@@ -78,11 +79,7 @@ func TestExecute_ForceBypassesCache(t *testing.T) {
 	zipData := buildModuleZip(t, coord, map[string]string{
 		"LICENSE": "MIT License\n...",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	// Pre-populate cache.
 	existing := domain2.LicenseRecord{
@@ -94,7 +91,7 @@ func TestExecute_ForceBypassesCache(t *testing.T) {
 		PipelineVersion: application.PipelineVersion,
 	}
 	var hh domain2.LicenseRecordHasher
-	existing, err = hh.SetContentHash(existing)
+	existing, err := hh.SetContentHash(existing)
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
 	}
@@ -121,11 +118,7 @@ func TestExecute_DetectedLicense(t *testing.T) {
 	zipData := buildModuleZip(t, coord, map[string]string{
 		"LICENSE": "MIT License text",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	detector := &fakeDetector{match: ports.LicenseMatch{SPDX: "MIT", Confidence: 0.98}}
 	uc := buildUseCaseWithDetector(t, factStore, blobStore, licenseStore, detector)
@@ -166,11 +159,7 @@ func TestExecute_NoLicenceFiles(t *testing.T) {
 		"main.go":   "package main",
 		"README.md": "# Readme",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	uc := buildUseCase(t, factStore, blobStore, licenceStore)
 	result, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
@@ -191,11 +180,7 @@ func TestExecute_VendoredLicenseNotPrimary(t *testing.T) {
 	zipData := buildModuleZip(t, coord, map[string]string{
 		"vendor/dep/LICENSE": "Apache-2.0 text",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	detector := &fakeDetector{match: ports.LicenseMatch{SPDX: "Apache-2.0", Confidence: 0.97}}
 	uc := buildUseCaseWithDetector(t, factStore, blobStore, licenceStore, detector)
@@ -232,11 +217,7 @@ func TestExecute_LowConfidenceThreadsToRecord(t *testing.T) {
 	zipData := buildModuleZip(t, coord, map[string]string{
 		"LICENSE": "truncated AGPL text",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	detector := &fakeDetector{match: ports.LicenseMatch{
 		LowConfidenceSPDX:     "AGPL-3.0-or-later",
@@ -279,11 +260,7 @@ func TestExecute_EffectiveSet(t *testing.T) {
 		"LICENSE": "MIT text",
 		"vendor/github.com/google/snappy/LICENSE": "BSD-3-Clause text",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	call := 0
 	detector := &callCountDetector{
@@ -329,11 +306,7 @@ func TestExecute_MultipleLicences(t *testing.T) {
 		"LICENSE": "MIT text",
 		"COPYING": "Apache-2.0 text",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	// The fake detector returns different results based on content.
 	call := 0
@@ -367,11 +340,7 @@ func TestExecute_HyphenatedLicenceFilenames(t *testing.T) {
 		"LICENSE-MIT": "MIT text",
 		"LICENSE-BSD": "BSD text",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	call := 0
 	detector := &callCountDetector{
@@ -408,11 +377,7 @@ func TestExecute_DottedLicenceFilename(t *testing.T) {
 	zipData := buildModuleZip(t, coord, map[string]string{
 		"LICENSE.MIT": "MIT License text",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	detector := &fakeDetector{match: ports.LicenseMatch{SPDX: "MIT", Confidence: 0.98}}
 	uc := buildUseCaseWithDetector(t, factStore, blobStore, licenceStore, detector)
@@ -449,11 +414,7 @@ func TestExecute_ExcludesGoSourceFromLicenceFilenames(t *testing.T) {
 		"LICENSE":    "BSD-3-Clause License text",
 		"license.go": "// Copyright 2019 The Go Authors. All rights reserved.\npackage licensecheck",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	detector := &fakeDetector{match: ports.LicenseMatch{SPDX: "BSD-3-Clause", Confidence: 0.98}}
 	uc := buildUseCaseWithDetector(t, factStore, blobStore, licenceStore, detector)
@@ -484,11 +445,7 @@ func TestExecute_DottedMultiLicenceFilenames(t *testing.T) {
 		"LICENSE.BSD":     "BSD text",
 		"COPYING.md":      "This project is dual licensed.",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	call := 0
 	detector := &callCountDetector{
@@ -527,11 +484,7 @@ func TestExecute_PerFile_SPDXHeader(t *testing.T) {
 		"main.go": "// SPDX-License-Identifier: Apache-2.0\n// Copyright 2024 Authors\npackage main\n",
 		"doc.go":  "// SPDX-License-Identifier: Apache-2.0\npackage main\n",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	uc := buildUseCase(t, factStore, blobStore, licenceStore)
 	result, err := uc.Execute(context.Background(), application.ExtractRequest{
@@ -565,11 +518,7 @@ func TestExecute_PerFile_DisabledYieldsNone(t *testing.T) {
 	zipData := buildModuleZip(t, coord, map[string]string{
 		"main.go": "// SPDX-License-Identifier: MIT\npackage main\n",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	uc := buildUseCase(t, factStore, blobStore, licenceStore)
 	result, err := uc.Execute(context.Background(), application.ExtractRequest{
@@ -596,11 +545,7 @@ func TestExecute_PerFile_Pass1Wins(t *testing.T) {
 		"LICENSE": "MIT License\n",
 		"main.go": "// SPDX-License-Identifier: Apache-2.0\npackage main\n",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	detector := &fakeDetector{match: ports.LicenseMatch{SPDX: "MIT", Confidence: 0.99}}
 	uc := buildUseCaseWithDetector(t, factStore, blobStore, licenceStore, detector)
@@ -631,11 +576,7 @@ func TestExecute_CorruptZip(t *testing.T) {
 	licenceStore := &fakeLicenseStore{}
 
 	// Store garbage as the blob.
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader([]byte("not a zip")))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, []byte("not a zip"))
 
 	uc := buildUseCase(t, factStore, blobStore, licenceStore)
 	result, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
@@ -657,11 +598,7 @@ func TestExecute_Idempotent(t *testing.T) {
 	licenceStore := &fakeLicenseStore{}
 
 	zipData := buildModuleZip(t, coord, map[string]string{"LICENSE": "MIT"})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	detector := &fakeDetector{match: ports.LicenseMatch{SPDX: "MIT", Confidence: 0.99}}
 	uc := buildUseCaseWithDetector(t, factStore, blobStore, licenceStore, detector)
@@ -694,11 +631,7 @@ func TestExecute_Copyright_WithNotice(t *testing.T) {
 	zipData := buildModuleZip(t, coord, map[string]string{
 		"LICENSE": "MIT License\n\nCopyright (c) 2024 Noticed Corp\n\nPermission is hereby granted...\n",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	detector := &fakeDetector{match: ports.LicenseMatch{SPDX: "MIT", Confidence: 0.99}}
 	uc := buildUseCaseWithDetector(t, factStore, blobStore, licenseStore, detector)
@@ -732,11 +665,7 @@ func TestExecute_Copyright_NoNotice(t *testing.T) {
 	zipData := buildModuleZip(t, coord, map[string]string{
 		"LICENSE": "Permission is hereby granted, free of charge...\n",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	detector := &fakeDetector{match: ports.LicenseMatch{SPDX: "MIT", Confidence: 0.99}}
 	uc := buildUseCaseWithDetector(t, factStore, blobStore, licenseStore, detector)
@@ -761,11 +690,7 @@ func TestExecute_Copyright_VendoredFilesSkipped(t *testing.T) {
 		// Only a vendored license file — no root-level license file.
 		"vendor/dep/LICENSE": "MIT License\nCopyright (c) 2020 Dep Author\n",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	detector := &fakeDetector{match: ports.LicenseMatch{SPDX: "MIT", Confidence: 0.99}}
 	uc := buildUseCaseWithDetector(t, factStore, blobStore, licenseStore, detector)
@@ -797,15 +722,11 @@ func TestExecute_Copyright_FoundVsNotAnalysed(t *testing.T) {
 	zipData := buildModuleZip(t, coord, map[string]string{
 		"LICENSE": "Permission is hereby granted, free of charge, to any person.\n",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	detector := &fakeDetector{match: ports.LicenseMatch{SPDX: "MIT", Confidence: 0.99}}
 	uc := buildUseCaseWithDetector(t, factStore, blobStore, licenseStore, detector)
-	_, err = uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
+	_, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -840,11 +761,7 @@ func TestExecute_NoticeFileExcludedFromStatus(t *testing.T) {
 		"LICENSE": "MIT license text",
 		"NOTICE":  "Apache attribution notice text",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	// Detector returns MIT for LICENSE, Apache-2.0 for NOTICE.
 	callN := 0
@@ -881,11 +798,7 @@ func TestExecute_HighConfidenceAltNotAmbiguous(t *testing.T) {
 	zipData := buildModuleZip(t, coord, map[string]string{
 		"LICENSE": "Apache 2.0 license text",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	// Primary at 0.99, best alt at 0.50 — clearly not ambiguous.
 	detector := &fakeDetector{match: ports.LicenseMatch{
@@ -908,11 +821,7 @@ func TestExecute_HighConfidenceAltNotAmbiguous(t *testing.T) {
 	factStore2 := &fakeFactStore{}
 	licenseStore2 := &fakeLicenseStore{}
 	zipData2 := buildModuleZip(t, coord2, map[string]string{"LICENSE": "text"})
-	handle2, err := blobStore2.Put(context.Background(), bytes.NewReader(zipData2))
-	if err != nil {
-		t.Fatalf("Put2: %v", err)
-	}
-	putFactWithBlob(t, factStore2, coord2, string(handle2))
+	putFactWithBlob(t, factStore2, blobStore2, coord2, zipData2)
 	detector2 := &fakeDetector{match: ports.LicenseMatch{
 		SPDX:       "Apache-2.0",
 		Confidence: 0.90,
@@ -942,11 +851,7 @@ func TestExecute_CompoundLicenseFileIsMultiple(t *testing.T) {
 	zipData := buildModuleZip(t, coord, map[string]string{
 		"LICENSE": "MIT and Apache compound license text",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	// Both at 0.85 (delta = 0.000) — compound file containing two full license texts.
 	detector := &fakeDetector{match: ports.LicenseMatch{
@@ -976,11 +881,7 @@ func TestExecute_Provenance_InboundOutbound(t *testing.T) {
 		"LICENSE":         "MIT License text",
 		"CONTRIBUTING.md": "Contributions are licensed under the same license as the project.\n",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	detector := &fakeDetector{match: ports.LicenseMatch{SPDX: "MIT", Confidence: 0.98}}
 	uc := buildUseCaseWithDetector(t, factStore, blobStore, licenseStore, detector)
@@ -1011,11 +912,7 @@ func TestExecute_Provenance_NoSignals_LowConfidence_Regression(t *testing.T) {
 	zipData := buildModuleZip(t, coord, map[string]string{
 		"LICENSE": "MIT License\n\nPermission is hereby granted...",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	// Detector returns no SPDX match (ensures CopyrightStatus = NoneFound too).
 	detector := &fakeDetector{match: ports.LicenseMatch{SPDX: "MIT", Confidence: 0.97}}
@@ -1045,11 +942,7 @@ func TestExecute_Provenance_AuthorsFile_MediumConfidence(t *testing.T) {
 		"LICENSE": "MIT License",
 		"AUTHORS": "Jane Doe <jane@example.com>\n",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	detector := &fakeDetector{match: ports.LicenseMatch{SPDX: "MIT", Confidence: 0.98}}
 	uc := buildUseCaseWithDetector(t, factStore, blobStore, licenseStore, detector)
@@ -1106,23 +999,30 @@ func buildUseCaseWithDetector(t *testing.T, facts *fakeFactStore, blobs *fakeBlo
 	return application.NewExtractLicenseUseCase(cfg)
 }
 
-func putFact(t *testing.T, s *fakeFactStore, coord coordinate.ModuleCoordinate, blobHandle string) {
+func putFact(t *testing.T, s *fakeFactStore, blobs *fakeBlobStore, coord coordinate.ModuleCoordinate, zipData []byte) {
 	t.Helper()
-	putFactWithBlob(t, s, coord, blobHandle)
+	putFactWithBlob(t, s, blobs, coord, zipData)
 }
 
-func putFactWithBlob(t *testing.T, s *fakeFactStore, coord coordinate.ModuleCoordinate, blobHandle string) {
+func putFactWithBlob(t *testing.T, s *fakeFactStore, blobs *fakeBlobStore, coord coordinate.ModuleCoordinate, zipData []byte) {
 	t.Helper()
-	r := domain.FactRecord{
-		SchemaVersion:      "2",
-		ModulePath:         coord.Path,
-		ModuleVersion:      coord.Version,
-		PipelineVersion:    application.PipelineVersion,
-		ContentLocation:    blobHandle,
-		ContentHash:        "sha256:placeholder",
-		VerificationStatus: "Verified",
+	r := fetchtest.Record(
+		t,
+		fetchtest.Coordinate(coord),
+		fetchtest.PipelineVersion(application.PipelineVersion),
+		fetchtest.Content("zip"),
+		fetchtest.Status(domain.Verified),
+	)
+	// Key the blob by the artefact identity the record carries: that is the
+	// address production asks the store for, and no other address resolves.
+	if err := blobs.Put(context.Background(), fetchtest.ZipIdentity(t, r), bytes.NewReader(zipData)); err != nil {
+		t.Fatalf("Put blob: %v", err)
 	}
-	if err := s.PutFetchRecord(context.Background(), r); err != nil {
+	sealed, serr := domain.Rehydrate(r)
+	if serr != nil {
+		t.Fatalf("sealing record: %v", serr)
+	}
+	if err := s.PutFetchRecord(context.Background(), sealed); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 }

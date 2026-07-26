@@ -17,6 +17,29 @@ import (
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
 )
 
+// fetchedAtFormat is how a measurement's time is PERSISTED: RFC3339 in UTC with
+// a fixed-width nanosecond fraction, matching domain.CanonicalTimeFormat.
+//
+// Sub-second resolution is for forensics. A second-precision timestamp cannot
+// order two measurements taken within one second, and correlating the ledger
+// against the assurance log or an external trace is exactly the situation where
+// that ordering is the question being asked.
+//
+// The fraction is FIXED WIDTH — nine digits always — because SQLite orders a
+// TEXT column lexicographically and time.RFC3339Nano strips trailing zeros. With
+// a variable-width fraction "…T12:00:00Z" sorts AFTER "…T12:00:00.123Z" ('Z' is
+// 0x5A, '.' is 0x2E), so the ledger's own sequence would come back reversed
+// within a second.
+//
+// Records written before sub-second measurement existed are NOT rewritten into
+// this form. Their stored hashes cover a second-precision time, so rewriting the
+// column would be a rehash of the whole store; the canonical encoding follows
+// the value instead, and those records keep verifying untouched. The two
+// generations differ in width, so a legacy row and a new row sharing one second
+// would sort by width rather than by time — reachable only in the second that
+// spans the upgrade, and rowid is the tiebreaker the sequence actually relies on.
+const fetchedAtFormat = "2006-01-02T15:04:05.000000000Z07:00"
+
 // Store is the SQLite-backed fact store.
 type Store struct {
 	db sqlitestore.DB
@@ -60,6 +83,106 @@ func Migrations() []sqlitestore.Migration {
             ALTER TABLE fetch_records ADD COLUMN zip_sha256 TEXT NOT NULL DEFAULT '';
             ALTER TABLE fetch_records ADD COLUMN zip_sha384 TEXT NOT NULL DEFAULT '';
             ALTER TABLE fetch_records ADD COLUMN zip_sha512 TEXT NOT NULL DEFAULT '';`},
+		// A record written before this column existed defaults to 0, which reads as
+		// "the lookup did not fail" and so stays cache-eligible. That is the honest
+		// default: those records were written by a pipeline that could not
+		// distinguish the two cases, and re-verifying every one of them on the
+		// strength of an absent column would invalidate the whole store.
+		{Module: "fetch", Version: 7, SQL: `ALTER TABLE fetch_records ADD COLUMN sumdb_lookup_failed BOOLEAN NOT NULL DEFAULT 0`},
+		// A record written before this column existed defaults to '', which reads
+		// as "the mode was not recorded" rather than guessing one from the handle
+		// shape. The empty value is omitted from the canonical JSON, so those
+		// records verify their content hash unchanged.
+		{Module: "fetch", Version: 8, SQL: `ALTER TABLE fetch_records ADD COLUMN acquisition_mode TEXT NOT NULL DEFAULT ''`},
+		// The ledger migration. The table is rebuilt because its primary key
+		// changes: a key of (path, version, pipeline) makes every re-measurement
+		// overwrite its predecessor, which is how the store came to contradict its
+		// own audit log — fifteen recorded writes for one coordinate, one surviving
+		// row, and no evidence left to explain what changed.
+		//
+		// The new key adds the artefact hash, the time of measurement and the
+		// record's own content hash, so every measurement that passes is its own
+		// row.
+		//
+		// content_hash is a TIEBREAKER, not the key. Keying on it alone would be
+		// wrong — the canonical hash covers fetched_at, so 19,537 of 19,655
+		// historical writes carried a distinct one and the ledger would grow once
+		// per fetch attempt rather than once per artefact. But two DIFFERENT
+		// measurements can share an instant: a coarse clock, or a fixed one, gives
+		// them the same fetched_at, and without the tiebreaker the second would
+		// collide with the first and be lost. Losing a measurement is precisely
+		// what this ticket exists to stop, so the key distinguishes them.
+		//
+		// ON CONFLICT DO NOTHING then covers the one remaining collision: the
+		// byte-identical record written twice. That is the same measurement, not a
+		// second one, so dropping it discards no evidence — and it must not be an
+		// error, or a retried write would fail a run that had already succeeded.
+		//
+		// Existing rows carry in as the first generation. Nothing is purged: they
+		// all still verify their content hashes, and they hold the only history the
+		// store has. Measured on the maintainer's 6629 rows, no pair of records for
+		// one coordinate disagrees on any hash they both carry, so the divergence
+		// rule fires on nothing at migration.
+		{Module: "fetch", Version: 9, SQL: `
+            ALTER TABLE fetch_records ADD COLUMN measurement_kind TEXT NOT NULL DEFAULT '';
+            ALTER TABLE fetch_records ADD COLUMN sumdb_check TEXT NOT NULL DEFAULT '';
+            ALTER TABLE fetch_records ADD COLUMN sumdb_check_source TEXT NOT NULL DEFAULT '';
+            ALTER TABLE fetch_records ADD COLUMN vcs_check TEXT NOT NULL DEFAULT '';
+            ALTER TABLE fetch_records ADD COLUMN vcs_check_source TEXT NOT NULL DEFAULT '';
+
+            CREATE TABLE fetch_records_ledger (
+                module_path         TEXT NOT NULL,
+                module_version      TEXT NOT NULL,
+                pipeline_version    TEXT NOT NULL,
+                schema_version      TEXT NOT NULL,
+                ecosystem           TEXT NOT NULL DEFAULT 'go',
+                module_hash         TEXT NOT NULL,
+                go_mod_hash         TEXT NOT NULL,
+                git_url             TEXT NOT NULL DEFAULT '',
+                git_ref             TEXT NOT NULL DEFAULT '',
+                git_commit_hash     TEXT NOT NULL DEFAULT '',
+                verification_status TEXT NOT NULL,
+                verification_detail TEXT NOT NULL DEFAULT '',
+                fetched_at          TEXT NOT NULL,
+                content_location    TEXT NOT NULL,
+                go_mod_location     TEXT NOT NULL DEFAULT '',
+                content_hash        TEXT NOT NULL,
+                retracted           BOOLEAN NOT NULL DEFAULT 0,
+                zip_sha256          TEXT NOT NULL DEFAULT '',
+                zip_sha384          TEXT NOT NULL DEFAULT '',
+                zip_sha512          TEXT NOT NULL DEFAULT '',
+                sumdb_lookup_failed BOOLEAN NOT NULL DEFAULT 0,
+                acquisition_mode    TEXT NOT NULL DEFAULT '',
+                measurement_kind    TEXT NOT NULL DEFAULT '',
+                sumdb_check         TEXT NOT NULL DEFAULT '',
+                sumdb_check_source  TEXT NOT NULL DEFAULT '',
+                vcs_check           TEXT NOT NULL DEFAULT '',
+                vcs_check_source    TEXT NOT NULL DEFAULT '',
+                PRIMARY KEY (module_path, module_version, pipeline_version, module_hash, fetched_at, content_hash)
+            );
+
+            INSERT INTO fetch_records_ledger (
+                module_path, module_version, pipeline_version, schema_version, ecosystem,
+                module_hash, go_mod_hash, git_url, git_ref, git_commit_hash,
+                verification_status, verification_detail, fetched_at,
+                content_location, go_mod_location, content_hash, retracted,
+                zip_sha256, zip_sha384, zip_sha512, sumdb_lookup_failed, acquisition_mode,
+                measurement_kind, sumdb_check, sumdb_check_source, vcs_check, vcs_check_source
+            )
+            SELECT
+                module_path, module_version, pipeline_version, schema_version, ecosystem,
+                module_hash, go_mod_hash, git_url, git_ref, git_commit_hash,
+                verification_status, verification_detail, fetched_at,
+                content_location, go_mod_location, content_hash, retracted,
+                zip_sha256, zip_sha384, zip_sha512, sumdb_lookup_failed, acquisition_mode,
+                measurement_kind, sumdb_check, sumdb_check_source, vcs_check, vcs_check_source
+            FROM fetch_records;
+
+            DROP TABLE fetch_records;
+            ALTER TABLE fetch_records_ledger RENAME TO fetch_records;
+
+            CREATE INDEX IF NOT EXISTS idx_fetch_records_identity
+                ON fetch_records (module_path, module_version, pipeline_version, module_hash, fetched_at);`},
 	}
 }
 
@@ -91,9 +214,29 @@ func (s *Store) Close() error {
 	return nil
 }
 
-// PutFetchRecord inserts or replaces a fact record. Idempotent on
-// (module_path, module_version, pipeline_version).
-func (s *Store) PutFetchRecord(ctx context.Context, r domain2.FactRecord) error {
+// recordColumns is the column list every read projects, in the order scanRecord
+// consumes them.
+const recordColumns = `schema_version, ecosystem, module_path, module_version, pipeline_version,
+       module_hash, go_mod_hash, git_url, git_ref, git_commit_hash,
+       verification_status, verification_detail,
+       fetched_at, content_location, go_mod_location, content_hash, retracted,
+       zip_sha256, zip_sha384, zip_sha512, sumdb_lookup_failed, acquisition_mode,
+       measurement_kind, sumdb_check, sumdb_check_source, vcs_check, vcs_check_source`
+
+// PutFetchRecord appends a measurement to the ledger.
+//
+// It never updates. The key carries the artefact hash, the time of measurement
+// and the record's own content hash, so two distinct measurements are always two
+// rows even when they share an instant. The only collision left is the same
+// record written twice, which the conflict clause makes a no-op because it is
+// one measurement rather than two. This is the property the whole ticket turns
+// on — an overwriting store destroys the evidence an investigation needs, and it
+// did.
+//
+// It takes a SealedRecord, so a record whose content hash does not describe its
+// contents cannot reach storage at all.
+func (s *Store) PutFetchRecord(ctx context.Context, sealed domain2.SealedRecord) error {
+	r := sealed.Record()
 	const q = `
 INSERT INTO fetch_records (
     module_path, module_version, pipeline_version,
@@ -101,86 +244,126 @@ INSERT INTO fetch_records (
     git_url, git_ref, git_commit_hash,
     verification_status, verification_detail,
     fetched_at, content_location, go_mod_location, content_hash, retracted,
-    zip_sha256, zip_sha384, zip_sha512
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT (module_path, module_version, pipeline_version)
-DO UPDATE SET
-    schema_version      = excluded.schema_version,
-    ecosystem           = excluded.ecosystem,
-    module_hash         = excluded.module_hash,
-    go_mod_hash         = excluded.go_mod_hash,
-    git_url             = excluded.git_url,
-    git_ref             = excluded.git_ref,
-    git_commit_hash     = excluded.git_commit_hash,
-    verification_status = excluded.verification_status,
-    verification_detail = excluded.verification_detail,
-    fetched_at          = excluded.fetched_at,
-    content_location    = excluded.content_location,
-    go_mod_location     = excluded.go_mod_location,
-    content_hash        = excluded.content_hash,
-    retracted           = excluded.retracted,
-    zip_sha256          = excluded.zip_sha256,
-    zip_sha384          = excluded.zip_sha384,
-    zip_sha512          = excluded.zip_sha512`
+    zip_sha256, zip_sha384, zip_sha512, sumdb_lookup_failed, acquisition_mode,
+    measurement_kind, sumdb_check, sumdb_check_source, vcs_check, vcs_check_source
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (module_path, module_version, pipeline_version, module_hash, fetched_at, content_hash)
+DO NOTHING`
 
 	_, err := s.db.DB().ExecContext(ctx, q,
 		r.ModulePath, r.ModuleVersion, r.PipelineVersion,
 		r.SchemaVersion, r.Ecosystem, r.ModuleHash, r.GoModHash,
 		r.GitURL, r.GitRef, r.GitCommitHash,
 		r.VerificationStatus, r.VerificationDetail,
-		r.FetchedAt.UTC().Format(time.RFC3339),
+		r.FetchedAt.UTC().Format(fetchedAtFormat),
 		r.ContentLocation, r.GoModLocation, r.ContentHash, r.Retracted,
-		r.ZipSHA256, r.ZipSHA384, r.ZipSHA512,
+		r.ZipSHA256, r.ZipSHA384, r.ZipSHA512, r.SumDBLookupFailed, r.AcquisitionMode,
+		r.MeasurementKind, r.SumDBCheck, r.SumDBCheckSource, r.VCSCheck, r.VCSCheckSource,
 	)
 	if err != nil {
-		return fmt.Errorf("inserting fetch record: %w", err)
+		return fmt.Errorf("appending fetch record: %w", err)
 	}
 	return nil
 }
 
-// GetFetchRecord retrieves and tamper-checks the fact record for the given
-// coordinate and pipeline version. Returns (zero, false, nil) if not found or
-// if the content hash does not match (treated as cache miss, triggering
-// re-fetch). Returns (zero, false, error) on DB error.
-func (s *Store) GetFetchRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain2.FactRecord, bool, error) {
-	const q = `
-SELECT schema_version, ecosystem, module_path, module_version, pipeline_version,
-       module_hash, go_mod_hash, git_url, git_ref, git_commit_hash,
-       verification_status, verification_detail,
-       fetched_at, content_location, go_mod_location, content_hash, retracted,
-       zip_sha256, zip_sha384, zip_sha512
-FROM fetch_records
-WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
+// GetFetchRecord returns the composed view of every measurement held for the
+// coordinate and pipeline version. The bool is false when none exist.
+//
+// A stored record that fails to rehydrate is an ERROR, not an absence. It used
+// to be reported as (zero, false, nil): a detected tamper handed back as "no
+// record here", which the caller then treated as a cache miss and re-fetched,
+// overwriting the very evidence that something had been tampered with. The
+// loudest signal the store can produce was its quietest path.
+func (s *Store) GetFetchRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain2.CompositeRecord, bool, error) {
+	records, err := s.ListFetchRecords(ctx, coord, pipelineVersion)
+	if err != nil {
+		return domain2.CompositeRecord{}, false, err
+	}
+	if len(records) == 0 {
+		return domain2.CompositeRecord{}, false, nil
+	}
+	if d := domain2.FindDivergence(records); d != nil {
+		return domain2.CompositeRecord{}, false, d
+	}
+	composite, err := domain2.Compose(records)
+	if err != nil {
+		return domain2.CompositeRecord{}, false, fmt.Errorf("composing records for %s: %w", coord, err)
+	}
+	return composite, true, nil
+}
 
-	row := s.db.DB().QueryRowContext(ctx, q, coord.Path, coord.Version, pipelineVersion)
+// ListFetchRecords returns every measurement held for the coordinate and
+// pipeline version, in the order they were appended.
+//
+// The secondary sort is the row id, not the content hash. fetched_at persists at
+// second precision, so two measurements taken within one second carry the same
+// timestamp and a timestamp sort cannot order them; insertion order is what an
+// append-only ledger actually has, and composition relies on it for coordinates
+// whose content is not pinned. It satisfies the optional
+// ports.FactRecordLister capability, which the write path needs in order to
+// inherit validation legs from earlier measurements of the same artefact.
+func (s *Store) ListFetchRecords(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain2.FactRecord, error) {
+	q := `SELECT ` + recordColumns + `
+FROM fetch_records
+WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
+ORDER BY fetched_at ASC, rowid ASC`
+
+	rows, err := s.db.DB().QueryContext(ctx, q, coord.Path, coord.Version, pipelineVersion)
+	if err != nil {
+		return nil, fmt.Errorf("querying fetch records: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	var out []domain2.FactRecord
+	for rows.Next() {
+		r, serr := scanRecord(rows)
+		if serr != nil {
+			return nil, serr
+		}
+		// Rehydrate verifies the whole integrity floor and fails closed. A row
+		// that cannot be rehydrated stops the read rather than being skipped:
+		// silently dropping it would report a tampered store as a smaller one.
+		sealed, rerr := domain2.Rehydrate(r)
+		if rerr != nil {
+			return nil, fmt.Errorf("rehydrating stored fetch record for %s: %w", coord, rerr)
+		}
+		out = append(out, sealed.Record())
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating fetch records: %w", err)
+	}
+	return out, nil
+}
+
+// rowScanner is satisfied by both *sql.Row and *sql.Rows.
+type rowScanner interface {
+	Scan(dest ...any) error
+}
+
+// scanRecord reads one row into a FactRecord, without verifying it.
+func scanRecord(sc rowScanner) (domain2.FactRecord, error) {
 	var r domain2.FactRecord
 	var fetchedAt string
-	err := row.Scan(
+	err := sc.Scan(
 		&r.SchemaVersion, &r.Ecosystem, &r.ModulePath, &r.ModuleVersion, &r.PipelineVersion,
 		&r.ModuleHash, &r.GoModHash, &r.GitURL, &r.GitRef, &r.GitCommitHash,
 		&r.VerificationStatus, &r.VerificationDetail,
 		&fetchedAt, &r.ContentLocation, &r.GoModLocation, &r.ContentHash, &r.Retracted,
-		&r.ZipSHA256, &r.ZipSHA384, &r.ZipSHA512,
+		&r.ZipSHA256, &r.ZipSHA384, &r.ZipSHA512, &r.SumDBLookupFailed, &r.AcquisitionMode,
+		&r.MeasurementKind, &r.SumDBCheck, &r.SumDBCheckSource, &r.VCSCheck, &r.VCSCheckSource,
 	)
-	if errors.Is(err, sql.ErrNoRows) {
-		return domain2.FactRecord{}, false, nil
-	}
 	if err != nil {
-		return domain2.FactRecord{}, false, fmt.Errorf("querying fetch record: %w", err)
+		if errors.Is(err, sql.ErrNoRows) {
+			return domain2.FactRecord{}, fmt.Errorf("scanning fetch record: %w", err)
+		}
+		return domain2.FactRecord{}, fmt.Errorf("scanning fetch record: %w", err)
 	}
 	t, err := time.Parse(time.RFC3339, fetchedAt)
 	if err != nil {
-		return domain2.FactRecord{}, false, fmt.Errorf("parsing fetched_at %q: %w", fetchedAt, err)
+		return domain2.FactRecord{}, fmt.Errorf("parsing fetched_at %q: %w", fetchedAt, err)
 	}
 	r.FetchedAt = t.UTC()
-
-	// Tamper-detection (T9): verify content hash before returning cached record.
-	var h domain2.CanonicalHasher
-	if err := h.VerifyContentHash(r); err != nil {
-		// Record is corrupt or tampered; treat as absent so it is re-fetched.
-		return domain2.FactRecord{}, false, nil //nolint:nilerr
-	}
-	return r, true, nil
+	return r, nil
 }
 
 // PutAttestation inserts or replaces a provenance attestation. Idempotent on
@@ -255,5 +438,6 @@ ORDER BY subject_kind, subject_digest`
 // Ensure Store implements ports.FactStore and ports.AttestationStore at compile time.
 var (
 	_ ports.FactStore        = (*Store)(nil)
+	_ ports.FactRecordLister = (*Store)(nil)
 	_ ports.AttestationStore = (*Store)(nil)
 )

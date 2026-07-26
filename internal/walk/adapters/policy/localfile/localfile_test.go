@@ -5,6 +5,8 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
+	"strings"
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -190,4 +192,119 @@ func writeTempFile(t *testing.T, content string) string {
 		t.Fatalf("writing temp file: %v", err)
 	}
 	return path
+}
+
+func TestParse_AllowedVCSHostsAbsentKeepsDefaults(t *testing.T) {
+	// The footgun this guards: setting an unrelated fetch field must not zero
+	// the trust list and silently push every module to checksum-DB-only.
+	policy, err := localfile.Parse([]byte("version: \"1\"\nstages:\n  fetch:\n    max_depth: 3\n"))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	if policy.Stages["fetch"].AllowedVCSHosts != nil {
+		t.Fatalf("absent allowed_vcs_hosts should stay nil, got %v", *policy.Stages["fetch"].AllowedVCSHosts)
+	}
+	hosts, err := policy.FetchStage().VCSHostAllowlist()
+	if err != nil {
+		t.Fatalf("resolving allowlist: %v", err)
+	}
+	if !hosts.IsDefault() {
+		t.Errorf("expected the built-in default set, got %v", hosts.Hosts())
+	}
+	if !hosts.IsAllowed("gitlab.com") {
+		t.Error("a policy that only sets max_depth must not narrow the VCS allowlist")
+	}
+}
+
+func TestParse_AllowedVCSHostsPresentOverridesWholesale(t *testing.T) {
+	src := "version: \"1\"\nstages:\n  fetch:\n    allowed_vcs_hosts:\n      - github.com\n      - git.example.org\n"
+	policy, err := localfile.Parse([]byte(src))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	hosts, err := policy.FetchStage().VCSHostAllowlist()
+	if err != nil {
+		t.Fatalf("resolving allowlist: %v", err)
+	}
+	if !hosts.IsAllowed("git.example.org") {
+		t.Error("a widened policy should trust the added forge")
+	}
+	if hosts.IsAllowed("gitlab.com") {
+		t.Error("an override replaces the built-in set; it must not merge with it")
+	}
+}
+
+func TestParse_AllowedVCSHostsEmptyIsALoadErrorNamingSkipFlag(t *testing.T) {
+	src := "version: \"1\"\nstages:\n  fetch:\n    allowed_vcs_hosts: []\n"
+	_, err := localfile.Parse([]byte(src))
+	if err == nil {
+		t.Fatal("expected an explicitly empty allowed_vcs_hosts to fail policy load")
+	}
+	if !strings.Contains(err.Error(), "--skip-vcs-verify") {
+		t.Errorf("the error must point at --skip-vcs-verify, got %q", err)
+	}
+}
+
+func TestParse_AllowedVCSHostsMalformedEntryIsALoadError(t *testing.T) {
+	for _, bad := range []string{"https://github.com", "github.com:443", "*.github.com", "GitHub.com", "github.com/foo"} {
+		t.Run(bad, func(t *testing.T) {
+			src := "version: \"1\"\nstages:\n  fetch:\n    allowed_vcs_hosts:\n      - " + strconv.Quote(bad) + "\n"
+			_, err := localfile.Parse([]byte(src))
+			if err == nil {
+				t.Fatalf("expected %q to fail policy load", bad)
+			}
+			if !strings.Contains(err.Error(), bad) {
+				t.Errorf("error must name the offending entry %q, got %q", bad, err)
+			}
+			if !strings.Contains(err.Error(), "allowed_vcs_hosts") {
+				t.Errorf("error must name the field, got %q", err)
+			}
+		})
+	}
+}
+
+func TestParse_AllowedVCSHostsOnANonFetchStageIsALoadError(t *testing.T) {
+	// Only the fetch stage cross-verifies, so the key elsewhere would load
+	// cleanly and change nothing — an operator would read their policy as
+	// narrowing trust while every forge stayed trusted. That silent weakening is
+	// the failure this field exists to prevent, so it is refused.
+	for _, stage := range []string{"license", "callgraph", "future_stage"} {
+		t.Run(stage, func(t *testing.T) {
+			src := "version: \"1\"\nstages:\n  " + stage + ":\n    allowed_vcs_hosts:\n      - github.com\n"
+			_, err := localfile.Parse([]byte(src))
+			if err == nil {
+				t.Fatalf("expected allowed_vcs_hosts on the %q stage to fail load", stage)
+			}
+			if !strings.Contains(err.Error(), stage) {
+				t.Errorf("error must name the offending stage, got %q", err)
+			}
+			if !strings.Contains(err.Error(), "fetch") {
+				t.Errorf("error must name the stage the field belongs on, got %q", err)
+			}
+		})
+	}
+}
+
+// A misplaced trust list is refused, but an unknown stage NAME on its own stays
+// accepted for forward compatibility — the two rules must not be confused.
+func TestParse_UnknownStageWithoutVCSHostsStillLoads(t *testing.T) {
+	policy, err := localfile.Parse([]byte("version: \"1\"\nstages:\n  future_stage:\n    max_depth: 5\n"))
+	if err != nil {
+		t.Fatalf("an unknown stage without allowed_vcs_hosts must still load: %v", err)
+	}
+	if policy.Stages["future_stage"].MaxDepth != 5 {
+		t.Error("the unknown stage was not preserved")
+	}
+}
+
+func TestParse_AllowedVCSHostsIsCopiedFromTheYAMLSlice(t *testing.T) {
+	src := "version: \"1\"\nstages:\n  fetch:\n    allowed_vcs_hosts:\n      - github.com\n"
+	policy, err := localfile.Parse([]byte(src))
+	if err != nil {
+		t.Fatalf("Parse: %v", err)
+	}
+	hosts := *policy.Stages["fetch"].AllowedVCSHosts
+	if len(hosts) != 1 || hosts[0] != "github.com" {
+		t.Fatalf("unexpected parsed hosts: %v", hosts)
+	}
 }

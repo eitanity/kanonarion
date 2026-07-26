@@ -128,6 +128,35 @@ type scanShowJSON struct {
 	Operator         string                                 `json:"operator"`
 	ContentHash      string                                 `json:"content_hash"`
 	AffectedModules  []scanAffectedModule                   `json:"affected_modules,omitempty"`
+	ScanFailures     []scanRecordFault                      `json:"scan_failures,omitempty"`
+	ReadErrors       []scanRecordFault                      `json:"read_errors,omitempty"`
+	MissingRecords   []string                               `json:"missing_records,omitempty"`
+}
+
+// scanRecordFault is a coordinate whose VulnerabilityRecord could not be read,
+// paired with the store error. A read error is not absence: reporting the module
+// as unscanned when the store could not be read is the misattribution
+// audit.go's vulnAuditStatus removes, and it must not reappear here.
+type scanRecordFault struct {
+	Coordinate string `json:"coordinate"`
+	Error      string `json:"error"`
+}
+
+// scanShowSummary is the per-module read-back of a scan run for display: the
+// modules with findings, the Unscannable roll-up, and the two ways a module in
+// PerModuleResults can fail to produce a summary line of its own — a store read
+// error (a fault) and a record that was never persisted (a coverage gap).
+//
+// Neither may leave the module out of the summary silently. The header prints a
+// module count from len(PerModuleResults), so a coordinate that resolves to no
+// section would make the output claim more modules than it accounts for — the
+// "appears in no roll-up" defect fixed one function above this one.
+type scanShowSummary struct {
+	affected    []scanAffectedModule
+	unscannable *unscannableRollup
+	readErrors  []scanRecordFault
+	missing     []string
+	scanFailed  []scanRecordFault
 }
 
 func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QueryScanRunsUseCase, ucVuln QueryVulnUseCase, stdout io.Writer) error {
@@ -139,7 +168,9 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 		return fmt.Errorf("scan run not found: %s", runID)
 	}
 
-	affected, unscannable := buildScanAffectedModules(ctx, run, ucVuln)
+	summary := buildScanAffectedModules(ctx, run, ucVuln)
+	affected := summary.affected
+	unscannable := summary.unscannable
 
 	if jsonOut {
 		out := scanShowJSON{
@@ -154,6 +185,9 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 			Operator:         run.Operator,
 			ContentHash:      run.ContentHash,
 			AffectedModules:  affected,
+			ScanFailures:     summary.scanFailed,
+			ReadErrors:       summary.readErrors,
+			MissingRecords:   summary.missing,
 		}
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
@@ -181,6 +215,13 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 		}
 		_, _ = fmt.Fprintf(stdout, "%s\n", line)
 	}
+	// The two ways a counted module produces no line above: a store read error
+	// (a fault) and a record that was never persisted (a coverage gap). Each gets
+	// its own heading in the unscannableRollup section shape rather than a silent
+	// skip, so the module count over the header is always accounted for.
+	writeScanFailures(summary.scanFailed, stdout)
+	writeScanRecordFaults(summary.readErrors, stdout)
+	writeMissingScanRecords(summary.missing, stdout)
 	if len(affected) > 0 {
 		_, _ = fmt.Fprintf(stdout, "\nAffected modules (%d):\n", len(affected))
 		for _, m := range affected {
@@ -200,7 +241,14 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 // reason, so the detail view carries the same categories the scan output does.
 // Previously only the out-of-toolchain reason was collected and every other
 // Unscannable record was dropped from the query output entirely.
-func buildScanAffectedModules(ctx context.Context, run vuldomain.WalkScanRun, uc QueryVulnUseCase) ([]scanAffectedModule, *unscannableRollup) {
+//
+// A store read error and a not-found record are also collected separately
+// rather than collapsed into one silent skip: a read error is a fault (the
+// store could not be read, so the module is neither scanned nor absent) and a
+// not-found record is a coverage gap (the run claims a verdict no record
+// backs). Both were dropped before, leaving the header's module count higher
+// than the summary explained.
+func buildScanAffectedModules(ctx context.Context, run vuldomain.WalkScanRun, uc QueryVulnUseCase) scanShowSummary {
 	coords := make([]coordinate.ModuleCoordinate, 0, len(run.PerModuleResults))
 	for coord := range run.PerModuleResults {
 		coords = append(coords, coord)
@@ -212,27 +260,97 @@ func buildScanAffectedModules(ctx context.Context, run vuldomain.WalkScanRun, uc
 		return coords[i].Version < coords[j].Version
 	})
 
-	out := []scanAffectedModule(nil)
-	unscannable := newUnscannableRollup()
+	summary := scanShowSummary{unscannable: newUnscannableRollup()}
 	for _, coord := range coords {
 		rec, found, err := uc.GetRecord(ctx, coord, vulnPipelineVersion, run.Snapshot)
-		if err != nil || !found {
+		if err != nil {
+			summary.readErrors = append(summary.readErrors, scanRecordFault{
+				Coordinate: coord.String(),
+				Error:      err.Error(),
+			})
+			continue
+		}
+		if !found {
+			summary.missing = append(summary.missing, coord.String())
 			continue
 		}
 		if rec.OverallStatus == vuldomain.StatusUnscannable {
-			unscannable.add(rec.UnscanReason, coord.String(), rec.UnscannableReason)
+			summary.unscannable.add(rec.UnscanReason, coord.String(), rec.UnscannableReason)
 			continue
 		}
+		// A failed scan is a fault, reported like a read error rather than dropped.
+		// A ScanFailed record is not Clean: the module was neither analysed nor
+		// declared out of scope, so a bare `!= StatusAffected` skip left it counted
+		// in the header and named nowhere — the same silent drop this function was
+		// changed to close. audit.go surfaces the same status via rec.ErrorDetail.
+		if rec.OverallStatus == vuldomain.StatusScanFailed {
+			summary.scanFailed = append(summary.scanFailed, scanRecordFault{
+				Coordinate: coord.String(),
+				Error:      rec.ErrorDetail,
+			})
+			continue
+		}
+		// StatusClean is the remaining case: analysed, no findings, no line owed.
 		if rec.OverallStatus != vuldomain.StatusAffected {
 			continue
 		}
-		out = append(out, scanAffectedModule{
+		summary.affected = append(summary.affected, scanAffectedModule{
 			Coordinate: coord.String(),
 			Status:     string(rec.OverallStatus),
 			Findings:   rec.Findings,
 		})
 	}
-	return out, unscannable
+	return summary
+}
+
+// writeScanFailures prints the scan-failure section: modules whose scan itself
+// failed (ScanFailed), each named with its recorded error detail. Same section
+// shape as the read-error and Unscannable sections. A ScanFailed module is a
+// fault, not a clean or out-of-scope module, so it is surfaced rather than
+// dropped by the "no findings" path.
+func writeScanFailures(faults []scanRecordFault, w io.Writer) {
+	if len(faults) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "Scan failed (%d): the scan of these modules failed — no verdict was reached\n", len(faults))
+	for _, f := range faults {
+		if f.Error == "" {
+			_, _ = fmt.Fprintf(w, "  %s\n", f.Coordinate)
+			continue
+		}
+		_, _ = fmt.Fprintf(w, "  %s: %s\n", f.Coordinate, f.Error)
+	}
+}
+
+// writeScanRecordFaults prints the read-error section: a heading carrying the
+// count and an explanation, then one line per coordinate naming the store
+// error. It follows the unscannableRollup section shape — heading "(N):
+// explanation" over an indented coordinate list — so the reader meets one
+// format for "counted but carries no findings line", not a third.
+//
+// A read error is reported as a fault, never as absence: the reader must not be
+// told a module is unscanned when the store could not be read.
+func writeScanRecordFaults(faults []scanRecordFault, w io.Writer) {
+	if len(faults) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "Read errors (%d): the vulnerability store could not be read for these modules — neither scanned nor absent\n", len(faults))
+	for _, f := range faults {
+		_, _ = fmt.Fprintf(w, "  %s: %s\n", f.Coordinate, f.Error)
+	}
+}
+
+// writeMissingScanRecords prints the coverage-gap section: modules the run
+// reports a verdict for in PerModuleResults that no stored record backs. Same
+// section shape as the read-error and Unscannable sections above it.
+func writeMissingScanRecords(coords []string, w io.Writer) {
+	if len(coords) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "No scan record (%d): the run reports a verdict for these modules but no record backs it\n", len(coords))
+	for _, c := range coords {
+		_, _ = fmt.Fprintf(w, "  %s\n", c)
+	}
 }
 
 // newVulnScanHistoryCmd returns the vuln-scan-history command.

@@ -67,6 +67,7 @@ kanonarion fetch <module>@<version> [flags]
 | `--gomod` | _(search upward from cwd)_ | Path to a `go.mod` file; fetch its dependency scope instead of a positional module |
 | `--tool` | `false` | Fetch the tooling supply chain (the `go.mod` tool directives' closure) instead of a positional module. Mutually exclusive with `--project` |
 | `--project` | `false` | Fetch the complete set: the project's code **and** tooling (the full Go build list). Mutually exclusive with `--tool` |
+| `--policy` | _(auto-discover `.kanonarion/policy.yaml`)_ | Depth policy file; its fetch stage's `allowed_vcs_hosts` selects which forges may be cross-verified |
 | `--json` | `false` | Emit the fact record as JSON |
 
 A scope fetch is triggered by `--gomod`, `--tool`, or `--project`; the scope is
@@ -76,6 +77,29 @@ chain, `--project` the complete set. See
 [`walk` Scopes](walk.md#scopes-code-tool-complete). A scope fetch cannot be
 combined with a positional module or with `--list-versions`; every module in the
 scope is fetched, continuing on per-module errors.
+
+### Trusted VCS forges
+
+Cross-verification clones the repository the module's proxy `Origin` metadata
+names - or, when there is no `Origin`, the repository inferred from the module
+path itself. Either way a URL from outside kanonarion reaches a `git`
+subprocess, so the set of hosts that may be handed to it is an allowlist, not a
+free-for-all. By default it is the
+built-in set:
+
+```
+bitbucket.org  codeberg.org  github.com  gitlab.com  go.googlesource.com  gopkg.in
+```
+
+A module whose repository lives elsewhere is not cloned; it degrades to
+checksum-database verification and says so in `verification_detail`. The set is
+policy-configurable via the fetch stage's `allowed_vcs_hosts` - see
+[`policy`](policy.md#trusted-vcs-forges-allowed_vcs_hosts). `kanonarion fetch`
+reads the same auto-discovered `.kanonarion/policy.yaml` that `walk` does, or
+the file named by `--policy`.
+
+The allowlist governs **which** forges are trusted, never **whether**
+cross-verification runs; to skip the git leg entirely use `--skip-vcs-verify`.
 
 ## Storage
 

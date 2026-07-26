@@ -213,8 +213,10 @@ type contextCVE struct {
 type contextVulnerabilities struct {
 	ExtractedAt  string       `json:"extracted_at,omitempty"`
 	Status       string       `json:"status"`
-	WalkStatus   string       `json:"walk_status,omitempty"`
+	WalkStatus   string       `json:"walk_status,omitempty"`   // the walk run's collapsed OverallStatus (compatibility summary)
+	WalkCoverage string       `json:"walk_coverage,omitempty"` // coverage axis (Partial/Failed) when the run left modules unanalysed
 	WalkAffected []string     `json:"walk_affected,omitempty"` // affected walk peers in this module's transitive dep closure
+	WalkError    string       `json:"walk_error,omitempty"`    // set when a walk-peer verdict could not be read; the affected-peer set may be incomplete
 	Reason       string       `json:"reason,omitempty"`
 	Findings     []contextCVE `json:"findings,omitempty"`
 	WalkID       string       `json:"walk_id,omitempty"`

@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 
 	"github.com/spf13/cobra"
 	"golang.org/x/mod/modfile"
@@ -547,6 +548,24 @@ func resolveProjectGoSum(gomodPath string) {
 	}
 }
 
+// allowVerificationDowngrade carries --allow-verification-downgrade across the
+// audit/sbom/walk orchestration, process-wide for the same reason modcacheMode
+// is: one invocation builds several Containers and every fetch use case they
+// wire must agree. False by default, which is what keeps a weaker
+// re-measurement from displacing a stronger stored record.
+var allowVerificationDowngrade bool
+
+// registerAllowVerificationDowngradeFlag adds --allow-verification-downgrade to
+// cmd, binding it to the process-wide state the containers read. It is
+// deliberately a separate flag from --force: forcing means "re-measure now", and
+// overloading it with "and accept a weaker anchor" is the conflation that let a
+// --from-modcache run demote records a network run had anchored to the
+// transparency log.
+func registerAllowVerificationDowngradeFlag(cmd *cobra.Command) {
+	cmd.Flags().BoolVar(&allowVerificationDowngrade, "allow-verification-downgrade", false,
+		"permit a re-measurement to REPLACE A STRONGER VERIFICATION ANCHOR WITH A WEAKER ONE (e.g. let a --from-modcache record verified only against local go.sum overwrite one verified against the checksum-database transparency log); without this, the stronger record is kept and the run logs a warning")
+}
+
 // modcacheFlagSentinel is the NoOptDefVal for --from-modcache: it distinguishes
 // "flag passed with no value" (use `go env GOMODCACHE`) from "flag absent"
 // (empty string, mode off) and from an explicit directory value.
@@ -788,5 +807,32 @@ func ExitCodeForError(err error) int {
 	if errors.Is(err, walkports.ErrWalkIntegrity) {
 		return ExitIntegrity
 	}
+	// A divergence — two records for one coordinate disagreeing on a hash they
+	// both carry — is an integrity failure, not a configuration error. A
+	// consuming command fails closed on it, matching modcacheWalkGate and
+	// goSumWalkGate; a store-inspection command reports it and exits 0 (see
+	// reportDivergence), so the tool used to diagnose the problem is not the one
+	// that refuses to run.
+	var divergence *fetchdomain.Divergence
+	if errors.As(err, &divergence) {
+		return ExitIntegrity
+	}
 	return ExitConfig
+}
+
+// divergenceMessage renders err as an operator-facing divergence report,
+// reporting whether it was a divergence at all.
+//
+// It is what a store-inspection command calls instead of failing: an operator
+// diagnosing a contradictory store must be able to run the commands that
+// describe it, so inspection reports the divergence and exits 0. Consuming
+// commands take the other branch and fail closed via ExitCodeForError.
+func divergenceMessage(err error) (string, bool) {
+	var divergence *fetchdomain.Divergence
+	if !errors.As(err, &divergence) {
+		return "", false
+	}
+	return divergence.Error() +
+		" — two measurements describe different artefacts; recover with --force," +
+		" which appends an authoritative measurement and erases nothing", true
 }

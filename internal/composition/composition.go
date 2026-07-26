@@ -60,6 +60,7 @@ import (
 	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
 	walkbuildlist "github.com/eitanity/kanonarion/internal/walk/adapters/buildlist/gotoolchain"
 	walkfetcher "github.com/eitanity/kanonarion/internal/walk/adapters/fetcher/local"
+	walkretry "github.com/eitanity/kanonarion/internal/walk/adapters/fetcher/retrying"
 	walkgomod "github.com/eitanity/kanonarion/internal/walk/adapters/gomod/xmod"
 	walklocalfs "github.com/eitanity/kanonarion/internal/walk/adapters/localfs"
 	walksqlite "github.com/eitanity/kanonarion/internal/walk/adapters/walks/sqlite"
@@ -302,7 +303,9 @@ func newLocalWalkExtract(
 	exStore := exsqlite.New(db)
 
 	// ---- project-walk pipeline ----
-	fetcher := walkfetcher.New(fetchUC, false)
+	// The driver always fetches over the network, so transient proxy failures are
+	// retried with bounded backoff before a module degrades to a fetch-failure node.
+	fetcher := walkretry.New(walkfetcher.New(fetchUC, false), logger)
 	localFetcher := walklocalfs.New(blobs, factStore, clk)
 	resolver := walkapp.NewGraphResolver(walkgomod.New(), fetcher, blobs, clk, "", logger).
 		WithBuildListResolver(walkbuildlist.New("", logger)).

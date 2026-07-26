@@ -66,8 +66,9 @@ kanonarion inspect github.com/spf13/cobra@v1.8.1 --json
 | `--store-root` | `~/.kanonarion` | Path to fact store root (or `KANONARION_STORE` env var) |
 | `--force` | `false` | Re-fetch and re-extract even if cached records exist |
 | `--fresh` | `false` | Fetch a fresh vulnerability database snapshot from the network |
-| `--reachability` | `false` | Enable call-graph reachability analysis during vuln-scan |
+| `--reachability` | `false` | Enable call-graph reachability analysis during vuln-scan. For `--gomod`, reachability roots at the dependency closure, not the project's own code (see the note under [`inspect --gomod`](#inspect---gomod-path)) |
 | `--skip-vcs-verify` | `false` | Skip git cross-verification; sumdb verification still runs |
+| `--policy` | _(auto-discover `.kanonarion/policy.yaml`)_ | Depth policy file; its fetch stage governs traversal and the `allowed_vcs_hosts` forge allowlist |
 | `--goproxy` | `$GOPROXY` | Override the Go module proxy |
 | `--go-binary` | | Path to `go` binary if not in `$PATH` |
 | `--json` | `false` | Emit final context as JSON |
@@ -89,7 +90,7 @@ github.com/spf13/cobra@v1.8.1
   Interface:       2 package(s), 66 symbol(s) (Extracted)
   Call Graph:      1192 nodes, 3463 edges (Extracted)
   Examples:        2 (Found)
-  Vulnerabilities: Clean [walk: AllClean]
+  Vulnerabilities: Clean
 
 Context size: ~90 tokens  (use --full for complete docs, --json for machine-readable)
 ```
@@ -129,6 +130,15 @@ the pair composes with no `not_fetched`/`not_run` gaps.
 The `Walk ID` in the output is the project walk record. It can be passed
 directly to `sbom`, `extract`, `vuln-scan`, and `walk-show`.
 
+> **Reachability roots at the dependency closure, not the project's own code.**
+> With `--reachability`, the project walk analyses the consumer module in
+> consumer-mode, so its call graph is not loaded into the store. A `reachable`
+> verdict therefore means "reachable from the closure roots", one hop short of
+> "reachable from a project entrypoint" - the final application-to-dependency
+> edge is absent. `inspect --gomod --reachability` prints an explicit banner to
+> stderr stating this. To root reachability at the application, run
+> [`kanonarion local <dir>`](local.md), which ingests the target graph.
+
 **Example output:**
 
 ```
@@ -140,6 +150,12 @@ Walk ID:  01KQDBVW092ER1HNXZ60X27CMD
 
 To get module context: kanonarion context --gomod ./go.mod
 ```
+
+`Status` is the coverage word (`AllClean` / `Affected` / `Partial` /
+`ScanFailed`) and `Affected` is the findings count; the two are independent
+axes. A run left `Partial` by an unscannable module still reports its real
+`Affected` count on its own line rather than collapsing it to zero — the
+coverage gap does not hide the findings, and neither hides the other.
 
 **Example JSON output:**
 

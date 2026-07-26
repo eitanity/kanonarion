@@ -101,18 +101,20 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 		return domain.ProjectScanResult{}, fmt.Errorf("start govulncheck: %w", err)
 	}
 
-	var waitErr error
+	waitErrCh := make(chan error, 1)
 	go func() {
-		waitErr = cmd.Wait()
+		waitErrCh <- cmd.Wait()
 		_ = pw.Close() /* #nosec G104 -- pipe close in goroutine, error not actionable */
 	}()
 
 	byModule, perr := s.parseResultsByModule(ctx, pr)
 	// Drain before closing so the writer goroutine reaches cmd.Wait() and waitErr
 	// is settled: a scan that died mid-stream must be classified as the failure it
-	// is, not as the truncated parse it also produced.
+	// is, not as the truncated parse it also produced. The channel receive is the
+	// synchronisation edge that publishes the goroutine's write to this goroutine.
 	_, _ = io.Copy(io.Discard, pr)
 	_ = pr.Close()
+	waitErr := <-waitErrCh
 	s.logMem(ctx, "target_output_parsed")
 
 	if waitErr != nil {

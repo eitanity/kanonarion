@@ -9,6 +9,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/audit"
 	"github.com/eitanity/kanonarion/internal/fetch/application"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
@@ -29,14 +30,14 @@ type existsControlBlob struct {
 	forceAbsent bool
 }
 
-func (b *existsControlBlob) Exists(ctx context.Context, h ports.BlobHandle) (bool, error) {
+func (b *existsControlBlob) Exists(ctx context.Context, identity ports.BlobIdentity) (bool, error) {
 	if b.existsErr != nil {
 		return false, b.existsErr
 	}
 	if b.forceAbsent {
 		return false, nil
 	}
-	return b.fakeBlob.Exists(ctx, h)
+	return b.fakeBlob.Exists(ctx, identity)
 }
 
 func TestServe_FreshFetch(t *testing.T) {
@@ -54,13 +55,13 @@ func TestServe_FreshFetch(t *testing.T) {
 	if res.FromCache {
 		t.Error("expected FromCache=false on first serve")
 	}
-	if res.Handle == "" {
+	if res.Identity.IsZero() {
 		t.Error("expected a non-empty blob handle")
 	}
 	// The handle must name a blob that actually exists in the store.
-	present, err := blobs.Exists(context.Background(), res.Handle)
+	present, err := blobs.Exists(context.Background(), res.Identity)
 	if err != nil || !present {
-		t.Errorf("returned handle %q not present in store (present=%v err=%v)", res.Handle, present, err)
+		t.Errorf("returned handle %q not present in store (present=%v err=%v)", res.Identity, present, err)
 	}
 	if res.Record.Coordinate() != testCoord {
 		t.Errorf("Record coordinate = %v, want %v", res.Record.Coordinate(), testCoord)
@@ -76,11 +77,7 @@ func TestServe_CacheHitBlobPresent(t *testing.T) {
 	facts := newFakeFacts()
 
 	// Seed a cached record whose blob is present in the store.
-	handle, err := blobs.Put(context.Background(), strings.NewReader("cached-zip"))
-	if err != nil {
-		t.Fatalf("seed blob: %v", err)
-	}
-	seedRecord(t, facts, handle, domain2.Verified)
+	seedRecord(t, blobs, facts, true, domain2.Verified)
 
 	serve := newServe(blobs, facts)
 	res, err := serve.Serve(context.Background(), application.ServeRequest{Coordinate: testCoord})
@@ -90,8 +87,8 @@ func TestServe_CacheHitBlobPresent(t *testing.T) {
 	if !res.FromCache {
 		t.Error("expected FromCache=true on cache hit with present blob")
 	}
-	if res.Handle != handle {
-		t.Errorf("Handle = %q, want cached %q", res.Handle, handle)
+	if res.Identity.IsZero() {
+		t.Error("Identity is zero on a cache hit; Serve must name the artefact it served")
 	}
 	if res.VerificationStatus != domain2.Verified {
 		t.Errorf("VerificationStatus = %q, want %q", res.VerificationStatus, domain2.Verified)
@@ -103,7 +100,7 @@ func TestServe_CacheHitBlobEvictedRefetches(t *testing.T) {
 	facts := newFakeFacts()
 
 	// Seed a cached record pointing at a blob that is NOT in the store (evicted).
-	seedRecord(t, facts, ports.BlobHandle("fake:evicted"), domain2.Verified)
+	seedRecord(t, blobs, facts, false, domain2.Verified)
 
 	serve := newServe(blobs, facts)
 	res, err := serve.Serve(context.Background(), application.ServeRequest{
@@ -116,12 +113,9 @@ func TestServe_CacheHitBlobEvictedRefetches(t *testing.T) {
 	if res.FromCache {
 		t.Error("expected FromCache=false after re-fetching an evicted blob")
 	}
-	if res.Handle == ports.BlobHandle("fake:evicted") {
-		t.Error("expected a freshly fetched handle, got the evicted one")
-	}
-	present, err := blobs.Exists(context.Background(), res.Handle)
+	present, err := blobs.Exists(context.Background(), res.Identity)
 	if err != nil || !present {
-		t.Errorf("re-fetched handle %q not present (present=%v err=%v)", res.Handle, present, err)
+		t.Errorf("re-fetched artefact %q not present (present=%v err=%v)", res.Identity, present, err)
 	}
 }
 
@@ -130,7 +124,7 @@ func TestServe_RefetchErrorPropagates(t *testing.T) {
 	facts := newFakeFacts()
 
 	// Cache hit whose blob is evicted, but the forced re-fetch fails at the proxy.
-	seedRecord(t, facts, ports.BlobHandle("fake:evicted"), domain2.Verified)
+	seedRecord(t, blobs, facts, false, domain2.Verified)
 	proxy := &fakeProxy{infoErr: errors.New("proxy down")}
 	fetch := newUseCase(proxy, &fakeVCS{}, blobs, facts)
 	serve := application.NewServeModuleUseCase(fetch, blobs)
@@ -187,7 +181,7 @@ func TestServe_ExistsErrorPropagates(t *testing.T) {
 func TestServe_CacheHitExistsErrorPropagates(t *testing.T) {
 	facts := newFakeFacts()
 	base := newFakeBlob()
-	seedRecord(t, facts, ports.BlobHandle("fake:cached"), domain2.Verified)
+	seedRecord(t, base, facts, true, domain2.Verified)
 	blobs := &existsControlBlob{fakeBlob: base, existsErr: errors.New("store io error")}
 	fetch := newUseCase(&fakeProxy{}, &fakeVCS{}, blobs, facts)
 	serve := application.NewServeModuleUseCase(fetch, blobs)
@@ -201,11 +195,7 @@ func TestServe_CacheHitExistsErrorPropagates(t *testing.T) {
 func TestServe_AuditsVerifiedRead(t *testing.T) {
 	blobs := newFakeBlob()
 	facts := newFakeFacts()
-	handle, err := blobs.Put(context.Background(), strings.NewReader("cached-zip"))
-	if err != nil {
-		t.Fatalf("seed blob: %v", err)
-	}
-	seedRecord(t, facts, handle, domain2.Verified)
+	seedRecord(t, blobs, facts, true, domain2.Verified)
 
 	sink := newFakeAudit()
 	serve := newServe(blobs, facts).WithAudit(sink)
@@ -214,8 +204,8 @@ func TestServe_AuditsVerifiedRead(t *testing.T) {
 		t.Fatalf("Serve: %v", err)
 	}
 	// A verified module is served AND recorded as verified.
-	if res.Handle != handle {
-		t.Errorf("Handle = %q, want %q", res.Handle, handle)
+	if res.Identity.IsZero() {
+		t.Error("Identity is zero; Serve must name the artefact it served")
 	}
 	ev := sink.only(t)
 	if ev.Type != audit.EventRecordReadVerified {
@@ -232,13 +222,9 @@ func TestServe_AuditsVerifiedRead(t *testing.T) {
 func TestServe_AuditsVerificationFailedButStillServes(t *testing.T) {
 	blobs := newFakeBlob()
 	facts := newFakeFacts()
-	handle, err := blobs.Put(context.Background(), strings.NewReader("cached-zip"))
-	if err != nil {
-		t.Fatalf("seed blob: %v", err)
-	}
 	// A blob whose hash did not match its trust anchor: the security-relevant
 	// case. Serve does not gate — it records the rejection and still returns.
-	seedRecord(t, facts, handle, domain2.UnverifiedHashMismatch)
+	seedRecord(t, blobs, facts, true, domain2.UnverifiedHashMismatch)
 
 	sink := newFakeAudit()
 	serve := newServe(blobs, facts).WithAudit(sink)
@@ -246,8 +232,8 @@ func TestServe_AuditsVerificationFailedButStillServes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Serve: %v", err)
 	}
-	if res.Handle != handle {
-		t.Errorf("Handle = %q, want served handle %q", res.Handle, handle)
+	if res.Identity.IsZero() {
+		t.Error("Identity is zero; Serve names the artefact even when verification failed")
 	}
 	ev := sink.only(t)
 	if ev.Type != audit.EventVerificationFailed {
@@ -264,11 +250,7 @@ func TestServe_AuditsVerificationFailedButStillServes(t *testing.T) {
 func TestServe_AuditEmitFailurePropagates(t *testing.T) {
 	blobs := newFakeBlob()
 	facts := newFakeFacts()
-	handle, err := blobs.Put(context.Background(), strings.NewReader("cached-zip"))
-	if err != nil {
-		t.Fatalf("seed blob: %v", err)
-	}
-	seedRecord(t, facts, handle, domain2.Verified)
+	seedRecord(t, blobs, facts, true, domain2.Verified)
 
 	sink := &fakeAudit{err: errors.New("log unwritable")}
 	serve := newServe(blobs, facts).WithAudit(sink)
@@ -277,21 +259,44 @@ func TestServe_AuditEmitFailurePropagates(t *testing.T) {
 	}
 }
 
-// seedRecord writes a fact record for testCoord at the test pipeline version,
-// pointing at the given content handle with the given verification status.
-func seedRecord(t *testing.T, facts ports.FactStore, handle ports.BlobHandle, status domain2.VerificationStatus) {
+// seedRecord writes a fact record for testCoord at the test pipeline version
+// with the given verification status, and stores its artefacts when zipPresent.
+//
+// The artefacts are keyed by the identity the record itself carries, because
+// that is the only address the pipeline will ask for. zipPresent false is how
+// the eviction tests seed a record whose zip is genuinely gone: there is no
+// longer a "wrong handle" to pass, since the address is derived from the record
+// rather than chosen by the caller.
+//
+// The go.mod blob is always stored. A record naming a go.mod the store never
+// held is not a state the pipeline can produce, and the cache check rejects such
+// a record because its artefacts are unreadable — so seeding one would test a
+// fiction.
+func seedRecord(t *testing.T, blobs ports.BlobStore, facts ports.FactStore, zipPresent bool, status domain2.VerificationStatus) {
 	t.Helper()
-	rec := domain2.NewFactRecord(domain2.FetchedModule{
-		Coordinate:         testCoord,
-		ModuleHash:         domain2.ModuleHash{Algorithm: "h1", Value: "seed=="},
-		GoModHash:          domain2.ModuleHash{Algorithm: "h1", Value: "seedmod=="},
-		VerificationStatus: status,
-		FetchedAt:          fixedTime,
-		PipelineVersion:    "test-0.1.0",
-		ContentLocation:    string(handle),
-		GoModLocation:      "fake:seed-gomod",
-	})
-	if err := facts.PutFetchRecord(context.Background(), rec); err != nil {
+	rec := fetchtest.Record(t,
+		fetchtest.Coordinate(testCoord),
+		fetchtest.ModuleHash(fetchtest.H1("seed==")),
+		fetchtest.GoModHash(fetchtest.H1("seedmod==")),
+		fetchtest.Status(status),
+		fetchtest.FetchedAt(fixedTime),
+		fetchtest.PipelineVersion("test-0.1.0"),
+		fetchtest.Content("seed-zip"),
+		fetchtest.GoMod("seed-gomod"),
+	)
+	if err := blobs.Put(context.Background(), fetchtest.GoModIdentity(t, rec), strings.NewReader("seed-gomod")); err != nil {
+		t.Fatalf("seed go.mod blob: %v", err)
+	}
+	if zipPresent {
+		if err := blobs.Put(context.Background(), fetchtest.ZipIdentity(t, rec), strings.NewReader("cached-zip")); err != nil {
+			t.Fatalf("seed zip blob: %v", err)
+		}
+	}
+	sealed, serr := domain2.Rehydrate(rec)
+	if serr != nil {
+		t.Fatalf("sealing seed record: %v", serr)
+	}
+	if err := facts.PutFetchRecord(context.Background(), sealed); err != nil {
 		t.Fatalf("seed record: %v", err)
 	}
 }

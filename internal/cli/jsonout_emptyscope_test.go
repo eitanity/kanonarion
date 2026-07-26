@@ -1,0 +1,129 @@
+package cli
+
+import (
+	"bytes"
+	"context"
+	"encoding/json"
+	"os"
+	"path/filepath"
+	"strings"
+	"testing"
+)
+
+// emptyToolScopeGoMod writes a go.mod with no tool directives, so
+// resolveScopeModules(scopeTool) resolves to zero modules without invoking the
+// go toolchain — a hermetic way to reach every command's empty-scope branch.
+func emptyToolScopeGoMod(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	p := filepath.Join(dir, "go.mod")
+	if err := os.WriteFile(p, []byte("module example.com/myapp\n\ngo 1.24\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	return p
+}
+
+// TestContextGomod_EmptyScope_JSONIsCleanStream guards that context's NDJSON
+// output stays a pure JSON-object stream on an empty scope: the empty answer is
+// zero stdout bytes, not a prose sentence a caller cannot parse.
+func TestContextGomod_EmptyScope_JSONIsCleanStream(t *testing.T) {
+	p := emptyToolScopeGoMod(t)
+	jsonOut = true
+	defer func() { jsonOut = false }()
+
+	var stdout, stderr bytes.Buffer
+	if err := runContextGoMod(context.Background(), contextFlags{gomodPath: p}, scopeTool, &stdout, &stderr); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if stdout.Len() != 0 {
+		t.Errorf("empty scope wrote to the NDJSON stream under --json: %q", stdout.String())
+	}
+}
+
+// TestContextGomod_EmptyScope_TextKeepsProse guards that routing the empty case
+// away from stdout under --json did not drop the human sentence on the text path.
+func TestContextGomod_EmptyScope_TextKeepsProse(t *testing.T) {
+	p := emptyToolScopeGoMod(t)
+	var stdout, stderr bytes.Buffer
+	if err := runContextGoMod(context.Background(), contextFlags{gomodPath: p}, scopeTool, &stdout, &stderr); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "no tool dependencies found") {
+		t.Errorf("expected the empty-scope sentence on the text path, got: %q", stdout.String())
+	}
+}
+
+// TestLatestGomod_EmptyScope_JSONIsEmptyArray guards that latest's JSON array
+// output decodes as [] on an empty scope, keeping the empty and populated
+// results the same type. The proxy is unused on this path, so nil is safe.
+func TestLatestGomod_EmptyScope_JSONIsEmptyArray(t *testing.T) {
+	p := emptyToolScopeGoMod(t)
+	jsonOut = true
+	defer func() { jsonOut = false }()
+
+	var stdout, stderr bytes.Buffer
+	if err := runLatestGomod(context.Background(), p, scopeTool, nil, &stdout, &stderr); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := strings.TrimSpace(stdout.String())
+	if out == "null" {
+		t.Fatalf("emitted JSON null instead of []")
+	}
+	var arr []latestResult
+	if err := json.Unmarshal([]byte(out), &arr); err != nil {
+		t.Fatalf("--json did not emit a JSON array: %v (out=%q)", err, out)
+	}
+	if len(arr) != 0 {
+		t.Errorf("expected empty array, got %d entries", len(arr))
+	}
+}
+
+// TestLatestGomod_EmptyScope_TextKeepsProse guards the text-path sentence.
+func TestLatestGomod_EmptyScope_TextKeepsProse(t *testing.T) {
+	p := emptyToolScopeGoMod(t)
+	var stdout, stderr bytes.Buffer
+	if err := runLatestGomod(context.Background(), p, scopeTool, nil, &stdout, &stderr); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "no tool dependencies found") {
+		t.Errorf("expected the empty-scope sentence on the text path, got: %q", stdout.String())
+	}
+}
+
+// TestInspectGomod_EmptyScope_JSONIsSummaryObject guards that inspect's JSON
+// object output decodes as an inspectSummary on an empty scope — the same type
+// the populated path emits — with no walks, rather than a prose sentence.
+func TestInspectGomod_EmptyScope_JSONIsSummaryObject(t *testing.T) {
+	p := emptyToolScopeGoMod(t)
+	jsonOut = true
+	defer func() { jsonOut = false }()
+
+	var stdout, stderr bytes.Buffer
+	if err := runInspectGoMod(context.Background(), inspectFlags{gomodPath: p}, scopeTool, &stdout, &stderr); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := strings.TrimSpace(stdout.String())
+	var summary inspectSummary
+	if err := json.Unmarshal([]byte(out), &summary); err != nil {
+		t.Fatalf("--json did not emit an inspectSummary object: %v (out=%q)", err, out)
+	}
+	if summary.ModuleCount != 0 {
+		t.Errorf("expected zero modules for an empty scope, got %d", summary.ModuleCount)
+	}
+	// walk_ids must be [] not null so empty and populated decode alike.
+	if strings.Contains(out, `"walk_ids": null`) {
+		t.Errorf("walk_ids emitted as null, not []: %q", out)
+	}
+}
+
+// TestInspectGomod_EmptyScope_TextKeepsProse guards the text-path sentence.
+func TestInspectGomod_EmptyScope_TextKeepsProse(t *testing.T) {
+	p := emptyToolScopeGoMod(t)
+	var stdout, stderr bytes.Buffer
+	if err := runInspectGoMod(context.Background(), inspectFlags{gomodPath: p}, scopeTool, &stdout, &stderr); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(stdout.String(), "no tool dependencies found") {
+		t.Errorf("expected the empty-scope sentence on the text path, got: %q", stdout.String())
+	}
+}

@@ -113,8 +113,11 @@ func (e *StoredError) Error() string {
 
 // NodeResult is the per-module outcome of a Walk operation.
 type NodeResult struct {
-	Coordinate  coordinate.ModuleCoordinate
-	FetchRecord *fetchdomain.FactRecord // nil on failure
+	Coordinate coordinate.ModuleCoordinate
+	// FetchRecord is the composed view of the artefact this node resolved to —
+	// its identity, when it was first seen, the measurement being served, and the
+	// validation legs any measurement established. nil on failure.
+	FetchRecord *fetchdomain.CompositeRecord
 	Status      NodeStatus
 	Error       *StoredError // nil on success
 	FromCache   bool

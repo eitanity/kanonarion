@@ -124,7 +124,10 @@ func (uc *ExecuteWalkUseCase) Execute(ctx context.Context, req WalkRequest) (Exe
 		}
 	}
 
-	id, resuming := uc.resolveWalkID(ctx, req.Target, scope)
+	id, resuming, err := uc.resolveWalkID(ctx, req.Target, scope)
+	if err != nil {
+		return ExecuteWalkResult{}, err
+	}
 	if resuming {
 		uc.logger.InfoContext(ctx, "walk_resuming",
 			slog.String("walk_id", id),
@@ -198,12 +201,16 @@ func walkCompletedEvent(rec domain.WalkRecord) audit.Event {
 // resolveWalkID returns the walk ID to use. If the most recent stored walk for
 // target and scope has status partial or cancelled, its ID is returned with resuming=true
 // so the record is updated in-place. Otherwise a fresh ULID is generated.
-func (uc *ExecuteWalkUseCase) resolveWalkID(ctx context.Context, target coordinate.ModuleCoordinate, scope domain.WalkScope) (id string, resuming bool) {
+func (uc *ExecuteWalkUseCase) resolveWalkID(ctx context.Context, target coordinate.ModuleCoordinate, scope domain.WalkScope) (id string, resuming bool, err error) {
 	summaries, err := uc.store.ListWalks(ctx, walkports.WalkFilter{Target: &target, Scope: &scope, Limit: 1})
 	if err == nil && len(summaries) > 0 {
 		if s := summaries[0]; s.OverallStatus == domain.WalkPartial || s.OverallStatus == domain.WalkCancelled {
-			return s.ID, true
+			return s.ID, true, nil
 		}
 	}
-	return ulid.MustNew(ulid.Now(), rand.Reader).String(), false
+	newID, err := ulid.New(ulid.Now(), rand.Reader)
+	if err != nil {
+		return "", false, fmt.Errorf("generating walk id: %w", err)
+	}
+	return newID.String(), false, nil
 }

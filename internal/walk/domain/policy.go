@@ -1,5 +1,11 @@
 package domain
 
+import (
+	"fmt"
+
+	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+)
+
 // PolicySchemaVersion is the version of the DepthPolicy YAML schema.
 // Bump when the serialisation format changes in a backwards-incompatible way.
 const PolicySchemaVersion = "1"
@@ -37,6 +43,25 @@ type StageDepth struct {
 	// FollowIndirect controls whether requirements marked // indirect in go.mod
 	// are followed. When false, indirect requirements are skipped at every level.
 	FollowIndirect bool
+	// AllowedVCSHosts overrides the built-in VCS forge allowlist used when a
+	// module's repository is cross-verified against its proxy zip. It is
+	// meaningful on the fetch stage, where that verification runs.
+	//
+	// Unlike the bool fields above, this one keys on FIELD PRESENCE rather than
+	// its zero value, hence the pointer: nil means the field was absent from the
+	// policy and the built-in default applies. Zero-value-on-omit is fine for a
+	// traversal toggle, but for a security trust list it is a footgun — an
+	// operator who sets only max_depth under fetch would otherwise empty the
+	// host list and silently push every module to checksum-DB-only verification.
+	//
+	// A present list replaces the default wholesale (it does not merge). A
+	// present but empty list is a load error: "trust no forge" is not a value of
+	// this field, it is the orthogonal --skip-vcs-verify flag.
+	//
+	// The json tag is omitempty so `kanonarion policy show` renders a policy
+	// that does not override the allowlist exactly as it did before this field
+	// existed; the resolved set is reported separately as effective_vcs_hosts.
+	AllowedVCSHosts *[]string `json:"AllowedVCSHosts,omitempty"`
 }
 
 // DefaultDepthPolicy returns the built-in policy used when no policy file is
@@ -87,4 +112,22 @@ func (p DepthPolicy) FetchStage() StageDepth {
 		return sd
 	}
 	return DefaultDepthPolicy().Stages["fetch"]
+}
+
+// VCSHostAllowlist resolves the stage's effective VCS forge allowlist: the
+// built-in default when the field is absent, the configured set when present.
+//
+// The returned allowlist is never empty. An error means the policy carries an
+// unusable list (empty, or an entry that is not a bare lowercased hostname) —
+// the caller must fail rather than fall back, because falling back would widen
+// or narrow the operator's declared trust without saying so.
+func (s StageDepth) VCSHostAllowlist() (fetchdomain.VCSHostAllowlist, error) {
+	if s.AllowedVCSHosts == nil {
+		return fetchdomain.DefaultVCSHostAllowlist(), nil
+	}
+	allowlist, err := fetchdomain.NewVCSHostAllowlist(*s.AllowedVCSHosts)
+	if err != nil {
+		return fetchdomain.VCSHostAllowlist{}, fmt.Errorf("resolving allowed_vcs_hosts: %w", err)
+	}
+	return allowlist, nil
 }

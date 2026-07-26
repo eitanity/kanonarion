@@ -35,6 +35,7 @@ type inspectFlags struct {
 	full            bool
 	noProgress      bool
 	stdlibFromGoMod bool
+	policyPath      string
 }
 
 func newInspectCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -86,8 +87,9 @@ tooling).`,
 	cmd.Flags().StringVar(&f.goBinary, "go-binary", "", "path to 'go' binary if not in PATH")
 	cmd.Flags().BoolVar(&f.force, "force", false, "re-fetch and re-extract even if cached records exist")
 	cmd.Flags().BoolVar(&f.fresh, "fresh", false, "fetch fresh vulnerability database snapshot from network")
-	cmd.Flags().BoolVar(&f.reachable, "reachability", false, "enable call-graph reachability analysis during vuln-scan")
+	cmd.Flags().BoolVar(&f.reachable, "reachability", false, "enable call-graph reachability analysis during vuln-scan (--gomod: roots at the dependency closure, not the project's own code; use 'kanonarion local' to root at the app)")
 	cmd.Flags().BoolVar(&f.skipVCS, "skip-vcs-verify", false, "skip git cross-verification; sumdb verification still runs")
+	cmd.Flags().StringVar(&f.policyPath, "policy", "", "path to depth policy YAML (default: search for .kanonarion/policy.yaml)")
 	cmd.Flags().BoolVar(&f.sizeOnly, "size-only", false, "print estimated token count and byte size of the context, then exit")
 	cmd.Flags().BoolVar(&f.full, "full", false, "include full doc comments and complete example bodies (overrides --compact)")
 	cmd.Flags().StringVar(&f.gomodPath, "gomod", "", "path to a go.mod file; run the pipeline over the project's code dependencies and print a summary (default: ./go.mod)")
@@ -116,7 +118,7 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 		return fmt.Errorf("writing output: %w", err)
 	}
 	progress := newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
-	if err := runWalk(ctx, arg, wf, f.force, true, 0, "", "", f.skipVCS, domain.WalkScopeCode, domain.WalkDepthFull, "", progress, ctr.ExecuteWalk, io.Discard, stderr); err != nil {
+	if err := runWalk(ctx, arg, wf, f.force, true, 0, "", f.policyPath, f.skipVCS, domain.WalkScopeCode, domain.WalkDepthFull, "", progress, ctr.ExecuteWalk, io.Discard, stderr); err != nil {
 		return fmt.Errorf("walk: %w", err)
 	}
 
@@ -225,19 +227,49 @@ type inspectSummary struct {
 // to Partial. Enumerating the non-clean statuses instead would silently report
 // AllClean for a status added to the enum later, which is the same defect this
 // function exists to prevent.
-func inspectSummaryStatus(nodeFails, extractFails, scanFails, affectedCount int, scanStatus vuldomain.WalkScanStatus) string {
+//
+// The word is coverage-first and is not promoted to Affected by the finding
+// count: scanStatus already collapses coverage over findings (a run left Partial
+// by an unscannable module reports Partial even with findings), and the affected
+// count is presented on its own line. Keying the word on the count instead would
+// flip such a run's word to Affected and hide the coverage gap — the same
+// two-axis collapse this cluster removes, and it would make inspect disagree with
+// vuln-scan about the same run.
+func inspectSummaryStatus(nodeFails, extractFails, scanFails int, scanStatus vuldomain.WalkScanStatus) string {
 	switch {
 	case scanStatus == vuldomain.WalkStatusFailed:
 		return string(vuldomain.WalkStatusFailed)
 	case nodeFails > 0 || extractFails > 0 || scanFails > 0:
 		return string(vuldomain.WalkStatusPartial)
-	case affectedCount > 0 || scanStatus == vuldomain.WalkStatusAffected:
+	case scanStatus == vuldomain.WalkStatusAffected:
 		return string(vuldomain.WalkStatusAffected)
 	case scanStatus == vuldomain.WalkStatusAllClean:
 		return string(vuldomain.WalkStatusAllClean)
 	default:
 		return string(vuldomain.WalkStatusPartial)
 	}
+}
+
+// writeEmptyInspectScope emits inspect's answer for a scope that resolved to no
+// dependencies, in the active output format. Under --json it is an
+// inspectSummary object with zeroed counts and no walks — the same type the
+// populated path emits, with status derived the same way a zero-module run
+// derives it — so empty and populated results decode alike. On the text path it
+// is the human sentence.
+func writeEmptyInspectScope(scope depScope, gomodPath string, stdout io.Writer) error {
+	if jsonOut {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(inspectSummary{
+			OverallStatus: inspectSummaryStatus(0, 0, 0, ""),
+			WalkIDs:       []string{},
+		}); err != nil {
+			return fmt.Errorf("encoding summary: %w", err)
+		}
+		return nil
+	}
+	_, _ = fmt.Fprintf(stdout, "no %s dependencies found in %s\n", scope, gomodPath)
+	return nil
 }
 
 // runInspectGoMod runs the full pipeline for the local project using a single
@@ -251,8 +283,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 	if scope != scopeComplete {
 		coords, cerr := resolveScopeModules(f.gomodPath, scope)
 		if cerr == nil && len(coords) == 0 {
-			_, _ = fmt.Fprintf(stdout, "no %s dependencies found in %s\n", scope, f.gomodPath)
-			return nil
+			return writeEmptyInspectScope(scope, f.gomodPath, stdout)
 		}
 	}
 
@@ -277,7 +308,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 
 	var nodeFails int
 	progress := newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
-	if werr := runWalkProject(ctx, f.gomodPath, wf, f.force, true, 0, "", "", f.skipVCS, scope, domain.WalkDepthFull, "", false, f.stdlibFromGoMod, progress, ctr.ExecuteWalk, io.Discard, stderr); werr != nil {
+	if werr := runWalkProject(ctx, f.gomodPath, wf, f.force, true, 0, "", f.policyPath, f.skipVCS, scope, domain.WalkDepthFull, "", false, f.stdlibFromGoMod, progress, ctr.ExecuteWalk, io.Discard, stderr); werr != nil {
 		_, _ = fmt.Fprintf(stderr, "walk: %v\n", werr)
 		nodeFails = 1
 	}
@@ -314,6 +345,15 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 			extractFails = 1
 		}
 
+		// The project walk roots at the consumer module but analyses its own code
+		// in consumer-mode, so the target's call graph is never loaded into the
+		// store. Reachability therefore roots at the dependency closure, one hop
+		// short of the project entrypoints. Disclose that up front so a reader
+		// cannot mistake a dep-closure verdict for an app-rooted one.
+		if f.reachable {
+			printReachabilityClosureBanner(stderr, f.gomodPath)
+		}
+
 		_, _ = fmt.Fprintf(stderr, "==> inspect --gomod: vuln-scanning walk %s\n", walkID)
 		// stderr, not io.Discard — see the note on the same call in runInspect:
 		// the grouped roll-up is the concise presentation and belongs to the
@@ -339,8 +379,14 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 			_, _ = fmt.Fprintf(stderr, "==> inspect: no scan run recorded for walk %s\n", walkID)
 		default:
 			scanStatus = runs[0].OverallStatus
-			if scanStatus == vuldomain.WalkStatusAffected {
-				affectedCount = 1
+			// Key the affected count on the findings axis, not the collapsed
+			// OverallStatus: a run left Partial by an unscannable module still
+			// reports FindingsStatus == Affected, so keying on OverallStatus made
+			// the count 0 over real findings. Read the real count from the
+			// run's stored counts rather than re-deriving it — a walk with 100
+			// affected modules must report 100, not a 0/1 flag.
+			if runs[0].FindingsStatus == vuldomain.FindingsAffected {
+				affectedCount = runs[0].Counts.Affected
 			}
 			snapshotVersion = runs[0].Snapshot.Version
 		}
@@ -351,7 +397,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 		walkIDs = []string{walkID}
 	}
 
-	overallStatus := inspectSummaryStatus(nodeFails, extractFails, scanFails, affectedCount, scanStatus)
+	overallStatus := inspectSummaryStatus(nodeFails, extractFails, scanFails, scanStatus)
 
 	if jsonOut {
 		var directives *directivesSection
@@ -412,6 +458,23 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 		_, _ = fmt.Fprintf(stdout, "\nTo get module context: kanonarion context --gomod %s\n", f.gomodPath)
 	}
 	return nil
+}
+
+// printReachabilityClosureBanner discloses that --gomod reachability roots at
+// the dependency closure rather than the project's own entrypoints. The
+// consumer module is walked but analysed in consumer-mode, so its call graph is
+// not in the store; a reachable verdict therefore means "reachable from the
+// closure roots", one hop short of "reachable from a project entrypoint". This
+// must be stated explicitly so the two cannot be confused. Directs the reader
+// to `kanonarion local`, which ingests the target graph and roots at the app.
+func printReachabilityClosureBanner(w io.Writer, gomodPath string) {
+	projectDir := filepath.Dir(gomodPath)
+	_, _ = fmt.Fprintln(w, "==> NOTE: reachability is rooted at the DEPENDENCY CLOSURE, not the project's own code.")
+	_, _ = fmt.Fprintln(w, "    The consumer module is analysed in consumer-mode, so its call graph is not")
+	_, _ = fmt.Fprintln(w, "    loaded: a 'reachable' verdict means reachable from the closure roots, one hop")
+	_, _ = fmt.Fprintln(w, "    short of reachable from a project entrypoint. The final app->dependency edge")
+	_, _ = fmt.Fprintln(w, "    is absent from this analysis.")
+	_, _ = fmt.Fprintf(w, "    To root reachability at the application, run: kanonarion local %s\n", projectDir)
 }
 
 // latestWalkIDForCoord returns the ID of the most recent walk for the given coordinate.

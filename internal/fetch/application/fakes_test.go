@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"testing"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/audit"
@@ -152,45 +153,44 @@ func (f *fakeVCS) CheckoutToDir(_ context.Context, _, _, dir string) error {
 // fakeBlob implements ports.BlobStore in memory.
 type fakeBlob struct {
 	mu   sync.Mutex
-	data map[ports.BlobHandle][]byte
+	data map[string][]byte
 }
 
-func newFakeBlob() *fakeBlob { return &fakeBlob{data: make(map[ports.BlobHandle][]byte)} }
+func newFakeBlob() *fakeBlob { return &fakeBlob{data: make(map[string][]byte)} }
 
-func (f *fakeBlob) Put(_ context.Context, content io.Reader) (ports.BlobHandle, error) {
+func (f *fakeBlob) Put(_ context.Context, identity ports.BlobIdentity, content io.Reader) error {
 	b, err := io.ReadAll(content)
 	if err != nil {
-		return "", fmt.Errorf("reading content: %w", err)
+		return fmt.Errorf("reading content: %w", err)
 	}
-	h := ports.BlobHandle("fake:" + string(b))
 	f.mu.Lock()
-	f.data[h] = b
+	f.data[identity.String()] = b
 	f.mu.Unlock()
-	return h, nil
+	return nil
 }
 
-func (f *fakeBlob) Get(_ context.Context, h ports.BlobHandle) (io.ReadCloser, error) {
+func (f *fakeBlob) Get(_ context.Context, identity ports.BlobIdentity) (io.ReadCloser, error) {
 	f.mu.Lock()
-	b := f.data[h]
+	b := f.data[identity.String()]
 	f.mu.Unlock()
 	return io.NopCloser(strings.NewReader(string(b))), nil
 }
 
-func (f *fakeBlob) Exists(_ context.Context, h ports.BlobHandle) (bool, error) {
+func (f *fakeBlob) Exists(_ context.Context, identity ports.BlobIdentity) (bool, error) {
 	f.mu.Lock()
-	_, ok := f.data[h]
+	_, ok := f.data[identity.String()]
 	f.mu.Unlock()
 	return ok, nil
 }
 
-func (f *fakeBlob) GetPath(_ context.Context, h ports.BlobHandle) (string, error) {
+func (f *fakeBlob) GetPath(_ context.Context, identity ports.BlobIdentity) (string, error) {
 	f.mu.Lock()
-	_, ok := f.data[h]
+	_, ok := f.data[identity.String()]
 	f.mu.Unlock()
 	if !ok {
-		return "", fmt.Errorf("blob not found: %s", h)
+		return "", fmt.Errorf("blob not found: %s", identity)
 	}
-	return "/fake/path/" + string(h), nil
+	return "/fake/path/" + identity.String(), nil
 }
 
 // fakeFacts implements ports.FactStore in memory.
@@ -201,7 +201,8 @@ type fakeFacts struct {
 
 func newFakeFacts() *fakeFacts { return &fakeFacts{records: make(map[string]domain2.FactRecord)} }
 
-func (f *fakeFacts) PutFetchRecord(_ context.Context, r domain2.FactRecord) error {
+func (f *fakeFacts) PutFetchRecord(_ context.Context, sealed domain2.SealedRecord) error {
+	r := sealed.Record()
 	key := r.ModulePath + "@" + r.ModuleVersion + "#" + r.PipelineVersion
 	f.mu.Lock()
 	f.records[key] = r
@@ -209,12 +210,19 @@ func (f *fakeFacts) PutFetchRecord(_ context.Context, r domain2.FactRecord) erro
 	return nil
 }
 
-func (f *fakeFacts) GetFetchRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (domain2.FactRecord, bool, error) {
+func (f *fakeFacts) GetFetchRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (domain2.CompositeRecord, bool, error) {
 	key := coord.Path + "@" + coord.Version + "#" + pv
 	f.mu.Lock()
 	r, ok := f.records[key]
 	f.mu.Unlock()
-	return r, ok, nil
+	if !ok {
+		return domain2.CompositeRecord{}, false, nil
+	}
+	c, cerr := domain2.Compose([]domain2.FactRecord{r})
+	if cerr != nil {
+		return domain2.CompositeRecord{}, false, cerr //nolint:wrapcheck // test fake
+	}
+	return c, true, nil
 }
 
 // fixedClock implements ports.Clock with a fixed time.
@@ -248,4 +256,48 @@ func disabledSumDB() *fakeSumDB {
 // availableSumDB returns a fakeSumDB that reports the given zip hash as verified.
 func availableSumDB(zipHash domain2.ModuleHash) *fakeSumDB {
 	return &fakeSumDB{result: ports.SumDBResult{Available: true, ZipHash: zipHash}}
+}
+
+// mustSealRecord wraps a record in the SealedRecord the store accepts for
+// writing. The store takes only sealed records, so a test that seeds one goes
+// through here rather than reaching past the guard the ledger depends on.
+func mustSealRecord(t *testing.T, r domain2.FactRecord) domain2.SealedRecord {
+	t.Helper()
+	sealed, err := domain2.Rehydrate(r)
+	if err != nil {
+		t.Fatalf("sealing record: %v", err)
+	}
+	return sealed
+}
+
+// seedRaw writes a record straight into the fake's map, past PutFetchRecord.
+//
+// It exists for the tests whose subject is a record that is ALREADY bad in the
+// store. Such a record cannot be sealed — Rehydrate refuses it, which is exactly
+// the guard those tests rely on elsewhere — so seeding it through the port is
+// impossible by construction. Reaching past the port here is what lets the read
+// side still be tested against the state an operator or a corrupted file can
+// produce.
+func (f *fakeFacts) seedRaw(r domain2.FactRecord) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.records == nil {
+		f.records = map[string]domain2.FactRecord{}
+	}
+	f.records[r.ModulePath+"@"+r.ModuleVersion+"#"+r.PipelineVersion] = r
+}
+
+// ListFetchRecords satisfies the optional ports.FactRecordLister capability, so
+// the write path can find earlier measurements of an artefact and inherit the
+// validation legs they established. A fake without it would make the pipeline
+// inherit nothing, which is honest degradation but not what the tests that
+// exercise inheritance are about.
+func (f *fakeFacts) ListFetchRecords(_ context.Context, coord coordinate.ModuleCoordinate, pv string) ([]domain2.FactRecord, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []domain2.FactRecord
+	if r, ok := f.records[coord.Path+"@"+coord.Version+"#"+pv]; ok {
+		out = append(out, r)
+	}
+	return out, nil
 }

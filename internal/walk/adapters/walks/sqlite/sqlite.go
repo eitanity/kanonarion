@@ -56,6 +56,14 @@ func Migrations() []sqlitestore.Migration {
 		// hash and a blob with no ecosystem field — unreadable under the new
 		// schema. Purge them; they are regenerable by re-walking.
 		{Module: "walk", Version: 4, SQL: `DELETE FROM walks`},
+		// Walk records embed the fetch record per node and hash its canonical JSON
+		// into the walk's own content hash. That embedded shape became the composed
+		// fetch record at pipeline 1.10.0, so every stored walk record's bytes
+		// predate a shape this build can no longer produce. There is deliberately no
+		// mixed-shape read path: a record is purged rather than served through a
+		// second decoder, because a store that answers in two shapes cannot say
+		// which one a given hash was computed over.
+		{Module: "walk", Version: 5, SQL: `DELETE FROM walks`},
 	}
 }
 

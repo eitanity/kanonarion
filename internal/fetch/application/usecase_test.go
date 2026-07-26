@@ -72,7 +72,7 @@ func TestExecute_HappyPath(t *testing.T) {
 		t.Error("ContentHash not set")
 	}
 	h := domain2.CanonicalHasher{}
-	if err := h.VerifyContentHash(result.Record); err != nil {
+	if err := h.VerifyContentHash(result.Record.FactRecord); err != nil {
 		t.Errorf("VerifyContentHash: %v", err)
 	}
 	// sumdb matched fake hash, VCS checkout failed → VerifiedBySumDBOnly.

@@ -51,7 +51,7 @@ kanonarion vuln-scan-rescan 01KQDBVW092ER1HNXZ60X27CMD \
 
 ```
 Re-scanning walk 01KQDBVW092ER1HNXZ60X27CMD...
-Re-scan completed with status: Affected
+Re-scan completed: Complete, Affected (2)
 Run ID: vscan-01KQDBVW092ER1HNXZ60X27CMD-1711929600
 Snapshot: osv.dev/go@v2024-04-01T00-00-00
 ```

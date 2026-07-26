@@ -17,13 +17,13 @@ import (
 func TestWalker_ProjectMode_AnalyseLocalRoot_PromotesRootToLocalAnalysed(t *testing.T) {
 	blobs := newFakeBlobStore()
 	rf := newFakeFetcher()
-	rf.add("example.com/dep", "v1.0.0", "module example.com/dep\ngo 1.21\n", blobs)
+	rf.add(t, "example.com/dep", "v1.0.0", "module example.com/dep\ngo 1.21\n", blobs)
 
 	wf := newWalkerFetcher()
-	wf.addRecord("example.com/dep", "v1.0.0")
+	wf.addRecord(t, "example.com/dep", "v1.0.0")
 
 	lf := newFakeLocalFetcher()
-	lf.addRecord("example.com/project", coordinate.LocalVersion)
+	lf.addRecord(t, "example.com/project", coordinate.LocalVersion)
 
 	mainGoMod := []byte("module example.com/project\ngo 1.21\nrequire example.com/dep v1.0.0\n")
 	target := coordinate.ModuleCoordinate{Path: "example.com/project", Version: coordinate.LocalVersion}
@@ -75,10 +75,10 @@ func TestWalker_ProjectMode_AnalyseLocalRoot_PromotesRootToLocalAnalysed(t *test
 func TestWalker_ProjectMode_AnalyseLocalRoot_IngestFailureFailsWalk(t *testing.T) {
 	blobs := newFakeBlobStore()
 	rf := newFakeFetcher()
-	rf.add("example.com/dep", "v1.0.0", "module example.com/dep\ngo 1.21\n", blobs)
+	rf.add(t, "example.com/dep", "v1.0.0", "module example.com/dep\ngo 1.21\n", blobs)
 
 	wf := newWalkerFetcher()
-	wf.addRecord("example.com/dep", "v1.0.0")
+	wf.addRecord(t, "example.com/dep", "v1.0.0")
 
 	lf := newFakeLocalFetcher()
 	lf.addError("example.com/project", coordinate.LocalVersion, errors.New("zip create failed"))
@@ -114,10 +114,10 @@ func TestWalker_ProjectMode_AnalyseLocalRoot_IngestFailureFailsWalk(t *testing.T
 func TestWalker_ProjectMode_AnalyseLocalRoot_MissingProjectDirFailsWalk(t *testing.T) {
 	blobs := newFakeBlobStore()
 	rf := newFakeFetcher()
-	rf.add("example.com/dep", "v1.0.0", "module example.com/dep\ngo 1.21\n", blobs)
+	rf.add(t, "example.com/dep", "v1.0.0", "module example.com/dep\ngo 1.21\n", blobs)
 
 	wf := newWalkerFetcher()
-	wf.addRecord("example.com/dep", "v1.0.0")
+	wf.addRecord(t, "example.com/dep", "v1.0.0")
 
 	mainGoMod := []byte("module example.com/project\ngo 1.21\nrequire example.com/dep v1.0.0\n")
 	target := coordinate.ModuleCoordinate{Path: "example.com/project", Version: coordinate.LocalVersion}

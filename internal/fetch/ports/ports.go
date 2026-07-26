@@ -3,7 +3,9 @@ package ports
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
+	"strings"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/audit"
@@ -39,16 +41,59 @@ type SumDBClient interface {
 	Lookup(ctx context.Context, coord coordinate.ModuleCoordinate) SumDBResult
 }
 
+// SumDBUnavailability discriminates why a checksum-database lookup produced no
+// hashes. The distinction is the difference between a measurement and a finding:
+// a policy answer is the database's real answer about the module and is stable
+// across runs, whereas a failure is a statement about the lookup, not about the
+// module, and a later attempt may well succeed. Collapsing the two lets one
+// network flake be recorded — and cached — as a property of a dependency.
+type SumDBUnavailability string
+
+const (
+	// SumDBUnavailabilityNone is the zero value, used when Available is true.
+	SumDBUnavailabilityNone SumDBUnavailability = ""
+
+	// SumDBUnavailabilityPolicy means the database was deliberately not
+	// consulted, or answered without a hash line: GOSUMDB=off, a
+	// GOPRIVATE/GONOSUMCHECK match, or a response carrying no hash for the
+	// module. It is a settled answer; callers treat it exactly as they treat
+	// any other stable verification outcome.
+	SumDBUnavailabilityPolicy SumDBUnavailability = "policy"
+
+	// SumDBUnavailabilityFailure means the lookup itself returned an error, so
+	// nothing is known about the module's transparency-log entry. Err carries
+	// the error for transient classification, and the resulting record is not
+	// eligible as a cache hit — the next fetch must re-verify rather than serve
+	// a downgrade produced by a bad network moment.
+	SumDBUnavailabilityFailure SumDBUnavailability = "failure"
+)
+
 // SumDBResult is the outcome of a checksum database lookup.
 type SumDBResult struct {
 	// Available is true when the lookup succeeded and hashes were returned.
 	Available bool
 	// Reason is set when Available is false; describes why the lookup was skipped.
 	Reason string
+	// Unavailability discriminates a policy answer from a lookup failure when
+	// Available is false; it is SumDBUnavailabilityNone when Available is true.
+	// A client that leaves it unset on an unavailable result is read as a policy
+	// answer, which is the pre-existing behaviour for every caller.
+	Unavailability SumDBUnavailability
+	// Err is the error the lookup returned when Unavailability is
+	// SumDBUnavailabilityFailure, carried as a value so a decorator can classify
+	// it (domain.IsTransientFetchError) rather than re-parse Reason. Nil for
+	// every other outcome.
+	Err error
 	// ZipHash is the h1 hash of the module zip as recorded in the transparency log.
 	ZipHash domain2.ModuleHash
 	// GoModHash is the h1 hash of the go.mod as recorded in the transparency log.
 	GoModHash domain2.ModuleHash
+}
+
+// LookupFailed reports whether the result is an unavailable-because-the-lookup-
+// failed outcome, as opposed to an available result or a settled policy answer.
+func (r SumDBResult) LookupFailed() bool {
+	return !r.Available && r.Unavailability == SumDBUnavailabilityFailure
 }
 
 // ModuleProxy retrieves modules via the Go module proxy protocol.
@@ -132,40 +177,151 @@ type VCSClient interface {
 	CheckoutToDir(ctx context.Context, url, commit, dir string) error
 }
 
-// BlobStore persists opaque binary artefacts content-addressably.
-// Implementations: localfsBlob, fakeBlob (tests).
+// BlobStore persists binary artefacts under an address chosen by their content.
+// Implementations: localfsBlob, modcache, fakeBlob (tests).
 //
-// BlobHandle is an opaque string returned by Put. Callers must not interpret
-// its internal format; it may be a hash, a path segment, or an OCI digest.
+// The store does not choose the address. Every method takes the artefact's
+// identity — the h1 hash the fetch pipeline measured — and the adapter maps that
+// identity onto its own layout internally, never persisting the mapping. This is
+// the correction of a real defect: when Put returned a store-chosen opaque
+// handle and that handle was written into a fact record, the record described
+// where one run had put the bytes rather than what the bytes were, and a
+// coordinate measured by two routes acquired two irreconcilable records. With a
+// content-chosen address, the same artefact measured any number of ways produces
+// one address, and the same artefact may legitimately be held by several stores
+// at once.
+//
+// Every implementation satisfies four obligations and is otherwise free:
+//
+//   - Addressed by artefact identity. The adapter's internal layout is its own
+//     business, but it is never persisted and never leaks into a record.
+//   - Verify before serve. Get produces bytes that hash to the requested
+//     identity or reports absence. Absence is not a failure; wrong bytes are a
+//     tamper finding.
+//   - Materialise locally on demand, via BlobPathOptimizer, for the consumers
+//     that need a filesystem path. A remote backend must not pretend to have
+//     paths — it declines the optional interface instead.
+//   - Population is the adapter's business. The port guarantees only that after
+//     Put, Exists(identity) is true. Whether the bytes arrive by write, copy,
+//     hard link or server-side copy is the adapter's choice.
 type BlobStore interface {
-	// Put stores content and returns an opaque handle. Idempotent: storing
-	// the same bytes twice returns the same handle.
-	Put(ctx context.Context, content io.Reader) (BlobHandle, error)
+	// Put stores content under the given artefact identity. Idempotent: storing
+	// the same identity twice is a no-op the second time.
+	Put(ctx context.Context, identity BlobIdentity, content io.Reader) error
 
-	// Get opens a stored blob for reading. Returns an error if the handle
-	// is unknown.
-	Get(ctx context.Context, handle BlobHandle) (io.ReadCloser, error)
+	// Get opens the artefact for reading. Returns an error if the identity is
+	// not held.
+	Get(ctx context.Context, identity BlobIdentity) (io.ReadCloser, error)
 
-	// Exists reports whether the handle is present in the store.
-	Exists(ctx context.Context, handle BlobHandle) (bool, error)
+	// Exists reports whether the artefact is present in the store.
+	Exists(ctx context.Context, identity BlobIdentity) (bool, error)
 }
 
 // BlobPathOptimizer is an optional capability a BlobStore may also implement
-// when it can hand back a local filesystem path to a blob, letting callers pass
-// the path to external tools or avoid reading the whole blob into memory. It is
-// kept off BlobStore because object stores (e.g. S3) cannot honour it; callers
-// must type-assert for it and degrade gracefully (materialise the blob bytes)
-// when it is absent. Per the published-port asymmetry rule, capabilities grow
-// by new optional interfaces like this one, never by widening BlobStore.
+// when it can hand back a local filesystem path to an artefact, letting callers
+// pass the path to external tools or avoid reading the whole artefact into
+// memory. It is kept off BlobStore because object stores (e.g. S3) cannot honour
+// it; callers must type-assert for it and degrade gracefully (materialise the
+// bytes) when it is absent. Per the published-port asymmetry rule, capabilities
+// grow by new optional interfaces like this one, never by widening BlobStore.
 type BlobPathOptimizer interface {
-	// GetPath returns the local filesystem path to the blob identified by
-	// handle. Returns ErrBlobNotFound if the handle is unknown.
-	GetPath(ctx context.Context, handle BlobHandle) (string, error)
+	// GetPath returns the local filesystem path to the artefact identified by
+	// identity. Returns ErrBlobNotFound if it is not held.
+	GetPath(ctx context.Context, identity BlobIdentity) (string, error)
 }
 
-// BlobHandle is an opaque reference to a stored blob. Treat as an identifier,
-// not a filesystem path.
-type BlobHandle string
+// BlobIdentity addresses an artefact by what it is. It is derived from the
+// fetch measurement, never invented by a store, so two stores asked for the same
+// artefact are asked with the same value.
+//
+// Kind distinguishes the module zip from the standalone go.mod, because a
+// go.mod-only measurement records the go.mod's h1 as the artefact identity and
+// the two must not collide in a store that holds both.
+type BlobIdentity struct {
+	// Kind names which artefact of the module this identity addresses.
+	Kind BlobKind
+
+	// Hash is the h1 hash of the artefact's bytes.
+	Hash domain2.ModuleHash
+}
+
+// BlobKind names an artefact of a module version.
+type BlobKind string
+
+const (
+	// BlobKindZip is the module zip.
+	BlobKindZip BlobKind = "zip"
+
+	// BlobKindGoMod is the standalone go.mod.
+	BlobKindGoMod BlobKind = "gomod"
+)
+
+// IsZero reports whether the identity addresses nothing.
+func (b BlobIdentity) IsZero() bool { return b.Hash.IsZero() }
+
+// String renders the identity as "<kind>:<algorithm>:<value>". It is the
+// canonical spelling adapters key their internal layout from and the form a
+// record persists when it needs to name an artefact.
+func (b BlobIdentity) String() string {
+	if b.IsZero() {
+		return ""
+	}
+	return string(b.Kind) + ":" + b.Hash.String()
+}
+
+// ZipIdentity derives the blob identity of a fact record's module zip. The
+// second result is false when the record describes a go.mod-only measurement,
+// which has no zip to address — absence, not an error.
+//
+// Callers must use this rather than reading a handle off the record. A handle
+// says where one measurement put the bytes; the identity says what the bytes
+// are, and only the identity is the same for every store that holds them.
+func ZipIdentity(r domain2.FactRecord) (BlobIdentity, bool, error) {
+	h, err := domain2.StoredModuleHash(r.ModuleHash)
+	if err != nil {
+		return BlobIdentity{}, false, fmt.Errorf("deriving zip identity for %s: %w", r.Coordinate(), err)
+	}
+	if h.IsZero() {
+		return BlobIdentity{}, false, nil
+	}
+	return BlobIdentity{Kind: BlobKindZip, Hash: h}, true, nil
+}
+
+// GoModIdentity derives the blob identity of a fact record's standalone go.mod.
+// The second result is false when the record carries no go.mod hash.
+func GoModIdentity(r domain2.FactRecord) (BlobIdentity, bool, error) {
+	h, err := domain2.StoredModuleHash(r.GoModHash)
+	if err != nil {
+		return BlobIdentity{}, false, fmt.Errorf("deriving go.mod identity for %s: %w", r.Coordinate(), err)
+	}
+	if h.IsZero() {
+		return BlobIdentity{}, false, nil
+	}
+	return BlobIdentity{Kind: BlobKindGoMod, Hash: h}, true, nil
+}
+
+// ParseBlobIdentity is the inverse of BlobIdentity.String. It rejects a value it
+// cannot read rather than returning a zero identity, so a malformed address can
+// never be mistaken for an absent one.
+func ParseBlobIdentity(s string) (BlobIdentity, error) {
+	kind, rest, ok := strings.Cut(s, ":")
+	if !ok {
+		return BlobIdentity{}, fmt.Errorf("invalid blob identity %q: expected kind:algorithm:value", s)
+	}
+	switch BlobKind(kind) {
+	case BlobKindZip, BlobKindGoMod:
+	default:
+		return BlobIdentity{}, fmt.Errorf("invalid blob identity %q: unknown kind %q", s, kind)
+	}
+	h, err := domain2.ParseModuleHash(rest)
+	if err != nil {
+		return BlobIdentity{}, fmt.Errorf("invalid blob identity %q: %w", s, err)
+	}
+	if h.IsZero() {
+		return BlobIdentity{}, fmt.Errorf("invalid blob identity %q: no hash", s)
+	}
+	return BlobIdentity{Kind: BlobKind(kind), Hash: h}, nil
+}
 
 // Signer signs a subject digest taken from the content-identity surface and
 // returns an attestation over it. It is a published substitution port: OSS
@@ -211,17 +367,54 @@ type Attestation struct {
 	Bundle []byte
 }
 
-// FactStore persists FactRecords durably and structurally.
-// Implementations: sqliteFact, fakeFact (tests).
+// FactStore persists FactRecords durably and structurally, as an append-only
+// ledger. Implementations: sqliteFact, fakeFact (tests).
+//
+// A measurement is never overwritten; it is appended. What a reader gets back is
+// composed from the records describing the same artefact, so a re-measurement
+// adds to the evidence rather than destroying its predecessor. That is what lets
+// the store corroborate its own audit log: before this, the log could record
+// fifteen writes for a coordinate while the store kept one, and an investigation
+// into what changed had no surviving evidence to read.
 type FactStore interface {
-	// PutFetchRecord persists a fact record. Idempotent on
-	// (module_path, module_version, pipeline_version): a second call with
-	// the same coordinate and pipeline version overwrites the existing record.
-	PutFetchRecord(ctx context.Context, record domain2.FactRecord) error
+	// PutFetchRecord appends a measurement to the ledger. It never updates and
+	// never deduplicates: each call is its own row, keyed on the coordinate, the
+	// pipeline version, the artefact hash and the time of measurement.
+	//
+	// It accepts only a SealedRecord, so a record whose content hash does not
+	// describe its contents cannot reach storage. Callers obtain one from
+	// domain.Seal, which hashes at construction.
+	PutFetchRecord(ctx context.Context, record domain2.SealedRecord) error
 
-	// GetFetchRecord retrieves the fact record for the given coordinate and
-	// pipeline version. The bool is false if no record exists.
-	GetFetchRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain2.FactRecord, bool, error)
+	// GetFetchRecord returns the composed view of the measurements held for the
+	// given coordinate and pipeline version. The bool is false if no record
+	// exists.
+	//
+	// It returns an error, not absence, when a stored record fails to rehydrate:
+	// a detected tamper reported as "nothing here" becomes a silent re-fetch
+	// that overwrites the evidence of the tamper.
+	GetFetchRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain2.CompositeRecord, bool, error)
+}
+
+// FactRecordLister is the optional capability a FactStore may also implement to
+// hand back the individual measurements behind a composed record, rather than
+// the composition alone.
+//
+// It arrives as a separate optional interface because the published-port
+// asymmetry rule forbids widening FactStore with a third method;
+// BlobPathOptimizer is the established precedent. Callers type-assert for it and
+// degrade to the composed read when it is absent.
+//
+// It is needed by the write path as much as the read path. A run that skips the
+// VCS check but is forced to re-measure has to find the earlier measurements of
+// the same artefact in order to inherit their legs, and a composed record cannot
+// answer that: it has already folded the measurements into one.
+type FactRecordLister interface {
+	// ListFetchRecords returns every measurement held for the coordinate and
+	// pipeline version, oldest first. Empty (not an error) when none exist.
+	// Records that fail to rehydrate are an error, on the same terms as
+	// GetFetchRecord.
+	ListFetchRecords(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain2.FactRecord, error)
 }
 
 // AttestationStore persists provenance attestations additively, separate from

@@ -598,3 +598,92 @@ func TestUndefinedSymbolSplit(t *testing.T) {
 		t.Errorf("mixed = %q, want the qualified reading to win", got)
 	}
 }
+
+// TestImportSiteModule_SkipsLineWithoutMarker covers the arm where a detail line
+// carries no could-not-import marker: it is skipped and a later matching line is
+// paired, rather than the whole detail being rejected.
+func TestImportSiteModule_SkipsLineWithoutMarker(t *testing.T) {
+	detail := "module lookup disabled by GOPROXY=off\n" +
+		"/tmp/x/github.com/foo/bar@v1.2.3/pkg/file.go:1:2: could not import github.com/foo/pkg (invalid package name: \"\")"
+	got, ok := ImportSiteModule(detail, "github.com/foo/pkg")
+	if !ok {
+		t.Fatalf("ok = false, want true (the marker line after a non-marker line must pair)")
+	}
+	want := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.2.3"}
+	if got != want {
+		t.Errorf("coord = %v, want %v", got, want)
+	}
+}
+
+// TestPositionLine_Branches covers positionLine's decision arms: no colon, a
+// single colon (already file:line), a numeric column stripped, and a non-numeric
+// tail left intact.
+func TestPositionLine_Branches(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{"nocolon", "nocolon"},             // last <= 0
+		{":leading", ":leading"},           // last == 0 (colon at index 0)
+		{"file.go:12", "file.go:12"},       // prev < 0 (single colon)
+		{"file.go:12:3", "file.go:12"},     // both tails numeric -> strip column
+		{"pkg:name:here", "pkg:name:here"}, // non-numeric tails -> unchanged
+		{"file.go:ab:12", "file.go:ab:12"}, // second-last not numeric -> unchanged
+	}
+	for _, c := range cases {
+		if got := positionLine(c.in); got != c.want {
+			t.Errorf("positionLine(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+// TestIsAllDigits_Branches covers the empty, non-digit, and all-digit arms.
+func TestIsAllDigits_Branches(t *testing.T) {
+	cases := []struct {
+		in   string
+		want bool
+	}{
+		{"", false},
+		{"12a", false},
+		{"007", true},
+	}
+	for _, c := range cases {
+		if got := isAllDigits(c.in); got != c.want {
+			t.Errorf("isAllDigits(%q) = %v, want %v", c.in, got, c.want)
+		}
+	}
+}
+
+// TestModuleFromCachePath_Branches covers each rejection arm and the plain
+// (non-escaped) success path: no '@', no slash after the version, a version not
+// prefixed with 'v', a valid module coordinate, and a well-formed position whose
+// prefix is no valid module path.
+func TestModuleFromCachePath_Branches(t *testing.T) {
+	cases := []struct {
+		name      string
+		pos       string
+		wantOK    bool
+		wantCoord coordinate.ModuleCoordinate
+	}{
+		{"no at-sign", "github.com/foo/bar/file.go:1:2", false, coordinate.ModuleCoordinate{}},
+		{"no slash after version", "github.com/foo/bar@v1.0.0", false, coordinate.ModuleCoordinate{}},
+		{"version not v-prefixed", "github.com/foo/bar@abc/file.go", false, coordinate.ModuleCoordinate{}},
+		{"valid coordinate", "/tmp/x/github.com/foo/bar@v1.2.3/pkg/file.go:1:2", true,
+			coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.2.3"}},
+		// A literal (unescaped) path with an uppercase element fails UnescapePath
+		// — the escaped form must be all-lowercase — but is a valid module path, so
+		// it is accepted via the plain CheckPath arm.
+		{"literal uppercase path", "/tmp/x/github.com/Masterminds/semver@v1.5.0/version.go:1:2", true,
+			coordinate.ModuleCoordinate{Path: "github.com/Masterminds/semver", Version: "v1.5.0"}},
+		{"empty trailing segment before version", "x/@v1.0.0/file.go", false, coordinate.ModuleCoordinate{}},
+		{"no valid module prefix", "not a path@v1.0.0/file.go", false, coordinate.ModuleCoordinate{}},
+	}
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			got, ok := moduleFromCachePath(c.pos)
+			if ok != c.wantOK {
+				t.Fatalf("ok = %v, want %v (got %v)", ok, c.wantOK, got)
+			}
+			if ok && got != c.wantCoord {
+				t.Errorf("coord = %v, want %v", got, c.wantCoord)
+			}
+		})
+	}
+}

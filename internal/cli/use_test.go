@@ -13,6 +13,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
@@ -29,12 +30,7 @@ func TestCopyToModCache_PipelineVersionBinding(t *testing.T) {
 	const storedPV = "9.9.9"
 
 	facts := newPVFakeFacts()
-	_ = facts.PutFetchRecord(context.Background(), fetchdomain.FactRecord{
-		ModulePath:      c.Path,
-		ModuleVersion:   c.Version,
-		PipelineVersion: storedPV,
-		ContentLocation: "fake:zip",
-	})
+	_ = facts.PutFetchRecord(context.Background(), fetchtest.Sealed(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion(storedPV), fetchtest.Content("fake:zip")))
 	blobs := newPVFakeBlobs() // Get always errors — we only care about the lookup
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
@@ -67,18 +63,26 @@ func newPVFakeFacts() *pvFakeFacts {
 	return &pvFakeFacts{records: make(map[string]fetchdomain.FactRecord)}
 }
 
-func (f *pvFakeFacts) PutFetchRecord(_ context.Context, r fetchdomain.FactRecord) error {
+func (f *pvFakeFacts) PutFetchRecord(_ context.Context, sealed fetchdomain.SealedRecord) error {
+	r := sealed.Record()
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.records[r.ModulePath+"@"+r.ModuleVersion+"#"+r.PipelineVersion] = r
 	return nil
 }
 
-func (f *pvFakeFacts) GetFetchRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (fetchdomain.FactRecord, bool, error) {
+func (f *pvFakeFacts) GetFetchRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (fetchdomain.CompositeRecord, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	r, ok := f.records[coord.Path+"@"+coord.Version+"#"+pv]
-	return r, ok, nil
+	if !ok {
+		return fetchdomain.CompositeRecord{}, false, nil
+	}
+	c, cerr := fetchdomain.Compose([]fetchdomain.FactRecord{r})
+	if cerr != nil {
+		return fetchdomain.CompositeRecord{}, false, cerr //nolint:wrapcheck // test fake
+	}
+	return c, true, nil
 }
 
 // pvFakeBlobs satisfies BlobStore but never returns content; copyToModCache
@@ -88,18 +92,18 @@ type pvFakeBlobs struct{}
 
 func newPVFakeBlobs() *pvFakeBlobs { return &pvFakeBlobs{} }
 
-func (pvFakeBlobs) Put(_ context.Context, _ io.Reader) (fetchports.BlobHandle, error) {
-	return "", errors.New("not implemented")
+func (pvFakeBlobs) Put(_ context.Context, identity fetchports.BlobIdentity, _ io.Reader) error {
+	return errors.New("not implemented")
 }
 
-func (pvFakeBlobs) Get(_ context.Context, h fetchports.BlobHandle) (io.ReadCloser, error) {
-	return nil, fmt.Errorf("blob not found: %s", h)
+func (pvFakeBlobs) Get(_ context.Context, identity fetchports.BlobIdentity) (io.ReadCloser, error) {
+	return nil, fmt.Errorf("blob not found: %s", identity)
 }
 
-func (pvFakeBlobs) GetPath(_ context.Context, h fetchports.BlobHandle) (string, error) {
-	return "", fmt.Errorf("blob not found: %s", h)
+func (pvFakeBlobs) GetPath(_ context.Context, identity fetchports.BlobIdentity) (string, error) {
+	return "", fmt.Errorf("blob not found: %s", identity)
 }
 
-func (pvFakeBlobs) Exists(_ context.Context, _ fetchports.BlobHandle) (bool, error) {
+func (pvFakeBlobs) Exists(_ context.Context, identity fetchports.BlobIdentity) (bool, error) {
 	return false, nil
 }

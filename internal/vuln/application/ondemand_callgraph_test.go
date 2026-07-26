@@ -11,8 +11,8 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 )
@@ -35,16 +35,11 @@ func newAffectedScannerFor(coord coordinate.ModuleCoordinate, findingID string, 
 
 func seedFact(t *testing.T, facts *fakeFacts, blobs *fakeBlob, coord coordinate.ModuleCoordinate) {
 	t.Helper()
-	handle, err := blobs.Put(t.Context(), strings.NewReader("zip"))
-	if err != nil {
+	rec := fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip"))
+	if err := blobs.Put(t.Context(), fetchtest.ZipIdentity(t, rec), strings.NewReader("zip")); err != nil {
 		t.Fatalf("blobs.Put: %v", err)
 	}
-	if err := facts.PutFetchRecord(t.Context(), fetchdomain.FactRecord{
-		ModulePath:      coord.Path,
-		ModuleVersion:   coord.Version,
-		PipelineVersion: "v1",
-		ContentLocation: string(handle),
-	}); err != nil {
+	if err := facts.PutFetchRecord(t.Context(), fetchtest.Sealed(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip"))); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 }

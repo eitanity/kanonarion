@@ -7,8 +7,8 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -30,10 +30,11 @@ func makeWalkWithModules(t *testing.T, coords ...coordinate.ModuleCoordinate) (w
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
 	for _, c := range coords {
-		h, _ := blobs.Put(ctx, strings.NewReader("zip-"+c.Path))
-		if err := facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
-			ModulePath: c.Path, ModuleVersion: c.Version, PipelineVersion: "v1", ContentLocation: string(h),
-		}); err != nil {
+		seedRec := fetchtest.Record(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path))
+		if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip-"+c.Path)); err != nil {
+			t.Fatalf("Put blob: %v", err)
+		}
+		if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path))); err != nil {
 			t.Fatalf("PutFetchRecord: %v", err)
 		}
 	}

@@ -388,10 +388,13 @@ func (p *Proxy) get(ctx context.Context, url string) (io.ReadCloser, error) {
 		return nil, fmt.Errorf("%w: %s", errNotFound, url)
 	}
 	if resp.StatusCode != http.StatusOK {
+		// Typed so callers can tell a retryable proxy condition (429, 5xx) from a
+		// definitive answer without parsing the message.
+		statusErr := &domain2.ProxyStatusError{StatusCode: resp.StatusCode, URL: url}
 		if cerr := resp.Body.Close(); cerr != nil {
-			return nil, fmt.Errorf("HTTP %d from %s (closing body: %w)", resp.StatusCode, url, cerr)
+			return nil, fmt.Errorf("%w (closing body: %w)", statusErr, cerr)
 		}
-		return nil, fmt.Errorf("HTTP %d from %s", resp.StatusCode, url)
+		return nil, statusErr
 	}
 	return resp.Body, nil
 }

@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -108,17 +108,18 @@ func TestScanWalk(t *testing.T) {
 	}
 	clock := fixedClock{t: now}
 
-	// Prepare facts for scanner
-	h1, _ := blobs.Put(ctx, strings.NewReader("zip1"))
-	if err := facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
-		ModulePath: target.Path, ModuleVersion: target.Version, PipelineVersion: "v1", ContentLocation: string(h1),
-	}); err != nil {
+	seedRec := fetchtest.Record(t, fetchtest.Coordinate(target), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip1"))
+	if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip1")); err != nil {
+		t.Fatalf("blobs.Put: %v", err)
+	}
+	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(target), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip1"))); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
-	h2, _ := blobs.Put(ctx, strings.NewReader("zip2"))
-	if err := facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
-		ModulePath: dep.Path, ModuleVersion: dep.Version, PipelineVersion: "v1", ContentLocation: string(h2),
-	}); err != nil {
+	seedRec2 := fetchtest.Record(t, fetchtest.Coordinate(dep), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip2"))
+	if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec2), strings.NewReader("zip2")); err != nil {
+		t.Fatalf("blobs.Put: %v", err)
+	}
+	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(dep), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip2"))); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
@@ -180,10 +181,9 @@ func TestScanWalk_SnapshotPersisted(t *testing.T) {
 
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
-	h, _ := blobs.Put(ctx, strings.NewReader("zip1"))
-	if err := facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
-		ModulePath: coord.Path, ModuleVersion: coord.Version, PipelineVersion: "v1", ContentLocation: string(h),
-	}); err != nil {
+	seedRec := fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip1"))
+	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip1"))
+	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip1"))); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
@@ -302,10 +302,11 @@ func TestScanWalk_OverallStatus(t *testing.T) {
 			facts := newFakeFacts()
 			blobs := newFakeBlob()
 			for _, c := range []coordinate.ModuleCoordinate{coord1, coord2} {
-				h, _ := blobs.Put(ctx, strings.NewReader("zip"))
-				if err := facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
-					ModulePath: c.Path, ModuleVersion: c.Version, PipelineVersion: "v1", ContentLocation: string(h),
-				}); err != nil {
+				loopRec := fetchtest.Record(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip"))
+				if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, loopRec), strings.NewReader("zip")); err != nil {
+					t.Fatalf("blobs.Put: %v", err)
+				}
+				if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip"))); err != nil {
 					t.Fatalf("PutFetchRecord: %v", err)
 				}
 			}
@@ -367,10 +368,9 @@ func TestScanWalk_FreshFetch(t *testing.T) {
 
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
-	h, _ := blobs.Put(ctx, strings.NewReader("zip"))
-	_ = facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
-		ModulePath: coord.Path, ModuleVersion: coord.Version, PipelineVersion: "v1", ContentLocation: string(h),
-	})
+	seedRec := fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip"))
+	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip"))
+	_ = facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip")))
 
 	scanner := &fakeScanner{}
 	vulnStore := newFakeVulnStore()
@@ -464,11 +464,9 @@ func TestScanWalk_LocalReplaceUnscannable(t *testing.T) {
 
 	// Fact for the target only — the local-replace dep deliberately has no
 	// fact record, mirroring the live wiring where the walker never fetched it.
-	h, _ := blobs.Put(ctx, strings.NewReader("zip-target"))
-	if err := facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
-		ModulePath: target.Path, ModuleVersion: target.Version,
-		PipelineVersion: "v1", ContentLocation: string(h),
-	}); err != nil {
+	seedRec := fetchtest.Record(t, fetchtest.Coordinate(target), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-target"))
+	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip-target"))
+	if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(target), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-target"))); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 

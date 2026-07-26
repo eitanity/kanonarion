@@ -81,15 +81,22 @@ func (b *vulnBatchCtx) graphFor(ctx context.Context, walkID string) (*walkdomain
 }
 
 // affectedFor lazily computes and caches the set of module coordinates that are
-// Affected in the most recent scan run for walkID. A module whose record is
-// unreadable is included conservatively: it was part of the scan but cannot be
-// confirmed Clean (absence is never presented as a confident negative).
-func (b *vulnBatchCtx) affectedFor(ctx context.Context, walkID string, vulnUC QueryVulnUseCase) map[coordinate.ModuleCoordinate]struct{} {
+// Affected in the most recent scan run for walkID.
+//
+// A store read error is a fault, not a verdict: it is propagated, never
+// fabricated into an Affected entry — presenting a peer as affected when the
+// store could only not be read is the same absence/error-as-answer defect this
+// codebase removes elsewhere. A not-found record is a coverage gap (the run
+// lists the coordinate but nothing backs a verdict): it is no evidence of
+// Affected, so it is skipped rather than fabricated. Only a real StatusAffected
+// record adds a coordinate. A failed read is not cached, so a later read may
+// still succeed.
+func (b *vulnBatchCtx) affectedFor(ctx context.Context, walkID string, vulnUC QueryVulnUseCase) (map[coordinate.ModuleCoordinate]struct{}, error) {
 	if b.affectedCache == nil {
-		return nil
+		return nil, nil
 	}
 	if s, ok := b.affectedCache[walkID]; ok {
-		return s
+		return s, nil
 	}
 	runs := b.runs[walkID]
 	affected := make(map[coordinate.ModuleCoordinate]struct{})
@@ -97,8 +104,10 @@ func (b *vulnBatchCtx) affectedFor(ctx context.Context, walkID string, vulnUC Qu
 		run := runs[0] // most recent (DESC by started_at)
 		for coord := range run.PerModuleResults {
 			rec, found, err := vulnUC.GetLatestRecordForWalk(ctx, coord, vulnPipelineVersion, run.WalkID)
-			if err != nil || !found {
-				affected[coord] = struct{}{}
+			if err != nil {
+				return nil, fmt.Errorf("reading walk-peer verdict for %s in walk %s: %w", coord, run.WalkID, err)
+			}
+			if !found {
 				continue
 			}
 			if rec.OverallStatus == vuldomain.StatusAffected {
@@ -107,24 +116,25 @@ func (b *vulnBatchCtx) affectedFor(ctx context.Context, walkID string, vulnUC Qu
 		}
 	}
 	b.affectedCache[walkID] = affected
-	return affected
+	return affected, nil
 }
 
-// filterWalkAnnotation replaces the generic walk-level vulnerability annotation
-// with the specific affected peers that lie in coord's own transitive
-// dependency closure. A walk-level "Affected" status only matters to this
-// module when an affected peer is actually reachable from it; otherwise the
-// annotation implies a relationship that does not exist, so it is suppressed.
+// filterWalkAnnotation names the affected peers that lie in coord's own
+// transitive dependency closure, so the walk-level finding is surfaced only
+// where it is actionable for this module.
 //
-// Non-Affected walk statuses (e.g. Partial) describe scan completeness rather
-// than affected peers, so they are left untouched. The annotation is also left
-// intact when the module's own status already matches the walk status (nothing
-// to filter) or when the graph cannot be loaded (no basis to narrow it).
+// It is driven by the findings axis alone (run.FindingsStatus): a run that found
+// vulnerabilities may carry an affected peer in this module's closure regardless
+// of whether coverage was complete. Keying on the collapsed OverallStatus was
+// the collapse defect — a single unscannable module made the run Partial, so this
+// narrowing never ran and a reachable advisory in a direct dependency was
+// silently dropped. The coverage axis is carried independently on
+// result.WalkCoverage and rendered separately, so an incomplete-coverage run no
+// longer suppresses a real finding. The graph is required to narrow to the
+// closure; when it cannot be loaded there is no basis to narrow, so no peer is
+// named.
 func (b *vulnBatchCtx) filterWalkAnnotation(ctx context.Context, result *contextVulnerabilities, coord coordinate.ModuleCoordinate, run vuldomain.WalkScanRun, vulnUC QueryVulnUseCase) {
-	if result.WalkStatus == "" || result.WalkStatus == result.Status {
-		return
-	}
-	if run.OverallStatus != vuldomain.WalkStatusAffected {
+	if run.FindingsStatus != vuldomain.FindingsAffected {
 		return
 	}
 	graph, ok := b.graphFor(ctx, run.WalkID)
@@ -133,7 +143,16 @@ func (b *vulnBatchCtx) filterWalkAnnotation(ctx context.Context, result *context
 	}
 
 	reachable := graph.ReachableFrom(coord)
-	affected := b.affectedFor(ctx, run.WalkID, vulnUC)
+	affected, err := b.affectedFor(ctx, run.WalkID, vulnUC)
+	if err != nil {
+		// A peer's verdict could not be read. Do not fabricate an affected peer
+		// from a store fault, and do not misattribute the fault to this module's
+		// own verdict (which read fine) by turning the whole section into a read
+		// error. Record the fault so the peer set reads as uncertain rather than
+		// as a confident finding.
+		result.WalkError = err.Error()
+		return
+	}
 
 	var peers []string
 	for ac := range affected {
@@ -145,13 +164,6 @@ func (b *vulnBatchCtx) filterWalkAnnotation(ctx context.Context, result *context
 		}
 	}
 	sort.Strings(peers)
-
-	if len(peers) == 0 {
-		// No affected peer in this module's dependency closure: the walk-level
-		// status is irrelevant to this module. Suppress the annotation entirely.
-		result.WalkStatus = ""
-		return
-	}
 	result.WalkAffected = peers
 }
 
@@ -177,7 +189,7 @@ func buildVulnerabilitiesFromBatch(ctx context.Context, coord coordinate.ModuleC
 			if !found {
 				continue
 			}
-			result := vulnRecordToContext(&rec, string(run.OverallStatus))
+			result := vulnRecordToContext(&rec, string(run.OverallStatus), walkCoverageCaveat(run))
 			batch.filterWalkAnnotation(ctx, &result, coord, run, vulnUC)
 			return result
 		}
@@ -189,18 +201,33 @@ func buildVulnerabilitiesFromBatch(ctx context.Context, coord coordinate.ModuleC
 	case err != nil:
 		return contextVulnerabilities{Status: sectionStatusReadError, Error: err.Error()}
 	case found:
-		return vulnRecordToContext(&rec, "")
+		return vulnRecordToContext(&rec, "", "")
 	case readErr != nil:
 		return contextVulnerabilities{Status: sectionStatusReadError, Error: readErr.Error()}
 	}
 	return contextVulnerabilities{Status: sectionStatusNotRun}
 }
 
-func vulnRecordToContext(rec *vuldomain.VulnerabilityRecord, walkStatus string) contextVulnerabilities {
+// walkCoverageCaveat returns the coverage-axis annotation for a run when it left
+// modules unanalysed, and empty when coverage is complete (or unknown, as on a
+// legacy run whose CoverageStatus was never stored). It is independent of the
+// findings axis: an incomplete-coverage run carries this caveat whether or not
+// it also found a vulnerability.
+func walkCoverageCaveat(run vuldomain.WalkScanRun) string {
+	switch run.CoverageStatus {
+	case vuldomain.CoveragePartial, vuldomain.CoverageFailed:
+		return string(run.CoverageStatus)
+	default:
+		return ""
+	}
+}
+
+func vulnRecordToContext(rec *vuldomain.VulnerabilityRecord, walkStatus, walkCoverage string) contextVulnerabilities {
 	out := contextVulnerabilities{
 		ExtractedAt:     isoTime(rec.ScannedAt),
 		Status:          string(rec.OverallStatus),
 		WalkStatus:      walkStatus,
+		WalkCoverage:    walkCoverage,
 		Reason:          rec.UnscannableReason,
 		WalkID:          rec.WalkID,
 		LastValidatedAt: isoTime(rec.ScannedAt),

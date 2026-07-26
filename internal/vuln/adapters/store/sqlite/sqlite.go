@@ -263,6 +263,34 @@ ALTER TABLE vulnerability_records ADD COLUMN first_scanned_at TEXT NOT NULL DEFA
 UPDATE vulnerability_records SET first_scanned_at = scanned_at WHERE first_scanned_at = '';
 `,
 		},
+		{
+			Module:  "vuln",
+			Version: 8,
+			// A WalkScanRun now carries two independent verdict axes — coverage and
+			// findings — plus the module counts they derive from, instead of the
+			// single collapsed overall_status. Persist them as columns for
+			// queryability alongside the existing overall_status, and purge the
+			// pre-split runs: their serialised blobs have neither axis, so a
+			// consumer that reads FindingsStatus off a legacy run silently loses the
+			// finding — the same absence-as-answer defect this change removes. The
+			// runs are regenerable by re-scanning (the PipelineVersion bump to v14
+			// re-scans every walk in any case), so purging rather than back-filling
+			// keeps the store free of collapsed-shape rows a new reader could
+			// misread. walk_scan_run_modules indexes those runs and is purged with
+			// them.
+			SQL: `
+ALTER TABLE walk_scan_runs ADD COLUMN coverage_status TEXT NOT NULL DEFAULT '';
+ALTER TABLE walk_scan_runs ADD COLUMN findings_status TEXT NOT NULL DEFAULT '';
+ALTER TABLE walk_scan_runs ADD COLUMN total_modules INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE walk_scan_runs ADD COLUMN analysed_modules INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE walk_scan_runs ADD COLUMN affected_modules INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE walk_scan_runs ADD COLUMN unscannable_modules INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE walk_scan_runs ADD COLUMN failed_modules INTEGER NOT NULL DEFAULT 0;
+
+DELETE FROM walk_scan_runs;
+DELETE FROM walk_scan_run_modules;
+`,
+		},
 	}
 }
 
@@ -501,25 +529,38 @@ func (s *Store) PutWalkScanRun(ctx context.Context, run domain.WalkScanRun) erro
 INSERT INTO walk_scan_runs (
     id, walk_id, snapshot_source, snapshot_version,
     started_at, completed_at, overall_status,
+    coverage_status, findings_status,
+    total_modules, analysed_modules, affected_modules,
+    unscannable_modules, failed_modules,
     operator, content_hash, serialised
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (id) DO UPDATE SET
-    walk_id          = excluded.walk_id,
-    snapshot_source  = excluded.snapshot_source,
-    snapshot_version = excluded.snapshot_version,
-    started_at       = excluded.started_at,
-    completed_at     = excluded.completed_at,
-    overall_status   = excluded.overall_status,
-    operator         = excluded.operator,
-    content_hash     = excluded.content_hash,
-    serialised       = excluded.serialised`
+    walk_id             = excluded.walk_id,
+    snapshot_source     = excluded.snapshot_source,
+    snapshot_version    = excluded.snapshot_version,
+    started_at          = excluded.started_at,
+    completed_at        = excluded.completed_at,
+    overall_status      = excluded.overall_status,
+    coverage_status     = excluded.coverage_status,
+    findings_status     = excluded.findings_status,
+    total_modules       = excluded.total_modules,
+    analysed_modules    = excluded.analysed_modules,
+    affected_modules    = excluded.affected_modules,
+    unscannable_modules = excluded.unscannable_modules,
+    failed_modules      = excluded.failed_modules,
+    operator            = excluded.operator,
+    content_hash        = excluded.content_hash,
+    serialised          = excluded.serialised`
 
 	if _, err = tx.ExecContext(ctx, q,
 		run.ID, run.WalkID, run.Snapshot.Source, run.Snapshot.Version,
 		run.StartedAt.UTC().Format(time.RFC3339),
 		run.CompletedAt.UTC().Format(time.RFC3339),
-		string(run.OverallStatus), run.Operator,
-		run.ContentHash, serialised,
+		string(run.OverallStatus),
+		string(run.CoverageStatus), string(run.FindingsStatus),
+		run.Counts.Total, run.Counts.Analysed, run.Counts.Affected,
+		run.Counts.Unscannable, run.Counts.Failed,
+		run.Operator, run.ContentHash, serialised,
 	); err != nil {
 		return fmt.Errorf("inserting walk scan run: %w", err)
 	}

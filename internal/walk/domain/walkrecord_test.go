@@ -10,6 +10,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	domain3 "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
@@ -19,20 +20,6 @@ var (
 
 	targetCoord = mustCoord("github.com/example/target", "v1.0.0")
 	depCoord    = mustCoord("github.com/example/dep", "v2.3.0")
-
-	sampleFactRecord = domain2.FactRecord{
-		SchemaVersion:      "2",
-		Ecosystem:          domain2.EcosystemGo,
-		ModulePath:         "github.com/example/target",
-		ModuleVersion:      "v1.0.0",
-		ModuleHash:         "h1:abc",
-		GoModHash:          "h1:def",
-		VerificationStatus: "verified",
-		FetchedAt:          fixedTime,
-		PipelineVersion:    "0.2.0",
-		ContentLocation:    "blobs/ab/abcdef",
-		ContentHash:        "sha256:deadbeef",
-	}
 )
 
 func mustCoord(path, version string) coordinate.ModuleCoordinate {
@@ -43,8 +30,27 @@ func mustCoord(path, version string) coordinate.ModuleCoordinate {
 	return c
 }
 
-func buildOutcome() domain3.WalkOutcome {
-	rec := sampleFactRecord
+// sampleFactRecord is the fetch record every walk outcome in these tests carries.
+func sampleFactRecord(t testing.TB) domain2.FactRecord {
+	t.Helper()
+	return fetchtest.Record(t,
+		fetchtest.Module("github.com/example/target", "v1.0.0"),
+		fetchtest.PipelineVersion("0.2.0"),
+		fetchtest.Content("blobs/ab/abcdef"),
+		fetchtest.ModuleHash(fetchtest.H1("abc")),
+		fetchtest.GoModHash(fetchtest.H1("def")),
+		fetchtest.Status("verified"),
+		fetchtest.FetchedAt(fixedTime),
+		fetchtest.SchemaVersion("2"),
+	)
+}
+
+func buildOutcome(t testing.TB) domain3.WalkOutcome {
+	rec := sampleFactRecord(t)
+	composed, cerr := domain2.Compose([]domain2.FactRecord{rec})
+	if cerr != nil {
+		t.Fatalf("composing fetch record: %v", cerr)
+	}
 	graph := domain3.Graph{
 		Target: targetCoord,
 		Nodes: []domain3.GraphNode{
@@ -64,7 +70,7 @@ func buildOutcome() domain3.WalkOutcome {
 		PerNodeResults: map[coordinate.ModuleCoordinate]domain3.NodeResult{
 			targetCoord: {
 				Coordinate:  targetCoord,
-				FetchRecord: &rec,
+				FetchRecord: &composed,
 				Status:      domain3.NodeSucceeded,
 				FromCache:   false,
 				DurationMs:  42,
@@ -84,7 +90,7 @@ func buildOutcome() domain3.WalkOutcome {
 }
 
 func TestNewWalkRecord(t *testing.T) {
-	outcome := buildOutcome()
+	outcome := buildOutcome(t)
 	rec := domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, outcome, domain3.DefaultDepthPolicy(), "")
 
 	if rec.SchemaVersion != domain3.WalkSchemaVersion {
@@ -112,7 +118,7 @@ func TestNewWalkRecord(t *testing.T) {
 
 func TestWalkRecordHasher_SetAndVerify(t *testing.T) {
 	hasher := domain3.WalkRecordHasher{}
-	rec := domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(), domain3.DefaultDepthPolicy(), "")
+	rec := domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(t), domain3.DefaultDepthPolicy(), "")
 
 	hashed, err := hasher.SetContentHash(rec)
 	if err != nil {
@@ -129,7 +135,7 @@ func TestWalkRecordHasher_SetAndVerify(t *testing.T) {
 
 func TestWalkRecordHasher_Deterministic(t *testing.T) {
 	hasher := domain3.WalkRecordHasher{}
-	rec := domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(), domain3.DefaultDepthPolicy(), "")
+	rec := domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(t), domain3.DefaultDepthPolicy(), "")
 
 	h1, err := hasher.SetContentHash(rec)
 	if err != nil {
@@ -146,7 +152,7 @@ func TestWalkRecordHasher_Deterministic(t *testing.T) {
 
 func TestWalkRecordHasher_TamperDetected(t *testing.T) {
 	hasher := domain3.WalkRecordHasher{}
-	rec := domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(), domain3.DefaultDepthPolicy(), "")
+	rec := domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(t), domain3.DefaultDepthPolicy(), "")
 
 	hashed, err := hasher.SetContentHash(rec)
 	if err != nil {
@@ -165,7 +171,7 @@ func TestWalkRecordHasher_ContentHashZeroedBeforeHash(t *testing.T) {
 	// Two records identical except one has a pre-set ContentHash. The computed
 	// hash must be the same for both because ContentHash is zeroed before hashing.
 	hasher := domain3.WalkRecordHasher{}
-	base := domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(), domain3.DefaultDepthPolicy(), "")
+	base := domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(t), domain3.DefaultDepthPolicy(), "")
 
 	withPre := base
 	withPre.ContentHash = "sha256:previousvalue"
@@ -186,7 +192,7 @@ func TestWalkRecordHasher_ContentHashZeroedBeforeHash(t *testing.T) {
 func TestWalkRecordHasher_MarshalRoundTrip(t *testing.T) {
 	hasher := domain3.WalkRecordHasher{}
 	rec, err := hasher.SetContentHash(
-		domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(), domain3.DefaultDepthPolicy(), ""),
+		domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(t), domain3.DefaultDepthPolicy(), ""),
 	)
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
@@ -208,7 +214,7 @@ func TestWalkRecordHasher_MarshalRoundTrip(t *testing.T) {
 func TestWalkRecord_EcosystemPresentAfterRoundTrip(t *testing.T) {
 	hasher := domain3.WalkRecordHasher{}
 	rec, err := hasher.SetContentHash(
-		domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(), domain3.DefaultDepthPolicy(), ""),
+		domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(t), domain3.DefaultDepthPolicy(), ""),
 	)
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
@@ -237,7 +243,7 @@ func TestWalkRecord_EcosystemPresentAfterRoundTrip(t *testing.T) {
 func TestWalkRecord_RejectsForeignEcosystem(t *testing.T) {
 	hasher := domain3.WalkRecordHasher{}
 	rec, _ := hasher.SetContentHash(
-		domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(), domain3.DefaultDepthPolicy(), ""),
+		domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(t), domain3.DefaultDepthPolicy(), ""),
 	)
 	rec.Ecosystem = "npm"
 	data, err := hasher.Marshal(rec)
@@ -254,18 +260,19 @@ func TestWalkRecordHasher_NodeResultsOrdering(t *testing.T) {
 	// the same hash (PerNodeResults is a map; ordering must come from the hasher).
 	hasher := domain3.WalkRecordHasher{}
 
-	rec := domain2.FactRecord{
-		SchemaVersion:      "2",
-		Ecosystem:          domain2.EcosystemGo,
-		ModulePath:         "github.com/example/target",
-		ModuleVersion:      "v1.0.0",
-		VerificationStatus: "verified",
-		FetchedAt:          fixedTime,
-		PipelineVersion:    "0.2.0",
-		ContentHash:        "sha256:aabbcc",
-	}
+	rec := fetchtest.Record(t,
+		fetchtest.Module("github.com/example/target", "v1.0.0"),
+		fetchtest.PipelineVersion("0.2.0"),
+		fetchtest.Status("verified"),
+		fetchtest.FetchedAt(fixedTime),
+		fetchtest.SchemaVersion("2"),
+	)
 
 	makeOutcome := func(order1, order2 coordinate.ModuleCoordinate) domain3.WalkOutcome {
+		composed, cerr := domain2.Compose([]domain2.FactRecord{rec})
+		if cerr != nil {
+			t.Fatalf("composing fetch record: %v", cerr)
+		}
 		return domain3.WalkOutcome{
 			Target:        targetCoord,
 			Graph:         domain3.Graph{Target: targetCoord, ResolvedAt: fixedTime, PipelineVersion: "0.2.0"},
@@ -273,8 +280,8 @@ func TestWalkRecordHasher_NodeResultsOrdering(t *testing.T) {
 			CompletedAt:   fixedTime.Add(time.Second),
 			OverallStatus: domain3.WalkSucceeded,
 			PerNodeResults: map[coordinate.ModuleCoordinate]domain3.NodeResult{
-				order1: {Coordinate: order1, FetchRecord: &rec, Status: domain3.NodeSucceeded},
-				order2: {Coordinate: order2, FetchRecord: &rec, Status: domain3.NodeSucceeded},
+				order1: {Coordinate: order1, FetchRecord: &composed, Status: domain3.NodeSucceeded},
+				order2: {Coordinate: order2, FetchRecord: &composed, Status: domain3.NodeSucceeded},
 			},
 		}
 	}
@@ -348,7 +355,7 @@ func TestStoredError_Error(t *testing.T) {
 
 func TestWalkRecordHasher_Unmarshal_RoundTrip(t *testing.T) {
 	hasher := domain3.WalkRecordHasher{}
-	rec := domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(), domain3.DefaultDepthPolicy(), "")
+	rec := domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(t), domain3.DefaultDepthPolicy(), "")
 	hashed, err := hasher.SetContentHash(rec)
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
@@ -428,7 +435,7 @@ func TestWalkRecordHasher_Unmarshal_FailedWalkEmptyGraphTarget(t *testing.T) {
 
 func TestWalkRecordHasher_Unmarshal_PreservesError(t *testing.T) {
 	hasher := domain3.WalkRecordHasher{}
-	rec := domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(), domain3.DefaultDepthPolicy(), "")
+	rec := domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(t), domain3.DefaultDepthPolicy(), "")
 	hashed, err := hasher.SetContentHash(rec)
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
@@ -833,7 +840,7 @@ func TestWalkRecordHasher_LocalReplaceRoundTrip(t *testing.T) {
 func TestWalkRecordHasher_HashUnchangedWhenNewFieldsUnset(t *testing.T) {
 	hasher := domain3.WalkRecordHasher{}
 
-	rec := domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(), domain3.DefaultDepthPolicy(), "")
+	rec := domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(t), domain3.DefaultDepthPolicy(), "")
 	hashed, err := hasher.SetContentHash(rec)
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
@@ -895,7 +902,11 @@ func buildRichWalkRecord(t *testing.T) domain3.WalkRecord {
 	perNodeA := mustCoord("pernode.example/mod", "v1.0.0")
 	perNodeB := mustCoord("pernode.example/mod", "v2.0.0")
 
-	rec := sampleFactRecord
+	rec := sampleFactRecord(t)
+	composed, cerr := domain2.Compose([]domain2.FactRecord{rec})
+	if cerr != nil {
+		t.Fatalf("composing fetch record: %v", cerr)
+	}
 	outcome := domain3.WalkOutcome{
 		Target: rootTarget,
 		Graph: domain3.Graph{
@@ -913,7 +924,7 @@ func buildRichWalkRecord(t *testing.T) domain3.WalkRecord {
 			PipelineVersion: "0.2.0",
 		},
 		PerNodeResults: map[coordinate.ModuleCoordinate]domain3.NodeResult{
-			perNodeA: {Coordinate: perNodeA, FetchRecord: &rec, Status: domain3.NodeSucceeded},
+			perNodeA: {Coordinate: perNodeA, FetchRecord: &composed, Status: domain3.NodeSucceeded},
 			perNodeB: {Coordinate: perNodeB, Status: domain3.NodeFetchFailed},
 		},
 		StartedAt:     fixedTime,
@@ -990,7 +1001,7 @@ func TestWalkRecordHasher_Unmarshal_DefaultsEmptyScope(t *testing.T) {
 	// field; Unmarshal must default it to WalkScopeCode rather than leaving
 	// it blank.
 	hasher := domain3.WalkRecordHasher{}
-	rec := domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(), domain3.DefaultDepthPolicy(), "")
+	rec := domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(t), domain3.DefaultDepthPolicy(), "")
 	hashed, err := hasher.SetContentHash(rec)
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
@@ -1013,7 +1024,7 @@ func TestWalkRecordHasher_Unmarshal_DefaultsEmptyScope(t *testing.T) {
 }
 
 func TestNewWalkRecord_DefaultsEmptyScope(t *testing.T) {
-	outcome := buildOutcome()
+	outcome := buildOutcome(t)
 	rec := domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", "", domain3.WalkDepthFull, outcome, domain3.DefaultDepthPolicy(), "")
 	if rec.Scope != domain3.WalkScopeCode {
 		t.Errorf("Scope = %q, want default %q when passed empty", rec.Scope, domain3.WalkScopeCode)

@@ -26,7 +26,11 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 		return fmt.Errorf("resolving %s scope: %w", scope, err)
 	}
 	if len(coords) == 0 {
-		_, _ = fmt.Fprintf(stdout, "no %s dependencies found in %s\n", scope, f.gomodPath)
+		// NDJSON: an empty stream is how "nothing matched" is spelled, so under
+		// --json emit zero stdout bytes. The prose stays on the text path only.
+		if !jsonOut {
+			_, _ = fmt.Fprintf(stdout, "no %s dependencies found in %s\n", scope, f.gomodPath)
+		}
 		return nil
 	}
 

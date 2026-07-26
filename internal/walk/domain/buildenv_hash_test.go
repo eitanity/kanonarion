@@ -12,7 +12,7 @@ import (
 // content hash.
 func TestWalkRecordHasher_BuildEnvRoundTrip(t *testing.T) {
 	hasher := domain3.WalkRecordHasher{}
-	rec := domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(), domain3.DefaultDepthPolicy(), "")
+	rec := domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(t), domain3.DefaultDepthPolicy(), "")
 	rec.Graph.BuildEnv = domain3.BuildEnv{GOOS: "linux", GOARCH: "arm64", GoVersion: "go1.26.4"}
 
 	rec, err := hasher.SetContentHash(rec)
@@ -42,7 +42,7 @@ func TestWalkRecordHasher_BuildEnvRoundTrip(t *testing.T) {
 func TestWalkRecordHasher_ZeroBuildEnvOmitted(t *testing.T) {
 	hasher := domain3.WalkRecordHasher{}
 	rec, err := hasher.SetContentHash(
-		domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(), domain3.DefaultDepthPolicy(), ""),
+		domain3.NewWalkRecord("01ARZ3NDEKTSV4RRFFQ69G5FAV", "ci-bot", "0.2.0", domain3.WalkScopeCode, domain3.WalkDepthFull, buildOutcome(t), domain3.DefaultDepthPolicy(), ""),
 	)
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)

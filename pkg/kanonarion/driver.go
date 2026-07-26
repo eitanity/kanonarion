@@ -16,7 +16,7 @@ import (
 // composition root, so its orchestration shape is free to change.
 
 // ServeModuleUseCase resolves a single ModuleCoordinate to a servable blob,
-// fetching and verifying on a miss and returning a BlobHandle the caller streams
+// fetching and verifying on a miss and returning a BlobIdentity the caller streams
 // to its consumer. It is a TYPE ALIAS to the internal use case; the verification
 // path (sumdb/hash) is unchanged. Serve never gates: the caller inspects the
 // returned VerificationStatus and applies its own fail-closed policy.
@@ -32,7 +32,7 @@ type ServeModuleUseCase = fetchapp.ServeModuleUseCase
 // be added within a major version (§4).
 type ServeRequest = fetchapp.ServeRequest
 
-// ServeResult is the output of ServeModuleUseCase.Serve: the servable BlobHandle
+// ServeResult is the output of ServeModuleUseCase.Serve: the servable BlobIdentity
 // (guaranteed present on success), the recorded VerificationStatus, the full
 // FactRecord, and whether the result came from cache.
 //

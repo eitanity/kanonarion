@@ -84,14 +84,14 @@ var _ walkports.WalkStore = (*fakeWalkStore)(nil)
 // buildMinimalWalker constructs a walker backed by a single target module with no
 // dependencies. Uses the same fakeModuleFetcher + fakeBlobStore + walkerFakeFetcher
 // wiring as the walker tests.
-func buildMinimalWalker(path, version string) *application2.Walker {
+func buildMinimalWalker(t testing.TB, path, version string) *application2.Walker {
 	const goMod = "module " // minimal go.mod
 	blobs := newFakeBlobStore()
 	rf := newFakeFetcher()
-	rf.add(path, version, goMod+path+"\ngo 1.21\n", blobs)
+	rf.add(t, path, version, goMod+path+"\ngo 1.21\n", blobs)
 
 	wf := newWalkerFetcher()
-	wf.addRecord(path, version)
+	wf.addRecord(t, path, version)
 
 	return buildWalker(rf, wf, blobs, 1)
 }
@@ -99,7 +99,7 @@ func buildMinimalWalker(path, version string) *application2.Walker {
 // ---- ExecuteWalkUseCase tests ----
 
 func TestExecuteWalkUseCase_Success(t *testing.T) {
-	walker := buildMinimalWalker("github.com/example/m", "v1.0.0")
+	walker := buildMinimalWalker(t, "github.com/example/m", "v1.0.0")
 	store := newFakeWalkStore()
 	uc := application2.NewExecuteWalkUseCase(walker, store, "test-op", "0.3.0", discardLogger())
 
@@ -123,7 +123,7 @@ func TestExecuteWalkUseCase_Success(t *testing.T) {
 }
 
 func TestExecuteWalkUseCase_StoreError(t *testing.T) {
-	walker := buildMinimalWalker("github.com/example/m", "v1.0.0")
+	walker := buildMinimalWalker(t, "github.com/example/m", "v1.0.0")
 	store := newFakeWalkStore()
 	store.putErr = errors.New("disk full")
 	uc := application2.NewExecuteWalkUseCase(walker, store, "op", "0.3.0", discardLogger())
@@ -136,7 +136,7 @@ func TestExecuteWalkUseCase_StoreError(t *testing.T) {
 }
 
 func TestExecuteWalkUseCase_ContextCancelled(t *testing.T) {
-	walker := buildMinimalWalker("github.com/example/m", "v1.0.0")
+	walker := buildMinimalWalker(t, "github.com/example/m", "v1.0.0")
 	store := newFakeWalkStore()
 	uc := application2.NewExecuteWalkUseCase(walker, store, "op", "0.3.0", discardLogger())
 
@@ -170,7 +170,7 @@ func (s *fakeAuditSink) RecordEvent(e audit.Event) error {
 var _ walkports.AuditSink = (*fakeAuditSink)(nil)
 
 func TestExecuteWalkUseCase_EmitsWalkCompletedEvent(t *testing.T) {
-	walker := buildMinimalWalker("github.com/example/m", "v1.0.0")
+	walker := buildMinimalWalker(t, "github.com/example/m", "v1.0.0")
 	store := newFakeWalkStore()
 	sink := &fakeAuditSink{}
 	uc := application2.NewExecuteWalkUseCase(walker, store, "test-op", "0.3.0", discardLogger()).WithAudit(sink)
@@ -209,7 +209,7 @@ func TestExecuteWalkUseCase_EmitsWalkCompletedEvent(t *testing.T) {
 }
 
 func TestExecuteWalkUseCase_NoAuditSink_NoEmission(t *testing.T) {
-	walker := buildMinimalWalker("github.com/example/m", "v1.0.0")
+	walker := buildMinimalWalker(t, "github.com/example/m", "v1.0.0")
 	store := newFakeWalkStore()
 	// No WithAudit call: a nil sink must be a no-op, not a panic.
 	uc := application2.NewExecuteWalkUseCase(walker, store, "test-op", "0.3.0", discardLogger())
@@ -247,7 +247,7 @@ func TestExecuteWalkUseCase_FailedWalk_EmitsNothing(t *testing.T) {
 }
 
 func TestExecuteWalkUseCase_AuditSinkError_Propagates(t *testing.T) {
-	walker := buildMinimalWalker("github.com/example/m", "v1.0.0")
+	walker := buildMinimalWalker(t, "github.com/example/m", "v1.0.0")
 	store := newFakeWalkStore()
 	sink := &fakeAuditSink{recErr: errors.New("audit log write failed")}
 	uc := application2.NewExecuteWalkUseCase(walker, store, "test-op", "0.3.0", discardLogger()).WithAudit(sink)
@@ -261,7 +261,7 @@ func TestExecuteWalkUseCase_AuditSinkError_Propagates(t *testing.T) {
 // ---- resume tests ----
 
 func TestExecuteWalkUseCase_Resume_PartialWalk(t *testing.T) {
-	walker := buildMinimalWalker("github.com/example/m", "v1.0.0")
+	walker := buildMinimalWalker(t, "github.com/example/m", "v1.0.0")
 	store := newFakeWalkStore()
 	target := coord("github.com/example/m", "v1.0.0")
 
@@ -279,7 +279,7 @@ func TestExecuteWalkUseCase_Resume_PartialWalk(t *testing.T) {
 }
 
 func TestExecuteWalkUseCase_Resume_CancelledWalk(t *testing.T) {
-	walker := buildMinimalWalker("github.com/example/m", "v1.0.0")
+	walker := buildMinimalWalker(t, "github.com/example/m", "v1.0.0")
 	store := newFakeWalkStore()
 	target := coord("github.com/example/m", "v1.0.0")
 
@@ -297,7 +297,7 @@ func TestExecuteWalkUseCase_Resume_CancelledWalk(t *testing.T) {
 }
 
 func TestExecuteWalkUseCase_NoResume_SucceededWalk(t *testing.T) {
-	walker := buildMinimalWalker("github.com/example/m", "v1.0.0")
+	walker := buildMinimalWalker(t, "github.com/example/m", "v1.0.0")
 	store := newFakeWalkStore()
 	target := coord("github.com/example/m", "v1.0.0")
 
@@ -328,7 +328,7 @@ func TestExecuteWalkUseCase_NoResume_SucceededWalk(t *testing.T) {
 }
 
 func TestExecuteWalkUseCase_NoResume_DifferentVersion(t *testing.T) {
-	walker := buildMinimalWalker("github.com/example/m", "v2.0.0")
+	walker := buildMinimalWalker(t, "github.com/example/m", "v2.0.0")
 	store := newFakeWalkStore()
 	targetV1 := coord("github.com/example/m", "v1.0.0")
 	targetV2 := coord("github.com/example/m", "v2.0.0")
@@ -505,7 +505,7 @@ func TestDiffWalksUseCase_NotFound(t *testing.T) {
 // ---- depth-aware cache tests ----
 
 func TestExecuteWalkUseCase_ShallowCacheHit_ForShallowRequest(t *testing.T) {
-	walker := buildMinimalWalker("github.com/example/m", "v1.0.0")
+	walker := buildMinimalWalker(t, "github.com/example/m", "v1.0.0")
 	store := newFakeWalkStore()
 	target := coord("github.com/example/m", "v1.0.0")
 
@@ -527,7 +527,7 @@ func TestExecuteWalkUseCase_ShallowCacheHit_ForShallowRequest(t *testing.T) {
 }
 
 func TestExecuteWalkUseCase_ShallowCacheMiss_ForFullRequest(t *testing.T) {
-	walker := buildMinimalWalker("github.com/example/m", "v1.0.0")
+	walker := buildMinimalWalker(t, "github.com/example/m", "v1.0.0")
 	store := newFakeWalkStore()
 	target := coord("github.com/example/m", "v1.0.0")
 
@@ -549,7 +549,7 @@ func TestExecuteWalkUseCase_ShallowCacheMiss_ForFullRequest(t *testing.T) {
 }
 
 func TestExecuteWalkUseCase_FullCacheHit_ForShallowRequest(t *testing.T) {
-	walker := buildMinimalWalker("github.com/example/m", "v1.0.0")
+	walker := buildMinimalWalker(t, "github.com/example/m", "v1.0.0")
 	store := newFakeWalkStore()
 	target := coord("github.com/example/m", "v1.0.0")
 
@@ -571,7 +571,7 @@ func TestExecuteWalkUseCase_FullCacheHit_ForShallowRequest(t *testing.T) {
 }
 
 func TestExecuteWalkUseCase_ShallowRecordHasShallowDepth(t *testing.T) {
-	walker := buildMinimalWalker("github.com/example/m", "v1.0.0")
+	walker := buildMinimalWalker(t, "github.com/example/m", "v1.0.0")
 	store := newFakeWalkStore()
 	target := coord("github.com/example/m", "v1.0.0")
 
@@ -774,7 +774,7 @@ func buildCancelledRecord(id string, target coordinate.ModuleCoordinate) domain.
 // shares its target path with an independent requirement) would keep being
 // handed out as authoritative until someone happened to pass --force.
 func TestExecuteWalkUseCase_StalePipelineVersionIsReresolved(t *testing.T) {
-	walker := buildMinimalWalker("github.com/example/m", "v1.0.0")
+	walker := buildMinimalWalker(t, "github.com/example/m", "v1.0.0")
 	store := newFakeWalkStore()
 	target := coord("github.com/example/m", "v1.0.0")
 
@@ -800,7 +800,7 @@ func TestExecuteWalkUseCase_StalePipelineVersionIsReresolved(t *testing.T) {
 // The gate must not re-resolve a walk that is already current — that would
 // discard the cache entirely and make every run pay for a full re-walk.
 func TestExecuteWalkUseCase_CurrentPipelineVersionStillCached(t *testing.T) {
-	walker := buildMinimalWalker("github.com/example/m", "v1.0.0")
+	walker := buildMinimalWalker(t, "github.com/example/m", "v1.0.0")
 	store := newFakeWalkStore()
 	target := coord("github.com/example/m", "v1.0.0")
 

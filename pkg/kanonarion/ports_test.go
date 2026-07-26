@@ -12,6 +12,7 @@ import (
 	configports "github.com/eitanity/kanonarion/internal/config/ports"
 	exampleports "github.com/eitanity/kanonarion/internal/example/ports"
 	extractports "github.com/eitanity/kanonarion/internal/extract/ports"
+	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	ifaceports "github.com/eitanity/kanonarion/internal/iface/ports"
 	licenseports "github.com/eitanity/kanonarion/internal/license/ports"
@@ -52,8 +53,17 @@ var (
 	_ fetchports.BlobStore         = (kanonarion.BlobStore)(nil)
 	_ kanonarion.BlobPathOptimizer = (fetchports.BlobPathOptimizer)(nil)
 	_ fetchports.BlobPathOptimizer = (kanonarion.BlobPathOptimizer)(nil)
-	_ kanonarion.BlobHandle        = fetchports.BlobHandle("")
-	_ fetchports.BlobHandle        = kanonarion.BlobHandle("")
+	_ kanonarion.BlobIdentity      = fetchports.BlobIdentity{}
+	_ fetchports.BlobIdentity      = kanonarion.BlobIdentity{}
+	_ kanonarion.BlobKind          = fetchports.BlobKind("")
+	_ fetchports.BlobKind          = kanonarion.BlobKind("")
+
+	_ kanonarion.FactRecordLister = (fetchports.FactRecordLister)(nil)
+	_ fetchports.FactRecordLister = (kanonarion.FactRecordLister)(nil)
+	_ kanonarion.SealedRecord     = fetchdomain.SealedRecord{}
+	_ fetchdomain.SealedRecord    = kanonarion.SealedRecord{}
+	_ kanonarion.CompositeRecord  = fetchdomain.CompositeRecord{}
+	_ fetchdomain.CompositeRecord = kanonarion.CompositeRecord{}
 
 	_ kanonarion.ConfigStore  = (configports.ConfigStore)(nil)
 	_ configports.ConfigStore = (kanonarion.ConfigStore)(nil)
@@ -89,14 +99,28 @@ var staysInternalPorts = map[string]bool{
 // allowedPortAliases is the closed set of names the façade may alias out of an
 // internal ".../ports" package. It is the named substitution-port surface
 // (§2.3) plus the supporting value types that travel with those ports
-// (BlobHandle for BlobStore; SubjectDigest/Attestation for Signer). Any new
-// ports-package alias outside this set fails TestPorts_NoUnexpectedPortAlias,
-// forcing a deliberate decision rather than an accidental surface growth.
+// (BlobIdentity/BlobKind for BlobStore; SubjectDigest/Attestation for Signer).
+// Any new ports-package alias outside this set fails
+// TestPorts_NoUnexpectedPortAlias, forcing a deliberate decision rather than an
+// accidental surface growth.
+//
+// Three names were added deliberately when the fetch ledger landed:
+//
+//   - FactRecordLister, the optional capability that returns the individual
+//     measurements behind a composed record. It is the port-asymmetry rule
+//     working as intended — FactStore grew a capability without growing a
+//     method.
+//   - BlobIdentity and BlobKind, which replace BlobHandle. A store no longer
+//     chooses an artefact's address, so there is no opaque handle to name; an
+//     external implementer needs the identity type instead, and cannot build one
+//     without the kind.
 var allowedPortAliases = map[string]bool{
-	"FactStore": true, "WalkStore": true, "LicenseStore": true,
+	"FactStore": true, "FactRecordLister": true,
+	"WalkStore": true, "LicenseStore": true,
 	"InterfaceStore": true, "CallGraphStore": true, "ExampleStore": true,
 	"ExtractionStore": true, "VulnerabilityStore": true, "SBOMStore": true,
-	"BlobStore": true, "BlobPathOptimizer": true, "BlobHandle": true,
+	"BlobStore": true, "BlobPathOptimizer": true,
+	"BlobIdentity": true, "BlobKind": true,
 	"ConfigStore": true, "Clock": true, "ModuleProxy": true,
 	"VCSClient": true, "SumDBClient": true,
 	"Signer": true, "SubjectDigest": true, "Attestation": true,

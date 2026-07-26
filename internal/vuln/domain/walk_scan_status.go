@@ -38,3 +38,30 @@ func DetermineWalkScanStatus(failed, affected, unscannable, total int) WalkScanS
 		return WalkStatusAllClean
 	}
 }
+
+// DetermineCoverageStatus computes the coverage axis alone: whether every module
+// in the build list was analysed. It carries the same precedence as the coverage
+// portion of DetermineWalkScanStatus (failed == total outranks a partial gap, so
+// a zero-module walk yields Failed) but is blind to findings, so an affected run
+// with complete coverage still reports Complete here.
+func DetermineCoverageStatus(failed, unscannable, total int) CoverageStatus {
+	switch {
+	case failed == total:
+		return CoverageFailed
+	case failed > 0 || unscannable > 0:
+		return CoveragePartial
+	default:
+		return CoverageComplete
+	}
+}
+
+// DetermineFindingsStatus computes the findings axis alone: whether any module
+// was affected. It is blind to coverage, so a run that could not analyse part of
+// the build list still reports Affected here when a finding exists — the fact
+// DetermineWalkScanStatus discards when coverage is incomplete.
+func DetermineFindingsStatus(affected int) FindingsStatus {
+	if affected > 0 {
+		return FindingsAffected
+	}
+	return FindingsClean
+}

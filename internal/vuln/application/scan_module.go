@@ -97,8 +97,16 @@ import (
 // module's own go.mod selects, and a failure whose version cannot be recovered
 // is recorded as version-not-in-toolchain-unverified rather than an asserted
 // out-of-toolchain outcome. A "v12" record on that path carries the unverified
-// reason as if established and must be re-scanned.
-const PipelineVersion = "v13"
+// reason as if established and must be re-scanned. It was bumped to "v14" when
+// the walk-scan aggregate gained separate coverage and findings axes: a
+// WalkScanRun now stores CoverageStatus, FindingsStatus and the module counts
+// alongside the collapsed OverallStatus, and a run recorded before the split
+// carries neither axis, so a consumer that reads FindingsStatus off it silently
+// loses the finding. The per-module record content is unchanged by this bump;
+// the version moves so a walk scanned in the collapsed-status era re-runs as a
+// whole and produces a run carrying both axes, rather than reusing cached
+// per-module verdicts under a run that has neither.
+const PipelineVersion = "v14"
 
 // ScanModuleUseCase orchestrates a single module's vulnerability scan.
 type ScanModuleUseCase struct {
@@ -199,7 +207,7 @@ func (uc *ScanModuleUseCase) getFetchRecord(ctx context.Context, coord coordinat
 			return fetchdomain.FactRecord{}, false, fmt.Errorf("checking fetch record (pipeline %s): %w", v, err)
 		}
 		if ok {
-			return r, true, nil
+			return r.FactRecord, true, nil
 		}
 	}
 	return fetchdomain.FactRecord{}, false, nil
@@ -246,6 +254,24 @@ type ScanModuleParams struct {
 	// coordinate a replaced node stands in for, which names a module whose source
 	// was never fetched, and requiring it would fail every scan that used it.
 	SelectedVersions map[coordinate.ModuleCoordinate]struct{}
+}
+
+// openModuleSource opens a module's zip for scanning, addressed by the artefact
+// identity the record carries rather than by a handle read off it. Any store
+// holding those bytes answers, whichever mode acquired them.
+func (uc *ScanModuleUseCase) openModuleSource(ctx context.Context, fact fetchdomain.FactRecord) (io.ReadCloser, error) {
+	zipIdentity, hasZip, err := fetchports.ZipIdentity(fact)
+	if err != nil {
+		return nil, fmt.Errorf("deriving zip address for %s: %w", fact.Coordinate(), err)
+	}
+	if !hasZip {
+		return nil, fmt.Errorf("fact record for %s carries no module zip to scan", fact.Coordinate())
+	}
+	blob, err := uc.blobs.Get(ctx, zipIdentity)
+	if err != nil {
+		return nil, fmt.Errorf("retrieving module content: %w", err)
+	}
+	return blob, nil
 }
 
 // Scan performs the scan.
@@ -331,10 +357,11 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 		}
 	}
 
-	// 4. Source Retrieval
-	blob, err := uc.blobs.Get(ctx, fetchports.BlobHandle(fact.ContentLocation))
+	// 4. Source Retrieval, addressed by the artefact's identity so any store
+	// holding these bytes answers, whichever mode acquired them.
+	blob, err := uc.openModuleSource(ctx, fact)
 	if err != nil {
-		return domain.VulnerabilityRecord{}, fmt.Errorf("retrieving module content: %w", err)
+		return domain.VulnerabilityRecord{}, err
 	}
 	defer func() { _ = blob.Close() }()
 
@@ -702,10 +729,14 @@ func goModModulePaths(f *modfile.File) map[string]struct{} {
 // parsed — treated as a recovery miss, never a fabricated requirement.
 func (uc *ScanModuleUseCase) scannedGoMod(ctx context.Context, scanned coordinate.ModuleCoordinate) (*modfile.File, bool) {
 	fact, ok, err := uc.getFetchRecord(ctx, scanned)
-	if err != nil || !ok || fact.GoModLocation == "" {
+	if err != nil || !ok {
 		return nil, false
 	}
-	rc, err := uc.blobs.Get(ctx, fetchports.BlobHandle(fact.GoModLocation))
+	goModIdentity, hasGoMod, err := fetchports.GoModIdentity(fact)
+	if err != nil || !hasGoMod {
+		return nil, false
+	}
+	rc, err := uc.blobs.Get(ctx, goModIdentity)
 	if err != nil {
 		return nil, false
 	}

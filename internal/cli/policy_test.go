@@ -3,10 +3,13 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 const validPolicyYAML = `version: "1"
@@ -214,5 +217,104 @@ func TestRunPolicyValidateDir_WithInvalidFile(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "FAIL:") {
 		t.Errorf("expected 'FAIL:' in output, got: %q", buf.String())
+	}
+}
+
+// `policy show` must report the VCS forge allowlist that will actually be
+// contacted, resolved rather than as authored: an operator syncing an egress
+// allowlist (harden-runner) needs the effective set, and a policy that omits
+// the field still cross-verifies against the built-in one.
+func TestRunPolicyShow_ReportsEffectiveVCSHosts(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "policy.yaml")
+	if err := os.WriteFile(path, []byte(validPolicyYAML), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	var out, errBuf bytes.Buffer
+	if err := runPolicyShow(context.Background(), path, &out, &errBuf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var got struct {
+		EffectiveVCSHosts []string       `json:"effective_vcs_hosts"`
+		StageDepths       map[string]any `json:"stage_depths"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("decoding policy show output: %v\n%s", err, out.String())
+	}
+	if len(got.EffectiveVCSHosts) != len(fetchdomain.DefaultVCSHosts()) {
+		t.Errorf("effective_vcs_hosts = %v, want the built-in default set", got.EffectiveVCSHosts)
+	}
+	// A policy that does not override the list must render exactly as before,
+	// so the absent field stays absent from the per-stage object.
+	if _, present := got.StageDepths["fetch"].(map[string]any)["AllowedVCSHosts"]; present {
+		t.Error("an unset allowed_vcs_hosts must not appear in the per-stage output")
+	}
+}
+
+func TestRunPolicyShow_ReportsOverriddenVCSHosts(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "policy.yaml")
+	src := "version: \"1\"\nstages:\n  fetch:\n    allowed_vcs_hosts:\n      - github.com\n"
+	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	var out, errBuf bytes.Buffer
+	if err := runPolicyShow(context.Background(), path, &out, &errBuf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var got struct {
+		EffectiveVCSHosts []string `json:"effective_vcs_hosts"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("decoding policy show output: %v\n%s", err, out.String())
+	}
+	if len(got.EffectiveVCSHosts) != 1 || got.EffectiveVCSHosts[0] != "github.com" {
+		t.Errorf("effective_vcs_hosts = %v, want [github.com]", got.EffectiveVCSHosts)
+	}
+}
+
+// A policy whose allowlist cannot be resolved must fail the command rather than
+// print the default set as if it were in force.
+func TestRunPolicyShow_UnusableVCSHostsIsAnError(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "policy.yaml")
+	src := "version: \"1\"\nstages:\n  fetch:\n    allowed_vcs_hosts: []\n"
+	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	var out, errBuf bytes.Buffer
+	err := runPolicyShow(context.Background(), path, &out, &errBuf)
+	if err == nil {
+		t.Fatal("expected an empty allowed_vcs_hosts to fail policy show")
+	}
+	if !strings.Contains(err.Error(), "--skip-vcs-verify") {
+		t.Errorf("error should point at --skip-vcs-verify, got %q", err)
+	}
+}
+
+// resolveFetchVCSHosts is what `kanonarion fetch` uses to honour the policy
+// without a dedicated flag: an absent policy yields the built-in set, and an
+// override reaches the fetch.
+func TestResolveFetchVCSHosts(t *testing.T) {
+	var errBuf bytes.Buffer
+	dir := t.TempDir()
+	path := filepath.Join(dir, "policy.yaml")
+	src := "version: \"1\"\nstages:\n  fetch:\n    allowed_vcs_hosts:\n      - git.example.org\n"
+	if err := os.WriteFile(path, []byte(src), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	hosts, err := resolveFetchVCSHosts(context.Background(), path, &errBuf)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !hosts.IsAllowed("git.example.org") {
+		t.Error("the policy's forge did not reach the fetch command")
+	}
+	if hosts.IsAllowed("github.com") {
+		t.Error("the override must replace the built-in set")
+	}
+
+	if _, err := resolveFetchVCSHosts(context.Background(), filepath.Join(dir, "missing.yaml"), &errBuf); err == nil {
+		t.Error("an explicit policy path that does not exist should be an error")
 	}
 }

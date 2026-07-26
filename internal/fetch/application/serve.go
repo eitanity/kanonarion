@@ -52,19 +52,23 @@ type ServeRequest struct {
 	// SkipVCSVerify skips the git cross-verification step on a fetch; sumdb
 	// verification still runs. Forwarded to the fetch pipeline unchanged.
 	SkipVCSVerify bool
+	// VCSHosts is the effective VCS forge allowlist for a fetch-on-miss,
+	// forwarded to the fetch pipeline unchanged. The zero value enforces the
+	// built-in default set.
+	VCSHosts domain2.VCSHostAllowlist
 }
 
 // ServeResult is the output of Serve.
 type ServeResult struct {
-	// Handle is the opaque blob handle for the module zip, ready to stream to a
-	// consumer via BlobStore.Get. Guaranteed present in the store on success.
-	Handle ports.BlobHandle
+	// Identity addresses the module zip, ready to stream to a consumer via
+	// BlobStore.Get. Guaranteed present in the store on success.
+	Identity ports.BlobIdentity
 	// VerificationStatus is the outcome the fetch pipeline recorded for this
 	// module. The caller applies its own fail-closed policy against it before
 	// serving the bytes.
 	VerificationStatus domain2.VerificationStatus
-	// Record is the full fact record backing this handle.
-	Record domain2.FactRecord
+	// Record is the composed fact record backing this identity.
+	Record domain2.CompositeRecord
 	// FromCache reports whether the record was served from an existing record
 	// (true) or freshly fetched and verified (false).
 	FromCache bool
@@ -81,6 +85,7 @@ func (uc *ServeModuleUseCase) Serve(ctx context.Context, req ServeRequest) (Serv
 	res, err := uc.fetch.Execute(ctx, FetchRequest{
 		Coordinate:    req.Coordinate,
 		SkipVCSVerify: req.SkipVCSVerify,
+		VCSHosts:      req.VCSHosts,
 	})
 	if err != nil {
 		return ServeResult{}, fmt.Errorf("fetch-on-miss for %s: %w", req.Coordinate, err)
@@ -90,7 +95,14 @@ func (uc *ServeModuleUseCase) Serve(ctx context.Context, req ServeRequest) (Serv
 	// absent blob as a miss and re-fetch, forcing past the cache so the record
 	// and its blob are rewritten together.
 	if res.FromCache {
-		present, err := uc.blobs.Exists(ctx, ports.BlobHandle(res.Record.ContentLocation))
+		identity, ok, ierr := ports.ZipIdentity(res.Record.FactRecord)
+		if ierr != nil {
+			return ServeResult{}, fmt.Errorf("deriving zip address for %s: %w", req.Coordinate, ierr)
+		}
+		present, err := ok, error(nil)
+		if ok {
+			present, err = uc.blobs.Exists(ctx, identity)
+		}
 		if err != nil {
 			return ServeResult{}, fmt.Errorf("checking blob presence for %s: %w", req.Coordinate, err)
 		}
@@ -99,6 +111,7 @@ func (uc *ServeModuleUseCase) Serve(ctx context.Context, req ServeRequest) (Serv
 				Coordinate:    req.Coordinate,
 				Force:         true,
 				SkipVCSVerify: req.SkipVCSVerify,
+				VCSHosts:      req.VCSHosts,
 			})
 			if err != nil {
 				return ServeResult{}, fmt.Errorf("re-fetch of evicted %s: %w", req.Coordinate, err)
@@ -106,22 +119,28 @@ func (uc *ServeModuleUseCase) Serve(ctx context.Context, req ServeRequest) (Serv
 		}
 	}
 
-	handle := ports.BlobHandle(res.Record.ContentLocation)
-	present, err := uc.blobs.Exists(ctx, handle)
+	identity, ok, err := ports.ZipIdentity(res.Record.FactRecord)
+	if err != nil {
+		return ServeResult{}, fmt.Errorf("deriving zip address for %s: %w", req.Coordinate, err)
+	}
+	if !ok {
+		return ServeResult{}, fmt.Errorf("fetched %s but it carries no module zip to serve", req.Coordinate)
+	}
+	present, err := uc.blobs.Exists(ctx, identity)
 	if err != nil {
 		return ServeResult{}, fmt.Errorf("confirming blob presence for %s: %w", req.Coordinate, err)
 	}
 	if !present {
-		return ServeResult{}, fmt.Errorf("fetched %s but its content blob %q is absent from the store", req.Coordinate, handle)
+		return ServeResult{}, fmt.Errorf("fetched %s but its content blob %q is absent from the store", req.Coordinate, identity)
 	}
 
 	status := domain2.VerificationStatus(res.Record.VerificationStatus)
-	if err := uc.recordServeOutcome(res.Record, status); err != nil {
+	if err := uc.recordServeOutcome(res.Record.FactRecord, status); err != nil {
 		return ServeResult{}, err
 	}
 
 	return ServeResult{
-		Handle:             handle,
+		Identity:           identity,
 		VerificationStatus: status,
 		Record:             res.Record,
 		FromCache:          res.FromCache,

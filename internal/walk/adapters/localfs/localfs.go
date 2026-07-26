@@ -116,12 +116,12 @@ func (f *Fetcher) EnsureFetchedFromPath(
 		return walkports.LocalModuleFetchResult{}, fmt.Errorf("parsing go.mod hash for %s: %w", coord, err)
 	}
 
-	blobHandle, err := f.blobs.Put(ctx, bytes.NewReader(zipData))
-	if err != nil {
+	zipIdentity := fetchports.BlobIdentity{Kind: fetchports.BlobKindZip, Hash: zipHash}
+	if err := f.blobs.Put(ctx, zipIdentity, bytes.NewReader(zipData)); err != nil {
 		return walkports.LocalModuleFetchResult{}, fmt.Errorf("storing zip blob for %s: %w", coord, err)
 	}
-	goModHandle, err := f.blobs.Put(ctx, bytes.NewReader(goModData))
-	if err != nil {
+	goModIdentity := fetchports.BlobIdentity{Kind: fetchports.BlobKindGoMod, Hash: goModHash}
+	if err := f.blobs.Put(ctx, goModIdentity, bytes.NewReader(goModData)); err != nil {
 		return walkports.LocalModuleFetchResult{}, fmt.Errorf("storing go.mod blob for %s: %w", coord, err)
 	}
 
@@ -133,18 +133,23 @@ func (f *Fetcher) EnsureFetchedFromPath(
 		VerificationDetail: "local filesystem path: " + absPath,
 		FetchedAt:          f.clock.Now().UTC(),
 		PipelineVersion:    PipelineVersion,
-		ContentLocation:    string(blobHandle),
-		GoModLocation:      string(goModHandle),
+		ContentLocation:    zipIdentity.String(),
+		GoModLocation:      goModIdentity.String(),
+		AcquisitionMode:    fetchdomain.AcquisitionLocal,
+		MeasurementKind:    fetchdomain.MeasurementAcquired,
 	}
-	record := fetchdomain.NewFactRecord(m)
-	record, err = fetchdomain.CanonicalHasher{}.SetContentHash(record)
+	sealed, err := fetchdomain.Seal(m)
 	if err != nil {
-		return walkports.LocalModuleFetchResult{}, fmt.Errorf("computing content hash for %s: %w", coord, err)
+		return walkports.LocalModuleFetchResult{}, fmt.Errorf("sealing local measurement of %s: %w", coord, err)
 	}
-	if err := f.facts.PutFetchRecord(ctx, record); err != nil {
-		return walkports.LocalModuleFetchResult{}, fmt.Errorf("persisting fact record for %s: %w", coord, err)
+	if err := f.facts.PutFetchRecord(ctx, sealed); err != nil {
+		return walkports.LocalModuleFetchResult{}, fmt.Errorf("appending fact record for %s: %w", coord, err)
 	}
-	return walkports.LocalModuleFetchResult{Record: record, FromCache: false}, nil
+	composed, err := fetchdomain.Compose([]fetchdomain.FactRecord{sealed.Record()})
+	if err != nil {
+		return walkports.LocalModuleFetchResult{}, fmt.Errorf("composing local measurement of %s: %w", coord, err)
+	}
+	return walkports.LocalModuleFetchResult{Record: composed, FromCache: false}, nil
 }
 
 // localZipPlaceholderVersion is the canonical semver under which the

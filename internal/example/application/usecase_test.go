@@ -16,6 +16,7 @@ import (
 	domain2 "github.com/eitanity/kanonarion/internal/example/domain"
 	"github.com/eitanity/kanonarion/internal/example/ports"
 	"github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
@@ -32,9 +33,10 @@ func TestExecute_ModuleNotFetched(t *testing.T) {
 func TestExecute_CacheHit(t *testing.T) {
 	coord := mustCoord(t, "example.com/pkg", "v1.0.0")
 	factStore := &fakeFactStore{}
+	blobStore := &fakeBlobStore{}
 	exampleStore := &fakeExampleStore{}
 
-	putFact(t, factStore, coord, "blob:fakecontent")
+	putFact(t, factStore, blobStore, coord, []byte("blob:fakecontent"))
 
 	existing := domain2.ExampleRecord{
 		SchemaVersion:   domain2.ExampleSchemaVersion,
@@ -72,11 +74,7 @@ func TestExecute_ForceBypassesCache(t *testing.T) {
 	zipData := buildModuleZip(t, coord, map[string]string{
 		"foo_test.go": "package foo_test\n",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	existing := domain2.ExampleRecord{
 		SchemaVersion:   domain2.ExampleSchemaVersion,
@@ -86,7 +84,7 @@ func TestExecute_ForceBypassesCache(t *testing.T) {
 		PipelineVersion: application.PipelineVersion,
 	}
 	var hh domain2.ExampleRecordHasher
-	existing, err = hh.SetContentHash(existing)
+	existing, err := hh.SetContentHash(existing)
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
 	}
@@ -113,11 +111,7 @@ func TestExecute_NoExamples(t *testing.T) {
 	zipData := buildModuleZip(t, coord, map[string]string{
 		"foo_test.go": "package foo_test\n\nimport \"testing\"\n\nfunc TestFoo(t *testing.T) {}\n",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	uc := buildUseCase(t, factStore, blobStore, exampleStore)
 	result, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
@@ -156,11 +150,7 @@ func ExampleBar_method() {
 	zipData := buildModuleZip(t, coord, map[string]string{
 		"foo_test.go": testSrc,
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	uc := buildUseCase(t, factStore, blobStore, exampleStore)
 	result, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
@@ -229,11 +219,7 @@ func ExampleClient_Do_advanced() {
 	zipData := buildModuleZip(t, coord, map[string]string{
 		"client_test.go": testSrc,
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	uc := buildUseCase(t, factStore, blobStore, exampleStore)
 	result, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
@@ -262,11 +248,7 @@ func TestExecute_ParseFailure(t *testing.T) {
 		"bad_test.go":  "package bad_test\nfunc Example( {", // syntax error
 		"good_test.go": "package good_test\nimport \"fmt\"\nfunc ExampleGood() {\nfmt.Println(\"ok\")\n}\n",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	uc := buildUseCase(t, factStore, blobStore, exampleStore)
 	result, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
@@ -287,11 +269,7 @@ func TestExecute_CorruptZip(t *testing.T) {
 	factStore := &fakeFactStore{}
 	exampleStore := &fakeExampleStore{}
 
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader([]byte("not a zip")))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, []byte("not a zip"))
 
 	uc := buildUseCase(t, factStore, blobStore, exampleStore)
 	result, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
@@ -314,11 +292,7 @@ func TestExecute_Idempotent(t *testing.T) {
 
 	testSrc := "package idem_test\nimport \"fmt\"\nfunc ExampleFoo() {\nfmt.Println(\"hi\")\n// Output:\n// hi\n}\n"
 	zipData := buildModuleZip(t, coord, map[string]string{"foo_test.go": testSrc})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	uc := buildUseCase(t, factStore, blobStore, exampleStore)
 
@@ -355,11 +329,7 @@ func ExampleFoo() {
 }
 `
 	zipData := buildModuleZip(t, coord, map[string]string{"foo_test.go": testSrc})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	uc := buildUseCase(t, factStore, blobStore, exampleStore)
 	result, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
@@ -383,11 +353,7 @@ func TestExecute_InlineOutput(t *testing.T) {
 	// Inline output: "// Output: result" on the same line as the marker.
 	testSrc := "package inline_test\n\nimport \"fmt\"\n\nfunc ExampleFoo() {\n\tfmt.Println(\"result\")\n\t// Output: result\n}\n"
 	zipData := buildModuleZip(t, coord, map[string]string{"foo_test.go": testSrc})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	uc := buildUseCase(t, factStore, blobStore, exampleStore)
 	result, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
@@ -414,11 +380,7 @@ func TestExecute_UnorderedOutput(t *testing.T) {
 
 	testSrc := "package unordered_test\n\nimport \"fmt\"\n\nfunc ExampleFoo() {\n\tfmt.Println(\"b\")\n\tfmt.Println(\"a\")\n\t// Unordered output:\n\t// a\n\t// b\n}\n"
 	zipData := buildModuleZip(t, coord, map[string]string{"foo_test.go": testSrc})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	uc := buildUseCase(t, factStore, blobStore, exampleStore)
 	result, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
@@ -442,11 +404,7 @@ func TestExecute_UsedImports(t *testing.T) {
 	// Only "fmt" is used in the example body; "io" is imported but not referenced.
 	testSrc := "package imports_test\n\nimport (\n\t\"fmt\"\n\t\"io\"\n)\n\nfunc ExampleFoo() {\n\tfmt.Println(\"ok\")\n}\n\nvar _ io.Reader\n"
 	zipData := buildModuleZip(t, coord, map[string]string{"foo_test.go": testSrc})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	uc := buildUseCase(t, factStore, blobStore, exampleStore)
 	result, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
@@ -471,11 +429,7 @@ func TestExecute_AliasedImport(t *testing.T) {
 	// Use an aliased import: "myfmt" → "fmt".
 	testSrc := "package alias_test\n\nimport myfmt \"fmt\"\n\nfunc ExampleFoo() {\n\tmyfmt.Println(\"ok\")\n}\n"
 	zipData := buildModuleZip(t, coord, map[string]string{"foo_test.go": testSrc})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	uc := buildUseCase(t, factStore, blobStore, exampleStore)
 	result, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
@@ -500,11 +454,7 @@ func TestExecute_BlankImport(t *testing.T) {
 	// Blank import should be excluded from example imports.
 	testSrc := "package blank_test\n\nimport (\n\t\"fmt\"\n\t_ \"io\"\n)\n\nfunc ExampleFoo() {\n\tfmt.Println(\"ok\")\n}\n"
 	zipData := buildModuleZip(t, coord, map[string]string{"foo_test.go": testSrc})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	uc := buildUseCase(t, factStore, blobStore, exampleStore)
 	result, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
@@ -530,11 +480,7 @@ func TestExecute_ContextCancelled(t *testing.T) {
 	exampleStore := &fakeExampleStore{}
 
 	zipData := buildModuleZip(t, coord, map[string]string{"foo.go": "package foo\n"})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // pre-cancel so extractFromZip sees a cancelled context
@@ -576,11 +522,7 @@ func TestExecute_ZipDirectoryEntry(t *testing.T) {
 		t.Fatalf("zip close: %v", err)
 	}
 
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(buf.Bytes()))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, buf.Bytes())
 
 	uc := buildUseCase(t, factStore, blobStore, exampleStore)
 	result, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
@@ -602,11 +544,7 @@ func TestExecute_NoSpaceInComment(t *testing.T) {
 	// This exercises the else branches in extractDoc and extractOutput.
 	testSrc := "package nospace_test\n\nimport \"fmt\"\n\n//ExampleFoo shows Foo.\nfunc ExampleFoo() {\n\tfmt.Println(\"ok\")\n\t// Output:\n\t//ok\n}\n"
 	zipData := buildModuleZip(t, coord, map[string]string{"foo_test.go": testSrc})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	uc := buildUseCase(t, factStore, blobStore, exampleStore)
 	result, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
@@ -637,14 +575,10 @@ func TestExecute_Persists(t *testing.T) {
 	zipData := buildModuleZip(t, coord, map[string]string{
 		"foo_test.go": "package foo_test\nimport \"fmt\"\nfunc ExampleFoo() {\nfmt.Println(\"ok\")\n}\n",
 	})
-	handle, err := blobStore.Put(context.Background(), bytes.NewReader(zipData))
-	if err != nil {
-		t.Fatalf("Put: %v", err)
-	}
-	putFactWithBlob(t, factStore, coord, string(handle))
+	putFactWithBlob(t, factStore, blobStore, coord, zipData)
 
 	uc := buildUseCase(t, factStore, blobStore, exampleStore)
-	_, err = uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
+	_, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
@@ -695,23 +629,30 @@ func buildUseCase(t *testing.T, facts *fakeFactStore, blobs *fakeBlobStore, exam
 	})
 }
 
-func putFact(t *testing.T, s *fakeFactStore, coord coordinate.ModuleCoordinate, blobHandle string) {
+func putFact(t *testing.T, s *fakeFactStore, blobs *fakeBlobStore, coord coordinate.ModuleCoordinate, zipData []byte) {
 	t.Helper()
-	putFactWithBlob(t, s, coord, blobHandle)
+	putFactWithBlob(t, s, blobs, coord, zipData)
 }
 
-func putFactWithBlob(t *testing.T, s *fakeFactStore, coord coordinate.ModuleCoordinate, blobHandle string) {
+func putFactWithBlob(t *testing.T, s *fakeFactStore, blobs *fakeBlobStore, coord coordinate.ModuleCoordinate, zipData []byte) {
 	t.Helper()
-	r := domain.FactRecord{
-		SchemaVersion:      "2",
-		ModulePath:         coord.Path,
-		ModuleVersion:      coord.Version,
-		PipelineVersion:    application.PipelineVersion,
-		ContentLocation:    blobHandle,
-		ContentHash:        "sha256:placeholder",
-		VerificationStatus: "Verified",
+	r := fetchtest.Record(
+		t,
+		fetchtest.Coordinate(coord),
+		fetchtest.PipelineVersion(application.PipelineVersion),
+		fetchtest.Content("zip"),
+		fetchtest.Status(domain.Verified),
+	)
+	// Key the blob by the artefact identity the record carries: that is the
+	// address production asks the store for, and no other address resolves.
+	if err := blobs.Put(context.Background(), fetchtest.ZipIdentity(t, r), bytes.NewReader(zipData)); err != nil {
+		t.Fatalf("Put blob: %v", err)
 	}
-	if err := s.PutFetchRecord(context.Background(), r); err != nil {
+	sealed, serr := domain.Rehydrate(r)
+	if serr != nil {
+		t.Fatalf("sealing record: %v", serr)
+	}
+	if err := s.PutFetchRecord(context.Background(), sealed); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 }

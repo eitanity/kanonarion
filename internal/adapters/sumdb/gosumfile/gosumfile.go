@@ -98,9 +98,13 @@ func (c *Client) Lookup(_ context.Context, coord coordinate.ModuleCoordinate) po
 	k := key(coord.Path, coord.Version)
 	zipHash, ok := c.zip[k]
 	if !ok {
+		// An absent entry is go.sum's real answer, and this adapter performs no
+		// network I/O, so the outcome is policy-unavailable: nothing here can flake
+		// and a later attempt would read the same file.
 		return ports.SumDBResult{
-			Available: false,
-			Reason:    fmt.Sprintf("no go.sum entry for %s in %s", coord, c.path),
+			Available:      false,
+			Reason:         fmt.Sprintf("no go.sum entry for %s in %s", coord, c.path),
+			Unavailability: ports.SumDBUnavailabilityPolicy,
 		}
 	}
 	return ports.SumDBResult{

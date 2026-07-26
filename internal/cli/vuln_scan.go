@@ -270,6 +270,29 @@ type vulnScanAffected struct {
 	record vuldomain.VulnerabilityRecord
 }
 
+// scanCompletionSummary renders both scan axes for the "Scan completed" line,
+// printing each only when it says something: coverage names the unanalysed count
+// unless it is Complete, findings names the affected count unless it is Clean.
+// The two answer different questions, so neither suppresses the other —
+// a run that is both Partial and Affected reports both.
+func scanCompletionSummary(run vuldomain.WalkScanRun) string {
+	unanalysed := run.Counts.Unscannable + run.Counts.Failed
+	var coverage string
+	switch run.CoverageStatus {
+	case vuldomain.CoveragePartial:
+		coverage = fmt.Sprintf("Partial coverage (%d of %d unanalysed)", unanalysed, run.Counts.Total)
+	case vuldomain.CoverageFailed:
+		coverage = fmt.Sprintf("Failed coverage (%d of %d unanalysed)", unanalysed, run.Counts.Total)
+	default:
+		coverage = "Complete"
+	}
+	findings := "Clean"
+	if run.FindingsStatus == vuldomain.FindingsAffected {
+		findings = fmt.Sprintf("Affected (%d)", run.Counts.Affected)
+	}
+	return coverage + ", " + findings
+}
+
 // printVulnScanResult writes the scan result to stdout. Progress output has
 // already been written to stderr by the Progress callback. This function owns
 // only the final result channel: JSON under --json, or a findings summary
@@ -311,7 +334,7 @@ func printVulnScanResult(run vuldomain.WalkScanRun, affected []vulnScanAffected,
 		}
 	}
 
-	_, _ = fmt.Fprintf(stdout, "Scan completed: %s  Run ID: %s\n", run.OverallStatus, run.ID)
+	_, _ = fmt.Fprintf(stdout, "Scan completed: %s  Run ID: %s\n", scanCompletionSummary(run), run.ID)
 	// Listed whenever any module failed, not only on a Partial run. A run is
 	// Affected as soon as one module has findings and Failed when every module
 	// failed, so gating on Partial dropped the failed list from the summary in
@@ -532,7 +555,7 @@ func runScanRescan(ctx context.Context, walkID string, f commonWalkFlags, enable
 		return fmt.Errorf("vuln-scan-rescan failed: %w", err)
 	}
 
-	_, _ = fmt.Fprintf(stdout, "Re-scan completed with status: %s\n", run.OverallStatus)
+	_, _ = fmt.Fprintf(stdout, "Re-scan completed: %s\n", scanCompletionSummary(run))
 	_, _ = fmt.Fprintf(stdout, "Run ID: %s\n", run.ID)
 	_, _ = fmt.Fprintf(stdout, "Snapshot: %s@%s\n", run.Snapshot.Source, run.Snapshot.Version)
 	return nil

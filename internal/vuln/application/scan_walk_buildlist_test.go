@@ -6,8 +6,8 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
@@ -15,15 +15,17 @@ import (
 // seedFactNodeGoMod records a node's zip and a caller-supplied go.mod body in the
 // fact/blob stores under the "v1" fetch pipeline version, so a scan finds the
 // node present and reads the exact require directives given.
-func seedFactNodeGoMod(ctx context.Context, facts *fakeFacts, blobs *fakeBlob, coord coordinate.ModuleCoordinate, goMod string) {
-	zipHandle, _ := blobs.Put(ctx, strings.NewReader("zip-"+coord.Path+"-"+coord.Version))
-	modHandle, _ := blobs.Put(ctx, strings.NewReader(goMod))
-	_ = facts.PutFetchRecord(ctx, fetchdomain.FactRecord{
-		ModulePath: coord.Path, ModuleVersion: coord.Version,
-		PipelineVersion: "v1",
-		ContentLocation: string(zipHandle),
-		GoModLocation:   string(modHandle),
-	})
+func seedFactNodeGoMod(t testing.TB, ctx context.Context, facts *fakeFacts, blobs *fakeBlob, coord coordinate.ModuleCoordinate, goMod string) {
+	opts := []fetchtest.Option{
+		fetchtest.Coordinate(coord),
+		fetchtest.PipelineVersion("v1"),
+		fetchtest.Content("zip-" + coord.Path + "-" + coord.Version),
+		fetchtest.GoMod("gomod-" + coord.Path + "-" + coord.Version),
+	}
+	rec := fetchtest.Record(t, opts...)
+	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, rec), strings.NewReader("zip-"+coord.Path+"-"+coord.Version))
+	_ = blobs.Put(ctx, fetchtest.GoModIdentity(t, rec), strings.NewReader(goMod))
+	_ = facts.PutFetchRecord(ctx, fetchtest.Sealed(t, opts...))
 }
 
 // TestScan_PopulatesScannedNodeBuildListDeps verifies that a scannable node's own
@@ -61,7 +63,7 @@ func TestScan_PopulatesScannedNodeBuildListDeps(t *testing.T) {
 
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
-	seedFactNodeGoMod(ctx, facts, blobs, consumer, goMod)
+	seedFactNodeGoMod(t, ctx, facts, blobs, consumer, goMod)
 
 	vulnStore := newFakeVulnStore()
 	fetcher := &fakeFetcher{}
@@ -121,7 +123,7 @@ func TestScan_SourcesSelfNestedAncestor(t *testing.T) {
 
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
-	seedFactNodeGoMod(ctx, facts, blobs, consumer, goMod)
+	seedFactNodeGoMod(t, ctx, facts, blobs, consumer, goMod)
 
 	vulnStore := newFakeVulnStore()
 	fetcher := &fakeFetcher{}

@@ -14,6 +14,7 @@ import (
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
 	noopsigner "github.com/eitanity/kanonarion/internal/adapters/signer/noop"
 	"github.com/eitanity/kanonarion/internal/adapters/sumdb/gosum"
+	sumdbretry "github.com/eitanity/kanonarion/internal/adapters/sumdb/retrying"
 	"github.com/eitanity/kanonarion/internal/adapters/vcs/gitexec"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/fetch/application"
@@ -31,6 +32,11 @@ type fetchFlags struct {
 	tool          bool
 	project       bool
 	gomod         string
+	policyPath    string
+	// vcsHosts is the effective VCS forge allowlist, resolved once from the
+	// depth policy before any fetch runs. The zero value enforces the built-in
+	// default set.
+	vcsHosts domain.VCSHostAllowlist
 }
 
 func newFetchCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -47,6 +53,15 @@ func newFetchCmd(stdout, stderr io.Writer) *cobra.Command {
   kanonarion fetch --gomod ./go.mod
   kanonarion fetch --gomod ./go.mod --tool`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// The fetch stage's allowed_vcs_hosts governs which forges this
+			// command may cross-verify against, so resolve the policy once here
+			// rather than per module in the scope loop.
+			hosts, herr := resolveFetchVCSHosts(cmd.Context(), f.policyPath, stderr)
+			if herr != nil {
+				return herr
+			}
+			f.vcsHosts = hosts
+
 			goModScope := f.gomod != "" || f.tool || f.project
 			if goModScope {
 				if len(args) > 0 {
@@ -76,6 +91,7 @@ func newFetchCmd(stdout, stderr io.Writer) *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&f.force, "force", false, "re-fetch even if cached")
+	registerAllowVerificationDowngradeFlag(cmd)
 	cmd.Flags().BoolVar(&f.strict, "strict", false, "exit non-zero on verification failure")
 	cmd.Flags().BoolVar(&f.insecure, "insecure", false, "allow plain HTTP proxy URLs (forces unverified status)")
 	cmd.Flags().BoolVar(&f.skipVCSVerify, "skip-vcs-verify", false, "skip git cross-verification; sumdb verification still runs")
@@ -84,8 +100,27 @@ func newFetchCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().BoolVar(&f.tool, "tool", false, "fetch the tooling supply chain (the go.mod tool directives' closure) instead of a positional module@version")
 	cmd.Flags().BoolVar(&f.project, "project", false, "fetch the complete set: the project's code AND tooling")
 	cmd.Flags().StringVar(&f.gomod, "gomod", "", "path to a go.mod file to fetch a dependency scope from (default: search upward from cwd)")
+	cmd.Flags().StringVar(&f.policyPath, "policy", "", "path to depth policy YAML (default: search for .kanonarion/policy.yaml)")
 
 	return cmd
+}
+
+// resolveFetchVCSHosts resolves the effective VCS forge allowlist for a fetch
+// from the depth policy's fetch stage. An absent policy, or a policy without
+// allowed_vcs_hosts, yields the built-in default set; a malformed list is an
+// error rather than a silent fall-back to the default, which would verify
+// against forges the operator did not authorise.
+func resolveFetchVCSHosts(ctx context.Context, policyPath string, stderr io.Writer) (domain.VCSHostAllowlist, error) {
+	logger := buildLogger(logLevel, stderr)
+	policy, _, err := loadPolicy(ctx, policyPath, logger)
+	if err != nil {
+		return domain.VCSHostAllowlist{}, fmt.Errorf("loading policy: %w", err)
+	}
+	hosts, err := policy.FetchStage().VCSHostAllowlist()
+	if err != nil {
+		return domain.VCSHostAllowlist{}, fmt.Errorf("resolving fetch-stage VCS host allowlist: %w", err)
+	}
+	return hosts, nil
 }
 
 // runFetchScope fetches every module in a go.mod's dependency scope (default
@@ -96,7 +131,9 @@ func runFetchScope(ctx context.Context, gomodPath string, scope depScope, f fetc
 		return fmt.Errorf("resolving %s scope: %w", scope, err)
 	}
 	if len(coords) == 0 {
-		_, _ = fmt.Fprintf(stdout, "no %s dependencies found in %s\n", scope, gomodPath)
+		// Diagnostic, not data: keep stdout clean so a --json caller reading
+		// the per-module object stream is not handed prose on an empty scope.
+		_, _ = fmt.Fprintf(stderr, "no %s dependencies found in %s\n", scope, gomodPath)
 		return nil
 	}
 	_, _ = fmt.Fprintf(stderr, "fetching %d %s modules from %s\n", len(coords), scope, gomodPath)
@@ -168,18 +205,23 @@ func runFetch(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.W
 		}
 	}()
 
-	sumdbClient := gosum.New(storeRoot + "/sumdb")
+	// Retry transient checksum-database failures before they can downgrade the
+	// module's verification status, matching the walk path's wiring.
+	sumdbClient := sumdbretry.New(gosum.New(storeRoot+"/sumdb"), logger)
 	clk := clock.System{}
 
 	uc := application.NewFetchModuleUseCase(
 		proxyAdapter, vcsClient, blobStore, factStore,
 		sumdbClient, clk, clock.Monotonic{}, "", logger,
-	).WithSigner(noopsigner.New(), factStore)
+	).WithSigner(noopsigner.New(), factStore).
+		WithAudit(factStore).
+		WithAllowVerificationDowngrade(allowVerificationDowngrade)
 
 	result, err := uc.Execute(ctx, application.FetchRequest{
 		Coordinate:    coord,
 		Force:         f.force,
 		SkipVCSVerify: f.skipVCSVerify,
+		VCSHosts:      f.vcsHosts,
 	})
 	if err != nil {
 		return fmt.Errorf("fetching module: %w", err)

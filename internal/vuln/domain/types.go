@@ -341,7 +341,13 @@ type ProjectScanResult struct {
 // root rather than to any dependency.
 const StdlibModulePath = "stdlib"
 
-// WalkScanStatus describes the outcome of a walk-wide vulnerability scan.
+// WalkScanStatus describes the outcome of a walk-wide vulnerability scan. It
+// collapses two independent axes — coverage and findings — into one word, so it
+// can only ever carry one of them (see CoverageStatus / FindingsStatus). It is
+// retained as a stored compatibility summary for consumers that display only the
+// summary word; no consumer may derive a findings fact from it, because a run
+// that both found vulnerabilities and left part of the build list unanalysed
+// reports Partial and hides the finding.
 type WalkScanStatus string
 
 const (
@@ -351,6 +357,40 @@ const (
 	WalkStatusFailed   WalkScanStatus = "ScanFailed"
 )
 
+// CoverageStatus answers "was every module in the build list analysed?" — one of
+// the two axes WalkScanStatus conflates. It is independent of whether any
+// vulnerability was found.
+type CoverageStatus string
+
+const (
+	CoverageComplete CoverageStatus = "Complete"
+	CoveragePartial  CoverageStatus = "Partial"
+	CoverageFailed   CoverageStatus = "Failed"
+)
+
+// FindingsStatus answers "did the analysis find vulnerabilities?" — the other
+// axis WalkScanStatus conflates. It is independent of coverage: a run can be
+// Partial-and-Clean or Complete-and-Affected.
+type FindingsStatus string
+
+const (
+	FindingsAffected FindingsStatus = "Affected"
+	FindingsClean    FindingsStatus = "Clean"
+)
+
+// WalkScanCounts is the per-outcome module breakdown a walk scan produces. It is
+// the evidence both the coverage and findings verdicts are derived from, stored
+// on the run so every consumer can state a count without re-reading each
+// module's record. Total = Analysed + Unscannable + Failed, and
+// Analysed = clean + Affected.
+type WalkScanCounts struct {
+	Total       int `json:"total"`
+	Analysed    int `json:"analysed"`
+	Affected    int `json:"affected"`
+	Unscannable int `json:"unscannable"`
+	Failed      int `json:"failed"`
+}
+
 // WalkScanRun records the aggregate results of scanning every module in a walk.
 type WalkScanRun struct {
 	ID               string                                 `json:"id"`
@@ -359,8 +399,14 @@ type WalkScanRun struct {
 	PerModuleResults map[coordinate.ModuleCoordinate]string `json:"per_module_results"` // Maps coordinate to VulnerabilityRecord ContentHash
 	StartedAt        time.Time                              `json:"started_at"`
 	CompletedAt      time.Time                              `json:"completed_at"`
-	OverallStatus    WalkScanStatus                         `json:"overall_status"`
-	PipelineVersion  string                                 `json:"pipeline_version"`
-	Operator         string                                 `json:"operator"`
-	ContentHash      string                                 `json:"content_hash"`
+	// OverallStatus is a derived, stored compatibility summary. CoverageStatus
+	// and FindingsStatus are the two independent axes it collapses; consumers
+	// that need a findings fact read FindingsStatus, never OverallStatus.
+	OverallStatus   WalkScanStatus `json:"overall_status"`
+	CoverageStatus  CoverageStatus `json:"coverage_status"`
+	FindingsStatus  FindingsStatus `json:"findings_status"`
+	Counts          WalkScanCounts `json:"counts"`
+	PipelineVersion string         `json:"pipeline_version"`
+	Operator        string         `json:"operator"`
+	ContentHash     string         `json:"content_hash"`
 }
