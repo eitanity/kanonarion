@@ -1,9 +1,9 @@
 package local
 
 import (
-	"bytes"
 	"context"
-	"os/exec"
+
+	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 )
 
 // OsSubprocessExecutor runs a subprocess using the OS exec package.
@@ -23,10 +23,10 @@ func NewOsSubprocessExecutor(binary string) OsSubprocessExecutor {
 // Execute runs binary with args under ctx. It captures stderr and returns it
 // alongside any error. A non-zero exit code results in a non-nil error
 // (typically *exec.ExitError). Context cancellation/deadline propagates as-is.
+//
+// The child runs through childproc: these are callgraph extractions whose SSA
+// closure can hold several GB, so they must die with this process rather than
+// outliving it as orphans.
 func (e OsSubprocessExecutor) Execute(ctx context.Context, args []string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, e.binary, args...) // #nosec G204 -- binary resolved from os.Executable; args constructed from internal coord strings only
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	return stderr.Bytes(), err
+	return childproc.Run(ctx, e.binary, args...) //nolint:wrapcheck // the caller classifies the raw exec error (exit status, context deadline); wrapping it here would rewrite the text those classifiers read
 }

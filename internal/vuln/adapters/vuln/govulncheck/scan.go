@@ -11,6 +11,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
@@ -65,7 +66,7 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (domain.Vulne
 		pkg := findFirstGoPackage(scanDir)
 		s.logger.Info("vuln-scan: binary mode — building test binary", "dir", scanDir, "pkg", pkg)
 		tmpBin := filepath.Join(tmpDir, "vuln-test.bin")
-		buildCmd := exec.CommandContext(ctx, "go", "test", "-c", "-o", tmpBin, pkg) // #nosec G204 -- pkg derived from local filesystem walk
+		buildCmd := childproc.CommandContext(ctx, "go", "test", "-c", "-o", tmpBin, pkg) // #nosec G204 -- pkg derived from local filesystem walk
 		buildCmd.Dir = scanDir
 		buildCmd.Env = env
 		out, buildErr := buildCmd.CombinedOutput()
@@ -82,14 +83,14 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (domain.Vulne
 			scanMode = domain.ScanModeSource
 		default:
 			s.logger.Info("vuln-scan: test binary built, running govulncheck -mode=binary", "binary", tmpBin)
-			cmd = exec.CommandContext(ctx, govulncheckBin, "-json", "-db", dbArg, "-mode=binary", tmpBin) // #nosec G204 -- binary path from exec.LookPath
+			cmd = childproc.CommandContext(ctx, govulncheckBin, "-json", "-db", dbArg, "-mode=binary", tmpBin) // #nosec G204 -- binary path from exec.LookPath
 			s.logMem(ctx, "binary_built")
 		}
 	}
 	if scanMode != domain.ScanModeBinary {
 		// Source mode: download deps then run govulncheck source analysis.
 		s.logger.Info("vuln-scan: downloading dependencies", "dir", scanDir)
-		dlCmd := exec.Command("go", "mod", "download")
+		dlCmd := childproc.CommandContext(ctx, "go", "mod", "download")
 		dlCmd.Dir = scanDir
 		dlCmd.Env = env
 		if out, dlErr := dlCmd.CombinedOutput(); dlErr != nil {
@@ -105,7 +106,7 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (domain.Vulne
 		}
 		s.logMem(ctx, "deps_downloaded")
 		s.logger.Info("vuln-scan: running govulncheck source mode", "dir", scanDir, "db", dbArg)
-		cmd = exec.CommandContext(ctx, govulncheckBin, "-json", "-db", dbArg, "./...") // #nosec G204 -- binary path from exec.LookPath
+		cmd = childproc.CommandContext(ctx, govulncheckBin, "-json", "-db", dbArg, "./...") // #nosec G204 -- binary path from exec.LookPath
 		cmd.Dir = scanDir
 	}
 	cmd.Env = env

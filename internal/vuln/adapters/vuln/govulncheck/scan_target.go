@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"runtime"
 
+	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
 )
@@ -78,7 +78,7 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 	// fatal on its own — the packages may still load — so it is reported by the
 	// scan's own exit status rather than pre-empted here.
 	s.logger.Info("vuln-scan: downloading target dependencies", "dir", scanDir)
-	dlCmd := exec.CommandContext(ctx, "go", "mod", "download")
+	dlCmd := childproc.CommandContext(ctx, "go", "mod", "download")
 	dlCmd.Dir = scanDir
 	dlCmd.Env = env
 	if out, dlErr := dlCmd.CombinedOutput(); dlErr != nil {
@@ -87,7 +87,7 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 	s.logMem(ctx, "target_deps_downloaded")
 
 	s.logger.Info("vuln-scan: running target-rooted govulncheck source mode", "dir", scanDir, "db", dbArg)
-	cmd := exec.CommandContext(ctx, govulncheckBin, "-json", "-db", dbArg, "./...") // #nosec G204 -- binary path from exec.LookPath
+	cmd := childproc.CommandContext(ctx, govulncheckBin, "-json", "-db", dbArg, "./...") // #nosec G204 -- binary path from exec.LookPath
 	cmd.Dir = scanDir
 	cmd.Env = env
 

@@ -5,8 +5,8 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 
+	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 )
 
@@ -63,7 +63,7 @@ func (s *Scanner) ScanProject(
 	}
 
 	s.logger.Info("vuln-scan: running project-rooted govulncheck source mode", "dir", projectDir, "db", dbArg)
-	cmd := exec.CommandContext(ctx, govulncheckBin, "-json", "-db", dbArg, "./...") // #nosec G204 -- binary path from exec.LookPath
+	cmd := childproc.CommandContext(ctx, govulncheckBin, "-json", "-db", dbArg, "./...") // #nosec G204 -- binary path from exec.LookPath
 	cmd.Dir = projectDir
 	cmd.Env = append(os.Environ(), "GOGC=30")
 
