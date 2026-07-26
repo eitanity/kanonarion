@@ -16,6 +16,7 @@
 package fetchtest
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -168,8 +169,54 @@ func build(opts []Option) domain.FactRecord {
 // H1 is the h1 module hash of value, the only algorithm current Go toolchains
 // produce. It exists so callers pass a hash rather than a pre-formatted string
 // and the ":" separator stays the domain's business.
+//
+// It panics on a value the domain refuses, and takes no testing.TB in order to
+// do so: hashes are built in table-driven cases and package-level vars where no
+// testing handle is in scope, on the same terms as coordinatetest.MustNew. A
+// panic here is a bad fixture, reported with a stack trace pointing at it.
 func H1(value string) domain.ModuleHash {
-	return domain.ModuleHash{Algorithm: "h1", Value: value}
+	return Hash("h1", value)
+}
+
+// Hash is the module hash of value under algorithm, for the tests whose subject
+// is an artefact hashed by something other than h1 — a stdlib source tarball
+// addressed by its SHA-256, say. It panics on a hash the domain refuses; see
+// H1 for why it takes no testing.TB.
+func Hash(algorithm, value string) domain.ModuleHash {
+	h, err := domain.NewModuleHash(algorithm, value)
+	if err != nil {
+		panic(fmt.Sprintf("fetchtest: invalid module hash %s:%s: %v", algorithm, value, err))
+	}
+	return h
+}
+
+// ZipArtefact is the artefact identity of a module zip with the h1 hash of
+// value, and GoModArtefact the identity of a go.mod-only measurement. They are
+// for the tests whose subject is an identity rather than the record carrying
+// one; a test that has a record should derive the identity from it with
+// domain.ArtefactIdentityOf, which is what production does.
+//
+// Both go through domain.ParseArtefactIdentity, so a fixture identity is one
+// the reader can read — a hand-built value object could claim a shape the
+// parser rejects and no test would notice.
+func ZipArtefact(value string) domain.ArtefactIdentity {
+	return artefact("zip", H1(value))
+}
+
+// GoModArtefact is the artefact identity of a go.mod-only measurement whose
+// go.mod has the h1 hash of value. See ZipArtefact.
+func GoModArtefact(value string) domain.ArtefactIdentity {
+	return artefact("gomod", H1(value))
+}
+
+// artefact parses the persisted spelling of an identity at the given depth,
+// panicking on one the domain refuses.
+func artefact(prefix string, hash domain.ModuleHash) domain.ArtefactIdentity {
+	identity, err := domain.ParseArtefactIdentity(prefix + ":" + hash.String())
+	if err != nil {
+		panic(fmt.Sprintf("fetchtest: invalid artefact identity %s:%s: %v", prefix, hash, err))
+	}
+	return identity
 }
 
 // Coordinate sets the module path and version.

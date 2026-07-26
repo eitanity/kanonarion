@@ -198,9 +198,15 @@ func (a *Acquirer) cacheTarball(ctx context.Context, version string, tarball []b
 	// so its identity is the SHA-256 of its bytes — the same digest the published
 	// checksum is compared against.
 	sum := sha256.Sum256(tarball)
+	hash, err := fetchdomain.NewModuleHash("sha256", hex.EncodeToString(sum[:]))
+	if err != nil {
+		a.logger.WarnContext(ctx, "stdlib.tarball.cache_failed",
+			slog.String("go_version", version), slog.String("error", err.Error()))
+		return ""
+	}
 	identity := fetchports.BlobIdentity{
 		Kind: fetchports.BlobKindZip,
-		Hash: fetchdomain.ModuleHash{Algorithm: "sha256", Value: hex.EncodeToString(sum[:])},
+		Hash: hash,
 	}
 	if err := a.blobs.Put(ctx, identity, bytes.NewReader(tarball)); err != nil {
 		a.logger.WarnContext(ctx, "stdlib.tarball.cache_failed",

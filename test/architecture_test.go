@@ -377,15 +377,29 @@ func TestNoInfraImportsInApplicationOrDomain(t *testing.T) {
 	}
 }
 
-// coordinateAccessors are the ModuleCoordinate methods that replaced its
-// exported fields. Each returns a string, which is what makes a missing call
-// dangerous rather than merely wrong.
-var coordinateAccessors = map[string]bool{
-	"Path": true, "Version": true, "String": true, "IsLocal": true,
+// valueObjectAccessors are the methods that replaced an exported field on each
+// value object, keyed by the fully qualified receiver type. A missing call on
+// one of these yields a func value rather than the string or bool the reader
+// meant, which is what makes the omission dangerous rather than merely wrong.
+//
+// Each entry is one conversion: ModuleCoordinate, then the artefact identity
+// and the hash inside it. The identity is the key the fetch ledger composes on
+// and the value the extraction contexts embed, so an uncalled accessor there
+// reaches a SQL parameter by the same route the coordinate's did.
+var valueObjectAccessors = map[string]map[string]bool{
+	modulePath + "/internal/coordinate.ModuleCoordinate": {
+		"Path": true, "Version": true, "String": true, "IsLocal": true,
+	},
+	modulePath + "/internal/fetch/domain.ArtefactIdentity": {
+		"Hash": true, "GoModOnly": true, "String": true, "IsZero": true,
+	},
+	modulePath + "/internal/fetch/domain.ModuleHash": {
+		"Algorithm": true, "Value": true, "String": true, "IsZero": true,
+	},
 }
 
-// TestNoCoordinateAccessorMethodValues is the residual guard on unexporting
-// ModuleCoordinate's fields.
+// TestNoCoordinateAccessorMethodValues is the residual guard on unexporting the
+// fields of the value objects above.
 //
 // Unexporting them turned every read of coord.Path into a call. The compiler
 // catches almost all of the ones that were missed — a func() string will not
@@ -394,11 +408,12 @@ var coordinateAccessors = map[string]bool{
 // structured-log field, an audit event's payload), a %v or %s verb (go vet
 // catches those, and did), and a value stored into an interface field.
 //
-// This is not hypothetical. The conversion left 88 such method values behind:
-// they built cleanly and vet passed on all but seven, and the first evidence
-// was "sql: converting argument $1 type: unsupported type func() string" from
-// the fact store. Nothing else in the toolchain rejects them, so the check
-// lives here.
+// This is not hypothetical. The coordinate conversion left 88 such method
+// values behind: they built cleanly and vet passed on all but seven, and the
+// first evidence was "sql: converting argument $1 type: unsupported type
+// func() string" from the fact store. Nothing else in the toolchain rejects
+// them, so the check lives here, and every later conversion is added to
+// valueObjectAccessors rather than trusted to a clean build.
 func TestNoCoordinateAccessorMethodValues(t *testing.T) {
 	cfg := &packages.Config{
 		Mode:  packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedName | packages.NeedFiles | packages.NeedDeps | packages.NeedImports,
@@ -409,7 +424,6 @@ func TestNoCoordinateAccessorMethodValues(t *testing.T) {
 	if err != nil {
 		t.Fatalf("packages.Load: %v", err)
 	}
-	const coordType = modulePath + "/internal/coordinate.ModuleCoordinate"
 	reported := map[string]bool{}
 	for _, pkg := range pkgs {
 		for _, file := range pkg.Syntax {
@@ -422,19 +436,23 @@ func TestNoCoordinateAccessorMethodValues(t *testing.T) {
 			})
 			ast.Inspect(file, func(n ast.Node) bool {
 				sel, ok := n.(*ast.SelectorExpr)
-				if !ok || called[ast.Expr(sel)] || !coordinateAccessors[sel.Sel.Name] {
+				if !ok || called[ast.Expr(sel)] {
 					return true
 				}
 				selection := pkg.TypesInfo.Selections[sel]
 				if selection == nil || selection.Kind() != types.MethodVal {
 					return true
 				}
-				if recv := selection.Recv().String(); recv != coordType && recv != "*"+coordType {
+				// Selections is the only reliable oracle here: the receiver type
+				// says which value object this is, and a nil Selection means the
+				// selector is not a method on a value at all.
+				recv := strings.TrimPrefix(selection.Recv().String(), "*")
+				if !valueObjectAccessors[recv][sel.Sel.Name] {
 					return true
 				}
 				pos := pkg.Fset.Position(sel.Sel.Pos())
-				msg := fmt.Sprintf("%s:%d:%d: ModuleCoordinate.%s is used as a method value, not called — add the parentheses; a func() string reaching an any-typed argument fails at run time, not at build time",
-					pos.Filename, pos.Line, pos.Column, sel.Sel.Name)
+				msg := fmt.Sprintf("%s:%d:%d: %s.%s is used as a method value, not called — add the parentheses; a func() reaching an any-typed argument fails at run time, not at build time",
+					pos.Filename, pos.Line, pos.Column, recv[strings.LastIndex(recv, ".")+1:], sel.Sel.Name)
 				if !reported[msg] {
 					reported[msg] = true
 					t.Error(msg)

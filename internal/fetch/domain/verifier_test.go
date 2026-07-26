@@ -30,10 +30,10 @@ func TestVerifier_HashDirAsModuleZip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("HashDirAsModuleZip: %v", err)
 	}
-	if h.Algorithm != "h1" {
-		t.Errorf("Algorithm = %q, want h1", h.Algorithm)
+	if h.Algorithm() != "h1" {
+		t.Errorf("Algorithm = %q, want h1", h.Algorithm())
 	}
-	if h.Value == "" {
+	if h.Value() == "" {
 		t.Error("Value is empty")
 	}
 }

@@ -10,7 +10,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
-	"github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
@@ -19,7 +19,7 @@ import (
 func testIdentity(value string) ports.BlobIdentity {
 	return ports.BlobIdentity{
 		Kind: ports.BlobKindZip,
-		Hash: domain.ModuleHash{Algorithm: "h1", Value: value},
+		Hash: fetchtest.H1(value),
 	}
 }
 

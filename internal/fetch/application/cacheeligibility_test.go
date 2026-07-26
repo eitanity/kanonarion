@@ -73,7 +73,7 @@ func newProxyWithOrigin() *fakeProxy {
 // check served on every later run until --force, so one bad network moment became
 // a permanent finding about the module.
 func TestFailedSumDBLookupRecordIsReVerifiedNotServedFromCache(t *testing.T) {
-	fakeHash := domain2.ModuleHash{Algorithm: "h1", Value: "fakehash=="}
+	fakeHash := fetchtest.H1("fakehash==")
 	sumdb := &scriptedSumDB{results: []ports.SumDBResult{
 		transientSumDBFailure(),
 		{Available: true, ZipHash: fakeHash},
@@ -166,7 +166,7 @@ func TestPolicyUnavailableRecordStillHitsTheCache(t *testing.T) {
 // the record looks verified and nothing in its status hints that the transparency
 // log was never reached. It must still be re-verified.
 func TestGoSumMaskedFailureIsStillReVerified(t *testing.T) {
-	fakeHash := domain2.ModuleHash{Algorithm: "h1", Value: "fakehash=="}
+	fakeHash := fetchtest.H1("fakehash==")
 	sumdb := &scriptedSumDB{results: []ports.SumDBResult{transientSumDBFailure()}}
 	blobs, facts := newFakeBlob(), newFakeFacts()
 	uc := newUseCaseWithSumDB(newProxyWithOrigin(), &fakeVCS{checkoutErr: errors.New("no checkout in test")}, blobs, facts, sumdb).
@@ -272,7 +272,7 @@ func TestCachedRecordWithUnreadableHandleIsReFetched(t *testing.T) {
 		t.Fatalf("seed record: %v", err)
 	}
 
-	fakeHash := domain2.ModuleHash{Algorithm: "h1", Value: "fakehash=="}
+	fakeHash := fetchtest.H1("fakehash==")
 	uc := newUseCaseWithSumDB(newProxyWithOrigin(), &fakeVCS{checkoutErr: errors.New("no checkout in test")},
 		blobs, facts, availableSumDB(fakeHash))
 
@@ -309,7 +309,7 @@ func TestCachedRecordWithEvictedBlobIsReFetched(t *testing.T) {
 		t.Fatalf("seed record: %v", err)
 	}
 
-	fakeHash := domain2.ModuleHash{Algorithm: "h1", Value: "fakehash=="}
+	fakeHash := fetchtest.H1("fakehash==")
 	uc := newUseCaseWithSumDB(newProxyWithOrigin(), &fakeVCS{checkoutErr: errors.New("no checkout in test")},
 		blobs, facts, availableSumDB(fakeHash))
 

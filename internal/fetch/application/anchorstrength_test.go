@@ -31,8 +31,8 @@ func modcacheUseCase(t *testing.T, facts ports.FactStore, buf *bytes.Buffer) *ap
 // from module-cache mode.
 func modcacheUseCaseWithBlobs(t *testing.T, facts ports.FactStore, blobs ports.BlobStore, buf *bytes.Buffer) *application.FetchModuleUseCase {
 	t.Helper()
-	zipHash := domain2.ModuleHash{Algorithm: "h1", Value: "zip-abc="}
-	goModHash := domain2.ModuleHash{Algorithm: "h1", Value: "mod-abc="}
+	zipHash := fetchtest.H1("zip-abc=")
+	goModHash := fetchtest.H1("mod-abc=")
 	log := slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	return application.NewFetchModuleUseCase(
 		downloadWithHashes(testCoord, zipHash, goModHash),

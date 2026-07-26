@@ -12,8 +12,8 @@ import (
 func TestNewFactRecord(t *testing.T) {
 	m := domain2.FetchedModule{
 		Coordinate:         coordinatetest.MustNew("github.com/foo/bar", "v1.0.0"),
-		ModuleHash:         domain2.ModuleHash{Algorithm: "h1", Value: "abc=="},
-		GoModHash:          domain2.ModuleHash{Algorithm: "h1", Value: "def=="},
+		ModuleHash:         fetchtest.H1("abc=="),
+		GoModHash:          fetchtest.H1("def=="),
 		GitReference:       domain2.GitReference{URL: "https://github.com/foo/bar", Ref: "refs/tags/v1.0.0", CommitHash: "aabbcc00000000000000000000000000000000"},
 		VerificationStatus: domain2.Verified,
 		FetchedAt:          time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
@@ -71,8 +71,7 @@ func TestModuleHash_IsZero(t *testing.T) {
 	if !h.IsZero() {
 		t.Error("zero value should be IsZero")
 	}
-	h.Algorithm = "h1"
-	if h.IsZero() {
+	if fetchtest.H1("abc==").IsZero() {
 		t.Error("non-zero should not be IsZero")
 	}
 }

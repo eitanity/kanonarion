@@ -13,7 +13,7 @@ import (
 
 	localfs "github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
 
-	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
@@ -27,7 +27,7 @@ func newCoord(t *testing.T, path, version string) coordinate.ModuleCoordinate {
 }
 
 func identity(kind ports.BlobKind, value string) ports.BlobIdentity {
-	return ports.BlobIdentity{Kind: kind, Hash: fetchdomain.ModuleHash{Algorithm: "h1", Value: value}}
+	return ports.BlobIdentity{Kind: kind, Hash: fetchtest.H1(value)}
 }
 
 // seedCacheEntry writes bytes to the module-cache path for coord + ext, mirroring

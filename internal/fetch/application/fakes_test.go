@@ -12,6 +12,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/audit"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
@@ -97,8 +98,8 @@ func (f *fakeProxy) Download(_ context.Context, coord coordinate.ModuleCoordinat
 		dl = fakeDownload{
 			zipData:   "fake-zip",
 			goModData: "module " + coord.Path(),
-			zipHash:   domain2.ModuleHash{Algorithm: "h1", Value: "fakehash=="},
-			goModHash: domain2.ModuleHash{Algorithm: "h1", Value: "fakegomodhash=="},
+			zipHash:   fetchtest.H1("fakehash=="),
+			goModHash: fetchtest.H1("fakegomodhash=="),
 		}
 	}
 	return ports.ModuleDownload{
@@ -119,7 +120,7 @@ func (f *fakeProxy) DownloadGoMod(_ context.Context, coord coordinate.ModuleCoor
 	if !ok {
 		dl = fakeDownload{
 			goModData: "module " + coord.Path(),
-			goModHash: domain2.ModuleHash{Algorithm: "h1", Value: "fakegomodhash=="},
+			goModHash: fetchtest.H1("fakegomodhash=="),
 		}
 	}
 	return ports.GoModDownload{

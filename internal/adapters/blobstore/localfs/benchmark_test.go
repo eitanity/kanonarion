@@ -6,9 +6,10 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	"github.com/eitanity/kanonarion/internal/fetch/domain"
-	"github.com/eitanity/kanonarion/internal/fetch/ports"
 	"testing"
+
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
+	"github.com/eitanity/kanonarion/internal/fetch/ports"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
 )
@@ -36,7 +37,7 @@ func BenchmarkPut(b *testing.B) {
 				// write.
 				identity := ports.BlobIdentity{
 					Kind: ports.BlobKindZip,
-					Hash: domain.ModuleHash{Algorithm: "h1", Value: strconv.Itoa(i)},
+					Hash: fetchtest.H1(strconv.Itoa(i)),
 				}
 				if err := store.Put(ctx, identity, bytes.NewReader(payload)); err != nil {
 					b.Fatal(err)

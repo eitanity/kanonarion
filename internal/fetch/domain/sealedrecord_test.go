@@ -17,7 +17,7 @@ var sealCoord = coordinatetest.MustNew("example.com/mod", "v1.0.0")
 func TestSeal_HashesAtConstruction(t *testing.T) {
 	sealed, err := domain.Seal(domain.FetchedModule{
 		Coordinate:         sealCoord,
-		ModuleHash:         domain.ModuleHash{Algorithm: "h1", Value: "zip=="},
+		ModuleHash:         fetchtest.H1("zip=="),
 		VerificationStatus: domain.Verified,
 		PipelineVersion:    "0.1.0",
 	})
@@ -101,10 +101,10 @@ func TestArtefactIdentityOf(t *testing.T) {
 		t.Fatalf("ArtefactIdentityOf(shallow): %v", err)
 	}
 
-	if fullID.GoModOnly {
+	if fullID.GoModOnly() {
 		t.Error("a record carrying a zip hash was identified as go.mod-only")
 	}
-	if !shallowID.GoModOnly {
+	if !shallowID.GoModOnly() {
 		t.Error("a record with no zip hash was not identified as go.mod-only")
 	}
 	// Both hold the h1 value "same==", so only the depth keeps them apart.
@@ -132,7 +132,7 @@ func TestArtefactIdentityOf_ReadsThePersistedZeroHash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ArtefactIdentityOf could not read the persisted zero hash: %v", err)
 	}
-	if !id.GoModOnly || id.Hash.Value != "mod==" {
+	if !id.GoModOnly() || id.Hash().Value() != "mod==" {
 		t.Errorf("identity = %v, want the go.mod hash", id)
 	}
 }

@@ -150,9 +150,13 @@ func TestConsumer_SubstitutionPortsAreImplementable(t *testing.T) {
 	// The S3-shaped blob store round-trips bytes through Put/Get/Exists.
 	bs := newFakeS3BlobStore()
 	// The caller addresses the artefact by what it is; the store never chooses.
+	zipHash, err := kanonarion.NewModuleHash("h1", "capstone-zip=")
+	if err != nil {
+		t.Fatalf("NewModuleHash: %v", err)
+	}
 	handle := kanonarion.BlobIdentity{
 		Kind: kanonarion.BlobKindZip,
-		Hash: kanonarion.ModuleHash{Algorithm: "h1", Value: "capstone-zip="},
+		Hash: zipHash,
 	}
 	if err := bs.Put(ctx, handle, strings.NewReader("module-zip-bytes")); err != nil {
 		t.Fatalf("Put: %v", err)

@@ -12,6 +12,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/fetch/application"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
@@ -42,8 +43,8 @@ func proxyWithZip(coord coordinate.ModuleCoordinate, zipBytes []byte, standalone
 			coord.String(): {
 				zipData:   string(zipBytes),
 				goModData: standaloneGoMod,
-				zipHash:   domain2.ModuleHash{Algorithm: "h1", Value: "fakehash=="},
-				goModHash: domain2.ModuleHash{Algorithm: "h1", Value: "fakegomodhash=="},
+				zipHash:   fetchtest.H1("fakehash=="),
+				goModHash: fetchtest.H1("fakegomodhash=="),
 			},
 		},
 	}
@@ -104,7 +105,7 @@ func TestVerify_GoModConsistency_Match(t *testing.T) {
 		"example.com/foo/bar@v1.0.0/go.mod": goModContent,
 	})
 	proxy := proxyWithZip(coord, zipBytes, goModContent)
-	sumdb := availableSumDB(domain2.ModuleHash{Algorithm: "h1", Value: "fakehash=="})
+	sumdb := availableSumDB(fetchtest.H1("fakehash=="))
 
 	uc := newUseCaseWithSumDB(proxy, &fakeVCS{}, newFakeBlob(), newFakeFacts(), sumdb)
 	result, err := uc.Execute(context.Background(), application.FetchRequest{Coordinate: coord})
@@ -212,15 +213,15 @@ func TestVerify_SumDB_GoModHashMatch(t *testing.T) {
 			coord.String(): {
 				zipData:   string(zipBytes),
 				goModData: goModContent,
-				zipHash:   domain2.ModuleHash{Algorithm: "h1", Value: "correcthash=="},
-				goModHash: domain2.ModuleHash{Algorithm: "h1", Value: "gomodhash=="},
+				zipHash:   fetchtest.H1("correcthash=="),
+				goModHash: fetchtest.H1("gomodhash=="),
 			},
 		},
 	}
 	sumdb := &fakeSumDB{result: ports.SumDBResult{
 		Available: true,
-		ZipHash:   domain2.ModuleHash{Algorithm: "h1", Value: "correcthash=="},
-		GoModHash: domain2.ModuleHash{Algorithm: "h1", Value: "gomodhash=="},
+		ZipHash:   fetchtest.H1("correcthash=="),
+		GoModHash: fetchtest.H1("gomodhash=="),
 	}}
 
 	uc := newUseCaseWithSumDB(proxy, &fakeVCS{}, newFakeBlob(), newFakeFacts(), sumdb)

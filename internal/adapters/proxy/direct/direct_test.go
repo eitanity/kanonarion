@@ -153,10 +153,10 @@ func TestProxy_Download(t *testing.T) {
 	}()
 
 	// Hash must be computed from bytes; algorithm is always "h1".
-	if dl.ZipHash.Algorithm != "h1" || dl.ZipHash.Value == "" {
+	if dl.ZipHash.Algorithm() != "h1" || dl.ZipHash.Value() == "" {
 		t.Errorf("ZipHash = %v, want non-empty h1 hash", dl.ZipHash)
 	}
-	if dl.GoModHash.Algorithm != "h1" || dl.GoModHash.Value == "" {
+	if dl.GoModHash.Algorithm() != "h1" || dl.GoModHash.Value() == "" {
 		t.Errorf("GoModHash = %v, want non-empty h1 hash", dl.GoModHash)
 	}
 }
@@ -204,7 +204,7 @@ func TestProxy_DownloadGoMod_FetchesOnlyGoMod(t *testing.T) {
 	if modHits != 1 {
 		t.Errorf(".mod endpoint hit %d times, want 1", modHits)
 	}
-	if dl.GoModHash.Algorithm != "h1" || dl.GoModHash.Value == "" {
+	if dl.GoModHash.Algorithm() != "h1" || dl.GoModHash.Value() == "" {
 		t.Errorf("GoModHash = %v, want non-empty h1 hash", dl.GoModHash)
 	}
 	body, _ := io.ReadAll(dl.GoMod)

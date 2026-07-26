@@ -132,7 +132,7 @@ func TestCompose_LocalCoordinateServesTheLastMeasurement(t *testing.T) {
 	if got.ContentHash != after.ContentHash {
 		t.Error("a local root served an earlier state of the working tree; an edit between runs would vanish")
 	}
-	if got.Identity.Hash.Value != "tree-after==" {
+	if got.Identity.Hash().Value() != "tree-after==" {
 		t.Errorf("Identity = %v, want the served measurement's own artefact", got.Identity)
 	}
 }
@@ -281,7 +281,7 @@ func TestCompose_FullRecordOutranksGoModOnlyEvenWithAWeakerAnchor(t *testing.T) 
 			if !got.Identity.Equal(wantID) {
 				t.Errorf("Identity = %s, does not describe the served record (%s)", got.Identity, wantID)
 			}
-			if got.Identity.GoModOnly {
+			if got.Identity.GoModOnly() {
 				t.Error("Identity reports go.mod-only while serving a full record")
 			}
 		})

@@ -45,6 +45,47 @@ func AssertRefusesUnsealed(t testing.TB, w RecordWriter) {
 	}
 }
 
+// AssertRefusesZeroIdentity asserts that op refuses the zero artefact identity
+// with domain.ErrZeroIdentity.
+//
+// It exists for the same reason AssertRefusesUnsealed and
+// coordinatetest.AssertRefusesZeroCoordinate do: the rule needs one definition
+// rather than one per store. Unexporting ArtefactIdentity's fields makes a
+// hand-built identity impossible, but Go always permits the zero value, and the
+// zero identity names no artefact at all — it would key a row on the empty hash
+// on a write, and on a read it asks about nothing, to which absence is the
+// wrong answer.
+//
+// Every implementation that takes an identity should call it, fakes included: a
+// fake that accepts the zero identity lets an application-layer test go green
+// on a call the real store rejects.
+//
+// It asserts the refusal only. Whether the refusal also left the store
+// untouched needs a reader, so that leg stays with the implementation that has
+// one.
+func AssertRefusesZeroIdentity(t testing.TB, name string, op func() error) {
+	t.Helper()
+	err := recovering(op)
+	if err == nil {
+		t.Fatalf("fetchtest: %s accepted the zero artefact identity; it names no artefact and must never reach storage", name)
+	}
+	if !errors.Is(err, domain.ErrZeroIdentity) {
+		t.Fatalf("fetchtest: %s(zero) error = %v, want %v", name, err, domain.ErrZeroIdentity)
+	}
+}
+
+// recovering turns a panic into an error so AssertRefusesZeroIdentity reports a
+// contract failure rather than a stack trace, on the same terms as
+// putRecovering below.
+func recovering(op func() error) (err error) {
+	defer func() {
+		if p := recover(); p != nil {
+			err = fmt.Errorf("panicked instead of refusing the zero artefact identity: %v", p)
+		}
+	}()
+	return op()
+}
+
 // putRecovering turns a panic into an error so the assertion above reports a
 // contract failure rather than a stack trace. An implementation that reaches its
 // storage before checking the record panics here as readily as it corrupts

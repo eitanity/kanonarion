@@ -169,10 +169,7 @@ func (uc *FetchModuleUseCase) inheritLegs(ctx context.Context, log *slog.Logger,
 		return domain2.FetchedModule{}, fmt.Errorf("reading earlier measurements to inherit validation legs: %w", err)
 	}
 
-	identity := domain2.ArtefactIdentity{Hash: m.ModuleHash}
-	if m.ModuleHash.IsZero() {
-		identity = domain2.ArtefactIdentity{Hash: m.GoModHash, GoModOnly: true}
-	}
+	identity := domain2.ArtefactIdentityOfMeasurement(m)
 
 	// Latest first: the most recent establishment of a leg is the one worth
 	// carrying forward.

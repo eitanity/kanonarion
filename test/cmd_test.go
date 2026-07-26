@@ -12,6 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rogpeppe/go-internal/testscript"
+	"golang.org/x/mod/sumdb/dirhash"
+
 	"github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
 	fetchsqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
 	cgsqlite "github.com/eitanity/kanonarion/internal/callgraph/adapters/store/sqlite"
@@ -24,6 +27,7 @@ import (
 	exdomain "github.com/eitanity/kanonarion/internal/example/domain"
 	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	ifsqlite "github.com/eitanity/kanonarion/internal/iface/adapters/store/sqlite"
 	ifapp "github.com/eitanity/kanonarion/internal/iface/application"
@@ -37,8 +41,6 @@ import (
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/walk/adapters/walks/sqlite"
 	"github.com/eitanity/kanonarion/internal/walk/domain"
-	"github.com/rogpeppe/go-internal/testscript"
-	"golang.org/x/mod/sumdb/dirhash"
 )
 
 func TestMain(m *testing.M) {
@@ -310,7 +312,7 @@ func cmdSeedCallGraph(args []string) {
 	// and Seal needs none.
 	sealed, serr := fetchdomain.Seal(fetchdomain.FetchedModule{
 		Coordinate:         app,
-		ModuleHash:         fetchdomain.ModuleHash{Algorithm: "h1", Value: "fixture-zip="},
+		ModuleHash:         fetchtest.H1("fixture-zip="),
 		VerificationStatus: fetchdomain.Verified,
 		PipelineVersion:    fetchapp.PipelineVersion,
 		ContentLocation:    "zip:h1:fixture-zip=",
@@ -466,7 +468,7 @@ func cmdSeedExamples(args []string) {
 	// cache. Sealed through domain.Seal: this entry point has no testing handle.
 	exSealed, exSerr := fetchdomain.Seal(fetchdomain.FetchedModule{
 		Coordinate:         app,
-		ModuleHash:         fetchdomain.ModuleHash{Algorithm: "h1", Value: "fixture-zip="},
+		ModuleHash:         fetchtest.H1("fixture-zip="),
 		VerificationStatus: fetchdomain.Verified,
 		PipelineVersion:    exapp.PipelineVersion, // Match record.PipelineVersion
 		ContentLocation:    "zip:h1:fixture-zip=",

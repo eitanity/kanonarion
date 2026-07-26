@@ -7,6 +7,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/fetch/application"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
@@ -14,8 +15,8 @@ import (
 // for the default fake download, so a project go.sum fake can be made to agree
 // or disagree with the fetched bytes deterministically.
 var (
-	fakeZipHash   = domain2.ModuleHash{Algorithm: "h1", Value: "fakehash=="}
-	fakeGoModHash = domain2.ModuleHash{Algorithm: "h1", Value: "fakegomodhash=="}
+	fakeZipHash   = fetchtest.H1("fakehash==")
+	fakeGoModHash = fetchtest.H1("fakegomodhash==")
 )
 
 // projectGoSum builds a use case whose network sumdb is disabled but whose
@@ -47,7 +48,7 @@ func TestExecute_ProjectGoSum_MatchElevatesToVerifiedByGoSum(t *testing.T) {
 // A present-but-mismatched zip entry is tamper-evidence: Execute fails hard with
 // ErrGoSumVerification and persists no record.
 func TestExecute_ProjectGoSum_ZipMismatchHardFails(t *testing.T) {
-	wrong := domain2.ModuleHash{Algorithm: "h1", Value: "tamperedhash=="}
+	wrong := fetchtest.H1("tamperedhash==")
 	uc, facts := projectGoSum(t, ports.SumDBResult{Available: true, ZipHash: wrong})
 
 	_, err := uc.Execute(context.Background(), application.FetchRequest{Coordinate: testCoord})
@@ -62,7 +63,7 @@ func TestExecute_ProjectGoSum_ZipMismatchHardFails(t *testing.T) {
 // The go.mod hash is also cross-checked when go.sum records one: a matching zip
 // but mismatched go.mod still fails hard.
 func TestExecute_ProjectGoSum_GoModMismatchHardFails(t *testing.T) {
-	wrongGoMod := domain2.ModuleHash{Algorithm: "h1", Value: "tamperedgomod=="}
+	wrongGoMod := fetchtest.H1("tamperedgomod==")
 	uc, _ := projectGoSum(t, ports.SumDBResult{Available: true, ZipHash: fakeZipHash, GoModHash: wrongGoMod})
 
 	_, err := uc.Execute(context.Background(), application.FetchRequest{Coordinate: testCoord})

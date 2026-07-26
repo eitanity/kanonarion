@@ -12,6 +12,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/fetch/application"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
@@ -51,7 +52,7 @@ func TestExecute_HappyPath(t *testing.T) {
 		},
 	}
 	// sumdb matches the fake zip hash; VCS checkout fails → VerifiedBySumDBOnly.
-	fakeHash := domain2.ModuleHash{Algorithm: "h1", Value: "fakehash=="}
+	fakeHash := fetchtest.H1("fakehash==")
 	sumdb := availableSumDB(fakeHash)
 	vcs := &fakeVCS{checkoutErr: errors.New("no real checkout in test")}
 	blobs := newFakeBlob()
@@ -83,7 +84,7 @@ func TestExecute_HappyPath(t *testing.T) {
 
 func TestExecute_Verified_SumDBAndVCS(t *testing.T) {
 	// sumdb matches AND VCS checkout succeeds → Verified.
-	fakeHash := domain2.ModuleHash{Algorithm: "h1", Value: "fakehash=="}
+	fakeHash := fetchtest.H1("fakehash==")
 	proxy := &fakeProxy{
 		infos: map[string]ports.ModuleInfo{
 			testCoord.String(): {
@@ -197,7 +198,7 @@ func TestExecute_UnverifiedNoSumDB_VCSFails(t *testing.T) {
 
 func TestExecute_VerifiedBySumDBOnly_VCSUnavailable(t *testing.T) {
 	// sumdb available and matching, VCS fails → VerifiedBySumDBOnly.
-	fakeHash := domain2.ModuleHash{Algorithm: "h1", Value: "fakehash=="}
+	fakeHash := fetchtest.H1("fakehash==")
 	proxy := &fakeProxy{}
 	sumdb := availableSumDB(fakeHash)
 	vcs := &fakeVCS{resolveErr: errors.New("network unreachable")}
@@ -239,7 +240,7 @@ func TestExecute_SkipVCSVerify_DowngradesToSumDBOnly(t *testing.T) {
 	// with SkipVCSVerify the zip is never reproduced from the git tree. The
 	// record must NOT claim the strongest Verified — it is VerifiedBySumDBOnly,
 	// because only the sumdb (transparency-log) leg actually ran.
-	fakeHash := domain2.ModuleHash{Algorithm: "h1", Value: "fakehash=="}
+	fakeHash := fetchtest.H1("fakehash==")
 	sumdb := availableSumDB(fakeHash)
 	// A VCS that would "succeed" if cross-verify ran, proving the skip — not a
 	// VCS failure — is what holds the status at sumdb-only.
@@ -287,7 +288,7 @@ func TestExecute_VCSToolMissing_ActionableDetailReachesRecord(t *testing.T) {
 	// sumdb verifies authenticity but the VCS tool is absent: the record stays
 	// VerifiedBySumDBOnly, and the actionable tool-missing detail is persisted so
 	// a consumer can tell "not VCS-checked because git is absent" from a failure.
-	fakeHash := domain2.ModuleHash{Algorithm: "h1", Value: "fakehash=="}
+	fakeHash := fetchtest.H1("fakehash==")
 	proxy := &fakeProxy{}
 	sumdb := availableSumDB(fakeHash)
 	vcs := &fakeVCS{resolveErr: fmt.Errorf("resolve: %w", ports.ErrVCSToolMissing)}
@@ -312,7 +313,7 @@ func TestExecute_VerifiedBySumDBOnly_VCSReproductionMismatch(t *testing.T) {
 	// from the proxy zip → downgrades to VerifiedBySumDBOnly, not UnverifiedHashMismatch.
 	// Regression: major-version subdirs, submodules, and generated files can cause
 	// naive reproduction mismatches for legitimately authentic modules.
-	fakeHash := domain2.ModuleHash{Algorithm: "h1", Value: "fakehash=="}
+	fakeHash := fetchtest.H1("fakehash==")
 	proxy := &fakeProxy{} // no Origin — forces resolveInferredGitRef + crossVerify
 	sumdb := availableSumDB(fakeHash)
 	vcs := &fakeVCS{checkoutErr: nil} // checkout "succeeds" but empty dir → hash differs
@@ -333,7 +334,7 @@ func TestExecute_VerifiedBySumDBOnly_VCSReproductionMismatch(t *testing.T) {
 func TestExecute_UnverifiedHashMismatch_SumDB(t *testing.T) {
 	// sumdb returns a different hash than what the proxy served → UnverifiedHashMismatch.
 	// A genuine proxy-vs-sumdb mismatch still hard-fails even when VCS also disagrees.
-	wrongHash := domain2.ModuleHash{Algorithm: "h1", Value: "wronghash=="}
+	wrongHash := fetchtest.H1("wronghash==")
 	proxy := &fakeProxy{}
 	sumdb := availableSumDB(wrongHash) // differs from fakeProxy's "fakehash=="
 	vcs := &fakeVCS{}
