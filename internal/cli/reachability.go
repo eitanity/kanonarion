@@ -209,8 +209,8 @@ func vulnReachabilityVerdict(coord coordinate.ModuleCoordinate, rec vuldomain.Vu
 	if !ok {
 		// Genuine zero: the scan ran and this CVE is not among its findings.
 		return vulnReachabilityQuery{
-			Module:    coord.Path,
-			Version:   coord.Version,
+			Module:    coord.Path(),
+			Version:   coord.Version(),
 			VulnID:    vulnID,
 			Verdict:   verdictNotAffected,
 			Method:    reachabilityMethodCallGraph,
@@ -235,8 +235,8 @@ func vulnReachabilityVerdict(coord coordinate.ModuleCoordinate, rec vuldomain.Vu
 		verdict = verdictReachable
 	}
 	return vulnReachabilityQuery{
-		Module:       coord.Path,
-		Version:      coord.Version,
+		Module:       coord.Path(),
+		Version:      coord.Version(),
 		VulnID:       f.ID,
 		Aliases:      f.Aliases,
 		Summary:      f.Summary,

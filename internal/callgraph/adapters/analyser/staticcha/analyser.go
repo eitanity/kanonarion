@@ -70,7 +70,7 @@ func (a *Analyser) Analyse(ctx context.Context, zipPath string, coord coordinate
 		}
 	}()
 
-	modulePrefix := coord.Path + "@" + coord.Version + "/"
+	modulePrefix := coord.Path() + "@" + coord.Version() + "/"
 	if err := extractModuleZip(zipPath, modulePrefix, tempDir); err != nil {
 		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed,
 			"extracting module zip: "+err.Error()), nil
@@ -134,7 +134,7 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord coordin
 	// We load and process target packages in small batches to keep peak memory low.
 	var targetPkgPaths []string
 	packages.Visit(pkgsMeta, nil, func(p *packages.Package) {
-		isTarget := p.PkgPath == coord.Path || strings.HasPrefix(p.PkgPath, coord.Path+"/")
+		isTarget := p.PkgPath == coord.Path() || strings.HasPrefix(p.PkgPath, coord.Path()+"/")
 		if isTarget {
 			targetPkgPaths = append(targetPkgPaths, p.PkgPath)
 		}

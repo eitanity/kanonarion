@@ -84,7 +84,7 @@ func printInterfaceRecord(r domain.InterfaceRecord, fromCache bool, jsonOut bool
 		cached = " (cached)"
 	}
 	if _, err := fmt.Fprintf(stdout, "%s@%s: %s — %d package(s)%s\n",
-		r.Coordinate.Path, r.Coordinate.Version,
+		r.Coordinate.Path(), r.Coordinate.Version(),
 		r.OverallStatus.String(), len(r.Packages), cached,
 	); err != nil {
 		return fmt.Errorf("writing output: %w", err)

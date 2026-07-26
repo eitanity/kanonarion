@@ -175,8 +175,8 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 	lap := uc.stopwatch.Start()
 
 	log := uc.logger.With(
-		slog.String("module_path", req.Coordinate.Path),
-		slog.String("module_version", req.Coordinate.Version),
+		slog.String("module_path", req.Coordinate.Path()),
+		slog.String("module_version", req.Coordinate.Version()),
 		slog.String("pipeline_version", uc.pipelineVersion),
 		slog.String("trace_id", traceID),
 	)
@@ -362,8 +362,8 @@ func (uc *FetchModuleUseCase) executeGoModOnly(ctx context.Context, req FetchReq
 	lap := uc.stopwatch.Start()
 
 	log := uc.logger.With(
-		slog.String("module_path", req.Coordinate.Path),
-		slog.String("module_version", req.Coordinate.Version),
+		slog.String("module_path", req.Coordinate.Path()),
+		slog.String("module_version", req.Coordinate.Version()),
 		slog.String("pipeline_version", uc.pipelineVersion),
 		slog.String("trace_id", traceID),
 		slog.Bool("go_mod_only", true),
@@ -566,7 +566,7 @@ func (uc *FetchModuleUseCase) verifyGoModOnly(
 	goModData []byte,
 	goSumMatched bool,
 ) (domain2.VerificationStatus, string, bool, bool) {
-	retracted := parseRetracted(goModData, coord.Version)
+	retracted := parseRetracted(goModData, coord.Version())
 	if retracted {
 		log.InfoContext(ctx, "retracted_version_detected")
 	}
@@ -741,7 +741,7 @@ func (uc *FetchModuleUseCase) verify(
 	}
 
 	// Retraction: parse from standalone go.mod (T10). Done regardless of status.
-	retracted := parseRetracted(goModData, coord.Version)
+	retracted := parseRetracted(goModData, coord.Version())
 	if retracted {
 		log.InfoContext(ctx, "retracted_version_detected")
 	}
@@ -928,7 +928,7 @@ func (uc *FetchModuleUseCase) resolveInferredGitRef(
 			return domain2.GitReference{}, domain2.UnverifiedMissingOrigin,
 				fmt.Sprintf("could not extract commit prefix from pseudo-version: %v", err)
 		}
-		repoURL, detail := inferAllowedRepoURL(coord.Path, vcsHosts)
+		repoURL, detail := inferAllowedRepoURL(coord.Path(), vcsHosts)
 		if repoURL == "" {
 			return domain2.GitReference{}, domain2.UnverifiedMissingOrigin, detail
 		}
@@ -939,11 +939,11 @@ func (uc *FetchModuleUseCase) resolveInferredGitRef(
 		}, domain2.Verified, ""
 	}
 
-	repoURL, detail := inferAllowedRepoURL(coord.Path, vcsHosts)
+	repoURL, detail := inferAllowedRepoURL(coord.Path(), vcsHosts)
 	if repoURL == "" {
 		return domain2.GitReference{}, domain2.UnverifiedMissingOrigin, detail
 	}
-	ref := "refs/tags/" + coord.Version
+	ref := "refs/tags/" + coord.Version()
 	commit, err := uc.vcs.ResolveTag(ctx, repoURL, ref)
 	if err != nil {
 		status := domain2.UnverifiedNoVCS
@@ -999,7 +999,7 @@ func (uc *FetchModuleUseCase) crossVerify(
 	// subdirectory, not the repo root. Hashing the root produces a guaranteed
 	// mismatch for any such module, so locate the subdirectory whose go.mod
 	// declares the module path before hashing.
-	moduleDir := findModuleSubdir(tmpDir, coord.Path)
+	moduleDir := findModuleSubdir(tmpDir, coord.Path())
 
 	// Mirror CreateFromVCS behaviour: if the module lives in a subdirectory and
 	// the subdirectory has no LICENSE file, copy the root LICENSE into the
@@ -1036,7 +1036,7 @@ func checkZipVersionPrefix(data []byte, coord coordinate.ModuleCoordinate) strin
 	if err != nil {
 		return ""
 	}
-	expected := coord.Path + "@" + coord.Version + "/"
+	expected := coord.Path() + "@" + coord.Version() + "/"
 	for _, name := range archive.Names() {
 		if !strings.HasPrefix(name, expected) {
 			return fmt.Sprintf("zip entry %q does not start with expected prefix %q", name, expected)
@@ -1053,7 +1053,7 @@ func checkGoModConsistency(zipData, standaloneGoMod []byte, coord coordinate.Mod
 	if err != nil {
 		return ""
 	}
-	target := coord.Path + "@" + coord.Version + "/go.mod"
+	target := coord.Path() + "@" + coord.Version() + "/go.mod"
 	zipGoMod, found, rerr := archive.ReadFile(target)
 	if rerr != nil {
 		return fmt.Sprintf("reading go.mod in zip: %v", rerr)

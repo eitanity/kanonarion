@@ -10,13 +10,12 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
-var testCoord = coordinate.ModuleCoordinate{Path: "golang.org/x/text", Version: "v0.37.0"}
+var testCoord = coordinatetest.MustNew("golang.org/x/text", "v0.37.0")
 
 // newServerClient points a Client at a local test server. The key is the real
 // sum.golang.org verifier key, so note verification behaves as in production; the

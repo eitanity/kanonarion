@@ -28,7 +28,7 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (domain.Vulne
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	s.logger.Info("vuln-scan: starting", "module", coord.Path, "version", coord.Version)
+	s.logger.Info("vuln-scan: starting", "module", coord.Path(), "version", coord.Version())
 
 	env := scanEnv(os.Environ(), goModCache)
 
@@ -128,7 +128,7 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (domain.Vulne
 	}()
 
 	s.logger.Info("vuln-scan: parsing govulncheck output")
-	findings, parseErr := s.parseResults(ctx, pr, coord.Path)
+	findings, parseErr := s.parseResults(ctx, pr, coord.Path())
 	// Drain before closing so the writer goroutine reaches cmd.Wait() and waitErr
 	// is settled: a scan that died mid-stream must be classified as the failure it
 	// is, not as the truncated parse it also produced. The channel receive is the
@@ -160,7 +160,7 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (domain.Vulne
 		}, nil
 	}
 	if parseErr != nil {
-		return domain.VulnerabilityRecord{}, fmt.Errorf("parse govulncheck output for %s@%s: %w", coord.Path, coord.Version, parseErr)
+		return domain.VulnerabilityRecord{}, fmt.Errorf("parse govulncheck output for %s@%s: %w", coord.Path(), coord.Version(), parseErr)
 	}
 	s.logger.Info("vuln-scan: govulncheck finished", "findings", len(findings))
 
@@ -207,7 +207,7 @@ func (s *Scanner) prepareScanDir(
 	env []string,
 	buildList map[coordinate.ModuleCoordinate]struct{},
 ) (string, *prepareFault, error) {
-	s.logger.Info("vuln-scan: extracting module zip", "module", coord.Path)
+	s.logger.Info("vuln-scan: extracting module zip", "module", coord.Path())
 	if err := s.extractZip(ctx, moduleSource, tmpDir); err != nil {
 		return "", nil, fmt.Errorf("extract module: %w", err)
 	}
@@ -235,11 +235,11 @@ func (s *Scanner) prepareScanDir(
 			// the files so a later unresolved-package failure is attributable here
 			// rather than appearing as an unexplained resolution error.
 			s.logger.Warn("vuln-scan: some source files could not be read while synthesising go.mod; the require set may be incomplete",
-				"module", coord.Path, "skipped_files", strings.Join(skipped, ", "), "skipped_count", len(skipped))
+				"module", coord.Path(), "skipped_files", strings.Join(skipped, ", "), "skipped_count", len(skipped))
 		}
 		if werr != nil {
 			s.logger.Warn("vuln-scan: could not synthesise go.mod, marking unscannable",
-				"module", coord.Path, "error", werr)
+				"module", coord.Path(), "error", werr)
 			return "", &prepareFault{
 				unscanReason: domain.UnscanReasonNoGoMod,
 				reason:       "no go.mod in module zip and none could be synthesised: " + werr.Error(),
@@ -247,7 +247,7 @@ func (s *Scanner) prepareScanDir(
 		}
 		scanDir = root
 		s.logger.Info("vuln-scan: no go.mod in module zip, synthesised one for the scan",
-			"module", coord.Path, "dir", scanDir)
+			"module", coord.Path(), "dir", scanDir)
 	}
 
 	// Neutralise the module's own filesystem replace directives. The module is
@@ -256,9 +256,9 @@ func (s *Scanner) prepareScanDir(
 	// would fail the build. Dropping them matches a consumer's view, where a
 	// dependency's replaces are ignored and siblings resolve from GOMODCACHE.
 	if changed, nerr := neutraliseLocalReplaces(filepath.Join(scanDir, "go.mod")); nerr != nil {
-		s.logger.Warn("vuln-scan: failed to neutralise local replaces", "module", coord.Path, "error", nerr)
+		s.logger.Warn("vuln-scan: failed to neutralise local replaces", "module", coord.Path(), "error", nerr)
 	} else if changed {
-		s.logger.Info("vuln-scan: dropped filesystem replace directives for the scan", "module", coord.Path)
+		s.logger.Info("vuln-scan: dropped filesystem replace directives for the scan", "module", coord.Path())
 	}
 	return scanDir, nil, nil
 }

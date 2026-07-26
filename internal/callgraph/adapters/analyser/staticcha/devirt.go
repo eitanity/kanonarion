@@ -303,7 +303,7 @@ func leafNodeFromFunc(
 	recv := recvTypeStr(sig.Recv().Type())
 	symbol := methodObj.Name()
 
-	isExternal := pkgPath != coord.Path && !strings.HasPrefix(pkgPath, coord.Path+"/")
+	isExternal := pkgPath != coord.Path() && !strings.HasPrefix(pkgPath, coord.Path()+"/")
 
 	pos := domain.SourcePosition{}
 	if methodObj.Pos() != token.NoPos && fset != nil {
@@ -317,7 +317,7 @@ func leafNodeFromFunc(
 
 	module := ""
 	if !isExternal {
-		module = coord.Path
+		module = coord.Path()
 	}
 
 	return domain.CallNode{
@@ -349,7 +349,7 @@ func fnInModule(fn *ssa.Function, coord coordinate.ModuleCoordinate) bool {
 		return false
 	}
 	p := fn.Package().Pkg.Path()
-	return p == coord.Path || strings.HasPrefix(p, coord.Path+"/")
+	return p == coord.Path() || strings.HasPrefix(p, coord.Path()+"/")
 }
 
 // sitePosition returns the module-relative file and line of a call

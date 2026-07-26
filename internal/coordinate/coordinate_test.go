@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 )
 
 func TestNewModuleCoordinate(t *testing.T) {
@@ -27,7 +28,7 @@ func TestNewModuleCoordinate(t *testing.T) {
 				t.Fatalf("NewModuleCoordinate(%q, %q) err=%v, wantErr=%v", tt.path, tt.version, err, tt.wantErr)
 			}
 			if !tt.wantErr {
-				if c.Path != tt.path || c.Version != tt.version {
+				if c.Path() != tt.path || c.Version() != tt.version {
 					t.Errorf("got %v, want path=%s version=%s", c, tt.path, tt.version)
 				}
 			}
@@ -36,7 +37,7 @@ func TestNewModuleCoordinate(t *testing.T) {
 }
 
 func TestModuleCoordinate_String(t *testing.T) {
-	c := coordinate.ModuleCoordinate{Path: "github.com/gorilla/mux", Version: "v1.8.1"}
+	c := coordinatetest.MustNew("github.com/gorilla/mux", "v1.8.1")
 	want := "github.com/gorilla/mux@v1.8.1"
 	if got := c.String(); got != want {
 		t.Errorf("String() = %q, want %q", got, want)
@@ -55,7 +56,7 @@ func TestModuleCoordinate_IsPseudoVersion(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.version, func(t *testing.T) {
-			c := coordinate.ModuleCoordinate{Path: "example.com/m", Version: tt.version}
+			c := coordinatetest.MustNew("example.com/m", tt.version)
 			if got := c.IsPseudoVersion(); got != tt.want {
 				t.Errorf("IsPseudoVersion() = %v, want %v", got, tt.want)
 			}
@@ -75,7 +76,7 @@ func TestModuleCoordinate_ExtractCommitPrefix(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.version, func(t *testing.T) {
-			c := coordinate.ModuleCoordinate{Path: "example.com/m", Version: tt.version}
+			c := coordinatetest.MustNew("example.com/m", tt.version)
 			got, err := c.ExtractCommitPrefix()
 			if (err != nil) != tt.wantErr {
 				t.Fatalf("ExtractCommitPrefix() err=%v, wantErr=%v", err, tt.wantErr)
@@ -92,8 +93,8 @@ func TestModuleCoordinate_UnmarshalJSON_StringForm(t *testing.T) {
 	if err := c.UnmarshalJSON([]byte(`"example.com/m@v1.0.0"`)); err != nil {
 		t.Fatalf("UnmarshalJSON string form: %v", err)
 	}
-	if c.Path != "example.com/m" || c.Version != "v1.0.0" {
-		t.Errorf("got Path=%q Version=%q, want example.com/m v1.0.0", c.Path, c.Version)
+	if c.Path() != "example.com/m" || c.Version() != "v1.0.0" {
+		t.Errorf("got Path=%q Version=%q, want example.com/m v1.0.0", c.Path(), c.Version())
 	}
 }
 
@@ -102,8 +103,8 @@ func TestModuleCoordinate_UnmarshalJSON_ObjectForm(t *testing.T) {
 	if err := c.UnmarshalJSON([]byte(`{"Path":"example.com/m","Version":"v1.0.0"}`)); err != nil {
 		t.Fatalf("UnmarshalJSON object form: %v", err)
 	}
-	if c.Path != "example.com/m" || c.Version != "v1.0.0" {
-		t.Errorf("got Path=%q Version=%q, want example.com/m v1.0.0", c.Path, c.Version)
+	if c.Path() != "example.com/m" || c.Version() != "v1.0.0" {
+		t.Errorf("got Path=%q Version=%q, want example.com/m v1.0.0", c.Path(), c.Version())
 	}
 }
 

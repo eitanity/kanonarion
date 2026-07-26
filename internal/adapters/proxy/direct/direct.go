@@ -79,13 +79,13 @@ func resolveProxy() string {
 
 // Info fetches the.info endpoint for the module version.
 func (p *Proxy) Info(ctx context.Context, coord coordinate.ModuleCoordinate) (_ ports.ModuleInfo, retErr error) {
-	escapedPath, err := module.EscapePath(coord.Path)
+	escapedPath, err := module.EscapePath(coord.Path())
 	if err != nil {
-		return ports.ModuleInfo{}, fmt.Errorf("escaping module path %q: %w", coord.Path, err)
+		return ports.ModuleInfo{}, fmt.Errorf("escaping module path %q: %w", coord.Path(), err)
 	}
-	escapedVersion, err := module.EscapeVersion(coord.Version)
+	escapedVersion, err := module.EscapeVersion(coord.Version())
 	if err != nil {
-		return ports.ModuleInfo{}, fmt.Errorf("escaping version %q: %w", coord.Version, err)
+		return ports.ModuleInfo{}, fmt.Errorf("escaping version %q: %w", coord.Version(), err)
 	}
 
 	url := fmt.Sprintf("%s/%s/@v/%s.info", p.baseURL, escapedPath, escapedVersion)
@@ -219,11 +219,11 @@ func (p *Proxy) LatestInfo(ctx context.Context, path string) (_ LatestVersionInf
 // computed from the received bytes — the proxy's own.ziphash claim is not
 // trusted. Returns an error if the download exceeds maxZipBytes.
 func (p *Proxy) Download(ctx context.Context, coord coordinate.ModuleCoordinate) (ports.ModuleDownload, error) {
-	escapedPath, err := module.EscapePath(coord.Path)
+	escapedPath, err := module.EscapePath(coord.Path())
 	if err != nil {
 		return ports.ModuleDownload{}, fmt.Errorf("escaping module path: %w", err)
 	}
-	escapedVersion, err := module.EscapeVersion(coord.Version)
+	escapedVersion, err := module.EscapeVersion(coord.Version())
 	if err != nil {
 		return ports.ModuleDownload{}, fmt.Errorf("escaping version: %w", err)
 	}
@@ -292,11 +292,11 @@ func (p *Proxy) Download(ctx context.Context, coord coordinate.ModuleCoordinate)
 // it does none of the zip download or hashing work Download performs. GoModHash
 // is computed from the received bytes — the proxy's own claim is not trusted.
 func (p *Proxy) DownloadGoMod(ctx context.Context, coord coordinate.ModuleCoordinate) (ports.GoModDownload, error) {
-	escapedPath, err := module.EscapePath(coord.Path)
+	escapedPath, err := module.EscapePath(coord.Path())
 	if err != nil {
 		return ports.GoModDownload{}, fmt.Errorf("escaping module path: %w", err)
 	}
-	escapedVersion, err := module.EscapeVersion(coord.Version)
+	escapedVersion, err := module.EscapeVersion(coord.Version())
 	if err != nil {
 		return ports.GoModDownload{}, fmt.Errorf("escaping version: %w", err)
 	}

@@ -628,7 +628,7 @@ func (f *FakeQueryExamples) FindBySymbolInModule(_ context.Context, coord coordi
 	// Return refs that match the given module coordinate.
 	var out []exports.ExampleRef
 	for _, ref := range f.refs {
-		if ref.ModulePath == coord.Path && ref.ModuleVersion == coord.Version {
+		if ref.ModulePath == coord.Path() && ref.ModuleVersion == coord.Version() {
 			out = append(out, ref)
 		}
 	}

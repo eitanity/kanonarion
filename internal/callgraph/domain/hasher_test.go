@@ -43,8 +43,8 @@ func TestHasherRoundTrip(t *testing.T) {
 	if restored.ContentHash != hashed.ContentHash {
 		t.Errorf("ContentHash mismatch after round-trip: got %q, want %q", restored.ContentHash, hashed.ContentHash)
 	}
-	if restored.Coordinate.Path != hashed.Coordinate.Path {
-		t.Errorf("Coordinate.Path mismatch: got %q, want %q", restored.Coordinate.Path, hashed.Coordinate.Path)
+	if restored.Coordinate.Path() != hashed.Coordinate.Path() {
+		t.Errorf("Coordinate.Path mismatch: got %q, want %q", restored.Coordinate.Path(), hashed.Coordinate.Path())
 	}
 	if len(restored.Nodes) != len(hashed.Nodes) {
 		t.Errorf("node count mismatch: got %d, want %d", len(restored.Nodes), len(hashed.Nodes))

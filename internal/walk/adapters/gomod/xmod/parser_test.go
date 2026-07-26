@@ -31,7 +31,7 @@ require (
 		t.Fatalf("len(Require) = %d, want 2", len(got.Require))
 	}
 	r0 := got.Require[0]
-	if r0.Coordinate.Path != "github.com/foo/bar" || r0.Coordinate.Version != "v1.2.3" {
+	if r0.Coordinate.Path() != "github.com/foo/bar" || r0.Coordinate.Version() != "v1.2.3" {
 		t.Errorf("Require[0] = %v, want github.com/foo/bar@v1.2.3", r0.Coordinate)
 	}
 	if r0.Indirect {
@@ -85,11 +85,11 @@ replace github.com/old/pkg v1.0.0 => github.com/new/pkg v1.1.0
 	if r.IsLocal {
 		t.Error("should not be local replace")
 	}
-	if r.NewCoordinate.Path != "github.com/new/pkg" {
-		t.Errorf("Replace.New.Path = %q", r.NewCoordinate.Path)
+	if r.NewCoordinate.Path() != "github.com/new/pkg" {
+		t.Errorf("Replace.New.Path = %q", r.NewCoordinate.Path())
 	}
-	if r.NewCoordinate.Version != "v1.1.0" {
-		t.Errorf("Replace.New.Version = %q", r.NewCoordinate.Version)
+	if r.NewCoordinate.Version() != "v1.1.0" {
+		t.Errorf("Replace.New.Version = %q", r.NewCoordinate.Version())
 	}
 }
 
@@ -137,7 +137,7 @@ exclude github.com/foo/bar v1.2.3
 		t.Fatalf("len(Exclude) = %d, want 1", len(got.Exclude))
 	}
 	e := got.Exclude[0]
-	if e.Coordinate.Path != "github.com/foo/bar" || e.Coordinate.Version != "v1.2.3" {
+	if e.Coordinate.Path() != "github.com/foo/bar" || e.Coordinate.Version() != "v1.2.3" {
 		t.Errorf("Exclude[0] = %v", e.Coordinate)
 	}
 }
@@ -197,8 +197,8 @@ require github.com/some/mod v0.0.0-20230101120000-abcdef012345
 	if len(got.Require) != 1 {
 		t.Fatalf("len(Require) = %d, want 1", len(got.Require))
 	}
-	if got.Require[0].Coordinate.Version != "v0.0.0-20230101120000-abcdef012345" {
-		t.Errorf("pseudo-version not preserved: %q", got.Require[0].Coordinate.Version)
+	if got.Require[0].Coordinate.Version() != "v0.0.0-20230101120000-abcdef012345" {
+		t.Errorf("pseudo-version not preserved: %q", got.Require[0].Coordinate.Version())
 	}
 }
 

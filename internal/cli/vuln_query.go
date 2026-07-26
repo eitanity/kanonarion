@@ -130,7 +130,7 @@ func runVulnShowHistory(ctx context.Context, coord coordinate.ModuleCoordinate, 
 		return nil
 	}
 
-	_, _ = fmt.Fprintf(stdout, "%s@%s — %d scan record(s)\n\n", coord.Path, coord.Version, len(recs))
+	_, _ = fmt.Fprintf(stdout, "%s@%s — %d scan record(s)\n\n", coord.Path(), coord.Version(), len(recs))
 	for _, rec := range recs {
 		findingIDs := make([]string, 0, len(rec.Findings))
 		for _, f := range rec.Findings {
@@ -197,7 +197,7 @@ func runVulnByID(ctx context.Context, findingID string, jsonOut bool, uc QueryVu
 
 	for _, rec := range records {
 		_, _ = fmt.Fprintf(stdout, "%-60s %s\n",
-			rec.Coordinate.Path+"@"+rec.Coordinate.Version,
+			rec.Coordinate.Path()+"@"+rec.Coordinate.Version(),
 			rec.OverallStatus)
 	}
 	return nil

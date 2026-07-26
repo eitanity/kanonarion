@@ -129,7 +129,16 @@ func coordinateFromLine(line string) (coordinate.ModuleCoordinate, bool) {
 	if strings.ContainsAny(version, "/:") || strings.HasPrefix(path, "/") {
 		return coordinate.ModuleCoordinate{}, false
 	}
-	return coordinate.ModuleCoordinate{Path: path, Version: version}, true
+	// The shape checks above narrow the line to something that looks like a
+	// coordinate; the constructor decides whether it is one. A token that passes
+	// them but carries a malformed version is not a module this scan failed to
+	// resolve, so it is no coordinate rather than a coordinate no downstream
+	// lookup can match.
+	coord, err := coordinate.NewModuleCoordinate(path, version)
+	if err != nil {
+		return coordinate.ModuleCoordinate{}, false
+	}
+	return coord, true
 }
 
 // couldNotImportMarker is the toolchain's wording when a source position fails
@@ -340,10 +349,14 @@ func moduleFromCachePath(pos string) (coordinate.ModuleCoordinate, bool) {
 			continue
 		}
 		if unescaped, err := module.UnescapePath(cand); err == nil && module.CheckPath(unescaped) == nil {
-			return coordinate.ModuleCoordinate{Path: unescaped, Version: version}, true
+			if coord, cErr := coordinate.NewModuleCoordinate(unescaped, version); cErr == nil {
+				return coord, true
+			}
 		}
 		if module.CheckPath(cand) == nil {
-			return coordinate.ModuleCoordinate{Path: cand, Version: version}, true
+			if coord, cErr := coordinate.NewModuleCoordinate(cand, version); cErr == nil {
+				return coord, true
+			}
 		}
 	}
 	return coordinate.ModuleCoordinate{}, false

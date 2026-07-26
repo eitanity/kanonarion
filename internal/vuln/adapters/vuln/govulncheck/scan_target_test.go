@@ -7,8 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
 )
@@ -27,7 +26,7 @@ func TestScanTargetModule_AnalysesTheExtractedTarget(t *testing.T) {
 		"github.com/example/engine@v1.4.0/go.mod": "module github.com/example/engine\n\ngo 1.21\n",
 		"github.com/example/engine@v1.4.0/e.go":   "package engine\n",
 	})
-	coord := coordinate.ModuleCoordinate{Path: "github.com/example/engine", Version: "v1.4.0"}
+	coord := coordinatetest.MustNew("github.com/example/engine", "v1.4.0")
 
 	var buf bytes.Buffer
 	s := capturingScanner(&buf, slog.LevelInfo)
@@ -63,7 +62,7 @@ func TestScanTargetModule_UnanalysableTargetIsAFaultNotACleanVerdict(t *testing.
 
 	s := capturingScanner(&bytes.Buffer{}, slog.LevelWarn)
 	res, err := s.ScanTargetModule(t.Context(), ports.TargetScanRequest{
-		Coordinate:   coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"},
+		Coordinate:   coordinatetest.MustNew("example.com/mod", "v1.0.0"),
 		ModuleSource: bytes.NewReader(zipBytes),
 		Snapshot:     domain.DatabaseSnapshot{},
 	})
@@ -100,7 +99,7 @@ func TestScanTargetModule_SharesGoModSynthesisWithTheIsolatedPath(t *testing.T) 
 	var buf bytes.Buffer
 	s := capturingScanner(&buf, slog.LevelInfo)
 	res, err := s.ScanTargetModule(t.Context(), ports.TargetScanRequest{
-		Coordinate:   coordinate.ModuleCoordinate{Path: "github.com/boltdb/bolt", Version: "v1.3.1"},
+		Coordinate:   coordinatetest.MustNew("github.com/boltdb/bolt", "v1.3.1"),
 		ModuleSource: bytes.NewReader(zipBytes),
 		Snapshot:     domain.DatabaseSnapshot{},
 	})

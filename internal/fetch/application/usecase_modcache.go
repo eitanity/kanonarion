@@ -62,8 +62,8 @@ func (uc *FetchModuleUseCase) executeModcache(ctx context.Context, req FetchRequ
 	lap := uc.stopwatch.Start()
 
 	log := uc.logger.With(
-		slog.String("module_path", req.Coordinate.Path),
-		slog.String("module_version", req.Coordinate.Version),
+		slog.String("module_path", req.Coordinate.Path()),
+		slog.String("module_version", req.Coordinate.Version()),
 		slog.String("pipeline_version", uc.pipelineVersion),
 		slog.String("trace_id", traceID),
 		slog.Bool("from_modcache", true),
@@ -148,7 +148,7 @@ func (uc *FetchModuleUseCase) executeModcache(ctx context.Context, req FetchRequ
 
 	// Step 5: construct the record. Retraction is still parsed from go.mod; VCS
 	// cross-verification is skipped, so the status reflects go.sum only.
-	retracted := parseRetracted(goModData, req.Coordinate.Version)
+	retracted := parseRetracted(goModData, req.Coordinate.Version())
 	if retracted {
 		log.InfoContext(ctx, "retracted_version_detected")
 	}
@@ -195,8 +195,8 @@ func (uc *FetchModuleUseCase) executeGoModOnlyModcache(ctx context.Context, req 
 	lap := uc.stopwatch.Start()
 
 	log := uc.logger.With(
-		slog.String("module_path", req.Coordinate.Path),
-		slog.String("module_version", req.Coordinate.Version),
+		slog.String("module_path", req.Coordinate.Path()),
+		slog.String("module_version", req.Coordinate.Version()),
 		slog.String("pipeline_version", uc.pipelineVersion),
 		slog.String("trace_id", traceID),
 		slog.Bool("from_modcache", true),
@@ -251,7 +251,7 @@ func (uc *FetchModuleUseCase) executeGoModOnlyModcache(ctx context.Context, req 
 		return FetchResult{}, fmt.Errorf("storing go.mod blob: %w", err)
 	}
 
-	retracted := parseRetracted(goModData, req.Coordinate.Version)
+	retracted := parseRetracted(goModData, req.Coordinate.Version())
 	if retracted {
 		log.InfoContext(ctx, "retracted_version_detected")
 	}

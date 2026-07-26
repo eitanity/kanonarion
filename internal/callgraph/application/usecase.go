@@ -108,8 +108,8 @@ type ExtractResult struct {
 // errors (store access, blob I/O) return errors.
 func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractRequest) (_ ExtractResult, retErr error) {
 	log := uc.logger.With(
-		slog.String("extraction.module.path", req.Coordinate.Path),
-		slog.String("extraction.module.version", req.Coordinate.Version),
+		slog.String("extraction.module.path", req.Coordinate.Path()),
+		slog.String("extraction.module.version", req.Coordinate.Version()),
 		slog.String("extraction.stage", "callgraph"),
 		slog.String("pipeline_version", uc.pipelineVersion),
 	)
@@ -144,7 +144,7 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 	// Skip listed modules entirely before any traversal/SSA work (
 	// budgets). The exclusion decision is a pure domain rule; the use case
 	// only orchestrates persisting the resulting record.
-	if domain2.IsModuleExcluded(req.Coordinate.Path, uc.exclusions) {
+	if domain2.IsModuleExcluded(req.Coordinate.Path(), uc.exclusions) {
 		record := domain2.NewExcludedRecord(req.Coordinate, uc.analyser.AnalyserMetadata().Algorithm, uc.exclusions)
 		record.ExtractedAt = uc.clock.Now().UTC()
 		record.PipelineVersion = uc.pipelineVersion

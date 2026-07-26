@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
@@ -338,7 +339,7 @@ func TestRunCallers_GenuineZero(t *testing.T) {
 	// The symbol IS a node in an analysed module but has zero callers: a
 	// genuine zero, reported as such with exit 0.
 	uc := testfakes.NewFakeQueryCallGraph()
-	coord := coordinate.ModuleCoordinate{Path: "example.com/app", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/app", "v1.0.0")
 	uc.SetList([]cgports.CallGraphSummary{
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: "0.2.0"},
 	})
@@ -358,7 +359,7 @@ func TestRunCallers_UnknownSymbolInAnalysedModule(t *testing.T) {
 	// The module is analysed but the symbol is NOT a node in its graph:
 	// absence-as-answer must be a directing error, not a silent empty result
 	uc := testfakes.NewFakeQueryCallGraph()
-	coord := coordinate.ModuleCoordinate{Path: "example.com/app", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/app", "v1.0.0")
 	uc.SetList([]cgports.CallGraphSummary{
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: "0.2.0"},
 	})
@@ -398,7 +399,7 @@ func TestRunCallees_GenuineZero(t *testing.T) {
 	// The symbol IS a node (a leaf) in an analysed module but has zero callees:
 	// a genuine zero, reported as such with exit 0.
 	uc := testfakes.NewFakeQueryCallGraph()
-	coord := coordinate.ModuleCoordinate{Path: "example.com/app", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/app", "v1.0.0")
 	uc.SetList([]cgports.CallGraphSummary{
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: "0.2.0"},
 	})
@@ -418,7 +419,7 @@ func TestRunCallees_UnknownSymbolInAnalysedModule(t *testing.T) {
 	// The module is analysed but the symbol is NOT a node in its graph:
 	// absence-as-answer must be a directing error, not a silent empty result
 	uc := testfakes.NewFakeQueryCallGraph()
-	coord := coordinate.ModuleCoordinate{Path: "example.com/app", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/app", "v1.0.0")
 	uc.SetList([]cgports.CallGraphSummary{
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: "0.2.0"},
 	})
@@ -782,7 +783,7 @@ func TestRunCallers_UnresolvedSymbol_IsError(t *testing.T) {
 
 func TestRunCallers_AnalysedButZeroEdges_IsNotError(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
-	coord := coordinate.ModuleCoordinate{Path: "example.com/app", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/app", "v1.0.0")
 	uc.SetList([]cgports.CallGraphSummary{
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: "0.2.0"},
 	})
@@ -817,7 +818,7 @@ func TestRunCallees_UnresolvedSymbol_IsError(t *testing.T) {
 // output: the module is analysed but the symbol has no edges.
 func TestRunCallers_GenuineZeroJSON_IsEmptyArrayNotNull(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
-	coord := coordinate.ModuleCoordinate{Path: "example.com/app", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/app", "v1.0.0")
 	uc.SetList([]cgports.CallGraphSummary{
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: "0.2.0"},
 	})
@@ -863,7 +864,7 @@ func TestUnresolvedSymbolMessage_IntentAware(t *testing.T) {
 func setupPartialStore(t *testing.T, callers []cgports.CallEdgeRef) *testfakes.FakeQueryCallGraph {
 	t.Helper()
 	uc := testfakes.NewFakeQueryCallGraph()
-	coord := coordinate.ModuleCoordinate{Path: "example.com/app", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/app", "v1.0.0")
 	uc.SetList([]cgports.CallGraphSummary{
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: "0.2.0"},
 	})
@@ -965,7 +966,7 @@ func TestRunCallers_PartialGraph_JSON_NoCaveatLine(t *testing.T) {
 func TestRunCallers_ExtractedGraph_NoCaveat(t *testing.T) {
 	// An Extracted graph must never carry a Partial caveat.
 	uc := testfakes.NewFakeQueryCallGraph()
-	coord := coordinate.ModuleCoordinate{Path: "example.com/app", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/app", "v1.0.0")
 	uc.SetList([]cgports.CallGraphSummary{
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: "0.2.0"},
 	})

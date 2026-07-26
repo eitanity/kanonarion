@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 
 	application "github.com/eitanity/kanonarion/internal/vuln/application"
@@ -35,9 +36,9 @@ func newProjectScanFixture(t *testing.T, scanner *fakeScanner) projectScanFixtur
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	walkID := "walk-project"
 
-	root := coordinate.ModuleCoordinate{Path: "github.com/example/proj", Version: coordinate.LocalVersion}
-	depA := coordinate.ModuleCoordinate{Path: "gopkg.in/yaml.v3", Version: "v3.0.1"}
-	depB := coordinate.ModuleCoordinate{Path: "github.com/spf13/cobra", Version: "v1.8.1"}
+	root := coordinatetest.MustNew("github.com/example/proj", coordinate.LocalVersion)
+	depA := coordinatetest.MustNew("gopkg.in/yaml.v3", "v3.0.1")
+	depB := coordinatetest.MustNew("github.com/spf13/cobra", "v1.8.1")
 
 	walk := walkdomain.WalkRecord{
 		ID:     walkID,
@@ -66,11 +67,11 @@ func newProjectScanFixture(t *testing.T, scanner *fakeScanner) projectScanFixtur
 	// Every in-build node needs a fetch record so the root source (and, on the
 	// isolated path, each dependency) can be located.
 	for _, c := range []coordinate.ModuleCoordinate{root, depA, depB} {
-		seedRec := fetchtest.Record(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path))
-		if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip-"+c.Path)); err != nil {
+		seedRec := fetchtest.Record(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path()))
+		if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip-"+c.Path())); err != nil {
 			t.Fatalf("Put blob: %v", err)
 		}
-		if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path))); err != nil {
+		if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path()))); err != nil {
 			t.Fatalf("PutFetchRecord %s: %v", c, err)
 		}
 	}
@@ -218,11 +219,11 @@ func newStdlibProjectFixture(t *testing.T, scanner *fakeScanner) stdlibProjectFi
 	now := time.Date(2026, 7, 15, 0, 0, 0, 0, time.UTC)
 	walkID := "walk-stdlib"
 
-	root := coordinate.ModuleCoordinate{Path: "github.com/example/proj", Version: coordinate.LocalVersion}
-	dep := coordinate.ModuleCoordinate{Path: "gopkg.in/yaml.v3", Version: "v3.0.1"}
+	root := coordinatetest.MustNew("github.com/example/proj", coordinate.LocalVersion)
+	dep := coordinatetest.MustNew("gopkg.in/yaml.v3", "v3.0.1")
 	// The stdlib node carries a concrete toolchain version; the grouped parse
 	// attributes its findings to the version-less {stdlib, ""} key.
-	std := coordinate.ModuleCoordinate{Path: domain.StdlibModulePath, Version: "v1.26.4"}
+	std := coordinatetest.MustNew(domain.StdlibModulePath, "v1.26.4")
 
 	walk := walkdomain.WalkRecord{
 		ID:     walkID,
@@ -250,11 +251,11 @@ func newStdlibProjectFixture(t *testing.T, scanner *fakeScanner) stdlibProjectFi
 
 	// Root and dep need a fetch record; stdlib is never fetched.
 	for _, c := range []coordinate.ModuleCoordinate{root, dep} {
-		seedRec := fetchtest.Record(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path))
-		if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip-"+c.Path)); err != nil {
+		seedRec := fetchtest.Record(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path()))
+		if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip-"+c.Path())); err != nil {
 			t.Fatalf("Put blob: %v", err)
 		}
-		if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path))); err != nil {
+		if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path()))); err != nil {
 			t.Fatalf("PutFetchRecord %s: %v", c, err)
 		}
 	}
@@ -281,7 +282,7 @@ func TestScanWalk_ProjectRooted_StdlibCarriesReachability(t *testing.T) {
 	// The project-rooted scan reaches a stdlib symbol; the grouped parse files it
 	// under the version-less {stdlib, ""} key with reachability populated.
 	scanner.projectFindings = map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding{
-		{Path: domain.StdlibModulePath}: {{
+		coordinatetest.PathOnly(domain.StdlibModulePath): {{
 			ID:              "GO-2026-4970",
 			Summary:         "Root escape via symlink in os",
 			AffectedSymbols: []string{"Root.Lstat"},
@@ -334,7 +335,7 @@ func TestScanWalk_ProjectRooted_StdlibUnreachableIsClean(t *testing.T) {
 
 	// A dependency has a reachable finding, but nothing in stdlib is reached.
 	scanner.projectFindings = map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding{
-		{Path: "gopkg.in/yaml.v3", Version: "v3.0.1"}: {{
+		coordinatetest.MustNew("gopkg.in/yaml.v3", "v3.0.1"): {{
 			ID:        "GO-2024-0001",
 			Reachable: &domain.ReachabilityResult{IsReachable: true, Confidence: domain.ConfidenceHigh},
 		}},

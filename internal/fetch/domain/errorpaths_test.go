@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
@@ -26,9 +26,9 @@ type unparseableHasher struct{}
 func (unparseableHasher) HashModuleZip([]byte) (string, error) { return "not-a-hash", nil }
 
 func TestVerifier_HashDirAsModuleZip_ZipCreationFailureIsReported(t *testing.T) {
-	// An invalid module version makes modzip.CreateFromDir reject the request
+	// A versionless coordinate makes modzip.CreateFromDir reject the request
 	// before reading the tree, so the zip leg is what fails.
-	coord := coordinate.ModuleCoordinate{Path: "example.com/m", Version: "not-a-semver"}
+	coord := coordinatetest.PathOnly("example.com/m")
 	v := domain2.NewVerifier(failingHasher{err: errors.New("never reached")})
 
 	_, err := v.HashDirAsModuleZip(t.TempDir(), coord)
@@ -43,7 +43,7 @@ func TestVerifier_HashDirAsModuleZip_ZipCreationFailureIsReported(t *testing.T) 
 func TestVerifier_HashDirAsModuleZip_HashFailureIsReported(t *testing.T) {
 	dir := t.TempDir()
 	writeGoMod(t, dir, "module example.com/m\n\ngo 1.21\n")
-	coord := coordinate.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/m", "v1.0.0")
 	sentinel := errors.New("disk gave out mid-hash")
 	v := domain2.NewVerifier(failingHasher{err: sentinel})
 
@@ -62,7 +62,7 @@ func TestVerifier_HashDirAsModuleZip_HashFailureIsReported(t *testing.T) {
 func TestVerifier_HashDirAsModuleZip_UnparseableHashIsReported(t *testing.T) {
 	dir := t.TempDir()
 	writeGoMod(t, dir, "module example.com/m\n\ngo 1.21\n")
-	coord := coordinate.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/m", "v1.0.0")
 	v := domain2.NewVerifier(unparseableHasher{})
 
 	if _, err := v.HashDirAsModuleZip(dir, coord); err == nil {
@@ -74,10 +74,7 @@ func TestVerifier_HashDirAsModuleZip_UnparseableHashIsReported(t *testing.T) {
 // length guard. Without it, commitHash[:12] would panic on a truncated hash
 // instead of reporting an unusable input.
 func TestVerifier_VerifyPseudoVersionCommit_ShortCommitIsRejected(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{
-		Path:    "example.com/m",
-		Version: "v0.0.0-20210101120000-abcdefabcdef",
-	}
+	coord := coordinatetest.MustNew("example.com/m", "v0.0.0-20210101120000-abcdefabcdef")
 	v := domain2.NewVerifier(unparseableHasher{})
 
 	for _, short := range []string{"", "abc", "abcdefabcde"} {

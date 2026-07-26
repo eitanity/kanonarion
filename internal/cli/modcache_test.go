@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
@@ -87,7 +88,7 @@ func TestResolveModcacheMode_MissingGoSumErrors(t *testing.T) {
 
 func makeNode(path, version string, src walkdomain.ResolutionSource, detail string) walkdomain.GraphNode {
 	return walkdomain.GraphNode{
-		Coordinate:       coordinate.ModuleCoordinate{Path: path, Version: version},
+		Coordinate:       coordinatetest.MustNew(path, version),
 		ResolutionSource: src,
 		ErrorDetail:      detail,
 	}
@@ -96,7 +97,7 @@ func makeNode(path, version string, src walkdomain.ResolutionSource, detail stri
 func TestModcacheWalkGate_FailsOnFetchFailedNode(t *testing.T) {
 	resetModcacheGlobals(t)
 	modcacheMode = true
-	local := coordinate.ModuleCoordinate{Path: "example.com/proj", Version: coordinate.LocalVersion}
+	local := coordinatetest.MustNew("example.com/proj", coordinate.LocalVersion)
 	rec := walkdomain.WalkRecord{Graph: walkdomain.Graph{Nodes: []walkdomain.GraphNode{
 		{Coordinate: local, ResolutionSource: walkdomain.ResolutionLocalMainModule},
 		makeNode("github.com/good/dep", "v1.0.0", walkdomain.ResolutionMVS, ""),
@@ -116,7 +117,7 @@ func TestModcacheWalkGate_FailsOnFetchFailedNode(t *testing.T) {
 func TestModcacheWalkGate_CleanWalkPasses(t *testing.T) {
 	resetModcacheGlobals(t)
 	modcacheMode = true
-	local := coordinate.ModuleCoordinate{Path: "example.com/proj", Version: coordinate.LocalVersion}
+	local := coordinatetest.MustNew("example.com/proj", coordinate.LocalVersion)
 	rec := walkdomain.WalkRecord{Graph: walkdomain.Graph{Nodes: []walkdomain.GraphNode{
 		makeNode("github.com/good/dep", "v1.0.0", walkdomain.ResolutionMVS, ""),
 	}}}
@@ -128,7 +129,7 @@ func TestModcacheWalkGate_CleanWalkPasses(t *testing.T) {
 func TestModcacheWalkGate_ModeOffIsNoop(t *testing.T) {
 	resetModcacheGlobals(t)
 	modcacheMode = false
-	local := coordinate.ModuleCoordinate{Path: "example.com/proj", Version: coordinate.LocalVersion}
+	local := coordinatetest.MustNew("example.com/proj", coordinate.LocalVersion)
 	rec := walkdomain.WalkRecord{Graph: walkdomain.Graph{Nodes: []walkdomain.GraphNode{
 		makeNode("github.com/bad/dep", "v2.0.0", walkdomain.ResolutionFetchFailed, "boom"),
 	}}}

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	domain "github.com/eitanity/kanonarion/internal/extract/domain"
 )
@@ -84,7 +85,7 @@ func TestExtractCmd_StatusPreambleGoesToStderr(t *testing.T) {
 func TestPrintExtractionFailures_NoFailures(t *testing.T) {
 	run := domain.ExtractionRun{
 		PerModuleResults: map[coordinate.ModuleCoordinate]domain.ModuleExtractionResult{
-			{Path: "example.com/mod", Version: "v1.0.0"}: {
+			coordinatetest.MustNew("example.com/mod", "v1.0.0"): {
 				Stages: map[string]domain.StageResult{
 					"license": {Status: domain.StageSucceeded},
 				},
@@ -101,13 +102,13 @@ func TestPrintExtractionFailures_NoFailures(t *testing.T) {
 func TestPrintExtractionFailures_WithFailures(t *testing.T) {
 	run := domain.ExtractionRun{
 		PerModuleResults: map[coordinate.ModuleCoordinate]domain.ModuleExtractionResult{
-			{Path: "example.com/mod", Version: "v1.0.0"}: {
+			coordinatetest.MustNew("example.com/mod", "v1.0.0"): {
 				Stages: map[string]domain.StageResult{
 					"license":   {Status: domain.StageSucceeded},
 					"callgraph": {Status: domain.StageFailed, Error: "analysis error"},
 				},
 			},
-			{Path: "example.com/other", Version: "v2.0.0"}: {
+			coordinatetest.MustNew("example.com/other", "v2.0.0"): {
 				Stages: map[string]domain.StageResult{
 					"interface": {Status: domain.StageFailed, Error: ""},
 				},
@@ -135,12 +136,12 @@ func TestPrintExtractionFailures_WithFailures(t *testing.T) {
 func TestPrintExtractionFailures_SortedOutput(t *testing.T) {
 	run := domain.ExtractionRun{
 		PerModuleResults: map[coordinate.ModuleCoordinate]domain.ModuleExtractionResult{
-			{Path: "example.com/z", Version: "v1.0.0"}: {
+			coordinatetest.MustNew("example.com/z", "v1.0.0"): {
 				Stages: map[string]domain.StageResult{
 					"license": {Status: domain.StageFailed},
 				},
 			},
-			{Path: "example.com/a", Version: "v1.0.0"}: {
+			coordinatetest.MustNew("example.com/a", "v1.0.0"): {
 				Stages: map[string]domain.StageResult{
 					"license": {Status: domain.StageFailed},
 				},

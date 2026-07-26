@@ -8,7 +8,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 )
@@ -65,7 +65,7 @@ func TestPutGetFetchRecord_DigestsRoundTrip(t *testing.T) {
 	if err := s.PutFetchRecord(ctx, mustSeal(t, r)); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	got, ok, err := s.GetFetchRecord(ctx, coordinate.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}, r.PipelineVersion)
+	got, ok, err := s.GetFetchRecord(ctx, coordinatetest.MustNew(r.ModulePath, r.ModuleVersion), r.PipelineVersion)
 	if err != nil || !ok {
 		t.Fatalf("Get: ok=%v err=%v", ok, err)
 	}
@@ -83,7 +83,7 @@ func TestPutGetFetchRecord(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	got, ok, err := s.GetFetchRecord(ctx, coordinate.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}, r.PipelineVersion)
+	got, ok, err := s.GetFetchRecord(ctx, coordinatetest.MustNew(r.ModulePath, r.ModuleVersion), r.PipelineVersion)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestGetFetchRecord_NotFound(t *testing.T) {
 	s := openMemStore(t)
 	ctx := context.Background()
 
-	_, ok, err := s.GetFetchRecord(ctx, coordinate.ModuleCoordinate{Path: "x", Version: "v1.0.0"}, "0.1.0")
+	_, ok, err := s.GetFetchRecord(ctx, coordinatetest.MustNew("x", "v1.0.0"), "0.1.0")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -136,7 +136,7 @@ func TestPutFetchRecord_AppendsRatherThanOverwrites(t *testing.T) {
 		t.Fatalf("second Put: %v", err)
 	}
 
-	coord := coordinate.ModuleCoordinate{Path: first.ModulePath, Version: first.ModuleVersion}
+	coord := coordinatetest.MustNew(first.ModulePath, first.ModuleVersion)
 	held, err := s.ListFetchRecords(ctx, coord, first.PipelineVersion)
 	if err != nil {
 		t.Fatalf("ListFetchRecords: %v", err)
@@ -169,7 +169,7 @@ func TestPutFetchRecord_IdenticalRewriteIsANoOp(t *testing.T) {
 	}
 
 	held, err := s.ListFetchRecords(ctx,
-		coordinate.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}, r.PipelineVersion)
+		coordinatetest.MustNew(r.ModulePath, r.ModuleVersion), r.PipelineVersion)
 	if err != nil {
 		t.Fatalf("ListFetchRecords: %v", err)
 	}
@@ -201,7 +201,7 @@ func TestGetFetchRecord_IntegrityError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, ok, err := s.GetFetchRecord(ctx, coordinate.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}, r.PipelineVersion)
+	_, ok, err := s.GetFetchRecord(ctx, coordinatetest.MustNew(r.ModulePath, r.ModuleVersion), r.PipelineVersion)
 	if err == nil {
 		t.Fatal("a tampered record was reported without error; a detected tamper must never read as absence")
 	}
@@ -276,7 +276,7 @@ func TestGetFetchRecord_Retracted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, ok, err := s.GetFetchRecord(ctx, coordinate.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}, r.PipelineVersion)
+	got, ok, err := s.GetFetchRecord(ctx, coordinatetest.MustNew(r.ModulePath, r.ModuleVersion), r.PipelineVersion)
 	if err != nil || !ok {
 		t.Fatalf("Get: err=%v ok=%v", err, ok)
 	}

@@ -5,9 +5,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-
 	"github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 )
 
 func TestOpen_FileDB(t *testing.T) {
@@ -72,7 +71,7 @@ func TestGetFetchRecord_MultiplePipelineVersions(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	coord := coordinate.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/m", "v1.0.0")
 
 	got1, ok1, _ := s.GetFetchRecord(ctx, coord, "0.1.0")
 	got2, ok2, _ := s.GetFetchRecord(ctx, coord, "0.2.0")

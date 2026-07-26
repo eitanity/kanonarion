@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
@@ -24,7 +25,7 @@ func newTestStore(t *testing.T) *sqlite.Store {
 }
 
 func coord(path, version string) coordinate.ModuleCoordinate {
-	return coordinate.ModuleCoordinate{Path: path, Version: version}
+	return coordinatetest.MustNew(path, version)
 }
 
 func snap(source, version string) domain.DatabaseSnapshot {

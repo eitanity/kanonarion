@@ -4,12 +4,13 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 )
 
 func coord(path string) coordinate.ModuleCoordinate {
-	return coordinate.ModuleCoordinate{Path: path, Version: "v1.0.0"}
+	return coordinatetest.MustNew(path, "v1.0.0")
 }
 
 func record(c coordinate.ModuleCoordinate, findings ...domain.VulnerabilityFinding) domain.VulnerabilityRecord {
@@ -122,7 +123,7 @@ func TestDiffScanRuns_PresentAndUnchanged(t *testing.T) {
 func TestCompareFindingDelta_VersionTiebreak(t *testing.T) {
 	mk := func(path, version, id string) domain.FindingDelta {
 		return domain.FindingDelta{
-			Coordinate: coordinate.ModuleCoordinate{Path: path, Version: version},
+			Coordinate: coordinatetest.MustNew(path, version),
 			Finding:    domain.VulnerabilityFinding{ID: id},
 		}
 	}
@@ -153,8 +154,8 @@ func TestDiffScanRuns_SameModuleTwoVersionsStableOrder(t *testing.T) {
 	runA := domain.WalkScanRun{ID: "a", WalkID: "walk-1"}
 	runB := domain.WalkScanRun{ID: "b", WalkID: "walk-1"}
 
-	v2 := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v2.0.0"}
-	v1 := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	v2 := coordinatetest.MustNew("github.com/foo/bar", "v2.0.0")
+	v1 := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
 	diff := domain.DiffScanRuns(runA, runB,
 		[]domain.VulnerabilityRecord{},
@@ -167,11 +168,11 @@ func TestDiffScanRuns_SameModuleTwoVersionsStableOrder(t *testing.T) {
 	if len(diff.NewFindings) != 2 {
 		t.Fatalf("expected 2 new findings, got %d", len(diff.NewFindings))
 	}
-	if diff.NewFindings[0].Coordinate.Version != "v1.0.0" {
-		t.Errorf("expected v1.0.0 first, got %s", diff.NewFindings[0].Coordinate.Version)
+	if diff.NewFindings[0].Coordinate.Version() != "v1.0.0" {
+		t.Errorf("expected v1.0.0 first, got %s", diff.NewFindings[0].Coordinate.Version())
 	}
-	if diff.NewFindings[1].Coordinate.Version != "v2.0.0" {
-		t.Errorf("expected v2.0.0 second, got %s", diff.NewFindings[1].Coordinate.Version)
+	if diff.NewFindings[1].Coordinate.Version() != "v2.0.0" {
+		t.Errorf("expected v2.0.0 second, got %s", diff.NewFindings[1].Coordinate.Version())
 	}
 }
 
@@ -197,8 +198,8 @@ func TestDiffScanRuns_DeterministicSort(t *testing.T) {
 	}
 	for i, w := range want {
 		got := diff.NewFindings[i]
-		if got.Coordinate.Path != w.path || got.Finding.ID != w.id {
-			t.Errorf("position %d: got %s/%s, want %s/%s", i, got.Coordinate.Path, got.Finding.ID, w.path, w.id)
+		if got.Coordinate.Path() != w.path || got.Finding.ID != w.id {
+			t.Errorf("position %d: got %s/%s, want %s/%s", i, got.Coordinate.Path(), got.Finding.ID, w.path, w.id)
 		}
 	}
 }

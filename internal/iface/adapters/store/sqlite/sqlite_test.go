@@ -132,7 +132,7 @@ func TestStore_ListInterfaceRecords(t *testing.T) {
 	if len(sums) != 1 {
 		t.Fatalf("expected 1 summary, got %d", len(sums))
 	}
-	if sums[0].ModulePath != r.Coordinate.Path {
+	if sums[0].ModulePath != r.Coordinate.Path() {
 		t.Errorf("ModulePath: %q", sums[0].ModulePath)
 	}
 	if sums[0].PackageCount != len(r.Packages) {

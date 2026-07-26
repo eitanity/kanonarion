@@ -259,8 +259,8 @@ func marshalCanonicalLicense(r LicenseRecord) ([]byte, error) {
 	c := canonicalLicenseRecord{
 		ContentHash: r.ContentHash,
 		Coordinate: canonicalCoord{
-			Path:    r.Coordinate.Path,
-			Version: r.Coordinate.Version,
+			Path:    r.Coordinate.Path(),
+			Version: r.Coordinate.Version(),
 		},
 		CopyrightStatus:   int(r.CopyrightStatus),
 		Ecosystem:         r.Ecosystem,

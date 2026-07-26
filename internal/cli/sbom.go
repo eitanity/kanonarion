@@ -397,7 +397,10 @@ func ensureProjectWalkForSBOM(ctx context.Context, ctr *Container, force, stdlib
 	// SBOM rather than emitting one that silently omits the unverifiable module:
 	// --from-modcache mode fails on any such node (go.sum is the sole anchor),
 	// and the normal network path fails on a go.sum-mismatch node.
-	localCoord := coordinate.ModuleCoordinate{Path: modulePath, Version: coordinate.LocalVersion}
+	localCoord, cErr := coordinate.NewLocalCoordinate(modulePath)
+	if cErr != nil {
+		return "", fmt.Errorf("project coordinate for %s: %w", modulePath, cErr)
+	}
 	walkID, werr := latestProjectWalkByScope(ctx, ctr.QueryWalks, modulePath, walkdomain.WalkScopeCode)
 	if werr != nil {
 		return "", werr

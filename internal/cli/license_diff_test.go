@@ -6,14 +6,13 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
 )
 
 func makeDiffRecord(path, ver, spdx string, files ...licdomain.LicenseFileEntry) licdomain.LicenseRecord {
 	return licdomain.LicenseRecord{
-		Coordinate:    coordinate.ModuleCoordinate{Path: path, Version: ver},
+		Coordinate:    coordinatetest.MustNew(path, ver),
 		PrimarySPDX:   spdx,
 		OverallStatus: licdomain.LicenseStatusDetected,
 		LicenseFiles:  files,

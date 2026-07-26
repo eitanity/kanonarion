@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/fetch/application"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
@@ -39,7 +40,7 @@ func proxyWithOrigin(coord coordinate.ModuleCoordinate, originURL string) *fakeP
 	return &fakeProxy{
 		infos: map[string]ports.ModuleInfo{
 			coord.String(): {
-				Version: coord.Version,
+				Version: coord.Version(),
 				Origin: &ports.ModuleOrigin{
 					URL:  originURL,
 					Hash: strings.Repeat("a", 40),
@@ -61,7 +62,7 @@ func mustAllowlist(t *testing.T, hosts ...string) domain2.VCSHostAllowlist {
 // Narrowing the policy to a subset must provably stop the excluded forge from
 // reaching git, and must say so in the record rather than degrading silently.
 func TestExecute_NarrowedVCSHostsRejectsExcludedOrigin(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "gitlab.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("gitlab.com/foo/bar", "v1.0.0")
 	vcs := &countingVCS{}
 	facts := newFakeFacts()
 
@@ -87,7 +88,7 @@ func TestExecute_NarrowedVCSHostsRejectsExcludedOrigin(t *testing.T) {
 // The same Origin under the default allowlist is accepted, so the test above is
 // measuring the policy rather than an unrelated rejection.
 func TestExecute_DefaultVCSHostsAcceptTheSameOrigin(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "gitlab.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("gitlab.com/foo/bar", "v1.0.0")
 	vcs := &countingVCS{}
 
 	uc := newUseCase(proxyWithOrigin(coord, "https://gitlab.com/foo/bar"), vcs, newFakeBlob(), newFakeFacts())
@@ -106,7 +107,7 @@ func TestExecute_DefaultVCSHostsAcceptTheSameOrigin(t *testing.T) {
 // Widening the policy makes a forge that is NOT built in cross-verify, with no
 // rebuild — the need this field exists for.
 func TestExecute_WidenedVCSHostsAcceptsNewForge(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "git.example.org/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("git.example.org/foo/bar", "v1.0.0")
 	vcs := &countingVCS{}
 
 	// Under the built-in set this Origin is refused.
@@ -144,7 +145,7 @@ func TestExecute_WidenedVCSHostsAcceptsNewForge(t *testing.T) {
 // but it is still handed to git — so the policy must gate it too, or "trust
 // github.com only" would still clone gitlab.
 func TestExecute_NarrowedVCSHostsGateInferredCloneURL(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "gitlab.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("gitlab.com/foo/bar", "v1.0.0")
 	vcs := &countingVCS{}
 
 	// No Origin in the proxy info: the fetcher infers https://gitlab.com/foo/bar.
@@ -167,7 +168,7 @@ func TestExecute_NarrowedVCSHostsGateInferredCloneURL(t *testing.T) {
 // The control for the test above: the same inferred URL is used when the policy
 // allows the host.
 func TestExecute_InferredCloneURLUsedWhenHostIsAllowed(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "gitlab.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("gitlab.com/foo/bar", "v1.0.0")
 	vcs := &countingVCS{}
 
 	uc := newUseCase(&fakeProxy{}, vcs, newFakeBlob(), newFakeFacts())
@@ -185,7 +186,7 @@ func TestExecute_InferredCloneURLUsedWhenHostIsAllowed(t *testing.T) {
 // The allowlist governs WHICH forges are trusted, never WHETHER git runs: with
 // verification skipped, no host is contacted regardless of the configured set.
 func TestExecute_SkipVCSVerifyStillWinsOverTheAllowlist(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	vcs := &countingVCS{}
 
 	uc := newUseCase(proxyWithOrigin(coord, "https://github.com/foo/bar"), vcs, newFakeBlob(), newFakeFacts())

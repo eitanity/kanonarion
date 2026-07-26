@@ -214,7 +214,7 @@ func TestServe_AuditsVerifiedRead(t *testing.T) {
 	if ev.Payload["verification_status"] != string(domain2.Verified) {
 		t.Errorf("payload status = %v, want %q", ev.Payload["verification_status"], domain2.Verified)
 	}
-	if ev.Payload["module"] != testCoord.Path || ev.Payload["version"] != testCoord.Version {
+	if ev.Payload["module"] != testCoord.Path() || ev.Payload["version"] != testCoord.Version() {
 		t.Errorf("payload coordinate = %v@%v, want %v", ev.Payload["module"], ev.Payload["version"], testCoord)
 	}
 }

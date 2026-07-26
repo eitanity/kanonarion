@@ -32,7 +32,7 @@ func (s *fakeFactStore) PutFetchRecord(_ context.Context, sealed fetchdomain.Sea
 }
 
 func (s *fakeFactStore) GetFetchRecord(_ context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (fetchdomain.CompositeRecord, bool, error) {
-	rec, ok := s.records[coord.Path+"@"+coord.Version+"|"+pipelineVersion]
+	rec, ok := s.records[coord.Path()+"@"+coord.Version()+"|"+pipelineVersion]
 	if !ok {
 		return fetchdomain.CompositeRecord{}, false, nil
 	}

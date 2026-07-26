@@ -142,7 +142,7 @@ func TestScanWalk_EveryScannedCoordinateHasAPersistedRecord(t *testing.T) {
 	if err == nil {
 		t.Fatal("Scan returned nil error although one scanned coordinate has no persisted record")
 	}
-	if !strings.Contains(err.Error(), f.depB.Path) {
+	if !strings.Contains(err.Error(), f.depB.Path()) {
 		t.Errorf("error must name the module whose verdict was lost; got: %v", err)
 	}
 }

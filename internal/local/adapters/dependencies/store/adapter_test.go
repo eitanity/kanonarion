@@ -26,7 +26,7 @@ func (s *fakeCallGraphStore) PutCallGraphRecord(_ context.Context, r callgraphdo
 	if s.records == nil {
 		s.records = make(map[cgKey]callgraphdomain.CallGraphRecord)
 	}
-	s.records[cgKey{r.Coordinate.Path, r.Coordinate.Version, r.PipelineVersion}] = r
+	s.records[cgKey{r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion}] = r
 	return nil
 }
 
@@ -37,7 +37,7 @@ func (s *fakeCallGraphStore) GetCallGraphRecord(_ context.Context, coord coordin
 	if s.records == nil {
 		return callgraphdomain.CallGraphRecord{}, false, nil
 	}
-	r, ok := s.records[cgKey{coord.Path, coord.Version, pv}]
+	r, ok := s.records[cgKey{coord.Path(), coord.Version(), pv}]
 	return r, ok, nil
 }
 
@@ -86,8 +86,8 @@ func TestAdapter_LoadCallGraphRecords_Found(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("len = %d, want 1", len(got))
 	}
-	if got[0].Coordinate.Path != "example.com/dep" {
-		t.Errorf("Coordinate.Path = %q, want %q", got[0].Coordinate.Path, "example.com/dep")
+	if got[0].Coordinate.Path() != "example.com/dep" {
+		t.Errorf("Coordinate.Path = %q, want %q", got[0].Coordinate.Path(), "example.com/dep")
 	}
 }
 
@@ -152,7 +152,7 @@ func TestAdapter_LoadCallGraphRecords_MixedFoundAndMissing(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("len = %d, want 1 (missing should be omitted)", len(got))
 	}
-	if got[0].Coordinate.Path != "example.com/found" {
-		t.Errorf("wrong record returned: %q", got[0].Coordinate.Path)
+	if got[0].Coordinate.Path() != "example.com/found" {
+		t.Errorf("wrong record returned: %q", got[0].Coordinate.Path())
 	}
 }

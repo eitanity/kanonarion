@@ -93,6 +93,12 @@ func (s *Store) Close() error {
 // (module_path, module_version, pipeline_version). Verifies the ContentHash
 // before storage.
 func (s *Store) PutExampleRecord(ctx context.Context, r domain2.ExampleRecord) error {
+	// A record whose coordinate is the zero value would key a row on the empty
+	// path at the empty version, which every later read treats as a genuine
+	// measurement of a module that does not exist.
+	if r.Coordinate.IsZero() {
+		return coordinate.ErrZeroCoordinate
+	}
 	var h domain2.ExampleRecordHasher
 	if err := h.VerifyContentHash(r); err != nil {
 		return fmt.Errorf("verifying content hash before put: %w", err)
@@ -126,7 +132,7 @@ ON CONFLICT (module_path, module_version, pipeline_version) DO UPDATE SET
     serialised     = excluded.serialised`
 
 	_, err = tx.ExecContext(ctx, qRecord,
-		r.Coordinate.Path, r.Coordinate.Version, r.PipelineVersion,
+		r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
 		int(r.OverallStatus), len(r.Examples),
 		r.ExtractedAt.UTC().Format(time.RFC3339),
 		r.ContentHash, blob,
@@ -138,7 +144,7 @@ ON CONFLICT (module_path, module_version, pipeline_version) DO UPDATE SET
 	// Rebuild the index rows: delete old entries, insert new ones.
 	const qDel = `DELETE FROM example_index
 	WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
-	if _, err := tx.ExecContext(ctx, qDel, r.Coordinate.Path, r.Coordinate.Version, r.PipelineVersion); err != nil {
+	if _, err := tx.ExecContext(ctx, qDel, r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion); err != nil {
 		return fmt.Errorf("deleting old example index: %w", err)
 	}
 
@@ -164,7 +170,7 @@ INSERT INTO example_index (
 			validates = 1
 		}
 		if _, err := tx.ExecContext(ctx, qIdx,
-			r.Coordinate.Path, r.Coordinate.Version, r.PipelineVersion,
+			r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
 			e.Package, e.AssociatedSymbol, e.Name, validates,
 		); err != nil {
 			return fmt.Errorf("inserting example index row %s: %w", e.Name, err)
@@ -181,10 +187,16 @@ INSERT INTO example_index (
 // given coordinate and pipeline version. Returns (zero, false, nil) if not
 // found. Returns (zero, false, ErrExampleIntegrity) on hash mismatch.
 func (s *Store) GetExampleRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain2.ExampleRecord, bool, error) {
+	// The zero coordinate names no module, so this is a question about nothing.
+	// Answering it with absence would report "no record here" for a module that
+	// was never asked about — see coordinate.ErrZeroCoordinate.
+	if coord.IsZero() {
+		return domain2.ExampleRecord{}, false, coordinate.ErrZeroCoordinate
+	}
 	const q = `SELECT serialised, content_hash FROM example_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 
-	row := s.db.DB().QueryRowContext(ctx, q, coord.Path, coord.Version, pipelineVersion)
+	row := s.db.DB().QueryRowContext(ctx, q, coord.Path(), coord.Version(), pipelineVersion)
 	var blob []byte
 	var storedHash string
 	if err := row.Scan(&blob, &storedHash); errors.Is(err, sql.ErrNoRows) {
@@ -322,6 +334,12 @@ func (s *Store) FindBySymbol(ctx context.Context, symbol string, pipelineVersion
 // given symbol within a specific module@version. Applies the same
 // package-qualification stripping as FindBySymbol.
 func (s *Store) FindBySymbolInModule(ctx context.Context, coord coordinate.ModuleCoordinate, symbol string, pipelineVersion string) ([]ports.ExampleRef, error) {
+	// The zero coordinate names no module, so this is a question about nothing.
+	// Answering it with absence would report "no record here" for a module that
+	// was never asked about — see coordinate.ErrZeroCoordinate.
+	if coord.IsZero() {
+		return nil, coordinate.ErrZeroCoordinate
+	}
 	lookup := symbol
 	if idx := strings.Index(symbol, "."); idx >= 0 {
 		pkg := symbol[:idx]
@@ -338,7 +356,7 @@ func (s *Store) FindBySymbolInModule(ctx context.Context, coord coordinate.Modul
 	              AND associated_symbol = ? AND pipeline_version = ?
 	            ORDER BY example_name`
 
-	rows, err := s.db.DB().QueryContext(ctx, q, coord.Path, coord.Version, lookup, pipelineVersion)
+	rows, err := s.db.DB().QueryContext(ctx, q, coord.Path(), coord.Version(), lookup, pipelineVersion)
 	if err != nil {
 		return nil, fmt.Errorf("querying example index for %q in %s: %w", symbol, coord, err)
 	}

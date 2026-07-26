@@ -282,7 +282,7 @@ func fromCanonicalVCSHosts(hosts []string) *[]string {
 }
 
 func toCanonicalCoord(c coordinate.ModuleCoordinate) canonicalWalkCoord {
-	return canonicalWalkCoord{Path: c.Path, Version: c.Version}
+	return canonicalWalkCoord{Path: c.Path(), Version: c.Version()}
 }
 
 // fromCanonicalBuildEnv is the inverse of toCanonicalBuildEnv: a nil canonical
@@ -317,10 +317,10 @@ func canonicalWalkNodes(nodes []GraphNode) []canonicalWalkNode {
 	copy(sorted, nodes)
 	sort.Slice(sorted, func(i, j int) bool {
 		a, b := sorted[i].Coordinate, sorted[j].Coordinate
-		if a.Path != b.Path {
-			return a.Path < b.Path
+		if a.Path() != b.Path() {
+			return a.Path() < b.Path()
 		}
-		return a.Version < b.Version
+		return a.Version() < b.Version()
 	})
 
 	out := make([]canonicalWalkNode, len(sorted))
@@ -336,7 +336,7 @@ func canonicalWalkNodes(nodes []GraphNode) []canonicalWalkNode {
 			ZipSHA384:        n.Digests.SHA384,
 			ZipSHA512:        n.Digests.SHA512,
 		}
-		if n.OriginalCoordinate.Path != "" || n.OriginalCoordinate.Version != "" {
+		if n.OriginalCoordinate.Path() != "" || n.OriginalCoordinate.Version() != "" {
 			c := toCanonicalCoord(n.OriginalCoordinate)
 			out[i].OriginalCoordinate = &c
 		}
@@ -387,16 +387,16 @@ func canonicalWalkEdges(edges []GraphEdge) []canonicalWalkEdge {
 	copy(sorted, edges)
 	sort.Slice(sorted, func(i, j int) bool {
 		a, b := sorted[i], sorted[j]
-		if a.From.Path != b.From.Path {
-			return a.From.Path < b.From.Path
+		if a.From.Path() != b.From.Path() {
+			return a.From.Path() < b.From.Path()
 		}
-		if a.From.Version != b.From.Version {
-			return a.From.Version < b.From.Version
+		if a.From.Version() != b.From.Version() {
+			return a.From.Version() < b.From.Version()
 		}
-		if a.To.Path != b.To.Path {
-			return a.To.Path < b.To.Path
+		if a.To.Path() != b.To.Path() {
+			return a.To.Path() < b.To.Path()
 		}
-		return a.To.Version < b.To.Version
+		return a.To.Version() < b.To.Version()
 	})
 
 	out := make([]canonicalWalkEdge, len(sorted))
@@ -418,10 +418,10 @@ func canonicalNodeResults(results map[coordinate.ModuleCoordinate]NodeResult) ([
 		keys = append(keys, k)
 	}
 	sort.Slice(keys, func(i, j int) bool {
-		if keys[i].Path != keys[j].Path {
-			return keys[i].Path < keys[j].Path
+		if keys[i].Path() != keys[j].Path() {
+			return keys[i].Path() < keys[j].Path()
 		}
-		return keys[i].Version < keys[j].Version
+		return keys[i].Version() < keys[j].Version()
 	})
 
 	out := make([]canonicalNodeEntry, 0, len(keys))

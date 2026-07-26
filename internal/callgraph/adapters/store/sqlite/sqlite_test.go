@@ -130,7 +130,7 @@ func TestPutStoresCompressedBlob(t *testing.T) {
 	// Read the raw bytes directly from SQLite to confirm they are zstd-compressed.
 	row := s.InternalDB().DB().QueryRowContext(ctx,
 		"SELECT serialised FROM callgraph_records WHERE module_path = ? AND module_version = ?",
-		testCoord.Path, testCoord.Version,
+		testCoord.Path(), testCoord.Version(),
 	)
 	var blob []byte
 	if err := row.Scan(&blob); err != nil {
@@ -273,7 +273,7 @@ func TestListCallGraphRecords_LimitOffset(t *testing.T) {
 	}
 	for _, c := range coords {
 		if err := s.PutCallGraphRecord(ctx, makeRecord(c, "0.1.0")); err != nil {
-			t.Fatalf("put %s: %v", c.Path, err)
+			t.Fatalf("put %s: %v", c.Path(), err)
 		}
 	}
 

@@ -119,7 +119,7 @@ func (f *fakeFacts) PutFetchRecord(_ context.Context, sealed fetchdomain.SealedR
 }
 
 func (f *fakeFacts) GetFetchRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (fetchdomain.CompositeRecord, bool, error) {
-	key := coord.Path + "@" + coord.Version + "#" + pv
+	key := coord.Path() + "@" + coord.Version() + "#" + pv
 	f.mu.Lock()
 	r, ok := f.records[key]
 	f.mu.Unlock()

@@ -119,11 +119,11 @@ func TestGenerateNotice_HappyPath(t *testing.T) {
 	}
 
 	// Verify sorted order: a before b.
-	if result.Entries[0].Coordinate.Path != "example.com/a" {
-		t.Errorf("entries[0].Path = %q, want example.com/a", result.Entries[0].Coordinate.Path)
+	if result.Entries[0].Coordinate.Path() != "example.com/a" {
+		t.Errorf("entries[0].Path = %q, want example.com/a", result.Entries[0].Coordinate.Path())
 	}
-	if result.Entries[1].Coordinate.Path != "example.com/b" {
-		t.Errorf("entries[1].Path = %q, want example.com/b", result.Entries[1].Coordinate.Path)
+	if result.Entries[1].Coordinate.Path() != "example.com/b" {
+		t.Errorf("entries[1].Path = %q, want example.com/b", result.Entries[1].Coordinate.Path())
 	}
 
 	// Verify verbatim text.
@@ -361,7 +361,7 @@ func TestGenerateNotice_Deterministic(t *testing.T) {
 		}
 		var paths []string
 		for _, e := range result.Entries {
-			paths = append(paths, e.Coordinate.Path)
+			paths = append(paths, e.Coordinate.Path())
 		}
 		if i == 0 {
 			paths1 = paths

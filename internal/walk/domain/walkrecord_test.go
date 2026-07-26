@@ -810,7 +810,7 @@ func TestWalkRecordHasher_LocalReplaceRoundTrip(t *testing.T) {
 
 	var depNode domain3.GraphNode
 	for _, n := range round.Graph.Nodes {
-		if n.Coordinate.Path == originalCoord.Path {
+		if n.Coordinate.Path() == originalCoord.Path() {
 			depNode = n
 		}
 	}

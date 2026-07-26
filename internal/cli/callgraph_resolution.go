@@ -80,7 +80,10 @@ func rootPartialStatus(ctx context.Context, symbolID string, uc QueryCallGraphUs
 		if s.ModulePath != modulePath {
 			continue
 		}
-		coord := coordinate.ModuleCoordinate{Path: s.ModulePath, Version: s.ModuleVersion}
+		coord, cErr := coordinate.NewModuleCoordinate(s.ModulePath, s.ModuleVersion)
+		if cErr != nil {
+			return "", false, nil, fmt.Errorf("call graph record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
+		}
 		rec, found, gerr := uc.GetCallGraphRecord(ctx, coord, s.PipelineVersion)
 		if gerr != nil {
 			return "", false, nil, fmt.Errorf("loading call graph for %s: %w", coord, gerr)
@@ -130,7 +133,10 @@ func rootCompletenessCaveat(ctx context.Context, symbolID string, uc QueryCallGr
 		if s.ModulePath != modulePath {
 			continue
 		}
-		coord := coordinate.ModuleCoordinate{Path: s.ModulePath, Version: s.ModuleVersion}
+		coord, cErr := coordinate.NewModuleCoordinate(s.ModulePath, s.ModuleVersion)
+		if cErr != nil {
+			return "", fmt.Errorf("call graph record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
+		}
 		rec, found, gerr := uc.GetCallGraphRecord(ctx, coord, s.PipelineVersion)
 		if gerr != nil {
 			return "", fmt.Errorf("loading call graph for %s: %w", coord, gerr)
@@ -189,7 +195,10 @@ func negativeCallVerdict(ctx context.Context, symbolID string, scanDispatch bool
 	}
 	belowFull := domain.CompletenessUnknown
 	for _, s := range owning {
-		coord := coordinate.ModuleCoordinate{Path: s.ModulePath, Version: s.ModuleVersion}
+		coord, cErr := coordinate.NewModuleCoordinate(s.ModulePath, s.ModuleVersion)
+		if cErr != nil {
+			return domain.Verdict{}, fmt.Errorf("call graph record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
+		}
 		rec, found, gerr := uc.GetCallGraphRecord(ctx, coord, s.PipelineVersion)
 		if gerr != nil {
 			return domain.Verdict{}, fmt.Errorf("loading call graph for %s: %w", coord, gerr)
@@ -320,7 +329,10 @@ func symbolIsKnownNode(ctx context.Context, uc QueryCallGraphUseCase, symbolID, 
 		if s.ModulePath != modulePath {
 			continue
 		}
-		coord := coordinate.ModuleCoordinate{Path: s.ModulePath, Version: s.ModuleVersion}
+		coord, cErr := coordinate.NewModuleCoordinate(s.ModulePath, s.ModuleVersion)
+		if cErr != nil {
+			return false, fmt.Errorf("call graph record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
+		}
 		rec, found, err := uc.GetCallGraphRecord(ctx, coord, s.PipelineVersion)
 		if err != nil {
 			return false, fmt.Errorf("loading call graph for %s: %w", coord, err)

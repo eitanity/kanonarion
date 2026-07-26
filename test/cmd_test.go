@@ -134,11 +134,11 @@ func cmdSeedWalk(args []string) {
 	for _, node := range latestWalk.Graph.Nodes {
 		buf := new(bytes.Buffer)
 		zw := zip.NewWriter(buf)
-		f, _ := zw.Create(node.Coordinate.Path + "@" + node.Coordinate.Version + "/README")
+		f, _ := zw.Create(node.Coordinate.Path() + "@" + node.Coordinate.Version() + "/README")
 		_, _ = f.Write([]byte("zip content for " + node.Coordinate.String()))
 		_ = zw.Close()
 		zipContent := buf.Bytes()
-		modContent := []byte("module " + node.Coordinate.Path + "\n")
+		modContent := []byte("module " + node.Coordinate.Path() + "\n")
 
 		modHash, _ := dirhash.Hash1([]string{"go.mod"}, func(string) (io.ReadCloser, error) {
 			return io.NopCloser(bytes.NewReader(modContent)), nil

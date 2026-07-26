@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -93,6 +94,12 @@ func (s *Store) Close() error {
 // PutWalk inserts or replaces a walk record. Verifies the ContentHash before
 // storage. Idempotent on ID.
 func (s *Store) PutWalk(ctx context.Context, rec domain.WalkRecord) error {
+	// A record whose coordinate is the zero value would key a row on the empty
+	// path at the empty version, which every later read treats as a genuine
+	// measurement of a module that does not exist.
+	if rec.Graph.Target.IsZero() {
+		return coordinate.ErrZeroCoordinate
+	}
 	var h domain.WalkRecordHasher
 	if err := h.VerifyContentHash(rec); err != nil {
 		return fmt.Errorf("verifying content hash before put: %w", err)
@@ -140,7 +147,7 @@ ON CONFLICT (id) DO UPDATE SET
     serialised       = excluded.serialised`
 
 	_, err = s.db.DB().ExecContext(ctx, q,
-		rec.ID, rec.Target.Path, rec.Target.Version,
+		rec.ID, rec.Target.Path(), rec.Target.Version(),
 		rec.StartedAt.UTC().Format(time.RFC3339),
 		rec.CompletedAt.UTC().Format(time.RFC3339),
 		int(rec.OverallStatus),
@@ -198,10 +205,11 @@ func (s *Store) ListWalks(ctx context.Context, filter walkports.WalkFilter) ([]w
 	for rows.Next() {
 		var sum walkports.WalkSummary
 		var startedAt, completedAt, scope, depth string
+		var targetPath, targetVersion string
 		var status int
 		if serr := rows.Scan(
 			&sum.ID,
-			&sum.Target.Path, &sum.Target.Version,
+			&targetPath, &targetVersion,
 			&startedAt, &completedAt,
 			&status,
 			&sum.NodeCount, &sum.FailureCount,
@@ -217,6 +225,15 @@ func (s *Store) ListWalks(ctx context.Context, filter walkports.WalkFilter) ([]w
 		if perr != nil {
 			return nil, fmt.Errorf("parsing completed_at %q: %w", completedAt, perr)
 		}
+		// The row's two module columns are put back together through the
+		// constructor rather than written straight into the summary: a stored pair
+		// that is not a coordinate is a corrupt row, and a listing that renders it
+		// as a module is how it would go unnoticed.
+		target, cErr := coordinate.NewModuleCoordinate(targetPath, targetVersion)
+		if cErr != nil {
+			return nil, fmt.Errorf("walk summary %s names no target module (%s@%s): %w", sum.ID, targetPath, targetVersion, cErr)
+		}
+		sum.Target = target
 		sum.StartedAt = t1.UTC()
 		sum.CompletedAt = t2.UTC()
 		sum.OverallStatus = domain.WalkStatus(status)
@@ -257,7 +274,7 @@ func buildListQuery(f walkports.WalkFilter) (string, []any) {
 
 	if f.Target != nil {
 		conditions = append(conditions, "target_path = ? AND target_version = ?")
-		args = append(args, f.Target.Path, f.Target.Version)
+		args = append(args, f.Target.Path(), f.Target.Version())
 	}
 	if f.Since != nil {
 		conditions = append(conditions, "started_at >= ?")

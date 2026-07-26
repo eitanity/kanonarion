@@ -95,7 +95,7 @@ func printExampleRecord(r domain.ExampleRecord, fromCache bool, jsonOut bool, st
 		cached = " (cached)"
 	}
 	if _, err := fmt.Fprintf(stdout, "%s@%s: %s — %d example(s)%s\n",
-		r.Coordinate.Path, r.Coordinate.Version,
+		r.Coordinate.Path(), r.Coordinate.Version(),
 		r.OverallStatus.String(), len(r.Examples),
 		cached,
 	); err != nil {
@@ -314,8 +314,8 @@ func runExamplesListForModule(ctx context.Context, moduleArg string, uc QueryExa
 		out := make([]exampleRefJSON, 0, len(r.Examples))
 		for _, e := range r.Examples {
 			out = append(out, exampleRefJSON{
-				ModulePath:       r.Coordinate.Path,
-				ModuleVersion:    r.Coordinate.Version,
+				ModulePath:       r.Coordinate.Path(),
+				ModuleVersion:    r.Coordinate.Version(),
 				PipelineVersion:  r.PipelineVersion,
 				Package:          e.Package,
 				AssociatedSymbol: e.AssociatedSymbol,

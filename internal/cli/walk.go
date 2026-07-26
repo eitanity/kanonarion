@@ -214,9 +214,11 @@ func runWalkProject(
 	}
 
 	// The main module is local and unpublished; pin it at the synthetic
-	// LocalVersion rather than a semver. NewModuleCoordinate is bypassed because
-	// "local" is not valid semver — the constant is the one exception it allows.
-	target := coordinate.ModuleCoordinate{Path: modulePath, Version: coordinate.LocalVersion}
+	// LocalVersion rather than a semver.
+	target, err := coordinate.NewLocalCoordinate(modulePath)
+	if err != nil {
+		return fmt.Errorf("project coordinate for %s: %w", modulePath, err)
+	}
 
 	policy, policyHash, err := loadPolicy(ctx, policyPath, logger)
 	if err != nil {

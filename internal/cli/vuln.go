@@ -43,7 +43,7 @@ func printVulnRecord(stdout io.Writer, rec vuldomain.VulnerabilityRecord) {
 	if rec.OverallStatus == vuldomain.StatusUnscannable && rec.UnscanReason != "" {
 		label = fmt.Sprintf("%s (%s)", rec.OverallStatus, rec.UnscanReason)
 	}
-	_, _ = fmt.Fprintf(stdout, "%s@%s — %s\n", rec.Coordinate.Path, rec.Coordinate.Version, label)
+	_, _ = fmt.Fprintf(stdout, "%s@%s — %s\n", rec.Coordinate.Path(), rec.Coordinate.Version(), label)
 	_, _ = fmt.Fprintf(stdout, "  Walk:            %s\n", rec.WalkID)
 	// First and last validated are stated as distinct facts: when the verdict was
 	// first established versus the run that last re-confirmed it. The reader, not

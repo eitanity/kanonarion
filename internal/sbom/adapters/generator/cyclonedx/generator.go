@@ -205,7 +205,7 @@ func (g *Generator) buildBOM(
 
 // moduleRef projects a fetch ModuleCoordinate onto the sbom-domain identity.
 func moduleRef(coord coordinate.ModuleCoordinate) domain.ModuleRef {
-	return domain.ModuleRef{Path: coord.Path, Version: coord.Version}
+	return domain.ModuleRef{Path: coord.Path(), Version: coord.Version()}
 }
 
 // buildComponent maps an assembled domain Component to a CycloneDX Component.
@@ -483,7 +483,7 @@ type mainComponentOptions struct {
 // own version. A subject that is the local main module is always an application;
 // version and licence overrides are applied only when the caller supplied them.
 func mainComponentOptionsFor(target coordinate.ModuleCoordinate, req ports.GenerateRequest) mainComponentOptions {
-	if target.Version != coordinate.LocalVersion {
+	if target.Version() != coordinate.LocalVersion {
 		return mainComponentOptions{}
 	}
 	return mainComponentOptions{

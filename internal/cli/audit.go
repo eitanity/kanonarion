@@ -239,7 +239,10 @@ func auditScope(
 	}
 
 	// The project walk's target is the local main module; find its record.
-	localCoord := coordinate.ModuleCoordinate{Path: modulePath, Version: coordinate.LocalVersion}
+	localCoord, cErr := coordinate.NewLocalCoordinate(modulePath)
+	if cErr != nil {
+		return nil, fmt.Errorf("project coordinate for %s: %w", modulePath, cErr)
+	}
 	walkScope := walkdomain.WalkScope(scope)
 	walks, qerr := ctr.QueryWalks.ListWalks(ctx, walkports.WalkFilter{Target: &localCoord, Scope: &walkScope, Limit: 1})
 	if qerr != nil {
@@ -341,7 +344,7 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, sc
 	}
 
 	if proxy != nil {
-		if info, lerr := proxy.LatestInfo(ctx, coord.Path); lerr == nil && info.Version != coord.Version {
+		if info, lerr := proxy.LatestInfo(ctx, coord.Path()); lerr == nil && info.Version != coord.Version() {
 			res.IsLatest = false
 			res.LatestVersion = info.Version
 			if !info.Time.IsZero() {

@@ -100,7 +100,7 @@ func runSymbolContext(ctx context.Context, symbolName string, f symbolContextFla
 		}
 		var filtered []ifaceports.SymbolRef
 		for _, ref := range refs {
-			if ref.ModulePath == coord.Path && ref.ModuleVersion == coord.Version {
+			if ref.ModulePath == coord.Path() && ref.ModuleVersion == coord.Version() {
 				filtered = append(filtered, ref)
 			}
 		}
@@ -203,7 +203,10 @@ func buildSymbolContextEntries(ctx context.Context, ctr *Container, refs []iface
 
 	entries := make([]symbolContextEntry, 0, len(refs))
 	for _, mk := range order {
-		coord := coordinate.ModuleCoordinate{Path: mk.path, Version: mk.version}
+		coord, cErr := coordinate.NewModuleCoordinate(mk.path, mk.version)
+		if cErr != nil {
+			return nil, fmt.Errorf("symbol reference %s@%s names no module: %w", mk.path, mk.version, cErr)
+		}
 
 		// Best-effort: missing interface record means empty doc.
 		ifaceRec, _, _ := ctr.QueryInterface.GetInterfaceRecord(ctx, coord, pipelineVersion)

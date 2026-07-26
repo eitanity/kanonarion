@@ -201,15 +201,15 @@ func runVulnScan(ctx context.Context, walkID string, f commonWalkFlags, force, f
 			writeVulnScanProgress(record, coord, current, total, stderr)
 			switch record.OverallStatus {
 			case vuldomain.StatusScanFailed:
-				failedCoords = append(failedCoords, coord.Path+"@"+coord.Version)
+				failedCoords = append(failedCoords, coord.Path()+"@"+coord.Version())
 			case vuldomain.StatusAffected:
-				affected = append(affected, vulnScanAffected{coord: coord.Path + "@" + coord.Version, record: record})
+				affected = append(affected, vulnScanAffected{coord: coord.Path() + "@" + coord.Version(), record: record})
 			// Every Unscannable is bucketed, not just the out-of-toolchain one:
 			// the same advisory matching ran for all of them, so a record that
 			// appeared in no roll-up was being hidden from the reader on the
 			// strength of its reason code alone.
 			case vuldomain.StatusUnscannable:
-				unscannable.add(record.UnscanReason, coord.Path+"@"+coord.Version, record.UnscannableReason)
+				unscannable.add(record.UnscanReason, coord.Path()+"@"+coord.Version(), record.UnscannableReason)
 			}
 		},
 	})
@@ -257,7 +257,7 @@ func writeVulnScanProgress(record vuldomain.VulnerabilityRecord, coord coordinat
 		// it so the line does not read as a fresh scan that never happened.
 		status += " (reused — same snapshot)"
 	}
-	_, _ = fmt.Fprintf(w, "  [%d/%d] %s@%s — %s\n", current, total, coord.Path, coord.Version, status)
+	_, _ = fmt.Fprintf(w, "  [%d/%d] %s@%s — %s\n", current, total, coord.Path(), coord.Version(), status)
 	if record.OverallStatus == vuldomain.StatusScanFailed && record.ErrorDetail != "" {
 		_, _ = fmt.Fprintf(w, "      reason: %s\n", record.ErrorDetail)
 	}

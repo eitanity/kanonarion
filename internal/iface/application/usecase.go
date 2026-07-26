@@ -95,8 +95,8 @@ type ExtractResult struct {
 // infrastructure errors (store access, blob I/O) return errors.
 func (uc *ExtractInterfaceUseCase) Execute(ctx context.Context, req ExtractRequest) (_ ExtractResult, retErr error) {
 	log := uc.logger.With(
-		slog.String("extraction.module.path", req.Coordinate.Path),
-		slog.String("extraction.module.version", req.Coordinate.Version),
+		slog.String("extraction.module.path", req.Coordinate.Path()),
+		slog.String("extraction.module.version", req.Coordinate.Version()),
 		slog.String("extraction.stage", "interface"),
 		slog.String("pipeline_version", uc.pipelineVersion),
 	)
@@ -225,7 +225,7 @@ func (uc *ExtractInterfaceUseCase) extractFromZip(
 
 	// Strip the "module@version/" prefix so paths inside the FS are
 	// relative to the module root (e.g., "net/http/server.go").
-	modulePrefix := coord.Path + "@" + coord.Version + "/"
+	modulePrefix := coord.Path() + "@" + coord.Version() + "/"
 	stripped := archive.FS(modulePrefix)
 
 	record, err := uc.extractor.Extract(ctx, stripped, coord)

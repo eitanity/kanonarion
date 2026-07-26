@@ -105,7 +105,7 @@ func TestPutGetWalkRecord(t *testing.T) {
 	if got.OverallStatus != rec.OverallStatus {
 		t.Errorf("OverallStatus: got %v, want %v", got.OverallStatus, rec.OverallStatus)
 	}
-	if got.Target.Path != rec.Target.Path || got.Target.Version != rec.Target.Version {
+	if got.Target.Path() != rec.Target.Path() || got.Target.Version() != rec.Target.Version() {
 		t.Errorf("Target: got %v, want %v", got.Target, rec.Target)
 	}
 	if len(got.PerNodeResults) != len(rec.PerNodeResults) {

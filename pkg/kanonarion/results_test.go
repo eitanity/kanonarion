@@ -142,7 +142,7 @@ func TestResultTypes_TableNamesUnique(t *testing.T) {
 // that the new method is still read-shape plumbing, never a hasher (which
 // behaviourMethodMarkers rejects outright regardless of this list).
 var allowedResultMethods = map[string][]string{
-	"ModuleCoordinate":    {"ExtractCommitPrefix", "IsLocal", "IsPseudoVersion", "MarshalJSON", "MarshalText", "String", "UnmarshalJSON", "UnmarshalText"},
+	"ModuleCoordinate":    {"ExtractCommitPrefix", "HasVersion", "IsLocal", "IsPseudoVersion", "IsZero", "MarshalJSON", "MarshalText", "Path", "String", "UnmarshalJSON", "UnmarshalText", "Version"},
 	"FactRecord":          {"Coordinate", "IsGoModOnly"},
 	"WalkRecord":          {},
 	"LicenseRecord":       {"SortFiles"},
@@ -178,7 +178,10 @@ var behaviourMethodMarkers = []string{
 // bidirectional alias-identity assertions above do NOT catch, because a zero
 // value T{} still compiles after a field is removed from the underlying record.
 var allowedResultFields = map[string][]string{
-	"ModuleCoordinate":    {"Path", "Version"},
+	// ModuleCoordinate is a value object, not a record: it reads through the
+	// Path and Version accessors listed in valueObjectAccessors, and has no
+	// exported fields at all. See that map for why the field baseline is empty.
+	"ModuleCoordinate":    {},
 	"FactRecord":          {"ContentHash", "ContentLocation", "Ecosystem", "FetchedAt", "GitCommitHash", "GitRef", "GitURL", "GoModHash", "GoModLocation", "ModuleHash", "ModulePath", "ModuleVersion", "PipelineVersion", "Retracted", "SchemaVersion", "VerificationDetail", "VerificationStatus"},
 	"WalkRecord":          {"CompletedAt", "ContentHash", "Depth", "Ecosystem", "Graph", "ID", "Operator", "OverallStatus", "PerNodeResults", "PipelineVersion", "PolicyHash", "PolicyVersion", "SchemaVersion", "Scope", "StageDepths", "StartedAt", "Target"},
 	"LicenseRecord":       {"ContentHash", "Coordinate", "CopyrightStatus", "Ecosystem", "EffectiveSet", "Expression", "ExtractedAt", "FailureDetail", "LicenseFiles", "OverallStatus", "PackageLicenses", "PipelineVersion", "PrimaryConfidence", "PrimarySPDX", "Provenance", "SchemaVersion"},
@@ -326,6 +329,27 @@ func TestResultTypes_FieldAddOnlyGrowth(t *testing.T) {
 	}
 }
 
+// valueObjectAccessors names the result types that are value objects rather
+// than records, and the accessor methods that carry what used to be exported
+// fields.
+//
+// A record is a read shape: the pipeline produced it, a consumer reads fields
+// off it, and nothing about it can be wrong. A value object is an identity a
+// consumer CONSTRUCTS and hands back in, so it is the one kind of published
+// type whose invariants have to hold on the way in as well as out. Exported
+// fields cannot express that: ModuleCoordinate's doc claimed for years that it
+// was always built through its constructor while dozens of call sites wrote the
+// struct literal instead, and the claim decayed at the rate the codebase
+// changed. Unexporting the fields is what makes the compiler the enforcer.
+//
+// The read-shape guards below therefore check the accessors for these types
+// instead of the fields, so a value object still cannot quietly drop the way a
+// consumer reads it. Adding a type here is a deliberate v0 contract change, not
+// a way to opt out of the checks.
+var valueObjectAccessors = map[string][]string{
+	"ModuleCoordinate": {"Path", "Version"},
+}
+
 // TestResultTypes_ReadShaped asserts every result alias is a struct exposing at
 // least one exported field. "Read-shaped" (§2.1) means consumers read
 // the data off exported fields; a result type with no exported field would be
@@ -344,6 +368,19 @@ func TestResultTypes_ReadShaped(t *testing.T) {
 			if typ.Field(i).IsExported() {
 				exported++
 			}
+		}
+		accessors, isValueObject := valueObjectAccessors[entry.name]
+		if isValueObject {
+			if exported != 0 {
+				t.Errorf("value-object result type %q exposes exported fields; its invariants must be enforced by the constructor, not left writable", typ)
+			}
+			ptr := reflect.PointerTo(typ)
+			for _, want := range accessors {
+				if _, ok := ptr.MethodByName(want); !ok {
+					t.Errorf("value-object result type %q lost accessor %s; a consumer can no longer read it across the boundary", typ, want)
+				}
+			}
+			continue
 		}
 		if exported == 0 {
 			t.Errorf("result type %q exposes no exported fields; cannot be read across the boundary", typ)

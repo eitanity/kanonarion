@@ -194,8 +194,8 @@ func (r *GraphResolver) workers() int {
 // is set.
 func (r *GraphResolver) Resolve(ctx context.Context, target coordinate.ModuleCoordinate, depth domain3.StageDepth) (domain3.Graph, error) {
 	r.logger.InfoContext(ctx, "walk.resolve.start",
-		slog.String("module.path", target.Path),
-		slog.String("module.version", target.Version),
+		slog.String("module.path", target.Path()),
+		slog.String("module.version", target.Version()),
 		slog.String("pipeline_version", r.pipelineVersion),
 	)
 
@@ -241,8 +241,8 @@ func (r *GraphResolver) Resolve(ctx context.Context, target coordinate.ModuleCoo
 // scopeModules keeps the whole build list (the complete scope).
 func (r *GraphResolver) ResolveProject(ctx context.Context, target coordinate.ModuleCoordinate, goModBytes []byte, projectDir string, depth domain3.StageDepth, scopeModules []string, stdlibFromGoMod, force bool) (domain3.Graph, error) {
 	r.logger.InfoContext(ctx, "walk.resolve_project.start",
-		slog.String("module.path", target.Path),
-		slog.String("module.version", target.Version),
+		slog.String("module.path", target.Path()),
+		slog.String("module.version", target.Version()),
 		slog.Bool("scoped", scopeModules != nil),
 		slog.String("pipeline_version", r.pipelineVersion),
 	)
@@ -273,9 +273,9 @@ func (r *GraphResolver) ResolveProject(ctx context.Context, target coordinate.Mo
 	// A scoped walk (code or tool) restricts the build-list graph to the caller's
 	// module set plus the project anchor; the complete scope (nil) keeps it whole.
 	if scopeModules != nil {
-		g = domain3.FilterGraphToScope(g, target.Path, scopeModules)
+		g = domain3.FilterGraphToScope(g, target.Path(), scopeModules)
 		r.logger.InfoContext(ctx, "walk.scope.complete",
-			slog.String("module.path", target.Path),
+			slog.String("module.path", target.Path()),
 			slog.Int("node_count", len(g.Nodes)),
 		)
 	}
@@ -306,7 +306,7 @@ func (r *GraphResolver) injectStdlib(ctx context.Context, g *domain3.Graph, targ
 	node, ok := domain3.StdlibNode(version)
 	if !ok {
 		r.logger.InfoContext(ctx, "walk.stdlib.skipped",
-			slog.String("module.path", target.Path),
+			slog.String("module.path", target.Path()),
 			slog.String("reason", "toolchain version undeterminable"),
 		)
 		return
@@ -314,7 +314,7 @@ func (r *GraphResolver) injectStdlib(ctx context.Context, g *domain3.Graph, targ
 
 	// Guard against a duplicate if a future build list ever lists stdlib directly.
 	for _, existing := range g.Nodes {
-		if existing.Coordinate.Path == domain3.StdlibModulePath {
+		if existing.Coordinate.Path() == domain3.StdlibModulePath {
 			return
 		}
 	}
@@ -330,8 +330,8 @@ func (r *GraphResolver) injectStdlib(ctx context.Context, g *domain3.Graph, targ
 	g.Sort()
 
 	r.logger.InfoContext(ctx, "walk.stdlib.injected",
-		slog.String("module.path", target.Path),
-		slog.String("stdlib.version", node.Coordinate.Version),
+		slog.String("module.path", target.Path()),
+		slog.String("stdlib.version", node.Coordinate.Version()),
 		slog.Bool("from_gomod", fromGoMod),
 		slog.Bool("custody", node.Stdlib != nil),
 	)
@@ -349,7 +349,7 @@ func (r *GraphResolver) acquireStdlibCustody(ctx context.Context, node *domain3.
 	facts, digests, err := r.stdlib.AcquireStdlib(ctx, version, force, r.skipVCSVerify)
 	if err != nil {
 		r.logger.WarnContext(ctx, "walk.stdlib.custody_unavailable",
-			slog.String("stdlib.version", node.Coordinate.Version),
+			slog.String("stdlib.version", node.Coordinate.Version()),
 			slog.String("error", err.Error()),
 		)
 		return
@@ -436,16 +436,16 @@ func (r *GraphResolver) resolveProjectFallback(ctx context.Context, target coord
 // nodes are never fetched, so they never mark the graph Partial.
 func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target coordinate.ModuleCoordinate, bl walkports.BuildList, scopeModules []string) domain3.Graph {
 	st := &resolveState{
-		selected: map[string]string{target.Path: target.Version},
+		selected: map[string]string{target.Path(): target.Version()},
 		nodes:    map[string]domain3.GraphNode{},
 	}
 
 	// nodeByPath maps a build-list module's own path to the coordinate of the node
 	// representing it (the replacement coordinate when a module replace applies, the
 	// anchor for the main module). Used to normalise `go mod graph` endpoints.
-	nodeByPath := map[string]coordinate.ModuleCoordinate{target.Path: target}
+	nodeByPath := map[string]coordinate.ModuleCoordinate{target.Path(): target}
 
-	st.nodes[target.Path] = domain3.GraphNode{
+	st.nodes[target.Path()] = domain3.GraphNode{
 		Coordinate:       target,
 		DirectDependency: false,
 		ResolutionSource: domain3.ResolutionLocalMainModule,
@@ -512,8 +512,8 @@ func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target coordin
 		node := st.nodes[t.path]
 		if err := results[i].err; err != nil {
 			r.logger.WarnContext(ctx, "walk.fetch.failed",
-				slog.String("module.path", t.coord.Path),
-				slog.String("module.version", t.coord.Version),
+				slog.String("module.path", t.coord.Path()),
+				slog.String("module.version", t.coord.Version()),
 				slog.String("error.type", "fetch_failed"),
 				slog.String("error", err.Error()),
 			)
@@ -532,14 +532,14 @@ func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target coordin
 	for _, e := range bl.Edges {
 		from := normaliseEndpoint(e.From, nodeByPath)
 		toRaw := parseGraphToken(e.To)
-		if isPseudoNode(from.Path) || isPseudoNode(toRaw.Path) {
+		if isPseudoNode(from.Path()) || isPseudoNode(toRaw.Path()) {
 			continue
 		}
 		to := toRaw
-		if c, ok := nodeByPath[toRaw.Path]; ok {
+		if c, ok := nodeByPath[toRaw.Path()]; ok {
 			to = c
 		}
-		edge := domain3.GraphEdge{From: from, To: to, ConstraintVersion: toRaw.Version}
+		edge := domain3.GraphEdge{From: from, To: to, ConstraintVersion: toRaw.Version()}
 		key := edge.From.String() + " -> " + edge.To.String()
 		if seen[key] {
 			continue
@@ -566,7 +566,7 @@ func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target coordin
 	g.Sort()
 
 	r.logger.InfoContext(ctx, "walk.resolve_project.complete",
-		slog.String("module.path", target.Path),
+		slog.String("module.path", target.Path()),
 		slog.Int("node_count", len(g.Nodes)),
 		slog.Int("edge_count", len(g.Edges)),
 		slog.Bool("partial", g.Partial),
@@ -586,10 +586,10 @@ func inFetchScope(scopeSet map[string]bool, node domain3.GraphNode) bool {
 	if scopeSet == nil {
 		return true
 	}
-	if scopeSet[node.Coordinate.Path] {
+	if scopeSet[node.Coordinate.Path()] {
 		return true
 	}
-	orig := node.OriginalCoordinate.Path
+	orig := node.OriginalCoordinate.Path()
 	return orig != "" && scopeSet[orig]
 }
 
@@ -601,13 +601,13 @@ func inFetchScope(scopeSet map[string]bool, node domain3.GraphNode) bool {
 // list can run concurrently. Must run sequentially (mutates st.selected).
 func (r *GraphResolver) buildListNodeSkeleton(m walkports.BuildListModule, st *resolveState) (domain3.GraphNode, bool) {
 	direct := !m.Indirect
-	orig := coordinate.ModuleCoordinate{Path: m.Path, Version: m.Version}
+	orig := coordOrPathOnly(m.Path, m.Version)
 
 	// Filesystem replacement: a directory target with no version. Not fetchable —
 	// recorded as a local-replace node for downstream skip-with-reason.
 	if m.Replace != nil && m.Replace.Version == "" {
 		st.hasLocalReplace = true
-		st.selected[orig.Path] = orig.Version
+		st.selected[orig.Path()] = orig.Version()
 		return domain3.GraphNode{
 			Coordinate:         orig,
 			DirectDependency:   direct,
@@ -621,21 +621,73 @@ func (r *GraphResolver) buildListNodeSkeleton(m walkports.BuildListModule, st *r
 	source := domain3.ResolutionMVS
 	var original coordinate.ModuleCoordinate
 	if m.Replace != nil {
-		effective = coordinate.ModuleCoordinate{Path: m.Replace.Path, Version: m.Replace.Version}
+		effective = coordOrPathOnly(m.Replace.Path, m.Replace.Version)
 		source = domain3.ResolutionReplace
 		original = orig
 	}
 	// Selection is tracked under the module's own path — the toolchain already
 	// settled MVS, and a replacement target's version belongs to the replaced
 	// entry, not to any independent requirement on that same path.
-	st.selected[orig.Path] = orig.Version
+	st.selected[orig.Path()] = orig.Version()
 
+	// A node whose coordinate carries no version is kept, because the edges
+	// around it are still true, but it is not fetched: there is no version to
+	// fetch at, and inventing one would record a measurement of a module the
+	// build list never named.
 	return domain3.GraphNode{
 		Coordinate:         effective,
 		DirectDependency:   direct,
 		ResolutionSource:   source,
 		OriginalCoordinate: original,
-	}, true
+	}, effective.HasVersion()
+}
+
+// repinEdgesToSelected rewrites each edge's target to the MVS-selected version
+// of its path, leaving edges into replaced modules alone.
+//
+// The endpoint is replaced rather than edited: a coordinate is immutable, so
+// the selected version is applied by constructing the coordinate it names. A
+// selection that is not a version leaves the edge naming what it already
+// named, since an edge to a versionless target is a worse answer than an edge
+// to the version the graph already had.
+func repinEdgesToSelected(st *resolveState) {
+	pinnedTargets := make(map[string]bool, len(st.nodes))
+	for _, n := range st.nodes {
+		if n.OriginalCoordinate.Path() != "" {
+			pinnedTargets[n.Coordinate.String()] = true
+		}
+	}
+	for i := range st.edges {
+		if pinnedTargets[st.edges[i].To.String()] {
+			continue
+		}
+		sel, ok := st.selected[st.edges[i].To.Path()]
+		if !ok {
+			continue
+		}
+		if repinned, err := coordinate.NewModuleCoordinate(st.edges[i].To.Path(), sel); err == nil {
+			st.edges[i].To = repinned
+		}
+	}
+}
+
+// coordOrPathOnly returns the coordinate for path@version, falling back to the
+// path-only form when version is not a version. The caller tells the two apart
+// with HasVersion, so the one about to fetch can decline.
+//
+// The build list comes from the toolchain, so the fallback is the unusual case
+// rather than the expected one. It exists because the alternative — carrying
+// the unparsed version string on into a coordinate — is what let a node reach
+// the fetcher at a coordinate no proxy could serve.
+func coordOrPathOnly(path, version string) coordinate.ModuleCoordinate {
+	if coord, err := coordinate.NewModuleCoordinate(path, version); err == nil {
+		return coord
+	}
+	coord, err := coordinate.NewPathOnlyCoordinate(path)
+	if err != nil {
+		return coordinate.ModuleCoordinate{}
+	}
+	return coord
 }
 
 // fetchResult pairs a fetched fact record with any per-coordinate fetch error.
@@ -674,9 +726,20 @@ func (r *GraphResolver) fetchLevel(ctx context.Context, coords []coordinate.Modu
 // empty version.
 func parseGraphToken(tok string) coordinate.ModuleCoordinate {
 	if i := strings.LastIndex(tok, "@"); i >= 0 {
-		return coordinate.ModuleCoordinate{Path: tok[:i], Version: tok[i+1:]}
+		coord, err := coordinate.NewModuleCoordinate(tok[:i], tok[i+1:])
+		if err == nil {
+			return coord
+		}
+		// The token carries an "@" but not a version. Fall through to the
+		// path-only form: endpoints are normalised by path, so the edge keeps its
+		// shape, and no version is invented for it.
+		tok = tok[:i]
 	}
-	return coordinate.ModuleCoordinate{Path: tok}
+	coord, err := coordinate.NewPathOnlyCoordinate(tok)
+	if err != nil {
+		return coordinate.ModuleCoordinate{}
+	}
+	return coord
 }
 
 // normaliseEndpoint parses a graph endpoint token and, when its path is a known
@@ -684,7 +747,7 @@ func parseGraphToken(tok string) coordinate.ModuleCoordinate {
 // connect the same nodes the build list produced.
 func normaliseEndpoint(tok string, nodeByPath map[string]coordinate.ModuleCoordinate) coordinate.ModuleCoordinate {
 	raw := parseGraphToken(tok)
-	if c, ok := nodeByPath[raw.Path]; ok {
+	if c, ok := nodeByPath[raw.Path()]; ok {
 		return c
 	}
 	return raw
@@ -732,11 +795,11 @@ func (r *GraphResolver) resolveFromParsed(
 	// only down pre-pruning (go < 1.17) chains.
 	roots := make(map[string]bool, len(targetParsed.Require))
 	for _, req := range targetParsed.Require {
-		roots[req.Coordinate.Path] = true
+		roots[req.Coordinate.Path()] = true
 	}
 
 	st := &resolveState{
-		selected:     map[string]string{target.Path: target.Version},
+		selected:     map[string]string{target.Path(): target.Version()},
 		processed:    map[string]bool{target.String(): true},
 		nodes:        map[string]domain3.GraphNode{},
 		parsed:       map[string]parsedRequires{},
@@ -747,7 +810,7 @@ func (r *GraphResolver) resolveFromParsed(
 	}
 
 	// Add target node.
-	st.nodes[target.Path] = domain3.GraphNode{
+	st.nodes[target.Path()] = domain3.GraphNode{
 		Coordinate:       target,
 		DirectDependency: false,
 		ResolutionSource: targetSource,
@@ -793,8 +856,13 @@ func (r *GraphResolver) resolveFromParsed(
 			// replace directive, and the selected version tracked under its require
 			// path belongs to that path, not to the replacement target.
 			if !item.pinned {
-				if sel := st.selected[item.nodeKey]; sel != "" && sel != coord.Version {
-					coord = coordinate.ModuleCoordinate{Path: coord.Path, Version: sel}
+				if sel := st.selected[item.nodeKey]; sel != "" && sel != coord.Version() {
+					// The selected version comes from the build list, so it is a
+					// version; if it somehow is not, the item keeps the coordinate it
+					// already had rather than being coerced to a nonexistent one.
+					if selected, err := coordinate.NewModuleCoordinate(coord.Path(), sel); err == nil {
+						coord = selected
+					}
 				}
 			}
 			key := coord.String()
@@ -868,20 +936,7 @@ func (r *GraphResolver) resolveFromParsed(
 	// replacement coordinate; MVS never raises it, and the selected version under
 	// the replacement path belongs to a different build participant, so coercing
 	// it would retarget the edge onto the wrong node.
-	pinnedTargets := make(map[string]bool, len(st.nodes))
-	for _, n := range st.nodes {
-		if n.OriginalCoordinate.Path != "" {
-			pinnedTargets[n.Coordinate.String()] = true
-		}
-	}
-	for i := range st.edges {
-		if pinnedTargets[st.edges[i].To.String()] {
-			continue
-		}
-		if sel, ok := st.selected[st.edges[i].To.Path]; ok {
-			st.edges[i].To.Version = sel
-		}
-	}
+	repinEdgesToSelected(st)
 
 	// Step 7: build and return the final graph.
 	g := domain3.Graph{
@@ -897,8 +952,8 @@ func (r *GraphResolver) resolveFromParsed(
 	g.Sort()
 
 	r.logger.InfoContext(ctx, "walk.resolve.complete",
-		slog.String("module.path", target.Path),
-		slog.String("module.version", target.Version),
+		slog.String("module.path", target.Path()),
+		slog.String("module.version", target.Version()),
 		slog.Int("node_count", len(g.Nodes)),
 		slog.Int("edge_count", len(g.Edges)),
 		slog.Bool("partial", g.Partial),
@@ -914,8 +969,8 @@ func (r *GraphResolver) resolveFromParsed(
 // carry ResolutionSource=ResolutionMVS with no fetch record.
 func (r *GraphResolver) ResolveShallow(ctx context.Context, target coordinate.ModuleCoordinate) (domain3.Graph, error) {
 	r.logger.InfoContext(ctx, "walk.resolve_shallow.start",
-		slog.String("module.path", target.Path),
-		slog.String("module.version", target.Version),
+		slog.String("module.path", target.Path()),
+		slog.String("module.version", target.Version()),
 	)
 
 	targetResult, err := r.fetcher.EnsureFetched(ctx, target)
@@ -939,13 +994,13 @@ func (r *GraphResolver) ResolveShallow(ctx context.Context, target coordinate.Mo
 	excludeSet := buildExcludeSet(targetParsed.Exclude)
 
 	st := &resolveState{
-		selected:        map[string]string{target.Path: target.Version},
+		selected:        map[string]string{target.Path(): target.Version()},
 		processed:       map[string]bool{target.String(): true},
 		nodes:           map[string]domain3.GraphNode{},
 		hasLocalReplace: anyLocalReplace(replaces),
 	}
 
-	st.nodes[target.Path] = domain3.GraphNode{
+	st.nodes[target.Path()] = domain3.GraphNode{
 		Coordinate:       target,
 		DirectDependency: false,
 		ResolutionSource: domain3.ResolutionTarget,
@@ -969,8 +1024,8 @@ func (r *GraphResolver) ResolveShallow(ctx context.Context, target coordinate.Mo
 	g.Sort()
 
 	r.logger.InfoContext(ctx, "walk.resolve_shallow.complete",
-		slog.String("module.path", target.Path),
-		slog.String("module.version", target.Version),
+		slog.String("module.path", target.Path()),
+		slog.String("module.version", target.Version()),
 		slog.Int("node_count", len(g.Nodes)),
 	)
 	return g, nil
@@ -991,16 +1046,16 @@ func (r *GraphResolver) seedDirectDeps(
 		out := applyReplace(req.Coordinate, replaceMap)
 		// Every build participant is keyed by its own require path, never by a
 		// replacement target path (see resolveState).
-		key := req.Coordinate.Path
+		key := req.Coordinate.Path()
 		if out.localReplace {
 			st.hasLocalReplace = true
 			st.edges = append(st.edges, domain3.GraphEdge{
 				From:              target,
 				To:                out.effective,
-				ConstraintVersion: req.Coordinate.Version,
+				ConstraintVersion: req.Coordinate.Version(),
 			})
 			if _, exists := st.nodes[key]; !exists {
-				st.selected[key] = out.effective.Version
+				st.selected[key] = out.effective.Version()
 				st.nodes[key] = domain3.GraphNode{
 					Coordinate:         out.effective,
 					DirectDependency:   true,
@@ -1024,7 +1079,7 @@ func (r *GraphResolver) seedDirectDeps(
 		st.edges = append(st.edges, domain3.GraphEdge{
 			From:              target,
 			To:                effective,
-			ConstraintVersion: req.Coordinate.Version,
+			ConstraintVersion: req.Coordinate.Version(),
 		})
 
 		var original coordinate.ModuleCoordinate
@@ -1037,8 +1092,8 @@ func (r *GraphResolver) seedDirectDeps(
 		// what competes, while the node's coordinate stays the pinned replacement.
 		currentSel := st.selected[key]
 		switch {
-		case currentSel == "" || versionGT(req.Coordinate.Version, currentSel):
-			st.selected[key] = req.Coordinate.Version
+		case currentSel == "" || versionGT(req.Coordinate.Version(), currentSel):
+			st.selected[key] = req.Coordinate.Version()
 			prev := st.nodes[key]
 			st.nodes[key] = domain3.GraphNode{
 				Coordinate:         effective,
@@ -1173,8 +1228,8 @@ func (r *GraphResolver) applyFetchParse(ctx context.Context, out fetchParseOutco
 
 	if out.fetchErr != nil {
 		r.logger.WarnContext(ctx, "walk.fetch.failed",
-			slog.String("module.path", coord.Path),
-			slog.String("module.version", coord.Version),
+			slog.String("module.path", coord.Path()),
+			slog.String("module.version", coord.Version()),
 			slog.String("error.type", "fetch_failed"),
 			slog.String("error", out.fetchErr.Error()),
 		)
@@ -1204,8 +1259,8 @@ func (r *GraphResolver) applyFetchParse(ctx context.Context, out fetchParseOutco
 
 	if out.extractErr != nil {
 		r.logger.WarnContext(ctx, "walk.gomod.extract.failed",
-			slog.String("module.path", coord.Path),
-			slog.String("module.version", coord.Version),
+			slog.String("module.path", coord.Path()),
+			slog.String("module.version", coord.Version()),
 			slog.String("error", out.extractErr.Error()),
 		)
 		st.markPartial("parse_failed")
@@ -1221,8 +1276,8 @@ func (r *GraphResolver) applyFetchParse(ctx context.Context, out fetchParseOutco
 	}
 	if !out.hasGoMod {
 		r.logger.InfoContext(ctx, "walk.gomod.absent",
-			slog.String("module.path", coord.Path),
-			slog.String("module.version", coord.Version),
+			slog.String("module.path", coord.Path()),
+			slog.String("module.version", coord.Version()),
 		)
 		prev := st.nodes[nodeKey]
 		st.nodes[nodeKey] = domain3.GraphNode{
@@ -1237,8 +1292,8 @@ func (r *GraphResolver) applyFetchParse(ctx context.Context, out fetchParseOutco
 
 	if out.parseErr != nil {
 		r.logger.WarnContext(ctx, "walk.gomod.parse.failed",
-			slog.String("module.path", coord.Path),
-			slog.String("module.version", coord.Version),
+			slog.String("module.path", coord.Path()),
+			slog.String("module.version", coord.Version()),
 			slog.String("error", out.parseErr.Error()),
 		)
 		st.markPartial("parse_failed")
@@ -1396,17 +1451,17 @@ func enqueueTransitive(
 	out := applyReplace(req.Coordinate, replaceMap)
 	// Every build participant is keyed by its own require path, never by a
 	// replacement target path (see resolveState).
-	key := req.Coordinate.Path
+	key := req.Coordinate.Path()
 	if out.localReplace {
 		if followReplace {
 			st.hasLocalReplace = true
 			st.edges = append(st.edges, domain3.GraphEdge{
 				From:              fromCoord,
 				To:                out.effective,
-				ConstraintVersion: req.Coordinate.Version,
+				ConstraintVersion: req.Coordinate.Version(),
 			})
 			if _, exists := st.nodes[key]; !exists {
-				st.selected[key] = out.effective.Version
+				st.selected[key] = out.effective.Version()
 				st.nodes[key] = domain3.GraphNode{
 					Coordinate:         out.effective,
 					DirectDependency:   false,
@@ -1427,7 +1482,7 @@ func enqueueTransitive(
 	// is an expanded pre-pruning module. roots is keyed by the target's require
 	// paths, so a replaced module must be tested under its require path — testing
 	// the replacement target path would never match and would strand its subtree.
-	expand := roots[req.Coordinate.Path] || parentPrePruning
+	expand := roots[req.Coordinate.Path()] || parentPrePruning
 
 	source := domain3.ResolutionMVS
 	if out.replaced {
@@ -1441,7 +1496,7 @@ func enqueueTransitive(
 	st.edges = append(st.edges, domain3.GraphEdge{
 		From:              fromCoord,
 		To:                effective,
-		ConstraintVersion: req.Coordinate.Version,
+		ConstraintVersion: req.Coordinate.Version(),
 	})
 
 	if atMaxDepth {
@@ -1451,7 +1506,7 @@ func enqueueTransitive(
 		// Partial and never consumed as a complete audit.
 		st.depthTruncated = true
 		if st.selected[key] == "" {
-			st.selected[key] = req.Coordinate.Version
+			st.selected[key] = req.Coordinate.Version()
 			st.nodes[key] = domain3.GraphNode{
 				Coordinate:         effective,
 				DirectDependency:   false,
@@ -1467,8 +1522,8 @@ func enqueueTransitive(
 	// competes, while the node's coordinate stays the pinned replacement.
 	currentSel := st.selected[key]
 	switch {
-	case currentSel == "" || versionGT(req.Coordinate.Version, currentSel):
-		st.selected[key] = req.Coordinate.Version
+	case currentSel == "" || versionGT(req.Coordinate.Version(), currentSel):
+		st.selected[key] = req.Coordinate.Version()
 		prev := st.nodes[key]
 		st.nodes[key] = domain3.GraphNode{
 			Coordinate:         effective,
@@ -1496,7 +1551,7 @@ func enqueueTransitive(
 				depthQueue = append(depthQueue, queueItem{
 					coord:   prev.Coordinate,
 					nodeKey: key,
-					pinned:  prev.OriginalCoordinate.Path != "",
+					pinned:  prev.OriginalCoordinate.Path() != "",
 					depth:   currentDepth + 1,
 					expand:  true,
 				})
@@ -1575,7 +1630,7 @@ func (s *resolveState) drainNodes() []domain3.GraphNode {
 	for _, node := range s.nodes {
 		ck := node.Coordinate.String()
 		if i, seen := byCoord[ck]; seen {
-			if out[i].OriginalCoordinate.Path == "" && node.OriginalCoordinate.Path != "" {
+			if out[i].OriginalCoordinate.Path() == "" && node.OriginalCoordinate.Path() != "" {
 				out[i] = node
 			}
 			continue
@@ -1642,7 +1697,7 @@ func buildReplaceMap(replacements []domain3.Replacement) map[replaceKey]domain3.
 func buildExcludeSet(exclusions []domain3.Exclusion) map[excludeKey]bool {
 	m := make(map[excludeKey]bool, len(exclusions))
 	for _, e := range exclusions {
-		m[excludeKey{e.Coordinate.Path, e.Coordinate.Version}] = true
+		m[excludeKey{e.Coordinate.Path(), e.Coordinate.Version()}] = true
 	}
 	return m
 }
@@ -1709,14 +1764,14 @@ type replaceOutcome struct {
 // source and to skip fetch.
 func applyReplace(coord coordinate.ModuleCoordinate, replaceMap map[replaceKey]domain3.Replacement) replaceOutcome {
 	// Check version-specific replacement first (higher priority).
-	if r, ok := replaceMap[replaceKey{coord.Path, coord.Version}]; ok {
+	if r, ok := replaceMap[replaceKey{coord.Path(), coord.Version()}]; ok {
 		if r.IsLocal {
 			return replaceOutcome{effective: coord, localReplace: true, localPath: r.LocalPath}
 		}
 		return replaceOutcome{effective: r.NewCoordinate, replaced: true}
 	}
 	// Check wildcard replacement (all versions of this path).
-	if r, ok := replaceMap[replaceKey{coord.Path, ""}]; ok {
+	if r, ok := replaceMap[replaceKey{coord.Path(), ""}]; ok {
 		if r.IsLocal {
 			return replaceOutcome{effective: coord, localReplace: true, localPath: r.LocalPath}
 		}
@@ -1727,7 +1782,7 @@ func applyReplace(coord coordinate.ModuleCoordinate, replaceMap map[replaceKey]d
 
 // isExcluded reports whether coord is covered by an exclude directive.
 func isExcluded(coord coordinate.ModuleCoordinate, excludeSet map[excludeKey]bool) bool {
-	return excludeSet[excludeKey{coord.Path, coord.Version}]
+	return excludeSet[excludeKey{coord.Path(), coord.Version()}]
 }
 
 // versionGT reports whether a is strictly greater than b under semver ordering.

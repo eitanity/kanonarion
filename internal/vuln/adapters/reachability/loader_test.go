@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	callgraphdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
@@ -42,7 +43,7 @@ func (s *fakeStore) FindCallees(context.Context, string, string) ([]cgports.Call
 	return nil, nil
 }
 
-var loaderCoord = coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+var loaderCoord = coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
 func TestLoad_ProjectsRecord(t *testing.T) {
 	rec := callgraphdomain.CallGraphRecord{

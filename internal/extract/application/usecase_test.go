@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	"github.com/eitanity/kanonarion/internal/extract/domain"
 	"github.com/eitanity/kanonarion/internal/extract/ports"
@@ -112,7 +113,7 @@ func (m *mockExtractor) Extract(ctx context.Context, coord coordinate.ModuleCoor
 	if stage == "license" && force {
 		return ports.StageResult{Status: domain.StageFailed, Error: "forced failure"}, nil
 	}
-	if stage == "interface" && coord.Version == "v2.0.0" {
+	if stage == "interface" && coord.Version() == "v2.0.0" {
 		return ports.StageResult{}, errors.New("unexpected error")
 	}
 	return ports.StageResult{
@@ -433,7 +434,7 @@ func TestExtractUseCase_localReplaceNodesSkipped(t *testing.T) {
 // partial.
 func TestExtractUseCase_localMainModuleRootSkippedNotFailed(t *testing.T) {
 	ctx := t.Context()
-	root := coordinate.ModuleCoordinate{Path: "example.com/project", Version: coordinate.LocalVersion}
+	root := coordinatetest.MustNew("example.com/project", coordinate.LocalVersion)
 	dep, _ := coordinate.NewModuleCoordinate("github.com/foo/bar", "v1.0.0")
 	walkID := "walk-localroot"
 

@@ -79,7 +79,7 @@ func (f *fakeProxy) Info(_ context.Context, coord coordinate.ModuleCoordinate) (
 	defer f.mu.Unlock()
 	info, ok := f.infos[coord.String()]
 	if !ok {
-		info = ports.ModuleInfo{Version: coord.Version, Time: time.Now()}
+		info = ports.ModuleInfo{Version: coord.Version(), Time: time.Now()}
 	}
 	return info, nil
 }
@@ -96,7 +96,7 @@ func (f *fakeProxy) Download(_ context.Context, coord coordinate.ModuleCoordinat
 	if !ok {
 		dl = fakeDownload{
 			zipData:   "fake-zip",
-			goModData: "module " + coord.Path,
+			goModData: "module " + coord.Path(),
 			zipHash:   domain2.ModuleHash{Algorithm: "h1", Value: "fakehash=="},
 			goModHash: domain2.ModuleHash{Algorithm: "h1", Value: "fakegomodhash=="},
 		}
@@ -118,7 +118,7 @@ func (f *fakeProxy) DownloadGoMod(_ context.Context, coord coordinate.ModuleCoor
 	dl, ok := f.downloads[coord.String()]
 	if !ok {
 		dl = fakeDownload{
-			goModData: "module " + coord.Path,
+			goModData: "module " + coord.Path(),
 			goModHash: domain2.ModuleHash{Algorithm: "h1", Value: "fakegomodhash=="},
 		}
 	}
@@ -214,7 +214,7 @@ func (f *fakeFacts) PutFetchRecord(_ context.Context, sealed domain2.SealedRecor
 }
 
 func (f *fakeFacts) GetFetchRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (domain2.CompositeRecord, bool, error) {
-	key := coord.Path + "@" + coord.Version + "#" + pv
+	key := coord.Path() + "@" + coord.Version() + "#" + pv
 	f.mu.Lock()
 	r, ok := f.records[key]
 	f.mu.Unlock()
@@ -299,7 +299,7 @@ func (f *fakeFacts) ListFetchRecords(_ context.Context, coord coordinate.ModuleC
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []domain2.FactRecord
-	if r, ok := f.records[coord.Path+"@"+coord.Version+"#"+pv]; ok {
+	if r, ok := f.records[coord.Path()+"@"+coord.Version()+"#"+pv]; ok {
 		out = append(out, r)
 	}
 	return out, nil

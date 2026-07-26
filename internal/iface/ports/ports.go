@@ -32,6 +32,14 @@ type InterfaceExtractor interface {
 }
 
 // InterfaceStore persists InterfaceRecords and supports queries.
+//
+// The zero coordinate is the one value the signatures cannot exclude: Go
+// always permits coordinate.ModuleCoordinate{}, and it names no module.
+// Implementations MUST refuse it with coordinate.ErrZeroCoordinate — on a
+// write because it would key a row on the empty path at the empty version,
+// which every later read treats as a genuine measurement, and on a read
+// because absence is the wrong answer to a question about no module.
+// coordinatetest.AssertRefusesZeroCoordinate pins the rule for every store.
 type InterfaceStore interface {
 	// PutInterfaceRecord persists an interface record. Idempotent on
 	// (module_path, module_version, pipeline_version).

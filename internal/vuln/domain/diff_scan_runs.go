@@ -167,14 +167,14 @@ func reachableFlag(f VulnerabilityFinding) bool {
 // contain the same module path at multiple versions, and ordering by path+ID
 // alone leaves those ties unstable.
 func CompareFindingDelta(a, b FindingDelta) int {
-	if a.Coordinate.Path != b.Coordinate.Path {
-		if a.Coordinate.Path < b.Coordinate.Path {
+	if a.Coordinate.Path() != b.Coordinate.Path() {
+		if a.Coordinate.Path() < b.Coordinate.Path() {
 			return -1
 		}
 		return 1
 	}
-	if a.Coordinate.Version != b.Coordinate.Version {
-		if a.Coordinate.Version < b.Coordinate.Version {
+	if a.Coordinate.Version() != b.Coordinate.Version() {
+		if a.Coordinate.Version() < b.Coordinate.Version() {
 			return -1
 		}
 		return 1

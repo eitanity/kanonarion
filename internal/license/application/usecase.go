@@ -137,8 +137,8 @@ func (uc *ExtractLicenseUseCase) GetLicenseStore() ports.LicenseStore {
 // an error. Only infrastructure errors (store access, blob I/O) return errors.
 func (uc *ExtractLicenseUseCase) Execute(ctx context.Context, req ExtractRequest) (_ ExtractResult, retErr error) {
 	log := uc.logger.With(
-		slog.String("extraction.module.path", req.Coordinate.Path),
-		slog.String("extraction.module.version", req.Coordinate.Version),
+		slog.String("extraction.module.path", req.Coordinate.Path()),
+		slog.String("extraction.module.version", req.Coordinate.Version()),
 		slog.String("extraction.stage", "license"),
 		slog.String("pipeline_version", uc.pipelineVersion),
 	)
@@ -269,8 +269,8 @@ func licenseExtractedEvent(record domain2.LicenseRecord) audit.Event {
 	return audit.Event{
 		Type: audit.EventLicenseExtracted,
 		Payload: map[string]any{
-			"module":         record.Coordinate.Path,
-			"version":        record.Coordinate.Version,
+			"module":         record.Coordinate.Path(),
+			"version":        record.Coordinate.Version(),
 			"primary_spdx":   record.PrimarySPDX,
 			"overall_status": record.OverallStatus.String(),
 			"source":         "scanner",
@@ -321,7 +321,7 @@ func (uc *ExtractLicenseUseCase) extractFromZip(
 		return domain2.LicenseRecord{}, fmt.Errorf("parsing zip: %w", err)
 	}
 
-	modulePrefix := coord.Path + "@" + coord.Version + "/"
+	modulePrefix := coord.Path() + "@" + coord.Version() + "/"
 	var entries []domain2.LicenseFileEntry
 
 	for _, name := range archive.Names() {
@@ -562,7 +562,7 @@ func (uc *ExtractLicenseUseCase) scanSourceFiles(
 	coord coordinate.ModuleCoordinate,
 	archive *ziparchive.Archive,
 ) []domain2.LicenseFileEntry {
-	modulePrefix := coord.Path + "@" + coord.Version + "/"
+	modulePrefix := coord.Path() + "@" + coord.Version() + "/"
 	var entries []domain2.LicenseFileEntry
 	totalBytes := 0
 	fileCount := 0
@@ -650,7 +650,7 @@ func (uc *ExtractLicenseUseCase) backfillCopyrightFromSource(
 	archive *ziparchive.Archive,
 	entries []domain2.LicenseFileEntry,
 ) {
-	modulePrefix := coord.Path + "@" + coord.Version + "/"
+	modulePrefix := coord.Path() + "@" + coord.Version() + "/"
 	seen := make(map[string]bool)
 	var collected []domain2.CopyrightStatement
 	fileCount := 0

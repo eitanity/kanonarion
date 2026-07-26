@@ -210,11 +210,11 @@ func DedupeSnippets(atts []SnippetAttribution) ([]SnippetAttribution, error) {
 		out = append(out, a)
 	}
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].Coordinate.Path != out[j].Coordinate.Path {
-			return out[i].Coordinate.Path < out[j].Coordinate.Path
+		if out[i].Coordinate.Path() != out[j].Coordinate.Path() {
+			return out[i].Coordinate.Path() < out[j].Coordinate.Path()
 		}
-		if out[i].Coordinate.Version != out[j].Coordinate.Version {
-			return out[i].Coordinate.Version < out[j].Coordinate.Version
+		if out[i].Coordinate.Version() != out[j].Coordinate.Version() {
+			return out[i].Coordinate.Version() < out[j].Coordinate.Version()
 		}
 		return out[i].Name < out[j].Name
 	})

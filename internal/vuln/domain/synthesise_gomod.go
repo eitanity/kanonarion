@@ -38,14 +38,14 @@ import (
 // hold fails a module that never referenced it.
 func SynthesiseGoMod(coord coordinate.ModuleCoordinate, goVersion string, imports []string, buildList map[coordinate.ModuleCoordinate]struct{}) string {
 	var b strings.Builder
-	b.WriteString("module " + coord.Path + "\n")
+	b.WriteString("module " + coord.Path() + "\n")
 	if v := strings.TrimPrefix(strings.TrimSpace(goVersion), "go"); v != "" {
 		b.WriteString("\ngo " + v + "\n")
 	}
 	if reqs := goModRequires(coord, imports, buildList); len(reqs) > 0 {
 		b.WriteString("\nrequire (\n")
 		for _, r := range reqs {
-			b.WriteString("\t" + r.Path + " " + r.Version + "\n")
+			b.WriteString("\t" + r.Path() + " " + r.Version() + "\n")
 		}
 		b.WriteString(")\n")
 	}
@@ -72,19 +72,24 @@ func SynthesiseGoMod(coord coordinate.ModuleCoordinate, goVersion string, import
 // so the rendered file, and therefore the scan environment, is deterministic.
 func goModRequires(coord coordinate.ModuleCoordinate, imports []string, buildList map[coordinate.ModuleCoordinate]struct{}) []coordinate.ModuleCoordinate {
 	candidates := make(map[string]string, len(buildList))
+	// The build-list coordinate that won each path is kept alongside its version
+	// so the requires can be emitted as the coordinates they already are, rather
+	// than re-built from the halves they were taken apart into.
+	coordByPath := make(map[string]coordinate.ModuleCoordinate, len(buildList))
 	for c := range buildList {
 		switch {
-		case c.Path == coord.Path:
+		case c.Path() == coord.Path():
 			continue
-		case c.Path == StdlibModulePath:
+		case c.Path() == StdlibModulePath:
 			continue
 		case c.IsLocal():
 			continue
-		case c.Path == "" || c.Version == "":
+		case c.Path() == "" || c.Version() == "":
 			continue
 		}
-		if prev, ok := candidates[c.Path]; !ok || semver.Compare(c.Version, prev) > 0 {
-			candidates[c.Path] = c.Version
+		if prev, ok := candidates[c.Path()]; !ok || semver.Compare(c.Version(), prev) > 0 {
+			candidates[c.Path()] = c.Version()
+			coordByPath[c.Path()] = c
 		}
 	}
 	selected := make(map[string]string, len(imports))
@@ -94,10 +99,10 @@ func goModRequires(coord coordinate.ModuleCoordinate, imports []string, buildLis
 		}
 	}
 	reqs := make([]coordinate.ModuleCoordinate, 0, len(selected))
-	for path, version := range selected {
-		reqs = append(reqs, coordinate.ModuleCoordinate{Path: path, Version: version})
+	for path := range selected {
+		reqs = append(reqs, coordByPath[path])
 	}
-	sort.Slice(reqs, func(i, j int) bool { return reqs[i].Path < reqs[j].Path })
+	sort.Slice(reqs, func(i, j int) bool { return reqs[i].Path() < reqs[j].Path() })
 	return reqs
 }
 

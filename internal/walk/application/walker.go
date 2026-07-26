@@ -403,7 +403,7 @@ func (w *Walker) Walk(ctx context.Context, req WalkRequest) (domain2.WalkOutcome
 		fr, ferr := w.localFetcher.EnsureFetchedFromPath(ctx, node.Coordinate, absPath)
 		if ferr != nil {
 			log.WarnContext(ctx, "walker.local_fetch.failed",
-				slog.String("module.path", node.Coordinate.Path),
+				slog.String("module.path", node.Coordinate.Path()),
 				slog.String("local_path", absPath),
 				slog.String("error", ferr.Error()),
 			)
@@ -433,7 +433,7 @@ func (w *Walker) Walk(ctx context.Context, req WalkRequest) (domain2.WalkOutcome
 			}
 		}
 		log.InfoContext(ctx, "walker.local_fetch.ok",
-			slog.String("module.path", node.Coordinate.Path),
+			slog.String("module.path", node.Coordinate.Path()),
 			slog.String("local_path", absPath),
 			slog.Bool("from_cache", fr.FromCache),
 		)
@@ -521,7 +521,7 @@ func (w *Walker) ingestProjectRoot(
 ) {
 	fail := func(msg string) {
 		log.WarnContext(ctx, "walker.local_root_ingest.failed",
-			slog.String("module.path", req.Target.Path),
+			slog.String("module.path", req.Target.Path()),
 			slog.String("project_dir", req.ProjectDir),
 			slog.String("error", msg),
 		)
@@ -563,7 +563,7 @@ func (w *Walker) ingestProjectRoot(
 		}
 	}
 	log.InfoContext(ctx, "walker.local_root_ingest.ok",
-		slog.String("module.path", req.Target.Path),
+		slog.String("module.path", req.Target.Path()),
 		slog.String("project_dir", req.ProjectDir),
 	)
 }

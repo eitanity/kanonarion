@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/fetch/application"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
@@ -51,7 +52,7 @@ func proxyWithZip(coord coordinate.ModuleCoordinate, zipBytes []byte, standalone
 // TestVerify_ZipVersionPrefix_Failure exercises checkZipVersionPrefix when a
 // zip entry carries the wrong module@version prefix.
 func TestVerify_ZipVersionPrefix_Failure(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "example.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/foo/bar", "v1.0.0")
 	// Entry uses wrong module path prefix.
 	zipBytes := buildZip(map[string]string{
 		"example.com/wrong/path@v1.0.0/go.mod": "module example.com/wrong/path",
@@ -74,7 +75,7 @@ func TestVerify_ZipVersionPrefix_Failure(t *testing.T) {
 // TestVerify_GoModConsistency_Failure exercises checkGoModConsistency when the
 // standalone go.mod differs from the one embedded in the zip.
 func TestVerify_GoModConsistency_Failure(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "example.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/foo/bar", "v1.0.0")
 	goModContent := "module example.com/foo/bar\n\ngo 1.21\n"
 	differentGoMod := "module example.com/foo/bar\n\ngo 1.20\n"
 	zipBytes := buildZip(map[string]string{
@@ -97,7 +98,7 @@ func TestVerify_GoModConsistency_Failure(t *testing.T) {
 // TestVerify_GoModConsistency_Match exercises the happy-path branch of
 // checkGoModConsistency when standalone and embedded go.mod match.
 func TestVerify_GoModConsistency_Match(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "example.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/foo/bar", "v1.0.0")
 	goModContent := "module example.com/foo/bar\n\ngo 1.21\n"
 	zipBytes := buildZip(map[string]string{
 		"example.com/foo/bar@v1.0.0/go.mod": goModContent,
@@ -118,7 +119,7 @@ func TestVerify_GoModConsistency_Match(t *testing.T) {
 // TestVerify_Retracted_SingleVersion exercises parseRetracted for a single
 // retracted version where v == low (no range comparison needed).
 func TestVerify_Retracted_SingleVersion(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "example.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/foo/bar", "v1.0.0")
 	// The module's own go.mod declares v1.0.0 as retracted.
 	goModWithRetract := "module example.com/foo/bar\n\ngo 1.21\n\nretract v1.0.0 // security issue\n"
 	zipBytes := buildZip(map[string]string{
@@ -139,7 +140,7 @@ func TestVerify_Retracted_SingleVersion(t *testing.T) {
 // TestVerify_Retracted_VersionRange exercises parseRetracted and versionInRange
 // for a range retract directive, including the compareVersion fallback path.
 func TestVerify_Retracted_VersionRange(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "example.com/foo/bar", Version: "v1.1.0"}
+	coord := coordinatetest.MustNew("example.com/foo/bar", "v1.1.0")
 	// v1.1.0 falls within the retracted range [v1.0.0, v1.2.0].
 	goModWithRange := "module example.com/foo/bar\n\ngo 1.21\n\nretract [v1.0.0, v1.2.0] // broken range\n"
 	zipBytes := buildZip(map[string]string{
@@ -160,7 +161,7 @@ func TestVerify_Retracted_VersionRange(t *testing.T) {
 // TestVerify_Retracted_OutsideRange confirms that a version outside a retract
 // range is NOT flagged as retracted, and exercises the false branch of versionInRange.
 func TestVerify_Retracted_OutsideRange(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "example.com/foo/bar", Version: "v1.3.0"}
+	coord := coordinatetest.MustNew("example.com/foo/bar", "v1.3.0")
 	// v1.3.0 is outside the retracted range [v1.0.0, v1.2.0].
 	goModWithRange := "module example.com/foo/bar\n\ngo 1.21\n\nretract [v1.0.0, v1.2.0]\n"
 	zipBytes := buildZip(map[string]string{
@@ -181,7 +182,7 @@ func TestVerify_Retracted_OutsideRange(t *testing.T) {
 // TestVerify_ZipVersionPrefix_NoGoMod_NoFail confirms that a zip without any
 // go.mod entry is not flagged for prefix failures (some pre-module modules lack go.mod).
 func TestVerify_ZipVersionPrefix_NoGoMod(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "example.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/foo/bar", "v1.0.0")
 	// A correct-prefix zip but with no go.mod.
 	zipBytes := buildZip(map[string]string{
 		"example.com/foo/bar@v1.0.0/README.md": "readme",
@@ -201,7 +202,7 @@ func TestVerify_ZipVersionPrefix_NoGoMod(t *testing.T) {
 // TestVerify_SumDB_GoModHashMatch exercises the sumdb go.mod hash verification
 // path and the GoModHash field.
 func TestVerify_SumDB_GoModHashMatch(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "example.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/foo/bar", "v1.0.0")
 	goModContent := "module example.com/foo/bar\n\ngo 1.21\n"
 	zipBytes := buildZip(map[string]string{
 		"example.com/foo/bar@v1.0.0/go.mod": goModContent,

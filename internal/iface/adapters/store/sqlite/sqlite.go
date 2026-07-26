@@ -92,6 +92,12 @@ func (s *Store) Close() error {
 // PutInterfaceRecord inserts or replaces an interface record. Idempotent on
 // (module_path, module_version, pipeline_version).
 func (s *Store) PutInterfaceRecord(ctx context.Context, r domain2.InterfaceRecord) error {
+	// A record whose coordinate is the zero value would key a row on the empty
+	// path at the empty version, which every later read treats as a genuine
+	// measurement of a module that does not exist.
+	if r.Coordinate.IsZero() {
+		return coordinate.ErrZeroCoordinate
+	}
 	var h domain2.InterfaceRecordHasher
 	if err := h.VerifyContentHash(r); err != nil {
 		return fmt.Errorf("verifying content hash before put: %w", err)
@@ -125,7 +131,7 @@ ON CONFLICT (module_path, module_version, pipeline_version) DO UPDATE SET
     serialised     = excluded.serialised`
 
 	_, err = tx.ExecContext(ctx, qRecord,
-		r.Coordinate.Path, r.Coordinate.Version, r.PipelineVersion,
+		r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
 		int(r.OverallStatus), len(r.Packages),
 		r.ExtractedAt.UTC().Format(time.RFC3339),
 		r.ContentHash, blob,
@@ -136,7 +142,7 @@ ON CONFLICT (module_path, module_version, pipeline_version) DO UPDATE SET
 
 	const qDel = `DELETE FROM interface_symbols
 	WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
-	if _, err := tx.ExecContext(ctx, qDel, r.Coordinate.Path, r.Coordinate.Version, r.PipelineVersion); err != nil {
+	if _, err := tx.ExecContext(ctx, qDel, r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion); err != nil {
 		return fmt.Errorf("deleting old interface symbols: %w", err)
 	}
 
@@ -155,14 +161,14 @@ INSERT OR IGNORE INTO interface_symbols (
 	for _, pkg := range r.Packages {
 		for _, t := range pkg.Types {
 			if _, err := stmtSym.ExecContext(ctx,
-				r.Coordinate.Path, r.Coordinate.Version, r.PipelineVersion,
+				r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
 				pkg.ImportPath, "type", t.Name, "", t.Signature,
 			); err != nil {
 				return fmt.Errorf("inserting type symbol %s: %w", t.Name, err)
 			}
 			for _, m := range t.Methods {
 				if _, err := stmtSym.ExecContext(ctx,
-					r.Coordinate.Path, r.Coordinate.Version, r.PipelineVersion,
+					r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
 					pkg.ImportPath, "method", m.Name, t.Name, m.Signature,
 				); err != nil {
 					return fmt.Errorf("inserting method symbol %s.%s: %w", t.Name, m.Name, err)
@@ -171,7 +177,7 @@ INSERT OR IGNORE INTO interface_symbols (
 		}
 		for _, f := range pkg.Funcs {
 			if _, err := stmtSym.ExecContext(ctx,
-				r.Coordinate.Path, r.Coordinate.Version, r.PipelineVersion,
+				r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
 				pkg.ImportPath, "func", f.Name, "", f.Signature,
 			); err != nil {
 				return fmt.Errorf("inserting func symbol %s: %w", f.Name, err)
@@ -179,7 +185,7 @@ INSERT OR IGNORE INTO interface_symbols (
 		}
 		for _, c := range pkg.Consts {
 			if _, err := stmtSym.ExecContext(ctx,
-				r.Coordinate.Path, r.Coordinate.Version, r.PipelineVersion,
+				r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
 				pkg.ImportPath, "const", c.Name, "", c.Type,
 			); err != nil {
 				return fmt.Errorf("inserting const symbol %s: %w", c.Name, err)
@@ -187,7 +193,7 @@ INSERT OR IGNORE INTO interface_symbols (
 		}
 		for _, v := range pkg.Vars {
 			if _, err := stmtSym.ExecContext(ctx,
-				r.Coordinate.Path, r.Coordinate.Version, r.PipelineVersion,
+				r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
 				pkg.ImportPath, "var", v.Name, "", v.Type,
 			); err != nil {
 				return fmt.Errorf("inserting var symbol %s: %w", v.Name, err)
@@ -206,10 +212,16 @@ INSERT OR IGNORE INTO interface_symbols (
 // Returns (zero, false, nil) if not found.
 // Returns (zero, false, ErrInterfaceIntegrity) on hash mismatch.
 func (s *Store) GetInterfaceRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain2.InterfaceRecord, bool, error) {
+	// The zero coordinate names no module, so this is a question about nothing.
+	// Answering it with absence would report "no record here" for a module that
+	// was never asked about — see coordinate.ErrZeroCoordinate.
+	if coord.IsZero() {
+		return domain2.InterfaceRecord{}, false, coordinate.ErrZeroCoordinate
+	}
 	const q = `SELECT serialised, content_hash FROM interface_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 
-	row := s.db.DB().QueryRowContext(ctx, q, coord.Path, coord.Version, pipelineVersion)
+	row := s.db.DB().QueryRowContext(ctx, q, coord.Path(), coord.Version(), pipelineVersion)
 	var blob []byte
 	var storedHash string
 	if err := row.Scan(&blob, &storedHash); errors.Is(err, sql.ErrNoRows) {

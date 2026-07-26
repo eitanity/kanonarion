@@ -170,11 +170,11 @@ func realZipProxy(t *testing.T, coord coordinateFor) (*fakeProxy, []byte) {
 	t.Helper()
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
-	f, err := zw.Create(coord.Path + "@" + coord.Version + "/go.mod")
+	f, err := zw.Create(coord.Path() + "@" + coord.Version() + "/go.mod")
 	if err != nil {
 		t.Fatalf("creating zip entry: %v", err)
 	}
-	if _, err := io.WriteString(f, "module "+coord.Path+"\n"); err != nil {
+	if _, err := io.WriteString(f, "module "+coord.Path()+"\n"); err != nil {
 		t.Fatalf("writing zip entry: %v", err)
 	}
 	if err := zw.Close(); err != nil {
@@ -190,7 +190,7 @@ func realZipProxy(t *testing.T, coord coordinateFor) (*fakeProxy, []byte) {
 	if err != nil {
 		t.Fatalf("parsing test zip hash: %v", err)
 	}
-	goMod := "module " + coord.Path + "\n"
+	goMod := "module " + coord.Path() + "\n"
 	goModHashStr, err := dirhash.Hash1([]string{"go.mod"}, func(string) (io.ReadCloser, error) {
 		return io.NopCloser(strings.NewReader(goMod)), nil
 	})

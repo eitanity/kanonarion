@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	"github.com/eitanity/kanonarion/internal/composition"
 	"github.com/eitanity/kanonarion/internal/driver"
@@ -73,7 +74,7 @@ func TestLocalWalkExtract_AnalyseLocalRoot_EndToEnd(t *testing.T) {
 	defer func() { _ = cleanup() }()
 
 	ctx := context.Background()
-	root := coordinate.ModuleCoordinate{Path: "example.test/proj", Version: coordinate.LocalVersion}
+	root := coordinatetest.MustNew("example.test/proj", coordinate.LocalVersion)
 	// The dependency-free project keeps the test offline. Callgraph is excluded
 	// here because the extract pipeline now spawns the kanonarion binary as a
 	// subprocess for that stage; in-process test runs don't have a real binary
@@ -181,7 +182,7 @@ func TestLocalWalkExtract_DefaultRootStaysSkipped(t *testing.T) {
 	}
 	defer func() { _ = cleanup() }()
 
-	root := coordinate.ModuleCoordinate{Path: "example.test/proj", Version: coordinate.LocalVersion}
+	root := coordinatetest.MustNew("example.test/proj", coordinate.LocalVersion)
 	res, err := drv.LocalWalkExtract.Run(context.Background(), driver.LocalWalkExtractRequest{
 		Dir:    projDir,
 		Stages: []string{"license"},

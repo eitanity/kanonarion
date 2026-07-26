@@ -19,7 +19,7 @@ import (
 )
 
 func buildCommandsWithWalk(coord coordinate.ModuleCoordinate, walkID string) contextCommands {
-	mod := coord.Path + "@" + coord.Version
+	mod := coord.Path() + "@" + coord.Version()
 	vulnCmd := "kanonarion vuln-show " + mod
 	if walkID != "" {
 		vulnCmd = "kanonarion vuln-scan " + walkID
@@ -70,7 +70,7 @@ func buildVerification(ctx context.Context, coord coordinate.ModuleCoordinate, u
 // The heuristic is a pure function of the coordinate, so the section is
 // always analysed here — its status is never "not_analysed".
 func buildProvenance(coord coordinate.ModuleCoordinate) contextProvenance {
-	fp := fetchdomain.InferForkProvenance(coord.Path)
+	fp := fetchdomain.InferForkProvenance(coord.Path())
 	out := contextForkHeuristic{
 		Status:           fp.Status.String(),
 		CatalogueVersion: fp.CatalogueVersion,
@@ -104,8 +104,8 @@ func buildDependencies(ctx context.Context, coord coordinate.ModuleCoordinate, w
 			continue
 		}
 		deps = append(deps, contextDependency{
-			Path:    node.Coordinate.Path,
-			Version: node.Coordinate.Version,
+			Path:    node.Coordinate.Path(),
+			Version: node.Coordinate.Version(),
 		})
 	}
 	// Graph.Nodes is sorted lexicographically by (Path, Version) after Sort.
@@ -314,10 +314,10 @@ func buildExamples(ctx context.Context, coord coordinate.ModuleCoordinate, uc Qu
 	// name, which handles multi-level paths (e.g. sumdb/note) correctly.
 	var pkgSubdir string
 	if pkgFilter != "" {
-		if pkgFilter == coord.Path {
+		if pkgFilter == coord.Path() {
 			pkgSubdir = "."
 		} else {
-			pkgSubdir = strings.TrimPrefix(pkgFilter, coord.Path+"/")
+			pkgSubdir = strings.TrimPrefix(pkgFilter, coord.Path()+"/")
 		}
 	}
 

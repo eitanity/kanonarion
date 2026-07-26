@@ -5,7 +5,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 )
@@ -22,7 +22,7 @@ import (
 func TestLedger_ReMeasurementIsAppendedNotOverwritten(t *testing.T) {
 	s := openMemStore(t)
 	ctx := context.Background()
-	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 
 	base := []fetchtest.Option{
 		fetchtest.Coordinate(coord),
@@ -72,7 +72,7 @@ func TestLedger_ReMeasurementIsAppendedNotOverwritten(t *testing.T) {
 func TestLedger_MeasurementsSharingAnInstantAreBothKept(t *testing.T) {
 	s := openMemStore(t)
 	ctx := context.Background()
-	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	at := time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)
 
 	for _, detail := range []string{"first measurement", "second measurement"} {
@@ -104,7 +104,7 @@ func TestLedger_MeasurementsSharingAnInstantAreBothKept(t *testing.T) {
 func TestLedger_DivergentRecordsFailTheRead(t *testing.T) {
 	s := openMemStore(t)
 	ctx := context.Background()
-	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 
 	for i, hash := range []string{"zip-a==", "zip-b=="} {
 		r := fetchtest.Record(t,
@@ -150,7 +150,7 @@ func asDivergence(err error, target **domain2.Divergence) bool {
 func TestLedger_GoModOnlyBesideFullRecordReadsCleanly(t *testing.T) {
 	s := openMemStore(t)
 	ctx := context.Background()
-	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 
 	shallow := fetchtest.Record(t,
 		fetchtest.Coordinate(coord),
@@ -204,7 +204,7 @@ func TestLedger_TamperedRowFailsTheListRead(t *testing.T) {
 	}
 
 	if _, err := s.ListFetchRecords(ctx,
-		coordinate.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}, r.PipelineVersion); err == nil {
+		coordinatetest.MustNew(r.ModulePath, r.ModuleVersion), r.PipelineVersion); err == nil {
 		t.Error("a tampered row was listed without error")
 	}
 }
@@ -227,7 +227,7 @@ func TestLedger_PreFieldRecordsStillVerify(t *testing.T) {
 		t.Fatalf("appending a pre-field record: %v", err)
 	}
 	if _, ok, err := s.GetFetchRecord(ctx,
-		coordinate.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}, r.PipelineVersion); err != nil || !ok {
+		coordinatetest.MustNew(r.ModulePath, r.ModuleVersion), r.PipelineVersion); err != nil || !ok {
 		t.Fatalf("a pre-field record did not survive a round trip: ok=%v err=%v", ok, err)
 	}
 }

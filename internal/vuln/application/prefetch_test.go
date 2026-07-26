@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 
 	"github.com/eitanity/kanonarion/internal/vuln/application"
@@ -100,8 +101,8 @@ func TestPrefetchMissing_FetchesMissingModules(t *testing.T) {
 	ctx := t.Context()
 	walkID := "w1"
 
-	present := coordinate.ModuleCoordinate{Path: "github.com/present/mod", Version: "v1.0.0"}
-	missing := coordinate.ModuleCoordinate{Path: "github.com/missing/mod", Version: "v2.0.0"}
+	present := coordinatetest.MustNew("github.com/present/mod", "v1.0.0")
+	missing := coordinatetest.MustNew("github.com/missing/mod", "v2.0.0")
 
 	walkStore := newFakeWalkStore()
 	_ = walkStore.PutWalk(ctx, walkdomain.WalkRecord{
@@ -144,7 +145,7 @@ func TestPrefetchMissing_RefetchesGoModOnlyRecord(t *testing.T) {
 	ctx := t.Context()
 	walkID := "wgomod"
 
-	node := coordinate.ModuleCoordinate{Path: "github.com/gomod/only", Version: "v1.0.0"}
+	node := coordinatetest.MustNew("github.com/gomod/only", "v1.0.0")
 
 	walkStore := newFakeWalkStore()
 	_ = walkStore.PutWalk(ctx, walkdomain.WalkRecord{
@@ -184,7 +185,7 @@ func TestPrefetchMissing_NilFetcherIsNoop(t *testing.T) {
 	ctx := t.Context()
 	walkID := "w2"
 
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	walkStore := newFakeWalkStore()
 	_ = walkStore.PutWalk(ctx, walkdomain.WalkRecord{
 		ID:    walkID,
@@ -221,7 +222,7 @@ func TestPrefetchMissing_FetchErrorIsWarningOnly(t *testing.T) {
 	ctx := t.Context()
 	walkID := "w3"
 
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	walkStore := newFakeWalkStore()
 	_ = walkStore.PutWalk(ctx, walkdomain.WalkRecord{
 		ID:    walkID,
@@ -251,8 +252,8 @@ func TestPrefetchMissing_AllPresentSkipsFetch(t *testing.T) {
 	walkID := "w4"
 
 	coords := []coordinate.ModuleCoordinate{
-		{Path: "github.com/a/a", Version: "v1.0.0"},
-		{Path: "github.com/b/b", Version: "v1.0.0"},
+		coordinatetest.MustNew("github.com/a/a", "v1.0.0"),
+		coordinatetest.MustNew("github.com/b/b", "v1.0.0"),
 	}
 
 	walkStore := newFakeWalkStore()
@@ -265,9 +266,9 @@ func TestPrefetchMissing_AllPresentSkipsFetch(t *testing.T) {
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
 	for _, c := range coords {
-		rec := fetchtest.Record(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path))
-		_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, rec), strings.NewReader("zip-"+c.Path))
-		_ = facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path)))
+		rec := fetchtest.Record(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path()))
+		_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, rec), strings.NewReader("zip-"+c.Path()))
+		_ = facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path())))
 	}
 
 	vulnStore := newFakeVulnStore()

@@ -4,8 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/fetch/application"
 )
 
@@ -13,7 +12,7 @@ import (
 
 func TestExecute_InferRepoURL_GitHub(t *testing.T) {
 	// Module on github.com — URL should be inferable.
-	coord := coordinate.ModuleCoordinate{Path: "github.com/pkg/errors", Version: "v0.9.1"}
+	coord := coordinatetest.MustNew("github.com/pkg/errors", "v0.9.1")
 	proxy := &fakeProxy{}
 	vcs := &fakeVCS{}
 	blobs := newFakeBlob()
@@ -31,10 +30,7 @@ func TestExecute_InferRepoURL_GitHub(t *testing.T) {
 }
 
 func TestExecute_PseudoVersion(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{
-		Path:    "github.com/foo/bar",
-		Version: "v0.0.0-20210101120000-abcdefabcdef",
-	}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v0.0.0-20210101120000-abcdefabcdef")
 	proxy := &fakeProxy{}
 	vcs := &fakeVCS{}
 	blobs := newFakeBlob()

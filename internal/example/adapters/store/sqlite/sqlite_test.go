@@ -289,8 +289,8 @@ func TestFindBySymbolInModule_Scoped(t *testing.T) {
 	if len(refs) != 1 {
 		t.Fatalf("expected 1 scoped ref for mod-a, got %d", len(refs))
 	}
-	if refs[0].ModulePath != coordA.Path {
-		t.Errorf("ModulePath: got %q, want %q", refs[0].ModulePath, coordA.Path)
+	if refs[0].ModulePath != coordA.Path() {
+		t.Errorf("ModulePath: got %q, want %q", refs[0].ModulePath, coordA.Path())
 	}
 	if refs[0].ExampleName != "ExampleMarshal" {
 		t.Errorf("ExampleName: got %q", refs[0].ExampleName)

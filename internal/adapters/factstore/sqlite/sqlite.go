@@ -280,6 +280,12 @@ DO NOTHING`
 // overwriting the very evidence that something had been tampered with. The
 // loudest signal the store can produce was its quietest path.
 func (s *Store) GetFetchRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain2.CompositeRecord, bool, error) {
+	// The zero coordinate names no module, so this is a question about nothing.
+	// Answering it with absence would report "no record here" for a module that
+	// was never asked about — see coordinate.ErrZeroCoordinate.
+	if coord.IsZero() {
+		return domain2.CompositeRecord{}, false, coordinate.ErrZeroCoordinate
+	}
 	records, err := s.ListFetchRecords(ctx, coord, pipelineVersion)
 	if err != nil {
 		return domain2.CompositeRecord{}, false, err
@@ -308,12 +314,18 @@ func (s *Store) GetFetchRecord(ctx context.Context, coord coordinate.ModuleCoord
 // ports.FactRecordLister capability, which the write path needs in order to
 // inherit validation legs from earlier measurements of the same artefact.
 func (s *Store) ListFetchRecords(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain2.FactRecord, error) {
+	// The zero coordinate names no module, so this is a question about nothing.
+	// Answering it with absence would report "no record here" for a module that
+	// was never asked about — see coordinate.ErrZeroCoordinate.
+	if coord.IsZero() {
+		return nil, coordinate.ErrZeroCoordinate
+	}
 	q := `SELECT ` + recordColumns + `
 FROM fetch_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 ORDER BY fetched_at ASC, rowid ASC`
 
-	rows, err := s.db.DB().QueryContext(ctx, q, coord.Path, coord.Version, pipelineVersion)
+	rows, err := s.db.DB().QueryContext(ctx, q, coord.Path(), coord.Version(), pipelineVersion)
 	if err != nil {
 		return nil, fmt.Errorf("querying fetch records: %w", err)
 	}
@@ -386,7 +398,7 @@ DO UPDATE SET
     signed_at         = excluded.signed_at`
 
 	_, err := s.db.DB().ExecContext(ctx, q,
-		r.Coordinate.Path, r.Coordinate.Version, r.PipelineVersion,
+		r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
 		string(r.SubjectKind), r.SubjectAlgorithm, r.SubjectDigest, r.Bundle,
 		r.SignedAt.UTC().Format(time.RFC3339),
 	)
@@ -399,13 +411,19 @@ DO UPDATE SET
 // ListAttestations returns all attestations for a coordinate and pipeline
 // version in deterministic order.
 func (s *Store) ListAttestations(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain2.AttestationRecord, error) {
+	// The zero coordinate names no module, so this is a question about nothing.
+	// Answering it with absence would report "no record here" for a module that
+	// was never asked about — see coordinate.ErrZeroCoordinate.
+	if coord.IsZero() {
+		return nil, coordinate.ErrZeroCoordinate
+	}
 	const q = `
 SELECT subject_kind, subject_algorithm, subject_digest, bundle, signed_at
 FROM fetch_attestations
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 ORDER BY subject_kind, subject_digest`
 
-	rows, err := s.db.DB().QueryContext(ctx, q, coord.Path, coord.Version, pipelineVersion)
+	rows, err := s.db.DB().QueryContext(ctx, q, coord.Path(), coord.Version(), pipelineVersion)
 	if err != nil {
 		return nil, fmt.Errorf("querying attestations: %w", err)
 	}

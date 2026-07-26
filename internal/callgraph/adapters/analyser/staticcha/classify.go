@@ -19,8 +19,8 @@ func buildNode(fn *ssa.Function, coord coordinate.ModuleCoordinate, fset *token.
 	isExternal := true
 	if fn.Package() != nil {
 		pkgPath = fn.Package().Pkg.Path()
-		isExternal = pkgPath != coord.Path &&
-			!strings.HasPrefix(pkgPath, coord.Path+"/")
+		isExternal = pkgPath != coord.Path() &&
+			!strings.HasPrefix(pkgPath, coord.Path()+"/")
 	}
 
 	symbol := fn.Name()
@@ -55,7 +55,7 @@ func buildNode(fn *ssa.Function, coord coordinate.ModuleCoordinate, fset *token.
 
 	modulePath := ""
 	if !isExternal {
-		modulePath = coord.Path
+		modulePath = coord.Path()
 	}
 
 	return domain.CallNode{

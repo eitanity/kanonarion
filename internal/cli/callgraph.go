@@ -110,7 +110,7 @@ func printCallGraphSummary(r domain.CallGraphRecord, fromCache bool, jsonOut boo
 		cached = " (cached)"
 	}
 	if _, err := fmt.Fprintf(stdout, "%s@%s: %s — %d nodes, %d edges [%s]%s\n",
-		r.Coordinate.Path, r.Coordinate.Version,
+		r.Coordinate.Path(), r.Coordinate.Version(),
 		r.OverallStatus.String(),
 		r.NodeCount, r.EdgeCount,
 		string(r.Algorithm),

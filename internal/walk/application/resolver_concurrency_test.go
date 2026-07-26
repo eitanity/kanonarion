@@ -161,8 +161,8 @@ func TestResolve_DeterministicAcrossWorkerCounts(t *testing.T) {
 		}
 	}
 	for _, n := range seq.Nodes {
-		if n.Coordinate.Path == "example.com/shared" && n.Coordinate.Version != "v1.5.0" {
-			t.Errorf("shared selected at %s, want v1.5.0 (MVS)", n.Coordinate.Version)
+		if n.Coordinate.Path() == "example.com/shared" && n.Coordinate.Version() != "v1.5.0" {
+			t.Errorf("shared selected at %s, want v1.5.0 (MVS)", n.Coordinate.Version())
 		}
 	}
 }

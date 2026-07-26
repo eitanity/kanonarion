@@ -303,6 +303,12 @@ DELETE FROM walk_scan_run_modules;
 // existing anchor is preserved in both the column (left out of the UPDATE) and
 // the serialised blob (which reads return), regardless of what the caller set.
 func (s *Store) PutVulnerabilityRecord(ctx context.Context, record domain.VulnerabilityRecord) error {
+	// A record whose coordinate is the zero value would key a row on the empty
+	// path at the empty version, which every later read treats as a genuine
+	// measurement of a module that does not exist.
+	if record.Coordinate.IsZero() {
+		return coordinate.ErrZeroCoordinate
+	}
 	if existing, ok, err := s.firstScannedAt(ctx, record); err != nil {
 		return err
 	} else if ok {
@@ -331,7 +337,7 @@ DO UPDATE SET
     serialised     = excluded.serialised`
 
 	_, err = s.db.DB().ExecContext(ctx, q,
-		record.Coordinate.Path, record.Coordinate.Version, record.PipelineVersion,
+		record.Coordinate.Path(), record.Coordinate.Version(), record.PipelineVersion,
 		record.DatabaseSnapshot.Source, record.DatabaseSnapshot.Version, record.WalkID,
 		string(record.OverallStatus), len(record.Findings),
 		record.ScannedAt.UTC().Format(time.RFC3339),
@@ -364,7 +370,7 @@ ON CONFLICT DO NOTHING`
 		for _, id := range ids {
 			if _, err := s.db.DB().ExecContext(ctx, idxQ,
 				id,
-				record.Coordinate.Path, record.Coordinate.Version, record.PipelineVersion,
+				record.Coordinate.Path(), record.Coordinate.Version(), record.PipelineVersion,
 				record.DatabaseSnapshot.Source, record.DatabaseSnapshot.Version,
 				isReachable,
 			); err != nil {
@@ -388,7 +394,7 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 
 	var raw string
 	err := s.db.DB().QueryRowContext(ctx, q,
-		record.Coordinate.Path, record.Coordinate.Version, record.PipelineVersion,
+		record.Coordinate.Path(), record.Coordinate.Version(), record.PipelineVersion,
 		record.DatabaseSnapshot.Source, record.DatabaseSnapshot.Version,
 	).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -414,6 +420,12 @@ func (s *Store) GetVulnerabilityRecord(
 	pipelineVersion string,
 	snapshot domain.DatabaseSnapshot,
 ) (domain.VulnerabilityRecord, bool, error) {
+	// The zero coordinate names no module, so this is a question about nothing.
+	// Answering it with absence would report "no record here" for a module that
+	// was never asked about — see coordinate.ErrZeroCoordinate.
+	if coord.IsZero() {
+		return domain.VulnerabilityRecord{}, false, coordinate.ErrZeroCoordinate
+	}
 	const q = `
 SELECT serialised FROM vulnerability_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
@@ -421,7 +433,7 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 
 	var serialised []byte
 	err := s.db.DB().QueryRowContext(ctx, q,
-		coord.Path, coord.Version, pipelineVersion,
+		coord.Path(), coord.Version(), pipelineVersion,
 		snapshot.Source, snapshot.Version,
 	).Scan(&serialised)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -445,6 +457,12 @@ func (s *Store) GetLatestVulnerabilityRecord(
 	coord coordinate.ModuleCoordinate,
 	pipelineVersion string,
 ) (domain.VulnerabilityRecord, bool, error) {
+	// The zero coordinate names no module, so this is a question about nothing.
+	// Answering it with absence would report "no record here" for a module that
+	// was never asked about — see coordinate.ErrZeroCoordinate.
+	if coord.IsZero() {
+		return domain.VulnerabilityRecord{}, false, coordinate.ErrZeroCoordinate
+	}
 	const q = `
 SELECT serialised FROM vulnerability_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
@@ -452,7 +470,7 @@ ORDER BY scanned_at DESC LIMIT 1`
 
 	var serialised []byte
 	err := s.db.DB().QueryRowContext(ctx, q,
-		coord.Path, coord.Version, pipelineVersion,
+		coord.Path(), coord.Version(), pipelineVersion,
 	).Scan(&serialised)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.VulnerabilityRecord{}, false, nil
@@ -477,6 +495,12 @@ func (s *Store) GetLatestVulnerabilityRecordForWalk(
 	pipelineVersion string,
 	walkID string,
 ) (domain.VulnerabilityRecord, bool, error) {
+	// The zero coordinate names no module, so this is a question about nothing.
+	// Answering it with absence would report "no record here" for a module that
+	// was never asked about — see coordinate.ErrZeroCoordinate.
+	if coord.IsZero() {
+		return domain.VulnerabilityRecord{}, false, coordinate.ErrZeroCoordinate
+	}
 	const q = `
 SELECT vr.serialised
 FROM vulnerability_records vr
@@ -496,7 +520,7 @@ LIMIT 1`
 
 	var serialised []byte
 	err := s.db.DB().QueryRowContext(ctx, q,
-		coord.Path, coord.Version, pipelineVersion, walkID,
+		coord.Path(), coord.Version(), pipelineVersion, walkID,
 	).Scan(&serialised)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.VulnerabilityRecord{}, false, nil
@@ -574,7 +598,7 @@ ON CONFLICT (walk_scan_run_id, module_path, module_version) DO NOTHING`
 
 	for coord := range run.PerModuleResults {
 		if _, err = tx.ExecContext(ctx, modQ,
-			run.ID, coord.Path, coord.Version,
+			run.ID, coord.Path(), coord.Version(),
 			run.PipelineVersion, run.Snapshot.Source, run.Snapshot.Version, run.WalkID,
 		); err != nil {
 			return fmt.Errorf("inserting walk scan run module %s: %w", coord, err)
@@ -857,12 +881,18 @@ func (s *Store) ListVulnerabilityRecordsForModule(
 	coord coordinate.ModuleCoordinate,
 	pipelineVersion string,
 ) ([]domain.VulnerabilityRecord, error) {
+	// The zero coordinate names no module, so this is a question about nothing.
+	// Answering it with absence would report "no record here" for a module that
+	// was never asked about — see coordinate.ErrZeroCoordinate.
+	if coord.IsZero() {
+		return nil, coordinate.ErrZeroCoordinate
+	}
 	const q = `
 SELECT serialised FROM vulnerability_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 ORDER BY scanned_at DESC`
 
-	rows, err := s.db.DB().QueryContext(ctx, q, coord.Path, coord.Version, pipelineVersion)
+	rows, err := s.db.DB().QueryContext(ctx, q, coord.Path(), coord.Version(), pipelineVersion)
 	if err != nil {
 		return nil, fmt.Errorf("listing vulnerability records for module: %w", err)
 	}

@@ -279,8 +279,8 @@ func TestRefusedDowngradeIsAuditedWithTheForceFlag(t *testing.T) {
 		t.Fatalf("audit event type = %q, want %q", e.Type, audit.EventFactRecordWriteRefused)
 	}
 	want := map[string]any{
-		"module":                       testCoord.Path,
-		"version":                      testCoord.Version,
+		"module":                       testCoord.Path(),
+		"version":                      testCoord.Version(),
 		"existing_verification_status": string(domain2.Verified),
 		"incoming_verification_status": string(domain2.VerifiedBySumDBOnly),
 		"existing_acquisition_mode":    string(domain2.AcquisitionProxy),

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	"github.com/eitanity/kanonarion/internal/iface/application"
 	"github.com/eitanity/kanonarion/internal/iface/domain"
@@ -28,7 +29,7 @@ func (s *queryFakeStore) PutInterfaceRecord(_ context.Context, r domain.Interfac
 	if s.records == nil {
 		s.records = make(map[queryIfaceKey]domain.InterfaceRecord)
 	}
-	s.records[queryIfaceKey{r.Coordinate.Path, r.Coordinate.Version, r.PipelineVersion}] = r
+	s.records[queryIfaceKey{r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion}] = r
 	return nil
 }
 
@@ -36,7 +37,7 @@ func (s *queryFakeStore) GetInterfaceRecord(_ context.Context, coord coordinate.
 	if s.getErr != nil {
 		return domain.InterfaceRecord{}, false, s.getErr
 	}
-	r, ok := s.records[queryIfaceKey{coord.Path, coord.Version, pv}]
+	r, ok := s.records[queryIfaceKey{coord.Path(), coord.Version(), pv}]
 	return r, ok, nil
 }
 
@@ -51,7 +52,7 @@ func (s *queryFakeStore) FindSymbol(_ context.Context, _ string, _ string) ([]if
 var _ ifaceports.InterfaceStore = (*queryFakeStore)(nil)
 
 func TestQueryInterfaceUseCase_GetInterfaceRecord(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	store := &queryFakeStore{}
 	_ = store.PutInterfaceRecord(context.Background(), domain.InterfaceRecord{
 		Coordinate:      coord,
@@ -73,7 +74,7 @@ func TestQueryInterfaceUseCase_GetInterfaceRecord(t *testing.T) {
 }
 
 func TestQueryInterfaceUseCase_GetInterfaceRecord_NotFound(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	uc := application.NewQueryInterfaceUseCase(&queryFakeStore{})
 
 	_, found, err := uc.GetInterfaceRecord(context.Background(), coord, "0.1.0")
@@ -89,7 +90,7 @@ func TestQueryInterfaceUseCase_GetInterfaceRecord_StoreError(t *testing.T) {
 	storeErr := errors.New("db failure")
 	uc := application.NewQueryInterfaceUseCase(&queryFakeStore{getErr: storeErr})
 
-	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	_, _, err := uc.GetInterfaceRecord(context.Background(), coord, "0.1.0")
 	if !errors.Is(err, storeErr) {
 		t.Errorf("got %v, want wrapping %v", err, storeErr)

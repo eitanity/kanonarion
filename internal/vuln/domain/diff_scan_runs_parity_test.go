@@ -199,9 +199,9 @@ func TestDiffScanRuns_UnresolvedSortedDeterministically(t *testing.T) {
 		t.Fatalf("expected 3 withheld findings, got %+v", diff.UnresolvedFindings)
 	}
 	got := []string{
-		diff.UnresolvedFindings[0].Coordinate.Path + "/" + diff.UnresolvedFindings[0].Finding.ID,
-		diff.UnresolvedFindings[1].Coordinate.Path + "/" + diff.UnresolvedFindings[1].Finding.ID,
-		diff.UnresolvedFindings[2].Coordinate.Path + "/" + diff.UnresolvedFindings[2].Finding.ID,
+		diff.UnresolvedFindings[0].Coordinate.Path() + "/" + diff.UnresolvedFindings[0].Finding.ID,
+		diff.UnresolvedFindings[1].Coordinate.Path() + "/" + diff.UnresolvedFindings[1].Finding.ID,
+		diff.UnresolvedFindings[2].Coordinate.Path() + "/" + diff.UnresolvedFindings[2].Finding.ID,
 	}
 	want := []string{
 		"github.com/foo/bar/VULN-9",

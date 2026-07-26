@@ -52,7 +52,7 @@ func (s *fakeFactStore) GetFetchRecord(_ context.Context, coord coordinate.Modul
 	if s.records == nil {
 		return domain2.CompositeRecord{}, false, nil
 	}
-	r, ok := s.records[factKey{coord.Path, coord.Version, pv}]
+	r, ok := s.records[factKey{coord.Path(), coord.Version(), pv}]
 	if !ok {
 		return domain2.CompositeRecord{}, false, nil
 	}
@@ -127,7 +127,7 @@ func (s *fakeCallGraphStore) PutCallGraphRecord(_ context.Context, r domain.Call
 	if s.records == nil {
 		s.records = make(map[cgKey]domain.CallGraphRecord)
 	}
-	s.records[cgKey{r.Coordinate.Path, r.Coordinate.Version, r.PipelineVersion}] = r
+	s.records[cgKey{r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion}] = r
 	return nil
 }
 
@@ -138,7 +138,7 @@ func (s *fakeCallGraphStore) GetCallGraphRecord(_ context.Context, coord coordin
 	if s.records == nil {
 		return domain.CallGraphRecord{}, false, nil
 	}
-	r, ok := s.records[cgKey{coord.Path, coord.Version, pv}]
+	r, ok := s.records[cgKey{coord.Path(), coord.Version(), pv}]
 	return r, ok, nil
 }
 

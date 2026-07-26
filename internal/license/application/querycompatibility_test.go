@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	"github.com/eitanity/kanonarion/internal/license/application"
 	"github.com/eitanity/kanonarion/internal/license/domain"
@@ -20,7 +21,7 @@ type compatFakeLicenseStore struct {
 }
 
 func (s *compatFakeLicenseStore) GetLicenseRecord(_ context.Context, coord coordinate.ModuleCoordinate, _ string) (domain.LicenseRecord, bool, error) {
-	key := coord.Path + "@" + coord.Version
+	key := coord.Path() + "@" + coord.Version()
 	r, ok := s.records[key]
 	return r, ok, nil
 }
@@ -47,7 +48,7 @@ var _ walkports.WalkStore = (*compatFakeWalkStore)(nil)
 // -- tests --
 
 func makeCoord(path, version string) coordinate.ModuleCoordinate {
-	return coordinate.ModuleCoordinate{Path: path, Version: version}
+	return coordinatetest.MustNew(path, version)
 }
 
 // TestCheckCompatibilityForWalk_WalkNotFound verifies the resolved-vs-zero
@@ -183,8 +184,8 @@ func TestCheckCompatibilityForWalk_UnextractedLicenseIsUnknown(t *testing.T) {
 	if c.Verdict != domain.VerdictUnknownPair {
 		t.Errorf("un-extracted dep verdict = %s, want unknown_pair", c.Verdict)
 	}
-	if c.ModulePath != unextracted.Path {
-		t.Errorf("conflict module = %q, want %q", c.ModulePath, unextracted.Path)
+	if c.ModulePath != unextracted.Path() {
+		t.Errorf("conflict module = %q, want %q", c.ModulePath, unextracted.Path())
 	}
 }
 
@@ -240,8 +241,8 @@ func TestCheckCompatibilityForWalk_EmbeddedGPLConflict(t *testing.T) {
 	if gplConflict == nil {
 		t.Fatalf("expected a GPL-2.0-only conflict, got: %v", report.Conflicts)
 	}
-	if gplConflict.ModulePath != dep.Path {
-		t.Errorf("conflict module = %q, want %q", gplConflict.ModulePath, dep.Path)
+	if gplConflict.ModulePath != dep.Path() {
+		t.Errorf("conflict module = %q, want %q", gplConflict.ModulePath, dep.Path())
 	}
 }
 
@@ -375,13 +376,13 @@ func TestCheckCompatibilityForWalk_EmptyTargetAdoptsRootLicence(t *testing.T) {
 		},
 	}
 	licStore := &compatFakeLicenseStore{records: map[string]domain.LicenseRecord{
-		root.Path + "@" + root.Version: {
+		root.Path() + "@" + root.Version(): {
 			Coordinate:  root,
 			Role:        domain.LicenseRoleRootDeclaration,
 			Expression:  "Apache-2.0",
 			PrimarySPDX: "Apache-2.0",
 		},
-		dep.Path + "@" + dep.Version: {
+		dep.Path() + "@" + dep.Version(): {
 			Coordinate:  dep,
 			Expression:  "MIT",
 			PrimarySPDX: "MIT",
@@ -427,7 +428,7 @@ func TestCheckCompatibilityForWalk_EmptyTargetWithUnclassifiedRootErrs(t *testin
 	t.Parallel()
 	root := makeCoord("example.com/project", coordinate.LocalVersion)
 	licStore := &compatFakeLicenseStore{records: map[string]domain.LicenseRecord{
-		root.Path + "@" + root.Version: {
+		root.Path() + "@" + root.Version(): {
 			Coordinate:    root,
 			Role:          domain.LicenseRoleRootDeclaration,
 			OverallStatus: domain.LicenseStatusUnclassified,

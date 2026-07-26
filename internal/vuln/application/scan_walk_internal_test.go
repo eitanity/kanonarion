@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 )
 
@@ -32,7 +33,7 @@ func TestComputeContentHash_WalkScanRun_MarshalFailure(t *testing.T) {
 func TestTallyModuleResults_UnrecognisedStatusCountedNotDropped(t *testing.T) {
 	uc := &ScanWalkUseCase{logger: slog.New(slog.NewTextHandler(io.Discard, nil))}
 
-	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	final := map[coordinate.ModuleCoordinate]moduleResult{
 		coord: {coord: coord, record: domain.VulnerabilityRecord{
 			Coordinate:    coord,

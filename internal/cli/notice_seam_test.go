@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
 
@@ -31,7 +32,7 @@ func walksWithNodes(id string, coords ...coordinate.ModuleCoordinate) *testfakes
 // emit the document — it fails loudly with a non-nil error and writes nothing
 // to stdout. Publishing an incomplete NOTICE would be the failure mode.
 func TestNoticeWith_ReviewItemsFailLoud(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "example.com/dep", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/dep", "v1.0.0")
 	ctr := &Container{
 		QueryWalks: walksWithNodes("W1", coord),
 		GenerateNotice: &testfakes.FakeGenerateNotice{Result: licapp.NoticeResult{
@@ -69,7 +70,7 @@ func TestNoticeWith_NoModules(t *testing.T) {
 
 // With no review items, the document is written to stdout.
 func TestNoticeWith_WritesDocument(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "example.com/dep", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/dep", "v1.0.0")
 	ctr := &Container{
 		QueryWalks: walksWithNodes("W1", coord),
 		GenerateNotice: &testfakes.FakeGenerateNotice{Result: licapp.NoticeResult{

@@ -151,8 +151,8 @@ func capabilityReportToJSON(coord coordinate.ModuleCoordinate, r capdomain.Capab
 		})
 	}
 	return capabilityReportJSON{
-		Module:       coord.Path,
-		Version:      coord.Version,
+		Module:       coord.Path(),
+		Version:      coord.Version(),
 		Partial:      r.Partial,
 		Caveat:       r.Caveat,
 		Capabilities: capsToStrings(r.Capabilities()),
@@ -183,7 +183,7 @@ func capsToStrings(caps []capdomain.Capability) []string {
 // -- text rendering --
 
 func printCapabilityReport(stdout io.Writer, coord coordinate.ModuleCoordinate, r capdomain.CapabilityReport) error {
-	if _, err := fmt.Fprintf(stdout, "%s@%s capabilities:\n", coord.Path, coord.Version); err != nil {
+	if _, err := fmt.Fprintf(stdout, "%s@%s capabilities:\n", coord.Path(), coord.Version()); err != nil {
 		return fmt.Errorf("writing header: %w", err)
 	}
 	if r.Partial {
@@ -211,7 +211,7 @@ func printCapabilityReport(stdout io.Writer, coord coordinate.ModuleCoordinate, 
 
 func printCapabilityDiff(stdout io.Writer, from, to coordinate.ModuleCoordinate, diff capdomain.CapabilityDiff) error {
 	if _, err := fmt.Fprintf(stdout, "capability diff %s@%s → %s@%s:\n",
-		from.Path, from.Version, to.Path, to.Version); err != nil {
+		from.Path(), from.Version(), to.Path(), to.Version()); err != nil {
 		return fmt.Errorf("writing header: %w", err)
 	}
 	if !diff.ParityOK {

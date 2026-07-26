@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 )
 
 // -- proxy seam fakes --
@@ -33,7 +34,7 @@ func (f fakeVersions) ListVersions(_ context.Context, _ string) ([]string, error
 // -- resolveLatest --
 
 func TestResolveLatest_Success(t *testing.T) {
-	want := coordinate.ModuleCoordinate{Path: "example.com/m", Version: "v1.2.3"}
+	want := coordinatetest.MustNew("example.com/m", "v1.2.3")
 	var stderr bytes.Buffer
 
 	got, err := resolveLatest(context.Background(), "example.com/m", fakeLatest{coord: want}, &stderr)
@@ -131,7 +132,7 @@ func TestResolveCoordForInspect_PinnedVersion(t *testing.T) {
 	if err != nil {
 		t.Fatalf("resolveCoordForInspect: %v", err)
 	}
-	want := coordinate.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
+	want := coordinatetest.MustNew("example.com/m", "v1.0.0")
 	if got != want {
 		t.Errorf("want %+v, got %+v", want, got)
 	}

@@ -43,7 +43,7 @@ import (
 func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequest) (domain.ProjectScanResult, error) {
 	coord := req.Coordinate
 	s.logMem(ctx, "target_scan_start")
-	s.logger.Info("vuln-scan: target-rooted scan starting", "module", coord.Path, "version", coord.Version)
+	s.logger.Info("vuln-scan: target-rooted scan starting", "module", coord.Path(), "version", coord.Version())
 
 	tmpDir, err := os.MkdirTemp("", "kanonarion-vuln-target-*")
 	if err != nil {
@@ -129,7 +129,7 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 		}, nil
 	}
 	if perr != nil {
-		return domain.ProjectScanResult{}, fmt.Errorf("parse target govulncheck output for %s@%s: %w", coord.Path, coord.Version, perr)
+		return domain.ProjectScanResult{}, fmt.Errorf("parse target govulncheck output for %s@%s: %w", coord.Path(), coord.Version(), perr)
 	}
 
 	runtime.GC()

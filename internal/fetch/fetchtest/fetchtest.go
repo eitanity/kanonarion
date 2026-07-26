@@ -20,6 +20,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 )
@@ -174,14 +175,14 @@ func H1(value string) domain.ModuleHash {
 // Coordinate sets the module path and version.
 func Coordinate(c coordinate.ModuleCoordinate) Option {
 	return func(r *domain.FactRecord) {
-		r.ModulePath = c.Path
-		r.ModuleVersion = c.Version
+		r.ModulePath = c.Path()
+		r.ModuleVersion = c.Version()
 	}
 }
 
 // Module sets the module path and version from their parts.
 func Module(path, version string) Option {
-	return Coordinate(coordinate.ModuleCoordinate{Path: path, Version: version})
+	return Coordinate(coordinatetest.MustNew(path, version))
 }
 
 // Path sets the module path, leaving the version as it is. It is for the tests

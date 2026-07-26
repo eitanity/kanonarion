@@ -25,7 +25,7 @@ func (s *fakeVulnStore) GetLatestVulnerabilityRecord(_ context.Context, coord co
 	if s.err != nil {
 		return vulndomain.VulnerabilityRecord{}, false, s.err
 	}
-	r, ok := s.records[coord.Path]
+	r, ok := s.records[coord.Path()]
 	return r, ok, nil
 }
 

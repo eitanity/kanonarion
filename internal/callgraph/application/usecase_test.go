@@ -442,7 +442,7 @@ func TestExecute_ExcludedByConfig(t *testing.T) {
 		Stopwatch:            fakeStopwatch{},
 		PipelineVersion:      testPipelineV,
 		FetchPipelineVersion: testFetchPipV,
-		Exclusions:           []string{"other/mod", testCoord.Path, ""},
+		Exclusions:           []string{"other/mod", testCoord.Path(), ""},
 		Logger:               slog.Default(),
 	})
 
@@ -465,7 +465,7 @@ func TestExecute_ExcludedByConfig(t *testing.T) {
 	}
 	// Normalised: sorted, de-duplicated, blanks dropped.
 	// testCoord.Path is "example.com/mod", which sorts before "other/mod".
-	wantList := []string{testCoord.Path, "other/mod"}
+	wantList := []string{testCoord.Path(), "other/mod"}
 	if len(r.ExclusionList) != len(wantList) {
 		t.Fatalf("ExclusionList = %v, want %v", r.ExclusionList, wantList)
 	}

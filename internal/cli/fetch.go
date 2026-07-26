@@ -236,7 +236,7 @@ func runFetch(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.W
 	}
 	stale := stalenessInfo{IsLatest: true}
 	if version != "latest" {
-		if info, lerr := proxyAdapter.LatestInfo(ctx, coord.Path); lerr == nil && info.Version != coord.Version {
+		if info, lerr := proxyAdapter.LatestInfo(ctx, coord.Path()); lerr == nil && info.Version != coord.Version() {
 			stale.IsLatest = false
 			stale.LatestVersion = info.Version
 			if !info.Time.IsZero() {
@@ -314,7 +314,7 @@ func resolveLatest(ctx context.Context, path string, proxy latestResolver, stder
 	if err != nil {
 		return coordinate.ModuleCoordinate{}, fmt.Errorf("resolving %s@latest: %w", path, err)
 	}
-	if _, wErr := fmt.Fprintf(stderr, "resolved %s@latest → %s\n", path, coord.Version); wErr != nil {
+	if _, wErr := fmt.Fprintf(stderr, "resolved %s@latest → %s\n", path, coord.Version()); wErr != nil {
 		return coordinate.ModuleCoordinate{}, fmt.Errorf("writing output: %w", wErr)
 	}
 	return coord, nil

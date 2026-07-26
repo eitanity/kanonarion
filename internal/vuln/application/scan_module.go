@@ -185,7 +185,7 @@ func (uc *ScanModuleUseCase) WithLocalFetchPipelineVersion(v string) *ScanModule
 // never fetched (a shallow walk).
 func metadataOnlyNote(coord coordinate.ModuleCoordinate, goModOnly bool) string {
 	switch {
-	case coord.Path == domain.StdlibModulePath:
+	case coord.Path() == domain.StdlibModulePath:
 		return "Go standard library (toolchain-provided); advisories resolved from OSV metadata by coordinate"
 	case goModOnly:
 		return "metadata-only: only go.mod fetched for module-graph resolution; module source not retrieved"
@@ -609,7 +609,7 @@ func (uc *ScanModuleUseCase) recoverUnresolvedCoordinate(ctx context.Context, pa
 	// about the module being scanned; a path the module does not require yields no
 	// coordinate.
 	if coord, ok := domain.UnresolvedCoordinate(detail); ok {
-		return uc.requiredCoordinate(ctx, params.Coordinate, coord.Path)
+		return uc.requiredCoordinate(ctx, params.Coordinate, coord.Path())
 	}
 
 	// Source-position shape: the error names an unimportable package but no
@@ -704,10 +704,18 @@ func coordinateFromModFile(f *modfile.File, modulePath string) (coordinate.Modul
 			continue
 		}
 		if r.Old.Version == "" || r.Old.Version == version {
-			return coordinate.ModuleCoordinate{Path: r.New.Path, Version: r.New.Version}, true
+			coord, err := coordinate.NewModuleCoordinate(r.New.Path, r.New.Version)
+			if err != nil {
+				return coordinate.ModuleCoordinate{}, false
+			}
+			return coord, true
 		}
 	}
-	return coordinate.ModuleCoordinate{Path: modulePath, Version: version}, true
+	coord, err := coordinate.NewModuleCoordinate(modulePath, version)
+	if err != nil {
+		return coordinate.ModuleCoordinate{}, false
+	}
+	return coord, true
 }
 
 // goModModulePaths returns the set of module paths a parsed go.mod requires —
@@ -757,7 +765,7 @@ func (uc *ScanModuleUseCase) scannedGoMod(ctx context.Context, scanned coordinat
 func modulePaths(known map[coordinate.ModuleCoordinate]struct{}) map[string]struct{} {
 	paths := make(map[string]struct{}, len(known))
 	for coord := range known {
-		paths[coord.Path] = struct{}{}
+		paths[coord.Path()] = struct{}{}
 	}
 	return paths
 }
@@ -896,7 +904,7 @@ func (uc *ScanModuleUseCase) applyReachability(ctx context.Context, params ScanM
 	}
 
 	for i, finding := range findings {
-		syms := buildSymbolRefs(params.Coordinate.Path, finding.AffectedSymbols)
+		syms := buildSymbolRefs(params.Coordinate.Path(), finding.AffectedSymbols)
 		if len(syms) == 0 {
 			continue
 		}

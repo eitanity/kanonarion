@@ -165,8 +165,8 @@ func (r *recordingFetcher) fetchAndRecord(ctx context.Context, c coordinate.Modu
 
 	lap := r.stopwatch.Start()
 	r.logger.InfoContext(ctx, "walker.fetch.start",
-		slog.String("module.path", c.Path),
-		slog.String("module.version", c.Version),
+		slog.String("module.path", c.Path()),
+		slog.String("module.version", c.Version()),
 		slog.String("walk.target", r.walkTarget.String()),
 	)
 
@@ -203,8 +203,8 @@ func (r *recordingFetcher) fetchAndRecord(ctx context.Context, c coordinate.Modu
 		errType = "fetch_failed"
 	}
 	r.logger.InfoContext(ctx, "walker.fetch.end",
-		slog.String("module.path", c.Path),
-		slog.String("module.version", c.Version),
+		slog.String("module.path", c.Path()),
+		slog.String("module.version", c.Version()),
 		slog.String("walk.target", r.walkTarget.String()),
 		slog.Bool("from_cache", out.fromCache),
 		slog.Int64("duration_ms", dur),
@@ -223,8 +223,8 @@ func (r *recordingFetcher) callWithRecover(ctx context.Context, c coordinate.Mod
 			stack := debug.Stack()
 			msg := fmt.Sprintf("panic: %v\n%s", rec, stack)
 			r.logger.ErrorContext(ctx, "walker.fetch.panic",
-				slog.String("module.path", c.Path),
-				slog.String("module.version", c.Version),
+				slog.String("module.path", c.Path()),
+				slog.String("module.version", c.Version()),
 				slog.String("detail", msg),
 			)
 			fr = walkports.ModuleFetchResult{}

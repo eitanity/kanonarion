@@ -333,13 +333,13 @@ func (d *Database) CheckVulnerable(ctx context.Context, modules []coordinate.Mod
 
 	res := make(map[coordinate.ModuleCoordinate][]string)
 	for _, m := range modules {
-		entries, ok := d.moduleIndex[m.Path]
+		entries, ok := d.moduleIndex[m.Path()]
 		if !ok {
 			continue
 		}
 		var affecting []string
 		for _, e := range entries {
-			if isAffectedVersion(m.Version, e.fixed) {
+			if isAffectedVersion(m.Version(), e.fixed) {
 				affecting = append(affecting, e.id)
 			}
 		}
@@ -362,11 +362,11 @@ func (d *Database) CheckVulnerable(ctx context.Context, modules []coordinate.Mod
 func advisoryAffects(coord coordinate.ModuleCoordinate, adv *osvAdvisory) bool {
 	matched := false
 	for _, a := range adv.Affected {
-		if a.Package.Name != coord.Path {
+		if a.Package.Name != coord.Path() {
 			continue
 		}
 		matched = true
-		if versionInAffectedRanges(coord.Version, a.Ranges) {
+		if versionInAffectedRanges(coord.Version(), a.Ranges) {
 			return true
 		}
 	}
@@ -502,7 +502,7 @@ func (d *Database) LookupFindings(ctx context.Context, coord coordinate.ModuleCo
 	}
 
 	d.mu.RLock()
-	entries := append([]modulevuln(nil), d.moduleIndex[coord.Path]...)
+	entries := append([]modulevuln(nil), d.moduleIndex[coord.Path()]...)
 	d.mu.RUnlock()
 
 	var findings []domain.VulnerabilityFinding
@@ -511,7 +511,7 @@ func (d *Database) LookupFindings(ctx context.Context, coord coordinate.ModuleCo
 		// highest fix, so it only ever over-includes (a version below any real
 		// fix). It never wrongly excludes, making it a safe cheap skip before the
 		// per-advisory fetch.
-		if !isAffectedVersion(coord.Version, e.fixed) {
+		if !isAffectedVersion(coord.Version(), e.fixed) {
 			continue
 		}
 		finding := domain.VulnerabilityFinding{ID: e.id, FixedIn: normaliseFixed(e.fixed)}
@@ -534,7 +534,7 @@ func (d *Database) LookupFindings(ctx context.Context, coord coordinate.ModuleCo
 				"advisory", e.id, "coordinate", coord)
 			continue
 		}
-		enrichFinding(&finding, coord.Path, adv)
+		enrichFinding(&finding, coord.Path(), adv)
 		findings = append(findings, finding)
 	}
 	domain.SortFindings(findings)

@@ -3,12 +3,12 @@ package domain_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 )
 
-var sealCoord = coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+var sealCoord = coordinatetest.MustNew("example.com/mod", "v1.0.0")
 
 // Seal hashes at construction, so there is no window in which an unsealed record
 // exists to be mislaid. Before this, the write path built a record, then hashed

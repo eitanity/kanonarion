@@ -94,8 +94,8 @@ type ExtractResult struct {
 // an error. Only infrastructure errors (store access, blob I/O) return errors.
 func (uc *ExtractExampleUseCase) Execute(ctx context.Context, req ExtractRequest) (_ ExtractResult, retErr error) {
 	log := uc.logger.With(
-		slog.String("extraction.module.path", req.Coordinate.Path),
-		slog.String("extraction.module.version", req.Coordinate.Version),
+		slog.String("extraction.module.path", req.Coordinate.Path()),
+		slog.String("extraction.module.version", req.Coordinate.Version()),
 		slog.String("extraction.stage", "example"),
 		slog.String("pipeline_version", uc.pipelineVersion),
 	)
@@ -215,7 +215,7 @@ func (uc *ExtractExampleUseCase) extractFromZip(
 		return domain2.ExampleRecord{}, fmt.Errorf("example extraction cancelled: %w", ctxErr)
 	}
 
-	modulePrefix := coord.Path + "@" + coord.Version + "/"
+	modulePrefix := coord.Path() + "@" + coord.Version() + "/"
 	examples, failures, err := uc.parser.Parse(zipData, modulePrefix)
 	if err != nil {
 		return domain2.ExampleRecord{}, fmt.Errorf("parsing module zip: %w", err)

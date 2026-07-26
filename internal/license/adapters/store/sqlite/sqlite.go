@@ -92,6 +92,12 @@ func (s *Store) Close() error {
 // (module_path, module_version, pipeline_version). Verifies the ContentHash
 // before storage.
 func (s *Store) PutLicenseRecord(ctx context.Context, r domain2.LicenseRecord) error {
+	// A record whose coordinate is the zero value would key a row on the empty
+	// path at the empty version, which every later read treats as a genuine
+	// measurement of a module that does not exist.
+	if r.Coordinate.IsZero() {
+		return coordinate.ErrZeroCoordinate
+	}
 	var h domain2.LicenseRecordHasher
 	if err := h.VerifyContentHash(r); err != nil {
 		return fmt.Errorf("verifying content hash before put: %w", err)
@@ -120,7 +126,7 @@ ON CONFLICT (module_path, module_version, pipeline_version) DO UPDATE SET
     serialised               = excluded.serialised`
 
 	_, err = s.db.DB().ExecContext(ctx, q,
-		r.Coordinate.Path, r.Coordinate.Version, r.PipelineVersion,
+		r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
 		r.PrimarySPDX, r.Expression, int(r.OverallStatus), int(r.CopyrightStatus), int(r.Provenance.Confidence),
 		r.ExtractedAt.UTC().Format(time.RFC3339),
 		r.ContentHash, blob,
@@ -135,10 +141,16 @@ ON CONFLICT (module_path, module_version, pipeline_version) DO UPDATE SET
 // given coordinate and pipeline version. Returns (zero, false, nil) if not
 // found. Returns (zero, false, ErrLicenceIntegrity) on hash mismatch.
 func (s *Store) GetLicenseRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain2.LicenseRecord, bool, error) {
+	// The zero coordinate names no module, so this is a question about nothing.
+	// Answering it with absence would report "no record here" for a module that
+	// was never asked about — see coordinate.ErrZeroCoordinate.
+	if coord.IsZero() {
+		return domain2.LicenseRecord{}, false, coordinate.ErrZeroCoordinate
+	}
 	const q = `SELECT serialised, content_hash FROM licence_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 
-	row := s.db.DB().QueryRowContext(ctx, q, coord.Path, coord.Version, pipelineVersion)
+	row := s.db.DB().QueryRowContext(ctx, q, coord.Path(), coord.Version(), pipelineVersion)
 	var blob []byte
 	var storedHash string
 	if err := row.Scan(&blob, &storedHash); errors.Is(err, sql.ErrNoRows) {

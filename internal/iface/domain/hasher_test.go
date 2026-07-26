@@ -91,8 +91,8 @@ func TestHasher_RoundTrip(t *testing.T) {
 	if got.ContentHash != r.ContentHash {
 		t.Errorf("ContentHash mismatch after round-trip: %q vs %q", got.ContentHash, r.ContentHash)
 	}
-	if got.Coordinate.Path != r.Coordinate.Path {
-		t.Errorf("Coordinate.Path: %q vs %q", got.Coordinate.Path, r.Coordinate.Path)
+	if got.Coordinate.Path() != r.Coordinate.Path() {
+		t.Errorf("Coordinate.Path: %q vs %q", got.Coordinate.Path(), r.Coordinate.Path())
 	}
 	if len(got.Packages) != len(r.Packages) {
 		t.Fatalf("Packages length: %d vs %d", len(got.Packages), len(r.Packages))

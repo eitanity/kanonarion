@@ -349,7 +349,7 @@ func runContext(ctx context.Context, arg string, f contextFlags, stdout, stderr 
 		}
 	}
 	out := contextOutput{
-		Module:          contextModuleInfo{Path: coord.Path, Version: coord.Version},
+		Module:          contextModuleInfo{Path: coord.Path(), Version: coord.Version()},
 		Verification:    buildVerification(ctx, coord, ctr.QueryFetch),
 		Provenance:      buildProvenance(coord),
 		Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks),

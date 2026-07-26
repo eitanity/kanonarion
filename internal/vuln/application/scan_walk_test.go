@@ -9,6 +9,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 
 	"github.com/eitanity/kanonarion/internal/vuln/application"
@@ -69,8 +70,8 @@ func TestScanWalk(t *testing.T) {
 	walkID := "walk-1"
 
 	// 1. Setup Walk
-	target := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
-	dep := coordinate.ModuleCoordinate{Path: "github.com/lib/baz", Version: "v2.0.0"}
+	target := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
+	dep := coordinatetest.MustNew("github.com/lib/baz", "v2.0.0")
 
 	walk := walkdomain.WalkRecord{
 		ID: walkID,
@@ -170,7 +171,7 @@ func TestScanWalk_SnapshotPersisted(t *testing.T) {
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	walkID := "walk-snap"
 
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	walkStore := newFakeWalkStore()
 	if err := walkStore.PutWalk(ctx, walkdomain.WalkRecord{
 		ID:    walkID,
@@ -225,8 +226,8 @@ func TestScanWalk_OverallStatus(t *testing.T) {
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	clock := fixedClock{t: now}
 
-	coord1 := coordinate.ModuleCoordinate{Path: "m1", Version: "v1"}
-	coord2 := coordinate.ModuleCoordinate{Path: "m2", Version: "v1"}
+	coord1 := coordinatetest.MustNew("m1", "v1")
+	coord2 := coordinatetest.MustNew("m2", "v1")
 
 	tests := []struct {
 		name     string
@@ -359,7 +360,7 @@ func TestScanWalk_FreshFetch(t *testing.T) {
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	clock := fixedClock{t: now}
 
-	coord := coordinate.ModuleCoordinate{Path: "m1", Version: "v1"}
+	coord := coordinatetest.MustNew("m1", "v1")
 	walkStore := newFakeWalkStore()
 	_ = walkStore.PutWalk(ctx, walkdomain.WalkRecord{
 		ID:    "w1",
@@ -425,8 +426,8 @@ func TestScanWalk_LocalReplaceUnscannable(t *testing.T) {
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	walkID := "walk-localreplace"
 
-	target := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
-	localDep := coordinate.ModuleCoordinate{Path: "example.com/dep", Version: "v1.0.0"}
+	target := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
+	localDep := coordinatetest.MustNew("example.com/dep", "v1.0.0")
 
 	walk := walkdomain.WalkRecord{
 		ID: walkID,

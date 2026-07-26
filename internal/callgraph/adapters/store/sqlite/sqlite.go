@@ -136,6 +136,12 @@ func (s *Store) Close() error {
 // stored separately in callgraph_edges so that GetCallGraphRecord can
 // reconstruct the record without a second full parse of a large blob.
 func (s *Store) PutCallGraphRecord(ctx context.Context, r domain2.CallGraphRecord) error {
+	// A record whose coordinate is the zero value would key a row on the empty
+	// path at the empty version, which every later read treats as a genuine
+	// measurement of a module that does not exist.
+	if r.Coordinate.IsZero() {
+		return coordinate.ErrZeroCoordinate
+	}
 	var h domain2.CallGraphRecordHasher
 	if err := h.VerifyContentHash(r); err != nil {
 		return fmt.Errorf("verifying content hash before put: %w", err)
@@ -176,7 +182,7 @@ ON CONFLICT (module_path, module_version, pipeline_version) DO UPDATE SET
     serialised     = excluded.serialised`
 
 	_, err = tx.ExecContext(ctx, qRecord,
-		r.Coordinate.Path, r.Coordinate.Version, r.PipelineVersion,
+		r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
 		string(r.Algorithm), int(r.OverallStatus),
 		r.NodeCount, r.EdgeCount,
 		r.ExtractedAt.UTC().Format(time.RFC3339),
@@ -188,7 +194,7 @@ ON CONFLICT (module_path, module_version, pipeline_version) DO UPDATE SET
 
 	const qDel = `DELETE FROM callgraph_edges
 	WHERE from_module = ? AND from_version = ? AND pipeline_version = ?`
-	if _, err := tx.ExecContext(ctx, qDel, r.Coordinate.Path, r.Coordinate.Version, r.PipelineVersion); err != nil {
+	if _, err := tx.ExecContext(ctx, qDel, r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion); err != nil {
 		return fmt.Errorf("deleting old callgraph edges: %w", err)
 	}
 
@@ -207,7 +213,7 @@ INSERT OR IGNORE INTO callgraph_edges (
 
 	for _, e := range r.Edges {
 		if _, err := stmtEdge.ExecContext(ctx,
-			r.Coordinate.Path, r.Coordinate.Version, r.PipelineVersion,
+			r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
 			e.FromID, e.ToID, string(e.Confidence),
 			e.CallSite.File, e.CallSite.Line, e.ReflectDispatch,
 		); err != nil {
@@ -226,10 +232,16 @@ INSERT OR IGNORE INTO callgraph_edges (
 // Returns (zero, false, nil) if not found.
 // Returns (zero, false, ErrCallGraphIntegrity) on hash mismatch.
 func (s *Store) GetCallGraphRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain2.CallGraphRecord, bool, error) {
+	// The zero coordinate names no module, so this is a question about nothing.
+	// Answering it with absence would report "no record here" for a module that
+	// was never asked about — see coordinate.ErrZeroCoordinate.
+	if coord.IsZero() {
+		return domain2.CallGraphRecord{}, false, coordinate.ErrZeroCoordinate
+	}
 	const q = `SELECT serialised, content_hash FROM callgraph_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 
-	row := s.db.DB().QueryRowContext(ctx, q, coord.Path, coord.Version, pipelineVersion)
+	row := s.db.DB().QueryRowContext(ctx, q, coord.Path(), coord.Version(), pipelineVersion)
 	var blob []byte
 	var storedHash string
 	if err := row.Scan(&blob, &storedHash); errors.Is(err, sql.ErrNoRows) {
@@ -285,7 +297,7 @@ func (s *Store) fetchEdges(ctx context.Context, coord coordinate.ModuleCoordinat
 	    WHERE from_module = ? AND from_version = ? AND pipeline_version = ?
 	    ORDER BY from_id, to_id, call_site_file, call_site_line`
 
-	rows, err := s.db.DB().QueryContext(ctx, q, coord.Path, coord.Version, pipelineVersion)
+	rows, err := s.db.DB().QueryContext(ctx, q, coord.Path(), coord.Version(), pipelineVersion)
 	if err != nil {
 		return nil, fmt.Errorf("fetching callgraph edges: %w", err)
 	}

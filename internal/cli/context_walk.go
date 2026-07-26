@@ -69,7 +69,7 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 				cmdWalkID = f.walkID
 			}
 			out := contextOutput{
-				Module:          contextModuleInfo{Path: coord.Path, Version: coord.Version},
+				Module:          contextModuleInfo{Path: coord.Path(), Version: coord.Version()},
 				Verification:    buildVerification(ctx, coord, ctr.QueryFetch),
 				Provenance:      buildProvenance(coord),
 				Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks),
@@ -103,7 +103,7 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 			cmdWalkID = f.walkID
 		}
 		out := contextOutput{
-			Module:          contextModuleInfo{Path: coord.Path, Version: coord.Version},
+			Module:          contextModuleInfo{Path: coord.Path(), Version: coord.Version()},
 			Verification:    buildVerification(ctx, coord, ctr.QueryFetch),
 			Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks),
 			License:         buildLicense(ctx, coord, ctr.QueryLicense),
@@ -114,7 +114,7 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 			Commands:        buildCommandsWithWalk(coord, cmdWalkID),
 		}
 		if err := enc.Encode(out); err != nil {
-			return fmt.Errorf("encoding context for %s@%s: %w", coord.Path, coord.Version, err)
+			return fmt.Errorf("encoding context for %s@%s: %w", coord.Path(), coord.Version(), err)
 		}
 	}
 	return nil
@@ -276,7 +276,7 @@ func runContextWalkSizeOnly(
 			cmdWalkID = f.walkID
 		}
 		out := contextOutput{
-			Module:          contextModuleInfo{Path: coord.Path, Version: coord.Version},
+			Module:          contextModuleInfo{Path: coord.Path(), Version: coord.Version()},
 			Verification:    buildVerification(ctx, coord, fetchUC),
 			Provenance:      buildProvenance(coord),
 			Dependencies:    buildDependencies(ctx, coord, walkUC),

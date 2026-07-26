@@ -159,7 +159,7 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 	}
 	return callGraphRecordJSON{
 		SchemaVersion:   r.SchemaVersion,
-		Coordinate:      coordinateJSON{Path: r.Coordinate.Path, Version: r.Coordinate.Version},
+		Coordinate:      coordinateJSON{Path: r.Coordinate.Path(), Version: r.Coordinate.Version()},
 		Algorithm:       string(r.Algorithm),
 		Nodes:           nodes,
 		Edges:           edges,
@@ -210,7 +210,7 @@ func filterCallGraphRecord(r domain.CallGraphRecord, sym string) domain.CallGrap
 
 func printCallGraphRecord(r domain.CallGraphRecord, limitNodes, limitEdges int, stdout io.Writer) error {
 	if _, err := fmt.Fprintf(stdout, "%s@%s  [%s]  %s\n",
-		r.Coordinate.Path, r.Coordinate.Version,
+		r.Coordinate.Path(), r.Coordinate.Version(),
 		string(r.Algorithm), r.OverallStatus.String(),
 	); err != nil {
 		return fmt.Errorf("writing header: %w", err)

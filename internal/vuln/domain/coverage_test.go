@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -67,7 +68,7 @@ func TestVulnerabilityRecord_UnmarshalJSON_ForeignEcosystem(t *testing.T) {
 // TestCompareFindingDelta_IDTiebreak covers the finding-ID tiebreak, the last
 // discriminator when module path and version are identical.
 func TestCompareFindingDelta_IDTiebreak(t *testing.T) {
-	c := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	c := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	a := domain.FindingDelta{Coordinate: c, Finding: domain.VulnerabilityFinding{ID: "GO-1"}}
 	b := domain.FindingDelta{Coordinate: c, Finding: domain.VulnerabilityFinding{ID: "GO-2"}}
 	if got := domain.CompareFindingDelta(a, b); got != -1 {
@@ -78,8 +79,8 @@ func TestCompareFindingDelta_IDTiebreak(t *testing.T) {
 	}
 
 	// Path comparison in the greater-than direction (a > b → 1).
-	pz := domain.FindingDelta{Coordinate: coordinate.ModuleCoordinate{Path: "github.com/zzz/pkg", Version: "v1.0.0"}}
-	pa := domain.FindingDelta{Coordinate: coordinate.ModuleCoordinate{Path: "github.com/aaa/pkg", Version: "v1.0.0"}}
+	pz := domain.FindingDelta{Coordinate: coordinatetest.MustNew("github.com/zzz/pkg", "v1.0.0")}
+	pa := domain.FindingDelta{Coordinate: coordinatetest.MustNew("github.com/aaa/pkg", "v1.0.0")}
 	if got := domain.CompareFindingDelta(pz, pa); got != 1 {
 		t.Errorf("zzz vs aaa: got %d, want 1", got)
 	}
@@ -89,8 +90,8 @@ func TestCompareFindingDelta_IDTiebreak(t *testing.T) {
 // sort comparator to run: two findings flip reachability, so SortFunc must order
 // more than one element and the comparator closure is exercised.
 func TestDiffScanRuns_TwoReachabilityChangesSorted(t *testing.T) {
-	cz := coordinate.ModuleCoordinate{Path: "github.com/zzz/mod", Version: "v1.0.0"}
-	ca := coordinate.ModuleCoordinate{Path: "github.com/aaa/mod", Version: "v1.0.0"}
+	cz := coordinatetest.MustNew("github.com/zzz/mod", "v1.0.0")
+	ca := coordinatetest.MustNew("github.com/aaa/mod", "v1.0.0")
 	before := []domain.VulnerabilityRecord{
 		{Coordinate: cz, WalkID: "walk-1", Findings: []domain.VulnerabilityFinding{{ID: "VULN-Z", Reachable: &domain.ReachabilityResult{IsReachable: false}}}},
 		{Coordinate: ca, WalkID: "walk-1", Findings: []domain.VulnerabilityFinding{{ID: "VULN-A", Reachable: &domain.ReachabilityResult{IsReachable: false}}}},
@@ -110,7 +111,7 @@ func TestDiffScanRuns_TwoReachabilityChangesSorted(t *testing.T) {
 		t.Fatalf("expected two reachability changes, got %+v", diff.ReachabilityChanges)
 	}
 	// Deterministic order: aaa/mod sorts before zzz/mod.
-	if diff.ReachabilityChanges[0].Coordinate.Path != "github.com/aaa/mod" {
+	if diff.ReachabilityChanges[0].Coordinate.Path() != "github.com/aaa/mod" {
 		t.Errorf("reachability changes not sorted by module path: %+v", diff.ReachabilityChanges)
 	}
 }
@@ -120,7 +121,7 @@ func TestDiffScanRuns_TwoReachabilityChangesSorted(t *testing.T) {
 // module present only in A contributes resolved findings.
 func TestDiffScanRuns_ModuleAppearsAndDisappears(t *testing.T) {
 	only := func(path string) coordinate.ModuleCoordinate {
-		return coordinate.ModuleCoordinate{Path: path, Version: "v1.0.0"}
+		return coordinatetest.MustNew(path, "v1.0.0")
 	}
 	added := only("github.com/added/mod")
 	removed := only("github.com/removed/mod")
@@ -147,7 +148,7 @@ func TestDiffScanRuns_ModuleAppearsAndDisappears(t *testing.T) {
 // both-nil branch: a finding present in both runs with no reachability verdict on
 // either side is not a reachability change.
 func TestDiffScanRuns_PresentBothNilReachability(t *testing.T) {
-	c := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	c := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	rec := domain.VulnerabilityRecord{
 		Coordinate: c, WalkID: "walk-1",
 		Findings: []domain.VulnerabilityFinding{{ID: "VULN-1"}}, // nil Reachable

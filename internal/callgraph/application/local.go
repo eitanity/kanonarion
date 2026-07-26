@@ -75,8 +75,8 @@ type LocalExtractRequest struct {
 // access, analyser infrastructure failures) return errors.
 func (uc *ExtractLocalCallGraphUseCase) Execute(ctx context.Context, req LocalExtractRequest) (_ ExtractResult, retErr error) {
 	log := uc.logger.With(
-		slog.String("extraction.module.path", req.Coordinate.Path),
-		slog.String("extraction.module.version", req.Coordinate.Version),
+		slog.String("extraction.module.path", req.Coordinate.Path()),
+		slog.String("extraction.module.version", req.Coordinate.Version()),
 		slog.String("extraction.stage", "callgraph-local"),
 		slog.String("pipeline_version", uc.pipelineVersion),
 	)

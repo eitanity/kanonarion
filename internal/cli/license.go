@@ -216,7 +216,7 @@ func printLicenseRecord(r domain.LicenseRecord, fromCache bool, jsonOut bool, st
 		displayLicense = r.Expression
 	}
 	if _, err := fmt.Fprintf(stdout, "%s@%s: %s — %s%s\n",
-		r.Coordinate.Path, r.Coordinate.Version,
+		r.Coordinate.Path(), r.Coordinate.Version(),
 		r.OverallStatus.String(), displayLicense,
 		cached,
 	); err != nil {
@@ -470,7 +470,10 @@ func runLicenseList(ctx context.Context, spdx, copyright string, limit int, uc Q
 	if copyright != "" {
 		var matched []ports.LicenseSummary
 		for _, s := range sums {
-			coord := coordinate.ModuleCoordinate{Path: s.ModulePath, Version: s.ModuleVersion}
+			coord, cErr := coordinate.NewModuleCoordinate(s.ModulePath, s.ModuleVersion)
+			if cErr != nil {
+				return fmt.Errorf("license record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
+			}
 			rec, found, rerr := uc.GetLicenseRecord(ctx, coord, s.PipelineVersion)
 			if rerr != nil || !found {
 				continue
@@ -498,7 +501,11 @@ func runLicenseList(ctx context.Context, spdx, copyright string, limit int, uc Q
 			license := s.PrimarySPDX
 			expr := s.Expression
 			source := "scanner"
-			if ov, ok := overrides.Resolve(coordinate.ModuleCoordinate{Path: s.ModulePath, Version: s.ModuleVersion}); ok {
+			coord, cErr := coordinate.NewModuleCoordinate(s.ModulePath, s.ModuleVersion)
+			if cErr != nil {
+				return fmt.Errorf("license record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
+			}
+			if ov, ok := overrides.Resolve(coord); ok {
 				license = ov.SPDX
 				expr = ""
 				source = "override"
@@ -524,7 +531,11 @@ func runLicenseList(ctx context.Context, spdx, copyright string, limit int, uc Q
 			license = s.Expression
 		}
 		source := "scanner"
-		if ov, ok := overrides.Resolve(coordinate.ModuleCoordinate{Path: s.ModulePath, Version: s.ModuleVersion}); ok {
+		coord, cErr := coordinate.NewModuleCoordinate(s.ModulePath, s.ModuleVersion)
+		if cErr != nil {
+			return fmt.Errorf("license record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
+		}
+		if ov, ok := overrides.Resolve(coord); ok {
 			license = ov.SPDX
 			source = "override"
 		}

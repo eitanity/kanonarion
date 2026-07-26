@@ -62,9 +62,9 @@ func TestFakeFetchModule_Execute(t *testing.T) {
 func TestFakeQueryFetch_GetFetchRecord(t *testing.T) {
 	f := testfakes.NewFakeQueryFetch()
 	c := coord(t, "example.com/a", "v1.0.0")
-	f.Add(c, "0.1.0", fetchtest.Record(t, fetchtest.Path(c.Path)))
+	f.Add(c, "0.1.0", fetchtest.Record(t, fetchtest.Path(c.Path())))
 	rec, ok, err := f.GetFetchRecord(context.Background(), c, "0.1.0")
-	if err != nil || !ok || rec.ModulePath != c.Path {
+	if err != nil || !ok || rec.ModulePath != c.Path() {
 		t.Fatalf("expected record, got ok=%v err=%v", ok, err)
 	}
 	_, ok2, _ := f.GetFetchRecord(context.Background(), c, "0.2.0")
@@ -202,7 +202,7 @@ func TestFakeExtractCallGraph_Execute(t *testing.T) {
 	rec := cgdomain.CallGraphRecord{Coordinate: coord(t, "example.com/cg", "v1.0.0")}
 	f := &testfakes.FakeExtractCallGraph{Result: cgapp.ExtractResult{Record: rec}}
 	res, err := f.Execute(context.Background(), cgapp.ExtractRequest{})
-	if err != nil || res.Record.Coordinate.Path != "example.com/cg" {
+	if err != nil || res.Record.Coordinate.Path() != "example.com/cg" {
 		t.Fatalf("unexpected: %v %v", res, err)
 	}
 }
@@ -302,7 +302,7 @@ func TestFakeScanModule_Scan(t *testing.T) {
 	c := coord(t, "example.com/app", "v1.0.0")
 	f := &testfakes.FakeScanModule{Result: vulndomain.VulnerabilityRecord{Coordinate: c}}
 	res, err := f.Scan(context.Background(), vulnapp.ScanModuleParams{})
-	if err != nil || res.Coordinate.Path != "example.com/app" {
+	if err != nil || res.Coordinate.Path() != "example.com/app" {
 		t.Fatalf("unexpected: %v %v", res, err)
 	}
 }

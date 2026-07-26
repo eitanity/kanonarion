@@ -7,11 +7,10 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 )
 
 // builtRecord is a fully-built module record with the given nodes and edges.
@@ -28,7 +27,7 @@ func fakeWithRecord(path, version, pipeline string, rec cgdomain.CallGraphRecord
 	uc.SetList([]cgports.CallGraphSummary{
 		{ModulePath: path, ModuleVersion: version, PipelineVersion: pipeline},
 	})
-	uc.AddRecord(coordinate.ModuleCoordinate{Path: path, Version: version}, pipeline, rec)
+	uc.AddRecord(coordinatetest.MustNew(path, version), pipeline, rec)
 	return uc
 }
 

@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 
 	"github.com/eitanity/kanonarion/internal/vuln/application"
@@ -57,7 +58,7 @@ func buildBenchScanWalk(n int) (walkdomain.WalkRecord, []coordinate.ModuleCoordi
 	nodes := make([]walkdomain.GraphNode, n)
 	coords := make([]coordinate.ModuleCoordinate, n)
 	for i := range n {
-		c := coordinate.ModuleCoordinate{Path: fmt.Sprintf("github.com/pkg/m%d", i), Version: "v1.0.0"}
+		c := coordinatetest.MustNew(fmt.Sprintf("github.com/pkg/m%d", i), "v1.0.0")
 		nodes[i] = walkdomain.GraphNode{Coordinate: c}
 		coords[i] = c
 	}

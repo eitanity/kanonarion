@@ -5,12 +5,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 )
 
-var timeCoord = coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+var timeCoord = coordinatetest.MustNew("example.com/mod", "v1.0.0")
 
 // A record measured at a whole second hashes exactly as it always did.
 //

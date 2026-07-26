@@ -254,10 +254,10 @@ func buildScanAffectedModules(ctx context.Context, run vuldomain.WalkScanRun, uc
 		coords = append(coords, coord)
 	}
 	sort.Slice(coords, func(i, j int) bool {
-		if coords[i].Path != coords[j].Path {
-			return coords[i].Path < coords[j].Path
+		if coords[i].Path() != coords[j].Path() {
+			return coords[i].Path() < coords[j].Path()
 		}
-		return coords[i].Version < coords[j].Version
+		return coords[i].Version() < coords[j].Version()
 	})
 
 	summary := scanShowSummary{unscannable: newUnscannableRollup()}
@@ -465,7 +465,7 @@ func runScanDiff(ctx context.Context, runIDA, runIDB string, jsonOut bool, ucDif
 	if len(diff.NewFindings) > 0 {
 		_, _ = fmt.Fprintf(stdout, "NEW findings (%d):\n", len(diff.NewFindings))
 		for _, d := range diff.NewFindings {
-			_, _ = fmt.Fprintf(stdout, "  + %s  %s@%s  %s\n", d.Finding.ID, d.Coordinate.Path, d.Coordinate.Version, d.Finding.Summary)
+			_, _ = fmt.Fprintf(stdout, "  + %s  %s@%s  %s\n", d.Finding.ID, d.Coordinate.Path(), d.Coordinate.Version(), d.Finding.Summary)
 		}
 		_, _ = fmt.Fprintln(stdout)
 	}
@@ -473,7 +473,7 @@ func runScanDiff(ctx context.Context, runIDA, runIDB string, jsonOut bool, ucDif
 	if len(diff.ResolvedFindings) > 0 {
 		_, _ = fmt.Fprintf(stdout, "RESOLVED findings (%d):\n", len(diff.ResolvedFindings))
 		for _, d := range diff.ResolvedFindings {
-			_, _ = fmt.Fprintf(stdout, "  - %s  %s@%s  %s\n", d.Finding.ID, d.Coordinate.Path, d.Coordinate.Version, d.Finding.Summary)
+			_, _ = fmt.Fprintf(stdout, "  - %s  %s@%s  %s\n", d.Finding.ID, d.Coordinate.Path(), d.Coordinate.Version(), d.Finding.Summary)
 		}
 		_, _ = fmt.Fprintln(stdout)
 	}
@@ -489,7 +489,7 @@ func runScanDiff(ctx context.Context, runIDA, runIDB string, jsonOut bool, ucDif
 			if c.IsReachable {
 				now = "reachable"
 			}
-			_, _ = fmt.Fprintf(stdout, "  ~ %s  %s@%s  %s → %s\n", c.Finding.ID, c.Coordinate.Path, c.Coordinate.Version, was, now)
+			_, _ = fmt.Fprintf(stdout, "  ~ %s  %s@%s  %s → %s\n", c.Finding.ID, c.Coordinate.Path(), c.Coordinate.Version(), was, now)
 		}
 		_, _ = fmt.Fprintln(stdout)
 	}
@@ -498,7 +498,7 @@ func runScanDiff(ctx context.Context, runIDA, runIDB string, jsonOut bool, ucDif
 		_, _ = fmt.Fprintf(stdout, "UNRESOLVED (%d) — completeness parity mismatch, verdict withheld:\n", len(diff.UnresolvedFindings))
 		for _, u := range diff.UnresolvedFindings {
 			_, _ = fmt.Fprintf(stdout, "  ? %s  %s@%s  would-be %s but %s\n",
-				u.Finding.ID, u.Coordinate.Path, u.Coordinate.Version, u.Kind, u.Reason)
+				u.Finding.ID, u.Coordinate.Path(), u.Coordinate.Version(), u.Kind, u.Reason)
 		}
 	}
 

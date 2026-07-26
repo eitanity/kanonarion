@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/walk/adapters/gomod/xmod"
@@ -84,7 +85,7 @@ func (f *walkerFakeFetcher) addGate(path, version string) chan struct{} {
 }
 
 func (f *walkerFakeFetcher) EnsureFetched(ctx context.Context, c coordinate.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
-	k := wkey(c.Path, c.Version)
+	k := wkey(c.Path(), c.Version())
 
 	f.mu.Lock()
 	shouldPanic := f.panicOn[k]
@@ -186,7 +187,7 @@ func (f *fakeLocalFetcher) addError(path, version string, err error) {
 }
 
 func (f *fakeLocalFetcher) EnsureFetchedFromPath(_ context.Context, c coordinate.ModuleCoordinate, _ string) (walkports.LocalModuleFetchResult, error) {
-	k := wkey(c.Path, c.Version)
+	k := wkey(c.Path(), c.Version())
 	f.mu.Lock()
 	rec, hasRec := f.records[k]
 	err := f.errors[k]
@@ -876,7 +877,7 @@ func (f *productionCacheFetcher) callCount(path, version string) int {
 }
 
 func (f *productionCacheFetcher) EnsureFetched(_ context.Context, c coordinate.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
-	k := wkey(c.Path, c.Version)
+	k := wkey(c.Path(), c.Version())
 	f.mu.Lock()
 	rec, ok := f.records[k]
 	if !ok {
@@ -1184,7 +1185,7 @@ func TestWalker_ProjectMode_RootsAtLocalMainModule(t *testing.T) {
 	wf.addRecord(t, "example.com/dep", "v1.0.0")
 
 	mainGoMod := []byte("module example.com/project\ngo 1.21\nrequire example.com/dep v1.0.0\n")
-	target := coordinate.ModuleCoordinate{Path: "example.com/project", Version: coordinate.LocalVersion}
+	target := coordinatetest.MustNew("example.com/project", coordinate.LocalVersion)
 
 	w := buildWalker(rf, wf, blobs, 2)
 	outcome, err := w.Walk(context.Background(), application2.WalkRequest{

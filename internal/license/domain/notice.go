@@ -127,9 +127,9 @@ func dedupeSorted(in []string) []string {
 // SortNoticeEntries sorts entries by module path, then version.
 func SortNoticeEntries(entries []NoticeEntry) {
 	sort.Slice(entries, func(i, j int) bool {
-		if entries[i].Coordinate.Path != entries[j].Coordinate.Path {
-			return entries[i].Coordinate.Path < entries[j].Coordinate.Path
+		if entries[i].Coordinate.Path() != entries[j].Coordinate.Path() {
+			return entries[i].Coordinate.Path() < entries[j].Coordinate.Path()
 		}
-		return entries[i].Coordinate.Version < entries[j].Coordinate.Version
+		return entries[i].Coordinate.Version() < entries[j].Coordinate.Version()
 	})
 }

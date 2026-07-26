@@ -376,6 +376,14 @@ type Attestation struct {
 // the store corroborate its own audit log: before this, the log could record
 // fifteen writes for a coordinate while the store kept one, and an investigation
 // into what changed had no surviving evidence to read.
+//
+// The zero coordinate is the one value the signatures cannot exclude: Go
+// always permits coordinate.ModuleCoordinate{}, and it names no module.
+// Implementations MUST refuse it with coordinate.ErrZeroCoordinate — on a
+// write because it would key a row on the empty path at the empty version,
+// which every later read treats as a genuine measurement, and on a read
+// because absence is the wrong answer to a question about no module.
+// coordinatetest.AssertRefusesZeroCoordinate pins the rule for every store.
 type FactStore interface {
 	// PutFetchRecord appends a measurement to the ledger. It never updates and
 	// never deduplicates: each call is its own row, keyed on the coordinate, the

@@ -150,14 +150,14 @@ func (uc *ScanWalkUseCase) mergeCoordinateFindings(
 // the walk node's (a pruned build carries one version per path, so this cannot
 // mis-attribute between two versions of the same module).
 func projectFindingsFor(byModule map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding, coord coordinate.ModuleCoordinate) []domain.VulnerabilityFinding {
-	if coord.Path == domain.StdlibModulePath {
-		return byModule[coordinate.ModuleCoordinate{Path: domain.StdlibModulePath}]
+	if coord.Path() == domain.StdlibModulePath {
+		return byModule[coordinate.NewStdlibCoordinate()]
 	}
 	if fs, ok := byModule[coord]; ok {
 		return fs
 	}
 	for k, fs := range byModule {
-		if k.Path != domain.StdlibModulePath && k.Path == coord.Path {
+		if k.Path() != domain.StdlibModulePath && k.Path() == coord.Path() {
 			return fs
 		}
 	}

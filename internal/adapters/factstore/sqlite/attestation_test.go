@@ -5,14 +5,13 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 func sampleAttestation(path, version, pv string, kind domain2.SubjectKind, digest string) domain2.AttestationRecord {
 	return domain2.AttestationRecord{
-		Coordinate:       coordinate.ModuleCoordinate{Path: path, Version: version},
+		Coordinate:       coordinatetest.MustNew(path, version),
 		PipelineVersion:  pv,
 		SubjectKind:      kind,
 		SubjectAlgorithm: "sha256",
@@ -25,10 +24,10 @@ func sampleAttestation(path, version, pv string, kind domain2.SubjectKind, diges
 func TestPutListAttestations(t *testing.T) {
 	s := openMemStore(t)
 	ctx := context.Background()
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
-	blob := sampleAttestation(coord.Path, coord.Version, "0.1.0", domain2.SubjectBlob, "bbbb")
-	fact := sampleAttestation(coord.Path, coord.Version, "0.1.0", domain2.SubjectFact, "ffff")
+	blob := sampleAttestation(coord.Path(), coord.Version(), "0.1.0", domain2.SubjectBlob, "bbbb")
+	fact := sampleAttestation(coord.Path(), coord.Version(), "0.1.0", domain2.SubjectFact, "ffff")
 	for _, a := range []domain2.AttestationRecord{fact, blob} {
 		if err := s.PutAttestation(ctx, a); err != nil {
 			t.Fatalf("PutAttestation: %v", err)
@@ -57,9 +56,9 @@ func TestPutListAttestations(t *testing.T) {
 func TestPutAttestation_IdempotentOnSubject(t *testing.T) {
 	s := openMemStore(t)
 	ctx := context.Background()
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
-	first := sampleAttestation(coord.Path, coord.Version, "0.1.0", domain2.SubjectBlob, "bbbb")
+	first := sampleAttestation(coord.Path(), coord.Version(), "0.1.0", domain2.SubjectBlob, "bbbb")
 	if err := s.PutAttestation(ctx, first); err != nil {
 		t.Fatalf("PutAttestation: %v", err)
 	}
@@ -85,7 +84,7 @@ func TestPutAttestation_IdempotentOnSubject(t *testing.T) {
 func TestListAttestations_EmptyNotError(t *testing.T) {
 	s := openMemStore(t)
 	ctx := context.Background()
-	coord := coordinate.ModuleCoordinate{Path: "none", Version: "v0.0.0"}
+	coord := coordinatetest.MustNew("none", "v0.0.0")
 
 	got, err := s.ListAttestations(ctx, coord, "0.1.0")
 	if err != nil {

@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/driver"
 	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
@@ -99,7 +99,7 @@ func TestValidateIngest_RoundTripAndFailClosed(t *testing.T) {
 
 	ctx := context.Background()
 	uc := d.ValidateIngest
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.2.3"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.2.3")
 	rec := fetchtest.Record(
 		t,
 		fetchtest.Coordinate(coord),

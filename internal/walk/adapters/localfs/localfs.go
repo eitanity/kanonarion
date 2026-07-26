@@ -77,11 +77,11 @@ func (f *Fetcher) EnsureFetchedFromPath(
 	// is not. Zip the project root under a placeholder version, then rewrite
 	// the entry prefix back to the local coordinate so every zip consumer can
 	// keep deriving the prefix from the coordinate.
-	zipVersion := coord.Version
+	zipVersion := coord.Version()
 	if coord.IsLocal() {
 		zipVersion = localZipPlaceholderVersion
 	}
-	mv := module.Version{Path: coord.Path, Version: zipVersion}
+	mv := module.Version{Path: coord.Path(), Version: zipVersion}
 	var zipBuf bytes.Buffer
 	if err := modzip.CreateFromDir(&zipBuf, mv, absPath); err != nil {
 		return walkports.LocalModuleFetchResult{}, fmt.Errorf("creating zip from %q: %w", absPath, err)
@@ -89,8 +89,8 @@ func (f *Fetcher) EnsureFetchedFromPath(
 	zipData := zipBuf.Bytes()
 	if coord.IsLocal() {
 		rewritten, err := rewriteZipPrefix(zipData,
-			coord.Path+"@"+zipVersion+"/",
-			coord.Path+"@"+coord.Version+"/",
+			coord.Path()+"@"+zipVersion+"/",
+			coord.Path()+"@"+coord.Version()+"/",
 		)
 		if err != nil {
 			return walkports.LocalModuleFetchResult{}, fmt.Errorf("rewriting zip prefix for %s: %w", coord, err)

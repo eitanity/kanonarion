@@ -79,7 +79,7 @@ func (p *Proxy) Info(ctx context.Context, coord coordinate.ModuleCoordinate) (po
 	}
 	version := raw.Version
 	if version == "" {
-		version = coord.Version
+		version = coord.Version()
 	}
 	return ports.ModuleInfo{Version: version, Time: raw.Time}, nil
 }
@@ -164,13 +164,13 @@ func (p *Proxy) DownloadGoMod(ctx context.Context, coord coordinate.ModuleCoordi
 // entryBase returns the "@v/<version>" path prefix for a coordinate inside the
 // module cache. Callers append the entry suffix (.info, .mod, .zip).
 func (p *Proxy) entryBase(coord coordinate.ModuleCoordinate) (string, error) {
-	escapedPath, err := module.EscapePath(coord.Path)
+	escapedPath, err := module.EscapePath(coord.Path())
 	if err != nil {
-		return "", fmt.Errorf("escaping module path %q: %w", coord.Path, err)
+		return "", fmt.Errorf("escaping module path %q: %w", coord.Path(), err)
 	}
-	escapedVersion, err := module.EscapeVersion(coord.Version)
+	escapedVersion, err := module.EscapeVersion(coord.Version())
 	if err != nil {
-		return "", fmt.Errorf("escaping module version %q: %w", coord.Version, err)
+		return "", fmt.Errorf("escaping module version %q: %w", coord.Version(), err)
 	}
 	return filepath.Join(p.dir, "cache", "download", filepath.FromSlash(escapedPath), "@v", escapedVersion), nil
 }
@@ -204,7 +204,7 @@ func (p *Proxy) download(ctx context.Context, coord coordinate.ModuleCoordinate)
 	if goBin == "" {
 		goBin = "go"
 	}
-	arg := coord.Path + "@" + coord.Version
+	arg := coord.Path() + "@" + coord.Version()
 	p.logger.InfoContext(ctx, "modcache_go_mod_download", slog.String("module", arg))
 	cmd := exec.CommandContext(ctx, goBin, "mod", "download", arg) // #nosec G204 -- goBin is operator-configured; arg is a validated coordinate
 	cmd.Dir = p.projectDir

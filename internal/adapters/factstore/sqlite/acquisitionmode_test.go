@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 )
@@ -30,7 +30,7 @@ func TestAcquisitionModeRoundTripsThroughTheStore(t *testing.T) {
 			t.Fatalf("Put(%s): %v", mode, err)
 		}
 		got, ok, err := s.GetFetchRecord(ctx,
-			coordinate.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}, r.PipelineVersion)
+			coordinatetest.MustNew(r.ModulePath, r.ModuleVersion), r.PipelineVersion)
 		if err != nil || !ok {
 			// Rehydrate verifies the content hash on read, so a field dropped
 			// between write and read surfaces here as an integrity error.
@@ -58,7 +58,7 @@ func TestPreFieldRecordStillReadsBack(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 	got, ok, err := s.GetFetchRecord(ctx,
-		coordinate.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}, r.PipelineVersion)
+		coordinatetest.MustNew(r.ModulePath, r.ModuleVersion), r.PipelineVersion)
 	if err != nil || !ok {
 		t.Fatalf("a record without an acquisition mode failed to read back: ok=%v err=%v", ok, err)
 	}

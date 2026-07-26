@@ -6,7 +6,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 )
 
 // indentStream re-encodes a stream of compact JSON messages the way govulncheck
@@ -55,7 +55,7 @@ const projectStreamFixture = `
 // The identical fixture is parsed compact and indented: the two must agree.
 func TestParseResultsByModule_IndentedStreamIsNotDiscarded(t *testing.T) {
 	s := New("v1", nil)
-	xtext := coordinate.ModuleCoordinate{Path: "golang.org/x/text", Version: "v0.37.0"}
+	xtext := coordinatetest.MustNew("golang.org/x/text", "v0.37.0")
 
 	indented := indentStream(t, projectStreamFixture)
 	if strings.Contains(indented, `"finding"`) && !strings.Contains(indented, "\n") {

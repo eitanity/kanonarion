@@ -9,7 +9,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/fetch/application"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
@@ -17,7 +17,7 @@ import (
 
 var (
 	fixedTime  = time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)
-	testCoord  = coordinate.ModuleCoordinate{Path: "github.com/gorilla/mux", Version: "v1.8.1"}
+	testCoord  = coordinatetest.MustNew("github.com/gorilla/mux", "v1.8.1")
 	discardLog = slog.New(slog.NewTextHandler(noopWriter{}, nil))
 )
 
@@ -65,8 +65,8 @@ func TestExecute_HappyPath(t *testing.T) {
 	if result.FromCache {
 		t.Error("expected FromCache=false on first fetch")
 	}
-	if result.Record.ModulePath != testCoord.Path {
-		t.Errorf("ModulePath = %q, want %q", result.Record.ModulePath, testCoord.Path)
+	if result.Record.ModulePath != testCoord.Path() {
+		t.Errorf("ModulePath = %q, want %q", result.Record.ModulePath, testCoord.Path())
 	}
 	if result.Record.ContentHash == "" {
 		t.Error("ContentHash not set")
@@ -221,12 +221,12 @@ func trustedOriginProxy() *fakeProxy {
 	return &fakeProxy{
 		infos: map[string]ports.ModuleInfo{
 			testCoord.String(): {
-				Version: testCoord.Version,
+				Version: testCoord.Version(),
 				Time:    fixedTime,
 				Origin: &ports.ModuleOrigin{
 					VCS:  "git",
 					URL:  "https://github.com/gorilla/mux",
-					Ref:  "refs/tags/" + testCoord.Version,
+					Ref:  "refs/tags/" + testCoord.Version(),
 					Hash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
 				},
 			},
@@ -352,7 +352,7 @@ func TestExecute_UnverifiedHashMismatch_SumDB(t *testing.T) {
 
 func TestExecute_UnverifiedNoSumDB_NonGitHub(t *testing.T) {
 	// gopkg.in module: can't infer VCS URL; sumdb disabled → UnverifiedNoSumDB.
-	coord := coordinate.ModuleCoordinate{Path: "gopkg.in/yaml.v3", Version: "v3.0.1"}
+	coord := coordinatetest.MustNew("gopkg.in/yaml.v3", "v3.0.1")
 	proxy := &fakeProxy{}
 	vcs := &fakeVCS{}
 	blobs := newFakeBlob()

@@ -504,8 +504,8 @@ func findingObservedEvent(coord coordinate.ModuleCoordinate, vulnID string, stat
 	return audit.Event{
 		Type: audit.EventVulnFindingObserved,
 		Payload: map[string]any{
-			"module":         coord.Path,
-			"version":        coord.Version,
+			"module":         coord.Path(),
+			"version":        coord.Version(),
 			"vuln_id":        vulnID,
 			"overall_status": string(status),
 		},
@@ -782,11 +782,11 @@ func (uc *ScanWalkUseCase) populateScannedBuildListDeps(ctx context.Context, coo
 		// its own ancestor google.golang.org/genproto). Both make the toolchain
 		// read the ancestor's source, so both seed the source set.
 		for _, a := range requires {
-			if strings.HasPrefix(node.Path, a.Path+"/") {
+			if strings.HasPrefix(node.Path(), a.Path()+"/") {
 				sourceSet[a] = struct{}{}
 			}
 			for _, b := range requires {
-				if a != b && strings.HasPrefix(b.Path, a.Path+"/") {
+				if a != b && strings.HasPrefix(b.Path(), a.Path()+"/") {
 					sourceSet[a] = struct{}{}
 				}
 			}
@@ -855,10 +855,16 @@ func (uc *ScanWalkUseCase) nodeGoModRequires(ctx context.Context, coord coordina
 	}
 	out := make([]coordinate.ModuleCoordinate, 0, len(f.Require))
 	for _, req := range f.Require {
-		if req == nil || req.Mod.Path == "" || req.Mod.Version == "" {
+		if req == nil {
 			continue
 		}
-		out = append(out, coordinate.ModuleCoordinate{Path: req.Mod.Path, Version: req.Mod.Version})
+		// A require line the constructor rejects is not a module to populate for,
+		// on the same terms as the empty path or version this skipped before.
+		coord, err := coordinate.NewModuleCoordinate(req.Mod.Path, req.Mod.Version)
+		if err != nil {
+			continue
+		}
+		out = append(out, coord)
 	}
 	return out, true
 }

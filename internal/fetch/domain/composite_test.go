@@ -5,11 +5,12 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 )
 
-var composeCoord = coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+var composeCoord = coordinatetest.MustNew("example.com/mod", "v1.0.0")
 
 func at(day int) time.Time { return time.Date(2026, 1, day, 12, 0, 0, 0, time.UTC) }
 
@@ -112,7 +113,7 @@ func TestCompose_FirstFetchedAtIsTheEarliestMeasurement(t *testing.T) {
 // precision, so two runs within one second are indistinguishable by time and the
 // ledger's insertion order is the only sequence there is.
 func TestCompose_LocalCoordinateServesTheLastMeasurement(t *testing.T) {
-	local := coordinate.ModuleCoordinate{Path: "example.com/proj", Version: coordinate.LocalVersion}
+	local := coordinatetest.MustNew("example.com/proj", coordinate.LocalVersion)
 	opts := func(hash string) []fetchtest.Option {
 		return []fetchtest.Option{
 			fetchtest.Coordinate(local),

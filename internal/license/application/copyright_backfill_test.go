@@ -8,9 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-
 	"github.com/eitanity/kanonarion/internal/adapters/ziparchive"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	domain2 "github.com/eitanity/kanonarion/internal/license/domain"
 )
@@ -61,7 +60,7 @@ func TestBackfillCopyrightScansNestedSourceFiles(t *testing.T) {
 
 	uc := &ExtractLicenseUseCase{}
 	uc.backfillCopyrightFromSource(context.Background(),
-		coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"},
+		coordinatetest.MustNew("example.com/mod", "v1.0.0"),
 		archive, entries)
 
 	stmts := collected(entries)
@@ -87,7 +86,7 @@ func TestBackfillCopyrightSkipsVendoredSources(t *testing.T) {
 
 	uc := &ExtractLicenseUseCase{}
 	uc.backfillCopyrightFromSource(context.Background(),
-		coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"},
+		coordinatetest.MustNew("example.com/mod", "v1.0.0"),
 		archive, entries)
 
 	for _, s := range collected(entries) {
@@ -117,7 +116,7 @@ func TestBackfillCopyrightIsDeterministicAtTheFileCap(t *testing.T) {
 		entries := rootEntry()
 		uc := &ExtractLicenseUseCase{}
 		uc.backfillCopyrightFromSource(context.Background(),
-			coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"},
+			coordinatetest.MustNew("example.com/mod", "v1.0.0"),
 			archive, entries)
 		got := collected(entries)
 		if len(got) != copyrightMaxFiles {

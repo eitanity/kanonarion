@@ -12,12 +12,13 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
-var testCoord = coordinate.ModuleCoordinate{Path: "golang.org/x/text", Version: "v0.37.0"}
+var testCoord = coordinatetest.MustNew("golang.org/x/text", "v0.37.0")
 
 // scriptedFetcher fails with errs[i] on attempt i+1 and succeeds once the
 // script runs out — the "fails N times then succeeds" seam.

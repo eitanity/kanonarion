@@ -314,21 +314,12 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 	}
 
 	// Look up the project walk record for its ID and node counts.
-	localCoord := coordinate.ModuleCoordinate{Path: modulePath, Version: coordinate.LocalVersion}
-	walkScope := domain.WalkScope(scope)
-	walks, qerr := ctr.QueryWalks.ListWalks(ctx, walkports.WalkFilter{Target: &localCoord, Scope: &walkScope, Limit: 1})
+	walkID, moduleCount, walkFails, qerr := latestProjectWalkSummary(ctx, ctr.QueryWalks, modulePath, scope)
 	if qerr != nil {
-		return fmt.Errorf("querying project walk: %w", qerr)
+		return qerr
 	}
-
-	var walkID string
-	var moduleCount int
-	if len(walks) > 0 {
-		walkID = walks[0].ID
-		moduleCount = walks[0].NodeCount
-		if walks[0].FailureCount > 0 && nodeFails == 0 {
-			nodeFails = walks[0].FailureCount
-		}
+	if walkFails > 0 && nodeFails == 0 {
+		nodeFails = walkFails
 	}
 
 	var extractFails, scanFails int
@@ -500,4 +491,24 @@ func latestWalkIDForCoordScope(ctx context.Context, uc QueryWalksUseCase, coord 
 		return "", fmt.Errorf("no walk found for %s after walk step", coord)
 	}
 	return walks[0].ID, nil
+}
+
+// latestProjectWalkSummary returns the id, node count and failure count of the
+// most recent walk rooted at the local main module under scope. All three are
+// zero when no such walk has been recorded, which is not an error: the caller
+// reports on what the store holds.
+func latestProjectWalkSummary(ctx context.Context, q QueryWalksUseCase, modulePath string, scope depScope) (string, int, int, error) {
+	localCoord, err := coordinate.NewLocalCoordinate(modulePath)
+	if err != nil {
+		return "", 0, 0, fmt.Errorf("project coordinate for %s: %w", modulePath, err)
+	}
+	walkScope := domain.WalkScope(scope)
+	walks, err := q.ListWalks(ctx, walkports.WalkFilter{Target: &localCoord, Scope: &walkScope, Limit: 1})
+	if err != nil {
+		return "", 0, 0, fmt.Errorf("querying project walk: %w", err)
+	}
+	if len(walks) == 0 {
+		return "", 0, 0, nil
+	}
+	return walks[0].ID, walks[0].NodeCount, walks[0].FailureCount, nil
 }

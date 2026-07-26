@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"os"
 	"path/filepath"
 	"strings"
@@ -372,6 +373,74 @@ func TestNoInfraImportsInApplicationOrDomain(t *testing.T) {
 		if !seen[key] {
 			t.Errorf("knownInfraViolations entry %q (%s) no longer violates — remove it from the baseline now that %s is fixed",
 				key, ticket, ticket)
+		}
+	}
+}
+
+// coordinateAccessors are the ModuleCoordinate methods that replaced its
+// exported fields. Each returns a string, which is what makes a missing call
+// dangerous rather than merely wrong.
+var coordinateAccessors = map[string]bool{
+	"Path": true, "Version": true, "String": true, "IsLocal": true,
+}
+
+// TestNoCoordinateAccessorMethodValues is the residual guard on unexporting
+// ModuleCoordinate's fields.
+//
+// Unexporting them turned every read of coord.Path into a call. The compiler
+// catches almost all of the ones that were missed — a func() string will not
+// concatenate, compare or pass as a string — but it accepts three shapes that
+// fail only at run time: an argument typed any (a SQL query parameter, a
+// structured-log field, an audit event's payload), a %v or %s verb (go vet
+// catches those, and did), and a value stored into an interface field.
+//
+// This is not hypothetical. The conversion left 88 such method values behind:
+// they built cleanly and vet passed on all but seven, and the first evidence
+// was "sql: converting argument $1 type: unsupported type func() string" from
+// the fact store. Nothing else in the toolchain rejects them, so the check
+// lives here.
+func TestNoCoordinateAccessorMethodValues(t *testing.T) {
+	cfg := &packages.Config{
+		Mode:  packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedName | packages.NeedFiles | packages.NeedDeps | packages.NeedImports,
+		Tests: true,
+		Dir:   "..",
+	}
+	pkgs, err := packages.Load(cfg, "./...")
+	if err != nil {
+		t.Fatalf("packages.Load: %v", err)
+	}
+	const coordType = modulePath + "/internal/coordinate.ModuleCoordinate"
+	reported := map[string]bool{}
+	for _, pkg := range pkgs {
+		for _, file := range pkg.Syntax {
+			called := map[ast.Expr]bool{}
+			ast.Inspect(file, func(n ast.Node) bool {
+				if c, ok := n.(*ast.CallExpr); ok {
+					called[c.Fun] = true
+				}
+				return true
+			})
+			ast.Inspect(file, func(n ast.Node) bool {
+				sel, ok := n.(*ast.SelectorExpr)
+				if !ok || called[ast.Expr(sel)] || !coordinateAccessors[sel.Sel.Name] {
+					return true
+				}
+				selection := pkg.TypesInfo.Selections[sel]
+				if selection == nil || selection.Kind() != types.MethodVal {
+					return true
+				}
+				if recv := selection.Recv().String(); recv != coordType && recv != "*"+coordType {
+					return true
+				}
+				pos := pkg.Fset.Position(sel.Sel.Pos())
+				msg := fmt.Sprintf("%s:%d:%d: ModuleCoordinate.%s is used as a method value, not called — add the parentheses; a func() string reaching an any-typed argument fails at run time, not at build time",
+					pos.Filename, pos.Line, pos.Column, sel.Sel.Name)
+				if !reported[msg] {
+					reported[msg] = true
+					t.Error(msg)
+				}
+				return true
+			})
 		}
 	}
 }

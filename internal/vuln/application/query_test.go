@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -109,7 +110,7 @@ var _ vulnports.VulnerabilityStore = (*queryVulnFakeStore)(nil)
 // --- QueryVulnUseCase tests ---
 
 func TestQueryVulnUseCase_GetRecord(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	want := domain.VulnerabilityRecord{Coordinate: coord, OverallStatus: domain.StatusClean}
 	uc := application.NewQueryVulnUseCase(&queryVulnFakeStore{record: want, recordFound: true})
 
@@ -136,7 +137,7 @@ func TestQueryVulnUseCase_GetRecord_Error(t *testing.T) {
 }
 
 func TestQueryVulnUseCase_GetLatestRecord(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	want := domain.VulnerabilityRecord{Coordinate: coord}
 	uc := application.NewQueryVulnUseCase(&queryVulnFakeStore{latestRecord: want, latestFound: true})
 
@@ -153,7 +154,7 @@ func TestQueryVulnUseCase_GetLatestRecord(t *testing.T) {
 }
 
 func TestQueryVulnUseCase_GetLatestRecordForWalk(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	want := domain.VulnerabilityRecord{Coordinate: coord, WalkID: "walk-1"}
 	uc := application.NewQueryVulnUseCase(&queryVulnFakeStore{latestForWalk: want, latestForWalkOK: true})
 
@@ -170,7 +171,7 @@ func TestQueryVulnUseCase_GetLatestRecordForWalk(t *testing.T) {
 }
 
 func TestQueryVulnUseCase_ListRecordsForModule(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	recs := []domain.VulnerabilityRecord{{Coordinate: coord}, {Coordinate: coord}}
 	uc := application.NewQueryVulnUseCase(&queryVulnFakeStore{moduleRecords: recs})
 
@@ -184,7 +185,7 @@ func TestQueryVulnUseCase_ListRecordsForModule(t *testing.T) {
 }
 
 func TestQueryVulnUseCase_ListRecordsByFindingID(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	recs := []domain.VulnerabilityRecord{{Coordinate: coord}}
 	uc := application.NewQueryVulnUseCase(&queryVulnFakeStore{findingRecords: recs})
 

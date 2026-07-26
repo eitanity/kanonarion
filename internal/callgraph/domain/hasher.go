@@ -278,7 +278,7 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 		ArtifactKind:    string(r.ArtifactKind),
 		Completeness:    string(r.Completeness),
 		ContentHash:     r.ContentHash,
-		Coordinate:      canonicalCoord{Path: r.Coordinate.Path, Version: r.Coordinate.Version},
+		Coordinate:      canonicalCoord{Path: r.Coordinate.Path(), Version: r.Coordinate.Version()},
 		Ecosystem:       r.Ecosystem,
 		EdgeCount:       r.EdgeCount,
 		Edges:           cEdges,

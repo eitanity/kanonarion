@@ -25,6 +25,14 @@ type AuditSink interface {
 var ErrCallGraphNotFound = errors.New("call graph record not found")
 
 // VulnerabilityStore defines the port for persisting vulnerability records.
+//
+// The zero coordinate is the one value the signatures cannot exclude: Go
+// always permits coordinate.ModuleCoordinate{}, and it names no module.
+// Implementations MUST refuse it with coordinate.ErrZeroCoordinate — on a
+// write because it would key a row on the empty path at the empty version,
+// which every later read treats as a genuine measurement, and on a read
+// because absence is the wrong answer to a question about no module.
+// coordinatetest.AssertRefusesZeroCoordinate pins the rule for every store.
 type VulnerabilityStore interface {
 	// PutVulnerabilityRecord persists a vulnerability record for a module.
 	// Idempotent on (coordinate, pipelineVersion, snapshotIdentity).

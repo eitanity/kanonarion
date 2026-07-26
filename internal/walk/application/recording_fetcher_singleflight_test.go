@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
@@ -31,9 +32,9 @@ func (b *blockingFetcher) EnsureFetched(ctx context.Context, c coordinate.Module
 // share the one fetch: a second fetch would measure and append a second,
 // redundant fact record for the same artefact.
 func TestRecordingFetcher_OverlappingCallsFetchOnce(t *testing.T) {
-	c := coordinate.ModuleCoordinate{Path: "example.com/dup", Version: "v1.0.0"}
+	c := coordinatetest.MustNew("example.com/dup", "v1.0.0")
 	inner := newRecorderFakeFetcher()
-	inner.add(t, c.Path, c.Version, false)
+	inner.add(t, c.Path(), c.Version(), false)
 	gate := &blockingFetcher{inner: inner, entered: make(chan struct{}), release: make(chan struct{})}
 	rec := newRecorderForTest(gate)
 
@@ -61,7 +62,7 @@ func TestRecordingFetcher_OverlappingCallsFetchOnce(t *testing.T) {
 	close(gate.release)
 	wg.Wait()
 
-	if got := inner.callCount(c.Path, c.Version); got != 1 {
+	if got := inner.callCount(c.Path(), c.Version()); got != 1 {
 		t.Errorf("inner EnsureFetched calls = %d, want 1 across %d overlapping callers", got, callers)
 	}
 	for i := range callers {
@@ -77,10 +78,10 @@ func TestRecordingFetcher_OverlappingCallsFetchOnce(t *testing.T) {
 // A caller that waits on an in-flight fetch must observe that fetch's failure,
 // not silently start a second one and report its own.
 func TestRecordingFetcher_OverlappingCallsShareFailure(t *testing.T) {
-	c := coordinate.ModuleCoordinate{Path: "example.com/broken", Version: "v1.0.0"}
+	c := coordinatetest.MustNew("example.com/broken", "v1.0.0")
 	sentinel := errors.New("proxy unreachable")
 	inner := newRecorderFakeFetcher()
-	inner.addError(c.Path, c.Version, sentinel)
+	inner.addError(c.Path(), c.Version(), sentinel)
 	gate := &blockingFetcher{inner: inner, entered: make(chan struct{}), release: make(chan struct{})}
 	rec := newRecorderForTest(gate)
 
@@ -100,7 +101,7 @@ func TestRecordingFetcher_OverlappingCallsShareFailure(t *testing.T) {
 	close(gate.release)
 	wg.Wait()
 
-	if got := inner.callCount(c.Path, c.Version); got != 1 {
+	if got := inner.callCount(c.Path(), c.Version()); got != 1 {
 		t.Errorf("inner EnsureFetched calls = %d, want 1", got)
 	}
 	if !errors.Is(leadErr, sentinel) {
@@ -114,9 +115,9 @@ func TestRecordingFetcher_OverlappingCallsShareFailure(t *testing.T) {
 // A cancelled waiter must return the cancellation rather than block until the
 // in-flight fetch finishes.
 func TestRecordingFetcher_WaiterHonoursContextCancellation(t *testing.T) {
-	c := coordinate.ModuleCoordinate{Path: "example.com/slow", Version: "v1.0.0"}
+	c := coordinatetest.MustNew("example.com/slow", "v1.0.0")
 	inner := newRecorderFakeFetcher()
-	inner.add(t, c.Path, c.Version, false)
+	inner.add(t, c.Path(), c.Version(), false)
 	gate := &blockingFetcher{inner: inner, entered: make(chan struct{}), release: make(chan struct{})}
 	rec := newRecorderForTest(gate)
 

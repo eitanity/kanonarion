@@ -204,8 +204,8 @@ func marshalCanonicalExample(r ExampleRecord) ([]byte, error) {
 	c := canonicalExampleRecord{
 		ContentHash: r.ContentHash,
 		Coordinate: canonicalExampleCoord{
-			Path:    r.Coordinate.Path,
-			Version: r.Coordinate.Version,
+			Path:    r.Coordinate.Path(),
+			Version: r.Coordinate.Version(),
 		},
 		Ecosystem:       r.Ecosystem,
 		Examples:        cExamples,

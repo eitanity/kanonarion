@@ -349,10 +349,19 @@ func (s *Scanner) processFindingGrouped(raw []byte, byModule map[coordinate.Modu
 		return
 	}
 
-	key := coordinate.ModuleCoordinate{Path: intern(vuln.Module), Version: intern(vuln.Version)}
-	if key.Path == domain.StdlibModulePath {
+	var key coordinate.ModuleCoordinate
+	if intern(vuln.Module) == domain.StdlibModulePath {
 		// Collapse every toolchain-version-tagged stdlib frame onto one key.
-		key.Version = ""
+		key = coordinate.NewStdlibCoordinate()
+	} else {
+		k, err := coordinate.NewModuleCoordinate(intern(vuln.Module), intern(vuln.Version))
+		if err != nil {
+			// The finding names no module this scan can attribute it to. Before the
+			// key was validated such a frame still produced an entry, under a key no
+			// caller ever looks up; dropping it here loses nothing that was reachable.
+			return
+		}
+		key = k
 	}
 
 	osvID := intern(partial.Finding.OSV)

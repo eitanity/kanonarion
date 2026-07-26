@@ -241,7 +241,7 @@ func marshalCanonical(r InterfaceRecord) ([]byte, error) {
 
 	c := canonicalRecord{
 		ContentHash:     r.ContentHash,
-		Coordinate:      canonicalCoord{Path: r.Coordinate.Path, Version: r.Coordinate.Version},
+		Coordinate:      canonicalCoord{Path: r.Coordinate.Path(), Version: r.Coordinate.Version()},
 		Ecosystem:       r.Ecosystem,
 		ExtractedAt:     r.ExtractedAt.UTC().Format(time.RFC3339),
 		FailureDetail:   r.FailureDetail,
