@@ -311,6 +311,17 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 	// treat it like an absent record so the fallback is explicit rather than a
 	// scan that quietly analysed nothing. The full path re-fetches the zip (see
 	// prefetchMissing) before a node is scanned, so this is a defensive guard.
+	// Which bytes this scan is about. A module held only as a go.mod still names
+	// an artefact — its go.mod — and a module never fetched at all names none, so
+	// the metadata-only records below carry an identity in the first case and an
+	// honestly empty one in the second. No !ok guard is needed: an absent record
+	// is the zero FactRecord, whose hashes are absent rather than malformed, so
+	// derivedFromFact reads it as the zero derivedFrom without error.
+	derived, derr := derivedFromFact(fact)
+	if derr != nil {
+		return domain.VulnerabilityRecord{}, derr
+	}
+
 	if !ok || fact.IsGoModOnly() {
 		// Module not in the blob store (e.g. a node from a shallow walk), or held
 		// only as a go.mod (module-graph resolution). Fall back to OSV metadata:
@@ -319,7 +330,7 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 		// that call-graph analysis was not performed. A coordinate with no matching
 		// advisory is a real answer here, so the empty status is Clean.
 		note := metadataOnlyNote(params.Coordinate, ok && fact.IsGoModOnly())
-		return uc.scanMetadataOnly(ctx, params, snapshot, note, "", "", domain.StatusClean)
+		return uc.scanMetadataOnly(ctx, params, snapshot, derived, note, "", "", domain.StatusClean)
 	}
 
 	// 3.5 Metadata-based Filtering (Optimization)
@@ -341,6 +352,7 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 				FirstScannedAt:   now,
 				PipelineVersion:  uc.pipelineVersion,
 			}
+			derived.stamp(&record)
 			hash, err := uc.computeContentHash(record)
 			if err != nil {
 				return domain.VulnerabilityRecord{}, fmt.Errorf("hashing clean record: %w", err)
@@ -400,11 +412,14 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 	// re-scan never resets the first-seen anchor.
 	record.FirstScannedAt = now
 	record.PipelineVersion = uc.pipelineVersion
+	// The verdict names the bytes it was reached from, on both branches: a scan
+	// that failed still failed on a specific artefact.
+	derived.stamp(&record)
 
 	// 5b/5c. Coverage recovery: route a scan that could not analyse the source to
 	// metadata-only matching rather than leaving it a bare failure or a confident
 	// "no findings".
-	if rec, handled, ferr := uc.routeCoverageFallback(ctx, params, snapshot, record); handled || ferr != nil {
+	if rec, handled, ferr := uc.routeCoverageFallback(ctx, params, snapshot, derived, record); handled || ferr != nil {
 		return rec, ferr
 	}
 
@@ -537,6 +552,7 @@ func (uc *ScanModuleUseCase) routeCoverageFallback(
 	ctx context.Context,
 	params ScanModuleParams,
 	snapshot domain.DatabaseSnapshot,
+	derived derivedFrom,
 	record domain.VulnerabilityRecord,
 ) (domain.VulnerabilityRecord, bool, error) {
 	if record.OverallStatus == domain.StatusScanFailed && domain.IsBuildIncompatibility(record.ErrorDetail) {
@@ -551,7 +567,7 @@ func (uc *ScanModuleUseCase) routeCoverageFallback(
 		}
 		uc.logMetadataFallback(params.Coordinate, reason, category, record.ErrorDetail)
 		note := "source analysis unavailable: " + category + "; results are metadata-only with no reachability"
-		rec, err := uc.scanMetadataOnly(ctx, params, snapshot, note, reason, record.ErrorDetail, domain.StatusUnscannable)
+		rec, err := uc.scanMetadataOnly(ctx, params, snapshot, derived, note, reason, record.ErrorDetail, domain.StatusUnscannable)
 		return rec, true, err
 	}
 
@@ -562,7 +578,7 @@ func (uc *ScanModuleUseCase) routeCoverageFallback(
 		}
 		uc.logger.Warn("vuln-scan: scanner reported unscannable, falling back to metadata",
 			"coordinate", params.Coordinate, "reason", record.UnscanReason)
-		rec, err := uc.scanMetadataOnly(ctx, params, snapshot, note, record.UnscanReason, record.ErrorDetail, domain.StatusUnscannable)
+		rec, err := uc.scanMetadataOnly(ctx, params, snapshot, derived, note, record.UnscanReason, record.ErrorDetail, domain.StatusUnscannable)
 		return rec, true, err
 	}
 
@@ -828,7 +844,7 @@ func (uc *ScanModuleUseCase) attributeCoordinateFindings(ctx context.Context, re
 // emptyStatus is the status when no advisory matches: Clean when that is a
 // genuine answer, or Unscannable when metadata is a fallback for a module that
 // could not be analysed from source (a coverage gap, not a clean).
-func (uc *ScanModuleUseCase) scanMetadataOnly(ctx context.Context, params ScanModuleParams, snapshot domain.DatabaseSnapshot, note string, unscanReason domain.UnscanReason, errorDetail string, emptyStatus domain.VulnerabilityStatus) (domain.VulnerabilityRecord, error) {
+func (uc *ScanModuleUseCase) scanMetadataOnly(ctx context.Context, params ScanModuleParams, snapshot domain.DatabaseSnapshot, derived derivedFrom, note string, unscanReason domain.UnscanReason, errorDetail string, emptyStatus domain.VulnerabilityStatus) (domain.VulnerabilityRecord, error) {
 	uc.logger.Info("vuln-scan: metadata-only", "coordinate", params.Coordinate, "reason", note)
 	findings, err := uc.database.LookupFindings(ctx, params.Coordinate)
 	if err != nil {
@@ -859,6 +875,9 @@ func (uc *ScanModuleUseCase) scanMetadataOnly(ctx context.Context, params ScanMo
 		FirstScannedAt:   now,
 		PipelineVersion:  uc.pipelineVersion,
 	}
+	// Empty when the module was never fetched: a coordinate matched against the
+	// advisory database read no artefact, and must not claim to have read one.
+	derived.stamp(&record)
 	hash, err := uc.computeContentHash(record)
 	if err != nil {
 		return domain.VulnerabilityRecord{}, fmt.Errorf("hashing metadata-only record: %w", err)

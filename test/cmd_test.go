@@ -356,8 +356,9 @@ func cmdSeedLicense(args []string) {
 		LicenseFiles: []licdomain.LicenseFileEntry{
 			{Path: "LICENSE", SPDX: "MIT", Confidence: 1.0, FileHash: "sha256:abc", FileSize: 1024},
 		},
-		ExtractedAt:     time.Now(),
-		PipelineVersion: licapp.PipelineVersion,
+		ExtractedAt:      time.Now(),
+		PipelineVersion:  licapp.PipelineVersion,
+		ArtefactIdentity: fetchtest.ZipArtefact("fixture-zip=").String(),
 	}
 	rec.SortFiles()
 	var hasher licdomain.LicenseRecordHasher
@@ -403,8 +404,9 @@ func cmdSeedIface(args []string) {
 				},
 			},
 		},
-		ExtractedAt:     time.Now(),
-		PipelineVersion: ifapp.PipelineVersion,
+		ExtractedAt:      time.Now(),
+		PipelineVersion:  ifapp.PipelineVersion,
+		ArtefactIdentity: fetchtest.ZipArtefact("fixture-zip=").String(),
 	}
 	rec.Sort()
 	var hasher ifdomain.InterfaceRecordHasher
@@ -453,8 +455,9 @@ func cmdSeedExamples(args []string) {
 		ParseFailures: []exdomain.ParseFailure{
 			{File: "broken.go", Error: "syntax error"},
 		},
-		ExtractedAt:     time.Now(),
-		PipelineVersion: exapp.PipelineVersion,
+		ExtractedAt:      time.Now(),
+		PipelineVersion:  exapp.PipelineVersion,
+		ArtefactIdentity: fetchtest.ZipArtefact("fixture-zip=").String(),
 	}
 	var hasher exdomain.ExampleRecordHasher
 	rec, _ = hasher.SetContentHash(rec)

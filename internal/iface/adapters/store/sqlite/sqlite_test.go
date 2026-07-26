@@ -9,6 +9,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	"github.com/eitanity/kanonarion/internal/iface/adapters/store/sqlite"
 	domain2 "github.com/eitanity/kanonarion/internal/iface/domain"
 	"github.com/eitanity/kanonarion/internal/iface/ports"
@@ -53,9 +54,10 @@ func makeRecord(t *testing.T) domain2.InterfaceRecord {
 				Vars:   []domain2.ValueDecl{{Name: "ErrClosed", Type: "error"}},
 			},
 		},
-		OverallStatus:   domain2.InterfaceStatusExtracted,
-		ExtractedAt:     time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
-		PipelineVersion: "0.1.0",
+		OverallStatus:    domain2.InterfaceStatusExtracted,
+		ExtractedAt:      time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
+		PipelineVersion:  "0.1.0",
+		ArtefactIdentity: fetchtest.ZipArtefact("test-zip=").String(),
 	}
 	var h domain2.InterfaceRecordHasher
 	r, err = h.SetContentHash(r)
@@ -272,9 +274,10 @@ func TestStore_FindSymbol_MultiPackage_Disambiguates(t *testing.T) {
 				},
 			},
 		},
-		OverallStatus:   domain2.InterfaceStatusExtracted,
-		ExtractedAt:     time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
-		PipelineVersion: "0.1.0",
+		OverallStatus:    domain2.InterfaceStatusExtracted,
+		ExtractedAt:      time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
+		PipelineVersion:  "0.1.0",
+		ArtefactIdentity: fetchtest.ZipArtefact("test-zip=").String(),
 	}
 	var h domain2.InterfaceRecordHasher
 	r, err := h.SetContentHash(r)

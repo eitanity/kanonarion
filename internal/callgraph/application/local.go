@@ -97,6 +97,12 @@ func (uc *ExtractLocalCallGraphUseCase) Execute(ctx context.Context, req LocalEx
 	record.PipelineVersion = uc.pipelineVersion
 	record.NodeCount = len(record.Nodes)
 	record.EdgeCount = len(record.Edges)
+	// ArtefactIdentity and SourceContentHash are deliberately left empty. The
+	// source here is a working tree, not a fetched artefact: nothing was measured,
+	// so there is no identity to name and no fetch record to point at. Empty reads
+	// as "not recorded", which is the truth. Stamping a hash of the tree computed
+	// here would invent an artefact no fetch measurement ever saw, and it would key
+	// rows in every table that composes on the identity.
 
 	record, err = uc.hasher.SetContentHash(record)
 	if err != nil {

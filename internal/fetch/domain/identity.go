@@ -159,6 +159,26 @@ func ParseArtefactIdentity(s string) (ArtefactIdentity, error) {
 	return ArtefactIdentity{hash: hash, goModOnly: goModOnly}, nil
 }
 
+// StoredArtefactIdentity reads an identity as it is held on a derived record,
+// where the empty field means "not recorded" rather than "corrupt".
+//
+// It exists because ParseArtefactIdentity deliberately refuses the empty string:
+// a value that cannot be read is not evidence of an artefact that was never
+// measured, and the parser cannot tell which of the two an empty column is. Only
+// the caller knows, and on a derived record it is always the former — records
+// written before the identity field existed carry nothing there, and there are
+// millions of them. Handing those to the parser would make every one unreadable.
+//
+// So the distinction is drawn once, here, rather than re-derived at the read site
+// of every context that stores an identity. Anything other than the empty string
+// still goes through ParseArtefactIdentity and still fails closed.
+func StoredArtefactIdentity(s string) (ArtefactIdentity, error) {
+	if s == "" {
+		return ArtefactIdentity{}, nil
+	}
+	return ParseArtefactIdentity(s)
+}
+
 // StoredModuleHash reads a hash as it is held on a record, where absence has two
 // spellings: an unset field on an in-memory record, and the ":" a persisted
 // record carries because String concatenates an empty algorithm and value. Both

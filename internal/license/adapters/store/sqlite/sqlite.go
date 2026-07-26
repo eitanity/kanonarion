@@ -12,6 +12,8 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
+	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
 
 	domain2 "github.com/eitanity/kanonarion/internal/license/domain"
@@ -97,6 +99,20 @@ func (s *Store) PutLicenseRecord(ctx context.Context, r domain2.LicenseRecord) e
 	// measurement of a module that does not exist.
 	if r.Coordinate.IsZero() {
 		return coordinate.ErrZeroCoordinate
+	}
+	// Every record this store holds is produced by an extraction that read a
+	// fetched artefact, so one that cannot name which artefact is a fault in the
+	// stage, not a legacy row. It matters more than the coordinate guard above:
+	// composition reads the identity to decide which records describe the same
+	// bytes, so a zero identity does not merely record nothing — it groups
+	// together every record that also recorded nothing.
+	//
+	// The read leg deliberately does NOT refuse it. Records written before the
+	// field existed carry an empty one legitimately, and refusing on read would
+	// make every one of them unreadable. They are read, never rewritten, so the
+	// write-leg refusal costs them nothing.
+	if r.ArtefactIdentity == "" {
+		return fmt.Errorf("licence record for %s names no artefact: %w", r.Coordinate, fetchdomain.ErrZeroIdentity)
 	}
 	var h domain2.LicenseRecordHasher
 	if err := h.VerifyContentHash(r); err != nil {

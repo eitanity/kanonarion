@@ -127,6 +127,20 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 		return ExtractResult{}, err
 	}
 
+	// Which bytes this extraction is about, resolved before any work is done so a
+	// fetch record that names no artefact fails here rather than after a full
+	// analysis. This stage always holds a fetch record, so a record it cannot name
+	// an artefact for is a fault in the measurement, not a legacy row. The
+	// working-tree stage in local.go has no fetch record at all and leaves both
+	// fields empty; see ExtractLocalCallGraphUseCase.Execute.
+	artefact, err := domain.ArtefactIdentityOf(factRecord)
+	if err != nil {
+		return ExtractResult{}, fmt.Errorf("deriving artefact identity for %s: %w", req.Coordinate, err)
+	}
+	if artefact.IsZero() {
+		return ExtractResult{}, fmt.Errorf("fetch record for %s names no artefact: %w", req.Coordinate, domain.ErrZeroIdentity)
+	}
+
 	// A local coordinate (the project-walk root) is never served from cache:
 	// the working tree mutates between runs, so its records are recomputed
 	// fresh every time.
@@ -149,6 +163,11 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 		record.ExtractedAt = uc.clock.Now().UTC()
 		record.PipelineVersion = uc.pipelineVersion
 		record.Sort()
+		// An excluded module is still a decision about a specific artefact: the
+		// record says these bytes were not analysed, which is only checkable if it
+		// says which bytes.
+		record.ArtefactIdentity = artefact.String()
+		record.SourceContentHash = factRecord.ContentHash
 		record, err = uc.hasher.SetContentHash(record)
 		if err != nil {
 			return ExtractResult{}, fmt.Errorf("computing content hash: %w", err)
@@ -190,6 +209,8 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 	record.ExclusionList = uc.exclusions
 	record.NodeCount = len(record.Nodes)
 	record.EdgeCount = len(record.Edges)
+	record.ArtefactIdentity = artefact.String()
+	record.SourceContentHash = factRecord.ContentHash
 
 	record, err = uc.hasher.SetContentHash(record)
 	if err != nil {

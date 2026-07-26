@@ -284,6 +284,26 @@ type VulnerabilityRecord struct {
 	CallGraphCompleteness string `json:"callgraph_completeness,omitempty"`
 	CallGraphAlgorithm    string `json:"callgraph_algorithm,omitempty"`
 	ContentHash           string `json:"content_hash"`
+	// ArtefactIdentity names the fetched artefact this record was derived from,
+	// in the "zip:h1:..." / "gomod:h1:..." form fetchdomain.ArtefactIdentity
+	// renders. It answers the question the coordinate cannot: which bytes were
+	// scanned. A coordinate names a module version, and the fetch record for that
+	// coordinate may since have been re-measured, so a link by coordinate is a
+	// link by convention; this one is by fact, and is covered by ContentHash, so
+	// the claim is as tamper-evident as the verdict itself.
+	//
+	// Empty on records written before the field existed, and on records that
+	// analysed no fetched artefact — a metadata-only match by coordinate, a
+	// local-replace node, a project-rooted verdict derived from the target's own
+	// build. Both read as "not recorded", never as "scanned nothing". Read it
+	// back through RecordArtefactIdentity, which draws that distinction; never
+	// hand this field to ParseArtefactIdentity directly.
+	ArtefactIdentity string `json:"artefact_identity,omitempty"`
+	// SourceContentHash is the content hash of the fetch record that supplied
+	// those bytes. ArtefactIdentity says which artefact; this says which
+	// measurement of it, so a reader can fetch that record and check the claim
+	// against it. Empty exactly when ArtefactIdentity is.
+	SourceContentHash string `json:"source_content_hash,omitempty"`
 	// Reused is true when this record was served from the per-module cache for
 	// the current call rather than freshly scanned (the same module/version was
 	// already scanned under this snapshot by an earlier run). It is call-scoped

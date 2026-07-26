@@ -105,24 +105,26 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 		}
 	}
 	return CallGraphRecord{
-		SchemaVersion:   c.SchemaVersion,
-		Ecosystem:       c.Ecosystem,
-		Coordinate:      coord,
-		Algorithm:       CallGraphAlgorithm(c.Algorithm),
-		ArtifactKind:    ArtifactKind(c.ArtifactKind),
-		Completeness:    CompletenessLevel(c.Completeness),
-		Nodes:           nodes,
-		Edges:           edges,
-		OverallStatus:   CallGraphStatus(c.OverallStatus),
-		FailureDetail:   c.FailureDetail,
-		FailedPackages:  c.FailedPackages,
-		ExclusionReason: c.ExclusionReason,
-		ExclusionList:   c.ExclusionList,
-		NodeCount:       c.NodeCount,
-		EdgeCount:       c.EdgeCount,
-		ExtractedAt:     extractedAt.UTC(),
-		PipelineVersion: c.PipelineVersion,
-		ContentHash:     c.ContentHash,
+		SchemaVersion:     c.SchemaVersion,
+		Ecosystem:         c.Ecosystem,
+		Coordinate:        coord,
+		Algorithm:         CallGraphAlgorithm(c.Algorithm),
+		ArtifactKind:      ArtifactKind(c.ArtifactKind),
+		Completeness:      CompletenessLevel(c.Completeness),
+		Nodes:             nodes,
+		Edges:             edges,
+		OverallStatus:     CallGraphStatus(c.OverallStatus),
+		FailureDetail:     c.FailureDetail,
+		FailedPackages:    c.FailedPackages,
+		ExclusionReason:   c.ExclusionReason,
+		ExclusionList:     c.ExclusionList,
+		NodeCount:         c.NodeCount,
+		EdgeCount:         c.EdgeCount,
+		ExtractedAt:       extractedAt.UTC(),
+		PipelineVersion:   c.PipelineVersion,
+		ContentHash:       c.ContentHash,
+		ArtefactIdentity:  c.ArtefactIdentity,
+		SourceContentHash: c.SourceContentHash,
 	}, nil
 }
 
@@ -192,24 +194,29 @@ type canonicalEdge struct {
 }
 
 type canonicalRecord struct {
-	Algorithm       string          `json:"algorithm"`
-	ArtifactKind    string          `json:"artifact_kind,omitempty"`
-	Completeness    string          `json:"completeness,omitempty"`
-	ContentHash     string          `json:"content_hash"`
-	Coordinate      canonicalCoord  `json:"coordinate"`
-	Ecosystem       string          `json:"ecosystem"`
-	EdgeCount       int             `json:"edge_count"`
-	Edges           []canonicalEdge `json:"edges"`
-	ExclusionList   []string        `json:"exclusion_list,omitempty"`
-	ExclusionReason string          `json:"exclusion_reason,omitempty"`
-	ExtractedAt     string          `json:"extracted_at"`
-	FailedPackages  []string        `json:"failed_packages,omitempty"`
-	FailureDetail   string          `json:"failure_detail"`
-	NodeCount       int             `json:"node_count"`
-	Nodes           []canonicalNode `json:"nodes"`
-	OverallStatus   int             `json:"overall_status"`
-	PipelineVersion string          `json:"pipeline_version"`
-	SchemaVersion   string          `json:"schema_version"`
+	Algorithm    string `json:"algorithm"`
+	ArtifactKind string `json:"artifact_kind,omitempty"`
+	Completeness string `json:"completeness,omitempty"`
+	// ArtefactIdentity and SourceContentHash are omitted when empty so
+	// records that predate them keep their stored content hash verifiable,
+	// on the same terms every additive field on this shape has used.
+	ArtefactIdentity  string          `json:"artefact_identity,omitempty"`
+	ContentHash       string          `json:"content_hash"`
+	Coordinate        canonicalCoord  `json:"coordinate"`
+	Ecosystem         string          `json:"ecosystem"`
+	EdgeCount         int             `json:"edge_count"`
+	Edges             []canonicalEdge `json:"edges"`
+	ExclusionList     []string        `json:"exclusion_list,omitempty"`
+	ExclusionReason   string          `json:"exclusion_reason,omitempty"`
+	ExtractedAt       string          `json:"extracted_at"`
+	FailedPackages    []string        `json:"failed_packages,omitempty"`
+	FailureDetail     string          `json:"failure_detail"`
+	NodeCount         int             `json:"node_count"`
+	Nodes             []canonicalNode `json:"nodes"`
+	OverallStatus     int             `json:"overall_status"`
+	PipelineVersion   string          `json:"pipeline_version"`
+	SchemaVersion     string          `json:"schema_version"`
+	SourceContentHash string          `json:"source_content_hash,omitempty"`
 }
 
 func marshalCanonical(r CallGraphRecord) ([]byte, error) {
@@ -274,24 +281,26 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 	}
 
 	c := canonicalRecord{
-		Algorithm:       string(r.Algorithm),
-		ArtifactKind:    string(r.ArtifactKind),
-		Completeness:    string(r.Completeness),
-		ContentHash:     r.ContentHash,
-		Coordinate:      canonicalCoord{Path: r.Coordinate.Path(), Version: r.Coordinate.Version()},
-		Ecosystem:       r.Ecosystem,
-		EdgeCount:       r.EdgeCount,
-		Edges:           cEdges,
-		ExclusionList:   exclusions,
-		ExclusionReason: r.ExclusionReason,
-		ExtractedAt:     r.ExtractedAt.UTC().Format(time.RFC3339),
-		FailedPackages:  failedPkgs,
-		FailureDetail:   r.FailureDetail,
-		NodeCount:       r.NodeCount,
-		Nodes:           cNodes,
-		OverallStatus:   int(r.OverallStatus),
-		PipelineVersion: r.PipelineVersion,
-		SchemaVersion:   r.SchemaVersion,
+		Algorithm:         string(r.Algorithm),
+		ArtefactIdentity:  r.ArtefactIdentity,
+		ArtifactKind:      string(r.ArtifactKind),
+		Completeness:      string(r.Completeness),
+		ContentHash:       r.ContentHash,
+		Coordinate:        canonicalCoord{Path: r.Coordinate.Path(), Version: r.Coordinate.Version()},
+		Ecosystem:         r.Ecosystem,
+		EdgeCount:         r.EdgeCount,
+		Edges:             cEdges,
+		ExclusionList:     exclusions,
+		ExclusionReason:   r.ExclusionReason,
+		ExtractedAt:       r.ExtractedAt.UTC().Format(time.RFC3339),
+		FailedPackages:    failedPkgs,
+		FailureDetail:     r.FailureDetail,
+		NodeCount:         r.NodeCount,
+		Nodes:             cNodes,
+		OverallStatus:     int(r.OverallStatus),
+		PipelineVersion:   r.PipelineVersion,
+		SchemaVersion:     r.SchemaVersion,
+		SourceContentHash: r.SourceContentHash,
 	}
 	b, err := canonicalMarshal(c)
 	if err != nil {

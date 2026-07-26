@@ -208,6 +208,12 @@ func (uc *ScanWalkUseCase) persistProjectRecord(
 	params ScanWalkParams,
 	snapshot *domain.DatabaseSnapshot,
 ) domain.VulnerabilityRecord {
+	// No ArtefactIdentity. A project-rooted verdict is derived from one
+	// govulncheck run over the TARGET's build, not from this dependency's own
+	// bytes: the stage never opened the dependency's artefact, so it cannot name
+	// which measurement of it produced this row. Stamping the coordinate's latest
+	// fetch identity here would be exactly the link-by-convention this field
+	// exists to replace — a claim about bytes nothing in this path read.
 	now := uc.clock.Now()
 	rec := domain.VulnerabilityRecord{
 		Ecosystem:         fetchdomain.EcosystemGo,

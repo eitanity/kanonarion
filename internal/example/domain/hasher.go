@@ -20,16 +20,21 @@ type ExampleRecordHasher struct{}
 // canonical structs use alphabetically sorted JSON keys for deterministic output.
 
 type canonicalExampleRecord struct {
-	ContentHash     string                  `json:"content_hash"`
-	Coordinate      canonicalExampleCoord   `json:"coordinate"`
-	Ecosystem       string                  `json:"ecosystem"`
-	Examples        []canonicalExampleEntry `json:"examples"`
-	ExtractedAt     string                  `json:"extracted_at"`
-	FailureDetail   string                  `json:"failure_detail"`
-	OverallStatus   int                     `json:"overall_status"`
-	ParseFailures   []canonicalParseFailure `json:"parse_failures"`
-	PipelineVersion string                  `json:"pipeline_version"`
-	SchemaVersion   string                  `json:"schema_version"`
+	// ArtefactIdentity and SourceContentHash are omitted when empty so
+	// records that predate them keep their stored content hash verifiable,
+	// on the same terms every additive field on this shape has used.
+	ArtefactIdentity  string                  `json:"artefact_identity,omitempty"`
+	ContentHash       string                  `json:"content_hash"`
+	Coordinate        canonicalExampleCoord   `json:"coordinate"`
+	Ecosystem         string                  `json:"ecosystem"`
+	Examples          []canonicalExampleEntry `json:"examples"`
+	ExtractedAt       string                  `json:"extracted_at"`
+	FailureDetail     string                  `json:"failure_detail"`
+	OverallStatus     int                     `json:"overall_status"`
+	ParseFailures     []canonicalParseFailure `json:"parse_failures"`
+	PipelineVersion   string                  `json:"pipeline_version"`
+	SchemaVersion     string                  `json:"schema_version"`
+	SourceContentHash string                  `json:"source_content_hash,omitempty"`
 }
 
 type canonicalExampleCoord struct {
@@ -143,16 +148,18 @@ func (ExampleRecordHasher) Unmarshal(data []byte) (ExampleRecord, error) {
 	}
 
 	return ExampleRecord{
-		SchemaVersion:   c.SchemaVersion,
-		Ecosystem:       c.Ecosystem,
-		Coordinate:      coord,
-		Examples:        examples,
-		ParseFailures:   failures,
-		OverallStatus:   ExampleStatus(c.OverallStatus),
-		FailureDetail:   c.FailureDetail,
-		ExtractedAt:     extractedAt.UTC(),
-		PipelineVersion: c.PipelineVersion,
-		ContentHash:     c.ContentHash,
+		SchemaVersion:     c.SchemaVersion,
+		Ecosystem:         c.Ecosystem,
+		Coordinate:        coord,
+		Examples:          examples,
+		ParseFailures:     failures,
+		OverallStatus:     ExampleStatus(c.OverallStatus),
+		FailureDetail:     c.FailureDetail,
+		ExtractedAt:       extractedAt.UTC(),
+		PipelineVersion:   c.PipelineVersion,
+		ContentHash:       c.ContentHash,
+		ArtefactIdentity:  c.ArtefactIdentity,
+		SourceContentHash: c.SourceContentHash,
 	}, nil
 }
 
@@ -202,19 +209,21 @@ func marshalCanonicalExample(r ExampleRecord) ([]byte, error) {
 	}
 
 	c := canonicalExampleRecord{
-		ContentHash: r.ContentHash,
+		ArtefactIdentity: r.ArtefactIdentity,
+		ContentHash:      r.ContentHash,
 		Coordinate: canonicalExampleCoord{
 			Path:    r.Coordinate.Path(),
 			Version: r.Coordinate.Version(),
 		},
-		Ecosystem:       r.Ecosystem,
-		Examples:        cExamples,
-		ExtractedAt:     r.ExtractedAt.UTC().Format(time.RFC3339),
-		FailureDetail:   r.FailureDetail,
-		OverallStatus:   int(r.OverallStatus),
-		ParseFailures:   cFailures,
-		PipelineVersion: r.PipelineVersion,
-		SchemaVersion:   r.SchemaVersion,
+		Ecosystem:         r.Ecosystem,
+		Examples:          cExamples,
+		ExtractedAt:       r.ExtractedAt.UTC().Format(time.RFC3339),
+		FailureDetail:     r.FailureDetail,
+		OverallStatus:     int(r.OverallStatus),
+		ParseFailures:     cFailures,
+		PipelineVersion:   r.PipelineVersion,
+		SchemaVersion:     r.SchemaVersion,
+		SourceContentHash: r.SourceContentHash,
 	}
 
 	b, err := canonicalMarshal(c)

@@ -9,6 +9,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	licensesqlite "github.com/eitanity/kanonarion/internal/license/adapters/store/sqlite"
 	domain2 "github.com/eitanity/kanonarion/internal/license/domain"
 	"github.com/eitanity/kanonarion/internal/license/ports"
@@ -48,9 +49,10 @@ func buildRecord(t *testing.T, coord coordinate.ModuleCoordinate, spdx string, s
 		LicenseFiles: []domain2.LicenseFileEntry{
 			{Path: "LICENSE", SPDX: spdx, Confidence: 0.95, FileHash: "sha256:abc", FileSize: 1000},
 		},
-		OverallStatus:   status,
-		ExtractedAt:     time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
-		PipelineVersion: "0.1.0",
+		OverallStatus:    status,
+		ExtractedAt:      time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+		PipelineVersion:  "0.1.0",
+		ArtefactIdentity: fetchtest.ZipArtefact("test-zip=").String(),
 	}
 	var h domain2.LicenseRecordHasher
 	r, err := h.SetContentHash(r)
@@ -240,10 +242,11 @@ func TestPutAndGet_WithCopyrightStatements(t *testing.T) {
 				},
 			},
 		},
-		OverallStatus:   domain2.LicenseStatusDetected,
-		CopyrightStatus: domain2.CopyrightStatusFound,
-		ExtractedAt:     time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
-		PipelineVersion: "0.2.0",
+		OverallStatus:    domain2.LicenseStatusDetected,
+		CopyrightStatus:  domain2.CopyrightStatusFound,
+		ExtractedAt:      time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+		PipelineVersion:  "0.2.0",
+		ArtefactIdentity: fetchtest.ZipArtefact("test-zip=").String(),
 	}
 	var h domain2.LicenseRecordHasher
 	r, err := h.SetContentHash(r)

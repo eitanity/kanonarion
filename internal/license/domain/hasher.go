@@ -20,6 +20,10 @@ type LicenseRecordHasher struct{}
 // canonical structs use sorted JSON-key field order for deterministic output.
 
 type canonicalLicenseRecord struct {
+	// ArtefactIdentity and SourceContentHash are omitted when empty so
+	// records that predate them keep their stored content hash verifiable,
+	// on the same terms every additive field on this shape has used.
+	ArtefactIdentity  string                     `json:"artefact_identity,omitempty"`
 	ContentHash       string                     `json:"content_hash"`
 	Coordinate        canonicalCoord             `json:"coordinate"`
 	CopyrightStatus   int                        `json:"copyright_status"`
@@ -35,8 +39,9 @@ type canonicalLicenseRecord struct {
 	Provenance        canonicalProvenanceSummary `json:"provenance"`
 	// Role is omitted when empty so records that predate it (every dependency
 	// record) keep their stored content hash verifiable.
-	Role          string `json:"role,omitempty"`
-	SchemaVersion string `json:"schema_version"`
+	Role              string `json:"role,omitempty"`
+	SchemaVersion     string `json:"schema_version"`
+	SourceContentHash string `json:"source_content_hash,omitempty"`
 }
 
 type canonicalProvenanceSummary struct {
@@ -184,10 +189,12 @@ func (LicenseRecordHasher) Unmarshal(data []byte) (LicenseRecord, error) {
 			Signals:    signals,
 			Confidence: ChainOfTitleConfidence(c.Provenance.Confidence),
 		},
-		FailureDetail:   c.FailureDetail,
-		ExtractedAt:     extractedAt.UTC(),
-		PipelineVersion: c.PipelineVersion,
-		ContentHash:     c.ContentHash,
+		FailureDetail:     c.FailureDetail,
+		ExtractedAt:       extractedAt.UTC(),
+		PipelineVersion:   c.PipelineVersion,
+		ContentHash:       c.ContentHash,
+		ArtefactIdentity:  c.ArtefactIdentity,
+		SourceContentHash: c.SourceContentHash,
 	}
 	rec.EffectiveSet = DeriveEffectiveLicenseSet(rec.LicenseFiles)
 	rec.PackageLicenses = DerivePackageLicenses(rec.LicenseFiles)
@@ -257,7 +264,8 @@ func marshalCanonicalLicense(r LicenseRecord) ([]byte, error) {
 	}
 
 	c := canonicalLicenseRecord{
-		ContentHash: r.ContentHash,
+		ArtefactIdentity: r.ArtefactIdentity,
+		ContentHash:      r.ContentHash,
 		Coordinate: canonicalCoord{
 			Path:    r.Coordinate.Path(),
 			Version: r.Coordinate.Version(),
@@ -276,8 +284,9 @@ func marshalCanonicalLicense(r LicenseRecord) ([]byte, error) {
 			Confidence: int(r.Provenance.Confidence),
 			Signals:    cSignals,
 		},
-		Role:          r.Role,
-		SchemaVersion: r.SchemaVersion,
+		Role:              r.Role,
+		SchemaVersion:     r.SchemaVersion,
+		SourceContentHash: r.SourceContentHash,
 	}
 
 	b, err := json.Marshal(c)

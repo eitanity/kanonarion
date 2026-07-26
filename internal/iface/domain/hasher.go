@@ -87,15 +87,17 @@ func (InterfaceRecordHasher) Unmarshal(data []byte) (InterfaceRecord, error) {
 	}
 
 	return InterfaceRecord{
-		SchemaVersion:   c.SchemaVersion,
-		Ecosystem:       c.Ecosystem,
-		Coordinate:      coord,
-		Packages:        pkgs,
-		OverallStatus:   InterfaceStatus(c.OverallStatus),
-		FailureDetail:   c.FailureDetail,
-		ExtractedAt:     extractedAt.UTC(),
-		PipelineVersion: c.PipelineVersion,
-		ContentHash:     c.ContentHash,
+		SchemaVersion:     c.SchemaVersion,
+		Ecosystem:         c.Ecosystem,
+		Coordinate:        coord,
+		Packages:          pkgs,
+		OverallStatus:     InterfaceStatus(c.OverallStatus),
+		FailureDetail:     c.FailureDetail,
+		ExtractedAt:       extractedAt.UTC(),
+		PipelineVersion:   c.PipelineVersion,
+		ContentHash:       c.ContentHash,
+		ArtefactIdentity:  c.ArtefactIdentity,
+		SourceContentHash: c.SourceContentHash,
 	}, nil
 }
 
@@ -138,15 +140,20 @@ type canonicalCoord struct {
 }
 
 type canonicalRecord struct {
-	ContentHash     string         `json:"content_hash"`
-	Coordinate      canonicalCoord `json:"coordinate"`
-	Ecosystem       string         `json:"ecosystem"`
-	ExtractedAt     string         `json:"extracted_at"`
-	FailureDetail   string         `json:"failure_detail"`
-	OverallStatus   int            `json:"overall_status"`
-	Packages        []canonicalPkg `json:"packages"`
-	PipelineVersion string         `json:"pipeline_version"`
-	SchemaVersion   string         `json:"schema_version"`
+	// ArtefactIdentity and SourceContentHash are omitted when empty so
+	// records that predate them keep their stored content hash verifiable,
+	// on the same terms every additive field on this shape has used.
+	ArtefactIdentity  string         `json:"artefact_identity,omitempty"`
+	ContentHash       string         `json:"content_hash"`
+	Coordinate        canonicalCoord `json:"coordinate"`
+	Ecosystem         string         `json:"ecosystem"`
+	ExtractedAt       string         `json:"extracted_at"`
+	FailureDetail     string         `json:"failure_detail"`
+	OverallStatus     int            `json:"overall_status"`
+	Packages          []canonicalPkg `json:"packages"`
+	PipelineVersion   string         `json:"pipeline_version"`
+	SchemaVersion     string         `json:"schema_version"`
+	SourceContentHash string         `json:"source_content_hash,omitempty"`
 }
 
 type canonicalPkg struct {
@@ -240,15 +247,17 @@ func marshalCanonical(r InterfaceRecord) ([]byte, error) {
 	}
 
 	c := canonicalRecord{
-		ContentHash:     r.ContentHash,
-		Coordinate:      canonicalCoord{Path: r.Coordinate.Path(), Version: r.Coordinate.Version()},
-		Ecosystem:       r.Ecosystem,
-		ExtractedAt:     r.ExtractedAt.UTC().Format(time.RFC3339),
-		FailureDetail:   r.FailureDetail,
-		OverallStatus:   int(r.OverallStatus),
-		Packages:        cPkgs,
-		PipelineVersion: r.PipelineVersion,
-		SchemaVersion:   r.SchemaVersion,
+		ArtefactIdentity:  r.ArtefactIdentity,
+		ContentHash:       r.ContentHash,
+		Coordinate:        canonicalCoord{Path: r.Coordinate.Path(), Version: r.Coordinate.Version()},
+		Ecosystem:         r.Ecosystem,
+		ExtractedAt:       r.ExtractedAt.UTC().Format(time.RFC3339),
+		FailureDetail:     r.FailureDetail,
+		OverallStatus:     int(r.OverallStatus),
+		Packages:          cPkgs,
+		PipelineVersion:   r.PipelineVersion,
+		SchemaVersion:     r.SchemaVersion,
+		SourceContentHash: r.SourceContentHash,
 	}
 
 	b, err := canonicalMarshal(c)

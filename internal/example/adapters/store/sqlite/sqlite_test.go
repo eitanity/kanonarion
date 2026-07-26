@@ -12,6 +12,7 @@ import (
 	domain2 "github.com/eitanity/kanonarion/internal/example/domain"
 	"github.com/eitanity/kanonarion/internal/example/ports"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 )
 
 func openTestStore(t *testing.T) *examplesqlite.Store {
@@ -50,13 +51,14 @@ func buildRecord(t *testing.T, coord coordinate.ModuleCoordinate, count int, sta
 		})
 	}
 	r := domain2.ExampleRecord{
-		SchemaVersion:   domain2.ExampleSchemaVersion,
-		Ecosystem:       fetchdomain.EcosystemGo,
-		Coordinate:      coord,
-		Examples:        examples,
-		OverallStatus:   status,
-		ExtractedAt:     time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
-		PipelineVersion: "0.1.0",
+		SchemaVersion:    domain2.ExampleSchemaVersion,
+		Ecosystem:        fetchdomain.EcosystemGo,
+		Coordinate:       coord,
+		Examples:         examples,
+		OverallStatus:    status,
+		ExtractedAt:      time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+		PipelineVersion:  "0.1.0",
+		ArtefactIdentity: fetchtest.ZipArtefact("test-zip=").String(),
 	}
 	var h domain2.ExampleRecordHasher
 	r, err := h.SetContentHash(r)
@@ -253,9 +255,10 @@ func TestFindBySymbolInModule_Scoped(t *testing.T) {
 			Examples: []domain2.ExampleEntry{
 				{Name: "ExampleMarshal", Package: "pkg_test", AssociatedSymbol: "Marshal", Body: "{}"},
 			},
-			OverallStatus:   domain2.ExampleStatusFound,
-			ExtractedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-			PipelineVersion: "0.1.0",
+			OverallStatus:    domain2.ExampleStatusFound,
+			ExtractedAt:      time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+			PipelineVersion:  "0.1.0",
+			ArtefactIdentity: fetchtest.ZipArtefact("test-zip=").String(),
 		}
 		_ = name
 		var h domain2.ExampleRecordHasher

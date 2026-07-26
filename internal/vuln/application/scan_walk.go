@@ -399,6 +399,9 @@ func (uc *ScanWalkUseCase) tallyModuleResults(
 		if r.err != nil {
 			uc.logger.Error("failed to scan module in walk", "walk_id", params.WalkID, "module", r.coord, "error", r.err)
 			counts.failed++
+			// No ArtefactIdentity: the worker failed before reaching a verdict, so
+			// this record reports an outcome of the run rather than a reading of any
+			// artefact. Naming one would claim bytes were analysed that were not.
 			failedRecord := domain.VulnerabilityRecord{
 				Ecosystem:        fetchdomain.EcosystemGo,
 				Coordinate:       r.coord,
@@ -528,6 +531,8 @@ func (uc *ScanWalkUseCase) recordLocalReplaceUnscannable(
 	for _, node := range nodes {
 		added++
 		*progressCount++
+		// No ArtefactIdentity: a local-replace node is unscannable precisely
+		// because it is a working tree rather than a fetched artefact.
 		rec := domain.VulnerabilityRecord{
 			Ecosystem:         fetchdomain.EcosystemGo,
 			Coordinate:        node.Coordinate,

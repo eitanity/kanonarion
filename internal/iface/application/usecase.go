@@ -114,6 +114,18 @@ func (uc *ExtractInterfaceUseCase) Execute(ctx context.Context, req ExtractReque
 		return ExtractResult{}, err
 	}
 
+	// Which bytes this extraction is about, resolved before any work is done so a
+	// fetch record that names no artefact fails here rather than after a full
+	// parse. This stage always holds a fetch record, so a record it cannot name
+	// an artefact for is a fault in the measurement, not a legacy row.
+	artefact, err := domain2.ArtefactIdentityOf(factRecord)
+	if err != nil {
+		return ExtractResult{}, fmt.Errorf("deriving artefact identity for %s: %w", req.Coordinate, err)
+	}
+	if artefact.IsZero() {
+		return ExtractResult{}, fmt.Errorf("fetch record for %s names no artefact: %w", req.Coordinate, domain2.ErrZeroIdentity)
+	}
+
 	// A local coordinate (the project-walk root) is never served from cache:
 	// the working tree mutates between runs, so its records are recomputed
 	// fresh every time.
@@ -168,6 +180,11 @@ func (uc *ExtractInterfaceUseCase) Execute(ctx context.Context, req ExtractReque
 	} else {
 		record.PipelineVersion = uc.pipelineVersion
 	}
+
+	// Stamped on both branches: a failed extraction is still a claim about a
+	// specific artefact, and one that cannot say which is unfalsifiable.
+	record.ArtefactIdentity = artefact.String()
+	record.SourceContentHash = factRecord.ContentHash
 
 	record, err = uc.hasher.SetContentHash(record)
 	if err != nil {
