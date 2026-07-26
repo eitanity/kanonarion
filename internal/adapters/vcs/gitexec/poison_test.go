@@ -199,7 +199,7 @@ func runGitWithAdapterEnv(t *testing.T, c *gitexec.Client, dir string, args ...s
 	home := t.TempDir()
 	cmd := exec.Command("git", append(c.ConfigArgs(), args...)...) //nolint:gosec // binary hard-coded, args are literals
 	cmd.Dir = dir
-	cmd.Env = c.GitEnv(home)
+	cmd.Env = c.GitEnv(home, dir)
 	out, err := cmd.CombinedOutput()
 	if err != nil {
 		t.Fatalf("git %v: %v\n%s", args, err, out)
@@ -311,5 +311,62 @@ func TestCheckoutToDir_WellFormedRepoUnchangedUnderPoisonedConfig(t *testing.T) 
 	gotTree := gitRun(t, checkoutDir, "rev-parse", "HEAD^{tree}")
 	if gotTree != wantTree {
 		t.Errorf("checked-out tree = %q, want %q", gotTree, wantTree)
+	}
+}
+
+// kanonarion is routinely run from inside a git repository — its own, or one a
+// developer is inspecting. Repository-local .git/config is the one config file
+// GIT_CONFIG_GLOBAL and GIT_CONFIG_SYSTEM do not govern, so an operation that
+// needs no repository must not stand anywhere one can be found. Otherwise an
+// insteadOf in the enclosing repo's config rewrites the URL after
+// ValidateCloneURL has passed it, and the allowlist is bypassed exactly as it
+// is via a poisoned ~/.gitconfig.
+func TestResolveTag_EnclosingRepoConfigDoesNotRewriteURL(t *testing.T) {
+	requireGit(t)
+
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatalf("net.Listen: %v", err)
+	}
+	defer ln.Close() //nolint:errcheck
+
+	var connections atomic.Int64
+	go func() {
+		for {
+			conn, err := ln.Accept()
+			if err != nil {
+				return
+			}
+			connections.Add(1)
+			_ = conn.Close()
+		}
+	}()
+
+	// A repository whose own config carries the rewrite, with a clean HOME so
+	// the only possible source is .git/config.
+	repo := t.TempDir()
+	gitRun(t, repo, "init")
+	cfg := fmt.Sprintf("\n[url \"http://%s/\"]\n\tinsteadOf = https://kanonarion-test.invalid/\n", ln.Addr())
+	f, err := os.OpenFile(filepath.Join(repo, ".git", "config"), os.O_APPEND|os.O_WRONLY, 0o600)
+	if err != nil {
+		t.Fatalf("opening repo config: %v", err)
+	}
+	if _, err := f.WriteString(cfg); err != nil {
+		t.Fatalf("writing repo config: %v", err)
+	}
+	if err := f.Close(); err != nil {
+		t.Fatalf("closing repo config: %v", err)
+	}
+	t.Setenv("HOME", t.TempDir())
+	t.Chdir(repo)
+
+	c := gitexec.NewWithProtocols("https:http")
+	// Expected to fail: the host does not resolve. Where it failed to reach is
+	// the assertion.
+	_, _ = c.ResolveTag(context.Background(),
+		"https://kanonarion-test.invalid/example/mod", "refs/tags/v1.0.0")
+
+	if got := connections.Load(); got != 0 {
+		t.Errorf("the rewritten host received %d connections; the enclosing repository's .git/config was applied", got)
 	}
 }

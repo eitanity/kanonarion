@@ -24,6 +24,7 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"time"
 
@@ -212,12 +213,13 @@ var inheritedEnvKeys = []string{
 //
 // home must be a private, empty directory owned by this process — never the
 // checkout directory, which holds attacker-controlled content and would supply
-// a ~/.gitconfig of the attacker's choosing.
+// a ~/.gitconfig of the attacker's choosing. workDir is the directory git will
+// run in, used to bound repository discovery.
 //
 // With GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM and HOME all neutralised, the
 // GITHUB_TOKEN entries below are the only configuration in effect for the
 // child, which is the intent.
-func (c *Client) gitEnv(home string) []string {
+func (c *Client) gitEnv(home, workDir string) []string {
 	env := make([]string, 0, len(inheritedEnvKeys)+12)
 	for _, key := range inheritedEnvKeys {
 		if val, ok := os.LookupEnv(key); ok {
@@ -243,6 +245,14 @@ func (c *Client) gitEnv(home string) []string {
 		// /etc/gitattributes would otherwise still be read, and attributes are
 		// what select a smudge filter for a path.
 		"GIT_ATTR_NOSYSTEM=1",
+		// Stop repository discovery from walking above workDir's parent. On its
+		// own, running in a scratch directory already keeps git away from an
+		// enclosing repository; this closes the case where the scratch or
+		// checkout directory is itself nested inside one. The parent — not
+		// workDir — is the ceiling, so a checkout directory's own .git is still
+		// found, which CheckoutToDir requires.
+		"GIT_CEILING_DIRECTORIES="+filepath.Dir(workDir),
+		"GIT_DISCOVERY_ACROSS_FILESYSTEM=0",
 	)
 	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
 		env = append(env,
@@ -268,8 +278,13 @@ func (c *Client) configArgs() []string {
 	return append(args, c.extraConfig...)
 }
 
-// runGit runs git with the process working directory. dir == "" means "wherever
-// the parent happens to be"; runGitDir is the variant that pins it.
+// runGit runs a git operation that needs no repository (ls-remote). It must
+// never inherit the parent's working directory: kanonarion is routinely run
+// from inside a git repository, and that repository's .git/config is a config
+// file like any other — url.<base>.insteadOf read from it rewrites the fetch
+// URL after ValidateCloneURL has passed it, which is the allowlist bypass this
+// adapter exists to prevent. run() therefore pins the invocation to the
+// isolated scratch directory when no repository directory is given.
 func (c *Client) runGit(ctx context.Context, args ...string) ([]byte, error) {
 	return c.run(ctx, "", args...)
 }
@@ -311,10 +326,20 @@ func (c *Client) run(ctx context.Context, dir string, args ...string) ([]byte, e
 		_ = os.RemoveAll(home)
 	}()
 
+	// A repository-less operation runs in the scratch directory, never in the
+	// parent's cwd: the enclosing repository's .git/config would otherwise be
+	// discovered and applied. Repository-local config is the one config file
+	// the environment overrides cannot switch off — GIT_CONFIG_GLOBAL and
+	// GIT_CONFIG_SYSTEM do not govern it — so the defence has to be that git
+	// never stands anywhere a repository can be found.
+	if dir == "" {
+		dir = home
+	}
+
 	argv := append(c.configArgs(), args...)
 	cmd := exec.CommandContext(ctx, "git", argv...) // #nosec G204 -- binary is hard-coded; args come from internal call sites
 	cmd.Dir = dir
-	cmd.Env = c.gitEnv(home)
+	cmd.Env = c.gitEnv(home, dir)
 	cmd.WaitDelay = cmdWaitDelay
 	var out, errBuf bytes.Buffer
 	cmd.Stdout = &out

@@ -34,8 +34,9 @@ func (c *Client) SetExtraConfig(settings ...string) {
 
 // GitEnv re-exports the child environment builder so tests can assert on the
 // exact variable block handed to git — that no inherited GIT_CONFIG_* survives,
-// and that HOME is the isolated directory rather than the operator's.
-func (c *Client) GitEnv(home string) []string { return c.gitEnv(home) }
+// and that HOME is the isolated directory rather than the operator's. workDir
+// is the directory the invocation would run in.
+func (c *Client) GitEnv(home, workDir string) []string { return c.gitEnv(home, workDir) }
 
 // ConfigArgs re-exports the per-invocation -c overrides for the same reason.
 func (c *Client) ConfigArgs() []string { return c.configArgs() }
