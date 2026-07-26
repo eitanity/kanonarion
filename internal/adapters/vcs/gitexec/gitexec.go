@@ -24,10 +24,10 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"path/filepath"
 	"strings"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/vcs/gitenv"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
@@ -183,77 +183,19 @@ func (c *Client) CheckoutToDir(ctx context.Context, url, commit, dir string) err
 	return nil
 }
 
-// inheritedEnvKeys is the allowlist of parent-process environment variables
-// passed through to git subprocesses. The child environment is built from this
-// list rather than from os.Environ() so that an inherited GIT_CONFIG_GLOBAL,
-// GIT_CONFIG_SYSTEM, GIT_CONFIG_COUNT, XDG_CONFIG_HOME or HOME cannot reach
-// git at all — appending overrides on top of os.Environ() would leave the
-// hostile value present in the block and rely on last-wins resolution, which is
-// a libc detail rather than a guarantee.
+// gitEnv returns the environment for a git subprocess: the shared constrained
+// baseline from gitenv, plus the GitHub credential this adapter injects when
+// GITHUB_TOKEN is set.
 //
-// PATH is needed to find git itself and its helpers (git-remote-https); TMPDIR
-// so git's own scratch files land where the operator expects; the proxy and CA
-// variables so cross-verification still works on a network that requires them.
-// None of them can name a config file or a command for git to run.
-var inheritedEnvKeys = []string{
-	"PATH",
-	"TMPDIR",
-	"HTTP_PROXY", "HTTPS_PROXY", "NO_PROXY", "ALL_PROXY",
-	"http_proxy", "https_proxy", "no_proxy", "all_proxy",
-	"SSL_CERT_FILE", "SSL_CERT_DIR",
-	"GIT_SSL_CAINFO", "GIT_SSL_CAPATH",
-	"SystemRoot", // Windows: winsock fails to initialise without it
-}
-
-// gitEnv returns an environment for git subprocesses that neutralises git's
-// configuration surface, restricts the transport allowlist (blocking
-// ext::/file:///ssh:// RCE and SSRF vectors), disables interactive credential
-// prompts (preventing hangs in non-TTY contexts), and injects a GitHub token
-// when GITHUB_TOKEN is set.
+// home must be a private empty directory — never the checkout directory, whose
+// contents come from the repository being verified. workDir is the directory
+// git will run in.
 //
-// home must be a private, empty directory owned by this process — never the
-// checkout directory, which holds attacker-controlled content and would supply
-// a ~/.gitconfig of the attacker's choosing. workDir is the directory git will
-// run in, used to bound repository discovery.
-//
-// With GIT_CONFIG_GLOBAL, GIT_CONFIG_SYSTEM and HOME all neutralised, the
-// GITHUB_TOKEN entries below are the only configuration in effect for the
-// child, which is the intent.
+// With config discovery neutralised by gitenv.Base, the GITHUB_TOKEN entries
+// below are the only configuration in effect for the child, which is the
+// intent.
 func (c *Client) gitEnv(home, workDir string) []string {
-	env := make([]string, 0, len(inheritedEnvKeys)+12)
-	for _, key := range inheritedEnvKeys {
-		if val, ok := os.LookupEnv(key); ok {
-			env = append(env, key+"="+val)
-		}
-	}
-	env = append(env,
-		// Only the configured transports may be used. GIT_PROTOCOL_FROM_USER=0
-		// marks these URLs as not user-supplied so git enforces the allowlist
-		// even for transports it would otherwise trust from an interactive user.
-		"GIT_ALLOW_PROTOCOL="+c.allowedProtocols,
-		"GIT_PROTOCOL_FROM_USER=0",
-		"GIT_TERMINAL_PROMPT=0",
-		"GIT_ASKPASS=/bin/false",
-		// Config discovery off at every path: the system file (twice, so an
-		// older git without GIT_CONFIG_SYSTEM is still covered), the per-user
-		// file, and — via HOME — ~/.gitconfig and ~/.config/git/config.
-		// XDG_CONFIG_HOME is simply not inherited.
-		"GIT_CONFIG_SYSTEM=/dev/null",
-		"GIT_CONFIG_NOSYSTEM=1",
-		"GIT_CONFIG_GLOBAL=/dev/null",
-		"HOME="+home,
-		// /etc/gitattributes would otherwise still be read, and attributes are
-		// what select a smudge filter for a path.
-		"GIT_ATTR_NOSYSTEM=1",
-		// Stop repository discovery from walking above workDir's parent. On its
-		// own, running in a scratch directory already keeps git away from an
-		// enclosing repository; this closes the case where the scratch or
-		// checkout directory is itself nested inside one. The parent — not
-		// workDir — is the ceiling, so a checkout directory's own .git is still
-		// found, which CheckoutToDir requires.
-		"GIT_CEILING_DIRECTORIES="+filepath.Dir(workDir),
-		"GIT_DISCOVERY_ACROSS_FILESYSTEM=0",
-	)
+	env := gitenv.Base(home, workDir, c.allowedProtocols)
 	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
 		env = append(env,
 			"GIT_CONFIG_COUNT=1",
@@ -270,12 +212,7 @@ func (c *Client) gitEnv(home, workDir string) []string {
 // silently reopen the hooks/fsmonitor/ext-transport sinks. Command-line -c
 // beats every config file, so these hold whatever the environment does.
 func (c *Client) configArgs() []string {
-	args := []string{
-		"-c", "core.hooksPath=/dev/null",
-		"-c", "core.fsmonitor=",
-		"-c", "protocol.ext.allow=never",
-	}
-	return append(args, c.extraConfig...)
+	return append(gitenv.ConfigArgs(), c.extraConfig...)
 }
 
 // runGit runs a git operation that needs no repository (ls-remote). It must
@@ -316,15 +253,11 @@ func (c *Client) runGitDir(ctx context.Context, dir string, args ...string) ([]b
 // the checkout directory is unusable for that purpose because its contents come
 // from the repository being verified.
 func (c *Client) run(ctx context.Context, dir string, args ...string) ([]byte, error) {
-	home, err := os.MkdirTemp("", "kanonarion-githome-*")
+	home, cleanup, err := gitenv.ScratchHome()
 	if err != nil {
-		return nil, fmt.Errorf("creating isolated git HOME: %w", err)
+		return nil, fmt.Errorf("isolating git config for %s: %w", args[0], err)
 	}
-	defer func() {
-		// Best-effort: a leaked empty temp dir is not worth failing a
-		// verification over, and there is no logger at this layer.
-		_ = os.RemoveAll(home)
-	}()
+	defer cleanup()
 
 	// A repository-less operation runs in the scratch directory, never in the
 	// parent's cwd: the enclosing repository's .git/config would otherwise be

@@ -347,6 +347,7 @@ func TestResolveTag_EnclosingRepoConfigDoesNotRewriteURL(t *testing.T) {
 	repo := t.TempDir()
 	gitRun(t, repo, "init")
 	cfg := fmt.Sprintf("\n[url \"http://%s/\"]\n\tinsteadOf = https://kanonarion-test.invalid/\n", ln.Addr())
+	// #nosec G304 -- the path is rooted in t.TempDir, not in any input
 	f, err := os.OpenFile(filepath.Join(repo, ".git", "config"), os.O_APPEND|os.O_WRONLY, 0o600)
 	if err != nil {
 		t.Fatalf("opening repo config: %v", err)
