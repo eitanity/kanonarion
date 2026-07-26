@@ -2,6 +2,8 @@ package sqlite_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -205,6 +207,62 @@ func TestGetFetchRecord_IntegrityError(t *testing.T) {
 	}
 	if ok {
 		t.Error("a tampered record must not be reported as found")
+	}
+}
+
+// SealedRecord is meant to be self-evidencing: holding one proves its contents
+// were hashed, because Seal and Rehydrate are the only ways to make one. The
+// type system does not quite deliver that — SealedRecord is an exported struct,
+// so any package can write domain2.SealedRecord{} and hold a value that sealed
+// nothing. Stored, it becomes an all-empty row that every later read treats as a
+// genuine measurement of the empty module at the empty version, with a content
+// hash of "" that no verification can distinguish from a record whose fields
+// really are empty. The write is refused instead.
+func TestPutFetchRecord_RefusesTheZeroSealedRecord(t *testing.T) {
+	s := openMemStore(t)
+
+	fetchtest.AssertRefusesUnsealed(t, s)
+
+	// The leg the shared assertion cannot cover: it has no reader, so whether the
+	// refusal also left the ledger untouched is checked by the store that has one.
+	var n int
+	if qerr := s.InternalDB().DB().QueryRow("SELECT COUNT(*) FROM fetch_records").Scan(&n); qerr != nil {
+		t.Fatalf("counting rows: %v", qerr)
+	}
+	if n != 0 {
+		t.Errorf("the refused write left %d row(s) behind", n)
+	}
+}
+
+// The guard has to hold under the decorator the production path actually uses.
+// An audit entry for a record that was never stored would put a measurement in
+// the log that no ledger row backs — the audit log's whole claim is that it
+// mirrors the writes.
+func TestAuditingStore_RefusesTheZeroSealedRecordAndLogsNothing(t *testing.T) {
+	dir := t.TempDir()
+	auditPath := filepath.Join(dir, "audit.jsonl")
+	inner, err := sqlite.Open(filepath.Join(dir, "facts.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	store, err := sqlite.NewAuditingStore(inner, auditPath)
+	if err != nil {
+		t.Fatalf("NewAuditingStore: %v", err)
+	}
+	defer func() {
+		if cerr := store.Close(); cerr != nil {
+			t.Errorf("store.Close: %v", cerr)
+		}
+	}()
+
+	fetchtest.AssertRefusesUnsealed(t, store)
+
+	data, rerr := os.ReadFile(auditPath) //nolint:gosec // test-owned temp path
+	if rerr != nil && !os.IsNotExist(rerr) {
+		t.Fatalf("reading audit log: %v", rerr)
+	}
+	if len(data) != 0 {
+		t.Errorf("the refused write was mirrored into the audit log: %s", data)
 	}
 }
 

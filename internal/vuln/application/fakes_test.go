@@ -107,6 +107,9 @@ type fakeFacts struct {
 func newFakeFacts() *fakeFacts { return &fakeFacts{records: make(map[string]fetchdomain.FactRecord)} }
 
 func (f *fakeFacts) PutFetchRecord(_ context.Context, sealed fetchdomain.SealedRecord) error {
+	if sealed.IsZero() {
+		return fetchdomain.ErrUnsealedRecord
+	}
 	r := sealed.Record()
 	key := r.ModulePath + "@" + r.ModuleVersion + "#" + r.PipelineVersion
 	f.mu.Lock()

@@ -64,6 +64,9 @@ func newPVFakeFacts() *pvFakeFacts {
 }
 
 func (f *pvFakeFacts) PutFetchRecord(_ context.Context, sealed fetchdomain.SealedRecord) error {
+	if sealed.IsZero() {
+		return fetchdomain.ErrUnsealedRecord
+	}
 	r := sealed.Record()
 	f.mu.Lock()
 	defer f.mu.Unlock()

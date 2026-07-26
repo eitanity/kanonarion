@@ -202,6 +202,9 @@ type fakeFacts struct {
 func newFakeFacts() *fakeFacts { return &fakeFacts{records: make(map[string]domain2.FactRecord)} }
 
 func (f *fakeFacts) PutFetchRecord(_ context.Context, sealed domain2.SealedRecord) error {
+	if sealed.IsZero() {
+		return domain2.ErrUnsealedRecord
+	}
 	r := sealed.Record()
 	key := r.ModulePath + "@" + r.ModuleVersion + "#" + r.PipelineVersion
 	f.mu.Lock()

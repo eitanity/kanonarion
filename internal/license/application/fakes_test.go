@@ -40,6 +40,9 @@ type fakeFactStore struct {
 type factKey struct{ path, version, pipeline string }
 
 func (s *fakeFactStore) PutFetchRecord(_ context.Context, sealed domain2.SealedRecord) error {
+	if sealed.IsZero() {
+		return domain2.ErrUnsealedRecord
+	}
 	r := sealed.Record()
 	if s.records == nil {
 		s.records = make(map[factKey]domain2.FactRecord)

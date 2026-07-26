@@ -234,8 +234,13 @@ const recordColumns = `schema_version, ecosystem, module_path, module_version, p
 // did.
 //
 // It takes a SealedRecord, so a record whose content hash does not describe its
-// contents cannot reach storage at all.
+// contents cannot reach storage at all — except for the one value the type
+// system cannot exclude, the zero SealedRecord, which this refuses with
+// domain2.ErrUnsealedRecord rather than storing.
 func (s *Store) PutFetchRecord(ctx context.Context, sealed domain2.SealedRecord) error {
+	if sealed.IsZero() {
+		return domain2.ErrUnsealedRecord
+	}
 	r := sealed.Record()
 	const q = `
 INSERT INTO fetch_records (

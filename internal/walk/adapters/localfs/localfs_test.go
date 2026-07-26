@@ -75,6 +75,9 @@ func newFakeFacts() *fakeFacts {
 }
 
 func (f *fakeFacts) PutFetchRecord(_ context.Context, sealed fetchdomain.SealedRecord) error {
+	if sealed.IsZero() {
+		return fetchdomain.ErrUnsealedRecord
+	}
 	r := sealed.Record()
 	key := r.ModulePath + "@" + r.ModuleVersion + "#" + r.PipelineVersion
 	f.mu.Lock()

@@ -384,6 +384,12 @@ type FactStore interface {
 	// It accepts only a SealedRecord, so a record whose content hash does not
 	// describe its contents cannot reach storage. Callers obtain one from
 	// domain.Seal, which hashes at construction.
+	//
+	// The zero SealedRecord is the one value the signature cannot exclude —
+	// SealedRecord is an exported struct, so the literal domain.SealedRecord{}
+	// compiles anywhere and seals nothing. Implementations MUST refuse it with
+	// domain.ErrUnsealedRecord and store nothing; accepting it would append an
+	// all-empty row that every later read treats as a genuine measurement.
 	PutFetchRecord(ctx context.Context, record domain2.SealedRecord) error
 
 	// GetFetchRecord returns the composed view of the measurements held for the
