@@ -1,6 +1,7 @@
 package domain_test
 
 import (
+	"strings"
 	"testing"
 	"time"
 
@@ -36,7 +37,7 @@ func TestCanonicalTime_WholeSecondRecordHashesUnchanged(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	if want := `"fetched_at":"2026-01-01T12:00:00Z"`; !contains(string(b), want) {
+	if want := `"fetched_at":"2026-01-01T12:00:00Z"`; !strings.Contains(string(b), want) {
 		t.Errorf("canonical bytes do not carry %s; every existing record would fail its integrity check", want)
 	}
 }
@@ -70,7 +71,7 @@ func TestCanonicalTime_SubSecondMeasurementIsHashedAtFullPrecision(t *testing.T)
 	if err != nil {
 		t.Fatalf("Marshal: %v", err)
 	}
-	if want := `"fetched_at":"2026-01-01T12:00:00.000000001Z"`; !contains(string(b), want) {
+	if want := `"fetched_at":"2026-01-01T12:00:00.000000001Z"`; !strings.Contains(string(b), want) {
 		t.Errorf("canonical bytes do not carry %s; the sub-second measurement was truncated", want)
 	}
 }
@@ -135,17 +136,4 @@ func TestCanonicalTime_VerificationIsSelfDescribing(t *testing.T) {
 			}
 		})
 	}
-}
-
-func contains(haystack, needle string) bool {
-	return len(haystack) >= len(needle) && indexOf(haystack, needle) >= 0
-}
-
-func indexOf(haystack, needle string) int {
-	for i := 0; i+len(needle) <= len(haystack); i++ {
-		if haystack[i:i+len(needle)] == needle {
-			return i
-		}
-	}
-	return -1
 }
