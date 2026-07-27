@@ -293,12 +293,14 @@ func (s *Store) ListExampleRecords(ctx context.Context, filter ports.ExampleFilt
 }
 
 // FindBySymbol returns index entries for all examples associated with the
-// given symbol across all stored modules, filtered by pipeline version.
+// given symbol, filtered by pipeline version and restricted to the modules in
+// scope (the zero ModuleSet imposes no restriction, matching every stored
+// version — see ports.ExampleStore).
 // The symbol may be qualified with a package name (e.g. "modfile.File") or
 // unqualified (e.g. "File"); both forms are matched against the stored
 // associated_symbol column which holds unqualified names like "File" or
 // "Client.Do".
-func (s *Store) FindBySymbol(ctx context.Context, symbol string, pipelineVersion string) ([]ports.ExampleRef, error) {
+func (s *Store) FindBySymbol(ctx context.Context, symbol string, pipelineVersion string, scope coordinate.ModuleSet) ([]ports.ExampleRef, error) {
 	// If the caller passes a package-qualified name like "modfile.File" or
 	// "modfile.File.Method", strip the leading package segment so we search
 	// for the unqualified form stored in the index.
@@ -338,6 +340,9 @@ func (s *Store) FindBySymbol(ctx context.Context, symbol string, pipelineVersion
 			return nil, fmt.Errorf("scanning example ref: %w", serr)
 		}
 		ref.Validates = validates != 0
+		if !scope.ContainsPathVersion(ref.ModulePath, ref.ModuleVersion) {
+			continue
+		}
 		out = append(out, ref)
 	}
 	if err := rows.Err(); err != nil {

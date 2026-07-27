@@ -38,9 +38,10 @@ func (uc *QueryInterfaceUseCase) ListInterfaceRecords(ctx context.Context, filte
 	return sums, nil
 }
 
-// FindSymbol returns all packages that export a symbol with the given name.
-func (uc *QueryInterfaceUseCase) FindSymbol(ctx context.Context, symbolName, pipelineVersion string) ([]ifaceports.SymbolRef, error) {
-	refs, err := uc.store.FindSymbol(ctx, symbolName, pipelineVersion)
+// FindSymbol returns all packages that export a symbol with the given name,
+// restricted to the modules in scope (the zero ModuleSet imposes no restriction).
+func (uc *QueryInterfaceUseCase) FindSymbol(ctx context.Context, symbolName, pipelineVersion string, scope coordinate.ModuleSet) ([]ifaceports.SymbolRef, error) {
+	refs, err := uc.store.FindSymbol(ctx, symbolName, pipelineVersion, scope)
 	if err != nil {
 		return nil, fmt.Errorf("finding symbol %q: %w", symbolName, err)
 	}

@@ -145,7 +145,7 @@ func (s *fakeInterfaceStore) ListInterfaceRecords(_ context.Context, _ ports.Int
 	return nil, nil
 }
 
-func (s *fakeInterfaceStore) FindSymbol(_ context.Context, _ string, _ string) ([]ports.SymbolRef, error) {
+func (s *fakeInterfaceStore) FindSymbol(_ context.Context, _ string, _ string, _ coordinate.ModuleSet) ([]ports.SymbolRef, error) {
 	return nil, nil
 }
 

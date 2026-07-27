@@ -317,8 +317,12 @@ func (s *Store) ListInterfaceRecords(ctx context.Context, filter ports.Interface
 }
 
 // FindSymbol returns index entries for all packages that export a symbol with
-// the given name across all stored modules.
-func (s *Store) FindSymbol(ctx context.Context, symbolName string, pipelineVersion string) ([]ports.SymbolRef, error) {
+// the given name, restricted to the modules in scope (see ports.InterfaceStore).
+//
+// The scope filter runs over the scanned rows rather than as a SQL predicate: a
+// build's version set is a list of pairs, so expressing it in the WHERE clause
+// costs one bound parameter per module, and a full-depth walk holds thousands.
+func (s *Store) FindSymbol(ctx context.Context, symbolName string, pipelineVersion string, scope coordinate.ModuleSet) ([]ports.SymbolRef, error) {
 	const q = `SELECT module_path, module_version, pipeline_version,
 	                   package_path, symbol_kind, symbol_name, parent_type, signature
 	            FROM interface_symbols
@@ -341,6 +345,9 @@ func (s *Store) FindSymbol(ctx context.Context, symbolName string, pipelineVersi
 			&ref.PackagePath, &ref.SymbolKind, &ref.SymbolName, &ref.ParentType, &ref.Signature,
 		); serr != nil {
 			return nil, fmt.Errorf("scanning symbol ref: %w", serr)
+		}
+		if !scope.ContainsPathVersion(ref.ModulePath, ref.ModuleVersion) {
+			continue
 		}
 		out = append(out, ref)
 	}

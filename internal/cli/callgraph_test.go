@@ -322,7 +322,7 @@ func TestRunCallers_WithResults(t *testing.T) {
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", FromID: "example.com/app.Main", ToID: "example.com/app.Helper"},
 	})
 	var buf bytes.Buffer
-	err := runCallers(context.Background(), "example.com/app.Helper", false, uc, &buf)
+	err := runCallers(context.Background(), "example.com/app.Helper", false, uc, &buf, buildScope{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -347,7 +347,7 @@ func TestRunCallers_GenuineZero(t *testing.T) {
 		Nodes: []cgdomain.CallNode{{ID: "example.com/app.Root"}},
 	})
 	var buf bytes.Buffer
-	if err := runCallers(context.Background(), "example.com/app.Root", false, uc, &buf); err != nil {
+	if err := runCallers(context.Background(), "example.com/app.Root", false, uc, &buf, buildScope{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "No callers found for example.com/app.Root") {
@@ -367,7 +367,7 @@ func TestRunCallers_UnknownSymbolInAnalysedModule(t *testing.T) {
 		Nodes: []cgdomain.CallNode{{ID: "example.com/app.Real"}},
 	})
 	var buf bytes.Buffer
-	err := runCallers(context.Background(), "example.com/app.NoSuchSymbol", false, uc, &buf)
+	err := runCallers(context.Background(), "example.com/app.NoSuchSymbol", false, uc, &buf, buildScope{})
 	if err == nil {
 		t.Fatal("expected a directing error for an unknown symbol, got nil")
 	}
@@ -382,7 +382,7 @@ func TestRunCallees_WithResults(t *testing.T) {
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", FromID: "example.com/app.Main", ToID: "example.com/app.Helper"},
 	})
 	var buf bytes.Buffer
-	err := runCallees(context.Background(), "example.com/app.Main", false, uc, &buf)
+	err := runCallees(context.Background(), "example.com/app.Main", false, uc, &buf, buildScope{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -407,7 +407,7 @@ func TestRunCallees_GenuineZero(t *testing.T) {
 		Nodes: []cgdomain.CallNode{{ID: "example.com/app.Leaf"}},
 	})
 	var buf bytes.Buffer
-	if err := runCallees(context.Background(), "example.com/app.Leaf", false, uc, &buf); err != nil {
+	if err := runCallees(context.Background(), "example.com/app.Leaf", false, uc, &buf, buildScope{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "No callees found for example.com/app.Leaf") {
@@ -427,7 +427,7 @@ func TestRunCallees_UnknownSymbolInAnalysedModule(t *testing.T) {
 		Nodes: []cgdomain.CallNode{{ID: "example.com/app.Real"}},
 	})
 	var buf bytes.Buffer
-	err := runCallees(context.Background(), "example.com/app.NoSuchSymbol", false, uc, &buf)
+	err := runCallees(context.Background(), "example.com/app.NoSuchSymbol", false, uc, &buf, buildScope{})
 	if err == nil {
 		t.Fatal("expected a directing error for an unknown symbol, got nil")
 	}
@@ -446,7 +446,7 @@ func TestRunCallersTransitive_WithResults(t *testing.T) {
 		[]string{"example.com/app.Helper", "example.com/app.Main"},
 	)
 	var buf bytes.Buffer
-	err := runCallersTransitive(context.Background(), "fmt.Println", 0, false, uc, &buf)
+	err := runCallersTransitive(context.Background(), "fmt.Println", 0, false, uc, &buf, buildScope{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -471,7 +471,7 @@ func TestRunCallersTransitive_DepthLimit(t *testing.T) {
 		[]string{"example.com/app.Helper"},
 	)
 	var buf bytes.Buffer
-	err := runCallersTransitive(context.Background(), "fmt.Println", 1, false, uc, &buf)
+	err := runCallersTransitive(context.Background(), "fmt.Println", 1, false, uc, &buf, buildScope{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -487,7 +487,7 @@ func TestRunCallersTransitive_DepthLimit(t *testing.T) {
 func TestRunCallersTransitive_NoResults(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
 	var buf bytes.Buffer
-	err := runCallersTransitive(context.Background(), "example.com/app.Main", 0, false, uc, &buf)
+	err := runCallersTransitive(context.Background(), "example.com/app.Main", 0, false, uc, &buf, buildScope{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -506,7 +506,7 @@ func TestRunCallersTransitive_JSON(t *testing.T) {
 		[]string{"example.com/app.Helper", "example.com/app.Main"},
 	)
 	var buf bytes.Buffer
-	err := runCallersTransitive(context.Background(), "fmt.Println", 0, true, uc, &buf)
+	err := runCallersTransitive(context.Background(), "fmt.Println", 0, true, uc, &buf, buildScope{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -528,7 +528,7 @@ func TestRunCalleesTransitive_WithResults(t *testing.T) {
 		[]string{"example.com/app.Helper", "fmt.Println"},
 	)
 	var buf bytes.Buffer
-	err := runCalleesTransitive(context.Background(), "example.com/app.Main", 0, false, uc, &buf)
+	err := runCalleesTransitive(context.Background(), "example.com/app.Main", 0, false, uc, &buf, buildScope{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -553,7 +553,7 @@ func TestRunCalleesTransitive_DepthLimit(t *testing.T) {
 		[]string{"example.com/app.Helper"},
 	)
 	var buf bytes.Buffer
-	err := runCalleesTransitive(context.Background(), "example.com/app.Main", 1, false, uc, &buf)
+	err := runCalleesTransitive(context.Background(), "example.com/app.Main", 1, false, uc, &buf, buildScope{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -569,7 +569,7 @@ func TestRunCalleesTransitive_DepthLimit(t *testing.T) {
 func TestRunCalleesTransitive_NoResults(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
 	var buf bytes.Buffer
-	err := runCalleesTransitive(context.Background(), "fmt.Println", 0, false, uc, &buf)
+	err := runCalleesTransitive(context.Background(), "fmt.Println", 0, false, uc, &buf, buildScope{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -588,7 +588,7 @@ func TestRunCalleesTransitive_JSON(t *testing.T) {
 		[]string{"example.com/app.Helper", "fmt.Println"},
 	)
 	var buf bytes.Buffer
-	err := runCalleesTransitive(context.Background(), "example.com/app.Main", 0, true, uc, &buf)
+	err := runCalleesTransitive(context.Background(), "example.com/app.Main", 0, true, uc, &buf, buildScope{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -769,7 +769,7 @@ func TestRunCallers_UnresolvedSymbol_IsError(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
 	// No analysed modules at all; FindCallers returns empty.
 	var buf bytes.Buffer
-	err := runCallers(context.Background(), "example.com/notanalysed/pkg.Foo", false, uc, &buf)
+	err := runCallers(context.Background(), "example.com/notanalysed/pkg.Foo", false, uc, &buf, buildScope{})
 	if err == nil {
 		t.Fatal("expected an error for an unresolved symbol, got nil")
 	}
@@ -792,7 +792,7 @@ func TestRunCallers_AnalysedButZeroEdges_IsNotError(t *testing.T) {
 		Nodes: []cgdomain.CallNode{{ID: "example.com/app/pkg.Orphan"}},
 	})
 	var buf bytes.Buffer
-	err := runCallers(context.Background(), "example.com/app/pkg.Orphan", false, uc, &buf)
+	err := runCallers(context.Background(), "example.com/app/pkg.Orphan", false, uc, &buf, buildScope{})
 	if err != nil {
 		t.Fatalf("analysed-but-zero must not be an error, got: %v", err)
 	}
@@ -804,7 +804,7 @@ func TestRunCallers_AnalysedButZeroEdges_IsNotError(t *testing.T) {
 func TestRunCallees_UnresolvedSymbol_IsError(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
 	var buf bytes.Buffer
-	err := runCallees(context.Background(), "example.com/notanalysed/pkg.Foo", false, uc, &buf)
+	err := runCallees(context.Background(), "example.com/notanalysed/pkg.Foo", false, uc, &buf, buildScope{})
 	if err == nil {
 		t.Fatal("expected an error for an unresolved symbol, got nil")
 	}
@@ -826,7 +826,7 @@ func TestRunCallers_GenuineZeroJSON_IsEmptyArrayNotNull(t *testing.T) {
 		Nodes: []cgdomain.CallNode{{ID: "example.com/app.Orphan"}},
 	})
 	var buf bytes.Buffer
-	if err := runCallers(context.Background(), "example.com/app.Orphan", true, uc, &buf); err != nil {
+	if err := runCallers(context.Background(), "example.com/app.Orphan", true, uc, &buf, buildScope{}); err != nil {
 		t.Fatalf("genuine-zero must not error: %v", err)
 	}
 	out := strings.TrimSpace(buf.String())
@@ -886,7 +886,7 @@ func TestRunCallers_RootInFailedPackage_Unresolved(t *testing.T) {
 	// must downgrade to a directing unresolved error instead.
 	uc := setupPartialStore(t, nil)
 	var buf bytes.Buffer
-	err := runCallers(context.Background(), "example.com/app/broken.Broken", false, uc, &buf)
+	err := runCallers(context.Background(), "example.com/app/broken.Broken", false, uc, &buf, buildScope{})
 	if err == nil {
 		t.Fatal("expected unresolved error for a root in a failed package, got nil")
 	}
@@ -903,7 +903,7 @@ func TestRunCallers_RootInFailedPackage_Unresolved(t *testing.T) {
 func TestRunCallees_RootInFailedPackage_Unresolved(t *testing.T) {
 	uc := setupPartialStore(t, nil)
 	var buf bytes.Buffer
-	err := runCallees(context.Background(), "example.com/app/broken.Broken", false, uc, &buf)
+	err := runCallees(context.Background(), "example.com/app/broken.Broken", false, uc, &buf, buildScope{})
 	if err == nil {
 		t.Fatal("expected unresolved error for a root in a failed package, got nil")
 	}
@@ -915,7 +915,7 @@ func TestRunCallees_RootInFailedPackage_Unresolved(t *testing.T) {
 func TestRunCallersTransitive_RootInFailedPackage_Unresolved(t *testing.T) {
 	uc := setupPartialStore(t, nil)
 	var buf bytes.Buffer
-	err := runCallersTransitive(context.Background(), "example.com/app/broken.Broken", 0, false, uc, &buf)
+	err := runCallersTransitive(context.Background(), "example.com/app/broken.Broken", 0, false, uc, &buf, buildScope{})
 	if err == nil {
 		t.Fatal("expected unresolved error for a transitive root in a failed package, got nil")
 	}
@@ -932,7 +932,7 @@ func TestRunCallers_PartialGraph_CleanRoot_Caveat(t *testing.T) {
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", FromID: "example.com/app.Main", ToID: "example.com/app.Helper"},
 	})
 	var buf bytes.Buffer
-	if err := runCallers(context.Background(), "example.com/app.Helper", false, uc, &buf); err != nil {
+	if err := runCallers(context.Background(), "example.com/app.Helper", false, uc, &buf, buildScope{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -951,7 +951,7 @@ func TestRunCallers_PartialGraph_JSON_NoCaveatLine(t *testing.T) {
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", FromID: "example.com/app.Main", ToID: "example.com/app.Helper"},
 	})
 	var buf bytes.Buffer
-	if err := runCallers(context.Background(), "example.com/app.Helper", true, uc, &buf); err != nil {
+	if err := runCallers(context.Background(), "example.com/app.Helper", true, uc, &buf, buildScope{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if strings.Contains(buf.String(), "notice:") {
@@ -978,7 +978,7 @@ func TestRunCallers_ExtractedGraph_NoCaveat(t *testing.T) {
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", FromID: "example.com/app.Main", ToID: "example.com/app.Helper"},
 	})
 	var buf bytes.Buffer
-	if err := runCallers(context.Background(), "example.com/app.Helper", false, uc, &buf); err != nil {
+	if err := runCallers(context.Background(), "example.com/app.Helper", false, uc, &buf, buildScope{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if strings.Contains(buf.String(), "notice:") {

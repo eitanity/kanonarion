@@ -85,11 +85,17 @@ type CallGraphStore interface {
 
 	// FindCallers returns all edges in the store where the callee node ID
 	// matches symbolID, for the given pipeline version.
-	FindCallers(ctx context.Context, symbolID string, pipelineVersion string) ([]CallEdgeRef, error)
+	//
+	// scope restricts the result to edges owned by a module in that build's
+	// resolved version set; the zero ModuleSet imposes no restriction and
+	// returns matches across every stored version, which is what a query that
+	// names no build means.
+	FindCallers(ctx context.Context, symbolID string, pipelineVersion string, scope coordinate.ModuleSet) ([]CallEdgeRef, error)
 
 	// FindCallees returns all edges in the store where the caller node ID
-	// matches symbolID, for the given pipeline version.
-	FindCallees(ctx context.Context, symbolID string, pipelineVersion string) ([]CallEdgeRef, error)
+	// matches symbolID, for the given pipeline version. scope behaves as in
+	// FindCallers.
+	FindCallees(ctx context.Context, symbolID string, pipelineVersion string, scope coordinate.ModuleSet) ([]CallEdgeRef, error)
 }
 
 // CallGraphFilter constrains ListCallGraphRecords results.

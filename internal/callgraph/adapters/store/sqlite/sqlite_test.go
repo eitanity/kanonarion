@@ -213,7 +213,7 @@ func TestFindCallers(t *testing.T) {
 	}
 
 	// The edge is Foo→Bar. FindCallers of Bar should return Foo.
-	callers, err := s.FindCallers(ctx, "example.com/mod.Bar", "0.1.0")
+	callers, err := s.FindCallers(ctx, "example.com/mod.Bar", "0.1.0", coordinate.ModuleSet{})
 	if err != nil {
 		t.Fatalf("FindCallers: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestFindCallees(t *testing.T) {
 
 	// Foo calls Bar (Direct) and Baz (reflect-dispatched Unknown); FindCallees
 	// of Foo should return both, ordered by ToID.
-	callees, err := s.FindCallees(ctx, "example.com/mod.Foo", "0.1.0")
+	callees, err := s.FindCallees(ctx, "example.com/mod.Foo", "0.1.0", coordinate.ModuleSet{})
 	if err != nil {
 		t.Fatalf("FindCallees: %v", err)
 	}
@@ -253,7 +253,7 @@ func TestFindCallers_EmptyResult(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
 
-	callers, err := s.FindCallers(ctx, "example.com/mod.Unknown", "0.1.0")
+	callers, err := s.FindCallers(ctx, "example.com/mod.Unknown", "0.1.0", coordinate.ModuleSet{})
 	if err != nil {
 		t.Fatalf("FindCallers: %v", err)
 	}
@@ -412,5 +412,99 @@ func TestGetCurrentSchemaRecordStillServed(t *testing.T) {
 	}
 	if got.SchemaVersion != domain2.CallGraphSchemaVersion {
 		t.Errorf("SchemaVersion = %q, want %q", got.SchemaVersion, domain2.CallGraphSchemaVersion)
+	}
+}
+
+// TestFindCallers_MultiVersionUnscoped pins the behaviour a scoped query has to
+// improve on: with three versions of the same module analysed, an unscoped
+// callers query answers across all of them. That is correct for "where has this
+// ever been called" and is why the scoped variant below is needed for "is this
+// called in my build".
+func TestFindCallers_MultiVersionUnscoped(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	for _, v := range []string{"v1.0.0", "v1.1.0", "v2.0.0"} {
+		coord, err := coordinate.NewModuleCoordinate("example.com/mod", v)
+		if err != nil {
+			t.Fatalf("coordinate %s: %v", v, err)
+		}
+		if perr := s.PutCallGraphRecord(ctx, makeRecord(coord, "0.1.0")); perr != nil {
+			t.Fatalf("put %s: %v", v, perr)
+		}
+	}
+
+	callers, err := s.FindCallers(ctx, "example.com/mod.Bar", "0.1.0", coordinate.ModuleSet{})
+	if err != nil {
+		t.Fatalf("FindCallers: %v", err)
+	}
+	if len(callers) != 3 {
+		t.Fatalf("expected 3 callers (one per stored version), got %d: %v", len(callers), callers)
+	}
+}
+
+// TestFindCallers_ScopedToOneVersion is the regression for the reported defect:
+// a build that resolves exactly one version of a module must not be told about
+// callers living in the other versions the store happens to hold.
+func TestFindCallers_ScopedToOneVersion(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	for _, v := range []string{"v1.0.0", "v1.1.0", "v2.0.0"} {
+		coord, err := coordinate.NewModuleCoordinate("example.com/mod", v)
+		if err != nil {
+			t.Fatalf("coordinate %s: %v", v, err)
+		}
+		if perr := s.PutCallGraphRecord(ctx, makeRecord(coord, "0.1.0")); perr != nil {
+			t.Fatalf("put %s: %v", v, perr)
+		}
+	}
+
+	inBuild, err := coordinate.NewModuleCoordinate("example.com/mod", "v1.1.0")
+	if err != nil {
+		t.Fatalf("coordinate: %v", err)
+	}
+	scope := coordinate.NewModuleSet([]coordinate.ModuleCoordinate{inBuild})
+
+	callers, err := s.FindCallers(ctx, "example.com/mod.Bar", "0.1.0", scope)
+	if err != nil {
+		t.Fatalf("FindCallers: %v", err)
+	}
+	if len(callers) != 1 {
+		t.Fatalf("expected 1 caller (the in-build version), got %d: %v", len(callers), callers)
+	}
+	if callers[0].ModuleVersion != "v1.1.0" {
+		t.Errorf("caller module version = %q, want v1.1.0", callers[0].ModuleVersion)
+	}
+
+	callees, err := s.FindCallees(ctx, "example.com/mod.Foo", "0.1.0", scope)
+	if err != nil {
+		t.Fatalf("FindCallees: %v", err)
+	}
+	for _, c := range callees {
+		if c.ModuleVersion != "v1.1.0" {
+			t.Errorf("callee from out-of-build version %q leaked into scoped result", c.ModuleVersion)
+		}
+	}
+}
+
+// TestFindCallers_EmptyScopeMatchesNothing pins the difference between the zero
+// ModuleSet and one built from no coordinates. A build that contains no modules
+// must return nothing rather than silently widening back to every stored
+// version — the two are different statements and cannot share an encoding.
+func TestFindCallers_EmptyScopeMatchesNothing(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	if err := s.PutCallGraphRecord(ctx, makeRecord(testCoord, "0.1.0")); err != nil {
+		t.Fatalf("put: %v", err)
+	}
+
+	callers, err := s.FindCallers(ctx, "example.com/mod.Bar", "0.1.0", coordinate.NewModuleSet(nil))
+	if err != nil {
+		t.Fatalf("FindCallers: %v", err)
+	}
+	if len(callers) != 0 {
+		t.Errorf("empty restricted scope returned %d callers, want 0: %v", len(callers), callers)
 	}
 }

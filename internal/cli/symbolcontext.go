@@ -42,6 +42,7 @@ type symbolContextEntry struct {
 
 type symbolContextFlags struct {
 	module string
+	scope  buildScopeFlags
 }
 
 func newSymbolContextCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -57,11 +58,14 @@ func newSymbolContextCmd(stdout, stderr io.Writer) *cobra.Command {
 			if len(args) != 1 {
 				return usageErr(cmd)
 			}
+			f.scope.bind(cmd)
 			return runSymbolContext(cmd.Context(), args[0], f, jsonOut, stdout, stderr)
 		},
 	}
 
 	cmd.Flags().StringVar(&f.module, "module", "", "narrow results to a specific module@version")
+	registerBuildScopeFlags(cmd, &f.scope)
+	cmd.Flags().Lookup("gomod").NoOptDefVal = defaultGoModPath
 
 	return cmd
 }
@@ -78,9 +82,24 @@ func runSymbolContext(ctx context.Context, symbolName string, f symbolContextFla
 	}
 	defer func() { _ = cleanup() }()
 
-	refs, err := ctr.QueryInterface.FindSymbol(ctx, symbolName, ifaceapp.PipelineVersion)
+	sc, err := f.scope.resolve(ctx, ctr.QueryWalks)
+	if err != nil {
+		return err
+	}
+
+	// Without a scope this fans out one entry — signature, godoc and examples —
+	// per stored version of the owning module, which reads as several distinct
+	// symbols rather than one symbol recorded several times. --module narrows
+	// after the fact and only if the caller thought to pass it; a build scope
+	// narrows the query itself.
+	refs, err := ctr.QueryInterface.FindSymbol(ctx, symbolName, ifaceapp.PipelineVersion, sc.modules)
 	if err != nil {
 		return fmt.Errorf("finding symbol %q: %w", symbolName, err)
+	}
+	if !jsonOut {
+		if nerr := writeScopeNotice(stdout, sc); nerr != nil {
+			return nerr
+		}
 	}
 
 	if f.module != "" {

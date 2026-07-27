@@ -55,8 +55,12 @@ type InterfaceStore interface {
 	ListInterfaceRecords(ctx context.Context, filter InterfaceFilter) ([]InterfaceSummary, error)
 
 	// FindSymbol returns index entries for all packages that export a symbol
-	// with the given name across all stored modules.
-	FindSymbol(ctx context.Context, symbolName string, pipelineVersion string) ([]SymbolRef, error)
+	// with the given name.
+	//
+	// scope restricts the result to the modules in one build's resolved version
+	// set; the zero ModuleSet imposes no restriction and answers across every
+	// stored version, which is what a query that names no build means.
+	FindSymbol(ctx context.Context, symbolName string, pipelineVersion string, scope coordinate.ModuleSet) ([]SymbolRef, error)
 }
 
 // InterfaceFilter constrains ListInterfaceRecords results.

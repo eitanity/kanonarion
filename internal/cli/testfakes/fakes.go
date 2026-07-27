@@ -416,13 +416,22 @@ func (f *FakeQueryInterface) ListInterfaceRecords(_ context.Context, _ ifaceport
 	return f.list, nil
 }
 
-func (f *FakeQueryInterface) FindSymbol(_ context.Context, _, _ string) ([]ifaceports.SymbolRef, error) {
+func (f *FakeQueryInterface) FindSymbol(_ context.Context, _, _ string, scope coordinate.ModuleSet) ([]ifaceports.SymbolRef, error) {
 	if f.Err != nil {
 		return nil, f.Err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.symbols, nil
+	if !scope.IsRestricted() {
+		return f.symbols, nil
+	}
+	out := make([]ifaceports.SymbolRef, 0, len(f.symbols))
+	for _, r := range f.symbols {
+		if scope.ContainsPathVersion(r.ModulePath, r.ModuleVersion) {
+			out = append(out, r)
+		}
+	}
+	return out, nil
 }
 
 // ---- callgraph context ----
@@ -498,22 +507,38 @@ func (f *FakeQueryCallGraph) SetCallees(refs []cgports.CallEdgeRef) {
 	f.callees = refs
 }
 
-func (f *FakeQueryCallGraph) FindCallers(_ context.Context, _, _ string) ([]cgports.CallEdgeRef, error) {
+func (f *FakeQueryCallGraph) FindCallers(_ context.Context, _, _ string, scope coordinate.ModuleSet) ([]cgports.CallEdgeRef, error) {
 	if f.Err != nil {
 		return nil, f.Err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.callers, nil
+	return scopeEdgeRefs(f.callers, scope), nil
 }
 
-func (f *FakeQueryCallGraph) FindCallees(_ context.Context, _, _ string) ([]cgports.CallEdgeRef, error) {
+func (f *FakeQueryCallGraph) FindCallees(_ context.Context, _, _ string, scope coordinate.ModuleSet) ([]cgports.CallEdgeRef, error) {
 	if f.Err != nil {
 		return nil, f.Err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.callees, nil
+	return scopeEdgeRefs(f.callees, scope), nil
+}
+
+// scopeEdgeRefs mirrors the real store's scope filter so a CLI test can observe
+// whether the scope reached the query at all — a fake that ignored the argument
+// would pass whether or not the command plumbed it.
+func scopeEdgeRefs(refs []cgports.CallEdgeRef, scope coordinate.ModuleSet) []cgports.CallEdgeRef {
+	if !scope.IsRestricted() {
+		return refs
+	}
+	out := make([]cgports.CallEdgeRef, 0, len(refs))
+	for _, r := range refs {
+		if scope.ContainsPathVersion(r.ModulePath, r.ModuleVersion) {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 func (f *FakeQueryCallGraph) SetTraverseCallers(edges []cgports.CallEdgeRef, nodes []string) {
@@ -530,22 +555,22 @@ func (f *FakeQueryCallGraph) SetTraverseCallees(edges []cgports.CallEdgeRef, nod
 	f.traverseCalleeNodes = nodes
 }
 
-func (f *FakeQueryCallGraph) TraverseCallers(_ context.Context, _, _ string, _ int) ([]cgports.CallEdgeRef, []string, error) {
+func (f *FakeQueryCallGraph) TraverseCallers(_ context.Context, _, _ string, _ int, scope coordinate.ModuleSet) ([]cgports.CallEdgeRef, []string, error) {
 	if f.Err != nil {
 		return nil, nil, f.Err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.traverseCallers, f.traverseCallerNodes, nil
+	return scopeEdgeRefs(f.traverseCallers, scope), f.traverseCallerNodes, nil
 }
 
-func (f *FakeQueryCallGraph) TraverseCallees(_ context.Context, _, _ string, _ int) ([]cgports.CallEdgeRef, []string, error) {
+func (f *FakeQueryCallGraph) TraverseCallees(_ context.Context, _, _ string, _ int, scope coordinate.ModuleSet) ([]cgports.CallEdgeRef, []string, error) {
 	if f.Err != nil {
 		return nil, nil, f.Err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.traverseCallees, f.traverseCalleeNodes, nil
+	return scopeEdgeRefs(f.traverseCallees, scope), f.traverseCalleeNodes, nil
 }
 
 // ---- example context ----
@@ -610,7 +635,7 @@ func (f *FakeQueryExamples) ListExampleRecords(_ context.Context, _ exports.Exam
 	return f.list, nil
 }
 
-func (f *FakeQueryExamples) FindBySymbol(_ context.Context, _, _ string) ([]exports.ExampleRef, error) {
+func (f *FakeQueryExamples) FindBySymbol(_ context.Context, _, _ string, _ coordinate.ModuleSet) ([]exports.ExampleRef, error) {
 	if f.Err != nil {
 		return nil, f.Err
 	}

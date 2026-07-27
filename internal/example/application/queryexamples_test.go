@@ -45,7 +45,7 @@ func (s *queryExFakeStore) ListExampleRecords(_ context.Context, _ exampleports.
 	return s.summaries, s.listErr
 }
 
-func (s *queryExFakeStore) FindBySymbol(_ context.Context, _ string, _ string) ([]exampleports.ExampleRef, error) {
+func (s *queryExFakeStore) FindBySymbol(_ context.Context, _ string, _ string, _ coordinate.ModuleSet) ([]exampleports.ExampleRef, error) {
 	return s.exampleRefs, s.findErr
 }
 
@@ -135,7 +135,7 @@ func TestQueryExamplesUseCase_FindBySymbol(t *testing.T) {
 	}
 	uc := application.NewQueryExamplesUseCase(store)
 
-	refs, err := uc.FindBySymbol(context.Background(), "Marshal", "0.1.0")
+	refs, err := uc.FindBySymbol(context.Background(), "Marshal", "0.1.0", coordinate.ModuleSet{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -148,7 +148,7 @@ func TestQueryExamplesUseCase_FindBySymbol_Error(t *testing.T) {
 	findErr := errors.New("index failure")
 	uc := application.NewQueryExamplesUseCase(&queryExFakeStore{findErr: findErr})
 
-	_, err := uc.FindBySymbol(context.Background(), "Marshal", "0.1.0")
+	_, err := uc.FindBySymbol(context.Background(), "Marshal", "0.1.0", coordinate.ModuleSet{})
 	if !errors.Is(err, findErr) {
 		t.Errorf("got %v, want wrapping %v", err, findErr)
 	}

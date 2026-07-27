@@ -38,9 +38,11 @@ func (uc *QueryExamplesUseCase) ListExampleRecords(ctx context.Context, filter e
 	return sums, nil
 }
 
-// FindBySymbol returns all examples associated with the given symbol.
-func (uc *QueryExamplesUseCase) FindBySymbol(ctx context.Context, symbol, pipelineVersion string) ([]exampleports.ExampleRef, error) {
-	refs, err := uc.store.FindBySymbol(ctx, symbol, pipelineVersion)
+// FindBySymbol returns all examples associated with the given symbol,
+// restricted to the modules in scope (the zero ModuleSet imposes no
+// restriction).
+func (uc *QueryExamplesUseCase) FindBySymbol(ctx context.Context, symbol, pipelineVersion string, scope coordinate.ModuleSet) ([]exampleports.ExampleRef, error) {
+	refs, err := uc.store.FindBySymbol(ctx, symbol, pipelineVersion, scope)
 	if err != nil {
 		return nil, fmt.Errorf("finding examples for symbol %q: %w", symbol, err)
 	}

@@ -399,27 +399,36 @@ func (s *Store) ListCallGraphRecords(ctx context.Context, filter ports.CallGraph
 	return out, nil
 }
 
-// FindCallers returns all edges where the callee matches symbolID.
-func (s *Store) FindCallers(ctx context.Context, symbolID string, pipelineVersion string) ([]ports.CallEdgeRef, error) {
+// FindCallers returns all edges where the callee matches symbolID, restricted
+// to edges owned by a module in scope (see ports.CallGraphStore).
+func (s *Store) FindCallers(ctx context.Context, symbolID string, pipelineVersion string, scope coordinate.ModuleSet) ([]ports.CallEdgeRef, error) {
 	const q = `SELECT DISTINCT from_module, from_version, pipeline_version,
 	                   from_id, to_id, confidence
 	            FROM callgraph_edges
 	            WHERE to_id = ? AND pipeline_version = ?
 	            ORDER BY from_module, from_version, from_id`
-	return s.queryEdges(ctx, q, symbolID, pipelineVersion)
+	return s.queryEdges(ctx, q, symbolID, pipelineVersion, scope)
 }
 
-// FindCallees returns all edges where the caller matches symbolID.
-func (s *Store) FindCallees(ctx context.Context, symbolID string, pipelineVersion string) ([]ports.CallEdgeRef, error) {
+// FindCallees returns all edges where the caller matches symbolID, restricted
+// to edges owned by a module in scope (see ports.CallGraphStore).
+func (s *Store) FindCallees(ctx context.Context, symbolID string, pipelineVersion string, scope coordinate.ModuleSet) ([]ports.CallEdgeRef, error) {
 	const q = `SELECT DISTINCT from_module, from_version, pipeline_version,
 	                   from_id, to_id, confidence
 	            FROM callgraph_edges
 	            WHERE from_id = ? AND pipeline_version = ?
 	            ORDER BY from_module, from_version, to_id`
-	return s.queryEdges(ctx, q, symbolID, pipelineVersion)
+	return s.queryEdges(ctx, q, symbolID, pipelineVersion, scope)
 }
 
-func (s *Store) queryEdges(ctx context.Context, q, symbolID, pipelineVersion string) ([]ports.CallEdgeRef, error) {
+// queryEdges runs an edge query and drops rows whose owning module is outside
+// scope. The filter is applied here rather than in SQL because a build's version
+// set is a list of pairs, not a range: expressing it as a WHERE clause means one
+// bound parameter per module, and a full-depth walk can hold thousands. Both
+// queries are already driven by an index on the symbol ID, so the rows reaching
+// this loop are the matches for one symbol — a set small enough that filtering
+// in Go costs nothing the parameter list would not cost more of.
+func (s *Store) queryEdges(ctx context.Context, q, symbolID, pipelineVersion string, scope coordinate.ModuleSet) ([]ports.CallEdgeRef, error) {
 	rows, err := s.db.DB().QueryContext(ctx, q, symbolID, pipelineVersion)
 	if err != nil {
 		return nil, fmt.Errorf("querying callgraph edges: %w", err)
@@ -437,6 +446,9 @@ func (s *Store) queryEdges(ctx context.Context, q, symbolID, pipelineVersion str
 			&ref.FromID, &ref.ToID, &conf,
 		); serr != nil {
 			return nil, fmt.Errorf("scanning callgraph edge ref: %w", serr)
+		}
+		if !scope.ContainsPathVersion(ref.ModulePath, ref.ModuleVersion) {
+			continue
 		}
 		// Normalise any legacy vocabulary lingering in the table so query
 		// consumers only ever see the current confidence tags.

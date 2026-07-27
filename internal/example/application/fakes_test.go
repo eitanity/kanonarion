@@ -139,7 +139,7 @@ func (s *fakeExampleStore) ListExampleRecords(_ context.Context, _ ports.Example
 	return nil, nil
 }
 
-func (s *fakeExampleStore) FindBySymbol(_ context.Context, _ string, _ string) ([]ports.ExampleRef, error) {
+func (s *fakeExampleStore) FindBySymbol(_ context.Context, _ string, _ string, _ coordinate.ModuleSet) ([]ports.ExampleRef, error) {
 	return nil, nil
 }
 

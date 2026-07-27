@@ -238,7 +238,7 @@ func TestRunExamplesFind_WithResults(t *testing.T) {
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", ExampleName: "ExampleMain", AssociatedSymbol: "Main"},
 	})
 	var buf bytes.Buffer
-	err := runExamplesFind(context.Background(), "Main", false, uc, &buf)
+	err := runExamplesFind(context.Background(), "Main", false, uc, &buf, buildScope{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -250,7 +250,7 @@ func TestRunExamplesFind_WithResults(t *testing.T) {
 func TestRunExamplesFind_NoResults(t *testing.T) {
 	uc := testfakes.NewFakeQueryExamples()
 	var buf bytes.Buffer
-	err := runExamplesFind(context.Background(), "NoSuchSymbol", false, uc, &buf)
+	err := runExamplesFind(context.Background(), "NoSuchSymbol", false, uc, &buf, buildScope{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -262,7 +262,7 @@ func TestRunExamplesFind_NoResults(t *testing.T) {
 func TestRunExamplesFind_JSON_Empty(t *testing.T) {
 	uc := testfakes.NewFakeQueryExamples()
 	var buf bytes.Buffer
-	err := runExamplesFind(context.Background(), "NoSuchSymbol", true, uc, &buf)
+	err := runExamplesFind(context.Background(), "NoSuchSymbol", true, uc, &buf, buildScope{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -277,7 +277,7 @@ func TestRunExamplesFind_JSON_WithRefs(t *testing.T) {
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", ExampleName: "ExampleMain", AssociatedSymbol: "Main"},
 	})
 	var buf bytes.Buffer
-	err := runExamplesFind(context.Background(), "Main", true, uc, &buf)
+	err := runExamplesFind(context.Background(), "Main", true, uc, &buf, buildScope{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

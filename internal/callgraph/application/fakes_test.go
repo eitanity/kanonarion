@@ -146,11 +146,11 @@ func (s *fakeCallGraphStore) ListCallGraphRecords(_ context.Context, _ ports.Cal
 	return nil, nil
 }
 
-func (s *fakeCallGraphStore) FindCallers(_ context.Context, _ string, _ string) ([]ports.CallEdgeRef, error) {
+func (s *fakeCallGraphStore) FindCallers(_ context.Context, _ string, _ string, _ coordinate.ModuleSet) ([]ports.CallEdgeRef, error) {
 	return nil, nil
 }
 
-func (s *fakeCallGraphStore) FindCallees(_ context.Context, _ string, _ string) ([]ports.CallEdgeRef, error) {
+func (s *fakeCallGraphStore) FindCallees(_ context.Context, _ string, _ string, _ coordinate.ModuleSet) ([]ports.CallEdgeRef, error) {
 	return nil, nil
 }
 

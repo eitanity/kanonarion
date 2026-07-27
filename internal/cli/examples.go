@@ -194,33 +194,50 @@ func runExamplesShow(ctx context.Context, moduleArg, exampleName string, jsonOut
 // -- examples-find command --
 
 func newExamplesFindCmd(stdout, stderr io.Writer) *cobra.Command {
+	var scopeFlags buildScopeFlags
+
 	cmd := &cobra.Command{
 		Use:   "examples-find <symbol>",
 		Short: "Find all examples for a symbol across the store",
 		Example: `  kanonarion examples-find Client.Do
   kanonarion examples-find Marshal
-  kanonarion examples-find Marshal --json`,
+  kanonarion examples-find Marshal --json
+  kanonarion examples-find Marshal --gomod`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
 				return usageErr(cmd)
 			}
+			scopeFlags.bind(cmd)
 			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runExamplesFind(cmd.Context(), args[0], jsonOut, ctr.QueryExamples, stdout)
+			sc, serr := scopeFlags.resolve(cmd.Context(), ctr.QueryWalks)
+			if serr != nil {
+				return serr
+			}
+			return runExamplesFind(cmd.Context(), args[0], jsonOut, ctr.QueryExamples, stdout, sc)
 		},
 	}
+
+	registerBuildScopeFlags(cmd, &scopeFlags)
+	cmd.Flags().Lookup("gomod").NoOptDefVal = defaultGoModPath
 
 	return cmd
 }
 
-func runExamplesFind(ctx context.Context, symbol string, jsonOut bool, uc QueryExamplesUseCase, stdout io.Writer) error {
-	refs, err := uc.FindBySymbol(ctx, symbol, application.PipelineVersion)
+func runExamplesFind(ctx context.Context, symbol string, jsonOut bool, uc QueryExamplesUseCase, stdout io.Writer, sc buildScope) error {
+	refs, err := uc.FindBySymbol(ctx, symbol, application.PipelineVersion, sc.modules)
 	if err != nil {
 		return fmt.Errorf("finding examples for %q: %w", symbol, err)
+	}
+
+	if !jsonOut {
+		if nerr := writeScopeNotice(stdout, sc); nerr != nil {
+			return nerr
+		}
 	}
 
 	if jsonOut {

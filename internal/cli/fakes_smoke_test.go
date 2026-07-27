@@ -178,7 +178,7 @@ func TestFakeQueryInterface_AllMethods(t *testing.T) {
 		t.Fatalf("ListInterfaceRecords: %v %v", list, err)
 	}
 
-	refs, err := f.FindSymbol(context.Background(), "example.com/iface", "Do")
+	refs, err := f.FindSymbol(context.Background(), "example.com/iface", "Do", coordinate.ModuleSet{})
 	if err != nil || refs != nil {
 		t.Fatalf("FindSymbol: %v %v", refs, err)
 	}
@@ -192,7 +192,7 @@ func TestFakeQueryInterface_AllMethods(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	_, err = f.FindSymbol(context.Background(), "", "")
+	_, err = f.FindSymbol(context.Background(), "", "", coordinate.ModuleSet{})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -221,22 +221,22 @@ func TestFakeQueryCallGraph_AllMethods(t *testing.T) {
 		t.Fatalf("ListCallGraphRecords: %v %v", list, err)
 	}
 
-	callers, err := f.FindCallers(context.Background(), "sym", "0.1.0")
+	callers, err := f.FindCallers(context.Background(), "sym", "0.1.0", coordinate.ModuleSet{})
 	if err != nil || callers != nil {
 		t.Fatalf("FindCallers: %v %v", callers, err)
 	}
 
-	callees, err := f.FindCallees(context.Background(), "sym", "0.1.0")
+	callees, err := f.FindCallees(context.Background(), "sym", "0.1.0", coordinate.ModuleSet{})
 	if err != nil || callees != nil {
 		t.Fatalf("FindCallees: %v %v", callees, err)
 	}
 
-	edges, nodes, err := f.TraverseCallers(context.Background(), "sym", "0.1.0", 5)
+	edges, nodes, err := f.TraverseCallers(context.Background(), "sym", "0.1.0", 5, coordinate.ModuleSet{})
 	if err != nil || edges != nil || nodes != nil {
 		t.Fatalf("TraverseCallers: %v %v %v", edges, nodes, err)
 	}
 
-	edges, nodes, err = f.TraverseCallees(context.Background(), "sym", "0.1.0", 5)
+	edges, nodes, err = f.TraverseCallees(context.Background(), "sym", "0.1.0", 5, coordinate.ModuleSet{})
 	if err != nil || edges != nil || nodes != nil {
 		t.Fatalf("TraverseCallees: %v %v %v", edges, nodes, err)
 	}
@@ -274,7 +274,7 @@ func TestFakeQueryExamples_AllMethods(t *testing.T) {
 		t.Fatalf("ListExampleRecords: %v %v", list, err)
 	}
 
-	refs, err := f.FindBySymbol(context.Background(), "example.com/ex", "Func")
+	refs, err := f.FindBySymbol(context.Background(), "example.com/ex", "Func", coordinate.ModuleSet{})
 	if err != nil || refs != nil {
 		t.Fatalf("FindBySymbol: %v %v", refs, err)
 	}
@@ -292,7 +292,7 @@ func TestFakeQueryExamples_AllMethods(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	_, err = f2.FindBySymbol(context.Background(), "", "")
+	_, err = f2.FindBySymbol(context.Background(), "", "", coordinate.ModuleSet{})
 	if err == nil {
 		t.Fatal("expected error")
 	}

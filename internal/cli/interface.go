@@ -7,6 +7,7 @@ import (
 	"io"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
 	"github.com/eitanity/kanonarion/internal/iface/domain"
 	"github.com/eitanity/kanonarion/internal/iface/ports"
@@ -257,24 +258,34 @@ func printRecordText(r domain.InterfaceRecord, stdout io.Writer) error {
 // -- symbol-find command --
 
 func newSymbolFindCmd(stdout, stderr io.Writer) *cobra.Command {
+	var scopeFlags buildScopeFlags
+
 	cmd := &cobra.Command{
 		Use:   "symbol-find <name>",
 		Short: "Find all modules that export a symbol with the given name",
 		Example: `  kanonarion symbol-find Client
   kanonarion symbol-find Marshal
-  kanonarion symbol-find Marshal --json`,
+  kanonarion symbol-find Marshal --json
+  kanonarion symbol-find Marshal --gomod`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
 				return usageErr(cmd)
 			}
-			return runSymbolFind(cmd.Context(), args[0], jsonOut, stdout, stderr)
+			scopeFlags.bind(cmd)
+			return runSymbolFind(cmd.Context(), args[0], scopeFlags, jsonOut, stdout, stderr)
 		},
 	}
+
+	registerBuildScopeFlags(cmd, &scopeFlags)
+	// Cobra only allows a valueless --gomod when the flag declares what that
+	// means, and the default has to be the literal path so it is both what the
+	// resolver receives and what --help prints.
+	cmd.Flags().Lookup("gomod").NoOptDefVal = defaultGoModPath
 
 	return cmd
 }
 
-func runSymbolFind(ctx context.Context, symbolName string, jsonOut bool, stdout, stderr io.Writer) error {
+func runSymbolFind(ctx context.Context, symbolName string, scopeFlags buildScopeFlags, jsonOut bool, stdout, stderr io.Writer) error {
 	logger := buildLogger(logLevel, stderr)
 	ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 	if err != nil {
@@ -282,7 +293,12 @@ func runSymbolFind(ctx context.Context, symbolName string, jsonOut bool, stdout,
 	}
 	defer func() { _ = cleanup() }()
 
-	refs, err := ctr.QueryInterface.FindSymbol(ctx, symbolName, ifaceapp.PipelineVersion)
+	sc, err := scopeFlags.resolve(ctx, ctr.QueryWalks)
+	if err != nil {
+		return err
+	}
+
+	refs, err := ctr.QueryInterface.FindSymbol(ctx, symbolName, ifaceapp.PipelineVersion, sc.modules)
 	if err != nil {
 		return fmt.Errorf("finding symbol %q: %w", symbolName, err)
 	}
@@ -303,6 +319,29 @@ func runSymbolFind(ctx context.Context, symbolName string, jsonOut bool, stdout,
 					"  kanonarion interface <module>@<version>\n"+
 					"  kanonarion local .   # for this project's own symbols",
 				symbolName)
+		}
+		// Under a scope, "no exports" is also reachable because every module that
+		// exports the symbol sits outside the named build. That is a statement
+		// about the build, not about the symbol, and the two must not print the
+		// same line — so say which one it is before the empty list is rendered.
+		if sc.modules.IsRestricted() {
+			unscoped, uerr := ctr.QueryInterface.FindSymbol(ctx, symbolName, ifaceapp.PipelineVersion, coordinate.ModuleSet{})
+			if uerr != nil {
+				return fmt.Errorf("finding symbol %q across all versions: %w", symbolName, uerr)
+			}
+			if len(unscoped) > 0 {
+				if _, werr := fmt.Fprintf(stderr,
+					"notice: %d export(s) of %q exist in the store, all outside %s\n",
+					len(unscoped), symbolName, sc.source); werr != nil {
+					return fmt.Errorf("writing scope notice: %w", werr)
+				}
+			}
+		}
+	}
+
+	if !jsonOut {
+		if err := writeScopeNotice(stdout, sc); err != nil {
+			return err
 		}
 	}
 

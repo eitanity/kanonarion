@@ -60,7 +60,7 @@ type ExampleStore interface {
 
 	// FindBySymbol returns index entries for all examples associated with the
 	// given symbol across all stored modules, filtered by pipeline version.
-	FindBySymbol(ctx context.Context, symbol string, pipelineVersion string) ([]ExampleRef, error)
+	FindBySymbol(ctx context.Context, symbol string, pipelineVersion string, scope coordinate.ModuleSet) ([]ExampleRef, error)
 
 	// FindBySymbolInModule returns index entries for examples associated with
 	// the given symbol within a specific module@version. This is the scoped

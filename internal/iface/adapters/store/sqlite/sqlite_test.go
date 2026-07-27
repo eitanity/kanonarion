@@ -182,7 +182,7 @@ func TestStore_FindSymbol(t *testing.T) {
 	}
 
 	// Find a type symbol.
-	refs, err := s.FindSymbol(context.Background(), "Client", r.PipelineVersion)
+	refs, err := s.FindSymbol(context.Background(), "Client", r.PipelineVersion, coordinate.ModuleSet{})
 	if err != nil {
 		t.Fatalf("FindSymbol: %v", err)
 	}
@@ -211,7 +211,7 @@ func TestStore_FindSymbol_Method(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	refs, err := s.FindSymbol(context.Background(), "Do", r.PipelineVersion)
+	refs, err := s.FindSymbol(context.Background(), "Do", r.PipelineVersion, coordinate.ModuleSet{})
 	if err != nil {
 		t.Fatalf("FindSymbol: %v", err)
 	}
@@ -237,7 +237,7 @@ func TestStore_FindSymbol_Func_Signature(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	refs, err := s.FindSymbol(context.Background(), "New", r.PipelineVersion)
+	refs, err := s.FindSymbol(context.Background(), "New", r.PipelineVersion, coordinate.ModuleSet{})
 	if err != nil {
 		t.Fatalf("FindSymbol: %v", err)
 	}
@@ -289,7 +289,7 @@ func TestStore_FindSymbol_MultiPackage_Disambiguates(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	refs, err := s.FindSymbol(context.Background(), "Marshal", r.PipelineVersion)
+	refs, err := s.FindSymbol(context.Background(), "Marshal", r.PipelineVersion, coordinate.ModuleSet{})
 	if err != nil {
 		t.Fatalf("FindSymbol: %v", err)
 	}
@@ -315,7 +315,7 @@ func TestStore_FindSymbol_MultiPackage_Disambiguates(t *testing.T) {
 
 func TestStore_FindSymbol_NotFound(t *testing.T) {
 	s := openStore(t)
-	refs, err := s.FindSymbol(context.Background(), "NoSuchSymbol", "0.1.0")
+	refs, err := s.FindSymbol(context.Background(), "NoSuchSymbol", "0.1.0", coordinate.ModuleSet{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -337,7 +337,7 @@ func TestStore_Put_RebuildIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	refs, err := s.FindSymbol(context.Background(), "Client", r.PipelineVersion)
+	refs, err := s.FindSymbol(context.Background(), "Client", r.PipelineVersion, coordinate.ModuleSet{})
 	if err != nil {
 		t.Fatal(err)
 	}

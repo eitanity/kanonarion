@@ -128,7 +128,7 @@ type ExtractInterfaceUseCase interface {
 type QueryInterfaceUseCase interface {
 	GetInterfaceRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (ifacedomain.InterfaceRecord, bool, error)
 	ListInterfaceRecords(ctx context.Context, filter ifaceports.InterfaceFilter) ([]ifaceports.InterfaceSummary, error)
-	FindSymbol(ctx context.Context, symbolName, pipelineVersion string) ([]ifaceports.SymbolRef, error)
+	FindSymbol(ctx context.Context, symbolName, pipelineVersion string, scope coordinate.ModuleSet) ([]ifaceports.SymbolRef, error)
 }
 
 // --- callgraph context ---
@@ -148,10 +148,10 @@ type ExtractLocalCallGraphUseCase interface {
 type QueryCallGraphUseCase interface {
 	GetCallGraphRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (callgraphdomain.CallGraphRecord, bool, error)
 	ListCallGraphRecords(ctx context.Context, filter cgports.CallGraphFilter) ([]cgports.CallGraphSummary, error)
-	FindCallers(ctx context.Context, symbolID, pipelineVersion string) ([]cgports.CallEdgeRef, error)
-	FindCallees(ctx context.Context, symbolID, pipelineVersion string) ([]cgports.CallEdgeRef, error)
-	TraverseCallers(ctx context.Context, symbolID, pipelineVersion string, maxDepth int) (edges []cgports.CallEdgeRef, nodes []string, err error)
-	TraverseCallees(ctx context.Context, symbolID, pipelineVersion string, maxDepth int) (edges []cgports.CallEdgeRef, nodes []string, err error)
+	FindCallers(ctx context.Context, symbolID, pipelineVersion string, scope coordinate.ModuleSet) ([]cgports.CallEdgeRef, error)
+	FindCallees(ctx context.Context, symbolID, pipelineVersion string, scope coordinate.ModuleSet) ([]cgports.CallEdgeRef, error)
+	TraverseCallers(ctx context.Context, symbolID, pipelineVersion string, maxDepth int, scope coordinate.ModuleSet) (edges []cgports.CallEdgeRef, nodes []string, err error)
+	TraverseCallees(ctx context.Context, symbolID, pipelineVersion string, maxDepth int, scope coordinate.ModuleSet) (edges []cgports.CallEdgeRef, nodes []string, err error)
 }
 
 // --- example context ---
@@ -165,7 +165,7 @@ type ExtractExampleUseCase interface {
 type QueryExamplesUseCase interface {
 	GetExampleRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (exampledomain.ExampleRecord, bool, error)
 	ListExampleRecords(ctx context.Context, filter exampleports.ExampleFilter) ([]exampleports.ExampleSummary, error)
-	FindBySymbol(ctx context.Context, symbol, pipelineVersion string) ([]exampleports.ExampleRef, error)
+	FindBySymbol(ctx context.Context, symbol, pipelineVersion string, scope coordinate.ModuleSet) ([]exampleports.ExampleRef, error)
 	FindBySymbolInModule(ctx context.Context, coord coordinate.ModuleCoordinate, symbol, pipelineVersion string) ([]exampleports.ExampleRef, error)
 }
 

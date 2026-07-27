@@ -45,7 +45,7 @@ func (s *queryFakeStore) ListInterfaceRecords(_ context.Context, _ ifaceports.In
 	return s.summaries, s.listErr
 }
 
-func (s *queryFakeStore) FindSymbol(_ context.Context, _ string, _ string) ([]ifaceports.SymbolRef, error) {
+func (s *queryFakeStore) FindSymbol(_ context.Context, _ string, _ string, _ coordinate.ModuleSet) ([]ifaceports.SymbolRef, error) {
 	return s.symbolRefs, s.findErr
 }
 
@@ -122,7 +122,7 @@ func TestQueryInterfaceUseCase_FindSymbol(t *testing.T) {
 	}
 	uc := application.NewQueryInterfaceUseCase(store)
 
-	refs, err := uc.FindSymbol(context.Background(), "Marshal", "0.1.0")
+	refs, err := uc.FindSymbol(context.Background(), "Marshal", "0.1.0", coordinate.ModuleSet{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -135,7 +135,7 @@ func TestQueryInterfaceUseCase_FindSymbol_Error(t *testing.T) {
 	findErr := errors.New("index failure")
 	uc := application.NewQueryInterfaceUseCase(&queryFakeStore{findErr: findErr})
 
-	_, err := uc.FindSymbol(context.Background(), "Marshal", "0.1.0")
+	_, err := uc.FindSymbol(context.Background(), "Marshal", "0.1.0", coordinate.ModuleSet{})
 	if !errors.Is(err, findErr) {
 		t.Errorf("got %v, want wrapping %v", err, findErr)
 	}
