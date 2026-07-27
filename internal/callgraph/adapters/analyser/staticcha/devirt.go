@@ -50,7 +50,7 @@ func (a *Analyser) devirtualizeSingleImplementer(
 	nodes []domain.CallNode,
 	edges []domain.CallEdge,
 ) ([]domain.CallNode, []domain.CallEdge) {
-	universe := concreteNamedTypes(prog)
+	universe := concreteNamedTypes(prog, fset)
 	if len(universe) == 0 {
 		return nodes, edges
 	}
@@ -178,12 +178,22 @@ func (a *Analyser) devirtualizeSingleImplementer(
 // dependency (whose types.Package persists even when its SSA was never built).
 // Interfaces and generic (uninstantiated) named types are excluded; they cannot
 // be the concrete target of a devirtualized call.
-func concreteNamedTypes(prog *ssa.Program) []*types.Named {
+//
+// Types declared in _test.go files are excluded too. This pass fires only when
+// an interface has exactly one implementer, and its purpose is to recover a
+// production edge CHA dropped because that implementer's body was never built.
+// A test fake is a second implementer only inside a test binary, and counting
+// it would silence the pass for every port that has one — turning a recovered
+// edge into a missing edge, which is the failure this whole pass exists to
+// prevent. CHA still binds the fakes itself: their bodies are built, so they
+// need no recovery.
+func concreteNamedTypes(prog *ssa.Program, fset *token.FileSet) []*types.Named {
 	var out []*types.Named
 	for _, pkg := range prog.AllPackages() {
 		if pkg == nil || pkg.Pkg == nil {
 			continue
 		}
+		pkgPath := pkg.Pkg.Path()
 		scope := pkg.Pkg.Scope()
 		for _, name := range scope.Names() {
 			tn, ok := scope.Lookup(name).(*types.TypeName)
@@ -198,6 +208,9 @@ func concreteNamedTypes(prog *ssa.Program) []*types.Named {
 				continue
 			}
 			if _, isIface := named.Underlying().(*types.Interface); isIface {
+				continue
+			}
+			if isTestDeclaration(tn.Pos(), fset, pkgPath) {
 				continue
 			}
 			out = append(out, named)
@@ -329,6 +342,7 @@ func leafNodeFromFunc(
 		IsExternal:    isExternal,
 		IsExportedAPI: !isExternal && token.IsExported(symbol) && !isInternalPkg(pkgPath),
 		Position:      pos,
+		IsTest:        isTestDeclaration(methodObj.Pos(), fset, pkgPath),
 	}
 }
 

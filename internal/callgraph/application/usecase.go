@@ -26,7 +26,7 @@ import (
 // the module was stored as a LoadFailed record with an empty graph. Those
 // records are indistinguishable from a genuine load failure once written, so
 // they must be re-derived rather than served.
-const PipelineVersion = "0.2.0"
+const PipelineVersion = "0.3.0"
 
 // ExtractCallGraphUseCase extracts the call graph of a module and persists a
 // CallGraphRecord.

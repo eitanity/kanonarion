@@ -174,7 +174,7 @@ golang.org/x/mod@v0.36.0
   Dependencies:    1 direct (succeeded)
   License:         BSD-3-Clause
   Interface:       9 package(s), 159 symbol(s) (Extracted)
-  Call Graph:      649 nodes, 1844 edges (Extracted)
+  Call Graph:      1055 nodes, 4234 edges (Extracted)
   Examples:        3 (Found)
   Vulnerabilities: Clean
 
@@ -252,22 +252,49 @@ kanonarion interface-show golang.org/x/mod@v0.36.0
 # Who calls / what does a symbol call, across every analysed module
 kanonarion callers 'github.com/spf13/pflag.NewFlagSet'
 kanonarion callees 'github.com/spf13/cobra.(*Command).Execute'
+
+# Which concrete types satisfy an interface - the question a signature change
+# raises, and the one a grep for the method name gets wrong
+kanonarion implementers 'github.com/spf13/cobra.FParseErrWhitelist'
 ```
+
+Every one of these three prints a verdict line. An empty result is either
+`RESOLVED-ABSENT` (a measurement) or `UNRESOLVED` (the graph could not decide,
+and the line names what blocked it). Only the first may be read as "nothing
+calls this".
 
 ### 6. Bring your own code into the graph: `local`
 
-`callers`/`callees` only see analysed modules. To resolve symbols in the
-project's *own* packages, ingest the working tree:
+`callers`/`callees`/`implementers` only see analysed modules. To resolve symbols
+in the project's *own* packages, ingest the working tree:
 
 ```bash
 kanonarion local .
 kanonarion callers '<module-path>/internal/server.New'
 ```
 
-**Duration:** ~27 s to analyse this codebase (2,744 functions / 19,022
-call edges). Working-tree analysis is recomputed fresh on every run - it is
-intentionally never cached, because the tree changes between runs and a stale
-graph would be worse than a recomputed one.
+**Duration:** ~15 s to analyse this codebase (8,598 nodes / 97,246 call
+edges, of which 4,481 nodes are `_test.go` declarations). Working-tree analysis
+is recomputed fresh on every run - it is intentionally never cached, because the
+tree changes between runs and a stale graph would be worse than a recomputed
+one.
+
+Test files are part of the graph, because test fakes and table-driven callers
+are most of what a signature change has to touch. Test-scope results carry a
+`[test]` tag; add `--exclude-tests` for the production-only view, which is
+stated on the verdict line so a narrowed answer is never read as a wider one:
+
+```bash
+kanonarion callers '<module-path>/internal/server.New' --exclude-tests
+```
+
+Interfaces the tree declares are addressable too, which is how a port change is
+scoped in one query rather than a grep that cannot tell an implementation from a
+call - and that silently misses types satisfying the interface by embedding:
+
+```bash
+kanonarion implementers '<module-path>/internal/vuln/ports.VulnerabilityStore'
+```
 
 Two related working-tree modes hang off `context <dir>`:
 
@@ -350,10 +377,12 @@ Then answer questions from these (all local reads, warm timings for an
     kanonarion license-compat <module>@<version> --json   # exit 0 clean / 1 conflicts / 2 unknown pairs / 4 no root record
     kanonarion vuln-show <module>@<version> --json
     kanonarion interface-show <module>@<version> --json
-    kanonarion callers '<pkg.Symbol>' --json
+    kanonarion callers '<pkg.Symbol>' --json       # add --exclude-tests for production callers only
     kanonarion callees '<pkg.Symbol>' --json
-    kanonarion local . --json                      # ingest working tree so callers/callees resolve
-                                                   # internal symbols (~27s; recomputed fresh each run, never cached)
+    kanonarion implementers '<pkg/path.Interface>' --json  # concrete types satisfying an interface;
+                                                   # also accepts '<pkg/path.(Interface).Method>'
+    kanonarion local . --json                      # ingest working tree so the three queries above resolve
+                                                   # internal symbols (~15s; recomputed fresh each run, never cached)
     kanonarion context . --symbol --json           # which dep symbols the working tree uses, seconds
     kanonarion context . --reachability --json     # are stored CVE findings reachable (~30s when probing;
                                                    # instant + notice when no findings are stored)
@@ -368,6 +397,13 @@ Interpretation rules - these are load-bearing:
 2. Queries over unanalysed data exit non-zero and print which command to
    run. Run that command, then re-run the query. An empty result with
    exit 0 over analysed data is a genuine zero - report it as such.
+2b. Read the verdict line on callers/callees/implementers, not just the
+   list. RESOLVED-ABSENT is a measurement and may be reported as "nothing
+   calls this". UNRESOLVED is not an answer: it means the graph could not
+   decide, and the line names what blocked it - relay that, never launder
+   it into a confident negative. Results tagged [test] are test-scope; pass
+   --exclude-tests when the question is about production code, and say that
+   is what you measured.
 3. license-compat exit code 2 means licence pairs outside the modelled
    dataset: report "needs human review", never "compatible".
 4. kanonarion reports facts and caveated inferences, not verdicts. Relay

@@ -103,6 +103,17 @@ DELETE FROM callgraph_edges`},
 		{Module: "callgraph", Version: 6, SQL: `DELETE FROM callgraph_records;
 DELETE FROM callgraph_edges;
 ALTER TABLE callgraph_edges ADD COLUMN reflect_dispatch INTEGER NOT NULL DEFAULT 0`},
+		// Migration v7: _test.go declarations became graph nodes and the
+		// interface/implementer relation joined the record, bumping the schema
+		// version. Pre-existing rows carry stale hashes, and — the reason a purge
+		// rather than a backfill is right — they were produced by an analysis that
+		// never looked at test files, so leaving them in place would answer test
+		// scope questions from a measurement that did not make one. The is_test
+		// column lets an edge query exclude the test surface in SQL rather than
+		// reconstructing node roles per row.
+		{Module: "callgraph", Version: 7, SQL: `DELETE FROM callgraph_records;
+DELETE FROM callgraph_edges;
+ALTER TABLE callgraph_edges ADD COLUMN is_test INTEGER NOT NULL DEFAULT 0`},
 	}
 }
 
@@ -202,8 +213,8 @@ ON CONFLICT (module_path, module_version, pipeline_version) DO UPDATE SET
 INSERT OR IGNORE INTO callgraph_edges (
     from_module, from_version, pipeline_version,
     from_id, to_id, confidence,
-    call_site_file, call_site_line, reflect_dispatch
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    call_site_file, call_site_line, reflect_dispatch, is_test
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	stmtEdge, err := tx.PrepareContext(ctx, qEdge)
 	if err != nil {
@@ -211,11 +222,24 @@ INSERT OR IGNORE INTO callgraph_edges (
 	}
 	defer func() { _ = stmtEdge.Close() }()
 
+	// An edge is test-scope when either end is: a production function calling a
+	// test fake, and a test calling production code, are both part of the test
+	// surface a query may want to set aside. The role is denormalised onto the
+	// edge because the edge queries are answered from this table alone — they
+	// never load the record the node roles live in.
+	testNode := make(map[string]bool, len(r.Nodes))
+	for _, n := range r.Nodes {
+		if n.IsTest {
+			testNode[n.ID] = true
+		}
+	}
+
 	for _, e := range r.Edges {
 		if _, err := stmtEdge.ExecContext(ctx,
 			r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
 			e.FromID, e.ToID, string(e.Confidence),
 			e.CallSite.File, e.CallSite.Line, e.ReflectDispatch,
+			testNode[e.FromID] || testNode[e.ToID],
 		); err != nil {
 			return fmt.Errorf("inserting callgraph edge %s→%s: %w", e.FromID, e.ToID, err)
 		}
@@ -401,23 +425,29 @@ func (s *Store) ListCallGraphRecords(ctx context.Context, filter ports.CallGraph
 
 // FindCallers returns all edges where the callee matches symbolID, restricted
 // to edges owned by a module in scope (see ports.CallGraphStore).
-func (s *Store) FindCallers(ctx context.Context, symbolID string, pipelineVersion string, scope coordinate.ModuleSet) ([]ports.CallEdgeRef, error) {
-	const q = `SELECT DISTINCT from_module, from_version, pipeline_version,
-	                   from_id, to_id, confidence
+func (s *Store) FindCallers(ctx context.Context, symbolID string, pipelineVersion string, scope coordinate.ModuleSet, opts ports.EdgeQueryOptions) ([]ports.CallEdgeRef, error) {
+	q := `SELECT DISTINCT from_module, from_version, pipeline_version,
+	                   from_id, to_id, confidence, is_test
 	            FROM callgraph_edges
-	            WHERE to_id = ? AND pipeline_version = ?
-	            ORDER BY from_module, from_version, from_id`
+	            WHERE to_id = ? AND pipeline_version = ?`
+	if opts.ExcludeTests {
+		q += ` AND is_test = 0`
+	}
+	q += ` ORDER BY from_module, from_version, from_id`
 	return s.queryEdges(ctx, q, symbolID, pipelineVersion, scope)
 }
 
 // FindCallees returns all edges where the caller matches symbolID, restricted
 // to edges owned by a module in scope (see ports.CallGraphStore).
-func (s *Store) FindCallees(ctx context.Context, symbolID string, pipelineVersion string, scope coordinate.ModuleSet) ([]ports.CallEdgeRef, error) {
-	const q = `SELECT DISTINCT from_module, from_version, pipeline_version,
-	                   from_id, to_id, confidence
+func (s *Store) FindCallees(ctx context.Context, symbolID string, pipelineVersion string, scope coordinate.ModuleSet, opts ports.EdgeQueryOptions) ([]ports.CallEdgeRef, error) {
+	q := `SELECT DISTINCT from_module, from_version, pipeline_version,
+	                   from_id, to_id, confidence, is_test
 	            FROM callgraph_edges
-	            WHERE from_id = ? AND pipeline_version = ?
-	            ORDER BY from_module, from_version, to_id`
+	            WHERE from_id = ? AND pipeline_version = ?`
+	if opts.ExcludeTests {
+		q += ` AND is_test = 0`
+	}
+	q += ` ORDER BY from_module, from_version, to_id`
 	return s.queryEdges(ctx, q, symbolID, pipelineVersion, scope)
 }
 
@@ -443,7 +473,7 @@ func (s *Store) queryEdges(ctx context.Context, q, symbolID, pipelineVersion str
 		var conf string
 		if serr := rows.Scan(
 			&ref.ModulePath, &ref.ModuleVersion, &ref.PipelineVersion,
-			&ref.FromID, &ref.ToID, &conf,
+			&ref.FromID, &ref.ToID, &conf, &ref.IsTest,
 		); serr != nil {
 			return nil, fmt.Errorf("scanning callgraph edge ref: %w", serr)
 		}

@@ -41,10 +41,15 @@ kanonarion callees '<your-module>/internal/app.Execute'
 This makes structural rules *checkable* rather than aspirational. A layered or
 DDD codebase says "dependencies point inward - `application` reaches `adapters`
 only through `ports`." The call graph shows it: edges into an injected adapter
-come back as `[DynamicDispatch]` (interface-mediated, fine), while a `[Direct]`
+come back as `[CHA-overapprox]` (interface-mediated, fine), while a `[Direct]`
 edge from `application` into a concrete `adapters` type is a coupling violation
 you can see. Run it before you commit a refactor to confirm you did not
 quietly wire a layer the wrong way.
+
+For a change to an interface itself, `implementers` is the query that scopes it:
+it lists the concrete types whose method sets have to change together, including
+the ones that satisfy the interface only by embedding - which a grep for the
+method name reports as no match at all.
 
 It also gives you blast radius before you change a signature: `callers` of a
 symbol is exactly the set of call sites that break if you change it - review

@@ -86,6 +86,7 @@ type callNodeJSON struct {
 	IsExportedAPI bool   `json:"is_exported_api"`
 	PositionFile  string `json:"position_file,omitempty"`
 	PositionLine  int    `json:"position_line,omitempty"`
+	IsTest        bool   `json:"is_test"`
 	Role          string `json:"role"`
 }
 
@@ -119,11 +120,25 @@ type callGraphRecordJSON struct {
 	ExtractedAt     string         `json:"extracted_at"`
 	PipelineVersion string         `json:"pipeline_version"`
 	ContentHash     string         `json:"content_hash"`
+	// TestScope says whether _test.go declarations were part of the analysis.
+	// It is emitted even when empty: a consumer that cannot see the axis cannot
+	// tell an unmeasured one from a measured-and-empty one.
+	TestScope       string `json:"test_scope"`
+	TestScopeDetail string `json:"test_scope_detail,omitempty"`
+	TestNodeCount   int    `json:"test_node_count"`
+	// InterfaceCount and ImplementationCount summarise the type-level relation
+	// the implementers query reads; the relation itself is listed by that
+	// command rather than inlined into every record dump.
+	InterfaceCount      int `json:"interface_count"`
+	ImplementationCount int `json:"implementation_count"`
 }
 
 func callNodeRole(n domain.CallNode) string {
 	if n.IsExternal {
 		return "external"
+	}
+	if n.IsTest {
+		return "test"
 	}
 	if n.IsExportedAPI {
 		return "api"
@@ -144,6 +159,7 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 			IsExportedAPI: n.IsExportedAPI,
 			PositionFile:  n.Position.File,
 			PositionLine:  n.Position.Line,
+			IsTest:        n.IsTest,
 			Role:          callNodeRole(n),
 		}
 	}
@@ -155,6 +171,12 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 			CallSiteFile: e.CallSite.File,
 			CallSiteLine: e.CallSite.Line,
 			Confidence:   string(e.Confidence),
+		}
+	}
+	testNodes := 0
+	for i := range r.Nodes {
+		if r.Nodes[i].IsTest {
+			testNodes++
 		}
 	}
 	return callGraphRecordJSON{
@@ -173,7 +195,42 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 		ExtractedAt:     isoTime(r.ExtractedAt),
 		PipelineVersion: r.PipelineVersion,
 		ContentHash:     r.ContentHash,
+
+		TestScope:           string(r.TestScope),
+		TestScopeDetail:     r.TestScopeDetail,
+		TestNodeCount:       testNodes,
+		InterfaceCount:      len(r.Interfaces),
+		ImplementationCount: len(r.Implementations),
 	}
+}
+
+// writeTestScopeLine reports the test axis on every record, including when it
+// was not measured. A record that says nothing about test scope is read by a
+// human as one where test code simply did not appear, which is exactly the
+// confusion the axis exists to remove.
+func writeTestScopeLine(stdout io.Writer, r domain.CallGraphRecord) error {
+	testNodes := 0
+	for i := range r.Nodes {
+		if r.Nodes[i].IsTest {
+			testNodes++
+		}
+	}
+	var line string
+	switch {
+	case r.TestScope.IsMeasured():
+		line = fmt.Sprintf("  test scope: analysed — %d of %d nodes are test declarations", testNodes, r.NodeCount)
+	case r.TestScope == domain.TestScopeExcluded:
+		line = "  test scope: EXCLUDED — _test.go declarations were not analysed"
+		if r.TestScopeDetail != "" {
+			line += " (" + r.TestScopeDetail + ")"
+		}
+	default:
+		line = "  test scope: not recorded — this record makes no claim about _test.go declarations"
+	}
+	if _, err := fmt.Fprintln(stdout, line); err != nil {
+		return fmt.Errorf("writing test scope: %w", err)
+	}
+	return nil
 }
 
 func filterCallGraphRecord(r domain.CallGraphRecord, sym string) domain.CallGraphRecord {
@@ -227,7 +284,17 @@ func printCallGraphRecord(r domain.CallGraphRecord, limitNodes, limitEdges int, 
 		return err
 	}
 
-	if _, err := fmt.Fprintf(stdout, "Legend: [api] exported symbol  [external] outside this module  (no tag) unexported\n"); err != nil {
+	if err := writeTestScopeLine(stdout, r); err != nil {
+		return err
+	}
+	if len(r.Interfaces) > 0 {
+		if _, err := fmt.Fprintf(stdout, "  interfaces: %d declared, %d implementations recorded (query with 'kanonarion implementers')\n",
+			len(r.Interfaces), len(r.Implementations)); err != nil {
+			return fmt.Errorf("writing interface summary: %w", err)
+		}
+	}
+
+	if _, err := fmt.Fprintf(stdout, "Legend: [api] exported symbol  [external] outside this module  [test] declared in a _test.go file  (no tag) unexported\n"); err != nil {
 		return fmt.Errorf("writing legend: %w", err)
 	}
 
@@ -247,7 +314,11 @@ func printCallGraphRecord(r domain.CallGraphRecord, limitNodes, limitEdges int, 
 		if n.IsExportedAPI {
 			api = " [api]"
 		}
-		if _, err := fmt.Fprintf(stdout, "  %s%s%s\n", n.ID, ext, api); err != nil {
+		test := ""
+		if n.IsTest {
+			test = " [test]"
+		}
+		if _, err := fmt.Fprintf(stdout, "  %s%s%s%s\n", n.ID, ext, api, test); err != nil {
 			return fmt.Errorf("writing node: %w", err)
 		}
 	}

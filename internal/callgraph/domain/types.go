@@ -2,6 +2,7 @@ package domain
 
 import (
 	"sort"
+	"strings"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -36,7 +37,39 @@ import (
 // v12 stops flagging closures and other SSA-synthetic functions as
 // IsExportedAPI. A closure is not nameable by a consumer, so rooting library
 // reachability at one asserts a path that cannot be triggered.
-const CallGraphSchemaVersion = "12"
+// v13 opens two axes the graph previously left unmeasured and unstated.
+// CallNode.IsTest plus CallGraphRecord.TestScope bring _test.go declarations
+// into the graph as first-class nodes and record whether that axis was measured
+// at all, so a callers query over a symbol only tests exercise is no longer a
+// confident RESOLVED-ABSENT. Interfaces and Implementations make interface
+// types and their method sets addressable, so "which concrete types must change
+// with this port" is answerable from the graph rather than from a grep.
+const CallGraphSchemaVersion = "13"
+
+// TestScope records whether a module's _test.go declarations were part of the
+// analysis. It exists because the alternative — saying nothing — makes an empty
+// callers answer indistinguishable from an unmeasured one, and test fakes are a
+// large, systematic part of the edit surface of any interface change.
+type TestScope string
+
+const (
+	// TestScopeUnknown is the zero value: the record makes no claim either way,
+	// which every consumer must read as "not measured", never as "no test code".
+	TestScopeUnknown TestScope = ""
+	// TestScopeAnalysed means test files were loaded and their declarations are
+	// present as nodes tagged IsTest. An empty test-scope answer over such a
+	// record is a measurement.
+	TestScopeAnalysed TestScope = "Analysed"
+	// TestScopeExcluded means test files were deliberately not analysed for this
+	// module — the load could not be performed with tests enabled.
+	// TestScopeDetail carries why.
+	TestScopeExcluded TestScope = "Excluded"
+)
+
+// IsMeasured reports whether the record's test axis was actually analysed.
+// Only TestScopeAnalysed qualifies; both the zero value and an explicit
+// exclusion mean an answer scoped to production code alone.
+func (t TestScope) IsMeasured() bool { return t == TestScopeAnalysed }
 
 // ArtifactKind describes what the analysed module is, which decides how
 // reachability roots are chosen. An application's code all runs under entry
@@ -208,6 +241,70 @@ type CallNode struct {
 	// to UNRESOLVED. Capability analysis already witnesses plugin use via the
 	// package-import sink map, so this fact is verdict-layer only.
 	UsesPlugin bool
+	// IsTest is true when the function is declared in a _test.go file or in an
+	// external test package. It is the node role that lets a query separate the
+	// production blast radius of a change from its test surface without hiding
+	// either: both are in the graph, and the caller chooses.
+	IsTest bool
+}
+
+// InterfaceType is an interface declared in the analysed module, made
+// addressable so a port-signature change can ask the type question — which
+// concrete method sets must change together — rather than the edge question.
+// An interface method is not a call-graph node (nothing calls it; calls go to
+// implementations), so it needs its own identity.
+type InterfaceType struct {
+	// ID is "pkg/path.Name", matching the node-ID convention for a free
+	// declaration. The per-method form is "pkg/path.(Name).Method", matching the
+	// receiver-parenthesised convention for methods.
+	ID      string
+	Package string
+	Name    string
+	// Methods is the interface's full method set including embedded interfaces,
+	// sorted. Names only: the signature lives in the declaration this ID points at.
+	Methods  []string
+	Position SourcePosition
+	// IsTest is true when the interface is declared in a _test.go file.
+	IsTest bool
+}
+
+// MethodID renders the addressable ID of one of the interface's methods.
+func (i InterfaceType) MethodID(method string) string {
+	return i.Package + ".(" + i.Name + ")." + method
+}
+
+// ImplementedMethod binds one interface method name to the concrete call-graph
+// node that satisfies it, so the per-method form of an implementers query
+// answers with node IDs the edge queries also accept.
+type ImplementedMethod struct {
+	Method string
+	NodeID string
+}
+
+// InterfaceImplementation records that a concrete named type in the analysed
+// module satisfies an interface the module declares.
+//
+// The relation is computed over the analysed module's own declarations on both
+// sides. A type in another module that satisfies the same interface is not
+// recorded here — that module's analysis does not own the interface, and
+// computing satisfaction against every interface in the dependency graph is a
+// different, far larger measurement. Query output states this scope rather than
+// letting the omission read as an empty set.
+type InterfaceImplementation struct {
+	// InterfaceID is the InterfaceType.ID this implementation satisfies.
+	InterfaceID string
+	// TypeID is the concrete type in receiver form: "pkg/path.(*Store)" for a
+	// pointer-receiver implementation, "pkg/path.(Value)" for a value one. It is
+	// the node-ID prefix every method of the implementation shares.
+	TypeID   string
+	Package  string
+	Position SourcePosition
+	// IsTest is true when the concrete type is declared in a _test.go file —
+	// the test fakes that a port-signature change must be updated alongside.
+	IsTest bool
+	// Methods maps each interface method to the concrete node implementing it,
+	// sorted by method name.
+	Methods []ImplementedMethod
 }
 
 // CallEdge is a directed call relationship between two nodes.
@@ -244,11 +341,24 @@ type CallGraphRecord struct {
 	// dynamically is still the application's own code and its capabilities are
 	// really exercised. Empty means library, so pre-v10 records keep their
 	// original rooting.
-	ArtifactKind  ArtifactKind
-	Nodes         []CallNode
-	Edges         []CallEdge
-	OverallStatus CallGraphStatus
-	FailureDetail string
+	ArtifactKind ArtifactKind
+	Nodes        []CallNode
+	Edges        []CallEdge
+	// Interfaces are the interface types the analysed module declares, and
+	// Implementations the concrete types of that module satisfying them. They
+	// are the type-level half of "what must change together", which the edge
+	// collections cannot express: an interface method has no callers, only
+	// implementations.
+	Interfaces      []InterfaceType
+	Implementations []InterfaceImplementation
+	// TestScope records whether _test.go declarations were part of this
+	// analysis. The zero value means the record makes no claim, which consumers
+	// must treat as unmeasured rather than as an absence of test code.
+	TestScope TestScope
+	// TestScopeDetail explains a TestScopeExcluded value. Empty otherwise.
+	TestScopeDetail string
+	OverallStatus   CallGraphStatus
+	FailureDetail   string
 	// FailedPackages is the sorted, deduplicated set of import paths within the
 	// analysed module that failed to typecheck (or failed SSA construction).
 	// It is populated when OverallStatus is Partial and drives sound verdict
@@ -310,4 +420,77 @@ func (r *CallGraphRecord) Sort() {
 		}
 		return r.Edges[i].CallSite.Line < r.Edges[j].CallSite.Line
 	})
+	sort.Slice(r.Interfaces, func(i, j int) bool {
+		return r.Interfaces[i].ID < r.Interfaces[j].ID
+	})
+	for i := range r.Interfaces {
+		sort.Strings(r.Interfaces[i].Methods)
+	}
+	sort.Slice(r.Implementations, func(i, j int) bool {
+		if r.Implementations[i].InterfaceID != r.Implementations[j].InterfaceID {
+			return r.Implementations[i].InterfaceID < r.Implementations[j].InterfaceID
+		}
+		return r.Implementations[i].TypeID < r.Implementations[j].TypeID
+	})
+	for i := range r.Implementations {
+		ms := r.Implementations[i].Methods
+		sort.Slice(ms, func(a, b int) bool { return ms[a].Method < ms[b].Method })
+	}
+}
+
+// ImplementersOf returns the implementations of interfaceID recorded in rec,
+// and whether rec's module declares the interface at all. The two results are
+// distinct answers: an interface this module does not declare is outside the
+// measurement, whereas a declared interface with no implementations is a
+// measured empty set.
+//
+// It is a function rather than a method because CallGraphRecord is a result
+// type: it carries facts, and query behaviour over those facts lives beside it,
+// not on it.
+func ImplementersOf(rec CallGraphRecord, interfaceID string) (impls []InterfaceImplementation, declared bool) {
+	if _, declared = InterfaceByID(rec, interfaceID); !declared {
+		return nil, false
+	}
+	for i := range rec.Implementations {
+		if rec.Implementations[i].InterfaceID == interfaceID {
+			impls = append(impls, rec.Implementations[i])
+		}
+	}
+	return impls, true
+}
+
+// InterfaceByID returns the interface rec's module declares under the given ID.
+func InterfaceByID(rec CallGraphRecord, id string) (InterfaceType, bool) {
+	for i := range rec.Interfaces {
+		if rec.Interfaces[i].ID == id {
+			return rec.Interfaces[i], true
+		}
+	}
+	return InterfaceType{}, false
+}
+
+// ParseInterfaceMethodID splits an interface-method ID of the form
+// "pkg/path.(Name).Method" into the interface ID "pkg/path.Name" and the method
+// name. It reports false for any other shape, including a concrete method ID
+// with a pointer receiver ("pkg/path.(*Name).Method"), which names a node, not
+// an interface method.
+func ParseInterfaceMethodID(id string) (interfaceID, method string, ok bool) {
+	open := strings.LastIndex(id, ".(")
+	if open < 0 {
+		return "", "", false
+	}
+	closeIdx := strings.Index(id[open:], ").")
+	if closeIdx < 0 {
+		return "", "", false
+	}
+	closeIdx += open
+	name := id[open+2 : closeIdx]
+	method = id[closeIdx+2:]
+	if name == "" || method == "" || strings.HasPrefix(name, "*") {
+		return "", "", false
+	}
+	if strings.ContainsAny(method, ".()") {
+		return "", "", false
+	}
+	return id[:open] + "." + name, method, true
 }

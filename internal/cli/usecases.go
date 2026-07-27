@@ -148,10 +148,10 @@ type ExtractLocalCallGraphUseCase interface {
 type QueryCallGraphUseCase interface {
 	GetCallGraphRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (callgraphdomain.CallGraphRecord, bool, error)
 	ListCallGraphRecords(ctx context.Context, filter cgports.CallGraphFilter) ([]cgports.CallGraphSummary, error)
-	FindCallers(ctx context.Context, symbolID, pipelineVersion string, scope coordinate.ModuleSet) ([]cgports.CallEdgeRef, error)
-	FindCallees(ctx context.Context, symbolID, pipelineVersion string, scope coordinate.ModuleSet) ([]cgports.CallEdgeRef, error)
-	TraverseCallers(ctx context.Context, symbolID, pipelineVersion string, maxDepth int, scope coordinate.ModuleSet) (edges []cgports.CallEdgeRef, nodes []string, err error)
-	TraverseCallees(ctx context.Context, symbolID, pipelineVersion string, maxDepth int, scope coordinate.ModuleSet) (edges []cgports.CallEdgeRef, nodes []string, err error)
+	FindCallers(ctx context.Context, symbolID, pipelineVersion string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error)
+	FindCallees(ctx context.Context, symbolID, pipelineVersion string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error)
+	TraverseCallers(ctx context.Context, symbolID, pipelineVersion string, maxDepth int, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) (edges []cgports.CallEdgeRef, nodes []string, err error)
+	TraverseCallees(ctx context.Context, symbolID, pipelineVersion string, maxDepth int, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) (edges []cgports.CallEdgeRef, nodes []string, err error)
 }
 
 // --- example context ---

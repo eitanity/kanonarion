@@ -140,16 +140,19 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord coordin
 		}
 	})
 
-	prog, targetSSAPkgs, allLoadErrs, failedPkgs, err := a.loadAndBuildSSA(ctx, fset, tempDir, coord, targetPkgPaths)
+	build, err := a.loadAndBuildSSA(ctx, fset, tempDir, coord, targetPkgPaths)
 	if err != nil {
 		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed, err.Error()), nil
 	}
+	prog := build.Prog
+	allLoadErrs := build.LoadErrs
+	failedPkgs := build.FailedPkgs
 
 	// Step 4: Final Cleanup and Call Graph Construction
 	runtime.GC()
-	a.logMem(ctx, "all_batches_processed")
+	a.logMem(ctx, "all_packages_processed")
 
-	if len(targetSSAPkgs) == 0 {
+	if build.Built() == 0 {
 		detail := "no packages successfully loaded"
 		if len(allLoadErrs) > 0 {
 			detail = joinFirst(allLoadErrs, 3)
@@ -158,11 +161,12 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord coordin
 	}
 
 	if ctx.Err() != nil {
-		return a.failRecord(coord, domain.CallGraphStatusCancelled, domain.CompletenessUnknown, "cancelled after streaming load"), nil
+		return a.failRecord(coord, domain.CallGraphStatusCancelled, domain.CompletenessUnknown, "cancelled after load"), nil
 	}
 
-	a.logger.InfoContext(ctx, "callgraph_streaming_load_completed",
-		slog.Int("target_pkg_count", len(targetSSAPkgs)),
+	a.logger.InfoContext(ctx, "callgraph_load_completed",
+		slog.Int("target_pkg_count", len(build.TargetPkgs)),
+		slog.Int("test_pkg_count", len(build.TestPkgs)),
 		slog.Int("load_errors", len(allLoadErrs)),
 	)
 
@@ -196,6 +200,13 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord coordin
 	// devirtualized leaf targets carry no onward edges.
 	nodes, edges = a.devirtualizeSingleImplementer(ctx, prog, coord, fset, tempDir, nodes, edges)
 
+	// Record the type-level relation: which of the module's concrete types
+	// satisfy which of its interfaces. An interface method has no callers — calls
+	// go to implementations — so the edge collections cannot answer "what must
+	// change with this port", and a grep for the method name cannot tell an
+	// implementation from a call.
+	ifaces, impls := a.extractInterfaces(ctx, prog, coord, fset, tempDir)
+
 	// A failed package (or any load error) means the graph is incomplete;
 	// never report Extracted when some target package did not resolve. Keeping
 	// FailedPackages and the Partial status in lock-step is what lets the query
@@ -212,10 +223,16 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord coordin
 		// Reaching here means at least one target package was built into SSA with
 		// bodies. Per-package build failures are carried in FailedPackages (and
 		// force Partial below); the module-level fidelity is still bodies-built.
-		Completeness:    domain.CompletenessBuiltWithBodies,
-		ArtifactKind:    artifactKind(targetSSAPkgs),
+		Completeness: domain.CompletenessBuiltWithBodies,
+		// Only production packages decide the artifact kind: the test binary main
+		// go/packages synthesises is not a command this module ships.
+		ArtifactKind:    artifactKind(build.TargetPkgs),
 		Nodes:           nodes,
 		Edges:           edges,
+		Interfaces:      ifaces,
+		Implementations: impls,
+		TestScope:       build.TestScope,
+		TestScopeDetail: build.TestScopeDetail,
 		OverallStatus:   overallStatus,
 		NodeCount:       len(nodes),
 		EdgeCount:       len(edges),

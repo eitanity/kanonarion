@@ -458,6 +458,7 @@ type FakeQueryCallGraph struct {
 	traverseCallerNodes []string
 	traverseCallees     []cgports.CallEdgeRef
 	traverseCalleeNodes []string
+	getErr              error
 	Err                 error
 }
 
@@ -477,9 +478,21 @@ func (f *FakeQueryCallGraph) SetList(summaries []cgports.CallGraphSummary) {
 	f.list = summaries
 }
 
+// SetGetErr makes record reads fail while listing still succeeds, so a caller
+// that must surface a store failure rather than report an empty answer can be
+// tested at the point the read happens.
+func (f *FakeQueryCallGraph) SetGetErr(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.getErr = err
+}
+
 func (f *FakeQueryCallGraph) GetCallGraphRecord(_ context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (cgdomain.CallGraphRecord, bool, error) {
 	if f.Err != nil {
 		return cgdomain.CallGraphRecord{}, false, f.Err
+	}
+	if f.getErr != nil {
+		return cgdomain.CallGraphRecord{}, false, f.getErr
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -508,7 +521,7 @@ func (f *FakeQueryCallGraph) SetCallees(refs []cgports.CallEdgeRef) {
 	f.callees = refs
 }
 
-func (f *FakeQueryCallGraph) FindCallers(_ context.Context, _, _ string, scope coordinate.ModuleSet) ([]cgports.CallEdgeRef, error) {
+func (f *FakeQueryCallGraph) FindCallers(_ context.Context, _, _ string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error) {
 	if f.Err != nil {
 		return nil, f.Err
 	}
@@ -517,7 +530,7 @@ func (f *FakeQueryCallGraph) FindCallers(_ context.Context, _, _ string, scope c
 	return scopeEdgeRefs(f.callers, scope), nil
 }
 
-func (f *FakeQueryCallGraph) FindCallees(_ context.Context, _, _ string, scope coordinate.ModuleSet) ([]cgports.CallEdgeRef, error) {
+func (f *FakeQueryCallGraph) FindCallees(_ context.Context, _, _ string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error) {
 	if f.Err != nil {
 		return nil, f.Err
 	}
@@ -556,7 +569,7 @@ func (f *FakeQueryCallGraph) SetTraverseCallees(edges []cgports.CallEdgeRef, nod
 	f.traverseCalleeNodes = nodes
 }
 
-func (f *FakeQueryCallGraph) TraverseCallers(_ context.Context, _, _ string, _ int, scope coordinate.ModuleSet) ([]cgports.CallEdgeRef, []string, error) {
+func (f *FakeQueryCallGraph) TraverseCallers(_ context.Context, _, _ string, _ int, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, []string, error) {
 	if f.Err != nil {
 		return nil, nil, f.Err
 	}
@@ -565,7 +578,7 @@ func (f *FakeQueryCallGraph) TraverseCallers(_ context.Context, _, _ string, _ i
 	return scopeEdgeRefs(f.traverseCallers, scope), f.traverseCallerNodes, nil
 }
 
-func (f *FakeQueryCallGraph) TraverseCallees(_ context.Context, _, _ string, _ int, scope coordinate.ModuleSet) ([]cgports.CallEdgeRef, []string, error) {
+func (f *FakeQueryCallGraph) TraverseCallees(_ context.Context, _, _ string, _ int, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, []string, error) {
 	if f.Err != nil {
 		return nil, nil, f.Err
 	}

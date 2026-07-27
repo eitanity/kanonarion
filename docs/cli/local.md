@@ -28,7 +28,19 @@ Prints the same call-graph summary as `callgraph` (node/edge counts and status;
 
 ```sh
 kanonarion local
-kanonarion callers 'github.com/eitanity/kanonarion/internal/cli.runScanRescan'
+kanonarion callers 'example.com/mod/internal/cli.runScanRescan'
+```
+
+The tree's `_test.go` declarations are analysed too, so a symbol only tests
+exercise has callers rather than a confident empty answer. Add `--exclude-tests`
+to any query for the production-only view; see
+[`callgraph`](callgraph.md#test-scope).
+
+Interfaces the module declares become addressable, so a port-signature change
+can be scoped with one query instead of a grep:
+
+```sh
+kanonarion implementers 'example.com/mod/internal/vuln/ports.VulnerabilityStore'
 ```
 
 ## Flags
@@ -42,8 +54,8 @@ kanonarion callers 'github.com/eitanity/kanonarion/internal/cli.runScanRescan'
 
 ## Relationship to other commands
 
-- **Enables:** `callers` / `callees` over first-party symbols (without `local`
-  they resolve only fetched external modules).
+- **Enables:** `callers` / `callees` / `implementers` over first-party symbols
+  (without `local` they resolve only fetched external modules).
 - **Complementary:** `callgraph <module@version>` for external modules;
   `reachability --local <dir>` for a live working-tree vulnerability probe.
 

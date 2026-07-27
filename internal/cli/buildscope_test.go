@@ -147,7 +147,7 @@ func TestRunCallers_ScopeFiltersOutOfBuildVersions(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := runCallers(context.Background(), "golang.org/x/net/idna.normalize", false, uc, &buf, sc); err != nil {
+	if err := runCallers(context.Background(), "golang.org/x/net/idna.normalize", false, uc, &buf, sc, cgports.EdgeQueryOptions{}); err != nil {
 		t.Fatalf("runCallers: %v", err)
 	}
 	out := buf.String()
@@ -175,7 +175,7 @@ func TestRunCallers_UnscopedKeepsEveryVersion(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	if err := runCallers(context.Background(), "golang.org/x/net/idna.normalize", false, uc, &buf, buildScope{}); err != nil {
+	if err := runCallers(context.Background(), "golang.org/x/net/idna.normalize", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
 		t.Fatalf("runCallers: %v", err)
 	}
 	out := buf.String()

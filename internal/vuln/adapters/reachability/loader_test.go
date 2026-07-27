@@ -35,11 +35,11 @@ func (s *fakeStore) ListCallGraphRecords(context.Context, cgports.CallGraphFilte
 	return nil, nil
 }
 
-func (s *fakeStore) FindCallers(context.Context, string, string, coordinate.ModuleSet) ([]cgports.CallEdgeRef, error) {
+func (s *fakeStore) FindCallers(context.Context, string, string, coordinate.ModuleSet, cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error) {
 	return nil, nil
 }
 
-func (s *fakeStore) FindCallees(context.Context, string, string, coordinate.ModuleSet) ([]cgports.CallEdgeRef, error) {
+func (s *fakeStore) FindCallees(context.Context, string, string, coordinate.ModuleSet, cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error) {
 	return nil, nil
 }
 

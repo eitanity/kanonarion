@@ -252,7 +252,7 @@ func rootCompletenessCaveat(ctx context.Context, symbolID string, uc QueryCallGr
 // It is only meaningful once classifyEmptyEdgeResult has confirmed the symbol is
 // a known node in an analysed module; a symbol whose module was never analysed is
 // reported as an error there, not downgraded here.
-func negativeCallVerdict(ctx context.Context, symbolID string, scanDispatch bool, uc QueryCallGraphUseCase, scope coordinate.ModuleSet) (domain.Verdict, error) {
+func negativeCallVerdict(ctx context.Context, symbolID string, scanDispatch bool, uc QueryCallGraphUseCase, scope coordinate.ModuleSet, opts ports.EdgeQueryOptions) (domain.Verdict, error) {
 	sums, err := listScopedSummaries(ctx, uc, scope)
 	if err != nil {
 		return domain.Verdict{}, err
@@ -277,9 +277,14 @@ func negativeCallVerdict(ctx context.Context, symbolID string, scanDispatch bool
 	sort.Slice(owning, func(i, j int) bool { return owning[i].ModuleVersion < owning[j].ModuleVersion })
 
 	in := domain.NegativeVerdictInputs{
-		MethodName:   domain.SymbolMethodName(symbolID),
-		NodesByID:    map[string]domain.CallNode{},
-		ScanDispatch: scanDispatch,
+		MethodName:             domain.SymbolMethodName(symbolID),
+		NodesByID:              map[string]domain.CallNode{},
+		ScanDispatch:           scanDispatch,
+		TestsExcludedByRequest: opts.ExcludeTests,
+		// Start from Analysed and weaken on the first record that says otherwise:
+		// a symbol answered from several analysed versions is only as measured as
+		// the least-measured of them.
+		TestScope: domain.TestScopeAnalysed,
 	}
 	belowFull := domain.CompletenessUnknown
 	for _, s := range owning {
@@ -308,12 +313,21 @@ func negativeCallVerdict(ctx context.Context, symbolID string, scanDispatch bool
 			rec.Completeness != domain.CompletenessUnknown && !rec.Completeness.IsBuiltWithBodies() {
 			belowFull = rec.Completeness
 		}
+		if !rec.TestScope.IsMeasured() && in.TestScope.IsMeasured() {
+			in.TestScope = rec.TestScope
+			in.TestScopeDetail = rec.TestScopeDetail
+		}
 	}
 	// When the symbol is not itself a node (e.g. its package was built type-only
 	// so it produced no SSA node), fall back to the least-complete level seen so a
 	// below-full module still downgrades the verdict.
 	if !in.Found {
 		in.ModuleLevel = belowFull
+	}
+	// No record was consulted at all: nothing has claimed the test axis was
+	// measured, so it has not been.
+	if len(owning) == 0 {
+		in.TestScope = domain.TestScopeUnknown
 	}
 
 	return domain.ClassifyNegativeVerdict(in), nil
@@ -323,18 +337,25 @@ func negativeCallVerdict(ctx context.Context, symbolID string, scanDispatch bool
 // callers/callees answer: a confident RESOLVED-ABSENT, or an UNRESOLVED verdict
 // with the soundness sinks named so a reviewer can act on them. kind is
 // "callers", "callees", or the transitive variants.
-func writeCallVerdict(stdout io.Writer, kind, symbolID string, v domain.Verdict) error {
+func writeCallVerdict(stdout io.Writer, kind, symbolID string, v domain.Verdict, opts ports.EdgeQueryOptions) error {
+	// A scope the caller chose is stated on the verdict line, not folded into
+	// the outcome: --exclude-tests narrows what "none" covers, and a reader who
+	// cannot see that narrowing will read the answer as wider than it is.
+	scope := ""
+	if opts.ExcludeTests {
+		scope = " (production only; --" + testScopeFlagName + " was given)"
+	}
 	switch v.Outcome {
 	case domain.VerdictUnresolved:
 		if _, err := fmt.Fprintf(stdout,
-			"verdict: UNRESOLVED — %s of %s cannot be confirmed absent: %s\n",
-			kind, symbolID, v.Reason()); err != nil {
+			"verdict: UNRESOLVED — %s of %s cannot be confirmed absent%s: %s\n",
+			kind, symbolID, scope, v.Reason()); err != nil {
 			return fmt.Errorf("writing verdict: %w", err)
 		}
 	default:
 		if _, err := fmt.Fprintf(stdout,
-			"verdict: RESOLVED-ABSENT — no %s of %s across a fully-built path\n",
-			kind, symbolID); err != nil {
+			"verdict: RESOLVED-ABSENT — no %s of %s across a fully-built path%s\n",
+			kind, symbolID, scope); err != nil {
 			return fmt.Errorf("writing verdict: %w", err)
 		}
 	}

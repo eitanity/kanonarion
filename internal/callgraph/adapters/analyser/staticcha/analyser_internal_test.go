@@ -13,11 +13,10 @@ import (
 	"golang.org/x/tools/go/ssa"
 )
 
-// TestCreateAndBuildSSAPackageSafe_RecoversPanic verifies that
-// createAndBuildSSAPackageSafe recovers from the panic that x/tools/go/ssa
-// raises when an imported package is not registered with the SSA program
-// before Build is called.
-func TestCreateAndBuildSSAPackageSafe_RecoversPanic(t *testing.T) {
+// TestBuildSSAPackageSafe_RecoversPanic verifies that buildSSAPackageSafe
+// recovers from the panic that x/tools/go/ssa raises when an imported package is
+// not registered with the SSA program before Build is called.
+func TestBuildSSAPackageSafe_RecoversPanic(t *testing.T) {
 	tmpDir := t.TempDir()
 	write := func(rel, content string) {
 		t.Helper()
@@ -62,7 +61,11 @@ func Get() pkgb.Value { return 42 }
 	prog := ssa.NewProgram(fset, ssa.BuilderMode(0))
 
 	// Without the fix, Build panics; with it we get a descriptive error.
-	_, gotErr := createAndBuildSSAPackageSafe(prog, pkga)
+	ssaPkg, cerr := createSSAPackageSafe(prog, pkga, true)
+	if cerr != nil {
+		t.Fatalf("creating SSA package: %v", cerr)
+	}
+	gotErr := buildSSAPackageSafe(ssaPkg)
 	if gotErr == nil {
 		t.Fatal("expected an error from unregistered import, got nil")
 	}
@@ -71,9 +74,9 @@ func Get() pkgb.Value { return 42 }
 	}
 }
 
-// TestCreateAndBuildSSAPackageSafe_NoErrorOnSuccess verifies that
-// createAndBuildSSAPackageSafe returns nil when all imports are registered.
-func TestCreateAndBuildSSAPackageSafe_NoErrorOnSuccess(t *testing.T) {
+// TestBuildSSAPackageSafe_NoErrorOnSuccess verifies that create-then-build
+// returns nil when all imports are registered.
+func TestBuildSSAPackageSafe_NoErrorOnSuccess(t *testing.T) {
 	tmpDir := t.TempDir()
 	write := func(rel, content string) {
 		t.Helper()
@@ -119,12 +122,15 @@ func Get() pkgb.Value { return 42 }
 		}
 	})
 
-	ssaPkg, err := createAndBuildSSAPackageSafe(prog, pkgs[0])
+	ssaPkg, err := createSSAPackageSafe(prog, pkgs[0], true)
 	if err != nil {
-		t.Fatalf("unexpected error with all deps registered: %v", err)
+		t.Fatalf("unexpected error creating SSA package: %v", err)
 	}
 	if ssaPkg == nil {
 		t.Fatal("expected non-nil SSA package")
+	}
+	if err := buildSSAPackageSafe(ssaPkg); err != nil {
+		t.Fatalf("unexpected error with all deps registered: %v", err)
 	}
 }
 

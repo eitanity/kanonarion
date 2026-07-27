@@ -6,23 +6,51 @@ import (
 	"fmt"
 	"go/token"
 	"io"
+	"log/slog"
 	"os"
 	"path/filepath"
 	"runtime"
 	"sort"
 	"strings"
 
+	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
 )
 
-func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tempDir string, coord coordinate.ModuleCoordinate, targetPkgPaths []string) (prog *ssa.Program, targetSSAPkgs []*ssa.Package, allLoadErrs []string, failedPkgs []string, err error) {
-	prog = ssa.NewProgram(fset, ssa.BuilderMode(0))
+// loadAndBuildSSA type-checks every target package in one go/packages call and
+// builds SSA for it.
+//
+// The single call is a correctness requirement, not a convenience. go/packages
+// mints a fresh set of *types.Package objects per Load, and go/types compares
+// types by pointer identity: a concrete type from one Load never satisfies
+// types.Implements against an interface from another. Loading the target set in
+// batches therefore populated the ssa.Program with one copy of most packages per
+// batch, and CHA's implements relation — which is how every interface dispatch
+// is bound — silently failed across the seam. Whether a port method resolved its
+// callers came down to whether the interface and its implementer happened to
+// land in the same batch, which is why a store adapter could return callers for
+// one method and RESOLVED-ABSENT for its sibling. The batching also cost more
+// than it saved: each batch re-type-checked the whole transitive dependency set
+// from scratch, and the ssa.Program retained every duplicate for the life of the
+// analysis.
+//
+// Test files are part of the target set. A module's fakes and table-driven
+// callers are a large, systematic share of what a signature change has to
+// touch, and omitting them made "no callers" a confident false negative for
+// every test-only consumer. The outcome of that decision is recorded on the
+// result so a query can state it rather than imply coverage it does not have.
+func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tempDir string, coord coordinate.ModuleCoordinate, targetPkgPaths []string) (ssaBuildResult, error) {
+	res := ssaBuildResult{
+		Prog:      ssa.NewProgram(fset, ssa.BuilderMode(0)),
+		TestPkgs:  map[*ssa.Package]bool{},
+		TestScope: domain.TestScopeAnalysed,
+	}
 
 	// failedSet accumulates target package import paths whose typecheck or SSA
-	// construction failed. It is the machine-readable companion to allLoadErrs:
+	// construction failed. It is the machine-readable companion to LoadErrs:
 	// verdicts over the resulting Partial graph are caveated per package, not by
 	// node/edge totals.
 	failedSet := make(map[string]bool)
@@ -32,106 +60,180 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 		}
 	}
 
-	// Step 2: Load ALL types.Packages (NeedTypes) but NO ASTs.
-	cfgTypes := &packages.Config{
-		Mode:    packages.NeedName | packages.NeedTypes | packages.NeedImports | packages.NeedDeps,
-		Dir:     tempDir,
-		Context: ctx,
-		Env:     isolatedModuleEnv(),
-		Tests:   false,
+	if len(targetPkgPaths) == 0 {
+		return res, nil
 	}
-	if _, err := packages.Load(cfgTypes, "./..."); err != nil {
-		return nil, nil, nil, nil, fmt.Errorf("types load: %w", err)
-	}
-	a.logMem(ctx, "types_loaded")
 
-	// Step 3: Batched Syntax Loading for target packages.
-	batchSize := 20
-	for i := 0; i < len(targetPkgPaths); i += batchSize {
-		end := i + batchSize
-		if end > len(targetPkgPaths) {
-			end = len(targetPkgPaths)
-		}
+	const fullMode = packages.NeedName | packages.NeedSyntax | packages.NeedTypes |
+		packages.NeedTypesInfo | packages.NeedFiles | packages.NeedImports | packages.NeedDeps
 
-		batchPatterns := targetPkgPaths[i:end]
-		cfgFull := &packages.Config{
-			Mode:    packages.NeedName | packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedFiles | packages.NeedImports | packages.NeedDeps,
+	load := func(withTests bool) ([]*packages.Package, error) {
+		cfg := &packages.Config{
+			Mode:    fullMode,
 			Dir:     tempDir,
 			Context: ctx,
 			Env:     isolatedModuleEnv(),
 			Fset:    fset,
-			Tests:   false,
+			Tests:   withTests,
 		}
-
-		// Aggressive GC tuning for the batch load
+		// Aggressive GC tuning: the ASTs of the whole target module are live at
+		// once between the load returning and the last package being built.
 		oldGOGC := os.Getenv("GOGC")
 		_ = os.Setenv("GOGC", "30")
-		batchPkgs, bErr := packages.Load(cfgFull, batchPatterns...)
+		pkgs, lErr := packages.Load(cfg, targetPkgPaths...)
 		_ = os.Setenv("GOGC", oldGOGC)
+		if lErr != nil {
+			return nil, fmt.Errorf("syntax load: %w", lErr)
+		}
+		return pkgs, nil
+	}
 
-		if bErr != nil {
-			allLoadErrs = append(allLoadErrs, fmt.Sprintf("batch %d load failed: %v", i/batchSize, bErr))
-			// The whole batch failed to load, so every target package in it is
-			// unresolved; record each so verdicts touching them are caveated.
-			for _, pkgPath := range batchPatterns {
-				markFailed(pkgPath)
-			}
+	loaded, lErr := load(true)
+	if lErr != nil {
+		// Loading with tests is not viable for this module. Retry without them
+		// rather than lose the graph entirely — but record the exclusion, so the
+		// query layer names the axis it could not measure instead of reporting a
+		// clean absence over it.
+		a.logger.WarnContext(ctx, "callgraph_test_scope_excluded",
+			slog.String("module", coord.Path()),
+			slog.String("error", lErr.Error()),
+		)
+		res.TestScope = domain.TestScopeExcluded
+		res.TestScopeDetail = "loading the module with test files failed: " + lErr.Error()
+		var retryErr error
+		loaded, retryErr = load(false)
+		if retryErr != nil {
+			return res, retryErr
+		}
+	}
+	a.logMem(ctx, "syntax_loaded")
+
+	// Pass 1: register every target package from syntax. This must complete
+	// before any Build, and before the type-only dependency sweep below: a
+	// target registered type-only (because a sibling target imports it) would be
+	// the copy that sibling's build binds to, and its method bodies would be
+	// invisible for the rest of the analysis.
+	//
+	// With tests enabled go/packages returns up to three packages per target:
+	// the production package, the internal test variant (same import path, extra
+	// _test.go files), and the external test package. The synthetic test-binary
+	// main is skipped — it is generated code, and its package main would
+	// otherwise make every library look like an application to the rooting rule.
+	var built []*ssa.Package
+	for _, p := range loaded {
+		if isSyntheticTestMain(p) {
 			continue
 		}
-
-		for _, p := range batchPkgs {
-			for _, e := range p.Errors {
-				allLoadErrs = append(allLoadErrs, e.Error())
-			}
-			if len(p.Errors) > 0 {
-				markFailed(p.PkgPath)
-			}
-
-			if p.Types == nil {
-				markFailed(p.PkgPath)
-				continue
-			}
-
-			// Ensure all dependencies (transitive) are registered first
-			packages.Visit([]*packages.Package{p}, nil, func(dp *packages.Package) {
-				if dp.Types != nil && prog.Package(dp.Types) == nil {
-					prog.CreatePackage(dp.Types, nil, nil, true)
-				}
-			})
-
-			// Create the target package with syntax and build it.
-			// Both steps can panic: CreatePackage on nil TypesInfo entries,
-			// Build on unregistered imports. createAndBuildSSAPackageSafe
-			// recovers from either.
-			ssaPkg, berr := createAndBuildSSAPackageSafe(prog, p)
-			if berr != nil {
-				allLoadErrs = append(allLoadErrs, fmt.Sprintf("SSA construction panic for %s: %v", p.PkgPath, berr))
-				markFailed(p.PkgPath)
-				continue
-			}
-			if ssaPkg == nil {
-				continue
-			}
-			targetSSAPkgs = append(targetSSAPkgs, ssaPkg)
-
-			// Discard heavy AST data immediately
-			p.Syntax = nil
-			p.TypesInfo = nil
+		for _, e := range p.Errors {
+			res.LoadErrs = append(res.LoadErrs, e.Error())
 		}
-
-		runtime.GC()
-		a.logMem(ctx, fmt.Sprintf("batch_%d_processed", i/batchSize))
+		if len(p.Errors) > 0 {
+			markFailed(p.PkgPath)
+		}
+		if p.Types == nil {
+			markFailed(p.PkgPath)
+			continue
+		}
+		if res.Prog.Package(p.Types) != nil {
+			// Already registered from syntax: the pattern list named this
+			// package twice.
+			continue
+		}
+		testPkg := isTestPackage(p)
+		// A test variant is registered but not importable: production code never
+		// imports it, and leaving the importable slot to the production package
+		// keeps ImportedPackage answering with the package consumers see.
+		ssaPkg, cerr := createSSAPackageSafe(res.Prog, p, !testPkg)
+		if cerr != nil {
+			res.LoadErrs = append(res.LoadErrs, fmt.Sprintf("SSA package creation panic for %s: %v", p.PkgPath, cerr))
+			markFailed(p.PkgPath)
+			continue
+		}
+		built = append(built, ssaPkg)
+		if testPkg {
+			res.TestPkgs[ssaPkg] = true
+		} else {
+			res.TargetPkgs = append(res.TargetPkgs, ssaPkg)
+		}
 	}
+
+	// Pass 2: register the transitive dependencies that are not targets. They
+	// carry no syntax, so their method bodies are absent by design; the
+	// single-implementer devirtualisation pass recovers the dispatch edges CHA
+	// drops for them.
+	for _, p := range loaded {
+		packages.Visit([]*packages.Package{p}, nil, func(dp *packages.Package) {
+			if dp.Types != nil && res.Prog.Package(dp.Types) == nil {
+				res.Prog.CreatePackage(dp.Types, nil, nil, true)
+			}
+		})
+	}
+	a.logMem(ctx, "packages_registered")
+
+	// Pass 3: build. Every package the builder can reach is registered now, so
+	// no build resolves a callee through a placeholder.
+	for _, ssaPkg := range built {
+		if berr := buildSSAPackageSafe(ssaPkg); berr != nil {
+			path := ""
+			if ssaPkg.Pkg != nil {
+				path = ssaPkg.Pkg.Path()
+			}
+			res.LoadErrs = append(res.LoadErrs, fmt.Sprintf("SSA construction panic for %s: %v", path, berr))
+			markFailed(path)
+		}
+	}
+	// The ASTs and type info are held only until the packages that need them are
+	// built; ssa keeps its own references while building and drops them after.
+	for _, p := range loaded {
+		p.Syntax = nil
+		p.TypesInfo = nil
+	}
+	runtime.GC()
+	a.logMem(ctx, "ssa_built")
 
 	if len(failedSet) > 0 {
-		failedPkgs = make([]string, 0, len(failedSet))
+		res.FailedPkgs = make([]string, 0, len(failedSet))
 		for p := range failedSet {
-			failedPkgs = append(failedPkgs, p)
+			res.FailedPkgs = append(res.FailedPkgs, p)
 		}
-		sort.Strings(failedPkgs)
+		sort.Strings(res.FailedPkgs)
 	}
 
-	return prog, targetSSAPkgs, allLoadErrs, failedPkgs, nil
+	return res, nil
+}
+
+// ssaBuildResult is the outcome of loading and building a module's packages.
+type ssaBuildResult struct {
+	Prog *ssa.Program
+	// TargetPkgs are the module's production packages. artifactKind reads only
+	// these: a test binary's generated main must not make a library look like a
+	// command.
+	TargetPkgs []*ssa.Package
+	// TestPkgs is the set of built packages that carry the module's _test.go
+	// declarations — the internal test variants and the external test packages.
+	TestPkgs        map[*ssa.Package]bool
+	LoadErrs        []string
+	FailedPkgs      []string
+	TestScope       domain.TestScope
+	TestScopeDetail string
+}
+
+// Built returns every package built from syntax, production and test alike.
+func (r ssaBuildResult) Built() int { return len(r.TargetPkgs) + len(r.TestPkgs) }
+
+// isSyntheticTestMain reports whether p is the test binary main go/packages
+// synthesises for a package under test. Its import path is the package path
+// with a ".test" suffix and it contains no source of the module's own.
+func isSyntheticTestMain(p *packages.Package) bool {
+	return strings.HasSuffix(p.PkgPath, ".test")
+}
+
+// isTestPackage reports whether p carries _test.go declarations: either the
+// external test package (import path suffixed "_test") or the internal test
+// variant, which go/packages distinguishes from the production package by ID
+// while keeping the same import path.
+func isTestPackage(p *packages.Package) bool {
+	return strings.HasSuffix(p.PkgPath, "_test") || p.ID != p.PkgPath
 }
 
 // extractModuleZip extracts files from a Go module proxy zip to destDir,
@@ -194,22 +296,31 @@ func extractZipEntry(f *zip.File, destPath string) (retErr error) {
 	return nil
 }
 
-// createAndBuildSSAPackageSafe calls prog.CreatePackage and then Build,
-// recovering from any panic either step raises. Two distinct panics are known:
-// - CreatePackage: nil dereference when TypesInfo contains nil-typed declarations
-// - Build: "unsatisfied import" when a dependency's *types.Package was not
-// registered with the program (happens when a dep had nil Types during loading)
+// createSSAPackageSafe calls prog.CreatePackage, recovering from the known
+// panic: a nil dereference when TypesInfo contains nil-typed declarations.
 //
-// Returns (nil, nil) if CreatePackage returns nil (package already registered).
-func createAndBuildSSAPackageSafe(prog *ssa.Program, p *packages.Package) (pkg *ssa.Package, retErr error) {
+// Creation is separated from Build so every package in the analysis can be
+// registered before any of them is built — see loadAndBuildSSA.
+func createSSAPackageSafe(prog *ssa.Program, p *packages.Package, importable bool) (pkg *ssa.Package, retErr error) {
 	defer func() {
 		if r := recover(); r != nil {
 			retErr = fmt.Errorf("%v", r)
 		}
 	}()
-	pkg = prog.CreatePackage(p.Types, p.Syntax, p.TypesInfo, true)
+	return prog.CreatePackage(p.Types, p.Syntax, p.TypesInfo, importable), nil
+}
+
+// buildSSAPackageSafe calls Build on an already-created package, recovering from
+// the known panic: "unsatisfied import" when a dependency's *types.Package was
+// never registered with the program (a dep that had nil Types during loading).
+func buildSSAPackageSafe(pkg *ssa.Package) (retErr error) {
+	defer func() {
+		if r := recover(); r != nil {
+			retErr = fmt.Errorf("%v", r)
+		}
+	}()
 	if pkg != nil {
 		pkg.Build()
 	}
-	return pkg, nil
+	return nil
 }

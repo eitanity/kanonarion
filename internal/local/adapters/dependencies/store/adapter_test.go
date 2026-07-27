@@ -45,11 +45,11 @@ func (s *fakeCallGraphStore) ListCallGraphRecords(_ context.Context, _ cgports.C
 	return nil, nil
 }
 
-func (s *fakeCallGraphStore) FindCallers(_ context.Context, _ string, _ string, _ coordinate.ModuleSet) ([]cgports.CallEdgeRef, error) {
+func (s *fakeCallGraphStore) FindCallers(_ context.Context, _ string, _ string, _ coordinate.ModuleSet, _ cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error) {
 	return nil, nil
 }
 
-func (s *fakeCallGraphStore) FindCallees(_ context.Context, _ string, _ string, _ coordinate.ModuleSet) ([]cgports.CallEdgeRef, error) {
+func (s *fakeCallGraphStore) FindCallees(_ context.Context, _ string, _ string, _ coordinate.ModuleSet, _ cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error) {
 	return nil, nil
 }
 

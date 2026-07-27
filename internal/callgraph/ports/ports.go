@@ -90,12 +90,25 @@ type CallGraphStore interface {
 	// resolved version set; the zero ModuleSet imposes no restriction and
 	// returns matches across every stored version, which is what a query that
 	// names no build means.
-	FindCallers(ctx context.Context, symbolID string, pipelineVersion string, scope coordinate.ModuleSet) ([]CallEdgeRef, error)
+	//
+	// opts is the caller's choice about the test surface; the zero value
+	// includes it, because omitting a caller is the more damaging error.
+	FindCallers(ctx context.Context, symbolID string, pipelineVersion string, scope coordinate.ModuleSet, opts EdgeQueryOptions) ([]CallEdgeRef, error)
 
 	// FindCallees returns all edges in the store where the caller node ID
-	// matches symbolID, for the given pipeline version. scope behaves as in
-	// FindCallers.
-	FindCallees(ctx context.Context, symbolID string, pipelineVersion string, scope coordinate.ModuleSet) ([]CallEdgeRef, error)
+	// matches symbolID, for the given pipeline version. scope and opts behave as
+	// in FindCallers.
+	FindCallees(ctx context.Context, symbolID string, pipelineVersion string, scope coordinate.ModuleSet, opts EdgeQueryOptions) ([]CallEdgeRef, error)
+}
+
+// EdgeQueryOptions narrows a caller/callee query. The zero value is the
+// unrestricted query.
+type EdgeQueryOptions struct {
+	// ExcludeTests drops every edge with a test-scope endpoint. It is opt-in:
+	// the default answer covers the whole graph, because a hidden test caller is
+	// a false negative — the failure the three-valued verdict exists to prevent
+	// — while an unwanted one is merely noise the reader can see and discount.
+	ExcludeTests bool
 }
 
 // CallGraphFilter constrains ListCallGraphRecords results.
@@ -129,6 +142,9 @@ type CallEdgeRef struct {
 	FromID          string
 	ToID            string
 	Confidence      domain.EdgeConfidence
+	// IsTest is true when either endpoint is a test-scope node, so a reader can
+	// see which part of an answer is the test surface without a second query.
+	IsTest bool
 }
 
 // CallEdgeRefLess is the canonical ordering for CallEdgeRef slices produced by

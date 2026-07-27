@@ -41,8 +41,8 @@ func (uc *QueryCallGraphUseCase) ListCallGraphRecords(ctx context.Context, filte
 
 // FindCallers returns all edges where the callee matches symbolID, restricted
 // to the modules in scope (the zero ModuleSet imposes no restriction).
-func (uc *QueryCallGraphUseCase) FindCallers(ctx context.Context, symbolID, pipelineVersion string, scope coordinate.ModuleSet) ([]cgports.CallEdgeRef, error) {
-	refs, err := uc.store.FindCallers(ctx, symbolID, pipelineVersion, scope)
+func (uc *QueryCallGraphUseCase) FindCallers(ctx context.Context, symbolID, pipelineVersion string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error) {
+	refs, err := uc.store.FindCallers(ctx, symbolID, pipelineVersion, scope, opts)
 	if err != nil {
 		return nil, fmt.Errorf("finding callers of %q: %w", symbolID, err)
 	}
@@ -51,8 +51,8 @@ func (uc *QueryCallGraphUseCase) FindCallers(ctx context.Context, symbolID, pipe
 
 // FindCallees returns all edges where the caller matches symbolID, restricted
 // to the modules in scope (the zero ModuleSet imposes no restriction).
-func (uc *QueryCallGraphUseCase) FindCallees(ctx context.Context, symbolID, pipelineVersion string, scope coordinate.ModuleSet) ([]cgports.CallEdgeRef, error) {
-	refs, err := uc.store.FindCallees(ctx, symbolID, pipelineVersion, scope)
+func (uc *QueryCallGraphUseCase) FindCallees(ctx context.Context, symbolID, pipelineVersion string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error) {
+	refs, err := uc.store.FindCallees(ctx, symbolID, pipelineVersion, scope, opts)
 	if err != nil {
 		return nil, fmt.Errorf("finding callees of %q: %w", symbolID, err)
 	}
@@ -66,8 +66,8 @@ func (uc *QueryCallGraphUseCase) FindCallees(ctx context.Context, symbolID, pipe
 // through an out-of-build module version would carry the traversal into code the
 // build does not contain, and every node discovered beyond it would inherit that
 // mistake.
-func (uc *QueryCallGraphUseCase) TraverseCallers(ctx context.Context, symbolID, pipelineVersion string, maxDepth int, scope coordinate.ModuleSet) (edges []cgports.CallEdgeRef, nodes []string, err error) {
-	return uc.traverseTransitive(ctx, symbolID, pipelineVersion, maxDepth, scope,
+func (uc *QueryCallGraphUseCase) TraverseCallers(ctx context.Context, symbolID, pipelineVersion string, maxDepth int, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) (edges []cgports.CallEdgeRef, nodes []string, err error) {
+	return uc.traverseTransitive(ctx, symbolID, pipelineVersion, maxDepth, scope, opts,
 		uc.store.FindCallers,
 		func(e cgports.CallEdgeRef) string { return e.FromID },
 	)
@@ -76,8 +76,8 @@ func (uc *QueryCallGraphUseCase) TraverseCallers(ctx context.Context, symbolID, 
 // TraverseCallees performs a BFS from symbolID following callee edges.
 // maxDepth 0 means unlimited. Returns all reachable edges and nodes (excluding the root).
 // scope is applied at every hop, as in TraverseCallers.
-func (uc *QueryCallGraphUseCase) TraverseCallees(ctx context.Context, symbolID, pipelineVersion string, maxDepth int, scope coordinate.ModuleSet) (edges []cgports.CallEdgeRef, nodes []string, err error) {
-	return uc.traverseTransitive(ctx, symbolID, pipelineVersion, maxDepth, scope,
+func (uc *QueryCallGraphUseCase) TraverseCallees(ctx context.Context, symbolID, pipelineVersion string, maxDepth int, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) (edges []cgports.CallEdgeRef, nodes []string, err error) {
+	return uc.traverseTransitive(ctx, symbolID, pipelineVersion, maxDepth, scope, opts,
 		uc.store.FindCallees,
 		func(e cgports.CallEdgeRef) string { return e.ToID },
 	)
@@ -90,7 +90,8 @@ func (uc *QueryCallGraphUseCase) traverseTransitive(
 	root, pipelineVersion string,
 	maxDepth int,
 	scope coordinate.ModuleSet,
-	queryFn func(context.Context, string, string, coordinate.ModuleSet) ([]cgports.CallEdgeRef, error),
+	opts cgports.EdgeQueryOptions,
+	queryFn func(context.Context, string, string, coordinate.ModuleSet, cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error),
 	neighborOf func(cgports.CallEdgeRef) string,
 ) (edges []cgports.CallEdgeRef, nodes []string, err error) {
 	visited := map[string]bool{root: true}
@@ -99,7 +100,7 @@ func (uc *QueryCallGraphUseCase) traverseTransitive(
 	for depth := 0; len(queue) > 0 && (maxDepth == 0 || depth < maxDepth); depth++ {
 		var next []string
 		for _, sym := range queue {
-			hops, qerr := queryFn(ctx, sym, pipelineVersion, scope)
+			hops, qerr := queryFn(ctx, sym, pipelineVersion, scope, opts)
 			if qerr != nil {
 				return nil, nil, fmt.Errorf("querying at depth %d: %w", depth+1, qerr)
 			}

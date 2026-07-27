@@ -54,9 +54,13 @@ and variables (V).
 ```
 $ kanonarion interface github.com/spf13/cobra@v1.8.1 --json
 {
-  "SchemaVersion": "1",
-  "Coordinate": { ... },
-  ...
+  "schema_version": "...",
+  "coordinate": { "path": "github.com/spf13/cobra", "version": "v1.8.1" },
+  "overall_status": "Extracted",
+  "packages": [ ... ],
+  "pipeline_version": "...",
+  "content_hash": "sha256:...",
+  "extracted_at": "..."
 }
 ```
 

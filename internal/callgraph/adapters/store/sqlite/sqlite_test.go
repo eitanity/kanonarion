@@ -213,7 +213,7 @@ func TestFindCallers(t *testing.T) {
 	}
 
 	// The edge is Foo→Bar. FindCallers of Bar should return Foo.
-	callers, err := s.FindCallers(ctx, "example.com/mod.Bar", "0.1.0", coordinate.ModuleSet{})
+	callers, err := s.FindCallers(ctx, "example.com/mod.Bar", "0.1.0", coordinate.ModuleSet{}, ports.EdgeQueryOptions{})
 	if err != nil {
 		t.Fatalf("FindCallers: %v", err)
 	}
@@ -236,7 +236,7 @@ func TestFindCallees(t *testing.T) {
 
 	// Foo calls Bar (Direct) and Baz (reflect-dispatched Unknown); FindCallees
 	// of Foo should return both, ordered by ToID.
-	callees, err := s.FindCallees(ctx, "example.com/mod.Foo", "0.1.0", coordinate.ModuleSet{})
+	callees, err := s.FindCallees(ctx, "example.com/mod.Foo", "0.1.0", coordinate.ModuleSet{}, ports.EdgeQueryOptions{})
 	if err != nil {
 		t.Fatalf("FindCallees: %v", err)
 	}
@@ -253,7 +253,7 @@ func TestFindCallers_EmptyResult(t *testing.T) {
 	s := openTestStore(t)
 	ctx := context.Background()
 
-	callers, err := s.FindCallers(ctx, "example.com/mod.Unknown", "0.1.0", coordinate.ModuleSet{})
+	callers, err := s.FindCallers(ctx, "example.com/mod.Unknown", "0.1.0", coordinate.ModuleSet{}, ports.EdgeQueryOptions{})
 	if err != nil {
 		t.Fatalf("FindCallers: %v", err)
 	}
@@ -434,7 +434,7 @@ func TestFindCallers_MultiVersionUnscoped(t *testing.T) {
 		}
 	}
 
-	callers, err := s.FindCallers(ctx, "example.com/mod.Bar", "0.1.0", coordinate.ModuleSet{})
+	callers, err := s.FindCallers(ctx, "example.com/mod.Bar", "0.1.0", coordinate.ModuleSet{}, ports.EdgeQueryOptions{})
 	if err != nil {
 		t.Fatalf("FindCallers: %v", err)
 	}
@@ -466,7 +466,7 @@ func TestFindCallers_ScopedToOneVersion(t *testing.T) {
 	}
 	scope := coordinate.NewModuleSet([]coordinate.ModuleCoordinate{inBuild})
 
-	callers, err := s.FindCallers(ctx, "example.com/mod.Bar", "0.1.0", scope)
+	callers, err := s.FindCallers(ctx, "example.com/mod.Bar", "0.1.0", scope, ports.EdgeQueryOptions{})
 	if err != nil {
 		t.Fatalf("FindCallers: %v", err)
 	}
@@ -477,7 +477,7 @@ func TestFindCallers_ScopedToOneVersion(t *testing.T) {
 		t.Errorf("caller module version = %q, want v1.1.0", callers[0].ModuleVersion)
 	}
 
-	callees, err := s.FindCallees(ctx, "example.com/mod.Foo", "0.1.0", scope)
+	callees, err := s.FindCallees(ctx, "example.com/mod.Foo", "0.1.0", scope, ports.EdgeQueryOptions{})
 	if err != nil {
 		t.Fatalf("FindCallees: %v", err)
 	}
@@ -500,7 +500,7 @@ func TestFindCallers_EmptyScopeMatchesNothing(t *testing.T) {
 		t.Fatalf("put: %v", err)
 	}
 
-	callers, err := s.FindCallers(ctx, "example.com/mod.Bar", "0.1.0", coordinate.NewModuleSet(nil))
+	callers, err := s.FindCallers(ctx, "example.com/mod.Bar", "0.1.0", coordinate.NewModuleSet(nil), ports.EdgeQueryOptions{})
 	if err != nil {
 		t.Fatalf("FindCallers: %v", err)
 	}

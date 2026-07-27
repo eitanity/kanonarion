@@ -284,17 +284,49 @@ func cmdSeedCallGraph(args []string) {
 		Coordinate:    app,
 		Algorithm:     cgdomain.AlgorithmCHA,
 		OverallStatus: cgdomain.CallGraphStatusExtracted,
+		// The test axis is measured, and a test caller of Helper is in the graph
+		// alongside the production one, so the fixture exercises both the default
+		// (include) and the --exclude-tests view.
+		TestScope: cgdomain.TestScopeAnalysed,
 		Nodes: []cgdomain.CallNode{
 			{ID: "example.com/app.Main", Package: "example.com/app", Symbol: "Main", IsExportedAPI: true},
 			{ID: "example.com/app.Helper", Package: "example.com/app", Symbol: "Helper"},
+			{ID: "example.com/app_test.TestHelper", Package: "example.com/app_test", Symbol: "TestHelper", IsTest: true},
+			{ID: "example.com/app.(*Store).Put", Package: "example.com/app", Symbol: "Put", Receiver: "*Store"},
+			{ID: "example.com/app_test.(*fakeStore).Put", Package: "example.com/app_test", Symbol: "Put", Receiver: "*fakeStore", IsTest: true},
 			{ID: "fmt.Println", Package: "fmt", Symbol: "Println", IsExternal: true},
 		},
 		Edges: []cgdomain.CallEdge{
 			{FromID: "example.com/app.Main", ToID: "example.com/app.Helper", Confidence: cgdomain.ConfidenceDirect},
 			{FromID: "example.com/app.Helper", ToID: "fmt.Println", Confidence: cgdomain.ConfidenceDirect},
+			{FromID: "example.com/app_test.TestHelper", ToID: "example.com/app.Helper", Confidence: cgdomain.ConfidenceDirect},
 		},
-		NodeCount:       3,
-		EdgeCount:       2,
+		// The type-level relation: one port with a production implementer and a
+		// test fake, which is the shape an interface change has to enumerate.
+		Interfaces: []cgdomain.InterfaceType{
+			{
+				ID: "example.com/app.Store", Package: "example.com/app", Name: "Store",
+				Methods:  []string{"Put"},
+				Position: cgdomain.SourcePosition{File: "app.go", Line: 3},
+			},
+		},
+		Implementations: []cgdomain.InterfaceImplementation{
+			{
+				InterfaceID: "example.com/app.Store",
+				TypeID:      "example.com/app.(*Store)",
+				Package:     "example.com/app",
+				Methods:     []cgdomain.ImplementedMethod{{Method: "Put", NodeID: "example.com/app.(*Store).Put"}},
+			},
+			{
+				InterfaceID: "example.com/app.Store",
+				TypeID:      "example.com/app_test.(*fakeStore)",
+				Package:     "example.com/app_test",
+				IsTest:      true,
+				Methods:     []cgdomain.ImplementedMethod{{Method: "Put", NodeID: "example.com/app_test.(*fakeStore).Put"}},
+			},
+		},
+		NodeCount:       6,
+		EdgeCount:       3,
 		ExtractedAt:     time.Now(),
 		PipelineVersion: cgapp.PipelineVersion,
 	}

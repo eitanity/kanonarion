@@ -221,22 +221,22 @@ func TestFakeQueryCallGraph_AllMethods(t *testing.T) {
 		t.Fatalf("ListCallGraphRecords: %v %v", list, err)
 	}
 
-	callers, err := f.FindCallers(context.Background(), "sym", "0.1.0", coordinate.ModuleSet{})
+	callers, err := f.FindCallers(context.Background(), "sym", "0.1.0", coordinate.ModuleSet{}, cgports.EdgeQueryOptions{})
 	if err != nil || callers != nil {
 		t.Fatalf("FindCallers: %v %v", callers, err)
 	}
 
-	callees, err := f.FindCallees(context.Background(), "sym", "0.1.0", coordinate.ModuleSet{})
+	callees, err := f.FindCallees(context.Background(), "sym", "0.1.0", coordinate.ModuleSet{}, cgports.EdgeQueryOptions{})
 	if err != nil || callees != nil {
 		t.Fatalf("FindCallees: %v %v", callees, err)
 	}
 
-	edges, nodes, err := f.TraverseCallers(context.Background(), "sym", "0.1.0", 5, coordinate.ModuleSet{})
+	edges, nodes, err := f.TraverseCallers(context.Background(), "sym", "0.1.0", 5, coordinate.ModuleSet{}, cgports.EdgeQueryOptions{})
 	if err != nil || edges != nil || nodes != nil {
 		t.Fatalf("TraverseCallers: %v %v %v", edges, nodes, err)
 	}
 
-	edges, nodes, err = f.TraverseCallees(context.Background(), "sym", "0.1.0", 5, coordinate.ModuleSet{})
+	edges, nodes, err = f.TraverseCallees(context.Background(), "sym", "0.1.0", 5, coordinate.ModuleSet{}, cgports.EdgeQueryOptions{})
 	if err != nil || edges != nil || nodes != nil {
 		t.Fatalf("TraverseCallees: %v %v %v", edges, nodes, err)
 	}
