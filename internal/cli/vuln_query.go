@@ -50,7 +50,7 @@ or was absent because the vulnerability database snapshot predated it.`,
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runVulnShow(cmd.Context(), args[0], walkID, jsonOut, history, ctr.QueryVuln, stdout)
+			return runVulnShow(cmd.Context(), args[0], walkID, jsonOut, history, ctr.QueryVuln, ctr.QueryScanRuns, stdout)
 		},
 	}
 
@@ -60,7 +60,14 @@ or was absent because the vulnerability database snapshot predated it.`,
 	return cmd
 }
 
-func runVulnShow(ctx context.Context, arg, walkID string, jsonOut, history bool, uc QueryVulnUseCase, stdout io.Writer) error {
+func runVulnShow(
+	ctx context.Context,
+	arg, walkID string,
+	jsonOut, history bool,
+	uc QueryVulnUseCase,
+	runs QueryScanRunsUseCase,
+	stdout io.Writer,
+) error {
 	coord, err := parseCoordinate(arg)
 	if err != nil {
 		return fmt.Errorf("invalid coordinate %q: %w", arg, err)
@@ -86,15 +93,7 @@ func runVulnShow(ctx context.Context, arg, walkID string, jsonOut, history bool,
 			return fmt.Errorf("getting vulnerability record: %w", err)
 		}
 		if !ok {
-			any, _, aerr := uc.GetLatestRecord(ctx, coord, vulnPipelineVersion)
-			if aerr == nil && any.OverallStatus == vuldomain.StatusScanFailed {
-				msg := fmt.Sprintf("scan for %s failed", coord)
-				if any.ErrorDetail != "" {
-					msg += ": " + any.ErrorDetail
-				}
-				return fmt.Errorf("%s — re-run: kanonarion vuln-scan %s", msg, walkID)
-			}
-			return fmt.Errorf("no vulnerability record for %s in walk %s — run: kanonarion vuln-scan %s", coord, walkID, walkID)
+			return explainWalkRecordAbsence(ctx, runs, coord, walkID)
 		}
 		rec = r
 	}
@@ -110,6 +109,55 @@ func runVulnShow(ctx context.Context, arg, walkID string, jsonOut, history bool,
 
 	printVulnRecord(stdout, rec)
 	return nil
+}
+
+// explainWalkRecordAbsence says why the named walk has no readable record for
+// coord, using only what that walk's own scan runs recorded.
+//
+// The obvious shortcut — ask for the coordinate's latest record across all
+// walks and report its status — answers with a fact about some other walk. When
+// walk W never scanned the module and walk V's scan of it failed, that shortcut
+// reports W as having failed, quotes V's error detail, and tells the operator to
+// re-run W, where the failure will not reproduce. Every clause is wrong about
+// the walk the user named.
+func explainWalkRecordAbsence(
+	ctx context.Context,
+	runs QueryScanRunsUseCase,
+	coord coordinate.ModuleCoordinate,
+	walkID string,
+) error {
+	scanRuns, err := runs.ListRunsForWalk(ctx, walkID)
+	if err != nil {
+		return fmt.Errorf("no vulnerability record for %s in walk %s, and its scan runs could not be read: %w", coord, walkID, err)
+	}
+	if len(scanRuns) == 0 {
+		return fmt.Errorf("no vulnerability scan run for walk %s — run: kanonarion vuln-scan %s", walkID, walkID)
+	}
+
+	// The newest run that covered this module is the one whose generation
+	// explains why the read missed.
+	var covering *vuldomain.WalkScanRun
+	for i := range scanRuns {
+		if _, ok := scanRuns[i].PerModuleResults[coord]; !ok {
+			continue
+		}
+		if covering == nil || scanRuns[i].CompletedAt.After(covering.CompletedAt) {
+			covering = &scanRuns[i]
+		}
+	}
+	if covering == nil {
+		return fmt.Errorf("walk %s has %d vulnerability scan run(s), none covering %s — the walk does not contain this module",
+			walkID, len(scanRuns), coord)
+	}
+	if covering.PipelineVersion != vulnPipelineVersion {
+		return fmt.Errorf("walk %s scanned %s under pipeline version %s, and this build reads pipeline version %s — re-run: kanonarion vuln-scan %s",
+			walkID, coord, covering.PipelineVersion, vulnPipelineVersion, walkID)
+	}
+	// The run claims this module and the generations agree, so a record should
+	// have been readable. Say so rather than reporting a plain absence, which
+	// would read as "not affected".
+	return fmt.Errorf("walk %s scan run %s records %s at pipeline version %s, but no record was readable — the store may be inconsistent; re-run: kanonarion vuln-scan %s",
+		walkID, covering.ID, coord, vulnPipelineVersion, walkID)
 }
 
 func runVulnShowHistory(ctx context.Context, coord coordinate.ModuleCoordinate, jsonOut bool, uc QueryVulnUseCase, stdout io.Writer) error {
@@ -221,10 +269,21 @@ func runVulnByID(ctx context.Context, findingID, walkID string, jsonOut bool, uc
 		return nil
 	}
 
+	// Each row is one module version's current verdict, and a verdict is only
+	// meaningful with the scan it came from: a Clean from a database snapshot
+	// that predates the advisory says something very different from a Clean
+	// scanned yesterday. Printing the generation is what lets a reader tell a
+	// stale answer from a fresh one.
+	// Two dates, because they answer different questions. vuln-db is the
+	// generation of the advisory database the verdict was reached against — a
+	// Clean from a database that predates the advisory is not evidence of
+	// anything. scanned is when this tool last looked.
 	for _, rec := range records {
-		_, _ = fmt.Fprintf(stdout, "%-60s %s\n",
+		_, _ = fmt.Fprintf(stdout, "%-60s %-12s vuln-db=%-24s scanned=%s\n",
 			rec.Coordinate.Path()+"@"+rec.Coordinate.Version(),
-			rec.OverallStatus)
+			rec.OverallStatus,
+			rec.DatabaseSnapshot.Version,
+			rec.ScannedAt.UTC().Format(time.RFC3339))
 	}
 	return nil
 }

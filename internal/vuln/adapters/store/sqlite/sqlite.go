@@ -838,12 +838,38 @@ func (s *Store) ListDatabaseSnapshots(ctx context.Context) ([]domain.DatabaseSna
 	return snapshots, nil
 }
 
-// ListVulnerabilityRecordsByFindingID returns the vulnerability records that
-// contain a finding with the given identifier.
+// ListVulnerabilityRecordsByFindingID returns one vulnerability record per
+// module version that contains a finding with the given identifier.
 //
-// An empty walkID answers across the whole store: every module version, every
-// pipeline version and every snapshot generation ever scanned. When walkID is
-// set the answer is restricted to the modules a scan run of that walk covered.
+// A coordinate accumulates a record per (pipeline version, snapshot) it was ever
+// scanned under, and those generations disagree — the same module version is
+// Affected under one snapshot and Clean under another. Reporting every
+// generation gives the reader rows they cannot rank; reporting only the newest
+// would let a later Clean quietly retire an earlier finding.
+//
+// The tie-break is therefore the finding, not the clock: a record that reports
+// the module as Affected outranks one that does not, and only among equals does
+// the newest scan win.
+//
+// Clean is the right label for a module where the advisory was never found. It
+// is not a label a finding may quietly decay into: once a finding exists,
+// turning it into anything else needs a stated reason — the advisory was
+// withdrawn, the module moved out of the affected range, the reachability
+// verdict was corrected. The store has no way to record such a reason yet, so
+// this ranking is a guard rather than a model: it keeps an unexplained Clean
+// from displacing a finding until reasoned transitions exist.
+//
+// The guard is not hypothetical. In a working store, seven (advisory, module,
+// snapshot) triples — identical inputs, no new evidence — were reported Clean by
+// exactly one pipeline generation and Affected by every other. Ranking by
+// recency alone would have let that generation retract seven real findings.
+//
+// Superseded generations are not lost — vuln-show --history exists to show them,
+// and does.
+//
+// An empty walkID answers across the store. When walkID is set the answer is
+// restricted to the modules a scan run of that walk covered, and "most recent"
+// is taken within that walk.
 //
 // The walk constraint goes through walk_scan_run_modules rather than the
 // walk_id column on vulnerability_records: since schema v5 that column is
@@ -855,40 +881,69 @@ func (s *Store) ListDatabaseSnapshots(ctx context.Context) ([]domain.DatabaseSna
 // affected by this CVE" is the wrong answer to give for a walk that was never
 // scanned.
 func (s *Store) ListVulnerabilityRecordsByFindingID(ctx context.Context, findingID, walkID string) ([]domain.VulnerabilityRecord, error) {
+	// Ranking within a coordinate: a finding-bearing verdict first, then the
+	// newest scan, then the newest pipeline generation.
+	//
+	// The pipeline version is a tie-break, never a filter. Pinning the reader's
+	// current version would erase every module whose newest scan predates a
+	// pipeline bump — measured at 92 of 235 findings in a working store, each of
+	// which would have become "no modules affected". A stale answer labelled
+	// with its date is a fact; a missing answer is a false all-clear.
+	//
+	// substr past the leading "v" makes that compare numeric, so v9 does not
+	// outrank v14 the way a text compare would. A format change degrades to 0,
+	// which is arbitrary but still deterministic.
+	//
+	// The status placeholder is bound first because it appears first in the
+	// query text, ahead of the WHERE clause parameters.
+	const rankWithinCoordinate = `
+    ROW_NUMBER() OVER (
+      PARTITION BY vr.module_path, vr.module_version
+      ORDER BY (vr.overall_status = ?) DESC,
+               vr.scanned_at DESC,
+               CAST(substr(vr.pipeline_version, 2) AS INTEGER) DESC
+    ) AS rn`
+
 	const unscoped = `
-SELECT vr.serialised, vr.scanned_at
-FROM vulnerability_records vr
-JOIN vulnerability_findings_index fi
-  ON fi.module_path      = vr.module_path
- AND fi.module_version   = vr.module_version
- AND fi.pipeline_version = vr.pipeline_version
- AND fi.snapshot_source  = vr.snapshot_source
- AND fi.snapshot_version = vr.snapshot_version
-WHERE fi.finding_id = ?
-ORDER BY vr.scanned_at DESC`
+SELECT serialised, scanned_at FROM (
+  SELECT vr.serialised AS serialised, vr.scanned_at AS scanned_at,` + rankWithinCoordinate + `
+  FROM vulnerability_records vr
+  JOIN vulnerability_findings_index fi
+    ON fi.module_path      = vr.module_path
+   AND fi.module_version   = vr.module_version
+   AND fi.pipeline_version = vr.pipeline_version
+   AND fi.snapshot_source  = vr.snapshot_source
+   AND fi.snapshot_version = vr.snapshot_version
+  WHERE fi.finding_id = ?
+)
+WHERE rn = 1
+ORDER BY scanned_at DESC`
 
-	// DISTINCT because a walk may hold several scan runs covering the same
-	// module; without it one record is reported once per run that touched it.
+	// The partition also absorbs the duplicate rows a walk with several scan
+	// runs over one module would otherwise produce.
 	const scoped = `
-SELECT DISTINCT vr.serialised, vr.scanned_at
-FROM vulnerability_records vr
-JOIN vulnerability_findings_index fi
-  ON fi.module_path      = vr.module_path
- AND fi.module_version   = vr.module_version
- AND fi.pipeline_version = vr.pipeline_version
- AND fi.snapshot_source  = vr.snapshot_source
- AND fi.snapshot_version = vr.snapshot_version
-JOIN walk_scan_run_modules m
-  ON m.module_path      = vr.module_path
- AND m.module_version   = vr.module_version
- AND m.pipeline_version = vr.pipeline_version
- AND m.snapshot_source  = vr.snapshot_source
- AND m.snapshot_version = vr.snapshot_version
-JOIN walk_scan_runs wsr ON wsr.id = m.walk_scan_run_id
-WHERE fi.finding_id = ? AND wsr.walk_id = ?
-ORDER BY vr.scanned_at DESC`
+SELECT serialised, scanned_at FROM (
+  SELECT DISTINCT vr.serialised AS serialised, vr.scanned_at AS scanned_at,` + rankWithinCoordinate + `
+  FROM vulnerability_records vr
+  JOIN vulnerability_findings_index fi
+    ON fi.module_path      = vr.module_path
+   AND fi.module_version   = vr.module_version
+   AND fi.pipeline_version = vr.pipeline_version
+   AND fi.snapshot_source  = vr.snapshot_source
+   AND fi.snapshot_version = vr.snapshot_version
+  JOIN walk_scan_run_modules m
+    ON m.module_path      = vr.module_path
+   AND m.module_version   = vr.module_version
+   AND m.pipeline_version = vr.pipeline_version
+   AND m.snapshot_source  = vr.snapshot_source
+   AND m.snapshot_version = vr.snapshot_version
+  JOIN walk_scan_runs wsr ON wsr.id = m.walk_scan_run_id
+  WHERE fi.finding_id = ? AND wsr.walk_id = ?
+)
+WHERE rn = 1
+ORDER BY scanned_at DESC`
 
-	q, args := unscoped, []any{findingID}
+	q, args := unscoped, []any{string(domain.StatusAffected), findingID}
 	if walkID != "" {
 		known, err := s.walkHasScanRun(ctx, walkID)
 		if err != nil {
@@ -897,7 +952,7 @@ ORDER BY vr.scanned_at DESC`
 		if !known {
 			return nil, fmt.Errorf("no vulnerability scan run for walk %s — run: kanonarion vuln-scan %s", walkID, walkID)
 		}
-		q, args = scoped, []any{findingID, walkID}
+		q, args = scoped, []any{string(domain.StatusAffected), findingID, walkID}
 	}
 
 	rows, err := s.db.DB().QueryContext(ctx, q, args...)

@@ -851,7 +851,7 @@ func TestRunVulnShow_WithWalkID(t *testing.T) {
 	uc.AddRecord(app, vulnRec)
 
 	var buf bytes.Buffer
-	if err := runVulnShow(context.Background(), "example.com/app@v1.0.0", fixtureWalkID, false, false, uc, &buf); err != nil {
+	if err := runVulnShow(context.Background(), "example.com/app@v1.0.0", fixtureWalkID, false, false, uc, testfakes.NewFakeQueryScanRuns(), &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -871,7 +871,7 @@ func TestRunVulnShow_NoWalkID(t *testing.T) {
 	uc.AddRecord(app, vulnRec)
 
 	var buf bytes.Buffer
-	if err := runVulnShow(context.Background(), "example.com/app@v1.0.0", "", false, false, uc, &buf); err != nil {
+	if err := runVulnShow(context.Background(), "example.com/app@v1.0.0", "", false, false, uc, testfakes.NewFakeQueryScanRuns(), &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "example.com/app@v1.0.0") {
@@ -903,7 +903,7 @@ func TestRunVulnShow_SurfacesRemediation(t *testing.T) {
 	uc.AddRecord(app, rec)
 
 	var buf bytes.Buffer
-	if err := runVulnShow(context.Background(), "github.com/gorilla/csrf@v1.7.3", "", false, false, uc, &buf); err != nil {
+	if err := runVulnShow(context.Background(), "github.com/gorilla/csrf@v1.7.3", "", false, false, uc, testfakes.NewFakeQueryScanRuns(), &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -934,7 +934,7 @@ func TestRunVulnShow_FixedVersionRendered(t *testing.T) {
 	uc.AddRecord(app, rec)
 
 	var buf bytes.Buffer
-	if err := runVulnShow(context.Background(), "github.com/foo/bar@v1.0.0", "", false, false, uc, &buf); err != nil {
+	if err := runVulnShow(context.Background(), "github.com/foo/bar@v1.0.0", "", false, false, uc, testfakes.NewFakeQueryScanRuns(), &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -950,7 +950,7 @@ func TestRunVulnShow_NotFound(t *testing.T) {
 	uc := testfakes.NewFakeQueryVuln()
 
 	var buf bytes.Buffer
-	err := runVulnShow(context.Background(), "example.com/missing@v9.9.9", "", false, false, uc, &buf)
+	err := runVulnShow(context.Background(), "example.com/missing@v9.9.9", "", false, false, uc, testfakes.NewFakeQueryScanRuns(), &buf)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -1201,36 +1201,102 @@ func TestRunScanDiff_Error(t *testing.T) {
 	}
 }
 
-// ---- runVulnShow ScanFailed fallback (from vuln_error_messages.txtar) ---
+// ---- runVulnShow: explaining a walk-scoped miss ------------------------
 
-func TestRunVulnShow_ScanFailed(t *testing.T) {
-	// Simulate: GetLatestRecordForWalk returns not-found,
-	// but GetLatestRecord finds a ScanFailed record with ErrorDetail.
+// absentForWalkFixture builds the state that reaches the absence explainer: a
+// ScanFailed record exists for the coordinate somewhere in the store, and the
+// named walk has no readable record of its own.
+func absentForWalkFixture(t *testing.T) (*testfakes.FakeQueryVuln, coordinate.ModuleCoordinate) {
+	t.Helper()
 	app := mustVulnCoord(t, "example.com/failed", "v1.0.0")
-	scannedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
-	failedRec := vuldomain.VulnerabilityRecord{
+	uc := testfakes.NewFakeQueryVuln()
+	uc.AddRecord(app, vuldomain.VulnerabilityRecord{
 		Coordinate:       app,
-		WalkID:           "01JWALKPARTIAL00000000001",
+		WalkID:           "01JSOMEOTHERWALK000000001",
 		OverallStatus:    vuldomain.StatusScanFailed,
 		DatabaseSnapshot: fixtureSnap,
 		ErrorDetail:      "govulncheck failed: exit status 1",
-		ScannedAt:        scannedAt,
+		ScannedAt:        time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC),
 		PipelineVersion:  "v1",
-	}
-
-	uc := testfakes.NewFakeQueryVuln()
-	uc.AddRecord(app, failedRec)
-	// Force GetLatestRecordForWalk to return not-found so the fallback path runs.
+	})
 	uc.ForceLatestRecordForWalkNotFound = true
+	return uc, app
+}
+
+// A failure recorded by some other walk must never be reported as this walk's.
+// The old fallback asked for the coordinate's latest record across all walks and
+// quoted whatever it found, so it named a failure that did not happen in the
+// walk the user asked about and told them to re-run that walk.
+func TestRunVulnShow_DoesNotAttributeAnotherWalksFailure(t *testing.T) {
+	uc, app := absentForWalkFixture(t)
+
+	// The named walk ran, but never covered this module.
+	runs := testfakes.NewFakeQueryScanRuns()
+	other := mustVulnCoord(t, "example.com/other", "v1.0.0")
+	runs.AddRun(vuldomain.WalkScanRun{
+		ID:               "run-1",
+		WalkID:           "01JWALKPARTIAL00000000001",
+		PipelineVersion:  vulnPipelineVersion,
+		PerModuleResults: map[coordinate.ModuleCoordinate]string{other: "hash"},
+		CompletedAt:      time.Date(2025, 1, 2, 12, 0, 0, 0, time.UTC),
+	})
 
 	var buf bytes.Buffer
 	err := runVulnShow(context.Background(), "example.com/failed@v1.0.0",
-		"01JWALKPARTIAL00000000001", false, false, uc, &buf)
+		"01JWALKPARTIAL00000000001", false, false, uc, runs, &buf)
 	if err == nil {
-		t.Fatal("expected error for ScanFailed fallback path, got nil")
+		t.Fatal("expected an error when the walk has no record for the module")
 	}
-	if !strings.Contains(err.Error(), "govulncheck failed") {
-		t.Errorf("expected error detail in error message, got: %v", err)
+	if strings.Contains(err.Error(), "govulncheck failed") {
+		t.Errorf("another walk's failure detail leaked into this walk's answer: %v", err)
+	}
+	if !strings.Contains(err.Error(), "none covering") || !strings.Contains(err.Error(), app.Path()) {
+		t.Errorf("expected the error to say the walk does not contain the module, got: %v", err)
+	}
+}
+
+// A walk that was never scanned says exactly that.
+func TestRunVulnShow_WalkNeverScanned(t *testing.T) {
+	uc, _ := absentForWalkFixture(t)
+
+	var buf bytes.Buffer
+	err := runVulnShow(context.Background(), "example.com/failed@v1.0.0",
+		"01JWALKPARTIAL00000000001", false, false, uc, testfakes.NewFakeQueryScanRuns(), &buf)
+	if err == nil {
+		t.Fatal("expected an error for a walk with no scan run")
+	}
+	if !strings.Contains(err.Error(), "no vulnerability scan run for walk") {
+		t.Errorf("expected the never-scanned message, got: %v", err)
+	}
+	if strings.Contains(err.Error(), "govulncheck failed") {
+		t.Errorf("another walk's failure detail leaked in: %v", err)
+	}
+}
+
+// The common real cause of a walk-scoped miss is a generation gap: the walk was
+// scanned under an older pipeline version than the one this build reads. Naming
+// both versions is what tells the operator the re-scan is the fix.
+func TestRunVulnShow_ReportsPipelineGenerationGap(t *testing.T) {
+	uc, app := absentForWalkFixture(t)
+
+	runs := testfakes.NewFakeQueryScanRuns()
+	runs.AddRun(vuldomain.WalkScanRun{
+		ID:               "run-1",
+		WalkID:           "01JWALKPARTIAL00000000001",
+		PipelineVersion:  "v1",
+		PerModuleResults: map[coordinate.ModuleCoordinate]string{app: "hash"},
+		CompletedAt:      time.Date(2025, 1, 2, 12, 0, 0, 0, time.UTC),
+	})
+
+	var buf bytes.Buffer
+	err := runVulnShow(context.Background(), "example.com/failed@v1.0.0",
+		"01JWALKPARTIAL00000000001", false, false, uc, runs, &buf)
+	if err == nil {
+		t.Fatal("expected an error for a generation gap")
+	}
+	if !strings.Contains(err.Error(), "pipeline version v1") ||
+		!strings.Contains(err.Error(), "pipeline version "+vulnPipelineVersion) {
+		t.Errorf("expected both generations named, got: %v", err)
 	}
 }
 

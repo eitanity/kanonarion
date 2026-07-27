@@ -264,6 +264,137 @@ func scanRun(t *testing.T, id, walkID string, snapshot domain.DatabaseSnapshot, 
 	})
 }
 
+// One coordinate scanned under two generations yields one row. Reporting both
+// made the command answer Affected and Clean for the same module version in one
+// listing, with nothing to rank the two.
+//
+// The survivor is the finding, not the newest scan: a later all-clear says the
+// module was clean when that scan ran, which does not retract an earlier
+// finding. Retracting is the withdrawn-advisory work's job, and a Clean row must
+// not do it by accident.
+func TestListVulnerabilityRecordsByFindingID_LaterCleanDoesNotRetractEarlierFinding(t *testing.T) {
+	ctx := t.Context()
+	store := newTestStore(t)
+
+	affected := findingRecord(t, "github.com/foo/bar", "v1.0.0", "walk-1", "GO-2024-0001", snap("govulndb", "v2024-01-01"))
+	affected.ScannedAt = time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	affected.OverallStatus = domain.StatusAffected
+	affected = seal(t, affected)
+
+	laterClean := findingRecord(t, "github.com/foo/bar", "v1.0.0", "walk-1", "GO-2024-0001", snap("govulndb", "v2024-06-01"))
+	laterClean.ScannedAt = time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
+	laterClean.OverallStatus = domain.StatusClean
+	laterClean = seal(t, laterClean)
+
+	for _, rec := range []domain.VulnerabilityRecord{affected, laterClean} {
+		if err := store.PutVulnerabilityRecord(ctx, rec); err != nil {
+			t.Fatalf("PutVulnerabilityRecord: %v", err)
+		}
+	}
+
+	got, err := store.ListVulnerabilityRecordsByFindingID(ctx, "GO-2024-0001", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d records, want 1 per coordinate", len(got))
+	}
+	if got[0].OverallStatus != domain.StatusAffected {
+		t.Errorf("status: got %s, want the finding to survive the later all-clear (%s)", got[0].OverallStatus, domain.StatusAffected)
+	}
+}
+
+// Among records that agree on the verdict, the newest scan is the one reported.
+func TestListVulnerabilityRecordsByFindingID_NewestWinsAmongEqualVerdicts(t *testing.T) {
+	ctx := t.Context()
+	store := newTestStore(t)
+
+	older := findingRecord(t, "github.com/foo/bar", "v1.0.0", "walk-1", "GO-2024-0001", snap("govulndb", "v2024-01-01"))
+	older.ScannedAt = time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	older = seal(t, older)
+
+	newer := findingRecord(t, "github.com/foo/bar", "v1.0.0", "walk-1", "GO-2024-0001", snap("govulndb", "v2024-06-01"))
+	newer.ScannedAt = time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
+	newer = seal(t, newer)
+
+	for _, rec := range []domain.VulnerabilityRecord{older, newer} {
+		if err := store.PutVulnerabilityRecord(ctx, rec); err != nil {
+			t.Fatalf("PutVulnerabilityRecord: %v", err)
+		}
+	}
+
+	got, err := store.ListVulnerabilityRecordsByFindingID(ctx, "GO-2024-0001", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d records, want 1 per coordinate", len(got))
+	}
+	if !got[0].ScannedAt.Equal(newer.ScannedAt) {
+		t.Errorf("scanned_at: got %s, want the newer scan %s", got[0].ScannedAt, newer.ScannedAt)
+	}
+}
+
+// A record whose newest scan predates a pipeline bump must still be reported.
+// Pinning the reader's current pipeline version would have silently dropped 39%
+// of the findings in a working store.
+func TestListVulnerabilityRecordsByFindingID_OlderPipelineGenerationStillAnswers(t *testing.T) {
+	ctx := t.Context()
+	store := newTestStore(t)
+
+	stale := findingRecord(t, "github.com/foo/bar", "v1.0.0", "walk-1", "GO-2024-0001", snap("govulndb", "v2024-01-01"))
+	stale.PipelineVersion = "v10" // superseded; nothing has re-scanned this module since.
+	stale = seal(t, stale)
+	if err := store.PutVulnerabilityRecord(ctx, stale); err != nil {
+		t.Fatalf("PutVulnerabilityRecord: %v", err)
+	}
+
+	got, err := store.ListVulnerabilityRecordsByFindingID(ctx, "GO-2024-0001", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d records, want the superseded-generation record reported, not dropped", len(got))
+	}
+}
+
+// Generations are ranked numerically, so v9 does not outrank v14 the way a text
+// compare would when two scans share a timestamp.
+func TestListVulnerabilityRecordsByFindingID_PipelineTieBreakIsNumeric(t *testing.T) {
+	ctx := t.Context()
+	store := newTestStore(t)
+
+	sameInstant := time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
+
+	// Both Affected, so the verdict rank cannot decide and the generation must.
+	old := findingRecord(t, "github.com/foo/bar", "v1.0.0", "walk-1", "GO-2024-0001", snap("govulndb", "v2024-01-01"))
+	old.PipelineVersion = "v9"
+	old.ScannedAt = sameInstant
+	old = seal(t, old)
+
+	current := findingRecord(t, "github.com/foo/bar", "v1.0.0", "walk-1", "GO-2024-0001", snap("govulndb", "v2024-06-01"))
+	current.PipelineVersion = "v14"
+	current.ScannedAt = sameInstant
+	current = seal(t, current)
+
+	for _, rec := range []domain.VulnerabilityRecord{old, current} {
+		if err := store.PutVulnerabilityRecord(ctx, rec); err != nil {
+			t.Fatalf("PutVulnerabilityRecord: %v", err)
+		}
+	}
+
+	got, err := store.ListVulnerabilityRecordsByFindingID(ctx, "GO-2024-0001", "")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 1 {
+		t.Fatalf("got %d records, want 1", len(got))
+	}
+	if got[0].PipelineVersion != "v14" {
+		t.Errorf("tie-break picked pipeline %s, want v14", got[0].PipelineVersion)
+	}
+}
+
 // A by-finding query scoped to a walk answers for that walk's modules only. The
 // unscoped answer spans every stored version, including one that a later build
 // patched out — reporting that version as affected is a false security claim.

@@ -494,19 +494,29 @@ store cannot support. The walk constraint resolves through scan-run membership,
 not the `walk_id` provenance column on the record, so a scan two walks share is
 reported for both.
 
+**One row per module version.** A module accumulates a scan record for every
+(pipeline version, database snapshot) it has been scanned under, and those
+records disagree. `vuln-by-id` reports one row per module version, choosing the
+record that reports the advisory as affecting the module; only among records
+that agree does the most recent scan win. A later all-clear does not retire an
+earlier finding: `Clean` is the right label for a module where the advisory was
+never found, not a state a finding may decay into without a stated reason. Each
+row carries the snapshot and scan time it came from, so a stale answer is
+visible as one. Use `vuln-show --history` to see every generation.
+
 **Example:**
 
 ```
 $ kanonarion vuln-by-id GO-2020-0001
-github.com/gin-gonic/gin@v1.6.2                              Affected
-github.com/gin-gonic/gin@v1.7.0                              Affected
+github.com/gin-gonic/gin@v1.6.2       Affected     vuln-db=2026-07-24T18:35:55Z   scanned=2026-07-26T06:37:10Z
+github.com/gin-gonic/gin@v1.7.0       Affected     vuln-db=2026-07-23T18:46:07Z   scanned=2026-07-24T11:07:36Z
 
 $ kanonarion vuln-by-id CVE-2020-28483
-github.com/gin-gonic/gin@v1.6.2                              Affected
+github.com/gin-gonic/gin@v1.6.2       Affected     vuln-db=2026-07-24T18:35:55Z   scanned=2026-07-26T06:37:10Z
 
 $ kanonarion vuln-by-id GO-2020-0001 --walk-id 01KQDBVW092ER1HNXZ60X27CMD
 notice: results restricted to the modules scanned under walk "01KQDBVW092ER1HNXZ60X27CMD"
-github.com/gin-gonic/gin@v1.7.0                              Affected
+github.com/gin-gonic/gin@v1.7.0       Affected     vuln-db=2026-07-23T18:46:07Z   scanned=2026-07-24T11:07:36Z
 ```
 
 ---
