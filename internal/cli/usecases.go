@@ -88,6 +88,7 @@ type ExtractLicenseUseCase interface {
 type QueryLicenseUseCase interface {
 	GetLicenseRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (licensedomain.LicenseRecord, bool, error)
 	ListLicenseRecords(ctx context.Context, filter licenseports.LicenseFilter) ([]licenseports.LicenseSummary, error)
+	LicenseHistory(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]licensedomain.LicenseRecord, error)
 	ResolveForWalk(ctx context.Context, walkID string, target coordinate.ModuleCoordinate, extractFn func(context.Context, coordinate.ModuleCoordinate) (licensedomain.LicenseRecord, error)) ([]licapp.DepLicenseResult, error)
 }
 

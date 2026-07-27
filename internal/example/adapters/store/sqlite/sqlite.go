@@ -16,6 +16,7 @@ import (
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	domain2 "github.com/eitanity/kanonarion/internal/example/domain"
 	"github.com/eitanity/kanonarion/internal/example/ports"
 
@@ -232,7 +233,10 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 	}
 
 	if verr := h.VerifyContentHash(rec); verr != nil {
-		return domain2.ExampleRecord{}, false, fmt.Errorf("%w: %w", ports.ErrExampleIntegrity, verr)
+		// A record this build cannot reproduce is not necessarily one that has
+		// been altered. recordseal decides which, on the stored bytes alone.
+		return domain2.ExampleRecord{}, false, fmt.Errorf("%w: %w",
+			ports.ErrExampleIntegrity, recordseal.Classify(blob, rec.ContentHash, verr))
 	}
 	return rec, true, nil
 }

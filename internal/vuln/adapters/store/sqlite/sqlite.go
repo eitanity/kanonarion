@@ -11,6 +11,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
@@ -1349,7 +1350,12 @@ func decodeRecord(serialised []byte) (domain.VulnerabilityRecord, error) {
 		return domain.VulnerabilityRecord{}, fmt.Errorf("unmarshalling vulnerability record: %w", err)
 	}
 	if verr := h.VerifyContentHash(rec); verr != nil {
-		return domain.VulnerabilityRecord{}, fmt.Errorf("%w: %s: %w", ports.ErrVulnIntegrity, rec.Coordinate, verr)
+		// A record this build cannot reproduce is not necessarily one that has
+		// been altered. recordseal decides which, on the stored bytes alone —
+		// and it is JSON-aware, so the snapshot's embedded content_hash is
+		// treated as the sealed content it is rather than as the seal.
+		return domain.VulnerabilityRecord{}, fmt.Errorf("%w: %s: %w",
+			ports.ErrVulnIntegrity, rec.Coordinate, recordseal.Classify(serialised, rec.ContentHash, verr))
 	}
 	return rec, nil
 }
@@ -1363,7 +1369,8 @@ func decodeRun(serialised []byte) (domain.WalkScanRun, error) {
 		return domain.WalkScanRun{}, fmt.Errorf("unmarshalling walk scan run: %w", err)
 	}
 	if verr := h.VerifyContentHash(run); verr != nil {
-		return domain.WalkScanRun{}, fmt.Errorf("%w: run %s: %w", ports.ErrVulnIntegrity, run.ID, verr)
+		return domain.WalkScanRun{}, fmt.Errorf("%w: run %s: %w",
+			ports.ErrVulnIntegrity, run.ID, recordseal.Classify(serialised, run.ContentHash, verr))
 	}
 	return run, nil
 }

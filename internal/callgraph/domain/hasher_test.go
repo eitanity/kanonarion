@@ -219,15 +219,6 @@ func TestHasherUnmarshalRejectsBadCoordinate(t *testing.T) {
 	}
 }
 
-func TestHasherVerifyBlobHashRejectsUnterminatedHash(t *testing.T) {
-	var h domain2.CallGraphRecordHasher
-	// A content_hash value with no closing quote must be rejected, not panic.
-	blob := []byte(`{"content_hash":"sha256:deadbeef`)
-	if err := h.VerifyBlobHash(blob, "sha256:deadbeef"); err == nil {
-		t.Fatal("VerifyBlobHash should reject an unterminated content_hash value")
-	}
-}
-
 // mustMarshal builds and marshals a hashed test record, failing the test on error.
 func mustMarshal(t *testing.T, h domain2.CallGraphRecordHasher) []byte {
 	t.Helper()
@@ -417,39 +408,6 @@ func TestMarshalCanonical_AllEdgeSortBranches(t *testing.T) {
 	}
 	if len(restored.Edges) != len(r.Edges) {
 		t.Errorf("edge count after round-trip: got %d, want %d", len(restored.Edges), len(r.Edges))
-	}
-}
-
-func TestHasherVerifyBlobHash(t *testing.T) {
-	var h domain2.CallGraphRecordHasher
-	r := makeTestRecord()
-
-	hashed, err := h.SetContentHash(r)
-	if err != nil {
-		t.Fatalf("SetContentHash: %v", err)
-	}
-	blob, err := h.Marshal(hashed)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-
-	if err := h.VerifyBlobHash(blob, hashed.ContentHash); err != nil {
-		t.Errorf("VerifyBlobHash on valid blob: %v", err)
-	}
-
-	if err := h.VerifyBlobHash(blob, "sha256:badhash"); err == nil {
-		t.Error("VerifyBlobHash should fail on wrong storedHash")
-	}
-
-	tampered := make([]byte, len(blob))
-	copy(tampered, blob)
-	tampered[len(tampered)-2] ^= 0xff
-	if err := h.VerifyBlobHash(tampered, hashed.ContentHash); err == nil {
-		t.Error("VerifyBlobHash should fail on tampered blob")
-	}
-
-	if err := h.VerifyBlobHash([]byte(`{"no_hash_field":"x"}`), hashed.ContentHash); err == nil {
-		t.Error("VerifyBlobHash should fail when content_hash field is absent")
 	}
 }
 

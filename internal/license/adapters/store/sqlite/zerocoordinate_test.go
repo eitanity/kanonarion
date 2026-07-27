@@ -26,4 +26,14 @@ func TestRefusesZeroCoordinate(t *testing.T) {
 		}
 		return nil
 	})
+	// The ledger's history read inherits the same obligation. The existing cases
+	// only cover the methods that existed when they were written, so a conversion
+	// that adds a read without this reopens the hole silently.
+	coordinatetest.AssertRefusesZeroCoordinate(t, "ListLicenseRecordsFor", func() error {
+		_, err := s.ListLicenseRecordsFor(ctx, zeroCoordinate(), "0.1.0")
+		if err != nil {
+			return fmt.Errorf("ListLicenseRecordsFor: %w", err)
+		}
+		return nil
+	})
 }

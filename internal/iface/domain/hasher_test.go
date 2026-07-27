@@ -138,42 +138,6 @@ func TestHasher_Deterministic(t *testing.T) {
 	}
 }
 
-func TestHasher_VerifyBlobHash(t *testing.T) {
-	var h domain2.InterfaceRecordHasher
-	r := makeTestRecord(t)
-	r, err := h.SetContentHash(r)
-	if err != nil {
-		t.Fatalf("SetContentHash: %v", err)
-	}
-	blob, err := h.Marshal(r)
-	if err != nil {
-		t.Fatalf("Marshal: %v", err)
-	}
-
-	if err := h.VerifyBlobHash(blob, r.ContentHash); err != nil {
-		t.Errorf("VerifyBlobHash on valid blob: %v", err)
-	}
-
-	if err := h.VerifyBlobHash(blob, "sha256:badhash"); err == nil {
-		t.Error("VerifyBlobHash should fail on wrong storedHash")
-	}
-
-	tampered := make([]byte, len(blob))
-	copy(tampered, blob)
-	tampered[len(tampered)-2] ^= 0xff
-	if err := h.VerifyBlobHash(tampered, r.ContentHash); err == nil {
-		t.Error("VerifyBlobHash should fail on tampered blob")
-	}
-
-	if err := h.VerifyBlobHash([]byte(`{"no_hash_field":"x"}`), r.ContentHash); err == nil {
-		t.Error("VerifyBlobHash should fail when content_hash field is absent")
-	}
-
-	if err := h.VerifyBlobHash([]byte(`{"content_hash":"unterminated`), r.ContentHash); err == nil {
-		t.Error("VerifyBlobHash should fail when the content_hash value is not quote-terminated")
-	}
-}
-
 func TestHasher_EmptyRecord(t *testing.T) {
 	var h domain2.InterfaceRecordHasher
 	coord, _ := coordinate.NewModuleCoordinate("example.com/m", "v0.0.1")

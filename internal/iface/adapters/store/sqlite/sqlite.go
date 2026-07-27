@@ -15,6 +15,7 @@ import (
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 
 	domain2 "github.com/eitanity/kanonarion/internal/iface/domain"
 	"github.com/eitanity/kanonarion/internal/iface/ports"
@@ -251,7 +252,7 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 		return domain2.InterfaceRecord{}, false, fmt.Errorf("decompressing interface record: %w", decErr)
 	}
 	var h domain2.InterfaceRecordHasher
-	if verr := h.VerifyBlobHash(blob, storedHash); verr != nil {
+	if verr := recordseal.VerifyBlob(blob, storedHash); verr != nil {
 		return domain2.InterfaceRecord{}, false, fmt.Errorf("%w: %w", ports.ErrInterfaceIntegrity, verr)
 	}
 	rec, err := h.Unmarshal(blob)

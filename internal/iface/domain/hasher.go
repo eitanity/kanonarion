@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -48,13 +47,6 @@ func (InterfaceRecordHasher) VerifyContentHash(r InterfaceRecord) error {
 	return nil
 }
 
-// VerifyBlobHash verifies the content hash directly against the raw serialised
-// blob, zeroing the content_hash value in-place rather than deserializing and
-// re-serializing the full record. This is the fast path for read verification.
-func (InterfaceRecordHasher) VerifyBlobHash(blob []byte, storedHash string) error {
-	return verifyBlobHash(blob, storedHash)
-}
-
 // Marshal returns the canonical JSON bytes for an InterfaceRecord, including
 // its ContentHash field. Call SetContentHash before this.
 func (InterfaceRecordHasher) Marshal(r InterfaceRecord) ([]byte, error) {
@@ -99,37 +91,6 @@ func (InterfaceRecordHasher) Unmarshal(data []byte) (InterfaceRecord, error) {
 		ArtefactIdentity:  c.ArtefactIdentity,
 		SourceContentHash: c.SourceContentHash,
 	}, nil
-}
-
-// verifyBlobHash hashes blob after zeroing the content_hash JSON value in-place.
-// Checks both internal consistency (hash embedded in blob matches content) and
-// DB-level consistency (DB column matches content). The blob must be valid
-// canonical JSON produced by Marshal.
-func verifyBlobHash(blob []byte, storedHash string) error {
-	const key = `"content_hash":"`
-	idx := bytes.Index(blob, []byte(key))
-	if idx < 0 {
-		return fmt.Errorf("content_hash field not found in blob")
-	}
-	valueStart := idx + len(key)
-	rel := bytes.IndexByte(blob[valueStart:], '"')
-	if rel < 0 {
-		return fmt.Errorf("content_hash value not terminated in blob")
-	}
-	valueEnd := valueStart + rel
-	blobHash := string(blob[valueStart:valueEnd])
-	zeroed := make([]byte, 0, len(blob)-(valueEnd-valueStart))
-	zeroed = append(zeroed, blob[:valueStart]...)
-	zeroed = append(zeroed, blob[valueEnd:]...)
-	sum := sha256.Sum256(zeroed)
-	expected := "sha256:" + hex.EncodeToString(sum[:])
-	if blobHash != expected {
-		return fmt.Errorf("content hash mismatch: blob has %q, computed %q", blobHash, expected)
-	}
-	if storedHash != expected {
-		return fmt.Errorf("content hash mismatch: stored %q, computed %q", storedHash, expected)
-	}
-	return nil
 }
 
 // -- canonical wire types --

@@ -256,6 +256,7 @@ func (f *FakeExtractLicense) GetLicenseStore() licenseports.LicenseStore {
 type FakeQueryLicense struct {
 	mu            sync.Mutex
 	records       map[string]licensedomain.LicenseRecord
+	history       map[string][]licensedomain.LicenseRecord
 	list          []licenseports.LicenseSummary
 	resolveResult []licapp.DepLicenseResult
 	Err           error
@@ -291,6 +292,26 @@ func (f *FakeQueryLicense) GetLicenseRecord(_ context.Context, coord coordinate.
 	defer f.mu.Unlock()
 	rec, ok := f.records[coord.String()+"|"+pipelineVersion]
 	return rec, ok, nil
+}
+
+// History is the generation list LicenseHistory returns, keyed by
+// "coordinate|pipelineVersion" like records.
+func (f *FakeQueryLicense) SetHistory(coord coordinate.ModuleCoordinate, pipelineVersion string, recs []licensedomain.LicenseRecord) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.history == nil {
+		f.history = map[string][]licensedomain.LicenseRecord{}
+	}
+	f.history[coord.String()+"|"+pipelineVersion] = recs
+}
+
+func (f *FakeQueryLicense) LicenseHistory(_ context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]licensedomain.LicenseRecord, error) {
+	if f.Err != nil {
+		return nil, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.history[coord.String()+"|"+pipelineVersion], nil
 }
 
 func (f *FakeQueryLicense) ListLicenseRecords(_ context.Context, _ licenseports.LicenseFilter) ([]licenseports.LicenseSummary, error) {
