@@ -21,6 +21,15 @@ type Store struct {
 	db sqlitestore.DB
 }
 
+// querier is the read surface *sql.DB and *sql.Tx have in common, so a helper
+// can be called either standalone or inside an open transaction. The pool holds
+// one connection, which makes the choice mandatory rather than stylistic: a
+// helper that reached for the store's own handle from inside a transaction
+// would wait on the connection that transaction is holding.
+type querier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+}
+
 // New returns a new Store.
 func New(db sqlitestore.DB) *Store {
 	return &Store{db: db}
@@ -323,6 +332,105 @@ WHERE EXISTS (
 DELETE FROM vulnerability_records WHERE content_hash = '';
 `,
 		},
+		{
+			Module:  "vuln",
+			Version: 10,
+			// WITHDRAWN. This migration used to hash every stored snapshot blob in
+			// place, to give the pre-existing rows the content hash they were
+			// written without.
+			//
+			// That sealed the wrong claim. A snapshot's content hash answers "are
+			// these the bytes we fetched"; hashing at migration time answers "are
+			// these the bytes we held when the migration ran". A blob altered before
+			// that moment would have been blessed by the migration and verified
+			// cleanly ever after, and the resulting seal is indistinguishable from
+			// an honest one — so the check would report integrity it never
+			// established.
+			//
+			// The version number is retained and made a no-op rather than removed,
+			// because schema_migrations is keyed on (module, version) and a store
+			// that already applied it must not renumber. Migration 12 unseals the
+			// rows this one sealed on stores where it ran.
+			//
+			// A pre-hash snapshot therefore stays unverifiable, which is what it
+			// honestly is: the read leg tolerates an empty hash and reports such a
+			// blob as unverified rather than as verified. Nothing is lost that these
+			// rows ever had, and they age out as fresh snapshots are fetched.
+			SQL: ``,
+		},
+		{
+			Module:  "vuln",
+			Version: 11,
+			// A VulnerabilityRecord now carries the same two independent verdict
+			// axes a WalkScanRun does — coverage (was this module analysed?) and
+			// findings (did the analysis report anything?) — instead of only the
+			// single collapsed overall_status, which mixed answers to both. Persist
+			// them as columns so the ranking query can ask a findings question
+			// without treating "we could not look" as "we looked and it was clean".
+			//
+			// The back-fill is exact, not a guess: the projection from the collapsed
+			// status onto each axis is total and lossless (Clean and Affected are
+			// analysed; Unscannable and ScanFailed are the two coverage failures,
+			// neither of which reports a finding). It is the same mapping the write
+			// path applies, expressed in SQL.
+			//
+			// The records themselves are kept. Unlike migration 8's walk_scan_runs
+			// purge — where a legacy blob had no axis at all and a reader would
+			// silently lose a finding — a pre-split record's axes are recoverable
+			// from what it already stores, and RecordAxes recovers them on read. The
+			// PipelineVersion bump means new scans write the new shape; deleting
+			// thousands of still-readable verdicts to reach the same place would
+			// destroy evidence rather than correct it.
+			SQL: `
+ALTER TABLE vulnerability_records ADD COLUMN coverage_status TEXT NOT NULL DEFAULT '';
+ALTER TABLE vulnerability_records ADD COLUMN findings_status TEXT NOT NULL DEFAULT '';
+
+UPDATE vulnerability_records SET
+    coverage_status = CASE overall_status
+        WHEN 'Clean'       THEN 'Analysed'
+        WHEN 'Affected'    THEN 'Analysed'
+        WHEN 'Unscannable' THEN 'Unscannable'
+        ELSE 'Failed'
+    END,
+    findings_status = CASE overall_status
+        WHEN 'Affected' THEN 'Affected'
+        ELSE 'Clean'
+    END;
+
+CREATE INDEX IF NOT EXISTS vuln_records_findings_status_idx
+  ON vulnerability_records(findings_status);
+`,
+		},
+		{
+			Module:  "vuln",
+			Version: 12,
+			// Unseal the snapshots migration 10 sealed, on stores where it ran
+			// before it was withdrawn (see the note there). Such a hash attests
+			// only that the blob was unchanged since the migration, while being
+			// indistinguishable from one taken at fetch — so it reports an
+			// integrity guarantee that was never established, which is worse than
+			// reporting none.
+			//
+			// The rows to clear are exactly those retrieved BEFORE migration 10 ran:
+			// a snapshot fetched afterwards was sealed by the fetch path against the
+			// bytes it downloaded, and that hash is honest and must survive. Both
+			// timestamps are RFC3339 in UTC, so the string comparison is
+			// chronological.
+			//
+			// When migration 10 has no recorded applied_at — impossible in practice,
+			// since it is applied before this one — the subquery is NULL, the
+			// predicate is false and nothing is touched. Failing closed is right: the
+			// alternative would clear honestly-sealed rows.
+			SQL: `
+UPDATE vulnerability_snapshots
+SET content_hash = ''
+WHERE content_hash != ''
+  AND retrieved_at < (
+    SELECT applied_at FROM schema_migrations
+    WHERE module = 'vuln' AND version = 10
+  );
+`,
+		},
 	}
 }
 
@@ -334,6 +442,24 @@ DELETE FROM vulnerability_records WHERE content_hash = '';
 // row already exists for the (module, version, pipeline, snapshot) tuple, the
 // existing anchor is preserved in both the column (left out of the UPDATE) and
 // the serialised blob (which reads return), regardless of what the caller set.
+//
+// The record row and its findings-index rows are written in one transaction,
+// and the index is reconciled rather than appended to: every index row for the
+// record's key is deleted and re-inserted from the findings the record actually
+// carries. Both properties are load-bearing.
+//
+// Appending alone let a re-scan that returned *fewer* findings than its
+// predecessor — the advisory stopped applying, the reachability verdict
+// changed, the scan came back clean — leave the earlier scan's rows behind,
+// describing a record that no longer supports them. vuln-by-id resolves through
+// this index, so such a row is a false positive on a security question,
+// manufactured by the store rather than by the scanner, and invisible to a
+// content-hash check because each record is internally valid.
+//
+// Separate statements on the shared handle let a failure between the record
+// write and the index write leave the two permanently disagreeing even with no
+// re-scan at all. One transaction is what makes the reconciliation atomic with
+// the verdict it describes.
 func (s *Store) PutVulnerabilityRecord(ctx context.Context, record domain.VulnerabilityRecord) error {
 	// A record whose coordinate is the zero value would key a row on the empty
 	// path at the empty version, which every later read treats as a genuine
@@ -353,8 +479,18 @@ func (s *Store) PutVulnerabilityRecord(ctx context.Context, record domain.Vulner
 	if verr := h.VerifyContentHash(record); verr != nil {
 		return fmt.Errorf("%w: verifying %s before put: %w", ports.ErrVulnIntegrity, record.Coordinate, verr)
 	}
-	if existing, ok, err := s.firstScannedAt(ctx, record); err != nil {
-		return err
+	// The pool is capped at a single connection, so every statement below —
+	// including the first-seen lookup — must run on the transaction's handle. A
+	// query issued against s.db.DB() while this transaction is open would wait
+	// for a connection the transaction is holding, and deadlock.
+	tx, err := s.db.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if existing, ok, ferr := s.firstScannedAt(ctx, tx, record); ferr != nil {
+		return ferr
 	} else if ok {
 		record.FirstScannedAt = existing
 	}
@@ -368,28 +504,52 @@ func (s *Store) PutVulnerabilityRecord(ctx context.Context, record domain.Vulner
 INSERT INTO vulnerability_records (
     module_path, module_version, pipeline_version,
     snapshot_source, snapshot_version, walk_id,
-    overall_status, finding_count, scanned_at, first_scanned_at,
+    overall_status, coverage_status, findings_status,
+    finding_count, scanned_at, first_scanned_at,
     content_hash, serialised
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (module_path, module_version, pipeline_version, snapshot_source, snapshot_version)
 DO UPDATE SET
-    walk_id        = excluded.walk_id,
-    overall_status = excluded.overall_status,
-    finding_count  = excluded.finding_count,
-    scanned_at     = excluded.scanned_at,
-    content_hash   = excluded.content_hash,
-    serialised     = excluded.serialised`
+    walk_id         = excluded.walk_id,
+    overall_status  = excluded.overall_status,
+    coverage_status = excluded.coverage_status,
+    findings_status = excluded.findings_status,
+    finding_count   = excluded.finding_count,
+    scanned_at      = excluded.scanned_at,
+    content_hash    = excluded.content_hash,
+    serialised      = excluded.serialised`
 
-	_, err = s.db.DB().ExecContext(ctx, q,
+	// The columns come from RecordAxes rather than from the fields directly, so a
+	// record that reached here without the seal step's derivation still indexes
+	// under a real axis instead of the empty string.
+	coverage, findings := domain.RecordAxes(record)
+
+	if _, err = tx.ExecContext(ctx, q,
 		record.Coordinate.Path(), record.Coordinate.Version(), record.PipelineVersion,
 		record.DatabaseSnapshot.Source, record.DatabaseSnapshot.Version, record.WalkID,
-		string(record.OverallStatus), len(record.Findings),
+		string(record.OverallStatus), string(coverage), string(findings), len(record.Findings),
 		record.ScannedAt.UTC().Format(time.RFC3339),
 		record.FirstScannedAt.UTC().Format(time.RFC3339),
 		record.ContentHash, serialised,
-	)
-	if err != nil {
+	); err != nil {
 		return fmt.Errorf("inserting vulnerability record: %w", err)
+	}
+
+	// Reconcile the findings index for this key: clear it, then re-derive it from
+	// the record just written. The delete is what makes the index describe the
+	// current record rather than the union of every record ever written under
+	// this key — an all-clear must be able to retract the rows an earlier
+	// affected scan added.
+	const clearIdxQ = `
+DELETE FROM vulnerability_findings_index
+WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
+  AND snapshot_source = ? AND snapshot_version = ?`
+
+	if _, err = tx.ExecContext(ctx, clearIdxQ,
+		record.Coordinate.Path(), record.Coordinate.Version(), record.PipelineVersion,
+		record.DatabaseSnapshot.Source, record.DatabaseSnapshot.Version,
+	); err != nil {
+		return fmt.Errorf("clearing finding index entries for %s: %w", record.Coordinate, err)
 	}
 
 	// Populate the findings index for cross-store queries.
@@ -412,7 +572,7 @@ ON CONFLICT DO NOTHING`
 		// Index all aliases too (CVE, GHSA, etc.) so queries by any identifier work.
 		ids := append([]string{f.ID}, f.Aliases...)
 		for _, id := range ids {
-			if _, err := s.db.DB().ExecContext(ctx, idxQ,
+			if _, err = tx.ExecContext(ctx, idxQ,
 				id,
 				record.Coordinate.Path(), record.Coordinate.Version(), record.PipelineVersion,
 				record.DatabaseSnapshot.Source, record.DatabaseSnapshot.Version,
@@ -422,6 +582,10 @@ ON CONFLICT DO NOTHING`
 			}
 		}
 	}
+
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("committing vulnerability record: %w", err)
+	}
 	return nil
 }
 
@@ -430,14 +594,19 @@ ON CONFLICT DO NOTHING`
 // when no row exists yet or the stored anchor is empty (a pre-anchor legacy
 // row), in which case the caller's own FirstScannedAt stands as the first
 // insert.
-func (s *Store) firstScannedAt(ctx context.Context, record domain.VulnerabilityRecord) (time.Time, bool, error) {
-	const q = `
+//
+// It takes the querier rather than reaching for s.db so it can run inside
+// PutVulnerabilityRecord's transaction: the connection pool holds a single
+// connection, so a query on the store's own handle would block on the
+// transaction that is about to write the row it is reading.
+func (s *Store) firstScannedAt(ctx context.Context, q querier, record domain.VulnerabilityRecord) (time.Time, bool, error) {
+	const stmt = `
 SELECT first_scanned_at FROM vulnerability_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
   AND snapshot_source = ? AND snapshot_version = ?`
 
 	var raw string
-	err := s.db.DB().QueryRowContext(ctx, q,
+	err := q.QueryRowContext(ctx, stmt,
 		record.Coordinate.Path(), record.Coordinate.Version(), record.PipelineVersion,
 		record.DatabaseSnapshot.Source, record.DatabaseSnapshot.Version,
 	).Scan(&raw)
@@ -744,6 +913,23 @@ func (s *Store) PutDatabaseSnapshot(ctx context.Context, snapshot domain.Databas
 		return fmt.Errorf("reading snapshot content: %w", err)
 	}
 
+	// The stored hash is always computed from the bytes being stored: the store
+	// is the authority on what it holds, and a hash taken from the caller's word
+	// would verify nothing on the way back out.
+	//
+	// A caller that supplies one is asserting which bytes it fetched, so a
+	// disagreement is a real finding — the blob changed between the fetch that
+	// sealed it and this write — and is refused rather than papered over by
+	// storing the hash of whatever arrived. A caller that supplies none has
+	// simply not sealed; the store seals it, and the snapshot becomes verifiable
+	// from here on.
+	computed := domain.HashSnapshotContent(data)
+	if snapshot.ContentHash != "" && snapshot.ContentHash != computed {
+		return fmt.Errorf("%w: snapshot %s@%s content hash mismatch: caller declared %q, content is %q",
+			ports.ErrVulnIntegrity, snapshot.Source, snapshot.Version, snapshot.ContentHash, computed)
+	}
+	snapshot.ContentHash = computed
+
 	const q = `
 INSERT INTO vulnerability_snapshots (
     source, version, retrieved_at, content_hash, content
@@ -764,12 +950,33 @@ ON CONFLICT (source, version) DO UPDATE SET
 	return nil
 }
 
-// GetDatabaseSnapshot retrieves a snapshot blob.
+// GetDatabaseSnapshot retrieves a snapshot blob, verified against its stored
+// content hash before it is handed to a scan.
+//
+// This is the read leg of the same rule record content already gets: the
+// advisory database is the evidence every finding is derived from, so a scan
+// must not consume a blob that is not the one that was fetched. A mismatch is
+// reported as ErrVulnIntegrity rather than as absence, for the same reason a
+// tampered record is — absence would trigger a silent re-fetch that overwrites
+// the evidence.
+//
+// A snapshot stored before the hash existed carries an empty one. Such a blob
+// is returned with no check, because there is nothing to check it against;
+// unverifiable is not the same claim as verified, and refusing it would make
+// every pre-existing store unreadable rather than merely unproven. The
+// migration that hashes those blobs in place closes the gap for stores it runs
+// against.
+//
+// When the caller's own snapshot value carries a hash, it is checked too: it is
+// the caller's assertion about which snapshot it asked for, and answering a
+// question about one snapshot with the bytes of another is the failure this
+// whole field exists to prevent.
 func (s *Store) GetDatabaseSnapshot(ctx context.Context, snapshot domain.DatabaseSnapshot) (io.ReadCloser, error) {
-	const q = `SELECT content FROM vulnerability_snapshots WHERE source = ? AND version = ?`
+	const q = `SELECT content, content_hash FROM vulnerability_snapshots WHERE source = ? AND version = ?`
 
 	var content []byte
-	err := s.db.DB().QueryRowContext(ctx, q, snapshot.Source, snapshot.Version).Scan(&content)
+	var storedHash string
+	err := s.db.DB().QueryRowContext(ctx, q, snapshot.Source, snapshot.Version).Scan(&content, &storedHash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("snapshot not found: %s@%s", snapshot.Source, snapshot.Version)
 	}
@@ -777,15 +984,32 @@ func (s *Store) GetDatabaseSnapshot(ctx context.Context, snapshot domain.Databas
 		return nil, fmt.Errorf("querying database snapshot: %w", err)
 	}
 
+	if storedHash != "" {
+		if computed := domain.HashSnapshotContent(content); computed != storedHash {
+			return nil, fmt.Errorf("%w: snapshot %s@%s content hash mismatch: stored %q, computed %q",
+				ports.ErrVulnIntegrity, snapshot.Source, snapshot.Version, storedHash, computed)
+		}
+	}
+	if snapshot.ContentHash != "" && storedHash != "" && snapshot.ContentHash != storedHash {
+		return nil, fmt.Errorf("%w: snapshot %s@%s is not the one requested: caller expected %q, store holds %q",
+			ports.ErrVulnIntegrity, snapshot.Source, snapshot.Version, snapshot.ContentHash, storedHash)
+	}
+
 	return io.NopCloser(bytes.NewReader(content)), nil
 }
 
 // GetLatestDatabaseSnapshot returns the most recently stored snapshot metadata.
+//
+// content_hash is part of that metadata. Omitting it — as this query did before
+// the hash was populated — silently produced an unsealed snapshot value that
+// then flowed into every record built from a cached snapshot, which is most of
+// them: the field being empty on the record was not only a gap in the fetch
+// path but a gap here, where the stored hash was read past.
 func (s *Store) GetLatestDatabaseSnapshot(ctx context.Context) (domain.DatabaseSnapshot, bool, error) {
-	const q = `SELECT source, version, retrieved_at FROM vulnerability_snapshots ORDER BY retrieved_at DESC LIMIT 1`
+	const q = `SELECT source, version, retrieved_at, content_hash FROM vulnerability_snapshots ORDER BY retrieved_at DESC LIMIT 1`
 
-	var source, version, retrievedAt string
-	err := s.db.DB().QueryRowContext(ctx, q).Scan(&source, &version, &retrievedAt)
+	var source, version, retrievedAt, contentHash string
+	err := s.db.DB().QueryRowContext(ctx, q).Scan(&source, &version, &retrievedAt, &contentHash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.DatabaseSnapshot{}, false, nil
 	}
@@ -802,6 +1026,7 @@ func (s *Store) GetLatestDatabaseSnapshot(ctx context.Context) (domain.DatabaseS
 		Source:      source,
 		Version:     version,
 		RetrievedAt: t,
+		ContentHash: contentHash,
 	}, true, nil
 }
 
@@ -881,8 +1106,20 @@ func (s *Store) ListDatabaseSnapshots(ctx context.Context) ([]domain.DatabaseSna
 // affected by this CVE" is the wrong answer to give for a walk that was never
 // scanned.
 func (s *Store) ListVulnerabilityRecordsByFindingID(ctx context.Context, findingID, walkID string) ([]domain.VulnerabilityRecord, error) {
-	// Ranking within a coordinate: a finding-bearing verdict first, then the
-	// newest scan, then the newest pipeline generation.
+	// Ranking within a coordinate: a finding-bearing verdict first, then a
+	// verdict that was actually analysed, then the newest scan, then the newest
+	// pipeline generation.
+	//
+	// The two status terms are the two axes, and both are needed. Findings first,
+	// because a later all-clear must not retire an earlier finding. Coverage
+	// second, because among records that report no finding, one that was analysed
+	// and found nothing is evidence of absence while one that could not be
+	// analysed is merely absence of evidence — ranking them together let a
+	// ScanFailed record outrank a real all-clear purely on being newer, and
+	// answer a security question with a scan that never happened. That is the
+	// collapse this pair of columns exists to undo; a single collapsed status
+	// could not express it, because two of its four values are coverage answers
+	// sitting in a findings field.
 	//
 	// The pipeline version is a tie-break, never a filter. Pinning the reader's
 	// current version would erase every module whose newest scan predates a
@@ -894,12 +1131,18 @@ func (s *Store) ListVulnerabilityRecordsByFindingID(ctx context.Context, finding
 	// outrank v14 the way a text compare would. A format change degrades to 0,
 	// which is arbitrary but still deterministic.
 	//
-	// The status placeholder is bound first because it appears first in the
-	// query text, ahead of the WHERE clause parameters.
+	// The two status placeholders are bound first because they appear first in
+	// the query text, ahead of the WHERE clause parameters.
+	//
+	// Records written before the axes existed carry them back-filled by migration
+	// 11, so the comparison is against a real value on every row rather than
+	// against the empty string on the older generations the query deliberately
+	// still reads.
 	const rankWithinCoordinate = `
     ROW_NUMBER() OVER (
       PARTITION BY vr.module_path, vr.module_version
-      ORDER BY (vr.overall_status = ?) DESC,
+      ORDER BY (vr.findings_status = ?) DESC,
+               (vr.coverage_status = ?) DESC,
                vr.scanned_at DESC,
                CAST(substr(vr.pipeline_version, 2) AS INTEGER) DESC
     ) AS rn`
@@ -943,7 +1186,9 @@ SELECT serialised, scanned_at FROM (
 WHERE rn = 1
 ORDER BY scanned_at DESC`
 
-	q, args := unscoped, []any{string(domain.StatusAffected), findingID}
+	rank := []any{string(domain.FindingsRecordAffected), string(domain.CoverageAnalysed)}
+
+	q, args := unscoped, append(append([]any{}, rank...), findingID)
 	if walkID != "" {
 		known, err := s.walkHasScanRun(ctx, walkID)
 		if err != nil {
@@ -952,7 +1197,7 @@ ORDER BY scanned_at DESC`
 		if !known {
 			return nil, fmt.Errorf("no vulnerability scan run for walk %s — run: kanonarion vuln-scan %s", walkID, walkID)
 		}
-		q, args = scoped, []any{string(domain.StatusAffected), findingID, walkID}
+		q, args = scoped, append(append([]any{}, rank...), findingID, walkID)
 	}
 
 	rows, err := s.db.DB().QueryContext(ctx, q, args...)

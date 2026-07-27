@@ -16,7 +16,11 @@ import (
 type Migration struct {
 	Module  string
 	Version int
-	SQL     string
+	// SQL may be empty, which makes the migration a no-op. That exists for a
+	// withdrawn migration whose version number must be retained: schema_migrations
+	// is keyed on (module, version), so a store that already applied one cannot
+	// have it renumbered or removed.
+	SQL string
 }
 
 // DB is a shared SQLite interface that handles opening the database,
@@ -142,9 +146,11 @@ func migrate(db *sql.DB, migrations []Migration) error {
 		if err != nil {
 			return fmt.Errorf("beginning migration transaction: %w", err)
 		}
-		if _, err := tx.Exec(m.SQL); err != nil {
-			rerr := tx.Rollback()
-			return fmt.Errorf("migration %s v%d: %w", m.Module, m.Version, errors.Join(err, rerr))
+		if strings.TrimSpace(m.SQL) != "" {
+			if _, err := tx.Exec(m.SQL); err != nil {
+				rerr := tx.Rollback()
+				return fmt.Errorf("migration %s v%d: %w", m.Module, m.Version, errors.Join(err, rerr))
+			}
 		}
 		if _, err := tx.Exec(
 			`INSERT INTO schema_migrations (module, version, applied_at) VALUES (?, ?, ?)`,

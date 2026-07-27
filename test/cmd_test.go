@@ -521,6 +521,12 @@ func cmdSeedExamples(args []string) {
 	_ = db.Close()
 }
 
+// fixtureSnapshotBody is the advisory-database blob every seeder stores. The
+// store seals a snapshot against the bytes it is given and refuses a declared
+// hash those bytes contradict, so the fixtures hash this constant rather than
+// asserting a placeholder.
+const fixtureSnapshotBody = "{}"
+
 func cmdSeedVuln(args []string) {
 	if len(args) != 1 {
 		os.Exit(1)
@@ -541,9 +547,9 @@ func cmdSeedVuln(args []string) {
 		Source:      "govulndb",
 		Version:     "v2025-01-01T00-00-00",
 		RetrievedAt: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
-		ContentHash: "sha256:fixture",
+		ContentHash: vuldomain.HashSnapshotContent([]byte(fixtureSnapshotBody)),
 	}
-	if err := store.PutDatabaseSnapshot(ctx, snap, strings.NewReader("{}")); err != nil {
+	if err := store.PutDatabaseSnapshot(ctx, snap, strings.NewReader(fixtureSnapshotBody)); err != nil {
 		_ = db.Close()
 		os.Exit(1)
 	}
@@ -642,9 +648,9 @@ func cmdSeedVulnPartial(args []string) {
 		Source:      "govulndb",
 		Version:     "v2025-01-01T00-00-00",
 		RetrievedAt: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
-		ContentHash: "sha256:fixture",
+		ContentHash: vuldomain.HashSnapshotContent([]byte(fixtureSnapshotBody)),
 	}
-	if err := store.PutDatabaseSnapshot(ctx, snap, strings.NewReader("{}")); err != nil {
+	if err := store.PutDatabaseSnapshot(ctx, snap, strings.NewReader(fixtureSnapshotBody)); err != nil {
 		_ = db.Close()
 		os.Exit(1)
 	}
@@ -739,9 +745,9 @@ func cmdSeedVulnForWalk(args []string) {
 		Source:      "govulndb",
 		Version:     "v2025-01-01T00-00-00",
 		RetrievedAt: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
-		ContentHash: "sha256:fixture",
+		ContentHash: vuldomain.HashSnapshotContent([]byte(fixtureSnapshotBody)),
 	}
-	if err := store.PutDatabaseSnapshot(ctx, snap, strings.NewReader("{}")); err != nil {
+	if err := store.PutDatabaseSnapshot(ctx, snap, strings.NewReader(fixtureSnapshotBody)); err != nil {
 		_ = db.Close()
 		os.Exit(1)
 	}

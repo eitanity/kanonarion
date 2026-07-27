@@ -50,7 +50,16 @@ With no arguments, inspect defaults to --gomod ./go.mod and runs the pipeline
 over the project's own code dependencies, printing a summary instead of
 per-module context. The dependency scope is consistent with every go.mod
 command: default = code, --tool = tooling, --project = complete (code +
-tooling).`,
+tooling).
+
+Memory: the vuln-scan stage sizes its module-scan pool against this host's
+available memory, because a single source-mode scan of a cloud-SDK-heavy module
+can hold several GB. That budget is per-process and is measured once, at the
+start of the scan. Two inspect runs on one host therefore each admit a full pool
+against the same free memory and share no budget with each other, so they can
+still exhaust the host and have their scanners OOM-killed — which reports the
+affected modules as unanalysed, not as clean. Run them one at a time on a host
+that is tight on memory.`,
 		Example: `  kanonarion inspect github.com/spf13/cobra@v1.8.1
   kanonarion inspect modernc.org/sqlite@latest --reachability
   kanonarion inspect

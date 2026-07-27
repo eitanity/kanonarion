@@ -101,8 +101,26 @@ import (
 // loses the finding. The per-module record content is unchanged by this bump;
 // the version moves so a walk scanned in the collapsed-status era re-runs as a
 // whole and produces a run carrying both axes, rather than reusing cached
-// per-module verdicts under a run that has neither.
-const PipelineVersion = "v14"
+// per-module verdicts under a run that has neither. It was bumped to "v15" when
+// two record-shape changes landed together, both of which alter the canonical
+// bytes a record hashes over.
+//
+// First, the per-module record gained the same two verdict axes the walk-scan
+// aggregate got at v14: CoverageStatus and FindingsStatus now sit beside the
+// collapsed OverallStatus, whose four values answered two different questions.
+// The projection is total and lossless, so a "v14" record loses nothing —
+// migration 11 back-fills the columns and RecordAxes recovers the axes on read
+// — but a record written from v15 onward carries them in its blob and therefore
+// hashes differently.
+//
+// Second, DatabaseSnapshot.ContentHash is now populated. It was already part of
+// the record's canonical shape and was empty on every record ever written, so
+// the advisory database — the evidence every finding is derived from — was the
+// one input to a verdict that could not be checked against the bytes it was
+// reached from. Populating it changes stored record hashes; migration 10 seals
+// the snapshot blobs the store already holds so an existing store can verify
+// them too.
+const PipelineVersion = "v15"
 
 // ScanModuleUseCase orchestrates a single module's vulnerability scan.
 type ScanModuleUseCase struct {

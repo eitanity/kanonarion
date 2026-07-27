@@ -200,6 +200,30 @@ vuln-scan, the database snapshot version. Running `inspect` a second time on
 the same module is fast: only changed or absent records are recomputed. Use
 `--force` to bypass the cache for all stages.
 
+## Memory
+
+The vuln-scan stage runs a bounded pool of `govulncheck` processes. A single
+source-mode scan of a cloud-SDK-heavy module can hold several GB, so the pool is
+sized against the host's available memory as well as its CPU count:
+
+```
+workers = max(1, min(NumCPU, 4, floor(available memory / 4 GiB)))
+```
+
+Available memory is read once, when the pool is built (on Linux, `MemAvailable`
+from `/proc/meminfo`). When the memory term lowers the count, `inspect` logs it
+at info with the available bytes, the per-worker budget and the resulting cap —
+so a slow scan is explained rather than mysterious. When the reading cannot be
+taken at all, which is the normal case off Linux, the pool falls back to
+`min(NumCPU, 4)` and says so at debug; a missing reading never fails a scan.
+
+**The budget is per-process.** Two `inspect` runs on one host each measure the
+same free memory and each admit a full pool against it, so they share no budget
+with each other and can still exhaust the host. When that happens the scanners
+are OOM-killed and the affected modules are reported as **unanalysed** — a
+coverage gap, correctly, not a clean result. On a host that is tight on memory,
+run them one at a time.
+
 ## See also
 
 - `extract` - run extraction stages independently

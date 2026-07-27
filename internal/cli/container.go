@@ -12,6 +12,7 @@ import (
 	mcblobstore "github.com/eitanity/kanonarion/internal/adapters/blobstore/modcache"
 	"github.com/eitanity/kanonarion/internal/adapters/clock"
 	fetchsqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
+	"github.com/eitanity/kanonarion/internal/adapters/meminfo"
 	fetchproxy "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
 	mcproxy "github.com/eitanity/kanonarion/internal/adapters/proxy/modcache"
 	noopsigner "github.com/eitanity/kanonarion/internal/adapters/signer/noop"
@@ -433,12 +434,12 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		walkStore, vulnStore, moduleScannerUC,
 		vulnfetch.NewFetchModuleAdapter(fetchUC),
 		clk, vulnapp.PipelineVersion, logger,
-	).WithAudit(factStore)
+	).WithAudit(factStore).WithHostMemory(meminfo.New())
 	rescanWalkUC := vulnapp.NewRescanWalkUseCase(
 		walkStore, vulnStore, moduleScannerUC,
 		vulnfetch.NewFetchModuleAdapter(fetchUC),
 		clk, vulnapp.PipelineVersion, logger,
-	).WithAudit(factStore)
+	).WithAudit(factStore).WithHostMemory(meminfo.New())
 	if modcacheMode {
 		// --from-modcache: govulncheck reads the caller's existing module cache
 		// directly instead of a blob-store-populated temp cache.

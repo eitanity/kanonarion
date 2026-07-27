@@ -2,6 +2,7 @@ package sqlite_test
 
 import (
 	"bytes"
+	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -13,6 +14,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/ports"
 )
 
 func newTestStore(t *testing.T) *sqlite.Store {
@@ -559,12 +561,19 @@ func TestPutAndListDatabaseSnapshots(t *testing.T) {
 	ctx := t.Context()
 	store := newTestStore(t)
 
+	const body = "content"
+	// The store seals a snapshot against the bytes it stores, so a caller-declared
+	// hash has to be the real one; "abc123" from the shared helper is not.
+	want := domain.HashSnapshotContent([]byte(body))
+
 	s1 := snap("govulndb", "v2024-01-01")
+	s1.ContentHash = want
 	s2 := snap("govulndb", "v2024-02-01")
+	s2.ContentHash = ""
 	s2.RetrievedAt = s2.RetrievedAt.Add(24 * time.Hour)
 
 	for _, s := range []domain.DatabaseSnapshot{s1, s2} {
-		if err := store.PutDatabaseSnapshot(ctx, s, bytes.NewReader([]byte("content"))); err != nil {
+		if err := store.PutDatabaseSnapshot(ctx, s, bytes.NewReader([]byte(body))); err != nil {
 			t.Fatalf("PutDatabaseSnapshot: %v", err)
 		}
 	}
@@ -575,6 +584,77 @@ func TestPutAndListDatabaseSnapshots(t *testing.T) {
 	}
 	if len(snapshots) != 2 {
 		t.Fatalf("got %d snapshots, want 2", len(snapshots))
+	}
+	// Both are sealed: the one that declared its hash and the one that did not.
+	for _, s := range snapshots {
+		if s.ContentHash != want {
+			t.Errorf("snapshot %s@%s content hash = %q, want %q", s.Source, s.Version, s.ContentHash, want)
+		}
+	}
+}
+
+// TestPutDatabaseSnapshot_RefusesDeclaredHashMismatch pins the write leg: a
+// caller asserting which bytes it fetched is checked against the bytes that
+// actually arrived, rather than having its claim overwritten silently.
+func TestPutDatabaseSnapshot_RefusesDeclaredHashMismatch(t *testing.T) {
+	ctx := t.Context()
+	store := newTestStore(t)
+
+	s := snap("govulndb", "v2024-01-01")
+	s.ContentHash = domain.HashSnapshotContent([]byte("the bytes I fetched"))
+
+	err := store.PutDatabaseSnapshot(ctx, s, bytes.NewReader([]byte("different bytes")))
+	if !errors.Is(err, ports.ErrVulnIntegrity) {
+		t.Fatalf("PutDatabaseSnapshot(mismatched hash) error = %v, want ErrVulnIntegrity", err)
+	}
+}
+
+// TestGetDatabaseSnapshot_RefusesTamperedBlob pins the read leg: the advisory
+// database is the evidence every finding derives from, so a blob that no longer
+// matches its stored hash is refused rather than fed to a scan. It is reported
+// as an integrity failure, not as absence — absence would trigger a silent
+// re-fetch that overwrites the evidence of the tamper.
+func TestGetDatabaseSnapshot_RefusesTamperedBlob(t *testing.T) {
+	ctx := t.Context()
+	store := newTestStore(t)
+
+	s := snap("govulndb", "v2024-01-01")
+	s.ContentHash = ""
+	if err := store.PutDatabaseSnapshot(ctx, s, bytes.NewReader([]byte("honest advisories"))); err != nil {
+		t.Fatalf("PutDatabaseSnapshot: %v", err)
+	}
+
+	if _, err := store.InternalDB().DB().ExecContext(ctx,
+		`UPDATE vulnerability_snapshots SET content = ? WHERE source = ? AND version = ?`,
+		[]byte("swapped advisories"), s.Source, s.Version); err != nil {
+		t.Fatalf("tampering with the stored blob: %v", err)
+	}
+
+	if _, err := store.GetDatabaseSnapshot(ctx, s); !errors.Is(err, ports.ErrVulnIntegrity) {
+		t.Fatalf("GetDatabaseSnapshot(tampered) error = %v, want ErrVulnIntegrity", err)
+	}
+}
+
+// TestGetLatestDatabaseSnapshot_CarriesContentHash covers the read that used to
+// drop the column: a cached snapshot flows straight into the records built
+// against it, so a hash omitted here was a hash absent from every one of them.
+func TestGetLatestDatabaseSnapshot_CarriesContentHash(t *testing.T) {
+	ctx := t.Context()
+	store := newTestStore(t)
+
+	const body = "advisory database bytes"
+	s := snap("govulndb", "v2024-01-01")
+	s.ContentHash = ""
+	if err := store.PutDatabaseSnapshot(ctx, s, bytes.NewReader([]byte(body))); err != nil {
+		t.Fatalf("PutDatabaseSnapshot: %v", err)
+	}
+
+	latest, found, err := store.GetLatestDatabaseSnapshot(ctx)
+	if err != nil || !found {
+		t.Fatalf("GetLatestDatabaseSnapshot() = found %v, err %v", found, err)
+	}
+	if want := domain.HashSnapshotContent([]byte(body)); latest.ContentHash != want {
+		t.Fatalf("latest snapshot content hash = %q, want %q", latest.ContentHash, want)
 	}
 }
 

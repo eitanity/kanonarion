@@ -194,6 +194,55 @@ func TestGetWalkScanRun_RefusesTamperedRun(t *testing.T) {
 	assertTamperReported(t, err, len(all) > 0)
 }
 
+// TestStoreIntegrity_FindingsIndexAgreesWithRecords runs the findings-index
+// consistency check as part of the integrity suite, over a store exercised the
+// way production exercises it: several coordinates, an alias-bearing finding,
+// and a re-scan of one key that retires an advisory.
+//
+// It belongs here rather than only beside the index's own unit tests because
+// the defect it guards is the one the rest of this suite cannot see: a record
+// whose content hash verifies perfectly while a stale index row says it reports
+// an advisory it does not carry. Every per-record check passes on such a store.
+func TestStoreIntegrity_FindingsIndexAgreesWithRecords(t *testing.T) {
+	ctx := t.Context()
+	store := newTestStore(t)
+
+	snapshot := snap("govulndb", "2026-07-17T19:42:05Z")
+	put := func(path string, status domain.VulnerabilityStatus, findings ...domain.VulnerabilityFinding) {
+		t.Helper()
+		rec := seal(t, domain.VulnerabilityRecord{
+			Ecosystem:        fetchdomain.EcosystemGo,
+			Coordinate:       coord(path, "v1.0.0"),
+			WalkID:           "walk-1",
+			Findings:         findings,
+			OverallStatus:    status,
+			DatabaseSnapshot: snapshot,
+			ScannedAt:        time.Date(2026, 7, 17, 20, 0, 0, 0, time.UTC),
+			FirstScannedAt:   time.Date(2026, 7, 17, 20, 0, 0, 0, time.UTC),
+			PipelineVersion:  "v14",
+		})
+		if err := store.PutVulnerabilityRecord(ctx, rec); err != nil {
+			t.Fatalf("PutVulnerabilityRecord(%s, %s): %v", path, status, err)
+		}
+	}
+
+	put("github.com/foo/affected", domain.StatusAffected,
+		finding("GO-2026-0001", "CVE-2026-1111"))
+	put("github.com/foo/clean", domain.StatusClean)
+	put("github.com/foo/unscannable", domain.StatusUnscannable)
+	// The re-scan that retires an advisory — the exact shape that used to leave
+	// the index asserting a finding the record no longer carries.
+	put("github.com/foo/affected", domain.StatusClean)
+
+	defects, err := store.CheckFindingsIndex(ctx)
+	if err != nil {
+		t.Fatalf("CheckFindingsIndex: %v", err)
+	}
+	if err := sqlite.FindingsIndexDefectsError(defects); err != nil {
+		t.Fatalf("store integrity: %v", err)
+	}
+}
+
 // TestMigration_PurgesEmptyHashRows covers the rows the unsealed write paths
 // left behind: the read leg cannot return them, so the migration removes them
 // rather than leaving rows every read reports as a tamper.

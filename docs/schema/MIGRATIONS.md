@@ -43,6 +43,26 @@ pinned to the prior shape are unaffected (unknown-section rule above):
 | `vendor`     | reserved              |
 | `fips`       | reserved              |
 
+## Vulnerability record: pipeline `v14` → `v15`
+
+**Additive.** Two changes to `VulnerabilityRecord`'s stored shape, both of which
+alter the canonical bytes it hashes over, hence the pipeline bump:
+
+- `coverage_status` (`Analysed` / `Unscannable` / `Failed`) and
+  `findings_status` (`Affected` / `Clean`) join the collapsed `overall_status`,
+  whose four values answered two different questions. `overall_status` keeps its
+  existing values, so a consumer that reads only the summary word is unaffected;
+  a consumer that wants a findings fact must read `findings_status`. See
+  [`docs/cli/vuln.md`](../cli/vuln.md) for the mapping.
+- `database_snapshot.content_hash` is now populated. It was already part of the
+  record's shape and empty on every record ever written.
+
+Migration for existing stores: **none required by the consumer.** Store
+migration 11 back-fills the axis columns from `overall_status`; the projection is exact, so no verdict changes.
+Records at `v14` and earlier are kept and still answer queries — their blobs
+carry no axes, and readers derive them from `overall_status` on read. New scans
+write `v15`.
+
 ## Audit log (`audit.jsonl`)
 
 Append-only JSONL; **no schema migration** is ever required to add an event

@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -21,7 +23,17 @@ const (
 	ScanModeBinary ScanMode = "binary"
 )
 
-// VulnerabilityStatus describes the outcome of a module's vulnerability scan.
+// VulnerabilityStatus describes the outcome of a module's vulnerability scan as
+// a single word.
+//
+// It collapses two independent axes — coverage and findings — so it can only
+// ever carry one of them. It is retained as a stored compatibility summary for
+// consumers that display only the summary word; no consumer may derive a
+// findings fact from it, because Unscannable and ScanFailed are coverage answers
+// occupying the same field, and reading them as "not affected" ranks "we could
+// not look" as though it were "we looked and it was clean". Those are opposite
+// claims: absence of evidence versus evidence of absence. Read
+// RecordCoverageStatus / RecordFindingsStatus instead.
 type VulnerabilityStatus string
 
 const (
@@ -30,6 +42,125 @@ const (
 	StatusUnscannable VulnerabilityStatus = "Unscannable"
 	StatusScanFailed  VulnerabilityStatus = "ScanFailed"
 )
+
+// RecordCoverageStatus answers "was this module analysed?" — one of the two axes
+// VulnerabilityStatus conflates, at the per-module level where WalkScanRun's
+// CoverageStatus answers it for a whole run. It is independent of whether any
+// vulnerability was found.
+//
+// The diagnostic detail for a non-analysed outcome is unchanged and still lives
+// beside it on the record: UnscanReason (a machine-readable cause code) and
+// UnscannableReason (human prose) for CoverageUnscannable, ErrorDetail for
+// CoverageFailed.
+type RecordCoverageStatus string
+
+const (
+	// CoverageAnalysed means the module was analysed and the findings axis is an
+	// answer about it.
+	CoverageAnalysed RecordCoverageStatus = "Analysed"
+	// CoverageUnscannable means the module could not be analysed at all — see
+	// UnscanReason for which of the taxonomy's causes applies.
+	CoverageUnscannable RecordCoverageStatus = "Unscannable"
+	// CoverageFailedScan means the analysis was attempted and the attempt failed
+	// — see ErrorDetail. It is distinct from Unscannable: one is a module that
+	// cannot be looked at, the other a look that went wrong.
+	CoverageFailedScan RecordCoverageStatus = "Failed"
+)
+
+// RecordFindingsStatus answers "did the analysis report a vulnerability?" — the
+// other axis, mirroring WalkScanRun's FindingsStatus.
+//
+// It is independent of coverage, and like the run-level axis it must be read
+// alongside coverage to mean anything: FindingsClean on a record whose coverage
+// is not Analysed says "no finding is being reported", not "there is nothing
+// here". Only CoverageAnalysed + FindingsClean is an all-clear.
+type RecordFindingsStatus string
+
+const (
+	FindingsRecordAffected RecordFindingsStatus = "Affected"
+	FindingsRecordClean    RecordFindingsStatus = "Clean"
+)
+
+// DetermineRecordCoverageStatus projects a collapsed status onto the coverage
+// axis. The mapping is total: every one of the four values says something about
+// coverage, which is why the collapsed field could never be read as a findings
+// answer on its own.
+func DetermineRecordCoverageStatus(status VulnerabilityStatus) RecordCoverageStatus {
+	switch status {
+	case StatusUnscannable:
+		return CoverageUnscannable
+	case StatusScanFailed:
+		return CoverageFailedScan
+	case StatusClean, StatusAffected:
+		return CoverageAnalysed
+	default:
+		// An unrecognised status is not evidence that the module was analysed.
+		// Treating it as coverage-failed keeps an unknown verdict out of the
+		// analysed population rather than letting it over-claim completeness —
+		// the same rule the run-level tally applies to the same case.
+		return CoverageFailedScan
+	}
+}
+
+// DetermineRecordFindingsStatus projects a collapsed status onto the findings
+// axis. Only Affected reports a finding; every other value reports none, which
+// on a non-analysed record means "none is being reported", not "none exists" —
+// the distinction the coverage axis carries.
+func DetermineRecordFindingsStatus(status VulnerabilityStatus) RecordFindingsStatus {
+	if status == StatusAffected {
+		return FindingsRecordAffected
+	}
+	return FindingsRecordClean
+}
+
+// DetermineRecordOverallStatus collapses the two axes back into the stored
+// compatibility summary, so a consumer that displays only a summary word keeps
+// seeing exactly the values it always saw.
+//
+// Coverage outranks findings, the same precedence DetermineWalkScanStatus
+// applies one level up: a record that could not be analysed reports that, not a
+// findings word it has no standing to assert. The collapse is lossy in exactly
+// one direction — a coverage failure that nonetheless matched an advisory
+// summarises as Unscannable or ScanFailed while FindingsStatus keeps the
+// Affected fact — which is the whole reason the axes are stored beside it.
+func DetermineRecordOverallStatus(coverage RecordCoverageStatus, findings RecordFindingsStatus) VulnerabilityStatus {
+	switch coverage {
+	case CoverageUnscannable:
+		return StatusUnscannable
+	case CoverageFailedScan:
+		return StatusScanFailed
+	case CoverageAnalysed:
+		if findings == FindingsRecordAffected {
+			return StatusAffected
+		}
+		return StatusClean
+	default:
+		// An unrecognised coverage value is not a claim that the module was
+		// analysed, so it must not summarise as one.
+		return StatusScanFailed
+	}
+}
+
+// RecordAxes returns the record's two verdict axes.
+//
+// It prefers the stored fields and falls back to deriving them from the
+// collapsed OverallStatus when they are empty, which is the case for every
+// record written before the split. The derivation is exactly what the write
+// path applies, so a pre-split record is read on the same terms as a new one
+// rather than presenting a consumer with an empty axis it has no rule for.
+//
+// It is a function rather than a method so that no caller can reach the raw
+// fields by accident through a method value on a partially-populated record.
+func RecordAxes(r VulnerabilityRecord) (RecordCoverageStatus, RecordFindingsStatus) {
+	coverage, findings := r.CoverageStatus, r.FindingsStatus
+	if coverage == "" {
+		coverage = DetermineRecordCoverageStatus(r.OverallStatus)
+	}
+	if findings == "" {
+		findings = DetermineRecordFindingsStatus(r.OverallStatus)
+	}
+	return coverage, findings
+}
 
 // UnscanReason is a machine-readable cause code for why a module could not be
 // fully scanned from source. It accompanies UnscannableReason (human prose)
@@ -185,11 +316,43 @@ type Severity struct {
 }
 
 // DatabaseSnapshot identifies a pinned snapshot of the vulnerability database.
+//
+// Source and Version name the advisory database and its own generation;
+// RetrievedAt records when kanonarion fetched it. Those three answer "how
+// current was the data behind this verdict". ContentHash answers the question
+// they cannot: whether the bytes a verdict was reached against are the bytes
+// still held.
+//
+// The advisory database is the evidence every finding is derived from, and it
+// was the one input to a verdict that was not content-addressed — a snapshot
+// was identified by a version string alone, and the version string is metadata
+// the blob itself asserts. Two stores both holding "2026-07-24T18:35:55Z" could
+// not be shown to hold the same advisories.
 type DatabaseSnapshot struct {
 	Source      string    `json:"source"`
 	Version     string    `json:"version"`
 	RetrievedAt time.Time `json:"retrieved_at"`
-	ContentHash string    `json:"content_hash"`
+	// ContentHash is HashSnapshotContent over the snapshot blob, in
+	// "sha256:<hex>" form. Empty on snapshots recorded before the hash existed;
+	// such a snapshot is unverifiable, never verified-and-clean.
+	ContentHash string `json:"content_hash"`
+}
+
+// snapshotHashPrefix labels the digest algorithm inside DatabaseSnapshot's
+// ContentHash. It is present here — unlike on a VulnerabilityRecord's own bare
+// hex hash, whose recipe is frozen by the records already in every store —
+// because no snapshot hash has ever been written, so the field is free to take
+// the project's normal prefixed form.
+const snapshotHashPrefix = "sha256:"
+
+// HashSnapshotContent renders the content hash of a vulnerability database
+// snapshot blob: SHA-256 over the bytes verbatim, prefixed with the algorithm.
+//
+// It hashes the stored bytes rather than any parsed view of them, so the check
+// covers exactly what a later scan will feed to govulncheck.
+func HashSnapshotContent(blob []byte) string {
+	sum := sha256.Sum256(blob)
+	return snapshotHashPrefix + hex.EncodeToString(sum[:])
 }
 
 // SnapshotAgeDays reports how many whole days the vulnerability database
@@ -254,16 +417,26 @@ func SortFindings(findings []VulnerabilityFinding) {
 // VulnerabilityRecord is the aggregate root for a module's vulnerability scan.
 type VulnerabilityRecord struct {
 	// Ecosystem declares the schema's scope; always fetchdomain.EcosystemGo.
-	Ecosystem         string                      `json:"ecosystem"`
-	Coordinate        coordinate.ModuleCoordinate `json:"coordinate"`
-	WalkID            string                      `json:"walk_id"`
-	Findings          []VulnerabilityFinding      `json:"findings,omitzero"`
-	OverallStatus     VulnerabilityStatus         `json:"overall_status"`
-	UnscanReason      UnscanReason                `json:"unscan_reason,omitempty"`
-	UnscannableReason string                      `json:"unscannable_reason,omitempty"`
-	ErrorDetail       string                      `json:"error_detail,omitempty"`
-	DatabaseSnapshot  DatabaseSnapshot            `json:"database_snapshot"`
-	ScannedAt         time.Time                   `json:"scanned_at"`
+	Ecosystem  string                      `json:"ecosystem"`
+	Coordinate coordinate.ModuleCoordinate `json:"coordinate"`
+	WalkID     string                      `json:"walk_id"`
+	Findings   []VulnerabilityFinding      `json:"findings,omitzero"`
+	// OverallStatus is a derived, stored compatibility summary. CoverageStatus
+	// and FindingsStatus are the two independent axes it collapses; consumers
+	// that need a findings fact read FindingsStatus, never OverallStatus. All
+	// three are set together by the hasher's seal step, so no writer can produce
+	// a record whose summary and axes disagree.
+	OverallStatus VulnerabilityStatus `json:"overall_status"`
+	// CoverageStatus and FindingsStatus are the two axes. Read them through
+	// RecordAxes, which fills them in for records written before the split rather
+	// than handing back an empty axis.
+	CoverageStatus    RecordCoverageStatus `json:"coverage_status,omitempty"`
+	FindingsStatus    RecordFindingsStatus `json:"findings_status,omitempty"`
+	UnscanReason      UnscanReason         `json:"unscan_reason,omitempty"`
+	UnscannableReason string               `json:"unscannable_reason,omitempty"`
+	ErrorDetail       string               `json:"error_detail,omitempty"`
+	DatabaseSnapshot  DatabaseSnapshot     `json:"database_snapshot"`
+	ScannedAt         time.Time            `json:"scanned_at"`
 	// FirstScannedAt anchors when this verdict was first established for the
 	// (module, version, pipeline, snapshot) tuple. Unlike ScannedAt — which
 	// moves forward to the run that last validated the verdict — it is set once

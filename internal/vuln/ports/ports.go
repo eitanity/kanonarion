@@ -246,6 +246,24 @@ type ModuleFetcher interface {
 	FetchModuleGoMod(ctx context.Context, coord coordinate.ModuleCoordinate) error
 }
 
+// HostMemory reports how much memory the host can hand to new work right now.
+// It exists so the module-scan worker pool can size itself against a real
+// budget instead of against the CPU count alone: each govulncheck source-mode
+// scan of a cloud-SDK-heavy module holds multiple GB, so a pool sized purely by
+// cores can exhaust the host and be OOM-killed, which reports every module as
+// unanalysed rather than as scanned.
+//
+// It is a port rather than a direct /proc read so the cap is injectable in
+// tests, and so a host that cannot answer degrades to the CPU-only cap instead
+// of failing the scan.
+type HostMemory interface {
+	// AvailableBytes returns the memory available for new allocations without
+	// swapping. An error means the reading could not be taken — never that the
+	// host has no memory — and callers MUST treat it as "unknown" and fall back
+	// to their CPU-derived cap rather than refusing to run.
+	AvailableBytes() (uint64, error)
+}
+
 // ReachabilityAnalyser defines the port for call-graph-based reachability analysis.
 type ReachabilityAnalyser interface {
 	Analyse(

@@ -15,8 +15,45 @@ import (
 // nothing that happens to a record after it is stored.
 type VulnerabilityRecordHasher struct{}
 
-// SetContentHash returns r with ContentHash set to the hash of its contents.
+// SetContentHash returns r with its three status fields reconciled and
+// ContentHash set to the hash of the result.
+//
+// Reconciling here rather than at each construction site is deliberate: every
+// record that reaches a store passes through this call — it is the only way to
+// obtain the hash the store demands — so no writer can produce a record whose
+// summary and axes disagree, and none can omit either by forgetting.
+//
+// Which side is authoritative depends on what the caller stated:
+//
+//   - A caller that set only OverallStatus (every writer that predates the
+//     split) has its axes derived from it. The summary is untouched, so stored
+//     values are unchanged.
+//   - A caller that set the axes has OverallStatus derived from them, exactly as
+//     WalkScanRun treats its own collapsed summary. This is what lets a record
+//     say something the single word cannot — an advisory matched, but coverage
+//     failed, so whether it applies was never established. That pair collapses
+//     to a coverage word while FindingsStatus keeps the finding, instead of
+//     becoming a Clean that reads as an all-clear.
+//
+// A caller that set both is taken at the axes' word, since they are the more
+// specific statement.
 func (h VulnerabilityRecordHasher) SetContentHash(r VulnerabilityRecord) (VulnerabilityRecord, error) {
+	switch {
+	case r.CoverageStatus == "" && r.FindingsStatus == "":
+		r.CoverageStatus = DetermineRecordCoverageStatus(r.OverallStatus)
+		r.FindingsStatus = DetermineRecordFindingsStatus(r.OverallStatus)
+	default:
+		// One axis stated and not the other still leaves the record fully
+		// determined: the unstated one falls back to the summary's projection,
+		// which is what the record said before the caller narrowed it.
+		if r.CoverageStatus == "" {
+			r.CoverageStatus = DetermineRecordCoverageStatus(r.OverallStatus)
+		}
+		if r.FindingsStatus == "" {
+			r.FindingsStatus = DetermineRecordFindingsStatus(r.OverallStatus)
+		}
+		r.OverallStatus = DetermineRecordOverallStatus(r.CoverageStatus, r.FindingsStatus)
+	}
 	hash, err := h.hash(r)
 	if err != nil {
 		return VulnerabilityRecord{}, err

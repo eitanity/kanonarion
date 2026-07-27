@@ -30,6 +30,21 @@ import (
 // know which version is missing, not merely that something is.
 const populateFailureLogLimit = 10
 
+// perWorkerBudgetBytes is the memory one module-scan worker is budgeted. It is
+// the observed working set of a single govulncheck source-mode scan of a
+// cloud-SDK-heavy module — the shape that OOM-killed an entire 321-module pool
+// and reported every one of them unanalysed.
+//
+// It is a budget, not a limit: nothing enforces it on the child. Its only job
+// is to stop the pool from admitting more concurrent scans than the host can
+// hold, so a slow scan replaces a killed one.
+const perWorkerBudgetBytes = 4 << 30 // 4 GiB
+
+// cpuWorkerCap is the pool's ceiling from the CPU side. The workers spend most
+// of their wall clock inside a govulncheck subprocess, so more than four buys
+// little even on a large host — and each one costs perWorkerBudgetBytes.
+const cpuWorkerCap = 4
+
 // moduleResult holds the outcome of a single module scan dispatched by a worker pool.
 type moduleResult struct {
 	coord  coordinate.ModuleCoordinate
@@ -53,6 +68,12 @@ type ScanWalkUseCase struct {
 	// time. The scan points GOMODCACHE straight at it and skips the temp-cache
 	// prefetch/populate, so govulncheck runs fully offline with no blob reads.
 	realModcacheDir string
+
+	// hostMemory sizes the module-scan pool against the host's available memory
+	// as well as its CPU count. Optional: a nil reporter (the default) keeps the
+	// CPU-only cap, which is what every caller had before the memory budget
+	// existed. Set via WithHostMemory.
+	hostMemory ports.HostMemory
 }
 
 // NewScanWalkUseCase returns a new ScanWalkUseCase.
@@ -85,6 +106,15 @@ func (uc *ScanWalkUseCase) WithAudit(sink ports.AuditSink) *ScanWalkUseCase {
 	return uc
 }
 
+// WithHostMemory wires the host-memory reporter the module-scan pool sizes
+// itself against. It is optional — a nil reporter (the default) leaves the pool
+// on its CPU-only cap — and returns the receiver for chaining, mirroring the
+// other optional-dependency builders.
+func (uc *ScanWalkUseCase) WithHostMemory(mem ports.HostMemory) *ScanWalkUseCase {
+	uc.hostMemory = mem
+	return uc
+}
+
 // WithRealModcache switches the scan into --from-modcache mode: govulncheck runs
 // with GOMODCACHE pointed at dir, an already-populated module cache, instead of
 // materialising a temp cache from the blob store. A nil/empty dir (the default)
@@ -102,7 +132,10 @@ type ScanWalkParams struct {
 	Fresh              bool
 	EnableReachability bool
 	Operator           string
-	// Workers controls the module scan pool size. Zero means min(NumCPU, 4).
+	// Workers controls the module scan pool size. Zero means the derived cap:
+	// min(NumCPU, 4) further reduced by the host's available-memory budget (see
+	// resolveWorkerCount). A non-zero value is an explicit operator override and
+	// is taken as given — the memory budget does not second-guess it.
 	Workers int
 	// CallGraphWorkers limits concurrent on-demand callgraph subprocess spawns.
 	// Zero defaults to 1. Kept separate from Workers because SSA builds are
@@ -179,13 +212,7 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	total := len(allCoords)
 	uc.logger.Info("scanning walk modules", "walk_id", params.WalkID, "module_count", total)
 
-	workers := params.Workers
-	if workers <= 0 {
-		workers = min(runtime.NumCPU(), 4)
-	}
-	if workers > total {
-		workers = total
-	}
+	workers := min(uc.resolveWorkerCount(params.Workers), total)
 
 	// Semaphore bounding concurrent on-demand callgraph subprocesses. SSA builds
 	// are memory-heavy; they must not scale with the number of scan workers.
@@ -552,6 +579,59 @@ func (uc *ScanWalkUseCase) recordLocalReplaceUnscannable(
 	return added
 }
 
+// resolveWorkerCount sizes the module-scan pool.
+//
+// A non-zero requested count is an operator override and is returned unchanged:
+// the operator is assumed to know their host, and silently shrinking an
+// explicit --workers would make the flag lie.
+//
+// Otherwise the cap is max(1, min(NumCPU, cpuWorkerCap, available /
+// perWorkerBudgetBytes)). The memory term is what stops a pool of large
+// source-mode scans from exhausting the host and being OOM-killed, which does
+// not report a slow scan — it reports every module as unanalysed. The floor of
+// 1 is deliberate: a host too small for even one budgeted worker still gets a
+// scan attempted, because a single govulncheck that might survive is a better
+// answer than a pool of zero that certainly reports nothing.
+//
+// A memory reading that cannot be taken is never fatal. It degrades to the
+// CPU-only cap and says so at debug, because an unreadable /proc is the normal
+// case on every host that is not Linux and must not read as a fault.
+//
+// The budget is per-process. Two kanonarion runs on one host each measure the
+// same free memory and each admit a full pool against it, so they can still
+// exhaust it between them; that is documented in the inspect command's help
+// rather than coordinated here, which would need a lock outside this process.
+func (uc *ScanWalkUseCase) resolveWorkerCount(requested int) int {
+	if requested > 0 {
+		return requested
+	}
+	cpuCap := min(runtime.NumCPU(), cpuWorkerCap)
+	if uc.hostMemory == nil {
+		uc.logger.Debug("no host-memory reporter wired; sizing module scan pool by CPU alone",
+			"workers", cpuCap)
+		return cpuCap
+	}
+	available, err := uc.hostMemory.AvailableBytes()
+	if err != nil {
+		uc.logger.Debug("available memory unreadable; sizing module scan pool by CPU alone",
+			"workers", cpuCap, "error", err)
+		return cpuCap
+	}
+	// uint64 division, then a bounded conversion: min caps the quotient at cpuCap
+	// (at most cpuWorkerCap, 4) before it is narrowed, so the result fits an int
+	// on every platform regardless of how much memory the host reports.
+	budgeted := available / perWorkerBudgetBytes
+	workers := max(1, int(min(budgeted, uint64(cpuCap)))) // #nosec G115 -- min bounds the value by cpuWorkerCap before conversion.
+	if workers < cpuCap {
+		uc.logger.Info("module scan workers capped by available memory",
+			"available_bytes", available,
+			"per_worker_budget_bytes", perWorkerBudgetBytes,
+			"workers", workers,
+			"cpu_cap", cpuCap)
+	}
+	return workers
+}
+
 // runScanPool dispatches coordSlice to a bounded worker pool and returns all results.
 // cgSem is a shared semaphore that limits concurrent callgraph subprocess spawns.
 func (uc *ScanWalkUseCase) runScanPool(
@@ -574,10 +654,8 @@ func (uc *ScanWalkUseCase) runScanPool(
 	out := make(chan moduleResult, len(coordSlice))
 	w := min(workers, len(coordSlice))
 	var wg sync.WaitGroup
-	for i := 0; i < w; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range w {
+		wg.Go(func() {
 			for coord := range ch {
 				rec, scanErr := uc.moduleScanner.Scan(ctx, ScanModuleParams{
 					Coordinate:         coord,
@@ -594,7 +672,7 @@ func (uc *ScanWalkUseCase) runScanPool(
 				})
 				out <- moduleResult{coord: coord, record: rec, err: scanErr}
 			}
-		}()
+		})
 	}
 	go func() {
 		wg.Wait()

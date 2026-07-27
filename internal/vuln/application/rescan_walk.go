@@ -22,8 +22,9 @@ type RescanWalkUseCase struct {
 	clock           fetchports.Clock
 	pipelineVersion string
 	logger          *slog.Logger
-	audit           ports.AuditSink // optional; propagated to the delegated scan
-	realModcacheDir string          // --from-modcache; propagated to the delegated scan
+	audit           ports.AuditSink  // optional; propagated to the delegated scan
+	realModcacheDir string           // --from-modcache; propagated to the delegated scan
+	hostMemory      ports.HostMemory // optional; propagated to the delegated scan
 }
 
 // NewRescanWalkUseCase returns a new RescanWalkUseCase.
@@ -52,6 +53,15 @@ func NewRescanWalkUseCase(
 // for chaining.
 func (uc *RescanWalkUseCase) WithAudit(sink ports.AuditSink) *RescanWalkUseCase {
 	uc.audit = sink
+	return uc
+}
+
+// WithHostMemory propagates the host-memory reporter to the delegated walk
+// scan, so a re-scan sizes its module-scan pool against the same memory budget
+// a first scan does. Optional (nil keeps the CPU-only cap); returns the
+// receiver for chaining.
+func (uc *RescanWalkUseCase) WithHostMemory(mem ports.HostMemory) *RescanWalkUseCase {
+	uc.hostMemory = mem
 	return uc
 }
 
@@ -110,7 +120,7 @@ func (uc *RescanWalkUseCase) Rescan(ctx context.Context, req RescanRequest) (dom
 		uc.clock,
 		uc.pipelineVersion,
 		uc.logger,
-	).WithAudit(uc.audit).WithRealModcache(uc.realModcacheDir)
+	).WithAudit(uc.audit).WithRealModcache(uc.realModcacheDir).WithHostMemory(uc.hostMemory)
 
 	run, err := scanWalk.Scan(ctx, ScanWalkParams{
 		WalkID:             req.WalkID,

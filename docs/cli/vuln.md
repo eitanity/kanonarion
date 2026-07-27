@@ -26,6 +26,22 @@ The vulnerability database is fetched once and stored as a `DatabaseSnapshot`
 blob. Subsequent scans reuse the cached snapshot, making them fast and
 offline-capable. The snapshot is pinned so repeat scans are reproducible.
 
+The snapshot is content-addressed. Its `content_hash` is computed over the blob
+when it is fetched, stored beside it, and verified before any scan consumes it —
+so the pinning is a checkable claim rather than a version string the blob itself
+asserts, and two stores holding the same `version` can be shown to hold the same
+advisories. A blob that no longer matches its stored hash is refused as an
+integrity failure rather than reported as absent, because absence would trigger
+a silent re-fetch that overwrites the evidence.
+
+Snapshots stored before the hash existed carry an empty one, and are deliberately
+**left that way**. Hashing a blob the store already holds would attest "these are
+the bytes we hold now", not "these are the bytes we fetched" — a seal
+indistinguishable from an honest one, reporting an integrity guarantee that was
+never established. Such a snapshot therefore reads as *unverifiable*, which is
+what it honestly is; it is still returned and still serves a scan. They age out
+as fresh snapshots are fetched.
+
 The module must have been fetched first (`kanonarion walk` or `kanonarion fetch`).
 
 ### Prerequisites
@@ -197,6 +213,44 @@ The stored run also carries a single collapsed `overall_status`
 (`AllClean` / `Affected` / `Partial` / `ScanFailed`) for consumers that display
 only a summary word; because one word cannot carry both axes, no consumer should
 derive a findings fact from it — read `findings_status` instead.
+
+#### The same two axes on a per-module record
+
+Each `VulnerabilityRecord` carries the same split, for the same reason. Its
+`overall_status` is one word over four values that answer two different
+questions:
+
+| `overall_status` | `coverage_status` | `findings_status` |
+|---|---|---|
+| `Clean` | `Analysed` | `Clean` |
+| `Affected` | `Analysed` | `Affected` |
+| `Unscannable` | `Unscannable` | `Clean` |
+| `ScanFailed` | `Failed` | `Clean` |
+
+Read the two axes, not the collapsed word. `findings_status: Clean` on a record
+whose `coverage_status` is not `Analysed` means "no finding is being reported",
+not "there is nothing here" — only `Analysed` + `Clean` is an all-clear. The
+diagnostic detail for a coverage failure is unchanged and sits beside the axes:
+`unscan_reason` / `unscannable_reason` for `Unscannable`, `error_detail` for
+`Failed`.
+
+The axes can also state a pair the collapsed word has no value for: an advisory
+matched, but coverage failed, so whether it applies was never established
+(`coverage_status: Failed` with `findings_status: Affected`). On a single status
+that became `Clean`, which reads as an all-clear. `overall_status` still
+collapses it to the coverage word — coverage outranks findings in the summary,
+as it does for a whole run — while the findings axis keeps the finding.
+
+This is what lets `vuln-by-id` rank honestly when one coordinate has several
+records. A record that reports the finding wins first; among those that report
+none, one that was analysed beats one that could not be, however recent the
+latter is. Ranking on the collapsed word put "we could not look" and "we looked
+and it was clean" in one bucket, where the newer scan won — answering a security
+question with a scan that never completed.
+
+Records written before the split carry the axes back-filled by a store
+migration, and readers recover them from `overall_status` when absent; the
+projection is exact in both directions, so no record loses information.
 
 ```
 $ kanonarion vuln-scan --module github.com/gin-gonic/gin@v1.6.2

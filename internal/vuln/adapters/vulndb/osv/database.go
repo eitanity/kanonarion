@@ -84,10 +84,16 @@ func (d *Database) Snapshot(ctx context.Context) (domain.DatabaseSnapshot, io.Re
 		return domain.DatabaseSnapshot{}, nil, fmt.Errorf("validate vulndb.zip: %w", err)
 	}
 
+	// Seal the snapshot against the bytes just downloaded. This is the only place
+	// that sees them before anything else does, so it is the only place that can
+	// establish what "this snapshot" means; every later reader checks the blob it
+	// holds against this hash rather than trusting the version string, which is
+	// metadata the blob itself asserts.
 	snapshot := domain.DatabaseSnapshot{
 		Source:      "vuln.go.dev",
 		Version:     version,
 		RetrievedAt: time.Now(),
+		ContentHash: domain.HashSnapshotContent(zipData),
 	}
 
 	return snapshot, io.NopCloser(bytes.NewReader(zipData)), nil

@@ -46,6 +46,10 @@ func TestVulnerabilityRecordHasher_Recipe(t *testing.T) {
 		`"coordinate":"github.com/foo/bar@v1.0.0",` +
 		`"walk_id":"walk-1",` +
 		`"overall_status":"Clean",` +
+		// The two verdict axes are derived and written by SetContentHash itself,
+		// so they are part of the sealed bytes even though no caller set them.
+		`"coverage_status":"Analysed",` +
+		`"findings_status":"Clean",` +
 		`"database_snapshot":{"source":"test","version":"v1","retrieved_at":"0001-01-01T00:00:00Z","content_hash":""},` +
 		`"scanned_at":"2024-01-01T00:00:00Z",` +
 		`"pipeline_version":"v1",` +
