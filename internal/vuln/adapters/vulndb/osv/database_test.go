@@ -316,7 +316,7 @@ func (f *fakeVulnStore) GetLatestDatabaseSnapshot(_ context.Context) (domain.Dat
 func (f *fakeVulnStore) ListDatabaseSnapshots(_ context.Context) ([]domain.DatabaseSnapshot, error) {
 	return nil, nil
 }
-func (f *fakeVulnStore) ListVulnerabilityRecordsByFindingID(_ context.Context, _ string) ([]domain.VulnerabilityRecord, error) {
+func (f *fakeVulnStore) ListVulnerabilityRecordsByFindingID(_ context.Context, _, _ string) ([]domain.VulnerabilityRecord, error) {
 	return nil, nil
 }
 func (f *fakeVulnStore) ListVulnerabilityRecords(_ context.Context, _ string) ([]domain.VulnerabilityRecord, error) {

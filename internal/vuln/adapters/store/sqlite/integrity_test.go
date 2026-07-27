@@ -130,7 +130,7 @@ func TestReadPaths_RefuseTamperedRecord(t *testing.T) {
 		assertTamperReported(t, err, found)
 	})
 	t.Run("ListVulnerabilityRecordsByFindingID", func(t *testing.T) {
-		got, err := store.ListVulnerabilityRecordsByFindingID(ctx, "GO-2024-0001")
+		got, err := store.ListVulnerabilityRecordsByFindingID(ctx, "GO-2024-0001", "")
 		assertTamperReported(t, err, len(got) > 0)
 	})
 	t.Run("ListVulnerabilityRecords", func(t *testing.T) {

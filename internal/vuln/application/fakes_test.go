@@ -315,7 +315,7 @@ func (f *fakeVulnStore) ListDatabaseSnapshots(_ context.Context) ([]domain.Datab
 	return []domain.DatabaseSnapshot{*f.latestSnapshot}, nil
 }
 
-func (f *fakeVulnStore) ListVulnerabilityRecordsByFindingID(_ context.Context, findingID string) ([]domain.VulnerabilityRecord, error) {
+func (f *fakeVulnStore) ListVulnerabilityRecordsByFindingID(_ context.Context, findingID, _ string) ([]domain.VulnerabilityRecord, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []domain.VulnerabilityRecord

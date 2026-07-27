@@ -476,8 +476,23 @@ kanonarion vuln-by-id <finding-id> [flags]
 
 | Flag | Default | Description |
 |------|---------|-------------|
+| `--walk-id` | *(none)* | Restrict results to the modules scanned under this walk |
 | `--store-root` | `~/.kanonarion` | Path to fact store root |
 | `--json` | `false` | Emit records as JSON |
+
+Without `--walk-id` the answer spans the whole store: every module version,
+every pipeline version and every database snapshot generation ever scanned.
+That includes a module version a later build patched out, which will still be
+listed as `Affected`. Pass `--walk-id` when the question is "which of the
+modules in *this* build is hit by this advisory"; text output then prints a
+`notice:` line naming the walk it filtered against, so a shorter list is never
+mistaken for an unrestricted one.
+
+A `--walk-id` with no stored vulnerability scan run is an error, not an empty
+result — an all-clear for a walk that was never scanned would be a claim the
+store cannot support. The walk constraint resolves through scan-run membership,
+not the `walk_id` provenance column on the record, so a scan two walks share is
+reported for both.
 
 **Example:**
 
@@ -488,6 +503,10 @@ github.com/gin-gonic/gin@v1.7.0                              Affected
 
 $ kanonarion vuln-by-id CVE-2020-28483
 github.com/gin-gonic/gin@v1.6.2                              Affected
+
+$ kanonarion vuln-by-id GO-2020-0001 --walk-id 01KQDBVW092ER1HNXZ60X27CMD
+notice: results restricted to the modules scanned under walk "01KQDBVW092ER1HNXZ60X27CMD"
+github.com/gin-gonic/gin@v1.7.0                              Affected
 ```
 
 ---

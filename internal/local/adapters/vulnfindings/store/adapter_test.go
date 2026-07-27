@@ -63,7 +63,7 @@ func (s *fakeVulnStore) GetLatestDatabaseSnapshot(_ context.Context) (vulndomain
 func (s *fakeVulnStore) ListDatabaseSnapshots(_ context.Context) ([]vulndomain.DatabaseSnapshot, error) {
 	panic("unexpected call: ListDatabaseSnapshots")
 }
-func (s *fakeVulnStore) ListVulnerabilityRecordsByFindingID(_ context.Context, _ string) ([]vulndomain.VulnerabilityRecord, error) {
+func (s *fakeVulnStore) ListVulnerabilityRecordsByFindingID(_ context.Context, _, _ string) ([]vulndomain.VulnerabilityRecord, error) {
 	panic("unexpected call: ListVulnerabilityRecordsByFindingID")
 }
 func (s *fakeVulnStore) ListVulnerabilityRecords(_ context.Context, _ string) ([]vulndomain.VulnerabilityRecord, error) {

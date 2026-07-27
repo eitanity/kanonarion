@@ -980,7 +980,7 @@ func TestRunVulnByID_WithResults(t *testing.T) {
 	uc.SetByID([]vuldomain.VulnerabilityRecord{rec})
 
 	var buf bytes.Buffer
-	if err := runVulnByID(context.Background(), "GO-2025-0001", false, uc, &buf); err != nil {
+	if err := runVulnByID(context.Background(), "GO-2025-0001", "", false, uc, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "example.com/app@v1.0.0") {
@@ -992,11 +992,69 @@ func TestRunVulnByID_NoResults(t *testing.T) {
 	uc := testfakes.NewFakeQueryVuln()
 
 	var buf bytes.Buffer
-	if err := runVulnByID(context.Background(), "GO-9999-9999", false, uc, &buf); err != nil {
+	if err := runVulnByID(context.Background(), "GO-9999-9999", "", false, uc, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "no modules affected") {
 		t.Errorf("expected 'no modules affected', got: %q", buf.String())
+	}
+}
+
+// --walk-id restricts the answer to one build, and says so: a restricted list
+// looks exactly like an unrestricted one, and this command's output is read as
+// a security claim about the modules the reader has.
+func TestRunVulnByID_WalkScopedRestrictsAndSaysSo(t *testing.T) {
+	old := mustVulnCoord(t, "example.com/app", "v1.0.0")
+	current := mustVulnCoord(t, "example.com/app", "v1.2.0")
+	scannedAt := time.Date(2025, 1, 1, 12, 0, 0, 0, time.UTC)
+	record := func(c coordinate.ModuleCoordinate) vuldomain.VulnerabilityRecord {
+		return vuldomain.VulnerabilityRecord{
+			Coordinate:       c,
+			WalkID:           fixtureWalkID,
+			OverallStatus:    vuldomain.StatusAffected,
+			DatabaseSnapshot: fixtureSnap,
+			Findings: []vuldomain.VulnerabilityFinding{
+				{ID: "GO-2025-0001", Summary: "example vulnerability", PublishedAt: scannedAt, ModifiedAt: scannedAt},
+			},
+			ScannedAt:       scannedAt,
+			PipelineVersion: "v1",
+		}
+	}
+
+	uc := testfakes.NewFakeQueryVuln()
+	uc.SetByID([]vuldomain.VulnerabilityRecord{record(old), record(current)})
+	uc.SetByIDForWalk("W-CURRENT", []vuldomain.VulnerabilityRecord{record(current)})
+
+	var buf bytes.Buffer
+	if err := runVulnByID(context.Background(), "GO-2025-0001", "W-CURRENT", false, uc, &buf); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := buf.String()
+	if uc.ByIDWalkSeen() != "W-CURRENT" {
+		t.Errorf("walk ID did not reach the use case: got %q", uc.ByIDWalkSeen())
+	}
+	if !strings.Contains(out, "notice: results restricted to") || !strings.Contains(out, "W-CURRENT") {
+		t.Errorf("expected a scope notice naming the walk, got: %q", out)
+	}
+	if !strings.Contains(out, "example.com/app@v1.2.0") {
+		t.Errorf("expected the in-walk module, got: %q", out)
+	}
+	if strings.Contains(out, "example.com/app@v1.0.0") {
+		t.Errorf("out-of-walk module version leaked into a scoped answer: %q", out)
+	}
+}
+
+// An unscanned walk is an error, not a quiet all-clear.
+func TestRunVulnByID_UnknownWalkErrors(t *testing.T) {
+	uc := testfakes.NewFakeQueryVuln()
+
+	var buf bytes.Buffer
+	err := runVulnByID(context.Background(), "GO-2025-0001", "W-NEVER-SCANNED", false, uc, &buf)
+	if err == nil {
+		t.Fatalf("expected an error for an unscanned walk, got output: %q", buf.String())
+	}
+	if strings.Contains(buf.String(), "no modules") {
+		t.Errorf("an unscanned walk must not print an all-clear, got: %q", buf.String())
 	}
 }
 

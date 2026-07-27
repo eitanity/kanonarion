@@ -152,11 +152,21 @@ func runVulnShowHistory(ctx context.Context, coord coordinate.ModuleCoordinate, 
 }
 
 func newVulnByIDCmd(stdout, stderr io.Writer) *cobra.Command {
+	var walkID string
+
 	cmd := &cobra.Command{
 		Use:   "vuln-by-id <finding-id>",
 		Short: "Find all modules affected by a specific vulnerability ID",
+		Long: `Find all modules affected by a specific vulnerability ID.
+
+With no --walk-id, the answer spans the entire store: every module version,
+pipeline version and database snapshot generation ever scanned — including a
+module version that was patched out of your build several scans ago. Pass
+--walk-id to restrict the answer to the modules one walk's scans covered,
+which is what "which of my modules is hit by this CVE" usually means.`,
 		Example: `  kanonarion vuln-by-id GO-2023-1234
-  kanonarion vuln-by-id CVE-2023-12345 --json`,
+  kanonarion vuln-by-id CVE-2023-12345 --json
+  kanonarion vuln-by-id GO-2023-1234 --walk-id 01KQDBVW092ER1HNXZ60X27CMD`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			logger := buildLogger(logLevel, stderr)
@@ -165,17 +175,22 @@ func newVulnByIDCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runVulnByID(cmd.Context(), args[0], jsonOut, ctr.QueryVuln, stdout)
+			return runVulnByID(cmd.Context(), args[0], walkID, jsonOut, ctr.QueryVuln, stdout)
 		},
 	}
+
+	cmd.Flags().StringVar(&walkID, "walk-id", "", "restrict results to modules scanned under this walk (optional; defaults to every stored scan)")
 
 	return cmd
 }
 
-func runVulnByID(ctx context.Context, findingID string, jsonOut bool, uc QueryVulnUseCase, stdout io.Writer) error {
-	records, err := uc.ListRecordsByFindingID(ctx, findingID)
+func runVulnByID(ctx context.Context, findingID, walkID string, jsonOut bool, uc QueryVulnUseCase, stdout io.Writer) error {
+	// Wrapped with the command name rather than a second description of the
+	// operation: the use case already says "listing vulnerability records by
+	// finding ID", and repeating that here tells the reader nothing new.
+	records, err := uc.ListRecordsByFindingID(ctx, findingID, walkID)
 	if err != nil {
-		return fmt.Errorf("querying by finding ID: %w", err)
+		return fmt.Errorf("vuln-by-id: %w", err)
 	}
 	if jsonOut {
 		// emit a JSON array ("[]" when empty), never plain text.
@@ -190,7 +205,18 @@ func runVulnByID(ctx context.Context, findingID string, jsonOut bool, uc QueryVu
 		return nil
 	}
 
+	// A restricted list looks exactly like an unrestricted one, so without this
+	// the reader has no way to tell that rows were withheld — and "no modules
+	// affected" is the most consequential sentence this command can print.
+	if walkID != "" {
+		_, _ = fmt.Fprintf(stdout, "notice: results restricted to the modules scanned under walk %q\n", walkID)
+	}
+
 	if len(records) == 0 {
+		if walkID != "" {
+			_, _ = fmt.Fprintf(stdout, "no modules in walk %s affected by %s\n", walkID, findingID)
+			return nil
+		}
 		_, _ = fmt.Fprintf(stdout, "no modules affected by %s\n", findingID)
 		return nil
 	}

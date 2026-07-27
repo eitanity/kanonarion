@@ -838,11 +838,25 @@ func (s *Store) ListDatabaseSnapshots(ctx context.Context) ([]domain.DatabaseSna
 	return snapshots, nil
 }
 
-// ListVulnerabilityRecordsByFindingID returns all vulnerability records that
+// ListVulnerabilityRecordsByFindingID returns the vulnerability records that
 // contain a finding with the given identifier.
-func (s *Store) ListVulnerabilityRecordsByFindingID(ctx context.Context, findingID string) ([]domain.VulnerabilityRecord, error) {
-	const q = `
-SELECT vr.serialised
+//
+// An empty walkID answers across the whole store: every module version, every
+// pipeline version and every snapshot generation ever scanned. When walkID is
+// set the answer is restricted to the modules a scan run of that walk covered.
+//
+// The walk constraint goes through walk_scan_run_modules rather than the
+// walk_id column on vulnerability_records: since schema v5 that column is
+// provenance for the last walk that triggered the scan, so a record shared by
+// two walks names only one of them and filtering on it would drop the other
+// walk's module. GetLatestVulnerabilityRecordForWalk takes the same route.
+//
+// An unknown walkID is an error rather than an empty result: "no modules are
+// affected by this CVE" is the wrong answer to give for a walk that was never
+// scanned.
+func (s *Store) ListVulnerabilityRecordsByFindingID(ctx context.Context, findingID, walkID string) ([]domain.VulnerabilityRecord, error) {
+	const unscoped = `
+SELECT vr.serialised, vr.scanned_at
 FROM vulnerability_records vr
 JOIN vulnerability_findings_index fi
   ON fi.module_path      = vr.module_path
@@ -853,8 +867,44 @@ JOIN vulnerability_findings_index fi
 WHERE fi.finding_id = ?
 ORDER BY vr.scanned_at DESC`
 
-	rows, err := s.db.DB().QueryContext(ctx, q, findingID)
+	// DISTINCT because a walk may hold several scan runs covering the same
+	// module; without it one record is reported once per run that touched it.
+	const scoped = `
+SELECT DISTINCT vr.serialised, vr.scanned_at
+FROM vulnerability_records vr
+JOIN vulnerability_findings_index fi
+  ON fi.module_path      = vr.module_path
+ AND fi.module_version   = vr.module_version
+ AND fi.pipeline_version = vr.pipeline_version
+ AND fi.snapshot_source  = vr.snapshot_source
+ AND fi.snapshot_version = vr.snapshot_version
+JOIN walk_scan_run_modules m
+  ON m.module_path      = vr.module_path
+ AND m.module_version   = vr.module_version
+ AND m.pipeline_version = vr.pipeline_version
+ AND m.snapshot_source  = vr.snapshot_source
+ AND m.snapshot_version = vr.snapshot_version
+JOIN walk_scan_runs wsr ON wsr.id = m.walk_scan_run_id
+WHERE fi.finding_id = ? AND wsr.walk_id = ?
+ORDER BY vr.scanned_at DESC`
+
+	q, args := unscoped, []any{findingID}
+	if walkID != "" {
+		known, err := s.walkHasScanRun(ctx, walkID)
+		if err != nil {
+			return nil, err
+		}
+		if !known {
+			return nil, fmt.Errorf("no vulnerability scan run for walk %s — run: kanonarion vuln-scan %s", walkID, walkID)
+		}
+		q, args = scoped, []any{findingID, walkID}
+	}
+
+	rows, err := s.db.DB().QueryContext(ctx, q, args...)
 	if err != nil {
+		if walkID != "" {
+			return nil, fmt.Errorf("querying records by finding id in walk %s: %w", walkID, err)
+		}
 		return nil, fmt.Errorf("querying records by finding id: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
@@ -862,7 +912,8 @@ ORDER BY vr.scanned_at DESC`
 	var records []domain.VulnerabilityRecord
 	for rows.Next() {
 		var serialised []byte
-		if err := rows.Scan(&serialised); err != nil {
+		var scannedAt string // ordering key only; the record carries its own timestamp.
+		if err := rows.Scan(&serialised, &scannedAt); err != nil {
 			return nil, fmt.Errorf("scanning vulnerability record: %w", err)
 		}
 		rec, derr := decodeRecord(serialised)
@@ -875,6 +926,22 @@ ORDER BY vr.scanned_at DESC`
 		return nil, fmt.Errorf("iterating vulnerability records: %w", err)
 	}
 	return records, nil
+}
+
+// walkHasScanRun reports whether any vulnerability scan run was recorded for
+// the given walk, so a scoped query can tell "nothing matched" apart from
+// "that walk was never scanned".
+func (s *Store) walkHasScanRun(ctx context.Context, walkID string) (bool, error) {
+	const q = `SELECT 1 FROM walk_scan_runs WHERE walk_id = ? LIMIT 1`
+	var one int
+	err := s.db.DB().QueryRowContext(ctx, q, walkID).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("checking scan runs for walk %s: %w", walkID, err)
+	}
+	return true, nil
 }
 
 // ListVulnerabilityRecords returns all vulnerability records for a walk scan run.

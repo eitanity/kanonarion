@@ -5,6 +5,7 @@ package testfakes
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
@@ -722,7 +723,12 @@ type FakeQueryVuln struct {
 	mu      sync.Mutex
 	records map[string]vulndomain.VulnerabilityRecord
 	byID    []vulndomain.VulnerabilityRecord
-	Err     error
+	// byIDForWalk holds the walk-scoped answers for ListRecordsByFindingID. A
+	// walk with no entry is unknown to the store, which is an error rather than
+	// an empty result — the same distinction the sqlite adapter makes.
+	byIDForWalk  map[string][]vulndomain.VulnerabilityRecord
+	byIDWalkSeen string
+	Err          error
 	// ForceLatestRecordForWalkNotFound makes GetLatestRecordForWalk always return
 	// (zero, false, nil) regardless of the records map. Use this to exercise the
 	// fallback path that checks GetLatestRecord for a ScanFailed status.
@@ -790,13 +796,40 @@ func (f *FakeQueryVuln) SetByID(recs []vulndomain.VulnerabilityRecord) {
 	f.byID = recs
 }
 
-func (f *FakeQueryVuln) ListRecordsByFindingID(_ context.Context, _ string) ([]vulndomain.VulnerabilityRecord, error) {
+// SetByIDForWalk seeds the answer a walk-scoped vuln-by-id query gets. Walks
+// with no entry are reported as never scanned.
+func (f *FakeQueryVuln) SetByIDForWalk(walkID string, recs []vulndomain.VulnerabilityRecord) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.byIDForWalk == nil {
+		f.byIDForWalk = make(map[string][]vulndomain.VulnerabilityRecord)
+	}
+	f.byIDForWalk[walkID] = recs
+}
+
+// ByIDWalkSeen returns the walk ID the last ListRecordsByFindingID call carried,
+// so a test can prove the flag reached the use case rather than being dropped.
+func (f *FakeQueryVuln) ByIDWalkSeen() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.byIDWalkSeen
+}
+
+func (f *FakeQueryVuln) ListRecordsByFindingID(_ context.Context, _, walkID string) ([]vulndomain.VulnerabilityRecord, error) {
 	if f.Err != nil {
 		return nil, f.Err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.byID, nil
+	f.byIDWalkSeen = walkID
+	if walkID == "" {
+		return f.byID, nil
+	}
+	recs, ok := f.byIDForWalk[walkID]
+	if !ok {
+		return nil, fmt.Errorf("no vulnerability scan run for walk %s", walkID)
+	}
+	return recs, nil
 }
 
 // FakeQueryScanRuns implements cli.QueryScanRunsUseCase.

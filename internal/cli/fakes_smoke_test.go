@@ -349,7 +349,7 @@ func TestFakeQueryVuln_AllMethods(t *testing.T) {
 		t.Fatalf("ListRecordsForModule: %v %v", list, err)
 	}
 
-	byID, err := f.ListRecordsByFindingID(context.Background(), "GO-2024-001")
+	byID, err := f.ListRecordsByFindingID(context.Background(), "GO-2024-001", "")
 	if err != nil || byID != nil {
 		t.Fatalf("ListRecordsByFindingID: %v %v", byID, err)
 	}
@@ -377,7 +377,7 @@ func TestFakeQueryVuln_AllMethods(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	_, err = f.ListRecordsByFindingID(context.Background(), "")
+	_, err = f.ListRecordsByFindingID(context.Background(), "", "")
 	if err == nil {
 		t.Fatal("expected error")
 	}

@@ -2,6 +2,7 @@ package sqlite_test
 
 import (
 	"bytes"
+	"strings"
 	"testing"
 	"time"
 
@@ -197,7 +198,7 @@ func TestListVulnerabilityRecordsByFindingID(t *testing.T) {
 	}
 
 	// Query by primary ID
-	records, err := store.ListVulnerabilityRecordsByFindingID(ctx, "GO-2024-0001")
+	records, err := store.ListVulnerabilityRecordsByFindingID(ctx, "GO-2024-0001", "")
 	if err != nil {
 		t.Fatalf("ListVulnerabilityRecordsByFindingID: %v", err)
 	}
@@ -206,7 +207,7 @@ func TestListVulnerabilityRecordsByFindingID(t *testing.T) {
 	}
 
 	// Query by alias
-	records, err = store.ListVulnerabilityRecordsByFindingID(ctx, "CVE-2024-0001")
+	records, err = store.ListVulnerabilityRecordsByFindingID(ctx, "CVE-2024-0001", "")
 	if err != nil {
 		t.Fatalf("ListVulnerabilityRecordsByFindingID by alias: %v", err)
 	}
@@ -215,12 +216,146 @@ func TestListVulnerabilityRecordsByFindingID(t *testing.T) {
 	}
 
 	// Query for unknown ID
-	records, err = store.ListVulnerabilityRecordsByFindingID(ctx, "GO-9999-9999")
+	records, err = store.ListVulnerabilityRecordsByFindingID(ctx, "GO-9999-9999", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if len(records) != 0 {
 		t.Fatalf("got %d records, want 0", len(records))
+	}
+}
+
+// findingRecord builds a sealed record carrying one finding, so the by-finding
+// tests below differ only in coordinate and walk.
+func findingRecord(t *testing.T, path, version, walkID, findingID string, snapshot domain.DatabaseSnapshot) domain.VulnerabilityRecord {
+	t.Helper()
+	return seal(t, domain.VulnerabilityRecord{
+		Ecosystem:        fetchdomain.EcosystemGo,
+		Coordinate:       coord(path, version),
+		WalkID:           walkID,
+		OverallStatus:    domain.StatusAffected,
+		DatabaseSnapshot: snapshot,
+		ScannedAt:        time.Now().UTC().Truncate(time.Second),
+		PipelineVersion:  "v1",
+		Findings: []domain.VulnerabilityFinding{
+			{ID: findingID, Summary: "test vuln", AffectedRange: "< v1.1.0"},
+		},
+	})
+}
+
+// scanRun builds a sealed run for walkID covering the given coordinates.
+func scanRun(t *testing.T, id, walkID string, snapshot domain.DatabaseSnapshot, coords ...coordinate.ModuleCoordinate) domain.WalkScanRun {
+	t.Helper()
+	per := make(map[coordinate.ModuleCoordinate]string, len(coords))
+	for _, c := range coords {
+		per[c] = "hash-" + c.Version()
+	}
+	now := time.Now().UTC().Truncate(time.Second)
+	return sealRun(t, domain.WalkScanRun{
+		ID:               id,
+		WalkID:           walkID,
+		Snapshot:         snapshot,
+		PerModuleResults: per,
+		StartedAt:        now,
+		CompletedAt:      now,
+		OverallStatus:    domain.WalkStatusAffected,
+		Operator:         "tester",
+		PipelineVersion:  "v1",
+	})
+}
+
+// A by-finding query scoped to a walk answers for that walk's modules only. The
+// unscoped answer spans every stored version, including one that a later build
+// patched out — reporting that version as affected is a false security claim.
+func TestListVulnerabilityRecordsByFindingID_ScopedToWalk(t *testing.T) {
+	ctx := t.Context()
+	store := newTestStore(t)
+	snapshot := snap("govulndb", "v2024-01-01")
+
+	old := findingRecord(t, "github.com/foo/bar", "v1.0.0", "walk-1", "GO-2024-0001", snapshot)
+	current := findingRecord(t, "github.com/foo/bar", "v1.2.0", "walk-2", "GO-2024-0001", snapshot)
+	for _, rec := range []domain.VulnerabilityRecord{old, current} {
+		if err := store.PutVulnerabilityRecord(ctx, rec); err != nil {
+			t.Fatalf("PutVulnerabilityRecord: %v", err)
+		}
+	}
+	if err := store.PutWalkScanRun(ctx, scanRun(t, "run-1", "walk-1", snapshot, old.Coordinate)); err != nil {
+		t.Fatalf("PutWalkScanRun run-1: %v", err)
+	}
+	if err := store.PutWalkScanRun(ctx, scanRun(t, "run-2", "walk-2", snapshot, current.Coordinate)); err != nil {
+		t.Fatalf("PutWalkScanRun run-2: %v", err)
+	}
+
+	unscoped, err := store.ListVulnerabilityRecordsByFindingID(ctx, "GO-2024-0001", "")
+	if err != nil {
+		t.Fatalf("unscoped: %v", err)
+	}
+	if len(unscoped) != 2 {
+		t.Fatalf("unscoped: got %d records, want 2", len(unscoped))
+	}
+
+	scoped, err := store.ListVulnerabilityRecordsByFindingID(ctx, "GO-2024-0001", "walk-2")
+	if err != nil {
+		t.Fatalf("scoped: %v", err)
+	}
+	if len(scoped) != 1 {
+		t.Fatalf("scoped: got %d records, want 1", len(scoped))
+	}
+	if got := scoped[0].Coordinate.Version(); got != "v1.2.0" {
+		t.Errorf("scoped to walk-2: got version %s, want v1.2.0", got)
+	}
+}
+
+// walk_id on vulnerability_records is provenance for the last walk that
+// triggered the scan, so a record two walks share names only one of them.
+// Scoping must go through the run membership index, or the other walk loses a
+// module it demonstrably contains.
+func TestListVulnerabilityRecordsByFindingID_WalkScopeIgnoresRecordProvenance(t *testing.T) {
+	ctx := t.Context()
+	store := newTestStore(t)
+	snapshot := snap("govulndb", "v2024-01-01")
+
+	// Stored under walk-2, so vr.walk_id says "walk-2" ...
+	rec := findingRecord(t, "github.com/foo/bar", "v1.0.0", "walk-2", "GO-2024-0001", snapshot)
+	if err := store.PutVulnerabilityRecord(ctx, rec); err != nil {
+		t.Fatalf("PutVulnerabilityRecord: %v", err)
+	}
+	// ... but walk-1's scan run covered the same module.
+	if err := store.PutWalkScanRun(ctx, scanRun(t, "run-1", "walk-1", snapshot, rec.Coordinate)); err != nil {
+		t.Fatalf("PutWalkScanRun run-1: %v", err)
+	}
+	// Two runs of walk-1 cover it, which must not duplicate the record.
+	if err := store.PutWalkScanRun(ctx, scanRun(t, "run-1b", "walk-1", snapshot, rec.Coordinate)); err != nil {
+		t.Fatalf("PutWalkScanRun run-1b: %v", err)
+	}
+
+	scoped, err := store.ListVulnerabilityRecordsByFindingID(ctx, "GO-2024-0001", "walk-1")
+	if err != nil {
+		t.Fatalf("scoped: %v", err)
+	}
+	if len(scoped) != 1 {
+		t.Fatalf("scoped to walk-1: got %d records, want 1", len(scoped))
+	}
+}
+
+// An unknown walk is an error, not an empty result: "no modules affected" for a
+// walk that was never scanned reads as an all-clear it has no basis for.
+func TestListVulnerabilityRecordsByFindingID_UnknownWalkIsError(t *testing.T) {
+	ctx := t.Context()
+	store := newTestStore(t)
+	snapshot := snap("govulndb", "v2024-01-01")
+
+	rec := findingRecord(t, "github.com/foo/bar", "v1.0.0", "walk-1", "GO-2024-0001", snapshot)
+	if err := store.PutVulnerabilityRecord(ctx, rec); err != nil {
+		t.Fatalf("PutVulnerabilityRecord: %v", err)
+	}
+
+	got, err := store.ListVulnerabilityRecordsByFindingID(ctx, "GO-2024-0001", "walk-never-scanned")
+	if err == nil {
+		t.Fatalf("expected an error for an unscanned walk, got %d records", len(got))
+	}
+	if !strings.Contains(err.Error(), "walk-never-scanned") {
+		t.Errorf("error should name the walk, got: %v", err)
 	}
 }
 

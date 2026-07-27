@@ -192,7 +192,7 @@ type QueryVulnUseCase interface {
 	GetLatestRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (vulndomain.VulnerabilityRecord, bool, error)
 	GetLatestRecordForWalk(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, walkID string) (vulndomain.VulnerabilityRecord, bool, error)
 	ListRecordsForModule(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]vulndomain.VulnerabilityRecord, error)
-	ListRecordsByFindingID(ctx context.Context, findingID string) ([]vulndomain.VulnerabilityRecord, error)
+	ListRecordsByFindingID(ctx context.Context, findingID, walkID string) ([]vulndomain.VulnerabilityRecord, error)
 }
 
 // QueryScanRunsUseCase is the interface for querying scan runs and snapshots.

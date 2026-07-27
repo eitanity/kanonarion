@@ -80,7 +80,7 @@ func (f *fakeVulnStore) PutVulnerabilityRecord(_ context.Context, _ vulndomain.V
 func (f *fakeVulnStore) GetVulnerabilityRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ vulndomain.DatabaseSnapshot) (vulndomain.VulnerabilityRecord, bool, error) {
 	return vulndomain.VulnerabilityRecord{}, false, nil
 }
-func (f *fakeVulnStore) ListVulnerabilityRecordsByFindingID(_ context.Context, _ string) ([]vulndomain.VulnerabilityRecord, error) {
+func (f *fakeVulnStore) ListVulnerabilityRecordsByFindingID(_ context.Context, _, _ string) ([]vulndomain.VulnerabilityRecord, error) {
 	return nil, nil
 }
 func (f *fakeVulnStore) ListVulnerabilityRecords(_ context.Context, _ string) ([]vulndomain.VulnerabilityRecord, error) {

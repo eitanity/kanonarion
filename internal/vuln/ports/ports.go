@@ -101,9 +101,15 @@ type VulnerabilityStore interface {
 	// ListDatabaseSnapshots returns all stored snapshot metadata, most recent first.
 	ListDatabaseSnapshots(ctx context.Context) ([]domain.DatabaseSnapshot, error)
 
-	// ListVulnerabilityRecordsByFindingID returns all vulnerability records across
-	// the store that contain a finding with the given OSV/CVE/GHSA identifier.
-	ListVulnerabilityRecordsByFindingID(ctx context.Context, findingID string) ([]domain.VulnerabilityRecord, error)
+	// ListVulnerabilityRecordsByFindingID returns the vulnerability records that
+	// contain a finding with the given OSV/CVE/GHSA identifier.
+	//
+	// An empty walkID answers across the whole store — every module version,
+	// pipeline version and snapshot generation it holds, including versions no
+	// current build contains. A non-empty walkID restricts the answer to the
+	// modules a scan run of that walk covered, and an unknown walkID is an
+	// error rather than an empty result.
+	ListVulnerabilityRecordsByFindingID(ctx context.Context, findingID, walkID string) ([]domain.VulnerabilityRecord, error)
 
 	// ListVulnerabilityRecords returns all vulnerability records for a walk scan run.
 	ListVulnerabilityRecords(ctx context.Context, walkScanRunID string) ([]domain.VulnerabilityRecord, error)

@@ -93,7 +93,7 @@ func (s *queryVulnFakeStore) ListDatabaseSnapshots(_ context.Context) ([]domain.
 	return s.snapshots, s.storeErr
 }
 
-func (s *queryVulnFakeStore) ListVulnerabilityRecordsByFindingID(_ context.Context, _ string) ([]domain.VulnerabilityRecord, error) {
+func (s *queryVulnFakeStore) ListVulnerabilityRecordsByFindingID(_ context.Context, _, _ string) ([]domain.VulnerabilityRecord, error) {
 	return s.findingRecords, s.storeErr
 }
 
@@ -189,7 +189,7 @@ func TestQueryVulnUseCase_ListRecordsByFindingID(t *testing.T) {
 	recs := []domain.VulnerabilityRecord{{Coordinate: coord}}
 	uc := application.NewQueryVulnUseCase(&queryVulnFakeStore{findingRecords: recs})
 
-	got, err := uc.ListRecordsByFindingID(context.Background(), "GO-2024-1234")
+	got, err := uc.ListRecordsByFindingID(context.Background(), "GO-2024-1234", "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestQueryVulnUseCase_ListRecordsByFindingID_Error(t *testing.T) {
 	storeErr := errors.New("db failure")
 	uc := application.NewQueryVulnUseCase(&queryVulnFakeStore{storeErr: storeErr})
 
-	_, err := uc.ListRecordsByFindingID(context.Background(), "GO-2024-1234")
+	_, err := uc.ListRecordsByFindingID(context.Background(), "GO-2024-1234", "")
 	if !errors.Is(err, storeErr) {
 		t.Errorf("got %v, want wrapping %v", err, storeErr)
 	}
