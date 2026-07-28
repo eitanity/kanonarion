@@ -744,3 +744,52 @@ func TestListVulnerabilityRecords(t *testing.T) {
 		t.Fatalf("got %d records, want 2", len(records))
 	}
 }
+
+// TestPutDatabaseSnapshot_ReFetchOverwritesInPlace pins the fact the scan's
+// abort message depends on: the snapshot write upserts on (source, version), so
+// re-fetching the same dated snapshot replaces the stored bytes rather than
+// keeping the old ones alongside.
+//
+// That matters because the abort tells an operator the corrupt blob was left
+// untouched AND that the remedy it recommends will overwrite it. If this ever
+// became append-only, the second half of that message would be a lie in the
+// opposite direction, so the claim is pinned here rather than left to a reading
+// of the SQL.
+func TestPutDatabaseSnapshot_ReFetchOverwritesInPlace(t *testing.T) {
+	ctx := t.Context()
+	store := newTestStore(t)
+
+	s := snap("govulndb", "v2024-01-01")
+	s.ContentHash = ""
+	if err := store.PutDatabaseSnapshot(ctx, s, bytes.NewReader([]byte("honest advisories"))); err != nil {
+		t.Fatalf("PutDatabaseSnapshot: %v", err)
+	}
+
+	// Stand in for a tamper: the bytes no longer match the recorded hash.
+	if _, err := store.InternalDB().DB().ExecContext(ctx,
+		`UPDATE vulnerability_snapshots SET content = ? WHERE source = ? AND version = ?`,
+		[]byte("swapped advisories"), s.Source, s.Version); err != nil {
+		t.Fatalf("tampering with the stored blob: %v", err)
+	}
+	if _, err := store.GetDatabaseSnapshot(ctx, s); err == nil {
+		t.Fatal("the tampered blob should not read back cleanly")
+	}
+
+	// The remedy: re-fetch the same version.
+	if err := store.PutDatabaseSnapshot(ctx, s, bytes.NewReader([]byte("honest advisories"))); err != nil {
+		t.Fatalf("re-fetching the snapshot: %v", err)
+	}
+
+	var rows int
+	if err := store.InternalDB().DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM vulnerability_snapshots WHERE source = ? AND version = ?`,
+		s.Source, s.Version).Scan(&rows); err != nil {
+		t.Fatalf("counting snapshot rows: %v", err)
+	}
+	if rows != 1 {
+		t.Errorf("re-fetch kept %d rows; the upsert replaces in place, so the tampered bytes are gone", rows)
+	}
+	if _, err := store.GetDatabaseSnapshot(ctx, s); err != nil {
+		t.Errorf("after the re-fetch the snapshot must read back cleanly, got: %v", err)
+	}
+}

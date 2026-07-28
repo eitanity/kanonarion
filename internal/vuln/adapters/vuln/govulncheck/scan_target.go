@@ -65,7 +65,10 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 		}, nil
 	}
 
-	dbArg, dbCleanup := s.prepareDBArg(ctx, req.Snapshot, req.DBDir)
+	dbArg, dbCleanup, err := s.prepareDBArg(ctx, req.Snapshot, req.DBDir)
+	if err != nil {
+		return domain.ProjectScanResult{}, err
+	}
 	defer dbCleanup()
 
 	govulncheckBin, err := lookupGovulncheck()

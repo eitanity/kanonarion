@@ -8,22 +8,22 @@ import (
 
 func TestValidateOriginForCheckout_AcceptsHTTPSAllowlistedHost(t *testing.T) {
 	commit := strings.Repeat("a", 40)
-	if err := DefaultVCSHostAllowlist().ValidateOriginForCheckout("https://github.com/foo/bar", "refs/tags/v1.0.0", commit); err != nil {
+	if _, err := DefaultVCSHostAllowlist().CheckOriginForCheckout("https://github.com/foo/bar", "refs/tags/v1.0.0", commit); err != nil {
 		t.Fatalf("expected allowlisted https Origin to validate, got %v", err)
 	}
-	if err := DefaultVCSHostAllowlist().ValidateOriginForCheckout("https://gitlab.com/foo/bar", "", strings.Repeat("b", 64)); err != nil {
+	if _, err := DefaultVCSHostAllowlist().CheckOriginForCheckout("https://gitlab.com/foo/bar", "", strings.Repeat("b", 64)); err != nil {
 		t.Fatalf("expected 64-char sha256 commit to validate, got %v", err)
 	}
 	// go.googlesource.com is a first-party Go host (golang.org/x, google.golang.org).
-	if err := DefaultVCSHostAllowlist().ValidateOriginForCheckout("https://go.googlesource.com/mod", "", commit); err != nil {
+	if _, err := DefaultVCSHostAllowlist().CheckOriginForCheckout("https://go.googlesource.com/mod", "", commit); err != nil {
 		t.Fatalf("expected go.googlesource.com Origin to validate, got %v", err)
 	}
 	// codeberg.org (Forgejo) and gopkg.in (git-serving redirector) appear as
 	// resolved Origins in real dependency graphs and must cross-verify.
-	if err := DefaultVCSHostAllowlist().ValidateOriginForCheckout("https://codeberg.org/foo/bar", "", commit); err != nil {
+	if _, err := DefaultVCSHostAllowlist().CheckOriginForCheckout("https://codeberg.org/foo/bar", "", commit); err != nil {
 		t.Fatalf("expected codeberg.org Origin to validate, got %v", err)
 	}
-	if err := DefaultVCSHostAllowlist().ValidateOriginForCheckout("https://gopkg.in/ini.v1", "", commit); err != nil {
+	if _, err := DefaultVCSHostAllowlist().CheckOriginForCheckout("https://gopkg.in/ini.v1", "", commit); err != nil {
 		t.Fatalf("expected gopkg.in Origin to validate, got %v", err)
 	}
 }
@@ -42,25 +42,78 @@ func TestValidateOriginForCheckout_RejectsDangerousTransports(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
-			if err := DefaultVCSHostAllowlist().ValidateOriginForCheckout(tc.url, "", commit); err == nil {
+			if _, err := DefaultVCSHostAllowlist().CheckOriginForCheckout(tc.url, "", commit); err == nil {
 				t.Errorf("expected %q to be rejected", tc.url)
 			}
 		})
 	}
 }
 
-func TestValidateOriginForCheckout_RejectsNonAllowlistedHost(t *testing.T) {
+// The built-in set is advisory: a host outside it is reported and still
+// contacted. Refusing by default would cap cross-verification at whichever
+// forges kanonarion ships a name for and silently degrade every other ecosystem
+// to checksum-DB-only, which is the condition the coverage report exists to
+// surface rather than to cause.
+func TestCheckOriginForCheckout_DefaultWarnsAndPermitsUnlistedHost(t *testing.T) {
 	commit := strings.Repeat("a", 40)
-	if err := DefaultVCSHostAllowlist().ValidateOriginForCheckout("https://evil.example.com/foo/bar", "", commit); err == nil {
-		t.Error("expected non-allowlisted host to be rejected")
+	warning, err := DefaultVCSHostAllowlist().CheckOriginForCheckout("https://git.example.com/foo/bar", "", commit)
+	if err != nil {
+		t.Fatalf("the default set must not refuse an unlisted host: %v", err)
+	}
+	if warning == "" {
+		t.Error("an unlisted host must still be reported")
+	}
+	if !strings.Contains(warning, "git.example.com") {
+		t.Errorf("the warning must name the host, got %q", warning)
+	}
+	if !strings.Contains(warning, "allowed_vcs_hosts") {
+		t.Errorf("the warning must name the policy field that would refuse it, got %q", warning)
+	}
+}
+
+// A policy-configured list means it. This is the same host as above, and the
+// only difference is that an operator named the forges they will talk to.
+func TestCheckOriginForCheckout_PolicyListRefusesUnlistedHost(t *testing.T) {
+	narrowed, err := NewVCSHostAllowlist([]string{"github.com"})
+	if err != nil {
+		t.Fatalf("NewVCSHostAllowlist: %v", err)
+	}
+	if !narrowed.IsEnforcing() {
+		t.Fatal("a policy-configured list must enforce")
+	}
+	commit := strings.Repeat("a", 40)
+	warning, err := narrowed.CheckOriginForCheckout("https://git.example.com/foo/bar", "", commit)
+	if err == nil {
+		t.Fatal("an enforcing list must refuse a host outside it")
+	}
+	if warning != "" {
+		t.Errorf("a refusal must not also warn, got %q", warning)
+	}
+}
+
+// Advisory mode is about host identity only. The URL-shape invariants are the
+// RCE vectors and hold in both modes, so a scheme the allowlist has no opinion
+// about is still a hard failure under the default set.
+func TestCheckCloneURL_ShapeInvariantsHoldInAdvisoryMode(t *testing.T) {
+	for _, raw := range []string{
+		"ext::sh -c touch/foo",
+		"file:///etc/passwd",
+		"ssh://git@github.com/foo/bar",
+		"git://github.com/foo/bar",
+		"http://github.com/foo/bar",
+		"-upload-pack=touch",
+	} {
+		if _, err := DefaultVCSHostAllowlist().CheckCloneURL(raw); err == nil {
+			t.Errorf("%q must be refused even by an advisory list", raw)
+		}
 	}
 }
 
 func TestValidateOriginForCheckout_RejectsFlagLikeCommitAndRef(t *testing.T) {
-	if err := DefaultVCSHostAllowlist().ValidateOriginForCheckout("https://github.com/foo/bar", "", "--upload-pack=touch"); err == nil {
+	if _, err := DefaultVCSHostAllowlist().CheckOriginForCheckout("https://github.com/foo/bar", "", "--upload-pack=touch"); err == nil {
 		t.Error("expected flag-like commit to be rejected")
 	}
-	if err := DefaultVCSHostAllowlist().ValidateOriginForCheckout("https://github.com/foo/bar", "-malicious", strings.Repeat("a", 40)); err == nil {
+	if _, err := DefaultVCSHostAllowlist().CheckOriginForCheckout("https://github.com/foo/bar", "-malicious", strings.Repeat("a", 40)); err == nil {
 		t.Error("expected leading-dash ref to be rejected")
 	}
 }
@@ -224,27 +277,27 @@ func TestValidateOriginForCheckout_PolicyOverrideGovernsHostOnly(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	// The configured forge still verifies.
-	if err := narrow.ValidateOriginForCheckout("https://github.com/foo/bar", "", commit); err != nil {
+	if _, err := narrow.CheckOriginForCheckout("https://github.com/foo/bar", "", commit); err != nil {
 		t.Fatalf("expected the configured forge to validate, got %v", err)
 	}
 	// A default forge left out of the override no longer does.
-	if err := narrow.ValidateOriginForCheckout("https://gitlab.com/foo/bar", "", commit); err == nil {
+	if _, err := narrow.CheckOriginForCheckout("https://gitlab.com/foo/bar", "", commit); err == nil {
 		t.Error("expected a host excluded by the policy to be rejected")
 	}
 	// Every non-host invariant still holds under an override.
-	if err := narrow.ValidateOriginForCheckout("ssh://github.com/foo/bar", "", commit); err == nil {
+	if _, err := narrow.CheckOriginForCheckout("ssh://github.com/foo/bar", "", commit); err == nil {
 		t.Error("non-https transport must stay rejected regardless of the allowlist")
 	}
-	if err := narrow.ValidateOriginForCheckout("https://github.com/foo/bar", "", "--upload-pack=touch"); err == nil {
+	if _, err := narrow.CheckOriginForCheckout("https://github.com/foo/bar", "", "--upload-pack=touch"); err == nil {
 		t.Error("flag-like commit must stay rejected regardless of the allowlist")
 	}
-	if err := narrow.ValidateOriginForCheckout("https://github.com/foo/bar", "-evil", commit); err == nil {
+	if _, err := narrow.CheckOriginForCheckout("https://github.com/foo/bar", "-evil", commit); err == nil {
 		t.Error("leading-dash ref must stay rejected regardless of the allowlist")
 	}
 }
 
 func TestValidateCloneURL_RejectsUnparseableURL(t *testing.T) {
-	if err := DefaultVCSHostAllowlist().ValidateCloneURL("https://gith ub.com/\x7f"); err == nil {
+	if _, err := DefaultVCSHostAllowlist().CheckCloneURL("https://gith ub.com/\x7f"); err == nil {
 		t.Error("expected an unparseable clone URL to be rejected")
 	}
 }

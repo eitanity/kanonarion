@@ -16,6 +16,7 @@ import (
 
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
 	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
+	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
@@ -130,6 +131,16 @@ type auditModuleResult struct {
 	// modules (Direct=false) appear alongside direct ones and the
 	// compliance picture spans the full closure, not just the require lines.
 	Direct bool `json:"direct"`
+
+	// coverage is this module's contribution to the run's verification-coverage
+	// aggregate, captured from the same record read that filled Verification.
+	// Taking it from the same read is what makes the aggregate equal the rows by
+	// construction rather than by a second lookup that could disagree.
+	//
+	// Unexported deliberately: the aggregate is reported on stderr, and adding a
+	// field here would change the documented `audit --json` array element for
+	// every consumer to carry a per-row copy of a whole-graph figure.
+	coverage fetchdomain.CoverageObservation
 }
 
 func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error {
@@ -194,6 +205,13 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 		return err
 	}
 
+	// The aggregate goes to stderr on both paths: a whole-graph collapse in
+	// cross-verification is invisible in a populated status column, and stdout
+	// is the data channel --json callers pipe into jq.
+	if cerr := writeVerificationCoverage(stderr, auditVerificationCoverage(results)); cerr != nil {
+		return cerr
+	}
+
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
@@ -241,7 +259,7 @@ func auditScope(
 
 	progress := newWalkProgressReporter(stderr, false, activeConfig, logLevel)
 	if werr := runWalkProject(ctx, f.gomodPath, f.force, true, 0, "", f.policyPath, f.skipVCSVerify, scope,
-		walkdomain.WalkDepthFull, "", false, f.stdlibFromGoMod, progress, ctr.ExecuteWalk, io.Discard, stderr); werr != nil {
+		walkdomain.WalkDepthFull, "", false, f.stdlibFromGoMod, progress, ctr.ExecuteWalk, nil, io.Discard, stderr); werr != nil {
 		// A partial walk is tolerated (allowPartial=true above): individual
 		// unfetchable nodes surface as "(not fetched)" rows. Only a hard walk
 		// failure or cancellation leaves no usable record.
@@ -369,6 +387,11 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, sc
 
 	if frec, found, ferr := ctr.QueryFetch.GetFetchRecord(ctx, coord, fetchapp.PipelineVersion); ferr == nil && found {
 		res.Verification = frec.VerificationStatus
+		res.coverage = fetchdomain.CoverageObservation{
+			Bucket:   fetchdomain.BucketForVerification(fetchdomain.VerificationStatus(frec.VerificationStatus)),
+			Legs:     frec.Legs,
+			Recorded: true,
+		}
 	} else if !found {
 		res.Verification = "(not fetched)"
 	}
@@ -499,6 +522,11 @@ func buildStdlibAuditResult(ctx context.Context, coord coordinate.ModuleCoordina
 	if node.Stdlib != nil {
 		if node.Stdlib.VerificationStatus != "" {
 			res.Verification = node.Stdlib.VerificationStatus
+			// The stdlib's custody rides on the graph node, not a fetch record,
+			// and it carries no validation legs — so it reports as measured for
+			// the status buckets and as not-measured for the ledger, which is
+			// exactly what it is.
+			res.coverage = stdlibCoverageObservation(node)
 		}
 		res.LicenseSource = "stdlib-tarball"
 		if node.Stdlib.LicenseSPDX != "" {
@@ -521,6 +549,19 @@ func buildStdlibAuditResult(ctx context.Context, coord coordinate.ModuleCoordina
 	vrec, found, verr := ctr.QueryVuln.GetLatestRecordForWalk(ctx, coord, vulnPipelineVersion, walkID)
 	res.VulnStatus, res.VulnReason, res.VulnFindings, res.VulnWithdrawn = vulnAuditStatus(vrec, found, verr)
 	return res
+}
+
+// auditVerificationCoverage aggregates the run's own rows. It reads the
+// observations captured alongside each row's Verification column rather than
+// consulting the store again, so the acceptance the ticket asks for — that the
+// counts equal the per-module statuses in the same run — holds by construction
+// instead of by two reads agreeing.
+func auditVerificationCoverage(results []auditModuleResult) fetchdomain.VerificationCoverage {
+	obs := make([]fetchdomain.CoverageObservation, 0, len(results))
+	for _, r := range results {
+		obs = append(obs, r.coverage)
+	}
+	return fetchdomain.VerificationCoverageOf(obs)
 }
 
 // auditBlockingErr returns a non-nil error when any result is a hard

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"net"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -38,6 +40,12 @@ type FetchModuleUseCase struct {
 	pipelineVersion string
 	logger          *slog.Logger
 	verifier        domain2.Verifier
+
+	// resolveHost looks up a hostname for the Origin address guard. It is a
+	// field rather than a direct net call so a test can present a name that
+	// answers into private space without touching DNS; nil uses the system
+	// resolver. See WithHostResolver.
+	resolveHost func(ctx context.Context, host string) ([]net.IP, error)
 
 	// signer and attestations are optional sign-on-process capabilities
 	// When signer is nil, or it yields no attestation (the OSS
@@ -784,7 +792,7 @@ func (uc *FetchModuleUseCase) verify(
 	// Verified meaning "git ref resolved, ready to cross-verify" — not that the
 	// zip was reproduced from the git tree. crossVerify is what actually
 	// reproduces it, and it is the only step skipVCSVerify gates.
-	gitRef, vcsStatus, vcsDetail := uc.resolveGitRef(ctx, log, coord, info, vcsHosts)
+	gitRef, vcsStatus, vcsDetail, originRefusal := uc.resolveGitRef(ctx, log, coord, info, vcsHosts)
 	switch {
 	case skipVCSVerify:
 		// Cross-verify is skipped (e.g. when GitHub rate limits make git
@@ -818,15 +826,33 @@ func (uc *FetchModuleUseCase) verify(
 		if vcsDetail != "" {
 			detail += "; vcs: " + vcsDetail
 		}
-		return earlyStatus, detail, gitRef, retracted, sumdbLookupFailed
+		return earlyStatus, withOriginRefusal(detail, originRefusal), gitRef, retracted, sumdbLookupFailed
 	}
 
-	// sumdb passed; combine with VCS result.
+	// sumdb passed; combine with VCS result. A refused Origin is recorded even
+	// here, where nothing went wrong: the run reached Verified through the
+	// inferred URL, and the fact that the proxy claimed a different source and
+	// was refused is exactly what an auditor needs afterwards.
 	if vcsStatus == domain2.Verified {
-		return domain2.Verified, "", gitRef, retracted, sumdbLookupFailed
+		return domain2.Verified, withOriginRefusal("", originRefusal), gitRef, retracted, sumdbLookupFailed
 	}
 	// sumdb passed but VCS was not available or missing.
-	return domain2.VerifiedBySumDBOnly, vcsDetail, gitRef, retracted, sumdbLookupFailed
+	return domain2.VerifiedBySumDBOnly, withOriginRefusal(vcsDetail, originRefusal), gitRef, retracted, sumdbLookupFailed
+}
+
+// withOriginRefusal puts a refused proxy Origin at the FRONT of the detail.
+// When both are present the refusal is the more actionable cause — the run
+// declined metadata from an untrusted source — and a reader who sees only the
+// downstream consequence would go looking in the wrong place.
+func withOriginRefusal(detail, refusal string) string {
+	switch {
+	case refusal == "":
+		return detail
+	case detail == "":
+		return refusal
+	default:
+		return refusal + "; " + detail
+	}
 }
 
 // checkProjectGoSum cross-checks the module's already-computed h1 hashes
@@ -875,14 +901,21 @@ func (uc *FetchModuleUseCase) resolveGitRef(
 	coord coordinate.ModuleCoordinate,
 	info ports.ModuleInfo,
 	vcsHosts domain2.VCSHostAllowlist,
-) (domain2.GitReference, domain2.VerificationStatus, string) {
+) (domain2.GitReference, domain2.VerificationStatus, string, string) {
 	var originRejected string
 	if info.Origin != nil && info.Origin.URL != "" && info.Origin.Hash != "" {
 		// The module proxy is untrusted (T1/T2), so its Origin metadata is too.
 		// Validate the URL/ref/commit before any of it reaches a git subprocess;
 		// a failing claim is treated as a missing Origin (fall through to the
 		// inferred-URL path below), never trusted as Verified.
-		if err := vcsHosts.ValidateOriginForCheckout(info.Origin.URL, info.Origin.Ref, info.Origin.Hash); err != nil {
+		warning, err := vcsHosts.CheckOriginForCheckout(info.Origin.URL, info.Origin.Ref, info.Origin.Hash)
+		if err == nil {
+			// The URL-only guard has passed, so the host is not a private
+			// literal. Resolve it: a name is the form the guard cannot settle
+			// on its own, and it is the form an SSRF attempt would take.
+			err = uc.checkOriginResolves(ctx, info.Origin.URL)
+		}
+		if err != nil {
 			log.WarnContext(ctx, "origin_rejected",
 				slog.String("url", info.Origin.URL),
 				slog.String("error", err.Error()))
@@ -890,28 +923,31 @@ func (uc *FetchModuleUseCase) resolveGitRef(
 			// (Origin refused) rather than a misleading "could not infer URL".
 			originRejected = fmt.Sprintf("proxy Origin %q refused: %v", info.Origin.URL, err)
 		} else {
+			if warning != "" {
+				// The proxy is untrusted, so an off-list host it names is the
+				// case most worth saying out loud rather than merely allowing.
+				log.WarnContext(ctx, "origin_host_off_allowlist",
+					slog.String("url", info.Origin.URL),
+					slog.String("warning", warning))
+			}
 			log.InfoContext(ctx, "origin_from_proxy", slog.String("url", info.Origin.URL))
 			return domain2.GitReference{
 				URL:        info.Origin.URL,
 				Ref:        info.Origin.Ref,
 				CommitHash: info.Origin.Hash,
-			}, domain2.Verified, ""
+			}, domain2.Verified, "", ""
 		}
 	}
 
 	gitRef, status, detail := uc.resolveInferredGitRef(ctx, log, coord, vcsHosts)
-	// A rejected Origin that the inferred path also could not verify must
-	// surface the rejection as the primary, actionable cause: the
-	// status degraded because we refused untrusted Origin metadata, not merely
-	// because no URL could be inferred.
-	if originRejected != "" && status != domain2.Verified {
-		if detail == "" {
-			detail = originRejected
-		} else {
-			detail = originRejected + "; " + detail
-		}
-	}
-	return gitRef, status, detail
+	// The refusal is returned separately rather than folded into detail here.
+	// Folding it in loses it twice over: the inferred path can return a
+	// provisional Verified (so there is no failure to attach it to), and
+	// crossVerify overwrites detail wholesale a moment later. A run that refused
+	// untrusted Origin metadata must say so in the record whatever the eventual
+	// status, or a repelled SSRF attempt is indistinguishable on disk from a run
+	// that never faced one.
+	return gitRef, status, detail, originRejected
 }
 
 // resolveInferredGitRef resolves a GitReference without any trusted proxy
@@ -928,7 +964,7 @@ func (uc *FetchModuleUseCase) resolveInferredGitRef(
 			return domain2.GitReference{}, domain2.UnverifiedMissingOrigin,
 				fmt.Sprintf("could not extract commit prefix from pseudo-version: %v", err)
 		}
-		repoURL, detail := inferAllowedRepoURL(coord.Path(), vcsHosts)
+		repoURL, detail := inferAllowedRepoURL(ctx, log, coord.Path(), vcsHosts)
 		if repoURL == "" {
 			return domain2.GitReference{}, domain2.UnverifiedMissingOrigin, detail
 		}
@@ -939,7 +975,7 @@ func (uc *FetchModuleUseCase) resolveInferredGitRef(
 		}, domain2.Verified, ""
 	}
 
-	repoURL, detail := inferAllowedRepoURL(coord.Path(), vcsHosts)
+	repoURL, detail := inferAllowedRepoURL(ctx, log, coord.Path(), vcsHosts)
 	if repoURL == "" {
 		return domain2.GitReference{}, domain2.UnverifiedMissingOrigin, detail
 	}
@@ -1174,6 +1210,59 @@ func goModMatchesPath(goModPath, modulePath string) bool {
 	return f.Module != nil && f.Module.Mod.Path == modulePath
 }
 
+// checkOriginResolves resolves a proxy-supplied Origin host and refuses it when
+// the answer lands outside public address space.
+//
+// A resolution failure is NOT a refusal. The name may be unreachable for
+// ordinary reasons — offline, DNS outage, a forge that has moved — and turning
+// those into "untrusted Origin" would degrade verification on network weather.
+// git will fail to dial it a moment later anyway, which reports the real cause.
+func (uc *FetchModuleUseCase) checkOriginResolves(ctx context.Context, rawURL string) error {
+	u, err := url.Parse(rawURL)
+	if err != nil {
+		return fmt.Errorf("parsing Origin URL %q: %w", rawURL, err)
+	}
+	host := u.Hostname()
+	if host == "" || net.ParseIP(host) != nil {
+		// No name to resolve: the URL-only guard has already classified it.
+		return nil
+	}
+	resolve := uc.resolveHost
+	if resolve == nil {
+		resolve = defaultHostResolver
+	}
+	addrs, err := resolve(ctx, host)
+	if err != nil {
+		// Deliberately not a refusal: see the doc comment. An unresolvable name
+		// is network weather, and git reports the real cause when it dials.
+		//nolint:nilerr // a resolution failure must not become a verification verdict
+		return nil
+	}
+	if err := domain2.CheckOriginResolvedAddrs(host, addrs); err != nil {
+		return fmt.Errorf("checking Origin address for %q: %w", host, err)
+	}
+	return nil
+}
+
+// defaultHostResolver is the system resolver.
+func defaultHostResolver(ctx context.Context, host string) ([]net.IP, error) {
+	addrs, err := net.DefaultResolver.LookupIPAddr(ctx, host)
+	if err != nil {
+		return nil, fmt.Errorf("resolving %q: %w", host, err)
+	}
+	out := make([]net.IP, 0, len(addrs))
+	for _, a := range addrs {
+		out = append(out, a.IP)
+	}
+	return out, nil
+}
+
+// WithHostResolver overrides the resolver used by the Origin address guard.
+func (uc *FetchModuleUseCase) WithHostResolver(f func(ctx context.Context, host string) ([]net.IP, error)) *FetchModuleUseCase {
+	uc.resolveHost = f
+	return uc
+}
+
 // inferAllowedRepoURL infers a clone URL from a module path and puts it through
 // the same host gate a proxy-supplied Origin faces. An inferred URL is
 // kanonarion's own guess rather than untrusted proxy metadata, but it is still
@@ -1181,34 +1270,60 @@ func goModMatchesPath(goModPath, modulePath string) bool {
 // govern it too — otherwise "trust github.com only" would still clone gitlab.
 // Returns ("", reason) when no URL can be inferred or the inferred host is off
 // the allowlist; the reason is recorded as the verification detail.
-func inferAllowedRepoURL(modulePath string, vcsHosts domain2.VCSHostAllowlist) (string, string) {
+func inferAllowedRepoURL(
+	ctx context.Context,
+	log *slog.Logger,
+	modulePath string,
+	vcsHosts domain2.VCSHostAllowlist,
+) (string, string) {
 	repoURL := inferRepoURL(modulePath)
 	if repoURL == "" {
 		return "", fmt.Sprintf("could not infer VCS URL for %s", modulePath)
 	}
-	if err := vcsHosts.ValidateCloneURL(repoURL); err != nil {
+	warning, err := vcsHosts.CheckCloneURL(repoURL)
+	if err != nil {
 		return "", fmt.Sprintf("inferred VCS URL %s refused: %v", repoURL, err)
+	}
+	if warning != "" {
+		log.WarnContext(ctx, "inferred_host_off_allowlist",
+			slog.String("url", repoURL),
+			slog.String("warning", warning))
 	}
 	return repoURL, ""
 }
 
 // inferRepoURL guesses a git clone URL from a Go module path.
+//
+// It names no forge. An inferred URL is a CANDIDATE, not an assurance: the
+// status it leads to is settled by crossVerify reproducing the proxy zip from
+// the checked-out tree, so where the candidate came from carries no weight —
+// a wrong guess fails to reproduce and the status degrades exactly as it would
+// have without one. Deciding which hosts may be guessed at is therefore not a
+// trust question, and the host switch that used to live here was a second,
+// hardcoded allowlist shadowing the policy-governed one: gopkg.in is on the
+// default VCS allowlist precisely so real graphs cross-verify there, and this
+// function silently withheld a candidate for it anyway.
+//
+// The one host decision that IS load-bearing stays where it belongs, in
+// VCSHostAllowlist.ValidateCloneURL: a candidate is handed to a git subprocess,
+// so the effective policy allowlist governs what may be contacted. This
+// function only proposes; that one refuses.
+//
+// Two shapes are recognised, by arity alone:
+//   - host/org/repo, the common forge layout (a /vN suffix falls outside the
+//     first three elements and is dropped, which is what the forge URL needs);
+//   - host/repo, which is what a version-redirecting host like gopkg.in serves.
 func inferRepoURL(modulePath string) string {
 	parts := splitPath(modulePath, 3)
-	if len(parts) == 0 {
+	switch len(parts) {
+	case 0, 1:
+		// A bare host, or nothing: no repository to name.
 		return ""
-	}
-	// Only the forges with a predictable host/org/repo clone-URL shape can be
-	// inferred here. Other allowlisted hosts (e.g. go.googlesource.com) have a
-	// different layout and are only trusted when the proxy supplies their Origin.
-	switch parts[0] {
-	case "github.com", "gitlab.com", "bitbucket.org":
-		if len(parts) < 3 {
-			return ""
-		}
+	case 2:
+		return "https://" + parts[0] + "/" + parts[1]
+	default:
 		return "https://" + parts[0] + "/" + parts[1] + "/" + parts[2]
 	}
-	return ""
 }
 
 func splitPath(path string, n int) []string {

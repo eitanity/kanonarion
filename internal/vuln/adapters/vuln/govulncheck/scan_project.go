@@ -72,7 +72,10 @@ func (s *Scanner) ScanProject(
 		}, nil
 	}
 
-	dbArg, dbCleanup := s.prepareDBArg(ctx, snapshot, dbDir)
+	dbArg, dbCleanup, err := s.prepareDBArg(ctx, snapshot, dbDir)
+	if err != nil {
+		return domain.ProjectScanResult{}, err
+	}
 	defer dbCleanup()
 
 	govulncheckBin, err := lookupGovulncheck()

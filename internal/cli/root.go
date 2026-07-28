@@ -63,6 +63,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 		newWalkListCmd(stdout, stderr),
 		newWalkShowCmd(stdout, stderr),
 		newWalkDiffCmd(stdout, stderr),
+		newVerificationCoverageCmd(stdout, stderr),
 		newPolicyCmd(stdout, stderr),
 		newLicenseCmd(stdout, stderr),
 		newLicenseListCmd(stdout, stderr),

@@ -143,6 +143,18 @@ type configShowResult struct {
 	GoDebugPolicy   configGoDebugResult   `json:"godebug_policy"`
 	VendorPolicy    configVendorResult    `json:"vendor_policy"`
 	FIPSPolicy      configFIPSResult      `json:"fips_policy"`
+	FetchPolicy     configFetchResult     `json:"fetch_policy"`
+}
+
+// configFetchResult reports the resolved cross-verification posture.
+//
+// Enforcing is stated alongside the list because the list alone cannot say it:
+// an absent allowed_vcs_hosts still has a host set behind it (the built-in
+// one), and the difference that matters to a reader is whether an off-list host
+// is refused or merely reported.
+type configFetchResult struct {
+	AllowedVCSHosts []string `json:"allowed_vcs_hosts"`
+	Enforcing       bool     `json:"enforcing"`
 }
 
 type configDirectiveResult struct {
@@ -256,6 +268,10 @@ func runStoreConfigShow(root string, asJSON bool, stdout io.Writer) error {
 			FIPSPolicy: configFIPSResult{
 				Required:    cfg.FIPSPolicy.Required,
 				OnDeviation: string(cfg.FIPSPolicy.OnDeviation),
+			},
+			FetchPolicy: configFetchResult{
+				AllowedVCSHosts: cfg.FetchPolicy.AllowedVCSHosts,
+				Enforcing:       cfg.FetchPolicy.AllowedVCSHosts != nil,
 			},
 		}
 		enc := json.NewEncoder(stdout)

@@ -45,7 +45,7 @@ func TestResolveGitRef_ToolMissing(t *testing.T) {
 	uc := &FetchModuleUseCase{vcs: toolMissingVCS{}}
 	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
-	_, status, _ := uc.resolveGitRef(context.Background(), slog.Default(), coord, ports.ModuleInfo{}, domain2.DefaultVCSHostAllowlist())
+	_, status, _, _ := uc.resolveGitRef(context.Background(), slog.Default(), coord, ports.ModuleInfo{}, domain2.DefaultVCSHostAllowlist())
 	if status != domain2.UnverifiedVCSToolMissing {
 		t.Errorf("status = %q, want UnverifiedVCSToolMissing", status)
 	}
@@ -55,7 +55,7 @@ func TestResolveGitRef_GenericFailureStaysNoVCS(t *testing.T) {
 	uc := &FetchModuleUseCase{vcs: genericFailVCS{}}
 	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
-	_, status, _ := uc.resolveGitRef(context.Background(), slog.Default(), coord, ports.ModuleInfo{}, domain2.DefaultVCSHostAllowlist())
+	_, status, _, _ := uc.resolveGitRef(context.Background(), slog.Default(), coord, ports.ModuleInfo{}, domain2.DefaultVCSHostAllowlist())
 	if status != domain2.UnverifiedNoVCS {
 		t.Errorf("status = %q, want UnverifiedNoVCS", status)
 	}
@@ -72,18 +72,22 @@ func TestResolveGitRef_RejectsMaliciousOrigin(t *testing.T) {
 		Hash: "--upload-pack=touch",
 	}}
 
-	gitRef, status, detail := uc.resolveGitRef(context.Background(), slog.Default(), coord, info, domain2.DefaultVCSHostAllowlist())
+	gitRef, status, _, refusal := uc.resolveGitRef(context.Background(), slog.Default(), coord, info, domain2.DefaultVCSHostAllowlist())
 	if status == domain2.Verified {
 		t.Fatal("malicious Origin must not be trusted as Verified")
 	}
 	if strings.HasPrefix(gitRef.URL, "ext::") {
 		t.Errorf("malicious Origin URL leaked into GitReference: %q", gitRef.URL)
 	}
-	// The detail must name the refused Origin as the cause, not a misleading
-	// "could not infer VCS URL" — the status degraded because we refused
-	// untrusted metadata.
-	if !strings.Contains(detail, "refused") {
-		t.Errorf("detail %q does not explain the Origin was refused", detail)
+	// The refusal is returned separately from the detail, and it must survive
+	// whatever the inferred fall-through goes on to do. Folded into detail it
+	// was dropped whenever the fall-through resolved a ref, which is how a
+	// refused Origin came to leave no trace in the record.
+	if !strings.Contains(refusal, "refused") {
+		t.Errorf("refusal %q does not explain the Origin was refused", refusal)
+	}
+	if !strings.Contains(refusal, "ext::") {
+		t.Errorf("refusal %q should name the Origin it declined", refusal)
 	}
 }
 
@@ -97,7 +101,7 @@ func TestResolveGitRef_AcceptsValidOrigin(t *testing.T) {
 		Hash: strings.Repeat("a", 40),
 	}}
 
-	gitRef, status, _ := uc.resolveGitRef(context.Background(), slog.Default(), coord, info, domain2.DefaultVCSHostAllowlist())
+	gitRef, status, _, _ := uc.resolveGitRef(context.Background(), slog.Default(), coord, info, domain2.DefaultVCSHostAllowlist())
 	if status != domain2.Verified {
 		t.Fatalf("valid Origin should resolve Verified, got %q", status)
 	}

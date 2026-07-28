@@ -2,6 +2,7 @@ package govulncheck
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -51,7 +52,10 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (domain.Vulne
 	}
 
 	// 2. Prepare vulnerability database argument.
-	dbArg, dbCleanup := s.prepareDBArg(ctx, snapshot, dbDir)
+	dbArg, dbCleanup, err := s.prepareDBArg(ctx, snapshot, dbDir)
+	if err != nil {
+		return domain.VulnerabilityRecord{}, err
+	}
 	defer dbCleanup()
 
 	govulncheckBin, err := lookupGovulncheck()
@@ -288,20 +292,29 @@ func locateGoMod(root string) (string, bool) {
 // the snapshot from the store into a temp dir, and finally to the live database.
 // The returned cleanup removes any temp dir it created (a no-op otherwise) and
 // must be deferred by the caller.
-func (s *Scanner) prepareDBArg(ctx context.Context, snapshot domain.DatabaseSnapshot, dbDir string) (string, func()) {
+//
+// A snapshot integrity failure is fatal rather than a fallback. The live
+// database is a DIFFERENT advisory set from the one the record about to be
+// written names, so answering from it produces a finding that cites a snapshot
+// whose bytes were never consulted. Absent and unreadable snapshots keep the
+// fallback, which is the case it was written for.
+func (s *Scanner) prepareDBArg(ctx context.Context, snapshot domain.DatabaseSnapshot, dbDir string) (string, func(), error) {
 	noop := func() {}
 	s.logger.Info("vuln-scan: preparing vulnerability database", "snapshot", snapshot.Version)
 	if dbDir != "" {
 		s.logger.Info("vuln-scan: using pre-extracted local database", "path", dbDir)
-		return "file://" + dbDir, noop
+		return "file://" + dbDir, noop, nil
 	}
 	if s.vulnStore == nil {
-		return "https://vuln.go.dev", noop
+		return "https://vuln.go.dev", noop, nil
 	}
 	snapshotContent, err := s.vulnStore.GetDatabaseSnapshot(ctx, snapshot)
 	if err != nil {
+		if errors.Is(err, ports.ErrSnapshotIntegrity) {
+			return "", noop, fmt.Errorf("preparing the advisory database: %w", ports.SnapshotIntegrityAbort(snapshot, err))
+		}
 		s.logger.Warn("vuln-scan: failed to retrieve snapshot, falling back to live DB", "error", err)
-		return "https://vuln.go.dev", noop
+		return "https://vuln.go.dev", noop, nil
 	}
 	defer func() {
 		if cerr := snapshotContent.Close(); cerr != nil {
@@ -311,16 +324,16 @@ func (s *Scanner) prepareDBArg(ctx context.Context, snapshot domain.DatabaseSnap
 	extractedDir, err := os.MkdirTemp("", "kanonarion-vulndb-*")
 	if err != nil {
 		s.logger.Warn("vuln-scan: failed to create temp dir for snapshot, falling back to live DB", "error", err)
-		return "https://vuln.go.dev", noop
+		return "https://vuln.go.dev", noop, nil
 	}
 	if err := s.extractZip(ctx, snapshotContent, extractedDir); err != nil {
 		s.logger.Warn("vuln-scan: failed to extract snapshot, falling back to live DB", "error", err)
 		_ = os.RemoveAll(extractedDir)
-		return "https://vuln.go.dev", noop
+		return "https://vuln.go.dev", noop, nil
 	}
 	s.logger.Info("vuln-scan: using pinned local database", "path", extractedDir)
 	s.logMem(ctx, "db_extracted")
-	return "file://" + extractedDir, func() { _ = os.RemoveAll(extractedDir) }
+	return "file://" + extractedDir, func() { _ = os.RemoveAll(extractedDir) }, nil
 }
 
 // scanEnv builds the process environment for the Go toolchain and govulncheck.

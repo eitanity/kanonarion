@@ -5,7 +5,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"strings"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/audit"
@@ -298,29 +297,6 @@ func GoModIdentity(r domain2.FactRecord) (BlobIdentity, bool, error) {
 		return BlobIdentity{}, false, nil
 	}
 	return BlobIdentity{Kind: BlobKindGoMod, Hash: h}, true, nil
-}
-
-// ParseBlobIdentity is the inverse of BlobIdentity.String. It rejects a value it
-// cannot read rather than returning a zero identity, so a malformed address can
-// never be mistaken for an absent one.
-func ParseBlobIdentity(s string) (BlobIdentity, error) {
-	kind, rest, ok := strings.Cut(s, ":")
-	if !ok {
-		return BlobIdentity{}, fmt.Errorf("invalid blob identity %q: expected kind:algorithm:value", s)
-	}
-	switch BlobKind(kind) {
-	case BlobKindZip, BlobKindGoMod:
-	default:
-		return BlobIdentity{}, fmt.Errorf("invalid blob identity %q: unknown kind %q", s, kind)
-	}
-	h, err := domain2.ParseModuleHash(rest)
-	if err != nil {
-		return BlobIdentity{}, fmt.Errorf("invalid blob identity %q: %w", s, err)
-	}
-	if h.IsZero() {
-		return BlobIdentity{}, fmt.Errorf("invalid blob identity %q: no hash", s)
-	}
-	return BlobIdentity{Kind: BlobKind(kind), Hash: h}, nil
 }
 
 // Signer signs a subject digest taken from the content-identity surface and

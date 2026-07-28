@@ -195,7 +195,7 @@ func TestWriteNoticeDocument_FullEntry(t *testing.T) {
 		}},
 	}}
 	var buf bytes.Buffer
-	if err := writeNoticeDocument(entries, &buf); err != nil {
+	if err := writeNoticeDocument(entries, nil, &buf); err != nil {
 		t.Fatalf("writeNoticeDocument: %v", err)
 	}
 	got := buf.String()
@@ -217,7 +217,7 @@ func TestWriteNoticeDocument_FullEntry(t *testing.T) {
 
 func TestWriteNoticeDocument_Empty(t *testing.T) {
 	var buf bytes.Buffer
-	if err := writeNoticeDocument(nil, &buf); err != nil {
+	if err := writeNoticeDocument(nil, nil, &buf); err != nil {
 		t.Fatalf("writeNoticeDocument: %v", err)
 	}
 	got := buf.String()

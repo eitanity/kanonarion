@@ -3,6 +3,7 @@ package ports
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -57,6 +58,33 @@ var ErrVulnIntegrity = errors.New("vulnerability record integrity check failed")
 // sentinel; nor is a snapshot stored before hashing existed, which reads back as
 // unverifiable rather than as corrupt.
 var ErrSnapshotIntegrity = errors.New("vulnerability database snapshot integrity check failed")
+
+// SnapshotIntegrityAbort wraps a snapshot integrity failure into the error that
+// ends the run, and lives beside the sentinel so both scan paths abort with the
+// same sentence rather than each inventing one.
+//
+// The failure is not survivable by design. The snapshot is the evidence every
+// finding in the run rests on, and the run's records name it, so continuing
+// against a live database would answer from a different advisory set than the
+// records claim — findings indistinguishable from ones actually derived from the
+// snapshot they cite. Falling back is worse than the failure it papers over.
+//
+// This run leaves the corrupt blob alone: it is the evidence of the tamper, and
+// re-fetching over it silently would destroy the one artefact an investigation
+// needs. The message says so, and says the opposite thing too — that the remedy
+// it recommends DOES overwrite it. Measured, not assumed: PutDatabaseSnapshot
+// upserts on (source, version), so a --fresh re-fetch of the same dated snapshot
+// version replaces the altered bytes in place and leaves nothing to examine. An
+// operator who wants the evidence must copy the store first, and would otherwise
+// learn that only after destroying it.
+func SnapshotIntegrityAbort(snapshot domain.DatabaseSnapshot, err error) error {
+	return fmt.Errorf(
+		"%w: the advisory database snapshot %s@%s does not match the bytes it is recorded as, "+
+			"so no finding derived from it can be vouched for and the run must not claim it; "+
+			"this run left the stored blob untouched as evidence — copy the store before re-fetching, "+
+			"because re-fetching (--fresh) overwrites this snapshot in place",
+		err, snapshot.Source, snapshot.Version)
+}
 
 // VulnerabilityStore defines the port for persisting vulnerability records.
 //

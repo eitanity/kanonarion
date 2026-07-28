@@ -104,40 +104,42 @@ func TestExecute_DefaultVCSHostsAcceptTheSameOrigin(t *testing.T) {
 	}
 }
 
-// Widening the policy makes a forge that is NOT built in cross-verify, with no
-// rebuild — the need this field exists for.
-func TestExecute_WidenedVCSHostsAcceptsNewForge(t *testing.T) {
+// The policy field NARROWS. Under the built-in advisory set an unknown forge is
+// contacted (with a warning); naming allowed_vcs_hosts without it is what
+// refuses. This pins both halves against the same forge, so the difference
+// measured is the policy and nothing else.
+func TestExecute_PolicyNarrowsToRefuseForgeTheDefaultPermits(t *testing.T) {
 	coord := coordinatetest.MustNew("git.example.org/foo/bar", "v1.0.0")
-	vcs := &countingVCS{}
 
-	// Under the built-in set this Origin is refused.
-	ucDefault := newUseCase(proxyWithOrigin(coord, "https://git.example.org/foo/bar"), vcs, newFakeBlob(), newFakeFacts())
+	// Default: advisory, so the Origin reaches git.
+	permissive := &countingVCS{}
+	ucDefault := newUseCase(proxyWithOrigin(coord, "https://git.example.org/foo/bar"), permissive, newFakeBlob(), newFakeFacts())
 	before, err := ucDefault.Execute(context.Background(), application.FetchRequest{Coordinate: coord})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if !strings.Contains(before.Record.VerificationDetail, "not on the VCS allowlist") {
-		t.Fatalf("expected the built-in set to refuse this forge, got %q", before.Record.VerificationDetail)
+	if permissive.checkouts.Load() == 0 {
+		t.Fatal("the advisory default must hand an unlisted forge to git, not refuse it")
 	}
-	if vcs.checkouts.Load() != 0 {
-		t.Fatal("an unlisted forge must not reach git")
+	if strings.Contains(before.Record.VerificationDetail, "not on the VCS allowlist") {
+		t.Errorf("the default set must not refuse, got %q", before.Record.VerificationDetail)
 	}
 
-	// The policy adds it; the same Origin now reaches cross-verification.
-	widened := append(domain2.DefaultVCSHosts(), "git.example.org")
-	ucWide := newUseCase(proxyWithOrigin(coord, "https://git.example.org/foo/bar"), vcs, newFakeBlob(), newFakeFacts())
-	after, err := ucWide.Execute(context.Background(), application.FetchRequest{
+	// Policy names the forges it will talk to, and this one is not among them.
+	strict := &countingVCS{}
+	ucNarrow := newUseCase(proxyWithOrigin(coord, "https://git.example.org/foo/bar"), strict, newFakeBlob(), newFakeFacts())
+	after, err := ucNarrow.Execute(context.Background(), application.FetchRequest{
 		Coordinate: coord,
-		VCSHosts:   mustAllowlist(t, widened...),
+		VCSHosts:   mustAllowlist(t, "github.com"),
 	})
 	if err != nil {
 		t.Fatalf("Execute: %v", err)
 	}
-	if vcs.checkouts.Load() == 0 {
-		t.Error("the widened forge should have been handed to git")
+	if strict.checkouts.Load() != 0 {
+		t.Error("a host excluded by policy must never reach a git checkout")
 	}
-	if strings.Contains(after.Record.VerificationDetail, "not on the VCS allowlist") {
-		t.Errorf("the widened forge should no longer be refused, got %q", after.Record.VerificationDetail)
+	if !strings.Contains(after.Record.VerificationDetail, "not on the VCS allowlist") {
+		t.Errorf("the record must say why verification degraded, got %q", after.Record.VerificationDetail)
 	}
 }
 

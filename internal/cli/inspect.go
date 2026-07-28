@@ -127,7 +127,7 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 		return fmt.Errorf("writing output: %w", err)
 	}
 	progress := newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
-	if err := runWalk(ctx, arg, wf, f.force, true, 0, f.policyPath, f.skipVCS, domain.WalkScopeCode, domain.WalkDepthFull, "", progress, ctr.ExecuteWalk, io.Discard, stderr); err != nil {
+	if err := runWalk(ctx, arg, wf, f.force, true, 0, f.policyPath, f.skipVCS, domain.WalkScopeCode, domain.WalkDepthFull, "", progress, ctr.ExecuteWalk, nil, io.Discard, stderr); err != nil {
 		return fmt.Errorf("walk: %w", err)
 	}
 
@@ -317,7 +317,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 	var nodeFails int
 	progress := newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
 	if werr := runWalkProject(ctx, f.gomodPath, f.force, true, 0, "", f.policyPath, f.skipVCS, scope,
-		domain.WalkDepthFull, "", false, f.stdlibFromGoMod, progress, ctr.ExecuteWalk, io.Discard, stderr); werr != nil {
+		domain.WalkDepthFull, "", false, f.stdlibFromGoMod, progress, ctr.ExecuteWalk, nil, io.Discard, stderr); werr != nil {
 		_, _ = fmt.Fprintf(stderr, "walk: %v\n", werr)
 		nodeFails = 1
 	}

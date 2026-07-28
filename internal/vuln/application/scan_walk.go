@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -188,7 +189,10 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	run.Snapshot = *snapshot
 
 	// 3a. Extract the vulnerability database snapshot once, shared across all module scans.
-	vulnDBDir, cleanupDB := uc.preExtractVulnDB(ctx, snapshot)
+	vulnDBDir, cleanupDB, err := uc.preExtractVulnDB(ctx, snapshot)
+	if err != nil {
+		return domain.WalkScanRun{}, err
+	}
 	defer cleanupDB()
 
 	// 3b. Pre-populate a shared GOMODCACHE from the blob store so govulncheck workers
@@ -296,6 +300,14 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 		for _, r := range scanPool(allCoords, domain.ScanModeSource) {
 			finalResults[r.coord] = r
 		}
+	}
+
+	// A module scan that reached the snapshot itself and found it corrupt is not
+	// one module's failure. The pool would otherwise fold it into a per-module
+	// StatusScanFailed record and let the run complete, which is the same
+	// swallow this abort exists to remove — one layer further down.
+	if err := firstSnapshotIntegrityFailure(allCoords, finalResults); err != nil {
+		return domain.WalkScanRun{}, err
 	}
 
 	progressCount := 0
@@ -1123,32 +1135,61 @@ func (uc *ScanWalkUseCase) fetchAndPersistSnapshot(ctx context.Context, errFetch
 	return &s, nil
 }
 
+// firstSnapshotIntegrityFailure returns the snapshot integrity failure a module
+// scan hit, if any, walking the coordinates in their stable order so the same
+// corruption always reports the same module rather than a map-iteration lottery.
+//
+// It reaches here only when the shared pre-extraction did not run or did not
+// serve this scan; when it did, the abort has already happened upstream. Both
+// are kept because the two paths reach the store independently, and a decision
+// enforced at only one of them is enforced only while the other stays unused.
+func firstSnapshotIntegrityFailure(
+	coords []coordinate.ModuleCoordinate,
+	results map[coordinate.ModuleCoordinate]moduleResult,
+) error {
+	for _, coord := range coords {
+		if r, ok := results[coord]; ok && errors.Is(r.err, ports.ErrSnapshotIntegrity) {
+			return fmt.Errorf("scanning %s: %w", coord, r.err)
+		}
+	}
+	return nil
+}
+
 // preExtractVulnDB extracts the snapshot ZIP to a temp dir so all module scans
-// in a walk share a single extraction. Returns the dir path (empty on failure)
-// and a cleanup function.
-func (uc *ScanWalkUseCase) preExtractVulnDB(ctx context.Context, snapshot *domain.DatabaseSnapshot) (string, func()) {
+// in a walk share a single extraction. Returns the dir path (empty when the
+// extraction could not be shared) and a cleanup function.
+//
+// A snapshot integrity failure is returned rather than logged. Every finding in
+// the run is derived from this snapshot, and the run's records name it, so a run
+// that cannot vouch for the snapshot must not produce findings that claim it.
+// The other failures — absent, unreadable, no temp dir — leave the per-module
+// extraction path to answer, which is what the fallback was written for.
+func (uc *ScanWalkUseCase) preExtractVulnDB(ctx context.Context, snapshot *domain.DatabaseSnapshot) (string, func(), error) {
 	noop := func() {}
 	content, err := uc.vulnStore.GetDatabaseSnapshot(ctx, *snapshot)
 	if err != nil {
+		if errors.Is(err, ports.ErrSnapshotIntegrity) {
+			return "", noop, fmt.Errorf("pre-extracting the advisory database: %w", ports.SnapshotIntegrityAbort(*snapshot, err))
+		}
 		uc.logger.Warn("failed to retrieve snapshot for pre-extraction, each module scan will extract independently", "error", err)
-		return "", noop
+		return "", noop, nil
 	}
 	defer func() { _ = content.Close() }()
 
 	dbDir, err := os.MkdirTemp("", "kanonarion-vulndb-*")
 	if err != nil {
 		uc.logger.Warn("failed to create temp dir for snapshot pre-extraction, each module scan will extract independently", "error", err)
-		return "", noop
+		return "", noop, nil
 	}
 	cleanup := func() { _ = os.RemoveAll(dbDir) }
 
 	if err := ziparchive.ExtractStream(content, dbDir); err != nil {
 		uc.logger.Warn("failed to pre-extract snapshot, each module scan will extract independently", "error", err)
 		cleanup()
-		return "", noop
+		return "", noop, nil
 	}
 	uc.logger.Info("pre-extracted vulnerability database snapshot", "path", dbDir)
-	return dbDir, cleanup
+	return dbDir, cleanup, nil
 }
 
 // persistSealed seals rec with its content hash and persists it, returning the

@@ -14,6 +14,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/config"
 	"github.com/eitanity/kanonarion/internal/config/domain"
+	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 func newConfigCmd(stdout io.Writer) *cobra.Command {
@@ -146,6 +147,13 @@ func configGetValue(cfg domain.Config, key string) (string, error) {
 		return val, nil
 	case key == "callgraph.exclude":
 		return marshalConfigYAML(cfg.Callgraph.Exclude)
+	case key == "fetch_policy.allowed_vcs_hosts":
+		if cfg.FetchPolicy.AllowedVCSHosts == nil {
+			// Absent is a distinct answer from empty, and printing "[]" would
+			// report the enforcing posture for a config that has not chosen it.
+			return "(unset: the built-in VCS host set applies, advisory — off-list hosts are reported, not refused)", nil
+		}
+		return marshalConfigYAML(cfg.FetchPolicy.AllowedVCSHosts)
 	default:
 		return "", &exitError{code: ExitConfig, msg: fmt.Sprintf("unknown config key %q", key)}
 	}
@@ -249,6 +257,8 @@ func configSetPath(key string) ([]string, error) {
 		return []string{"license_overrides", module}, nil
 	case key == "callgraph.exclude":
 		return []string{"callgraph", "exclude"}, nil
+	case key == "fetch_policy.allowed_vcs_hosts":
+		return []string{"fetch_policy", "allowed_vcs_hosts"}, nil
 	default:
 		return nil, &exitError{code: ExitConfig, msg: fmt.Sprintf("unknown config key %q", key)}
 	}
@@ -288,6 +298,23 @@ func parseConfigValue(key, value string) (*yaml.Node, error) {
 		key == "callgraph.exclude":
 		if node.Kind != yaml.SequenceNode {
 			return nil, &exitError{code: ExitConfig, msg: fmt.Sprintf("%s requires a YAML sequence (e.g. '[MIT, Apache-2.0]'), got %q", key, value)}
+		}
+	case key == "fetch_policy.allowed_vcs_hosts":
+		if node.Kind != yaml.SequenceNode {
+			return nil, &exitError{code: ExitConfig, msg: fmt.Sprintf(
+				"%s requires a YAML sequence of bare hostnames (e.g. '[github.com, git.example.org]'), got %q", key, value)}
+		}
+		// Validated on the way in, by the domain that owns the rule, so an
+		// unusable list is refused while the operator is typing it rather than
+		// halfway through the next walk. Setting it switches the host check
+		// from advisory to enforcing, which is worth saying out loud in the
+		// error when the list cannot be used.
+		hosts := make([]string, 0, len(node.Content))
+		for _, n := range node.Content {
+			hosts = append(hosts, n.Value)
+		}
+		if _, err := fetchdomain.NewVCSHostAllowlist(hosts); err != nil {
+			return nil, &exitError{code: ExitConfig, msg: fmt.Sprintf("%s: %v", key, err)}
 		}
 	case strings.HasPrefix(key, "license_overrides."):
 		if node.Kind != yaml.ScalarNode {
