@@ -142,3 +142,83 @@ func TestVerificationCoverage_IsCollapsed(t *testing.T) {
 		t.Error("a graph of only local source is not a collapse")
 	}
 }
+
+// The bucket names are the reader-facing vocabulary of the coverage line, so
+// they are pinned as output rather than left to whatever the switch happens to
+// return. Every bucket must name itself: a bucket that fell through to the
+// default would report a real class as "unrecognised status" and read as a
+// measurement failure rather than as the class it is.
+func TestVerificationBucket_String(t *testing.T) {
+	for bucket, want := range map[VerificationBucket]string{
+		BucketCrossVerified:  "cross-verified (checksum db + VCS)",
+		BucketChecksumDBOnly: "checksum database only",
+		BucketGoSumOnly:      "local go.sum only",
+		BucketUnverified:     "unverified",
+		BucketLocalSource:    "local source (nothing to verify)",
+		BucketUnrecorded:     "no fetch record",
+		BucketUnrecognised:   "unrecognised status",
+	} {
+		if got := bucket.String(); got != want {
+			t.Errorf("bucket %d = %q, want %q", int(bucket), got, want)
+		}
+	}
+
+	// A value from outside the enum is the safety net, not a panic.
+	if got := VerificationBucket(99).String(); got != "unrecognised status" {
+		t.Errorf("out-of-range bucket = %q, want the safety net", got)
+	}
+}
+
+// An explicitly absent VCS leg is the same claim as no VCS leg at all: the
+// ledger was written, could have recorded one, and did not. RecordLegs never
+// emits LegAbsent today, but a composed or hand-built set can, and it must not
+// fall through to the not-measured class — that would report a genuine gap as
+// "the record cannot say".
+func TestVCSEvidenceOf_AbsentLegIsNever(t *testing.T) {
+	got := VCSEvidenceOf([]ValidationLeg{
+		{Kind: LegSumDB, Provenance: LegRechecked},
+		{Kind: LegVCS, Provenance: LegAbsent},
+	})
+	if got != VCSNever {
+		t.Errorf("VCSEvidenceOf = %v, want VCSNever: an absent leg is a measured absence, not an unmeasured one", got)
+	}
+}
+
+// The buckets must keep partitioning the total. BucketUnrecorded is not
+// reachable from a status today — an absent record is handled before the
+// switch — but the arm exists so the sum still holds if the mapping ever
+// changes, and an arm nothing exercises is an arm nothing protects.
+func TestVerificationCoverageOf_RecordedUnrecordedBucketStillCounts(t *testing.T) {
+	c := VerificationCoverageOf([]CoverageObservation{
+		{Bucket: BucketUnrecorded, Recorded: true},
+	})
+	if c.Total != 1 {
+		t.Fatalf("Total = %d, want 1", c.Total)
+	}
+	if c.Unrecorded != 1 {
+		t.Errorf("Unrecorded = %d, want 1: the bucket must be counted, not dropped", c.Unrecorded)
+	}
+	if sum := c.CrossVerified + c.ChecksumDBOnly + c.GoSumOnly + c.Unverified +
+		c.LocalSource + c.Unrecorded + c.Unrecognised; sum != c.Total {
+		t.Errorf("buckets sum to %d but Total is %d: they no longer partition the graph", sum, c.Total)
+	}
+}
+
+// VCSNever is the class that matters most — the only one where no
+// cross-verification evidence exists at all — so it is counted explicitly
+// rather than inferred from the others.
+func TestVerificationCoverageOf_CountsVCSNever(t *testing.T) {
+	c := VerificationCoverageOf([]CoverageObservation{
+		{
+			Bucket:   BucketChecksumDBOnly,
+			Recorded: true,
+			Legs:     []ValidationLeg{{Kind: LegSumDB, Provenance: LegRechecked}},
+		},
+	})
+	if c.VCSNever != 1 {
+		t.Errorf("VCSNever = %d, want 1: a record with legs and no VCS leg is a measured absence", c.VCSNever)
+	}
+	if c.VCSNotMeasured != 0 {
+		t.Errorf("VCSNotMeasured = %d, want 0: this record carries legs, so it can speak to the question", c.VCSNotMeasured)
+	}
+}

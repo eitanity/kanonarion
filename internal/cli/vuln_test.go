@@ -700,7 +700,7 @@ func TestRunScanRescan_SnapshotFlagsMustBePaired(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
-			err := runScanRescan(context.Background(), "01KQDBVW092ER1HNXZ60X27CMD", false, "", "tester", tc.source, tc.version, &stdout, &stderr)
+			err := runScanRescan(context.Background(), "01KQDBVW092ER1HNXZ60X27CMD", false, "", "tester", tc.source, tc.version, "", &stdout, &stderr)
 			if err == nil {
 				t.Fatal("expected error for unpaired snapshot flags")
 			}

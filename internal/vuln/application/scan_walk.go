@@ -58,6 +58,7 @@ type ScanWalkUseCase struct {
 	walkStore       walkports.WalkStore
 	vulnStore       ports.VulnerabilityStore
 	moduleScanner   *ScanModuleUseCase
+	vcsHosts        fetchdomain.VCSHostAllowlist
 	fetcher         ports.ModuleFetcher // pre-fetches modules missing from the fact store
 	clock           fetchports.Clock
 	pipelineVersion string
@@ -78,6 +79,50 @@ type ScanWalkUseCase struct {
 }
 
 // NewScanWalkUseCase returns a new ScanWalkUseCase.
+// vcsHostCapable is a ModuleFetcher that accepts a per-run VCS forge allowlist.
+// The scan type-asserts against it only when a policy actually enforces one; a
+// fetcher that cannot accept the override fails the scan rather than quietly
+// cross-verifying against forges the operator excluded. The walk stage declares
+// the same capability for the same reason.
+type vcsHostCapable interface {
+	WithVCSHosts(fetchdomain.VCSHostAllowlist) ports.ModuleFetcher
+}
+
+// WithVCSHosts sets the effective VCS forge allowlist for the pre-fetch this
+// scan may perform.
+//
+// It exists because a vuln-scan that finds a module missing from the fact store
+// fetches it, and that fetch cross-verifies against a forge. Without this the
+// allowlist a run applies depended on which command happened to populate the
+// store first: walk and audit bound by the operator's policy, vuln-scan not
+// bound at all.
+func (uc *ScanWalkUseCase) WithVCSHosts(hosts fetchdomain.VCSHostAllowlist) *ScanWalkUseCase {
+	uc.vcsHosts = hosts
+	return uc
+}
+
+// applyVCSHosts binds the resolved allowlist to the fetcher, or fails.
+//
+// Only an ENFORCING list is applied — a policy-configured one. The built-in set
+// is advisory and already the fetcher's zero-value behaviour, so binding it
+// would be a no-op that only risks masking a fetcher that cannot accept the
+// real thing. Gating on "differs from the built-in set" would be wrong: a
+// policy naming exactly the built-in hosts is still a decision to refuse
+// everything else.
+func (uc *ScanWalkUseCase) applyVCSHosts() error {
+	if !uc.vcsHosts.IsEnforcing() {
+		return nil
+	}
+	vc, ok := uc.fetcher.(vcsHostCapable)
+	if !ok {
+		return fmt.Errorf(
+			"policy sets allowed_vcs_hosts but the module fetcher cannot apply it: %T does not implement WithVCSHosts",
+			uc.fetcher)
+	}
+	uc.fetcher = vc.WithVCSHosts(uc.vcsHosts)
+	return nil
+}
+
 func NewScanWalkUseCase(
 	walkStore walkports.WalkStore,
 	vulnStore ports.VulnerabilityStore,
@@ -164,6 +209,13 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	// DB extraction, GOMODCACHE population or module scanning.
 	if err := uc.moduleScanner.Preflight(ctx); err != nil {
 		return domain.WalkScanRun{}, fmt.Errorf("vuln-scan pre-flight failed: %w", err)
+	}
+
+	// Bind the operator's VCS forge allowlist to the pre-fetch before anything
+	// is fetched. Pre-flight is the right place: a policy that cannot be applied
+	// must stop the run here, not after a snapshot fetch and a partial scan.
+	if err := uc.applyVCSHosts(); err != nil {
+		return domain.WalkScanRun{}, err
 	}
 
 	// 1. Walk Retrieval

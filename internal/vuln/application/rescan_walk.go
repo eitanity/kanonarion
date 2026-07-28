@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
@@ -18,6 +19,7 @@ type RescanWalkUseCase struct {
 	walkStore       walkports.WalkStore
 	vulnStore       ports.VulnerabilityStore
 	moduleScanner   *ScanModuleUseCase
+	vcsHosts        fetchdomain.VCSHostAllowlist
 	fetcher         ports.ModuleFetcher
 	clock           fetchports.Clock
 	pipelineVersion string
@@ -28,6 +30,15 @@ type RescanWalkUseCase struct {
 }
 
 // NewRescanWalkUseCase returns a new RescanWalkUseCase.
+// WithVCSHosts sets the effective VCS forge allowlist for the pre-fetch the
+// delegated scan may perform. A rescan re-runs the same pipeline, so it must be
+// bound by the same policy; leaving it out would restore the divergence this
+// exists to remove, one command over.
+func (uc *RescanWalkUseCase) WithVCSHosts(hosts fetchdomain.VCSHostAllowlist) *RescanWalkUseCase {
+	uc.vcsHosts = hosts
+	return uc
+}
+
 func NewRescanWalkUseCase(
 	walkStore walkports.WalkStore,
 	vulnStore ports.VulnerabilityStore,
@@ -120,7 +131,8 @@ func (uc *RescanWalkUseCase) Rescan(ctx context.Context, req RescanRequest) (dom
 		uc.clock,
 		uc.pipelineVersion,
 		uc.logger,
-	).WithAudit(uc.audit).WithRealModcache(uc.realModcacheDir).WithHostMemory(uc.hostMemory)
+	).WithAudit(uc.audit).WithRealModcache(uc.realModcacheDir).WithHostMemory(uc.hostMemory).
+		WithVCSHosts(uc.vcsHosts)
 
 	run, err := scanWalk.Scan(ctx, ScanWalkParams{
 		WalkID:             req.WalkID,

@@ -12,6 +12,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
+	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	application2 "github.com/eitanity/kanonarion/internal/vuln/application"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -32,6 +33,7 @@ func newVulnScanCmd(stdout, stderr io.Writer) *cobra.Command {
 	var tool bool
 	var project bool
 	var gomod string
+	var policyPath string
 
 	cmd := &cobra.Command{
 		Use:   "vuln-scan [walk-id]",
@@ -59,7 +61,7 @@ func newVulnScanCmd(stdout, stderr io.Writer) *cobra.Command {
 				if err != nil {
 					return err
 				}
-				return runVulnScanScope(cmd.Context(), gomodPath, scope, force, fresh, enableReachability, callGraphWorkers, jsonOut, goBinary, operator, stdout, stderr)
+				return runVulnScanScope(cmd.Context(), gomodPath, scope, force, fresh, enableReachability, callGraphWorkers, jsonOut, goBinary, operator, policyPath, stdout, stderr)
 			}
 			if moduleCoord != "" && len(args) > 0 {
 				return fmt.Errorf("--module and a positional walk-id are mutually exclusive")
@@ -68,9 +70,9 @@ func newVulnScanCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("provide either a walk-id argument, --module <module@version>, --gomod, --tool, or --project")
 			}
 			if moduleCoord != "" {
-				return runVulnScanByModule(cmd.Context(), moduleCoord, f, force, fresh, enableReachability, callGraphWorkers, jsonOut, goBinary, operator, stdout, stderr)
+				return runVulnScanByModule(cmd.Context(), moduleCoord, f, force, fresh, enableReachability, callGraphWorkers, jsonOut, goBinary, operator, policyPath, stdout, stderr)
 			}
-			return runVulnScan(cmd.Context(), args[0], force, fresh, enableReachability, callGraphWorkers, binaryModePrePass, jsonOut, goBinary, operator, "", stdout, stderr)
+			return runVulnScan(cmd.Context(), args[0], force, fresh, enableReachability, callGraphWorkers, binaryModePrePass, jsonOut, goBinary, operator, "", policyPath, stdout, stderr)
 		},
 	}
 
@@ -85,6 +87,7 @@ func newVulnScanCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().BoolVar(&tool, "tool", false, "scan the tooling supply chain: the latest tool-scoped project walk (requires prior walk --tool)")
 	cmd.Flags().BoolVar(&project, "project", false, "scan the complete set: the latest complete-scope project walk (requires prior walk --project)")
 	cmd.Flags().StringVar(&gomod, "gomod", "", "scan the latest project walk for this go.mod's scope (default: search upward from cwd); default scope is code")
+	cmd.Flags().StringVar(&policyPath, "policy", "", "path to depth policy YAML (default: search upward for .kanonarion/policy.yaml)")
 
 	return cmd
 }
@@ -93,7 +96,7 @@ func newVulnScanCmd(stdout, stderr io.Writer) *cobra.Command {
 // dependency scope (the single record produced by `walk --gomod [--tool|--project]`)
 // and scans it. The project walk is rooted at the local main module, so its
 // closure is the scope's full set in one record — one scan, not one per module.
-func runVulnScanScope(ctx context.Context, gomodPath string, scope depScope, force, fresh, enableReachability bool, callGraphWorkers int, jsonOut bool, goBinary, operator string, stdout, stderr io.Writer) error {
+func runVulnScanScope(ctx context.Context, gomodPath string, scope depScope, force, fresh, enableReachability bool, callGraphWorkers int, jsonOut bool, goBinary, operator, policyPath string, stdout, stderr io.Writer) error {
 	modulePath, err := readGoModulePath(gomodPath)
 	if err != nil {
 		return err
@@ -131,7 +134,7 @@ func runVulnScanScope(ctx context.Context, gomodPath string, scope depScope, for
 	}
 
 	_, _ = fmt.Fprintf(stderr, "scanning %s project walk %s\n", scope, walks[0].ID)
-	return runVulnScan(ctx, walks[0].ID, force, fresh, enableReachability, callGraphWorkers, false, jsonOut, goBinary, operator, filepath.Dir(gomodPath), stdout, stderr)
+	return runVulnScan(ctx, walks[0].ID, force, fresh, enableReachability, callGraphWorkers, false, jsonOut, goBinary, operator, filepath.Dir(gomodPath), policyPath, stdout, stderr)
 }
 
 // scopeWalkFlagHint returns the `walk` flag that produces a walk of the given
@@ -147,7 +150,45 @@ func scopeWalkFlagHint(scope depScope) string {
 	}
 }
 
-func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachability bool, callGraphWorkers int, binaryModePrePass, jsonOut bool, goBinary, operator, projectDir string, stdout, stderr io.Writer) error {
+// vcsHostScopedScan is a scan use case that accepts a per-run VCS forge
+// allowlist. It is asserted rather than added to ScanWalkUseCase so the narrow
+// CLI interface (and the fakes that satisfy it) stay unchanged; the assertion
+// only has to succeed when a policy actually enforces a list.
+type vcsHostScopedScan interface {
+	WithVCSHosts(fetchdomain.VCSHostAllowlist) *application2.ScanWalkUseCase
+}
+
+// applyScanVCSHosts binds the operator's fetch-stage VCS forge allowlist to a
+// scan's pre-fetch.
+//
+// A vuln-scan that finds a module missing from the fact store fetches it, and
+// that fetch cross-verifies against a forge. Without this, which allowlist
+// applied depended on whether walk or vuln-scan reached the coordinate first.
+// Resolution goes through loadPolicy — the same path walk, fetch and audit use
+// — so both sources reach it: the depth policy file and the store config's
+// fetch_policy block, with the policy file winning where both speak.
+//
+// An enforcing policy that cannot be applied fails the scan. Continuing would
+// cross-verify against forges the operator excluded and record the result as if
+// their policy had been honoured.
+func applyScanVCSHosts(ctx context.Context, scan ScanWalkUseCase, policyPath string, stderr io.Writer) error {
+	hosts, err := resolveFetchVCSHosts(ctx, policyPath, stderr)
+	if err != nil {
+		return err
+	}
+	if !hosts.IsEnforcing() {
+		return nil
+	}
+	vc, ok := scan.(vcsHostScopedScan)
+	if !ok {
+		return fmt.Errorf(
+			"policy sets allowed_vcs_hosts but the scan cannot apply it: %T does not implement WithVCSHosts", scan)
+	}
+	vc.WithVCSHosts(hosts)
+	return nil
+}
+
+func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachability bool, callGraphWorkers int, binaryModePrePass, jsonOut bool, goBinary, operator, projectDir, policyPath string, stdout, stderr io.Writer) error {
 	logger := buildLogger(logLevel, stderr)
 
 	if goBinary != "" {
@@ -183,6 +224,11 @@ func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachab
 	// Progress preamble goes to stderr so stdout is a clean data channel —
 	// under --json, callers pipe stdout straight into jq and a preamble line
 	// breaks parsing.
+	// Before any fetch: an unusable policy must stop the run here.
+	if err := applyScanVCSHosts(ctx, ctr.ScanWalk, policyPath, stderr); err != nil {
+		return err
+	}
+
 	_, _ = fmt.Fprintf(stderr, "Scanning walk %s...\n", walkID)
 
 	var affected, withdrawn []vulnScanAffected
@@ -484,7 +530,7 @@ func pluralModules(n int) string {
 	return fmt.Sprintf("%d modules", n)
 }
 
-func runVulnScanByModule(ctx context.Context, moduleCoord string, f commonWalkFlags, force, fresh, enableReachability bool, callGraphWorkers int, jsonOut bool, goBinary, operator string, stdout, stderr io.Writer) error {
+func runVulnScanByModule(ctx context.Context, moduleCoord string, f commonWalkFlags, force, fresh, enableReachability bool, callGraphWorkers int, jsonOut bool, goBinary, operator, policyPath string, stdout, stderr io.Writer) error {
 	logger := buildLogger(logLevel, stderr)
 
 	coord, err := parseCoordinate(moduleCoord)
@@ -525,7 +571,7 @@ func runVulnScanByModule(ctx context.Context, moduleCoord string, f commonWalkFl
 
 	walkID := summaries[0].ID
 	logger.Debug("vuln-scan: resolved module to walk", "module", moduleCoord, "walk_id", walkID)
-	return runVulnScan(ctx, walkID, force, fresh, enableReachability, callGraphWorkers, false, jsonOut, goBinary, operator, "", stdout, stderr)
+	return runVulnScan(ctx, walkID, force, fresh, enableReachability, callGraphWorkers, false, jsonOut, goBinary, operator, "", policyPath, stdout, stderr)
 }
 
 // newVulnScanRescanCmd returns the vuln-scan-rescan command.
@@ -535,6 +581,7 @@ func newVulnScanRescanCmd(stdout, stderr io.Writer) *cobra.Command {
 	var operator string
 	var snapshotSource string
 	var snapshotVersion string
+	var policyPath string
 
 	cmd := &cobra.Command{
 		Use:     "vuln-scan-rescan <walk-id>",
@@ -551,7 +598,7 @@ Prior scan runs are preserved unchanged; a new WalkScanRun is appended.`,
 			if cmd.CalledAs() == "vuln-scan-regate" {
 				_, _ = fmt.Fprintln(stderr, "warning: 'vuln-scan-regate' is deprecated; use 'vuln-scan-rescan' instead")
 			}
-			return runScanRescan(cmd.Context(), args[0], enableReachability, goBinary, operator, snapshotSource, snapshotVersion, stdout, stderr)
+			return runScanRescan(cmd.Context(), args[0], enableReachability, goBinary, operator, snapshotSource, snapshotVersion, policyPath, stdout, stderr)
 		},
 	}
 
@@ -560,11 +607,36 @@ Prior scan runs are preserved unchanged; a new WalkScanRun is appended.`,
 	cmd.Flags().StringVar(&operator, "operator", os.Getenv("USER"), "operator identifier (defaults to $USER)")
 	cmd.Flags().StringVar(&snapshotSource, "snapshot-source", "", "pin to a specific snapshot source (requires --snapshot-version)")
 	cmd.Flags().StringVar(&snapshotVersion, "snapshot-version", "", "pin to a specific snapshot version (requires --snapshot-source)")
+	cmd.Flags().StringVar(&policyPath, "policy", "", "path to depth policy YAML (default: search upward for .kanonarion/policy.yaml)")
 
 	return cmd
 }
 
-func runScanRescan(ctx context.Context, walkID string, enableReachability bool, goBinary, operator, snapshotSource, snapshotVersion string, stdout, stderr io.Writer) error {
+// vcsHostScopedRescan is the rescan counterpart of vcsHostScopedScan.
+type vcsHostScopedRescan interface {
+	WithVCSHosts(fetchdomain.VCSHostAllowlist) *application2.RescanWalkUseCase
+}
+
+// applyRescanVCSHosts binds the operator's VCS forge allowlist to a rescan's
+// pre-fetch, failing when an enforcing policy cannot be applied.
+func applyRescanVCSHosts(ctx context.Context, rescan RescanWalkUseCase, policyPath string, stderr io.Writer) error {
+	hosts, err := resolveFetchVCSHosts(ctx, policyPath, stderr)
+	if err != nil {
+		return err
+	}
+	if !hosts.IsEnforcing() {
+		return nil
+	}
+	vc, ok := rescan.(vcsHostScopedRescan)
+	if !ok {
+		return fmt.Errorf(
+			"policy sets allowed_vcs_hosts but the rescan cannot apply it: %T does not implement WithVCSHosts", rescan)
+	}
+	vc.WithVCSHosts(hosts)
+	return nil
+}
+
+func runScanRescan(ctx context.Context, walkID string, enableReachability bool, goBinary, operator, snapshotSource, snapshotVersion, policyPath string, stdout, stderr io.Writer) error {
 	logger := buildLogger(logLevel, stderr)
 
 	if goBinary != "" {
@@ -619,6 +691,13 @@ func runScanRescan(ctx context.Context, walkID string, enableReachability bool, 
 	}
 
 	_, _ = fmt.Fprintf(stdout, "Re-scanning walk %s...\n", walkID)
+	// A rescan re-runs the same pipeline and may pre-fetch, so it is bound by
+	// the same policy as a scan. Omitting it here would restore the divergence
+	// one command over.
+	if err := applyRescanVCSHosts(ctx, ctr.RescanWalk, policyPath, stderr); err != nil {
+		return err
+	}
+
 	run, err := ctr.RescanWalk.Rescan(ctx, req)
 	if err != nil {
 		return fmt.Errorf("vuln-scan-rescan failed: %w", err)

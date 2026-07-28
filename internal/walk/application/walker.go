@@ -498,7 +498,12 @@ func (w *Walker) perWalkFetcher(
 		}
 	}
 
-	if !vcsHosts.IsDefault() {
+	// Gate on ENFORCING, not on "differs from the built-in set". A policy that
+	// lists exactly the built-in hosts is still an operator decision to refuse
+	// everything else, and IsDefault() reports true for it — so gating on that
+	// silently downgraded such a policy to the advisory built-in behaviour and
+	// contacted hosts the operator had excluded.
+	if vcsHosts.IsEnforcing() {
 		vc, ok := fetcher.(vcsHostCapable)
 		if !ok {
 			return nil, fmt.Errorf(

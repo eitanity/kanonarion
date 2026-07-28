@@ -100,3 +100,43 @@ func TestCheckCloneURL_DoesNotApplyTheAddressGuard(t *testing.T) {
 		t.Error("the Origin path must apply the address guard")
 	}
 }
+
+// A malformed URL is reported as malformed, not waved through. CheckOriginAddress
+// is exported and callable independently of CheckCloneURL, so it cannot assume
+// something upstream already parsed the value.
+func TestCheckOriginAddress_UnparseableURL(t *testing.T) {
+	for name, raw := range map[string]string{
+		"space in host":     "https://exa mple.com/foo",
+		"bad escape":        "https://%zz/foo",
+		"control character": "\x7f://host/foo",
+		"unclosed bracket":  "https://[::1/foo",
+	} {
+		t.Run(name, func(t *testing.T) {
+			err := CheckOriginAddress(raw)
+			if err == nil {
+				t.Fatalf("%q must be refused", raw)
+			}
+			if !strings.Contains(err.Error(), "parsing Origin URL") {
+				t.Errorf("error should name the parse failure, got %v", err)
+			}
+		})
+	}
+}
+
+// A URL that parses but names no host cannot be checked against any address, so
+// it is refused rather than treated as public. Waving it through would let a
+// hostless Origin skip the guard entirely.
+func TestCheckOriginAddress_NoHost(t *testing.T) {
+	for _, raw := range []string{"https:///foo/bar", "https:"} {
+		err := CheckOriginAddress(raw)
+		if err == nil {
+			t.Fatalf("%q names no host and must be refused", raw)
+		}
+		if !errors.Is(err, ErrPrivateOriginHost) {
+			t.Errorf("%q: error must be ErrPrivateOriginHost, got %v", raw, err)
+		}
+		if !strings.Contains(err.Error(), "names no host") {
+			t.Errorf("%q: error should say the host is absent, got %v", raw, err)
+		}
+	}
+}
