@@ -124,10 +124,11 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 			continue
 		}
 
-		status := domain.StatusClean
-		if len(findings) > 0 {
-			status = domain.StatusAffected
-		}
+		// The findings decide the word, not their count: every match may name an
+		// advisory that has since been retracted, and that is not an Affected verdict.
+		status := domain.DetermineRecordOverallStatus(
+			domain.CoverageAnalysed, domain.DetermineFindingsAxis(findings),
+		)
 		rec := uc.persistProjectRecord(ctx, coord, findings, status, "", "", "", params, snapshot)
 		out[coord] = moduleResult{coord: coord, record: rec}
 	}

@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"errors"
+	"slices"
 	"sync"
 	"testing"
 	"time"
@@ -40,12 +41,7 @@ type mockStageRegistry struct{}
 
 func (mockStageRegistry) Stages() []string { return testStages }
 func (mockStageRegistry) Has(name string) bool {
-	for _, s := range testStages {
-		if s == name {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(testStages, name)
 }
 
 type mockExtractionStore struct {

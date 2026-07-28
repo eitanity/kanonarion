@@ -132,7 +132,7 @@ func TestWalkCmd_AnalyseRootRejectsToolScope(t *testing.T) {
 func TestRunWalkList_Empty(t *testing.T) {
 	uc := testfakes.NewFakeQueryWalks()
 	var buf bytes.Buffer
-	err := runWalkList(context.Background(), commonWalkFlags{}, "", "", "", "", "", 20, false, false, uc, &buf, &buf)
+	err := runWalkList(context.Background(), "", "", "", "", "", 20, false, false, uc, &buf, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -155,7 +155,7 @@ func TestRunWalkList_WithSummaries(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	err := runWalkList(context.Background(), commonWalkFlags{}, "", "", "", "", "", 20, false, false, uc, &buf, &buf)
+	err := runWalkList(context.Background(), "", "", "", "", "", 20, false, false, uc, &buf, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -167,7 +167,7 @@ func TestRunWalkList_WithSummaries(t *testing.T) {
 func TestRunWalkList_ByID_NotFound(t *testing.T) {
 	uc := testfakes.NewFakeQueryWalks()
 	var buf bytes.Buffer
-	err := runWalkList(context.Background(), commonWalkFlags{}, "", "", "", "", "MISSING", 20, false, false, uc, &buf, &buf)
+	err := runWalkList(context.Background(), "", "", "", "", "MISSING", 20, false, false, uc, &buf, &buf)
 	if err == nil {
 		t.Fatal("expected error for missing walk")
 	}
@@ -189,7 +189,7 @@ func TestRunWalkList_ByID_Found(t *testing.T) {
 	uc.AddWalk(rec)
 
 	var buf bytes.Buffer
-	err := runWalkList(context.Background(), commonWalkFlags{}, "", "", "", "", "WALK002", 20, false, false, uc, &buf, &buf)
+	err := runWalkList(context.Background(), "", "", "", "", "WALK002", 20, false, false, uc, &buf, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestRunWalkList_ListError(t *testing.T) {
 	uc := testfakes.NewFakeQueryWalks()
 	uc.ListErr = fmt.Errorf("database offline")
 	var buf bytes.Buffer
-	err := runWalkList(context.Background(), commonWalkFlags{}, "", "", "", "", "", 20, false, false, uc, &buf, &buf)
+	err := runWalkList(context.Background(), "", "", "", "", "", 20, false, false, uc, &buf, &buf)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -211,7 +211,7 @@ func TestRunWalkList_ListError(t *testing.T) {
 func TestRunWalkShow_NotFound(t *testing.T) {
 	uc := testfakes.NewFakeQueryWalks()
 	var buf bytes.Buffer
-	err := runWalkShow(context.Background(), commonWalkFlags{}, "MISSING", uc, &buf)
+	err := runWalkShow(context.Background(), "MISSING", uc, &buf)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -237,7 +237,7 @@ func TestRunWalkShow_Found(t *testing.T) {
 	uc.AddWalk(rec)
 
 	var buf bytes.Buffer
-	err := runWalkShow(context.Background(), commonWalkFlags{}, "WALK003", uc, &buf)
+	err := runWalkShow(context.Background(), "WALK003", uc, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -249,7 +249,7 @@ func TestRunWalkShow_Found(t *testing.T) {
 func TestRunWalkDiff_NotFound(t *testing.T) {
 	uc := &testfakes.FakeDiffWalks{Err: walkports.ErrWalkNotFound}
 	var buf bytes.Buffer
-	err := runWalkDiff(context.Background(), commonWalkFlags{}, "A", "B", uc, &buf)
+	err := runWalkDiff(context.Background(), "A", "B", uc, &buf)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -267,7 +267,7 @@ func TestRunWalkDiff_EmptyDiff(t *testing.T) {
 		Result: walkapp.WalkDiff{WalkA: "A", WalkB: "B"},
 	}
 	var buf bytes.Buffer
-	err := runWalkDiff(context.Background(), commonWalkFlags{}, "A", "B", uc, &buf)
+	err := runWalkDiff(context.Background(), "A", "B", uc, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -279,7 +279,7 @@ func TestRunWalkDiff_EmptyDiff(t *testing.T) {
 func TestRunWalkList_InvalidSince(t *testing.T) {
 	uc := testfakes.NewFakeQueryWalks()
 	var buf bytes.Buffer
-	err := runWalkList(context.Background(), commonWalkFlags{}, "", "not-a-time", "", "", "", 20, false, false, uc, &buf, &buf)
+	err := runWalkList(context.Background(), "", "not-a-time", "", "", "", 20, false, false, uc, &buf, &buf)
 	if err == nil {
 		t.Fatal("expected error for invalid --since")
 	}
@@ -291,7 +291,7 @@ func TestRunWalkList_InvalidSince(t *testing.T) {
 func TestRunWalkList_InvalidStatus(t *testing.T) {
 	uc := testfakes.NewFakeQueryWalks()
 	var buf bytes.Buffer
-	err := runWalkList(context.Background(), commonWalkFlags{}, "", "", "unknown", "", "", 20, false, false, uc, &buf, &buf)
+	err := runWalkList(context.Background(), "", "", "unknown", "", "", 20, false, false, uc, &buf, &buf)
 	if err == nil {
 		t.Fatal("expected error for invalid --status")
 	}
@@ -303,7 +303,7 @@ func TestRunWalkList_InvalidStatus(t *testing.T) {
 func TestRunWalkList_InvalidTarget(t *testing.T) {
 	uc := testfakes.NewFakeQueryWalks()
 	var buf bytes.Buffer
-	err := runWalkList(context.Background(), commonWalkFlags{}, "badmodule", "", "", "", "", 20, false, false, uc, &buf, &buf)
+	err := runWalkList(context.Background(), "badmodule", "", "", "", "", 20, false, false, uc, &buf, &buf)
 	if err == nil {
 		t.Fatal("expected error for --target without version")
 	}
@@ -330,7 +330,7 @@ func TestRunWalkList_ToolScope_Empty(t *testing.T) {
 	t.Cleanup(func() { jsonOut = prev })
 	uc := testfakes.NewFakeQueryWalks()
 	var buf bytes.Buffer
-	err := runWalkList(context.Background(), commonWalkFlags{}, "", "", "", "tool", "", 20, false, false, uc, &buf, &buf)
+	err := runWalkList(context.Background(), "", "", "", "tool", "", 20, false, false, uc, &buf, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -349,7 +349,7 @@ func TestRunWalkList_ToolScope_FiltersMixedScopes(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	err := runWalkList(context.Background(), commonWalkFlags{}, "", "", "", "tool", "", 20, false, false, uc, &buf, &buf)
+	err := runWalkList(context.Background(), "", "", "", "tool", "", 20, false, false, uc, &buf, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -397,7 +397,7 @@ func TestRunWalkList_TextOutput(t *testing.T) {
 	uc := testfakes.NewFakeQueryWalks()
 	uc.SetSummaries(buildFixtureWalkSummaries(t))
 	var buf bytes.Buffer
-	err := runWalkList(context.Background(), commonWalkFlags{}, "", "", "", "", "", 20, false, false, uc, &buf, &buf)
+	err := runWalkList(context.Background(), "", "", "", "", "", 20, false, false, uc, &buf, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -424,7 +424,7 @@ func TestRunWalkList_JSONOutput(t *testing.T) {
 	uc := testfakes.NewFakeQueryWalks()
 	uc.SetSummaries(buildFixtureWalkSummaries(t))
 	var buf bytes.Buffer
-	err := runWalkList(context.Background(), commonWalkFlags{}, "", "", "", "", "", 20, false, false, uc, &buf, &buf)
+	err := runWalkList(context.Background(), "", "", "", "", "", 20, false, false, uc, &buf, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -451,7 +451,7 @@ func TestRunWalkList_LatestSuccess_JSONObject(t *testing.T) {
 	uc := testfakes.NewFakeQueryWalks()
 	uc.SetSummaries(buildFixtureWalkSummaries(t))
 	var buf bytes.Buffer
-	err := runWalkList(context.Background(), commonWalkFlags{}, "", "", "", "", "", 20, false, true, uc, &buf, &buf)
+	err := runWalkList(context.Background(), "", "", "", "", "", 20, false, true, uc, &buf, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -470,7 +470,7 @@ func TestRunWalkList_LatestSuccess_JSONObject(t *testing.T) {
 func TestRunWalkList_LatestSuccess_NoneErrors(t *testing.T) {
 	uc := testfakes.NewFakeQueryWalks()
 	var buf bytes.Buffer
-	err := runWalkList(context.Background(), commonWalkFlags{}, "", "", "", "", "", 20, false, true, uc, &buf, &buf)
+	err := runWalkList(context.Background(), "", "", "", "", "", 20, false, true, uc, &buf, &buf)
 	if err == nil {
 		t.Fatalf("--latest-success with no succeeded walk returned nil error")
 	}
@@ -480,7 +480,7 @@ func TestRunWalkList_FilterStatusSucceeded(t *testing.T) {
 	uc := testfakes.NewFakeQueryWalks()
 	uc.SetSummaries(buildFixtureWalkSummaries(t))
 	var buf bytes.Buffer
-	err := runWalkList(context.Background(), commonWalkFlags{}, "", "", "succeeded", "", "", 20, false, false, uc, &buf, &buf)
+	err := runWalkList(context.Background(), "", "", "succeeded", "", "", 20, false, false, uc, &buf, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -495,7 +495,7 @@ func TestRunWalkList_FilterStatusSucceeded(t *testing.T) {
 func TestRunWalkList_FilterStatusFailed(t *testing.T) {
 	uc := testfakes.NewFakeQueryWalks()
 	var buf bytes.Buffer
-	err := runWalkList(context.Background(), commonWalkFlags{}, "", "", "failed", "", "", 20, false, false, uc, &buf, &buf)
+	err := runWalkList(context.Background(), "", "", "failed", "", "", 20, false, false, uc, &buf, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -536,7 +536,7 @@ func TestRunWalkShow_JSONOutput(t *testing.T) {
 	uc := testfakes.NewFakeQueryWalks()
 	uc.AddWalk(buildFixtureWalkRecordA(t))
 	var buf bytes.Buffer
-	err := runWalkShow(context.Background(), commonWalkFlags{}, "01ARZ3NDEKTSV4RRFFQ69G5FAV", uc, &buf)
+	err := runWalkShow(context.Background(), "01ARZ3NDEKTSV4RRFFQ69G5FAV", uc, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -566,7 +566,7 @@ func TestRunWalkDiff_TextOutput(t *testing.T) {
 		},
 	}
 	var buf bytes.Buffer
-	err := runWalkDiff(context.Background(), commonWalkFlags{}, "01ARZ3NDEKTSV4RRFFQ69G5FAV", "01ARZ3NDEKTSV4RRFFQ69G5FBB", uc, &buf)
+	err := runWalkDiff(context.Background(), "01ARZ3NDEKTSV4RRFFQ69G5FAV", "01ARZ3NDEKTSV4RRFFQ69G5FBB", uc, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -595,7 +595,7 @@ func TestRunWalkDiff_JSONOutput(t *testing.T) {
 		},
 	}
 	var buf bytes.Buffer
-	err := runWalkDiff(context.Background(), commonWalkFlags{}, "01ARZ3NDEKTSV4RRFFQ69G5FAV", "01ARZ3NDEKTSV4RRFFQ69G5FBB", uc, &buf)
+	err := runWalkDiff(context.Background(), "01ARZ3NDEKTSV4RRFFQ69G5FAV", "01ARZ3NDEKTSV4RRFFQ69G5FBB", uc, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

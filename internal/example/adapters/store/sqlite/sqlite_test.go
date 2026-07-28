@@ -41,7 +41,7 @@ func mustCoord(t *testing.T, path, version string) coordinate.ModuleCoordinate {
 func buildRecord(t *testing.T, coord coordinate.ModuleCoordinate, count int, status domain2.ExampleStatus) domain2.ExampleRecord {
 	t.Helper()
 	var examples []domain2.ExampleEntry
-	for i := 0; i < count; i++ {
+	for i := range count {
 		examples = append(examples, domain2.ExampleEntry{
 			Name:             fmt.Sprintf("ExampleFoo%d", i),
 			Package:          "mod_test",

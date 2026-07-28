@@ -67,8 +67,7 @@ func runLicenseDiff(ctx context.Context, argA, argB string, stdout, stderr io.Wr
 func licenseDiffWith(ctx context.Context, ctr *Container, coordA, coordB coordinate.ModuleCoordinate, stdout io.Writer) error {
 	diff, err := ctr.DiffLicense.Diff(ctx, coordA, coordB)
 	if err != nil {
-		var notFound *licapp.ErrLicenseRecordNotFound
-		if errors.As(err, &notFound) {
+		if notFound, ok := errors.AsType[*licapp.ErrLicenseRecordNotFound](err); ok {
 			return &exitError{code: ExitNotFound, msg: notFound.Error()}
 		}
 		return fmt.Errorf("diffing license records: %w", err)

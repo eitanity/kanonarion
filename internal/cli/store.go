@@ -31,7 +31,7 @@ func newStoreCmd(stdout, stderr io.Writer) *cobra.Command {
 		Short: "Inspect and manage the kanonarion store",
 	}
 	cmd.AddCommand(newStoreInfoCmd(stdout, stderr))
-	cmd.AddCommand(newStoreConfigCmd(stdout, stderr))
+	cmd.AddCommand(newStoreConfigCmd(stdout))
 	cmd.AddCommand(newStoreCleanCmd(stdout))
 	return cmd
 }
@@ -119,12 +119,12 @@ func runStoreClean(root, tmpDir string, stdout io.Writer) error {
 	return nil
 }
 
-func newStoreConfigCmd(stdout, stderr io.Writer) *cobra.Command {
+func newStoreConfigCmd(stdout io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
 		Short: "Inspect and manage the store configuration",
 	}
-	cmd.AddCommand(newStoreConfigShowCmd(stdout, stderr))
+	cmd.AddCommand(newStoreConfigShowCmd(stdout))
 	return cmd
 }
 
@@ -195,7 +195,7 @@ type configCGResult struct {
 	Exclude []string `json:"exclude"`
 }
 
-func newStoreConfigShowCmd(stdout, stderr io.Writer) *cobra.Command {
+func newStoreConfigShowCmd(stdout io.Writer) *cobra.Command {
 	return &cobra.Command{
 		Use:   "show",
 		Short: "Show the effective configuration for this store",

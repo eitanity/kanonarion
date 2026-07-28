@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 
@@ -163,12 +164,7 @@ type implementerLookup struct {
 }
 
 func (l implementerLookup) hasMethod(method string) bool {
-	for _, m := range l.iface.Methods {
-		if m == method {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(l.iface.Methods, method)
 }
 
 // verdict classifies the answer. Presence is never downgraded: an implementer
@@ -438,8 +434,8 @@ func moduleOfScopeLine(scopeLine string) string {
 	if !ok {
 		return "the analysed module"
 	}
-	if i := strings.Index(rest, ";"); i >= 0 {
-		return rest[:i]
+	if before, _, ok := strings.Cut(rest, ";"); ok {
+		return before
 	}
 	return rest
 }

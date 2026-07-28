@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -69,7 +70,7 @@ func newVulnScanCmd(stdout, stderr io.Writer) *cobra.Command {
 			if moduleCoord != "" {
 				return runVulnScanByModule(cmd.Context(), moduleCoord, f, force, fresh, enableReachability, callGraphWorkers, jsonOut, goBinary, operator, stdout, stderr)
 			}
-			return runVulnScan(cmd.Context(), args[0], f, force, fresh, enableReachability, callGraphWorkers, binaryModePrePass, jsonOut, goBinary, operator, "", stdout, stderr)
+			return runVulnScan(cmd.Context(), args[0], force, fresh, enableReachability, callGraphWorkers, binaryModePrePass, jsonOut, goBinary, operator, "", stdout, stderr)
 		},
 	}
 
@@ -80,7 +81,7 @@ func newVulnScanCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().BoolVar(&binaryModePrePass, "binary-pre-pass", false, "fast binary-mode pre-pass; source mode only for affected modules")
 	cmd.Flags().StringVar(&goBinary, "go-binary", "", "path to 'go' binary if not in PATH")
 	cmd.Flags().StringVar(&operator, "operator", os.Getenv("USER"), "operator identifier (defaults to $USER)")
-	cmd.Flags().StringVar(&moduleCoord, "module", "", "look up the latest walk for <module@version> and scan it")
+	cmd.Flags().StringVar(&moduleCoord, "module", "", "look up the latest walk ROOTED AT <module@version> (its own target, not a walk that merely contains it as a dependency) and scan it")
 	cmd.Flags().BoolVar(&tool, "tool", false, "scan the tooling supply chain: the latest tool-scoped project walk (requires prior walk --tool)")
 	cmd.Flags().BoolVar(&project, "project", false, "scan the complete set: the latest complete-scope project walk (requires prior walk --project)")
 	cmd.Flags().StringVar(&gomod, "gomod", "", "scan the latest project walk for this go.mod's scope (default: search upward from cwd); default scope is code")
@@ -130,7 +131,7 @@ func runVulnScanScope(ctx context.Context, gomodPath string, scope depScope, for
 	}
 
 	_, _ = fmt.Fprintf(stderr, "scanning %s project walk %s\n", scope, walks[0].ID)
-	return runVulnScan(ctx, walks[0].ID, commonWalkFlags{}, force, fresh, enableReachability, callGraphWorkers, false, jsonOut, goBinary, operator, filepath.Dir(gomodPath), stdout, stderr)
+	return runVulnScan(ctx, walks[0].ID, force, fresh, enableReachability, callGraphWorkers, false, jsonOut, goBinary, operator, filepath.Dir(gomodPath), stdout, stderr)
 }
 
 // scopeWalkFlagHint returns the `walk` flag that produces a walk of the given
@@ -146,7 +147,7 @@ func scopeWalkFlagHint(scope depScope) string {
 	}
 }
 
-func runVulnScan(ctx context.Context, walkID string, f commonWalkFlags, force, fresh, enableReachability bool, callGraphWorkers int, binaryModePrePass, jsonOut bool, goBinary, operator, projectDir string, stdout, stderr io.Writer) error {
+func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachability bool, callGraphWorkers int, binaryModePrePass, jsonOut bool, goBinary, operator, projectDir string, stdout, stderr io.Writer) error {
 	logger := buildLogger(logLevel, stderr)
 
 	if goBinary != "" {
@@ -184,7 +185,7 @@ func runVulnScan(ctx context.Context, walkID string, f commonWalkFlags, force, f
 	// breaks parsing.
 	_, _ = fmt.Fprintf(stderr, "Scanning walk %s...\n", walkID)
 
-	var affected []vulnScanAffected
+	var affected, withdrawn []vulnScanAffected
 	var failedCoords []string
 	unscannable := newUnscannableRollup()
 
@@ -206,8 +207,16 @@ func runVulnScan(ctx context.Context, walkID string, f commonWalkFlags, force, f
 			// is where the reader learns the match was never checked for
 			// reachability.
 			coverage, findings := vuldomain.RecordAxes(record)
-			if findings == vuldomain.FindingsRecordAffected {
+			// Three findings values, three destinations. A withdrawn module is not
+			// affected and must leave the affected roll-up; it is also not silent and
+			// must not thereby leave the report.
+			switch findings {
+			case vuldomain.FindingsRecordAffected:
 				affected = append(affected, vulnScanAffected{coord: coord.Path() + "@" + coord.Version(), record: record})
+			case vuldomain.FindingsRecordWithdrawn:
+				withdrawn = append(withdrawn, vulnScanAffected{coord: coord.Path() + "@" + coord.Version(), record: record})
+			case vuldomain.FindingsRecordClean:
+				// No advisory matched: neither findings roll-up names it.
 			}
 			// Every Unscannable is bucketed, not just the out-of-toolchain one:
 			// the same advisory matching ran for all of them, so a record that
@@ -227,7 +236,7 @@ func runVulnScan(ctx context.Context, walkID string, f commonWalkFlags, force, f
 		return fmt.Errorf("vuln scan failed: %w", err)
 	}
 
-	return printVulnScanResult(run, affected, failedCoords, unscannable, jsonOut, stdout)
+	return printVulnScanResult(run, affected, withdrawn, failedCoords, unscannable, jsonOut, stdout)
 }
 
 // reachabilityLocalHint is the intent-aware direction shown for modules that are
@@ -254,8 +263,17 @@ func vulnScanStatusLabel(record vuldomain.VulnerabilityRecord) string {
 		return string(record.OverallStatus)
 	}
 	label := unscanLabelFor(record)
-	if findings == vuldomain.FindingsRecordAffected {
+	// Both findings words that report a matched advisory keep it in front of the
+	// coverage caveat. A withdrawn match under a coverage gap is still something the
+	// module was found to carry, and dropping to the bare coverage label would be
+	// the same silence that hid an Affected match before it.
+	switch findings {
+	case vuldomain.FindingsRecordAffected:
 		return string(vuldomain.StatusAffected) + " — " + label
+	case vuldomain.FindingsRecordWithdrawn:
+		return string(vuldomain.StatusWithdrawn) + " — " + label
+	case vuldomain.FindingsRecordClean:
+		return label
 	}
 	return label
 }
@@ -319,7 +337,7 @@ func scanCompletionSummary(run vuldomain.WalkScanRun) string {
 // already been written to stderr by the Progress callback. This function owns
 // only the final result channel: JSON under --json, or a findings summary
 // followed by the status line in text mode.
-func printVulnScanResult(run vuldomain.WalkScanRun, affected []vulnScanAffected, failedCoords []string, unscannable *unscannableRollup, jsonOut bool, stdout io.Writer) error {
+func printVulnScanResult(run vuldomain.WalkScanRun, affected, withdrawn []vulnScanAffected, failedCoords []string, unscannable *unscannableRollup, jsonOut bool, stdout io.Writer) error {
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
@@ -352,6 +370,26 @@ func printVulnScanResult(run vuldomain.WalkScanRun, affected []vulnScanAffected,
 					}
 				}
 				_, _ = fmt.Fprintf(stdout, "    %s%s%s%s: %s\n", f.ID, aliases, fixedIn, reachability, f.Summary)
+			}
+		}
+	}
+
+	// Its own section, after the findings and outside the affected count. A module
+	// whose advisory was retracted has a history the reader needs — it was reported
+	// affected until the retraction became readable — and naming it only on the
+	// progress line, which scrolls past, is the silence the retraction exists to
+	// break. It carries no fix or reachability line: neither applies to an advisory
+	// that no longer stands, and printing them would invite acting on them.
+	if len(withdrawn) > 0 {
+		_, _ = fmt.Fprintf(stdout, "Withdrawn advisories (%d, not counted as findings):\n", len(withdrawn))
+		for _, a := range withdrawn {
+			_, _ = fmt.Fprintf(stdout, "  %s\n", a.coord)
+			for _, f := range a.record.Findings {
+				if !f.IsWithdrawn() {
+					continue
+				}
+				_, _ = fmt.Fprintf(stdout, "    %s: retracted upstream %s — %s\n",
+					f.ID, f.WithdrawnAt.UTC().Format(time.RFC3339), f.Summary)
 			}
 		}
 	}
@@ -472,17 +510,26 @@ func runVulnScanByModule(ctx context.Context, moduleCoord string, f commonWalkFl
 		return fmt.Errorf("listing walks for %s: %w", moduleCoord, err)
 	}
 	if len(summaries) == 0 {
-		return fmt.Errorf("no walk found for %s", moduleCoord)
+		// The filter is Target, so this searched walks ROOTED AT the coordinate, not
+		// walks that contain it — and a module is contained by every walk of every
+		// project that depends on it. Saying "no walk found" asserted the wider fact
+		// from the narrower search, and reads as "this module has never been walked"
+		// for a coordinate sitting in a walk that was scanned minutes earlier. The
+		// message states what was searched and names the two ways forward.
+		return fmt.Errorf("no walk is rooted at %s (searched walks whose target is that coordinate; "+
+			"a walk that merely contains it as a dependency is not one). Either walk it as its own target:\n"+
+			"  kanonarion walk %s\n"+
+			"or scan the walk that already contains it, by ID:\n"+
+			"  kanonarion vuln-scan <walk-id>", moduleCoord, moduleCoord)
 	}
 
 	walkID := summaries[0].ID
 	logger.Debug("vuln-scan: resolved module to walk", "module", moduleCoord, "walk_id", walkID)
-	return runVulnScan(ctx, walkID, f, force, fresh, enableReachability, callGraphWorkers, false, jsonOut, goBinary, operator, "", stdout, stderr)
+	return runVulnScan(ctx, walkID, force, fresh, enableReachability, callGraphWorkers, false, jsonOut, goBinary, operator, "", stdout, stderr)
 }
 
 // newVulnScanRescanCmd returns the vuln-scan-rescan command.
 func newVulnScanRescanCmd(stdout, stderr io.Writer) *cobra.Command {
-	var f commonWalkFlags
 	var enableReachability bool
 	var goBinary string
 	var operator string
@@ -504,7 +551,7 @@ Prior scan runs are preserved unchanged; a new WalkScanRun is appended.`,
 			if cmd.CalledAs() == "vuln-scan-regate" {
 				_, _ = fmt.Fprintln(stderr, "warning: 'vuln-scan-regate' is deprecated; use 'vuln-scan-rescan' instead")
 			}
-			return runScanRescan(cmd.Context(), args[0], f, enableReachability, goBinary, operator, snapshotSource, snapshotVersion, stdout, stderr)
+			return runScanRescan(cmd.Context(), args[0], enableReachability, goBinary, operator, snapshotSource, snapshotVersion, stdout, stderr)
 		},
 	}
 
@@ -517,7 +564,7 @@ Prior scan runs are preserved unchanged; a new WalkScanRun is appended.`,
 	return cmd
 }
 
-func runScanRescan(ctx context.Context, walkID string, f commonWalkFlags, enableReachability bool, goBinary, operator, snapshotSource, snapshotVersion string, stdout, stderr io.Writer) error {
+func runScanRescan(ctx context.Context, walkID string, enableReachability bool, goBinary, operator, snapshotSource, snapshotVersion string, stdout, stderr io.Writer) error {
 	logger := buildLogger(logLevel, stderr)
 
 	if goBinary != "" {

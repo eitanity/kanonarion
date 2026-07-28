@@ -110,6 +110,16 @@ func printVulnRecord(stdout io.Writer, rec vuldomain.VulnerabilityRecord) {
 			}
 		}
 		_, _ = fmt.Fprintf(stdout, "  %s%s%s: %s\n", f.ID, aliases, reachability, f.Summary)
+		// The retraction is printed as its own line, ahead of the range and the fix,
+		// because it changes what the rest of the entry means: an affected range and
+		// a fixed version for a retracted advisory describe a report that was
+		// withdrawn, and acting on the fix line would be acting on nothing. Upstream
+		// signals this only by prefixing the summary with "WITHDRAWN: ", which is
+		// prose a reader may or may not notice and no consumer could route on.
+		if f.IsWithdrawn() {
+			_, _ = fmt.Fprintf(stdout, "      WITHDRAWN: advisory retracted upstream %s — not a finding against this module\n",
+				f.WithdrawnAt.UTC().Format(time.RFC3339))
+		}
 		if f.AffectedRange != "" {
 			_, _ = fmt.Fprintf(stdout, "      affected: %s\n", f.AffectedRange)
 		}

@@ -44,7 +44,7 @@ func assertEveryWriteGuardFires(t *testing.T, render func(w *stallingWriter) err
 	if total == 0 {
 		t.Fatal("render performed no writes")
 	}
-	for i := 0; i < total; i++ {
+	for i := range total {
 		if err := render(&stallingWriter{remaining: i}); err == nil {
 			t.Errorf("write %d/%d failed silently", i+1, total)
 		}

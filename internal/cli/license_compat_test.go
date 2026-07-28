@@ -130,14 +130,14 @@ func TestPrintCompatReportJSON_CleanShape(t *testing.T) {
 	if err := printCompatReportJSON(report, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	var out map[string]interface{}
+	var out map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
 		t.Fatalf("invalid JSON: %v\n%s", err, buf.String())
 	}
 	if out["clean"] != true {
 		t.Errorf("clean should be true, got %v", out["clean"])
 	}
-	conflicts, ok := out["conflicts"].([]interface{})
+	conflicts, ok := out["conflicts"].([]any)
 	if !ok {
 		t.Errorf("conflicts should be an array, got %T", out["conflicts"])
 	}

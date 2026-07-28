@@ -354,7 +354,7 @@ func TestGenerateNotice_Deterministic(t *testing.T) {
 	uc := buildNoticeUseCase(t, facts, blobs, licences)
 
 	var paths1, paths2 []string
-	for i := 0; i < 2; i++ {
+	for i := range 2 {
 		result, err := uc.Generate(context.Background(), application.NoticeRequest{Coordinates: coords})
 		if err != nil {
 			t.Fatalf("run %d: Generate: %v", i, err)

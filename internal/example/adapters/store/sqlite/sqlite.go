@@ -711,15 +711,15 @@ func (s *Store) servedRefs(ctx context.Context, candidates []candidateRef, pipel
 // either "modfile.File" or "File" and match the unqualified form the index
 // stores.
 func unqualify(symbol string) string {
-	idx := strings.Index(symbol, ".")
-	if idx < 0 {
+	before, after, ok := strings.Cut(symbol, ".")
+	if !ok {
 		return symbol
 	}
 	// Check whether the first segment looks like a package name (all
 	// lowercase). If so, drop it.
-	pkg := symbol[:idx]
+	pkg := before
 	if pkg != "" && strings.ToLower(pkg) == pkg {
-		return symbol[idx+1:]
+		return after
 	}
 	return symbol
 }

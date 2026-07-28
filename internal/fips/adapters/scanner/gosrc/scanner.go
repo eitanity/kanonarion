@@ -19,6 +19,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"github.com/eitanity/kanonarion/internal/fips/domain"
@@ -296,8 +297,8 @@ func extractImportLine(l string) (string, bool) {
 	l = strings.TrimPrefix(l, "import ")
 	l = strings.TrimSpace(l)
 	// Drop a leading alias / blank identifier.
-	if strings.HasPrefix(l, "_") {
-		l = strings.TrimSpace(strings.TrimPrefix(l, "_"))
+	if after, ok := strings.CutPrefix(l, "_"); ok {
+		l = strings.TrimSpace(after)
 	}
 	// "name" preceding the path — skip a single Go ident.
 	if !strings.HasPrefix(l, `"`) && len(l) > 0 {
@@ -355,10 +356,5 @@ func isCryptoShapedModule(mod string) bool {
 // deps — `import "C"` in the project's own code is out of scope for this
 // scanner and belongs to a separate cgo-usage analysis.
 func isUnderVendor(rel string) bool {
-	for _, p := range strings.Split(rel, "/") {
-		if p == "vendor" {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(strings.Split(rel, "/"), "vendor")
 }

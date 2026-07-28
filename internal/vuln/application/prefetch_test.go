@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 	"strings"
 	"sync"
 	"testing"
@@ -49,23 +50,13 @@ func (f *fakeFetcher) FetchModuleGoMod(_ context.Context, coord coordinate.Modul
 func (f *fakeFetcher) wasFetchedGoModOnly(coord coordinate.ModuleCoordinate) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	for _, c := range f.goModOnly {
-		if c == coord {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(f.goModOnly, coord)
 }
 
 func (f *fakeFetcher) wasFetched(coord coordinate.ModuleCoordinate) bool {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	for _, c := range f.fetched {
-		if c == coord {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(f.fetched, coord)
 }
 
 func (f *fakeFetcher) fetchCount() int {

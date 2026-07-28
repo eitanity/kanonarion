@@ -1,6 +1,7 @@
 package domain_test
 
 import (
+	"slices"
 	"strings"
 	"testing"
 
@@ -35,10 +36,8 @@ var strengthOrder = [][]domain2.VerificationStatus{
 func rank(t *testing.T, s domain2.VerificationStatus) int {
 	t.Helper()
 	for i, tier := range strengthOrder {
-		for _, candidate := range tier {
-			if candidate == s {
-				return i
-			}
+		if slices.Contains(tier, s) {
+			return i
 		}
 	}
 	t.Fatalf("status %q is missing from strengthOrder: a new status must be ranked deliberately, "+

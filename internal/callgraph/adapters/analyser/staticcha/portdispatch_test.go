@@ -74,7 +74,7 @@ func Build() *app.UseCase {
 }
 `,
 	}
-	for i := 0; i < fillers; i++ {
+	for i := range fillers {
 		dir := fmt.Sprintf("filler%02d", i)
 		files[dir+"/"+dir+".go"] = fmt.Sprintf("package filler%02d\n\n// N is padding so the target package set spans more than one load batch.\nconst N = %d\n", i, i)
 	}

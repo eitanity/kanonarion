@@ -169,10 +169,12 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (domain.Vulne
 	runtime.GC()
 	s.logMem(ctx, "post_parse_gc")
 
-	status := domain.StatusClean
-	if len(findings) > 0 {
-		status = domain.StatusAffected
-	}
+	// The set decides the word, not its length. A stream whose every finding names
+	// a retracted advisory has matched nothing that stands, and calling that
+	// Affected is the false positive a withdrawal exists to prevent.
+	status := domain.DetermineRecordOverallStatus(
+		domain.CoverageAnalysed, domain.DetermineFindingsAxis(findings),
+	)
 
 	return domain.VulnerabilityRecord{
 		Coordinate:       coord,

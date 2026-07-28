@@ -120,7 +120,28 @@ import (
 // reached from. Populating it changes stored record hashes; migration 10 seals
 // the snapshot blobs the store already holds so an existing store can verify
 // them too.
-const PipelineVersion = "v15"
+//
+// It was bumped to "v16" when a withdrawn advisory stopped being reported as a
+// finding against the module it names. The OSV top-level "withdrawn" timestamp is
+// now parsed — on both the metadata path and the govulncheck stream — carried on
+// the finding as WithdrawnAt, and read by the findings axis, which gained a third
+// value: a module whose every matched advisory is retracted reports Withdrawn
+// rather than Affected, and never Clean.
+//
+// The bump is what makes the fix reachable, not merely a shape formality. A "v15"
+// record for a coordinate carrying a retracted advisory holds an Affected verdict
+// reached before the retraction could be read, and its withdrawal is not
+// recoverable from the record — WithdrawnAt was never populated, so no migration
+// can correct it in place. Without the bump those records would be reused from
+// cache and the false positive would survive the fix. Under it, a re-scan produces
+// a v16 record that states the retraction, and the v15 record remains readable as
+// what the earlier generation concluded.
+//
+// The record's canonical bytes are unchanged for every finding that is not
+// withdrawn: WithdrawnAt is a new field carrying omitzero, so it is absent from
+// the encoding exactly when it is zero, and a v15 record's hash recomputes
+// identically under this generation.
+const PipelineVersion = "v16"
 
 // ScanModuleUseCase orchestrates a single module's vulnerability scan.
 type ScanModuleUseCase struct {
@@ -859,8 +880,14 @@ func (uc *ScanModuleUseCase) attributeCoordinateFindings(ctx context.Context, re
 		// diagnostic, so this reads Analysed — asserted from the record rather than
 		// assumed here, so a record that did carry a coverage gap could not have
 		// one written over it.
+		//
+		// The findings axis is read from the merged set for the same reason. A
+		// coordinate match is not a finding when the advisory it names has been
+		// retracted, and asserting Affected on the strength of the merge having
+		// produced entries is what turned a two-day-old retraction into a live
+		// verdict on the path a project walk treats as authoritative.
 		record.CoverageStatus = domain.DetermineRecordCoverage(*record)
-		record.FindingsStatus = domain.FindingsRecordAffected
+		record.FindingsStatus = domain.DetermineFindingsAxis(record.Findings)
 		record.OverallStatus = domain.DetermineRecordOverallStatus(record.CoverageStatus, record.FindingsStatus)
 	}
 	return nil
@@ -895,19 +922,28 @@ func (uc *ScanModuleUseCase) scanMetadataOnly(ctx context.Context, params ScanMo
 	// analysed when only its coordinate was: the coverage this call was passed was
 	// discarded the moment an advisory matched, surviving only as UnscanReason.
 	coverage := domain.CoverageUnscannable
-	findingsAxis := domain.FindingsRecordClean
-	if len(findings) > 0 {
-		findingsAxis = domain.FindingsRecordAffected
-	}
-	// The summary word is unchanged: emptyStatus as the caller chose it, promoted
-	// to Affected by a match. Collapsing the axes instead would report Unscannable
-	// for a matched advisory — correct for ranking, since coverage outranks
-	// findings, but it would retire a finding from every consumer that reads the
-	// summary. A finding never decays into a coverage word; the gap travels beside
-	// it on the coverage axis, which is why that axis is stored.
+	// The set decides the findings axis, which is three-valued: a match whose
+	// advisory has been retracted upstream is neither a finding against this module
+	// nor an absence of one. Counting the matches instead reported Affected for a
+	// coordinate whose only advisory was withdrawn — a metadata-only match is the
+	// path that produced exactly that false positive, since it has no reachability
+	// to fall back on and no other evidence than the advisory itself.
+	findingsAxis := domain.DetermineFindingsAxis(findings)
+	// The summary word is emptyStatus as the caller chose it, promoted by a match to
+	// whichever word carries the findings answer. Collapsing the axes instead would
+	// report Unscannable for a matched advisory — correct for ranking, since
+	// coverage outranks findings, but it would retire a finding from every consumer
+	// that reads the summary. A finding never decays into a coverage word; the gap
+	// travels beside it on the coverage axis, which is why that axis is stored.
 	status := emptyStatus
-	if findingsAxis == domain.FindingsRecordAffected {
+	switch findingsAxis {
+	case domain.FindingsRecordAffected:
 		status = domain.StatusAffected
+	case domain.FindingsRecordWithdrawn:
+		status = domain.StatusWithdrawn
+	case domain.FindingsRecordClean:
+		// No match: the caller's emptyStatus is the answer, and it is a coverage
+		// word on every entry point that is not a genuine clean.
 	}
 
 	now := uc.clock.Now()

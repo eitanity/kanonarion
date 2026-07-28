@@ -286,15 +286,20 @@ func TestListVulnerabilityRecordsByFindingID_LaterCleanDoesNotRetractEarlierFind
 	// is the real-store shape: one pipeline generation called the module Clean
 	// where every other called it Affected.
 	//
-	// It is built and sealed once, with the verdict stated up front. Flipping
-	// OverallStatus on an already-sealed record and re-sealing does not produce
-	// this shape: the axes are already stated by then, and the record keeps the
-	// findings axis of the verdict it was first sealed with.
+	// The findings axis is stated explicitly, because the seal no longer derives
+	// this shape from the collapsed word and will not produce it: it reads the
+	// findings axis off the findings the record kept, so a set holding a live
+	// advisory seals as Affected however the word reads. That is deliberate — a
+	// record cannot newly claim Clean over a finding it is carrying — but the shape
+	// still exists on disk, written by a generation that could, so the ranking must
+	// go on handling it. Stating the axis reproduces the stored row exactly, since
+	// the seal fills only the fields a writer left empty.
 	laterClean := domain.VulnerabilityRecord{
 		Ecosystem:        fetchdomain.EcosystemGo,
 		Coordinate:       coord("github.com/foo/bar", "v1.0.0"),
 		WalkID:           "walk-1",
 		OverallStatus:    domain.StatusClean,
+		FindingsStatus:   domain.FindingsRecordClean,
 		DatabaseSnapshot: snap("govulndb", "v2024-06-01"),
 		ScannedAt:        time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC),
 		PipelineVersion:  "v1",

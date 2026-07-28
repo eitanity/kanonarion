@@ -9,6 +9,7 @@ import (
 	"io"
 	"runtime"
 	"runtime/debug"
+	"slices"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -31,6 +32,12 @@ type OSV struct {
 	Details   string    `json:"details,omitempty"`
 	Published time.Time `json:"published"`
 	Modified  time.Time `json:"modified"`
+	// Withdrawn is the OSV top-level retraction timestamp, absent on a live
+	// advisory. govulncheck emits the whole advisory entry in its OSV message, so
+	// the retraction was always on the wire; this struct simply did not read it,
+	// and a stream-derived finding for a retracted advisory therefore reached a
+	// verdict as though the advisory still stood.
+	Withdrawn *time.Time `json:"withdrawn,omitempty"`
 }
 type Finding struct {
 	OSV          string          `json:"osv"`
@@ -136,6 +143,7 @@ func (s *Scanner) processMessage(raw []byte, msg *Message, osvs map[string]*OSV,
 				Details:   intern(details),
 				Published: msg.OSV.Published,
 				Modified:  msg.OSV.Modified,
+				Withdrawn: msg.OSV.Withdrawn,
 			}
 			msg.OSV = nil
 		}
@@ -249,10 +257,8 @@ func (s *Scanner) processFinding(raw []byte, findings *[]domain.VulnerabilityFin
 	}
 	sym = intern(sym)
 	existing := &(*findings)[idx]
-	for _, s := range existing.AffectedSymbols {
-		if s == sym {
-			return
-		}
+	if slices.Contains(existing.AffectedSymbols, sym) {
+		return
 	}
 	existing.AffectedSymbols = append(existing.AffectedSymbols, sym)
 }
@@ -279,13 +285,7 @@ func (s *Scanner) parseResults(ctx context.Context, r io.Reader, scannedModule s
 	// We do this at the end because OSV messages might come after Findings
 	for i := range findings {
 		f := &findings[i]
-		if entry, ok := osvs[f.ID]; ok {
-			f.Aliases = entry.Aliases
-			f.Summary = entry.Summary
-			f.Details = entry.Details
-			f.PublishedAt = entry.Published
-			f.ModifiedAt = entry.Modified
-		}
+		applyOSV(f, osvs[f.ID])
 		f.Reachable = &domain.ReachabilityResult{
 			IsReachable: reachableIDs[f.ID],
 			Confidence:  domain.ConfidenceHigh,
@@ -393,10 +393,8 @@ func (s *Scanner) processFindingGrouped(raw []byte, byModule map[coordinate.Modu
 	}
 	sym = intern(sym)
 	existing := &mf.findings[idx]
-	for _, s := range existing.AffectedSymbols {
-		if s == sym {
-			return
-		}
+	if slices.Contains(existing.AffectedSymbols, sym) {
+		return
 	}
 	existing.AffectedSymbols = append(existing.AffectedSymbols, sym)
 }
@@ -424,19 +422,33 @@ func (s *Scanner) parseResultsByModule(ctx context.Context, r io.Reader) (map[co
 	out := make(map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding, len(byModule))
 	for coord, mf := range byModule {
 		for i := range mf.findings {
-			f := &mf.findings[i]
-			if entry, ok := osvs[f.ID]; ok {
-				f.Aliases = entry.Aliases
-				f.Summary = entry.Summary
-				f.Details = entry.Details
-				f.PublishedAt = entry.Published
-				f.ModifiedAt = entry.Modified
-			}
+			applyOSV(&mf.findings[i], osvs[mf.findings[i].ID])
 		}
 		domain.SortFindings(mf.findings)
 		out[coord] = mf.findings
 	}
 	return out, nil
+}
+
+// applyOSV copies the advisory-level facts of entry onto f. Both parse paths call
+// it so neither can grow a field the other lacks — the retraction timestamp in
+// particular, since a finding missing it is counted as a live one.
+//
+// A nil entry means the stream carried findings for an advisory whose OSV message
+// never arrived; f keeps its bare ID and fixed version, and no advisory fact is
+// invented for it.
+func applyOSV(f *domain.VulnerabilityFinding, entry *OSV) {
+	if entry == nil {
+		return
+	}
+	f.Aliases = entry.Aliases
+	f.Summary = entry.Summary
+	f.Details = entry.Details
+	f.PublishedAt = entry.Published
+	f.ModifiedAt = entry.Modified
+	if entry.Withdrawn != nil {
+		f.WithdrawnAt = *entry.Withdrawn
+	}
 }
 
 func internStrings(s []string, intern func(string) string) []string {

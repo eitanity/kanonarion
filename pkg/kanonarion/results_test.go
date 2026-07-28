@@ -243,8 +243,8 @@ func TestResultTypes_NoBehaviourOrHasherLeak(t *testing.T) {
 		ptr := reflect.PointerTo(reflect.TypeOf(entry.v))
 		present := make(map[string]bool, ptr.NumMethod())
 		methods := make([]string, 0, ptr.NumMethod())
-		for i := 0; i < ptr.NumMethod(); i++ {
-			m := ptr.Method(i).Name
+		for method := range ptr.Methods() {
+			m := method.Name
 			present[m] = true
 			methods = append(methods, m)
 		}
@@ -311,8 +311,8 @@ func TestResultTypes_FieldAddOnlyGrowth(t *testing.T) {
 			continue
 		}
 		present := make(map[string]bool, typ.NumField())
-		for i := 0; i < typ.NumField(); i++ {
-			if f := typ.Field(i); f.IsExported() {
+		for f := range typ.Fields() {
+			if f.IsExported() {
 				present[f.Name] = true
 			}
 		}
@@ -364,8 +364,8 @@ func TestResultTypes_ReadShaped(t *testing.T) {
 			continue
 		}
 		var exported int
-		for i := 0; i < typ.NumField(); i++ {
-			if typ.Field(i).IsExported() {
+		for field := range typ.Fields() {
+			if field.IsExported() {
 				exported++
 			}
 		}

@@ -421,6 +421,12 @@ func (uc *ScanWalkUseCase) verifyRecordsPersisted(
 // modules that were never read.
 type scanCounts struct {
 	affected, analysed, clean, unscannable, failed int
+	// withdrawn counts analysed modules whose every matched advisory was retracted
+	// upstream. It is its own tally rather than a share of clean, so a run cannot
+	// report "N clean" for modules that were reported affected until the retraction
+	// was read. Such a module is not affected, so it does not degrade the run's
+	// findings word; it is reported so the transition is visible rather than silent.
+	withdrawn int
 }
 
 // tallyModuleResults walks the per-module results in deterministic allCoords
@@ -481,8 +487,15 @@ func (uc *ScanWalkUseCase) tallyModuleResults(
 		switch coverage {
 		case domain.CoverageAnalysed:
 			counts.analysed++
+			// Clean is the narrow word here, not "everything that is not Affected". A
+			// module whose only advisories were retracted reports Withdrawn, and
+			// counting it clean would fold the retraction back into the all-clear tally
+			// and lose the reason it is being kept out of.
 			if findings == domain.FindingsRecordClean {
 				counts.clean++
+			}
+			if findings == domain.FindingsRecordWithdrawn {
+				counts.withdrawn++
 			}
 		case domain.CoverageFailedScan:
 			counts.failed++
@@ -551,6 +564,7 @@ func scanCompletedEvent(run domain.WalkScanRun, counts scanCounts) audit.Event {
 			"overall_status":   string(run.OverallStatus),
 			"affected":         counts.affected,
 			"clean":            counts.clean,
+			"withdrawn":        counts.withdrawn,
 			"unscannable":      counts.unscannable,
 			"failed":           counts.failed,
 		},

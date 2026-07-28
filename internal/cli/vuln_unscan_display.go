@@ -1,7 +1,7 @@
 package cli
 
 import (
-	"sort"
+	"slices"
 
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 )
@@ -9,7 +9,7 @@ import (
 // sortUnscanReasons orders reason codes lexically, for the tail of the roll-up
 // that AllUnscanReasons does not cover.
 func sortUnscanReasons(rs []vuldomain.UnscanReason) {
-	sort.Slice(rs, func(i, j int) bool { return rs[i] < rs[j] })
+	slices.Sort(rs)
 }
 
 // unscanDisplay is the human presentation of one UnscanReason: the label that

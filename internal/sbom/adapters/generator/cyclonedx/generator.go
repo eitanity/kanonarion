@@ -193,6 +193,7 @@ func (g *Generator) buildBOM(
 					ID:            f.ID,
 					Summary:       f.Summary,
 					SeverityLabel: severityLabel(f.Severity),
+					WithdrawnAt:   f.WithdrawnAt,
 				})
 			}
 		}
@@ -551,23 +552,49 @@ func copyrightString(lic licensedomain.LicenseRecord) string {
 }
 
 // buildVulnerabilities maps aggregated domain vulnerabilities to CycloneDX.
+//
+// A retracted advisory is emitted rather than dropped, carrying the VEX analysis
+// state that says what it is. Omitting it would be the quieter bug: the document
+// would then be indistinguishable from one produced before the advisory was ever
+// published, and a consumer diffing two SBOMs across the retraction would read the
+// disappearance as a fix. Emitting it unmarked — what this generator did before —
+// publishes a withdrawn report as a live vulnerability of the component to
+// everyone downstream who consumes the document.
 func buildVulnerabilities(aggregated []domain.AggregatedVulnerability) []cdx.Vulnerability {
 	result := make([]cdx.Vulnerability, 0, len(aggregated))
 	for _, v := range aggregated {
-		ratings := []cdx.VulnerabilityRating{
-			{Severity: mapSeverityLabel(v.SeverityLabel)},
-		}
 		affects := make([]cdx.Affects, 0, len(v.Affected))
 		for _, m := range v.Affected {
 			affects = append(affects, cdx.Affects{Ref: modulePURL(m)})
 		}
-		result = append(result, cdx.Vulnerability{
+		vuln := cdx.Vulnerability{
 			BOMRef:      v.ID,
 			ID:          v.ID,
 			Description: v.Summary,
-			Ratings:     &ratings,
 			Affects:     &affects,
-		})
+		}
+		if !v.IsWithdrawn() {
+			// A rating is a claim about how severely this advisory affects the
+			// component. A retracted advisory makes no such claim, so it carries none:
+			// a consumer that tallies severities across the document — the common
+			// dashboard shape, and one that need not read the analysis block to do it —
+			// would otherwise count severity for a report that does not stand. The
+			// analysis block below is where a retracted entry states what it is.
+			vuln.Ratings = &[]cdx.VulnerabilityRating{
+				{Severity: mapSeverityLabel(v.SeverityLabel)},
+			}
+		}
+		if v.IsWithdrawn() {
+			// false_positive is the CycloneDX state for a report that does not stand
+			// against the component. The schema has no "withdrawn" state, so the reason
+			// goes in detail with the date, where a VEX consumer that only routes on
+			// state still excludes it and a reader gets the attribution.
+			vuln.Analysis = &cdx.VulnerabilityAnalysis{
+				State:  cdx.IASFalsePositive,
+				Detail: "advisory withdrawn upstream " + v.WithdrawnAt.UTC().Format(time.RFC3339) + "; retained so its retraction is stated rather than inferred from absence",
+			}
+		}
+		result = append(result, vuln)
 	}
 	return result
 }

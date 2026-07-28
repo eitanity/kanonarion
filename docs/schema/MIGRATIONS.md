@@ -63,6 +63,31 @@ Records at `v14` and earlier are kept and still answer queries — their blobs
 carry no axes, and readers derive them from `overall_status` on read. New scans
 write `v15`.
 
+## Vulnerability record: pipeline `v15` → `v16`
+
+**Additive, and hash-transparent.** `VulnerabilityFinding` gains `withdrawn_at`,
+the OSV top-level `withdrawn` timestamp, so a retracted advisory stops being
+reported as a finding against the module it names.
+
+The field carries `omitzero`, so it is absent from the encoding exactly when it is
+zero, and a `v15` record's hash recomputes identically under this generation. The
+bump records that the *verdict* changed, not the bytes: `overall_status` and
+`findings_status` gain a fifth/third value, `Withdrawn`, for a module whose every
+matched advisory has been retracted. A mixture stays `Affected` — one live advisory
+decides the axis, and the retracted ones remain visible per finding.
+
+Migration for existing stores: **none.** No store migration and no purge; existing
+records verify unchanged. Their `withdrawn_at` is absent, which reads as "the
+generation that wrote this never asked", not as "confirmed live" — re-scan to get a
+retraction verdict for a coordinate scanned before `v16`. New scans write `v16`.
+
+Consumer impact: `audit --json` gains `vuln_withdrawn` (`vuln_findings` keeps its
+existing meaning, retracted advisories included), `context` gains
+`findings[].withdrawn_at`, `reachability` gains a `withdrawn` verdict with
+`withdrawn_at`, `vuln-scan-diff` gains a `WithdrawnFindings` bucket, and a
+CycloneDX SBOM marks a retracted advisory `analysis.state: false_positive` with no
+`ratings` block.
+
 ## Audit log (`audit.jsonl`)
 
 Append-only JSONL; **no schema migration** is ever required to add an event

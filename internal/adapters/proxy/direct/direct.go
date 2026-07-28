@@ -153,7 +153,7 @@ func (p *Proxy) ListVersions(ctx context.Context, path string) (_ []string, retE
 		return nil, fmt.Errorf("reading version list: %w", err)
 	}
 	var versions []string
-	for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(string(data)), "\n") {
 		if v := strings.TrimSpace(line); v != "" {
 			versions = append(versions, v)
 		}

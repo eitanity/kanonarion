@@ -66,7 +66,7 @@ func TestPrintEdgeRefs_TagsTestEdges(t *testing.T) {
 	if err := printEdgeRefs("callers", "example.com/m.Target", refs, false, &buf); err != nil {
 		t.Fatalf("printEdgeRefs: %v", err)
 	}
-	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(buf.String()), "\n") {
 		switch {
 		case strings.Contains(line, "m.Prod"):
 			if strings.Contains(line, "[test]") {

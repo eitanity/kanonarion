@@ -80,8 +80,8 @@ func TestRunStoreConfigShow_Text(t *testing.T) {
 // rather than weakening the test.
 func TestStoreConfigShow_CoversEveryConfigField(t *testing.T) {
 	assertStructCovered(t,
-		reflect.TypeOf(domain.Config{}),
-		reflect.TypeOf(configShowResult{}),
+		reflect.TypeFor[domain.Config](),
+		reflect.TypeFor[configShowResult](),
 		"Config")
 }
 
@@ -108,8 +108,7 @@ func assertStructCovered(t *testing.T, src, dst reflect.Type, path string) {
 	if dst.Kind() != reflect.Struct {
 		t.Fatalf("%s: view side is %s, not a struct — cannot mirror config", path, dst.Kind())
 	}
-	for i := 0; i < src.NumField(); i++ {
-		sf := src.Field(i)
+	for sf := range src.Fields() {
 		if !sf.IsExported() {
 			continue
 		}

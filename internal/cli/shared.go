@@ -158,7 +158,7 @@ func readPackageModules(pattern string) ([]string, error) {
 	}
 	seen := make(map[string]bool)
 	var coords []string
-	for _, line := range strings.Split(string(out), "\n") {
+	for line := range strings.SplitSeq(string(out), "\n") {
 		line = strings.TrimSpace(line)
 		// Skip blank lines and the local module (no version suffix after @).
 		if line == "" || strings.HasSuffix(line, "@") || seen[line] {
@@ -283,7 +283,7 @@ func runGoListCoords(dir string, args []string) ([]string, error) {
 	}
 	seen := make(map[string]bool)
 	var coords []string
-	for _, line := range strings.Split(string(out), "\n") {
+	for line := range strings.SplitSeq(string(out), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasSuffix(line, "@") || seen[line] {
 			continue
@@ -785,8 +785,7 @@ func (e *exitError) Error() string { return e.msg }
 // Used by main to translate categorised errors (e.g. ExitNotFound) into
 // distinct process exit codes rather than the catch-all ExitConfig.
 func ExitCodeFromError(err error) (int, bool) {
-	var ee *exitError
-	if errors.As(err, &ee) {
+	if ee, ok := errors.AsType[*exitError](err); ok {
 		return ee.code, true
 	}
 	return 0, false
@@ -813,8 +812,7 @@ func ExitCodeForError(err error) int {
 	// goSumWalkGate; a store-inspection command reports it and exits 0 (see
 	// reportDivergence), so the tool used to diagnose the problem is not the one
 	// that refuses to run.
-	var divergence *fetchdomain.Divergence
-	if errors.As(err, &divergence) {
+	if _, ok := errors.AsType[*fetchdomain.Divergence](err); ok {
 		return ExitIntegrity
 	}
 	return ExitConfig

@@ -46,7 +46,7 @@ The two modes scan from **different roots**, and their vuln legs differ to match
 - **Project** (`inspect`, `--gomod`, `--tool`, `--project`) roots the walk at the
   local main module and derives its vuln verdict from a single **project-rooted**
   scan of the live working tree - the project's real build - not from re-scanning
-  each dependency in isolation. In-build modules read `Clean`/`Affected`; only a
+  each dependency in isolation. In-build modules read `Clean`/`Affected`/`Withdrawn`; only a
   genuine fault reads `Unscannable`/`ScanFailed`.
 
 ### `inspect <module>@<version>`
@@ -156,6 +156,11 @@ To get module context: kanonarion context --gomod ./go.mod
 axes. A run left `Partial` by an unscannable module still reports its real
 `Affected` count on its own line rather than collapsing it to zero — the
 coverage gap does not hide the findings, and neither hides the other.
+
+A module whose advisories were all retracted upstream is **not** in the `Affected`
+count; the scan output above the summary names it under `Withdrawn advisories (N,
+not counted as findings)` with its retraction date. See
+[`vuln.md`](vuln.md#withdrawn-advisories).
 
 **Example JSON output:**
 

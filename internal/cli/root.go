@@ -101,7 +101,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 		newSBOMCmd(stdout, stderr),
 		newSBOMShowCmd(stdout, stderr),
 		newSBOMListCmd(stdout, stderr),
-		newConfigCmd(stdout, stderr),
+		newConfigCmd(stdout),
 		newStoreCmd(stdout, stderr),
 		newContextCmd(stdout, stderr),
 		newReachabilityCmd(stdout, stderr),
@@ -112,7 +112,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 		newVendorCmd(stdout, stderr),
 		newFIPSCmd(stdout, stderr),
 		newLatestCmd(stdout, stderr),
-		newProvenanceCmd(stdout, stderr),
+		newProvenanceCmd(stdout),
 		newUseCmd(stdout, stderr),
 		newLocalCmd(stdout, stderr),
 	)

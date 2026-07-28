@@ -240,7 +240,7 @@ func printFullExample(w *errWriter, e contextExample) {
 	w.indented("    ", e.Body)
 	if e.Output != "" {
 		w.printf("    // Output:\n")
-		for _, line := range strings.Split(strings.TrimRight(e.Output, "\n"), "\n") {
+		for line := range strings.SplitSeq(strings.TrimRight(e.Output, "\n"), "\n") {
 			w.printf("    // %s\n", line)
 		}
 	}

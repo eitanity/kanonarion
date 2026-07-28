@@ -94,7 +94,7 @@ func findModule(files map[string][]byte) (modulePath, moduleRoot string, err err
 // parseModulePath extracts the module path from go.mod content by scanning
 // for the "module" directive without importing golang.org/x/mod.
 func parseModulePath(content []byte) (string, error) {
-	for _, line := range bytes.Split(content, []byte("\n")) {
+	for line := range bytes.SplitSeq(content, []byte("\n")) {
 		line = bytes.TrimSpace(line)
 		if !bytes.HasPrefix(line, []byte("module ")) {
 			continue

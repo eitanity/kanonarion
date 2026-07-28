@@ -16,14 +16,14 @@ import (
 	"github.com/eitanity/kanonarion/internal/config/domain"
 )
 
-func newConfigCmd(stdout, stderr io.Writer) *cobra.Command {
+func newConfigCmd(stdout io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
 		Short: "Read and write configuration values (git config style)",
 	}
 	cmd.AddCommand(
 		newConfigInitCmd(stdout),
-		newConfigShowCmd(stdout, stderr),
+		newConfigShowCmd(stdout),
 		newConfigGetCmd(stdout),
 		newConfigSetCmd(stdout),
 	)
@@ -73,7 +73,7 @@ func runConfigInit(root string, stdout io.Writer) error {
 
 // ---- config show ----
 
-func newConfigShowCmd(stdout, stderr io.Writer) *cobra.Command {
+func newConfigShowCmd(stdout io.Writer) *cobra.Command {
 	return &cobra.Command{
 		Use:   "show",
 		Short: "Print the full effective configuration",
@@ -151,7 +151,7 @@ func configGetValue(cfg domain.Config, key string) (string, error) {
 	}
 }
 
-func marshalConfigYAML(v interface{}) (string, error) {
+func marshalConfigYAML(v any) (string, error) {
 	data, err := yaml.Marshal(v)
 	if err != nil {
 		return "", fmt.Errorf("marshaling config value: %w", err)

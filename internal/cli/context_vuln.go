@@ -257,6 +257,9 @@ func vulnRecordToContext(rec *vuldomain.VulnerabilityRecord, walkStatus, walkCov
 		if f.Severity != nil {
 			cve.Score = f.Severity.Score
 		}
+		if f.IsWithdrawn() {
+			cve.WithdrawnAt = isoTime(f.WithdrawnAt)
+		}
 		if f.Reachable != nil {
 			r := f.Reachable.IsReachable
 			cve.Reachable = &r

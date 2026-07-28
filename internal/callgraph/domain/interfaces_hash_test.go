@@ -2,6 +2,7 @@ package domain_test
 
 import (
 	"encoding/json"
+	"maps"
 	"reflect"
 	"strings"
 	"testing"
@@ -312,9 +313,7 @@ func TestUnmarshal_BadCoordinateAndTime(t *testing.T) {
 func cloneWith(t *testing.T, base map[string]json.RawMessage, key, value string) []byte {
 	t.Helper()
 	out := make(map[string]json.RawMessage, len(base))
-	for k, v := range base {
-		out[k] = v
-	}
+	maps.Copy(out, base)
 	out[key] = json.RawMessage(value)
 	raw, err := json.Marshal(out)
 	if err != nil {

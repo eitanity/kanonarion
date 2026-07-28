@@ -128,9 +128,14 @@ type scanShowJSON struct {
 	Operator         string                                 `json:"operator"`
 	ContentHash      string                                 `json:"content_hash"`
 	AffectedModules  []scanAffectedModule                   `json:"affected_modules,omitempty"`
-	ScanFailures     []scanRecordFault                      `json:"scan_failures,omitempty"`
-	ReadErrors       []scanRecordFault                      `json:"read_errors,omitempty"`
-	MissingRecords   []string                               `json:"missing_records,omitempty"`
+	// WithdrawnModules are modules whose every matched advisory has been retracted
+	// upstream. They are their own list rather than an omission: a module that once
+	// reported a finding and now does not owes the reader the reason, and leaving it
+	// out of the report reads as never-affected.
+	WithdrawnModules []scanAffectedModule `json:"withdrawn_modules,omitempty"`
+	ScanFailures     []scanRecordFault    `json:"scan_failures,omitempty"`
+	ReadErrors       []scanRecordFault    `json:"read_errors,omitempty"`
+	MissingRecords   []string             `json:"missing_records,omitempty"`
 }
 
 // scanRecordFault is a coordinate whose VulnerabilityRecord could not be read,
@@ -153,6 +158,7 @@ type scanRecordFault struct {
 // "appears in no roll-up" defect fixed one function above this one.
 type scanShowSummary struct {
 	affected    []scanAffectedModule
+	withdrawn   []scanAffectedModule
 	unscannable *unscannableRollup
 	readErrors  []scanRecordFault
 	missing     []string
@@ -185,6 +191,7 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 			Operator:         run.Operator,
 			ContentHash:      run.ContentHash,
 			AffectedModules:  affected,
+			WithdrawnModules: summary.withdrawn,
 			ScanFailures:     summary.scanFailed,
 			ReadErrors:       summary.readErrors,
 			MissingRecords:   summary.missing,
@@ -222,17 +229,35 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 	writeScanFailures(summary.scanFailed, stdout)
 	writeScanRecordFaults(summary.readErrors, stdout)
 	writeMissingScanRecords(summary.missing, stdout)
-	if len(affected) > 0 {
-		_, _ = fmt.Fprintf(stdout, "\nAffected modules (%d):\n", len(affected))
-		for _, m := range affected {
-			findingIDs := make([]string, 0, len(m.Findings))
-			for _, f := range m.Findings {
-				findingIDs = append(findingIDs, f.ID)
-			}
-			_, _ = fmt.Fprintf(stdout, "  %s  %s\n", m.Coordinate, strings.Join(findingIDs, "  "))
-		}
-	}
+	writeScanModuleFindings(stdout, "Affected modules", affected)
+	// Printed after the affected list and separately from it: a reader scanning for
+	// what to act on sees the affected set alone, and a reader asking why a module
+	// stopped being listed finds it named here with the retraction date rather than
+	// having to notice its absence.
+	writeScanModuleFindings(stdout, "Withdrawn advisories, not counted as findings", summary.withdrawn)
 	return nil
+}
+
+// writeScanModuleFindings prints one findings section: a heading with the module
+// count, then one line per module naming its finding IDs. A withdrawn advisory
+// carries its retraction date, which is the whole reason it is listed apart from
+// the affected set.
+func writeScanModuleFindings(stdout io.Writer, heading string, modules []scanAffectedModule) {
+	if len(modules) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintf(stdout, "\n%s (%d):\n", heading, len(modules))
+	for _, m := range modules {
+		findingIDs := make([]string, 0, len(m.Findings))
+		for _, f := range m.Findings {
+			id := f.ID
+			if f.IsWithdrawn() {
+				id += " (withdrawn " + f.WithdrawnAt.UTC().Format(time.RFC3339) + ")"
+			}
+			findingIDs = append(findingIDs, id)
+		}
+		_, _ = fmt.Fprintf(stdout, "  %s  %s\n", m.Coordinate, strings.Join(findingIDs, "  "))
+	}
 }
 
 // buildScanAffectedModules looks up VulnerabilityRecords for each module in
@@ -282,12 +307,23 @@ func buildScanAffectedModules(ctx context.Context, run vuldomain.WalkScanRun, uc
 		// for. Coverage answers "was it analysed", findings answers "was anything
 		// found", and neither may stand in for the other.
 		coverage, findings := vuldomain.RecordAxes(rec)
-		if findings == vuldomain.FindingsRecordAffected {
-			summary.affected = append(summary.affected, scanAffectedModule{
-				Coordinate: coord.String(),
-				Status:     string(rec.OverallStatus),
-				Findings:   rec.Findings,
-			})
+		module := scanAffectedModule{
+			Coordinate: coord.String(),
+			Status:     string(rec.OverallStatus),
+			Findings:   rec.Findings,
+		}
+		// The findings axis has three values and each owes its own section. A
+		// withdrawn module is not affected, so it must not appear in the affected
+		// list; it is also not silent, so it must not be absent from the report —
+		// that absence is what let a retracted advisory read exactly like an
+		// advisory that never applied.
+		switch findings {
+		case vuldomain.FindingsRecordAffected:
+			summary.affected = append(summary.affected, module)
+		case vuldomain.FindingsRecordWithdrawn:
+			summary.withdrawn = append(summary.withdrawn, module)
+		case vuldomain.FindingsRecordClean:
+			// No advisory matched: nothing to name in either findings section.
 		}
 		// A coverage gap is reported whether or not an advisory matched, so a
 		// finding that was never checked for reachability is not read as one that
@@ -463,7 +499,8 @@ func runScanDiff(ctx context.Context, runIDA, runIDB string, jsonOut bool, ucDif
 	_, _ = fmt.Fprintf(stdout, "Diff: %s → %s\n", runIDA, runIDB)
 	_, _ = fmt.Fprintf(stdout, "Walk: %s\n\n", diff.RunA.WalkID)
 
-	if len(diff.NewFindings) == 0 && len(diff.ResolvedFindings) == 0 && len(diff.ReachabilityChanges) == 0 && len(diff.UnresolvedFindings) == 0 {
+	if len(diff.NewFindings) == 0 && len(diff.ResolvedFindings) == 0 && len(diff.WithdrawnFindings) == 0 &&
+		len(diff.ReachabilityChanges) == 0 && len(diff.UnresolvedFindings) == 0 {
 		_, _ = fmt.Fprintln(stdout, "No differences.")
 		return nil
 	}
@@ -476,8 +513,22 @@ func runScanDiff(ctx context.Context, runIDA, runIDB string, jsonOut bool, ucDif
 		_, _ = fmt.Fprintln(stdout)
 	}
 
+	// Withdrawn is printed before resolved, and separately from it, because it is the
+	// attributed half of what used to be one bucket. "Resolved / no longer known"
+	// collapsed "upstream fixed it", "we upgraded" and "the advisory was retracted"
+	// into a single green label, and a review acted on the wrong one of the three.
+	if len(diff.WithdrawnFindings) > 0 {
+		_, _ = fmt.Fprintf(stdout, "WITHDRAWN advisories (%d) — retracted upstream, not fixed:\n", len(diff.WithdrawnFindings))
+		for _, d := range diff.WithdrawnFindings {
+			_, _ = fmt.Fprintf(stdout, "  ! %s  %s@%s  withdrawn %s  %s\n", d.Finding.ID,
+				d.Coordinate.Path(), d.Coordinate.Version(),
+				d.Finding.WithdrawnAt.UTC().Format(time.RFC3339), d.Finding.Summary)
+		}
+		_, _ = fmt.Fprintln(stdout)
+	}
+
 	if len(diff.ResolvedFindings) > 0 {
-		_, _ = fmt.Fprintf(stdout, "RESOLVED findings (%d):\n", len(diff.ResolvedFindings))
+		_, _ = fmt.Fprintf(stdout, "RESOLVED findings (%d) — no longer reported, no reason recorded:\n", len(diff.ResolvedFindings))
 		for _, d := range diff.ResolvedFindings {
 			_, _ = fmt.Fprintf(stdout, "  - %s  %s@%s  %s\n", d.Finding.ID, d.Coordinate.Path(), d.Coordinate.Version(), d.Finding.Summary)
 		}

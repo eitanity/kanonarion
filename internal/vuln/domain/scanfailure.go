@@ -85,7 +85,7 @@ const goProxyOffMarker = "module lookup disabled by goproxy=off"
 // fill from a version the project genuinely never resolved, so this parse is the
 // input to that distinction rather than a convenience for log prose.
 func UnresolvedCoordinate(detail string) (coordinate.ModuleCoordinate, bool) {
-	for _, line := range strings.Split(detail, "\n") {
+	for line := range strings.SplitSeq(detail, "\n") {
 		if coord, ok := coordinateFromLine(line); ok {
 			return coord, true
 		}
@@ -165,7 +165,7 @@ const couldNotImportMarker = "could not import "
 // to read, and pairing it here would recover a package path redundantly.
 func UnresolvedImportPath(detail string) (string, bool) {
 	var positions []string
-	for _, line := range strings.Split(detail, "\n") {
+	for line := range strings.SplitSeq(detail, "\n") {
 		idx := strings.Index(strings.ToLower(line), goProxyOffMarker)
 		if idx < 0 {
 			continue
@@ -180,7 +180,7 @@ func UnresolvedImportPath(detail string) (string, bool) {
 	if len(positions) == 0 {
 		return "", false
 	}
-	for _, line := range strings.Split(detail, "\n") {
+	for line := range strings.SplitSeq(detail, "\n") {
 		mi := strings.Index(strings.ToLower(line), couldNotImportMarker)
 		if mi < 0 {
 			continue
@@ -281,8 +281,8 @@ func looksLikeImportPath(p string) bool {
 		return false
 	}
 	first := p
-	if i := strings.IndexByte(p, '/'); i >= 0 {
-		first = p[:i]
+	if before, _, ok := strings.Cut(p, "/"); ok {
+		first = before
 	}
 	return strings.Contains(first, ".")
 }
@@ -301,7 +301,7 @@ func looksLikeImportPath(p string) bool {
 // module@version file path — the import came from the scanned module's own
 // freshly extracted source, whose go.mod the caller already consulted.
 func ImportSiteModule(detail, importPath string) (coordinate.ModuleCoordinate, bool) {
-	for _, line := range strings.Split(detail, "\n") {
+	for line := range strings.SplitSeq(detail, "\n") {
 		mi := strings.Index(strings.ToLower(line), couldNotImportMarker)
 		if mi < 0 {
 			continue

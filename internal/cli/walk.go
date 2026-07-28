@@ -140,9 +140,9 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
 			defer func() { _ = cleanup() }()
 			progress := newWalkProgressReporter(stderr, noProgress, activeConfig, logLevel)
 			if isGoMod {
-				return runWalkProject(cmd.Context(), gomodPath, f, force, allowPartial, workerCount, operator, policyPath, skipVCSVerify, scope, depth, localReplaceBase, analyseRoot, stdlibFromGoMod, progress, ctr.ExecuteWalk, stdout, stderr)
+				return runWalkProject(cmd.Context(), gomodPath, force, allowPartial, workerCount, operator, policyPath, skipVCSVerify, scope, depth, localReplaceBase, analyseRoot, stdlibFromGoMod, progress, ctr.ExecuteWalk, stdout, stderr)
 			}
-			return runWalk(cmd.Context(), args[0], f, force, allowPartial, workerCount, operator, policyPath, skipVCSVerify, domain.WalkScopeCode, depth, localReplaceBase, progress, ctr.ExecuteWalk, stdout, stderr)
+			return runWalk(cmd.Context(), args[0], f, force, allowPartial, workerCount, policyPath, skipVCSVerify, domain.WalkScopeCode, depth, localReplaceBase, progress, ctr.ExecuteWalk, stdout, stderr)
 		},
 	}
 
@@ -175,25 +175,7 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
 // scopeTool the tooling supply chain, scopeComplete the whole build list. For
 // code/tool the build-list graph is restricted to the scope's module set,
 // resolved via the shared Go-toolchain resolver.
-func runWalkProject(
-	ctx context.Context,
-	gomodPath string,
-	f commonWalkFlags,
-	force bool,
-	allowPartial bool,
-	workerCount int,
-	operator string,
-	policyPath string,
-	skipVCSVerify bool,
-	scope depScope,
-	depth domain.WalkDepth,
-	localReplaceBase string,
-	analyseRoot bool,
-	stdlibFromGoMod bool,
-	progress walkports.ProgressReporter,
-	uc ExecuteWalkUseCase,
-	stdout, stderr io.Writer,
-) error {
+func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial bool, workerCount int, operator, policyPath string, skipVCSVerify bool, scope depScope, depth domain.WalkDepth, localReplaceBase string, analyseRoot, stdlibFromGoMod bool, progress walkports.ProgressReporter, uc ExecuteWalkUseCase, stdout, stderr io.Writer) error {
 	_ = operator // operator is bound on the use case at construction, as in runWalk
 	logger := buildLogger(logLevel, stderr)
 
@@ -287,23 +269,7 @@ func runWalkProject(
 	return nil
 }
 
-func runWalk(
-	ctx context.Context,
-	arg string,
-	f commonWalkFlags,
-	force bool,
-	allowPartial bool,
-	workerCount int,
-	operator string,
-	policyPath string,
-	skipVCSVerify bool,
-	scope domain.WalkScope,
-	depth domain.WalkDepth,
-	localReplaceBase string,
-	progress walkports.ProgressReporter,
-	uc ExecuteWalkUseCase,
-	stdout, stderr io.Writer,
-) error {
+func runWalk(ctx context.Context, arg string, f commonWalkFlags, force, allowPartial bool, workerCount int, policyPath string, skipVCSVerify bool, scope domain.WalkScope, depth domain.WalkDepth, localReplaceBase string, progress walkports.ProgressReporter, uc ExecuteWalkUseCase, stdout, stderr io.Writer) error {
 	logger := buildLogger(logLevel, stderr)
 
 	path, version, err := parseModuleArg(arg)

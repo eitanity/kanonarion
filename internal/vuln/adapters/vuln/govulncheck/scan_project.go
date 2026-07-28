@@ -7,8 +7,26 @@ import (
 	"os"
 
 	"github.com/eitanity/kanonarion/internal/adapters/childproc"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 )
+
+// projectScanStatus renders the scan-level summary word for a grouped
+// (project- or target-rooted) parse.
+//
+// It reads the findings rather than counting the modules that carry them: a build
+// whose only matches name retracted advisories has found nothing that stands, and
+// the count cannot tell that apart from a real finding. Both grouped entry points
+// share this so the two cannot disagree about the same finding set.
+func projectScanStatus(byModule map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding) domain.VulnerabilityStatus {
+	all := make([]domain.VulnerabilityFinding, 0, len(byModule))
+	for _, findings := range byModule {
+		all = append(all, findings...)
+	}
+	return domain.DetermineRecordOverallStatus(
+		domain.CoverageAnalysed, domain.DetermineFindingsAxis(all),
+	)
+}
 
 // ScanProject runs a single project-rooted govulncheck over the project's live
 // working tree — the same live analysis reachability --local performs — reading
@@ -108,10 +126,7 @@ func (s *Scanner) ScanProject(
 		return domain.ProjectScanResult{}, fmt.Errorf("parse project govulncheck output: %w", perr)
 	}
 
-	status := domain.StatusClean
-	if len(byModule) > 0 {
-		status = domain.StatusAffected
-	}
+	status := projectScanStatus(byModule)
 	s.logger.Info("vuln-scan: project-rooted scan finished", "modules_with_findings", len(byModule))
 	return domain.ProjectScanResult{
 		FindingsByModule: byModule,

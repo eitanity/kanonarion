@@ -135,10 +135,7 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 	runtime.GC()
 	s.logMem(ctx, "target_post_parse_gc")
 
-	status := domain.StatusClean
-	if len(byModule) > 0 {
-		status = domain.StatusAffected
-	}
+	status := projectScanStatus(byModule)
 	s.logger.Info("vuln-scan: target-rooted scan finished", "modules_with_findings", len(byModule))
 	return domain.ProjectScanResult{
 		FindingsByModule: byModule,

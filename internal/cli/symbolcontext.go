@@ -181,7 +181,7 @@ func filterImportableRefs(refs []ifaceports.SymbolRef) []ifaceports.SymbolRef {
 // isImportablePackage reports whether importPath is importable by code outside
 // the defining module — i.e. it contains no "internal" or "testdata" segment.
 func isImportablePackage(importPath string) bool {
-	for _, seg := range strings.Split(importPath, "/") {
+	for seg := range strings.SplitSeq(importPath, "/") {
 		if seg == "internal" || seg == "testdata" {
 			return false
 		}

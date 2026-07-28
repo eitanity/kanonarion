@@ -263,8 +263,8 @@ func TestPrintSymbolContext_NoSignatureNoDoc(t *testing.T) {
 		t.Errorf("expected symbol name, got: %q", out)
 	}
 	// No whitespace-only non-empty lines (blank separator lines are empty strings, not spaces).
-	lines := strings.Split(strings.TrimRight(out, "\n"), "\n")
-	for _, l := range lines {
+	lines := strings.SplitSeq(strings.TrimRight(out, "\n"), "\n")
+	for l := range lines {
 		if strings.TrimSpace(l) == "" && l != "" {
 			t.Errorf("unexpected whitespace-only line: %q", out)
 		}
@@ -301,7 +301,7 @@ func TestPrintSymbolContext_WithExamples(t *testing.T) {
 		t.Errorf("expected second example, got: %q", out)
 	}
 	// Second example should NOT have the validates marker.
-	for _, l := range strings.Split(out, "\n") {
+	for l := range strings.SplitSeq(out, "\n") {
 		if strings.Contains(l, "ExampleNew_withOptions") && strings.Contains(l, "(validates)") {
 			t.Errorf("non-validating example should not show (validates): %q", l)
 		}

@@ -247,7 +247,7 @@ func runFetch(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.W
 
 	if jsonOut {
 		type fetchOutput struct {
-			Record    interface{}   `json:"record"`
+			Record    any           `json:"record"`
 			Staleness stalenessInfo `json:"staleness"`
 		}
 		enc := json.NewEncoder(stdout)

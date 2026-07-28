@@ -122,8 +122,7 @@ func TestDiffLicenseUseCase_StoreError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	var notFound *application.ErrLicenseRecordNotFound
-	if errors.As(err, &notFound) {
+	if _, ok := errors.AsType[*application.ErrLicenseRecordNotFound](err); ok {
 		t.Error("store error must not be wrapped as ErrLicenseRecordNotFound")
 	}
 	if !errors.Is(err, sentinel) {

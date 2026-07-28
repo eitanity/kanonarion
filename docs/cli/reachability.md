@@ -56,7 +56,16 @@ you which command to run - it is never reported as a false "not reachable".
 |---|---|---|
 | `<id> is REACHABLE in <m>@<v>` | 0 | Affected symbol is reachable from an entry point. |
 | `<id> affects <m>@<v> but is NOT reachable` | 0 | Affected symbol is present but unreachable. |
+| `<id> was WITHDRAWN upstream <date>` | 0 | The advisory was retracted upstream; the module is not affected by it. |
 | `<m>@<v> is not affected by <id>` | 0 | Module was scanned; this CVE is not among its findings. |
+
+The `withdrawn` verdict is answered **before** reachability is consulted, and is its
+own verdict rather than a flavour of "not reachable". Whether anything calls the
+symbol does not matter for an advisory that no longer stands, and answering "not
+reachable" would offer reachability as the mitigation — inviting the reader to
+conclude the module would be at risk if only something called it, when there is
+nothing to be at risk from. For the same reason the two "run this command" errors
+below are never raised for a retracted advisory: it needs no call graph.
 | `… has not been vuln-scanned` | non-zero | No record. Run `vuln-scan <m>@<v> --reachability`. |
 | `… ScanFailed` / `… is unscannable` | non-zero | Module could not be scanned; reachability is unknown. |
 | `… scanned without --reachability` | non-zero | Findings exist but reachability was not computed. |
@@ -81,6 +90,24 @@ JSON shape:
   "method": "call-graph",
   "example_paths": [["main.main", "golang.org/x/text/...Vuln"]],
   "scanned_at": "2026-06-14T00:00:00Z"
+}
+```
+
+A retracted advisory answers with `"verdict": "withdrawn"` and a `withdrawn_at`
+timestamp instead of a reachability determination, so the answer states its reason
+rather than asserting a bare negative the reader has to take on trust:
+
+```json
+{
+  "module": "go.etcd.io/bbolt",
+  "version": "v1.4.3",
+  "vuln_id": "GO-2026-4923",
+  "aliases": ["CVE-2026-33817", "GHSA-6jwv-w5xf-7j27"],
+  "summary": "WITHDRAWN: out-of-range-index in go.etcd.io/bbolt",
+  "verdict": "withdrawn",
+  "method": "call-graph",
+  "withdrawn_at": "2026-04-08T13:33:56Z",
+  "scanned_at": "2026-07-28T06:06:20Z"
 }
 ```
 

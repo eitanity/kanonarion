@@ -164,8 +164,8 @@ func collectModuleInterfaces(prog *ssa.Program, coord coordinate.ModuleCoordinat
 		entry, exists := byID[id]
 		if !exists {
 			methods := make([]string, 0, iface.NumMethods())
-			for i := 0; i < iface.NumMethods(); i++ {
-				methods = append(methods, iface.Method(i).Name())
+			for method := range iface.Methods() {
+				methods = append(methods, method.Name())
 			}
 			sort.Strings(methods)
 			entry = &moduleInterface{
@@ -215,8 +215,8 @@ func collectModuleConcreteTypes(prog *ssa.Program, coord coordinate.ModuleCoordi
 		// The pointer method set is the superset: it contains every method
 		// declared on either receiver form.
 		mset := types.NewMethodSet(types.NewPointer(named))
-		for i := 0; i < mset.Len(); i++ {
-			entry.methodNames[mset.At(i).Obj().Name()] = struct{}{}
+		for method := range mset.Methods() {
+			entry.methodNames[method.Obj().Name()] = struct{}{}
 		}
 	})
 	out := make([]*concreteType, 0, len(order))
@@ -258,7 +258,7 @@ func forEachModuleTypeName(prog *ssa.Program, coord coordinate.ModuleCoordinate,
 // interface method to the concrete node that implements it. It reports false
 // when no instance pair satisfies the interface, which is the common case after
 // the method-name prefilter admits a candidate by coincidence of naming.
-func buildImplementation(it *moduleInterface, c *concreteType, fset *token.FileSet, tempDir string) (domain.InterfaceImplementation, bool) {
+func buildImplementation(it *moduleInterface, c *concreteType, _ *token.FileSet, _ string) (domain.InterfaceImplementation, bool) {
 	var matched *types.Named
 	pointerOnly := false
 	for _, named := range c.instances {

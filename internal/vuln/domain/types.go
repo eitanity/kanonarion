@@ -37,8 +37,20 @@ const (
 type VulnerabilityStatus string
 
 const (
-	StatusClean       VulnerabilityStatus = "Clean"
-	StatusAffected    VulnerabilityStatus = "Affected"
+	StatusClean    VulnerabilityStatus = "Clean"
+	StatusAffected VulnerabilityStatus = "Affected"
+	// StatusWithdrawn means every advisory that matched this module has been
+	// retracted upstream. It is a findings answer and it is not Clean: Clean says
+	// no advisory ever applied, this says one did and was withdrawn, and the
+	// withdrawal date travels on the finding itself.
+	//
+	// It is a fifth value in a vocabulary that had four, which is a shape change
+	// the pipeline version carries. Folding it into Clean was the alternative and
+	// it is the bug: a retracted advisory then becomes indistinguishable from one
+	// that never existed, so a reader cannot tell "we upgraded", "upstream fixed
+	// it" and "the report was wrong" apart. A finding never decays into an
+	// all-clear; it decays into a stated reason.
+	StatusWithdrawn   VulnerabilityStatus = "Withdrawn"
 	StatusUnscannable VulnerabilityStatus = "Unscannable"
 	StatusScanFailed  VulnerabilityStatus = "ScanFailed"
 )
@@ -78,7 +90,16 @@ type RecordFindingsStatus string
 
 const (
 	FindingsRecordAffected RecordFindingsStatus = "Affected"
-	FindingsRecordClean    RecordFindingsStatus = "Clean"
+	// FindingsRecordWithdrawn means advisories matched this module and every one of
+	// them has been retracted upstream. It sits on the findings axis beside
+	// Affected, not beside Clean: the module is not affected, but the reason it is
+	// not is recorded rather than implied, and the retracted findings stay on the
+	// record with their withdrawal dates.
+	//
+	// A mixture is Affected, not Withdrawn — one live advisory decides the axis,
+	// and the withdrawn ones remain visible per finding.
+	FindingsRecordWithdrawn RecordFindingsStatus = "Withdrawn"
+	FindingsRecordClean     RecordFindingsStatus = "Clean"
 )
 
 // DetermineRecordCoverageStatus projects a collapsed status onto the coverage
@@ -91,7 +112,10 @@ func DetermineRecordCoverageStatus(status VulnerabilityStatus) RecordCoverageSta
 		return CoverageUnscannable
 	case StatusScanFailed:
 		return CoverageFailedScan
-	case StatusClean, StatusAffected:
+	case StatusClean, StatusAffected, StatusWithdrawn:
+		// Withdrawn joins the two analysed words: an advisory can only be known
+		// retracted for a module whose advisory set was read, so the word reports a
+		// findings outcome and says nothing against coverage.
 		return CoverageAnalysed
 	default:
 		// An unrecognised status is not evidence that the module was analysed.
@@ -139,14 +163,67 @@ func DetermineRecordCoverage(r VulnerabilityRecord) RecordCoverageStatus {
 }
 
 // DetermineRecordFindingsStatus projects a collapsed status onto the findings
-// axis. Only Affected reports a finding; every other value reports none, which
-// on a non-analysed record means "none is being reported", not "none exists" —
-// the distinction the coverage axis carries.
+// axis. Affected and Withdrawn are the two words that report a matched advisory;
+// every other value reports none, which on a non-analysed record means "none is
+// being reported", not "none exists" — the distinction the coverage axis carries.
 func DetermineRecordFindingsStatus(status VulnerabilityStatus) RecordFindingsStatus {
-	if status == StatusAffected {
+	switch status {
+	case StatusAffected:
 		return FindingsRecordAffected
+	case StatusWithdrawn:
+		return FindingsRecordWithdrawn
+	default:
+		return FindingsRecordClean
 	}
-	return FindingsRecordClean
+}
+
+// DetermineFindingsAxis answers the findings axis from a finding set.
+//
+// A matched advisory that has been retracted upstream is not a finding against
+// the module, and it is not an absence either. So the set decides three ways:
+//
+//   - no advisory matched — Clean.
+//   - at least one matched advisory is live — Affected. One live advisory decides
+//     it however many retracted ones sit beside it; those stay on the record and
+//     carry their own withdrawal dates.
+//   - every matched advisory is withdrawn — Withdrawn.
+//
+// A finding whose advisory enrichment failed carries no withdrawal date and is
+// therefore live here. That is the conservative direction on purpose: a lookup
+// that could not read the advisory has not established a retraction, and the
+// module stays affected until it does.
+func DetermineFindingsAxis(findings []VulnerabilityFinding) RecordFindingsStatus {
+	if len(findings) == 0 {
+		return FindingsRecordClean
+	}
+	for _, f := range findings {
+		if !f.IsWithdrawn() {
+			return FindingsRecordAffected
+		}
+	}
+	return FindingsRecordWithdrawn
+}
+
+// DetermineRecordFindings answers the findings axis for a whole record, from the
+// evidence the record carries rather than from the collapsed summary word alone —
+// the same rule DetermineRecordCoverage applies to the other axis, for the same
+// reason.
+//
+// The findings the record kept are the evidence, and they outrank the word for
+// two reasons. A writer that reached its verdict before withdrawal was expressible
+// puts Affected in the word for a set whose every advisory is retracted, and the
+// word cannot then be corrected without re-reading the set. And a writer that put
+// a coverage word there — a scan that failed while still holding matched
+// advisories — would have its findings projected away to Clean, retiring a
+// finding into a coverage answer.
+//
+// The word is consulted only when the record kept no findings, where it is exact:
+// no set, no finding, and the word's projection is the answer.
+func DetermineRecordFindings(r VulnerabilityRecord) RecordFindingsStatus {
+	if len(r.Findings) > 0 {
+		return DetermineFindingsAxis(r.Findings)
+	}
+	return DetermineRecordFindingsStatus(r.OverallStatus)
 }
 
 // DetermineRecordOverallStatus collapses the two axes back into the stored
@@ -166,10 +243,14 @@ func DetermineRecordOverallStatus(coverage RecordCoverageStatus, findings Record
 	case CoverageFailedScan:
 		return StatusScanFailed
 	case CoverageAnalysed:
-		if findings == FindingsRecordAffected {
+		switch findings {
+		case FindingsRecordAffected:
 			return StatusAffected
+		case FindingsRecordWithdrawn:
+			return StatusWithdrawn
+		default:
+			return StatusClean
 		}
-		return StatusClean
 	default:
 		// An unrecognised coverage value is not a claim that the module was
 		// analysed, so it must not summarise as one.
@@ -186,7 +267,8 @@ func DetermineRecordOverallStatus(coverage RecordCoverageStatus, findings Record
 // empty axis it has no rule for. Coverage is derived from the record's
 // diagnostics (DetermineRecordCoverage), not from the summary word, so a
 // pre-split metadata-only record is healed to the coverage gap it recorded
-// rather than to the Analysed its summary implies.
+// rather than to the Analysed its summary implies. Findings are derived from the
+// findings the record kept (DetermineRecordFindings), for the same reason.
 //
 // It is a function rather than a method so that no caller can reach the raw
 // fields by accident through a method value on a partially-populated record.
@@ -196,7 +278,7 @@ func RecordAxes(r VulnerabilityRecord) (RecordCoverageStatus, RecordFindingsStat
 		coverage = DetermineRecordCoverage(r)
 	}
 	if findings == "" {
-		findings = DetermineRecordFindingsStatus(r.OverallStatus)
+		findings = DetermineRecordFindings(r)
 	}
 	return coverage, findings
 }
@@ -430,6 +512,22 @@ type VulnerabilityFinding struct {
 	References       []string            `json:"references,omitzero"`
 	PublishedAt      time.Time           `json:"published_at"`
 	ModifiedAt       time.Time           `json:"modified_at"`
+	// WithdrawnAt is the OSV top-level "withdrawn" timestamp: the moment the
+	// advisory was retracted upstream. Zero means the advisory is live, or that the
+	// lookup never read an advisory to ask — an enrichment fetch that failed leaves
+	// it zero, so absence is never read as "confirmed live".
+	//
+	// It is the reason a finding is allowed to stop being one. Before it was
+	// parsed, a retraction reached kanonarion only as prose in the summary ("WITHDRAWN:
+	// ...") that nothing inspected, so a retracted advisory either surfaced as an
+	// Affected verdict or vanished into Clean, and the two were indistinguishable
+	// from a real finding and a real all-clear respectively.
+	WithdrawnAt time.Time `json:"withdrawn_at,omitzero"`
+}
+
+// IsWithdrawn reports whether this advisory has been retracted upstream.
+func (f VulnerabilityFinding) IsWithdrawn() bool {
+	return !f.WithdrawnAt.IsZero()
 }
 
 // FixDisplay renders a finding's remediation state for human-facing output.

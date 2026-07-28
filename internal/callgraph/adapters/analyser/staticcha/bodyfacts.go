@@ -104,10 +104,7 @@ func scanBodyFacts(ctx context.Context, dir string, pkgPaths []string) map[strin
 		if ctx.Err() != nil {
 			return facts
 		}
-		end := i + batchSize
-		if end > len(pkgPaths) {
-			end = len(pkgPaths)
-		}
+		end := min(i+batchSize, len(pkgPaths))
 
 		cfg := &packages.Config{
 			Mode:    packages.NeedName | packages.NeedSyntax | packages.NeedFiles | packages.NeedCompiledGoFiles,

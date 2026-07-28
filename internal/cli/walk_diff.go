@@ -11,7 +11,6 @@ import (
 )
 
 func newWalkDiffCmd(stdout, stderr io.Writer) *cobra.Command {
-	var f commonWalkFlags
 
 	cmd := &cobra.Command{
 		Use:   "walk-diff <id-a> <id-b>",
@@ -26,12 +25,12 @@ func newWalkDiffCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runWalkDiff(cmd.Context(), f, args[0], args[1], ctr.DiffWalks, stdout)
+			return runWalkDiff(cmd.Context(), args[0], args[1], ctr.DiffWalks, stdout)
 		},
 	}
 	return cmd
 }
-func runWalkDiff(ctx context.Context, f commonWalkFlags, idA, idB string, uc DiffWalksUseCase, stdout io.Writer) error {
+func runWalkDiff(ctx context.Context, idA, idB string, uc DiffWalksUseCase, stdout io.Writer) error {
 	diff, err := uc.Diff(ctx, idA, idB)
 	if err != nil {
 		if isWalkNotFound(err) {

@@ -78,8 +78,8 @@ func (c *Client) parse(content string) error {
 		if err != nil {
 			continue
 		}
-		if strings.HasSuffix(verField, "/go.mod") {
-			version := strings.TrimSuffix(verField, "/go.mod")
+		if before, ok := strings.CutSuffix(verField, "/go.mod"); ok {
+			version := before
 			c.gomod[key(modPath, version)] = hash
 		} else {
 			c.zip[key(modPath, verField)] = hash

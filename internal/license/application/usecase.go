@@ -611,10 +611,7 @@ func (uc *ExtractLicenseUseCase) scanSourceFiles(
 		fileCount++
 
 		// Fast path: look for SPDX-License-Identifier in the first 4 KB.
-		scanLen := perFileSPDXScanBytes
-		if len(content) < scanLen {
-			scanLen = len(content)
-		}
+		scanLen := min(len(content), perFileSPDXScanBytes)
 		if spdx := parseSPDXHeader(content[:scanLen]); spdx != "" {
 			sum := sha256.Sum256(content)
 			entries = append(entries, domain2.LicenseFileEntry{
@@ -695,10 +692,7 @@ func (uc *ExtractLicenseUseCase) backfillCopyrightFromSource(
 			continue
 		}
 		// Only scan the first 4 KB — copyright headers appear at the top.
-		scanLen := 4096
-		if len(content) < scanLen {
-			scanLen = len(content)
-		}
+		scanLen := min(len(content), 4096)
 		fileCount++
 
 		for _, stmt := range domain2.ExtractCopyright(relPath, content[:scanLen]) {

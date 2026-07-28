@@ -172,7 +172,7 @@ func isCompoundExpression(spdx string) bool {
 	if strings.ContainsAny(spdx, "()") {
 		return true
 	}
-	for _, f := range strings.Fields(spdx) {
+	for f := range strings.FieldsSeq(spdx) {
 		switch strings.ToUpper(f) {
 		case "AND", "OR", "WITH":
 			return true

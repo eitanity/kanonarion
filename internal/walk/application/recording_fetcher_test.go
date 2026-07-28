@@ -208,8 +208,7 @@ func TestRecordingFetcher_RecoversFromPanic(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from panic recovery, got nil")
 	}
-	var pe *panicError
-	if !errors.As(err, &pe) {
+	if _, ok := errors.AsType[*panicError](err); !ok {
 		t.Errorf("err type = %T, want *panicError", err)
 	}
 
@@ -255,13 +254,11 @@ func TestRecordingFetcher_ConcurrentSameCoord(t *testing.T) {
 	var wg sync.WaitGroup
 	var errCount atomic.Int32
 	for range n {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			if _, err := r.EnsureFetched(context.Background(), rcoord("example.com/a", "v1.0.0")); err != nil {
 				errCount.Add(1)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	if errCount.Load() != 0 {

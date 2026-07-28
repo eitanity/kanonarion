@@ -34,6 +34,12 @@ func TestDetermineRecordOverallStatus_EveryAxisPair(t *testing.T) {
 		{"unscannable that still matched an advisory", domain.CoverageUnscannable, domain.FindingsRecordAffected, domain.StatusUnscannable},
 		{"failed reports coverage", domain.CoverageFailedScan, domain.FindingsRecordClean, domain.StatusScanFailed},
 		{"failed that still matched an advisory", domain.CoverageFailedScan, domain.FindingsRecordAffected, domain.StatusScanFailed},
+		// Withdrawn gets its own word rather than collapsing to Clean. Clean says no
+		// advisory ever applied; this says one did and was retracted, and the two
+		// must not read alike to a consumer that sees only the summary.
+		{"analysed and withdrawn is not an all-clear", domain.CoverageAnalysed, domain.FindingsRecordWithdrawn, domain.StatusWithdrawn},
+		{"unscannable that matched a withdrawn advisory reports coverage", domain.CoverageUnscannable, domain.FindingsRecordWithdrawn, domain.StatusUnscannable},
+		{"failed that matched a withdrawn advisory reports coverage", domain.CoverageFailedScan, domain.FindingsRecordWithdrawn, domain.StatusScanFailed},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			if got := domain.DetermineRecordOverallStatus(tc.coverage, tc.findings); got != tc.want {

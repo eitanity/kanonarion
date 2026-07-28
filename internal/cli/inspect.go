@@ -127,7 +127,7 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 		return fmt.Errorf("writing output: %w", err)
 	}
 	progress := newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
-	if err := runWalk(ctx, arg, wf, f.force, true, 0, "", f.policyPath, f.skipVCS, domain.WalkScopeCode, domain.WalkDepthFull, "", progress, ctr.ExecuteWalk, io.Discard, stderr); err != nil {
+	if err := runWalk(ctx, arg, wf, f.force, true, 0, f.policyPath, f.skipVCS, domain.WalkScopeCode, domain.WalkDepthFull, "", progress, ctr.ExecuteWalk, io.Discard, stderr); err != nil {
 		return fmt.Errorf("walk: %w", err)
 	}
 
@@ -167,7 +167,7 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 	// reader with the repetitive half of the presentation and threw away the
 	// concise half. stdout stays the clean data channel because inspect always
 	// scans with jsonOut=false, so nothing machine-readable is written here.
-	if err := runVulnScan(ctx, walkID, commonWalkFlags{}, f.force, f.fresh, f.reachable, 1, false, false, f.goBinary, os.Getenv("USER"), "", stderr, stderr); err != nil {
+	if err := runVulnScan(ctx, walkID, f.force, f.fresh, f.reachable, 1, false, false, f.goBinary, os.Getenv("USER"), "", stderr, stderr); err != nil {
 		return fmt.Errorf("vuln-scan: %w", err)
 	}
 
@@ -312,12 +312,12 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 		return err
 	}
 
-	wf := commonWalkFlags{goproxy: f.goproxy}
 	_, _ = fmt.Fprintf(stderr, "==> inspect --gomod: walking project %s\n", f.gomodPath)
 
 	var nodeFails int
 	progress := newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
-	if werr := runWalkProject(ctx, f.gomodPath, wf, f.force, true, 0, "", f.policyPath, f.skipVCS, scope, domain.WalkDepthFull, "", false, f.stdlibFromGoMod, progress, ctr.ExecuteWalk, io.Discard, stderr); werr != nil {
+	if werr := runWalkProject(ctx, f.gomodPath, f.force, true, 0, "", f.policyPath, f.skipVCS, scope,
+		domain.WalkDepthFull, "", false, f.stdlibFromGoMod, progress, ctr.ExecuteWalk, io.Discard, stderr); werr != nil {
 		_, _ = fmt.Fprintf(stderr, "walk: %v\n", werr)
 		nodeFails = 1
 	}
@@ -358,7 +358,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 		// stderr, not io.Discard — see the note on the same call in runInspect:
 		// the grouped roll-up is the concise presentation and belongs to the
 		// reader, while stdout stays reserved for the context output.
-		if verr := runVulnScan(ctx, walkID, commonWalkFlags{}, f.force, f.fresh, f.reachable, 1, false, false, f.goBinary, os.Getenv("USER"), filepath.Dir(f.gomodPath), stderr, stderr); verr != nil {
+		if verr := runVulnScan(ctx, walkID, f.force, f.fresh, f.reachable, 1, false, false, f.goBinary, os.Getenv("USER"), filepath.Dir(f.gomodPath), stderr, stderr); verr != nil {
 			_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", verr)
 			scanFails = 1
 		}

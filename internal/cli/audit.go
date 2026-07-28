@@ -90,7 +90,17 @@ type auditModuleResult struct {
 	License       string `json:"license"`
 	LicenseStatus string `json:"license_status"`
 	VulnStatus    string `json:"vuln_status"`
-	VulnFindings  int    `json:"vuln_findings"`
+	// VulnFindings counts every advisory the record carries, retracted ones
+	// included. Its meaning is deliberately unchanged: narrowing it to live
+	// advisories would have altered the number under an existing field name, with
+	// the same type and no signal, so a consumer parsing this JSON would silently
+	// read a different fact than the one it was written against.
+	VulnFindings int `json:"vuln_findings"`
+	// VulnWithdrawn counts the retracted subset of VulnFindings; live advisories are
+	// the difference. It is a new field, so a consumer that has never heard of it
+	// reads exactly what it read before, and one that has can tell a retraction from
+	// a finding — which the single tally could not express.
+	VulnWithdrawn int `json:"vuln_withdrawn,omitempty"`
 	// VulnReason carries the diagnostic for a non-clean, non-affected status
 	// (ScanFailed → ErrorDetail, Unscannable → UnscannableReason). Absent for
 	// Clean/Affected. Without it a ScanFailed row is an "absence-as-answer".
@@ -227,11 +237,11 @@ func auditScope(
 		return nil, err
 	}
 
-	wf := commonWalkFlags{goproxy: f.goproxy}
 	_, _ = fmt.Fprintf(stderr, "==> audit: walking project %s (%d %s dependencies)\n", f.gomodPath, len(coords), scope)
 
 	progress := newWalkProgressReporter(stderr, false, activeConfig, logLevel)
-	if werr := runWalkProject(ctx, f.gomodPath, wf, f.force, true, 0, "", f.policyPath, f.skipVCSVerify, scope, walkdomain.WalkDepthFull, "", false, f.stdlibFromGoMod, progress, ctr.ExecuteWalk, io.Discard, stderr); werr != nil {
+	if werr := runWalkProject(ctx, f.gomodPath, f.force, true, 0, "", f.policyPath, f.skipVCSVerify, scope,
+		walkdomain.WalkDepthFull, "", false, f.stdlibFromGoMod, progress, ctr.ExecuteWalk, io.Discard, stderr); werr != nil {
 		// A partial walk is tolerated (allowPartial=true above): individual
 		// unfetchable nodes surface as "(not fetched)" rows. Only a hard walk
 		// failure or cancellation leaves no usable record.
@@ -277,7 +287,7 @@ func auditScope(
 	}
 
 	_, _ = fmt.Fprintf(stderr, "==> audit: scanning vulnerabilities for walk %s\n", walkID)
-	if verr := runVulnScan(ctx, walkID, commonWalkFlags{}, f.force, f.fresh, false, 1, false, false, "", os.Getenv("USER"), filepath.Dir(f.gomodPath), io.Discard, stderr); verr != nil {
+	if verr := runVulnScan(ctx, walkID, f.force, f.fresh, false, 1, false, false, "", os.Getenv("USER"), filepath.Dir(f.gomodPath), io.Discard, stderr); verr != nil {
 		_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", verr)
 	}
 
@@ -412,7 +422,7 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, sc
 	}
 
 	vrec, found, verr := ctr.QueryVuln.GetLatestRecordForWalk(ctx, coord, vulnPipelineVersion, walkID)
-	res.VulnStatus, res.VulnReason, res.VulnFindings = vulnAuditStatus(vrec, found, verr)
+	res.VulnStatus, res.VulnReason, res.VulnFindings, res.VulnWithdrawn = vulnAuditStatus(vrec, found, verr)
 
 	return res, nil
 }
@@ -433,12 +443,17 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, sc
 //
 // Both audit paths share this so they cannot drift into disagreeing about the
 // same condition, which is how one of them came to have no error branch at all.
-func vulnAuditStatus(rec vulndomain.VulnerabilityRecord, found bool, err error) (status, reason string, findings int) {
+// findings counts every advisory on the record and withdrawn counts the retracted
+// subset of it, so the live count is the difference. Reporting only the total made
+// the row read "Withdrawn (1 findings)" — a finding asserted and denied in one
+// line — while narrowing the total instead would have changed what an existing
+// field means without saying so.
+func vulnAuditStatus(rec vulndomain.VulnerabilityRecord, found bool, err error) (status, reason string, findings, withdrawn int) {
 	if err != nil {
-		return "(scan record unreadable)", "reading vulnerability record: " + err.Error(), 0
+		return "(scan record unreadable)", "reading vulnerability record: " + err.Error(), 0, 0
 	}
 	if !found {
-		return "(not scanned)", "", 0
+		return "(not scanned)", "", 0, 0
 	}
 	// Which diagnostic explains the row is a coverage question, so it is asked of
 	// the coverage axis. The collapsed word cannot answer it: a metadata-only
@@ -453,7 +468,12 @@ func vulnAuditStatus(rec vulndomain.VulnerabilityRecord, found bool, err error) 
 	case vulndomain.CoverageAnalysed:
 		// Analysed: the status word stands on its own, no caveat to explain.
 	}
-	return string(rec.OverallStatus), reason, len(rec.Findings)
+	for _, f := range rec.Findings {
+		if f.IsWithdrawn() {
+			withdrawn++
+		}
+	}
+	return string(rec.OverallStatus), reason, len(rec.Findings), withdrawn
 }
 
 // buildStdlibAuditResult reports the standard-library node's custody chain from
@@ -499,7 +519,7 @@ func buildStdlibAuditResult(ctx context.Context, coord coordinate.ModuleCoordina
 	}
 
 	vrec, found, verr := ctr.QueryVuln.GetLatestRecordForWalk(ctx, coord, vulnPipelineVersion, walkID)
-	res.VulnStatus, res.VulnReason, res.VulnFindings = vulnAuditStatus(vrec, found, verr)
+	res.VulnStatus, res.VulnReason, res.VulnFindings, res.VulnWithdrawn = vulnAuditStatus(vrec, found, verr)
 	return res
 }
 
@@ -534,9 +554,18 @@ func printAuditTable(stdout io.Writer, results []auditModuleResult) error {
 	}
 	for _, r := range results {
 		vuln := r.VulnStatus
-		if r.VulnFindings > 0 {
-			vuln = fmt.Sprintf("%s (%d findings)", r.VulnStatus, r.VulnFindings)
-		} else if r.VulnReason != "" {
+		// live is the difference, because VulnFindings counts the retracted ones too.
+		live := r.VulnFindings - r.VulnWithdrawn
+		switch {
+		case live > 0 && r.VulnWithdrawn > 0:
+			vuln = fmt.Sprintf("%s (%d findings, %d retracted)", r.VulnStatus, live, r.VulnWithdrawn)
+		case live > 0:
+			vuln = fmt.Sprintf("%s (%d findings)", r.VulnStatus, live)
+		case r.VulnWithdrawn > 0:
+			// Named as retracted, never as findings: the count column sits beside a
+			// Withdrawn status word, and "1 findings" there contradicts it.
+			vuln = fmt.Sprintf("%s (%d retracted)", r.VulnStatus, r.VulnWithdrawn)
+		case r.VulnReason != "":
 			// The reason (govulncheck stderr) is multi-line and too wide for
 			// the table; direct the reader to vuln-show, which renders it.
 			vuln = fmt.Sprintf("%s (see vuln-show)", r.VulnStatus)

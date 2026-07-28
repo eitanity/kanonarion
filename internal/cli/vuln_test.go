@@ -106,7 +106,7 @@ func TestPrintVulnScanResult_FindingsOnStdout(t *testing.T) {
 	affected := []vulnScanAffected{{coord: "github.com/gorilla/csrf@v1.7.3", record: rec}}
 
 	var stdout bytes.Buffer
-	if err := printVulnScanResult(run, affected, nil, nil, false, &stdout); err != nil {
+	if err := printVulnScanResult(run, affected, nil, nil, nil, false, &stdout); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -133,7 +133,7 @@ func TestPrintVulnScanResult_CleanWalkNoFindingsBlock(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	if err := printVulnScanResult(run, nil, nil, nil, false, &stdout); err != nil {
+	if err := printVulnScanResult(run, nil, nil, nil, nil, false, &stdout); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -211,7 +211,7 @@ func TestPrintVulnScanResult_JSONOnStdout(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	if err := printVulnScanResult(run, nil, nil, nil, true, &stdout); err != nil {
+	if err := printVulnScanResult(run, nil, nil, nil, nil, true, &stdout); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
@@ -334,7 +334,7 @@ func TestVulnScanProgress_SharedTextIsNotRepeatedPerModule(t *testing.T) {
 
 	var stream strings.Builder
 	rollup := newUnscannableRollup()
-	for i := 0; i < modules; i++ {
+	for i := range modules {
 		coord := mustVulnCoord(t, fmt.Sprintf("example.com/mod%d", i), "v1.0.0")
 		rec := vuldomain.VulnerabilityRecord{
 			Coordinate:        coord,
@@ -382,7 +382,7 @@ func TestVulnScanProgress_OutOfToolchainExplanationIsOncePerRun(t *testing.T) {
 
 	var stream strings.Builder
 	rollup := newUnscannableRollup()
-	for i := 0; i < modules; i++ {
+	for i := range modules {
 		coord := mustVulnCoord(t, fmt.Sprintf("example.com/mod%d", i), "v1.0.0")
 		rec := vuldomain.VulnerabilityRecord{
 			Coordinate:        coord,
@@ -429,7 +429,7 @@ func TestWriteUnscannableRollup_ProjectFaultCountsNotCoordinates(t *testing.T) {
 	const modules = 107
 
 	r := newUnscannableRollup()
-	for i := 0; i < modules; i++ {
+	for i := range modules {
 		r.add(vuldomain.UnscanReasonProjectNoGoMod,
 			fmt.Sprintf("example.com/mod%d@v1.0.0", i),
 			"no go.mod in project directory /home/u/proj")
@@ -700,11 +700,7 @@ func TestRunScanRescan_SnapshotFlagsMustBePaired(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			var stdout, stderr bytes.Buffer
-			err := runScanRescan(
-				context.Background(), "01KQDBVW092ER1HNXZ60X27CMD",
-				commonWalkFlags{}, false, "", "tester",
-				tc.source, tc.version, &stdout, &stderr,
-			)
+			err := runScanRescan(context.Background(), "01KQDBVW092ER1HNXZ60X27CMD", false, "", "tester", tc.source, tc.version, &stdout, &stderr)
 			if err == nil {
 				t.Fatal("expected error for unpaired snapshot flags")
 			}

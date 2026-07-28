@@ -1,6 +1,6 @@
 package domain
 
-import "sort"
+import "slices"
 
 // CapabilityDiff compares two capability reports (for example two versions of a
 // module) to answer the update-validity question: did the capability set change?
@@ -58,5 +58,5 @@ func capabilitySet(r CapabilityReport) map[Capability]bool {
 }
 
 func sortCaps(caps []Capability) {
-	sort.Slice(caps, func(i, j int) bool { return caps[i] < caps[j] })
+	slices.Sort(caps)
 }

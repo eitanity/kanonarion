@@ -14,7 +14,6 @@ import (
 )
 
 func newWalkListCmd(stdout, stderr io.Writer) *cobra.Command {
-	var f commonWalkFlags
 	var target string
 	var since string
 	var statusStr string
@@ -48,7 +47,7 @@ func newWalkListCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runWalkList(cmd.Context(), f, target, since, statusStr, scopeStr, walkID, limit, latest, latestSuccess, ctr.QueryWalks, stdout, stderr)
+			return runWalkList(cmd.Context(), target, since, statusStr, scopeStr, walkID, limit, latest, latestSuccess, ctr.QueryWalks, stdout, stderr)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", "", "filter by target module@version")
@@ -62,16 +61,7 @@ func newWalkListCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().BoolVar(&latestSuccess, "latest-success", false, "return only the single most recent succeeded walk (as a JSON object, not an array)")
 	return cmd
 }
-func runWalkList(
-	ctx context.Context,
-	f commonWalkFlags,
-	targetArg, sinceArg, statusArg, scopeArg, walkID string,
-	limit int,
-	latest bool,
-	latestSuccess bool,
-	uc QueryWalksUseCase,
-	stdout, _ io.Writer,
-) error {
+func runWalkList(ctx context.Context, targetArg, sinceArg, statusArg, scopeArg, walkID string, limit int, latest, latestSuccess bool, uc QueryWalksUseCase, stdout, _ io.Writer) error {
 	if walkID != "" {
 		rec, rerr := uc.GetWalk(ctx, walkID)
 		if rerr != nil {

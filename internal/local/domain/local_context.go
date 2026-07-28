@@ -95,7 +95,7 @@ func SnapshotModulePath(snap Snapshot) (string, error) {
 // parseGoModModulePath scans go.mod bytes for the module directive and returns
 // the declared module path. It does not import golang.org/x/mod.
 func parseGoModModulePath(content []byte) (string, error) {
-	for _, line := range bytes.Split(content, []byte("\n")) {
+	for line := range bytes.SplitSeq(content, []byte("\n")) {
 		line = bytes.TrimSpace(line)
 		if !bytes.HasPrefix(line, []byte("module ")) {
 			continue

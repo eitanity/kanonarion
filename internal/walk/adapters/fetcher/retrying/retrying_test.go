@@ -374,7 +374,7 @@ func TestFullJitterStaysWithinHalfOfTheInterval(t *testing.T) {
 		t.Errorf("fullJitter(negative) = %v, want 0", got)
 	}
 	const d = 200 * time.Millisecond
-	for i := 0; i < 200; i++ {
+	for range 200 {
 		got := fullJitter(d)
 		if got < d/2 || got > d {
 			t.Fatalf("fullJitter(%v) = %v, want within [%v, %v]", d, got, d/2, d)

@@ -237,7 +237,7 @@ func TestRefusedDowngradeLogsBothStatusesAndModes(t *testing.T) {
 
 	logged := buf.String()
 	var warnLines []string
-	for _, line := range strings.Split(strings.TrimSpace(logged), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(logged), "\n") {
 		if strings.Contains(line, "level=WARN") {
 			warnLines = append(warnLines, line)
 		}

@@ -1183,7 +1183,17 @@ func (s *Store) ListVulnerabilityRecordsByFindingID(ctx context.Context, finding
 	// outrank v14 the way a text compare would. A format change degrades to 0,
 	// which is arbitrary but still deterministic.
 	//
-	// The two status placeholders are bound first because they appear first in
+	// The first tier is "this record reports a matched advisory at all", which is
+	// two findings values, not one: Affected and Withdrawn. A withdrawn record bears
+	// the finding and states why it no longer stands, so it belongs in the tier that
+	// outranks a bare all-clear, and within that tier scanned_at decides — which is
+	// what lets a newer retraction supersede an older Affected verdict. Ranking
+	// Withdrawn with Clean instead would have demoted the very record that carries
+	// the reason, leaving a stale Affected as the answer for a retracted advisory.
+	// Ranking it above Affected would be the mirror error: one live advisory beside
+	// a retracted one is an Affected record, and it must not lose to a withdrawal.
+	//
+	// The three status placeholders are bound first because they appear first in
 	// the query text, ahead of the WHERE clause parameters.
 	//
 	// Records written before the axes existed carry them back-filled by migration
@@ -1193,7 +1203,7 @@ func (s *Store) ListVulnerabilityRecordsByFindingID(ctx context.Context, finding
 	const rankWithinCoordinate = `
     ROW_NUMBER() OVER (
       PARTITION BY vr.module_path, vr.module_version
-      ORDER BY (vr.findings_status = ?) DESC,
+      ORDER BY (vr.findings_status IN (?, ?)) DESC,
                (vr.coverage_status = ?) DESC,
                vr.scanned_at DESC,
                CAST(substr(vr.pipeline_version, 2) AS INTEGER) DESC
@@ -1238,7 +1248,11 @@ SELECT serialised, scanned_at FROM (
 WHERE rn = 1
 ORDER BY scanned_at DESC`
 
-	rank := []any{string(domain.FindingsRecordAffected), string(domain.CoverageAnalysed)}
+	rank := []any{
+		string(domain.FindingsRecordAffected),
+		string(domain.FindingsRecordWithdrawn),
+		string(domain.CoverageAnalysed),
+	}
 
 	q, args := unscoped, append(append([]any{}, rank...), findingID)
 	if walkID != "" {

@@ -45,19 +45,15 @@ func TestRecordingFetcher_OverlappingCallsFetchOnce(t *testing.T) {
 
 	// Caller 0 becomes the leader; wait until it is inside the inner fetcher so
 	// the remaining callers are guaranteed to find the fetch already in flight.
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		results[0], errs[0] = rec.EnsureFetched(context.Background(), c)
-	}()
+	})
 	<-gate.entered
 
 	for i := 1; i < callers; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			results[i], errs[i] = rec.EnsureFetched(context.Background(), c)
-		}()
+		})
 	}
 	close(gate.release)
 	wg.Wait()
@@ -87,17 +83,13 @@ func TestRecordingFetcher_OverlappingCallsShareFailure(t *testing.T) {
 
 	var wg sync.WaitGroup
 	var leadErr, waitErr error
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		_, leadErr = rec.EnsureFetched(context.Background(), c)
-	}()
+	})
 	<-gate.entered
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		_, waitErr = rec.EnsureFetched(context.Background(), c)
-	}()
+	})
 	close(gate.release)
 	wg.Wait()
 
@@ -122,11 +114,9 @@ func TestRecordingFetcher_WaiterHonoursContextCancellation(t *testing.T) {
 	rec := newRecorderForTest(gate)
 
 	var wg sync.WaitGroup
-	wg.Add(1)
-	go func() {
-		defer wg.Done()
+	wg.Go(func() {
 		_, _ = rec.EnsureFetched(context.Background(), c)
-	}()
+	})
 	<-gate.entered
 
 	ctx, cancel := context.WithCancel(context.Background())

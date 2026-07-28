@@ -99,6 +99,12 @@ How to read it: `Status` is the coverage roll-up
 (`AllClean` / `Affected` / `Partial` / `ScanFailed`) and `Affected` is how many
 modules have findings — two independent facts, so a run left `Partial` by an
 unscannable module still reports its real `Affected` count rather than hiding it.
+
+A module can also read `Withdrawn`: an advisory matched it and was later retracted
+upstream. That is not the same as `Clean` — `Clean` means no advisory ever applied —
+so such a module is listed in its own section with the retraction date and is kept
+out of the `Affected` count. Nothing to act on, but the history is stated rather
+than left as an unexplained absence.
 `Snapshot` dates the vulnerability database the scan used (pass `--fresh`
 to pull a current snapshot), and the walk ID is the stored dependency
 walk you can feed to `walk-show`, `sbom`, or `context --walk-id`. With

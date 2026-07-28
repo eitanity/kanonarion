@@ -99,6 +99,16 @@ un-analysable merely for a build your project never produces. A *single-module*
 `inspect <module@version>` or `vuln-scan --module <module@version>` is the
 coordinate-keyed view: it scans that module in isolation as its own main module,
 which is the intended "look at it on its own" analysis and is unchanged.
+(`vuln-scan --module` resolves the latest walk **rooted at** that coordinate — a
+walk that merely contains it as a dependency is a different thing, and is scanned
+by its walk id.)
+
+A module whose every matched advisory was **retracted upstream** reads `Withdrawn`,
+not `Clean`, and is reported in its own section with the retraction date. `Clean`
+says no advisory ever applied; `Withdrawn` says one did and was withdrawn. Folding
+the two together is what let a retracted advisory read exactly like an advisory that
+never existed — and, on the other side of the same gap, let one be reported as a live
+finding for a module nothing was wrong with.
 
 **Drive the pipeline stage by stage.** `walk`, `extract`, and `vuln-scan` all
 key off a **walk id**. `walk` prints it, and you can always resolve the most

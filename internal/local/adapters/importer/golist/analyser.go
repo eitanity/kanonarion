@@ -53,8 +53,7 @@ func (a *Analyser) AnalyseImports(ctx context.Context, root string) ([]domain.Im
 	cmd.Dir = root
 	out, err := cmd.Output()
 	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
+		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 			return nil, fmt.Errorf("go list: %w\n%s", err, exitErr.Stderr)
 		}
 		return nil, fmt.Errorf("go list: %w", err)

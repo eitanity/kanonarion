@@ -112,7 +112,7 @@ func ValidateVCSHost(host string) error {
 	case host != strings.ToLower(host):
 		return fmt.Errorf("VCS host %q must be lowercase", host)
 	}
-	for _, label := range strings.Split(host, ".") {
+	for label := range strings.SplitSeq(host, ".") {
 		if err := validateHostLabel(host, label); err != nil {
 			return err
 		}

@@ -37,6 +37,13 @@ const (
 	verdictReachable    = "reachable"
 	verdictNotReachable = "not_reachable"
 	verdictNotAffected  = "not_affected"
+	// verdictWithdrawn is its own verdict, not a flavour of not_affected and
+	// certainly not a reachability answer. A retracted advisory is excluded on the
+	// strength of its retraction, and answering "not reachable" for one would offer
+	// reachability as the mitigation — inviting the reader to conclude the module
+	// would be at risk if only something called it, when there is nothing to be at
+	// risk from.
+	verdictWithdrawn = "withdrawn"
 )
 
 // -- output types --
@@ -171,7 +178,11 @@ type vulnReachabilityQuery struct {
 	Confidence   string     `json:"confidence,omitempty"`
 	Method       string     `json:"method"`
 	ExamplePaths [][]string `json:"example_paths,omitempty"`
-	ScannedAt    string     `json:"scanned_at,omitempty"`
+	// WithdrawnAt is set only on the withdrawn verdict, and carries the retraction
+	// timestamp so the answer states its reason rather than asserting a bare
+	// negative the reader has to take on trust.
+	WithdrawnAt string `json:"withdrawn_at,omitempty"`
+	ScannedAt   string `json:"scanned_at,omitempty"`
 }
 
 // vulnReachabilityVerdict is the pure classifier (no I/O) so the intent-aware
@@ -224,6 +235,24 @@ func vulnReachabilityVerdict(coord coordinate.ModuleCoordinate, rec vuldomain.Vu
 			Verdict:   verdictNotAffected,
 			Method:    reachabilityMethodCallGraph,
 			ScannedAt: rec.ScannedAt.UTC().Format(time.RFC3339),
+		}, nil
+	}
+
+	// The retraction is answered before reachability is consulted, because it makes
+	// the reachability question moot: whether anything calls the symbol does not
+	// matter for an advisory that no longer stands, and the two directing errors
+	// below would otherwise send the operator to compute a call graph for it.
+	if f.IsWithdrawn() {
+		return vulnReachabilityQuery{
+			Module:      coord.Path(),
+			Version:     coord.Version(),
+			VulnID:      f.ID,
+			Aliases:     f.Aliases,
+			Summary:     f.Summary,
+			Verdict:     verdictWithdrawn,
+			Method:      reachabilityMethodCallGraph,
+			WithdrawnAt: f.WithdrawnAt.UTC().Format(time.RFC3339),
+			ScannedAt:   rec.ScannedAt.UTC().Format(time.RFC3339),
 		}, nil
 	}
 
@@ -289,6 +318,9 @@ func printVulnReachability(stdout io.Writer, res vulnReachabilityQuery) {
 		_, _ = fmt.Fprintf(stdout, "%s affects %s but is NOT reachable [confidence: %s, method: %s]\n", res.VulnID, coord, res.Confidence, res.Method)
 	case verdictNotAffected:
 		_, _ = fmt.Fprintf(stdout, "%s is not affected by %s (scanned %s)\n", coord, res.VulnID, res.ScannedAt)
+	case verdictWithdrawn:
+		_, _ = fmt.Fprintf(stdout, "%s was WITHDRAWN upstream %s — %s is not affected by it (scanned %s)\n",
+			res.VulnID, res.WithdrawnAt, coord, res.ScannedAt)
 	}
 }
 

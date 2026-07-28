@@ -125,7 +125,7 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 func filterContextWalkNodes(
 	ctx context.Context,
 	nodes []walkdomain.GraphNode,
-	root coordinate.ModuleCoordinate,
+	_ coordinate.ModuleCoordinate,
 	f contextFlags,
 	vulnUC QueryVulnUseCase,
 	runsUC QueryScanRunsUseCase,
@@ -139,7 +139,7 @@ func filterContextWalkNodes(
 			return nil, fmt.Errorf("reading --modules file %q: %w", f.modulesFile, err)
 		}
 		allowSet = make(map[string]struct{})
-		for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		for line := range strings.SplitSeq(strings.TrimSpace(string(data)), "\n") {
 			line = strings.TrimSpace(line)
 			if line != "" {
 				allowSet[line] = struct{}{}

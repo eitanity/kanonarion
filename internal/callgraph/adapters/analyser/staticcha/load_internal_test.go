@@ -44,7 +44,7 @@ func TestLoadAndBuildSSA_OnePackagePerImportPath(t *testing.T) {
 	// split it, with each link importing the previous one so a split guarantees
 	// a re-load of the earlier links as dependencies.
 	const chain = 25
-	for i := 0; i < chain; i++ {
+	for i := range chain {
 		body := fmt.Sprintf("package p%02d\n\nfunc N() int { return %d }\n", i, i)
 		if i > 0 {
 			body = fmt.Sprintf("package p%02d\n\nimport prev %q\n\nfunc N() int { return prev.N() + %d }\n",

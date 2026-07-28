@@ -31,8 +31,11 @@ type VulnerabilityRecordHasher struct{}
 //     gap and a matching advisory can put only one of them in the single word and
 //     puts the finding there, so deriving coverage from the word answers
 //     "Analysed" for a module that was never analysed.
-//   - Findings comes from the summary word, which is exact for this axis: only
-//     Affected reports a finding.
+//   - Findings comes from DetermineRecordFindings, which reads the findings the
+//     record kept. A retracted advisory is not a finding against the module and
+//     not an absence either, and only the set can say which of the two a match
+//     is; the word cannot, because a writer that matched an advisory puts
+//     Affected there whether or not it has since been withdrawn.
 //   - The summary is collapsed from the axes when the writer stated none, so a
 //     writer that has decided the axes need not restate the word.
 //
@@ -48,7 +51,7 @@ func (h VulnerabilityRecordHasher) SetContentHash(r VulnerabilityRecord) (Vulner
 		r.CoverageStatus = DetermineRecordCoverage(r)
 	}
 	if r.FindingsStatus == "" {
-		r.FindingsStatus = DetermineRecordFindingsStatus(r.OverallStatus)
+		r.FindingsStatus = DetermineRecordFindings(r)
 	}
 	if r.OverallStatus == "" {
 		r.OverallStatus = DetermineRecordOverallStatus(r.CoverageStatus, r.FindingsStatus)
