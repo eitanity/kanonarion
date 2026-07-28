@@ -1,7 +1,9 @@
 package sqlite_test
 
 import (
+	"fmt"
 	"io"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -348,5 +350,119 @@ INSERT INTO vulnerability_snapshots (source, version, retrieved_at, content_hash
 		if got != tc.want {
 			t.Errorf("%s snapshot content_hash = %q, want %q", tc.version, got, tc.want)
 		}
+	}
+}
+
+// TestMigration13_CorrectsCoverageBackFilledFromTheCollapsedWord is the
+// correction applied to rows already in every store.
+//
+// Migration 11 back-filled the coverage column by projecting the collapsed status
+// word, which is not a coverage answer on a record that carries both a coverage
+// gap and an advisory match: the word holds the match, so the projection wrote
+// 'Analysed' for a module whose source was never read. 74 rows of the
+// maintainer's store persist that claim.
+//
+// The rows are built here the way the old pipeline wrote them — a blob with no
+// axes of its own, and columns back-filled by migration 11's own SQL — so the
+// test exercises the migration against the shape it exists for rather than
+// against a record today's writer would produce.
+func TestMigration13_CorrectsCoverageBackFilledFromTheCollapsedWord(t *testing.T) {
+	dsn := filepath.Join(t.TempDir(), "vuln.db")
+
+	// Stop at 12: the state a store is in before this correction.
+	var upTo12 []sqlitestore.Migration
+	for _, m := range sqlite.Migrations() {
+		if m.Module != "vuln" || m.Version <= 12 {
+			upTo12 = append(upTo12, m)
+		}
+	}
+	db, err := sqlitestore.Open(dsn, upTo12)
+	if err != nil {
+		t.Fatalf("opening at migration 12: %v", err)
+	}
+
+	// Four legacy rows: the two mislabelled shapes, and two that must not move.
+	for _, r := range []struct {
+		version           string
+		overall           string
+		unscanReason      string
+		unscannableReason string
+		errorDetail       string
+	}{
+		{"v1.0.0", "Affected", "version-not-in-toolchain", "metadata-only", ""},
+		{"v1.1.0", "Clean", "", "metadata-only: module not fetched (shallow walk)", ""},
+		{"v1.2.0", "Affected", "", "", "govulncheck exited 1"},
+		{"v1.3.0", "Affected", "", "", ""},
+	} {
+		blob := fmt.Sprintf(
+			`{"ecosystem":"go","overall_status":%q,"unscan_reason":%q,"unscannable_reason":%q,"error_detail":%q}`,
+			r.overall, r.unscanReason, r.unscannableReason, r.errorDetail)
+		if _, err := db.DB().Exec(`
+INSERT INTO vulnerability_records
+  (module_path, module_version, pipeline_version, snapshot_source, snapshot_version,
+   overall_status, coverage_status, findings_status, finding_count, scanned_at, first_scanned_at, content_hash, serialised)
+VALUES ('github.com/foo/bar', ?, 'v14', 'govulndb', 'v2024-01-01', ?, ?, ?, 0,
+        '2024-01-01T00:00:00Z', '2024-01-01T00:00:00Z', 'hash-'||?, ?)`,
+			r.version, r.overall,
+			// Exactly what migration 11's CASE produced for this word.
+			map[string]string{"Clean": "Analysed", "Affected": "Analysed", "Unscannable": "Unscannable"}[r.overall],
+			map[string]string{"Clean": "Clean", "Affected": "Affected", "Unscannable": "Clean"}[r.overall],
+			r.version, blob); err != nil {
+			t.Fatalf("seeding legacy row %s: %v", r.version, err)
+		}
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("closing: %v", err)
+	}
+
+	// Re-open with the full set, which applies 13 to the rows above.
+	db2, err := sqlitestore.Open(dsn, sqlite.Migrations())
+	if err != nil {
+		t.Fatalf("applying migration 13: %v", err)
+	}
+	t.Cleanup(func() { _ = db2.Close() })
+
+	for _, want := range []struct {
+		version  string
+		coverage string
+		overall  string
+		why      string
+	}{
+		{"v1.0.0", "Unscannable", "Affected", "an advisory matched on a module whose source was never analysed"},
+		{"v1.1.0", "Unscannable", "Clean", "prose without a reason code is still a coverage gap"},
+		{"v1.2.0", "Failed", "Affected", "an error detail alone is a failed look"},
+		{"v1.3.0", "Analysed", "Affected", "a genuine analysis must not be touched"},
+	} {
+		var coverage, overall string
+		if err := db2.DB().QueryRow(
+			`SELECT coverage_status, overall_status FROM vulnerability_records WHERE module_version = ?`,
+			want.version).Scan(&coverage, &overall); err != nil {
+			t.Fatalf("reading %s back: %v", want.version, err)
+		}
+		if coverage != want.coverage {
+			t.Errorf("%s: coverage_status = %q, want %q — %s", want.version, coverage, want.coverage, want.why)
+		}
+		// The summary word is never rewritten by the migration. Deriving it from the
+		// corrected coverage would report Unscannable for the first row and retire a
+		// finding every summary-reading consumer reports today; and it is inside the
+		// blob, which the migration must not contradict.
+		if overall != want.overall {
+			t.Errorf("%s: overall_status = %q, want %q left as written", want.version, overall, want.overall)
+		}
+	}
+
+	// The acceptance measurement, run against this store: no row may claim it was
+	// analysed while carrying a diagnostic saying otherwise.
+	var mislabelled int
+	if err := db2.DB().QueryRow(`
+SELECT COUNT(*) FROM vulnerability_records
+WHERE coverage_status = 'Analysed'
+  AND (COALESCE(json_extract(serialised, '$.unscan_reason'), '') != ''
+    OR COALESCE(json_extract(serialised, '$.unscannable_reason'), '') != ''
+    OR COALESCE(json_extract(serialised, '$.error_detail'), '') != '')`).Scan(&mislabelled); err != nil {
+		t.Fatalf("counting mislabelled rows: %v", err)
+	}
+	if mislabelled != 0 {
+		t.Errorf("%d rows still claim Analysed while carrying a coverage diagnostic, want 0", mislabelled)
 	}
 }

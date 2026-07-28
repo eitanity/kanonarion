@@ -35,6 +35,29 @@ var ErrCallGraphNotFound = errors.New("call graph record not found")
 // failure without importing the store.
 var ErrVulnIntegrity = errors.New("vulnerability record integrity check failed")
 
+// ErrSnapshotIntegrity is returned by the vulnerability store when the advisory
+// database snapshot itself fails its integrity check: on write when the
+// caller-declared hash contradicts the bytes handed over, and on read when the
+// stored blob no longer matches its stored hash or is not the snapshot the caller
+// asked for.
+//
+// It is separate from ErrVulnIntegrity because the two failures have
+// incomparable blast radius. A corrupt record invalidates one module's verdict; a
+// corrupt snapshot invalidates every verdict derived from it, and the records in
+// a working store reference a handful of snapshots between them. A caller that
+// would fail the module on one and abort the run and re-fetch the database on the
+// other could not tell them apart while both answered to one sentinel.
+//
+// It deliberately does not wrap ErrVulnIntegrity. Wrapping would make
+// errors.Is(err, ErrVulnIntegrity) true for a snapshot failure — the exact
+// conflation this removes — and would keep every existing broad match working
+// while making the narrow one impossible to write.
+//
+// A snapshot that is absent is not an integrity failure and matches neither
+// sentinel; nor is a snapshot stored before hashing existed, which reads back as
+// unverifiable rather than as corrupt.
+var ErrSnapshotIntegrity = errors.New("vulnerability database snapshot integrity check failed")
+
 // VulnerabilityStore defines the port for persisting vulnerability records.
 //
 // The zero coordinate is the one value the signatures cannot exclude: Go

@@ -199,17 +199,27 @@ func runVulnScan(ctx context.Context, walkID string, f commonWalkFlags, force, f
 		ProjectDir:         projectDir,
 		Progress: func(coord coordinate.ModuleCoordinate, record vuldomain.VulnerabilityRecord, current, total int) {
 			writeVulnScanProgress(record, coord, current, total, stderr)
-			switch record.OverallStatus {
-			case vuldomain.StatusScanFailed:
-				failedCoords = append(failedCoords, coord.Path()+"@"+coord.Version())
-			case vuldomain.StatusAffected:
+			// Bucketed by axis, not by the collapsed word, so a module can appear in
+			// both roll-ups. A metadata-only record that matched an advisory is both
+			// a finding and a coverage gap; routing on the single word put it in the
+			// affected list and silently left it out of the coverage roll-up, which
+			// is where the reader learns the match was never checked for
+			// reachability.
+			coverage, findings := vuldomain.RecordAxes(record)
+			if findings == vuldomain.FindingsRecordAffected {
 				affected = append(affected, vulnScanAffected{coord: coord.Path() + "@" + coord.Version(), record: record})
+			}
 			// Every Unscannable is bucketed, not just the out-of-toolchain one:
 			// the same advisory matching ran for all of them, so a record that
 			// appeared in no roll-up was being hidden from the reader on the
 			// strength of its reason code alone.
-			case vuldomain.StatusUnscannable:
+			switch coverage {
+			case vuldomain.CoverageFailedScan:
+				failedCoords = append(failedCoords, coord.Path()+"@"+coord.Version())
+			case vuldomain.CoverageUnscannable:
 				unscannable.add(record.UnscanReason, coord.Path()+"@"+coord.Version(), record.UnscannableReason)
+			case vuldomain.CoverageAnalysed:
+				// Analysed: the findings bucket above is the whole answer.
 			}
 		},
 	})
@@ -232,11 +242,22 @@ const reachabilityLocalHint = "for project-rooted reachability, run: kanonarion 
 // all of them, so telling the reader nothing for one module and explaining
 // another is a difference in presentation that no difference in analysis backs.
 // The stored status and JSON stay Unscannable; only the human label changes.
+// Whether the module was analysed is asked of the coverage axis: a metadata-only
+// record that matched an advisory summarises as Affected, so gating on the word
+// printed a bare "Affected" and told the reader nothing about the module never
+// having been analysed. When both axes have something to say the line carries
+// both, findings first — the coverage caveat qualifies the finding, it does not
+// replace it.
 func vulnScanStatusLabel(record vuldomain.VulnerabilityRecord) string {
-	if record.OverallStatus == vuldomain.StatusUnscannable {
-		return unscanDisplayFor(record.UnscanReason).label
+	coverage, findings := vuldomain.RecordAxes(record)
+	if coverage != vuldomain.CoverageUnscannable {
+		return string(record.OverallStatus)
 	}
-	return string(record.OverallStatus)
+	label := unscanLabelFor(record)
+	if findings == vuldomain.FindingsRecordAffected {
+		return string(vuldomain.StatusAffected) + " — " + label
+	}
+	return label
 }
 
 // writeVulnScanProgress writes one per-module progress line (and, for a scan
@@ -258,7 +279,8 @@ func writeVulnScanProgress(record vuldomain.VulnerabilityRecord, coord coordinat
 		status += " (reused — same snapshot)"
 	}
 	_, _ = fmt.Fprintf(w, "  [%d/%d] %s@%s — %s\n", current, total, coord.Path(), coord.Version(), status)
-	if record.OverallStatus == vuldomain.StatusScanFailed && record.ErrorDetail != "" {
+	coverage, _ := vuldomain.RecordAxes(record)
+	if coverage == vuldomain.CoverageFailedScan && record.ErrorDetail != "" {
 		_, _ = fmt.Fprintf(w, "      reason: %s\n", record.ErrorDetail)
 	}
 }

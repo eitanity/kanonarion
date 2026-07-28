@@ -432,6 +432,52 @@ WHERE content_hash != ''
   );
 `,
 		},
+		{
+			Module:  "vuln",
+			Version: 13,
+			// Correct the coverage axis migration 11 back-filled from the collapsed
+			// status word.
+			//
+			// That back-fill was exact for the projection it applied, but the word it
+			// projected from is not always a coverage answer. A writer that has both a
+			// coverage gap and a matching advisory can put only one of them in the
+			// single word, and it puts the finding there: the metadata-only fallback
+			// records Affected and leaves the gap in unscan_reason. Migration 11 read
+			// Affected and wrote 'Analysed', so 74 rows persist a claim that a module
+			// was analysed when only its coordinate was ever matched — the exact
+			// over-claim the axis exists to prevent.
+			//
+			// The diagnostics on the record are the evidence the word discarded, and
+			// they are read here in the same precedence the domain applies
+			// (DetermineRecordCoverage): a named reason means Unscannable, an error
+			// detail alone means Failed — a look that went wrong rather than a module
+			// that cannot be looked at.
+			//
+			// Three guards keep it to rows that are genuinely wrong. Only rows whose
+			// blob states no coverage_status of its own are touched, so a record that
+			// asserted its axis at seal time keeps the value its content hash covers;
+			// only rows currently claiming 'Analysed'; and only rows that actually
+			// carry a diagnostic to re-derive from.
+			//
+			// No PipelineVersion bump: coverage_status is absent from the blob of every
+			// row this touches (the field is omitempty and these predate the split),
+			// so no stored content hash covers the value being corrected and no record
+			// stops verifying.
+			SQL: `
+UPDATE vulnerability_records
+SET coverage_status = CASE
+        WHEN COALESCE(json_extract(serialised, '$.unscan_reason'), '') != ''
+          OR COALESCE(json_extract(serialised, '$.unscannable_reason'), '') != ''
+        THEN 'Unscannable'
+        ELSE 'Failed'
+    END
+WHERE json_extract(serialised, '$.coverage_status') IS NULL
+  AND coverage_status = 'Analysed'
+  AND (COALESCE(json_extract(serialised, '$.unscan_reason'), '') != ''
+    OR COALESCE(json_extract(serialised, '$.unscannable_reason'), '') != ''
+    OR COALESCE(json_extract(serialised, '$.error_detail'), '') != '');
+`,
+		},
 	}
 }
 
@@ -927,7 +973,7 @@ func (s *Store) PutDatabaseSnapshot(ctx context.Context, snapshot domain.Databas
 	computed := domain.HashSnapshotContent(data)
 	if snapshot.ContentHash != "" && snapshot.ContentHash != computed {
 		return fmt.Errorf("%w: snapshot %s@%s content hash mismatch: caller declared %q, content is %q",
-			ports.ErrVulnIntegrity, snapshot.Source, snapshot.Version, snapshot.ContentHash, computed)
+			ports.ErrSnapshotIntegrity, snapshot.Source, snapshot.Version, snapshot.ContentHash, computed)
 	}
 	snapshot.ContentHash = computed
 
@@ -957,9 +1003,14 @@ ON CONFLICT (source, version) DO UPDATE SET
 // This is the read leg of the same rule record content already gets: the
 // advisory database is the evidence every finding is derived from, so a scan
 // must not consume a blob that is not the one that was fetched. A mismatch is
-// reported as ErrVulnIntegrity rather than as absence, for the same reason a
+// reported as ErrSnapshotIntegrity rather than as absence, for the same reason a
 // tampered record is — absence would trigger a silent re-fetch that overwrites
 // the evidence.
+//
+// The sentinel is the snapshot's own, not the record's: a corrupt snapshot
+// invalidates every verdict derived from it, while a corrupt record invalidates
+// one module's, and a caller that would abort the run on the first and fail the
+// module on the second must be able to tell them apart.
 //
 // A snapshot stored before the hash existed carries an empty one. Such a blob
 // is returned with no check, because there is nothing to check it against;
@@ -988,12 +1039,12 @@ func (s *Store) GetDatabaseSnapshot(ctx context.Context, snapshot domain.Databas
 	if storedHash != "" {
 		if computed := domain.HashSnapshotContent(content); computed != storedHash {
 			return nil, fmt.Errorf("%w: snapshot %s@%s content hash mismatch: stored %q, computed %q",
-				ports.ErrVulnIntegrity, snapshot.Source, snapshot.Version, storedHash, computed)
+				ports.ErrSnapshotIntegrity, snapshot.Source, snapshot.Version, storedHash, computed)
 		}
 	}
 	if snapshot.ContentHash != "" && storedHash != "" && snapshot.ContentHash != storedHash {
 		return nil, fmt.Errorf("%w: snapshot %s@%s is not the one requested: caller expected %q, store holds %q",
-			ports.ErrVulnIntegrity, snapshot.Source, snapshot.Version, snapshot.ContentHash, storedHash)
+			ports.ErrSnapshotIntegrity, snapshot.Source, snapshot.Version, snapshot.ContentHash, storedHash)
 	}
 
 	return io.NopCloser(bytes.NewReader(content)), nil

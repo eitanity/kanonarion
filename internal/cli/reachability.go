@@ -185,8 +185,15 @@ func vulnReachabilityVerdict(coord coordinate.ModuleCoordinate, rec vuldomain.Vu
 			coord, coord)
 	}
 
-	switch rec.OverallStatus {
-	case vuldomain.StatusScanFailed:
+	// Whether reachability could have been computed is a coverage question, so it
+	// is asked of the coverage axis rather than the collapsed word. A metadata-only
+	// record that matched an advisory summarises as Affected, so this switch missed
+	// it and the answer fell through to the finding lookup below, which reported
+	// "the module was scanned without --reachability" — naming a flag the operator
+	// did pass, for a module whose source could never be analysed at all.
+	coverage, _ := vuldomain.RecordAxes(rec)
+	switch coverage {
+	case vuldomain.CoverageFailedScan:
 		detail := ""
 		if rec.ErrorDetail != "" {
 			detail = ": " + rec.ErrorDetail
@@ -194,7 +201,7 @@ func vulnReachabilityVerdict(coord coordinate.ModuleCoordinate, rec vuldomain.Vu
 		return vulnReachabilityQuery{}, fmt.Errorf(
 			"%s could not be scanned (ScanFailed)%s; reachability is unknown. Re-run:\n  kanonarion vuln-scan %s --reachability",
 			coord, detail, coord)
-	case vuldomain.StatusUnscannable:
+	case vuldomain.CoverageUnscannable:
 		detail := ""
 		if rec.UnscannableReason != "" {
 			detail = ": " + rec.UnscannableReason
@@ -202,9 +209,11 @@ func vulnReachabilityVerdict(coord coordinate.ModuleCoordinate, rec vuldomain.Vu
 		return vulnReachabilityQuery{}, fmt.Errorf(
 			"%s is unscannable%s; reachability cannot be determined. See: kanonarion vuln-show %s",
 			coord, detail, coord)
+	case vuldomain.CoverageAnalysed:
+		// Analysed: the findings below are an answer about a module that was read.
 	}
 
-	// The module was scanned successfully (Clean or Affected).
+	// The module was analysed, so its findings answer the question.
 	f, ok := findFindingByID(rec.Findings, vulnID)
 	if !ok {
 		// Genuine zero: the scan ran and this CVE is not among its findings.

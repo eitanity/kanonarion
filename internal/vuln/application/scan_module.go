@@ -501,7 +501,10 @@ func (uc *ScanModuleUseCase) tryReuseCachedRecord(ctx context.Context, params Sc
 	if err != nil || !ok {
 		return domain.VulnerabilityRecord{}, false, nil //nolint:nilerr // a lookup failure is treated as a cache miss; the scan proceeds fresh
 	}
-	if rec.OverallStatus == domain.StatusScanFailed {
+	// Whether a stored verdict is worth reusing is a coverage question — a failed
+	// attempt is a fault to retry, not an analysis to serve — so it is asked of the
+	// coverage axis rather than the collapsed word.
+	if coverage, _ := domain.RecordAxes(rec); coverage == domain.CoverageFailedScan {
 		uc.logger.Debug("vulnerability scan cache miss: stored result is ScanFailed, retrying", "coordinate", params.Coordinate)
 		return domain.VulnerabilityRecord{}, false, nil
 	}
@@ -565,7 +568,12 @@ func (uc *ScanModuleUseCase) routeCoverageFallback(
 	derived derivedFrom,
 	record domain.VulnerabilityRecord,
 ) (domain.VulnerabilityRecord, bool, error) {
-	if record.OverallStatus == domain.StatusScanFailed && domain.IsBuildIncompatibility(record.ErrorDetail) {
+	// Routing is decided on the coverage axis: both shapes below are statements
+	// about whether the module could be analysed, which is the axis's question. The
+	// scanner adapters state only the collapsed word, so RecordAxes derives it here
+	// from the diagnostics they set beside it.
+	coverage, _ := domain.RecordAxes(record)
+	if coverage == domain.CoverageFailedScan && domain.IsBuildIncompatibility(record.ErrorDetail) {
 		category := domain.ClassifyBuildIncompatibility(record.ErrorDetail)
 		reason := domain.StructuredUnscanReason(record.ErrorDetail)
 		// An offline resolution failure must be established, not asserted: the
@@ -581,7 +589,7 @@ func (uc *ScanModuleUseCase) routeCoverageFallback(
 		return rec, true, err
 	}
 
-	if record.OverallStatus == domain.StatusUnscannable {
+	if coverage == domain.CoverageUnscannable {
 		note := record.UnscannableReason
 		if note == "" {
 			note = "source analysis unavailable; results are metadata-only with no reachability"
@@ -812,7 +820,11 @@ func modulePaths(known map[coordinate.ModuleCoordinate]struct{}) map[string]stru
 // reachability step that follows, or left undetermined. Findings are never
 // dropped in either direction.
 func (uc *ScanModuleUseCase) attributeCoordinateFindings(ctx context.Context, record *domain.VulnerabilityRecord, coord coordinate.ModuleCoordinate) error {
-	if record.OverallStatus != domain.StatusClean && record.OverallStatus != domain.StatusAffected {
+	// "Did an analysis produce this record" is the coverage axis's question, and
+	// the two-word test was an open-coded projection of it. The Unscannable and
+	// build-incompatibility paths route through scanMetadataOnly, which performs
+	// the same coordinate match and states the coverage gap itself.
+	if coverage, _ := domain.RecordAxes(*record); coverage != domain.CoverageAnalysed {
 		return nil
 	}
 	matched, err := uc.database.LookupFindings(ctx, coord)
@@ -840,7 +852,16 @@ func (uc *ScanModuleUseCase) attributeCoordinateFindings(ctx context.Context, re
 		domain.SortFindings(record.Findings)
 	}
 	if len(record.Findings) > 0 {
-		record.OverallStatus = domain.StatusAffected
+		// This is a verdict decision, so it states the axis it decided and lets the
+		// domain collapse the summary, rather than open-coding the word. Coverage
+		// comes from the record's own evidence: the guard above admits only a
+		// record the scanner analysed, and the scanner's analysed results carry no
+		// diagnostic, so this reads Analysed — asserted from the record rather than
+		// assumed here, so a record that did carry a coverage gap could not have
+		// one written over it.
+		record.CoverageStatus = domain.DetermineRecordCoverage(*record)
+		record.FindingsStatus = domain.FindingsRecordAffected
+		record.OverallStatus = domain.DetermineRecordOverallStatus(record.CoverageStatus, record.FindingsStatus)
 	}
 	return nil
 }
@@ -861,8 +882,31 @@ func (uc *ScanModuleUseCase) scanMetadataOnly(ctx context.Context, params ScanMo
 		return domain.VulnerabilityRecord{}, fmt.Errorf("metadata check for %s: %w", params.Coordinate, err)
 	}
 
-	status := emptyStatus
+	// Both axes are asserted here rather than left for the seal to project off the
+	// summary word, because this is the one path whose two answers cannot both fit
+	// in that word.
+	//
+	// Coverage is Unscannable on every metadata-only record, whichever entry point
+	// arrived here: no module source was analysed, so no reachability was
+	// established and note always says why. That is true even when emptyStatus is
+	// Clean — a coordinate matched against the advisory database with no advisory
+	// applying is a real answer about FINDINGS, and says nothing about coverage.
+	// Conflating the two is what left 74 stored records claiming a module was
+	// analysed when only its coordinate was: the coverage this call was passed was
+	// discarded the moment an advisory matched, surviving only as UnscanReason.
+	coverage := domain.CoverageUnscannable
+	findingsAxis := domain.FindingsRecordClean
 	if len(findings) > 0 {
+		findingsAxis = domain.FindingsRecordAffected
+	}
+	// The summary word is unchanged: emptyStatus as the caller chose it, promoted
+	// to Affected by a match. Collapsing the axes instead would report Unscannable
+	// for a matched advisory — correct for ranking, since coverage outranks
+	// findings, but it would retire a finding from every consumer that reads the
+	// summary. A finding never decays into a coverage word; the gap travels beside
+	// it on the coverage axis, which is why that axis is stored.
+	status := emptyStatus
+	if findingsAxis == domain.FindingsRecordAffected {
 		status = domain.StatusAffected
 	}
 
@@ -873,6 +917,8 @@ func (uc *ScanModuleUseCase) scanMetadataOnly(ctx context.Context, params ScanMo
 		WalkID:            params.WalkID,
 		Findings:          findings,
 		OverallStatus:     status,
+		CoverageStatus:    coverage,
+		FindingsStatus:    findingsAxis,
 		UnscanReason:      unscanReason,
 		UnscannableReason: note,
 		// The originating toolchain error is carried onto the metadata-only

@@ -274,31 +274,37 @@ func buildScanAffectedModules(ctx context.Context, run vuldomain.WalkScanRun, uc
 			summary.missing = append(summary.missing, coord.String())
 			continue
 		}
-		if rec.OverallStatus == vuldomain.StatusUnscannable {
-			summary.unscannable.add(rec.UnscanReason, coord.String(), rec.UnscannableReason)
-			continue
+		// The two axes are reported independently, and a module can owe a line in
+		// both sections. Routing on the collapsed word instead tested coverage
+		// first and returned, so a record reporting an advisory under a coverage
+		// gap — the metadata-only fallback's normal shape — had its findings
+		// dropped from the report entirely: the one section the reader is looking
+		// for. Coverage answers "was it analysed", findings answers "was anything
+		// found", and neither may stand in for the other.
+		coverage, findings := vuldomain.RecordAxes(rec)
+		if findings == vuldomain.FindingsRecordAffected {
+			summary.affected = append(summary.affected, scanAffectedModule{
+				Coordinate: coord.String(),
+				Status:     string(rec.OverallStatus),
+				Findings:   rec.Findings,
+			})
 		}
-		// A failed scan is a fault, reported like a read error rather than dropped.
-		// A ScanFailed record is not Clean: the module was neither analysed nor
-		// declared out of scope, so a bare `!= StatusAffected` skip left it counted
-		// in the header and named nowhere — the same silent drop this function was
-		// changed to close. audit.go surfaces the same status via rec.ErrorDetail.
-		if rec.OverallStatus == vuldomain.StatusScanFailed {
+		// A coverage gap is reported whether or not an advisory matched, so a
+		// finding that was never checked for reachability is not read as one that
+		// was. A failed scan is a fault, reported like a read error rather than
+		// dropped: the module was neither analysed nor declared out of scope, and a
+		// bare skip left it counted in the header and named nowhere.
+		switch coverage {
+		case vuldomain.CoverageUnscannable:
+			summary.unscannable.add(rec.UnscanReason, coord.String(), rec.UnscannableReason)
+		case vuldomain.CoverageFailedScan:
 			summary.scanFailed = append(summary.scanFailed, scanRecordFault{
 				Coordinate: coord.String(),
 				Error:      rec.ErrorDetail,
 			})
-			continue
+		case vuldomain.CoverageAnalysed:
+			// Analysed: the findings axis above is the whole answer, no caveat owed.
 		}
-		// StatusClean is the remaining case: analysed, no findings, no line owed.
-		if rec.OverallStatus != vuldomain.StatusAffected {
-			continue
-		}
-		summary.affected = append(summary.affected, scanAffectedModule{
-			Coordinate: coord.String(),
-			Status:     string(rec.OverallStatus),
-			Findings:   rec.Findings,
-		})
 	}
 	return summary
 }

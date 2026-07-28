@@ -23,35 +23,34 @@ type VulnerabilityRecordHasher struct{}
 // obtain the hash the store demands — so no writer can produce a record whose
 // summary and axes disagree, and none can omit either by forgetting.
 //
-// Which side is authoritative depends on what the caller stated:
+// Each of the three fields is filled only when the writer left it empty, and
+// whatever the writer stated stands:
 //
-//   - A caller that set only OverallStatus (every writer that predates the
-//     split) has its axes derived from it. The summary is untouched, so stored
-//     values are unchanged.
-//   - A caller that set the axes has OverallStatus derived from them, exactly as
-//     WalkScanRun treats its own collapsed summary. This is what lets a record
-//     say something the single word cannot — an advisory matched, but coverage
-//     failed, so whether it applies was never established. That pair collapses
-//     to a coverage word while FindingsStatus keeps the finding, instead of
-//     becoming a Clean that reads as an all-clear.
+//   - Coverage comes from DetermineRecordCoverage, which reads the record's
+//     diagnostics rather than the summary word. A writer that has both a coverage
+//     gap and a matching advisory can put only one of them in the single word and
+//     puts the finding there, so deriving coverage from the word answers
+//     "Analysed" for a module that was never analysed.
+//   - Findings comes from the summary word, which is exact for this axis: only
+//     Affected reports a finding.
+//   - The summary is collapsed from the axes when the writer stated none, so a
+//     writer that has decided the axes need not restate the word.
 //
-// A caller that set both is taken at the axes' word, since they are the more
-// specific statement.
+// A stated summary is never overwritten from the axes, and that is deliberate.
+// The collapse is lossy in one direction — coverage outranks findings, so
+// (Unscannable, Affected) collapses to Unscannable — and applying it to a record
+// whose writer already reported Affected would retire a finding for every
+// consumer that reads the summary. A record may therefore carry a summary its
+// axes would not have produced; the axes are the fact, and the summary is the
+// compatibility word the writer chose to keep the finding visible in.
 func (h VulnerabilityRecordHasher) SetContentHash(r VulnerabilityRecord) (VulnerabilityRecord, error) {
-	switch {
-	case r.CoverageStatus == "" && r.FindingsStatus == "":
-		r.CoverageStatus = DetermineRecordCoverageStatus(r.OverallStatus)
+	if r.CoverageStatus == "" {
+		r.CoverageStatus = DetermineRecordCoverage(r)
+	}
+	if r.FindingsStatus == "" {
 		r.FindingsStatus = DetermineRecordFindingsStatus(r.OverallStatus)
-	default:
-		// One axis stated and not the other still leaves the record fully
-		// determined: the unstated one falls back to the summary's projection,
-		// which is what the record said before the caller narrowed it.
-		if r.CoverageStatus == "" {
-			r.CoverageStatus = DetermineRecordCoverageStatus(r.OverallStatus)
-		}
-		if r.FindingsStatus == "" {
-			r.FindingsStatus = DetermineRecordFindingsStatus(r.OverallStatus)
-		}
+	}
+	if r.OverallStatus == "" {
 		r.OverallStatus = DetermineRecordOverallStatus(r.CoverageStatus, r.FindingsStatus)
 	}
 	hash, err := h.hash(r)

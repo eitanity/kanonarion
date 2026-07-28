@@ -171,6 +171,23 @@ func unscanDisplayFor(reason vuldomain.UnscanReason) unscanDisplay {
 	}
 }
 
+// unscanLabelFor returns the one-line label for a record whose coverage axis is
+// Unscannable, preferring the reason code's display treatment and falling back to
+// the free-text reason the writer recorded.
+//
+// The fallback matters because a coverage gap can be recorded as prose without a
+// taxonomy code: a module held only as a go.mod, or never fetched at all, records
+// "metadata-only: module not fetched" and no reason code, since no analysis was
+// attempted for a classifier to categorise. Reporting "no reason recorded" for
+// such a record would be false — the reason is right there on it — and only the
+// code is missing.
+func unscanLabelFor(record vuldomain.VulnerabilityRecord) string {
+	if record.UnscanReason == "" && record.UnscannableReason != "" {
+		return record.UnscannableReason
+	}
+	return unscanDisplayFor(record.UnscanReason).label
+}
+
 // unscannableRollup accumulates Unscannable coordinates by reason so the run
 // can print one section per reason instead of leaving a record in no summary at
 // all. Insertion order of first appearance is not used for output: sections are

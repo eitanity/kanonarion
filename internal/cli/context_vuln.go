@@ -110,7 +110,13 @@ func (b *vulnBatchCtx) affectedFor(ctx context.Context, walkID string, vulnUC Qu
 			if !found {
 				continue
 			}
-			if rec.OverallStatus == vuldomain.StatusAffected {
+			// "Is this peer affected" is a findings question, so it is asked of the
+			// findings axis. The collapsed word answers it only for a module that
+			// was analysed: a metadata-only peer whose coordinate matched an advisory
+			// carries the finding on the axis, and reading the word would have
+			// dropped it from the closure the moment its coverage word won the
+			// collapse.
+			if _, findings := vuldomain.RecordAxes(rec); findings == vuldomain.FindingsRecordAffected {
 				affected[coord] = struct{}{}
 			}
 		}

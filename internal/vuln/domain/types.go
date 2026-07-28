@@ -102,6 +102,42 @@ func DetermineRecordCoverageStatus(status VulnerabilityStatus) RecordCoverageSta
 	}
 }
 
+// DetermineRecordCoverage answers the coverage axis for a whole record, from the
+// evidence the record carries rather than from the collapsed summary word alone.
+//
+// The summary cannot be trusted for this question, because a writer that has both
+// a coverage gap and a matching advisory can only put one of them in the single
+// word, and it puts the finding there: a metadata-only fallback for a module that
+// does not build reports Affected, and the coverage gap survives only as
+// UnscanReason / UnscannableReason. Projecting coverage off that word therefore
+// answers "Analysed" for a module that was never analysed — the precise claim the
+// axes exist to stop being made.
+//
+// So the diagnostics decide, and the word is consulted only when the record
+// carries none:
+//
+//   - UnscanReason or UnscannableReason present — the writer named a reason the
+//     module could not be analysed, so coverage is Unscannable whatever the
+//     summary says.
+//   - ErrorDetail alone — an analysis was attempted and failed, which is Failed
+//     rather than Unscannable: a look that went wrong, not a module that cannot
+//     be looked at.
+//   - no diagnostic at all — the record is the output of an analysis that ran, so
+//     the summary's projection is the answer.
+//
+// A stated CoverageStatus always wins over this; RecordAxes and the seal both
+// call it only for a record that states none.
+func DetermineRecordCoverage(r VulnerabilityRecord) RecordCoverageStatus {
+	switch {
+	case r.UnscanReason != "" || r.UnscannableReason != "":
+		return CoverageUnscannable
+	case r.ErrorDetail != "":
+		return CoverageFailedScan
+	default:
+		return DetermineRecordCoverageStatus(r.OverallStatus)
+	}
+}
+
 // DetermineRecordFindingsStatus projects a collapsed status onto the findings
 // axis. Only Affected reports a finding; every other value reports none, which
 // on a non-analysed record means "none is being reported", not "none exists" —
@@ -143,18 +179,21 @@ func DetermineRecordOverallStatus(coverage RecordCoverageStatus, findings Record
 
 // RecordAxes returns the record's two verdict axes.
 //
-// It prefers the stored fields and falls back to deriving them from the
-// collapsed OverallStatus when they are empty, which is the case for every
-// record written before the split. The derivation is exactly what the write
-// path applies, so a pre-split record is read on the same terms as a new one
-// rather than presenting a consumer with an empty axis it has no rule for.
+// It prefers the stored fields and falls back to deriving them when they are
+// empty, which is the case for every record written before the split. The
+// derivation is exactly what the write path applies, so a pre-split record is
+// read on the same terms as a new one rather than presenting a consumer with an
+// empty axis it has no rule for. Coverage is derived from the record's
+// diagnostics (DetermineRecordCoverage), not from the summary word, so a
+// pre-split metadata-only record is healed to the coverage gap it recorded
+// rather than to the Analysed its summary implies.
 //
 // It is a function rather than a method so that no caller can reach the raw
 // fields by accident through a method value on a partially-populated record.
 func RecordAxes(r VulnerabilityRecord) (RecordCoverageStatus, RecordFindingsStatus) {
 	coverage, findings := r.CoverageStatus, r.FindingsStatus
 	if coverage == "" {
-		coverage = DetermineRecordCoverageStatus(r.OverallStatus)
+		coverage = DetermineRecordCoverage(r)
 	}
 	if findings == "" {
 		findings = DetermineRecordFindingsStatus(r.OverallStatus)

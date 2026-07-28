@@ -271,7 +271,14 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 		// Modules flagged Affected by binary mode need source-mode re-scan for call-graph precision.
 		var needSourceScan []coordinate.ModuleCoordinate
 		for _, r := range pass1 {
-			if r.err == nil && r.record.OverallStatus == domain.StatusAffected {
+			// Which modules earn a source-mode re-scan is a findings question — the
+			// re-scan exists to add call-graph precision to a match — so it is asked
+			// of the findings axis. A binary-mode record that matched by coordinate
+			// under a coverage gap reports its finding there, and reading the
+			// collapsed word skipped the re-scan for exactly the module whose
+			// reachability was never computed.
+			_, findings := domain.RecordAxes(r.record)
+			if r.err == nil && findings == domain.FindingsRecordAffected {
 				needSourceScan = append(needSourceScan, r.coord)
 			} else {
 				finalResults[r.coord] = r
@@ -317,8 +324,11 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	run.CoverageStatus = domain.DetermineCoverageStatus(counts.failed, counts.unscannable, nodeCount)
 	run.FindingsStatus = domain.DetermineFindingsStatus(counts.affected)
 	run.Counts = domain.WalkScanCounts{
-		Total:       nodeCount,
-		Analysed:    counts.clean + counts.affected,
+		Total: nodeCount,
+		// The coverage axis's own count, not clean+affected. A coordinate-matched
+		// module reports a finding without having been analysed, so adding the
+		// affected tally here counted it as read.
+		Analysed:    counts.analysed,
 		Affected:    counts.affected,
 		Unscannable: counts.unscannable,
 		Failed:      counts.failed,
@@ -397,8 +407,20 @@ func (uc *ScanWalkUseCase) verifyRecordsPersisted(
 
 // scanCounts is the overall module-count breakdown recorded on a
 // vuln_scan_completed audit event.
+//
+// The three coverage buckets partition the modules — analysed + unscannable +
+// failed == total — and affected counts across all three, because a module can
+// report an advisory whether or not its source was ever read. They are two
+// independent tallies, not four slices of one, which is why affected is not part
+// of the sum: counting a coordinate-matched module as analysed on the strength of
+// its summary word is how a run came to report full coverage of a module nothing
+// was analysed in.
+// clean is the intersection — analysed and reporting nothing, the only real
+// all-clear — kept beside them because it is what the audit event has always
+// meant by "clean" and the one number that must not quietly start including
+// modules that were never read.
 type scanCounts struct {
-	affected, clean, unscannable, failed int
+	affected, analysed, clean, unscannable, failed int
 }
 
 // tallyModuleResults walks the per-module results in deterministic allCoords
@@ -447,25 +469,35 @@ func (uc *ScanWalkUseCase) tallyModuleResults(
 		}
 
 		run.PerModuleResults[r.coord] = r.record.ContentHash
-		switch r.record.OverallStatus {
-		case domain.StatusAffected:
+		// Tallied per axis. Reading the collapsed word counted a coordinate-matched
+		// module as analysed — the word says Affected, and Affected was an analysed
+		// bucket — so a run whose modules were never read reported full coverage of
+		// them. The findings tally is independent and counts the same module again
+		// when it reports both.
+		coverage, findings := domain.RecordAxes(r.record)
+		if findings == domain.FindingsRecordAffected {
 			counts.affected++
-		case domain.StatusScanFailed:
+		}
+		switch coverage {
+		case domain.CoverageAnalysed:
+			counts.analysed++
+			if findings == domain.FindingsRecordClean {
+				counts.clean++
+			}
+		case domain.CoverageFailedScan:
 			counts.failed++
-		case domain.StatusUnscannable:
+		case domain.CoverageUnscannable:
 			counts.unscannable++
-		case domain.StatusClean:
-			counts.clean++
 		default:
-			// A status outside the known set must not vanish from the counts. The
-			// coverage axis and the "N of T unanalysed" summary derive from
-			// affected+clean+unscannable+failed == total, so a dropped module would
-			// silently understate the analysed count and let the run over-claim
-			// completeness. Surface it and count it as failed: the run cannot vouch
-			// for a verdict it does not understand, and an unaccounted module must
-			// degrade coverage rather than disappear.
-			uc.logger.Error("module scan produced an unrecognised status",
-				"walk_id", params.WalkID, "module", r.coord, "status", r.record.OverallStatus)
+			// A coverage value outside the known set must not vanish from the counts.
+			// The coverage axis and the "N of T unanalysed" summary derive from
+			// analysed+unscannable+failed == total, so a dropped module would silently
+			// understate the unanalysed count and let the run over-claim completeness.
+			// Surface it and count it as failed: the run cannot vouch for a verdict it
+			// does not understand, and an unaccounted module must degrade coverage
+			// rather than disappear.
+			uc.logger.Error("module scan produced an unrecognised coverage status",
+				"walk_id", params.WalkID, "module", r.coord, "coverage", coverage, "status", r.record.OverallStatus)
 			counts.failed++
 		}
 		if params.Progress != nil {

@@ -440,11 +440,18 @@ func vulnAuditStatus(rec vulndomain.VulnerabilityRecord, found bool, err error) 
 	if !found {
 		return "(not scanned)", "", 0
 	}
-	switch rec.OverallStatus {
-	case vulndomain.StatusScanFailed:
+	// Which diagnostic explains the row is a coverage question, so it is asked of
+	// the coverage axis. The collapsed word cannot answer it: a metadata-only
+	// record that matched an advisory summarises as Affected, so its coverage gap
+	// went unexplained here while the findings count reported the match.
+	coverage, _ := vulndomain.RecordAxes(rec)
+	switch coverage {
+	case vulndomain.CoverageFailedScan:
 		reason = rec.ErrorDetail
-	case vulndomain.StatusUnscannable:
+	case vulndomain.CoverageUnscannable:
 		reason = rec.UnscannableReason
+	case vulndomain.CoverageAnalysed:
+		// Analysed: the status word stands on its own, no caveat to explain.
 	}
 	return string(rec.OverallStatus), reason, len(rec.Findings)
 }

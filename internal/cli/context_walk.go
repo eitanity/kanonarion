@@ -232,7 +232,10 @@ func affectedSetForRun(ctx context.Context, vulnUC QueryVulnUseCase, run vuldoma
 		if !found {
 			continue
 		}
-		if rec.OverallStatus == vuldomain.StatusAffected {
+		// A findings question, asked of the findings axis: a module whose coordinate
+		// matched an advisory is affected whether or not its source could be
+		// analysed, and the collapsed word reports only one of those two facts.
+		if _, findings := vuldomain.RecordAxes(rec); findings == vuldomain.FindingsRecordAffected {
 			affected[coord] = struct{}{}
 		}
 	}

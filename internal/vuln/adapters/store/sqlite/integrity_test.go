@@ -2,6 +2,7 @@ package sqlite_test
 
 import (
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -303,4 +304,90 @@ INSERT INTO vulnerability_findings_index (
 	if index != 0 {
 		t.Errorf("index entries for the purged record = %d, want 0", index)
 	}
+}
+
+// assertSnapshotIntegrity pins both halves of the sentinel split for a snapshot
+// failure: it answers to ErrSnapshotIntegrity, and it does NOT answer to
+// ErrVulnIntegrity.
+//
+// The negative half is the point. A corrupt snapshot invalidates every verdict
+// derived from it while a corrupt record invalidates one module's, so a caller
+// that would abort the run and re-fetch the database on the first must not have
+// the second match the same test. That is also why ErrSnapshotIntegrity does not
+// wrap ErrVulnIntegrity — wrapping would make this assertion impossible to write.
+func assertSnapshotIntegrity(t *testing.T, err error, what string) {
+	t.Helper()
+	if !errors.Is(err, ports.ErrSnapshotIntegrity) {
+		t.Fatalf("%s error = %v, want ErrSnapshotIntegrity", what, err)
+	}
+	if errors.Is(err, ports.ErrVulnIntegrity) {
+		t.Fatalf("%s reported a snapshot failure as a record failure: %v", what, err)
+	}
+}
+
+// TestIntegritySentinels_RecordAndSnapshotAreDistinguishable is the whole point
+// of the split, asserted in both directions at once: each failure answers to its
+// own sentinel and to neither the other's.
+//
+// Stated as one test because the property is a relation between the two, not two
+// independent facts — before the split both answered to ErrVulnIntegrity, and
+// every individual assertion still passed.
+func TestIntegritySentinels_RecordAndSnapshotAreDistinguishable(t *testing.T) {
+	ctx := t.Context()
+	store := newTestStore(t)
+
+	t.Run("a corrupt record is not a corrupt snapshot", func(t *testing.T) {
+		unsealed := domain.VulnerabilityRecord{
+			Ecosystem:        fetchdomain.EcosystemGo,
+			Coordinate:       coord("github.com/foo/bar", "v1.0.0"),
+			OverallStatus:    domain.StatusClean,
+			DatabaseSnapshot: snap("govulndb", "v2024-01-01"),
+			ScannedAt:        time.Now().UTC().Truncate(time.Second),
+			PipelineVersion:  "v1",
+		}
+		err := store.PutVulnerabilityRecord(ctx, unsealed)
+		if !errors.Is(err, ports.ErrVulnIntegrity) {
+			t.Fatalf("error = %v, want ErrVulnIntegrity", err)
+		}
+		if errors.Is(err, ports.ErrSnapshotIntegrity) {
+			t.Fatalf("a record failure matched the snapshot sentinel: %v", err)
+		}
+	})
+
+	t.Run("a corrupt run is not a corrupt snapshot", func(t *testing.T) {
+		err := store.PutWalkScanRun(ctx, domain.WalkScanRun{
+			ID:               "vscan-1",
+			WalkID:           "walk-1",
+			Snapshot:         snap("govulndb", "v2024-01-01"),
+			PerModuleResults: map[coordinate.ModuleCoordinate]string{},
+		})
+		if !errors.Is(err, ports.ErrVulnIntegrity) {
+			t.Fatalf("error = %v, want ErrVulnIntegrity", err)
+		}
+		if errors.Is(err, ports.ErrSnapshotIntegrity) {
+			t.Fatalf("a run failure matched the snapshot sentinel: %v", err)
+		}
+	})
+
+	// A snapshot stored before hashing existed carries an empty hash. It is
+	// unverifiable, which is not the same claim as corrupt, so it reads back
+	// without error and matches neither sentinel.
+	t.Run("an unverifiable legacy snapshot is not a failure at all", func(t *testing.T) {
+		s := snap("govulndb", "v2024-02-01")
+		s.ContentHash = ""
+		if err := store.PutDatabaseSnapshot(ctx, s, strings.NewReader("advisories")); err != nil {
+			t.Fatalf("PutDatabaseSnapshot: %v", err)
+		}
+		// Clear the hash the store computed on the way in, leaving the pre-hash shape.
+		if _, err := store.InternalDB().DB().ExecContext(ctx,
+			`UPDATE vulnerability_snapshots SET content_hash = '' WHERE source = ? AND version = ?`,
+			s.Source, s.Version); err != nil {
+			t.Fatalf("unsealing the stored snapshot: %v", err)
+		}
+		body, err := store.GetDatabaseSnapshot(ctx, s)
+		if err != nil {
+			t.Fatalf("GetDatabaseSnapshot(legacy) = %v, want it read back unverified", err)
+		}
+		_ = body.Close()
+	})
 }

@@ -264,9 +264,8 @@ func TestGetDatabaseSnapshot_RefusesADifferentSnapshotThanAsked(t *testing.T) {
 	asked := s
 	asked.ContentHash = domain.HashSnapshotContent([]byte("the advisories the caller expected"))
 
-	if _, err := store.GetDatabaseSnapshot(ctx, asked); !errors.Is(err, ports.ErrVulnIntegrity) {
-		t.Fatalf("GetDatabaseSnapshot(other snapshot) error = %v, want ErrVulnIntegrity", err)
-	}
+	_, err := store.GetDatabaseSnapshot(ctx, asked)
+	assertSnapshotIntegrity(t, err, "GetDatabaseSnapshot(other snapshot)")
 }
 
 // TestGetDatabaseSnapshot_AbsentIsAbsent keeps the distinction the read leg
@@ -280,7 +279,8 @@ func TestGetDatabaseSnapshot_AbsentIsAbsent(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "snapshot not found") {
 		t.Fatalf("GetDatabaseSnapshot(absent) error = %v, want a not-found report", err)
 	}
-	if errors.Is(err, ports.ErrVulnIntegrity) {
+	// Neither sentinel: absence is not corruption, of either kind.
+	if errors.Is(err, ports.ErrVulnIntegrity) || errors.Is(err, ports.ErrSnapshotIntegrity) {
 		t.Fatal("an absent snapshot was reported as an integrity failure")
 	}
 }

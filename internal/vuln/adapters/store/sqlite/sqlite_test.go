@@ -2,7 +2,6 @@ package sqlite_test
 
 import (
 	"bytes"
-	"errors"
 	"strings"
 	"testing"
 	"time"
@@ -14,7 +13,6 @@ import (
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
-	"github.com/eitanity/kanonarion/internal/vuln/ports"
 )
 
 func newTestStore(t *testing.T) *sqlite.Store {
@@ -283,10 +281,32 @@ func TestListVulnerabilityRecordsByFindingID_LaterCleanDoesNotRetractEarlierFind
 	affected.OverallStatus = domain.StatusAffected
 	affected = seal(t, affected)
 
-	laterClean := findingRecord(t, "github.com/foo/bar", "v1.0.0", "walk-1", "GO-2024-0001", snap("govulndb", "v2024-06-01"))
-	laterClean.ScannedAt = time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
-	laterClean.OverallStatus = domain.StatusClean
+	// The later generation carries the same finding — so it joins the findings
+	// index and enters the ranking — while reporting no finding on its axis. That
+	// is the real-store shape: one pipeline generation called the module Clean
+	// where every other called it Affected.
+	//
+	// It is built and sealed once, with the verdict stated up front. Flipping
+	// OverallStatus on an already-sealed record and re-sealing does not produce
+	// this shape: the axes are already stated by then, and the record keeps the
+	// findings axis of the verdict it was first sealed with.
+	laterClean := domain.VulnerabilityRecord{
+		Ecosystem:        fetchdomain.EcosystemGo,
+		Coordinate:       coord("github.com/foo/bar", "v1.0.0"),
+		WalkID:           "walk-1",
+		OverallStatus:    domain.StatusClean,
+		DatabaseSnapshot: snap("govulndb", "v2024-06-01"),
+		ScannedAt:        time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC),
+		PipelineVersion:  "v1",
+		Findings: []domain.VulnerabilityFinding{
+			{ID: "GO-2024-0001", Summary: "test vuln", AffectedRange: "< v1.1.0"},
+		},
+	}
 	laterClean = seal(t, laterClean)
+	if laterClean.FindingsStatus != domain.FindingsRecordClean {
+		t.Fatalf("findings axis = %q, want %q: the later generation must report no finding for this test to rank anything",
+			laterClean.FindingsStatus, domain.FindingsRecordClean)
+	}
 
 	for _, rec := range []domain.VulnerabilityRecord{affected, laterClean} {
 		if err := store.PutVulnerabilityRecord(ctx, rec); err != nil {
@@ -604,9 +624,7 @@ func TestPutDatabaseSnapshot_RefusesDeclaredHashMismatch(t *testing.T) {
 	s.ContentHash = domain.HashSnapshotContent([]byte("the bytes I fetched"))
 
 	err := store.PutDatabaseSnapshot(ctx, s, bytes.NewReader([]byte("different bytes")))
-	if !errors.Is(err, ports.ErrVulnIntegrity) {
-		t.Fatalf("PutDatabaseSnapshot(mismatched hash) error = %v, want ErrVulnIntegrity", err)
-	}
+	assertSnapshotIntegrity(t, err, "PutDatabaseSnapshot(mismatched hash)")
 }
 
 // TestGetDatabaseSnapshot_RefusesTamperedBlob pins the read leg: the advisory
@@ -630,9 +648,8 @@ func TestGetDatabaseSnapshot_RefusesTamperedBlob(t *testing.T) {
 		t.Fatalf("tampering with the stored blob: %v", err)
 	}
 
-	if _, err := store.GetDatabaseSnapshot(ctx, s); !errors.Is(err, ports.ErrVulnIntegrity) {
-		t.Fatalf("GetDatabaseSnapshot(tampered) error = %v, want ErrVulnIntegrity", err)
-	}
+	_, err := store.GetDatabaseSnapshot(ctx, s)
+	assertSnapshotIntegrity(t, err, "GetDatabaseSnapshot(tampered)")
 }
 
 // TestGetLatestDatabaseSnapshot_CarriesContentHash covers the read that used to
