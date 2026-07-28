@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -92,8 +93,14 @@ func runSymbolContext(ctx context.Context, symbolName string, f symbolContextFla
 	// symbols rather than one symbol recorded several times. --module narrows
 	// after the fact and only if the caller thought to pass it; a build scope
 	// narrows the query itself.
+	// A conflict is carried rather than returned: see runSymbolFind. The entries
+	// this command CAN assemble are rendered, and the command fails afterwards.
 	refs, err := ctr.QueryInterface.FindSymbol(ctx, symbolName, ifaceapp.PipelineVersion, sc.modules)
-	if err != nil {
+	var conflictErr error
+	switch {
+	case errors.Is(err, ifaceports.ErrInterfaceConflict):
+		conflictErr = err
+	case err != nil:
 		return fmt.Errorf("finding symbol %q: %w", symbolName, err)
 	}
 	if !jsonOut {
@@ -133,10 +140,10 @@ func runSymbolContext(ctx context.Context, symbolName string, f symbolContextFla
 	if len(refs) == 0 {
 		if jsonOut {
 			_, _ = fmt.Fprintln(stdout, "[]")
-			return nil
+			return conflictErr
 		}
 		_, _ = fmt.Fprintf(stdout, "no exports found for symbol %q\n", symbolName)
-		return nil
+		return conflictErr
 	}
 
 	entries, err := buildSymbolContextEntries(ctx, ctr, refs, ifaceapp.PipelineVersion)
@@ -150,9 +157,12 @@ func runSymbolContext(ctx context.Context, symbolName string, f symbolContextFla
 		if err := enc.Encode(entries); err != nil {
 			return fmt.Errorf("encoding symbol context: %w", err)
 		}
-		return nil
+		return conflictErr
 	}
-	return printSymbolContext(entries, stdout)
+	if perr := printSymbolContext(entries, stdout); perr != nil {
+		return perr
+	}
+	return conflictErr
 }
 
 // filterImportableRefs drops refs whose package path has an "internal" or

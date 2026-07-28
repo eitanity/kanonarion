@@ -23,6 +23,20 @@ var ErrInterfaceNotFound = errors.New("interface record not found")
 // not match the recomputed hash.
 var ErrInterfaceIntegrity = errors.New("interface record integrity check failed")
 
+// ErrInterfaceConflict is returned by InterfaceStore.GetInterfaceRecord when the
+// ledger holds records for one coordinate that composition must not resolve by
+// picking: two records naming different artefacts for one pinned version, or two
+// records describing the same artefact at the same extraction status that
+// disagree about the exported API. The wrapped domain.InterfaceConflict names
+// the field, the values and the records carrying them.
+//
+// The second case is the one this store exists to make visible. A public API is
+// close to a deterministic function of the artefact's bytes, so two records that
+// the ladder cannot separate and that still disagree are evidence of
+// non-determinism in the extractor — and an overwriting store absorbed exactly
+// that signal, every time, by keeping only the last answer.
+var ErrInterfaceConflict = errors.New("conflicting interface records")
+
 // InterfaceExtractor extracts the public API from a module source tree.
 type InterfaceExtractor interface {
 	// Extract parses the module source tree and returns an InterfaceRecord.
@@ -41,13 +55,15 @@ type InterfaceExtractor interface {
 // because absence is the wrong answer to a question about no module.
 // coordinatetest.AssertRefusesZeroCoordinate pins the rule for every store.
 type InterfaceStore interface {
-	// PutInterfaceRecord persists an interface record. Idempotent on
-	// (module_path, module_version, pipeline_version).
+	// PutInterfaceRecord appends an interface record to the ledger. Two distinct
+	// extractions are two rows; the same record written twice is one.
 	PutInterfaceRecord(ctx context.Context, record domain.InterfaceRecord) error
 
-	// GetInterfaceRecord retrieves the record for the given coordinate and
-	// pipeline version. Returns (zero, false, nil) if not found.
-	// Returns ErrInterfaceIntegrity if the stored hash does not verify.
+	// GetInterfaceRecord retrieves the composed record for the given coordinate
+	// and pipeline version. Returns (zero, false, nil) if not found.
+	// Returns ErrInterfaceIntegrity if a stored hash does not verify, and
+	// ErrInterfaceConflict when composition must not pick between the records
+	// held.
 	GetInterfaceRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (domain.InterfaceRecord, bool, error)
 
 	// ListInterfaceRecords returns summaries matching the filter, ordered by
@@ -61,6 +77,22 @@ type InterfaceStore interface {
 	// set; the zero ModuleSet imposes no restriction and answers across every
 	// stored version, which is what a query that names no build means.
 	FindSymbol(ctx context.Context, symbolName string, pipelineVersion string, scope coordinate.ModuleSet) ([]SymbolRef, error)
+}
+
+// InterfaceRecordLister is the optional capability of reading every generation
+// the ledger holds for one coordinate, rather than the composed answer.
+//
+// It is separate from InterfaceStore, on the same terms as fetch's
+// FactRecordLister and licence's LicenceRecordLister: a store that only ever
+// answers "what is this module's API" needs none of it, and the history read
+// exists for the callers that need to show what the extractor said before —
+// which is where a non-determination becomes examinable rather than merely
+// reported.
+type InterfaceRecordLister interface {
+	// ListInterfaceRecordsFor returns every record held for the coordinate and
+	// pipeline version, in the order they were appended. An empty slice and no
+	// error means the ledger holds none.
+	ListInterfaceRecordsFor(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain.InterfaceRecord, error)
 }
 
 // InterfaceFilter constrains ListInterfaceRecords results.
@@ -78,6 +110,15 @@ type InterfaceSummary struct {
 	PackageCount    int
 	ExtractedAt     time.Time
 	ContentHash     string
+
+	// Conflict is non-nil when the ledger holds records for this module that
+	// composition refused to pick between, and every other field but the three
+	// identifying ones is then zero.
+	//
+	// It is reported on the row rather than raised as the list's error because
+	// one disputed module must not delete the answers for every other module.
+	// The command still exits non-zero.
+	Conflict error
 }
 
 // SymbolRef identifies a symbol in the index, returned by FindSymbol.

@@ -410,13 +410,41 @@ func (f *FakeExtractInterface) Execute(_ context.Context, _ ifaceapp.ExtractRequ
 type FakeQueryInterface struct {
 	mu      sync.Mutex
 	records map[string]ifacedomain.InterfaceRecord
+	history map[string][]ifacedomain.InterfaceRecord
 	list    []ifaceports.InterfaceSummary
 	symbols []ifaceports.SymbolRef
 	Err     error
 }
 
 func NewFakeQueryInterface() *FakeQueryInterface {
-	return &FakeQueryInterface{records: make(map[string]ifacedomain.InterfaceRecord)}
+	return &FakeQueryInterface{
+		records: make(map[string]ifacedomain.InterfaceRecord),
+		history: make(map[string][]ifacedomain.InterfaceRecord),
+	}
+}
+
+// SetInterfaceHistory sets the generations InterfaceHistory returns for a
+// coordinate.
+func (f *FakeQueryInterface) SetInterfaceHistory(coord coordinate.ModuleCoordinate, pipelineVersion string, recs []ifacedomain.InterfaceRecord) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.history[coord.String()+"|"+pipelineVersion] = recs
+}
+
+func (f *FakeQueryInterface) InterfaceHistory(_ context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]ifacedomain.InterfaceRecord, error) {
+	if f.Err != nil {
+		return nil, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.history[coord.String()+"|"+pipelineVersion], nil
+}
+
+// AddRecord sets the composed record GetInterfaceRecord returns for a coordinate.
+func (f *FakeQueryInterface) AddRecord(coord coordinate.ModuleCoordinate, pipelineVersion string, rec ifacedomain.InterfaceRecord) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.records[coord.String()+"|"+pipelineVersion] = rec
 }
 
 func (f *FakeQueryInterface) GetInterfaceRecord(_ context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (ifacedomain.InterfaceRecord, bool, error) {
@@ -624,13 +652,33 @@ func (f *FakeExtractExample) Execute(_ context.Context, _ exapp.ExtractRequest) 
 type FakeQueryExamples struct {
 	mu      sync.Mutex
 	records map[string]exdomain.ExampleRecord
+	history map[string][]exdomain.ExampleRecord
 	list    []exports.ExampleSummary
 	refs    []exports.ExampleRef
 	Err     error
 }
 
 func NewFakeQueryExamples() *FakeQueryExamples {
-	return &FakeQueryExamples{records: make(map[string]exdomain.ExampleRecord)}
+	return &FakeQueryExamples{
+		records: make(map[string]exdomain.ExampleRecord),
+		history: make(map[string][]exdomain.ExampleRecord),
+	}
+}
+
+// SetHistory sets the generations ExampleHistory returns for a coordinate.
+func (f *FakeQueryExamples) SetHistory(coord coordinate.ModuleCoordinate, pipelineVersion string, recs []exdomain.ExampleRecord) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.history[coord.String()+"|"+pipelineVersion] = recs
+}
+
+func (f *FakeQueryExamples) ExampleHistory(_ context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]exdomain.ExampleRecord, error) {
+	if f.Err != nil {
+		return nil, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.history[coord.String()+"|"+pipelineVersion], nil
 }
 
 func (f *FakeQueryExamples) AddRecord(coord coordinate.ModuleCoordinate, pipelineVersion string, rec exdomain.ExampleRecord) {

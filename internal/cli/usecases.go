@@ -128,6 +128,7 @@ type ExtractInterfaceUseCase interface {
 // QueryInterfaceUseCase is the interface for querying interface records.
 type QueryInterfaceUseCase interface {
 	GetInterfaceRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (ifacedomain.InterfaceRecord, bool, error)
+	InterfaceHistory(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]ifacedomain.InterfaceRecord, error)
 	ListInterfaceRecords(ctx context.Context, filter ifaceports.InterfaceFilter) ([]ifaceports.InterfaceSummary, error)
 	FindSymbol(ctx context.Context, symbolName, pipelineVersion string, scope coordinate.ModuleSet) ([]ifaceports.SymbolRef, error)
 }
@@ -165,6 +166,7 @@ type ExtractExampleUseCase interface {
 // QueryExamplesUseCase is the interface for querying example records.
 type QueryExamplesUseCase interface {
 	GetExampleRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (exampledomain.ExampleRecord, bool, error)
+	ExampleHistory(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]exampledomain.ExampleRecord, error)
 	ListExampleRecords(ctx context.Context, filter exampleports.ExampleFilter) ([]exampleports.ExampleSummary, error)
 	FindBySymbol(ctx context.Context, symbol, pipelineVersion string, scope coordinate.ModuleSet) ([]exampleports.ExampleRef, error)
 	FindBySymbolInModule(ctx context.Context, coord coordinate.ModuleCoordinate, symbol, pipelineVersion string) ([]exampleports.ExampleRef, error)
