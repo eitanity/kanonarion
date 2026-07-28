@@ -68,11 +68,16 @@ var ErrSnapshotIntegrity = errors.New("vulnerability database snapshot integrity
 // because absence is the wrong answer to a question about no module.
 // coordinatetest.AssertRefusesZeroCoordinate pins the rule for every store.
 type VulnerabilityStore interface {
-	// PutVulnerabilityRecord persists a vulnerability record for a module.
-	// Idempotent on (coordinate, pipelineVersion, snapshotIdentity).
+	// PutVulnerabilityRecord appends a scan to the ledger. It never updates a
+	// record: two distinct scans of one coordinate — under two snapshots, in two
+	// analysis frames, or simply repeated — are always two records, and only a
+	// byte-identical re-write is idempotent.
 	PutVulnerabilityRecord(ctx context.Context, record domain.VulnerabilityRecord) error
 
-	// GetVulnerabilityRecord retrieves a record by coordinate, pipeline version, and snapshot.
+	// GetVulnerabilityRecord returns the composed record for a coordinate,
+	// pipeline version and snapshot, across every analysis frame the ledger holds.
+	// It is the read for a caller that has declined to name a frame; see
+	// domain.Compose for the ladder it serves on.
 	GetVulnerabilityRecord(
 		ctx context.Context,
 		coord coordinate.ModuleCoordinate,
@@ -80,8 +85,36 @@ type VulnerabilityStore interface {
 		snapshot domain.DatabaseSnapshot,
 	) (domain.VulnerabilityRecord, bool, error)
 
-	// GetLatestVulnerabilityRecord returns the most recently scanned record for a
-	// coordinate and pipeline version, regardless of snapshot or walk ID.
+	// GetVulnerabilityRecordAt returns the composed record within one analysis
+	// frame, and (zero, false, nil) when the ledger holds none reached in it.
+	//
+	// A caller that has a frame — a scan deciding whether an earlier record may
+	// be reused, a run reading back what it wrote — MUST use this rather than
+	// GetVulnerabilityRecord. An isolated scan and a target-rooted scan answer
+	// different questions, so serving one for the other attributes a reachability
+	// finding to a build it was never computed against.
+	GetVulnerabilityRecordAt(
+		ctx context.Context,
+		coord coordinate.ModuleCoordinate,
+		pipelineVersion string,
+		snapshot domain.DatabaseSnapshot,
+		rooting domain.Rooting,
+	) (domain.VulnerabilityRecord, bool, error)
+
+	// HasVulnerabilityRecord reports whether the ledger holds the exact
+	// generation named by contentHash. It answers "was this measurement kept",
+	// which composition cannot: the record a read serves is not necessarily the
+	// one a given run wrote, because an earlier generation may outrank it.
+	HasVulnerabilityRecord(
+		ctx context.Context,
+		coord coordinate.ModuleCoordinate,
+		pipelineVersion string,
+		snapshot domain.DatabaseSnapshot,
+		contentHash string,
+	) (bool, error)
+
+	// GetLatestVulnerabilityRecord returns the composed record for a coordinate
+	// and pipeline version across every snapshot and frame the ledger holds.
 	// Returns (zero, false, nil) if no record exists.
 	GetLatestVulnerabilityRecord(
 		ctx context.Context,
@@ -137,9 +170,11 @@ type VulnerabilityStore interface {
 	// ListVulnerabilityRecords returns all vulnerability records for a walk scan run.
 	ListVulnerabilityRecords(ctx context.Context, walkScanRunID string) ([]domain.VulnerabilityRecord, error)
 
-	// ListVulnerabilityRecordsForModule returns all stored scan records for a
-	// coordinate and pipeline version across all walks and snapshots, ordered
-	// by scanned_at descending (most recent first).
+	// ListVulnerabilityRecordsForModule returns every generation the ledger holds
+	// for a coordinate and pipeline version, across all walks, snapshots and
+	// analysis frames, ordered by scanned_at descending (most recent first). It
+	// is the history read: the superseded records are still here, each stating
+	// the evidence it rested on.
 	ListVulnerabilityRecordsForModule(
 		ctx context.Context,
 		coord coordinate.ModuleCoordinate,

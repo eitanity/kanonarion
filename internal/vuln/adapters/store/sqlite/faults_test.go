@@ -196,18 +196,35 @@ func TestPutVulnerabilityRecord_IndexesReachability(t *testing.T) {
 // anchor or carries an unreadable one, where the wrong answer would silently
 // move a first-seen date that is supposed to be immutable.
 func TestPutVulnerabilityRecord_FirstSeenAnchorEdges(t *testing.T) {
+	// The seeded row is a real, sealed record rather than a placeholder blob.
+	// Since the table became a ledger it survives the caller's own append as a
+	// second generation, and every read decodes and verifies every generation —
+	// so a stub blob would fail the read for the right reason and hide the anchor
+	// behaviour this test is about.
 	seedRow := func(t *testing.T, store *sqlite.Store, anchor string) domain.VulnerabilityRecord {
 		t.Helper()
 		rec := faultRecord(t)
+		legacy := rec
+		legacy.WalkID = "legacy-walk"
+		legacy.ScannedAt = time.Date(2020, 1, 1, 0, 0, 0, 0, time.UTC)
+		legacy, err := domain.VulnerabilityRecordHasher{}.SetContentHash(legacy)
+		if err != nil {
+			t.Fatalf("sealing legacy row: %v", err)
+		}
+		blob, err := domain.VulnerabilityRecordHasher{}.Marshal(legacy)
+		if err != nil {
+			t.Fatalf("marshalling legacy row: %v", err)
+		}
 		if _, err := store.InternalDB().DB().ExecContext(t.Context(), `
 INSERT INTO vulnerability_records (
     module_path, module_version, pipeline_version, snapshot_source, snapshot_version,
     walk_id, overall_status, coverage_status, findings_status, finding_count,
     scanned_at, first_scanned_at, content_hash, serialised
 ) VALUES (?, ?, ?, ?, ?, 'w', 'Clean', 'Analysed', 'Clean', 0,
-          '2020-01-01T00:00:00Z', ?, 'h', '{}')`,
+          '2020-01-01T00:00:00Z', ?, ?, ?)`,
 			rec.Coordinate.Path(), rec.Coordinate.Version(), rec.PipelineVersion,
-			rec.DatabaseSnapshot.Source, rec.DatabaseSnapshot.Version, anchor); err != nil {
+			rec.DatabaseSnapshot.Source, rec.DatabaseSnapshot.Version, anchor,
+			legacy.ContentHash, blob); err != nil {
 			t.Fatalf("seeding legacy row: %v", err)
 		}
 		return rec

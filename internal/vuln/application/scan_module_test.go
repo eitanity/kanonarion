@@ -81,12 +81,18 @@ func TestScanModule_NewScan(t *testing.T) {
 	}
 }
 
-// TestScanModule_ReuseReattributesToCurrentRun covers re-scanning a module that
-// was already scanned under the same snapshot by an earlier, unrelated walk. The
-// cached verdict is reused, but its provenance must follow the run the user
-// actually invoked: the returned and persisted record carry the current walk id
-// and scan time, and the result is flagged as reuse rather than a fresh scan.
-func TestScanModule_ReuseReattributesToCurrentRun(t *testing.T) {
+// TestScanModule_ReuseWritesNothingAndKeepsTheMeasurement covers re-scanning a
+// module already scanned under the same snapshot by an earlier, unrelated walk.
+//
+// The stored record is served and flagged as reuse, and NOTHING is written. The
+// reuse path used to re-stamp the walk reference and the scan time onto the
+// record and write it back, which was an UPDATE of a record in place; against
+// an append-only ledger the same code appends a second generation recording no
+// new measurement, so every later reader sees two records that differ only in
+// which run last touched them. The record keeps the walk and the time it was
+// measured in; this run's membership is recorded on the run's own per-module
+// index.
+func TestScanModule_ReuseWritesNothingAndKeepsTheMeasurement(t *testing.T) {
 	ctx := t.Context()
 	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	snapshot := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
@@ -127,32 +133,28 @@ func TestScanModule_ReuseReattributesToCurrentRun(t *testing.T) {
 	if !res.Reused {
 		t.Error("expected Reused=true for a cache reuse")
 	}
-	if res.WalkID != "walk-current" {
-		t.Errorf("expected returned record re-attributed to walk-current, got %q", res.WalkID)
+	if res.WalkID != "walk-earlier" {
+		t.Errorf("reuse must keep the walk the measurement was made in, got %q", res.WalkID)
 	}
-	if !res.ScannedAt.Equal(now) {
-		t.Errorf("expected returned ScannedAt %s, got %s", now, res.ScannedAt)
+	if !res.ScannedAt.Equal(earlier) {
+		t.Errorf("reuse must keep the time the measurement was made, want %s, got %s", earlier, res.ScannedAt)
 	}
-	// last-validated (ScannedAt) advances to the invoked run, but the first-seen
-	// anchor must stay pinned to the earlier scan that established the verdict.
 	if !res.FirstScannedAt.Equal(earlier) {
 		t.Errorf("expected FirstScannedAt to stay %s, got %s", earlier, res.FirstScannedAt)
 	}
 
-	// The persisted record must be re-attributed too, so a later vuln-show /
-	// context query reflects the run the user invoked, not the earlier walk.
-	persisted, ok, err := vulnStore.GetVulnerabilityRecord(ctx, coord, "v1", snapshot)
-	if err != nil || !ok {
-		t.Fatalf("persisted record missing: ok=%v err=%v", ok, err)
+	// The ledger gained no generation: a reuse is not a measurement, and a row
+	// that records none is noise a history read cannot tell from evidence.
+	history, err := vulnStore.ListVulnerabilityRecordsForModule(ctx, coord, "v1")
+	if err != nil {
+		t.Fatalf("ListVulnerabilityRecordsForModule: %v", err)
 	}
-	if persisted.WalkID != "walk-current" {
-		t.Errorf("expected persisted walk-current, got %q", persisted.WalkID)
+	if len(history) != 1 {
+		t.Fatalf("ledger holds %d generations after a reuse, want 1", len(history))
 	}
-	if !persisted.ScannedAt.Equal(now) {
-		t.Errorf("expected persisted ScannedAt %s, got %s", now, persisted.ScannedAt)
-	}
-	if !persisted.FirstScannedAt.Equal(earlier) {
-		t.Errorf("expected persisted FirstScannedAt to stay %s, got %s", earlier, persisted.FirstScannedAt)
+	persisted := history[0]
+	if persisted.WalkID != "walk-earlier" || !persisted.ScannedAt.Equal(earlier) {
+		t.Errorf("the stored measurement was rewritten: walk %q at %s", persisted.WalkID, persisted.ScannedAt)
 	}
 	if persisted.Reused {
 		t.Error("Reused is call-scoped and must never be persisted")

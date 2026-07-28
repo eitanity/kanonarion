@@ -546,3 +546,11 @@ func TestGenerateSBOM_PersistError(t *testing.T) {
 		t.Fatalf("want persist error, got: %v", err)
 	}
 }
+
+func (f *fakeVulnStore) GetVulnerabilityRecordAt(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ vulndomain.DatabaseSnapshot, _ vulndomain.Rooting) (vulndomain.VulnerabilityRecord, bool, error) {
+	return vulndomain.VulnerabilityRecord{}, false, nil
+}
+
+func (f *fakeVulnStore) HasVulnerabilityRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ vulndomain.DatabaseSnapshot, _ string) (bool, error) {
+	return false, nil
+}

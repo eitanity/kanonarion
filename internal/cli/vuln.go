@@ -53,6 +53,13 @@ func printVulnRecord(stdout io.Writer, rec vuldomain.VulnerabilityRecord) {
 	}
 	_, _ = fmt.Fprintf(stdout, "%s@%s — %s\n", rec.Coordinate.Path(), rec.Coordinate.Version(), label)
 	_, _ = fmt.Fprintf(stdout, "  Walk:            %s\n", rec.WalkID)
+	// The analysis frame is printed on every record, including "not recorded".
+	// A reachability finding means something different in each: isolated answers
+	// "is this advisory reachable in the module examined alone", target-rooted
+	// answers "is it reachable in the build we ship". Leaving it off would let a
+	// reader take one for the other, which is exactly what happened while the two
+	// shared a row.
+	_, _ = fmt.Fprintf(stdout, "  Analysis frame:  %s\n", vuldomain.RecordRooting(rec))
 	// First and last validated are stated as distinct facts: when the verdict was
 	// first established versus the run that last re-confirmed it. The reader, not
 	// kanonarion, judges whether that is acceptably fresh.

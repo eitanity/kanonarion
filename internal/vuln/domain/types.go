@@ -593,7 +593,17 @@ type VulnerabilityRecord struct {
 	// downgrades such a verdict to UNRESOLVED with the mismatch named.
 	CallGraphCompleteness string `json:"callgraph_completeness,omitempty"`
 	CallGraphAlgorithm    string `json:"callgraph_algorithm,omitempty"`
-	ContentHash           string `json:"content_hash"`
+	// Rooting names the analysis frame this record was produced in — isolated,
+	// or rooted at the walk's target. It is an identity fact, not a ladder: two
+	// records for one coordinate under one snapshot that state different frames
+	// are two answers to two questions, and neither supersedes the other. See
+	// Rooting for why the frame must be recorded rather than inferred.
+	//
+	// Empty on records written before the field existed, and on records that
+	// describe a module no analysis was rooted at. Both read as "not recorded";
+	// read it back through RecordRooting.
+	Rooting     Rooting `json:"rooting,omitempty"`
+	ContentHash string  `json:"content_hash"`
 	// ArtefactIdentity names the fetched artefact this record was derived from,
 	// in the "zip:h1:..." / "gomod:h1:..." form fetchdomain.ArtefactIdentity
 	// renders. It answers the question the coordinate cannot: which bytes were

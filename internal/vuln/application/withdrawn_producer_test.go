@@ -54,7 +54,7 @@ func TestScanModule_WithdrawnAdvisoryIsNotAnAffectedVerdict(t *testing.T) {
 		t.Fatalf("Scan(): %v", err)
 	}
 
-	stored, ok := vulnStore.records[vulnStore.recordKey(bbolt, "v16", snap)]
+	stored, ok := vulnStore.served(vulnStore.recordKey(bbolt, "v16", snap))
 	if !ok {
 		t.Fatal("no record was stored")
 	}
@@ -113,7 +113,7 @@ func TestScanModule_LiveAdvisoryBesideAWithdrawnOneStillAffects(t *testing.T) {
 		t.Fatalf("Scan(): %v", err)
 	}
 
-	stored, ok := vulnStore.records[vulnStore.recordKey(mod, "v16", snap)]
+	stored, ok := vulnStore.served(vulnStore.recordKey(mod, "v16", snap))
 	if !ok {
 		t.Fatal("no record was stored")
 	}

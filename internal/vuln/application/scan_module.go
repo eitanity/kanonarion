@@ -386,6 +386,8 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 				ScannedAt:        now,
 				FirstScannedAt:   now,
 				PipelineVersion:  uc.pipelineVersion,
+				// Reached by scanning this module alone; see the stamp below.
+				Rooting: domain.RootingIsolated,
 			}
 			derived.stamp(&record)
 			sealed, herr := domain.VulnerabilityRecordHasher{}.SetContentHash(record)
@@ -446,6 +448,13 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 	// re-scan never resets the first-seen anchor.
 	record.FirstScannedAt = now
 	record.PipelineVersion = uc.pipelineVersion
+	// The record names the analysis frame it was produced in, on both branches.
+	// This use case resolves and builds the module as its own main module, so
+	// every record it produces answers the isolated question — not "is this
+	// advisory reachable in what we ship", which only a target-rooted analysis
+	// can answer. Recording it is what keeps the two from sharing a row and
+	// silently standing in for each other.
+	record.Rooting = domain.RootingIsolated
 	// The verdict names the bytes it was reached from, on both branches: a scan
 	// that failed still failed on a specific artefact.
 	derived.stamp(&record)
@@ -508,17 +517,31 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 // when a usable one exists. handled is true when the caller should return
 // (rec, err) directly; false means proceed with a fresh scan.
 //
+// The lookup is frame-scoped. This use case produces isolated records, so it
+// may only reuse one: a target-rooted record was derived from the target's
+// build, and serving it here would report a reachability answer computed against
+// a build this call never named. Before the frame was recorded the two shared a
+// row, so that substitution happened silently in both directions.
+//
 // A local coordinate (the project-walk root) is never served from cache: the
 // working tree mutates between runs, so its records are recomputed fresh every
 // time. ScanFailed is also never served from cache: it represents a transient
 // infrastructure failure (govulncheck crash, temp dir cleaned up, network blip)
 // not a stable analysis verdict — caching it would permanently block retry
 // without --force. A store lookup error is treated as a cache miss.
+//
+// A reuse writes nothing. It used to re-stamp the walk reference and the scan
+// time onto the stored record and write it back, which was an UPDATE of a
+// record in place; against an append-only ledger the same code appends a second
+// row recording no new measurement, and every later reader would see two
+// generations that differ only in which run last touched them. The measurement
+// keeps the walk it was made in, and this run's membership is recorded where it
+// belongs — on the run's own per-module index.
 func (uc *ScanModuleUseCase) tryReuseCachedRecord(ctx context.Context, params ScanModuleParams, snapshot domain.DatabaseSnapshot) (domain.VulnerabilityRecord, bool, error) {
 	if params.Force || params.Coordinate.IsLocal() {
 		return domain.VulnerabilityRecord{}, false, nil
 	}
-	rec, ok, err := uc.vulnStore.GetVulnerabilityRecord(ctx, params.Coordinate, uc.pipelineVersion, snapshot)
+	rec, ok, err := uc.vulnStore.GetVulnerabilityRecordAt(ctx, params.Coordinate, uc.pipelineVersion, snapshot, domain.RootingIsolated)
 	if err != nil || !ok {
 		return domain.VulnerabilityRecord{}, false, nil //nolint:nilerr // a lookup failure is treated as a cache miss; the scan proceeds fresh
 	}
@@ -529,22 +552,7 @@ func (uc *ScanModuleUseCase) tryReuseCachedRecord(ctx context.Context, params Sc
 		uc.logger.Debug("vulnerability scan cache miss: stored result is ScanFailed, retrying", "coordinate", params.Coordinate)
 		return domain.VulnerabilityRecord{}, false, nil
 	}
-	uc.logger.Debug("vulnerability scan cache hit, re-attributing to current run", "coordinate", params.Coordinate, "status", rec.OverallStatus)
-	// The cached verdict is reused, but its provenance must follow the run the
-	// user actually invoked: re-stamp the walk reference and scan time so a later
-	// query reflects this run, never the unrelated earlier walk that first
-	// produced the record. The analysis result is unchanged; only walk_id and
-	// scanned_at move forward. The hasher hashes over an empty hash field, so
-	// the re-stamped record is sealed exactly as a fresh one is.
-	rec.WalkID = params.WalkID
-	rec.ScannedAt = uc.clock.Now()
-	rec, err = domain.VulnerabilityRecordHasher{}.SetContentHash(rec)
-	if err != nil {
-		return domain.VulnerabilityRecord{}, false, fmt.Errorf("hashing reused vulnerability record: %w", err)
-	}
-	if perr := uc.vulnStore.PutVulnerabilityRecord(ctx, rec); perr != nil {
-		return domain.VulnerabilityRecord{}, false, fmt.Errorf("re-attributing reused vulnerability record: %w", perr)
-	}
+	uc.logger.Debug("vulnerability scan cache hit", "coordinate", params.Coordinate, "status", rec.OverallStatus, "scanned_at", rec.ScannedAt, "measured_in_walk", rec.WalkID)
 	rec.Reused = true
 	return rec, true, nil
 }
@@ -966,6 +974,11 @@ func (uc *ScanModuleUseCase) scanMetadataOnly(ctx context.Context, params ScanMo
 		ScannedAt:        now,
 		FirstScannedAt:   now,
 		PipelineVersion:  uc.pipelineVersion,
+		// This use case scans one module as its own main module, and that holds for
+		// the fallback too: the coordinate was matched because the ISOLATED analysis
+		// could not be produced, so this record answers the isolated question and
+		// must not be servable as a target-rooted answer.
+		Rooting: domain.RootingIsolated,
 	}
 	// Empty when the module was never fetched: a coordinate matched against the
 	// advisory database read no artefact, and must not claim to have read one.

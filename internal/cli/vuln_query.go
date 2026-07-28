@@ -188,10 +188,14 @@ func runVulnShowHistory(ctx context.Context, coord coordinate.ModuleCoordinate, 
 		if len(findingIDs) > 0 {
 			findingSummary = strings.Join(findingIDs, "  ")
 		}
-		_, _ = fmt.Fprintf(stdout, "  %s  walk=%-26s  snap=%-24s  %-8s  %s\n",
+		// The frame is on every line because two generations for one coordinate
+		// and snapshot may be answers to two different questions rather than a
+		// revision of one, and the dates alone cannot say which.
+		_, _ = fmt.Fprintf(stdout, "  %s  walk=%-26s  snap=%-24s  frame=%-13s  %-8s  %s\n",
 			rec.ScannedAt.UTC().Format(time.RFC3339),
 			rec.WalkID,
 			rec.DatabaseSnapshot.Version,
+			vuldomain.RecordRooting(rec),
 			rec.OverallStatus,
 			findingSummary,
 		)

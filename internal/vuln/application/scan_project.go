@@ -36,14 +36,14 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 	result, err := uc.moduleScanner.scanner.ScanProject(ctx, params.ProjectDir, *snapshot, vulnDBDir)
 	if err != nil {
 		uc.logger.Error("project-rooted scan failed", "root", root, "error", err)
-		uc.fillProjectFault(ctx, allCoords, params, snapshot, out, domain.StatusScanFailed, "", "", err.Error())
+		uc.fillProjectFault(ctx, root, allCoords, params, snapshot, out, domain.StatusScanFailed, "", "", err.Error())
 		return
 	}
 	if result.Status == domain.StatusUnscannable || result.Status == domain.StatusScanFailed {
 		// A genuine fault — no go.mod, OOM, a real build break — surfaces
 		// honestly across the build rather than as a false clean.
 		uc.logger.Warn("project-rooted scan could not analyse the project", "root", root, "status", result.Status)
-		uc.fillProjectFault(ctx, allCoords, params, snapshot, out, result.Status, result.UnscanReason, result.UnscannableReason, result.ErrorDetail)
+		uc.fillProjectFault(ctx, root, allCoords, params, snapshot, out, result.Status, result.UnscanReason, result.UnscannableReason, result.ErrorDetail)
 		return
 	}
 
@@ -68,7 +68,7 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 			// checked. Reporting it Clean would be the exact false negative this
 			// path is being fixed for, so it carries the fault instead.
 			uc.logger.Error("project-rooted scan: advisory match by coordinate failed", "coordinate", coord, "error", err)
-			rec := uc.persistProjectRecord(ctx, coord, nil, domain.StatusScanFailed, "", "", err.Error(), params, snapshot)
+			rec := uc.persistProjectRecord(ctx, root, coord, nil, domain.StatusScanFailed, "", "", err.Error(), params, snapshot)
 			out[coord] = moduleResult{coord: coord, record: rec}
 			continue
 		}
@@ -78,7 +78,7 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 		status := domain.DetermineRecordOverallStatus(
 			domain.CoverageAnalysed, domain.DetermineFindingsAxis(findings),
 		)
-		rec := uc.persistProjectRecord(ctx, coord, findings, status, "", "", "", params, snapshot)
+		rec := uc.persistProjectRecord(ctx, root, coord, findings, status, "", "", "", params, snapshot)
 		out[coord] = moduleResult{coord: coord, record: rec}
 	}
 }
@@ -181,6 +181,7 @@ func copyFindings(in []domain.VulnerabilityFinding) []domain.VulnerabilityFindin
 // is visible per row rather than silently dropped.
 func (uc *ScanWalkUseCase) fillProjectFault(
 	ctx context.Context,
+	root coordinate.ModuleCoordinate,
 	allCoords []coordinate.ModuleCoordinate,
 	params ScanWalkParams,
 	snapshot *domain.DatabaseSnapshot,
@@ -190,7 +191,7 @@ func (uc *ScanWalkUseCase) fillProjectFault(
 	unscannableReason, errorDetail string,
 ) {
 	for _, coord := range allCoords {
-		rec := uc.persistProjectRecord(ctx, coord, nil, status, unscanReason, unscannableReason, errorDetail, params, snapshot)
+		rec := uc.persistProjectRecord(ctx, root, coord, nil, status, unscanReason, unscannableReason, errorDetail, params, snapshot)
 		out[coord] = moduleResult{coord: coord, record: rec}
 	}
 }
@@ -201,6 +202,7 @@ func (uc *ScanWalkUseCase) fillProjectFault(
 // downstream tally, run persistence and queries treat both paths uniformly.
 func (uc *ScanWalkUseCase) persistProjectRecord(
 	ctx context.Context,
+	root coordinate.ModuleCoordinate,
 	coord coordinate.ModuleCoordinate,
 	findings []domain.VulnerabilityFinding,
 	status domain.VulnerabilityStatus,
@@ -229,6 +231,18 @@ func (uc *ScanWalkUseCase) persistProjectRecord(
 		ScannedAt:         now,
 		FirstScannedAt:    now,
 		PipelineVersion:   uc.pipelineVersion,
+		// The frame this record was produced in, naming the target it was rooted
+		// at. Every record on this path comes from one analysis rooted at that
+		// target, reaching each dependency through the target's import graph at the
+		// versions the build selects — so it answers "is this advisory reachable in
+		// what THIS target ships", which neither an isolated scan of the same
+		// coordinate nor an analysis rooted at a different target can.
+		//
+		// The root is part of the frame rather than a note beside it. All three
+		// collided on (coordinate, pipeline, snapshot) before, and whichever ran
+		// last silently answered for every question; naming the root is what keeps
+		// one consumer's reachability finding from being displaced by another's.
+		Rooting: domain.TargetRootedAt(root),
 	}
 	domain.SortFindings(rec.Findings)
 	sealed, herr := domain.VulnerabilityRecordHasher{}.SetContentHash(rec)

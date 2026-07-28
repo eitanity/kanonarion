@@ -26,16 +26,34 @@ func indexTestSnapshot() domain.DatabaseSnapshot {
 // indexTestRecord builds a sealed record for the shared key carrying findings.
 func indexTestRecord(t *testing.T, status domain.VulnerabilityStatus, findings ...domain.VulnerabilityFinding) domain.VulnerabilityRecord {
 	t.Helper()
+	return indexTestRecordAt(t, domain.RootingIsolated, "", time.Date(2026, 7, 17, 20, 0, 0, 0, time.UTC), status, findings...)
+}
+
+// indexTestRecordAt builds a sealed record for the shared key in a named
+// analysis frame, at a named call-graph completeness and scan time. The ledger
+// keeps every generation, so a test that wants a particular one served has to
+// say which rung of the ladder puts it there.
+func indexTestRecordAt(
+	t *testing.T,
+	rooting domain.Rooting,
+	completeness string,
+	scannedAt time.Time,
+	status domain.VulnerabilityStatus,
+	findings ...domain.VulnerabilityFinding,
+) domain.VulnerabilityRecord {
+	t.Helper()
 	return seal(t, domain.VulnerabilityRecord{
-		Ecosystem:        fetchdomain.EcosystemGo,
-		Coordinate:       coord("golang.org/x/text", "v0.37.0"),
-		WalkID:           "walk-1",
-		Findings:         findings,
-		OverallStatus:    status,
-		DatabaseSnapshot: indexTestSnapshot(),
-		ScannedAt:        time.Date(2026, 7, 17, 20, 0, 0, 0, time.UTC),
-		FirstScannedAt:   time.Date(2026, 7, 17, 20, 0, 0, 0, time.UTC),
-		PipelineVersion:  "v14",
+		Ecosystem:             fetchdomain.EcosystemGo,
+		Coordinate:            coord("golang.org/x/text", "v0.37.0"),
+		WalkID:                "walk-1",
+		Findings:              findings,
+		OverallStatus:         status,
+		DatabaseSnapshot:      indexTestSnapshot(),
+		ScannedAt:             scannedAt,
+		FirstScannedAt:        scannedAt,
+		PipelineVersion:       "v14",
+		CallGraphCompleteness: completeness,
+		Rooting:               rooting,
 	})
 }
 
@@ -48,12 +66,18 @@ func finding(id string, aliases ...string) domain.VulnerabilityFinding {
 	}
 }
 
-// TestPutVulnerabilityRecord_ReScanRetractsIndexRows reproduces the defect end
-// to end: scan a coordinate that yields findings, re-scan the
-// same key against a state that yields none, and the index must no longer claim
-// the retired advisories. Before the reconciliation the old rows survived and
-// put the module into vuln-by-id's answer on evidence its own record denies.
-func TestPutVulnerabilityRecord_ReScanRetractsIndexRows(t *testing.T) {
+// TestPutVulnerabilityRecord_BareCleanReScanDoesNotRetractAFinding pins the
+// ledger's answer to the case the overwriting store handled by deletion.
+//
+// When a re-scan overwrote its predecessor, the record backing the index rows
+// was gone, so the rows had to go with it or vuln-by-id answered from evidence
+// no record supported. Against a ledger both generations survive, and the
+// composed record is the finding-bearing one: a bare all-clear that offers no
+// reason is not authority to retire a finding, which is the rule the by-finding
+// ranking already applies. Retracting the index here would therefore delete the
+// rows that ranking needs and make it unreachable — the answer would be "no
+// modules affected" for a module whose served record says otherwise.
+func TestPutVulnerabilityRecord_BareCleanReScanDoesNotRetractAFinding(t *testing.T) {
 	ctx := t.Context()
 	store := newTestStore(t)
 
@@ -74,8 +98,9 @@ func TestPutVulnerabilityRecord_ReScanRetractsIndexRows(t *testing.T) {
 		}
 	}
 
-	// The re-scan of the same key comes back clean.
-	clean := indexTestRecord(t, domain.StatusClean)
+	// A later scan of the same key comes back clean, offering no reason.
+	clean := indexTestRecordAt(t, domain.RootingIsolated, "",
+		time.Date(2026, 7, 18, 20, 0, 0, 0, time.UTC), domain.StatusClean)
 	if err := store.PutVulnerabilityRecord(ctx, clean); err != nil {
 		t.Fatalf("re-scan: %v", err)
 	}
@@ -85,10 +110,20 @@ func TestPutVulnerabilityRecord_ReScanRetractsIndexRows(t *testing.T) {
 		if err != nil {
 			t.Fatalf("ListVulnerabilityRecordsByFindingID(%s): %v", id, err)
 		}
-		if len(recs) != 0 {
-			t.Fatalf("after an all-clear re-scan, %s still matched %d records; "+
-				"the index kept rows the record does not support", id, len(recs))
+		if len(recs) != 1 {
+			t.Fatalf("after an unexplained all-clear, %s matched %d records, want 1: "+
+				"a later Clean must not retire a finding", id, len(recs))
 		}
+	}
+
+	// Both generations are still there, which is what makes the earlier finding
+	// auditable rather than merely retained in an index.
+	history, err := store.ListVulnerabilityRecordsForModule(ctx, affected.Coordinate, affected.PipelineVersion)
+	if err != nil {
+		t.Fatalf("ListVulnerabilityRecordsForModule: %v", err)
+	}
+	if len(history) != 2 {
+		t.Fatalf("ledger holds %d generations, want 2", len(history))
 	}
 
 	defects, err := store.CheckFindingsIndex(ctx)
@@ -102,19 +137,29 @@ func TestPutVulnerabilityRecord_ReScanRetractsIndexRows(t *testing.T) {
 }
 
 // TestPutVulnerabilityRecord_ReScanRetractsOnlyRetiredFindings proves the
-// reconciliation is a rewrite, not a purge: a finding the re-scan still reports
-// keeps its index row, and only the one that stopped applying is dropped.
+// reconciliation is a rewrite, not a purge: a finding the served record still
+// reports keeps its index row, and only the one that stopped applying is
+// dropped.
+//
+// The re-scan supersedes its predecessor on the completeness rung, not on the
+// clock: both records report an advisory, so the ladder's first two rungs tie
+// and the better-founded call graph decides. That is the only way one
+// finding-bearing record displaces another, and it is what makes the drop of
+// the retired row a statement about evidence rather than about recency.
 func TestPutVulnerabilityRecord_ReScanRetractsOnlyRetiredFindings(t *testing.T) {
 	ctx := t.Context()
 	store := newTestStore(t)
 
-	both := indexTestRecord(t, domain.StatusAffected,
+	both := indexTestRecordAt(t, domain.RootingIsolated, "METADATA_ONLY",
+		time.Date(2026, 7, 17, 20, 0, 0, 0, time.UTC), domain.StatusAffected,
 		finding("GO-2026-0001"), finding("GO-2026-0002"))
 	if err := store.PutVulnerabilityRecord(ctx, both); err != nil {
 		t.Fatalf("first scan: %v", err)
 	}
 
-	one := indexTestRecord(t, domain.StatusAffected, finding("GO-2026-0001"))
+	one := indexTestRecordAt(t, domain.RootingIsolated, "BUILT_WITH_BODIES",
+		time.Date(2026, 7, 18, 20, 0, 0, 0, time.UTC), domain.StatusAffected,
+		finding("GO-2026-0001"))
 	if err := store.PutVulnerabilityRecord(ctx, one); err != nil {
 		t.Fatalf("re-scan: %v", err)
 	}
@@ -133,6 +178,65 @@ func TestPutVulnerabilityRecord_ReScanRetractsOnlyRetiredFindings(t *testing.T) 
 	}
 	if len(retired) != 0 {
 		t.Fatalf("a retired finding still matched %d records, want 0", len(retired))
+	}
+}
+
+// TestPutVulnerabilityRecord_FramesDoNotRetractEachOther is the defect this
+// conversion exists for, at the index. A target-rooted scan and an isolated scan
+// of one coordinate under one snapshot are two answers to two questions; before
+// the frame was recorded they shared a row, so writing either retracted the
+// other's findings. Both must now stand.
+func TestPutVulnerabilityRecord_FramesDoNotRetractEachOther(t *testing.T) {
+	ctx := t.Context()
+	store := newTestStore(t)
+
+	isolated := indexTestRecordAt(t, domain.RootingIsolated, "",
+		time.Date(2026, 7, 17, 20, 0, 0, 0, time.UTC), domain.StatusAffected,
+		finding("GO-2026-0001"))
+	if err := store.PutVulnerabilityRecord(ctx, isolated); err != nil {
+		t.Fatalf("isolated scan: %v", err)
+	}
+
+	// The target-rooted analysis reaches this module through the target's build
+	// and finds the advisory does not apply there. It says nothing about the
+	// isolated question, so it must not retract the isolated answer.
+	targetRooted := indexTestRecordAt(t, domain.RootingTargetRooted, "",
+		time.Date(2026, 7, 18, 20, 0, 0, 0, time.UTC), domain.StatusClean)
+	if err := store.PutVulnerabilityRecord(ctx, targetRooted); err != nil {
+		t.Fatalf("target-rooted scan: %v", err)
+	}
+
+	recs, err := store.ListVulnerabilityRecordsByFindingID(ctx, "GO-2026-0001", "")
+	if err != nil {
+		t.Fatalf("ListVulnerabilityRecordsByFindingID: %v", err)
+	}
+	if len(recs) != 1 {
+		t.Fatalf("after a target-rooted all-clear, the isolated finding matched %d records, want 1", len(recs))
+	}
+
+	// Each frame is readable on its own terms, and neither is served for the
+	// other's question.
+	iso, ok, err := store.GetVulnerabilityRecordAt(ctx, isolated.Coordinate, isolated.PipelineVersion, indexTestSnapshot(), domain.RootingIsolated)
+	if err != nil || !ok {
+		t.Fatalf("GetVulnerabilityRecordAt(isolated) = found %v, err %v", ok, err)
+	}
+	if iso.ContentHash != isolated.ContentHash {
+		t.Fatalf("isolated frame served %q, want the isolated record %q", iso.ContentHash, isolated.ContentHash)
+	}
+	tr, ok, err := store.GetVulnerabilityRecordAt(ctx, isolated.Coordinate, isolated.PipelineVersion, indexTestSnapshot(), domain.RootingTargetRooted)
+	if err != nil || !ok {
+		t.Fatalf("GetVulnerabilityRecordAt(target-rooted) = found %v, err %v", ok, err)
+	}
+	if tr.ContentHash != targetRooted.ContentHash {
+		t.Fatalf("target-rooted frame served %q, want the target-rooted record %q", tr.ContentHash, targetRooted.ContentHash)
+	}
+
+	defects, err := store.CheckFindingsIndex(ctx)
+	if err != nil {
+		t.Fatalf("CheckFindingsIndex: %v", err)
+	}
+	if len(defects) != 0 {
+		t.Fatalf("CheckFindingsIndex found %d defect(s): %v", len(defects), sqlite.FindingsIndexDefectsError(defects))
 	}
 }
 
@@ -232,11 +336,11 @@ func plantIndexRow(t *testing.T, ctx context.Context, store *sqlite.Store, findi
 	const q = `
 INSERT INTO vulnerability_findings_index (
     finding_id, module_path, module_version, pipeline_version,
-    snapshot_source, snapshot_version, is_reachable
-) VALUES (?, ?, ?, ?, ?, ?, NULL)`
+    snapshot_source, snapshot_version, rooting, is_reachable
+) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`
 	if _, err := store.InternalDB().DB().ExecContext(ctx, q,
 		findingID, rec.Coordinate.Path(), rec.Coordinate.Version(), rec.PipelineVersion,
-		rec.DatabaseSnapshot.Source, rec.DatabaseSnapshot.Version,
+		rec.DatabaseSnapshot.Source, rec.DatabaseSnapshot.Version, string(rec.Rooting),
 	); err != nil {
 		t.Fatalf("planting index row: %v", err)
 	}

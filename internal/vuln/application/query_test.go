@@ -298,3 +298,14 @@ func TestQueryScanRunsUseCase_ListSnapshots_Error(t *testing.T) {
 		t.Errorf("got %v, want wrapping %v", err, storeErr)
 	}
 }
+
+func (s *queryVulnFakeStore) GetVulnerabilityRecordAt(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ domain.DatabaseSnapshot, _ domain.Rooting) (domain.VulnerabilityRecord, bool, error) {
+	if s.storeErr != nil {
+		return domain.VulnerabilityRecord{}, false, s.storeErr
+	}
+	return s.record, s.recordFound, nil
+}
+
+func (s *queryVulnFakeStore) HasVulnerabilityRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ domain.DatabaseSnapshot, _ string) (bool, error) {
+	return s.recordFound, s.storeErr
+}

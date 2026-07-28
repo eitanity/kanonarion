@@ -33,6 +33,11 @@ type FindingsIndexDefect struct {
 	ModuleVersion   string
 	PipelineVersion string
 	Snapshot        domain.DatabaseSnapshot
+	// Rooting is the analysis frame the row is filed under. The index is keyed on
+	// it because an isolated record and a target-rooted one for the same
+	// coordinate and snapshot are two answers, so a row is supported by the
+	// composed record OF ITS OWN FRAME and by no other.
+	Rooting domain.Rooting
 	// Reason states which of the two failures this is: the record carries no such
 	// finding, the record could not be decoded, or there is no record at all.
 	Reason string
@@ -40,9 +45,9 @@ type FindingsIndexDefect struct {
 
 // String renders the defect as one line naming the row and why it is wrong.
 func (d FindingsIndexDefect) String() string {
-	return fmt.Sprintf("%s indexed against %s@%s (pipeline %s, snapshot %s@%s): %s",
+	return fmt.Sprintf("%s indexed against %s@%s (pipeline %s, snapshot %s@%s, rooting %s): %s",
 		d.FindingID, d.ModulePath, d.ModuleVersion, d.PipelineVersion,
-		d.Snapshot.Source, d.Snapshot.Version, d.Reason)
+		d.Snapshot.Source, d.Snapshot.Version, d.Rooting, d.Reason)
 }
 
 // Reasons a findings-index row fails to be supported by its record.
@@ -64,40 +69,65 @@ const (
 // A row whose record is absent entirely counts as a defect on the same terms as
 // one whose record disagrees. Both put a module into an advisory's answer on
 // the strength of evidence that is not there.
+// Since the record table became a ledger, "its record" is the COMPOSED record
+// of the row's own frame rather than the single row a coordinate used to
+// resolve to. A superseded generation that still carries the advisory is not
+// support: the index has to agree with what a read returns, or vuln-by-id
+// answers from a record no reader is served.
 func (s *Store) CheckFindingsIndex(ctx context.Context) ([]FindingsIndexDefect, error) {
-	// LEFT JOIN, not JOIN: an index row with no record at all is a defect this
-	// check must report, and an inner join would silently drop exactly those.
 	const q = `
-SELECT fi.finding_id, fi.module_path, fi.module_version, fi.pipeline_version,
-       fi.snapshot_source, fi.snapshot_version, vr.serialised
-FROM vulnerability_findings_index fi
-LEFT JOIN vulnerability_records vr
-    ON vr.module_path      = fi.module_path
-   AND vr.module_version   = fi.module_version
-   AND vr.pipeline_version = fi.pipeline_version
-   AND vr.snapshot_source  = fi.snapshot_source
-   AND vr.snapshot_version = fi.snapshot_version
-ORDER BY fi.module_path, fi.module_version, fi.pipeline_version,
-         fi.snapshot_source, fi.snapshot_version, fi.finding_id`
+SELECT finding_id, module_path, module_version, pipeline_version,
+       snapshot_source, snapshot_version, rooting
+FROM vulnerability_findings_index
+ORDER BY module_path, module_version, pipeline_version,
+         snapshot_source, snapshot_version, rooting, finding_id`
 
-	rows, err := s.db.DB().QueryContext(ctx, q)
-	if err != nil {
-		return nil, fmt.Errorf("querying findings index for consistency: %w", err)
+	// The index rows are read to completion and the cursor closed BEFORE any
+	// record is composed. The pool holds a single connection, so composing inside
+	// the loop would issue a query against the connection this cursor is holding
+	// and deadlock.
+	type indexRow struct {
+		findingID, path, version, pipeline, snapSource, snapVersion, rooting string
 	}
-	defer func() { _ = rows.Close() }()
+	var indexRows []indexRow
 
-	// supported caches the identifier set of each record so a module with many
-	// index rows decodes its record once rather than once per row.
-	supported := make(map[string]map[string]bool)
+	if err := func() error {
+		rows, qerr := s.db.DB().QueryContext(ctx, q)
+		if qerr != nil {
+			return fmt.Errorf("querying findings index for consistency: %w", qerr)
+		}
+		defer func() {
+			_ = rows.Close() //nolint:errcheck // rows.Err() checked below
+		}()
+		for rows.Next() {
+			var r indexRow
+			if serr := rows.Scan(&r.findingID, &r.path, &r.version, &r.pipeline,
+				&r.snapSource, &r.snapVersion, &r.rooting); serr != nil {
+				return fmt.Errorf("scanning findings index row: %w", serr)
+			}
+			indexRows = append(indexRows, r)
+		}
+		if rerr := rows.Err(); rerr != nil {
+			return fmt.Errorf("iterating findings index rows: %w", rerr)
+		}
+		return nil
+	}(); err != nil {
+		return nil, err
+	}
+
+	// supported caches, per (key, frame), the identifier set the composed record
+	// carries — or the reason there is none — so a module with many index rows
+	// composes once rather than once per row.
+	type support struct {
+		ids    map[string]bool
+		reason string
+	}
+	supported := make(map[string]support)
 
 	var defects []FindingsIndexDefect
-	for rows.Next() {
-		var findingID, path, version, pipeline, snapSource, snapVersion string
-		var serialised []byte
-		if err := rows.Scan(&findingID, &path, &version, &pipeline,
-			&snapSource, &snapVersion, &serialised); err != nil {
-			return nil, fmt.Errorf("scanning findings index row: %w", err)
-		}
+	for _, row := range indexRows {
+		findingID, path, version := row.findingID, row.path, row.version
+		pipeline, snapSource, snapVersion, rooting := row.pipeline, row.snapSource, row.snapVersion, row.rooting
 
 		defect := FindingsIndexDefect{
 			FindingID:       findingID,
@@ -105,43 +135,51 @@ ORDER BY fi.module_path, fi.module_version, fi.pipeline_version,
 			ModuleVersion:   version,
 			PipelineVersion: pipeline,
 			Snapshot:        domain.DatabaseSnapshot{Source: snapSource, Version: snapVersion},
+			Rooting:         domain.Rooting(rooting),
 		}
 
-		if serialised == nil {
-			defect.Reason = reasonNoRecord
-			defects = append(defects, defect)
-			continue
-		}
-
-		key := strings.Join([]string{path, version, pipeline, snapSource, snapVersion}, "\x00")
-		ids, cached := supported[key]
+		key := strings.Join([]string{path, version, pipeline, snapSource, snapVersion, rooting}, "\x00")
+		sup, cached := supported[key]
 		if !cached {
-			// decodeRecord verifies the content hash, so a record that fails here is
-			// already reported by every read path; the index sweep names it too
-			// rather than treating an unreadable record as agreement.
-			rec, derr := decodeRecord(serialised)
-			if derr != nil {
-				supported[key] = nil
-			} else {
-				ids = recordFindingIDs(rec)
-				supported[key] = ids
-			}
-			ids = supported[key]
+			sup.ids, sup.reason = s.composedFindingIDs(ctx, path, version, pipeline, snapSource, snapVersion, domain.Rooting(rooting))
+			supported[key] = sup
 		}
 		switch {
-		case ids == nil:
-			defect.Reason = reasonUndecodable
-		case !ids[findingID]:
+		case sup.ids == nil:
+			defect.Reason = sup.reason
+			defects = append(defects, defect)
+		case !sup.ids[findingID]:
 			defect.Reason = reasonFindingAbsent
-		default:
-			continue
+			defects = append(defects, defect)
 		}
-		defects = append(defects, defect)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating findings index rows: %w", err)
 	}
 	return defects, nil
+}
+
+// composedFindingIDs returns the identifiers the composed record of one key and
+// frame carries, or nil plus the reason there is none.
+//
+// A generation that fails its content-hash check stops the whole answer rather
+// than being skipped: decodeRecord verifies, so an unreadable generation is
+// already reported by every read path, and treating it as agreement here would
+// let the one check aimed at this defect class be the one that looks away.
+func (s *Store) composedFindingIDs(
+	ctx context.Context,
+	path, version, pipeline, snapSource, snapVersion string,
+	rooting domain.Rooting,
+) (map[string]bool, string) {
+	generations, err := s.listGenerations(ctx, s.db.DB(), path, version, pipeline, snapSource, snapVersion)
+	if err != nil {
+		return nil, reasonUndecodable
+	}
+	if len(generations) == 0 {
+		return nil, reasonNoRecord
+	}
+	served, ok, cerr := domain.ComposeAt(generations, rooting)
+	if cerr != nil || !ok {
+		return nil, reasonNoRecord
+	}
+	return recordFindingIDs(served), ""
 }
 
 // recordFindingIDs returns every identifier the record's findings can legally be

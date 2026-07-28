@@ -837,3 +837,11 @@ func TestLookupFindings_ConservativeWhenUnrefinable(t *testing.T) {
 		})
 	}
 }
+
+func (f *fakeVulnStore) GetVulnerabilityRecordAt(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ domain.DatabaseSnapshot, _ domain.Rooting) (domain.VulnerabilityRecord, bool, error) {
+	return domain.VulnerabilityRecord{}, false, nil
+}
+
+func (f *fakeVulnStore) HasVulnerabilityRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ domain.DatabaseSnapshot, _ string) (bool, error) {
+	return false, nil
+}

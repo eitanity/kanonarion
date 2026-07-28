@@ -228,3 +228,11 @@ func TestLoadFindings_EmptyCoords(t *testing.T) {
 
 // Compile-time check that adapter satisfies the port interface.
 var _ ports.VulnFindingLoader = (*store.VulnStoreAdapter)(nil)
+
+func (s *fakeVulnStore) GetVulnerabilityRecordAt(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ vulndomain.DatabaseSnapshot, _ vulndomain.Rooting) (vulndomain.VulnerabilityRecord, bool, error) {
+	panic("unexpected call: GetVulnerabilityRecordAt")
+}
+
+func (s *fakeVulnStore) HasVulnerabilityRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ vulndomain.DatabaseSnapshot, _ string) (bool, error) {
+	panic("unexpected call: HasVulnerabilityRecord")
+}

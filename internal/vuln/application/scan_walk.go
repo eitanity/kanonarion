@@ -308,7 +308,7 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	// 4b. Every coordinate the run reported a verdict for must have that verdict
 	// in the store. A module that produced a progress line and no record is a
 	// verdict the run claims to have made and did not keep.
-	if err := uc.verifyRecordsPersisted(ctx, walk, params, snapshot); err != nil {
+	if err := uc.verifyRecordsPersisted(ctx, walk, run, snapshot); err != nil {
 		return domain.WalkScanRun{}, err
 	}
 
@@ -372,23 +372,41 @@ const missingRecordLogLimit = 10
 //
 // A gap fails the run rather than being logged: an incomplete record set silently
 // under-reports the build, which is the same class of defect as a false clean.
+//
+// The check is by CONTENT HASH — the exact generation this run recorded in
+// run.PerModuleResults — rather than by reading the coordinate back and
+// comparing walk IDs. Two things make that necessary against a ledger. A read by
+// coordinate now serves the composed record, which may legitimately be an
+// earlier generation that outranks the one this run wrote, so a hash comparison
+// against it would report a stored record as missing. And a reused record keeps
+// the walk it was measured in, so a walk-ID comparison would report every reuse
+// as a gap. The run's claim is a set of specific records; this asks whether each
+// of them is in the store.
 func (uc *ScanWalkUseCase) verifyRecordsPersisted(
 	ctx context.Context,
 	walk walkdomain.WalkRecord,
-	params ScanWalkParams,
+	run domain.WalkScanRun,
 	snapshot *domain.DatabaseSnapshot,
 ) error {
 	var missing []coordinate.ModuleCoordinate
 	for _, node := range walk.Graph.Nodes {
+		contentHash, claimed := run.PerModuleResults[node.Coordinate]
+		if !claimed {
+			// The run reported a result for every node and kept no record for this one:
+			// the write failed and was logged rather than raised. That is exactly the
+			// gap this check exists to turn into a failure.
+			missing = append(missing, node.Coordinate)
+			continue
+		}
 		// Read back by the store's own record identity rather than through the
 		// per-run module index: that index is written by PutWalkScanRun, which has
 		// not run yet, so querying it here would answer for previous runs of this
 		// walk instead of this one.
-		rec, ok, err := uc.vulnStore.GetVulnerabilityRecord(ctx, node.Coordinate, uc.pipelineVersion, *snapshot)
+		ok, err := uc.vulnStore.HasVulnerabilityRecord(ctx, node.Coordinate, uc.pipelineVersion, *snapshot, contentHash)
 		if err != nil {
 			return fmt.Errorf("verifying persisted vulnerability record for %s: %w", node.Coordinate, err)
 		}
-		if !ok || rec.WalkID != params.WalkID {
+		if !ok {
 			missing = append(missing, node.Coordinate)
 		}
 	}
@@ -401,7 +419,7 @@ func (uc *ScanWalkUseCase) verifyRecordsPersisted(
 	}
 	return fmt.Errorf(
 		"vuln scan of walk %s reported a verdict for %d modules but stored only %d: no record persisted for %v (and %d more)",
-		params.WalkID, len(walk.Graph.Nodes), len(walk.Graph.Nodes)-len(missing), named, len(missing)-len(named),
+		run.WalkID, len(walk.Graph.Nodes), len(walk.Graph.Nodes)-len(missing), named, len(missing)-len(named),
 	)
 }
 
@@ -462,6 +480,11 @@ func (uc *ScanWalkUseCase) tallyModuleResults(
 				DatabaseSnapshot: *snapshot,
 				ScannedAt:        uc.clock.Now(),
 				PipelineVersion:  uc.pipelineVersion,
+				// A worker error only ever comes from the isolated scan pool — the
+				// target-rooted paths return their own records and never an error here —
+				// so this failure is a failure of the isolated analysis, and states that
+				// frame rather than leaving it unrecorded.
+				Rooting: domain.RootingIsolated,
 			}
 			var stored bool
 			failedRecord, stored = uc.persistSealed(ctx, failedRecord, "ScanFailed")
@@ -602,7 +625,14 @@ func (uc *ScanWalkUseCase) recordLocalReplaceUnscannable(
 		*progressCount++
 		// No ArtefactIdentity: a local-replace node is unscannable precisely
 		// because it is a working tree rather than a fetched artefact.
+		//
+		// The frame is unrecorded, and it is stated so rather than left off. No
+		// analysis was rooted anywhere for this node: it is excluded from the scan
+		// pool and from the target-rooted build alike, so naming a frame would
+		// claim an analysis that was never attempted. Writing the constant makes
+		// that a decision at the site rather than a field someone forgot.
 		rec := domain.VulnerabilityRecord{
+			Rooting:           domain.RootingUnrecorded,
 			Ecosystem:         fetchdomain.EcosystemGo,
 			Coordinate:        node.Coordinate,
 			WalkID:            params.WalkID,

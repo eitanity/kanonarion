@@ -43,7 +43,7 @@ func TestScanModule_MetadataOnlyMatchStatesBothAxes(t *testing.T) {
 		t.Fatalf("Scan(): %v", err)
 	}
 
-	stored, ok := vulnStore.records[vulnStore.recordKey(modCoord, "v1", snap)]
+	stored, ok := vulnStore.served(vulnStore.recordKey(modCoord, "v1", snap))
 	if !ok {
 		t.Fatal("no record was stored for the metadata-only scan")
 	}
@@ -90,7 +90,7 @@ func TestScanModule_MetadataOnlyCleanIsStillACoverageGap(t *testing.T) {
 		t.Fatalf("Scan(): %v", err)
 	}
 
-	stored, ok := vulnStore.records[vulnStore.recordKey(modCoord, "v1", snap)]
+	stored, ok := vulnStore.served(vulnStore.recordKey(modCoord, "v1", snap))
 	if !ok {
 		t.Fatal("no record was stored for the metadata-only scan")
 	}
