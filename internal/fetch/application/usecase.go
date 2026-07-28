@@ -167,6 +167,25 @@ type FetchResult struct {
 	FromCache bool
 }
 
+// blobIdentities addresses both artefacts of a measurement. The addresses come
+// from the hashes just measured, so the same artefact acquired by any route
+// lands at the same place in every store that holds it.
+//
+// Each refusal the constructor makes is returned rather than absorbed: an
+// address the identity type would not build is one no reader could read back
+// out of the content_location it is written to.
+func blobIdentities(dl ports.ModuleDownload) (zip, goMod ports.BlobIdentity, err error) {
+	zip, err = ports.NewBlobIdentity(ports.BlobKindZip, dl.ZipHash)
+	if err != nil {
+		return ports.BlobIdentity{}, ports.BlobIdentity{}, fmt.Errorf("addressing zip blob: %w", err)
+	}
+	goMod, err = ports.NewBlobIdentity(ports.BlobKindGoMod, dl.GoModHash)
+	if err != nil {
+		return ports.BlobIdentity{}, ports.BlobIdentity{}, fmt.Errorf("addressing go.mod blob: %w", err)
+	}
+	return zip, goMod, nil
+}
+
 // Execute runs the full fetch-verify-persist pipeline for the given module.
 //
 // Verification failures (UnverifiedX statuses) do not fail Execute; they are
@@ -295,8 +314,10 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 	// just shown to be the recorded ones, so there is nothing to write; a Put
 	// here would be a no-op that obscures whether a forced run transferred
 	// anything at all.
-	zipIdentity := ports.BlobIdentity{Kind: ports.BlobKindZip, Hash: dl.ZipHash}
-	goModIdentity := ports.BlobIdentity{Kind: ports.BlobKindGoMod, Hash: dl.GoModHash}
+	zipIdentity, goModIdentity, err := blobIdentities(dl)
+	if err != nil {
+		return FetchResult{}, err
+	}
 	if revalidated == nil {
 		if err := uc.blobs.Put(ctx, zipIdentity, newReader(zipData)); err != nil {
 			return FetchResult{}, fmt.Errorf("storing zip blob: %w", err)
@@ -430,7 +451,10 @@ func (uc *FetchModuleUseCase) executeGoModOnly(ctx context.Context, req FetchReq
 	}
 
 	// Step 3: store the go.mod blob (no zip blob).
-	goModIdentity := ports.BlobIdentity{Kind: ports.BlobKindGoMod, Hash: dl.GoModHash}
+	goModIdentity, err := ports.NewBlobIdentity(ports.BlobKindGoMod, dl.GoModHash)
+	if err != nil {
+		return FetchResult{}, fmt.Errorf("addressing go.mod blob: %w", err)
+	}
 	if err := uc.blobs.Put(ctx, goModIdentity, newReader(goModData)); err != nil {
 		return FetchResult{}, fmt.Errorf("storing go.mod blob: %w", err)
 	}

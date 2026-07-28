@@ -68,7 +68,16 @@ func adoptLegacyBlobs(db sqlitestore.DB, blobs *blobstore.Store, storeRoot strin
 			if perr != nil || h.IsZero() || artefact.legacy == "" {
 				continue
 			}
-			ok, aerr := blobs.AdoptLegacyBlob(fetchports.BlobIdentity{Kind: artefact.kind, Hash: h}, artefact.legacy)
+			identity, ierr := fetchports.NewBlobIdentity(artefact.kind, h)
+			if ierr != nil {
+				logger.Warn("blob_readdress_failed",
+					slog.String("legacy_handle", artefact.legacy),
+					slog.String("error", ierr.Error()),
+				)
+				skipped++
+				continue
+			}
+			ok, aerr := blobs.AdoptLegacyBlob(identity, artefact.legacy)
 			switch {
 			case aerr != nil:
 				logger.Warn("blob_readdress_failed",

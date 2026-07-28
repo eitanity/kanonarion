@@ -116,11 +116,17 @@ func (f *Fetcher) EnsureFetchedFromPath(
 		return walkports.LocalModuleFetchResult{}, fmt.Errorf("parsing go.mod hash for %s: %w", coord, err)
 	}
 
-	zipIdentity := fetchports.BlobIdentity{Kind: fetchports.BlobKindZip, Hash: zipHash}
+	zipIdentity, err := fetchports.NewBlobIdentity(fetchports.BlobKindZip, zipHash)
+	if err != nil {
+		return walkports.LocalModuleFetchResult{}, fmt.Errorf("addressing zip blob for %s: %w", coord, err)
+	}
 	if err := f.blobs.Put(ctx, zipIdentity, bytes.NewReader(zipData)); err != nil {
 		return walkports.LocalModuleFetchResult{}, fmt.Errorf("storing zip blob for %s: %w", coord, err)
 	}
-	goModIdentity := fetchports.BlobIdentity{Kind: fetchports.BlobKindGoMod, Hash: goModHash}
+	goModIdentity, err := fetchports.NewBlobIdentity(fetchports.BlobKindGoMod, goModHash)
+	if err != nil {
+		return walkports.LocalModuleFetchResult{}, fmt.Errorf("addressing go.mod blob for %s: %w", coord, err)
+	}
 	if err := f.blobs.Put(ctx, goModIdentity, bytes.NewReader(goModData)); err != nil {
 		return walkports.LocalModuleFetchResult{}, fmt.Errorf("storing go.mod blob for %s: %w", coord, err)
 	}

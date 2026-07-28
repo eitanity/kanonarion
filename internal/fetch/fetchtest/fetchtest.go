@@ -209,6 +209,23 @@ func GoModArtefact(value string) domain.ArtefactIdentity {
 	return artefact("gomod", H1(value))
 }
 
+// Blob is the blob identity of one artefact of a module version, for the tests
+// that key a fake blob store directly rather than deriving the address from a
+// record. A test that has a record should use ZipIdentity or GoModIdentity,
+// which is the route production takes.
+//
+// It goes through ports.NewBlobIdentity, so a fixture identity is one the
+// constructor accepts, and it panics rather than taking a testing.TB for the
+// reason H1 does — identities are built in table cases and package-level vars
+// where no testing handle is in scope.
+func Blob(kind ports.BlobKind, hash domain.ModuleHash) ports.BlobIdentity {
+	identity, err := ports.NewBlobIdentity(kind, hash)
+	if err != nil {
+		panic(fmt.Sprintf("fetchtest: invalid blob identity %s:%s: %v", kind, hash, err))
+	}
+	return identity
+}
+
 // artefact parses the persisted spelling of an identity at the given depth,
 // panicking on one the domain refuses.
 func artefact(prefix string, hash domain.ModuleHash) domain.ArtefactIdentity {

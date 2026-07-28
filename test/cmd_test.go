@@ -163,8 +163,12 @@ func cmdSeedWalk(args []string) {
 			_ = db.Close()
 			os.Exit(1)
 		}
-		zipIdentity := fetchports.BlobIdentity{Kind: fetchports.BlobKindZip, Hash: parsedZipHash}
-		goModIdentity := fetchports.BlobIdentity{Kind: fetchports.BlobKindGoMod, Hash: parsedModHash}
+		zipIdentity, zierr := fetchports.NewBlobIdentity(fetchports.BlobKindZip, parsedZipHash)
+		goModIdentity, mierr := fetchports.NewBlobIdentity(fetchports.BlobKindGoMod, parsedModHash)
+		if zierr != nil || mierr != nil {
+			_ = db.Close()
+			os.Exit(1)
+		}
 		if err := blobStore.Put(context.Background(), zipIdentity, bytes.NewReader(zipContent)); err != nil {
 			_ = db.Close()
 			os.Exit(1)

@@ -109,8 +109,8 @@ func TestExecuteModcache_RecordsTheSameIdentityAsEveryOtherMode(t *testing.T) {
 	if got, want := res.Record.VerificationStatus, string(domain2.VerifiedBySumDBOnly); got != want {
 		t.Errorf("VerificationStatus = %q, want %q", got, want)
 	}
-	wantZip := ports.BlobIdentity{Kind: ports.BlobKindZip, Hash: zipHash}
-	wantGoMod := ports.BlobIdentity{Kind: ports.BlobKindGoMod, Hash: goModHash}
+	wantZip := fetchtest.Blob(ports.BlobKindZip, zipHash)
+	wantGoMod := fetchtest.Blob(ports.BlobKindGoMod, goModHash)
 	if got := res.Record.ContentLocation; got != wantZip.String() {
 		t.Errorf("ContentLocation = %q, want the measured zip identity %q", got, wantZip)
 	}
@@ -153,7 +153,7 @@ func TestExecuteGoModOnlyModcache_RecordsGoModOnly(t *testing.T) {
 	if res.Record.ContentLocation != "" {
 		t.Errorf("go.mod-only record must have empty ContentLocation, got %q", res.Record.ContentLocation)
 	}
-	wantGoMod := ports.BlobIdentity{Kind: ports.BlobKindGoMod, Hash: goModHash}
+	wantGoMod := fetchtest.Blob(ports.BlobKindGoMod, goModHash)
 	if got := res.Record.GoModLocation; got != wantGoMod.String() {
 		t.Errorf("GoModLocation = %q, want the measured go.mod identity %q", got, wantGoMod)
 	}
@@ -260,7 +260,7 @@ func TestExecuteModcache_CacheHitSkipsDownload(t *testing.T) {
 		fetchtest.GoModHash(domain2.ModuleHash{}),
 		fetchtest.Status(domain2.VerifiedBySumDBOnly),
 		fetchtest.PipelineVersion("test-0.1.0"),
-		fetchtest.Content(ports.BlobIdentity{Kind: ports.BlobKindZip, Hash: zipHash}.String()),
+		fetchtest.Content(fetchtest.Blob(ports.BlobKindZip, zipHash).String()),
 	)
 	if err := blobs.Put(context.Background(), fetchtest.ZipIdentity(t, seeded), strings.NewReader("zip-bytes")); err != nil {
 		t.Fatalf("seeding zip blob: %v", err)
@@ -271,7 +271,7 @@ func TestExecuteModcache_CacheHitSkipsDownload(t *testing.T) {
 		fetchtest.GoModHash(domain2.ModuleHash{}),
 		fetchtest.Status(domain2.VerifiedBySumDBOnly),
 		fetchtest.PipelineVersion("test-0.1.0"),
-		fetchtest.Content(ports.BlobIdentity{Kind: ports.BlobKindZip, Hash: zipHash}.String()),
+		fetchtest.Content(fetchtest.Blob(ports.BlobKindZip, zipHash).String()),
 	)); err != nil {
 		t.Fatalf("seeding record: %v", err)
 	}

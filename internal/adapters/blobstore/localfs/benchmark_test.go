@@ -35,10 +35,7 @@ func BenchmarkPut(b *testing.B) {
 				// A distinct identity per iteration: an identity already held is a
 				// no-op, which would benchmark the existence check rather than the
 				// write.
-				identity := ports.BlobIdentity{
-					Kind: ports.BlobKindZip,
-					Hash: fetchtest.H1(strconv.Itoa(i)),
-				}
+				identity := fetchtest.Blob(ports.BlobKindZip, fetchtest.H1(strconv.Itoa(i)))
 				if err := store.Put(ctx, identity, bytes.NewReader(payload)); err != nil {
 					b.Fatal(err)
 				}

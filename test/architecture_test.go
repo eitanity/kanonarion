@@ -383,9 +383,12 @@ func TestNoInfraImportsInApplicationOrDomain(t *testing.T) {
 // meant, which is what makes the omission dangerous rather than merely wrong.
 //
 // Each entry is one conversion: ModuleCoordinate, then the artefact identity
-// and the hash inside it. The identity is the key the fetch ledger composes on
-// and the value the extraction contexts embed, so an uncalled accessor there
-// reaches a SQL parameter by the same route the coordinate's did.
+// and the hash inside it, then the blob identity that addresses an artefact in
+// a store. The identity is the key the fetch ledger composes on and the value
+// the extraction contexts embed, so an uncalled accessor there reaches a SQL
+// parameter by the same route the coordinate's did. The blob identity reaches
+// one by a shorter route still: its String is written to the content_location
+// and go_mod_location columns of every fact record.
 var valueObjectAccessors = map[string]map[string]bool{
 	modulePath + "/internal/coordinate.ModuleCoordinate": {
 		"Path": true, "Version": true, "String": true, "IsLocal": true,
@@ -395,6 +398,9 @@ var valueObjectAccessors = map[string]map[string]bool{
 	},
 	modulePath + "/internal/fetch/domain.ModuleHash": {
 		"Algorithm": true, "Value": true, "String": true, "IsZero": true,
+	},
+	modulePath + "/internal/fetch/ports.BlobIdentity": {
+		"Kind": true, "Hash": true, "String": true, "IsZero": true,
 	},
 }
 

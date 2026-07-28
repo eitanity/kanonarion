@@ -137,11 +137,13 @@ func (uc *FetchModuleUseCase) executeModcache(ctx context.Context, req FetchRequ
 	// blob adapter populates its address space by hard link where it can, so this
 	// costs no duplication, and the resulting record names the same address a
 	// network measurement of the same artefact would.
-	zipIdentity := ports.BlobIdentity{Kind: ports.BlobKindZip, Hash: dl.ZipHash}
+	zipIdentity, goModIdentity, err := blobIdentities(dl)
+	if err != nil {
+		return FetchResult{}, err
+	}
 	if err := uc.blobs.Put(ctx, zipIdentity, newReader(zipData)); err != nil {
 		return FetchResult{}, fmt.Errorf("storing zip blob: %w", err)
 	}
-	goModIdentity := ports.BlobIdentity{Kind: ports.BlobKindGoMod, Hash: dl.GoModHash}
 	if err := uc.blobs.Put(ctx, goModIdentity, newReader(goModData)); err != nil {
 		return FetchResult{}, fmt.Errorf("storing go.mod blob: %w", err)
 	}
@@ -246,7 +248,10 @@ func (uc *FetchModuleUseCase) executeGoModOnlyModcache(ctx context.Context, req 
 	}
 
 	// Step 4: store the go.mod alone — there is no zip in a go.mod-only fetch.
-	goModIdentity := ports.BlobIdentity{Kind: ports.BlobKindGoMod, Hash: dl.GoModHash}
+	goModIdentity, err := ports.NewBlobIdentity(ports.BlobKindGoMod, dl.GoModHash)
+	if err != nil {
+		return FetchResult{}, fmt.Errorf("addressing go.mod blob: %w", err)
+	}
 	if err := uc.blobs.Put(ctx, goModIdentity, newReader(goModData)); err != nil {
 		return FetchResult{}, fmt.Errorf("storing go.mod blob: %w", err)
 	}

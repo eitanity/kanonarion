@@ -233,15 +233,24 @@ type BlobPathOptimizer interface {
 // fetch measurement, never invented by a store, so two stores asked for the same
 // artefact are asked with the same value.
 //
-// Kind distinguishes the module zip from the standalone go.mod, because a
+// The kind distinguishes the module zip from the standalone go.mod, because a
 // go.mod-only measurement records the go.mod's h1 as the artefact identity and
 // the two must not collide in a store that holds both.
+//
+// Its fields are unexported: an identity is derived from a fact record by
+// ZipIdentity or GoModIdentity, or built by NewBlobIdentity, and none of those
+// can be short-circuited by a struct literal. Both refusals the constructor
+// makes close a shape that renders to a string no reader can read: an identity
+// with no kind renders as ":h1:..." and collides a zip with a go.mod of equal
+// hash, which is the collision the kind exists to prevent, and an identity with
+// a zero hash renders as "", which persists indistinguishably from a record
+// that never recorded a location. Read it back through Kind, Hash or String.
 type BlobIdentity struct {
-	// Kind names which artefact of the module this identity addresses.
-	Kind BlobKind
+	// kind names which artefact of the module this identity addresses.
+	kind BlobKind
 
-	// Hash is the h1 hash of the artefact's bytes.
-	Hash domain2.ModuleHash
+	// hash is the h1 hash of the artefact's bytes.
+	hash domain2.ModuleHash
 }
 
 // BlobKind names an artefact of a module version.
@@ -255,8 +264,40 @@ const (
 	BlobKindGoMod BlobKind = "gomod"
 )
 
+// ErrUnknownBlobKind is the refusal a blob identity owes a kind that is neither
+// the module zip nor the standalone go.mod. It is defined here, beside the value
+// object, on the terms domain.ErrZeroIdentity already set: one error so every
+// caller refuses alike and a test can name the refusal without matching prose.
+var ErrUnknownBlobKind = errors.New("blob kind is neither zip nor gomod: an identity without a kind collides the two artefacts of a module version")
+
+// NewBlobIdentity returns the content-chosen address of one artefact of one
+// module version. Both parts are required: an unknown kind and a zero hash are
+// each refused, because each produces a rendering no reader can read back.
+//
+// It is the construction path for the cases with no fact record to derive from
+// — a stdlib acquisition, a local-filesystem measurement, the adoption of a
+// legacy blob. Where a record does exist, ZipIdentity and GoModIdentity remain
+// the ordinary route and route through here themselves.
+func NewBlobIdentity(kind BlobKind, hash domain2.ModuleHash) (BlobIdentity, error) {
+	switch kind {
+	case BlobKindZip, BlobKindGoMod:
+	default:
+		return BlobIdentity{}, fmt.Errorf("building blob identity: %w: got %q", ErrUnknownBlobKind, kind)
+	}
+	if hash.IsZero() {
+		return BlobIdentity{}, fmt.Errorf("building %s blob identity: %w", kind, domain2.ErrZeroIdentity)
+	}
+	return BlobIdentity{kind: kind, hash: hash}, nil
+}
+
+// Kind names which artefact of the module version this identity addresses.
+func (b BlobIdentity) Kind() BlobKind { return b.kind }
+
+// Hash is the h1 hash of the artefact's bytes.
+func (b BlobIdentity) Hash() domain2.ModuleHash { return b.hash }
+
 // IsZero reports whether the identity addresses nothing.
-func (b BlobIdentity) IsZero() bool { return b.Hash.IsZero() }
+func (b BlobIdentity) IsZero() bool { return b.hash.IsZero() }
 
 // String renders the identity as "<kind>:<algorithm>:<value>". It is the
 // canonical spelling adapters key their internal layout from and the form a
@@ -265,7 +306,7 @@ func (b BlobIdentity) String() string {
 	if b.IsZero() {
 		return ""
 	}
-	return string(b.Kind) + ":" + b.Hash.String()
+	return string(b.kind) + ":" + b.hash.String()
 }
 
 // ZipIdentity derives the blob identity of a fact record's module zip. The
@@ -283,7 +324,11 @@ func ZipIdentity(r domain2.FactRecord) (BlobIdentity, bool, error) {
 	if h.IsZero() {
 		return BlobIdentity{}, false, nil
 	}
-	return BlobIdentity{Kind: BlobKindZip, Hash: h}, true, nil
+	identity, err := NewBlobIdentity(BlobKindZip, h)
+	if err != nil {
+		return BlobIdentity{}, false, fmt.Errorf("deriving zip identity for %s: %w", r.Coordinate(), err)
+	}
+	return identity, true, nil
 }
 
 // GoModIdentity derives the blob identity of a fact record's standalone go.mod.
@@ -296,7 +341,11 @@ func GoModIdentity(r domain2.FactRecord) (BlobIdentity, bool, error) {
 	if h.IsZero() {
 		return BlobIdentity{}, false, nil
 	}
-	return BlobIdentity{Kind: BlobKindGoMod, Hash: h}, true, nil
+	identity, err := NewBlobIdentity(BlobKindGoMod, h)
+	if err != nil {
+		return BlobIdentity{}, false, fmt.Errorf("deriving go.mod identity for %s: %w", r.Coordinate(), err)
+	}
+	return identity, true, nil
 }
 
 // Signer signs a subject digest taken from the content-identity surface and

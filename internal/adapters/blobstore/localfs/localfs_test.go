@@ -85,8 +85,7 @@ func TestStore_KindSeparatesArtefactsOfEqualHash(t *testing.T) {
 	ctx := context.Background()
 
 	zip := testIdentity("same-hash")
-	goMod := zip
-	goMod.Kind = "gomod"
+	goMod := testGoModIdentity("same-hash")
 
 	if err := store.Put(ctx, zip, strings.NewReader("zip bytes")); err != nil {
 		t.Fatalf("Put zip: %v", err)

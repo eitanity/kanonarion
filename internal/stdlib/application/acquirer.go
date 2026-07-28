@@ -204,9 +204,11 @@ func (a *Acquirer) cacheTarball(ctx context.Context, version string, tarball []b
 			slog.String("go_version", version), slog.String("error", err.Error()))
 		return ""
 	}
-	identity := fetchports.BlobIdentity{
-		Kind: fetchports.BlobKindZip,
-		Hash: hash,
+	identity, err := fetchports.NewBlobIdentity(fetchports.BlobKindZip, hash)
+	if err != nil {
+		a.logger.WarnContext(ctx, "stdlib.tarball.cache_failed",
+			slog.String("go_version", version), slog.String("error", err.Error()))
+		return ""
 	}
 	if err := a.blobs.Put(ctx, identity, bytes.NewReader(tarball)); err != nil {
 		a.logger.WarnContext(ctx, "stdlib.tarball.cache_failed",

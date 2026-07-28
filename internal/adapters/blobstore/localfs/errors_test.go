@@ -17,10 +17,13 @@ import (
 // testIdentity is a well-formed artefact identity for tests that need one but do
 // not care what it names.
 func testIdentity(value string) ports.BlobIdentity {
-	return ports.BlobIdentity{
-		Kind: ports.BlobKindZip,
-		Hash: fetchtest.H1(value),
-	}
+	return fetchtest.Blob(ports.BlobKindZip, fetchtest.H1(value))
+}
+
+// testGoModIdentity is testIdentity's go.mod counterpart: the same h1 under the
+// other kind, for the tests whose subject is that the two do not collide.
+func testGoModIdentity(value string) ports.BlobIdentity {
+	return fetchtest.Blob(ports.BlobKindGoMod, fetchtest.H1(value))
 }
 
 // The malformed-handle cases these tests used to cover no longer exist. An

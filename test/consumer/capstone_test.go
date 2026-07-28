@@ -154,9 +154,9 @@ func TestConsumer_SubstitutionPortsAreImplementable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewModuleHash: %v", err)
 	}
-	handle := kanonarion.BlobIdentity{
-		Kind: kanonarion.BlobKindZip,
-		Hash: zipHash,
+	handle, err := kanonarion.NewBlobIdentity(kanonarion.BlobKindZip, zipHash)
+	if err != nil {
+		t.Fatalf("NewBlobIdentity: %v", err)
 	}
 	if err := bs.Put(ctx, handle, strings.NewReader("module-zip-bytes")); err != nil {
 		t.Fatalf("Put: %v", err)
