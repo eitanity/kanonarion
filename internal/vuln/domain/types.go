@@ -489,12 +489,32 @@ func SnapshotAgeDays(validatedAt, retrievedAt time.Time) int {
 	return int(validatedAt.Sub(retrievedAt).Hours() / 24)
 }
 
-// ReachabilityResult captures call-graph-based determination of whether a
-// vulnerability is reachable from the target's entry points.
+// ReachabilityResult captures whether a vulnerability is reachable from the
+// analysed entry points, the routes that reach it, and how the answer was
+// derived.
+//
+// DerivedBy is not decoration. A reachability answer is a fact about ONE
+// analysis of ONE resolved build, and the same advisory in the same module is
+// reachable in one project and unreachable in the next — a different consumer
+// may resolve a different, unaffected version, or reach the module by a route
+// that never touches the vulnerable symbol. An answer that does not say what
+// produced it, how well it could see, and what it was rooted at will be read as
+// a property of the module, which it is not.
 type ReachabilityResult struct {
-	IsReachable  bool                   `json:"is_reachable"`
-	Confidence   ReachabilityConfidence `json:"confidence"`
-	ExamplePaths [][]string             `json:"example_paths,omitzero"`
+	IsReachable bool                   `json:"is_reachable"`
+	Confidence  ReachabilityConfidence `json:"confidence"`
+	// Routes are the paths from an entry point to the vulnerable symbol, entry
+	// point first. Empty when the analyser reported none, and on every answer
+	// recorded before routes were kept.
+	//
+	// It replaces an earlier [][]string of bare symbol names. Those could not
+	// name the module version at each hop, which is the one thing that lets a
+	// reader check a route against their own build; the field was populated on
+	// none of the answers in a working store, so nothing was lost by retiring
+	// it.
+	Routes []ReachabilityRoute `json:"routes,omitzero"`
+	// DerivedBy states the instrument, the fidelity and the analysis frame.
+	DerivedBy ReachabilityDerivation `json:"derived_by,omitzero"`
 }
 
 // VulnerabilityFinding represents a single vulnerability affecting a module.

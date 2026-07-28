@@ -499,6 +499,10 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 		record.CallGraphAlgorithm = algorithm
 	}
 
+	// The analysers below this layer produce the reachability answers and cannot
+	// know the frame the record is being written in; this is where the two meet.
+	domain.StampReachabilityRooting(&record)
+
 	// 7. Deterministic Identity (T5: Hash-based Identity)
 	record, err = domain.VulnerabilityRecordHasher{}.SetContentHash(record)
 	if err != nil {

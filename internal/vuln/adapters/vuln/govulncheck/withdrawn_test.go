@@ -22,7 +22,7 @@ var wantWithdrawnAt = time.Date(2026, 4, 8, 13, 33, 56, 0, time.UTC)
 func TestParseResults_CarriesTheWithdrawalTimestamp(t *testing.T) {
 	s := New("v1", nil)
 
-	findings, err := s.parseResults(t.Context(), strings.NewReader(withdrawnStream), "go.etcd.io/bbolt")
+	findings, err := s.parseResults(t.Context(), strings.NewReader(withdrawnStream), "go.etcd.io/bbolt", domain.ScanModeSource)
 	if err != nil {
 		t.Fatalf("parseResults: %v", err)
 	}
@@ -48,7 +48,7 @@ func TestParseResults_CarriesTheWithdrawalTimestamp(t *testing.T) {
 func TestParseResultsByModule_CarriesTheWithdrawalTimestamp(t *testing.T) {
 	s := New("v1", nil)
 
-	byModule, err := s.parseResultsByModule(t.Context(), strings.NewReader(withdrawnStream))
+	byModule, err := s.parseResultsByModule(t.Context(), strings.NewReader(withdrawnStream), domain.ScanModeSource)
 	if err != nil {
 		t.Fatalf("parseResultsByModule: %v", err)
 	}
@@ -79,7 +79,7 @@ func TestProjectScanStatus_OneLiveAdvisoryStillAffects(t *testing.T) {
 {"osv": {"id": "GO-2026-5970", "summary": "live advisory in x/text"}}
 {"finding": {"osv": "GO-2026-5970", "trace": [{"module": "golang.org/x/text", "version": "v0.37.0", "function": "Parse"}]}}
 `
-	byModule, err := s.parseResultsByModule(t.Context(), strings.NewReader(stream))
+	byModule, err := s.parseResultsByModule(t.Context(), strings.NewReader(stream), domain.ScanModeSource)
 	if err != nil {
 		t.Fatalf("parseResultsByModule: %v", err)
 	}

@@ -127,7 +127,21 @@ func (uc *ScanWalkUseCase) mergeCoordinateFindings(
 			continue
 		}
 		if reachabilityAnswerable {
-			f.Reachable = &domain.ReachabilityResult{IsReachable: false, Confidence: domain.ConfidenceHigh}
+			// The derivation is stated even though this answer has no route, and
+			// having none is the point: it is govulncheck's SILENCE about the
+			// module, not a path it traced. The instrument and its fidelity are
+			// what make that silence an answer — the analysis examined this module
+			// at its real version from real entry points — so an answer that did
+			// not name them would be indistinguishable from one no analyser
+			// produced at all.
+			f.Reachable = &domain.ReachabilityResult{
+				IsReachable: false,
+				Confidence:  domain.ConfidenceHigh,
+				DerivedBy: domain.ReachabilityDerivation{
+					Analyser: domain.AnalyserGovulncheck,
+					Fidelity: string(domain.ScanModeSource),
+				},
+			}
 		}
 		reported = append(reported, f)
 		added++
@@ -245,6 +259,10 @@ func (uc *ScanWalkUseCase) persistProjectRecord(
 		Rooting: domain.TargetRootedAt(root),
 	}
 	domain.SortFindings(rec.Findings)
+	// govulncheck produced these reachability answers and knows nothing of the
+	// walk; the frame it was rooted at is stamped on each of them here, so a
+	// finding carries its own derivation wherever it is copied to.
+	domain.StampReachabilityRooting(&rec)
 	sealed, herr := domain.VulnerabilityRecordHasher{}.SetContentHash(rec)
 	if herr != nil {
 		// An unsealed record is one the store refuses, so there is nothing to

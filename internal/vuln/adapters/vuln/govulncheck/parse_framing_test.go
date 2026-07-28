@@ -7,6 +7,9 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+
+	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/vuln/domain"
 )
 
 // indentStream re-encodes a stream of compact JSON messages the way govulncheck
@@ -62,7 +65,7 @@ func TestParseResultsByModule_IndentedStreamIsNotDiscarded(t *testing.T) {
 		t.Fatal("fixture is not multi-line; the framing regression cannot be reproduced")
 	}
 
-	byModule, err := s.parseResultsByModule(t.Context(), strings.NewReader(indented))
+	byModule, err := s.parseResultsByModule(t.Context(), strings.NewReader(indented), domain.ScanModeSource)
 	if err != nil {
 		t.Fatalf("parseResultsByModule on indented stream: %v", err)
 	}
@@ -80,7 +83,7 @@ func TestParseResultsByModule_IndentedStreamIsNotDiscarded(t *testing.T) {
 		t.Errorf("affected symbols on indented stream = %v, want [Form.Append]", got[0].AffectedSymbols)
 	}
 
-	compact, err := s.parseResultsByModule(t.Context(), strings.NewReader(projectStreamFixture))
+	compact, err := s.parseResultsByModule(t.Context(), strings.NewReader(projectStreamFixture), domain.ScanModeSource)
 	if err != nil {
 		t.Fatalf("parseResultsByModule on compact stream: %v", err)
 	}
@@ -97,7 +100,7 @@ func TestParseResults_IndentedStreamIsNotDiscarded(t *testing.T) {
 	s := New("v1", nil)
 	indented := indentStream(t, projectStreamFixture)
 
-	findings, err := s.parseResults(t.Context(), strings.NewReader(indented), "golang.org/x/text")
+	findings, err := s.parseResults(t.Context(), strings.NewReader(indented), "golang.org/x/text", domain.ScanModeSource)
 	if err != nil {
 		t.Fatalf("parseResults on indented stream: %v", err)
 	}
@@ -117,7 +120,73 @@ func TestStreamMessages_TruncatedStreamIsAnError(t *testing.T) {
 	indented := indentStream(t, projectStreamFixture)
 	truncated := indented[:len(indented)-40]
 
-	if _, err := s.parseResultsByModule(t.Context(), strings.NewReader(truncated)); err == nil {
+	if _, err := s.parseResultsByModule(t.Context(), strings.NewReader(truncated), domain.ScanModeSource); err == nil {
 		t.Fatal("parseResultsByModule on a truncated stream returned nil error; a partial parse must not read as clean")
+	}
+}
+
+// TestParseResultsByModule_KeepsTheVersionedRoute is the regression for a route
+// that arrived in full and was thrown away.
+//
+// govulncheck reports the whole call chain beside each finding, with a module
+// path AND a version at every hop it knows one for. The parser used to unmarshal
+// that trace into a struct that kept three fields, read trace[0] to decide
+// attribution, and discard every caller frame — so the store held the two ends
+// of a reachability answer and nothing between them, and "which of my
+// dependencies drags this in" could not be answered from it.
+func TestParseResultsByModule_KeepsTheVersionedRoute(t *testing.T) {
+	s := New("v1", nil)
+
+	byModule, err := s.parseResultsByModule(t.Context(), strings.NewReader(projectStreamFixture), domain.ScanModeSource)
+	if err != nil {
+		t.Fatalf("parseResultsByModule: %v", err)
+	}
+	coord, err := coordinate.NewModuleCoordinate("golang.org/x/text", "v0.37.0")
+	if err != nil {
+		t.Fatalf("building coordinate: %v", err)
+	}
+	findings := byModule[coord]
+	if len(findings) != 1 {
+		t.Fatalf("got %d findings for the owning module, want 1", len(findings))
+	}
+	r := findings[0].Reachable
+	if r == nil {
+		t.Fatal("the finding carries no reachability answer")
+	}
+
+	// The derivation names the instrument and how well it could see.
+	if r.DerivedBy.Analyser != domain.AnalyserGovulncheck {
+		t.Errorf("analyser = %q, want %q", r.DerivedBy.Analyser, domain.AnalyserGovulncheck)
+	}
+	if r.DerivedBy.Fidelity != string(domain.ScanModeSource) {
+		t.Errorf("fidelity = %q, want %q", r.DerivedBy.Fidelity, domain.ScanModeSource)
+	}
+
+	if len(r.Routes) != 1 {
+		t.Fatalf("got %d routes, want 1", len(r.Routes))
+	}
+	route := r.Routes[0]
+	if len(route) != 2 {
+		t.Fatalf("route has %d hops, want 2: %v", len(route), route)
+	}
+	// Entry point first: govulncheck emits the reverse, and the stored order is
+	// normalised so no consumer has to know which analyser wrote it.
+	if route[0].Symbol != "main" || route[0].ModulePath != "example.com/proj" {
+		t.Errorf("hop 0 = %v, want the project's main", route[0])
+	}
+	// The vulnerable hop carries the version, which is the whole point: a reader
+	// can check it against their own build, where the module may resolve to a
+	// version this advisory does not affect.
+	last := route[len(route)-1]
+	if last.ModulePath != "golang.org/x/text" || last.ModuleVersion != "v0.37.0" || last.Symbol != "Append" {
+		t.Errorf("last hop = %v, want golang.org/x/text@v0.37.0 Append", last)
+	}
+	if last.Receiver != "Form" {
+		t.Errorf("last hop lost the receiver: %v", last)
+	}
+	// The entry point is a main module and so carries no version; the route is
+	// still checkable, because every hop past it names one.
+	if !route.IsVersioned() {
+		t.Error("a route whose only unversioned hop is the entry point was reported uncheckable")
 	}
 }

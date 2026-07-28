@@ -106,23 +106,40 @@ func scannedRecord(status vuldomain.VulnerabilityStatus, findings ...vuldomain.V
 // with the expected verdict and never an error.
 func TestVulnReachabilityVerdict_ConfidentAnswers(t *testing.T) {
 	reachable := vuldomain.VulnerabilityFinding{
-		ID:        "GO-2021-0113",
-		Reachable: &vuldomain.ReachabilityResult{IsReachable: true, Confidence: vuldomain.ConfidenceHigh, ExamplePaths: [][]string{{"main.main", "x.Vuln"}}},
+		ID: "GO-2021-0113",
+		Reachable: &vuldomain.ReachabilityResult{IsReachable: true, Confidence: vuldomain.ConfidenceHigh, Routes: []vuldomain.ReachabilityRoute{{
+			{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", Symbol: "main"},
+			{ModulePath: "golang.org/x/text", ModuleVersion: "v0.3.0", Package: "language", Symbol: "Parse"},
+		}},
+			DerivedBy: vuldomain.ReachabilityDerivation{
+				Analyser: vuldomain.AnalyserGovulncheck,
+				Fidelity: string(vuldomain.ScanModeSource),
+				Rooting:  vuldomain.RootingIsolated,
+			}},
 	}
 	notReachable := vuldomain.VulnerabilityFinding{
 		ID:        "GO-2021-0113",
 		Reachable: &vuldomain.ReachabilityResult{IsReachable: false, Confidence: vuldomain.ConfidenceHigh},
 	}
 
+	// The method is read off the answer, never assumed. It used to be the
+	// constant "call-graph" on every reply, which reported every
+	// govulncheck-derived answer in the store — almost all of them — as one this
+	// tool had computed, and reported the two replies that consult no analyser at
+	// all as if they had.
 	tests := []struct {
 		name        string
 		rec         vuldomain.VulnerabilityRecord
 		vulnID      string
 		wantVerdict string
+		wantMethod  string
 	}{
-		{"reachable", scannedRecord(vuldomain.StatusAffected, reachable), "GO-2021-0113", verdictReachable},
-		{"not reachable", scannedRecord(vuldomain.StatusAffected, notReachable), "GO-2021-0113", verdictNotReachable},
-		{"not affected: scanned clean, CVE absent", scannedRecord(vuldomain.StatusClean), "GO-2021-0113", verdictNotAffected},
+		{"reachable", scannedRecord(vuldomain.StatusAffected, reachable), "GO-2021-0113", verdictReachable, string(vuldomain.AnalyserGovulncheck)},
+		// An answer stored before the derivation was recorded says so, rather than
+		// borrowing an instrument it never named.
+		{"not reachable", scannedRecord(vuldomain.StatusAffected, notReachable), "GO-2021-0113", verdictNotReachable, vuldomain.AnalyserUnrecorded.String()},
+		// Not-affected is read off the advisory set; no analyser was consulted.
+		{"not affected: scanned clean, CVE absent", scannedRecord(vuldomain.StatusClean), "GO-2021-0113", verdictNotAffected, reachabilityMethodNone},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -133,8 +150,8 @@ func TestVulnReachabilityVerdict_ConfidentAnswers(t *testing.T) {
 			if res.Verdict != tt.wantVerdict {
 				t.Errorf("verdict = %q, want %q", res.Verdict, tt.wantVerdict)
 			}
-			if res.Method != reachabilityMethodCallGraph {
-				t.Errorf("method = %q, want %q", res.Method, reachabilityMethodCallGraph)
+			if res.Method != tt.wantMethod {
+				t.Errorf("method = %q, want %q", res.Method, tt.wantMethod)
 			}
 		})
 	}

@@ -58,7 +58,7 @@ func TestScanner_ParseResults_OrderIssue(t *testing.T) {
 {"finding": {"osv": "GO-2021-0001", "fixed_version": "v1.2.3", "trace": [{"symbol": "Foo"}]}}
 {"osv": {"id": "GO-2021-0001", "summary": "Vulnerability summary"}}
 `
-	findings, err := s.parseResults(t.Context(), strings.NewReader(jsonStream), "example.com/mod")
+	findings, err := s.parseResults(t.Context(), strings.NewReader(jsonStream), "example.com/mod", domain.ScanModeSource)
 	if err != nil {
 		t.Fatalf("parseResults failed: %v", err)
 	}
@@ -77,7 +77,7 @@ func TestScanner_ParseResults_MockGin(t *testing.T) {
 {"osv": {"id": "GO-2020-0015", "summary": "Infinite loop in Gin", "aliases": ["CVE-2020-28483"]}}
 {"finding": {"osv": "GO-2020-0015", "fixed_version": "v1.6.3", "trace": [{"symbol": "Context.Bind"}]}}
 `
-	findings, err := s.parseResults(t.Context(), strings.NewReader(jsonStream), "github.com/gin-gonic/gin")
+	findings, err := s.parseResults(t.Context(), strings.NewReader(jsonStream), "github.com/gin-gonic/gin", domain.ScanModeSource)
 	if err != nil {
 		t.Fatalf("parseResults failed: %v", err)
 	}
@@ -152,7 +152,7 @@ func TestScanner_ParseResults_FiltersDependencyFindings(t *testing.T) {
 {"osv": {"id": "GO-STD-0003", "summary": "Stdlib vuln"}}
 {"finding": {"osv": "GO-STD-0003", "fixed_version": "go1.22.0", "trace": [{"module": "stdlib", "package": "net/http", "function": "Serve"}]}}
 `
-	findings, err := s.parseResults(t.Context(), strings.NewReader(jsonStream), "golang.org/x/crypto")
+	findings, err := s.parseResults(t.Context(), strings.NewReader(jsonStream), "golang.org/x/crypto", domain.ScanModeSource)
 	if err != nil {
 		t.Fatalf("parseResults failed: %v", err)
 	}
@@ -183,7 +183,7 @@ func TestScanner_ParseResults_VulnerableSymbolNotCallers(t *testing.T) {
 {"osv": {"id": "GO-2024-9999", "summary": "Vuln in x/text"}}
 {"finding": {"osv": "GO-2024-9999", "fixed_version": "v0.36.0", "trace": [{"module": "golang.org/x/text", "package": "golang.org/x/text/language", "receiver": "*Parser", "function": "Parse"}, {"module": "golang.org/x/text", "package": "golang.org/x/text/language", "function": "MustParse"}, {"module": "example.com/app", "package": "example.com/app", "function": "main"}]}}
 `
-	findings, err := s.parseResults(t.Context(), strings.NewReader(jsonStream), "golang.org/x/text")
+	findings, err := s.parseResults(t.Context(), strings.NewReader(jsonStream), "golang.org/x/text", domain.ScanModeSource)
 	if err != nil {
 		t.Fatalf("parseResults failed: %v", err)
 	}
@@ -468,7 +468,7 @@ func TestScanner_ParseResultsByModule_GroupsAllModules(t *testing.T) {
 {"osv": {"id": "GO-STD-0003", "summary": "Stdlib vuln"}}
 {"finding": {"osv": "GO-STD-0003", "fixed_version": "go1.22.0", "trace": [{"module": "stdlib", "version": "go1.21.0", "package": "net/http", "function": "Serve"}]}}
 `
-	byModule, err := s.parseResultsByModule(t.Context(), strings.NewReader(jsonStream))
+	byModule, err := s.parseResultsByModule(t.Context(), strings.NewReader(jsonStream), domain.ScanModeSource)
 	if err != nil {
 		t.Fatalf("parseResultsByModule failed: %v", err)
 	}

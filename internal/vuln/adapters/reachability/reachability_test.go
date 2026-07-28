@@ -106,8 +106,16 @@ func TestAnalyse_Reachable_DirectEntryPoint(t *testing.T) {
 	if result.Confidence != domain.ConfidenceHigh {
 		t.Errorf("confidence: got %s, want High", result.Confidence)
 	}
-	if len(result.ExamplePaths) == 0 || len(result.ExamplePaths[0]) == 0 {
-		t.Error("expected non-empty example path")
+	if len(result.Routes) == 0 || len(result.Routes[0]) == 0 {
+		t.Error("expected a non-empty route")
+	}
+	// This analyser reads a call graph, which records no module versions, so its
+	// route must report itself as unversioned rather than look checkable.
+	if len(result.Routes) > 0 && result.Routes[0].IsVersioned() {
+		t.Error("a call-graph route claimed to be versioned; the projection carries no versions")
+	}
+	if result.DerivedBy.Analyser != domain.AnalyserCallGraphBFS {
+		t.Errorf("analyser: got %q, want %q", result.DerivedBy.Analyser, domain.AnalyserCallGraphBFS)
 	}
 }
 
@@ -188,9 +196,9 @@ func TestAnalyse_Reachable_TransitiveCall(t *testing.T) {
 	if result.Confidence != domain.ConfidenceHigh {
 		t.Errorf("confidence: got %s, want High", result.Confidence)
 	}
-	// Path should be Entry → Mid → Vuln (3 nodes)
-	if len(result.ExamplePaths) == 0 || len(result.ExamplePaths[0]) != 3 {
-		t.Errorf("expected path length 3, got %v", result.ExamplePaths)
+	// Route should be Entry → Mid → Vuln (3 hops), entry point first.
+	if len(result.Routes) == 0 || len(result.Routes[0]) != 3 {
+		t.Errorf("expected route length 3, got %v", result.Routes)
 	}
 }
 
@@ -247,8 +255,9 @@ func TestAnalyse_ReachableViaInitRoot(t *testing.T) {
 	if !result.IsReachable {
 		t.Error("expected reachable via package init root")
 	}
-	if len(result.ExamplePaths) == 0 || result.ExamplePaths[0][0] != "github.com/foo/bar.init" {
-		t.Errorf("expected witness path rooted at init, got %v", result.ExamplePaths)
+	// The route is entry point first, so hop 0 is the root the search started at.
+	if len(result.Routes) == 0 || result.Routes[0][0].Symbol != "init" {
+		t.Errorf("expected witness route rooted at init, got %v", result.Routes)
 	}
 }
 

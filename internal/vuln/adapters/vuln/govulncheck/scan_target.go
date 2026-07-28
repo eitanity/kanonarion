@@ -107,7 +107,7 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 		_ = pw.Close() /* #nosec G104 -- pipe close in goroutine, error not actionable */
 	}()
 
-	byModule, perr := s.parseResultsByModule(ctx, pr)
+	byModule, perr := s.parseResultsByModule(ctx, pr, domain.ScanModeSource)
 	// Drain before closing so the writer goroutine reaches cmd.Wait() and waitErr
 	// is settled: a scan that died mid-stream must be classified as the failure it
 	// is, not as the truncated parse it also produced. The channel receive is the

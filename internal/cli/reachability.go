@@ -25,12 +25,11 @@ import (
 
 const localVulnPipelineVersion = vulnPipelineVersion
 
-// reachabilityMethodCallGraph names the analysis that produced a persisted
-// reachability verdict. Today the only producer is govulncheck source-mode
-// call-graph analysis; the field is reported (and reserved in --json) so a
-// future symbol-table probe method can be distinguished without a breaking
-// change to the output shape.
-const reachabilityMethodCallGraph = "call-graph"
+// reachabilityMethodNone is the method of a reply that consulted no
+// reachability analysis — "not affected" and "withdrawn" are read off the
+// advisory set. An empty string would render as a missing value; this says the
+// question was not asked.
+const reachabilityMethodNone = "none"
 
 // reachability verdicts for the stored-module query mode.
 const (
@@ -169,20 +168,68 @@ func runVulnReachability(ctx context.Context, arg, vulnID string, jsonOut bool, 
 // reachability query for a single CVE. Method records which analysis produced
 // the verdict so a future probe-based method is reported, not silently mixed in.
 type vulnReachabilityQuery struct {
-	Module       string     `json:"module"`
-	Version      string     `json:"version"`
-	VulnID       string     `json:"vuln_id"`
-	Aliases      []string   `json:"aliases,omitempty"`
-	Summary      string     `json:"summary,omitempty"`
-	Verdict      string     `json:"verdict"`
-	Confidence   string     `json:"confidence,omitempty"`
-	Method       string     `json:"method"`
-	ExamplePaths [][]string `json:"example_paths,omitempty"`
+	Module     string   `json:"module"`
+	Version    string   `json:"version"`
+	VulnID     string   `json:"vuln_id"`
+	Aliases    []string `json:"aliases,omitempty"`
+	Summary    string   `json:"summary,omitempty"`
+	Verdict    string   `json:"verdict"`
+	Confidence string   `json:"confidence,omitempty"`
+	// Method is the analyser that produced the stored answer, read off the
+	// answer itself. It used to be the constant "call-graph" on every reply,
+	// which mislabelled every govulncheck-derived answer in the store — most of
+	// them — as one this tool had computed.
+	Method string `json:"method"`
+	// Fidelity and Rooting complete the derivation: how well the analyser could
+	// see, and what the analysis was rooted at. Without the root a route reads
+	// as a property of the module, and it is a property of one build.
+	Fidelity string `json:"fidelity,omitempty"`
+	Rooting  string `json:"rooting,omitempty"`
+	// Routes are the paths that reach the vulnerable symbol, entry point first,
+	// each hop naming its module and version where the analyser knew them.
+	Routes []reachabilityRouteOutput `json:"routes,omitempty"`
 	// WithdrawnAt is set only on the withdrawn verdict, and carries the retraction
 	// timestamp so the answer states its reason rather than asserting a bare
 	// negative the reader has to take on trust.
 	WithdrawnAt string `json:"withdrawn_at,omitempty"`
 	ScannedAt   string `json:"scanned_at,omitempty"`
+}
+
+// reachabilityRouteOutput is one route in the curated JSON shape. Versioned
+// says whether every hop named its module version: a route from the call-graph
+// search never does, and a reader must not take an unversioned route for one
+// they can check against their own build.
+type reachabilityRouteOutput struct {
+	Versioned bool                      `json:"versioned"`
+	Frames    []reachabilityFrameOutput `json:"frames"`
+}
+
+// reachabilityFrameOutput is one hop.
+type reachabilityFrameOutput struct {
+	Module   string `json:"module,omitempty"`
+	Version  string `json:"version,omitempty"`
+	Package  string `json:"package,omitempty"`
+	Receiver string `json:"receiver,omitempty"`
+	Symbol   string `json:"symbol,omitempty"`
+}
+
+// routesToOutput renders stored routes for the curated JSON shape.
+func routesToOutput(routes []vuldomain.ReachabilityRoute) []reachabilityRouteOutput {
+	if len(routes) == 0 {
+		return nil
+	}
+	out := make([]reachabilityRouteOutput, 0, len(routes))
+	for _, r := range routes {
+		frames := make([]reachabilityFrameOutput, 0, len(r))
+		for _, f := range r {
+			frames = append(frames, reachabilityFrameOutput{
+				Module: f.ModulePath, Version: f.ModuleVersion,
+				Package: f.Package, Receiver: f.Receiver, Symbol: f.Symbol,
+			})
+		}
+		out = append(out, reachabilityRouteOutput{Versioned: r.IsVersioned(), Frames: frames})
+	}
+	return out
 }
 
 // vulnReachabilityVerdict is the pure classifier (no I/O) so the intent-aware
@@ -229,11 +276,14 @@ func vulnReachabilityVerdict(coord coordinate.ModuleCoordinate, rec vuldomain.Vu
 	if !ok {
 		// Genuine zero: the scan ran and this CVE is not among its findings.
 		return vulnReachabilityQuery{
-			Module:    coord.Path(),
-			Version:   coord.Version(),
-			VulnID:    vulnID,
-			Verdict:   verdictNotAffected,
-			Method:    reachabilityMethodCallGraph,
+			Module:  coord.Path(),
+			Version: coord.Version(),
+			VulnID:  vulnID,
+			Verdict: verdictNotAffected,
+			// No Method: this reply is a statement about the advisory set, not the
+			// output of a reachability analyser. Naming one would attribute an
+			// answer to an instrument that was never consulted.
+			Method:    reachabilityMethodNone,
 			ScannedAt: rec.ScannedAt.UTC().Format(time.RFC3339),
 		}, nil
 	}
@@ -244,13 +294,15 @@ func vulnReachabilityVerdict(coord coordinate.ModuleCoordinate, rec vuldomain.Vu
 	// below would otherwise send the operator to compute a call graph for it.
 	if f.IsWithdrawn() {
 		return vulnReachabilityQuery{
-			Module:      coord.Path(),
-			Version:     coord.Version(),
-			VulnID:      f.ID,
-			Aliases:     f.Aliases,
-			Summary:     f.Summary,
-			Verdict:     verdictWithdrawn,
-			Method:      reachabilityMethodCallGraph,
+			Module:  coord.Path(),
+			Version: coord.Version(),
+			VulnID:  f.ID,
+			Aliases: f.Aliases,
+			Summary: f.Summary,
+			Verdict: verdictWithdrawn,
+			// No Method, for the reason given on the not-affected reply above: a
+			// retraction is read off the advisory, not computed.
+			Method:      reachabilityMethodNone,
 			WithdrawnAt: f.WithdrawnAt.UTC().Format(time.RFC3339),
 			ScannedAt:   rec.ScannedAt.UTC().Format(time.RFC3339),
 		}, nil
@@ -273,16 +325,18 @@ func vulnReachabilityVerdict(coord coordinate.ModuleCoordinate, rec vuldomain.Vu
 		verdict = verdictReachable
 	}
 	return vulnReachabilityQuery{
-		Module:       coord.Path(),
-		Version:      coord.Version(),
-		VulnID:       f.ID,
-		Aliases:      f.Aliases,
-		Summary:      f.Summary,
-		Verdict:      verdict,
-		Confidence:   string(f.Reachable.Confidence),
-		Method:       reachabilityMethodCallGraph,
-		ExamplePaths: f.Reachable.ExamplePaths,
-		ScannedAt:    rec.ScannedAt.UTC().Format(time.RFC3339),
+		Module:     coord.Path(),
+		Version:    coord.Version(),
+		VulnID:     f.ID,
+		Aliases:    f.Aliases,
+		Summary:    f.Summary,
+		Verdict:    verdict,
+		Confidence: string(f.Reachable.Confidence),
+		Method:     f.Reachable.DerivedBy.Analyser.String(),
+		Fidelity:   f.Reachable.DerivedBy.Fidelity,
+		Rooting:    f.Reachable.DerivedBy.Rooting.String(),
+		Routes:     routesToOutput(f.Reachable.Routes),
+		ScannedAt:  rec.ScannedAt.UTC().Format(time.RFC3339),
 	}, nil
 }
 
@@ -303,19 +357,76 @@ func findFindingByID(findings []vuldomain.VulnerabilityFinding, vulnID string) (
 	return vuldomain.VulnerabilityFinding{}, false
 }
 
+// derivationLine renders the instrument, how well it could see and what it was
+// rooted at, for the one-line summary.
+func derivationLine(res vulnReachabilityQuery) string {
+	parts := []string{"by: " + res.Method}
+	if res.Fidelity != "" {
+		parts = append(parts, "fidelity: "+res.Fidelity)
+	}
+	if res.Rooting != "" {
+		parts = append(parts, "rooted at: "+res.Rooting)
+	}
+	return strings.Join(parts, ", ")
+}
+
+// printRoute prints the first stored route, hop by hop, and says plainly when
+// the hops carry no versions — an unversioned route cannot be checked against
+// another build, and a reader who assumes it can will draw the wrong conclusion
+// about their own.
+func printRoute(stdout io.Writer, res vulnReachabilityQuery) {
+	if len(res.Routes) == 0 {
+		return
+	}
+	r := res.Routes[0]
+	label := "  route (entry point first):"
+	if !r.Versioned {
+		label = "  route (entry point first; hops carry no module version, so it cannot be checked against another build):"
+	}
+	_, _ = fmt.Fprintln(stdout, label)
+	for _, f := range r.Frames {
+		_, _ = fmt.Fprintf(stdout, "    %s\n", frameLine(f))
+	}
+	if len(res.Routes) > 1 {
+		_, _ = fmt.Fprintf(stdout, "    (%d further route(s) recorded)\n", len(res.Routes)-1)
+	}
+}
+
+// frameLine renders one hop, omitting the parts the analyser could not supply.
+func frameLine(f reachabilityFrameOutput) string {
+	var b strings.Builder
+	if f.Module != "" {
+		b.WriteString(f.Module)
+		if f.Version != "" {
+			b.WriteString("@")
+			b.WriteString(f.Version)
+		}
+		b.WriteString(" ")
+	}
+	if f.Package != "" && f.Package != f.Module {
+		b.WriteString(f.Package)
+		b.WriteString(".")
+	}
+	if f.Receiver != "" {
+		b.WriteString("(")
+		b.WriteString(f.Receiver)
+		b.WriteString(").")
+	}
+	b.WriteString(f.Symbol)
+	return strings.TrimSpace(b.String())
+}
+
 func printVulnReachability(stdout io.Writer, res vulnReachabilityQuery) {
 	coord := res.Module + "@" + res.Version
 	switch res.Verdict {
 	case verdictReachable:
-		_, _ = fmt.Fprintf(stdout, "%s is REACHABLE in %s [confidence: %s, method: %s]\n", res.VulnID, coord, res.Confidence, res.Method)
-		if len(res.ExamplePaths) > 0 {
-			_, _ = fmt.Fprintln(stdout, "  example path:")
-			for _, step := range res.ExamplePaths[0] {
-				_, _ = fmt.Fprintf(stdout, "    %s\n", step)
-			}
-		}
+		_, _ = fmt.Fprintf(stdout, "%s is REACHABLE in %s [confidence: %s, %s]\n", res.VulnID, coord, res.Confidence, derivationLine(res))
+		printRoute(stdout, res)
 	case verdictNotReachable:
-		_, _ = fmt.Fprintf(stdout, "%s affects %s but is NOT reachable [confidence: %s, method: %s]\n", res.VulnID, coord, res.Confidence, res.Method)
+		// The derivation is printed on the negative too. "Not reachable" from a
+		// metadata-only graph and from a built one are different claims, and the
+		// negative is the one an operator acts on by NOT upgrading.
+		_, _ = fmt.Fprintf(stdout, "%s affects %s but is NOT reachable [confidence: %s, %s]\n", res.VulnID, coord, res.Confidence, derivationLine(res))
 	case verdictNotAffected:
 		_, _ = fmt.Fprintf(stdout, "%s is not affected by %s (scanned %s)\n", coord, res.VulnID, res.ScannedAt)
 	case verdictWithdrawn:

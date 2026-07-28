@@ -137,6 +137,30 @@ func printVulnRecord(stdout io.Writer, rec vuldomain.VulnerabilityRecord) {
 		if len(f.AffectedSymbols) > 0 {
 			_, _ = fmt.Fprintf(stdout, "      symbols:  %s\n", strings.Join(f.AffectedSymbols, ", "))
 		}
+		// A reachability answer never prints without saying what produced it. The
+		// same advisory in the same module is reachable in one build and not in
+		// the next, so an unlabelled answer reads as a property of the module and
+		// is a property of one analysis of one build.
+		if f.Reachable != nil {
+			_, _ = fmt.Fprintf(stdout, "      derived:  %s\n", f.Reachable.DerivedBy)
+		}
+		// The route is what answers "which of my dependencies reaches this". It is
+		// printed entry point first, and says so when its hops carry no versions,
+		// because an unversioned route cannot be checked against another build.
+		if f.Reachable != nil && len(f.Reachable.Routes) > 0 {
+			route := f.Reachable.Routes[0]
+			caveat := ""
+			if !route.IsVersioned() {
+				caveat = " (hops carry no module version)"
+			}
+			_, _ = fmt.Fprintf(stdout, "      route:    entry point first%s\n", caveat)
+			for _, hop := range route {
+				_, _ = fmt.Fprintf(stdout, "        %s\n", hop)
+			}
+			if extra := len(f.Reachable.Routes) - 1; extra > 0 {
+				_, _ = fmt.Fprintf(stdout, "        (%d further route(s) recorded)\n", extra)
+			}
+		}
 		if f.ReachabilityNote != "" {
 			_, _ = fmt.Fprintf(stdout, "      reachability: %s\n", f.ReachabilityNote)
 		}
