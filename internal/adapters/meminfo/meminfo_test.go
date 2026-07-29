@@ -36,7 +36,7 @@ func TestAvailableBytes_ParsesMemAvailable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("AvailableBytes() error = %v, want nil", err)
 	}
-	const want = 8342184 * 1024
+	const want uint64 = 8342184 * 1024
 	if got != want {
 		t.Fatalf("AvailableBytes() = %d, want %d (MemAvailable is in kB, not bytes)", got, want)
 	}

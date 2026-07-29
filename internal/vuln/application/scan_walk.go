@@ -39,7 +39,10 @@ const populateFailureLogLimit = 10
 // It is a budget, not a limit: nothing enforces it on the child. Its only job
 // is to stop the pool from admitting more concurrent scans than the host can
 // hold, so a slow scan replaces a killed one.
-const perWorkerBudgetBytes = 4 << 30 // 4 GiB
+// It is typed rather than left untyped because 4 GiB does not fit an int on a
+// 32-bit platform, and an untyped constant handed to a variadic any — the
+// logger — defaults to int and fails to compile there.
+const perWorkerBudgetBytes uint64 = 4 << 30 // 4 GiB
 
 // cpuWorkerCap is the pool's ceiling from the CPU side. The workers spend most
 // of their wall clock inside a govulncheck subprocess, so more than four buys

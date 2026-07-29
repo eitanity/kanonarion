@@ -54,6 +54,22 @@ jobs:
           go-version: ${{ matrix.go }}
           cache: true
 
+      # The release matrix in release.yml is the only place non-amd64 targets
+      # are built, and it triggers on tag push — so the first machine able to
+      # see platform-width breakage was the one publishing the release, and a
+      # published tag cannot be recalled once the module proxy has cached it.
+      # Compiling every release target here moves that detection to PR time.
+      # It runs before the suite because a target that does not compile makes
+      # the race run's result irrelevant.
+      - name: Cross-compile the release matrix
+        run: |
+          set -euo pipefail
+          for t in darwin/amd64 darwin/arm64 windows/amd64 windows/arm64 \
+                   linux/amd64 linux/arm64 linux/arm; do
+            echo "compiling $t"
+            GOOS=${t%/*} GOARCH=${t#*/} go build -o /dev/null ./cmd/kanonarion
+          done
+
       # Single instrumented run: the whole suite executes once under -race with
       # coverage collected in the same pass. atomic mode is required because
       # -race runs tests concurrently. This is both the race gate and the
