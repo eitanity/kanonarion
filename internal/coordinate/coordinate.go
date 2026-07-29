@@ -164,6 +164,32 @@ func (c ModuleCoordinate) IsPseudoVersion() bool {
 	return module.IsPseudoVersion(c.version)
 }
 
+// incompatibleSuffix is the build-metadata suffix the go command appends to a
+// major version 2+ resolved under the pre-modules rule — a module that reached
+// v2 or higher without adopting Go modules, and so has neither a /vN path
+// suffix nor a go.mod declaring one.
+const incompatibleSuffix = "+incompatible"
+
+// GitTagVersion returns the version as the repository spells it as a tag.
+//
+// That differs from Version only for a +incompatible coordinate. The suffix is
+// the go command's own annotation, not part of the project's version: the tag
+// behind github.com/Masterminds/sprig v2.22.0+incompatible is v2.22.0, and no
+// ref can ever carry the suffix. Code building a "refs/tags/..." ref must use
+// this rather than Version, or ls-remote is asked for a ref that cannot exist
+// and the module degrades to checksum-database-only trust. The module proxy
+// strips it the same way when it names the tag in its Origin metadata, so both
+// resolution paths agree on the ref for the same coordinate.
+//
+// The rule lives on the coordinate rather than at the call site because the
+// coordinate is what knows how its version is spelled; a second consumer that
+// builds a ref must not have to rediscover it. This is for ref construction
+// ONLY — the recorded coordinate, the content hash and the record identity all
+// keep the full version, which is what the build actually resolved.
+func (c ModuleCoordinate) GitTagVersion() string {
+	return strings.TrimSuffix(c.version, incompatibleSuffix)
+}
+
 // ExtractCommitPrefix returns the 12-char commit hash embedded in a
 // pseudo-version. Returns an error if the version is not a pseudo-version.
 func (c ModuleCoordinate) ExtractCommitPrefix() (string, error) {

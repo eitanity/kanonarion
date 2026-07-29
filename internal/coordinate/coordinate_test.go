@@ -64,6 +64,37 @@ func TestModuleCoordinate_IsPseudoVersion(t *testing.T) {
 	}
 }
 
+// The +incompatible suffix is the go command's annotation for a pre-modules
+// major version; it never appears on a tag, so the ref-building spelling drops
+// it while the coordinate itself keeps the version the build resolved.
+func TestModuleCoordinate_GitTagVersion(t *testing.T) {
+	tests := []struct {
+		version string
+		want    string
+	}{
+		{"v2.22.0+incompatible", "v2.22.0"},
+		{"v28.2.2+incompatible", "v28.2.2"},
+		{"v1.8.1", "v1.8.1"},
+		{"v0.0.0-20210101120000-abcdefabcdef", "v0.0.0-20210101120000-abcdefabcdef"},
+		{"v1.0.0-beta", "v1.0.0-beta"},
+		{coordinate.LocalVersion, coordinate.LocalVersion},
+	}
+	for _, tt := range tests {
+		t.Run(tt.version, func(t *testing.T) {
+			c := coordinatetest.MustNew("example.com/m", tt.version)
+			if got := c.GitTagVersion(); got != tt.want {
+				t.Errorf("GitTagVersion() = %q, want %q", got, tt.want)
+			}
+			if c.Version() != tt.version {
+				t.Errorf("Version() = %q, want the unmodified %q", c.Version(), tt.version)
+			}
+			if c.String() != "example.com/m@"+tt.version {
+				t.Errorf("String() = %q, want the coordinate to keep its full version", c.String())
+			}
+		})
+	}
+}
+
 func TestModuleCoordinate_ExtractCommitPrefix(t *testing.T) {
 	tests := []struct {
 		version    string
