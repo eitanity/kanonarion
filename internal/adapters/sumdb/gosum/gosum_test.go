@@ -9,7 +9,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 )
 
 func TestNew(t *testing.T) {
@@ -179,14 +179,14 @@ func TestLookup(t *testing.T) {
 	// Instead we test the wrapping logic and some error paths.
 
 	client := &Client{disabled: true}
-	res := client.Lookup(context.Background(), coordinate.ModuleCoordinate{Path: "any", Version: "v1.0.0"})
+	res := client.Lookup(context.Background(), coordinatetest.MustNew("any", "v1.0.0"))
 	if res.Available {
 		t.Error("Lookup should not be available when disabled")
 	}
 
 	client = &Client{disabled: false}
 	t.Setenv("GONOSUMCHECK", "private.com")
-	res = client.Lookup(context.Background(), coordinate.ModuleCoordinate{Path: "private.com/foo", Version: "v1.0.0"})
+	res = client.Lookup(context.Background(), coordinatetest.MustNew("private.com/foo", "v1.0.0"))
 	if res.Available {
 		t.Error("Lookup should be unavailable for GONOSUMCHECK")
 	}
@@ -216,7 +216,7 @@ func TestResolveCacheDir_NoEnv(t *testing.T) {
 
 func TestLookupDisabled(t *testing.T) {
 	client := &Client{disabled: true}
-	res := client.Lookup(context.Background(), coordinate.ModuleCoordinate{Path: "any", Version: "v1.0.0"})
+	res := client.Lookup(context.Background(), coordinatetest.MustNew("any", "v1.0.0"))
 	if res.Available {
 		t.Error("Lookup should not be available when disabled")
 	}

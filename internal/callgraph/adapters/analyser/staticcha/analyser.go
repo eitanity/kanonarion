@@ -70,30 +70,63 @@ func (a *Analyser) Analyse(ctx context.Context, zipPath string, coord coordinate
 		}
 	}()
 
-	modulePrefix := coord.Path + "@" + coord.Version + "/"
+	modulePrefix := coord.Path() + "@" + coord.Version() + "/"
 	if err := extractModuleZip(zipPath, modulePrefix, tempDir); err != nil {
-		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed,
-			"extracting module zip: "+err.Error()), nil
+		return a.sourced(a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed,
+			"extracting module zip: "+err.Error())), nil
 	}
 
 	if ctx.Err() != nil {
-		return a.failRecord(coord, domain.CallGraphStatusCancelled, domain.CompletenessUnknown, "cancelled before load"), nil
+		return a.sourced(a.failRecord(coord, domain.CallGraphStatusCancelled, domain.CompletenessUnknown, "cancelled before load")), nil
 	}
 
-	return a.analyseDir(ctx, tempDir, coord)
+	rec, err := a.analyseDir(ctx, tempDir, coord)
+	if err != nil {
+		return rec, err
+	}
+	return a.sourced(rec), nil
+}
+
+// sourced stamps a record as built from a fetched module zip.
+//
+// It is applied on every return path of Analyse, including the failures. A
+// record that says nothing about what it read cannot be told apart from one
+// written before the field existed, and a failed analysis of a zip is still an
+// answer about that zip.
+func (a *Analyser) sourced(r domain.CallGraphRecord) domain.CallGraphRecord {
+	r.AnalysisSource = domain.AnalysisSourceModuleZip
+	return r
 }
 
 // AnalyseDir runs the same CHA pipeline as Analyse but against an on-disk Go
 // module working tree instead of a fetched module zip. It is used for
-// local-analysis ingestion so kanonarion can answer
-// callers/callees for its own internal packages. coord.Path must be the
-// module path declared in the directory's go.mod; coord.Version is a
-// synthetic local version (e.g. "v0.0.0").
+// local-analysis ingestion so kanonarion can answer callers/callees for its own
+// internal packages. coord.Path must be the module path declared in the
+// directory's go.mod; coord.Version is coordinate.LocalVersion, the marker for a
+// module nothing published.
+//
+// The record it returns names its source as a working tree and carries a digest
+// of that tree. The digest is computed BEFORE the analysis, so it describes the
+// bytes the analysis is about to read rather than whatever the tree became while
+// SSA construction was running.
 func (a *Analyser) AnalyseDir(ctx context.Context, dir string, coord coordinate.ModuleCoordinate) (domain.CallGraphRecord, error) {
 	a.logMem(ctx, "start")
+	digest, err := worktreeDigest(dir)
+	if err != nil {
+		// Infrastructure, not a property of the module: a tree that cannot be read
+		// cannot be identified, and a worktree record with no digest is one that
+		// silently merges with every other checkout of the same module path.
+		return domain.CallGraphRecord{}, fmt.Errorf("identifying working tree %s: %w", dir, err)
+	}
 	// Cancellation is observed inside analyseDir (packages.Load honours ctx,
 	// plus explicit ctx.Err checkpoints), so no pre-check is needed here.
-	return a.analyseDir(ctx, dir, coord)
+	rec, err := a.analyseDir(ctx, dir, coord)
+	if err != nil {
+		return rec, err
+	}
+	rec.AnalysisSource = domain.AnalysisSourceWorktree
+	rec.WorktreeDigest = digest
+	return rec, nil
 }
 
 // analyseDir holds the shared post-extraction analysis pipeline: load
@@ -134,22 +167,25 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord coordin
 	// We load and process target packages in small batches to keep peak memory low.
 	var targetPkgPaths []string
 	packages.Visit(pkgsMeta, nil, func(p *packages.Package) {
-		isTarget := p.PkgPath == coord.Path || strings.HasPrefix(p.PkgPath, coord.Path+"/")
+		isTarget := p.PkgPath == coord.Path() || strings.HasPrefix(p.PkgPath, coord.Path()+"/")
 		if isTarget {
 			targetPkgPaths = append(targetPkgPaths, p.PkgPath)
 		}
 	})
 
-	prog, targetSSAPkgs, allLoadErrs, failedPkgs, err := a.loadAndBuildSSA(ctx, fset, tempDir, coord, targetPkgPaths)
+	build, err := a.loadAndBuildSSA(ctx, fset, tempDir, coord, targetPkgPaths)
 	if err != nil {
 		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed, err.Error()), nil
 	}
+	prog := build.Prog
+	allLoadErrs := build.LoadErrs
+	failedPkgs := build.FailedPkgs
 
 	// Step 4: Final Cleanup and Call Graph Construction
 	runtime.GC()
-	a.logMem(ctx, "all_batches_processed")
+	a.logMem(ctx, "all_packages_processed")
 
-	if len(targetSSAPkgs) == 0 {
+	if build.Registered() == 0 {
 		detail := "no packages successfully loaded"
 		if len(allLoadErrs) > 0 {
 			detail = joinFirst(allLoadErrs, 3)
@@ -158,11 +194,12 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord coordin
 	}
 
 	if ctx.Err() != nil {
-		return a.failRecord(coord, domain.CallGraphStatusCancelled, domain.CompletenessUnknown, "cancelled after streaming load"), nil
+		return a.failRecord(coord, domain.CallGraphStatusCancelled, domain.CompletenessUnknown, "cancelled after load"), nil
 	}
 
-	a.logger.InfoContext(ctx, "callgraph_streaming_load_completed",
-		slog.Int("target_pkg_count", len(targetSSAPkgs)),
+	a.logger.InfoContext(ctx, "callgraph_load_completed",
+		slog.Int("target_pkg_count", len(build.TargetPkgs)),
+		slog.Int("test_pkg_count", len(build.TestPkgs)),
 		slog.Int("load_errors", len(allLoadErrs)),
 	)
 
@@ -196,6 +233,13 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord coordin
 	// devirtualized leaf targets carry no onward edges.
 	nodes, edges = a.devirtualizeSingleImplementer(ctx, prog, coord, fset, tempDir, nodes, edges)
 
+	// Record the type-level relation: which of the module's concrete types
+	// satisfy which of its interfaces. An interface method has no callers — calls
+	// go to implementations — so the edge collections cannot answer "what must
+	// change with this port", and a grep for the method name cannot tell an
+	// implementation from a call.
+	ifaces, impls := a.extractInterfaces(ctx, prog, coord, fset, tempDir)
+
 	// A failed package (or any load error) means the graph is incomplete;
 	// never report Extracted when some target package did not resolve. Keeping
 	// FailedPackages and the Partial status in lock-step is what lets the query
@@ -209,13 +253,16 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord coordin
 		Ecosystem:     fetchdomain.EcosystemGo,
 		Coordinate:    coord,
 		Algorithm:     domain.AlgorithmCHA,
-		// Reaching here means at least one target package was built into SSA with
-		// bodies. Per-package build failures are carried in FailedPackages (and
-		// force Partial below); the module-level fidelity is still bodies-built.
-		Completeness:    domain.CompletenessBuiltWithBodies,
-		ArtifactKind:    artifactKind(targetSSAPkgs),
+		Completeness:  buildCompleteness(build),
+		// Only production packages decide the artifact kind: the test binary main
+		// go/packages synthesises is not a command this module ships.
+		ArtifactKind:    artifactKind(build.TargetPkgs),
 		Nodes:           nodes,
 		Edges:           edges,
+		Interfaces:      ifaces,
+		Implementations: impls,
+		TestScope:       build.TestScope,
+		TestScopeDetail: build.TestScopeDetail,
 		OverallStatus:   overallStatus,
 		NodeCount:       len(nodes),
 		EdgeCount:       len(edges),
@@ -230,6 +277,27 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord coordin
 	rec.FailedPackages = failedPkgs
 	rec.Sort()
 	return rec, nil
+}
+
+// buildCompleteness reads the module-level fidelity off the load result, at the
+// point the result is known.
+//
+// Reaching this function means at least one package was registered from syntax —
+// the caller has already returned METADATA_ONLY when none was. What remains is
+// the distinction between having bodies and having only types, and the load
+// result is the only place it survives: an ssa.Program with registered packages
+// and no built bodies looks exactly like one with built-but-empty packages to
+// every consumer downstream, so collapsing the two here would discard a fidelity
+// difference at the moment it is known.
+//
+// Per-package build failures with at least one success are still
+// BUILT_WITH_BODIES at module level: the scope of the incompleteness is carried
+// in FailedPackages, and the caller forces OverallStatus to Partial for it.
+func buildCompleteness(build ssaBuildResult) domain.CompletenessLevel {
+	if build.BodiesBuilt == 0 {
+		return domain.CompletenessTypeOnly
+	}
+	return domain.CompletenessBuiltWithBodies
 }
 
 // artifactKind classifies the analysed module from the packages it owns: it is

@@ -105,7 +105,7 @@ var (
 // statement. Returns nil when no copyright lines are found.
 func ExtractCopyright(source string, content []byte) []CopyrightStatement {
 	var stmts []CopyrightStatement
-	for _, raw := range strings.Split(string(content), "\n") {
+	for raw := range strings.SplitSeq(string(content), "\n") {
 		line := strings.TrimSpace(raw)
 		if line == "" || !copyrightLineRe.MatchString(line) || copyrightBoilerplateRe.MatchString(line) {
 			continue

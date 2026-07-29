@@ -85,7 +85,7 @@ func TestResolveProject_BuildList_NodeMapping(t *testing.T) {
 
 	byPath := map[string]domain3.GraphNode{}
 	for _, n := range g.Nodes {
-		byPath[n.Coordinate.Path] = n
+		byPath[n.Coordinate.Path()] = n
 	}
 
 	// Main module: local anchor, unfetched.
@@ -99,7 +99,7 @@ func TestResolveProject_BuildList_NodeMapping(t *testing.T) {
 
 	// Plain MVS direct + indirect.
 	if mod := byPath["golang.org/x/mod"]; mod.ResolutionSource != domain3.ResolutionMVS ||
-		!mod.DirectDependency || mod.Coordinate.Version != "v0.35.0" {
+		!mod.DirectDependency || mod.Coordinate.Version() != "v0.35.0" {
 		t.Errorf("golang.org/x/mod node = %+v, want mvs/direct/v0.35.0", mod)
 	}
 	sys := byPath["golang.org/x/sys"]
@@ -186,12 +186,12 @@ func TestResolveProject_BuildList_ScopeParityWithBuildList(t *testing.T) {
 	// toolchain set is keyed by.
 	walkSet := map[string]bool{}
 	for _, n := range g.Nodes {
-		if n.Coordinate.Path == target.Path {
+		if n.Coordinate.Path() == target.Path() {
 			continue // main anchor, not a dependency
 		}
-		id := n.Coordinate.Path
-		if n.OriginalCoordinate.Path != "" {
-			id = n.OriginalCoordinate.Path
+		id := n.Coordinate.Path()
+		if n.OriginalCoordinate.Path() != "" {
+			id = n.OriginalCoordinate.Path()
 		}
 		walkSet[id] = true
 	}
@@ -256,7 +256,7 @@ func TestResolveProject_BuildList_FetchFailureIsPartial(t *testing.T) {
 
 	var missing domain3.GraphNode
 	for _, n := range g.Nodes {
-		if n.Coordinate.Path == "example.com/missing" {
+		if n.Coordinate.Path() == "example.com/missing" {
 			missing = n
 		}
 	}
@@ -316,7 +316,7 @@ func TestResolveProject_BuildList_FallbackOnToolchainError(t *testing.T) {
 	// The internal resolver still produced the closure.
 	var depPresent bool
 	for _, n := range g.Nodes {
-		if n.Coordinate.Path == "example.com/dep" {
+		if n.Coordinate.Path() == "example.com/dep" {
 			depPresent = true
 		}
 	}
@@ -370,7 +370,7 @@ func TestResolveProject_ToolScope_RestrictsToToolClosure(t *testing.T) {
 
 	paths := map[string]bool{}
 	for _, n := range g.Nodes {
-		paths[n.Coordinate.Path] = true
+		paths[n.Coordinate.Path()] = true
 	}
 	for _, want := range []string{"example.com/project", "example.com/tool", "example.com/toolsub", "example.com/shared"} {
 		if !paths[want] {
@@ -423,7 +423,7 @@ func TestResolveProject_ScopedWalk_SkipsOutOfScopeFetch(t *testing.T) {
 	}
 	// The out-of-scope module was filtered out of the final graph entirely.
 	for _, n := range g.Nodes {
-		if n.Coordinate.Path == "example.com/prod" {
+		if n.Coordinate.Path() == "example.com/prod" {
 			t.Errorf("out-of-scope example.com/prod must not survive scope filtering")
 		}
 	}
@@ -530,10 +530,10 @@ func TestResolveProject_BuildList_ReplaceTargetAlsoRequiredIndependently(t *test
 	var replaced, independent *domain3.GraphNode
 	for i := range g.Nodes {
 		n := &g.Nodes[i]
-		if n.Coordinate.Path != "example.com/fork" {
+		if n.Coordinate.Path() != "example.com/fork" {
 			continue
 		}
-		if n.OriginalCoordinate.Path != "" {
+		if n.OriginalCoordinate.Path() != "" {
 			replaced = n
 		} else {
 			independent = n
@@ -543,7 +543,7 @@ func TestResolveProject_BuildList_ReplaceTargetAlsoRequiredIndependently(t *test
 	if replaced == nil {
 		t.Fatalf("replace-pinned node example.com/fork@v1.2.0 missing; nodes: %+v", g.Nodes)
 	}
-	if replaced.Coordinate.Version != "v1.2.0" || replaced.ResolutionSource != domain3.ResolutionReplace {
+	if replaced.Coordinate.Version() != "v1.2.0" || replaced.ResolutionSource != domain3.ResolutionReplace {
 		t.Errorf("replaced node = %+v, want example.com/fork@v1.2.0 source=replace", *replaced)
 	}
 	if replaced.OriginalCoordinate != coord("example.com/forked", "v1.0.0") {
@@ -553,7 +553,7 @@ func TestResolveProject_BuildList_ReplaceTargetAlsoRequiredIndependently(t *test
 	if independent == nil {
 		t.Fatalf("independent node example.com/fork@v1.5.0 missing; nodes: %+v", g.Nodes)
 	}
-	if independent.Coordinate.Version != "v1.5.0" || independent.ResolutionSource != domain3.ResolutionMVS {
+	if independent.Coordinate.Version() != "v1.5.0" || independent.ResolutionSource != domain3.ResolutionMVS {
 		t.Errorf("independent node = %+v, want example.com/fork@v1.5.0 source=mvs", *independent)
 	}
 

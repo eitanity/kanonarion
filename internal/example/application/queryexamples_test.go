@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	"github.com/eitanity/kanonarion/internal/example/application"
 	"github.com/eitanity/kanonarion/internal/example/domain"
@@ -28,7 +29,7 @@ func (s *queryExFakeStore) PutExampleRecord(_ context.Context, r domain.ExampleR
 	if s.records == nil {
 		s.records = make(map[queryExKey]domain.ExampleRecord)
 	}
-	s.records[queryExKey{r.Coordinate.Path, r.Coordinate.Version, r.PipelineVersion}] = r
+	s.records[queryExKey{r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion}] = r
 	return nil
 }
 
@@ -36,7 +37,7 @@ func (s *queryExFakeStore) GetExampleRecord(_ context.Context, coord coordinate.
 	if s.getErr != nil {
 		return domain.ExampleRecord{}, false, s.getErr
 	}
-	r, ok := s.records[queryExKey{coord.Path, coord.Version, pv}]
+	r, ok := s.records[queryExKey{coord.Path(), coord.Version(), pv}]
 	return r, ok, nil
 }
 
@@ -44,7 +45,7 @@ func (s *queryExFakeStore) ListExampleRecords(_ context.Context, _ exampleports.
 	return s.summaries, s.listErr
 }
 
-func (s *queryExFakeStore) FindBySymbol(_ context.Context, _ string, _ string) ([]exampleports.ExampleRef, error) {
+func (s *queryExFakeStore) FindBySymbol(_ context.Context, _ string, _ string, _ coordinate.ModuleSet) ([]exampleports.ExampleRef, error) {
 	return s.exampleRefs, s.findErr
 }
 
@@ -54,7 +55,7 @@ func (s *queryExFakeStore) FindBySymbolInModule(_ context.Context, coord coordin
 	}
 	var out []exampleports.ExampleRef
 	for _, ref := range s.exampleRefs {
-		if ref.ModulePath == coord.Path && ref.ModuleVersion == coord.Version {
+		if ref.ModulePath == coord.Path() && ref.ModuleVersion == coord.Version() {
 			out = append(out, ref)
 		}
 	}
@@ -64,7 +65,7 @@ func (s *queryExFakeStore) FindBySymbolInModule(_ context.Context, coord coordin
 var _ exampleports.ExampleStore = (*queryExFakeStore)(nil)
 
 func TestQueryExamplesUseCase_GetExampleRecord(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	store := &queryExFakeStore{}
 	_ = store.PutExampleRecord(context.Background(), domain.ExampleRecord{
 		Coordinate:      coord,
@@ -86,7 +87,7 @@ func TestQueryExamplesUseCase_GetExampleRecord(t *testing.T) {
 }
 
 func TestQueryExamplesUseCase_GetExampleRecord_NotFound(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	uc := application.NewQueryExamplesUseCase(&queryExFakeStore{})
 
 	_, found, err := uc.GetExampleRecord(context.Background(), coord, "0.1.0")
@@ -102,7 +103,7 @@ func TestQueryExamplesUseCase_GetExampleRecord_StoreError(t *testing.T) {
 	storeErr := errors.New("db failure")
 	uc := application.NewQueryExamplesUseCase(&queryExFakeStore{getErr: storeErr})
 
-	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	_, _, err := uc.GetExampleRecord(context.Background(), coord, "0.1.0")
 	if !errors.Is(err, storeErr) {
 		t.Errorf("got %v, want wrapping %v", err, storeErr)
@@ -134,7 +135,7 @@ func TestQueryExamplesUseCase_FindBySymbol(t *testing.T) {
 	}
 	uc := application.NewQueryExamplesUseCase(store)
 
-	refs, err := uc.FindBySymbol(context.Background(), "Marshal", "0.1.0")
+	refs, err := uc.FindBySymbol(context.Background(), "Marshal", "0.1.0", coordinate.ModuleSet{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -147,19 +148,19 @@ func TestQueryExamplesUseCase_FindBySymbol_Error(t *testing.T) {
 	findErr := errors.New("index failure")
 	uc := application.NewQueryExamplesUseCase(&queryExFakeStore{findErr: findErr})
 
-	_, err := uc.FindBySymbol(context.Background(), "Marshal", "0.1.0")
+	_, err := uc.FindBySymbol(context.Background(), "Marshal", "0.1.0", coordinate.ModuleSet{})
 	if !errors.Is(err, findErr) {
 		t.Errorf("got %v, want wrapping %v", err, findErr)
 	}
 }
 
 func TestQueryExamplesUseCase_FindBySymbolInModule(t *testing.T) {
-	coordA := coordinate.ModuleCoordinate{Path: "example.com/a", Version: "v1.0.0"}
-	coordB := coordinate.ModuleCoordinate{Path: "example.com/b", Version: "v1.0.0"}
+	coordA := coordinatetest.MustNew("example.com/a", "v1.0.0")
+	coordB := coordinatetest.MustNew("example.com/b", "v1.0.0")
 	store := &queryExFakeStore{
 		exampleRefs: []exampleports.ExampleRef{
-			{ModulePath: coordA.Path, ModuleVersion: coordA.Version, ExampleName: "ExampleMarshal"},
-			{ModulePath: coordB.Path, ModuleVersion: coordB.Version, ExampleName: "ExampleMarshal"},
+			{ModulePath: coordA.Path(), ModuleVersion: coordA.Version(), ExampleName: "ExampleMarshal"},
+			{ModulePath: coordB.Path(), ModuleVersion: coordB.Version(), ExampleName: "ExampleMarshal"},
 		},
 	}
 	uc := application.NewQueryExamplesUseCase(store)
@@ -171,8 +172,8 @@ func TestQueryExamplesUseCase_FindBySymbolInModule(t *testing.T) {
 	if len(refs) != 1 {
 		t.Fatalf("expected 1 scoped ref, got %d", len(refs))
 	}
-	if refs[0].ModulePath != coordA.Path {
-		t.Errorf("got ModulePath %q, want %q", refs[0].ModulePath, coordA.Path)
+	if refs[0].ModulePath != coordA.Path() {
+		t.Errorf("got ModulePath %q, want %q", refs[0].ModulePath, coordA.Path())
 	}
 }
 
@@ -180,7 +181,7 @@ func TestQueryExamplesUseCase_FindBySymbolInModule_Error(t *testing.T) {
 	findErr := errors.New("index failure")
 	uc := application.NewQueryExamplesUseCase(&queryExFakeStore{findErr: findErr})
 
-	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	_, err := uc.FindBySymbolInModule(context.Background(), coord, "Marshal", "0.1.0")
 	if !errors.Is(err, findErr) {
 		t.Errorf("got %v, want wrapping %v", err, findErr)

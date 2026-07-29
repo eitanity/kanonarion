@@ -95,8 +95,8 @@ type ExtractResult struct {
 // infrastructure errors (store access, blob I/O) return errors.
 func (uc *ExtractInterfaceUseCase) Execute(ctx context.Context, req ExtractRequest) (_ ExtractResult, retErr error) {
 	log := uc.logger.With(
-		slog.String("extraction.module.path", req.Coordinate.Path),
-		slog.String("extraction.module.version", req.Coordinate.Version),
+		slog.String("extraction.module.path", req.Coordinate.Path()),
+		slog.String("extraction.module.version", req.Coordinate.Version()),
 		slog.String("extraction.stage", "interface"),
 		slog.String("pipeline_version", uc.pipelineVersion),
 	)
@@ -112,6 +112,18 @@ func (uc *ExtractInterfaceUseCase) Execute(ctx context.Context, req ExtractReque
 	factRecord, err := uc.requireFetchRecord(ctx, req.Coordinate)
 	if err != nil {
 		return ExtractResult{}, err
+	}
+
+	// Which bytes this extraction is about, resolved before any work is done so a
+	// fetch record that names no artefact fails here rather than after a full
+	// parse. This stage always holds a fetch record, so a record it cannot name
+	// an artefact for is a fault in the measurement, not a legacy row.
+	artefact, err := domain2.ArtefactIdentityOf(factRecord)
+	if err != nil {
+		return ExtractResult{}, fmt.Errorf("deriving artefact identity for %s: %w", req.Coordinate, err)
+	}
+	if artefact.IsZero() {
+		return ExtractResult{}, fmt.Errorf("fetch record for %s names no artefact: %w", req.Coordinate, domain2.ErrZeroIdentity)
 	}
 
 	// A local coordinate (the project-walk root) is never served from cache:
@@ -169,6 +181,11 @@ func (uc *ExtractInterfaceUseCase) Execute(ctx context.Context, req ExtractReque
 		record.PipelineVersion = uc.pipelineVersion
 	}
 
+	// Stamped on both branches: a failed extraction is still a claim about a
+	// specific artefact, and one that cannot say which is unfalsifiable.
+	record.ArtefactIdentity = artefact.String()
+	record.SourceContentHash = factRecord.ContentHash
+
 	record, err = uc.hasher.SetContentHash(record)
 	if err != nil {
 		return ExtractResult{}, fmt.Errorf("computing content hash: %w", err)
@@ -225,7 +242,7 @@ func (uc *ExtractInterfaceUseCase) extractFromZip(
 
 	// Strip the "module@version/" prefix so paths inside the FS are
 	// relative to the module root (e.g., "net/http/server.go").
-	modulePrefix := coord.Path + "@" + coord.Version + "/"
+	modulePrefix := coord.Path() + "@" + coord.Version() + "/"
 	stripped := archive.FS(modulePrefix)
 
 	record, err := uc.extractor.Extract(ctx, stripped, coord)

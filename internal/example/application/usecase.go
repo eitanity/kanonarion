@@ -94,8 +94,8 @@ type ExtractResult struct {
 // an error. Only infrastructure errors (store access, blob I/O) return errors.
 func (uc *ExtractExampleUseCase) Execute(ctx context.Context, req ExtractRequest) (_ ExtractResult, retErr error) {
 	log := uc.logger.With(
-		slog.String("extraction.module.path", req.Coordinate.Path),
-		slog.String("extraction.module.version", req.Coordinate.Version),
+		slog.String("extraction.module.path", req.Coordinate.Path()),
+		slog.String("extraction.module.version", req.Coordinate.Version()),
 		slog.String("extraction.stage", "example"),
 		slog.String("pipeline_version", uc.pipelineVersion),
 	)
@@ -111,6 +111,18 @@ func (uc *ExtractExampleUseCase) Execute(ctx context.Context, req ExtractRequest
 	factRecord, err := uc.requireFetchRecord(ctx, req.Coordinate)
 	if err != nil {
 		return ExtractResult{}, err
+	}
+
+	// Which bytes this extraction is about, resolved before any work is done so a
+	// fetch record that names no artefact fails here rather than after a full
+	// parse. This stage always holds a fetch record, so a record it cannot name
+	// an artefact for is a fault in the measurement, not a legacy row.
+	artefact, err := domain.ArtefactIdentityOf(factRecord)
+	if err != nil {
+		return ExtractResult{}, fmt.Errorf("deriving artefact identity for %s: %w", req.Coordinate, err)
+	}
+	if artefact.IsZero() {
+		return ExtractResult{}, fmt.Errorf("fetch record for %s names no artefact: %w", req.Coordinate, domain.ErrZeroIdentity)
 	}
 
 	// A local coordinate (the project-walk root) is never served from cache:
@@ -166,6 +178,11 @@ func (uc *ExtractExampleUseCase) Execute(ctx context.Context, req ExtractRequest
 		log.InfoContext(ctx, "example_extraction_failed", slog.String("error", extractErr.Error()))
 	}
 
+	// Stamped on every branch: a failed extraction is still a claim about a
+	// specific artefact, and one that cannot say which is unfalsifiable.
+	record.ArtefactIdentity = artefact.String()
+	record.SourceContentHash = factRecord.ContentHash
+
 	record, err = uc.hasher.SetContentHash(record)
 	if err != nil {
 		return ExtractResult{}, fmt.Errorf("computing content hash: %w", err)
@@ -215,7 +232,7 @@ func (uc *ExtractExampleUseCase) extractFromZip(
 		return domain2.ExampleRecord{}, fmt.Errorf("example extraction cancelled: %w", ctxErr)
 	}
 
-	modulePrefix := coord.Path + "@" + coord.Version + "/"
+	modulePrefix := coord.Path() + "@" + coord.Version() + "/"
 	examples, failures, err := uc.parser.Parse(zipData, modulePrefix)
 	if err != nil {
 		return domain2.ExampleRecord{}, fmt.Errorf("parsing module zip: %w", err)

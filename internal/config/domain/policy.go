@@ -1,5 +1,7 @@
 package domain
 
+import "slices"
+
 import "sort"
 
 // PolicyEvaluation is the resolved result of checking a single license against
@@ -72,10 +74,8 @@ func (p LicensePolicy) categoryFor(license string) string {
 	}
 	sort.Strings(names)
 	for _, name := range names {
-		for _, id := range p.Categories[name] {
-			if id == license {
-				return name
-			}
+		if slices.Contains(p.Categories[name], license) {
+			return name
 		}
 	}
 	return ""
@@ -99,20 +99,14 @@ func (p LicensePolicy) ruleForScope(scope string) (LicensePolicyRule, bool) {
 // Default, and an unset Default resolves to allow.
 func (r LicensePolicyRule) resolveOutcome(category string) PolicyOutcome {
 	if category != "" {
-		for _, c := range r.Allow {
-			if c == category {
-				return PolicyOutcomeAllow
-			}
+		if slices.Contains(r.Allow, category) {
+			return PolicyOutcomeAllow
 		}
-		for _, c := range r.Notify {
-			if c == category {
-				return PolicyOutcomeNotify
-			}
+		if slices.Contains(r.Notify, category) {
+			return PolicyOutcomeNotify
 		}
-		for _, c := range r.Warn {
-			if c == category {
-				return PolicyOutcomeWarn
-			}
+		if slices.Contains(r.Warn, category) {
+			return PolicyOutcomeWarn
 		}
 	}
 	if r.Default == "" {

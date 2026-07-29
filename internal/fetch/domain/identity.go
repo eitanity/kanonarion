@@ -1,6 +1,28 @@
 package domain
 
-import "fmt"
+import (
+	"errors"
+	"fmt"
+	"strings"
+)
+
+// ErrZeroIdentity is the refusal every store owes the zero artefact identity.
+// It is defined here, beside the value object, on the terms ErrUnsealedRecord
+// and coordinate.ErrZeroCoordinate already set: one error in the domain so
+// every implementation refuses alike and a caller can test the refusal without
+// knowing which store answered.
+//
+// The zero identity names no artefact at all — no module hash and no go.mod
+// hash — so it can key nothing on a write and answers nothing on a read.
+var ErrZeroIdentity = errors.New("artefact identity is zero: it names no artefact and must never reach storage")
+
+// identityPrefixZip and identityPrefixGoMod are the depth prefixes String
+// writes and ParseArtefactIdentity reads back. They exist so a go.mod hash can
+// never collide with a zip hash that happens to hold the same value.
+const (
+	identityPrefixZip   = "zip"
+	identityPrefixGoMod = "gomod"
+)
 
 // ArtefactIdentity is the content-chosen address of the artefact a fact record
 // describes. It is the key the ledger composes on: two records share an identity
@@ -13,39 +35,54 @@ import "fmt"
 // be derived without consulting a storage handle. The raw SHA-256/384/512
 // digests corroborate; they are absent on records predating them and so cannot
 // serve as identity.
+//
+// Its fields are unexported: an identity is derived from a measurement by
+// ArtefactIdentityOf or read back from its persisted form by
+// ParseArtefactIdentity, and neither can be short-circuited by a struct
+// literal. The derivation is the whole value of the type — a hand-built
+// identity claiming a zip hash for a go.mod-only measurement is a false claim
+// about which bytes were seen, and it would key rows in every satellite table
+// that composes on it. Read it back through Hash, GoModOnly or String.
 type ArtefactIdentity struct {
-	// Hash is the h1 hash naming the artefact.
-	Hash ModuleHash
+	// hash is the h1 hash naming the artefact.
+	hash ModuleHash
 
-	// GoModOnly reports that Hash names a go.mod rather than a module zip,
+	// goModOnly reports that hash names a go.mod rather than a module zip,
 	// because this measurement never fetched the zip. It is what stops a
 	// go.mod-only record and a full record of the same coordinate being read as
 	// competing claims: they describe one artefact at two depths, and the full
 	// record subsumes the shallower one.
-	GoModOnly bool
+	goModOnly bool
 }
+
+// Hash is the h1 hash naming the artefact.
+func (a ArtefactIdentity) Hash() ModuleHash { return a.hash }
+
+// GoModOnly reports that Hash names a go.mod rather than a module zip, because
+// the measurement behind this identity never fetched the zip.
+func (a ArtefactIdentity) GoModOnly() bool { return a.goModOnly }
 
 // IsZero reports whether no identity could be derived — no module hash and no
 // go.mod hash. Such a record names no artefact at all and cannot take part in
-// composition.
-func (a ArtefactIdentity) IsZero() bool { return a.Hash.IsZero() }
+// composition, and a store handed one refuses it with ErrZeroIdentity.
+func (a ArtefactIdentity) IsZero() bool { return a.hash.IsZero() }
 
 // String renders the identity for keying and for logs. The go.mod-only form is
 // prefixed so a go.mod hash can never collide with a zip hash that happens to
-// hold the same value.
+// hold the same value. ParseArtefactIdentity reads the result back.
 func (a ArtefactIdentity) String() string {
 	if a.IsZero() {
 		return ""
 	}
-	if a.GoModOnly {
-		return "gomod:" + a.Hash.String()
+	if a.goModOnly {
+		return identityPrefixGoMod + ":" + a.hash.String()
 	}
-	return "zip:" + a.Hash.String()
+	return identityPrefixZip + ":" + a.hash.String()
 }
 
 // Equal reports whether two identities name the same artefact at the same depth.
 func (a ArtefactIdentity) Equal(other ArtefactIdentity) bool {
-	return a.GoModOnly == other.GoModOnly && a.Hash.Equal(other.Hash)
+	return a.goModOnly == other.goModOnly && a.hash.Equal(other.hash)
 }
 
 // ArtefactIdentityOf derives the identity of a fact record.
@@ -61,13 +98,85 @@ func ArtefactIdentityOf(r FactRecord) (ArtefactIdentity, error) {
 		return ArtefactIdentity{}, fmt.Errorf("parsing module hash of %s: %w", r.Coordinate(), err)
 	}
 	if !moduleHash.IsZero() {
-		return ArtefactIdentity{Hash: moduleHash}, nil
+		return ArtefactIdentity{hash: moduleHash}, nil
 	}
 	goModHash, err := StoredModuleHash(r.GoModHash)
 	if err != nil {
 		return ArtefactIdentity{}, fmt.Errorf("parsing go.mod hash of %s: %w", r.Coordinate(), err)
 	}
-	return ArtefactIdentity{Hash: goModHash, GoModOnly: true}, nil
+	return ArtefactIdentity{hash: goModHash, goModOnly: true}, nil
+}
+
+// ArtefactIdentityOfMeasurement derives the identity of a measurement that has
+// not been written to a record yet. It applies the same rule as
+// ArtefactIdentityOf — the zip hash when the zip was fetched, the go.mod hash
+// marked go.mod-only when it was not — and needs no error return because a
+// FetchedModule already holds parsed hashes.
+//
+// It lives here rather than in the caller so the rule has one statement. The
+// application layer used to restate it in a struct literal, which is exactly
+// how a measurement's identity and its record's identity come to disagree.
+func ArtefactIdentityOfMeasurement(m FetchedModule) ArtefactIdentity {
+	if !m.ModuleHash.IsZero() {
+		return ArtefactIdentity{hash: m.ModuleHash}
+	}
+	return ArtefactIdentity{hash: m.GoModHash, goModOnly: true}
+}
+
+// ParseArtefactIdentity reads the persisted form String emits — "zip:h1:..."
+// or "gomod:h1:..." — back into an identity.
+//
+// It fails closed on everything else. An unknown depth prefix, a hash the
+// parser cannot read, and the empty string all produce an error rather than a
+// zero identity, because a value that cannot be read is not evidence of an
+// artefact that was never measured: mistaking the first for the second is how
+// a corrupt column becomes a silently absent one. The zero identity's own
+// spelling is the empty string, and reading one back is refused with
+// ErrZeroIdentity, the same error a store refuses it with on the way in.
+func ParseArtefactIdentity(s string) (ArtefactIdentity, error) {
+	if s == "" {
+		return ArtefactIdentity{}, fmt.Errorf("parsing artefact identity %q: %w", s, ErrZeroIdentity)
+	}
+	prefix, rest, ok := strings.Cut(s, ":")
+	if !ok {
+		return ArtefactIdentity{}, fmt.Errorf("invalid artefact identity %q: expected %s: or %s: followed by algorithm:value", s, identityPrefixZip, identityPrefixGoMod)
+	}
+	var goModOnly bool
+	switch prefix {
+	case identityPrefixZip:
+	case identityPrefixGoMod:
+		goModOnly = true
+	default:
+		return ArtefactIdentity{}, fmt.Errorf("invalid artefact identity %q: unknown artefact depth %q", s, prefix)
+	}
+	hash, err := ParseModuleHash(rest)
+	if err != nil {
+		return ArtefactIdentity{}, fmt.Errorf("invalid artefact identity %q: %w", s, err)
+	}
+	if hash.IsZero() {
+		return ArtefactIdentity{}, fmt.Errorf("invalid artefact identity %q: %w", s, ErrZeroIdentity)
+	}
+	return ArtefactIdentity{hash: hash, goModOnly: goModOnly}, nil
+}
+
+// StoredArtefactIdentity reads an identity as it is held on a derived record,
+// where the empty field means "not recorded" rather than "corrupt".
+//
+// It exists because ParseArtefactIdentity deliberately refuses the empty string:
+// a value that cannot be read is not evidence of an artefact that was never
+// measured, and the parser cannot tell which of the two an empty column is. Only
+// the caller knows, and on a derived record it is always the former — records
+// written before the identity field existed carry nothing there, and there are
+// millions of them. Handing those to the parser would make every one unreadable.
+//
+// So the distinction is drawn once, here, rather than re-derived at the read site
+// of every context that stores an identity. Anything other than the empty string
+// still goes through ParseArtefactIdentity and still fails closed.
+func StoredArtefactIdentity(s string) (ArtefactIdentity, error) {
+	if s == "" {
+		return ArtefactIdentity{}, nil
+	}
+	return ParseArtefactIdentity(s)
 }
 
 // StoredModuleHash reads a hash as it is held on a record, where absence has two

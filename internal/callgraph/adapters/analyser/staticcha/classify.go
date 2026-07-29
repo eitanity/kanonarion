@@ -15,13 +15,9 @@ import (
 )
 
 func buildNode(fn *ssa.Function, coord coordinate.ModuleCoordinate, fset *token.FileSet, tempDir string) domain.CallNode {
-	pkgPath := ""
-	isExternal := true
-	if fn.Package() != nil {
-		pkgPath = fn.Package().Pkg.Path()
-		isExternal = pkgPath != coord.Path &&
-			!strings.HasPrefix(pkgPath, coord.Path+"/")
-	}
+	pkgPath := funcPackagePath(fn)
+	isExternal := pkgPath == "" ||
+		(pkgPath != coord.Path() && !strings.HasPrefix(pkgPath, coord.Path()+"/"))
 
 	symbol := fn.Name()
 	receiver := extractReceiverName(fn)
@@ -55,7 +51,7 @@ func buildNode(fn *ssa.Function, coord coordinate.ModuleCoordinate, fset *token.
 
 	modulePath := ""
 	if !isExternal {
-		modulePath = coord.Path
+		modulePath = coord.Path()
 	}
 
 	return domain.CallNode{
@@ -67,7 +63,86 @@ func buildNode(fn *ssa.Function, coord coordinate.ModuleCoordinate, fset *token.
 		IsExternal:    isExternal,
 		IsExportedAPI: isExportedAPI,
 		Position:      pos,
+		IsTest:        isTestFunc(fn, fset, pkgPath),
 	}
+}
+
+// isTestFunc reports whether fn is test-scope: declared in a _test.go file, or
+// in an external test package.
+//
+// The position is taken from the object rather than the function when the
+// function has none, which is the case for the synthetic wrappers SSA
+// materialises for a method set. A wrapper around a test fake's method is test
+// code, and attributing it to production would put it back in exactly the
+// answer the role exists to keep separate.
+func isTestFunc(fn *ssa.Function, fset *token.FileSet, pkgPath string) bool {
+	if isTestPackagePath(pkgPath) {
+		return true
+	}
+	if fset == nil {
+		return false
+	}
+	pos := fn.Pos()
+	if pos == token.NoPos {
+		if obj := fn.Object(); obj != nil {
+			pos = obj.Pos()
+		}
+	}
+	if pos == token.NoPos {
+		// A synthetic function with no object at all — a package initialiser or
+		// a bound-method thunk. It inherits its parent's role when it has one.
+		if parent := fn.Parent(); parent != nil {
+			return isTestFunc(parent, fset, pkgPath)
+		}
+		return false
+	}
+	p := fset.Position(pos)
+	return p.IsValid() && strings.HasSuffix(p.Filename, "_test.go")
+}
+
+// isTestDeclaration is the type-level form of isTestFunc, for a declaration
+// identified by its position rather than by an SSA function.
+func isTestDeclaration(pos token.Pos, fset *token.FileSet, pkgPath string) bool {
+	if isTestPackagePath(pkgPath) {
+		return true
+	}
+	if fset == nil || pos == token.NoPos {
+		return false
+	}
+	p := fset.Position(pos)
+	return p.IsValid() && strings.HasSuffix(p.Filename, "_test.go")
+}
+
+// isTestPackagePath reports whether an import path names an external test
+// package, whose every declaration is test code.
+func isTestPackagePath(pkgPath string) bool {
+	return strings.HasSuffix(pkgPath, "_test")
+}
+
+// funcPackagePath returns the import path of the package a function belongs to.
+//
+// SSA leaves Package() nil for the synthetic wrappers it materialises for a
+// method set — a value-receiver method reached through a pointer, a bound
+// method value. Those wrappers are not package members, but they are not
+// package-less either: they wrap a method declared in a real package, and the
+// object records which. Reading only Package() attributed every one of them to
+// no module and marked it external, which mis-scopes reachability rooting and
+// module attribution for a symbol that is the module's own code.
+func funcPackagePath(fn *ssa.Function) string {
+	if fn == nil {
+		return ""
+	}
+	if pkg := fn.Package(); pkg != nil && pkg.Pkg != nil {
+		return pkg.Pkg.Path()
+	}
+	if obj := fn.Object(); obj != nil && obj.Pkg() != nil {
+		return obj.Pkg().Path()
+	}
+	// A closure inherits the package of whatever encloses it.
+	if parent := fn.Parent(); parent != nil {
+		return funcPackagePath(parent)
+	}
+	return ""
 }
 
 // nodeID returns a stable, unique identifier for an SSA function.
@@ -167,7 +242,7 @@ func isInternalPkg(path string) bool {
 		strings.HasSuffix(path, "/internal")
 }
 func isMainPkg(fn *ssa.Function) bool {
-	if fn.Package() == nil {
+	if fn.Package() == nil || fn.Package().Pkg == nil {
 		return false
 	}
 	return fn.Package().Pkg.Name() == "main"

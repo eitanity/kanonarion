@@ -145,10 +145,10 @@ func marshalCanonicalRun(r ExtractionRun) ([]byte, error) {
 		coords = append(coords, c)
 	}
 	sort.Slice(coords, func(i, j int) bool {
-		if coords[i].Path != coords[j].Path {
-			return coords[i].Path < coords[j].Path
+		if coords[i].Path() != coords[j].Path() {
+			return coords[i].Path() < coords[j].Path()
 		}
-		return coords[i].Version < coords[j].Version
+		return coords[i].Version() < coords[j].Version()
 	})
 
 	cResults := make([]canonicalModuleResult, len(coords))
@@ -172,7 +172,7 @@ func marshalCanonicalRun(r ExtractionRun) ([]byte, error) {
 			}
 		}
 		cResults[i] = canonicalModuleResult{
-			Coordinate: canonicalCoord{Path: coord.Path, Version: coord.Version},
+			Coordinate: canonicalCoord{Path: coord.Path(), Version: coord.Version()},
 			Stages:     cStages,
 		}
 	}

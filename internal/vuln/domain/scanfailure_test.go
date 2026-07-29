@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 )
 
 func TestIsBuildIncompatibility(t *testing.T) {
@@ -242,8 +243,8 @@ func TestUnresolvedCoordinate(t *testing.T) {
 			if !ok {
 				return
 			}
-			if got.Path != tc.wantPath || got.Version != tc.wantVersion {
-				t.Errorf("coordinate = %s@%s, want %s@%s", got.Path, got.Version, tc.wantPath, tc.wantVersion)
+			if got.Path() != tc.wantPath || got.Version() != tc.wantVersion {
+				t.Errorf("coordinate = %s@%s, want %s@%s", got.Path(), got.Version(), tc.wantPath, tc.wantVersion)
 			}
 		})
 	}
@@ -256,10 +257,10 @@ func TestUnresolvedCoordinate(t *testing.T) {
 // evidence supports.
 func TestClassifyOfflineResolution(t *testing.T) {
 	known := map[coordinate.ModuleCoordinate]struct{}{
-		{Path: "github.com/stretchr/testify", Version: "v1.7.0"}: {},
+		coordinatetest.MustNew("github.com/stretchr/testify", "v1.7.0"): {},
 	}
-	inClosure := coordinate.ModuleCoordinate{Path: "github.com/stretchr/testify", Version: "v1.7.0"}
-	outside := coordinate.ModuleCoordinate{Path: "example.com/other", Version: "v3.0.0"}
+	inClosure := coordinatetest.MustNew("github.com/stretchr/testify", "v1.7.0")
+	outside := coordinatetest.MustNew("example.com/other", "v3.0.0")
 	detail := "govulncheck: loading packages: stdr.go:25:2: module lookup disabled by GOPROXY=off"
 
 	// A version the walk records: a fault, not an expected outcome, and the prose
@@ -396,7 +397,7 @@ func TestImportSiteModule(t *testing.T) {
 			detail: "/tmp/kanonarion-modcache-1/github.com/golang/protobuf@v1.5.3/proto/buffer.go:11:2: " +
 				"could not import google.golang.org/protobuf/proto (invalid package name: \"\")",
 			importPath: "google.golang.org/protobuf/proto",
-			wantCoord:  coordinate.ModuleCoordinate{Path: "github.com/golang/protobuf", Version: "v1.5.3"},
+			wantCoord:  coordinatetest.MustNew("github.com/golang/protobuf", "v1.5.3"),
 			wantOK:     true,
 		},
 		{
@@ -404,7 +405,7 @@ func TestImportSiteModule(t *testing.T) {
 			detail: "/tmp/kanonarion-modcache-1/github.com/!paessler!a!g/jsonpath@v0.1.1/jsonpath.go:17:2: " +
 				"could not import github.com/PaesslerAG/gval (invalid package name: \"\")",
 			importPath: "github.com/PaesslerAG/gval",
-			wantCoord:  coordinate.ModuleCoordinate{Path: "github.com/PaesslerAG/jsonpath", Version: "v0.1.1"},
+			wantCoord:  coordinatetest.MustNew("github.com/PaesslerAG/jsonpath", "v0.1.1"),
 			wantOK:     true,
 		},
 		{
@@ -609,7 +610,7 @@ func TestImportSiteModule_SkipsLineWithoutMarker(t *testing.T) {
 	if !ok {
 		t.Fatalf("ok = false, want true (the marker line after a non-marker line must pair)")
 	}
-	want := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.2.3"}
+	want := coordinatetest.MustNew("github.com/foo/bar", "v1.2.3")
 	if got != want {
 		t.Errorf("coord = %v, want %v", got, want)
 	}
@@ -666,12 +667,12 @@ func TestModuleFromCachePath_Branches(t *testing.T) {
 		{"no slash after version", "github.com/foo/bar@v1.0.0", false, coordinate.ModuleCoordinate{}},
 		{"version not v-prefixed", "github.com/foo/bar@abc/file.go", false, coordinate.ModuleCoordinate{}},
 		{"valid coordinate", "/tmp/x/github.com/foo/bar@v1.2.3/pkg/file.go:1:2", true,
-			coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.2.3"}},
+			coordinatetest.MustNew("github.com/foo/bar", "v1.2.3")},
 		// A literal (unescaped) path with an uppercase element fails UnescapePath
 		// — the escaped form must be all-lowercase — but is a valid module path, so
 		// it is accepted via the plain CheckPath arm.
 		{"literal uppercase path", "/tmp/x/github.com/Masterminds/semver@v1.5.0/version.go:1:2", true,
-			coordinate.ModuleCoordinate{Path: "github.com/Masterminds/semver", Version: "v1.5.0"}},
+			coordinatetest.MustNew("github.com/Masterminds/semver", "v1.5.0")},
 		{"empty trailing segment before version", "x/@v1.0.0/file.go", false, coordinate.ModuleCoordinate{}},
 		{"no valid module prefix", "not a path@v1.0.0/file.go", false, coordinate.ModuleCoordinate{}},
 	}

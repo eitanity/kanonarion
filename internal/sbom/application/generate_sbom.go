@@ -136,7 +136,7 @@ func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (d
 		// The allow-list is version-sensitive, so match and key edges on the full
 		// coordinate rather than the bare path.
 		inScope := func(c coordinate.ModuleCoordinate) bool {
-			return allowed[c] || c.Path == walkdomain.StdlibModulePath
+			return allowed[c] || c.Path() == walkdomain.StdlibModulePath
 		}
 		walk.Graph.Nodes, walk.Graph.Edges = walkdomain.FilterGraph(
 			walk.Graph,

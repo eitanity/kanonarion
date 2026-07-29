@@ -5,45 +5,77 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"strings"
 
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/spf13/cobra"
 )
 
+// testScopeFlagName is the opt-in that drops the test surface from an edge
+// query. Including tests is the default because the correctness risk runs one
+// way: a test caller the graph hides is a false negative dressed as a
+// measurement, while one the reader did not want is visible and discountable.
+const testScopeFlagName = "exclude-tests"
+
+// registerEdgeScopeFlag adds --exclude-tests to an edge query command.
+func registerEdgeScopeFlag(cmd *cobra.Command, excludeTests *bool) {
+	cmd.Flags().BoolVar(excludeTests, testScopeFlagName, false,
+		"omit callers and callees declared in _test.go files and external test packages")
+}
+
 func newCallersCmd(stdout, stderr io.Writer) *cobra.Command {
 	var transitive bool
 	var depth int
+	var excludeTests bool
+	var scopeFlags buildScopeFlags
 
 	cmd := &cobra.Command{
-		Use:     "callers <symbol-id>",
-		Short:   "Find all callers of a symbol across the call graph store",
-		Example: `  kanonarion callers 'github.com/spf13/cobra.(*Command).Execute'`,
+		Use:   "callers <symbol-id>",
+		Short: "Find all callers of a symbol across the call graph store",
+		Example: `  kanonarion callers 'github.com/spf13/cobra.(*Command).Execute'
+  kanonarion callers 'golang.org/x/text/unicode/norm.(Form).String' --gomod
+  kanonarion callers 'golang.org/x/text/unicode/norm.(Form).String' --walk-id abc123`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
 				return usageErr(cmd)
 			}
+			scopeFlags.bind(cmd)
 			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			if transitive {
-				return runCallersTransitive(cmd.Context(), args[0], depth, jsonOut, ctr.QueryCallGraph, stdout)
+			sc, err := scopeFlags.resolve(cmd.Context(), ctr.QueryWalks)
+			if err != nil {
+				return err
 			}
-			return runCallers(cmd.Context(), args[0], jsonOut, ctr.QueryCallGraph, stdout)
+			opts := ports.EdgeQueryOptions{ExcludeTests: excludeTests}
+			if transitive {
+				return runCallersTransitive(cmd.Context(), args[0], depth, jsonOut, ctr.QueryCallGraph, stdout, sc, opts)
+			}
+			return runCallers(cmd.Context(), args[0], jsonOut, ctr.QueryCallGraph, stdout, sc, opts)
 		},
 	}
 
 	cmd.Flags().BoolVar(&transitive, "transitive", false, "traverse the call graph transitively, following all reachable edges")
 	cmd.Flags().IntVar(&depth, "depth", 0, "maximum traversal depth for --transitive (0 = unlimited)")
+	registerEdgeScopeFlag(cmd, &excludeTests)
+	registerBuildScopeFlags(cmd, &scopeFlags)
+	// Cobra only allows a valueless --gomod when the flag declares what that
+	// means, and the default has to be the literal path so it is both what the
+	// resolver receives and what --help prints.
+	cmd.Flags().Lookup("gomod").NoOptDefVal = defaultGoModPath
 
 	return cmd
 }
 
-func runCallers(ctx context.Context, symbolID string, jsonOut bool, uc QueryCallGraphUseCase, stdout io.Writer) error {
-	failedPkg, isPartial, failedList, err := rootPartialStatus(ctx, symbolID, uc)
+func runCallers(ctx context.Context, symbolID string, jsonOut bool, uc QueryCallGraphUseCase, stdout io.Writer, sc buildScope, opts ports.EdgeQueryOptions) error {
+	if err := checkSymbolInScope(ctx, symbolID, uc, sc); err != nil {
+		return err
+	}
+	failedPkg, isPartial, failedList, err := rootPartialStatus(ctx, symbolID, uc, sc.modules)
 	if err != nil {
 		return err
 	}
@@ -51,24 +83,29 @@ func runCallers(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 		return partialUnresolvedError("callers", symbolID, failedPkg)
 	}
 
-	refs, err := uc.FindCallers(ctx, symbolID, cgapp.PipelineVersion)
+	refs, err := uc.FindCallers(ctx, symbolID, cgapp.PipelineVersion, sc.modules, opts)
 	if err != nil {
 		return fmt.Errorf("finding callers: %w", err)
 	}
 
 	if len(refs) == 0 {
-		if cerr := classifyEmptyEdgeResult(ctx, symbolID, uc); cerr != nil {
+		if cerr := classifyEmptyEdgeResult(ctx, symbolID, uc, sc.modules); cerr != nil {
 			return cerr
 		}
 	}
 
+	if !jsonOut {
+		if err := writeScopeNotice(stdout, sc); err != nil {
+			return err
+		}
+	}
 	if isPartial && !jsonOut {
 		if err := writePartialNotice(stdout, "callers", symbolID, failedList); err != nil {
 			return err
 		}
 	}
 	if !jsonOut {
-		if err := writeCompletenessNotice(ctx, symbolID, uc, stdout); err != nil {
+		if err := writeCompletenessNotice(ctx, symbolID, uc, stdout, sc.modules); err != nil {
 			return err
 		}
 	}
@@ -77,11 +114,11 @@ func runCallers(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 		return err
 	}
 	if len(refs) == 0 && !jsonOut {
-		v, verr := negativeCallVerdict(ctx, symbolID, true, uc)
+		v, verr := negativeCallVerdict(ctx, symbolID, true, uc, sc.modules, opts)
 		if verr != nil {
 			return verr
 		}
-		return writeCallVerdict(stdout, "callers", symbolID, v)
+		return writeCallVerdict(stdout, "callers", symbolID, v, opts)
 	}
 	return nil
 }
@@ -89,36 +126,54 @@ func runCallers(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 func newCalleesCmd(stdout, stderr io.Writer) *cobra.Command {
 	var transitive bool
 	var depth int
+	var excludeTests bool
+	var scopeFlags buildScopeFlags
 
 	cmd := &cobra.Command{
-		Use:     "callees <symbol-id>",
-		Short:   "Find all callees of a symbol across the call graph store",
-		Example: `  kanonarion callees 'github.com/spf13/cobra.(*Command).Execute'`,
+		Use:   "callees <symbol-id>",
+		Short: "Find all callees of a symbol across the call graph store",
+		Example: `  kanonarion callees 'github.com/spf13/cobra.(*Command).Execute'
+  kanonarion callees 'github.com/spf13/cobra.(*Command).Execute' --gomod`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
 				return usageErr(cmd)
 			}
+			scopeFlags.bind(cmd)
 			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			if transitive {
-				return runCalleesTransitive(cmd.Context(), args[0], depth, jsonOut, ctr.QueryCallGraph, stdout)
+			sc, err := scopeFlags.resolve(cmd.Context(), ctr.QueryWalks)
+			if err != nil {
+				return err
 			}
-			return runCallees(cmd.Context(), args[0], jsonOut, ctr.QueryCallGraph, stdout)
+			opts := ports.EdgeQueryOptions{ExcludeTests: excludeTests}
+			if transitive {
+				return runCalleesTransitive(cmd.Context(), args[0], depth, jsonOut, ctr.QueryCallGraph, stdout, sc, opts)
+			}
+			return runCallees(cmd.Context(), args[0], jsonOut, ctr.QueryCallGraph, stdout, sc, opts)
 		},
 	}
 
 	cmd.Flags().BoolVar(&transitive, "transitive", false, "traverse the call graph transitively, following all reachable edges")
 	cmd.Flags().IntVar(&depth, "depth", 0, "maximum traversal depth for --transitive (0 = unlimited)")
+	registerEdgeScopeFlag(cmd, &excludeTests)
+	registerBuildScopeFlags(cmd, &scopeFlags)
+	// Cobra only allows a valueless --gomod when the flag declares what that
+	// means, and the default has to be the literal path so it is both what the
+	// resolver receives and what --help prints.
+	cmd.Flags().Lookup("gomod").NoOptDefVal = defaultGoModPath
 
 	return cmd
 }
 
-func runCallees(ctx context.Context, symbolID string, jsonOut bool, uc QueryCallGraphUseCase, stdout io.Writer) error {
-	failedPkg, isPartial, failedList, err := rootPartialStatus(ctx, symbolID, uc)
+func runCallees(ctx context.Context, symbolID string, jsonOut bool, uc QueryCallGraphUseCase, stdout io.Writer, sc buildScope, opts ports.EdgeQueryOptions) error {
+	if err := checkSymbolInScope(ctx, symbolID, uc, sc); err != nil {
+		return err
+	}
+	failedPkg, isPartial, failedList, err := rootPartialStatus(ctx, symbolID, uc, sc.modules)
 	if err != nil {
 		return err
 	}
@@ -126,24 +181,29 @@ func runCallees(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 		return partialUnresolvedError("callees", symbolID, failedPkg)
 	}
 
-	refs, err := uc.FindCallees(ctx, symbolID, cgapp.PipelineVersion)
+	refs, err := uc.FindCallees(ctx, symbolID, cgapp.PipelineVersion, sc.modules, opts)
 	if err != nil {
 		return fmt.Errorf("finding callees: %w", err)
 	}
 
 	if len(refs) == 0 {
-		if cerr := classifyEmptyEdgeResult(ctx, symbolID, uc); cerr != nil {
+		if cerr := classifyEmptyEdgeResult(ctx, symbolID, uc, sc.modules); cerr != nil {
 			return cerr
 		}
 	}
 
+	if !jsonOut {
+		if err := writeScopeNotice(stdout, sc); err != nil {
+			return err
+		}
+	}
 	if isPartial && !jsonOut {
 		if err := writePartialNotice(stdout, "callees", symbolID, failedList); err != nil {
 			return err
 		}
 	}
 	if !jsonOut {
-		if err := writeCompletenessNotice(ctx, symbolID, uc, stdout); err != nil {
+		if err := writeCompletenessNotice(ctx, symbolID, uc, stdout, sc.modules); err != nil {
 			return err
 		}
 	}
@@ -152,11 +212,11 @@ func runCallees(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 		return err
 	}
 	if len(refs) == 0 && !jsonOut {
-		v, verr := negativeCallVerdict(ctx, symbolID, false, uc)
+		v, verr := negativeCallVerdict(ctx, symbolID, false, uc, sc.modules, opts)
 		if verr != nil {
 			return verr
 		}
-		return writeCallVerdict(stdout, "callees", symbolID, v)
+		return writeCallVerdict(stdout, "callees", symbolID, v, opts)
 	}
 	return nil
 }
@@ -170,6 +230,7 @@ type callEdgeRefJSON struct {
 	FromID          string `json:"from_id"`
 	ToID            string `json:"to_id"`
 	Confidence      string `json:"confidence"`
+	IsTest          bool   `json:"is_test"`
 }
 
 // toEdgeRefsJSON maps to the curated shape. The result is always non-nil so
@@ -184,6 +245,7 @@ func toEdgeRefsJSON(refs []ports.CallEdgeRef) []callEdgeRefJSON {
 			FromID:          r.FromID,
 			ToID:            r.ToID,
 			Confidence:      string(r.Confidence),
+			IsTest:          r.IsTest,
 		})
 	}
 	return out
@@ -206,7 +268,7 @@ func printEdgeRefs(kind, symbolID string, refs []ports.CallEdgeRef, jsonOut bool
 		return nil
 	}
 
-	if _, err := fmt.Fprintf(stdout, "%d %s of %s:\n", len(refs), kind, symbolID); err != nil {
+	if _, err := fmt.Fprintf(stdout, "%s of %s:\n", countOf(len(refs), kind), symbolID); err != nil {
 		return fmt.Errorf("writing header: %w", err)
 	}
 	for _, ref := range refs {
@@ -214,14 +276,28 @@ func printEdgeRefs(kind, symbolID string, refs []ports.CallEdgeRef, jsonOut bool
 		if kind == "callers" {
 			other = ref.FromID
 		}
-		if _, err := fmt.Fprintf(stdout, "  %s  [%s]  (%s@%s)\n",
-			other, string(ref.Confidence),
+		testTag := ""
+		if ref.IsTest {
+			testTag = "  [test]"
+		}
+		if _, err := fmt.Fprintf(stdout, "  %s  [%s]%s  (%s@%s)\n",
+			other, string(ref.Confidence), testTag,
 			ref.ModulePath, ref.ModuleVersion,
 		); err != nil {
 			return fmt.Errorf("writing ref: %w", err)
 		}
 	}
 	return nil
+}
+
+// countOf renders a count with the right number: "1 caller", not "1 callers".
+// kind is a plural noun ("callers", "callees"), singularised by dropping the
+// trailing "s" — which is correct for every kind this renders.
+func countOf(n int, kind string) string {
+	if n == 1 {
+		return "1 " + strings.TrimSuffix(kind, "s")
+	}
+	return fmt.Sprintf("%d %s", n, kind)
 }
 
 // transitiveResult is the JSON shape for --transitive output.
@@ -235,17 +311,25 @@ type transitiveResult struct {
 	Edges     []callEdgeRefJSON `json:"edges"`
 }
 
-func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, jsonOut bool, uc QueryCallGraphUseCase, stdout io.Writer) error {
-	failedPkg, isPartial, failedList, err := rootPartialStatus(ctx, symbolID, uc)
+func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, jsonOut bool, uc QueryCallGraphUseCase, stdout io.Writer, sc buildScope, opts ports.EdgeQueryOptions) error {
+	if err := checkSymbolInScope(ctx, symbolID, uc, sc); err != nil {
+		return err
+	}
+	failedPkg, isPartial, failedList, err := rootPartialStatus(ctx, symbolID, uc, sc.modules)
 	if err != nil {
 		return err
 	}
 	if failedPkg != "" {
 		return partialUnresolvedError("transitive callers", symbolID, failedPkg)
 	}
-	edges, nodes, err := uc.TraverseCallers(ctx, symbolID, cgapp.PipelineVersion, maxDepth)
+	edges, nodes, err := uc.TraverseCallers(ctx, symbolID, cgapp.PipelineVersion, maxDepth, sc.modules, opts)
 	if err != nil {
 		return fmt.Errorf("traversing callers: %w", err)
+	}
+	if !jsonOut {
+		if err := writeScopeNotice(stdout, sc); err != nil {
+			return err
+		}
 	}
 	if isPartial && !jsonOut {
 		if err := writePartialNotice(stdout, "transitive callers", symbolID, failedList); err != nil {
@@ -253,7 +337,7 @@ func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, js
 		}
 	}
 	if !jsonOut {
-		if err := writeCompletenessNotice(ctx, symbolID, uc, stdout); err != nil {
+		if err := writeCompletenessNotice(ctx, symbolID, uc, stdout, sc.modules); err != nil {
 			return err
 		}
 	}
@@ -261,26 +345,34 @@ func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, js
 		return err
 	}
 	if len(nodes) == 0 && !jsonOut {
-		v, verr := negativeCallVerdict(ctx, symbolID, true, uc)
+		v, verr := negativeCallVerdict(ctx, symbolID, true, uc, sc.modules, opts)
 		if verr != nil {
 			return verr
 		}
-		return writeCallVerdict(stdout, "transitive callers", symbolID, v)
+		return writeCallVerdict(stdout, "transitive callers", symbolID, v, opts)
 	}
 	return nil
 }
 
-func runCalleesTransitive(ctx context.Context, symbolID string, maxDepth int, jsonOut bool, uc QueryCallGraphUseCase, stdout io.Writer) error {
-	failedPkg, isPartial, failedList, err := rootPartialStatus(ctx, symbolID, uc)
+func runCalleesTransitive(ctx context.Context, symbolID string, maxDepth int, jsonOut bool, uc QueryCallGraphUseCase, stdout io.Writer, sc buildScope, opts ports.EdgeQueryOptions) error {
+	if err := checkSymbolInScope(ctx, symbolID, uc, sc); err != nil {
+		return err
+	}
+	failedPkg, isPartial, failedList, err := rootPartialStatus(ctx, symbolID, uc, sc.modules)
 	if err != nil {
 		return err
 	}
 	if failedPkg != "" {
 		return partialUnresolvedError("transitive callees", symbolID, failedPkg)
 	}
-	edges, nodes, err := uc.TraverseCallees(ctx, symbolID, cgapp.PipelineVersion, maxDepth)
+	edges, nodes, err := uc.TraverseCallees(ctx, symbolID, cgapp.PipelineVersion, maxDepth, sc.modules, opts)
 	if err != nil {
 		return fmt.Errorf("traversing callees: %w", err)
+	}
+	if !jsonOut {
+		if err := writeScopeNotice(stdout, sc); err != nil {
+			return err
+		}
 	}
 	if isPartial && !jsonOut {
 		if err := writePartialNotice(stdout, "transitive callees", symbolID, failedList); err != nil {
@@ -288,7 +380,7 @@ func runCalleesTransitive(ctx context.Context, symbolID string, maxDepth int, js
 		}
 	}
 	if !jsonOut {
-		if err := writeCompletenessNotice(ctx, symbolID, uc, stdout); err != nil {
+		if err := writeCompletenessNotice(ctx, symbolID, uc, stdout, sc.modules); err != nil {
 			return err
 		}
 	}
@@ -296,11 +388,11 @@ func runCalleesTransitive(ctx context.Context, symbolID string, maxDepth int, js
 		return err
 	}
 	if len(nodes) == 0 && !jsonOut {
-		v, verr := negativeCallVerdict(ctx, symbolID, false, uc)
+		v, verr := negativeCallVerdict(ctx, symbolID, false, uc, sc.modules, opts)
 		if verr != nil {
 			return verr
 		}
-		return writeCallVerdict(stdout, "transitive callees", symbolID, v)
+		return writeCallVerdict(stdout, "transitive callees", symbolID, v, opts)
 	}
 	return nil
 }

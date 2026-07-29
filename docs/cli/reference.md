@@ -24,7 +24,7 @@ depth policy, store layout, and exit codes - see
 
 - [`extract`](extract.md) - run extraction stages for all modules in a walk
 - [`interface`](interface.md) - extract and summarise a module's public API (also `symbol-find`)
-- [`callgraph`](callgraph.md) - extract and summarise a module's call graph (also `callers`, `callees`)
+- [`callgraph`](callgraph.md) - extract and summarise a module's call graph (also `callers`, `callees`, `implementers`)
 - [`local`](local.md) - ingest the working tree's call graph so `callers`/`callees` resolve internal symbols
 - [`examples`](examples.md) - harvest Example\* functions
 - [`symbol-context`](symbol-context.md) - assemble a per-module symbol record (signature, godoc, examples) for AI context
@@ -56,6 +56,7 @@ depth policy, store layout, and exit codes - see
 - [`fips`](fips.md) - assess FIPS toolchain eligibility and non-FIPS algorithm / cgo-crypto usage
 - [`policy`](policy.md) - `policy validate` and `policy show`
 - [`inspect`](inspect.md) - run the full pipeline (walk → extract → vuln-scan → context) for a module
+- [`verification-coverage`](verification-coverage.md) - report how a walk's modules were verified, and whether cross-verification collapsed
 - [`provenance`](provenance.md) - fork/copy provenance facts for a module path (name-path heuristic)
 - [`config`](config.md) - read and write configuration values
 - [`store`](store.md) - inspect and manage the kanonarion store

@@ -36,14 +36,14 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 	result, err := uc.moduleScanner.scanner.ScanProject(ctx, params.ProjectDir, *snapshot, vulnDBDir)
 	if err != nil {
 		uc.logger.Error("project-rooted scan failed", "root", root, "error", err)
-		uc.fillProjectFault(ctx, allCoords, params, snapshot, out, domain.StatusScanFailed, "", "", err.Error())
+		uc.fillProjectFault(ctx, root, allCoords, params, snapshot, out, domain.StatusScanFailed, "", "", err.Error())
 		return
 	}
 	if result.Status == domain.StatusUnscannable || result.Status == domain.StatusScanFailed {
 		// A genuine fault — no go.mod, OOM, a real build break — surfaces
 		// honestly across the build rather than as a false clean.
 		uc.logger.Warn("project-rooted scan could not analyse the project", "root", root, "status", result.Status)
-		uc.fillProjectFault(ctx, allCoords, params, snapshot, out, result.Status, result.UnscanReason, result.UnscannableReason, result.ErrorDetail)
+		uc.fillProjectFault(ctx, root, allCoords, params, snapshot, out, result.Status, result.UnscanReason, result.UnscannableReason, result.ErrorDetail)
 		return
 	}
 
@@ -68,16 +68,17 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 			// checked. Reporting it Clean would be the exact false negative this
 			// path is being fixed for, so it carries the fault instead.
 			uc.logger.Error("project-rooted scan: advisory match by coordinate failed", "coordinate", coord, "error", err)
-			rec := uc.persistProjectRecord(ctx, coord, nil, domain.StatusScanFailed, "", "", err.Error(), params, snapshot)
+			rec := uc.persistProjectRecord(ctx, root, coord, nil, domain.StatusScanFailed, "", "", err.Error(), params, snapshot)
 			out[coord] = moduleResult{coord: coord, record: rec}
 			continue
 		}
 
-		status := domain.StatusClean
-		if len(findings) > 0 {
-			status = domain.StatusAffected
-		}
-		rec := uc.persistProjectRecord(ctx, coord, findings, status, "", "", "", params, snapshot)
+		// The findings decide the word, not their count: every match may name an
+		// advisory that has since been retracted, and that is not an Affected verdict.
+		status := domain.DetermineRecordOverallStatus(
+			domain.CoverageAnalysed, domain.DetermineFindingsAxis(findings),
+		)
+		rec := uc.persistProjectRecord(ctx, root, coord, findings, status, "", "", "", params, snapshot)
 		out[coord] = moduleResult{coord: coord, record: rec}
 	}
 }
@@ -126,7 +127,21 @@ func (uc *ScanWalkUseCase) mergeCoordinateFindings(
 			continue
 		}
 		if reachabilityAnswerable {
-			f.Reachable = &domain.ReachabilityResult{IsReachable: false, Confidence: domain.ConfidenceHigh}
+			// The derivation is stated even though this answer has no route, and
+			// having none is the point: it is govulncheck's SILENCE about the
+			// module, not a path it traced. The instrument and its fidelity are
+			// what make that silence an answer — the analysis examined this module
+			// at its real version from real entry points — so an answer that did
+			// not name them would be indistinguishable from one no analyser
+			// produced at all.
+			f.Reachable = &domain.ReachabilityResult{
+				IsReachable: false,
+				Confidence:  domain.ConfidenceHigh,
+				DerivedBy: domain.ReachabilityDerivation{
+					Analyser: domain.AnalyserGovulncheck,
+					Fidelity: string(domain.ScanModeSource),
+				},
+			}
 		}
 		reported = append(reported, f)
 		added++
@@ -150,14 +165,14 @@ func (uc *ScanWalkUseCase) mergeCoordinateFindings(
 // the walk node's (a pruned build carries one version per path, so this cannot
 // mis-attribute between two versions of the same module).
 func projectFindingsFor(byModule map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding, coord coordinate.ModuleCoordinate) []domain.VulnerabilityFinding {
-	if coord.Path == domain.StdlibModulePath {
-		return byModule[coordinate.ModuleCoordinate{Path: domain.StdlibModulePath}]
+	if coord.Path() == domain.StdlibModulePath {
+		return byModule[coordinate.NewStdlibCoordinate()]
 	}
 	if fs, ok := byModule[coord]; ok {
 		return fs
 	}
 	for k, fs := range byModule {
-		if k.Path != domain.StdlibModulePath && k.Path == coord.Path {
+		if k.Path() != domain.StdlibModulePath && k.Path() == coord.Path() {
 			return fs
 		}
 	}
@@ -180,6 +195,7 @@ func copyFindings(in []domain.VulnerabilityFinding) []domain.VulnerabilityFindin
 // is visible per row rather than silently dropped.
 func (uc *ScanWalkUseCase) fillProjectFault(
 	ctx context.Context,
+	root coordinate.ModuleCoordinate,
 	allCoords []coordinate.ModuleCoordinate,
 	params ScanWalkParams,
 	snapshot *domain.DatabaseSnapshot,
@@ -189,7 +205,7 @@ func (uc *ScanWalkUseCase) fillProjectFault(
 	unscannableReason, errorDetail string,
 ) {
 	for _, coord := range allCoords {
-		rec := uc.persistProjectRecord(ctx, coord, nil, status, unscanReason, unscannableReason, errorDetail, params, snapshot)
+		rec := uc.persistProjectRecord(ctx, root, coord, nil, status, unscanReason, unscannableReason, errorDetail, params, snapshot)
 		out[coord] = moduleResult{coord: coord, record: rec}
 	}
 }
@@ -200,6 +216,7 @@ func (uc *ScanWalkUseCase) fillProjectFault(
 // downstream tally, run persistence and queries treat both paths uniformly.
 func (uc *ScanWalkUseCase) persistProjectRecord(
 	ctx context.Context,
+	root coordinate.ModuleCoordinate,
 	coord coordinate.ModuleCoordinate,
 	findings []domain.VulnerabilityFinding,
 	status domain.VulnerabilityStatus,
@@ -208,6 +225,12 @@ func (uc *ScanWalkUseCase) persistProjectRecord(
 	params ScanWalkParams,
 	snapshot *domain.DatabaseSnapshot,
 ) domain.VulnerabilityRecord {
+	// No ArtefactIdentity. A project-rooted verdict is derived from one
+	// govulncheck run over the TARGET's build, not from this dependency's own
+	// bytes: the stage never opened the dependency's artefact, so it cannot name
+	// which measurement of it produced this row. Stamping the coordinate's latest
+	// fetch identity here would be exactly the link-by-convention this field
+	// exists to replace — a claim about bytes nothing in this path read.
 	now := uc.clock.Now()
 	rec := domain.VulnerabilityRecord{
 		Ecosystem:         fetchdomain.EcosystemGo,
@@ -222,13 +245,33 @@ func (uc *ScanWalkUseCase) persistProjectRecord(
 		ScannedAt:         now,
 		FirstScannedAt:    now,
 		PipelineVersion:   uc.pipelineVersion,
+		// The frame this record was produced in, naming the target it was rooted
+		// at. Every record on this path comes from one analysis rooted at that
+		// target, reaching each dependency through the target's import graph at the
+		// versions the build selects — so it answers "is this advisory reachable in
+		// what THIS target ships", which neither an isolated scan of the same
+		// coordinate nor an analysis rooted at a different target can.
+		//
+		// The root is part of the frame rather than a note beside it. All three
+		// collided on (coordinate, pipeline, snapshot) before, and whichever ran
+		// last silently answered for every question; naming the root is what keeps
+		// one consumer's reachability finding from being displaced by another's.
+		Rooting: domain.TargetRootedAt(root),
 	}
 	domain.SortFindings(rec.Findings)
-	if hash, err := uc.moduleScanner.computeContentHash(rec); err != nil {
-		uc.logger.Error("project-rooted scan: failed to compute content hash", "coordinate", coord, "error", err)
-	} else {
-		rec.ContentHash = hash
+	// govulncheck produced these reachability answers and knows nothing of the
+	// walk; the frame it was rooted at is stamped on each of them here, so a
+	// finding carries its own derivation wherever it is copied to.
+	domain.StampReachabilityRooting(&rec)
+	sealed, herr := domain.VulnerabilityRecordHasher{}.SetContentHash(rec)
+	if herr != nil {
+		// An unsealed record is one the store refuses, so there is nothing to
+		// persist: report the failure and return the unsealed verdict to the
+		// caller rather than following it with a write that cannot succeed.
+		uc.logger.Error("project-rooted scan: failed to compute content hash", "coordinate", coord, "error", herr)
+		return rec
 	}
+	rec = sealed
 	if perr := uc.vulnStore.PutVulnerabilityRecord(ctx, rec); perr != nil {
 		uc.logger.Error("project-rooted scan: failed to persist record", "coordinate", coord, "error", perr)
 	}

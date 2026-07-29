@@ -4,17 +4,16 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 )
 
 func TestNewFactRecord(t *testing.T) {
 	m := domain2.FetchedModule{
-		Coordinate:         coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"},
-		ModuleHash:         domain2.ModuleHash{Algorithm: "h1", Value: "abc=="},
-		GoModHash:          domain2.ModuleHash{Algorithm: "h1", Value: "def=="},
+		Coordinate:         coordinatetest.MustNew("github.com/foo/bar", "v1.0.0"),
+		ModuleHash:         fetchtest.H1("abc=="),
+		GoModHash:          fetchtest.H1("def=="),
 		GitReference:       domain2.GitReference{URL: "https://github.com/foo/bar", Ref: "refs/tags/v1.0.0", CommitHash: "aabbcc00000000000000000000000000000000"},
 		VerificationStatus: domain2.Verified,
 		FetchedAt:          time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
@@ -40,7 +39,7 @@ func TestNewFactRecord(t *testing.T) {
 func TestFactRecord_Coordinate(t *testing.T) {
 	r := fetchtest.Record(t, fetchtest.Module("github.com/foo/bar", "v1.0.0"))
 	c := r.Coordinate()
-	if c.Path != "github.com/foo/bar" || c.Version != "v1.0.0" {
+	if c.Path() != "github.com/foo/bar" || c.Version() != "v1.0.0" {
 		t.Errorf("Coordinate() = %v", c)
 	}
 }
@@ -72,8 +71,7 @@ func TestModuleHash_IsZero(t *testing.T) {
 	if !h.IsZero() {
 		t.Error("zero value should be IsZero")
 	}
-	h.Algorithm = "h1"
-	if h.IsZero() {
+	if fetchtest.H1("abc==").IsZero() {
 		t.Error("non-zero should not be IsZero")
 	}
 }

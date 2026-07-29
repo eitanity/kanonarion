@@ -5,6 +5,7 @@ package testfakes
 
 import (
 	"context"
+	"fmt"
 	"sync"
 
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
@@ -255,6 +256,7 @@ func (f *FakeExtractLicense) GetLicenseStore() licenseports.LicenseStore {
 type FakeQueryLicense struct {
 	mu            sync.Mutex
 	records       map[string]licensedomain.LicenseRecord
+	history       map[string][]licensedomain.LicenseRecord
 	list          []licenseports.LicenseSummary
 	resolveResult []licapp.DepLicenseResult
 	Err           error
@@ -290,6 +292,26 @@ func (f *FakeQueryLicense) GetLicenseRecord(_ context.Context, coord coordinate.
 	defer f.mu.Unlock()
 	rec, ok := f.records[coord.String()+"|"+pipelineVersion]
 	return rec, ok, nil
+}
+
+// History is the generation list LicenseHistory returns, keyed by
+// "coordinate|pipelineVersion" like records.
+func (f *FakeQueryLicense) SetHistory(coord coordinate.ModuleCoordinate, pipelineVersion string, recs []licensedomain.LicenseRecord) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.history == nil {
+		f.history = map[string][]licensedomain.LicenseRecord{}
+	}
+	f.history[coord.String()+"|"+pipelineVersion] = recs
+}
+
+func (f *FakeQueryLicense) LicenseHistory(_ context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]licensedomain.LicenseRecord, error) {
+	if f.Err != nil {
+		return nil, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.history[coord.String()+"|"+pipelineVersion], nil
 }
 
 func (f *FakeQueryLicense) ListLicenseRecords(_ context.Context, _ licenseports.LicenseFilter) ([]licenseports.LicenseSummary, error) {
@@ -388,13 +410,41 @@ func (f *FakeExtractInterface) Execute(_ context.Context, _ ifaceapp.ExtractRequ
 type FakeQueryInterface struct {
 	mu      sync.Mutex
 	records map[string]ifacedomain.InterfaceRecord
+	history map[string][]ifacedomain.InterfaceRecord
 	list    []ifaceports.InterfaceSummary
 	symbols []ifaceports.SymbolRef
 	Err     error
 }
 
 func NewFakeQueryInterface() *FakeQueryInterface {
-	return &FakeQueryInterface{records: make(map[string]ifacedomain.InterfaceRecord)}
+	return &FakeQueryInterface{
+		records: make(map[string]ifacedomain.InterfaceRecord),
+		history: make(map[string][]ifacedomain.InterfaceRecord),
+	}
+}
+
+// SetInterfaceHistory sets the generations InterfaceHistory returns for a
+// coordinate.
+func (f *FakeQueryInterface) SetInterfaceHistory(coord coordinate.ModuleCoordinate, pipelineVersion string, recs []ifacedomain.InterfaceRecord) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.history[coord.String()+"|"+pipelineVersion] = recs
+}
+
+func (f *FakeQueryInterface) InterfaceHistory(_ context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]ifacedomain.InterfaceRecord, error) {
+	if f.Err != nil {
+		return nil, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.history[coord.String()+"|"+pipelineVersion], nil
+}
+
+// AddRecord sets the composed record GetInterfaceRecord returns for a coordinate.
+func (f *FakeQueryInterface) AddRecord(coord coordinate.ModuleCoordinate, pipelineVersion string, rec ifacedomain.InterfaceRecord) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.records[coord.String()+"|"+pipelineVersion] = rec
 }
 
 func (f *FakeQueryInterface) GetInterfaceRecord(_ context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (ifacedomain.InterfaceRecord, bool, error) {
@@ -416,13 +466,22 @@ func (f *FakeQueryInterface) ListInterfaceRecords(_ context.Context, _ ifaceport
 	return f.list, nil
 }
 
-func (f *FakeQueryInterface) FindSymbol(_ context.Context, _, _ string) ([]ifaceports.SymbolRef, error) {
+func (f *FakeQueryInterface) FindSymbol(_ context.Context, _, _ string, scope coordinate.ModuleSet) ([]ifaceports.SymbolRef, error) {
 	if f.Err != nil {
 		return nil, f.Err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.symbols, nil
+	if !scope.IsRestricted() {
+		return f.symbols, nil
+	}
+	out := make([]ifaceports.SymbolRef, 0, len(f.symbols))
+	for _, r := range f.symbols {
+		if scope.ContainsPathVersion(r.ModulePath, r.ModuleVersion) {
+			out = append(out, r)
+		}
+	}
+	return out, nil
 }
 
 // ---- callgraph context ----
@@ -448,6 +507,8 @@ type FakeQueryCallGraph struct {
 	traverseCallerNodes []string
 	traverseCallees     []cgports.CallEdgeRef
 	traverseCalleeNodes []string
+	history             map[string][]cgdomain.CallGraphRecord
+	getErr              error
 	Err                 error
 }
 
@@ -467,14 +528,71 @@ func (f *FakeQueryCallGraph) SetList(summaries []cgports.CallGraphSummary) {
 	f.list = summaries
 }
 
+// SetGetErr makes record reads fail while listing still succeeds, so a caller
+// that must surface a store failure rather than report an empty answer can be
+// tested at the point the read happens.
+func (f *FakeQueryCallGraph) SetGetErr(err error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.getErr = err
+}
+
 func (f *FakeQueryCallGraph) GetCallGraphRecord(_ context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (cgdomain.CallGraphRecord, bool, error) {
 	if f.Err != nil {
 		return cgdomain.CallGraphRecord{}, false, f.Err
+	}
+	if f.getErr != nil {
+		return cgdomain.CallGraphRecord{}, false, f.getErr
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	rec, ok := f.records[coord.String()+"|"+pipelineVersion]
 	return rec, ok, nil
+}
+
+// AddGeneration appends a record to the coordinate's history without changing
+// what GetCallGraphRecord serves, so a test can set up a ledger holding several
+// generations and a composed answer independently.
+func (f *FakeQueryCallGraph) AddGeneration(coord coordinate.ModuleCoordinate, pipelineVersion string, rec cgdomain.CallGraphRecord) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key := coord.String() + "|" + pipelineVersion
+	if f.history == nil {
+		f.history = make(map[string][]cgdomain.CallGraphRecord)
+	}
+	f.history[key] = append(f.history[key], rec)
+}
+
+func (f *FakeQueryCallGraph) GetCallGraphRecordFrom(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, source cgdomain.AnalysisSource) (cgdomain.CallGraphRecord, bool, error) {
+	rec, found, err := f.GetCallGraphRecord(ctx, coord, pipelineVersion)
+	if err != nil || !found {
+		return rec, found, err
+	}
+	if source != cgdomain.AnalysisSourceUnrecorded && rec.AnalysisSource != source {
+		return cgdomain.CallGraphRecord{}, false, nil
+	}
+	return rec, true, nil
+}
+
+func (f *FakeQueryCallGraph) CallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]cgdomain.CallGraphRecord, error) {
+	if f.Err != nil {
+		return nil, f.Err
+	}
+	f.mu.Lock()
+	key := coord.String() + "|" + pipelineVersion
+	gens := append([]cgdomain.CallGraphRecord(nil), f.history[key]...)
+	f.mu.Unlock()
+	if len(gens) > 0 {
+		return gens, nil
+	}
+	// No explicit history was staged, so the single served record IS the history.
+	// A fake that returned nothing here would make "the ledger holds one
+	// generation" indistinguishable from "the store keeps no history at all".
+	rec, ok, err := f.GetCallGraphRecord(ctx, coord, pipelineVersion)
+	if err != nil || !ok {
+		return nil, err
+	}
+	return []cgdomain.CallGraphRecord{rec}, nil
 }
 
 func (f *FakeQueryCallGraph) ListCallGraphRecords(_ context.Context, _ cgports.CallGraphFilter) ([]cgports.CallGraphSummary, error) {
@@ -498,22 +616,38 @@ func (f *FakeQueryCallGraph) SetCallees(refs []cgports.CallEdgeRef) {
 	f.callees = refs
 }
 
-func (f *FakeQueryCallGraph) FindCallers(_ context.Context, _, _ string) ([]cgports.CallEdgeRef, error) {
+func (f *FakeQueryCallGraph) FindCallers(_ context.Context, _, _ string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error) {
 	if f.Err != nil {
 		return nil, f.Err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.callers, nil
+	return scopeEdgeRefs(f.callers, scope), nil
 }
 
-func (f *FakeQueryCallGraph) FindCallees(_ context.Context, _, _ string) ([]cgports.CallEdgeRef, error) {
+func (f *FakeQueryCallGraph) FindCallees(_ context.Context, _, _ string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error) {
 	if f.Err != nil {
 		return nil, f.Err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.callees, nil
+	return scopeEdgeRefs(f.callees, scope), nil
+}
+
+// scopeEdgeRefs mirrors the real store's scope filter so a CLI test can observe
+// whether the scope reached the query at all — a fake that ignored the argument
+// would pass whether or not the command plumbed it.
+func scopeEdgeRefs(refs []cgports.CallEdgeRef, scope coordinate.ModuleSet) []cgports.CallEdgeRef {
+	if !scope.IsRestricted() {
+		return refs
+	}
+	out := make([]cgports.CallEdgeRef, 0, len(refs))
+	for _, r := range refs {
+		if scope.ContainsPathVersion(r.ModulePath, r.ModuleVersion) {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 func (f *FakeQueryCallGraph) SetTraverseCallers(edges []cgports.CallEdgeRef, nodes []string) {
@@ -530,22 +664,22 @@ func (f *FakeQueryCallGraph) SetTraverseCallees(edges []cgports.CallEdgeRef, nod
 	f.traverseCalleeNodes = nodes
 }
 
-func (f *FakeQueryCallGraph) TraverseCallers(_ context.Context, _, _ string, _ int) ([]cgports.CallEdgeRef, []string, error) {
+func (f *FakeQueryCallGraph) TraverseCallers(_ context.Context, _, _ string, _ int, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, []string, error) {
 	if f.Err != nil {
 		return nil, nil, f.Err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.traverseCallers, f.traverseCallerNodes, nil
+	return scopeEdgeRefs(f.traverseCallers, scope), f.traverseCallerNodes, nil
 }
 
-func (f *FakeQueryCallGraph) TraverseCallees(_ context.Context, _, _ string, _ int) ([]cgports.CallEdgeRef, []string, error) {
+func (f *FakeQueryCallGraph) TraverseCallees(_ context.Context, _, _ string, _ int, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, []string, error) {
 	if f.Err != nil {
 		return nil, nil, f.Err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.traverseCallees, f.traverseCalleeNodes, nil
+	return scopeEdgeRefs(f.traverseCallees, scope), f.traverseCalleeNodes, nil
 }
 
 // ---- example context ----
@@ -564,13 +698,33 @@ func (f *FakeExtractExample) Execute(_ context.Context, _ exapp.ExtractRequest) 
 type FakeQueryExamples struct {
 	mu      sync.Mutex
 	records map[string]exdomain.ExampleRecord
+	history map[string][]exdomain.ExampleRecord
 	list    []exports.ExampleSummary
 	refs    []exports.ExampleRef
 	Err     error
 }
 
 func NewFakeQueryExamples() *FakeQueryExamples {
-	return &FakeQueryExamples{records: make(map[string]exdomain.ExampleRecord)}
+	return &FakeQueryExamples{
+		records: make(map[string]exdomain.ExampleRecord),
+		history: make(map[string][]exdomain.ExampleRecord),
+	}
+}
+
+// SetHistory sets the generations ExampleHistory returns for a coordinate.
+func (f *FakeQueryExamples) SetHistory(coord coordinate.ModuleCoordinate, pipelineVersion string, recs []exdomain.ExampleRecord) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.history[coord.String()+"|"+pipelineVersion] = recs
+}
+
+func (f *FakeQueryExamples) ExampleHistory(_ context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]exdomain.ExampleRecord, error) {
+	if f.Err != nil {
+		return nil, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.history[coord.String()+"|"+pipelineVersion], nil
 }
 
 func (f *FakeQueryExamples) AddRecord(coord coordinate.ModuleCoordinate, pipelineVersion string, rec exdomain.ExampleRecord) {
@@ -610,7 +764,7 @@ func (f *FakeQueryExamples) ListExampleRecords(_ context.Context, _ exports.Exam
 	return f.list, nil
 }
 
-func (f *FakeQueryExamples) FindBySymbol(_ context.Context, _, _ string) ([]exports.ExampleRef, error) {
+func (f *FakeQueryExamples) FindBySymbol(_ context.Context, _, _ string, _ coordinate.ModuleSet) ([]exports.ExampleRef, error) {
 	if f.Err != nil {
 		return nil, f.Err
 	}
@@ -628,7 +782,7 @@ func (f *FakeQueryExamples) FindBySymbolInModule(_ context.Context, coord coordi
 	// Return refs that match the given module coordinate.
 	var out []exports.ExampleRef
 	for _, ref := range f.refs {
-		if ref.ModulePath == coord.Path && ref.ModuleVersion == coord.Version {
+		if ref.ModulePath == coord.Path() && ref.ModuleVersion == coord.Version() {
 			out = append(out, ref)
 		}
 	}
@@ -697,7 +851,12 @@ type FakeQueryVuln struct {
 	mu      sync.Mutex
 	records map[string]vulndomain.VulnerabilityRecord
 	byID    []vulndomain.VulnerabilityRecord
-	Err     error
+	// byIDForWalk holds the walk-scoped answers for ListRecordsByFindingID. A
+	// walk with no entry is unknown to the store, which is an error rather than
+	// an empty result — the same distinction the sqlite adapter makes.
+	byIDForWalk  map[string][]vulndomain.VulnerabilityRecord
+	byIDWalkSeen string
+	Err          error
 	// ForceLatestRecordForWalkNotFound makes GetLatestRecordForWalk always return
 	// (zero, false, nil) regardless of the records map. Use this to exercise the
 	// fallback path that checks GetLatestRecord for a ScanFailed status.
@@ -765,13 +924,40 @@ func (f *FakeQueryVuln) SetByID(recs []vulndomain.VulnerabilityRecord) {
 	f.byID = recs
 }
 
-func (f *FakeQueryVuln) ListRecordsByFindingID(_ context.Context, _ string) ([]vulndomain.VulnerabilityRecord, error) {
+// SetByIDForWalk seeds the answer a walk-scoped vuln-by-id query gets. Walks
+// with no entry are reported as never scanned.
+func (f *FakeQueryVuln) SetByIDForWalk(walkID string, recs []vulndomain.VulnerabilityRecord) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.byIDForWalk == nil {
+		f.byIDForWalk = make(map[string][]vulndomain.VulnerabilityRecord)
+	}
+	f.byIDForWalk[walkID] = recs
+}
+
+// ByIDWalkSeen returns the walk ID the last ListRecordsByFindingID call carried,
+// so a test can prove the flag reached the use case rather than being dropped.
+func (f *FakeQueryVuln) ByIDWalkSeen() string {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.byIDWalkSeen
+}
+
+func (f *FakeQueryVuln) ListRecordsByFindingID(_ context.Context, _, walkID string) ([]vulndomain.VulnerabilityRecord, error) {
 	if f.Err != nil {
 		return nil, f.Err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.byID, nil
+	f.byIDWalkSeen = walkID
+	if walkID == "" {
+		return f.byID, nil
+	}
+	recs, ok := f.byIDForWalk[walkID]
+	if !ok {
+		return nil, fmt.Errorf("no vulnerability scan run for walk %s", walkID)
+	}
+	return recs, nil
 }
 
 // FakeQueryScanRuns implements cli.QueryScanRunsUseCase.

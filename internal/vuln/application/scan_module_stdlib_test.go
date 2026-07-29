@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -16,7 +17,7 @@ import (
 // coordinate and reports Affected when the toolchain version is vulnerable.
 func TestScanModule_Stdlib_MetadataAffected(t *testing.T) {
 	ctx := t.Context()
-	std := coordinate.ModuleCoordinate{Path: domain.StdlibModulePath, Version: "v1.26.4"}
+	std := coordinatetest.MustNew(domain.StdlibModulePath, "v1.26.4")
 	now := time.Date(2026, 7, 9, 0, 0, 0, 0, time.UTC)
 
 	facts := newFakeFacts() // no fetch record for stdlib — it is never fetched
@@ -57,7 +58,7 @@ func TestScanModule_Stdlib_MetadataAffected(t *testing.T) {
 // toolchain (no matching advisory) reports Clean, not Unscannable.
 func TestScanModule_Stdlib_MetadataClean(t *testing.T) {
 	ctx := t.Context()
-	std := coordinate.ModuleCoordinate{Path: domain.StdlibModulePath, Version: "v1.26.5"}
+	std := coordinatetest.MustNew(domain.StdlibModulePath, "v1.26.5")
 	now := time.Date(2026, 7, 9, 0, 0, 0, 0, time.UTC)
 
 	uc := application.NewScanModuleUseCase(

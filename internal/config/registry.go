@@ -13,7 +13,7 @@ type ConfigSpec struct {
 	Section string
 	// Defaults holds the built-in default values for this section.
 	// The type must be a struct with yaml tags matching the config.yaml schema.
-	Defaults interface{}
+	Defaults any
 }
 
 // Registry collects ConfigSpec values registered by compiled-in modules.

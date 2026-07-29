@@ -138,7 +138,7 @@ func populateOne(
 	// The .info time is when the artefact was FIRST seen, not when the served
 	// measurement was taken. A revalidation does not make a module newer, and the
 	// module cache's .info is a fact about the module.
-	if err := writeInfo(base, coord.Version, record.FirstFetchedAt); err != nil {
+	if err := writeInfo(base, coord.Version(), record.FirstFetchedAt); err != nil {
 		return err
 	}
 
@@ -219,7 +219,7 @@ func populateGoModOne(
 	if err := linkOrCopy(ctx, blobs, goModIdentity, base+".mod"); err != nil {
 		return fmt.Errorf("writing mod: %w", err)
 	}
-	if err := writeInfo(base, coord.Version, record.FirstFetchedAt); err != nil {
+	if err := writeInfo(base, coord.Version(), record.FirstFetchedAt); err != nil {
 		return err
 	}
 	// .lock — empty sentinel required by the Go module cache protocol.
@@ -371,10 +371,16 @@ func goModRequirements(modPath string) ([]coordinate.ModuleCoordinate, error) {
 	}
 	out := make([]coordinate.ModuleCoordinate, 0, len(f.Require))
 	for _, req := range f.Require {
-		if req == nil || req.Mod.Path == "" || req.Mod.Version == "" {
+		if req == nil {
 			continue
 		}
-		out = append(out, coordinate.ModuleCoordinate{Path: req.Mod.Path, Version: req.Mod.Version})
+		// A require line the constructor rejects is not a module to populate for,
+		// on the same terms as the empty path or version this skipped before.
+		coord, err := coordinate.NewModuleCoordinate(req.Mod.Path, req.Mod.Version)
+		if err != nil {
+			continue
+		}
+		out = append(out, coord)
 	}
 	return out, nil
 }
@@ -396,13 +402,13 @@ func cacheEntryBase(cacheDir string, coord coordinate.ModuleCoordinate) (string,
 // cacheEntryPath is cacheEntryBase without the directory creation, for callers
 // that only need to test whether an entry is already present.
 func cacheEntryPath(cacheDir string, coord coordinate.ModuleCoordinate) (string, error) {
-	escapedPath, err := module.EscapePath(coord.Path)
+	escapedPath, err := module.EscapePath(coord.Path())
 	if err != nil {
-		return "", fmt.Errorf("escaping module path %q: %w", coord.Path, err)
+		return "", fmt.Errorf("escaping module path %q: %w", coord.Path(), err)
 	}
-	escapedVersion, err := module.EscapeVersion(coord.Version)
+	escapedVersion, err := module.EscapeVersion(coord.Version())
 	if err != nil {
-		return "", fmt.Errorf("escaping module version %q: %w", coord.Version, err)
+		return "", fmt.Errorf("escaping module version %q: %w", coord.Version(), err)
 	}
 	versionDir := filepath.Join(cacheDir, "cache", "download", filepath.FromSlash(escapedPath), "@v")
 	return filepath.Join(versionDir, escapedVersion), nil

@@ -67,8 +67,7 @@ func runLicenseDiff(ctx context.Context, argA, argB string, stdout, stderr io.Wr
 func licenseDiffWith(ctx context.Context, ctr *Container, coordA, coordB coordinate.ModuleCoordinate, stdout io.Writer) error {
 	diff, err := ctr.DiffLicense.Diff(ctx, coordA, coordB)
 	if err != nil {
-		var notFound *licapp.ErrLicenseRecordNotFound
-		if errors.As(err, &notFound) {
+		if notFound, ok := errors.AsType[*licapp.ErrLicenseRecordNotFound](err); ok {
 			return &exitError{code: ExitNotFound, msg: notFound.Error()}
 		}
 		return fmt.Errorf("diffing license records: %w", err)
@@ -92,7 +91,7 @@ func printLicenseDiff(diff domain.LicenseDiff, stdout io.Writer) error {
 	a := diff.RecordA.Coordinate
 	b := diff.RecordB.Coordinate
 
-	if _, err := fmt.Fprintf(stdout, "Diff:  %s@%s → %s@%s\n", a.Path, a.Version, b.Path, b.Version); err != nil {
+	if _, err := fmt.Fprintf(stdout, "Diff:  %s@%s → %s@%s\n", a.Path(), a.Version(), b.Path(), b.Version()); err != nil {
 		return fmt.Errorf("writing header: %w", err)
 	}
 
@@ -217,8 +216,8 @@ func toLicenseDiffJSON(diff domain.LicenseDiff) licenseDiffJSON {
 	b := diff.RecordB.Coordinate
 
 	out := licenseDiffJSON{
-		ModuleA:          a.Path + "@" + a.Version,
-		ModuleB:          b.Path + "@" + b.Version,
+		ModuleA:          a.Path() + "@" + a.Version(),
+		ModuleB:          b.Path() + "@" + b.Version(),
 		FilesAdded:       make([]licFileDeltaJSON, 0, len(diff.FilesAdded)),
 		FilesRemoved:     make([]licFileDeltaJSON, 0, len(diff.FilesRemoved)),
 		CopyrightAdded:   make([]string, 0, len(diff.CopyrightAdded)),

@@ -15,6 +15,7 @@ import (
 	"gopkg.in/yaml.v3"
 
 	"github.com/eitanity/kanonarion/internal/config/domain"
+	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
 // ConfigStore loads a Config from a YAML file at a fixed path.
@@ -54,6 +55,14 @@ type configYAML struct {
 	GoDebugPolicy   *godebugPolicyYAML   `yaml:"godebug_policy"`
 	VendorPolicy    *vendorPolicyYAML    `yaml:"vendor_policy"`
 	FIPSPolicy      *fipsPolicyYAML      `yaml:"fips_policy"`
+	FetchPolicy     *fetchPolicyYAML     `yaml:"fetch_policy"`
+}
+
+// fetchPolicyYAML is a pointer in configYAML and its list is left nil when
+// absent, because absent and empty mean different things here: absent leaves
+// the built-in host set advisory, while naming the key switches to enforcing.
+type fetchPolicyYAML struct {
+	AllowedVCSHosts []string `yaml:"allowed_vcs_hosts"`
 }
 
 type directivePolicyYAML struct {
@@ -318,6 +327,17 @@ func applyGovernance(cfg *domain.Config, y configYAML, defaults domain.Config) e
 			return fmt.Errorf("fips_policy.on_deviation: %w", err)
 		}
 		cfg.FIPSPolicy = domain.FIPSPolicy{Required: fp.Required, OnDeviation: o}
+	}
+
+	cfg.FetchPolicy = defaults.FetchPolicy
+	if fp := y.FetchPolicy; fp != nil && fp.AllowedVCSHosts != nil {
+		// Validated here rather than at first use: a malformed or empty host
+		// list must fail while the operator is looking at the config file, not
+		// halfway through a walk. The domain owns what a usable list is.
+		if _, err := fetchdomain.NewVCSHostAllowlist(fp.AllowedVCSHosts); err != nil {
+			return fmt.Errorf("fetch_policy.allowed_vcs_hosts: %w", err)
+		}
+		cfg.FetchPolicy = domain.FetchPolicy{AllowedVCSHosts: fp.AllowedVCSHosts}
 	}
 
 	if err := cfg.ValidateGovernance(); err != nil {

@@ -5,12 +5,13 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	"github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
 func coord(path, version string) coordinate.ModuleCoordinate {
-	return coordinate.ModuleCoordinate{Path: path, Version: version}
+	return coordinatetest.MustNew(path, version)
 }
 
 func TestGraphSort_nodes(t *testing.T) {
@@ -51,14 +52,14 @@ func TestGraphSort_edges(t *testing.T) {
 	g.Sort()
 
 	// Expected order: a.com/a→a.com/a, a.com/a→b.com/b, z.com/z→a.com/a
-	if g.Edges[0].From.Path != "a.com/a" || g.Edges[0].To.Path != "a.com/a" {
-		t.Errorf("edges[0] = %q→%q, want a.com/a→a.com/a", g.Edges[0].From.Path, g.Edges[0].To.Path)
+	if g.Edges[0].From.Path() != "a.com/a" || g.Edges[0].To.Path() != "a.com/a" {
+		t.Errorf("edges[0] = %q→%q, want a.com/a→a.com/a", g.Edges[0].From.Path(), g.Edges[0].To.Path())
 	}
-	if g.Edges[1].From.Path != "a.com/a" || g.Edges[1].To.Path != "b.com/b" {
-		t.Errorf("edges[1] = %q→%q, want a.com/a→b.com/b", g.Edges[1].From.Path, g.Edges[1].To.Path)
+	if g.Edges[1].From.Path() != "a.com/a" || g.Edges[1].To.Path() != "b.com/b" {
+		t.Errorf("edges[1] = %q→%q, want a.com/a→b.com/b", g.Edges[1].From.Path(), g.Edges[1].To.Path())
 	}
-	if g.Edges[2].From.Path != "z.com/z" {
-		t.Errorf("edges[2].From = %q, want z.com/z", g.Edges[2].From.Path)
+	if g.Edges[2].From.Path() != "z.com/z" {
+		t.Errorf("edges[2].From = %q, want z.com/z", g.Edges[2].From.Path())
 	}
 }
 
@@ -95,8 +96,8 @@ func TestGraphNode_fields(t *testing.T) {
 		ErrorDetail:      "",
 		Retracted:        false,
 	}
-	if n.Coordinate.Path != "example.com/pkg" {
-		t.Errorf("Path = %q", n.Coordinate.Path)
+	if n.Coordinate.Path() != "example.com/pkg" {
+		t.Errorf("Path = %q", n.Coordinate.Path())
 	}
 	if !n.DirectDependency {
 		t.Error("DirectDependency should be true")
@@ -130,8 +131,8 @@ func TestGraphSort_edges_sameFromPath(t *testing.T) {
 		},
 	}
 	g.Sort()
-	if g.Edges[0].From.Version != "v1.0.0" {
-		t.Errorf("edges[0].From.Version = %q, want v1.0.0", g.Edges[0].From.Version)
+	if g.Edges[0].From.Version() != "v1.0.0" {
+		t.Errorf("edges[0].From.Version = %q, want v1.0.0", g.Edges[0].From.Version())
 	}
 }
 
@@ -143,8 +144,8 @@ func TestGraphSort_edges_sameFromDifferentToPath(t *testing.T) {
 		},
 	}
 	g.Sort()
-	if g.Edges[0].To.Path != "a.com/a" {
-		t.Errorf("edges[0].To.Path = %q, want a.com/a", g.Edges[0].To.Path)
+	if g.Edges[0].To.Path() != "a.com/a" {
+		t.Errorf("edges[0].To.Path = %q, want a.com/a", g.Edges[0].To.Path())
 	}
 }
 
@@ -156,8 +157,8 @@ func TestGraphSort_edges_sameFromSameToPathDiffVersion(t *testing.T) {
 		},
 	}
 	g.Sort()
-	if g.Edges[0].To.Version != "v1.0.0" {
-		t.Errorf("edges[0].To.Version = %q, want v1.0.0", g.Edges[0].To.Version)
+	if g.Edges[0].To.Version() != "v1.0.0" {
+		t.Errorf("edges[0].To.Version = %q, want v1.0.0", g.Edges[0].To.Version())
 	}
 }
 
@@ -276,7 +277,7 @@ func TestSupersededRequirements_returnsIntermediateVersions(t *testing.T) {
 	if len(got) != 1 {
 		t.Fatalf("SupersededRequirements() = %v, want exactly one entry", got)
 	}
-	if got[0].Path != "github.com/go-logr/logr" || got[0].Version != "v1.2.2" {
+	if got[0].Path() != "github.com/go-logr/logr" || got[0].Version() != "v1.2.2" {
 		t.Errorf("SupersededRequirements()[0] = %s, want github.com/go-logr/logr@v1.2.2", got[0])
 	}
 }
@@ -312,7 +313,7 @@ func TestSupersededRequirements_dedupesAndSorts(t *testing.T) {
 			{From: coord("b.com/b", "v1.0.0"), To: coord("z.com/z", "v2.0.0"), ConstraintVersion: "v1.0.0"}, // duplicate
 			{From: coord("c.com/c", "v1.0.0"), To: coord("z.com/z", "v2.0.0"), ConstraintVersion: "v1.5.0"},
 			// An empty constraint (main-module edge) is skipped.
-			{From: coord("main", ""), To: coord("z.com/z", "v2.0.0"), ConstraintVersion: ""},
+			{From: coordinatetest.PathOnly("main"), To: coord("z.com/z", "v2.0.0"), ConstraintVersion: ""},
 		},
 	}
 	got := g.SupersededRequirements()
@@ -408,33 +409,33 @@ func TestKnownVersions_coversSelectedVersionsOnly(t *testing.T) {
 // set rather than of the store.
 func TestSelectedVersions_ExcludesReplacedFromCoordinate(t *testing.T) {
 	g := domain.Graph{Nodes: []domain.GraphNode{{
-		Coordinate:         coordinate.ModuleCoordinate{Path: "github.com/hashicorp/go-metrics", Version: "v0.5.1"},
-		OriginalCoordinate: coordinate.ModuleCoordinate{Path: "github.com/armon/go-metrics", Version: "v0.5.4"},
+		Coordinate:         coordinatetest.MustNew("github.com/hashicorp/go-metrics", "v0.5.1"),
+		OriginalCoordinate: coordinatetest.MustNew("github.com/armon/go-metrics", "v0.5.4"),
 	}}}
 	sel := g.SelectedVersions()
-	if _, ok := sel[coordinate.ModuleCoordinate{Path: "github.com/hashicorp/go-metrics", Version: "v0.5.1"}]; !ok {
+	if _, ok := sel[coordinatetest.MustNew("github.com/hashicorp/go-metrics", "v0.5.1")]; !ok {
 		t.Error("the fetched replacement must be selected")
 	}
-	if _, ok := sel[coordinate.ModuleCoordinate{Path: "github.com/armon/go-metrics", Version: "v0.5.4"}]; ok {
+	if _, ok := sel[coordinatetest.MustNew("github.com/armon/go-metrics", "v0.5.4")]; ok {
 		t.Error("the replaced-from coordinate must not be selected: it was never fetched")
 	}
 	// KnownVersions keeps both, because it answers a different question.
-	if _, ok := g.KnownVersions()[coordinate.ModuleCoordinate{Path: "github.com/armon/go-metrics", Version: "v0.5.4"}]; !ok {
+	if _, ok := g.KnownVersions()[coordinatetest.MustNew("github.com/armon/go-metrics", "v0.5.4")]; !ok {
 		t.Error("KnownVersions must still recognise the replaced-from coordinate")
 	}
 }
 
 func TestSelectedVersions_ExcludesStdlibAndLocalNodes(t *testing.T) {
 	g := domain.Graph{Nodes: []domain.GraphNode{
-		{Coordinate: coordinate.ModuleCoordinate{Path: "stdlib", Version: "v1.26.5"}, ResolutionSource: domain.ResolutionStdlib},
-		{Coordinate: coordinate.ModuleCoordinate{Path: "example.com/root", Version: coordinate.LocalVersion}},
-		{Coordinate: coordinate.ModuleCoordinate{Path: "example.com/dep", Version: "v1.0.0"}},
+		{Coordinate: coordinatetest.MustNew("stdlib", "v1.26.5"), ResolutionSource: domain.ResolutionStdlib},
+		{Coordinate: coordinatetest.MustNew("example.com/root", coordinate.LocalVersion)},
+		{Coordinate: coordinatetest.MustNew("example.com/dep", "v1.0.0")},
 	}}
 	sel := g.SelectedVersions()
 	if len(sel) != 1 {
 		t.Fatalf("SelectedVersions() has %d entries, want 1: %v", len(sel), sel)
 	}
-	if _, ok := sel[coordinate.ModuleCoordinate{Path: "example.com/dep", Version: "v1.0.0"}]; !ok {
+	if _, ok := sel[coordinatetest.MustNew("example.com/dep", "v1.0.0")]; !ok {
 		t.Error("the ordinary fetched dependency must be selected")
 	}
 }

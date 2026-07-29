@@ -13,13 +13,6 @@ import (
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 )
 
-// localCallGraphVersion is the synthetic module version used for the local
-// working tree. The tree is unversioned, but ModuleCoordinate requires a
-// valid semver, so a fixed placeholder is used. The version carries no
-// freshness meaning: a working tree mutates between runs, so 'local' always
-// re-analyses (it never serves a cached record).
-const localCallGraphVersion = "v0.0.0"
-
 type localFlags struct {
 	goBinary string
 }
@@ -70,7 +63,14 @@ func runLocalCallGraph(ctx context.Context, dir string, f localFlags, stdout, st
 		return fmt.Errorf("reading module path: %w", err)
 	}
 
-	coord, err := coordinate.NewModuleCoordinate(modulePath, localCallGraphVersion)
+	// coordinate.LocalVersion, not a synthetic semver. Nothing published this
+	// tree, so there is no version to name, and a placeholder like "v0.0.0" is a
+	// version column stating something untrue: it reads as a real release, it is
+	// invisible to every query that filters on version, and it smuggles "this came
+	// from a working tree" into a field that means something else. LocalVersion is
+	// the marker the project walk already uses for exactly this, and the record's
+	// AnalysisSource now carries what the placeholder was standing in for.
+	coord, err := coordinate.NewLocalCoordinate(modulePath)
 	if err != nil {
 		return fmt.Errorf("constructing local coordinate: %w", err)
 	}

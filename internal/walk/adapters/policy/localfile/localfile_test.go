@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	"github.com/eitanity/kanonarion/internal/walk/adapters/policy/localfile"
 	domain2 "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -141,7 +142,7 @@ func TestWalkRecord_PolicyRoundTrip(t *testing.T) {
 		t.Errorf("MaxDepth = %d, want 2", p.Stages["fetch"].MaxDepth)
 	}
 
-	target := coordinate.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
+	target := coordinatetest.MustNew("example.com/m", "v1.0.0")
 	outcome := domain2.WalkOutcome{
 		Target:         target,
 		Graph:          domain2.Graph{Target: target},

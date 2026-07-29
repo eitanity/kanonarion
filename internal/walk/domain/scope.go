@@ -33,12 +33,12 @@ func FilterGraph[K comparable](
 	}
 	for _, n := range g.Nodes {
 		orig := n.OriginalCoordinate
-		if !inScope(n.Coordinate) && (orig.Path == "" || !inScope(orig)) {
+		if !inScope(n.Coordinate) && (orig.Path() == "" || !inScope(orig)) {
 			continue
 		}
 		nodes = append(nodes, n)
 		effectiveKeep[id(n.Coordinate)] = true
-		if orig.Path != "" {
+		if orig.Path() != "" {
 			effectiveKeep[id(orig)] = true
 		}
 	}
@@ -82,8 +82,8 @@ func FilterGraphToScope(g Graph, mainPath string, keep []string) Graph {
 	}
 	out.Nodes, out.Edges = FilterGraph(
 		g,
-		func(c coordinate.ModuleCoordinate) bool { return inScope[c.Path] },
-		func(c coordinate.ModuleCoordinate) string { return c.Path },
+		func(c coordinate.ModuleCoordinate) bool { return inScope[c.Path()] },
+		func(c coordinate.ModuleCoordinate) string { return c.Path() },
 		mainPath,
 	)
 	out.Sort()

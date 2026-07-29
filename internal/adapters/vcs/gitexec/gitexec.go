@@ -1,6 +1,20 @@
 // Package gitexec implements ports.VCSClient by shelling out to the git binary.
 //
-// Runtime dependency: git must be present in PATH.
+// Runtime dependency: git must be present in PATH, version 2.32 or newer.
+// 2.32 is the release that introduced GIT_CONFIG_GLOBAL/GIT_CONFIG_SYSTEM,
+// which this adapter relies on to neutralise git's configuration surface (see
+// gitEnv). On an older git the GIT_CONFIG_NOSYSTEM=1 and HOME overrides still
+// close the system and per-user files, but the neutralisation is no longer
+// belt-and-braces.
+//
+// Every git subprocess started here runs against attacker-controlled
+// repository content (the module source being cross-verified), so the child
+// environment is built from an explicit allowlist rather than inherited, and
+// git's config discovery is switched off in full. Config is not merely a
+// preferences mechanism for git: core.hooksPath, filter.<name>.smudge and
+// core.fsmonitor are all arbitrary-command sinks reachable from a plain
+// checkout, and url.<base>.insteadOf rewrites a fetch URL *after* the
+// application layer has validated it against the VCS host allowlist.
 package gitexec
 
 import (
@@ -13,6 +27,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/vcs/gitenv"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
@@ -60,6 +75,11 @@ type Client struct {
 	fallbackFetchDepth int
 	// fetchTimeout bounds each individual git fetch attempt in CheckoutToDir.
 	fetchTimeout time.Duration
+	// extraConfig holds additional "-c key=value" argument pairs appended to
+	// configArgs. It is empty in production; tests use it to drive git into a
+	// mode they need (protocol.version=0), which they can no longer do through
+	// the environment now that config discovery is neutralised.
+	extraConfig []string
 }
 
 // New constructs a gitexec Client restricted to the https transport.
@@ -119,7 +139,13 @@ func (c *Client) CheckoutToDir(ctx context.Context, url, commit, dir string) err
 	if err := checkGitAvailable(); err != nil {
 		return err
 	}
-	// Init a bare local repo and fetch just the commit. --end-of-options before
+	// Init a local repo with a working tree and fetch just the commit. The tree
+	// is required: the caller hashes the checked-out directory as a module zip
+	// and reads go.mod files out of it to locate a major-version subdirectory,
+	// neither of which a bare repo can serve. Execution sinks that a checkout
+	// would otherwise reach — post-checkout hooks, smudge filters selected by
+	// the repository's own .gitattributes — are closed by gitEnv/configArgs
+	// rather than by withholding the tree. --end-of-options before
 	// the remote and commit positionals stops a flag-like value (e.g. a
 	// "--upload-pack=..." commit) from being parsed as an option; a trailing
 	// "--" does not, since git parses the positional before reaching it.
@@ -157,20 +183,19 @@ func (c *Client) CheckoutToDir(ctx context.Context, url, commit, dir string) err
 	return nil
 }
 
-// gitEnv returns an environment for git subprocesses that restricts the
-// transport allowlist (blocking ext::/file:///ssh:// RCE and SSRF vectors),
-// disables interactive credential prompts (preventing hangs in non-TTY
-// contexts), and injects a GitHub token when GITHUB_TOKEN is set.
-func (c *Client) gitEnv() []string {
-	env := append(os.Environ(),
-		// Only the configured transports may be used. GIT_PROTOCOL_FROM_USER=0
-		// marks these URLs as not user-supplied so git enforces the allowlist
-		// even for transports it would otherwise trust from an interactive user.
-		"GIT_ALLOW_PROTOCOL="+c.allowedProtocols,
-		"GIT_PROTOCOL_FROM_USER=0",
-		"GIT_TERMINAL_PROMPT=0",
-		"GIT_ASKPASS=/bin/false",
-	)
+// gitEnv returns the environment for a git subprocess: the shared constrained
+// baseline from gitenv, plus the GitHub credential this adapter injects when
+// GITHUB_TOKEN is set.
+//
+// home must be a private empty directory — never the checkout directory, whose
+// contents come from the repository being verified. workDir is the directory
+// git will run in.
+//
+// With config discovery neutralised by gitenv.Base, the GITHUB_TOKEN entries
+// below are the only configuration in effect for the child, which is the
+// intent.
+func (c *Client) gitEnv(home, workDir string) []string {
+	env := gitenv.Base(home, workDir, c.allowedProtocols)
 	if token := os.Getenv("GITHUB_TOKEN"); token != "" {
 		env = append(env,
 			"GIT_CONFIG_COUNT=1",
@@ -181,17 +206,24 @@ func (c *Client) gitEnv() []string {
 	return env
 }
 
+// configArgs returns the -c overrides prepended to every git invocation. They
+// duplicate what the neutralised environment already achieves, deliberately: a
+// future refactor that reintroduces an ambient config path would otherwise
+// silently reopen the hooks/fsmonitor/ext-transport sinks. Command-line -c
+// beats every config file, so these hold whatever the environment does.
+func (c *Client) configArgs() []string {
+	return append(gitenv.ConfigArgs(), c.extraConfig...)
+}
+
+// runGit runs a git operation that needs no repository (ls-remote). It must
+// never inherit the parent's working directory: kanonarion is routinely run
+// from inside a git repository, and that repository's .git/config is a config
+// file like any other — url.<base>.insteadOf read from it rewrites the fetch
+// URL after ValidateCloneURL has passed it, which is the allowlist bypass this
+// adapter exists to prevent. run() therefore pins the invocation to the
+// isolated scratch directory when no repository directory is given.
 func (c *Client) runGit(ctx context.Context, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "git", args...) // #nosec G204 -- binary is hard-coded; args come from internal call sites
-	cmd.Env = c.gitEnv()
-	cmd.WaitDelay = cmdWaitDelay
-	var out, errBuf bytes.Buffer
-	cmd.Stdout = &out
-	cmd.Stderr = &errBuf
-	if err := cmd.Run(); err != nil {
-		return nil, fmt.Errorf("%w: %s", err, errBuf.String())
-	}
-	return out.Bytes(), nil
+	return c.run(ctx, "", args...)
 }
 
 // runFetch runs a git fetch invocation in dir under the client's fetch
@@ -212,9 +244,35 @@ func (c *Client) runFetch(ctx context.Context, dir string, args ...string) error
 }
 
 func (c *Client) runGitDir(ctx context.Context, dir string, args ...string) ([]byte, error) {
-	cmd := exec.CommandContext(ctx, "git", args...) // #nosec G204 -- binary is hard-coded; args come from internal call sites
+	return c.run(ctx, dir, args...)
+}
+
+// run is the single point at which a git subprocess is started, so the config
+// neutralisation cannot be bypassed by adding a call site. Each invocation gets
+// a fresh private HOME: git must not be able to discover a per-user config, and
+// the checkout directory is unusable for that purpose because its contents come
+// from the repository being verified.
+func (c *Client) run(ctx context.Context, dir string, args ...string) ([]byte, error) {
+	home, cleanup, err := gitenv.ScratchHome()
+	if err != nil {
+		return nil, fmt.Errorf("isolating git config for %s: %w", args[0], err)
+	}
+	defer cleanup()
+
+	// A repository-less operation runs in the scratch directory, never in the
+	// parent's cwd: the enclosing repository's .git/config would otherwise be
+	// discovered and applied. Repository-local config is the one config file
+	// the environment overrides cannot switch off — GIT_CONFIG_GLOBAL and
+	// GIT_CONFIG_SYSTEM do not govern it — so the defence has to be that git
+	// never stands anywhere a repository can be found.
+	if dir == "" {
+		dir = home
+	}
+
+	argv := append(c.configArgs(), args...)
+	cmd := exec.CommandContext(ctx, "git", argv...) // #nosec G204 -- binary is hard-coded; args come from internal call sites
 	cmd.Dir = dir
-	cmd.Env = c.gitEnv()
+	cmd.Env = c.gitEnv(home, dir)
 	cmd.WaitDelay = cmdWaitDelay
 	var out, errBuf bytes.Buffer
 	cmd.Stdout = &out

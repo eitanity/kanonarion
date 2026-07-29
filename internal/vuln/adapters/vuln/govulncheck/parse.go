@@ -9,6 +9,7 @@ import (
 	"io"
 	"runtime"
 	"runtime/debug"
+	"slices"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -31,6 +32,12 @@ type OSV struct {
 	Details   string    `json:"details,omitempty"`
 	Published time.Time `json:"published"`
 	Modified  time.Time `json:"modified"`
+	// Withdrawn is the OSV top-level retraction timestamp, absent on a live
+	// advisory. govulncheck emits the whole advisory entry in its OSV message, so
+	// the retraction was always on the wire; this struct simply did not read it,
+	// and a stream-derived finding for a retracted advisory therefore reached a
+	// verdict as though the advisory still stood.
+	Withdrawn *time.Time `json:"withdrawn,omitempty"`
 }
 type Finding struct {
 	OSV          string          `json:"osv"`
@@ -136,6 +143,7 @@ func (s *Scanner) processMessage(raw []byte, msg *Message, osvs map[string]*OSV,
 				Details:   intern(details),
 				Published: msg.OSV.Published,
 				Modified:  msg.OSV.Modified,
+				Withdrawn: msg.OSV.Withdrawn,
 			}
 			msg.OSV = nil
 		}
@@ -147,7 +155,43 @@ func (s *Scanner) processMessage(raw []byte, msg *Message, osvs map[string]*OSV,
 // so they are kept rather than filtered out by the module-attribution check.
 const stdlibModule = "stdlib"
 
-func (s *Scanner) processFinding(raw []byte, findings *[]domain.VulnerabilityFinding, findingIndex map[string]int, reachableIDs map[string]bool, intern func(string) string, scannedModule string) {
+// traceFrame is govulncheck's trace frame. Every field it publishes that names
+// a hop is read: the module AND its version, the package, the receiver and the
+// function. Two local copies of this struct used to exist, one dropping the
+// version and one dropping the package, which is how the route came to be
+// unrecoverable from a stream that carried it in full.
+type traceFrame struct {
+	Module   string `json:"module"`
+	Version  string `json:"version"`
+	Package  string `json:"package"`
+	Function string `json:"function"`
+	Receiver string `json:"receiver"`
+}
+
+// routeFromTrace turns govulncheck's trace into a route ordered ENTRY POINT
+// FIRST. govulncheck emits it the other way round — Trace[0] is the vulnerable
+// symbol and the frames above it are its callers — and the stored order is
+// normalised here so no consumer has to know which analyser produced a route in
+// order to read it.
+//
+// A frame with no function is kept. It is a module- or package-level hop rather
+// than a named call, and dropping it would silently shorten the route across
+// exactly the boundary a reader most wants to see.
+func routeFromTrace(trace []traceFrame, intern func(string) string) domain.ReachabilityRoute {
+	route := make(domain.ReachabilityRoute, 0, len(trace))
+	for _, f := range trace {
+		route = append(route, domain.ReachabilityFrame{
+			ModulePath:    intern(f.Module),
+			ModuleVersion: intern(f.Version),
+			Package:       intern(f.Package),
+			Receiver:      intern(f.Receiver),
+			Symbol:        intern(f.Function),
+		})
+	}
+	return route.Reverse()
+}
+
+func (s *Scanner) processFinding(raw []byte, findings *[]domain.VulnerabilityFinding, findingIndex map[string]int, reachableIDs map[string]bool, routes map[string][]domain.ReachabilityRoute, intern func(string) string, scannedModule string) {
 	if !bytes.Contains(raw, []byte("\"finding\":")) {
 		return
 	}
@@ -192,11 +236,7 @@ func (s *Scanner) processFinding(raw []byte, findings *[]domain.VulnerabilityFin
 		return
 	}
 
-	var trace []struct {
-		Module   string `json:"module"`
-		Function string `json:"function"`
-		Receiver string `json:"receiver"`
-	}
+	var trace []traceFrame
 	if err := json.Unmarshal(partial.Finding.Trace, &trace); err != nil || len(trace) == 0 {
 		return
 	}
@@ -226,6 +266,11 @@ func (s *Scanner) processFinding(raw []byte, findings *[]domain.VulnerabilityFin
 	}
 
 	reachableIDs[osvID] = true
+	// The route this finding was reached by. Accumulated per advisory because
+	// govulncheck emits one finding message per reached symbol, so an OSV
+	// affecting several symbols arrives as several traces and each is a real
+	// route to it.
+	routes[osvID] = append(routes[osvID], routeFromTrace(trace, intern))
 	if !exists {
 		*findings = append(*findings, domain.VulnerabilityFinding{
 			ID:      osvID,
@@ -249,27 +294,28 @@ func (s *Scanner) processFinding(raw []byte, findings *[]domain.VulnerabilityFin
 	}
 	sym = intern(sym)
 	existing := &(*findings)[idx]
-	for _, s := range existing.AffectedSymbols {
-		if s == sym {
-			return
-		}
+	if slices.Contains(existing.AffectedSymbols, sym) {
+		return
 	}
 	existing.AffectedSymbols = append(existing.AffectedSymbols, sym)
 }
-func (s *Scanner) parseResults(ctx context.Context, r io.Reader, scannedModule string) ([]domain.VulnerabilityFinding, error) {
+func (s *Scanner) parseResults(ctx context.Context, r io.Reader, scannedModule string, mode domain.ScanMode) ([]domain.VulnerabilityFinding, error) {
 	var osvs = make(map[string]*OSV)
 	// Map OSV ID -> index in findings slice
 	findingIndex := make(map[string]int)
 	var findings []domain.VulnerabilityFinding
 	// Track which vuln IDs have symbol-level (reachable) findings.
 	reachableIDs := make(map[string]bool)
+	// Routes reached per advisory, keyed by OSV ID until the findings are
+	// enriched below.
+	routes := make(map[string][]domain.ReachabilityRoute)
 
 	intern := newInternPool()
 
 	var msg Message
 	if err := s.streamMessages(ctx, r, "parsing_stream", func(raw []byte) {
 		s.processMessage(raw, &msg, osvs, intern)
-		s.processFinding(raw, &findings, findingIndex, reachableIDs, intern, scannedModule)
+		s.processFinding(raw, &findings, findingIndex, reachableIDs, routes, intern, scannedModule)
 	}); err != nil {
 		return nil, err
 	}
@@ -279,16 +325,18 @@ func (s *Scanner) parseResults(ctx context.Context, r io.Reader, scannedModule s
 	// We do this at the end because OSV messages might come after Findings
 	for i := range findings {
 		f := &findings[i]
-		if entry, ok := osvs[f.ID]; ok {
-			f.Aliases = entry.Aliases
-			f.Summary = entry.Summary
-			f.Details = entry.Details
-			f.PublishedAt = entry.Published
-			f.ModifiedAt = entry.Modified
-		}
+		applyOSV(f, osvs[f.ID])
 		f.Reachable = &domain.ReachabilityResult{
 			IsReachable: reachableIDs[f.ID],
 			Confidence:  domain.ConfidenceHigh,
+			Routes:      routes[f.ID],
+			// Stamped on every answer, reachable or not: a binary-mode "not
+			// reachable" is a symbol-table result and a source-mode one is a call
+			// graph result, and nothing downstream can tell them apart otherwise.
+			DerivedBy: domain.ReachabilityDerivation{
+				Analyser: domain.AnalyserGovulncheck,
+				Fidelity: string(mode),
+			},
 		}
 	}
 	s.logMem(ctx, "parse_enriched")
@@ -310,7 +358,7 @@ type moduleFindings struct {
 // what lets one project-rooted scan derive a per-module verdict for the whole
 // build. Stdlib advisories are normalised to the {stdlib, ""} key so the caller
 // can attribute them to the project root deterministically.
-func (s *Scanner) processFindingGrouped(raw []byte, byModule map[coordinate.ModuleCoordinate]*moduleFindings, intern func(string) string) {
+func (s *Scanner) processFindingGrouped(raw []byte, byModule map[coordinate.ModuleCoordinate]*moduleFindings, intern func(string) string, mode domain.ScanMode) {
 	if !bytes.Contains(raw, []byte("\"finding\":")) {
 		return
 	}
@@ -329,12 +377,7 @@ func (s *Scanner) processFindingGrouped(raw []byte, byModule map[coordinate.Modu
 		return
 	}
 
-	var trace []struct {
-		Module   string `json:"module"`
-		Version  string `json:"version"`
-		Function string `json:"function"`
-		Receiver string `json:"receiver"`
-	}
+	var trace []traceFrame
 	if err := json.Unmarshal(partial.Finding.Trace, &trace); err != nil || len(trace) == 0 {
 		return
 	}
@@ -349,10 +392,19 @@ func (s *Scanner) processFindingGrouped(raw []byte, byModule map[coordinate.Modu
 		return
 	}
 
-	key := coordinate.ModuleCoordinate{Path: intern(vuln.Module), Version: intern(vuln.Version)}
-	if key.Path == domain.StdlibModulePath {
+	var key coordinate.ModuleCoordinate
+	if intern(vuln.Module) == domain.StdlibModulePath {
 		// Collapse every toolchain-version-tagged stdlib frame onto one key.
-		key.Version = ""
+		key = coordinate.NewStdlibCoordinate()
+	} else {
+		k, err := coordinate.NewModuleCoordinate(intern(vuln.Module), intern(vuln.Version))
+		if err != nil {
+			// The finding names no module this scan can attribute it to. Before the
+			// key was validated such a frame still produced an entry, under a key no
+			// caller ever looks up; dropping it here loses nothing that was reachable.
+			return
+		}
+		key = k
 	}
 
 	osvID := intern(partial.Finding.OSV)
@@ -361,6 +413,12 @@ func (s *Scanner) processFindingGrouped(raw []byte, byModule map[coordinate.Modu
 		mf = &moduleFindings{index: make(map[string]int)}
 		byModule[key] = mf
 	}
+	// The route this advisory was reached by, from the project's entry point
+	// down to the vulnerable symbol, with the module version at every hop. This
+	// is the answer to "which of my dependencies drags this in", and until it was
+	// kept the store held only the two ends of it.
+	route := routeFromTrace(trace, intern)
+
 	idx, exists := mf.index[osvID]
 	if !exists {
 		mf.findings = append(mf.findings, domain.VulnerabilityFinding{
@@ -369,11 +427,22 @@ func (s *Scanner) processFindingGrouped(raw []byte, byModule map[coordinate.Modu
 			// A finding recorded here was reached from the project's entry
 			// points, so its reachability is known-true with high confidence —
 			// the project-rooted analysis is the reachability answer.
-			Reachable: &domain.ReachabilityResult{IsReachable: true, Confidence: domain.ConfidenceHigh},
+			Reachable: &domain.ReachabilityResult{
+				IsReachable: true,
+				Confidence:  domain.ConfidenceHigh,
+				DerivedBy: domain.ReachabilityDerivation{
+					Analyser: domain.AnalyserGovulncheck,
+					Fidelity: string(mode),
+				},
+			},
 		})
 		idx = len(mf.findings) - 1
 		mf.index[osvID] = idx
 	}
+	// Accumulated rather than replaced: govulncheck emits one finding message per
+	// reached symbol, so an advisory affecting several symbols arrives as several
+	// traces and each is a real route to it.
+	mf.findings[idx].Reachable.Routes = append(mf.findings[idx].Reachable.Routes, route)
 
 	if vuln.Function == "" {
 		return
@@ -384,10 +453,8 @@ func (s *Scanner) processFindingGrouped(raw []byte, byModule map[coordinate.Modu
 	}
 	sym = intern(sym)
 	existing := &mf.findings[idx]
-	for _, s := range existing.AffectedSymbols {
-		if s == sym {
-			return
-		}
+	if slices.Contains(existing.AffectedSymbols, sym) {
+		return
 	}
 	existing.AffectedSymbols = append(existing.AffectedSymbols, sym)
 }
@@ -398,7 +465,7 @@ func (s *Scanner) processFindingGrouped(raw []byte, byModule map[coordinate.Modu
 // deterministic finding order match, so a per-module verdict built from this map
 // is identical to what a coordinate scan of that module would report for the
 // same reachable findings.
-func (s *Scanner) parseResultsByModule(ctx context.Context, r io.Reader) (map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding, error) {
+func (s *Scanner) parseResultsByModule(ctx context.Context, r io.Reader, mode domain.ScanMode) (map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding, error) {
 	osvs := make(map[string]*OSV)
 	byModule := make(map[coordinate.ModuleCoordinate]*moduleFindings)
 
@@ -407,7 +474,7 @@ func (s *Scanner) parseResultsByModule(ctx context.Context, r io.Reader) (map[co
 	var msg Message
 	if err := s.streamMessages(ctx, r, "parsing_project_stream", func(raw []byte) {
 		s.processMessage(raw, &msg, osvs, intern)
-		s.processFindingGrouped(raw, byModule, intern)
+		s.processFindingGrouped(raw, byModule, intern, mode)
 	}); err != nil {
 		return nil, err
 	}
@@ -415,19 +482,33 @@ func (s *Scanner) parseResultsByModule(ctx context.Context, r io.Reader) (map[co
 	out := make(map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding, len(byModule))
 	for coord, mf := range byModule {
 		for i := range mf.findings {
-			f := &mf.findings[i]
-			if entry, ok := osvs[f.ID]; ok {
-				f.Aliases = entry.Aliases
-				f.Summary = entry.Summary
-				f.Details = entry.Details
-				f.PublishedAt = entry.Published
-				f.ModifiedAt = entry.Modified
-			}
+			applyOSV(&mf.findings[i], osvs[mf.findings[i].ID])
 		}
 		domain.SortFindings(mf.findings)
 		out[coord] = mf.findings
 	}
 	return out, nil
+}
+
+// applyOSV copies the advisory-level facts of entry onto f. Both parse paths call
+// it so neither can grow a field the other lacks — the retraction timestamp in
+// particular, since a finding missing it is counted as a live one.
+//
+// A nil entry means the stream carried findings for an advisory whose OSV message
+// never arrived; f keeps its bare ID and fixed version, and no advisory fact is
+// invented for it.
+func applyOSV(f *domain.VulnerabilityFinding, entry *OSV) {
+	if entry == nil {
+		return
+	}
+	f.Aliases = entry.Aliases
+	f.Summary = entry.Summary
+	f.Details = entry.Details
+	f.PublishedAt = entry.Published
+	f.ModifiedAt = entry.Modified
+	if entry.Withdrawn != nil {
+		f.WithdrawnAt = *entry.Withdrawn
+	}
 }
 
 func internStrings(s []string, intern func(string) string) []string {

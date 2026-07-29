@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
@@ -42,6 +43,7 @@ type symbolContextEntry struct {
 
 type symbolContextFlags struct {
 	module string
+	scope  buildScopeFlags
 }
 
 func newSymbolContextCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -57,11 +59,14 @@ func newSymbolContextCmd(stdout, stderr io.Writer) *cobra.Command {
 			if len(args) != 1 {
 				return usageErr(cmd)
 			}
+			f.scope.bind(cmd)
 			return runSymbolContext(cmd.Context(), args[0], f, jsonOut, stdout, stderr)
 		},
 	}
 
 	cmd.Flags().StringVar(&f.module, "module", "", "narrow results to a specific module@version")
+	registerBuildScopeFlags(cmd, &f.scope)
+	cmd.Flags().Lookup("gomod").NoOptDefVal = defaultGoModPath
 
 	return cmd
 }
@@ -78,9 +83,30 @@ func runSymbolContext(ctx context.Context, symbolName string, f symbolContextFla
 	}
 	defer func() { _ = cleanup() }()
 
-	refs, err := ctr.QueryInterface.FindSymbol(ctx, symbolName, ifaceapp.PipelineVersion)
+	sc, err := f.scope.resolve(ctx, ctr.QueryWalks)
 	if err != nil {
+		return err
+	}
+
+	// Without a scope this fans out one entry — signature, godoc and examples —
+	// per stored version of the owning module, which reads as several distinct
+	// symbols rather than one symbol recorded several times. --module narrows
+	// after the fact and only if the caller thought to pass it; a build scope
+	// narrows the query itself.
+	// A conflict is carried rather than returned: see runSymbolFind. The entries
+	// this command CAN assemble are rendered, and the command fails afterwards.
+	refs, err := ctr.QueryInterface.FindSymbol(ctx, symbolName, ifaceapp.PipelineVersion, sc.modules)
+	var conflictErr error
+	switch {
+	case errors.Is(err, ifaceports.ErrInterfaceConflict):
+		conflictErr = err
+	case err != nil:
 		return fmt.Errorf("finding symbol %q: %w", symbolName, err)
+	}
+	if !jsonOut {
+		if nerr := writeScopeNotice(stdout, sc); nerr != nil {
+			return nerr
+		}
 	}
 
 	if f.module != "" {
@@ -100,7 +126,7 @@ func runSymbolContext(ctx context.Context, symbolName string, f symbolContextFla
 		}
 		var filtered []ifaceports.SymbolRef
 		for _, ref := range refs {
-			if ref.ModulePath == coord.Path && ref.ModuleVersion == coord.Version {
+			if ref.ModulePath == coord.Path() && ref.ModuleVersion == coord.Version() {
 				filtered = append(filtered, ref)
 			}
 		}
@@ -114,10 +140,10 @@ func runSymbolContext(ctx context.Context, symbolName string, f symbolContextFla
 	if len(refs) == 0 {
 		if jsonOut {
 			_, _ = fmt.Fprintln(stdout, "[]")
-			return nil
+			return conflictErr
 		}
 		_, _ = fmt.Fprintf(stdout, "no exports found for symbol %q\n", symbolName)
-		return nil
+		return conflictErr
 	}
 
 	entries, err := buildSymbolContextEntries(ctx, ctr, refs, ifaceapp.PipelineVersion)
@@ -131,9 +157,12 @@ func runSymbolContext(ctx context.Context, symbolName string, f symbolContextFla
 		if err := enc.Encode(entries); err != nil {
 			return fmt.Errorf("encoding symbol context: %w", err)
 		}
-		return nil
+		return conflictErr
 	}
-	return printSymbolContext(entries, stdout)
+	if perr := printSymbolContext(entries, stdout); perr != nil {
+		return perr
+	}
+	return conflictErr
 }
 
 // filterImportableRefs drops refs whose package path has an "internal" or
@@ -152,7 +181,7 @@ func filterImportableRefs(refs []ifaceports.SymbolRef) []ifaceports.SymbolRef {
 // isImportablePackage reports whether importPath is importable by code outside
 // the defining module — i.e. it contains no "internal" or "testdata" segment.
 func isImportablePackage(importPath string) bool {
-	for _, seg := range strings.Split(importPath, "/") {
+	for seg := range strings.SplitSeq(importPath, "/") {
 		if seg == "internal" || seg == "testdata" {
 			return false
 		}
@@ -203,7 +232,10 @@ func buildSymbolContextEntries(ctx context.Context, ctr *Container, refs []iface
 
 	entries := make([]symbolContextEntry, 0, len(refs))
 	for _, mk := range order {
-		coord := coordinate.ModuleCoordinate{Path: mk.path, Version: mk.version}
+		coord, cErr := coordinate.NewModuleCoordinate(mk.path, mk.version)
+		if cErr != nil {
+			return nil, fmt.Errorf("symbol reference %s@%s names no module: %w", mk.path, mk.version, cErr)
+		}
 
 		// Best-effort: missing interface record means empty doc.
 		ifaceRec, _, _ := ctr.QueryInterface.GetInterfaceRecord(ctx, coord, pipelineVersion)

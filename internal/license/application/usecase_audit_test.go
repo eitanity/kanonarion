@@ -113,11 +113,11 @@ func assertOneLicenseEvent(
 		t.Fatalf("expected 1 license_extracted event, got %d", len(events))
 	}
 	p := events[0].Payload
-	if got := p["module"]; got != coord.Path {
-		t.Errorf("module = %v, want %v", got, coord.Path)
+	if got := p["module"]; got != coord.Path() {
+		t.Errorf("module = %v, want %v", got, coord.Path())
 	}
-	if got := p["version"]; got != coord.Version {
-		t.Errorf("version = %v, want %v", got, coord.Version)
+	if got := p["version"]; got != coord.Version() {
+		t.Errorf("version = %v, want %v", got, coord.Version())
 	}
 	if got := p["primary_spdx"]; got != wantSPDX {
 		t.Errorf("primary_spdx = %v, want %q", got, wantSPDX)

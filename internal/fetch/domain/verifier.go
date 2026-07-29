@@ -36,7 +36,7 @@ func NewVerifier(hasher ModuleZipHasher) Verifier {
 // covers, unlike dirhash.HashDir which hashes every file in the tree.
 func (v Verifier) HashDirAsModuleZip(dir string, coord coordinate.ModuleCoordinate) (ModuleHash, error) {
 	var buf bytes.Buffer
-	mv := module.Version{Path: coord.Path, Version: coord.Version}
+	mv := module.Version{Path: coord.Path(), Version: coord.Version()}
 	if err := modzip.CreateFromDir(&buf, mv, dir); err != nil {
 		return ModuleHash{}, fmt.Errorf("creating module zip from checkout: %w", err)
 	}

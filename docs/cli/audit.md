@@ -32,11 +32,15 @@ For each module in the scope, `audit` emits a single line containing:
   (e.g. `Apache-2.0 [Multiple]`)
 - **Staleness** - `current` when the pinned version is the latest published, or
   `latest: vX.Y.Z (N days ago)` when a newer version exists
-- **Vuln status** - `Clean`, `Affected (N findings)`, `ScanFailed`, or
-  `(not scanned)` when no record exists yet. The verdict is **project-rooted**:
+- **Vuln status** - `Clean`, `Affected (N findings)`, `Withdrawn (N retracted)`,
+  `ScanFailed`, or `(not scanned)` when no record exists yet. A module whose every
+  matched advisory was retracted upstream reads `Withdrawn`, and its count is
+  reported as *retracted* rather than as findings — the two must not read alike,
+  since only one of them is something to act on. A module carrying both reads
+  `Affected (N findings, M retracted)`. The verdict is **project-rooted**:
   it comes from a single scan of the project's resolved, pruned build graph - the
   build the project actually produces - not from scanning each dependency in
-  isolation. A module the project builds cleanly reads `Clean` or `Affected`
+  isolation. A module the project builds cleanly reads `Clean`, `Affected` or `Withdrawn`
   within that graph; only a genuine fault of the whole scan (no `go.mod`, an OOM
   kill, a build that does not compile) reads `Unscannable`/`ScanFailed`. Because
   no dependency is re-resolved on its own, a module can never be reported
@@ -108,7 +112,7 @@ the install command.
 | `--stdlib-from-gomod` | `false` | Version the `stdlib` node from the `go.mod` directive, not the live toolchain. See [Standard-library version](walk.md#standard-library-version---stdlib-from-gomod). |
 | `--skip-vcs-verify` | `false` | Skip git cross-verification; the checksum-database check still runs. A sumdb-attested module then reports `VerifiedBySumDBOnly`, never the strongest `Verified` (the git leg never ran). Useful when auditing a large closure where git operations are rate-limited or unavailable |
 | `--policy` | _(auto-discover `.kanonarion/policy.yaml`)_ | Depth policy file; its fetch stage governs traversal and the `allowed_vcs_hosts` forge allowlist |
-| `--from-modcache[=dir]` | _(off)_ | Source modules from an existing Go module cache instead of the network proxy, verifying each against the local `go.sum`. Passed bare it uses `go env GOMODCACHE`; an optional value names the cache directory. See [Sourcing from an existing module cache](#sourcing-from-an-existing-module-cache-from-modcache) |
+| `--from-modcache[=dir]` | _(off)_ | Source modules from an existing Go module cache instead of the network proxy, verifying each against the local `go.sum`. Passed bare it uses `go env GOMODCACHE`; an optional value names the cache directory. See [Sourcing from an existing module cache](#sourcing-from-an-existing-module-cache---from-modcache) |
 | `--goproxy` | `$GOPROXY` | Override the Go module proxy (ignored under `--from-modcache`) |
 | `--json` | `false` | Emit output as a JSON array |
 | `--store-root` | `~/.kanonarion` | Path to fact store root (or `KANONARION_STORE` env var) |
@@ -196,9 +200,27 @@ kanonarion audit --gomod ./go.mod --json
     "vuln_status": "Clean",
     "vuln_findings": 0,
     "is_latest": true
+  },
+  {
+    "coordinate": "go.etcd.io/bbolt@v1.4.3",
+    "verification": "Verified",
+    "license": "MIT",
+    "license_status": "Detected",
+    "vuln_status": "Withdrawn",
+    "vuln_findings": 1,
+    "vuln_withdrawn": 1,
+    "is_latest": false,
+    "latest_version": "v1.5.0",
+    "days_behind": 54
   }
 ]
 ```
+
+`vuln_findings` counts **every** advisory on the record, retracted ones included —
+its meaning is unchanged from before withdrawn advisories were recognised, so a
+consumer written against the older output reads the same fact it always did.
+`vuln_withdrawn` is the retracted subset, present only when non-zero; live advisories
+are the difference between the two.
 
 ## Pipeline
 

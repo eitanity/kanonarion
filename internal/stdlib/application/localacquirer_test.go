@@ -116,7 +116,7 @@ func TestLocalAcquire_DigestsAreDeterministic(t *testing.T) {
 
 func TestLocalAcquire_CacheHitSkipsToolchain(t *testing.T) {
 	store := newMemStore()
-	store.m["go1.26.4"] = domain.Facts{GoVersion: "go1.26.4", VerificationStatus: domain.VerifiedGoDevChecksum}
+	store.m["go1.26.4"] = []domain.Facts{{GoVersion: "go1.26.4", VerificationStatus: domain.VerifiedGoDevChecksum}}
 	tc := &fakeToolchain{err: errors.New("must not be called")}
 	acq := newLocalAcquirer(t, tc, fakeSource{}, fakeLicense{}, store)
 

@@ -1,5 +1,7 @@
 package domain
 
+import "slices"
+
 // Capability is a sensitive capability category a reachable code path can
 // exercise. The taxonomy mirrors capslock's CAPABILITY_* categories so
 // kanonarion reports are directly comparable.
@@ -54,10 +56,5 @@ func AllCapabilities() []Capability {
 
 // Valid reports whether c is a member of the taxonomy.
 func (c Capability) Valid() bool {
-	for _, known := range AllCapabilities() {
-		if c == known {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(AllCapabilities(), c)
 }

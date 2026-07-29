@@ -107,7 +107,10 @@ func (uc *LocalWalkExtractUseCase) Run(ctx context.Context, req LocalWalkExtract
 
 	// The main module is local and unpublished; pin it at the synthetic
 	// LocalVersion rather than a semver, matching the default project go.mod walk.
-	target := coordinate.ModuleCoordinate{Path: modulePath, Version: coordinate.LocalVersion}
+	target, cErr := coordinate.NewLocalCoordinate(modulePath)
+	if cErr != nil {
+		return LocalWalkExtractResult{}, fmt.Errorf("project coordinate for %s: %w", modulePath, cErr)
+	}
 	var projectDir string
 	if req.AnalyseLocalRoot {
 		projectDir, err = filepath.Abs(dir)

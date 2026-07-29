@@ -132,7 +132,7 @@ func TestSnapshotModulePath_PrefersRootGoModOverNested(t *testing.T) {
 		"/ws/test/fixtures/supplychain/license/dep/go.mod":  []byte("module example.com/supplychain/license/conflict\n"),
 		"/ws/test/fixtures/supplychain/vendored/app/go.mod": []byte("module example.com/supplychain/vendored\n"),
 	})
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		// Loop to defeat map-iteration randomisation even on the off-chance
 		// the buggy implementation happens to pick the root on the first try.
 		got, err := domain.SnapshotModulePath(snap)

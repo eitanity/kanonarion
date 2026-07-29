@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log/slog"
 
+	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
@@ -18,15 +19,26 @@ type RescanWalkUseCase struct {
 	walkStore       walkports.WalkStore
 	vulnStore       ports.VulnerabilityStore
 	moduleScanner   *ScanModuleUseCase
+	vcsHosts        fetchdomain.VCSHostAllowlist
 	fetcher         ports.ModuleFetcher
 	clock           fetchports.Clock
 	pipelineVersion string
 	logger          *slog.Logger
-	audit           ports.AuditSink // optional; propagated to the delegated scan
-	realModcacheDir string          // --from-modcache; propagated to the delegated scan
+	audit           ports.AuditSink  // optional; propagated to the delegated scan
+	realModcacheDir string           // --from-modcache; propagated to the delegated scan
+	hostMemory      ports.HostMemory // optional; propagated to the delegated scan
 }
 
 // NewRescanWalkUseCase returns a new RescanWalkUseCase.
+// WithVCSHosts sets the effective VCS forge allowlist for the pre-fetch the
+// delegated scan may perform. A rescan re-runs the same pipeline, so it must be
+// bound by the same policy; leaving it out would restore the divergence this
+// exists to remove, one command over.
+func (uc *RescanWalkUseCase) WithVCSHosts(hosts fetchdomain.VCSHostAllowlist) *RescanWalkUseCase {
+	uc.vcsHosts = hosts
+	return uc
+}
+
 func NewRescanWalkUseCase(
 	walkStore walkports.WalkStore,
 	vulnStore ports.VulnerabilityStore,
@@ -52,6 +64,15 @@ func NewRescanWalkUseCase(
 // for chaining.
 func (uc *RescanWalkUseCase) WithAudit(sink ports.AuditSink) *RescanWalkUseCase {
 	uc.audit = sink
+	return uc
+}
+
+// WithHostMemory propagates the host-memory reporter to the delegated walk
+// scan, so a re-scan sizes its module-scan pool against the same memory budget
+// a first scan does. Optional (nil keeps the CPU-only cap); returns the
+// receiver for chaining.
+func (uc *RescanWalkUseCase) WithHostMemory(mem ports.HostMemory) *RescanWalkUseCase {
+	uc.hostMemory = mem
 	return uc
 }
 
@@ -110,7 +131,8 @@ func (uc *RescanWalkUseCase) Rescan(ctx context.Context, req RescanRequest) (dom
 		uc.clock,
 		uc.pipelineVersion,
 		uc.logger,
-	).WithAudit(uc.audit).WithRealModcache(uc.realModcacheDir)
+	).WithAudit(uc.audit).WithRealModcache(uc.realModcacheDir).WithHostMemory(uc.hostMemory).
+		WithVCSHosts(uc.vcsHosts)
 
 	run, err := scanWalk.Scan(ctx, ScanWalkParams{
 		WalkID:             req.WalkID,

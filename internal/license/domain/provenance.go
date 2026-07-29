@@ -2,6 +2,7 @@ package domain
 
 import (
 	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -102,12 +103,7 @@ type ProvenanceSummary struct {
 
 // HasSignal reports whether s is present.
 func (p ProvenanceSummary) HasSignal(s ProvenanceSignal) bool {
-	for _, sig := range p.Signals {
-		if sig == s {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(p.Signals, s)
 }
 
 // hasContributionLicensingStatement reports whether the summary contains any
@@ -234,12 +230,7 @@ func provenanceIsRootLevel(relPath string) bool {
 }
 
 func matchesAny(lower string, names []string) bool {
-	for _, n := range names {
-		if lower == n {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(names, lower)
 }
 
 func signalSetToSlice(m map[ProvenanceSignal]struct{}) []ProvenanceSignal {

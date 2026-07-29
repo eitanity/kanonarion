@@ -57,8 +57,7 @@ func IsTransientFetchError(err error) bool {
 	if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
 		return false
 	}
-	var pse *ProxyStatusError
-	if errors.As(err, &pse) {
+	if pse, ok := errors.AsType[*ProxyStatusError](err); ok {
 		return isTransientStatus(pse.StatusCode)
 	}
 	msg := strings.ToLower(err.Error())

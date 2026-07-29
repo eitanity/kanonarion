@@ -131,6 +131,22 @@ impact analysis and reachability, using a static class-hierarchy-analysis
 algorithm (`adapters/analyser/staticcha`). Powers the `callers`/`callees`
 traversals and vulnerability reachability.
 
+The record carries two axes beyond the edges. `_test.go` declarations are nodes
+tagged `IsTest`, and `TestScope` records whether that axis was measured at all -
+so an empty callers answer over a module whose tests were never analysed is
+reported as `UNRESOLVED` rather than as an absence. `Interfaces` and
+`Implementations` record which of the module's concrete types satisfy which of
+its declared interfaces; that relation is what `implementers` reads, and it is
+the type-level counterpart of the edge queries, since an interface method has no
+callers.
+
+The whole target module is type-checked in a **single** `go/packages` call.
+This is a correctness constraint, not a performance choice: go/packages mints
+fresh `*types.Package` objects per call and go/types compares types by pointer
+identity, so a concrete type loaded in one call never satisfies
+`types.Implements` against an interface loaded in another - and that relation is
+how CHA binds every interface dispatch.
+
 **example** - harvests `Example*` functions from module test files into an
 `ExampleRecord`, so downstream context offers patterns that actually compile.
 *Adapter:* `parser/goast`.

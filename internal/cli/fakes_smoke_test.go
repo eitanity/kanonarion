@@ -62,9 +62,9 @@ func TestFakeFetchModule_Execute(t *testing.T) {
 func TestFakeQueryFetch_GetFetchRecord(t *testing.T) {
 	f := testfakes.NewFakeQueryFetch()
 	c := coord(t, "example.com/a", "v1.0.0")
-	f.Add(c, "0.1.0", fetchtest.Record(t, fetchtest.Path(c.Path)))
+	f.Add(c, "0.1.0", fetchtest.Record(t, fetchtest.Path(c.Path())))
 	rec, ok, err := f.GetFetchRecord(context.Background(), c, "0.1.0")
-	if err != nil || !ok || rec.ModulePath != c.Path {
+	if err != nil || !ok || rec.ModulePath != c.Path() {
 		t.Fatalf("expected record, got ok=%v err=%v", ok, err)
 	}
 	_, ok2, _ := f.GetFetchRecord(context.Background(), c, "0.2.0")
@@ -178,7 +178,7 @@ func TestFakeQueryInterface_AllMethods(t *testing.T) {
 		t.Fatalf("ListInterfaceRecords: %v %v", list, err)
 	}
 
-	refs, err := f.FindSymbol(context.Background(), "example.com/iface", "Do")
+	refs, err := f.FindSymbol(context.Background(), "example.com/iface", "Do", coordinate.ModuleSet{})
 	if err != nil || refs != nil {
 		t.Fatalf("FindSymbol: %v %v", refs, err)
 	}
@@ -192,7 +192,7 @@ func TestFakeQueryInterface_AllMethods(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	_, err = f.FindSymbol(context.Background(), "", "")
+	_, err = f.FindSymbol(context.Background(), "", "", coordinate.ModuleSet{})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -202,7 +202,7 @@ func TestFakeExtractCallGraph_Execute(t *testing.T) {
 	rec := cgdomain.CallGraphRecord{Coordinate: coord(t, "example.com/cg", "v1.0.0")}
 	f := &testfakes.FakeExtractCallGraph{Result: cgapp.ExtractResult{Record: rec}}
 	res, err := f.Execute(context.Background(), cgapp.ExtractRequest{})
-	if err != nil || res.Record.Coordinate.Path != "example.com/cg" {
+	if err != nil || res.Record.Coordinate.Path() != "example.com/cg" {
 		t.Fatalf("unexpected: %v %v", res, err)
 	}
 }
@@ -221,22 +221,22 @@ func TestFakeQueryCallGraph_AllMethods(t *testing.T) {
 		t.Fatalf("ListCallGraphRecords: %v %v", list, err)
 	}
 
-	callers, err := f.FindCallers(context.Background(), "sym", "0.1.0")
+	callers, err := f.FindCallers(context.Background(), "sym", "0.1.0", coordinate.ModuleSet{}, cgports.EdgeQueryOptions{})
 	if err != nil || callers != nil {
 		t.Fatalf("FindCallers: %v %v", callers, err)
 	}
 
-	callees, err := f.FindCallees(context.Background(), "sym", "0.1.0")
+	callees, err := f.FindCallees(context.Background(), "sym", "0.1.0", coordinate.ModuleSet{}, cgports.EdgeQueryOptions{})
 	if err != nil || callees != nil {
 		t.Fatalf("FindCallees: %v %v", callees, err)
 	}
 
-	edges, nodes, err := f.TraverseCallers(context.Background(), "sym", "0.1.0", 5)
+	edges, nodes, err := f.TraverseCallers(context.Background(), "sym", "0.1.0", 5, coordinate.ModuleSet{}, cgports.EdgeQueryOptions{})
 	if err != nil || edges != nil || nodes != nil {
 		t.Fatalf("TraverseCallers: %v %v %v", edges, nodes, err)
 	}
 
-	edges, nodes, err = f.TraverseCallees(context.Background(), "sym", "0.1.0", 5)
+	edges, nodes, err = f.TraverseCallees(context.Background(), "sym", "0.1.0", 5, coordinate.ModuleSet{}, cgports.EdgeQueryOptions{})
 	if err != nil || edges != nil || nodes != nil {
 		t.Fatalf("TraverseCallees: %v %v %v", edges, nodes, err)
 	}
@@ -274,7 +274,7 @@ func TestFakeQueryExamples_AllMethods(t *testing.T) {
 		t.Fatalf("ListExampleRecords: %v %v", list, err)
 	}
 
-	refs, err := f.FindBySymbol(context.Background(), "example.com/ex", "Func")
+	refs, err := f.FindBySymbol(context.Background(), "example.com/ex", "Func", coordinate.ModuleSet{})
 	if err != nil || refs != nil {
 		t.Fatalf("FindBySymbol: %v %v", refs, err)
 	}
@@ -292,7 +292,7 @@ func TestFakeQueryExamples_AllMethods(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	_, err = f2.FindBySymbol(context.Background(), "", "")
+	_, err = f2.FindBySymbol(context.Background(), "", "", coordinate.ModuleSet{})
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -302,7 +302,7 @@ func TestFakeScanModule_Scan(t *testing.T) {
 	c := coord(t, "example.com/app", "v1.0.0")
 	f := &testfakes.FakeScanModule{Result: vulndomain.VulnerabilityRecord{Coordinate: c}}
 	res, err := f.Scan(context.Background(), vulnapp.ScanModuleParams{})
-	if err != nil || res.Coordinate.Path != "example.com/app" {
+	if err != nil || res.Coordinate.Path() != "example.com/app" {
 		t.Fatalf("unexpected: %v %v", res, err)
 	}
 }
@@ -349,7 +349,7 @@ func TestFakeQueryVuln_AllMethods(t *testing.T) {
 		t.Fatalf("ListRecordsForModule: %v %v", list, err)
 	}
 
-	byID, err := f.ListRecordsByFindingID(context.Background(), "GO-2024-001")
+	byID, err := f.ListRecordsByFindingID(context.Background(), "GO-2024-001", "")
 	if err != nil || byID != nil {
 		t.Fatalf("ListRecordsByFindingID: %v %v", byID, err)
 	}
@@ -377,7 +377,7 @@ func TestFakeQueryVuln_AllMethods(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	_, err = f.ListRecordsByFindingID(context.Background(), "")
+	_, err = f.ListRecordsByFindingID(context.Background(), "", "")
 	if err == nil {
 		t.Fatal("expected error")
 	}

@@ -1,11 +1,20 @@
 package domain
 
 import (
+	"errors"
 	"strings"
 	"time"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 )
+
+// ErrNoGoVersion is returned when a measurement names no toolchain version.
+//
+// It is the stdlib counterpart of coordinate.ErrZeroCoordinate: a row keyed on
+// the empty version reads back later as a genuine measurement of a toolchain
+// that does not exist, and a read for no version is a question about nothing,
+// which absence is the wrong answer to.
+var ErrNoGoVersion = errors.New("stdlib facts name no go version")
 
 // VerificationStatus records how far the standard-library source tarball was
 // verified. The values are deliberately distinct from the fetch stage's
@@ -49,8 +58,13 @@ const (
 func (s VerificationStatus) Verified() bool { return s == VerifiedGoDevChecksum }
 
 // Facts is the persisted chain-of-custody evidence for one Go standard-library
-// version. It is a value object keyed by GoVersion; once acquired and stored it
-// is immutable until a --force re-acquisition overwrites it.
+// version.
+//
+// It is one MEASUREMENT, not the answer. The store holds every measurement ever
+// taken for a version and a read composes them, so a run that could not reach
+// go.dev/dl no longer replaces the run that could. What identifies a measurement
+// is the bytes it was taken over (Digests.SHA256) and the route it took to them
+// (AcquisitionRoute); ContentHash seals the whole of it.
 type Facts struct {
 	// GoVersion is the canonical toolchain version the facts describe, in
 	// go.dev/dl form ("go1.26.4").
@@ -86,6 +100,22 @@ type Facts struct {
 	ContentLocation string
 	// AcquiredAt is when the tarball was acquired and verified.
 	AcquiredAt time.Time
+	// AcquisitionRoute names where the bytes came from — the published go.dev/dl
+	// tarball, or the installed toolchain's own source tree. It is a dimension
+	// rather than a ladder position, so composition never chooses between routes.
+	//
+	// Empty on records written before the field existed, which reads as "not
+	// recorded" and never as "acquired from nowhere".
+	AcquisitionRoute AcquisitionRoute
+	// ContentHash is the seal over this measurement's canonical form, set by
+	// FactsHasher. It is what makes a stored row checkable at all: before it,
+	// stdlib_facts was the one record table whose rows could be edited in place
+	// with nothing to detect it.
+	//
+	// Empty on records written before the field existed. Those rows are readable
+	// and are reported as unsealed rather than as failing verification, because
+	// they never carried a seal to fail.
+	ContentHash string
 }
 
 // CanonicalGoVersion converts any toolchain version string the resolver may

@@ -101,8 +101,8 @@ func TestLeafNodeFromFunc(t *testing.T) {
 			if tc.wantExt && node.Module != "" {
 				t.Errorf("external node Module = %q, want empty", node.Module)
 			}
-			if !tc.wantExt && node.Module != coord.Path {
-				t.Errorf("in-module node Module = %q, want %q", node.Module, coord.Path)
+			if !tc.wantExt && node.Module != coord.Path() {
+				t.Errorf("in-module node Module = %q, want %q", node.Module, coord.Path())
 			}
 		})
 	}

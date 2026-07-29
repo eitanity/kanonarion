@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 
 	"github.com/eitanity/kanonarion/internal/vuln/application"
@@ -30,11 +31,11 @@ func makeWalkWithModules(t *testing.T, coords ...coordinate.ModuleCoordinate) (w
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
 	for _, c := range coords {
-		seedRec := fetchtest.Record(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path))
-		if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip-"+c.Path)); err != nil {
+		seedRec := fetchtest.Record(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path()))
+		if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip-"+c.Path())); err != nil {
 			t.Fatalf("Put blob: %v", err)
 		}
-		if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path))); err != nil {
+		if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path()))); err != nil {
 			t.Fatalf("PutFetchRecord: %v", err)
 		}
 	}
@@ -47,7 +48,7 @@ func TestRescan_ProducesNewScanRun(t *testing.T) {
 	ctx := t.Context()
 	now := time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC)
 
-	target := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	target := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	walk, ws, facts, blobs := makeWalkWithModules(t, target)
 
 	vulnStore := newFakeVulnStore()
@@ -110,7 +111,7 @@ func TestRescan_FreshSnapshotFetched(t *testing.T) {
 	ctx := t.Context()
 	now := time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC)
 
-	target := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	target := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	walk, ws, facts, blobs := makeWalkWithModules(t, target)
 
 	vulnStore := newFakeVulnStore()
@@ -138,7 +139,7 @@ func TestRescan_PinnedSnapshot(t *testing.T) {
 	ctx := t.Context()
 	now := time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC)
 
-	target := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	target := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	walk, ws, facts, blobs := makeWalkWithModules(t, target)
 
 	vulnStore := newFakeVulnStore()

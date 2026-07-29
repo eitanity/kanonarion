@@ -125,7 +125,7 @@ func (c *Client) Lookup(_ context.Context, coord coordinate.ModuleCoordinate) po
 			Unavailability: ports.SumDBUnavailabilityPolicy,
 		}
 	}
-	if matchesNoSum(coord.Path) {
+	if matchesNoSum(coord.Path()) {
 		return ports.SumDBResult{
 			Available:      false,
 			Reason:         "module matches GONOSUMCHECK/GOPRIVATE pattern",
@@ -134,7 +134,7 @@ func (c *Client) Lookup(_ context.Context, coord coordinate.ModuleCoordinate) po
 	}
 
 	sc, o := c.client()
-	lines, err := sc.Lookup(coord.Path, coord.Version)
+	lines, err := sc.Lookup(coord.Path(), coord.Version())
 	if err != nil {
 		// The failed lookup is memoised inside sc (errors included), so drop the
 		// client: a retry must reach the network, not replay this error.

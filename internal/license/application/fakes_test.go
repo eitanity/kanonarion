@@ -40,6 +40,9 @@ type fakeFactStore struct {
 type factKey struct{ path, version, pipeline string }
 
 func (s *fakeFactStore) PutFetchRecord(_ context.Context, sealed domain2.SealedRecord) error {
+	if sealed.IsZero() {
+		return domain2.ErrUnsealedRecord
+	}
 	r := sealed.Record()
 	if s.records == nil {
 		s.records = make(map[factKey]domain2.FactRecord)
@@ -52,7 +55,7 @@ func (s *fakeFactStore) GetFetchRecord(_ context.Context, coord coordinate.Modul
 	if s.records == nil {
 		return domain2.CompositeRecord{}, false, nil
 	}
-	r, ok := s.records[factKey{coord.Path, coord.Version, pv}]
+	r, ok := s.records[factKey{coord.Path(), coord.Version(), pv}]
 	if !ok {
 		return domain2.CompositeRecord{}, false, nil
 	}
@@ -121,7 +124,7 @@ func (s *fakeLicenseStore) PutLicenseRecord(_ context.Context, r domain.LicenseR
 	if s.records == nil {
 		s.records = make(map[licenseKey]domain.LicenseRecord)
 	}
-	s.records[licenseKey{r.Coordinate.Path, r.Coordinate.Version, r.PipelineVersion}] = r
+	s.records[licenseKey{r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion}] = r
 	return nil
 }
 
@@ -129,7 +132,7 @@ func (s *fakeLicenseStore) GetLicenseRecord(_ context.Context, coord coordinate.
 	if s.records == nil {
 		return domain.LicenseRecord{}, false, nil
 	}
-	r, ok := s.records[licenseKey{coord.Path, coord.Version, pv}]
+	r, ok := s.records[licenseKey{coord.Path(), coord.Version(), pv}]
 	return r, ok, nil
 }
 

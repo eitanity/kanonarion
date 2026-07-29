@@ -7,13 +7,58 @@ import (
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 )
 
-var levels = []domain.CompletenessLevel{
-	domain.CompletenessBuiltWithBodies,
-	domain.CompletenessTypeOnly,
-	domain.CompletenessMetadataOnly,
-	domain.CompletenessFailed,
-	domain.CompletenessVersionNotInToolchain,
-	domain.CompletenessUnknown,
+// levels is the ladder the domain itself publishes, not a copy of it. A hand-
+// maintained duplicate is how a level gets added in one place and quietly missed
+// in the parity table that is supposed to cover every pairing.
+var levels = domain.CompletenessLevels()
+
+// TestCompletenessLevels_IsExhaustive pins the published ladder to the constants
+// this package defines, so a level added to the type without being added to
+// CompletenessLevels is caught here rather than by whichever consumer happens to
+// range over the ladder first.
+func TestCompletenessLevels_IsExhaustive(t *testing.T) {
+	t.Parallel()
+	want := map[domain.CompletenessLevel]bool{
+		domain.CompletenessBuiltWithBodies: true,
+		domain.CompletenessTypeOnly:        true,
+		domain.CompletenessMetadataOnly:    true,
+		domain.CompletenessFailed:          true,
+		domain.CompletenessUnknown:         true,
+	}
+	got := domain.CompletenessLevels()
+	if len(got) != len(want) {
+		t.Fatalf("CompletenessLevels() has %d entries, want %d: %v", len(got), len(want), got)
+	}
+	for _, l := range got {
+		if !want[l] {
+			t.Errorf("CompletenessLevels() contains unexpected level %q", l)
+		}
+		delete(want, l)
+	}
+	for l := range want {
+		t.Errorf("CompletenessLevels() omits level %q", l)
+	}
+}
+
+// TestCompletenessLevels_AreOrderedMostToLeastComplete pins the documented
+// ordering of the published ladder. Consumers mirror it (the vulnerability
+// domain ranks reachability evidence on these strings), so the order is part of
+// the contract, not an incidental property of the slice literal.
+func TestCompletenessLevels_AreOrderedMostToLeastComplete(t *testing.T) {
+	t.Parallel()
+	want := []domain.CompletenessLevel{
+		domain.CompletenessBuiltWithBodies,
+		domain.CompletenessTypeOnly,
+		domain.CompletenessMetadataOnly,
+		domain.CompletenessFailed,
+		domain.CompletenessUnknown,
+	}
+	got := domain.CompletenessLevels()
+	for i := range want {
+		if i >= len(got) || got[i] != want[i] {
+			t.Fatalf("CompletenessLevels() = %v, want %v", got, want)
+		}
+	}
 }
 
 func TestCompletenessLevel_String(t *testing.T) {

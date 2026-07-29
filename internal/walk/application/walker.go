@@ -403,7 +403,7 @@ func (w *Walker) Walk(ctx context.Context, req WalkRequest) (domain2.WalkOutcome
 		fr, ferr := w.localFetcher.EnsureFetchedFromPath(ctx, node.Coordinate, absPath)
 		if ferr != nil {
 			log.WarnContext(ctx, "walker.local_fetch.failed",
-				slog.String("module.path", node.Coordinate.Path),
+				slog.String("module.path", node.Coordinate.Path()),
 				slog.String("local_path", absPath),
 				slog.String("error", ferr.Error()),
 			)
@@ -433,7 +433,7 @@ func (w *Walker) Walk(ctx context.Context, req WalkRequest) (domain2.WalkOutcome
 			}
 		}
 		log.InfoContext(ctx, "walker.local_fetch.ok",
-			slog.String("module.path", node.Coordinate.Path),
+			slog.String("module.path", node.Coordinate.Path()),
 			slog.String("local_path", absPath),
 			slog.Bool("from_cache", fr.FromCache),
 		)
@@ -498,7 +498,12 @@ func (w *Walker) perWalkFetcher(
 		}
 	}
 
-	if !vcsHosts.IsDefault() {
+	// Gate on ENFORCING, not on "differs from the built-in set". A policy that
+	// lists exactly the built-in hosts is still an operator decision to refuse
+	// everything else, and IsDefault() reports true for it — so gating on that
+	// silently downgraded such a policy to the advisory built-in behaviour and
+	// contacted hosts the operator had excluded.
+	if vcsHosts.IsEnforcing() {
 		vc, ok := fetcher.(vcsHostCapable)
 		if !ok {
 			return nil, fmt.Errorf(
@@ -521,7 +526,7 @@ func (w *Walker) ingestProjectRoot(
 ) {
 	fail := func(msg string) {
 		log.WarnContext(ctx, "walker.local_root_ingest.failed",
-			slog.String("module.path", req.Target.Path),
+			slog.String("module.path", req.Target.Path()),
 			slog.String("project_dir", req.ProjectDir),
 			slog.String("error", msg),
 		)
@@ -563,7 +568,7 @@ func (w *Walker) ingestProjectRoot(
 		}
 	}
 	log.InfoContext(ctx, "walker.local_root_ingest.ok",
-		slog.String("module.path", req.Target.Path),
+		slog.String("module.path", req.Target.Path()),
 		slog.String("project_dir", req.ProjectDir),
 	)
 }

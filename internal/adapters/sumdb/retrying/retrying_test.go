@@ -12,12 +12,13 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
-var testCoord = coordinate.ModuleCoordinate{Path: "golang.org/x/text", Version: "v0.37.0"}
+var testCoord = coordinatetest.MustNew("golang.org/x/text", "v0.37.0")
 
 func mustHash(t *testing.T, s string) fetchdomain.ModuleHash {
 	t.Helper()

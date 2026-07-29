@@ -1,11 +1,10 @@
 package callgraph
 
 import (
-	"bytes"
 	"context"
-	"os/exec"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
@@ -41,11 +40,9 @@ func (s *OsCallGraphSpawner) Spawn(ctx context.Context, coord coordinate.ModuleC
 		args = append(args, "--force")
 	}
 
-	cmd := exec.CommandContext(spawnCtx, s.binary, args...) // #nosec G204 -- binary resolved from os.Executable; args constructed from internal coord strings only
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	return stderr.Bytes(), err
+	// childproc, not exec directly: the child builds an SSA closure that can hold
+	// several GB, and must not survive an abnormal death of this process.
+	return childproc.Run(spawnCtx, s.binary, args...) //nolint:wrapcheck // the caller classifies the raw exec error (exit status, context deadline); wrapping it here would rewrite the text those classifiers read
 }
 
 var _ ports.CallGraphSpawner = (*OsCallGraphSpawner)(nil)

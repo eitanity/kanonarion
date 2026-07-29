@@ -98,7 +98,7 @@ func (ew *errWriter) printf(format string, args ...any) {
 // indented writes text with prefix prepended to every line, preserving
 // multi-line content such as type signatures and example bodies.
 func (ew *errWriter) indented(prefix, text string) {
-	for _, line := range strings.Split(strings.TrimRight(text, "\n"), "\n") {
+	for line := range strings.SplitSeq(strings.TrimRight(text, "\n"), "\n") {
 		ew.printf("%s%s\n", prefix, line)
 	}
 }
@@ -236,10 +236,7 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 	case sectionStatusReadError:
 		w.printf("  Vulnerabilities: (failed: %s)\n", out.Vulnerabilities.Error)
 	default:
-		line := out.Vulnerabilities.Status
-		if len(out.Vulnerabilities.Findings) > 0 {
-			line += fmt.Sprintf(" (%d finding(s))", len(out.Vulnerabilities.Findings))
-		}
+		line := out.Vulnerabilities.Status + contextFindingCount(out.Vulnerabilities.Findings)
 		if ann := walkAnnotation(out.Vulnerabilities); ann != "" {
 			line += " " + ann
 		}
@@ -281,6 +278,37 @@ func printScanProvenance(w *errWriter, v contextVulnerabilities) {
 // The two answer different questions, so neither suppresses the other — a Partial
 // run that also carries an affected peer prints both. A run with no affected peer
 // in this module's closure and complete coverage yields no annotation.
+// contextFindingCount renders the parenthesised tally beside a module's
+// vulnerability status, counting retracted advisories apart from live ones.
+//
+// A single "N finding(s)" could not distinguish them, so a module whose only
+// advisory had been withdrawn read identically to one carrying a live finding —
+// the status word said Withdrawn while the count beside it still asserted a
+// finding. A mixture states both numbers, because the live one is what the reader
+// must act on and the retracted one is what explains the rest of the entry.
+func contextFindingCount(findings []contextCVE) string {
+	if len(findings) == 0 {
+		return ""
+	}
+	withdrawn := 0
+	for _, f := range findings {
+		if f.WithdrawnAt != "" {
+			withdrawn++
+		}
+	}
+	switch live := len(findings) - withdrawn; {
+	case withdrawn == 0:
+		return fmt.Sprintf(" (%d finding(s))", live)
+	case live == 0:
+		// No "finding(s)" word at all when every advisory was retracted: the status
+		// word beside this tally says Withdrawn, and a count of findings there
+		// contradicts it.
+		return fmt.Sprintf(" (%d retracted)", withdrawn)
+	default:
+		return fmt.Sprintf(" (%d finding(s), %d retracted)", live, withdrawn)
+	}
+}
+
 func walkAnnotation(v contextVulnerabilities) string {
 	var parts []string
 	switch n := len(v.WalkAffected); {

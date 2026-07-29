@@ -122,11 +122,11 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 	var modResults []domain.ModuleProbeResult
 	for coord, cveFindings := range findings {
 		modResult := domain.ModuleProbeResult{
-			Path:    coord.Path,
-			Version: coord.Version,
+			Path:    coord.Path(),
+			Version: coord.Version(),
 		}
 		for _, f := range cveFindings {
-			finding := probeOneFinding(f, coord.Path, binarySymbols)
+			finding := probeOneFinding(f, coord.Path(), binarySymbols)
 			modResult.Findings = append(modResult.Findings, finding)
 		}
 		modResults = append(modResults, modResult)

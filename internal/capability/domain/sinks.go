@@ -1,6 +1,7 @@
 package domain
 
 import (
+	"slices"
 	"strings"
 
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
@@ -181,10 +182,5 @@ func NodeCapabilities(n cgdomain.CallNode) []Capability {
 }
 
 func containsCapability(caps []Capability, c Capability) bool {
-	for _, existing := range caps {
-		if existing == c {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(caps, c)
 }

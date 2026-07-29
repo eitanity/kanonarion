@@ -3,10 +3,12 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"sort"
 	"strings"
+	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -22,6 +24,7 @@ type licenseFlags struct {
 	recursive bool
 	all       bool
 	perFile   bool
+	history   bool
 }
 
 // -- license extract command --
@@ -50,6 +53,7 @@ func newLicenseCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().BoolVar(&f.recursive, "recursive", false, "report licenses for dependencies recursively")
 	cmd.Flags().BoolVar(&f.all, "all", false, "show all dependencies and their licenses")
 	cmd.Flags().BoolVar(&f.perFile, "per-file", false, "scan root-level .go files for SPDX headers when no license file is found")
+	cmd.Flags().BoolVar(&f.history, "history", false, "show every stored generation for the module instead of extracting")
 
 	return cmd
 }
@@ -67,6 +71,10 @@ func runLicenseExtract(ctx context.Context, arg string, f licenseFlags, stdout, 
 		return fmt.Errorf("initialising store: %w", err)
 	}
 	defer func() { _ = cleanup() }()
+
+	if f.history {
+		return runLicenseHistory(ctx, coord, ctr.QueryLicense, stdout)
+	}
 
 	result, err := ctr.ExtractLicense.Execute(ctx, licapp.ExtractRequest{
 		Coordinate: coord,
@@ -87,6 +95,66 @@ func runLicenseExtract(ctx context.Context, arg string, f licenseFlags, stdout, 
 		}
 	}
 
+	return nil
+}
+
+// runLicenseHistory prints every generation the ledger holds for a coordinate,
+// oldest first, and marks the one composition serves.
+//
+// The served record is marked rather than printed alone, because the point of
+// the ledger is that the two are different things: what is believed now, and
+// what was believed before and on the strength of which bytes.
+func runLicenseHistory(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryLicenseUseCase, stdout io.Writer) error {
+	recs, err := uc.LicenseHistory(ctx, coord, licapp.PipelineVersion)
+	if err != nil {
+		return fmt.Errorf("reading license history: %w", err)
+	}
+	if len(recs) == 0 {
+		if _, werr := fmt.Fprintf(stdout, "no license records for %s\n", coord); werr != nil {
+			return fmt.Errorf("writing output: %w", werr)
+		}
+		return nil
+	}
+
+	// A conflict is reported, not hidden: the history view is precisely where an
+	// operator goes to see why the composed read refused to pick.
+	servedHash := ""
+	served, found, gerr := uc.GetLicenseRecord(ctx, coord, licapp.PipelineVersion)
+	switch {
+	case gerr != nil:
+		if _, werr := fmt.Fprintf(stdout, "composed answer: unavailable — %v\n\n", gerr); werr != nil {
+			return fmt.Errorf("writing output: %w", werr)
+		}
+	case found:
+		servedHash = served.ContentHash
+	}
+
+	if _, werr := fmt.Fprintf(stdout, "%d generation(s) for %s at pipeline %s:\n",
+		len(recs), coord, licapp.PipelineVersion); werr != nil {
+		return fmt.Errorf("writing output: %w", werr)
+	}
+	for _, r := range recs {
+		marker := " "
+		if r.ContentHash != "" && r.ContentHash == servedHash {
+			marker = "*"
+		}
+		artefact := r.ArtefactIdentity
+		if artefact == "" {
+			artefact = "(no artefact recorded)"
+		}
+		spdx := r.PrimarySPDX
+		if spdx == "" {
+			spdx = "-"
+		}
+		if _, werr := fmt.Fprintf(stdout, "%s %s  %-20s conf=%.2f  %s\n    artefact: %s\n    record:   %s\n",
+			marker, r.ExtractedAt.UTC().Format(time.RFC3339), spdx, r.PrimaryConfidence,
+			r.OverallStatus.String(), artefact, r.ContentHash); werr != nil {
+			return fmt.Errorf("writing output: %w", werr)
+		}
+	}
+	if _, werr := fmt.Fprintln(stdout, "\n* served by the composed read (highest confidence, then most recent)"); werr != nil {
+		return fmt.Errorf("writing output: %w", werr)
+	}
 	return nil
 }
 
@@ -216,7 +284,7 @@ func printLicenseRecord(r domain.LicenseRecord, fromCache bool, jsonOut bool, st
 		displayLicense = r.Expression
 	}
 	if _, err := fmt.Fprintf(stdout, "%s@%s: %s — %s%s\n",
-		r.Coordinate.Path, r.Coordinate.Version,
+		r.Coordinate.Path(), r.Coordinate.Version(),
 		r.OverallStatus.String(), displayLicense,
 		cached,
 	); err != nil {
@@ -470,7 +538,10 @@ func runLicenseList(ctx context.Context, spdx, copyright string, limit int, uc Q
 	if copyright != "" {
 		var matched []ports.LicenseSummary
 		for _, s := range sums {
-			coord := coordinate.ModuleCoordinate{Path: s.ModulePath, Version: s.ModuleVersion}
+			coord, cErr := coordinate.NewModuleCoordinate(s.ModulePath, s.ModuleVersion)
+			if cErr != nil {
+				return fmt.Errorf("license record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
+			}
 			rec, found, rerr := uc.GetLicenseRecord(ctx, coord, s.PipelineVersion)
 			if rerr != nil || !found {
 				continue
@@ -492,23 +563,42 @@ func runLicenseList(ctx context.Context, spdx, copyright string, limit int, uc Q
 			License    string `json:"license"`
 			Expression string `json:"expression,omitempty"`
 			Source     string `json:"source"`
+			// Conflict carries the disagreement composition refused to resolve. A
+			// consumer parsing this must not read an absent license as "no licence".
+			Conflict string `json:"conflict,omitempty"`
 		}
 		out := make([]entry, 0, len(sums))
+		var jsonConflicts []error
 		for _, s := range sums {
+			coord, cErr := coordinate.NewModuleCoordinate(s.ModulePath, s.ModuleVersion)
+			if cErr != nil {
+				return fmt.Errorf("license record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
+			}
+			if s.Conflict != nil {
+				jsonConflicts = append(jsonConflicts, s.Conflict)
+				out = append(out, entry{
+					Module: s.ModulePath, Version: s.ModuleVersion,
+					Status: "Conflict", Source: "scanner", Conflict: s.Conflict.Error(),
+				})
+				continue
+			}
 			license := s.PrimarySPDX
 			expr := s.Expression
 			source := "scanner"
-			if ov, ok := overrides.Resolve(coordinate.ModuleCoordinate{Path: s.ModulePath, Version: s.ModuleVersion}); ok {
+			if ov, ok := overrides.Resolve(coord); ok {
 				license = ov.SPDX
 				expr = ""
 				source = "override"
 			}
-			out = append(out, entry{s.ModulePath, s.ModuleVersion, s.OverallStatus.String(), license, expr, source})
+			out = append(out, entry{s.ModulePath, s.ModuleVersion, s.OverallStatus.String(), license, expr, source, ""})
 		}
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(out); err != nil {
 			return fmt.Errorf("encoding JSON: %w", err)
+		}
+		if len(jsonConflicts) > 0 {
+			return fmt.Errorf("%d module(s) hold conflicting license records: %w", len(jsonConflicts), errors.Join(jsonConflicts...))
 		}
 		return nil
 	}
@@ -518,13 +608,27 @@ func runLicenseList(ctx context.Context, spdx, copyright string, limit int, uc Q
 		}
 		return nil
 	}
+	var conflicts []error
 	for _, s := range sums {
+		coord, cErr := coordinate.NewModuleCoordinate(s.ModulePath, s.ModuleVersion)
+		if cErr != nil {
+			return fmt.Errorf("license record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
+		}
+		if s.Conflict != nil {
+			conflicts = append(conflicts, s.Conflict)
+			if _, err := fmt.Fprintf(stdout, "%-50s %-12s %-20s %s\n",
+				s.ModulePath+"@"+s.ModuleVersion, "CONFLICT", "unresolved",
+				"run 'kanonarion license "+s.ModulePath+"@"+s.ModuleVersion+" --history'"); err != nil {
+				return fmt.Errorf("writing output: %w", err)
+			}
+			continue
+		}
 		license := s.PrimarySPDX
 		if s.Expression != "" {
 			license = s.Expression
 		}
 		source := "scanner"
-		if ov, ok := overrides.Resolve(coordinate.ModuleCoordinate{Path: s.ModulePath, Version: s.ModuleVersion}); ok {
+		if ov, ok := overrides.Resolve(coord); ok {
 			license = ov.SPDX
 			source = "override"
 		}
@@ -536,6 +640,11 @@ func runLicenseList(ctx context.Context, spdx, copyright string, limit int, uc Q
 		); err != nil {
 			return fmt.Errorf("writing output: %w", err)
 		}
+	}
+	// Every module is listed first, then the command fails. A licence in dispute
+	// must not be reported as a clean run.
+	if len(conflicts) > 0 {
+		return fmt.Errorf("%d module(s) hold conflicting license records: %w", len(conflicts), errors.Join(conflicts...))
 	}
 	return nil
 }

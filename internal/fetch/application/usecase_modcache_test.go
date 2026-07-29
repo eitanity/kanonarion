@@ -88,8 +88,8 @@ func downloadWithHashes(coord coordinate.ModuleCoordinate, zip, gomod domain2.Mo
 // which is what makes the two measurements of one artefact reconcilable.
 func TestExecuteModcache_RecordsTheSameIdentityAsEveryOtherMode(t *testing.T) {
 	coord := modcacheCoord(t)
-	zipHash := domain2.ModuleHash{Algorithm: "h1", Value: "zip-abc="}
-	goModHash := domain2.ModuleHash{Algorithm: "h1", Value: "mod-abc="}
+	zipHash := fetchtest.H1("zip-abc=")
+	goModHash := fetchtest.H1("mod-abc=")
 
 	facts := newFakeFacts()
 	blobs := newModcacheBlob(t)
@@ -109,8 +109,8 @@ func TestExecuteModcache_RecordsTheSameIdentityAsEveryOtherMode(t *testing.T) {
 	if got, want := res.Record.VerificationStatus, string(domain2.VerifiedBySumDBOnly); got != want {
 		t.Errorf("VerificationStatus = %q, want %q", got, want)
 	}
-	wantZip := ports.BlobIdentity{Kind: ports.BlobKindZip, Hash: zipHash}
-	wantGoMod := ports.BlobIdentity{Kind: ports.BlobKindGoMod, Hash: goModHash}
+	wantZip := fetchtest.Blob(ports.BlobKindZip, zipHash)
+	wantGoMod := fetchtest.Blob(ports.BlobKindGoMod, goModHash)
 	if got := res.Record.ContentLocation; got != wantZip.String() {
 		t.Errorf("ContentLocation = %q, want the measured zip identity %q", got, wantZip)
 	}
@@ -132,11 +132,11 @@ func TestExecuteModcache_RecordsTheSameIdentityAsEveryOtherMode(t *testing.T) {
 
 func TestExecuteGoModOnlyModcache_RecordsGoModOnly(t *testing.T) {
 	coord := modcacheCoord(t)
-	goModHash := domain2.ModuleHash{Algorithm: "h1", Value: "mod-abc="}
+	goModHash := fetchtest.H1("mod-abc=")
 
 	facts := newFakeFacts()
 	uc := newUseCaseWithSumDB(
-		downloadWithHashes(coord, domain2.ModuleHash{Algorithm: "h1", Value: "zip-unused="}, goModHash),
+		downloadWithHashes(coord, fetchtest.H1("zip-unused="), goModHash),
 		&fakeVCS{}, newModcacheBlob(t), facts,
 		// modcache verification consults only the go.mod hash on this path.
 		&fakeSumDB{result: ports.SumDBResult{Available: true, GoModHash: goModHash}},
@@ -153,7 +153,7 @@ func TestExecuteGoModOnlyModcache_RecordsGoModOnly(t *testing.T) {
 	if res.Record.ContentLocation != "" {
 		t.Errorf("go.mod-only record must have empty ContentLocation, got %q", res.Record.ContentLocation)
 	}
-	wantGoMod := ports.BlobIdentity{Kind: ports.BlobKindGoMod, Hash: goModHash}
+	wantGoMod := fetchtest.Blob(ports.BlobKindGoMod, goModHash)
 	if got := res.Record.GoModLocation; got != wantGoMod.String() {
 		t.Errorf("GoModLocation = %q, want the measured go.mod identity %q", got, wantGoMod)
 	}
@@ -167,13 +167,13 @@ func TestExecuteGoModOnlyModcache_RecordsGoModOnly(t *testing.T) {
 
 func TestExecuteGoModOnlyModcache_GoModHashMismatchHardFails(t *testing.T) {
 	coord := modcacheCoord(t)
-	goModHash := domain2.ModuleHash{Algorithm: "h1", Value: "mod-abc="}
+	goModHash := fetchtest.H1("mod-abc=")
 	facts := newFakeFacts()
 	uc := newUseCaseWithSumDB(
-		downloadWithHashes(coord, domain2.ModuleHash{Algorithm: "h1", Value: "zip-unused="}, goModHash),
+		downloadWithHashes(coord, fetchtest.H1("zip-unused="), goModHash),
 		&fakeVCS{}, newModcacheBlob(t), facts,
 		// go.sum records a different go.mod hash → hard tamper failure, no record.
-		&fakeSumDB{result: ports.SumDBResult{Available: true, GoModHash: domain2.ModuleHash{Algorithm: "h1", Value: "different=="}}},
+		&fakeSumDB{result: ports.SumDBResult{Available: true, GoModHash: fetchtest.H1("different==")}},
 	).WithModcacheMode()
 
 	_, err := uc.Execute(context.Background(), application.FetchRequest{Coordinate: coord, GoModOnly: true})
@@ -187,8 +187,8 @@ func TestExecuteGoModOnlyModcache_GoModHashMismatchHardFails(t *testing.T) {
 
 func TestExecuteModcache_ZipHashMismatchHardFails(t *testing.T) {
 	coord := modcacheCoord(t)
-	computed := domain2.ModuleHash{Algorithm: "h1", Value: "computed="}
-	recorded := domain2.ModuleHash{Algorithm: "h1", Value: "recorded="}
+	computed := fetchtest.H1("computed=")
+	recorded := fetchtest.H1("recorded=")
 
 	uc := newUseCaseWithSumDB(
 		downloadWithHashes(coord, computed, domain2.ModuleHash{}),
@@ -204,7 +204,7 @@ func TestExecuteModcache_ZipHashMismatchHardFails(t *testing.T) {
 
 func TestExecuteModcache_MissingFromGoSumHardFails(t *testing.T) {
 	coord := modcacheCoord(t)
-	zipHash := domain2.ModuleHash{Algorithm: "h1", Value: "zip="}
+	zipHash := fetchtest.H1("zip=")
 
 	uc := newUseCaseWithSumDB(
 		downloadWithHashes(coord, zipHash, domain2.ModuleHash{}),
@@ -220,9 +220,9 @@ func TestExecuteModcache_MissingFromGoSumHardFails(t *testing.T) {
 
 func TestExecuteModcache_GoModHashMismatchHardFails(t *testing.T) {
 	coord := modcacheCoord(t)
-	zipHash := domain2.ModuleHash{Algorithm: "h1", Value: "zip="}
-	computedMod := domain2.ModuleHash{Algorithm: "h1", Value: "computed-mod="}
-	recordedMod := domain2.ModuleHash{Algorithm: "h1", Value: "recorded-mod="}
+	zipHash := fetchtest.H1("zip=")
+	computedMod := fetchtest.H1("computed-mod=")
+	recordedMod := fetchtest.H1("recorded-mod=")
 
 	uc := newUseCaseWithSumDB(
 		downloadWithHashes(coord, zipHash, computedMod),
@@ -238,7 +238,7 @@ func TestExecuteModcache_GoModHashMismatchHardFails(t *testing.T) {
 
 func TestExecuteModcache_CacheHitSkipsDownload(t *testing.T) {
 	coord := modcacheCoord(t)
-	zipHash := domain2.ModuleHash{Algorithm: "h1", Value: "zip="}
+	zipHash := fetchtest.H1("zip=")
 
 	facts := newFakeFacts()
 	blobs := newModcacheBlob(t)
@@ -260,7 +260,7 @@ func TestExecuteModcache_CacheHitSkipsDownload(t *testing.T) {
 		fetchtest.GoModHash(domain2.ModuleHash{}),
 		fetchtest.Status(domain2.VerifiedBySumDBOnly),
 		fetchtest.PipelineVersion("test-0.1.0"),
-		fetchtest.Content(ports.BlobIdentity{Kind: ports.BlobKindZip, Hash: zipHash}.String()),
+		fetchtest.Content(fetchtest.Blob(ports.BlobKindZip, zipHash).String()),
 	)
 	if err := blobs.Put(context.Background(), fetchtest.ZipIdentity(t, seeded), strings.NewReader("zip-bytes")); err != nil {
 		t.Fatalf("seeding zip blob: %v", err)
@@ -271,7 +271,7 @@ func TestExecuteModcache_CacheHitSkipsDownload(t *testing.T) {
 		fetchtest.GoModHash(domain2.ModuleHash{}),
 		fetchtest.Status(domain2.VerifiedBySumDBOnly),
 		fetchtest.PipelineVersion("test-0.1.0"),
-		fetchtest.Content(ports.BlobIdentity{Kind: ports.BlobKindZip, Hash: zipHash}.String()),
+		fetchtest.Content(fetchtest.Blob(ports.BlobKindZip, zipHash).String()),
 	)); err != nil {
 		t.Fatalf("seeding record: %v", err)
 	}

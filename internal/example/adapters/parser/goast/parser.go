@@ -223,8 +223,8 @@ func extractOutput(astFile *ast.File, fn *ast.FuncDecl) (output string, validate
 	// Subsequent comment lines are output lines.
 	for _, c := range last.List[1:] {
 		text := c.Text
-		if strings.HasPrefix(text, "// ") {
-			lines = append(lines, strings.TrimPrefix(text, "// "))
+		if after, ok := strings.CutPrefix(text, "// "); ok {
+			lines = append(lines, after)
 		} else {
 			lines = append(lines, strings.TrimPrefix(text, "//"))
 		}
@@ -280,8 +280,8 @@ func extractDoc(fn *ast.FuncDecl) string {
 	var lines []string
 	for _, comment := range fn.Doc.List {
 		text := comment.Text
-		if strings.HasPrefix(text, "// ") {
-			lines = append(lines, strings.TrimPrefix(text, "// "))
+		if after, ok := strings.CutPrefix(text, "// "); ok {
+			lines = append(lines, after)
 		} else {
 			lines = append(lines, strings.TrimPrefix(text, "//"))
 		}

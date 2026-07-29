@@ -10,7 +10,6 @@ import (
 )
 
 func newWalkShowCmd(stdout, stderr io.Writer) *cobra.Command {
-	var f commonWalkFlags
 
 	cmd := &cobra.Command{
 		Use:   "walk-show <id>",
@@ -25,12 +24,12 @@ func newWalkShowCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runWalkShow(cmd.Context(), f, args[0], ctr.QueryWalks, stdout)
+			return runWalkShow(cmd.Context(), args[0], ctr.QueryWalks, stdout)
 		},
 	}
 	return cmd
 }
-func runWalkShow(ctx context.Context, f commonWalkFlags, id string, uc QueryWalksUseCase, stdout io.Writer) error {
+func runWalkShow(ctx context.Context, id string, uc QueryWalksUseCase, stdout io.Writer) error {
 	rec, err := uc.GetWalk(ctx, id)
 	if err != nil {
 		if isWalkNotFound(err) {

@@ -5,6 +5,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 )
 
 func buildList(coords ...coordinate.ModuleCoordinate) map[coordinate.ModuleCoordinate]struct{} {
@@ -16,7 +17,7 @@ func buildList(coords ...coordinate.ModuleCoordinate) map[coordinate.ModuleCoord
 }
 
 func TestSynthesiseGoMod_DeclaresModulePathAndGoVersion(t *testing.T) {
-	got := SynthesiseGoMod(coordinate.ModuleCoordinate{Path: "github.com/boltdb/bolt", Version: "v1.3.1"}, "go1.26.5", nil, nil)
+	got := SynthesiseGoMod(coordinatetest.MustNew("github.com/boltdb/bolt", "v1.3.1"), "go1.26.5", nil, nil)
 	want := "module github.com/boltdb/bolt\n\ngo 1.26.5\n"
 	if got != want {
 		t.Errorf("SynthesiseGoMod() = %q, want %q", got, want)
@@ -24,7 +25,7 @@ func TestSynthesiseGoMod_DeclaresModulePathAndGoVersion(t *testing.T) {
 }
 
 func TestSynthesiseGoMod_AcceptsGoVersionWithOrWithoutPrefix(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	withPrefix := SynthesiseGoMod(coord, "go1.26.5", nil, nil)
 	without := SynthesiseGoMod(coord, "1.26.5", nil, nil)
 	if withPrefix != without {
@@ -36,7 +37,7 @@ func TestSynthesiseGoMod_AcceptsGoVersionWithOrWithoutPrefix(t *testing.T) {
 // which files build constraints admit, so inventing one would silently change
 // what is analysed.
 func TestSynthesiseGoMod_OmitsGoDirectiveWhenVersionUnknown(t *testing.T) {
-	got := SynthesiseGoMod(coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}, "", nil, nil)
+	got := SynthesiseGoMod(coordinatetest.MustNew("example.com/mod", "v1.0.0"), "", nil, nil)
 	if strings.Contains(got, "go ") {
 		t.Errorf("expected no go directive when version is unknown, got:\n%s", got)
 	}
@@ -47,12 +48,12 @@ func TestSynthesiseGoMod_OmitsGoDirectiveWhenVersionUnknown(t *testing.T) {
 
 func TestSynthesiseGoMod_RendersBuildListAsSortedRequires(t *testing.T) {
 	got := SynthesiseGoMod(
-		coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"},
+		coordinatetest.MustNew("example.com/mod", "v1.0.0"),
 		"go1.26.5",
 		[]string{"github.com/zzz/last", "github.com/aaa/first/sub"},
 		buildList(
-			coordinate.ModuleCoordinate{Path: "github.com/zzz/last", Version: "v0.2.0"},
-			coordinate.ModuleCoordinate{Path: "github.com/aaa/first", Version: "v1.4.0"},
+			coordinatetest.MustNew("github.com/zzz/last", "v0.2.0"),
+			coordinatetest.MustNew("github.com/aaa/first", "v1.4.0"),
 		),
 	)
 	want := "module example.com/mod\n\ngo 1.26.5\n\nrequire (\n\tgithub.com/aaa/first v1.4.0\n\tgithub.com/zzz/last v0.2.0\n)\n"
@@ -65,18 +66,18 @@ func TestSynthesiseGoMod_RendersBuildListAsSortedRequires(t *testing.T) {
 // file the toolchain rejects — which would turn a scannable module back into a
 // coverage gap for a reason that has nothing to do with the module.
 func TestSynthesiseGoMod_ExcludesRequiresGoModCannotExpress(t *testing.T) {
-	self := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	self := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	imports := []string{
 		"example.com/mod/inner", StdlibModulePath, "example.com/working-tree",
 		"example.com/no-version", "example.com/kept",
 	}
 	got := SynthesiseGoMod(self, "go1.26.5", imports, buildList(
 		self,
-		coordinate.ModuleCoordinate{Path: StdlibModulePath, Version: "v1.26.5"},
-		coordinate.ModuleCoordinate{Path: "example.com/working-tree", Version: coordinate.LocalVersion},
-		coordinate.ModuleCoordinate{Path: "", Version: "v1.0.0"},
-		coordinate.ModuleCoordinate{Path: "example.com/no-version", Version: ""},
-		coordinate.ModuleCoordinate{Path: "example.com/kept", Version: "v0.1.0"},
+		coordinatetest.MustNew(StdlibModulePath, "v1.26.5"),
+		coordinatetest.MustNew("example.com/working-tree", coordinate.LocalVersion),
+		coordinate.ModuleCoordinate{},
+		coordinatetest.PathOnly("example.com/no-version"),
+		coordinatetest.MustNew("example.com/kept", "v0.1.0"),
 	))
 	if !strings.Contains(got, "example.com/kept v0.1.0") {
 		t.Fatalf("expected the ordinary dependency to be required, got:\n%s", got)
@@ -96,12 +97,12 @@ func TestSynthesiseGoMod_ExcludesRequiresGoModCannotExpress(t *testing.T) {
 // require per path.
 func TestSynthesiseGoMod_DeduplicatesPathKeepingHighestVersion(t *testing.T) {
 	got := SynthesiseGoMod(
-		coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"},
+		coordinatetest.MustNew("example.com/mod", "v1.0.0"),
 		"go1.26.5",
 		[]string{"github.com/davecgh/go-spew/spew"},
 		buildList(
-			coordinate.ModuleCoordinate{Path: "github.com/davecgh/go-spew", Version: "v1.1.1"},
-			coordinate.ModuleCoordinate{Path: "github.com/davecgh/go-spew", Version: "v1.1.2"},
+			coordinatetest.MustNew("github.com/davecgh/go-spew", "v1.1.1"),
+			coordinatetest.MustNew("github.com/davecgh/go-spew", "v1.1.2"),
 		),
 	)
 	if strings.Count(got, "github.com/davecgh/go-spew") != 1 {
@@ -118,12 +119,12 @@ func TestSynthesiseGoMod_DeduplicatesPathKeepingHighestVersion(t *testing.T) {
 // version the store lacks fails a module that never referenced it.
 func TestSynthesiseGoMod_RequiresOnlyImportedModules(t *testing.T) {
 	got := SynthesiseGoMod(
-		coordinate.ModuleCoordinate{Path: "github.com/aymerick/douceur", Version: "v0.2.0"},
+		coordinatetest.MustNew("github.com/aymerick/douceur", "v0.2.0"),
 		"go1.26.5",
 		[]string{"github.com/gorilla/css/scanner"},
 		buildList(
-			coordinate.ModuleCoordinate{Path: "github.com/gorilla/css", Version: "v1.0.0"},
-			coordinate.ModuleCoordinate{Path: "github.com/fsnotify/fsnotify", Version: "v1.4.9"},
+			coordinatetest.MustNew("github.com/gorilla/css", "v1.0.0"),
+			coordinatetest.MustNew("github.com/fsnotify/fsnotify", "v1.4.9"),
 		),
 	)
 	if !strings.Contains(got, "github.com/gorilla/css v1.0.0") {
@@ -138,12 +139,12 @@ func TestSynthesiseGoMod_RequiresOnlyImportedModules(t *testing.T) {
 // recoverable from the string alone, so the longest matching module wins.
 func TestSynthesiseGoMod_ResolvesImportToLongestMatchingModule(t *testing.T) {
 	got := SynthesiseGoMod(
-		coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"},
+		coordinatetest.MustNew("example.com/mod", "v1.0.0"),
 		"go1.26.5",
 		[]string{"github.com/gorilla/css/scanner"},
 		buildList(
-			coordinate.ModuleCoordinate{Path: "github.com/gorilla", Version: "v0.1.0"},
-			coordinate.ModuleCoordinate{Path: "github.com/gorilla/css", Version: "v1.0.0"},
+			coordinatetest.MustNew("github.com/gorilla", "v0.1.0"),
+			coordinatetest.MustNew("github.com/gorilla/css", "v1.0.0"),
 		),
 	)
 	if !strings.Contains(got, "github.com/gorilla/css v1.0.0") {
@@ -157,10 +158,10 @@ func TestSynthesiseGoMod_ResolvesImportToLongestMatchingModule(t *testing.T) {
 // Prefix matching must respect path element boundaries.
 func TestSynthesiseGoMod_DoesNotMatchPartialPathElement(t *testing.T) {
 	got := SynthesiseGoMod(
-		coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"},
+		coordinatetest.MustNew("example.com/mod", "v1.0.0"),
 		"go1.26.5",
 		[]string{"example.com/other-extra/pkg"},
-		buildList(coordinate.ModuleCoordinate{Path: "example.com/other", Version: "v1.0.0"}),
+		buildList(coordinatetest.MustNew("example.com/other", "v1.0.0")),
 	)
 	if strings.Contains(got, "example.com/other") {
 		t.Errorf("a partial path element must not match, got:\n%s", got)
@@ -172,10 +173,10 @@ func TestSynthesiseGoMod_DoesNotMatchPartialPathElement(t *testing.T) {
 // truthful outcome — there is no version to pin it to.
 func TestSynthesiseGoMod_UnsatisfiedImportContributesNoRequire(t *testing.T) {
 	got := SynthesiseGoMod(
-		coordinate.ModuleCoordinate{Path: "github.com/aymerick/douceur", Version: "v0.2.0"},
+		coordinatetest.MustNew("github.com/aymerick/douceur", "v0.2.0"),
 		"go1.26.5",
 		[]string{"github.com/PuerkitoBio/goquery"},
-		buildList(coordinate.ModuleCoordinate{Path: "github.com/gorilla/css", Version: "v1.0.0"}),
+		buildList(coordinatetest.MustNew("github.com/gorilla/css", "v1.0.0")),
 	)
 	if strings.Contains(got, "require") {
 		t.Errorf("expected no require block when no import is satisfied, got:\n%s", got)

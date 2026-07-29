@@ -5,6 +5,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -25,7 +26,7 @@ func TestScanWalk_WithRealModcache_UsesProvidedDir(t *testing.T) {
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	clock := fixedClock{t: now}
 
-	coord := coordinate.ModuleCoordinate{Path: "github.com/example/mod", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/example/mod", "v1.0.0")
 	walkStore := newFakeWalkStore()
 	if err := walkStore.PutWalk(ctx, walkdomain.WalkRecord{
 		ID: "w1",

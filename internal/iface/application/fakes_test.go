@@ -41,6 +41,9 @@ type fakeFactStore struct {
 type factKey struct{ path, version, pipeline string }
 
 func (s *fakeFactStore) PutFetchRecord(_ context.Context, sealed domain2.SealedRecord) error {
+	if sealed.IsZero() {
+		return domain2.ErrUnsealedRecord
+	}
 	r := sealed.Record()
 	if s.records == nil {
 		s.records = make(map[factKey]domain2.FactRecord)
@@ -53,7 +56,7 @@ func (s *fakeFactStore) GetFetchRecord(_ context.Context, coord coordinate.Modul
 	if s.records == nil {
 		return domain2.CompositeRecord{}, false, nil
 	}
-	r, ok := s.records[factKey{coord.Path, coord.Version, pv}]
+	r, ok := s.records[factKey{coord.Path(), coord.Version(), pv}]
 	if !ok {
 		return domain2.CompositeRecord{}, false, nil
 	}
@@ -126,7 +129,7 @@ func (s *fakeInterfaceStore) PutInterfaceRecord(_ context.Context, r domain.Inte
 	if s.records == nil {
 		s.records = make(map[ifaceKey]domain.InterfaceRecord)
 	}
-	s.records[ifaceKey{r.Coordinate.Path, r.Coordinate.Version, r.PipelineVersion}] = r
+	s.records[ifaceKey{r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion}] = r
 	return nil
 }
 
@@ -134,7 +137,7 @@ func (s *fakeInterfaceStore) GetInterfaceRecord(_ context.Context, coord coordin
 	if s.records == nil {
 		return domain.InterfaceRecord{}, false, nil
 	}
-	r, ok := s.records[ifaceKey{coord.Path, coord.Version, pv}]
+	r, ok := s.records[ifaceKey{coord.Path(), coord.Version(), pv}]
 	return r, ok, nil
 }
 
@@ -142,7 +145,7 @@ func (s *fakeInterfaceStore) ListInterfaceRecords(_ context.Context, _ ports.Int
 	return nil, nil
 }
 
-func (s *fakeInterfaceStore) FindSymbol(_ context.Context, _ string, _ string) ([]ports.SymbolRef, error) {
+func (s *fakeInterfaceStore) FindSymbol(_ context.Context, _ string, _ string, _ coordinate.ModuleSet) ([]ports.SymbolRef, error) {
 	return nil, nil
 }
 

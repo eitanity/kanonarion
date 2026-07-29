@@ -191,7 +191,7 @@ func (uc *GenerateNoticeUseCase) readLicenseTexts(
 		return nil, nil, fmt.Errorf("parsing zip: %w", err)
 	}
 
-	zipPrefix := coord.Path + "@" + coord.Version + "/"
+	zipPrefix := coord.Path() + "@" + coord.Version() + "/"
 
 	// Root-level non-vendored license texts.
 	var texts []licensedomain.NoticeLicenseFile

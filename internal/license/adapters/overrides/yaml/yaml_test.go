@@ -4,7 +4,7 @@ import (
 	"context"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 )
 
 func TestStore_LoadOverrides(t *testing.T) {
@@ -16,7 +16,7 @@ func TestStore_LoadOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadOverrides: %v", err)
 	}
-	ov, ok := set.Resolve(coordinate.ModuleCoordinate{Path: "golang.org/x/mod", Version: "v0.36.0"})
+	ov, ok := set.Resolve(coordinatetest.MustNew("golang.org/x/mod", "v0.36.0"))
 	if !ok || ov.SPDX != "MIT" {
 		t.Fatalf("got %+v ok=%v, want MIT", ov, ok)
 	}
@@ -27,7 +27,7 @@ func TestStore_EmptyNeverOverrides(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadOverrides: %v", err)
 	}
-	if _, ok := set.Resolve(coordinate.ModuleCoordinate{Path: "x", Version: "v1"}); ok {
+	if _, ok := set.Resolve(coordinatetest.MustNew("x", "v1")); ok {
 		t.Fatal("empty store must never override")
 	}
 }

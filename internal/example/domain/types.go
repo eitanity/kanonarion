@@ -88,6 +88,25 @@ type ExampleRecord struct {
 	ExtractedAt     time.Time
 	PipelineVersion string
 	ContentHash     string
+	// ArtefactIdentity names the fetched artefact this record was derived from,
+	// in the "zip:h1:..." / "gomod:h1:..." form fetchdomain.ArtefactIdentity
+	// renders. It answers the question the coordinate cannot: which bytes
+	// produced this finding. A coordinate names a module version, and the fetch
+	// record for that coordinate may since have been re-measured, so a link by
+	// coordinate is a link by convention; this one is by fact, and is covered by
+	// ContentHash, so the claim is as tamper-evident as the finding itself.
+	//
+	// Empty on records written before the field existed, and on records derived
+	// from no fetched artefact at all. Both read as "not recorded", never as
+	// "derived from nothing". Read it back through RecordArtefactIdentity,
+	// which draws that distinction; never hand this field to
+	// ParseArtefactIdentity directly.
+	ArtefactIdentity string
+	// SourceContentHash is the content hash of the fetch record that supplied
+	// those bytes. ArtefactIdentity says which artefact; this says which
+	// measurement of it, so a reader can fetch that record and check the claim
+	// against it. Empty exactly when ArtefactIdentity is.
+	SourceContentHash string
 }
 
 // SortExamples sorts r.Examples by (Package, AssociatedSymbol, Name) for determinism.

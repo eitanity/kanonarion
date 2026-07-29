@@ -25,7 +25,7 @@ func (f *fakeDependencyLoader) LoadCallGraphRecords(_ context.Context, coords []
 	}
 	out := make([]callgraphdomain.CallGraphRecord, 0, len(coords))
 	for _, c := range coords {
-		if r, ok := f.records[c.Path]; ok {
+		if r, ok := f.records[c.Path()]; ok {
 			out = append(out, r)
 		}
 	}

@@ -2,15 +2,11 @@ package application
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"strings"
-	"time"
 
 	"golang.org/x/mod/modfile"
 
@@ -105,8 +101,47 @@ import (
 // loses the finding. The per-module record content is unchanged by this bump;
 // the version moves so a walk scanned in the collapsed-status era re-runs as a
 // whole and produces a run carrying both axes, rather than reusing cached
-// per-module verdicts under a run that has neither.
-const PipelineVersion = "v14"
+// per-module verdicts under a run that has neither. It was bumped to "v15" when
+// two record-shape changes landed together, both of which alter the canonical
+// bytes a record hashes over.
+//
+// First, the per-module record gained the same two verdict axes the walk-scan
+// aggregate got at v14: CoverageStatus and FindingsStatus now sit beside the
+// collapsed OverallStatus, whose four values answered two different questions.
+// The projection is total and lossless, so a "v14" record loses nothing —
+// migration 11 back-fills the columns and RecordAxes recovers the axes on read
+// — but a record written from v15 onward carries them in its blob and therefore
+// hashes differently.
+//
+// Second, DatabaseSnapshot.ContentHash is now populated. It was already part of
+// the record's canonical shape and was empty on every record ever written, so
+// the advisory database — the evidence every finding is derived from — was the
+// one input to a verdict that could not be checked against the bytes it was
+// reached from. Populating it changes stored record hashes; migration 10 seals
+// the snapshot blobs the store already holds so an existing store can verify
+// them too.
+//
+// It was bumped to "v16" when a withdrawn advisory stopped being reported as a
+// finding against the module it names. The OSV top-level "withdrawn" timestamp is
+// now parsed — on both the metadata path and the govulncheck stream — carried on
+// the finding as WithdrawnAt, and read by the findings axis, which gained a third
+// value: a module whose every matched advisory is retracted reports Withdrawn
+// rather than Affected, and never Clean.
+//
+// The bump is what makes the fix reachable, not merely a shape formality. A "v15"
+// record for a coordinate carrying a retracted advisory holds an Affected verdict
+// reached before the retraction could be read, and its withdrawal is not
+// recoverable from the record — WithdrawnAt was never populated, so no migration
+// can correct it in place. Without the bump those records would be reused from
+// cache and the false positive would survive the fix. Under it, a re-scan produces
+// a v16 record that states the retraction, and the v15 record remains readable as
+// what the earlier generation concluded.
+//
+// The record's canonical bytes are unchanged for every finding that is not
+// withdrawn: WithdrawnAt is a new field carrying omitzero, so it is absent from
+// the encoding exactly when it is zero, and a v15 record's hash recomputes
+// identically under this generation.
+const PipelineVersion = "v16"
 
 // ScanModuleUseCase orchestrates a single module's vulnerability scan.
 type ScanModuleUseCase struct {
@@ -185,7 +220,7 @@ func (uc *ScanModuleUseCase) WithLocalFetchPipelineVersion(v string) *ScanModule
 // never fetched (a shallow walk).
 func metadataOnlyNote(coord coordinate.ModuleCoordinate, goModOnly bool) string {
 	switch {
-	case coord.Path == domain.StdlibModulePath:
+	case coord.Path() == domain.StdlibModulePath:
 		return "Go standard library (toolchain-provided); advisories resolved from OSV metadata by coordinate"
 	case goModOnly:
 		return "metadata-only: only go.mod fetched for module-graph resolution; module source not retrieved"
@@ -311,6 +346,17 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 	// treat it like an absent record so the fallback is explicit rather than a
 	// scan that quietly analysed nothing. The full path re-fetches the zip (see
 	// prefetchMissing) before a node is scanned, so this is a defensive guard.
+	// Which bytes this scan is about. A module held only as a go.mod still names
+	// an artefact — its go.mod — and a module never fetched at all names none, so
+	// the metadata-only records below carry an identity in the first case and an
+	// honestly empty one in the second. No !ok guard is needed: an absent record
+	// is the zero FactRecord, whose hashes are absent rather than malformed, so
+	// derivedFromFact reads it as the zero derivedFrom without error.
+	derived, derr := derivedFromFact(fact)
+	if derr != nil {
+		return domain.VulnerabilityRecord{}, derr
+	}
+
 	if !ok || fact.IsGoModOnly() {
 		// Module not in the blob store (e.g. a node from a shallow walk), or held
 		// only as a go.mod (module-graph resolution). Fall back to OSV metadata:
@@ -319,13 +365,13 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 		// that call-graph analysis was not performed. A coordinate with no matching
 		// advisory is a real answer here, so the empty status is Clean.
 		note := metadataOnlyNote(params.Coordinate, ok && fact.IsGoModOnly())
-		return uc.scanMetadataOnly(ctx, params, snapshot, note, "", "", domain.StatusClean)
+		return uc.scanMetadataOnly(ctx, params, snapshot, derived, note, "", "", domain.StatusClean)
 	}
 
 	// 3.5 Metadata-based Filtering (Optimization)
 	// Check if this module or any of its dependencies have known vulnerabilities.
 	if !params.Force {
-		isVulnerable, err := uc.checkVulnerabilities(ctx, params.Coordinate, fact, params.WalkID)
+		isVulnerable, err := uc.checkVulnerabilities(ctx, params.Coordinate, params.WalkID)
 		switch {
 		case err == nil && !isVulnerable:
 			uc.logger.Info("metadata check: no known vulnerabilities in module or dependencies, skipping heavy scan", "coordinate", params.Coordinate)
@@ -340,16 +386,18 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 				ScannedAt:        now,
 				FirstScannedAt:   now,
 				PipelineVersion:  uc.pipelineVersion,
+				// Reached by scanning this module alone; see the stamp below.
+				Rooting: domain.RootingIsolated,
 			}
-			hash, err := uc.computeContentHash(record)
-			if err != nil {
-				return domain.VulnerabilityRecord{}, fmt.Errorf("hashing clean record: %w", err)
+			derived.stamp(&record)
+			sealed, herr := domain.VulnerabilityRecordHasher{}.SetContentHash(record)
+			if herr != nil {
+				return domain.VulnerabilityRecord{}, fmt.Errorf("hashing clean record: %w", herr)
 			}
-			record.ContentHash = hash
-			if err := uc.vulnStore.PutVulnerabilityRecord(ctx, record); err != nil {
-				return domain.VulnerabilityRecord{}, fmt.Errorf("persisting clean record: %w", err)
+			if perr := uc.vulnStore.PutVulnerabilityRecord(ctx, sealed); perr != nil {
+				return domain.VulnerabilityRecord{}, fmt.Errorf("persisting clean record: %w", perr)
 			}
-			return record, nil
+			return sealed, nil
 		case err != nil:
 			uc.logger.Warn("metadata check failed, proceeding with full scan", "error", err)
 		case isVulnerable:
@@ -400,11 +448,21 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 	// re-scan never resets the first-seen anchor.
 	record.FirstScannedAt = now
 	record.PipelineVersion = uc.pipelineVersion
+	// The record names the analysis frame it was produced in, on both branches.
+	// This use case resolves and builds the module as its own main module, so
+	// every record it produces answers the isolated question — not "is this
+	// advisory reachable in what we ship", which only a target-rooted analysis
+	// can answer. Recording it is what keeps the two from sharing a row and
+	// silently standing in for each other.
+	record.Rooting = domain.RootingIsolated
+	// The verdict names the bytes it was reached from, on both branches: a scan
+	// that failed still failed on a specific artefact.
+	derived.stamp(&record)
 
 	// 5b/5c. Coverage recovery: route a scan that could not analyse the source to
 	// metadata-only matching rather than leaving it a bare failure or a confident
 	// "no findings".
-	if rec, handled, ferr := uc.routeCoverageFallback(ctx, params, snapshot, record); handled || ferr != nil {
+	if rec, handled, ferr := uc.routeCoverageFallback(ctx, params, snapshot, derived, record); handled || ferr != nil {
 		return rec, ferr
 	}
 
@@ -441,12 +499,15 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 		record.CallGraphAlgorithm = algorithm
 	}
 
+	// The analysers below this layer produce the reachability answers and cannot
+	// know the frame the record is being written in; this is where the two meet.
+	domain.StampReachabilityRooting(&record)
+
 	// 7. Deterministic Identity (T5: Hash-based Identity)
-	hash, err := uc.computeContentHash(record)
+	record, err = domain.VulnerabilityRecordHasher{}.SetContentHash(record)
 	if err != nil {
 		return domain.VulnerabilityRecord{}, fmt.Errorf("hashing vulnerability record: %w", err)
 	}
-	record.ContentHash = hash
 
 	// 8. Durability (T6: Aggregate Persistence)
 	if err := uc.vulnStore.PutVulnerabilityRecord(ctx, record); err != nil {
@@ -460,42 +521,42 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 // when a usable one exists. handled is true when the caller should return
 // (rec, err) directly; false means proceed with a fresh scan.
 //
+// The lookup is frame-scoped. This use case produces isolated records, so it
+// may only reuse one: a target-rooted record was derived from the target's
+// build, and serving it here would report a reachability answer computed against
+// a build this call never named. Before the frame was recorded the two shared a
+// row, so that substitution happened silently in both directions.
+//
 // A local coordinate (the project-walk root) is never served from cache: the
 // working tree mutates between runs, so its records are recomputed fresh every
 // time. ScanFailed is also never served from cache: it represents a transient
 // infrastructure failure (govulncheck crash, temp dir cleaned up, network blip)
 // not a stable analysis verdict — caching it would permanently block retry
 // without --force. A store lookup error is treated as a cache miss.
+//
+// A reuse writes nothing. It used to re-stamp the walk reference and the scan
+// time onto the stored record and write it back, which was an UPDATE of a
+// record in place; against an append-only ledger the same code appends a second
+// row recording no new measurement, and every later reader would see two
+// generations that differ only in which run last touched them. The measurement
+// keeps the walk it was made in, and this run's membership is recorded where it
+// belongs — on the run's own per-module index.
 func (uc *ScanModuleUseCase) tryReuseCachedRecord(ctx context.Context, params ScanModuleParams, snapshot domain.DatabaseSnapshot) (domain.VulnerabilityRecord, bool, error) {
 	if params.Force || params.Coordinate.IsLocal() {
 		return domain.VulnerabilityRecord{}, false, nil
 	}
-	rec, ok, err := uc.vulnStore.GetVulnerabilityRecord(ctx, params.Coordinate, uc.pipelineVersion, snapshot)
+	rec, ok, err := uc.vulnStore.GetVulnerabilityRecordAt(ctx, params.Coordinate, uc.pipelineVersion, snapshot, domain.RootingIsolated)
 	if err != nil || !ok {
 		return domain.VulnerabilityRecord{}, false, nil //nolint:nilerr // a lookup failure is treated as a cache miss; the scan proceeds fresh
 	}
-	if rec.OverallStatus == domain.StatusScanFailed {
+	// Whether a stored verdict is worth reusing is a coverage question — a failed
+	// attempt is a fault to retry, not an analysis to serve — so it is asked of the
+	// coverage axis rather than the collapsed word.
+	if coverage, _ := domain.RecordAxes(rec); coverage == domain.CoverageFailedScan {
 		uc.logger.Debug("vulnerability scan cache miss: stored result is ScanFailed, retrying", "coordinate", params.Coordinate)
 		return domain.VulnerabilityRecord{}, false, nil
 	}
-	uc.logger.Debug("vulnerability scan cache hit, re-attributing to current run", "coordinate", params.Coordinate, "status", rec.OverallStatus)
-	// The cached verdict is reused, but its provenance must follow the run the
-	// user actually invoked: re-stamp the walk reference and scan time so a later
-	// query reflects this run, never the unrelated earlier walk that first
-	// produced the record. The analysis result is unchanged; only walk_id and
-	// scanned_at move forward. ContentHash is cleared before recompute so it is
-	// hashed over an empty hash field, matching how fresh records are hashed.
-	rec.WalkID = params.WalkID
-	rec.ScannedAt = uc.clock.Now()
-	rec.ContentHash = ""
-	hash, err := uc.computeContentHash(rec)
-	if err != nil {
-		return domain.VulnerabilityRecord{}, false, fmt.Errorf("hashing reused vulnerability record: %w", err)
-	}
-	rec.ContentHash = hash
-	if perr := uc.vulnStore.PutVulnerabilityRecord(ctx, rec); perr != nil {
-		return domain.VulnerabilityRecord{}, false, fmt.Errorf("re-attributing reused vulnerability record: %w", perr)
-	}
+	uc.logger.Debug("vulnerability scan cache hit", "coordinate", params.Coordinate, "status", rec.OverallStatus, "scanned_at", rec.ScannedAt, "measured_in_walk", rec.WalkID)
 	rec.Reused = true
 	return rec, true, nil
 }
@@ -537,9 +598,15 @@ func (uc *ScanModuleUseCase) routeCoverageFallback(
 	ctx context.Context,
 	params ScanModuleParams,
 	snapshot domain.DatabaseSnapshot,
+	derived derivedFrom,
 	record domain.VulnerabilityRecord,
 ) (domain.VulnerabilityRecord, bool, error) {
-	if record.OverallStatus == domain.StatusScanFailed && domain.IsBuildIncompatibility(record.ErrorDetail) {
+	// Routing is decided on the coverage axis: both shapes below are statements
+	// about whether the module could be analysed, which is the axis's question. The
+	// scanner adapters state only the collapsed word, so RecordAxes derives it here
+	// from the diagnostics they set beside it.
+	coverage, _ := domain.RecordAxes(record)
+	if coverage == domain.CoverageFailedScan && domain.IsBuildIncompatibility(record.ErrorDetail) {
 		category := domain.ClassifyBuildIncompatibility(record.ErrorDetail)
 		reason := domain.StructuredUnscanReason(record.ErrorDetail)
 		// An offline resolution failure must be established, not asserted: the
@@ -551,18 +618,18 @@ func (uc *ScanModuleUseCase) routeCoverageFallback(
 		}
 		uc.logMetadataFallback(params.Coordinate, reason, category, record.ErrorDetail)
 		note := "source analysis unavailable: " + category + "; results are metadata-only with no reachability"
-		rec, err := uc.scanMetadataOnly(ctx, params, snapshot, note, reason, record.ErrorDetail, domain.StatusUnscannable)
+		rec, err := uc.scanMetadataOnly(ctx, params, snapshot, derived, note, reason, record.ErrorDetail, domain.StatusUnscannable)
 		return rec, true, err
 	}
 
-	if record.OverallStatus == domain.StatusUnscannable {
+	if coverage == domain.CoverageUnscannable {
 		note := record.UnscannableReason
 		if note == "" {
 			note = "source analysis unavailable; results are metadata-only with no reachability"
 		}
 		uc.logger.Warn("vuln-scan: scanner reported unscannable, falling back to metadata",
 			"coordinate", params.Coordinate, "reason", record.UnscanReason)
-		rec, err := uc.scanMetadataOnly(ctx, params, snapshot, note, record.UnscanReason, record.ErrorDetail, domain.StatusUnscannable)
+		rec, err := uc.scanMetadataOnly(ctx, params, snapshot, derived, note, record.UnscanReason, record.ErrorDetail, domain.StatusUnscannable)
 		return rec, true, err
 	}
 
@@ -609,7 +676,7 @@ func (uc *ScanModuleUseCase) recoverUnresolvedCoordinate(ctx context.Context, pa
 	// about the module being scanned; a path the module does not require yields no
 	// coordinate.
 	if coord, ok := domain.UnresolvedCoordinate(detail); ok {
-		return uc.requiredCoordinate(ctx, params.Coordinate, coord.Path)
+		return uc.requiredCoordinate(ctx, params.Coordinate, coord.Path())
 	}
 
 	// Source-position shape: the error names an unimportable package but no
@@ -704,10 +771,18 @@ func coordinateFromModFile(f *modfile.File, modulePath string) (coordinate.Modul
 			continue
 		}
 		if r.Old.Version == "" || r.Old.Version == version {
-			return coordinate.ModuleCoordinate{Path: r.New.Path, Version: r.New.Version}, true
+			coord, err := coordinate.NewModuleCoordinate(r.New.Path, r.New.Version)
+			if err != nil {
+				return coordinate.ModuleCoordinate{}, false
+			}
+			return coord, true
 		}
 	}
-	return coordinate.ModuleCoordinate{Path: modulePath, Version: version}, true
+	coord, err := coordinate.NewModuleCoordinate(modulePath, version)
+	if err != nil {
+		return coordinate.ModuleCoordinate{}, false
+	}
+	return coord, true
 }
 
 // goModModulePaths returns the set of module paths a parsed go.mod requires —
@@ -757,7 +832,7 @@ func (uc *ScanModuleUseCase) scannedGoMod(ctx context.Context, scanned coordinat
 func modulePaths(known map[coordinate.ModuleCoordinate]struct{}) map[string]struct{} {
 	paths := make(map[string]struct{}, len(known))
 	for coord := range known {
-		paths[coord.Path] = struct{}{}
+		paths[coord.Path()] = struct{}{}
 	}
 	return paths
 }
@@ -778,7 +853,11 @@ func modulePaths(known map[coordinate.ModuleCoordinate]struct{}) map[string]stru
 // reachability step that follows, or left undetermined. Findings are never
 // dropped in either direction.
 func (uc *ScanModuleUseCase) attributeCoordinateFindings(ctx context.Context, record *domain.VulnerabilityRecord, coord coordinate.ModuleCoordinate) error {
-	if record.OverallStatus != domain.StatusClean && record.OverallStatus != domain.StatusAffected {
+	// "Did an analysis produce this record" is the coverage axis's question, and
+	// the two-word test was an open-coded projection of it. The Unscannable and
+	// build-incompatibility paths route through scanMetadataOnly, which performs
+	// the same coordinate match and states the coverage gap itself.
+	if coverage, _ := domain.RecordAxes(*record); coverage != domain.CoverageAnalysed {
 		return nil
 	}
 	matched, err := uc.database.LookupFindings(ctx, coord)
@@ -806,7 +885,22 @@ func (uc *ScanModuleUseCase) attributeCoordinateFindings(ctx context.Context, re
 		domain.SortFindings(record.Findings)
 	}
 	if len(record.Findings) > 0 {
-		record.OverallStatus = domain.StatusAffected
+		// This is a verdict decision, so it states the axis it decided and lets the
+		// domain collapse the summary, rather than open-coding the word. Coverage
+		// comes from the record's own evidence: the guard above admits only a
+		// record the scanner analysed, and the scanner's analysed results carry no
+		// diagnostic, so this reads Analysed — asserted from the record rather than
+		// assumed here, so a record that did carry a coverage gap could not have
+		// one written over it.
+		//
+		// The findings axis is read from the merged set for the same reason. A
+		// coordinate match is not a finding when the advisory it names has been
+		// retracted, and asserting Affected on the strength of the merge having
+		// produced entries is what turned a two-day-old retraction into a live
+		// verdict on the path a project walk treats as authoritative.
+		record.CoverageStatus = domain.DetermineRecordCoverage(*record)
+		record.FindingsStatus = domain.DetermineFindingsAxis(record.Findings)
+		record.OverallStatus = domain.DetermineRecordOverallStatus(record.CoverageStatus, record.FindingsStatus)
 	}
 	return nil
 }
@@ -820,16 +914,48 @@ func (uc *ScanModuleUseCase) attributeCoordinateFindings(ctx context.Context, re
 // emptyStatus is the status when no advisory matches: Clean when that is a
 // genuine answer, or Unscannable when metadata is a fallback for a module that
 // could not be analysed from source (a coverage gap, not a clean).
-func (uc *ScanModuleUseCase) scanMetadataOnly(ctx context.Context, params ScanModuleParams, snapshot domain.DatabaseSnapshot, note string, unscanReason domain.UnscanReason, errorDetail string, emptyStatus domain.VulnerabilityStatus) (domain.VulnerabilityRecord, error) {
+func (uc *ScanModuleUseCase) scanMetadataOnly(ctx context.Context, params ScanModuleParams, snapshot domain.DatabaseSnapshot, derived derivedFrom, note string, unscanReason domain.UnscanReason, errorDetail string, emptyStatus domain.VulnerabilityStatus) (domain.VulnerabilityRecord, error) {
 	uc.logger.Info("vuln-scan: metadata-only", "coordinate", params.Coordinate, "reason", note)
 	findings, err := uc.database.LookupFindings(ctx, params.Coordinate)
 	if err != nil {
 		return domain.VulnerabilityRecord{}, fmt.Errorf("metadata check for %s: %w", params.Coordinate, err)
 	}
 
+	// Both axes are asserted here rather than left for the seal to project off the
+	// summary word, because this is the one path whose two answers cannot both fit
+	// in that word.
+	//
+	// Coverage is Unscannable on every metadata-only record, whichever entry point
+	// arrived here: no module source was analysed, so no reachability was
+	// established and note always says why. That is true even when emptyStatus is
+	// Clean — a coordinate matched against the advisory database with no advisory
+	// applying is a real answer about FINDINGS, and says nothing about coverage.
+	// Conflating the two is what left 74 stored records claiming a module was
+	// analysed when only its coordinate was: the coverage this call was passed was
+	// discarded the moment an advisory matched, surviving only as UnscanReason.
+	coverage := domain.CoverageUnscannable
+	// The set decides the findings axis, which is three-valued: a match whose
+	// advisory has been retracted upstream is neither a finding against this module
+	// nor an absence of one. Counting the matches instead reported Affected for a
+	// coordinate whose only advisory was withdrawn — a metadata-only match is the
+	// path that produced exactly that false positive, since it has no reachability
+	// to fall back on and no other evidence than the advisory itself.
+	findingsAxis := domain.DetermineFindingsAxis(findings)
+	// The summary word is emptyStatus as the caller chose it, promoted by a match to
+	// whichever word carries the findings answer. Collapsing the axes instead would
+	// report Unscannable for a matched advisory — correct for ranking, since
+	// coverage outranks findings, but it would retire a finding from every consumer
+	// that reads the summary. A finding never decays into a coverage word; the gap
+	// travels beside it on the coverage axis, which is why that axis is stored.
 	status := emptyStatus
-	if len(findings) > 0 {
+	switch findingsAxis {
+	case domain.FindingsRecordAffected:
 		status = domain.StatusAffected
+	case domain.FindingsRecordWithdrawn:
+		status = domain.StatusWithdrawn
+	case domain.FindingsRecordClean:
+		// No match: the caller's emptyStatus is the answer, and it is a coverage
+		// word on every entry point that is not a genuine clean.
 	}
 
 	now := uc.clock.Now()
@@ -839,6 +965,8 @@ func (uc *ScanModuleUseCase) scanMetadataOnly(ctx context.Context, params ScanMo
 		WalkID:            params.WalkID,
 		Findings:          findings,
 		OverallStatus:     status,
+		CoverageStatus:    coverage,
+		FindingsStatus:    findingsAxis,
 		UnscanReason:      unscanReason,
 		UnscannableReason: note,
 		// The originating toolchain error is carried onto the metadata-only
@@ -850,31 +978,23 @@ func (uc *ScanModuleUseCase) scanMetadataOnly(ctx context.Context, params ScanMo
 		ScannedAt:        now,
 		FirstScannedAt:   now,
 		PipelineVersion:  uc.pipelineVersion,
+		// This use case scans one module as its own main module, and that holds for
+		// the fallback too: the coordinate was matched because the ISOLATED analysis
+		// could not be produced, so this record answers the isolated question and
+		// must not be servable as a target-rooted answer.
+		Rooting: domain.RootingIsolated,
 	}
-	hash, err := uc.computeContentHash(record)
+	// Empty when the module was never fetched: a coordinate matched against the
+	// advisory database read no artefact, and must not claim to have read one.
+	derived.stamp(&record)
+	record, err = domain.VulnerabilityRecordHasher{}.SetContentHash(record)
 	if err != nil {
 		return domain.VulnerabilityRecord{}, fmt.Errorf("hashing metadata-only record: %w", err)
 	}
-	record.ContentHash = hash
 	if perr := uc.vulnStore.PutVulnerabilityRecord(ctx, record); perr != nil {
 		return domain.VulnerabilityRecord{}, fmt.Errorf("persisting metadata-only record: %w", perr)
 	}
 	return record, nil
-}
-
-func (uc *ScanModuleUseCase) computeContentHash(r domain.VulnerabilityRecord) (string, error) {
-	// FirstScannedAt is first-seen provenance, not part of the verdict, so it is
-	// excluded from the canonical hash: a reused record whose ScannedAt advances
-	// must not change identity on account of an anchor that never moves. r is a
-	// value copy, so zeroing it here does not affect the persisted record.
-	r.FirstScannedAt = time.Time{}
-	// Canonical JSON hashing
-	data, err := json.Marshal(r)
-	if err != nil {
-		return "", fmt.Errorf("marshalling vulnerability record for content hash: %w", err)
-	}
-	hash := sha256.Sum256(data)
-	return hex.EncodeToString(hash[:]), nil
 }
 
 // applyReachability runs reachability analysis for each finding that has
@@ -896,7 +1016,7 @@ func (uc *ScanModuleUseCase) applyReachability(ctx context.Context, params ScanM
 	}
 
 	for i, finding := range findings {
-		syms := buildSymbolRefs(params.Coordinate.Path, finding.AffectedSymbols)
+		syms := buildSymbolRefs(params.Coordinate.Path(), finding.AffectedSymbols)
 		if len(syms) == 0 {
 			continue
 		}
@@ -993,7 +1113,7 @@ func buildSymbolRefs(module string, affectedSymbols []string) []ports.SymbolRefe
 	return refs
 }
 
-func (uc *ScanModuleUseCase) checkVulnerabilities(ctx context.Context, coord coordinate.ModuleCoordinate, fact fetchdomain.FactRecord, walkID string) (bool, error) {
+func (uc *ScanModuleUseCase) checkVulnerabilities(ctx context.Context, coord coordinate.ModuleCoordinate, walkID string) (bool, error) {
 	// If walkID is empty, we can't look up dependencies in a walk graph.
 	// This might happen during direct module scans outside a walk context.
 	if walkID == "" || uc.walkStore == nil {

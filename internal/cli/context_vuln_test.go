@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
 
@@ -122,7 +123,7 @@ func walkAffectedFixture(t *testing.T, subjectEdges []walkdomain.GraphEdge, reco
 // fixture models.
 func walkAffectedFixtureCoverage(t *testing.T, overall vuldomain.WalkScanStatus, coverage vuldomain.CoverageStatus, subjectEdges []walkdomain.GraphEdge, records ...vuldomain.VulnerabilityRecord) (*vulnBatchCtx, *testfakes.FakeQueryVuln) {
 	t.Helper()
-	root := coordinate.ModuleCoordinate{Path: "example.com/root", Version: "local"}
+	root := coordinatetest.MustNew("example.com/root", "local")
 
 	vuln := testfakes.NewFakeQueryVuln()
 	perModule := map[coordinate.ModuleCoordinate]string{}
@@ -160,9 +161,9 @@ func walkAffectedFixtureCoverage(t *testing.T, overall vuldomain.WalkScanStatus,
 // annotation, while one whose closure contains an affected peer names it.
 
 func TestBuildVulnerabilities_WalkAffectedPeerNotInClosure_Suppressed(t *testing.T) {
-	root := coordinate.ModuleCoordinate{Path: "example.com/root", Version: "local"}
+	root := coordinatetest.MustNew("example.com/root", "local")
 	subject := mustContextCoord(t) // example.com/mod@v1.0.0, clean
-	peer := coordinate.ModuleCoordinate{Path: "example.com/peer", Version: "v2.0.0"}
+	peer := coordinatetest.MustNew("example.com/peer", "v2.0.0")
 
 	// root → subject ; root → peer. subject has no path to peer.
 	edges := []walkdomain.GraphEdge{
@@ -188,9 +189,9 @@ func TestBuildVulnerabilities_WalkAffectedPeerNotInClosure_Suppressed(t *testing
 }
 
 func TestBuildVulnerabilities_WalkAffectedPeerInClosure_Named(t *testing.T) {
-	root := coordinate.ModuleCoordinate{Path: "example.com/root", Version: "local"}
+	root := coordinatetest.MustNew("example.com/root", "local")
 	subject := mustContextCoord(t) // example.com/mod@v1.0.0, clean
-	peer := coordinate.ModuleCoordinate{Path: "example.com/peer", Version: "v2.0.0"}
+	peer := coordinatetest.MustNew("example.com/peer", "v2.0.0")
 
 	// root → subject → peer. peer IS in subject's transitive closure.
 	edges := []walkdomain.GraphEdge{
@@ -215,9 +216,9 @@ func TestBuildVulnerabilities_WalkAffectedPeerInClosure_Named(t *testing.T) {
 // findings axis (FindingsStatus == Affected) must drive it instead, and the
 // coverage caveat must surface alongside the named peer rather than replacing it.
 func TestBuildVulnerabilities_PartialRunWithAffectedPeerInClosure_Named(t *testing.T) {
-	root := coordinate.ModuleCoordinate{Path: "example.com/root", Version: "local"}
+	root := coordinatetest.MustNew("example.com/root", "local")
 	subject := mustContextCoord(t) // example.com/mod@v1.0.0, clean
-	peer := coordinate.ModuleCoordinate{Path: "example.com/peer", Version: "v2.0.0"}
+	peer := coordinatetest.MustNew("example.com/peer", "v2.0.0")
 
 	// root → subject → peer. peer IS in subject's transitive closure.
 	edges := []walkdomain.GraphEdge{
@@ -247,9 +248,9 @@ func TestBuildVulnerabilities_PartialRunWithAffectedPeerInClosure_Named(t *testi
 // own (successfully read) verdict. filterWalkAnnotation records it on WalkError
 // and leaves the peer set empty, so the module keeps its own verdict.
 func TestFilterWalkAnnotation_PeerReadError_RecordedNotFabricated(t *testing.T) {
-	root := coordinate.ModuleCoordinate{Path: "example.com/root", Version: "local"}
+	root := coordinatetest.MustNew("example.com/root", "local")
 	subject := mustContextCoord(t)
-	peer := coordinate.ModuleCoordinate{Path: "example.com/peer", Version: "v2.0.0"}
+	peer := coordinatetest.MustNew("example.com/peer", "v2.0.0")
 
 	edges := []walkdomain.GraphEdge{
 		{From: root, To: subject},
@@ -281,7 +282,7 @@ func TestFilterWalkAnnotation_PeerReadError_RecordedNotFabricated(t *testing.T) 
 
 func TestBuildVulnerabilities_WalkGraphUnavailable_KeepsGenericAnnotation(t *testing.T) {
 	subject := mustContextCoord(t)
-	peer := coordinate.ModuleCoordinate{Path: "example.com/peer", Version: "v2.0.0"}
+	peer := coordinatetest.MustNew("example.com/peer", "v2.0.0")
 
 	// No walkUC / graphCache wired → graph cannot be loaded, so the generic
 	// walk annotation is preserved rather than silently dropped.

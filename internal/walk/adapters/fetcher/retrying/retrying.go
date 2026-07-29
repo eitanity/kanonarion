@@ -200,8 +200,8 @@ func (f *Fetcher) EnsureFetched(ctx context.Context, coord coordinate.ModuleCoor
 		if err == nil {
 			if attempt > 1 {
 				f.logger.InfoContext(ctx, "walk.fetch.retried",
-					slog.String("module.path", coord.Path),
-					slog.String("module.version", coord.Version),
+					slog.String("module.path", coord.Path()),
+					slog.String("module.version", coord.Version()),
 					slog.Int("attempts", attempt),
 					slog.Int64("backoff_total_ms", totalBackoff.Milliseconds()),
 				)
@@ -220,8 +220,8 @@ func (f *Fetcher) EnsureFetched(ctx context.Context, coord coordinate.ModuleCoor
 			// which reads identically to a first-attempt failure. This line is what
 			// separates "the network was bad for a while" from "the module is bad".
 			f.logger.WarnContext(ctx, "walk.fetch.retries_exhausted",
-				slog.String("module.path", coord.Path),
-				slog.String("module.version", coord.Version),
+				slog.String("module.path", coord.Path()),
+				slog.String("module.version", coord.Version()),
 				slog.Int("attempts", attempt),
 				slog.Int64("backoff_total_ms", totalBackoff.Milliseconds()),
 				slog.String("error", err.Error()),
@@ -230,8 +230,8 @@ func (f *Fetcher) EnsureFetched(ctx context.Context, coord coordinate.ModuleCoor
 		}
 		delay := f.jitter(f.backoffFor(attempt))
 		f.logger.DebugContext(ctx, "walk.fetch.retry",
-			slog.String("module.path", coord.Path),
-			slog.String("module.version", coord.Version),
+			slog.String("module.path", coord.Path()),
+			slog.String("module.version", coord.Version()),
 			slog.Int("attempt", attempt),
 			slog.Int("attempts.max", f.attempts),
 			slog.Int64("backoff_ms", delay.Milliseconds()),
@@ -244,8 +244,8 @@ func (f *Fetcher) EnsureFetched(ctx context.Context, coord coordinate.ModuleCoor
 			// retry, not the wait's cancellation: the fetch is what the caller
 			// asked about.
 			f.logger.DebugContext(ctx, "walk.fetch.retry.aborted",
-				slog.String("module.path", coord.Path),
-				slog.String("module.version", coord.Version),
+				slog.String("module.path", coord.Path()),
+				slog.String("module.version", coord.Version()),
 				slog.Int("attempt", attempt),
 				slog.String("reason", serr.Error()),
 			)

@@ -81,11 +81,11 @@ func diffRecords(a, b domain.WalkRecord) WalkDiff {
 	for key, nodeB := range nodesB {
 		if nodeA, ok := nodesA[key]; !ok {
 			added = append(added, nodeB.Coordinate)
-		} else if nodeA.Coordinate.Version != nodeB.Coordinate.Version {
+		} else if nodeA.Coordinate.Version() != nodeB.Coordinate.Version() {
 			versionChanged = append(versionChanged, VersionChange{
-				Path:     nodeB.Coordinate.Path,
-				VersionA: nodeA.Coordinate.Version,
-				VersionB: nodeB.Coordinate.Version,
+				Path:     nodeB.Coordinate.Path(),
+				VersionA: nodeA.Coordinate.Version(),
+				VersionB: nodeB.Coordinate.Version(),
 			})
 		}
 	}
@@ -173,9 +173,9 @@ func normalizeDepth(d domain.WalkDepth) domain.WalkDepth {
 func nodesByPath(nodes []domain.GraphNode) map[string]domain.GraphNode {
 	m := make(map[string]domain.GraphNode, len(nodes))
 	for _, n := range nodes {
-		key := n.Coordinate.Path
-		if n.OriginalCoordinate.Path != "" {
-			key = n.OriginalCoordinate.Path
+		key := n.Coordinate.Path()
+		if n.OriginalCoordinate.Path() != "" {
+			key = n.OriginalCoordinate.Path()
 		}
 		m[key] = n
 	}

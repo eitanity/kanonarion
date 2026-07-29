@@ -146,3 +146,41 @@ func TestWalker_UnusableVCSHostListFailsTheWalk(t *testing.T) {
 		t.Error("a walk must not fetch anything under an unusable trust list")
 	}
 }
+
+// A policy that lists exactly the built-in hosts must still reach the fetcher.
+//
+// Regression. The gate here used to be `!vcsHosts.IsDefault()` — "does this
+// differ from the built-in set" — which was a sound proxy while the allowlist
+// had only one mode. Once a policy-configured list became ENFORCING and the
+// built-in set became advisory, the two questions came apart: a policy naming
+// precisely the built-in hosts reports IsDefault() == true, so the override was
+// skipped and the fetcher kept its advisory zero value. An operator who wrote
+// "only these six forges" silently got "any forge, warn" — the exact silent
+// downgrade allowed_vcs_hosts exists to prevent.
+//
+// The three tests above do not catch it: each overrides with a list that
+// differs from the built-in set, so they pass under either gate. Verified by
+// restoring the old gate — all 151 tests in this package still passed.
+func TestWalker_PolicyMatchingTheBuiltInSetStillReachesTheFetcher(t *testing.T) {
+	blobs := newFakeBlobStore()
+	pf := newVCSHostFetcher(t, blobs)
+	w := buildWalkerWithVCSHostFetcher(pf, blobs)
+
+	// Identical in content to the built-in set, but stated by an operator.
+	sameAsDefault := domain2.DefaultVCSHosts()
+
+	if _, err := w.Walk(context.Background(), application2.WalkRequest{
+		Target: vcsHostWalkTarget(),
+		Policy: policyWithHosts(sameAsDefault),
+	}); err != nil {
+		t.Fatalf("Walk: %v", err)
+	}
+
+	if pf.applied == nil {
+		t.Fatal("a policy listing exactly the built-in hosts must still be applied: " +
+			"it enforces, and the built-in set only advises")
+	}
+	if !pf.applied.IsEnforcing() {
+		t.Error("the allowlist handed to the fetcher must enforce, or an excluded forge is still contacted")
+	}
+}

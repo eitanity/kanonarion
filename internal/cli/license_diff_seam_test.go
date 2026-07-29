@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
 
@@ -14,8 +15,8 @@ import (
 )
 
 func diffCoords() (coordinate.ModuleCoordinate, coordinate.ModuleCoordinate) {
-	return coordinate.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"},
-		coordinate.ModuleCoordinate{Path: "example.com/m", Version: "v2.0.0"}
+	return coordinatetest.MustNew("example.com/m", "v1.0.0"),
+		coordinatetest.MustNew("example.com/m", "v2.0.0")
 }
 
 // A missing record on either side => ExitNotFound (absence surfaced, never

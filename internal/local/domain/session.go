@@ -29,7 +29,7 @@ func NewAnalysisSession(records []callgraphdomain.CallGraphRecord) AnalysisSessi
 	outEdges := make(map[string][]callgraphdomain.CallEdge)
 
 	for _, r := range records {
-		byModule[r.Coordinate.Path] = r
+		byModule[r.Coordinate.Path()] = r
 		for _, n := range r.Nodes {
 			nodeIndex[n.ID] = n
 		}

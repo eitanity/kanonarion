@@ -23,13 +23,16 @@ type fakeFactStore struct {
 }
 
 func (s *fakeFactStore) PutFetchRecord(_ context.Context, sealed fetchdomain.SealedRecord) error {
+	if sealed.IsZero() {
+		return fetchdomain.ErrUnsealedRecord
+	}
 	r := sealed.Record()
 	s.records[r.ModulePath+"@"+r.ModuleVersion+"|"+r.PipelineVersion] = r
 	return nil
 }
 
 func (s *fakeFactStore) GetFetchRecord(_ context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (fetchdomain.CompositeRecord, bool, error) {
-	rec, ok := s.records[coord.Path+"@"+coord.Version+"|"+pipelineVersion]
+	rec, ok := s.records[coord.Path()+"@"+coord.Version()+"|"+pipelineVersion]
 	if !ok {
 		return fetchdomain.CompositeRecord{}, false, nil
 	}

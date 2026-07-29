@@ -137,8 +137,8 @@ func (uc *ExtractLicenseUseCase) GetLicenseStore() ports.LicenseStore {
 // an error. Only infrastructure errors (store access, blob I/O) return errors.
 func (uc *ExtractLicenseUseCase) Execute(ctx context.Context, req ExtractRequest) (_ ExtractResult, retErr error) {
 	log := uc.logger.With(
-		slog.String("extraction.module.path", req.Coordinate.Path),
-		slog.String("extraction.module.version", req.Coordinate.Version),
+		slog.String("extraction.module.path", req.Coordinate.Path()),
+		slog.String("extraction.module.version", req.Coordinate.Version()),
 		slog.String("extraction.stage", "license"),
 		slog.String("pipeline_version", uc.pipelineVersion),
 	)
@@ -155,6 +155,18 @@ func (uc *ExtractLicenseUseCase) Execute(ctx context.Context, req ExtractRequest
 	factRecord, err := uc.requireFetchRecord(ctx, req.Coordinate)
 	if err != nil {
 		return ExtractResult{}, err
+	}
+
+	// Which bytes this extraction is about, resolved before any work is done so a
+	// fetch record that names no artefact fails here rather than after a full
+	// parse. This stage always holds a fetch record, so a record it cannot name
+	// an artefact for is a fault in the measurement, not a legacy row.
+	artefact, err := domain.ArtefactIdentityOf(factRecord)
+	if err != nil {
+		return ExtractResult{}, fmt.Errorf("deriving artefact identity for %s: %w", req.Coordinate, err)
+	}
+	if artefact.IsZero() {
+		return ExtractResult{}, fmt.Errorf("fetch record for %s names no artefact: %w", req.Coordinate, domain.ErrZeroIdentity)
 	}
 
 	// Step 2: check for an existing extraction record. A local coordinate
@@ -222,6 +234,11 @@ func (uc *ExtractLicenseUseCase) Execute(ctx context.Context, req ExtractRequest
 		record.Role = domain2.LicenseRoleRootDeclaration
 	}
 
+	// Stamped on every branch: a failed extraction is still a claim about a
+	// specific artefact, and one that cannot say which is unfalsifiable.
+	record.ArtefactIdentity = artefact.String()
+	record.SourceContentHash = factRecord.ContentHash
+
 	// Step 8: compute content hash.
 	record, err = uc.hasher.SetContentHash(record)
 	if err != nil {
@@ -269,8 +286,8 @@ func licenseExtractedEvent(record domain2.LicenseRecord) audit.Event {
 	return audit.Event{
 		Type: audit.EventLicenseExtracted,
 		Payload: map[string]any{
-			"module":         record.Coordinate.Path,
-			"version":        record.Coordinate.Version,
+			"module":         record.Coordinate.Path(),
+			"version":        record.Coordinate.Version(),
 			"primary_spdx":   record.PrimarySPDX,
 			"overall_status": record.OverallStatus.String(),
 			"source":         "scanner",
@@ -321,7 +338,7 @@ func (uc *ExtractLicenseUseCase) extractFromZip(
 		return domain2.LicenseRecord{}, fmt.Errorf("parsing zip: %w", err)
 	}
 
-	modulePrefix := coord.Path + "@" + coord.Version + "/"
+	modulePrefix := coord.Path() + "@" + coord.Version() + "/"
 	var entries []domain2.LicenseFileEntry
 
 	for _, name := range archive.Names() {
@@ -562,7 +579,7 @@ func (uc *ExtractLicenseUseCase) scanSourceFiles(
 	coord coordinate.ModuleCoordinate,
 	archive *ziparchive.Archive,
 ) []domain2.LicenseFileEntry {
-	modulePrefix := coord.Path + "@" + coord.Version + "/"
+	modulePrefix := coord.Path() + "@" + coord.Version() + "/"
 	var entries []domain2.LicenseFileEntry
 	totalBytes := 0
 	fileCount := 0
@@ -594,10 +611,7 @@ func (uc *ExtractLicenseUseCase) scanSourceFiles(
 		fileCount++
 
 		// Fast path: look for SPDX-License-Identifier in the first 4 KB.
-		scanLen := perFileSPDXScanBytes
-		if len(content) < scanLen {
-			scanLen = len(content)
-		}
+		scanLen := min(len(content), perFileSPDXScanBytes)
 		if spdx := parseSPDXHeader(content[:scanLen]); spdx != "" {
 			sum := sha256.Sum256(content)
 			entries = append(entries, domain2.LicenseFileEntry{
@@ -650,7 +664,7 @@ func (uc *ExtractLicenseUseCase) backfillCopyrightFromSource(
 	archive *ziparchive.Archive,
 	entries []domain2.LicenseFileEntry,
 ) {
-	modulePrefix := coord.Path + "@" + coord.Version + "/"
+	modulePrefix := coord.Path() + "@" + coord.Version() + "/"
 	seen := make(map[string]bool)
 	var collected []domain2.CopyrightStatement
 	fileCount := 0
@@ -678,10 +692,7 @@ func (uc *ExtractLicenseUseCase) backfillCopyrightFromSource(
 			continue
 		}
 		// Only scan the first 4 KB — copyright headers appear at the top.
-		scanLen := 4096
-		if len(content) < scanLen {
-			scanLen = len(content)
-		}
+		scanLen := min(len(content), 4096)
 		fileCount++
 
 		for _, stmt := range domain2.ExtractCopyright(relPath, content[:scanLen]) {

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 )
 
 // A module zip nests its content under a "path@version/" prefix, so the
@@ -63,10 +64,10 @@ func TestWriteSynthesisedGoMod_WritesToTheModuleRoot(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(src, "db.go"), []byte("package bolt\n\nimport _ \"example.com/dep/sub\"\n"), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	coord := coordinate.ModuleCoordinate{Path: "github.com/boltdb/bolt", Version: "v1.3.1"}
+	coord := coordinatetest.MustNew("github.com/boltdb/bolt", "v1.3.1")
 	dir, skipped, err := writeSynthesisedGoMod(root, coord, "go1.26.5", map[coordinate.ModuleCoordinate]struct{}{
-		{Path: "example.com/dep", Version: "v0.3.0"}:    {},
-		{Path: "example.com/unused", Version: "v9.9.9"}: {},
+		coordinatetest.MustNew("example.com/dep", "v0.3.0"):    {},
+		coordinatetest.MustNew("example.com/unused", "v9.9.9"): {},
 	})
 	if err != nil {
 		t.Fatalf("writeSynthesisedGoMod: %v", err)
@@ -104,7 +105,7 @@ func TestWriteSynthesisedGoMod_RefusesToOverwriteAnExistingGoMod(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(src, "go.mod"), []byte(original), 0o600); err != nil {
 		t.Fatalf("write: %v", err)
 	}
-	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	if _, _, err := writeSynthesisedGoMod(root, coord, "go1.26.5", nil); err == nil {
 		t.Fatal("expected an error when a go.mod already exists")
 	}

@@ -48,33 +48,6 @@ func makeLargeRecord(n int) domain.CallGraphRecord {
 	}
 }
 
-// BenchmarkVerifyBlobHash benchmarks the fast in-place blob verification path
-// introduced in, which avoids deserialisation and re-serialisation.
-func BenchmarkVerifyBlobHash(b *testing.B) {
-	for _, n := range []int{10, 100, 1000} {
-		r := makeLargeRecord(n)
-		var h domain.CallGraphRecordHasher
-		hashed, err := h.SetContentHash(r)
-		if err != nil {
-			b.Fatalf("SetContentHash: %v", err)
-		}
-		blob, err := h.Marshal(hashed)
-		if err != nil {
-			b.Fatalf("Marshal: %v", err)
-		}
-		storedHash := hashed.ContentHash
-		b.Run(fmt.Sprintf("nodes=%d/blob_bytes=%d", n, len(blob)), func(b *testing.B) {
-			b.SetBytes(int64(len(blob)))
-			b.ResetTimer()
-			for range b.N {
-				if err := h.VerifyBlobHash(blob, storedHash); err != nil {
-					b.Fatal(err)
-				}
-			}
-		})
-	}
-}
-
 // BenchmarkVerifyContentHash benchmarks the old path that unmarshals and
 // re-serialises the full record for comparison.
 func BenchmarkVerifyContentHash(b *testing.B) {

@@ -37,6 +37,9 @@ type fakeFactStore struct {
 type factKey struct{ path, version, pipeline string }
 
 func (s *fakeFactStore) PutFetchRecord(_ context.Context, sealed domain2.SealedRecord) error {
+	if sealed.IsZero() {
+		return domain2.ErrUnsealedRecord
+	}
 	r := sealed.Record()
 	if s.records == nil {
 		s.records = make(map[factKey]domain2.FactRecord)
@@ -49,7 +52,7 @@ func (s *fakeFactStore) GetFetchRecord(_ context.Context, coord coordinate.Modul
 	if s.records == nil {
 		return domain2.CompositeRecord{}, false, nil
 	}
-	r, ok := s.records[factKey{coord.Path, coord.Version, pv}]
+	r, ok := s.records[factKey{coord.Path(), coord.Version(), pv}]
 	if !ok {
 		return domain2.CompositeRecord{}, false, nil
 	}
@@ -124,7 +127,7 @@ func (s *fakeCallGraphStore) PutCallGraphRecord(_ context.Context, r domain.Call
 	if s.records == nil {
 		s.records = make(map[cgKey]domain.CallGraphRecord)
 	}
-	s.records[cgKey{r.Coordinate.Path, r.Coordinate.Version, r.PipelineVersion}] = r
+	s.records[cgKey{r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion}] = r
 	return nil
 }
 
@@ -135,7 +138,7 @@ func (s *fakeCallGraphStore) GetCallGraphRecord(_ context.Context, coord coordin
 	if s.records == nil {
 		return domain.CallGraphRecord{}, false, nil
 	}
-	r, ok := s.records[cgKey{coord.Path, coord.Version, pv}]
+	r, ok := s.records[cgKey{coord.Path(), coord.Version(), pv}]
 	return r, ok, nil
 }
 
@@ -143,11 +146,11 @@ func (s *fakeCallGraphStore) ListCallGraphRecords(_ context.Context, _ ports.Cal
 	return nil, nil
 }
 
-func (s *fakeCallGraphStore) FindCallers(_ context.Context, _ string, _ string) ([]ports.CallEdgeRef, error) {
+func (s *fakeCallGraphStore) FindCallers(_ context.Context, _ string, _ string, _ coordinate.ModuleSet, _ ports.EdgeQueryOptions) ([]ports.CallEdgeRef, error) {
 	return nil, nil
 }
 
-func (s *fakeCallGraphStore) FindCallees(_ context.Context, _ string, _ string) ([]ports.CallEdgeRef, error) {
+func (s *fakeCallGraphStore) FindCallees(_ context.Context, _ string, _ string, _ coordinate.ModuleSet, _ ports.EdgeQueryOptions) ([]ports.CallEdgeRef, error) {
 	return nil, nil
 }
 

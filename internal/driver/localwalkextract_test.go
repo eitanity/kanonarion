@@ -80,11 +80,11 @@ func TestRun_HappyPath(t *testing.T) {
 	}
 
 	// Walk request: project-rooted at the local module, version "local".
-	if w.gotReq.Target.Path != "example.com/widget" {
-		t.Errorf("walk target path = %q, want example.com/widget", w.gotReq.Target.Path)
+	if w.gotReq.Target.Path() != "example.com/widget" {
+		t.Errorf("walk target path = %q, want example.com/widget", w.gotReq.Target.Path())
 	}
-	if w.gotReq.Target.Version != coordinate.LocalVersion {
-		t.Errorf("walk target version = %q, want %q", w.gotReq.Target.Version, coordinate.LocalVersion)
+	if w.gotReq.Target.Version() != coordinate.LocalVersion {
+		t.Errorf("walk target version = %q, want %q", w.gotReq.Target.Version(), coordinate.LocalVersion)
 	}
 	if !w.gotReq.ProjectMode {
 		t.Error("walk request should set ProjectMode")
@@ -188,8 +188,8 @@ func TestRun_EmptyDirDefaultsToCwd(t *testing.T) {
 	if _, err := uc.Run(context.Background(), LocalWalkExtractRequest{}); err != nil {
 		t.Fatalf("Run with empty Dir: %v", err)
 	}
-	if w.gotReq.Target.Path != "example.com/here" {
-		t.Errorf("target path = %q, want example.com/here (cwd go.mod)", w.gotReq.Target.Path)
+	if w.gotReq.Target.Path() != "example.com/here" {
+		t.Errorf("target path = %q, want example.com/here (cwd go.mod)", w.gotReq.Target.Path())
 	}
 }
 

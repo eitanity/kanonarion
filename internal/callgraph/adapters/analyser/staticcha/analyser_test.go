@@ -18,7 +18,7 @@ import (
 
 func makeZip(t testing.TB, coord coordinate.ModuleCoordinate, files map[string]string) []byte {
 	t.Helper()
-	prefix := coord.Path + "@" + coord.Version + "/"
+	prefix := coord.Path() + "@" + coord.Version() + "/"
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
 	for name, content := range files {
@@ -321,7 +321,7 @@ func TestAnalyse_PathTraversalInZip(t *testing.T) {
 	// Create a zip with a path traversal entry — should be silently skipped.
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
-	prefix := testCoord.Path + "@" + testCoord.Version + "/"
+	prefix := testCoord.Path() + "@" + testCoord.Version() + "/"
 
 	// Valid entry.
 	w, err := zw.Create(prefix + "go.mod")
@@ -390,7 +390,7 @@ func TestAnalyse_ZipWithDirectoryEntries(t *testing.T) {
 	// Create a zip that contains explicit directory entries (IsDir == true).
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
-	prefix := testCoord.Path + "@" + testCoord.Version + "/"
+	prefix := testCoord.Path() + "@" + testCoord.Version() + "/"
 
 	// Explicit directory entry.
 	if _, err := zw.Create(prefix + "subdir/"); err != nil {

@@ -167,7 +167,7 @@ func parsePackageDir(fsys fs.FS, dir string, coord coordinate.ModuleCoordinate) 
 		parsed = append(parsed, f)
 	}
 
-	importPath := packageImportPath(coord.Path, dir)
+	importPath := packageImportPath(coord.Path(), dir)
 
 	if len(parsed) == 0 {
 		if len(failures) > 0 {

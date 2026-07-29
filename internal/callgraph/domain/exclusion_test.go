@@ -4,7 +4,7 @@ import (
 	"reflect"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 )
 
 func TestNormaliseExclusions(t *testing.T) {
@@ -53,7 +53,7 @@ func TestIsModuleExcluded(t *testing.T) {
 }
 
 func TestNewExcludedRecord(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "example.com/x", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/x", "v1.0.0")
 	r := NewExcludedRecord(coord, AlgorithmCHA, []string{"a/m", "example.com/x"})
 	if r.OverallStatus != CallGraphStatusExcludedByConfig {
 		t.Errorf("status = %s, want ExcludedByConfig", r.OverallStatus)
@@ -71,7 +71,7 @@ func TestNewExcludedRecord(t *testing.T) {
 
 func TestExcludedRecord_HashRoundTrip(t *testing.T) {
 	var h CallGraphRecordHasher
-	coord := coordinate.ModuleCoordinate{Path: "example.com/x", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/x", "v1.0.0")
 	r := NewExcludedRecord(coord, AlgorithmCHA, []string{"example.com/x", "a/m"})
 	r.PipelineVersion = "0.1.0"
 	r.Sort()

@@ -58,7 +58,9 @@ type LocalExtractRequest struct {
 	// Dir is the module working-tree root (contains go.mod).
 	Dir string
 	// Coordinate.Path must be the module path declared in Dir/go.mod;
-	// Coordinate.Version is a synthetic local version (e.g. "v0.0.0").
+	// Coordinate.Version is coordinate.LocalVersion — nothing published the tree,
+	// so there is no version to name. Which tree it was is carried by the record's
+	// AnalysisSource and WorktreeDigest, not by the version component.
 	Coordinate coordinate.ModuleCoordinate
 }
 
@@ -75,8 +77,8 @@ type LocalExtractRequest struct {
 // access, analyser infrastructure failures) return errors.
 func (uc *ExtractLocalCallGraphUseCase) Execute(ctx context.Context, req LocalExtractRequest) (_ ExtractResult, retErr error) {
 	log := uc.logger.With(
-		slog.String("extraction.module.path", req.Coordinate.Path),
-		slog.String("extraction.module.version", req.Coordinate.Version),
+		slog.String("extraction.module.path", req.Coordinate.Path()),
+		slog.String("extraction.module.version", req.Coordinate.Version()),
 		slog.String("extraction.stage", "callgraph-local"),
 		slog.String("pipeline_version", uc.pipelineVersion),
 	)
@@ -97,6 +99,12 @@ func (uc *ExtractLocalCallGraphUseCase) Execute(ctx context.Context, req LocalEx
 	record.PipelineVersion = uc.pipelineVersion
 	record.NodeCount = len(record.Nodes)
 	record.EdgeCount = len(record.Edges)
+	// ArtefactIdentity and SourceContentHash are deliberately left empty. The
+	// source here is a working tree, not a fetched artefact: nothing was measured,
+	// so there is no identity to name and no fetch record to point at. Empty reads
+	// as "not recorded", which is the truth. Stamping a hash of the tree computed
+	// here would invent an artefact no fetch measurement ever saw, and it would key
+	// rows in every table that composes on the identity.
 
 	record, err = uc.hasher.SetContentHash(record)
 	if err != nil {

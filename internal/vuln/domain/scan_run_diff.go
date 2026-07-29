@@ -11,8 +11,24 @@ type ScanRunDiff struct {
 
 	// NewFindings contains findings present in B but not in A (newly known).
 	NewFindings []FindingDelta
-	// ResolvedFindings contains findings present in A but not in B (no longer known).
+	// ResolvedFindings contains findings present in A but not in B (no longer
+	// known), for which no reason is recorded. It is deliberately not called
+	// "fixed": within one coordinate the module version cannot have moved between
+	// the two runs, so a finding that simply stops being reported is an
+	// unattributed disappearance, and labelling it green would assert a fix that
+	// nothing established.
 	ResolvedFindings []FindingDelta
+	// WithdrawnFindings contains findings that stopped standing for a stated
+	// reason: the advisory was retracted upstream. It is the attributed half of
+	// what used to fall wholesale into ResolvedFindings, and it is the reason that
+	// bucket could not be trusted — "upstream fixed it", "we upgraded" and "the
+	// report was withdrawn" all read the same there, and a review acted on the
+	// wrong one.
+	//
+	// Two shapes reach it: a finding both runs report where only B's copy carries
+	// the retraction timestamp (the withdrawal happened between the runs), and a
+	// finding absent from B whose A-side copy already recorded the retraction.
+	WithdrawnFindings []FindingDelta
 	// ReachabilityChanges contains findings present in both runs whose reachability
 	// determination changed between A and B.
 	ReachabilityChanges []ReachabilityChange

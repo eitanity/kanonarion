@@ -6,6 +6,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/fetch/application"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
@@ -56,7 +57,7 @@ func TestExecuteGoModOnly_HashMismatchRecorded(t *testing.T) {
 	blobs := newFakeBlob()
 	facts := newFakeFacts()
 
-	wrong := domain2.ModuleHash{Algorithm: "h1", Value: "somethingelse=="}
+	wrong := fetchtest.H1("somethingelse==")
 	uc := newUseCaseWithSumDB(proxy, &fakeVCS{}, blobs, facts, availableGoModSumDB(wrong))
 	result, err := uc.Execute(context.Background(), application.FetchRequest{Coordinate: testCoord, GoModOnly: true})
 	if err != nil {

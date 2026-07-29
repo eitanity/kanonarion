@@ -6,7 +6,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 
 	"github.com/eitanity/kanonarion/internal/vuln/application"
@@ -20,7 +20,7 @@ import (
 func TestScanModule_FindsFactRecordUnderLocalIngestPipelineVersion(t *testing.T) {
 	ctx := t.Context()
 	const localPipeline = "local-0.1.0"
-	coord := coordinate.ModuleCoordinate{Path: "example.com/localmod", Version: "v0.0.0"}
+	coord := coordinatetest.MustNew("example.com/localmod", "v0.0.0")
 	now := time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)
 
 	facts := newFakeFacts()

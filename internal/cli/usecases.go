@@ -88,6 +88,7 @@ type ExtractLicenseUseCase interface {
 type QueryLicenseUseCase interface {
 	GetLicenseRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (licensedomain.LicenseRecord, bool, error)
 	ListLicenseRecords(ctx context.Context, filter licenseports.LicenseFilter) ([]licenseports.LicenseSummary, error)
+	LicenseHistory(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]licensedomain.LicenseRecord, error)
 	ResolveForWalk(ctx context.Context, walkID string, target coordinate.ModuleCoordinate, extractFn func(context.Context, coordinate.ModuleCoordinate) (licensedomain.LicenseRecord, error)) ([]licapp.DepLicenseResult, error)
 }
 
@@ -127,8 +128,9 @@ type ExtractInterfaceUseCase interface {
 // QueryInterfaceUseCase is the interface for querying interface records.
 type QueryInterfaceUseCase interface {
 	GetInterfaceRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (ifacedomain.InterfaceRecord, bool, error)
+	InterfaceHistory(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]ifacedomain.InterfaceRecord, error)
 	ListInterfaceRecords(ctx context.Context, filter ifaceports.InterfaceFilter) ([]ifaceports.InterfaceSummary, error)
-	FindSymbol(ctx context.Context, symbolName, pipelineVersion string) ([]ifaceports.SymbolRef, error)
+	FindSymbol(ctx context.Context, symbolName, pipelineVersion string, scope coordinate.ModuleSet) ([]ifaceports.SymbolRef, error)
 }
 
 // --- callgraph context ---
@@ -147,11 +149,13 @@ type ExtractLocalCallGraphUseCase interface {
 // QueryCallGraphUseCase is the interface for querying call graph records.
 type QueryCallGraphUseCase interface {
 	GetCallGraphRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (callgraphdomain.CallGraphRecord, bool, error)
+	GetCallGraphRecordFrom(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, source callgraphdomain.AnalysisSource) (callgraphdomain.CallGraphRecord, bool, error)
+	CallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]callgraphdomain.CallGraphRecord, error)
 	ListCallGraphRecords(ctx context.Context, filter cgports.CallGraphFilter) ([]cgports.CallGraphSummary, error)
-	FindCallers(ctx context.Context, symbolID, pipelineVersion string) ([]cgports.CallEdgeRef, error)
-	FindCallees(ctx context.Context, symbolID, pipelineVersion string) ([]cgports.CallEdgeRef, error)
-	TraverseCallers(ctx context.Context, symbolID, pipelineVersion string, maxDepth int) (edges []cgports.CallEdgeRef, nodes []string, err error)
-	TraverseCallees(ctx context.Context, symbolID, pipelineVersion string, maxDepth int) (edges []cgports.CallEdgeRef, nodes []string, err error)
+	FindCallers(ctx context.Context, symbolID, pipelineVersion string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error)
+	FindCallees(ctx context.Context, symbolID, pipelineVersion string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error)
+	TraverseCallers(ctx context.Context, symbolID, pipelineVersion string, maxDepth int, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) (edges []cgports.CallEdgeRef, nodes []string, err error)
+	TraverseCallees(ctx context.Context, symbolID, pipelineVersion string, maxDepth int, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) (edges []cgports.CallEdgeRef, nodes []string, err error)
 }
 
 // --- example context ---
@@ -164,8 +168,9 @@ type ExtractExampleUseCase interface {
 // QueryExamplesUseCase is the interface for querying example records.
 type QueryExamplesUseCase interface {
 	GetExampleRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (exampledomain.ExampleRecord, bool, error)
+	ExampleHistory(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]exampledomain.ExampleRecord, error)
 	ListExampleRecords(ctx context.Context, filter exampleports.ExampleFilter) ([]exampleports.ExampleSummary, error)
-	FindBySymbol(ctx context.Context, symbol, pipelineVersion string) ([]exampleports.ExampleRef, error)
+	FindBySymbol(ctx context.Context, symbol, pipelineVersion string, scope coordinate.ModuleSet) ([]exampleports.ExampleRef, error)
 	FindBySymbolInModule(ctx context.Context, coord coordinate.ModuleCoordinate, symbol, pipelineVersion string) ([]exampleports.ExampleRef, error)
 }
 
@@ -192,7 +197,7 @@ type QueryVulnUseCase interface {
 	GetLatestRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (vulndomain.VulnerabilityRecord, bool, error)
 	GetLatestRecordForWalk(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, walkID string) (vulndomain.VulnerabilityRecord, bool, error)
 	ListRecordsForModule(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]vulndomain.VulnerabilityRecord, error)
-	ListRecordsByFindingID(ctx context.Context, findingID string) ([]vulndomain.VulnerabilityRecord, error)
+	ListRecordsByFindingID(ctx context.Context, findingID, walkID string) ([]vulndomain.VulnerabilityRecord, error)
 }
 
 // QueryScanRunsUseCase is the interface for querying scan runs and snapshots.

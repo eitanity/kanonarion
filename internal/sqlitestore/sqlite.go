@@ -16,7 +16,25 @@ import (
 type Migration struct {
 	Module  string
 	Version int
-	SQL     string
+	// SQL may be empty, which makes the migration a no-op. That exists for a
+	// withdrawn migration whose version number must be retained: schema_migrations
+	// is keyed on (module, version), so a store that already applied one cannot
+	// have it renumbered or removed.
+	SQL string
+	// Fn is an optional Go step run inside the SAME transaction as SQL, after it.
+	// It exists for back-fills SQLite cannot express — decoding a compressed blob
+	// to populate a column denormalised from it is the case that brought it back.
+	//
+	// It has been added and removed before. It must only ever exist ALONGSIDE a
+	// caller: a hook in a struct with nothing using it is the defect this project
+	// treats as its own class, and that is why the previous one was deleted when
+	// its single caller was withdrawn. If the last user of Fn is ever removed,
+	// remove Fn with it.
+	//
+	// It takes no context deliberately. An earlier version manufactured a
+	// context.Background() inside migrate, which made contextcheck flag every
+	// Open call site.
+	Fn func(tx *sql.Tx) error
 }
 
 // DB is a shared SQLite interface that handles opening the database,
@@ -142,9 +160,20 @@ func migrate(db *sql.DB, migrations []Migration) error {
 		if err != nil {
 			return fmt.Errorf("beginning migration transaction: %w", err)
 		}
-		if _, err := tx.Exec(m.SQL); err != nil {
-			rerr := tx.Rollback()
-			return fmt.Errorf("migration %s v%d: %w", m.Module, m.Version, errors.Join(err, rerr))
+		if strings.TrimSpace(m.SQL) != "" {
+			if _, err := tx.Exec(m.SQL); err != nil {
+				rerr := tx.Rollback()
+				return fmt.Errorf("migration %s v%d: %w", m.Module, m.Version, errors.Join(err, rerr))
+			}
+		}
+		if m.Fn != nil {
+			// Inside the same transaction, so a back-fill that fails leaves the
+			// schema change it accompanies rolled back too — a half-applied
+			// migration is a store whose columns disagree with its rows.
+			if err := m.Fn(tx); err != nil {
+				rerr := tx.Rollback()
+				return fmt.Errorf("migration %s v%d go step: %w", m.Module, m.Version, errors.Join(err, rerr))
+			}
 		}
 		if _, err := tx.Exec(
 			`INSERT INTO schema_migrations (module, version, applied_at) VALUES (?, ?, ?)`,

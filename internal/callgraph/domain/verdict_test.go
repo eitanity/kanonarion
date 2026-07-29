@@ -71,6 +71,7 @@ func TestSymbolMethodName(t *testing.T) {
 // no leaf sink, no unresolved dispatch — a confident RESOLVED-ABSENT.
 func TestClassifyNegativeVerdict_GenuineAbsence(t *testing.T) {
 	in := domain.NegativeVerdictInputs{
+		TestScope:   domain.TestScopeAnalysed,
 		MethodName:  "Root",
 		QueriedNode: domain.CallNode{ID: "m.Root", Symbol: "Root"},
 		Found:       true,
@@ -92,6 +93,7 @@ func TestClassifyNegativeVerdict_GenuineAbsence(t *testing.T) {
 // no completeness level does not by itself force UNRESOLVED.
 func TestClassifyNegativeVerdict_UnknownLevelIsNotDowngraded(t *testing.T) {
 	in := domain.NegativeVerdictInputs{
+		TestScope:   domain.TestScopeAnalysed,
 		MethodName:  "Root",
 		QueriedNode: domain.CallNode{ID: "m.Root", Symbol: "Root"},
 		Found:       true,
@@ -106,6 +108,7 @@ func TestClassifyNegativeVerdict_UnknownLevelIsNotDowngraded(t *testing.T) {
 // downgrades to UNRESOLVED, using the node ID as the site when found.
 func TestClassifyNegativeVerdict_TypeOnlyModule(t *testing.T) {
 	in := domain.NegativeVerdictInputs{
+		TestScope:   domain.TestScopeAnalysed,
 		MethodName:  "Root",
 		QueriedNode: domain.CallNode{ID: "m.Root", Symbol: "Root"},
 		Found:       true,
@@ -128,6 +131,7 @@ func TestClassifyNegativeVerdict_TypeOnlyModule(t *testing.T) {
 // method name.
 func TestClassifyNegativeVerdict_TypeOnlyModuleNodeAbsent(t *testing.T) {
 	in := domain.NegativeVerdictInputs{
+		TestScope:   domain.TestScopeAnalysed,
 		MethodName:  "Ghost",
 		Found:       false,
 		ModuleLevel: domain.CompletenessMetadataOnly,
@@ -145,6 +149,7 @@ func TestClassifyNegativeVerdict_TypeOnlyModuleNodeAbsent(t *testing.T) {
 // and/or asm/linkname leaf facts downgrades, and only a found node is inspected.
 func TestClassifyNegativeVerdict_LeafSinks(t *testing.T) {
 	in := domain.NegativeVerdictInputs{
+		TestScope:  domain.TestScopeAnalysed,
 		MethodName: "Leaf",
 		QueriedNode: domain.CallNode{
 			ID: "m.Leaf", Symbol: "Leaf",
@@ -179,6 +184,7 @@ func TestClassifyNegativeVerdict_LeafSinks(t *testing.T) {
 // plugin site named, since the loaded targets are absent from the static graph.
 func TestClassifyNegativeVerdict_PluginLeafSink(t *testing.T) {
 	in := domain.NegativeVerdictInputs{
+		TestScope:  domain.TestScopeAnalysed,
 		MethodName: "Load",
 		QueriedNode: domain.CallNode{
 			ID: "m.Load", Symbol: "Load",
@@ -224,6 +230,7 @@ func TestClassifyNegativeVerdict_InterfaceDispatchScan(t *testing.T) {
 		"m.(*X).Nope":       {ID: "m.(*X).Nope", Symbol: "Nope"},
 	}
 	base := domain.NegativeVerdictInputs{
+		TestScope:   domain.TestScopeAnalysed,
 		MethodName:  "Do",
 		QueriedNode: domain.CallNode{ID: "m.(*Target).Do", Symbol: "Do"},
 		Found:       true,
@@ -256,6 +263,7 @@ func TestClassifyNegativeVerdict_InterfaceDispatchScan(t *testing.T) {
 // so it contributes no sink.
 func TestClassifyNegativeVerdict_UnknownEdgeUnindexedCallee(t *testing.T) {
 	in := domain.NegativeVerdictInputs{
+		TestScope:    domain.TestScopeAnalysed,
 		MethodName:   "Do",
 		Found:        true,
 		QueriedNode:  domain.CallNode{ID: "m.(*Target).Do", Symbol: "Do"},
@@ -273,6 +281,7 @@ func TestClassifyNegativeVerdict_UnknownEdgeUnindexedCallee(t *testing.T) {
 // no interface-dispatch sinks even with ScanDispatch set.
 func TestClassifyNegativeVerdict_EmptyMethodNameNoScan(t *testing.T) {
 	in := domain.NegativeVerdictInputs{
+		TestScope:    domain.TestScopeAnalysed,
 		MethodName:   "",
 		Found:        true,
 		QueriedNode:  domain.CallNode{ID: "m.Root"},
@@ -300,6 +309,7 @@ func TestClassifyNegativeVerdict_DedupeAndOrder(t *testing.T) {
 		"m.(*C).Do": {Symbol: "Do"},
 	}
 	in := domain.NegativeVerdictInputs{
+		TestScope:    domain.TestScopeAnalysed,
 		MethodName:   "Do",
 		Found:        true,
 		QueriedNode:  domain.CallNode{ID: "m.(*Target).Do", Symbol: "Do", UsesUnsafePointer: true},

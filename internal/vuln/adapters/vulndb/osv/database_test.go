@@ -17,6 +17,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	"github.com/eitanity/kanonarion/internal/vuln/adapters/vulndb/osv"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -315,7 +316,7 @@ func (f *fakeVulnStore) GetLatestDatabaseSnapshot(_ context.Context) (domain.Dat
 func (f *fakeVulnStore) ListDatabaseSnapshots(_ context.Context) ([]domain.DatabaseSnapshot, error) {
 	return nil, nil
 }
-func (f *fakeVulnStore) ListVulnerabilityRecordsByFindingID(_ context.Context, _ string) ([]domain.VulnerabilityRecord, error) {
+func (f *fakeVulnStore) ListVulnerabilityRecordsByFindingID(_ context.Context, _, _ string) ([]domain.VulnerabilityRecord, error) {
 	return nil, nil
 }
 func (f *fakeVulnStore) ListVulnerabilityRecords(_ context.Context, _ string) ([]domain.VulnerabilityRecord, error) {
@@ -336,7 +337,7 @@ func TestCheckVulnerable_LazilyLoadsIndex(t *testing.T) {
 	defer srv.Close()
 
 	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
 	vulns, err := db.CheckVulnerable(t.Context(), []coordinate.ModuleCoordinate{coord})
 	if err != nil {
@@ -387,7 +388,7 @@ func TestCheckVulnerable_VersionRangeFiltering(t *testing.T) {
 	}
 
 	for _, tc := range cases {
-		coord := coordinate.ModuleCoordinate{Path: tc.path, Version: tc.version}
+		coord := coordinatetest.MustNew(tc.path, tc.version)
 		vulns, err := db.CheckVulnerable(ctx, []coordinate.ModuleCoordinate{coord})
 		if err != nil {
 			t.Fatalf("%s@%s: CheckVulnerable: %v", tc.path, tc.version, err)
@@ -500,7 +501,7 @@ func TestLookupFindings_EnrichesFromAdvisory(t *testing.T) {
 	defer srv.Close()
 
 	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
-	coord := coordinate.ModuleCoordinate{Path: "github.com/gorilla/csrf", Version: "v1.7.3"}
+	coord := coordinatetest.MustNew("github.com/gorilla/csrf", "v1.7.3")
 
 	findings, err := db.LookupFindings(t.Context(), coord)
 	if err != nil {
@@ -550,7 +551,7 @@ func TestLookupFindings_PatchedAdvisory(t *testing.T) {
 	defer srv.Close()
 
 	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
 	findings, err := db.LookupFindings(t.Context(), coord)
 	if err != nil {
@@ -584,7 +585,7 @@ func TestLookupFindings_DegradesOnAdvisoryFetchFailure(t *testing.T) {
 	defer srv.Close()
 
 	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
 	findings, err := db.LookupFindings(t.Context(), coord)
 	if err != nil {
@@ -613,7 +614,7 @@ func TestLookupFindings_PatchedVersionNotAffected(t *testing.T) {
 	defer srv.Close()
 
 	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v2.0.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v2.0.0")
 
 	findings, err := db.LookupFindings(t.Context(), coord)
 	if err != nil {
@@ -633,7 +634,7 @@ func TestLookupFindings_IndexFetchFailure(t *testing.T) {
 	defer srv.Close()
 
 	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
 	if _, err := db.LookupFindings(t.Context(), coord); err == nil {
 		t.Fatal("expected error when modules index fetch fails, got nil")
@@ -659,7 +660,7 @@ func TestLookupFindings_PreVPrefixedVersions(t *testing.T) {
 	defer srv.Close()
 
 	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.2.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.2.0")
 
 	findings, err := db.LookupFindings(t.Context(), coord)
 	if err != nil {
@@ -727,7 +728,7 @@ func TestLookupFindings_MultiRangeBackport(t *testing.T) {
 	}
 	for _, tc := range cases {
 		t.Run(tc.version, func(t *testing.T) {
-			coord := coordinate.ModuleCoordinate{Path: "stdlib", Version: tc.version}
+			coord := coordinatetest.MustNew("stdlib", tc.version)
 			findings, err := db.LookupFindings(t.Context(), coord)
 			if err != nil {
 				t.Fatalf("LookupFindings: %v", err)
@@ -766,7 +767,7 @@ func TestLookupFindings_MultiRangeConservativeOnPackageMismatch(t *testing.T) {
 	defer srv.Close()
 
 	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.5.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.5.0")
 
 	findings, err := db.LookupFindings(t.Context(), coord)
 	if err != nil {
@@ -793,8 +794,11 @@ func TestLookupFindings_ConservativeWhenUnrefinable(t *testing.T) {
 			ranges:  `[{"type": "GIT", "events": [{"introduced": "0"}, {"fixed": "abc123"}]}]`,
 		},
 		{
-			name:    "unparseable version",
-			version: "not-a-version",
+			// A coordinate can no longer hold a malformed version, but it can hold
+			// no version at all — the path-only form — which reaches the same
+			// conservative branch.
+			name:    "versionless coordinate",
+			version: "",
 			ranges:  `[{"type": "SEMVER", "events": [{"introduced": "0"}, {"fixed": "1.0.0"}]}]`,
 		},
 	}
@@ -818,7 +822,10 @@ func TestLookupFindings_ConservativeWhenUnrefinable(t *testing.T) {
 			defer srv.Close()
 
 			db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
-			coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: tc.version}
+			coord := coordinatetest.PathOnly("github.com/foo/bar")
+			if tc.version != "" {
+				coord = coordinatetest.MustNew("github.com/foo/bar", tc.version)
+			}
 
 			findings, err := db.LookupFindings(t.Context(), coord)
 			if err != nil {
@@ -829,4 +836,12 @@ func TestLookupFindings_ConservativeWhenUnrefinable(t *testing.T) {
 			}
 		})
 	}
+}
+
+func (f *fakeVulnStore) GetVulnerabilityRecordAt(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ domain.DatabaseSnapshot, _ domain.Rooting) (domain.VulnerabilityRecord, bool, error) {
+	return domain.VulnerabilityRecord{}, false, nil
+}
+
+func (f *fakeVulnStore) HasVulnerabilityRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ domain.DatabaseSnapshot, _ string) (bool, error) {
+	return false, nil
 }

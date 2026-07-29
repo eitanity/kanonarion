@@ -69,7 +69,7 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 				cmdWalkID = f.walkID
 			}
 			out := contextOutput{
-				Module:          contextModuleInfo{Path: coord.Path, Version: coord.Version},
+				Module:          contextModuleInfo{Path: coord.Path(), Version: coord.Version()},
 				Verification:    buildVerification(ctx, coord, ctr.QueryFetch),
 				Provenance:      buildProvenance(coord),
 				Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks),
@@ -103,7 +103,7 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 			cmdWalkID = f.walkID
 		}
 		out := contextOutput{
-			Module:          contextModuleInfo{Path: coord.Path, Version: coord.Version},
+			Module:          contextModuleInfo{Path: coord.Path(), Version: coord.Version()},
 			Verification:    buildVerification(ctx, coord, ctr.QueryFetch),
 			Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks),
 			License:         buildLicense(ctx, coord, ctr.QueryLicense),
@@ -114,7 +114,7 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 			Commands:        buildCommandsWithWalk(coord, cmdWalkID),
 		}
 		if err := enc.Encode(out); err != nil {
-			return fmt.Errorf("encoding context for %s@%s: %w", coord.Path, coord.Version, err)
+			return fmt.Errorf("encoding context for %s@%s: %w", coord.Path(), coord.Version(), err)
 		}
 	}
 	return nil
@@ -125,7 +125,7 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 func filterContextWalkNodes(
 	ctx context.Context,
 	nodes []walkdomain.GraphNode,
-	root coordinate.ModuleCoordinate,
+	_ coordinate.ModuleCoordinate,
 	f contextFlags,
 	vulnUC QueryVulnUseCase,
 	runsUC QueryScanRunsUseCase,
@@ -139,7 +139,7 @@ func filterContextWalkNodes(
 			return nil, fmt.Errorf("reading --modules file %q: %w", f.modulesFile, err)
 		}
 		allowSet = make(map[string]struct{})
-		for _, line := range strings.Split(strings.TrimSpace(string(data)), "\n") {
+		for line := range strings.SplitSeq(strings.TrimSpace(string(data)), "\n") {
 			line = strings.TrimSpace(line)
 			if line != "" {
 				allowSet[line] = struct{}{}
@@ -232,7 +232,10 @@ func affectedSetForRun(ctx context.Context, vulnUC QueryVulnUseCase, run vuldoma
 		if !found {
 			continue
 		}
-		if rec.OverallStatus == vuldomain.StatusAffected {
+		// A findings question, asked of the findings axis: a module whose coordinate
+		// matched an advisory is affected whether or not its source could be
+		// analysed, and the collapsed word reports only one of those two facts.
+		if _, findings := vuldomain.RecordAxes(rec); findings == vuldomain.FindingsRecordAffected {
 			affected[coord] = struct{}{}
 		}
 	}
@@ -276,7 +279,7 @@ func runContextWalkSizeOnly(
 			cmdWalkID = f.walkID
 		}
 		out := contextOutput{
-			Module:          contextModuleInfo{Path: coord.Path, Version: coord.Version},
+			Module:          contextModuleInfo{Path: coord.Path(), Version: coord.Version()},
 			Verification:    buildVerification(ctx, coord, fetchUC),
 			Provenance:      buildProvenance(coord),
 			Dependencies:    buildDependencies(ctx, coord, walkUC),

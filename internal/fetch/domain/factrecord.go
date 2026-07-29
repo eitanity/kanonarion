@@ -98,8 +98,8 @@ func NewFactRecord(m FetchedModule) FactRecord {
 	return FactRecord{
 		SchemaVersion:      SchemaVersion,
 		Ecosystem:          EcosystemGo,
-		ModulePath:         m.Coordinate.Path,
-		ModuleVersion:      m.Coordinate.Version,
+		ModulePath:         m.Coordinate.Path(),
+		ModuleVersion:      m.Coordinate.Version(),
 		ModuleHash:         m.ModuleHash.String(),
 		GoModHash:          m.GoModHash.String(),
 		ZipSHA256:          m.Digests.SHA256,
@@ -147,8 +147,19 @@ func RecordIsCacheable(r FactRecord) bool {
 }
 
 // Coordinate returns the ModuleCoordinate this record describes.
+//
+// The record stores the coordinate taken apart into two strings, so this puts
+// it back together through the validating constructor. A record reaching here
+// with fields that are not a coordinate was persisted from something that was
+// never one, and the zero coordinate is the right answer for it: it renders as
+// "@", which is visibly not a module, where a half-built coordinate would
+// render as a plausible one and be looked up as though it existed.
 func (r FactRecord) Coordinate() coordinate.ModuleCoordinate {
-	return coordinate.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}
+	coord, err := coordinate.NewModuleCoordinate(r.ModulePath, r.ModuleVersion)
+	if err != nil {
+		return coordinate.ModuleCoordinate{}
+	}
+	return coord
 }
 
 // IsGoModOnly reports whether this record was produced by the go.mod-only

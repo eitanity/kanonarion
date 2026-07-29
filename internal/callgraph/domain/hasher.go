@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -48,13 +47,6 @@ func (CallGraphRecordHasher) VerifyContentHash(r CallGraphRecord) error {
 	return nil
 }
 
-// VerifyBlobHash verifies the content hash directly against the raw serialised
-// blob, zeroing the content_hash value in-place rather than deserializing and
-// re-serializing the full record. This is the fast path for read verification.
-func (CallGraphRecordHasher) VerifyBlobHash(blob []byte, storedHash string) error {
-	return verifyBlobHash(blob, storedHash)
-}
-
 // Marshal returns the canonical JSON bytes for a CallGraphRecord, including
 // its ContentHash field. Call SetContentHash before this.
 func (CallGraphRecordHasher) Marshal(r CallGraphRecord) ([]byte, error) {
@@ -92,6 +84,42 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 			UsesUnsafePointer:    cn.UsesUnsafePointer,
 			IsAssemblyOrLinkname: cn.IsAssemblyOrLinkname,
 			UsesPlugin:           cn.UsesPlugin,
+			IsTest:               cn.IsTest,
+		}
+	}
+	var ifaces []InterfaceType
+	if len(c.Interfaces) > 0 {
+		ifaces = make([]InterfaceType, len(c.Interfaces))
+		for i, ci := range c.Interfaces {
+			ifaces[i] = InterfaceType{
+				ID:       ci.ID,
+				Package:  ci.Package,
+				Name:     ci.Name,
+				Methods:  ci.Methods,
+				Position: SourcePosition{File: ci.Position.File, Line: ci.Position.Line},
+				IsTest:   ci.IsTest,
+			}
+		}
+	}
+	var impls []InterfaceImplementation
+	if len(c.Implementations) > 0 {
+		impls = make([]InterfaceImplementation, len(c.Implementations))
+		for i, ci := range c.Implementations {
+			// The wire and domain shapes are deliberately separate types; the
+			// conversion is legal only while their fields coincide, so a change
+			// to either stops compiling here rather than silently re-encoding.
+			methods := make([]ImplementedMethod, len(ci.Methods))
+			for j, m := range ci.Methods {
+				methods[j] = ImplementedMethod(m)
+			}
+			impls[i] = InterfaceImplementation{
+				InterfaceID: ci.InterfaceID,
+				TypeID:      ci.TypeID,
+				Package:     ci.Package,
+				Position:    SourcePosition{File: ci.Position.File, Line: ci.Position.Line},
+				IsTest:      ci.IsTest,
+				Methods:     methods,
+			}
 		}
 	}
 	edges := make([]CallEdge, len(c.Edges))
@@ -105,56 +133,33 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 		}
 	}
 	return CallGraphRecord{
-		SchemaVersion:   c.SchemaVersion,
-		Ecosystem:       c.Ecosystem,
-		Coordinate:      coord,
-		Algorithm:       CallGraphAlgorithm(c.Algorithm),
-		ArtifactKind:    ArtifactKind(c.ArtifactKind),
-		Completeness:    CompletenessLevel(c.Completeness),
-		Nodes:           nodes,
-		Edges:           edges,
-		OverallStatus:   CallGraphStatus(c.OverallStatus),
-		FailureDetail:   c.FailureDetail,
-		FailedPackages:  c.FailedPackages,
-		ExclusionReason: c.ExclusionReason,
-		ExclusionList:   c.ExclusionList,
-		NodeCount:       c.NodeCount,
-		EdgeCount:       c.EdgeCount,
-		ExtractedAt:     extractedAt.UTC(),
-		PipelineVersion: c.PipelineVersion,
-		ContentHash:     c.ContentHash,
+		SchemaVersion:     c.SchemaVersion,
+		Ecosystem:         c.Ecosystem,
+		Coordinate:        coord,
+		Algorithm:         CallGraphAlgorithm(c.Algorithm),
+		ArtifactKind:      ArtifactKind(c.ArtifactKind),
+		Completeness:      CompletenessLevel(c.Completeness),
+		Nodes:             nodes,
+		Edges:             edges,
+		Interfaces:        ifaces,
+		Implementations:   impls,
+		TestScope:         TestScope(c.TestScope),
+		TestScopeDetail:   c.TestScopeDetail,
+		OverallStatus:     CallGraphStatus(c.OverallStatus),
+		FailureDetail:     c.FailureDetail,
+		FailedPackages:    c.FailedPackages,
+		ExclusionReason:   c.ExclusionReason,
+		ExclusionList:     c.ExclusionList,
+		NodeCount:         c.NodeCount,
+		EdgeCount:         c.EdgeCount,
+		ExtractedAt:       extractedAt.UTC(),
+		PipelineVersion:   c.PipelineVersion,
+		ContentHash:       c.ContentHash,
+		ArtefactIdentity:  c.ArtefactIdentity,
+		SourceContentHash: c.SourceContentHash,
+		AnalysisSource:    AnalysisSource(c.AnalysisSource),
+		WorktreeDigest:    c.WorktreeDigest,
 	}, nil
-}
-
-// verifyBlobHash hashes blob after zeroing the content_hash JSON value in-place.
-// Checks both internal consistency (hash embedded in blob matches content) and
-// DB-level consistency (DB column matches content). The blob must be valid
-// canonical JSON produced by Marshal.
-func verifyBlobHash(blob []byte, storedHash string) error {
-	const key = `"content_hash":"`
-	idx := bytes.Index(blob, []byte(key))
-	if idx < 0 {
-		return fmt.Errorf("content_hash field not found in blob")
-	}
-	valueStart := idx + len(key)
-	rel := bytes.IndexByte(blob[valueStart:], '"')
-	if rel < 0 {
-		return fmt.Errorf("content_hash value not terminated in blob")
-	}
-	valueEnd := valueStart + rel
-	blobHash := string(blob[valueStart:valueEnd])
-	zeroed := make([]byte, 0, len(blob)-(valueEnd-valueStart))
-	zeroed = append(zeroed, blob[:valueStart]...)
-	zeroed = append(zeroed, blob[valueEnd:]...)
-	sum := sha256.Sum256(zeroed)
-	expected := "sha256:" + hex.EncodeToString(sum[:])
-	if blobHash != expected {
-		return fmt.Errorf("content hash mismatch: blob has %q, computed %q", blobHash, expected)
-	}
-	if storedHash != expected {
-		return fmt.Errorf("content hash mismatch: stored %q, computed %q", storedHash, expected)
-	}
-	return nil
 }
 
 // -- canonical wire types --
@@ -174,6 +179,7 @@ type canonicalNode struct {
 	IsAssemblyOrLinkname bool         `json:"is_assembly_or_linkname"`
 	IsExportedAPI        bool         `json:"is_exported_api"`
 	IsExternal           bool         `json:"is_external"`
+	IsTest               bool         `json:"is_test"`
 	Module               string       `json:"module"`
 	Package              string       `json:"package"`
 	Position             canonicalPos `json:"position"`
@@ -181,6 +187,29 @@ type canonicalNode struct {
 	Symbol               string       `json:"symbol"`
 	UsesPlugin           bool         `json:"uses_plugin"`
 	UsesUnsafePointer    bool         `json:"uses_unsafe_pointer"`
+}
+
+type canonicalInterface struct {
+	ID       string       `json:"id"`
+	IsTest   bool         `json:"is_test"`
+	Methods  []string     `json:"methods"`
+	Name     string       `json:"name"`
+	Package  string       `json:"package"`
+	Position canonicalPos `json:"position"`
+}
+
+type canonicalImplMethod struct {
+	Method string `json:"method"`
+	NodeID string `json:"node_id"`
+}
+
+type canonicalImplementation struct {
+	InterfaceID string                `json:"interface_id"`
+	IsTest      bool                  `json:"is_test"`
+	Methods     []canonicalImplMethod `json:"methods"`
+	Package     string                `json:"package"`
+	Position    canonicalPos          `json:"position"`
+	TypeID      string                `json:"type_id"`
 }
 
 type canonicalEdge struct {
@@ -192,24 +221,42 @@ type canonicalEdge struct {
 }
 
 type canonicalRecord struct {
-	Algorithm       string          `json:"algorithm"`
-	ArtifactKind    string          `json:"artifact_kind,omitempty"`
-	Completeness    string          `json:"completeness,omitempty"`
-	ContentHash     string          `json:"content_hash"`
-	Coordinate      canonicalCoord  `json:"coordinate"`
-	Ecosystem       string          `json:"ecosystem"`
-	EdgeCount       int             `json:"edge_count"`
-	Edges           []canonicalEdge `json:"edges"`
-	ExclusionList   []string        `json:"exclusion_list,omitempty"`
-	ExclusionReason string          `json:"exclusion_reason,omitempty"`
-	ExtractedAt     string          `json:"extracted_at"`
-	FailedPackages  []string        `json:"failed_packages,omitempty"`
-	FailureDetail   string          `json:"failure_detail"`
-	NodeCount       int             `json:"node_count"`
-	Nodes           []canonicalNode `json:"nodes"`
-	OverallStatus   int             `json:"overall_status"`
-	PipelineVersion string          `json:"pipeline_version"`
-	SchemaVersion   string          `json:"schema_version"`
+	Algorithm string `json:"algorithm"`
+	// AnalysisSource and WorktreeDigest are omitted when empty so records written
+	// before the analysis source was named keep their stored content hash
+	// verifiable, on the same terms every additive field on this shape has used.
+	// An absent analysis_source is the "not recorded" value, not a fourth source.
+	AnalysisSource string `json:"analysis_source,omitempty"`
+	ArtifactKind   string `json:"artifact_kind,omitempty"`
+	Completeness   string `json:"completeness,omitempty"`
+	// ArtefactIdentity and SourceContentHash are omitted when empty so
+	// records that predate them keep their stored content hash verifiable,
+	// on the same terms every additive field on this shape has used.
+	ArtefactIdentity string          `json:"artefact_identity,omitempty"`
+	ContentHash      string          `json:"content_hash"`
+	Coordinate       canonicalCoord  `json:"coordinate"`
+	Ecosystem        string          `json:"ecosystem"`
+	EdgeCount        int             `json:"edge_count"`
+	Edges            []canonicalEdge `json:"edges"`
+	ExclusionList    []string        `json:"exclusion_list,omitempty"`
+	ExclusionReason  string          `json:"exclusion_reason,omitempty"`
+	ExtractedAt      string          `json:"extracted_at"`
+	FailedPackages   []string        `json:"failed_packages,omitempty"`
+	FailureDetail    string          `json:"failure_detail"`
+	// Implementations and Interfaces are omitted when empty so a module that
+	// declares no interfaces hashes the same as one analysed before the axis
+	// existed would have — the same terms every additive field here has used.
+	Implementations   []canonicalImplementation `json:"implementations,omitempty"`
+	Interfaces        []canonicalInterface      `json:"interfaces,omitempty"`
+	NodeCount         int                       `json:"node_count"`
+	Nodes             []canonicalNode           `json:"nodes"`
+	OverallStatus     int                       `json:"overall_status"`
+	PipelineVersion   string                    `json:"pipeline_version"`
+	SchemaVersion     string                    `json:"schema_version"`
+	SourceContentHash string                    `json:"source_content_hash,omitempty"`
+	TestScope         string                    `json:"test_scope,omitempty"`
+	TestScopeDetail   string                    `json:"test_scope_detail,omitempty"`
+	WorktreeDigest    string                    `json:"worktree_digest,omitempty"`
 }
 
 func marshalCanonical(r CallGraphRecord) ([]byte, error) {
@@ -242,6 +289,7 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 			Module:               n.Module,
 			Package:              n.Package,
 			Position:             canonicalPos{File: n.Position.File, Line: n.Position.Line},
+			IsTest:               n.IsTest,
 			Receiver:             n.Receiver,
 			Symbol:               n.Symbol,
 			UsesPlugin:           n.UsesPlugin,
@@ -256,6 +304,57 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 			FromID:          e.FromID,
 			ReflectDispatch: e.ReflectDispatch,
 			ToID:            e.ToID,
+		}
+	}
+
+	var cIfaces []canonicalInterface
+	if len(r.Interfaces) > 0 {
+		ifaces := make([]InterfaceType, len(r.Interfaces))
+		copy(ifaces, r.Interfaces)
+		sort.Slice(ifaces, func(i, j int) bool { return ifaces[i].ID < ifaces[j].ID })
+		cIfaces = make([]canonicalInterface, len(ifaces))
+		for i, it := range ifaces {
+			methods := make([]string, len(it.Methods))
+			copy(methods, it.Methods)
+			sort.Strings(methods)
+			cIfaces[i] = canonicalInterface{
+				ID:       it.ID,
+				IsTest:   it.IsTest,
+				Methods:  methods,
+				Name:     it.Name,
+				Package:  it.Package,
+				Position: canonicalPos{File: it.Position.File, Line: it.Position.Line},
+			}
+		}
+	}
+
+	var cImpls []canonicalImplementation
+	if len(r.Implementations) > 0 {
+		impls := make([]InterfaceImplementation, len(r.Implementations))
+		copy(impls, r.Implementations)
+		sort.Slice(impls, func(i, j int) bool {
+			if impls[i].InterfaceID != impls[j].InterfaceID {
+				return impls[i].InterfaceID < impls[j].InterfaceID
+			}
+			return impls[i].TypeID < impls[j].TypeID
+		})
+		cImpls = make([]canonicalImplementation, len(impls))
+		for i, im := range impls {
+			methods := make([]ImplementedMethod, len(im.Methods))
+			copy(methods, im.Methods)
+			sort.Slice(methods, func(a, b int) bool { return methods[a].Method < methods[b].Method })
+			cm := make([]canonicalImplMethod, len(methods))
+			for j, m := range methods {
+				cm[j] = canonicalImplMethod(m)
+			}
+			cImpls[i] = canonicalImplementation{
+				InterfaceID: im.InterfaceID,
+				IsTest:      im.IsTest,
+				Methods:     cm,
+				Package:     im.Package,
+				Position:    canonicalPos{File: im.Position.File, Line: im.Position.Line},
+				TypeID:      im.TypeID,
+			}
 		}
 	}
 
@@ -274,24 +373,32 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 	}
 
 	c := canonicalRecord{
-		Algorithm:       string(r.Algorithm),
-		ArtifactKind:    string(r.ArtifactKind),
-		Completeness:    string(r.Completeness),
-		ContentHash:     r.ContentHash,
-		Coordinate:      canonicalCoord{Path: r.Coordinate.Path, Version: r.Coordinate.Version},
-		Ecosystem:       r.Ecosystem,
-		EdgeCount:       r.EdgeCount,
-		Edges:           cEdges,
-		ExclusionList:   exclusions,
-		ExclusionReason: r.ExclusionReason,
-		ExtractedAt:     r.ExtractedAt.UTC().Format(time.RFC3339),
-		FailedPackages:  failedPkgs,
-		FailureDetail:   r.FailureDetail,
-		NodeCount:       r.NodeCount,
-		Nodes:           cNodes,
-		OverallStatus:   int(r.OverallStatus),
-		PipelineVersion: r.PipelineVersion,
-		SchemaVersion:   r.SchemaVersion,
+		Algorithm:         string(r.Algorithm),
+		AnalysisSource:    string(r.AnalysisSource),
+		ArtefactIdentity:  r.ArtefactIdentity,
+		ArtifactKind:      string(r.ArtifactKind),
+		Completeness:      string(r.Completeness),
+		ContentHash:       r.ContentHash,
+		Coordinate:        canonicalCoord{Path: r.Coordinate.Path(), Version: r.Coordinate.Version()},
+		Ecosystem:         r.Ecosystem,
+		EdgeCount:         r.EdgeCount,
+		Edges:             cEdges,
+		ExclusionList:     exclusions,
+		ExclusionReason:   r.ExclusionReason,
+		ExtractedAt:       r.ExtractedAt.UTC().Format(time.RFC3339),
+		FailedPackages:    failedPkgs,
+		FailureDetail:     r.FailureDetail,
+		Implementations:   cImpls,
+		Interfaces:        cIfaces,
+		NodeCount:         r.NodeCount,
+		Nodes:             cNodes,
+		OverallStatus:     int(r.OverallStatus),
+		PipelineVersion:   r.PipelineVersion,
+		SchemaVersion:     r.SchemaVersion,
+		SourceContentHash: r.SourceContentHash,
+		TestScope:         string(r.TestScope),
+		TestScopeDetail:   r.TestScopeDetail,
+		WorktreeDigest:    r.WorktreeDigest,
 	}
 	b, err := canonicalMarshal(c)
 	if err != nil {

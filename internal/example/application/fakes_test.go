@@ -39,6 +39,9 @@ type fakeFactStore struct {
 type factKey struct{ path, version, pipeline string }
 
 func (s *fakeFactStore) PutFetchRecord(_ context.Context, sealed domain2.SealedRecord) error {
+	if sealed.IsZero() {
+		return domain2.ErrUnsealedRecord
+	}
 	r := sealed.Record()
 	if s.records == nil {
 		s.records = make(map[factKey]domain2.FactRecord)
@@ -51,7 +54,7 @@ func (s *fakeFactStore) GetFetchRecord(_ context.Context, coord coordinate.Modul
 	if s.records == nil {
 		return domain2.CompositeRecord{}, false, nil
 	}
-	r, ok := s.records[factKey{coord.Path, coord.Version, pv}]
+	r, ok := s.records[factKey{coord.Path(), coord.Version(), pv}]
 	if !ok {
 		return domain2.CompositeRecord{}, false, nil
 	}
@@ -120,7 +123,7 @@ func (s *fakeExampleStore) PutExampleRecord(_ context.Context, r domain.ExampleR
 	if s.records == nil {
 		s.records = make(map[exampleKey]domain.ExampleRecord)
 	}
-	s.records[exampleKey{r.Coordinate.Path, r.Coordinate.Version, r.PipelineVersion}] = r
+	s.records[exampleKey{r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion}] = r
 	return nil
 }
 
@@ -128,7 +131,7 @@ func (s *fakeExampleStore) GetExampleRecord(_ context.Context, coord coordinate.
 	if s.records == nil {
 		return domain.ExampleRecord{}, false, nil
 	}
-	r, ok := s.records[exampleKey{coord.Path, coord.Version, pv}]
+	r, ok := s.records[exampleKey{coord.Path(), coord.Version(), pv}]
 	return r, ok, nil
 }
 
@@ -136,7 +139,7 @@ func (s *fakeExampleStore) ListExampleRecords(_ context.Context, _ ports.Example
 	return nil, nil
 }
 
-func (s *fakeExampleStore) FindBySymbol(_ context.Context, _ string, _ string) ([]ports.ExampleRef, error) {
+func (s *fakeExampleStore) FindBySymbol(_ context.Context, _ string, _ string, _ coordinate.ModuleSet) ([]ports.ExampleRef, error) {
 	return nil, nil
 }
 

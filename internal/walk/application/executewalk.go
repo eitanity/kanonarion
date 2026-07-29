@@ -189,8 +189,8 @@ func walkCompletedEvent(rec domain.WalkRecord) audit.Event {
 		Type: audit.EventWalkCompleted,
 		Payload: map[string]any{
 			"walk_id":      rec.ID,
-			"module":       rec.Target.Path,
-			"version":      rec.Target.Version,
+			"module":       rec.Target.Path(),
+			"version":      rec.Target.Version(),
 			"scope":        string(rec.Scope),
 			"node_count":   len(rec.Graph.Nodes),
 			"content_hash": rec.ContentHash,

@@ -1,6 +1,8 @@
 package kanonarion
 
 import (
+	"fmt"
+
 	callgraphdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	directivedomain "github.com/eitanity/kanonarion/internal/directive/domain"
@@ -29,10 +31,39 @@ import (
 // ModuleCoordinate uniquely identifies a Go module at a specific version
 // (path + version). It is the coordinate every other result type is keyed by.
 //
-// Stability: result type (received by consumers); unstable pre-v1. Fields may
-// be added within a major; consumers must not assume field exhaustiveness
-// (§4).
+// Unlike the other result types it has no exported fields: read it with the
+// Path and Version methods, and build one with NewModuleCoordinate or
+// ParseModuleCoordinate. That is what makes the non-empty-path and semver
+// rules hold for every coordinate in existence rather than only for the ones
+// whose author remembered the constructor.
+//
+// Stability: result type (received by consumers); unstable pre-v1. Methods may
+// be added within a major (§4).
 type ModuleCoordinate = coordinate.ModuleCoordinate
+
+// NewModuleCoordinate validates and constructs a ModuleCoordinate. The path
+// must be non-empty and the version must be valid semver.
+//
+// Stability: constructor (called by consumers); unstable pre-v1 (§4).
+func NewModuleCoordinate(path, version string) (ModuleCoordinate, error) {
+	c, err := coordinate.NewModuleCoordinate(path, version)
+	if err != nil {
+		return ModuleCoordinate{}, fmt.Errorf("module coordinate %s@%s: %w", path, version, err)
+	}
+	return c, nil
+}
+
+// ParseModuleCoordinate parses and validates the canonical "path@version"
+// form — the same string ModuleCoordinate.String emits.
+//
+// Stability: constructor (called by consumers); unstable pre-v1 (§4).
+func ParseModuleCoordinate(s string) (ModuleCoordinate, error) {
+	c, err := coordinate.ParseModuleCoordinate(s)
+	if err != nil {
+		return ModuleCoordinate{}, fmt.Errorf("module coordinate %q: %w", s, err)
+	}
+	return c, nil
+}
 
 // FactRecord is the persisted, tamper-evident fetch result for a module: its
 // hashes, git provenance, and verification outcome. It is the read-shaped,

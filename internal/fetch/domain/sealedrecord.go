@@ -1,10 +1,29 @@
 package domain
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 )
+
+// ErrUnsealedRecord is the invariant behind SealedRecord, stated for the one
+// value that can hold the type without holding the evidence: the zero
+// SealedRecord, which seals nothing.
+//
+// Seal and Rehydrate are meant to be the only ways to obtain a SealedRecord, and
+// for every value they return they are. But SealedRecord is an exported struct,
+// so any package can write the composite literal domain.SealedRecord{} and hold
+// a value that was never hashed. Rehydrate already refuses a record with no
+// content hash; this is the same refusal for the record that never went through
+// Rehydrate at all. A store that wrote one would append an all-empty row that
+// later reads back as a genuine measurement of the empty module at the empty
+// version.
+//
+// It lives here rather than in an adapter so every FactStore implementation
+// refuses on the same terms, and so callers can match the rule without importing
+// the storage that happens to enforce it.
+var ErrUnsealedRecord = errors.New("unsealed fact record: the zero SealedRecord carries no content hash")
 
 // SealedRecord is a FactRecord that has been shown to carry its own content
 // hash. It is the only shape the fact store accepts for writing.

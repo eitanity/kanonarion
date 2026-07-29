@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
 
@@ -29,7 +30,7 @@ func requireExit(t *testing.T, err error, code int) {
 }
 
 func compatCoord() coordinate.ModuleCoordinate {
-	return coordinate.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
+	return coordinatetest.MustNew("example.com/m", "v1.0.0")
 }
 
 // containerWithWalk returns a Container whose walk store holds one walk for

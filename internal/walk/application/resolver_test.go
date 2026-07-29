@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
@@ -29,7 +30,7 @@ import (
 var fixedNow = time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 func coord(path, version string) coordinate.ModuleCoordinate {
-	return coordinate.ModuleCoordinate{Path: path, Version: version}
+	return coordinatetest.MustNew(path, version)
 }
 
 // makeFactRecord builds a minimal FactRecord whose ContentLocation is "path@version".
@@ -415,8 +416,8 @@ go 1.21
 
 	// D should appear exactly once, at MVS-selected v1.2.0.
 	dNode := findNode(t, g.Nodes, "example.com/d")
-	if dNode.Coordinate.Version != "v1.2.0" {
-		t.Errorf("D version = %q, want v1.2.0 (MVS)", dNode.Coordinate.Version)
+	if dNode.Coordinate.Version() != "v1.2.0" {
+		t.Errorf("D version = %q, want v1.2.0 (MVS)", dNode.Coordinate.Version())
 	}
 
 	// Two edges pointing to D (from B and from C), both with To.Version = v1.2.0.
@@ -425,8 +426,8 @@ go 1.21
 		t.Errorf("edges to D = %d, want 2", len(dEdges))
 	}
 	for _, e := range dEdges {
-		if e.To.Version != "v1.2.0" {
-			t.Errorf("edge to D has To.Version=%q, want v1.2.0", e.To.Version)
+		if e.To.Version() != "v1.2.0" {
+			t.Errorf("edge to D has To.Version=%q, want v1.2.0", e.To.Version())
 		}
 	}
 }
@@ -467,8 +468,8 @@ go 1.21
 	}
 
 	cNode := findNode(t, g.Nodes, "example.com/c")
-	if cNode.Coordinate.Version != "v1.1.0" {
-		t.Errorf("C version = %q, want v1.1.0 (MVS bump)", cNode.Coordinate.Version)
+	if cNode.Coordinate.Version() != "v1.1.0" {
+		t.Errorf("C version = %q, want v1.1.0 (MVS bump)", cNode.Coordinate.Version())
 	}
 }
 
@@ -497,13 +498,13 @@ go 1.21
 
 	// old/pkg should not be in the graph; new/pkg should be.
 	for _, n := range g.Nodes {
-		if n.Coordinate.Path == "github.com/old/pkg" {
+		if n.Coordinate.Path() == "github.com/old/pkg" {
 			t.Error("old/pkg should not be in graph after replace")
 		}
 	}
 	newNode := findNode(t, g.Nodes, "github.com/new/pkg")
-	if newNode.Coordinate.Version != "v1.1.0" {
-		t.Errorf("new/pkg version = %q, want v1.1.0", newNode.Coordinate.Version)
+	if newNode.Coordinate.Version() != "v1.1.0" {
+		t.Errorf("new/pkg version = %q, want v1.1.0", newNode.Coordinate.Version())
 	}
 }
 
@@ -533,7 +534,7 @@ go 1.21
 		t.Fatalf("Resolve: %v", err)
 	}
 	for _, n := range g.Nodes {
-		if n.Coordinate.Path == "example.com/b" {
+		if n.Coordinate.Path() == "example.com/b" {
 			t.Error("excluded module b should not be in graph")
 		}
 	}
@@ -820,8 +821,8 @@ require (
 	}
 
 	for i := 1; i < len(g.Nodes); i++ {
-		prev := g.Nodes[i-1].Coordinate.Path
-		curr := g.Nodes[i].Coordinate.Path
+		prev := g.Nodes[i-1].Coordinate.Path()
+		curr := g.Nodes[i].Coordinate.Path()
 		if prev > curr {
 			t.Errorf("nodes not sorted: %q > %q at index %d", prev, curr, i)
 		}
@@ -851,13 +852,13 @@ go 1.21
 		t.Fatalf("Resolve: %v", err)
 	}
 	for _, n := range g.Nodes {
-		if n.Coordinate.Path == "github.com/old/pkg" {
+		if n.Coordinate.Path() == "github.com/old/pkg" {
 			t.Error("old/pkg should not be in graph after wildcard replace")
 		}
 	}
 	newNode := findNode(t, g.Nodes, "github.com/new/pkg")
-	if newNode.Coordinate.Version != "v1.1.0" {
-		t.Errorf("new/pkg version = %q, want v1.1.0", newNode.Coordinate.Version)
+	if newNode.Coordinate.Version() != "v1.1.0" {
+		t.Errorf("new/pkg version = %q, want v1.1.0", newNode.Coordinate.Version())
 	}
 	if newNode.ResolutionSource != domain3.ResolutionReplace {
 		t.Errorf("ResolutionSource = %q, want replace", newNode.ResolutionSource)
@@ -964,8 +965,8 @@ go 1.21
 		t.Fatalf("Resolve: %v", err)
 	}
 	depNode := findNode(t, g.Nodes, "example.com/dep")
-	if depNode.Coordinate.Version != "v1.2.0" {
-		t.Errorf("dep version = %q, want v1.2.0 (MVS)", depNode.Coordinate.Version)
+	if depNode.Coordinate.Version() != "v1.2.0" {
+		t.Errorf("dep version = %q, want v1.2.0 (MVS)", depNode.Coordinate.Version())
 	}
 	if !depNode.DirectDependency {
 		t.Error("dep should be DirectDependency=true")
@@ -1001,8 +1002,8 @@ go 1.21
 		t.Fatalf("Resolve: %v", err)
 	}
 	depNode := findNode(t, g.Nodes, "example.com/dep")
-	if depNode.Coordinate.Version != "v1.2.0" {
-		t.Errorf("dep version = %q, want v1.2.0 (MVS)", depNode.Coordinate.Version)
+	if depNode.Coordinate.Version() != "v1.2.0" {
+		t.Errorf("dep version = %q, want v1.2.0 (MVS)", depNode.Coordinate.Version())
 	}
 	if !depNode.DirectDependency {
 		t.Error("dep should be DirectDependency=true")
@@ -1171,7 +1172,7 @@ require example.com/dep3 v1.0.0
 		t.Error("dep3 should not appear in graph; MaxDepth=1 prevents traversing dep2")
 	}
 	for _, n := range g.Nodes {
-		if n.Coordinate.Path == "example.com/dep2" && n.ResolutionSource == domain3.ResolutionFetchFailed {
+		if n.Coordinate.Path() == "example.com/dep2" && n.ResolutionSource == domain3.ResolutionFetchFailed {
 			t.Error("dep2 should not be fetch_failed; it was registered but not enqueued for fetch")
 		}
 	}
@@ -1373,7 +1374,7 @@ go 1.21
 func findNode(t *testing.T, nodes []domain3.GraphNode, path string) domain3.GraphNode {
 	t.Helper()
 	for _, n := range nodes {
-		if n.Coordinate.Path == path {
+		if n.Coordinate.Path() == path {
 			return n
 		}
 	}
@@ -1384,7 +1385,7 @@ func findNode(t *testing.T, nodes []domain3.GraphNode, path string) domain3.Grap
 func edgesTo(edges []domain3.GraphEdge, path string) []domain3.GraphEdge {
 	var result []domain3.GraphEdge
 	for _, e := range edges {
-		if e.To.Path == path {
+		if e.To.Path() == path {
 			result = append(result, e)
 		}
 	}
@@ -1395,7 +1396,7 @@ func edgesTo(edges []domain3.GraphEdge, path string) []domain3.GraphEdge {
 func nodeSet(nodes []domain3.GraphNode) map[string]bool {
 	m := make(map[string]bool, len(nodes))
 	for _, n := range nodes {
-		m[n.Coordinate.Path] = true
+		m[n.Coordinate.Path()] = true
 	}
 	return m
 }
@@ -1535,7 +1536,7 @@ go 1.21
 	if forkNode.ResolutionSource != domain3.ResolutionReplace {
 		t.Errorf("ResolutionSource = %q, want replace", forkNode.ResolutionSource)
 	}
-	if forkNode.OriginalCoordinate.Path != "example.com/dep" || forkNode.OriginalCoordinate.Version != "v1.0.0" {
+	if forkNode.OriginalCoordinate.Path() != "example.com/dep" || forkNode.OriginalCoordinate.Version() != "v1.0.0" {
 		t.Errorf("OriginalCoordinate = %v, want example.com/dep@v1.0.0", forkNode.OriginalCoordinate)
 	}
 }
@@ -1569,12 +1570,12 @@ replace example.com/dep => ../local/dep
 	if depNode.LocalPath != "../local/dep" {
 		t.Errorf("LocalPath = %q, want ../local/dep", depNode.LocalPath)
 	}
-	if depNode.OriginalCoordinate.Path != "example.com/dep" || depNode.OriginalCoordinate.Version != "v1.0.0" {
+	if depNode.OriginalCoordinate.Path() != "example.com/dep" || depNode.OriginalCoordinate.Version() != "v1.0.0" {
 		t.Errorf("OriginalCoordinate = %v, want example.com/dep@v1.0.0", depNode.OriginalCoordinate)
 	}
 	var found bool
 	for _, e := range g.Edges {
-		if e.From.Path == "example.com/project" && e.To.Path == "example.com/dep" {
+		if e.From.Path() == "example.com/project" && e.To.Path() == "example.com/dep" {
 			found = true
 			break
 		}
@@ -1641,7 +1642,7 @@ require example.com/dep/one v1.2.3
 	foundRoot := false
 	byPath := map[string]domain3.GraphNode{}
 	for _, n := range g.Nodes {
-		byPath[n.Coordinate.Path] = n
+		byPath[n.Coordinate.Path()] = n
 		if n.Coordinate == target {
 			root, foundRoot = n, true
 		}
@@ -2027,8 +2028,8 @@ go 1.16
 		t.Errorf("parser called %d times, want 4 (c@v1.0 superseded before parsing); nodes=%v", parser.callCount(), nodeSet(g.Nodes))
 	}
 	cNode := findNode(t, g.Nodes, "example.com/c")
-	if cNode.Coordinate.Version != "v1.1.0" {
-		t.Errorf("c version = %q, want v1.1.0 (MVS selected)", cNode.Coordinate.Version)
+	if cNode.Coordinate.Version() != "v1.1.0" {
+		t.Errorf("c version = %q, want v1.1.0 (MVS selected)", cNode.Coordinate.Version())
 	}
 }
 
@@ -2069,10 +2070,10 @@ replace example.com/forked => example.com/fork v1.2.0
 	var replaced, independent *domain3.GraphNode
 	for i := range g.Nodes {
 		n := &g.Nodes[i]
-		if n.Coordinate.Path != "example.com/fork" {
+		if n.Coordinate.Path() != "example.com/fork" {
 			continue
 		}
-		if n.OriginalCoordinate.Path != "" {
+		if n.OriginalCoordinate.Path() != "" {
 			replaced = n
 		} else {
 			independent = n
@@ -2082,8 +2083,8 @@ replace example.com/forked => example.com/fork v1.2.0
 	if replaced == nil {
 		t.Fatalf("replace-pinned node example.com/fork@v1.2.0 missing from graph; nodes: %+v", g.Nodes)
 	}
-	if replaced.Coordinate.Version != "v1.2.0" {
-		t.Errorf("replaced node version = %q, want v1.2.0 (a versioned replace target is pinned, never MVS-raised)", replaced.Coordinate.Version)
+	if replaced.Coordinate.Version() != "v1.2.0" {
+		t.Errorf("replaced node version = %q, want v1.2.0 (a versioned replace target is pinned, never MVS-raised)", replaced.Coordinate.Version())
 	}
 	if replaced.ResolutionSource != domain3.ResolutionReplace {
 		t.Errorf("replaced node source = %q, want replace", replaced.ResolutionSource)
@@ -2095,8 +2096,8 @@ replace example.com/forked => example.com/fork v1.2.0
 	if independent == nil {
 		t.Fatalf("independent node example.com/fork@v1.5.0 missing from graph; nodes: %+v", g.Nodes)
 	}
-	if independent.Coordinate.Version != "v1.5.0" {
-		t.Errorf("independent node version = %q, want v1.5.0", independent.Coordinate.Version)
+	if independent.Coordinate.Version() != "v1.5.0" {
+		t.Errorf("independent node version = %q, want v1.5.0", independent.Coordinate.Version())
 	}
 	if independent.ResolutionSource != domain3.ResolutionMVS {
 		t.Errorf("independent node source = %q, want mvs", independent.ResolutionSource)
@@ -2143,14 +2144,14 @@ replace example.com/forked => example.com/fork v1.2.0
 
 	var forks []domain3.GraphNode
 	for _, n := range g.Nodes {
-		if n.Coordinate.Path == "example.com/fork" {
+		if n.Coordinate.Path() == "example.com/fork" {
 			forks = append(forks, n)
 		}
 	}
 	if len(forks) != 1 {
 		t.Fatalf("want exactly 1 example.com/fork node when both resolve to v1.2.0, got %d: %+v", len(forks), forks)
 	}
-	if forks[0].OriginalCoordinate.Path != "example.com/forked" {
+	if forks[0].OriginalCoordinate.Path() != "example.com/forked" {
 		t.Errorf("collapsed node must keep OriginalCoordinate so scope filters match either identity, got %+v", forks[0])
 	}
 }

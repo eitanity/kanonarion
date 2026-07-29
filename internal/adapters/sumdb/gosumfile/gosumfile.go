@@ -78,8 +78,8 @@ func (c *Client) parse(content string) error {
 		if err != nil {
 			continue
 		}
-		if strings.HasSuffix(verField, "/go.mod") {
-			version := strings.TrimSuffix(verField, "/go.mod")
+		if before, ok := strings.CutSuffix(verField, "/go.mod"); ok {
+			version := before
 			c.gomod[key(modPath, version)] = hash
 		} else {
 			c.zip[key(modPath, verField)] = hash
@@ -95,7 +95,7 @@ func (c *Client) parse(content string) error {
 // with no zip entry in go.sum reports Available=false with a "not in go.sum"
 // reason; the caller's --from-modcache policy turns that into a hard failure.
 func (c *Client) Lookup(_ context.Context, coord coordinate.ModuleCoordinate) ports.SumDBResult {
-	k := key(coord.Path, coord.Version)
+	k := key(coord.Path(), coord.Version())
 	zipHash, ok := c.zip[k]
 	if !ok {
 		// An absent entry is go.sum's real answer, and this adapter performs no

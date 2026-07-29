@@ -4,10 +4,11 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 )
 
 func c(path, version string) coordinate.ModuleCoordinate {
-	return coordinate.ModuleCoordinate{Path: path, Version: version}
+	return coordinatetest.MustNew(path, version)
 }
 
 // FilterGraphToScope keeps the main anchor plus the kept module paths, drops the
@@ -29,11 +30,11 @@ func TestFilterGraphToScope_KeepsSetDropsRest(t *testing.T) {
 		},
 	}
 
-	got := FilterGraphToScope(g, main.Path, []string{"example.com/keep", "example.com/sub"})
+	got := FilterGraphToScope(g, main.Path(), []string{"example.com/keep", "example.com/sub"})
 
 	paths := map[string]bool{}
 	for _, n := range got.Nodes {
-		paths[n.Coordinate.Path] = true
+		paths[n.Coordinate.Path()] = true
 	}
 	for _, want := range []string{"example.com/project", "example.com/keep", "example.com/sub"} {
 		if !paths[want] {
@@ -44,7 +45,7 @@ func TestFilterGraphToScope_KeepsSetDropsRest(t *testing.T) {
 		t.Errorf("out-of-scope module example.com/drop must be dropped")
 	}
 	for _, e := range got.Edges {
-		if e.From.Path == "example.com/drop" || e.To.Path == "example.com/drop" {
+		if e.From.Path() == "example.com/drop" || e.To.Path() == "example.com/drop" {
 			t.Errorf("edge touching dropped node survived: %s -> %s", e.From, e.To)
 		}
 	}
@@ -82,11 +83,11 @@ func TestFilterGraphToScope_KeepsModuleReplaceByOriginalPath(t *testing.T) {
 	}
 
 	// keep carries the ORIGINAL path only, exactly as `go list -deps` reports it.
-	got := FilterGraphToScope(g, main.Path, []string{"example.com/orig"})
+	got := FilterGraphToScope(g, main.Path(), []string{"example.com/orig"})
 
 	paths := map[string]bool{}
 	for _, n := range got.Nodes {
-		paths[n.Coordinate.Path] = true
+		paths[n.Coordinate.Path()] = true
 	}
 	if !paths["example.com/fork"] {
 		t.Fatalf("module-replace node dropped; scope kept %v", paths)
@@ -108,8 +109,8 @@ func TestFilterGraphToScope_EmptyKeepsOnlyMain(t *testing.T) {
 		},
 		Edges: []GraphEdge{{From: main, To: c("example.com/a", "v1.0.0")}},
 	}
-	got := FilterGraphToScope(g, main.Path, nil)
-	if len(got.Nodes) != 1 || got.Nodes[0].Coordinate.Path != "example.com/project" {
+	got := FilterGraphToScope(g, main.Path(), nil)
+	if len(got.Nodes) != 1 || got.Nodes[0].Coordinate.Path() != "example.com/project" {
 		t.Errorf("expected only the main anchor, got %+v", got.Nodes)
 	}
 	if len(got.Edges) != 0 {
@@ -128,7 +129,7 @@ func TestFilterGraphToScope_PreservesGraphMetadata(t *testing.T) {
 		HasLocalReplace: true,
 		Nodes:           []GraphNode{{Coordinate: main, ResolutionSource: ResolutionLocalMainModule}},
 	}
-	got := FilterGraphToScope(g, main.Path, nil)
+	got := FilterGraphToScope(g, main.Path(), nil)
 	if !got.Partial || got.PartialReason != "fetch_failed" || !got.HasLocalReplace || got.PipelineVersion != "1.5.0" {
 		t.Errorf("metadata not preserved: %+v", got)
 	}

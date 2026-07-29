@@ -1,5 +1,7 @@
 package local
 
+import "slices"
+
 // defaultStages lists all built-in extraction stage names in execution order.
 var defaultStages = []string{"license", "interface", "callgraph", "example"}
 
@@ -18,10 +20,5 @@ func (Registry) Stages() []string {
 
 // Has reports whether name is a known stage.
 func (Registry) Has(name string) bool {
-	for _, s := range defaultStages {
-		if s == name {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(defaultStages, name)
 }

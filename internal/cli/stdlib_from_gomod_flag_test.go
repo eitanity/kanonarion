@@ -91,8 +91,7 @@ func TestRunWalkProject_ThreadsStdlibFromGoMod(t *testing.T) {
 			progress := newWalkProgressReporter(io.Discard, true, activeConfig, logLevel)
 			// scopeComplete keeps the whole build list, so runWalkProject skips
 			// the Go-toolchain scope resolution and stays hermetic.
-			err := runWalkProject(context.Background(), gomodPath, commonWalkFlags{}, false, true, 0, "", "", false,
-				scopeComplete, walkdomain.WalkDepthFull, "", false, want, progress, uc, io.Discard, io.Discard)
+			err := runWalkProject(context.Background(), gomodPath, false, true, 0, "", "", false, scopeComplete, walkdomain.WalkDepthFull, "", false, want, progress, uc, nil, io.Discard, io.Discard)
 			if err != nil {
 				t.Fatalf("runWalkProject: %v", err)
 			}

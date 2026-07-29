@@ -90,7 +90,7 @@ func TestEvaluateLicense_CategoryCollisionIsDeterministic(t *testing.T) {
 		Rules: []LicensePolicyRule{{Scope: "production"}},
 	}
 	// Lexicographic scan: "restricted" < "strong_copyleft".
-	for i := 0; i < 20; i++ {
+	for range 20 {
 		if got := p.EvaluateLicense("AGPL-3.0-only", "production"); got.Category != "restricted" {
 			t.Fatalf("category = %q, want restricted (deterministic first-by-name)", got.Category)
 		}

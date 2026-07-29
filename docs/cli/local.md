@@ -14,9 +14,14 @@ call graph into the store. Unlike `callgraph <module@version>`, which only sees
 packages**, so `callers` / `callees` can answer questions about symbols defined
 in the working tree.
 
-The tree is stored under the module's own path at the synthetic version
-`local` (`v0.0.0` internally) - a working tree has no semver to pin. This
-record carries **no freshness meaning**: a tree mutates between runs, so
+The tree is stored under the module's own path at the version `local` - a
+working tree has no semver to pin, and `local` is the marker a project walk
+already uses for the module nothing published. The record additionally names
+its **analysis source** as `worktree` and carries a **worktree digest**, a hash
+over the Go source the analysis could see, so two checkouts of the same module
+path are two records rather than one overwritten row.
+
+This record carries **no freshness meaning**: a tree mutates between runs, so
 `local` always re-analyses and never serves a cached result. (This is the same
 "local source is never cached" rule the `reachability --local` probe relies
 on.)
@@ -28,7 +33,19 @@ Prints the same call-graph summary as `callgraph` (node/edge counts and status;
 
 ```sh
 kanonarion local
-kanonarion callers 'github.com/eitanity/kanonarion/internal/cli.runScanRescan'
+kanonarion callers 'example.com/mod/internal/cli.runScanRescan'
+```
+
+The tree's `_test.go` declarations are analysed too, so a symbol only tests
+exercise has callers rather than a confident empty answer. Add `--exclude-tests`
+to any query for the production-only view; see
+[`callgraph`](callgraph.md#test-scope).
+
+Interfaces the module declares become addressable, so a port-signature change
+can be scoped with one query instead of a grep:
+
+```sh
+kanonarion implementers 'example.com/mod/internal/vuln/ports.VulnerabilityStore'
 ```
 
 ## Flags
@@ -42,8 +59,8 @@ kanonarion callers 'github.com/eitanity/kanonarion/internal/cli.runScanRescan'
 
 ## Relationship to other commands
 
-- **Enables:** `callers` / `callees` over first-party symbols (without `local`
-  they resolve only fetched external modules).
+- **Enables:** `callers` / `callees` / `implementers` over first-party symbols
+  (without `local` they resolve only fetched external modules).
 - **Complementary:** `callgraph <module@version>` for external modules;
   `reachability --local <dir>` for a live working-tree vulnerability probe.
 

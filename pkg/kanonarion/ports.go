@@ -202,8 +202,29 @@ type BlobPathOptimizer = fetchports.BlobPathOptimizer
 // stores asked for the same artefact are asked with the same value. It replaces
 // the opaque BlobHandle a store used to return.
 //
+// It is a value object, not a read shape: its fields are unexported and it is
+// built through NewBlobIdentity, read back through Kind, Hash and String. A
+// struct literal could state a hash with no kind, which renders to a string
+// that collides the module zip with the standalone go.mod.
+//
 // Stability: supporting type of the BlobStore port; unstable pre-v1.
 type BlobIdentity = fetchports.BlobIdentity
+
+// NewBlobIdentity returns the address of one artefact — the module zip or the
+// standalone go.mod, named by kind — with the given h1 hash. Both parts are
+// required. It is the construction path a consumer needs once BlobIdentity's
+// fields are unexported: without it, an external implementer of BlobStore could
+// name the type in a signature but never build one to address a blob with.
+//
+// Stability: constructor for a supporting type of the BlobStore port; unstable
+// pre-v1.
+func NewBlobIdentity(kind BlobKind, hash ModuleHash) (BlobIdentity, error) {
+	identity, err := fetchports.NewBlobIdentity(kind, hash)
+	if err != nil {
+		return BlobIdentity{}, fmt.Errorf("building blob identity: %w", err)
+	}
+	return identity, nil
+}
 
 // BlobKind names which artefact of a module version a BlobIdentity addresses:
 // the module zip or the standalone go.mod. It exists so the two cannot collide
@@ -217,8 +238,43 @@ type BlobKind = fetchports.BlobKind
 // is built from. It is exported for the same reason the kinds below are: an
 // external implementer cannot construct an identity without naming one.
 //
+// It is a value object, not a read shape: its fields are unexported and it is
+// built through NewModuleHash or ParseModuleHash, read back through Algorithm,
+// Value and String. A struct literal could state an algorithm with no value,
+// which serialises to a string no reader can parse.
+//
 // Stability: supporting type of the BlobStore port; unstable pre-v1.
 type ModuleHash = fetchdomain.ModuleHash
+
+// NewModuleHash returns the hash of an artefact under algorithm — "h1" for
+// everything the Go toolchain produces. Both parts are required. It is the
+// construction path a consumer needs once ModuleHash's fields are unexported:
+// without it, an external implementer could name the type in a signature but
+// never build one to address a blob with.
+//
+// Stability: constructor for a supporting type of the BlobStore port; unstable
+// pre-v1.
+func NewModuleHash(algorithm, value string) (ModuleHash, error) {
+	h, err := fetchdomain.NewModuleHash(algorithm, value)
+	if err != nil {
+		return ModuleHash{}, fmt.Errorf("building module hash: %w", err)
+	}
+	return h, nil
+}
+
+// ParseModuleHash reads the canonical "algorithm:value" spelling — the form
+// String emits and a fact record persists — back into a ModuleHash. It fails
+// closed on a value it cannot read rather than returning an absent hash.
+//
+// Stability: parser for a supporting type of the BlobStore port; unstable
+// pre-v1.
+func ParseModuleHash(s string) (ModuleHash, error) {
+	h, err := fetchdomain.ParseModuleHash(s)
+	if err != nil {
+		return ModuleHash{}, fmt.Errorf("parsing module hash: %w", err)
+	}
+	return h, nil
+}
 
 // BlobKindZip and BlobKindGoMod are the two artefacts of a module version a
 // BlobIdentity can address. They are exported alongside BlobKind because an

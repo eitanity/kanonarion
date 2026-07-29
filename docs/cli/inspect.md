@@ -46,7 +46,7 @@ The two modes scan from **different roots**, and their vuln legs differ to match
 - **Project** (`inspect`, `--gomod`, `--tool`, `--project`) roots the walk at the
   local main module and derives its vuln verdict from a single **project-rooted**
   scan of the live working tree - the project's real build - not from re-scanning
-  each dependency in isolation. In-build modules read `Clean`/`Affected`; only a
+  each dependency in isolation. In-build modules read `Clean`/`Affected`/`Withdrawn`; only a
   genuine fault reads `Unscannable`/`ScanFailed`.
 
 ### `inspect <module>@<version>`
@@ -157,6 +157,11 @@ axes. A run left `Partial` by an unscannable module still reports its real
 `Affected` count on its own line rather than collapsing it to zero — the
 coverage gap does not hide the findings, and neither hides the other.
 
+A module whose advisories were all retracted upstream is **not** in the `Affected`
+count; the scan output above the summary names it under `Withdrawn advisories (N,
+not counted as findings)` with its retraction date. See
+[`vuln.md`](vuln.md#withdrawn-advisories).
+
 **Example JSON output:**
 
 ```json
@@ -199,6 +204,30 @@ Each stage is independently cached by its pipeline version and, for
 vuln-scan, the database snapshot version. Running `inspect` a second time on
 the same module is fast: only changed or absent records are recomputed. Use
 `--force` to bypass the cache for all stages.
+
+## Memory
+
+The vuln-scan stage runs a bounded pool of `govulncheck` processes. A single
+source-mode scan of a cloud-SDK-heavy module can hold several GB, so the pool is
+sized against the host's available memory as well as its CPU count:
+
+```
+workers = max(1, min(NumCPU, 4, floor(available memory / 4 GiB)))
+```
+
+Available memory is read once, when the pool is built (on Linux, `MemAvailable`
+from `/proc/meminfo`). When the memory term lowers the count, `inspect` logs it
+at info with the available bytes, the per-worker budget and the resulting cap —
+so a slow scan is explained rather than mysterious. When the reading cannot be
+taken at all, which is the normal case off Linux, the pool falls back to
+`min(NumCPU, 4)` and says so at debug; a missing reading never fails a scan.
+
+**The budget is per-process.** Two `inspect` runs on one host each measure the
+same free memory and each admit a full pool against it, so they share no budget
+with each other and can still exhaust the host. When that happens the scanners
+are OOM-killed and the affected modules are reported as **unanalysed** — a
+coverage gap, correctly, not a clean result. On a host that is tight on memory,
+run them one at a time.
 
 ## See also
 

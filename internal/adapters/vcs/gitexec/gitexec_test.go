@@ -197,15 +197,15 @@ func setupRepoWithHistory(t *testing.T, n int) (repoURL string, commits []string
 // which upload-pack refuses non-advertised SHA wants by default. Modern git
 // over protocol v2 happily serves any reachable SHA from a local repo, which
 // would let the direct single-commit fetch succeed and never exercise the
-// fallback path these tests exist to pin down. The vars flow through gitEnv's
-// os.Environ passthrough; GITHUB_TOKEN is cleared because gitEnv would
-// otherwise emit its own GIT_CONFIG_COUNT and override this one.
-func forceProtocolV0(t *testing.T) {
+// fallback path these tests exist to pin down.
+//
+// This goes through the -c seam rather than GIT_CONFIG_* in the environment:
+// gitEnv builds the child environment from an explicit allowlist that excludes
+// every config variable, so setting them in the test process has no effect on
+// the subprocess at all.
+func forceProtocolV0(t *testing.T, c *gitexec.Client) {
 	t.Helper()
-	t.Setenv("GITHUB_TOKEN", "")
-	t.Setenv("GIT_CONFIG_COUNT", "1")
-	t.Setenv("GIT_CONFIG_KEY_0", "protocol.version")
-	t.Setenv("GIT_CONFIG_VALUE_0", "0")
+	c.SetExtraConfig("protocol.version=0")
 }
 
 // A commit reachable within the fallback depth cap must still check out when
@@ -213,10 +213,10 @@ func forceProtocolV0(t *testing.T) {
 // legitimate cross-verification.
 func TestClient_CheckoutToDir_BoundedFallbackWithinDepth(t *testing.T) {
 	requireGit(t)
-	forceProtocolV0(t)
 	repoURL, commits := setupRepoWithHistory(t, 3)
 
 	c := gitexec.NewWithProtocols("https:file")
+	forceProtocolV0(t, c)
 	c.SetFetchBounds(100, time.Minute)
 	checkoutDir := t.TempDir()
 	if err := c.CheckoutToDir(context.Background(), repoURL, commits[0], checkoutDir); err != nil {
@@ -236,10 +236,10 @@ func TestClient_CheckoutToDir_BoundedFallbackWithinDepth(t *testing.T) {
 // the DoS this bound exists to prevent.
 func TestClient_CheckoutToDir_BoundedFallbackFailsClosedBeyondDepth(t *testing.T) {
 	requireGit(t)
-	forceProtocolV0(t)
 	repoURL, commits := setupRepoWithHistory(t, 3)
 
 	c := gitexec.NewWithProtocols("https:file")
+	forceProtocolV0(t, c)
 	c.SetFetchBounds(1, time.Minute)
 	err := c.CheckoutToDir(context.Background(), repoURL, commits[0], t.TempDir())
 	if err == nil {

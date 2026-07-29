@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 
 	"github.com/eitanity/kanonarion/internal/vuln/application"
@@ -16,15 +17,15 @@ import (
 // fact/blob stores under the "v1" fetch pipeline version, so a scan finds it
 // present and can read its declared go version.
 func seedFactNode(t testing.TB, ctx context.Context, facts *fakeFacts, blobs *fakeBlob, coord coordinate.ModuleCoordinate, goVersion string) {
-	goMod := "module " + coord.Path + "\n\ngo " + goVersion + "\n"
+	goMod := "module " + coord.Path() + "\n\ngo " + goVersion + "\n"
 	opts := []fetchtest.Option{
 		fetchtest.Coordinate(coord),
 		fetchtest.PipelineVersion("v1"),
-		fetchtest.Content("zip-" + coord.Path + "-" + coord.Version),
-		fetchtest.GoMod("gomod-" + coord.Path + "-" + coord.Version),
+		fetchtest.Content("zip-" + coord.Path() + "-" + coord.Version()),
+		fetchtest.GoMod("gomod-" + coord.Path() + "-" + coord.Version()),
 	}
 	rec := fetchtest.Record(t, opts...)
-	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, rec), strings.NewReader("zip-"+coord.Path+"-"+coord.Version))
+	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, rec), strings.NewReader("zip-"+coord.Path()+"-"+coord.Version()))
 	_ = blobs.Put(ctx, fetchtest.GoModIdentity(t, rec), strings.NewReader(goMod))
 	_ = facts.PutFetchRecord(ctx, fetchtest.Sealed(t, opts...))
 }
@@ -34,9 +35,9 @@ func seedFactNode(t testing.TB, ctx context.Context, facts *fakeFacts, blobs *fa
 // declared go version — which gates the superseded-go.mod population — is set
 // separately via seedFactNode.
 func supersededGraph(walkID string) (walkdomain.WalkRecord, coordinate.ModuleCoordinate) {
-	logrSelected := coordinate.ModuleCoordinate{Path: "github.com/go-logr/logr", Version: "v1.4.3"}
-	stdr := coordinate.ModuleCoordinate{Path: "github.com/go-logr/stdr", Version: "v1.2.2"}
-	supersededLogr := coordinate.ModuleCoordinate{Path: "github.com/go-logr/logr", Version: "v1.2.2"}
+	logrSelected := coordinatetest.MustNew("github.com/go-logr/logr", "v1.4.3")
+	stdr := coordinatetest.MustNew("github.com/go-logr/stdr", "v1.2.2")
+	supersededLogr := coordinatetest.MustNew("github.com/go-logr/logr", "v1.2.2")
 
 	rec := walkdomain.WalkRecord{
 		ID: walkID,

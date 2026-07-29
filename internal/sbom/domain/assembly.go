@@ -3,6 +3,7 @@ package domain
 import (
 	"slices"
 	"strings"
+	"time"
 )
 
 // ModuleRef is the module identity the SBOM assembly policy operates on.
@@ -77,6 +78,12 @@ type FindingInput struct {
 	ID            string
 	Summary       string
 	SeverityLabel string
+	// WithdrawnAt is the moment the advisory was retracted upstream, zero when it
+	// is live or when the record predates the field being read. It travels this far
+	// because a retracted advisory that reaches an SBOM unmarked is published to
+	// third parties as a live vulnerability of the component, which is the same
+	// silence in a document that outlives the scan that produced it.
+	WithdrawnAt time.Time
 }
 
 // AggregatedVulnerability is the policy decision for a single deduplicated
@@ -88,12 +95,29 @@ type AggregatedVulnerability struct {
 	Summary       string
 	SeverityLabel string
 	Affected      []ModuleRef
+	// WithdrawnAt is the retraction timestamp, taken from the first occurrence that
+	// carries one rather than from the first occurrence outright — see
+	// AggregateVulnerabilities for why the two rules differ.
+	WithdrawnAt time.Time
+}
+
+// IsWithdrawn reports whether this advisory has been retracted upstream.
+func (v AggregatedVulnerability) IsWithdrawn() bool {
+	return !v.WithdrawnAt.IsZero()
 }
 
 // AggregateVulnerabilities collapses findings that share an ID into a single
 // vulnerability, accumulating affected modules. Summary/severity are taken
 // from the first occurrence (input order); affected modules are deduplicated
 // and ordered by module identity. The result is ordered by vulnerability ID.
+//
+// Withdrawal follows a different rule from summary and severity: the first
+// occurrence that carries a timestamp wins, not the first occurrence. Retraction
+// is a property of the advisory rather than of any module it names, so occurrences
+// cannot legitimately disagree about it — but they can differ in whether they were
+// written by a generation that read the field at all, and a zero there means "not
+// asked", never "confirmed live". Taking the first occurrence outright would let
+// one older record republish a retracted advisory as live.
 func AggregateVulnerabilities(findings []FindingInput) []AggregatedVulnerability {
 	type acc struct {
 		v       AggregatedVulnerability
@@ -113,6 +137,9 @@ func AggregateVulnerabilities(findings []FindingInput) []AggregatedVulnerability
 				modKeys: make(map[string]struct{}),
 			}
 			byID[f.ID] = a
+		}
+		if a.v.WithdrawnAt.IsZero() && !f.WithdrawnAt.IsZero() {
+			a.v.WithdrawnAt = f.WithdrawnAt
 		}
 		k := f.Module.sortKey()
 		if _, dup := a.modKeys[k]; !dup {

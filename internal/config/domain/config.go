@@ -63,6 +63,24 @@ type Config struct {
 	GoDebugPolicy   GoDebugPolicy
 	VendorPolicy    VendorPolicy
 	FIPSPolicy      FIPSPolicy
+	FetchPolicy     FetchPolicy
+}
+
+// FetchPolicy governs the fetch stage's cross-verification posture.
+//
+// It is separate from the depth policy file, which not every invocation has,
+// and which is a per-project artefact. The VCS host set is an operator-level
+// decision about what this machine will talk to, so it belongs where the
+// operator's other standing decisions live.
+type FetchPolicy struct {
+	// AllowedVCSHosts names the forges kanonarion may hand to a git subprocess.
+	//
+	// Nil (absent) is not the same as empty. Absent means "no opinion": the
+	// built-in host set applies in ADVISORY mode, so a host outside it is
+	// reported and still contacted. Naming the field switches to ENFORCING
+	// mode, and a host outside the named set is refused. Empty is rejected at
+	// load time rather than read as "trust nobody" — that is --skip-vcs-verify.
+	AllowedVCSHosts []string
 }
 
 // Preferences holds sticky per-user output preferences.

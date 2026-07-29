@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 
 	"github.com/eitanity/kanonarion/internal/vuln/application"
@@ -72,7 +73,7 @@ func newScanUCWith(
 // and reachability.Analyse is called on success.
 func TestOnDemandCallGraph_SpawnedOnMiss(t *testing.T) {
 	ctx := t.Context()
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
@@ -125,7 +126,7 @@ func TestOnDemandCallGraph_SpawnedOnMiss(t *testing.T) {
 // in the store, the spawner is NOT invoked.
 func TestOnDemandCallGraph_CacheHit(t *testing.T) {
 	ctx := t.Context()
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
@@ -170,7 +171,7 @@ func TestOnDemandCallGraph_CacheHit(t *testing.T) {
 // record are still persisted with StatusAffected.
 func TestOnDemandCallGraph_SpawnFailureSetsNote(t *testing.T) {
 	ctx := t.Context()
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
@@ -243,7 +244,7 @@ func TestOnDemandCallGraph_SpawnFailureSetsNote(t *testing.T) {
 // even when a callgraph record already exists in the store.
 func TestOnDemandCallGraph_ForceBypassesCache(t *testing.T) {
 	ctx := t.Context()
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
@@ -285,7 +286,7 @@ func TestOnDemandCallGraph_ForceBypassesCache(t *testing.T) {
 // never trigger a subprocess.
 func TestOnDemandCallGraph_NoSpawnForClean(t *testing.T) {
 	ctx := t.Context()
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/clean", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/foo/clean", "v1.0.0")
 
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
@@ -325,7 +326,7 @@ func TestOnDemandCallGraph_NoSpawnForClean(t *testing.T) {
 // AffectedSymbols (metadata-only) never trigger a subprocess.
 func TestOnDemandCallGraph_NoSpawnWhenSymbolsEmpty(t *testing.T) {
 	ctx := t.Context()
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
@@ -383,8 +384,8 @@ func TestOnDemandCallGraph_NoSpawnWhenSymbolsEmpty(t *testing.T) {
 func TestOnDemandCallGraph_SemaphoreSerialises(t *testing.T) {
 	ctx := t.Context()
 
-	coordA := coordinate.ModuleCoordinate{Path: "github.com/foo/a", Version: "v1.0.0"}
-	coordB := coordinate.ModuleCoordinate{Path: "github.com/foo/b", Version: "v1.0.0"}
+	coordA := coordinatetest.MustNew("github.com/foo/a", "v1.0.0")
+	coordB := coordinatetest.MustNew("github.com/foo/b", "v1.0.0")
 
 	facts := newFakeFacts()
 	blobs := newFakeBlob()

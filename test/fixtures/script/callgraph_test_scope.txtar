@@ -1,0 +1,75 @@
+mkdir $WORK/stores
+seedcallgraph $WORK/stores
+
+# The graph carries test declarations, and a callers answer includes them by
+# default: a test caller the tool hides is a false negative dressed as a
+# measurement, which is exactly what the three-valued verdict exists to prevent.
+kanonarion callers 'example.com/app.Helper' --store-root=$WORK/stores
+stdout '2 callers'
+stdout 'example.com/app.Main'
+stdout 'example.com/app_test.TestHelper'
+stdout '\[test\]'
+
+# --exclude-tests narrows the answer to production code.
+kanonarion callers 'example.com/app.Helper' --store-root=$WORK/stores --exclude-tests
+stdout '1 caller of'
+stdout 'example.com/app.Main'
+! stdout 'TestHelper'
+
+# The narrowing is stated on the verdict line, so an empty production-only
+# answer is never read as wider than it is.
+kanonarion callers 'example.com/app.(*Store).Put' --store-root=$WORK/stores --exclude-tests
+stdout 'RESOLVED-ABSENT'
+stdout 'production only'
+stdout 'exclude-tests'
+
+# The test role is carried in JSON too, so a consumer can filter on it.
+kanonarion callers 'example.com/app.Helper' --store-root=$WORK/stores --json
+stdout '"is_test": true'
+
+# callgraph-show states the test axis and summarises the interface relation.
+kanonarion callgraph-show example.com/app@v1.0.0 --store-root=$WORK/stores
+stdout 'test scope: analysed'
+stdout 'interfaces: 1 declared, 2 implementations recorded'
+stdout '\[test\]'
+
+# implementers answers the type question: which concrete method sets must
+# change with the port, production and test alike.
+kanonarion implementers 'example.com/app.Store' --store-root=$WORK/stores
+stdout '2 implementers'
+stdout 'example.com/app.\(\*Store\)'
+stdout 'example.com/app_test.\(\*fakeStore\)'
+stdout 'RESOLVED-PRESENT'
+stdout 'types in other modules that satisfy this interface are not measured'
+
+# The per-method form resolves each implementer to the concrete node the edge
+# queries also accept.
+kanonarion implementers 'example.com/app.(Store).Put' --store-root=$WORK/stores
+stdout 'example.com/app.\(\*Store\).Put'
+stdout 'example.com/app_test.\(\*fakeStore\).Put'
+
+# --exclude-tests drops the fakes and says so.
+kanonarion implementers 'example.com/app.Store' --store-root=$WORK/stores --exclude-tests
+stdout '1 implementer of'
+! stdout 'fakeStore'
+stdout 'test implementations omitted'
+
+# JSON carries the verdict and the scope alongside the list.
+kanonarion implementers 'example.com/app.Store' --store-root=$WORK/stores --json
+stdout '"verdict": "RESOLVED-PRESENT"'
+stdout '"is_test": true'
+stdout '"scope"'
+
+# A name the module does not declare as an interface is an error, not an empty
+# list: absence-as-answer is the failure mode being avoided.
+! kanonarion implementers 'example.com/app.NoSuchPort' --store-root=$WORK/stores
+stderr 'is not an interface declared by the analysed module'
+
+# A method the interface does not declare names the ones it does.
+! kanonarion implementers 'example.com/app.(Store).Nope' --store-root=$WORK/stores
+stderr 'declares no method'
+stderr 'its methods are Put'
+
+# A module that was never analysed is a different diagnostic again.
+! kanonarion implementers 'example.com/never/ports.Thing' --store-root=$WORK/stores
+stderr 'not in the call-graph store'

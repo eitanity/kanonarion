@@ -260,14 +260,14 @@ func TestBuildPackageAllowList_LiveRepo(t *testing.T) {
 	}
 	// Every entry must have a non-empty path and version.
 	for _, c := range list {
-		if c.Path == "" || c.Version == "" {
+		if c.Path() == "" || c.Version() == "" {
 			t.Errorf("coordinate has empty field: %+v", c)
 		}
 	}
 	// cobra is a known direct dep of cmd/kanonarion.
 	found := false
 	for _, c := range list {
-		if c.Path == "github.com/spf13/cobra" {
+		if c.Path() == "github.com/spf13/cobra" {
 			found = true
 			break
 		}

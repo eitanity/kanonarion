@@ -122,8 +122,8 @@ func (c *Client) Lookup(ctx context.Context, coord coordinate.ModuleCoordinate) 
 		if !res.LookupFailed() {
 			if attempt > 1 {
 				c.logger.DebugContext(ctx, "sumdb.lookup.retried",
-					slog.String("module.path", coord.Path),
-					slog.String("module.version", coord.Version),
+					slog.String("module.path", coord.Path()),
+					slog.String("module.version", coord.Version()),
 					slog.Int("attempts", attempt),
 					slog.Int64("backoff_total_ms", totalBackoff.Milliseconds()),
 				)
@@ -139,8 +139,8 @@ func (c *Client) Lookup(ctx context.Context, coord coordinate.ModuleCoordinate) 
 			// checksum database was unreachable for a while" from "this module has
 			// no transparency-log entry".
 			c.logger.WarnContext(ctx, "sumdb.lookup.retries_exhausted",
-				slog.String("module.path", coord.Path),
-				slog.String("module.version", coord.Version),
+				slog.String("module.path", coord.Path()),
+				slog.String("module.version", coord.Version()),
 				slog.Int("attempts", attempt),
 				slog.Int64("backoff_total_ms", totalBackoff.Milliseconds()),
 				slog.String("reason", res.Reason),
@@ -149,8 +149,8 @@ func (c *Client) Lookup(ctx context.Context, coord coordinate.ModuleCoordinate) 
 		}
 		delay := c.jitter(c.backoffFor(attempt))
 		c.logger.DebugContext(ctx, "sumdb.lookup.retry",
-			slog.String("module.path", coord.Path),
-			slog.String("module.version", coord.Version),
+			slog.String("module.path", coord.Path()),
+			slog.String("module.version", coord.Version()),
 			slog.Int("attempt", attempt),
 			slog.Int("attempts.max", c.attempts),
 			slog.Int64("backoff_ms", delay.Milliseconds()),
@@ -162,8 +162,8 @@ func (c *Client) Lookup(ctx context.Context, coord coordinate.ModuleCoordinate) 
 			// as either. The lookup result that prompted the retry is what the caller
 			// asked about, so it is what comes back.
 			c.logger.DebugContext(ctx, "sumdb.lookup.retry.aborted",
-				slog.String("module.path", coord.Path),
-				slog.String("module.version", coord.Version),
+				slog.String("module.path", coord.Path()),
+				slog.String("module.version", coord.Version()),
 				slog.Int("attempt", attempt),
 				slog.String("reason", serr.Error()),
 			)

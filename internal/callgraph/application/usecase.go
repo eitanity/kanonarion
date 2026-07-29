@@ -26,7 +26,7 @@ import (
 // the module was stored as a LoadFailed record with an empty graph. Those
 // records are indistinguishable from a genuine load failure once written, so
 // they must be re-derived rather than served.
-const PipelineVersion = "0.2.0"
+const PipelineVersion = "0.3.0"
 
 // ExtractCallGraphUseCase extracts the call graph of a module and persists a
 // CallGraphRecord.
@@ -108,8 +108,8 @@ type ExtractResult struct {
 // errors (store access, blob I/O) return errors.
 func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractRequest) (_ ExtractResult, retErr error) {
 	log := uc.logger.With(
-		slog.String("extraction.module.path", req.Coordinate.Path),
-		slog.String("extraction.module.version", req.Coordinate.Version),
+		slog.String("extraction.module.path", req.Coordinate.Path()),
+		slog.String("extraction.module.version", req.Coordinate.Version()),
 		slog.String("extraction.stage", "callgraph"),
 		slog.String("pipeline_version", uc.pipelineVersion),
 	)
@@ -125,6 +125,20 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 	factRecord, err := uc.requireFetchRecord(ctx, req.Coordinate)
 	if err != nil {
 		return ExtractResult{}, err
+	}
+
+	// Which bytes this extraction is about, resolved before any work is done so a
+	// fetch record that names no artefact fails here rather than after a full
+	// analysis. This stage always holds a fetch record, so a record it cannot name
+	// an artefact for is a fault in the measurement, not a legacy row. The
+	// working-tree stage in local.go has no fetch record at all and leaves both
+	// fields empty; see ExtractLocalCallGraphUseCase.Execute.
+	artefact, err := domain.ArtefactIdentityOf(factRecord)
+	if err != nil {
+		return ExtractResult{}, fmt.Errorf("deriving artefact identity for %s: %w", req.Coordinate, err)
+	}
+	if artefact.IsZero() {
+		return ExtractResult{}, fmt.Errorf("fetch record for %s names no artefact: %w", req.Coordinate, domain.ErrZeroIdentity)
 	}
 
 	// A local coordinate (the project-walk root) is never served from cache:
@@ -144,11 +158,16 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 	// Skip listed modules entirely before any traversal/SSA work (
 	// budgets). The exclusion decision is a pure domain rule; the use case
 	// only orchestrates persisting the resulting record.
-	if domain2.IsModuleExcluded(req.Coordinate.Path, uc.exclusions) {
+	if domain2.IsModuleExcluded(req.Coordinate.Path(), uc.exclusions) {
 		record := domain2.NewExcludedRecord(req.Coordinate, uc.analyser.AnalyserMetadata().Algorithm, uc.exclusions)
 		record.ExtractedAt = uc.clock.Now().UTC()
 		record.PipelineVersion = uc.pipelineVersion
 		record.Sort()
+		// An excluded module is still a decision about a specific artefact: the
+		// record says these bytes were not analysed, which is only checkable if it
+		// says which bytes.
+		record.ArtefactIdentity = artefact.String()
+		record.SourceContentHash = factRecord.ContentHash
 		record, err = uc.hasher.SetContentHash(record)
 		if err != nil {
 			return ExtractResult{}, fmt.Errorf("computing content hash: %w", err)
@@ -190,6 +209,8 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 	record.ExclusionList = uc.exclusions
 	record.NodeCount = len(record.Nodes)
 	record.EdgeCount = len(record.Edges)
+	record.ArtefactIdentity = artefact.String()
+	record.SourceContentHash = factRecord.ContentHash
 
 	record, err = uc.hasher.SetContentHash(record)
 	if err != nil {

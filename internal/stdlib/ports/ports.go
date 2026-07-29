@@ -5,10 +5,25 @@ package ports
 
 import (
 	"context"
+	"errors"
 	"io/fs"
 
 	"github.com/eitanity/kanonarion/internal/stdlib/domain"
 )
+
+// ErrFactsConflict wraps a domain.FactsConflict surfaced through the store. It
+// marks the answers composition refuses to produce by picking: one toolchain
+// version whose measurements describe different bytes, or two definite and
+// opposing statements about the same bytes.
+var ErrFactsConflict = errors.New("conflicting stdlib facts")
+
+// ErrFactsIntegrity is returned when a stored measurement carries a seal its own
+// canonical form does not reproduce — the row was altered after it was written.
+//
+// A measurement carrying NO seal is not an integrity failure: rows written before
+// the seal existed legitimately have none, and refusing them would make an
+// un-migrated store unreadable.
+var ErrFactsIntegrity = errors.New("stdlib facts integrity check failed")
 
 // ManifestClient fetches Go's published release manifest — the source of the
 // canonical source-tarball checksums the tarball integrity is matched against.
@@ -70,6 +85,30 @@ type Store interface {
 	// Get returns the cached facts for goVersion. The bool is false on a cache
 	// miss.
 	Get(ctx context.Context, goVersion string) (domain.Facts, bool, error)
-	// Put inserts or replaces the facts for their Go version.
+	// Put APPENDS a measurement. It never updates: the ledger key carries the
+	// acquisition route, the artefact digest, the time of measurement and the
+	// measurement's own seal, so two distinct acquisitions are two rows. Writing
+	// the same measurement twice is a no-op rather than an error.
 	Put(ctx context.Context, facts domain.Facts) error
+}
+
+// FactsLister is the optional history read a store may offer: every measurement
+// the ledger holds for one toolchain version, in the order they were appended.
+//
+// It is separate from Store because it is what makes the ledger OBSERVABLE rather
+// than what makes it work — no acquisition path needs it, and a store that cannot
+// answer it is still a usable fact cache. Callers type-assert for it.
+type FactsLister interface {
+	ListFactsFor(ctx context.Context, goVersion string) ([]domain.Facts, error)
+}
+
+// RouteReader is the optional route-scoped read: the same question Get answers,
+// restricted to one acquisition route.
+//
+// It exists because the route is a dimension rather than a ladder position, so
+// "the published tarball or this machine's toolchain" is a real question the
+// version cannot answer. Get applies a stated default; this is how a caller asks
+// for the other one.
+type RouteReader interface {
+	GetVia(ctx context.Context, goVersion string, route domain.AcquisitionRoute) (domain.Facts, bool, error)
 }

@@ -74,9 +74,13 @@ func (uc *QueryVulnUseCase) ListRecordsForModule(
 	return recs, nil
 }
 
-// ListRecordsByFindingID returns all vulnerability records containing a finding with the given ID.
-func (uc *QueryVulnUseCase) ListRecordsByFindingID(ctx context.Context, findingID string) ([]domain.VulnerabilityRecord, error) {
-	recs, err := uc.store.ListVulnerabilityRecordsByFindingID(ctx, findingID)
+// ListRecordsByFindingID returns the vulnerability records containing a finding
+// with the given ID. An empty walkID spans the whole store; a non-empty one
+// restricts the answer to the modules that walk's scan runs covered.
+func (uc *QueryVulnUseCase) ListRecordsByFindingID(ctx context.Context, findingID, walkID string) ([]domain.VulnerabilityRecord, error) {
+	// The walk is not repeated here: every store error on the scoped path
+	// already names it, and three mentions of one ULID is not three facts.
+	recs, err := uc.store.ListVulnerabilityRecordsByFindingID(ctx, findingID, walkID)
 	if err != nil {
 		return nil, fmt.Errorf("listing vulnerability records by finding ID %q: %w", findingID, err)
 	}

@@ -64,6 +64,9 @@ func newPVFakeFacts() *pvFakeFacts {
 }
 
 func (f *pvFakeFacts) PutFetchRecord(_ context.Context, sealed fetchdomain.SealedRecord) error {
+	if sealed.IsZero() {
+		return fetchdomain.ErrUnsealedRecord
+	}
 	r := sealed.Record()
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -74,7 +77,7 @@ func (f *pvFakeFacts) PutFetchRecord(_ context.Context, sealed fetchdomain.Seale
 func (f *pvFakeFacts) GetFetchRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (fetchdomain.CompositeRecord, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	r, ok := f.records[coord.Path+"@"+coord.Version+"#"+pv]
+	r, ok := f.records[coord.Path()+"@"+coord.Version()+"#"+pv]
 	if !ok {
 		return fetchdomain.CompositeRecord{}, false, nil
 	}

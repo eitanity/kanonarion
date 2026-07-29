@@ -14,6 +14,94 @@ import (
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
 )
 
+// listScopedSummaries lists the analysed call graph records, keeping only those
+// whose module@version is in scope.
+//
+// Every verdict helper below reasons over the records owning the queried symbol,
+// and a module the store holds at four versions contributes four of them. Left
+// unscoped they would read completeness, Partial status and dispatch evidence
+// out of versions the build does not contain — so a query restricted to one
+// build would still be answered, in part, by another. The filter belongs here
+// rather than at the call sites so no helper can forget it.
+func listScopedSummaries(ctx context.Context, uc QueryCallGraphUseCase, scope coordinate.ModuleSet) ([]ports.CallGraphSummary, error) {
+	sums, err := uc.ListCallGraphRecords(ctx, ports.CallGraphFilter{})
+	if err != nil {
+		return nil, fmt.Errorf("listing analysed modules: %w", err)
+	}
+	if !scope.IsRestricted() {
+		return sums, nil
+	}
+	out := make([]ports.CallGraphSummary, 0, len(sums))
+	for _, s := range sums {
+		if scope.ContainsPathVersion(s.ModulePath, s.ModuleVersion) {
+			out = append(out, s)
+		}
+	}
+	return out, nil
+}
+
+// checkSymbolInScope refuses a scoped query whose symbol belongs to a module the
+// store has analysed but that the named build does not contain at any of the
+// analysed versions.
+//
+// Without it that query returns an empty result and a RESOLVED-ABSENT verdict:
+// the answer to "nothing calls this in your build" and the answer to "this isn't
+// in your build at all" would be the same output. The second is not a
+// measurement of reachability, and reporting it as one is exactly the false
+// confidence the scope filter exists to remove.
+func checkSymbolInScope(ctx context.Context, symbolID string, uc QueryCallGraphUseCase, sc buildScope) error {
+	if !sc.modules.IsRestricted() {
+		return nil
+	}
+	all, err := uc.ListCallGraphRecords(ctx, ports.CallGraphFilter{})
+	if err != nil {
+		return fmt.Errorf("listing analysed modules: %w", err)
+	}
+	paths := make([]string, 0, len(all))
+	for _, s := range all {
+		paths = append(paths, s.ModulePath)
+	}
+	modulePath, ok := domain.ResolveSymbolModule(symbolID, paths)
+	if !ok {
+		// The module was never analysed at any version; that is a different
+		// diagnostic, raised by classifyEmptyEdgeResult with its own guidance.
+		return nil
+	}
+
+	analysed := make(map[string]bool)
+	for _, s := range all {
+		if s.ModulePath == modulePath {
+			analysed[s.ModuleVersion] = true
+			if sc.modules.ContainsPathVersion(s.ModulePath, s.ModuleVersion) {
+				return nil
+			}
+		}
+	}
+
+	versions := make([]string, 0, len(analysed))
+	for v := range analysed {
+		versions = append(versions, v)
+	}
+	sort.Strings(versions)
+
+	inBuild := sc.modules.VersionsOf(modulePath)
+	switch {
+	case len(inBuild) == 0:
+		return fmt.Errorf(
+			"symbol %q belongs to module %q, which %s does not contain; "+
+				"analysed versions in the store are %s. Drop the scope flag to query "+
+				"across every stored version",
+			symbolID, modulePath, sc.source, strings.Join(versions, ", "))
+	default:
+		return fmt.Errorf(
+			"symbol %q belongs to module %q, which %s resolves to %s — a version that "+
+				"has not been analysed; analysed versions are %s. Analyse the version "+
+				"the build uses:\n  kanonarion callgraph %s@%s",
+			symbolID, modulePath, sc.source, strings.Join(inBuild, ", "),
+			strings.Join(versions, ", "), modulePath, inBuild[0])
+	}
+}
+
 // classifyEmptyEdgeResult turns an empty callers/callees result into either
 // nil (the symbol is a node in an analysed module — genuinely zero edges) or a
 // directing error (so printing "[]" would be a false negative — /
@@ -22,10 +110,10 @@ import (
 // - the symbol's module was never analysed; or
 // - the module was analysed but the symbol is not a node in its graph
 // (a typo, or unexported/unreachable code).
-func classifyEmptyEdgeResult(ctx context.Context, symbolID string, uc QueryCallGraphUseCase) error {
-	sums, err := uc.ListCallGraphRecords(ctx, ports.CallGraphFilter{})
+func classifyEmptyEdgeResult(ctx context.Context, symbolID string, uc QueryCallGraphUseCase, scope coordinate.ModuleSet) error {
+	sums, err := listScopedSummaries(ctx, uc, scope)
 	if err != nil {
-		return fmt.Errorf("listing analysed modules: %w", err)
+		return err
 	}
 	paths := make([]string, 0, len(sums))
 	for _, s := range sums {
@@ -61,10 +149,10 @@ func classifyEmptyEdgeResult(ctx context.Context, symbolID string, uc QueryCallG
 //
 // A module with no analysed record (symbol's module never analysed) yields the
 // zero value; that case is classified separately by classifyEmptyEdgeResult.
-func rootPartialStatus(ctx context.Context, symbolID string, uc QueryCallGraphUseCase) (symbolFailedPkg string, isPartial bool, failedPkgs []string, err error) {
-	sums, err := uc.ListCallGraphRecords(ctx, ports.CallGraphFilter{})
+func rootPartialStatus(ctx context.Context, symbolID string, uc QueryCallGraphUseCase, scope coordinate.ModuleSet) (symbolFailedPkg string, isPartial bool, failedPkgs []string, err error) {
+	sums, err := listScopedSummaries(ctx, uc, scope)
 	if err != nil {
-		return "", false, nil, fmt.Errorf("listing analysed modules: %w", err)
+		return "", false, nil, err
 	}
 	paths := make([]string, 0, len(sums))
 	for _, s := range sums {
@@ -80,7 +168,10 @@ func rootPartialStatus(ctx context.Context, symbolID string, uc QueryCallGraphUs
 		if s.ModulePath != modulePath {
 			continue
 		}
-		coord := coordinate.ModuleCoordinate{Path: s.ModulePath, Version: s.ModuleVersion}
+		coord, cErr := coordinate.NewModuleCoordinate(s.ModulePath, s.ModuleVersion)
+		if cErr != nil {
+			return "", false, nil, fmt.Errorf("call graph record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
+		}
 		rec, found, gerr := uc.GetCallGraphRecord(ctx, coord, s.PipelineVersion)
 		if gerr != nil {
 			return "", false, nil, fmt.Errorf("loading call graph for %s: %w", coord, gerr)
@@ -113,10 +204,10 @@ func rootPartialStatus(ctx context.Context, symbolID string, uc QueryCallGraphUs
 // package that failed to typecheck, this covers a module built type-only /
 // metadata-only, where dispatch edges are simply absent. The query commands run
 // in the coding phase, so a below-full module is an instruction to rebuild.
-func rootCompletenessCaveat(ctx context.Context, symbolID string, uc QueryCallGraphUseCase, phase domain.AnalysisPhase) (string, error) {
-	sums, err := uc.ListCallGraphRecords(ctx, ports.CallGraphFilter{})
+func rootCompletenessCaveat(ctx context.Context, symbolID string, uc QueryCallGraphUseCase, phase domain.AnalysisPhase, scope coordinate.ModuleSet) (string, error) {
+	sums, err := listScopedSummaries(ctx, uc, scope)
 	if err != nil {
-		return "", fmt.Errorf("listing analysed modules: %w", err)
+		return "", err
 	}
 	paths := make([]string, 0, len(sums))
 	for _, s := range sums {
@@ -130,18 +221,22 @@ func rootCompletenessCaveat(ctx context.Context, symbolID string, uc QueryCallGr
 		if s.ModulePath != modulePath {
 			continue
 		}
-		coord := coordinate.ModuleCoordinate{Path: s.ModulePath, Version: s.ModuleVersion}
-		rec, found, gerr := uc.GetCallGraphRecord(ctx, coord, s.PipelineVersion)
-		if gerr != nil {
-			return "", fmt.Errorf("loading call graph for %s: %w", coord, gerr)
-		}
+		// Read the level off the SUMMARY, which already describes the generation
+		// composition serves. Loading the record here would decode every stored
+		// generation's blob and reconstruct all of their edges — measured at 1.5s
+		// for a three-generation module with 344k edges — to read one field the
+		// summary is already holding, on every callers/callees/implementers query.
+		//
 		// Only a definite below-full level warrants a caveat. Unknown (a legacy
-		// record, or one from a path that recorded no level) and BuiltWithBodies
-		// both stay silent — we never invent a caveat we cannot substantiate.
-		if !found || rec.Completeness == domain.CompletenessUnknown || rec.Completeness.IsBuiltWithBodies() {
+		// record, one from a path that recorded no level, or a module whose
+		// generations are in conflict, which the summary reports with its other
+		// fields zeroed) and BuiltWithBodies both stay silent — we never invent a
+		// caveat we cannot substantiate. A conflicted module is not silently
+		// dropped: the edge query itself refuses it with ErrCallGraphConflict.
+		if s.Completeness == domain.CompletenessUnknown || s.Completeness.IsBuiltWithBodies() {
 			continue
 		}
-		if caveat := domain.CompletenessCaveat(rec.Completeness, phase); caveat != "" {
+		if caveat := domain.CompletenessCaveat(s.Completeness, phase); caveat != "" {
 			return caveat, nil
 		}
 	}
@@ -158,10 +253,10 @@ func rootCompletenessCaveat(ctx context.Context, symbolID string, uc QueryCallGr
 // It is only meaningful once classifyEmptyEdgeResult has confirmed the symbol is
 // a known node in an analysed module; a symbol whose module was never analysed is
 // reported as an error there, not downgraded here.
-func negativeCallVerdict(ctx context.Context, symbolID string, scanDispatch bool, uc QueryCallGraphUseCase) (domain.Verdict, error) {
-	sums, err := uc.ListCallGraphRecords(ctx, ports.CallGraphFilter{})
+func negativeCallVerdict(ctx context.Context, symbolID string, scanDispatch bool, uc QueryCallGraphUseCase, scope coordinate.ModuleSet, opts ports.EdgeQueryOptions) (domain.Verdict, error) {
+	sums, err := listScopedSummaries(ctx, uc, scope)
 	if err != nil {
-		return domain.Verdict{}, fmt.Errorf("listing analysed modules: %w", err)
+		return domain.Verdict{}, err
 	}
 	paths := make([]string, 0, len(sums))
 	for _, s := range sums {
@@ -183,13 +278,21 @@ func negativeCallVerdict(ctx context.Context, symbolID string, scanDispatch bool
 	sort.Slice(owning, func(i, j int) bool { return owning[i].ModuleVersion < owning[j].ModuleVersion })
 
 	in := domain.NegativeVerdictInputs{
-		MethodName:   domain.SymbolMethodName(symbolID),
-		NodesByID:    map[string]domain.CallNode{},
-		ScanDispatch: scanDispatch,
+		MethodName:             domain.SymbolMethodName(symbolID),
+		NodesByID:              map[string]domain.CallNode{},
+		ScanDispatch:           scanDispatch,
+		TestsExcludedByRequest: opts.ExcludeTests,
+		// Start from Analysed and weaken on the first record that says otherwise:
+		// a symbol answered from several analysed versions is only as measured as
+		// the least-measured of them.
+		TestScope: domain.TestScopeAnalysed,
 	}
 	belowFull := domain.CompletenessUnknown
 	for _, s := range owning {
-		coord := coordinate.ModuleCoordinate{Path: s.ModulePath, Version: s.ModuleVersion}
+		coord, cErr := coordinate.NewModuleCoordinate(s.ModulePath, s.ModuleVersion)
+		if cErr != nil {
+			return domain.Verdict{}, fmt.Errorf("call graph record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
+		}
 		rec, found, gerr := uc.GetCallGraphRecord(ctx, coord, s.PipelineVersion)
 		if gerr != nil {
 			return domain.Verdict{}, fmt.Errorf("loading call graph for %s: %w", coord, gerr)
@@ -211,12 +314,21 @@ func negativeCallVerdict(ctx context.Context, symbolID string, scanDispatch bool
 			rec.Completeness != domain.CompletenessUnknown && !rec.Completeness.IsBuiltWithBodies() {
 			belowFull = rec.Completeness
 		}
+		if !rec.TestScope.IsMeasured() && in.TestScope.IsMeasured() {
+			in.TestScope = rec.TestScope
+			in.TestScopeDetail = rec.TestScopeDetail
+		}
 	}
 	// When the symbol is not itself a node (e.g. its package was built type-only
 	// so it produced no SSA node), fall back to the least-complete level seen so a
 	// below-full module still downgrades the verdict.
 	if !in.Found {
 		in.ModuleLevel = belowFull
+	}
+	// No record was consulted at all: nothing has claimed the test axis was
+	// measured, so it has not been.
+	if len(owning) == 0 {
+		in.TestScope = domain.TestScopeUnknown
 	}
 
 	return domain.ClassifyNegativeVerdict(in), nil
@@ -226,18 +338,25 @@ func negativeCallVerdict(ctx context.Context, symbolID string, scanDispatch bool
 // callers/callees answer: a confident RESOLVED-ABSENT, or an UNRESOLVED verdict
 // with the soundness sinks named so a reviewer can act on them. kind is
 // "callers", "callees", or the transitive variants.
-func writeCallVerdict(stdout io.Writer, kind, symbolID string, v domain.Verdict) error {
+func writeCallVerdict(stdout io.Writer, kind, symbolID string, v domain.Verdict, opts ports.EdgeQueryOptions) error {
+	// A scope the caller chose is stated on the verdict line, not folded into
+	// the outcome: --exclude-tests narrows what "none" covers, and a reader who
+	// cannot see that narrowing will read the answer as wider than it is.
+	scope := ""
+	if opts.ExcludeTests {
+		scope = " (production only; --" + testScopeFlagName + " was given)"
+	}
 	switch v.Outcome {
 	case domain.VerdictUnresolved:
 		if _, err := fmt.Fprintf(stdout,
-			"verdict: UNRESOLVED — %s of %s cannot be confirmed absent: %s\n",
-			kind, symbolID, v.Reason()); err != nil {
+			"verdict: UNRESOLVED — %s of %s cannot be confirmed absent%s: %s\n",
+			kind, symbolID, scope, v.Reason()); err != nil {
 			return fmt.Errorf("writing verdict: %w", err)
 		}
 	default:
 		if _, err := fmt.Fprintf(stdout,
-			"verdict: RESOLVED-ABSENT — no %s of %s across a fully-built path\n",
-			kind, symbolID); err != nil {
+			"verdict: RESOLVED-ABSENT — no %s of %s across a fully-built path%s\n",
+			kind, symbolID, scope); err != nil {
 			return fmt.Errorf("writing verdict: %w", err)
 		}
 	}
@@ -299,8 +418,8 @@ func writePartialNotice(stdout io.Writer, kind, symbolID string, failedPkgs []st
 // queried module analysed below full fidelity, or nothing when it was built with
 // bodies. It rides alongside any Partial notice: the two describe different
 // gaps (a failed package vs a module built type-/metadata-only).
-func writeCompletenessNotice(ctx context.Context, symbolID string, uc QueryCallGraphUseCase, stdout io.Writer) error {
-	caveat, err := rootCompletenessCaveat(ctx, symbolID, uc, domain.PhaseCoding)
+func writeCompletenessNotice(ctx context.Context, symbolID string, uc QueryCallGraphUseCase, stdout io.Writer, scope coordinate.ModuleSet) error {
+	caveat, err := rootCompletenessCaveat(ctx, symbolID, uc, domain.PhaseCoding, scope)
 	if err != nil {
 		return err
 	}
@@ -320,7 +439,10 @@ func symbolIsKnownNode(ctx context.Context, uc QueryCallGraphUseCase, symbolID, 
 		if s.ModulePath != modulePath {
 			continue
 		}
-		coord := coordinate.ModuleCoordinate{Path: s.ModulePath, Version: s.ModuleVersion}
+		coord, cErr := coordinate.NewModuleCoordinate(s.ModulePath, s.ModuleVersion)
+		if cErr != nil {
+			return false, fmt.Errorf("call graph record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
+		}
 		rec, found, err := uc.GetCallGraphRecord(ctx, coord, s.PipelineVersion)
 		if err != nil {
 			return false, fmt.Errorf("loading call graph for %s: %w", coord, err)
