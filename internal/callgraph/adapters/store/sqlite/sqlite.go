@@ -4,6 +4,7 @@ package sqlite
 
 import (
 	"context"
+	"database/sql"
 	"errors"
 	"fmt"
 	"strings"
@@ -240,7 +241,88 @@ CREATE INDEX IF NOT EXISTS callgraph_edges_to_idx   ON callgraph_edges(to_id, pi
 CREATE INDEX IF NOT EXISTS callgraph_edges_from_idx ON callgraph_edges(from_id, pipeline_version);
 CREATE INDEX IF NOT EXISTS callgraph_records_generation_idx
     ON callgraph_records(module_path, module_version, pipeline_version, extracted_at)`},
+		// Migration v9: back-fill the completeness column migration 8 left empty.
+		//
+		// Migration 8 added three columns and back-filled all three with ''. That is
+		// correct for analysis_source and worktree_digest — those facts were never
+		// recorded, and '' is the honest "not recorded" value the decoded record also
+		// carries. It is WRONG for completeness, and the difference is the whole
+		// point: completeness has been inside the serialised record since schema v8,
+		// so a row whose column says '' while its own blob says BUILT_WITH_BODIES is a
+		// denormalised copy that contradicts what it copies.
+		//
+		// Measured on the maintainer's store when this was found: 234 rows carried an
+		// empty column while their records stated 189 BUILT_WITH_BODIES, 41
+		// METADATA_ONLY, 3 FAILED and 1 TYPE_ONLY. Nothing read the column into a
+		// wrong answer — composition reads the decoded record, not the column — but a
+		// column that has to be distrusted is worse than no column, because the next
+		// reader will not know to distrust it.
+		//
+		// SQLite cannot do this: the value is inside a zstd-compressed blob. This is
+		// the caller that brings back sqlitestore.Migration.Fn, which was previously
+		// removed for having none — reintroduced together with its use, in one change,
+		// which is the condition its own doc comment sets.
+		{Module: "callgraph", Version: 9, Fn: backfillCompleteness},
 	}
+}
+
+// backfillCompleteness populates callgraph_records.completeness from each row's
+// own serialised record.
+//
+// Rows are drained fully before any UPDATE is issued. The store runs on a single
+// connection, so writing while the SELECT's result set is still open deadlocks.
+//
+// A row that cannot be decoded is an error rather than a skip. The migration runs
+// inside the caller's transaction, so failing rolls back the schema change it
+// accompanies — leaving a store whose column disagrees with its rows for the
+// second time is the outcome worth refusing.
+func backfillCompleteness(tx *sql.Tx) error {
+	rows, err := tx.Query(`SELECT rowid, serialised FROM callgraph_records WHERE completeness = ''`)
+	if err != nil {
+		return fmt.Errorf("selecting rows to back-fill: %w", err)
+	}
+	type pending struct {
+		rowID int64
+		blob  []byte
+	}
+	var todo []pending
+	for rows.Next() {
+		var p pending
+		if serr := rows.Scan(&p.rowID, &p.blob); serr != nil {
+			_ = rows.Close() //nolint:errcheck // returning the scan error
+			return fmt.Errorf("scanning row to back-fill: %w", serr)
+		}
+		todo = append(todo, p)
+	}
+	if cerr := rows.Err(); cerr != nil {
+		_ = rows.Close() //nolint:errcheck // returning the iteration error
+		return fmt.Errorf("iterating rows to back-fill: %w", cerr)
+	}
+	if cerr := rows.Close(); cerr != nil {
+		return fmt.Errorf("closing back-fill rows: %w", cerr)
+	}
+
+	var h domain2.CallGraphRecordHasher
+	for _, p := range todo {
+		raw, derr := blobcodec.Decode(p.blob)
+		if derr != nil {
+			return fmt.Errorf("decompressing record %d: %w", p.rowID, derr)
+		}
+		rec, uerr := h.Unmarshal(raw)
+		if uerr != nil {
+			return fmt.Errorf("unmarshalling record %d: %w", p.rowID, uerr)
+		}
+		if rec.Completeness == domain2.CompletenessUnknown {
+			// The record genuinely records no level — written before the field, or by
+			// a path that makes no fidelity claim. '' is already correct for it.
+			continue
+		}
+		if _, uerr := tx.Exec(`UPDATE callgraph_records SET completeness = ? WHERE rowid = ?`,
+			string(rec.Completeness), p.rowID); uerr != nil {
+			return fmt.Errorf("back-filling completeness for record %d: %w", p.rowID, uerr)
+		}
+	}
+	return nil
 }
 
 // Open opens (or creates) the SQLite database at dsn and runs migrations.

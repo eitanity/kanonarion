@@ -616,3 +616,88 @@ func TestLedger_LegacyRecordVerifiesUnchanged(t *testing.T) {
 		t.Errorf("an absent analysis source read back as %q, not as unrecorded", got.AnalysisSource)
 	}
 }
+
+// TestMigration_BackfillsCompletenessFromTheRecord pins the fix for a defect the
+// ledger migration introduced and a post-implementation review caught.
+//
+// Migration 8 added three columns and back-filled all three with ”. That is
+// correct for the two facts that were never recorded, and wrong for completeness,
+// which has been inside the serialised record since schema v8 — so every carried-in
+// row held a column saying "unknown fidelity" next to a record saying
+// BUILT_WITH_BODIES. Nothing read the column into a wrong answer, because
+// composition reads the decoded record; but a denormalised column that contradicts
+// what it denormalises is worse than no column, since the next reader will not know
+// to distrust it.
+//
+// The guard is written against the store's own read path rather than the column, so
+// it fails if the two ever disagree again in either direction.
+func TestMigration_BackfillsCompletenessFromTheRecord(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	// Simulate a carried-in row: written normally, then its column blanked, which
+	// is exactly the state migration 8 left every pre-existing row in.
+	rec := ledgerRecord(t, ledgerSpec{
+		source: domain2.AnalysisSourceModuleZip, artefact: "zip:h1:a",
+		completeness: domain2.CompletenessBuiltWithBodies,
+	})
+	if err := s.PutCallGraphRecord(ctx, rec); err != nil {
+		t.Fatalf("PutCallGraphRecord: %v", err)
+	}
+	if _, err := s.InternalDB().DB().ExecContext(ctx,
+		`UPDATE callgraph_records SET completeness = '' WHERE content_hash = ?`, rec.ContentHash); err != nil {
+		t.Fatalf("blanking the column: %v", err)
+	}
+
+	if err := s.BackfillCompletenessForTest(ctx); err != nil {
+		t.Fatalf("back-fill: %v", err)
+	}
+
+	var col string
+	if err := s.InternalDB().DB().QueryRowContext(ctx,
+		`SELECT completeness FROM callgraph_records WHERE content_hash = ?`, rec.ContentHash).Scan(&col); err != nil {
+		t.Fatalf("reading the column back: %v", err)
+	}
+	if col != string(domain2.CompletenessBuiltWithBodies) {
+		t.Fatalf("completeness column = %q, want %q — it still contradicts the record it copies",
+			col, domain2.CompletenessBuiltWithBodies)
+	}
+
+	// And the summary, which is the only consumer of the column, now reports what
+	// the record says.
+	sums, err := s.ListCallGraphRecords(ctx, ports.CallGraphFilter{})
+	if err != nil {
+		t.Fatalf("ListCallGraphRecords: %v", err)
+	}
+	if len(sums) != 1 || sums[0].Completeness != domain2.CompletenessBuiltWithBodies {
+		t.Fatalf("summary reports completeness %q", sums[0].Completeness)
+	}
+}
+
+// TestMigration_BackfillLeavesAnUnrecordedLevelAlone: a record that genuinely
+// states no fidelity must keep an empty column. Writing something there would
+// invent a measurement, which is the mirror of the defect being fixed.
+func TestMigration_BackfillLeavesAnUnrecordedLevelAlone(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	rec := ledgerRecord(t, ledgerSpec{
+		source: domain2.AnalysisSourceModuleZip, artefact: "zip:h1:a",
+		// No completeness at all.
+		status: domain2.CallGraphStatusCancelled,
+	})
+	if err := s.PutCallGraphRecord(ctx, rec); err != nil {
+		t.Fatalf("PutCallGraphRecord: %v", err)
+	}
+	if err := s.BackfillCompletenessForTest(ctx); err != nil {
+		t.Fatalf("back-fill: %v", err)
+	}
+	var col string
+	if err := s.InternalDB().DB().QueryRowContext(ctx,
+		`SELECT completeness FROM callgraph_records WHERE content_hash = ?`, rec.ContentHash).Scan(&col); err != nil {
+		t.Fatalf("reading the column back: %v", err)
+	}
+	if col != "" {
+		t.Fatalf("completeness column = %q for a record that states none", col)
+	}
+}
