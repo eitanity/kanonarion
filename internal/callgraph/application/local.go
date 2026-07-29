@@ -58,7 +58,9 @@ type LocalExtractRequest struct {
 	// Dir is the module working-tree root (contains go.mod).
 	Dir string
 	// Coordinate.Path must be the module path declared in Dir/go.mod;
-	// Coordinate.Version is a synthetic local version (e.g. "v0.0.0").
+	// Coordinate.Version is coordinate.LocalVersion — nothing published the tree,
+	// so there is no version to name. Which tree it was is carried by the record's
+	// AnalysisSource and WorktreeDigest, not by the version component.
 	Coordinate coordinate.ModuleCoordinate
 }
 

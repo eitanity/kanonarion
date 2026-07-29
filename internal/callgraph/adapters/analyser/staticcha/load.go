@@ -172,6 +172,12 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 
 	// Pass 3: build. Every package the builder can reach is registered now, so
 	// no build resolves a callee through a placeholder.
+	//
+	// BodiesBuilt counts the packages that came through with bodies. It is the
+	// difference between "we had types but no bodies" and "we had neither", and
+	// that difference is only knowable here: downstream, a program with registered
+	// packages and no built bodies is indistinguishable from one built from
+	// metadata. Recording it is what gives CompletenessTypeOnly a producer.
 	for _, ssaPkg := range built {
 		if berr := buildSSAPackageSafe(ssaPkg); berr != nil {
 			path := ""
@@ -180,7 +186,9 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 			}
 			res.LoadErrs = append(res.LoadErrs, fmt.Sprintf("SSA construction panic for %s: %v", path, berr))
 			markFailed(path)
+			continue
 		}
+		res.BodiesBuilt++
 	}
 	// The ASTs and type info are held only until the packages that need them are
 	// built; ssa keeps its own references while building and drops them after.
@@ -211,15 +219,23 @@ type ssaBuildResult struct {
 	TargetPkgs []*ssa.Package
 	// TestPkgs is the set of built packages that carry the module's _test.go
 	// declarations — the internal test variants and the external test packages.
-	TestPkgs        map[*ssa.Package]bool
+	TestPkgs map[*ssa.Package]bool
+	// BodiesBuilt is how many of the registered packages had SSA construction
+	// complete without panicking, i.e. how many carry function bodies. Zero with
+	// a non-zero Registered() is the TYPE_ONLY state: the packages type-checked
+	// and are known to the program, but no body was ever built from them.
+	BodiesBuilt     int
 	LoadErrs        []string
 	FailedPkgs      []string
 	TestScope       domain.TestScope
 	TestScopeDetail string
 }
 
-// Built returns every package built from syntax, production and test alike.
-func (r ssaBuildResult) Built() int { return len(r.TargetPkgs) + len(r.TestPkgs) }
+// Registered returns every package registered from syntax, production and test
+// alike. Registration means the package type-checked and its *types.Package
+// joined the SSA program; it does not mean its bodies were built — see
+// BodiesBuilt.
+func (r ssaBuildResult) Registered() int { return len(r.TargetPkgs) + len(r.TestPkgs) }
 
 // isSyntheticTestMain reports whether p is the test binary main go/packages
 // synthesises for a package under test. Its import path is the package path

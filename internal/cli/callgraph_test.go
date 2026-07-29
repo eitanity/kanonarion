@@ -307,7 +307,7 @@ func TestRunCallGraphList_WithModuleFilter(t *testing.T) {
 func TestRunCallGraphShow_NotFound(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
 	var buf bytes.Buffer
-	err := runCallGraphShow(context.Background(), "github.com/missing/pkg@v1.0.0", "", 50, 100, false, uc, &buf)
+	err := runCallGraphShow(context.Background(), "github.com/missing/pkg@v1.0.0", callGraphShowFlags{nodeFilter: "", limitNodes: 50, limitEdges: 100}, false, uc, &buf)
 	if err == nil {
 		t.Fatal("expected error for missing record")
 	}
@@ -687,7 +687,7 @@ func TestRunCallGraphShow_Found_Text(t *testing.T) {
 	coord := makeCGCoord(t)
 	uc.AddRecord(coord, cgapp.PipelineVersion, rec)
 	var buf bytes.Buffer
-	err := runCallGraphShow(context.Background(), "example.com/cg@v1.0.0", "", 50, 100, false, uc, &buf)
+	err := runCallGraphShow(context.Background(), "example.com/cg@v1.0.0", callGraphShowFlags{nodeFilter: "", limitNodes: 50, limitEdges: 100}, false, uc, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -706,7 +706,7 @@ func TestRunCallGraphShow_Found_JSON(t *testing.T) {
 	coord := makeCGCoord(t)
 	uc.AddRecord(coord, cgapp.PipelineVersion, rec)
 	var buf bytes.Buffer
-	err := runCallGraphShow(context.Background(), "example.com/cg@v1.0.0", "", 50, 100, true, uc, &buf)
+	err := runCallGraphShow(context.Background(), "example.com/cg@v1.0.0", callGraphShowFlags{nodeFilter: "", limitNodes: 50, limitEdges: 100}, true, uc, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -730,7 +730,7 @@ func TestRunCallGraphShow_WithNodeFilter(t *testing.T) {
 	coord := makeCGCoord(t)
 	uc.AddRecord(coord, cgapp.PipelineVersion, rec)
 	var buf bytes.Buffer
-	err := runCallGraphShow(context.Background(), "example.com/cg@v1.0.0", "Main", 50, 100, false, uc, &buf)
+	err := runCallGraphShow(context.Background(), "example.com/cg@v1.0.0", callGraphShowFlags{nodeFilter: "Main", limitNodes: 50, limitEdges: 100}, false, uc, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -743,7 +743,7 @@ func TestRunCallGraphShow_Error(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
 	uc.Err = errors.New("db error")
 	var buf bytes.Buffer
-	err := runCallGraphShow(context.Background(), "example.com/cg@v1.0.0", "", 50, 100, false, uc, &buf)
+	err := runCallGraphShow(context.Background(), "example.com/cg@v1.0.0", callGraphShowFlags{nodeFilter: "", limitNodes: 50, limitEdges: 100}, false, uc, &buf)
 	if err == nil {
 		t.Fatal("expected error from GetCallGraphRecord failure")
 	}

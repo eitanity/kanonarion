@@ -64,10 +64,16 @@ func makeRecord(coord coordinate.ModuleCoordinate, pv string) domain2.CallGraphR
 			},
 		},
 		OverallStatus:   domain2.CallGraphStatusExtracted,
+		Completeness:    domain2.CompletenessBuiltWithBodies,
 		NodeCount:       1,
 		EdgeCount:       2,
 		ExtractedAt:     testTime,
 		PipelineVersion: pv,
+		// A record analysed from a fetched zip must name the artefact it read; the
+		// store refuses one that does not, because composition groups records by
+		// which bytes they measured.
+		AnalysisSource:   domain2.AnalysisSourceModuleZip,
+		ArtefactIdentity: "zip:h1:" + coord.Path() + "@" + coord.Version(),
 	}
 	hashed, err := h.SetContentHash(r)
 	if err != nil {

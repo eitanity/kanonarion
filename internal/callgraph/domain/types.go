@@ -44,6 +44,15 @@ import (
 // confident RESOLVED-ABSENT. Interfaces and Implementations make interface
 // types and their method sets addressable, so "which concrete types must change
 // with this port" is answerable from the graph rather than from a grep.
+//
+// AnalysisSource and WorktreeDigest joined the record WITHOUT a bump, and that is
+// deliberate. Both are json omitempty, so a v13 record re-marshals to the bytes
+// it was sealed over and still verifies; and both read as "not recorded" when
+// absent, which is the truth about a record written before the field existed.
+// Bumping would make every stored record unreadable through the schema gate — a
+// purge by another name, and the opposite of what an append-only ledger is for.
+// Bump only when a change makes an OLD record say something false, not merely
+// something less.
 const CallGraphSchemaVersion = "13"
 
 // TestScope records whether a module's _test.go declarations were part of the
@@ -398,6 +407,25 @@ type CallGraphRecord struct {
 	// measurement of it, so a reader can fetch that record and check the claim
 	// against it. Empty exactly when ArtefactIdentity is.
 	SourceContentHash string
+	// AnalysisSource names what the analysis read: a fetched module zip, or a
+	// working tree on disk. It is a dimension rather than a ladder position — see
+	// AnalysisSource — so it belongs to the record's identity and composition
+	// never chooses between its values.
+	//
+	// Empty on records written before the field existed, which reads as "not
+	// recorded" and never as "analysed from nothing".
+	AnalysisSource AnalysisSource
+	// WorktreeDigest identifies WHICH working tree a worktree analysis read, as a
+	// digest over the Go source the analysis could see. Empty for every other
+	// source.
+	//
+	// It is here because a worktree record has no artefact identity — nothing was
+	// fetched, so there is nothing to name — and without a discriminator two
+	// checkouts of one module path are one row. The absolute path the analysis ran
+	// in is deliberately not used: where a tree happened to be mounted is
+	// provenance, and two different trees at one path (a branch switch, a
+	// rebuild) would share it while two copies of one tree would not.
+	WorktreeDigest string
 }
 
 // Sort puts all collections into a canonical, deterministic order.

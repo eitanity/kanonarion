@@ -21,15 +21,17 @@ func recordFidelity(c coordinate.ModuleCoordinate, completeness string, findings
 }
 
 // allLevels is every completeness level a record can carry, including the
-// Unknown zero value, so the parity table covers each pairing.
-var allLevels = []string{
-	string(callgraphdomain.CompletenessBuiltWithBodies),
-	string(callgraphdomain.CompletenessTypeOnly),
-	string(callgraphdomain.CompletenessMetadataOnly),
-	string(callgraphdomain.CompletenessFailed),
-	string(callgraphdomain.CompletenessVersionNotInToolchain),
-	string(callgraphdomain.CompletenessUnknown),
-}
+// Unknown zero value, so the parity table covers each pairing. It is taken from
+// the call-graph domain that owns the ladder rather than copied, so a level
+// added there joins this table without an edit.
+var allLevels = func() []string {
+	levels := callgraphdomain.CompletenessLevels()
+	out := make([]string, 0, len(levels))
+	for _, l := range levels {
+		out = append(out, string(l))
+	}
+	return out
+}()
 
 // TestDiffScanRuns_ResolvedParity_AllLevelPairings crafts a resolved finding
 // (present in A, absent in B) for every (before, after) completeness pairing and

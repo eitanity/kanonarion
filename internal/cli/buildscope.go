@@ -147,24 +147,19 @@ func latestWalkForGoMod(ctx context.Context, walks QueryWalksUseCase, gomod stri
 //
 // The main module and any local-path replace target appear in the walk at
 // coordinate.LocalVersion, because nothing published them and there is no
-// version to name. Their call graphs, however, are ingested by `kanonarion
-// local` under localCallGraphVersion. Those are the same module under two
-// synthetic names, so both are admitted — otherwise scoping a query to a
-// project's own build would filter out the project's own symbols, which is the
-// case the filter exists to serve.
+// version to name. `kanonarion local` now ingests their call graphs at that same
+// version, so one coordinate covers both and no second synthetic name has to be
+// admitted alongside it. Before that, a working-tree ingest landed at a
+// synthetic "v0.0.0" and this function had to admit the module twice or scoping
+// a query to a project's own build would have filtered out the project's own
+// symbols — the case the filter exists to serve.
 func walkModuleSet(rec walkdomain.WalkRecord) coordinate.ModuleSet {
-	coords := make([]coordinate.ModuleCoordinate, 0, len(rec.Graph.Nodes)+2)
+	coords := make([]coordinate.ModuleCoordinate, 0, len(rec.Graph.Nodes)+1)
 	admit := func(c coordinate.ModuleCoordinate) {
 		if c.IsZero() {
 			return
 		}
 		coords = append(coords, c)
-		if c.Version() != coordinate.LocalVersion {
-			return
-		}
-		if local, err := coordinate.NewModuleCoordinate(c.Path(), localCallGraphVersion); err == nil {
-			coords = append(coords, local)
-		}
 	}
 
 	admit(rec.Target)

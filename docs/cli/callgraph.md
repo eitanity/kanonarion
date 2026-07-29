@@ -107,10 +107,13 @@ kanonarion callgraph-show <module>@<version> [flags]
 | `--node` | _(all)_ | Filter to nodes/edges whose symbol contains this substring |
 | `--limit-nodes` | `50` | Maximum nodes to print (`0` = unlimited) |
 | `--limit-edges` | `100` | Maximum edges to print (`0` = unlimited) |
+| `--history` | `false` | List every stored generation for the module instead of the composed answer |
+| `--source` | _(default)_ | Restrict to graphs built from one source: `zip` or `worktree` |
 
 ```
 $ kanonarion callgraph-show golang.org/x/mod@v0.30.0 --limit-nodes 2 --limit-edges 2
 golang.org/x/mod@v0.30.0  [CHA]  Extracted
+  fidelity: BUILT_WITH_BODIES   source: zip
   test scope: analysed — 290 of 1039 nodes are test declarations
   interfaces: 11 declared, 29 implementations recorded (query with 'kanonarion implementers')
 Legend: [api] exported symbol  [external] outside this module  [test] declared in a _test.go file  (no tag) unexported
@@ -125,6 +128,67 @@ Edges (4201 total, showing 2):
 
 The `test scope:` line is printed on every record, including when the axis was
 not measured — silence there would read as "there was no test code".
+
+The `fidelity:` line reports how much of the module was actually built and what
+the analysis read. Both matter to how an empty answer should be taken: only
+`BUILT_WITH_BODIES` supports a confident negative, and a `worktree` graph
+describes a directory on disk rather than the published module of that version. A
+record written before the source was recorded prints `source: not recorded`,
+which is a statement rather than a default.
+
+#### Generations
+
+`callgraph_records` is an append-only ledger: re-analysing a module adds a
+generation rather than replacing one. `--history` lists them oldest first and
+marks the one the composed read serves.
+
+```
+$ kanonarion callgraph-show example.com/mod@local --history
+2 generation(s) for example.com/mod@local at pipeline 0.3.0:
+  2026-01-01T10:00:00Z  Extracted        BUILT_WITH_BODIES 8334 node(s) / 89058 edge(s)
+    source:   worktree
+    from:     tree sha256:020268b3...
+    graph:    sha256:7e1b556a...
+    record:   sha256:286f5597...
+* 2026-01-01T10:02:00Z  Extracted        BUILT_WITH_BODIES 8335 node(s) / 89102 edge(s)
+    source:   worktree
+    from:     tree sha256:1c48c5a1...
+    graph:    sha256:a5f1f9e3...
+    record:   sha256:a03186a6...
+
+* served by the composed read (highest completeness, then most recent, within one analysis source)
+```
+
+The `graph:` digest is what each record says the graph **is**, with the
+measurement time and the fetch provenance blanked. It is there because the
+`record:` hash cannot answer "do these two agree": two analyses a second apart
+that produced the identical graph carry different record hashes, so a comparison
+on those would report every re-analysis as a disagreement.
+
+#### Composition
+
+A read returns one answer composed from the generations, on a stated ordering:
+
+1. **Highest completeness**, then
+2. **most recent**, then
+3. the record's own content hash, only so the served record does not depend on
+   row order.
+
+Recency is never the authority. A `METADATA_ONLY` graph appended after a
+`BUILT_WITH_BODIES` one analysed less of the same module, so it is a weaker
+measurement rather than a newer answer, and it does not displace its better.
+
+The **analysis source is not on that ladder**. A zip graph and a worktree graph
+answer different questions about different bytes, so composition never serves one
+for the other; a read that names no source is answered from the zip records,
+because that is what a coordinate-keyed walk writes. `--source worktree` asks for
+the other one.
+
+Two disagreements are reported rather than resolved by picking: two analyses of
+one pinned version that name **different artefacts**, and two records at the
+**same completeness** that disagree about the graph (the narrow case that
+indicates non-determinism in the analyser). A disputed module is reported on its
+own row in `callgraph-list` rather than failing the whole listing.
 
 ### `callgraph-list`
 
@@ -296,16 +360,35 @@ negative.
 
 Records live in `<store-root>/mirror.db` (SQLite):
 
-- `callgraph_records` — one serialised blob per `(module_path, module_version, pipeline_version)`, holding the nodes, the interface relation and the test-scope axis.
-- `callgraph_edges` — denormalised edge rows carrying `is_test` (true when either endpoint is a test node, which is what `--exclude-tests` filters on), with two covering indices:
+- `callgraph_records` — an append-only ledger keyed on
+  `(module_path, module_version, pipeline_version, extracted_at, content_hash)`.
+  One serialised blob per generation, holding the nodes, the interface relation
+  and the test-scope axis, alongside `completeness`, `analysis_source` and
+  `worktree_digest` columns so the fidelity and the source are queryable without
+  decoding a blob. Nothing is ever updated; writing the same record twice is a
+  no-op.
+- `callgraph_edges` — edge rows keyed on the **parent record's** content hash,
+  plus denormalised coordinate columns and `is_test` (true when either endpoint
+  is a test node, which is what `--exclude-tests` filters on), with two covering
+  indices:
   - `callgraph_edges_to_idx ON (to_id, pipeline_version)` — used by `callers`
   - `callgraph_edges_from_idx ON (from_id, pipeline_version)` — used by `callees`
 
+Edges are keyed on the parent rather than the coordinate because a coordinate now
+names every generation at once. `callers` and `callees` resolve the served
+generation first and answer from its edges alone, so a superseded generation's
+edges stay in the table as history and answer nothing.
+
 The callgraph schema is tracked in the shared `schema_migrations` table under
-module key `callgraph` (current version: 7). A record whose `schema_version`
+module key `callgraph` (current version: 8). A record whose `schema_version`
 differs from the binary's is treated as not found, so a schema bump is
 self-enforcing: stale records are re-derived rather than read with later fields
 silently zeroed.
+
+That read gate is also why the ledger does not purge. Four of the first seven
+migrations deleted both tables wholesale on an analyser shape change; the gate
+achieves what those purges were for — a stale-shape record answers nothing —
+without deleting the evidence, so the row survives for a history read.
 
 ## Relation to other stages
 

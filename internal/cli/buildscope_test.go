@@ -54,10 +54,15 @@ func TestWalkModuleSet_PinsOneVersionPerModule(t *testing.T) {
 	}
 }
 
-// TestWalkModuleSet_AdmitsLocalAnalysisVersion covers the one module that
-// carries two synthetic names: the main module is `local` in a walk and
-// localCallGraphVersion in the call-graph store. Scoping a query to a project's
-// own build must not filter out the project's own symbols.
+// TestWalkModuleSet_AdmitsLocalAnalysisVersion covers the main module, which a
+// walk records at coordinate.LocalVersion and `kanonarion local` now ingests at
+// the same version. Scoping a query to a project's own build must not filter out
+// the project's own symbols.
+//
+// It also pins the negative half: the retired synthetic "v0.0.0" must NOT be
+// admitted. Nothing writes call graphs there any more, so admitting it would
+// widen every project-scoped query to a coordinate that names a published
+// release of the module — a different artefact entirely.
 func TestWalkModuleSet_AdmitsLocalAnalysisVersion(t *testing.T) {
 	target, err := coordinate.NewLocalCoordinate("example.com/app")
 	if err != nil {
@@ -68,9 +73,8 @@ func TestWalkModuleSet_AdmitsLocalAnalysisVersion(t *testing.T) {
 	if !set.ContainsPathVersion("example.com/app", coordinate.LocalVersion) {
 		t.Error("the walk's own target coordinate was not admitted")
 	}
-	if !set.ContainsPathVersion("example.com/app", localCallGraphVersion) {
-		t.Errorf("the local-analysis coordinate %s@%s was not admitted",
-			"example.com/app", localCallGraphVersion)
+	if set.ContainsPathVersion("example.com/app", "v0.0.0") {
+		t.Error("the retired synthetic local-analysis version v0.0.0 is still admitted")
 	}
 }
 

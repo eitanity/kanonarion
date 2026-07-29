@@ -4,15 +4,23 @@ import "fmt"
 
 // CompletenessLevel records the fidelity at which a module's call graph was
 // analysed. The same module can be analysed at very different fidelity from run
-// to run — fully built into SSA, registered type-only, reduced to package
-// metadata, failed to load, or resolved at a version the host toolchain never
-// built — and that fidelity, not a code change, can make an edge appear or
-// disappear between two runs. Recording the level per module lets a diff assert
-// that a before/after comparison is fidelity-symmetric before it trusts a
-// "resolved"/"unaffected" verdict.
+// to run — fully built into SSA, registered from type information with no
+// bodies, reduced to package metadata, or failed to load — and that fidelity,
+// not a code change, can make an edge appear or disappear between two runs.
+// Recording the level per module lets a diff assert that a before/after
+// comparison is fidelity-symmetric before it trusts a "resolved"/"unaffected"
+// verdict.
 //
 // The levels are ordered most to least complete. A verdict is only ever as
 // sound as the least-complete side of the comparison that produced it.
+//
+// Every level here has a production producer, and that is a standing property of
+// this type rather than an observation about it. A level nothing writes tells a
+// reader — of the type, of a record, or of the docs — that the analyser can
+// report a fidelity it has never once reported, and the ladders built on this
+// one (composition of call-graph generations, the soundness rung for a negative
+// reachability answer) then order on a rung nobody can occupy.
+// TestEveryCompletenessLevelHasAProducer pins it.
 type CompletenessLevel string
 
 const (
@@ -25,10 +33,17 @@ const (
 	// edges were resolvable. This is the only level a confident negative verdict
 	// may rest on.
 	CompletenessBuiltWithBodies CompletenessLevel = "BUILT_WITH_BODIES"
-	// CompletenessTypeOnly means the module was registered from type information
-	// only (no SSA bodies were built), as happens for a dependency package pulled
-	// in type-only. Method bodies were never analysed, so call edges out of them
-	// are absent.
+	// CompletenessTypeOnly means the module's packages type-checked and were
+	// registered with the SSA program, but not one of them was built into SSA
+	// with function bodies. Types are known, so the interface/implementation
+	// relation and every declaration are visible; method bodies were never
+	// analysed, so call edges out of them are absent.
+	//
+	// It is written when SSA construction fails for every target package that
+	// type-checked — see the staticcha analyser. That is the state the level
+	// names, and it is strictly more than METADATA_ONLY: the distinction between
+	// "we had types but no bodies" and "we had neither" is known at the point the
+	// build result is read and must not be discarded there.
 	CompletenessTypeOnly CompletenessLevel = "TYPE_ONLY"
 	// CompletenessMetadataOnly means only package metadata (names, imports) was
 	// loaded — no types, no bodies. Nothing about dispatch can be concluded.
@@ -36,13 +51,28 @@ const (
 	// CompletenessFailed means loading or SSA construction failed and no usable
 	// graph was produced for the module.
 	CompletenessFailed CompletenessLevel = "FAILED"
-	// CompletenessVersionNotInToolchain means the module resolved to a version
-	// the host toolchain never built (scanned in isolation it selects a version
-	// the project's build list never resolved). Its in-toolchain status differs
-	// from an ordinary analysed module, so it is never fidelity-comparable with
-	// one even if some graph was produced.
-	CompletenessVersionNotInToolchain CompletenessLevel = "VERSION_NOT_IN_TOOLCHAIN"
 )
+
+// CompletenessLevels is every level this type defines, most to least complete,
+// with the zero value last. It is the ladder other domains mirror and the list
+// the producer guard walks; adding a level without adding it here is caught by
+// TestCompletenessLevels_IsExhaustive.
+//
+// VERSION_NOT_IN_TOOLCHAIN was removed from this ladder rather than given a
+// producer. The condition it named — the module resolved to a version outside
+// the analysed project's toolchain — is a property of an isolated SCAN, not of a
+// call graph's fidelity, and it is already reported where it belongs and with a
+// real producer, as vuln domain's UnscanReasonVersionNotInToolchain. Restating
+// it as a call-graph level asserted a second, unmaintained account of one fact.
+func CompletenessLevels() []CompletenessLevel {
+	return []CompletenessLevel{
+		CompletenessBuiltWithBodies,
+		CompletenessTypeOnly,
+		CompletenessMetadataOnly,
+		CompletenessFailed,
+		CompletenessUnknown,
+	}
+}
 
 // String returns the human-readable name of the level, rendering the zero value
 // as "Unknown".
@@ -61,11 +91,10 @@ func (l CompletenessLevel) IsBuiltWithBodies() bool {
 }
 
 // CompletenessDescriptor is the per-side fidelity signature a diff compares for
-// parity. The completeness level folds in in-toolchain status (a
-// VERSION_NOT_IN_TOOLCHAIN level is its own value), and the algorithm captures
-// the algorithm/devirt tier that produced the graph, so equality across both
-// fields is "same completeness level, same in-toolchain status, same
-// algorithm/devirt tier".
+// parity. The completeness level names how much of the module was built, and the
+// algorithm captures the algorithm/devirt tier that produced the graph, so
+// equality across both fields is "same completeness level, same algorithm/devirt
+// tier".
 type CompletenessDescriptor struct {
 	Level     CompletenessLevel
 	Algorithm CallGraphAlgorithm

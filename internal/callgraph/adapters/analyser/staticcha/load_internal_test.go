@@ -66,7 +66,7 @@ func TestLoadAndBuildSSA_OnePackagePerImportPath(t *testing.T) {
 	if err != nil {
 		t.Skipf("go/packages could not load the test module: %v", err)
 	}
-	if build.Built() == 0 {
+	if build.Registered() == 0 {
 		t.Skipf("no packages built; load errors: %v", build.LoadErrs)
 	}
 

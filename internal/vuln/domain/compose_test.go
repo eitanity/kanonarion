@@ -268,14 +268,10 @@ func TestCompletenessRung_CoversEveryCallGraphLevel(t *testing.T) {
 	t.Parallel()
 	// Most complete first. Unknown is last: it is the zero value, and a record
 	// that consulted no call graph must not displace one that did.
-	ladder := []callgraphdomain.CompletenessLevel{
-		callgraphdomain.CompletenessBuiltWithBodies,
-		callgraphdomain.CompletenessTypeOnly,
-		callgraphdomain.CompletenessMetadataOnly,
-		callgraphdomain.CompletenessFailed,
-		callgraphdomain.CompletenessVersionNotInToolchain,
-		callgraphdomain.CompletenessUnknown,
-	}
+	// Taken from the domain that owns the ladder, in its published order, rather
+	// than copied here: a copy is exactly how a level gets added there and misses
+	// the rung function this test exists to pin.
+	ladder := callgraphdomain.CompletenessLevels()
 	for i := 0; i+1 < len(ladder); i++ {
 		better := composeRecord(t, composeSpec{
 			rooting: domain.RootingIsolated, completeness: string(ladder[i]),

@@ -507,6 +507,7 @@ type FakeQueryCallGraph struct {
 	traverseCallerNodes []string
 	traverseCallees     []cgports.CallEdgeRef
 	traverseCalleeNodes []string
+	history             map[string][]cgdomain.CallGraphRecord
 	getErr              error
 	Err                 error
 }
@@ -547,6 +548,51 @@ func (f *FakeQueryCallGraph) GetCallGraphRecord(_ context.Context, coord coordin
 	defer f.mu.Unlock()
 	rec, ok := f.records[coord.String()+"|"+pipelineVersion]
 	return rec, ok, nil
+}
+
+// AddGeneration appends a record to the coordinate's history without changing
+// what GetCallGraphRecord serves, so a test can set up a ledger holding several
+// generations and a composed answer independently.
+func (f *FakeQueryCallGraph) AddGeneration(coord coordinate.ModuleCoordinate, pipelineVersion string, rec cgdomain.CallGraphRecord) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	key := coord.String() + "|" + pipelineVersion
+	if f.history == nil {
+		f.history = make(map[string][]cgdomain.CallGraphRecord)
+	}
+	f.history[key] = append(f.history[key], rec)
+}
+
+func (f *FakeQueryCallGraph) GetCallGraphRecordFrom(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, source cgdomain.AnalysisSource) (cgdomain.CallGraphRecord, bool, error) {
+	rec, found, err := f.GetCallGraphRecord(ctx, coord, pipelineVersion)
+	if err != nil || !found {
+		return rec, found, err
+	}
+	if source != cgdomain.AnalysisSourceUnrecorded && rec.AnalysisSource != source {
+		return cgdomain.CallGraphRecord{}, false, nil
+	}
+	return rec, true, nil
+}
+
+func (f *FakeQueryCallGraph) CallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]cgdomain.CallGraphRecord, error) {
+	if f.Err != nil {
+		return nil, f.Err
+	}
+	f.mu.Lock()
+	key := coord.String() + "|" + pipelineVersion
+	gens := append([]cgdomain.CallGraphRecord(nil), f.history[key]...)
+	f.mu.Unlock()
+	if len(gens) > 0 {
+		return gens, nil
+	}
+	// No explicit history was staged, so the single served record IS the history.
+	// A fake that returned nothing here would make "the ledger holds one
+	// generation" indistinguishable from "the store keeps no history at all".
+	rec, ok, err := f.GetCallGraphRecord(ctx, coord, pipelineVersion)
+	if err != nil || !ok {
+		return nil, err
+	}
+	return []cgdomain.CallGraphRecord{rec}, nil
 }
 
 func (f *FakeQueryCallGraph) ListCallGraphRecords(_ context.Context, _ cgports.CallGraphFilter) ([]cgports.CallGraphSummary, error) {

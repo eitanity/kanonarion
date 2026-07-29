@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"sort"
 
@@ -26,6 +27,48 @@ func (uc *QueryCallGraphUseCase) GetCallGraphRecord(ctx context.Context, coord c
 	rec, found, err := uc.store.GetCallGraphRecord(ctx, coord, pipelineVersion)
 	if err != nil {
 		return domain.CallGraphRecord{}, false, fmt.Errorf("getting call graph record for %s: %w", coord, err)
+	}
+	return rec, found, nil
+}
+
+// ErrNoCallGraphHistory is returned by CallGraphHistory when the store cannot
+// answer a history question at all.
+//
+// It is a capability statement, not an absence: a store that does not implement
+// CallGraphRecordLister has no generations to report, which is different from a
+// ledger that holds none for this coordinate.
+var ErrNoCallGraphHistory = errors.New("this call graph store does not keep a record history")
+
+// CallGraphHistory returns every generation the ledger holds for one coordinate
+// and pipeline version, oldest first.
+//
+// It is the read that makes the ledger observable. Without it "both records
+// survive" is a claim about a table nobody can see, and a reported
+// non-determination names two records a reader has no way to look at.
+func (uc *QueryCallGraphUseCase) CallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain.CallGraphRecord, error) {
+	lister, ok := uc.store.(cgports.CallGraphRecordLister)
+	if !ok {
+		return nil, ErrNoCallGraphHistory
+	}
+	recs, err := lister.ListCallGraphRecordsFor(ctx, coord, pipelineVersion)
+	if err != nil {
+		return nil, fmt.Errorf("listing call graph generations for %s: %w", coord, err)
+	}
+	return recs, nil
+}
+
+// GetCallGraphRecordFrom retrieves the composed record for a coordinate,
+// restricted to one kind of analysis source. A store that cannot scope by source
+// answers ErrNoCallGraphHistory's sibling condition by falling back to the
+// unscoped read — there is nothing to restrict when only one source can exist.
+func (uc *QueryCallGraphUseCase) GetCallGraphRecordFrom(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, source domain.AnalysisSource) (domain.CallGraphRecord, bool, error) {
+	reader, ok := uc.store.(cgports.CallGraphSourceReader)
+	if !ok {
+		return uc.GetCallGraphRecord(ctx, coord, pipelineVersion)
+	}
+	rec, found, err := reader.GetCallGraphRecordFrom(ctx, coord, pipelineVersion, source)
+	if err != nil {
+		return domain.CallGraphRecord{}, false, fmt.Errorf("getting %s call graph record for %s: %w", source, coord, err)
 	}
 	return rec, found, nil
 }

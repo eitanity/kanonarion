@@ -333,6 +333,13 @@ func cmdSeedCallGraph(args []string) {
 		EdgeCount:       3,
 		ExtractedAt:     time.Now(),
 		PipelineVersion: cgapp.PipelineVersion,
+		Completeness:    cgdomain.CompletenessBuiltWithBodies,
+		// The fixture stands in for a graph built from the fetched zip seeded
+		// below, so it names that artefact. The store refuses a zip-sourced record
+		// that names none: composition groups records by which bytes they measured,
+		// and an empty identity groups every record that also recorded nothing.
+		AnalysisSource:   cgdomain.AnalysisSourceModuleZip,
+		ArtefactIdentity: "zip:h1:fixture-zip=",
 	}
 	rec.Sort()
 	var hasher cgdomain.CallGraphRecordHasher

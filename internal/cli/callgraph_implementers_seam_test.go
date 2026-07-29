@@ -149,7 +149,7 @@ func TestPrintEdgeRefs_ReportsEveryFailedWrite(t *testing.T) {
 func TestCallGraphShow_JSONWriteError(t *testing.T) {
 	rec := builtRecord([]cgdomain.CallNode{{ID: "example.com/m.Root", Symbol: "Root"}}, nil)
 	uc := fakeWithRecord("example.com/m", "v1.0.0", "0.2.0", rec)
-	err := runCallGraphShow(context.Background(), "example.com/m@v1.0.0", "", 10, 10, true, uc, &stallingWriter{})
+	err := runCallGraphShow(context.Background(), "example.com/m@v1.0.0", callGraphShowFlags{nodeFilter: "", limitNodes: 10, limitEdges: 10}, true, uc, &stallingWriter{})
 	if err == nil {
 		t.Fatal("a failed JSON write was swallowed")
 	}
@@ -160,7 +160,7 @@ func TestCallGraphShow_JSONWriteError(t *testing.T) {
 func TestCallGraphShow_BadCoordinate(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
 	var buf bytes.Buffer
-	err := runCallGraphShow(context.Background(), "not-a-coordinate", "", 10, 10, false, uc, &buf)
+	err := runCallGraphShow(context.Background(), "not-a-coordinate", callGraphShowFlags{nodeFilter: "", limitNodes: 10, limitEdges: 10}, false, uc, &buf)
 	if err == nil || !strings.Contains(err.Error(), "invalid coordinate") {
 		t.Fatalf("want an invalid-coordinate error, got %v", err)
 	}

@@ -157,6 +157,8 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 		ContentHash:       c.ContentHash,
 		ArtefactIdentity:  c.ArtefactIdentity,
 		SourceContentHash: c.SourceContentHash,
+		AnalysisSource:    AnalysisSource(c.AnalysisSource),
+		WorktreeDigest:    c.WorktreeDigest,
 	}, nil
 }
 
@@ -219,9 +221,14 @@ type canonicalEdge struct {
 }
 
 type canonicalRecord struct {
-	Algorithm    string `json:"algorithm"`
-	ArtifactKind string `json:"artifact_kind,omitempty"`
-	Completeness string `json:"completeness,omitempty"`
+	Algorithm string `json:"algorithm"`
+	// AnalysisSource and WorktreeDigest are omitted when empty so records written
+	// before the analysis source was named keep their stored content hash
+	// verifiable, on the same terms every additive field on this shape has used.
+	// An absent analysis_source is the "not recorded" value, not a fourth source.
+	AnalysisSource string `json:"analysis_source,omitempty"`
+	ArtifactKind   string `json:"artifact_kind,omitempty"`
+	Completeness   string `json:"completeness,omitempty"`
 	// ArtefactIdentity and SourceContentHash are omitted when empty so
 	// records that predate them keep their stored content hash verifiable,
 	// on the same terms every additive field on this shape has used.
@@ -249,6 +256,7 @@ type canonicalRecord struct {
 	SourceContentHash string                    `json:"source_content_hash,omitempty"`
 	TestScope         string                    `json:"test_scope,omitempty"`
 	TestScopeDetail   string                    `json:"test_scope_detail,omitempty"`
+	WorktreeDigest    string                    `json:"worktree_digest,omitempty"`
 }
 
 func marshalCanonical(r CallGraphRecord) ([]byte, error) {
@@ -366,6 +374,7 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 
 	c := canonicalRecord{
 		Algorithm:         string(r.Algorithm),
+		AnalysisSource:    string(r.AnalysisSource),
 		ArtefactIdentity:  r.ArtefactIdentity,
 		ArtifactKind:      string(r.ArtifactKind),
 		Completeness:      string(r.Completeness),
@@ -389,6 +398,7 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 		SourceContentHash: r.SourceContentHash,
 		TestScope:         string(r.TestScope),
 		TestScopeDetail:   r.TestScopeDetail,
+		WorktreeDigest:    r.WorktreeDigest,
 	}
 	b, err := canonicalMarshal(c)
 	if err != nil {

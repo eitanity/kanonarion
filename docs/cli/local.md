@@ -14,9 +14,14 @@ call graph into the store. Unlike `callgraph <module@version>`, which only sees
 packages**, so `callers` / `callees` can answer questions about symbols defined
 in the working tree.
 
-The tree is stored under the module's own path at the synthetic version
-`local` (`v0.0.0` internally) - a working tree has no semver to pin. This
-record carries **no freshness meaning**: a tree mutates between runs, so
+The tree is stored under the module's own path at the version `local` - a
+working tree has no semver to pin, and `local` is the marker a project walk
+already uses for the module nothing published. The record additionally names
+its **analysis source** as `worktree` and carries a **worktree digest**, a hash
+over the Go source the analysis could see, so two checkouts of the same module
+path are two records rather than one overwritten row.
+
+This record carries **no freshness meaning**: a tree mutates between runs, so
 `local` always re-analyses and never serves a cached result. (This is the same
 "local source is never cached" rule the `reachability --local` probe relies
 on.)

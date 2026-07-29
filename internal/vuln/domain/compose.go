@@ -171,19 +171,12 @@ func reportsAdvisory(f RecordFindingsStatus) bool {
 func completenessRung(level string) int {
 	switch level {
 	case "BUILT_WITH_BODIES":
-		return 5
-	case "TYPE_ONLY":
 		return 4
-	case "METADATA_ONLY":
+	case "TYPE_ONLY":
 		return 3
-	case "FAILED":
+	case "METADATA_ONLY":
 		return 2
-	case "VERSION_NOT_IN_TOOLCHAIN":
-		// Below FAILED rather than beside it. A failed load produced no graph and
-		// says so; a version the host toolchain never built produced a graph of a
-		// module the build never selected, so its reachability answers are about
-		// different code. It is the least sound basis for a finding, not merely an
-		// absent one.
+	case "FAILED":
 		return 1
 	default:
 		return 0
