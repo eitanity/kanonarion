@@ -31,7 +31,7 @@ func newStoreCmd(stdout, stderr io.Writer) *cobra.Command {
 		Short: "Inspect and manage the kanonarion store",
 	}
 	cmd.AddCommand(newStoreInfoCmd(stdout, stderr))
-	cmd.AddCommand(newStoreConfigCmd(stdout, stderr))
+	cmd.AddCommand(newStoreConfigCmd(stdout))
 	cmd.AddCommand(newStoreCleanCmd(stdout))
 	return cmd
 }
@@ -119,12 +119,12 @@ func runStoreClean(root, tmpDir string, stdout io.Writer) error {
 	return nil
 }
 
-func newStoreConfigCmd(stdout, stderr io.Writer) *cobra.Command {
+func newStoreConfigCmd(stdout io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "config",
 		Short: "Inspect and manage the store configuration",
 	}
-	cmd.AddCommand(newStoreConfigShowCmd(stdout, stderr))
+	cmd.AddCommand(newStoreConfigShowCmd(stdout))
 	return cmd
 }
 
@@ -143,6 +143,18 @@ type configShowResult struct {
 	GoDebugPolicy   configGoDebugResult   `json:"godebug_policy"`
 	VendorPolicy    configVendorResult    `json:"vendor_policy"`
 	FIPSPolicy      configFIPSResult      `json:"fips_policy"`
+	FetchPolicy     configFetchResult     `json:"fetch_policy"`
+}
+
+// configFetchResult reports the resolved cross-verification posture.
+//
+// Enforcing is stated alongside the list because the list alone cannot say it:
+// an absent allowed_vcs_hosts still has a host set behind it (the built-in
+// one), and the difference that matters to a reader is whether an off-list host
+// is refused or merely reported.
+type configFetchResult struct {
+	AllowedVCSHosts []string `json:"allowed_vcs_hosts"`
+	Enforcing       bool     `json:"enforcing"`
 }
 
 type configDirectiveResult struct {
@@ -195,7 +207,7 @@ type configCGResult struct {
 	Exclude []string `json:"exclude"`
 }
 
-func newStoreConfigShowCmd(stdout, stderr io.Writer) *cobra.Command {
+func newStoreConfigShowCmd(stdout io.Writer) *cobra.Command {
 	return &cobra.Command{
 		Use:   "show",
 		Short: "Show the effective configuration for this store",
@@ -256,6 +268,10 @@ func runStoreConfigShow(root string, asJSON bool, stdout io.Writer) error {
 			FIPSPolicy: configFIPSResult{
 				Required:    cfg.FIPSPolicy.Required,
 				OnDeviation: string(cfg.FIPSPolicy.OnDeviation),
+			},
+			FetchPolicy: configFetchResult{
+				AllowedVCSHosts: cfg.FetchPolicy.AllowedVCSHosts,
+				Enforcing:       cfg.FetchPolicy.AllowedVCSHosts != nil,
 			},
 		}
 		enc := json.NewEncoder(stdout)

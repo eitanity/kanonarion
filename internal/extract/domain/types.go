@@ -39,7 +39,7 @@ func (s ExtractionRunStatus) String() string {
 
 // MarshalJSON implements json.Marshaler for ExtractionRunStatus.
 func (s ExtractionRunStatus) MarshalJSON() ([]byte, error) {
-	return []byte(fmt.Sprintf("%q", s.String())), nil
+	return fmt.Appendf(nil, "%q", s.String()), nil
 }
 
 // UnmarshalJSON implements json.Unmarshaler for ExtractionRunStatus.
@@ -87,7 +87,7 @@ func (s StageStatus) String() string {
 
 // MarshalJSON implements json.Marshaler for StageStatus.
 func (s StageStatus) MarshalJSON() ([]byte, error) {
-	return []byte(fmt.Sprintf("%q", s.String())), nil
+	return fmt.Appendf(nil, "%q", s.String()), nil
 }
 
 // UnmarshalJSON implements json.Unmarshaler for StageStatus.

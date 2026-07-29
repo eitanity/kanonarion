@@ -29,7 +29,7 @@ func buildModuleZip(t *testing.T, coord coordinate.ModuleCoordinate, goMod []byt
 	t.Helper()
 	var buf bytes.Buffer
 	zw := zip.NewWriter(&buf)
-	w, err := zw.Create(coord.Path + "@" + coord.Version + "/go.mod")
+	w, err := zw.Create(coord.Path() + "@" + coord.Version() + "/go.mod")
 	if err != nil {
 		t.Fatalf("zip create: %v", err)
 	}
@@ -44,11 +44,11 @@ func buildModuleZip(t *testing.T, coord coordinate.ModuleCoordinate, goMod []byt
 
 func seedEntry(t *testing.T, dir string, coord coordinate.ModuleCoordinate, ext string, content []byte) string {
 	t.Helper()
-	base := filepath.Join(dir, "cache", "download", filepath.FromSlash(coord.Path), "@v")
+	base := filepath.Join(dir, "cache", "download", filepath.FromSlash(coord.Path()), "@v")
 	if err := os.MkdirAll(base, 0o750); err != nil {
 		t.Fatalf("mkdir: %v", err)
 	}
-	path := filepath.Join(base, coord.Version+ext)
+	path := filepath.Join(base, coord.Version()+ext)
 	if err := os.WriteFile(path, content, 0o600); err != nil {
 		t.Fatalf("write %s: %v", ext, err)
 	}
@@ -176,8 +176,8 @@ func TestInfo_EmptyVersionFallsBackToCoordinate(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Info: %v", err)
 	}
-	if info.Version != coord.Version {
-		t.Errorf("Version = %q, want fallback to coordinate version %q", info.Version, coord.Version)
+	if info.Version != coord.Version() {
+		t.Errorf("Version = %q, want fallback to coordinate version %q", info.Version, coord.Version())
 	}
 }
 

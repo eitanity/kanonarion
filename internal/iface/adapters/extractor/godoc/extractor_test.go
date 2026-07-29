@@ -467,7 +467,7 @@ type Helper struct{}
 func TestExtractor_ContextCancelled(t *testing.T) {
 	// Build a big fs to ensure cancellation fires before all dirs are processed.
 	fsys := make(fstest.MapFS)
-	for i := 0; i < 50; i++ {
+	for i := range 50 {
 		name := "pkg" + string(rune('a'+i%26)) + "/file.go"
 		fsys[name] = &fstest.MapFile{
 			Data: []byte(`package p

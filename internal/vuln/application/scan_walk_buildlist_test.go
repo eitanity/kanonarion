@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 
 	"github.com/eitanity/kanonarion/internal/vuln/application"
@@ -19,11 +20,11 @@ func seedFactNodeGoMod(t testing.TB, ctx context.Context, facts *fakeFacts, blob
 	opts := []fetchtest.Option{
 		fetchtest.Coordinate(coord),
 		fetchtest.PipelineVersion("v1"),
-		fetchtest.Content("zip-" + coord.Path + "-" + coord.Version),
-		fetchtest.GoMod("gomod-" + coord.Path + "-" + coord.Version),
+		fetchtest.Content("zip-" + coord.Path() + "-" + coord.Version()),
+		fetchtest.GoMod("gomod-" + coord.Path() + "-" + coord.Version()),
 	}
 	rec := fetchtest.Record(t, opts...)
-	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, rec), strings.NewReader("zip-"+coord.Path+"-"+coord.Version))
+	_ = blobs.Put(ctx, fetchtest.ZipIdentity(t, rec), strings.NewReader("zip-"+coord.Path()+"-"+coord.Version()))
 	_ = blobs.Put(ctx, fetchtest.GoModIdentity(t, rec), strings.NewReader(goMod))
 	_ = facts.PutFetchRecord(ctx, fetchtest.Sealed(t, opts...))
 }
@@ -38,19 +39,19 @@ func TestScan_PopulatesScannedNodeBuildListDeps(t *testing.T) {
 	ctx := t.Context()
 	walkID := "w-buildlist-deps"
 
-	consumer := coordinate.ModuleCoordinate{Path: "golang.org/x/oauth2", Version: "v0.16.0"}
+	consumer := coordinatetest.MustNew("golang.org/x/oauth2", "v0.16.0")
 	// The consumer's go.mod names three off-graph versions: a nested pair
 	// (compute is a proper path-ancestor of compute/metadata) plus a plain
 	// superseded require. None are walk nodes, so only the consumer's own go.mod
 	// reveals them.
-	ancestor := coordinate.ModuleCoordinate{Path: "cloud.google.com/go/compute", Version: "v1.20.1"}
-	nested := coordinate.ModuleCoordinate{Path: "cloud.google.com/go/compute/metadata", Version: "v0.2.3"}
-	plain := coordinate.ModuleCoordinate{Path: "golang.org/x/net", Version: "v0.20.0"}
+	ancestor := coordinatetest.MustNew("cloud.google.com/go/compute", "v1.20.1")
+	nested := coordinatetest.MustNew("cloud.google.com/go/compute/metadata", "v0.2.3")
+	plain := coordinatetest.MustNew("golang.org/x/net", "v0.20.0")
 
-	goMod := "module " + consumer.Path + "\n\ngo 1.18\n\nrequire (\n" +
-		"\t" + nested.Path + " " + nested.Version + "\n" +
-		"\t" + ancestor.Path + " " + ancestor.Version + " // indirect\n" +
-		"\t" + plain.Path + " " + plain.Version + " // indirect\n" +
+	goMod := "module " + consumer.Path() + "\n\ngo 1.18\n\nrequire (\n" +
+		"\t" + nested.Path() + " " + nested.Version() + "\n" +
+		"\t" + ancestor.Path() + " " + ancestor.Version() + " // indirect\n" +
+		"\t" + plain.Path() + " " + plain.Version() + " // indirect\n" +
 		")\n"
 
 	walkStore := newFakeWalkStore()
@@ -108,12 +109,12 @@ func TestScan_SourcesSelfNestedAncestor(t *testing.T) {
 	ctx := t.Context()
 	walkID := "w-self-nested"
 
-	consumer := coordinate.ModuleCoordinate{Path: "google.golang.org/genproto/googleapis/rpc", Version: "v0.0.0-20240213162025-012b6fc9bca9"}
+	consumer := coordinatetest.MustNew("google.golang.org/genproto/googleapis/rpc", "v0.0.0-20240213162025-012b6fc9bca9")
 	// The consumer requires its OWN path-ancestor; no descendant require exists,
 	// so only the self-nested rule can surface it.
-	ancestor := coordinate.ModuleCoordinate{Path: "google.golang.org/genproto", Version: "v0.0.0-20240205150955-31a09d347014"}
+	ancestor := coordinatetest.MustNew("google.golang.org/genproto", "v0.0.0-20240205150955-31a09d347014")
 
-	goMod := "module " + consumer.Path + "\n\ngo 1.19\n\nrequire " + ancestor.Path + " " + ancestor.Version + "\n"
+	goMod := "module " + consumer.Path() + "\n\ngo 1.19\n\nrequire " + ancestor.Path() + " " + ancestor.Version() + "\n"
 
 	walkStore := newFakeWalkStore()
 	_ = walkStore.PutWalk(ctx, walkdomain.WalkRecord{

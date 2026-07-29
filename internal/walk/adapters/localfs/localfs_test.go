@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
@@ -75,6 +76,9 @@ func newFakeFacts() *fakeFacts {
 }
 
 func (f *fakeFacts) PutFetchRecord(_ context.Context, sealed fetchdomain.SealedRecord) error {
+	if sealed.IsZero() {
+		return fetchdomain.ErrUnsealedRecord
+	}
 	r := sealed.Record()
 	key := r.ModulePath + "@" + r.ModuleVersion + "#" + r.PipelineVersion
 	f.mu.Lock()
@@ -84,7 +88,7 @@ func (f *fakeFacts) PutFetchRecord(_ context.Context, sealed fetchdomain.SealedR
 }
 
 func (f *fakeFacts) GetFetchRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (fetchdomain.CompositeRecord, bool, error) {
-	key := coord.Path + "@" + coord.Version + "#" + pv
+	key := coord.Path() + "@" + coord.Version() + "#" + pv
 	f.mu.Lock()
 	r, ok := f.records[key]
 	f.mu.Unlock()
@@ -122,8 +126,8 @@ func writeLocalModule(t *testing.T, dir, modulePath, version string) {
 
 func TestEnsureFetchedFromPath_OK(t *testing.T) {
 	dir := t.TempDir()
-	coord := coordinate.ModuleCoordinate{Path: "example.com/local", Version: "v1.0.0"}
-	writeLocalModule(t, dir, coord.Path, coord.Version)
+	coord := coordinatetest.MustNew("example.com/local", "v1.0.0")
+	writeLocalModule(t, dir, coord.Path(), coord.Version())
 
 	blobs := newFakeBlob()
 	facts := newFakeFacts()
@@ -139,11 +143,11 @@ func TestEnsureFetchedFromPath_OK(t *testing.T) {
 	}
 
 	rec := res.Record
-	if rec.ModulePath != coord.Path {
-		t.Errorf("ModulePath = %q, want %q", rec.ModulePath, coord.Path)
+	if rec.ModulePath != coord.Path() {
+		t.Errorf("ModulePath = %q, want %q", rec.ModulePath, coord.Path())
 	}
-	if rec.ModuleVersion != coord.Version {
-		t.Errorf("ModuleVersion = %q, want %q", rec.ModuleVersion, coord.Version)
+	if rec.ModuleVersion != coord.Version() {
+		t.Errorf("ModuleVersion = %q, want %q", rec.ModuleVersion, coord.Version())
 	}
 	if rec.VerificationStatus != string(fetchdomain.LocalSource) {
 		t.Errorf("VerificationStatus = %q, want %q", rec.VerificationStatus, fetchdomain.LocalSource)
@@ -170,8 +174,8 @@ func TestEnsureFetchedFromPath_OK(t *testing.T) {
 
 func TestEnsureFetchedFromPath_Cache(t *testing.T) {
 	dir := t.TempDir()
-	coord := coordinate.ModuleCoordinate{Path: "example.com/local", Version: "v1.0.0"}
-	writeLocalModule(t, dir, coord.Path, coord.Version)
+	coord := coordinatetest.MustNew("example.com/local", "v1.0.0")
+	writeLocalModule(t, dir, coord.Path(), coord.Version())
 
 	blobs := newFakeBlob()
 	facts := newFakeFacts()
@@ -200,7 +204,7 @@ func TestEnsureFetchedFromPath_Cache(t *testing.T) {
 
 func TestEnsureFetchedFromPath_MissingGoMod(t *testing.T) {
 	dir := t.TempDir()
-	coord := coordinate.ModuleCoordinate{Path: "example.com/local", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/local", "v1.0.0")
 	// Do NOT write go.mod.
 
 	f := localfs.New(newFakeBlob(), newFakeFacts(), fixedClock{t: time.Now()})
@@ -211,7 +215,7 @@ func TestEnsureFetchedFromPath_MissingGoMod(t *testing.T) {
 }
 
 func TestEnsureFetchedFromPath_NonexistentDir(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "example.com/local", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/local", "v1.0.0")
 	f := localfs.New(newFakeBlob(), newFakeFacts(), fixedClock{t: time.Now()})
 	_, err := f.EnsureFetchedFromPath(context.Background(), coord, "/nonexistent/does/not/exist")
 	if err == nil {
@@ -221,8 +225,8 @@ func TestEnsureFetchedFromPath_NonexistentDir(t *testing.T) {
 
 func TestEnsureFetchedFromPath_HashStability(t *testing.T) {
 	dir := t.TempDir()
-	coord := coordinate.ModuleCoordinate{Path: "example.com/local", Version: "v1.2.3"}
-	writeLocalModule(t, dir, coord.Path, coord.Version)
+	coord := coordinatetest.MustNew("example.com/local", "v1.2.3")
+	writeLocalModule(t, dir, coord.Path(), coord.Version())
 
 	clk := fixedClock{t: time.Date(2024, 6, 1, 12, 0, 0, 0, time.UTC)}
 
@@ -248,8 +252,8 @@ func TestEnsureFetchedFromPath_HashStability(t *testing.T) {
 // calls is reflected in the second record.
 func TestEnsureFetchedFromPath_LocalVersionIsNeverServedFromCache(t *testing.T) {
 	dir := t.TempDir()
-	coord := coordinate.ModuleCoordinate{Path: "example.com/project", Version: coordinate.LocalVersion}
-	writeLocalModule(t, dir, coord.Path, coord.Version)
+	coord := coordinatetest.MustNew("example.com/project", coordinate.LocalVersion)
+	writeLocalModule(t, dir, coord.Path(), coord.Version())
 
 	blobs := newFakeBlob()
 	facts := newFakeFacts()
@@ -282,8 +286,8 @@ func TestEnsureFetchedFromPath_LocalVersionIsNeverServedFromCache(t *testing.T) 
 // (license, interface, callgraph, example, vuln) can read the archive.
 func TestEnsureFetchedFromPath_LocalVersionZipUsesLocalPrefix(t *testing.T) {
 	dir := t.TempDir()
-	coord := coordinate.ModuleCoordinate{Path: "example.com/project", Version: coordinate.LocalVersion}
-	writeLocalModule(t, dir, coord.Path, coord.Version)
+	coord := coordinatetest.MustNew("example.com/project", coordinate.LocalVersion)
+	writeLocalModule(t, dir, coord.Path(), coord.Version())
 
 	blobs := newFakeBlob()
 	facts := newFakeFacts()
@@ -309,7 +313,7 @@ func TestEnsureFetchedFromPath_LocalVersionZipUsesLocalPrefix(t *testing.T) {
 	if len(zr.File) == 0 {
 		t.Fatal("zip is empty")
 	}
-	wantPrefix := coord.Path + "@" + coord.Version + "/"
+	wantPrefix := coord.Path() + "@" + coord.Version() + "/"
 	for _, zf := range zr.File {
 		if !strings.HasPrefix(zf.Name, wantPrefix) {
 			t.Errorf("zip entry %q lacks prefix %q", zf.Name, wantPrefix)

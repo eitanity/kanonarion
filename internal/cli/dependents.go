@@ -143,14 +143,14 @@ func walkDependents(rec walkdomain.WalkRecord, coord coordinate.ModuleCoordinate
 	var out []dependentResult
 
 	for _, edge := range rec.Graph.Edges {
-		if edge.To.Path != coord.Path || edge.To.Version != coord.Version {
+		if edge.To.Path() != coord.Path() || edge.To.Version() != coord.Version() {
 			continue
 		}
 		if seen[edge.From] {
 			continue
 		}
 		seen[edge.From] = true
-		isRoot := edge.From.Path == rec.Target.Path && edge.From.Version == rec.Target.Version
+		isRoot := edge.From.Path() == rec.Target.Path() && edge.From.Version() == rec.Target.Version()
 		if isRoot && !includeRoot {
 			continue
 		}
@@ -166,10 +166,10 @@ func walkDependents(rec walkdomain.WalkRecord, coord coordinate.ModuleCoordinate
 		if out[i].Root != out[j].Root {
 			return out[i].Root
 		}
-		if out[i].Coord.Path != out[j].Coord.Path {
-			return out[i].Coord.Path < out[j].Coord.Path
+		if out[i].Coord.Path() != out[j].Coord.Path() {
+			return out[i].Coord.Path() < out[j].Coord.Path()
 		}
-		return out[i].Coord.Version < out[j].Coord.Version
+		return out[i].Coord.Version() < out[j].Coord.Version()
 	})
 	return out
 }
@@ -191,8 +191,8 @@ func writeDependentsJSON(w io.Writer, walkID, target string, deps []dependentRes
 	entries := make([]dependentEntryJSON, len(deps))
 	for i, d := range deps {
 		entries[i] = dependentEntryJSON{
-			Module:  d.Coord.Path,
-			Version: d.Coord.Version,
+			Module:  d.Coord.Path(),
+			Version: d.Coord.Version(),
 			Direct:  d.Direct,
 			Root:    d.Root,
 		}
@@ -254,7 +254,7 @@ func writeDependentsText(w io.Writer, walkID, target string, deps []dependentRes
 		case d.Direct:
 			annotation = "  [direct]"
 		}
-		if _, err := fmt.Fprintf(w, "  %s@%s%s\n", d.Coord.Path, d.Coord.Version, annotation); err != nil {
+		if _, err := fmt.Fprintf(w, "  %s@%s%s\n", d.Coord.Path(), d.Coord.Version(), annotation); err != nil {
 			return fmt.Errorf("writing dependent: %w", err)
 		}
 	}

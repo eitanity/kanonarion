@@ -99,6 +99,16 @@ un-analysable merely for a build your project never produces. A *single-module*
 `inspect <module@version>` or `vuln-scan --module <module@version>` is the
 coordinate-keyed view: it scans that module in isolation as its own main module,
 which is the intended "look at it on its own" analysis and is unchanged.
+(`vuln-scan --module` resolves the latest walk **rooted at** that coordinate — a
+walk that merely contains it as a dependency is a different thing, and is scanned
+by its walk id.)
+
+A module whose every matched advisory was **retracted upstream** reads `Withdrawn`,
+not `Clean`, and is reported in its own section with the retraction date. `Clean`
+says no advisory ever applied; `Withdrawn` says one did and was withdrawn. Folding
+the two together is what let a retracted advisory read exactly like an advisory that
+never existed — and, on the other side of the same gap, let one be reported as a live
+finding for a module nothing was wrong with.
 
 **Drive the pipeline stage by stage.** `walk`, `extract`, and `vuln-scan` all
 key off a **walk id**. `walk` prints it, and you can always resolve the most
@@ -141,7 +151,9 @@ Kanonarion is designed to be called directly from agent tool-use. The recommende
 | Generate a third-party attribution / NOTICE file | `notice --package ./cmd/<binary>` |
 | "What does function F call?"               | `callees '<fully.qualified.Symbol>'` |
 | "What calls function F?" / impact analysis | `callers '<fully.qualified.Symbol>'` |
-| Make callers/callees resolve my own project's symbols | `local <dir>` |
+| "Which types implement this interface?" / port-change scoping | `implementers '<pkg/path.Interface>'` |
+| Scope an answer to production code only    | add `--exclude-tests` to any of the three |
+| Make those queries resolve my own project's symbols | `local <dir>` |
 | Dependency upgraded - what changed?        | `walk-diff <old-id> <new-id>` |
 | "Is there a newer version of X?"           | `latest <module>` |
 | Audit this project's supply-chain hygiene  | `directives` / `godebug` / `vendor` / `fips` |
@@ -158,7 +170,8 @@ All query commands support `--json` for machine-readable output, making them eas
 - **Reachability-aware vulnerability scanning.** Integrates govulncheck with optional `--reachability` filtering. CVEs your code can't actually reach are triaged down, not paged on at 2am.
 - **Licence compliance with provenance.** Per-module SPDX licence detection with a full transitive summary, classified as Detected, Unclassified, or None.
 - **Interface extraction.** Full public API surface - types, functions, methods, constants - in structured JSON the agent can consume directly.
-- **Call graph.** Intra-module call graph for impact analysis and reachability queries.
+- **Call graph with a three-valued verdict.** Intra-module call graph for impact analysis and reachability queries. Every answer says whether an empty result is a *measurement* (`RESOLVED-ABSENT`) or an *undecided* one (`UNRESOLVED`, naming what blocked it) - so "nothing calls this" is never a guess dressed as a fact. `_test.go` declarations are in the graph and tagged, because test fakes are most of the edit surface of an interface change; `--exclude-tests` narrows any query to production code and says so on the verdict line.
+- **Interface implementers.** `implementers` lists the concrete types satisfying an interface, including ones that satisfy it only by embedding - the question a port-signature change actually raises, and one a grep for the method name answers wrongly.
 - **Usage examples.** Verified code snippets extracted from module test files, so the agent codes against patterns that actually work.
 - **Policy gates.** Walk-traversal rules in YAML - max depth, whether replace directives and indirect requirements are followed, and which VCS forges may be cross-verified against - validated with `policy validate`.
 - **SBOM generation.** CycloneDX 1.6 software bill of materials from any walk, with a full dependency graph and per-component `SHA-256/384/512` artefact hashes computed at download. The Go standard library is a first-class component, verified against Go's published source-tarball checksum; `--stdlib-from-gomod` pins its version to the `go.mod` directive for reproducible release artifacts.

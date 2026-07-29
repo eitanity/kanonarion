@@ -272,8 +272,8 @@ func (s *strippedFS) ReadDir(dir string) ([]fs.DirEntry, error) {
 			continue
 		}
 		// Only entries at this level (no nested slash).
-		slash := strings.IndexByte(rel, '/')
-		if slash < 0 {
+		before, _, ok := strings.Cut(rel, "/")
+		if !ok {
 			// file at this level
 			if !seen[rel] {
 				seen[rel] = true
@@ -282,7 +282,7 @@ func (s *strippedFS) ReadDir(dir string) ([]fs.DirEntry, error) {
 			}
 		} else {
 			// directory
-			dname := rel[:slash]
+			dname := before
 			if !seen[dname] {
 				seen[dname] = true
 				entries = append(entries, &syntheticDirEntry{name: dname})

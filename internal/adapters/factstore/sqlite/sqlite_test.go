@@ -2,11 +2,13 @@ package sqlite_test
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 )
@@ -63,7 +65,7 @@ func TestPutGetFetchRecord_DigestsRoundTrip(t *testing.T) {
 	if err := s.PutFetchRecord(ctx, mustSeal(t, r)); err != nil {
 		t.Fatalf("Put: %v", err)
 	}
-	got, ok, err := s.GetFetchRecord(ctx, coordinate.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}, r.PipelineVersion)
+	got, ok, err := s.GetFetchRecord(ctx, coordinatetest.MustNew(r.ModulePath, r.ModuleVersion), r.PipelineVersion)
 	if err != nil || !ok {
 		t.Fatalf("Get: ok=%v err=%v", ok, err)
 	}
@@ -81,7 +83,7 @@ func TestPutGetFetchRecord(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 
-	got, ok, err := s.GetFetchRecord(ctx, coordinate.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}, r.PipelineVersion)
+	got, ok, err := s.GetFetchRecord(ctx, coordinatetest.MustNew(r.ModulePath, r.ModuleVersion), r.PipelineVersion)
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -100,7 +102,7 @@ func TestGetFetchRecord_NotFound(t *testing.T) {
 	s := openMemStore(t)
 	ctx := context.Background()
 
-	_, ok, err := s.GetFetchRecord(ctx, coordinate.ModuleCoordinate{Path: "x", Version: "v1.0.0"}, "0.1.0")
+	_, ok, err := s.GetFetchRecord(ctx, coordinatetest.MustNew("x", "v1.0.0"), "0.1.0")
 	if err != nil {
 		t.Fatalf("Get: %v", err)
 	}
@@ -134,7 +136,7 @@ func TestPutFetchRecord_AppendsRatherThanOverwrites(t *testing.T) {
 		t.Fatalf("second Put: %v", err)
 	}
 
-	coord := coordinate.ModuleCoordinate{Path: first.ModulePath, Version: first.ModuleVersion}
+	coord := coordinatetest.MustNew(first.ModulePath, first.ModuleVersion)
 	held, err := s.ListFetchRecords(ctx, coord, first.PipelineVersion)
 	if err != nil {
 		t.Fatalf("ListFetchRecords: %v", err)
@@ -167,7 +169,7 @@ func TestPutFetchRecord_IdenticalRewriteIsANoOp(t *testing.T) {
 	}
 
 	held, err := s.ListFetchRecords(ctx,
-		coordinate.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}, r.PipelineVersion)
+		coordinatetest.MustNew(r.ModulePath, r.ModuleVersion), r.PipelineVersion)
 	if err != nil {
 		t.Fatalf("ListFetchRecords: %v", err)
 	}
@@ -199,12 +201,68 @@ func TestGetFetchRecord_IntegrityError(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	_, ok, err := s.GetFetchRecord(ctx, coordinate.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}, r.PipelineVersion)
+	_, ok, err := s.GetFetchRecord(ctx, coordinatetest.MustNew(r.ModulePath, r.ModuleVersion), r.PipelineVersion)
 	if err == nil {
 		t.Fatal("a tampered record was reported without error; a detected tamper must never read as absence")
 	}
 	if ok {
 		t.Error("a tampered record must not be reported as found")
+	}
+}
+
+// SealedRecord is meant to be self-evidencing: holding one proves its contents
+// were hashed, because Seal and Rehydrate are the only ways to make one. The
+// type system does not quite deliver that — SealedRecord is an exported struct,
+// so any package can write domain2.SealedRecord{} and hold a value that sealed
+// nothing. Stored, it becomes an all-empty row that every later read treats as a
+// genuine measurement of the empty module at the empty version, with a content
+// hash of "" that no verification can distinguish from a record whose fields
+// really are empty. The write is refused instead.
+func TestPutFetchRecord_RefusesTheZeroSealedRecord(t *testing.T) {
+	s := openMemStore(t)
+
+	fetchtest.AssertRefusesUnsealed(t, s)
+
+	// The leg the shared assertion cannot cover: it has no reader, so whether the
+	// refusal also left the ledger untouched is checked by the store that has one.
+	var n int
+	if qerr := s.InternalDB().DB().QueryRow("SELECT COUNT(*) FROM fetch_records").Scan(&n); qerr != nil {
+		t.Fatalf("counting rows: %v", qerr)
+	}
+	if n != 0 {
+		t.Errorf("the refused write left %d row(s) behind", n)
+	}
+}
+
+// The guard has to hold under the decorator the production path actually uses.
+// An audit entry for a record that was never stored would put a measurement in
+// the log that no ledger row backs — the audit log's whole claim is that it
+// mirrors the writes.
+func TestAuditingStore_RefusesTheZeroSealedRecordAndLogsNothing(t *testing.T) {
+	dir := t.TempDir()
+	auditPath := filepath.Join(dir, "audit.jsonl")
+	inner, err := sqlite.Open(filepath.Join(dir, "facts.db"))
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	store, err := sqlite.NewAuditingStore(inner, auditPath)
+	if err != nil {
+		t.Fatalf("NewAuditingStore: %v", err)
+	}
+	defer func() {
+		if cerr := store.Close(); cerr != nil {
+			t.Errorf("store.Close: %v", cerr)
+		}
+	}()
+
+	fetchtest.AssertRefusesUnsealed(t, store)
+
+	data, rerr := os.ReadFile(auditPath) //nolint:gosec // test-owned temp path
+	if rerr != nil && !os.IsNotExist(rerr) {
+		t.Fatalf("reading audit log: %v", rerr)
+	}
+	if len(data) != 0 {
+		t.Errorf("the refused write was mirrored into the audit log: %s", data)
 	}
 }
 
@@ -218,7 +276,7 @@ func TestGetFetchRecord_Retracted(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	got, ok, err := s.GetFetchRecord(ctx, coordinate.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}, r.PipelineVersion)
+	got, ok, err := s.GetFetchRecord(ctx, coordinatetest.MustNew(r.ModulePath, r.ModuleVersion), r.PipelineVersion)
 	if err != nil || !ok {
 		t.Fatalf("Get: err=%v ok=%v", err, ok)
 	}

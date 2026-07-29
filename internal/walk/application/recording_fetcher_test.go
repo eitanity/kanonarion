@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
@@ -68,7 +69,7 @@ func (f *recorderFakeFetcher) callCount(path, version string) int {
 }
 
 func (f *recorderFakeFetcher) EnsureFetched(_ context.Context, c coordinate.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
-	k := c.Path + "@" + c.Version
+	k := c.Path() + "@" + c.Version()
 	f.mu.Lock()
 	f.calls[k]++
 	shouldPanic := f.panicOn[k]
@@ -117,13 +118,13 @@ func newRecorderForTestWithProgress(inner walkports.ModuleFetcher, progress walk
 		inner,
 		&fakeStopwatch2{},
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
-		coordinate.ModuleCoordinate{Path: "example.com/target", Version: "v1.0.0"},
+		coordinatetest.MustNew("example.com/target", "v1.0.0"),
 		progress,
 	)
 }
 
 func rcoord(path, version string) coordinate.ModuleCoordinate {
-	return coordinate.ModuleCoordinate{Path: path, Version: version}
+	return coordinatetest.MustNew(path, version)
 }
 
 func TestRecordingFetcher_RecordsFirstCallOutcome(t *testing.T) {
@@ -207,8 +208,7 @@ func TestRecordingFetcher_RecoversFromPanic(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error from panic recovery, got nil")
 	}
-	var pe *panicError
-	if !errors.As(err, &pe) {
+	if _, ok := errors.AsType[*panicError](err); !ok {
 		t.Errorf("err type = %T, want *panicError", err)
 	}
 
@@ -254,13 +254,11 @@ func TestRecordingFetcher_ConcurrentSameCoord(t *testing.T) {
 	var wg sync.WaitGroup
 	var errCount atomic.Int32
 	for range n {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+		wg.Go(func() {
 			if _, err := r.EnsureFetched(context.Background(), rcoord("example.com/a", "v1.0.0")); err != nil {
 				errCount.Add(1)
 			}
-		}()
+		})
 	}
 	wg.Wait()
 	if errCount.Load() != 0 {

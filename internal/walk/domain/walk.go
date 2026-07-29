@@ -41,7 +41,7 @@ func (s WalkStatus) String() string {
 
 // MarshalJSON implements json.Marshaler for WalkStatus.
 func (s WalkStatus) MarshalJSON() ([]byte, error) {
-	return []byte(fmt.Sprintf("%q", s.String())), nil
+	return fmt.Appendf(nil, "%q", s.String()), nil
 }
 
 // UnmarshalJSON implements json.Unmarshaler for WalkStatus.

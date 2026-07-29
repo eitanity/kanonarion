@@ -162,7 +162,7 @@ func toInterfaceRecordJSON(r ifacedomain.InterfaceRecord) interfaceRecordJSON {
 	}
 	return interfaceRecordJSON{
 		SchemaVersion:   r.SchemaVersion,
-		Coordinate:      coordinateJSON{Path: r.Coordinate.Path, Version: r.Coordinate.Version},
+		Coordinate:      coordinateJSON{Path: r.Coordinate.Path(), Version: r.Coordinate.Version()},
 		Packages:        pkgs,
 		OverallStatus:   r.OverallStatus.String(),
 		FailureDetail:   r.FailureDetail,

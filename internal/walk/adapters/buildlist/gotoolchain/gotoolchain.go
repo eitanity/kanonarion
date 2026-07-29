@@ -114,8 +114,7 @@ func (r *Resolver) run(ctx context.Context, dir string, args ...string) ([]byte,
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
+		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 			return nil, fmt.Errorf("go %s: %w\n%s", strings.Join(args, " "), err, exitErr.Stderr)
 		}
 		return nil, fmt.Errorf("go %s: %w", strings.Join(args, " "), err)

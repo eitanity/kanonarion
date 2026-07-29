@@ -106,11 +106,48 @@ func loadPolicy(ctx context.Context, policyPath string, logger *slog.Logger) (wa
 			slog.String("version", result.Policy.Version),
 			slog.String("hash", result.ContentHash),
 		)
-		return result.Policy, result.ContentHash, nil
+		return applyConfigVCSHosts(ctx, result.Policy, logger), result.ContentHash, nil
 	}
 
 	logger.InfoContext(ctx, "policy.defaults", slog.String("reason", "no policy file found"))
-	return walkdomain.DefaultDepthPolicy(), "", nil
+	return applyConfigVCSHosts(ctx, walkdomain.DefaultDepthPolicy(), logger), "", nil
+}
+
+// applyConfigVCSHosts overlays the store config's fetch_policy.allowed_vcs_hosts
+// onto the resolved depth policy when the policy file did not set it.
+//
+// The depth policy file wins where both speak. It is the narrower, per-project
+// artefact, and it is the one whose content hash is recorded on the walk — an
+// operator who wrote allowed_vcs_hosts into it has said something specific
+// about this project, and a machine-level default must not quietly override it.
+// Where the policy file is silent, the config supplies the operator's standing
+// answer instead of leaving the built-in advisory set to apply by default.
+//
+// Setting it here rather than at each use site means the value flows into the
+// same StageDepth every command already reads, so `walk`, `fetch`, `audit` and
+// `inspect` cannot drift apart on which forges they will contact.
+func applyConfigVCSHosts(ctx context.Context, p walkdomain.DepthPolicy, logger *slog.Logger) walkdomain.DepthPolicy {
+	hosts := activeConfig.FetchPolicy.AllowedVCSHosts
+	if len(hosts) == 0 {
+		return p
+	}
+	fetch := p.FetchStage()
+	if fetch.AllowedVCSHosts != nil {
+		logger.InfoContext(ctx, "policy.vcs_hosts.policy_file_wins",
+			slog.Int("config_hosts", len(hosts)))
+		return p
+	}
+	// Copy before writing: DepthPolicy carries a map, and callers hold the
+	// default policy value in package state.
+	stages := make(map[string]walkdomain.StageDepth, len(p.Stages)+1)
+	for k, v := range p.Stages {
+		stages[k] = v
+	}
+	fetch.AllowedVCSHosts = &hosts
+	stages["fetch"] = fetch
+	p.Stages = stages
+	logger.InfoContext(ctx, "policy.vcs_hosts.from_config", slog.Int("hosts", len(hosts)))
+	return p
 }
 
 // findPolicyFile searches from the current working directory upward for
@@ -158,7 +195,7 @@ func readPackageModules(pattern string) ([]string, error) {
 	}
 	seen := make(map[string]bool)
 	var coords []string
-	for _, line := range strings.Split(string(out), "\n") {
+	for line := range strings.SplitSeq(string(out), "\n") {
 		line = strings.TrimSpace(line)
 		// Skip blank lines and the local module (no version suffix after @).
 		if line == "" || strings.HasSuffix(line, "@") || seen[line] {
@@ -264,11 +301,12 @@ func goListBuildList(dir string) ([]string, error) {
 	})
 }
 
-// runGoListCoords executes `go <args>` in dir and parses its line-oriented
-// "path@version" output into a sorted, de-duplicated slice. Blank lines (emitted
-// by the templates for skipped packages) are dropped.
-func runGoListCoords(dir string, args []string) ([]string, error) {
-	cmd := exec.Command("go", args...) // #nosec G204 -- args are ./..., go.mod tool directive package paths, or the fixed `list -m all`
+// runGoList executes `go <args>` in dir and returns its raw stdout. The absence
+// of the toolchain is named rather than reported as a generic exec failure, and
+// a non-zero exit carries the toolchain's own stderr, which says more about a
+// broken module graph than any message this could invent.
+func runGoList(dir string, args []string) ([]byte, error) {
+	cmd := exec.Command("go", args...) // #nosec G204 -- args are ./..., a Go package pattern from a developer CLI flag, go.mod tool directive package paths, or the fixed `list -m all`
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
@@ -281,9 +319,20 @@ func runGoListCoords(dir string, args []string) ([]string, error) {
 		}
 		return nil, fmt.Errorf("go %s: %w", strings.Join(args, " "), err)
 	}
+	return out, nil
+}
+
+// runGoListCoords executes `go <args>` in dir and parses its line-oriented
+// "path@version" output into a sorted, de-duplicated slice. Blank lines (emitted
+// by the templates for skipped packages) are dropped.
+func runGoListCoords(dir string, args []string) ([]string, error) {
+	out, err := runGoList(dir, args)
+	if err != nil {
+		return nil, err
+	}
 	seen := make(map[string]bool)
 	var coords []string
-	for _, line := range strings.Split(string(out), "\n") {
+	for line := range strings.SplitSeq(string(out), "\n") {
 		line = strings.TrimSpace(line)
 		if line == "" || strings.HasSuffix(line, "@") || seen[line] {
 			continue
@@ -785,8 +834,7 @@ func (e *exitError) Error() string { return e.msg }
 // Used by main to translate categorised errors (e.g. ExitNotFound) into
 // distinct process exit codes rather than the catch-all ExitConfig.
 func ExitCodeFromError(err error) (int, bool) {
-	var ee *exitError
-	if errors.As(err, &ee) {
+	if ee, ok := errors.AsType[*exitError](err); ok {
 		return ee.code, true
 	}
 	return 0, false
@@ -813,8 +861,7 @@ func ExitCodeForError(err error) int {
 	// goSumWalkGate; a store-inspection command reports it and exits 0 (see
 	// reportDivergence), so the tool used to diagnose the problem is not the one
 	// that refuses to run.
-	var divergence *fetchdomain.Divergence
-	if errors.As(err, &divergence) {
+	if _, ok := errors.AsType[*fetchdomain.Divergence](err); ok {
 		return ExitIntegrity
 	}
 	return ExitConfig

@@ -2,9 +2,16 @@
 // `git ls-remote` against the Go source repository to resolve a release tag to
 // its commit — the VCS-anchor half of the standard-library chain of custody.
 //
-// Runtime dependency: git must be present in PATH. A missing git binary or an
-// unreachable remote surfaces as an error, which the acquirer records as an
-// unresolved commit rather than a failure.
+// Runtime dependency: git must be present in PATH, version 2.32 or newer. A
+// missing git binary or an unreachable remote surfaces as an error, which the
+// acquirer records as an unresolved commit rather than a failure.
+//
+// The subprocess runs under the shared gitenv baseline: an allowlisted
+// environment, no config discovery, and a private working directory. This
+// lookup carries no attacker-controlled URL — repoURL is the compile-time
+// constant domain.VCSRepoURL and tag is always prefixed into refs/tags/ — so
+// the baseline is applied for consistency and to keep the two git call sites
+// from drifting apart, not to close a known exposure here.
 package gitlsremote
 
 import (
@@ -17,6 +24,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/vcs/gitenv"
 	"github.com/eitanity/kanonarion/internal/stdlib/ports"
 )
 
@@ -52,11 +60,26 @@ func (r *Resolver) ResolveCommit(ctx context.Context, repoURL, tag string) (stri
 	ctx, cancel := context.WithTimeout(ctx, r.timeout)
 	defer cancel()
 
+	// ls-remote needs no repository, so it runs in a private empty directory
+	// rather than wherever the parent happens to be. That is not incidental:
+	// kanonarion is routinely invoked from inside a git repository, and a
+	// repository-local .git/config is the one config file the environment
+	// overrides cannot switch off. A url.<base>.insteadOf read from it would
+	// redirect this lookup to a mirror while the resulting record still claimed
+	// the canonical Go repository as its anchor.
+	home, cleanup, err := gitenv.ScratchHome()
+	if err != nil {
+		return "", fmt.Errorf("isolating git config for ls-remote: %w", err)
+	}
+	defer cleanup()
+
 	ref := "refs/tags/" + tag
+	args := append(gitenv.ConfigArgs(), "ls-remote", "--tags", "--end-of-options", repoURL, ref, ref+"^{}")
 	// #nosec G204 -- binary is hard-coded "git"; repoURL is the fixed Go source
 	// repository and the transport is restricted to https via GIT_ALLOW_PROTOCOL.
-	cmd := exec.CommandContext(ctx, "git", "ls-remote", "--tags", repoURL, ref, ref+"^{}")
-	cmd.Env = append(cmd.Environ(), "GIT_ALLOW_PROTOCOL="+r.allowedProtocols, "GIT_TERMINAL_PROMPT=0")
+	cmd := exec.CommandContext(ctx, "git", args...)
+	cmd.Dir = home
+	cmd.Env = gitenv.Base(home, home, r.allowedProtocols)
 
 	var stdout, stderr bytes.Buffer
 	cmd.Stdout = &stdout

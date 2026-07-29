@@ -16,6 +16,7 @@ import (
 
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
 	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
+	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
@@ -90,7 +91,17 @@ type auditModuleResult struct {
 	License       string `json:"license"`
 	LicenseStatus string `json:"license_status"`
 	VulnStatus    string `json:"vuln_status"`
-	VulnFindings  int    `json:"vuln_findings"`
+	// VulnFindings counts every advisory the record carries, retracted ones
+	// included. Its meaning is deliberately unchanged: narrowing it to live
+	// advisories would have altered the number under an existing field name, with
+	// the same type and no signal, so a consumer parsing this JSON would silently
+	// read a different fact than the one it was written against.
+	VulnFindings int `json:"vuln_findings"`
+	// VulnWithdrawn counts the retracted subset of VulnFindings; live advisories are
+	// the difference. It is a new field, so a consumer that has never heard of it
+	// reads exactly what it read before, and one that has can tell a retraction from
+	// a finding — which the single tally could not express.
+	VulnWithdrawn int `json:"vuln_withdrawn,omitempty"`
 	// VulnReason carries the diagnostic for a non-clean, non-affected status
 	// (ScanFailed → ErrorDetail, Unscannable → UnscannableReason). Absent for
 	// Clean/Affected. Without it a ScanFailed row is an "absence-as-answer".
@@ -120,6 +131,16 @@ type auditModuleResult struct {
 	// modules (Direct=false) appear alongside direct ones and the
 	// compliance picture spans the full closure, not just the require lines.
 	Direct bool `json:"direct"`
+
+	// coverage is this module's contribution to the run's verification-coverage
+	// aggregate, captured from the same record read that filled Verification.
+	// Taking it from the same read is what makes the aggregate equal the rows by
+	// construction rather than by a second lookup that could disagree.
+	//
+	// Unexported deliberately: the aggregate is reported on stderr, and adding a
+	// field here would change the documented `audit --json` array element for
+	// every consumer to carry a per-row copy of a whole-graph figure.
+	coverage fetchdomain.CoverageObservation
 }
 
 func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error {
@@ -184,6 +205,13 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 		return err
 	}
 
+	// The aggregate goes to stderr on both paths: a whole-graph collapse in
+	// cross-verification is invisible in a populated status column, and stdout
+	// is the data channel --json callers pipe into jq.
+	if cerr := writeVerificationCoverage(stderr, auditVerificationCoverage(results)); cerr != nil {
+		return cerr
+	}
+
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
@@ -227,11 +255,11 @@ func auditScope(
 		return nil, err
 	}
 
-	wf := commonWalkFlags{goproxy: f.goproxy}
 	_, _ = fmt.Fprintf(stderr, "==> audit: walking project %s (%d %s dependencies)\n", f.gomodPath, len(coords), scope)
 
 	progress := newWalkProgressReporter(stderr, false, activeConfig, logLevel)
-	if werr := runWalkProject(ctx, f.gomodPath, wf, f.force, true, 0, "", f.policyPath, f.skipVCSVerify, scope, walkdomain.WalkDepthFull, "", false, f.stdlibFromGoMod, progress, ctr.ExecuteWalk, io.Discard, stderr); werr != nil {
+	if werr := runWalkProject(ctx, f.gomodPath, f.force, true, 0, "", f.policyPath, f.skipVCSVerify, scope,
+		walkdomain.WalkDepthFull, "", false, f.stdlibFromGoMod, progress, ctr.ExecuteWalk, nil, io.Discard, stderr); werr != nil {
 		// A partial walk is tolerated (allowPartial=true above): individual
 		// unfetchable nodes surface as "(not fetched)" rows. Only a hard walk
 		// failure or cancellation leaves no usable record.
@@ -239,7 +267,10 @@ func auditScope(
 	}
 
 	// The project walk's target is the local main module; find its record.
-	localCoord := coordinate.ModuleCoordinate{Path: modulePath, Version: coordinate.LocalVersion}
+	localCoord, cErr := coordinate.NewLocalCoordinate(modulePath)
+	if cErr != nil {
+		return nil, fmt.Errorf("project coordinate for %s: %w", modulePath, cErr)
+	}
 	walkScope := walkdomain.WalkScope(scope)
 	walks, qerr := ctr.QueryWalks.ListWalks(ctx, walkports.WalkFilter{Target: &localCoord, Scope: &walkScope, Limit: 1})
 	if qerr != nil {
@@ -274,7 +305,7 @@ func auditScope(
 	}
 
 	_, _ = fmt.Fprintf(stderr, "==> audit: scanning vulnerabilities for walk %s\n", walkID)
-	if verr := runVulnScan(ctx, walkID, commonWalkFlags{}, f.force, f.fresh, false, 1, false, false, "", os.Getenv("USER"), filepath.Dir(f.gomodPath), io.Discard, stderr); verr != nil {
+	if verr := runVulnScan(ctx, walkID, f.force, f.fresh, false, 1, false, false, "", os.Getenv("USER"), filepath.Dir(f.gomodPath), f.policyPath, io.Discard, stderr); verr != nil {
 		_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", verr)
 	}
 
@@ -341,7 +372,7 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, sc
 	}
 
 	if proxy != nil {
-		if info, lerr := proxy.LatestInfo(ctx, coord.Path); lerr == nil && info.Version != coord.Version {
+		if info, lerr := proxy.LatestInfo(ctx, coord.Path()); lerr == nil && info.Version != coord.Version() {
 			res.IsLatest = false
 			res.LatestVersion = info.Version
 			if !info.Time.IsZero() {
@@ -356,6 +387,11 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, sc
 
 	if frec, found, ferr := ctr.QueryFetch.GetFetchRecord(ctx, coord, fetchapp.PipelineVersion); ferr == nil && found {
 		res.Verification = frec.VerificationStatus
+		res.coverage = fetchdomain.CoverageObservation{
+			Bucket:   fetchdomain.BucketForVerification(fetchdomain.VerificationStatus(frec.VerificationStatus)),
+			Legs:     frec.Legs,
+			Recorded: true,
+		}
 	} else if !found {
 		res.Verification = "(not fetched)"
 	}
@@ -409,7 +445,7 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, sc
 	}
 
 	vrec, found, verr := ctr.QueryVuln.GetLatestRecordForWalk(ctx, coord, vulnPipelineVersion, walkID)
-	res.VulnStatus, res.VulnReason, res.VulnFindings = vulnAuditStatus(vrec, found, verr)
+	res.VulnStatus, res.VulnReason, res.VulnFindings, res.VulnWithdrawn = vulnAuditStatus(vrec, found, verr)
 
 	return res, nil
 }
@@ -430,20 +466,37 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, sc
 //
 // Both audit paths share this so they cannot drift into disagreeing about the
 // same condition, which is how one of them came to have no error branch at all.
-func vulnAuditStatus(rec vulndomain.VulnerabilityRecord, found bool, err error) (status, reason string, findings int) {
+// findings counts every advisory on the record and withdrawn counts the retracted
+// subset of it, so the live count is the difference. Reporting only the total made
+// the row read "Withdrawn (1 findings)" — a finding asserted and denied in one
+// line — while narrowing the total instead would have changed what an existing
+// field means without saying so.
+func vulnAuditStatus(rec vulndomain.VulnerabilityRecord, found bool, err error) (status, reason string, findings, withdrawn int) {
 	if err != nil {
-		return "(scan record unreadable)", "reading vulnerability record: " + err.Error(), 0
+		return "(scan record unreadable)", "reading vulnerability record: " + err.Error(), 0, 0
 	}
 	if !found {
-		return "(not scanned)", "", 0
+		return "(not scanned)", "", 0, 0
 	}
-	switch rec.OverallStatus {
-	case vulndomain.StatusScanFailed:
+	// Which diagnostic explains the row is a coverage question, so it is asked of
+	// the coverage axis. The collapsed word cannot answer it: a metadata-only
+	// record that matched an advisory summarises as Affected, so its coverage gap
+	// went unexplained here while the findings count reported the match.
+	coverage, _ := vulndomain.RecordAxes(rec)
+	switch coverage {
+	case vulndomain.CoverageFailedScan:
 		reason = rec.ErrorDetail
-	case vulndomain.StatusUnscannable:
+	case vulndomain.CoverageUnscannable:
 		reason = rec.UnscannableReason
+	case vulndomain.CoverageAnalysed:
+		// Analysed: the status word stands on its own, no caveat to explain.
 	}
-	return string(rec.OverallStatus), reason, len(rec.Findings)
+	for _, f := range rec.Findings {
+		if f.IsWithdrawn() {
+			withdrawn++
+		}
+	}
+	return string(rec.OverallStatus), reason, len(rec.Findings), withdrawn
 }
 
 // buildStdlibAuditResult reports the standard-library node's custody chain from
@@ -469,6 +522,11 @@ func buildStdlibAuditResult(ctx context.Context, coord coordinate.ModuleCoordina
 	if node.Stdlib != nil {
 		if node.Stdlib.VerificationStatus != "" {
 			res.Verification = node.Stdlib.VerificationStatus
+			// The stdlib's custody rides on the graph node, not a fetch record,
+			// and it carries no validation legs — so it reports as measured for
+			// the status buckets and as not-measured for the ledger, which is
+			// exactly what it is.
+			res.coverage = stdlibCoverageObservation(node)
 		}
 		res.LicenseSource = "stdlib-tarball"
 		if node.Stdlib.LicenseSPDX != "" {
@@ -489,8 +547,21 @@ func buildStdlibAuditResult(ctx context.Context, coord coordinate.ModuleCoordina
 	}
 
 	vrec, found, verr := ctr.QueryVuln.GetLatestRecordForWalk(ctx, coord, vulnPipelineVersion, walkID)
-	res.VulnStatus, res.VulnReason, res.VulnFindings = vulnAuditStatus(vrec, found, verr)
+	res.VulnStatus, res.VulnReason, res.VulnFindings, res.VulnWithdrawn = vulnAuditStatus(vrec, found, verr)
 	return res
+}
+
+// auditVerificationCoverage aggregates the run's own rows. It reads the
+// observations captured alongside each row's Verification column rather than
+// consulting the store again, so the acceptance the ticket asks for — that the
+// counts equal the per-module statuses in the same run — holds by construction
+// instead of by two reads agreeing.
+func auditVerificationCoverage(results []auditModuleResult) fetchdomain.VerificationCoverage {
+	obs := make([]fetchdomain.CoverageObservation, 0, len(results))
+	for _, r := range results {
+		obs = append(obs, r.coverage)
+	}
+	return fetchdomain.VerificationCoverageOf(obs)
 }
 
 // auditBlockingErr returns a non-nil error when any result is a hard
@@ -524,9 +595,18 @@ func printAuditTable(stdout io.Writer, results []auditModuleResult) error {
 	}
 	for _, r := range results {
 		vuln := r.VulnStatus
-		if r.VulnFindings > 0 {
-			vuln = fmt.Sprintf("%s (%d findings)", r.VulnStatus, r.VulnFindings)
-		} else if r.VulnReason != "" {
+		// live is the difference, because VulnFindings counts the retracted ones too.
+		live := r.VulnFindings - r.VulnWithdrawn
+		switch {
+		case live > 0 && r.VulnWithdrawn > 0:
+			vuln = fmt.Sprintf("%s (%d findings, %d retracted)", r.VulnStatus, live, r.VulnWithdrawn)
+		case live > 0:
+			vuln = fmt.Sprintf("%s (%d findings)", r.VulnStatus, live)
+		case r.VulnWithdrawn > 0:
+			// Named as retracted, never as findings: the count column sits beside a
+			// Withdrawn status word, and "1 findings" there contradicts it.
+			vuln = fmt.Sprintf("%s (%d retracted)", r.VulnStatus, r.VulnWithdrawn)
+		case r.VulnReason != "":
 			// The reason (govulncheck stderr) is multi-line and too wide for
 			// the table; direct the reader to vuln-show, which renders it.
 			vuln = fmt.Sprintf("%s (see vuln-show)", r.VulnStatus)

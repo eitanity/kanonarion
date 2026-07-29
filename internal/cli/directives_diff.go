@@ -269,8 +269,7 @@ func runDirectivesDiff(ctx context.Context, scanA, scanB string, stdout, stderr 
 func directivesDiffWith(ctx context.Context, ctr *Container, scanA, scanB string, stdout io.Writer) error {
 	diff, err := ctr.DiffDirectives.Diff(ctx, scanA, scanB)
 	if err != nil {
-		var notFound *dirapp.ErrScanNotFound
-		if errors.As(err, &notFound) {
+		if notFound, ok := errors.AsType[*dirapp.ErrScanNotFound](err); ok {
 			return &exitError{code: ExitNotFound, msg: notFound.Error()}
 		}
 		return fmt.Errorf("diffing directive scans: %w", err)

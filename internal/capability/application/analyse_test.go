@@ -20,7 +20,7 @@ func (f fakeSource) GetCallGraphRecord(_ context.Context, coord coordinate.Modul
 	if f.err != nil {
 		return cgdomain.CallGraphRecord{}, false, f.err
 	}
-	rec, ok := f.records[coord.Path+"@"+coord.Version]
+	rec, ok := f.records[coord.Path()+"@"+coord.Version()]
 	return rec, ok, nil
 }
 

@@ -9,6 +9,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	"github.com/eitanity/kanonarion/internal/iface/adapters/store/sqlite"
 	domain2 "github.com/eitanity/kanonarion/internal/iface/domain"
 	"github.com/eitanity/kanonarion/internal/iface/ports"
@@ -53,9 +54,10 @@ func makeRecord(t *testing.T) domain2.InterfaceRecord {
 				Vars:   []domain2.ValueDecl{{Name: "ErrClosed", Type: "error"}},
 			},
 		},
-		OverallStatus:   domain2.InterfaceStatusExtracted,
-		ExtractedAt:     time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
-		PipelineVersion: "0.1.0",
+		OverallStatus:    domain2.InterfaceStatusExtracted,
+		ExtractedAt:      time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
+		PipelineVersion:  "0.1.0",
+		ArtefactIdentity: fetchtest.ZipArtefact("test-zip=").String(),
 	}
 	var h domain2.InterfaceRecordHasher
 	r, err = h.SetContentHash(r)
@@ -132,7 +134,7 @@ func TestStore_ListInterfaceRecords(t *testing.T) {
 	if len(sums) != 1 {
 		t.Fatalf("expected 1 summary, got %d", len(sums))
 	}
-	if sums[0].ModulePath != r.Coordinate.Path {
+	if sums[0].ModulePath != r.Coordinate.Path() {
 		t.Errorf("ModulePath: %q", sums[0].ModulePath)
 	}
 	if sums[0].PackageCount != len(r.Packages) {
@@ -180,7 +182,7 @@ func TestStore_FindSymbol(t *testing.T) {
 	}
 
 	// Find a type symbol.
-	refs, err := s.FindSymbol(context.Background(), "Client", r.PipelineVersion)
+	refs, err := s.FindSymbol(context.Background(), "Client", r.PipelineVersion, coordinate.ModuleSet{})
 	if err != nil {
 		t.Fatalf("FindSymbol: %v", err)
 	}
@@ -209,7 +211,7 @@ func TestStore_FindSymbol_Method(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	refs, err := s.FindSymbol(context.Background(), "Do", r.PipelineVersion)
+	refs, err := s.FindSymbol(context.Background(), "Do", r.PipelineVersion, coordinate.ModuleSet{})
 	if err != nil {
 		t.Fatalf("FindSymbol: %v", err)
 	}
@@ -235,7 +237,7 @@ func TestStore_FindSymbol_Func_Signature(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	refs, err := s.FindSymbol(context.Background(), "New", r.PipelineVersion)
+	refs, err := s.FindSymbol(context.Background(), "New", r.PipelineVersion, coordinate.ModuleSet{})
 	if err != nil {
 		t.Fatalf("FindSymbol: %v", err)
 	}
@@ -272,9 +274,10 @@ func TestStore_FindSymbol_MultiPackage_Disambiguates(t *testing.T) {
 				},
 			},
 		},
-		OverallStatus:   domain2.InterfaceStatusExtracted,
-		ExtractedAt:     time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
-		PipelineVersion: "0.1.0",
+		OverallStatus:    domain2.InterfaceStatusExtracted,
+		ExtractedAt:      time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC),
+		PipelineVersion:  "0.1.0",
+		ArtefactIdentity: fetchtest.ZipArtefact("test-zip=").String(),
 	}
 	var h domain2.InterfaceRecordHasher
 	r, err := h.SetContentHash(r)
@@ -286,7 +289,7 @@ func TestStore_FindSymbol_MultiPackage_Disambiguates(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	refs, err := s.FindSymbol(context.Background(), "Marshal", r.PipelineVersion)
+	refs, err := s.FindSymbol(context.Background(), "Marshal", r.PipelineVersion, coordinate.ModuleSet{})
 	if err != nil {
 		t.Fatalf("FindSymbol: %v", err)
 	}
@@ -312,7 +315,7 @@ func TestStore_FindSymbol_MultiPackage_Disambiguates(t *testing.T) {
 
 func TestStore_FindSymbol_NotFound(t *testing.T) {
 	s := openStore(t)
-	refs, err := s.FindSymbol(context.Background(), "NoSuchSymbol", "0.1.0")
+	refs, err := s.FindSymbol(context.Background(), "NoSuchSymbol", "0.1.0", coordinate.ModuleSet{})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -334,7 +337,7 @@ func TestStore_Put_RebuildIndex(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	refs, err := s.FindSymbol(context.Background(), "Client", r.PipelineVersion)
+	refs, err := s.FindSymbol(context.Background(), "Client", r.PipelineVersion, coordinate.ModuleSet{})
 	if err != nil {
 		t.Fatal(err)
 	}

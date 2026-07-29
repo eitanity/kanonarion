@@ -50,7 +50,16 @@ With no arguments, inspect defaults to --gomod ./go.mod and runs the pipeline
 over the project's own code dependencies, printing a summary instead of
 per-module context. The dependency scope is consistent with every go.mod
 command: default = code, --tool = tooling, --project = complete (code +
-tooling).`,
+tooling).
+
+Memory: the vuln-scan stage sizes its module-scan pool against this host's
+available memory, because a single source-mode scan of a cloud-SDK-heavy module
+can hold several GB. That budget is per-process and is measured once, at the
+start of the scan. Two inspect runs on one host therefore each admit a full pool
+against the same free memory and share no budget with each other, so they can
+still exhaust the host and have their scanners OOM-killed — which reports the
+affected modules as unanalysed, not as clean. Run them one at a time on a host
+that is tight on memory.`,
 		Example: `  kanonarion inspect github.com/spf13/cobra@v1.8.1
   kanonarion inspect modernc.org/sqlite@latest --reachability
   kanonarion inspect
@@ -118,7 +127,7 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 		return fmt.Errorf("writing output: %w", err)
 	}
 	progress := newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
-	if err := runWalk(ctx, arg, wf, f.force, true, 0, "", f.policyPath, f.skipVCS, domain.WalkScopeCode, domain.WalkDepthFull, "", progress, ctr.ExecuteWalk, io.Discard, stderr); err != nil {
+	if err := runWalk(ctx, arg, wf, f.force, true, 0, f.policyPath, f.skipVCS, domain.WalkScopeCode, domain.WalkDepthFull, "", progress, ctr.ExecuteWalk, nil, io.Discard, stderr); err != nil {
 		return fmt.Errorf("walk: %w", err)
 	}
 
@@ -158,7 +167,7 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 	// reader with the repetitive half of the presentation and threw away the
 	// concise half. stdout stays the clean data channel because inspect always
 	// scans with jsonOut=false, so nothing machine-readable is written here.
-	if err := runVulnScan(ctx, walkID, commonWalkFlags{}, f.force, f.fresh, f.reachable, 1, false, false, f.goBinary, os.Getenv("USER"), "", stderr, stderr); err != nil {
+	if err := runVulnScan(ctx, walkID, f.force, f.fresh, f.reachable, 1, false, false, f.goBinary, os.Getenv("USER"), "", f.policyPath, stderr, stderr); err != nil {
 		return fmt.Errorf("vuln-scan: %w", err)
 	}
 
@@ -303,32 +312,23 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 		return err
 	}
 
-	wf := commonWalkFlags{goproxy: f.goproxy}
 	_, _ = fmt.Fprintf(stderr, "==> inspect --gomod: walking project %s\n", f.gomodPath)
 
 	var nodeFails int
 	progress := newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
-	if werr := runWalkProject(ctx, f.gomodPath, wf, f.force, true, 0, "", f.policyPath, f.skipVCS, scope, domain.WalkDepthFull, "", false, f.stdlibFromGoMod, progress, ctr.ExecuteWalk, io.Discard, stderr); werr != nil {
+	if werr := runWalkProject(ctx, f.gomodPath, f.force, true, 0, "", f.policyPath, f.skipVCS, scope,
+		domain.WalkDepthFull, "", false, f.stdlibFromGoMod, progress, ctr.ExecuteWalk, nil, io.Discard, stderr); werr != nil {
 		_, _ = fmt.Fprintf(stderr, "walk: %v\n", werr)
 		nodeFails = 1
 	}
 
 	// Look up the project walk record for its ID and node counts.
-	localCoord := coordinate.ModuleCoordinate{Path: modulePath, Version: coordinate.LocalVersion}
-	walkScope := domain.WalkScope(scope)
-	walks, qerr := ctr.QueryWalks.ListWalks(ctx, walkports.WalkFilter{Target: &localCoord, Scope: &walkScope, Limit: 1})
+	walkID, moduleCount, walkFails, qerr := latestProjectWalkSummary(ctx, ctr.QueryWalks, modulePath, scope)
 	if qerr != nil {
-		return fmt.Errorf("querying project walk: %w", qerr)
+		return qerr
 	}
-
-	var walkID string
-	var moduleCount int
-	if len(walks) > 0 {
-		walkID = walks[0].ID
-		moduleCount = walks[0].NodeCount
-		if walks[0].FailureCount > 0 && nodeFails == 0 {
-			nodeFails = walks[0].FailureCount
-		}
+	if walkFails > 0 && nodeFails == 0 {
+		nodeFails = walkFails
 	}
 
 	var extractFails, scanFails int
@@ -358,7 +358,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 		// stderr, not io.Discard — see the note on the same call in runInspect:
 		// the grouped roll-up is the concise presentation and belongs to the
 		// reader, while stdout stays reserved for the context output.
-		if verr := runVulnScan(ctx, walkID, commonWalkFlags{}, f.force, f.fresh, f.reachable, 1, false, false, f.goBinary, os.Getenv("USER"), filepath.Dir(f.gomodPath), stderr, stderr); verr != nil {
+		if verr := runVulnScan(ctx, walkID, f.force, f.fresh, f.reachable, 1, false, false, f.goBinary, os.Getenv("USER"), filepath.Dir(f.gomodPath), f.policyPath, stderr, stderr); verr != nil {
 			_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", verr)
 			scanFails = 1
 		}
@@ -500,4 +500,24 @@ func latestWalkIDForCoordScope(ctx context.Context, uc QueryWalksUseCase, coord 
 		return "", fmt.Errorf("no walk found for %s after walk step", coord)
 	}
 	return walks[0].ID, nil
+}
+
+// latestProjectWalkSummary returns the id, node count and failure count of the
+// most recent walk rooted at the local main module under scope. All three are
+// zero when no such walk has been recorded, which is not an error: the caller
+// reports on what the store holds.
+func latestProjectWalkSummary(ctx context.Context, q QueryWalksUseCase, modulePath string, scope depScope) (string, int, int, error) {
+	localCoord, err := coordinate.NewLocalCoordinate(modulePath)
+	if err != nil {
+		return "", 0, 0, fmt.Errorf("project coordinate for %s: %w", modulePath, err)
+	}
+	walkScope := domain.WalkScope(scope)
+	walks, err := q.ListWalks(ctx, walkports.WalkFilter{Target: &localCoord, Scope: &walkScope, Limit: 1})
+	if err != nil {
+		return "", 0, 0, fmt.Errorf("querying project walk: %w", err)
+	}
+	if len(walks) == 0 {
+		return "", 0, 0, nil
+	}
+	return walks[0].ID, walks[0].NodeCount, walks[0].FailureCount, nil
 }

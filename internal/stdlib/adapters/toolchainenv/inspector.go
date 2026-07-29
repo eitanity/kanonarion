@@ -44,8 +44,7 @@ func (i *Inspector) Locate(ctx context.Context) (goRoot, goVersion string, err e
 	cmd := exec.CommandContext(ctx, i.goBin(), "env", "GOROOT", "GOVERSION") // #nosec G204 -- binary path is either "go" (hardcoded) or caller-supplied and trusted
 	out, runErr := cmd.Output()
 	if runErr != nil {
-		var exitErr *exec.ExitError
-		if errors.As(runErr, &exitErr) {
+		if exitErr, ok := errors.AsType[*exec.ExitError](runErr); ok {
 			return "", "", fmt.Errorf("go env GOROOT GOVERSION: %w\n%s", runErr, exitErr.Stderr)
 		}
 		return "", "", fmt.Errorf("go env GOROOT GOVERSION: %w", runErr)

@@ -171,10 +171,8 @@ func (uc *ExtractUseCase) Execute(ctx context.Context, req ExtractRequest) (doma
 	var completed atomic.Int64
 
 	var wg sync.WaitGroup
-	for w := 0; w < workers; w++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range workers {
+		wg.Go(func() {
 			for j := range jobs {
 				if ctx.Err() != nil {
 					cancelled.Store(true)
@@ -244,7 +242,7 @@ func (uc *ExtractUseCase) Execute(ctx context.Context, req ExtractRequest) (doma
 					req.Progress.Advance(int(completed.Add(1)))
 				}
 			}
-		}()
+		})
 	}
 
 	wg.Wait()

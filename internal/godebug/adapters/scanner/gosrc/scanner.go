@@ -208,7 +208,7 @@ func scanFile(path string) ([]foundSetting, error) {
 // skipped rather than guessed at.
 func parseSettings(body string, line int) []foundSetting {
 	var out []foundSetting
-	for _, frag := range strings.Split(body, ",") {
+	for frag := range strings.SplitSeq(body, ",") {
 		frag = strings.TrimSpace(frag)
 		k, v, ok := strings.Cut(frag, "=")
 		k = strings.TrimSpace(k)

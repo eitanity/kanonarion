@@ -89,10 +89,10 @@ func (uc *CheckCompatibilityUseCase) CheckCompatibilityForWalk(
 		coords = append(coords, node.Coordinate)
 	}
 	sort.Slice(coords, func(i, j int) bool {
-		if coords[i].Path != coords[j].Path {
-			return coords[i].Path < coords[j].Path
+		if coords[i].Path() != coords[j].Path() {
+			return coords[i].Path() < coords[j].Path()
 		}
-		return coords[i].Version < coords[j].Version
+		return coords[i].Version() < coords[j].Version()
 	})
 
 	// Expand each module into one CompatibilityInput per effective SPDX.
@@ -103,16 +103,16 @@ func (uc *CheckCompatibilityUseCase) CheckCompatibilityForWalk(
 		spdxs := resolveEffectiveSPDXs(ctx, uc.store, coord)
 		if len(spdxs) == 0 {
 			modules = append(modules, domain.CompatibilityInput{
-				ModulePath:    coord.Path,
-				ModuleVersion: coord.Version,
+				ModulePath:    coord.Path(),
+				ModuleVersion: coord.Version(),
 				SPDX:          "", // unknown — treated as VerdictUnknownPair
 			})
 			continue
 		}
 		for _, spdx := range spdxs {
 			modules = append(modules, domain.CompatibilityInput{
-				ModulePath:    coord.Path,
-				ModuleVersion: coord.Version,
+				ModulePath:    coord.Path(),
+				ModuleVersion: coord.Version(),
 				SPDX:          spdx,
 			})
 		}

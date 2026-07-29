@@ -296,14 +296,22 @@ the coverage it saw, never a confident SPDX it cannot stand behind.
 
 | Field | Type | Description |
 |---|---|---|
-| `status` | string | `not_run` / `read_error` / scan status (e.g. `Clean`, `Vulnerable`) |
+| `status` | string | `not_run` / `read_error` / scan status (`Clean`, `Affected`, `Withdrawn`, `Unscannable`, `ScanFailed`) |
 | `findings` | array | CVE findings |
 | `findings[].id` | string | Primary CVE / GHSA identifier |
 | `findings[].aliases` | array | Alternative identifiers |
 | `findings[].summary` | string | One-line description |
 | `findings[].fixed_in` | string | Earliest version with a fix |
 | `findings[].score` | float | CVSS score |
+| `findings[].withdrawn_at` | string | Retraction timestamp, present **only** on an advisory retracted upstream. Absent means live — the retraction is a fact on the finding, never something to infer from the `WITHDRAWN: ` prefix upstream puts on the summary |
 | `findings[].reachable` | bool | Reachability verdict (null if not analysed) |
+
+A retracted advisory stays in `findings` as the historical fact, so a module whose
+every advisory was withdrawn reports `status: Withdrawn` with its findings intact
+rather than reading as never-affected. It does **not** appear in any peer's
+`walk_affected`, which names only modules something must be done about. In text
+output the tally beside the status counts the two apart — `Withdrawn (1 retracted)`,
+or `Affected (2 finding(s), 1 retracted)` for a mixture.
 | `walk_status` | string | The walk run's collapsed `overall_status` (`AllClean` / `Affected` / `Partial` / `ScanFailed`), carried as a compatibility summary. It collapses two independent axes into one word, so read `walk_coverage` for coverage rather than deriving it here |
 | `walk_coverage` | string | The coverage axis of the walk run, set only when the run left modules unanalysed (`Partial` or `Failed`). Independent of findings: it surfaces alongside `walk_affected`, so an incomplete-coverage run that also carries an affected peer states both |
 | `walk_affected` | array | Affected walk peers (`module@version`) that lie in **this module's own transitive dependency closure**, sorted; empty/omitted when no affected peer is reachable from this module |

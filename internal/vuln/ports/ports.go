@@ -3,6 +3,7 @@ package ports
 import (
 	"context"
 	"errors"
+	"fmt"
 	"io"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -24,13 +25,87 @@ type AuditSink interface {
 // integrity failures.
 var ErrCallGraphNotFound = errors.New("call graph record not found")
 
+// ErrVulnIntegrity is returned by the vulnerability store's read paths when a
+// stored record's content hash does not describe its contents, and by the write
+// path when asked to persist a record whose hash does not describe what it is
+// about to store.
+//
+// A read reports it instead of absence deliberately: a detected tamper reported
+// as "nothing here" becomes a silent re-scan that overwrites the evidence of the
+// tamper. It lives here rather than in the adapter so a caller can match the
+// failure without importing the store.
+var ErrVulnIntegrity = errors.New("vulnerability record integrity check failed")
+
+// ErrSnapshotIntegrity is returned by the vulnerability store when the advisory
+// database snapshot itself fails its integrity check: on write when the
+// caller-declared hash contradicts the bytes handed over, and on read when the
+// stored blob no longer matches its stored hash or is not the snapshot the caller
+// asked for.
+//
+// It is separate from ErrVulnIntegrity because the two failures have
+// incomparable blast radius. A corrupt record invalidates one module's verdict; a
+// corrupt snapshot invalidates every verdict derived from it, and the records in
+// a working store reference a handful of snapshots between them. A caller that
+// would fail the module on one and abort the run and re-fetch the database on the
+// other could not tell them apart while both answered to one sentinel.
+//
+// It deliberately does not wrap ErrVulnIntegrity. Wrapping would make
+// errors.Is(err, ErrVulnIntegrity) true for a snapshot failure — the exact
+// conflation this removes — and would keep every existing broad match working
+// while making the narrow one impossible to write.
+//
+// A snapshot that is absent is not an integrity failure and matches neither
+// sentinel; nor is a snapshot stored before hashing existed, which reads back as
+// unverifiable rather than as corrupt.
+var ErrSnapshotIntegrity = errors.New("vulnerability database snapshot integrity check failed")
+
+// SnapshotIntegrityAbort wraps a snapshot integrity failure into the error that
+// ends the run, and lives beside the sentinel so both scan paths abort with the
+// same sentence rather than each inventing one.
+//
+// The failure is not survivable by design. The snapshot is the evidence every
+// finding in the run rests on, and the run's records name it, so continuing
+// against a live database would answer from a different advisory set than the
+// records claim — findings indistinguishable from ones actually derived from the
+// snapshot they cite. Falling back is worse than the failure it papers over.
+//
+// This run leaves the corrupt blob alone: it is the evidence of the tamper, and
+// re-fetching over it silently would destroy the one artefact an investigation
+// needs. The message says so, and says the opposite thing too — that the remedy
+// it recommends DOES overwrite it. Measured, not assumed: PutDatabaseSnapshot
+// upserts on (source, version), so a --fresh re-fetch of the same dated snapshot
+// version replaces the altered bytes in place and leaves nothing to examine. An
+// operator who wants the evidence must copy the store first, and would otherwise
+// learn that only after destroying it.
+func SnapshotIntegrityAbort(snapshot domain.DatabaseSnapshot, err error) error {
+	return fmt.Errorf(
+		"%w: the advisory database snapshot %s@%s does not match the bytes it is recorded as, "+
+			"so no finding derived from it can be vouched for and the run must not claim it; "+
+			"this run left the stored blob untouched as evidence — copy the store before re-fetching, "+
+			"because re-fetching (--fresh) overwrites this snapshot in place",
+		err, snapshot.Source, snapshot.Version)
+}
+
 // VulnerabilityStore defines the port for persisting vulnerability records.
+//
+// The zero coordinate is the one value the signatures cannot exclude: Go
+// always permits coordinate.ModuleCoordinate{}, and it names no module.
+// Implementations MUST refuse it with coordinate.ErrZeroCoordinate — on a
+// write because it would key a row on the empty path at the empty version,
+// which every later read treats as a genuine measurement, and on a read
+// because absence is the wrong answer to a question about no module.
+// coordinatetest.AssertRefusesZeroCoordinate pins the rule for every store.
 type VulnerabilityStore interface {
-	// PutVulnerabilityRecord persists a vulnerability record for a module.
-	// Idempotent on (coordinate, pipelineVersion, snapshotIdentity).
+	// PutVulnerabilityRecord appends a scan to the ledger. It never updates a
+	// record: two distinct scans of one coordinate — under two snapshots, in two
+	// analysis frames, or simply repeated — are always two records, and only a
+	// byte-identical re-write is idempotent.
 	PutVulnerabilityRecord(ctx context.Context, record domain.VulnerabilityRecord) error
 
-	// GetVulnerabilityRecord retrieves a record by coordinate, pipeline version, and snapshot.
+	// GetVulnerabilityRecord returns the composed record for a coordinate,
+	// pipeline version and snapshot, across every analysis frame the ledger holds.
+	// It is the read for a caller that has declined to name a frame; see
+	// domain.Compose for the ladder it serves on.
 	GetVulnerabilityRecord(
 		ctx context.Context,
 		coord coordinate.ModuleCoordinate,
@@ -38,8 +113,36 @@ type VulnerabilityStore interface {
 		snapshot domain.DatabaseSnapshot,
 	) (domain.VulnerabilityRecord, bool, error)
 
-	// GetLatestVulnerabilityRecord returns the most recently scanned record for a
-	// coordinate and pipeline version, regardless of snapshot or walk ID.
+	// GetVulnerabilityRecordAt returns the composed record within one analysis
+	// frame, and (zero, false, nil) when the ledger holds none reached in it.
+	//
+	// A caller that has a frame — a scan deciding whether an earlier record may
+	// be reused, a run reading back what it wrote — MUST use this rather than
+	// GetVulnerabilityRecord. An isolated scan and a target-rooted scan answer
+	// different questions, so serving one for the other attributes a reachability
+	// finding to a build it was never computed against.
+	GetVulnerabilityRecordAt(
+		ctx context.Context,
+		coord coordinate.ModuleCoordinate,
+		pipelineVersion string,
+		snapshot domain.DatabaseSnapshot,
+		rooting domain.Rooting,
+	) (domain.VulnerabilityRecord, bool, error)
+
+	// HasVulnerabilityRecord reports whether the ledger holds the exact
+	// generation named by contentHash. It answers "was this measurement kept",
+	// which composition cannot: the record a read serves is not necessarily the
+	// one a given run wrote, because an earlier generation may outrank it.
+	HasVulnerabilityRecord(
+		ctx context.Context,
+		coord coordinate.ModuleCoordinate,
+		pipelineVersion string,
+		snapshot domain.DatabaseSnapshot,
+		contentHash string,
+	) (bool, error)
+
+	// GetLatestVulnerabilityRecord returns the composed record for a coordinate
+	// and pipeline version across every snapshot and frame the ledger holds.
 	// Returns (zero, false, nil) if no record exists.
 	GetLatestVulnerabilityRecord(
 		ctx context.Context,
@@ -82,16 +185,24 @@ type VulnerabilityStore interface {
 	// ListDatabaseSnapshots returns all stored snapshot metadata, most recent first.
 	ListDatabaseSnapshots(ctx context.Context) ([]domain.DatabaseSnapshot, error)
 
-	// ListVulnerabilityRecordsByFindingID returns all vulnerability records across
-	// the store that contain a finding with the given OSV/CVE/GHSA identifier.
-	ListVulnerabilityRecordsByFindingID(ctx context.Context, findingID string) ([]domain.VulnerabilityRecord, error)
+	// ListVulnerabilityRecordsByFindingID returns the vulnerability records that
+	// contain a finding with the given OSV/CVE/GHSA identifier.
+	//
+	// An empty walkID answers across the whole store — every module version,
+	// pipeline version and snapshot generation it holds, including versions no
+	// current build contains. A non-empty walkID restricts the answer to the
+	// modules a scan run of that walk covered, and an unknown walkID is an
+	// error rather than an empty result.
+	ListVulnerabilityRecordsByFindingID(ctx context.Context, findingID, walkID string) ([]domain.VulnerabilityRecord, error)
 
 	// ListVulnerabilityRecords returns all vulnerability records for a walk scan run.
 	ListVulnerabilityRecords(ctx context.Context, walkScanRunID string) ([]domain.VulnerabilityRecord, error)
 
-	// ListVulnerabilityRecordsForModule returns all stored scan records for a
-	// coordinate and pipeline version across all walks and snapshots, ordered
-	// by scanned_at descending (most recent first).
+	// ListVulnerabilityRecordsForModule returns every generation the ledger holds
+	// for a coordinate and pipeline version, across all walks, snapshots and
+	// analysis frames, ordered by scanned_at descending (most recent first). It
+	// is the history read: the superseded records are still here, each stating
+	// the evidence it rested on.
 	ListVulnerabilityRecordsForModule(
 		ctx context.Context,
 		coord coordinate.ModuleCoordinate,
@@ -219,6 +330,24 @@ type ModuleFetcher interface {
 	// those versions are never compiled, so downloading their zips is discarded
 	// work.
 	FetchModuleGoMod(ctx context.Context, coord coordinate.ModuleCoordinate) error
+}
+
+// HostMemory reports how much memory the host can hand to new work right now.
+// It exists so the module-scan worker pool can size itself against a real
+// budget instead of against the CPU count alone: each govulncheck source-mode
+// scan of a cloud-SDK-heavy module holds multiple GB, so a pool sized purely by
+// cores can exhaust the host and be OOM-killed, which reports every module as
+// unanalysed rather than as scanned.
+//
+// It is a port rather than a direct /proc read so the cap is injectable in
+// tests, and so a host that cannot answer degrades to the CPU-only cap instead
+// of failing the scan.
+type HostMemory interface {
+	// AvailableBytes returns the memory available for new allocations without
+	// swapping. An error means the reading could not be taken — never that the
+	// host has no memory — and callers MUST treat it as "unknown" and fall back
+	// to their CPU-derived cap rather than refusing to run.
+	AvailableBytes() (uint64, error)
 }
 
 // ReachabilityAnalyser defines the port for call-graph-based reachability analysis.

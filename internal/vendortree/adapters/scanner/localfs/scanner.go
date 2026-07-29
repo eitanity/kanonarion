@@ -155,7 +155,7 @@ func parseGoSum(path string) (map[string]string, error) {
 		return nil, fmt.Errorf("reading go.sum %q: %w", path, err)
 	}
 	out := map[string]string{}
-	for _, ln := range strings.Split(string(data), "\n") {
+	for ln := range strings.SplitSeq(string(data), "\n") {
 		fields := strings.Fields(ln)
 		if len(fields) != 3 {
 			continue

@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
-	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -12,6 +11,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
@@ -20,6 +20,23 @@ import (
 // Store implements ports.VulnerabilityStore using SQLite.
 type Store struct {
 	db sqlitestore.DB
+}
+
+// querier is the read surface *sql.DB and *sql.Tx have in common, so a helper
+// can be called either standalone or inside an open transaction. The pool holds
+// one connection, which makes the choice mandatory rather than stylistic: a
+// helper that reached for the store's own handle from inside a transaction
+// would wait on the connection that transaction is holding.
+type querier interface {
+	QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row
+	QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error)
+}
+
+// execQuerier is querier plus the write surface, for a helper that both reads
+// the ledger and rewrites a satellite inside the caller's transaction.
+type execQuerier interface {
+	querier
+	ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error)
 }
 
 // New returns a new Store.
@@ -291,25 +308,416 @@ DELETE FROM walk_scan_runs;
 DELETE FROM walk_scan_run_modules;
 `,
 		},
+		{
+			Module:  "vuln",
+			Version: 9,
+			// Both legs of this store now verify a record's content hash, so a row
+			// carrying an empty one is a row no read can return. Such rows exist:
+			// the local-replace and worker-failure paths persisted records without
+			// hashing them at all, because nothing checked. They are Unscannable
+			// and ScanFailed verdicts with no findings, regenerable by re-scanning,
+			// so they are deleted rather than back-filled — computing a hash for
+			// them here would seal bytes this migration never read as evidence.
+			//
+			// This must land before the read-leg check goes live, or the first read
+			// of such a row starts failing. Their index entries go with them (an
+			// Unscannable record indexes no finding, so this is belt and braces).
+			// Their walk_scan_run_modules membership is deliberately left alone: a
+			// run that named a module it can no longer produce a record for is
+			// surfaced by the scan-show read as a verdict with nothing backing it,
+			// which is the honest report of what the deletion did.
+			SQL: `
+DELETE FROM vulnerability_findings_index
+WHERE EXISTS (
+    SELECT 1 FROM vulnerability_records r
+    WHERE r.content_hash = ''
+      AND r.module_path      = vulnerability_findings_index.module_path
+      AND r.module_version   = vulnerability_findings_index.module_version
+      AND r.pipeline_version = vulnerability_findings_index.pipeline_version
+      AND r.snapshot_source  = vulnerability_findings_index.snapshot_source
+      AND r.snapshot_version = vulnerability_findings_index.snapshot_version
+);
+
+DELETE FROM vulnerability_records WHERE content_hash = '';
+`,
+		},
+		{
+			Module:  "vuln",
+			Version: 10,
+			// WITHDRAWN. This migration used to hash every stored snapshot blob in
+			// place, to give the pre-existing rows the content hash they were
+			// written without.
+			//
+			// That sealed the wrong claim. A snapshot's content hash answers "are
+			// these the bytes we fetched"; hashing at migration time answers "are
+			// these the bytes we held when the migration ran". A blob altered before
+			// that moment would have been blessed by the migration and verified
+			// cleanly ever after, and the resulting seal is indistinguishable from
+			// an honest one — so the check would report integrity it never
+			// established.
+			//
+			// The version number is retained and made a no-op rather than removed,
+			// because schema_migrations is keyed on (module, version) and a store
+			// that already applied it must not renumber. Migration 12 unseals the
+			// rows this one sealed on stores where it ran.
+			//
+			// A pre-hash snapshot therefore stays unverifiable, which is what it
+			// honestly is: the read leg tolerates an empty hash and reports such a
+			// blob as unverified rather than as verified. Nothing is lost that these
+			// rows ever had, and they age out as fresh snapshots are fetched.
+			SQL: ``,
+		},
+		{
+			Module:  "vuln",
+			Version: 11,
+			// A VulnerabilityRecord now carries the same two independent verdict
+			// axes a WalkScanRun does — coverage (was this module analysed?) and
+			// findings (did the analysis report anything?) — instead of only the
+			// single collapsed overall_status, which mixed answers to both. Persist
+			// them as columns so the ranking query can ask a findings question
+			// without treating "we could not look" as "we looked and it was clean".
+			//
+			// The back-fill is exact, not a guess: the projection from the collapsed
+			// status onto each axis is total and lossless (Clean and Affected are
+			// analysed; Unscannable and ScanFailed are the two coverage failures,
+			// neither of which reports a finding). It is the same mapping the write
+			// path applies, expressed in SQL.
+			//
+			// The records themselves are kept. Unlike migration 8's walk_scan_runs
+			// purge — where a legacy blob had no axis at all and a reader would
+			// silently lose a finding — a pre-split record's axes are recoverable
+			// from what it already stores, and RecordAxes recovers them on read. The
+			// PipelineVersion bump means new scans write the new shape; deleting
+			// thousands of still-readable verdicts to reach the same place would
+			// destroy evidence rather than correct it.
+			SQL: `
+ALTER TABLE vulnerability_records ADD COLUMN coverage_status TEXT NOT NULL DEFAULT '';
+ALTER TABLE vulnerability_records ADD COLUMN findings_status TEXT NOT NULL DEFAULT '';
+
+UPDATE vulnerability_records SET
+    coverage_status = CASE overall_status
+        WHEN 'Clean'       THEN 'Analysed'
+        WHEN 'Affected'    THEN 'Analysed'
+        WHEN 'Unscannable' THEN 'Unscannable'
+        ELSE 'Failed'
+    END,
+    findings_status = CASE overall_status
+        WHEN 'Affected' THEN 'Affected'
+        ELSE 'Clean'
+    END;
+
+CREATE INDEX IF NOT EXISTS vuln_records_findings_status_idx
+  ON vulnerability_records(findings_status);
+`,
+		},
+		{
+			Module:  "vuln",
+			Version: 12,
+			// Unseal the snapshots migration 10 sealed, on stores where it ran
+			// before it was withdrawn (see the note there). Such a hash attests
+			// only that the blob was unchanged since the migration, while being
+			// indistinguishable from one taken at fetch — so it reports an
+			// integrity guarantee that was never established, which is worse than
+			// reporting none.
+			//
+			// The rows to clear are exactly those retrieved BEFORE migration 10 ran:
+			// a snapshot fetched afterwards was sealed by the fetch path against the
+			// bytes it downloaded, and that hash is honest and must survive. Both
+			// timestamps are RFC3339 in UTC, so the string comparison is
+			// chronological.
+			//
+			// When migration 10 has no recorded applied_at — impossible in practice,
+			// since it is applied before this one — the subquery is NULL, the
+			// predicate is false and nothing is touched. Failing closed is right: the
+			// alternative would clear honestly-sealed rows.
+			SQL: `
+UPDATE vulnerability_snapshots
+SET content_hash = ''
+WHERE content_hash != ''
+  AND retrieved_at < (
+    SELECT applied_at FROM schema_migrations
+    WHERE module = 'vuln' AND version = 10
+  );
+`,
+		},
+		{
+			Module:  "vuln",
+			Version: 13,
+			// Correct the coverage axis migration 11 back-filled from the collapsed
+			// status word.
+			//
+			// That back-fill was exact for the projection it applied, but the word it
+			// projected from is not always a coverage answer. A writer that has both a
+			// coverage gap and a matching advisory can put only one of them in the
+			// single word, and it puts the finding there: the metadata-only fallback
+			// records Affected and leaves the gap in unscan_reason. Migration 11 read
+			// Affected and wrote 'Analysed', so 74 rows persist a claim that a module
+			// was analysed when only its coordinate was ever matched — the exact
+			// over-claim the axis exists to prevent.
+			//
+			// The diagnostics on the record are the evidence the word discarded, and
+			// they are read here in the same precedence the domain applies
+			// (DetermineRecordCoverage): a named reason means Unscannable, an error
+			// detail alone means Failed — a look that went wrong rather than a module
+			// that cannot be looked at.
+			//
+			// Three guards keep it to rows that are genuinely wrong. Only rows whose
+			// blob states no coverage_status of its own are touched, so a record that
+			// asserted its axis at seal time keeps the value its content hash covers;
+			// only rows currently claiming 'Analysed'; and only rows that actually
+			// carry a diagnostic to re-derive from.
+			//
+			// No PipelineVersion bump: coverage_status is absent from the blob of every
+			// row this touches (the field is omitempty and these predate the split),
+			// so no stored content hash covers the value being corrected and no record
+			// stops verifying.
+			SQL: `
+UPDATE vulnerability_records
+SET coverage_status = CASE
+        WHEN COALESCE(json_extract(serialised, '$.unscan_reason'), '') != ''
+          OR COALESCE(json_extract(serialised, '$.unscannable_reason'), '') != ''
+        THEN 'Unscannable'
+        ELSE 'Failed'
+    END
+WHERE json_extract(serialised, '$.coverage_status') IS NULL
+  AND coverage_status = 'Analysed'
+  AND (COALESCE(json_extract(serialised, '$.unscan_reason'), '') != ''
+    OR COALESCE(json_extract(serialised, '$.unscannable_reason'), '') != ''
+    OR COALESCE(json_extract(serialised, '$.error_detail'), '') != '');
+`,
+		},
+		{
+			Module:  "vuln",
+			Version: 14,
+			// The ledger, plus the identity axis the old key discarded.
+			//
+			// The key was (module, version, pipeline, snapshot). Two things follow
+			// from that, and both are defects rather than economies.
+			//
+			// First, every re-scan UPDATEd its predecessor, so the store could not
+			// say what it previously held. A vulnerability finding legitimately
+			// changes for one artefact — a new advisory lands, an advisory is
+			// retracted, a reachability finding is corrected by a better call graph
+			// — and the overwrite destroyed the earlier finding each time, which is
+			// the one fact an audit asks about by date.
+			//
+			// Second, and worse, the key had no place for the ANALYSIS FRAME. A
+			// target-rooted scan and an isolated scan of the same coordinate under
+			// the same snapshot are two answers to two different questions, and they
+			// overwrote each other: whichever ran last survived, and nothing recorded
+			// which question the survivor answered. Coordinate-keyed walks scan
+			// target-rooted while `kanonarion vuln <module>` scans in isolation, so
+			// both kinds are written in a working store today.
+			//
+			// The new key adds the time of measurement and the record's own content
+			// hash, so every scan that passes is its own row. rooting is a COLUMN and
+			// not a key column, for the same reason the licence ledger left the
+			// artefact identity out of its key: the frame is inside the hashed shape,
+			// so two records stating different frames necessarily carry different
+			// content hashes and the key already separates them. Putting it in the
+			// key would additionally split every pre-existing row — all of which
+			// state no frame — into a partition of its own, so the first re-scan of a
+			// module would land in a group its own history could not be reconciled
+			// with. The column exists so a reader can filter and count frames without
+			// decoding 9,276 blobs.
+			//
+			// walk_id stays a provenance column, and this conversion is what finally
+			// makes it honest. It used to be re-stamped in place on every cache
+			// reuse, so it named the last walk to touch the row rather than the walk
+			// the measurement was made in; a row is now immutable, so it names the
+			// walk that produced it. Membership of later runs lives in
+			// walk_scan_run_modules, which is where it always belonged.
+			//
+			// ON CONFLICT DO NOTHING on the write covers the one remaining collision:
+			// the byte-identical record written twice. That is one measurement, not
+			// two, so dropping it discards no evidence — and it must not be an error,
+			// or a retried write would fail a run that had already succeeded.
+			//
+			// Existing rows carry in as the first generation with no purge. No
+			// content hash is touched and no PipelineVersion is bumped: the rooting
+			// field is omitempty and absent from every stored blob, so the canonical
+			// shape of every existing record is unchanged.
+			//
+			// The satellites get the same treatment, because both reference a record
+			// by the key that is changing:
+			//
+			//   - vulnerability_findings_index gains rooting in its key. Without it,
+			//     writing an isolated record would clear the index rows a
+			//     target-rooted record put there — the reconciliation added to keep a
+			//     later all-clear from leaving a retracted finding behind would start
+			//     retracting the OTHER frame's live findings instead.
+			//   - walk_scan_run_modules gains record_content_hash, so a run names the
+			//     exact generation it scanned rather than a coordinate that now
+			//     resolves to several. Legacy rows carry the empty string and are
+			//     resolved by composition, which is the honest reading of a run that
+			//     recorded only a coordinate.
+			SQL: `
+CREATE TABLE vulnerability_records_ledger (
+    module_path        TEXT NOT NULL,
+    module_version     TEXT NOT NULL,
+    pipeline_version   TEXT NOT NULL,
+    snapshot_source    TEXT NOT NULL,
+    snapshot_version   TEXT NOT NULL,
+    rooting            TEXT NOT NULL DEFAULT '',
+    walk_id            TEXT,
+    overall_status     TEXT NOT NULL,
+    coverage_status    TEXT NOT NULL DEFAULT '',
+    findings_status    TEXT NOT NULL DEFAULT '',
+    finding_count      INTEGER NOT NULL,
+    scanned_at         TEXT NOT NULL,
+    first_scanned_at   TEXT NOT NULL DEFAULT '',
+    content_hash       TEXT NOT NULL,
+    serialised         BLOB NOT NULL,
+    PRIMARY KEY (module_path, module_version, pipeline_version,
+                 snapshot_source, snapshot_version, scanned_at, content_hash)
+);
+
+INSERT INTO vulnerability_records_ledger (
+    module_path, module_version, pipeline_version,
+    snapshot_source, snapshot_version, rooting, walk_id,
+    overall_status, coverage_status, findings_status,
+    finding_count, scanned_at, first_scanned_at, content_hash, serialised
+)
+SELECT
+    module_path, module_version, pipeline_version,
+    snapshot_source, snapshot_version,
+    COALESCE(json_extract(serialised, '$.rooting'), ''), walk_id,
+    overall_status, coverage_status, findings_status,
+    finding_count, scanned_at, first_scanned_at, content_hash, serialised
+FROM vulnerability_records;
+
+DROP TABLE vulnerability_records;
+ALTER TABLE vulnerability_records_ledger RENAME TO vulnerability_records;
+
+CREATE INDEX IF NOT EXISTS vuln_records_finding_count_idx
+  ON vulnerability_records(finding_count);
+CREATE INDEX IF NOT EXISTS vuln_records_walk_idx
+  ON vulnerability_records(walk_id);
+CREATE INDEX IF NOT EXISTS vuln_records_findings_status_idx
+  ON vulnerability_records(findings_status);
+CREATE INDEX IF NOT EXISTS vuln_records_rooting_idx
+  ON vulnerability_records(rooting);
+CREATE INDEX IF NOT EXISTS vuln_records_generation_idx
+  ON vulnerability_records(module_path, module_version, pipeline_version,
+                           snapshot_source, snapshot_version);
+
+CREATE TABLE vulnerability_findings_index_v14 (
+    finding_id         TEXT NOT NULL,
+    module_path        TEXT NOT NULL,
+    module_version     TEXT NOT NULL,
+    pipeline_version   TEXT NOT NULL,
+    snapshot_source    TEXT NOT NULL,
+    snapshot_version   TEXT NOT NULL,
+    rooting            TEXT NOT NULL DEFAULT '',
+    is_reachable       INTEGER,
+    PRIMARY KEY (finding_id, module_path, module_version,
+                 pipeline_version, snapshot_source, snapshot_version, rooting)
+);
+
+INSERT OR IGNORE INTO vulnerability_findings_index_v14 (
+    finding_id, module_path, module_version, pipeline_version,
+    snapshot_source, snapshot_version, rooting, is_reachable
+)
+SELECT finding_id, module_path, module_version, pipeline_version,
+       snapshot_source, snapshot_version, '', is_reachable
+FROM vulnerability_findings_index;
+
+DROP TABLE vulnerability_findings_index;
+ALTER TABLE vulnerability_findings_index_v14 RENAME TO vulnerability_findings_index;
+
+CREATE INDEX IF NOT EXISTS vuln_findings_finding_idx
+  ON vulnerability_findings_index(finding_id);
+
+ALTER TABLE walk_scan_run_modules ADD COLUMN record_content_hash TEXT NOT NULL DEFAULT '';
+`,
+		},
 	}
 }
 
-// PutVulnerabilityRecord persists a vulnerability record.
+// PutVulnerabilityRecord appends a scan to the ledger.
 //
-// first_scanned_at is an immutable first-seen anchor: the store, not the
-// caller, owns its persistence so the guarantee holds across every write path
-// (fresh scan, force re-scan, metadata fallback, reuse re-attribution). When a
-// row already exists for the (module, version, pipeline, snapshot) tuple, the
-// existing anchor is preserved in both the column (left out of the UPDATE) and
-// the serialised blob (which reads return), regardless of what the caller set.
+// It never updates a record. The key carries the time of measurement and the
+// record's own content hash, so two distinct scans are always two rows, and the
+// only collision left is the same record written twice — which the conflict
+// clause makes a no-op, because that is one measurement rather than two.
+//
+// This is the property the conversion turns on. A vulnerability finding
+// legitimately changes for one artefact: a new advisory lands, an advisory is
+// retracted, a better call graph corrects a reachability finding. An overwriting
+// store destroyed the earlier finding every time, and it also destroyed the
+// other ANALYSIS FRAME's answer — an isolated scan and a target-rooted scan of
+// one coordinate under one snapshot shared a row, so whichever ran last silently
+// answered for both questions.
+//
+// first_scanned_at is an immutable first-seen anchor: the store, not the caller,
+// owns its persistence so the guarantee holds across every write path. When the
+// ledger already holds a generation for the (module, version, pipeline,
+// snapshot) tuple, the earliest anchor it carries is preserved in both the
+// column and the serialised blob, regardless of what the caller set.
+//
+// The record row and its findings-index rows are written in one transaction, and
+// the index is reconciled rather than appended to: every index row for the
+// record's coordinate, snapshot AND FRAME is deleted and re-derived from the
+// composed record of that frame. All three properties are load-bearing.
+//
+// Appending to the index alone let a re-scan that returned *fewer* findings than
+// its predecessor — the advisory stopped applying, the reachability finding
+// changed, the scan came back clean — leave the earlier scan's rows behind,
+// describing a record that no longer supports them. vuln-by-id resolves through
+// this index, so such a row is a false positive on a security question,
+// manufactured by the store rather than by the scanner, and invisible to a
+// content-hash check because each record is internally valid.
+//
+// Scoping the reconciliation to the frame is what keeps that fix from becoming
+// its own defect once records are appended: without it, writing an isolated
+// all-clear would retract the live findings a target-rooted scan had indexed.
+//
+// The re-derivation reads the composed record rather than the record just
+// written, because an append is not necessarily the newest or the best-founded
+// generation — a re-scan under an older snapshot, or one backed by a weaker call
+// graph, must not be able to retract the index rows of the record a read
+// actually serves.
+//
+// Separate statements on the shared handle let a failure between the record
+// write and the index write leave the two permanently disagreeing even with no
+// re-scan at all. One transaction is what makes the reconciliation atomic with
+// the verdict it describes.
 func (s *Store) PutVulnerabilityRecord(ctx context.Context, record domain.VulnerabilityRecord) error {
-	if existing, ok, err := s.firstScannedAt(ctx, record); err != nil {
-		return err
+	// A record whose coordinate is the zero value would key a row on the empty
+	// path at the empty version, which every later read treats as a genuine
+	// measurement of a module that does not exist.
+	if record.Coordinate.IsZero() {
+		return coordinate.ErrZeroCoordinate
+	}
+	// A record whose hash does not describe its contents is refused before it
+	// reaches the table: the hash is what every later read checks the record
+	// against, so storing one that is already wrong stores a row that can only
+	// ever be read as a tamper. It also catches the caller that forgot to seal —
+	// an empty hash never describes anything.
+	//
+	// FirstScannedAt is outside the hash, so the anchor substitution below does
+	// not disturb this verdict.
+	var h domain.VulnerabilityRecordHasher
+	if verr := h.VerifyContentHash(record); verr != nil {
+		return fmt.Errorf("%w: verifying %s before put: %w", ports.ErrVulnIntegrity, record.Coordinate, verr)
+	}
+	// The pool is capped at a single connection, so every statement below —
+	// including the first-seen lookup — must run on the transaction's handle. A
+	// query issued against s.db.DB() while this transaction is open would wait
+	// for a connection the transaction is holding, and deadlock.
+	tx, err := s.db.DB().BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("beginning transaction: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	if existing, ok, ferr := s.firstScannedAt(ctx, tx, record); ferr != nil {
+		return ferr
 	} else if ok {
 		record.FirstScannedAt = existing
 	}
 
-	serialised, err := json.Marshal(record)
+	serialised, err := h.Marshal(record)
 	if err != nil {
 		return fmt.Errorf("marshalling vulnerability record: %w", err)
 	}
@@ -317,40 +725,105 @@ func (s *Store) PutVulnerabilityRecord(ctx context.Context, record domain.Vulner
 	const q = `
 INSERT INTO vulnerability_records (
     module_path, module_version, pipeline_version,
-    snapshot_source, snapshot_version, walk_id,
-    overall_status, finding_count, scanned_at, first_scanned_at,
+    snapshot_source, snapshot_version, rooting, walk_id,
+    overall_status, coverage_status, findings_status,
+    finding_count, scanned_at, first_scanned_at,
     content_hash, serialised
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-ON CONFLICT (module_path, module_version, pipeline_version, snapshot_source, snapshot_version)
-DO UPDATE SET
-    walk_id        = excluded.walk_id,
-    overall_status = excluded.overall_status,
-    finding_count  = excluded.finding_count,
-    scanned_at     = excluded.scanned_at,
-    content_hash   = excluded.content_hash,
-    serialised     = excluded.serialised`
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+ON CONFLICT (module_path, module_version, pipeline_version,
+             snapshot_source, snapshot_version, scanned_at, content_hash)
+DO NOTHING`
 
-	_, err = s.db.DB().ExecContext(ctx, q,
-		record.Coordinate.Path, record.Coordinate.Version, record.PipelineVersion,
-		record.DatabaseSnapshot.Source, record.DatabaseSnapshot.Version, record.WalkID,
-		string(record.OverallStatus), len(record.Findings),
+	// The columns come from RecordAxes rather than from the fields directly, so a
+	// record that reached here without the seal step's derivation still indexes
+	// under a real axis instead of the empty string.
+	coverage, findings := domain.RecordAxes(record)
+	rooting := domain.RecordRooting(record)
+
+	if _, err = tx.ExecContext(ctx, q,
+		record.Coordinate.Path(), record.Coordinate.Version(), record.PipelineVersion,
+		record.DatabaseSnapshot.Source, record.DatabaseSnapshot.Version,
+		string(rooting), record.WalkID,
+		string(record.OverallStatus), string(coverage), string(findings), len(record.Findings),
 		record.ScannedAt.UTC().Format(time.RFC3339),
 		record.FirstScannedAt.UTC().Format(time.RFC3339),
 		record.ContentHash, serialised,
-	)
-	if err != nil {
+	); err != nil {
 		return fmt.Errorf("inserting vulnerability record: %w", err)
+	}
+
+	if err = s.reconcileFindingsIndex(ctx, tx, record, rooting); err != nil {
+		return err
+	}
+
+	if err = tx.Commit(); err != nil {
+		return fmt.Errorf("committing vulnerability record: %w", err)
+	}
+	return nil
+}
+
+// reconcileFindingsIndex rewrites the findings index for one coordinate,
+// snapshot and analysis frame so it describes the record a read of that frame
+// now serves.
+//
+// It composes rather than indexing the record just written. An append is not
+// necessarily the best-founded generation the ledger holds — a re-scan under an
+// older snapshot, or one backed by a weaker call graph, is still a legitimate
+// append — and indexing it would let such a scan retract the index rows of the
+// record a read actually serves. Composing here keeps the index and the served
+// record the same statement.
+//
+// Everything runs on the caller's transaction. The pool holds one connection, so
+// a read issued against the store's own handle would wait on the transaction
+// that has already written the row it needs to see.
+func (s *Store) reconcileFindingsIndex(
+	ctx context.Context,
+	tx execQuerier,
+	record domain.VulnerabilityRecord,
+	rooting domain.Rooting,
+) error {
+	generations, err := s.listGenerations(ctx, tx,
+		record.Coordinate.Path(), record.Coordinate.Version(), record.PipelineVersion,
+		record.DatabaseSnapshot.Source, record.DatabaseSnapshot.Version)
+	if err != nil {
+		return err
+	}
+	served, ok, cerr := domain.ComposeAt(generations, rooting)
+	if cerr != nil {
+		return fmt.Errorf("composing %s to reconcile its finding index: %w", record.Coordinate, cerr)
+	}
+	if !ok {
+		// Unreachable in practice — the row just inserted is in this frame — but a
+		// silent skip here would leave the index describing a superseded record,
+		// so the impossible case is reported rather than assumed away.
+		return fmt.Errorf("reconciling finding index for %s: no record in frame %q after appending one", record.Coordinate, rooting)
+	}
+
+	// The delete is what makes the index describe the served record rather than
+	// the union of every record ever written for this frame — an all-clear must be
+	// able to retract the rows an earlier affected scan added. It is scoped to the
+	// frame so an isolated scan cannot retract what a target-rooted scan indexed.
+	const clearIdxQ = `
+DELETE FROM vulnerability_findings_index
+WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
+  AND snapshot_source = ? AND snapshot_version = ? AND rooting = ?`
+
+	if _, err = tx.ExecContext(ctx, clearIdxQ,
+		record.Coordinate.Path(), record.Coordinate.Version(), record.PipelineVersion,
+		record.DatabaseSnapshot.Source, record.DatabaseSnapshot.Version, string(rooting),
+	); err != nil {
+		return fmt.Errorf("clearing finding index entries for %s: %w", record.Coordinate, err)
 	}
 
 	// Populate the findings index for cross-store queries.
 	const idxQ = `
 INSERT INTO vulnerability_findings_index (
     finding_id, module_path, module_version, pipeline_version,
-    snapshot_source, snapshot_version, is_reachable
-) VALUES (?, ?, ?, ?, ?, ?, ?)
+    snapshot_source, snapshot_version, rooting, is_reachable
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT DO NOTHING`
 
-	for _, f := range record.Findings {
+	for _, f := range served.Findings {
 		var isReachable *int
 		if f.Reachable != nil {
 			v := 0
@@ -362,11 +835,11 @@ ON CONFLICT DO NOTHING`
 		// Index all aliases too (CVE, GHSA, etc.) so queries by any identifier work.
 		ids := append([]string{f.ID}, f.Aliases...)
 		for _, id := range ids {
-			if _, err := s.db.DB().ExecContext(ctx, idxQ,
+			if _, err = tx.ExecContext(ctx, idxQ,
 				id,
-				record.Coordinate.Path, record.Coordinate.Version, record.PipelineVersion,
+				record.Coordinate.Path(), record.Coordinate.Version(), record.PipelineVersion,
 				record.DatabaseSnapshot.Source, record.DatabaseSnapshot.Version,
-				isReachable,
+				string(rooting), isReachable,
 			); err != nil {
 				return fmt.Errorf("inserting finding index entry %s: %w", id, err)
 			}
@@ -375,20 +848,82 @@ ON CONFLICT DO NOTHING`
 	return nil
 }
 
-// firstScannedAt returns the immutable first-seen timestamp already stored for
-// record's (module, version, pipeline, snapshot) tuple, if any. ok is false
-// when no row exists yet or the stored anchor is empty (a pre-anchor legacy
-// row), in which case the caller's own FirstScannedAt stands as the first
-// insert.
-func (s *Store) firstScannedAt(ctx context.Context, record domain.VulnerabilityRecord) (time.Time, bool, error) {
-	const q = `
-SELECT first_scanned_at FROM vulnerability_records
+// listGenerations returns every verified record the ledger holds for one
+// coordinate, pipeline version and snapshot, oldest append first.
+//
+// It takes the querier so it can run either standalone or inside a transaction;
+// see reconcileFindingsIndex for why that is mandatory rather than stylistic.
+func (s *Store) listGenerations(
+	ctx context.Context,
+	q querier,
+	path, version, pipelineVersion, snapshotSource, snapshotVersion string,
+) ([]domain.VulnerabilityRecord, error) {
+	// rowid, not content_hash, is the secondary sort: scanned_at persists at
+	// second precision — the precision the canonical hash covers, so widening the
+	// column would put the stored hashes and the stored time out of step — and two
+	// scans within one second carry the same timestamp. The ledger is append-only,
+	// so insertion order is the sequence it actually has.
+	const stmt = `
+SELECT serialised FROM vulnerability_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
-  AND snapshot_source = ? AND snapshot_version = ?`
+  AND snapshot_source = ? AND snapshot_version = ?
+ORDER BY scanned_at ASC, rowid ASC`
 
-	var raw string
-	err := s.db.DB().QueryRowContext(ctx, q,
-		record.Coordinate.Path, record.Coordinate.Version, record.PipelineVersion,
+	rows, err := q.QueryContext(ctx, stmt, path, version, pipelineVersion, snapshotSource, snapshotVersion)
+	if err != nil {
+		return nil, fmt.Errorf("querying vulnerability record generations: %w", err)
+	}
+	defer func() {
+		_ = rows.Close() //nolint:errcheck // rows.Err() checked below
+	}()
+
+	var out []domain.VulnerabilityRecord
+	for rows.Next() {
+		var serialised []byte
+		if serr := rows.Scan(&serialised); serr != nil {
+			return nil, fmt.Errorf("scanning vulnerability record: %w", serr)
+		}
+		rec, derr := decodeRecord(serialised)
+		if derr != nil {
+			return nil, derr
+		}
+		out = append(out, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating vulnerability record generations: %w", err)
+	}
+	return out, nil
+}
+
+// firstScannedAt returns the immutable first-seen timestamp the ledger already
+// holds for record's (module, version, pipeline, snapshot) tuple, if any. ok is
+// false when no generation exists yet or none carries an anchor (pre-anchor
+// legacy rows), in which case the caller's own FirstScannedAt stands as the
+// first insert.
+//
+// The earliest anchor across the tuple's generations wins, not the anchor of any
+// particular row. The question the field answers — when did we first find this
+// out — is about the module under that snapshot, not about one measurement of
+// it, so an append must not be able to move it forward.
+//
+// It takes the querier rather than reaching for s.db so it can run inside
+// PutVulnerabilityRecord's transaction: the connection pool holds a single
+// connection, so a query on the store's own handle would block on the
+// transaction that is about to write the row it is reading.
+func (s *Store) firstScannedAt(ctx context.Context, q querier, record domain.VulnerabilityRecord) (time.Time, bool, error) {
+	const stmt = `
+SELECT MIN(first_scanned_at) FROM vulnerability_records
+WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
+  AND snapshot_source = ? AND snapshot_version = ?
+  AND first_scanned_at != ''`
+
+	// An aggregate over no rows is one NULL row rather than no rows, so the
+	// "nothing stored yet" case arrives as an invalid NullString and not as
+	// ErrNoRows. Both are handled: the sentinel stays checked so the reading does
+	// not depend on which of the two SQLite chooses to report.
+	var raw sql.NullString
+	err := q.QueryRowContext(ctx, stmt,
+		record.Coordinate.Path(), record.Coordinate.Version(), record.PipelineVersion,
 		record.DatabaseSnapshot.Source, record.DatabaseSnapshot.Version,
 	).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
@@ -397,88 +932,204 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 	if err != nil {
 		return time.Time{}, false, fmt.Errorf("querying first_scanned_at: %w", err)
 	}
-	if raw == "" {
+	if !raw.Valid || raw.String == "" {
 		return time.Time{}, false, nil
 	}
-	t, perr := time.Parse(time.RFC3339, raw)
+	t, perr := time.Parse(time.RFC3339, raw.String)
 	if perr != nil {
 		return time.Time{}, false, fmt.Errorf("parsing first_scanned_at: %w", perr)
 	}
 	return t, true, nil
 }
 
-// GetVulnerabilityRecord retrieves a vulnerability record.
+// GetVulnerabilityRecord returns the composed record for a coordinate,
+// pipeline version and snapshot, across every analysis frame the ledger holds.
+//
+// It is the read for a caller that has explicitly declined to name a frame and
+// is asking what the store's best-founded answer about this module is. A caller
+// that HAS a frame in mind — a scan deciding whether it may reuse an earlier
+// record, a run reading back what it wrote — must use
+// GetVulnerabilityRecordAt, or it will be handed an answer to the other
+// question.
+//
+// See domain.Compose for the ladder: a finding outranks an all-clear, an
+// analysed record outranks a coverage gap, a better call graph outranks a
+// weaker one, and only then does recency decide. The served record states its
+// own frame, snapshot and completeness, so a composed answer always names the
+// evidence it rests on.
 func (s *Store) GetVulnerabilityRecord(
 	ctx context.Context,
 	coord coordinate.ModuleCoordinate,
 	pipelineVersion string,
 	snapshot domain.DatabaseSnapshot,
 ) (domain.VulnerabilityRecord, bool, error) {
-	const q = `
-SELECT serialised FROM vulnerability_records
-WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
-  AND snapshot_source = ? AND snapshot_version = ?`
-
-	var serialised []byte
-	err := s.db.DB().QueryRowContext(ctx, q,
-		coord.Path, coord.Version, pipelineVersion,
-		snapshot.Source, snapshot.Version,
-	).Scan(&serialised)
-	if errors.Is(err, sql.ErrNoRows) {
+	// The zero coordinate names no module, so this is a question about nothing.
+	// Answering it with absence would report "no record here" for a module that
+	// was never asked about — see coordinate.ErrZeroCoordinate.
+	if coord.IsZero() {
+		return domain.VulnerabilityRecord{}, false, coordinate.ErrZeroCoordinate
+	}
+	records, err := s.listGenerations(ctx, s.db.DB(),
+		coord.Path(), coord.Version(), pipelineVersion, snapshot.Source, snapshot.Version)
+	if err != nil {
+		return domain.VulnerabilityRecord{}, false, err
+	}
+	if len(records) == 0 {
 		return domain.VulnerabilityRecord{}, false, nil
 	}
-	if err != nil {
-		return domain.VulnerabilityRecord{}, false, fmt.Errorf("querying vulnerability record: %w", err)
+	composed, cerr := domain.Compose(records)
+	if cerr != nil {
+		return domain.VulnerabilityRecord{}, false, fmt.Errorf("composing vulnerability record for %s: %w", coord, cerr)
 	}
-
-	var record domain.VulnerabilityRecord
-	if err := json.Unmarshal(serialised, &record); err != nil {
-		return domain.VulnerabilityRecord{}, false, fmt.Errorf("unmarshalling vulnerability record: %w", err)
-	}
-	return record, true, nil
+	return composed, true, nil
 }
 
-// GetLatestVulnerabilityRecord returns the most recently scanned record for a
-// coordinate and pipeline version, regardless of snapshot or walk ID.
+// GetVulnerabilityRecordAt returns the composed record for a coordinate,
+// pipeline version and snapshot WITHIN one analysis frame. found is false when
+// the ledger holds no record produced in that frame.
+//
+// This is what stops a frame boundary from being crossed silently. An isolated
+// scan asking whether it may reuse a stored record must not be handed a
+// target-rooted one: the two were computed from different builds, so reusing
+// across the boundary attributes a reachability answer to a build it was never
+// computed against — and before the frame was recorded, that is exactly what
+// happened, because both frames shared a row.
+//
+// Records that state no frame are considered only when nothing in the group
+// states one; see domain.ComposeAt.
+func (s *Store) GetVulnerabilityRecordAt(
+	ctx context.Context,
+	coord coordinate.ModuleCoordinate,
+	pipelineVersion string,
+	snapshot domain.DatabaseSnapshot,
+	rooting domain.Rooting,
+) (domain.VulnerabilityRecord, bool, error) {
+	// The zero coordinate names no module, so this is a question about nothing.
+	// Answering it with absence would report "no record here" for a module that
+	// was never asked about — see coordinate.ErrZeroCoordinate.
+	if coord.IsZero() {
+		return domain.VulnerabilityRecord{}, false, coordinate.ErrZeroCoordinate
+	}
+	records, err := s.listGenerations(ctx, s.db.DB(),
+		coord.Path(), coord.Version(), pipelineVersion, snapshot.Source, snapshot.Version)
+	if err != nil {
+		return domain.VulnerabilityRecord{}, false, err
+	}
+	if len(records) == 0 {
+		return domain.VulnerabilityRecord{}, false, nil
+	}
+	composed, ok, cerr := domain.ComposeAt(records, rooting)
+	if cerr != nil {
+		return domain.VulnerabilityRecord{}, false, fmt.Errorf("composing vulnerability record for %s: %w", coord, cerr)
+	}
+	return composed, ok, nil
+}
+
+// HasVulnerabilityRecord reports whether the ledger holds the exact generation
+// named by contentHash for this coordinate, pipeline version and snapshot.
+//
+// It is an existence check on one measurement rather than on a coordinate,
+// which is what a run needs to verify that the records it reported were
+// actually kept. Composing and comparing would answer a different question: the
+// record a read serves is not necessarily the one this run wrote, because an
+// earlier generation may legitimately outrank it.
+func (s *Store) HasVulnerabilityRecord(
+	ctx context.Context,
+	coord coordinate.ModuleCoordinate,
+	pipelineVersion string,
+	snapshot domain.DatabaseSnapshot,
+	contentHash string,
+) (bool, error) {
+	// The zero coordinate names no module, so this is a question about nothing.
+	if coord.IsZero() {
+		return false, coordinate.ErrZeroCoordinate
+	}
+	const q = `
+SELECT 1 FROM vulnerability_records
+WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
+  AND snapshot_source = ? AND snapshot_version = ? AND content_hash = ?
+LIMIT 1`
+
+	var one int
+	err := s.db.DB().QueryRowContext(ctx, q,
+		coord.Path(), coord.Version(), pipelineVersion,
+		snapshot.Source, snapshot.Version, contentHash,
+	).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("checking stored vulnerability record for %s: %w", coord, err)
+	}
+	return true, nil
+}
+
+// GetLatestVulnerabilityRecord returns the composed record for a coordinate and
+// pipeline version across every snapshot and every frame the ledger holds.
+//
+// "Latest" is the name it has always had; what it serves is the best-founded
+// answer, not the newest row. The distinction is the point of the ladder: a
+// re-scan under a newer advisory database backed by a weaker call graph is a
+// legitimate append and a worse basis for a reachability finding, so ordering by
+// scanned_at alone would let it retract an established finding merely by running
+// later.
 func (s *Store) GetLatestVulnerabilityRecord(
 	ctx context.Context,
 	coord coordinate.ModuleCoordinate,
 	pipelineVersion string,
 ) (domain.VulnerabilityRecord, bool, error) {
+	// The zero coordinate names no module, so this is a question about nothing.
+	// Answering it with absence would report "no record here" for a module that
+	// was never asked about — see coordinate.ErrZeroCoordinate.
+	if coord.IsZero() {
+		return domain.VulnerabilityRecord{}, false, coordinate.ErrZeroCoordinate
+	}
 	const q = `
 SELECT serialised FROM vulnerability_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
-ORDER BY scanned_at DESC LIMIT 1`
+ORDER BY scanned_at ASC, rowid ASC`
 
-	var serialised []byte
-	err := s.db.DB().QueryRowContext(ctx, q,
-		coord.Path, coord.Version, pipelineVersion,
-	).Scan(&serialised)
-	if errors.Is(err, sql.ErrNoRows) {
+	records, err := s.queryRecords(ctx, "latest vulnerability record", q,
+		coord.Path(), coord.Version(), pipelineVersion)
+	if err != nil {
+		return domain.VulnerabilityRecord{}, false, err
+	}
+	if len(records) == 0 {
 		return domain.VulnerabilityRecord{}, false, nil
 	}
-	if err != nil {
-		return domain.VulnerabilityRecord{}, false, fmt.Errorf("querying latest vulnerability record: %w", err)
+	composed, cerr := domain.Compose(records)
+	if cerr != nil {
+		return domain.VulnerabilityRecord{}, false, fmt.Errorf("composing vulnerability record for %s: %w", coord, cerr)
 	}
-
-	var record domain.VulnerabilityRecord
-	if err := json.Unmarshal(serialised, &record); err != nil {
-		return domain.VulnerabilityRecord{}, false, fmt.Errorf("unmarshalling vulnerability record: %w", err)
-	}
-	return record, true, nil
+	return composed, true, nil
 }
 
-// GetLatestVulnerabilityRecordForWalk returns the most recently scanned record
-// for a coordinate and pipeline version that is associated with any scan run
-// of the given walk, regardless of snapshot.
+// GetLatestVulnerabilityRecordForWalk returns the composed record for a
+// coordinate and pipeline version among the records the given walk's scan runs
+// covered, regardless of snapshot.
+//
+// The membership index answers which MODULES a walk's runs covered, not which
+// generation each run reported — that is the run's own PerModuleResults, and
+// ListVulnerabilityRecords is the read that uses it. So the join is by
+// coordinate and every generation of a covered module is a candidate, with the
+// ladder deciding between them. Narrowing it by the recorded content hash would
+// make a run that named a record the store no longer holds answer "this walk
+// never covered the module", which is a false absence rather than a narrower
+// truth.
 func (s *Store) GetLatestVulnerabilityRecordForWalk(
 	ctx context.Context,
 	coord coordinate.ModuleCoordinate,
 	pipelineVersion string,
 	walkID string,
 ) (domain.VulnerabilityRecord, bool, error) {
+	// The zero coordinate names no module, so this is a question about nothing.
+	// Answering it with absence would report "no record here" for a module that
+	// was never asked about — see coordinate.ErrZeroCoordinate.
+	if coord.IsZero() {
+		return domain.VulnerabilityRecord{}, false, coordinate.ErrZeroCoordinate
+	}
 	const q = `
-SELECT vr.serialised
+SELECT DISTINCT vr.serialised, vr.scanned_at, vr.rowid
 FROM vulnerability_records vr
 JOIN walk_scan_run_modules m
   ON m.module_path      = vr.module_path
@@ -491,30 +1142,82 @@ WHERE vr.module_path      = ?
   AND vr.module_version   = ?
   AND vr.pipeline_version = ?
   AND wsr.walk_id = ?
-ORDER BY vr.scanned_at DESC
-LIMIT 1`
+ORDER BY vr.scanned_at ASC, vr.rowid ASC`
 
-	var serialised []byte
-	err := s.db.DB().QueryRowContext(ctx, q,
-		coord.Path, coord.Version, pipelineVersion, walkID,
-	).Scan(&serialised)
-	if errors.Is(err, sql.ErrNoRows) {
-		return domain.VulnerabilityRecord{}, false, nil
-	}
+	rows, err := s.db.DB().QueryContext(ctx, q, coord.Path(), coord.Version(), pipelineVersion, walkID)
 	if err != nil {
 		return domain.VulnerabilityRecord{}, false, fmt.Errorf("querying vulnerability record for walk: %w", err)
 	}
+	defer func() {
+		_ = rows.Close() //nolint:errcheck // rows.Err() checked below
+	}()
 
-	var record domain.VulnerabilityRecord
-	if err := json.Unmarshal(serialised, &record); err != nil {
-		return domain.VulnerabilityRecord{}, false, fmt.Errorf("unmarshalling vulnerability record: %w", err)
+	var records []domain.VulnerabilityRecord
+	for rows.Next() {
+		var serialised []byte
+		var scannedAt string // ordering keys only; the record carries its own timestamp.
+		var rowID int64
+		if serr := rows.Scan(&serialised, &scannedAt, &rowID); serr != nil {
+			return domain.VulnerabilityRecord{}, false, fmt.Errorf("scanning vulnerability record: %w", serr)
+		}
+		rec, derr := decodeRecord(serialised)
+		if derr != nil {
+			return domain.VulnerabilityRecord{}, false, derr
+		}
+		records = append(records, rec)
 	}
-	return record, true, nil
+	if err := rows.Err(); err != nil {
+		return domain.VulnerabilityRecord{}, false, fmt.Errorf("iterating vulnerability records for walk: %w", err)
+	}
+	if len(records) == 0 {
+		return domain.VulnerabilityRecord{}, false, nil
+	}
+	composed, cerr := domain.Compose(records)
+	if cerr != nil {
+		return domain.VulnerabilityRecord{}, false, fmt.Errorf("composing vulnerability record for %s: %w", coord, cerr)
+	}
+	return composed, true, nil
+}
+
+// queryRecords runs a query selecting only the serialised column and decodes
+// every row, verifying each record's seal. what names the read in error
+// messages.
+func (s *Store) queryRecords(ctx context.Context, what, query string, args ...any) ([]domain.VulnerabilityRecord, error) {
+	rows, err := s.db.DB().QueryContext(ctx, query, args...)
+	if err != nil {
+		return nil, fmt.Errorf("querying %s: %w", what, err)
+	}
+	defer func() {
+		_ = rows.Close() //nolint:errcheck // rows.Err() checked below
+	}()
+
+	var out []domain.VulnerabilityRecord
+	for rows.Next() {
+		var serialised []byte
+		if serr := rows.Scan(&serialised); serr != nil {
+			return nil, fmt.Errorf("scanning %s: %w", what, serr)
+		}
+		rec, derr := decodeRecord(serialised)
+		if derr != nil {
+			return nil, derr
+		}
+		out = append(out, rec)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating %s: %w", what, err)
+	}
+	return out, nil
 }
 
 // PutWalkScanRun persists a walk scan run and its per-module membership index.
 func (s *Store) PutWalkScanRun(ctx context.Context, run domain.WalkScanRun) error {
-	serialised, err := json.Marshal(run)
+	// Same rule as PutVulnerabilityRecord: a run whose hash does not describe it
+	// is refused rather than stored as a row only a tamper report can read back.
+	var h domain.WalkScanRunHasher
+	if verr := h.VerifyContentHash(run); verr != nil {
+		return fmt.Errorf("%w: verifying run %s before put: %w", ports.ErrVulnIntegrity, run.ID, verr)
+	}
+	serialised, err := h.Marshal(run)
 	if err != nil {
 		return fmt.Errorf("marshalling walk scan run: %w", err)
 	}
@@ -565,17 +1268,24 @@ ON CONFLICT (id) DO UPDATE SET
 		return fmt.Errorf("inserting walk scan run: %w", err)
 	}
 
+	// record_content_hash names the exact generation this run scanned. Since the
+	// record table became a ledger a coordinate resolves to several, so a
+	// membership row that named only the coordinate would let a run be read back
+	// against a record written after it finished. PerModuleResults already holds
+	// the hash; this carries it into the index the joins actually use.
 	const modQ = `
 INSERT INTO walk_scan_run_modules (
     walk_scan_run_id, module_path, module_version,
-    pipeline_version, snapshot_source, snapshot_version, walk_id
-) VALUES (?, ?, ?, ?, ?, ?, ?)
+    pipeline_version, snapshot_source, snapshot_version, walk_id,
+    record_content_hash
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (walk_scan_run_id, module_path, module_version) DO NOTHING`
 
-	for coord := range run.PerModuleResults {
+	for coord, contentHash := range run.PerModuleResults {
 		if _, err = tx.ExecContext(ctx, modQ,
-			run.ID, coord.Path, coord.Version,
+			run.ID, coord.Path(), coord.Version(),
 			run.PipelineVersion, run.Snapshot.Source, run.Snapshot.Version, run.WalkID,
+			contentHash,
 		); err != nil {
 			return fmt.Errorf("inserting walk scan run module %s: %w", coord, err)
 		}
@@ -600,9 +1310,9 @@ func (s *Store) GetWalkScanRun(ctx context.Context, id string) (domain.WalkScanR
 		return domain.WalkScanRun{}, false, fmt.Errorf("querying walk scan run: %w", err)
 	}
 
-	var run domain.WalkScanRun
-	if err := json.Unmarshal(serialised, &run); err != nil {
-		return domain.WalkScanRun{}, false, fmt.Errorf("unmarshalling walk scan run: %w", err)
+	run, derr := decodeRun(serialised)
+	if derr != nil {
+		return domain.WalkScanRun{}, false, derr
 	}
 	return run, true, nil
 }
@@ -623,9 +1333,9 @@ func (s *Store) ListWalkScanRuns(ctx context.Context, walkID string) ([]domain.W
 		if err := rows.Scan(&serialised); err != nil {
 			return nil, fmt.Errorf("scanning walk scan run: %w", err)
 		}
-		var run domain.WalkScanRun
-		if err := json.Unmarshal(serialised, &run); err != nil {
-			return nil, fmt.Errorf("unmarshalling walk scan run: %w", err)
+		run, derr := decodeRun(serialised)
+		if derr != nil {
+			return nil, derr
 		}
 		runs = append(runs, run)
 	}
@@ -651,9 +1361,9 @@ func (s *Store) ListAllWalkScanRuns(ctx context.Context) ([]domain.WalkScanRun, 
 		if err := rows.Scan(&serialised); err != nil {
 			return nil, fmt.Errorf("scanning walk scan run: %w", err)
 		}
-		var run domain.WalkScanRun
-		if err := json.Unmarshal(serialised, &run); err != nil {
-			return nil, fmt.Errorf("unmarshalling walk scan run: %w", err)
+		run, derr := decodeRun(serialised)
+		if derr != nil {
+			return nil, derr
 		}
 		runs = append(runs, run)
 	}
@@ -669,6 +1379,23 @@ func (s *Store) PutDatabaseSnapshot(ctx context.Context, snapshot domain.Databas
 	if err != nil {
 		return fmt.Errorf("reading snapshot content: %w", err)
 	}
+
+	// The stored hash is always computed from the bytes being stored: the store
+	// is the authority on what it holds, and a hash taken from the caller's word
+	// would verify nothing on the way back out.
+	//
+	// A caller that supplies one is asserting which bytes it fetched, so a
+	// disagreement is a real finding — the blob changed between the fetch that
+	// sealed it and this write — and is refused rather than papered over by
+	// storing the hash of whatever arrived. A caller that supplies none has
+	// simply not sealed; the store seals it, and the snapshot becomes verifiable
+	// from here on.
+	computed := domain.HashSnapshotContent(data)
+	if snapshot.ContentHash != "" && snapshot.ContentHash != computed {
+		return fmt.Errorf("%w: snapshot %s@%s content hash mismatch: caller declared %q, content is %q",
+			ports.ErrSnapshotIntegrity, snapshot.Source, snapshot.Version, snapshot.ContentHash, computed)
+	}
+	snapshot.ContentHash = computed
 
 	const q = `
 INSERT INTO vulnerability_snapshots (
@@ -690,12 +1417,38 @@ ON CONFLICT (source, version) DO UPDATE SET
 	return nil
 }
 
-// GetDatabaseSnapshot retrieves a snapshot blob.
+// GetDatabaseSnapshot retrieves a snapshot blob, verified against its stored
+// content hash before it is handed to a scan.
+//
+// This is the read leg of the same rule record content already gets: the
+// advisory database is the evidence every finding is derived from, so a scan
+// must not consume a blob that is not the one that was fetched. A mismatch is
+// reported as ErrSnapshotIntegrity rather than as absence, for the same reason a
+// tampered record is — absence would trigger a silent re-fetch that overwrites
+// the evidence.
+//
+// The sentinel is the snapshot's own, not the record's: a corrupt snapshot
+// invalidates every verdict derived from it, while a corrupt record invalidates
+// one module's, and a caller that would abort the run on the first and fail the
+// module on the second must be able to tell them apart.
+//
+// A snapshot stored before the hash existed carries an empty one. Such a blob
+// is returned with no check, because there is nothing to check it against;
+// unverifiable is not the same claim as verified, and refusing it would make
+// every pre-existing store unreadable rather than merely unproven. The
+// migration that hashes those blobs in place closes the gap for stores it runs
+// against.
+//
+// When the caller's own snapshot value carries a hash, it is checked too: it is
+// the caller's assertion about which snapshot it asked for, and answering a
+// question about one snapshot with the bytes of another is the failure this
+// whole field exists to prevent.
 func (s *Store) GetDatabaseSnapshot(ctx context.Context, snapshot domain.DatabaseSnapshot) (io.ReadCloser, error) {
-	const q = `SELECT content FROM vulnerability_snapshots WHERE source = ? AND version = ?`
+	const q = `SELECT content, content_hash FROM vulnerability_snapshots WHERE source = ? AND version = ?`
 
 	var content []byte
-	err := s.db.DB().QueryRowContext(ctx, q, snapshot.Source, snapshot.Version).Scan(&content)
+	var storedHash string
+	err := s.db.DB().QueryRowContext(ctx, q, snapshot.Source, snapshot.Version).Scan(&content, &storedHash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("snapshot not found: %s@%s", snapshot.Source, snapshot.Version)
 	}
@@ -703,15 +1456,32 @@ func (s *Store) GetDatabaseSnapshot(ctx context.Context, snapshot domain.Databas
 		return nil, fmt.Errorf("querying database snapshot: %w", err)
 	}
 
+	if storedHash != "" {
+		if computed := domain.HashSnapshotContent(content); computed != storedHash {
+			return nil, fmt.Errorf("%w: snapshot %s@%s content hash mismatch: stored %q, computed %q",
+				ports.ErrSnapshotIntegrity, snapshot.Source, snapshot.Version, storedHash, computed)
+		}
+	}
+	if snapshot.ContentHash != "" && storedHash != "" && snapshot.ContentHash != storedHash {
+		return nil, fmt.Errorf("%w: snapshot %s@%s is not the one requested: caller expected %q, store holds %q",
+			ports.ErrSnapshotIntegrity, snapshot.Source, snapshot.Version, snapshot.ContentHash, storedHash)
+	}
+
 	return io.NopCloser(bytes.NewReader(content)), nil
 }
 
 // GetLatestDatabaseSnapshot returns the most recently stored snapshot metadata.
+//
+// content_hash is part of that metadata. Omitting it — as this query did before
+// the hash was populated — silently produced an unsealed snapshot value that
+// then flowed into every record built from a cached snapshot, which is most of
+// them: the field being empty on the record was not only a gap in the fetch
+// path but a gap here, where the stored hash was read past.
 func (s *Store) GetLatestDatabaseSnapshot(ctx context.Context) (domain.DatabaseSnapshot, bool, error) {
-	const q = `SELECT source, version, retrieved_at FROM vulnerability_snapshots ORDER BY retrieved_at DESC LIMIT 1`
+	const q = `SELECT source, version, retrieved_at, content_hash FROM vulnerability_snapshots ORDER BY retrieved_at DESC LIMIT 1`
 
-	var source, version, retrievedAt string
-	err := s.db.DB().QueryRowContext(ctx, q).Scan(&source, &version, &retrievedAt)
+	var source, version, retrievedAt, contentHash string
+	err := s.db.DB().QueryRowContext(ctx, q).Scan(&source, &version, &retrievedAt, &contentHash)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.DatabaseSnapshot{}, false, nil
 	}
@@ -728,6 +1498,7 @@ func (s *Store) GetLatestDatabaseSnapshot(ctx context.Context) (domain.DatabaseS
 		Source:      source,
 		Version:     version,
 		RetrievedAt: t,
+		ContentHash: contentHash,
 	}, true, nil
 }
 
@@ -764,23 +1535,168 @@ func (s *Store) ListDatabaseSnapshots(ctx context.Context) ([]domain.DatabaseSna
 	return snapshots, nil
 }
 
-// ListVulnerabilityRecordsByFindingID returns all vulnerability records that
-// contain a finding with the given identifier.
-func (s *Store) ListVulnerabilityRecordsByFindingID(ctx context.Context, findingID string) ([]domain.VulnerabilityRecord, error) {
-	const q = `
-SELECT vr.serialised
-FROM vulnerability_records vr
-JOIN vulnerability_findings_index fi
-  ON fi.module_path      = vr.module_path
- AND fi.module_version   = vr.module_version
- AND fi.pipeline_version = vr.pipeline_version
- AND fi.snapshot_source  = vr.snapshot_source
- AND fi.snapshot_version = vr.snapshot_version
-WHERE fi.finding_id = ?
-ORDER BY vr.scanned_at DESC`
+// ListVulnerabilityRecordsByFindingID returns one vulnerability record per
+// module version that contains a finding with the given identifier.
+//
+// A coordinate accumulates a record per (pipeline version, snapshot) it was ever
+// scanned under, and those generations disagree — the same module version is
+// Affected under one snapshot and Clean under another. Reporting every
+// generation gives the reader rows they cannot rank; reporting only the newest
+// would let a later Clean quietly retire an earlier finding.
+//
+// The tie-break is therefore the finding, not the clock: a record that reports
+// the module as Affected outranks one that does not, and only among equals does
+// the newest scan win.
+//
+// Clean is the right label for a module where the advisory was never found. It
+// is not a label a finding may quietly decay into: once a finding exists,
+// turning it into anything else needs a stated reason — the advisory was
+// withdrawn, the module moved out of the affected range, the reachability
+// verdict was corrected. The store has no way to record such a reason yet, so
+// this ranking is a guard rather than a model: it keeps an unexplained Clean
+// from displacing a finding until reasoned transitions exist.
+//
+// The guard is not hypothetical. In a working store, seven (advisory, module,
+// snapshot) triples — identical inputs, no new evidence — were reported Clean by
+// exactly one pipeline generation and Affected by every other. Ranking by
+// recency alone would have let that generation retract seven real findings.
+//
+// Superseded generations are not lost — vuln-show --history exists to show them,
+// and does.
+//
+// An empty walkID answers across the store. When walkID is set the answer is
+// restricted to the modules a scan run of that walk covered, and "most recent"
+// is taken within that walk.
+//
+// The walk constraint goes through walk_scan_run_modules rather than the
+// walk_id column on vulnerability_records: since schema v5 that column is
+// provenance for the last walk that triggered the scan, so a record shared by
+// two walks names only one of them and filtering on it would drop the other
+// walk's module. GetLatestVulnerabilityRecordForWalk takes the same route.
+//
+// An unknown walkID is an error rather than an empty result: "no modules are
+// affected by this CVE" is the wrong answer to give for a walk that was never
+// scanned.
+func (s *Store) ListVulnerabilityRecordsByFindingID(ctx context.Context, findingID, walkID string) ([]domain.VulnerabilityRecord, error) {
+	// Ranking within a coordinate: a finding-bearing verdict first, then a
+	// verdict that was actually analysed, then the newest scan, then the newest
+	// pipeline generation.
+	//
+	// The two status terms are the two axes, and both are needed. Findings first,
+	// because a later all-clear must not retire an earlier finding. Coverage
+	// second, because among records that report no finding, one that was analysed
+	// and found nothing is evidence of absence while one that could not be
+	// analysed is merely absence of evidence — ranking them together let a
+	// ScanFailed record outrank a real all-clear purely on being newer, and
+	// answer a security question with a scan that never happened. That is the
+	// collapse this pair of columns exists to undo; a single collapsed status
+	// could not express it, because two of its four values are coverage answers
+	// sitting in a findings field.
+	//
+	// The pipeline version is a tie-break, never a filter. Pinning the reader's
+	// current version would erase every module whose newest scan predates a
+	// pipeline bump — measured at 92 of 235 findings in a working store, each of
+	// which would have become "no modules affected". A stale answer labelled
+	// with its date is a fact; a missing answer is a false all-clear.
+	//
+	// substr past the leading "v" makes that compare numeric, so v9 does not
+	// outrank v14 the way a text compare would. A format change degrades to 0,
+	// which is arbitrary but still deterministic.
+	//
+	// The first tier is "this record reports a matched advisory at all", which is
+	// two findings values, not one: Affected and Withdrawn. A withdrawn record bears
+	// the finding and states why it no longer stands, so it belongs in the tier that
+	// outranks a bare all-clear, and within that tier scanned_at decides — which is
+	// what lets a newer retraction supersede an older Affected verdict. Ranking
+	// Withdrawn with Clean instead would have demoted the very record that carries
+	// the reason, leaving a stale Affected as the answer for a retracted advisory.
+	// Ranking it above Affected would be the mirror error: one live advisory beside
+	// a retracted one is an Affected record, and it must not lose to a withdrawal.
+	//
+	// The three status placeholders are bound first because they appear first in
+	// the query text, ahead of the WHERE clause parameters.
+	//
+	// Records written before the axes existed carry them back-filled by migration
+	// 11, so the comparison is against a real value on every row rather than
+	// against the empty string on the older generations the query deliberately
+	// still reads.
+	const rankWithinCoordinate = `
+    ROW_NUMBER() OVER (
+      PARTITION BY vr.module_path, vr.module_version
+      ORDER BY (vr.findings_status IN (?, ?)) DESC,
+               (vr.coverage_status = ?) DESC,
+               vr.scanned_at DESC,
+               CAST(substr(vr.pipeline_version, 2) AS INTEGER) DESC
+    ) AS rn`
 
-	rows, err := s.db.DB().QueryContext(ctx, q, findingID)
+	// The index carries the analysis frame, so the join carries it too. Without
+	// that term an index row an isolated scan wrote would attach to the
+	// target-rooted record of the same coordinate and snapshot, and the answer
+	// would name a record that never reported the advisory being asked about.
+	const unscoped = `
+SELECT serialised, scanned_at FROM (
+  SELECT vr.serialised AS serialised, vr.scanned_at AS scanned_at,` + rankWithinCoordinate + `
+  FROM vulnerability_records vr
+  JOIN vulnerability_findings_index fi
+    ON fi.module_path      = vr.module_path
+   AND fi.module_version   = vr.module_version
+   AND fi.pipeline_version = vr.pipeline_version
+   AND fi.snapshot_source  = vr.snapshot_source
+   AND fi.snapshot_version = vr.snapshot_version
+   AND fi.rooting          = vr.rooting
+  WHERE fi.finding_id = ?
+)
+WHERE rn = 1
+ORDER BY scanned_at DESC`
+
+	// The partition also absorbs the duplicate rows a walk with several scan
+	// runs over one module would otherwise produce.
+	const scoped = `
+SELECT serialised, scanned_at FROM (
+  SELECT DISTINCT vr.serialised AS serialised, vr.scanned_at AS scanned_at,` + rankWithinCoordinate + `
+  FROM vulnerability_records vr
+  JOIN vulnerability_findings_index fi
+    ON fi.module_path      = vr.module_path
+   AND fi.module_version   = vr.module_version
+   AND fi.pipeline_version = vr.pipeline_version
+   AND fi.snapshot_source  = vr.snapshot_source
+   AND fi.snapshot_version = vr.snapshot_version
+   AND fi.rooting          = vr.rooting
+  JOIN walk_scan_run_modules m
+    ON m.module_path      = vr.module_path
+   AND m.module_version   = vr.module_version
+   AND m.pipeline_version = vr.pipeline_version
+   AND m.snapshot_source  = vr.snapshot_source
+   AND m.snapshot_version = vr.snapshot_version
+  JOIN walk_scan_runs wsr ON wsr.id = m.walk_scan_run_id
+  WHERE fi.finding_id = ? AND wsr.walk_id = ?
+)
+WHERE rn = 1
+ORDER BY scanned_at DESC`
+
+	rank := []any{
+		string(domain.FindingsRecordAffected),
+		string(domain.FindingsRecordWithdrawn),
+		string(domain.CoverageAnalysed),
+	}
+
+	q, args := unscoped, append(append([]any{}, rank...), findingID)
+	if walkID != "" {
+		known, err := s.walkHasScanRun(ctx, walkID)
+		if err != nil {
+			return nil, err
+		}
+		if !known {
+			return nil, fmt.Errorf("no vulnerability scan run for walk %s — run: kanonarion vuln-scan %s", walkID, walkID)
+		}
+		q, args = scoped, append(append([]any{}, rank...), findingID, walkID)
+	}
+
+	rows, err := s.db.DB().QueryContext(ctx, q, args...)
 	if err != nil {
+		if walkID != "" {
+			return nil, fmt.Errorf("querying records by finding id in walk %s: %w", walkID, err)
+		}
 		return nil, fmt.Errorf("querying records by finding id: %w", err)
 	}
 	defer func() { _ = rows.Close() }()
@@ -788,12 +1704,13 @@ ORDER BY vr.scanned_at DESC`
 	var records []domain.VulnerabilityRecord
 	for rows.Next() {
 		var serialised []byte
-		if err := rows.Scan(&serialised); err != nil {
+		var scannedAt string // ordering key only; the record carries its own timestamp.
+		if err := rows.Scan(&serialised, &scannedAt); err != nil {
 			return nil, fmt.Errorf("scanning vulnerability record: %w", err)
 		}
-		var rec domain.VulnerabilityRecord
-		if err := json.Unmarshal(serialised, &rec); err != nil {
-			return nil, fmt.Errorf("unmarshalling vulnerability record: %w", err)
+		rec, derr := decodeRecord(serialised)
+		if derr != nil {
+			return nil, derr
 		}
 		records = append(records, rec)
 	}
@@ -801,6 +1718,22 @@ ORDER BY vr.scanned_at DESC`
 		return nil, fmt.Errorf("iterating vulnerability records: %w", err)
 	}
 	return records, nil
+}
+
+// walkHasScanRun reports whether any vulnerability scan run was recorded for
+// the given walk, so a scoped query can tell "nothing matched" apart from
+// "that walk was never scanned".
+func (s *Store) walkHasScanRun(ctx context.Context, walkID string) (bool, error) {
+	const q = `SELECT 1 FROM walk_scan_runs WHERE walk_id = ? LIMIT 1`
+	var one int
+	err := s.db.DB().QueryRowContext(ctx, q, walkID).Scan(&one)
+	if errors.Is(err, sql.ErrNoRows) {
+		return false, nil
+	}
+	if err != nil {
+		return false, fmt.Errorf("checking scan runs for walk %s: %w", walkID, err)
+	}
+	return true, nil
 }
 
 // ListVulnerabilityRecords returns all vulnerability records for a walk scan run.
@@ -814,8 +1747,12 @@ func (s *Store) ListVulnerabilityRecords(ctx context.Context, walkScanRunID stri
 		return nil, fmt.Errorf("walk scan run not found: %s", walkScanRunID)
 	}
 
+	// One row per (coordinate, generation) the run's membership index reaches. A
+	// run that recorded the record's content hash reaches exactly the generation
+	// it scanned; a run written before that column existed named only the
+	// coordinate, so it reaches every generation and the collapse below decides.
 	const q = `
-SELECT vr.serialised
+SELECT vr.module_path, vr.module_version, m.record_content_hash, vr.content_hash, vr.serialised
 FROM vulnerability_records vr
 JOIN walk_scan_run_modules m
   ON m.module_path      = vr.module_path
@@ -824,7 +1761,7 @@ JOIN walk_scan_run_modules m
  AND m.snapshot_source  = vr.snapshot_source
  AND m.snapshot_version = vr.snapshot_version
 WHERE m.walk_scan_run_id = ?
-ORDER BY vr.module_path, vr.module_version`
+ORDER BY vr.module_path, vr.module_version, vr.scanned_at ASC, vr.rowid ASC`
 
 	rows, err := s.db.DB().QueryContext(ctx, q, walkScanRunID)
 	if err != nil {
@@ -832,58 +1769,123 @@ ORDER BY vr.module_path, vr.module_version`
 	}
 	defer func() { _ = rows.Close() }()
 
-	var records []domain.VulnerabilityRecord
+	type moduleKey struct{ path, version string }
+	var order []moduleKey
+	pinned := map[moduleKey]domain.VulnerabilityRecord{}
+	candidates := map[moduleKey][]domain.VulnerabilityRecord{}
+
 	for rows.Next() {
+		var path, version, wantHash, gotHash string
 		var serialised []byte
-		if err := rows.Scan(&serialised); err != nil {
+		if err := rows.Scan(&path, &version, &wantHash, &gotHash, &serialised); err != nil {
 			return nil, fmt.Errorf("scanning vulnerability record: %w", err)
 		}
-		var rec domain.VulnerabilityRecord
-		if err := json.Unmarshal(serialised, &rec); err != nil {
-			return nil, fmt.Errorf("unmarshalling vulnerability record: %w", err)
+		rec, derr := decodeRecord(serialised)
+		if derr != nil {
+			return nil, derr
 		}
-		records = append(records, rec)
+		k := moduleKey{path, version}
+		if _, seen := candidates[k]; !seen {
+			order = append(order, k)
+		}
+		candidates[k] = append(candidates[k], rec)
+		if wantHash != "" && wantHash == gotHash {
+			// The run named this generation. It is the answer, not a candidate:
+			// serving a later one would report a record the run never produced.
+			pinned[k] = rec
+		}
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating vulnerability records: %w", err)
 	}
+
+	records := make([]domain.VulnerabilityRecord, 0, len(order))
+	for _, k := range order {
+		if rec, ok := pinned[k]; ok {
+			records = append(records, rec)
+			continue
+		}
+		composed, cerr := domain.Compose(candidates[k])
+		if cerr != nil {
+			return nil, fmt.Errorf("composing vulnerability record for %s@%s in run %s: %w", k.path, k.version, walkScanRunID, cerr)
+		}
+		records = append(records, composed)
+	}
 	return records, nil
 }
 
-// ListVulnerabilityRecordsForModule returns all stored scan records for a
-// coordinate and pipeline version across all walks and snapshots, newest first.
+// ListVulnerabilityRecordsForModule returns every generation the ledger holds
+// for a coordinate and pipeline version, across all walks, snapshots and
+// analysis frames, newest first.
+//
+// This is what makes the ledger observable: after a re-scan has changed the
+// served record, the earlier one is still here, stating the snapshot, the
+// call-graph completeness and the frame it was reached in.
+//
+// The secondary sort is the row id, not the content hash. scanned_at persists at
+// second precision — the precision the canonical hash covers, so widening the
+// column would put the stored hashes and the stored time out of step — and two
+// scans within one second carry the same timestamp. The ledger is append-only,
+// so insertion order is the sequence it actually has.
 func (s *Store) ListVulnerabilityRecordsForModule(
 	ctx context.Context,
 	coord coordinate.ModuleCoordinate,
 	pipelineVersion string,
 ) ([]domain.VulnerabilityRecord, error) {
+	// The zero coordinate names no module, so this is a question about nothing.
+	// Answering it with absence would report "no record here" for a module that
+	// was never asked about — see coordinate.ErrZeroCoordinate.
+	if coord.IsZero() {
+		return nil, coordinate.ErrZeroCoordinate
+	}
 	const q = `
 SELECT serialised FROM vulnerability_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
-ORDER BY scanned_at DESC`
+ORDER BY scanned_at DESC, rowid DESC`
 
-	rows, err := s.db.DB().QueryContext(ctx, q, coord.Path, coord.Version, pipelineVersion)
+	return s.queryRecords(ctx, "vulnerability records for module", q,
+		coord.Path(), coord.Version(), pipelineVersion)
+}
+
+// decodeRecord parses a stored record and checks the seal it carries. Every
+// read path goes through it, not only the snapshot-keyed one: a guarantee that
+// holds on one query and not the next has a hole the size of the rest of the
+// query surface, and a caller reaching a record by any route is entitled to the
+// same answer about whether it still describes what was scanned.
+//
+// An integrity failure is reported as ErrVulnIntegrity, never as absence. A
+// detected tamper reported as "nothing here" becomes a silent re-scan that
+// overwrites the evidence of the tamper.
+func decodeRecord(serialised []byte) (domain.VulnerabilityRecord, error) {
+	var h domain.VulnerabilityRecordHasher
+	rec, err := h.Unmarshal(serialised)
 	if err != nil {
-		return nil, fmt.Errorf("listing vulnerability records for module: %w", err)
+		return domain.VulnerabilityRecord{}, fmt.Errorf("unmarshalling vulnerability record: %w", err)
 	}
-	defer func() { _ = rows.Close() }()
+	if verr := h.VerifyContentHash(rec); verr != nil {
+		// A record this build cannot reproduce is not necessarily one that has
+		// been altered. recordseal decides which, on the stored bytes alone —
+		// and it is JSON-aware, so the snapshot's embedded content_hash is
+		// treated as the sealed content it is rather than as the seal.
+		return domain.VulnerabilityRecord{}, fmt.Errorf("%w: %s: %w",
+			ports.ErrVulnIntegrity, rec.Coordinate, recordseal.Classify(serialised, rec.ContentHash, verr))
+	}
+	return rec, nil
+}
 
-	var records []domain.VulnerabilityRecord
-	for rows.Next() {
-		var serialised []byte
-		if err := rows.Scan(&serialised); err != nil {
-			return nil, fmt.Errorf("scanning vulnerability record: %w", err)
-		}
-		var rec domain.VulnerabilityRecord
-		if err := json.Unmarshal(serialised, &rec); err != nil {
-			return nil, fmt.Errorf("unmarshalling vulnerability record: %w", err)
-		}
-		records = append(records, rec)
+// decodeRun parses a stored walk scan run and checks its seal, on the same
+// terms as decodeRecord.
+func decodeRun(serialised []byte) (domain.WalkScanRun, error) {
+	var h domain.WalkScanRunHasher
+	run, err := h.Unmarshal(serialised)
+	if err != nil {
+		return domain.WalkScanRun{}, fmt.Errorf("unmarshalling walk scan run: %w", err)
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating vulnerability records for module: %w", err)
+	if verr := h.VerifyContentHash(run); verr != nil {
+		return domain.WalkScanRun{}, fmt.Errorf("%w: run %s: %w",
+			ports.ErrVulnIntegrity, run.ID, recordseal.Classify(serialised, run.ContentHash, verr))
 	}
-	return records, nil
+	return run, nil
 }
 
 // InternalDB returns the underlying sqlitestore.DB for testing/wiring.

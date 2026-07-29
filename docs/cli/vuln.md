@@ -26,6 +26,22 @@ The vulnerability database is fetched once and stored as a `DatabaseSnapshot`
 blob. Subsequent scans reuse the cached snapshot, making them fast and
 offline-capable. The snapshot is pinned so repeat scans are reproducible.
 
+The snapshot is content-addressed. Its `content_hash` is computed over the blob
+when it is fetched, stored beside it, and verified before any scan consumes it —
+so the pinning is a checkable claim rather than a version string the blob itself
+asserts, and two stores holding the same `version` can be shown to hold the same
+advisories. A blob that no longer matches its stored hash is refused as an
+integrity failure rather than reported as absent, because absence would trigger
+a silent re-fetch that overwrites the evidence.
+
+Snapshots stored before the hash existed carry an empty one, and are deliberately
+**left that way**. Hashing a blob the store already holds would attest "these are
+the bytes we hold now", not "these are the bytes we fetched" — a seal
+indistinguishable from an honest one, reporting an integrity guarantee that was
+never established. Such a snapshot therefore reads as *unverifiable*, which is
+what it honestly is; it is still returned and still serves a scan. They age out
+as fresh snapshots are fetched.
+
 The module must have been fetched first (`kanonarion walk` or `kanonarion fetch`).
 
 ### Prerequisites
@@ -198,6 +214,86 @@ The stored run also carries a single collapsed `overall_status`
 only a summary word; because one word cannot carry both axes, no consumer should
 derive a findings fact from it — read `findings_status` instead.
 
+#### The same two axes on a per-module record
+
+Each `VulnerabilityRecord` carries the same split, for the same reason. Its
+`overall_status` is one word over five values that answer two different
+questions:
+
+| `overall_status` | `coverage_status` | `findings_status` |
+|---|---|---|
+| `Clean` | `Analysed` | `Clean` |
+| `Affected` | `Analysed` | `Affected` |
+| `Withdrawn` | `Analysed` | `Withdrawn` |
+| `Unscannable` | `Unscannable` | `Clean` |
+| `ScanFailed` | `Failed` | `Clean` |
+
+Read the two axes, not the collapsed word. `findings_status: Clean` on a record
+whose `coverage_status` is not `Analysed` means "no finding is being reported",
+not "there is nothing here" — only `Analysed` + `Clean` is an all-clear. The
+diagnostic detail for a coverage failure is unchanged and sits beside the axes:
+`unscan_reason` / `unscannable_reason` for `Unscannable`, `error_detail` for
+`Failed`.
+
+The axes can also state a pair the collapsed word has no value for: an advisory
+matched, but coverage failed, so whether it applies was never established
+(`coverage_status: Failed` with `findings_status: Affected`). On a single status
+that became `Clean`, which reads as an all-clear. `overall_status` still
+collapses it to the coverage word — coverage outranks findings in the summary,
+as it does for a whole run — while the findings axis keeps the finding.
+
+This is what lets `vuln-by-id` rank honestly when one coordinate has several
+records. A record that reports the finding wins first; among those that report
+none, one that was analysed beats one that could not be, however recent the
+latter is. Ranking on the collapsed word put "we could not look" and "we looked
+and it was clean" in one bucket, where the newer scan won — answering a security
+question with a scan that never completed.
+
+Records written before the split carry the axes back-filled by a store
+migration, and readers recover them from `overall_status` when absent; the
+projection is exact in both directions, so no record loses information.
+
+#### Withdrawn advisories
+
+`Withdrawn` is the third value on the findings axis, and it is not a flavour of
+`Clean`. `Clean` says no advisory ever applied; `Withdrawn` says one did and was
+retracted upstream, and the retraction date travels on the finding itself as
+`withdrawn_at` (the OSV top-level `withdrawn` timestamp).
+
+The rule for a finding set:
+
+- no advisory matched — `Clean`.
+- at least one matched advisory is live — `Affected`. One live advisory decides it
+  however many retracted ones sit beside it; those stay on the record with their
+  own dates.
+- every matched advisory is retracted — `Withdrawn`.
+
+A finding whose advisory enrichment failed carries no date and is therefore treated
+as live. That is the conservative direction on purpose: a lookup that could not read
+the advisory has not established a retraction.
+
+A withdrawn module is reported, never omitted. It is listed apart from the affected
+set, so a reader scanning for what to act on sees the affected modules alone, while a
+reader asking why a module stopped being listed finds it named with its date rather
+than having to notice an absence:
+
+```
+Findings (4 affected):
+  ...
+Withdrawn advisories (1, not counted as findings):
+  go.etcd.io/bbolt@v1.4.3
+    GO-2026-4923: retracted upstream 2026-04-08T13:33:56Z — WITHDRAWN: out-of-range-index in go.etcd.io/bbolt
+```
+
+Note that upstream signals a retraction *twice*: in the top-level `withdrawn`
+timestamp, and by prefixing the advisory summary with `WITHDRAWN: `. Only the
+timestamp is a fact a consumer can route on; the prefix is prose that kanonarion
+passes through. It carries no fix or reachability line, because neither applies to an
+advisory that no longer stands — and reachability is not the lever here: a retracted
+advisory is excluded on the strength of its retraction, not on nothing calling it.
+`reachability` answers such a query with its own `withdrawn` verdict rather than
+computing a call graph for it.
+
 ```
 $ kanonarion vuln-scan --module github.com/gin-gonic/gin@v1.6.2
 ```
@@ -293,6 +389,7 @@ version bump fix it?* and *which symbol is at risk?* - directly in the output:
 
 | Line | Meaning |
 |---|---|
+| `WITHDRAWN:` | The advisory was retracted upstream on the date given, and is **not a finding against this module**. Printed ahead of the range and the fix, because it changes what the rest of the entry means |
 | `affected:` | The version range the advisory applies to (e.g. `>= v1.7.3`) |
 | `fix:` | `fixed in <version>` when a patch exists, or **`no fix available`** when none does - the no-fix state is rendered explicitly, never left blank |
 | `symbols:` | The at-risk symbols named by the advisory, surfaced even for metadata-only (Unscannable) modules where reachability could not be computed |
@@ -319,6 +416,16 @@ github.com/gin-gonic/gin@v1.6.2 - Affected
   GO-2020-0001 (CVE-2020-28483): HTTP request smuggling
       affected: < v1.7.7
       fix:      fixed in v1.7.7
+
+$ kanonarion vuln-show go.etcd.io/bbolt@v1.4.3
+go.etcd.io/bbolt@v1.4.3 — Withdrawn
+  Walk:            01KYKDXSM74WQ9FBSN7WX0S97P
+  First validated: 2026-07-28T06:06:20Z
+  Last validated:  2026-07-28T06:06:20Z
+  Snapshot:        vuln.go.dev@2026-07-27T16:28:49Z
+  GO-2026-4923 (CVE-2026-33817, GHSA-6jwv-w5xf-7j27) [not reachable]: WITHDRAWN: out-of-range-index in go.etcd.io/bbolt
+      WITHDRAWN: advisory retracted upstream 2026-04-08T13:33:56Z — not a finding against this module
+      fix:      no fix available
 
 $ kanonarion vuln-show www.velocidex.com/golang/velociraptor@v0.76.6
 www.velocidex.com/golang/velociraptor@v0.76.6 - Unscannable (generated-assets-missing)
@@ -476,18 +583,47 @@ kanonarion vuln-by-id <finding-id> [flags]
 
 | Flag | Default | Description |
 |------|---------|-------------|
+| `--walk-id` | *(none)* | Restrict results to the modules scanned under this walk |
 | `--store-root` | `~/.kanonarion` | Path to fact store root |
 | `--json` | `false` | Emit records as JSON |
+
+Without `--walk-id` the answer spans the whole store: every module version,
+every pipeline version and every database snapshot generation ever scanned.
+That includes a module version a later build patched out, which will still be
+listed as `Affected`. Pass `--walk-id` when the question is "which of the
+modules in *this* build is hit by this advisory"; text output then prints a
+`notice:` line naming the walk it filtered against, so a shorter list is never
+mistaken for an unrestricted one.
+
+A `--walk-id` with no stored vulnerability scan run is an error, not an empty
+result — an all-clear for a walk that was never scanned would be a claim the
+store cannot support. The walk constraint resolves through scan-run membership,
+not the `walk_id` provenance column on the record, so a scan two walks share is
+reported for both.
+
+**One row per module version.** A module accumulates a scan record for every
+(pipeline version, database snapshot) it has been scanned under, and those
+records disagree. `vuln-by-id` reports one row per module version, choosing the
+record that reports the advisory as affecting the module; only among records
+that agree does the most recent scan win. A later all-clear does not retire an
+earlier finding: `Clean` is the right label for a module where the advisory was
+never found, not a state a finding may decay into without a stated reason. Each
+row carries the snapshot and scan time it came from, so a stale answer is
+visible as one. Use `vuln-show --history` to see every generation.
 
 **Example:**
 
 ```
 $ kanonarion vuln-by-id GO-2020-0001
-github.com/gin-gonic/gin@v1.6.2                              Affected
-github.com/gin-gonic/gin@v1.7.0                              Affected
+github.com/gin-gonic/gin@v1.6.2       Affected     vuln-db=2026-07-24T18:35:55Z   scanned=2026-07-26T06:37:10Z
+github.com/gin-gonic/gin@v1.7.0       Affected     vuln-db=2026-07-23T18:46:07Z   scanned=2026-07-24T11:07:36Z
 
 $ kanonarion vuln-by-id CVE-2020-28483
-github.com/gin-gonic/gin@v1.6.2                              Affected
+github.com/gin-gonic/gin@v1.6.2       Affected     vuln-db=2026-07-24T18:35:55Z   scanned=2026-07-26T06:37:10Z
+
+$ kanonarion vuln-by-id GO-2020-0001 --walk-id 01KQDBVW092ER1HNXZ60X27CMD
+notice: results restricted to the modules scanned under walk "01KQDBVW092ER1HNXZ60X27CMD"
+github.com/gin-gonic/gin@v1.7.0       Affected     vuln-db=2026-07-23T18:46:07Z   scanned=2026-07-24T11:07:36Z
 ```
 
 ---

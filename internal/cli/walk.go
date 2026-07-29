@@ -140,9 +140,9 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
 			defer func() { _ = cleanup() }()
 			progress := newWalkProgressReporter(stderr, noProgress, activeConfig, logLevel)
 			if isGoMod {
-				return runWalkProject(cmd.Context(), gomodPath, f, force, allowPartial, workerCount, operator, policyPath, skipVCSVerify, scope, depth, localReplaceBase, analyseRoot, stdlibFromGoMod, progress, ctr.ExecuteWalk, stdout, stderr)
+				return runWalkProject(cmd.Context(), gomodPath, force, allowPartial, workerCount, operator, policyPath, skipVCSVerify, scope, depth, localReplaceBase, analyseRoot, stdlibFromGoMod, progress, ctr.ExecuteWalk, ctr.QueryFetch, stdout, stderr)
 			}
-			return runWalk(cmd.Context(), args[0], f, force, allowPartial, workerCount, operator, policyPath, skipVCSVerify, domain.WalkScopeCode, depth, localReplaceBase, progress, ctr.ExecuteWalk, stdout, stderr)
+			return runWalk(cmd.Context(), args[0], f, force, allowPartial, workerCount, policyPath, skipVCSVerify, domain.WalkScopeCode, depth, localReplaceBase, progress, ctr.ExecuteWalk, ctr.QueryFetch, stdout, stderr)
 		},
 	}
 
@@ -175,25 +175,7 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
 // scopeTool the tooling supply chain, scopeComplete the whole build list. For
 // code/tool the build-list graph is restricted to the scope's module set,
 // resolved via the shared Go-toolchain resolver.
-func runWalkProject(
-	ctx context.Context,
-	gomodPath string,
-	f commonWalkFlags,
-	force bool,
-	allowPartial bool,
-	workerCount int,
-	operator string,
-	policyPath string,
-	skipVCSVerify bool,
-	scope depScope,
-	depth domain.WalkDepth,
-	localReplaceBase string,
-	analyseRoot bool,
-	stdlibFromGoMod bool,
-	progress walkports.ProgressReporter,
-	uc ExecuteWalkUseCase,
-	stdout, stderr io.Writer,
-) error {
+func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial bool, workerCount int, operator, policyPath string, skipVCSVerify bool, scope depScope, depth domain.WalkDepth, localReplaceBase string, analyseRoot, stdlibFromGoMod bool, progress walkports.ProgressReporter, uc ExecuteWalkUseCase, records fetchRecordReader, stdout, stderr io.Writer) error {
 	_ = operator // operator is bound on the use case at construction, as in runWalk
 	logger := buildLogger(logLevel, stderr)
 
@@ -214,9 +196,11 @@ func runWalkProject(
 	}
 
 	// The main module is local and unpublished; pin it at the synthetic
-	// LocalVersion rather than a semver. NewModuleCoordinate is bypassed because
-	// "local" is not valid semver — the constant is the one exception it allows.
-	target := coordinate.ModuleCoordinate{Path: modulePath, Version: coordinate.LocalVersion}
+	// LocalVersion rather than a semver.
+	target, err := coordinate.NewLocalCoordinate(modulePath)
+	if err != nil {
+		return fmt.Errorf("project coordinate for %s: %w", modulePath, err)
+	}
 
 	policy, policyHash, err := loadPolicy(ctx, policyPath, logger)
 	if err != nil {
@@ -258,6 +242,11 @@ func runWalkProject(
 	}
 
 	rec := result.Record
+	// The aggregate goes to stderr, never stdout: the walk record on stdout is
+	// the content-hashed artefact, and a report about the run is not part of it.
+	if cerr := reportGraphVerificationCoverage(ctx, rec.Graph.Nodes, records, stderr); cerr != nil {
+		return cerr
+	}
 	if jsonOut {
 		if encErr := writeWalkRecordJSON(stdout, rec); encErr != nil {
 			return fmt.Errorf("encoding JSON: %w", encErr)
@@ -285,23 +274,7 @@ func runWalkProject(
 	return nil
 }
 
-func runWalk(
-	ctx context.Context,
-	arg string,
-	f commonWalkFlags,
-	force bool,
-	allowPartial bool,
-	workerCount int,
-	operator string,
-	policyPath string,
-	skipVCSVerify bool,
-	scope domain.WalkScope,
-	depth domain.WalkDepth,
-	localReplaceBase string,
-	progress walkports.ProgressReporter,
-	uc ExecuteWalkUseCase,
-	stdout, stderr io.Writer,
-) error {
+func runWalk(ctx context.Context, arg string, f commonWalkFlags, force, allowPartial bool, workerCount int, policyPath string, skipVCSVerify bool, scope domain.WalkScope, depth domain.WalkDepth, localReplaceBase string, progress walkports.ProgressReporter, uc ExecuteWalkUseCase, records fetchRecordReader, stdout, stderr io.Writer) error {
 	logger := buildLogger(logLevel, stderr)
 
 	path, version, err := parseModuleArg(arg)
@@ -351,6 +324,11 @@ func runWalk(
 	}
 
 	rec := result.Record
+	// The aggregate goes to stderr, never stdout: the walk record on stdout is
+	// the content-hashed artefact, and a report about the run is not part of it.
+	if cerr := reportGraphVerificationCoverage(ctx, rec.Graph.Nodes, records, stderr); cerr != nil {
+		return cerr
+	}
 	if jsonOut {
 		if encErr := writeWalkRecordJSON(stdout, rec); encErr != nil {
 			return fmt.Errorf("encoding JSON: %w", encErr)

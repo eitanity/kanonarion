@@ -75,6 +75,12 @@ const (
 	// package (plugin.Open / (*Plugin).Lookup): the loaded targets are resolved
 	// at runtime and are never present in the static graph.
 	SinkPluginLeaf SinkKind = "plugin-leaf"
+	// SinkTestScopeUnmeasured is a module whose _test.go declarations were not
+	// part of the analysis. Test fakes and table-driven callers are a systematic
+	// part of what calls a port, so an empty answer over such a module measures
+	// production code only — and saying so is worth more than a clean-looking
+	// absent that quietly means something narrower than it reads.
+	SinkTestScopeUnmeasured SinkKind = "test-scope-unmeasured"
 )
 
 // SoundnessSink is a single reason an empty verdict was downgraded to
@@ -157,6 +163,17 @@ type NegativeVerdictInputs struct {
 	// cannot observe an empty bound-implementer set from stored edges, so it
 	// leaves this false.
 	ScanDispatch bool
+	// TestScope is the owning module's test-scope axis. Anything other than
+	// Analysed means the answer covers production code only.
+	TestScope TestScope
+	// TestScopeDetail explains an excluded test scope, when the record recorded
+	// a reason.
+	TestScopeDetail string
+	// TestsExcludedByRequest is set when the caller asked for the test surface
+	// to be dropped. It is not a soundness sink — the scope was chosen, not
+	// missed — but it still narrows what an empty answer means, so it is named
+	// on the verdict line rather than left implicit.
+	TestsExcludedByRequest bool
 }
 
 // ClassifyNegativeVerdict classifies an empty callers/callees answer into
@@ -182,6 +199,25 @@ func ClassifyNegativeVerdict(in NegativeVerdictInputs) Verdict {
 	// The queried node itself carries a documented leaf sink.
 	if in.Found {
 		sinks = append(sinks, leafSinks(in.QueriedNode)...)
+	}
+
+	// The module's test declarations were never analysed, so a test-only caller
+	// could not have produced an edge. That is an unmeasured axis, not a
+	// measured absence.
+	if !in.TestScope.IsMeasured() && !in.TestsExcludedByRequest {
+		site := in.QueriedNode.ID
+		if site == "" {
+			site = in.MethodName
+		}
+		detail := in.TestScopeDetail
+		if detail == "" {
+			detail = "_test.go declarations were not analysed for this module"
+		}
+		sinks = append(sinks, SoundnessSink{
+			Kind:   SinkTestScopeUnmeasured,
+			Site:   site,
+			Detail: detail,
+		})
 	}
 
 	// An over-approximated or unresolved interface invoke site dispatches on the

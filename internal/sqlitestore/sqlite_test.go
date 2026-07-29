@@ -2,8 +2,11 @@ package sqlitestore_test
 
 import (
 	"database/sql"
+	"errors"
+	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
@@ -205,5 +208,96 @@ func TestFakeDB(t *testing.T) {
 	f2 := &sqlitestore.FakeDB{}
 	if err := f2.Close(); err != nil {
 		t.Errorf("FakeDB.Close() with nil sqlDB failed: %v", err)
+	}
+}
+
+// TestMigration_GoStepRunsInsideTheSameTransaction pins the two properties the Fn
+// hook exists for and would be useless without: it runs, and it runs inside the
+// transaction carrying the SQL beside it — so a back-fill that fails leaves the
+// schema change it accompanies rolled back rather than half-applied.
+func TestMigration_GoStepRunsInsideTheSameTransaction(t *testing.T) {
+	dir := t.TempDir()
+	dsn := filepath.Join(dir, "t.db")
+
+	ran := false
+	db, err := sqlitestore.Open(dsn, []sqlitestore.Migration{
+		{Module: "m", Version: 1, SQL: `CREATE TABLE t (v TEXT NOT NULL DEFAULT '')`},
+		{Module: "m", Version: 2, SQL: `INSERT INTO t (v) VALUES ('before')`,
+			Fn: func(tx *sql.Tx) error {
+				ran = true
+				// Visible inside the same transaction: the row the SQL above inserted
+				// is readable here, which is what "same transaction" means.
+				var v string
+				if err := tx.QueryRow(`SELECT v FROM t`).Scan(&v); err != nil {
+					return fmt.Errorf("reading the row the SQL step inserted: %w", err)
+				}
+				if v != "before" {
+					return fmt.Errorf("go step could not see the SQL beside it: %q", v)
+				}
+				if _, err := tx.Exec(`UPDATE t SET v = 'after'`); err != nil {
+					return fmt.Errorf("writing from the go step: %w", err)
+				}
+				return nil
+			}},
+	})
+	if err != nil {
+		t.Fatalf("Open: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	if !ran {
+		t.Fatal("the go step never ran")
+	}
+	var v string
+	if err := db.DB().QueryRow(`SELECT v FROM t`).Scan(&v); err != nil {
+		t.Fatalf("QueryRow: %v", err)
+	}
+	if v != "after" {
+		t.Fatalf("v = %q, want the go step's write to have committed", v)
+	}
+}
+
+// TestMigration_GoStepFailureRollsBackTheWholeMigration: a half-applied migration
+// is a store whose columns disagree with its rows, and the version must not be
+// recorded as applied either — otherwise the next open skips it and the store is
+// permanently inconsistent.
+func TestMigration_GoStepFailureRollsBackTheWholeMigration(t *testing.T) {
+	dir := t.TempDir()
+	dsn := filepath.Join(dir, "t.db")
+
+	_, err := sqlitestore.Open(dsn, []sqlitestore.Migration{
+		{Module: "m", Version: 1, SQL: `CREATE TABLE t (v TEXT NOT NULL DEFAULT '')`},
+		{Module: "m", Version: 2, SQL: `INSERT INTO t (v) VALUES ('x')`,
+			Fn: func(*sql.Tx) error { return errors.New("back-fill failed") }},
+	})
+	if err == nil {
+		t.Fatal("a failing go step did not fail the open")
+	}
+	if !strings.Contains(err.Error(), "back-fill failed") {
+		t.Fatalf("error does not name the go step's failure: %v", err)
+	}
+
+	// Re-open with only the first migration: the second must not be recorded, and
+	// its SQL must not have taken effect.
+	db, err := sqlitestore.Open(dsn, []sqlitestore.Migration{
+		{Module: "m", Version: 1, SQL: `CREATE TABLE IF NOT EXISTS t (v TEXT NOT NULL DEFAULT '')`},
+	})
+	if err != nil {
+		t.Fatalf("re-open: %v", err)
+	}
+	defer func() { _ = db.Close() }()
+
+	var n int
+	if err := db.DB().QueryRow(`SELECT COUNT(*) FROM t`).Scan(&n); err != nil {
+		t.Fatalf("QueryRow: %v", err)
+	}
+	if n != 0 {
+		t.Fatalf("the failed migration's SQL survived: %d rows", n)
+	}
+	if err := db.DB().QueryRow(`SELECT COUNT(*) FROM schema_migrations WHERE module='m' AND version=2`).Scan(&n); err != nil {
+		t.Fatalf("QueryRow: %v", err)
+	}
+	if n != 0 {
+		t.Fatal("the failed migration was recorded as applied")
 	}
 }

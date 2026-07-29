@@ -7,6 +7,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 
 	application "github.com/eitanity/kanonarion/internal/vuln/application"
@@ -34,9 +35,9 @@ func newTargetScanFixture(t *testing.T, scanner *fakeScanner, fetchedCoords ...c
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	walkID := "walk-target"
 
-	target := coordinate.ModuleCoordinate{Path: "github.com/example/engine", Version: "v1.4.0"}
-	depA := coordinate.ModuleCoordinate{Path: "gopkg.in/yaml.v3", Version: "v3.0.1"}
-	depB := coordinate.ModuleCoordinate{Path: "github.com/spf13/cobra", Version: "v1.8.1"}
+	target := coordinatetest.MustNew("github.com/example/engine", "v1.4.0")
+	depA := coordinatetest.MustNew("gopkg.in/yaml.v3", "v3.0.1")
+	depB := coordinatetest.MustNew("github.com/spf13/cobra", "v1.8.1")
 
 	walk := walkdomain.WalkRecord{
 		ID:     walkID,
@@ -66,11 +67,11 @@ func newTargetScanFixture(t *testing.T, scanner *fakeScanner, fetchedCoords ...c
 		fetchedCoords = []coordinate.ModuleCoordinate{target, depA, depB}
 	}
 	for _, c := range fetchedCoords {
-		seedRec := fetchtest.Record(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path))
-		if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip-"+c.Path)); err != nil {
+		seedRec := fetchtest.Record(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path()))
+		if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip-"+c.Path())); err != nil {
 			t.Fatalf("Put blob: %v", err)
 		}
-		if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path))); err != nil {
+		if err := facts.PutFetchRecord(ctx, fetchtest.Sealed(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path()))); err != nil {
 			t.Fatalf("PutFetchRecord %s: %v", c, err)
 		}
 	}
@@ -361,8 +362,8 @@ func TestScanWalk_CoordinateKeyed_FallsBackWhenTargetCannotBeAnalysed(t *testing
 func TestScanWalk_CoordinateKeyed_FallsBackWhenTargetSourceIsAbsent(t *testing.T) {
 	ctx := t.Context()
 	scanner := &fakeScanner{targetRooted: true}
-	depA := coordinate.ModuleCoordinate{Path: "gopkg.in/yaml.v3", Version: "v3.0.1"}
-	depB := coordinate.ModuleCoordinate{Path: "github.com/spf13/cobra", Version: "v1.8.1"}
+	depA := coordinatetest.MustNew("gopkg.in/yaml.v3", "v3.0.1")
+	depB := coordinatetest.MustNew("github.com/spf13/cobra", "v1.8.1")
 	f := newTargetScanFixture(t, scanner, depA, depB) // target deliberately not fetched
 	f.markAllVulnerable()
 

@@ -58,9 +58,11 @@ A node witnesses a capability in two ways:
 ## Confidence
 
 Every finding carries the weakest edge confidence along its witnessing path
-(`Direct`, `DynamicDispatch`, `Reflection`, `Unknown`), so a capability reached
-by a resolved direct call is distinguishable from one reached only through
-interface fanout. See [`callgraph`](callgraph.md) for edge confidence semantics.
+(`Direct`, `CHA-overapprox`, `VTA`, `Framework`, `Unknown`), so a capability
+reached by a resolved direct call is distinguishable from one reached only
+through interface fanout. Reflect-dispatched edges carry `Unknown` plus a
+separate reflect attribute. See [`callgraph`](callgraph.md) for edge confidence
+semantics.
 
 ## Partial graphs
 

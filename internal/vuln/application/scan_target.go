@@ -50,6 +50,7 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 	out map[coordinate.ModuleCoordinate]moduleResult,
 ) bool {
 	target := walk.Target
+	root := target
 
 	fact, ok, err := uc.moduleScanner.getFetchRecord(ctx, target)
 	if err != nil {
@@ -119,16 +120,17 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 			// checked. Recording it Clean would be a false negative, so it carries
 			// the fault instead.
 			uc.logger.Error("target-rooted scan: advisory match by coordinate failed", "coordinate", coord, "error", err)
-			rec := uc.persistProjectRecord(ctx, coord, nil, domain.StatusScanFailed, "", "", err.Error(), params, snapshot)
+			rec := uc.persistProjectRecord(ctx, root, coord, nil, domain.StatusScanFailed, "", "", err.Error(), params, snapshot)
 			out[coord] = moduleResult{coord: coord, record: rec}
 			continue
 		}
 
-		status := domain.StatusClean
-		if len(findings) > 0 {
-			status = domain.StatusAffected
-		}
-		rec := uc.persistProjectRecord(ctx, coord, findings, status, "", "", "", params, snapshot)
+		// The findings decide the word, not their count: every match may name an
+		// advisory that has since been retracted, and that is not an Affected verdict.
+		status := domain.DetermineRecordOverallStatus(
+			domain.CoverageAnalysed, domain.DetermineFindingsAxis(findings),
+		)
+		rec := uc.persistProjectRecord(ctx, root, coord, findings, status, "", "", "", params, snapshot)
 		out[coord] = moduleResult{coord: coord, record: rec}
 	}
 	uc.logger.Info("target-rooted scan derived verdicts for the walk", "target", target, "modules", len(allCoords))

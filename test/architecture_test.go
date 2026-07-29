@@ -5,6 +5,7 @@ import (
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"go/types"
 	"os"
 	"path/filepath"
 	"strings"
@@ -372,6 +373,98 @@ func TestNoInfraImportsInApplicationOrDomain(t *testing.T) {
 		if !seen[key] {
 			t.Errorf("knownInfraViolations entry %q (%s) no longer violates — remove it from the baseline now that %s is fixed",
 				key, ticket, ticket)
+		}
+	}
+}
+
+// valueObjectAccessors are the methods that replaced an exported field on each
+// value object, keyed by the fully qualified receiver type. A missing call on
+// one of these yields a func value rather than the string or bool the reader
+// meant, which is what makes the omission dangerous rather than merely wrong.
+//
+// Each entry is one conversion: ModuleCoordinate, then the artefact identity
+// and the hash inside it, then the blob identity that addresses an artefact in
+// a store. The identity is the key the fetch ledger composes on and the value
+// the extraction contexts embed, so an uncalled accessor there reaches a SQL
+// parameter by the same route the coordinate's did. The blob identity reaches
+// one by a shorter route still: its String is written to the content_location
+// and go_mod_location columns of every fact record.
+var valueObjectAccessors = map[string]map[string]bool{
+	modulePath + "/internal/coordinate.ModuleCoordinate": {
+		"Path": true, "Version": true, "String": true, "IsLocal": true,
+	},
+	modulePath + "/internal/fetch/domain.ArtefactIdentity": {
+		"Hash": true, "GoModOnly": true, "String": true, "IsZero": true,
+	},
+	modulePath + "/internal/fetch/domain.ModuleHash": {
+		"Algorithm": true, "Value": true, "String": true, "IsZero": true,
+	},
+	modulePath + "/internal/fetch/ports.BlobIdentity": {
+		"Kind": true, "Hash": true, "String": true, "IsZero": true,
+	},
+}
+
+// TestNoCoordinateAccessorMethodValues is the residual guard on unexporting the
+// fields of the value objects above.
+//
+// Unexporting them turned every read of coord.Path into a call. The compiler
+// catches almost all of the ones that were missed — a func() string will not
+// concatenate, compare or pass as a string — but it accepts three shapes that
+// fail only at run time: an argument typed any (a SQL query parameter, a
+// structured-log field, an audit event's payload), a %v or %s verb (go vet
+// catches those, and did), and a value stored into an interface field.
+//
+// This is not hypothetical. The coordinate conversion left 88 such method
+// values behind: they built cleanly and vet passed on all but seven, and the
+// first evidence was "sql: converting argument $1 type: unsupported type
+// func() string" from the fact store. Nothing else in the toolchain rejects
+// them, so the check lives here, and every later conversion is added to
+// valueObjectAccessors rather than trusted to a clean build.
+func TestNoCoordinateAccessorMethodValues(t *testing.T) {
+	cfg := &packages.Config{
+		Mode:  packages.NeedSyntax | packages.NeedTypes | packages.NeedTypesInfo | packages.NeedName | packages.NeedFiles | packages.NeedDeps | packages.NeedImports,
+		Tests: true,
+		Dir:   "..",
+	}
+	pkgs, err := packages.Load(cfg, "./...")
+	if err != nil {
+		t.Fatalf("packages.Load: %v", err)
+	}
+	reported := map[string]bool{}
+	for _, pkg := range pkgs {
+		for _, file := range pkg.Syntax {
+			called := map[ast.Expr]bool{}
+			ast.Inspect(file, func(n ast.Node) bool {
+				if c, ok := n.(*ast.CallExpr); ok {
+					called[c.Fun] = true
+				}
+				return true
+			})
+			ast.Inspect(file, func(n ast.Node) bool {
+				sel, ok := n.(*ast.SelectorExpr)
+				if !ok || called[ast.Expr(sel)] {
+					return true
+				}
+				selection := pkg.TypesInfo.Selections[sel]
+				if selection == nil || selection.Kind() != types.MethodVal {
+					return true
+				}
+				// Selections is the only reliable oracle here: the receiver type
+				// says which value object this is, and a nil Selection means the
+				// selector is not a method on a value at all.
+				recv := strings.TrimPrefix(selection.Recv().String(), "*")
+				if !valueObjectAccessors[recv][sel.Sel.Name] {
+					return true
+				}
+				pos := pkg.Fset.Position(sel.Sel.Pos())
+				msg := fmt.Sprintf("%s:%d:%d: %s.%s is used as a method value, not called — add the parentheses; a func() reaching an any-typed argument fails at run time, not at build time",
+					pos.Filename, pos.Line, pos.Column, recv[strings.LastIndex(recv, ".")+1:], sel.Sel.Name)
+				if !reported[msg] {
+					reported[msg] = true
+					t.Error(msg)
+				}
+				return true
+			})
 		}
 	}
 }

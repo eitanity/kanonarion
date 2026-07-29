@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/walk/adapters/gomod/xmod"
@@ -33,8 +34,8 @@ type walkerFakeFetcher struct {
 	panicOn   map[string]bool
 	gate      map[string]chan struct{}
 
-	inFlight    int32
-	maxInFlight int32
+	inFlight    atomic.Int32
+	maxInFlight atomic.Int32
 }
 
 func newWalkerFetcher() *walkerFakeFetcher {
@@ -84,7 +85,7 @@ func (f *walkerFakeFetcher) addGate(path, version string) chan struct{} {
 }
 
 func (f *walkerFakeFetcher) EnsureFetched(ctx context.Context, c coordinate.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
-	k := wkey(c.Path, c.Version)
+	k := wkey(c.Path(), c.Version())
 
 	f.mu.Lock()
 	shouldPanic := f.panicOn[k]
@@ -98,14 +99,14 @@ func (f *walkerFakeFetcher) EnsureFetched(ctx context.Context, c coordinate.Modu
 		panic("injected panic for " + k)
 	}
 
-	cur := atomic.AddInt32(&f.inFlight, 1)
-	defer atomic.AddInt32(&f.inFlight, -1)
+	cur := f.inFlight.Add(1)
+	defer f.inFlight.Add(-1)
 	for {
-		max := atomic.LoadInt32(&f.maxInFlight)
+		max := f.maxInFlight.Load()
 		if cur <= max {
 			break
 		}
-		if atomic.CompareAndSwapInt32(&f.maxInFlight, max, cur) {
+		if f.maxInFlight.CompareAndSwap(max, cur) {
 			break
 		}
 	}
@@ -186,7 +187,7 @@ func (f *fakeLocalFetcher) addError(path, version string, err error) {
 }
 
 func (f *fakeLocalFetcher) EnsureFetchedFromPath(_ context.Context, c coordinate.ModuleCoordinate, _ string) (walkports.LocalModuleFetchResult, error) {
-	k := wkey(c.Path, c.Version)
+	k := wkey(c.Path(), c.Version())
 	f.mu.Lock()
 	rec, hasRec := f.records[k]
 	err := f.errors[k]
@@ -457,7 +458,7 @@ func TestWalker_WorkerPoolLimit(t *testing.T) {
 		t.Fatalf("Walk: %v", err)
 	}
 
-	if got := int(atomic.LoadInt32(&wf.maxInFlight)); got > workerLimit {
+	if got := int(wf.maxInFlight.Load()); got > workerLimit {
 		t.Errorf("max concurrent fetches = %d, want ≤ %d", got, workerLimit)
 	}
 }
@@ -876,7 +877,7 @@ func (f *productionCacheFetcher) callCount(path, version string) int {
 }
 
 func (f *productionCacheFetcher) EnsureFetched(_ context.Context, c coordinate.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
-	k := wkey(c.Path, c.Version)
+	k := wkey(c.Path(), c.Version())
 	f.mu.Lock()
 	rec, ok := f.records[k]
 	if !ok {
@@ -1184,7 +1185,7 @@ func TestWalker_ProjectMode_RootsAtLocalMainModule(t *testing.T) {
 	wf.addRecord(t, "example.com/dep", "v1.0.0")
 
 	mainGoMod := []byte("module example.com/project\ngo 1.21\nrequire example.com/dep v1.0.0\n")
-	target := coordinate.ModuleCoordinate{Path: "example.com/project", Version: coordinate.LocalVersion}
+	target := coordinatetest.MustNew("example.com/project", coordinate.LocalVersion)
 
 	w := buildWalker(rf, wf, blobs, 2)
 	outcome, err := w.Walk(context.Background(), application2.WalkRequest{

@@ -9,7 +9,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 )
@@ -25,15 +25,15 @@ func TestAcquisitionModeRoundTripsThroughTheStore(t *testing.T) {
 	for _, mode := range []domain2.AcquisitionMode{
 		domain2.AcquisitionProxy, domain2.AcquisitionModcache, domain2.AcquisitionLocal,
 	} {
-		sealed := sampleRecord(t, "github.com/foo/"+string(mode), "v1.0.0", "0.4.0", fetchtest.AcquisitionMode(mode))
-		if err := s.PutFetchRecord(ctx, mustSeal(t, sealed)); err != nil {
+		r := sampleRecord(t, "github.com/foo/"+string(mode), "v1.0.0", "0.4.0", fetchtest.AcquisitionMode(mode))
+		if err := s.PutFetchRecord(ctx, mustSeal(t, r)); err != nil {
 			t.Fatalf("Put(%s): %v", mode, err)
 		}
 		got, ok, err := s.GetFetchRecord(ctx,
-			coordinate.ModuleCoordinate{Path: sealed.ModulePath, Version: sealed.ModuleVersion}, sealed.PipelineVersion)
+			coordinatetest.MustNew(r.ModulePath, r.ModuleVersion), r.PipelineVersion)
 		if err != nil || !ok {
-			// A hash mismatch is reported as absent, so this also catches the field
-			// being dropped between write and read.
+			// Rehydrate verifies the content hash on read, so a field dropped
+			// between write and read surfaces here as an integrity error.
 			t.Fatalf("Get(%s): ok=%v err=%v", mode, ok, err)
 		}
 		if got.AcquisitionMode != string(mode) {
@@ -58,7 +58,7 @@ func TestPreFieldRecordStillReadsBack(t *testing.T) {
 		t.Fatalf("Put: %v", err)
 	}
 	got, ok, err := s.GetFetchRecord(ctx,
-		coordinate.ModuleCoordinate{Path: r.ModulePath, Version: r.ModuleVersion}, r.PipelineVersion)
+		coordinatetest.MustNew(r.ModulePath, r.ModuleVersion), r.PipelineVersion)
 	if err != nil || !ok {
 		t.Fatalf("a record without an acquisition mode failed to read back: ok=%v err=%v", ok, err)
 	}
@@ -88,8 +88,8 @@ func TestAuditEntryNamesTheAcquisitionMode(t *testing.T) {
 		}
 	}()
 
-	sealed := sampleRecord(t, "github.com/foo/bar", "v2.0.0", "0.4.0", fetchtest.AcquisitionMode(domain2.AcquisitionModcache))
-	if err := store.PutFetchRecord(context.Background(), mustSeal(t, sealed)); err != nil {
+	r := sampleRecord(t, "github.com/foo/bar", "v2.0.0", "0.4.0", fetchtest.AcquisitionMode(domain2.AcquisitionModcache))
+	if err := store.PutFetchRecord(context.Background(), mustSeal(t, r)); err != nil {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 

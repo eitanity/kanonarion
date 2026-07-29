@@ -120,7 +120,12 @@ func newCoordinateFromReplace(path, version, filename string) (coordinate.Module
 	if version == "" || !semver.IsValid(version) {
 		// Replace pointing to a module path without a valid version is unusual;
 		// store path with empty version so the caller can decide what to do.
-		return coordinate.ModuleCoordinate{Path: path, Version: version}, nil
+		c, err := coordinate.NewPathOnlyCoordinate(path)
+		if err != nil {
+			return coordinate.ModuleCoordinate{}, fmt.Errorf("invalid replace new-coord %s@%s in %s: %w",
+				path, version, filename, err)
+		}
+		return c, nil
 	}
 	c, err := coordinate.NewModuleCoordinate(path, version)
 	if err != nil {

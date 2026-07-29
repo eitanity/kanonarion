@@ -5,12 +5,12 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"math"
 	"strings"
 	"testing"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
@@ -21,7 +21,7 @@ import (
 
 func TestScanModule_NewScan(t *testing.T) {
 	ctx := t.Context()
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	facts := newFakeFacts()
@@ -81,14 +81,20 @@ func TestScanModule_NewScan(t *testing.T) {
 	}
 }
 
-// TestScanModule_ReuseReattributesToCurrentRun covers re-scanning a module that
-// was already scanned under the same snapshot by an earlier, unrelated walk. The
-// cached verdict is reused, but its provenance must follow the run the user
-// actually invoked: the returned and persisted record carry the current walk id
-// and scan time, and the result is flagged as reuse rather than a fresh scan.
-func TestScanModule_ReuseReattributesToCurrentRun(t *testing.T) {
+// TestScanModule_ReuseWritesNothingAndKeepsTheMeasurement covers re-scanning a
+// module already scanned under the same snapshot by an earlier, unrelated walk.
+//
+// The stored record is served and flagged as reuse, and NOTHING is written. The
+// reuse path used to re-stamp the walk reference and the scan time onto the
+// record and write it back, which was an UPDATE of a record in place; against
+// an append-only ledger the same code appends a second generation recording no
+// new measurement, so every later reader sees two records that differ only in
+// which run last touched them. The record keeps the walk and the time it was
+// measured in; this run's membership is recorded on the run's own per-module
+// index.
+func TestScanModule_ReuseWritesNothingAndKeepsTheMeasurement(t *testing.T) {
 	ctx := t.Context()
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	snapshot := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
 	earlier := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := time.Date(2024, 6, 17, 0, 0, 0, 0, time.UTC)
@@ -127,88 +133,31 @@ func TestScanModule_ReuseReattributesToCurrentRun(t *testing.T) {
 	if !res.Reused {
 		t.Error("expected Reused=true for a cache reuse")
 	}
-	if res.WalkID != "walk-current" {
-		t.Errorf("expected returned record re-attributed to walk-current, got %q", res.WalkID)
+	if res.WalkID != "walk-earlier" {
+		t.Errorf("reuse must keep the walk the measurement was made in, got %q", res.WalkID)
 	}
-	if !res.ScannedAt.Equal(now) {
-		t.Errorf("expected returned ScannedAt %s, got %s", now, res.ScannedAt)
+	if !res.ScannedAt.Equal(earlier) {
+		t.Errorf("reuse must keep the time the measurement was made, want %s, got %s", earlier, res.ScannedAt)
 	}
-	// last-validated (ScannedAt) advances to the invoked run, but the first-seen
-	// anchor must stay pinned to the earlier scan that established the verdict.
 	if !res.FirstScannedAt.Equal(earlier) {
 		t.Errorf("expected FirstScannedAt to stay %s, got %s", earlier, res.FirstScannedAt)
 	}
 
-	// The persisted record must be re-attributed too, so a later vuln-show /
-	// context query reflects the run the user invoked, not the earlier walk.
-	persisted, ok, err := vulnStore.GetVulnerabilityRecord(ctx, coord, "v1", snapshot)
-	if err != nil || !ok {
-		t.Fatalf("persisted record missing: ok=%v err=%v", ok, err)
+	// The ledger gained no generation: a reuse is not a measurement, and a row
+	// that records none is noise a history read cannot tell from evidence.
+	history, err := vulnStore.ListVulnerabilityRecordsForModule(ctx, coord, "v1")
+	if err != nil {
+		t.Fatalf("ListVulnerabilityRecordsForModule: %v", err)
 	}
-	if persisted.WalkID != "walk-current" {
-		t.Errorf("expected persisted walk-current, got %q", persisted.WalkID)
+	if len(history) != 1 {
+		t.Fatalf("ledger holds %d generations after a reuse, want 1", len(history))
 	}
-	if !persisted.ScannedAt.Equal(now) {
-		t.Errorf("expected persisted ScannedAt %s, got %s", now, persisted.ScannedAt)
-	}
-	if !persisted.FirstScannedAt.Equal(earlier) {
-		t.Errorf("expected persisted FirstScannedAt to stay %s, got %s", earlier, persisted.FirstScannedAt)
+	persisted := history[0]
+	if persisted.WalkID != "walk-earlier" || !persisted.ScannedAt.Equal(earlier) {
+		t.Errorf("the stored measurement was rewritten: walk %q at %s", persisted.WalkID, persisted.ScannedAt)
 	}
 	if persisted.Reused {
 		t.Error("Reused is call-scoped and must never be persisted")
-	}
-}
-
-func TestScanModule_ContentHashExcludesFirstScannedAt(t *testing.T) {
-	uc := application.NewScanModuleUseCase(
-		nil, nil, nil, nil, nil, nil, nil, fixedClock{}, "v1", "v1", slog.Default(),
-	)
-	base := domain.VulnerabilityRecord{
-		Ecosystem:        fetchdomain.EcosystemGo,
-		Coordinate:       coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"},
-		WalkID:           "walk-1",
-		OverallStatus:    domain.StatusClean,
-		DatabaseSnapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1"},
-		ScannedAt:        time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
-		PipelineVersion:  "v1",
-	}
-	withAnchor := base
-	withAnchor.FirstScannedAt = time.Date(2023, 1, 1, 0, 0, 0, 0, time.UTC)
-	movedAnchor := base
-	movedAnchor.FirstScannedAt = time.Date(2024, 6, 1, 0, 0, 0, 0, time.UTC)
-
-	// The first-seen anchor is provenance, not verdict: records that differ only
-	// in FirstScannedAt must hash identically so reuse re-attribution keeps a
-	// stable identity.
-	h1, err := uc.ComputeContentHash(withAnchor)
-	if err != nil {
-		t.Fatalf("ComputeContentHash(withAnchor): %v", err)
-	}
-	h2, err := uc.ComputeContentHash(movedAnchor)
-	if err != nil {
-		t.Fatalf("ComputeContentHash(movedAnchor): %v", err)
-	}
-	if h1 != h2 {
-		t.Errorf("content hash changed with FirstScannedAt: %s vs %s", h1, h2)
-	}
-}
-
-// TestComputeContentHash_MarshalFailure exercises the marshal-failure guard
-// with a genuinely unmarshalable value — encoding/json rejects NaN/Inf floats
-// — rather than an injected fake, so it proves the guard is actually
-// reachable in production (a finding's CVSS Severity.Score is a plain
-// float64), not just that the wrapping code is well-formed.
-func TestComputeContentHash_MarshalFailure(t *testing.T) {
-	uc := application.NewScanModuleUseCase(
-		nil, nil, nil, nil, nil, nil, nil, fixedClock{}, "v1", "v1", slog.Default(),
-	)
-	rec := domain.VulnerabilityRecord{
-		Findings: []domain.VulnerabilityFinding{
-			{ID: "GO-2024-0001", Severity: &domain.Severity{Score: math.NaN()}},
-		},
-	}
-	if _, err := uc.ComputeContentHash(rec); err == nil {
-		t.Fatal("ComputeContentHash() error = nil, want a marshal error for a NaN severity score")
 	}
 }
 
@@ -222,9 +171,9 @@ func TestScanModule_MetadataFilter_UsesGraphEdges(t *testing.T) {
 	ctx := t.Context()
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
-	coordA := coordinate.ModuleCoordinate{Path: "github.com/example/a", Version: "v1.0.0"}
-	coordB := coordinate.ModuleCoordinate{Path: "github.com/example/b", Version: "v1.0.0"}
-	coordC := coordinate.ModuleCoordinate{Path: "github.com/example/c", Version: "v1.0.0"}
+	coordA := coordinatetest.MustNew("github.com/example/a", "v1.0.0")
+	coordB := coordinatetest.MustNew("github.com/example/b", "v1.0.0")
+	coordC := coordinatetest.MustNew("github.com/example/c", "v1.0.0")
 
 	// Walk: A→B, C is a separate root (no edge from A).
 	walk := walkdomain.WalkRecord{
@@ -296,7 +245,7 @@ func TestScanModule_MetadataFilter_UsesGraphEdges(t *testing.T) {
 // ecosystem" errors for freshly scanned modules.
 func TestScanModule_HeavyScanRecordSurvivesReadGate(t *testing.T) {
 	ctx := t.Context()
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	facts := newFakeFacts()
@@ -351,7 +300,7 @@ func TestScanModule_HeavyScanRecordSurvivesReadGate(t *testing.T) {
 
 func TestScanModule_ScanFailure(t *testing.T) {
 	ctx := t.Context()
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	facts := newFakeFacts()
@@ -396,7 +345,7 @@ func TestScanModule_ScanFailure(t *testing.T) {
 // attributed (metadata-only, no reachability).
 func TestScanModule_BuildIncompatibility_FallsBackToMetadata(t *testing.T) {
 	ctx := t.Context()
-	coord := coordinate.ModuleCoordinate{Path: "golang.org/x/text", Version: "v0.19.0"}
+	coord := coordinatetest.MustNew("golang.org/x/text", "v0.19.0")
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	facts := newFakeFacts()
@@ -452,8 +401,8 @@ func TestScanModule_OfflineResolution_SourcePositionShapeIsVerified(t *testing.T
 	scannerErr := "govulncheck: loading packages: \n" +
 		"rich_url.go:7:2: module lookup disabled by GOPROXY=off\n" +
 		"/tmp/x/github.com/shopify/goreferrer@v0.0.0/rich_url.go:7:2: could not import golang.org/x/net/publicsuffix (invalid package name: \"\")"
-	coord := coordinate.ModuleCoordinate{Path: "github.com/shopify/goreferrer", Version: "v0.0.0"}
-	recovered := coordinate.ModuleCoordinate{Path: "golang.org/x/net", Version: "v0.0.0-20180218175443-cbe0f9307d01"}
+	coord := coordinatetest.MustNew("github.com/shopify/goreferrer", "v0.0.0")
+	recovered := coordinatetest.MustNew("golang.org/x/net", "v0.0.0-20180218175443-cbe0f9307d01")
 
 	cases := []struct {
 		name       string
@@ -465,7 +414,7 @@ func TestScanModule_OfflineResolution_SourcePositionShapeIsVerified(t *testing.T
 			// The recovered version is not the one the project builds, so the
 			// out-of-toolchain verdict is confirmed — and the prose names it.
 			name:       "recovered version outside the walk is verified out-of-toolchain",
-			known:      map[coordinate.ModuleCoordinate]struct{}{{Path: "golang.org/x/net", Version: "v0.55.0"}: {}},
+			known:      map[coordinate.ModuleCoordinate]struct{}{coordinatetest.MustNew("golang.org/x/net", "v0.55.0"): {}},
 			wantReason: domain.UnscanReasonVersionNotInToolchain,
 			wantInNote: recovered.String(),
 		},
@@ -532,7 +481,7 @@ func TestScanModule_OfflineResolution_SourcePositionShapeIsVerified(t *testing.T
 func TestScanModule_OfflineResolution_UnrecoverableIsMarkedUnverified(t *testing.T) {
 	ctx := t.Context()
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	coord := coordinate.ModuleCoordinate{Path: "github.com/shopify/goreferrer", Version: "v0.0.0"}
+	coord := coordinatetest.MustNew("github.com/shopify/goreferrer", "v0.0.0")
 	// go.mod requires no golang.org/x/net, so the recovered module path resolves
 	// to no version and the coordinate cannot be established.
 	const goMod = "module github.com/shopify/goreferrer\n\ngo 1.12\n"
@@ -568,7 +517,7 @@ func TestScanModule_OfflineResolution_UnrecoverableIsMarkedUnverified(t *testing
 	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
 	res, err := uc.Scan(ctx, application.ScanModuleParams{
 		Coordinate: coord, WalkID: "walk-1", Force: true,
-		KnownVersions: map[coordinate.ModuleCoordinate]struct{}{{Path: "golang.org/x/net", Version: "v0.55.0"}: {}},
+		KnownVersions: map[coordinate.ModuleCoordinate]struct{}{coordinatetest.MustNew("golang.org/x/net", "v0.55.0"): {}},
 	})
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
@@ -590,7 +539,7 @@ func TestScanModule_OfflineResolution_UnrecoverableIsMarkedUnverified(t *testing
 func TestScanModule_OfflineResolution_DirectShapeGatedOnRequireClosure(t *testing.T) {
 	ctx := t.Context()
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	coord := coordinate.ModuleCoordinate{Path: "example.com/scanned", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/scanned", "v1.0.0")
 	// The module requires only x/text; it never requires fsnotify. The direct
 	// shape names fsnotify@v1.7.0 (an unrelated build-list upgrade).
 	const goMod = "module example.com/scanned\n\ngo 1.19\n\nrequire golang.org/x/text v0.3.8\n"
@@ -627,7 +576,7 @@ func TestScanModule_OfflineResolution_DirectShapeGatedOnRequireClosure(t *testin
 		Coordinate: coord, WalkID: "walk-1", Force: true,
 		// fsnotify@v1.7.0 is outside the walk's known set, so the un-gated code
 		// would report a confident verified out-of-toolchain naming it.
-		KnownVersions: map[coordinate.ModuleCoordinate]struct{}{{Path: "github.com/fsnotify/fsnotify", Version: "v1.4.9"}: {}},
+		KnownVersions: map[coordinate.ModuleCoordinate]struct{}{coordinatetest.MustNew("github.com/fsnotify/fsnotify", "v1.4.9"): {}},
 	})
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
@@ -652,7 +601,7 @@ func TestScanModule_OfflineResolution_DirectShapeGatedOnRequireClosure(t *testin
 func TestScanModule_OfflineResolution_ColumnMismatchRecovers(t *testing.T) {
 	ctx := t.Context()
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	coord := coordinate.ModuleCoordinate{Path: "github.com/cortezaproject/goqu/v9", Version: "v9.18.4"}
+	coord := coordinatetest.MustNew("github.com/cortezaproject/goqu/v9", "v9.18.4")
 	const goMod = "module github.com/cortezaproject/goqu/v9\n\ngo 1.16\n\n" +
 		"require github.com/stretchr/testify v1.7.0\n"
 	scannerErr := "govulncheck: loading packages: \n" +
@@ -688,7 +637,7 @@ func TestScanModule_OfflineResolution_ColumnMismatchRecovers(t *testing.T) {
 	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
 	res, err := uc.Scan(ctx, application.ScanModuleParams{
 		Coordinate: coord, WalkID: "walk-1", Force: true,
-		KnownVersions: map[coordinate.ModuleCoordinate]struct{}{{Path: "github.com/stretchr/testify", Version: "v1.9.0"}: {}},
+		KnownVersions: map[coordinate.ModuleCoordinate]struct{}{coordinatetest.MustNew("github.com/stretchr/testify", "v1.9.0"): {}},
 	})
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
@@ -711,7 +660,7 @@ func TestScanModule_OfflineResolution_ColumnMismatchRecovers(t *testing.T) {
 func TestScanModule_OfflineResolution_OwnGoModWhenPackageOutsideWalk(t *testing.T) {
 	ctx := t.Context()
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	coord := coordinate.ModuleCoordinate{Path: "github.com/stretchr/testify", Version: "v1.9.0"}
+	coord := coordinatetest.MustNew("github.com/stretchr/testify", "v1.9.0")
 	const goMod = "module github.com/stretchr/testify\n\ngo 1.17\n\n" +
 		"require github.com/stretchr/objx v0.5.2\n"
 	scannerErr := "govulncheck: loading packages: \n" +
@@ -748,7 +697,7 @@ func TestScanModule_OfflineResolution_OwnGoModWhenPackageOutsideWalk(t *testing.
 	res, err := uc.Scan(ctx, application.ScanModuleParams{
 		Coordinate: coord, WalkID: "walk-1", Force: true,
 		// The walk built testify itself but never objx; objx is off-graph.
-		KnownVersions: map[coordinate.ModuleCoordinate]struct{}{{Path: "github.com/stretchr/testify", Version: "v1.9.0"}: {}},
+		KnownVersions: map[coordinate.ModuleCoordinate]struct{}{coordinatetest.MustNew("github.com/stretchr/testify", "v1.9.0"): {}},
 	})
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
@@ -772,12 +721,12 @@ func TestScanModule_OfflineResolution_OwnGoModWhenPackageOutsideWalk(t *testing.
 func TestScanModule_OfflineResolution_ImportSiteDependencyGoMod(t *testing.T) {
 	ctx := t.Context()
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	coord := coordinate.ModuleCoordinate{Path: "github.com/matttproud/golang_protobuf_extensions", Version: "v1.0.1"}
+	coord := coordinatetest.MustNew("github.com/matttproud/golang_protobuf_extensions", "v1.0.1")
 	// The scanned module's own go.mod requires no protobuf module at all.
 	const goMod = "module github.com/matttproud/golang_protobuf_extensions\n\ngo 1.9\n"
 	// The import site is golang/protobuf@v1.5.3, a dependency whose go.mod selects
 	// the missing protobuf version.
-	site := coordinate.ModuleCoordinate{Path: "github.com/golang/protobuf", Version: "v1.5.3"}
+	site := coordinatetest.MustNew("github.com/golang/protobuf", "v1.5.3")
 	const siteGoMod = "module github.com/golang/protobuf\n\ngo 1.9\n\n" +
 		"require google.golang.org/protobuf v1.26.0\n"
 	scannerErr := "govulncheck: loading packages: \n" +
@@ -832,8 +781,8 @@ func TestScanModule_OfflineResolution_ImportSiteDependencyGoMod(t *testing.T) {
 	res, err := uc.Scan(ctx, application.ScanModuleParams{
 		Coordinate: coord, WalkID: "walk-1", Force: true,
 		KnownVersions: map[coordinate.ModuleCoordinate]struct{}{
-			{Path: "google.golang.org/protobuf", Version: "v1.32.0"}: {},
-			{Path: "github.com/golang/protobuf", Version: "v1.5.3"}:  {},
+			coordinatetest.MustNew("google.golang.org/protobuf", "v1.32.0"): {},
+			coordinatetest.MustNew("github.com/golang/protobuf", "v1.5.3"):  {},
 		},
 	})
 	if err != nil {
@@ -855,7 +804,7 @@ func TestScanModule_OfflineResolution_ImportSiteDependencyGoMod(t *testing.T) {
 func TestScanModule_OfflineResolution_VersionedReplaceScoping(t *testing.T) {
 	ctx := t.Context()
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	coord := coordinate.ModuleCoordinate{Path: "example.com/scanned", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/scanned", "v1.0.0")
 	// The replace targets x/text v0.9.9, but the require selects v0.3.8, so the
 	// replace does not apply and must not be read as if it did.
 	const goMod = "module example.com/scanned\n\ngo 1.19\n\n" +
@@ -893,7 +842,7 @@ func TestScanModule_OfflineResolution_VersionedReplaceScoping(t *testing.T) {
 	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
 	res, err := uc.Scan(ctx, application.ScanModuleParams{
 		Coordinate: coord, WalkID: "walk-1", Force: true,
-		KnownVersions: map[coordinate.ModuleCoordinate]struct{}{{Path: "golang.org/x/text", Version: "v0.21.0"}: {}},
+		KnownVersions: map[coordinate.ModuleCoordinate]struct{}{coordinatetest.MustNew("golang.org/x/text", "v0.21.0"): {}},
 	})
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
@@ -913,7 +862,7 @@ func TestScanModule_OfflineResolution_VersionedReplaceScoping(t *testing.T) {
 // leaving the tool.
 func TestScanModule_MetadataPath_PersistsEnrichedFindings(t *testing.T) {
 	ctx := t.Context()
-	coord := coordinate.ModuleCoordinate{Path: "github.com/gorilla/csrf", Version: "v1.7.3"}
+	coord := coordinatetest.MustNew("github.com/gorilla/csrf", "v1.7.3")
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	facts := newFakeFacts()
@@ -976,7 +925,7 @@ func TestScanModule_MetadataPath_PersistsEnrichedFindings(t *testing.T) {
 // produce a fresh result (StatusClean in this case).
 func TestScanModule_ScanFailed_NotServedFromCache(t *testing.T) {
 	ctx := t.Context()
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	snapshot := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
@@ -1038,7 +987,7 @@ func TestScanModule_ScanFailed_NotServedFromCache(t *testing.T) {
 // build incompatibilities.
 func TestScanModule_GeneratedAssetsMissing_UnscanReason(t *testing.T) {
 	ctx := t.Context()
-	coord := coordinate.ModuleCoordinate{Path: "www.velocidex.com/golang/velociraptor", Version: "v0.76.6"}
+	coord := coordinatetest.MustNew("www.velocidex.com/golang/velociraptor", "v0.76.6")
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	facts := newFakeFacts()
@@ -1080,7 +1029,7 @@ func TestScanModule_GeneratedAssetsMissing_UnscanReason(t *testing.T) {
 // coverage gap — never a confident clean.
 func TestScanModule_BuildIncompatibility_NoAdvisory_IsUnscannable(t *testing.T) {
 	ctx := t.Context()
-	coord := coordinate.ModuleCoordinate{Path: "golang.org/x/tools", Version: "v0.26.0"}
+	coord := coordinatetest.MustNew("golang.org/x/tools", "v0.26.0")
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	facts := newFakeFacts()
@@ -1145,7 +1094,7 @@ func scannerUnscannable(coord coordinate.ModuleCoordinate) *fakeScanner {
 // absence-as-answer regression pair.
 func TestScanModule_ScannerUnscannable_MetadataAttributesAdvisories(t *testing.T) {
 	ctx := t.Context()
-	coord := coordinate.ModuleCoordinate{Path: "golang.org/x/text", Version: "v0.3.0"}
+	coord := coordinatetest.MustNew("golang.org/x/text", "v0.3.0")
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	facts := newFakeFacts()
@@ -1199,7 +1148,7 @@ func TestScanModule_ScannerUnscannable_MetadataAttributesAdvisories(t *testing.T
 // never a silent clean. This is the genuine-zero half of the regression pair.
 func TestScanModule_ScannerUnscannable_NoAdvisory_IsUnscannable(t *testing.T) {
 	ctx := t.Context()
-	coord := coordinate.ModuleCoordinate{Path: "example.com/nogomod", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/nogomod", "v1.0.0")
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	facts := newFakeFacts()
@@ -1242,7 +1191,7 @@ func TestScanModule_ScannerUnscannable_NoAdvisory_IsUnscannable(t *testing.T) {
 // matching advisory surfaces it while preserving the oom-killed caveat.
 func TestScanModule_ScannerUnscannable_OOMKilled_RoutesToMetadata(t *testing.T) {
 	ctx := t.Context()
-	coord := coordinate.ModuleCoordinate{Path: "github.com/big/module", Version: "v2.0.0"}
+	coord := coordinatetest.MustNew("github.com/big/module", "v2.0.0")
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	facts := newFakeFacts()
@@ -1311,7 +1260,7 @@ func scanModuleFixture(t *testing.T, coord coordinate.ModuleCoordinate, scanner 
 // was consulted only when the scan failed.
 func TestScanModule_SuccessfulSourceScanStillMatchesOwnAdvisories(t *testing.T) {
 	ctx := t.Context()
-	coord := coordinate.ModuleCoordinate{Path: "github.com/gomarkdown/markdown", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/gomarkdown/markdown", "v1.0.0")
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	// The source scan succeeds and reports nothing, exactly as it does for a
@@ -1358,7 +1307,7 @@ func TestScanModule_SuccessfulSourceScanStillMatchesOwnAdvisories(t *testing.T) 
 
 // A Clean verdict must mean "advisories were matched and none applied".
 func TestScanModule_CleanVerdictMeansAdvisoriesWereMatched(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	scanner := &fakeScanner{results: map[string]domain.VulnerabilityRecord{
 		coord.String(): {Coordinate: coord, OverallStatus: domain.StatusClean},
@@ -1383,7 +1332,7 @@ func TestScanModule_CleanVerdictMeansAdvisoriesWereMatched(t *testing.T) {
 // The source analysis knows reachability the coordinate match cannot, so where
 // both report the same advisory the source finding must survive intact.
 func TestScanModule_SourceFindingWinsOverCoordinateMatch(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	reachable := &domain.ReachabilityResult{IsReachable: true}
 	scanner := &fakeScanner{results: map[string]domain.VulnerabilityRecord{
@@ -1424,7 +1373,7 @@ func TestScanModule_SourceFindingWinsOverCoordinateMatch(t *testing.T) {
 // about its own main module, overrides that with Clean. The scan discards a
 // verdict the pipeline had already established.
 func TestScanModule_PrefilterVulnerableIsNotOverriddenByCleanSourceScan(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	scanner := &fakeScanner{results: map[string]domain.VulnerabilityRecord{
 		coord.String(): {Coordinate: coord, OverallStatus: domain.StatusClean},

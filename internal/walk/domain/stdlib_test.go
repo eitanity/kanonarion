@@ -37,11 +37,11 @@ func TestStdlibNode(t *testing.T) {
 	if !ok {
 		t.Fatalf("StdlibNode(go1.26.4): ok = false, want true")
 	}
-	if node.Coordinate.Path != domain.StdlibModulePath {
-		t.Errorf("path = %q, want %q", node.Coordinate.Path, domain.StdlibModulePath)
+	if node.Coordinate.Path() != domain.StdlibModulePath {
+		t.Errorf("path = %q, want %q", node.Coordinate.Path(), domain.StdlibModulePath)
 	}
-	if node.Coordinate.Version != "v1.26.4" {
-		t.Errorf("version = %q, want v1.26.4", node.Coordinate.Version)
+	if node.Coordinate.Version() != "v1.26.4" {
+		t.Errorf("version = %q, want v1.26.4", node.Coordinate.Version())
 	}
 	if node.ResolutionSource != domain.ResolutionStdlib {
 		t.Errorf("source = %q, want stdlib", node.ResolutionSource)

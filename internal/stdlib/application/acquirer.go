@@ -90,11 +90,24 @@ func (a *Acquirer) Acquire(ctx context.Context, goVersionRaw string, opts Option
 	}
 
 	if !opts.Force {
-		if facts, ok, err := a.store.Get(ctx, version); err != nil {
+		facts, ok, err := a.store.Get(ctx, version)
+		if err != nil {
 			return domain.Facts{}, fmt.Errorf("reading stdlib fact cache for %s: %w", version, err)
-		} else if ok {
+		}
+		switch {
+		case ok && domain.ServesAsCacheHit(facts):
 			a.logger.InfoContext(ctx, "stdlib.acquire.cache_hit", slog.String("go_version", version))
 			return facts, nil
+		case ok:
+			// The composed answer exists but rests on an anchor that was never
+			// consulted, so it is a record of a run that could not establish custody
+			// rather than a fact about the toolchain. Re-acquire: serving it would turn
+			// one transient go.dev/dl failure into a permanent downgrade surviving every
+			// later run until --force. The measurement is not deleted — it stays in the
+			// ledger and loses to whatever this run establishes.
+			a.logger.InfoContext(ctx, "stdlib.acquire.cache_ineligible",
+				slog.String("go_version", version),
+				slog.String("verification", string(facts.VerificationStatus)))
 		}
 	}
 
@@ -119,12 +132,24 @@ func (a *Acquirer) Acquire(ctx context.Context, goVersionRaw string, opts Option
 		VCSURL:             domain.VCSRepoURL,
 		VCSRef:             version,
 		AcquiredAt:         a.clock.Now().UTC(),
+		// Stated, not inferred from the verification status. The status happens to
+		// identify the route today; reading a dimension out of another field is how
+		// the call-graph stage ended up encoding "this came from a working tree" in a
+		// version string.
+		AcquisitionRoute: domain.RouteGoDev,
 	}
 	if !opts.SkipVCS {
 		facts.VCSCommit = a.resolveCommit(ctx, version)
 	}
 	facts.VerificationDetail = detail + vcsDetail(opts.SkipVCS, facts.VCSCommit)
 	facts.ContentLocation = a.cacheTarball(ctx, version, tarball)
+
+	// Sealed last, over the finished measurement: every field above is inside the
+	// hash, so the row is checkable once written.
+	facts, err = domain.FactsHasher{}.SetContentHash(facts)
+	if err != nil {
+		return domain.Facts{}, fmt.Errorf("sealing stdlib facts for %s: %w", version, err)
+	}
 
 	if err := a.store.Put(ctx, facts); err != nil {
 		return domain.Facts{}, fmt.Errorf("caching stdlib facts for %s: %w", version, err)
@@ -198,9 +223,17 @@ func (a *Acquirer) cacheTarball(ctx context.Context, version string, tarball []b
 	// so its identity is the SHA-256 of its bytes — the same digest the published
 	// checksum is compared against.
 	sum := sha256.Sum256(tarball)
-	identity := fetchports.BlobIdentity{
-		Kind: fetchports.BlobKindZip,
-		Hash: fetchdomain.ModuleHash{Algorithm: "sha256", Value: hex.EncodeToString(sum[:])},
+	hash, err := fetchdomain.NewModuleHash("sha256", hex.EncodeToString(sum[:]))
+	if err != nil {
+		a.logger.WarnContext(ctx, "stdlib.tarball.cache_failed",
+			slog.String("go_version", version), slog.String("error", err.Error()))
+		return ""
+	}
+	identity, err := fetchports.NewBlobIdentity(fetchports.BlobKindZip, hash)
+	if err != nil {
+		a.logger.WarnContext(ctx, "stdlib.tarball.cache_failed",
+			slog.String("go_version", version), slog.String("error", err.Error()))
+		return ""
 	}
 	if err := a.blobs.Put(ctx, identity, bytes.NewReader(tarball)); err != nil {
 		a.logger.WarnContext(ctx, "stdlib.tarball.cache_failed",

@@ -505,7 +505,7 @@ func TestExecute_ZipDirectoryEntry(t *testing.T) {
 	// Build a zip with a directory entry and a test file.
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)
-	prefix := coord.Path + "@" + coord.Version + "/"
+	prefix := coord.Path() + "@" + coord.Version() + "/"
 	// Create a directory entry.
 	if _, err := w.Create(prefix + "subdir/"); err != nil {
 		t.Fatalf("create dir entry: %v", err)
@@ -661,7 +661,7 @@ func buildModuleZip(t *testing.T, coord coordinate.ModuleCoordinate, files map[s
 	t.Helper()
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)
-	prefix := coord.Path + "@" + coord.Version + "/"
+	prefix := coord.Path() + "@" + coord.Version() + "/"
 	for name, content := range files {
 		f, err := w.Create(prefix + name)
 		if err != nil {

@@ -1,6 +1,8 @@
 package domain
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -21,15 +23,265 @@ const (
 	ScanModeBinary ScanMode = "binary"
 )
 
-// VulnerabilityStatus describes the outcome of a module's vulnerability scan.
+// VulnerabilityStatus describes the outcome of a module's vulnerability scan as
+// a single word.
+//
+// It collapses two independent axes — coverage and findings — so it can only
+// ever carry one of them. It is retained as a stored compatibility summary for
+// consumers that display only the summary word; no consumer may derive a
+// findings fact from it, because Unscannable and ScanFailed are coverage answers
+// occupying the same field, and reading them as "not affected" ranks "we could
+// not look" as though it were "we looked and it was clean". Those are opposite
+// claims: absence of evidence versus evidence of absence. Read
+// RecordCoverageStatus / RecordFindingsStatus instead.
 type VulnerabilityStatus string
 
 const (
-	StatusClean       VulnerabilityStatus = "Clean"
-	StatusAffected    VulnerabilityStatus = "Affected"
+	StatusClean    VulnerabilityStatus = "Clean"
+	StatusAffected VulnerabilityStatus = "Affected"
+	// StatusWithdrawn means every advisory that matched this module has been
+	// retracted upstream. It is a findings answer and it is not Clean: Clean says
+	// no advisory ever applied, this says one did and was withdrawn, and the
+	// withdrawal date travels on the finding itself.
+	//
+	// It is a fifth value in a vocabulary that had four, which is a shape change
+	// the pipeline version carries. Folding it into Clean was the alternative and
+	// it is the bug: a retracted advisory then becomes indistinguishable from one
+	// that never existed, so a reader cannot tell "we upgraded", "upstream fixed
+	// it" and "the report was wrong" apart. A finding never decays into an
+	// all-clear; it decays into a stated reason.
+	StatusWithdrawn   VulnerabilityStatus = "Withdrawn"
 	StatusUnscannable VulnerabilityStatus = "Unscannable"
 	StatusScanFailed  VulnerabilityStatus = "ScanFailed"
 )
+
+// RecordCoverageStatus answers "was this module analysed?" — one of the two axes
+// VulnerabilityStatus conflates, at the per-module level where WalkScanRun's
+// CoverageStatus answers it for a whole run. It is independent of whether any
+// vulnerability was found.
+//
+// The diagnostic detail for a non-analysed outcome is unchanged and still lives
+// beside it on the record: UnscanReason (a machine-readable cause code) and
+// UnscannableReason (human prose) for CoverageUnscannable, ErrorDetail for
+// CoverageFailed.
+type RecordCoverageStatus string
+
+const (
+	// CoverageAnalysed means the module was analysed and the findings axis is an
+	// answer about it.
+	CoverageAnalysed RecordCoverageStatus = "Analysed"
+	// CoverageUnscannable means the module could not be analysed at all — see
+	// UnscanReason for which of the taxonomy's causes applies.
+	CoverageUnscannable RecordCoverageStatus = "Unscannable"
+	// CoverageFailedScan means the analysis was attempted and the attempt failed
+	// — see ErrorDetail. It is distinct from Unscannable: one is a module that
+	// cannot be looked at, the other a look that went wrong.
+	CoverageFailedScan RecordCoverageStatus = "Failed"
+)
+
+// RecordFindingsStatus answers "did the analysis report a vulnerability?" — the
+// other axis, mirroring WalkScanRun's FindingsStatus.
+//
+// It is independent of coverage, and like the run-level axis it must be read
+// alongside coverage to mean anything: FindingsClean on a record whose coverage
+// is not Analysed says "no finding is being reported", not "there is nothing
+// here". Only CoverageAnalysed + FindingsClean is an all-clear.
+type RecordFindingsStatus string
+
+const (
+	FindingsRecordAffected RecordFindingsStatus = "Affected"
+	// FindingsRecordWithdrawn means advisories matched this module and every one of
+	// them has been retracted upstream. It sits on the findings axis beside
+	// Affected, not beside Clean: the module is not affected, but the reason it is
+	// not is recorded rather than implied, and the retracted findings stay on the
+	// record with their withdrawal dates.
+	//
+	// A mixture is Affected, not Withdrawn — one live advisory decides the axis,
+	// and the withdrawn ones remain visible per finding.
+	FindingsRecordWithdrawn RecordFindingsStatus = "Withdrawn"
+	FindingsRecordClean     RecordFindingsStatus = "Clean"
+)
+
+// DetermineRecordCoverageStatus projects a collapsed status onto the coverage
+// axis. The mapping is total: every one of the four values says something about
+// coverage, which is why the collapsed field could never be read as a findings
+// answer on its own.
+func DetermineRecordCoverageStatus(status VulnerabilityStatus) RecordCoverageStatus {
+	switch status {
+	case StatusUnscannable:
+		return CoverageUnscannable
+	case StatusScanFailed:
+		return CoverageFailedScan
+	case StatusClean, StatusAffected, StatusWithdrawn:
+		// Withdrawn joins the two analysed words: an advisory can only be known
+		// retracted for a module whose advisory set was read, so the word reports a
+		// findings outcome and says nothing against coverage.
+		return CoverageAnalysed
+	default:
+		// An unrecognised status is not evidence that the module was analysed.
+		// Treating it as coverage-failed keeps an unknown verdict out of the
+		// analysed population rather than letting it over-claim completeness —
+		// the same rule the run-level tally applies to the same case.
+		return CoverageFailedScan
+	}
+}
+
+// DetermineRecordCoverage answers the coverage axis for a whole record, from the
+// evidence the record carries rather than from the collapsed summary word alone.
+//
+// The summary cannot be trusted for this question, because a writer that has both
+// a coverage gap and a matching advisory can only put one of them in the single
+// word, and it puts the finding there: a metadata-only fallback for a module that
+// does not build reports Affected, and the coverage gap survives only as
+// UnscanReason / UnscannableReason. Projecting coverage off that word therefore
+// answers "Analysed" for a module that was never analysed — the precise claim the
+// axes exist to stop being made.
+//
+// So the diagnostics decide, and the word is consulted only when the record
+// carries none:
+//
+//   - UnscanReason or UnscannableReason present — the writer named a reason the
+//     module could not be analysed, so coverage is Unscannable whatever the
+//     summary says.
+//   - ErrorDetail alone — an analysis was attempted and failed, which is Failed
+//     rather than Unscannable: a look that went wrong, not a module that cannot
+//     be looked at.
+//   - no diagnostic at all — the record is the output of an analysis that ran, so
+//     the summary's projection is the answer.
+//
+// A stated CoverageStatus always wins over this; RecordAxes and the seal both
+// call it only for a record that states none.
+func DetermineRecordCoverage(r VulnerabilityRecord) RecordCoverageStatus {
+	switch {
+	case r.UnscanReason != "" || r.UnscannableReason != "":
+		return CoverageUnscannable
+	case r.ErrorDetail != "":
+		return CoverageFailedScan
+	default:
+		return DetermineRecordCoverageStatus(r.OverallStatus)
+	}
+}
+
+// DetermineRecordFindingsStatus projects a collapsed status onto the findings
+// axis. Affected and Withdrawn are the two words that report a matched advisory;
+// every other value reports none, which on a non-analysed record means "none is
+// being reported", not "none exists" — the distinction the coverage axis carries.
+func DetermineRecordFindingsStatus(status VulnerabilityStatus) RecordFindingsStatus {
+	switch status {
+	case StatusAffected:
+		return FindingsRecordAffected
+	case StatusWithdrawn:
+		return FindingsRecordWithdrawn
+	default:
+		return FindingsRecordClean
+	}
+}
+
+// DetermineFindingsAxis answers the findings axis from a finding set.
+//
+// A matched advisory that has been retracted upstream is not a finding against
+// the module, and it is not an absence either. So the set decides three ways:
+//
+//   - no advisory matched — Clean.
+//   - at least one matched advisory is live — Affected. One live advisory decides
+//     it however many retracted ones sit beside it; those stay on the record and
+//     carry their own withdrawal dates.
+//   - every matched advisory is withdrawn — Withdrawn.
+//
+// A finding whose advisory enrichment failed carries no withdrawal date and is
+// therefore live here. That is the conservative direction on purpose: a lookup
+// that could not read the advisory has not established a retraction, and the
+// module stays affected until it does.
+func DetermineFindingsAxis(findings []VulnerabilityFinding) RecordFindingsStatus {
+	if len(findings) == 0 {
+		return FindingsRecordClean
+	}
+	for _, f := range findings {
+		if !f.IsWithdrawn() {
+			return FindingsRecordAffected
+		}
+	}
+	return FindingsRecordWithdrawn
+}
+
+// DetermineRecordFindings answers the findings axis for a whole record, from the
+// evidence the record carries rather than from the collapsed summary word alone —
+// the same rule DetermineRecordCoverage applies to the other axis, for the same
+// reason.
+//
+// The findings the record kept are the evidence, and they outrank the word for
+// two reasons. A writer that reached its verdict before withdrawal was expressible
+// puts Affected in the word for a set whose every advisory is retracted, and the
+// word cannot then be corrected without re-reading the set. And a writer that put
+// a coverage word there — a scan that failed while still holding matched
+// advisories — would have its findings projected away to Clean, retiring a
+// finding into a coverage answer.
+//
+// The word is consulted only when the record kept no findings, where it is exact:
+// no set, no finding, and the word's projection is the answer.
+func DetermineRecordFindings(r VulnerabilityRecord) RecordFindingsStatus {
+	if len(r.Findings) > 0 {
+		return DetermineFindingsAxis(r.Findings)
+	}
+	return DetermineRecordFindingsStatus(r.OverallStatus)
+}
+
+// DetermineRecordOverallStatus collapses the two axes back into the stored
+// compatibility summary, so a consumer that displays only a summary word keeps
+// seeing exactly the values it always saw.
+//
+// Coverage outranks findings, the same precedence DetermineWalkScanStatus
+// applies one level up: a record that could not be analysed reports that, not a
+// findings word it has no standing to assert. The collapse is lossy in exactly
+// one direction — a coverage failure that nonetheless matched an advisory
+// summarises as Unscannable or ScanFailed while FindingsStatus keeps the
+// Affected fact — which is the whole reason the axes are stored beside it.
+func DetermineRecordOverallStatus(coverage RecordCoverageStatus, findings RecordFindingsStatus) VulnerabilityStatus {
+	switch coverage {
+	case CoverageUnscannable:
+		return StatusUnscannable
+	case CoverageFailedScan:
+		return StatusScanFailed
+	case CoverageAnalysed:
+		switch findings {
+		case FindingsRecordAffected:
+			return StatusAffected
+		case FindingsRecordWithdrawn:
+			return StatusWithdrawn
+		default:
+			return StatusClean
+		}
+	default:
+		// An unrecognised coverage value is not a claim that the module was
+		// analysed, so it must not summarise as one.
+		return StatusScanFailed
+	}
+}
+
+// RecordAxes returns the record's two verdict axes.
+//
+// It prefers the stored fields and falls back to deriving them when they are
+// empty, which is the case for every record written before the split. The
+// derivation is exactly what the write path applies, so a pre-split record is
+// read on the same terms as a new one rather than presenting a consumer with an
+// empty axis it has no rule for. Coverage is derived from the record's
+// diagnostics (DetermineRecordCoverage), not from the summary word, so a
+// pre-split metadata-only record is healed to the coverage gap it recorded
+// rather than to the Analysed its summary implies. Findings are derived from the
+// findings the record kept (DetermineRecordFindings), for the same reason.
+//
+// It is a function rather than a method so that no caller can reach the raw
+// fields by accident through a method value on a partially-populated record.
+func RecordAxes(r VulnerabilityRecord) (RecordCoverageStatus, RecordFindingsStatus) {
+	coverage, findings := r.CoverageStatus, r.FindingsStatus
+	if coverage == "" {
+		coverage = DetermineRecordCoverage(r)
+	}
+	if findings == "" {
+		findings = DetermineRecordFindings(r)
+	}
+	return coverage, findings
+}
 
 // UnscanReason is a machine-readable cause code for why a module could not be
 // fully scanned from source. It accompanies UnscannableReason (human prose)
@@ -185,11 +437,43 @@ type Severity struct {
 }
 
 // DatabaseSnapshot identifies a pinned snapshot of the vulnerability database.
+//
+// Source and Version name the advisory database and its own generation;
+// RetrievedAt records when kanonarion fetched it. Those three answer "how
+// current was the data behind this verdict". ContentHash answers the question
+// they cannot: whether the bytes a verdict was reached against are the bytes
+// still held.
+//
+// The advisory database is the evidence every finding is derived from, and it
+// was the one input to a verdict that was not content-addressed — a snapshot
+// was identified by a version string alone, and the version string is metadata
+// the blob itself asserts. Two stores both holding "2026-07-24T18:35:55Z" could
+// not be shown to hold the same advisories.
 type DatabaseSnapshot struct {
 	Source      string    `json:"source"`
 	Version     string    `json:"version"`
 	RetrievedAt time.Time `json:"retrieved_at"`
-	ContentHash string    `json:"content_hash"`
+	// ContentHash is HashSnapshotContent over the snapshot blob, in
+	// "sha256:<hex>" form. Empty on snapshots recorded before the hash existed;
+	// such a snapshot is unverifiable, never verified-and-clean.
+	ContentHash string `json:"content_hash"`
+}
+
+// snapshotHashPrefix labels the digest algorithm inside DatabaseSnapshot's
+// ContentHash. It is present here — unlike on a VulnerabilityRecord's own bare
+// hex hash, whose recipe is frozen by the records already in every store —
+// because no snapshot hash has ever been written, so the field is free to take
+// the project's normal prefixed form.
+const snapshotHashPrefix = "sha256:"
+
+// HashSnapshotContent renders the content hash of a vulnerability database
+// snapshot blob: SHA-256 over the bytes verbatim, prefixed with the algorithm.
+//
+// It hashes the stored bytes rather than any parsed view of them, so the check
+// covers exactly what a later scan will feed to govulncheck.
+func HashSnapshotContent(blob []byte) string {
+	sum := sha256.Sum256(blob)
+	return snapshotHashPrefix + hex.EncodeToString(sum[:])
 }
 
 // SnapshotAgeDays reports how many whole days the vulnerability database
@@ -205,12 +489,32 @@ func SnapshotAgeDays(validatedAt, retrievedAt time.Time) int {
 	return int(validatedAt.Sub(retrievedAt).Hours() / 24)
 }
 
-// ReachabilityResult captures call-graph-based determination of whether a
-// vulnerability is reachable from the target's entry points.
+// ReachabilityResult captures whether a vulnerability is reachable from the
+// analysed entry points, the routes that reach it, and how the answer was
+// derived.
+//
+// DerivedBy is not decoration. A reachability answer is a fact about ONE
+// analysis of ONE resolved build, and the same advisory in the same module is
+// reachable in one project and unreachable in the next — a different consumer
+// may resolve a different, unaffected version, or reach the module by a route
+// that never touches the vulnerable symbol. An answer that does not say what
+// produced it, how well it could see, and what it was rooted at will be read as
+// a property of the module, which it is not.
 type ReachabilityResult struct {
-	IsReachable  bool                   `json:"is_reachable"`
-	Confidence   ReachabilityConfidence `json:"confidence"`
-	ExamplePaths [][]string             `json:"example_paths,omitzero"`
+	IsReachable bool                   `json:"is_reachable"`
+	Confidence  ReachabilityConfidence `json:"confidence"`
+	// Routes are the paths from an entry point to the vulnerable symbol, entry
+	// point first. Empty when the analyser reported none, and on every answer
+	// recorded before routes were kept.
+	//
+	// It replaces an earlier [][]string of bare symbol names. Those could not
+	// name the module version at each hop, which is the one thing that lets a
+	// reader check a route against their own build; the field was populated on
+	// none of the answers in a working store, so nothing was lost by retiring
+	// it.
+	Routes []ReachabilityRoute `json:"routes,omitzero"`
+	// DerivedBy states the instrument, the fidelity and the analysis frame.
+	DerivedBy ReachabilityDerivation `json:"derived_by,omitzero"`
 }
 
 // VulnerabilityFinding represents a single vulnerability affecting a module.
@@ -228,6 +532,22 @@ type VulnerabilityFinding struct {
 	References       []string            `json:"references,omitzero"`
 	PublishedAt      time.Time           `json:"published_at"`
 	ModifiedAt       time.Time           `json:"modified_at"`
+	// WithdrawnAt is the OSV top-level "withdrawn" timestamp: the moment the
+	// advisory was retracted upstream. Zero means the advisory is live, or that the
+	// lookup never read an advisory to ask — an enrichment fetch that failed leaves
+	// it zero, so absence is never read as "confirmed live".
+	//
+	// It is the reason a finding is allowed to stop being one. Before it was
+	// parsed, a retraction reached kanonarion only as prose in the summary ("WITHDRAWN:
+	// ...") that nothing inspected, so a retracted advisory either surfaced as an
+	// Affected verdict or vanished into Clean, and the two were indistinguishable
+	// from a real finding and a real all-clear respectively.
+	WithdrawnAt time.Time `json:"withdrawn_at,omitzero"`
+}
+
+// IsWithdrawn reports whether this advisory has been retracted upstream.
+func (f VulnerabilityFinding) IsWithdrawn() bool {
+	return !f.WithdrawnAt.IsZero()
 }
 
 // FixDisplay renders a finding's remediation state for human-facing output.
@@ -254,16 +574,26 @@ func SortFindings(findings []VulnerabilityFinding) {
 // VulnerabilityRecord is the aggregate root for a module's vulnerability scan.
 type VulnerabilityRecord struct {
 	// Ecosystem declares the schema's scope; always fetchdomain.EcosystemGo.
-	Ecosystem         string                      `json:"ecosystem"`
-	Coordinate        coordinate.ModuleCoordinate `json:"coordinate"`
-	WalkID            string                      `json:"walk_id"`
-	Findings          []VulnerabilityFinding      `json:"findings,omitzero"`
-	OverallStatus     VulnerabilityStatus         `json:"overall_status"`
-	UnscanReason      UnscanReason                `json:"unscan_reason,omitempty"`
-	UnscannableReason string                      `json:"unscannable_reason,omitempty"`
-	ErrorDetail       string                      `json:"error_detail,omitempty"`
-	DatabaseSnapshot  DatabaseSnapshot            `json:"database_snapshot"`
-	ScannedAt         time.Time                   `json:"scanned_at"`
+	Ecosystem  string                      `json:"ecosystem"`
+	Coordinate coordinate.ModuleCoordinate `json:"coordinate"`
+	WalkID     string                      `json:"walk_id"`
+	Findings   []VulnerabilityFinding      `json:"findings,omitzero"`
+	// OverallStatus is a derived, stored compatibility summary. CoverageStatus
+	// and FindingsStatus are the two independent axes it collapses; consumers
+	// that need a findings fact read FindingsStatus, never OverallStatus. All
+	// three are set together by the hasher's seal step, so no writer can produce
+	// a record whose summary and axes disagree.
+	OverallStatus VulnerabilityStatus `json:"overall_status"`
+	// CoverageStatus and FindingsStatus are the two axes. Read them through
+	// RecordAxes, which fills them in for records written before the split rather
+	// than handing back an empty axis.
+	CoverageStatus    RecordCoverageStatus `json:"coverage_status,omitempty"`
+	FindingsStatus    RecordFindingsStatus `json:"findings_status,omitempty"`
+	UnscanReason      UnscanReason         `json:"unscan_reason,omitempty"`
+	UnscannableReason string               `json:"unscannable_reason,omitempty"`
+	ErrorDetail       string               `json:"error_detail,omitempty"`
+	DatabaseSnapshot  DatabaseSnapshot     `json:"database_snapshot"`
+	ScannedAt         time.Time            `json:"scanned_at"`
 	// FirstScannedAt anchors when this verdict was first established for the
 	// (module, version, pipeline, snapshot) tuple. Unlike ScannedAt — which
 	// moves forward to the run that last validated the verdict — it is set once
@@ -283,7 +613,37 @@ type VulnerabilityRecord struct {
 	// downgrades such a verdict to UNRESOLVED with the mismatch named.
 	CallGraphCompleteness string `json:"callgraph_completeness,omitempty"`
 	CallGraphAlgorithm    string `json:"callgraph_algorithm,omitempty"`
-	ContentHash           string `json:"content_hash"`
+	// Rooting names the analysis frame this record was produced in — isolated,
+	// or rooted at the walk's target. It is an identity fact, not a ladder: two
+	// records for one coordinate under one snapshot that state different frames
+	// are two answers to two questions, and neither supersedes the other. See
+	// Rooting for why the frame must be recorded rather than inferred.
+	//
+	// Empty on records written before the field existed, and on records that
+	// describe a module no analysis was rooted at. Both read as "not recorded";
+	// read it back through RecordRooting.
+	Rooting     Rooting `json:"rooting,omitempty"`
+	ContentHash string  `json:"content_hash"`
+	// ArtefactIdentity names the fetched artefact this record was derived from,
+	// in the "zip:h1:..." / "gomod:h1:..." form fetchdomain.ArtefactIdentity
+	// renders. It answers the question the coordinate cannot: which bytes were
+	// scanned. A coordinate names a module version, and the fetch record for that
+	// coordinate may since have been re-measured, so a link by coordinate is a
+	// link by convention; this one is by fact, and is covered by ContentHash, so
+	// the claim is as tamper-evident as the verdict itself.
+	//
+	// Empty on records written before the field existed, and on records that
+	// analysed no fetched artefact — a metadata-only match by coordinate, a
+	// local-replace node, a project-rooted verdict derived from the target's own
+	// build. Both read as "not recorded", never as "scanned nothing". Read it
+	// back through RecordArtefactIdentity, which draws that distinction; never
+	// hand this field to ParseArtefactIdentity directly.
+	ArtefactIdentity string `json:"artefact_identity,omitempty"`
+	// SourceContentHash is the content hash of the fetch record that supplied
+	// those bytes. ArtefactIdentity says which artefact; this says which
+	// measurement of it, so a reader can fetch that record and check the claim
+	// against it. Empty exactly when ArtefactIdentity is.
+	SourceContentHash string `json:"source_content_hash,omitempty"`
 	// Reused is true when this record was served from the per-module cache for
 	// the current call rather than freshly scanned (the same module/version was
 	// already scanned under this snapshot by an earlier run). It is call-scoped

@@ -202,12 +202,18 @@ type contextExamples struct {
 }
 
 type contextCVE struct {
-	ID        string   `json:"id"`
-	Aliases   []string `json:"aliases,omitempty"`
-	Summary   string   `json:"summary"`
-	FixedIn   string   `json:"fixed_in,omitempty"`
-	Score     float64  `json:"score,omitempty"`
-	Reachable *bool    `json:"reachable,omitempty"`
+	ID      string   `json:"id"`
+	Aliases []string `json:"aliases,omitempty"`
+	Summary string   `json:"summary"`
+	FixedIn string   `json:"fixed_in,omitempty"`
+	Score   float64  `json:"score,omitempty"`
+	// WithdrawnAt is the retraction timestamp, present only on a withdrawn
+	// advisory. Without it this projection carried the retraction no further than
+	// the module's status word, so a consumer reading a finding here saw an entry
+	// shaped exactly like a live one — with the withdrawal legible only as prose in
+	// the upstream summary, which is what the field exists to stop being the signal.
+	WithdrawnAt string `json:"withdrawn_at,omitempty"`
+	Reachable   *bool  `json:"reachable,omitempty"`
 }
 
 type contextVulnerabilities struct {
@@ -349,7 +355,7 @@ func runContext(ctx context.Context, arg string, f contextFlags, stdout, stderr 
 		}
 	}
 	out := contextOutput{
-		Module:          contextModuleInfo{Path: coord.Path, Version: coord.Version},
+		Module:          contextModuleInfo{Path: coord.Path(), Version: coord.Version()},
 		Verification:    buildVerification(ctx, coord, ctr.QueryFetch),
 		Provenance:      buildProvenance(coord),
 		Dependencies:    buildDependencies(ctx, coord, ctr.QueryWalks),

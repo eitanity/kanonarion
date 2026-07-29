@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"slices"
 
 	"github.com/eitanity/kanonarion/internal/audit"
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
@@ -169,15 +170,12 @@ func (uc *FetchModuleUseCase) inheritLegs(ctx context.Context, log *slog.Logger,
 		return domain2.FetchedModule{}, fmt.Errorf("reading earlier measurements to inherit validation legs: %w", err)
 	}
 
-	identity := domain2.ArtefactIdentity{Hash: m.ModuleHash}
-	if m.ModuleHash.IsZero() {
-		identity = domain2.ArtefactIdentity{Hash: m.GoModHash, GoModOnly: true}
-	}
+	identity := domain2.ArtefactIdentityOfMeasurement(m)
 
 	// Latest first: the most recent establishment of a leg is the one worth
 	// carrying forward.
-	for i := len(prior) - 1; i >= 0; i-- {
-		r := prior[i]
+	for _, r := range slices.Backward(prior) {
+
 		priorIdentity, ierr := domain2.ArtefactIdentityOf(r)
 		if ierr != nil {
 			return domain2.FetchedModule{}, fmt.Errorf("reading the identity of an earlier measurement of %s: %w", m.Coordinate, ierr)

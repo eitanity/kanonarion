@@ -163,6 +163,12 @@ func (s *Store) ListExtractionRuns(ctx context.Context, filter ports.ExtractionR
 
 		summaries = append(summaries, summary)
 	}
+	// A row iteration that stopped on an error is indistinguishable from one
+	// that reached the end, so an unchecked Err() reports a truncated list as a
+	// complete one.
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating extraction runs: %w", err)
+	}
 	return summaries, nil
 }
 

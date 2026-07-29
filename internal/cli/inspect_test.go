@@ -12,6 +12,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 )
 
@@ -66,11 +67,11 @@ func TestInspectSummaryStatus_FailuresAreNeverAllClean(t *testing.T) {
 // is a coverage gap, not an affected verdict, so it is excluded rather than
 // fabricated into the set.
 func TestAffectedSetForRun_CountsEveryAffectedModule(t *testing.T) {
-	aff1 := coordinate.ModuleCoordinate{Path: "example.com/a", Version: "v1.0.0"}
-	aff2 := coordinate.ModuleCoordinate{Path: "example.com/b", Version: "v1.0.0"}
-	aff3 := coordinate.ModuleCoordinate{Path: "example.com/c", Version: "v1.0.0"}
-	clean := coordinate.ModuleCoordinate{Path: "example.com/d", Version: "v1.0.0"}
-	missing := coordinate.ModuleCoordinate{Path: "example.com/e", Version: "v1.0.0"}
+	aff1 := coordinatetest.MustNew("example.com/a", "v1.0.0")
+	aff2 := coordinatetest.MustNew("example.com/b", "v1.0.0")
+	aff3 := coordinatetest.MustNew("example.com/c", "v1.0.0")
+	clean := coordinatetest.MustNew("example.com/d", "v1.0.0")
+	missing := coordinatetest.MustNew("example.com/e", "v1.0.0")
 
 	vuln := testfakes.NewFakeQueryVuln()
 	vuln.AddRecord(aff1, aff(aff1))
@@ -107,7 +108,7 @@ func TestAffectedSetForRun_CountsEveryAffectedModule(t *testing.T) {
 // a peer as affected when the store could only not be read is the error-as-answer
 // defect. affectedSetForRun propagates the fault instead.
 func TestAffectedSetForRun_ReadErrorPropagatedNotFabricated(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "example.com/a", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/a", "v1.0.0")
 	vuln := testfakes.NewFakeQueryVuln()
 	vuln.Err = errors.New("store unreadable")
 

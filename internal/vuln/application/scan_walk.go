@@ -2,9 +2,7 @@ package application
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
-	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
@@ -33,6 +31,21 @@ import (
 // know which version is missing, not merely that something is.
 const populateFailureLogLimit = 10
 
+// perWorkerBudgetBytes is the memory one module-scan worker is budgeted. It is
+// the observed working set of a single govulncheck source-mode scan of a
+// cloud-SDK-heavy module — the shape that OOM-killed an entire 321-module pool
+// and reported every one of them unanalysed.
+//
+// It is a budget, not a limit: nothing enforces it on the child. Its only job
+// is to stop the pool from admitting more concurrent scans than the host can
+// hold, so a slow scan replaces a killed one.
+const perWorkerBudgetBytes = 4 << 30 // 4 GiB
+
+// cpuWorkerCap is the pool's ceiling from the CPU side. The workers spend most
+// of their wall clock inside a govulncheck subprocess, so more than four buys
+// little even on a large host — and each one costs perWorkerBudgetBytes.
+const cpuWorkerCap = 4
+
 // moduleResult holds the outcome of a single module scan dispatched by a worker pool.
 type moduleResult struct {
 	coord  coordinate.ModuleCoordinate
@@ -45,6 +58,7 @@ type ScanWalkUseCase struct {
 	walkStore       walkports.WalkStore
 	vulnStore       ports.VulnerabilityStore
 	moduleScanner   *ScanModuleUseCase
+	vcsHosts        fetchdomain.VCSHostAllowlist
 	fetcher         ports.ModuleFetcher // pre-fetches modules missing from the fact store
 	clock           fetchports.Clock
 	pipelineVersion string
@@ -56,9 +70,59 @@ type ScanWalkUseCase struct {
 	// time. The scan points GOMODCACHE straight at it and skips the temp-cache
 	// prefetch/populate, so govulncheck runs fully offline with no blob reads.
 	realModcacheDir string
+
+	// hostMemory sizes the module-scan pool against the host's available memory
+	// as well as its CPU count. Optional: a nil reporter (the default) keeps the
+	// CPU-only cap, which is what every caller had before the memory budget
+	// existed. Set via WithHostMemory.
+	hostMemory ports.HostMemory
 }
 
 // NewScanWalkUseCase returns a new ScanWalkUseCase.
+// vcsHostCapable is a ModuleFetcher that accepts a per-run VCS forge allowlist.
+// The scan type-asserts against it only when a policy actually enforces one; a
+// fetcher that cannot accept the override fails the scan rather than quietly
+// cross-verifying against forges the operator excluded. The walk stage declares
+// the same capability for the same reason.
+type vcsHostCapable interface {
+	WithVCSHosts(fetchdomain.VCSHostAllowlist) ports.ModuleFetcher
+}
+
+// WithVCSHosts sets the effective VCS forge allowlist for the pre-fetch this
+// scan may perform.
+//
+// It exists because a vuln-scan that finds a module missing from the fact store
+// fetches it, and that fetch cross-verifies against a forge. Without this the
+// allowlist a run applies depended on which command happened to populate the
+// store first: walk and audit bound by the operator's policy, vuln-scan not
+// bound at all.
+func (uc *ScanWalkUseCase) WithVCSHosts(hosts fetchdomain.VCSHostAllowlist) *ScanWalkUseCase {
+	uc.vcsHosts = hosts
+	return uc
+}
+
+// applyVCSHosts binds the resolved allowlist to the fetcher, or fails.
+//
+// Only an ENFORCING list is applied — a policy-configured one. The built-in set
+// is advisory and already the fetcher's zero-value behaviour, so binding it
+// would be a no-op that only risks masking a fetcher that cannot accept the
+// real thing. Gating on "differs from the built-in set" would be wrong: a
+// policy naming exactly the built-in hosts is still a decision to refuse
+// everything else.
+func (uc *ScanWalkUseCase) applyVCSHosts() error {
+	if !uc.vcsHosts.IsEnforcing() {
+		return nil
+	}
+	vc, ok := uc.fetcher.(vcsHostCapable)
+	if !ok {
+		return fmt.Errorf(
+			"policy sets allowed_vcs_hosts but the module fetcher cannot apply it: %T does not implement WithVCSHosts",
+			uc.fetcher)
+	}
+	uc.fetcher = vc.WithVCSHosts(uc.vcsHosts)
+	return nil
+}
+
 func NewScanWalkUseCase(
 	walkStore walkports.WalkStore,
 	vulnStore ports.VulnerabilityStore,
@@ -88,6 +152,15 @@ func (uc *ScanWalkUseCase) WithAudit(sink ports.AuditSink) *ScanWalkUseCase {
 	return uc
 }
 
+// WithHostMemory wires the host-memory reporter the module-scan pool sizes
+// itself against. It is optional — a nil reporter (the default) leaves the pool
+// on its CPU-only cap — and returns the receiver for chaining, mirroring the
+// other optional-dependency builders.
+func (uc *ScanWalkUseCase) WithHostMemory(mem ports.HostMemory) *ScanWalkUseCase {
+	uc.hostMemory = mem
+	return uc
+}
+
 // WithRealModcache switches the scan into --from-modcache mode: govulncheck runs
 // with GOMODCACHE pointed at dir, an already-populated module cache, instead of
 // materialising a temp cache from the blob store. A nil/empty dir (the default)
@@ -105,7 +178,10 @@ type ScanWalkParams struct {
 	Fresh              bool
 	EnableReachability bool
 	Operator           string
-	// Workers controls the module scan pool size. Zero means min(NumCPU, 4).
+	// Workers controls the module scan pool size. Zero means the derived cap:
+	// min(NumCPU, 4) further reduced by the host's available-memory budget (see
+	// resolveWorkerCount). A non-zero value is an explicit operator override and
+	// is taken as given — the memory budget does not second-guess it.
 	Workers int
 	// CallGraphWorkers limits concurrent on-demand callgraph subprocess spawns.
 	// Zero defaults to 1. Kept separate from Workers because SSA builds are
@@ -135,6 +211,13 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 		return domain.WalkScanRun{}, fmt.Errorf("vuln-scan pre-flight failed: %w", err)
 	}
 
+	// Bind the operator's VCS forge allowlist to the pre-fetch before anything
+	// is fetched. Pre-flight is the right place: a policy that cannot be applied
+	// must stop the run here, not after a snapshot fetch and a partial scan.
+	if err := uc.applyVCSHosts(); err != nil {
+		return domain.WalkScanRun{}, err
+	}
+
 	// 1. Walk Retrieval
 	walk, err := uc.walkStore.GetWalk(ctx, params.WalkID)
 	if err != nil {
@@ -158,7 +241,10 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	run.Snapshot = *snapshot
 
 	// 3a. Extract the vulnerability database snapshot once, shared across all module scans.
-	vulnDBDir, cleanupDB := uc.preExtractVulnDB(ctx, snapshot)
+	vulnDBDir, cleanupDB, err := uc.preExtractVulnDB(ctx, snapshot)
+	if err != nil {
+		return domain.WalkScanRun{}, err
+	}
 	defer cleanupDB()
 
 	// 3b. Pre-populate a shared GOMODCACHE from the blob store so govulncheck workers
@@ -182,13 +268,7 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	total := len(allCoords)
 	uc.logger.Info("scanning walk modules", "walk_id", params.WalkID, "module_count", total)
 
-	workers := params.Workers
-	if workers <= 0 {
-		workers = min(runtime.NumCPU(), 4)
-	}
-	if workers > total {
-		workers = total
-	}
+	workers := min(uc.resolveWorkerCount(params.Workers), total)
 
 	// Semaphore bounding concurrent on-demand callgraph subprocesses. SSA builds
 	// are memory-heavy; they must not scale with the number of scan workers.
@@ -247,7 +327,14 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 		// Modules flagged Affected by binary mode need source-mode re-scan for call-graph precision.
 		var needSourceScan []coordinate.ModuleCoordinate
 		for _, r := range pass1 {
-			if r.err == nil && r.record.OverallStatus == domain.StatusAffected {
+			// Which modules earn a source-mode re-scan is a findings question — the
+			// re-scan exists to add call-graph precision to a match — so it is asked
+			// of the findings axis. A binary-mode record that matched by coordinate
+			// under a coverage gap reports its finding there, and reading the
+			// collapsed word skipped the re-scan for exactly the module whose
+			// reachability was never computed.
+			_, findings := domain.RecordAxes(r.record)
+			if r.err == nil && findings == domain.FindingsRecordAffected {
 				needSourceScan = append(needSourceScan, r.coord)
 			} else {
 				finalResults[r.coord] = r
@@ -267,6 +354,14 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 		}
 	}
 
+	// A module scan that reached the snapshot itself and found it corrupt is not
+	// one module's failure. The pool would otherwise fold it into a per-module
+	// StatusScanFailed record and let the run complete, which is the same
+	// swallow this abort exists to remove — one layer further down.
+	if err := firstSnapshotIntegrityFailure(allCoords, finalResults); err != nil {
+		return domain.WalkScanRun{}, err
+	}
+
 	progressCount := 0
 	counts := uc.tallyModuleResults(ctx, allCoords, finalResults, &run, params, snapshot, &progressCount, total)
 
@@ -277,7 +372,7 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	// 4b. Every coordinate the run reported a verdict for must have that verdict
 	// in the store. A module that produced a progress line and no record is a
 	// verdict the run claims to have made and did not keep.
-	if err := uc.verifyRecordsPersisted(ctx, walk, params, snapshot); err != nil {
+	if err := uc.verifyRecordsPersisted(ctx, walk, run, snapshot); err != nil {
 		return domain.WalkScanRun{}, err
 	}
 
@@ -293,19 +388,21 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	run.CoverageStatus = domain.DetermineCoverageStatus(counts.failed, counts.unscannable, nodeCount)
 	run.FindingsStatus = domain.DetermineFindingsStatus(counts.affected)
 	run.Counts = domain.WalkScanCounts{
-		Total:       nodeCount,
-		Analysed:    counts.clean + counts.affected,
+		Total: nodeCount,
+		// The coverage axis's own count, not clean+affected. A coordinate-matched
+		// module reports a finding without having been analysed, so adding the
+		// affected tally here counted it as read.
+		Analysed:    counts.analysed,
 		Affected:    counts.affected,
 		Unscannable: counts.unscannable,
 		Failed:      counts.failed,
 	}
 
 	// 6. Hash & Persist
-	hash, err := uc.computeContentHash(run)
+	run, err = domain.WalkScanRunHasher{}.SetContentHash(run)
 	if err != nil {
 		return domain.WalkScanRun{}, fmt.Errorf("hashing walk scan run: %w", err)
 	}
-	run.ContentHash = hash
 	if err := uc.vulnStore.PutWalkScanRun(ctx, run); err != nil {
 		return domain.WalkScanRun{}, fmt.Errorf("persisting walk scan run: %w", err)
 	}
@@ -339,23 +436,41 @@ const missingRecordLogLimit = 10
 //
 // A gap fails the run rather than being logged: an incomplete record set silently
 // under-reports the build, which is the same class of defect as a false clean.
+//
+// The check is by CONTENT HASH — the exact generation this run recorded in
+// run.PerModuleResults — rather than by reading the coordinate back and
+// comparing walk IDs. Two things make that necessary against a ledger. A read by
+// coordinate now serves the composed record, which may legitimately be an
+// earlier generation that outranks the one this run wrote, so a hash comparison
+// against it would report a stored record as missing. And a reused record keeps
+// the walk it was measured in, so a walk-ID comparison would report every reuse
+// as a gap. The run's claim is a set of specific records; this asks whether each
+// of them is in the store.
 func (uc *ScanWalkUseCase) verifyRecordsPersisted(
 	ctx context.Context,
 	walk walkdomain.WalkRecord,
-	params ScanWalkParams,
+	run domain.WalkScanRun,
 	snapshot *domain.DatabaseSnapshot,
 ) error {
 	var missing []coordinate.ModuleCoordinate
 	for _, node := range walk.Graph.Nodes {
+		contentHash, claimed := run.PerModuleResults[node.Coordinate]
+		if !claimed {
+			// The run reported a result for every node and kept no record for this one:
+			// the write failed and was logged rather than raised. That is exactly the
+			// gap this check exists to turn into a failure.
+			missing = append(missing, node.Coordinate)
+			continue
+		}
 		// Read back by the store's own record identity rather than through the
 		// per-run module index: that index is written by PutWalkScanRun, which has
 		// not run yet, so querying it here would answer for previous runs of this
 		// walk instead of this one.
-		rec, ok, err := uc.vulnStore.GetVulnerabilityRecord(ctx, node.Coordinate, uc.pipelineVersion, *snapshot)
+		ok, err := uc.vulnStore.HasVulnerabilityRecord(ctx, node.Coordinate, uc.pipelineVersion, *snapshot, contentHash)
 		if err != nil {
 			return fmt.Errorf("verifying persisted vulnerability record for %s: %w", node.Coordinate, err)
 		}
-		if !ok || rec.WalkID != params.WalkID {
+		if !ok {
 			missing = append(missing, node.Coordinate)
 		}
 	}
@@ -368,14 +483,32 @@ func (uc *ScanWalkUseCase) verifyRecordsPersisted(
 	}
 	return fmt.Errorf(
 		"vuln scan of walk %s reported a verdict for %d modules but stored only %d: no record persisted for %v (and %d more)",
-		params.WalkID, len(walk.Graph.Nodes), len(walk.Graph.Nodes)-len(missing), named, len(missing)-len(named),
+		run.WalkID, len(walk.Graph.Nodes), len(walk.Graph.Nodes)-len(missing), named, len(missing)-len(named),
 	)
 }
 
 // scanCounts is the overall module-count breakdown recorded on a
 // vuln_scan_completed audit event.
+//
+// The three coverage buckets partition the modules — analysed + unscannable +
+// failed == total — and affected counts across all three, because a module can
+// report an advisory whether or not its source was ever read. They are two
+// independent tallies, not four slices of one, which is why affected is not part
+// of the sum: counting a coordinate-matched module as analysed on the strength of
+// its summary word is how a run came to report full coverage of a module nothing
+// was analysed in.
+// clean is the intersection — analysed and reporting nothing, the only real
+// all-clear — kept beside them because it is what the audit event has always
+// meant by "clean" and the one number that must not quietly start including
+// modules that were never read.
 type scanCounts struct {
-	affected, clean, unscannable, failed int
+	affected, analysed, clean, unscannable, failed int
+	// withdrawn counts analysed modules whose every matched advisory was retracted
+	// upstream. It is its own tally rather than a share of clean, so a run cannot
+	// report "N clean" for modules that were reported affected until the retraction
+	// was read. Such a module is not affected, so it does not degrade the run's
+	// findings word; it is reported so the transition is visible rather than silent.
+	withdrawn int
 }
 
 // tallyModuleResults walks the per-module results in deterministic allCoords
@@ -399,6 +532,9 @@ func (uc *ScanWalkUseCase) tallyModuleResults(
 		if r.err != nil {
 			uc.logger.Error("failed to scan module in walk", "walk_id", params.WalkID, "module", r.coord, "error", r.err)
 			counts.failed++
+			// No ArtefactIdentity: the worker failed before reaching a verdict, so
+			// this record reports an outcome of the run rather than a reading of any
+			// artefact. Naming one would claim bytes were analysed that were not.
 			failedRecord := domain.VulnerabilityRecord{
 				Ecosystem:        fetchdomain.EcosystemGo,
 				Coordinate:       r.coord,
@@ -408,11 +544,16 @@ func (uc *ScanWalkUseCase) tallyModuleResults(
 				DatabaseSnapshot: *snapshot,
 				ScannedAt:        uc.clock.Now(),
 				PipelineVersion:  uc.pipelineVersion,
+				// A worker error only ever comes from the isolated scan pool — the
+				// target-rooted paths return their own records and never an error here —
+				// so this failure is a failure of the isolated analysis, and states that
+				// frame rather than leaving it unrecorded.
+				Rooting: domain.RootingIsolated,
 			}
-			if perr := uc.vulnStore.PutVulnerabilityRecord(ctx, failedRecord); perr != nil {
-				uc.logger.Error("failed to persist ScanFailed record", "module", r.coord, "error", perr)
-			} else {
-				run.PerModuleResults[r.coord] = ""
+			var stored bool
+			failedRecord, stored = uc.persistSealed(ctx, failedRecord, "ScanFailed")
+			if stored {
+				run.PerModuleResults[r.coord] = failedRecord.ContentHash
 			}
 			if params.Progress != nil {
 				params.Progress(r.coord, failedRecord, *progressCount, total)
@@ -421,25 +562,42 @@ func (uc *ScanWalkUseCase) tallyModuleResults(
 		}
 
 		run.PerModuleResults[r.coord] = r.record.ContentHash
-		switch r.record.OverallStatus {
-		case domain.StatusAffected:
+		// Tallied per axis. Reading the collapsed word counted a coordinate-matched
+		// module as analysed — the word says Affected, and Affected was an analysed
+		// bucket — so a run whose modules were never read reported full coverage of
+		// them. The findings tally is independent and counts the same module again
+		// when it reports both.
+		coverage, findings := domain.RecordAxes(r.record)
+		if findings == domain.FindingsRecordAffected {
 			counts.affected++
-		case domain.StatusScanFailed:
+		}
+		switch coverage {
+		case domain.CoverageAnalysed:
+			counts.analysed++
+			// Clean is the narrow word here, not "everything that is not Affected". A
+			// module whose only advisories were retracted reports Withdrawn, and
+			// counting it clean would fold the retraction back into the all-clear tally
+			// and lose the reason it is being kept out of.
+			if findings == domain.FindingsRecordClean {
+				counts.clean++
+			}
+			if findings == domain.FindingsRecordWithdrawn {
+				counts.withdrawn++
+			}
+		case domain.CoverageFailedScan:
 			counts.failed++
-		case domain.StatusUnscannable:
+		case domain.CoverageUnscannable:
 			counts.unscannable++
-		case domain.StatusClean:
-			counts.clean++
 		default:
-			// A status outside the known set must not vanish from the counts. The
-			// coverage axis and the "N of T unanalysed" summary derive from
-			// affected+clean+unscannable+failed == total, so a dropped module would
-			// silently understate the analysed count and let the run over-claim
-			// completeness. Surface it and count it as failed: the run cannot vouch
-			// for a verdict it does not understand, and an unaccounted module must
-			// degrade coverage rather than disappear.
-			uc.logger.Error("module scan produced an unrecognised status",
-				"walk_id", params.WalkID, "module", r.coord, "status", r.record.OverallStatus)
+			// A coverage value outside the known set must not vanish from the counts.
+			// The coverage axis and the "N of T unanalysed" summary derive from
+			// analysed+unscannable+failed == total, so a dropped module would silently
+			// understate the unanalysed count and let the run over-claim completeness.
+			// Surface it and count it as failed: the run cannot vouch for a verdict it
+			// does not understand, and an unaccounted module must degrade coverage
+			// rather than disappear.
+			uc.logger.Error("module scan produced an unrecognised coverage status",
+				"walk_id", params.WalkID, "module", r.coord, "coverage", coverage, "status", r.record.OverallStatus)
 			counts.failed++
 		}
 		if params.Progress != nil {
@@ -493,6 +651,7 @@ func scanCompletedEvent(run domain.WalkScanRun, counts scanCounts) audit.Event {
 			"overall_status":   string(run.OverallStatus),
 			"affected":         counts.affected,
 			"clean":            counts.clean,
+			"withdrawn":        counts.withdrawn,
 			"unscannable":      counts.unscannable,
 			"failed":           counts.failed,
 		},
@@ -504,8 +663,8 @@ func findingObservedEvent(coord coordinate.ModuleCoordinate, vulnID string, stat
 	return audit.Event{
 		Type: audit.EventVulnFindingObserved,
 		Payload: map[string]any{
-			"module":         coord.Path,
-			"version":        coord.Version,
+			"module":         coord.Path(),
+			"version":        coord.Version(),
 			"vuln_id":        vulnID,
 			"overall_status": string(status),
 		},
@@ -528,7 +687,16 @@ func (uc *ScanWalkUseCase) recordLocalReplaceUnscannable(
 	for _, node := range nodes {
 		added++
 		*progressCount++
+		// No ArtefactIdentity: a local-replace node is unscannable precisely
+		// because it is a working tree rather than a fetched artefact.
+		//
+		// The frame is unrecorded, and it is stated so rather than left off. No
+		// analysis was rooted anywhere for this node: it is excluded from the scan
+		// pool and from the target-rooted build alike, so naming a frame would
+		// claim an analysis that was never attempted. Writing the constant makes
+		// that a decision at the site rather than a field someone forgot.
 		rec := domain.VulnerabilityRecord{
+			Rooting:           domain.RootingUnrecorded,
 			Ecosystem:         fetchdomain.EcosystemGo,
 			Coordinate:        node.Coordinate,
 			WalkID:            params.WalkID,
@@ -539,16 +707,69 @@ func (uc *ScanWalkUseCase) recordLocalReplaceUnscannable(
 			ScannedAt:         uc.clock.Now(),
 			PipelineVersion:   uc.pipelineVersion,
 		}
-		if perr := uc.vulnStore.PutVulnerabilityRecord(ctx, rec); perr != nil {
-			uc.logger.Error("failed to persist local-replace Unscannable record", "module", node.Coordinate, "error", perr)
-		} else {
-			run.PerModuleResults[node.Coordinate] = ""
+		var stored bool
+		rec, stored = uc.persistSealed(ctx, rec, "local-replace Unscannable")
+		if stored {
+			run.PerModuleResults[node.Coordinate] = rec.ContentHash
 		}
 		if params.Progress != nil {
 			params.Progress(node.Coordinate, rec, *progressCount, total)
 		}
 	}
 	return added
+}
+
+// resolveWorkerCount sizes the module-scan pool.
+//
+// A non-zero requested count is an operator override and is returned unchanged:
+// the operator is assumed to know their host, and silently shrinking an
+// explicit --workers would make the flag lie.
+//
+// Otherwise the cap is max(1, min(NumCPU, cpuWorkerCap, available /
+// perWorkerBudgetBytes)). The memory term is what stops a pool of large
+// source-mode scans from exhausting the host and being OOM-killed, which does
+// not report a slow scan — it reports every module as unanalysed. The floor of
+// 1 is deliberate: a host too small for even one budgeted worker still gets a
+// scan attempted, because a single govulncheck that might survive is a better
+// answer than a pool of zero that certainly reports nothing.
+//
+// A memory reading that cannot be taken is never fatal. It degrades to the
+// CPU-only cap and says so at debug, because an unreadable /proc is the normal
+// case on every host that is not Linux and must not read as a fault.
+//
+// The budget is per-process. Two kanonarion runs on one host each measure the
+// same free memory and each admit a full pool against it, so they can still
+// exhaust it between them; that is documented in the inspect command's help
+// rather than coordinated here, which would need a lock outside this process.
+func (uc *ScanWalkUseCase) resolveWorkerCount(requested int) int {
+	if requested > 0 {
+		return requested
+	}
+	cpuCap := min(runtime.NumCPU(), cpuWorkerCap)
+	if uc.hostMemory == nil {
+		uc.logger.Debug("no host-memory reporter wired; sizing module scan pool by CPU alone",
+			"workers", cpuCap)
+		return cpuCap
+	}
+	available, err := uc.hostMemory.AvailableBytes()
+	if err != nil {
+		uc.logger.Debug("available memory unreadable; sizing module scan pool by CPU alone",
+			"workers", cpuCap, "error", err)
+		return cpuCap
+	}
+	// uint64 division, then a bounded conversion: min caps the quotient at cpuCap
+	// (at most cpuWorkerCap, 4) before it is narrowed, so the result fits an int
+	// on every platform regardless of how much memory the host reports.
+	budgeted := available / perWorkerBudgetBytes
+	workers := max(1, int(min(budgeted, uint64(cpuCap)))) // #nosec G115 -- min bounds the value by cpuWorkerCap before conversion.
+	if workers < cpuCap {
+		uc.logger.Info("module scan workers capped by available memory",
+			"available_bytes", available,
+			"per_worker_budget_bytes", perWorkerBudgetBytes,
+			"workers", workers,
+			"cpu_cap", cpuCap)
+	}
+	return workers
 }
 
 // runScanPool dispatches coordSlice to a bounded worker pool and returns all results.
@@ -573,10 +794,8 @@ func (uc *ScanWalkUseCase) runScanPool(
 	out := make(chan moduleResult, len(coordSlice))
 	w := min(workers, len(coordSlice))
 	var wg sync.WaitGroup
-	for i := 0; i < w; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range w {
+		wg.Go(func() {
 			for coord := range ch {
 				rec, scanErr := uc.moduleScanner.Scan(ctx, ScanModuleParams{
 					Coordinate:         coord,
@@ -593,7 +812,7 @@ func (uc *ScanWalkUseCase) runScanPool(
 				})
 				out <- moduleResult{coord: coord, record: rec, err: scanErr}
 			}
-		}()
+		})
 	}
 	go func() {
 		wg.Wait()
@@ -782,11 +1001,11 @@ func (uc *ScanWalkUseCase) populateScannedBuildListDeps(ctx context.Context, coo
 		// its own ancestor google.golang.org/genproto). Both make the toolchain
 		// read the ancestor's source, so both seed the source set.
 		for _, a := range requires {
-			if strings.HasPrefix(node.Path, a.Path+"/") {
+			if strings.HasPrefix(node.Path(), a.Path()+"/") {
 				sourceSet[a] = struct{}{}
 			}
 			for _, b := range requires {
-				if a != b && strings.HasPrefix(b.Path, a.Path+"/") {
+				if a != b && strings.HasPrefix(b.Path(), a.Path()+"/") {
 					sourceSet[a] = struct{}{}
 				}
 			}
@@ -855,10 +1074,16 @@ func (uc *ScanWalkUseCase) nodeGoModRequires(ctx context.Context, coord coordina
 	}
 	out := make([]coordinate.ModuleCoordinate, 0, len(f.Require))
 	for _, req := range f.Require {
-		if req == nil || req.Mod.Path == "" || req.Mod.Version == "" {
+		if req == nil {
 			continue
 		}
-		out = append(out, coordinate.ModuleCoordinate{Path: req.Mod.Path, Version: req.Mod.Version})
+		// A require line the constructor rejects is not a module to populate for,
+		// on the same terms as the empty path or version this skipped before.
+		coord, err := coordinate.NewModuleCoordinate(req.Mod.Path, req.Mod.Version)
+		if err != nil {
+			continue
+		}
+		out = append(out, coord)
 	}
 	return out, true
 }
@@ -962,50 +1187,92 @@ func (uc *ScanWalkUseCase) fetchAndPersistSnapshot(ctx context.Context, errFetch
 	return &s, nil
 }
 
+// firstSnapshotIntegrityFailure returns the snapshot integrity failure a module
+// scan hit, if any, walking the coordinates in their stable order so the same
+// corruption always reports the same module rather than a map-iteration lottery.
+//
+// It reaches here only when the shared pre-extraction did not run or did not
+// serve this scan; when it did, the abort has already happened upstream. Both
+// are kept because the two paths reach the store independently, and a decision
+// enforced at only one of them is enforced only while the other stays unused.
+func firstSnapshotIntegrityFailure(
+	coords []coordinate.ModuleCoordinate,
+	results map[coordinate.ModuleCoordinate]moduleResult,
+) error {
+	for _, coord := range coords {
+		if r, ok := results[coord]; ok && errors.Is(r.err, ports.ErrSnapshotIntegrity) {
+			return fmt.Errorf("scanning %s: %w", coord, r.err)
+		}
+	}
+	return nil
+}
+
 // preExtractVulnDB extracts the snapshot ZIP to a temp dir so all module scans
-// in a walk share a single extraction. Returns the dir path (empty on failure)
-// and a cleanup function.
-func (uc *ScanWalkUseCase) preExtractVulnDB(ctx context.Context, snapshot *domain.DatabaseSnapshot) (string, func()) {
+// in a walk share a single extraction. Returns the dir path (empty when the
+// extraction could not be shared) and a cleanup function.
+//
+// A snapshot integrity failure is returned rather than logged. Every finding in
+// the run is derived from this snapshot, and the run's records name it, so a run
+// that cannot vouch for the snapshot must not produce findings that claim it.
+// The other failures — absent, unreadable, no temp dir — leave the per-module
+// extraction path to answer, which is what the fallback was written for.
+func (uc *ScanWalkUseCase) preExtractVulnDB(ctx context.Context, snapshot *domain.DatabaseSnapshot) (string, func(), error) {
 	noop := func() {}
 	content, err := uc.vulnStore.GetDatabaseSnapshot(ctx, *snapshot)
 	if err != nil {
+		if errors.Is(err, ports.ErrSnapshotIntegrity) {
+			return "", noop, fmt.Errorf("pre-extracting the advisory database: %w", ports.SnapshotIntegrityAbort(*snapshot, err))
+		}
 		uc.logger.Warn("failed to retrieve snapshot for pre-extraction, each module scan will extract independently", "error", err)
-		return "", noop
+		return "", noop, nil
 	}
 	defer func() { _ = content.Close() }()
 
 	dbDir, err := os.MkdirTemp("", "kanonarion-vulndb-*")
 	if err != nil {
 		uc.logger.Warn("failed to create temp dir for snapshot pre-extraction, each module scan will extract independently", "error", err)
-		return "", noop
+		return "", noop, nil
 	}
 	cleanup := func() { _ = os.RemoveAll(dbDir) }
 
 	if err := ziparchive.ExtractStream(content, dbDir); err != nil {
 		uc.logger.Warn("failed to pre-extract snapshot, each module scan will extract independently", "error", err)
 		cleanup()
-		return "", noop
+		return "", noop, nil
 	}
 	uc.logger.Info("pre-extracted vulnerability database snapshot", "path", dbDir)
-	return dbDir, cleanup
+	return dbDir, cleanup, nil
 }
 
-func (uc *ScanWalkUseCase) computeContentHash(r domain.WalkScanRun) (string, error) {
-	data, err := walkScanRunMarshal(r)
-	if err != nil {
-		return "", fmt.Errorf("marshalling walk scan run for content hash: %w", err)
+// persistSealed seals rec with its content hash and persists it, returning the
+// record that was stored. stored is false when the record could not be sealed
+// or written: the walk continues, because one module's bookkeeping failure must
+// not abort a run that has already produced verdicts for the rest, but the
+// caller must not then claim a stored verdict for that module.
+//
+// Both callers are paths that report an outcome of the run rather than a
+// reading of an artefact — a worker that failed before reaching a verdict, and
+// a local-replace node that is unscannable by construction. They seal all the
+// same: the store refuses an unsealed record, and a record nothing can check is
+// exactly the record a tamper would choose.
+func (uc *ScanWalkUseCase) persistSealed(
+	ctx context.Context,
+	rec domain.VulnerabilityRecord,
+	kind string,
+) (domain.VulnerabilityRecord, bool) {
+	sealed, herr := domain.VulnerabilityRecordHasher{}.SetContentHash(rec)
+	if herr != nil {
+		uc.logger.Error("failed to hash vulnerability record",
+			"kind", kind, "module", rec.Coordinate, "error", herr)
+		return rec, false
 	}
-	hash := sha256.Sum256(data)
-	return hex.EncodeToString(hash[:]), nil
+	if perr := uc.vulnStore.PutVulnerabilityRecord(ctx, sealed); perr != nil {
+		uc.logger.Error("failed to persist vulnerability record",
+			"kind", kind, "module", sealed.Coordinate, "error", perr)
+		return sealed, false
+	}
+	return sealed, true
 }
-
-// walkScanRunMarshal is a seam over json.Marshal used to test the
-// marshal-failure guard's wrapping and propagation logic. No field in
-// WalkScanRun can currently make json.Marshal fail (no NaN/Inf floats, no
-// unsupported types), so this proves the guard's error handling is correct,
-// not that the guard is reachable with a real value today — it exists for
-// the never-silent-failure invariant, not a known failure mode.
-var walkScanRunMarshal = json.Marshal
 
 // prepareModCache resolves the GOMODCACHE the scan's govulncheck runs against
 // and returns it with a release function the caller must defer. An empty

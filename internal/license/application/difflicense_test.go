@@ -6,13 +6,14 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	"github.com/eitanity/kanonarion/internal/license/application"
 	"github.com/eitanity/kanonarion/internal/license/domain"
 )
 
 func diffCoord(path, ver string) coordinate.ModuleCoordinate {
-	return coordinate.ModuleCoordinate{Path: path, Version: ver}
+	return coordinatetest.MustNew(path, ver)
 }
 
 func seedDiffRecord(t *testing.T, store *fakeLicenseStore, path, ver, spdx string, files ...domain.LicenseFileEntry) {
@@ -83,7 +84,7 @@ func TestDiffLicenseUseCase_FirstMissing(t *testing.T) {
 	if !errors.As(err, &notFound) {
 		t.Fatalf("error = %v, want *ErrLicenseRecordNotFound", err)
 	}
-	if notFound.Coordinate.Version != "v1.0.0" {
+	if notFound.Coordinate.Version() != "v1.0.0" {
 		t.Errorf("ErrLicenseRecordNotFound.Coordinate = %v, want v1.0.0", notFound.Coordinate)
 	}
 }
@@ -102,7 +103,7 @@ func TestDiffLicenseUseCase_SecondMissing(t *testing.T) {
 	if !errors.As(err, &notFound) {
 		t.Fatalf("error = %v, want *ErrLicenseRecordNotFound", err)
 	}
-	if notFound.Coordinate.Version != "v2.0.0" {
+	if notFound.Coordinate.Version() != "v2.0.0" {
 		t.Errorf("ErrLicenseRecordNotFound.Coordinate = %v, want v2.0.0", notFound.Coordinate)
 	}
 }
@@ -121,8 +122,7 @@ func TestDiffLicenseUseCase_StoreError(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	var notFound *application.ErrLicenseRecordNotFound
-	if errors.As(err, &notFound) {
+	if _, ok := errors.AsType[*application.ErrLicenseRecordNotFound](err); ok {
 		t.Error("store error must not be wrapped as ErrLicenseRecordNotFound")
 	}
 	if !errors.Is(err, sentinel) {

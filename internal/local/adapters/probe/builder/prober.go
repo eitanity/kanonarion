@@ -101,8 +101,7 @@ func findMainPackages(ctx context.Context, root, goBin string) ([]string, error)
 	cmd.Dir = root
 	out, err := cmd.Output()
 	if err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
+		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
 			return nil, fmt.Errorf("go list: %w\n%s", err, ee.Stderr)
 		}
 		return nil, fmt.Errorf("go list: %w", err)
@@ -182,8 +181,7 @@ func listWorkspacePackages(ctx context.Context, root, goBin string) ([]goListPac
 	cmd.Dir = root
 	out, err := cmd.Output()
 	if err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
+		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
 			return nil, fmt.Errorf("go list: %w\n%s", err, ee.Stderr)
 		}
 		return nil, fmt.Errorf("go list: %w", err)
@@ -327,8 +325,7 @@ func readSymbolTable(ctx context.Context, root, binPath, goBin string) (map[stri
 	cmd.Dir = root
 	out, err := cmd.Output()
 	if err != nil {
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
+		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
 			return nil, fmt.Errorf("go tool nm: %w\n%s", err, ee.Stderr)
 		}
 		return nil, fmt.Errorf("go tool nm: %w", err)

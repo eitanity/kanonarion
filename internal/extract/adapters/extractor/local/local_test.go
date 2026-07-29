@@ -496,10 +496,8 @@ func TestAdapterExtractor_CallGraph_WorkerConcurrency(t *testing.T) {
 	sem := make(chan struct{}, workers)
 	var wg sync.WaitGroup
 	var callCount atomic.Int64
-	for i := 0; i < modules; i++ {
-		wg.Add(1)
-		go func() {
-			defer wg.Done()
+	for range modules {
+		wg.Go(func() {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			coord, _ := coordinate.NewModuleCoordinate("github.com/foo/mod", "v1.0.0")
@@ -512,7 +510,7 @@ func TestAdapterExtractor_CallGraph_WorkerConcurrency(t *testing.T) {
 				t.Errorf("Status = %v, want Succeeded", res.Status)
 			}
 			callCount.Add(1)
-		}()
+		})
 	}
 	wg.Wait()
 

@@ -5,7 +5,10 @@ import (
 	"context"
 	"io"
 	"log/slog"
+
 	"testing"
+
+	"github.com/eitanity/kanonarion/internal/vuln/domain"
 )
 
 // FuzzParseResults exercises the govulncheck subprocess output parser. The
@@ -73,7 +76,7 @@ func FuzzParseResults(f *testing.F) {
 		// exceeding the scanner's 10MB cap) but must not crash, and on
 		// success every returned finding must carry a non-empty ID and an
 		// initialised reachability result.
-		findings, err := s.parseResults(context.Background(), bytes.NewReader(data), "example.com/m")
+		findings, err := s.parseResults(context.Background(), bytes.NewReader(data), "example.com/m", domain.ScanModeSource)
 		if err != nil {
 			return
 		}

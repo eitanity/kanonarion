@@ -75,11 +75,23 @@ func (a *LocalAcquirer) Acquire(ctx context.Context, goVersionRaw string, opts O
 	}
 
 	if !opts.Force {
-		if facts, ok, err := a.store.Get(ctx, version); err != nil {
+		facts, ok, err := a.store.Get(ctx, version)
+		if err != nil {
 			return domain.Facts{}, fmt.Errorf("reading stdlib fact cache for %s: %w", version, err)
-		} else if ok {
+		}
+		switch {
+		case ok && domain.ServesAsCacheHit(facts):
+			// Including facts a prior online run established: composition serves the
+			// most definite anchor, so a mixed pipeline never downgrades a stronger one.
+			// That property used to depend on this cache check returning whatever was
+			// stored; it now holds because of what composition serves, which is the
+			// stronger place for it.
 			a.logger.InfoContext(ctx, "stdlib.acquire_local.cache_hit", slog.String("go_version", version))
 			return facts, nil
+		case ok:
+			a.logger.InfoContext(ctx, "stdlib.acquire_local.cache_ineligible",
+				slog.String("go_version", version),
+				slog.String("verification", string(facts.VerificationStatus)))
 		}
 	}
 
@@ -116,6 +128,15 @@ func (a *LocalAcquirer) Acquire(ctx context.Context, goVersionRaw string, opts O
 		VCSURL:      domain.VCSRepoURL,
 		VCSRef:      version,
 		AcquiredAt:  a.clock.Now().UTC(),
+		// The bytes are $GOROOT/src, not the published tarball, so this route can
+		// never share an artefact identity with an online measurement — which is why
+		// the two are separate groups rather than rungs of one ladder.
+		AcquisitionRoute: domain.RouteLocalToolchain,
+	}
+
+	facts, err = domain.FactsHasher{}.SetContentHash(facts)
+	if err != nil {
+		return domain.Facts{}, fmt.Errorf("sealing stdlib facts for %s: %w", version, err)
 	}
 
 	if err := a.store.Put(ctx, facts); err != nil {

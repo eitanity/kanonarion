@@ -7,8 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/license/domain"
 )
 
@@ -29,7 +28,7 @@ func TestPrintCompatReportText_Clean(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer
 	report := makeCompatReport(true)
-	coord := coordinate.ModuleCoordinate{Path: "example.com/root", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/root", "v1.0.0")
 	printCompatReportText(report, coord, &buf)
 	out := buf.String()
 	if !strings.Contains(out, "compatible with Apache-2.0") {
@@ -53,7 +52,7 @@ func TestPrintCompatReportText_IncompatibleConflict(t *testing.T) {
 		Verdict:       domain.VerdictIncompatible,
 		Kind:          domain.ConflictCopyleftPropagation,
 	})
-	coord := coordinate.ModuleCoordinate{Path: "example.com/root", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/root", "v1.0.0")
 	printCompatReportText(report, coord, &buf)
 	out := buf.String()
 	if !strings.Contains(out, "Incompatible") {
@@ -83,7 +82,7 @@ func TestPrintCompatReportText_UnknownWithNoRecord(t *testing.T) {
 		Verdict:       domain.VerdictUnknownPair,
 		Kind:          domain.ConflictUnknownPair,
 	})
-	coord := coordinate.ModuleCoordinate{Path: "example.com/root", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/root", "v1.0.0")
 	printCompatReportText(report, coord, &buf)
 	out := buf.String()
 	if !strings.Contains(out, "no license detected") {
@@ -109,7 +108,7 @@ func TestPrintCompatReportText_UnknownNamedSPDX(t *testing.T) {
 		Verdict:       domain.VerdictUnknownPair,
 		Kind:          domain.ConflictUnknownPair,
 	})
-	coord := coordinate.ModuleCoordinate{Path: "example.com/root", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/root", "v1.0.0")
 	printCompatReportText(report, coord, &buf)
 	out := buf.String()
 	if strings.Contains(out, "kanonarion extract") {
@@ -131,14 +130,14 @@ func TestPrintCompatReportJSON_CleanShape(t *testing.T) {
 	if err := printCompatReportJSON(report, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	var out map[string]interface{}
+	var out map[string]any
 	if err := json.Unmarshal(buf.Bytes(), &out); err != nil {
 		t.Fatalf("invalid JSON: %v\n%s", err, buf.String())
 	}
 	if out["clean"] != true {
 		t.Errorf("clean should be true, got %v", out["clean"])
 	}
-	conflicts, ok := out["conflicts"].([]interface{})
+	conflicts, ok := out["conflicts"].([]any)
 	if !ok {
 		t.Errorf("conflicts should be an array, got %T", out["conflicts"])
 	}

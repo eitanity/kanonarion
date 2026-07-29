@@ -1,5 +1,7 @@
 package domain
 
+import "maps"
+
 import "github.com/eitanity/kanonarion/internal/coordinate"
 
 // LicenseOverride is an operator-supplied correction for a single module's
@@ -31,9 +33,7 @@ func NewLicenseOverrideSet(entries map[string]string) LicenseOverrideSet {
 		return LicenseOverrideSet{}
 	}
 	cp := make(map[string]string, len(entries))
-	for k, v := range entries {
-		cp[k] = v
-	}
+	maps.Copy(cp, entries)
 	return LicenseOverrideSet{entries: cp}
 }
 
@@ -45,12 +45,12 @@ func (s LicenseOverrideSet) Resolve(coord coordinate.ModuleCoordinate) (LicenseO
 	if len(s.entries) == 0 {
 		return LicenseOverride{}, false
 	}
-	pinned := coord.Path + "@" + coord.Version
+	pinned := coord.Path() + "@" + coord.Version()
 	if spdx, ok := s.entries[pinned]; ok && spdx != "" {
 		return LicenseOverride{SPDX: spdx, Key: pinned, VersionPinned: true}, true
 	}
-	if spdx, ok := s.entries[coord.Path]; ok && spdx != "" {
-		return LicenseOverride{SPDX: spdx, Key: coord.Path, VersionPinned: false}, true
+	if spdx, ok := s.entries[coord.Path()]; ok && spdx != "" {
+		return LicenseOverride{SPDX: spdx, Key: coord.Path(), VersionPinned: false}, true
 	}
 	return LicenseOverride{}, false
 }

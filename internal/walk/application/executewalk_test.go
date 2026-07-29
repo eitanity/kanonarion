@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	"github.com/eitanity/kanonarion/internal/audit"
 
@@ -56,7 +57,7 @@ func (f *fakeWalkStore) GetWalk(_ context.Context, id string) (domain.WalkRecord
 func (f *fakeWalkStore) ListWalks(_ context.Context, filter walkports.WalkFilter) ([]walkports.WalkSummary, error) {
 	var summaries []walkports.WalkSummary
 	for _, rec := range f.walks {
-		if filter.Target != nil && (rec.Target.Path != filter.Target.Path || rec.Target.Version != filter.Target.Version) {
+		if filter.Target != nil && (rec.Target.Path() != filter.Target.Path() || rec.Target.Version() != filter.Target.Version()) {
 			continue
 		}
 		summaries = append(summaries, walkports.WalkSummary{
@@ -424,7 +425,7 @@ func TestDiffWalksUseCase_Added(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
-	if len(diff.Added) != 1 || diff.Added[0].Path != dep.Path {
+	if len(diff.Added) != 1 || diff.Added[0].Path() != dep.Path() {
 		t.Errorf("expected 1 added dep, got %+v", diff.Added)
 	}
 }
@@ -444,7 +445,7 @@ func TestDiffWalksUseCase_Removed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Diff: %v", err)
 	}
-	if len(diff.Removed) != 1 || diff.Removed[0].Path != dep.Path {
+	if len(diff.Removed) != 1 || diff.Removed[0].Path() != dep.Path() {
 		t.Errorf("expected 1 removed dep, got %+v", diff.Removed)
 	}
 }
@@ -654,7 +655,7 @@ func buildRecordWithDep(id string, target, dep coordinate.ModuleCoordinate) doma
 				{Coordinate: target, ResolutionSource: domain.ResolutionTarget},
 				{Coordinate: dep, DirectDependency: true, ResolutionSource: domain.ResolutionMVS},
 			},
-			Edges:           []domain.GraphEdge{{From: target, To: dep, ConstraintVersion: dep.Version}},
+			Edges:           []domain.GraphEdge{{From: target, To: dep, ConstraintVersion: dep.Version()}},
 			ResolvedAt:      now,
 			PipelineVersion: application2.PipelineVersion,
 		},
@@ -685,7 +686,7 @@ func buildRecordWithFailedDep(id string, target, dep coordinate.ModuleCoordinate
 				{Coordinate: target, ResolutionSource: domain.ResolutionTarget},
 				{Coordinate: dep, DirectDependency: true, ResolutionSource: domain.ResolutionMVS},
 			},
-			Edges:           []domain.GraphEdge{{From: target, To: dep, ConstraintVersion: dep.Version}},
+			Edges:           []domain.GraphEdge{{From: target, To: dep, ConstraintVersion: dep.Version()}},
 			ResolvedAt:      now,
 			PipelineVersion: application2.PipelineVersion,
 		},
@@ -712,7 +713,7 @@ func buildRecordWithFailedDep(id string, target, dep coordinate.ModuleCoordinate
 
 func buildPartialRecord(id string, target coordinate.ModuleCoordinate) domain.WalkRecord {
 	now := time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)
-	dep := coordinate.ModuleCoordinate{Path: "github.com/example/dep", Version: "v1.0.0"}
+	dep := coordinatetest.MustNew("github.com/example/dep", "v1.0.0")
 	outcome := domain.WalkOutcome{
 		Target: target,
 		Graph: domain.Graph{

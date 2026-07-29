@@ -59,7 +59,7 @@ func TestGoldenFactRecord(t *testing.T) {
 		t.Skipf("golden file not found (%v); run UPDATE_GOLDEN=1 go test to generate", err)
 	}
 	// Normalise: compare parsed JSON to avoid trailing-newline issues.
-	var gotJSON, wantJSON interface{}
+	var gotJSON, wantJSON any
 	if err := json.Unmarshal(got, &gotJSON); err != nil {
 		t.Fatalf("parsing got: %v", err)
 	}

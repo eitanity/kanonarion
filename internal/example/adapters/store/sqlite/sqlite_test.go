@@ -12,6 +12,7 @@ import (
 	domain2 "github.com/eitanity/kanonarion/internal/example/domain"
 	"github.com/eitanity/kanonarion/internal/example/ports"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 )
 
 func openTestStore(t *testing.T) *examplesqlite.Store {
@@ -40,7 +41,7 @@ func mustCoord(t *testing.T, path, version string) coordinate.ModuleCoordinate {
 func buildRecord(t *testing.T, coord coordinate.ModuleCoordinate, count int, status domain2.ExampleStatus) domain2.ExampleRecord {
 	t.Helper()
 	var examples []domain2.ExampleEntry
-	for i := 0; i < count; i++ {
+	for i := range count {
 		examples = append(examples, domain2.ExampleEntry{
 			Name:             fmt.Sprintf("ExampleFoo%d", i),
 			Package:          "mod_test",
@@ -50,13 +51,14 @@ func buildRecord(t *testing.T, coord coordinate.ModuleCoordinate, count int, sta
 		})
 	}
 	r := domain2.ExampleRecord{
-		SchemaVersion:   domain2.ExampleSchemaVersion,
-		Ecosystem:       fetchdomain.EcosystemGo,
-		Coordinate:      coord,
-		Examples:        examples,
-		OverallStatus:   status,
-		ExtractedAt:     time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
-		PipelineVersion: "0.1.0",
+		SchemaVersion:    domain2.ExampleSchemaVersion,
+		Ecosystem:        fetchdomain.EcosystemGo,
+		Coordinate:       coord,
+		Examples:         examples,
+		OverallStatus:    status,
+		ExtractedAt:      time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
+		PipelineVersion:  "0.1.0",
+		ArtefactIdentity: fetchtest.ZipArtefact("test-zip=").String(),
 	}
 	var h domain2.ExampleRecordHasher
 	r, err := h.SetContentHash(r)
@@ -214,7 +216,7 @@ func TestFindBySymbol(t *testing.T) {
 		t.Fatalf("PutExampleRecord: %v", err)
 	}
 
-	refs, err := s.FindBySymbol(context.Background(), "Foo0", "0.1.0")
+	refs, err := s.FindBySymbol(context.Background(), "Foo0", "0.1.0", coordinate.ModuleSet{})
 	if err != nil {
 		t.Fatalf("FindBySymbol: %v", err)
 	}
@@ -229,7 +231,7 @@ func TestFindBySymbol(t *testing.T) {
 	}
 
 	// Symbol not in index.
-	refs, err = s.FindBySymbol(context.Background(), "Absent", "0.1.0")
+	refs, err = s.FindBySymbol(context.Background(), "Absent", "0.1.0", coordinate.ModuleSet{})
 	if err != nil {
 		t.Fatalf("FindBySymbol Absent: %v", err)
 	}
@@ -253,9 +255,10 @@ func TestFindBySymbolInModule_Scoped(t *testing.T) {
 			Examples: []domain2.ExampleEntry{
 				{Name: "ExampleMarshal", Package: "pkg_test", AssociatedSymbol: "Marshal", Body: "{}"},
 			},
-			OverallStatus:   domain2.ExampleStatusFound,
-			ExtractedAt:     time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
-			PipelineVersion: "0.1.0",
+			OverallStatus:    domain2.ExampleStatusFound,
+			ExtractedAt:      time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+			PipelineVersion:  "0.1.0",
+			ArtefactIdentity: fetchtest.ZipArtefact("test-zip=").String(),
 		}
 		_ = name
 		var h domain2.ExampleRecordHasher
@@ -273,7 +276,7 @@ func TestFindBySymbolInModule_Scoped(t *testing.T) {
 	}
 
 	// Global find returns both.
-	all, err := s.FindBySymbol(context.Background(), "Marshal", "0.1.0")
+	all, err := s.FindBySymbol(context.Background(), "Marshal", "0.1.0", coordinate.ModuleSet{})
 	if err != nil {
 		t.Fatalf("FindBySymbol: %v", err)
 	}
@@ -289,8 +292,8 @@ func TestFindBySymbolInModule_Scoped(t *testing.T) {
 	if len(refs) != 1 {
 		t.Fatalf("expected 1 scoped ref for mod-a, got %d", len(refs))
 	}
-	if refs[0].ModulePath != coordA.Path {
-		t.Errorf("ModulePath: got %q, want %q", refs[0].ModulePath, coordA.Path)
+	if refs[0].ModulePath != coordA.Path() {
+		t.Errorf("ModulePath: got %q, want %q", refs[0].ModulePath, coordA.Path())
 	}
 	if refs[0].ExampleName != "ExampleMarshal" {
 		t.Errorf("ExampleName: got %q", refs[0].ExampleName)
@@ -348,5 +351,44 @@ func TestMigrateIdempotent(t *testing.T) {
 	}
 	if err := s2.Close(); err != nil {
 		t.Fatalf("Close: %v", err)
+	}
+}
+
+// TestFindBySymbol_ScopedToOneVersion pins the same defect the call-graph and
+// interface stores had: an example index keyed on the symbol alone answers
+// across every stored version of the owning module, so a project that builds one
+// version is shown examples from versions it does not contain.
+func TestFindBySymbol_ScopedToOneVersion(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	versions := []string{"v1.0.0", "v1.1.0", "v2.0.0"}
+	for _, v := range versions {
+		rec := buildRecord(t, mustCoord(t, "example.com/mod", v), 1, domain2.ExampleStatusFound)
+		if perr := s.PutExampleRecord(ctx, rec); perr != nil {
+			t.Fatalf("put %s: %v", v, perr)
+		}
+	}
+
+	unscoped, err := s.FindBySymbol(ctx, "Foo0", "0.1.0", coordinate.ModuleSet{})
+	if err != nil {
+		t.Fatalf("FindBySymbol (unscoped): %v", err)
+	}
+	if len(unscoped) != len(versions) {
+		t.Fatalf("unscoped result = %d refs, want one per stored version (%d): %v",
+			len(unscoped), len(versions), unscoped)
+	}
+
+	inBuild := mustCoord(t, "example.com/mod", "v1.1.0")
+	scoped, err := s.FindBySymbol(ctx, "Foo0", "0.1.0",
+		coordinate.NewModuleSet([]coordinate.ModuleCoordinate{inBuild}))
+	if err != nil {
+		t.Fatalf("FindBySymbol (scoped): %v", err)
+	}
+	if len(scoped) != 1 {
+		t.Fatalf("scoped result = %d refs, want 1: %v", len(scoped), scoped)
+	}
+	if scoped[0].ModuleVersion != "v1.1.0" {
+		t.Errorf("scoped ref version = %q, want v1.1.0", scoped[0].ModuleVersion)
 	}
 }

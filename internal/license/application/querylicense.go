@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -42,6 +43,30 @@ func (uc *QueryLicenseUseCase) GetLicenseRecord(ctx context.Context, coord coord
 		return domain.LicenseRecord{}, false, fmt.Errorf("getting license record for %s: %w", coord, err)
 	}
 	return rec, found, nil
+}
+
+// ErrNoLicenceHistory is returned by LicenseHistory when the configured store
+// cannot produce one. It is not "there is no history": it says the store this
+// build was wired with does not keep generations, which is a different answer
+// from a module that has only ever been extracted once.
+var ErrNoLicenceHistory = errors.New("this license store keeps no generation history")
+
+// LicenseHistory returns every generation the ledger holds for a coordinate, in
+// the order they were appended, oldest first.
+//
+// This is the read that an overwriting store could not answer. The composed
+// record says what is believed now; this says what was believed before, each
+// entry naming the artefact it was computed from.
+func (uc *QueryLicenseUseCase) LicenseHistory(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain.LicenseRecord, error) {
+	lister, ok := uc.store.(licenseports.LicenceRecordLister)
+	if !ok {
+		return nil, ErrNoLicenceHistory
+	}
+	recs, err := lister.ListLicenseRecordsFor(ctx, coord, pipelineVersion)
+	if err != nil {
+		return nil, fmt.Errorf("listing license generations for %s: %w", coord, err)
+	}
+	return recs, nil
 }
 
 // ListLicenseRecords returns summaries matching the given filter.

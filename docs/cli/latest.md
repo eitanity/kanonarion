@@ -108,6 +108,12 @@ modernc.org/sqlite@v1.50.0                     latest: v1.50.1 (3 days ago)
 ]
 ```
 
+`latest_date` is **omitted entirely** when the proxy supplied no publication date for
+the version, rather than being emitted as the zero time. A module whose date is
+unknown previously rendered `"latest_date": "0001-01-01T00:00:00Z"` — a fabricated
+date offered where the honest answer is no date at all. Text output makes the same
+distinction: such a module prints `module@version` with no "released …" clause.
+
 ## Agentic workflow
 
 The recommended pattern for an agent answering "which of my deps need an

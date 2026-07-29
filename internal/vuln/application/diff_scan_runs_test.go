@@ -6,6 +6,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -71,7 +72,7 @@ func makeFindingWithReachability(id, summary string, reachable bool) domain.Vuln
 func TestDiff_NoDifferences(t *testing.T) {
 	ctx := t.Context()
 	store := newFakeVulnStore()
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	snap := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
 
 	rec := makeRecord(coord, "walk-1", makeFinding("VULN-1", "bad bug"))
@@ -102,7 +103,7 @@ func TestDiff_NoDifferences(t *testing.T) {
 func TestDiff_NewFinding(t *testing.T) {
 	ctx := t.Context()
 	store := newFakeVulnStore()
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	snapA := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
 	snapB := domain.DatabaseSnapshot{Source: "test", Version: "v2"}
 
@@ -137,7 +138,7 @@ func TestDiff_NewFinding(t *testing.T) {
 func TestDiff_ResolvedFinding(t *testing.T) {
 	ctx := t.Context()
 	store := newFakeVulnStore()
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	snapA := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
 	snapB := domain.DatabaseSnapshot{Source: "test", Version: "v2"}
 
@@ -173,7 +174,7 @@ func TestDiff_ResolvedFinding(t *testing.T) {
 func TestDiff_ReachabilityChange(t *testing.T) {
 	ctx := t.Context()
 	store := newFakeVulnStore()
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	snap := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
 
 	findingA := domain.VulnerabilityFinding{
@@ -253,8 +254,8 @@ func TestDiff_MissingRun(t *testing.T) {
 func TestDiff_SortingPathGreater(t *testing.T) {
 	ctx := t.Context()
 	store := newFakeVulnStore()
-	coordZ := coordinate.ModuleCoordinate{Path: "github.com/zzz/pkg", Version: "v1.0.0"}
-	coordA := coordinate.ModuleCoordinate{Path: "github.com/aaa/pkg", Version: "v1.0.0"}
+	coordZ := coordinatetest.MustNew("github.com/zzz/pkg", "v1.0.0")
+	coordA := coordinatetest.MustNew("github.com/aaa/pkg", "v1.0.0")
 	snap := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
 
 	runA := makeRun("run-a", "walk-1", snap)
@@ -276,11 +277,11 @@ func TestDiff_SortingPathGreater(t *testing.T) {
 		t.Fatalf("expected 2 new findings, got %d", len(diff.NewFindings))
 	}
 	// After sorting, aaa should come before zzz.
-	if diff.NewFindings[0].Coordinate.Path != "github.com/aaa/pkg" {
-		t.Errorf("expected aaa first, got %s", diff.NewFindings[0].Coordinate.Path)
+	if diff.NewFindings[0].Coordinate.Path() != "github.com/aaa/pkg" {
+		t.Errorf("expected aaa first, got %s", diff.NewFindings[0].Coordinate.Path())
 	}
-	if diff.NewFindings[1].Coordinate.Path != "github.com/zzz/pkg" {
-		t.Errorf("expected zzz second, got %s", diff.NewFindings[1].Coordinate.Path)
+	if diff.NewFindings[1].Coordinate.Path() != "github.com/zzz/pkg" {
+		t.Errorf("expected zzz second, got %s", diff.NewFindings[1].Coordinate.Path())
 	}
 }
 
@@ -289,7 +290,7 @@ func TestDiff_SortingPathGreater(t *testing.T) {
 func TestDiff_SortingFindingIDOrder(t *testing.T) {
 	ctx := t.Context()
 	store := newFakeVulnStore()
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	snap := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
 
 	runA := makeRun("run-a", "walk-1", snap)
@@ -326,7 +327,7 @@ func TestDiff_SortingFindingIDOrder(t *testing.T) {
 func TestDiff_ReachabilityNilToNonNilResolved(t *testing.T) {
 	ctx := t.Context()
 	store := newFakeVulnStore()
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	snap := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
 
 	findingA := makeFinding("VULN-X", "some bug") // no reachability

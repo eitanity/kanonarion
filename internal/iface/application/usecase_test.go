@@ -234,7 +234,7 @@ func TestStrippedFS(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	prefix := coord.Path + "@" + coord.Version + "/"
+	prefix := coord.Path() + "@" + coord.Version() + "/"
 	fsys := archive.FS(prefix)
 
 	t.Run("Open and Read", func(t *testing.T) {
@@ -508,7 +508,7 @@ func buildModuleZip(t *testing.T, coord coordinate.ModuleCoordinate, files map[s
 	t.Helper()
 	var buf bytes.Buffer
 	w := zip.NewWriter(&buf)
-	prefix := coord.Path + "@" + coord.Version + "/"
+	prefix := coord.Path() + "@" + coord.Version() + "/"
 	for name, content := range files {
 		f, err := w.Create(prefix + name)
 		if err != nil {

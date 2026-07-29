@@ -97,8 +97,19 @@ vscan-01KQ...-1711929600    Affected      osv.dev/go@v2024-04-01T00...    2024-0
 Compare two scan runs of the same walk and report:
 
 - **NEW** - findings present in run B but not in run A (newly known vulnerabilities).
-- **RESOLVED** - findings present in run A but not in run B (no longer known, typically because the database revised them).
+- **WITHDRAWN** - findings that stopped standing for a stated reason: the advisory was
+  retracted upstream. Reported with the retraction date, and never as a fix.
+- **RESOLVED** - findings present in run A but not in run B, for which no reason is
+  recorded. It is deliberately not called "fixed": within one coordinate the module
+  version cannot have moved between the two runs, so a finding that simply stops
+  being reported is an unattributed disappearance.
 - **REACHABILITY changes** - findings present in both runs whose reachability determination changed.
+
+WITHDRAWN is the attributed half of what used to fall wholesale into RESOLVED, and it
+is the reason that bucket could not be trusted: "upstream fixed it", "we upgraded" and
+"the report was withdrawn" all read the same there. Two shapes reach it — a finding both
+runs report where only B's copy carries the retraction timestamp (the withdrawal landed
+between the runs), and a finding absent from B whose A-side copy already recorded it.
 
 ```
 kanonarion vuln-scan-diff <run-id-a> <run-id-b> [flags]
@@ -131,7 +142,10 @@ NEW findings (2):
   + GO-2024-1234  github.com/some/lib@v1.2.3  Use of unsafe pointer arithmetic
   + GO-2024-1235  github.com/other/pkg@v0.9.0  Integer overflow in parser
 
-RESOLVED findings (1):
+WITHDRAWN advisories (1) — retracted upstream, not fixed:
+  ! GO-2024-8888  github.com/some/lib@v1.2.3  withdrawn 2024-04-08T13:33:56Z  WITHDRAWN: out-of-range-index
+
+RESOLVED findings (1) — no longer reported, no reason recorded:
   - GO-2023-9999  github.com/old/dep@v2.0.0  Path traversal in file handler
 ```
 

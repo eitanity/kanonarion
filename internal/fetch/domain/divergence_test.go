@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 )
@@ -16,7 +17,7 @@ import (
 // naive "more than one artefact hash for a coordinate" rule fires on 90
 // legitimate upgrade pairs; the shared-hash rule fires on none.
 func TestFindDivergence_GoModOnlyThenFullIsSilent(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	goModOnly := fetchtest.Record(t,
 		fetchtest.Coordinate(coord),
 		fetchtest.GoModOnly("gomod"),
@@ -36,7 +37,7 @@ func TestFindDivergence_GoModOnlyThenFullIsSilent(t *testing.T) {
 // Two records disagreeing on a hash they BOTH carry is the same pinned version
 // described by two different artefacts.
 func TestFindDivergence_DisagreementOnASharedHash(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	for _, tc := range []struct {
 		name  string
 		a, b  []fetchtest.Option
@@ -77,7 +78,7 @@ func TestFindDivergence_DisagreementOnASharedHash(t *testing.T) {
 // measurements of it are a sequence rather than competing claims, and the walker
 // deliberately re-reads the working tree on every walk.
 func TestFindDivergence_LocalCoordinateIsExempt(t *testing.T) {
-	local := coordinate.ModuleCoordinate{Path: "example.com/proj", Version: coordinate.LocalVersion}
+	local := coordinatetest.MustNew("example.com/proj", coordinate.LocalVersion)
 	a := fetchtest.Record(t, fetchtest.Coordinate(local), fetchtest.ModuleHash(fetchtest.H1("tree-a==")))
 	b := fetchtest.Record(t, fetchtest.Coordinate(local), fetchtest.ModuleHash(fetchtest.H1("tree-b==")))
 
@@ -90,7 +91,7 @@ func TestFindDivergence_LocalCoordinateIsExempt(t *testing.T) {
 // maintainer's audit log holds 44 measurements of a single coordinate; they
 // agree on every hash, so none of them contradicts another.
 func TestFindDivergence_RepeatedMeasurementsOfOneArtefactAreSilent(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "gopkg.in/yaml.v3", Version: "v3.0.1"}
+	coord := coordinatetest.MustNew("gopkg.in/yaml.v3", "v3.0.1")
 	var records []domain.FactRecord
 	for i := range 44 {
 		records = append(records, fetchtest.Record(t,

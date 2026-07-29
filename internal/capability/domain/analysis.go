@@ -2,6 +2,7 @@ package domain
 
 import (
 	"container/heap"
+	"slices"
 	"sort"
 
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
@@ -89,7 +90,7 @@ func (r CapabilityReport) Capabilities() []Capability {
 	for _, f := range r.Findings {
 		caps = append(caps, f.Capability)
 	}
-	sort.Slice(caps, func(i, j int) bool { return caps[i] < caps[j] })
+	slices.Sort(caps)
 	return caps
 }
 

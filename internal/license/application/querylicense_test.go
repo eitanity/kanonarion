@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	"github.com/eitanity/kanonarion/internal/license/application"
 	"github.com/eitanity/kanonarion/internal/license/domain"
@@ -28,7 +29,7 @@ func (s *queryLicFakeStore) PutLicenseRecord(_ context.Context, r domain.License
 	if s.records == nil {
 		s.records = make(map[queryLicKey]domain.LicenseRecord)
 	}
-	s.records[queryLicKey{r.Coordinate.Path, r.Coordinate.Version, r.PipelineVersion}] = r
+	s.records[queryLicKey{r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion}] = r
 	return nil
 }
 
@@ -36,7 +37,7 @@ func (s *queryLicFakeStore) GetLicenseRecord(_ context.Context, coord coordinate
 	if s.getErr != nil {
 		return domain.LicenseRecord{}, false, s.getErr
 	}
-	r, ok := s.records[queryLicKey{coord.Path, coord.Version, pv}]
+	r, ok := s.records[queryLicKey{coord.Path(), coord.Version(), pv}]
 	return r, ok, nil
 }
 
@@ -47,7 +48,7 @@ func (s *queryLicFakeStore) ListLicenseRecords(_ context.Context, _ licenseports
 var _ licenseports.LicenseStore = (*queryLicFakeStore)(nil)
 
 func TestQueryLicenseUseCase_GetLicenseRecord(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	store := &queryLicFakeStore{}
 	_ = store.PutLicenseRecord(context.Background(), domain.LicenseRecord{
 		Coordinate:      coord,
@@ -69,7 +70,7 @@ func TestQueryLicenseUseCase_GetLicenseRecord(t *testing.T) {
 }
 
 func TestQueryLicenseUseCase_GetLicenseRecord_NotFound(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	uc := application.NewQueryLicenseUseCase(&queryLicFakeStore{})
 
 	_, found, err := uc.GetLicenseRecord(context.Background(), coord, "0.1.0")
@@ -85,7 +86,7 @@ func TestQueryLicenseUseCase_GetLicenseRecord_StoreError(t *testing.T) {
 	storeErr := errors.New("db failure")
 	uc := application.NewQueryLicenseUseCase(&queryLicFakeStore{getErr: storeErr})
 
-	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	_, _, err := uc.GetLicenseRecord(context.Background(), coord, "0.1.0")
 	if !errors.Is(err, storeErr) {
 		t.Errorf("got %v, want wrapping %v", err, storeErr)
@@ -148,8 +149,8 @@ func TestQueryLicenseUseCase_ResolveForWalk_NoWalksStore(t *testing.T) {
 }
 
 func TestQueryLicenseUseCase_ResolveForWalk(t *testing.T) {
-	target := coordinate.ModuleCoordinate{Path: "example.com/target", Version: "v1.0.0"}
-	dep := coordinate.ModuleCoordinate{Path: "example.com/dep", Version: "v0.1.0"}
+	target := coordinatetest.MustNew("example.com/target", "v1.0.0")
+	dep := coordinatetest.MustNew("example.com/dep", "v0.1.0")
 
 	walkStore := &queryLicFakeWalkStore{
 		walk: walkdomain.WalkRecord{
@@ -186,8 +187,8 @@ func TestQueryLicenseUseCase_ResolveForWalk(t *testing.T) {
 }
 
 func TestQueryLicenseUseCase_ResolveForWalk_ExtractError(t *testing.T) {
-	target := coordinate.ModuleCoordinate{Path: "example.com/target", Version: "v1.0.0"}
-	dep := coordinate.ModuleCoordinate{Path: "example.com/dep", Version: "v0.1.0"}
+	target := coordinatetest.MustNew("example.com/target", "v1.0.0")
+	dep := coordinatetest.MustNew("example.com/dep", "v0.1.0")
 	extractErr := errors.New("extract failure")
 
 	walkStore := &queryLicFakeWalkStore{

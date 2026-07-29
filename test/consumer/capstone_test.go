@@ -48,7 +48,7 @@ func newFakePostgresFactStore() *fakePostgresFactStore {
 }
 
 func factKey(coord kanonarion.ModuleCoordinate, pipelineVersion string) string {
-	return coord.Path + "@" + coord.Version + "#" + pipelineVersion
+	return coord.Path() + "@" + coord.Version() + "#" + pipelineVersion
 }
 
 func (s *fakePostgresFactStore) PutFetchRecord(_ context.Context, sealed kanonarion.SealedRecord) error {
@@ -142,7 +142,7 @@ func TestConsumer_SubstitutionPortsAreImplementable(t *testing.T) {
 	// The Postgres-shaped fact store round-trips a record through the published
 	// FactStore contract.
 	fs := newFakePostgresFactStore()
-	coord := kanonarion.ModuleCoordinate{Path: "example.com/m", Version: "v1.0.0"}
+	coord := mustCoord(t, "example.com/m", "v1.0.0")
 	if _, found, err := fs.GetFetchRecord(ctx, coord, "0.0.0"); err != nil || found {
 		t.Fatalf("empty fact store: found=%v err=%v, want found=false err=nil", found, err)
 	}
@@ -150,9 +150,13 @@ func TestConsumer_SubstitutionPortsAreImplementable(t *testing.T) {
 	// The S3-shaped blob store round-trips bytes through Put/Get/Exists.
 	bs := newFakeS3BlobStore()
 	// The caller addresses the artefact by what it is; the store never chooses.
-	handle := kanonarion.BlobIdentity{
-		Kind: kanonarion.BlobKindZip,
-		Hash: kanonarion.ModuleHash{Algorithm: "h1", Value: "capstone-zip="},
+	zipHash, err := kanonarion.NewModuleHash("h1", "capstone-zip=")
+	if err != nil {
+		t.Fatalf("NewModuleHash: %v", err)
+	}
+	handle, err := kanonarion.NewBlobIdentity(kanonarion.BlobKindZip, zipHash)
+	if err != nil {
+		t.Fatalf("NewBlobIdentity: %v", err)
 	}
 	if err := bs.Put(ctx, handle, strings.NewReader("module-zip-bytes")); err != nil {
 		t.Fatalf("Put: %v", err)
@@ -207,7 +211,7 @@ func TestConsumer_QueryUseCasesViaDIContainer(t *testing.T) {
 	// A read against the empty store must report a clean "unknown" — found=false,
 	// no error — not a confident negative (absence-vs-zero).
 	_, found, err := queries.Fetch.GetFetchRecord(ctx,
-		kanonarion.ModuleCoordinate{Path: "example.com/absent", Version: "v0.0.1"}, "0.0.0")
+		mustCoord(t, "example.com/absent", "v0.0.1"), "0.0.0")
 	if err != nil {
 		t.Fatalf("GetFetchRecord on empty store errored: %v", err)
 	}
@@ -414,7 +418,7 @@ func TestConsumer_VerifiedFetchServeAndAirgapRoundTrip(t *testing.T) {
 	}
 
 	out, err := producer.FetchServe.Serve(ctx, kanonarion.ServeRequest{
-		Coordinate: kanonarion.ModuleCoordinate{Path: "golang.org/x/time", Version: "v0.5.0"},
+		Coordinate: mustCoord(t, "golang.org/x/time", "v0.5.0"),
 	})
 	if err != nil {
 		t.Fatalf("Serve: %v", err)
@@ -500,4 +504,17 @@ func writeLocalModule(t *testing.T) string {
 	write("go.mod", "module example.com/capstone\n\ngo 1.21\n")
 	write("capstone.go", "// Package capstone is a dependency-free fixture module.\npackage capstone\n\n// Add returns the sum of a and b.\nfunc Add(a, b int) int { return a + b }\n")
 	return dir
+}
+
+// mustCoord builds a coordinate through the published constructor, which is the
+// only way a consumer outside the module can obtain one: ModuleCoordinate's
+// fields are unexported so that every coordinate in existence has been through
+// the path and semver checks.
+func mustCoord(t *testing.T, path, version string) kanonarion.ModuleCoordinate {
+	t.Helper()
+	c, err := kanonarion.NewModuleCoordinate(path, version)
+	if err != nil {
+		t.Fatalf("NewModuleCoordinate(%q, %q): %v", path, version, err)
+	}
+	return c
 }

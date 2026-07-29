@@ -44,26 +44,73 @@ func (a *Analyser) Analyse(
 		return unknown, fmt.Errorf("loading call graph for %s: %w", targetCoord, err)
 	}
 
+	graphDerived := domain.ReachabilityDerivation{
+		Analyser: domain.AnalyserCallGraphBFS,
+		Fidelity: cg.Completeness,
+	}
+
 	targetIDs := buildTargetSet(cg, targetSymbols)
 	if len(targetIDs) == 0 {
-		return domain.ReachabilityResult{IsReachable: false, Confidence: domain.ConfidenceHigh}, nil
+		return domain.ReachabilityResult{IsReachable: false, Confidence: domain.ConfidenceHigh, DerivedBy: graphDerived}, nil
 	}
 
 	entryPoints := collectEntryPoints(cg)
 	if len(entryPoints) == 0 {
-		return domain.ReachabilityResult{IsReachable: false, Confidence: domain.ConfidenceHigh}, nil
+		return domain.ReachabilityResult{IsReachable: false, Confidence: domain.ConfidenceHigh, DerivedBy: graphDerived}, nil
 	}
+
+	// The derivation is stamped on every answer this analyser returns, reachable
+	// or not. "Not reachable" is exactly as dependent on the fidelity of the
+	// graph as "reachable" is — a metadata-only graph reaches nothing and would
+	// otherwise report a confident negative indistinguishable from a searched
+	// one.
+	derived := graphDerived
 
 	path := bfsPath(cg, entryPoints, targetIDs)
 	if path == nil {
-		return domain.ReachabilityResult{IsReachable: false, Confidence: domain.ConfidenceHigh}, nil
+		return domain.ReachabilityResult{IsReachable: false, Confidence: domain.ConfidenceHigh, DerivedBy: derived}, nil
 	}
 
 	return domain.ReachabilityResult{
-		IsReachable:  true,
-		Confidence:   domain.ConfidenceHigh,
-		ExamplePaths: [][]string{path},
+		IsReachable: true,
+		Confidence:  domain.ConfidenceHigh,
+		Routes:      []domain.ReachabilityRoute{routeFrom(cg, path)},
+		DerivedBy:   derived,
 	}, nil
+}
+
+// routeFrom turns a path of call-graph node IDs into a route of frames.
+//
+// The frames carry NO module version, and that is a property of the input
+// rather than an omission here: ports.CallGraphNode records a module path, a
+// package, a receiver and a symbol, and no version at all. The route is
+// therefore honestly unversioned — ReachabilityRoute.IsVersioned reports false
+// for it — and a reader cannot check it against their own build the way a
+// govulncheck route can. Filling the version in from the analysed coordinate
+// would be a guess for every hop outside that one module.
+func routeFrom(cg ports.CallGraphProjection, path []string) domain.ReachabilityRoute {
+	byID := make(map[string]ports.CallGraphNode, len(cg.Nodes))
+	for _, n := range cg.Nodes {
+		byID[n.ID] = n
+	}
+	route := make(domain.ReachabilityRoute, 0, len(path))
+	for _, id := range path {
+		n, ok := byID[id]
+		if !ok {
+			// A path can only be built from edges between nodes, so this cannot
+			// fire; the id is kept as the symbol rather than dropped, so a route
+			// never silently loses a hop it traversed.
+			route = append(route, domain.ReachabilityFrame{Symbol: id})
+			continue
+		}
+		route = append(route, domain.ReachabilityFrame{
+			ModulePath: n.Module,
+			Package:    n.Package,
+			Receiver:   n.Receiver,
+			Symbol:     n.Symbol,
+		})
+	}
+	return route
 }
 
 // buildTargetSet returns the set of node IDs that match any of the target symbols.

@@ -30,7 +30,7 @@ type flakyFetcher struct {
 }
 
 func (f *flakyFetcher) EnsureFetched(ctx context.Context, c coordinate.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
-	if c.Path == f.path {
+	if c.Path() == f.path {
 		f.mu.Lock()
 		f.calls++
 		remaining := f.failures

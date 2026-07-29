@@ -27,8 +27,20 @@ func DiffScanRuns(runA, runB WalkScanRun, recsA, recsB []VulnerabilityRecord) Sc
 			if !inA || !containsFinding(recA.Findings, fB.ID) {
 				diff.NewFindings = append(diff.NewFindings, FindingDelta{Coordinate: coord, Finding: fB})
 			} else if inA {
-				// Both runs have this finding — check for reachability change.
+				// Both runs have this finding — check for a withdrawal, then for a
+				// reachability change.
 				fA, ok := findByID(recA.Findings, fB.ID)
+				// A retraction that landed between the runs is the one transition that
+				// takes a finding out of contention with a reason attached. It is
+				// reported here rather than as a reachability change or a resolution:
+				// the finding is still in B (retained as the historical fact), so
+				// neither of those buckets would ever see it, and before withdrawal was
+				// parsed the advisory instead vanished from the database and was filed
+				// as an unexplained resolution.
+				if ok && !fA.IsWithdrawn() && fB.IsWithdrawn() {
+					diff.WithdrawnFindings = append(diff.WithdrawnFindings, FindingDelta{Coordinate: coord, Finding: fB})
+					continue
+				}
 				if ok && reachabilityChanged(fA, fB) {
 					wasReachable, isReachable := reachableFlag(fA), reachableFlag(fB)
 					// A reachable→not-reachable flip is a green "now unaffected"
@@ -55,11 +67,18 @@ func DiffScanRuns(runA, runB WalkScanRun, recsA, recsB []VulnerabilityRecord) Sc
 		}
 	}
 
-	// Findings in A not in B → resolved / no longer known.
+	// Findings in A not in B → withdrawn, or resolved / no longer known.
 	for coord, recA := range indexA {
 		recB, inB := indexB[coord]
 		for _, fA := range recA.Findings {
 			if !inB || !containsFinding(recB.Findings, fA.ID) {
+				// A already recorded the retraction, so the disappearance is explained
+				// and does not need the fidelity guard below: the reason it stopped
+				// standing is a fact on the finding, not an inference from its absence.
+				if fA.IsWithdrawn() {
+					diff.WithdrawnFindings = append(diff.WithdrawnFindings, FindingDelta{Coordinate: coord, Finding: fA})
+					continue
+				}
 				// A finding that disappears from a module still present in B is a
 				// green "resolved" verdict. If B analysed the module at lower
 				// fidelity than A, the finding may have vanished because the scan
@@ -82,6 +101,7 @@ func DiffScanRuns(runA, runB WalkScanRun, recsA, recsB []VulnerabilityRecord) Sc
 	// Sort for deterministic output.
 	slices.SortFunc(diff.NewFindings, CompareFindingDelta)
 	slices.SortFunc(diff.ResolvedFindings, CompareFindingDelta)
+	slices.SortFunc(diff.WithdrawnFindings, CompareFindingDelta)
 	// A given (coordinate, finding) is either "in both runs" or "in A only", never
 	// both, so it can produce at most one UnresolvedFinding — ordering by
 	// coordinate+finding is already total and deterministic.
@@ -167,14 +187,14 @@ func reachableFlag(f VulnerabilityFinding) bool {
 // contain the same module path at multiple versions, and ordering by path+ID
 // alone leaves those ties unstable.
 func CompareFindingDelta(a, b FindingDelta) int {
-	if a.Coordinate.Path != b.Coordinate.Path {
-		if a.Coordinate.Path < b.Coordinate.Path {
+	if a.Coordinate.Path() != b.Coordinate.Path() {
+		if a.Coordinate.Path() < b.Coordinate.Path() {
 			return -1
 		}
 		return 1
 	}
-	if a.Coordinate.Version != b.Coordinate.Version {
-		if a.Coordinate.Version < b.Coordinate.Version {
+	if a.Coordinate.Version() != b.Coordinate.Version() {
+		if a.Coordinate.Version() < b.Coordinate.Version() {
 			return -1
 		}
 		return 1

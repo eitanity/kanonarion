@@ -31,8 +31,8 @@ func modcacheUseCase(t *testing.T, facts ports.FactStore, buf *bytes.Buffer) *ap
 // from module-cache mode.
 func modcacheUseCaseWithBlobs(t *testing.T, facts ports.FactStore, blobs ports.BlobStore, buf *bytes.Buffer) *application.FetchModuleUseCase {
 	t.Helper()
-	zipHash := domain2.ModuleHash{Algorithm: "h1", Value: "zip-abc="}
-	goModHash := domain2.ModuleHash{Algorithm: "h1", Value: "mod-abc="}
+	zipHash := fetchtest.H1("zip-abc=")
+	goModHash := fetchtest.H1("mod-abc=")
 	log := slog.New(slog.NewTextHandler(buf, &slog.HandlerOptions{Level: slog.LevelDebug}))
 	return application.NewFetchModuleUseCase(
 		downloadWithHashes(testCoord, zipHash, goModHash),
@@ -237,7 +237,7 @@ func TestRefusedDowngradeLogsBothStatusesAndModes(t *testing.T) {
 
 	logged := buf.String()
 	var warnLines []string
-	for _, line := range strings.Split(strings.TrimSpace(logged), "\n") {
+	for line := range strings.SplitSeq(strings.TrimSpace(logged), "\n") {
 		if strings.Contains(line, "level=WARN") {
 			warnLines = append(warnLines, line)
 		}
@@ -279,8 +279,8 @@ func TestRefusedDowngradeIsAuditedWithTheForceFlag(t *testing.T) {
 		t.Fatalf("audit event type = %q, want %q", e.Type, audit.EventFactRecordWriteRefused)
 	}
 	want := map[string]any{
-		"module":                       testCoord.Path,
-		"version":                      testCoord.Version,
+		"module":                       testCoord.Path(),
+		"version":                      testCoord.Version(),
 		"existing_verification_status": string(domain2.Verified),
 		"incoming_verification_status": string(domain2.VerifiedBySumDBOnly),
 		"existing_acquisition_mode":    string(domain2.AcquisitionProxy),

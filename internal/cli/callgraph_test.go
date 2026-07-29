@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
@@ -306,7 +307,7 @@ func TestRunCallGraphList_WithModuleFilter(t *testing.T) {
 func TestRunCallGraphShow_NotFound(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
 	var buf bytes.Buffer
-	err := runCallGraphShow(context.Background(), "github.com/missing/pkg@v1.0.0", "", 50, 100, false, uc, &buf)
+	err := runCallGraphShow(context.Background(), "github.com/missing/pkg@v1.0.0", callGraphShowFlags{nodeFilter: "", limitNodes: 50, limitEdges: 100}, false, uc, &buf)
 	if err == nil {
 		t.Fatal("expected error for missing record")
 	}
@@ -321,12 +322,12 @@ func TestRunCallers_WithResults(t *testing.T) {
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", FromID: "example.com/app.Main", ToID: "example.com/app.Helper"},
 	})
 	var buf bytes.Buffer
-	err := runCallers(context.Background(), "example.com/app.Helper", false, uc, &buf)
+	err := runCallers(context.Background(), "example.com/app.Helper", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "callers of example.com/app.Helper") {
+	if !strings.Contains(out, "caller of example.com/app.Helper") {
 		t.Errorf("expected header in output, got: %q", out)
 	}
 	if !strings.Contains(out, "example.com/app.Main") {
@@ -338,7 +339,7 @@ func TestRunCallers_GenuineZero(t *testing.T) {
 	// The symbol IS a node in an analysed module but has zero callers: a
 	// genuine zero, reported as such with exit 0.
 	uc := testfakes.NewFakeQueryCallGraph()
-	coord := coordinate.ModuleCoordinate{Path: "example.com/app", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/app", "v1.0.0")
 	uc.SetList([]cgports.CallGraphSummary{
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: "0.2.0"},
 	})
@@ -346,7 +347,7 @@ func TestRunCallers_GenuineZero(t *testing.T) {
 		Nodes: []cgdomain.CallNode{{ID: "example.com/app.Root"}},
 	})
 	var buf bytes.Buffer
-	if err := runCallers(context.Background(), "example.com/app.Root", false, uc, &buf); err != nil {
+	if err := runCallers(context.Background(), "example.com/app.Root", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "No callers found for example.com/app.Root") {
@@ -358,7 +359,7 @@ func TestRunCallers_UnknownSymbolInAnalysedModule(t *testing.T) {
 	// The module is analysed but the symbol is NOT a node in its graph:
 	// absence-as-answer must be a directing error, not a silent empty result
 	uc := testfakes.NewFakeQueryCallGraph()
-	coord := coordinate.ModuleCoordinate{Path: "example.com/app", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/app", "v1.0.0")
 	uc.SetList([]cgports.CallGraphSummary{
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: "0.2.0"},
 	})
@@ -366,7 +367,7 @@ func TestRunCallers_UnknownSymbolInAnalysedModule(t *testing.T) {
 		Nodes: []cgdomain.CallNode{{ID: "example.com/app.Real"}},
 	})
 	var buf bytes.Buffer
-	err := runCallers(context.Background(), "example.com/app.NoSuchSymbol", false, uc, &buf)
+	err := runCallers(context.Background(), "example.com/app.NoSuchSymbol", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
 	if err == nil {
 		t.Fatal("expected a directing error for an unknown symbol, got nil")
 	}
@@ -381,12 +382,12 @@ func TestRunCallees_WithResults(t *testing.T) {
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", FromID: "example.com/app.Main", ToID: "example.com/app.Helper"},
 	})
 	var buf bytes.Buffer
-	err := runCallees(context.Background(), "example.com/app.Main", false, uc, &buf)
+	err := runCallees(context.Background(), "example.com/app.Main", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
-	if !strings.Contains(out, "callees of example.com/app.Main") {
+	if !strings.Contains(out, "callee of example.com/app.Main") {
 		t.Errorf("expected header in output, got: %q", out)
 	}
 	if !strings.Contains(out, "example.com/app.Helper") {
@@ -398,7 +399,7 @@ func TestRunCallees_GenuineZero(t *testing.T) {
 	// The symbol IS a node (a leaf) in an analysed module but has zero callees:
 	// a genuine zero, reported as such with exit 0.
 	uc := testfakes.NewFakeQueryCallGraph()
-	coord := coordinate.ModuleCoordinate{Path: "example.com/app", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/app", "v1.0.0")
 	uc.SetList([]cgports.CallGraphSummary{
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: "0.2.0"},
 	})
@@ -406,7 +407,7 @@ func TestRunCallees_GenuineZero(t *testing.T) {
 		Nodes: []cgdomain.CallNode{{ID: "example.com/app.Leaf"}},
 	})
 	var buf bytes.Buffer
-	if err := runCallees(context.Background(), "example.com/app.Leaf", false, uc, &buf); err != nil {
+	if err := runCallees(context.Background(), "example.com/app.Leaf", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "No callees found for example.com/app.Leaf") {
@@ -418,7 +419,7 @@ func TestRunCallees_UnknownSymbolInAnalysedModule(t *testing.T) {
 	// The module is analysed but the symbol is NOT a node in its graph:
 	// absence-as-answer must be a directing error, not a silent empty result
 	uc := testfakes.NewFakeQueryCallGraph()
-	coord := coordinate.ModuleCoordinate{Path: "example.com/app", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/app", "v1.0.0")
 	uc.SetList([]cgports.CallGraphSummary{
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: "0.2.0"},
 	})
@@ -426,7 +427,7 @@ func TestRunCallees_UnknownSymbolInAnalysedModule(t *testing.T) {
 		Nodes: []cgdomain.CallNode{{ID: "example.com/app.Real"}},
 	})
 	var buf bytes.Buffer
-	err := runCallees(context.Background(), "example.com/app.NoSuchSymbol", false, uc, &buf)
+	err := runCallees(context.Background(), "example.com/app.NoSuchSymbol", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
 	if err == nil {
 		t.Fatal("expected a directing error for an unknown symbol, got nil")
 	}
@@ -445,7 +446,7 @@ func TestRunCallersTransitive_WithResults(t *testing.T) {
 		[]string{"example.com/app.Helper", "example.com/app.Main"},
 	)
 	var buf bytes.Buffer
-	err := runCallersTransitive(context.Background(), "fmt.Println", 0, false, uc, &buf)
+	err := runCallersTransitive(context.Background(), "fmt.Println", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -470,7 +471,7 @@ func TestRunCallersTransitive_DepthLimit(t *testing.T) {
 		[]string{"example.com/app.Helper"},
 	)
 	var buf bytes.Buffer
-	err := runCallersTransitive(context.Background(), "fmt.Println", 1, false, uc, &buf)
+	err := runCallersTransitive(context.Background(), "fmt.Println", 1, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -486,7 +487,7 @@ func TestRunCallersTransitive_DepthLimit(t *testing.T) {
 func TestRunCallersTransitive_NoResults(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
 	var buf bytes.Buffer
-	err := runCallersTransitive(context.Background(), "example.com/app.Main", 0, false, uc, &buf)
+	err := runCallersTransitive(context.Background(), "example.com/app.Main", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -505,7 +506,7 @@ func TestRunCallersTransitive_JSON(t *testing.T) {
 		[]string{"example.com/app.Helper", "example.com/app.Main"},
 	)
 	var buf bytes.Buffer
-	err := runCallersTransitive(context.Background(), "fmt.Println", 0, true, uc, &buf)
+	err := runCallersTransitive(context.Background(), "fmt.Println", 0, true, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -527,7 +528,7 @@ func TestRunCalleesTransitive_WithResults(t *testing.T) {
 		[]string{"example.com/app.Helper", "fmt.Println"},
 	)
 	var buf bytes.Buffer
-	err := runCalleesTransitive(context.Background(), "example.com/app.Main", 0, false, uc, &buf)
+	err := runCalleesTransitive(context.Background(), "example.com/app.Main", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -552,7 +553,7 @@ func TestRunCalleesTransitive_DepthLimit(t *testing.T) {
 		[]string{"example.com/app.Helper"},
 	)
 	var buf bytes.Buffer
-	err := runCalleesTransitive(context.Background(), "example.com/app.Main", 1, false, uc, &buf)
+	err := runCalleesTransitive(context.Background(), "example.com/app.Main", 1, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -568,7 +569,7 @@ func TestRunCalleesTransitive_DepthLimit(t *testing.T) {
 func TestRunCalleesTransitive_NoResults(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
 	var buf bytes.Buffer
-	err := runCalleesTransitive(context.Background(), "fmt.Println", 0, false, uc, &buf)
+	err := runCalleesTransitive(context.Background(), "fmt.Println", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -587,7 +588,7 @@ func TestRunCalleesTransitive_JSON(t *testing.T) {
 		[]string{"example.com/app.Helper", "fmt.Println"},
 	)
 	var buf bytes.Buffer
-	err := runCalleesTransitive(context.Background(), "example.com/app.Main", 0, true, uc, &buf)
+	err := runCalleesTransitive(context.Background(), "example.com/app.Main", 0, true, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -686,7 +687,7 @@ func TestRunCallGraphShow_Found_Text(t *testing.T) {
 	coord := makeCGCoord(t)
 	uc.AddRecord(coord, cgapp.PipelineVersion, rec)
 	var buf bytes.Buffer
-	err := runCallGraphShow(context.Background(), "example.com/cg@v1.0.0", "", 50, 100, false, uc, &buf)
+	err := runCallGraphShow(context.Background(), "example.com/cg@v1.0.0", callGraphShowFlags{nodeFilter: "", limitNodes: 50, limitEdges: 100}, false, uc, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -705,7 +706,7 @@ func TestRunCallGraphShow_Found_JSON(t *testing.T) {
 	coord := makeCGCoord(t)
 	uc.AddRecord(coord, cgapp.PipelineVersion, rec)
 	var buf bytes.Buffer
-	err := runCallGraphShow(context.Background(), "example.com/cg@v1.0.0", "", 50, 100, true, uc, &buf)
+	err := runCallGraphShow(context.Background(), "example.com/cg@v1.0.0", callGraphShowFlags{nodeFilter: "", limitNodes: 50, limitEdges: 100}, true, uc, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -729,7 +730,7 @@ func TestRunCallGraphShow_WithNodeFilter(t *testing.T) {
 	coord := makeCGCoord(t)
 	uc.AddRecord(coord, cgapp.PipelineVersion, rec)
 	var buf bytes.Buffer
-	err := runCallGraphShow(context.Background(), "example.com/cg@v1.0.0", "Main", 50, 100, false, uc, &buf)
+	err := runCallGraphShow(context.Background(), "example.com/cg@v1.0.0", callGraphShowFlags{nodeFilter: "Main", limitNodes: 50, limitEdges: 100}, false, uc, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -742,7 +743,7 @@ func TestRunCallGraphShow_Error(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
 	uc.Err = errors.New("db error")
 	var buf bytes.Buffer
-	err := runCallGraphShow(context.Background(), "example.com/cg@v1.0.0", "", 50, 100, false, uc, &buf)
+	err := runCallGraphShow(context.Background(), "example.com/cg@v1.0.0", callGraphShowFlags{nodeFilter: "", limitNodes: 50, limitEdges: 100}, false, uc, &buf)
 	if err == nil {
 		t.Fatal("expected error from GetCallGraphRecord failure")
 	}
@@ -768,7 +769,7 @@ func TestRunCallers_UnresolvedSymbol_IsError(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
 	// No analysed modules at all; FindCallers returns empty.
 	var buf bytes.Buffer
-	err := runCallers(context.Background(), "example.com/notanalysed/pkg.Foo", false, uc, &buf)
+	err := runCallers(context.Background(), "example.com/notanalysed/pkg.Foo", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
 	if err == nil {
 		t.Fatal("expected an error for an unresolved symbol, got nil")
 	}
@@ -782,7 +783,7 @@ func TestRunCallers_UnresolvedSymbol_IsError(t *testing.T) {
 
 func TestRunCallers_AnalysedButZeroEdges_IsNotError(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
-	coord := coordinate.ModuleCoordinate{Path: "example.com/app", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/app", "v1.0.0")
 	uc.SetList([]cgports.CallGraphSummary{
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: "0.2.0"},
 	})
@@ -791,7 +792,7 @@ func TestRunCallers_AnalysedButZeroEdges_IsNotError(t *testing.T) {
 		Nodes: []cgdomain.CallNode{{ID: "example.com/app/pkg.Orphan"}},
 	})
 	var buf bytes.Buffer
-	err := runCallers(context.Background(), "example.com/app/pkg.Orphan", false, uc, &buf)
+	err := runCallers(context.Background(), "example.com/app/pkg.Orphan", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
 	if err != nil {
 		t.Fatalf("analysed-but-zero must not be an error, got: %v", err)
 	}
@@ -803,7 +804,7 @@ func TestRunCallers_AnalysedButZeroEdges_IsNotError(t *testing.T) {
 func TestRunCallees_UnresolvedSymbol_IsError(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
 	var buf bytes.Buffer
-	err := runCallees(context.Background(), "example.com/notanalysed/pkg.Foo", false, uc, &buf)
+	err := runCallees(context.Background(), "example.com/notanalysed/pkg.Foo", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
 	if err == nil {
 		t.Fatal("expected an error for an unresolved symbol, got nil")
 	}
@@ -817,7 +818,7 @@ func TestRunCallees_UnresolvedSymbol_IsError(t *testing.T) {
 // output: the module is analysed but the symbol has no edges.
 func TestRunCallers_GenuineZeroJSON_IsEmptyArrayNotNull(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
-	coord := coordinate.ModuleCoordinate{Path: "example.com/app", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/app", "v1.0.0")
 	uc.SetList([]cgports.CallGraphSummary{
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: "0.2.0"},
 	})
@@ -825,7 +826,7 @@ func TestRunCallers_GenuineZeroJSON_IsEmptyArrayNotNull(t *testing.T) {
 		Nodes: []cgdomain.CallNode{{ID: "example.com/app.Orphan"}},
 	})
 	var buf bytes.Buffer
-	if err := runCallers(context.Background(), "example.com/app.Orphan", true, uc, &buf); err != nil {
+	if err := runCallers(context.Background(), "example.com/app.Orphan", true, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
 		t.Fatalf("genuine-zero must not error: %v", err)
 	}
 	out := strings.TrimSpace(buf.String())
@@ -863,7 +864,7 @@ func TestUnresolvedSymbolMessage_IntentAware(t *testing.T) {
 func setupPartialStore(t *testing.T, callers []cgports.CallEdgeRef) *testfakes.FakeQueryCallGraph {
 	t.Helper()
 	uc := testfakes.NewFakeQueryCallGraph()
-	coord := coordinate.ModuleCoordinate{Path: "example.com/app", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/app", "v1.0.0")
 	uc.SetList([]cgports.CallGraphSummary{
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: "0.2.0"},
 	})
@@ -885,7 +886,7 @@ func TestRunCallers_RootInFailedPackage_Unresolved(t *testing.T) {
 	// must downgrade to a directing unresolved error instead.
 	uc := setupPartialStore(t, nil)
 	var buf bytes.Buffer
-	err := runCallers(context.Background(), "example.com/app/broken.Broken", false, uc, &buf)
+	err := runCallers(context.Background(), "example.com/app/broken.Broken", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
 	if err == nil {
 		t.Fatal("expected unresolved error for a root in a failed package, got nil")
 	}
@@ -902,7 +903,7 @@ func TestRunCallers_RootInFailedPackage_Unresolved(t *testing.T) {
 func TestRunCallees_RootInFailedPackage_Unresolved(t *testing.T) {
 	uc := setupPartialStore(t, nil)
 	var buf bytes.Buffer
-	err := runCallees(context.Background(), "example.com/app/broken.Broken", false, uc, &buf)
+	err := runCallees(context.Background(), "example.com/app/broken.Broken", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
 	if err == nil {
 		t.Fatal("expected unresolved error for a root in a failed package, got nil")
 	}
@@ -914,7 +915,7 @@ func TestRunCallees_RootInFailedPackage_Unresolved(t *testing.T) {
 func TestRunCallersTransitive_RootInFailedPackage_Unresolved(t *testing.T) {
 	uc := setupPartialStore(t, nil)
 	var buf bytes.Buffer
-	err := runCallersTransitive(context.Background(), "example.com/app/broken.Broken", 0, false, uc, &buf)
+	err := runCallersTransitive(context.Background(), "example.com/app/broken.Broken", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
 	if err == nil {
 		t.Fatal("expected unresolved error for a transitive root in a failed package, got nil")
 	}
@@ -931,7 +932,7 @@ func TestRunCallers_PartialGraph_CleanRoot_Caveat(t *testing.T) {
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", FromID: "example.com/app.Main", ToID: "example.com/app.Helper"},
 	})
 	var buf bytes.Buffer
-	if err := runCallers(context.Background(), "example.com/app.Helper", false, uc, &buf); err != nil {
+	if err := runCallers(context.Background(), "example.com/app.Helper", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -950,7 +951,7 @@ func TestRunCallers_PartialGraph_JSON_NoCaveatLine(t *testing.T) {
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", FromID: "example.com/app.Main", ToID: "example.com/app.Helper"},
 	})
 	var buf bytes.Buffer
-	if err := runCallers(context.Background(), "example.com/app.Helper", true, uc, &buf); err != nil {
+	if err := runCallers(context.Background(), "example.com/app.Helper", true, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if strings.Contains(buf.String(), "notice:") {
@@ -965,7 +966,7 @@ func TestRunCallers_PartialGraph_JSON_NoCaveatLine(t *testing.T) {
 func TestRunCallers_ExtractedGraph_NoCaveat(t *testing.T) {
 	// An Extracted graph must never carry a Partial caveat.
 	uc := testfakes.NewFakeQueryCallGraph()
-	coord := coordinate.ModuleCoordinate{Path: "example.com/app", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/app", "v1.0.0")
 	uc.SetList([]cgports.CallGraphSummary{
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: "0.2.0"},
 	})
@@ -977,7 +978,7 @@ func TestRunCallers_ExtractedGraph_NoCaveat(t *testing.T) {
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", FromID: "example.com/app.Main", ToID: "example.com/app.Helper"},
 	})
 	var buf bytes.Buffer
-	if err := runCallers(context.Background(), "example.com/app.Helper", false, uc, &buf); err != nil {
+	if err := runCallers(context.Background(), "example.com/app.Helper", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if strings.Contains(buf.String(), "notice:") {

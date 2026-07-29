@@ -3,9 +3,12 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/example/application"
 	"github.com/eitanity/kanonarion/internal/example/domain"
 	"github.com/eitanity/kanonarion/internal/example/ports"
@@ -13,7 +16,8 @@ import (
 )
 
 type exampleFlags struct {
-	force bool
+	force   bool
+	history bool
 }
 
 // exampleRefJSON is the curated snake_case shape of a stored example
@@ -51,6 +55,7 @@ func newExamplesCmd(stdout, stderr io.Writer) *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&f.force, "force", false, "re-extract even if cached")
+	cmd.Flags().BoolVar(&f.history, "history", false, "show every stored generation for the module instead of extracting")
 
 	return cmd
 }
@@ -69,6 +74,10 @@ func runExamplesExtract(ctx context.Context, arg string, f exampleFlags, stdout,
 	}
 	defer func() { _ = cleanup() }()
 
+	if f.history {
+		return runExamplesHistory(ctx, coord, ctr.QueryExamples, stdout)
+	}
+
 	result, err := ctr.ExtractExample.Execute(ctx, application.ExtractRequest{
 		Coordinate: coord,
 		Force:      f.force,
@@ -78,6 +87,64 @@ func runExamplesExtract(ctx context.Context, arg string, f exampleFlags, stdout,
 	}
 
 	return printExampleRecord(result.Record, result.FromCache, jsonOut, stdout)
+}
+
+// runExamplesHistory prints every generation the ledger holds for a coordinate,
+// oldest first, and marks the one composition serves.
+//
+// The served record is marked rather than printed alone, because the point of
+// the ledger is that the two are different things: what was found now, and what
+// was found before and on the strength of which bytes.
+func runExamplesHistory(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryExamplesUseCase, stdout io.Writer) error {
+	recs, err := uc.ExampleHistory(ctx, coord, application.PipelineVersion)
+	if err != nil {
+		return fmt.Errorf("reading example history: %w", err)
+	}
+	if len(recs) == 0 {
+		if _, werr := fmt.Fprintf(stdout, "no example records for %s\n", coord); werr != nil {
+			return fmt.Errorf("writing output: %w", werr)
+		}
+		return nil
+	}
+
+	// A conflict is reported, not hidden: the history view is precisely where an
+	// operator goes to see why the composed read refused to pick.
+	servedHash := ""
+	served, found, gerr := uc.GetExampleRecord(ctx, coord, application.PipelineVersion)
+	switch {
+	case gerr != nil:
+		if _, werr := fmt.Fprintf(stdout, "composed answer: unavailable — %v\n\n", gerr); werr != nil {
+			return fmt.Errorf("writing output: %w", werr)
+		}
+	case found:
+		servedHash = served.ContentHash
+	}
+
+	if _, werr := fmt.Fprintf(stdout, "%d generation(s) for %s at pipeline %s:\n",
+		len(recs), coord, application.PipelineVersion); werr != nil {
+		return fmt.Errorf("writing output: %w", werr)
+	}
+	for _, r := range recs {
+		marker := " "
+		if r.ContentHash != "" && r.ContentHash == servedHash {
+			marker = "*"
+		}
+		artefact := r.ArtefactIdentity
+		if artefact == "" {
+			artefact = "(no artefact recorded)"
+		}
+		if _, werr := fmt.Fprintf(stdout,
+			"%s %s  %-16s %d example(s), %d parse failure(s)\n    artefact: %s\n    record:   %s\n",
+			marker, r.ExtractedAt.UTC().Format(time.RFC3339), r.OverallStatus.String(),
+			len(r.Examples), len(r.ParseFailures), artefact, r.ContentHash); werr != nil {
+			return fmt.Errorf("writing output: %w", werr)
+		}
+	}
+	if _, werr := fmt.Fprintln(stdout,
+		"\n* served by the composed read (completed extraction, then fewest parse failures, then most recent)"); werr != nil {
+		return fmt.Errorf("writing output: %w", werr)
+	}
+	return nil
 }
 
 func printExampleRecord(r domain.ExampleRecord, fromCache bool, jsonOut bool, stdout io.Writer) error {
@@ -95,7 +162,7 @@ func printExampleRecord(r domain.ExampleRecord, fromCache bool, jsonOut bool, st
 		cached = " (cached)"
 	}
 	if _, err := fmt.Fprintf(stdout, "%s@%s: %s — %d example(s)%s\n",
-		r.Coordinate.Path, r.Coordinate.Version,
+		r.Coordinate.Path(), r.Coordinate.Version(),
 		r.OverallStatus.String(), len(r.Examples),
 		cached,
 	); err != nil {
@@ -194,33 +261,58 @@ func runExamplesShow(ctx context.Context, moduleArg, exampleName string, jsonOut
 // -- examples-find command --
 
 func newExamplesFindCmd(stdout, stderr io.Writer) *cobra.Command {
+	var scopeFlags buildScopeFlags
+
 	cmd := &cobra.Command{
 		Use:   "examples-find <symbol>",
 		Short: "Find all examples for a symbol across the store",
 		Example: `  kanonarion examples-find Client.Do
   kanonarion examples-find Marshal
-  kanonarion examples-find Marshal --json`,
+  kanonarion examples-find Marshal --json
+  kanonarion examples-find Marshal --gomod`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
 				return usageErr(cmd)
 			}
+			scopeFlags.bind(cmd)
 			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runExamplesFind(cmd.Context(), args[0], jsonOut, ctr.QueryExamples, stdout)
+			sc, serr := scopeFlags.resolve(cmd.Context(), ctr.QueryWalks)
+			if serr != nil {
+				return serr
+			}
+			return runExamplesFind(cmd.Context(), args[0], jsonOut, ctr.QueryExamples, stdout, sc)
 		},
 	}
+
+	registerBuildScopeFlags(cmd, &scopeFlags)
+	cmd.Flags().Lookup("gomod").NoOptDefVal = defaultGoModPath
 
 	return cmd
 }
 
-func runExamplesFind(ctx context.Context, symbol string, jsonOut bool, uc QueryExamplesUseCase, stdout io.Writer) error {
-	refs, err := uc.FindBySymbol(ctx, symbol, application.PipelineVersion)
-	if err != nil {
+func runExamplesFind(ctx context.Context, symbol string, jsonOut bool, uc QueryExamplesUseCase, stdout io.Writer, sc buildScope) error {
+	// A conflict is carried, not returned: the refs the store COULD resolve are
+	// rendered first and the command fails afterwards, so one module whose records
+	// composition refused to pick between does not delete every other module's
+	// answer. See ports.ErrExampleConflict.
+	refs, err := uc.FindBySymbol(ctx, symbol, application.PipelineVersion, sc.modules)
+	var conflictErr error
+	switch {
+	case errors.Is(err, ports.ErrExampleConflict):
+		conflictErr = err
+	case err != nil:
 		return fmt.Errorf("finding examples for %q: %w", symbol, err)
+	}
+
+	if !jsonOut {
+		if nerr := writeScopeNotice(stdout, sc); nerr != nil {
+			return nerr
+		}
 	}
 
 	if jsonOut {
@@ -241,14 +333,14 @@ func runExamplesFind(ctx context.Context, symbol string, jsonOut bool, uc QueryE
 		if err := enc.Encode(out); err != nil {
 			return fmt.Errorf("encoding JSON: %w", err)
 		}
-		return nil
+		return conflictErr
 	}
 
 	if len(refs) == 0 {
 		if _, err := fmt.Fprintf(stdout, "no examples found for symbol %q\n", symbol); err != nil {
 			return fmt.Errorf("writing output: %w", err)
 		}
-		return nil
+		return conflictErr
 	}
 	for _, ref := range refs {
 		validates := ""
@@ -262,7 +354,7 @@ func runExamplesFind(ctx context.Context, symbol string, jsonOut bool, uc QueryE
 			return fmt.Errorf("writing ref: %w", err)
 		}
 	}
-	return nil
+	return conflictErr
 }
 
 // -- examples-list command --
@@ -314,8 +406,8 @@ func runExamplesListForModule(ctx context.Context, moduleArg string, uc QueryExa
 		out := make([]exampleRefJSON, 0, len(r.Examples))
 		for _, e := range r.Examples {
 			out = append(out, exampleRefJSON{
-				ModulePath:       r.Coordinate.Path,
-				ModuleVersion:    r.Coordinate.Version,
+				ModulePath:       r.Coordinate.Path(),
+				ModuleVersion:    r.Coordinate.Version(),
 				PipelineVersion:  r.PipelineVersion,
 				Package:          e.Package,
 				AssociatedSymbol: e.AssociatedSymbol,
@@ -361,15 +453,30 @@ func runExamplesList(ctx context.Context, limit int, uc QueryExamplesUseCase, st
 			Version      string `json:"version"`
 			Status       string `json:"status"`
 			ExampleCount int    `json:"example_count"`
+			Conflict     string `json:"conflict,omitempty"`
 		}
 		out := make([]entry, 0, len(sums))
+		var jsonConflicts []error
 		for _, s := range sums {
-			out = append(out, entry{s.ModulePath, s.ModuleVersion, s.OverallStatus.String(), s.ExampleCount})
+			if s.Conflict != nil {
+				jsonConflicts = append(jsonConflicts, s.Conflict)
+				out = append(out, entry{
+					Module: s.ModulePath, Version: s.ModuleVersion,
+					Status: "Conflict", Conflict: s.Conflict.Error(),
+				})
+				continue
+			}
+			out = append(out, entry{Module: s.ModulePath, Version: s.ModuleVersion,
+				Status: s.OverallStatus.String(), ExampleCount: s.ExampleCount})
 		}
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(out); err != nil {
 			return fmt.Errorf("encoding JSON: %w", err)
+		}
+		if len(jsonConflicts) > 0 {
+			return fmt.Errorf("%d module(s) hold conflicting example records: %w",
+				len(jsonConflicts), errors.Join(jsonConflicts...))
 		}
 		return nil
 	}
@@ -379,7 +486,17 @@ func runExamplesList(ctx context.Context, limit int, uc QueryExamplesUseCase, st
 		}
 		return nil
 	}
+	var conflicts []error
 	for _, s := range sums {
+		if s.Conflict != nil {
+			conflicts = append(conflicts, s.Conflict)
+			if _, err := fmt.Fprintf(stdout, "%-50s %-12s %s\n",
+				s.ModulePath+"@"+s.ModuleVersion, "CONFLICT",
+				"run 'kanonarion examples "+s.ModulePath+"@"+s.ModuleVersion+" --history'"); err != nil {
+				return fmt.Errorf("writing output: %w", err)
+			}
+			continue
+		}
 		if _, err := fmt.Fprintf(stdout, "%-50s %-12s %d example(s)\n",
 			s.ModulePath+"@"+s.ModuleVersion,
 			s.OverallStatus.String(),
@@ -387,6 +504,12 @@ func runExamplesList(ctx context.Context, limit int, uc QueryExamplesUseCase, st
 		); err != nil {
 			return fmt.Errorf("writing output: %w", err)
 		}
+	}
+	// Every module is listed first, then the command fails. A module in dispute
+	// must not be reported as a clean run.
+	if len(conflicts) > 0 {
+		return fmt.Errorf("%d module(s) hold conflicting example records: %w",
+			len(conflicts), errors.Join(conflicts...))
 	}
 	return nil
 }

@@ -119,8 +119,8 @@ func (uc *ValidateAndIngestUseCase) recordEvent(
 		return nil
 	}
 	payload := map[string]any{
-		"module":              coord.Path,
-		"version":             coord.Version,
+		"module":              coord.Path(),
+		"version":             coord.Version(),
 		"pipeline_version":    pipelineVersion,
 		"verification_status": rec.VerificationStatus,
 	}

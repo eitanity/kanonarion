@@ -7,17 +7,21 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
+	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 )
 
 // builtRecord is a fully-built module record with the given nodes and edges.
+// Its test scope is Analysed: these fixtures exist to exercise the dispatch and
+// completeness gates, and a record that made no claim about test files would be
+// downgraded to UNRESOLVED by the test-scope gate before those ever ran.
 func builtRecord(nodes []cgdomain.CallNode, edges []cgdomain.CallEdge) cgdomain.CallGraphRecord {
 	return cgdomain.CallGraphRecord{
 		Completeness: cgdomain.CompletenessBuiltWithBodies,
+		TestScope:    cgdomain.TestScopeAnalysed,
 		Nodes:        nodes,
 		Edges:        edges,
 	}
@@ -28,7 +32,7 @@ func fakeWithRecord(path, version, pipeline string, rec cgdomain.CallGraphRecord
 	uc.SetList([]cgports.CallGraphSummary{
 		{ModulePath: path, ModuleVersion: version, PipelineVersion: pipeline},
 	})
-	uc.AddRecord(coordinate.ModuleCoordinate{Path: path, Version: version}, pipeline, rec)
+	uc.AddRecord(coordinatetest.MustNew(path, version), pipeline, rec)
 	return uc
 }
 
@@ -38,7 +42,7 @@ func TestRunCallers_ResolvedAbsent(t *testing.T) {
 	uc := fakeWithRecord("example.com/m", "v1.0.0", "0.2.0",
 		builtRecord([]cgdomain.CallNode{{ID: "example.com/m.Root", Symbol: "Root"}}, nil))
 	var buf bytes.Buffer
-	if err := runCallers(context.Background(), "example.com/m.Root", false, uc, &buf); err != nil {
+	if err := runCallers(context.Background(), "example.com/m.Root", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "verdict: RESOLVED-ABSENT") {
@@ -61,7 +65,7 @@ func TestRunCallers_UnresolvedInterfaceDispatch(t *testing.T) {
 	)
 	uc := fakeWithRecord("example.com/m", "v1.0.0", "0.2.0", rec)
 	var buf bytes.Buffer
-	if err := runCallers(context.Background(), "example.com/m.(*Target).Do", false, uc, &buf); err != nil {
+	if err := runCallers(context.Background(), "example.com/m.(*Target).Do", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -82,7 +86,7 @@ func TestRunCallees_TypeOnlyModuleUnresolved(t *testing.T) {
 	}
 	uc := fakeWithRecord("example.com/m", "v1.0.0", "0.2.0", rec)
 	var buf bytes.Buffer
-	if err := runCallees(context.Background(), "example.com/m.Leaf", false, uc, &buf); err != nil {
+	if err := runCallees(context.Background(), "example.com/m.Leaf", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "verdict: UNRESOLVED") {
@@ -96,7 +100,7 @@ func TestRunCallees_JSONOmitsVerdict(t *testing.T) {
 	uc := fakeWithRecord("example.com/m", "v1.0.0", "0.2.0",
 		builtRecord([]cgdomain.CallNode{{ID: "example.com/m.Leaf", Symbol: "Leaf"}}, nil))
 	var buf bytes.Buffer
-	if err := runCallees(context.Background(), "example.com/m.Leaf", true, uc, &buf); err != nil {
+	if err := runCallees(context.Background(), "example.com/m.Leaf", true, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if strings.Contains(buf.String(), "verdict") {
@@ -121,7 +125,7 @@ func TestRunCallersTransitive_UnresolvedInterfaceDispatch(t *testing.T) {
 	)
 	uc := fakeWithRecord("example.com/m", "v1.0.0", "0.2.0", rec)
 	var buf bytes.Buffer
-	if err := runCallersTransitive(context.Background(), "example.com/m.(*Target).Do", 0, false, uc, &buf); err != nil {
+	if err := runCallersTransitive(context.Background(), "example.com/m.(*Target).Do", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "verdict: UNRESOLVED") {
@@ -135,7 +139,7 @@ func TestRunCalleesTransitive_ResolvedAbsent(t *testing.T) {
 	uc := fakeWithRecord("example.com/m", "v1.0.0", "0.2.0",
 		builtRecord([]cgdomain.CallNode{{ID: "example.com/m.Leaf", Symbol: "Leaf"}}, nil))
 	var buf bytes.Buffer
-	if err := runCalleesTransitive(context.Background(), "example.com/m.Leaf", 0, false, uc, &buf); err != nil {
+	if err := runCalleesTransitive(context.Background(), "example.com/m.Leaf", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "verdict: RESOLVED-ABSENT") {
@@ -147,7 +151,7 @@ func TestRunCalleesTransitive_ResolvedAbsent(t *testing.T) {
 // store yields a RESOLVED-ABSENT default (the caller has already errored on it).
 func TestNegativeCallVerdict_ModuleNotResolved(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph() // no summaries
-	v, err := negativeCallVerdict(context.Background(), "example.com/x.Fn", true, uc)
+	v, err := negativeCallVerdict(context.Background(), "example.com/x.Fn", true, uc, coordinate.ModuleSet{}, cgports.EdgeQueryOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -161,7 +165,7 @@ func TestNegativeCallVerdict_ModuleNotResolved(t *testing.T) {
 func TestNegativeCallVerdict_NodeAbsentBelowFull(t *testing.T) {
 	rec := cgdomain.CallGraphRecord{Completeness: cgdomain.CompletenessMetadataOnly}
 	uc := fakeWithRecord("example.com/m", "v1.0.0", "0.2.0", rec)
-	v, err := negativeCallVerdict(context.Background(), "example.com/m.Ghost", false, uc)
+	v, err := negativeCallVerdict(context.Background(), "example.com/m.Ghost", false, uc, coordinate.ModuleSet{}, cgports.EdgeQueryOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -177,14 +181,14 @@ func TestNegativeCallVerdict_NodeAbsentBelowFull(t *testing.T) {
 func TestNegativeCallVerdict_ListError(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
 	uc.Err = errors.New("boom")
-	if _, err := negativeCallVerdict(context.Background(), "example.com/m.Fn", true, uc); err == nil {
+	if _, err := negativeCallVerdict(context.Background(), "example.com/m.Fn", true, uc, coordinate.ModuleSet{}, cgports.EdgeQueryOptions{}); err == nil {
 		t.Fatal("expected error from list failure")
 	}
 }
 
 func TestWriteCallVerdict_Absent(t *testing.T) {
 	var buf bytes.Buffer
-	if err := writeCallVerdict(&buf, "callers", "m.F", cgdomain.Verdict{Outcome: cgdomain.VerdictResolvedAbsent}); err != nil {
+	if err := writeCallVerdict(&buf, "callers", "m.F", cgdomain.Verdict{Outcome: cgdomain.VerdictResolvedAbsent}, cgports.EdgeQueryOptions{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "RESOLVED-ABSENT") || !strings.Contains(buf.String(), "callers of m.F") {

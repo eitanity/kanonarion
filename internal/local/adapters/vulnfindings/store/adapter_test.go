@@ -25,7 +25,7 @@ func (s *fakeVulnStore) GetLatestVulnerabilityRecord(_ context.Context, coord co
 	if s.err != nil {
 		return vulndomain.VulnerabilityRecord{}, false, s.err
 	}
-	r, ok := s.records[coord.Path]
+	r, ok := s.records[coord.Path()]
 	return r, ok, nil
 }
 
@@ -63,7 +63,7 @@ func (s *fakeVulnStore) GetLatestDatabaseSnapshot(_ context.Context) (vulndomain
 func (s *fakeVulnStore) ListDatabaseSnapshots(_ context.Context) ([]vulndomain.DatabaseSnapshot, error) {
 	panic("unexpected call: ListDatabaseSnapshots")
 }
-func (s *fakeVulnStore) ListVulnerabilityRecordsByFindingID(_ context.Context, _ string) ([]vulndomain.VulnerabilityRecord, error) {
+func (s *fakeVulnStore) ListVulnerabilityRecordsByFindingID(_ context.Context, _, _ string) ([]vulndomain.VulnerabilityRecord, error) {
 	panic("unexpected call: ListVulnerabilityRecordsByFindingID")
 }
 func (s *fakeVulnStore) ListVulnerabilityRecords(_ context.Context, _ string) ([]vulndomain.VulnerabilityRecord, error) {
@@ -228,3 +228,11 @@ func TestLoadFindings_EmptyCoords(t *testing.T) {
 
 // Compile-time check that adapter satisfies the port interface.
 var _ ports.VulnFindingLoader = (*store.VulnStoreAdapter)(nil)
+
+func (s *fakeVulnStore) GetVulnerabilityRecordAt(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ vulndomain.DatabaseSnapshot, _ vulndomain.Rooting) (vulndomain.VulnerabilityRecord, bool, error) {
+	panic("unexpected call: GetVulnerabilityRecordAt")
+}
+
+func (s *fakeVulnStore) HasVulnerabilityRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ vulndomain.DatabaseSnapshot, _ string) (bool, error) {
+	panic("unexpected call: HasVulnerabilityRecord")
+}

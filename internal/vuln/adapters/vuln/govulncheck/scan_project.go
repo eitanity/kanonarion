@@ -5,10 +5,28 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 
+	"github.com/eitanity/kanonarion/internal/adapters/childproc"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 )
+
+// projectScanStatus renders the scan-level summary word for a grouped
+// (project- or target-rooted) parse.
+//
+// It reads the findings rather than counting the modules that carry them: a build
+// whose only matches name retracted advisories has found nothing that stands, and
+// the count cannot tell that apart from a real finding. Both grouped entry points
+// share this so the two cannot disagree about the same finding set.
+func projectScanStatus(byModule map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding) domain.VulnerabilityStatus {
+	all := make([]domain.VulnerabilityFinding, 0, len(byModule))
+	for _, findings := range byModule {
+		all = append(all, findings...)
+	}
+	return domain.DetermineRecordOverallStatus(
+		domain.CoverageAnalysed, domain.DetermineFindingsAxis(all),
+	)
+}
 
 // ScanProject runs a single project-rooted govulncheck over the project's live
 // working tree — the same live analysis reachability --local performs — reading
@@ -54,7 +72,10 @@ func (s *Scanner) ScanProject(
 		}, nil
 	}
 
-	dbArg, dbCleanup := s.prepareDBArg(ctx, snapshot, dbDir)
+	dbArg, dbCleanup, err := s.prepareDBArg(ctx, snapshot, dbDir)
+	if err != nil {
+		return domain.ProjectScanResult{}, err
+	}
 	defer dbCleanup()
 
 	govulncheckBin, err := lookupGovulncheck()
@@ -63,7 +84,7 @@ func (s *Scanner) ScanProject(
 	}
 
 	s.logger.Info("vuln-scan: running project-rooted govulncheck source mode", "dir", projectDir, "db", dbArg)
-	cmd := exec.CommandContext(ctx, govulncheckBin, "-json", "-db", dbArg, "./...") // #nosec G204 -- binary path from exec.LookPath
+	cmd := childproc.CommandContext(ctx, govulncheckBin, "-json", "-db", dbArg, "./...") // #nosec G204 -- binary path from exec.LookPath
 	cmd.Dir = projectDir
 	cmd.Env = append(os.Environ(), "GOGC=30")
 
@@ -83,7 +104,7 @@ func (s *Scanner) ScanProject(
 		_ = pw.Close() /* #nosec G104 -- pipe close in goroutine, error not actionable */
 	}()
 
-	byModule, perr := s.parseResultsByModule(ctx, pr)
+	byModule, perr := s.parseResultsByModule(ctx, pr, domain.ScanModeSource)
 	// Drain before closing so the writer goroutine reaches cmd.Wait() and waitErr
 	// is settled: a scan that died mid-stream must be classified as the failure it
 	// is, not as the truncated parse it also produced. The channel receive is the
@@ -108,10 +129,7 @@ func (s *Scanner) ScanProject(
 		return domain.ProjectScanResult{}, fmt.Errorf("parse project govulncheck output: %w", perr)
 	}
 
-	status := domain.StatusClean
-	if len(byModule) > 0 {
-		status = domain.StatusAffected
-	}
+	status := projectScanStatus(byModule)
 	s.logger.Info("vuln-scan: project-rooted scan finished", "modules_with_findings", len(byModule))
 	return domain.ProjectScanResult{
 		FindingsByModule: byModule,

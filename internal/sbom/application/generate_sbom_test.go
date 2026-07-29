@@ -80,7 +80,7 @@ func (f *fakeVulnStore) PutVulnerabilityRecord(_ context.Context, _ vulndomain.V
 func (f *fakeVulnStore) GetVulnerabilityRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ vulndomain.DatabaseSnapshot) (vulndomain.VulnerabilityRecord, bool, error) {
 	return vulndomain.VulnerabilityRecord{}, false, nil
 }
-func (f *fakeVulnStore) ListVulnerabilityRecordsByFindingID(_ context.Context, _ string) ([]vulndomain.VulnerabilityRecord, error) {
+func (f *fakeVulnStore) ListVulnerabilityRecordsByFindingID(_ context.Context, _, _ string) ([]vulndomain.VulnerabilityRecord, error) {
 	return nil, nil
 }
 func (f *fakeVulnStore) ListVulnerabilityRecords(_ context.Context, _ string) ([]vulndomain.VulnerabilityRecord, error) {
@@ -545,4 +545,12 @@ func TestGenerateSBOM_PersistError(t *testing.T) {
 	if err == nil || !strings.Contains(err.Error(), "persisting sbom record") {
 		t.Fatalf("want persist error, got: %v", err)
 	}
+}
+
+func (f *fakeVulnStore) GetVulnerabilityRecordAt(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ vulndomain.DatabaseSnapshot, _ vulndomain.Rooting) (vulndomain.VulnerabilityRecord, bool, error) {
+	return vulndomain.VulnerabilityRecord{}, false, nil
+}
+
+func (f *fakeVulnStore) HasVulnerabilityRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ vulndomain.DatabaseSnapshot, _ string) (bool, error) {
+	return false, nil
 }

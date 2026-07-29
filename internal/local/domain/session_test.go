@@ -47,8 +47,8 @@ func TestNewAnalysisSession_ModuleRecord_Found(t *testing.T) {
 	if !ok {
 		t.Fatal("ModuleRecord returned not found")
 	}
-	if got.Coordinate.Path != "example.com/a" {
-		t.Errorf("ModuleRecord.Path = %q, want %q", got.Coordinate.Path, "example.com/a")
+	if got.Coordinate.Path() != "example.com/a" {
+		t.Errorf("ModuleRecord.Path = %q, want %q", got.Coordinate.Path(), "example.com/a")
 	}
 }
 

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	"github.com/eitanity/kanonarion/internal/callgraph/application"
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
@@ -29,7 +30,7 @@ func (s *queryCGFakeStore) PutCallGraphRecord(_ context.Context, r domain.CallGr
 	if s.records == nil {
 		s.records = make(map[queryCGKey]domain.CallGraphRecord)
 	}
-	s.records[queryCGKey{r.Coordinate.Path, r.Coordinate.Version, r.PipelineVersion}] = r
+	s.records[queryCGKey{r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion}] = r
 	return nil
 }
 
@@ -37,7 +38,7 @@ func (s *queryCGFakeStore) GetCallGraphRecord(_ context.Context, coord coordinat
 	if s.getErr != nil {
 		return domain.CallGraphRecord{}, false, s.getErr
 	}
-	r, ok := s.records[queryCGKey{coord.Path, coord.Version, pv}]
+	r, ok := s.records[queryCGKey{coord.Path(), coord.Version(), pv}]
 	return r, ok, nil
 }
 
@@ -45,14 +46,14 @@ func (s *queryCGFakeStore) ListCallGraphRecords(_ context.Context, _ cgports.Cal
 	return s.summaries, s.listErr
 }
 
-func (s *queryCGFakeStore) FindCallers(_ context.Context, sym, _ string) ([]cgports.CallEdgeRef, error) {
+func (s *queryCGFakeStore) FindCallers(_ context.Context, sym, _ string, _ coordinate.ModuleSet, _ cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error) {
 	if s.edgeErr != nil {
 		return nil, s.edgeErr
 	}
 	return s.callers[sym], nil
 }
 
-func (s *queryCGFakeStore) FindCallees(_ context.Context, sym, _ string) ([]cgports.CallEdgeRef, error) {
+func (s *queryCGFakeStore) FindCallees(_ context.Context, sym, _ string, _ coordinate.ModuleSet, _ cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error) {
 	if s.edgeErr != nil {
 		return nil, s.edgeErr
 	}
@@ -62,7 +63,7 @@ func (s *queryCGFakeStore) FindCallees(_ context.Context, sym, _ string) ([]cgpo
 var _ cgports.CallGraphStore = (*queryCGFakeStore)(nil)
 
 func TestQueryCallGraphUseCase_GetCallGraphRecord(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	store := &queryCGFakeStore{}
 	_ = store.PutCallGraphRecord(context.Background(), domain.CallGraphRecord{
 		Coordinate:      coord,
@@ -84,7 +85,7 @@ func TestQueryCallGraphUseCase_GetCallGraphRecord(t *testing.T) {
 }
 
 func TestQueryCallGraphUseCase_GetCallGraphRecord_NotFound(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	uc := application.NewQueryCallGraphUseCase(&queryCGFakeStore{})
 
 	_, found, err := uc.GetCallGraphRecord(context.Background(), coord, "0.1.0")
@@ -100,7 +101,7 @@ func TestQueryCallGraphUseCase_GetCallGraphRecord_StoreError(t *testing.T) {
 	storeErr := errors.New("db failure")
 	uc := application.NewQueryCallGraphUseCase(&queryCGFakeStore{getErr: storeErr})
 
-	coord := coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 	_, _, err := uc.GetCallGraphRecord(context.Background(), coord, "0.1.0")
 	if !errors.Is(err, storeErr) {
 		t.Errorf("got %v, want wrapping %v", err, storeErr)
@@ -142,7 +143,7 @@ func TestQueryCallGraphUseCase_FindCallers(t *testing.T) {
 	}
 	uc := application.NewQueryCallGraphUseCase(store)
 
-	refs, err := uc.FindCallers(context.Background(), "pkg.Foo", "0.1.0")
+	refs, err := uc.FindCallers(context.Background(), "pkg.Foo", "0.1.0", coordinate.ModuleSet{}, cgports.EdgeQueryOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -155,7 +156,7 @@ func TestQueryCallGraphUseCase_FindCallers_Error(t *testing.T) {
 	edgeErr := errors.New("edge db failure")
 	uc := application.NewQueryCallGraphUseCase(&queryCGFakeStore{edgeErr: edgeErr})
 
-	_, err := uc.FindCallers(context.Background(), "pkg.Foo", "0.1.0")
+	_, err := uc.FindCallers(context.Background(), "pkg.Foo", "0.1.0", coordinate.ModuleSet{}, cgports.EdgeQueryOptions{})
 	if !errors.Is(err, edgeErr) {
 		t.Errorf("got %v, want wrapping %v", err, edgeErr)
 	}
@@ -169,7 +170,7 @@ func TestQueryCallGraphUseCase_FindCallees(t *testing.T) {
 	}
 	uc := application.NewQueryCallGraphUseCase(store)
 
-	refs, err := uc.FindCallees(context.Background(), "pkg.Foo", "0.1.0")
+	refs, err := uc.FindCallees(context.Background(), "pkg.Foo", "0.1.0", coordinate.ModuleSet{}, cgports.EdgeQueryOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -188,7 +189,7 @@ func TestQueryCallGraphUseCase_TraverseCallers(t *testing.T) {
 	}
 	uc := application.NewQueryCallGraphUseCase(store)
 
-	edges, nodes, err := uc.TraverseCallers(context.Background(), "A", "0.1.0", 0)
+	edges, nodes, err := uc.TraverseCallers(context.Background(), "A", "0.1.0", 0, coordinate.ModuleSet{}, cgports.EdgeQueryOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -209,7 +210,7 @@ func TestQueryCallGraphUseCase_TraverseCallers_MaxDepth(t *testing.T) {
 	}
 	uc := application.NewQueryCallGraphUseCase(store)
 
-	_, nodes, err := uc.TraverseCallers(context.Background(), "A", "0.1.0", 1)
+	_, nodes, err := uc.TraverseCallers(context.Background(), "A", "0.1.0", 1, coordinate.ModuleSet{}, cgports.EdgeQueryOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -227,7 +228,7 @@ func TestQueryCallGraphUseCase_TraverseCallees(t *testing.T) {
 	}
 	uc := application.NewQueryCallGraphUseCase(store)
 
-	edges, nodes, err := uc.TraverseCallees(context.Background(), "A", "0.1.0", 0)
+	edges, nodes, err := uc.TraverseCallees(context.Background(), "A", "0.1.0", 0, coordinate.ModuleSet{}, cgports.EdgeQueryOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

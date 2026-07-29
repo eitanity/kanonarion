@@ -159,7 +159,7 @@ func copyToModCache(
 	// cache/download/[module-path]/@v/[version].{zip,mod,info,ziphash}
 
 	// Escape module path for filesystem (Go convention: uppercase replaced by !lowercase)
-	escapedPath, err := escapePath(coord.Path)
+	escapedPath, err := escapePath(coord.Path())
 	if err != nil {
 		return fmt.Errorf("escaping path: %w", err)
 	}
@@ -183,12 +183,12 @@ func copyToModCache(
 	if !hasZip {
 		return fmt.Errorf("fact record for %s carries no module zip", coord)
 	}
-	relZipPath := filepath.Join("cache", "download", escapedPath, "@v", coord.Version+".zip")
+	relZipPath := filepath.Join("cache", "download", escapedPath, "@v", coord.Version()+".zip")
 	if err := copyBlob(ctx, blobs, zipIdentity, root, relZipPath); err != nil {
 		return fmt.Errorf("copying zip: %w", err)
 	}
 
-	zipDst := filepath.Join(baseDir, coord.Version+".zip")
+	zipDst := filepath.Join(baseDir, coord.Version()+".zip")
 
 	// 1b. Verify ZIP hash
 	computedZipHash, err := dirhash.HashZip(zipDst, dirhash.Hash1)
@@ -205,13 +205,13 @@ func copyToModCache(
 		return fmt.Errorf("deriving go.mod address for %s: %w", coord, err)
 	}
 	if hasGoMod {
-		relModPath := filepath.Join("cache", "download", escapedPath, "@v", coord.Version+".mod")
+		relModPath := filepath.Join("cache", "download", escapedPath, "@v", coord.Version()+".mod")
 		if err := copyBlob(ctx, blobs, goModIdentity, root, relModPath); err != nil {
 			return fmt.Errorf("copying mod: %w", err)
 		}
 
 		// 2b. Verify MOD hash
-		modBytes, err := root.ReadFile(filepath.Join("cache", "download", escapedPath, "@v", coord.Version+".mod"))
+		modBytes, err := root.ReadFile(filepath.Join("cache", "download", escapedPath, "@v", coord.Version()+".mod"))
 		if err != nil {
 			return fmt.Errorf("reading copied mod: %w", err)
 		}
@@ -240,7 +240,7 @@ func copyToModCache(
 			Ref  string
 		}
 	}{
-		Version: coord.Version,
+		Version: coord.Version(),
 		Time:    record.FirstFetchedAt.Format("2006-01-02T15:04:05Z"),
 	}
 	info.Origin.VCS = "git"
@@ -249,23 +249,23 @@ func copyToModCache(
 	info.Origin.Ref = record.GitRef
 
 	infoData, _ := json.Marshal(info)
-	if _, err := root.Stat(filepath.Join("cache", "download", escapedPath, "@v", coord.Version+".info")); err != nil {
-		if err := root.WriteFile(filepath.Join("cache", "download", escapedPath, "@v", coord.Version+".info"), infoData, 0o600); err != nil {
+	if _, err := root.Stat(filepath.Join("cache", "download", escapedPath, "@v", coord.Version()+".info")); err != nil {
+		if err := root.WriteFile(filepath.Join("cache", "download", escapedPath, "@v", coord.Version()+".info"), infoData, 0o600); err != nil {
 			return fmt.Errorf("writing info: %w", err)
 		}
 	}
 
 	// 4. Create ZIPHASH
-	zipHashData := fmt.Sprintf("%s %s\n", coord.Path, record.ModuleHash)
-	if _, err := root.Stat(filepath.Join("cache", "download", escapedPath, "@v", coord.Version+".ziphash")); err != nil {
-		if err := root.WriteFile(filepath.Join("cache", "download", escapedPath, "@v", coord.Version+".ziphash"), []byte(zipHashData), 0o600); err != nil {
+	zipHashData := fmt.Sprintf("%s %s\n", coord.Path(), record.ModuleHash)
+	if _, err := root.Stat(filepath.Join("cache", "download", escapedPath, "@v", coord.Version()+".ziphash")); err != nil {
+		if err := root.WriteFile(filepath.Join("cache", "download", escapedPath, "@v", coord.Version()+".ziphash"), []byte(zipHashData), 0o600); err != nil {
 			return fmt.Errorf("writing ziphash: %w", err)
 		}
 	}
 
 	// 5. Create LOCK (empty)
-	if _, err := root.Stat(filepath.Join("cache", "download", escapedPath, "@v", coord.Version+".lock")); err != nil {
-		if err := root.WriteFile(filepath.Join("cache", "download", escapedPath, "@v", coord.Version+".lock"), nil, 0o600); err != nil {
+	if _, err := root.Stat(filepath.Join("cache", "download", escapedPath, "@v", coord.Version()+".lock")); err != nil {
+		if err := root.WriteFile(filepath.Join("cache", "download", escapedPath, "@v", coord.Version()+".lock"), nil, 0o600); err != nil {
 			return fmt.Errorf("writing lock: %w", err)
 		}
 	}

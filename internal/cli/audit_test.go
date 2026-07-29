@@ -10,6 +10,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
@@ -20,9 +21,9 @@ import (
 // a row for the local main module, and it must carry each node's own direct-vs-
 // transitive flag rather than marking every row direct.
 func TestAuditDependencyNodes_ExcludesLocalRoot(t *testing.T) {
-	local := coordinate.ModuleCoordinate{Path: "example.com/app", Version: coordinate.LocalVersion}
-	direct := coordinate.ModuleCoordinate{Path: "example.com/direct", Version: "v1.0.0"}
-	transitive := coordinate.ModuleCoordinate{Path: "example.com/transitive", Version: "v2.0.0"}
+	local := coordinatetest.MustNew("example.com/app", coordinate.LocalVersion)
+	direct := coordinatetest.MustNew("example.com/direct", "v1.0.0")
+	transitive := coordinatetest.MustNew("example.com/transitive", "v2.0.0")
 
 	rec := walkdomain.WalkRecord{
 		Target: local,
@@ -62,7 +63,7 @@ func TestAuditDependencyNodes_ExcludesLocalRoot(t *testing.T) {
 
 // A walk with only the local root (an empty dependency set) yields no rows.
 func TestAuditDependencyNodes_RootOnly(t *testing.T) {
-	local := coordinate.ModuleCoordinate{Path: "example.com/app", Version: coordinate.LocalVersion}
+	local := coordinatetest.MustNew("example.com/app", coordinate.LocalVersion)
 	rec := walkdomain.WalkRecord{
 		Graph: walkdomain.Graph{Nodes: []walkdomain.GraphNode{{Coordinate: local}}},
 	}

@@ -8,6 +8,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -57,7 +58,7 @@ func TestReachabilityConfidence_Values(t *testing.T) {
 
 func TestVulnerabilityRecord_ZeroFindings(t *testing.T) {
 	rec := domain.VulnerabilityRecord{
-		Coordinate:      coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"},
+		Coordinate:      coordinatetest.MustNew("github.com/foo/bar", "v1.0.0"),
 		WalkID:          "walk-1",
 		OverallStatus:   domain.StatusClean,
 		ScannedAt:       time.Now(),
@@ -71,7 +72,7 @@ func TestVulnerabilityRecord_ZeroFindings(t *testing.T) {
 func TestVulnerabilityRecord_EcosystemPresentAfterRoundTrip(t *testing.T) {
 	rec := domain.VulnerabilityRecord{
 		Ecosystem:       fetchdomain.EcosystemGo,
-		Coordinate:      coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"},
+		Coordinate:      coordinatetest.MustNew("github.com/foo/bar", "v1.0.0"),
 		OverallStatus:   domain.StatusClean,
 		PipelineVersion: "v1",
 	}
@@ -133,7 +134,7 @@ func TestDatabaseSnapshot_Fields(t *testing.T) {
 }
 
 func TestWalkScanRun_PerModuleResults(t *testing.T) {
-	coord := coordinate.ModuleCoordinate{Path: "github.com/foo/bar", Version: "v1.0.0"}
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 	run := domain.WalkScanRun{
 		ID:     "run-1",
 		WalkID: "walk-1",

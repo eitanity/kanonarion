@@ -38,6 +38,19 @@ var ErrLicenceNotFound = errors.New("license record not found")
 // stored record's content hash does not match the recomputed hash.
 var ErrLicenceIntegrity = errors.New("license record integrity check failed")
 
+// ErrLicenceConflict is returned by LicenceStore.GetLicenceRecord when the
+// ledger holds records for one coordinate that composition must not resolve by
+// picking: two equally confident detections of the same artefact naming
+// different licences, or two records naming different artefacts for one pinned
+// version. The wrapped domain.LicenceConflict names the field, the values and
+// the records carrying them.
+//
+// It is an error rather than a quietly chosen answer because a licence is the
+// downstream fact with legal weight. Picking one and reporting it as the answer
+// makes a relicensing or a misdetection invisible at exactly the moment the
+// store is the only thing that could have shown it.
+var ErrLicenceConflict = errors.New("conflicting license records")
+
 // LicenseMatch is the result of running the detector on a single file's
 // content. An empty SPDX means no license was identified.
 type LicenseMatch struct {
@@ -72,6 +85,14 @@ type LicenseDetector interface {
 }
 
 // LicenseStore persists LicenceRecords and supports queries.
+//
+// The zero coordinate is the one value the signatures cannot exclude: Go
+// always permits coordinate.ModuleCoordinate{}, and it names no module.
+// Implementations MUST refuse it with coordinate.ErrZeroCoordinate — on a
+// write because it would key a row on the empty path at the empty version,
+// which every later read treats as a genuine measurement, and on a read
+// because absence is the wrong answer to a question about no module.
+// coordinatetest.AssertRefusesZeroCoordinate pins the rule for every store.
 type LicenseStore interface {
 	// PutLicenceRecord persists a license record. Idempotent on
 	// (module_path, module_version, pipeline_version).
@@ -85,6 +106,21 @@ type LicenseStore interface {
 	// ListLicenceRecords returns summaries matching the filter, ordered by
 	// extracted_at descending.
 	ListLicenseRecords(ctx context.Context, filter LicenseFilter) ([]LicenseSummary, error)
+}
+
+// LicenceRecordLister is the optional capability of reading every generation the
+// ledger holds for one coordinate, rather than the composed answer.
+//
+// It is separate from LicenseStore, on the same terms as fetch's
+// FactRecordLister: a store that only ever answers "what is the licence" needs
+// none of it, and the history read exists for the callers that need to show what
+// was believed before — which is the question the overwriting store could not
+// answer at all.
+type LicenceRecordLister interface {
+	// ListLicenceRecordsFor returns every record held for the coordinate and
+	// pipeline version, in the order they were appended. An empty slice and no
+	// error means the ledger holds none.
+	ListLicenseRecordsFor(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain.LicenseRecord, error)
 }
 
 // LicenseOverrideStore provides operator-supplied license corrections from a
@@ -116,4 +152,15 @@ type LicenseSummary struct {
 	OverallStatus   domain.LicenseStatus
 	ExtractedAt     time.Time
 	ContentHash     string
+
+	// Conflict is non-nil when the ledger holds records for this module that
+	// composition refuses to resolve by picking, and the other fields are then
+	// the zero values — there is no answer to project.
+	//
+	// It is carried on the row rather than returned as the list's error because
+	// those are different failures. One module in dispute must be impossible to
+	// miss, but it must not delete the answers for every other module: an
+	// operator running license-list over 2,206 modules needs the 2,205 that are
+	// fine AND the one that is not. The command still exits non-zero.
+	Conflict error
 }

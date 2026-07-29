@@ -117,7 +117,7 @@ func TestOpen_QueriesAreCallableAgainstEmptyStore(t *testing.T) {
 
 	// A read-shaped result type is constructed via its exported fields, not a
 	// constructor (constructors are not part of the contract, §4).
-	coord := kanonarion.ModuleCoordinate{Path: "golang.org/x/mod", Version: "v0.35.0"}
+	coord := mustCoord(t, "golang.org/x/mod", "v0.35.0")
 
 	_, found, err := queries.Fetch.GetFetchRecord(context.Background(), coord, fetchapp.PipelineVersion)
 	if err != nil {
@@ -186,4 +186,17 @@ func TestOpen_TwoOpensShareNoState(t *testing.T) {
 	if qa == qb {
 		t.Error("two Open calls returned the same Queries pointer; the surface is not per-store")
 	}
+}
+
+// mustCoord builds a coordinate through the published constructor, which is the
+// only way a consumer outside the module can obtain one: ModuleCoordinate's
+// fields are unexported so that every coordinate in existence has been through
+// the path and semver checks.
+func mustCoord(t *testing.T, path, version string) kanonarion.ModuleCoordinate {
+	t.Helper()
+	c, err := kanonarion.NewModuleCoordinate(path, version)
+	if err != nil {
+		t.Fatalf("NewModuleCoordinate(%q, %q): %v", path, version, err)
+	}
+	return c
 }

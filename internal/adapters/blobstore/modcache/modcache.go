@@ -124,13 +124,13 @@ func (s *Store) OpenGoMod(coord coordinate.ModuleCoordinate) (*os.File, error) {
 // CachePath returns the path a coordinate's artefact occupies in the module
 // cache, without opening it.
 func (s *Store) CachePath(coord coordinate.ModuleCoordinate, ext string) (string, error) {
-	escapedPath, err := module.EscapePath(coord.Path)
+	escapedPath, err := module.EscapePath(coord.Path())
 	if err != nil {
-		return "", fmt.Errorf("escaping module path %q: %w", coord.Path, err)
+		return "", fmt.Errorf("escaping module path %q: %w", coord.Path(), err)
 	}
-	escapedVersion, err := module.EscapeVersion(coord.Version)
+	escapedVersion, err := module.EscapeVersion(coord.Version())
 	if err != nil {
-		return "", fmt.Errorf("escaping module version %q: %w", coord.Version, err)
+		return "", fmt.Errorf("escaping module version %q: %w", coord.Version(), err)
 	}
 	return filepath.Join(s.dir, "cache", "download", filepath.FromSlash(escapedPath), "@v", escapedVersion+ext), nil
 }

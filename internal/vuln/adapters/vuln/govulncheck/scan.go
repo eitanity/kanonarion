@@ -2,6 +2,7 @@ package govulncheck
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -11,6 +12,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
@@ -28,7 +30,7 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (domain.Vulne
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	s.logger.Info("vuln-scan: starting", "module", coord.Path, "version", coord.Version)
+	s.logger.Info("vuln-scan: starting", "module", coord.Path(), "version", coord.Version())
 
 	env := scanEnv(os.Environ(), goModCache)
 
@@ -50,7 +52,10 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (domain.Vulne
 	}
 
 	// 2. Prepare vulnerability database argument.
-	dbArg, dbCleanup := s.prepareDBArg(ctx, snapshot, dbDir)
+	dbArg, dbCleanup, err := s.prepareDBArg(ctx, snapshot, dbDir)
+	if err != nil {
+		return domain.VulnerabilityRecord{}, err
+	}
 	defer dbCleanup()
 
 	govulncheckBin, err := lookupGovulncheck()
@@ -65,7 +70,7 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (domain.Vulne
 		pkg := findFirstGoPackage(scanDir)
 		s.logger.Info("vuln-scan: binary mode — building test binary", "dir", scanDir, "pkg", pkg)
 		tmpBin := filepath.Join(tmpDir, "vuln-test.bin")
-		buildCmd := exec.CommandContext(ctx, "go", "test", "-c", "-o", tmpBin, pkg) // #nosec G204 -- pkg derived from local filesystem walk
+		buildCmd := childproc.CommandContext(ctx, "go", "test", "-c", "-o", tmpBin, pkg) // #nosec G204 -- pkg derived from local filesystem walk
 		buildCmd.Dir = scanDir
 		buildCmd.Env = env
 		out, buildErr := buildCmd.CombinedOutput()
@@ -82,14 +87,14 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (domain.Vulne
 			scanMode = domain.ScanModeSource
 		default:
 			s.logger.Info("vuln-scan: test binary built, running govulncheck -mode=binary", "binary", tmpBin)
-			cmd = exec.CommandContext(ctx, govulncheckBin, "-json", "-db", dbArg, "-mode=binary", tmpBin) // #nosec G204 -- binary path from exec.LookPath
+			cmd = childproc.CommandContext(ctx, govulncheckBin, "-json", "-db", dbArg, "-mode=binary", tmpBin) // #nosec G204 -- binary path from exec.LookPath
 			s.logMem(ctx, "binary_built")
 		}
 	}
 	if scanMode != domain.ScanModeBinary {
 		// Source mode: download deps then run govulncheck source analysis.
 		s.logger.Info("vuln-scan: downloading dependencies", "dir", scanDir)
-		dlCmd := exec.Command("go", "mod", "download")
+		dlCmd := childproc.CommandContext(ctx, "go", "mod", "download")
 		dlCmd.Dir = scanDir
 		dlCmd.Env = env
 		if out, dlErr := dlCmd.CombinedOutput(); dlErr != nil {
@@ -105,7 +110,7 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (domain.Vulne
 		}
 		s.logMem(ctx, "deps_downloaded")
 		s.logger.Info("vuln-scan: running govulncheck source mode", "dir", scanDir, "db", dbArg)
-		cmd = exec.CommandContext(ctx, govulncheckBin, "-json", "-db", dbArg, "./...") // #nosec G204 -- binary path from exec.LookPath
+		cmd = childproc.CommandContext(ctx, govulncheckBin, "-json", "-db", dbArg, "./...") // #nosec G204 -- binary path from exec.LookPath
 		cmd.Dir = scanDir
 	}
 	cmd.Env = env
@@ -128,7 +133,7 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (domain.Vulne
 	}()
 
 	s.logger.Info("vuln-scan: parsing govulncheck output")
-	findings, parseErr := s.parseResults(ctx, pr, coord.Path)
+	findings, parseErr := s.parseResults(ctx, pr, coord.Path(), scanMode)
 	// Drain before closing so the writer goroutine reaches cmd.Wait() and waitErr
 	// is settled: a scan that died mid-stream must be classified as the failure it
 	// is, not as the truncated parse it also produced. The channel receive is the
@@ -160,7 +165,7 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (domain.Vulne
 		}, nil
 	}
 	if parseErr != nil {
-		return domain.VulnerabilityRecord{}, fmt.Errorf("parse govulncheck output for %s@%s: %w", coord.Path, coord.Version, parseErr)
+		return domain.VulnerabilityRecord{}, fmt.Errorf("parse govulncheck output for %s@%s: %w", coord.Path(), coord.Version(), parseErr)
 	}
 	s.logger.Info("vuln-scan: govulncheck finished", "findings", len(findings))
 
@@ -168,10 +173,12 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (domain.Vulne
 	runtime.GC()
 	s.logMem(ctx, "post_parse_gc")
 
-	status := domain.StatusClean
-	if len(findings) > 0 {
-		status = domain.StatusAffected
-	}
+	// The set decides the word, not its length. A stream whose every finding names
+	// a retracted advisory has matched nothing that stands, and calling that
+	// Affected is the false positive a withdrawal exists to prevent.
+	status := domain.DetermineRecordOverallStatus(
+		domain.CoverageAnalysed, domain.DetermineFindingsAxis(findings),
+	)
 
 	return domain.VulnerabilityRecord{
 		Coordinate:       coord,
@@ -207,7 +214,7 @@ func (s *Scanner) prepareScanDir(
 	env []string,
 	buildList map[coordinate.ModuleCoordinate]struct{},
 ) (string, *prepareFault, error) {
-	s.logger.Info("vuln-scan: extracting module zip", "module", coord.Path)
+	s.logger.Info("vuln-scan: extracting module zip", "module", coord.Path())
 	if err := s.extractZip(ctx, moduleSource, tmpDir); err != nil {
 		return "", nil, fmt.Errorf("extract module: %w", err)
 	}
@@ -235,11 +242,11 @@ func (s *Scanner) prepareScanDir(
 			// the files so a later unresolved-package failure is attributable here
 			// rather than appearing as an unexplained resolution error.
 			s.logger.Warn("vuln-scan: some source files could not be read while synthesising go.mod; the require set may be incomplete",
-				"module", coord.Path, "skipped_files", strings.Join(skipped, ", "), "skipped_count", len(skipped))
+				"module", coord.Path(), "skipped_files", strings.Join(skipped, ", "), "skipped_count", len(skipped))
 		}
 		if werr != nil {
 			s.logger.Warn("vuln-scan: could not synthesise go.mod, marking unscannable",
-				"module", coord.Path, "error", werr)
+				"module", coord.Path(), "error", werr)
 			return "", &prepareFault{
 				unscanReason: domain.UnscanReasonNoGoMod,
 				reason:       "no go.mod in module zip and none could be synthesised: " + werr.Error(),
@@ -247,7 +254,7 @@ func (s *Scanner) prepareScanDir(
 		}
 		scanDir = root
 		s.logger.Info("vuln-scan: no go.mod in module zip, synthesised one for the scan",
-			"module", coord.Path, "dir", scanDir)
+			"module", coord.Path(), "dir", scanDir)
 	}
 
 	// Neutralise the module's own filesystem replace directives. The module is
@@ -256,9 +263,9 @@ func (s *Scanner) prepareScanDir(
 	// would fail the build. Dropping them matches a consumer's view, where a
 	// dependency's replaces are ignored and siblings resolve from GOMODCACHE.
 	if changed, nerr := neutraliseLocalReplaces(filepath.Join(scanDir, "go.mod")); nerr != nil {
-		s.logger.Warn("vuln-scan: failed to neutralise local replaces", "module", coord.Path, "error", nerr)
+		s.logger.Warn("vuln-scan: failed to neutralise local replaces", "module", coord.Path(), "error", nerr)
 	} else if changed {
-		s.logger.Info("vuln-scan: dropped filesystem replace directives for the scan", "module", coord.Path)
+		s.logger.Info("vuln-scan: dropped filesystem replace directives for the scan", "module", coord.Path())
 	}
 	return scanDir, nil, nil
 }
@@ -285,20 +292,29 @@ func locateGoMod(root string) (string, bool) {
 // the snapshot from the store into a temp dir, and finally to the live database.
 // The returned cleanup removes any temp dir it created (a no-op otherwise) and
 // must be deferred by the caller.
-func (s *Scanner) prepareDBArg(ctx context.Context, snapshot domain.DatabaseSnapshot, dbDir string) (string, func()) {
+//
+// A snapshot integrity failure is fatal rather than a fallback. The live
+// database is a DIFFERENT advisory set from the one the record about to be
+// written names, so answering from it produces a finding that cites a snapshot
+// whose bytes were never consulted. Absent and unreadable snapshots keep the
+// fallback, which is the case it was written for.
+func (s *Scanner) prepareDBArg(ctx context.Context, snapshot domain.DatabaseSnapshot, dbDir string) (string, func(), error) {
 	noop := func() {}
 	s.logger.Info("vuln-scan: preparing vulnerability database", "snapshot", snapshot.Version)
 	if dbDir != "" {
 		s.logger.Info("vuln-scan: using pre-extracted local database", "path", dbDir)
-		return "file://" + dbDir, noop
+		return "file://" + dbDir, noop, nil
 	}
 	if s.vulnStore == nil {
-		return "https://vuln.go.dev", noop
+		return "https://vuln.go.dev", noop, nil
 	}
 	snapshotContent, err := s.vulnStore.GetDatabaseSnapshot(ctx, snapshot)
 	if err != nil {
+		if errors.Is(err, ports.ErrSnapshotIntegrity) {
+			return "", noop, fmt.Errorf("preparing the advisory database: %w", ports.SnapshotIntegrityAbort(snapshot, err))
+		}
 		s.logger.Warn("vuln-scan: failed to retrieve snapshot, falling back to live DB", "error", err)
-		return "https://vuln.go.dev", noop
+		return "https://vuln.go.dev", noop, nil
 	}
 	defer func() {
 		if cerr := snapshotContent.Close(); cerr != nil {
@@ -308,16 +324,16 @@ func (s *Scanner) prepareDBArg(ctx context.Context, snapshot domain.DatabaseSnap
 	extractedDir, err := os.MkdirTemp("", "kanonarion-vulndb-*")
 	if err != nil {
 		s.logger.Warn("vuln-scan: failed to create temp dir for snapshot, falling back to live DB", "error", err)
-		return "https://vuln.go.dev", noop
+		return "https://vuln.go.dev", noop, nil
 	}
 	if err := s.extractZip(ctx, snapshotContent, extractedDir); err != nil {
 		s.logger.Warn("vuln-scan: failed to extract snapshot, falling back to live DB", "error", err)
 		_ = os.RemoveAll(extractedDir)
-		return "https://vuln.go.dev", noop
+		return "https://vuln.go.dev", noop, nil
 	}
 	s.logger.Info("vuln-scan: using pinned local database", "path", extractedDir)
 	s.logMem(ctx, "db_extracted")
-	return "file://" + extractedDir, func() { _ = os.RemoveAll(extractedDir) }
+	return "file://" + extractedDir, func() { _ = os.RemoveAll(extractedDir) }, nil
 }
 
 // scanEnv builds the process environment for the Go toolchain and govulncheck.

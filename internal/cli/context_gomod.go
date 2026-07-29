@@ -73,7 +73,7 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 		}
 
 		out := contextOutput{
-			Module:          contextModuleInfo{Path: coord.Path, Version: coord.Version},
+			Module:          contextModuleInfo{Path: coord.Path(), Version: coord.Version()},
 			Commands:        buildCommandsWithWalk(coord, cmdWalkID),
 			Verification:    buildVerification(ctx, coord, ctr.QueryFetch),
 			Provenance:      buildProvenance(coord),

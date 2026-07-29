@@ -3,12 +3,12 @@ package domain_test
 import (
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 )
 
-var sealCoord = coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v1.0.0"}
+var sealCoord = coordinatetest.MustNew("example.com/mod", "v1.0.0")
 
 // Seal hashes at construction, so there is no window in which an unsealed record
 // exists to be mislaid. Before this, the write path built a record, then hashed
@@ -17,7 +17,7 @@ var sealCoord = coordinate.ModuleCoordinate{Path: "example.com/mod", Version: "v
 func TestSeal_HashesAtConstruction(t *testing.T) {
 	sealed, err := domain.Seal(domain.FetchedModule{
 		Coordinate:         sealCoord,
-		ModuleHash:         domain.ModuleHash{Algorithm: "h1", Value: "zip=="},
+		ModuleHash:         fetchtest.H1("zip=="),
 		VerificationStatus: domain.Verified,
 		PipelineVersion:    "0.1.0",
 	})
@@ -101,10 +101,10 @@ func TestArtefactIdentityOf(t *testing.T) {
 		t.Fatalf("ArtefactIdentityOf(shallow): %v", err)
 	}
 
-	if fullID.GoModOnly {
+	if fullID.GoModOnly() {
 		t.Error("a record carrying a zip hash was identified as go.mod-only")
 	}
-	if !shallowID.GoModOnly {
+	if !shallowID.GoModOnly() {
 		t.Error("a record with no zip hash was not identified as go.mod-only")
 	}
 	// Both hold the h1 value "same==", so only the depth keeps them apart.
@@ -132,7 +132,7 @@ func TestArtefactIdentityOf_ReadsThePersistedZeroHash(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ArtefactIdentityOf could not read the persisted zero hash: %v", err)
 	}
-	if !id.GoModOnly || id.Hash.Value != "mod==" {
+	if !id.GoModOnly() || id.Hash().Value() != "mod==" {
 		t.Errorf("identity = %v, want the go.mod hash", id)
 	}
 }

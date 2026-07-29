@@ -25,6 +25,39 @@ in addition to the flat component list, carries:
   source tarball rather than a module zip (see below). Only the local main
   component (the SBOM subject) carries no hashes; a missing hash block is never an
   error.
+- **A `vulnerabilities` list**, when `--scan` names a scan run. Findings sharing an
+  ID are aggregated into one entry whose `affects` names every module the ID applies
+  to. See below for how a retracted advisory is represented.
+
+### Retracted (withdrawn) advisories
+
+An advisory retracted upstream is **emitted, and marked** — not dropped:
+
+```json
+{
+  "id": "GO-2026-4923",
+  "description": "WITHDRAWN: out-of-range-index in go.etcd.io/bbolt",
+  "affects": [{ "ref": "pkg:golang/go.etcd.io/bbolt@v1.4.3" }],
+  "analysis": {
+    "state": "false_positive",
+    "detail": "advisory withdrawn upstream 2026-04-08T13:33:56Z; retained so its retraction is stated rather than inferred from absence"
+  }
+}
+```
+
+Two properties of that entry are deliberate:
+
+- **`analysis.state` is `false_positive`.** CycloneDX has no `withdrawn` state, so
+  the reason and the date go in `detail`: a VEX consumer that routes only on `state`
+  still excludes it, and a human reader gets the attribution. Omitting the entry
+  entirely would be the quieter bug — the document would then be indistinguishable
+  from one produced before the advisory was ever published, and a consumer diffing
+  two SBOMs across the retraction would read the disappearance as a fix.
+- **No `ratings` block.** A rating claims how severely the advisory affects the
+  component, and a retracted advisory makes no such claim. Leaving one on meant a
+  consumer tallying severities across the document counted a report that does not
+  stand — and such a consumer need never read `analysis` to do that tally. Live
+  advisories carry `ratings` exactly as before.
 
 ### Standard-library chain of custody
 
@@ -89,7 +122,7 @@ re-run when `--force` is passed.
 | `--operator` | _(empty)_ | Identity of the operator requesting generation |
 | `--stdlib-from-gomod` | `false` | Version the `stdlib` component from the `go.mod` directive, not the live toolchain (applies when `sbom` builds a project walk, e.g. `--package`). See [Standard-library version](walk.md#standard-library-version---stdlib-from-gomod). |
 | `--package <pattern>` | _(none)_ | Go package pattern (e.g. `./cmd/foo`); scopes `components` to modules in that binary's import closure |
-| `--from-modcache[=dir]` | _(off)_ | When `sbom` builds a project walk (e.g. `--package` on a cold store), source modules from an existing Go module cache instead of the network proxy and verify each against the local `go.sum`. Passed bare it uses `go env GOMODCACHE`; an optional value names the cache directory. A `go.sum` mismatch or missing entry fails the command (exit code `10`). See [`audit --from-modcache`](audit.md#sourcing-from-an-existing-module-cache-from-modcache) for the full semantics. |
+| `--from-modcache[=dir]` | _(off)_ | When `sbom` builds a project walk (e.g. `--package` on a cold store), source modules from an existing Go module cache instead of the network proxy and verify each against the local `go.sum`. Passed bare it uses `go env GOMODCACHE`; an optional value names the cache directory. A `go.sum` mismatch or missing entry fails the command (exit code `10`). See [`audit --from-modcache`](audit.md#sourcing-from-an-existing-module-cache---from-modcache) for the full semantics. |
 | `--policy` | _(auto-discover `.kanonarion/policy.yaml`)_ | Depth policy file; its fetch stage governs traversal and the `allowed_vcs_hosts` forge allowlist |
 | `--log-level` | `warn` | Log level (`debug`, `info`, `warn`, `error`) |
 | `--log-json` | `false` | Emit logs as JSON |

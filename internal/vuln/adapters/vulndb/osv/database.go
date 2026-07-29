@@ -84,10 +84,16 @@ func (d *Database) Snapshot(ctx context.Context) (domain.DatabaseSnapshot, io.Re
 		return domain.DatabaseSnapshot{}, nil, fmt.Errorf("validate vulndb.zip: %w", err)
 	}
 
+	// Seal the snapshot against the bytes just downloaded. This is the only place
+	// that sees them before anything else does, so it is the only place that can
+	// establish what "this snapshot" means; every later reader checks the blob it
+	// holds against this hash rather than trusting the version string, which is
+	// metadata the blob itself asserts.
 	snapshot := domain.DatabaseSnapshot{
 		Source:      "vuln.go.dev",
 		Version:     version,
 		RetrievedAt: time.Now(),
+		ContentHash: domain.HashSnapshotContent(zipData),
 	}
 
 	return snapshot, io.NopCloser(bytes.NewReader(zipData)), nil
@@ -333,13 +339,13 @@ func (d *Database) CheckVulnerable(ctx context.Context, modules []coordinate.Mod
 
 	res := make(map[coordinate.ModuleCoordinate][]string)
 	for _, m := range modules {
-		entries, ok := d.moduleIndex[m.Path]
+		entries, ok := d.moduleIndex[m.Path()]
 		if !ok {
 			continue
 		}
 		var affecting []string
 		for _, e := range entries {
-			if isAffectedVersion(m.Version, e.fixed) {
+			if isAffectedVersion(m.Version(), e.fixed) {
 				affecting = append(affecting, e.id)
 			}
 		}
@@ -362,11 +368,11 @@ func (d *Database) CheckVulnerable(ctx context.Context, modules []coordinate.Mod
 func advisoryAffects(coord coordinate.ModuleCoordinate, adv *osvAdvisory) bool {
 	matched := false
 	for _, a := range adv.Affected {
-		if a.Package.Name != coord.Path {
+		if a.Package.Name != coord.Path() {
 			continue
 		}
 		matched = true
-		if versionInAffectedRanges(coord.Version, a.Ranges) {
+		if versionInAffectedRanges(coord.Version(), a.Ranges) {
 			return true
 		}
 	}
@@ -447,16 +453,27 @@ func isAffectedVersion(version, fixed string) bool {
 const maxAdvisoryBytes = 1 << 20
 
 // osvAdvisory is the subset of the OSV advisory schema the metadata path reads
-// to enrich a finding: the human summary and timestamps, the affected version
-// ranges (to render an affected-range string and the fixed version), and the
-// ecosystem-specific imported symbols (the at-risk symbols).
+// to enrich a finding: the human summary and timestamps, the retraction
+// timestamp, the affected version ranges (to render an affected-range string and
+// the fixed version), and the ecosystem-specific imported symbols (the at-risk
+// symbols).
 type osvAdvisory struct {
-	ID        string        `json:"id"`
-	Summary   string        `json:"summary"`
-	Details   string        `json:"details"`
-	Aliases   []string      `json:"aliases"`
-	Published time.Time     `json:"published"`
-	Modified  time.Time     `json:"modified"`
+	ID        string    `json:"id"`
+	Summary   string    `json:"summary"`
+	Details   string    `json:"details"`
+	Aliases   []string  `json:"aliases"`
+	Published time.Time `json:"published"`
+	Modified  time.Time `json:"modified"`
+	// Withdrawn is the OSV top-level retraction timestamp, absent on a live
+	// advisory — hence the pointer, which distinguishes "not withdrawn" from a
+	// zero timestamp that decoded from something.
+	//
+	// The Go vulnerability database does carry it: GO-2026-4923 was published
+	// 2026-04-06 and withdrawn 2026-04-08, and remained in the pinned snapshot
+	// with both timestamps and a "WITHDRAWN: " summary prefix. Leaving the field
+	// out of this struct is what made the retraction unreadable, so the prose
+	// prefix was the only trace of it and nothing read prose.
+	Withdrawn *time.Time    `json:"withdrawn"`
 	Affected  []osvAffected `json:"affected"`
 }
 
@@ -502,7 +519,7 @@ func (d *Database) LookupFindings(ctx context.Context, coord coordinate.ModuleCo
 	}
 
 	d.mu.RLock()
-	entries := append([]modulevuln(nil), d.moduleIndex[coord.Path]...)
+	entries := append([]modulevuln(nil), d.moduleIndex[coord.Path()]...)
 	d.mu.RUnlock()
 
 	var findings []domain.VulnerabilityFinding
@@ -511,7 +528,7 @@ func (d *Database) LookupFindings(ctx context.Context, coord coordinate.ModuleCo
 		// highest fix, so it only ever over-includes (a version below any real
 		// fix). It never wrongly excludes, making it a safe cheap skip before the
 		// per-advisory fetch.
-		if !isAffectedVersion(coord.Version, e.fixed) {
+		if !isAffectedVersion(coord.Version(), e.fixed) {
 			continue
 		}
 		finding := domain.VulnerabilityFinding{ID: e.id, FixedIn: normaliseFixed(e.fixed)}
@@ -534,7 +551,7 @@ func (d *Database) LookupFindings(ctx context.Context, coord coordinate.ModuleCo
 				"advisory", e.id, "coordinate", coord)
 			continue
 		}
-		enrichFinding(&finding, coord.Path, adv)
+		enrichFinding(&finding, coord.Path(), adv)
 		findings = append(findings, finding)
 	}
 	domain.SortFindings(findings)
@@ -567,7 +584,9 @@ func (d *Database) fetchAdvisory(ctx context.Context, id string) (*osvAdvisory, 
 	return &adv, nil
 }
 
-// enrichFinding populates summary/details/aliases/timestamps from the advisory,
+// enrichFinding populates summary/details/aliases/timestamps — including the
+// retraction timestamp, which decides whether the match counts as a finding at
+// all — from the advisory,
 // then derives the affected-range string and at-risk symbols from the affected
 // block whose package matches modulePath. A FixedIn already set from the index
 // is preserved; only when the index carried no fixed version does the advisory's
@@ -578,6 +597,9 @@ func enrichFinding(f *domain.VulnerabilityFinding, modulePath string, adv *osvAd
 	f.Aliases = adv.Aliases
 	f.PublishedAt = adv.Published
 	f.ModifiedAt = adv.Modified
+	if adv.Withdrawn != nil {
+		f.WithdrawnAt = *adv.Withdrawn
+	}
 
 	for _, a := range adv.Affected {
 		if a.Package.Name != modulePath {

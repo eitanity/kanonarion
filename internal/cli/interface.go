@@ -3,10 +3,13 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
+	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
 	"github.com/eitanity/kanonarion/internal/iface/domain"
 	"github.com/eitanity/kanonarion/internal/iface/ports"
@@ -14,7 +17,8 @@ import (
 )
 
 type ifaceFlags struct {
-	force bool
+	force   bool
+	history bool
 }
 
 // -- interface command --
@@ -40,6 +44,7 @@ func newInterfaceCmd(stdout, stderr io.Writer) *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&f.force, "force", false, "re-extract even if cached")
+	cmd.Flags().BoolVar(&f.history, "history", false, "show every stored generation for the module instead of extracting")
 
 	return cmd
 }
@@ -58,6 +63,10 @@ func runInterfaceExtract(ctx context.Context, arg string, f ifaceFlags, stdout, 
 	}
 	defer func() { _ = cleanup() }()
 
+	if f.history {
+		return runInterfaceHistory(ctx, coord, ctr.QueryInterface, stdout)
+	}
+
 	result, err := ctr.ExtractInterface.Execute(ctx, ifaceapp.ExtractRequest{
 		Coordinate: coord,
 		Force:      f.force,
@@ -67,6 +76,64 @@ func runInterfaceExtract(ctx context.Context, arg string, f ifaceFlags, stdout, 
 	}
 
 	return printInterfaceRecord(result.Record, result.FromCache, jsonOut, stdout)
+}
+
+// runInterfaceHistory prints every generation the ledger holds for a coordinate,
+// oldest first, and marks the one composition serves.
+//
+// For this domain the history view is also where a reported non-determination is
+// examined: the two records that disagree are both listed, with the digest of
+// what each of them says the API is.
+func runInterfaceHistory(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryInterfaceUseCase, stdout io.Writer) error {
+	recs, err := uc.InterfaceHistory(ctx, coord, ifaceapp.PipelineVersion)
+	if err != nil {
+		return fmt.Errorf("reading interface history: %w", err)
+	}
+	if len(recs) == 0 {
+		if _, werr := fmt.Fprintf(stdout, "no interface records for %s\n", coord); werr != nil {
+			return fmt.Errorf("writing output: %w", werr)
+		}
+		return nil
+	}
+
+	// A conflict is reported, not hidden: the history view is precisely where an
+	// operator goes to see why the composed read refused to pick.
+	servedHash := ""
+	served, found, gerr := uc.GetInterfaceRecord(ctx, coord, ifaceapp.PipelineVersion)
+	switch {
+	case gerr != nil:
+		if _, werr := fmt.Fprintf(stdout, "composed answer: unavailable — %v\n\n", gerr); werr != nil {
+			return fmt.Errorf("writing output: %w", werr)
+		}
+	case found:
+		servedHash = served.ContentHash
+	}
+
+	if _, werr := fmt.Fprintf(stdout, "%d generation(s) for %s at pipeline %s:\n",
+		len(recs), coord, ifaceapp.PipelineVersion); werr != nil {
+		return fmt.Errorf("writing output: %w", werr)
+	}
+	for _, r := range recs {
+		marker := " "
+		if r.ContentHash != "" && r.ContentHash == servedHash {
+			marker = "*"
+		}
+		artefact := r.ArtefactIdentity
+		if artefact == "" {
+			artefact = "(no artefact recorded)"
+		}
+		if _, werr := fmt.Fprintf(stdout,
+			"%s %s  %-16s %d package(s)\n    artefact: %s\n    api:      %s\n    record:   %s\n",
+			marker, r.ExtractedAt.UTC().Format(time.RFC3339), r.OverallStatus.String(),
+			len(r.Packages), artefact, domain.APIDigest(r), r.ContentHash); werr != nil {
+			return fmt.Errorf("writing output: %w", werr)
+		}
+	}
+	if _, werr := fmt.Fprintln(stdout,
+		"\n* served by the composed read (a complete extraction outranks a Partial one, then most recent)"); werr != nil {
+		return fmt.Errorf("writing output: %w", werr)
+	}
+	return nil
 }
 
 func printInterfaceRecord(r domain.InterfaceRecord, fromCache bool, jsonOut bool, stdout io.Writer) error {
@@ -84,7 +151,7 @@ func printInterfaceRecord(r domain.InterfaceRecord, fromCache bool, jsonOut bool
 		cached = " (cached)"
 	}
 	if _, err := fmt.Fprintf(stdout, "%s@%s: %s — %d package(s)%s\n",
-		r.Coordinate.Path, r.Coordinate.Version,
+		r.Coordinate.Path(), r.Coordinate.Version(),
 		r.OverallStatus.String(), len(r.Packages), cached,
 	); err != nil {
 		return fmt.Errorf("writing output: %w", err)
@@ -257,24 +324,34 @@ func printRecordText(r domain.InterfaceRecord, stdout io.Writer) error {
 // -- symbol-find command --
 
 func newSymbolFindCmd(stdout, stderr io.Writer) *cobra.Command {
+	var scopeFlags buildScopeFlags
+
 	cmd := &cobra.Command{
 		Use:   "symbol-find <name>",
 		Short: "Find all modules that export a symbol with the given name",
 		Example: `  kanonarion symbol-find Client
   kanonarion symbol-find Marshal
-  kanonarion symbol-find Marshal --json`,
+  kanonarion symbol-find Marshal --json
+  kanonarion symbol-find Marshal --gomod`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
 				return usageErr(cmd)
 			}
-			return runSymbolFind(cmd.Context(), args[0], jsonOut, stdout, stderr)
+			scopeFlags.bind(cmd)
+			return runSymbolFind(cmd.Context(), args[0], scopeFlags, jsonOut, stdout, stderr)
 		},
 	}
+
+	registerBuildScopeFlags(cmd, &scopeFlags)
+	// Cobra only allows a valueless --gomod when the flag declares what that
+	// means, and the default has to be the literal path so it is both what the
+	// resolver receives and what --help prints.
+	cmd.Flags().Lookup("gomod").NoOptDefVal = defaultGoModPath
 
 	return cmd
 }
 
-func runSymbolFind(ctx context.Context, symbolName string, jsonOut bool, stdout, stderr io.Writer) error {
+func runSymbolFind(ctx context.Context, symbolName string, scopeFlags buildScopeFlags, jsonOut bool, stdout, stderr io.Writer) error {
 	logger := buildLogger(logLevel, stderr)
 	ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 	if err != nil {
@@ -282,8 +359,21 @@ func runSymbolFind(ctx context.Context, symbolName string, jsonOut bool, stdout,
 	}
 	defer func() { _ = cleanup() }()
 
-	refs, err := ctr.QueryInterface.FindSymbol(ctx, symbolName, ifaceapp.PipelineVersion)
+	sc, err := scopeFlags.resolve(ctx, ctr.QueryWalks)
 	if err != nil {
+		return err
+	}
+
+	// A conflict is carried, not returned: the refs the store COULD resolve are
+	// rendered first and the command fails afterwards, so one module whose records
+	// composition refused to pick between does not delete every other module's
+	// answer. See ports.ErrInterfaceConflict.
+	refs, err := ctr.QueryInterface.FindSymbol(ctx, symbolName, ifaceapp.PipelineVersion, sc.modules)
+	var conflictErr error
+	switch {
+	case errors.Is(err, ports.ErrInterfaceConflict):
+		conflictErr = err
+	case err != nil:
 		return fmt.Errorf("finding symbol %q: %w", symbolName, err)
 	}
 
@@ -304,6 +394,29 @@ func runSymbolFind(ctx context.Context, symbolName string, jsonOut bool, stdout,
 					"  kanonarion local .   # for this project's own symbols",
 				symbolName)
 		}
+		// Under a scope, "no exports" is also reachable because every module that
+		// exports the symbol sits outside the named build. That is a statement
+		// about the build, not about the symbol, and the two must not print the
+		// same line — so say which one it is before the empty list is rendered.
+		if sc.modules.IsRestricted() {
+			unscoped, uerr := ctr.QueryInterface.FindSymbol(ctx, symbolName, ifaceapp.PipelineVersion, coordinate.ModuleSet{})
+			if uerr != nil && !errors.Is(uerr, ports.ErrInterfaceConflict) {
+				return fmt.Errorf("finding symbol %q across all versions: %w", symbolName, uerr)
+			}
+			if len(unscoped) > 0 {
+				if _, werr := fmt.Fprintf(stderr,
+					"notice: %d export(s) of %q exist in the store, all outside %s\n",
+					len(unscoped), symbolName, sc.source); werr != nil {
+					return fmt.Errorf("writing scope notice: %w", werr)
+				}
+			}
+		}
+	}
+
+	if !jsonOut {
+		if err := writeScopeNotice(stdout, sc); err != nil {
+			return err
+		}
 	}
 
 	if jsonOut {
@@ -315,10 +428,13 @@ func runSymbolFind(ctx context.Context, symbolName string, jsonOut bool, stdout,
 		if err := enc.Encode(refs); err != nil {
 			return fmt.Errorf("encoding JSON: %w", err)
 		}
-		return nil
+		return conflictErr
 	}
 
-	return printSymbolRefs(symbolName, refs, stdout)
+	if perr := printSymbolRefs(symbolName, refs, stdout); perr != nil {
+		return perr
+	}
+	return conflictErr
 }
 
 func printSymbolRefs(symbolName string, refs []ports.SymbolRef, stdout io.Writer) error {
@@ -448,15 +564,35 @@ func runInterfaceList(ctx context.Context, limit int, stdout, stderr io.Writer) 
 	if err != nil {
 		return fmt.Errorf("listing interface records: %w", err)
 	}
+	return printInterfaceList(sums, jsonOut, stdout)
+}
+
+// printInterfaceList renders the collapsed list.
+//
+// A module whose records composition refused to pick between is printed on its
+// own row and the command fails afterwards: every module is listed first, so one
+// module in dispute does not delete the answers for all the others, and the run
+// still does not read as clean.
+func printInterfaceList(sums []ports.InterfaceSummary, jsonOut bool, stdout io.Writer) error {
 	if jsonOut {
 		type interfaceListEntry struct {
 			Module       string `json:"module"`
 			Version      string `json:"version"`
 			Status       string `json:"status"`
 			PackageCount int    `json:"package_count"`
+			Conflict     string `json:"conflict,omitempty"`
 		}
 		entries := make([]interfaceListEntry, 0, len(sums))
+		var jsonConflicts []error
 		for _, s := range sums {
+			if s.Conflict != nil {
+				jsonConflicts = append(jsonConflicts, s.Conflict)
+				entries = append(entries, interfaceListEntry{
+					Module: s.ModulePath, Version: s.ModuleVersion,
+					Status: "Conflict", Conflict: s.Conflict.Error(),
+				})
+				continue
+			}
 			entries = append(entries, interfaceListEntry{
 				Module:       s.ModulePath,
 				Version:      s.ModuleVersion,
@@ -469,6 +605,10 @@ func runInterfaceList(ctx context.Context, limit int, stdout, stderr io.Writer) 
 		if err := enc.Encode(entries); err != nil {
 			return fmt.Errorf("encoding JSON: %w", err)
 		}
+		if len(jsonConflicts) > 0 {
+			return fmt.Errorf("%d module(s) hold conflicting interface records: %w",
+				len(jsonConflicts), errors.Join(jsonConflicts...))
+		}
 		return nil
 	}
 	if len(sums) == 0 {
@@ -477,7 +617,17 @@ func runInterfaceList(ctx context.Context, limit int, stdout, stderr io.Writer) 
 		}
 		return nil
 	}
+	var conflicts []error
 	for _, s := range sums {
+		if s.Conflict != nil {
+			conflicts = append(conflicts, s.Conflict)
+			if _, err := fmt.Fprintf(stdout, "%-50s %-12s %s\n",
+				s.ModulePath+"@"+s.ModuleVersion, "CONFLICT",
+				"run 'kanonarion interface "+s.ModulePath+"@"+s.ModuleVersion+" --history'"); err != nil {
+				return fmt.Errorf("writing output: %w", err)
+			}
+			continue
+		}
 		if _, err := fmt.Fprintf(stdout, "%-50s %-12s %d package(s)\n",
 			s.ModulePath+"@"+s.ModuleVersion,
 			s.OverallStatus.String(),
@@ -485,6 +635,12 @@ func runInterfaceList(ctx context.Context, limit int, stdout, stderr io.Writer) 
 		); err != nil {
 			return fmt.Errorf("writing output: %w", err)
 		}
+	}
+	// Every module is listed first, then the command fails. A module whose
+	// records disagree must not be reported as a clean run.
+	if len(conflicts) > 0 {
+		return fmt.Errorf("%d module(s) hold conflicting interface records: %w",
+			len(conflicts), errors.Join(conflicts...))
 	}
 	return nil
 }

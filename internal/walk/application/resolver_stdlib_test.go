@@ -49,8 +49,8 @@ func TestResolveProject_Stdlib_FromToolchain(t *testing.T) {
 	}
 
 	node := stdlibNode(t, g)
-	if node.Coordinate.Version != "v1.26.4" {
-		t.Errorf("stdlib version = %q, want v1.26.4 (effective toolchain)", node.Coordinate.Version)
+	if node.Coordinate.Version() != "v1.26.4" {
+		t.Errorf("stdlib version = %q, want v1.26.4 (effective toolchain)", node.Coordinate.Version())
 	}
 
 	// The root→stdlib edge must exist so downstream consumers see the dependency.
@@ -149,8 +149,8 @@ func TestResolveProject_Stdlib_FromGoModOverride(t *testing.T) {
 	}
 
 	node := stdlibNode(t, g)
-	if node.Coordinate.Version != "v1.24.2" {
-		t.Errorf("stdlib version = %q, want v1.24.2 (go.mod toolchain directive)", node.Coordinate.Version)
+	if node.Coordinate.Version() != "v1.24.2" {
+		t.Errorf("stdlib version = %q, want v1.24.2 (go.mod toolchain directive)", node.Coordinate.Version())
 	}
 }
 

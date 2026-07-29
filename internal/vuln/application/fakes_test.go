@@ -107,6 +107,9 @@ type fakeFacts struct {
 func newFakeFacts() *fakeFacts { return &fakeFacts{records: make(map[string]fetchdomain.FactRecord)} }
 
 func (f *fakeFacts) PutFetchRecord(_ context.Context, sealed fetchdomain.SealedRecord) error {
+	if sealed.IsZero() {
+		return fetchdomain.ErrUnsealedRecord
+	}
 	r := sealed.Record()
 	key := r.ModulePath + "@" + r.ModuleVersion + "#" + r.PipelineVersion
 	f.mu.Lock()
@@ -116,7 +119,7 @@ func (f *fakeFacts) PutFetchRecord(_ context.Context, sealed fetchdomain.SealedR
 }
 
 func (f *fakeFacts) GetFetchRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (fetchdomain.CompositeRecord, bool, error) {
-	key := coord.Path + "@" + coord.Version + "#" + pv
+	key := coord.Path() + "@" + coord.Version() + "#" + pv
 	f.mu.Lock()
 	r, ok := f.records[key]
 	f.mu.Unlock()
@@ -130,9 +133,13 @@ func (f *fakeFacts) GetFetchRecord(_ context.Context, coord coordinate.ModuleCoo
 	return c, true, nil
 }
 
+// fakeVulnStore is an append-only ledger, like the real store: records holds
+// every generation written under a key, and the reads compose over them. A fake
+// that kept only the last write would let a test of the append behaviour pass
+// without the behaviour existing.
 type fakeVulnStore struct {
 	mu                 sync.Mutex
-	records            map[string]domain.VulnerabilityRecord
+	records            map[string][]domain.VulnerabilityRecord
 	runs               map[string]domain.WalkScanRun
 	runRecords         map[string][]domain.VulnerabilityRecord
 	snapshots          map[string][]byte
@@ -152,7 +159,7 @@ type fakeVulnStore struct {
 
 func newFakeVulnStore() *fakeVulnStore {
 	return &fakeVulnStore{
-		records:    make(map[string]domain.VulnerabilityRecord),
+		records:    make(map[string][]domain.VulnerabilityRecord),
 		runs:       make(map[string]domain.WalkScanRun),
 		runRecords: make(map[string][]domain.VulnerabilityRecord),
 		snapshots:  make(map[string][]byte),
@@ -177,47 +184,101 @@ func (f *fakeVulnStore) PutVulnerabilityRecord(_ context.Context, record domain.
 		return nil
 	}
 	key := f.recordKey(record.Coordinate, record.PipelineVersion, record.DatabaseSnapshot)
-	f.records[key] = record
+	for _, existing := range f.records[key] {
+		if existing.ContentHash == record.ContentHash {
+			// The same measurement written twice, which the real store's conflict
+			// clause makes a no-op.
+			return nil
+		}
+	}
+	f.records[key] = append(f.records[key], record)
 	return nil
+}
+
+// served returns the composed record for one key, as the real store's read
+// leg does. Tests that want one specific generation read the slice.
+func (f *fakeVulnStore) served(key string) (domain.VulnerabilityRecord, bool) {
+	gens := f.records[key]
+	if len(gens) == 0 {
+		return domain.VulnerabilityRecord{}, false
+	}
+	rec, err := domain.Compose(gens)
+	if err != nil {
+		return domain.VulnerabilityRecord{}, false
+	}
+	return rec, true
 }
 
 func (f *fakeVulnStore) GetVulnerabilityRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string, snapshot domain.DatabaseSnapshot) (domain.VulnerabilityRecord, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	key := f.recordKey(coord, pv, snapshot)
-	rec, ok := f.records[key]
+	rec, ok := f.served(f.recordKey(coord, pv, snapshot))
 	return rec, ok, nil
+}
+
+func (f *fakeVulnStore) GetVulnerabilityRecordAt(_ context.Context, coord coordinate.ModuleCoordinate, pv string, snapshot domain.DatabaseSnapshot, rooting domain.Rooting) (domain.VulnerabilityRecord, bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	gens := f.records[f.recordKey(coord, pv, snapshot)]
+	if len(gens) == 0 {
+		return domain.VulnerabilityRecord{}, false, nil
+	}
+	rec, ok, err := domain.ComposeAt(gens, rooting)
+	return rec, ok, err //nolint:wrapcheck // test fake
+}
+
+func (f *fakeVulnStore) HasVulnerabilityRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string, snapshot domain.DatabaseSnapshot, contentHash string) (bool, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	for _, rec := range f.records[f.recordKey(coord, pv, snapshot)] {
+		if rec.ContentHash == contentHash {
+			return true, nil
+		}
+	}
+	return false, nil
 }
 
 func (f *fakeVulnStore) GetLatestVulnerabilityRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (domain.VulnerabilityRecord, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	for _, rec := range f.records {
-		if rec.Coordinate == coord && rec.PipelineVersion == pv {
-			return rec, true, nil
-		}
-	}
-	return domain.VulnerabilityRecord{}, false, nil
+	return f.composeMatching(func(rec domain.VulnerabilityRecord) bool {
+		return rec.Coordinate == coord && rec.PipelineVersion == pv
+	})
 }
 
 func (f *fakeVulnStore) GetLatestVulnerabilityRecordForWalk(_ context.Context, coord coordinate.ModuleCoordinate, pv string, walkID string) (domain.VulnerabilityRecord, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	for _, rec := range f.records {
-		if rec.Coordinate == coord && rec.PipelineVersion == pv && rec.WalkID == walkID {
-			return rec, true, nil
+	return f.composeMatching(func(rec domain.VulnerabilityRecord) bool {
+		return rec.Coordinate == coord && rec.PipelineVersion == pv && rec.WalkID == walkID
+	})
+}
+
+func (f *fakeVulnStore) composeMatching(keep func(domain.VulnerabilityRecord) bool) (domain.VulnerabilityRecord, bool, error) {
+	var matched []domain.VulnerabilityRecord
+	for _, gens := range f.records {
+		for _, rec := range gens {
+			if keep(rec) {
+				matched = append(matched, rec)
+			}
 		}
 	}
-	return domain.VulnerabilityRecord{}, false, nil
+	if len(matched) == 0 {
+		return domain.VulnerabilityRecord{}, false, nil
+	}
+	rec, err := domain.Compose(matched)
+	return rec, err == nil, err //nolint:wrapcheck // test fake
 }
 
 func (f *fakeVulnStore) ListVulnerabilityRecordsForModule(_ context.Context, coord coordinate.ModuleCoordinate, pv string) ([]domain.VulnerabilityRecord, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []domain.VulnerabilityRecord
-	for _, rec := range f.records {
-		if rec.Coordinate == coord && rec.PipelineVersion == pv {
-			out = append(out, rec)
+	for _, gens := range f.records {
+		for _, rec := range gens {
+			if rec.Coordinate == coord && rec.PipelineVersion == pv {
+				out = append(out, rec)
+			}
 		}
 	}
 	return out, nil
@@ -312,11 +373,15 @@ func (f *fakeVulnStore) ListDatabaseSnapshots(_ context.Context) ([]domain.Datab
 	return []domain.DatabaseSnapshot{*f.latestSnapshot}, nil
 }
 
-func (f *fakeVulnStore) ListVulnerabilityRecordsByFindingID(_ context.Context, findingID string) ([]domain.VulnerabilityRecord, error) {
+func (f *fakeVulnStore) ListVulnerabilityRecordsByFindingID(_ context.Context, findingID, _ string) ([]domain.VulnerabilityRecord, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []domain.VulnerabilityRecord
-	for _, rec := range f.records {
+	for key := range f.records {
+		rec, ok := f.served(key)
+		if !ok {
+			continue
+		}
 		for _, finding := range rec.Findings {
 			if finding.ID == findingID {
 				out = append(out, rec)
@@ -337,8 +402,10 @@ func (f *fakeVulnStore) ListVulnerabilityRecords(_ context.Context, runID string
 		return recs, nil
 	}
 	out := make([]domain.VulnerabilityRecord, 0, len(f.records))
-	for _, rec := range f.records {
-		out = append(out, rec)
+	for key := range f.records {
+		if rec, ok := f.served(key); ok {
+			out = append(out, rec)
+		}
 	}
 	return out, nil
 }

@@ -5,9 +5,9 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"os/exec"
 	"runtime"
 
+	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
 )
@@ -43,7 +43,7 @@ import (
 func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequest) (domain.ProjectScanResult, error) {
 	coord := req.Coordinate
 	s.logMem(ctx, "target_scan_start")
-	s.logger.Info("vuln-scan: target-rooted scan starting", "module", coord.Path, "version", coord.Version)
+	s.logger.Info("vuln-scan: target-rooted scan starting", "module", coord.Path(), "version", coord.Version())
 
 	tmpDir, err := os.MkdirTemp("", "kanonarion-vuln-target-*")
 	if err != nil {
@@ -65,7 +65,10 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 		}, nil
 	}
 
-	dbArg, dbCleanup := s.prepareDBArg(ctx, req.Snapshot, req.DBDir)
+	dbArg, dbCleanup, err := s.prepareDBArg(ctx, req.Snapshot, req.DBDir)
+	if err != nil {
+		return domain.ProjectScanResult{}, err
+	}
 	defer dbCleanup()
 
 	govulncheckBin, err := lookupGovulncheck()
@@ -78,7 +81,7 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 	// fatal on its own — the packages may still load — so it is reported by the
 	// scan's own exit status rather than pre-empted here.
 	s.logger.Info("vuln-scan: downloading target dependencies", "dir", scanDir)
-	dlCmd := exec.CommandContext(ctx, "go", "mod", "download")
+	dlCmd := childproc.CommandContext(ctx, "go", "mod", "download")
 	dlCmd.Dir = scanDir
 	dlCmd.Env = env
 	if out, dlErr := dlCmd.CombinedOutput(); dlErr != nil {
@@ -87,7 +90,7 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 	s.logMem(ctx, "target_deps_downloaded")
 
 	s.logger.Info("vuln-scan: running target-rooted govulncheck source mode", "dir", scanDir, "db", dbArg)
-	cmd := exec.CommandContext(ctx, govulncheckBin, "-json", "-db", dbArg, "./...") // #nosec G204 -- binary path from exec.LookPath
+	cmd := childproc.CommandContext(ctx, govulncheckBin, "-json", "-db", dbArg, "./...") // #nosec G204 -- binary path from exec.LookPath
 	cmd.Dir = scanDir
 	cmd.Env = env
 
@@ -107,7 +110,7 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 		_ = pw.Close() /* #nosec G104 -- pipe close in goroutine, error not actionable */
 	}()
 
-	byModule, perr := s.parseResultsByModule(ctx, pr)
+	byModule, perr := s.parseResultsByModule(ctx, pr, domain.ScanModeSource)
 	// Drain before closing so the writer goroutine reaches cmd.Wait() and waitErr
 	// is settled: a scan that died mid-stream must be classified as the failure it
 	// is, not as the truncated parse it also produced. The channel receive is the
@@ -129,16 +132,13 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 		}, nil
 	}
 	if perr != nil {
-		return domain.ProjectScanResult{}, fmt.Errorf("parse target govulncheck output for %s@%s: %w", coord.Path, coord.Version, perr)
+		return domain.ProjectScanResult{}, fmt.Errorf("parse target govulncheck output for %s@%s: %w", coord.Path(), coord.Version(), perr)
 	}
 
 	runtime.GC()
 	s.logMem(ctx, "target_post_parse_gc")
 
-	status := domain.StatusClean
-	if len(byModule) > 0 {
-		status = domain.StatusAffected
-	}
+	status := projectScanStatus(byModule)
 	s.logger.Info("vuln-scan: target-rooted scan finished", "modules_with_findings", len(byModule))
 	return domain.ProjectScanResult{
 		FindingsByModule: byModule,

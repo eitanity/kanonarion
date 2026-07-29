@@ -62,10 +62,15 @@ arguments; with multiple modules, --json emits an array.`,
 
 // latestResult is the per-module output record.
 type latestResult struct {
-	Module     string    `json:"module"`
-	Pinned     string    `json:"pinned,omitempty"`
-	Latest     string    `json:"latest"`
-	LatestDate time.Time `json:"latest_date,omitempty"`
+	Module string `json:"module"`
+	Pinned string `json:"pinned,omitempty"`
+	Latest string `json:"latest"`
+	// omitzero, not omitempty: omitempty has no effect on a struct, so a module
+	// whose publication date the proxy did not supply emitted
+	// "0001-01-01T00:00:00Z" — a fabricated date offered where the honest answer is
+	// no date at all. omitzero is the form that actually omits it (and is the form
+	// WalkSummary.CompletedAt already uses for the same reason).
+	LatestDate time.Time `json:"latest_date,omitzero"`
 	DaysBehind int       `json:"days_behind"`
 	IsLatest   bool      `json:"is_latest"`
 }

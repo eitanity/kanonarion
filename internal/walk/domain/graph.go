@@ -104,8 +104,15 @@ func StdlibNode(goVersion string) (GraphNode, bool) {
 	if version == "" {
 		return GraphNode{}, false
 	}
+	coord, err := coordinate.NewStdlibCoordinateAt(version)
+	if err != nil {
+		// NormaliseStdlibVersion produced something that is not a version, so
+		// there is no usable stdlib node — the same outcome, and the same false,
+		// as the empty result it already guards against above.
+		return GraphNode{}, false
+	}
 	return GraphNode{
-		Coordinate:       coordinate.ModuleCoordinate{Path: StdlibModulePath, Version: version},
+		Coordinate:       coord,
 		DirectDependency: true,
 		ResolutionSource: ResolutionStdlib,
 	}, true
@@ -219,23 +226,23 @@ type GraphEdge struct {
 func (g *Graph) Sort() {
 	sort.Slice(g.Nodes, func(i, j int) bool {
 		a, b := g.Nodes[i].Coordinate, g.Nodes[j].Coordinate
-		if a.Path != b.Path {
-			return a.Path < b.Path
+		if a.Path() != b.Path() {
+			return a.Path() < b.Path()
 		}
-		return a.Version < b.Version
+		return a.Version() < b.Version()
 	})
 	sort.Slice(g.Edges, func(i, j int) bool {
 		a, b := g.Edges[i], g.Edges[j]
-		if a.From.Path != b.From.Path {
-			return a.From.Path < b.From.Path
+		if a.From.Path() != b.From.Path() {
+			return a.From.Path() < b.From.Path()
 		}
-		if a.From.Version != b.From.Version {
-			return a.From.Version < b.From.Version
+		if a.From.Version() != b.From.Version() {
+			return a.From.Version() < b.From.Version()
 		}
-		if a.To.Path != b.To.Path {
-			return a.To.Path < b.To.Path
+		if a.To.Path() != b.To.Path() {
+			return a.To.Path() < b.To.Path()
 		}
-		return a.To.Version < b.To.Version
+		return a.To.Version() < b.To.Version()
 	})
 }
 
@@ -279,7 +286,7 @@ func (g Graph) supersededRequirements(from map[coordinate.ModuleCoordinate]struc
 	// superseded versions along with the replaced one's fabricated pairing.
 	replaced := make(map[string]bool)
 	for _, n := range g.Nodes {
-		if n.OriginalCoordinate.Path != "" {
+		if n.OriginalCoordinate.Path() != "" {
 			replaced[n.Coordinate.String()] = true
 		}
 	}
@@ -290,13 +297,18 @@ func (g Graph) supersededRequirements(from map[coordinate.ModuleCoordinate]struc
 				continue
 			}
 		}
-		if e.ConstraintVersion == "" || e.ConstraintVersion == e.To.Version {
+		if e.ConstraintVersion == "" || e.ConstraintVersion == e.To.Version() {
 			continue
 		}
 		if replaced[e.To.String()] {
 			continue
 		}
-		coord := coordinate.ModuleCoordinate{Path: e.To.Path, Version: e.ConstraintVersion}
+		coord, err := coordinate.NewModuleCoordinate(e.To.Path(), e.ConstraintVersion)
+		if err != nil {
+			// A constraint that is not a version names no module that was demoted,
+			// so there is nothing to report for this edge.
+			continue
+		}
 		seen[coord] = struct{}{}
 	}
 	out := make([]coordinate.ModuleCoordinate, 0, len(seen))
@@ -304,10 +316,10 @@ func (g Graph) supersededRequirements(from map[coordinate.ModuleCoordinate]struc
 		out = append(out, c)
 	}
 	sort.Slice(out, func(i, j int) bool {
-		if out[i].Path != out[j].Path {
-			return out[i].Path < out[j].Path
+		if out[i].Path() != out[j].Path() {
+			return out[i].Path() < out[j].Path()
 		}
-		return out[i].Version < out[j].Version
+		return out[i].Version() < out[j].Version()
 	})
 	return out
 }
@@ -328,7 +340,7 @@ func (g Graph) KnownVersions() map[coordinate.ModuleCoordinate]struct{} {
 	for _, n := range g.Nodes {
 		known[n.Coordinate] = struct{}{}
 		// A replaced node is also referred to by the coordinate it replaced.
-		if n.OriginalCoordinate.Path != "" {
+		if n.OriginalCoordinate.Path() != "" {
 			known[n.OriginalCoordinate] = struct{}{}
 		}
 	}

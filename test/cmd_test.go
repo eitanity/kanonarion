@@ -12,6 +12,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/rogpeppe/go-internal/testscript"
+	"golang.org/x/mod/sumdb/dirhash"
+
 	"github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
 	fetchsqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
 	cgsqlite "github.com/eitanity/kanonarion/internal/callgraph/adapters/store/sqlite"
@@ -24,6 +27,7 @@ import (
 	exdomain "github.com/eitanity/kanonarion/internal/example/domain"
 	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	ifsqlite "github.com/eitanity/kanonarion/internal/iface/adapters/store/sqlite"
 	ifapp "github.com/eitanity/kanonarion/internal/iface/application"
@@ -37,8 +41,6 @@ import (
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/walk/adapters/walks/sqlite"
 	"github.com/eitanity/kanonarion/internal/walk/domain"
-	"github.com/rogpeppe/go-internal/testscript"
-	"golang.org/x/mod/sumdb/dirhash"
 )
 
 func TestMain(m *testing.M) {
@@ -134,11 +136,11 @@ func cmdSeedWalk(args []string) {
 	for _, node := range latestWalk.Graph.Nodes {
 		buf := new(bytes.Buffer)
 		zw := zip.NewWriter(buf)
-		f, _ := zw.Create(node.Coordinate.Path + "@" + node.Coordinate.Version + "/README")
+		f, _ := zw.Create(node.Coordinate.Path() + "@" + node.Coordinate.Version() + "/README")
 		_, _ = f.Write([]byte("zip content for " + node.Coordinate.String()))
 		_ = zw.Close()
 		zipContent := buf.Bytes()
-		modContent := []byte("module " + node.Coordinate.Path + "\n")
+		modContent := []byte("module " + node.Coordinate.Path() + "\n")
 
 		modHash, _ := dirhash.Hash1([]string{"go.mod"}, func(string) (io.ReadCloser, error) {
 			return io.NopCloser(bytes.NewReader(modContent)), nil
@@ -161,8 +163,12 @@ func cmdSeedWalk(args []string) {
 			_ = db.Close()
 			os.Exit(1)
 		}
-		zipIdentity := fetchports.BlobIdentity{Kind: fetchports.BlobKindZip, Hash: parsedZipHash}
-		goModIdentity := fetchports.BlobIdentity{Kind: fetchports.BlobKindGoMod, Hash: parsedModHash}
+		zipIdentity, zierr := fetchports.NewBlobIdentity(fetchports.BlobKindZip, parsedZipHash)
+		goModIdentity, mierr := fetchports.NewBlobIdentity(fetchports.BlobKindGoMod, parsedModHash)
+		if zierr != nil || mierr != nil {
+			_ = db.Close()
+			os.Exit(1)
+		}
 		if err := blobStore.Put(context.Background(), zipIdentity, bytes.NewReader(zipContent)); err != nil {
 			_ = db.Close()
 			os.Exit(1)
@@ -282,19 +288,58 @@ func cmdSeedCallGraph(args []string) {
 		Coordinate:    app,
 		Algorithm:     cgdomain.AlgorithmCHA,
 		OverallStatus: cgdomain.CallGraphStatusExtracted,
+		// The test axis is measured, and a test caller of Helper is in the graph
+		// alongside the production one, so the fixture exercises both the default
+		// (include) and the --exclude-tests view.
+		TestScope: cgdomain.TestScopeAnalysed,
 		Nodes: []cgdomain.CallNode{
 			{ID: "example.com/app.Main", Package: "example.com/app", Symbol: "Main", IsExportedAPI: true},
 			{ID: "example.com/app.Helper", Package: "example.com/app", Symbol: "Helper"},
+			{ID: "example.com/app_test.TestHelper", Package: "example.com/app_test", Symbol: "TestHelper", IsTest: true},
+			{ID: "example.com/app.(*Store).Put", Package: "example.com/app", Symbol: "Put", Receiver: "*Store"},
+			{ID: "example.com/app_test.(*fakeStore).Put", Package: "example.com/app_test", Symbol: "Put", Receiver: "*fakeStore", IsTest: true},
 			{ID: "fmt.Println", Package: "fmt", Symbol: "Println", IsExternal: true},
 		},
 		Edges: []cgdomain.CallEdge{
 			{FromID: "example.com/app.Main", ToID: "example.com/app.Helper", Confidence: cgdomain.ConfidenceDirect},
 			{FromID: "example.com/app.Helper", ToID: "fmt.Println", Confidence: cgdomain.ConfidenceDirect},
+			{FromID: "example.com/app_test.TestHelper", ToID: "example.com/app.Helper", Confidence: cgdomain.ConfidenceDirect},
 		},
-		NodeCount:       3,
-		EdgeCount:       2,
+		// The type-level relation: one port with a production implementer and a
+		// test fake, which is the shape an interface change has to enumerate.
+		Interfaces: []cgdomain.InterfaceType{
+			{
+				ID: "example.com/app.Store", Package: "example.com/app", Name: "Store",
+				Methods:  []string{"Put"},
+				Position: cgdomain.SourcePosition{File: "app.go", Line: 3},
+			},
+		},
+		Implementations: []cgdomain.InterfaceImplementation{
+			{
+				InterfaceID: "example.com/app.Store",
+				TypeID:      "example.com/app.(*Store)",
+				Package:     "example.com/app",
+				Methods:     []cgdomain.ImplementedMethod{{Method: "Put", NodeID: "example.com/app.(*Store).Put"}},
+			},
+			{
+				InterfaceID: "example.com/app.Store",
+				TypeID:      "example.com/app_test.(*fakeStore)",
+				Package:     "example.com/app_test",
+				IsTest:      true,
+				Methods:     []cgdomain.ImplementedMethod{{Method: "Put", NodeID: "example.com/app_test.(*fakeStore).Put"}},
+			},
+		},
+		NodeCount:       6,
+		EdgeCount:       3,
 		ExtractedAt:     time.Now(),
 		PipelineVersion: cgapp.PipelineVersion,
+		Completeness:    cgdomain.CompletenessBuiltWithBodies,
+		// The fixture stands in for a graph built from the fetched zip seeded
+		// below, so it names that artefact. The store refuses a zip-sourced record
+		// that names none: composition groups records by which bytes they measured,
+		// and an empty identity groups every record that also recorded nothing.
+		AnalysisSource:   cgdomain.AnalysisSourceModuleZip,
+		ArtefactIdentity: "zip:h1:fixture-zip=",
 	}
 	rec.Sort()
 	var hasher cgdomain.CallGraphRecordHasher
@@ -310,7 +355,7 @@ func cmdSeedCallGraph(args []string) {
 	// and Seal needs none.
 	sealed, serr := fetchdomain.Seal(fetchdomain.FetchedModule{
 		Coordinate:         app,
-		ModuleHash:         fetchdomain.ModuleHash{Algorithm: "h1", Value: "fixture-zip="},
+		ModuleHash:         fetchtest.H1("fixture-zip="),
 		VerificationStatus: fetchdomain.Verified,
 		PipelineVersion:    fetchapp.PipelineVersion,
 		ContentLocation:    "zip:h1:fixture-zip=",
@@ -354,8 +399,9 @@ func cmdSeedLicense(args []string) {
 		LicenseFiles: []licdomain.LicenseFileEntry{
 			{Path: "LICENSE", SPDX: "MIT", Confidence: 1.0, FileHash: "sha256:abc", FileSize: 1024},
 		},
-		ExtractedAt:     time.Now(),
-		PipelineVersion: licapp.PipelineVersion,
+		ExtractedAt:      time.Now(),
+		PipelineVersion:  licapp.PipelineVersion,
+		ArtefactIdentity: fetchtest.ZipArtefact("fixture-zip=").String(),
 	}
 	rec.SortFiles()
 	var hasher licdomain.LicenseRecordHasher
@@ -401,8 +447,9 @@ func cmdSeedIface(args []string) {
 				},
 			},
 		},
-		ExtractedAt:     time.Now(),
-		PipelineVersion: ifapp.PipelineVersion,
+		ExtractedAt:      time.Now(),
+		PipelineVersion:  ifapp.PipelineVersion,
+		ArtefactIdentity: fetchtest.ZipArtefact("fixture-zip=").String(),
 	}
 	rec.Sort()
 	var hasher ifdomain.InterfaceRecordHasher
@@ -451,8 +498,9 @@ func cmdSeedExamples(args []string) {
 		ParseFailures: []exdomain.ParseFailure{
 			{File: "broken.go", Error: "syntax error"},
 		},
-		ExtractedAt:     time.Now(),
-		PipelineVersion: exapp.PipelineVersion,
+		ExtractedAt:      time.Now(),
+		PipelineVersion:  exapp.PipelineVersion,
+		ArtefactIdentity: fetchtest.ZipArtefact("fixture-zip=").String(),
 	}
 	var hasher exdomain.ExampleRecordHasher
 	rec, _ = hasher.SetContentHash(rec)
@@ -466,7 +514,7 @@ func cmdSeedExamples(args []string) {
 	// cache. Sealed through domain.Seal: this entry point has no testing handle.
 	exSealed, exSerr := fetchdomain.Seal(fetchdomain.FetchedModule{
 		Coordinate:         app,
-		ModuleHash:         fetchdomain.ModuleHash{Algorithm: "h1", Value: "fixture-zip="},
+		ModuleHash:         fetchtest.H1("fixture-zip="),
 		VerificationStatus: fetchdomain.Verified,
 		PipelineVersion:    exapp.PipelineVersion, // Match record.PipelineVersion
 		ContentLocation:    "zip:h1:fixture-zip=",
@@ -483,6 +531,12 @@ func cmdSeedExamples(args []string) {
 
 	_ = db.Close()
 }
+
+// fixtureSnapshotBody is the advisory-database blob every seeder stores. The
+// store seals a snapshot against the bytes it is given and refuses a declared
+// hash those bytes contradict, so the fixtures hash this constant rather than
+// asserting a placeholder.
+const fixtureSnapshotBody = "{}"
 
 func cmdSeedVuln(args []string) {
 	if len(args) != 1 {
@@ -504,9 +558,9 @@ func cmdSeedVuln(args []string) {
 		Source:      "govulndb",
 		Version:     "v2025-01-01T00-00-00",
 		RetrievedAt: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
-		ContentHash: "sha256:fixture",
+		ContentHash: vuldomain.HashSnapshotContent([]byte(fixtureSnapshotBody)),
 	}
-	if err := store.PutDatabaseSnapshot(ctx, snap, strings.NewReader("{}")); err != nil {
+	if err := store.PutDatabaseSnapshot(ctx, snap, strings.NewReader(fixtureSnapshotBody)); err != nil {
 		_ = db.Close()
 		os.Exit(1)
 	}
@@ -538,7 +592,7 @@ func cmdSeedVuln(args []string) {
 		PipelineVersion: vulnapp.PipelineVersion,
 		ContentHash:     "sha256:vulnrec",
 	}
-	if err := store.PutVulnerabilityRecord(ctx, vulnRec); err != nil {
+	if err := store.PutVulnerabilityRecord(ctx, sealVulnRecord(vulnRec)); err != nil {
 		_ = db.Close()
 		os.Exit(1)
 	}
@@ -557,7 +611,7 @@ func cmdSeedVuln(args []string) {
 		Operator:        "test",
 		ContentHash:     "sha256:run1",
 	}
-	if err := store.PutWalkScanRun(ctx, run1); err != nil {
+	if err := store.PutWalkScanRun(ctx, sealVulnRun(run1)); err != nil {
 		_ = db.Close()
 		os.Exit(1)
 	}
@@ -574,7 +628,7 @@ func cmdSeedVuln(args []string) {
 		Operator:         "test",
 		ContentHash:      "sha256:run2",
 	}
-	if err := store.PutWalkScanRun(ctx, run2); err != nil {
+	if err := store.PutWalkScanRun(ctx, sealVulnRun(run2)); err != nil {
 		_ = db.Close()
 		os.Exit(1)
 	}
@@ -605,9 +659,9 @@ func cmdSeedVulnPartial(args []string) {
 		Source:      "govulndb",
 		Version:     "v2025-01-01T00-00-00",
 		RetrievedAt: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
-		ContentHash: "sha256:fixture",
+		ContentHash: vuldomain.HashSnapshotContent([]byte(fixtureSnapshotBody)),
 	}
-	if err := store.PutDatabaseSnapshot(ctx, snap, strings.NewReader("{}")); err != nil {
+	if err := store.PutDatabaseSnapshot(ctx, snap, strings.NewReader(fixtureSnapshotBody)); err != nil {
 		_ = db.Close()
 		os.Exit(1)
 	}
@@ -643,7 +697,7 @@ func cmdSeedVulnPartial(args []string) {
 	}
 
 	for _, rec := range []vuldomain.VulnerabilityRecord{cleanRec, failedRec, unscanRec} {
-		if err := store.PutVulnerabilityRecord(ctx, rec); err != nil {
+		if err := store.PutVulnerabilityRecord(ctx, sealVulnRecord(rec)); err != nil {
 			_ = db.Close()
 			os.Exit(1)
 		}
@@ -665,7 +719,7 @@ func cmdSeedVulnPartial(args []string) {
 		Operator:        "test",
 		ContentHash:     "sha256:runpartial",
 	}
-	if err := store.PutWalkScanRun(ctx, run); err != nil {
+	if err := store.PutWalkScanRun(ctx, sealVulnRun(run)); err != nil {
 		_ = db.Close()
 		os.Exit(1)
 	}
@@ -702,9 +756,9 @@ func cmdSeedVulnForWalk(args []string) {
 		Source:      "govulndb",
 		Version:     "v2025-01-01T00-00-00",
 		RetrievedAt: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
-		ContentHash: "sha256:fixture",
+		ContentHash: vuldomain.HashSnapshotContent([]byte(fixtureSnapshotBody)),
 	}
-	if err := store.PutDatabaseSnapshot(ctx, snap, strings.NewReader("{}")); err != nil {
+	if err := store.PutDatabaseSnapshot(ctx, snap, strings.NewReader(fixtureSnapshotBody)); err != nil {
 		_ = db.Close()
 		os.Exit(1)
 	}
@@ -735,7 +789,7 @@ func cmdSeedVulnForWalk(args []string) {
 		PipelineVersion: vulnapp.PipelineVersion,
 		ContentHash:     "sha256:vulnrec-app",
 	}
-	if err := store.PutVulnerabilityRecord(ctx, vulnRec); err != nil {
+	if err := store.PutVulnerabilityRecord(ctx, sealVulnRecord(vulnRec)); err != nil {
 		_ = db.Close()
 		os.Exit(1)
 	}
@@ -757,7 +811,7 @@ func cmdSeedVulnForWalk(args []string) {
 		Operator:        "test",
 		ContentHash:     "sha256:run-walkfix",
 	}
-	if err := store.PutWalkScanRun(ctx, run); err != nil {
+	if err := store.PutWalkScanRun(ctx, sealVulnRun(run)); err != nil {
 		_ = db.Close()
 		os.Exit(1)
 	}
@@ -771,4 +825,24 @@ func mustFixtureCoord(path, version string) coordinate.ModuleCoordinate {
 		panic(err)
 	}
 	return c
+}
+
+// sealVulnRecord stamps a seeded record with its content hash. The store
+// refuses an unsealed record, exactly as it does in production, so a fixture
+// that skipped this would be seeding a write that cannot happen.
+func sealVulnRecord(rec vuldomain.VulnerabilityRecord) vuldomain.VulnerabilityRecord {
+	sealed, err := vuldomain.VulnerabilityRecordHasher{}.SetContentHash(rec)
+	if err != nil {
+		panic("sealing seeded vulnerability record: " + err.Error())
+	}
+	return sealed
+}
+
+// sealVulnRun is sealVulnRecord for a walk scan run.
+func sealVulnRun(run vuldomain.WalkScanRun) vuldomain.WalkScanRun {
+	sealed, err := vuldomain.WalkScanRunHasher{}.SetContentHash(run)
+	if err != nil {
+		panic("sealing seeded walk scan run: " + err.Error())
+	}
+	return sealed
 }
