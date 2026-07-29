@@ -221,21 +221,22 @@ func rootCompletenessCaveat(ctx context.Context, symbolID string, uc QueryCallGr
 		if s.ModulePath != modulePath {
 			continue
 		}
-		coord, cErr := coordinate.NewModuleCoordinate(s.ModulePath, s.ModuleVersion)
-		if cErr != nil {
-			return "", fmt.Errorf("call graph record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
-		}
-		rec, found, gerr := uc.GetCallGraphRecord(ctx, coord, s.PipelineVersion)
-		if gerr != nil {
-			return "", fmt.Errorf("loading call graph for %s: %w", coord, gerr)
-		}
+		// Read the level off the SUMMARY, which already describes the generation
+		// composition serves. Loading the record here would decode every stored
+		// generation's blob and reconstruct all of their edges — measured at 1.5s
+		// for a three-generation module with 344k edges — to read one field the
+		// summary is already holding, on every callers/callees/implementers query.
+		//
 		// Only a definite below-full level warrants a caveat. Unknown (a legacy
-		// record, or one from a path that recorded no level) and BuiltWithBodies
-		// both stay silent — we never invent a caveat we cannot substantiate.
-		if !found || rec.Completeness == domain.CompletenessUnknown || rec.Completeness.IsBuiltWithBodies() {
+		// record, one from a path that recorded no level, or a module whose
+		// generations are in conflict, which the summary reports with its other
+		// fields zeroed) and BuiltWithBodies both stay silent — we never invent a
+		// caveat we cannot substantiate. A conflicted module is not silently
+		// dropped: the edge query itself refuses it with ErrCallGraphConflict.
+		if s.Completeness == domain.CompletenessUnknown || s.Completeness.IsBuiltWithBodies() {
 			continue
 		}
-		if caveat := domain.CompletenessCaveat(rec.Completeness, phase); caveat != "" {
+		if caveat := domain.CompletenessCaveat(s.Completeness, phase); caveat != "" {
 			return caveat, nil
 		}
 	}

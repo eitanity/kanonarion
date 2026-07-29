@@ -701,3 +701,232 @@ func TestMigration_BackfillLeavesAnUnrecordedLevelAlone(t *testing.T) {
 		t.Fatalf("completeness column = %q for a record that states none", col)
 	}
 }
+
+// TestMigration_RetiresStrandedSyntheticLocalRecords is the regression guard on a
+// defect a road test caught after the fact, not a unit test.
+//
+// `kanonarion local` used to store a working tree at <path>@v0.0.0. Retiring that
+// synthetic version left the old rows behind — and, crucially, FROZE them: nothing
+// writes that coordinate any more, so the row can never be superseded, while an
+// unscoped caller/callee query still spans every stored coordinate. Measured on
+// the maintainer's store, every project symbol was reported twice and the stale
+// half named a test that had since been deleted. Any user who had ever run
+// `kanonarion local` inherits that on upgrade.
+func TestMigration_RetiresStrandedSyntheticLocalRecords(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	stranded, err := coordinate.NewModuleCoordinate("example.com/mod", "v0.0.0")
+	if err != nil {
+		t.Fatalf("NewModuleCoordinate: %v", err)
+	}
+	// The pre-retirement shape: at v0.0.0, naming no artefact and no source.
+	old := ledgerRecord(t, ledgerSpec{
+		coord: stranded, completeness: domain2.CompletenessBuiltWithBodies,
+		callee: "example.com/mod.GoneSinceThisWasWritten",
+	})
+	// The store refuses a zip-sourced record naming no artefact, which is the
+	// guard this row predates — so it goes in the way the migration will find it.
+	if _, err := s.InternalDB().DB().ExecContext(ctx,
+		`INSERT INTO callgraph_records (module_path, module_version, pipeline_version, algorithm,
+		    overall_status, completeness, analysis_source, worktree_digest, node_count, edge_count,
+		    extracted_at, content_hash, serialised)
+		 VALUES (?,?,?,?,?,?,'','',?,?,?,?,?)`,
+		old.Coordinate.Path(), old.Coordinate.Version(), testPipeline, string(old.Algorithm),
+		int(old.OverallStatus), string(old.Completeness), old.NodeCount, old.EdgeCount,
+		old.ExtractedAt.UTC().Format(time.RFC3339), old.ContentHash, []byte("blob-placeholder"),
+	); err != nil {
+		t.Fatalf("seeding the stranded row: %v", err)
+	}
+
+	if err := s.RetireSyntheticLocalRecordsForTest(ctx); err == nil {
+		t.Fatal("an undecodable row was skipped silently; guessing whether it is stranded " +
+			"is the judgement this migration must not make on its own")
+	}
+}
+
+// TestMigration_LeavesAGenuineV000ModuleAlone. v0.0.0 is legal semver, so a real
+// published module can sit there. The discriminator is deliberately narrow —
+// naming no artefact AND no source — and this pins the half that must not fire.
+func TestMigration_LeavesAGenuineV000ModuleAlone(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	published, err := coordinate.NewModuleCoordinate("example.com/mod", "v0.0.0")
+	if err != nil {
+		t.Fatalf("NewModuleCoordinate: %v", err)
+	}
+	fetched := ledgerRecord(t, ledgerSpec{
+		coord: published, source: domain2.AnalysisSourceModuleZip, artefact: "zip:h1:real",
+		completeness: domain2.CompletenessBuiltWithBodies,
+	})
+	if perr := s.PutCallGraphRecord(ctx, fetched); perr != nil {
+		t.Fatalf("PutCallGraphRecord: %v", perr)
+	}
+
+	if rerr := s.RetireSyntheticLocalRecordsForTest(ctx); rerr != nil {
+		t.Fatalf("retirement: %v", rerr)
+	}
+
+	if n := countRows(t, s, `SELECT COUNT(*) FROM callgraph_records`); n != 1 {
+		t.Fatalf("a genuinely fetched module at v0.0.0 was deleted (%d rows left)", n)
+	}
+	if n := countRows(t, s, `SELECT COUNT(*) FROM callgraph_edges`); n != 1 {
+		t.Fatalf("its edges were deleted (%d rows left)", n)
+	}
+}
+
+// TestMigration_RetiresAWorktreeRecordAndItsEdges is the positive half, seeded
+// through the real write path so the row is decodable exactly as a stranded one
+// would be.
+func TestMigration_RetiresAWorktreeRecordAndItsEdges(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	stranded, err := coordinate.NewModuleCoordinate("example.com/mod", "v0.0.0")
+	if err != nil {
+		t.Fatalf("NewModuleCoordinate: %v", err)
+	}
+	// A worktree record carries no artefact identity, which is what makes it
+	// identifiable; the pre-retirement rows additionally named no source, so the
+	// digest and source columns are cleared to reproduce that shape exactly.
+	old := ledgerRecord(t, ledgerSpec{
+		coord: stranded, source: domain2.AnalysisSourceWorktree, worktree: "sha256:tree",
+		completeness: domain2.CompletenessBuiltWithBodies, callee: "example.com/mod.Gone",
+	})
+	if perr := s.PutCallGraphRecord(ctx, old); perr != nil {
+		t.Fatalf("PutCallGraphRecord: %v", perr)
+	}
+	// Rewrite the blob to the pre-field shape: no source recorded.
+	preField := old
+	preField.AnalysisSource = domain2.AnalysisSourceUnrecorded
+	preField.WorktreeDigest = ""
+	preField, err = domain2.CallGraphRecordHasher{}.SetContentHash(preField)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	if perr := s.PutCallGraphRecord(ctx, preField); perr == nil {
+		t.Fatal("premise check: the store should refuse a source-less record naming no artefact")
+	}
+
+	// Seed it the way the migration will meet it, bypassing the write-leg guards
+	// that row predates.
+	if serr := s.SeedPreFieldRowForTest(ctx, preField); serr != nil {
+		t.Fatalf("seeding: %v", serr)
+	}
+
+	before := countRows(t, s, `SELECT COUNT(*) FROM callgraph_records`)
+	if rerr := s.RetireSyntheticLocalRecordsForTest(ctx); rerr != nil {
+		t.Fatalf("retirement: %v", rerr)
+	}
+	after := countRows(t, s, `SELECT COUNT(*) FROM callgraph_records`)
+	if after >= before {
+		t.Fatalf("the stranded record survived: %d rows before, %d after", before, after)
+	}
+	if n := countRows(t, s, `SELECT COUNT(*) FROM callgraph_edges e
+		WHERE NOT EXISTS (SELECT 1 FROM callgraph_records r WHERE r.content_hash = e.record_content_hash)`); n != 0 {
+		t.Fatalf("%d orphaned edge rows left behind", n)
+	}
+}
+
+// TestLedger_WorktreeReadServesTheNewestWithoutLoadingTheRest pins the fast path
+// that makes a worktree read O(1) in the depth of its history.
+//
+// A working tree's generations are a sequence, so composition serves the last and
+// needs none of the others. Loading N to return the Nth was unbounded waste:
+// `kanonarion local` appends a generation on every run, and each one cost a blob
+// decode plus a full edge reconstruction on EVERY later query. Measured on a
+// 115k-edge project before this path existed, each additional generation added
+// ~0.45s permanently; after it, 7 through 10 generations measured 1.87 / 1.94 /
+// 1.77 / 1.83s — flat.
+//
+// The test asserts the answer rather than the timing, because a timing assertion
+// is flaky and the correctness property is what must not regress: the newest
+// generation is served, and the full history is still retrievable.
+func TestLedger_WorktreeReadServesTheNewestWithoutLoadingTheRest(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	local, err := coordinate.NewLocalCoordinate("example.com/mod")
+	if err != nil {
+		t.Fatalf("NewLocalCoordinate: %v", err)
+	}
+	const generations = 5
+	for i := range generations {
+		rec := ledgerRecord(t, ledgerSpec{
+			coord: local, source: domain2.AnalysisSourceWorktree,
+			worktree:     "sha256:tree-" + string(rune('a'+i)),
+			completeness: domain2.CompletenessBuiltWithBodies,
+			at:           testTime.Add(time.Duration(i) * time.Hour),
+			callee:       "example.com/mod.Gen" + string(rune('a'+i)),
+		})
+		if perr := s.PutCallGraphRecord(ctx, rec); perr != nil {
+			t.Fatalf("put %d: %v", i, perr)
+		}
+	}
+
+	got, found, err := s.GetCallGraphRecord(ctx, local, testPipeline)
+	if err != nil || !found {
+		t.Fatalf("GetCallGraphRecord: found=%v err=%v", found, err)
+	}
+	if got.WorktreeDigest != "sha256:tree-e" {
+		t.Fatalf("served tree %q, want the newest generation", got.WorktreeDigest)
+	}
+	// The edges of the served generation are still reconstructed — the record is
+	// verified over them, so a fast path that skipped them would serve an
+	// unverified answer.
+	if len(got.Edges) != 1 || got.Edges[0].ToID != "example.com/mod.Gene" {
+		t.Fatalf("served generation resolved the wrong edges: %+v", got.Edges)
+	}
+	// History is untouched: the fast path is a read optimisation, not a retention
+	// policy. The earlier generations answer "what did we know when".
+	gens, err := s.ListCallGraphRecordsFor(ctx, local, testPipeline)
+	if err != nil {
+		t.Fatalf("ListCallGraphRecordsFor: %v", err)
+	}
+	if len(gens) != generations {
+		t.Fatalf("history returned %d generations, want %d", len(gens), generations)
+	}
+}
+
+// TestLedger_WorktreeFastPathStandsAsideWhenAZipRecordExists is the condition
+// that is easy to miss.
+//
+// A local coordinate can legitimately hold a zip-sourced record too — a walk over
+// a local-path replace target fetches and analyses one. Then the answer is decided
+// by the source dimension and the completeness ladder, not by the sequence, so the
+// fast path must not fire. Without this the newest worktree generation would be
+// served for a read that names no source, which is the wrong question.
+func TestLedger_WorktreeFastPathStandsAsideWhenAZipRecordExists(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	local, err := coordinate.NewLocalCoordinate("example.com/mod")
+	if err != nil {
+		t.Fatalf("NewLocalCoordinate: %v", err)
+	}
+	zip := ledgerRecord(t, ledgerSpec{
+		coord: local, source: domain2.AnalysisSourceModuleZip, artefact: "zip:h1:a",
+		completeness: domain2.CompletenessBuiltWithBodies,
+		at:           testTime, callee: "example.com/mod.FromZip",
+	})
+	// Newer, so a sequence rule that fired here would serve it.
+	tree := ledgerRecord(t, ledgerSpec{
+		coord: local, source: domain2.AnalysisSourceWorktree, worktree: "sha256:tree",
+		completeness: domain2.CompletenessBuiltWithBodies,
+		at:           testTime.Add(time.Hour), callee: "example.com/mod.FromTree",
+	})
+	for _, r := range []domain2.CallGraphRecord{zip, tree} {
+		if perr := s.PutCallGraphRecord(ctx, r); perr != nil {
+			t.Fatalf("PutCallGraphRecord: %v", perr)
+		}
+	}
+
+	got, found, err := s.GetCallGraphRecord(ctx, local, testPipeline)
+	if err != nil || !found {
+		t.Fatalf("GetCallGraphRecord: found=%v err=%v", found, err)
+	}
+	if got.ContentHash != zip.ContentHash {
+		t.Fatal("the fast path fired past a zip record and served the newest worktree generation")
+	}
+}

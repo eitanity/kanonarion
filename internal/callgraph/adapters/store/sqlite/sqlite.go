@@ -20,6 +20,11 @@ import (
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
 )
 
+// syntheticLocalVersion is the module version `kanonarion local` used to write
+// working trees under, before it was retired for coordinate.LocalVersion. It
+// survives only so migration 10 can name the rows it strands; nothing writes it.
+const syntheticLocalVersion = "v0.0.0"
+
 // Store is the SQLite-backed call graph store.
 type Store struct {
 	db sqlitestore.DB
@@ -263,7 +268,109 @@ CREATE INDEX IF NOT EXISTS callgraph_records_generation_idx
 		// removed for having none — reintroduced together with its use, in one change,
 		// which is the condition its own doc comment sets.
 		{Module: "callgraph", Version: 9, Fn: backfillCompleteness},
+		// Migration v10: retire the working-tree records stranded at the synthetic
+		// "v0.0.0" coordinate.
+		//
+		// `kanonarion local` used to store a working tree at <path>@v0.0.0. That
+		// version was retired because it states something untrue — v0.0.0 names a
+		// published release, and nothing published the tree — and local ingests now
+		// write at coordinate.LocalVersion instead.
+		//
+		// Retiring the label left the old rows behind, and that is a defect rather
+		// than untidiness. Before the change, each `local` run OVERWROTE the v0.0.0
+		// row, so it tracked the tree. Now nothing writes that coordinate ever again:
+		// the row is frozen at whatever the tree looked like on the last run before
+		// the upgrade, it can never be superseded, and an unscoped caller/callee query
+		// spans every stored coordinate — so it answers alongside the live @local
+		// record forever. Measured on the maintainer's store: every symbol in the
+		// project reported TWICE, and the stale half named a test that had since been
+		// deleted. Any user who had ever run `kanonarion local` inherits this on
+		// upgrade.
+		//
+		// WHY THIS PURGE, WHEN MIGRATION 8 ARGUES AGAINST PURGING. Migration 8's
+		// argument is about ANALYSER SHAPE CHANGES: a superseded generation of the
+		// same question, which the SchemaVersion read gate already keeps out of every
+		// answer while leaving the evidence in place. These rows are a different
+		// thing. They are not a weaker answer to the same question — they are a
+		// correct measurement filed under a name that misdescribes it, at a coordinate
+		// no producer will ever write again, actively serving stale answers with no
+		// read gate that can recognise them. And they are regenerable in one command:
+		// `kanonarion local` reproduces the measurement at the coordinate that is true
+		// of it.
+		//
+		// THE DISCRIMINATOR IS NARROW, BECAUSE v0.0.0 IS LEGAL SEMVER. A genuinely
+		// fetched module at v0.0.0 must not be touched. The test is: version is
+		// exactly "v0.0.0", AND the record names no artefact, AND it names no analysis
+		// source. A fetched record always names the artefact it read — the store now
+		// refuses one that does not — and a working-tree record written since the
+		// change names its source and lives at @local. Measured before writing this:
+		// of 240 rows, exactly 3 satisfy it, and they are exactly the three local
+		// ingests. The artefact identity lives inside the compressed blob, which is
+		// why this needs a Go step.
+		{Module: "callgraph", Version: 10, Fn: retireSyntheticLocalRecords},
 	}
+}
+
+// retireSyntheticLocalRecords deletes the working-tree records stranded at the
+// synthetic "v0.0.0" coordinate, and the edge rows belonging to them.
+//
+// Rows are drained fully before any DELETE is issued: the store runs on a single
+// connection, so writing while the SELECT's result set is still open deadlocks.
+//
+// A row that cannot be decoded is an error rather than a skip. Guessing whether
+// an unreadable row is one of these is exactly the judgement this migration must
+// not make on its own.
+func retireSyntheticLocalRecords(tx *sql.Tx) error {
+	rows, err := tx.Query(
+		`SELECT content_hash, serialised FROM callgraph_records WHERE module_version = ?`,
+		syntheticLocalVersion)
+	if err != nil {
+		return fmt.Errorf("selecting synthetic-local records: %w", err)
+	}
+	type candidate struct {
+		hash string
+		blob []byte
+	}
+	var found []candidate
+	for rows.Next() {
+		var c candidate
+		if serr := rows.Scan(&c.hash, &c.blob); serr != nil {
+			_ = rows.Close() //nolint:errcheck // returning the scan error
+			return fmt.Errorf("scanning synthetic-local record: %w", serr)
+		}
+		found = append(found, c)
+	}
+	if cerr := rows.Err(); cerr != nil {
+		_ = rows.Close() //nolint:errcheck // returning the iteration error
+		return fmt.Errorf("iterating synthetic-local records: %w", cerr)
+	}
+	if cerr := rows.Close(); cerr != nil {
+		return fmt.Errorf("closing synthetic-local rows: %w", cerr)
+	}
+
+	var h domain2.CallGraphRecordHasher
+	for _, c := range found {
+		raw, derr := blobcodec.Decode(c.blob)
+		if derr != nil {
+			return fmt.Errorf("decompressing record %s: %w", c.hash, derr)
+		}
+		rec, uerr := h.Unmarshal(raw)
+		if uerr != nil {
+			return fmt.Errorf("unmarshalling record %s: %w", c.hash, uerr)
+		}
+		if rec.ArtefactIdentity != "" || rec.AnalysisSource != domain2.AnalysisSourceUnrecorded {
+			// A genuinely fetched module that happens to sit at v0.0.0, or a record
+			// written since the source field existed. Not ours to remove.
+			continue
+		}
+		if _, eerr := tx.Exec(`DELETE FROM callgraph_edges WHERE record_content_hash = ?`, c.hash); eerr != nil {
+			return fmt.Errorf("deleting edges for stranded record %s: %w", c.hash, eerr)
+		}
+		if _, rerr := tx.Exec(`DELETE FROM callgraph_records WHERE content_hash = ?`, c.hash); rerr != nil {
+			return fmt.Errorf("deleting stranded record %s: %w", c.hash, rerr)
+		}
+	}
+	return nil
 }
 
 // backfillCompleteness populates callgraph_records.completeness from each row's
@@ -519,6 +626,21 @@ func (s *Store) GetCallGraphRecordFrom(ctx context.Context, coord coordinate.Mod
 }
 
 func (s *Store) composeFor(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, req domain2.ComposeRequest) (domain2.CallGraphRecord, bool, error) {
+	// A working tree's generations are a SEQUENCE, so composition serves the last
+	// one and needs none of the others — see domain.Compose. Loading N generations
+	// to return the Nth is pure waste, and it is unbounded waste: `kanonarion
+	// local` appends a generation on every run, forever, and each one costs a full
+	// blob decode plus a reconstruction of its entire edge set. Measured before
+	// this path existed, on a 115k-edge project: every additional generation added
+	// ~0.45s to EVERY callers/callees/implementers query, permanently.
+	//
+	// Reading only the newest row makes that O(1) in the depth of the history. It
+	// is exactly equivalent, not an approximation: the sequence rule's "last" is by
+	// insertion order, which is what this query returns.
+	if latest, ok, err := s.latestWorktreeGeneration(ctx, coord, pipelineVersion, req); ok || err != nil {
+		return latest, ok, err
+	}
+
 	records, err := s.ListCallGraphRecordsFor(ctx, coord, pipelineVersion)
 	if err != nil {
 		return domain2.CallGraphRecord{}, false, err
@@ -536,6 +658,85 @@ func (s *Store) composeFor(ctx context.Context, coord coordinate.ModuleCoordinat
 		return domain2.CallGraphRecord{}, false, fmt.Errorf("%w: %w", ports.ErrCallGraphConflict, err)
 	}
 	return composed, true, nil
+}
+
+// latestWorktreeGeneration answers a compose request from the newest row alone,
+// when the coordinate's generations are a working-tree sequence.
+//
+// It reports ok=false when the fast path does not apply, and the caller falls
+// back to composing the full history. It applies only when BOTH hold:
+//
+//   - the coordinate is local — nothing else stores a working tree; and
+//   - no generation at that coordinate came from a module zip.
+//
+// The second condition is the one that is easy to miss. A local coordinate can
+// legitimately hold a zip-sourced record too (a walk over a local-path replace
+// target fetches and analyses one), and then the answer is decided by the source
+// dimension and the completeness ladder rather than by the sequence — so the fast
+// path must stand aside. Both conditions are decided from COLUMNS, without
+// decoding anything.
+//
+// A request that explicitly names the module-zip source also stands aside: it is
+// asking the other question.
+func (s *Store) latestWorktreeGeneration(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, req domain2.ComposeRequest) (domain2.CallGraphRecord, bool, error) {
+	if !coord.IsLocal() || req.Source == domain2.AnalysisSourceModuleZip {
+		return domain2.CallGraphRecord{}, false, nil
+	}
+	const qSources = `SELECT DISTINCT analysis_source FROM callgraph_records
+WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
+	rows, err := s.db.DB().QueryContext(ctx, qSources, coord.Path(), coord.Version(), pipelineVersion)
+	if err != nil {
+		return domain2.CallGraphRecord{}, false, fmt.Errorf("querying analysis sources for %s: %w", coord, err)
+	}
+	var sources []string
+	for rows.Next() {
+		var src string
+		if serr := rows.Scan(&src); serr != nil {
+			_ = rows.Close() //nolint:errcheck // returning the scan error
+			return domain2.CallGraphRecord{}, false, fmt.Errorf("scanning analysis source: %w", serr)
+		}
+		sources = append(sources, src)
+	}
+	if cerr := rows.Err(); cerr != nil {
+		_ = rows.Close() //nolint:errcheck // returning the iteration error
+		return domain2.CallGraphRecord{}, false, fmt.Errorf("iterating analysis sources: %w", cerr)
+	}
+	if cerr := rows.Close(); cerr != nil {
+		return domain2.CallGraphRecord{}, false, fmt.Errorf("closing analysis source rows: %w", cerr)
+	}
+	if len(sources) == 0 {
+		return domain2.CallGraphRecord{}, false, nil
+	}
+	for _, src := range sources {
+		if domain2.AnalysisSource(src) == domain2.AnalysisSourceModuleZip {
+			return domain2.CallGraphRecord{}, false, nil
+		}
+	}
+
+	// "Last" is by insertion order, because extracted_at persists at second
+	// precision and two runs within one second share it.
+	const qLatest = `SELECT serialised, content_hash FROM callgraph_records
+WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
+ORDER BY extracted_at DESC, rowid DESC
+LIMIT 1`
+	var blob []byte
+	var storedHash string
+	if serr := s.db.DB().QueryRowContext(ctx, qLatest,
+		coord.Path(), coord.Version(), pipelineVersion).Scan(&blob, &storedHash); errors.Is(serr, sql.ErrNoRows) {
+		return domain2.CallGraphRecord{}, false, nil
+	} else if serr != nil {
+		return domain2.CallGraphRecord{}, false, fmt.Errorf("querying latest generation for %s: %w", coord, serr)
+	}
+	rec, ok, derr := s.decodeRecord(ctx, blob, storedHash)
+	if derr != nil {
+		return domain2.CallGraphRecord{}, false, derr
+	}
+	if !ok {
+		// The newest generation was written at an older canonical shape. Fall back
+		// to the full read, which skips it and may find an older readable one.
+		return domain2.CallGraphRecord{}, false, nil
+	}
+	return rec, true, nil
 }
 
 // ListCallGraphRecordsFor returns every generation the ledger holds for one
