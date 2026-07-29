@@ -2,7 +2,6 @@ package cmd_test
 
 import (
 	"go/ast"
-	"go/token"
 	"go/types"
 	"sort"
 	"strconv"
@@ -61,6 +60,13 @@ func init() {
 	for _, name := range []string{"AnalysisSourceModuleZip", "AnalysisSourceWorktree"} {
 		producerGuarded[modulePath+"/internal/callgraph/domain."+name] = true
 	}
+
+	// The standard library's acquisition route. Same reasoning: it is stated by
+	// the acquirer that took it, not derived from the verification status that
+	// happens to correlate with it today.
+	for _, name := range []string{"RouteGoDev", "RouteLocalToolchain"} {
+		producerGuarded[modulePath+"/internal/stdlib/domain."+name] = true
+	}
 }
 
 // TestGuardedEnumValuesHaveAProductionProducer fails when a guarded constant is
@@ -92,10 +98,14 @@ func TestGuardedEnumValuesHaveAProductionProducer(t *testing.T) {
 
 	for _, pkg := range pkgs {
 		for _, file := range pkg.Syntax {
-			consumer := consumerUses(file)
+			strong, weak := producingUses(file)
 			ast.Inspect(file, func(n ast.Node) bool {
 				id, ok := n.(*ast.Ident)
-				if !ok || consumer[id] {
+				if !ok {
+					return true
+				}
+				isStrong, isWeak := strong[id], weak[id]
+				if !isStrong && !isWeak {
 					return true
 				}
 				konst, ok := pkg.TypesInfo.Uses[id].(*types.Const)
@@ -106,9 +116,25 @@ func TestGuardedEnumValuesHaveAProductionProducer(t *testing.T) {
 				if !producerGuarded[key] {
 					return true
 				}
-				if _, already := produced[key]; !already {
-					pos := pkg.Fset.Position(id.Pos())
-					produced[key] = trimRepoPath(pos.Filename) + ":" + strconv.Itoa(pos.Line)
+				pos := pkg.Fset.Position(id.Pos())
+				// A use in the file that DECLARES the constant does not count. That
+				// file is where the ladder-publishing helpers live — CompletenessLevels,
+				// AcquisitionRoutes — and a value listed in its own ladder is exactly the
+				// dead rung this guard exists to catch: enumerated, documented, and
+				// written by nothing. Found by reading the guard's own output, which
+				// reported the ladder literal as the producer of all four levels.
+				if pkg.Fset.Position(konst.Pos()).Filename == pos.Filename {
+					return true
+				}
+				where := trimRepoPath(pos.Filename) + ":" + strconv.Itoa(pos.Line)
+				if !isStrong {
+					// Evidence that the value reaches a function, not that anything
+					// stores it. Recorded, and labelled, so a reader can see that the
+					// producer was never directly observed.
+					where += " (passed to a call — construction not directly observed)"
+				}
+				if prev, already := produced[key]; !already || (isStrong && strings.Contains(prev, "(passed to a call")) {
+					produced[key] = where
 				}
 				return true
 			})
@@ -142,34 +168,82 @@ func TestGuardedEnumValuesHaveAProductionProducer(t *testing.T) {
 	}
 }
 
-// consumerUses marks the identifiers that only READ an enum value: the operands
-// of an equality comparison and the expressions of a switch case. Everything
-// else is treated as putting the value somewhere.
-func consumerUses(file *ast.File) map[*ast.Ident]bool {
-	out := map[*ast.Ident]bool{}
-	mark := func(e ast.Expr) {
-		if id, ok := e.(*ast.Ident); ok {
-			out[id] = true
-		}
-		if sel, ok := e.(*ast.SelectorExpr); ok {
-			out[sel.Sel] = true
+// producingUses splits the identifiers that PUT an enum value somewhere into two
+// strengths.
+//
+// STRONG is unambiguous: the right-hand side of an assignment, a value in a
+// composite literal, a return operand, a var/const initialiser. The value
+// demonstrably lands in something.
+//
+// WEAK is a call argument. It is often a producer — `failRecord(coord, status,
+// completeness, detail)` sets the field from its parameter — and often not, since
+// the same shape covers filters and lookups. It counts, because rejecting it
+// would fail the legitimate constructor pattern, but it is labelled in the
+// report so nobody reads "produced at" as "written at" when it was not.
+//
+// What is NOT a producing use at all: an equality operand, a switch case, or any
+// other bare read. That distinction is the guard's whole point, and getting it
+// too loose was the first version's bug — it reported `withSource(records,
+// RouteGoDev)` as a producer, under which a constant used only to filter,
+// compare and enumerate would pass as produced.
+//
+// It is a positive match rather than "everything that is not a comparison", and
+// the difference is not academic. The first version excluded only equality
+// operands and switch cases, and it reported `withSource(records, RouteGoDev)` —
+// a filter ARGUMENT, which reads the value — as the producer. Under that
+// definition a constant used exclusively to filter, compare and enumerate counts
+// as produced, which is precisely the dead rung this guard exists to catch. A
+// value nothing ever WRITES is not produced, however often it is read.
+//
+// A call argument is deliberately not a write. It can be one — a constructor
+// taking the value and storing it — but it is far more often a filter or a
+// lookup, and a guard that accepts the ambiguous case cannot fail on the case it
+// was built for. A genuine constructor-only producer would need a named
+// assignment somewhere to satisfy this, which is a small price for the guard
+// meaning what it says.
+func producingUses(file *ast.File) (strong, weak map[*ast.Ident]bool) {
+	strong, weak = map[*ast.Ident]bool{}, map[*ast.Ident]bool{}
+	into := func(m map[*ast.Ident]bool) func(ast.Expr) {
+		return func(e ast.Expr) {
+			switch v := e.(type) {
+			case *ast.Ident:
+				m[v] = true
+			case *ast.SelectorExpr:
+				m[v.Sel] = true
+			}
 		}
 	}
+	mark, markWeak := into(strong), into(weak)
 	ast.Inspect(file, func(n ast.Node) bool {
 		switch v := n.(type) {
-		case *ast.BinaryExpr:
-			if v.Op == token.EQL || v.Op == token.NEQ {
-				mark(v.X)
-				mark(v.Y)
+		case *ast.CallExpr:
+			for _, a := range v.Args {
+				markWeak(a)
 			}
-		case *ast.CaseClause:
-			for _, e := range v.List {
-				mark(e)
+		case *ast.AssignStmt:
+			for _, rhs := range v.Rhs {
+				mark(rhs)
+			}
+		case *ast.CompositeLit:
+			for _, elt := range v.Elts {
+				if kv, ok := elt.(*ast.KeyValueExpr); ok {
+					mark(kv.Value)
+					continue
+				}
+				mark(elt)
+			}
+		case *ast.ReturnStmt:
+			for _, r := range v.Results {
+				mark(r)
+			}
+		case *ast.ValueSpec:
+			for _, val := range v.Values {
+				mark(val)
 			}
 		}
 		return true
 	})
-	return out
+	return strong, weak
 }
 
 // trimRepoPath renders an absolute path from the loader as a repo-relative one.

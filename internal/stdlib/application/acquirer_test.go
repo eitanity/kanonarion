@@ -8,6 +8,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
+	"fmt"
 	"io"
 	"log/slog"
 	"testing"
@@ -58,27 +59,41 @@ type fakeLicense struct {
 
 func (f fakeLicense) Identify(context.Context, []byte) (string, error) { return f.spdx, f.err }
 
+// memStore is a ledger, like the real store: it APPENDS measurements and
+// composes on read. A fake that overwrote would make every acquirer test pass
+// regardless of the composition rule, which is the behaviour these tests exist to
+// exercise.
 type memStore struct {
-	m      map[string]domain.Facts
+	m      map[string][]domain.Facts
 	puts   int
 	getErr error
 }
 
-func newMemStore() *memStore { return &memStore{m: map[string]domain.Facts{}} }
+func newMemStore() *memStore { return &memStore{m: map[string][]domain.Facts{}} }
 
 func (s *memStore) Get(_ context.Context, v string) (domain.Facts, bool, error) {
 	if s.getErr != nil {
 		return domain.Facts{}, false, s.getErr
 	}
-	f, ok := s.m[v]
-	return f, ok, nil
+	gens := s.m[v]
+	if len(gens) == 0 {
+		return domain.Facts{}, false, nil
+	}
+	composed, err := domain.Compose(gens, domain.ComposeRequest{})
+	if err != nil {
+		return domain.Facts{}, false, fmt.Errorf("composing stdlib facts for %s: %w", v, err)
+	}
+	return composed, true, nil
 }
 
 func (s *memStore) Put(_ context.Context, f domain.Facts) error {
 	s.puts++
-	s.m[f.GoVersion] = f
+	s.m[f.GoVersion] = append(s.m[f.GoVersion], f)
 	return nil
 }
+
+// generations returns every measurement appended for a version, oldest first.
+func (s *memStore) generations(v string) []domain.Facts { return s.m[v] }
 
 type memBlobs struct{ puts int }
 
@@ -214,7 +229,7 @@ func TestAcquire_SkipVCS(t *testing.T) {
 
 func TestAcquire_CacheHitSkipsDownload(t *testing.T) {
 	store := newMemStore()
-	store.m["go1.26.4"] = domain.Facts{GoVersion: "go1.26.4", VerificationStatus: domain.VerifiedGoDevChecksum}
+	store.m["go1.26.4"] = []domain.Facts{{GoVersion: "go1.26.4", VerificationStatus: domain.VerifiedGoDevChecksum}}
 	tb := &fakeTarball{err: errors.New("must not be called")}
 	acq := newAcquirer(t, fakeManifest{}, tb, &fakeCommits{}, fakeLicense{}, store, nil)
 
@@ -233,7 +248,7 @@ func TestAcquire_CacheHitSkipsDownload(t *testing.T) {
 func TestAcquire_ForceReacquires(t *testing.T) {
 	tb := buildTarball(t, map[string]string{"go/LICENSE": "x"})
 	store := newMemStore()
-	store.m["go1.26.4"] = domain.Facts{GoVersion: "go1.26.4", VerificationStatus: domain.GoDevChecksumMismatch}
+	store.m["go1.26.4"] = []domain.Facts{{GoVersion: "go1.26.4", VerificationStatus: domain.GoDevChecksumMismatch}}
 	m := fakeManifest{releases: []domain.Release{{Version: "go1.26.4", Files: []domain.ReleaseFile{{Kind: "source", SHA256: sha256hex(tb)}}}}}
 	acq := newAcquirer(t, m, &fakeTarball{data: tb}, &fakeCommits{commit: "c1"}, fakeLicense{spdx: "BSD-3-Clause"}, store, nil)
 
@@ -273,5 +288,94 @@ func TestAcquire_MissingLicenseIsCoverageGap(t *testing.T) {
 	}
 	if facts.LicenseSPDX != "" {
 		t.Errorf("LicenseSPDX = %q, want empty on missing LICENSE", facts.LicenseSPDX)
+	}
+}
+
+// TestAcquire_ManifestFailureIsNotServedFromCache is the defect this conversion
+// removes, exercised end to end through the acquirer.
+//
+// Before: one transient go.dev/dl failure recorded UnverifiedGoDevUnavailable,
+// the cache check returned any stored row regardless of status, and the downgrade
+// was then served on EVERY later run until --force. The tool reported a finding
+// about the toolchain when what it had was an unreliable measurement of it.
+func TestAcquire_ManifestFailureIsNotServedFromCache(t *testing.T) {
+	tb := buildTarball(t, map[string]string{"go/LICENSE": "BSD-3-Clause text"})
+	sum := sha256hex(tb)
+	store := newMemStore()
+
+	// Run 1: the manifest cannot be reached.
+	failing := fakeManifest{err: errors.New("dial tcp: connection reset by peer")}
+	first, err := newAcquirer(t, failing, &fakeTarball{data: tb}, &fakeCommits{commit: "abc"}, fakeLicense{spdx: "BSD-3-Clause"}, store, nil).
+		Acquire(context.Background(), "go1.26.4", application.Options{})
+	if err != nil {
+		t.Fatalf("first acquire: %v", err)
+	}
+	if first.VerificationStatus != domain.UnverifiedGoDevUnavailable {
+		t.Fatalf("premise broken: a failed manifest must record %q, got %q",
+			domain.UnverifiedGoDevUnavailable, first.VerificationStatus)
+	}
+
+	// Run 2: the manifest is reachable again, and crucially WITHOUT --force. The
+	// downgrade must not satisfy the cache.
+	healthy := fakeManifest{releases: []domain.Release{{
+		Version: "go1.26.4",
+		Files:   []domain.ReleaseFile{{Filename: "go1.26.4.src.tar.gz", Kind: "source", SHA256: sum}},
+	}}}
+	second, err := newAcquirer(t, healthy, &fakeTarball{data: tb}, &fakeCommits{commit: "abc"}, fakeLicense{spdx: "BSD-3-Clause"}, store, nil).
+		Acquire(context.Background(), "go1.26.4", application.Options{})
+	if err != nil {
+		t.Fatalf("second acquire: %v", err)
+	}
+	if second.VerificationStatus != domain.VerifiedGoDevChecksum {
+		t.Fatalf("the downgrade was served from cache: got %q, want %q",
+			second.VerificationStatus, domain.VerifiedGoDevChecksum)
+	}
+
+	// Both measurements survive: the failed attempt is evidence, not something to
+	// delete, and the ledger is what makes it visible instead of overwritten.
+	gens := store.generations("go1.26.4")
+	if len(gens) != 2 {
+		t.Fatalf("ledger holds %d measurements, want 2", len(gens))
+	}
+
+	// Run 3: now that a definite anchor exists, the cache is satisfied and no
+	// further acquisition happens.
+	puts := store.puts
+	third, err := newAcquirer(t, healthy, &fakeTarball{data: tb}, &fakeCommits{commit: "abc"}, fakeLicense{spdx: "BSD-3-Clause"}, store, nil).
+		Acquire(context.Background(), "go1.26.4", application.Options{})
+	if err != nil {
+		t.Fatalf("third acquire: %v", err)
+	}
+	if store.puts != puts {
+		t.Errorf("a verified measurement did not satisfy the cache: %d further put(s)", store.puts-puts)
+	}
+	if third.VerificationStatus != domain.VerifiedGoDevChecksum {
+		t.Errorf("cache hit served %q", third.VerificationStatus)
+	}
+}
+
+// TestAcquire_SealsWhatItWrites: every measurement the acquirer stores carries a
+// seal over its own canonical form. Before this, stdlib_facts was the one record
+// table whose rows could be edited in place with nothing to detect it.
+func TestAcquire_SealsWhatItWrites(t *testing.T) {
+	tb := buildTarball(t, map[string]string{"go/LICENSE": "BSD-3-Clause text"})
+	sum := sha256hex(tb)
+	m := fakeManifest{releases: []domain.Release{{
+		Version: "go1.26.4",
+		Files:   []domain.ReleaseFile{{Filename: "go1.26.4.src.tar.gz", Kind: "source", SHA256: sum}},
+	}}}
+	got, err := newAcquirer(t, m, &fakeTarball{data: tb}, &fakeCommits{commit: "abc"}, fakeLicense{spdx: "BSD-3-Clause"}, newMemStore(), nil).
+		Acquire(context.Background(), "go1.26.4", application.Options{})
+	if err != nil {
+		t.Fatalf("acquire: %v", err)
+	}
+	if !domain.IsSealed(got) {
+		t.Fatal("the acquirer stored an unsealed measurement")
+	}
+	if verr := (domain.FactsHasher{}).VerifyContentHash(got); verr != nil {
+		t.Fatalf("the seal does not verify: %v", verr)
+	}
+	if got.AcquisitionRoute != domain.RouteGoDev {
+		t.Fatalf("acquisition route = %q, want %q", got.AcquisitionRoute, domain.RouteGoDev)
 	}
 }
