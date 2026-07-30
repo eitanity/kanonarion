@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -85,6 +86,64 @@ func SnapshotIntegrityAbort(snapshot domain.DatabaseSnapshot, err error) error {
 			"because re-fetching (--fresh) overwrites this snapshot in place",
 		err, snapshot.Source(), snapshot.Version())
 }
+
+// UnreadableRun names one stored scan run a listing could not verify, together
+// with the failure the read path reported.
+type UnreadableRun struct {
+	// ID is the run identifier carried by the stored bytes, or empty when they
+	// could not be parsed far enough to name it. An unnamed row is still
+	// reported: "there is a row here I cannot read" is an answer, and dropping
+	// it because it will not introduce itself is not.
+	ID string
+
+	// Reason is the read failure exactly as it was reported, so a caller that
+	// wants to tell generation drift from altered bytes can still match on it.
+	Reason error
+}
+
+// String renders one unreadable run for a message, naming the run when the
+// bytes named themselves.
+func (r UnreadableRun) String() string {
+	if r.ID == "" {
+		return fmt.Sprintf("unidentified run: %v", r.Reason)
+	}
+	return fmt.Sprintf("run %s: %v", r.ID, r.Reason)
+}
+
+// UnreadableRuns reports that a scan-run listing returned every row it could
+// verify and names the ones it could not. The verified runs come back as the
+// listing's ordinary result alongside it.
+//
+// It exists so one seam can serve both kinds of caller. It unwraps to
+// ErrVulnIntegrity, so a consuming command — one whose answer would be wrong if
+// it silently rested on a partial store — matches it exactly as it always did
+// and still fails closed. A survey command matches this type instead, prints
+// the rows it has and the rows it does not, and exits 0: the tool used to
+// diagnose the problem is not the one that refuses to run.
+//
+// The verified runs are returned WITH the error rather than discarded because
+// the alternative failure is worse than aborting. A listing that quietly
+// omitted the rows it could not read would answer a question about the store
+// with a clean list that is not true of it, and the reader would have no way to
+// know.
+type UnreadableRuns struct {
+	Runs []UnreadableRun
+}
+
+// Error renders every unreadable run, so a consuming command that only prints
+// the error still says which rows were at fault.
+func (e *UnreadableRuns) Error() string {
+	parts := make([]string, 0, len(e.Runs))
+	for _, r := range e.Runs {
+		parts = append(parts, r.String())
+	}
+	return fmt.Sprintf("%s: %s", ErrVulnIntegrity, strings.Join(parts, "; "))
+}
+
+// Unwrap keeps errors.Is(err, ErrVulnIntegrity) true, so every caller that
+// classified this failure before this type existed classifies it the same way
+// now.
+func (e *UnreadableRuns) Unwrap() error { return ErrVulnIntegrity }
 
 // VulnerabilityStore defines the port for persisting vulnerability records.
 //
@@ -179,9 +238,17 @@ type VulnerabilityStore interface {
 	GetWalkScanRun(ctx context.Context, id string) (domain.WalkScanRun, bool, error)
 
 	// ListWalkScanRuns lists all scan runs for a specific walk.
+	//
+	// A row that fails its seal does not end the listing. Implementations return
+	// every run they could verify AND an *UnreadableRuns naming the rest, so the
+	// caller decides: a consumer sees a non-nil error and fails closed as before,
+	// a survey reports the named rows and carries on. One unreadable row must
+	// never make the store unlistable, because the listing is how an operator
+	// finds it.
 	ListWalkScanRuns(ctx context.Context, walkID string) ([]domain.WalkScanRun, error)
 
-	// ListAllWalkScanRuns lists all scan runs across all walks, most recent first.
+	// ListAllWalkScanRuns lists all scan runs across all walks, most recent first,
+	// on the same partial-result terms as ListWalkScanRuns.
 	ListAllWalkScanRuns(ctx context.Context) ([]domain.WalkScanRun, error)
 
 	// PutDatabaseSnapshot persists a vulnerability database snapshot blob.

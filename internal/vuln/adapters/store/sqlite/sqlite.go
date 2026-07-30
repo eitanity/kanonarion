@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -1356,22 +1357,11 @@ func (s *Store) ListWalkScanRuns(ctx context.Context, walkID string) ([]domain.W
 	}
 	defer func() { _ = rows.Close() }()
 
-	var runs []domain.WalkScanRun
-	for rows.Next() {
-		var serialised []byte
-		if err := rows.Scan(&serialised); err != nil {
-			return nil, fmt.Errorf("scanning walk scan run: %w", err)
-		}
-		run, derr := decodeRun(serialised)
-		if derr != nil {
-			return nil, derr
-		}
-		runs = append(runs, run)
+	runs, unreadable, err := collectRuns(rows)
+	if err != nil {
+		return nil, err
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating walk scan runs: %w", err)
-	}
-	return runs, nil
+	return runs, unreadableRunsErr(unreadable)
 }
 
 // ListAllWalkScanRuns lists all scan runs across all walks, most recent first.
@@ -1384,22 +1374,69 @@ func (s *Store) ListAllWalkScanRuns(ctx context.Context) ([]domain.WalkScanRun, 
 	}
 	defer func() { _ = rows.Close() }()
 
-	var runs []domain.WalkScanRun
+	runs, unreadable, err := collectRuns(rows)
+	if err != nil {
+		return nil, err
+	}
+	return runs, unreadableRunsErr(unreadable)
+}
+
+// collectRuns reads every scan run in rows, keeping the ones that verify and
+// naming the ones that do not. It is the single seam both listings go through,
+// so a fix to how an unreadable row is handled cannot apply to one listing and
+// miss the other — vuln-scan-list reaches this store by both routes depending
+// on whether it was given a walk id.
+//
+// Only a seal failure is survivable here. A database that cannot hand over the
+// row at all is a different fault: nothing is known about what was skipped, not
+// even that it exists, so there is no honest partial answer to give.
+func collectRuns(rows *sql.Rows) ([]domain.WalkScanRun, []ports.UnreadableRun, error) {
+	var (
+		runs       []domain.WalkScanRun
+		unreadable []ports.UnreadableRun
+	)
 	for rows.Next() {
 		var serialised []byte
 		if err := rows.Scan(&serialised); err != nil {
-			return nil, fmt.Errorf("scanning walk scan run: %w", err)
+			return nil, nil, fmt.Errorf("scanning walk scan run: %w", err)
 		}
 		run, derr := decodeRun(serialised)
 		if derr != nil {
-			return nil, derr
+			unreadable = append(unreadable, ports.UnreadableRun{ID: runIDFrom(serialised), Reason: derr})
+			continue
 		}
 		runs = append(runs, run)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating walk scan runs: %w", err)
+		return nil, nil, fmt.Errorf("iterating walk scan runs: %w", err)
 	}
-	return runs, nil
+	return runs, unreadable, nil
+}
+
+// unreadableRunsErr wraps the unreadable rows for the caller, or returns nil
+// when there were none.
+func unreadableRunsErr(unreadable []ports.UnreadableRun) error {
+	if len(unreadable) == 0 {
+		return nil
+	}
+	return &ports.UnreadableRuns{Runs: unreadable}
+}
+
+// runIDFrom recovers a run's identifier from stored bytes the seal check
+// rejected, so the row can be named in a report.
+//
+// It reads only the id field and asserts nothing else about the bytes: they are
+// under suspicion, which is precisely why they must not be interpreted as a
+// record. An id that cannot be read comes back empty and the row is reported
+// without one.
+func runIDFrom(serialised []byte) string {
+	var head struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(serialised, &head); err != nil {
+		return ""
+	}
+	return head.ID
 }
 
 // PutDatabaseSnapshot persists a snapshot blob.

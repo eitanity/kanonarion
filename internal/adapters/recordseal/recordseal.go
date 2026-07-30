@@ -72,6 +72,15 @@ const contentHashKey = "content_hash"
 // Only the TOP-LEVEL content_hash is blanked. Some canonical shapes embed a
 // nested one — the vulnerability record carries its database snapshot's hash —
 // and that nested value is part of the sealed content, not the seal.
+//
+// Both notations for the same digest are accepted, "sha256:<hex>" and bare
+// <hex>. The choice is per domain and fixed by the records already stored: the
+// vulnerability record and the walk scan run seal bare hex, and prefixing them
+// now would invalidate every row. Insisting on the prefix here did not make
+// those records suspicious, it made them unclassifiable — the comparison could
+// never hold, so every drifted vuln record fell through to the wording reserved
+// for altered bytes. The digest is what is being compared; how it is spelled is
+// not evidence about the record.
 func SelfConsistent(raw []byte, storedHash string) (bool, error) {
 	if storedHash == "" {
 		return false, nil
@@ -81,7 +90,8 @@ func SelfConsistent(raw []byte, storedHash string) (bool, error) {
 		return false, err
 	}
 	sum := sha256.Sum256(blanked)
-	return "sha256:"+hex.EncodeToString(sum[:]) == storedHash, nil
+	digest := hex.EncodeToString(sum[:])
+	return storedHash == "sha256:"+digest || storedHash == digest, nil
 }
 
 // VerifyBlob checks a stored record blob against its seal without unmarshalling

@@ -18,10 +18,12 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/mod/modfile"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	configstore "github.com/eitanity/kanonarion/internal/config/adapters/store/yaml"
 	"github.com/eitanity/kanonarion/internal/config/domain"
 	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
 
+	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
 	walkadapterpolicy "github.com/eitanity/kanonarion/internal/walk/adapters/policy/localfile"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -891,4 +893,68 @@ func divergenceMessage(err error) (string, bool) {
 	return divergence.Error() +
 		" — two measurements describe different artefacts; recover with --force," +
 		" which appends an authoritative measurement and erases nothing", true
+}
+
+// unreadableRunEntry is one stored scan run a survey listed but could not
+// verify: the row's identity and why it could not be read, kept apart so text
+// and JSON output can each present them their own way.
+type unreadableRunEntry struct {
+	ID     string `json:"id"`
+	Reason string `json:"reason"`
+}
+
+// unreadableRunReport turns a scan-run listing error into one operator-facing
+// entry per row the store could not verify, reporting whether it was that kind
+// of failure at all.
+//
+// It is divergenceMessage's counterpart for the scan-run listings, and it is
+// there for the same reason: a survey command reports what it could not read
+// and exits 0, while a consuming command takes the other branch and fails
+// closed. Any other error is not this one and is returned as not-handled, so a
+// database that fell over still aborts the listing.
+func unreadableRunReport(err error) ([]unreadableRunEntry, bool) {
+	var unreadable *vulnports.UnreadableRuns
+	if !errors.As(err, &unreadable) {
+		return nil, false
+	}
+	entries := make([]unreadableRunEntry, 0, len(unreadable.Runs))
+	for _, r := range unreadable.Runs {
+		id := r.ID
+		if id == "" {
+			id = "(unidentified run)"
+		}
+		entries = append(entries, unreadableRunEntry{ID: id, Reason: unreadableRunReason(r)})
+	}
+	return entries, true
+}
+
+// scanRunStatusUnreadable is the status a survey reports for a row it listed
+// but could not verify. It is deliberately not one of the domain's scan
+// statuses: the run's status is exactly what is not known about it.
+const scanRunStatusUnreadable = "unreadable"
+
+// writeUnreadableRuns prints one line per row the store could not verify, in
+// the listing itself. Silence here would be the one answer that is not honest:
+// an omitted row and a row reported as unreadable say different things about
+// the store, and only the second is true of it.
+func writeUnreadableRuns(stdout io.Writer, entries []unreadableRunEntry) {
+	for _, e := range entries {
+		_, _ = fmt.Fprintf(stdout, "%-26s  status=%-12s  %s\n", e.ID, scanRunStatusUnreadable, e.Reason)
+	}
+}
+
+// unreadableRunReason says why a row could not be verified, in words a reader
+// can act on.
+//
+// The two cases are not interchangeable and must not be reported alike. A
+// record whose stored bytes still hash to the seal they carry has not been
+// altered; this build simply cannot reproduce it, because it was sealed by an
+// earlier canonical shape — the remedy is a re-scan. Where that cannot be
+// established the wording stays neutral: an unverified record is reported as
+// unverified, and nothing is insinuated about how it got that way.
+func unreadableRunReason(r vulnports.UnreadableRun) string {
+	if errors.Is(r.Reason, recordseal.ErrGenerationDrift) {
+		return "sealed by an earlier record generation; re-scan to reseal"
+	}
+	return "could not be verified: " + r.Reason.Error()
 }

@@ -179,3 +179,37 @@ func TestSelfConsistent(t *testing.T) {
 		t.Errorf("SelfConsistent with no stored hash = (%v, %v), want (false, nil)", ok, err)
 	}
 }
+
+// TestSelfConsistent_BareHexSeal covers the notation the vulnerability domain
+// uses. Its records and its walk scan runs seal bare hex — the recipe is fixed
+// by the rows already stored — and insisting on a "sha256:" prefix here did not
+// make those records suspicious, it made them unclassifiable: the comparison
+// could never hold, so every drifted vuln record fell through to the wording
+// reserved for altered bytes. That is what an operator saw when one such run
+// disabled the whole scan-run listing.
+func TestSelfConsistent_BareHexSeal(t *testing.T) {
+	t.Parallel()
+
+	body := `{"content_hash":"","name":"example"}`
+	sum := sha256.Sum256([]byte(body))
+	bare := hex.EncodeToString(sum[:])
+	blob := []byte(strings.Replace(body, `"content_hash":""`, fmt.Sprintf(`"content_hash":%q`, bare), 1))
+
+	ok, err := recordseal.SelfConsistent(blob, bare)
+	if err != nil || !ok {
+		t.Fatalf("SelfConsistent on a bare-hex seal = (%v, %v), want (true, nil)", ok, err)
+	}
+
+	// And the classification that rests on it follows.
+	reproductionFailed := errors.New("content hash mismatch: stored X, computed Y")
+	if err := recordseal.Classify(blob, bare, reproductionFailed); !errors.Is(err, recordseal.ErrGenerationDrift) {
+		t.Errorf("a bare-hex-sealed record whose bytes are intact was not reported as drift: %v", err)
+	}
+
+	// The digest still has to match. A different one is not excused by either
+	// notation.
+	other := strings.Repeat("0", len(bare))
+	if ok, err := recordseal.SelfConsistent(blob, other); err != nil || ok {
+		t.Errorf("SelfConsistent with a wrong bare hash = (%v, %v), want (false, nil)", ok, err)
+	}
+}
