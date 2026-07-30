@@ -275,10 +275,13 @@ func (s *DatabaseSnapshot) UnmarshalJSON(data []byte) error {
 }
 
 // snapshotHashPrefix labels the digest algorithm inside DatabaseSnapshot's
-// ContentHash. It is present here — unlike on a VulnerabilityRecord's own bare
-// hex hash, whose recipe is frozen by the records already in every store —
-// because no snapshot hash had ever been written when the field was added, so it
-// was free to take the project's normal prefixed form.
+// ContentHash, as contentHashPrefix does on the record's own seal. It was once
+// the only labelled hash on a vulnerability record, because no snapshot hash had
+// been written when the field was added and it was free to take the project's
+// normal prefixed form while the record's own seal was frozen bare by the rows
+// already stored. Those rows have since been re-notated and the contradiction is
+// gone; the two constants stay separate because they label different digests
+// over different bytes.
 const snapshotHashPrefix = "sha256:"
 
 // HashSnapshotContent renders the content hash of a vulnerability database

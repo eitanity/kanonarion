@@ -178,6 +178,13 @@ type scanShowSummary struct {
 
 func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QueryScanRunsUseCase, ucVuln QueryVulnUseCase, stdout io.Writer) error {
 	run, found, err := ucRuns.GetRun(ctx, runID)
+	// vuln-scan-list names the rows it could not verify, and this is the command
+	// an operator runs next against one of those names. Refusing here would send
+	// them from a listing that reports the fault to the one tool that will not
+	// discuss it, which is the same dead end one step along.
+	if unreadable, survivable := unreadableRunReport(err); survivable {
+		return writeUnreadableRun(stdout, runID, unreadable, jsonOut)
+	}
 	if err != nil {
 		return fmt.Errorf("getting scan run: %w", err)
 	}

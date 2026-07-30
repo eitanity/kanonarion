@@ -632,6 +632,34 @@ CREATE INDEX IF NOT EXISTS vuln_findings_finding_idx
 ALTER TABLE walk_scan_run_modules ADD COLUMN record_content_hash TEXT NOT NULL DEFAULT '';
 `,
 		},
+		{
+			Module:  "vuln",
+			Version: 15,
+			// Re-notate every stored vulnerability seal from bare hex to the
+			// labelled form the other seven record domains write.
+			//
+			// This domain sealed bare hex for one reason, stated in hasher.go and
+			// in the snapshot hasher's own comment: the rows already written. It
+			// was never a design position, and it cost a real answer — the shared
+			// verifier compared only against the labelled form, so a vulnerability
+			// record could never be classified and a drifted walk scan run was
+			// reported in the wording reserved for altered bytes. A record also
+			// carried both rules at once: its own seal was bare while the database
+			// snapshot hash inside it is labelled, and the snapshot constructor
+			// REFUSES a bare one.
+			//
+			// The whole rewrite lives in the Go step and not in SQL, because its
+			// correctness is the ORDER and the proof, neither of which SQL can
+			// express here: records re-notate by pure prefix and each rewrite is
+			// checked against that property, the membership column follows the
+			// records it names, and only then are the run seals recomputed over
+			// contents that have genuinely changed. See renotateVulnSeals.
+			//
+			// No purge and no PipelineVersion bump: this is the same measurement
+			// from the same pipeline, spelled the way the rest of the project
+			// spells it.
+			Fn: renotateVulnSeals,
+		},
 	}
 }
 
@@ -1342,7 +1370,14 @@ func (s *Store) GetWalkScanRun(ctx context.Context, id string) (domain.WalkScanR
 
 	run, derr := decodeRun(serialised)
 	if derr != nil {
-		return domain.WalkScanRun{}, false, derr
+		// Reported as the same unreadable-row failure the listings raise, for one
+		// row. The listing is how an operator finds a bad run, and looking at it
+		// is the next thing they do, so the two must speak the same language:
+		// an inspection command can name the row and carry on, and a consuming
+		// caller still matches the integrity sentinel and still fails closed.
+		return domain.WalkScanRun{}, false, unreadableRunsErr([]ports.UnreadableRun{
+			{ID: runIDFrom(serialised), Reason: derr},
+		})
 	}
 	return run, true, nil
 }
@@ -1942,8 +1977,14 @@ func decodeRecord(serialised []byte) (domain.VulnerabilityRecord, error) {
 		// been altered. recordseal decides which, on the stored bytes alone —
 		// and it is JSON-aware, so the snapshot's embedded content_hash is
 		// treated as the sealed content it is rather than as the seal.
+		//
+		// It is told what the recipe leaves out, because the stored blob and the
+		// sealed bytes are not the same set of fields: a record that has been
+		// re-scanned carries a first-seen anchor the seal never covered, and a
+		// verifier that did not know would report every one of them as altered.
 		return domain.VulnerabilityRecord{}, fmt.Errorf("%w: %s: %w",
-			ports.ErrVulnIntegrity, rec.Coordinate, recordseal.Classify(serialised, rec.ContentHash, verr))
+			ports.ErrVulnIntegrity, rec.Coordinate,
+			recordseal.Excluding(h.SealExcludes()...).Classify(serialised, rec.ContentHash, verr))
 	}
 	return rec, nil
 }
@@ -1958,7 +1999,8 @@ func decodeRun(serialised []byte) (domain.WalkScanRun, error) {
 	}
 	if verr := h.VerifyContentHash(run); verr != nil {
 		return domain.WalkScanRun{}, fmt.Errorf("%w: run %s: %w",
-			ports.ErrVulnIntegrity, run.ID, recordseal.Classify(serialised, run.ContentHash, verr))
+			ports.ErrVulnIntegrity, run.ID,
+			recordseal.Excluding(h.SealExcludes()...).Classify(serialised, run.ContentHash, verr))
 	}
 	return run, nil
 }

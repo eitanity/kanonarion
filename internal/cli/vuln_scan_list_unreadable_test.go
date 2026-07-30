@@ -181,6 +181,74 @@ func TestRunScanHistory_ReportsUnreadableRows(t *testing.T) {
 	}
 }
 
+// TestRunScanShow_ReportsTheUnreadableRunItWasAskedFor closes the loop the
+// listing opens. vuln-scan-list names a row it could not verify; this is the
+// command an operator runs next against that name, and it must discuss the row
+// rather than refuse it.
+func TestRunScanShow_ReportsTheUnreadableRunItWasAskedFor(t *testing.T) {
+	fake := testfakes.NewFakeQueryScanRuns()
+	fake.GetErr = driftedRuns("vscan-bad")
+
+	var out bytes.Buffer
+	if err := runScanShow(t.Context(), "vscan-bad", false, fake, nil, &out); err != nil {
+		t.Fatalf("runScanShow() = %v, want nil — an inspection command names the fault and exits 0", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "vscan-bad") {
+		t.Errorf("output does not name the run asked for:\n%s", got)
+	}
+	if !strings.Contains(got, scanRunStatusUnreadable) {
+		t.Errorf("output does not mark the run unreadable:\n%s", got)
+	}
+	if !strings.Contains(got, "sealed by an earlier record generation; re-scan to reseal") {
+		t.Errorf("output does not give the reason:\n%s", got)
+	}
+}
+
+// TestRunScanShow_JSONNamesTheRun covers the machine channel on the same path.
+func TestRunScanShow_JSONNamesTheRun(t *testing.T) {
+	fake := testfakes.NewFakeQueryScanRuns()
+	fake.GetErr = driftedRuns("")
+
+	var out bytes.Buffer
+	if err := runScanShow(t.Context(), "vscan-bad", true, fake, nil, &out); err != nil {
+		t.Fatalf("runScanShow(--json) = %v, want nil", err)
+	}
+	var got struct {
+		ID     string `json:"id"`
+		Status string `json:"status"`
+		Reason string `json:"reason"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &got); err != nil {
+		t.Fatalf("decoding JSON: %v\n%s", err, out.String())
+	}
+	// The stored bytes named no run; the id the caller typed is still reported,
+	// because it is the only identity in the exchange.
+	if got.ID != "vscan-bad" || got.Status != scanRunStatusUnreadable || got.Reason == "" {
+		t.Errorf("got %+v, want the asked-for id marked unreadable with a reason", got)
+	}
+}
+
+// TestRunScanShow_OtherFailuresStillAbort keeps the softening narrow: only the
+// unreadable-row failure is answerable, and absence is still absence.
+func TestRunScanShow_OtherFailuresStillAbort(t *testing.T) {
+	t.Run("read failure", func(t *testing.T) {
+		fake := testfakes.NewFakeQueryScanRuns()
+		fake.GetErr = errors.New("database is locked")
+		var out bytes.Buffer
+		if err := runScanShow(t.Context(), "vscan-x", false, fake, nil, &out); err == nil {
+			t.Errorf("runScanShow() = nil, want the database failure to abort")
+		}
+	})
+	t.Run("not found", func(t *testing.T) {
+		fake := testfakes.NewFakeQueryScanRuns()
+		var out bytes.Buffer
+		if err := runScanShow(t.Context(), "vscan-absent", false, fake, nil, &out); err == nil {
+			t.Errorf("runScanShow() = nil, want a missing run to still be reported missing")
+		}
+	})
+}
+
 // TestUnreadableRunsFailsConsumersClosed pins the half of the contract this
 // change must not move: a consuming command classifies the same failure exactly
 // as it did before.

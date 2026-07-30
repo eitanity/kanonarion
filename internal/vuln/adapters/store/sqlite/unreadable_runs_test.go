@@ -206,6 +206,53 @@ func TestListWalkScanRuns_UnparseableRowIsStillReported(t *testing.T) {
 	}
 }
 
+// TestGetWalkScanRun_ReportsUnreadableRowAsSuchPins the single-row read on the
+// same terms as the listings: an inspection command must be able to tell an
+// unreadable row from a missing one, and a consuming caller must still classify
+// it exactly as it did before.
+func TestGetWalkScanRun_ReportsUnreadableRowAsSuch(t *testing.T) {
+	ctx := t.Context()
+	db, err := sqlitestore.Open(":memory:", sqlite.Migrations())
+	if err != nil {
+		t.Fatalf("opening in-memory db: %v", err)
+	}
+	t.Cleanup(func() { _ = db.Close() })
+	store := sqlite.New(db)
+
+	bad := storeRun(t, store, "vscan-walk-1-bad", "walk-1")
+	if _, err := db.DB().ExecContext(ctx,
+		`UPDATE walk_scan_runs SET serialised = ? WHERE id = ?`,
+		driftBlob(t, bad), bad.ID); err != nil {
+		t.Fatalf("installing drifted row: %v", err)
+	}
+
+	_, found, err := store.GetWalkScanRun(ctx, bad.ID)
+	if found {
+		t.Error("an unverifiable run was handed to the caller")
+	}
+	var unreadable *ports.UnreadableRuns
+	if !errors.As(err, &unreadable) {
+		t.Fatalf("error = %v, want *ports.UnreadableRuns", err)
+	}
+	if len(unreadable.Runs) != 1 || unreadable.Runs[0].ID != bad.ID {
+		t.Errorf("unreadable = %v, want the one row named", unreadable.Runs)
+	}
+	if !errors.Is(unreadable.Runs[0].Reason, recordseal.ErrGenerationDrift) {
+		t.Errorf("reason = %v, want generation drift", unreadable.Runs[0].Reason)
+	}
+	// Consuming readers of this method — the SBOM generator and vuln-scan-diff —
+	// match the sentinel and must keep failing closed.
+	if !errors.Is(err, ports.ErrVulnIntegrity) {
+		t.Error("errors.Is(err, ErrVulnIntegrity) = false; consumers would stop failing closed")
+	}
+
+	// Absence is still absence, not an unreadable row.
+	_, found, err = store.GetWalkScanRun(ctx, "vscan-absent")
+	if found || err != nil {
+		t.Errorf("GetWalkScanRun(absent) = (found %v, %v), want (false, nil)", found, err)
+	}
+}
+
 func ids(runs []domain.WalkScanRun) []string {
 	out := make([]string, 0, len(runs))
 	for _, r := range runs {

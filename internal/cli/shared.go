@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -932,6 +933,36 @@ func unreadableRunReport(err error) ([]unreadableRunEntry, bool) {
 // but could not verify. It is deliberately not one of the domain's scan
 // statuses: the run's status is exactly what is not known about it.
 const scanRunStatusUnreadable = "unreadable"
+
+// writeUnreadableRun reports a single run an inspection command was asked for
+// and could not verify, and returns nil: naming what is wrong with the row is
+// the answer to "show me this run", not a failure to answer.
+//
+// It reports the id the CALLER asked for. The stored bytes may not name
+// themselves, and echoing an empty id back at someone who just typed one would
+// lose the only identity in the exchange.
+func writeUnreadableRun(stdout io.Writer, runID string, entries []unreadableRunEntry, asJSON bool) error {
+	reason := "could not be verified"
+	if len(entries) > 0 {
+		reason = entries[0].Reason
+	}
+	if asJSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+			Reason string `json:"reason"`
+		}{ID: runID, Status: scanRunStatusUnreadable, Reason: reason}); err != nil {
+			return fmt.Errorf("encoding unreadable scan run: %w", err)
+		}
+		return nil
+	}
+	_, _ = fmt.Fprintf(stdout, "ID:          %s\n", runID)
+	_, _ = fmt.Fprintf(stdout, "Status:      %s\n", scanRunStatusUnreadable)
+	_, _ = fmt.Fprintf(stdout, "Reason:      %s\n", reason)
+	return nil
+}
 
 // writeUnreadableRuns prints one line per row the store could not verify, in
 // the listing itself. Silence here would be the one answer that is not honest:

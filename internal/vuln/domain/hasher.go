@@ -79,18 +79,35 @@ func (h VulnerabilityRecordHasher) VerifyContentHash(r VulnerabilityRecord) erro
 
 // hash renders the content hash of r.
 //
-// The recipe is fixed by the records already in every store and must not be
-// changed: the JSON encoding of the record itself — struct field order is the
-// wire order, there is no separate canonical type — with FirstScannedAt zeroed
-// and ContentHash empty, rendered as bare hex. Unlike every other context this
-// hash carries no "sha256:" prefix; adding one now would invalidate every
-// stored record the moment the read leg checks it.
+// The recipe is the JSON encoding of the record itself — struct field order is
+// the wire order, there is no separate canonical type — with FirstScannedAt
+// zeroed and ContentHash empty, rendered as hex behind the "sha256:" label
+// every other domain uses.
+//
+// The label costs nothing and is not decoration. A bare digest does not name the
+// algorithm that produced it, and SHA3-256, BLAKE2s-256 and SM3 all emit 64 hex
+// characters, so a bare seal cannot say which of them it is. It also left one
+// record carrying two rules: its own seal was bare while the database snapshot
+// hash inside it is prefixed, and NewDatabaseSnapshot refuses a bare one.
+//
+// The digest itself is unchanged by the label, because the seal covers the JSON
+// with ContentHash blanked and the blanked bytes do not depend on how the field
+// is later spelled. A stored record therefore re-notates by pure prefix — the
+// new value is exactly "sha256:" plus the old one — which is what makes the
+// migration that rewrote the existing rows self-verifying rather than a reseal.
+// A walk scan run is not: its PerModuleResults embed record hashes, so its own
+// content really does change and its seal is genuinely recomputed.
 //
 // FirstScannedAt is excluded because it is first-seen provenance, not part of
 // the verdict: a reused record whose ScannedAt advances must not change
 // identity on account of an anchor that never moves. ContentHash is excluded
 // because a hash cannot cover itself. r is a value copy, so zeroing them here
 // does not affect the caller's record.
+//
+// The anchor's exclusion is also stated by SealExcludes, which is what a reader
+// verifying the STORED bytes needs: the field is omitzero, not omitted, so a
+// populated anchor is in the blob and was not in the seal. Both must move
+// together.
 func (VulnerabilityRecordHasher) hash(r VulnerabilityRecord) (string, error) {
 	r.FirstScannedAt = time.Time{}
 	r.ContentHash = ""
@@ -99,7 +116,24 @@ func (VulnerabilityRecordHasher) hash(r VulnerabilityRecord) (string, error) {
 		return "", fmt.Errorf("marshalling vulnerability record for content hash: %w", err)
 	}
 	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:]), nil
+	return contentHashPrefix + hex.EncodeToString(sum[:]), nil
+}
+
+// SealExcludes names the top-level JSON fields that are in a stored record but
+// not in the bytes its seal covers.
+//
+// It exists because the two are not the same set, and a verifier working from
+// the stored bytes alone cannot discover the difference. hash zeroes
+// FirstScannedAt, while the field is tagged omitzero rather than omitted, so a
+// record whose anchor has been set carries a member the seal never saw. Anything
+// recomputing the seal from a stored blob must remove those members first or it
+// will fail to reproduce every record that has been re-scanned — and report
+// intact bytes in the wording reserved for altered ones.
+//
+// It is stated here, next to the recipe, so the two cannot drift apart: a field
+// added to or removed from hash's exclusions is one line away from this list.
+func (VulnerabilityRecordHasher) SealExcludes() []string {
+	return []string{"first_scanned_at"}
 }
 
 // Marshal returns the bytes a store persists for r, hash field included. Call
@@ -150,8 +184,8 @@ func (h WalkScanRunHasher) VerifyContentHash(run WalkScanRun) error {
 }
 
 // hash renders the content hash of run: the JSON encoding of the run with
-// ContentHash empty, as bare hex. As with VulnerabilityRecord the recipe is
-// fixed by the runs already stored and carries no "sha256:" prefix.
+// ContentHash empty, hex behind the "sha256:" label, on the same terms as
+// VulnerabilityRecordHasher.hash.
 func (WalkScanRunHasher) hash(run WalkScanRun) (string, error) {
 	run.ContentHash = ""
 	data, err := walkScanRunMarshal(run)
@@ -159,7 +193,24 @@ func (WalkScanRunHasher) hash(run WalkScanRun) (string, error) {
 		return "", fmt.Errorf("marshalling walk scan run for content hash: %w", err)
 	}
 	sum := sha256.Sum256(data)
-	return hex.EncodeToString(sum[:]), nil
+	return contentHashPrefix + hex.EncodeToString(sum[:]), nil
+}
+
+// contentHashPrefix labels the digest algorithm inside the ContentHash of a
+// VulnerabilityRecord and a WalkScanRun, as it does in every other record
+// domain and, inside these same records, on the database snapshot hash.
+const contentHashPrefix = "sha256:"
+
+// SealExcludes names the top-level JSON fields that are in a stored run but not
+// in the bytes its seal covers. There are none: hash zeroes only ContentHash,
+// which the shared verifier blanks for every domain.
+//
+// It is stated rather than left implicit so that a reader wires the run the same
+// way it wires the record, and so that a field excluded from the recipe later
+// has an obvious place to be declared instead of silently making every stored
+// run unverifiable.
+func (WalkScanRunHasher) SealExcludes() []string {
+	return nil
 }
 
 // Marshal returns the bytes a store persists for run, hash field included.
