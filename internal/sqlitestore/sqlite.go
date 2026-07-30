@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -127,6 +128,89 @@ func Open(dsn string, migrations []Migration) (DB, error) {
 // New returns a DB interface from an already open *sql.DB.
 func New(dbHandle DB) DB {
 	return dbHandle
+}
+
+// MigrationKey renders a migration's identity the way schema_migrations keys it.
+// It is the wire form every report and refusal names a migration by.
+func MigrationKey(module string, version int) string {
+	return fmt.Sprintf("%s@v%d", module, version)
+}
+
+// MigrationState is what schema_migrations says about a given set of known
+// migrations: how many are applied in total, and which applied ones are not in
+// the known set.
+type MigrationState struct {
+	// Applied is the total number of rows in schema_migrations, which is the
+	// store's schema version.
+	Applied int
+	// Unknown names the applied migrations absent from the known set, sorted. A
+	// non-empty Unknown means the store was written by a newer build: it is the
+	// only reliable signal of that, because schema_migrations is keyed on (module,
+	// version), so every migration the current binary knows still reads as applied
+	// and the open succeeds regardless.
+	Unknown []string
+}
+
+// ReadMigrationState reads schema_migrations from an open handle and compares it
+// against the migrations the caller knows.
+//
+// It lives here, beside migrate, because there is more than one place that opens
+// the store to write to it and they must not each carry their own copy of this
+// comparison — a second copy could drift into disagreeing with the command an
+// operator runs to diagnose the refusal.
+//
+// The handle must have been opened WITHOUT migrations, or the comparison would be
+// against a table the same call had just written to. It takes no context: it runs
+// while the store is being opened, before any request context exists, and reads
+// one bounded local table.
+func ReadMigrationState(handle DB, known []Migration) (MigrationState, error) {
+	rows, err := handle.DB().Query(
+		`SELECT module, version FROM schema_migrations ORDER BY module, version`)
+	if err != nil {
+		return MigrationState{}, fmt.Errorf("querying schema_migrations: %w", err)
+	}
+	defer func() { _ = rows.Close() }()
+
+	knownKeys := make(map[string]struct{}, len(known))
+	for _, m := range known {
+		knownKeys[MigrationKey(m.Module, m.Version)] = struct{}{}
+	}
+
+	applied := 0
+	var unknown []string
+	for rows.Next() {
+		var module string
+		var version int
+		if err := rows.Scan(&module, &version); err != nil {
+			return MigrationState{}, fmt.Errorf("scanning schema_migrations: %w", err)
+		}
+		applied++
+		key := MigrationKey(module, version)
+		if _, ok := knownKeys[key]; !ok {
+			unknown = append(unknown, key)
+		}
+	}
+	if err := rows.Err(); err != nil {
+		return MigrationState{}, fmt.Errorf("reading schema_migrations: %w", err)
+	}
+	sort.Strings(unknown)
+
+	return MigrationState{Applied: applied, Unknown: unknown}, nil
+}
+
+// Apply runs migrations against an already open handle.
+//
+// It exists so a caller can interpose between opening the store and writing to
+// it. Open(dsn, migrations) does both in one step, which leaves no point at which
+// the applied migrations can be read and judged before the first DDL is executed
+// — and that judgement is what stops a binary from operating on a store built by
+// a newer one. A caller that needs it opens with nil migrations, inspects, then
+// calls this.
+func Apply(handle DB, migrations []Migration) error {
+	if err := migrate(handle.DB(), migrations); err != nil {
+		return fmt.Errorf("migrating schema: %w", err)
+	}
+	return nil
 }
 
 func migrate(db *sql.DB, migrations []Migration) error {

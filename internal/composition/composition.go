@@ -6,11 +6,13 @@
 package composition
 
 import (
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
 	"github.com/eitanity/kanonarion/internal/adapters/clock"
@@ -192,6 +194,45 @@ func NewQueries(storeRoot string) (*Queries, func() error, error) {
 	return q, cleanup, nil
 }
 
+// ErrStoreSchemaNewer reports that the store carries schema migrations this build
+// does not know, so it was last written by a newer kanonarion and must not be
+// written to by this one.
+//
+// It is a sentinel rather than a bare message so a caller can route on it: the CLI
+// maps it onto its precondition-failure exit code, and an embedding consumer can
+// tell "upgrade the binary" apart from a corrupt or unreachable store.
+var ErrStoreSchemaNewer = errors.New("store schema is newer than this build supports")
+
+// openStoreForWriting opens the store and refuses it if this build does not know
+// every migration already applied.
+//
+// The order — open without migrations, judge, then apply — is what makes the
+// refusal possible at all. Open(dsn, migrations) migrates in the same step, which
+// leaves no point at which the applied set can be read before the first DDL runs;
+// and because schema_migrations is keyed on (module, version), a store from a
+// newer build reports all of this build's migrations as applied and opens
+// cleanly. The mismatch only shows up later, as a failed write per statement.
+func openStoreForWriting(dbPath string) (sqlitestore.DB, error) {
+	db, err := sqlitestore.Open(dbPath, nil)
+	if err != nil {
+		return nil, fmt.Errorf("opening database: %w", err)
+	}
+	state, err := sqlitestore.ReadMigrationState(db, Migrations())
+	if err != nil {
+		return nil, errors.Join(err, db.Close())
+	}
+	if len(state.Unknown) > 0 {
+		return nil, errors.Join(fmt.Errorf(
+			"%w: %s carries %d migration(s) this build does not know (%s); upgrade kanonarion",
+			ErrStoreSchemaNewer, dbPath, len(state.Unknown), strings.Join(state.Unknown, ", "),
+		), db.Close())
+	}
+	if err := sqlitestore.Apply(db, Migrations()); err != nil {
+		return nil, errors.Join(fmt.Errorf("opening database: %w", err), db.Close())
+	}
+	return db, nil
+}
+
 // Driver is the write/serving surface. It holds the individually
 // exported write use cases — the verified single-coordinate fetch/serve driver
 // that powers a gating module proxy, the local walk→extract driver, and the
@@ -229,9 +270,15 @@ func NewDriver(storeRoot string) (*Driver, func() error, error) {
 	}
 
 	dbPath := filepath.Join(storeRoot, "mirror.db")
-	db, err := sqlitestore.Open(dbPath, Migrations())
+	// The driver surface writes — it fetches, walks, extracts and ingests — so it
+	// takes the same refusal the CLI's operating path takes: a store carrying
+	// migrations this build does not know was written by a newer one, and every
+	// write against it fails per statement while the caller sees a successful open.
+	// NewQueries is deliberately not gated: it wires read stores only, and an
+	// operator diagnosing the refusal must still be able to read the store.
+	db, err := openStoreForWriting(dbPath)
 	if err != nil {
-		return nil, nil, fmt.Errorf("opening database: %w", err)
+		return nil, nil, err
 	}
 	cleanup := func() error {
 		if cerr := db.Close(); cerr != nil {

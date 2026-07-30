@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -184,9 +185,31 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	}
 
 	dbPath := filepath.Join(storeRoot, "mirror.db")
-	dbHandle, err := sqlitestore.Open(dbPath, allMigrations())
+	// Opened without migrations, then judged, then migrated. This is the operating
+	// path's only door into the store, so it is where an older binary meeting a
+	// newer store has to be stopped: schema_migrations is keyed on (module,
+	// version), so this binary's own migrations all appear applied and nothing
+	// errors — the store just holds tables and constraints shaped by a later build.
+	// The failure that follows is not an open failure but a write one, per
+	// statement, and every one of them was logged and stepped over: a full scan
+	// that persisted nothing and still printed a summary.
+	//
+	// `store info` deliberately does not come through here — it opens with nil
+	// migrations and never applies any — so the command that names the remedy stays
+	// available after this refuses.
+	dbHandle, err := sqlitestore.Open(dbPath, nil)
 	if err != nil {
 		return nil, nil, fmt.Errorf("opening database: %w", err)
+	}
+	state, err := readStoreSchemaState(dbHandle)
+	if err != nil {
+		return nil, nil, errors.Join(err, dbHandle.Close())
+	}
+	if state.isNewer() {
+		return nil, nil, errors.Join(newerStoreError(dbPath, state), dbHandle.Close())
+	}
+	if err := sqlitestore.Apply(dbHandle, allMigrations()); err != nil {
+		return nil, nil, errors.Join(fmt.Errorf("opening database: %w", err), dbHandle.Close())
 	}
 
 	cleanup := func() error {

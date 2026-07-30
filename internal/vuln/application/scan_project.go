@@ -21,7 +21,9 @@ import (
 //
 // It writes one moduleResult per coordinate into out and persists each record,
 // mirroring how the isolated worker pool persists via the module scanner, so the
-// shared tally/status/run-persist path downstream is unchanged.
+// shared tally/status/run-persist path downstream is unchanged. A record the
+// store would not accept is returned as an error, because the tally downstream
+// reads out as the run's set of stored verdicts.
 func (uc *ScanWalkUseCase) scanProjectRooted(
 	ctx context.Context,
 	walk walkdomain.WalkRecord,
@@ -30,21 +32,19 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 	snapshot *domain.DatabaseSnapshot,
 	vulnDBDir string,
 	out map[coordinate.ModuleCoordinate]moduleResult,
-) {
+) error {
 	root := walk.Target
 
 	result, err := uc.moduleScanner.scanner.ScanProject(ctx, params.ProjectDir, *snapshot, vulnDBDir)
 	if err != nil {
 		uc.logger.Error("project-rooted scan failed", "root", root, "error", err)
-		uc.fillProjectFault(ctx, root, allCoords, params, snapshot, out, domain.StatusScanFailed, "", "", err.Error())
-		return
+		return uc.fillProjectFault(ctx, root, allCoords, params, snapshot, out, domain.StatusScanFailed, "", "", err.Error())
 	}
 	if result.Status == domain.StatusUnscannable || result.Status == domain.StatusScanFailed {
 		// A genuine fault — no go.mod, OOM, a real build break — surfaces
 		// honestly across the build rather than as a false clean.
 		uc.logger.Warn("project-rooted scan could not analyse the project", "root", root, "status", result.Status)
-		uc.fillProjectFault(ctx, root, allCoords, params, snapshot, out, result.Status, result.UnscanReason, result.UnscannableReason, result.ErrorDetail)
-		return
+		return uc.fillProjectFault(ctx, root, allCoords, params, snapshot, out, result.Status, result.UnscanReason, result.UnscannableReason, result.ErrorDetail)
 	}
 
 	for _, coord := range allCoords {
@@ -68,7 +68,10 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 			// checked. Reporting it Clean would be the exact false negative this
 			// path is being fixed for, so it carries the fault instead.
 			uc.logger.Error("project-rooted scan: advisory match by coordinate failed", "coordinate", coord, "error", err)
-			rec := uc.persistProjectRecord(ctx, root, coord, nil, domain.StatusScanFailed, "", "", err.Error(), params, snapshot)
+			rec, perr := uc.persistProjectRecord(ctx, root, coord, nil, domain.StatusScanFailed, "", "", err.Error(), params, snapshot)
+			if perr != nil {
+				return perr
+			}
 			out[coord] = moduleResult{coord: coord, record: rec}
 			continue
 		}
@@ -78,9 +81,13 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 		status := domain.DetermineRecordOverallStatus(
 			domain.CoverageAnalysed, domain.DetermineFindingsAxis(findings),
 		)
-		rec := uc.persistProjectRecord(ctx, root, coord, findings, status, "", "", "", params, snapshot)
+		rec, perr := uc.persistProjectRecord(ctx, root, coord, findings, status, "", "", "", params, snapshot)
+		if perr != nil {
+			return perr
+		}
 		out[coord] = moduleResult{coord: coord, record: rec}
 	}
+	return nil
 }
 
 // mergeCoordinateFindings matches coord's advisory set from the pinned snapshot
@@ -193,6 +200,9 @@ func copyFindings(in []domain.VulnerabilityFinding) []domain.VulnerabilityFindin
 // fillProjectFault records the same honest fault status for every in-build
 // module when the whole project scan could not be produced, so the coverage gap
 // is visible per row rather than silently dropped.
+//
+// The gap is only visible if the rows are there, so a write the store refused is
+// returned as an error rather than skipped.
 func (uc *ScanWalkUseCase) fillProjectFault(
 	ctx context.Context,
 	root coordinate.ModuleCoordinate,
@@ -203,17 +213,27 @@ func (uc *ScanWalkUseCase) fillProjectFault(
 	status domain.VulnerabilityStatus,
 	unscanReason domain.UnscanReason,
 	unscannableReason, errorDetail string,
-) {
+) error {
 	for _, coord := range allCoords {
-		rec := uc.persistProjectRecord(ctx, root, coord, nil, status, unscanReason, unscannableReason, errorDetail, params, snapshot)
+		rec, err := uc.persistProjectRecord(ctx, root, coord, nil, status, unscanReason, unscannableReason, errorDetail, params, snapshot)
+		if err != nil {
+			return err
+		}
 		out[coord] = moduleResult{coord: coord, record: rec}
 	}
+	return nil
 }
 
 // persistProjectRecord builds, hashes and persists one live project-rooted
 // vulnerability record. Record identity (Ecosystem, timestamps, pipeline) is
 // stamped here exactly as the module scanner stamps an isolated record, so the
 // downstream tally, run persistence and queries treat both paths uniformly.
+//
+// A record that could not be sealed or written is returned with an error, the
+// same rule the isolated module scanner and persistSealed apply. This site used
+// to log the failure and hand the in-memory record back: the caller then wrote
+// it into the results map, the tally counted it towards analysed and clean, and
+// the summary described as measured a module whose verdict was never stored.
 func (uc *ScanWalkUseCase) persistProjectRecord(
 	ctx context.Context,
 	root coordinate.ModuleCoordinate,
@@ -224,7 +244,7 @@ func (uc *ScanWalkUseCase) persistProjectRecord(
 	unscannableReason, errorDetail string,
 	params ScanWalkParams,
 	snapshot *domain.DatabaseSnapshot,
-) domain.VulnerabilityRecord {
+) (domain.VulnerabilityRecord, error) {
 	// No ArtefactIdentity. A project-rooted verdict is derived from one
 	// govulncheck run over the TARGET's build, not from this dependency's own
 	// bytes: the stage never opened the dependency's artefact, so it cannot name
@@ -266,14 +286,13 @@ func (uc *ScanWalkUseCase) persistProjectRecord(
 	sealed, herr := domain.VulnerabilityRecordHasher{}.SetContentHash(rec)
 	if herr != nil {
 		// An unsealed record is one the store refuses, so there is nothing to
-		// persist: report the failure and return the unsealed verdict to the
-		// caller rather than following it with a write that cannot succeed.
-		uc.logger.Error("project-rooted scan: failed to compute content hash", "coordinate", coord, "error", herr)
-		return rec
+		// persist: raise the failure rather than following it with a write that
+		// cannot succeed.
+		return rec, fmt.Errorf("hashing target-rooted vulnerability record for %s: %w", coord, herr)
 	}
 	rec = sealed
 	if perr := uc.vulnStore.PutVulnerabilityRecord(ctx, rec); perr != nil {
-		uc.logger.Error("project-rooted scan: failed to persist record", "coordinate", coord, "error", perr)
+		return rec, fmt.Errorf("persisting target-rooted vulnerability record for %s: %w", coord, perr)
 	}
-	return rec
+	return rec, nil
 }

@@ -845,6 +845,15 @@ func ExitCodeFromError(err error) (int, bool) {
 // survive), then the walk-integrity sentinel, and otherwise falls back to
 // ExitConfig. Shared by every main package so the binary's exit semantics are
 // defined once here rather than duplicated per entry point.
+//
+// A store-schema refusal — this binary meeting a store a newer one wrote — lands
+// on ExitConfig, and does so by both routes: the CLI's own gate carries
+// ExitConfig explicitly on the chain, and composition.ErrStoreSchemaNewer from
+// the shared driver surface reaches the same code through the fallback. That is
+// the intended classification, not an accident of the default: the store is
+// intact and a current binary reads it fine, so it is a precondition failure and
+// must not be reported as ExitIntegrity, which says the recorded evidence is in
+// doubt.
 func ExitCodeForError(err error) int {
 	if err == nil {
 		return ExitOK

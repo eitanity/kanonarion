@@ -46,8 +46,11 @@ func TestTallyModuleResults_UnrecognisedStatusCountedNotDropped(t *testing.T) {
 			run := &domain.WalkScanRun{PerModuleResults: map[coordinate.ModuleCoordinate]string{}}
 			pc := 0
 
-			counts := uc.tallyModuleResults(context.Background(), []coordinate.ModuleCoordinate{coord},
+			counts, err := uc.tallyModuleResults(context.Background(), []coordinate.ModuleCoordinate{coord},
 				final, run, ScanWalkParams{}, &domain.DatabaseSnapshot{}, &pc, 1)
+			if err != nil {
+				t.Fatalf("tallyModuleResults: %v", err)
+			}
 
 			if total := counts.analysed + counts.unscannable + counts.failed; total != 1 {
 				t.Fatalf("coverage buckets do not partition the module total: analysed=%d unscannable=%d failed=%d (want sum 1)",
@@ -84,8 +87,11 @@ func TestTallyModuleResults_ACoordinateMatchIsNotCountedAsAnalysed(t *testing.T)
 	run := &domain.WalkScanRun{PerModuleResults: map[coordinate.ModuleCoordinate]string{}}
 	pc := 0
 
-	counts := uc.tallyModuleResults(context.Background(), []coordinate.ModuleCoordinate{coord},
+	counts, err := uc.tallyModuleResults(context.Background(), []coordinate.ModuleCoordinate{coord},
 		final, run, ScanWalkParams{}, &domain.DatabaseSnapshot{}, &pc, 1)
+	if err != nil {
+		t.Fatalf("tallyModuleResults: %v", err)
+	}
 
 	if counts.affected != 1 {
 		t.Errorf("affected=%d, want 1: the advisory is reported", counts.affected)

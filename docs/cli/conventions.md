@@ -103,5 +103,24 @@ All state lives under `--store-root` (default `~/.kanonarion`):
 | 1 | Walk partial |
 | 2 | Walk failed |
 | 3 | Walk cancelled |
+| 4 | Record requested by ID does not exist |
 | 10 | Record integrity check failed |
-| 20 | Configuration or lookup error (bad ID, invalid coordinate, etc.) |
+| 20 | Configuration or lookup error (bad ID, invalid coordinate, store schema newer than the binary, etc.) |
+
+### Store schema newer than the binary
+
+Every command that writes to the store refuses to run when `mirror.db` carries
+schema migrations the binary does not know — that is, when the store was last
+written by a newer build of kanonarion. Exit code is **20**: the store is intact
+and a current binary reads it fine, so this is a precondition failure, not a
+record-integrity failure (10).
+
+The refusal names the unrecognised migrations and the remedy, which is to upgrade
+kanonarion. `kanonarion store info` is exempt: it opens the store without
+applying migrations and never writes, so the command that diagnoses the refusal
+stays available. This mirrors how a divergence is handled — a store-inspection
+command reports and exits 0 while a consuming command fails closed.
+
+Running an older binary against a newer store without this gate is not a
+harmless no-op: writes fail per statement against tables shaped by a later
+build, so a scan can complete, print a summary and have persisted nothing.

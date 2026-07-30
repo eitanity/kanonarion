@@ -15,7 +15,10 @@ import (
 // a single scan rooted at the walk target, the way scanProjectRooted does for a
 // walk rooted at a local project. It reports whether it produced verdicts; false
 // leaves finalResults untouched so the caller falls back to isolated per-module
-// scanning.
+// scanning. A store that refused one of the records it derived is returned as an
+// error instead of a fallback: a write failure is not an analysis failure the
+// isolated path could answer better, so retrying per module would only repeat it
+// while the run went on claiming verdicts it had not kept.
 //
 // The defect it exists to remove is on the package axis. Scanning a dependency
 // in isolation points `govulncheck ./...` at that dependency, and `./...`
@@ -48,7 +51,7 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 	vulnDBDir, goModCache string,
 	buildList map[coordinate.ModuleCoordinate]struct{},
 	out map[coordinate.ModuleCoordinate]moduleResult,
-) bool {
+) (bool, error) {
 	target := walk.Target
 	root := target
 
@@ -56,7 +59,7 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 	if err != nil {
 		uc.logger.Warn("target-rooted scan: could not read the target's fetch record, falling back to isolated scans",
 			"target", target, "error", err)
-		return false
+		return false, nil
 	}
 	if !ok || fact.IsGoModOnly() {
 		// A shallow walk holds no zip for the target, so there is nothing to root
@@ -64,20 +67,20 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 		// way the isolated path is the honest answer here.
 		uc.logger.Info("target-rooted scan: target module has no source in the blob store, falling back to isolated scans",
 			"target", target)
-		return false
+		return false, nil
 	}
 
 	zipIdentity, hasZip, err := fetchports.ZipIdentity(fact)
 	if err != nil || !hasZip {
 		uc.logger.Info("target-rooted scan: the target's fact record names no module zip, falling back to isolated scans",
 			"target", target)
-		return false
+		return false, nil
 	}
 	blob, err := uc.moduleScanner.blobs.Get(ctx, zipIdentity)
 	if err != nil {
 		uc.logger.Warn("target-rooted scan: could not retrieve the target's module content, falling back to isolated scans",
 			"target", target, "error", err)
-		return false
+		return false, nil
 	}
 	defer func() { _ = blob.Close() }()
 
@@ -91,12 +94,12 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 	})
 	if err != nil {
 		uc.logger.Warn("target-rooted scan failed, falling back to isolated scans", "target", target, "error", err)
-		return false
+		return false, nil
 	}
 	if result.Status == domain.StatusUnscannable || result.Status == domain.StatusScanFailed {
 		uc.logger.Warn("target-rooted scan could not analyse the target, falling back to isolated scans",
 			"target", target, "status", result.Status, "reason", result.UnscannableReason, "error_detail", result.ErrorDetail)
-		return false
+		return false, nil
 	}
 
 	for _, coord := range allCoords {
@@ -120,7 +123,10 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 			// checked. Recording it Clean would be a false negative, so it carries
 			// the fault instead.
 			uc.logger.Error("target-rooted scan: advisory match by coordinate failed", "coordinate", coord, "error", err)
-			rec := uc.persistProjectRecord(ctx, root, coord, nil, domain.StatusScanFailed, "", "", err.Error(), params, snapshot)
+			rec, perr := uc.persistProjectRecord(ctx, root, coord, nil, domain.StatusScanFailed, "", "", err.Error(), params, snapshot)
+			if perr != nil {
+				return false, perr
+			}
 			out[coord] = moduleResult{coord: coord, record: rec}
 			continue
 		}
@@ -130,9 +136,12 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 		status := domain.DetermineRecordOverallStatus(
 			domain.CoverageAnalysed, domain.DetermineFindingsAxis(findings),
 		)
-		rec := uc.persistProjectRecord(ctx, root, coord, findings, status, "", "", "", params, snapshot)
+		rec, perr := uc.persistProjectRecord(ctx, root, coord, findings, status, "", "", "", params, snapshot)
+		if perr != nil {
+			return false, perr
+		}
 		out[coord] = moduleResult{coord: coord, record: rec}
 	}
 	uc.logger.Info("target-rooted scan derived verdicts for the walk", "target", target, "modules", len(allCoords))
-	return true
+	return true, nil
 }

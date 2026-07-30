@@ -175,6 +175,13 @@ type fakeVulnStore struct {
 	// that produces a progress line and leaves no record behind. The zero
 	// coordinate never matches a real one, so the seam is off by default.
 	dropRecordFor coordinate.ModuleCoordinate
+	// errOnPutRecordFor is the fault seam for a REPORTED write failure confined to
+	// one coordinate — the shape a real store takes when its conflict clause no
+	// longer matches the table, which refuses each write with an error rather than
+	// accepting it. Scoping it to one coordinate is what lets a test reach a write
+	// leg that only runs after other records have already been stored. Off by
+	// default: the zero coordinate never matches a real one.
+	errOnPutRecordFor coordinate.ModuleCoordinate
 }
 
 func newFakeVulnStore() *fakeVulnStore {
@@ -202,6 +209,9 @@ func (f *fakeVulnStore) PutVulnerabilityRecord(_ context.Context, record domain.
 	defer f.mu.Unlock()
 	if f.errOnPutRecord != nil {
 		return f.errOnPutRecord
+	}
+	if record.Coordinate == f.errOnPutRecordFor {
+		return errStore
 	}
 	if record.Coordinate == f.dropRecordFor {
 		return nil
@@ -328,6 +338,15 @@ func (f *fakeVulnStore) PutWalkScanRun(_ context.Context, run domain.WalkScanRun
 	}
 	f.runs[run.ID] = run
 	return nil
+}
+
+// walkScanRunCount reports how many scan runs the store holds. A test asserting
+// that a refused scan claimed nothing needs the absence of a run, which no
+// read-by-ID can express.
+func (f *fakeVulnStore) walkScanRunCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.runs)
 }
 
 func (f *fakeVulnStore) GetWalkScanRun(_ context.Context, id string) (domain.WalkScanRun, bool, error) {

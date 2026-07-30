@@ -33,16 +33,13 @@ type projectScanFixture struct {
 
 func newProjectScanFixture(t *testing.T, scanner *fakeScanner) projectScanFixture {
 	t.Helper()
-	ctx := t.Context()
-	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	walkID := "walk-project"
 
 	root := coordinatetest.MustNew("github.com/example/proj", coordinate.LocalVersion)
 	depA := coordinatetest.MustNew("gopkg.in/yaml.v3", "v3.0.1")
 	depB := coordinatetest.MustNew("github.com/spf13/cobra", "v1.8.1")
 
-	walk := walkdomain.WalkRecord{
-		ID:     walkID,
+	f := newProjectScanFixtureFor(t, scanner, walkdomain.WalkRecord{
+		ID:     "walk-project",
 		Target: root,
 		Graph: walkdomain.Graph{
 			Target: root,
@@ -52,7 +49,31 @@ func newProjectScanFixture(t *testing.T, scanner *fakeScanner) projectScanFixtur
 				{Coordinate: depB, DirectDependency: true, ResolutionSource: walkdomain.ResolutionMVS},
 			},
 		},
-	}
+	}, root, depA, depB)
+	f.depA, f.depB = depA, depB
+	return f
+}
+
+// newProjectScanFixtureFor wires the same use case around a caller-supplied
+// walk, so a test that needs a different graph shape — a local-replace node, say
+// — gets the standard wiring rather than a second hand-assembled copy of it.
+// fetchedCoords are the nodes given a fact record and a blob; a node left out has
+// neither, which is how the walker leaves a node it never fetched.
+//
+// depA and depB are left zero: they are the two-dependency shape's own names, and
+// filling them in from an arbitrary graph would invent coordinates the caller did
+// not put in it.
+func newProjectScanFixtureFor(
+	t *testing.T,
+	scanner *fakeScanner,
+	walk walkdomain.WalkRecord,
+	fetchedCoords ...coordinate.ModuleCoordinate,
+) projectScanFixture {
+	t.Helper()
+	ctx := t.Context()
+	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	walkID := walk.ID
+	root := walk.Target
 
 	walkStore := newFakeWalkStore()
 	if err := walkStore.PutWalk(ctx, walk); err != nil {
@@ -67,7 +88,7 @@ func newProjectScanFixture(t *testing.T, scanner *fakeScanner) projectScanFixtur
 
 	// Every in-build node needs a fetch record so the root source (and, on the
 	// isolated path, each dependency) can be located.
-	for _, c := range []coordinate.ModuleCoordinate{root, depA, depB} {
+	for _, c := range fetchedCoords {
 		seedRec := fetchtest.Record(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path()))
 		if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip-"+c.Path())); err != nil {
 			t.Fatalf("Put blob: %v", err)
@@ -86,7 +107,7 @@ func newProjectScanFixture(t *testing.T, scanner *fakeScanner) projectScanFixtur
 
 	return projectScanFixture{
 		walkUC: walkUC, scanner: scanner, vulnStore: vulnStore, db: db,
-		root: root, depA: depA, depB: depB, walkID: walkID,
+		root: root, walkID: walkID,
 	}
 }
 
