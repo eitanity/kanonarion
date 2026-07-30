@@ -633,3 +633,110 @@ func TestAnalysisSource_StringNamesTheZeroValue(t *testing.T) {
 		t.Errorf("zip renders %q", got)
 	}
 }
+
+// TestCompose_LegacyRecordDoesNotConflictWithTheSourceItPredates is the
+// regression: two records describing an IDENTICAL graph, differing only in that
+// one predates the analysis-source field, must load.
+//
+// Measured on a working store — github.com/golang-jwt/jwt/v4@v4.5.1 at pipeline
+// 0.3.0 held exactly this pair. A full diff of both records' contents showed the
+// same 822 nodes, the same 1579 edges and the same BUILT_WITH_BODIES
+// completeness; the only substantive difference was the absent field. The
+// comparison hashed that field, so the two disagreed on the graph digest and the
+// read refused the graph, which made every reachability query against the
+// coordinate fail.
+func TestCompose_LegacyRecordDoesNotConflictWithTheSourceItPredates(t *testing.T) {
+	t.Parallel()
+	legacy := composeRecord(t, composeSpec{
+		artefact:     "zip:h1:a",
+		completeness: domain.CompletenessBuiltWithBodies, symbol: "Same",
+		extractedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	})
+	named := composeRecord(t, composeSpec{
+		source: domain.AnalysisSourceModuleZip, artefact: "zip:h1:a",
+		completeness: domain.CompletenessBuiltWithBodies, symbol: "Same",
+		extractedAt: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+	})
+	if legacy.ContentHash == named.ContentHash {
+		t.Fatal("the two records seal to one hash, so this test would pass without exercising the comparison")
+	}
+
+	got, err := domain.Compose([]domain.CallGraphRecord{legacy, named}, domain.ComposeRequest{})
+	if err != nil {
+		t.Fatalf("Compose refused two records describing the same graph: %v", err)
+	}
+	// Recency is the last tiebreaker and both sit on the same rung, so the record
+	// that names its source is the one served.
+	if got.ContentHash != named.ContentHash {
+		t.Errorf("served %q, want the later record %q", got.ContentHash, named.ContentHash)
+	}
+}
+
+// TestCompose_LegacyRecordStillConflictsOnAMeasuredDisagreement is the other
+// direction, and it is the one that keeps the narrowing honest.
+//
+// Resolving an absent analysis source must not make two records agree about
+// anything they actually measured. Same coordinate, same completeness, same
+// artefact — different graphs. That is non-determinism in the analyser, it was a
+// conflict before, and it must fail closed still.
+func TestCompose_LegacyRecordStillConflictsOnAMeasuredDisagreement(t *testing.T) {
+	t.Parallel()
+	legacy := composeRecord(t, composeSpec{
+		artefact:     "zip:h1:a",
+		completeness: domain.CompletenessBuiltWithBodies, symbol: "Foo",
+		extractedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	})
+	named := composeRecord(t, composeSpec{
+		source: domain.AnalysisSourceModuleZip, artefact: "zip:h1:a",
+		completeness: domain.CompletenessBuiltWithBodies, symbol: "Bar",
+		extractedAt: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+	})
+
+	_, err := domain.Compose([]domain.CallGraphRecord{legacy, named}, domain.ComposeRequest{})
+	var conflict domain.CallGraphConflict
+	if !errors.As(err, &conflict) {
+		t.Fatalf("two records disagreeing about the graph composed to an answer: err=%v", err)
+	}
+	if conflict.Field != "call_graph" {
+		t.Errorf("conflict field %q, want call_graph", conflict.Field)
+	}
+}
+
+// TestGraphDigest_ResolvesAnAbsentSourceToTheOneItPredates pins that absence is
+// resolved to a source this domain already defines, chosen from the coordinate,
+// rather than collapsed to a single value or represented by an invented one.
+//
+// A pinned version was fetched, so a graph built for it before the field existed
+// was built from a module zip. The synthetic local version is never fetched, so a
+// graph built for it was built from a working tree. Mapping both to one value
+// would make a legacy local record compare equal to a zip record of the same
+// graph, which are answers about different bytes.
+func TestGraphDigest_ResolvesAnAbsentSourceToTheOneItPredates(t *testing.T) {
+	t.Parallel()
+	pinnedLegacy := composeRecord(t, composeSpec{artefact: "zip:h1:a", completeness: domain.CompletenessBuiltWithBodies})
+	pinnedZip := composeRecord(t, composeSpec{
+		source: domain.AnalysisSourceModuleZip, artefact: "zip:h1:a",
+		completeness: domain.CompletenessBuiltWithBodies,
+	})
+	if domain.GraphDigest(pinnedLegacy) != domain.GraphDigest(pinnedZip) {
+		t.Error("a legacy record at a pinned version did not ladder with the module-zip record it predates")
+	}
+
+	localLegacy := composeRecord(t, composeSpec{
+		version: coordinate.LocalVersion, worktree: "sha256:tree",
+		completeness: domain.CompletenessBuiltWithBodies,
+	})
+	localTree := composeRecord(t, composeSpec{
+		version: coordinate.LocalVersion, source: domain.AnalysisSourceWorktree, worktree: "sha256:tree",
+		completeness: domain.CompletenessBuiltWithBodies,
+	})
+	if domain.GraphDigest(localLegacy) != domain.GraphDigest(localTree) {
+		t.Error("a legacy record at the local version did not ladder with the worktree record it predates")
+	}
+
+	localZip := localTree
+	localZip.AnalysisSource = domain.AnalysisSourceModuleZip
+	if domain.GraphDigest(localLegacy) == domain.GraphDigest(localZip) {
+		t.Error("an absent source was collapsed to one value rather than resolved from the coordinate")
+	}
+}

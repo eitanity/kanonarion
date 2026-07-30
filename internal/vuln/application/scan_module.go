@@ -175,7 +175,36 @@ import (
 // re-classify: AdvisoryNamesNoSymbols is a new field carrying omitzero, so it is
 // absent from the encoding exactly when it is false, and an untouched v16 record's
 // hash recomputes identically under this generation.
-const PipelineVersion = "v17"
+//
+// It was bumped to "v18" when a reachability analysis that was requested and
+// failed stopped being recorded as though it had never been requested.
+//
+// The failure was logged at WARN and the finding kept a nil Reachable, which is
+// also what a scan run without --reachability leaves behind. The two are
+// indistinguishable in the record, so the read side attributed the absence to a
+// missing flag and advised re-running with a flag that had been passed, while the
+// scan exited 0 and reported its finding set as though reachability had not been
+// needed. The failure now travels with the finding as a ReachabilityNote naming
+// the reason, and the read side names that cause instead of assuming one.
+//
+// The bump is what makes the fix reachable rather than a shape formality. A "v17"
+// record on that path carries a nil Reachable and no note, and nothing in it
+// records that the question was ever asked — so no migration can tell it apart
+// from a record where it genuinely was not. Read-side queries pin to this
+// constant, so under the bump those records stop being served and a re-scan
+// either computes the reachability the same run can now load, or records why it
+// could not; the v17 rows remain readable in the ledger as what the earlier
+// generation concluded. Without the bump the silent degradation would survive the
+// fix from cache. Measured on a working store: a 128-module walk scanned with
+// --reachability reported Affected (14) with reachability unavailable and
+// unstated for the findings a security review had called auth-critical.
+//
+// No shape change and no migration is owed with it. ReachabilityNote is an
+// existing hashed field already populated on the callgraph-spawn-failure path,
+// carrying omitzero, so it is absent from the encoding exactly when it is empty
+// and an untouched v17 record's hash recomputes identically under this
+// generation.
+const PipelineVersion = "v18"
 
 // ScanModuleUseCase orchestrates a single module's vulnerability scan.
 type ScanModuleUseCase struct {
@@ -1050,6 +1079,14 @@ func (uc *ScanModuleUseCase) applyReachability(ctx context.Context, params ScanM
 		}
 		result, rerr := uc.reachability.Analyse(ctx, params.Coordinate, syms, uc.callGraphLoader)
 		if rerr != nil {
+			// The failure is recorded on the finding, not only logged. A WARN is not a
+			// record: the scan exits 0 and the finding it belongs to is served for as
+			// long as the record lives, so a leg that was requested and could not be
+			// measured has to travel with the finding or the read side is left to
+			// guess. Reachable stays nil — nothing was determined — and the note is
+			// what tells "requested and failed" apart from "never requested", which
+			// are otherwise the same absence.
+			findings[i].ReachabilityNote = buildReachabilityFailureNote(rerr)
 			uc.logger.Warn("reachability analysis failed", "coordinate", params.Coordinate, "finding", finding.ID, "error", rerr)
 			continue
 		}
@@ -1125,6 +1162,14 @@ func buildCallGraphSpawnNote(execErr error, stderr []byte) string {
 		return fmt.Sprintf("callgraph subprocess failed (%v): %s", execErr, stderrStr)
 	}
 	return fmt.Sprintf("callgraph subprocess failed: %v", execErr)
+}
+
+// buildReachabilityFailureNote formats the ReachabilityNote for an analysis that
+// was requested and could not be computed, carrying the reason with it. The
+// reason is the whole point: "the call graph could not be loaded" and "the
+// analyser errored" send an operator to different places.
+func buildReachabilityFailureNote(err error) string {
+	return "reachability analysis failed: " + err.Error()
 }
 
 // buildSymbolRefs converts short symbol strings from govulncheck (e.g.

@@ -405,6 +405,15 @@ func GraphDigest(r CallGraphRecord) string {
 	// different content hashes, and this comparison only ever runs between records
 	// whose artefact identity already matches.
 	r.SourceContentHash = ""
+	// A record that predates the source field did not analyse a different kind of
+	// source; it analysed the only kind that existed when it was written and had
+	// nowhere to say so. Comparing the absent value as if it contradicted the named
+	// one made two records with identical nodes, edges and completeness disagree on
+	// nothing but the field one of them predates, and the read then refused the
+	// graph outright. Measured: github.com/golang-jwt/jwt/v4@v4.5.1 at pipeline
+	// 0.3.0 held two records whose full contents differed only in this field, and
+	// every reachability query against them failed.
+	r.AnalysisSource = analysedFrom(r)
 	data, err := marshalCanonical(r)
 	if err != nil {
 		// marshalCanonical fails only on a value json.Marshal cannot encode, which

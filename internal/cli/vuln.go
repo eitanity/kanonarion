@@ -116,6 +116,13 @@ func printVulnRecord(stdout io.Writer, rec vuldomain.VulnerabilityRecord) {
 // for the genuine negative, which differs in how much of the instrument it names.
 func reachabilityLabel(f vuldomain.VulnerabilityFinding, notReachable string) string {
 	if f.Reachable == nil {
+		// A reachability question that was asked and could not be answered is not
+		// the same as one nobody asked, and the blank label rendered them alike. The
+		// note printed under the finding carries the reason; this is what stops the
+		// entry reading as a finding reachability was simply not run for.
+		if f.ReachabilityAttemptFailed() {
+			return " [reachability requested but not computed]"
+		}
 		return ""
 	}
 	if f.Reachable.IsReachable {

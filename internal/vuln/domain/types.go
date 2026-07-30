@@ -507,11 +507,26 @@ type VulnerabilityFinding struct {
 	// False means either that the entry names symbols or that no advisory entry
 	// was read to ask — an enrichment that never ran states nothing here, on the
 	// same terms as WithdrawnAt.
-	AdvisoryNamesNoSymbols bool      `json:"advisory_names_no_symbols,omitzero"`
-	ReachabilityNote       string    `json:"reachability_note,omitzero"`
-	References             []string  `json:"references,omitzero"`
-	PublishedAt            time.Time `json:"published_at"`
-	ModifiedAt             time.Time `json:"modified_at"`
+	AdvisoryNamesNoSymbols bool `json:"advisory_names_no_symbols,omitzero"`
+	// ReachabilityNote states why a reachability analysis that was asked for
+	// produced no answer — the call graph could not be loaded, the extraction
+	// subprocess failed, the analyser errored.
+	//
+	// Together with a nil Reachable it is what tells "requested and failed" apart
+	// from "never requested". Those are the same absence in the record and they
+	// are not the same fact: the first is a question the run could not answer and
+	// must degrade the run's claim, the second is a question nobody asked. Before
+	// it was written on the analysis-failure path, a failed analysis logged a WARN
+	// and left the finding indistinguishable from an unrequested one, so a scan
+	// that could not compute reachability for its auth-critical findings reported
+	// as though it had not needed to.
+	//
+	// Empty means either that reachability was not requested, or that it was
+	// requested and answered — Reachable says which.
+	ReachabilityNote string    `json:"reachability_note,omitzero"`
+	References       []string  `json:"references,omitzero"`
+	PublishedAt      time.Time `json:"published_at"`
+	ModifiedAt       time.Time `json:"modified_at"`
 	// WithdrawnAt is the OSV top-level "withdrawn" timestamp: the moment the
 	// advisory was retracted upstream. Zero means the advisory is live, or that the
 	// lookup never read an advisory to ask — an enrichment fetch that failed leaves
@@ -523,6 +538,18 @@ type VulnerabilityFinding struct {
 	// Affected verdict or vanished into Clean, and the two were indistinguishable
 	// from a real finding and a real all-clear respectively.
 	WithdrawnAt time.Time `json:"withdrawn_at,omitzero"`
+}
+
+// ReachabilityAttemptFailed reports whether reachability was requested for this
+// finding and could not be computed.
+//
+// It exists so a reader names the cause of a nil Reachable rather than assuming
+// one. That absence has at least three causes — not requested, requested and
+// failed, and the advisory naming no symbols to search for — and only the record
+// can say which. AdvisoryNamesNoSymbols is the precedent: it was added for
+// exactly this reason, so the absent route is explained instead of guessed at.
+func (f VulnerabilityFinding) ReachabilityAttemptFailed() bool {
+	return f.Reachable == nil && f.ReachabilityNote != ""
 }
 
 // IsWithdrawn reports whether this advisory has been retracted upstream.

@@ -315,6 +315,17 @@ func vulnReachabilityVerdict(coord coordinate.ModuleCoordinate, rec vuldomain.Vu
 		}, nil
 	}
 
+	// A nil Reachable is asked WHY before it is explained. It has more than one
+	// cause, and the record is the only thing that can say which: attributing it to
+	// a missing flag when the flag was passed and the analysis failed sends the
+	// operator to re-run a command that already ran, and buries the failure the
+	// message exists to surface.
+	if f.ReachabilityAttemptFailed() {
+		return vulnReachabilityQuery{}, fmt.Errorf(
+			"reachability was requested for %s in %s and could not be computed: %s\nThe scan recorded the attempt. Re-run the same scan once that cause is resolved — a per-module re-run would root the analysis at %s rather than at the project, and would not reproduce the route this scan was asked for",
+			f.ID, coord, f.ReachabilityNote, coord.Path())
+	}
+
 	if f.Reachable == nil {
 		return vulnReachabilityQuery{}, fmt.Errorf(
 			"reachability was not computed for %s in %s (the module was scanned without --reachability). Run:\n  kanonarion callgraph %s\n  kanonarion vuln-scan %s --reachability",

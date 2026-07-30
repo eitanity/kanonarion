@@ -23,6 +23,12 @@ const (
 	// the others and is never fidelity-comparable with them — a record that does
 	// not say what it read cannot be shown to have read the same thing as one that
 	// does.
+	//
+	// That holds for grouping and for reporting. It does NOT extend to comparing
+	// what two records say about the graph: an absent value there is not a third
+	// answer, it is the absence of a field, and hashing it as an answer made two
+	// records with an identical graph contradict each other. analysedFrom resolves
+	// it for that one purpose.
 	AnalysisSourceUnrecorded AnalysisSource = ""
 	// AnalysisSourceModuleZip is a graph built from a fetched module zip. The
 	// bytes are pinned, the artefact identity names them, and re-analysing the
@@ -53,6 +59,30 @@ func AnalysisSources() []AnalysisSource {
 		AnalysisSourceWorktree,
 		AnalysisSourceUnrecorded,
 	}
+}
+
+// analysedFrom names the source a record was built from, resolving a record that
+// predates the field to the one source that was in use when it was written.
+//
+// It exists for the comparison site and nowhere else. An unrecorded source is not
+// a third kind of source and must not be reported as one, so nothing here invents
+// a value: it resolves to a source this type already defines, on the same evidence
+// isWorktreeSequence already reads. A pinned version was fetched, so a graph built
+// for it before the field existed was built from a module zip; the synthetic local
+// version is never fetched, so a graph built for it was built from a working tree.
+//
+// Grouping and reporting deliberately keep using the raw field. A record that did
+// not say what it read is still not evidence that it read the same bytes as one
+// that did — that judgement belongs to identifiedOrAll and defaultSourceGroup, and
+// resolving the value for them would assert provenance no record states.
+func analysedFrom(r CallGraphRecord) AnalysisSource {
+	if r.AnalysisSource != AnalysisSourceUnrecorded {
+		return r.AnalysisSource
+	}
+	if r.Coordinate.IsLocal() {
+		return AnalysisSourceWorktree
+	}
+	return AnalysisSourceModuleZip
 }
 
 // RecordAnalysisSource projects a record onto the source it was analysed from,
