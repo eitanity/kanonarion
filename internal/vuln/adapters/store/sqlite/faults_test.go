@@ -11,6 +11,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 )
 
 // The store's error arms cannot be reached by choosing inputs — the database has
@@ -223,7 +224,7 @@ INSERT INTO vulnerability_records (
 ) VALUES (?, ?, ?, ?, ?, 'w', 'Clean', 'Analysed', 'Clean', 0,
           '2020-01-01T00:00:00Z', ?, ?, ?)`,
 			rec.Coordinate.Path(), rec.Coordinate.Version(), rec.PipelineVersion,
-			rec.DatabaseSnapshot.Source, rec.DatabaseSnapshot.Version, anchor,
+			rec.DatabaseSnapshot.Source(), rec.DatabaseSnapshot.Version(), anchor,
 			legacy.ContentHash, blob); err != nil {
 			t.Fatalf("seeding legacy row: %v", err)
 		}
@@ -272,16 +273,17 @@ func TestGetDatabaseSnapshot_RefusesADifferentSnapshotThanAsked(t *testing.T) {
 	ctx := t.Context()
 	store := newTestStore(t)
 
-	s := snap("govulndb", "v2024-01-01")
-	s.ContentHash = ""
+	s := vulntest.MustNew("govulndb", "v2024-01-01")
 	if err := store.PutDatabaseSnapshot(ctx, s, strings.NewReader("the advisories the store holds")); err != nil {
 		t.Fatalf("PutDatabaseSnapshot: %v", err)
 	}
 
-	asked := s
-	asked.ContentHash = domain.HashSnapshotContent([]byte("the advisories the caller expected"))
+	asked, err := s.WithContentHash(domain.HashSnapshotContent([]byte("the advisories the caller expected")))
+	if err != nil {
+		t.Fatalf("WithContentHash: %v", err)
+	}
 
-	_, err := store.GetDatabaseSnapshot(ctx, asked)
+	_, err = store.GetDatabaseSnapshot(ctx, asked)
 	assertSnapshotIntegrity(t, err, "GetDatabaseSnapshot(other snapshot)")
 }
 
@@ -320,8 +322,7 @@ func TestPutDatabaseSnapshot_ReportsReadAndWriteFailures(t *testing.T) {
 		abortOn(t, store, "INSERT", "vulnerability_snapshots")
 		// No declared hash: the store seals from the bytes, so the write reaches
 		// the insert rather than being refused for a mismatch first.
-		s := snap("govulndb", "v1")
-		s.ContentHash = ""
+		s := vulntest.MustNew("govulndb", "v1")
 		err := store.PutDatabaseSnapshot(ctx, s, strings.NewReader("body"))
 		if err == nil || !strings.Contains(err.Error(), "inserting database snapshot") {
 			t.Fatalf("PutDatabaseSnapshot() error = %v, want the insert failure reported", err)

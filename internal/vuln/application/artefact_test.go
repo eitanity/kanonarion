@@ -12,6 +12,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 )
 
 // TestScanModule_RecordsTheArtefactItScanned is the ticket's observable for the
@@ -27,7 +28,7 @@ func TestScanModule_RecordsTheArtefactItScanned(t *testing.T) {
 	vulnStore := newFakeVulnStore()
 	scanner := &fakeScanner{}
 	db := &fakeDatabase{
-		snapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1", RetrievedAt: now},
+		snapshot: vulntest.MustNewAt("test", "v1", now),
 		content:  "vulndb content",
 	}
 
@@ -98,7 +99,7 @@ func TestScanModule_GoModOnlyStillNamesItsArtefact(t *testing.T) {
 	uc := application.NewScanModuleUseCase(
 		facts, newFakeBlob(), newFakeVulnStore(), nil, &fakeScanner{},
 		&fakeDatabase{
-			snapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1", RetrievedAt: now},
+			snapshot: vulntest.MustNewAt("test", "v1", now),
 			content:  "vulndb content",
 		},
 		nil, fixedClock{t: now}, "v1", "v1", slog.Default(),
@@ -137,7 +138,7 @@ func TestScanModule_MetadataOnlyRecordsNoArtefact(t *testing.T) {
 	uc := application.NewScanModuleUseCase(
 		newFakeFacts(), newFakeBlob(), newFakeVulnStore(), nil, &fakeScanner{},
 		&fakeDatabase{
-			snapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1", RetrievedAt: now},
+			snapshot: vulntest.MustNewAt("test", "v1", now),
 			content:  "vulndb content",
 		},
 		nil, fixedClock{t: now}, "v1", "v1", slog.Default(),

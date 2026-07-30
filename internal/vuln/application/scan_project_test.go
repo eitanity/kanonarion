@@ -13,6 +13,7 @@ import (
 
 	application "github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
@@ -61,7 +62,7 @@ func newProjectScanFixture(t *testing.T, scanner *fakeScanner) projectScanFixtur
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
 	vulnStore := newFakeVulnStore()
-	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1"}}
+	db := &fakeDatabase{snapshot: vulntest.MustNew("test", "v1")}
 	clock := fixedClock{t: now}
 
 	// Every in-build node needs a fetch record so the root source (and, on the
@@ -246,7 +247,7 @@ func newStdlibProjectFixture(t *testing.T, scanner *fakeScanner) stdlibProjectFi
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
 	vulnStore := newFakeVulnStore()
-	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1"}}
+	db := &fakeDatabase{snapshot: vulntest.MustNew("test", "v1")}
 	clock := fixedClock{t: now}
 
 	// Root and dep need a fetch record; stdlib is never fetched.

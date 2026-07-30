@@ -210,7 +210,7 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 	_, _ = fmt.Fprintf(stdout, "Operator:    %s\n", run.Operator)
 	_, _ = fmt.Fprintf(stdout, "Started:     %s\n", run.StartedAt.UTC().Format(time.RFC3339))
 	_, _ = fmt.Fprintf(stdout, "Completed:   %s\n", run.CompletedAt.UTC().Format(time.RFC3339))
-	_, _ = fmt.Fprintf(stdout, "Snapshot:    %s@%s\n", run.Snapshot.Source, run.Snapshot.Version)
+	_, _ = fmt.Fprintf(stdout, "Snapshot:    %s@%s\n", run.Snapshot.Source(), run.Snapshot.Version())
 	_, _ = fmt.Fprintf(stdout, "Modules:     %d\n", len(run.PerModuleResults))
 	// One line per reason rather than one for the out-of-toolchain set alone, so
 	// a Partial run is explained whichever reason produced it and no Unscannable
@@ -444,7 +444,7 @@ func runScanHistory(ctx context.Context, walkID string, jsonOut bool, uc QuerySc
 
 	_, _ = fmt.Fprintf(stdout, "%-26s  %-12s  %-30s  %s\n", "RUN ID", "STATUS", "SNAPSHOT", "COMPLETED")
 	for _, r := range runs {
-		snap := r.Snapshot.Source + "@" + r.Snapshot.Version
+		snap := r.Snapshot.Source() + "@" + r.Snapshot.Version()
 		_, _ = fmt.Fprintf(stdout, "%-26s  %-12s  %-30s  %s\n",
 			r.ID,
 			string(r.OverallStatus),

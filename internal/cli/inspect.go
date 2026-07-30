@@ -388,7 +388,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 			if runs[0].FindingsStatus == vuldomain.FindingsAffected {
 				affectedCount = runs[0].Counts.Affected
 			}
-			snapshotVersion = runs[0].Snapshot.Version
+			snapshotVersion = runs[0].Snapshot.Version()
 		}
 	}
 

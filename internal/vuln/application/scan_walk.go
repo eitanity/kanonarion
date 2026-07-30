@@ -649,8 +649,8 @@ func scanCompletedEvent(run domain.WalkScanRun, counts scanCounts) audit.Event {
 		Payload: map[string]any{
 			"walk_id":          run.WalkID,
 			"scan_id":          run.ID,
-			"snapshot_source":  run.Snapshot.Source,
-			"snapshot_version": run.Snapshot.Version,
+			"snapshot_source":  run.Snapshot.Source(),
+			"snapshot_version": run.Snapshot.Version(),
 			"overall_status":   string(run.OverallStatus),
 			"affected":         counts.affected,
 			"clean":            counts.clean,
@@ -1167,7 +1167,7 @@ func (uc *ScanWalkUseCase) resolveSnapshot(ctx context.Context, pinned *domain.D
 		return nil, fmt.Errorf("checking cached snapshot: %w", err)
 	}
 	if ok {
-		uc.logger.Debug("using cached vulnerability database snapshot", "version", cached.Version, "retrieved_at", cached.RetrievedAt)
+		uc.logger.Debug("using cached vulnerability database snapshot", "version", cached.Version(), "retrieved_at", cached.RetrievedAt())
 		return &cached, nil
 	}
 	uc.logger.Info("no cached snapshot: fetching vulnerability database snapshot from network")

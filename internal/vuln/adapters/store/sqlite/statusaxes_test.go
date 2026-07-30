@@ -11,6 +11,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 )
 
 // axisRecord builds a sealed record that carries findingID — so it is indexed
@@ -283,7 +284,7 @@ VALUES ('govulndb', 'v2024-01-01', '2024-01-01T00:00:00Z', '', ?)`, []byte(body)
 
 	// Unverifiable is not unreadable: the blob still serves a scan.
 	store := sqlite.New(migrated)
-	rc, err := store.GetDatabaseSnapshot(ctx, domain.DatabaseSnapshot{Source: "govulndb", Version: "v2024-01-01"})
+	rc, err := store.GetDatabaseSnapshot(ctx, vulntest.MustNew("govulndb", "v2024-01-01"))
 	if err != nil {
 		t.Fatalf("GetDatabaseSnapshot on an unsealed legacy snapshot: %v", err)
 	}

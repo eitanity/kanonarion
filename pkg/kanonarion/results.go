@@ -2,6 +2,7 @@ package kanonarion
 
 import (
 	"fmt"
+	"time"
 
 	callgraphdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -130,6 +131,53 @@ type ExtractionRun = extractdomain.ExtractionRun
 // be added within a major; consumers must not assume field exhaustiveness
 // (§4).
 type VulnerabilityRecord = vulndomain.VulnerabilityRecord
+
+// DatabaseSnapshot is the pinned generation of the advisory database a
+// vulnerability verdict was reached against. It reaches consumers on
+// VulnerabilityRecord.DatabaseSnapshot and WalkScanRun.Snapshot, and it is the
+// third axis the vulnerability ledger composes on, beside the coordinate and the
+// pipeline version.
+//
+// It is a value object, not a read shape: its fields are unexported and it is
+// built through NewDatabaseSnapshot or ParseDatabaseSnapshot, read back through
+// Source, Version, RetrievedAt, ContentHash and String. A struct literal could
+// state a generation with no database, or neither, and a record keyed on that
+// joins the composition group holding every other record that named no snapshot.
+//
+// Stability: supporting type of the vulnerability result types; unstable pre-v1.
+type DatabaseSnapshot = vulndomain.DatabaseSnapshot
+
+// NewDatabaseSnapshot returns the snapshot naming source at version, retrieved
+// at retrievedAt and — when it has been sealed against its blob — addressed by
+// contentHash. Source and version are both required; contentHash is optional and
+// empty on a snapshot recorded before the hash existed. It is the construction
+// path a consumer needs once DatabaseSnapshot's fields are unexported: without
+// it, an external implementer of a vulnerability port could name the type in a
+// signature but never build one to key a read with.
+//
+// Stability: constructor for a supporting type of the vulnerability result
+// types; unstable pre-v1.
+func NewDatabaseSnapshot(source, version string, retrievedAt time.Time, contentHash string) (DatabaseSnapshot, error) {
+	s, err := vulndomain.NewDatabaseSnapshot(source, version, retrievedAt, contentHash)
+	if err != nil {
+		return DatabaseSnapshot{}, fmt.Errorf("building database snapshot: %w", err)
+	}
+	return s, nil
+}
+
+// ParseDatabaseSnapshot reads the canonical spelling String emits back into a
+// snapshot, so a consumer that persisted one as text can key a later read with
+// the same value rather than a reconstruction of it.
+//
+// Stability: constructor for a supporting type of the vulnerability result
+// types; unstable pre-v1.
+func ParseDatabaseSnapshot(s string) (DatabaseSnapshot, error) {
+	snapshot, err := vulndomain.ParseDatabaseSnapshot(s)
+	if err != nil {
+		return DatabaseSnapshot{}, fmt.Errorf("parsing database snapshot: %w", err)
+	}
+	return snapshot, nil
+}
 
 // WalkScanRun is the aggregated result of scanning every module in a walk: the
 // per-module record references, overall status, and the snapshot scanned against.

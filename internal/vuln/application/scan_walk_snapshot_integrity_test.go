@@ -13,10 +13,11 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 )
 
 func testSnapshot() domain.DatabaseSnapshot {
-	return domain.DatabaseSnapshot{Source: "vuln.go.dev", Version: "2026-07-27T16:28:49Z"}
+	return vulntest.MustNew("vuln.go.dev", "2026-07-27T16:28:49Z")
 }
 
 // snapshotFaultStore fails the one read under test. The embedded nil port
@@ -63,7 +64,7 @@ func TestPreExtractVulnDB_IntegrityAbortsOtherFailuresFallBack(t *testing.T) {
 		// The operator is told what to do, that the evidence is intact, and that
 		// the remedy will destroy it — a --fresh re-fetch upserts on
 		// (source, version) and overwrites the altered bytes in place.
-		for _, want := range []string{"--fresh", "untouched as evidence", "copy the store", "overwrites", snapshot.Version} {
+		for _, want := range []string{"--fresh", "untouched as evidence", "copy the store", "overwrites", snapshot.Version()} {
 			if !strings.Contains(err.Error(), want) {
 				t.Errorf("abort message missing %q: %v", want, err)
 			}

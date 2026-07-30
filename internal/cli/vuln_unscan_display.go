@@ -181,6 +181,26 @@ func unscanDisplayFor(reason vuldomain.UnscanReason) unscanDisplay {
 // attempted for a classifier to categorise. Reporting "no reason recorded" for
 // such a record would be false — the reason is right there on it — and only the
 // code is missing.
+// unscanDisplayForSection returns the display treatment for one roll-up section.
+//
+// It exists because a section knows one thing unscanDisplayFor cannot: whether
+// the records collected under an empty reason code recorded a free-text reason
+// anyway. They usually did — a metadata-only module records "metadata-only:
+// module not fetched" and no code, because no analysis was attempted for a
+// classifier to categorise — and the section then prints that prose immediately
+// under its own heading. Announcing "no reason recorded" above a printed reason
+// is false in the same way unscanLabelFor already refuses to be false on the
+// per-module line; what is actually missing is the taxonomy code, so that is
+// what the heading says.
+func unscanDisplayForSection(reason vuldomain.UnscanReason, details []unscanDetail) unscanDisplay {
+	display := unscanDisplayFor(reason)
+	if reason == "" && len(details) > 0 {
+		display.label = "Unscannable (no reason code recorded)"
+		display.heading = "Unscannable — no reason code recorded"
+	}
+	return display
+}
+
 func unscanLabelFor(record vuldomain.VulnerabilityRecord) string {
 	if record.UnscanReason == "" && record.UnscannableReason != "" {
 		return record.UnscannableReason
@@ -270,7 +290,7 @@ func (r *unscannableRollup) sections() []unscannableSection {
 		seen[reason] = true
 		if coords := r.byReason[reason]; len(coords) > 0 {
 			out = append(out, unscannableSection{
-				display: unscanDisplayFor(reason),
+				display: unscanDisplayForSection(reason, r.detailsByReason[reason]),
 				coords:  coords,
 				details: r.detailsByReason[reason],
 			})
@@ -285,7 +305,7 @@ func (r *unscannableRollup) sections() []unscannableSection {
 	sortUnscanReasons(rest)
 	for _, reason := range rest {
 		out = append(out, unscannableSection{
-			display: unscanDisplayFor(reason),
+			display: unscanDisplayForSection(reason, r.detailsByReason[reason]),
 			coords:  r.byReason[reason],
 			details: r.detailsByReason[reason],
 		})

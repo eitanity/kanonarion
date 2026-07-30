@@ -175,6 +175,9 @@ func (f *fakeVulnStore) SetRunRecords(runID string, records []domain.Vulnerabili
 }
 
 func (f *fakeVulnStore) PutVulnerabilityRecord(_ context.Context, record domain.VulnerabilityRecord) error {
+	if record.DatabaseSnapshot.IsZero() {
+		return fmt.Errorf("fakeVulnStore.PutVulnerabilityRecord: %w", domain.ErrZeroSnapshot)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.errOnPutRecord != nil {
@@ -210,6 +213,9 @@ func (f *fakeVulnStore) served(key string) (domain.VulnerabilityRecord, bool) {
 }
 
 func (f *fakeVulnStore) GetVulnerabilityRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string, snapshot domain.DatabaseSnapshot) (domain.VulnerabilityRecord, bool, error) {
+	if snapshot.IsZero() {
+		return domain.VulnerabilityRecord{}, false, fmt.Errorf("fakeVulnStore.GetVulnerabilityRecord: %w", domain.ErrZeroSnapshot)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	rec, ok := f.served(f.recordKey(coord, pv, snapshot))
@@ -217,6 +223,9 @@ func (f *fakeVulnStore) GetVulnerabilityRecord(_ context.Context, coord coordina
 }
 
 func (f *fakeVulnStore) GetVulnerabilityRecordAt(_ context.Context, coord coordinate.ModuleCoordinate, pv string, snapshot domain.DatabaseSnapshot, rooting domain.Rooting) (domain.VulnerabilityRecord, bool, error) {
+	if snapshot.IsZero() {
+		return domain.VulnerabilityRecord{}, false, fmt.Errorf("fakeVulnStore.GetVulnerabilityRecordAt: %w", domain.ErrZeroSnapshot)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	gens := f.records[f.recordKey(coord, pv, snapshot)]
@@ -228,6 +237,9 @@ func (f *fakeVulnStore) GetVulnerabilityRecordAt(_ context.Context, coord coordi
 }
 
 func (f *fakeVulnStore) HasVulnerabilityRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string, snapshot domain.DatabaseSnapshot, contentHash string) (bool, error) {
+	if snapshot.IsZero() {
+		return false, fmt.Errorf("fakeVulnStore.HasVulnerabilityRecord: %w", domain.ErrZeroSnapshot)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, rec := range f.records[f.recordKey(coord, pv, snapshot)] {
@@ -285,7 +297,7 @@ func (f *fakeVulnStore) ListVulnerabilityRecordsForModule(_ context.Context, coo
 }
 
 func (f *fakeVulnStore) recordKey(coord coordinate.ModuleCoordinate, pv string, snapshot domain.DatabaseSnapshot) string {
-	return coord.String() + "|" + pv + "|" + snapshot.Source + "@" + snapshot.Version
+	return coord.String() + "|" + pv + "|" + snapshot.Source() + "@" + snapshot.Version()
 }
 
 func (f *fakeVulnStore) PutWalkScanRun(_ context.Context, run domain.WalkScanRun) error {
@@ -331,13 +343,16 @@ func (f *fakeVulnStore) ListAllWalkScanRuns(_ context.Context) ([]domain.WalkSca
 }
 
 func (f *fakeVulnStore) PutDatabaseSnapshot(_ context.Context, snapshot domain.DatabaseSnapshot, content io.Reader) error {
+	if snapshot.IsZero() {
+		return fmt.Errorf("fakeVulnStore.PutDatabaseSnapshot: %w", domain.ErrZeroSnapshot)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.errOnPutSnap != nil {
 		return f.errOnPutSnap
 	}
 	data, _ := io.ReadAll(content)
-	f.snapshots[snapshot.Source+"@"+snapshot.Version] = data
+	f.snapshots[snapshot.Source()+"@"+snapshot.Version()] = data
 	f.latestSnapshot = &snapshot
 	return nil
 }
@@ -355,9 +370,12 @@ func (f *fakeVulnStore) GetLatestDatabaseSnapshot(_ context.Context) (domain.Dat
 }
 
 func (f *fakeVulnStore) GetDatabaseSnapshot(_ context.Context, snapshot domain.DatabaseSnapshot) (io.ReadCloser, error) {
+	if snapshot.IsZero() {
+		return nil, fmt.Errorf("fakeVulnStore.GetDatabaseSnapshot: %w", domain.ErrZeroSnapshot)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	data, ok := f.snapshots[snapshot.Source+"@"+snapshot.Version]
+	data, ok := f.snapshots[snapshot.Source()+"@"+snapshot.Version()]
 	if !ok {
 		return nil, io.EOF
 	}
@@ -547,7 +565,7 @@ func (f *fakeDatabase) Snapshot(_ context.Context) (domain.DatabaseSnapshot, io.
 }
 
 func (f *fakeDatabase) GetSnapshot(_ context.Context, identity domain.DatabaseSnapshot) (io.ReadCloser, error) {
-	if identity.Version == f.snapshot.Version {
+	if identity.Version() == f.snapshot.Version() {
 		return io.NopCloser(strings.NewReader(f.content)), nil
 	}
 	return nil, io.EOF

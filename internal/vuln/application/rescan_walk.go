@@ -148,7 +148,7 @@ func (uc *RescanWalkUseCase) Rescan(ctx context.Context, req RescanRequest) (dom
 	uc.logger.Info("rescan completed",
 		"walk_id", req.WalkID,
 		"run_id", run.ID,
-		"snapshot_version", snapshot.Version,
+		"snapshot_version", snapshot.Version(),
 		"status", run.OverallStatus,
 	)
 	return run, nil

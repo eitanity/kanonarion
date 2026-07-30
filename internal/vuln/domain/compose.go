@@ -134,14 +134,14 @@ func servesBefore(a, b VulnerabilityRecord) bool {
 	if ra, rb := completenessRung(a.CallGraphCompleteness), completenessRung(b.CallGraphCompleteness); ra != rb {
 		return ra > rb
 	}
-	if !a.DatabaseSnapshot.RetrievedAt.Equal(b.DatabaseSnapshot.RetrievedAt) {
-		return a.DatabaseSnapshot.RetrievedAt.After(b.DatabaseSnapshot.RetrievedAt)
+	if !a.DatabaseSnapshot.RetrievedAt().Equal(b.DatabaseSnapshot.RetrievedAt()) {
+		return a.DatabaseSnapshot.RetrievedAt().After(b.DatabaseSnapshot.RetrievedAt())
 	}
-	if a.DatabaseSnapshot.Version != b.DatabaseSnapshot.Version {
+	if a.DatabaseSnapshot.Version() != b.DatabaseSnapshot.Version() {
 		// Both snapshots claim the same retrieval instant, so the instant cannot
 		// order them. The version string is the database's own generation label
 		// and is the only remaining statement about which is later.
-		return a.DatabaseSnapshot.Version > b.DatabaseSnapshot.Version
+		return a.DatabaseSnapshot.Version() > b.DatabaseSnapshot.Version()
 	}
 	if !a.ScannedAt.Equal(b.ScannedAt) {
 		return a.ScannedAt.After(b.ScannedAt)

@@ -10,7 +10,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 
 	"github.com/eitanity/kanonarion/internal/vuln/application"
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 )
 
 // A module ingested from a local working tree (a local-replace target or the
@@ -28,7 +28,7 @@ func TestScanModule_FindsFactRecordUnderLocalIngestPipelineVersion(t *testing.T)
 	vulnStore := newFakeVulnStore()
 	scanner := &fakeScanner{}
 	db := &fakeDatabase{
-		snapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1", RetrievedAt: now},
+		snapshot: vulntest.MustNewAt("test", "v1", now),
 		content:  "vulndb content",
 	}
 

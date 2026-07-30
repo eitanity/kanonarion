@@ -300,7 +300,7 @@ func locateGoMod(root string) (string, bool) {
 // fallback, which is the case it was written for.
 func (s *Scanner) prepareDBArg(ctx context.Context, snapshot domain.DatabaseSnapshot, dbDir string) (string, func(), error) {
 	noop := func() {}
-	s.logger.Info("vuln-scan: preparing vulnerability database", "snapshot", snapshot.Version)
+	s.logger.Info("vuln-scan: preparing vulnerability database", "snapshot", snapshot.Version())
 	if dbDir != "" {
 		s.logger.Info("vuln-scan: using pre-extracted local database", "path", dbDir)
 		return "file://" + dbDir, noop, nil

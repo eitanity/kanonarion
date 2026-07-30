@@ -384,11 +384,16 @@ func TestNoInfraImportsInApplicationOrDomain(t *testing.T) {
 //
 // Each entry is one conversion: ModuleCoordinate, then the artefact identity
 // and the hash inside it, then the blob identity that addresses an artefact in
-// a store. The identity is the key the fetch ledger composes on and the value
-// the extraction contexts embed, so an uncalled accessor there reaches a SQL
-// parameter by the same route the coordinate's did. The blob identity reaches
-// one by a shorter route still: its String is written to the content_location
-// and go_mod_location columns of every fact record.
+// a store, then the advisory-database snapshot a vulnerability verdict was
+// reached against. The identity is the key the fetch ledger composes on and the
+// value the extraction contexts embed, so an uncalled accessor there reaches a
+// SQL parameter by the same route the coordinate's did. The blob identity
+// reaches one by a shorter route still: its String is written to the
+// content_location and go_mod_location columns of every fact record. The
+// snapshot's Source and Version are two of the vulnerability ledger's primary
+// key columns and are passed as any to ExecContext, which is exactly the shape
+// the compiler accepts and the run time does not — four such method values
+// survived that conversion's clean build and were caught here.
 var valueObjectAccessors = map[string]map[string]bool{
 	modulePath + "/internal/coordinate.ModuleCoordinate": {
 		"Path": true, "Version": true, "String": true, "IsLocal": true,
@@ -401,6 +406,10 @@ var valueObjectAccessors = map[string]map[string]bool{
 	},
 	modulePath + "/internal/fetch/ports.BlobIdentity": {
 		"Kind": true, "Hash": true, "String": true, "IsZero": true,
+	},
+	modulePath + "/internal/vuln/domain.DatabaseSnapshot": {
+		"Source": true, "Version": true, "RetrievedAt": true, "ContentHash": true,
+		"String": true, "IsZero": true,
 	},
 }
 

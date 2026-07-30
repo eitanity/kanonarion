@@ -83,7 +83,7 @@ func SnapshotIntegrityAbort(snapshot domain.DatabaseSnapshot, err error) error {
 			"so no finding derived from it can be vouched for and the run must not claim it; "+
 			"this run left the stored blob untouched as evidence — copy the store before re-fetching, "+
 			"because re-fetching (--fresh) overwrites this snapshot in place",
-		err, snapshot.Source, snapshot.Version)
+		err, snapshot.Source(), snapshot.Version())
 }
 
 // VulnerabilityStore defines the port for persisting vulnerability records.
@@ -95,6 +95,18 @@ func SnapshotIntegrityAbort(snapshot domain.DatabaseSnapshot, err error) error {
 // which every later read treats as a genuine measurement, and on a read
 // because absence is the wrong answer to a question about no module.
 // coordinatetest.AssertRefusesZeroCoordinate pins the rule for every store.
+//
+// The zero snapshot is the same hazard on the other identity axis, and every
+// method that takes a domain.DatabaseSnapshot MUST refuse it with
+// domain.ErrZeroSnapshot, on both legs. vulnerability_records is an append-only
+// ledger whose composition group is keyed on (coordinate, pipeline version,
+// snapshot), so a record admitted under the zero snapshot joins the group
+// holding every other record that also named none, and a read composes them as
+// though they described one measurement against one advisory database. An empty
+// ContentHash does NOT make a snapshot zero: rows written before the hash
+// existed legitimately carry none, and refusing those would make every
+// un-migrated store unreadable. vulntest.AssertRefusesZeroSnapshot pins the rule
+// for every store.
 type VulnerabilityStore interface {
 	// PutVulnerabilityRecord appends a scan to the ledger. It never updates a
 	// record: two distinct scans of one coordinate — under two snapshots, in two

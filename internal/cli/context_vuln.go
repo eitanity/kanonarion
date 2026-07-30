@@ -237,15 +237,15 @@ func vulnRecordToContext(rec *vuldomain.VulnerabilityRecord, walkStatus, walkCov
 		Reason:          rec.UnscannableReason,
 		WalkID:          rec.WalkID,
 		LastValidatedAt: isoTime(rec.ScannedAt),
-		SnapshotVersion: rec.DatabaseSnapshot.Version,
+		SnapshotVersion: rec.DatabaseSnapshot.Version(),
 		PipelineVersion: rec.PipelineVersion,
 	}
 	if !rec.FirstScannedAt.IsZero() {
 		out.FirstValidatedAt = isoTime(rec.FirstScannedAt)
 	}
-	if !rec.DatabaseSnapshot.RetrievedAt.IsZero() {
-		out.SnapshotRetrievedAt = isoTime(rec.DatabaseSnapshot.RetrievedAt)
-		out.SnapshotAgeDays = vuldomain.SnapshotAgeDays(rec.ScannedAt, rec.DatabaseSnapshot.RetrievedAt)
+	if !rec.DatabaseSnapshot.RetrievedAt().IsZero() {
+		out.SnapshotRetrievedAt = isoTime(rec.DatabaseSnapshot.RetrievedAt())
+		out.SnapshotAgeDays = vuldomain.SnapshotAgeDays(rec.ScannedAt, rec.DatabaseSnapshot.RetrievedAt())
 	}
 	for _, f := range rec.Findings {
 		cve := contextCVE{

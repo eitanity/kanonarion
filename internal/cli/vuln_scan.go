@@ -705,7 +705,7 @@ func runScanRescan(ctx context.Context, walkID string, enableReachability bool, 
 
 	_, _ = fmt.Fprintf(stdout, "Re-scan completed: %s\n", scanCompletionSummary(run))
 	_, _ = fmt.Fprintf(stdout, "Run ID: %s\n", run.ID)
-	_, _ = fmt.Fprintf(stdout, "Snapshot: %s@%s\n", run.Snapshot.Source, run.Snapshot.Version)
+	_, _ = fmt.Fprintf(stdout, "Snapshot: %s@%s\n", run.Snapshot.Source(), run.Snapshot.Version())
 	return nil
 }
 
@@ -716,7 +716,7 @@ func resolveSnapshot(ctx context.Context, uc QueryScanRunsUseCase, source, versi
 		return vuldomain.DatabaseSnapshot{}, false, fmt.Errorf("listing snapshots: %w", err)
 	}
 	for _, s := range snapshots {
-		if s.Source == source && s.Version == version {
+		if s.Source() == source && s.Version() == version {
 			return s, true, nil
 		}
 	}

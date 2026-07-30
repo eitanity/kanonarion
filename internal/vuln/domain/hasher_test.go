@@ -12,6 +12,7 @@ import (
 	coordinatetest "github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 )
 
 func sampleRecord(t *testing.T) domain.VulnerabilityRecord {
@@ -21,7 +22,7 @@ func sampleRecord(t *testing.T) domain.VulnerabilityRecord {
 		Coordinate:       coordinatetest.MustNew("github.com/foo/bar", "v1.0.0"),
 		WalkID:           "walk-1",
 		OverallStatus:    domain.StatusClean,
-		DatabaseSnapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1"},
+		DatabaseSnapshot: vulntest.MustNew("test", "v1"),
 		ScannedAt:        time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
 		PipelineVersion:  "v1",
 	}

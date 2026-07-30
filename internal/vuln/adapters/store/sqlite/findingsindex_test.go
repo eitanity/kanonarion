@@ -9,18 +9,14 @@ import (
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 )
 
 // indexTestSnapshot is the one snapshot every test here re-scans against, so
 // the re-scan lands on the same (module, version, pipeline, snapshot) key the
 // index is reconciled on.
 func indexTestSnapshot() domain.DatabaseSnapshot {
-	return domain.DatabaseSnapshot{
-		Source:      "govulndb",
-		Version:     "2026-07-17T19:42:05Z",
-		RetrievedAt: time.Date(2026, 7, 17, 19, 42, 5, 0, time.UTC),
-		ContentHash: "snapshot-hash",
-	}
+	return vulntest.MustSealOver("govulndb", "2026-07-17T19:42:05Z", time.Date(2026, 7, 17, 19, 42, 5, 0, time.UTC), []byte("advisories"))
 }
 
 // indexTestRecord builds a sealed record for the shared key carrying findings.
@@ -340,7 +336,7 @@ INSERT INTO vulnerability_findings_index (
 ) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`
 	if _, err := store.InternalDB().DB().ExecContext(ctx, q,
 		findingID, rec.Coordinate.Path(), rec.Coordinate.Version(), rec.PipelineVersion,
-		rec.DatabaseSnapshot.Source, rec.DatabaseSnapshot.Version, string(rec.Rooting),
+		rec.DatabaseSnapshot.Source(), rec.DatabaseSnapshot.Version(), string(rec.Rooting),
 	); err != nil {
 		t.Fatalf("planting index row: %v", err)
 	}

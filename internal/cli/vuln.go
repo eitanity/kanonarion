@@ -67,11 +67,11 @@ func printVulnRecord(stdout io.Writer, rec vuldomain.VulnerabilityRecord) {
 		_, _ = fmt.Fprintf(stdout, "  First validated: %s\n", rec.FirstScannedAt.UTC().Format(time.RFC3339))
 	}
 	_, _ = fmt.Fprintf(stdout, "  Last validated:  %s\n", rec.ScannedAt.UTC().Format(time.RFC3339))
-	_, _ = fmt.Fprintf(stdout, "  Snapshot:        %s@%s\n", rec.DatabaseSnapshot.Source, rec.DatabaseSnapshot.Version)
-	if !rec.DatabaseSnapshot.RetrievedAt.IsZero() {
+	_, _ = fmt.Fprintf(stdout, "  Snapshot:        %s@%s\n", rec.DatabaseSnapshot.Source(), rec.DatabaseSnapshot.Version())
+	if !rec.DatabaseSnapshot.RetrievedAt().IsZero() {
 		_, _ = fmt.Fprintf(stdout, "  Snapshot age:    retrieved %s (%d day(s) old at validation)\n",
-			rec.DatabaseSnapshot.RetrievedAt.UTC().Format(time.RFC3339),
-			vuldomain.SnapshotAgeDays(rec.ScannedAt, rec.DatabaseSnapshot.RetrievedAt))
+			rec.DatabaseSnapshot.RetrievedAt().UTC().Format(time.RFC3339),
+			vuldomain.SnapshotAgeDays(rec.ScannedAt, rec.DatabaseSnapshot.RetrievedAt()))
 	}
 	// The coverage caveat is printed from the coverage axis, and printing it does
 	// not end the record: a coverage gap and an advisory match are independent

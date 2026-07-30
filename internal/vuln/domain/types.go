@@ -1,8 +1,6 @@
 package domain
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -434,46 +432,6 @@ type Severity struct {
 	Vector string  `json:"vector,omitzero"`
 	Score  float64 `json:"score,omitzero"`
 	Label  string  `json:"label,omitzero"`
-}
-
-// DatabaseSnapshot identifies a pinned snapshot of the vulnerability database.
-//
-// Source and Version name the advisory database and its own generation;
-// RetrievedAt records when kanonarion fetched it. Those three answer "how
-// current was the data behind this verdict". ContentHash answers the question
-// they cannot: whether the bytes a verdict was reached against are the bytes
-// still held.
-//
-// The advisory database is the evidence every finding is derived from, and it
-// was the one input to a verdict that was not content-addressed — a snapshot
-// was identified by a version string alone, and the version string is metadata
-// the blob itself asserts. Two stores both holding "2026-07-24T18:35:55Z" could
-// not be shown to hold the same advisories.
-type DatabaseSnapshot struct {
-	Source      string    `json:"source"`
-	Version     string    `json:"version"`
-	RetrievedAt time.Time `json:"retrieved_at"`
-	// ContentHash is HashSnapshotContent over the snapshot blob, in
-	// "sha256:<hex>" form. Empty on snapshots recorded before the hash existed;
-	// such a snapshot is unverifiable, never verified-and-clean.
-	ContentHash string `json:"content_hash"`
-}
-
-// snapshotHashPrefix labels the digest algorithm inside DatabaseSnapshot's
-// ContentHash. It is present here — unlike on a VulnerabilityRecord's own bare
-// hex hash, whose recipe is frozen by the records already in every store —
-// because no snapshot hash has ever been written, so the field is free to take
-// the project's normal prefixed form.
-const snapshotHashPrefix = "sha256:"
-
-// HashSnapshotContent renders the content hash of a vulnerability database
-// snapshot blob: SHA-256 over the bytes verbatim, prefixed with the algorithm.
-//
-// It hashes the stored bytes rather than any parsed view of them, so the check
-// covers exactly what a later scan will feed to govulncheck.
-func HashSnapshotContent(blob []byte) string {
-	sum := sha256.Sum256(blob)
-	return snapshotHashPrefix + hex.EncodeToString(sum[:])
 }
 
 // SnapshotAgeDays reports how many whole days the vulnerability database

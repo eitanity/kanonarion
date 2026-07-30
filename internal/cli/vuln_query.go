@@ -194,7 +194,7 @@ func runVulnShowHistory(ctx context.Context, coord coordinate.ModuleCoordinate, 
 		_, _ = fmt.Fprintf(stdout, "  %s  walk=%-26s  snap=%-24s  frame=%-13s  %-8s  %s\n",
 			rec.ScannedAt.UTC().Format(time.RFC3339),
 			rec.WalkID,
-			rec.DatabaseSnapshot.Version,
+			rec.DatabaseSnapshot.Version(),
 			vuldomain.RecordRooting(rec),
 			rec.OverallStatus,
 			findingSummary,
@@ -286,7 +286,7 @@ func runVulnByID(ctx context.Context, findingID, walkID string, jsonOut bool, uc
 		_, _ = fmt.Fprintf(stdout, "%-60s %-12s vuln-db=%-24s scanned=%s\n",
 			rec.Coordinate.Path()+"@"+rec.Coordinate.Version(),
 			rec.OverallStatus,
-			rec.DatabaseSnapshot.Version,
+			rec.DatabaseSnapshot.Version(),
 			rec.ScannedAt.UTC().Format(time.RFC3339))
 	}
 	return nil

@@ -39,6 +39,7 @@ import (
 	vulnsqlite "github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
 	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 	"github.com/eitanity/kanonarion/internal/walk/adapters/walks/sqlite"
 	"github.com/eitanity/kanonarion/internal/walk/domain"
 )
@@ -554,12 +555,7 @@ func cmdSeedVuln(args []string) {
 	store := vulnsqlite.New(db)
 	ctx := context.Background()
 
-	snap := vuldomain.DatabaseSnapshot{
-		Source:      "govulndb",
-		Version:     "v2025-01-01T00-00-00",
-		RetrievedAt: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
-		ContentHash: vuldomain.HashSnapshotContent([]byte(fixtureSnapshotBody)),
-	}
+	snap := vulntest.MustSeal("govulndb", "v2025-01-01T00-00-00", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), vuldomain.HashSnapshotContent([]byte(fixtureSnapshotBody)))
 	if err := store.PutDatabaseSnapshot(ctx, snap, strings.NewReader(fixtureSnapshotBody)); err != nil {
 		_ = db.Close()
 		os.Exit(1)
@@ -655,12 +651,7 @@ func cmdSeedVulnPartial(args []string) {
 	store := vulnsqlite.New(db)
 	ctx := context.Background()
 
-	snap := vuldomain.DatabaseSnapshot{
-		Source:      "govulndb",
-		Version:     "v2025-01-01T00-00-00",
-		RetrievedAt: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
-		ContentHash: vuldomain.HashSnapshotContent([]byte(fixtureSnapshotBody)),
-	}
+	snap := vulntest.MustSeal("govulndb", "v2025-01-01T00-00-00", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), vuldomain.HashSnapshotContent([]byte(fixtureSnapshotBody)))
 	if err := store.PutDatabaseSnapshot(ctx, snap, strings.NewReader(fixtureSnapshotBody)); err != nil {
 		_ = db.Close()
 		os.Exit(1)
@@ -752,12 +743,7 @@ func cmdSeedVulnForWalk(args []string) {
 	// walkID matches the latest walk created by cmdSeedWalk.
 	const walkID = "01ARZ3NDEKTSV4RRFFQ69G5FBB"
 
-	snap := vuldomain.DatabaseSnapshot{
-		Source:      "govulndb",
-		Version:     "v2025-01-01T00-00-00",
-		RetrievedAt: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
-		ContentHash: vuldomain.HashSnapshotContent([]byte(fixtureSnapshotBody)),
-	}
+	snap := vulntest.MustSeal("govulndb", "v2025-01-01T00-00-00", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), vuldomain.HashSnapshotContent([]byte(fixtureSnapshotBody)))
 	if err := store.PutDatabaseSnapshot(ctx, snap, strings.NewReader(fixtureSnapshotBody)); err != nil {
 		_ = db.Close()
 		os.Exit(1)

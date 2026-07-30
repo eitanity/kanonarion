@@ -201,3 +201,55 @@ func TestPrintVulnScanResult_FailedModulesListedOnAffectedRun(t *testing.T) {
 		t.Errorf("failed modules must be listed on an Affected run; got:\n%s", got)
 	}
 }
+
+// TestUnscannableRollup_HeadingDoesNotDenyAPrintedReason is the regression guard
+// on the roll-up's one self-contradicting output.
+//
+// A record can carry a free-text reason with no taxonomy code — a metadata-only
+// module records "metadata-only: module not fetched" and no code, because no
+// analysis was attempted for a classifier to categorise. The section collecting
+// those printed "Unscannable — no reason recorded" and then printed the reason on
+// the next line. Measured on a real scan of the maintainer's store: the stdlib
+// node rendered exactly that way. unscanLabelFor already refuses to be false in
+// this way on the per-module line; the heading now does too, and says what is
+// actually missing.
+func TestUnscannableRollup_HeadingDoesNotDenyAPrintedReason(t *testing.T) {
+	const detail = "Go standard library (toolchain-provided); advisories resolved from OSV metadata by coordinate"
+
+	r := newUnscannableRollup()
+	r.add("", "stdlib@v1.26.5", detail)
+
+	sections := r.sections()
+	if len(sections) != 1 {
+		t.Fatalf("got %d sections, want 1", len(sections))
+	}
+	section := sections[0]
+
+	printed := section.detailsToPrint()
+	if len(printed) != 1 || printed[0].text != detail {
+		t.Fatalf("detailsToPrint() = %v, want the recorded reason printed", printed)
+	}
+	if strings.Contains(section.display.heading, "no reason recorded") {
+		t.Errorf("heading %q denies a reason it goes on to print: %q", section.display.heading, detail)
+	}
+	if !strings.Contains(section.display.heading, "no reason code recorded") {
+		t.Errorf("heading = %q, want it to name the taxonomy code as the missing part", section.display.heading)
+	}
+}
+
+// TestUnscannableRollup_HeadingStillReportsATrulyReasonlessRecord is the other
+// half: a record that recorded no reason at all, which older pipeline versions
+// could produce, must still be reported as such. The fix above narrows a false
+// claim; it must not silence a true one.
+func TestUnscannableRollup_HeadingStillReportsATrulyReasonlessRecord(t *testing.T) {
+	r := newUnscannableRollup()
+	r.add("", "example.com/silent@v1.0.0", "")
+
+	sections := r.sections()
+	if len(sections) != 1 {
+		t.Fatalf("got %d sections, want 1", len(sections))
+	}
+	if got := sections[0].display.heading; got != "Unscannable — no reason recorded" {
+		t.Errorf("heading = %q, want the reasonless record still reported as such", got)
+	}
+}

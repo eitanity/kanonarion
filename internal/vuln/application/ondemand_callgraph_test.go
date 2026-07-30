@@ -16,6 +16,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 )
 
 // helpers shared across this file
@@ -80,7 +81,7 @@ func TestOnDemandCallGraph_SpawnedOnMiss(t *testing.T) {
 	seedFact(t, facts, blobs, coord)
 
 	vulnStore := newFakeVulnStore()
-	snap := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
+	snap := vulntest.MustNew("test", "v1")
 	_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
 
 	db := &fakeDatabase{
@@ -133,7 +134,7 @@ func TestOnDemandCallGraph_CacheHit(t *testing.T) {
 	seedFact(t, facts, blobs, coord)
 
 	vulnStore := newFakeVulnStore()
-	snap := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
+	snap := vulntest.MustNew("test", "v1")
 	_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
 
 	db := &fakeDatabase{
@@ -178,7 +179,7 @@ func TestOnDemandCallGraph_SpawnFailureSetsNote(t *testing.T) {
 	seedFact(t, facts, blobs, coord)
 
 	vulnStore := newFakeVulnStore()
-	snap := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
+	snap := vulntest.MustNew("test", "v1")
 	_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
 
 	db := &fakeDatabase{
@@ -251,7 +252,7 @@ func TestOnDemandCallGraph_ForceBypassesCache(t *testing.T) {
 	seedFact(t, facts, blobs, coord)
 
 	vulnStore := newFakeVulnStore()
-	snap := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
+	snap := vulntest.MustNew("test", "v1")
 	_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
 
 	db := &fakeDatabase{
@@ -293,7 +294,7 @@ func TestOnDemandCallGraph_NoSpawnForClean(t *testing.T) {
 	seedFact(t, facts, blobs, coord)
 
 	vulnStore := newFakeVulnStore()
-	snap := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
+	snap := vulntest.MustNew("test", "v1")
 	_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
 
 	db := &fakeDatabase{snapshot: snap} // no vulnerabilities
@@ -333,7 +334,7 @@ func TestOnDemandCallGraph_NoSpawnWhenSymbolsEmpty(t *testing.T) {
 	seedFact(t, facts, blobs, coord)
 
 	vulnStore := newFakeVulnStore()
-	snap := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
+	snap := vulntest.MustNew("test", "v1")
 	_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
 
 	db := &fakeDatabase{
@@ -393,7 +394,7 @@ func TestOnDemandCallGraph_SemaphoreSerialises(t *testing.T) {
 	seedFact(t, facts, blobs, coordB)
 
 	vulnStore := newFakeVulnStore()
-	snap := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
+	snap := vulntest.MustNew("test", "v1")
 	_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
 
 	db := &fakeDatabase{

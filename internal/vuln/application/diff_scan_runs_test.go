@@ -10,6 +10,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 )
 
 // seedScanRun stores a WalkScanRun and its per-module VulnerabilityRecords in the fake store.
@@ -51,6 +52,9 @@ func makeRecord(coord coordinate.ModuleCoordinate, walkID string, findings ...do
 		Findings:        findings,
 		OverallStatus:   status,
 		PipelineVersion: "v1",
+		// Every record names the snapshot its verdict was reached against; the
+		// store refuses one that does not, because the ledger composes on it.
+		DatabaseSnapshot: vulntest.MustNew("test", "v1"),
 	}
 }
 
@@ -73,7 +77,7 @@ func TestDiff_NoDifferences(t *testing.T) {
 	ctx := t.Context()
 	store := newFakeVulnStore()
 	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
-	snap := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
+	snap := vulntest.MustNew("test", "v1")
 
 	rec := makeRecord(coord, "walk-1", makeFinding("VULN-1", "bad bug"))
 	runA := makeRun("run-a", "walk-1", snap)
@@ -104,8 +108,8 @@ func TestDiff_NewFinding(t *testing.T) {
 	ctx := t.Context()
 	store := newFakeVulnStore()
 	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
-	snapA := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
-	snapB := domain.DatabaseSnapshot{Source: "test", Version: "v2"}
+	snapA := vulntest.MustNew("test", "v1")
+	snapB := vulntest.MustNew("test", "v2")
 
 	runA := makeRun("run-a", "walk-1", snapA)
 	runB := makeRun("run-b", "walk-1", snapB)
@@ -139,8 +143,8 @@ func TestDiff_ResolvedFinding(t *testing.T) {
 	ctx := t.Context()
 	store := newFakeVulnStore()
 	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
-	snapA := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
-	snapB := domain.DatabaseSnapshot{Source: "test", Version: "v2"}
+	snapA := vulntest.MustNew("test", "v1")
+	snapB := vulntest.MustNew("test", "v2")
 
 	runA := makeRun("run-a", "walk-1", snapA)
 	runB := makeRun("run-b", "walk-1", snapB)
@@ -175,7 +179,7 @@ func TestDiff_ReachabilityChange(t *testing.T) {
 	ctx := t.Context()
 	store := newFakeVulnStore()
 	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
-	snap := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
+	snap := vulntest.MustNew("test", "v1")
 
 	findingA := domain.VulnerabilityFinding{
 		ID:        "VULN-3",
@@ -219,7 +223,7 @@ func TestDiff_ReachabilityChange(t *testing.T) {
 func TestDiff_DifferentWalks(t *testing.T) {
 	ctx := t.Context()
 	store := newFakeVulnStore()
-	snap := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
+	snap := vulntest.MustNew("test", "v1")
 
 	runA := makeRun("run-a", "walk-1", snap)
 	runB := makeRun("run-b", "walk-2", snap)
@@ -238,7 +242,7 @@ func TestDiff_DifferentWalks(t *testing.T) {
 func TestDiff_MissingRun(t *testing.T) {
 	ctx := t.Context()
 	store := newFakeVulnStore()
-	snap := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
+	snap := vulntest.MustNew("test", "v1")
 	runA := makeRun("run-a", "walk-1", snap)
 	seedScanRun(t, ctx, store, runA, nil)
 
@@ -256,7 +260,7 @@ func TestDiff_SortingPathGreater(t *testing.T) {
 	store := newFakeVulnStore()
 	coordZ := coordinatetest.MustNew("github.com/zzz/pkg", "v1.0.0")
 	coordA := coordinatetest.MustNew("github.com/aaa/pkg", "v1.0.0")
-	snap := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
+	snap := vulntest.MustNew("test", "v1")
 
 	runA := makeRun("run-a", "walk-1", snap)
 	runB := makeRun("run-b", "walk-1", snap)
@@ -291,7 +295,7 @@ func TestDiff_SortingFindingIDOrder(t *testing.T) {
 	ctx := t.Context()
 	store := newFakeVulnStore()
 	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
-	snap := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
+	snap := vulntest.MustNew("test", "v1")
 
 	runA := makeRun("run-a", "walk-1", snap)
 	runB := makeRun("run-b", "walk-1", snap)
@@ -328,7 +332,7 @@ func TestDiff_ReachabilityNilToNonNilResolved(t *testing.T) {
 	ctx := t.Context()
 	store := newFakeVulnStore()
 	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
-	snap := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
+	snap := vulntest.MustNew("test", "v1")
 
 	findingA := makeFinding("VULN-X", "some bug") // no reachability
 	findingB := makeFindingWithReachability("VULN-X", "some bug", true)

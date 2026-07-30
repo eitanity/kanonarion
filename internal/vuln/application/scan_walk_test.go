@@ -14,6 +14,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
@@ -37,7 +38,7 @@ func TestScanWalk_PreflightFailsFast(t *testing.T) {
 		inner:  &fakeScanner{preflightErr: preflightErr},
 		called: &scanned,
 	}
-	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1"}}
+	db := &fakeDatabase{snapshot: vulntest.MustNew("test", "v1")}
 
 	moduleUC := application.NewScanModuleUseCase(
 		newFakeFacts(), newFakeBlob(), vulnStore, walkStore, scanner, db, nil, clock, "v1", "v1", slog.Default(),
@@ -104,7 +105,7 @@ func TestScanWalk(t *testing.T) {
 		},
 	}
 	db := &fakeDatabase{
-		snapshot:    domain.DatabaseSnapshot{Source: "test", Version: "v1"},
+		snapshot:    vulntest.MustNew("test", "v1"),
 		vulnerables: map[coordinate.ModuleCoordinate][]string{dep: {"GO-VULN-ID"}},
 	}
 	clock := fixedClock{t: now}
@@ -190,7 +191,7 @@ func TestScanWalk_SnapshotPersisted(t *testing.T) {
 
 	const snapshotContent = "snapshot-body-data"
 	db := &fakeDatabase{
-		snapshot: domain.DatabaseSnapshot{Source: "test", Version: "v42"},
+		snapshot: vulntest.MustNew("test", "v42"),
 		content:  snapshotContent,
 	}
 	vulnStore := newFakeVulnStore()
@@ -322,7 +323,7 @@ func TestScanWalk_OverallStatus(t *testing.T) {
 				}
 			}
 			db := &fakeDatabase{
-				snapshot:    domain.DatabaseSnapshot{Version: "v1"},
+				snapshot:    vulntest.MustNew("govulndb", "v1"),
 				vulnerables: vulnerables,
 				// The metadata pre-filter (CheckVulnerable) uses vulnerables to force
 				// the heavy scan, but a scanner-reported Unscannable result now routes
@@ -377,11 +378,11 @@ func TestScanWalk_FreshFetch(t *testing.T) {
 	vulnStore := newFakeVulnStore()
 
 	// 1. Put a cached snapshot.
-	cachedSnap := domain.DatabaseSnapshot{Source: "test", Version: "v1", RetrievedAt: now.Add(-time.Hour)}
+	cachedSnap := vulntest.MustNewAt("test", "v1", now.Add(-time.Hour))
 	_ = vulnStore.PutDatabaseSnapshot(ctx, cachedSnap, strings.NewReader("cached"))
 
 	// 2. Mock database returns a newer snapshot.
-	freshSnap := domain.DatabaseSnapshot{Source: "test", Version: "v2", RetrievedAt: now}
+	freshSnap := vulntest.MustNewAt("test", "v2", now)
 	db := &fakeDatabase{snapshot: freshSnap, content: "fresh"}
 
 	moduleUC := application.NewScanModuleUseCase(
@@ -396,8 +397,8 @@ func TestScanWalk_FreshFetch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
-	if run.Snapshot.Version != "v1" {
-		t.Errorf("expected cached version v1, got %s", run.Snapshot.Version)
+	if run.Snapshot.Version() != "v1" {
+		t.Errorf("expected cached version v1, got %s", run.Snapshot.Version())
 	}
 
 	// 4. Scan WITH fresh=true -> should fetch fresh.
@@ -405,13 +406,13 @@ func TestScanWalk_FreshFetch(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
 	}
-	if run.Snapshot.Version != "v2" {
-		t.Errorf("expected fresh version v2, got %s", run.Snapshot.Version)
+	if run.Snapshot.Version() != "v2" {
+		t.Errorf("expected fresh version v2, got %s", run.Snapshot.Version())
 	}
 
 	// 5. Verify v2 was persisted.
 	persisted, ok, _ := vulnStore.GetLatestDatabaseSnapshot(ctx)
-	if !ok || persisted.Version != "v2" {
+	if !ok || persisted.Version() != "v2" {
 		t.Errorf("fresh snapshot v2 not persisted")
 	}
 }
@@ -460,7 +461,7 @@ func TestScanWalk_LocalReplaceUnscannable(t *testing.T) {
 		inner:  &fakeScanner{results: map[string]domain.VulnerabilityRecord{}},
 		called: &scanned,
 	}
-	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1"}}
+	db := &fakeDatabase{snapshot: vulntest.MustNew("test", "v1")}
 	clock := fixedClock{t: now}
 
 	// Fact for the target only — the local-replace dep deliberately has no
@@ -560,7 +561,7 @@ func TestScanWalk_WorkerFailureRecordIsSealed(t *testing.T) {
 
 	// Every module scan fails, so every module takes the worker-failure path.
 	scanner := &fakeScanner{err: errors.New("scanner exploded")}
-	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1"}}
+	db := &fakeDatabase{snapshot: vulntest.MustNew("test", "v1")}
 	clock := fixedClock{t: now}
 
 	moduleUC := application.NewScanModuleUseCase(

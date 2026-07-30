@@ -17,6 +17,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
 )
@@ -517,12 +518,7 @@ const (
 	fixtureScanID = "01JSCANRUN0000000000000001"
 )
 
-var fixtureSnap = vuldomain.DatabaseSnapshot{
-	Source:      "govulndb",
-	Version:     "v2025-01-01T00-00-00",
-	RetrievedAt: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
-	ContentHash: "sha256:fixture",
-}
+var fixtureSnap = vulntest.MustSealOver("govulndb", "v2025-01-01T00-00-00", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), []byte("fixture advisories"))
 
 func fixtureRunAndRec(t *testing.T) (vuldomain.WalkScanRun, vuldomain.VulnerabilityRecord) {
 	t.Helper()
@@ -617,13 +613,8 @@ func TestRunScanList_UnknownWalk(t *testing.T) {
 
 func TestResolveSnapshot_Found(t *testing.T) {
 	uc := testfakes.NewFakeQueryScanRuns()
-	want := vuldomain.DatabaseSnapshot{
-		Source:      "osv",
-		Version:     "2026-05-07T19:21:40Z",
-		RetrievedAt: time.Date(2026, 5, 7, 19, 21, 40, 0, time.UTC),
-		ContentHash: "sha256:deadbeef",
-	}
-	uc.AddSnapshot(vuldomain.DatabaseSnapshot{Source: "osv", Version: "2026-01-01T00:00:00Z"})
+	want := vulntest.MustSealOver("osv", "2026-05-07T19:21:40Z", time.Date(2026, 5, 7, 19, 21, 40, 0, time.UTC), []byte("deadbeef advisories"))
+	uc.AddSnapshot(vulntest.MustNew("osv", "2026-01-01T00:00:00Z"))
 	uc.AddSnapshot(want)
 
 	got, found, err := resolveSnapshot(context.Background(), uc, "osv", "2026-05-07T19:21:40Z")
@@ -640,7 +631,7 @@ func TestResolveSnapshot_Found(t *testing.T) {
 
 func TestResolveSnapshot_NotFound(t *testing.T) {
 	uc := testfakes.NewFakeQueryScanRuns()
-	uc.AddSnapshot(vuldomain.DatabaseSnapshot{Source: "osv", Version: "2026-01-01T00:00:00Z"})
+	uc.AddSnapshot(vulntest.MustNew("osv", "2026-01-01T00:00:00Z"))
 
 	got, found, err := resolveSnapshot(context.Background(), uc, "osv", "nonexistent")
 	if err != nil {

@@ -12,6 +12,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 )
 
 // The govulncheck adapter records its non-zero exit at debug and hands the error
@@ -58,7 +59,7 @@ func TestScanModule_MetadataFallbackLogLevelByReason(t *testing.T) {
 			blobs := newFakeBlob()
 			vulnStore := newFakeVulnStore()
 			db := &fakeDatabase{
-				snapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1", RetrievedAt: now},
+				snapshot: vulntest.MustNewAt("test", "v1", now),
 				content:  "vulndb content",
 			}
 			scanner := &fakeScanner{results: map[string]domain.VulnerabilityRecord{

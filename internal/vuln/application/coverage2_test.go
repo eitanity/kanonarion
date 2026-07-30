@@ -10,6 +10,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 )
 
 // TestScanWalk_ProgressOnScanFailure covers the progress-callback path when a
@@ -21,7 +22,7 @@ func TestScanWalk_ProgressOnScanFailure(t *testing.T) {
 	seedWalk(t, walkStore, "w1", coord)
 
 	vulnStore := newFakeVulnStore()
-	snap := domain.DatabaseSnapshot{Source: "s", Version: "v1"}
+	snap := vulntest.MustNew("s", "v1")
 	// No fact record → scan_module.Scan returns error → scan_walk hits line 118
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
@@ -54,7 +55,7 @@ func TestRescan_PutSnapshotError(t *testing.T) {
 
 	vulnStore := newFakeVulnStore()
 	vulnStore.errOnPutSnap = errStore
-	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Source: "s", Version: "v1"}, content: "data"}
+	db := &fakeDatabase{snapshot: vulntest.MustNew("s", "v1"), content: "data"}
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
 	clock := fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}
@@ -79,7 +80,7 @@ func TestScanWalk_PutFreshSnapshotError(t *testing.T) {
 	vulnStore := newFakeVulnStore()
 	vulnStore.errOnPutSnap = errStore
 	// No cached snapshot → will fetch from db → then try to persist → error
-	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Source: "s", Version: "v1"}, content: "data"}
+	db := &fakeDatabase{snapshot: vulntest.MustNew("s", "v1"), content: "data"}
 
 	uc := makeScanWalkUC(t, walkStore, vulnStore, db)
 	_, err := uc.Scan(t.Context(), application.ScanWalkParams{WalkID: "w1"})

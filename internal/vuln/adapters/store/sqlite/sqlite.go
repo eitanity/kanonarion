@@ -689,6 +689,14 @@ func (s *Store) PutVulnerabilityRecord(ctx context.Context, record domain.Vulner
 	if record.Coordinate.IsZero() {
 		return coordinate.ErrZeroCoordinate
 	}
+	// A record whose snapshot is the zero value would key a row on the empty
+	// database at the empty generation. That is worse than the empty coordinate:
+	// the ledger composes on (coordinate, pipeline version, snapshot), so such a
+	// row joins the group holding every other record that also named no snapshot,
+	// and a read composes them as one measurement against one advisory database.
+	if record.DatabaseSnapshot.IsZero() {
+		return fmt.Errorf("putting the vulnerability record for %s: %w", record.Coordinate, domain.ErrZeroSnapshot)
+	}
 	// A record whose hash does not describe its contents is refused before it
 	// reaches the table: the hash is what every later read checks the record
 	// against, so storing one that is already wrong stores a row that can only
@@ -742,7 +750,7 @@ DO NOTHING`
 
 	if _, err = tx.ExecContext(ctx, q,
 		record.Coordinate.Path(), record.Coordinate.Version(), record.PipelineVersion,
-		record.DatabaseSnapshot.Source, record.DatabaseSnapshot.Version,
+		record.DatabaseSnapshot.Source(), record.DatabaseSnapshot.Version(),
 		string(rooting), record.WalkID,
 		string(record.OverallStatus), string(coverage), string(findings), len(record.Findings),
 		record.ScannedAt.UTC().Format(time.RFC3339),
@@ -784,7 +792,7 @@ func (s *Store) reconcileFindingsIndex(
 ) error {
 	generations, err := s.listGenerations(ctx, tx,
 		record.Coordinate.Path(), record.Coordinate.Version(), record.PipelineVersion,
-		record.DatabaseSnapshot.Source, record.DatabaseSnapshot.Version)
+		record.DatabaseSnapshot.Source(), record.DatabaseSnapshot.Version())
 	if err != nil {
 		return err
 	}
@@ -810,7 +818,7 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 
 	if _, err = tx.ExecContext(ctx, clearIdxQ,
 		record.Coordinate.Path(), record.Coordinate.Version(), record.PipelineVersion,
-		record.DatabaseSnapshot.Source, record.DatabaseSnapshot.Version, string(rooting),
+		record.DatabaseSnapshot.Source(), record.DatabaseSnapshot.Version(), string(rooting),
 	); err != nil {
 		return fmt.Errorf("clearing finding index entries for %s: %w", record.Coordinate, err)
 	}
@@ -838,7 +846,7 @@ ON CONFLICT DO NOTHING`
 			if _, err = tx.ExecContext(ctx, idxQ,
 				id,
 				record.Coordinate.Path(), record.Coordinate.Version(), record.PipelineVersion,
-				record.DatabaseSnapshot.Source, record.DatabaseSnapshot.Version,
+				record.DatabaseSnapshot.Source(), record.DatabaseSnapshot.Version(),
 				string(rooting), isReachable,
 			); err != nil {
 				return fmt.Errorf("inserting finding index entry %s: %w", id, err)
@@ -924,7 +932,7 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 	var raw sql.NullString
 	err := q.QueryRowContext(ctx, stmt,
 		record.Coordinate.Path(), record.Coordinate.Version(), record.PipelineVersion,
-		record.DatabaseSnapshot.Source, record.DatabaseSnapshot.Version,
+		record.DatabaseSnapshot.Source(), record.DatabaseSnapshot.Version(),
 	).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return time.Time{}, false, nil
@@ -969,8 +977,15 @@ func (s *Store) GetVulnerabilityRecord(
 	if coord.IsZero() {
 		return domain.VulnerabilityRecord{}, false, coordinate.ErrZeroCoordinate
 	}
+	// The zero snapshot names no advisory database at no generation, so this is a
+	// question about nothing. Answering it with absence would report "no record
+	// here" against a database that was never named — and, worse, would read the
+	// composition group every record that recorded no snapshot fell into.
+	if snapshot.IsZero() {
+		return domain.VulnerabilityRecord{}, false, domain.ErrZeroSnapshot
+	}
 	records, err := s.listGenerations(ctx, s.db.DB(),
-		coord.Path(), coord.Version(), pipelineVersion, snapshot.Source, snapshot.Version)
+		coord.Path(), coord.Version(), pipelineVersion, snapshot.Source(), snapshot.Version())
 	if err != nil {
 		return domain.VulnerabilityRecord{}, false, err
 	}
@@ -1010,8 +1025,15 @@ func (s *Store) GetVulnerabilityRecordAt(
 	if coord.IsZero() {
 		return domain.VulnerabilityRecord{}, false, coordinate.ErrZeroCoordinate
 	}
+	// The zero snapshot names no advisory database at no generation, so this is a
+	// question about nothing. Answering it with absence would report "no record
+	// here" against a database that was never named — and, worse, would read the
+	// composition group every record that recorded no snapshot fell into.
+	if snapshot.IsZero() {
+		return domain.VulnerabilityRecord{}, false, domain.ErrZeroSnapshot
+	}
 	records, err := s.listGenerations(ctx, s.db.DB(),
-		coord.Path(), coord.Version(), pipelineVersion, snapshot.Source, snapshot.Version)
+		coord.Path(), coord.Version(), pipelineVersion, snapshot.Source(), snapshot.Version())
 	if err != nil {
 		return domain.VulnerabilityRecord{}, false, err
 	}
@@ -1044,6 +1066,13 @@ func (s *Store) HasVulnerabilityRecord(
 	if coord.IsZero() {
 		return false, coordinate.ErrZeroCoordinate
 	}
+	// The zero snapshot names no advisory database at no generation, so this is a
+	// question about nothing. Answering it with absence would report "no record
+	// here" against a database that was never named — and, worse, would read the
+	// composition group every record that recorded no snapshot fell into.
+	if snapshot.IsZero() {
+		return false, domain.ErrZeroSnapshot
+	}
 	const q = `
 SELECT 1 FROM vulnerability_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
@@ -1053,7 +1082,7 @@ LIMIT 1`
 	var one int
 	err := s.db.DB().QueryRowContext(ctx, q,
 		coord.Path(), coord.Version(), pipelineVersion,
-		snapshot.Source, snapshot.Version, contentHash,
+		snapshot.Source(), snapshot.Version(), contentHash,
 	).Scan(&one)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
@@ -1256,7 +1285,7 @@ ON CONFLICT (id) DO UPDATE SET
     serialised          = excluded.serialised`
 
 	if _, err = tx.ExecContext(ctx, q,
-		run.ID, run.WalkID, run.Snapshot.Source, run.Snapshot.Version,
+		run.ID, run.WalkID, run.Snapshot.Source(), run.Snapshot.Version(),
 		run.StartedAt.UTC().Format(time.RFC3339),
 		run.CompletedAt.UTC().Format(time.RFC3339),
 		string(run.OverallStatus),
@@ -1284,7 +1313,7 @@ ON CONFLICT (walk_scan_run_id, module_path, module_version) DO NOTHING`
 	for coord, contentHash := range run.PerModuleResults {
 		if _, err = tx.ExecContext(ctx, modQ,
 			run.ID, coord.Path(), coord.Version(),
-			run.PipelineVersion, run.Snapshot.Source, run.Snapshot.Version, run.WalkID,
+			run.PipelineVersion, run.Snapshot.Source(), run.Snapshot.Version(), run.WalkID,
 			contentHash,
 		); err != nil {
 			return fmt.Errorf("inserting walk scan run module %s: %w", coord, err)
@@ -1375,6 +1404,10 @@ func (s *Store) ListAllWalkScanRuns(ctx context.Context) ([]domain.WalkScanRun, 
 
 // PutDatabaseSnapshot persists a snapshot blob.
 func (s *Store) PutDatabaseSnapshot(ctx context.Context, snapshot domain.DatabaseSnapshot, content io.Reader) error {
+	if snapshot.IsZero() {
+		return fmt.Errorf("putting database snapshot: %w", domain.ErrZeroSnapshot)
+	}
+
 	data, err := io.ReadAll(content)
 	if err != nil {
 		return fmt.Errorf("reading snapshot content: %w", err)
@@ -1391,11 +1424,14 @@ func (s *Store) PutDatabaseSnapshot(ctx context.Context, snapshot domain.Databas
 	// simply not sealed; the store seals it, and the snapshot becomes verifiable
 	// from here on.
 	computed := domain.HashSnapshotContent(data)
-	if snapshot.ContentHash != "" && snapshot.ContentHash != computed {
+	if snapshot.ContentHash() != "" && snapshot.ContentHash() != computed {
 		return fmt.Errorf("%w: snapshot %s@%s content hash mismatch: caller declared %q, content is %q",
-			ports.ErrSnapshotIntegrity, snapshot.Source, snapshot.Version, snapshot.ContentHash, computed)
+			ports.ErrSnapshotIntegrity, snapshot.Source(), snapshot.Version(), snapshot.ContentHash(), computed)
 	}
-	snapshot.ContentHash = computed
+	sealed, err := snapshot.WithContentHash(computed)
+	if err != nil {
+		return fmt.Errorf("sealing snapshot %s@%s against the bytes being stored: %w", snapshot.Source(), snapshot.Version(), err)
+	}
 
 	const q = `
 INSERT INTO vulnerability_snapshots (
@@ -1407,9 +1443,9 @@ ON CONFLICT (source, version) DO UPDATE SET
     content      = excluded.content`
 
 	_, err = s.db.DB().ExecContext(ctx, q,
-		snapshot.Source, snapshot.Version,
-		snapshot.RetrievedAt.UTC().Format(time.RFC3339),
-		snapshot.ContentHash, data,
+		sealed.Source(), sealed.Version(),
+		sealed.RetrievedAt().UTC().Format(time.RFC3339),
+		sealed.ContentHash(), data,
 	)
 	if err != nil {
 		return fmt.Errorf("inserting database snapshot: %w", err)
@@ -1444,13 +1480,17 @@ ON CONFLICT (source, version) DO UPDATE SET
 // question about one snapshot with the bytes of another is the failure this
 // whole field exists to prevent.
 func (s *Store) GetDatabaseSnapshot(ctx context.Context, snapshot domain.DatabaseSnapshot) (io.ReadCloser, error) {
+	if snapshot.IsZero() {
+		return nil, fmt.Errorf("getting database snapshot: %w", domain.ErrZeroSnapshot)
+	}
+
 	const q = `SELECT content, content_hash FROM vulnerability_snapshots WHERE source = ? AND version = ?`
 
 	var content []byte
 	var storedHash string
-	err := s.db.DB().QueryRowContext(ctx, q, snapshot.Source, snapshot.Version).Scan(&content, &storedHash)
+	err := s.db.DB().QueryRowContext(ctx, q, snapshot.Source(), snapshot.Version()).Scan(&content, &storedHash)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("snapshot not found: %s@%s", snapshot.Source, snapshot.Version)
+		return nil, fmt.Errorf("snapshot not found: %s@%s", snapshot.Source(), snapshot.Version())
 	}
 	if err != nil {
 		return nil, fmt.Errorf("querying database snapshot: %w", err)
@@ -1459,12 +1499,12 @@ func (s *Store) GetDatabaseSnapshot(ctx context.Context, snapshot domain.Databas
 	if storedHash != "" {
 		if computed := domain.HashSnapshotContent(content); computed != storedHash {
 			return nil, fmt.Errorf("%w: snapshot %s@%s content hash mismatch: stored %q, computed %q",
-				ports.ErrSnapshotIntegrity, snapshot.Source, snapshot.Version, storedHash, computed)
+				ports.ErrSnapshotIntegrity, snapshot.Source(), snapshot.Version(), storedHash, computed)
 		}
 	}
-	if snapshot.ContentHash != "" && storedHash != "" && snapshot.ContentHash != storedHash {
+	if snapshot.ContentHash() != "" && storedHash != "" && snapshot.ContentHash() != storedHash {
 		return nil, fmt.Errorf("%w: snapshot %s@%s is not the one requested: caller expected %q, store holds %q",
-			ports.ErrSnapshotIntegrity, snapshot.Source, snapshot.Version, snapshot.ContentHash, storedHash)
+			ports.ErrSnapshotIntegrity, snapshot.Source(), snapshot.Version(), snapshot.ContentHash(), storedHash)
 	}
 
 	return io.NopCloser(bytes.NewReader(content)), nil
@@ -1494,12 +1534,11 @@ func (s *Store) GetLatestDatabaseSnapshot(ctx context.Context) (domain.DatabaseS
 		return domain.DatabaseSnapshot{}, false, fmt.Errorf("parsing snapshot time: %w", err)
 	}
 
-	return domain.DatabaseSnapshot{
-		Source:      source,
-		Version:     version,
-		RetrievedAt: t,
-		ContentHash: contentHash,
-	}, true, nil
+	stored, err := domain.NewDatabaseSnapshot(source, version, t, contentHash)
+	if err != nil {
+		return domain.DatabaseSnapshot{}, false, fmt.Errorf("reading latest snapshot: %w", err)
+	}
+	return stored, true, nil
 }
 
 // ListDatabaseSnapshots returns all stored snapshot metadata, most recent first.
@@ -1522,12 +1561,11 @@ func (s *Store) ListDatabaseSnapshots(ctx context.Context) ([]domain.DatabaseSna
 		if err != nil {
 			return nil, fmt.Errorf("parsing snapshot time: %w", err)
 		}
-		snapshots = append(snapshots, domain.DatabaseSnapshot{
-			Source:      source,
-			Version:     version,
-			RetrievedAt: t,
-			ContentHash: contentHash,
-		})
+		stored, err := domain.NewDatabaseSnapshot(source, version, t, contentHash)
+		if err != nil {
+			return nil, fmt.Errorf("reading snapshot row: %w", err)
+		}
+		snapshots = append(snapshots, stored)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating snapshots: %w", err)

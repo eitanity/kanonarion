@@ -11,6 +11,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 )
 
 // The metadata-only fallback is the one producer whose two answers cannot both
@@ -23,7 +24,7 @@ import (
 // later reader ranks and reports from.
 func TestScanModule_MetadataOnlyMatchStatesBothAxes(t *testing.T) {
 	vulnStore := newFakeVulnStore()
-	snap := domain.DatabaseSnapshot{Source: "osv", Version: "v2"}
+	snap := vulntest.MustNew("osv", "v2")
 	modCoord := coordinatetest.MustNew("github.com/vuln/mod", "v1.0.0")
 	db := &fakeDatabase{
 		snapshot:    snap,
@@ -73,7 +74,7 @@ func TestScanModule_MetadataOnlyMatchStatesBothAxes(t *testing.T) {
 // analysed when its source was never read.
 func TestScanModule_MetadataOnlyCleanIsStillACoverageGap(t *testing.T) {
 	vulnStore := newFakeVulnStore()
-	snap := domain.DatabaseSnapshot{Source: "osv", Version: "v2"}
+	snap := vulntest.MustNew("osv", "v2")
 	modCoord := coordinatetest.MustNew("github.com/clean/mod", "v1.0.0")
 
 	uc := application.NewScanModuleUseCase(
@@ -117,7 +118,7 @@ func TestScanModule_MetadataOnlyCleanIsStillACoverageGap(t *testing.T) {
 func TestScanModule_CoordinateMatchOnAnAnalysedModuleStatesAnalysedAndAffected(t *testing.T) {
 	ctx := t.Context()
 	vulnStore := newFakeVulnStore()
-	snap := domain.DatabaseSnapshot{Source: "osv", Version: "v2"}
+	snap := vulntest.MustNew("osv", "v2")
 	modCoord := coordinatetest.MustNew("github.com/scanned/mod", "v1.0.0")
 
 	// The module must be fetched for the source path to run at all; an absent

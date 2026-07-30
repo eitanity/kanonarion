@@ -16,6 +16,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
@@ -75,7 +76,7 @@ func BenchmarkVulnScan_Sequential_vs_Parallel(b *testing.B) {
 	ctx := context.Background()
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	clock := fixedClock{t: now}
-	snap := domain.DatabaseSnapshot{Source: "bench", Version: "v1"}
+	snap := vulntest.MustNew("bench", "v1")
 	silentLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	for _, n := range []int{4, 8, 16} {

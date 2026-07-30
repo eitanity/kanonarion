@@ -11,6 +11,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 )
 
 // snapshotFaultStore fails the snapshot read under test. The embedded nil port
@@ -31,7 +32,7 @@ func (s *snapshotFaultStore) GetDatabaseSnapshot(context.Context, domain.Databas
 // never consulted. A corrupt snapshot therefore fails instead of falling back,
 // while the failures the fallback was actually written for keep it.
 func TestPrepareDBArg_IntegrityFailsWhileOtherFailuresFallBack(t *testing.T) {
-	snapshot := domain.DatabaseSnapshot{Source: "vuln.go.dev", Version: "2026-07-27T16:28:49Z"}
+	snapshot := vulntest.MustNew("vuln.go.dev", "2026-07-27T16:28:49Z")
 	const liveDB = "https://vuln.go.dev"
 
 	newScanner := func(err error) *Scanner {
