@@ -935,7 +935,7 @@ func (uc *ScanWalkUseCase) populatePrePruningGoMods(ctx context.Context, graph w
 
 	report := modcache.PopulateGoModClosure(
 		ctx, uc.moduleScanner.factStore, uc.moduleScanner.blobs, cacheDir,
-		seeds, uc.moduleScanner.fetchPipelineVersion,
+		seeds,
 		func(ctx context.Context, batch []coordinate.ModuleCoordinate) { uc.prefetchGoModOnly(ctx, batch) },
 	)
 	uc.logger.Info("populated pre-pruning module-graph go.mod files for offline resolution",
@@ -1031,7 +1031,7 @@ func (uc *ScanWalkUseCase) populateScannedBuildListDeps(ctx context.Context, coo
 	if len(sourceSet) > 0 {
 		src := coordSetSlice(sourceSet)
 		uc.prefetchMissing(ctx, src)
-		report := modcache.Populate(ctx, uc.moduleScanner.factStore, uc.moduleScanner.blobs, cacheDir, src, uc.moduleScanner.fetchPipelineVersion)
+		report := modcache.Populate(ctx, uc.moduleScanner.factStore, uc.moduleScanner.blobs, cacheDir, src)
 		uc.logger.Info("populated nested-ancestor module sources for offline resolution",
 			"written", report.Written, "requested", report.Requested)
 		if !report.Complete() {
@@ -1043,7 +1043,7 @@ func (uc *ScanWalkUseCase) populateScannedBuildListDeps(ctx context.Context, coo
 	if len(goModSet) > 0 {
 		mods := coordSetSlice(goModSet)
 		uc.prefetchGoModOnly(ctx, mods)
-		report := modcache.PopulateGoMod(ctx, uc.moduleScanner.factStore, uc.moduleScanner.blobs, cacheDir, mods, uc.moduleScanner.fetchPipelineVersion)
+		report := modcache.PopulateGoMod(ctx, uc.moduleScanner.factStore, uc.moduleScanner.blobs, cacheDir, mods)
 		uc.logger.Info("populated scanned-node build-list go.mod files for offline resolution",
 			"written", report.Written, "requested", report.Requested)
 		if !report.Complete() {
@@ -1331,7 +1331,7 @@ func (uc *ScanWalkUseCase) prepareModCache(ctx context.Context, walk walkdomain.
 		// best-effort semantics.
 		uc.prefetchMissing(ctx, coords)
 
-		report := modcache.Populate(ctx, uc.moduleScanner.factStore, uc.moduleScanner.blobs, cacheDir, coords, uc.moduleScanner.fetchPipelineVersion)
+		report := modcache.Populate(ctx, uc.moduleScanner.factStore, uc.moduleScanner.blobs, cacheDir, coords)
 		if report.Written == 0 && report.Requested > 0 {
 			uc.logger.Warn("failed to pre-populate GOMODCACHE, govulncheck will download dependencies",
 				"requested", report.Requested, "failures", report.FailureSummary(populateFailureLogLimit))

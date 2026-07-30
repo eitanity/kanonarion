@@ -110,7 +110,7 @@ func BenchmarkVulnScan_Sequential_vs_Parallel(b *testing.B) {
 			_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
 			moduleUC := application.NewScanModuleUseCase(
 				facts, blobs, vulnStore, ws, &slowScanner{delay: scanDelay},
-				db, nil, clock, "v1", "v1", silentLogger,
+				db, nil, clock, "v1", silentLogger,
 			)
 			walkUC := application.NewScanWalkUseCase(
 				ws, vulnStore, moduleUC, nil, clock, "v1", silentLogger,
@@ -134,7 +134,7 @@ func BenchmarkVulnScan_Sequential_vs_Parallel(b *testing.B) {
 			_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
 			moduleUC := application.NewScanModuleUseCase(
 				facts, blobs, vulnStore, ws, &slowScanner{delay: scanDelay},
-				db, nil, clock, "v1", "v1", silentLogger,
+				db, nil, clock, "v1", silentLogger,
 			)
 			walkUC := application.NewScanWalkUseCase(
 				ws, vulnStore, moduleUC, nil, clock, "v1", silentLogger,

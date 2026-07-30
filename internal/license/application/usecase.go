@@ -29,35 +29,28 @@ const PipelineVersion = "1.1.0"
 // ExtractLicenseUseCase extracts and persists license information for a
 // single Go module at a pinned version.
 type ExtractLicenseUseCase struct {
-	facts                     fetchports.FactStore
-	blobs                     fetchports.BlobStore
-	licenses                  ports.LicenseStore
-	detector                  ports.LicenseDetector
-	clock                     fetchports.Clock
-	stopwatch                 fetchports.Stopwatch
-	pipelineVersion           string
-	fetchPipelineVersion      string // pipeline version used when the module was fetched
-	localFetchPipelineVersion string // pipeline version used when the module was ingested from a local tree
-	logger                    *slog.Logger
-	hasher                    domain2.LicenseRecordHasher
-	audit                     ports.AuditSink // optional; nil disables audit emission
+	facts           fetchports.FactStore
+	blobs           fetchports.BlobStore
+	licenses        ports.LicenseStore
+	detector        ports.LicenseDetector
+	clock           fetchports.Clock
+	stopwatch       fetchports.Stopwatch
+	pipelineVersion string
+	logger          *slog.Logger
+	hasher          domain2.LicenseRecordHasher
+	audit           ports.AuditSink // optional; nil disables audit emission
 }
 
 // Config holds all construction parameters for ExtractLicenseUseCase.
 type Config struct {
-	Facts                fetchports.FactStore
-	Blobs                fetchports.BlobStore
-	Licenses             ports.LicenseStore
-	Detector             ports.LicenseDetector
-	Clock                fetchports.Clock
-	Stopwatch            fetchports.Stopwatch
-	PipelineVersion      string // defaults to PipelineVersion constant
-	FetchPipelineVersion string // pipeline version used when modules were fetched
-	// LocalFetchPipelineVersion is the pipeline version under which locally
-	// ingested modules (local-replace targets and the project-walk root)
-	// persist their FactRecord. Empty disables the local fallback.
-	LocalFetchPipelineVersion string
-	Logger                    *slog.Logger
+	Facts           fetchports.FactStore
+	Blobs           fetchports.BlobStore
+	Licenses        ports.LicenseStore
+	Detector        ports.LicenseDetector
+	Clock           fetchports.Clock
+	Stopwatch       fetchports.Stopwatch
+	PipelineVersion string // defaults to PipelineVersion constant
+	Logger          *slog.Logger
 }
 
 // NewExtractLicenseUseCase constructs an ExtractLicenseUseCase from a Config.
@@ -66,16 +59,14 @@ func NewExtractLicenseUseCase(cfg Config) *ExtractLicenseUseCase {
 		cfg.PipelineVersion = PipelineVersion
 	}
 	return &ExtractLicenseUseCase{
-		facts:                     cfg.Facts,
-		blobs:                     cfg.Blobs,
-		licenses:                  cfg.Licenses,
-		detector:                  cfg.Detector,
-		clock:                     cfg.Clock,
-		stopwatch:                 cfg.Stopwatch,
-		pipelineVersion:           cfg.PipelineVersion,
-		fetchPipelineVersion:      cfg.FetchPipelineVersion,
-		localFetchPipelineVersion: cfg.LocalFetchPipelineVersion,
-		logger:                    cfg.Logger,
+		facts:           cfg.Facts,
+		blobs:           cfg.Blobs,
+		licenses:        cfg.Licenses,
+		detector:        cfg.Detector,
+		clock:           cfg.Clock,
+		stopwatch:       cfg.Stopwatch,
+		pipelineVersion: cfg.PipelineVersion,
+		logger:          cfg.Logger,
 	}
 }
 
@@ -295,31 +286,28 @@ func licenseExtractedEvent(record domain2.LicenseRecord) audit.Event {
 	}
 }
 
-// requireFetchRecord looks up the FactRecord for coord. It tries the
-// configured fetch pipeline version first (a proxy-verified record always
-// wins), then the local-ingest pipeline version (modules ingested from a
-// local working tree), then falls back to the extraction pipeline version.
-// Returns ErrModuleNotFetched if no record is found.
+// requireFetchRecord asks the ledger what it has measured about coord and
+// returns the record composition serves. Returns ErrModuleNotFetched when
+// nothing has been measured.
+//
+// It names no fetch pipeline version. It used to try three — the fetch one, the
+// local-ingest one, and this stage's own extraction version, which is a category
+// error: an extraction version is not a fetch version, and the two namespaces
+// only share a type. The list also returned on its first hit, so a module
+// measured at two versions was extracted from whichever version was listed first
+// rather than from the stronger measurement. Composition decides both questions.
 func (uc *ExtractLicenseUseCase) requireFetchRecord(
 	ctx context.Context,
 	coord coordinate.ModuleCoordinate,
 ) (domain.FactRecord, error) {
-	versions := []string{uc.fetchPipelineVersion, uc.localFetchPipelineVersion, uc.pipelineVersion}
-	seen := map[string]bool{}
-	for _, v := range versions {
-		if v == "" || seen[v] {
-			continue
-		}
-		seen[v] = true
-		r, ok, err := uc.facts.GetFetchRecord(ctx, coord, v)
-		if err != nil {
-			return domain.FactRecord{}, fmt.Errorf("checking fetch record (pipeline %s): %w", v, err)
-		}
-		if ok {
-			return r.FactRecord, nil
-		}
+	r, ok, err := fetchports.ComposedFetchRecord(ctx, uc.facts, coord)
+	if err != nil {
+		return domain.FactRecord{}, fmt.Errorf("checking fetch record: %w", err)
 	}
-	return domain.FactRecord{}, fmt.Errorf("%w: %s", ports.ErrModuleNotFetched, coord)
+	if !ok {
+		return domain.FactRecord{}, fmt.Errorf("%w: %s", ports.ErrModuleNotFetched, coord)
+	}
+	return r.FactRecord, nil
 }
 
 // extractFromZip parses the module zip and runs license detection on every

@@ -60,7 +60,7 @@ func newScanUCWith(
 		facts, blobs, vulnStore, nil,
 		scanner, db, reachability,
 		fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)},
-		"v1", "v1",
+		"v1",
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	).WithCallGraphLoader(loader)
 	if spawner != nil {

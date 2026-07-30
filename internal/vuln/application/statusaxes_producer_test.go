@@ -34,7 +34,7 @@ func TestScanModule_MetadataOnlyMatchStatesBothAxes(t *testing.T) {
 	uc := application.NewScanModuleUseCase(
 		newFakeFacts(), newFakeBlob(), vulnStore, newFakeWalkStore(),
 		&fakeScanner{results: map[string]domain.VulnerabilityRecord{}}, db, nil,
-		fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}, "v1", "v1", slog.Default(),
+		fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}, "v1", slog.Default(),
 	)
 	if _, err := uc.Scan(t.Context(), application.ScanModuleParams{
 		Coordinate: modCoord,
@@ -81,7 +81,7 @@ func TestScanModule_MetadataOnlyCleanIsStillACoverageGap(t *testing.T) {
 		newFakeFacts(), newFakeBlob(), vulnStore, newFakeWalkStore(),
 		&fakeScanner{results: map[string]domain.VulnerabilityRecord{}},
 		&fakeDatabase{snapshot: snap}, nil,
-		fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}, "v1", "v1", slog.Default(),
+		fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}, "v1", slog.Default(),
 	)
 	if _, err := uc.Scan(t.Context(), application.ScanModuleParams{
 		Coordinate: modCoord,
@@ -146,7 +146,7 @@ func TestScanModule_CoordinateMatchOnAnAnalysedModuleStatesAnalysedAndAffected(t
 			snapshot:    snap,
 			vulnerables: map[coordinate.ModuleCoordinate][]string{modCoord: {"GO-2024-0001"}},
 		}, nil,
-		fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}, "v1", "v1", slog.Default(),
+		fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}, "v1", slog.Default(),
 	)
 	rec, err := uc.Scan(t.Context(), application.ScanModuleParams{
 		Coordinate: modCoord,

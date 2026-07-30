@@ -15,7 +15,6 @@ import (
 	"github.com/spf13/cobra"
 
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
-	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
@@ -385,7 +384,7 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, sc
 		return res, nil
 	}
 
-	if frec, found, ferr := ctr.QueryFetch.GetFetchRecord(ctx, coord, fetchapp.PipelineVersion); ferr == nil && found {
+	if frec, found, ferr := ctr.QueryFetch.ComposeFetchRecord(ctx, coord); ferr == nil && found {
 		res.Verification = frec.VerificationStatus
 		res.coverage = fetchdomain.CoverageObservation{
 			Bucket:   fetchdomain.BucketForVerification(fetchdomain.VerificationStatus(frec.VerificationStatus)),

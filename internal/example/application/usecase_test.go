@@ -618,14 +618,13 @@ func buildUseCase(t *testing.T, facts *fakeFactStore, blobs *fakeBlobStore, exam
 		examples = &fakeExampleStore{}
 	}
 	return application.NewExtractExampleUseCase(application.Config{
-		Facts:                facts,
-		Blobs:                blobs,
-		Examples:             examples,
-		Parser:               goast.New(),
-		Clock:                fakeClock{t: time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)},
-		Stopwatch:            fakeStopwatch{},
-		FetchPipelineVersion: application.PipelineVersion,
-		Logger:               slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Facts:     facts,
+		Blobs:     blobs,
+		Examples:  examples,
+		Parser:    goast.New(),
+		Clock:     fakeClock{t: time.Date(2025, 6, 1, 0, 0, 0, 0, time.UTC)},
+		Stopwatch: fakeStopwatch{},
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 }
 

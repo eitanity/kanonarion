@@ -4,8 +4,12 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"sort"
 	"testing"
+	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/fetch/domain"
 )
 
@@ -72,6 +76,130 @@ func AssertRefusesZeroIdentity(t testing.TB, name string, op func() error) {
 	if !errors.Is(err, domain.ErrZeroIdentity) {
 		t.Fatalf("fetchtest: %s(zero) error = %v, want %v", name, err, domain.ErrZeroIdentity)
 	}
+}
+
+// ComposedStore is the write half of ports.FactStore plus the coordinate-only
+// read of ports.FactRecordComposer. The assertion below takes this rather than
+// the full store so a fake that has no version-keyed read is still held to the
+// composed one.
+type ComposedStore interface {
+	PutFetchRecord(ctx context.Context, record domain.SealedRecord) error
+	ComposeFetchRecord(ctx context.Context, coord coordinate.ModuleCoordinate) (domain.CompositeRecord, bool, error)
+}
+
+// AssertComposesAcrossPipelineVersions is the ports.FactRecordComposer contract
+// test, and it pins both halves of the defect the capability was added for.
+//
+// It seeds one coordinate with two measurements at two different FETCH pipeline
+// versions — an older one whose checksum-database lookup answered, and a newer
+// one whose lookup failed — and asserts three things:
+//
+//   - the coordinate is found at all, though neither measurement sits at the
+//     pipeline version a reader would have guessed. A version-keyed read reports
+//     absence here, which is how a third of a real store became unextractable:
+//     the stage asked at the version it knew and the ledger answered "nothing",
+//     while the artefact sat in the blob store the whole time.
+//   - BOTH measurements reach the composer. Filtering before composing hides from
+//     the composer exactly the records it exists to rank.
+//   - the record served is the older, STRONGER one. A first-hit-wins fallback
+//     list returns whichever version it happened to name first, so a failed
+//     lookup appended after a good one becomes the answer — the defect
+//     domain.Compose's own doc says it was written to prevent. This is asserted
+//     against the served record's content hash, not against a version string.
+//
+// Every implementation should call it, fakes included: a fake that answers a
+// coordinate-only read by consulting one pipeline version lets an
+// application-layer test go green on a read the real store answers differently.
+func AssertComposesAcrossPipelineVersions(t testing.TB, s ComposedStore) {
+	t.Helper()
+	ctx := context.Background()
+	coord := coordinatetest.MustNew("example.com/composed", "v1.0.0")
+
+	// Both measurements describe the same artefact — same zip hash — so they do
+	// not diverge; what differs is the strength of the evidence behind them.
+	stronger := Record(t,
+		Coordinate(coord),
+		PipelineVersion("fetch-old"),
+		Content("composed-zip"),
+		Status(domain.Verified),
+		FetchedAt(time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC)),
+	)
+	weaker := Record(t,
+		Coordinate(coord),
+		PipelineVersion("fetch-new"),
+		Content("composed-zip"),
+		Status(domain.Verified),
+		SumDBLookupFailed(true),
+		FetchedAt(time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)),
+	)
+	for _, r := range []domain.FactRecord{stronger, weaker} {
+		sealed, err := domain.Rehydrate(r)
+		if err != nil {
+			t.Fatalf("fetchtest: sealing seed record at pipeline %s: %v", r.PipelineVersion, err)
+		}
+		if err := s.PutFetchRecord(ctx, sealed); err != nil {
+			t.Fatalf("fetchtest: seeding record at pipeline %s: %v", r.PipelineVersion, err)
+		}
+	}
+
+	got, ok, err := s.ComposeFetchRecord(ctx, coord)
+	if err != nil {
+		t.Fatalf("fetchtest: ComposeFetchRecord(%s) error = %v, want nil", coord, err)
+	}
+	if !ok {
+		t.Fatalf("fetchtest: ComposeFetchRecord(%s) reported absence; measurements exist at pipeline %q and %q, and a coordinate-only read must not be keyed by fetch pipeline version",
+			coord, stronger.PipelineVersion, weaker.PipelineVersion)
+	}
+	if got.MeasurementCount != 2 {
+		t.Fatalf("fetchtest: ComposeFetchRecord(%s) composed %d measurements, want 2; a read that filters by pipeline version before composing hides from the composer the records it exists to rank",
+			coord, got.MeasurementCount)
+	}
+	if got.ContentHash != stronger.ContentHash {
+		t.Fatalf("fetchtest: ComposeFetchRecord(%s) served the record with content hash %q, want %q — the older measurement whose checksum-database lookup answered. Serving %q would serve a failed lookup because it was appended later.",
+			coord, got.ContentHash, stronger.ContentHash, weaker.ContentHash)
+	}
+}
+
+// ComposeCoordinate is the composed read a fact-store fake owes, factored out so
+// each fake answers it the way the real store does rather than approximating it.
+// It selects the measurements describing coord — whatever pipeline version filed
+// them — orders them as an append-only ledger would, and folds them exactly as
+// the sqlite store's read does, divergence guard included. The bool is false when
+// the ledger holds nothing about the coordinate.
+//
+// Records are ordered by measurement time, then pipeline version, then content
+// hash. A fake holds its records in a map, and map iteration order is random, so
+// without a total order a fake would compose a differently-ordered slice on every
+// run — which matters for a local coordinate, where Compose reads the ORDER as
+// the sequence of observations rather than as competing claims.
+func ComposeCoordinate(coord coordinate.ModuleCoordinate, records []domain.FactRecord) (domain.CompositeRecord, bool, error) {
+	matching := make([]domain.FactRecord, 0, len(records))
+	for _, r := range records {
+		if r.ModulePath == coord.Path() && r.ModuleVersion == coord.Version() {
+			matching = append(matching, r)
+		}
+	}
+	if len(matching) == 0 {
+		return domain.CompositeRecord{}, false, nil
+	}
+	sort.SliceStable(matching, func(i, j int) bool {
+		a, b := matching[i], matching[j]
+		if !a.FetchedAt.Equal(b.FetchedAt) {
+			return a.FetchedAt.Before(b.FetchedAt)
+		}
+		if a.PipelineVersion != b.PipelineVersion {
+			return a.PipelineVersion < b.PipelineVersion
+		}
+		return a.ContentHash < b.ContentHash
+	})
+	if d := domain.FindDivergence(matching); d != nil {
+		return domain.CompositeRecord{}, false, d
+	}
+	composed, err := domain.Compose(matching)
+	if err != nil {
+		return domain.CompositeRecord{}, false, fmt.Errorf("composing records for %s: %w", coord, err)
+	}
+	return composed, true, nil
 }
 
 // recovering turns a panic into an error so AssertRefusesZeroIdentity reports a

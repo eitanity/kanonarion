@@ -91,7 +91,7 @@ func TestScanWalk_EmitsAuditEvents(t *testing.T) {
 	clock := fixedClock{t: now}
 
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 	sink := &recordingAuditSink{}
 	walkUC := application.NewScanWalkUseCase(
@@ -186,7 +186,7 @@ func TestRescan_EmitsAuditEvents(t *testing.T) {
 	clock := fixedClock{t: now}
 
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, ws, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, ws, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 	sink := &recordingAuditSink{}
 	rescanner := application.NewRescanWalkUseCase(
@@ -236,7 +236,7 @@ func TestScanWalk_NilAuditSink(t *testing.T) {
 
 	vulnStore := newFakeVulnStore()
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, walkStore, &fakeScanner{}, &fakeDatabase{snapshot: vulntest.MustNew("test", "v1")}, nil, fixedClock{t: now}, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, walkStore, &fakeScanner{}, &fakeDatabase{snapshot: vulntest.MustNew("test", "v1")}, nil, fixedClock{t: now}, "v1", slog.Default(),
 	)
 	walkUC := application.NewScanWalkUseCase(
 		walkStore, vulnStore, moduleUC, nil, fixedClock{t: now}, "v1", slog.Default(),

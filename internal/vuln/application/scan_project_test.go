@@ -78,7 +78,7 @@ func newProjectScanFixture(t *testing.T, scanner *fakeScanner) projectScanFixtur
 	}
 
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 	walkUC := application.NewScanWalkUseCase(
 		walkStore, vulnStore, moduleUC, nil, clock, "v1", slog.Default(),
@@ -262,7 +262,7 @@ func newStdlibProjectFixture(t *testing.T, scanner *fakeScanner) stdlibProjectFi
 	}
 
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 	walkUC := application.NewScanWalkUseCase(
 		walkStore, vulnStore, moduleUC, nil, clock, "v1", slog.Default(),

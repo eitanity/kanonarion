@@ -30,7 +30,7 @@ func TestScanWalk_ProgressOnScanFailure(t *testing.T) {
 	clock := fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}
 	db := &fakeDatabase{snapshot: snap}
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 	uc := application.NewScanWalkUseCase(walkStore, vulnStore, moduleUC, nil, clock, "v1", slog.Default())
 
@@ -61,7 +61,7 @@ func TestRescan_PutSnapshotError(t *testing.T) {
 	clock := fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}
 	scanner := &fakeScanner{results: map[string]domain.VulnerabilityRecord{}}
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 	uc := application.NewRescanWalkUseCase(walkStore, vulnStore, moduleUC, nil, clock, "v1", slog.Default())
 

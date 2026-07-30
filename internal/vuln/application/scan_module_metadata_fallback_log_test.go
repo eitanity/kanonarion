@@ -81,7 +81,7 @@ func TestScanModule_MetadataFallbackLogLevelByReason(t *testing.T) {
 			var buf bytes.Buffer
 			logger := slog.New(slog.NewTextHandler(&buf, &slog.HandlerOptions{Level: slog.LevelInfo}))
 			uc := application.NewScanModuleUseCase(
-				facts, blobs, vulnStore, nil, scanner, db, nil, fixedClock{t: now}, "v1", "v1", logger,
+				facts, blobs, vulnStore, nil, scanner, db, nil, fixedClock{t: now}, "v1", logger,
 			)
 
 			res, err := uc.Scan(ctx, application.ScanModuleParams{

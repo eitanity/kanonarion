@@ -41,7 +41,7 @@ func TestScanWalk_PreflightFailsFast(t *testing.T) {
 	db := &fakeDatabase{snapshot: vulntest.MustNew("test", "v1")}
 
 	moduleUC := application.NewScanModuleUseCase(
-		newFakeFacts(), newFakeBlob(), vulnStore, walkStore, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		newFakeFacts(), newFakeBlob(), vulnStore, walkStore, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 	walkUC := application.NewScanWalkUseCase(
 		walkStore, vulnStore, moduleUC, nil, clock, "v1", slog.Default(),
@@ -126,7 +126,7 @@ func TestScanWalk(t *testing.T) {
 	}
 
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 
 	walkUC := application.NewScanWalkUseCase(
@@ -199,7 +199,7 @@ func TestScanWalk_SnapshotPersisted(t *testing.T) {
 	clock := fixedClock{t: now}
 
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 	walkUC := application.NewScanWalkUseCase(
 		walkStore, vulnStore, moduleUC, nil, clock, "v1", slog.Default(),
@@ -339,7 +339,7 @@ func TestScanWalk_OverallStatus(t *testing.T) {
 			vulnStore := newFakeVulnStore()
 
 			moduleUC := application.NewScanModuleUseCase(
-				facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+				facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", slog.Default(),
 			)
 			walkUC := application.NewScanWalkUseCase(
 				walkStore, vulnStore, moduleUC, nil, clock, "v1", slog.Default(),
@@ -386,7 +386,7 @@ func TestScanWalk_FreshFetch(t *testing.T) {
 	db := &fakeDatabase{snapshot: freshSnap, content: "fresh"}
 
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 	walkUC := application.NewScanWalkUseCase(
 		walkStore, vulnStore, moduleUC, nil, clock, "v1", slog.Default(),
@@ -473,7 +473,7 @@ func TestScanWalk_LocalReplaceUnscannable(t *testing.T) {
 	}
 
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 	walkUC := application.NewScanWalkUseCase(
 		walkStore, vulnStore, moduleUC, nil, clock, "v1", slog.Default(),
@@ -565,7 +565,7 @@ func TestScanWalk_WorkerFailureRecordIsSealed(t *testing.T) {
 	clock := fixedClock{t: now}
 
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 	walkUC := application.NewScanWalkUseCase(
 		walkStore, vulnStore, moduleUC, nil, clock, "v1", slog.Default(),

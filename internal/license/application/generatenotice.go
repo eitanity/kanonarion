@@ -18,37 +18,30 @@ import (
 // GenerateNoticeUseCase assembles a THIRD-PARTY-LICENSES attribution document
 // from stored license records and verbatim license file content.
 type GenerateNoticeUseCase struct {
-	licenses                  licenseports.LicenseStore
-	facts                     fetchports.FactStore
-	blobs                     fetchports.BlobStore
-	pipelineVersion           string
-	fetchPipelineVersion      string
-	localFetchPipelineVersion string
+	licenses        licenseports.LicenseStore
+	facts           fetchports.FactStore
+	blobs           fetchports.BlobStore
+	pipelineVersion string
 }
 
 // NewGenerateNoticeUseCase constructs a GenerateNoticeUseCase.
+//
+// pipelineVersion is the LICENCE pipeline version, which keys the licence records
+// this use case reads. It takes no fetch pipeline version: the licence texts come
+// from whatever measurement the fetch ledger holds, and which generation of the
+// fetch pipeline took it is not a property of the module.
 func NewGenerateNoticeUseCase(
 	licenses licenseports.LicenseStore,
 	facts fetchports.FactStore,
 	blobs fetchports.BlobStore,
 	pipelineVersion string,
-	fetchPipelineVersion string,
 ) *GenerateNoticeUseCase {
 	return &GenerateNoticeUseCase{
-		licenses:             licenses,
-		facts:                facts,
-		blobs:                blobs,
-		pipelineVersion:      pipelineVersion,
-		fetchPipelineVersion: fetchPipelineVersion,
+		licenses:        licenses,
+		facts:           facts,
+		blobs:           blobs,
+		pipelineVersion: pipelineVersion,
 	}
-}
-
-// WithLocalFetchPipelineVersion sets the pipeline version under which locally
-// ingested modules (local-replace targets and the project-walk root) persist
-// their FactRecord, enabling notice generation to read their license texts.
-func (uc *GenerateNoticeUseCase) WithLocalFetchPipelineVersion(v string) *GenerateNoticeUseCase {
-	uc.localFetchPipelineVersion = v
-	return uc
 }
 
 // NoticeRequest is the input to Generate.
@@ -307,26 +300,20 @@ func ambiguousReason(rec licensedomain.LicenseRecord) string {
 	return "ambiguous license: primary=" + primary + ", alts=[" + strings.Join(candidates[1:], ", ") + "]"
 }
 
-// noticeRequireFetchRecord looks up the FactRecord for coord, trying the
-// fetch pipeline version first, then the local-ingest pipeline version, then
-// the license pipeline version.
+// noticeRequireFetchRecord asks the ledger what it has measured about coord and
+// returns the record composition serves, so the notice reads its licence text
+// from the strongest measurement rather than from whichever fetch pipeline
+// version a fallback list happened to name first.
 func (uc *GenerateNoticeUseCase) noticeRequireFetchRecord(
 	ctx context.Context,
 	coord coordinate.ModuleCoordinate,
 ) (fetchdomain.FactRecord, error) {
-	seen := map[string]bool{}
-	for _, v := range []string{uc.fetchPipelineVersion, uc.localFetchPipelineVersion, uc.pipelineVersion} {
-		if v == "" || seen[v] {
-			continue
-		}
-		seen[v] = true
-		r, ok, err := uc.facts.GetFetchRecord(ctx, coord, v)
-		if err != nil {
-			return fetchdomain.FactRecord{}, fmt.Errorf("checking fetch record (pipeline %s): %w", v, err)
-		}
-		if ok {
-			return r.FactRecord, nil
-		}
+	r, ok, err := fetchports.ComposedFetchRecord(ctx, uc.facts, coord)
+	if err != nil {
+		return fetchdomain.FactRecord{}, fmt.Errorf("checking fetch record: %w", err)
 	}
-	return fetchdomain.FactRecord{}, fmt.Errorf("%w: %s", licenseports.ErrModuleNotFetched, coord)
+	if !ok {
+		return fetchdomain.FactRecord{}, fmt.Errorf("%w: %s", licenseports.ErrModuleNotFetched, coord)
+	}
+	return r.FactRecord, nil
 }

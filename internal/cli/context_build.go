@@ -10,7 +10,6 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	exapp "github.com/eitanity/kanonarion/internal/example/application"
 	exdomain "github.com/eitanity/kanonarion/internal/example/domain"
-	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
@@ -43,7 +42,7 @@ func isoTime(t time.Time) string {
 }
 
 func buildVerification(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryFetchUseCase) contextVerification {
-	rec, found, err := uc.GetFetchRecord(ctx, coord, fetchapp.PipelineVersion)
+	rec, found, err := uc.ComposeFetchRecord(ctx, coord)
 	if err != nil {
 		// A divergence is named as such rather than folded into a generic read
 		// error. This command inspects the store, so it reports the contradiction

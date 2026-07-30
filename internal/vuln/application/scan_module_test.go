@@ -44,7 +44,7 @@ func TestScanModule_NewScan(t *testing.T) {
 	}
 
 	uc := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 
 	seedRec := fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip content"))
@@ -116,7 +116,7 @@ func TestScanModule_ReuseWritesNothingAndKeepsTheMeasurement(t *testing.T) {
 	}
 
 	uc := application.NewScanModuleUseCase(
-		nil, nil, vulnStore, nil, nil, nil, nil, fixedClock{t: now}, "v1", "v1", slog.Default(),
+		nil, nil, vulnStore, nil, nil, nil, nil, fixedClock{t: now}, "v1", slog.Default(),
 	)
 
 	res, err := uc.Scan(ctx, application.ScanModuleParams{
@@ -220,7 +220,7 @@ func TestScanModule_MetadataFilter_UsesGraphEdges(t *testing.T) {
 	uc := application.NewScanModuleUseCase(
 		facts, blobs, vulnStore, ws,
 		&callCountingScanner{inner: &fakeScanner{}, called: &scannerCalled},
-		db, nil, fixedClock{t: now}, "v1", "v1", slog.New(slog.NewTextHandler(io.Discard, nil)),
+		db, nil, fixedClock{t: now}, "v1", slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 
 	res, err := uc.Scan(ctx, application.ScanModuleParams{
@@ -271,7 +271,7 @@ func TestScanModule_HeavyScanRecordSurvivesReadGate(t *testing.T) {
 	}
 
 	uc := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 
 	res, err := uc.Scan(ctx, application.ScanModuleParams{
@@ -323,7 +323,7 @@ func TestScanModule_ScanFailure(t *testing.T) {
 	}
 
 	uc := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 
 	res, err := uc.Scan(ctx, application.ScanModuleParams{
@@ -367,7 +367,7 @@ func TestScanModule_BuildIncompatibility_FallsBackToMetadata(t *testing.T) {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
-	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default())
 	res, err := uc.Scan(ctx, application.ScanModuleParams{Coordinate: coord, WalkID: "walk-1", Force: true})
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
@@ -457,7 +457,7 @@ func TestScanModule_OfflineResolution_SourcePositionShapeIsVerified(t *testing.T
 				t.Fatalf("PutFetchRecord: %v", err)
 			}
 
-			uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+			uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default())
 			res, err := uc.Scan(ctx, application.ScanModuleParams{
 				Coordinate: coord, WalkID: "walk-1", Force: true, KnownVersions: tc.known,
 			})
@@ -515,7 +515,7 @@ func TestScanModule_OfflineResolution_UnrecoverableIsMarkedUnverified(t *testing
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
-	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default())
 	res, err := uc.Scan(ctx, application.ScanModuleParams{
 		Coordinate: coord, WalkID: "walk-1", Force: true,
 		KnownVersions: map[coordinate.ModuleCoordinate]struct{}{coordinatetest.MustNew("golang.org/x/net", "v0.55.0"): {}},
@@ -572,7 +572,7 @@ func TestScanModule_OfflineResolution_DirectShapeGatedOnRequireClosure(t *testin
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
-	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default())
 	res, err := uc.Scan(ctx, application.ScanModuleParams{
 		Coordinate: coord, WalkID: "walk-1", Force: true,
 		// fsnotify@v1.7.0 is outside the walk's known set, so the un-gated code
@@ -635,7 +635,7 @@ func TestScanModule_OfflineResolution_ColumnMismatchRecovers(t *testing.T) {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
-	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default())
 	res, err := uc.Scan(ctx, application.ScanModuleParams{
 		Coordinate: coord, WalkID: "walk-1", Force: true,
 		KnownVersions: map[coordinate.ModuleCoordinate]struct{}{coordinatetest.MustNew("github.com/stretchr/testify", "v1.9.0"): {}},
@@ -694,7 +694,7 @@ func TestScanModule_OfflineResolution_OwnGoModWhenPackageOutsideWalk(t *testing.
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
-	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default())
 	res, err := uc.Scan(ctx, application.ScanModuleParams{
 		Coordinate: coord, WalkID: "walk-1", Force: true,
 		// The walk built testify itself but never objx; objx is off-graph.
@@ -778,7 +778,7 @@ func TestScanModule_OfflineResolution_ImportSiteDependencyGoMod(t *testing.T) {
 		t.Fatalf("PutFetchRecord(site): %v", err)
 	}
 
-	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default())
 	res, err := uc.Scan(ctx, application.ScanModuleParams{
 		Coordinate: coord, WalkID: "walk-1", Force: true,
 		KnownVersions: map[coordinate.ModuleCoordinate]struct{}{
@@ -840,7 +840,7 @@ func TestScanModule_OfflineResolution_VersionedReplaceScoping(t *testing.T) {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
-	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default())
 	res, err := uc.Scan(ctx, application.ScanModuleParams{
 		Coordinate: coord, WalkID: "walk-1", Force: true,
 		KnownVersions: map[coordinate.ModuleCoordinate]struct{}{coordinatetest.MustNew("golang.org/x/text", "v0.21.0"): {}},
@@ -891,7 +891,7 @@ func TestScanModule_MetadataPath_PersistsEnrichedFindings(t *testing.T) {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
-	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default())
 	res, err := uc.Scan(ctx, application.ScanModuleParams{Coordinate: coord, WalkID: "walk-1", Force: true})
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
@@ -963,7 +963,7 @@ func TestScanModule_ScanFailed_NotServedFromCache(t *testing.T) {
 	uc := application.NewScanModuleUseCase(
 		facts, blobs, vulnStore, nil,
 		&callCountingScanner{inner: &fakeScanner{}, called: &scannerCalled},
-		db, nil, fixedClock{t: now}, "v1", "v1", slog.Default(),
+		db, nil, fixedClock{t: now}, "v1", slog.Default(),
 	)
 
 	res, err := uc.Scan(ctx, application.ScanModuleParams{
@@ -1009,7 +1009,7 @@ func TestScanModule_GeneratedAssetsMissing_UnscanReason(t *testing.T) {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
-	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default())
 	res, err := uc.Scan(ctx, application.ScanModuleParams{Coordinate: coord, WalkID: "walk-1", Force: true})
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
@@ -1048,7 +1048,7 @@ func TestScanModule_BuildIncompatibility_NoAdvisory_IsUnscannable(t *testing.T) 
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
-	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default())
 	res, err := uc.Scan(ctx, application.ScanModuleParams{Coordinate: coord, WalkID: "walk-1", Force: true})
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
@@ -1122,7 +1122,7 @@ func TestScanModule_ScannerUnscannable_MetadataAttributesAdvisories(t *testing.T
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
-	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default())
 	res, err := uc.Scan(ctx, application.ScanModuleParams{Coordinate: coord, WalkID: "walk-1", Force: true})
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
@@ -1167,7 +1167,7 @@ func TestScanModule_ScannerUnscannable_NoAdvisory_IsUnscannable(t *testing.T) {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
-	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default())
 	res, err := uc.Scan(ctx, application.ScanModuleParams{Coordinate: coord, WalkID: "walk-1", Force: true})
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
@@ -1215,7 +1215,7 @@ func TestScanModule_ScannerUnscannable_OOMKilled_RoutesToMetadata(t *testing.T) 
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
-	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default())
 	res, err := uc.Scan(ctx, application.ScanModuleParams{Coordinate: coord, WalkID: "walk-1", Force: true})
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
@@ -1248,7 +1248,7 @@ func scanModuleFixture(t *testing.T, coord coordinate.ModuleCoordinate, scanner 
 	}
 	uc := application.NewScanModuleUseCase(
 		facts, blobs, vulnStore, nil, scanner, db, nil,
-		fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}, "v1", "v1", slog.Default(),
+		fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}, "v1", slog.Default(),
 	)
 	return uc, vulnStore
 }

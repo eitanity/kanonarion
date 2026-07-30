@@ -22,34 +22,27 @@ const PipelineVersion = "0.3.0"
 // ExtractExampleUseCase harvests Example* functions from a module's _test.go
 // files and persists an ExampleRecord.
 type ExtractExampleUseCase struct {
-	facts                     fetchports.FactStore
-	blobs                     fetchports.BlobStore
-	examples                  ports.ExampleStore
-	parser                    ports.ExampleParser
-	clock                     fetchports.Clock
-	stopwatch                 fetchports.Stopwatch
-	pipelineVersion           string
-	fetchPipelineVersion      string
-	localFetchPipelineVersion string
-	logger                    *slog.Logger
-	hasher                    domain2.ExampleRecordHasher
+	facts           fetchports.FactStore
+	blobs           fetchports.BlobStore
+	examples        ports.ExampleStore
+	parser          ports.ExampleParser
+	clock           fetchports.Clock
+	stopwatch       fetchports.Stopwatch
+	pipelineVersion string
+	logger          *slog.Logger
+	hasher          domain2.ExampleRecordHasher
 }
 
 // Config holds all construction parameters for ExtractExampleUseCase.
 type Config struct {
-	Facts                fetchports.FactStore
-	Blobs                fetchports.BlobStore
-	Examples             ports.ExampleStore
-	Parser               ports.ExampleParser
-	Clock                fetchports.Clock
-	Stopwatch            fetchports.Stopwatch
-	PipelineVersion      string // defaults to PipelineVersion constant
-	FetchPipelineVersion string // pipeline version used when modules were fetched
-	// LocalFetchPipelineVersion is the pipeline version under which locally
-	// ingested modules (local-replace targets and the project-walk root)
-	// persist their FactRecord. Empty disables the local fallback.
-	LocalFetchPipelineVersion string
-	Logger                    *slog.Logger
+	Facts           fetchports.FactStore
+	Blobs           fetchports.BlobStore
+	Examples        ports.ExampleStore
+	Parser          ports.ExampleParser
+	Clock           fetchports.Clock
+	Stopwatch       fetchports.Stopwatch
+	PipelineVersion string // defaults to PipelineVersion constant
+	Logger          *slog.Logger
 }
 
 // NewExtractExampleUseCase constructs an ExtractExampleUseCase from a Config.
@@ -58,16 +51,14 @@ func NewExtractExampleUseCase(cfg Config) *ExtractExampleUseCase {
 		cfg.PipelineVersion = PipelineVersion
 	}
 	return &ExtractExampleUseCase{
-		facts:                     cfg.Facts,
-		blobs:                     cfg.Blobs,
-		examples:                  cfg.Examples,
-		parser:                    cfg.Parser,
-		clock:                     cfg.Clock,
-		stopwatch:                 cfg.Stopwatch,
-		pipelineVersion:           cfg.PipelineVersion,
-		fetchPipelineVersion:      cfg.FetchPipelineVersion,
-		localFetchPipelineVersion: cfg.LocalFetchPipelineVersion,
-		logger:                    cfg.Logger,
+		facts:           cfg.Facts,
+		blobs:           cfg.Blobs,
+		examples:        cfg.Examples,
+		parser:          cfg.Parser,
+		clock:           cfg.Clock,
+		stopwatch:       cfg.Stopwatch,
+		pipelineVersion: cfg.PipelineVersion,
+		logger:          cfg.Logger,
 	}
 }
 
@@ -200,26 +191,28 @@ func (uc *ExtractExampleUseCase) Execute(ctx context.Context, req ExtractRequest
 	return ExtractResult{Record: record, FromCache: false}, nil
 }
 
+// requireFetchRecord asks the ledger what it has measured about coord and
+// returns the record composition serves. Returns ErrModuleNotFetched when
+// nothing has been measured.
+//
+// It names no fetch pipeline version. It used to try three — the fetch one, the
+// local-ingest one, and this stage's own extraction version, which is a category
+// error: an extraction version is not a fetch version, and the two namespaces
+// only share a type. The list also returned on its first hit, so a module
+// measured at two versions was extracted from whichever version was listed first
+// rather than from the stronger measurement. Composition decides both questions.
 func (uc *ExtractExampleUseCase) requireFetchRecord(
 	ctx context.Context,
 	coord coordinate.ModuleCoordinate,
 ) (domain.FactRecord, error) {
-	versions := []string{uc.fetchPipelineVersion, uc.localFetchPipelineVersion, uc.pipelineVersion}
-	seen := map[string]bool{}
-	for _, v := range versions {
-		if v == "" || seen[v] {
-			continue
-		}
-		seen[v] = true
-		r, ok, err := uc.facts.GetFetchRecord(ctx, coord, v)
-		if err != nil {
-			return domain.FactRecord{}, fmt.Errorf("checking fetch record (pipeline %s): %w", v, err)
-		}
-		if ok {
-			return r.FactRecord, nil
-		}
+	r, ok, err := fetchports.ComposedFetchRecord(ctx, uc.facts, coord)
+	if err != nil {
+		return domain.FactRecord{}, fmt.Errorf("checking fetch record: %w", err)
 	}
-	return domain.FactRecord{}, fmt.Errorf("%w: %s", ports.ErrModuleNotFetched, coord)
+	if !ok {
+		return domain.FactRecord{}, fmt.Errorf("%w: %s", ports.ErrModuleNotFetched, coord)
+	}
+	return r.FactRecord, nil
 }
 
 func (uc *ExtractExampleUseCase) extractFromZip(

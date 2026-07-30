@@ -78,7 +78,7 @@ func newTargetScanFixture(t *testing.T, scanner *fakeScanner, fetchedCoords ...c
 	}
 
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 	walkUC := application.NewScanWalkUseCase(
 		walkStore, vulnStore, moduleUC, nil, clock, "v1", slog.Default(),

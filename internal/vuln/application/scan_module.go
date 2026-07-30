@@ -145,20 +145,18 @@ const PipelineVersion = "v16"
 
 // ScanModuleUseCase orchestrates a single module's vulnerability scan.
 type ScanModuleUseCase struct {
-	factStore                 fetchports.FactStore
-	blobs                     fetchports.BlobStore
-	vulnStore                 ports.VulnerabilityStore
-	walkStore                 walkports.WalkStore
-	scanner                   ports.VulnerabilityScanner
-	database                  ports.VulnerabilityDatabase
-	reachability              ports.ReachabilityAnalyser
-	callGraphLoader           ports.CallGraphLoader
-	callGraphSpawner          ports.CallGraphSpawner
-	clock                     fetchports.Clock
-	pipelineVersion           string
-	fetchPipelineVersion      string
-	localFetchPipelineVersion string
-	logger                    *slog.Logger
+	factStore        fetchports.FactStore
+	blobs            fetchports.BlobStore
+	vulnStore        ports.VulnerabilityStore
+	walkStore        walkports.WalkStore
+	scanner          ports.VulnerabilityScanner
+	database         ports.VulnerabilityDatabase
+	reachability     ports.ReachabilityAnalyser
+	callGraphLoader  ports.CallGraphLoader
+	callGraphSpawner ports.CallGraphSpawner
+	clock            fetchports.Clock
+	pipelineVersion  string
+	logger           *slog.Logger
 }
 
 // NewScanModuleUseCase returns a new ScanModuleUseCase.
@@ -172,21 +170,19 @@ func NewScanModuleUseCase(
 	reachability ports.ReachabilityAnalyser,
 	clock fetchports.Clock,
 	pipelineVersion string,
-	fetchPipelineVersion string,
 	logger *slog.Logger,
 ) *ScanModuleUseCase {
 	return &ScanModuleUseCase{
-		factStore:            factStore,
-		blobs:                blobs,
-		vulnStore:            vulnStore,
-		walkStore:            walkStore,
-		scanner:              scanner,
-		database:             database,
-		reachability:         reachability,
-		clock:                clock,
-		pipelineVersion:      pipelineVersion,
-		fetchPipelineVersion: fetchPipelineVersion,
-		logger:               logger,
+		factStore:       factStore,
+		blobs:           blobs,
+		vulnStore:       vulnStore,
+		walkStore:       walkStore,
+		scanner:         scanner,
+		database:        database,
+		reachability:    reachability,
+		clock:           clock,
+		pipelineVersion: pipelineVersion,
+		logger:          logger,
 	}
 }
 
@@ -205,15 +201,6 @@ func (uc *ScanModuleUseCase) WithCallGraphSpawner(spawner ports.CallGraphSpawner
 	return uc
 }
 
-// WithLocalFetchPipelineVersion sets the pipeline version under which locally
-// ingested modules (local-replace targets and the project-walk root) persist
-// their FactRecord, so their source is fully scanned instead of degrading to
-// a metadata-only scan. Returns the receiver for chaining.
-func (uc *ScanModuleUseCase) WithLocalFetchPipelineVersion(v string) *ScanModuleUseCase {
-	uc.localFetchPipelineVersion = v
-	return uc
-}
-
 // metadataOnlyNote returns the note recorded on a metadata-only scan, naming why
 // no source was analysed: the stdlib is toolchain-provided and resolved by
 // coordinate; a go.mod-only record carries no source; otherwise the module was
@@ -229,23 +216,26 @@ func metadataOnlyNote(coord coordinate.ModuleCoordinate, goModOnly bool) string 
 	}
 }
 
-// getFetchRecord looks up the FactRecord for coord under the fetch pipeline
-// version first (a proxy-verified record always wins), then the local-ingest
-// pipeline version.
+// getFetchRecord asks the ledger what it has measured about coord, naming no
+// fetch pipeline version.
+//
+// The absence this returns is load-bearing in a way the other stages' is not:
+// Scan reads !ok as "the module's source is not in the store" and routes to
+// scanMetadataOnly, which records a verdict whose note says the module was never
+// fetched. Under the previous version list, a module measured only under a
+// retired fetch generation produced exactly that record — a metadata-only
+// vulnerability verdict, indistinguishable from a deliberate coverage limit,
+// asserting something false about a module whose zip was in the blob store. A
+// wrong absence here is quieter and worse than the loud refusal licence gives.
 func (uc *ScanModuleUseCase) getFetchRecord(ctx context.Context, coord coordinate.ModuleCoordinate) (fetchdomain.FactRecord, bool, error) {
-	for _, v := range []string{uc.fetchPipelineVersion, uc.localFetchPipelineVersion} {
-		if v == "" {
-			continue
-		}
-		r, ok, err := uc.factStore.GetFetchRecord(ctx, coord, v)
-		if err != nil {
-			return fetchdomain.FactRecord{}, false, fmt.Errorf("checking fetch record (pipeline %s): %w", v, err)
-		}
-		if ok {
-			return r.FactRecord, true, nil
-		}
+	r, ok, err := fetchports.ComposedFetchRecord(ctx, uc.factStore, coord)
+	if err != nil {
+		return fetchdomain.FactRecord{}, false, fmt.Errorf("checking fetch record: %w", err)
 	}
-	return fetchdomain.FactRecord{}, false, nil
+	if !ok {
+		return fetchdomain.FactRecord{}, false, nil
+	}
+	return r.FactRecord, true, nil
 }
 
 // Preflight delegates to the underlying scanner's availability check so a

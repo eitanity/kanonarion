@@ -317,22 +317,16 @@ func newLocalWalkExtract(
 	licExtractUC := licapp.NewExtractLicenseUseCase(licapp.Config{
 		Facts: factStore, Blobs: blobs, Licenses: licStore,
 		Detector: licdet.New(), Clock: clk, Stopwatch: stopwatch, Logger: logger,
-		FetchPipelineVersion:      fetchapp.PipelineVersion,
-		LocalFetchPipelineVersion: walklocalfs.PipelineVersion,
 	})
 	ifaceExtractUC := ifaceapp.NewExtractInterfaceUseCase(ifaceapp.Config{
 		Facts: factStore, Blobs: blobs, Store: ifaceStore,
 		Extractor: ifaceext.New(stagePipelineVersion, clk), Clock: clk, Stopwatch: stopwatch, Logger: logger,
-		FetchPipelineVersion:      fetchapp.PipelineVersion,
-		LocalFetchPipelineVersion: walklocalfs.PipelineVersion,
 	})
 	cgSubprocessExec := extextractor.NewOsSubprocessExecutor(kanonarionBinary)
 	exExtractUC := exapp.NewExtractExampleUseCase(exapp.Config{
 		Facts: factStore, Blobs: blobs, Examples: exStore,
 		Parser: exgoast.New(),
 		Clock:  clk, Stopwatch: stopwatch, Logger: logger,
-		FetchPipelineVersion:      fetchapp.PipelineVersion,
-		LocalFetchPipelineVersion: walklocalfs.PipelineVersion,
 	})
 	stages := extstages.New()
 	extractUC := extractapp.NewExtractUseCase(extractapp.Config{

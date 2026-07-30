@@ -31,34 +31,27 @@ const PipelineVersion = "0.3.0"
 // ExtractCallGraphUseCase extracts the call graph of a module and persists a
 // CallGraphRecord.
 type ExtractCallGraphUseCase struct {
-	facts                     fetchports.FactStore
-	blobs                     fetchports.BlobStore
-	store                     ports.CallGraphStore
-	analyser                  ports.CallGraphAnalyser
-	clock                     fetchports.Clock
-	stopwatch                 fetchports.Stopwatch
-	pipelineVersion           string
-	fetchPipelineVersion      string
-	localFetchPipelineVersion string
-	exclusions                []string // normalised callgraph.exclude policy
-	logger                    *slog.Logger
-	hasher                    domain2.CallGraphRecordHasher
+	facts           fetchports.FactStore
+	blobs           fetchports.BlobStore
+	store           ports.CallGraphStore
+	analyser        ports.CallGraphAnalyser
+	clock           fetchports.Clock
+	stopwatch       fetchports.Stopwatch
+	pipelineVersion string
+	exclusions      []string // normalised callgraph.exclude policy
+	logger          *slog.Logger
+	hasher          domain2.CallGraphRecordHasher
 }
 
 // Config holds all construction parameters for ExtractCallGraphUseCase.
 type Config struct {
-	Facts                fetchports.FactStore
-	Blobs                fetchports.BlobStore
-	Store                ports.CallGraphStore
-	Analyser             ports.CallGraphAnalyser
-	Clock                fetchports.Clock
-	Stopwatch            fetchports.Stopwatch
-	PipelineVersion      string // defaults to PipelineVersion constant
-	FetchPipelineVersion string
-	// LocalFetchPipelineVersion is the pipeline version under which locally
-	// ingested modules (local-replace targets and the project-walk root)
-	// persist their FactRecord. Empty disables the local fallback.
-	LocalFetchPipelineVersion string
+	Facts           fetchports.FactStore
+	Blobs           fetchports.BlobStore
+	Store           ports.CallGraphStore
+	Analyser        ports.CallGraphAnalyser
+	Clock           fetchports.Clock
+	Stopwatch       fetchports.Stopwatch
+	PipelineVersion string // defaults to PipelineVersion constant
 	// Exclusions is the raw callgraph.exclude list (module paths skipped from
 	// analysis). Normalised on construction.
 	Exclusions []string
@@ -71,17 +64,15 @@ func NewExtractCallGraphUseCase(cfg Config) *ExtractCallGraphUseCase {
 		cfg.PipelineVersion = PipelineVersion
 	}
 	return &ExtractCallGraphUseCase{
-		facts:                     cfg.Facts,
-		blobs:                     cfg.Blobs,
-		store:                     cfg.Store,
-		analyser:                  cfg.Analyser,
-		clock:                     cfg.Clock,
-		stopwatch:                 cfg.Stopwatch,
-		pipelineVersion:           cfg.PipelineVersion,
-		fetchPipelineVersion:      cfg.FetchPipelineVersion,
-		localFetchPipelineVersion: cfg.LocalFetchPipelineVersion,
-		exclusions:                domain2.NormaliseExclusions(cfg.Exclusions),
-		logger:                    cfg.Logger,
+		facts:           cfg.Facts,
+		blobs:           cfg.Blobs,
+		store:           cfg.Store,
+		analyser:        cfg.Analyser,
+		clock:           cfg.Clock,
+		stopwatch:       cfg.Stopwatch,
+		pipelineVersion: cfg.PipelineVersion,
+		exclusions:      domain2.NormaliseExclusions(cfg.Exclusions),
+		logger:          cfg.Logger,
 	}
 }
 
@@ -230,26 +221,28 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 	return ExtractResult{Record: record, FromCache: false}, nil
 }
 
+// requireFetchRecord asks the ledger what it has measured about coord and
+// returns the record composition serves. Returns ErrModuleNotFetched when
+// nothing has been measured.
+//
+// It names no fetch pipeline version. It used to try three — the fetch one, the
+// local-ingest one, and this stage's own extraction version, which is a category
+// error: an extraction version is not a fetch version, and the two namespaces
+// only share a type. The list also returned on its first hit, so a module
+// measured at two versions was extracted from whichever version was listed first
+// rather than from the stronger measurement. Composition decides both questions.
 func (uc *ExtractCallGraphUseCase) requireFetchRecord(
 	ctx context.Context,
 	coord coordinate.ModuleCoordinate,
 ) (domain.FactRecord, error) {
-	versions := []string{uc.fetchPipelineVersion, uc.localFetchPipelineVersion, uc.pipelineVersion}
-	seen := map[string]bool{}
-	for _, v := range versions {
-		if v == "" || seen[v] {
-			continue
-		}
-		seen[v] = true
-		r, ok, err := uc.facts.GetFetchRecord(ctx, coord, v)
-		if err != nil {
-			return domain.FactRecord{}, fmt.Errorf("checking fetch record (pipeline %s): %w", v, err)
-		}
-		if ok {
-			return r.FactRecord, nil
-		}
+	r, ok, err := fetchports.ComposedFetchRecord(ctx, uc.facts, coord)
+	if err != nil {
+		return domain.FactRecord{}, fmt.Errorf("checking fetch record: %w", err)
 	}
-	return domain.FactRecord{}, fmt.Errorf("%w: %s", ports.ErrModuleNotFetched, coord)
+	if !ok {
+		return domain.FactRecord{}, fmt.Errorf("%w: %s", ports.ErrModuleNotFetched, coord)
+	}
+	return r.FactRecord, nil
 }
 
 // blobZipPath resolves a local filesystem path to a module zip so the

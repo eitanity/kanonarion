@@ -57,7 +57,7 @@ func TestScanWalk_WithRealModcache_UsesProvidedDir(t *testing.T) {
 	scanner := &fakeScanner{}
 
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 	const realCache = "/tmp/existing-modcache-fixture"
 	walkUC := application.NewScanWalkUseCase(

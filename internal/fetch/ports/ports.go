@@ -429,6 +429,13 @@ type FactStore interface {
 	// given coordinate and pipeline version. The bool is false if no record
 	// exists.
 	//
+	// The pipeline version narrows the read to one generation of the ledger,
+	// which is the fetch stage's own question: it is deciding whether to
+	// re-measure, so it wants what its generation wrote. It is NOT the question a
+	// reader outside fetch has — such a reader wants the artefact, and has no
+	// business knowing which fetch generation measured it. Those callers use
+	// ComposedFetchRecord.
+	//
 	// It returns an error, not absence, when a stored record fails to rehydrate:
 	// a detected tamper reported as "nothing here" becomes a silent re-fetch
 	// that overwrites the evidence of the tamper.
@@ -454,6 +461,66 @@ type FactRecordLister interface {
 	// Records that fail to rehydrate are an error, on the same terms as
 	// GetFetchRecord.
 	ListFetchRecords(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]domain2.FactRecord, error)
+}
+
+// ErrComposedReadUnsupported is the refusal a coordinate-only fetch read owes a
+// FactStore that cannot answer it. It is an error rather than an absence,
+// because "this store cannot say what has been measured" and "nothing has been
+// measured" are different answers and only one of them justifies re-fetching.
+var ErrComposedReadUnsupported = errors.New("fact store cannot report what has been measured about an artefact: it does not implement ports.FactRecordComposer")
+
+// FactRecordComposer is the optional capability a FactStore may also implement
+// to answer "what has the ledger measured about this artefact" — every
+// measurement of the coordinate, whatever fetch pipeline version wrote it,
+// folded by domain.Compose.
+//
+// It exists because GetFetchRecord asks a narrower question than any reader
+// outside fetch actually has. Keying a read by fetch pipeline version is a
+// question the fetch stage legitimately asks (it wants the measurements its own
+// generation wrote); an extraction stage does not, and every stage that tried
+// had to invent a list of versions to try. Four such lists drifted into two
+// wrong answers and two that were right only because an extraction stage's
+// version string happened to collide with a retired fetch one, and each list
+// returned on its first hit — passing over a stronger measurement at another
+// version, which is the defect domain.Compose was written to prevent.
+//
+// It arrives as a separate optional interface because the published-port
+// asymmetry rule forbids widening FactStore; FactRecordLister and
+// BlobPathOptimizer are the established precedents, and fourteen types
+// implement FactStore. Callers reach it through ComposedFetchRecord rather than
+// type-asserting themselves.
+type FactRecordComposer interface {
+	// ComposeFetchRecord returns the composed view of every measurement held for
+	// the coordinate, across every fetch pipeline version. The bool is false when
+	// none exist.
+	//
+	// It composes rather than picks, so the served record is the strongest
+	// eligible measurement on domain.Compose's terms, and it reports a
+	// disagreement between measurements as an error on the same terms
+	// GetFetchRecord does. A stored record that fails to rehydrate is likewise an
+	// error, not an absence.
+	ComposeFetchRecord(ctx context.Context, coord coordinate.ModuleCoordinate) (domain2.CompositeRecord, bool, error)
+}
+
+// ComposedFetchRecord asks the store what it has measured about one artefact,
+// naming no pipeline version.
+//
+// This is the read every consumer outside the fetch context wants, and it is a
+// function rather than a method so the six call sites share one answer to "what
+// happens when the store cannot compose" instead of six type assertions. That
+// answer is a refusal: a store with no composed read cannot be degraded to a
+// version-keyed one without reinstating the guess, so it is named with
+// ErrComposedReadUnsupported rather than silently narrowed.
+func ComposedFetchRecord(ctx context.Context, facts FactStore, coord coordinate.ModuleCoordinate) (domain2.CompositeRecord, bool, error) {
+	composer, ok := facts.(FactRecordComposer)
+	if !ok {
+		return domain2.CompositeRecord{}, false, fmt.Errorf("reading measurements of %s: %w", coord, ErrComposedReadUnsupported)
+	}
+	record, found, err := composer.ComposeFetchRecord(ctx, coord)
+	if err != nil {
+		return domain2.CompositeRecord{}, false, fmt.Errorf("reading measurements of %s: %w", coord, err)
+	}
+	return record, found, nil
 }
 
 // AttestationStore persists provenance attestations additively, separate from

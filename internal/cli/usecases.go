@@ -41,8 +41,14 @@ type FetchModuleUseCase interface {
 }
 
 // QueryFetchUseCase is the interface for querying fetch records.
+//
+// Reporting commands use ComposeFetchRecord: they are asking what the ledger has
+// measured about an artefact, and the generation of the fetch pipeline that
+// measured it is not a property of the artefact. GetFetchRecord remains for the
+// one caller that legitimately asks about a single generation.
 type QueryFetchUseCase interface {
 	GetFetchRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (fetchdomain.CompositeRecord, bool, error)
+	ComposeFetchRecord(ctx context.Context, coord coordinate.ModuleCoordinate) (fetchdomain.CompositeRecord, bool, error)
 }
 
 // --- walk context ---

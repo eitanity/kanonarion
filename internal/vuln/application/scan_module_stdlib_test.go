@@ -36,7 +36,7 @@ func TestScanModule_Stdlib_MetadataAffected(t *testing.T) {
 	}
 	clock := fixedClock{t: now}
 
-	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default())
 	res, err := uc.Scan(ctx, application.ScanModuleParams{Coordinate: std, WalkID: "walk-1"})
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
@@ -65,7 +65,7 @@ func TestScanModule_Stdlib_MetadataClean(t *testing.T) {
 	uc := application.NewScanModuleUseCase(
 		newFakeFacts(), newFakeBlob(), newFakeVulnStore(), nil, &fakeScanner{},
 		&fakeDatabase{snapshot: vulntest.MustNew("govulndb", "v1")}, nil,
-		fixedClock{t: now}, "v1", "v1", slog.Default(),
+		fixedClock{t: now}, "v1", slog.Default(),
 	)
 	res, err := uc.Scan(ctx, application.ScanModuleParams{Coordinate: std, WalkID: "walk-1"})
 	if err != nil {

@@ -74,17 +74,23 @@ func (r Report) FailureSummary(max int) string {
 // not silent, though — every such coordinate is returned in the Report's
 // Failures with the reason, so a caller can state what actually reached the
 // cache instead of assuming its whole input did.
+//
+// It names no fetch pipeline version. A cache entry is written from whatever the
+// ledger has measured about the artefact, composed, because the generation of the
+// fetch pipeline that measured a module is not a property of the module. Reading
+// by one named version made every coordinate measured only under a retired
+// generation report as "fact record not found" — under GOPROXY=off, a resolution
+// hole for a module whose bytes were sitting in the blob store all along.
 func Populate(
 	ctx context.Context,
 	facts fetchports.FactStore,
 	blobs fetchports.BlobStore,
 	cacheDir string,
 	coords []coordinate.ModuleCoordinate,
-	pipelineVersion string,
 ) Report {
 	report := Report{Requested: len(coords)}
 	for _, coord := range coords {
-		if err := populateOne(ctx, facts, blobs, cacheDir, coord, pipelineVersion); err != nil {
+		if err := populateOne(ctx, facts, blobs, cacheDir, coord); err != nil {
 			report.Failures = append(report.Failures, CoordinateFailure{Coordinate: coord, Err: err})
 			continue
 		}
@@ -99,9 +105,8 @@ func populateOne(
 	blobs fetchports.BlobStore,
 	cacheDir string,
 	coord coordinate.ModuleCoordinate,
-	pipelineVersion string,
 ) error {
-	record, ok, err := facts.GetFetchRecord(ctx, coord, pipelineVersion)
+	record, ok, err := fetchports.ComposedFetchRecord(ctx, facts, coord)
 	if err != nil {
 		return fmt.Errorf("getting fact record for %s: %w", coord, err)
 	}
@@ -172,11 +177,10 @@ func PopulateGoMod(
 	blobs fetchports.BlobStore,
 	cacheDir string,
 	coords []coordinate.ModuleCoordinate,
-	pipelineVersion string,
 ) Report {
 	report := Report{Requested: len(coords)}
 	for _, coord := range coords {
-		if err := populateGoModOne(ctx, facts, blobs, cacheDir, coord, pipelineVersion); err != nil {
+		if err := populateGoModOne(ctx, facts, blobs, cacheDir, coord); err != nil {
 			report.Failures = append(report.Failures, CoordinateFailure{Coordinate: coord, Err: err})
 			continue
 		}
@@ -191,9 +195,8 @@ func populateGoModOne(
 	blobs fetchports.BlobStore,
 	cacheDir string,
 	coord coordinate.ModuleCoordinate,
-	pipelineVersion string,
 ) error {
-	record, ok, err := facts.GetFetchRecord(ctx, coord, pipelineVersion)
+	record, ok, err := fetchports.ComposedFetchRecord(ctx, facts, coord)
 	if err != nil {
 		return fmt.Errorf("getting fact record for %s: %w", coord, err)
 	}
@@ -257,7 +260,6 @@ func PopulateGoModClosure(
 	blobs fetchports.BlobStore,
 	cacheDir string,
 	seeds []coordinate.ModuleCoordinate,
-	pipelineVersion string,
 	ensure func(context.Context, []coordinate.ModuleCoordinate),
 ) Report {
 	var report Report
@@ -289,7 +291,7 @@ func PopulateGoModClosure(
 
 		for _, coord := range batch {
 			report.Requested++
-			modPath, err := writeGoModEntry(ctx, facts, blobs, cacheDir, coord, pipelineVersion)
+			modPath, err := writeGoModEntry(ctx, facts, blobs, cacheDir, coord)
 			if err != nil {
 				report.Failures = append(report.Failures, CoordinateFailure{Coordinate: coord, Err: err})
 				continue
@@ -329,7 +331,6 @@ func writeGoModEntry(
 	blobs fetchports.BlobStore,
 	cacheDir string,
 	coord coordinate.ModuleCoordinate,
-	pipelineVersion string,
 ) (string, error) {
 	base, err := cacheEntryPath(cacheDir, coord)
 	if err != nil {
@@ -338,7 +339,7 @@ func writeGoModEntry(
 	if _, statErr := os.Lstat(base + ".mod"); statErr == nil {
 		return base + ".mod", nil
 	}
-	if err := populateGoModOne(ctx, facts, blobs, cacheDir, coord, pipelineVersion); err != nil {
+	if err := populateGoModOne(ctx, facts, blobs, cacheDir, coord); err != nil {
 		return "", err
 	}
 	return base + ".mod", nil

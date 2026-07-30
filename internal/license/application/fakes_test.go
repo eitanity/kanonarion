@@ -11,6 +11,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/license/domain"
 	"github.com/eitanity/kanonarion/internal/license/ports"
@@ -64,6 +65,23 @@ func (s *fakeFactStore) GetFetchRecord(_ context.Context, coord coordinate.Modul
 		return domain2.CompositeRecord{}, false, err //nolint:wrapcheck // test fake
 	}
 	return c, true, nil
+}
+
+// ComposeFetchRecord answers the coordinate-only composed read, satisfying the
+// optional fetchports.FactRecordComposer capability. It folds every record filed
+// for the coordinate whatever pipeline version wrote it, exactly as the sqlite
+// store does — a fake that consulted one pipeline version here would let a test
+// go green on a read production answers differently.
+func (s *fakeFactStore) ComposeFetchRecord(_ context.Context, coord coordinate.ModuleCoordinate) (domain2.CompositeRecord, bool, error) {
+	if coord.IsZero() {
+		return domain2.CompositeRecord{}, false, coordinate.ErrZeroCoordinate
+	}
+	held := make([]domain2.FactRecord, 0, len(s.records))
+	for _, r := range s.records {
+		held = append(held, r)
+	}
+	//nolint:wrapcheck // test fake; the helper already names the coordinate
+	return fetchtest.ComposeCoordinate(coord, held)
 }
 
 // fakeBlobStore holds blobs keyed by handle.

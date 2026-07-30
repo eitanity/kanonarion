@@ -465,14 +465,13 @@ func buildUseCase(
 		extractor = godocextractor.New(application.PipelineVersion, clk)
 	}
 	return application.NewExtractInterfaceUseCase(application.Config{
-		Facts:                facts,
-		Blobs:                blobs,
-		Store:                store,
-		Extractor:            extractor,
-		Clock:                clk,
-		Stopwatch:            fakeStopwatch{},
-		FetchPipelineVersion: application.PipelineVersion,
-		Logger:               slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Facts:     facts,
+		Blobs:     blobs,
+		Store:     store,
+		Extractor: extractor,
+		Clock:     clk,
+		Stopwatch: fakeStopwatch{},
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 }
 

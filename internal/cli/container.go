@@ -334,23 +334,17 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	licExtractUC := licapp.NewExtractLicenseUseCase(licapp.Config{
 		Facts: factStore, Blobs: blobs, Licenses: licStore,
 		Detector: licdet.New(), Clock: clk, Stopwatch: stopwatch, Logger: logger,
-		FetchPipelineVersion:      fetchapp.PipelineVersion,
-		LocalFetchPipelineVersion: walklocalfs.PipelineVersion,
 	}).WithAudit(factStore)
 	ifaceExtractUC := ifaceapp.NewExtractInterfaceUseCase(ifaceapp.Config{
 		Facts: factStore, Blobs: blobs, Store: ifaceStore,
 		Extractor: ifaceext.New("0.1.0", clk), Clock: clk, Stopwatch: stopwatch, Logger: logger,
-		FetchPipelineVersion:      fetchapp.PipelineVersion,
-		LocalFetchPipelineVersion: walklocalfs.PipelineVersion,
 	})
 	cgAnalyser := cganalyser.New("0.1.0", goBinary, logger)
 	cgExtractUC := cgapp.NewExtractCallGraphUseCase(cgapp.Config{
 		Facts: factStore, Blobs: blobs, Store: cgStore,
 		Analyser: cgAnalyser, Clock: clk, Logger: logger,
-		Stopwatch:                 stopwatch,
-		FetchPipelineVersion:      fetchapp.PipelineVersion,
-		LocalFetchPipelineVersion: walklocalfs.PipelineVersion,
-		Exclusions:                cfg.Callgraph.Exclude,
+		Stopwatch:  stopwatch,
+		Exclusions: cfg.Callgraph.Exclude,
 	})
 	cgLocalExtractUC := cgapp.NewExtractLocalCallGraphUseCase(cgapp.LocalConfig{
 		Store: cgStore, Analyser: cgAnalyser, Clock: clk, Stopwatch: stopwatch, Logger: logger,
@@ -359,8 +353,6 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		Facts: factStore, Blobs: blobs, Examples: exStore,
 		Parser: exgoast.New(),
 		Clock:  clk, Stopwatch: stopwatch, Logger: logger,
-		FetchPipelineVersion:      fetchapp.PipelineVersion,
-		LocalFetchPipelineVersion: walklocalfs.PipelineVersion,
 	})
 
 	kanonarionBinary, err := os.Executable()
@@ -404,8 +396,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	generateNoticeUC := licapp.NewGenerateNoticeUseCase(
 		licStore, factStore, blobs,
 		licapp.PipelineVersion,
-		fetchapp.PipelineVersion,
-	).WithLocalFetchPipelineVersion(walklocalfs.PipelineVersion)
+	)
 
 	// ---- iface query use case ----
 	queryIfaceUC := ifaceapp.NewQueryInterfaceUseCase(ifaceStore)
@@ -426,10 +417,9 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	moduleScannerUC := vulnapp.NewScanModuleUseCase(
 		factStore, blobs, vulnStore, walkStore,
 		scanner, database, reach,
-		clk, vulnapp.PipelineVersion, fetchapp.PipelineVersion, logger,
+		clk, vulnapp.PipelineVersion, logger,
 	).WithCallGraphLoader(cgLoader).
-		WithCallGraphSpawner(cgSpawner).
-		WithLocalFetchPipelineVersion(walklocalfs.PipelineVersion)
+		WithCallGraphSpawner(cgSpawner)
 	walkScannerUC := vulnapp.NewScanWalkUseCase(
 		walkStore, vulnStore, moduleScannerUC,
 		vulnfetch.NewFetchModuleAdapter(fetchUC),

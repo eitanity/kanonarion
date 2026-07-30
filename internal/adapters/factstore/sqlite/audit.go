@@ -220,6 +220,16 @@ func (s *AuditingStore) ListFetchRecords(ctx context.Context, coord coordinate.M
 	return s.inner.ListFetchRecords(ctx, coord, pv)
 }
 
+// ComposeFetchRecord delegates to the inner store, carrying the optional
+// ports.FactRecordComposer capability through the audit decorator. A decorator
+// that dropped it would make every extraction stage refuse with
+// ErrComposedReadUnsupported whenever auditing was enabled — which is always, in
+// production — so the capability has to survive the wrapping, exactly as
+// ListFetchRecords does.
+func (s *AuditingStore) ComposeFetchRecord(ctx context.Context, coord coordinate.ModuleCoordinate) (domain2.CompositeRecord, bool, error) {
+	return s.inner.ComposeFetchRecord(ctx, coord)
+}
+
 // PutAttestation delegates to the inner store. Attestations are additive
 // provenance, not fact writes, so they are not mirrored into the audit log.
 func (s *AuditingStore) PutAttestation(ctx context.Context, r domain2.AttestationRecord) error {
@@ -232,7 +242,8 @@ func (s *AuditingStore) ListAttestations(ctx context.Context, coord coordinate.M
 }
 
 var (
-	_ ports.FactStore        = (*AuditingStore)(nil)
-	_ ports.FactRecordLister = (*AuditingStore)(nil)
-	_ ports.AttestationStore = (*AuditingStore)(nil)
+	_ ports.FactStore          = (*AuditingStore)(nil)
+	_ ports.FactRecordLister   = (*AuditingStore)(nil)
+	_ ports.FactRecordComposer = (*AuditingStore)(nil)
+	_ ports.AttestationStore   = (*AuditingStore)(nil)
 )

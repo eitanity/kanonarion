@@ -29,7 +29,7 @@ func makeScanWalkUC(t *testing.T, walkStore *fakeWalkStore, vulnStore *fakeVulnS
 	scanner := &fakeScanner{results: map[string]domain.VulnerabilityRecord{}}
 	clock := fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 	return application.NewScanWalkUseCase(walkStore, vulnStore, moduleUC, nil, clock, "v1", slog.Default())
 }
@@ -132,7 +132,7 @@ func TestScanWalk_PutWalkScanRunError(t *testing.T) {
 	clock := fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}
 	db := &fakeDatabase{snapshot: snap}
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 	uc := application.NewScanWalkUseCase(walkStore, vulnStore, moduleUC, nil, clock, "v1", slog.Default())
 
@@ -156,7 +156,7 @@ func TestRescan_DatabaseSnapshotFetchError(t *testing.T) {
 	clock := fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}
 	scanner := &fakeScanner{results: map[string]domain.VulnerabilityRecord{}}
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 	uc := application.NewRescanWalkUseCase(walkStore, vulnStore, moduleUC, nil, clock, "v1", slog.Default())
 
@@ -309,7 +309,7 @@ func TestScanModule_ModuleNotFetched(t *testing.T) {
 	db := &fakeDatabase{snapshot: snap}
 
 	uc := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 	coord := coordinatetest.MustNew("github.com/missing/mod", "v1.0.0")
 	rec, err := uc.Scan(t.Context(), application.ScanModuleParams{
@@ -347,7 +347,7 @@ func TestScanModule_MetadataOnly_WithVulns(t *testing.T) {
 	}
 
 	uc := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 	rec, err := uc.Scan(t.Context(), application.ScanModuleParams{
 		Coordinate: modCoord,
@@ -379,7 +379,7 @@ func TestScanModule_MetadataOnly_Clean(t *testing.T) {
 	db := &fakeDatabase{snapshot: snap} // no vulnerables
 
 	uc := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 	modCoord := coordinatetest.MustNew("github.com/clean/mod", "v1.0.0")
 	rec, err := uc.Scan(t.Context(), application.ScanModuleParams{
@@ -418,7 +418,7 @@ func TestScanModule_PutVulnerabilityRecordError(t *testing.T) {
 	db := &fakeDatabase{snapshot: snap}
 
 	uc := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 	_, err := uc.Scan(t.Context(), application.ScanModuleParams{
 		Coordinate: coord,
@@ -452,7 +452,7 @@ func TestScanWalk_ProgressCallback(t *testing.T) {
 	snap := vulntest.MustNew("s", "v1")
 	db := &fakeDatabase{snapshot: snap}
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 	uc := application.NewScanWalkUseCase(walkStore, vulnStore, moduleUC, nil, clock, "v1", slog.Default())
 

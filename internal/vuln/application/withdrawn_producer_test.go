@@ -45,7 +45,7 @@ func TestScanModule_WithdrawnAdvisoryIsNotAnAffectedVerdict(t *testing.T) {
 	uc := application.NewScanModuleUseCase(
 		newFakeFacts(), newFakeBlob(), vulnStore, newFakeWalkStore(),
 		&fakeScanner{results: map[string]domain.VulnerabilityRecord{}}, db, nil,
-		fixedClock{t: time.Date(2026, 7, 28, 0, 0, 0, 0, time.UTC)}, "v16", "v1", slog.Default(),
+		fixedClock{t: time.Date(2026, 7, 28, 0, 0, 0, 0, time.UTC)}, "v16", slog.Default(),
 	)
 	if _, err := uc.Scan(t.Context(), application.ScanModuleParams{
 		Coordinate: bbolt,
@@ -104,7 +104,7 @@ func TestScanModule_LiveAdvisoryBesideAWithdrawnOneStillAffects(t *testing.T) {
 	uc := application.NewScanModuleUseCase(
 		newFakeFacts(), newFakeBlob(), vulnStore, newFakeWalkStore(),
 		&fakeScanner{results: map[string]domain.VulnerabilityRecord{}}, db, nil,
-		fixedClock{t: time.Date(2026, 7, 28, 0, 0, 0, 0, time.UTC)}, "v16", "v1", slog.Default(),
+		fixedClock{t: time.Date(2026, 7, 28, 0, 0, 0, 0, time.UTC)}, "v16", slog.Default(),
 	)
 	if _, err := uc.Scan(t.Context(), application.ScanModuleParams{
 		Coordinate: mod,

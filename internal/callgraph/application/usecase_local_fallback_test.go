@@ -54,16 +54,14 @@ func TestExecute_FindsFactRecordUnderLocalIngestPipelineVersion(t *testing.T) {
 	}
 
 	uc := application.NewExtractCallGraphUseCase(application.Config{
-		Facts:                     facts,
-		Blobs:                     blobs,
-		Store:                     store,
-		Analyser:                  analyser,
-		Clock:                     fakeClock{t: testTime},
-		Stopwatch:                 fakeStopwatch{},
-		PipelineVersion:           testPipelineV,
-		FetchPipelineVersion:      "0.3.0",
-		LocalFetchPipelineVersion: localPipeline,
-		Logger:                    slog.Default(),
+		Facts:           facts,
+		Blobs:           blobs,
+		Store:           store,
+		Analyser:        analyser,
+		Clock:           fakeClock{t: testTime},
+		Stopwatch:       fakeStopwatch{},
+		PipelineVersion: testPipelineV,
+		Logger:          slog.Default(),
 	})
 
 	result, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: testCoord})
@@ -130,16 +128,14 @@ func TestExecute_LocalCoordinateBypassesRecordCache(t *testing.T) {
 	}
 
 	uc := application.NewExtractCallGraphUseCase(application.Config{
-		Facts:                     facts,
-		Blobs:                     blobs,
-		Store:                     store,
-		Analyser:                  analyser,
-		Clock:                     fakeClock{t: testTime},
-		Stopwatch:                 fakeStopwatch{},
-		PipelineVersion:           testPipelineV,
-		FetchPipelineVersion:      "0.3.0",
-		LocalFetchPipelineVersion: localPipeline,
-		Logger:                    slog.Default(),
+		Facts:           facts,
+		Blobs:           blobs,
+		Store:           store,
+		Analyser:        analyser,
+		Clock:           fakeClock{t: testTime},
+		Stopwatch:       fakeStopwatch{},
+		PipelineVersion: testPipelineV,
+		Logger:          slog.Default(),
 	})
 
 	result, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: localCoord})

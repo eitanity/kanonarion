@@ -11,6 +11,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
@@ -131,6 +132,25 @@ func (f *fakeFacts) GetFetchRecord(_ context.Context, coord coordinate.ModuleCoo
 		return fetchdomain.CompositeRecord{}, false, cerr //nolint:wrapcheck // test fake
 	}
 	return c, true, nil
+}
+
+// ComposeFetchRecord answers the coordinate-only composed read, satisfying the
+// optional fetchports.FactRecordComposer capability. It folds every record filed
+// for the coordinate whatever pipeline version wrote it, exactly as the sqlite
+// store does — a fake that consulted one pipeline version here would let a scan
+// test go green while production routed the module to a metadata-only verdict.
+func (f *fakeFacts) ComposeFetchRecord(_ context.Context, coord coordinate.ModuleCoordinate) (fetchdomain.CompositeRecord, bool, error) {
+	if coord.IsZero() {
+		return fetchdomain.CompositeRecord{}, false, coordinate.ErrZeroCoordinate
+	}
+	f.mu.Lock()
+	held := make([]fetchdomain.FactRecord, 0, len(f.records))
+	for _, r := range f.records {
+		held = append(held, r)
+	}
+	f.mu.Unlock()
+	//nolint:wrapcheck // test fake; the helper already names the coordinate
+	return fetchtest.ComposeCoordinate(coord, held)
 }
 
 // fakeVulnStore is an append-only ledger, like the real store: records holds

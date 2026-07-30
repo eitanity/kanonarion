@@ -58,7 +58,7 @@ func TestRescan_ProducesNewScanRun(t *testing.T) {
 	clock2 := fixedClock{t: now.Add(time.Hour)}
 
 	moduleUC1 := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, ws, scanner, db, nil, clock1, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, ws, scanner, db, nil, clock1, "v1", slog.Default(),
 	)
 
 	// Perform an initial scan to establish a prior run.
@@ -71,7 +71,7 @@ func TestRescan_ProducesNewScanRun(t *testing.T) {
 	// Now rescan with a newer snapshot using a later clock so the run ID differs.
 	db.snapshot = vulntest.MustNew("test", "v2")
 	moduleUC2 := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, ws, scanner, db, nil, clock2, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, ws, scanner, db, nil, clock2, "v1", slog.Default(),
 	)
 	rescanner := application.NewRescanWalkUseCase(ws, vulnStore, moduleUC2, nil, clock2, "v1", slog.Default())
 	secondRun, err := rescanner.Rescan(ctx, application.RescanRequest{WalkID: walk.ID, Operator: "op"})
@@ -120,7 +120,7 @@ func TestRescan_FreshSnapshotFetched(t *testing.T) {
 	clock := fixedClock{t: now}
 
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, ws, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, ws, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 	rescanner := application.NewRescanWalkUseCase(ws, vulnStore, moduleUC, nil, clock, "v1", slog.Default())
 
@@ -151,7 +151,7 @@ func TestRescan_PinnedSnapshot(t *testing.T) {
 	pinned := vulntest.MustNew("osv", "pinned-42")
 
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, ws, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, ws, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 	rescanner := application.NewRescanWalkUseCase(ws, vulnStore, moduleUC, nil, clock, "v1", slog.Default())
 
@@ -178,7 +178,7 @@ func TestRescan_UnknownWalk(t *testing.T) {
 	blobs := newFakeBlob()
 
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, ws, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, ws, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 	rescanner := application.NewRescanWalkUseCase(ws, vulnStore, moduleUC, nil, clock, "v1", slog.Default())
 

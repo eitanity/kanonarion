@@ -135,38 +135,29 @@ func cmdSeedWalk(args []string) {
 	walks := buildFixtureWalkRecords()
 	latestWalk := walks[len(walks)-1]
 	for _, node := range latestWalk.Graph.Nodes {
-		buf := new(bytes.Buffer)
-		zw := zip.NewWriter(buf)
-		f, _ := zw.Create(node.Coordinate.Path() + "@" + node.Coordinate.Version() + "/README")
-		_, _ = f.Write([]byte("zip content for " + node.Coordinate.String()))
-		_ = zw.Close()
-		zipContent := buf.Bytes()
+		// The zip is the canonical fixture artefact, shared with every other seed
+		// helper, so a coordinate seeded twice is measured as one artefact.
+		zipContent, parsedZipHash, zipIdentity, aerr := fixtureArtefact(node.Coordinate)
+		if aerr != nil {
+			_ = db.Close()
+			os.Exit(1)
+		}
 		modContent := []byte("module " + node.Coordinate.Path() + "\n")
-
 		modHash, _ := dirhash.Hash1([]string{"go.mod"}, func(string) (io.ReadCloser, error) {
 			return io.NopCloser(bytes.NewReader(modContent)), nil
 		})
-
-		// Let's write the zip to a temp file just to get the hash.
-		tmpZip, _ := os.CreateTemp("", "seed-*.zip")
-		_, _ = tmpZip.Write(zipContent)
-		_ = tmpZip.Close()
-		zipHash, _ := dirhash.HashZip(tmpZip.Name(), dirhash.Hash1)
-		_ = os.Remove(tmpZip.Name())
 
 		// This is a testscript subprocess entry point: it calls os.Exit and has no
 		// testing handle, so it cannot use the fetchtest builder. It seals through
 		// domain.Seal instead, which needs none — and which is the only way to
 		// obtain the SealedRecord the store accepts.
-		parsedZipHash, zerr := fetchdomain.ParseModuleHash(zipHash)
 		parsedModHash, merr := fetchdomain.ParseModuleHash(modHash)
-		if zerr != nil || merr != nil {
+		if merr != nil {
 			_ = db.Close()
 			os.Exit(1)
 		}
-		zipIdentity, zierr := fetchports.NewBlobIdentity(fetchports.BlobKindZip, parsedZipHash)
 		goModIdentity, mierr := fetchports.NewBlobIdentity(fetchports.BlobKindGoMod, parsedModHash)
-		if zierr != nil || mierr != nil {
+		if mierr != nil {
 			_ = db.Close()
 			os.Exit(1)
 		}
@@ -201,6 +192,95 @@ func cmdSeedWalk(args []string) {
 	}
 
 	_ = db.Close()
+}
+
+// fixtureArtefact builds the canonical fixture zip for coord — the same bytes
+// every seed helper uses — and returns the bytes with the blob identity that
+// addresses them.
+//
+// It exists because the helpers used to disagree. seedwalk hashed a real zip and
+// filed a fetch record naming it, while seedcallgraph and seedexamples filed one
+// naming a fixed "zip:h1:fixture-zip=" they never stored. A fixture that ran both
+// therefore held two measurements describing one pinned version as two different
+// artefacts — a genuine contradiction, invisible only while every read was keyed
+// by fetch pipeline version and so never saw both records at once. The composed
+// read sees both, and the divergence guard fails closed on them, which is the
+// correct answer to a contradictory ledger; the fixture is what had to change.
+func fixtureArtefact(coord coordinate.ModuleCoordinate) ([]byte, fetchdomain.ModuleHash, fetchports.BlobIdentity, error) {
+	fail := func(stage string, err error) ([]byte, fetchdomain.ModuleHash, fetchports.BlobIdentity, error) {
+		return nil, fetchdomain.ModuleHash{}, fetchports.BlobIdentity{}, fmt.Errorf("building fixture artefact for %s: %s: %w", coord, stage, err)
+	}
+	buf := new(bytes.Buffer)
+	zw := zip.NewWriter(buf)
+	f, err := zw.Create(coord.Path() + "@" + coord.Version() + "/README")
+	if err != nil {
+		return fail("creating zip entry", err)
+	}
+	if _, err := f.Write([]byte("zip content for " + coord.String())); err != nil {
+		return fail("writing zip entry", err)
+	}
+	if err := zw.Close(); err != nil {
+		return fail("closing zip", err)
+	}
+	content := buf.Bytes()
+
+	tmp, err := os.CreateTemp("", "seed-*.zip")
+	if err != nil {
+		return fail("creating temp zip", err)
+	}
+	defer func() { _ = os.Remove(tmp.Name()) }()
+	if _, err := tmp.Write(content); err != nil {
+		return fail("writing temp zip", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fail("closing temp zip", err)
+	}
+	raw, err := dirhash.HashZip(tmp.Name(), dirhash.Hash1)
+	if err != nil {
+		return fail("hashing zip", err)
+	}
+	hash, err := fetchdomain.ParseModuleHash(raw)
+	if err != nil {
+		return fail("parsing zip hash", err)
+	}
+	identity, err := fetchports.NewBlobIdentity(fetchports.BlobKindZip, hash)
+	if err != nil {
+		return fail("deriving zip identity", err)
+	}
+	return content, hash, identity, nil
+}
+
+// seedFixtureFetchRecord stores the canonical fixture artefact for coord and files
+// one fetch measurement of it, so every helper that needs a fetch record for a
+// coordinate files the same one. It returns the artefact identity the derived
+// records must name.
+func seedFixtureFetchRecord(
+	factStore *fetchsqlite.Store,
+	blobStore *localfs.Store,
+	coord coordinate.ModuleCoordinate,
+) (fetchports.BlobIdentity, error) {
+	content, hash, identity, err := fixtureArtefact(coord)
+	if err != nil {
+		return fetchports.BlobIdentity{}, err
+	}
+	if err := blobStore.Put(context.Background(), identity, bytes.NewReader(content)); err != nil {
+		return fetchports.BlobIdentity{}, fmt.Errorf("storing fixture artefact for %s: %w", coord, err)
+	}
+	sealed, err := fetchdomain.Seal(fetchdomain.FetchedModule{
+		Coordinate:         coord,
+		ModuleHash:         hash,
+		VerificationStatus: fetchdomain.Verified,
+		PipelineVersion:    fetchapp.PipelineVersion,
+		ContentLocation:    identity.String(),
+		MeasurementKind:    fetchdomain.MeasurementAcquired,
+	})
+	if err != nil {
+		return fetchports.BlobIdentity{}, fmt.Errorf("sealing fixture fetch record for %s: %w", coord, err)
+	}
+	if err := factStore.PutFetchRecord(context.Background(), sealed); err != nil {
+		return fetchports.BlobIdentity{}, fmt.Errorf("filing fixture fetch record for %s: %w", coord, err)
+	}
+	return identity, nil
 }
 
 func buildFixtureWalkRecords() []domain.WalkRecord {
@@ -281,8 +361,17 @@ func cmdSeedCallGraph(args []string) {
 	}
 	store := cgsqlite.New(db)
 	factStore := fetchsqlite.New(db)
+	blobStore := localfs.New(storeRoot)
 
 	app := mustFixtureCoord("example.com/app", "v1.0.0")
+	// The fetch measurement comes first, so the graph record can name the artefact
+	// that measurement describes rather than a hand-written identity that no stored
+	// artefact matches.
+	appArtefact, aerr := seedFixtureFetchRecord(factStore, blobStore, app)
+	if aerr != nil {
+		_ = db.Close()
+		os.Exit(1)
+	}
 	rec := cgdomain.CallGraphRecord{
 		SchemaVersion: cgdomain.CallGraphSchemaVersion,
 		Ecosystem:     fetchdomain.EcosystemGo,
@@ -340,33 +429,13 @@ func cmdSeedCallGraph(args []string) {
 		// that names none: composition groups records by which bytes they measured,
 		// and an empty identity groups every record that also recorded nothing.
 		AnalysisSource:   cgdomain.AnalysisSourceModuleZip,
-		ArtefactIdentity: "zip:h1:fixture-zip=",
+		ArtefactIdentity: appArtefact.String(),
 	}
 	rec.Sort()
 	var hasher cgdomain.CallGraphRecordHasher
 	rec, _ = hasher.SetContentHash(rec)
 
 	if err := store.PutCallGraphRecord(context.Background(), rec); err != nil {
-		_ = db.Close()
-		os.Exit(1)
-	}
-
-	// Seed a fetch record so the callgraph command can find the module and hit the
-	// cache. Sealed through domain.Seal: this entry point has no testing handle,
-	// and Seal needs none.
-	sealed, serr := fetchdomain.Seal(fetchdomain.FetchedModule{
-		Coordinate:         app,
-		ModuleHash:         fetchtest.H1("fixture-zip="),
-		VerificationStatus: fetchdomain.Verified,
-		PipelineVersion:    fetchapp.PipelineVersion,
-		ContentLocation:    "zip:h1:fixture-zip=",
-		MeasurementKind:    fetchdomain.MeasurementAcquired,
-	})
-	if serr != nil {
-		_ = db.Close()
-		os.Exit(1)
-	}
-	if err := factStore.PutFetchRecord(context.Background(), sealed); err != nil {
 		_ = db.Close()
 		os.Exit(1)
 	}
@@ -479,8 +548,14 @@ func cmdSeedExamples(args []string) {
 	}
 	store := exsqlite.New(db)
 	factStore := fetchsqlite.New(db)
+	blobStore := localfs.New(storeRoot)
 
 	app := mustFixtureCoord("example.com/app", "v1.0.0")
+	appArtefact, aerr := seedFixtureFetchRecord(factStore, blobStore, app)
+	if aerr != nil {
+		_ = db.Close()
+		os.Exit(1)
+	}
 	rec := exdomain.ExampleRecord{
 		SchemaVersion: exdomain.ExampleSchemaVersion,
 		Ecosystem:     fetchdomain.EcosystemGo,
@@ -501,31 +576,12 @@ func cmdSeedExamples(args []string) {
 		},
 		ExtractedAt:      time.Now(),
 		PipelineVersion:  exapp.PipelineVersion,
-		ArtefactIdentity: fetchtest.ZipArtefact("fixture-zip=").String(),
+		ArtefactIdentity: appArtefact.String(),
 	}
 	var hasher exdomain.ExampleRecordHasher
 	rec, _ = hasher.SetContentHash(rec)
 
 	if err := store.PutExampleRecord(context.Background(), rec); err != nil {
-		_ = db.Close()
-		os.Exit(1)
-	}
-
-	// Seed a fetch record so the examples command can find the module and hit the
-	// cache. Sealed through domain.Seal: this entry point has no testing handle.
-	exSealed, exSerr := fetchdomain.Seal(fetchdomain.FetchedModule{
-		Coordinate:         app,
-		ModuleHash:         fetchtest.H1("fixture-zip="),
-		VerificationStatus: fetchdomain.Verified,
-		PipelineVersion:    exapp.PipelineVersion, // Match record.PipelineVersion
-		ContentLocation:    "zip:h1:fixture-zip=",
-		MeasurementKind:    fetchdomain.MeasurementAcquired,
-	})
-	if exSerr != nil {
-		_ = db.Close()
-		os.Exit(1)
-	}
-	if err := factStore.PutFetchRecord(context.Background(), exSealed); err != nil {
 		_ = db.Close()
 		os.Exit(1)
 	}

@@ -49,7 +49,7 @@ func TestScanModule_RecordsTheArtefactItScanned(t *testing.T) {
 	}
 
 	uc := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, nil, scanner, db, nil, fixedClock{t: now}, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, nil, scanner, db, nil, fixedClock{t: now}, "v1", slog.Default(),
 	)
 	res, err := uc.Scan(ctx, application.ScanModuleParams{
 		Coordinate: coord,
@@ -102,7 +102,7 @@ func TestScanModule_GoModOnlyStillNamesItsArtefact(t *testing.T) {
 			snapshot: vulntest.MustNewAt("test", "v1", now),
 			content:  "vulndb content",
 		},
-		nil, fixedClock{t: now}, "v1", "v1", slog.Default(),
+		nil, fixedClock{t: now}, "v1", slog.Default(),
 	)
 	res, err := uc.Scan(ctx, application.ScanModuleParams{Coordinate: coord, WalkID: "walk-1"})
 	if err != nil {
@@ -141,7 +141,7 @@ func TestScanModule_MetadataOnlyRecordsNoArtefact(t *testing.T) {
 			snapshot: vulntest.MustNewAt("test", "v1", now),
 			content:  "vulndb content",
 		},
-		nil, fixedClock{t: now}, "v1", "v1", slog.Default(),
+		nil, fixedClock{t: now}, "v1", slog.Default(),
 	)
 	res, err := uc.Scan(ctx, application.ScanModuleParams{Coordinate: coord, WalkID: "walk-1"})
 	if err != nil {
