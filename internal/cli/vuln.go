@@ -103,20 +103,40 @@ func printVulnRecord(stdout io.Writer, rec vuldomain.VulnerabilityRecord) {
 		}
 		return
 	}
+	printFindingLines(stdout, rec)
+}
+
+// reachabilityLabel renders the one-word reachability tag beside a finding.
+//
+// It has three outcomes, not two. A finding whose answer was never determined at
+// symbol level — because the advisory names no symbol for this module path, or
+// because the analysis could not decide — is not a negative: labelling it "not
+// reachable" reports a search that was never run, and the operator acts on the
+// negative by not upgrading. notReachable lets each caller keep its own wording
+// for the genuine negative, which differs in how much of the instrument it names.
+func reachabilityLabel(f vuldomain.VulnerabilityFinding, notReachable string) string {
+	if f.Reachable == nil {
+		return ""
+	}
+	if f.Reachable.IsReachable {
+		return " [reachable]"
+	}
+	if f.AdvisoryNamesNoSymbols {
+		return " [affected at package level; symbol-level reachability not determined]"
+	}
+	if f.Reachable.Confidence == vuldomain.ConfidenceUnknown {
+		return " [reachability not determined]"
+	}
+	return notReachable
+}
+
+func printFindingLines(stdout io.Writer, rec vuldomain.VulnerabilityRecord) {
 	for _, f := range rec.Findings {
 		aliases := ""
 		if len(f.Aliases) > 0 {
 			aliases = " (" + strings.Join(f.Aliases, ", ") + ")"
 		}
-		reachability := ""
-		if f.Reachable != nil {
-			if f.Reachable.IsReachable {
-				reachability = " [reachable]"
-			} else {
-				reachability = " [not reachable]"
-			}
-		}
-		_, _ = fmt.Fprintf(stdout, "  %s%s%s: %s\n", f.ID, aliases, reachability, f.Summary)
+		_, _ = fmt.Fprintf(stdout, "  %s%s%s: %s\n", f.ID, aliases, reachabilityLabel(f, " [not reachable]"), f.Summary)
 		// The retraction is printed as its own line, ahead of the range and the fix,
 		// because it changes what the rest of the entry means: an affected range and
 		// a fixed version for a retracted advisory describe a report that was
@@ -136,6 +156,12 @@ func printVulnRecord(stdout io.Writer, rec vuldomain.VulnerabilityRecord) {
 		_, _ = fmt.Fprintf(stdout, "      fix:      %s\n", f.FixDisplay())
 		if len(f.AffectedSymbols) > 0 {
 			_, _ = fmt.Fprintf(stdout, "      symbols:  %s\n", strings.Join(f.AffectedSymbols, ", "))
+		}
+		// Printed where the symbols would have been, because the empty symbol list
+		// is the thing being explained: a reader must not take it for a symbol list
+		// that failed to load, nor read the absent route as "nothing calls it".
+		if f.AdvisoryNamesNoSymbols {
+			_, _ = fmt.Fprintln(stdout, "      symbols:  none named by the advisory for this module path — affected at package level, symbol-level reachability not determinable")
 		}
 		// A reachability answer never prints without saying what produced it. The
 		// same advisory in the same module is reachable in one build and not in

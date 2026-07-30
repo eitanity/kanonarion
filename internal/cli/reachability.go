@@ -43,6 +43,13 @@ const (
 	// would be at risk if only something called it, when there is nothing to be at
 	// risk from.
 	verdictWithdrawn = "withdrawn"
+	// verdictPackageLevelOnly is the answer for a coordinate the advisory matches
+	// but names no symbol in: the module is affected, and symbol-level
+	// reachability was never determinable because there is no symbol to reach.
+	// It is neither "reachable" — nothing showed the vulnerable code running —
+	// nor "not reachable", which would offer a search that was never possible as
+	// the reason.
+	verdictPackageLevelOnly = "package_level_only"
 )
 
 // -- output types --
@@ -314,6 +321,27 @@ func vulnReachabilityVerdict(coord coordinate.ModuleCoordinate, rec vuldomain.Vu
 			f.ID, coord, coord, coord)
 	}
 
+	// Answered before the undetermined-confidence diagnostic below, because that
+	// diagnostic sends the operator to compute a call graph — advice which cannot
+	// help here. No graph resolves a symbol the advisory never named, and the
+	// scan that produced this record did run.
+	if f.AdvisoryNamesNoSymbols {
+		return vulnReachabilityQuery{
+			Module:     coord.Path(),
+			Version:    coord.Version(),
+			VulnID:     f.ID,
+			Aliases:    f.Aliases,
+			Summary:    f.Summary,
+			Verdict:    verdictPackageLevelOnly,
+			Confidence: string(f.Reachable.Confidence),
+			Method:     f.Reachable.DerivedBy.Analyser.String(),
+			Fidelity:   f.Reachable.DerivedBy.Fidelity,
+			Rooting:    f.Reachable.DerivedBy.Rooting.String(),
+			Routes:     routesToOutput(f.Reachable.Routes),
+			ScannedAt:  rec.ScannedAt.UTC().Format(time.RFC3339),
+		}, nil
+	}
+
 	if f.Reachable.Confidence == vuldomain.ConfidenceUnknown {
 		return vulnReachabilityQuery{}, fmt.Errorf(
 			"reachability for %s in %s is undetermined: the call graph was unavailable during the scan. Run:\n  kanonarion callgraph %s\n  kanonarion vuln-scan %s --reachability",
@@ -427,6 +455,13 @@ func printVulnReachability(stdout io.Writer, res vulnReachabilityQuery) {
 		// metadata-only graph and from a built one are different claims, and the
 		// negative is the one an operator acts on by NOT upgrading.
 		_, _ = fmt.Fprintf(stdout, "%s affects %s but is NOT reachable [confidence: %s, %s]\n", res.VulnID, coord, res.Confidence, derivationLine(res))
+	case verdictPackageLevelOnly:
+		// Says plainly that the module IS affected, then that the question of
+		// whether the vulnerable code runs has no answer here and why. The route is
+		// printed if one somehow exists, so the reply never hides evidence it holds.
+		_, _ = fmt.Fprintf(stdout, "%s affects %s at PACKAGE level; symbol-level reachability is not determined — the advisory names no symbols for this module path [confidence: %s, %s]\n",
+			res.VulnID, coord, res.Confidence, derivationLine(res))
+		printRoute(stdout, res)
 	case verdictNotAffected:
 		_, _ = fmt.Fprintf(stdout, "%s is not affected by %s (scanned %s)\n", coord, res.VulnID, res.ScannedAt)
 	case verdictWithdrawn:

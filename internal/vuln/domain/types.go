@@ -477,19 +477,41 @@ type ReachabilityResult struct {
 
 // VulnerabilityFinding represents a single vulnerability affecting a module.
 type VulnerabilityFinding struct {
-	ID               string              `json:"id"`
-	Aliases          []string            `json:"aliases,omitzero"`
-	Summary          string              `json:"summary"`
-	Details          string              `json:"details,omitzero"`
-	AffectedRange    string              `json:"affected_range"`
-	FixedIn          string              `json:"fixed_in,omitzero"`
-	Severity         *Severity           `json:"severity,omitzero"`
-	AffectedSymbols  []string            `json:"affected_symbols,omitzero"`
-	Reachable        *ReachabilityResult `json:"reachable,omitzero"`
-	ReachabilityNote string              `json:"reachability_note,omitzero"`
-	References       []string            `json:"references,omitzero"`
-	PublishedAt      time.Time           `json:"published_at"`
-	ModifiedAt       time.Time           `json:"modified_at"`
+	ID              string              `json:"id"`
+	Aliases         []string            `json:"aliases,omitzero"`
+	Summary         string              `json:"summary"`
+	Details         string              `json:"details,omitzero"`
+	AffectedRange   string              `json:"affected_range"`
+	FixedIn         string              `json:"fixed_in,omitzero"`
+	Severity        *Severity           `json:"severity,omitzero"`
+	AffectedSymbols []string            `json:"affected_symbols,omitzero"`
+	Reachable       *ReachabilityResult `json:"reachable,omitzero"`
+	// AdvisoryNamesNoSymbols records that the advisory entry matching this
+	// finding's module path carries no symbol list at all.
+	//
+	// It is the difference between "no symbol was reached" and "there was no
+	// symbol to reach", and only the advisory can say which. An OSV entry may
+	// name the affected symbols for one major-version path and none for another —
+	// measured on a live advisory, github.com/golang-jwt/jwt/v4 names
+	// Parser.ParseUnverified and the bare github.com/golang-jwt/jwt path names
+	// nothing — so this is a fact about the matched entry, not about the
+	// advisory as a whole.
+	//
+	// Where it is true, symbol-level reachability was never available for this
+	// coordinate: the analysis has no target to search for, so an empty
+	// AffectedSymbols and an empty route are the expected shape rather than a
+	// gap, and a reader must not read the absent route as "nothing calls it".
+	// Recording it explicitly is what lets a consumer tell the two apart instead
+	// of inferring the reason from an empty field.
+	//
+	// False means either that the entry names symbols or that no advisory entry
+	// was read to ask — an enrichment that never ran states nothing here, on the
+	// same terms as WithdrawnAt.
+	AdvisoryNamesNoSymbols bool      `json:"advisory_names_no_symbols,omitzero"`
+	ReachabilityNote       string    `json:"reachability_note,omitzero"`
+	References             []string  `json:"references,omitzero"`
+	PublishedAt            time.Time `json:"published_at"`
+	ModifiedAt             time.Time `json:"modified_at"`
 	// WithdrawnAt is the OSV top-level "withdrawn" timestamp: the moment the
 	// advisory was retracted upstream. Zero means the advisory is live, or that the
 	// lookup never read an advisory to ask — an enrichment fetch that failed leaves

@@ -611,6 +611,12 @@ func enrichFinding(f *domain.VulnerabilityFinding, modulePath string, adv *osvAd
 			f.FixedIn = fixed
 		}
 		f.AffectedSymbols = collectSymbols(a.EcosystemSpecific.Imports)
+		// An entry that names this module path but no symbol within it is recorded
+		// as such, so a reader can see that symbol-level reachability was never
+		// available for this coordinate rather than inferring it from an empty
+		// symbol list — which is also what an enrichment that never ran leaves
+		// behind. The two are not the same fact and must not look alike.
+		f.AdvisoryNamesNoSymbols = len(f.AffectedSymbols) == 0
 	}
 }
 

@@ -141,7 +141,41 @@ import (
 // withdrawn: WithdrawnAt is a new field carrying omitzero, so it is absent from
 // the encoding exactly when it is zero, and a v15 record's hash recomputes
 // identically under this generation.
-const PipelineVersion = "v16"
+//
+// It was bumped to "v17" when a govulncheck trace consisting entirely of
+// package-initialisation frames stopped being ingested as a reachability route.
+//
+// Where an advisory entry names no symbols for a module path, govulncheck treats
+// the whole package as vulnerable and the only thing it can report is that the
+// package's own init ran — which follows from the package being linked into the
+// build, not from anything calling the vulnerable code. Those frames were read as
+// a route, so the finding was recorded reachable at High confidence with source
+// fidelity, and "init" was written into affected_symbols, a symbol no advisory
+// ever names. Such a finding is now recorded as affected at package level: no
+// route, no symbol, IsReachable false at Confidence Unknown — the store's existing
+// "not determined" value — and the new AdvisoryNamesNoSymbols field states why, so
+// the absent route is not read as "nothing calls it". The coordinate match is
+// untouched; the module remains Affected.
+//
+// The bump is what makes the fix reachable rather than a shape formality. A "v16"
+// record for such a coordinate asserts reachable/High over init frames, and the
+// claim is not correctable in place: the verdict and the route are both inside the
+// hashed canonical shape, so rewriting them would require re-sealing a v16 record
+// against evidence the earlier generation reached a different conclusion from — the
+// mistake migration 10 was withdrawn for. Read-side queries pin to this constant,
+// so under the bump those records stop being served and a re-scan produces a v17
+// record that states the package-level match, while the v16 row remains readable
+// in the ledger as what the earlier generation concluded. Without the bump the
+// false reachable claim would survive the fix from cache. Measured on a working
+// store: github.com/golang-jwt/jwt@v3.2.2+incompatible and
+// github.com/golang-jwt/jwt/v4@v4.5.1 both carried GO-2025-3553 as reachable/High
+// in the same run, and only the second had a route to the advisory's named symbol.
+//
+// The record's canonical bytes are unchanged for every finding this does not
+// re-classify: AdvisoryNamesNoSymbols is a new field carrying omitzero, so it is
+// absent from the encoding exactly when it is false, and an untouched v16 record's
+// hash recomputes identically under this generation.
+const PipelineVersion = "v17"
 
 // ScanModuleUseCase orchestrates a single module's vulnerability scan.
 type ScanModuleUseCase struct {

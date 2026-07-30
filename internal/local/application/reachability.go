@@ -155,6 +155,14 @@ func probeOneFinding(f ports.VulnFinding, modPath string, binarySymbols map[stri
 		// No symbols to probe. Fall back to govulncheck's own reachability
 		// verdict from the stored scan if it captured one.
 		switch {
+		case f.AdvisoryNamesNoSymbols:
+			// The advisory names no symbol for this module path, so no symbol-level
+			// determination was ever possible — not by this probe and not by the
+			// stored scan either. Falling through to the stored verdict would report
+			// "unreachable" on the strength of a search that had no target.
+			result.Verdict = domain.SymbolProbeUnknown
+			result.VerdictSource = domain.VerdictSourceNone
+			result.Reason = "the advisory names no symbols for this module path, so symbol-level reachability is not determinable; the module is affected at package level"
 		case f.Reachable == nil:
 			result.Verdict = domain.SymbolProbeUnknown
 			result.VerdictSource = domain.VerdictSourceNone

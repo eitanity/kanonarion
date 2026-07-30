@@ -23,6 +23,13 @@ type VulnFinding struct {
 	// determine reachability (e.g. a module/binary-mode scan), so the symbol
 	// table probe is the only available signal.
 	Reachable *bool
+	// AdvisoryNamesNoSymbols reports that the advisory entry matching this
+	// finding's module path names no symbols at all, so there was never a symbol
+	// to probe for. It is why AffectedSymbols is empty, and it must be carried:
+	// without it an empty symbol list falls through to the stored govulncheck
+	// verdict and reports "unreachable", which claims a search that could not
+	// have been run.
+	AdvisoryNamesNoSymbols bool
 }
 
 // VulnFindingLoader loads stored CVE findings for a set of module coordinates.

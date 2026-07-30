@@ -407,14 +407,7 @@ func printVulnScanResult(run vuldomain.WalkScanRun, affected, withdrawn []vulnSc
 				if f.FixedIn != "" {
 					fixedIn = ", fixed in " + f.FixedIn
 				}
-				reachability := ""
-				if f.Reachable != nil {
-					if f.Reachable.IsReachable {
-						reachability = " [reachable]"
-					} else {
-						reachability = " [not reachable in call graph]"
-					}
-				}
+				reachability := reachabilityLabel(f, " [not reachable in call graph]")
 				_, _ = fmt.Fprintf(stdout, "    %s%s%s%s: %s\n", f.ID, aliases, fixedIn, reachability, f.Summary)
 			}
 		}

@@ -56,6 +56,7 @@ you which command to run - it is never reported as a false "not reachable".
 |---|---|---|
 | `<id> is REACHABLE in <m>@<v>` | 0 | Affected symbol is reachable from an entry point. |
 | `<id> affects <m>@<v> but is NOT reachable` | 0 | Affected symbol is present but unreachable. |
+| `<id> affects <m>@<v> at PACKAGE level; symbol-level reachability is not determined` | 0 | The advisory names no symbols for this module path, so there is no symbol for a route to reach. The module **is** affected. |
 | `<id> was WITHDRAWN upstream <date>` | 0 | The advisory was retracted upstream; the module is not affected by it. |
 | `<m>@<v> is not affected by <id>` | 0 | Module was scanned; this CVE is not among its findings. |
 
@@ -66,6 +67,15 @@ reachable" would offer reachability as the mitigation — inviting the reader to
 conclude the module would be at risk if only something called it, when there is
 nothing to be at risk from. For the same reason the two "run this command" errors
 below are never raised for a retracted advisory: it needs no call graph.
+
+The `package_level_only` verdict is its own answer for the same kind of reason. An
+OSV entry may name the affected symbols for one major-version path and none for
+another; where the matched entry names none, govulncheck treats the whole package
+as vulnerable and the only trace it can report is the package's own `init` running
+— which follows from the package being linked into the build, not from anything
+calling the vulnerable code. That is neither `reachable` nor `not_reachable`, and
+it is not fixed by computing a call graph, so it is answered before the
+"run this command" diagnostics rather than through them.
 | `… has not been vuln-scanned` | non-zero | No record. Run `vuln-scan <m>@<v> --reachability`. |
 | `… ScanFailed` / `… is unscannable` | non-zero | Module could not be scanned; reachability is unknown. |
 | `… scanned without --reachability` | non-zero | Findings exist but reachability was not computed. |

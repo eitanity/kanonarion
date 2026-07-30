@@ -43,6 +43,9 @@ func (a *VulnStoreAdapter) LoadFindings(ctx context.Context, coords []coordinate
 				Aliases:         f.Aliases,
 				Summary:         f.Summary,
 				AffectedSymbols: f.AffectedSymbols,
+				// Carried so an empty symbol list is read as "the advisory named
+				// none" rather than as a probe that found nothing.
+				AdvisoryNamesNoSymbols: f.AdvisoryNamesNoSymbols,
 			}
 			if f.Reachable != nil {
 				r := f.Reachable.IsReachable

@@ -545,6 +545,12 @@ func runScanDiff(ctx context.Context, runIDA, runIDB string, jsonOut bool, ucDif
 			now := "not reachable"
 			if c.IsReachable {
 				now = "reachable"
+			} else if c.Finding.AdvisoryNamesNoSymbols {
+				// The later run did not search and fail; there was no symbol for it to
+				// search for. Rendering this as "not reachable" would read as a
+				// resolution and invite the operator to stand down on a module that is
+				// still affected at package level.
+				now = "not determined at symbol level (advisory names no symbols)"
 			}
 			_, _ = fmt.Fprintf(stdout, "  ~ %s  %s@%s  %s → %s\n", c.Finding.ID, c.Coordinate.Path(), c.Coordinate.Version(), was, now)
 		}
