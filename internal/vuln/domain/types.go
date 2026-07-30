@@ -372,7 +372,55 @@ const (
 	// replacement (a replace directive pointing at a working-tree path) rather
 	// than a fetched, versioned module, so there is no fetched source to scan.
 	UnscanReasonLocalReplace UnscanReason = "local-replace"
+	// UnscanReasonAbsentFromVendor indicates the analysis was rooted at a
+	// vendored project — the vendored tree is the source the build compiles —
+	// and that tree holds no files for this module, so nothing of it was in the
+	// analysed build.
+	//
+	// It is deliberately a coverage gap rather than a cue to fetch the module
+	// from the proxy and analyse that instead. Substituting a fetched artefact
+	// for an absent vendored one would report findings about bytes the project
+	// does not build, which is the exact "analysed bytes are not built bytes"
+	// defect that choosing the vendored surface exists to close.
+	UnscanReasonAbsentFromVendor UnscanReason = "absent-from-vendor"
 )
+
+// AnalysisSurface names which copy of a module's source a scan measured.
+//
+// A module version has more than one copy on disk — the zip kanonarion fetched
+// and holds in its blob store, and, for a vendored project, the tree under
+// vendor/ that the project actually compiles. They can differ, and detecting
+// exactly that divergence is the tool's own value proposition, so a verdict
+// that does not say which one it read cannot be checked: a reader cannot tell
+// whether the facts describe the build.
+type AnalysisSurface string
+
+const (
+	// AnalysisSurfaceFetched — the analysis resolved modules from artefacts
+	// kanonarion fetched (the blob-store-populated module cache, or the host
+	// module cache under --from-modcache). This is the regime of every isolated
+	// per-module scan, every target-rooted scan of a published module, and any
+	// project scan of a project that is not vendored.
+	AnalysisSurfaceFetched AnalysisSurface = "fetched"
+	// AnalysisSurfaceVendored — the analysis resolved modules from the
+	// project's own vendor/ tree, under -mod=vendor. The bytes measured are the
+	// bytes the project compiles.
+	AnalysisSurfaceVendored AnalysisSurface = "vendored"
+)
+
+// RecordAnalysisSurface returns the surface r's verdict was reached from.
+//
+// An empty field ladders to AnalysisSurfaceFetched rather than reading as a
+// third state. Every record written before the field existed was produced by a
+// run that resolved from fetched artefacts — nothing consumed a vendored tree —
+// so "fetched" is what those bytes mean, and segregating them into an
+// "unrecorded" bucket would let a reader treat a known regime as an unknown one.
+func RecordAnalysisSurface(r VulnerabilityRecord) AnalysisSurface {
+	if r.AnalysisSurface == "" {
+		return AnalysisSurfaceFetched
+	}
+	return r.AnalysisSurface
+}
 
 // AllUnscanReasons returns every defined UnscanReason, in a stable order.
 //
@@ -402,6 +450,7 @@ func AllUnscanReasons() []UnscanReason {
 		UnscanReasonLocalReplace,
 		UnscanReasonProjectNoGoMod,
 		UnscanReasonProjectDirUnavailable,
+		UnscanReasonAbsentFromVendor,
 	}
 }
 
@@ -629,8 +678,18 @@ type VulnerabilityRecord struct {
 	// Empty on records written before the field existed, and on records that
 	// describe a module no analysis was rooted at. Both read as "not recorded";
 	// read it back through RecordRooting.
-	Rooting     Rooting `json:"rooting,omitempty"`
-	ContentHash string  `json:"content_hash"`
+	Rooting Rooting `json:"rooting,omitempty"`
+	// AnalysisSurface names which copy of the source the run resolved from —
+	// artefacts kanonarion fetched, or the project's own vendor/ tree. It is the
+	// resolution regime the run applied to this module, not a claim that bytes
+	// were read: a module the vendored tree does not hold is still a record of
+	// the vendored regime, which is what makes its absence legible.
+	//
+	// Empty on records written before the field existed; read it back through
+	// RecordAnalysisSurface, which ladders those to fetched rather than to a
+	// third state.
+	AnalysisSurface AnalysisSurface `json:"analysis_surface,omitempty"`
+	ContentHash     string          `json:"content_hash"`
 	// ArtefactIdentity names the fetched artefact this record was derived from,
 	// in the "zip:h1:..." / "gomod:h1:..." form fetchdomain.ArtefactIdentity
 	// renders. It answers the question the coordinate cannot: which bytes were
@@ -701,6 +760,11 @@ type ProjectScanResult struct {
 	UnscanReason      UnscanReason
 	UnscannableReason string
 	ErrorDetail       string
+	// AnalysisSurface is the surface the scan actually resolved from, reported
+	// by the adapter that ran it rather than assumed by the caller. The caller
+	// asks for a vendored analysis; only the scanner knows whether the project
+	// on disk could supply one, so the record names what ran.
+	AnalysisSurface AnalysisSurface
 }
 
 // StdlibModulePath is govulncheck's pseudo-module path for Go standard-library

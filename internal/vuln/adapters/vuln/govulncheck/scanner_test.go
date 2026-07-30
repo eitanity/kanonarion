@@ -217,7 +217,7 @@ func envMap(env []string) map[string]string {
 // The cache now carries the superseded intermediate go.mod files a pre-pruning
 // dependency needs, so GOPROXY=off can no longer fail on a missing go.mod.
 func TestScanEnv_PopulatedModcacheRunsHermetic(t *testing.T) {
-	got := envMap(scanEnv([]string{"PATH=/usr/bin"}, "/tmp/kanonarion-modcache"))
+	got := envMap(scanEnv([]string{"PATH=/usr/bin"}, "/tmp/kanonarion-modcache", domain.AnalysisSurfaceFetched))
 
 	want := map[string]string{
 		"GOMODCACHE": "/tmp/kanonarion-modcache",
@@ -239,7 +239,7 @@ func TestScanEnv_PopulatedModcacheRunsHermetic(t *testing.T) {
 // rejects -mod=mod and gets misreported as a module that does not build.
 func TestScanEnv_DisablesWorkspaceMode(t *testing.T) {
 	for _, modcache := range []string{"/tmp/kanonarion-modcache", ""} {
-		got := envMap(scanEnv([]string{"PATH=/usr/bin"}, modcache))
+		got := envMap(scanEnv([]string{"PATH=/usr/bin"}, modcache, domain.AnalysisSurfaceFetched))
 		if got["GOWORK"] != "off" {
 			t.Errorf("scanEnv(modcache=%q) GOWORK = %q, want off", modcache, got["GOWORK"])
 		}
@@ -249,7 +249,7 @@ func TestScanEnv_DisablesWorkspaceMode(t *testing.T) {
 // TestScanEnv_LastValueWinsOverInheritedWorkspace guards that an ambient GOWORK
 // pointing at a workspace file cannot leak into an isolated single-module scan.
 func TestScanEnv_LastValueWinsOverInheritedWorkspace(t *testing.T) {
-	got := envMap(scanEnv([]string{"GOWORK=/home/dev/go.work"}, "/tmp/kanonarion-modcache"))
+	got := envMap(scanEnv([]string{"GOWORK=/home/dev/go.work"}, "/tmp/kanonarion-modcache", domain.AnalysisSurfaceFetched))
 
 	if got["GOWORK"] != "off" {
 		t.Errorf("GOWORK = %q, want off to override the inherited workspace file", got["GOWORK"])
@@ -261,7 +261,7 @@ func TestScanEnv_LastValueWinsOverInheritedWorkspace(t *testing.T) {
 // values — exec.Cmd honours the last value for a duplicate key.
 func TestScanEnv_LastValueWinsOverInheritedFlags(t *testing.T) {
 	base := []string{"GOFLAGS=-mod=readonly", "GOSUMDB=sum.golang.org"}
-	got := envMap(scanEnv(base, "/tmp/kanonarion-modcache"))
+	got := envMap(scanEnv(base, "/tmp/kanonarion-modcache", domain.AnalysisSurfaceFetched))
 
 	if got["GOFLAGS"] != "-mod=mod" {
 		t.Errorf("GOFLAGS = %q, want -mod=mod to override the inherited -mod=readonly", got["GOFLAGS"])
@@ -276,7 +276,7 @@ func TestScanEnv_LastValueWinsOverInheritedFlags(t *testing.T) {
 // hermetic regardless of the inherited environment.
 func TestScanEnv_LastValueWinsOverInheritedProxy(t *testing.T) {
 	base := []string{"GOPROXY=https://proxy.golang.org"}
-	got := envMap(scanEnv(base, "/tmp/kanonarion-modcache"))
+	got := envMap(scanEnv(base, "/tmp/kanonarion-modcache", domain.AnalysisSurfaceFetched))
 
 	if got["GOPROXY"] != "off" {
 		t.Errorf("GOPROXY = %q, want off to override the inherited network proxy", got["GOPROXY"])
@@ -287,7 +287,7 @@ func TestScanEnv_LastValueWinsOverInheritedProxy(t *testing.T) {
 // populated cache keep the default network-backed resolution — the offline
 // overrides must not leak into that path.
 func TestScanEnv_NoModcacheLeavesResolutionDefault(t *testing.T) {
-	got := envMap(scanEnv([]string{"PATH=/usr/bin"}, ""))
+	got := envMap(scanEnv([]string{"PATH=/usr/bin"}, "", domain.AnalysisSurfaceFetched))
 
 	for _, k := range []string{"GOMODCACHE", "GOPROXY", "GOSUMDB"} {
 		if v, ok := got[k]; ok {
@@ -576,7 +576,7 @@ func TestScanProject_InputFaultsCarryDistinctReasons(t *testing.T) {
 	s.logger = slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	missing := filepath.Join(t.TempDir(), "does-not-exist")
-	res, err := s.ScanProject(t.Context(), missing, domain.DatabaseSnapshot{}, "")
+	res, err := s.ScanProject(t.Context(), ports.ProjectScanRequest{ProjectDir: missing})
 	if err != nil {
 		t.Fatalf("ScanProject on a missing directory must not error: %v", err)
 	}
@@ -588,7 +588,7 @@ func TestScanProject_InputFaultsCarryDistinctReasons(t *testing.T) {
 	}
 
 	empty := t.TempDir()
-	res, err = s.ScanProject(t.Context(), empty, domain.DatabaseSnapshot{}, "")
+	res, err = s.ScanProject(t.Context(), ports.ProjectScanRequest{ProjectDir: empty})
 	if err != nil {
 		t.Fatalf("ScanProject on a go.mod-less directory must not error: %v", err)
 	}

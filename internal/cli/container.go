@@ -79,6 +79,7 @@ import (
 	vulnfetch "github.com/eitanity/kanonarion/internal/vuln/adapters/fetch"
 	"github.com/eitanity/kanonarion/internal/vuln/adapters/reachability"
 	vulnsqlite "github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
+	vulnvendorclosure "github.com/eitanity/kanonarion/internal/vuln/adapters/vendorclosure/vendortree"
 	govulncheck "github.com/eitanity/kanonarion/internal/vuln/adapters/vuln/govulncheck"
 	osvdb "github.com/eitanity/kanonarion/internal/vuln/adapters/vulndb/osv"
 	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
@@ -448,7 +449,13 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		walkStore, vulnStore, moduleScannerUC,
 		vulnfetch.NewFetchModuleAdapter(fetchUC),
 		clk, vulnapp.PipelineVersion, logger,
-	).WithAudit(factStore).WithHostMemory(meminfo.New())
+	).WithAudit(factStore).WithHostMemory(meminfo.New()).
+		// A vendored project's analysis surface is its vendor/ tree. The reader is
+		// built over the vendor context's own modules.txt parser rather than a
+		// second one, so the closure the scan analyses and the closure the vendor
+		// command verifies are the same reading. It needs no zip source: this asks
+		// only which modules the tree holds, not whether their bytes match.
+		WithVendoredClosure(vulnvendorclosure.New(venlocalfs.New(nil)))
 	rescanWalkUC := vulnapp.NewRescanWalkUseCase(
 		walkStore, vulnStore, moduleScannerUC,
 		vulnfetch.NewFetchModuleAdapter(fetchUC),

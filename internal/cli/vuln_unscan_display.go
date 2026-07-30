@@ -146,6 +146,12 @@ var unscanDisplays = map[vuldomain.UnscanReason]unscanDisplay{
 		heading:  notScannedNote + " — one project-level fault: the project directory could not be read, so no module was scanned",
 		oneFault: true,
 	},
+	// Not one fault: each module is independently absent from the vendored tree,
+	// so the count is a real count of modules the analysed build did not contain.
+	vuldomain.UnscanReasonAbsentFromVendor: {
+		label:   notScannedNote + " (absent from vendor/ — not in the analysed build)",
+		heading: notScannedNote + " — absent from the project's vendor/ tree, so not in the build that was analysed",
+	},
 }
 
 // unscanDisplayFor returns the display treatment for reason.

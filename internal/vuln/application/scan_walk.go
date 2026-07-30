@@ -74,6 +74,13 @@ type ScanWalkUseCase struct {
 	// prefetch/populate, so govulncheck runs fully offline with no blob reads.
 	realModcacheDir string
 
+	// vendoredClosure reads a project's vendor/ tree so the scan can root the
+	// analysis at the source the project compiles. Optional: a nil reader (the
+	// default) leaves every scan on the fetched surface, which is what every
+	// caller had before the vendored surface existed. Set via
+	// WithVendoredClosure.
+	vendoredClosure ports.VendoredClosureReader
+
 	// hostMemory sizes the module-scan pool against the host's available memory
 	// as well as its CPU count. Optional: a nil reporter (the default) keeps the
 	// CPU-only cap, which is what every caller had before the memory budget
@@ -164,6 +171,15 @@ func (uc *ScanWalkUseCase) WithHostMemory(mem ports.HostMemory) *ScanWalkUseCase
 	return uc
 }
 
+// WithVendoredClosure wires the reader that tells the scan which modules a
+// vendored project's tree holds. It is optional — a nil reader (the default)
+// keeps every scan on the fetched surface — and returns the receiver for
+// chaining, mirroring the other optional-dependency builders.
+func (uc *ScanWalkUseCase) WithVendoredClosure(r ports.VendoredClosureReader) *ScanWalkUseCase {
+	uc.vendoredClosure = r
+	return uc
+}
+
 // WithRealModcache switches the scan into --from-modcache mode: govulncheck runs
 // with GOMODCACHE pointed at dir, an already-populated module cache, instead of
 // materialising a temp cache from the blob store. A nil/empty dir (the default)
@@ -201,6 +217,12 @@ type ScanWalkParams struct {
 	// isolation. Empty on a coordinate-keyed walk, which roots the same kind of
 	// single analysis at the walk target's own zip instead.
 	ProjectDir string
+	// NoVendor forces the fetched surface for a project that carries a
+	// vendor/ tree, which would otherwise be analysed from the vendored source
+	// it compiles. It exists for comparison — running both surfaces over one
+	// project is how a divergence between the vendored tree and the fetched
+	// artefacts becomes visible — and never as a default.
+	NoVendor bool
 	// Progress is called after each module is scanned. It may be nil.
 	Progress func(coord coordinate.ModuleCoordinate, record domain.VulnerabilityRecord, current, total int)
 }
@@ -297,6 +319,16 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	// finalResults maps each coordinate to its definitive scan result.
 	finalResults := make(map[coordinate.ModuleCoordinate]moduleResult, total)
 
+	// Which copy of the source this run resolves from. It is a property of the
+	// run, not of one code path, so it is settled once here and stamped on every
+	// record the run writes — including the ones no analysis reached, which
+	// otherwise could not be read alongside the rest.
+	closure := uc.resolveVendoredClosure(ctx, params)
+	runSurface := domain.AnalysisSurfaceFetched
+	if closure.Vendored {
+		runSurface = domain.AnalysisSurfaceVendored
+	}
+
 	// A coordinate-keyed walk has no project working tree, but it does have a
 	// root: the target module itself. Rooting the analysis there makes every
 	// dependency's package set import-driven — the packages the target's build
@@ -322,8 +354,15 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 		// project-rooted scan of the live working tree, not from re-scanning each
 		// dependency in isolation (which re-selects versions the project never
 		// builds and reports a self-inflicted version-not-in-toolchain gap).
-		uc.logger.Info("project-rooted vuln scan", "walk_id", params.WalkID, "root", walk.Target, "project_dir", params.ProjectDir)
-		if perr := uc.scanProjectRooted(ctx, walk, allCoords, params, snapshot, vulnDBDir, finalResults); perr != nil {
+		//
+		// A vendored project is analysed from vendor/ rather than from the
+		// artefacts kanonarion fetched: the vendored tree is what the project
+		// compiles, and a verdict about anything else is a verdict about a build
+		// that does not exist.
+		uc.logger.Info("project-rooted vuln scan",
+			"walk_id", params.WalkID, "root", walk.Target, "project_dir", params.ProjectDir,
+			"vendored", closure.Vendored)
+		if perr := uc.scanProjectRooted(ctx, walk, allCoords, params, snapshot, vulnDBDir, closure, finalResults); perr != nil {
 			return domain.WalkScanRun{}, perr
 		}
 	case targetRooted:
@@ -379,7 +418,7 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 
 	// emit a deterministic StatusUnscannable record for each
 	// local-replace node so absence isn't silently dropped.
-	localReplaceCount, err := uc.recordLocalReplaceUnscannable(ctx, localReplaceNodes, &run, params, snapshot, &progressCount, len(walk.Graph.Nodes))
+	localReplaceCount, err := uc.recordLocalReplaceUnscannable(ctx, localReplaceNodes, &run, params, snapshot, runSurface, &progressCount, len(walk.Graph.Nodes))
 	if err != nil {
 		return domain.WalkScanRun{}, err
 	}
@@ -569,6 +608,10 @@ func (uc *ScanWalkUseCase) tallyModuleResults(
 				// so this failure is a failure of the isolated analysis, and states that
 				// frame rather than leaving it unrecorded.
 				Rooting: domain.RootingIsolated,
+				// The isolated pool resolves from the artefacts kanonarion fetched;
+				// nothing routes it at a vendored tree, so the surface is not the
+				// run's but this path's own, and it is fetched by construction.
+				AnalysisSurface: domain.AnalysisSurfaceFetched,
 			}
 			var perr error
 			failedRecord, perr = uc.persistSealed(ctx, failedRecord, "ScanFailed")
@@ -706,6 +749,7 @@ func (uc *ScanWalkUseCase) recordLocalReplaceUnscannable(
 	run *domain.WalkScanRun,
 	params ScanWalkParams,
 	snapshot *domain.DatabaseSnapshot,
+	runSurface domain.AnalysisSurface,
 	progressCount *int,
 	total int,
 ) (int, error) {
@@ -721,7 +765,13 @@ func (uc *ScanWalkUseCase) recordLocalReplaceUnscannable(
 		// claim an analysis that was never attempted. Writing the constant makes
 		// that a decision at the site rather than a field someone forgot.
 		rec := domain.VulnerabilityRecord{
-			Rooting:           domain.RootingUnrecorded,
+			Rooting: domain.RootingUnrecorded,
+			// The surface is the run's, not this node's. No analysis was rooted
+			// anywhere for a local-replace node, so it read no bytes from either
+			// copy — but the record still has to be legible beside the rest of the
+			// run's, and a blank field would read as one written before the field
+			// existed rather than as this deliberate exclusion.
+			AnalysisSurface:   runSurface,
 			Ecosystem:         fetchdomain.EcosystemGo,
 			Coordinate:        node.Coordinate,
 			WalkID:            params.WalkID,

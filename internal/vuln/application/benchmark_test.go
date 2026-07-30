@@ -34,7 +34,7 @@ func (s *slowScanner) Scan(_ context.Context, req ports.ScanRequest) (domain.Vul
 	}, nil
 }
 
-func (s *slowScanner) ScanProject(_ context.Context, _ string, _ domain.DatabaseSnapshot, _ string) (domain.ProjectScanResult, error) {
+func (s *slowScanner) ScanProject(_ context.Context, _ ports.ProjectScanRequest) (domain.ProjectScanResult, error) {
 	time.Sleep(s.delay)
 	return domain.ProjectScanResult{Status: domain.StatusClean}, nil
 }

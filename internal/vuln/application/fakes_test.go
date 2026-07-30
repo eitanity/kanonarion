@@ -477,6 +477,14 @@ type fakeScanner struct {
 	projectStatus   domain.VulnerabilityStatus
 	projectReason   string
 	projectErr      error
+	// gotProjectVendored records whether the last ScanProject was asked for the
+	// vendored surface, so a test can assert --no-vendor really reached the
+	// scanner rather than being dropped on the way.
+	gotProjectVendored bool
+	// projectSurfaceOverride forces the surface the fake reports back,
+	// independently of what was requested — the case where the project on disk
+	// cannot supply the surface the caller asked for.
+	projectSurfaceOverride domain.AnalysisSurface
 	// target-rooted scan controls (ScanTargetModule). targetRooted must be opted
 	// into: a coordinate-keyed walk tries the target-rooted path first, and a fake
 	// that silently succeeded there would take every isolated-path test off the
@@ -525,25 +533,42 @@ func (f *fakeScanner) Scan(_ context.Context, req ports.ScanRequest) (domain.Vul
 // projectFindings, when set, is returned verbatim by ScanProject grouped by
 // module; projectStatus overrides the derived Clean/Affected outcome (used to
 // exercise genuine-fault paths). projectErr forces an infrastructure error.
-func (f *fakeScanner) ScanProject(_ context.Context, _ string, _ domain.DatabaseSnapshot, _ string) (domain.ProjectScanResult, error) {
+func (f *fakeScanner) ScanProject(_ context.Context, req ports.ProjectScanRequest) (domain.ProjectScanResult, error) {
 	if f.projectErr != nil {
 		return domain.ProjectScanResult{}, f.projectErr
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.projectCalls++
+	f.gotProjectVendored = req.Vendored
+	// The real scanner reports the surface that ran, not the one requested. The
+	// fake stands in for a project whose tree can supply what was asked for, so
+	// the two agree here; a test that needs them to disagree sets
+	// projectSurfaceOverride.
+	surface := domain.AnalysisSurfaceFetched
+	if req.Vendored {
+		surface = domain.AnalysisSurfaceVendored
+	}
+	if f.projectSurfaceOverride != "" {
+		surface = f.projectSurfaceOverride
+	}
 	if f.projectStatus == domain.StatusUnscannable || f.projectStatus == domain.StatusScanFailed {
 		return domain.ProjectScanResult{
 			Status:            f.projectStatus,
 			UnscannableReason: f.projectReason,
 			ErrorDetail:       f.projectReason,
+			AnalysisSurface:   surface,
 		}, nil
 	}
 	status := domain.StatusClean
 	if len(f.projectFindings) > 0 {
 		status = domain.StatusAffected
 	}
-	return domain.ProjectScanResult{FindingsByModule: f.projectFindings, Status: status}, nil
+	return domain.ProjectScanResult{
+		FindingsByModule: f.projectFindings,
+		Status:           status,
+		AnalysisSurface:  surface,
+	}, nil
 }
 
 // ScanTargetModule stands in for the target-rooted scan of a coordinate-keyed
@@ -667,8 +692,8 @@ func (s *callCountingScanner) Scan(ctx context.Context, req ports.ScanRequest) (
 	return rec, nil
 }
 
-func (s *callCountingScanner) ScanProject(ctx context.Context, dir string, snap domain.DatabaseSnapshot, dbDir string) (domain.ProjectScanResult, error) {
-	res, err := s.inner.ScanProject(ctx, dir, snap, dbDir)
+func (s *callCountingScanner) ScanProject(ctx context.Context, req ports.ProjectScanRequest) (domain.ProjectScanResult, error) {
+	res, err := s.inner.ScanProject(ctx, req)
 	if err != nil {
 		return domain.ProjectScanResult{}, fmt.Errorf("inner scan project: %w", err)
 	}

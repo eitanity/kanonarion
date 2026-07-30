@@ -32,7 +32,10 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (domain.Vulne
 
 	s.logger.Info("vuln-scan: starting", "module", coord.Path(), "version", coord.Version())
 
-	env := scanEnv(os.Environ(), goModCache)
+	// An isolated scan extracts a published zip into a scratch directory: there
+	// is no working tree and therefore no vendor/ tree to root at, so this path
+	// is fetched-surface by construction.
+	env := scanEnv(os.Environ(), goModCache, domain.AnalysisSurfaceFetched)
 
 	scanDir, fault, err := s.prepareScanDir(ctx, tmpDir, coord, moduleSource, env, req.BuildList)
 	if err != nil {
@@ -375,14 +378,28 @@ func (s *Scanner) prepareDBArg(ctx context.Context, snapshot domain.DatabaseSnap
 // class of dev-time metadata; without it such a module is misreported as not
 // building under the host toolchain.
 //
+// The vendored surface is the other regime, and it is the opposite choice on
+// the one flag that matters. -mod=mod is precisely what tells the toolchain to
+// IGNORE a vendor/ directory, so for a project that carries one the environment
+// above does not merely prefer the fetched copy — it makes the vendored copy
+// unreadable, and the analysis measures bytes the project does not compile.
+// AnalysisSurfaceVendored therefore sets -mod=vendor and nothing else that
+// touches resolution: under vendor mode the toolchain reads no module cache and
+// performs no MVS, so GOMODCACHE and a checksum database have nothing to say.
+// GOPROXY=off stays as the guarantee that a vendored analysis fetches nothing —
+// a vendored build that reached the network would no longer be the build.
+//
 // Duplicate keys are appended rather than replaced because exec.Cmd honours the
 // last value for a repeated key, so these overrides win over any inherited
 // GOWORK/GOFLAGS/GOSUMDB/GOPROXY.
-func scanEnv(base []string, goModCache string) []string {
+func scanEnv(base []string, goModCache string, surface domain.AnalysisSurface) []string {
 	// Copy rather than append onto base so a caller's slice is never mutated.
 	env := make([]string, len(base), len(base)+6)
 	copy(env, base)
 	env = append(env, "GOGC=30", "GOWORK=off")
+	if surface == domain.AnalysisSurfaceVendored {
+		return append(env, "GOFLAGS=-mod=vendor", "GOPROXY=off")
+	}
 	if goModCache != "" {
 		env = append(env,
 			"GOMODCACHE="+goModCache,

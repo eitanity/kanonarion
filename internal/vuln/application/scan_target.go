@@ -54,6 +54,9 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 ) (bool, error) {
 	target := walk.Target
 	root := target
+	// Fetched surface, unconditionally. This path roots the analysis at the
+	// target's published zip extracted into a scratch directory; there is no
+	// working tree, so there is no vendor/ tree that could be the surface.
 
 	fact, ok, err := uc.moduleScanner.getFetchRecord(ctx, target)
 	if err != nil {
@@ -123,7 +126,7 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 			// checked. Recording it Clean would be a false negative, so it carries
 			// the fault instead.
 			uc.logger.Error("target-rooted scan: advisory match by coordinate failed", "coordinate", coord, "error", err)
-			rec, perr := uc.persistProjectRecord(ctx, root, coord, nil, domain.StatusScanFailed, "", "", err.Error(), params, snapshot)
+			rec, perr := uc.persistProjectRecord(ctx, root, coord, nil, domain.StatusScanFailed, "", "", err.Error(), domain.AnalysisSurfaceFetched, params, snapshot)
 			if perr != nil {
 				return false, perr
 			}
@@ -136,7 +139,7 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 		status := domain.DetermineRecordOverallStatus(
 			domain.CoverageAnalysed, domain.DetermineFindingsAxis(findings),
 		)
-		rec, perr := uc.persistProjectRecord(ctx, root, coord, findings, status, "", "", "", params, snapshot)
+		rec, perr := uc.persistProjectRecord(ctx, root, coord, findings, status, "", "", "", domain.AnalysisSurfaceFetched, params, snapshot)
 		if perr != nil {
 			return false, perr
 		}

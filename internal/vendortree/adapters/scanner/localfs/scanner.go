@@ -64,7 +64,7 @@ func (s *Scanner) ScanProject(ctx context.Context, goModPath string, vendorOnly 
 		return domain.ParseResult{}, err
 	}
 
-	modules, err := parseModulesTxt(modulesTxtPath)
+	modules, replacements, err := parseModulesTxt(modulesTxtPath)
 	if err != nil {
 		return domain.ParseResult{}, err
 	}
@@ -113,6 +113,7 @@ func (s *Scanner) ScanProject(ctx context.Context, goModPath string, vendorOnly 
 		VendorDir:         "vendor",
 		VendorOnly:        vendorOnly,
 		ModulesTxt:        modules,
+		Replacements:      replacements,
 		GoModRequires:     requires,
 		GoSum:             goSum,
 		PresentDirs:       present,
@@ -216,14 +217,23 @@ func parseRequires(name string, data []byte) (map[string]string, error) {
 // parseModulesTxt parses vendor/modules.txt. Module entries are `# path
 // version` lines; an immediately-following `## explicit` marks a direct
 // dependency. Package lines and replacement targets are not module entries.
-func parseModulesTxt(path string) ([]domain.VendoredModule, error) {
+//
+// It also returns the replacement→original path mapping the `=>` lines carry.
+// A replaced module is vendored under its ORIGINAL path, with the replacement
+// named only on the comment line, so the mapping is the only thing in the tree
+// that connects the coordinate a build list resolves to the directory the files
+// are actually in. Recovering it here rather than in each consumer keeps one
+// reading of these lines: a second parser elsewhere would be free to disagree
+// with this one about the same file.
+func parseModulesTxt(path string) ([]domain.VendoredModule, map[string]string, error) {
 	f, err := os.Open(filepath.Clean(path))
 	if err != nil {
-		return nil, fmt.Errorf("opening %q: %w", path, err)
+		return nil, nil, fmt.Errorf("opening %q: %w", path, err)
 	}
 	defer func() { _ = f.Close() }()
 
 	var mods []domain.VendoredModule
+	replacements := map[string]string{}
 	sc := bufio.NewScanner(f)
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
@@ -250,12 +260,19 @@ func parseModulesTxt(path string) ([]domain.VendoredModule, error) {
 			// against a reproducible vendor tree is out of scope for this
 			// scanner.
 			mods = append(mods, domain.VendoredModule{Path: fields[0], Version: fields[1]})
+			// `=> replacement [version]` names the module whose source was
+			// actually vendored here, under this entry's original path. A
+			// filesystem replace (`=> ./dir`) has no version and is mapped the
+			// same way: the target is still the name a consumer may hold.
+			if len(fields) >= 4 && fields[2] == "=>" {
+				replacements[fields[3]] = fields[0]
+			}
 		}
 	}
 	if err := sc.Err(); err != nil {
-		return nil, fmt.Errorf("reading %q: %w", path, err)
+		return nil, nil, fmt.Errorf("reading %q: %w", path, err)
 	}
-	return mods, nil
+	return mods, replacements, nil
 }
 
 // parseGoSum parses go.sum into "path@version" → module h1 hash. The

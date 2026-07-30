@@ -181,6 +181,7 @@ fresh each time and is not served from the coordinate cache.
 | `--callgraph-workers` | `1` | Maximum number of concurrent on-demand callgraph subprocesses (SSA builds are memory-heavy; keep low) |
 | `--go-binary` | _(from `PATH`)_ | Path to the `go` binary if not on `PATH` (used by on-demand callgraph extraction) |
 | `--binary-pre-pass` | `false` | Fast binary-mode pre-pass; source mode only for affected modules |
+| `--no-vendor` | `false` | Analyse the fetched artefacts even when the project is vendored. By default a project carrying `vendor/modules.txt` is analysed from `vendor/`, the source it actually compiles |
 | `--operator` | `$USER` | Operator name recorded in the scan run |
 | `--log-level` | `warn` | Log level: `debug`, `info`, `warn`, `error` |
 
@@ -512,6 +513,57 @@ genuine build incompatibility that still falls back to metadata logs at `warn`,
 and a hard scanner fault logs at `error`. Nothing is dumped as a warning per
 out-of-toolchain module. Run with `--log-level debug` to see the raw
 `govulncheck` stderr behind an `Unscannable` verdict.
+
+### Which bytes were analysed
+
+A module version has more than one copy on disk: the zip kanonarion fetched and
+holds in its blob store, and — for a vendored project — the tree under `vendor/`
+that the project actually compiles. They can differ, and detecting exactly that
+divergence is what the tool is for, so every vulnerability record names the
+surface its verdict was reached from:
+
+| `analysis_surface` | Meaning |
+|------|---------|
+| `vendored` | The build was analysed from the project's `vendor/` tree under `-mod=vendor`. The bytes measured are the bytes the project compiles |
+| `fetched` | The build was resolved from artefacts kanonarion fetched — the blob-store-populated module cache, or the host cache under `--from-modcache` |
+
+A vendored project is detected automatically: `vendor/modules.txt` alongside the
+target `go.mod` is the signal, and no flag is needed to opt in. The whole build
+is then analysed in one pass from `vendor/`, which means no dependency is
+resolved on its own — so a dependency shipping no `go.mod` (every dependency
+published before Go modules) needs no synthesised one, and MVS is not re-run, so
+no version can be out of the toolchain. Both of those coverage gaps are
+artefacts of isolated resolution and cannot arise on this path.
+
+`--no-vendor` forces the fetched surface for comparison. It is a real override
+rather than an absence of preference: the Go toolchain defaults to `-mod=vendor`
+whenever `vendor/modules.txt` is present, so the fetch path has to be requested
+explicitly, and the run then records `fetched`. Running both surfaces over one
+project is how a divergence between the vendored tree and the published
+artefacts becomes visible.
+
+A module reached through a `replace` directive is vendored under its **original**
+module path, with the replacement named only on the `modules.txt` comment line
+(`# original v1.2.1 => replacement v1.2.4`), while the walk's resolved build list
+keys on the replacement coordinate. The coordinate is resolved through that
+mapping before its presence in the tree is judged, so a replaced dependency is
+analysed like any other.
+
+A module in the walk's build list that `vendor/` holds no files for is recorded
+`Unscannable` with reason `absent-from-vendor`, never quietly fetched and
+scanned in its place. Substituting a fetched artefact for an absent vendored one
+would report findings about bytes the project does not build, under a verdict a
+reader would take for the build's — which is the divergence choosing the
+vendored surface exists to close. The reason's prose distinguishes the two ways
+a module can be absent: listed in `modules.txt` with no files under `vendor/`
+(an incomplete vendor tree, the same inconsistency `kanonarion vendor` reports),
+or not listed at all (`go mod vendor` pruned it as contributing no imported
+package).
+
+Records written before this field existed read as `fetched`: nothing consumed a
+vendored tree then, so that is what those bytes mean.
+
+---
 
 ### How an `Unscannable` module is displayed
 

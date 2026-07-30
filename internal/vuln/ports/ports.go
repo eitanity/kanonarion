@@ -332,6 +332,68 @@ type TargetScanRequest struct {
 	BuildList map[coordinate.ModuleCoordinate]struct{}
 }
 
+// ProjectScanRequest carries the inputs for one project-rooted scan of a local
+// working tree.
+type ProjectScanRequest struct {
+	// ProjectDir is the project's working-tree directory (the one holding go.mod).
+	ProjectDir string
+	Snapshot   domain.DatabaseSnapshot
+	// DBDir is a pre-extracted vuln DB dir; empty extracts from the store.
+	DBDir string
+	// Vendored asks for the analysis to be rooted at the project's vendor/ tree
+	// under -mod=vendor, so the bytes measured are the bytes the project
+	// compiles. The scanner reports back which surface it could actually use.
+	//
+	// False is not merely "no preference": for a project that carries
+	// vendor/modules.txt the Go toolchain defaults to -mod=vendor on its own, so
+	// the fetch path has to be forced explicitly. That is what makes a
+	// deliberate fetched-surface comparison run a real comparison rather than a
+	// re-run of the vendored one.
+	Vendored bool
+}
+
+// VendoredClosure is what a project's vendored tree says about its own closure:
+// which modules vendor/modules.txt lists, and which of them the tree actually
+// holds files for.
+type VendoredClosure struct {
+	// Vendored is false when the project has no vendor/modules.txt at all, in
+	// which case the other fields are empty and mean nothing.
+	Vendored bool
+	// Listed maps module path → version for every entry in vendor/modules.txt.
+	Listed map[string]string
+	// Present is the set of module paths the tree holds files for. It is a
+	// subset of Listed's keys plus any unlisted module directory found under
+	// vendor/; a listed module missing from it is listed-but-absent.
+	Present map[string]bool
+	// ReplacedBy maps a replacement module path to the original module path it
+	// stands in for.
+	//
+	// A replaced module is vendored under its ORIGINAL path — `go mod vendor`
+	// records the replacement only on the modules.txt comment line — while a
+	// resolved build list keys on the REPLACEMENT coordinate. The two names
+	// never meet in Listed or Present, so a coordinate must be resolved through
+	// this mapping before its absence from either means anything.
+	//
+	// Listed and Present are deliberately left as a faithful reading of
+	// modules.txt rather than having the replacement names folded into them: a
+	// consumer asking what the tree says gets what the tree says, and the
+	// aliasing is applied where the question about a coordinate is actually
+	// asked.
+	ReplacedBy map[string]string
+}
+
+// VendoredClosureReader reads a project's vendored closure from its working
+// tree. It is how the vuln stage learns which modules a -mod=vendor analysis
+// could have measured, without re-implementing modules.txt parsing: the vendor
+// bounded context already owns that parser and this port is satisfied by an
+// adapter over it.
+type VendoredClosureReader interface {
+	// VendoredClosure reads the project rooted at goModPath. A project with no
+	// vendor/modules.txt yields a zero VendoredClosure and a nil error — not
+	// being vendored is an answer, not a failure.
+	VendoredClosure(ctx context.Context, goModPath string) (VendoredClosure, error)
+}
+
 // VulnerabilityScanner defines the port for a vulnerability scanner implementation.
 type VulnerabilityScanner interface {
 	// Preflight verifies the scanner's external prerequisites are available
@@ -348,12 +410,7 @@ type VulnerabilityScanner interface {
 	// each dependency in isolation. The working tree resolves its own build, so
 	// the scan is live and uncached. A genuine fault is carried in the result's
 	// Status; the error return is reserved for infrastructure failures.
-	ScanProject(
-		ctx context.Context,
-		projectDir string, // the project's working-tree directory (contains go.mod)
-		snapshot domain.DatabaseSnapshot,
-		dbDir string, // pre-extracted vuln DB dir; empty = extract from store on each call
-	) (domain.ProjectScanResult, error)
+	ScanProject(ctx context.Context, req ProjectScanRequest) (domain.ProjectScanResult, error)
 	// ScanTargetModule runs one target-rooted scan for a walk whose root is a
 	// published module, returning every finding grouped by the module that owns
 	// the vulnerable symbol. It is the coordinate-keyed counterpart of

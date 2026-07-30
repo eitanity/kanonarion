@@ -177,6 +177,21 @@ type ParseResult struct {
 
 	// ModulesTxt is the parsed vendor/modules.txt entry set.
 	ModulesTxt []VendoredModule
+	// Replacements maps a replacement module path to the original module path it
+	// stands in for, one entry per `# original ver => replacement ver` line in
+	// modules.txt.
+	//
+	// It exists because `go mod vendor` writes a replaced module's files under
+	// the ORIGINAL module path, recording the replacement only on that comment
+	// line. A consumer holding the replacement coordinate — which is what a
+	// resolved build list keys on — therefore cannot find the module in
+	// ModulesTxt or PresentDirs at all, and without this mapping would conclude
+	// the tree does not hold a module it holds under another name.
+	//
+	// It is derived from the same lines ModulesTxt is and is deliberately not
+	// carried onto the persisted Record: it is a reading aid for resolving a
+	// coordinate against this tree, not a fact about the closure.
+	Replacements map[string]string
 	// GoModRequires maps module path → version from the main module's
 	// require set, for the vendor-vs-go.mod consistency check.
 	GoModRequires map[string]string

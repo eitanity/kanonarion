@@ -204,7 +204,31 @@ import (
 // carrying omitzero, so it is absent from the encoding exactly when it is empty
 // and an untouched v17 record's hash recomputes identically under this
 // generation.
-const PipelineVersion = "v18"
+// v19 records the analysis surface — which copy of a module's source the run
+// resolved from — and, for a vendored project, changes which copy that is.
+//
+// The behavioural half is what forces the bump rather than the field. A project
+// carrying vendor/modules.txt is now analysed under -mod=vendor from the tree it
+// compiles, where a v18 run resolved the same build from the artefacts
+// kanonarion fetched. Those can differ — detecting exactly that divergence is
+// the tool's own value proposition — so a re-scan of unchanged inputs can now
+// produce a different verdict for the same coordinate under the same snapshot.
+// Read-side queries pin to this constant, so without the bump the fetched-surface
+// v18 row would keep answering the vendored-surface question, and the run that
+// finally read the built bytes would be served the one that did not.
+//
+// The field is the other half and could not have carried the bump on its own:
+// analysis_surface is omitempty, so an untouched v18 record still recomputes its
+// hash identically under this generation, and the ledger's older rows stay
+// readable as what the earlier generation concluded.
+//
+// No migration is owed. Reads are keyed on the pipeline version, so the v18 rows
+// are already unreachable for a v19 question, and the surface lives inside the
+// serialised record rather than in a column, so no schema changes. Purging them
+// would cost every store an irreversible schema bump to delete rows nothing can
+// read. The cost that IS owed is a full re-scan before a store can answer at
+// v19, which is the price of no longer serving a verdict about the wrong bytes.
+const PipelineVersion = "v19"
 
 // ScanModuleUseCase orchestrates a single module's vulnerability scan.
 type ScanModuleUseCase struct {
@@ -441,6 +465,9 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 				PipelineVersion:  uc.pipelineVersion,
 				// Reached by scanning this module alone; see the stamp below.
 				Rooting: domain.RootingIsolated,
+				// This use case resolves from the artefacts kanonarion fetched; it
+				// never roots an analysis at a project's vendored tree.
+				AnalysisSurface: domain.AnalysisSurfaceFetched,
 			}
 			derived.stamp(&record)
 			sealed, herr := domain.VulnerabilityRecordHasher{}.SetContentHash(record)
@@ -508,6 +535,10 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 	// can answer. Recording it is what keeps the two from sharing a row and
 	// silently standing in for each other.
 	record.Rooting = domain.RootingIsolated
+	// And the copy of the source it was reached from. An isolated scan extracts
+	// the published zip kanonarion holds; no path here consults a vendored tree,
+	// so the surface is fetched on both branches.
+	record.AnalysisSurface = domain.AnalysisSurfaceFetched
 	// The verdict names the bytes it was reached from, on both branches: a scan
 	// that failed still failed on a specific artefact.
 	derived.stamp(&record)
@@ -1036,6 +1067,10 @@ func (uc *ScanModuleUseCase) scanMetadataOnly(ctx context.Context, params ScanMo
 		// could not be produced, so this record answers the isolated question and
 		// must not be servable as a target-rooted answer.
 		Rooting: domain.RootingIsolated,
+		// The coordinate match consulted no source at all, but the run that
+		// produced it resolved from fetched artefacts, which is what the field
+		// names — leaving it blank would read as a record predating the field.
+		AnalysisSurface: domain.AnalysisSurfaceFetched,
 	}
 	// Empty when the module was never fetched: a coordinate matched against the
 	// advisory database read no artefact, and must not claim to have read one.
