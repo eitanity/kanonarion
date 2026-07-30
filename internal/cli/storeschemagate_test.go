@@ -71,8 +71,20 @@ func TestStoreSchemaGate_RefusesAnOlderBinaryAgainstANewerStore(t *testing.T) {
 	// The refusal is a precondition failure — the store is intact and a current
 	// binary reads it fine — so it must not be reported as a store-integrity
 	// failure, and must not fall through to the catch-all by accident.
-	if code := ExitCodeForError(err); code != ExitConfig {
-		t.Errorf("exit code = %d, want ExitConfig (%d): the store is not corrupt, this binary is stale", code, ExitConfig)
+	// Asserted through ExitCodeFromError, which reports whether a code was found,
+	// NOT through ExitCodeForError alone: ExitConfig is also that function's
+	// fallback, so "== ExitConfig" holds for any error whatsoever and could not
+	// tell a carried decision from an accident. What needs proving is that the
+	// carrier is on the chain and survives being joined with the Close error.
+	code, carried := ExitCodeFromError(err)
+	if !carried {
+		t.Error("the refusal carries no exit code, so it reaches the process only via the catch-all: the classification is an accident, not a decision")
+	}
+	if carried && code != ExitConfig {
+		t.Errorf("carried exit code = %d, want ExitConfig (%d): the store is not corrupt, this binary is stale", code, ExitConfig)
+	}
+	if got := ExitCodeForError(err); got != ExitConfig {
+		t.Errorf("ExitCodeForError = %d, want ExitConfig (%d)", got, ExitConfig)
 	}
 
 	// Shaped like the config and policy schema gates: what is newer than what, and
