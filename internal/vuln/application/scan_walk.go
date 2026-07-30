@@ -798,6 +798,11 @@ func (uc *ScanWalkUseCase) runScanPool(
 	w := min(workers, len(coordSlice))
 	var wg sync.WaitGroup
 	for range w {
+		// (*sync.WaitGroup).Go is standard library, added in Go 1.25; it performs
+		// the Add(1)/Done() pairing itself. Static analysis has flagged this as a
+		// non-existent method needing a rewrite to the pre-1.25 idiom — that is a
+		// false positive against an older stdlib, and the go directive in go.mod
+		// is the authority. Do not expand it back out.
 		wg.Go(func() {
 			for coord := range ch {
 				rec, scanErr := uc.moduleScanner.Scan(ctx, ScanModuleParams{
@@ -1049,11 +1054,10 @@ func (uc *ScanWalkUseCase) populateScannedBuildListDeps(ctx context.Context, coo
 	}
 }
 
-// nodeGoModRequires reads the require directives from a node's stored go.mod.
-// The bool is false when no go.mod could be read or parsed; both direct and
-// indirect requirements are returned, since a pruned main module's graph load
-// reads the go.mod of every entry in its require block regardless of block.
-func (uc *ScanWalkUseCase) nodeGoModRequires(ctx context.Context, coord coordinate.ModuleCoordinate) ([]coordinate.ModuleCoordinate, bool) {
+// readNodeGoMod fetches and parses a node's stored go.mod. The bool is false
+// when no go.mod could be read or parsed, so both callers rest on positive
+// evidence rather than on an assumed-empty file.
+func (uc *ScanWalkUseCase) readNodeGoMod(ctx context.Context, coord coordinate.ModuleCoordinate) (*modfile.File, bool) {
 	fact, ok, err := uc.moduleScanner.getFetchRecord(ctx, coord)
 	if err != nil || !ok {
 		return nil, false
@@ -1073,6 +1077,18 @@ func (uc *ScanWalkUseCase) nodeGoModRequires(ctx context.Context, coord coordina
 	}
 	f, err := modfile.Parse("go.mod", data, nil)
 	if err != nil {
+		return nil, false
+	}
+	return f, true
+}
+
+// nodeGoModRequires reads the require directives from a node's stored go.mod.
+// The bool is false when no go.mod could be read or parsed; both direct and
+// indirect requirements are returned, since a pruned main module's graph load
+// reads the go.mod of every entry in its require block regardless of block.
+func (uc *ScanWalkUseCase) nodeGoModRequires(ctx context.Context, coord coordinate.ModuleCoordinate) ([]coordinate.ModuleCoordinate, bool) {
+	f, ok := uc.readNodeGoMod(ctx, coord)
+	if !ok {
 		return nil, false
 	}
 	out := make([]coordinate.ModuleCoordinate, 0, len(f.Require))
@@ -1123,25 +1139,8 @@ func (uc *ScanWalkUseCase) prePruningNodes(ctx context.Context, graph walkdomain
 // when the go.mod was read, so a module with no go directive is reported as an
 // empty version — which PrePruning treats as pre-pruning.
 func (uc *ScanWalkUseCase) nodeGoVersion(ctx context.Context, coord coordinate.ModuleCoordinate) (string, bool) {
-	fact, ok, err := uc.moduleScanner.getFetchRecord(ctx, coord)
-	if err != nil || !ok {
-		return "", false
-	}
-	goModIdentity, hasGoMod, err := fetchports.GoModIdentity(fact)
-	if err != nil || !hasGoMod {
-		return "", false
-	}
-	rc, err := uc.moduleScanner.blobs.Get(ctx, goModIdentity)
-	if err != nil {
-		return "", false
-	}
-	defer func() { _ = rc.Close() }()
-	data, err := io.ReadAll(rc)
-	if err != nil {
-		return "", false
-	}
-	f, err := modfile.Parse("go.mod", data, nil)
-	if err != nil {
+	f, ok := uc.readNodeGoMod(ctx, coord)
+	if !ok {
 		return "", false
 	}
 	if f.Go == nil {
