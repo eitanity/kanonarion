@@ -21,7 +21,11 @@ import (
 // VendorSchemaVersion is the version of the Record JSON schema. Bump on a
 // backwards-incompatible serialisation change.
 // v2 adds the ecosystem scope marker.
-const VendorSchemaVersion = "2"
+// v3 drops the vendored tree's whole-directory hash from each module and names
+// the offending file on a drift finding: drift is now decided per file against
+// the go.sum-verified module zip, so a single tree-wide hash describes nothing
+// a reader can act on.
+const VendorSchemaVersion = "3"
 
 // EcosystemGo is the only ecosystem kanonarion records describe. The ecosystem
 // field declares the schema's scope — kanonarion is fitted for Go — rather than
@@ -35,14 +39,29 @@ var ErrUnsupportedEcosystem = errors.New("unsupported ecosystem: kanonarion reco
 // PipelineVersion tracks the vendor reconciliation logic. Bump when finding
 // detection or hashing changes such that a re-scan of unchanged inputs would
 // differ from a cached record.
-const PipelineVersion = "0.1.0"
+//
+// 0.2.0 replaces the whole-tree hash comparison with a per-file comparison
+// against the go.sum-verified module zip. A re-scan of an unchanged tree now
+// produces a different finding set from a 0.1.0 record, so the records are not
+// interchangeable and must not be served for one another.
+const PipelineVersion = "0.2.0"
 
 // FindingKind classifies a vendor reconciliation discrepancy.
 type FindingKind string
 
 const (
-	// FindingDrift — a vendored module's recomputed tree hash does not
-	// match the expected checksum recorded in go.sum.
+	// FindingDrift — a file under vendor/ is not the file the module's
+	// go.sum-verified zip publishes: either its bytes differ, or the zip
+	// holds no such file at all.
+	//
+	// Drift is decided per file, over the files vendor/ actually holds. It
+	// used to be decided by hashing the whole vendored directory and
+	// comparing that against go.sum's h1, which cannot work: `go mod vendor`
+	// prunes to the imported packages and strips test files and go.mod,
+	// while go.sum's h1 covers the complete published zip. The two hash
+	// different things by construction, so every pruned module read as
+	// drifted — tamper-shaped evidence for an intact tree. Files the zip
+	// publishes and vendor/ omits are that pruning, and are not a finding.
 	FindingDrift FindingKind = "drift"
 	// FindingMissingFromVendor — modules.txt lists a module but no files
 	// for it exist under vendor/.
@@ -88,11 +107,44 @@ type VendoredModule struct {
 	// Present is false when modules.txt lists the module but no files for
 	// it exist under vendor/.
 	Present bool
-	// ComputedHash is the recomputed dirhash of the vendored module tree;
-	// ExpectedHash is the go.sum h1 for Path@Version ("" when go.sum has
-	// no entry). Equal & non-empty ⇒ integrity verified.
-	ComputedHash string
+	// ExpectedHash is the go.sum h1 for Path@Version ("" when go.sum has no
+	// entry). It names the checksum the comparison oracle — the module zip
+	// kanonarion holds — was verified against, not a hash of anything under
+	// vendor/. There is deliberately no counterpart hash of the vendored
+	// tree: a pruned tree's whole-directory hash can never equal this value,
+	// so reporting the pair side by side asserted a mismatch that was an
+	// artefact of the measurement rather than a property of the tree.
 	ExpectedHash string
+}
+
+// DigestIrregularPrefix marks a vendored directory entry that is not a regular
+// file (a symlink, device, pipe, …) in the digest position, suffixed with what
+// it is. Its content was deliberately not read: a symlink resolves at build
+// time to bytes outside the tree being measured. A published module zip holds
+// only regular files, so the marker can never equal a zip digest and the entry
+// always reports as drift.
+const DigestIrregularPrefix = "irregular:"
+
+// ModuleFiles is the per-file evidence for one module: what the vendored tree
+// holds, and what the go.sum-verified module zip publishes. Both maps are keyed
+// by the module-relative, slash-separated file path and hold that file's
+// content digest ("sha256:<hex>"); a vendored entry that is not a regular file
+// instead carries a DigestIrregularPrefix marker naming what it is.
+//
+// The zip is the oracle and the vendored tree is what is checked against it, so
+// the comparison is directional: it is scoped to the subtree vendor/ actually
+// holds. ZipHeld distinguishes "the oracle says these files" from "there is no
+// oracle" — without it an unheld zip would present as a zip that publishes
+// nothing, and every vendored file would read as drift.
+type ModuleFiles struct {
+	// ZipHeld reports whether kanonarion holds the module zip whose bytes
+	// hash to the module's go.sum h1.
+	ZipHeld bool
+	// Zip maps each file the verified module zip publishes to its digest.
+	Zip map[string]string
+	// Vendored maps each file present under vendor/<path> to its digest,
+	// excluding any subtree that is itself a separately vendored module.
+	Vendored map[string]string
 }
 
 // Finding is one classified discrepancy with enough provenance for an agent
@@ -101,6 +153,7 @@ type Finding struct {
 	Kind     FindingKind
 	Module   string // module path
 	Version  string
+	File     string // module-relative file path, for the per-file drift axis
 	Detail   string
 	Expected string // expected hash / version, when applicable
 	Actual   string // actual hash / version, when applicable
@@ -132,8 +185,10 @@ type ParseResult struct {
 	// PresentDirs is the set of module paths that actually have files
 	// under vendor/ (top-level module directories).
 	PresentDirs map[string]bool
-	// ComputedHashes maps module path → recomputed vendored-tree dirhash.
-	ComputedHashes map[string]string
+	// Files maps module path → the per-file evidence for that module. A
+	// module with no entry has no evidence at all, which the domain reports
+	// as an unverified module rather than as a clean one.
+	Files map[string]ModuleFiles
 }
 
 // Record is the persisted, deterministic result of a vendored-closure scan.

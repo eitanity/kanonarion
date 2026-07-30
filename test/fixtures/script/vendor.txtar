@@ -14,16 +14,18 @@ stdout '"kind": "missing_from_vendor"'
 stdout '"module": "example.com/dep"'
 stdout '"overall_status": "findings"'
 stdout '"vendor_only": true'
-stdout '"schema_version": "2"'
+stdout '"schema_version": "3"'
 stdout '"ecosystem": "go"'
 stderr 'vendor policy: .* violate policy'
 
-# A vendored module whose go.sum checksum cannot match the recomputed tree
-# hash → drift, both hashes reported, exit 20.
-! kanonarion vendor --gomod $WORK/drift/go.mod --store-root=$WORK/stores --json
-stdout '"kind": "drift"'
-stdout '"expected": "h1:AAAAdefinitelyNotTheRealTreeHashAAAAAAAAAAAAA="'
-stdout '"actual": "h1:'
+# go.sum records a checksum but kanonarion holds no module zip at that
+# address, so there is nothing to compare the vendored files against. That is
+# uncertainty, not a clean pass and not drift: reporting drift here is exactly
+# the false positive the per-file comparison replaced.
+! kanonarion vendor --gomod $WORK/unheld/go.mod --store-root=$WORK/stores --json
+stdout '"kind": "unverified"'
+stdout '"expected": "h1:AAAAaChecksumWhoseZipIsNotHeldAAAAAAAAAAAAAA="'
+! stdout '"kind": "drift"'
 stderr 'vendor policy: .* violate policy'
 
 -- plain/go.mod --
@@ -43,23 +45,23 @@ require example.com/dep v1.2.0
 ## explicit
 example.com/dep
 
--- drift/go.mod --
-module example.com/drift
+-- unheld/go.mod --
+module example.com/unheld
 
 go 1.23
 
 require example.com/dep v1.2.0
 
--- drift/go.sum --
-example.com/dep v1.2.0 h1:AAAAdefinitelyNotTheRealTreeHashAAAAAAAAAAAAA=
+-- unheld/go.sum --
+example.com/dep v1.2.0 h1:AAAAaChecksumWhoseZipIsNotHeldAAAAAAAAAAAAAA=
 example.com/dep v1.2.0/go.mod h1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA=
 
--- drift/vendor/modules.txt --
+-- unheld/vendor/modules.txt --
 # example.com/dep v1.2.0
 ## explicit
 example.com/dep
 
--- drift/vendor/example.com/dep/dep.go --
+-- unheld/vendor/example.com/dep/dep.go --
 package dep
 
 const Version = "v1.2.0"

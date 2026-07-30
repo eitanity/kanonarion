@@ -18,8 +18,10 @@ func SortModules(ms []VendoredModule) {
 	})
 }
 
-// SortFindings orders findings by module, then kind, then version so output
-// is stable before hashing/serialising.
+// SortFindings orders findings by module, then kind, then version, then file so
+// output is stable before hashing/serialising. The file is part of the order
+// because the drift axis emits one finding per file, so module/kind/version
+// alone no longer identifies a finding.
 func SortFindings(fs []Finding) {
 	sort.SliceStable(fs, func(i, j int) bool {
 		a, b := fs[i], fs[j]
@@ -29,7 +31,10 @@ func SortFindings(fs []Finding) {
 		if a.Kind != b.Kind {
 			return a.Kind < b.Kind
 		}
-		return a.Version < b.Version
+		if a.Version != b.Version {
+			return a.Version < b.Version
+		}
+		return a.File < b.File
 	})
 }
 
@@ -39,12 +44,12 @@ func SortFindings(fs []Finding) {
 func Hash(ms []VendoredModule, fs []Finding) string {
 	var b strings.Builder
 	for _, m := range ms {
-		fmt.Fprintf(&b, "M|%s|%s|%t|%t|%s|%s\n",
-			m.Path, m.Version, m.Explicit, m.Present, m.ComputedHash, m.ExpectedHash)
+		fmt.Fprintf(&b, "M|%s|%s|%t|%t|%s\n",
+			m.Path, m.Version, m.Explicit, m.Present, m.ExpectedHash)
 	}
 	for _, f := range fs {
-		fmt.Fprintf(&b, "F|%s|%s|%s|%s|%s\n",
-			f.Kind, f.Module, f.Version, f.Expected, f.Actual)
+		fmt.Fprintf(&b, "F|%s|%s|%s|%s|%s|%s\n",
+			f.Kind, f.Module, f.Version, f.File, f.Expected, f.Actual)
 	}
 	sum := sha256.Sum256([]byte(b.String()))
 	return "sha256:" + hex.EncodeToString(sum[:])

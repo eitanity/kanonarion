@@ -1,16 +1,27 @@
 // Package localfs implements ports.VendorScanner against the local
 // filesystem. It is pure scanning: it parses vendor/modules.txt, the main
 // go.mod require set and go.sum, enumerates the module directories present
-// under vendor/, and recomputes each vendored module's tree hash using the
-// canonical dirhash algorithm. It performs no reconciliation or policy (those
-// are the domain and config concerns respectively, per) and never
-// contacts the proxy — the closure is resolved entirely from modules.txt, so
-// an airgapped scan completes with no network.
+// under vendor/, and digests every file each vendored module holds alongside
+// the files that module's go.sum-verified zip publishes. It performs no
+// reconciliation or policy (those are the domain and config concerns
+// respectively, per) and never contacts the proxy — the closure is resolved
+// entirely from modules.txt, so an airgapped scan completes with no network.
+//
+// It deliberately does not hash the vendored directory as a whole. `go mod
+// vendor` prunes each module to the packages the build imports and strips its
+// test files and go.mod, while go.sum's h1 covers the complete published zip, so
+// a whole-tree hash has no value to be compared against and reported nearly
+// every intact module as drifted. The comparison that is well-defined over a
+// pruned subset is per file, which is what this scanner measures.
 package localfs
 
 import (
 	"bufio"
+	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -18,20 +29,23 @@ import (
 	"github.com/eitanity/kanonarion/internal/vendortree/domain"
 	"github.com/eitanity/kanonarion/internal/vendortree/ports"
 	"golang.org/x/mod/modfile"
-	"golang.org/x/mod/sumdb/dirhash"
 )
 
 // Scanner implements ports.VendorScanner.
-type Scanner struct{}
+type Scanner struct {
+	zips ports.VerifiedModuleZipSource
+}
 
-// New returns a new Scanner.
-func New() *Scanner { return &Scanner{} }
+// New returns a Scanner that compares vendored files against the module zips
+// zips holds. A nil source is legitimate — nothing is held, so every module
+// with a go.sum entry is reported unverified rather than clean.
+func New(zips ports.VerifiedModuleZipSource) *Scanner { return &Scanner{zips: zips} }
 
 // ScanProject reads the vendored project rooted at goModPath. It returns
 // ports.ErrNotVendored when there is no vendor/modules.txt — the closure
 // cannot be resolved from the vendored tree, which the caller handles per the
 // requested mode.
-func (s *Scanner) ScanProject(goModPath string, vendorOnly bool) (domain.ParseResult, error) {
+func (s *Scanner) ScanProject(ctx context.Context, goModPath string, vendorOnly bool) (domain.ParseResult, error) {
 	root := filepath.Dir(goModPath)
 	vendorDir := filepath.Join(root, "vendor")
 	modulesTxtPath := filepath.Join(vendorDir, "modules.txt")
@@ -60,19 +74,33 @@ func (s *Scanner) ScanProject(goModPath string, vendorOnly bool) (domain.ParseRe
 		return domain.ParseResult{}, err
 	}
 
+	listedPaths := make(map[string]bool, len(modules))
+	for _, m := range modules {
+		listedPaths[m.Path] = true
+	}
+
 	present := map[string]bool{}
-	computed := map[string]string{}
+	files := map[string]domain.ModuleFiles{}
 	for _, m := range modules {
 		dir := filepath.Join(vendorDir, filepath.FromSlash(m.Path))
-		if !dirHasFiles(dir) {
+		vendored, err := digestVendoredModule(dir, m.Path, listedPaths)
+		if err != nil {
+			return domain.ParseResult{}, err
+		}
+		if len(vendored) == 0 {
 			continue
 		}
 		present[m.Path] = true
-		h, herr := dirhash.HashDir(dir, m.Path+"@"+m.Version, dirhash.Hash1)
-		if herr != nil {
-			return domain.ParseResult{}, fmt.Errorf("hashing vendored module %q: %w", m.Path, herr)
+
+		mf := domain.ModuleFiles{Vendored: vendored}
+		if h1 := goSum[m.Path+"@"+m.Version]; h1 != "" && s.zips != nil {
+			published, found, zerr := s.zips.PublishedFiles(ctx, m.Path, m.Version, h1)
+			if zerr != nil {
+				return domain.ParseResult{}, fmt.Errorf("reading the verified module zip for %s@%s: %w", m.Path, m.Version, zerr)
+			}
+			mf.ZipHeld, mf.Zip = found, published
 		}
-		computed[m.Path] = h
+		files[m.Path] = mf
 	}
 	// Also surface module directories present under vendor/ that
 	// modules.txt never lists, so the domain can flag extra-in-vendor.
@@ -88,8 +116,88 @@ func (s *Scanner) ScanProject(goModPath string, vendorOnly bool) (domain.ParseRe
 		GoModRequires:     requires,
 		GoSum:             goSum,
 		PresentDirs:       present,
-		ComputedHashes:    computed,
+		Files:             files,
 	}, nil
+}
+
+// digestVendoredModule maps every file under a vendored module's directory to
+// the digest of its bytes, keyed by the module-relative slash-separated path.
+// It returns an empty map (not an error) when the directory does not exist:
+// modules.txt listing a module the tree does not hold is a finding the domain
+// raises, not a scan failure.
+//
+// Subtrees that are themselves listed modules are excluded. Module paths nest —
+// github.com/go-chi/chi/v5 lives inside the directory of github.com/go-chi/chi —
+// and attributing the nested module's files to its parent would report every one
+// of them as a file the parent's zip never published.
+func digestVendoredModule(dir, modulePath string, listed map[string]bool) (map[string]string, error) {
+	info, err := os.Stat(dir)
+	if err != nil || !info.IsDir() {
+		return map[string]string{}, nil //nolint:nilerr // an absent directory is the domain's missing-from-vendor finding
+	}
+
+	out := map[string]string{}
+	walkErr := filepath.WalkDir(dir, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return fmt.Errorf("walking vendored module %q: %w", modulePath, err)
+		}
+		rel, rerr := filepath.Rel(dir, path)
+		if rerr != nil {
+			return fmt.Errorf("resolving %q under vendored module %q: %w", path, modulePath, rerr)
+		}
+		slashRel := filepath.ToSlash(rel)
+		if d.IsDir() {
+			if slashRel != "." && listed[modulePath+"/"+slashRel] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		if !d.Type().IsRegular() {
+			// A symlink or other irregular file is recorded, not skipped: the
+			// published module zip holds only regular files, so whatever this
+			// is, it is not what the module published — and skipping it would
+			// silently exempt exactly the kind of substitution the drift axis
+			// exists to catch (a symlink resolves at build time to bytes this
+			// scan never measured).
+			out[slashRel] = irregularMarker(d.Type())
+			return nil
+		}
+		digest, derr := digestFile(path)
+		if derr != nil {
+			return derr
+		}
+		out[slashRel] = digest
+		return nil
+	})
+	if walkErr != nil {
+		return nil, fmt.Errorf("digesting vendored module %q: %w", modulePath, walkErr)
+	}
+	return out, nil
+}
+
+// irregularMarker names a non-regular directory entry in the digest position.
+// It can never equal a "sha256:<hex>" digest, so the domain reports the file as
+// drift rather than comparing content that was never read.
+func irregularMarker(mode os.FileMode) string {
+	if mode&os.ModeSymlink != 0 {
+		return domain.DigestIrregularPrefix + "symlink"
+	}
+	return domain.DigestIrregularPrefix + "non-regular-file"
+}
+
+// digestFile returns the "sha256:<hex>" digest of a file's bytes.
+func digestFile(path string) (string, error) {
+	f, err := os.Open(filepath.Clean(path))
+	if err != nil {
+		return "", fmt.Errorf("opening vendored file %q: %w", path, err)
+	}
+	defer func() { _ = f.Close() }()
+
+	h := sha256.New()
+	if _, err := io.Copy(h, f); err != nil {
+		return "", fmt.Errorf("hashing vendored file %q: %w", path, err)
+	}
+	return "sha256:" + hex.EncodeToString(h.Sum(nil)), nil
 }
 
 // parseRequires returns the main module's require set (path → version).
@@ -127,6 +235,14 @@ func parseModulesTxt(path string) ([]domain.VendoredModule, error) {
 		case strings.HasPrefix(line, "# "):
 			fields := strings.Fields(strings.TrimPrefix(line, "# "))
 			if len(fields) < 2 {
+				continue
+			}
+			// `# path => target version` (no version on the left) is the
+			// trailing replacement-directive footer go mod vendor appends, not
+			// a module entry — the module it names already has its own
+			// `# path version => …` line above. Taking the footer as an entry
+			// fabricates a module whose version is the literal "=>".
+			if fields[1] == "=>" {
 				continue
 			}
 			// `# path version [=> replacement...]` — record the
@@ -167,23 +283,6 @@ func parseGoSum(path string) (map[string]string, error) {
 		out[path+"@"+ver] = hash
 	}
 	return out, nil
-}
-
-// dirHasFiles reports whether dir exists and contains at least one regular
-// file anywhere in its tree.
-func dirHasFiles(dir string) bool {
-	info, err := os.Stat(dir)
-	if err != nil || !info.IsDir() {
-		return false
-	}
-	found := false
-	_ = filepath.WalkDir(dir, func(_ string, d os.DirEntry, err error) error {
-		if err == nil && !d.IsDir() {
-			found = true
-		}
-		return nil
-	})
-	return found
 }
 
 // extraVendoredModules returns module-path-shaped directories under vendor/

@@ -42,6 +42,7 @@ import (
 
 	venlocalfs "github.com/eitanity/kanonarion/internal/vendortree/adapters/scanner/localfs"
 	vensqlite "github.com/eitanity/kanonarion/internal/vendortree/adapters/store/sqlite"
+	venzipsource "github.com/eitanity/kanonarion/internal/vendortree/adapters/zipsource/blobstore"
 	venapp "github.com/eitanity/kanonarion/internal/vendortree/application"
 
 	exgoast "github.com/eitanity/kanonarion/internal/example/adapters/parser/goast"
@@ -492,7 +493,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// ---- vendor use cases ----
 	venStore := vensqlite.New(dbHandle)
 	extractVendorUC := venapp.NewExtractVendorUseCase(venapp.Config{
-		Scanner: venlocalfs.New(), Store: venStore, Audit: factStore,
+		Scanner: venlocalfs.New(venzipsource.New(blobs)), Store: venStore, Audit: factStore,
 		Clock: clk, Stopwatch: stopwatch, Logger: logger,
 	})
 	queryVendorUC := venapp.NewQueryVendorUseCase(venStore)

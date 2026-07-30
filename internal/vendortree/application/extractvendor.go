@@ -56,7 +56,7 @@ func (uc *ExtractVendorUseCase) Extract(
 ) (domain.Record, error) {
 	lap := uc.stopwatch.Start()
 
-	res, err := uc.scanner.ScanProject(goModPath, vendorOnly)
+	res, err := uc.scanner.ScanProject(ctx, goModPath, vendorOnly)
 	if err != nil {
 		return domain.Record{}, fmt.Errorf("scanning vendored project: %w", err)
 	}
