@@ -50,17 +50,31 @@ func newSymbolContextCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f symbolContextFlags
 
 	cmd := &cobra.Command{
-		Use:   "symbol-context <name>",
+		Use:   "symbol-context <name> | <module>@<version> <name>",
 		Short: "Assemble per-module symbol record with signature, godoc, and examples",
+		Long: `Assemble a per-module symbol record (signature, godoc, examples).
+
+The bare-name form is primary: 'symbol-context <name>' searches every stored
+module and reports one entry per module version that declares the symbol.
+
+Every sibling record command (interface-show, examples-list, vuln-show,
+context) takes <module>@<version> positionally, so that form is accepted here
+too: 'symbol-context <module>@<version> <name>' is exactly equivalent to
+'symbol-context <name> --module <module>@<version>'.`,
 		Example: `  kanonarion symbol-context Marshal
   kanonarion symbol-context New --module github.com/spf13/cobra@v1.8.1
+  kanonarion symbol-context github.com/spf13/cobra@v1.8.1 New
   kanonarion symbol-context Client --json`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if len(args) != 1 {
+			symbolName, conflict, ok := symbolContextArgs(args, &f)
+			if conflict != nil {
+				return conflict
+			}
+			if !ok {
 				return usageErr(cmd)
 			}
 			f.scope.bind(cmd)
-			return runSymbolContext(cmd.Context(), args[0], f, jsonOut, stdout, stderr)
+			return runSymbolContext(cmd.Context(), symbolName, f, jsonOut, stdout, stderr)
 		},
 	}
 
@@ -69,6 +83,40 @@ func newSymbolContextCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().Lookup("gomod").NoOptDefVal = defaultGoModPath
 
 	return cmd
+}
+
+// symbolContextArgs resolves the accepted positional grammars to a symbol name,
+// narrowing f.module in place for the two-argument form.
+//
+// It reports three outcomes rather than two. conflict is a specific, nameable
+// disagreement the caller must see verbatim; ok=false is a shape the usage text
+// already explains and is rendered as usage. Collapsing them would print a
+// generic grammar dump at someone who stated the module twice and differently —
+// the one case where the grammar was not the problem.
+//
+// Two arguments are only accepted when the first contains '@'. A Go symbol name
+// cannot contain '@', so the form is unambiguous and no sibling grammar
+// collides with it. A first argument WITH '@' and no second argument stays the
+// bare-name form: that is a caller naming a symbol oddly, not a truncated
+// coordinate, and guessing would swallow the name.
+func symbolContextArgs(args []string, f *symbolContextFlags) (name string, conflict error, ok bool) {
+	switch len(args) {
+	case 1:
+		return args[0], nil, true
+	case 2:
+		if !strings.Contains(args[0], "@") {
+			return "", nil, false
+		}
+		if f.module != "" && f.module != args[0] {
+			return "", fmt.Errorf(
+				"module given twice and differently: %q positionally and %q via --module; pass it once",
+				args[0], f.module), false
+		}
+		f.module = args[0]
+		return args[1], nil, true
+	default:
+		return "", nil, false
+	}
 }
 
 // runSymbolContext is the entry point for the symbol-context command.

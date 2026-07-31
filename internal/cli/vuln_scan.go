@@ -682,7 +682,7 @@ func runScanRescan(ctx context.Context, walkID string, enableReachability bool, 
 			return err
 		}
 		if !found {
-			return fmt.Errorf("snapshot not found: %s@%s", snapshotSource, snapshotVersion)
+			return &exitError{code: ExitNotFound, msg: fmt.Sprintf("snapshot not found: %s@%s", snapshotSource, snapshotVersion)}
 		}
 		req.Snapshot = &snap
 	}

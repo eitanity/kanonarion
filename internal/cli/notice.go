@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"fmt"
 	"io"
@@ -26,6 +27,7 @@ func newNoticeCmd(stdout, stderr io.Writer) *cobra.Command {
 	var walkID string
 	var gomodPath string
 	var packagePattern string
+	var output string
 
 	cmd := &cobra.Command{
 		Use:   "notice [<walk-id>]",
@@ -44,6 +46,8 @@ Modules with Ambiguous or Multiple license status, or a missing copyright
 notice, are reported on stderr and cause a non-zero exit — they require human
 review before the document can be published. A malformed SPDX snippet block, or
 one citing an SPDX identifier with no embedded license text, is the same gate.
+The review gate exits 5 (policy gate fired on real findings), distinct from 20
+(bad invocation), so CI can route it to a human rather than to a build fixer.
 
 Use --package to scope the document to the modules actually linked into a
 specific binary. This excludes dev tools, linters, and test-only dependencies
@@ -51,7 +55,8 @@ that appear in go.mod but are never distributed.`,
 		Example: `  kanonarion notice 01KQDBVW092ER1HNXZ60X27CMD
   kanonarion notice --package ./cmd/kanonarion
   kanonarion notice --walk-id <id>
-  kanonarion notice --gomod ./go.mod`,
+  kanonarion notice --gomod ./go.mod
+  kanonarion notice --walk-id <id> --output THIRD-PARTY-LICENSES`,
 		Args: noticeArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 1 {
@@ -83,13 +88,14 @@ that appear in go.mod but are never distributed.`,
 					return rerr
 				}
 			}
-			return runNotice(cmd.Context(), walkID, gomodPath, packagePattern, snippetRoot(gomodPath), stdout, stderr)
+			return runNotice(cmd.Context(), walkID, gomodPath, packagePattern, snippetRoot(gomodPath), output, stdout, stderr)
 		},
 	}
 
 	cmd.Flags().StringVar(&walkID, "walk-id", "", "walk to generate notice for")
 	cmd.Flags().StringVar(&gomodPath, "gomod", "", "path to go.mod — the project's code dependencies; prefer --package to scope to a distributed binary")
 	cmd.Flags().StringVar(&packagePattern, "package", "", "Go package pattern (e.g. ./cmd/kanonarion); scopes notice to modules linked into that binary")
+	cmd.Flags().StringVar(&output, "output", "", "write the document to this file (default: stdout)")
 	return cmd
 }
 
@@ -133,7 +139,7 @@ func snippetRoot(gomodPath string) string {
 	return dir
 }
 
-func runNotice(ctx context.Context, walkID, gomodPath, packagePattern, snippetDir string, stdout, stderr io.Writer) error {
+func runNotice(ctx context.Context, walkID, gomodPath, packagePattern, snippetDir, output string, stdout, stderr io.Writer) error {
 	logger := buildLogger(logLevel, stderr)
 
 	dbPath := filepath.Join(storeRoot, "mirror.db")
@@ -147,7 +153,7 @@ func runNotice(ctx context.Context, walkID, gomodPath, packagePattern, snippetDi
 	}
 	defer func() { _ = cleanup() }()
 
-	return noticeWith(ctx, ctr, walkID, gomodPath, packagePattern, snippetDir, stdout, stderr)
+	return noticeWith(ctx, ctr, walkID, gomodPath, packagePattern, snippetDir, output, stdout, stderr)
 }
 
 // noticeWith holds the notice logic over an injected Container: it resolves the
@@ -155,7 +161,7 @@ func runNotice(ctx context.Context, walkID, gomodPath, packagePattern, snippetDi
 // review (failing loudly to stderr with a non-nil error rather than publishing
 // an incomplete NOTICE), and otherwise writes the attribution document. Split
 // from runNotice so the review-gate contract is testable without a live store.
-func noticeWith(ctx context.Context, ctr *Container, walkID, gomodPath, packagePattern, snippetDir string, stdout, stderr io.Writer) error {
+func noticeWith(ctx context.Context, ctr *Container, walkID, gomodPath, packagePattern, snippetDir, output string, stdout, stderr io.Writer) error {
 	mods, scope, err := resolveNoticeModules(ctx, walkID, gomodPath, packagePattern, ctr)
 	if err != nil {
 		return err
@@ -210,12 +216,26 @@ func noticeWith(ctx context.Context, ctr *Container, walkID, gomodPath, packageP
 				return fmt.Errorf("writing review item: %w", werr)
 			}
 		}
-		return fmt.Errorf("%d module(s) require review", len(reviews))
+		return &exitError{code: ExitPolicy, msg: fmt.Sprintf("%d module(s) require review", len(reviews))}
 	}
 
 	entries := append(append([]licensedomain.NoticeEntry{}, result.Entries...), snippetEntries...)
 	licensedomain.SortNoticeEntries(entries)
-	return writeNoticeDocument(entries, replaced, stdout)
+
+	// The document is rendered into memory before --output so a render failure
+	// cannot leave a half-written NOTICE on disk that looks publishable. The
+	// stdout path streams as before.
+	if output == "" {
+		return writeNoticeDocument(entries, replaced, stdout)
+	}
+	var doc bytes.Buffer
+	if werr := writeNoticeDocument(entries, replaced, &doc); werr != nil {
+		return werr
+	}
+	// The acknowledgement goes to stderr, not stdout: an operator capturing the
+	// document redirects stdout, and notice already reports scope and the review
+	// list on stderr, so the two streams stay one document and one commentary.
+	return writeArtefactFile("NOTICE", output, doc.Bytes(), stderr)
 }
 
 // partitionNoticeModules splits the resolved scope into the coordinates the

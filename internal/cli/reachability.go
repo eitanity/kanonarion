@@ -107,11 +107,18 @@ Local probe: 'reachability --local <dir>' analyses the working tree directly
 
 			switch {
 			case vulnID != "":
-				if coordArg == "" {
-					return fmt.Errorf("reachability --vuln requires a <module>@<version> argument")
-				}
+				// Mutual exclusion is checked FIRST. The default branch below
+				// offers --local as a peer target, so '--local . --vuln <id>' is
+				// exactly what an operator who read that message types next;
+				// checking the missing coordinate first answered them with
+				// "requires a <module>@<version> argument" — a complaint about
+				// the wrong thing, and one that made the conflict message
+				// unreachable precisely when it was the accurate one.
 				if localPath != "" {
 					return fmt.Errorf("--vuln and --local are mutually exclusive: --vuln queries a stored module, --local analyses the working tree")
+				}
+				if coordArg == "" {
+					return fmt.Errorf("reachability --vuln requires a <module>@<version> argument")
 				}
 				logger := buildLogger(logLevel, stderr)
 				ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
@@ -245,9 +252,9 @@ func routesToOutput(routes []vuldomain.ReachabilityRoute) []reachabilityRouteOut
 // directing error for the cases where the answer is genuinely unknown.
 func vulnReachabilityVerdict(coord coordinate.ModuleCoordinate, rec vuldomain.VulnerabilityRecord, found bool, vulnID string) (vulnReachabilityQuery, error) {
 	if !found {
-		return vulnReachabilityQuery{}, fmt.Errorf(
+		return vulnReachabilityQuery{}, &exitError{code: ExitNotFound, msg: fmt.Sprintf(
 			"no vulnerability record for %s: the module has not been vuln-scanned. Run:\n  kanonarion vuln-scan %s --reachability",
-			coord, coord)
+			coord, coord)}
 	}
 
 	// Whether reachability could have been computed is a coverage question, so it

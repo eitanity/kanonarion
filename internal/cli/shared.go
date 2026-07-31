@@ -825,6 +825,27 @@ func projectModulePathFromGoMod(goModPath string) (string, error) {
 	return mod, nil
 }
 
+// writeArtefactFile writes a generated document to path and reports the path on
+// notify, which is the whole of the --output contract two artefact generators
+// (sbom, notice) share.
+//
+// It is one function rather than one per command because the semantics are the
+// thing that must not drift: same permissions, same "wrote it, here is where"
+// acknowledgement, same wrapped error naming the path that failed. notify is a
+// parameter rather than a fixed stream because the two commands put it in
+// different places on purpose — sbom's acknowledgement joins its ID/hash block
+// on stdout, while notice keeps stdout clear of anything that is not the
+// document and reports on stderr alongside its scope and review lines.
+func writeArtefactFile(kind, path string, content []byte, notify io.Writer) error {
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		return fmt.Errorf("writing %s to %q: %w", kind, path, err)
+	}
+	if _, err := fmt.Fprintf(notify, "%s written to %s\n", kind, path); err != nil {
+		return fmt.Errorf("writing %s acknowledgement: %w", kind, err)
+	}
+	return nil
+}
+
 // exitError carries a specific exit code through cobra's error return.
 type exitError struct {
 	code int

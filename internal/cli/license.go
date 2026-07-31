@@ -172,7 +172,7 @@ func printLicenseRecursive(
 		return fmt.Errorf("listing walks: %w", err)
 	}
 	if len(summaries) == 0 {
-		return fmt.Errorf("no walk record found for %s — run 'kanonarion walk' first", target)
+		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("no walk record found for %s — run 'kanonarion walk' first", target)}
 	}
 
 	extractFn := func(ctx context.Context, coord coordinate.ModuleCoordinate) (domain.LicenseRecord, error) {

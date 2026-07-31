@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -38,6 +37,14 @@ func newSBOMCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "sbom [<walk-id>]",
 		Short: "Generate a Software Bill of Materials for a walk",
+		Long: `Generate a Software Bill of Materials (CycloneDX) for a walk.
+
+Exit codes:
+  0  SBOM generated with complete licence data
+  1  SBOM generated, but one or more modules have no licence record — the
+     document IS written; a licence-less SBOM must never pass as complete
+  4  the walk, scan run or package scope named does not exist
+  20 bad invocation (missing walk id and --package, unparseable coordinate, ...)`,
 		Example: `  kanonarion sbom 01KQDBVW092ER1HNXZ60X27CMD
   kanonarion sbom 01KQDBVW092ER1HNXZ60X27CMD --scan vscan-01KQDBVW092ER1HNXZ60X27CMD-1234
   kanonarion sbom 01KQDBVW092ER1HNXZ60X27CMD --output sbom.json
@@ -200,10 +207,9 @@ func sbomGenerateWith(
 	}
 
 	if output != "" {
-		if err := os.WriteFile(output, record.Content, 0o600); err != nil {
-			return fmt.Errorf("writing sbom to %q: %w", output, err)
+		if err := writeArtefactFile("SBOM", output, record.Content, stdout); err != nil {
+			return err
 		}
-		_, _ = fmt.Fprintf(stdout, "SBOM written to %s\n", output)
 		_, _ = fmt.Fprintf(stdout, "ID:           %s\n", record.ID)
 		_, _ = fmt.Fprintf(stdout, "Content-Hash: %s\n", record.ContentHash)
 	} else if _, err := stdout.Write(record.Content); err != nil {

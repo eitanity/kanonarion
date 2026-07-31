@@ -73,7 +73,7 @@ func runUse(ctx context.Context, f useFlags, targetArg string, stdout, stderr io
 		return fmt.Errorf("listing walks: %w", err)
 	}
 	if len(summaries) == 0 {
-		return fmt.Errorf("no walk record found for %s — run 'kanonarion walk' first", coord)
+		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("no walk record found for %s — run 'kanonarion walk' first", coord)}
 	}
 
 	walk, err := walkStore.GetWalk(ctx, summaries[0].ID)
@@ -146,7 +146,7 @@ func copyToModCache(
 		return fmt.Errorf("getting fact record: %w", err)
 	}
 	if !ok {
-		return fmt.Errorf("fact record not found")
+		return &exitError{code: ExitNotFound, msg: "fact record not found"}
 	}
 
 	// Paths in GOMODCACHE:

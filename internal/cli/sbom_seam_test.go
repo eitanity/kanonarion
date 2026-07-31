@@ -153,7 +153,7 @@ func TestSBOMGenerateWith_FileWriteError(t *testing.T) {
 	}}
 	var stdout bytes.Buffer
 	err := sbomGenerateWith(context.Background(), ctr, "W1", "", nil, "cyclonedx-json", dst, false, false, "", "", "tester", "", &stdout, io.Discard)
-	if err == nil || !strings.Contains(err.Error(), "writing sbom to") {
+	if err == nil || !strings.Contains(err.Error(), "writing SBOM to") {
 		t.Fatalf("want file-write error, got: %v", err)
 	}
 }

@@ -189,7 +189,7 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 		return fmt.Errorf("getting scan run: %w", err)
 	}
 	if !found {
-		return fmt.Errorf("scan run not found: %s", runID)
+		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("scan run not found: %s", runID)}
 	}
 
 	summary := buildScanAffectedModules(ctx, run, ucVuln)

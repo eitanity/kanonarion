@@ -56,7 +56,14 @@ This collapses the walk → vuln-scan → license-list workflow into a single ca
 The dependency scope is consistent with every go.mod command: the default is the
 project's own build dependencies (the code your packages import, incl. tests);
 --tool audits the tooling supply chain; --project audits the complete set (code
-+ tooling).`,
++ tooling).
+
+Exit codes:
+  0  every dependency resolved and no licence-policy block
+  5  the governance gate fired: dependencies with an undetermined licence are
+     blocked by policy (unknown_license=block) — the table is still printed
+  10 a walk node failed its integrity check
+  20 bad invocation, unresolvable go.mod, or a policy file that could not be read`,
 		Example: `  kanonarion audit
   kanonarion audit --gomod ./go.mod
   kanonarion audit --gomod ./go.mod --json
@@ -578,7 +585,7 @@ func auditBlockingErr(results []auditModuleResult) error {
 	if len(blocked) == 0 {
 		return nil
 	}
-	return &exitError{code: ExitConfig, msg: fmt.Sprintf(
+	return &exitError{code: ExitPolicy, msg: fmt.Sprintf(
 		"license policy: %d dependency(ies) with an undetermined license blocked by policy (unknown_license=block): %s",
 		len(blocked), strings.Join(blocked, ", "))}
 }

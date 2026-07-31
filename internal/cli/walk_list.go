@@ -66,7 +66,7 @@ func runWalkList(ctx context.Context, targetArg, sinceArg, statusArg, scopeArg, 
 		rec, rerr := uc.GetWalk(ctx, walkID)
 		if rerr != nil {
 			if isWalkNotFound(rerr) {
-				return fmt.Errorf("walk %s not found", walkID)
+				return &exitError{code: ExitNotFound, msg: fmt.Sprintf("walk %s not found", walkID)}
 			}
 			return fmt.Errorf("loading walk %s: %w", walkID, rerr)
 		}

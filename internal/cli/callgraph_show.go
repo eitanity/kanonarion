@@ -95,10 +95,11 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 	}
 	if !found {
 		if source != domain.AnalysisSourceUnrecorded {
-			return fmt.Errorf("no %s-sourced callgraph record for %s — the ledger may hold one from another source; try --history",
-				source, coord)
+			return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
+				"no %s-sourced callgraph record for %s — the ledger may hold one from another source; try --history",
+				source, coord)}
 		}
-		return fmt.Errorf("no callgraph record for %s — run 'kanonarion callgraph' first", coord)
+		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("no callgraph record for %s — run 'kanonarion callgraph' first", coord)}
 	}
 	nodeFilter, limitNodes, limitEdges := f.nodeFilter, f.limitNodes, f.limitEdges
 

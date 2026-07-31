@@ -31,7 +31,10 @@ Exit codes:
   0  clean — no conflicts, no unknown pairs
   1  conflicts — one or more deps are incompatible with the target license
   2  unknown pairs — one or more dep licenses are not in the modelled dataset
-     (requires human review; these are never silently "compatible")`,
+     (requires human review; these are never silently "compatible")
+  4  no walk record, or no licence record for the root — the diagnostic names
+     the command that produces the missing record
+  20 bad invocation (unparseable coordinate, wrong argument count)`,
 		Example: `  kanonarion license-compat github.com/spf13/cobra@v1.8.1 --target Apache-2.0
   kanonarion license-compat github.com/spf13/cobra@v1.8.1 --target Apache-2.0 --json
   kanonarion license-compat example.com/project@local`,

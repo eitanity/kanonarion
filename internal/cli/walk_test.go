@@ -219,8 +219,8 @@ func TestRunWalkShow_NotFound(t *testing.T) {
 	if !errors.As(err, &exitErr) {
 		t.Fatalf("expected exitError, got: %T %v", err, err)
 	}
-	if exitErr.code != ExitConfig {
-		t.Errorf("expected ExitConfig, got: %d", exitErr.code)
+	if exitErr.code != ExitNotFound {
+		t.Errorf("expected ExitNotFound, got: %d", exitErr.code)
 	}
 }
 
@@ -257,8 +257,8 @@ func TestRunWalkDiff_NotFound(t *testing.T) {
 	if !errors.As(err, &exitErr) {
 		t.Fatalf("expected exitError, got: %T", err)
 	}
-	if exitErr.code != ExitConfig {
-		t.Errorf("expected ExitConfig, got: %d", exitErr.code)
+	if exitErr.code != ExitNotFound {
+		t.Errorf("expected ExitNotFound, got: %d", exitErr.code)
 	}
 }
 

@@ -94,7 +94,7 @@ func runDependents(ctx context.Context, moduleArg, storeRoot, walkID string, jso
 	rec, err := ctr.QueryWalks.GetWalk(ctx, walkID)
 	if err != nil {
 		if isWalkNotFound(err) {
-			return &exitError{code: ExitConfig, msg: fmt.Sprintf("walk record %q not found", walkID)}
+			return &exitError{code: ExitNotFound, msg: fmt.Sprintf("walk record %q not found", walkID)}
 		}
 		if isWalkIntegrity(err) {
 			return &exitError{code: ExitIntegrity, msg: fmt.Sprintf("walk record %q failed integrity check", walkID)}

@@ -84,8 +84,13 @@ to dependency-graph analysis — some disable TLS verification, weaken crypto
 defaults, or revert deprecated protocol behaviour. A setting in a dependency
 does NOT take effect in the current build: it is recorded "applied": false,
 never silently dropped. The default policy flags red (security-weakening)
-settings, so this command exits non-zero (20) when an applied setting's
-policy outcome is "warn".`,
+settings, so this command exits non-zero when an applied setting's policy
+outcome is "warn".
+
+Exit codes:
+  0  no applied setting resolves to a blocking policy outcome
+  5  the governance gate fired: one or more applied settings violate policy
+  20 bad invocation, or a policy file that could not be read`,
 		Example: `  kanonarion godebug
   kanonarion godebug --gomod ./go.mod --json`,
 		Args: cobra.NoArgs,
@@ -153,7 +158,7 @@ func printGoDebugTable(stdout io.Writer, s godebugSection) error {
 	return nil
 }
 
-// godebugBlockingErr returns a non-zero ExitConfig error when any *applied*
+// godebugBlockingErr returns an ExitPolicy error when any *applied*
 // setting resolves to a blocking ("warn") policy outcome — e.g. a red-tier
 // setting in the main package under the default policy. Not-applied settings
 // are surfaced but never gate the build (they do not affect the binary).
@@ -167,6 +172,6 @@ func godebugBlockingErr(s godebugSection) error {
 	if len(blocked) == 0 {
 		return nil
 	}
-	return &exitError{code: ExitConfig, msg: fmt.Sprintf(
+	return &exitError{code: ExitPolicy, msg: fmt.Sprintf(
 		"godebug policy: %d setting(s) violate policy: %v", len(blocked), blocked)}
 }

@@ -138,8 +138,8 @@ func TestFipsBlockingErr_FlagsToolchainAlgorithmAndCgo(t *testing.T) {
 				return
 			}
 			var xerr *exitError
-			if !errors.As(err, &xerr) || xerr.code != ExitConfig {
-				t.Errorf("want ExitConfig exitError, got %v", err)
+			if !errors.As(err, &xerr) || xerr.code != ExitPolicy {
+				t.Errorf("want ExitPolicy exitError, got %v", err)
 			}
 			for _, want := range c.wantIn {
 				if !strings.Contains(err.Error(), want) {

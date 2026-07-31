@@ -34,7 +34,7 @@ func runWalkDiff(ctx context.Context, idA, idB string, uc DiffWalksUseCase, stdo
 	diff, err := uc.Diff(ctx, idA, idB)
 	if err != nil {
 		if isWalkNotFound(err) {
-			return &exitError{code: ExitConfig, msg: "one or both walk IDs not found"}
+			return &exitError{code: ExitNotFound, msg: "one or both walk IDs not found"}
 		}
 		if isWalkIntegrity(err) {
 			return &exitError{code: ExitIntegrity, msg: "walk record integrity check failed"}

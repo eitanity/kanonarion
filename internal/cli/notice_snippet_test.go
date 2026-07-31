@@ -39,7 +39,7 @@ func TestNoticeWith_IncludesCopiedSourceAttribution(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	if err := noticeWith(context.Background(), ctr, "W1", "", "", repoRoot(t), &stdout, &stderr); err != nil {
+	if err := noticeWith(context.Background(), ctr, "W1", "", "", repoRoot(t), "", &stdout, &stderr); err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
 
@@ -75,7 +75,7 @@ func TestNoticeWith_CopiedSourceSortsWithModules(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	if err := noticeWith(context.Background(), ctr, "W1", "", "", repoRoot(t), &stdout, &stderr); err != nil {
+	if err := noticeWith(context.Background(), ctr, "W1", "", "", repoRoot(t), "", &stdout, &stderr); err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
 
@@ -100,7 +100,7 @@ func TestNoticeWith_CopiedSourceOnlyStillEmitsDocument(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	if err := noticeWith(context.Background(), ctr, "W2", "", "", repoRoot(t), &stdout, &stderr); err != nil {
+	if err := noticeWith(context.Background(), ctr, "W2", "", "", repoRoot(t), "", &stdout, &stderr); err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
 	if !strings.Contains(stdout.String(), "github.com/google/capslock@v0.3.2") {
@@ -117,7 +117,7 @@ func TestNoticeWith_NoSnippetRootSkipsScan(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	if err := noticeWith(context.Background(), ctr, "W2", "", "", "", &stdout, &stderr); err != nil {
+	if err := noticeWith(context.Background(), ctr, "W2", "", "", "", "", &stdout, &stderr); err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
 	if !strings.Contains(stderr.String(), "no modules found") {

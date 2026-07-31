@@ -65,8 +65,11 @@ depth policy, store layout, and exit codes - see
 
 See [`conventions.md`](conventions.md) for:
 
-- Global conventions (output, exit codes, store discovery)
+- Global conventions (output, store discovery)
 - Layered configuration (file → env → flag)
 - Depth policy
 - Store layout
-- Common exit codes
+- **[The exit-code table](conventions.md#exit-codes)** - the authoritative
+  definition of every code, which failure class each names, and which commands
+  use it. It lives there and only there; per-command `--help` repeats only the
+  rows that command can produce.

@@ -106,5 +106,5 @@ func runSnapshotShow(ctx context.Context, source, version string, jsonOut bool, 
 			return nil
 		}
 	}
-	return fmt.Errorf("snapshot not found: %s@%s", source, version)
+	return &exitError{code: ExitNotFound, msg: fmt.Sprintf("snapshot not found: %s@%s", source, version)}
 }

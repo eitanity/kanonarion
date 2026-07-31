@@ -135,7 +135,12 @@ Findings: drift (a vendored file ≠ the published module), missing/extra module
 modules.txt and vendor/, modules.txt-vs-go.mod version mismatch, and
 unverified modules with no go.sum entry (surfaced, never assumed clean).
 The default policy flags drift and inconsistency (warn), so this
-command exits non-zero (20) when a finding's policy outcome is "warn".
+command exits non-zero when a finding's policy outcome is "warn".
+
+Exit codes:
+  0  no finding resolves to a blocking policy outcome
+  5  the governance gate fired: drift or inconsistency violates policy
+  20 bad invocation, no vendor/ tree, or a policy file that could not be read
 
 --vendor-only asserts the airgapped contract: the scan completes with no
 proxy contact, resolving the closure entirely from modules.txt.`,
@@ -232,7 +237,7 @@ func printVendorTable(stdout io.Writer, s vendorSection) error {
 	return nil
 }
 
-// vendorBlockingErr returns a non-zero ExitConfig error when any finding
+// vendorBlockingErr returns an ExitPolicy error when any finding
 // resolves to a blocking ("warn") policy outcome — drift or an inconsistency
 // under the default policy — making the command a CI gate.
 func vendorBlockingErr(s vendorSection) error {
@@ -249,6 +254,6 @@ func vendorBlockingErr(s vendorSection) error {
 	if len(blocked) == 0 {
 		return nil
 	}
-	return &exitError{code: ExitConfig, msg: fmt.Sprintf(
+	return &exitError{code: ExitPolicy, msg: fmt.Sprintf(
 		"vendor policy: %d finding(s) violate policy: %v", len(blocked), blocked)}
 }
