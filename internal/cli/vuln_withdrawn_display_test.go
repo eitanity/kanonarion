@@ -148,7 +148,7 @@ func TestVulnScanStatusLabel_WithdrawnUnderACoverageGap(t *testing.T) {
 func TestVulnReachabilityVerdict_WithdrawnIsNotAReachabilityAnswer(t *testing.T) {
 	rec := withdrawnBboltRecord()
 
-	q, err := vulnReachabilityVerdict(rec.Coordinate, rec, true, "GO-2026-4923", nil)
+	q, err := vulnReachabilityVerdict(rec.Coordinate, rec, true, "GO-2026-4923", nil, nil)
 	if err != nil {
 		t.Fatalf("vulnReachabilityVerdict: %v", err)
 	}

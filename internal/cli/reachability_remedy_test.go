@@ -141,7 +141,7 @@ func TestVulnReachability_SelfRootedScan_NamesTheRootingNotTheFlag(t *testing.T)
 	}
 	rec := nilReachabilityRecord(t, coord, vuldomain.TargetRootedAt(coord))
 
-	_, verr := vulnReachabilityVerdict(coord, rec, true, "GO-2025-3553", nil)
+	_, verr := vulnReachabilityVerdict(coord, rec, true, "GO-2025-3553", nil, nil)
 	if verr == nil {
 		t.Fatal("want a refusal, got none")
 	}
@@ -173,7 +173,7 @@ func TestVulnReachability_ForeignRootedScan_KeepsTheMissingFlagCause(t *testing.
 	}
 	rec := nilReachabilityRecord(t, coord, vuldomain.TargetRootedAt(consumer))
 
-	_, verr := vulnReachabilityVerdict(coord, rec, true, "GO-2025-3553", nil)
+	_, verr := vulnReachabilityVerdict(coord, rec, true, "GO-2025-3553", nil, nil)
 	if verr == nil {
 		t.Fatal("want a refusal, got none")
 	}
@@ -190,7 +190,7 @@ func TestVulnReachability_IsolatedScan_KeepsTheMissingFlagCause(t *testing.T) {
 	}
 	rec := nilReachabilityRecord(t, coord, vuldomain.RootingIsolated)
 
-	_, verr := vulnReachabilityVerdict(coord, rec, true, "GO-2025-3553", nil)
+	_, verr := vulnReachabilityVerdict(coord, rec, true, "GO-2025-3553", nil, nil)
 	if verr == nil {
 		t.Fatal("want a refusal, got none")
 	}
@@ -221,7 +221,7 @@ func TestVulnReachability_AdvisoryNamesNoSymbols_NamesTheAbsentTarget(t *testing
 		}},
 	}
 
-	_, verr := vulnReachabilityVerdict(coord, rec, true, "GO-2025-3553", nil)
+	_, verr := vulnReachabilityVerdict(coord, rec, true, "GO-2025-3553", nil, nil)
 	if verr == nil {
 		t.Fatal("want a refusal, got none")
 	}

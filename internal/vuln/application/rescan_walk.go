@@ -4,11 +4,13 @@ import (
 	"context"
 	"fmt"
 	"log/slog"
+	"os"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
+	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
@@ -27,6 +29,50 @@ type RescanWalkUseCase struct {
 	audit           ports.AuditSink  // optional; propagated to the delegated scan
 	realModcacheDir string           // --from-modcache; propagated to the delegated scan
 	hostMemory      ports.HostMemory // optional; propagated to the delegated scan
+	// vendoredClosure is the reader that lets the delegated scan reach a
+	// project's working tree. Without it a re-scan of a project walk cannot
+	// reproduce the frame the run it re-scans was analysed in — see
+	// projectFrameDir, which refuses rather than re-deriving under another one.
+	vendoredClosure ports.VendoredClosureReader
+}
+
+// FrameNotReproducibleError reports that a re-scan would have to change the
+// analysis frame of the run it re-scans, and refuses.
+//
+// A re-scan is asked for the SAME evidence against a newer advisory database.
+// Silently answering a different question instead is the failure this names: a
+// walk rooted at a project, re-scanned without the wiring that reaches the
+// project's tree, re-derives every module in isolation — and an isolated
+// "not reachable" then outranks the consumer's route on the compose ladder, so
+// the operator who asked for a refresh is handed a stand-down.
+//
+// It is deliberately a refusal and not the degradation the scan path performs.
+// The scan path is asked "scan this walk" and answering with what it can still
+// measure is a narrower answer to the question asked; a re-scan is asked to
+// reproduce a frame, and an answer in a different frame is not narrower, it is
+// about something else.
+type FrameNotReproducibleError struct {
+	WalkID string
+	// ProjectDir is the working tree the walk was taken from — the frame that
+	// cannot be reproduced.
+	ProjectDir string
+	// Reason states what stopped it, in the tool's own voice.
+	Reason string
+}
+
+func (e *FrameNotReproducibleError) Error() string {
+	return fmt.Sprintf(
+		"re-scanning walk %s would change its analysis frame: the walk was taken from the project at %s and its scan is rooted there, but %s. Every module would be re-derived in isolation, which answers a different question than the run being re-scanned — whether each module reaches its own vulnerable code when built alone, not whether this project's build does",
+		e.WalkID, e.ProjectDir, e.Reason)
+}
+
+// WithVendoredClosure wires the reader that lets a re-scan reach the working
+// tree its walk was taken from, so a project-rooted run re-scans project-rooted.
+// Optional in the type system and required in practice: without it a re-scan of
+// a project walk refuses rather than silently changing frame.
+func (uc *RescanWalkUseCase) WithVendoredClosure(r ports.VendoredClosureReader) *RescanWalkUseCase {
+	uc.vendoredClosure = r
+	return uc
 }
 
 // NewRescanWalkUseCase returns a new RescanWalkUseCase.
@@ -85,6 +131,46 @@ func (uc *RescanWalkUseCase) WithRealModcache(dir string) *RescanWalkUseCase {
 	return uc
 }
 
+// projectFrameDir returns the working tree the re-scan must root its analysis
+// at to reproduce the frame of the run it re-scans, or an error when it cannot.
+//
+// The three answers, and what each is:
+//
+//   - A walk of a published coordinate roots its analysis at the target module
+//     itself, which the delegated scan does from the walk alone. Nothing to
+//     reproduce, nothing to wire: the empty directory is correct here, not a gap.
+//   - A walk of a local project that recorded no directory predates the field or
+//     was never taken from a tree. Its own scan could not have been
+//     project-rooted either, so re-scanning without one changes nothing.
+//   - A walk of a local project that DID record a directory was scanned rooted
+//     there. Reproducing that is the whole of this method, and failing to is a
+//     refusal.
+func (uc *RescanWalkUseCase) projectFrameDir(walk walkdomain.WalkRecord) (string, error) {
+	if !walk.Target.IsLocal() {
+		return "", nil
+	}
+	if walk.ProjectDir == "" {
+		uc.logger.Info("rescan: the walk records no project directory, so no project-rooted frame is being reproduced",
+			"walk_id", walk.ID, "root", walk.Target)
+		return "", nil
+	}
+	if uc.vendoredClosure == nil {
+		return "", &FrameNotReproducibleError{
+			WalkID: walk.ID, ProjectDir: walk.ProjectDir,
+			Reason: "this re-scan has no reader for the project's module closure wired, so it cannot analyse that tree at all",
+		}
+	}
+	if _, serr := os.Stat(walk.ProjectDir); serr != nil {
+		return "", &FrameNotReproducibleError{
+			WalkID: walk.ID, ProjectDir: walk.ProjectDir,
+			Reason: fmt.Sprintf("that directory is not readable from here (%v)", serr),
+		}
+	}
+	uc.logger.Info("rescan: reproducing the project-rooted frame the walk was scanned in",
+		"walk_id", walk.ID, "project_dir", walk.ProjectDir)
+	return walk.ProjectDir, nil
+}
+
 // RescanRequest defines the input for a re-scan operation.
 type RescanRequest struct {
 	WalkID             string
@@ -98,9 +184,17 @@ type RescanRequest struct {
 // snapshot is actually consulted, and it never modifies existing scan runs.
 func (uc *RescanWalkUseCase) Rescan(ctx context.Context, req RescanRequest) (domain.WalkScanRun, error) {
 	// 1. Validate walk exists.
-	_, err := uc.walkStore.GetWalk(ctx, req.WalkID)
+	walk, err := uc.walkStore.GetWalk(ctx, req.WalkID)
 	if err != nil {
 		return domain.WalkScanRun{}, fmt.Errorf("retrieving walk %q: %w", req.WalkID, err)
+	}
+
+	// 1b. Settle the frame before anything is fetched or scanned. A frame this
+	// run cannot reproduce is a refusal, and a refusal is worth nothing after a
+	// snapshot download and a full re-scan.
+	projectDir, err := uc.projectFrameDir(walk)
+	if err != nil {
+		return domain.WalkScanRun{}, err
 	}
 
 	// 2. Resolve snapshot: if provided, use it; otherwise fetch a fresh one from
@@ -132,7 +226,7 @@ func (uc *RescanWalkUseCase) Rescan(ctx context.Context, req RescanRequest) (dom
 		uc.pipelineVersion,
 		uc.logger,
 	).WithAudit(uc.audit).WithRealModcache(uc.realModcacheDir).WithHostMemory(uc.hostMemory).
-		WithVCSHosts(uc.vcsHosts)
+		WithVCSHosts(uc.vcsHosts).WithVendoredClosure(uc.vendoredClosure)
 
 	run, err := scanWalk.Scan(ctx, ScanWalkParams{
 		WalkID:             req.WalkID,
@@ -140,6 +234,13 @@ func (uc *RescanWalkUseCase) Rescan(ctx context.Context, req RescanRequest) (dom
 		Force:              true,
 		EnableReachability: req.EnableReachability,
 		Operator:           req.Operator,
+		// Passed explicitly rather than left to the delegated scan's own
+		// recollection of the walk: that path adopts the directory only while it
+		// still holds a vendored tree, which is the right rule for a scan (it
+		// reaches for the directory to reach the vendored SURFACE) and the wrong
+		// one here (this reaches for it to reproduce the ROOT). A project that
+		// never vendored would otherwise re-scan isolated.
+		ProjectDir: projectDir,
 	})
 	if err != nil {
 		return domain.WalkScanRun{}, fmt.Errorf("rescan scan: %w", err)

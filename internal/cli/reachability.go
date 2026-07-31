@@ -215,12 +215,18 @@ func runVulnReachability(ctx context.Context, arg, vulnID string, jsonOut bool, 
 		return fmt.Errorf("invalid coordinate %q: %w", arg, err)
 	}
 
-	rec, found, err := uc.GetLatestRecord(ctx, coord, localVulnPipelineVersion)
+	// Every generation is read, not the composed "latest", because which record
+	// answers this question is a question about analysis frames and the composed
+	// read has none: it ranks an isolated scan against a consumer-rooted one on
+	// call-graph completeness, a rung the isolated scan always wins. See
+	// vuldomain.ComposeForConsumer.
+	recs, err := uc.ListRecordsForModule(ctx, coord, localVulnPipelineVersion)
 	if err != nil {
 		return fmt.Errorf("getting vulnerability record: %w", err)
 	}
+	rec, aside, hasAside, found := selectConsumerRecord(recs, coord)
 
-	res, verr := vulnReachabilityVerdict(coord, rec, found, vulnID, newRouteRootFunc(ctx, graphs, rec))
+	res, verr := vulnReachabilityVerdict(coord, rec, found, vulnID, newRouteRootFunc(ctx, graphs, rec), isolatedAsideFor(aside, hasAside, vulnID))
 	if verr != nil {
 		return verr
 	}
@@ -236,6 +242,64 @@ func runVulnReachability(ctx context.Context, arg, vulnID string, jsonOut bool, 
 
 	printVulnReachability(stdout, res)
 	return nil
+}
+
+// selectConsumerRecord picks the record that answers a consumer's reachability
+// question about coord, and the isolated-frame record it declined to answer
+// from. found is false when the ledger holds nothing for the coordinate at all.
+//
+// The empty group is answered here rather than propagated as the domain's
+// "nothing to compose" error: an unscanned module is an absence the caller
+// already reports (with the command that fixes it), not a fault.
+func selectConsumerRecord(recs []vuldomain.VulnerabilityRecord, coord coordinate.ModuleCoordinate) (vuldomain.VulnerabilityRecord, vuldomain.VulnerabilityRecord, bool, bool) {
+	if len(recs) == 0 {
+		return vuldomain.VulnerabilityRecord{}, vuldomain.VulnerabilityRecord{}, false, false
+	}
+	// The error is discarded because it has exactly one cause — an empty group —
+	// and the line above rules it out.
+	rec, aside, hasAside, _ := vuldomain.ComposeForConsumer(recs, coord)
+	return rec, aside, hasAside, true
+}
+
+// isolatedAside is what an isolated-frame record says about the queried
+// advisory, carried beside an answer drawn from a consumer-rooted record.
+//
+// It is reported, and it is never the answer. An isolated scan builds the module
+// as its own main module and asks whether that build reaches the vulnerable
+// symbol; a consumer's question is whether their build does. Serving the first
+// as the second is the false stand-down this type exists to stop, so the verdict
+// travels with the frame that produced it, labelled, in its own field.
+type isolatedAside struct {
+	Verdict    string `json:"verdict"`
+	Confidence string `json:"confidence,omitempty"`
+	Method     string `json:"method,omitempty"`
+	Fidelity   string `json:"fidelity,omitempty"`
+	ScannedAt  string `json:"scanned_at,omitempty"`
+}
+
+// isolatedAsideFor renders what the isolated-frame record says about vulnID, or
+// nil when there is no isolated record, it never saw the advisory, or it
+// recorded no reachability answer — an aside with nothing to say is noise beside
+// the answer, and an absent verdict is not one.
+func isolatedAsideFor(rec vuldomain.VulnerabilityRecord, has bool, vulnID string) *isolatedAside {
+	if !has {
+		return nil
+	}
+	f, ok := findFindingByID(rec.Findings, vulnID)
+	if !ok || f.Reachable == nil {
+		return nil
+	}
+	verdict := verdictNotReachable
+	if f.Reachable.IsReachable {
+		verdict = verdictReachable
+	}
+	return &isolatedAside{
+		Verdict:    verdict,
+		Confidence: string(f.Reachable.Confidence),
+		Method:     f.Reachable.DerivedBy.Analyser.String(),
+		Fidelity:   f.Reachable.DerivedBy.Fidelity,
+		ScannedAt:  rec.ScannedAt.UTC().Format(time.RFC3339),
+	}
 }
 
 // vulnReachabilityQuery is the curated, snake_case result of a stored-module
@@ -271,6 +335,11 @@ type vulnReachabilityQuery struct {
 	// root is exported-api is still reachable, and naming the root kind is not a
 	// statement that anything is exploitable.
 	RouteRoot *routeRootOutput `json:"route_root,omitempty"`
+	// IsolatedAside is what an isolated-frame scan of this module says about the
+	// same advisory, when the answer above came from a consumer-rooted record and
+	// the two frames both hold a verdict. Absent otherwise: an aside beside an
+	// answer drawn from the isolated frame itself would be the same record twice.
+	IsolatedAside *isolatedAside `json:"isolated_aside,omitempty"`
 	// WithdrawnAt is set only on the withdrawn verdict, and carries the retraction
 	// timestamp so the answer states its reason rather than asserting a bare
 	// negative the reader has to take on trust.
@@ -374,7 +443,23 @@ func firstRouteRoot(routes []reachabilityRouteOutput) *routeRootOutput {
 // distinctions are unit-testable from constructed records. It returns either a
 // confident result (reachable / not_reachable / not_affected) for exit 0, or a
 // directing error for the cases where the answer is genuinely unknown.
-func vulnReachabilityVerdict(coord coordinate.ModuleCoordinate, rec vuldomain.VulnerabilityRecord, found bool, vulnID string, classify routeRootFunc) (vulnReachabilityQuery, error) {
+//
+// aside is what the isolated frame says about the same advisory, when the record
+// being classified came from a consumer-rooted one. It rides along on every
+// answer this returns; it is never consulted to reach one.
+func vulnReachabilityVerdict(coord coordinate.ModuleCoordinate, rec vuldomain.VulnerabilityRecord, found bool, vulnID string, classify routeRootFunc, aside *isolatedAside) (vulnReachabilityQuery, error) {
+	res, err := vulnReachabilityAnswer(coord, rec, found, vulnID, classify, aside)
+	if err != nil {
+		return vulnReachabilityQuery{}, err
+	}
+	res.IsolatedAside = aside
+	return res, nil
+}
+
+// vulnReachabilityAnswer is the classification itself. It is split from the
+// function above only so the aside is attached in one place instead of on each
+// of the replies below.
+func vulnReachabilityAnswer(coord coordinate.ModuleCoordinate, rec vuldomain.VulnerabilityRecord, found bool, vulnID string, classify routeRootFunc, aside *isolatedAside) (vulnReachabilityQuery, error) {
 	if classify == nil {
 		classify = unclassifiedRoutes
 	}
@@ -461,7 +546,7 @@ func vulnReachabilityVerdict(coord coordinate.ModuleCoordinate, rec vuldomain.Vu
 	}
 
 	if f.Reachable == nil {
-		return vulnReachabilityQuery{}, nilReachabilityRefusal(coord, rec, f)
+		return vulnReachabilityQuery{}, nilReachabilityRefusal(coord, rec, f, aside)
 	}
 
 	// Answered before the undetermined-confidence diagnostic below, because that
@@ -531,7 +616,7 @@ func vulnReachabilityVerdict(coord coordinate.ModuleCoordinate, rec vuldomain.Vu
 //
 // The absence itself is correct in that case: declining to name a route is the
 // tool refusing to fabricate one. Only the explanation was wrong.
-func nilReachabilityRefusal(coord coordinate.ModuleCoordinate, rec vuldomain.VulnerabilityRecord, f vuldomain.VulnerabilityFinding) error {
+func nilReachabilityRefusal(coord coordinate.ModuleCoordinate, rec vuldomain.VulnerabilityRecord, f vuldomain.VulnerabilityFinding, aside *isolatedAside) error {
 	// Answered first, because it is the one cause no rooting and no re-run can
 	// change. The reachability leg skips a finding that carries no symbols to
 	// search for, leaving the same nil answer and the same empty note as an
@@ -546,6 +631,17 @@ func nilReachabilityRefusal(coord coordinate.ModuleCoordinate, rec vuldomain.Vul
 		return fmt.Errorf(
 			"no reachability route for %s in %s: the scan WAS run with reachability, but it was rooted at %s — the module is its own root, so no consumer entry point exists for a route to start from and none is fabricated. %s",
 			f.ID, coord, rec.Rooting.RootTarget(), remedyProjectRooted())
+	}
+	// The isolated frame HAS a verdict and it is deliberately not being served.
+	// Saying so is the whole point of the refusal: without it the operator reads
+	// "reachability was not computed" for a module the tool holds a confident
+	// not-reachable on, goes looking for it, finds it, and concludes the refusal
+	// was a bug. The verdict is named and its frame is named with it, so what is
+	// being declined is the transfer across the frame boundary, not the evidence.
+	if aside != nil {
+		return fmt.Errorf(
+			"no reachability answer for %s in %s in the frame that was asked about: the best-founded analysis in a consumer frame (%s) recorded no route, and the answer is not taken from the isolated-frame scan of %s (%s at confidence %s, by %s), which asks whether the module reaches its own vulnerable code when built alone — a different question, and not evidence about the build that consumes it. %s",
+			f.ID, coord, rec.Rooting.String(), coord.Path(), aside.Verdict, aside.Confidence, aside.Method, remedyProjectRooted())
 	}
 	return fmt.Errorf(
 		"reachability was not computed for %s in %s (the module was scanned without --reachability). %s",
@@ -651,6 +747,23 @@ func frameLine(f reachabilityFrameOutput) string {
 	return strings.TrimSpace(b.String())
 }
 
+// printIsolatedAside prints what the isolated frame said, under the answer and
+// visibly subordinate to it.
+//
+// It is printed rather than dropped because the two frames disagreeing is itself
+// information — on the store this was measured against, the isolated scan said
+// NOT reachable while the consumer's build carried a route to the symbol — and a
+// reader who has seen the isolated verdict elsewhere is owed the reason it is not
+// the headline.
+func printIsolatedAside(stdout io.Writer, aside *isolatedAside) {
+	if aside == nil {
+		return
+	}
+	_, _ = fmt.Fprintf(stdout,
+		"  isolated frame (a different question — the module built alone, not the build that consumes it): %s [confidence: %s, by: %s]\n",
+		aside.Verdict, aside.Confidence, aside.Method)
+}
+
 func printVulnReachability(stdout io.Writer, res vulnReachabilityQuery) {
 	coord := res.Module + "@" + res.Version
 	switch res.Verdict {
@@ -680,6 +793,7 @@ func printVulnReachability(stdout io.Writer, res vulnReachabilityQuery) {
 		_, _ = fmt.Fprintf(stdout, "%s was WITHDRAWN upstream %s — %s is not affected by it (scanned %s)\n",
 			res.VulnID, res.WithdrawnAt, coord, res.ScannedAt)
 	}
+	printIsolatedAside(stdout, res.IsolatedAside)
 }
 
 func runLocalReachability(ctx context.Context, dir string, stdout, stderr io.Writer) error {

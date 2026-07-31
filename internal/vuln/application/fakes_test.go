@@ -6,6 +6,7 @@ import (
 	"io"
 	"strings"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -623,9 +624,13 @@ type fakeDatabase struct {
 	// errOnLookup fails only LookupFindings, leaving snapshot resolution intact
 	// so a test can isolate an unreadable advisory set from an unusable database.
 	errOnLookup error
+	// snapshotCalls counts fresh-snapshot fetches, so a test can prove a run
+	// refused before spending a network round trip.
+	snapshotCalls atomic.Int64
 }
 
 func (f *fakeDatabase) Snapshot(_ context.Context) (domain.DatabaseSnapshot, io.ReadCloser, error) {
+	f.snapshotCalls.Add(1)
 	if f.err != nil {
 		return domain.DatabaseSnapshot{}, nil, f.err
 	}

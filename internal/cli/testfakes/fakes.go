@@ -854,6 +854,9 @@ type FakeQueryVuln struct {
 	// byIDForWalk holds the walk-scoped answers for ListRecordsByFindingID. A
 	// walk with no entry is unknown to the store, which is an error rather than
 	// an empty result — the same distinction the sqlite adapter makes.
+	// recordLedger holds every generation for a coordinate, for the reads that
+	// pick between analysis frames rather than taking the composed answer.
+	recordLedger map[string][]vulndomain.VulnerabilityRecord
 	byIDForWalk  map[string][]vulndomain.VulnerabilityRecord
 	byIDWalkSeen string
 	Err          error
@@ -906,12 +909,31 @@ func (f *FakeQueryVuln) GetLatestRecordForWalk(_ context.Context, coord coordina
 	return rec, ok, nil
 }
 
+// AddRecords seeds every generation the ledger holds for one coordinate, which
+// is what a frame-aware read consults. The first is also the coordinate's
+// single-record answer, so a test that seeds a ledger does not have to seed the
+// composed read separately.
+func (f *FakeQueryVuln) AddRecords(coord coordinate.ModuleCoordinate, recs ...vulndomain.VulnerabilityRecord) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.recordLedger == nil {
+		f.recordLedger = make(map[string][]vulndomain.VulnerabilityRecord)
+	}
+	f.recordLedger[coord.String()] = recs
+	if len(recs) > 0 {
+		f.records[coord.String()] = recs[0]
+	}
+}
+
 func (f *FakeQueryVuln) ListRecordsForModule(_ context.Context, coord coordinate.ModuleCoordinate, _ string) ([]vulndomain.VulnerabilityRecord, error) {
 	if f.Err != nil {
 		return nil, f.Err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if recs, ok := f.recordLedger[coord.String()]; ok {
+		return recs, nil
+	}
 	if rec, ok := f.records[coord.String()]; ok {
 		return []vulndomain.VulnerabilityRecord{rec}, nil
 	}

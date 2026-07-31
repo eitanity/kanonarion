@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -707,6 +708,20 @@ func runScanRescan(ctx context.Context, walkID string, enableReachability bool, 
 
 	run, err := ctr.RescanWalk.Rescan(ctx, req)
 	if err != nil {
+		// A frame the re-scan cannot reproduce is the one failure here that has a
+		// route out, and the route is a different command — so it is named. The
+		// remedy is built in this layer because the invocations are a CLI contract:
+		// every line the tool prints is pushed through the CLI's own parser by
+		// TestReachabilityRemedies_EveryLineIsAcceptedByTheParser.
+		var frame *application2.FrameNotReproducibleError
+		if errors.As(err, &frame) {
+			// ExitConfig, not ExitFailed: nothing was scanned and nothing failed to
+			// scan. The precondition for answering the question at all — a machine
+			// that can reach the project's tree — was not met, which is the class
+			// this code names.
+			return &exitError{code: ExitConfig, msg: fmt.Sprintf(
+				"vuln-scan-rescan refused: %v. %s", err, remedyRescanProject(frame.ProjectDir))}
+		}
 		return fmt.Errorf("vuln-scan-rescan failed: %w", err)
 	}
 

@@ -479,7 +479,13 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		walkStore, vulnStore, moduleScannerUC,
 		vulnfetch.NewFetchModuleAdapter(fetchUC),
 		clk, vulnapp.PipelineVersion, logger,
-	).WithAudit(factStore).WithHostMemory(meminfo.New())
+	).WithAudit(factStore).WithHostMemory(meminfo.New()).
+		// The same reader the scan gets, for the same reason and one more: a
+		// re-scan reaches for the walk's project directory to reproduce the frame
+		// the run it re-scans was rooted in, and without this it could only
+		// re-derive every module in isolation — which is a different question, and
+		// one whose answer then outranks the consumer's on the compose ladder.
+		WithVendoredClosure(vulnvendorclosure.New(venlocalfs.New(nil)))
 	if modcacheMode {
 		// --from-modcache: govulncheck reads the caller's existing module cache
 		// directly instead of a blob-store-populated temp cache.
