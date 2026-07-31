@@ -111,7 +111,7 @@ func TestLoadFindings_MapsFields(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadFindings: %v", err)
 	}
-	findings, ok := result[coord]
+	findings, ok := result.Findings[coord]
 	if !ok {
 		t.Fatal("coord not present in result")
 	}
@@ -142,8 +142,8 @@ func TestLoadFindings_OmitsCoordWithNoRecord(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadFindings: %v", err)
 	}
-	if len(result) != 0 {
-		t.Errorf("result len = %d, want 0 (coord with no record should be omitted)", len(result))
+	if len(result.Findings) != 0 {
+		t.Errorf("result len = %d, want 0 (coord with no record should be omitted)", len(result.Findings))
 	}
 }
 
@@ -160,8 +160,8 @@ func TestLoadFindings_OmitsCoordWithEmptyFindings(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadFindings: %v", err)
 	}
-	if len(result) != 0 {
-		t.Errorf("result len = %d, want 0 (coord with no findings should be omitted)", len(result))
+	if len(result.Findings) != 0 {
+		t.Errorf("result len = %d, want 0 (coord with no findings should be omitted)", len(result.Findings))
 	}
 }
 
@@ -187,16 +187,16 @@ func TestLoadFindings_MultipleCoords(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadFindings: %v", err)
 	}
-	if len(result) != 2 {
-		t.Errorf("result len = %d, want 2", len(result))
+	if len(result.Findings) != 2 {
+		t.Errorf("result len = %d, want 2", len(result.Findings))
 	}
-	if _, ok := result[coordA]; !ok {
+	if _, ok := result.Findings[coordA]; !ok {
 		t.Error("coordA not in result")
 	}
-	if _, ok := result[coordB]; !ok {
+	if _, ok := result.Findings[coordB]; !ok {
 		t.Error("coordB not in result")
 	}
-	if _, ok := result[coordC]; ok {
+	if _, ok := result.Findings[coordC]; ok {
 		t.Error("coordC should not be in result (no record)")
 	}
 }
@@ -221,8 +221,8 @@ func TestLoadFindings_EmptyCoords(t *testing.T) {
 	if err != nil {
 		t.Fatalf("LoadFindings: %v", err)
 	}
-	if len(result) != 0 {
-		t.Errorf("result len = %d, want 0", len(result))
+	if len(result.Findings) != 0 {
+		t.Errorf("result len = %d, want 0", len(result.Findings))
 	}
 }
 

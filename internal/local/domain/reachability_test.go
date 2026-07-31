@@ -46,3 +46,25 @@ func TestSymbolProbeVerdictConstants(t *testing.T) {
 		t.Errorf("SymbolProbeUnknown = %q, want %q", domain.SymbolProbeUnknown, "unknown")
 	}
 }
+
+// The uncovered list is sorted so a probe's answer is byte-stable across runs
+// that resolve the build in a different order — and by version within a path,
+// because one module can appear twice at two versions in one build.
+func TestSortUncovered(t *testing.T) {
+	mods := []domain.UncoveredModule{
+		{Path: "example.com/b", Version: "v1.0.0"},
+		{Path: "example.com/a", Version: "v2.0.0"},
+		{Path: "example.com/a", Version: "v1.0.0"},
+	}
+	domain.SortUncovered(mods)
+	want := []domain.UncoveredModule{
+		{Path: "example.com/a", Version: "v1.0.0"},
+		{Path: "example.com/a", Version: "v2.0.0"},
+		{Path: "example.com/b", Version: "v1.0.0"},
+	}
+	for i := range want {
+		if mods[i] != want[i] {
+			t.Fatalf("sorted[%d] = %+v, want %+v (full: %+v)", i, mods[i], want[i], mods)
+		}
+	}
+}

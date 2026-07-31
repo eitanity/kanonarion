@@ -226,6 +226,19 @@ func TestLocalContextUseCase_Execute_SymbolAnalyserError(t *testing.T) {
 	}
 }
 
+// -- helper: import analyser fake --
+
+type fakeImportAnalyser struct {
+	modules []domain.ImportedModule
+	err     error
+}
+
+func (f *fakeImportAnalyser) AnalyseImports(_ context.Context, _ string) ([]domain.ImportedModule, error) {
+	return f.modules, f.err
+}
+
+var _ ports.ImportAnalyser = (*fakeImportAnalyser)(nil)
+
 // -- helper: call-tracking import analyser --
 
 type callTrackingImportAnalyser struct {

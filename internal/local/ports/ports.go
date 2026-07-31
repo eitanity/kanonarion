@@ -1,6 +1,8 @@
 package ports
 
 import (
+	"time"
+
 	"context"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -32,14 +34,54 @@ type VulnFinding struct {
 	AdvisoryNamesNoSymbols bool
 }
 
+// Clock supplies the current time. The local probe stamps when its answer was
+// computed, and a stamp read straight off the wall clock is untestable — the
+// architecture rule that forbids time.Now below the adapter layer exists so the
+// stamp can be pinned.
+type Clock interface {
+	// Now returns the current time.
+	Now() time.Time
+}
+
+// FindingSet is what the store held for the coordinates a local run asked
+// about.
+//
+// Scanned is carried alongside Findings because "no findings" and "no record"
+// are different facts that the findings map alone renders identically. A
+// coordinate the store has never seen is unknown; a coordinate with a record and
+// an empty finding set is clean. Reporting the first as the second is the
+// mistake this type exists to make impossible.
+type FindingSet struct {
+	// Findings holds the stored findings for each coordinate that had at least
+	// one. Coordinates with none are absent.
+	Findings map[coordinate.ModuleCoordinate][]VulnFinding
+	// Scanned is every coordinate the store held a vulnerability record for,
+	// with or without findings.
+	Scanned map[coordinate.ModuleCoordinate]struct{}
+}
+
 // VulnFindingLoader loads stored CVE findings for a set of module coordinates.
 // It is the read-only bridge between the global vuln store and a local
 // reachability analysis run.
 type VulnFindingLoader interface {
-	// LoadFindings returns all stored CVE findings for each coordinate that has
-	// at least one finding. Coordinates with no findings are omitted from the
-	// result; errors for individual modules are surfaced in the error return.
-	LoadFindings(ctx context.Context, coords []coordinate.ModuleCoordinate) (map[coordinate.ModuleCoordinate][]VulnFinding, error)
+	// LoadFindings returns the stored findings for each coordinate that has at
+	// least one, and the set of coordinates a record was held for at all.
+	// Errors for individual modules are surfaced in the error return.
+	LoadFindings(ctx context.Context, coords []coordinate.ModuleCoordinate) (FindingSet, error)
+}
+
+// BuildModuleLister enumerates every module the local build resolves.
+//
+// It is separate from ImportAnalyser because the two answer different questions.
+// ImportAnalyser answers "which dependencies does this workspace's own code
+// reach for", which is what a context report is about. This answers "which
+// modules go into the artefact", which is what anything measuring the built
+// binary must be scoped to.
+type BuildModuleLister interface {
+	// BuildModules returns one entry per non-main module in the build, sorted by
+	// path. Modules the build resolves without a version carry an empty Version
+	// rather than being dropped.
+	BuildModules(ctx context.Context, root string) ([]domain.BuildModule, error)
 }
 
 // SymbolProbeResult is returned by SymbolTableProber.Probe.

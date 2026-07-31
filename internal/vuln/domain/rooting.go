@@ -95,6 +95,26 @@ func (r Rooting) RootTarget() string {
 	return target
 }
 
+// IsRootedAt reports whether the frame is an analysis rooted at coord itself —
+// the module is its own root, reached from no consumer.
+//
+// It is the difference between two indistinguishable absences. A finding with no
+// reachability answer may have come from a scan that was never asked for one, or
+// from a scan of a module rooted at itself: a main module has no version, so
+// version-range advisory matching never fires on it, the match is attributed by
+// coordinate instead, and there is no consumer entry point for a route to start
+// from. Both leave a nil Reachable and no note, and only the frame can say
+// which — a reader that assumes the first tells an operator who did pass
+// --reachability to pass it again.
+//
+// A bare "target-rooted" frame that names no target answers false: it states
+// that some target was the root without saying which, and reading it as this
+// coordinate would assert a root the record never recorded.
+func (r Rooting) IsRootedAt(coord coordinate.ModuleCoordinate) bool {
+	target := r.RootTarget()
+	return target != "" && target == coord.String()
+}
+
 // String renders the frame for display, naming the unrecorded case rather than
 // printing an empty column: a blank reads as a missing value, and "not
 // recorded" is the fact.

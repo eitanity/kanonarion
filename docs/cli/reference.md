@@ -57,7 +57,7 @@ depth policy, store layout, and exit codes - see
 - [`policy`](policy.md) - `policy validate` and `policy show`
 - [`inspect`](inspect.md) - run the full pipeline (walk → extract → vuln-scan → context) for a module
 - [`verification-coverage`](verification-coverage.md) - report how a walk's modules were verified, and whether cross-verification collapsed
-- [`provenance`](provenance.md) - fork/copy provenance facts for a module path (name-path heuristic)
+- [`provenance`](provenance.md) - fork/republication provenance facts for a module (name-path heuristic + licence copyright lines)
 - [`config`](config.md) - read and write configuration values
 - [`store`](store.md) - inspect and manage the kanonarion store
 

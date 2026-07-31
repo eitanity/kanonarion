@@ -19,8 +19,14 @@ command that produces the data one of them reads. Keep them distinct:
 | Live local probe | `reachability --local <dir>` | Analyses the **working tree** directly - a separate, live analysis, not a query of stored facts. |
 
 > A "not reachable" answer from the **query** is a *read of a prior
-> analysis*, not a fresh guarantee. To refresh it, re-run the producer:
-> `kanonarion vuln-scan <module>@<version> --reachability`.
+> analysis*, not a fresh guarantee. To refresh it, re-run the producer. Note
+> the grammar: `vuln-scan`'s positional argument is a **walk id**, never a
+> coordinate. The coordinate form is the `--module` flag:
+>
+> ```bash
+> kanonarion walk <module>@<version>
+> kanonarion vuln-scan --module <module>@<version> --reachability
+> ```
 
 The project-scoped vuln views - `audit`, `inspect --gomod`, and
 `vuln-scan --gomod/--tool/--project` - now derive their verdict from the **same
@@ -76,10 +82,36 @@ as vulnerable and the only trace it can report is the package's own `init` runni
 calling the vulnerable code. That is neither `reachable` nor `not_reachable`, and
 it is not fixed by computing a call graph, so it is answered before the
 "run this command" diagnostics rather than through them.
-| `… has not been vuln-scanned` | non-zero | No record. Run `vuln-scan <m>@<v> --reachability`. |
+| `… has not been vuln-scanned` | non-zero | No record. Walk the module, then scan that walk. |
 | `… ScanFailed` / `… is unscannable` | non-zero | Module could not be scanned; reachability is unknown. |
-| `… scanned without --reachability` | non-zero | Findings exist but reachability was not computed. |
+| `… scanned without --reachability` | non-zero | Findings exist and the scan was rooted elsewhere, so the flag was genuinely not passed. |
+| `no reachability route … it was rooted at <coord>` | non-zero | The scan **did** run with reachability, but the module was its own root. See below. |
 | `… reachability is undetermined` | non-zero | Reachability ran but the call graph was unavailable. |
+
+Every one of these refusals prints the commands that carry out its remedy, and
+each printed line is a whole invocation the CLI accepts as written.
+
+### A module rooted at itself has no consumer route
+
+A finding with no reachability answer has more than one cause, and they take
+opposite remedies. The refusal reads the cause off the record's analysis frame
+rather than assuming one.
+
+When the newest scan of a coordinate was rooted at **that same coordinate** —
+a `walk <module>@<version>` followed by `vuln-scan --module … --reachability`
+produces exactly this — the module is the analysis's own main module. Version-
+range advisory matching never fires on a main module, so the finding is
+attributed by coordinate, and there is no consumer above it for a route to
+start from. The tool declines to fabricate one.
+
+Re-scanning the module cannot help however it is invoked. Only a scan rooted at
+the consuming project can produce a consumer route:
+
+```bash
+kanonarion walk --gomod ./go.mod
+kanonarion vuln-scan --gomod ./go.mod --reachability
+kanonarion reachability --local .
+```
 
 ### Root classification
 
@@ -202,6 +234,31 @@ records already in the store. No fetch is performed; populate the store
 beforehand with `kanonarion walk` and `kanonarion vuln-scan` for the
 modules of interest.
 
+The probe is scoped to the **whole build** — every non-main module
+`go list -deps ./...` reports, transitive as well as direct — because the
+binary whose symbol table it reads contains the whole build. A module reached
+only through a dependency (a JWT library pulled in by a SAML library, say) is
+queried like any other.
+
+### Coverage: what the answer speaks about
+
+The probe reports stored findings, so it can only speak about modules the store
+holds a record for. Every module in the build it cannot speak about is **named**
+in `coverage.uncovered_modules` with its reason, never omitted — a ten-module
+reply that silently drops the eleventh is indistinguishable from one that
+examined eleven and cleared one.
+
+| `reason` | Means |
+|---|---|
+| `no stored vulnerability record for this coordinate; it has never been vuln-scanned` | Nothing is known about it either way. This is **not** "no known vulnerabilities" — a record with no findings is an answer and counts as covered. |
+| `the local build resolves this module without a version (a directory replacement), so it names no coordinate to look up` | Nothing asked the store about it. |
+
+`coverage.uncovered_remedy` names the route to a wider answer. There is no
+refresh flag on `reachability` and none is needed: `version_id` is a content
+digest recomputed from the working tree on every run, so the probe is never
+serving a cached snapshot. What limits the answer is the store's coverage, and
+scanning the build is what widens it.
+
 ## Workspace resolution
 
 `--local <dir>` uses the `go.mod` at `<dir>` (or, if absent, the nearest
@@ -233,6 +290,21 @@ JSON shape (text rendering follows the same fields):
   "version_id": "local-<sha256>",
   "probe_kind": "",
   "notice": "<optional diagnostic>",
+  "coverage": {
+    "snapshot_taken_at": "2026-01-01T00:00:00Z",
+    "build_modules": 2,
+    "queried_modules": 2,
+    "covered_modules": 1,
+    "modules_with_findings": 0,
+    "uncovered_modules": [
+      {
+        "path": "example.com/dep",
+        "version": "v1.8.1",
+        "reason": "no stored vulnerability record for this coordinate; it has never been vuln-scanned"
+      }
+    ],
+    "uncovered_remedy": "<the commands that widen the next answer>"
+  },
   "modules": [
     {
       "path": "github.com/some/dep",

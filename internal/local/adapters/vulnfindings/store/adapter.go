@@ -25,15 +25,24 @@ func New(store vulnports.VulnerabilityStore, pipelineVersion string) *VulnStoreA
 }
 
 // LoadFindings queries the latest stored vulnerability record for each
-// coordinate and returns only coordinates that have at least one finding.
-func (a *VulnStoreAdapter) LoadFindings(ctx context.Context, coords []coordinate.ModuleCoordinate) (map[coordinate.ModuleCoordinate][]ports.VulnFinding, error) {
-	result := make(map[coordinate.ModuleCoordinate][]ports.VulnFinding)
+// coordinate. Coordinates with at least one finding land in Findings; every
+// coordinate a record was held for at all — findings or not — lands in Scanned,
+// so a caller can tell "clean" from "never scanned".
+func (a *VulnStoreAdapter) LoadFindings(ctx context.Context, coords []coordinate.ModuleCoordinate) (ports.FindingSet, error) {
+	result := ports.FindingSet{
+		Findings: make(map[coordinate.ModuleCoordinate][]ports.VulnFinding),
+		Scanned:  make(map[coordinate.ModuleCoordinate]struct{}),
+	}
 	for _, coord := range coords {
 		rec, found, err := a.store.GetLatestVulnerabilityRecord(ctx, coord, a.pipelineVersion)
 		if err != nil {
-			return nil, fmt.Errorf("loading vuln record for %s: %w", coord, err)
+			return ports.FindingSet{}, fmt.Errorf("loading vuln record for %s: %w", coord, err)
 		}
-		if !found || len(rec.Findings) == 0 {
+		if !found {
+			continue
+		}
+		result.Scanned[coord] = struct{}{}
+		if len(rec.Findings) == 0 {
 			continue
 		}
 		findings := make([]ports.VulnFinding, 0, len(rec.Findings))
@@ -53,7 +62,7 @@ func (a *VulnStoreAdapter) LoadFindings(ctx context.Context, coords []coordinate
 			}
 			findings = append(findings, vf)
 		}
-		result[coord] = findings
+		result.Findings[coord] = findings
 	}
 	return result, nil
 }

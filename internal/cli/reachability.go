@@ -14,6 +14,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"github.com/eitanity/kanonarion/internal/adapters/clock"
 	localimporter "github.com/eitanity/kanonarion/internal/local/adapters/importer/golist"
 	localprober "github.com/eitanity/kanonarion/internal/local/adapters/probe/builder"
 	localsnapshot "github.com/eitanity/kanonarion/internal/local/adapters/snapshot/walkdir"
@@ -70,12 +71,52 @@ type reachabilityModule struct {
 	Findings []reachabilityFinding `json:"findings"`
 }
 
+// reachabilityUncovered is one module in the local build the probe holds no
+// answer about.
+type reachabilityUncovered struct {
+	Path    string `json:"path"`
+	Version string `json:"version,omitempty"`
+	Reason  string `json:"reason"`
+}
+
+// reachabilityCoverage states what the local probe's answer was drawn from and
+// what it left out.
+//
+// It is emitted on every local probe, not only the incomplete ones. A reader
+// cannot tell a complete answer from a short one without it, and the field that
+// says so has to be present when the answer is complete or its absence becomes
+// the signal instead.
+type reachabilityCoverage struct {
+	// SnapshotTakenAt is when the workspace snapshot behind version_id was
+	// built. The snapshot is recomputed from the working tree on every run, so
+	// this is the age of the answer.
+	SnapshotTakenAt string `json:"snapshot_taken_at"`
+	// BuildModules is how many non-main modules the local build resolves.
+	BuildModules int `json:"build_modules"`
+	// QueriedModules is how many of them named a coordinate the store was asked
+	// about.
+	QueriedModules int `json:"queried_modules"`
+	// CoveredModules is how many the store held a vulnerability record for —
+	// the modules this answer speaks about.
+	CoveredModules int `json:"covered_modules"`
+	// ModulesWithFindings is how many carried at least one stored finding.
+	ModulesWithFindings int `json:"modules_with_findings"`
+	// UncoveredModules names every module in the build this answer does not
+	// speak about. Never capped.
+	UncoveredModules []reachabilityUncovered `json:"uncovered_modules,omitempty"`
+	// UncoveredRemedy is the invocation that brings the uncovered modules into
+	// a later answer. Present exactly when something is uncovered: a remedy for
+	// nothing would read as an outstanding action.
+	UncoveredRemedy string `json:"uncovered_remedy,omitempty"`
+}
+
 type reachabilityOutput struct {
 	Root       string               `json:"root"`
 	ModulePath string               `json:"module_path"`
 	VersionID  string               `json:"version_id"`
 	ProbeKind  string               `json:"probe_kind"`
 	Notice     string               `json:"notice,omitempty"`
+	Coverage   reachabilityCoverage `json:"coverage"`
 	Modules    []reachabilityModule `json:"modules"`
 }
 
@@ -320,8 +361,8 @@ func vulnReachabilityVerdict(coord coordinate.ModuleCoordinate, rec vuldomain.Vu
 	}
 	if !found {
 		return vulnReachabilityQuery{}, &exitError{code: ExitNotFound, msg: fmt.Sprintf(
-			"no vulnerability record for %s: the module has not been vuln-scanned. Run:\n  kanonarion vuln-scan %s --reachability",
-			coord, coord)}
+			"no vulnerability record for %s: the module has not been vuln-scanned. %s",
+			coord, remedyScanModule(coord))}
 	}
 
 	// Whether reachability could have been computed is a coverage question, so it
@@ -338,16 +379,16 @@ func vulnReachabilityVerdict(coord coordinate.ModuleCoordinate, rec vuldomain.Vu
 			detail = ": " + rec.ErrorDetail
 		}
 		return vulnReachabilityQuery{}, fmt.Errorf(
-			"%s could not be scanned (ScanFailed)%s; reachability is unknown. Re-run:\n  kanonarion vuln-scan %s --reachability",
-			coord, detail, coord)
+			"%s could not be scanned (ScanFailed)%s; reachability is unknown. %s",
+			coord, detail, remedyRescanModule(coord))
 	case vuldomain.CoverageUnscannable:
 		detail := ""
 		if rec.UnscannableReason != "" {
 			detail = ": " + rec.UnscannableReason
 		}
 		return vulnReachabilityQuery{}, fmt.Errorf(
-			"%s is unscannable%s; reachability cannot be determined. See: kanonarion vuln-show %s",
-			coord, detail, coord)
+			"%s is unscannable%s; reachability cannot be determined. %s",
+			coord, detail, remedyShowRecord(coord))
 	case vuldomain.CoverageAnalysed:
 		// Analysed: the findings below are an answer about a module that was read.
 	}
@@ -401,9 +442,7 @@ func vulnReachabilityVerdict(coord coordinate.ModuleCoordinate, rec vuldomain.Vu
 	}
 
 	if f.Reachable == nil {
-		return vulnReachabilityQuery{}, fmt.Errorf(
-			"reachability was not computed for %s in %s (the module was scanned without --reachability). Run:\n  kanonarion callgraph %s\n  kanonarion vuln-scan %s --reachability",
-			f.ID, coord, coord, coord)
+		return vulnReachabilityQuery{}, nilReachabilityRefusal(coord, rec, f)
 	}
 
 	// Answered before the undetermined-confidence diagnostic below, because that
@@ -431,8 +470,8 @@ func vulnReachabilityVerdict(coord coordinate.ModuleCoordinate, rec vuldomain.Vu
 
 	if f.Reachable.Confidence == vuldomain.ConfidenceUnknown {
 		return vulnReachabilityQuery{}, fmt.Errorf(
-			"reachability for %s in %s is undetermined: the call graph was unavailable during the scan. Run:\n  kanonarion callgraph %s\n  kanonarion vuln-scan %s --reachability",
-			f.ID, coord, coord, coord)
+			"reachability for %s in %s is undetermined: the call graph was unavailable during the scan. %s",
+			f.ID, coord, remedyRebuildGraphThenRescan(coord))
 	}
 
 	verdict := verdictNotReachable
@@ -455,6 +494,43 @@ func vulnReachabilityVerdict(coord coordinate.ModuleCoordinate, rec vuldomain.Vu
 		RouteRoot:  firstRouteRoot(routes),
 		ScannedAt:  rec.ScannedAt.UTC().Format(time.RFC3339),
 	}, nil
+}
+
+// nilReachabilityRefusal names the cause of a finding that carries no
+// reachability answer, reading it off the record rather than assuming one.
+//
+// There is more than one cause and they take opposite remedies, so a message
+// that assumes is worse than no message at all. This one asserted the module had
+// been "scanned without --reachability" for every nil answer. For a module whose
+// newest scan was rooted at ITSELF that claim is contradicted by the record it
+// was printed from: the scan did run with --reachability, and the finding has no
+// route because a module rooted at itself is the analysis's own main module —
+// version-range advisory matching never fires on a main module, so the finding
+// is attributed by coordinate, and there is no consumer above it for a route to
+// start from. Re-running the named remedy produced the identical refusal, whose
+// stated cause was by then demonstrably false.
+//
+// The absence itself is correct in that case: declining to name a route is the
+// tool refusing to fabricate one. Only the explanation was wrong.
+func nilReachabilityRefusal(coord coordinate.ModuleCoordinate, rec vuldomain.VulnerabilityRecord, f vuldomain.VulnerabilityFinding) error {
+	// Answered first, because it is the one cause no rooting and no re-run can
+	// change. The reachability leg skips a finding that carries no symbols to
+	// search for, leaving the same nil answer and the same empty note as an
+	// unrequested one — so this record too was being reported as a missing flag,
+	// for a question that had no target whichever flags were passed.
+	if f.AdvisoryNamesNoSymbols {
+		return fmt.Errorf(
+			"no symbol-level reachability for %s in %s: the advisory names no symbols for this module path, so there was never a symbol to search for — the module is affected at package level and no flag or re-scan changes that. %s",
+			f.ID, coord, remedyShowRecord(coord))
+	}
+	if rec.Rooting.IsRootedAt(coord) {
+		return fmt.Errorf(
+			"no reachability route for %s in %s: the scan WAS run with reachability, but it was rooted at %s — the module is its own root, so no consumer entry point exists for a route to start from and none is fabricated. %s",
+			f.ID, coord, rec.Rooting.RootTarget(), remedyProjectRooted())
+	}
+	return fmt.Errorf(
+		"reachability was not computed for %s in %s (the module was scanned without --reachability). %s",
+		f.ID, coord, remedyRebuildGraphThenRescan(coord))
 }
 
 // findFindingByID matches a vulnerability ID against each finding's primary ID
@@ -628,6 +704,7 @@ func runLocalReachabilityInner(ctx context.Context, abs string, stderr io.Writer
 		localimporter.New(""),
 		vulnLoader,
 		localprober.New(""),
+		clock.System{},
 	)
 
 	result, err := uc.Execute(ctx, abs)
@@ -665,6 +742,32 @@ func reachabilityResultToOutput(r localdomain.LocalReachabilityResult) reachabil
 		VersionID:  r.VersionID,
 		ProbeKind:  r.ProbeKind,
 		Notice:     r.Notice,
+		Coverage:   coverageToOutput(r.Coverage),
 		Modules:    mods,
 	}
+}
+
+// coverageToOutput renders the probe's coverage, attaching the remedy that
+// brings uncovered modules into a later answer.
+//
+// The remedy is built here rather than in the use case for the reason every
+// remedy in this file is: the invocations are contract-tested against the CLI's
+// own parser, and a command line assembled below the CLI is one nothing checks.
+func coverageToOutput(c localdomain.ProbeCoverage) reachabilityCoverage {
+	out := reachabilityCoverage{
+		SnapshotTakenAt:     c.TakenAt.UTC().Format(time.RFC3339),
+		BuildModules:        c.BuildModules,
+		QueriedModules:      c.Queried,
+		CoveredModules:      c.Covered,
+		ModulesWithFindings: c.WithFindings,
+	}
+	for _, u := range c.Uncovered {
+		out.UncoveredModules = append(out.UncoveredModules, reachabilityUncovered{
+			Path: u.Path, Version: u.Version, Reason: u.Reason,
+		})
+	}
+	if len(out.UncoveredModules) > 0 {
+		out.UncoveredRemedy = remedyScanUncovered().String()
+	}
+	return out
 }

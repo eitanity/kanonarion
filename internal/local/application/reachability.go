@@ -16,35 +16,46 @@ import (
 // binary with inlining disabled and reading its symbol table.
 type LocalReachabilityUseCase struct {
 	snapshot   ports.SnapshotBuilder
-	imports    ports.ImportAnalyser
+	build      ports.BuildModuleLister
 	vulnLoader ports.VulnFindingLoader
 	prober     ports.SymbolTableProber
+	clock      ports.Clock
 }
 
 // NewLocalReachabilityUseCase constructs a LocalReachabilityUseCase.
+//
+// The module set comes from a BuildModuleLister, not an ImportAnalyser: the
+// probe measures a binary containing the whole build, so scoping its finding
+// lookup to the workspace's direct imports left every transitive module — and
+// any stored finding against one — out of the answer with nothing said.
 func NewLocalReachabilityUseCase(
 	snapshot ports.SnapshotBuilder,
-	imports ports.ImportAnalyser,
+	build ports.BuildModuleLister,
 	vulnLoader ports.VulnFindingLoader,
 	prober ports.SymbolTableProber,
+	clk ports.Clock,
 ) *LocalReachabilityUseCase {
 	return &LocalReachabilityUseCase{
 		snapshot:   snapshot,
-		imports:    imports,
+		build:      build,
 		vulnLoader: vulnLoader,
 		prober:     prober,
+		clock:      clk,
 	}
 }
 
 // Execute runs the symbol table probe and returns per-CVE reachability verdicts.
 //
 // Flow:
-// 1. Build snapshot → VersionID + module path
-// 2. Run import-level analysis to find dependency module coordinates
-// 3. Load stored CVE findings for those coordinates
-// 4. Build probe binary (inlining disabled) and read its symbol table
-// 5. For each module with findings, check which affected symbols are present
+//  1. Build snapshot → VersionID + module path
+//  2. Enumerate every module the local build resolves
+//  3. Load stored CVE findings for those coordinates, keeping which coordinates
+//     the store held a record for at all
+//  4. Build probe binary (inlining disabled) and read its symbol table
+//  5. For each module with findings, check which affected symbols are present
+//  6. State the coverage: what the answer speaks about, and what it does not
 func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (domain.LocalReachabilityResult, error) {
+	takenAt := uc.clock.Now().UTC()
 	snap, err := uc.snapshot.Build(ctx, root)
 	if err != nil {
 		return domain.LocalReachabilityResult{}, fmt.Errorf("building workspace snapshot: %w", err)
@@ -54,25 +65,50 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 		return domain.LocalReachabilityResult{}, fmt.Errorf("locating go.mod in snapshot: %w", err)
 	}
 
-	importedMods, err := uc.imports.AnalyseImports(ctx, root)
+	buildMods, err := uc.build.BuildModules(ctx, root)
 	if err != nil {
-		return domain.LocalReachabilityResult{}, fmt.Errorf("analysing imports: %w", err)
+		return domain.LocalReachabilityResult{}, fmt.Errorf("listing build modules: %w", err)
 	}
 
-	// Build coordinate list for vuln lookup.
-	coords := make([]coordinate.ModuleCoordinate, 0, len(importedMods))
-	for _, m := range importedMods {
+	// Build the coordinate list. A module the build resolves without a version
+	// names no coordinate; it is recorded as uncovered rather than dropped,
+	// because "the store said nothing about it" and "nothing asked the store
+	// about it" are not the same claim.
+	coords := make([]coordinate.ModuleCoordinate, 0, len(buildMods))
+	var uncovered []domain.UncoveredModule
+	for _, m := range buildMods {
 		coord, cerr := coordinate.NewModuleCoordinate(m.Path, m.Version)
 		if cerr != nil {
+			uncovered = append(uncovered, domain.UncoveredModule{
+				Path: m.Path, Version: m.Version, Reason: domain.UncoveredNoCoordinate,
+			})
 			continue
 		}
 		coords = append(coords, coord)
 	}
 
-	findings, err := uc.vulnLoader.LoadFindings(ctx, coords)
+	set, err := uc.vulnLoader.LoadFindings(ctx, coords)
 	if err != nil {
 		return domain.LocalReachabilityResult{}, fmt.Errorf("loading vuln findings: %w", err)
 	}
+	for _, coord := range coords {
+		if _, ok := set.Scanned[coord]; !ok {
+			uncovered = append(uncovered, domain.UncoveredModule{
+				Path: coord.Path(), Version: coord.Version(), Reason: domain.UncoveredNoStoredRecord,
+			})
+		}
+	}
+	domain.SortUncovered(uncovered)
+	coverage := domain.ProbeCoverage{
+		TakenAt:      takenAt,
+		BuildModules: len(buildMods),
+		Queried:      len(coords),
+		Covered:      len(set.Scanned),
+		WithFindings: len(set.Findings),
+		Uncovered:    uncovered,
+	}
+
+	findings := set.Findings
 	if len(findings) == 0 {
 		// No stored findings for any dependency — skip the expensive probe.
 		return domain.LocalReachabilityResult{
@@ -81,8 +117,9 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 			VersionID:  snap.VersionID,
 			ProbeKind:  "",
 			Modules:    nil,
-			Notice: fmt.Sprintf("no stored vulnerability findings for the %d analysed dependency module(s); "+
-				"run 'kanonarion walk' then 'kanonarion vuln-scan' for these coordinates to populate findings", len(coords)),
+			Coverage:   coverage,
+			Notice: fmt.Sprintf("no stored vulnerability findings for the %d module(s) of this build the store holds a record for",
+				len(set.Scanned)),
 		}, nil
 	}
 
@@ -139,6 +176,7 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 		VersionID:  snap.VersionID,
 		ProbeKind:  probeKind,
 		Modules:    modResults,
+		Coverage:   coverage,
 		Notice:     notice,
 	}, nil
 }
