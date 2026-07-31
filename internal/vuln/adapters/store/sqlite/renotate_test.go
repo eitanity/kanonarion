@@ -16,11 +16,24 @@ import (
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 )
 
-// The notation migration is the last one in the list, so everything before it is
-// the schema the store had when the bare-hex rows were written.
+// notationVersion is the migration that re-notated the bare-hex seals.
+const notationVersion = 15
+
+// migrationsBeforeNotation returns the schema the store had when the bare-hex
+// rows were written.
+//
+// It selects by version rather than by position. "Everything but the last"
+// silently retargets itself at whatever migration is added next, and the
+// failure it produces is a seal mismatch — which reads as a re-notation bug
+// rather than as a test that is no longer pointing at the re-notation.
 func migrationsBeforeNotation() []sqlitestore.Migration {
-	all := sqlite.Migrations()
-	return all[:len(all)-1]
+	var before []sqlitestore.Migration
+	for _, m := range sqlite.Migrations() {
+		if m.Version < notationVersion {
+			before = append(before, m)
+		}
+	}
+	return before
 }
 
 // preNotationStore opens a store at the schema that precedes the re-notation, so

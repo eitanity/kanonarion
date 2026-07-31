@@ -102,7 +102,7 @@ func runDependents(ctx context.Context, moduleArg, storeRoot, walkID string, jso
 		return fmt.Errorf("getting walk: %w", err)
 	}
 
-	deps := walkDependents(rec, coord, includeRoot)
+	deps, rootExcluded := walkDependents(rec, coord, includeRoot)
 	if directOnly {
 		filtered := deps[:0]
 		for _, d := range deps {
@@ -116,7 +116,7 @@ func runDependents(ctx context.Context, moduleArg, storeRoot, walkID string, jso
 	if jsonOut {
 		return writeDependentsJSON(stdout, walkID, coord.String(), deps)
 	}
-	return writeDependentsText(stdout, walkID, coord.String(), deps, directOnly)
+	return writeDependentsText(stdout, walkID, coord.String(), deps, directOnly, rootExcluded, includeRoot)
 }
 
 // dependentResult holds a single module that depends on the queried target.
@@ -131,7 +131,14 @@ type dependentResult struct {
 // includeRoot is true, the walk root is included if it has such an edge and
 // is annotated with Root=true. Direct is set from GraphNode.DirectDependency
 // and is never true for the walk root (the root is not a dependency of itself).
-func walkDependents(rec walkdomain.WalkRecord, coord coordinate.ModuleCoordinate, includeRoot bool) []dependentResult {
+//
+// The second return value reports that the root WAS dropped from the answer —
+// it depends on coord and includeRoot was off. That fact is only knowable here,
+// where the edge is seen and the exclusion applied, and it is exactly the fact
+// an empty answer needs in order to state its own scope. Without it a caller
+// cannot tell "nothing depends on this module" from "nothing except the thing
+// you are asking on behalf of".
+func walkDependents(rec walkdomain.WalkRecord, coord coordinate.ModuleCoordinate, includeRoot bool) ([]dependentResult, bool) {
 	directDeps := make(map[coordinate.ModuleCoordinate]bool)
 	for _, n := range rec.Graph.Nodes {
 		if n.DirectDependency {
@@ -141,6 +148,7 @@ func walkDependents(rec walkdomain.WalkRecord, coord coordinate.ModuleCoordinate
 
 	seen := make(map[coordinate.ModuleCoordinate]bool)
 	var out []dependentResult
+	var rootExcluded bool
 
 	for _, edge := range rec.Graph.Edges {
 		if edge.To.Path() != coord.Path() || edge.To.Version() != coord.Version() {
@@ -152,6 +160,7 @@ func walkDependents(rec walkdomain.WalkRecord, coord coordinate.ModuleCoordinate
 		seen[edge.From] = true
 		isRoot := edge.From.Path() == rec.Target.Path() && edge.From.Version() == rec.Target.Version()
 		if isRoot && !includeRoot {
+			rootExcluded = true
 			continue
 		}
 		out = append(out, dependentResult{
@@ -171,7 +180,7 @@ func walkDependents(rec walkdomain.WalkRecord, coord coordinate.ModuleCoordinate
 		}
 		return out[i].Coord.Version() < out[j].Coord.Version()
 	})
-	return out
+	return out, rootExcluded
 }
 
 type dependentsJSON struct {
@@ -232,18 +241,56 @@ func findWalkContaining(ctx context.Context, uc QueryWalksUseCase, coord coordin
 	return "", fmt.Errorf("no walk found containing %s", coord)
 }
 
-func writeDependentsText(w io.Writer, walkID, target string, deps []dependentResult, directOnly bool) error {
+// Scope suffixes for the answer line. The root is excluded by default, so
+// every answer produced under that default is narrower than the question asked
+// and has to say so — an empty one most of all, because a reader relaying it
+// verbatim otherwise reports the module as unused.
+const (
+	// rootDependsSuffix is used when the root itself depends on the target and
+	// was dropped: the answer names the omission and the flag that reverses it.
+	rootDependsSuffix = " (the walk root does; it is excluded by default — pass --include-root)"
+	// rootScopeSuffix is used when the root does not depend on the target
+	// either. There is nothing being withheld, only a scope to state.
+	rootScopeSuffix = " (walk root excluded by default)"
+)
+
+// dependentsScopeSuffix returns the suffix the answer line carries.
+//
+// It is empty when --include-root was passed: the root was in scope, so there
+// is no exclusion to disclose and a hint pointing at a flag already in effect
+// would be noise.
+func dependentsScopeSuffix(rootExcluded, includeRoot bool) string {
+	switch {
+	case includeRoot:
+		return ""
+	case rootExcluded:
+		return rootDependsSuffix
+	default:
+		return rootScopeSuffix
+	}
+}
+
+func writeDependentsText(w io.Writer, walkID, target string, deps []dependentResult, directOnly, rootExcluded, includeRoot bool) error {
 	qualifier := ""
 	if directOnly {
 		qualifier = "direct "
 	}
 	if len(deps) == 0 {
-		if _, err := fmt.Fprintf(w, "No %smodules in walk %s depend on %s\n", qualifier, walkID, target); err != nil {
+		if _, err := fmt.Fprintf(w, "No %smodules in walk %s depend on %s%s\n",
+			qualifier, walkID, target, dependentsScopeSuffix(rootExcluded, includeRoot)); err != nil {
 			return fmt.Errorf("writing output: %w", err)
 		}
 		return nil
 	}
-	if _, err := fmt.Fprintf(w, "%d %smodule(s) in walk %s depend on %s:\n", len(deps), qualifier, walkID, target); err != nil {
+	// A non-zero answer states the exclusion only when something was actually
+	// withheld. "walk root excluded by default" on a list that names ten
+	// modules teaches nothing the help text does not already carry.
+	header := ""
+	if rootExcluded && !includeRoot {
+		header = rootDependsSuffix
+	}
+	if _, err := fmt.Fprintf(w, "%d %smodule(s) in walk %s depend on %s%s:\n",
+		len(deps), qualifier, walkID, target, header); err != nil {
 		return fmt.Errorf("writing header: %w", err)
 	}
 	for _, d := range deps {

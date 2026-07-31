@@ -1,4 +1,4 @@
-  # Getting started - understand an unfamiliar Go project
+# Getting started - understand an unfamiliar Go project
 
 ## Why this matters
 
@@ -240,7 +240,18 @@ outbound calls.
 
 ### 5. Drill-downs
 
-All of these are warm-store reads and return in **tens of milliseconds**:
+All of these are warm-store reads - nothing below re-analyses anything. They
+are not all the same cost, and the difference is a **record read** versus a
+**graph computation**:
+
+- **Record reads** (`license-compat`, `vuln-show`, `interface-show`) return in
+  **tens of milliseconds** - the store holds the answer and hands it over.
+- **Graph drill-down queries** (`callers`, `callees`, `implementers`) are
+  **seconds** on a mid-sized call graph - measured at 3.7-5.9 s on a
+  25,256-node / 224,272-edge graph. They walk the graph rather than read a row.
+- **Transitive traversals** (`callers`/`callees` with `--transitive`) are **tens
+  of seconds** on the same graph - a depth-3 caller traversal over 465 nodes
+  measured 47.4 s.
 
 ```bash
 # Is this dependency's closure licence-compatible? Omitting --target adopts

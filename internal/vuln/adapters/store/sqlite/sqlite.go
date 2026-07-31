@@ -660,6 +660,37 @@ ALTER TABLE walk_scan_run_modules ADD COLUMN record_content_hash TEXT NOT NULL D
 			// spells it.
 			Fn: renotateVulnSeals,
 		},
+		{
+			Module:  "vuln",
+			Version: 16,
+			// Drop is_reachable from the findings index.
+			//
+			// The column was written on every indexed finding and preserved by
+			// both table rebuilds this adapter has done, and no SELECT has ever
+			// projected it, filtered on it or ordered by it. The index exists so
+			// vuln-by-id can name the affected modules without decoding every
+			// record; reachability was never part of that question, and the
+			// record remains the authority on it.
+			//
+			// It is dropped rather than corrected because a bool is the wrong
+			// shape for what reachability now means: the domain carries three
+			// states — reachable, not reachable, and not determined — and the
+			// stored rows cannot express the third. Rows written by superseded
+			// generations therefore assert a claim this generation would not
+			// make, with nothing on the row saying so. A column no reader has
+			// ever consulted has never taught a reader that it must filter on
+			// pipeline_version first, so the first cross-store query to reach
+			// for it would inherit that claim silently. Re-adding a
+			// three-valued column when such a query actually exists costs less
+			// than carrying a wrong one until then.
+			//
+			// No purge and no PipelineVersion bump: the index is derived from
+			// the records, not a fact of its own, and every record's own
+			// reachability field is untouched.
+			SQL: `
+ALTER TABLE vulnerability_findings_index DROP COLUMN is_reachable;
+`,
+		},
 	}
 }
 
@@ -853,22 +884,19 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 	}
 
 	// Populate the findings index for cross-store queries.
+	//
+	// The row carries the key and nothing else. Reachability deliberately does
+	// not travel with it: the record is the authority on that, it is
+	// three-valued rather than boolean, and an index column carrying a claim no
+	// reader consults is a claim that goes stale unobserved.
 	const idxQ = `
 INSERT INTO vulnerability_findings_index (
     finding_id, module_path, module_version, pipeline_version,
-    snapshot_source, snapshot_version, rooting, is_reachable
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    snapshot_source, snapshot_version, rooting
+) VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT DO NOTHING`
 
 	for _, f := range served.Findings {
-		var isReachable *int
-		if f.Reachable != nil {
-			v := 0
-			if f.Reachable.IsReachable {
-				v = 1
-			}
-			isReachable = &v
-		}
 		// Index all aliases too (CVE, GHSA, etc.) so queries by any identifier work.
 		ids := append([]string{f.ID}, f.Aliases...)
 		for _, id := range ids {
@@ -876,7 +904,7 @@ ON CONFLICT DO NOTHING`
 				id,
 				record.Coordinate.Path(), record.Coordinate.Version(), record.PipelineVersion,
 				record.DatabaseSnapshot.Source(), record.DatabaseSnapshot.Version(),
-				string(rooting), isReachable,
+				string(rooting),
 			); err != nil {
 				return fmt.Errorf("inserting finding index entry %s: %w", id, err)
 			}

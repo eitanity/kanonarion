@@ -3,11 +3,13 @@ package sqlite_test
 import (
 	"context"
 	"errors"
+	"slices"
 	"strings"
 	"testing"
 	"time"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
@@ -152,43 +154,116 @@ func TestPutVulnerabilityRecord_ReportsTransactionStartFailure(t *testing.T) {
 	}
 }
 
-// TestPutVulnerabilityRecord_IndexesReachability covers the reachability arm of
-// the index write. The column is what lets a consumer distinguish a reachable
-// finding from a merely present one, and nil (never analysed) is a third state
-// that must not collapse into "not reachable".
-func TestPutVulnerabilityRecord_IndexesReachability(t *testing.T) {
-	reachable := &domain.ReachabilityResult{IsReachable: true, Confidence: domain.ConfidenceHigh}
-	unreachable := &domain.ReachabilityResult{IsReachable: false, Confidence: domain.ConfidenceHigh}
+// TestFindingsIndex_CarriesNoReachabilityColumn pins the shape of the index
+// after the dead column was dropped.
+//
+// The index answers "which of my modules is affected by this advisory". A
+// reachability column on that row answered no question — nothing ever
+// projected it, filtered on it or ordered by it — while still going stale
+// whenever the pipeline changed what a reachable claim means. It is asserted
+// absent rather than merely unused because "unused" is the state that let it
+// survive two table rebuilds; and because a bool cannot express the three
+// states the record now carries, a re-added column has to be a new shape
+// rather than this one revived.
+func TestFindingsIndex_CarriesNoReachabilityColumn(t *testing.T) {
+	ctx := t.Context()
+	store := newTestStore(t)
 
-	for _, tc := range []struct {
-		name string
-		r    *domain.ReachabilityResult
-		want any
-	}{
-		{"reachable", reachable, int64(1)},
-		{"not reachable", unreachable, int64(0)},
-		{"never analysed", nil, nil},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			ctx := t.Context()
-			store := newTestStore(t)
+	rec := faultRecord(t)
+	rec.Findings[0].Reachable = &domain.ReachabilityResult{
+		IsReachable: true, Confidence: domain.ConfidenceHigh,
+	}
+	rec = seal(t, rec)
+	if err := store.PutVulnerabilityRecord(ctx, rec); err != nil {
+		t.Fatalf("PutVulnerabilityRecord: %v", err)
+	}
 
-			rec := faultRecord(t)
-			rec.Findings[0].Reachable = tc.r
-			rec = seal(t, rec)
-			if err := store.PutVulnerabilityRecord(ctx, rec); err != nil {
-				t.Fatalf("PutVulnerabilityRecord: %v", err)
-			}
+	rows, err := store.InternalDB().DB().QueryContext(ctx,
+		`SELECT name FROM pragma_table_info('vulnerability_findings_index')`)
+	if err != nil {
+		t.Fatalf("reading the findings index columns: %v", err)
+	}
+	defer func() { _ = rows.Close() }() //nolint:errcheck // rows.Err() checked below
 
-			var got any
-			if err := store.InternalDB().DB().QueryRowContext(ctx,
-				`SELECT is_reachable FROM vulnerability_findings_index WHERE finding_id = 'GO-2024-0001'`).Scan(&got); err != nil {
-				t.Fatalf("reading is_reachable: %v", err)
-			}
-			if got != tc.want {
-				t.Fatalf("is_reachable = %#v, want %#v", got, tc.want)
-			}
-		})
+	var columns []string
+	for rows.Next() {
+		var name string
+		if serr := rows.Scan(&name); serr != nil {
+			t.Fatalf("scanning column name: %v", serr)
+		}
+		columns = append(columns, name)
+	}
+	if rerr := rows.Err(); rerr != nil {
+		t.Fatalf("iterating column names: %v", rerr)
+	}
+
+	if len(columns) == 0 {
+		t.Fatal("the findings index reported no columns at all")
+	}
+	if slices.Contains(columns, "is_reachable") {
+		t.Errorf("vulnerability_findings_index still carries is_reachable (columns: %v); "+
+			"the record is the authority on reachability, and the index row is the key only", columns)
+	}
+}
+
+// TestMigration_DropsReachabilityColumn proves the drop reaches a store that
+// already holds the column, not just a freshly created one. A migration that
+// only shapes new databases would leave every existing store carrying the
+// stale claim indefinitely.
+func TestMigration_DropsReachabilityColumn(t *testing.T) {
+	ctx := t.Context()
+
+	var pre []sqlitestore.Migration
+	for _, m := range sqlite.Migrations() {
+		if m.Version < 16 {
+			pre = append(pre, m)
+		}
+	}
+	path := t.TempDir() + "/reach.db"
+	db, err := sqlitestore.Open(path, pre)
+	if err != nil {
+		t.Fatalf("opening the store before the drop: %v", err)
+	}
+
+	if _, err := db.DB().ExecContext(ctx, `
+INSERT INTO vulnerability_findings_index (
+    finding_id, module_path, module_version, pipeline_version,
+    snapshot_source, snapshot_version, rooting, is_reachable
+) VALUES ('GO-2024-0001', 'example.com/mod', 'v1.0.0', 'v16', 'govulndb', 'v1', '', 1);
+`); err != nil {
+		t.Fatalf("seeding a row carrying the superseded claim: %v", err)
+	}
+	if err := db.Close(); err != nil {
+		t.Fatalf("closing the store: %v", err)
+	}
+
+	migrated, err := sqlitestore.Open(path, sqlite.Migrations())
+	if err != nil {
+		t.Fatalf("applying the drop: %v", err)
+	}
+	t.Cleanup(func() { _ = migrated.Close() })
+
+	var present int
+	if err := migrated.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM pragma_table_info('vulnerability_findings_index') WHERE name = 'is_reachable'`,
+	).Scan(&present); err != nil {
+		t.Fatalf("checking for the dropped column: %v", err)
+	}
+	if present != 0 {
+		t.Error("is_reachable survived the migration on a store that already carried it")
+	}
+
+	// The row itself is kept: the index still names a module an advisory
+	// affects, which is the question it exists to answer. Only the claim it
+	// could not keep is gone.
+	var rows int
+	if err := migrated.DB().QueryRowContext(ctx,
+		`SELECT COUNT(*) FROM vulnerability_findings_index WHERE finding_id = 'GO-2024-0001'`,
+	).Scan(&rows); err != nil {
+		t.Fatalf("counting index rows: %v", err)
+	}
+	if rows != 1 {
+		t.Errorf("index rows after the drop = %d, want 1; dropping a column must not retract the row", rows)
 	}
 }
 
@@ -374,9 +449,9 @@ INSERT INTO vulnerability_records (
 
 INSERT INTO vulnerability_findings_index (
     finding_id, module_path, module_version, pipeline_version,
-    snapshot_source, snapshot_version, is_reachable
-) VALUES ('GO-2024-0001', 'example.com/mod', 'v1.0.0', 'v1', 'govulndb', 'v1', NULL),
-        ('CVE-2024-0001', 'example.com/mod', 'v1.0.0', 'v1', 'govulndb', 'v1', NULL);`); err != nil {
+    snapshot_source, snapshot_version
+) VALUES ('GO-2024-0001', 'example.com/mod', 'v1.0.0', 'v1', 'govulndb', 'v1'),
+        ('CVE-2024-0001', 'example.com/mod', 'v1.0.0', 'v1', 'govulndb', 'v1');`); err != nil {
 		t.Fatalf("seeding an undecodable record: %v", err)
 	}
 

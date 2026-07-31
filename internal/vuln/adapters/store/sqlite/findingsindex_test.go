@@ -332,8 +332,8 @@ func plantIndexRow(t *testing.T, ctx context.Context, store *sqlite.Store, findi
 	const q = `
 INSERT INTO vulnerability_findings_index (
     finding_id, module_path, module_version, pipeline_version,
-    snapshot_source, snapshot_version, rooting, is_reachable
-) VALUES (?, ?, ?, ?, ?, ?, ?, NULL)`
+    snapshot_source, snapshot_version, rooting
+) VALUES (?, ?, ?, ?, ?, ?, ?)`
 	if _, err := store.InternalDB().DB().ExecContext(ctx, q,
 		findingID, rec.Coordinate.Path(), rec.Coordinate.Version(), rec.PipelineVersion,
 		rec.DatabaseSnapshot.Source(), rec.DatabaseSnapshot.Version(), string(rec.Rooting),
