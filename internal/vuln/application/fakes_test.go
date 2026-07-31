@@ -11,6 +11,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
@@ -133,6 +134,25 @@ func (f *fakeFacts) GetFetchRecord(_ context.Context, coord coordinate.ModuleCoo
 	return c, true, nil
 }
 
+// ComposeFetchRecord answers the coordinate-only composed read, satisfying the
+// optional fetchports.FactRecordComposer capability. It folds every record filed
+// for the coordinate whatever pipeline version wrote it, exactly as the sqlite
+// store does — a fake that consulted one pipeline version here would let a scan
+// test go green while production routed the module to a metadata-only verdict.
+func (f *fakeFacts) ComposeFetchRecord(_ context.Context, coord coordinate.ModuleCoordinate) (fetchdomain.CompositeRecord, bool, error) {
+	if coord.IsZero() {
+		return fetchdomain.CompositeRecord{}, false, coordinate.ErrZeroCoordinate
+	}
+	f.mu.Lock()
+	held := make([]fetchdomain.FactRecord, 0, len(f.records))
+	for _, r := range f.records {
+		held = append(held, r)
+	}
+	f.mu.Unlock()
+	//nolint:wrapcheck // test fake; the helper already names the coordinate
+	return fetchtest.ComposeCoordinate(coord, held)
+}
+
 // fakeVulnStore is an append-only ledger, like the real store: records holds
 // every generation written under a key, and the reads compose over them. A fake
 // that kept only the last write would let a test of the append behaviour pass
@@ -155,6 +175,13 @@ type fakeVulnStore struct {
 	// that produces a progress line and leaves no record behind. The zero
 	// coordinate never matches a real one, so the seam is off by default.
 	dropRecordFor coordinate.ModuleCoordinate
+	// errOnPutRecordFor is the fault seam for a REPORTED write failure confined to
+	// one coordinate — the shape a real store takes when its conflict clause no
+	// longer matches the table, which refuses each write with an error rather than
+	// accepting it. Scoping it to one coordinate is what lets a test reach a write
+	// leg that only runs after other records have already been stored. Off by
+	// default: the zero coordinate never matches a real one.
+	errOnPutRecordFor coordinate.ModuleCoordinate
 }
 
 func newFakeVulnStore() *fakeVulnStore {
@@ -175,10 +202,16 @@ func (f *fakeVulnStore) SetRunRecords(runID string, records []domain.Vulnerabili
 }
 
 func (f *fakeVulnStore) PutVulnerabilityRecord(_ context.Context, record domain.VulnerabilityRecord) error {
+	if record.DatabaseSnapshot.IsZero() {
+		return fmt.Errorf("fakeVulnStore.PutVulnerabilityRecord: %w", domain.ErrZeroSnapshot)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.errOnPutRecord != nil {
 		return f.errOnPutRecord
+	}
+	if record.Coordinate == f.errOnPutRecordFor {
+		return errStore
 	}
 	if record.Coordinate == f.dropRecordFor {
 		return nil
@@ -210,6 +243,9 @@ func (f *fakeVulnStore) served(key string) (domain.VulnerabilityRecord, bool) {
 }
 
 func (f *fakeVulnStore) GetVulnerabilityRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string, snapshot domain.DatabaseSnapshot) (domain.VulnerabilityRecord, bool, error) {
+	if snapshot.IsZero() {
+		return domain.VulnerabilityRecord{}, false, fmt.Errorf("fakeVulnStore.GetVulnerabilityRecord: %w", domain.ErrZeroSnapshot)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	rec, ok := f.served(f.recordKey(coord, pv, snapshot))
@@ -217,6 +253,9 @@ func (f *fakeVulnStore) GetVulnerabilityRecord(_ context.Context, coord coordina
 }
 
 func (f *fakeVulnStore) GetVulnerabilityRecordAt(_ context.Context, coord coordinate.ModuleCoordinate, pv string, snapshot domain.DatabaseSnapshot, rooting domain.Rooting) (domain.VulnerabilityRecord, bool, error) {
+	if snapshot.IsZero() {
+		return domain.VulnerabilityRecord{}, false, fmt.Errorf("fakeVulnStore.GetVulnerabilityRecordAt: %w", domain.ErrZeroSnapshot)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	gens := f.records[f.recordKey(coord, pv, snapshot)]
@@ -228,6 +267,9 @@ func (f *fakeVulnStore) GetVulnerabilityRecordAt(_ context.Context, coord coordi
 }
 
 func (f *fakeVulnStore) HasVulnerabilityRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string, snapshot domain.DatabaseSnapshot, contentHash string) (bool, error) {
+	if snapshot.IsZero() {
+		return false, fmt.Errorf("fakeVulnStore.HasVulnerabilityRecord: %w", domain.ErrZeroSnapshot)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	for _, rec := range f.records[f.recordKey(coord, pv, snapshot)] {
@@ -285,7 +327,7 @@ func (f *fakeVulnStore) ListVulnerabilityRecordsForModule(_ context.Context, coo
 }
 
 func (f *fakeVulnStore) recordKey(coord coordinate.ModuleCoordinate, pv string, snapshot domain.DatabaseSnapshot) string {
-	return coord.String() + "|" + pv + "|" + snapshot.Source + "@" + snapshot.Version
+	return coord.String() + "|" + pv + "|" + snapshot.Source() + "@" + snapshot.Version()
 }
 
 func (f *fakeVulnStore) PutWalkScanRun(_ context.Context, run domain.WalkScanRun) error {
@@ -296,6 +338,15 @@ func (f *fakeVulnStore) PutWalkScanRun(_ context.Context, run domain.WalkScanRun
 	}
 	f.runs[run.ID] = run
 	return nil
+}
+
+// walkScanRunCount reports how many scan runs the store holds. A test asserting
+// that a refused scan claimed nothing needs the absence of a run, which no
+// read-by-ID can express.
+func (f *fakeVulnStore) walkScanRunCount() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.runs)
 }
 
 func (f *fakeVulnStore) GetWalkScanRun(_ context.Context, id string) (domain.WalkScanRun, bool, error) {
@@ -331,13 +382,16 @@ func (f *fakeVulnStore) ListAllWalkScanRuns(_ context.Context) ([]domain.WalkSca
 }
 
 func (f *fakeVulnStore) PutDatabaseSnapshot(_ context.Context, snapshot domain.DatabaseSnapshot, content io.Reader) error {
+	if snapshot.IsZero() {
+		return fmt.Errorf("fakeVulnStore.PutDatabaseSnapshot: %w", domain.ErrZeroSnapshot)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.errOnPutSnap != nil {
 		return f.errOnPutSnap
 	}
 	data, _ := io.ReadAll(content)
-	f.snapshots[snapshot.Source+"@"+snapshot.Version] = data
+	f.snapshots[snapshot.Source()+"@"+snapshot.Version()] = data
 	f.latestSnapshot = &snapshot
 	return nil
 }
@@ -355,9 +409,12 @@ func (f *fakeVulnStore) GetLatestDatabaseSnapshot(_ context.Context) (domain.Dat
 }
 
 func (f *fakeVulnStore) GetDatabaseSnapshot(_ context.Context, snapshot domain.DatabaseSnapshot) (io.ReadCloser, error) {
+	if snapshot.IsZero() {
+		return nil, fmt.Errorf("fakeVulnStore.GetDatabaseSnapshot: %w", domain.ErrZeroSnapshot)
+	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	data, ok := f.snapshots[snapshot.Source+"@"+snapshot.Version]
+	data, ok := f.snapshots[snapshot.Source()+"@"+snapshot.Version()]
 	if !ok {
 		return nil, io.EOF
 	}
@@ -420,6 +477,17 @@ type fakeScanner struct {
 	projectStatus   domain.VulnerabilityStatus
 	projectReason   string
 	projectErr      error
+	// gotProjectVendored records whether the last ScanProject was asked for the
+	// vendored surface, so a test can assert --no-vendor really reached the
+	// scanner rather than being dropped on the way.
+	gotProjectVendored bool
+	// gotProjectDir records the working tree the last ScanProject was pointed at,
+	// so a test can assert the directory a walk remembers is the one analysed.
+	gotProjectDir string
+	// projectSurfaceOverride forces the surface the fake reports back,
+	// independently of what was requested — the case where the project on disk
+	// cannot supply the surface the caller asked for.
+	projectSurfaceOverride domain.AnalysisSurface
 	// target-rooted scan controls (ScanTargetModule). targetRooted must be opted
 	// into: a coordinate-keyed walk tries the target-rooted path first, and a fake
 	// that silently succeeded there would take every isolated-path test off the
@@ -468,25 +536,43 @@ func (f *fakeScanner) Scan(_ context.Context, req ports.ScanRequest) (domain.Vul
 // projectFindings, when set, is returned verbatim by ScanProject grouped by
 // module; projectStatus overrides the derived Clean/Affected outcome (used to
 // exercise genuine-fault paths). projectErr forces an infrastructure error.
-func (f *fakeScanner) ScanProject(_ context.Context, _ string, _ domain.DatabaseSnapshot, _ string) (domain.ProjectScanResult, error) {
+func (f *fakeScanner) ScanProject(_ context.Context, req ports.ProjectScanRequest) (domain.ProjectScanResult, error) {
 	if f.projectErr != nil {
 		return domain.ProjectScanResult{}, f.projectErr
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	f.projectCalls++
+	f.gotProjectVendored = req.Vendored
+	f.gotProjectDir = req.ProjectDir
+	// The real scanner reports the surface that ran, not the one requested. The
+	// fake stands in for a project whose tree can supply what was asked for, so
+	// the two agree here; a test that needs them to disagree sets
+	// projectSurfaceOverride.
+	surface := domain.AnalysisSurfaceFetched
+	if req.Vendored {
+		surface = domain.AnalysisSurfaceVendored
+	}
+	if f.projectSurfaceOverride != "" {
+		surface = f.projectSurfaceOverride
+	}
 	if f.projectStatus == domain.StatusUnscannable || f.projectStatus == domain.StatusScanFailed {
 		return domain.ProjectScanResult{
 			Status:            f.projectStatus,
 			UnscannableReason: f.projectReason,
 			ErrorDetail:       f.projectReason,
+			AnalysisSurface:   surface,
 		}, nil
 	}
 	status := domain.StatusClean
 	if len(f.projectFindings) > 0 {
 		status = domain.StatusAffected
 	}
-	return domain.ProjectScanResult{FindingsByModule: f.projectFindings, Status: status}, nil
+	return domain.ProjectScanResult{
+		FindingsByModule: f.projectFindings,
+		Status:           status,
+		AnalysisSurface:  surface,
+	}, nil
 }
 
 // ScanTargetModule stands in for the target-rooted scan of a coordinate-keyed
@@ -547,7 +633,7 @@ func (f *fakeDatabase) Snapshot(_ context.Context) (domain.DatabaseSnapshot, io.
 }
 
 func (f *fakeDatabase) GetSnapshot(_ context.Context, identity domain.DatabaseSnapshot) (io.ReadCloser, error) {
-	if identity.Version == f.snapshot.Version {
+	if identity.Version() == f.snapshot.Version() {
 		return io.NopCloser(strings.NewReader(f.content)), nil
 	}
 	return nil, io.EOF
@@ -610,8 +696,8 @@ func (s *callCountingScanner) Scan(ctx context.Context, req ports.ScanRequest) (
 	return rec, nil
 }
 
-func (s *callCountingScanner) ScanProject(ctx context.Context, dir string, snap domain.DatabaseSnapshot, dbDir string) (domain.ProjectScanResult, error) {
-	res, err := s.inner.ScanProject(ctx, dir, snap, dbDir)
+func (s *callCountingScanner) ScanProject(ctx context.Context, req ports.ProjectScanRequest) (domain.ProjectScanResult, error) {
+	res, err := s.inner.ScanProject(ctx, req)
 	if err != nil {
 		return domain.ProjectScanResult{}, fmt.Errorf("inner scan project: %w", err)
 	}
@@ -635,7 +721,11 @@ func (s *callCountingScanner) ScannerMetadata() ports.ScannerMetadata {
 type fakeCallGraphLoader struct {
 	mu      sync.Mutex
 	present bool
-	loadErr error
+	// ineligible makes the stored record one that must not stand in for a fresh
+	// analysis — an environment failure. present says a record exists; this says
+	// whether it may answer.
+	ineligible bool
+	loadErr    error
 }
 
 func (f *fakeCallGraphLoader) setPresent(v bool) {
@@ -653,7 +743,7 @@ func (f *fakeCallGraphLoader) Load(_ context.Context, _ coordinate.ModuleCoordin
 	if !f.present {
 		return ports.CallGraphProjection{}, fmt.Errorf("%w: test coord", ports.ErrCallGraphNotFound)
 	}
-	return ports.CallGraphProjection{}, nil
+	return ports.CallGraphProjection{ServableAsCacheHit: !f.ineligible}, nil
 }
 
 // fakeCallGraphSpawner implements ports.CallGraphSpawner and records all invocations.

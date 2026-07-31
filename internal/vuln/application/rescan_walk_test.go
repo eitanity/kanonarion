@@ -11,7 +11,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 
 	"github.com/eitanity/kanonarion/internal/vuln/application"
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
@@ -53,12 +53,12 @@ func TestRescan_ProducesNewScanRun(t *testing.T) {
 
 	vulnStore := newFakeVulnStore()
 	scanner := &fakeScanner{}
-	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1"}}
+	db := &fakeDatabase{snapshot: vulntest.MustNew("test", "v1")}
 	clock1 := fixedClock{t: now}
 	clock2 := fixedClock{t: now.Add(time.Hour)}
 
 	moduleUC1 := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, ws, scanner, db, nil, clock1, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, ws, scanner, db, nil, clock1, "v1", slog.Default(),
 	)
 
 	// Perform an initial scan to establish a prior run.
@@ -69,9 +69,9 @@ func TestRescan_ProducesNewScanRun(t *testing.T) {
 	}
 
 	// Now rescan with a newer snapshot using a later clock so the run ID differs.
-	db.snapshot = domain.DatabaseSnapshot{Source: "test", Version: "v2"}
+	db.snapshot = vulntest.MustNew("test", "v2")
 	moduleUC2 := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, ws, scanner, db, nil, clock2, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, ws, scanner, db, nil, clock2, "v1", slog.Default(),
 	)
 	rescanner := application.NewRescanWalkUseCase(ws, vulnStore, moduleUC2, nil, clock2, "v1", slog.Default())
 	secondRun, err := rescanner.Rescan(ctx, application.RescanRequest{WalkID: walk.ID, Operator: "op"})
@@ -82,8 +82,8 @@ func TestRescan_ProducesNewScanRun(t *testing.T) {
 	if secondRun.ID == firstRun.ID {
 		t.Error("expected a new run ID, got the same as the first run")
 	}
-	if secondRun.Snapshot.Version != "v2" {
-		t.Errorf("expected snapshot v2, got %s", secondRun.Snapshot.Version)
+	if secondRun.Snapshot.Version() != "v2" {
+		t.Errorf("expected snapshot v2, got %s", secondRun.Snapshot.Version())
 	}
 
 	// Prior run must still exist unchanged.
@@ -91,8 +91,8 @@ func TestRescan_ProducesNewScanRun(t *testing.T) {
 	if err != nil || !ok {
 		t.Fatal("first run was removed from the store")
 	}
-	if persisted.Snapshot.Version != "v1" {
-		t.Errorf("first run snapshot was mutated: got %s", persisted.Snapshot.Version)
+	if persisted.Snapshot.Version() != "v1" {
+		t.Errorf("first run snapshot was mutated: got %s", persisted.Snapshot.Version())
 	}
 
 	// Both runs must be listed in history.
@@ -116,11 +116,11 @@ func TestRescan_FreshSnapshotFetched(t *testing.T) {
 
 	vulnStore := newFakeVulnStore()
 	scanner := &fakeScanner{}
-	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Source: "osv", Version: "fresh-1"}}
+	db := &fakeDatabase{snapshot: vulntest.MustNew("osv", "fresh-1")}
 	clock := fixedClock{t: now}
 
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, ws, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, ws, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 	rescanner := application.NewRescanWalkUseCase(ws, vulnStore, moduleUC, nil, clock, "v1", slog.Default())
 
@@ -128,8 +128,8 @@ func TestRescan_FreshSnapshotFetched(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Rescan: %v", err)
 	}
-	if run.Snapshot.Version != "fresh-1" {
-		t.Errorf("expected snapshot fresh-1, got %s", run.Snapshot.Version)
+	if run.Snapshot.Version() != "fresh-1" {
+		t.Errorf("expected snapshot fresh-1, got %s", run.Snapshot.Version())
 	}
 }
 
@@ -145,13 +145,13 @@ func TestRescan_PinnedSnapshot(t *testing.T) {
 	vulnStore := newFakeVulnStore()
 	scanner := &fakeScanner{}
 	// db.snapshot would be "network" but we pin a different one.
-	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Source: "osv", Version: "network"}}
+	db := &fakeDatabase{snapshot: vulntest.MustNew("osv", "network")}
 	clock := fixedClock{t: now}
 
-	pinned := domain.DatabaseSnapshot{Source: "osv", Version: "pinned-42"}
+	pinned := vulntest.MustNew("osv", "pinned-42")
 
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, ws, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, ws, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 	rescanner := application.NewRescanWalkUseCase(ws, vulnStore, moduleUC, nil, clock, "v1", slog.Default())
 
@@ -159,8 +159,8 @@ func TestRescan_PinnedSnapshot(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Rescan: %v", err)
 	}
-	if run.Snapshot.Version != "pinned-42" {
-		t.Errorf("expected pinned-42, got %s", run.Snapshot.Version)
+	if run.Snapshot.Version() != "pinned-42" {
+		t.Errorf("expected pinned-42, got %s", run.Snapshot.Version())
 	}
 }
 
@@ -172,13 +172,13 @@ func TestRescan_UnknownWalk(t *testing.T) {
 	ws := newFakeWalkStore()
 	vulnStore := newFakeVulnStore()
 	scanner := &fakeScanner{}
-	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1"}}
+	db := &fakeDatabase{snapshot: vulntest.MustNew("test", "v1")}
 	clock := fixedClock{t: now}
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
 
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, ws, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, ws, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 	rescanner := application.NewRescanWalkUseCase(ws, vulnStore, moduleUC, nil, clock, "v1", slog.Default())
 

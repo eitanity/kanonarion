@@ -9,6 +9,7 @@ import (
 	coordinatetest "github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 )
 
 // TestDetermineRecordOverallStatus_EveryAxisPair pins the whole collapse table,
@@ -154,7 +155,7 @@ func axisSeedRecord() domain.VulnerabilityRecord {
 	return domain.VulnerabilityRecord{
 		Ecosystem:        fetchdomain.EcosystemGo,
 		Coordinate:       coordinatetest.MustNew("github.com/foo/bar", "v1.0.0"),
-		DatabaseSnapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1"},
+		DatabaseSnapshot: vulntest.MustNew("test", "v1"),
 		ScannedAt:        time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
 		PipelineVersion:  "v1",
 	}

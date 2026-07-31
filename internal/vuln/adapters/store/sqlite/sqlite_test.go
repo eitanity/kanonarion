@@ -13,6 +13,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 )
 
 func newTestStore(t *testing.T) *sqlite.Store {
@@ -30,12 +31,7 @@ func coord(path, version string) coordinate.ModuleCoordinate {
 }
 
 func snap(source, version string) domain.DatabaseSnapshot {
-	return domain.DatabaseSnapshot{
-		Source:      source,
-		Version:     version,
-		RetrievedAt: time.Now().UTC().Truncate(time.Second),
-		ContentHash: "abc123",
-	}
+	return vulntest.MustNewAt(source, version, time.Now().UTC().Truncate(time.Second))
 }
 
 // seal stamps rec with its content hash, as every production write path does.
@@ -591,11 +587,9 @@ func TestPutAndListDatabaseSnapshots(t *testing.T) {
 	// hash has to be the real one; "abc123" from the shared helper is not.
 	want := domain.HashSnapshotContent([]byte(body))
 
-	s1 := snap("govulndb", "v2024-01-01")
-	s1.ContentHash = want
-	s2 := snap("govulndb", "v2024-02-01")
-	s2.ContentHash = ""
-	s2.RetrievedAt = s2.RetrievedAt.Add(24 * time.Hour)
+	base := snap("govulndb", "v2024-01-01")
+	s1 := vulntest.MustSeal("govulndb", "v2024-01-01", base.RetrievedAt(), want)
+	s2 := vulntest.MustNewAt("govulndb", "v2024-02-01", base.RetrievedAt().Add(24*time.Hour))
 
 	for _, s := range []domain.DatabaseSnapshot{s1, s2} {
 		if err := store.PutDatabaseSnapshot(ctx, s, bytes.NewReader([]byte(body))); err != nil {
@@ -612,8 +606,8 @@ func TestPutAndListDatabaseSnapshots(t *testing.T) {
 	}
 	// Both are sealed: the one that declared its hash and the one that did not.
 	for _, s := range snapshots {
-		if s.ContentHash != want {
-			t.Errorf("snapshot %s@%s content hash = %q, want %q", s.Source, s.Version, s.ContentHash, want)
+		if s.ContentHash() != want {
+			t.Errorf("snapshot %s@%s content hash = %q, want %q", s.Source(), s.Version(), s.ContentHash(), want)
 		}
 	}
 }
@@ -625,10 +619,12 @@ func TestPutDatabaseSnapshot_RefusesDeclaredHashMismatch(t *testing.T) {
 	ctx := t.Context()
 	store := newTestStore(t)
 
-	s := snap("govulndb", "v2024-01-01")
-	s.ContentHash = domain.HashSnapshotContent([]byte("the bytes I fetched"))
+	s, err := snap("govulndb", "v2024-01-01").WithContentHash(domain.HashSnapshotContent([]byte("the bytes I fetched")))
+	if err != nil {
+		t.Fatalf("WithContentHash: %v", err)
+	}
 
-	err := store.PutDatabaseSnapshot(ctx, s, bytes.NewReader([]byte("different bytes")))
+	err = store.PutDatabaseSnapshot(ctx, s, bytes.NewReader([]byte("different bytes")))
 	assertSnapshotIntegrity(t, err, "PutDatabaseSnapshot(mismatched hash)")
 }
 
@@ -642,14 +638,13 @@ func TestGetDatabaseSnapshot_RefusesTamperedBlob(t *testing.T) {
 	store := newTestStore(t)
 
 	s := snap("govulndb", "v2024-01-01")
-	s.ContentHash = ""
 	if err := store.PutDatabaseSnapshot(ctx, s, bytes.NewReader([]byte("honest advisories"))); err != nil {
 		t.Fatalf("PutDatabaseSnapshot: %v", err)
 	}
 
 	if _, err := store.InternalDB().DB().ExecContext(ctx,
 		`UPDATE vulnerability_snapshots SET content = ? WHERE source = ? AND version = ?`,
-		[]byte("swapped advisories"), s.Source, s.Version); err != nil {
+		[]byte("swapped advisories"), s.Source(), s.Version()); err != nil {
 		t.Fatalf("tampering with the stored blob: %v", err)
 	}
 
@@ -666,7 +661,6 @@ func TestGetLatestDatabaseSnapshot_CarriesContentHash(t *testing.T) {
 
 	const body = "advisory database bytes"
 	s := snap("govulndb", "v2024-01-01")
-	s.ContentHash = ""
 	if err := store.PutDatabaseSnapshot(ctx, s, bytes.NewReader([]byte(body))); err != nil {
 		t.Fatalf("PutDatabaseSnapshot: %v", err)
 	}
@@ -675,8 +669,8 @@ func TestGetLatestDatabaseSnapshot_CarriesContentHash(t *testing.T) {
 	if err != nil || !found {
 		t.Fatalf("GetLatestDatabaseSnapshot() = found %v, err %v", found, err)
 	}
-	if want := domain.HashSnapshotContent([]byte(body)); latest.ContentHash != want {
-		t.Fatalf("latest snapshot content hash = %q, want %q", latest.ContentHash, want)
+	if want := domain.HashSnapshotContent([]byte(body)); latest.ContentHash() != want {
+		t.Fatalf("latest snapshot content hash = %q, want %q", latest.ContentHash(), want)
 	}
 }
 
@@ -760,7 +754,6 @@ func TestPutDatabaseSnapshot_ReFetchOverwritesInPlace(t *testing.T) {
 	store := newTestStore(t)
 
 	s := snap("govulndb", "v2024-01-01")
-	s.ContentHash = ""
 	if err := store.PutDatabaseSnapshot(ctx, s, bytes.NewReader([]byte("honest advisories"))); err != nil {
 		t.Fatalf("PutDatabaseSnapshot: %v", err)
 	}
@@ -768,7 +761,7 @@ func TestPutDatabaseSnapshot_ReFetchOverwritesInPlace(t *testing.T) {
 	// Stand in for a tamper: the bytes no longer match the recorded hash.
 	if _, err := store.InternalDB().DB().ExecContext(ctx,
 		`UPDATE vulnerability_snapshots SET content = ? WHERE source = ? AND version = ?`,
-		[]byte("swapped advisories"), s.Source, s.Version); err != nil {
+		[]byte("swapped advisories"), s.Source(), s.Version()); err != nil {
 		t.Fatalf("tampering with the stored blob: %v", err)
 	}
 	if _, err := store.GetDatabaseSnapshot(ctx, s); err == nil {
@@ -783,7 +776,7 @@ func TestPutDatabaseSnapshot_ReFetchOverwritesInPlace(t *testing.T) {
 	var rows int
 	if err := store.InternalDB().DB().QueryRowContext(ctx,
 		`SELECT COUNT(*) FROM vulnerability_snapshots WHERE source = ? AND version = ?`,
-		s.Source, s.Version).Scan(&rows); err != nil {
+		s.Source(), s.Version()).Scan(&rows); err != nil {
 		t.Fatalf("counting snapshot rows: %v", err)
 	}
 	if rows != 1 {

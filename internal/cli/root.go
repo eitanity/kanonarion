@@ -113,7 +113,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 		newVendorCmd(stdout, stderr),
 		newFIPSCmd(stdout, stderr),
 		newLatestCmd(stdout, stderr),
-		newProvenanceCmd(stdout),
+		newProvenanceCmd(stdout, stderr),
 		newUseCmd(stdout, stderr),
 		newLocalCmd(stdout, stderr),
 	)

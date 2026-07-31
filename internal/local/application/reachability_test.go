@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"testing"
+	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -25,24 +26,55 @@ func (f *fakeSnapshotBuilder) Build(_ context.Context, _ string) (domain.Snapsho
 
 var _ ports.SnapshotBuilder = (*fakeSnapshotBuilder)(nil)
 
-type fakeImportAnalyser struct {
-	modules []domain.ImportedModule
+type fakeBuildLister struct {
+	modules []domain.BuildModule
 	err     error
 }
 
-func (f *fakeImportAnalyser) AnalyseImports(_ context.Context, _ string) ([]domain.ImportedModule, error) {
+func (f *fakeBuildLister) BuildModules(_ context.Context, _ string) ([]domain.BuildModule, error) {
 	return f.modules, f.err
 }
 
-var _ ports.ImportAnalyser = (*fakeImportAnalyser)(nil)
+var _ ports.BuildModuleLister = (*fakeBuildLister)(nil)
 
 type fakeVulnLoader struct {
 	findings map[coordinate.ModuleCoordinate][]ports.VulnFinding
-	err      error
+	// scanned is the extra set of coordinates the store holds a record for but
+	// no findings against. Coordinates in findings are always scanned.
+	scanned []coordinate.ModuleCoordinate
+	err     error
 }
 
-func (f *fakeVulnLoader) LoadFindings(_ context.Context, _ []coordinate.ModuleCoordinate) (map[coordinate.ModuleCoordinate][]ports.VulnFinding, error) {
-	return f.findings, f.err
+// LoadFindings answers ONLY about the coordinates it was asked about. A fake
+// that returned its whole table regardless of the query would answer for
+// modules the caller never queried, and a narrowing bug in the caller would
+// pass every test in this file.
+func (f *fakeVulnLoader) LoadFindings(_ context.Context, coords []coordinate.ModuleCoordinate) (ports.FindingSet, error) {
+	if f.err != nil {
+		return ports.FindingSet{}, f.err
+	}
+	asked := make(map[coordinate.ModuleCoordinate]struct{}, len(coords))
+	for _, c := range coords {
+		asked[c] = struct{}{}
+	}
+	set := ports.FindingSet{
+		Findings: make(map[coordinate.ModuleCoordinate][]ports.VulnFinding),
+		Scanned:  make(map[coordinate.ModuleCoordinate]struct{}),
+	}
+	for c, fs := range f.findings {
+		if _, ok := asked[c]; !ok {
+			continue
+		}
+		set.Findings[c] = fs
+		set.Scanned[c] = struct{}{}
+	}
+	for _, c := range f.scanned {
+		if _, ok := asked[c]; !ok {
+			continue
+		}
+		set.Scanned[c] = struct{}{}
+	}
+	return set, nil
 }
 
 var _ ports.VulnFindingLoader = (*fakeVulnLoader)(nil)
@@ -78,8 +110,18 @@ func mustCoord(t *testing.T, path, ver string) coordinate.ModuleCoordinate {
 	return c
 }
 
-func makeUC(snap *fakeSnapshotBuilder, imp *fakeImportAnalyser, vuln *fakeVulnLoader, prober *fakeProber) *application.LocalReachabilityUseCase {
-	return application.NewLocalReachabilityUseCase(snap, imp, vuln, prober)
+// fixedClock pins the snapshot stamp so it is a measurement rather than
+// whatever the wall clock read.
+type fixedClock struct{ t time.Time }
+
+func (c fixedClock) Now() time.Time { return c.t }
+
+var _ ports.Clock = fixedClock{}
+
+var testClockInstant = time.Date(2026, 7, 31, 12, 0, 0, 0, time.UTC)
+
+func makeUC(snap *fakeSnapshotBuilder, build *fakeBuildLister, vuln *fakeVulnLoader, prober *fakeProber) *application.LocalReachabilityUseCase {
+	return application.NewLocalReachabilityUseCase(snap, build, vuln, prober, fixedClock{t: testClockInstant})
 }
 
 // -- tests --
@@ -88,7 +130,7 @@ func TestLocalReachability_NoFindings_SkipsProbe(t *testing.T) {
 	prober := &fakeProber{}
 	uc := makeUC(
 		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
-		&fakeImportAnalyser{modules: []domain.ImportedModule{
+		&fakeBuildLister{modules: []domain.BuildModule{
 			{Path: "example.com/dep", Version: "v1.0.0"},
 		}},
 		&fakeVulnLoader{findings: nil},
@@ -114,7 +156,7 @@ func TestLocalReachability_SymbolPresent(t *testing.T) {
 	coord := mustCoord(t, "example.com/dep", "v1.0.0")
 	uc := makeUC(
 		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
-		&fakeImportAnalyser{modules: []domain.ImportedModule{
+		&fakeBuildLister{modules: []domain.BuildModule{
 			{Path: "example.com/dep", Version: "v1.0.0"},
 		}},
 		&fakeVulnLoader{findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
@@ -153,7 +195,7 @@ func TestLocalReachability_SymbolAbsent(t *testing.T) {
 	coord := mustCoord(t, "example.com/dep", "v1.0.0")
 	uc := makeUC(
 		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
-		&fakeImportAnalyser{modules: []domain.ImportedModule{
+		&fakeBuildLister{modules: []domain.BuildModule{
 			{Path: "example.com/dep", Version: "v1.0.0"},
 		}},
 		&fakeVulnLoader{findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
@@ -182,7 +224,7 @@ func TestLocalReachability_NoAffectedSymbols_UnknownVerdict(t *testing.T) {
 	coord := mustCoord(t, "example.com/dep", "v1.0.0")
 	uc := makeUC(
 		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
-		&fakeImportAnalyser{modules: []domain.ImportedModule{
+		&fakeBuildLister{modules: []domain.BuildModule{
 			{Path: "example.com/dep", Version: "v1.0.0"},
 		}},
 		&fakeVulnLoader{findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
@@ -210,7 +252,7 @@ func TestLocalReachability_SubpackageSymbolPresent(t *testing.T) {
 	coord := mustCoord(t, "github.com/foo/bar", "v1.0.0")
 	uc := makeUC(
 		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
-		&fakeImportAnalyser{modules: []domain.ImportedModule{
+		&fakeBuildLister{modules: []domain.BuildModule{
 			{Path: "github.com/foo/bar", Version: "v1.0.0"},
 		}},
 		&fakeVulnLoader{findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
@@ -242,7 +284,7 @@ func TestLocalReachability_DeepSubpackageSymbolPresent(t *testing.T) {
 	coord := mustCoord(t, "github.com/foo/bar", "v1.0.0")
 	uc := makeUC(
 		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
-		&fakeImportAnalyser{modules: []domain.ImportedModule{
+		&fakeBuildLister{modules: []domain.BuildModule{
 			{Path: "github.com/foo/bar", Version: "v1.0.0"},
 		}},
 		&fakeVulnLoader{findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
@@ -268,7 +310,7 @@ func TestLocalReachability_UnrelatedSymbolNotMatched(t *testing.T) {
 	coord := mustCoord(t, "example.com/dep", "v1.0.0")
 	uc := makeUC(
 		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
-		&fakeImportAnalyser{modules: []domain.ImportedModule{
+		&fakeBuildLister{modules: []domain.BuildModule{
 			{Path: "example.com/dep", Version: "v1.0.0"},
 		}},
 		&fakeVulnLoader{findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
@@ -296,7 +338,7 @@ func TestLocalReachability_MultipleSymbolsOnePresent(t *testing.T) {
 	coord := mustCoord(t, "example.com/dep", "v1.0.0")
 	uc := makeUC(
 		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
-		&fakeImportAnalyser{modules: []domain.ImportedModule{
+		&fakeBuildLister{modules: []domain.BuildModule{
 			{Path: "example.com/dep", Version: "v1.0.0"},
 		}},
 		&fakeVulnLoader{findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
@@ -332,7 +374,7 @@ func TestLocalReachability_ModulesAreSorted(t *testing.T) {
 	coordZ := mustCoord(t, "example.com/zzz", "v1.0.0")
 	uc := makeUC(
 		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
-		&fakeImportAnalyser{modules: []domain.ImportedModule{
+		&fakeBuildLister{modules: []domain.BuildModule{
 			{Path: "example.com/zzz", Version: "v1.0.0"},
 			{Path: "example.com/aaa", Version: "v1.0.0"},
 		}},
@@ -362,7 +404,7 @@ func TestLocalReachability_ResultFieldsPopulated(t *testing.T) {
 	coord := mustCoord(t, "example.com/dep", "v1.0.0")
 	uc := makeUC(
 		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
-		&fakeImportAnalyser{modules: []domain.ImportedModule{
+		&fakeBuildLister{modules: []domain.BuildModule{
 			{Path: "example.com/dep", Version: "v1.0.0"},
 		}},
 		&fakeVulnLoader{findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
@@ -410,7 +452,7 @@ func TestLocalReachability_SnapshotError(t *testing.T) {
 	snapErr := errors.New("disk read failed")
 	uc := makeUC(
 		&fakeSnapshotBuilder{err: snapErr},
-		&fakeImportAnalyser{},
+		&fakeBuildLister{},
 		&fakeVulnLoader{},
 		&fakeProber{},
 	)
@@ -420,11 +462,11 @@ func TestLocalReachability_SnapshotError(t *testing.T) {
 	}
 }
 
-func TestLocalReachability_ImportAnalyserError(t *testing.T) {
+func TestLocalReachability_BuildListerError(t *testing.T) {
 	impErr := errors.New("go list failed")
 	uc := makeUC(
 		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
-		&fakeImportAnalyser{err: impErr},
+		&fakeBuildLister{err: impErr},
 		&fakeVulnLoader{},
 		&fakeProber{},
 	)
@@ -438,7 +480,7 @@ func TestLocalReachability_VulnLoaderError(t *testing.T) {
 	loadErr := errors.New("store unavailable")
 	uc := makeUC(
 		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
-		&fakeImportAnalyser{modules: []domain.ImportedModule{
+		&fakeBuildLister{modules: []domain.BuildModule{
 			{Path: "example.com/dep", Version: "v1.0.0"},
 		}},
 		&fakeVulnLoader{err: loadErr},
@@ -455,7 +497,7 @@ func TestLocalReachability_ProberError(t *testing.T) {
 	probeErr := errors.New("build failed")
 	uc := makeUC(
 		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
-		&fakeImportAnalyser{modules: []domain.ImportedModule{
+		&fakeBuildLister{modules: []domain.BuildModule{
 			{Path: "example.com/dep", Version: "v1.0.0"},
 		}},
 		&fakeVulnLoader{findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
@@ -466,5 +508,312 @@ func TestLocalReachability_ProberError(t *testing.T) {
 	_, err := uc.Execute(context.Background(), "/ws")
 	if !errors.Is(err, probeErr) {
 		t.Errorf("error = %v, want wrapping %v", err, probeErr)
+	}
+}
+
+// -- coverage disclosure --
+
+// The probe reads the symbol table of a binary containing the WHOLE build, so
+// its finding lookup must be scoped to the whole build too. Scoped to direct
+// imports it answered about a smaller set than the artefact it measured and said
+// nothing about the difference: measured on a real project, a JWT library
+// reached only through a SAML library was absent from the answer entirely, even
+// though the store held an Affected finding against exactly that coordinate.
+func TestLocalReachability_TransitiveModuleWithFindingIsCovered(t *testing.T) {
+	transitive := mustCoord(t, "github.com/golang-jwt/jwt/v4", "v4.5.1")
+	uc := makeUC(
+		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
+		&fakeBuildLister{modules: []domain.BuildModule{
+			{Path: "github.com/crewjam/saml", Version: "v0.4.0", Direct: true},
+			{Path: "github.com/golang-jwt/jwt/v4", Version: "v4.5.1"},
+		}},
+		&fakeVulnLoader{
+			findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
+				transitive: {{ID: "GO-2025-3553", AffectedSymbols: []string{"Parser.ParseUnverified"}}},
+			},
+			scanned: []coordinate.ModuleCoordinate{mustCoord(t, "github.com/crewjam/saml", "v0.4.0")},
+		},
+		&fakeProber{result: ports.SymbolProbeResult{
+			Kind:          "binary",
+			BinarySymbols: map[string]struct{}{"github.com/golang-jwt/jwt/v4.Parser.ParseUnverified": {}},
+		}},
+	)
+
+	result, err := uc.Execute(context.Background(), "/ws")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	var found bool
+	for _, m := range result.Modules {
+		if m.Path == "github.com/golang-jwt/jwt/v4" {
+			found = true
+		}
+	}
+	if !found {
+		t.Fatalf("transitive module with a stored finding is missing from the answer: %+v", result.Modules)
+	}
+	if result.Coverage.BuildModules != 2 || result.Coverage.Queried != 2 {
+		t.Errorf("coverage = %+v, want both build modules queried", result.Coverage)
+	}
+	if len(result.Coverage.Uncovered) != 0 {
+		t.Errorf("Uncovered = %+v, want none (both modules have records)", result.Coverage.Uncovered)
+	}
+}
+
+// A module in the build the store holds no record for is named, with its reason
+// and a route to a wider answer. Omitting it silently is what made a ten-module
+// reply indistinguishable from a complete one.
+func TestLocalReachability_UnscannedBuildModuleIsNamedNotOmitted(t *testing.T) {
+	scanned := mustCoord(t, "example.com/dep", "v1.0.0")
+	uc := makeUC(
+		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
+		&fakeBuildLister{modules: []domain.BuildModule{
+			{Path: "example.com/dep", Version: "v1.0.0", Direct: true},
+			{Path: "example.com/never-scanned", Version: "v2.0.0"},
+		}},
+		&fakeVulnLoader{findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
+			scanned: {{ID: "GHSA-0009", AffectedSymbols: []string{"Bad"}}},
+		}},
+		&fakeProber{result: ports.SymbolProbeResult{Kind: "library", BinarySymbols: map[string]struct{}{}}},
+	)
+
+	result, err := uc.Execute(context.Background(), "/ws")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(result.Coverage.Uncovered) != 1 {
+		t.Fatalf("Uncovered = %+v, want exactly the unscanned module", result.Coverage.Uncovered)
+	}
+	u := result.Coverage.Uncovered[0]
+	if u.Path != "example.com/never-scanned" || u.Version != "v2.0.0" {
+		t.Errorf("Uncovered[0] = %+v, want example.com/never-scanned@v2.0.0", u)
+	}
+	if u.Reason != domain.UncoveredNoStoredRecord {
+		t.Errorf("Reason = %q, want the no-record reason", u.Reason)
+	}
+	if result.Coverage.BuildModules != 2 || result.Coverage.Covered != 1 || result.Coverage.WithFindings != 1 {
+		t.Errorf("coverage = %+v", result.Coverage)
+	}
+	if result.Coverage.TakenAt.IsZero() {
+		t.Error("TakenAt is zero: the answer states no age")
+	}
+}
+
+// A record with no findings is an answer — the module is clean — and must not be
+// reported as a module nothing is known about.
+func TestLocalReachability_ScannedButCleanModuleIsCoveredNotUncovered(t *testing.T) {
+	clean := mustCoord(t, "example.com/clean", "v1.0.0")
+	affected := mustCoord(t, "example.com/dep", "v1.0.0")
+	uc := makeUC(
+		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
+		&fakeBuildLister{modules: []domain.BuildModule{
+			{Path: "example.com/clean", Version: "v1.0.0"},
+			{Path: "example.com/dep", Version: "v1.0.0"},
+		}},
+		&fakeVulnLoader{
+			findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
+				affected: {{ID: "GHSA-0010", AffectedSymbols: []string{"Bad"}}},
+			},
+			scanned: []coordinate.ModuleCoordinate{clean},
+		},
+		&fakeProber{result: ports.SymbolProbeResult{Kind: "library", BinarySymbols: map[string]struct{}{}}},
+	)
+
+	result, err := uc.Execute(context.Background(), "/ws")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(result.Coverage.Uncovered) != 0 {
+		t.Errorf("Uncovered = %+v, want none: a clean record is an answer", result.Coverage.Uncovered)
+	}
+	if result.Coverage.Covered != 2 || result.Coverage.WithFindings != 1 {
+		t.Errorf("coverage = %+v, want 2 covered / 1 with findings", result.Coverage)
+	}
+}
+
+// A module the build resolves without a version names no coordinate, so nothing
+// asked the store about it. That is not the same claim as the store having said
+// nothing, and it is recorded rather than dropped at the coordinate check.
+func TestLocalReachability_VersionlessBuildModuleIsNamedUncovered(t *testing.T) {
+	uc := makeUC(
+		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
+		&fakeBuildLister{modules: []domain.BuildModule{
+			{Path: "example.com/replaced", Version: ""},
+		}},
+		&fakeVulnLoader{},
+		&fakeProber{},
+	)
+
+	result, err := uc.Execute(context.Background(), "/ws")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if len(result.Coverage.Uncovered) != 1 ||
+		result.Coverage.Uncovered[0].Reason != domain.UncoveredNoCoordinate {
+		t.Fatalf("Uncovered = %+v, want the versionless module with the no-coordinate reason", result.Coverage.Uncovered)
+	}
+	if result.Coverage.Queried != 0 {
+		t.Errorf("Queried = %d, want 0", result.Coverage.Queried)
+	}
+}
+
+// The clock is injectable so the stamp is a measurement rather than whatever the
+// wall clock read.
+func TestLocalReachability_SnapshotTimeIsStamped(t *testing.T) {
+	uc := makeUC(
+		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
+		&fakeBuildLister{},
+		&fakeVulnLoader{},
+		&fakeProber{},
+	)
+
+	result, err := uc.Execute(context.Background(), "/ws")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !result.Coverage.TakenAt.Equal(testClockInstant) {
+		t.Errorf("TakenAt = %v, want %v", result.Coverage.TakenAt, testClockInstant)
+	}
+}
+
+// A project with two mains ships two artefacts. A symbol linked only into the
+// second must read "present", and the answer must name the binary that carries
+// it — probing whichever main sorts first reported "absent" for exactly this
+// case.
+func TestLocalReachability_SymbolInSecondMainOnly_PresentNamingThatMain(t *testing.T) {
+	coord := mustCoord(t, "example.com/dep", "v1.0.0")
+	uc := makeUC(
+		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
+		&fakeBuildLister{modules: []domain.BuildModule{
+			{Path: "example.com/dep", Version: "v1.0.0"},
+		}},
+		&fakeVulnLoader{findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
+			coord: {{ID: "GHSA-0010", AffectedSymbols: []string{"Vulnerable"}}},
+		}},
+		&fakeProber{result: ports.SymbolProbeResult{
+			Kind: "binary",
+			BinarySymbols: map[string]struct{}{
+				"example.com/dep.Other":      {},
+				"example.com/dep.Vulnerable": {},
+			},
+			Binaries: []ports.ProbedBinary{
+				{
+					ImportPath: "example.com/app/cmd/alpha",
+					Symbols:    map[string]struct{}{"example.com/dep.Other": {}},
+				},
+				{
+					ImportPath: "example.com/app/cmd/beta",
+					Symbols:    map[string]struct{}{"example.com/dep.Vulnerable": {}},
+				},
+			},
+		}},
+	)
+
+	result, err := uc.Execute(context.Background(), "/ws")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	f := result.Modules[0].Findings[0]
+	if f.Verdict != domain.SymbolProbePresent {
+		t.Errorf("Verdict = %q, want %q", f.Verdict, domain.SymbolProbePresent)
+	}
+	if len(f.MatchedBinaries) != 1 || f.MatchedBinaries[0] != "example.com/app/cmd/beta" {
+		t.Errorf("MatchedBinaries = %v, want [example.com/app/cmd/beta]", f.MatchedBinaries)
+	}
+	if len(result.Coverage.Binaries) != 2 {
+		t.Fatalf("Coverage.Binaries = %v, want both mains named", result.Coverage.Binaries)
+	}
+	for _, b := range result.Coverage.Binaries {
+		if b.BuildError != "" {
+			t.Errorf("binary %q: BuildError = %q, want empty", b.ImportPath, b.BuildError)
+		}
+	}
+}
+
+// A main that fails to build is neither fatal nor silent: the binaries that did
+// build still answer, and the one that did not is named in the coverage block
+// with its build error.
+func TestLocalReachability_UnbuildableMain_NamedAsUnprobed(t *testing.T) {
+	coord := mustCoord(t, "example.com/dep", "v1.0.0")
+	uc := makeUC(
+		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
+		&fakeBuildLister{modules: []domain.BuildModule{
+			{Path: "example.com/dep", Version: "v1.0.0"},
+		}},
+		&fakeVulnLoader{findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
+			coord: {{ID: "GHSA-0011", AffectedSymbols: []string{"Vulnerable"}}},
+		}},
+		&fakeProber{result: ports.SymbolProbeResult{
+			Kind: "binary",
+			BinarySymbols: map[string]struct{}{
+				"example.com/dep.Vulnerable": {},
+			},
+			Binaries: []ports.ProbedBinary{
+				{
+					ImportPath: "example.com/app/cmd/alpha",
+					Symbols:    map[string]struct{}{"example.com/dep.Vulnerable": {}},
+				},
+				{
+					ImportPath: "example.com/app/cmd/beta",
+					BuildError: "building probe binary: undefined: nope",
+				},
+			},
+		}},
+	)
+
+	result, err := uc.Execute(context.Background(), "/ws")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	f := result.Modules[0].Findings[0]
+	if f.Verdict != domain.SymbolProbePresent {
+		t.Errorf("Verdict = %q, want %q", f.Verdict, domain.SymbolProbePresent)
+	}
+	if len(f.MatchedBinaries) != 1 || f.MatchedBinaries[0] != "example.com/app/cmd/alpha" {
+		t.Errorf("MatchedBinaries = %v, want [example.com/app/cmd/alpha]", f.MatchedBinaries)
+	}
+	if len(result.Coverage.Binaries) != 2 {
+		t.Fatalf("Coverage.Binaries = %v, want both mains named", result.Coverage.Binaries)
+	}
+	unprobed := result.Coverage.Binaries[1]
+	if unprobed.ImportPath != "example.com/app/cmd/beta" {
+		t.Errorf("unprobed binary = %q, want example.com/app/cmd/beta", unprobed.ImportPath)
+	}
+	if unprobed.BuildError == "" {
+		t.Error("unprobed binary carries no build error; the omission would be silent")
+	}
+}
+
+// A library probe has no main package, so nothing is attributed to one. The
+// verdict still comes off the union.
+func TestLocalReachability_LibraryProbe_NoBinariesNamed(t *testing.T) {
+	coord := mustCoord(t, "example.com/dep", "v1.0.0")
+	uc := makeUC(
+		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
+		&fakeBuildLister{modules: []domain.BuildModule{
+			{Path: "example.com/dep", Version: "v1.0.0"},
+		}},
+		&fakeVulnLoader{findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
+			coord: {{ID: "GHSA-0012", AffectedSymbols: []string{"Vulnerable"}}},
+		}},
+		&fakeProber{result: ports.SymbolProbeResult{
+			Kind:          "library",
+			BinarySymbols: map[string]struct{}{"example.com/dep.Vulnerable": {}},
+		}},
+	)
+
+	result, err := uc.Execute(context.Background(), "/ws")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	f := result.Modules[0].Findings[0]
+	if f.Verdict != domain.SymbolProbePresent {
+		t.Errorf("Verdict = %q, want %q", f.Verdict, domain.SymbolProbePresent)
+	}
+	if len(f.MatchedBinaries) != 0 {
+		t.Errorf("MatchedBinaries = %v, want none for a library probe", f.MatchedBinaries)
+	}
+	if len(result.Coverage.Binaries) != 0 {
+		t.Errorf("Coverage.Binaries = %v, want none for a library probe", result.Coverage.Binaries)
 	}
 }

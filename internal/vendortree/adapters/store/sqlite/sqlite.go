@@ -40,6 +40,11 @@ func Migrations() []sqlitestore.Migration {
 		// pre-existing blob (which has no ecosystem field) is unreadable under the
 		// new schema. Purge the legacy rows; they are regenerable by re-scanning.
 		{Module: "vendor", Version: 2, SQL: `DELETE FROM vendor_records`},
+		// No migration is owed for the move to per-file drift comparison
+		// (pipeline 0.2.0). The table is keyed on the pipeline version and
+		// GetVendorRecord selects on the current one, so 0.1.0 rows are already
+		// unreachable; purging them would cost every existing store an
+		// irreversible schema bump to delete records nothing can read.
 	}
 }
 

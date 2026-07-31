@@ -87,7 +87,13 @@ replace and exclude change dependency resolution WITHOUT changing the import
 graph, so they are invisible to anyone reading import statements. A local-path
 replace has no remote checksum to verify; an exclude can force resolution off
 a CVE-patched version. The default policy flags local-path replace, so this
-command exits non-zero (20) when a directive's policy outcome is "warn".`,
+command exits non-zero when a directive's policy outcome is "warn".
+
+Exit codes:
+  0  no directive resolves to a blocking policy outcome
+  5  the governance gate fired: one or more directives violate policy — the
+     scan succeeded and the finding is real, so route this to a human
+  20 bad invocation, or a policy file that could not be read`,
 		Example: `  kanonarion directives
   kanonarion directives --gomod ./go.mod --json`,
 		Args: cobra.NoArgs,
@@ -171,7 +177,7 @@ func printDirectivesTable(stdout io.Writer, s directivesSection) error {
 	return nil
 }
 
-// directivesBlockingErr returns a non-zero ExitConfig error when any directive
+// directivesBlockingErr returns an ExitPolicy error when any directive
 // resolves to a blocking ("warn") policy outcome — e.g. a local-path replace
 // under the default policy.
 func directivesBlockingErr(s directivesSection) error {
@@ -184,6 +190,6 @@ func directivesBlockingErr(s directivesSection) error {
 	if len(blocked) == 0 {
 		return nil
 	}
-	return &exitError{code: ExitConfig, msg: fmt.Sprintf(
+	return &exitError{code: ExitPolicy, msg: fmt.Sprintf(
 		"directive policy: %d directive(s) violate policy: %v", len(blocked), blocked)}
 }

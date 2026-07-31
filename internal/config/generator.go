@@ -7,6 +7,8 @@ import (
 	"path/filepath"
 
 	"gopkg.in/yaml.v3"
+
+	"github.com/eitanity/kanonarion/internal/config/domain"
 )
 
 // knownSections is the ordered list of top-level config sections this binary produces.
@@ -17,7 +19,9 @@ import (
 // via `config init` and is never appended to an existing file on upgrade.
 var knownSections = []string{
 	"preferences", "license_policy", "license_overrides", "callgraph",
+	"staleness",
 	"directive_policy", "godebug_policy", "vendor_policy", "fips_policy",
+	"fetch_policy",
 }
 
 // sectionDefaults maps a top-level section name to the YAML block appended
@@ -77,6 +81,17 @@ callgraph:
   # exclude:
   #   - github.com/some/huge/package
 `,
+	"staleness": `
+staleness:
+  # How long a recorded latest-version lookup may be served before the module
+  # proxy is asked again. Commands that report staleness (latest, audit) write
+  # every successful lookup to the store and read it back inside this window,
+  # and always state the lookup time they used, so a served answer is never
+  # mistaken for a live one. Pass --fresh to bypass the ledger for one run.
+  #
+  # Set to 0 to disable serving entirely (every command re-pays the sweep).
+  # ttl: 1h
+`,
 	"directive_policy": `
 directive_policy:
   # Governs go.mod/go.work replace & exclude directives by risk class. Every
@@ -133,14 +148,37 @@ fips_policy:
   # Outcome when a non-FIPS algorithm or cgo-crypto use is detected.
   # on_deviation: warn
 `,
+	"fetch_policy": `
+fetch_policy:
+  # Governs which forges kanonarion may hand to a git subprocess when it
+  # verifies a module's VCS provenance. Uncomment to override; the key left
+  # commented keeps the built-in host set (shown below) in ADVISORY mode,
+  # where a host outside it is reported and still contacted.
+  #
+  # Naming the key switches to ENFORCING mode: a host outside the list is
+  # refused. An empty list is rejected at load time rather than read as
+  # "trust nobody" — that is --skip-vcs-verify.
+  # allowed_vcs_hosts:
+  #   - bitbucket.org
+  #   - codeberg.org
+  #   - github.com
+  #   - gitlab.com
+  #   - go.googlesource.com
+  #   - gopkg.in
+`,
 }
 
 // DefaultYAML returns the full commented default config.yaml content.
+//
+// The version header is stamped from domain.SupportedSchemaVersion rather than
+// written as a literal. The loader only rejects versions NEWER than supported,
+// so a stale literal loads silently while claiming a schema the binary no
+// longer emits — a defect no test of the load path can catch.
 func DefaultYAML() []byte {
-	header := `# kanonarion configuration — edit to customise behaviour.
+	header := fmt.Sprintf(`# kanonarion configuration — edit to customise behaviour.
 # Run 'kanonarion config show' to see the resolved effective config.
-version: "1"
-`
+version: %q
+`, domain.SupportedSchemaVersion)
 	out := []byte(header)
 	for _, section := range knownSections {
 		out = append(out, []byte(sectionDefaults[section])...)

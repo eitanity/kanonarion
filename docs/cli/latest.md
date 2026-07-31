@@ -31,6 +31,54 @@ for each. With a single module, `--json` emits an object; with multiple,
 `--json` emits an array (matching the `--gomod` shape) so the output is
 trivially `jq`-pipeable. Argument order is preserved.
 
+### Two facts, never merged
+
+A Go module's next **major** version lives at a *different* module path
+(`.../v4` -> `.../v5`, or a bare path -> `.../v2`). A query on the path as
+written can therefore never see it, and a dependency pinned several majors
+behind resolves as the latest version of its own path - `current`, the strongest
+answer the column has - while being the most stale kind of dependency there is.
+
+`latest` reports both, as separate fields:
+
+- **latest** - the newest version at the module path itself (`latest`,
+  `latest_date`, `is_latest`). Unchanged.
+- **newer major** - the newest major-suffixed path above the pinned major that
+  resolves, with its version and date (`newer_major_module`,
+  `newer_major_latest`, `newer_major_date`).
+
+The probe starts one major above the **pinned version's** major - not above the
+path suffix, because a `+incompatible` pin carries its major in the version
+while living at the unsuffixed path - and stops at the first major that does not
+resolve. `major_probed` distinguishes "probed, nothing newer" from "not probed"
+(an offline run, or a probe whose request failed); a question that was never
+asked is never rendered as a clean answer.
+
+Whether the newer major is *adoptable* is a different question - a new major is
+expected to be breaking. This only stops a several-majors-behind module reading
+as up to date.
+
+### The staleness ledger
+
+Every successful `@latest` resolution - including the major probe, and including
+the recorded negative "no newer major exists" - is written to a store-side
+ledger keyed on module path. Any command that reports staleness (`latest`,
+`audit`) serves a recording younger than `staleness.ttl` instead of re-querying,
+so a `latest` run and an `audit` minutes later pay the proxy sweep once between
+them rather than once each.
+
+Every answer states the lookup time it used, so a served answer is never
+mistaken for a live one. A table is dated by its **oldest** row: a run where
+most rows were served and a few re-queried is only as current as the row asked
+about longest ago.
+
+A **failed** lookup is never written - failures are not cacheable facts. An
+absent major path is not a failure: it is a definitive answer, it is what bounds
+the probe, and it is recorded.
+
+`staleness.ttl` is a config key (default `1h`; `0` disables serving). `--fresh`
+bypasses the ledger for a single run and still records what it resolved.
+
 ### Integration with `fetch` and `audit`
 
 Version staleness is baked into the two most common commands, so agents rarely
@@ -52,6 +100,7 @@ need the `--json` output for a structured pipeline.
 | `--tool` | false | Scope to the tooling supply chain (the `go.mod` tool directives' closure). Mutually exclusive with `--project` |
 | `--project` | false | Scope to the complete set: the project's code **and** tooling (the full Go build list). Mutually exclusive with `--tool` |
 | `--goproxy` | `$GOPROXY` or `proxy.golang.org` | Override the Go module proxy |
+| `--fresh` | false | Re-query the proxy instead of serving recorded lookups from the store |
 | `--json` | false | Emit output as JSON (global flag) |
 
 ## Text output
@@ -59,7 +108,7 @@ need the `--json` output for a structured pipeline.
 ### Single module
 
 ```
-github.com/spf13/cobra@v1.10.2 (released 45 days ago, 2025-03-28)
+github.com/spf13/cobra@v1.10.2 (released 45 days ago, 2025-03-28)  [as of 2026-07-31 09:14 UTC]
 ```
 
 ### `--gomod` table (one line per direct dependency)
@@ -67,9 +116,16 @@ github.com/spf13/cobra@v1.10.2 (released 45 days ago, 2025-03-28)
 ```
 github.com/CycloneDX/cyclonedx-go@v0.9.2      latest: v0.11.0 (released today)
 github.com/google/licensecheck@v0.3.1          current
+github.com/golang-jwt/jwt/v4@v4.5.1            latest: v4.5.2 (33 days ago); newer major: github.com/golang-jwt/jwt/v5@v5.3.1 (2025-11-04)
+github.com/minio/minio-go/v6@v6.0.57           current; newer major: github.com/minio/minio-go/v7@v7.2.1 (2026-01-19)
 golang.org/x/mod@v0.35.0                       latest: v0.36.0 (6 days ago)
 modernc.org/sqlite@v1.50.0                     latest: v1.50.1 (3 days ago)
+
+latest as of 2026-07-31 09:14 UTC (staleness.ttl 1h0m0s; --fresh to re-query)
 ```
+
+`minio-go/v6` is the case this exists for: `current` is true of its own path and
+a whole major line is available. The clause is appended, never substituted.
 
 ## JSON output
 
@@ -81,7 +137,10 @@ modernc.org/sqlite@v1.50.0                     latest: v1.50.1 (3 days ago)
   "latest": "v1.10.2",
   "latest_date": "2025-03-28T...",
   "days_behind": 0,
-  "is_latest": true
+  "is_latest": true,
+  "major_probed": true,
+  "looked_up_at": "2026-07-31T09:14:02Z",
+  "served_from_store": false
 }
 ```
 
@@ -95,15 +154,24 @@ modernc.org/sqlite@v1.50.0                     latest: v1.50.1 (3 days ago)
     "latest": "v0.36.0",
     "latest_date": "2025-05-08T...",
     "days_behind": 6,
-    "is_latest": false
+    "is_latest": false,
+    "major_probed": true,
+    "looked_up_at": "2026-07-31T09:14:02Z",
+    "served_from_store": false
   },
   {
-    "module": "golang.org/x/sync",
-    "pinned": "v0.20.0",
-    "latest": "v0.20.0",
-    "latest_date": "2025-04-01T...",
+    "module": "github.com/minio/minio-go/v6",
+    "pinned": "v6.0.57",
+    "latest": "v6.0.57",
+    "latest_date": "2020-12-21T...",
     "days_behind": 0,
-    "is_latest": true
+    "is_latest": true,
+    "newer_major_module": "github.com/minio/minio-go/v7",
+    "newer_major_latest": "v7.2.1",
+    "newer_major_date": "2026-01-19T...",
+    "major_probed": true,
+    "looked_up_at": "2026-07-31T09:14:02Z",
+    "served_from_store": true
   }
 ]
 ```
@@ -127,8 +195,10 @@ kanonarion audit --gomod ./go.mod --json
 kanonarion fetch github.com/foo/bar@v1.5.0 --json
 ```
 
-`audit` calls the proxy for every direct dep internally, so the staleness data
-is already there at no extra cost.
+`audit` resolves staleness for every module in scope through the same ledger
+`latest` writes, so running both back to back pays the proxy sweep once. Note
+that `is_latest: true` is about the module *path*: check `newer_major_module`
+as well, or a dependency a whole major line behind will read as up to date.
 
 ## Examples
 
@@ -157,6 +227,12 @@ kanonarion latest --gomod ./go.mod --tool
 
 # Check staleness of the complete set (code + tooling)
 kanonarion latest --gomod ./go.mod --project
+
+# Bypass the ledger and re-query the proxy for every module
+kanonarion latest --gomod ./go.mod --fresh
+
+# Every dependency with a newer major line available
+kanonarion latest --gomod ./go.mod --json | jq '.[] | select(.newer_major_module != null)'
 ```
 
 ## See also

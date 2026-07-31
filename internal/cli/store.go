@@ -1,13 +1,11 @@
 package cli
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
-	"sort"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -129,11 +127,12 @@ func newStoreConfigCmd(stdout io.Writer) *cobra.Command {
 }
 
 type configShowResult struct {
-	Version          string             `json:"version"`
-	Preferences      configPrefsResult  `json:"preferences"`
-	LicensePolicy    configPolicyResult `json:"license_policy"`
-	LicenseOverrides map[string]string  `json:"license_overrides"`
-	Callgraph        configCGResult     `json:"callgraph"`
+	Version          string                `json:"version"`
+	Preferences      configPrefsResult     `json:"preferences"`
+	LicensePolicy    configPolicyResult    `json:"license_policy"`
+	LicenseOverrides map[string]string     `json:"license_overrides"`
+	Callgraph        configCGResult        `json:"callgraph"`
+	Staleness        configStalenessResult `json:"staleness"`
 
 	// Unified supply-chain governance blocks (schema v2). Surfaced
 	// in the effective-config view so the schema bump and the resolved
@@ -207,6 +206,14 @@ type configCGResult struct {
 	Exclude []string `json:"exclude"`
 }
 
+// configStalenessResult reports the resolved latest-version ledger TTL.
+//
+// Rendered as a duration string rather than a number: "1h0m0s" says what unit
+// it is in, and a bare 3600000000000 does not.
+type configStalenessResult struct {
+	TTL string `json:"ttl"`
+}
+
 func newStoreConfigShowCmd(stdout io.Writer) *cobra.Command {
 	return &cobra.Command{
 		Use:   "show",
@@ -247,6 +254,7 @@ func runStoreConfigShow(root string, asJSON bool, stdout io.Writer) error {
 			},
 			LicenseOverrides: cfg.LicenseOverrides,
 			Callgraph:        configCGResult{Exclude: cfg.Callgraph.Exclude},
+			Staleness:        configStalenessResult{TTL: cfg.Staleness.TTL.String()},
 			DirectivePolicy: configDirectiveResult{
 				LocalPathReplace:  string(cfg.DirectivePolicy.LocalPathReplace),
 				ModulePathReplace: string(cfg.DirectivePolicy.ModulePathReplace),
@@ -308,15 +316,84 @@ func newStoreInfoCmd(stdout, stderr io.Writer) *cobra.Command {
 		Example: `  kanonarion store info --store-root ~/kanonarion/.mirror
   kanonarion store info --store-root ~/kanonarion/.mirror --json`,
 		Args: cobra.NoArgs,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			return runStoreInfo(cmd.Context(), storeRoot, jsonOut, stdout, stderr)
+		RunE: func(_ *cobra.Command, _ []string) error {
+			return runStoreInfo(storeRoot, jsonOut, stdout, stderr)
 		},
 	}
 
 	return cmd
 }
 
-func runStoreInfo(ctx context.Context, storeRoot string, jsonOut bool, stdout, _ io.Writer) error {
+// storeSchemaState is what the store's schema_migrations table says about this
+// binary: how many migrations are applied, how many this binary knows, and which
+// applied ones it does not recognise.
+//
+// It is one determination with two consumers — the reporting `store info` prints
+// and the gate that refuses to operate — because the question they ask is
+// identical and a second copy of the comparison could drift into disagreeing
+// with the command an operator uses to diagnose it.
+type storeSchemaState struct {
+	applied  int
+	expected int
+	unknown  []string
+}
+
+// isNewer reports whether the store carries migrations this binary does not know,
+// which means it was built by a later build of kanonarion. It is not the same
+// question as "applied != expected": a store with FEWER migrations than this
+// binary knows is simply one this binary is about to bring up to date.
+func (s storeSchemaState) isNewer() bool { return len(s.unknown) > 0 }
+
+func (s storeSchemaState) status() string {
+	switch {
+	case s.isNewer():
+		return "newer"
+	case s.applied == s.expected:
+		return "ok"
+	default:
+		return fmt.Sprintf("pending (%d of %d migrations applied)", s.applied, s.expected)
+	}
+}
+
+// readStoreSchemaState asks the store what it holds and pairs the answer with what
+// this binary expects. The comparison itself lives in sqlitestore, beside migrate,
+// because the public driver surface opens the store to write to it too and must
+// reach the same verdict this does.
+//
+// The handle must have been opened WITHOUT migrations, or the comparison would be
+// against a table this call had just written to.
+//
+// It takes no context. It runs on the path that opens the store — before any
+// command's context exists — and reads one bounded local table, so a cancellation
+// hook here would buy nothing and cost every NewContainer caller a parameter.
+func readStoreSchemaState(dbHandle sqlitestore.DB) (storeSchemaState, error) {
+	state, err := sqlitestore.ReadMigrationState(dbHandle, allMigrations())
+	if err != nil {
+		return storeSchemaState{}, fmt.Errorf("reading store schema state: %w", err)
+	}
+	return storeSchemaState{
+		applied:  state.Applied,
+		expected: len(allMigrations()),
+		unknown:  state.Unknown,
+	}, nil
+}
+
+// newerStoreError is the refusal an older binary owes a newer store, in the shape
+// the config and policy schema gates already use: what is newer than what, and
+// the remedy.
+//
+// It is a precondition failure, not a corrupt store — the store is intact and a
+// current binary reads it fine — so it carries ExitConfig rather than
+// ExitIntegrity. Nothing about the recorded evidence is in doubt; this binary is
+// simply not the one that can operate on it.
+func newerStoreError(dbPath string, state storeSchemaState) error {
+	return &exitError{code: ExitConfig, msg: fmt.Sprintf(
+		"store schema at %s is newer than supported: %d migration(s) applied that this binary does not know (%s); upgrade kanonarion. "+
+			"Run `kanonarion store info` to inspect the store without writing to it",
+		dbPath, len(state.unknown), strings.Join(state.unknown, ", "))}
+}
+
+func runStoreInfo(storeRoot string, jsonOut bool, stdout, _ io.Writer) error {
 	absStore, err := filepath.Abs(storeRoot)
 	if err != nil {
 		return fmt.Errorf("resolving store root: %w", err)
@@ -329,61 +406,24 @@ func runStoreInfo(ctx context.Context, storeRoot string, jsonOut bool, stdout, _
 
 	// Open with no migrations — only initialises the infrastructure tables
 	// (schema_migrations, _store_meta) without applying any domain migrations.
-	// This keeps store info read-only with respect to domain schema changes.
+	// This keeps store info read-only with respect to domain schema changes, and
+	// is what lets it still answer for a store this binary refuses to operate on:
+	// the command an operator reaches for to diagnose the refusal must not be
+	// subject to it.
 	dbHandle, err := sqlitestore.Open(dbPath, nil)
 	if err != nil {
 		return fmt.Errorf("opening store at %s: %w", dbPath, err)
 	}
 	defer func() { _ = dbHandle.Close() }()
 
-	rows, err := dbHandle.DB().QueryContext(ctx,
-		`SELECT module, version FROM schema_migrations ORDER BY module, version`)
+	state, err := readStoreSchemaState(dbHandle)
 	if err != nil {
-		return fmt.Errorf("querying schema_migrations: %w", err)
+		return err
 	}
-	defer func() { _ = rows.Close() }()
-
-	type mv struct {
-		module  string
-		version int
-	}
-	var applied []mv
-	for rows.Next() {
-		var r mv
-		if err := rows.Scan(&r.module, &r.version); err != nil {
-			return fmt.Errorf("scanning schema_migrations: %w", err)
-		}
-		applied = append(applied, r)
-	}
-	if err := rows.Err(); err != nil {
-		return fmt.Errorf("reading schema_migrations: %w", err)
-	}
-
-	known := make(map[string]struct{}, len(allMigrations()))
-	for _, m := range allMigrations() {
-		known[migrationKey(m.Module, m.Version)] = struct{}{}
-	}
-
-	var unknown []string
-	for _, a := range applied {
-		if _, ok := known[migrationKey(a.module, a.version)]; !ok {
-			unknown = append(unknown, migrationKey(a.module, a.version))
-		}
-	}
-	sort.Strings(unknown)
-
-	expected := len(allMigrations())
-	appliedCount := len(applied)
-
-	var status string
-	switch {
-	case len(unknown) > 0:
-		status = "newer"
-	case appliedCount == expected:
-		status = "ok"
-	default:
-		status = fmt.Sprintf("pending (%d of %d migrations applied)", appliedCount, expected)
-	}
+	unknown := state.unknown
+	appliedCount := state.applied
+	expected := state.expected
+	status := state.status()
 
 	result := storeInfoResult{
 		StoreRoot: absStore,
@@ -418,8 +458,4 @@ func runStoreInfo(ctx context.Context, storeRoot string, jsonOut bool, stdout, _
 		}
 	}
 	return nil
-}
-
-func migrationKey(module string, version int) string {
-	return fmt.Sprintf("%s@v%d", module, version)
 }

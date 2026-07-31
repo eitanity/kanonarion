@@ -95,10 +95,11 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 	}
 	if !found {
 		if source != domain.AnalysisSourceUnrecorded {
-			return fmt.Errorf("no %s-sourced callgraph record for %s — the ledger may hold one from another source; try --history",
-				source, coord)
+			return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
+				"no %s-sourced callgraph record for %s — the ledger may hold one from another source; try --history",
+				source, coord)}
 		}
-		return fmt.Errorf("no callgraph record for %s — run 'kanonarion callgraph' first", coord)
+		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("no callgraph record for %s — run 'kanonarion callgraph' first", coord)}
 	}
 	nodeFilter, limitNodes, limitEdges := f.nodeFilter, f.limitNodes, f.limitEdges
 
@@ -191,10 +192,17 @@ func historyOrigin(r domain.CallGraphRecord) string {
 		}
 		return "tree " + r.WorktreeDigest
 	}
-	if r.ArtefactIdentity == "" {
-		return "(no artefact recorded)"
+	origin := r.ArtefactIdentity
+	if origin == "" {
+		origin = "(no artefact recorded)"
 	}
-	return r.ArtefactIdentity
+	// The artefact names the published bytes. When a go.mod was synthesised the
+	// analysis read those bytes PLUS a file kanonarion wrote, and a provenance
+	// line that named only the artefact would claim the graph describes it.
+	if !r.SynthesisedGoMod.IsZero() {
+		origin += " + " + r.SynthesisedGoMod.String()
+	}
+	return origin
 }
 
 // callNodeJSON is the curated snake_case shape of a call graph node plus a
@@ -237,21 +245,25 @@ type callGraphRecordJSON struct {
 	// type-only one, and one that cannot see the source cannot tell which bytes
 	// the record is about; in both cases an absent field is itself the answer
 	// ("not recorded") and must be visible as one.
-	Completeness    string         `json:"completeness"`
-	AnalysisSource  string         `json:"analysis_source"`
-	WorktreeDigest  string         `json:"worktree_digest,omitempty"`
-	Nodes           []callNodeJSON `json:"nodes"`
-	Edges           []callEdgeJSON `json:"edges"`
-	OverallStatus   string         `json:"overall_status"`
-	FailureDetail   string         `json:"failure_detail,omitempty"`
-	FailedPackages  []string       `json:"failed_packages,omitempty"`
-	ExclusionReason string         `json:"exclusion_reason,omitempty"`
-	ExclusionList   []string       `json:"exclusion_list,omitempty"`
-	NodeCount       int            `json:"node_count"`
-	EdgeCount       int            `json:"edge_count"`
-	ExtractedAt     string         `json:"extracted_at"`
-	PipelineVersion string         `json:"pipeline_version"`
-	ContentHash     string         `json:"content_hash"`
+	Completeness   string `json:"completeness"`
+	AnalysisSource string `json:"analysis_source"`
+	WorktreeDigest string `json:"worktree_digest,omitempty"`
+	// SynthesisedGoMod is present only when kanonarion wrote a go.mod into the
+	// extracted tree, which is the case in which the graph does not describe the
+	// published bytes alone. Absent means the tree was analysed as published.
+	SynthesisedGoMod *synthesisedGoModJSON `json:"synthesised_go_mod,omitempty"`
+	Nodes            []callNodeJSON        `json:"nodes"`
+	Edges            []callEdgeJSON        `json:"edges"`
+	OverallStatus    string                `json:"overall_status"`
+	FailureDetail    string                `json:"failure_detail,omitempty"`
+	FailedPackages   []string              `json:"failed_packages,omitempty"`
+	ExclusionReason  string                `json:"exclusion_reason,omitempty"`
+	ExclusionList    []string              `json:"exclusion_list,omitempty"`
+	NodeCount        int                   `json:"node_count"`
+	EdgeCount        int                   `json:"edge_count"`
+	ExtractedAt      string                `json:"extracted_at"`
+	PipelineVersion  string                `json:"pipeline_version"`
+	ContentHash      string                `json:"content_hash"`
 	// TestScope says whether _test.go declarations were part of the analysis.
 	// It is emitted even when empty: a consumer that cannot see the axis cannot
 	// tell an unmeasured one from a measured-and-empty one.
@@ -263,6 +275,26 @@ type callGraphRecordJSON struct {
 	// command rather than inlined into every record dump.
 	InterfaceCount      int `json:"interface_count"`
 	ImplementationCount int `json:"implementation_count"`
+}
+
+// synthesisedGoModJSON reports the go.mod kanonarion wrote into an extracted
+// module that shipped none, so a machine consumer can see that the analysed tree
+// is not the published tree and under which language semantics it was built.
+type synthesisedGoModJSON struct {
+	ModulePath        string `json:"module_path"`
+	GoDirective       string `json:"go_directive"`
+	VendorTreePresent bool   `json:"vendor_tree_present"`
+}
+
+func synthesisedGoModToJSON(s domain.SynthesisedGoMod) *synthesisedGoModJSON {
+	if s.IsZero() {
+		return nil
+	}
+	return &synthesisedGoModJSON{
+		ModulePath:        s.ModulePath,
+		GoDirective:       s.GoDirective,
+		VendorTreePresent: s.VendorTreePresent,
+	}
 }
 
 func callNodeRole(n domain.CallNode) string {
@@ -312,12 +344,15 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 		}
 	}
 	return callGraphRecordJSON{
-		SchemaVersion:   r.SchemaVersion,
-		Coordinate:      coordinateJSON{Path: r.Coordinate.Path(), Version: r.Coordinate.Version()},
-		Algorithm:       string(r.Algorithm),
-		Completeness:    string(r.Completeness),
-		AnalysisSource:  string(r.AnalysisSource),
-		WorktreeDigest:  r.WorktreeDigest,
+		SchemaVersion:  r.SchemaVersion,
+		Coordinate:     coordinateJSON{Path: r.Coordinate.Path(), Version: r.Coordinate.Version()},
+		Algorithm:      string(r.Algorithm),
+		Completeness:   string(r.Completeness),
+		AnalysisSource: string(r.AnalysisSource),
+		WorktreeDigest: r.WorktreeDigest,
+
+		SynthesisedGoMod: synthesisedGoModToJSON(r.SynthesisedGoMod),
+
 		Nodes:           nodes,
 		Edges:           edges,
 		OverallStatus:   r.OverallStatus.String(),
@@ -353,6 +388,12 @@ func writeFidelityLine(stdout io.Writer, r domain.CallGraphRecord) error {
 	line := fmt.Sprintf("  fidelity: %s   source: %s", r.Completeness.String(), r.AnalysisSource.String())
 	if r.AnalysisSource == domain.AnalysisSourceWorktree && r.WorktreeDigest != "" {
 		line += "  (tree " + r.WorktreeDigest + ")"
+	}
+	// A synthesised go.mod means the analysed tree is the published bytes plus a
+	// file kanonarion invented. Printing the source without it would let the
+	// record read as a description of the artefact it was sealed against.
+	if !r.SynthesisedGoMod.IsZero() {
+		line += "  [" + r.SynthesisedGoMod.String() + "]"
 	}
 	if _, err := fmt.Fprintln(stdout, line); err != nil {
 		return fmt.Errorf("writing fidelity: %w", err)

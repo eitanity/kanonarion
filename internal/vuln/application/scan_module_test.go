@@ -16,6 +16,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
@@ -29,7 +30,7 @@ func TestScanModule_NewScan(t *testing.T) {
 	vulnStore := newFakeVulnStore()
 	scanner := &fakeScanner{}
 	db := &fakeDatabase{
-		snapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1", RetrievedAt: now},
+		snapshot: vulntest.MustNewAt("test", "v1", now),
 		content:  "vulndb content",
 	}
 	clock := fixedClock{t: now}
@@ -43,7 +44,7 @@ func TestScanModule_NewScan(t *testing.T) {
 	}
 
 	uc := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 
 	seedRec := fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip content"))
@@ -67,8 +68,8 @@ func TestScanModule_NewScan(t *testing.T) {
 		t.Errorf("expected StatusClean, got %s", res.OverallStatus)
 	}
 
-	if res.DatabaseSnapshot.Version != "v1" {
-		t.Errorf("expected snapshot v1, got %s", res.DatabaseSnapshot.Version)
+	if res.DatabaseSnapshot.Version() != "v1" {
+		t.Errorf("expected snapshot v1, got %s", res.DatabaseSnapshot.Version())
 	}
 
 	// Verify persistence
@@ -95,7 +96,7 @@ func TestScanModule_NewScan(t *testing.T) {
 func TestScanModule_ReuseWritesNothingAndKeepsTheMeasurement(t *testing.T) {
 	ctx := t.Context()
 	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
-	snapshot := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
+	snapshot := vulntest.MustNew("test", "v1")
 	earlier := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	now := time.Date(2024, 6, 17, 0, 0, 0, 0, time.UTC)
 
@@ -115,7 +116,7 @@ func TestScanModule_ReuseWritesNothingAndKeepsTheMeasurement(t *testing.T) {
 	}
 
 	uc := application.NewScanModuleUseCase(
-		nil, nil, vulnStore, nil, nil, nil, nil, fixedClock{t: now}, "v1", "v1", slog.Default(),
+		nil, nil, vulnStore, nil, nil, nil, nil, fixedClock{t: now}, "v1", slog.Default(),
 	)
 
 	res, err := uc.Scan(ctx, application.ScanModuleParams{
@@ -206,7 +207,7 @@ func TestScanModule_MetadataFilter_UsesGraphEdges(t *testing.T) {
 	}
 
 	vulnStore := newFakeVulnStore()
-	snap := domain.DatabaseSnapshot{Source: "test", Version: "v1", RetrievedAt: now}
+	snap := vulntest.MustNewAt("test", "v1", now)
 	_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
 
 	// Only C is vulnerable — A and B are clean.
@@ -219,7 +220,7 @@ func TestScanModule_MetadataFilter_UsesGraphEdges(t *testing.T) {
 	uc := application.NewScanModuleUseCase(
 		facts, blobs, vulnStore, ws,
 		&callCountingScanner{inner: &fakeScanner{}, called: &scannerCalled},
-		db, nil, fixedClock{t: now}, "v1", "v1", slog.New(slog.NewTextHandler(io.Discard, nil)),
+		db, nil, fixedClock{t: now}, "v1", slog.New(slog.NewTextHandler(io.Discard, nil)),
 	)
 
 	res, err := uc.Scan(ctx, application.ScanModuleParams{
@@ -256,7 +257,7 @@ func TestScanModule_HeavyScanRecordSurvivesReadGate(t *testing.T) {
 	// past the metadata fast path that stamps Ecosystem itself.
 	scanner := &fakeScanner{}
 	db := &fakeDatabase{
-		snapshot:    domain.DatabaseSnapshot{Source: "test", Version: "v1", RetrievedAt: now},
+		snapshot:    vulntest.MustNewAt("test", "v1", now),
 		vulnerables: map[coordinate.ModuleCoordinate][]string{coord: {"GO-VULN-ID"}},
 	}
 	clock := fixedClock{t: now}
@@ -270,7 +271,7 @@ func TestScanModule_HeavyScanRecordSurvivesReadGate(t *testing.T) {
 	}
 
 	uc := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 
 	res, err := uc.Scan(ctx, application.ScanModuleParams{
@@ -308,7 +309,7 @@ func TestScanModule_ScanFailure(t *testing.T) {
 	vulnStore := newFakeVulnStore()
 	scanner := &fakeScanner{err: fmt.Errorf("scan failed")}
 	db := &fakeDatabase{
-		snapshot:    domain.DatabaseSnapshot{Version: "v1"},
+		snapshot:    vulntest.MustNew("govulndb", "v1"),
 		vulnerables: map[coordinate.ModuleCoordinate][]string{coord: {"GO-VULN-ID"}},
 	}
 	clock := fixedClock{t: now}
@@ -322,7 +323,7 @@ func TestScanModule_ScanFailure(t *testing.T) {
 	}
 
 	uc := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 
 	res, err := uc.Scan(ctx, application.ScanModuleParams{
@@ -353,7 +354,7 @@ func TestScanModule_BuildIncompatibility_FallsBackToMetadata(t *testing.T) {
 	vulnStore := newFakeVulnStore()
 	scanner := &fakeScanner{err: fmt.Errorf("govulncheck: loading packages: invalid array length -delta * delta")}
 	db := &fakeDatabase{
-		snapshot:    domain.DatabaseSnapshot{Version: "v1"},
+		snapshot:    vulntest.MustNew("govulndb", "v1"),
 		vulnerables: map[coordinate.ModuleCoordinate][]string{coord: {"GO-2024-0001"}},
 	}
 	clock := fixedClock{t: now}
@@ -366,7 +367,7 @@ func TestScanModule_BuildIncompatibility_FallsBackToMetadata(t *testing.T) {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
-	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default())
 	res, err := uc.Scan(ctx, application.ScanModuleParams{Coordinate: coord, WalkID: "walk-1", Force: true})
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
@@ -435,7 +436,7 @@ func TestScanModule_OfflineResolution_SourcePositionShapeIsVerified(t *testing.T
 			blobs := newFakeBlob()
 			vulnStore := newFakeVulnStore()
 			scanner := &fakeScanner{err: fmt.Errorf("%s", scannerErr)}
-			db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Version: "v1"}}
+			db := &fakeDatabase{snapshot: vulntest.MustNew("govulndb", "v1")}
 			clock := fixedClock{t: now}
 
 			seedRec := fetchtest.Record(t,
@@ -456,7 +457,7 @@ func TestScanModule_OfflineResolution_SourcePositionShapeIsVerified(t *testing.T
 				t.Fatalf("PutFetchRecord: %v", err)
 			}
 
-			uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+			uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default())
 			res, err := uc.Scan(ctx, application.ScanModuleParams{
 				Coordinate: coord, WalkID: "walk-1", Force: true, KnownVersions: tc.known,
 			})
@@ -493,7 +494,7 @@ func TestScanModule_OfflineResolution_UnrecoverableIsMarkedUnverified(t *testing
 	blobs := newFakeBlob()
 	vulnStore := newFakeVulnStore()
 	scanner := &fakeScanner{err: fmt.Errorf("%s", scannerErr)}
-	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Version: "v1"}}
+	db := &fakeDatabase{snapshot: vulntest.MustNew("govulndb", "v1")}
 	clock := fixedClock{t: now}
 
 	seedRec := fetchtest.Record(t,
@@ -514,7 +515,7 @@ func TestScanModule_OfflineResolution_UnrecoverableIsMarkedUnverified(t *testing
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
-	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default())
 	res, err := uc.Scan(ctx, application.ScanModuleParams{
 		Coordinate: coord, WalkID: "walk-1", Force: true,
 		KnownVersions: map[coordinate.ModuleCoordinate]struct{}{coordinatetest.MustNew("golang.org/x/net", "v0.55.0"): {}},
@@ -550,7 +551,7 @@ func TestScanModule_OfflineResolution_DirectShapeGatedOnRequireClosure(t *testin
 	blobs := newFakeBlob()
 	vulnStore := newFakeVulnStore()
 	scanner := &fakeScanner{err: fmt.Errorf("%s", scannerErr)}
-	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Version: "v1"}}
+	db := &fakeDatabase{snapshot: vulntest.MustNew("govulndb", "v1")}
 	clock := fixedClock{t: now}
 
 	seedRec := fetchtest.Record(t,
@@ -571,7 +572,7 @@ func TestScanModule_OfflineResolution_DirectShapeGatedOnRequireClosure(t *testin
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
-	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default())
 	res, err := uc.Scan(ctx, application.ScanModuleParams{
 		Coordinate: coord, WalkID: "walk-1", Force: true,
 		// fsnotify@v1.7.0 is outside the walk's known set, so the un-gated code
@@ -613,7 +614,7 @@ func TestScanModule_OfflineResolution_ColumnMismatchRecovers(t *testing.T) {
 	blobs := newFakeBlob()
 	vulnStore := newFakeVulnStore()
 	scanner := &fakeScanner{err: fmt.Errorf("%s", scannerErr)}
-	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Version: "v1"}}
+	db := &fakeDatabase{snapshot: vulntest.MustNew("govulndb", "v1")}
 	clock := fixedClock{t: now}
 
 	seedRec := fetchtest.Record(t,
@@ -634,7 +635,7 @@ func TestScanModule_OfflineResolution_ColumnMismatchRecovers(t *testing.T) {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
-	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default())
 	res, err := uc.Scan(ctx, application.ScanModuleParams{
 		Coordinate: coord, WalkID: "walk-1", Force: true,
 		KnownVersions: map[coordinate.ModuleCoordinate]struct{}{coordinatetest.MustNew("github.com/stretchr/testify", "v1.9.0"): {}},
@@ -672,7 +673,7 @@ func TestScanModule_OfflineResolution_OwnGoModWhenPackageOutsideWalk(t *testing.
 	blobs := newFakeBlob()
 	vulnStore := newFakeVulnStore()
 	scanner := &fakeScanner{err: fmt.Errorf("%s", scannerErr)}
-	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Version: "v1"}}
+	db := &fakeDatabase{snapshot: vulntest.MustNew("govulndb", "v1")}
 	clock := fixedClock{t: now}
 
 	seedRec := fetchtest.Record(t,
@@ -693,7 +694,7 @@ func TestScanModule_OfflineResolution_OwnGoModWhenPackageOutsideWalk(t *testing.
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
-	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default())
 	res, err := uc.Scan(ctx, application.ScanModuleParams{
 		Coordinate: coord, WalkID: "walk-1", Force: true,
 		// The walk built testify itself but never objx; objx is off-graph.
@@ -738,7 +739,7 @@ func TestScanModule_OfflineResolution_ImportSiteDependencyGoMod(t *testing.T) {
 	blobs := newFakeBlob()
 	vulnStore := newFakeVulnStore()
 	scanner := &fakeScanner{err: fmt.Errorf("%s", scannerErr)}
-	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Version: "v1"}}
+	db := &fakeDatabase{snapshot: vulntest.MustNew("govulndb", "v1")}
 	clock := fixedClock{t: now}
 
 	seedRec := fetchtest.Record(t,
@@ -777,7 +778,7 @@ func TestScanModule_OfflineResolution_ImportSiteDependencyGoMod(t *testing.T) {
 		t.Fatalf("PutFetchRecord(site): %v", err)
 	}
 
-	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default())
 	res, err := uc.Scan(ctx, application.ScanModuleParams{
 		Coordinate: coord, WalkID: "walk-1", Force: true,
 		KnownVersions: map[coordinate.ModuleCoordinate]struct{}{
@@ -818,7 +819,7 @@ func TestScanModule_OfflineResolution_VersionedReplaceScoping(t *testing.T) {
 	blobs := newFakeBlob()
 	vulnStore := newFakeVulnStore()
 	scanner := &fakeScanner{err: fmt.Errorf("%s", scannerErr)}
-	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Version: "v1"}}
+	db := &fakeDatabase{snapshot: vulntest.MustNew("govulndb", "v1")}
 	clock := fixedClock{t: now}
 
 	seedRec := fetchtest.Record(t,
@@ -839,7 +840,7 @@ func TestScanModule_OfflineResolution_VersionedReplaceScoping(t *testing.T) {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
-	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default())
 	res, err := uc.Scan(ctx, application.ScanModuleParams{
 		Coordinate: coord, WalkID: "walk-1", Force: true,
 		KnownVersions: map[coordinate.ModuleCoordinate]struct{}{coordinatetest.MustNew("golang.org/x/text", "v0.21.0"): {}},
@@ -877,7 +878,7 @@ func TestScanModule_MetadataPath_PersistsEnrichedFindings(t *testing.T) {
 		PublishedAt:     now,
 	}
 	db := &fakeDatabase{
-		snapshot: domain.DatabaseSnapshot{Version: "v1"},
+		snapshot: vulntest.MustNew("govulndb", "v1"),
 		findings: map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding{coord: {enriched}},
 	}
 	clock := fixedClock{t: now}
@@ -890,7 +891,7 @@ func TestScanModule_MetadataPath_PersistsEnrichedFindings(t *testing.T) {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
-	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default())
 	res, err := uc.Scan(ctx, application.ScanModuleParams{Coordinate: coord, WalkID: "walk-1", Force: true})
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
@@ -926,7 +927,7 @@ func TestScanModule_MetadataPath_PersistsEnrichedFindings(t *testing.T) {
 func TestScanModule_ScanFailed_NotServedFromCache(t *testing.T) {
 	ctx := t.Context()
 	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
-	snapshot := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
+	snapshot := vulntest.MustNew("test", "v1")
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 
 	// Pre-seed a cached ScanFailed record — simulates a previous failed run.
@@ -962,7 +963,7 @@ func TestScanModule_ScanFailed_NotServedFromCache(t *testing.T) {
 	uc := application.NewScanModuleUseCase(
 		facts, blobs, vulnStore, nil,
 		&callCountingScanner{inner: &fakeScanner{}, called: &scannerCalled},
-		db, nil, fixedClock{t: now}, "v1", "v1", slog.Default(),
+		db, nil, fixedClock{t: now}, "v1", slog.Default(),
 	)
 
 	res, err := uc.Scan(ctx, application.ScanModuleParams{
@@ -997,7 +998,7 @@ func TestScanModule_GeneratedAssetsMissing_UnscanReason(t *testing.T) {
 	scanner := &fakeScanner{err: fmt.Errorf("govulncheck: loading packages:\n" +
 		"/tmp/scan/velociraptor/utils/reflect.go:11:22: undefined: assets.ReadFile\n" +
 		"/tmp/scan/velociraptor/vql/unimplemented.go:176:44: undefined: assets.FileDocsReferencesVqlYaml")}
-	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Version: "v1"}}
+	db := &fakeDatabase{snapshot: vulntest.MustNew("govulndb", "v1")}
 	clock := fixedClock{t: now}
 
 	seedRec := fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip content"))
@@ -1008,7 +1009,7 @@ func TestScanModule_GeneratedAssetsMissing_UnscanReason(t *testing.T) {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
-	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default())
 	res, err := uc.Scan(ctx, application.ScanModuleParams{Coordinate: coord, WalkID: "walk-1", Force: true})
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
@@ -1036,7 +1037,7 @@ func TestScanModule_BuildIncompatibility_NoAdvisory_IsUnscannable(t *testing.T) 
 	blobs := newFakeBlob()
 	vulnStore := newFakeVulnStore()
 	scanner := &fakeScanner{err: fmt.Errorf("govulncheck: loading packages: invalid array length")}
-	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Version: "v1"}} // no advisories
+	db := &fakeDatabase{snapshot: vulntest.MustNew("govulndb", "v1")} // no advisories
 	clock := fixedClock{t: now}
 
 	seedRec := fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip content"))
@@ -1047,7 +1048,7 @@ func TestScanModule_BuildIncompatibility_NoAdvisory_IsUnscannable(t *testing.T) 
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
-	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default())
 	res, err := uc.Scan(ctx, application.ScanModuleParams{Coordinate: coord, WalkID: "walk-1", Force: true})
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
@@ -1102,7 +1103,7 @@ func TestScanModule_ScannerUnscannable_MetadataAttributesAdvisories(t *testing.T
 	vulnStore := newFakeVulnStore()
 	scanner := scannerUnscannable(coord)
 	db := &fakeDatabase{
-		snapshot: domain.DatabaseSnapshot{Version: "v1"},
+		snapshot: vulntest.MustNew("govulndb", "v1"),
 		findings: map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding{
 			coord: {
 				{ID: "GO-2020-0015", Summary: "unicode issue", FixedIn: "v0.3.3", AffectedSymbols: []string{"Transform"}},
@@ -1121,7 +1122,7 @@ func TestScanModule_ScannerUnscannable_MetadataAttributesAdvisories(t *testing.T
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
-	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default())
 	res, err := uc.Scan(ctx, application.ScanModuleParams{Coordinate: coord, WalkID: "walk-1", Force: true})
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
@@ -1155,7 +1156,7 @@ func TestScanModule_ScannerUnscannable_NoAdvisory_IsUnscannable(t *testing.T) {
 	blobs := newFakeBlob()
 	vulnStore := newFakeVulnStore()
 	scanner := scannerUnscannable(coord)
-	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Version: "v1"}} // no advisories
+	db := &fakeDatabase{snapshot: vulntest.MustNew("govulndb", "v1")} // no advisories
 	clock := fixedClock{t: now}
 
 	seedRec := fetchtest.Record(t, fetchtest.Coordinate(coord), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip content"))
@@ -1166,7 +1167,7 @@ func TestScanModule_ScannerUnscannable_NoAdvisory_IsUnscannable(t *testing.T) {
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
-	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default())
 	res, err := uc.Scan(ctx, application.ScanModuleParams{Coordinate: coord, WalkID: "walk-1", Force: true})
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
@@ -1199,7 +1200,7 @@ func TestScanModule_ScannerUnscannable_OOMKilled_RoutesToMetadata(t *testing.T) 
 	vulnStore := newFakeVulnStore()
 	scanner := scannerUnscannableReason(coord, domain.UnscanReasonOOMKilled, "govulncheck was killed (likely OOM)")
 	db := &fakeDatabase{
-		snapshot: domain.DatabaseSnapshot{Version: "v1"},
+		snapshot: vulntest.MustNew("govulndb", "v1"),
 		findings: map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding{
 			coord: {{ID: "GO-2024-0001", Summary: "boom", FixedIn: "v2.0.1"}},
 		},
@@ -1214,7 +1215,7 @@ func TestScanModule_ScannerUnscannable_OOMKilled_RoutesToMetadata(t *testing.T) 
 		t.Fatalf("PutFetchRecord: %v", err)
 	}
 
-	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default())
 	res, err := uc.Scan(ctx, application.ScanModuleParams{Coordinate: coord, WalkID: "walk-1", Force: true})
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
@@ -1247,7 +1248,7 @@ func scanModuleFixture(t *testing.T, coord coordinate.ModuleCoordinate, scanner 
 	}
 	uc := application.NewScanModuleUseCase(
 		facts, blobs, vulnStore, nil, scanner, db, nil,
-		fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}, "v1", "v1", slog.Default(),
+		fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}, "v1", slog.Default(),
 	)
 	return uc, vulnStore
 }
@@ -1269,7 +1270,7 @@ func TestScanModule_SuccessfulSourceScanStillMatchesOwnAdvisories(t *testing.T) 
 		coord.String(): {Coordinate: coord, OverallStatus: domain.StatusClean},
 	}}
 	db := &fakeDatabase{
-		snapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1", RetrievedAt: now},
+		snapshot: vulntest.MustNewAt("test", "v1", now),
 		content:  "vulndb content",
 		findings: map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding{
 			coord: {{ID: "GO-2024-3205", Summary: "Infinite loop", AffectedRange: "< v1.1.0", FixedIn: "v1.1.0"}},
@@ -1313,7 +1314,7 @@ func TestScanModule_CleanVerdictMeansAdvisoriesWereMatched(t *testing.T) {
 		coord.String(): {Coordinate: coord, OverallStatus: domain.StatusClean},
 	}}
 	db := &fakeDatabase{
-		snapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1", RetrievedAt: now},
+		snapshot: vulntest.MustNewAt("test", "v1", now),
 		content:  "vulndb content",
 	}
 	uc, _ := scanModuleFixture(t, coord, scanner, db)
@@ -1345,7 +1346,7 @@ func TestScanModule_SourceFindingWinsOverCoordinateMatch(t *testing.T) {
 		},
 	}}
 	db := &fakeDatabase{
-		snapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1", RetrievedAt: now},
+		snapshot: vulntest.MustNewAt("test", "v1", now),
 		content:  "vulndb content",
 		findings: map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding{
 			coord: {{ID: "GO-2024-0001", Summary: "from coordinate"}},
@@ -1379,7 +1380,7 @@ func TestScanModule_PrefilterVulnerableIsNotOverriddenByCleanSourceScan(t *testi
 		coord.String(): {Coordinate: coord, OverallStatus: domain.StatusClean},
 	}}
 	db := &fakeDatabase{
-		snapshot:    domain.DatabaseSnapshot{Source: "test", Version: "v1", RetrievedAt: now},
+		snapshot:    vulntest.MustNewAt("test", "v1", now),
 		content:     "vulndb content",
 		vulnerables: map[coordinate.ModuleCoordinate][]string{coord: {"GO-2024-0002"}},
 	}

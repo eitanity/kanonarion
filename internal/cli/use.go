@@ -15,7 +15,6 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
 	factstoresqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
-	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
 
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
@@ -74,7 +73,7 @@ func runUse(ctx context.Context, f useFlags, targetArg string, stdout, stderr io
 		return fmt.Errorf("listing walks: %w", err)
 	}
 	if len(summaries) == 0 {
-		return fmt.Errorf("no walk record found for %s — run 'kanonarion walk' first", coord)
+		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("no walk record found for %s — run 'kanonarion walk' first", coord)}
 	}
 
 	walk, err := walkStore.GetWalk(ctx, summaries[0].ID)
@@ -114,18 +113,14 @@ func runUse(ctx context.Context, f useFlags, targetArg string, stdout, stderr io
 		modules = append(modules, coord)
 	}
 
-	// Resolve the pipeline version per node from the walk's per-node
-	// FetchRecord. FactStore.GetFetchRecord requires an exact pipeline-version
-	// match, so the compile-time fetchapp.PipelineVersion is only safe as a
-	// last-resort fallback for legacy walks predating the per-node
-	// FetchRecord — using it unconditionally would hide records stored under
-	// any earlier pipeline version.
+	// No pipeline version is resolved per node any more. This command used to dig
+	// the version out of the walk's per-node FetchRecord and fall back to the
+	// compile-time fetch version for walks predating it — a workaround for the
+	// version-keyed read, kept correct by hand. The composed read asks the ledger
+	// what it has measured about each artefact, so the workaround and its
+	// last-resort fallback both go.
 	for _, m := range modules {
-		pv := fetchapp.PipelineVersion
-		if nr, ok := walk.PerNodeResults[m]; ok && nr.FetchRecord != nil && nr.FetchRecord.PipelineVersion != "" {
-			pv = nr.FetchRecord.PipelineVersion
-		}
-		if err := copyToModCache(ctx, m, factStore, blobStore, modCache, pv, logger); err != nil {
+		if err := copyToModCache(ctx, m, factStore, blobStore, modCache, logger); err != nil {
 			logger.WarnContext(ctx, "copy_failed",
 				slog.String("module", m.String()),
 				slog.String("error", err.Error()),
@@ -144,15 +139,14 @@ func copyToModCache(
 	facts ports.FactStore,
 	blobs ports.BlobStore,
 	modCache string,
-	pipelineVersion string,
 	logger *slog.Logger,
 ) error {
-	record, ok, err := facts.GetFetchRecord(ctx, coord, pipelineVersion)
+	record, ok, err := ports.ComposedFetchRecord(ctx, facts, coord)
 	if err != nil {
 		return fmt.Errorf("getting fact record: %w", err)
 	}
 	if !ok {
-		return fmt.Errorf("fact record not found")
+		return &exitError{code: ExitNotFound, msg: "fact record not found"}
 	}
 
 	// Paths in GOMODCACHE:

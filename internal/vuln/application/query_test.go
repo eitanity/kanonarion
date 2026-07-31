@@ -13,6 +13,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 )
 
 // queryVulnFakeStore is a minimal VulnerabilityStore for query use-case tests.
@@ -276,7 +277,7 @@ func TestQueryScanRunsUseCase_ListAllRuns(t *testing.T) {
 
 func TestQueryScanRunsUseCase_ListSnapshots(t *testing.T) {
 	snaps := []domain.DatabaseSnapshot{
-		{Source: "govulndb", Version: "v2024-01-01", RetrievedAt: time.Now()},
+		vulntest.MustNewAt("govulndb", "v2024-01-01", time.Now()),
 	}
 	uc := application.NewQueryScanRunsUseCase(&queryVulnFakeStore{snapshots: snaps})
 
@@ -284,7 +285,7 @@ func TestQueryScanRunsUseCase_ListSnapshots(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if len(got) != 1 || got[0].Source != "govulndb" {
+	if len(got) != 1 || got[0].Source() != "govulndb" {
 		t.Errorf("unexpected snapshots: %v", got)
 	}
 }

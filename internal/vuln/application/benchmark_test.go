@@ -16,6 +16,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
@@ -33,7 +34,7 @@ func (s *slowScanner) Scan(_ context.Context, req ports.ScanRequest) (domain.Vul
 	}, nil
 }
 
-func (s *slowScanner) ScanProject(_ context.Context, _ string, _ domain.DatabaseSnapshot, _ string) (domain.ProjectScanResult, error) {
+func (s *slowScanner) ScanProject(_ context.Context, _ ports.ProjectScanRequest) (domain.ProjectScanResult, error) {
 	time.Sleep(s.delay)
 	return domain.ProjectScanResult{Status: domain.StatusClean}, nil
 }
@@ -75,7 +76,7 @@ func BenchmarkVulnScan_Sequential_vs_Parallel(b *testing.B) {
 	ctx := context.Background()
 	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	clock := fixedClock{t: now}
-	snap := domain.DatabaseSnapshot{Source: "bench", Version: "v1"}
+	snap := vulntest.MustNew("bench", "v1")
 	silentLogger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
 	for _, n := range []int{4, 8, 16} {
@@ -109,7 +110,7 @@ func BenchmarkVulnScan_Sequential_vs_Parallel(b *testing.B) {
 			_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
 			moduleUC := application.NewScanModuleUseCase(
 				facts, blobs, vulnStore, ws, &slowScanner{delay: scanDelay},
-				db, nil, clock, "v1", "v1", silentLogger,
+				db, nil, clock, "v1", silentLogger,
 			)
 			walkUC := application.NewScanWalkUseCase(
 				ws, vulnStore, moduleUC, nil, clock, "v1", silentLogger,
@@ -133,7 +134,7 @@ func BenchmarkVulnScan_Sequential_vs_Parallel(b *testing.B) {
 			_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
 			moduleUC := application.NewScanModuleUseCase(
 				facts, blobs, vulnStore, ws, &slowScanner{delay: scanDelay},
-				db, nil, clock, "v1", "v1", silentLogger,
+				db, nil, clock, "v1", silentLogger,
 			)
 			walkUC := application.NewScanWalkUseCase(
 				ws, vulnStore, moduleUC, nil, clock, "v1", silentLogger,

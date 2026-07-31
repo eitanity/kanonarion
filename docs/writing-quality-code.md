@@ -162,8 +162,10 @@ queryable and auditable.
 # Once, per project (slow; populates the local store)
 kanonarion inspect
 
-# While writing - all local, sub-second reads
+# While writing - all local. Cost varies by what each one has to do:
+# a record read is milliseconds, a graph computation is seconds, and the
+# legs that re-analyse or go to the network are tens of seconds or more.
 kanonarion context <module>@<version>     # real API for the code you're about to write
-kanonarion audit                          # licence / vuln / staleness sanity check
+kanonarion audit                          # licence / vuln / staleness sanity check (network-bound; minutes)
 kanonarion local . && kanonarion callers '<symbol>'   # structure + blast radius before a refactor
 ```

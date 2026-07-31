@@ -11,6 +11,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 )
 
 // The metadata-only fallback is the one producer whose two answers cannot both
@@ -23,7 +24,7 @@ import (
 // later reader ranks and reports from.
 func TestScanModule_MetadataOnlyMatchStatesBothAxes(t *testing.T) {
 	vulnStore := newFakeVulnStore()
-	snap := domain.DatabaseSnapshot{Source: "osv", Version: "v2"}
+	snap := vulntest.MustNew("osv", "v2")
 	modCoord := coordinatetest.MustNew("github.com/vuln/mod", "v1.0.0")
 	db := &fakeDatabase{
 		snapshot:    snap,
@@ -33,7 +34,7 @@ func TestScanModule_MetadataOnlyMatchStatesBothAxes(t *testing.T) {
 	uc := application.NewScanModuleUseCase(
 		newFakeFacts(), newFakeBlob(), vulnStore, newFakeWalkStore(),
 		&fakeScanner{results: map[string]domain.VulnerabilityRecord{}}, db, nil,
-		fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}, "v1", "v1", slog.Default(),
+		fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}, "v1", slog.Default(),
 	)
 	if _, err := uc.Scan(t.Context(), application.ScanModuleParams{
 		Coordinate: modCoord,
@@ -73,14 +74,14 @@ func TestScanModule_MetadataOnlyMatchStatesBothAxes(t *testing.T) {
 // analysed when its source was never read.
 func TestScanModule_MetadataOnlyCleanIsStillACoverageGap(t *testing.T) {
 	vulnStore := newFakeVulnStore()
-	snap := domain.DatabaseSnapshot{Source: "osv", Version: "v2"}
+	snap := vulntest.MustNew("osv", "v2")
 	modCoord := coordinatetest.MustNew("github.com/clean/mod", "v1.0.0")
 
 	uc := application.NewScanModuleUseCase(
 		newFakeFacts(), newFakeBlob(), vulnStore, newFakeWalkStore(),
 		&fakeScanner{results: map[string]domain.VulnerabilityRecord{}},
 		&fakeDatabase{snapshot: snap}, nil,
-		fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}, "v1", "v1", slog.Default(),
+		fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}, "v1", slog.Default(),
 	)
 	if _, err := uc.Scan(t.Context(), application.ScanModuleParams{
 		Coordinate: modCoord,
@@ -117,7 +118,7 @@ func TestScanModule_MetadataOnlyCleanIsStillACoverageGap(t *testing.T) {
 func TestScanModule_CoordinateMatchOnAnAnalysedModuleStatesAnalysedAndAffected(t *testing.T) {
 	ctx := t.Context()
 	vulnStore := newFakeVulnStore()
-	snap := domain.DatabaseSnapshot{Source: "osv", Version: "v2"}
+	snap := vulntest.MustNew("osv", "v2")
 	modCoord := coordinatetest.MustNew("github.com/scanned/mod", "v1.0.0")
 
 	// The module must be fetched for the source path to run at all; an absent
@@ -145,7 +146,7 @@ func TestScanModule_CoordinateMatchOnAnAnalysedModuleStatesAnalysedAndAffected(t
 			snapshot:    snap,
 			vulnerables: map[coordinate.ModuleCoordinate][]string{modCoord: {"GO-2024-0001"}},
 		}, nil,
-		fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}, "v1", "v1", slog.Default(),
+		fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)}, "v1", slog.Default(),
 	)
 	rec, err := uc.Scan(t.Context(), application.ScanModuleParams{
 		Coordinate: modCoord,

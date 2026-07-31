@@ -110,6 +110,110 @@ func TestResolveGitRef_AcceptsValidOrigin(t *testing.T) {
 	}
 }
 
+// tagRecordingVCS records every ref it is asked to resolve, and refuses any ref
+// carrying the +incompatible suffix the way a real remote does: no such ref
+// exists, so ls-remote finds nothing.
+type tagRecordingVCS struct {
+	refs []string
+}
+
+func (v *tagRecordingVCS) ResolveTag(_ context.Context, _, ref string) (string, error) {
+	v.refs = append(v.refs, ref)
+	if strings.Contains(ref, "+incompatible") {
+		return "", fmt.Errorf("tag not found: %s", ref)
+	}
+	return strings.Repeat("b", 40), nil
+}
+
+func (v *tagRecordingVCS) CheckoutToDir(context.Context, string, string, string) error {
+	return fmt.Errorf("commit not found")
+}
+
+// A +incompatible module with no proxy Origin must be looked up under the tag
+// the repository actually carries — the suffix is the go command's annotation
+// for a pre-modules major version and no ref can hold it. Before the fix the
+// ref was built by concatenating the full version, ls-remote found nothing, and
+// the module degraded to checksum-database-only trust.
+func TestResolveGitRef_IncompatibleStripsSuffixFromTagRef(t *testing.T) {
+	vcs := &tagRecordingVCS{}
+	uc := &FetchModuleUseCase{vcs: vcs}
+	coord := coordinatetest.MustNew("github.com/Masterminds/sprig", "v2.22.0+incompatible")
+
+	gitRef, status, detail, _ := uc.resolveGitRef(context.Background(), slog.Default(),
+		coord, ports.ModuleInfo{}, domain2.DefaultVCSHostAllowlist())
+
+	if len(vcs.refs) != 1 {
+		t.Fatalf("VCS was asked for %d refs (%v), want exactly one", len(vcs.refs), vcs.refs)
+	}
+	if vcs.refs[0] != "refs/tags/v2.22.0" {
+		t.Errorf("resolved ref = %q, want refs/tags/v2.22.0 without the build-metadata suffix", vcs.refs[0])
+	}
+	if status != domain2.Verified {
+		t.Errorf("status = %q (detail %q), want Verified", status, detail)
+	}
+	if gitRef.Ref != "refs/tags/v2.22.0" {
+		t.Errorf("recorded GitReference.Ref = %q, want refs/tags/v2.22.0", gitRef.Ref)
+	}
+	// The stripping is for ref construction only: the coordinate the record is
+	// keyed on still names the version the build actually resolved.
+	if coord.Version() != "v2.22.0+incompatible" {
+		t.Errorf("coordinate version = %q, want the unmodified v2.22.0+incompatible", coord.Version())
+	}
+}
+
+// The same coordinate resolved from trusted proxy Origin metadata names the
+// same ref — the proxy strips the suffix too, and the two paths must not
+// disagree about which tag a module was built from.
+func TestResolveGitRef_IncompatibleAgreesWithProxyOrigin(t *testing.T) {
+	coord := coordinatetest.MustNew("github.com/docker/cli", "v28.2.2+incompatible")
+
+	vcs := &tagRecordingVCS{}
+	inferred, _, _, _ := (&FetchModuleUseCase{vcs: vcs}).resolveGitRef(context.Background(),
+		slog.Default(), coord, ports.ModuleInfo{}, domain2.DefaultVCSHostAllowlist())
+
+	info := ports.ModuleInfo{Origin: &ports.ModuleOrigin{
+		URL:  "https://github.com/docker/cli",
+		Ref:  "refs/tags/v28.2.2",
+		Hash: strings.Repeat("a", 40),
+	}}
+	fromOrigin, status, _, _ := (&FetchModuleUseCase{vcs: &tagRecordingVCS{}}).resolveGitRef(
+		context.Background(), slog.Default(), coord, info, domain2.DefaultVCSHostAllowlist())
+
+	if status != domain2.Verified {
+		t.Fatalf("proxy-Origin path status = %q, want Verified", status)
+	}
+	if fromOrigin.Ref != "refs/tags/v28.2.2" {
+		t.Errorf("Origin path ref = %q, want the Origin's own refs/tags/v28.2.2", fromOrigin.Ref)
+	}
+	if inferred.Ref != fromOrigin.Ref {
+		t.Errorf("inferred ref %q disagrees with proxy Origin ref %q for the same coordinate",
+			inferred.Ref, fromOrigin.Ref)
+	}
+}
+
+// An ordinary tagged version is passed through untouched, and a pseudo-version
+// still resolves by its embedded commit rather than by any tag at all.
+func TestResolveGitRef_NonIncompatibleVersionsUnchanged(t *testing.T) {
+	tagged := &tagRecordingVCS{}
+	taggedRef, _, _, _ := (&FetchModuleUseCase{vcs: tagged}).resolveGitRef(context.Background(),
+		slog.Default(), coordinatetest.MustNew("github.com/foo/bar", "v1.8.1"),
+		ports.ModuleInfo{}, domain2.DefaultVCSHostAllowlist())
+	if taggedRef.Ref != "refs/tags/v1.8.1" {
+		t.Errorf("tagged ref = %q, want refs/tags/v1.8.1", taggedRef.Ref)
+	}
+
+	pseudo := &tagRecordingVCS{}
+	pseudoRef, _, _, _ := (&FetchModuleUseCase{vcs: pseudo}).resolveGitRef(context.Background(),
+		slog.Default(), coordinatetest.MustNew("github.com/foo/bar", "v0.0.0-20210101120000-abcdefabcdef"),
+		ports.ModuleInfo{}, domain2.DefaultVCSHostAllowlist())
+	if len(pseudo.refs) != 0 {
+		t.Errorf("pseudo-version asked the VCS for tags %v, want none", pseudo.refs)
+	}
+	if pseudoRef.CommitHash != "abcdefabcdef" {
+		t.Errorf("pseudo-version commit = %q, want the embedded abcdefabcdef", pseudoRef.CommitHash)
+	}
+}
+
 // A missing VCS tool on the checkout path is classified as the distinct "tool
 // missing" status, and the detail carries the actionable message.
 func TestCrossVerify_ToolMissing(t *testing.T) {

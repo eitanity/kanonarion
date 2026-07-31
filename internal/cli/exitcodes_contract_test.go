@@ -1,0 +1,207 @@
+package cli
+
+import (
+	"bytes"
+	"context"
+	"errors"
+	"testing"
+
+	"github.com/eitanity/kanonarion/internal/cli/testfakes"
+	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+)
+
+// The exit-code taxonomy is a compatibility surface: an automation caller
+// branches on the number, not on the prose, so a code that drifts breaks a
+// script silently. These tests pin one code per failure class per command.
+//
+// They are deliberately organised by CLASS rather than by command. The defect
+// this guards against is not "command X returned the wrong code" but "two
+// commands answered the same question with two different codes" — which is
+// exactly how the not-found class came to be split between 4 and 20, with one
+// site's comment explaining why the distinction mattered while its neighbour
+// ignored it.
+
+// exitCase is one command's response to one failure class.
+type exitCase struct {
+	name string
+	want int
+	run  func(t *testing.T) error
+}
+
+func runExitCases(t *testing.T, cases []exitCase) {
+	t.Helper()
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.run(t)
+			if err == nil {
+				t.Fatalf("want a failure carrying exit %d, got nil", tc.want)
+			}
+			var ee *exitError
+			if !errors.As(err, &ee) {
+				t.Fatalf("want *exitError carrying %d, got a plain error that falls through to ExitConfig(%d): %v",
+					tc.want, ExitConfig, err)
+			}
+			if ee.code != tc.want {
+				t.Errorf("want exit %d, got %d (%q)", tc.want, ee.code, ee.msg)
+			}
+			// The carrier must survive ExitCodeForError, which is what main
+			// actually calls — a correct code on the chain is worthless if the
+			// mapping drops it.
+			if got := ExitCodeForError(err); got != tc.want {
+				t.Errorf("ExitCodeForError: want %d, got %d", tc.want, got)
+			}
+		})
+	}
+}
+
+// ---- class: the record you named does not exist -> ExitNotFound(4) ---------
+
+func TestExitCodeContract_MissingRecordIsNotFound(t *testing.T) {
+	const missingWalk = "01JWALKMISSING0000000001"
+	coord := coordinatetest.MustNew("example.com/m", "v1.0.0")
+
+	// A walk store that knows no walks: GetWalk returns ErrWalkNotFound and
+	// ListWalks returns nothing, which is the shape every one of these
+	// commands meets when the operator names an ID that was never written.
+	emptyWalks := testfakes.NewFakeQueryWalks
+
+	runExitCases(t, []exitCase{
+		{"walk-show", ExitNotFound, func(t *testing.T) error {
+			return runWalkShow(context.Background(), missingWalk, emptyWalks(), &bytes.Buffer{})
+		}},
+		{"walk-diff", ExitNotFound, func(t *testing.T) error {
+			return runWalkDiff(context.Background(), missingWalk, missingWalk,
+				&testfakes.FakeDiffWalks{Err: walkports.ErrWalkNotFound}, &bytes.Buffer{})
+		}},
+		{"walk-list --walk-id", ExitNotFound, func(t *testing.T) error {
+			return runWalkList(context.Background(), "", "", "", "", missingWalk, 0, false, false,
+				emptyWalks(), &bytes.Buffer{}, &bytes.Buffer{})
+		}},
+		{"vuln-show --walk-id (walk never scanned)", ExitNotFound, func(t *testing.T) error {
+			return runVulnShow(context.Background(), coord.String(), missingWalk, false, false,
+				testfakes.NewFakeQueryVuln(), testfakes.NewFakeQueryScanRuns(), emptyWalks(), nil, &bytes.Buffer{})
+		}},
+		{"vuln-show (no record at all)", ExitNotFound, func(t *testing.T) error {
+			return runVulnShow(context.Background(), coord.String(), "", false, false,
+				testfakes.NewFakeQueryVuln(), testfakes.NewFakeQueryScanRuns(), emptyWalks(), nil, &bytes.Buffer{})
+		}},
+		{"vuln-show --history", ExitNotFound, func(t *testing.T) error {
+			return runVulnShow(context.Background(), coord.String(), "", false, true,
+				testfakes.NewFakeQueryVuln(), testfakes.NewFakeQueryScanRuns(), emptyWalks(), nil, &bytes.Buffer{})
+		}},
+		{"scan-show", ExitNotFound, func(t *testing.T) error {
+			return runScanShow(context.Background(), "vscan-missing", false,
+				testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryVuln(), &bytes.Buffer{})
+		}},
+		{"license-compat (no walk record)", ExitNotFound, func(t *testing.T) error {
+			return licenseCompatWith(context.Background(),
+				&Container{QueryWalks: emptyWalks()}, coord, "Apache-2.0", &bytes.Buffer{})
+		}},
+	})
+}
+
+// Every command that reads a walk by ID must answer a missing one identically.
+// This is the specific drift that was measured: verification-coverage carried a
+// comment explaining why the not-found code exists, and its neighbour dependents
+// returned ExitConfig for the same condition three files away.
+func TestExitCodeContract_WalkByIDAgreesAcrossCommands(t *testing.T) {
+	const missingWalk = "01JWALKMISSING0000000001"
+
+	for name, err := range map[string]error{
+		"walk-show": runWalkShow(context.Background(), missingWalk, testfakes.NewFakeQueryWalks(), &bytes.Buffer{}),
+		"walk-diff": runWalkDiff(context.Background(), missingWalk, missingWalk,
+			&testfakes.FakeDiffWalks{Err: walkports.ErrWalkNotFound}, &bytes.Buffer{}),
+		"walk-list --walk-id": runWalkList(context.Background(), "", "", "", "", missingWalk, 0, false, false,
+			testfakes.NewFakeQueryWalks(), &bytes.Buffer{}, &bytes.Buffer{}),
+		"verification-coverage": runVerificationCoverage(context.Background(), missingWalk,
+			testfakes.NewFakeQueryWalks(), fakeFetchRecords{}, &bytes.Buffer{}),
+	} {
+		if code := ExitCodeForError(err); code != ExitNotFound {
+			t.Errorf("%s answers a missing walk with exit %d; every walk-by-ID read must answer %d",
+				name, code, ExitNotFound)
+		}
+	}
+}
+
+// ---- class: a policy gate fired on real findings -> ExitPolicy(5) ----------
+
+// Every governance gate reports the same class, so a CI step can branch once on
+// 5 rather than knowing which of the five commands it happened to run. These
+// exercise the pure blocking-error functions: the gate decision is what carries
+// the code, and it is testable without a store.
+func TestExitCodeContract_FiredGateIsPolicy(t *testing.T) {
+	runExitCases(t, []exitCase{
+		{"directives", ExitPolicy, func(t *testing.T) error {
+			return directivesBlockingErr(directivesSection{
+				Directives: []directiveResult{{Kind: "replace", OldPath: "example.com/m", Classification: "local-path", PolicyBlocking: true}},
+			})
+		}},
+		{"godebug", ExitPolicy, func(t *testing.T) error {
+			return godebugBlockingErr(godebugSection{
+				Settings: []godebugResult{{Setting: "x509negativeserial", Value: "1", Classification: "red", PolicyBlocking: true}},
+			})
+		}},
+		{"vendor", ExitPolicy, func(t *testing.T) error {
+			return vendorBlockingErr(vendorSection{
+				Findings: []vendorFinding{{Kind: "drift", Module: "example.com/m", PolicyBlocking: true}},
+			})
+		}},
+		{"fips", ExitPolicy, func(t *testing.T) error {
+			return fipsBlockingErr(fipsSection{
+				Findings: []fipsFindingResult{{Kind: "algorithm", Package: "crypto/md5", Module: "example.com/m", PolicyBlocking: true}},
+			})
+		}},
+		{"audit", ExitPolicy, func(t *testing.T) error {
+			return auditBlockingErr([]auditModuleResult{{Coordinate: "example.com/m@v1.0.0", PolicyBlocking: true}})
+		}},
+	})
+}
+
+// A gate that did NOT fire returns nil, not a zero-valued exitError: the
+// difference between "no findings" and "exit 0 carrier" is what keeps a clean
+// run from being reported as a graded one.
+func TestExitCodeContract_UnfiredGateIsNil(t *testing.T) {
+	for name, err := range map[string]error{
+		"directives": directivesBlockingErr(directivesSection{}),
+		"godebug":    godebugBlockingErr(godebugSection{}),
+		"vendor":     vendorBlockingErr(vendorSection{}),
+		"fips":       fipsBlockingErr(fipsSection{}),
+		"audit":      auditBlockingErr(nil),
+	} {
+		if err != nil {
+			t.Errorf("%s: an unfired gate must return nil, got %v", name, err)
+		}
+	}
+}
+
+// ---- class: the invocation was wrong -> ExitConfig(20) --------------------
+
+// A usage error keeps ExitConfig. It shares the code with a store-schema
+// refusal and a missing policy FILE, and that is the point: all three say the
+// command never reached an answer. What must NOT share it is a fired gate or a
+// missing record.
+func TestExitCodeContract_UsageAndPreconditionsStayConfig(t *testing.T) {
+	runExitCases(t, []exitCase{
+		{"store schema newer than binary", ExitConfig, func(t *testing.T) error {
+			return newerStoreError("/tmp/mirror.db", storeSchemaState{unknown: []string{"999_future"}})
+		}},
+	})
+}
+
+// The three classes must not collide. This is the whole contract in one
+// assertion: a script that branches on these numbers can distinguish them.
+func TestExitCodeContract_ClassesAreDistinct(t *testing.T) {
+	seen := map[int]string{}
+	for name, code := range map[string]int{
+		"ok": ExitOK, "partial": ExitPartial, "failed": ExitFailed,
+		"cancelled": ExitCancelled, "notfound": ExitNotFound, "policy": ExitPolicy,
+		"integrity": ExitIntegrity, "config": ExitConfig,
+	} {
+		if other, dup := seen[code]; dup {
+			t.Errorf("exit code %d is shared by %q and %q; the taxonomy only works if each class has its own number",
+				code, other, name)
+		}
+		seen[code] = name
+	}
+}

@@ -997,10 +997,11 @@ func (f *FakeQueryScanRuns) GetRun(_ context.Context, id string) (vulndomain.Wal
 	return run, ok, nil
 }
 
+// ListRunsForWalk returns the seeded runs for walkID. ListErr is returned
+// ALONGSIDE them, not instead of them: the real store reports the rows it could
+// not verify while still handing back the ones it could, and a fake that
+// withheld them would let a survey command pass a test it fails in production.
 func (f *FakeQueryScanRuns) ListRunsForWalk(_ context.Context, walkID string) ([]vulndomain.WalkScanRun, error) {
-	if f.ListErr != nil {
-		return nil, f.ListErr
-	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	var out []vulndomain.WalkScanRun
@@ -1009,16 +1010,15 @@ func (f *FakeQueryScanRuns) ListRunsForWalk(_ context.Context, walkID string) ([
 			out = append(out, r)
 		}
 	}
-	return out, nil
+	return out, f.ListErr
 }
 
+// ListAllRuns returns every seeded run, on the same partial-result terms as
+// ListRunsForWalk.
 func (f *FakeQueryScanRuns) ListAllRuns(_ context.Context) ([]vulndomain.WalkScanRun, error) {
-	if f.ListErr != nil {
-		return nil, f.ListErr
-	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.allRuns, nil
+	return f.allRuns, f.ListErr
 }
 
 func (f *FakeQueryScanRuns) ListSnapshots(_ context.Context) ([]vulndomain.DatabaseSnapshot, error) {

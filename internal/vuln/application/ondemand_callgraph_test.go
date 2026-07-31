@@ -16,6 +16,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 )
 
 // helpers shared across this file
@@ -59,7 +60,7 @@ func newScanUCWith(
 		facts, blobs, vulnStore, nil,
 		scanner, db, reachability,
 		fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)},
-		"v1", "v1",
+		"v1",
 		slog.New(slog.NewTextHandler(io.Discard, nil)),
 	).WithCallGraphLoader(loader)
 	if spawner != nil {
@@ -80,7 +81,7 @@ func TestOnDemandCallGraph_SpawnedOnMiss(t *testing.T) {
 	seedFact(t, facts, blobs, coord)
 
 	vulnStore := newFakeVulnStore()
-	snap := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
+	snap := vulntest.MustNew("test", "v1")
 	_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
 
 	db := &fakeDatabase{
@@ -133,7 +134,7 @@ func TestOnDemandCallGraph_CacheHit(t *testing.T) {
 	seedFact(t, facts, blobs, coord)
 
 	vulnStore := newFakeVulnStore()
-	snap := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
+	snap := vulntest.MustNew("test", "v1")
 	_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
 
 	db := &fakeDatabase{
@@ -166,6 +167,50 @@ func TestOnDemandCallGraph_CacheHit(t *testing.T) {
 	}
 }
 
+// TestOnDemandCallGraph_IneligibleRecordStillSpawns pins that this stage
+// inherits the call-graph ledger's cache-eligibility rule rather than
+// re-deciding it. A stored record whose failure was the analysis environment
+// measured nothing about the module, so its presence is not "already done" —
+// which is what previously made one broken toolchain permanent for a coordinate
+// across every stage that read the store.
+func TestOnDemandCallGraph_IneligibleRecordStillSpawns(t *testing.T) {
+	ctx := t.Context()
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
+
+	facts := newFakeFacts()
+	blobs := newFakeBlob()
+	seedFact(t, facts, blobs, coord)
+
+	vulnStore := newFakeVulnStore()
+	snap := vulntest.MustNew("test", "v1")
+	_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader("")) //nolint:errcheck
+
+	db := &fakeDatabase{
+		snapshot:    snap,
+		vulnerables: map[coordinate.ModuleCoordinate][]string{coord: {"GO-2024-0001"}},
+	}
+	scanner := newAffectedScannerFor(coord, "GO-2024-0001", []string{"Vuln"})
+	reach := &fakeReachabilityAnalyser{}
+
+	loader := &fakeCallGraphLoader{present: true, ineligible: true}
+	spawner := &fakeCallGraphSpawner{}
+
+	uc := newScanUCWith(facts, blobs, vulnStore, scanner, db, reach, loader, spawner)
+
+	if _, err := uc.Scan(ctx, application.ScanModuleParams{
+		Coordinate:         coord,
+		WalkID:             "walk-1",
+		Snapshot:           &snap,
+		EnableReachability: true,
+	}); err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+
+	if spawner.callCount() != 1 {
+		t.Errorf("expected the spawner to re-derive over an ineligible record; got %d calls", spawner.callCount())
+	}
+}
+
 // TestOnDemandCallGraph_SpawnFailureSetsNote verifies that a subprocess failure
 // leaves Reachable nil and sets a non-empty ReachabilityNote; the finding and
 // record are still persisted with StatusAffected.
@@ -178,7 +223,7 @@ func TestOnDemandCallGraph_SpawnFailureSetsNote(t *testing.T) {
 	seedFact(t, facts, blobs, coord)
 
 	vulnStore := newFakeVulnStore()
-	snap := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
+	snap := vulntest.MustNew("test", "v1")
 	_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
 
 	db := &fakeDatabase{
@@ -251,7 +296,7 @@ func TestOnDemandCallGraph_ForceBypassesCache(t *testing.T) {
 	seedFact(t, facts, blobs, coord)
 
 	vulnStore := newFakeVulnStore()
-	snap := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
+	snap := vulntest.MustNew("test", "v1")
 	_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
 
 	db := &fakeDatabase{
@@ -293,7 +338,7 @@ func TestOnDemandCallGraph_NoSpawnForClean(t *testing.T) {
 	seedFact(t, facts, blobs, coord)
 
 	vulnStore := newFakeVulnStore()
-	snap := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
+	snap := vulntest.MustNew("test", "v1")
 	_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
 
 	db := &fakeDatabase{snapshot: snap} // no vulnerabilities
@@ -333,7 +378,7 @@ func TestOnDemandCallGraph_NoSpawnWhenSymbolsEmpty(t *testing.T) {
 	seedFact(t, facts, blobs, coord)
 
 	vulnStore := newFakeVulnStore()
-	snap := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
+	snap := vulntest.MustNew("test", "v1")
 	_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
 
 	db := &fakeDatabase{
@@ -393,7 +438,7 @@ func TestOnDemandCallGraph_SemaphoreSerialises(t *testing.T) {
 	seedFact(t, facts, blobs, coordB)
 
 	vulnStore := newFakeVulnStore()
-	snap := domain.DatabaseSnapshot{Source: "test", Version: "v1"}
+	snap := vulntest.MustNew("test", "v1")
 	_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
 
 	db := &fakeDatabase{
@@ -457,5 +502,109 @@ func TestOnDemandCallGraph_SemaphoreSerialises(t *testing.T) {
 	}
 	if spawner.callCount() < 1 {
 		t.Error("expected at least one spawn call")
+	}
+}
+
+// TestReachability_FailedAnalysisIsRecordedNotOnlyLogged: an analysis that was
+// requested and could not be computed must travel with the finding.
+//
+// Observed on a 128-module walk scanned with --reachability: the call graph for
+// several coordinates could not be loaded, each failure was logged at WARN, and
+// every affected finding kept a nil Reachable and nothing else. That is the same
+// record a scan run WITHOUT --reachability leaves behind, so the run reported its
+// finding set as though reachability had not been needed, and the read side
+// attributed the absence to a flag that had in fact been passed.
+func TestReachability_FailedAnalysisIsRecordedNotOnlyLogged(t *testing.T) {
+	ctx := t.Context()
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
+
+	facts := newFakeFacts()
+	blobs := newFakeBlob()
+	seedFact(t, facts, blobs, coord)
+
+	vulnStore := newFakeVulnStore()
+	snap := vulntest.MustNew("test", "v1")
+	_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
+
+	db := &fakeDatabase{
+		snapshot:    snap,
+		vulnerables: map[coordinate.ModuleCoordinate][]string{coord: {"GO-2024-0001"}},
+	}
+	scanner := newAffectedScannerFor(coord, "GO-2024-0001", []string{"Vuln"})
+
+	// The graph is in the store — the spawn path is not what failed here — and the
+	// analysis over it errors, which is the shape a conflicting-records read takes.
+	loader := &fakeCallGraphLoader{present: true}
+	reach := &fakeReachabilityAnalyser{err: errors.New("conflicting call graph records at pipeline 0.3.0")}
+
+	uc := newScanUCWith(facts, blobs, vulnStore, scanner, db, reach, loader, nil)
+
+	rec, err := uc.Scan(ctx, application.ScanModuleParams{
+		Coordinate:         coord,
+		WalkID:             "walk-1",
+		Snapshot:           &snap,
+		EnableReachability: true,
+	})
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if len(rec.Findings) != 1 {
+		t.Fatalf("expected 1 finding, got %d", len(rec.Findings))
+	}
+	f := rec.Findings[0]
+	if f.Reachable != nil {
+		t.Error("a failed analysis must not fabricate a reachability verdict")
+	}
+	if !f.ReachabilityAttemptFailed() {
+		t.Error("a finding whose reachability analysis failed presents as one nobody asked about")
+	}
+	if !strings.Contains(f.ReachabilityNote, "conflicting call graph records") {
+		t.Errorf("ReachabilityNote must carry the reason; got %q", f.ReachabilityNote)
+	}
+
+	// The note has to survive the seal, or the run's claim is only degraded in
+	// memory and every later read of the record is back to guessing.
+	persisted, ok, perr := vulnStore.GetVulnerabilityRecord(ctx, coord, "v1", snap)
+	if perr != nil || !ok {
+		t.Fatalf("GetVulnerabilityRecord: ok=%v err=%v", ok, perr)
+	}
+	if !persisted.Findings[0].ReachabilityAttemptFailed() {
+		t.Error("the persisted record does not record that reachability was attempted and failed")
+	}
+}
+
+// TestReachability_NotRequestedIsNotAFailedAttempt is the other direction: a
+// finding that nobody asked about must not be reported as an attempt that failed.
+func TestReachability_NotRequestedIsNotAFailedAttempt(t *testing.T) {
+	ctx := t.Context()
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
+
+	facts := newFakeFacts()
+	blobs := newFakeBlob()
+	seedFact(t, facts, blobs, coord)
+
+	vulnStore := newFakeVulnStore()
+	snap := vulntest.MustNew("test", "v1")
+	_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader(""))
+
+	db := &fakeDatabase{
+		snapshot:    snap,
+		vulnerables: map[coordinate.ModuleCoordinate][]string{coord: {"GO-2024-0001"}},
+	}
+	scanner := newAffectedScannerFor(coord, "GO-2024-0001", []string{"Vuln"})
+	reach := &fakeReachabilityAnalyser{err: errors.New("must not be consulted")}
+
+	uc := newScanUCWith(facts, blobs, vulnStore, scanner, db, reach, &fakeCallGraphLoader{present: true}, nil)
+
+	rec, err := uc.Scan(ctx, application.ScanModuleParams{
+		Coordinate: coord,
+		WalkID:     "walk-1",
+		Snapshot:   &snap,
+	})
+	if err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+	if rec.Findings[0].ReachabilityAttemptFailed() {
+		t.Error("a scan that never asked for reachability recorded a failed attempt")
 	}
 }

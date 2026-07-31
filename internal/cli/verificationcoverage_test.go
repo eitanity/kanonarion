@@ -18,7 +18,7 @@ type fakeFetchRecords struct {
 	byCoord map[coordinate.ModuleCoordinate]fetchdomain.CompositeRecord
 }
 
-func (f fakeFetchRecords) GetFetchRecord(_ context.Context, coord coordinate.ModuleCoordinate, _ string) (fetchdomain.CompositeRecord, bool, error) {
+func (f fakeFetchRecords) ComposeFetchRecord(_ context.Context, coord coordinate.ModuleCoordinate) (fetchdomain.CompositeRecord, bool, error) {
 	rec, ok := f.byCoord[coord]
 	return rec, ok, nil
 }

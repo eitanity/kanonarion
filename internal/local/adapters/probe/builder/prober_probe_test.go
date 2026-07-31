@@ -152,3 +152,110 @@ func hasSymbolContaining(symbols map[string]struct{}, substr string) bool {
 	}
 	return false
 }
+
+// twoMainModule is a workspace with two main packages. markerAlpha is linked
+// only into cmd/alpha and markerBeta only into cmd/beta, so a probe that builds
+// one main alone cannot see the other's marker.
+func twoMainModule(t *testing.T, betaBody string) string {
+	t.Helper()
+	return writeModule(t, map[string]string{
+		"go.mod": goMod,
+		"lib/lib.go": "package lib\n\n" +
+			"func ProbeMarkerAlpha() string { return \"a\" }\n\n" +
+			"func ProbeMarkerBeta() string { return \"b\" }\n",
+		"cmd/alpha/main.go": "package main\n\nimport \"example.com/probe/lib\"\n\n" +
+			"func main() { _ = lib.ProbeMarkerAlpha() }\n",
+		"cmd/beta/main.go": betaBody,
+	})
+}
+
+const betaMainGood = "package main\n\nimport \"example.com/probe/lib\"\n\n" +
+	"func main() { _ = lib.ProbeMarkerBeta() }\n"
+
+// The probe builds every main, not the first one alone: a symbol linked only
+// into the second binary must appear in the union, attributed to that binary.
+func TestProbe_TwoMains_SymbolInSecondIsFound(t *testing.T) {
+	root := twoMainModule(t, betaMainGood)
+
+	res, err := New("").Probe(context.Background(), root)
+	if err != nil {
+		t.Fatalf("Probe: %v", err)
+	}
+	if res.Kind != "binary" {
+		t.Errorf("Kind = %q, want %q", res.Kind, "binary")
+	}
+	if !hasSymbolContaining(res.BinarySymbols, "ProbeMarkerBeta") {
+		t.Error("ProbeMarkerBeta missing from the union; only the first main was built")
+	}
+	if !hasSymbolContaining(res.BinarySymbols, "ProbeMarkerAlpha") {
+		t.Error("ProbeMarkerAlpha missing from the union")
+	}
+	if len(res.Binaries) != 2 {
+		t.Fatalf("Binaries = %d, want 2", len(res.Binaries))
+	}
+	if res.Binaries[0].ImportPath != "example.com/probe/cmd/alpha" ||
+		res.Binaries[1].ImportPath != "example.com/probe/cmd/beta" {
+		t.Fatalf("Binaries = %q/%q, want alpha then beta",
+			res.Binaries[0].ImportPath, res.Binaries[1].ImportPath)
+	}
+	for _, b := range res.Binaries {
+		if b.BuildError != "" {
+			t.Errorf("binary %q: BuildError = %q, want empty", b.ImportPath, b.BuildError)
+		}
+	}
+	// Attribution: each marker belongs to exactly its own binary.
+	if hasSymbolContaining(res.Binaries[0].Symbols, "ProbeMarkerBeta") {
+		t.Error("alpha's symbol table carries ProbeMarkerBeta; attribution is not per binary")
+	}
+	if !hasSymbolContaining(res.Binaries[1].Symbols, "ProbeMarkerBeta") {
+		t.Error("beta's symbol table does not carry ProbeMarkerBeta")
+	}
+}
+
+// A main that fails to build does not fail the probe. The binaries that did
+// build still answer, and the failure is carried against its import path.
+func TestProbe_TwoMains_UnbuildableSecondIsNotFatal(t *testing.T) {
+	root := twoMainModule(t,
+		"package main\n\nfunc main() { thisIdentifierDoesNotExist() }\n")
+
+	res, err := New("").Probe(context.Background(), root)
+	if err != nil {
+		t.Fatalf("Probe: %v (an unbuildable main must not fail the probe)", err)
+	}
+	if !hasSymbolContaining(res.BinarySymbols, "ProbeMarkerAlpha") {
+		t.Error("ProbeMarkerAlpha missing; the buildable main did not answer")
+	}
+	if len(res.Binaries) != 2 {
+		t.Fatalf("Binaries = %d, want 2 (both mains named, built or not)", len(res.Binaries))
+	}
+	if res.Binaries[0].BuildError != "" {
+		t.Errorf("alpha: BuildError = %q, want empty", res.Binaries[0].BuildError)
+	}
+	beta := res.Binaries[1]
+	if beta.ImportPath != "example.com/probe/cmd/beta" {
+		t.Fatalf("second binary = %q, want example.com/probe/cmd/beta", beta.ImportPath)
+	}
+	if beta.BuildError == "" {
+		t.Fatal("beta: BuildError is empty; the unprobed binary would be silent")
+	}
+	if !strings.Contains(beta.BuildError, "thisIdentifierDoesNotExist") {
+		t.Errorf("beta: BuildError = %q, want the compiler's own message", beta.BuildError)
+	}
+	if len(beta.Symbols) != 0 {
+		t.Errorf("beta: Symbols = %d, want none for a binary that did not build", len(beta.Symbols))
+	}
+}
+
+// Every main failing is a different case: there is no symbol table at all, and
+// reporting "absent" off a build that never happened is the false negative this
+// probe exists to avoid.
+func TestProbe_AllMainsUnbuildable_IsAnError(t *testing.T) {
+	root := writeModule(t, map[string]string{
+		"go.mod":            goMod,
+		"cmd/alpha/main.go": "package main\n\nfunc main() { nopeAlpha() }\n",
+	})
+
+	if _, err := New("").Probe(context.Background(), root); err == nil {
+		t.Fatal("expected an error when no main package could be probed")
+	}
+}

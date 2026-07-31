@@ -65,6 +65,12 @@ func Migrations() []sqlitestore.Migration {
 		// second decoder, because a store that answers in two shapes cannot say
 		// which one a given hash was computed over.
 		{Module: "walk", Version: 5, SQL: `DELETE FROM walks`},
+		// The project directory a walk was taken from. It is provenance, not
+		// identity: it is outside the walk's content hash and outside the
+		// serialised blob, so it needs a column of its own and no purge — every
+		// stored row still hashes to exactly what it did, and simply reports the
+		// empty directory that rows written before this column mean.
+		{Module: "walk", Version: 6, SQL: `ALTER TABLE walks ADD COLUMN project_dir TEXT NOT NULL DEFAULT ''`},
 	}
 }
 
@@ -129,8 +135,8 @@ INSERT INTO walks (
     id, target_path, target_version,
     started_at, completed_at, overall_status,
     pipeline_version, operator, content_hash,
-    node_count, failure_count, scope, depth, serialised
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    node_count, failure_count, scope, depth, project_dir, serialised
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (id) DO UPDATE SET
     target_path      = excluded.target_path,
     target_version   = excluded.target_version,
@@ -144,6 +150,7 @@ ON CONFLICT (id) DO UPDATE SET
     failure_count    = excluded.failure_count,
     scope            = excluded.scope,
     depth            = excluded.depth,
+    project_dir      = excluded.project_dir,
     serialised       = excluded.serialised`
 
 	_, err = s.db.DB().ExecContext(ctx, q,
@@ -152,7 +159,7 @@ ON CONFLICT (id) DO UPDATE SET
 		rec.CompletedAt.UTC().Format(time.RFC3339),
 		int(rec.OverallStatus),
 		rec.PipelineVersion, rec.Operator, rec.ContentHash,
-		nodeCount, failureCount, scope, depth, blob,
+		nodeCount, failureCount, scope, depth, rec.ProjectDir, blob,
 	)
 	if err != nil {
 		return fmt.Errorf("inserting walk record: %w", err)
@@ -163,12 +170,13 @@ ON CONFLICT (id) DO UPDATE SET
 // GetWalk retrieves a walk record by ID. Returns ErrWalkNotFound if absent.
 // Returns ErrWalkIntegrity if the stored hash does not verify.
 func (s *Store) GetWalk(ctx context.Context, id string) (domain.WalkRecord, error) {
-	const q = `SELECT serialised, content_hash FROM walks WHERE id = ?`
+	const q = `SELECT serialised, content_hash, project_dir FROM walks WHERE id = ?`
 	row := s.db.DB().QueryRowContext(ctx, q, id)
 
 	var blob []byte
 	var storedHash string
-	if err := row.Scan(&blob, &storedHash); errors.Is(err, sql.ErrNoRows) {
+	var projectDir string
+	if err := row.Scan(&blob, &storedHash, &projectDir); errors.Is(err, sql.ErrNoRows) {
 		return domain.WalkRecord{}, walkports.ErrWalkNotFound
 	} else if err != nil {
 		return domain.WalkRecord{}, fmt.Errorf("querying walk record: %w", err)
@@ -187,6 +195,11 @@ func (s *Store) GetWalk(ctx context.Context, id string) (domain.WalkRecord, erro
 	if verr := h.VerifyContentHash(rec); verr != nil {
 		return domain.WalkRecord{}, fmt.Errorf("%w: %w", walkports.ErrWalkIntegrity, verr)
 	}
+	// The project directory rides beside the sealed blob, not inside it: the
+	// canonical form the hash covers has no such field, so a column that differs
+	// between two checkouts of one project cannot make their walks differ. It is
+	// restored after the verification it plays no part in.
+	rec.ProjectDir = projectDir
 	return rec, nil
 }
 

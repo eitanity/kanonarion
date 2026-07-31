@@ -12,6 +12,7 @@ import (
 	coordinatetest "github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 )
 
 func sampleRecord(t *testing.T) domain.VulnerabilityRecord {
@@ -21,7 +22,7 @@ func sampleRecord(t *testing.T) domain.VulnerabilityRecord {
 		Coordinate:       coordinatetest.MustNew("github.com/foo/bar", "v1.0.0"),
 		WalkID:           "walk-1",
 		OverallStatus:    domain.StatusClean,
-		DatabaseSnapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1"},
+		DatabaseSnapshot: vulntest.MustNew("test", "v1"),
 		ScannedAt:        time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
 		PipelineVersion:  "v1",
 	}
@@ -30,10 +31,13 @@ func sampleRecord(t *testing.T) domain.VulnerabilityRecord {
 // TestVulnerabilityRecordHasher_Recipe pins the byte recipe against an
 // independently written expectation rather than against the hasher's own
 // output. Every record already stored was sealed with this recipe, so a change
-// to it — a reordered struct field, a renamed JSON tag, a newly hashed field,
-// or the "sha256:" prefix every other context uses and this one does not —
+// to it — a reordered struct field, a renamed JSON tag, a newly hashed field —
 // makes every stored record fail verification on read. Reproducing the bytes
 // by hand here is what makes that a test failure instead of a store-wide one.
+//
+// The digest is written separately from the "sha256:" label it is stored behind,
+// because the two are independent: the label is outside the sealed bytes, which
+// is why the stored rows could be re-notated by prefix alone.
 func TestVulnerabilityRecordHasher_Recipe(t *testing.T) {
 	rec := sampleRecord(t)
 	// FirstScannedAt is excluded from the hash, so a value here must not appear
@@ -55,7 +59,8 @@ func TestVulnerabilityRecordHasher_Recipe(t *testing.T) {
 		`"pipeline_version":"v1",` +
 		`"content_hash":""}`
 	sum := sha256.Sum256([]byte(wire))
-	want := hex.EncodeToString(sum[:])
+	digest := hex.EncodeToString(sum[:])
+	want := "sha256:" + digest
 
 	sealed, err := domain.VulnerabilityRecordHasher{}.SetContentHash(rec)
 	if err != nil {
@@ -64,8 +69,8 @@ func TestVulnerabilityRecordHasher_Recipe(t *testing.T) {
 	if sealed.ContentHash != want {
 		t.Errorf("content hash = %q, want %q — the byte recipe changed, which invalidates every stored record", sealed.ContentHash, want)
 	}
-	if strings.HasPrefix(sealed.ContentHash, "sha256:") {
-		t.Error("content hash carries a \"sha256:\" prefix; stored vuln records are bare hex")
+	if !strings.HasPrefix(sealed.ContentHash, "sha256:") {
+		t.Error("content hash carries no \"sha256:\" prefix; a stored seal must name the digest that produced it")
 	}
 }
 
@@ -198,8 +203,8 @@ func TestWalkScanRunHasher_SealVerifyRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("SetContentHash(): %v", err)
 	}
-	if strings.HasPrefix(sealed.ContentHash, "sha256:") {
-		t.Error("content hash carries a \"sha256:\" prefix; stored walk scan runs are bare hex")
+	if !strings.HasPrefix(sealed.ContentHash, "sha256:") {
+		t.Error("content hash carries no \"sha256:\" prefix; a stored seal must name the digest that produced it")
 	}
 	if verr := h.VerifyContentHash(sealed); verr != nil {
 		t.Fatalf("VerifyContentHash() = %v, want nil", verr)

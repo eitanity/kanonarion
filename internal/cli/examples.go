@@ -226,7 +226,7 @@ func runExamplesShow(ctx context.Context, moduleArg, exampleName string, jsonOut
 		return fmt.Errorf("getting example record: %w", err)
 	}
 	if !found {
-		return fmt.Errorf("no example record for %s — run 'kanonarion examples' first", coord)
+		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("no example record for %s — run 'kanonarion examples' first", coord)}
 	}
 
 	for _, e := range r.Examples {
@@ -255,7 +255,7 @@ func runExamplesShow(ctx context.Context, moduleArg, exampleName string, jsonOut
 		return nil
 	}
 
-	return fmt.Errorf("example %q not found in record for %s", exampleName, coord)
+	return &exitError{code: ExitNotFound, msg: fmt.Sprintf("example %q not found in record for %s", exampleName, coord)}
 }
 
 // -- examples-find command --
@@ -400,7 +400,7 @@ func runExamplesListForModule(ctx context.Context, moduleArg string, uc QueryExa
 		return fmt.Errorf("getting example record: %w", err)
 	}
 	if !found {
-		return fmt.Errorf("no example record for %s — run 'kanonarion examples %s' first", coord, moduleArg)
+		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("no example record for %s — run 'kanonarion examples %s' first", coord, moduleArg)}
 	}
 	if jsonOut {
 		out := make([]exampleRefJSON, 0, len(r.Examples))

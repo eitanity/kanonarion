@@ -13,7 +13,9 @@ import (
 
 type fakeScanner struct{ res domain.ParseResult }
 
-func (f fakeScanner) ScanProject(string, bool) (domain.ParseResult, error) { return f.res, nil }
+func (f fakeScanner) ScanProject(context.Context, string, bool) (domain.ParseResult, error) {
+	return f.res, nil
+}
 
 type fakeStore struct{ put *domain.Record }
 
@@ -51,7 +53,13 @@ func TestExtract_DriftBlockedAndAudited(t *testing.T) {
 			GoModRequires:     map[string]string{"example.com/dep": "v1.2.0"},
 			GoSum:             map[string]string{"example.com/dep@v1.2.0": "h1:EXPECTED"},
 			PresentDirs:       map[string]bool{"example.com/dep": true},
-			ComputedHashes:    map[string]string{"example.com/dep": "h1:TAMPERED"},
+			Files: map[string]domain.ModuleFiles{
+				"example.com/dep": {
+					ZipHeld:  true,
+					Zip:      map[string]string{"dep.go": "sha256:published"},
+					Vendored: map[string]string{"dep.go": "sha256:edited"},
+				},
+			},
 		}},
 		Store: store, Audit: sink,
 		Clock: clock.Fixed{}, Stopwatch: clock.Monotonic{},
@@ -100,7 +108,15 @@ func TestExtract_CleanNoFindings(t *testing.T) {
 			GoModRequires:     map[string]string{"example.com/dep": "v1.2.0"},
 			GoSum:             map[string]string{"example.com/dep@v1.2.0": "h1:OK"},
 			PresentDirs:       map[string]bool{"example.com/dep": true},
-			ComputedHashes:    map[string]string{"example.com/dep": "h1:OK"},
+			Files: map[string]domain.ModuleFiles{
+				"example.com/dep": {
+					ZipHeld: true,
+					// The published module carries more than the tree
+					// vendors; the pruned subset it does hold is intact.
+					Zip:      map[string]string{"dep.go": "sha256:published", "dep_test.go": "sha256:test"},
+					Vendored: map[string]string{"dep.go": "sha256:published"},
+				},
+			},
 		}},
 		Store: store, Audit: sink,
 		Clock: clock.Fixed{}, Stopwatch: clock.Monotonic{},

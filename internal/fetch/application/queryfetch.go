@@ -30,3 +30,16 @@ func (uc *QueryFetchUseCase) GetFetchRecord(ctx context.Context, coord coordinat
 	}
 	return rec, found, nil
 }
+
+// ComposeFetchRecord retrieves the composed fetch record for a coordinate across
+// every fetch pipeline version — what the ledger has measured about the artefact,
+// naming no generation of the pipeline.
+//
+// It is what a reporting command wants. Pinning the read to the current fetch
+// pipeline version made every module measured only under a retired one report as
+// "(not fetched)" — on the maintainer's store, 1357 of 5652 coordinates — which is
+// a false statement about a module whose artefact is held, not a gap in coverage.
+func (uc *QueryFetchUseCase) ComposeFetchRecord(ctx context.Context, coord coordinate.ModuleCoordinate) (domain.CompositeRecord, bool, error) {
+	//nolint:wrapcheck // ComposedFetchRecord already names the coordinate it read
+	return ports.ComposedFetchRecord(ctx, uc.store, coord)
+}

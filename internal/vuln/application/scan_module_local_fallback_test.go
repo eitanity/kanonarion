@@ -10,13 +10,15 @@ import (
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 
 	"github.com/eitanity/kanonarion/internal/vuln/application"
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 )
 
 // A module ingested from a local working tree (a local-replace target or the
 // project-walk root) persists its FactRecord under the local-ingest pipeline
-// version, not the proxy fetch pipeline version. The scan must find that
-// record and run a full source scan instead of degrading to metadata-only.
+// version, not the proxy fetch pipeline version. The scan must find that record
+// and run a full source scan instead of degrading to metadata-only — and it must
+// do so without being told the local-ingest version, because it asks the ledger
+// what has been measured about the artefact rather than naming a generation.
 func TestScanModule_FindsFactRecordUnderLocalIngestPipelineVersion(t *testing.T) {
 	ctx := t.Context()
 	const localPipeline = "local-0.1.0"
@@ -28,7 +30,7 @@ func TestScanModule_FindsFactRecordUnderLocalIngestPipelineVersion(t *testing.T)
 	vulnStore := newFakeVulnStore()
 	scanner := &fakeScanner{}
 	db := &fakeDatabase{
-		snapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1", RetrievedAt: now},
+		snapshot: vulntest.MustNewAt("test", "v1", now),
 		content:  "vulndb content",
 	}
 
@@ -51,8 +53,8 @@ func TestScanModule_FindsFactRecordUnderLocalIngestPipelineVersion(t *testing.T)
 	}
 
 	uc := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, nil, scanner, db, nil, fixedClock{t: now}, "v1", "v1", slog.Default(),
-	).WithLocalFetchPipelineVersion(localPipeline)
+		facts, blobs, vulnStore, nil, scanner, db, nil, fixedClock{t: now}, "v1", slog.Default(),
+	)
 
 	res, err := uc.Scan(ctx, application.ScanModuleParams{
 		Coordinate: coord,

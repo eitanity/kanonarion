@@ -8,8 +8,20 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/config"
 	configyaml "github.com/eitanity/kanonarion/internal/config/adapters/store/yaml"
+	"github.com/eitanity/kanonarion/internal/config/domain"
 	"gopkg.in/yaml.v3"
 )
+
+// TestDefaultYAML_VersionHeaderTracksSupportedSchema pins the generated header
+// to the version the binary actually emits. The loader only rejects versions
+// NEWER than supported, so a stale header loads without complaint — this is
+// the only place the drift is visible.
+func TestDefaultYAML_VersionHeaderTracksSupportedSchema(t *testing.T) {
+	want := "version: \"" + domain.SupportedSchemaVersion + "\"\n"
+	if !strings.Contains(string(config.DefaultYAML()), want) {
+		t.Errorf("generated template does not carry %q", want)
+	}
+}
 
 // TestDefaultYAML_PreferencesNotFrozen: the generated template must leave
 // preferences keys commented out so they inherit the live built-in default.
@@ -46,6 +58,7 @@ func TestDefaultYAML_PolicyBlocksNotFrozen(t *testing.T) {
 	for _, section := range []string{
 		"license_policy", "callgraph", "license_overrides",
 		"directive_policy", "godebug_policy", "vendor_policy", "fips_policy",
+		"fetch_policy",
 	} {
 		val, present := doc[section]
 		if !present {
@@ -67,8 +80,8 @@ func TestDefaultYAML_IsValidAndParseable(t *testing.T) {
 	if err != nil {
 		t.Fatalf("DefaultYAML produced invalid YAML: %v", err)
 	}
-	if cfg.Version != "1" {
-		t.Errorf("version: got %q, want 1", cfg.Version)
+	if cfg.Version != domain.SupportedSchemaVersion {
+		t.Errorf("version: got %q, want %q", cfg.Version, domain.SupportedSchemaVersion)
 	}
 	if cfg.Preferences.LogLevel != "warn" {
 		t.Errorf("log_level: got %q, want warn", cfg.Preferences.LogLevel)

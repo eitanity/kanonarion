@@ -19,8 +19,14 @@ command that produces the data one of them reads. Keep them distinct:
 | Live local probe | `reachability --local <dir>` | Analyses the **working tree** directly - a separate, live analysis, not a query of stored facts. |
 
 > A "not reachable" answer from the **query** is a *read of a prior
-> analysis*, not a fresh guarantee. To refresh it, re-run the producer:
-> `kanonarion vuln-scan <module>@<version> --reachability`.
+> analysis*, not a fresh guarantee. To refresh it, re-run the producer. Note
+> the grammar: `vuln-scan`'s positional argument is a **walk id**, never a
+> coordinate. The coordinate form is the `--module` flag:
+>
+> ```bash
+> kanonarion walk <module>@<version>
+> kanonarion vuln-scan --module <module>@<version> --reachability
+> ```
 
 The project-scoped vuln views - `audit`, `inspect --gomod`, and
 `vuln-scan --gomod/--tool/--project` - now derive their verdict from the **same
@@ -56,6 +62,7 @@ you which command to run - it is never reported as a false "not reachable".
 |---|---|---|
 | `<id> is REACHABLE in <m>@<v>` | 0 | Affected symbol is reachable from an entry point. |
 | `<id> affects <m>@<v> but is NOT reachable` | 0 | Affected symbol is present but unreachable. |
+| `<id> affects <m>@<v> at PACKAGE level; symbol-level reachability is not determined` | 0 | The advisory names no symbols for this module path, so there is no symbol for a route to reach. The module **is** affected. |
 | `<id> was WITHDRAWN upstream <date>` | 0 | The advisory was retracted upstream; the module is not affected by it. |
 | `<m>@<v> is not affected by <id>` | 0 | Module was scanned; this CVE is not among its findings. |
 
@@ -66,10 +73,78 @@ reachable" would offer reachability as the mitigation — inviting the reader to
 conclude the module would be at risk if only something called it, when there is
 nothing to be at risk from. For the same reason the two "run this command" errors
 below are never raised for a retracted advisory: it needs no call graph.
-| `… has not been vuln-scanned` | non-zero | No record. Run `vuln-scan <m>@<v> --reachability`. |
+
+The `package_level_only` verdict is its own answer for the same kind of reason. An
+OSV entry may name the affected symbols for one major-version path and none for
+another; where the matched entry names none, govulncheck treats the whole package
+as vulnerable and the only trace it can report is the package's own `init` running
+— which follows from the package being linked into the build, not from anything
+calling the vulnerable code. That is neither `reachable` nor `not_reachable`, and
+it is not fixed by computing a call graph, so it is answered before the
+"run this command" diagnostics rather than through them.
+| `… has not been vuln-scanned` | non-zero | No record. Walk the module, then scan that walk. |
 | `… ScanFailed` / `… is unscannable` | non-zero | Module could not be scanned; reachability is unknown. |
-| `… scanned without --reachability` | non-zero | Findings exist but reachability was not computed. |
+| `… scanned without --reachability` | non-zero | Findings exist and the scan was rooted elsewhere, so the flag was genuinely not passed. |
+| `no reachability route … it was rooted at <coord>` | non-zero | The scan **did** run with reachability, but the module was its own root. See below. |
 | `… reachability is undetermined` | non-zero | Reachability ran but the call graph was unavailable. |
+
+Every one of these refusals prints the commands that carry out its remedy, and
+each printed line is a whole invocation the CLI accepts as written.
+
+### A module rooted at itself has no consumer route
+
+A finding with no reachability answer has more than one cause, and they take
+opposite remedies. The refusal reads the cause off the record's analysis frame
+rather than assuming one.
+
+When the newest scan of a coordinate was rooted at **that same coordinate** —
+a `walk <module>@<version>` followed by `vuln-scan --module … --reachability`
+produces exactly this — the module is the analysis's own main module. Version-
+range advisory matching never fires on a main module, so the finding is
+attributed by coordinate, and there is no consumer above it for a route to
+start from. The tool declines to fabricate one.
+
+Re-scanning the module cannot help however it is invoked. Only a scan rooted at
+the consuming project can produce a consumer route:
+
+```bash
+kanonarion walk --gomod ./go.mod
+kanonarion vuln-scan --gomod ./go.mod --reachability
+kanonarion reachability --local .
+```
+
+### Root classification
+
+A route says a path exists. It does not say what starts the path, and a route
+rooted at an HTTP handler, at a test helper, and at an exported function nothing
+in the project calls were all reported the same way. Every route now reports what
+sits at its **root**, read from the stored call graph the answer was computed
+over — the test axis, the exported-API flag, and the edges into the node.
+
+| Kind | Means |
+|---|---|
+| `ingress` | The root is entered from outside the module's own call structure: an `http.Handler` implementation, the process entry point, a package initialiser, or a function a dependency calls back into. The `reason` says which. |
+| `exported-api` | The root is exported by the analysed module and called by nothing in it. A consumer could drive it; this project does not. |
+| `internal` | The root has in-project callers and is not itself an entry point — the route begins where the analyser stopped, not where execution starts. The `remedy` names the `kanonarion callers` query that walks the hops above it. |
+| `test` | The root is a test-scope declaration. This is printed **on the same line as the verdict**, so a test-only reach is never read as a production one. |
+| `unrooted` | The graph could not say, with the reason named — no call graph stored for the module, a graph analysed at a fidelity that holds no nodes, or an entry point that is not a node in it. |
+
+Two rules keep this honest:
+
+- **It is not an exploitability claim.** Naming the root kind is a measurement;
+  "exploitable" is a judgement about data flow that kanonarion does not make and
+  this classification does not introduce. Taint analysis is out of scope. The
+  classification is reported **alongside** the verdict and never overrides it: a
+  reachable finding whose root is `exported-api` is still reachable.
+- **A closure-rooted route says so.** Where the analysis was not rooted at an
+  application — an isolated scan, or a `--gomod` walk that roots at the dependency
+  closure — the answer carries `closure_rooted` and the command that would root it
+  at the application, instead of presenting a dependency's own entry point as the
+  project's.
+
+The classification is **derived at read time**, not stored: the facts it reads
+live in the call-graph ledger, so an answer improves as the graph does and no
+re-scan is owed for it.
 
 ```bash
 kanonarion reachability golang.org/x/text@v0.3.7 --vuln GO-2021-0113
@@ -80,18 +155,45 @@ JSON shape:
 
 ```json
 {
-  "module": "golang.org/x/text",
-  "version": "v0.3.7",
-  "vuln_id": "GO-2021-0113",
-  "aliases": ["CVE-2021-38561"],
+  "module": "example.com/dep",
+  "version": "v1.2.0",
+  "vuln_id": "GO-2026-0001",
+  "aliases": ["CVE-2026-00001"],
   "summary": "...",
   "verdict": "reachable",
   "confidence": "High",
-  "method": "call-graph",
-  "example_paths": [["main.main", "golang.org/x/text/...Vuln"]],
+  "method": "govulncheck",
+  "fidelity": "source",
+  "rooting": "target-rooted:example.com/app@local",
+  "routes": [
+    {
+      "versioned": true,
+      "frames": [
+        {"module": "example.com/app", "package": "example.com/app/pkg/apigw", "receiver": "*apigw", "symbol": "ServeHTTP"},
+        {"module": "example.com/dep", "version": "v1.2.0", "package": "example.com/dep", "receiver": "*handler", "symbol": "ServeHTTP"}
+      ],
+      "root": {
+        "kind": "ingress",
+        "reason": "an http.Handler implementation (method named ServeHTTP) — an HTTP server invokes it per request",
+        "node_id": "example.com/app/pkg/apigw.(*apigw).ServeHTTP"
+      }
+    }
+  ],
+  "route_root": {
+    "kind": "ingress",
+    "reason": "an http.Handler implementation (method named ServeHTTP) — an HTTP server invokes it per request",
+    "node_id": "example.com/app/pkg/apigw.(*apigw).ServeHTTP"
+  },
   "scanned_at": "2026-06-14T00:00:00Z"
 }
 ```
+
+Every route carries its own `root`; `route_root` repeats the first route's, so a
+consumer asking "is this a test-only reach" does not have to index into the list.
+Both are absent when the answer records no route — an absent route on a
+package-level finding is explained by the advisory naming no symbols, and
+answering `unrooted` there would offer a missing root as the reason for a search
+that was never possible.
 
 A retracted advisory answers with `"verdict": "withdrawn"` and a `withdrawn_at`
 timestamp instead of a reachability determination, so the answer states its reason
@@ -105,7 +207,7 @@ rather than asserting a bare negative the reader has to take on trust:
   "aliases": ["CVE-2026-33817", "GHSA-6jwv-w5xf-7j27"],
   "summary": "WITHDRAWN: out-of-range-index in go.etcd.io/bbolt",
   "verdict": "withdrawn",
-  "method": "call-graph",
+  "method": "none",
   "withdrawn_at": "2026-04-08T13:33:56Z",
   "scanned_at": "2026-07-28T06:06:20Z"
 }
@@ -131,6 +233,47 @@ references the imported symbols against the call graph and vulnerability
 records already in the store. No fetch is performed; populate the store
 beforehand with `kanonarion walk` and `kanonarion vuln-scan` for the
 modules of interest.
+
+The probe is scoped to the **whole build** — every non-main module
+`go list -deps ./...` reports, transitive as well as direct — because the
+binary whose symbol table it reads contains the whole build. A module reached
+only through a dependency (a JWT library pulled in by a SAML library, say) is
+queried like any other.
+
+### Coverage: what the answer speaks about
+
+The probe reports stored findings, so it can only speak about modules the store
+holds a record for. Every module in the build it cannot speak about is **named**
+in `coverage.uncovered_modules` with its reason, never omitted — a ten-module
+reply that silently drops the eleventh is indistinguishable from one that
+examined eleven and cleared one.
+
+| `reason` | Means |
+|---|---|
+| `no stored vulnerability record for this coordinate; it has never been vuln-scanned` | Nothing is known about it either way. This is **not** "no known vulnerabilities" — a record with no findings is an answer and counts as covered. |
+| `the local build resolves this module without a version (a directory replacement), so it names no coordinate to look up` | Nothing asked the store about it. |
+
+### Which binaries the probe read
+
+A workspace with more than one `main` package ships more than one artefact, and
+a symbol linked into only one of them is still in the product. The probe builds
+**every** main the workspace declares and unions the symbol tables: a finding is
+`present` if any binary carries the symbol, and `matched_binaries` names the
+ones that do. Building whichever main sorted first reported `absent` for every
+symbol linked solely into another — a false negative on the exact question the
+probe answers.
+
+`coverage.probed_binaries` names every main package found, probed or not. A main
+that fails to build does not fail the probe and is not dropped from the answer
+either: it appears with a `build_error`, so a reader can see which artefact the
+verdict does not rest on. A workspace with no main is probed through the
+synthetic harness instead and names no binaries.
+
+`coverage.uncovered_remedy` names the route to a wider answer. There is no
+refresh flag on `reachability` and none is needed: `version_id` is a content
+digest recomputed from the working tree on every run, so the probe is never
+serving a cached snapshot. What limits the answer is the store's coverage, and
+scanning the build is what widens it.
 
 ## Workspace resolution
 
@@ -163,6 +306,28 @@ JSON shape (text rendering follows the same fields):
   "version_id": "local-<sha256>",
   "probe_kind": "",
   "notice": "<optional diagnostic>",
+  "coverage": {
+    "snapshot_taken_at": "2026-01-01T00:00:00Z",
+    "build_modules": 2,
+    "queried_modules": 2,
+    "covered_modules": 1,
+    "modules_with_findings": 0,
+    "uncovered_modules": [
+      {
+        "path": "example.com/dep",
+        "version": "v1.8.1",
+        "reason": "no stored vulnerability record for this coordinate; it has never been vuln-scanned"
+      }
+    ],
+    "uncovered_remedy": "<the commands that widen the next answer>",
+    "probed_binaries": [
+      { "import_path": "github.com/example/app/cmd/server" },
+      {
+        "import_path": "github.com/example/app/cmd/tool",
+        "build_error": "building probe binary: exit status 1\n..."
+      }
+    ]
+  },
   "modules": [
     {
       "path": "github.com/some/dep",
@@ -175,7 +340,8 @@ JSON shape (text rendering follows the same fields):
           "verdict": "reachable",
           "verdict_source": "callgraph",
           "reason": "<why>",
-          "matched_symbols": ["pkg.Symbol"]
+          "matched_symbols": ["pkg.Symbol"],
+          "matched_binaries": ["github.com/example/app/cmd/server"]
         }
       ]
     }

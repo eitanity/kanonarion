@@ -51,7 +51,10 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 	}
 	defer func() { _ = os.RemoveAll(tmpDir) }()
 
-	env := scanEnv(os.Environ(), req.GoModCache)
+	// The target of a coordinate-keyed walk is a published zip extracted into a
+	// scratch directory, not a working tree, so there is no vendor/ tree to root
+	// at and this path is fetched-surface by construction.
+	env := scanEnv(os.Environ(), req.GoModCache, domain.AnalysisSurfaceFetched)
 
 	scanDir, fault, err := s.prepareScanDir(ctx, tmpDir, coord, req.ModuleSource, env, req.BuildList)
 	if err != nil {

@@ -17,12 +17,16 @@ import (
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 )
 
-// TestCopyToModCache_PipelineVersionBinding pins the contract that
-// copyToModCache looks up the fact record under the caller-supplied
-// pipeline version. A regression here resurfaces the silent
-// "fact record not found" failure for walks whose fetch records live
-// under a non-default PV (e.g. after a PV bump).
-func TestCopyToModCache_PipelineVersionBinding(t *testing.T) {
+// This test used to pin the opposite contract: that copyToModCache looked the
+// record up under a caller-supplied pipeline version, which the command dug out of
+// the walk's per-node FetchRecord and, failing that, guessed from a compile-time
+// constant. That workaround is what the version-keyed read forced, and it left the
+// silent "fact record not found" it was written to avoid for any walk whose
+// records predated the per-node field.
+//
+// What it pins now is that no pipeline version is supplied at all, and the record
+// is found under a version no caller names.
+func TestCopyToModCache_FindsARecordUnderAnyPipelineVersion(t *testing.T) {
 	c, err := coordinate.NewModuleCoordinate("example.com/m", "v1.0.0")
 	if err != nil {
 		t.Fatal(err)
@@ -34,26 +38,29 @@ func TestCopyToModCache_PipelineVersionBinding(t *testing.T) {
 	blobs := newPVFakeBlobs() // Get always errors — we only care about the lookup
 	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
 
-	// Matching PV: lookup succeeds, code proceeds past GetFetchRecord and
-	// fails at the next step (blob fetch / mkdir). Any error string other
-	// than "fact record not found" proves the lookup matched.
-	err = copyToModCache(context.Background(), c, facts, blobs, t.TempDir(), storedPV, logger)
+	// The lookup succeeds and the copy proceeds to fail at the next step (blob
+	// fetch), so any error other than "fact record not found" proves the record
+	// was found without its pipeline version being named.
+	err = copyToModCache(context.Background(), c, facts, blobs, t.TempDir(), logger)
 	if err == nil {
 		t.Fatal("expected an error after the fact lookup (no real blob)")
 	}
 	if strings.Contains(err.Error(), "fact record not found") {
-		t.Fatalf("matching PV should have found the record, got: %v", err)
+		t.Fatalf("the record is held at pipeline %s and must be found without the caller naming it, got: %v", storedPV, err)
 	}
 
-	// Wrong PV: must surface "fact record not found", proving the argument
-	// is honoured rather than a compile-time constant.
-	err = copyToModCache(context.Background(), c, facts, blobs, t.TempDir(), "0.0.0", logger)
+	// A coordinate the ledger holds nothing about is still absent.
+	other, err := coordinate.NewModuleCoordinate("example.com/absent", "v1.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	err = copyToModCache(context.Background(), other, facts, blobs, t.TempDir(), logger)
 	if err == nil || !strings.Contains(err.Error(), "fact record not found") {
-		t.Fatalf("wrong PV should have returned 'fact record not found', got: %v", err)
+		t.Fatalf("an unmeasured coordinate should have returned 'fact record not found', got: %v", err)
 	}
 }
 
-// pvFakeFacts is a minimal in-memory FactStore for the PV-binding test.
+// pvFakeFacts is a minimal in-memory FactStore for the lookup test.
 type pvFakeFacts struct {
 	mu      sync.Mutex
 	records map[string]fetchdomain.FactRecord
@@ -86,6 +93,22 @@ func (f *pvFakeFacts) GetFetchRecord(_ context.Context, coord coordinate.ModuleC
 		return fetchdomain.CompositeRecord{}, false, cerr //nolint:wrapcheck // test fake
 	}
 	return c, true, nil
+}
+
+// ComposeFetchRecord answers the coordinate-only composed read, satisfying the
+// optional fetchports.FactRecordComposer capability the way the sqlite store does.
+func (f *pvFakeFacts) ComposeFetchRecord(_ context.Context, coord coordinate.ModuleCoordinate) (fetchdomain.CompositeRecord, bool, error) {
+	if coord.IsZero() {
+		return fetchdomain.CompositeRecord{}, false, coordinate.ErrZeroCoordinate
+	}
+	f.mu.Lock()
+	held := make([]fetchdomain.FactRecord, 0, len(f.records))
+	for _, r := range f.records {
+		held = append(held, r)
+	}
+	f.mu.Unlock()
+	//nolint:wrapcheck // test fake; the helper already names the coordinate
+	return fetchtest.ComposeCoordinate(coord, held)
 }
 
 // pvFakeBlobs satisfies BlobStore but never returns content; copyToModCache

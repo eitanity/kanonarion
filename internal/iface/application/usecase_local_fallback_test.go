@@ -60,11 +60,9 @@ func TestExecute_FindsFactRecordUnderLocalIngestPipelineVersion(t *testing.T) {
 			SchemaVersion: domain3.InterfaceSchemaVersion,
 			OverallStatus: domain3.InterfaceStatusExtracted,
 		}},
-		Clock:                     fakeClock{t: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)},
-		Stopwatch:                 fakeStopwatch{},
-		FetchPipelineVersion:      "0.3.0",
-		LocalFetchPipelineVersion: localPipeline,
-		Logger:                    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Clock:     fakeClock{t: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)},
+		Stopwatch: fakeStopwatch{},
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 
 	result, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})
@@ -129,11 +127,9 @@ func TestExecute_LocalCoordinateBypassesRecordCache(t *testing.T) {
 			SchemaVersion: domain3.InterfaceSchemaVersion,
 			OverallStatus: domain3.InterfaceStatusExtracted,
 		}},
-		Clock:                     fakeClock{t: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)},
-		Stopwatch:                 fakeStopwatch{},
-		FetchPipelineVersion:      "0.3.0",
-		LocalFetchPipelineVersion: localPipeline,
-		Logger:                    slog.New(slog.NewTextHandler(io.Discard, nil)),
+		Clock:     fakeClock{t: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC)},
+		Stopwatch: fakeStopwatch{},
+		Logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 	})
 
 	result, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: coord})

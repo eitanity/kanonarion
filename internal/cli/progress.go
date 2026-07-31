@@ -7,10 +7,50 @@ import (
 	"sync"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	configdomain "github.com/eitanity/kanonarion/internal/config/domain"
 	extractports "github.com/eitanity/kanonarion/internal/extract/ports"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
+
+// noProgressUsage is the one help string every --no-progress registration
+// carries. It is stated once because the flag means one thing everywhere it
+// appears, and a per-command copy is how the same flag ends up documented three
+// different ways.
+const noProgressUsage = "suppress stderr progress output (the throttled heartbeat and any per-module progress lines); results and warnings are unaffected"
+
+// registerNoProgressFlag registers the shared --no-progress flag on cmd,
+// binding it to p.
+//
+// Every long-running command that narrates its progress on stderr registers it
+// through here, so the flag name, default and help string cannot drift apart —
+// and, more importantly, so the set of commands that accept it is a decision
+// made in one place rather than an accident of which command was written last.
+// A caller who learned the flag on `walk` and reached for it on `vuln-scan` got
+// "unknown flag" from exactly the command whose output most needs suppressing.
+//
+// A command that emits no progress does NOT register it: a flag that accepts an
+// instruction it cannot carry out is worse than its absence, because the caller
+// has no way to tell the two apart.
+func registerNoProgressFlag(cmd *cobra.Command, p *bool) {
+	cmd.Flags().BoolVar(p, "no-progress", false, noProgressUsage)
+}
+
+// progressWriter returns the stream progress narration should be written to:
+// stderr normally, and a sink under --no-progress.
+//
+// Routing rather than branching at each write site is deliberate. The
+// suppression must cover only the narration; the warnings and diagnostics that
+// share stderr keep writing to stderr, so a suppressed run still reports what
+// went wrong. Handing the narration a different writer makes that split
+// structural instead of a condition every future write site has to remember.
+func progressWriter(stderr io.Writer, noProgress bool) io.Writer {
+	if noProgress {
+		return io.Discard
+	}
+	return stderr
+}
 
 // progressInterval is the minimum wall-clock gap between two heartbeat lines.
 // Sized so a multi-minute cold walk emits a handful of lines (proof of life)

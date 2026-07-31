@@ -11,6 +11,24 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// advisoryCountLine renders how many advisories a verdict was measured against.
+//
+// It is the line that makes a clean verdict readable: govulncheck reports "No
+// vulnerabilities found." against a database holding six thousand advisories and
+// against one holding none, so the count is what tells the two apart after the
+// fact. A scan against an empty database is refused outright, so no record can
+// carry a measured zero.
+//
+// A zero is therefore reported as unrecorded rather than as a count. It means
+// the record predates the measurement, which is unproven — not a state that
+// ranks beside a measured one, and never a claim that nothing was consulted.
+func advisoryCountLine(snapshot vuldomain.DatabaseSnapshot) string {
+	if n := snapshot.AdvisoryCount(); n > 0 {
+		return fmt.Sprintf("%d in the snapshot scanned against", n)
+	}
+	return "not recorded (this record predates the advisory count)"
+}
+
 func newVulnCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "vuln <module>@<version>",
@@ -25,23 +43,27 @@ func newVulnCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runVuln(cmd.Context(), args[0], jsonOut, ctr.QueryVuln, ctr.QueryScanRuns, stdout)
+			return runVuln(cmd.Context(), args[0], jsonOut, ctr.QueryVuln, ctr.QueryScanRuns, ctr.QueryWalks, ctr.QueryCallGraph, stdout)
 		},
 	}
 
 	return cmd
 }
 
-func runVuln(ctx context.Context, arg string, jsonOut bool, uc QueryVulnUseCase, runs QueryScanRunsUseCase, stdout io.Writer) error {
+func runVuln(ctx context.Context, arg string, jsonOut bool, uc QueryVulnUseCase, runs QueryScanRunsUseCase, walks QueryWalksUseCase, graphs QueryCallGraphUseCase, stdout io.Writer) error {
 	// runs is unused on this path — it only explains a walk-scoped miss, and
 	// this command names no walk — but it is threaded rather than nil so the
-	// two entry points cannot drift into different behaviour.
-	return runVulnShow(ctx, arg, "", jsonOut, false, uc, runs, stdout)
+	// two entry points cannot drift into different behaviour. walks is used:
+	// the no-record refusal names a succeeded walk if one exists.
+	return runVulnShow(ctx, arg, "", jsonOut, false, uc, runs, walks, graphs, stdout)
 }
 
 // printVulnRecord renders a single VulnerabilityRecord in human-readable form;
 // shared between `vuln`, `vuln-show`, and any future text presenter.
-func printVulnRecord(stdout io.Writer, rec vuldomain.VulnerabilityRecord) {
+func printVulnRecord(stdout io.Writer, rec vuldomain.VulnerabilityRecord, classify routeRootFunc) {
+	if classify == nil {
+		classify = unclassifiedRoutes
+	}
 	coverage, _ := vuldomain.RecordAxes(rec)
 	label := string(rec.OverallStatus)
 	// Whether the summary word needs a coverage caveat beside it is a coverage
@@ -67,11 +89,12 @@ func printVulnRecord(stdout io.Writer, rec vuldomain.VulnerabilityRecord) {
 		_, _ = fmt.Fprintf(stdout, "  First validated: %s\n", rec.FirstScannedAt.UTC().Format(time.RFC3339))
 	}
 	_, _ = fmt.Fprintf(stdout, "  Last validated:  %s\n", rec.ScannedAt.UTC().Format(time.RFC3339))
-	_, _ = fmt.Fprintf(stdout, "  Snapshot:        %s@%s\n", rec.DatabaseSnapshot.Source, rec.DatabaseSnapshot.Version)
-	if !rec.DatabaseSnapshot.RetrievedAt.IsZero() {
+	_, _ = fmt.Fprintf(stdout, "  Snapshot:        %s@%s\n", rec.DatabaseSnapshot.Source(), rec.DatabaseSnapshot.Version())
+	_, _ = fmt.Fprintf(stdout, "  Advisories:      %s\n", advisoryCountLine(rec.DatabaseSnapshot))
+	if !rec.DatabaseSnapshot.RetrievedAt().IsZero() {
 		_, _ = fmt.Fprintf(stdout, "  Snapshot age:    retrieved %s (%d day(s) old at validation)\n",
-			rec.DatabaseSnapshot.RetrievedAt.UTC().Format(time.RFC3339),
-			vuldomain.SnapshotAgeDays(rec.ScannedAt, rec.DatabaseSnapshot.RetrievedAt))
+			rec.DatabaseSnapshot.RetrievedAt().UTC().Format(time.RFC3339),
+			vuldomain.SnapshotAgeDays(rec.ScannedAt, rec.DatabaseSnapshot.RetrievedAt()))
 	}
 	// The coverage caveat is printed from the coverage axis, and printing it does
 	// not end the record: a coverage gap and an advisory match are independent
@@ -103,20 +126,56 @@ func printVulnRecord(stdout io.Writer, rec vuldomain.VulnerabilityRecord) {
 		}
 		return
 	}
+	printFindingLines(stdout, rec, classify)
+}
+
+// reachabilityLabel renders the one-word reachability tag beside a finding.
+//
+// It has three outcomes, not two. A finding whose answer was never determined at
+// symbol level — because the advisory names no symbol for this module path, or
+// because the analysis could not decide — is not a negative: labelling it "not
+// reachable" reports a search that was never run, and the operator acts on the
+// negative by not upgrading. notReachable lets each caller keep its own wording
+// for the genuine negative, which differs in how much of the instrument it names.
+func reachabilityLabel(f vuldomain.VulnerabilityFinding, notReachable string) string {
+	if f.Reachable == nil {
+		// A reachability question that was asked and could not be answered is not
+		// the same as one nobody asked, and the blank label rendered them alike. The
+		// note printed under the finding carries the reason; this is what stops the
+		// entry reading as a finding reachability was simply not run for.
+		if f.ReachabilityAttemptFailed() {
+			return " [reachability requested but not computed]"
+		}
+		return ""
+	}
+	if f.Reachable.IsReachable {
+		return " [reachable]"
+	}
+	if f.AdvisoryNamesNoSymbols {
+		return " [affected at package level; symbol-level reachability not determined]"
+	}
+	if f.Reachable.Confidence == vuldomain.ConfidenceUnknown {
+		return " [reachability not determined]"
+	}
+	return notReachable
+}
+
+func printFindingLines(stdout io.Writer, rec vuldomain.VulnerabilityRecord, classify routeRootFunc) {
+	if classify == nil {
+		classify = unclassifiedRoutes
+	}
 	for _, f := range rec.Findings {
 		aliases := ""
 		if len(f.Aliases) > 0 {
 			aliases = " (" + strings.Join(f.Aliases, ", ") + ")"
 		}
-		reachability := ""
-		if f.Reachable != nil {
-			if f.Reachable.IsReachable {
-				reachability = " [reachable]"
-			} else {
-				reachability = " [not reachable]"
-			}
-		}
-		_, _ = fmt.Fprintf(stdout, "  %s%s%s: %s\n", f.ID, aliases, reachability, f.Summary)
+		// The first route's root is classified before the heading is printed,
+		// because its kind belongs on the same line as the reachability tag: a
+		// test-scope root beside "[reachable]" is the one pairing that changes what
+		// the whole entry means, and a line further down is a line that is skipped.
+		root := firstRouteRootOf(f, classify)
+		_, _ = fmt.Fprintf(stdout, "  %s%s%s%s: %s\n",
+			f.ID, aliases, reachabilityLabel(f, " [not reachable]"), routeRootTag(root), f.Summary)
 		// The retraction is printed as its own line, ahead of the range and the fix,
 		// because it changes what the rest of the entry means: an affected range and
 		// a fixed version for a retracted advisory describe a report that was
@@ -137,6 +196,12 @@ func printVulnRecord(stdout io.Writer, rec vuldomain.VulnerabilityRecord) {
 		if len(f.AffectedSymbols) > 0 {
 			_, _ = fmt.Fprintf(stdout, "      symbols:  %s\n", strings.Join(f.AffectedSymbols, ", "))
 		}
+		// Printed where the symbols would have been, because the empty symbol list
+		// is the thing being explained: a reader must not take it for a symbol list
+		// that failed to load, nor read the absent route as "nothing calls it".
+		if f.AdvisoryNamesNoSymbols {
+			_, _ = fmt.Fprintln(stdout, "      symbols:  none named by the advisory for this module path — affected at package level, symbol-level reachability not determinable")
+		}
 		// A reachability answer never prints without saying what produced it. The
 		// same advisory in the same module is reachable in one build and not in
 		// the next, so an unlabelled answer reads as a property of the module and
@@ -156,6 +221,19 @@ func printVulnRecord(stdout io.Writer, rec vuldomain.VulnerabilityRecord) {
 			_, _ = fmt.Fprintf(stdout, "      route:    entry point first%s\n", caveat)
 			for _, hop := range route {
 				_, _ = fmt.Fprintf(stdout, "        %s\n", hop)
+			}
+			// The evidence behind the tag on the heading, printed where the route it
+			// describes is. Naming the root kind is a fact about what starts the
+			// route; it is not a claim that anything is exploitable, and the reason
+			// is what keeps the reader on the first reading.
+			if root.IsRecorded() {
+				_, _ = fmt.Fprintf(stdout, "      root:     %s\n", root)
+				if root.NodeID != "" {
+					_, _ = fmt.Fprintf(stdout, "        node:   %s\n", root.NodeID)
+				}
+				if root.Remedy != "" {
+					_, _ = fmt.Fprintf(stdout, "        next:   %s\n", root.Remedy)
+				}
 			}
 			if extra := len(f.Reachable.Routes) - 1; extra > 0 {
 				_, _ = fmt.Fprintf(stdout, "        (%d further route(s) recorded)\n", extra)

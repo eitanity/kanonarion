@@ -2,6 +2,7 @@ package domain
 
 import (
 	"fmt"
+	"regexp"
 	"sort"
 	"strings"
 )
@@ -129,6 +130,304 @@ func inferForkProvenance(path string, catalogue []string) ForkProvenance {
 		CatalogueVersion: ForkCatalogueVersion,
 		Indicators:       indicators,
 	}
+}
+
+// -- copyright-attribution tier ---------------------------------------------
+//
+// The name-path heuristic above compares a path against a catalogue of
+// canonical paths. It is structurally blind to a republication, because a
+// republication is precisely a project that changed its path: when
+// github.com/dgrijalva/jwt-go was taken over as github.com/golang-jwt/jwt, no
+// element of the new path collides with the old one, so the trailing-name
+// comparison has nothing to fire on. The signal is in the licence text instead —
+// the republished LICENSE carries the original author's copyright line beside
+// the new maintainers'.
+
+// CopyrightAttribution is one copyright line read off a module's licence
+// record, reduced to what this inference needs.
+//
+// It is a plain-string projection rather than the licence domain's own type so
+// this package stays independent of that context: the inference is about names
+// and paths, and importing another bounded context's aggregate to compare two
+// strings would tie the two together for nothing.
+type CopyrightAttribution struct {
+	// Holder is the parsed copyright holder, best-effort.
+	Holder string
+	// Verbatim is the exact copyright line, for quoting as evidence.
+	Verbatim string
+}
+
+// RepublicationSignal names which copyright signal produced an indicator.
+type RepublicationSignal int
+
+const (
+	// RepublicationMultipleHolders means the licence text attributes copyright
+	// to more than one distinct holder. A single project that has always lived
+	// at one path normally carries one; a republication carries the original
+	// author's line and the new maintainers'.
+	RepublicationMultipleHolders RepublicationSignal = iota + 1
+	// RepublicationHolderMatchesPath means a copyright holder's name matches the
+	// owner element of a DIFFERENT module path the store holds, whose name
+	// overlaps this module's. That is the shape of a project republished under
+	// new ownership.
+	RepublicationHolderMatchesPath
+)
+
+// String returns the stable machine-readable name of the signal.
+func (s RepublicationSignal) String() string {
+	switch s {
+	case RepublicationMultipleHolders:
+		return "multiple_copyright_holders"
+	case RepublicationHolderMatchesPath:
+		return "holder_matches_other_module_path"
+	default:
+		return "unknown"
+	}
+}
+
+// CopyrightSignalStatus distinguishes the three states of the copyright tier, on
+// the same terms as ForkProvenanceStatus: a tier that never ran must never be
+// reported as a tier that ran and found nothing.
+type CopyrightSignalStatus int
+
+const (
+	// CopyrightSignalNotAnalysed is the zero value: no licence record was read,
+	// so the copyright lines were never consulted.
+	CopyrightSignalNotAnalysed CopyrightSignalStatus = iota
+	// CopyrightSignalNone means the copyright lines were read and carry no
+	// republication signal.
+	CopyrightSignalNone
+	// CopyrightSignalRepublication means at least one signal fired.
+	CopyrightSignalRepublication
+)
+
+// String returns the stable machine-readable name of the status.
+func (s CopyrightSignalStatus) String() string {
+	switch s {
+	case CopyrightSignalNone:
+		return "none"
+	case CopyrightSignalRepublication:
+		return "republication"
+	default:
+		return "not_analysed"
+	}
+}
+
+// RepublicationIndicator is one caveated republication inference drawn from a
+// module's copyright lines. Like ForkIndicator it is a suggestion to verify,
+// never an established fact.
+type RepublicationIndicator struct {
+	// Signal names which rule fired.
+	Signal RepublicationSignal
+	// Holders are the copyright holders the inference rests on, sorted.
+	Holders []string
+	// Evidence quotes the copyright lines verbatim, sorted. The evidence is
+	// carried rather than summarised because the reader is being asked to
+	// verify, and a claim they cannot check is one they must take on trust.
+	Evidence []string
+	// Canonical is the other module path a holder's name matched. Empty for the
+	// multiple-holders signal, which names no other module.
+	Canonical string
+	// Statement is the caveated human-readable inference.
+	Statement string
+}
+
+// InferRepublication runs the copyright-attribution tier over one module's
+// licence copyright lines.
+//
+// storePaths are other module paths known to the store, used only by the
+// holder-matches-path rule; passing none disables that rule and leaves the
+// multiple-holders rule intact. The result is an inference, never a verdict.
+func InferRepublication(modulePath string, attributions []CopyrightAttribution, storePaths []string) []RepublicationIndicator {
+	holders := distinctHolders(attributions)
+	var indicators []RepublicationIndicator
+
+	if len(holders) > 1 {
+		evidence := distinctVerbatim(attributions)
+		indicators = append(indicators, RepublicationIndicator{
+			Signal:   RepublicationMultipleHolders,
+			Holders:  holders,
+			Evidence: evidence,
+			Statement: fmt.Sprintf(
+				"licence text attributes copyright to %d distinct holders (%s) — a project republished under a new path carries the original author's line beside the new maintainers'; verify via VCS origin or content comparison",
+				len(holders), strings.Join(holders, "; ")),
+		})
+	}
+
+	indicators = append(indicators, holderPathMatches(modulePath, attributions, holders, storePaths)...)
+
+	sort.Slice(indicators, func(i, j int) bool {
+		if indicators[i].Signal != indicators[j].Signal {
+			return indicators[i].Signal < indicators[j].Signal
+		}
+		return indicators[i].Canonical < indicators[j].Canonical
+	})
+	return indicators
+}
+
+// holderPathMatches finds store module paths that a copyright holder's name
+// names the owner of, and whose module name overlaps modulePath's.
+//
+// Both conditions are required. The owner match alone fires on every module a
+// large copyright holder appears in; the name overlap alone fires on every
+// unrelated project that happens to share a word. Together they describe the one
+// shape this rule is for: the same library, under a different owner, still
+// carrying that owner's copyright.
+func holderPathMatches(modulePath string, attributions []CopyrightAttribution, holders []string, storePaths []string) []RepublicationIndicator {
+	self := normalizeModulePath(modulePath)
+	selfBase := moduleBaseName(modulePath)
+	seen := make(map[string]struct{})
+	var out []RepublicationIndicator
+
+	for _, candidate := range storePaths {
+		if normalizeModulePath(candidate) == self {
+			continue
+		}
+		if _, done := seen[candidate]; done {
+			continue
+		}
+		if !baseNamesOverlap(selfBase, moduleBaseName(candidate)) {
+			continue
+		}
+		owners := pathOwnerElements(candidate)
+		for _, holder := range holders {
+			if !holderNamesOwner(holder, owners) {
+				continue
+			}
+			seen[candidate] = struct{}{}
+			out = append(out, RepublicationIndicator{
+				Signal:    RepublicationHolderMatchesPath,
+				Holders:   []string{holder},
+				Evidence:  verbatimForHolder(attributions, holder),
+				Canonical: candidate,
+				Statement: fmt.Sprintf(
+					"copyright holder %q names the owner of %s, a differently-owned module of the same name held in this store — path suggests a republication of it; verify via VCS origin or content comparison",
+					holder, candidate),
+			})
+			break
+		}
+	}
+	return out
+}
+
+// holderMinTokenLen is the shortest holder-name token allowed to match a path
+// owner. It drops the corporate and given-name noise ("inc", "ltd", "the",
+// "dave") that would otherwise match owners at random.
+const holderMinTokenLen = 5
+
+// baseNameMinLen is the shortest module base name the overlap test accepts. A
+// one- or two-character name overlaps almost everything.
+const baseNameMinLen = 3
+
+// holderNameTokenRe splits a holder name into alphanumeric tokens.
+var holderNameTokenRe = regexp.MustCompile(`[^a-z0-9]+`)
+
+// holderNamesOwner reports whether any sufficiently distinctive token of holder
+// appears within one of a path's owner elements, in either direction — "Dave
+// Grijalva" names the owner of github.com/dgrijalva/jwt-go.
+func holderNamesOwner(holder string, owners []string) bool {
+	for _, tok := range holderNameTokenRe.Split(strings.ToLower(holder), -1) {
+		if len(tok) < holderMinTokenLen {
+			continue
+		}
+		for _, owner := range owners {
+			if strings.Contains(owner, tok) || strings.Contains(tok, owner) {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// pathOwnerElements returns the lowercased path elements after the host, with
+// any trailing major-version element already stripped by normalisation. The host
+// is excluded: every module on a forge shares it, so it names no owner.
+func pathOwnerElements(path string) []string {
+	parts := strings.Split(normalizeModulePath(path), "/")
+	if len(parts) <= 1 {
+		return nil
+	}
+	return parts[1:]
+}
+
+// baseNamesOverlap reports whether two module base names describe the same
+// library name, allowing one to extend the other ("jwt" and "jwt-go").
+func baseNamesOverlap(a, b string) bool {
+	if len(a) < baseNameMinLen || len(b) < baseNameMinLen {
+		return false
+	}
+	return strings.Contains(a, b) || strings.Contains(b, a)
+}
+
+// templatePlaceholderRe matches an unfilled licence-template placeholder token —
+// "<name of author>", "[fullname]", "{yyyy}". Licence "how to apply" scaffolds
+// ship these literally, and a stored record extracted before they were filtered
+// carries them where a holder belongs.
+//
+// It is applied here as well as at extraction because this tier reads records
+// the store already holds: measured over a working store, 219 of 2,454 licence
+// records name two or more holders, and among them are records whose "second
+// holder" is a bracketed placeholder. Counting one as a holder would report a
+// republication on the strength of an unfilled form field.
+var templatePlaceholderRe = regexp.MustCompile(`<[^<>]*>|\[[^\[\]]*\]|\{[^{}]*\}`)
+
+// distinctHolders returns the distinct, non-empty copyright holders across the
+// attributions, sorted. Holders are compared case-insensitively but reported as
+// first written.
+func distinctHolders(attributions []CopyrightAttribution) []string {
+	seen := make(map[string]string)
+	for _, a := range attributions {
+		h := strings.TrimSpace(a.Holder)
+		if h == "" {
+			continue
+		}
+		// A holder whose text is nothing but a template placeholder names
+		// nobody. One that merely mentions a URL in angle brackets beside a real
+		// name still names someone, so only a wholly-bracketed value is dropped.
+		if strings.TrimSpace(templatePlaceholderRe.ReplaceAllString(h, "")) == "" {
+			continue
+		}
+		key := strings.ToLower(h)
+		if _, ok := seen[key]; !ok {
+			seen[key] = h
+		}
+	}
+	out := make([]string, 0, len(seen))
+	for _, h := range seen {
+		out = append(out, h)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// distinctVerbatim returns the distinct, non-empty copyright lines, sorted.
+func distinctVerbatim(attributions []CopyrightAttribution) []string {
+	seen := make(map[string]struct{})
+	var out []string
+	for _, a := range attributions {
+		v := strings.TrimSpace(a.Verbatim)
+		if v == "" {
+			continue
+		}
+		if _, ok := seen[v]; ok {
+			continue
+		}
+		seen[v] = struct{}{}
+		out = append(out, v)
+	}
+	sort.Strings(out)
+	return out
+}
+
+// verbatimForHolder returns the copyright lines belonging to one holder.
+func verbatimForHolder(attributions []CopyrightAttribution, holder string) []string {
+	var matched []CopyrightAttribution
+	for _, a := range attributions {
+		if strings.EqualFold(strings.TrimSpace(a.Holder), holder) {
+			matched = append(matched, a)
+		}
+	}
+	return distinctVerbatim(matched)
 }
 
 // normalizeModulePath lowercases a module path and strips version markers

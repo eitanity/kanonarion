@@ -9,6 +9,7 @@ import (
 	coordinatetest "github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 )
 
 // bboltWithdrawnAt is GO-2026-4923's retraction timestamp, two days after it was
@@ -26,7 +27,7 @@ var bboltWithdrawnAt = time.Date(2026, 4, 8, 13, 33, 56, 0, time.UTC)
 // indistinguishable from an advisory that never applied.
 func TestScanModule_WithdrawnAdvisoryIsNotAnAffectedVerdict(t *testing.T) {
 	vulnStore := newFakeVulnStore()
-	snap := domain.DatabaseSnapshot{Source: "vuln.go.dev", Version: "2026-07-08T17:05:00Z"}
+	snap := vulntest.MustNew("vuln.go.dev", "2026-07-08T17:05:00Z")
 	bbolt := coordinatetest.MustNew("go.etcd.io/bbolt", "v1.4.3")
 	db := &fakeDatabase{
 		snapshot:    snap,
@@ -44,7 +45,7 @@ func TestScanModule_WithdrawnAdvisoryIsNotAnAffectedVerdict(t *testing.T) {
 	uc := application.NewScanModuleUseCase(
 		newFakeFacts(), newFakeBlob(), vulnStore, newFakeWalkStore(),
 		&fakeScanner{results: map[string]domain.VulnerabilityRecord{}}, db, nil,
-		fixedClock{t: time.Date(2026, 7, 28, 0, 0, 0, 0, time.UTC)}, "v16", "v1", slog.Default(),
+		fixedClock{t: time.Date(2026, 7, 28, 0, 0, 0, 0, time.UTC)}, "v16", slog.Default(),
 	)
 	if _, err := uc.Scan(t.Context(), application.ScanModuleParams{
 		Coordinate: bbolt,
@@ -87,7 +88,7 @@ func TestScanModule_WithdrawnAdvisoryIsNotAnAffectedVerdict(t *testing.T) {
 // retracted one sitting beside it.
 func TestScanModule_LiveAdvisoryBesideAWithdrawnOneStillAffects(t *testing.T) {
 	vulnStore := newFakeVulnStore()
-	snap := domain.DatabaseSnapshot{Source: "vuln.go.dev", Version: "2026-07-08T17:05:00Z"}
+	snap := vulntest.MustNew("vuln.go.dev", "2026-07-08T17:05:00Z")
 	mod := coordinatetest.MustNew("github.com/mixed/mod", "v1.0.0")
 	db := &fakeDatabase{
 		snapshot:    snap,
@@ -103,7 +104,7 @@ func TestScanModule_LiveAdvisoryBesideAWithdrawnOneStillAffects(t *testing.T) {
 	uc := application.NewScanModuleUseCase(
 		newFakeFacts(), newFakeBlob(), vulnStore, newFakeWalkStore(),
 		&fakeScanner{results: map[string]domain.VulnerabilityRecord{}}, db, nil,
-		fixedClock{t: time.Date(2026, 7, 28, 0, 0, 0, 0, time.UTC)}, "v16", "v1", slog.Default(),
+		fixedClock{t: time.Date(2026, 7, 28, 0, 0, 0, 0, time.UTC)}, "v16", slog.Default(),
 	)
 	if _, err := uc.Scan(t.Context(), application.ScanModuleParams{
 		Coordinate: mod,

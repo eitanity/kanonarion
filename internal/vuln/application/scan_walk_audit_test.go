@@ -12,6 +12,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
@@ -84,13 +85,13 @@ func TestScanWalk_EmitsAuditEvents(t *testing.T) {
 		},
 	}
 	db := &fakeDatabase{
-		snapshot:    domain.DatabaseSnapshot{Source: "test", Version: "v1"},
+		snapshot:    vulntest.MustNew("test", "v1"),
 		vulnerables: map[coordinate.ModuleCoordinate][]string{affected: {"GO-VULN-ID"}},
 	}
 	clock := fixedClock{t: now}
 
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 	sink := &recordingAuditSink{}
 	walkUC := application.NewScanWalkUseCase(
@@ -181,11 +182,11 @@ func TestRescan_EmitsAuditEvents(t *testing.T) {
 			},
 		},
 	}
-	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1"}}
+	db := &fakeDatabase{snapshot: vulntest.MustNew("test", "v1")}
 	clock := fixedClock{t: now}
 
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, ws, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, ws, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 	sink := &recordingAuditSink{}
 	rescanner := application.NewRescanWalkUseCase(
@@ -235,7 +236,7 @@ func TestScanWalk_NilAuditSink(t *testing.T) {
 
 	vulnStore := newFakeVulnStore()
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, walkStore, &fakeScanner{}, &fakeDatabase{snapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1"}}, nil, fixedClock{t: now}, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, walkStore, &fakeScanner{}, &fakeDatabase{snapshot: vulntest.MustNew("test", "v1")}, nil, fixedClock{t: now}, "v1", slog.Default(),
 	)
 	walkUC := application.NewScanWalkUseCase(
 		walkStore, vulnStore, moduleUC, nil, fixedClock{t: now}, "v1", slog.Default(),

@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -83,8 +84,103 @@ func SnapshotIntegrityAbort(snapshot domain.DatabaseSnapshot, err error) error {
 			"so no finding derived from it can be vouched for and the run must not claim it; "+
 			"this run left the stored blob untouched as evidence — copy the store before re-fetching, "+
 			"because re-fetching (--fresh) overwrites this snapshot in place",
-		err, snapshot.Source, snapshot.Version)
+		err, snapshot.Source(), snapshot.Version())
 }
+
+// ErrSnapshotEmpty is returned when the advisory database a scan was about to be
+// measured against was found to hold no advisories.
+//
+// It is separate from ErrSnapshotIntegrity because the two describe different
+// failures of the same object. An integrity failure says the bytes are not the
+// bytes that were recorded — something changed them. An empty database says the
+// bytes are exactly what was recorded and there is nothing in them: nobody
+// tampered, the evidence simply never arrived. A caller that would preserve the
+// blob as evidence of a tamper on one, and re-fetch on the other, must be able to
+// tell them apart.
+//
+// It is a precondition failure, not a per-module outcome. The operator asked for
+// a measurement against a database that cannot produce one, and recording every
+// module Unscannable would be technically honest and practically useless — it
+// buries the single fact that matters under one row per module.
+var ErrSnapshotEmpty = errors.New("vulnerability database snapshot holds no advisories")
+
+// EmptySnapshotAbort wraps an empty-database finding into the error that ends the
+// scan, naming the snapshot and the count that was measured.
+//
+// It lives beside the sentinel so every extraction site refuses in the same
+// sentence, on the terms SnapshotIntegrityAbort already set. The count is in the
+// message because it is the whole content of the finding: "no advisories" is what
+// distinguishes this from a database that was merely small, and an operator who
+// sees the number can tell an empty air-gapped mirror from a scan that worked.
+//
+// Nothing is written and nothing is left behind to preserve. Unlike a corrupt
+// snapshot, an empty one is not evidence of anything having happened to it, so
+// the remedy is simply to fetch a database that holds advisories.
+func EmptySnapshotAbort(snapshot domain.DatabaseSnapshot, count int) error {
+	return fmt.Errorf(
+		"%w: the advisory database snapshot %s@%s holds %d advisories, so a scan against it can only report "+
+			"that nothing was found because nothing was consulted; no verdict may be sealed against it — "+
+			"fetch a populated database (--fresh) and re-run",
+		ErrSnapshotEmpty, snapshot.Source(), snapshot.Version(), count)
+}
+
+// UnreadableRun names one stored scan run a listing could not verify, together
+// with the failure the read path reported.
+type UnreadableRun struct {
+	// ID is the run identifier carried by the stored bytes, or empty when they
+	// could not be parsed far enough to name it. An unnamed row is still
+	// reported: "there is a row here I cannot read" is an answer, and dropping
+	// it because it will not introduce itself is not.
+	ID string
+
+	// Reason is the read failure exactly as it was reported, so a caller that
+	// wants to tell generation drift from altered bytes can still match on it.
+	Reason error
+}
+
+// String renders one unreadable run for a message, naming the run when the
+// bytes named themselves.
+func (r UnreadableRun) String() string {
+	if r.ID == "" {
+		return fmt.Sprintf("unidentified run: %v", r.Reason)
+	}
+	return fmt.Sprintf("run %s: %v", r.ID, r.Reason)
+}
+
+// UnreadableRuns reports that a scan-run listing returned every row it could
+// verify and names the ones it could not. The verified runs come back as the
+// listing's ordinary result alongside it.
+//
+// It exists so one seam can serve both kinds of caller. It unwraps to
+// ErrVulnIntegrity, so a consuming command — one whose answer would be wrong if
+// it silently rested on a partial store — matches it exactly as it always did
+// and still fails closed. A survey command matches this type instead, prints
+// the rows it has and the rows it does not, and exits 0: the tool used to
+// diagnose the problem is not the one that refuses to run.
+//
+// The verified runs are returned WITH the error rather than discarded because
+// the alternative failure is worse than aborting. A listing that quietly
+// omitted the rows it could not read would answer a question about the store
+// with a clean list that is not true of it, and the reader would have no way to
+// know.
+type UnreadableRuns struct {
+	Runs []UnreadableRun
+}
+
+// Error renders every unreadable run, so a consuming command that only prints
+// the error still says which rows were at fault.
+func (e *UnreadableRuns) Error() string {
+	parts := make([]string, 0, len(e.Runs))
+	for _, r := range e.Runs {
+		parts = append(parts, r.String())
+	}
+	return fmt.Sprintf("%s: %s", ErrVulnIntegrity, strings.Join(parts, "; "))
+}
+
+// Unwrap keeps errors.Is(err, ErrVulnIntegrity) true, so every caller that
+// classified this failure before this type existed classifies it the same way
+// now.
+func (e *UnreadableRuns) Unwrap() error { return ErrVulnIntegrity }
 
 // VulnerabilityStore defines the port for persisting vulnerability records.
 //
@@ -95,6 +191,18 @@ func SnapshotIntegrityAbort(snapshot domain.DatabaseSnapshot, err error) error {
 // which every later read treats as a genuine measurement, and on a read
 // because absence is the wrong answer to a question about no module.
 // coordinatetest.AssertRefusesZeroCoordinate pins the rule for every store.
+//
+// The zero snapshot is the same hazard on the other identity axis, and every
+// method that takes a domain.DatabaseSnapshot MUST refuse it with
+// domain.ErrZeroSnapshot, on both legs. vulnerability_records is an append-only
+// ledger whose composition group is keyed on (coordinate, pipeline version,
+// snapshot), so a record admitted under the zero snapshot joins the group
+// holding every other record that also named none, and a read composes them as
+// though they described one measurement against one advisory database. An empty
+// ContentHash does NOT make a snapshot zero: rows written before the hash
+// existed legitimately carry none, and refusing those would make every
+// un-migrated store unreadable. vulntest.AssertRefusesZeroSnapshot pins the rule
+// for every store.
 type VulnerabilityStore interface {
 	// PutVulnerabilityRecord appends a scan to the ledger. It never updates a
 	// record: two distinct scans of one coordinate — under two snapshots, in two
@@ -167,9 +275,17 @@ type VulnerabilityStore interface {
 	GetWalkScanRun(ctx context.Context, id string) (domain.WalkScanRun, bool, error)
 
 	// ListWalkScanRuns lists all scan runs for a specific walk.
+	//
+	// A row that fails its seal does not end the listing. Implementations return
+	// every run they could verify AND an *UnreadableRuns naming the rest, so the
+	// caller decides: a consumer sees a non-nil error and fails closed as before,
+	// a survey reports the named rows and carries on. One unreadable row must
+	// never make the store unlistable, because the listing is how an operator
+	// finds it.
 	ListWalkScanRuns(ctx context.Context, walkID string) ([]domain.WalkScanRun, error)
 
-	// ListAllWalkScanRuns lists all scan runs across all walks, most recent first.
+	// ListAllWalkScanRuns lists all scan runs across all walks, most recent first,
+	// on the same partial-result terms as ListWalkScanRuns.
 	ListAllWalkScanRuns(ctx context.Context) ([]domain.WalkScanRun, error)
 
 	// PutDatabaseSnapshot persists a vulnerability database snapshot blob.
@@ -253,6 +369,68 @@ type TargetScanRequest struct {
 	BuildList map[coordinate.ModuleCoordinate]struct{}
 }
 
+// ProjectScanRequest carries the inputs for one project-rooted scan of a local
+// working tree.
+type ProjectScanRequest struct {
+	// ProjectDir is the project's working-tree directory (the one holding go.mod).
+	ProjectDir string
+	Snapshot   domain.DatabaseSnapshot
+	// DBDir is a pre-extracted vuln DB dir; empty extracts from the store.
+	DBDir string
+	// Vendored asks for the analysis to be rooted at the project's vendor/ tree
+	// under -mod=vendor, so the bytes measured are the bytes the project
+	// compiles. The scanner reports back which surface it could actually use.
+	//
+	// False is not merely "no preference": for a project that carries
+	// vendor/modules.txt the Go toolchain defaults to -mod=vendor on its own, so
+	// the fetch path has to be forced explicitly. That is what makes a
+	// deliberate fetched-surface comparison run a real comparison rather than a
+	// re-run of the vendored one.
+	Vendored bool
+}
+
+// VendoredClosure is what a project's vendored tree says about its own closure:
+// which modules vendor/modules.txt lists, and which of them the tree actually
+// holds files for.
+type VendoredClosure struct {
+	// Vendored is false when the project has no vendor/modules.txt at all, in
+	// which case the other fields are empty and mean nothing.
+	Vendored bool
+	// Listed maps module path → version for every entry in vendor/modules.txt.
+	Listed map[string]string
+	// Present is the set of module paths the tree holds files for. It is a
+	// subset of Listed's keys plus any unlisted module directory found under
+	// vendor/; a listed module missing from it is listed-but-absent.
+	Present map[string]bool
+	// ReplacedBy maps a replacement module path to the original module path it
+	// stands in for.
+	//
+	// A replaced module is vendored under its ORIGINAL path — `go mod vendor`
+	// records the replacement only on the modules.txt comment line — while a
+	// resolved build list keys on the REPLACEMENT coordinate. The two names
+	// never meet in Listed or Present, so a coordinate must be resolved through
+	// this mapping before its absence from either means anything.
+	//
+	// Listed and Present are deliberately left as a faithful reading of
+	// modules.txt rather than having the replacement names folded into them: a
+	// consumer asking what the tree says gets what the tree says, and the
+	// aliasing is applied where the question about a coordinate is actually
+	// asked.
+	ReplacedBy map[string]string
+}
+
+// VendoredClosureReader reads a project's vendored closure from its working
+// tree. It is how the vuln stage learns which modules a -mod=vendor analysis
+// could have measured, without re-implementing modules.txt parsing: the vendor
+// bounded context already owns that parser and this port is satisfied by an
+// adapter over it.
+type VendoredClosureReader interface {
+	// VendoredClosure reads the project rooted at goModPath. A project with no
+	// vendor/modules.txt yields a zero VendoredClosure and a nil error — not
+	// being vendored is an answer, not a failure.
+	VendoredClosure(ctx context.Context, goModPath string) (VendoredClosure, error)
+}
+
 // VulnerabilityScanner defines the port for a vulnerability scanner implementation.
 type VulnerabilityScanner interface {
 	// Preflight verifies the scanner's external prerequisites are available
@@ -269,12 +447,7 @@ type VulnerabilityScanner interface {
 	// each dependency in isolation. The working tree resolves its own build, so
 	// the scan is live and uncached. A genuine fault is carried in the result's
 	// Status; the error return is reserved for infrastructure failures.
-	ScanProject(
-		ctx context.Context,
-		projectDir string, // the project's working-tree directory (contains go.mod)
-		snapshot domain.DatabaseSnapshot,
-		dbDir string, // pre-extracted vuln DB dir; empty = extract from store on each call
-	) (domain.ProjectScanResult, error)
+	ScanProject(ctx context.Context, req ProjectScanRequest) (domain.ProjectScanResult, error)
 	// ScanTargetModule runs one target-rooted scan for a walk whose root is a
 	// published module, returning every finding grouped by the module that owns
 	// the vulnerable symbol. It is the coordinate-keyed counterpart of
@@ -393,6 +566,16 @@ type CallGraphProjection struct {
 	// it: an application's own code is all reachable, because functions the
 	// runtime dispatches to dynamically are still shipped code.
 	ArtifactKind string
+	// ServableAsCacheHit reports whether the stored graph this projection came
+	// from may stand in for a fresh analysis, or whether the coordinate must be
+	// analysed again. It is false for a record that failed because the analysis
+	// environment could not run: nothing was measured about the module, so the
+	// on-demand spawner must not read its presence as "already done".
+	//
+	// It is a projected boolean rather than the callgraph domain's own rule
+	// because this port must stay free of that domain — the rule lives beside
+	// composition and the reachability adapter applies it.
+	ServableAsCacheHit bool
 }
 
 // CallGraphNode is the subset of a call graph node the analyser needs.

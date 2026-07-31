@@ -20,19 +20,22 @@ import (
 type FindingsIndexDefect struct {
 	// FindingID is the advisory identifier the index row claims.
 	FindingID string
-	// ModulePath, ModuleVersion, PipelineVersion and Snapshot are the record key
-	// the row points at — the same tuple PutVulnerabilityRecord reconciles on.
+	// ModulePath, ModuleVersion, PipelineVersion and the two snapshot columns are
+	// the record key the row points at — the same tuple PutVulnerabilityRecord
+	// reconciles on.
 	//
-	// The module is held as the two raw columns rather than as a
-	// coordinate.ModuleCoordinate because this is a report about rows that are
-	// already wrong: a key that no longer parses as a coordinate (the stdlib
-	// pseudo-module's empty version, or a row written before a validation rule
-	// existed) is precisely the kind of row worth naming, and constructing a
-	// coordinate would fail on it instead of reporting it.
+	// The module and the snapshot are both held as their raw columns rather than
+	// as a coordinate.ModuleCoordinate and a domain.DatabaseSnapshot because this
+	// is a report about rows that are already wrong: a key that no longer parses
+	// as a coordinate (the stdlib pseudo-module's empty version, or a row written
+	// before a validation rule existed) or a snapshot pin with an empty half is
+	// precisely the kind of row worth naming, and constructing either value object
+	// would fail on it instead of reporting it.
 	ModulePath      string
 	ModuleVersion   string
 	PipelineVersion string
-	Snapshot        domain.DatabaseSnapshot
+	SnapshotSource  string
+	SnapshotVersion string
 	// Rooting is the analysis frame the row is filed under. The index is keyed on
 	// it because an isolated record and a target-rooted one for the same
 	// coordinate and snapshot are two answers, so a row is supported by the
@@ -47,7 +50,7 @@ type FindingsIndexDefect struct {
 func (d FindingsIndexDefect) String() string {
 	return fmt.Sprintf("%s indexed against %s@%s (pipeline %s, snapshot %s@%s, rooting %s): %s",
 		d.FindingID, d.ModulePath, d.ModuleVersion, d.PipelineVersion,
-		d.Snapshot.Source, d.Snapshot.Version, d.Rooting, d.Reason)
+		d.SnapshotSource, d.SnapshotVersion, d.Rooting, d.Reason)
 }
 
 // Reasons a findings-index row fails to be supported by its record.
@@ -134,7 +137,8 @@ ORDER BY module_path, module_version, pipeline_version,
 			ModulePath:      path,
 			ModuleVersion:   version,
 			PipelineVersion: pipeline,
-			Snapshot:        domain.DatabaseSnapshot{Source: snapSource, Version: snapVersion},
+			SnapshotSource:  snapSource,
+			SnapshotVersion: snapVersion,
 			Rooting:         domain.Rooting(rooting),
 		}
 

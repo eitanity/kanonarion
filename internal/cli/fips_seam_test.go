@@ -46,7 +46,9 @@ func TestFipsWith_BlockingExitsInBothModes(t *testing.T) {
 			jsonOut = json
 			var out bytes.Buffer
 			err := fipsWith(context.Background(), ctr, "go.mod", &out)
-			requireExit(t, err, ExitConfig)
+			// A fired governance gate is ExitPolicy, not ExitConfig: the scan
+			// succeeded and the finding is real.
+			requireExit(t, err, ExitPolicy)
 			if out.Len() == 0 {
 				t.Errorf("json=%v: expected output to still be rendered alongside the blocking exit", json)
 			}

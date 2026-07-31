@@ -3,13 +3,13 @@ package domain
 import (
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 )
 
-// Divergence is two records for one coordinate and pipeline version that
-// disagree on a hash they BOTH carry: the same pinned version described by two
-// different artefacts.
+// Divergence is two records for one coordinate that disagree on a hash they
+// BOTH carry: the same pinned version described by two different artefacts.
 //
 // The rule is deliberately "disagreement on a shared hash" rather than "more
 // than one artefact hash for a coordinate". A go.mod-only record followed by a
@@ -30,7 +30,11 @@ type Divergence struct {
 	// Coordinate is the module and version the disagreeing records describe.
 	Coordinate coordinate.ModuleCoordinate
 
-	// PipelineVersion is the pipeline version both records were written under.
+	// PipelineVersion names the fetch pipeline version(s) the disagreeing records
+	// were written under: the single version when the read was narrowed to one,
+	// and every distinct version present, comma-separated, when the read spanned
+	// the whole ledger. Reporting one arbitrary version for a cross-generation
+	// disagreement would send an operator to the wrong rows.
 	PipelineVersion string
 
 	// Field names the hash the records disagree on: "module_hash" or
@@ -56,7 +60,9 @@ func (d Divergence) Error() string {
 }
 
 // FindDivergence reports the first disagreement among records describing one
-// coordinate and pipeline version, or nil when they are consistent.
+// coordinate, or nil when they are consistent. The records may span several fetch
+// pipeline versions: the rule is about the artefact, not about a generation of
+// the pipeline, so a wider input can only find more disagreement, never less.
 //
 // Records are consistent when, for each hash field, every record that carries a
 // value agrees with every other record that carries one. Records that omit a
@@ -105,11 +111,29 @@ func FindDivergence(records []FactRecord) *Divergence {
 		}
 		return &Divergence{
 			Coordinate:      records[0].Coordinate(),
-			PipelineVersion: records[0].PipelineVersion,
+			PipelineVersion: pipelineVersionsOf(records),
 			Field:           field.name,
 			Values:          values,
 			ContentHashes:   hashes,
 		}
 	}
 	return nil
+}
+
+// pipelineVersionsOf renders the distinct fetch pipeline versions across records,
+// sorted so the report is stable across runs. A single-version read renders
+// exactly the version it asked for; a whole-ledger read renders every generation
+// involved rather than whichever happened to be listed first.
+func pipelineVersionsOf(records []FactRecord) string {
+	seen := make(map[string]bool, len(records))
+	versions := make([]string, 0, len(records))
+	for _, r := range records {
+		if seen[r.PipelineVersion] {
+			continue
+		}
+		seen[r.PipelineVersion] = true
+		versions = append(versions, r.PipelineVersion)
+	}
+	sort.Strings(versions)
+	return strings.Join(versions, ", ")
 }

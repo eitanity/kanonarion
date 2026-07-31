@@ -10,6 +10,9 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
+	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
+	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
+
 	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/spf13/cobra"
@@ -50,7 +53,7 @@ or was absent because the vulnerability database snapshot predated it.`,
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runVulnShow(cmd.Context(), args[0], walkID, jsonOut, history, ctr.QueryVuln, ctr.QueryScanRuns, stdout)
+			return runVulnShow(cmd.Context(), args[0], walkID, jsonOut, history, ctr.QueryVuln, ctr.QueryScanRuns, ctr.QueryWalks, ctr.QueryCallGraph, stdout)
 		},
 	}
 
@@ -66,6 +69,8 @@ func runVulnShow(
 	jsonOut, history bool,
 	uc QueryVulnUseCase,
 	runs QueryScanRunsUseCase,
+	walks QueryWalksUseCase,
+	graphs QueryCallGraphUseCase,
 	stdout io.Writer,
 ) error {
 	coord, err := parseCoordinate(arg)
@@ -84,7 +89,15 @@ func runVulnShow(
 			return fmt.Errorf("getting vulnerability record: %w", err)
 		}
 		if !ok {
-			return fmt.Errorf("no vulnerability record for %s — run: kanonarion vuln-scan <walk-id>", coord)
+			// No walk was named, so there is no "newer than what you passed" to
+			// compute — but a succeeded walk of this module may already exist,
+			// and naming it turns the placeholder <walk-id> into a command the
+			// operator can run. The primary line keeps its placeholder shape.
+			msg := fmt.Sprintf("no vulnerability record for %s — run: kanonarion vuln-scan <walk-id>", coord)
+			if note := latestSucceededWalkNote(ctx, walks, coord, time.Time{}); note != "" {
+				msg += "\n" + note
+			}
+			return &exitError{code: ExitNotFound, msg: msg}
 		}
 		rec = r
 	} else {
@@ -93,7 +106,7 @@ func runVulnShow(
 			return fmt.Errorf("getting vulnerability record: %w", err)
 		}
 		if !ok {
-			return explainWalkRecordAbsence(ctx, runs, coord, walkID)
+			return explainWalkRecordAbsence(ctx, runs, walks, coord, walkID)
 		}
 		rec = r
 	}
@@ -107,7 +120,7 @@ func runVulnShow(
 		return nil
 	}
 
-	printVulnRecord(stdout, rec)
+	printVulnRecord(stdout, rec, newRouteRootFunc(ctx, graphs, rec))
 	return nil
 }
 
@@ -123,6 +136,7 @@ func runVulnShow(
 func explainWalkRecordAbsence(
 	ctx context.Context,
 	runs QueryScanRunsUseCase,
+	walks QueryWalksUseCase,
 	coord coordinate.ModuleCoordinate,
 	walkID string,
 ) error {
@@ -131,7 +145,15 @@ func explainWalkRecordAbsence(
 		return fmt.Errorf("no vulnerability record for %s in walk %s, and its scan runs could not be read: %w", coord, walkID, err)
 	}
 	if len(scanRuns) == 0 {
-		return fmt.Errorf("no vulnerability scan run for walk %s — run: kanonarion vuln-scan %s", walkID, walkID)
+		// The remedy names the walk the operator passed — that walk stays the
+		// subject. But scanning a resolution that a fresher walk has already
+		// superseded produces a second scan surface for an outdated build list,
+		// so a newer succeeded walk of the same root is worth one line.
+		msg := fmt.Sprintf("no vulnerability scan run for walk %s — run: kanonarion vuln-scan %s", walkID, walkID)
+		if note := newerWalkNote(ctx, walks, walkID); note != "" {
+			msg += "\n" + note
+		}
+		return &exitError{code: ExitNotFound, msg: msg}
 	}
 
 	// The newest run that covered this module is the one whose generation
@@ -146,18 +168,89 @@ func explainWalkRecordAbsence(
 		}
 	}
 	if covering == nil {
-		return fmt.Errorf("walk %s has %d vulnerability scan run(s), none covering %s — the walk does not contain this module",
-			walkID, len(scanRuns), coord)
+		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
+			"walk %s has %d vulnerability scan run(s), none covering %s — the walk does not contain this module",
+			walkID, len(scanRuns), coord)}
 	}
 	if covering.PipelineVersion != vulnPipelineVersion {
-		return fmt.Errorf("walk %s scanned %s under pipeline version %s, and this build reads pipeline version %s — re-run: kanonarion vuln-scan %s",
-			walkID, coord, covering.PipelineVersion, vulnPipelineVersion, walkID)
+		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
+			"walk %s scanned %s under pipeline version %s, and this build reads pipeline version %s — re-run: kanonarion vuln-scan %s",
+			walkID, coord, covering.PipelineVersion, vulnPipelineVersion, walkID)}
 	}
 	// The run claims this module and the generations agree, so a record should
 	// have been readable. Say so rather than reporting a plain absence, which
 	// would read as "not affected".
-	return fmt.Errorf("walk %s scan run %s records %s at pipeline version %s, but no record was readable — the store may be inconsistent; re-run: kanonarion vuln-scan %s",
-		walkID, covering.ID, coord, vulnPipelineVersion, walkID)
+	return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
+		"walk %s scan run %s records %s at pipeline version %s, but no record was readable — the store may be inconsistent; re-run: kanonarion vuln-scan %s",
+		walkID, covering.ID, coord, vulnPipelineVersion, walkID)}
+}
+
+// newerWalkNote reports, as one appendable line, whether a succeeded walk of
+// the same root coordinate as walkID exists that is newer than walkID itself.
+//
+// It is advisory: every failure to answer — the named walk cannot be read, the
+// listing fails, nothing newer exists — yields the empty string, because this
+// decorates a refusal that is already correct. A note that cannot be computed
+// must not turn a good diagnostic into an error about the diagnostic.
+func newerWalkNote(ctx context.Context, walks QueryWalksUseCase, walkID string) string {
+	if walks == nil {
+		return ""
+	}
+	named, err := walks.GetWalk(ctx, walkID)
+	if err != nil {
+		return ""
+	}
+	return latestSucceededWalkNote(ctx, walks, named.Target, named.StartedAt)
+}
+
+// latestSucceededWalkNote returns the note for the most recent succeeded walk
+// of root that started after notBefore, or "" when there is none. A zero
+// notBefore imposes no lower bound.
+func latestSucceededWalkNote(
+	ctx context.Context,
+	walks QueryWalksUseCase,
+	root coordinate.ModuleCoordinate,
+	notBefore time.Time,
+) string {
+	if walks == nil {
+		return ""
+	}
+	succeeded := walkdomain.WalkSucceeded
+	target := root
+	// No LatestOnly: it groups by (target, scope), so a Target filter can still
+	// return one row per scope. The plain listing is ordered started_at DESC, so
+	// Limit 1 is exactly "the newest succeeded walk of this root".
+	summaries, err := walks.ListWalks(ctx, walkports.WalkFilter{
+		Target:        &target,
+		OverallStatus: &succeeded,
+		Limit:         1,
+	})
+	if err != nil || len(summaries) == 0 {
+		return ""
+	}
+	newest := summaries[0]
+	if !notBefore.IsZero() && !newest.StartedAt.After(notBefore) {
+		return ""
+	}
+	return fmt.Sprintf("note: a newer walk of %s exists (%s, %s); consider scanning that instead",
+		root, newest.ID, walkAge(newest.StartedAt))
+}
+
+// walkAge renders how long ago t was, coarsely — the note exists to say
+// "fresher than the one you named", and a minute-accurate duration would imply
+// a precision the advice does not need.
+func walkAge(t time.Time) string {
+	d := time.Since(t)
+	switch {
+	case d < time.Minute:
+		return "seconds ago"
+	case d < time.Hour:
+		return fmt.Sprintf("%dm ago", int(d.Minutes()))
+	case d < 24*time.Hour:
+		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	default:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
+	}
 }
 
 func runVulnShowHistory(ctx context.Context, coord coordinate.ModuleCoordinate, jsonOut bool, uc QueryVulnUseCase, stdout io.Writer) error {
@@ -166,7 +259,7 @@ func runVulnShowHistory(ctx context.Context, coord coordinate.ModuleCoordinate, 
 		return fmt.Errorf("listing vulnerability history: %w", err)
 	}
 	if len(recs) == 0 {
-		return fmt.Errorf("no vulnerability records for %s — run 'kanonarion vuln-scan' first", coord)
+		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("no vulnerability records for %s — run 'kanonarion vuln-scan' first", coord)}
 	}
 
 	if jsonOut {
@@ -194,7 +287,7 @@ func runVulnShowHistory(ctx context.Context, coord coordinate.ModuleCoordinate, 
 		_, _ = fmt.Fprintf(stdout, "  %s  walk=%-26s  snap=%-24s  frame=%-13s  %-8s  %s\n",
 			rec.ScannedAt.UTC().Format(time.RFC3339),
 			rec.WalkID,
-			rec.DatabaseSnapshot.Version,
+			rec.DatabaseSnapshot.Version(),
 			vuldomain.RecordRooting(rec),
 			rec.OverallStatus,
 			findingSummary,
@@ -286,7 +379,7 @@ func runVulnByID(ctx context.Context, findingID, walkID string, jsonOut bool, uc
 		_, _ = fmt.Fprintf(stdout, "%-60s %-12s vuln-db=%-24s scanned=%s\n",
 			rec.Coordinate.Path()+"@"+rec.Coordinate.Version(),
 			rec.OverallStatus,
-			rec.DatabaseSnapshot.Version,
+			rec.DatabaseSnapshot.Version(),
 			rec.ScannedAt.UTC().Format(time.RFC3339))
 	}
 	return nil

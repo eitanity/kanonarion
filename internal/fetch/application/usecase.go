@@ -1003,7 +1003,10 @@ func (uc *FetchModuleUseCase) resolveInferredGitRef(
 	if repoURL == "" {
 		return domain2.GitReference{}, domain2.UnverifiedMissingOrigin, detail
 	}
-	ref := "refs/tags/" + coord.Version()
+	// GitTagVersion, not Version: a +incompatible coordinate names a tag that
+	// never carries the suffix, and "refs/tags/v2.22.0+incompatible" resolves to
+	// nothing. The coordinate recorded alongside this ref keeps the full version.
+	ref := "refs/tags/" + coord.GitTagVersion()
 	commit, err := uc.vcs.ResolveTag(ctx, repoURL, ref)
 	if err != nil {
 		status := domain2.UnverifiedNoVCS

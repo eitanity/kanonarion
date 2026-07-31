@@ -215,7 +215,7 @@ func runInterfaceShow(ctx context.Context, moduleArg, pkgFilter, symbolFilter st
 		return fmt.Errorf("getting interface record: %w", err)
 	}
 	if !found {
-		return fmt.Errorf("no interface record for %s — run 'kanonarion interface' first", coord)
+		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("no interface record for %s — run 'kanonarion interface' first", coord)}
 	}
 
 	// Apply filters.
@@ -519,7 +519,7 @@ func runInterfaceListForModule(ctx context.Context, moduleArg string, jsonOut bo
 		return fmt.Errorf("getting interface record: %w", err)
 	}
 	if !found {
-		return fmt.Errorf("no interface record for %s — run 'kanonarion interface %s' first", coord, moduleArg)
+		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("no interface record for %s — run 'kanonarion interface %s' first", coord, moduleArg)}
 	}
 
 	if jsonOut {

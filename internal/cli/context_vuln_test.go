@@ -12,6 +12,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
 
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
@@ -91,7 +92,7 @@ func TestVulnRecordToContext_CarriesScanProvenance(t *testing.T) {
 		Coordinate:       mustContextCoord(t),
 		OverallStatus:    vuldomain.StatusClean,
 		PipelineVersion:  "0.10.0",
-		DatabaseSnapshot: vuldomain.DatabaseSnapshot{Version: "2026-07-08T17:05:00Z"},
+		DatabaseSnapshot: vulntest.MustNew("vuln.go.dev", "2026-07-08T17:05:00Z"),
 	}
 
 	v := vulnRecordToContext(&rec, "", "")

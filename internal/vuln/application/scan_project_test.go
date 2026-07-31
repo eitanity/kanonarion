@@ -1,6 +1,7 @@
 package application_test
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
 	"strings"
@@ -13,6 +14,7 @@ import (
 
 	application "github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
@@ -24,24 +26,25 @@ type projectScanFixture struct {
 	scanner   *fakeScanner
 	vulnStore *fakeVulnStore
 	db        *fakeDatabase
-	root      coordinate.ModuleCoordinate
-	depA      coordinate.ModuleCoordinate
-	depB      coordinate.ModuleCoordinate
-	walkID    string
+	// logs holds everything the wired use cases logged, so a test can assert on
+	// a decision the run reports but does not record — which surface it chose,
+	// and why — instead of inferring it from the verdicts.
+	logs   *bytes.Buffer
+	root   coordinate.ModuleCoordinate
+	depA   coordinate.ModuleCoordinate
+	depB   coordinate.ModuleCoordinate
+	walkID string
 }
 
 func newProjectScanFixture(t *testing.T, scanner *fakeScanner) projectScanFixture {
 	t.Helper()
-	ctx := t.Context()
-	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
-	walkID := "walk-project"
 
 	root := coordinatetest.MustNew("github.com/example/proj", coordinate.LocalVersion)
 	depA := coordinatetest.MustNew("gopkg.in/yaml.v3", "v3.0.1")
 	depB := coordinatetest.MustNew("github.com/spf13/cobra", "v1.8.1")
 
-	walk := walkdomain.WalkRecord{
-		ID:     walkID,
+	f := newProjectScanFixtureFor(t, scanner, walkdomain.WalkRecord{
+		ID:     "walk-project",
 		Target: root,
 		Graph: walkdomain.Graph{
 			Target: root,
@@ -51,7 +54,31 @@ func newProjectScanFixture(t *testing.T, scanner *fakeScanner) projectScanFixtur
 				{Coordinate: depB, DirectDependency: true, ResolutionSource: walkdomain.ResolutionMVS},
 			},
 		},
-	}
+	}, root, depA, depB)
+	f.depA, f.depB = depA, depB
+	return f
+}
+
+// newProjectScanFixtureFor wires the same use case around a caller-supplied
+// walk, so a test that needs a different graph shape — a local-replace node, say
+// — gets the standard wiring rather than a second hand-assembled copy of it.
+// fetchedCoords are the nodes given a fact record and a blob; a node left out has
+// neither, which is how the walker leaves a node it never fetched.
+//
+// depA and depB are left zero: they are the two-dependency shape's own names, and
+// filling them in from an arbitrary graph would invent coordinates the caller did
+// not put in it.
+func newProjectScanFixtureFor(
+	t *testing.T,
+	scanner *fakeScanner,
+	walk walkdomain.WalkRecord,
+	fetchedCoords ...coordinate.ModuleCoordinate,
+) projectScanFixture {
+	t.Helper()
+	ctx := t.Context()
+	now := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	walkID := walk.ID
+	root := walk.Target
 
 	walkStore := newFakeWalkStore()
 	if err := walkStore.PutWalk(ctx, walk); err != nil {
@@ -61,12 +88,12 @@ func newProjectScanFixture(t *testing.T, scanner *fakeScanner) projectScanFixtur
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
 	vulnStore := newFakeVulnStore()
-	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1"}}
+	db := &fakeDatabase{snapshot: vulntest.MustNew("test", "v1")}
 	clock := fixedClock{t: now}
 
 	// Every in-build node needs a fetch record so the root source (and, on the
 	// isolated path, each dependency) can be located.
-	for _, c := range []coordinate.ModuleCoordinate{root, depA, depB} {
+	for _, c := range fetchedCoords {
 		seedRec := fetchtest.Record(t, fetchtest.Coordinate(c), fetchtest.PipelineVersion("v1"), fetchtest.Content("zip-"+c.Path()))
 		if err := blobs.Put(ctx, fetchtest.ZipIdentity(t, seedRec), strings.NewReader("zip-"+c.Path())); err != nil {
 			t.Fatalf("Put blob: %v", err)
@@ -76,16 +103,19 @@ func newProjectScanFixture(t *testing.T, scanner *fakeScanner) projectScanFixtur
 		}
 	}
 
+	logs := &bytes.Buffer{}
+	logger := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", logger,
 	)
 	walkUC := application.NewScanWalkUseCase(
-		walkStore, vulnStore, moduleUC, nil, clock, "v1", slog.Default(),
+		walkStore, vulnStore, moduleUC, nil, clock, "v1", logger,
 	)
 
 	return projectScanFixture{
-		walkUC: walkUC, scanner: scanner, vulnStore: vulnStore, db: db,
-		root: root, depA: depA, depB: depB, walkID: walkID,
+		walkUC: walkUC, scanner: scanner, vulnStore: vulnStore, db: db, logs: logs,
+		root: root, walkID: walkID,
 	}
 }
 
@@ -246,7 +276,7 @@ func newStdlibProjectFixture(t *testing.T, scanner *fakeScanner) stdlibProjectFi
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
 	vulnStore := newFakeVulnStore()
-	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1"}}
+	db := &fakeDatabase{snapshot: vulntest.MustNew("test", "v1")}
 	clock := fixedClock{t: now}
 
 	// Root and dep need a fetch record; stdlib is never fetched.
@@ -261,7 +291,7 @@ func newStdlibProjectFixture(t *testing.T, scanner *fakeScanner) stdlibProjectFi
 	}
 
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 	walkUC := application.NewScanWalkUseCase(
 		walkStore, vulnStore, moduleUC, nil, clock, "v1", slog.Default(),

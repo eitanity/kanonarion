@@ -161,7 +161,7 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().BoolVar(&analyseLocal, "analyse-local", false, "ingest local-replace targets from disk so callgraph/iface/license analyse them (requires --gomod)")
 	cmd.Flags().BoolVar(&analyseRoot, "analyse-root", false, "ingest the project's own working tree so all extraction stages analyse the project's own packages; re-reads the tree fresh on every run (requires a go.mod walk)")
 	registerStdlibFromGoModFlag(cmd, &stdlibFromGoMod)
-	cmd.Flags().BoolVar(&noProgress, "no-progress", false, "suppress the stderr fetch-progress heartbeat (default: heartbeat on for long runs)")
+	registerNoProgressFlag(cmd, &noProgress)
 	return cmd
 }
 

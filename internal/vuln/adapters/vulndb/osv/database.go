@@ -89,11 +89,9 @@ func (d *Database) Snapshot(ctx context.Context) (domain.DatabaseSnapshot, io.Re
 	// establish what "this snapshot" means; every later reader checks the blob it
 	// holds against this hash rather than trusting the version string, which is
 	// metadata the blob itself asserts.
-	snapshot := domain.DatabaseSnapshot{
-		Source:      "vuln.go.dev",
-		Version:     version,
-		RetrievedAt: time.Now(),
-		ContentHash: domain.HashSnapshotContent(zipData),
+	snapshot, err := domain.NewDatabaseSnapshot("vuln.go.dev", version, time.Now(), domain.HashSnapshotContent(zipData))
+	if err != nil {
+		return domain.DatabaseSnapshot{}, nil, fmt.Errorf("pinning vulndb.zip snapshot: %w", err)
 	}
 
 	return snapshot, io.NopCloser(bytes.NewReader(zipData)), nil
@@ -613,6 +611,12 @@ func enrichFinding(f *domain.VulnerabilityFinding, modulePath string, adv *osvAd
 			f.FixedIn = fixed
 		}
 		f.AffectedSymbols = collectSymbols(a.EcosystemSpecific.Imports)
+		// An entry that names this module path but no symbol within it is recorded
+		// as such, so a reader can see that symbol-level reachability was never
+		// available for this coordinate rather than inferring it from an empty
+		// symbol list — which is also what an enrichment that never ran leaves
+		// behind. The two are not the same fact and must not look alike.
+		f.AdvisoryNamesNoSymbols = len(f.AffectedSymbols) == 0
 	}
 }
 

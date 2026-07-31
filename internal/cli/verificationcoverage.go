@@ -6,7 +6,6 @@ import (
 	"io"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
-	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	stdlibdomain "github.com/eitanity/kanonarion/internal/stdlib/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -17,7 +16,7 @@ import (
 // driven by five callers with different jobs, gain a dependency they can decline
 // by passing nil.
 type fetchRecordReader interface {
-	GetFetchRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (fetchdomain.CompositeRecord, bool, error)
+	ComposeFetchRecord(ctx context.Context, coord coordinate.ModuleCoordinate) (fetchdomain.CompositeRecord, bool, error)
 }
 
 // graphVerificationCoverage aggregates how a walk's graph was verified, reading
@@ -54,7 +53,7 @@ func graphVerificationCoverage(
 			})
 			continue
 		}
-		rec, found, err := records.GetFetchRecord(ctx, n.Coordinate, fetchapp.PipelineVersion)
+		rec, found, err := records.ComposeFetchRecord(ctx, n.Coordinate)
 		if err != nil || !found {
 			obs = append(obs, fetchdomain.CoverageObservation{})
 			continue

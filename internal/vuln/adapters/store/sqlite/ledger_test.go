@@ -9,17 +9,13 @@ import (
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
 	"github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 )
 
 // ledgerSnapshot is the one advisory database every test here scans against, so
 // re-scans land on the same composition group.
 func ledgerSnapshot() domain.DatabaseSnapshot {
-	return domain.DatabaseSnapshot{
-		Source:      "govulndb",
-		Version:     "2026-07-17T19:42:05Z",
-		RetrievedAt: time.Date(2026, 7, 17, 19, 42, 5, 0, time.UTC),
-		ContentHash: "sha256:snapshot",
-	}
+	return vulntest.MustSealOver("govulndb", "2026-07-17T19:42:05Z", time.Date(2026, 7, 17, 19, 42, 5, 0, time.UTC), []byte("advisories"))
 }
 
 func ledgerRecord(t *testing.T, rooting domain.Rooting, scannedAt time.Time, status domain.VulnerabilityStatus) domain.VulnerabilityRecord {
@@ -196,7 +192,7 @@ INSERT INTO vulnerability_records (
 ) VALUES (?, ?, ?, ?, ?, 'walk-1', 'Affected', 'Analysed', 'Affected', 0,
           '2026-05-01T12:00:00Z', '2026-05-01T12:00:00Z', ?, ?)`,
 		legacy.Coordinate.Path(), legacy.Coordinate.Version(), legacy.PipelineVersion,
-		legacy.DatabaseSnapshot.Source, legacy.DatabaseSnapshot.Version,
+		legacy.DatabaseSnapshot.Source(), legacy.DatabaseSnapshot.Version(),
 		legacy.ContentHash, blob); err != nil {
 		t.Fatalf("seeding pre-ledger row: %v", err)
 	}

@@ -17,6 +17,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
 )
@@ -517,12 +518,7 @@ const (
 	fixtureScanID = "01JSCANRUN0000000000000001"
 )
 
-var fixtureSnap = vuldomain.DatabaseSnapshot{
-	Source:      "govulndb",
-	Version:     "v2025-01-01T00-00-00",
-	RetrievedAt: time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC),
-	ContentHash: "sha256:fixture",
-}
+var fixtureSnap = vulntest.MustSealOver("govulndb", "v2025-01-01T00-00-00", time.Date(2025, 1, 1, 0, 0, 0, 0, time.UTC), []byte("fixture advisories"))
 
 func fixtureRunAndRec(t *testing.T) (vuldomain.WalkScanRun, vuldomain.VulnerabilityRecord) {
 	t.Helper()
@@ -617,13 +613,8 @@ func TestRunScanList_UnknownWalk(t *testing.T) {
 
 func TestResolveSnapshot_Found(t *testing.T) {
 	uc := testfakes.NewFakeQueryScanRuns()
-	want := vuldomain.DatabaseSnapshot{
-		Source:      "osv",
-		Version:     "2026-05-07T19:21:40Z",
-		RetrievedAt: time.Date(2026, 5, 7, 19, 21, 40, 0, time.UTC),
-		ContentHash: "sha256:deadbeef",
-	}
-	uc.AddSnapshot(vuldomain.DatabaseSnapshot{Source: "osv", Version: "2026-01-01T00:00:00Z"})
+	want := vulntest.MustSealOver("osv", "2026-05-07T19:21:40Z", time.Date(2026, 5, 7, 19, 21, 40, 0, time.UTC), []byte("deadbeef advisories"))
+	uc.AddSnapshot(vulntest.MustNew("osv", "2026-01-01T00:00:00Z"))
 	uc.AddSnapshot(want)
 
 	got, found, err := resolveSnapshot(context.Background(), uc, "osv", "2026-05-07T19:21:40Z")
@@ -640,7 +631,7 @@ func TestResolveSnapshot_Found(t *testing.T) {
 
 func TestResolveSnapshot_NotFound(t *testing.T) {
 	uc := testfakes.NewFakeQueryScanRuns()
-	uc.AddSnapshot(vuldomain.DatabaseSnapshot{Source: "osv", Version: "2026-01-01T00:00:00Z"})
+	uc.AddSnapshot(vulntest.MustNew("osv", "2026-01-01T00:00:00Z"))
 
 	got, found, err := resolveSnapshot(context.Background(), uc, "osv", "nonexistent")
 	if err != nil {
@@ -847,7 +838,7 @@ func TestRunVulnShow_WithWalkID(t *testing.T) {
 	uc.AddRecord(app, vulnRec)
 
 	var buf bytes.Buffer
-	if err := runVulnShow(context.Background(), "example.com/app@v1.0.0", fixtureWalkID, false, false, uc, testfakes.NewFakeQueryScanRuns(), &buf); err != nil {
+	if err := runVulnShow(context.Background(), "example.com/app@v1.0.0", fixtureWalkID, false, false, uc, testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryWalks(), nil, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -867,7 +858,7 @@ func TestRunVulnShow_NoWalkID(t *testing.T) {
 	uc.AddRecord(app, vulnRec)
 
 	var buf bytes.Buffer
-	if err := runVulnShow(context.Background(), "example.com/app@v1.0.0", "", false, false, uc, testfakes.NewFakeQueryScanRuns(), &buf); err != nil {
+	if err := runVulnShow(context.Background(), "example.com/app@v1.0.0", "", false, false, uc, testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryWalks(), nil, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "example.com/app@v1.0.0") {
@@ -899,7 +890,7 @@ func TestRunVulnShow_SurfacesRemediation(t *testing.T) {
 	uc.AddRecord(app, rec)
 
 	var buf bytes.Buffer
-	if err := runVulnShow(context.Background(), "github.com/gorilla/csrf@v1.7.3", "", false, false, uc, testfakes.NewFakeQueryScanRuns(), &buf); err != nil {
+	if err := runVulnShow(context.Background(), "github.com/gorilla/csrf@v1.7.3", "", false, false, uc, testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryWalks(), nil, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -930,7 +921,7 @@ func TestRunVulnShow_FixedVersionRendered(t *testing.T) {
 	uc.AddRecord(app, rec)
 
 	var buf bytes.Buffer
-	if err := runVulnShow(context.Background(), "github.com/foo/bar@v1.0.0", "", false, false, uc, testfakes.NewFakeQueryScanRuns(), &buf); err != nil {
+	if err := runVulnShow(context.Background(), "github.com/foo/bar@v1.0.0", "", false, false, uc, testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryWalks(), nil, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -946,7 +937,7 @@ func TestRunVulnShow_NotFound(t *testing.T) {
 	uc := testfakes.NewFakeQueryVuln()
 
 	var buf bytes.Buffer
-	err := runVulnShow(context.Background(), "example.com/missing@v9.9.9", "", false, false, uc, testfakes.NewFakeQueryScanRuns(), &buf)
+	err := runVulnShow(context.Background(), "example.com/missing@v9.9.9", "", false, false, uc, testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryWalks(), nil, &buf)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -1239,7 +1230,7 @@ func TestRunVulnShow_DoesNotAttributeAnotherWalksFailure(t *testing.T) {
 
 	var buf bytes.Buffer
 	err := runVulnShow(context.Background(), "example.com/failed@v1.0.0",
-		"01JWALKPARTIAL00000000001", false, false, uc, runs, &buf)
+		"01JWALKPARTIAL00000000001", false, false, uc, runs, testfakes.NewFakeQueryWalks(), nil, &buf)
 	if err == nil {
 		t.Fatal("expected an error when the walk has no record for the module")
 	}
@@ -1257,7 +1248,7 @@ func TestRunVulnShow_WalkNeverScanned(t *testing.T) {
 
 	var buf bytes.Buffer
 	err := runVulnShow(context.Background(), "example.com/failed@v1.0.0",
-		"01JWALKPARTIAL00000000001", false, false, uc, testfakes.NewFakeQueryScanRuns(), &buf)
+		"01JWALKPARTIAL00000000001", false, false, uc, testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryWalks(), nil, &buf)
 	if err == nil {
 		t.Fatal("expected an error for a walk with no scan run")
 	}
@@ -1286,7 +1277,7 @@ func TestRunVulnShow_ReportsPipelineGenerationGap(t *testing.T) {
 
 	var buf bytes.Buffer
 	err := runVulnShow(context.Background(), "example.com/failed@v1.0.0",
-		"01JWALKPARTIAL00000000001", false, false, uc, runs, &buf)
+		"01JWALKPARTIAL00000000001", false, false, uc, runs, testfakes.NewFakeQueryWalks(), nil, &buf)
 	if err == nil {
 		t.Fatal("expected an error for a generation gap")
 	}

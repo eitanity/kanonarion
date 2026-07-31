@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
-	"os"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -34,10 +33,19 @@ func newSBOMCmd(stdout, stderr io.Writer) *cobra.Command {
 	var mainLicense string
 	var fromModcache string
 	var policyPath string
+	var noProgress bool
 
 	cmd := &cobra.Command{
 		Use:   "sbom [<walk-id>]",
 		Short: "Generate a Software Bill of Materials for a walk",
+		Long: `Generate a Software Bill of Materials (CycloneDX) for a walk.
+
+Exit codes:
+  0  SBOM generated with complete licence data
+  1  SBOM generated, but one or more modules have no licence record — the
+     document IS written; a licence-less SBOM must never pass as complete
+  4  the walk, scan run or package scope named does not exist
+  20 bad invocation (missing walk id and --package, unparseable coordinate, ...)`,
 		Example: `  kanonarion sbom 01KQDBVW092ER1HNXZ60X27CMD
   kanonarion sbom 01KQDBVW092ER1HNXZ60X27CMD --scan vscan-01KQDBVW092ER1HNXZ60X27CMD-1234
   kanonarion sbom 01KQDBVW092ER1HNXZ60X27CMD --output sbom.json
@@ -66,7 +74,7 @@ func newSBOMCmd(stdout, stderr io.Writer) *cobra.Command {
 				scanRunPtr = &scanRunID
 			}
 			logger := buildLogger(logLevel, stderr)
-			return runSBOMGenerate(cmd.Context(), walkID, storeRoot, packagePattern, scanRunPtr, format, output, force, stdlibFromGoMod, mainVersion, mainLicense, operator, policyPath, logger, stdout, stderr)
+			return runSBOMGenerate(cmd.Context(), walkID, storeRoot, packagePattern, scanRunPtr, format, output, force, stdlibFromGoMod, noProgress, mainVersion, mainLicense, operator, policyPath, logger, stdout, stderr)
 		},
 	}
 
@@ -83,6 +91,7 @@ func newSBOMCmd(stdout, stderr io.Writer) *cobra.Command {
 	registerStdlibFromGoModFlag(cmd, &stdlibFromGoMod)
 	registerFromModcacheFlag(cmd, &fromModcache)
 	registerAllowVerificationDowngradeFlag(cmd)
+	registerNoProgressFlag(cmd, &noProgress)
 	return cmd
 }
 
@@ -125,6 +134,7 @@ func runSBOMGenerate(
 	format, output string,
 	force bool,
 	stdlibFromGoMod bool,
+	noProgress bool,
 	mainVersion, mainLicense string,
 	operator string,
 	policyPath string,
@@ -145,7 +155,7 @@ func runSBOMGenerate(
 	}
 	defer func() { _ = cleanup() }()
 
-	return sbomGenerateWith(ctx, ctr, walkID, packagePattern, scanRunID, format, output, force, stdlibFromGoMod, mainVersion, mainLicense, operator, policyPath, stdout, stderr)
+	return sbomGenerateWith(ctx, ctr, walkID, packagePattern, scanRunID, format, output, force, stdlibFromGoMod, noProgress, mainVersion, mainLicense, operator, policyPath, stdout, stderr)
 }
 
 // sbomGenerateWith holds the sbom-generate logic over an injected Container:
@@ -162,6 +172,7 @@ func sbomGenerateWith(
 	format, output string,
 	force bool,
 	stdlibFromGoMod bool,
+	noProgress bool,
 	mainVersion, mainLicense string,
 	operator string,
 	policyPath string,
@@ -176,7 +187,7 @@ func sbomGenerateWith(
 			return aerr
 		}
 		if walkID == "" {
-			walkID, err = ensureProjectWalkForSBOM(ctx, ctr, force, stdlibFromGoMod, policyPath, stderr)
+			walkID, err = ensureProjectWalkForSBOM(ctx, ctr, force, stdlibFromGoMod, noProgress, policyPath, stderr)
 			if err != nil {
 				return err
 			}
@@ -200,10 +211,9 @@ func sbomGenerateWith(
 	}
 
 	if output != "" {
-		if err := os.WriteFile(output, record.Content, 0o600); err != nil {
-			return fmt.Errorf("writing sbom to %q: %w", output, err)
+		if err := writeArtefactFile("SBOM", output, record.Content, stdout); err != nil {
+			return err
 		}
-		_, _ = fmt.Fprintf(stdout, "SBOM written to %s\n", output)
 		_, _ = fmt.Fprintf(stdout, "ID:           %s\n", record.ID)
 		_, _ = fmt.Fprintf(stdout, "Content-Hash: %s\n", record.ContentHash)
 	} else if _, err := stdout.Write(record.Content); err != nil {
@@ -366,7 +376,7 @@ var errNoProjectWalk = errors.New("no succeeded project walk found")
 // equivalent to 'walk --gomod ./go.mod', then a licence-extraction stage over
 // that walk, equivalent to 'extract <walk-id> --stages license'. So a bare
 // 'sbom --package' on a clean store yields a fully-licenced artifact.
-func ensureProjectWalkForSBOM(ctx context.Context, ctr *Container, force, stdlibFromGoMod bool, policyPath string, stderr io.Writer) (string, error) {
+func ensureProjectWalkForSBOM(ctx context.Context, ctr *Container, force, stdlibFromGoMod, noProgress bool, policyPath string, stderr io.Writer) (string, error) {
 	gomodPath, err := resolveGoModPath("")
 	if err != nil {
 		return "", fmt.Errorf("locating go.mod for project walk: %w", err)
@@ -387,8 +397,8 @@ func ensureProjectWalkForSBOM(ctx context.Context, ctr *Container, force, stdlib
 	// Cold store (or --force): build the project walk for the default code
 	// scope, matching 'walk --gomod ./go.mod'. allowPartial is true so an
 	// unfetchable node does not abort the SBOM; the SBOM records what resolved.
-	progress := newWalkProgressReporter(stderr, false, activeConfig, logLevel)
-	_, _ = fmt.Fprintf(stderr, "==> sbom: building project walk for %s\n", modulePath)
+	progress := newWalkProgressReporter(stderr, noProgress, activeConfig, logLevel)
+	_, _ = fmt.Fprintf(progressWriter(stderr, noProgress), "==> sbom: building project walk for %s\n", modulePath)
 	if werr := runWalkProject(ctx, gomodPath, force, true, 0, "", policyPath, false, scopeCode, walkdomain.WalkDepthFull, "", false, stdlibFromGoMod, progress, ctr.ExecuteWalk, nil, io.Discard, stderr); werr != nil {
 		return "", fmt.Errorf("building project walk: %w", werr)
 	}

@@ -18,6 +18,7 @@ type vendorFinding struct {
 	Kind           string `json:"kind"`
 	Module         string `json:"module"`
 	Version        string `json:"version,omitempty"`
+	File           string `json:"file,omitempty"`
 	Detail         string `json:"detail"`
 	Expected       string `json:"expected,omitempty"`
 	Actual         string `json:"actual,omitempty"`
@@ -27,12 +28,16 @@ type vendorFinding struct {
 
 // vendorModule is the machine-readable shape of one reconciled module.
 type vendorModule struct {
-	Path         string `json:"path"`
-	Version      string `json:"version"`
-	Explicit     bool   `json:"explicit"`
-	Present      bool   `json:"present"`
-	Dir          string `json:"dir"`
-	ComputedHash string `json:"computed_hash,omitempty"`
+	Path     string `json:"path"`
+	Version  string `json:"version"`
+	Explicit bool   `json:"explicit"`
+	Present  bool   `json:"present"`
+	Dir      string `json:"dir"`
+	// ExpectedHash is the go.sum h1 the comparison oracle — the module zip
+	// kanonarion holds — was verified against. There is no counterpart hash
+	// of the vendored tree: `go mod vendor` prunes the tree, so a whole-tree
+	// hash could never equal this value and reporting the pair asserted a
+	// mismatch that was an artefact of the measurement.
 	ExpectedHash string `json:"expected_hash,omitempty"`
 }
 
@@ -95,12 +100,13 @@ func toVendorSection(rec vendomain.Record) vendorSection {
 		out.Modules = append(out.Modules, vendorModule{
 			Path: m.Path, Version: m.Version, Explicit: m.Explicit,
 			Present: m.Present, Dir: m.Dir,
-			ComputedHash: m.ComputedHash, ExpectedHash: m.ExpectedHash,
+			ExpectedHash: m.ExpectedHash,
 		})
 	}
 	for _, f := range rec.Findings {
 		out.Findings = append(out.Findings, vendorFinding{
 			Kind: string(f.Kind), Module: f.Module, Version: f.Version,
+			File:   f.File,
 			Detail: f.Detail, Expected: f.Expected, Actual: f.Actual,
 			PolicyOutcome: f.PolicyOutcome, PolicyBlocking: f.PolicyBlocking,
 		})
@@ -116,15 +122,25 @@ func newVendorCmd(stdout, stderr io.Writer) *cobra.Command {
 		Short: "Analyse a vendored project and detect vendor/ drift & inconsistency",
 		Long: `vendor treats a vendored project (vendor/ + vendor/modules.txt) as a
 first-class input: it resolves the closure from modules.txt instead of
-re-fetching from the proxy, recomputes each vendored module's tree hash and
-verifies it against the expected go.sum checksum, and reconciles
-vendor/modules.txt against the filesystem and the go.mod require set.
+re-fetching from the proxy, checks every file under vendor/ against the same
+file in the module zip go.sum verifies, and reconciles vendor/modules.txt
+against the filesystem and the go.mod require set.
 
-Findings: drift (vendored tree ≠ go.sum), missing/extra modules between
+A vendored tree is pruned to the packages the build imports, so files the
+module publishes and vendor/ omits are expected and are not reported. A file
+vendor/ holds that the published module does not, or holds with different
+bytes, is drift.
+
+Findings: drift (a vendored file ≠ the published module), missing/extra modules between
 modules.txt and vendor/, modules.txt-vs-go.mod version mismatch, and
 unverified modules with no go.sum entry (surfaced, never assumed clean).
 The default policy flags drift and inconsistency (warn), so this
-command exits non-zero (20) when a finding's policy outcome is "warn".
+command exits non-zero when a finding's policy outcome is "warn".
+
+Exit codes:
+  0  no finding resolves to a blocking policy outcome
+  5  the governance gate fired: drift or inconsistency violates policy
+  20 bad invocation, no vendor/ tree, or a policy file that could not be read
 
 --vendor-only asserts the airgapped contract: the scan completes with no
 proxy contact, resolving the closure entirely from modules.txt.`,
@@ -204,12 +220,14 @@ func printVendorTable(stdout io.Writer, s vendorSection) error {
 		return nil
 	}
 	tw := tabwriter.NewWriter(stdout, 0, 2, 2, ' ', 0)
-	if _, err := fmt.Fprintln(tw, "KIND\tMODULE\tVERSION\tEXPECTED\tACTUAL\tPOLICY"); err != nil {
+	// FILE carries the drift axis, which is decided per file: naming the module
+	// alone would leave a reader unable to see which file to look at.
+	if _, err := fmt.Fprintln(tw, "KIND\tMODULE\tVERSION\tFILE\tEXPECTED\tACTUAL\tPOLICY"); err != nil {
 		return fmt.Errorf("writing output: %w", err)
 	}
 	for _, f := range s.Findings {
-		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\n",
-			f.Kind, f.Module, f.Version, f.Expected, f.Actual, f.PolicyOutcome); err != nil {
+		if _, err := fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			f.Kind, f.Module, f.Version, f.File, f.Expected, f.Actual, f.PolicyOutcome); err != nil {
 			return fmt.Errorf("writing output: %w", err)
 		}
 	}
@@ -219,19 +237,23 @@ func printVendorTable(stdout io.Writer, s vendorSection) error {
 	return nil
 }
 
-// vendorBlockingErr returns a non-zero ExitConfig error when any finding
+// vendorBlockingErr returns an ExitPolicy error when any finding
 // resolves to a blocking ("warn") policy outcome — drift or an inconsistency
 // under the default policy — making the command a CI gate.
 func vendorBlockingErr(s vendorSection) error {
 	var blocked []string
 	for _, f := range s.Findings {
 		if f.PolicyBlocking {
-			blocked = append(blocked, fmt.Sprintf("%s %s", f.Kind, f.Module))
+			subject := f.Module
+			if f.File != "" {
+				subject = f.Module + "/" + f.File
+			}
+			blocked = append(blocked, fmt.Sprintf("%s %s", f.Kind, subject))
 		}
 	}
 	if len(blocked) == 0 {
 		return nil
 	}
-	return &exitError{code: ExitConfig, msg: fmt.Sprintf(
+	return &exitError{code: ExitPolicy, msg: fmt.Sprintf(
 		"vendor policy: %d finding(s) violate policy: %v", len(blocked), blocked)}
 }

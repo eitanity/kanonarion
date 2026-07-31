@@ -5,10 +5,12 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 
 	"github.com/eitanity/kanonarion/internal/adapters/childproc"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/ports"
 )
 
 // projectScanStatus renders the scan-level summary word for a grouped
@@ -48,12 +50,17 @@ func projectScanStatus(byModule map[coordinate.ModuleCoordinate][]domain.Vulnera
 // yields a StatusUnscannable/StatusScanFailed result with the diagnostic, never
 // a false clean. The error return is reserved for infrastructure failures
 // (missing govulncheck) that abort the whole scan.
-func (s *Scanner) ScanProject(
-	ctx context.Context,
-	projectDir string,
-	snapshot domain.DatabaseSnapshot,
-	dbDir string,
-) (domain.ProjectScanResult, error) {
+//
+// For a project that carries vendor/modules.txt, the vendored tree — not the
+// module cache — is what the project compiles, so it is what the scan measures.
+// The whole build is analysed from vendor/ in one pass under -mod=vendor: no
+// module is resolved on its own, so a dependency shipping no go.mod (every
+// pre-modules dependency does) needs no synthesised one, and MVS is not re-run,
+// so no version can be out of the toolchain. The surface that actually ran is
+// reported on the result rather than assumed by the caller: the caller asks,
+// the project on disk decides, and the verdict names which bytes were measured.
+func (s *Scanner) ScanProject(ctx context.Context, req ports.ProjectScanRequest) (domain.ProjectScanResult, error) {
+	projectDir := req.ProjectDir
 	s.logMem(ctx, "project_scan_start")
 	s.logger.Info("vuln-scan: project-rooted scan starting", "dir", projectDir)
 
@@ -64,7 +71,7 @@ func (s *Scanner) ScanProject(
 			UnscannableReason: "project directory not accessible: " + err.Error(),
 		}, nil
 	}
-	if _, err := os.Stat(projectDir + "/go.mod"); err != nil {
+	if _, err := os.Stat(filepath.Join(projectDir, "go.mod")); err != nil {
 		return domain.ProjectScanResult{
 			Status:            domain.StatusUnscannable,
 			UnscanReason:      domain.UnscanReasonProjectNoGoMod,
@@ -72,7 +79,9 @@ func (s *Scanner) ScanProject(
 		}, nil
 	}
 
-	dbArg, dbCleanup, err := s.prepareDBArg(ctx, snapshot, dbDir)
+	surface, env := projectScanSurface(projectDir, req.Vendored)
+
+	dbArg, dbCleanup, err := s.prepareDBArg(ctx, req.Snapshot, req.DBDir)
 	if err != nil {
 		return domain.ProjectScanResult{}, err
 	}
@@ -83,10 +92,11 @@ func (s *Scanner) ScanProject(
 		return domain.ProjectScanResult{}, err
 	}
 
-	s.logger.Info("vuln-scan: running project-rooted govulncheck source mode", "dir", projectDir, "db", dbArg)
+	s.logger.Info("vuln-scan: running project-rooted govulncheck source mode",
+		"dir", projectDir, "db", dbArg, "analysis_surface", string(surface))
 	cmd := childproc.CommandContext(ctx, govulncheckBin, "-json", "-db", dbArg, "./...") // #nosec G204 -- binary path from exec.LookPath
 	cmd.Dir = projectDir
-	cmd.Env = append(os.Environ(), "GOGC=30")
+	cmd.Env = env
 
 	stderr := &limitWriter{limit: 2048}
 	cmd.Stderr = stderr
@@ -122,6 +132,11 @@ func (s *Scanner) ScanProject(
 			UnscanReason:      unscanReason,
 			ErrorDetail:       errorDetail,
 			UnscannableReason: unscannableReason,
+			// A failure is still a failure of a named surface. Which one it was is
+			// the first thing a reader needs — a build break under -mod=vendor says
+			// the vendored tree does not compile, which is a different fact from the
+			// same break under a fetched resolution.
+			AnalysisSurface: surface,
 		}, nil
 	}
 
@@ -130,9 +145,42 @@ func (s *Scanner) ScanProject(
 	}
 
 	status := projectScanStatus(byModule)
-	s.logger.Info("vuln-scan: project-rooted scan finished", "modules_with_findings", len(byModule))
+	s.logger.Info("vuln-scan: project-rooted scan finished",
+		"modules_with_findings", len(byModule), "analysis_surface", string(surface))
 	return domain.ProjectScanResult{
 		FindingsByModule: byModule,
 		Status:           status,
+		AnalysisSurface:  surface,
 	}, nil
+}
+
+// projectScanSurface decides which copy of the source a project scan resolves
+// from, and returns the process environment that makes that decision real.
+//
+// The decision needs both the caller's request and the tree on disk. A caller
+// asking for a vendored analysis of a project that has no vendor/modules.txt
+// gets the fetched surface, because that is the only one that exists — the
+// returned surface is what ran, never what was wanted.
+//
+// The other direction is the one that is easy to get wrong. A caller declining
+// the vendored surface for a project that HAS one cannot simply leave the
+// toolchain alone: Go defaults to -mod=vendor whenever vendor/modules.txt is
+// present, so an unforced run would silently be the vendored analysis under a
+// fetched label. -mod=mod is forced explicitly there, which is what makes a
+// deliberate comparison run against the fetched artefacts a real comparison.
+func projectScanSurface(projectDir string, wantVendored bool) (domain.AnalysisSurface, []string) {
+	_, err := os.Stat(filepath.Join(projectDir, "vendor", "modules.txt"))
+	hasVendorTree := err == nil
+
+	switch {
+	case hasVendorTree && wantVendored:
+		return domain.AnalysisSurfaceVendored, scanEnv(os.Environ(), "", domain.AnalysisSurfaceVendored)
+	case hasVendorTree:
+		return domain.AnalysisSurfaceFetched, append(os.Environ(), "GOGC=30", "GOFLAGS=-mod=mod")
+	default:
+		// No vendor tree: the toolchain's own default resolution against the
+		// project's go.mod/go.sum is the fetched surface, and forcing a mode flag
+		// would only override whatever the project itself declares.
+		return domain.AnalysisSurfaceFetched, append(os.Environ(), "GOGC=30")
+	}
 }

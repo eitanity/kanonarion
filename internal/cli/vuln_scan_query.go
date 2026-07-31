@@ -54,7 +54,10 @@ func runScanList(ctx context.Context, walkID string, limit int, uc QueryScanRuns
 	} else {
 		runs, err = uc.ListRunsForWalk(ctx, walkID)
 	}
-	if err != nil {
+	// This command surveys the store, so a row it cannot verify is part of the
+	// answer rather than a reason to withhold it. Any other error still aborts.
+	unreadable, survivable := unreadableRunReport(err)
+	if err != nil && !survivable {
 		return fmt.Errorf("listing scan runs: %w", err)
 	}
 	if limit > 0 && len(runs) > limit {
@@ -66,10 +69,17 @@ func runScanList(ctx context.Context, walkID string, limit int, uc QueryScanRuns
 			WalkID      string `json:"walk_id"`
 			Status      string `json:"status"`
 			CompletedAt string `json:"completed_at"`
+			Reason      string `json:"reason,omitempty"`
 		}
-		out := make([]entry, 0, len(runs))
+		out := make([]entry, 0, len(runs)+len(unreadable))
 		for _, r := range runs {
-			out = append(out, entry{r.ID, r.WalkID, string(r.OverallStatus), isoTime(r.CompletedAt)})
+			out = append(out, entry{r.ID, r.WalkID, string(r.OverallStatus), isoTime(r.CompletedAt), ""})
+		}
+		// The unreadable rows join the same array rather than a section of their
+		// own: a caller that reads this output as "the runs in the store" must
+		// not be able to miss them, and one that filters on status still can.
+		for _, u := range unreadable {
+			out = append(out, entry{ID: u.ID, Status: scanRunStatusUnreadable, Reason: u.Reason})
 		}
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
@@ -78,7 +88,7 @@ func runScanList(ctx context.Context, walkID string, limit int, uc QueryScanRuns
 		}
 		return nil
 	}
-	if len(runs) == 0 {
+	if len(runs) == 0 && len(unreadable) == 0 {
 		_, _ = fmt.Fprintln(stdout, "no scan runs found")
 		return nil
 	}
@@ -86,6 +96,7 @@ func runScanList(ctx context.Context, walkID string, limit int, uc QueryScanRuns
 		_, _ = fmt.Fprintf(stdout, "%-26s  walk=%-26s  status=%-12s  %s\n",
 			r.ID, r.WalkID, string(r.OverallStatus), r.CompletedAt.UTC().Format("2006-01-02T15:04:05Z"))
 	}
+	writeUnreadableRuns(stdout, unreadable)
 	return nil
 }
 
@@ -167,11 +178,18 @@ type scanShowSummary struct {
 
 func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QueryScanRunsUseCase, ucVuln QueryVulnUseCase, stdout io.Writer) error {
 	run, found, err := ucRuns.GetRun(ctx, runID)
+	// vuln-scan-list names the rows it could not verify, and this is the command
+	// an operator runs next against one of those names. Refusing here would send
+	// them from a listing that reports the fault to the one tool that will not
+	// discuss it, which is the same dead end one step along.
+	if unreadable, survivable := unreadableRunReport(err); survivable {
+		return writeUnreadableRun(stdout, runID, unreadable, jsonOut)
+	}
 	if err != nil {
 		return fmt.Errorf("getting scan run: %w", err)
 	}
 	if !found {
-		return fmt.Errorf("scan run not found: %s", runID)
+		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("scan run not found: %s", runID)}
 	}
 
 	summary := buildScanAffectedModules(ctx, run, ucVuln)
@@ -210,7 +228,8 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 	_, _ = fmt.Fprintf(stdout, "Operator:    %s\n", run.Operator)
 	_, _ = fmt.Fprintf(stdout, "Started:     %s\n", run.StartedAt.UTC().Format(time.RFC3339))
 	_, _ = fmt.Fprintf(stdout, "Completed:   %s\n", run.CompletedAt.UTC().Format(time.RFC3339))
-	_, _ = fmt.Fprintf(stdout, "Snapshot:    %s@%s\n", run.Snapshot.Source, run.Snapshot.Version)
+	_, _ = fmt.Fprintf(stdout, "Snapshot:    %s@%s\n", run.Snapshot.Source(), run.Snapshot.Version())
+	_, _ = fmt.Fprintf(stdout, "Advisories:  %s\n", advisoryCountLine(run.Snapshot))
 	_, _ = fmt.Fprintf(stdout, "Modules:     %d\n", len(run.PerModuleResults))
 	// One line per reason rather than one for the out-of-toolchain set alone, so
 	// a Partial run is explained whichever reason produced it and no Unscannable
@@ -419,7 +438,11 @@ func newVulnScanHistoryCmd(stdout, stderr io.Writer) *cobra.Command {
 
 func runScanHistory(ctx context.Context, walkID string, jsonOut bool, uc QueryScanRunsUseCase, stdout io.Writer) error {
 	runs, err := uc.ListRunsForWalk(ctx, walkID)
-	if err != nil {
+	// A history of a walk is a survey of the same rows vuln-scan-list surveys,
+	// and reaches them through the same store seam, so it answers the same way:
+	// every run it can read, plus the ones it cannot, named.
+	unreadable, survivable := unreadableRunReport(err)
+	if err != nil && !survivable {
 		return fmt.Errorf("listing scan runs: %w", err)
 	}
 	// The empty case is answered on the caller's own channel: under --json an
@@ -431,20 +454,35 @@ func runScanHistory(ctx context.Context, walkID string, jsonOut bool, uc QuerySc
 		if runs == nil {
 			runs = []vuldomain.WalkScanRun{}
 		}
+		// The unreadable rows are reported on their own key rather than folded
+		// into the run array, whose elements are whole WalkScanRuns: an entry
+		// that is not one would have to be faked, and a fabricated run is a
+		// worse answer than an omitted one. The key is absent when there are
+		// none, so an existing consumer sees no change.
+		if len(unreadable) > 0 {
+			payload := struct {
+				Runs       []vuldomain.WalkScanRun `json:"runs"`
+				Unreadable []unreadableRunEntry    `json:"unreadable"`
+			}{Runs: runs, Unreadable: unreadable}
+			if err := enc.Encode(payload); err != nil {
+				return fmt.Errorf("encoding scan runs: %w", err)
+			}
+			return nil
+		}
 		if err := enc.Encode(runs); err != nil {
 			return fmt.Errorf("encoding scan runs: %w", err)
 		}
 		return nil
 	}
 
-	if len(runs) == 0 {
+	if len(runs) == 0 && len(unreadable) == 0 {
 		_, _ = fmt.Fprintf(stdout, "no scan runs found for walk %s\n", walkID)
 		return nil
 	}
 
 	_, _ = fmt.Fprintf(stdout, "%-26s  %-12s  %-30s  %s\n", "RUN ID", "STATUS", "SNAPSHOT", "COMPLETED")
 	for _, r := range runs {
-		snap := r.Snapshot.Source + "@" + r.Snapshot.Version
+		snap := r.Snapshot.Source() + "@" + r.Snapshot.Version()
 		_, _ = fmt.Fprintf(stdout, "%-26s  %-12s  %-30s  %s\n",
 			r.ID,
 			string(r.OverallStatus),
@@ -452,6 +490,7 @@ func runScanHistory(ctx context.Context, walkID string, jsonOut bool, uc QuerySc
 			r.CompletedAt.UTC().Format("2006-01-02T15:04:05Z"),
 		)
 	}
+	writeUnreadableRuns(stdout, unreadable)
 	return nil
 }
 
@@ -545,6 +584,12 @@ func runScanDiff(ctx context.Context, runIDA, runIDB string, jsonOut bool, ucDif
 			now := "not reachable"
 			if c.IsReachable {
 				now = "reachable"
+			} else if c.Finding.AdvisoryNamesNoSymbols {
+				// The later run did not search and fail; there was no symbol for it to
+				// search for. Rendering this as "not reachable" would read as a
+				// resolution and invite the operator to stand down on a module that is
+				// still affected at package level.
+				now = "not determined at symbol level (advisory names no symbols)"
 			}
 			_, _ = fmt.Fprintf(stdout, "  ~ %s  %s@%s  %s → %s\n", c.Finding.ID, c.Coordinate.Path(), c.Coordinate.Version(), was, now)
 		}

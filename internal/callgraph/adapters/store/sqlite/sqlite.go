@@ -308,6 +308,38 @@ CREATE INDEX IF NOT EXISTS callgraph_records_generation_idx
 		// ingests. The artefact identity lives inside the compressed blob, which is
 		// why this needs a Go step.
 		{Module: "callgraph", Version: 10, Fn: retireSyntheticLocalRecords},
+		// Migration v11: add the failure_cause column.
+		//
+		// The cause axis says whether a failed extraction is a statement about the
+		// module or about the run that tried to analyse it, and the cache gate reads
+		// it — see domain.RecordIsCacheable. It lives inside the serialised record
+		// like every other fact; this column is the denormalised copy, on the same
+		// terms completeness and analysis_source are, so the population can be
+		// counted without decompressing a blob per row.
+		//
+		// NO BACK-FILL AND NO PURGE, and the two have different reasons.
+		//
+		// No back-fill because '' is the true value. No record written before this
+		// migration states a cause — the axis did not exist — and the decoded record
+		// carries exactly the same empty value. This is the opposite of migration 9's
+		// situation, where the column contradicted a fact the blob already held.
+		// Inventing a cause here would be exactly the collapse the axis exists to
+		// prevent: an unattributed failure asserted to be the module's fault.
+		//
+		// No purge because the record shape did not move. The field is omitzero in
+		// the canonical encoding, so a record that states no cause marshals to the
+		// bytes it always did and verifies against the content hash it was written
+		// with. CallGraphSchemaVersion is unchanged and so is PipelineVersion, so the
+		// read gate lets every existing generation through and they keep answering.
+		//
+		// What DOES change for the existing rows is cache eligibility, and only for
+		// the failures among them: a record that failed and states no cause is
+		// re-attempted once, because "no cause recorded" is not evidence the module
+		// was at fault. Measured read-only on the maintainer's store before writing
+		// this: of 264 rows, 46 are failures (5 at FAILED completeness, 41 at
+		// METADATA_ONLY) and 218 carry a graph and are untouched by the rule.
+		{Module: "callgraph", Version: 11, SQL: `
+ALTER TABLE callgraph_records ADD COLUMN failure_cause TEXT NOT NULL DEFAULT ''`},
 	}
 }
 
@@ -532,9 +564,10 @@ func (s *Store) PutCallGraphRecord(ctx context.Context, r domain2.CallGraphRecor
 INSERT INTO callgraph_records (
     module_path, module_version, pipeline_version,
     algorithm, overall_status, completeness, analysis_source, worktree_digest,
+    failure_cause,
     node_count, edge_count,
     extracted_at, content_hash, serialised
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (module_path, module_version, pipeline_version, extracted_at, content_hash)
 DO NOTHING`
 
@@ -542,6 +575,7 @@ DO NOTHING`
 		r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
 		string(r.Algorithm), int(r.OverallStatus),
 		string(r.Completeness), string(r.AnalysisSource), r.WorktreeDigest,
+		string(r.FailureCause),
 		r.NodeCount, r.EdgeCount,
 		r.ExtractedAt.UTC().Format(time.RFC3339),
 		r.ContentHash, blob,

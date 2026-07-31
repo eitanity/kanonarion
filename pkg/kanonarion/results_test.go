@@ -135,14 +135,15 @@ func TestResultTypes_TableNamesUnique(t *testing.T) {
 // fields, no behavior, no hashers"). The methods present are read-shape plumbing,
 // not domain behaviour: JSON/text marshalers (MarshalJSON/UnmarshalJSON/
 // MarshalText/UnmarshalText), pure accessors (Coordinate, String,
-// IsPseudoVersion, ExtractCommitPrefix), and in-place determinism helpers
+// IsPseudoVersion, ExtractCommitPrefix, GitTagVersion), and in-place
+// determinism helpers
 // (Sort/SortFiles/SortExamples). A result type GAINING any method not recorded
 // here is the regression this guards — most importantly a leaked *Hasher or
 // other business behaviour. Adding a method here must be a conscious decision
 // that the new method is still read-shape plumbing, never a hasher (which
 // behaviourMethodMarkers rejects outright regardless of this list).
 var allowedResultMethods = map[string][]string{
-	"ModuleCoordinate":    {"ExtractCommitPrefix", "HasVersion", "IsLocal", "IsPseudoVersion", "IsZero", "MarshalJSON", "MarshalText", "Path", "String", "UnmarshalJSON", "UnmarshalText", "Version"},
+	"ModuleCoordinate":    {"ExtractCommitPrefix", "GitTagVersion", "HasVersion", "IsLocal", "IsPseudoVersion", "IsZero", "MarshalJSON", "MarshalText", "Path", "String", "UnmarshalJSON", "UnmarshalText", "Version"},
 	"FactRecord":          {"Coordinate", "IsGoModOnly"},
 	"WalkRecord":          {},
 	"LicenseRecord":       {"SortFiles"},

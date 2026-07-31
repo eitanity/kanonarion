@@ -95,13 +95,57 @@ All state lives under `--store-root` (default `~/.kanonarion`):
 
 ---
 
-## Common exit codes
+## Exit codes
 
-| Code | Meaning |
+This is the authoritative table. Every command uses these codes and no others;
+where a command gives one of them a command-specific meaning it is listed below
+and repeated in that command's `--help`.
+
+| Code | Name | Meaning |
+|---|---|---|
+| 0 | OK | Success |
+| 1 | Partial | The work completed but is known-incomplete: walk partial, or an SBOM generated with incomplete licence data |
+| 2 | Failed | The work could not complete: walk failed, or `license-compat` found unmodelled licence pairs needing review |
+| 3 | Cancelled | The context was cancelled before the work completed |
+| 4 | NotFound | A record requested by ID or coordinate does not exist. The message names the command that produces it |
+| 5 | Policy | A governance or publication gate fired on real findings. The scan succeeded and the finding is genuine |
+| 10 | Integrity | Recorded evidence is in doubt: a record failed its content-hash check, or two records for one coordinate diverge |
+| 20 | Config | The command never got as far as an answer: malformed argument, unparseable coordinate, missing toolchain, absent policy *file*, or a store whose schema is newer than this binary |
+
+The distinction that matters to an automation caller is **4 vs 5 vs 20**. A 4
+means the request was well-formed and the named remedy command fixes it. A 5
+means the command did its job and the answer is one a human must accept or
+reject — it must not be routed to whoever fixes broken invocations. A 20 means
+the invocation itself was wrong.
+
+### Which commands use which codes
+
+| Code | Commands |
 |---|---|
-| 0 | Success |
-| 1 | Walk partial |
-| 2 | Walk failed |
-| 3 | Walk cancelled |
-| 10 | Record integrity check failed |
-| 20 | Configuration or lookup error (bad ID, invalid coordinate, etc.) |
+| 1 | `walk`, `inspect` (partial closure); `sbom` (incomplete licence data — the document IS still written); `license-compat` (confirmed incompatible pairs) |
+| 2 | `walk`, `inspect` (target unfetchable); `license-compat` (unknown pairs, never silently "compatible"); `license-compat` (root has a licence record but no SPDX identity) |
+| 4 | `walk-show`, `walk-list --walk-id`, `walk-diff`, `dependents`, `context --walk-id`, `verification-coverage`, `vuln-show`, `vuln --history`, `scan-show`, `snapshot-show`, `vuln-scan --snapshot`, `reachability --vuln`, `callgraph-show`, `interface-show`, `interface-list`, `examples-show`, `examples-list`, `license`, `license-compat`, `license-diff`, `directives-show`, `directives-diff`, `use` |
+| 5 | `audit` (unknown licence blocked by policy), `directives`, `godebug`, `vendor`, `fips`, `notice` (modules require human review) |
+| 10 | any command consuming a walk whose node failed integrity, or that meets a divergence |
+| 20 | every command, for a malformed invocation |
+
+A policy gate is only a 5 when it *fired on findings*. A policy **file** that
+cannot be found or parsed is a 20 — that is a broken invocation, not a verdict.
+
+### Store schema newer than the binary
+
+Every command that writes to the store refuses to run when `mirror.db` carries
+schema migrations the binary does not know — that is, when the store was last
+written by a newer build of kanonarion. Exit code is **20**: the store is intact
+and a current binary reads it fine, so this is a precondition failure, not a
+record-integrity failure (10).
+
+The refusal names the unrecognised migrations and the remedy, which is to upgrade
+kanonarion. `kanonarion store info` is exempt: it opens the store without
+applying migrations and never writes, so the command that diagnoses the refusal
+stays available. This mirrors how a divergence is handled — a store-inspection
+command reports and exits 0 while a consuming command fails closed.
+
+Running an older binary against a newer store without this gate is not a
+harmless no-op: writes fail per statement against tables shaped by a later
+build, so a scan can complete, print a summary and have persisted nothing.

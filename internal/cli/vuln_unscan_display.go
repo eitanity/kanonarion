@@ -146,6 +146,56 @@ var unscanDisplays = map[vuldomain.UnscanReason]unscanDisplay{
 		heading:  notScannedNote + " — one project-level fault: the project directory could not be read, so no module was scanned",
 		oneFault: true,
 	},
+	// Not one fault: each module is independently absent from the vendored tree,
+	// so the count is a real count of modules the analysed build did not contain.
+	vuldomain.UnscanReasonAbsentFromVendor: {
+		label:   notScannedNote + " (absent from vendor/ — not in the analysed build)",
+		heading: notScannedNote + " — absent from the project's vendor/ tree, so not in the build that was analysed",
+	},
+	// The four shapes the scan itself records on every run. They had prose and no
+	// code, which put them in the fallback bucket for producers the display does
+	// not know — a bucket that then printed their reason directly beneath a
+	// heading announcing that no reason was recorded. They are the best-known
+	// producers there are, so they are named here.
+	//
+	// The first is Metadata-only: the coordinate WAS matched against the advisory
+	// database, and only reachability is missing. The other three are Not
+	// scanned in the same sense as local-replace — no source was there to look
+	// at — but the advisory match still ran, so they keep the metadata-only
+	// wording that says so, and differ in why the source was absent.
+	vuldomain.UnscanReasonStdlibMetadata: {
+		label:   metadataOnlyNote + " (Go standard library, toolchain-provided)",
+		heading: metadataOnlyNote + " — the Go standard library is toolchain-provided, not a fetched module",
+		explanation: "the standard library ships with the toolchain rather than as a module artefact, " +
+			"so there is nothing in the store to analyse; its advisories are matched by coordinate against the release, " +
+			"and reachability into it is answered by a project-rooted run, not by scanning it alone",
+	},
+	vuldomain.UnscanReasonGoModOnly: {
+		label:   metadataOnlyNote + " (only go.mod fetched)",
+		heading: metadataOnlyNote + " — only the go.mod was fetched, not the module source",
+		explanation: "these modules were fetched for module-graph resolution only, so the store holds their go.mod " +
+			"and not their source; advisories matched, reachability not computed here",
+	},
+	vuldomain.UnscanReasonLocalProjectSource: {
+		label:   metadataOnlyNote + " (local project source, never published)",
+		heading: metadataOnlyNote + " — local project source: no published artefact exists to fetch",
+		// No direction line. The explanation already says where the source is
+		// analysed, and the reachability direction is reserved for the
+		// isolated-resolution class, whose modules are analysable and simply not in
+		// isolation; borrowing it here would widen a narrow, deliberate rule.
+		explanation: "the project's own module is unpublished, so no artefact exists for the store to hold; " +
+			"its source is on disk and is analysed by a project-rooted run over the project directory",
+	},
+	vuldomain.UnscanReasonSourceNotInStore: {
+		label:   metadataOnlyNote + " (module source not in the store)",
+		heading: metadataOnlyNote + " — module source is not in the store",
+		// No cause is named, because the scan measured none: it found no fetch
+		// record and stopped there. A shallow walk is one way to arrive here and a
+		// fetch under a retired pipeline generation is another, and stating either
+		// would be a guess printed as a finding.
+		explanation: "the store holds no fetched source for these coordinates, so only their advisory match could run; " +
+			"advisories matched, reachability not computed here",
+	},
 }
 
 // unscanDisplayFor returns the display treatment for reason.
@@ -181,6 +231,32 @@ func unscanDisplayFor(reason vuldomain.UnscanReason) unscanDisplay {
 // attempted for a classifier to categorise. Reporting "no reason recorded" for
 // such a record would be false — the reason is right there on it — and only the
 // code is missing.
+// unscanDisplayForSection returns the display treatment for one roll-up section.
+//
+// It exists because a section knows one thing unscanDisplayFor cannot: whether
+// the records collected under an empty reason code recorded a free-text reason
+// anyway. When they did, the section prints that prose immediately under its own
+// heading, so a heading announcing that no reason was recorded is denied by its
+// own body two lines later. What is missing in that case is the taxonomy code,
+// not the reason, and the heading says exactly that.
+//
+// The bare "no reason recorded" heading survives for the records that really
+// carry neither — an older pipeline version's output, or a producer that
+// recorded a coverage gap and said nothing about it. That is a different and
+// worse state than an uncoded reason, and collapsing the two would hide it.
+//
+// Both are meant for producers this display does not know. The two the scan
+// itself writes on every run — the stdlib note and the metadata-only note —
+// carry codes of their own, so the bucket is a fallback rather than a fixture.
+func unscanDisplayForSection(reason vuldomain.UnscanReason, details []unscanDetail) unscanDisplay {
+	display := unscanDisplayFor(reason)
+	if reason == "" && len(details) > 0 {
+		display.label = "Unscannable (reason recorded without a structured code)"
+		display.heading = "Unscannable — reason recorded without a structured code"
+	}
+	return display
+}
+
 func unscanLabelFor(record vuldomain.VulnerabilityRecord) string {
 	if record.UnscanReason == "" && record.UnscannableReason != "" {
 		return record.UnscannableReason
@@ -270,7 +346,7 @@ func (r *unscannableRollup) sections() []unscannableSection {
 		seen[reason] = true
 		if coords := r.byReason[reason]; len(coords) > 0 {
 			out = append(out, unscannableSection{
-				display: unscanDisplayFor(reason),
+				display: unscanDisplayForSection(reason, r.detailsByReason[reason]),
 				coords:  coords,
 				details: r.detailsByReason[reason],
 			})
@@ -285,7 +361,7 @@ func (r *unscannableRollup) sections() []unscannableSection {
 	sortUnscanReasons(rest)
 	for _, reason := range rest {
 		out = append(out, unscannableSection{
-			display: unscanDisplayFor(reason),
+			display: unscanDisplayForSection(reason, r.detailsByReason[reason]),
 			coords:  r.byReason[reason],
 			details: r.detailsByReason[reason],
 		})

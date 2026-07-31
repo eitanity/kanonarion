@@ -24,7 +24,29 @@ var ErrNotVendored = errors.New("project is not vendored (no vendor/modules.txt)
 // policy. vendorOnly asserts the airgapped contract: no proxy contact (OSS
 // scope never contacts the proxy, so it is recorded, not enforced by I/O).
 type VendorScanner interface {
-	ScanProject(goModPath string, vendorOnly bool) (domain.ParseResult, error)
+	ScanProject(ctx context.Context, goModPath string, vendorOnly bool) (domain.ParseResult, error)
+}
+
+// VerifiedModuleZipSource yields the published file set of the module zip
+// kanonarion holds for a module version. It is the oracle the vendored tree is
+// compared against: the zip is the complete published module, so it answers
+// both "does vendor/ hold a file this module never published" and "do the bytes
+// match".
+//
+// The lookup is by checksum rather than by coordinate on purpose. go.sum states
+// the h1 the project trusts for path@version, and an artefact is addressed by
+// what it is, so asking for the artefact with that h1 makes "verified against
+// go.sum" a property of the lookup rather than a check someone has to remember
+// to perform afterwards. The coordinate is passed only so the adapter can strip
+// the "<path>@<version>/" prefix every zip entry carries.
+//
+// found is false when kanonarion holds no such zip — an absent oracle, which
+// the domain surfaces as an unverified module rather than passing off as clean.
+type VerifiedModuleZipSource interface {
+	// PublishedFiles returns each file the held zip publishes, keyed by its
+	// module-relative slash-separated path, mapped to its content digest in
+	// the "sha256:<hex>" form the vendored side is measured in.
+	PublishedFiles(ctx context.Context, modulePath, version, h1 string) (files map[string]string, found bool, err error)
 }
 
 // VendorStore persists and retrieves project vendored-closure scan records.

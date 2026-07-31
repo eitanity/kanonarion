@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/eitanity/kanonarion/internal/config/adapters/store/yaml"
 	"github.com/eitanity/kanonarion/internal/config/domain"
@@ -367,5 +368,41 @@ license_policy:
 	}
 	if len(cfg.LicensePolicy.Rules) != 1 {
 		t.Errorf("rules: got %d, want 1", len(cfg.LicensePolicy.Rules))
+	}
+}
+
+func TestParse_StalenessTTL(t *testing.T) {
+	tests := []struct {
+		name    string
+		block   string
+		want    time.Duration
+		wantErr bool
+	}{
+		{"absent block inherits the default", "", domain.DefaultStalenessTTL, false},
+		{"explicit ttl", "staleness:\n  ttl: 6h\n", 6 * time.Hour, false},
+		// 0 must be reachable: it is the off switch for serving, and merging it
+		// with "absent" would make it unreachable.
+		{"zero disables serving", "staleness:\n  ttl: 0s\n", 0, false},
+		{"empty value keeps the default", "staleness:\n  ttl: \"\"\n", domain.DefaultStalenessTTL, false},
+		{"block with no keys keeps the default", "staleness:\n", domain.DefaultStalenessTTL, false},
+		{"non-duration is refused", "staleness:\n  ttl: soon\n", 0, true},
+		{"negative is refused", "staleness:\n  ttl: -1h\n", 0, true},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			cfg, err := yaml.Parse([]byte("version: \"2\"\n" + tc.block))
+			if tc.wantErr {
+				if err == nil {
+					t.Fatal("expected an error")
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("Parse: %v", err)
+			}
+			if cfg.Staleness.TTL != tc.want {
+				t.Errorf("Staleness.TTL = %v, want %v", cfg.Staleness.TTL, tc.want)
+			}
+		})
 	}
 }

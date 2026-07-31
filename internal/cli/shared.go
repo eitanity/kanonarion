@@ -2,6 +2,7 @@ package cli
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -18,10 +19,12 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/mod/modfile"
 
+	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	configstore "github.com/eitanity/kanonarion/internal/config/adapters/store/yaml"
 	"github.com/eitanity/kanonarion/internal/config/domain"
 	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
 
+	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
 	walkadapterpolicy "github.com/eitanity/kanonarion/internal/walk/adapters/policy/localfile"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -822,6 +825,27 @@ func projectModulePathFromGoMod(goModPath string) (string, error) {
 	return mod, nil
 }
 
+// writeArtefactFile writes a generated document to path and reports the path on
+// notify, which is the whole of the --output contract two artefact generators
+// (sbom, notice) share.
+//
+// It is one function rather than one per command because the semantics are the
+// thing that must not drift: same permissions, same "wrote it, here is where"
+// acknowledgement, same wrapped error naming the path that failed. notify is a
+// parameter rather than a fixed stream because the two commands put it in
+// different places on purpose — sbom's acknowledgement joins its ID/hash block
+// on stdout, while notice keeps stdout clear of anything that is not the
+// document and reports on stderr alongside its scope and review lines.
+func writeArtefactFile(kind, path string, content []byte, notify io.Writer) error {
+	if err := os.WriteFile(path, content, 0o600); err != nil {
+		return fmt.Errorf("writing %s to %q: %w", kind, path, err)
+	}
+	if _, err := fmt.Fprintf(notify, "%s written to %s\n", kind, path); err != nil {
+		return fmt.Errorf("writing %s acknowledgement: %w", kind, err)
+	}
+	return nil
+}
+
 // exitError carries a specific exit code through cobra's error return.
 type exitError struct {
 	code int
@@ -845,6 +869,15 @@ func ExitCodeFromError(err error) (int, bool) {
 // survive), then the walk-integrity sentinel, and otherwise falls back to
 // ExitConfig. Shared by every main package so the binary's exit semantics are
 // defined once here rather than duplicated per entry point.
+//
+// A store-schema refusal — this binary meeting a store a newer one wrote — lands
+// on ExitConfig, and does so by both routes: the CLI's own gate carries
+// ExitConfig explicitly on the chain, and composition.ErrStoreSchemaNewer from
+// the shared driver surface reaches the same code through the fallback. That is
+// the intended classification, not an accident of the default: the store is
+// intact and a current binary reads it fine, so it is a precondition failure and
+// must not be reported as ExitIntegrity, which says the recorded evidence is in
+// doubt.
 func ExitCodeForError(err error) int {
 	if err == nil {
 		return ExitOK
@@ -882,4 +915,98 @@ func divergenceMessage(err error) (string, bool) {
 	return divergence.Error() +
 		" — two measurements describe different artefacts; recover with --force," +
 		" which appends an authoritative measurement and erases nothing", true
+}
+
+// unreadableRunEntry is one stored scan run a survey listed but could not
+// verify: the row's identity and why it could not be read, kept apart so text
+// and JSON output can each present them their own way.
+type unreadableRunEntry struct {
+	ID     string `json:"id"`
+	Reason string `json:"reason"`
+}
+
+// unreadableRunReport turns a scan-run listing error into one operator-facing
+// entry per row the store could not verify, reporting whether it was that kind
+// of failure at all.
+//
+// It is divergenceMessage's counterpart for the scan-run listings, and it is
+// there for the same reason: a survey command reports what it could not read
+// and exits 0, while a consuming command takes the other branch and fails
+// closed. Any other error is not this one and is returned as not-handled, so a
+// database that fell over still aborts the listing.
+func unreadableRunReport(err error) ([]unreadableRunEntry, bool) {
+	var unreadable *vulnports.UnreadableRuns
+	if !errors.As(err, &unreadable) {
+		return nil, false
+	}
+	entries := make([]unreadableRunEntry, 0, len(unreadable.Runs))
+	for _, r := range unreadable.Runs {
+		id := r.ID
+		if id == "" {
+			id = "(unidentified run)"
+		}
+		entries = append(entries, unreadableRunEntry{ID: id, Reason: unreadableRunReason(r)})
+	}
+	return entries, true
+}
+
+// scanRunStatusUnreadable is the status a survey reports for a row it listed
+// but could not verify. It is deliberately not one of the domain's scan
+// statuses: the run's status is exactly what is not known about it.
+const scanRunStatusUnreadable = "unreadable"
+
+// writeUnreadableRun reports a single run an inspection command was asked for
+// and could not verify, and returns nil: naming what is wrong with the row is
+// the answer to "show me this run", not a failure to answer.
+//
+// It reports the id the CALLER asked for. The stored bytes may not name
+// themselves, and echoing an empty id back at someone who just typed one would
+// lose the only identity in the exchange.
+func writeUnreadableRun(stdout io.Writer, runID string, entries []unreadableRunEntry, asJSON bool) error {
+	reason := "could not be verified"
+	if len(entries) > 0 {
+		reason = entries[0].Reason
+	}
+	if asJSON {
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if err := enc.Encode(struct {
+			ID     string `json:"id"`
+			Status string `json:"status"`
+			Reason string `json:"reason"`
+		}{ID: runID, Status: scanRunStatusUnreadable, Reason: reason}); err != nil {
+			return fmt.Errorf("encoding unreadable scan run: %w", err)
+		}
+		return nil
+	}
+	_, _ = fmt.Fprintf(stdout, "ID:          %s\n", runID)
+	_, _ = fmt.Fprintf(stdout, "Status:      %s\n", scanRunStatusUnreadable)
+	_, _ = fmt.Fprintf(stdout, "Reason:      %s\n", reason)
+	return nil
+}
+
+// writeUnreadableRuns prints one line per row the store could not verify, in
+// the listing itself. Silence here would be the one answer that is not honest:
+// an omitted row and a row reported as unreadable say different things about
+// the store, and only the second is true of it.
+func writeUnreadableRuns(stdout io.Writer, entries []unreadableRunEntry) {
+	for _, e := range entries {
+		_, _ = fmt.Fprintf(stdout, "%-26s  status=%-12s  %s\n", e.ID, scanRunStatusUnreadable, e.Reason)
+	}
+}
+
+// unreadableRunReason says why a row could not be verified, in words a reader
+// can act on.
+//
+// The two cases are not interchangeable and must not be reported alike. A
+// record whose stored bytes still hash to the seal they carry has not been
+// altered; this build simply cannot reproduce it, because it was sealed by an
+// earlier canonical shape — the remedy is a re-scan. Where that cannot be
+// established the wording stays neutral: an unverified record is reported as
+// unverified, and nothing is insinuated about how it got that way.
+func unreadableRunReason(r vulnports.UnreadableRun) string {
+	if errors.Is(r.Reason, recordseal.ErrGenerationDrift) {
+		return "sealed by an earlier record generation; re-scan to reseal"
+	}
+	return "could not be verified: " + r.Reason.Error()
 }

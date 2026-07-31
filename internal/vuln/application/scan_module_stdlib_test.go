@@ -10,6 +10,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 )
 
 // TestScanModule_Stdlib_MetadataAffected verifies that the standard-library node
@@ -25,7 +26,7 @@ func TestScanModule_Stdlib_MetadataAffected(t *testing.T) {
 	vulnStore := newFakeVulnStore()
 	scanner := &fakeScanner{} // must never be invoked for the stdlib node
 	db := &fakeDatabase{
-		snapshot: domain.DatabaseSnapshot{Version: "v1"},
+		snapshot: vulntest.MustNew("govulndb", "v1"),
 		findings: map[coordinate.ModuleCoordinate][]domain.VulnerabilityFinding{
 			std: {
 				{ID: "GO-2026-4970", FixedIn: "v1.26.5", Summary: "Root escape via symlink in os"},
@@ -35,7 +36,7 @@ func TestScanModule_Stdlib_MetadataAffected(t *testing.T) {
 	}
 	clock := fixedClock{t: now}
 
-	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", "v1", slog.Default())
+	uc := application.NewScanModuleUseCase(facts, blobs, vulnStore, nil, scanner, db, nil, clock, "v1", slog.Default())
 	res, err := uc.Scan(ctx, application.ScanModuleParams{Coordinate: std, WalkID: "walk-1"})
 	if err != nil {
 		t.Fatalf("Scan: %v", err)
@@ -63,8 +64,8 @@ func TestScanModule_Stdlib_MetadataClean(t *testing.T) {
 
 	uc := application.NewScanModuleUseCase(
 		newFakeFacts(), newFakeBlob(), newFakeVulnStore(), nil, &fakeScanner{},
-		&fakeDatabase{snapshot: domain.DatabaseSnapshot{Version: "v1"}}, nil,
-		fixedClock{t: now}, "v1", "v1", slog.Default(),
+		&fakeDatabase{snapshot: vulntest.MustNew("govulndb", "v1")}, nil,
+		fixedClock{t: now}, "v1", slog.Default(),
 	)
 	res, err := uc.Scan(ctx, application.ScanModuleParams{Coordinate: std, WalkID: "walk-1"})
 	if err != nil {

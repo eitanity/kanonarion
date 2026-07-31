@@ -387,9 +387,21 @@ non-zero exit.
 
 Walk records are stored in `<store-root>/mirror.db` (SQLite). The walk schema
 is tracked in the shared `schema_migrations` table under module key `walk`
-(current version: 4). Module zips resolved by the walk are written to the
+(current version: 6). Module zips resolved by the walk are written to the
 content-addressed blob store, and each fetch is appended to
 `<store-root>/audit.jsonl`.
+
+A walk rooted at a local project (`--gomod`, `--tool`, `--project`) also records
+the working-tree directory it was taken from, so a later scan by walk id can
+reach the same analysis surface the original run did - notably a `vendor/` tree.
+A walk of a published coordinate records no directory, because it has no project
+root; the empty value is that distinction, not a gap.
+
+The directory is **provenance, not identity**. It is machine-local, so it is
+deliberately outside the walk's content hash and outside the serialised record:
+two walks of one project taken from two checkouts are the same walk, and a walk
+whose checkout has since moved still verifies. It is stored in its own column,
+which is why recording it needed no pipeline bump and no purge of existing rows.
 
 ## Assurance log
 

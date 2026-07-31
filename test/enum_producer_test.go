@@ -61,6 +61,17 @@ func init() {
 		producerGuarded[modulePath+"/internal/callgraph/domain."+name] = true
 	}
 
+	// The route root classification. Every kind must be reachable from a real
+	// answer: a classification nothing produces tells a reader the tool can
+	// report a root kind it has never once reported, and the rendering that
+	// branches on the kind then has a dead arm. The zero value is excluded — it
+	// is what a route carries when nothing classified it.
+	for _, name := range []string{
+		"RootIngress", "RootExportedAPI", "RootInternal", "RootTest", "RootUnrooted",
+	} {
+		producerGuarded[modulePath+"/internal/vuln/domain."+name] = true
+	}
+
 	// The standard library's acquisition route. Same reasoning: it is stated by
 	// the acquirer that took it, not derived from the verification status that
 	// happens to correlate with it today.

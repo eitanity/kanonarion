@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"errors"
 	"fmt"
 	"log/slog"
 	"os"
@@ -41,6 +42,7 @@ import (
 
 	venlocalfs "github.com/eitanity/kanonarion/internal/vendortree/adapters/scanner/localfs"
 	vensqlite "github.com/eitanity/kanonarion/internal/vendortree/adapters/store/sqlite"
+	venzipsource "github.com/eitanity/kanonarion/internal/vendortree/adapters/zipsource/blobstore"
 	venapp "github.com/eitanity/kanonarion/internal/vendortree/application"
 
 	exgoast "github.com/eitanity/kanonarion/internal/example/adapters/parser/goast"
@@ -73,10 +75,14 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
 
+	stalesqlite "github.com/eitanity/kanonarion/internal/staleness/adapters/store/sqlite"
+	staleports "github.com/eitanity/kanonarion/internal/staleness/ports"
+
 	vulncallgraph "github.com/eitanity/kanonarion/internal/vuln/adapters/callgraph"
 	vulnfetch "github.com/eitanity/kanonarion/internal/vuln/adapters/fetch"
 	"github.com/eitanity/kanonarion/internal/vuln/adapters/reachability"
 	vulnsqlite "github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
+	vulnvendorclosure "github.com/eitanity/kanonarion/internal/vuln/adapters/vendorclosure/vendortree"
 	govulncheck "github.com/eitanity/kanonarion/internal/vuln/adapters/vuln/govulncheck"
 	osvdb "github.com/eitanity/kanonarion/internal/vuln/adapters/vulndb/osv"
 	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
@@ -169,6 +175,10 @@ type Container struct {
 	// fips
 	ExtractFIPS ExtractFIPSUseCase
 	QueryFIPS   QueryFIPSUseCase
+
+	// staleness. The ledger of latest-version lookups, read and written by
+	// every command that reports how far behind a dependency is.
+	StalenessLedger staleports.Ledger
 }
 
 // NewContainer opens a single mirror.db with all migrations applied, wires all
@@ -178,15 +188,48 @@ type Container struct {
 // cfg is the resolved store configuration; callers should pass activeConfig
 // from the CLI layer. goBinary may be empty (falls back to PATH).
 // skipVCSVerify is forwarded to the fetch use case for the walk pipeline.
+// openMigratedStore opens mirror.db and applies every migration this build
+// knows, refusing a store that already carries migrations it does not.
+//
+// Opened without migrations, then judged, then migrated. This is the operating
+// path's only door into the store, so it is where an older binary meeting a
+// newer store has to be stopped: schema_migrations is keyed on (module,
+// version), so this binary's own migrations all appear applied and nothing
+// errors — the store just holds tables and constraints shaped by a later build.
+// The failure that follows is not an open failure but a write one, per
+// statement, and every one of them was logged and stepped over: a full scan
+// that persisted nothing and still printed a summary.
+//
+// `store info` deliberately does not come through here — it opens with nil
+// migrations and never applies any — so the command that names the remedy stays
+// available after this refuses.
+func openMigratedStore(dbPath string) (sqlitestore.DB, error) {
+	dbHandle, err := sqlitestore.Open(dbPath, nil)
+	if err != nil {
+		return nil, fmt.Errorf("opening database: %w", err)
+	}
+	state, err := readStoreSchemaState(dbHandle)
+	if err != nil {
+		return nil, errors.Join(err, dbHandle.Close())
+	}
+	if state.isNewer() {
+		return nil, errors.Join(newerStoreError(dbPath, state), dbHandle.Close())
+	}
+	if err := sqlitestore.Apply(dbHandle, allMigrations()); err != nil {
+		return nil, errors.Join(fmt.Errorf("opening database: %w", err), dbHandle.Close())
+	}
+	return dbHandle, nil
+}
+
 func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg domain.Config, logger *slog.Logger) (*Container, func() error, error) {
 	if err := os.MkdirAll(storeRoot, 0o750); err != nil {
 		return nil, nil, fmt.Errorf("creating store root %s: %w", storeRoot, err)
 	}
 
 	dbPath := filepath.Join(storeRoot, "mirror.db")
-	dbHandle, err := sqlitestore.Open(dbPath, allMigrations())
+	dbHandle, err := openMigratedStore(dbPath)
 	if err != nil {
-		return nil, nil, fmt.Errorf("opening database: %w", err)
+		return nil, nil, err
 	}
 
 	cleanup := func() error {
@@ -334,23 +377,18 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	licExtractUC := licapp.NewExtractLicenseUseCase(licapp.Config{
 		Facts: factStore, Blobs: blobs, Licenses: licStore,
 		Detector: licdet.New(), Clock: clk, Stopwatch: stopwatch, Logger: logger,
-		FetchPipelineVersion:      fetchapp.PipelineVersion,
-		LocalFetchPipelineVersion: walklocalfs.PipelineVersion,
 	}).WithAudit(factStore)
 	ifaceExtractUC := ifaceapp.NewExtractInterfaceUseCase(ifaceapp.Config{
 		Facts: factStore, Blobs: blobs, Store: ifaceStore,
 		Extractor: ifaceext.New("0.1.0", clk), Clock: clk, Stopwatch: stopwatch, Logger: logger,
-		FetchPipelineVersion:      fetchapp.PipelineVersion,
-		LocalFetchPipelineVersion: walklocalfs.PipelineVersion,
 	})
+	cganalyser.SetToolchainProbe(goToolchainVersionProbe)
 	cgAnalyser := cganalyser.New("0.1.0", goBinary, logger)
 	cgExtractUC := cgapp.NewExtractCallGraphUseCase(cgapp.Config{
 		Facts: factStore, Blobs: blobs, Store: cgStore,
 		Analyser: cgAnalyser, Clock: clk, Logger: logger,
-		Stopwatch:                 stopwatch,
-		FetchPipelineVersion:      fetchapp.PipelineVersion,
-		LocalFetchPipelineVersion: walklocalfs.PipelineVersion,
-		Exclusions:                cfg.Callgraph.Exclude,
+		Stopwatch:  stopwatch,
+		Exclusions: cfg.Callgraph.Exclude,
 	})
 	cgLocalExtractUC := cgapp.NewExtractLocalCallGraphUseCase(cgapp.LocalConfig{
 		Store: cgStore, Analyser: cgAnalyser, Clock: clk, Stopwatch: stopwatch, Logger: logger,
@@ -359,8 +397,6 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		Facts: factStore, Blobs: blobs, Examples: exStore,
 		Parser: exgoast.New(),
 		Clock:  clk, Stopwatch: stopwatch, Logger: logger,
-		FetchPipelineVersion:      fetchapp.PipelineVersion,
-		LocalFetchPipelineVersion: walklocalfs.PipelineVersion,
 	})
 
 	kanonarionBinary, err := os.Executable()
@@ -404,8 +440,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	generateNoticeUC := licapp.NewGenerateNoticeUseCase(
 		licStore, factStore, blobs,
 		licapp.PipelineVersion,
-		fetchapp.PipelineVersion,
-	).WithLocalFetchPipelineVersion(walklocalfs.PipelineVersion)
+	)
 
 	// ---- iface query use case ----
 	queryIfaceUC := ifaceapp.NewQueryInterfaceUseCase(ifaceStore)
@@ -426,15 +461,20 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	moduleScannerUC := vulnapp.NewScanModuleUseCase(
 		factStore, blobs, vulnStore, walkStore,
 		scanner, database, reach,
-		clk, vulnapp.PipelineVersion, fetchapp.PipelineVersion, logger,
+		clk, vulnapp.PipelineVersion, logger,
 	).WithCallGraphLoader(cgLoader).
-		WithCallGraphSpawner(cgSpawner).
-		WithLocalFetchPipelineVersion(walklocalfs.PipelineVersion)
+		WithCallGraphSpawner(cgSpawner)
 	walkScannerUC := vulnapp.NewScanWalkUseCase(
 		walkStore, vulnStore, moduleScannerUC,
 		vulnfetch.NewFetchModuleAdapter(fetchUC),
 		clk, vulnapp.PipelineVersion, logger,
-	).WithAudit(factStore).WithHostMemory(meminfo.New())
+	).WithAudit(factStore).WithHostMemory(meminfo.New()).
+		// A vendored project's analysis surface is its vendor/ tree. The reader is
+		// built over the vendor context's own modules.txt parser rather than a
+		// second one, so the closure the scan analyses and the closure the vendor
+		// command verifies are the same reading. It needs no zip source: this asks
+		// only which modules the tree holds, not whether their bytes match.
+		WithVendoredClosure(vulnvendorclosure.New(venlocalfs.New(nil)))
 	rescanWalkUC := vulnapp.NewRescanWalkUseCase(
 		walkStore, vulnStore, moduleScannerUC,
 		vulnfetch.NewFetchModuleAdapter(fetchUC),
@@ -479,7 +519,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// ---- vendor use cases ----
 	venStore := vensqlite.New(dbHandle)
 	extractVendorUC := venapp.NewExtractVendorUseCase(venapp.Config{
-		Scanner: venlocalfs.New(), Store: venStore, Audit: factStore,
+		Scanner: venlocalfs.New(venzipsource.New(blobs)), Store: venStore, Audit: factStore,
 		Clock: clk, Stopwatch: stopwatch, Logger: logger,
 	})
 	queryVendorUC := venapp.NewQueryVendorUseCase(venStore)
@@ -546,6 +586,8 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 
 		ExtractFIPS: extractFIPSUC,
 		QueryFIPS:   queryFIPSUC,
+
+		StalenessLedger: stalesqlite.New(dbHandle),
 	}
 
 	return ctr, cleanup, nil

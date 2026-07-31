@@ -1,8 +1,6 @@
 package domain
 
 import (
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"sort"
@@ -374,7 +372,83 @@ const (
 	// replacement (a replace directive pointing at a working-tree path) rather
 	// than a fetched, versioned module, so there is no fetched source to scan.
 	UnscanReasonLocalReplace UnscanReason = "local-replace"
+	// UnscanReasonAbsentFromVendor indicates the analysis was rooted at a
+	// vendored project — the vendored tree is the source the build compiles —
+	// and that tree holds no files for this module, so nothing of it was in the
+	// analysed build.
+	//
+	// It is deliberately a coverage gap rather than a cue to fetch the module
+	// from the proxy and analyse that instead. Substituting a fetched artefact
+	// for an absent vendored one would report findings about bytes the project
+	// does not build, which is the exact "analysed bytes are not built bytes"
+	// defect that choosing the vendored surface exists to close.
+	UnscanReasonAbsentFromVendor UnscanReason = "absent-from-vendor"
+	// UnscanReasonStdlibMetadata indicates the coordinate is the Go standard
+	// library, which is provided by the toolchain rather than fetched as a
+	// module: there is no artefact in the store to analyse, and its advisories
+	// are resolved from OSV metadata by coordinate. It is a property of how the
+	// stdlib is distributed, not a fault and not a gap a re-run can close.
+	UnscanReasonStdlibMetadata UnscanReason = "stdlib-metadata"
+	// UnscanReasonGoModOnly indicates the store holds only the module's go.mod,
+	// fetched for module-graph resolution, and not its zip. There is source to
+	// analyse in principle — it was simply never retrieved, because nothing in
+	// the walk needed it.
+	UnscanReasonGoModOnly UnscanReason = "go-mod-only"
+	// UnscanReasonLocalProjectSource indicates the coordinate is a local main
+	// module (the synthetic @local version), so no published artefact exists for
+	// the store to hold: its source is on disk in the project directory and is
+	// analysed only by a project-rooted run.
+	//
+	// Distinct from local-replace, which names a DEPENDENCY redirected at a
+	// working-tree path. This names the walk's own root.
+	UnscanReasonLocalProjectSource UnscanReason = "local-project-source"
+	// UnscanReasonSourceNotInStore indicates the store holds no fetch record for
+	// the coordinate at all, so the scan had nothing but the coordinate to match
+	// advisories against.
+	//
+	// It names what was measured — the absence — and stops there. A shallow walk
+	// is one way to arrive here, but so are a coordinate fetched under a retired
+	// pipeline generation and a node the walk listed without resolving, and the
+	// scan cannot tell them apart from where it stands.
+	UnscanReasonSourceNotInStore UnscanReason = "source-not-in-store"
 )
+
+// AnalysisSurface names which copy of a module's source a scan measured.
+//
+// A module version has more than one copy on disk — the zip kanonarion fetched
+// and holds in its blob store, and, for a vendored project, the tree under
+// vendor/ that the project actually compiles. They can differ, and detecting
+// exactly that divergence is the tool's own value proposition, so a verdict
+// that does not say which one it read cannot be checked: a reader cannot tell
+// whether the facts describe the build.
+type AnalysisSurface string
+
+const (
+	// AnalysisSurfaceFetched — the analysis resolved modules from artefacts
+	// kanonarion fetched (the blob-store-populated module cache, or the host
+	// module cache under --from-modcache). This is the regime of every isolated
+	// per-module scan, every target-rooted scan of a published module, and any
+	// project scan of a project that is not vendored.
+	AnalysisSurfaceFetched AnalysisSurface = "fetched"
+	// AnalysisSurfaceVendored — the analysis resolved modules from the
+	// project's own vendor/ tree, under -mod=vendor. The bytes measured are the
+	// bytes the project compiles.
+	AnalysisSurfaceVendored AnalysisSurface = "vendored"
+)
+
+// RecordAnalysisSurface returns the surface r's verdict was reached from.
+//
+// An empty field ladders to AnalysisSurfaceFetched rather than reading as a
+// third state. Every record written before the field existed was produced by a
+// run that resolved from fetched artefacts — nothing consumed a vendored tree —
+// so "fetched" is what those bytes mean, and segregating them into an
+// "unrecorded" bucket would let a reader treat a known regime as an unknown one.
+func RecordAnalysisSurface(r VulnerabilityRecord) AnalysisSurface {
+	if r.AnalysisSurface == "" {
+		return AnalysisSurfaceFetched
+	}
+	return r.AnalysisSurface
+}
 
 // AllUnscanReasons returns every defined UnscanReason, in a stable order.
 //
@@ -404,6 +478,11 @@ func AllUnscanReasons() []UnscanReason {
 		UnscanReasonLocalReplace,
 		UnscanReasonProjectNoGoMod,
 		UnscanReasonProjectDirUnavailable,
+		UnscanReasonAbsentFromVendor,
+		UnscanReasonStdlibMetadata,
+		UnscanReasonGoModOnly,
+		UnscanReasonLocalProjectSource,
+		UnscanReasonSourceNotInStore,
 	}
 }
 
@@ -434,46 +513,6 @@ type Severity struct {
 	Vector string  `json:"vector,omitzero"`
 	Score  float64 `json:"score,omitzero"`
 	Label  string  `json:"label,omitzero"`
-}
-
-// DatabaseSnapshot identifies a pinned snapshot of the vulnerability database.
-//
-// Source and Version name the advisory database and its own generation;
-// RetrievedAt records when kanonarion fetched it. Those three answer "how
-// current was the data behind this verdict". ContentHash answers the question
-// they cannot: whether the bytes a verdict was reached against are the bytes
-// still held.
-//
-// The advisory database is the evidence every finding is derived from, and it
-// was the one input to a verdict that was not content-addressed — a snapshot
-// was identified by a version string alone, and the version string is metadata
-// the blob itself asserts. Two stores both holding "2026-07-24T18:35:55Z" could
-// not be shown to hold the same advisories.
-type DatabaseSnapshot struct {
-	Source      string    `json:"source"`
-	Version     string    `json:"version"`
-	RetrievedAt time.Time `json:"retrieved_at"`
-	// ContentHash is HashSnapshotContent over the snapshot blob, in
-	// "sha256:<hex>" form. Empty on snapshots recorded before the hash existed;
-	// such a snapshot is unverifiable, never verified-and-clean.
-	ContentHash string `json:"content_hash"`
-}
-
-// snapshotHashPrefix labels the digest algorithm inside DatabaseSnapshot's
-// ContentHash. It is present here — unlike on a VulnerabilityRecord's own bare
-// hex hash, whose recipe is frozen by the records already in every store —
-// because no snapshot hash has ever been written, so the field is free to take
-// the project's normal prefixed form.
-const snapshotHashPrefix = "sha256:"
-
-// HashSnapshotContent renders the content hash of a vulnerability database
-// snapshot blob: SHA-256 over the bytes verbatim, prefixed with the algorithm.
-//
-// It hashes the stored bytes rather than any parsed view of them, so the check
-// covers exactly what a later scan will feed to govulncheck.
-func HashSnapshotContent(blob []byte) string {
-	sum := sha256.Sum256(blob)
-	return snapshotHashPrefix + hex.EncodeToString(sum[:])
 }
 
 // SnapshotAgeDays reports how many whole days the vulnerability database
@@ -519,19 +558,56 @@ type ReachabilityResult struct {
 
 // VulnerabilityFinding represents a single vulnerability affecting a module.
 type VulnerabilityFinding struct {
-	ID               string              `json:"id"`
-	Aliases          []string            `json:"aliases,omitzero"`
-	Summary          string              `json:"summary"`
-	Details          string              `json:"details,omitzero"`
-	AffectedRange    string              `json:"affected_range"`
-	FixedIn          string              `json:"fixed_in,omitzero"`
-	Severity         *Severity           `json:"severity,omitzero"`
-	AffectedSymbols  []string            `json:"affected_symbols,omitzero"`
-	Reachable        *ReachabilityResult `json:"reachable,omitzero"`
-	ReachabilityNote string              `json:"reachability_note,omitzero"`
-	References       []string            `json:"references,omitzero"`
-	PublishedAt      time.Time           `json:"published_at"`
-	ModifiedAt       time.Time           `json:"modified_at"`
+	ID              string              `json:"id"`
+	Aliases         []string            `json:"aliases,omitzero"`
+	Summary         string              `json:"summary"`
+	Details         string              `json:"details,omitzero"`
+	AffectedRange   string              `json:"affected_range"`
+	FixedIn         string              `json:"fixed_in,omitzero"`
+	Severity        *Severity           `json:"severity,omitzero"`
+	AffectedSymbols []string            `json:"affected_symbols,omitzero"`
+	Reachable       *ReachabilityResult `json:"reachable,omitzero"`
+	// AdvisoryNamesNoSymbols records that the advisory entry matching this
+	// finding's module path carries no symbol list at all.
+	//
+	// It is the difference between "no symbol was reached" and "there was no
+	// symbol to reach", and only the advisory can say which. An OSV entry may
+	// name the affected symbols for one major-version path and none for another —
+	// measured on a live advisory, github.com/golang-jwt/jwt/v4 names
+	// Parser.ParseUnverified and the bare github.com/golang-jwt/jwt path names
+	// nothing — so this is a fact about the matched entry, not about the
+	// advisory as a whole.
+	//
+	// Where it is true, symbol-level reachability was never available for this
+	// coordinate: the analysis has no target to search for, so an empty
+	// AffectedSymbols and an empty route are the expected shape rather than a
+	// gap, and a reader must not read the absent route as "nothing calls it".
+	// Recording it explicitly is what lets a consumer tell the two apart instead
+	// of inferring the reason from an empty field.
+	//
+	// False means either that the entry names symbols or that no advisory entry
+	// was read to ask — an enrichment that never ran states nothing here, on the
+	// same terms as WithdrawnAt.
+	AdvisoryNamesNoSymbols bool `json:"advisory_names_no_symbols,omitzero"`
+	// ReachabilityNote states why a reachability analysis that was asked for
+	// produced no answer — the call graph could not be loaded, the extraction
+	// subprocess failed, the analyser errored.
+	//
+	// Together with a nil Reachable it is what tells "requested and failed" apart
+	// from "never requested". Those are the same absence in the record and they
+	// are not the same fact: the first is a question the run could not answer and
+	// must degrade the run's claim, the second is a question nobody asked. Before
+	// it was written on the analysis-failure path, a failed analysis logged a WARN
+	// and left the finding indistinguishable from an unrequested one, so a scan
+	// that could not compute reachability for its auth-critical findings reported
+	// as though it had not needed to.
+	//
+	// Empty means either that reachability was not requested, or that it was
+	// requested and answered — Reachable says which.
+	ReachabilityNote string    `json:"reachability_note,omitzero"`
+	References       []string  `json:"references,omitzero"`
+	PublishedAt      time.Time `json:"published_at"`
+	ModifiedAt       time.Time `json:"modified_at"`
 	// WithdrawnAt is the OSV top-level "withdrawn" timestamp: the moment the
 	// advisory was retracted upstream. Zero means the advisory is live, or that the
 	// lookup never read an advisory to ask — an enrichment fetch that failed leaves
@@ -543,6 +619,18 @@ type VulnerabilityFinding struct {
 	// Affected verdict or vanished into Clean, and the two were indistinguishable
 	// from a real finding and a real all-clear respectively.
 	WithdrawnAt time.Time `json:"withdrawn_at,omitzero"`
+}
+
+// ReachabilityAttemptFailed reports whether reachability was requested for this
+// finding and could not be computed.
+//
+// It exists so a reader names the cause of a nil Reachable rather than assuming
+// one. That absence has at least three causes — not requested, requested and
+// failed, and the advisory naming no symbols to search for — and only the record
+// can say which. AdvisoryNamesNoSymbols is the precedent: it was added for
+// exactly this reason, so the absent route is explained instead of guessed at.
+func (f VulnerabilityFinding) ReachabilityAttemptFailed() bool {
+	return f.Reachable == nil && f.ReachabilityNote != ""
 }
 
 // IsWithdrawn reports whether this advisory has been retracted upstream.
@@ -622,8 +710,18 @@ type VulnerabilityRecord struct {
 	// Empty on records written before the field existed, and on records that
 	// describe a module no analysis was rooted at. Both read as "not recorded";
 	// read it back through RecordRooting.
-	Rooting     Rooting `json:"rooting,omitempty"`
-	ContentHash string  `json:"content_hash"`
+	Rooting Rooting `json:"rooting,omitempty"`
+	// AnalysisSurface names which copy of the source the run resolved from —
+	// artefacts kanonarion fetched, or the project's own vendor/ tree. It is the
+	// resolution regime the run applied to this module, not a claim that bytes
+	// were read: a module the vendored tree does not hold is still a record of
+	// the vendored regime, which is what makes its absence legible.
+	//
+	// Empty on records written before the field existed; read it back through
+	// RecordAnalysisSurface, which ladders those to fetched rather than to a
+	// third state.
+	AnalysisSurface AnalysisSurface `json:"analysis_surface,omitempty"`
+	ContentHash     string          `json:"content_hash"`
 	// ArtefactIdentity names the fetched artefact this record was derived from,
 	// in the "zip:h1:..." / "gomod:h1:..." form fetchdomain.ArtefactIdentity
 	// renders. It answers the question the coordinate cannot: which bytes were
@@ -694,6 +792,11 @@ type ProjectScanResult struct {
 	UnscanReason      UnscanReason
 	UnscannableReason string
 	ErrorDetail       string
+	// AnalysisSurface is the surface the scan actually resolved from, reported
+	// by the adapter that ran it rather than assumed by the caller. The caller
+	// asks for a vendored analysis; only the scanner knows whether the project
+	// on disk could supply one, so the record names what ran.
+	AnalysisSurface AnalysisSurface
 }
 
 // StdlibModulePath is govulncheck's pseudo-module path for Go standard-library

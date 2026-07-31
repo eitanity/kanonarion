@@ -132,3 +132,17 @@ func assertFuncDecls(t *testing.T, got, want []domain.FuncDecl) {
 		}
 	}
 }
+
+// Scope is a string, so an unrecognised value is representable. Selecting no
+// roots for one is the safe answer: silently falling through to ScopeAll would
+// analyse more than the caller asked for and report it as the scope they named.
+func TestSelectRoots_UnknownScopeSelectsNothing(t *testing.T) {
+	decls := []domain.FuncDecl{
+		{Name: "main", Package: "main"},
+		{Name: "Exported", Package: "lib", IsExported: true},
+		{Name: "TestThing", Package: "lib", IsTestFile: true},
+	}
+	if got := domain.SelectRoots(domain.Scope("not-a-scope"), decls); len(got) != 0 {
+		t.Errorf("SelectRoots(unknown) = %+v, want none", got)
+	}
+}

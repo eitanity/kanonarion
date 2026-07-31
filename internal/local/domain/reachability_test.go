@@ -46,3 +46,52 @@ func TestSymbolProbeVerdictConstants(t *testing.T) {
 		t.Errorf("SymbolProbeUnknown = %q, want %q", domain.SymbolProbeUnknown, "unknown")
 	}
 }
+
+// The uncovered list is sorted so a probe's answer is byte-stable across runs
+// that resolve the build in a different order — and by version within a path,
+// because one module can appear twice at two versions in one build.
+func TestSortUncovered(t *testing.T) {
+	mods := []domain.UncoveredModule{
+		{Path: "example.com/b", Version: "v1.0.0"},
+		{Path: "example.com/a", Version: "v2.0.0"},
+		{Path: "example.com/a", Version: "v1.0.0"},
+	}
+	domain.SortUncovered(mods)
+	want := []domain.UncoveredModule{
+		{Path: "example.com/a", Version: "v1.0.0"},
+		{Path: "example.com/a", Version: "v2.0.0"},
+		{Path: "example.com/b", Version: "v1.0.0"},
+	}
+	for i := range want {
+		if mods[i] != want[i] {
+			t.Fatalf("sorted[%d] = %+v, want %+v (full: %+v)", i, mods[i], want[i], mods)
+		}
+	}
+}
+
+// The probed-binary list is sorted so a multi-main project's answer is stable
+// across runs that enumerate the mains in a different order.
+func TestSortProbedBinaries(t *testing.T) {
+	bins := []domain.ProbedBinary{
+		{ImportPath: "example.com/app/cmd/zeta"},
+		{ImportPath: "example.com/app/cmd/alpha", BuildError: "boom"},
+		{ImportPath: "example.com/app/cmd/mid"},
+	}
+	domain.SortProbedBinaries(bins)
+	want := []string{
+		"example.com/app/cmd/alpha",
+		"example.com/app/cmd/mid",
+		"example.com/app/cmd/zeta",
+	}
+	for i := range want {
+		if bins[i].ImportPath != want[i] {
+			t.Fatalf("sorted[%d] = %q, want %q (full: %+v)", i, bins[i].ImportPath, want[i], bins)
+		}
+	}
+	// The build error travels with its binary, not with its position.
+	if bins[0].BuildError != "boom" {
+		t.Errorf("alpha.BuildError = %q, want %q", bins[0].BuildError, "boom")
+	}
+	// Must not panic on empty input.
+	domain.SortProbedBinaries(nil)
+}

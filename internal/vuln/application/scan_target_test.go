@@ -12,6 +12,7 @@ import (
 
 	application "github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
@@ -60,7 +61,7 @@ func newTargetScanFixture(t *testing.T, scanner *fakeScanner, fetchedCoords ...c
 	facts := newFakeFacts()
 	blobs := newFakeBlob()
 	vulnStore := newFakeVulnStore()
-	db := &fakeDatabase{snapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1"}}
+	db := &fakeDatabase{snapshot: vulntest.MustNew("test", "v1")}
 	clock := fixedClock{t: now}
 
 	if len(fetchedCoords) == 0 {
@@ -77,7 +78,7 @@ func newTargetScanFixture(t *testing.T, scanner *fakeScanner, fetchedCoords ...c
 	}
 
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 	walkUC := application.NewScanWalkUseCase(
 		walkStore, vulnStore, moduleUC, nil, clock, "v1", slog.Default(),

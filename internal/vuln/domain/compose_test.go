@@ -11,6 +11,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 )
 
 // composeRecord builds a sealed generation for one coordinate. Every knob the
@@ -40,13 +41,11 @@ func composeRecord(t *testing.T, s composeSpec) domain.VulnerabilityRecord {
 		}
 	}
 	rec, err := domain.VulnerabilityRecordHasher{}.SetContentHash(domain.VulnerabilityRecord{
-		Ecosystem:  fetchdomain.EcosystemGo,
-		Coordinate: coordinatetest.MustNew("github.com/foo/bar", "v1.0.0"),
-		WalkID:     "walk-1",
-		Findings:   s.findings,
-		DatabaseSnapshot: domain.DatabaseSnapshot{
-			Source: "test", Version: s.snapshotAt.Format(time.RFC3339), RetrievedAt: s.snapshotAt,
-		},
+		Ecosystem:             fetchdomain.EcosystemGo,
+		Coordinate:            coordinatetest.MustNew("github.com/foo/bar", "v1.0.0"),
+		WalkID:                "walk-1",
+		Findings:              s.findings,
+		DatabaseSnapshot:      vulntest.MustNewAt("test", s.snapshotAt.Format(time.RFC3339), s.snapshotAt),
 		OverallStatus:         s.status,
 		UnscanReason:          s.unscanReason,
 		ScannedAt:             s.scannedAt,

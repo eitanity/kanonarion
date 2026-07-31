@@ -13,10 +13,30 @@ func base() domain.ParseResult {
 		ModulesTxt: []domain.VendoredModule{
 			{Path: "example.com/dep", Version: "v1.2.0", Explicit: true},
 		},
-		GoModRequires:  map[string]string{"example.com/dep": "v1.2.0"},
-		GoSum:          map[string]string{"example.com/dep@v1.2.0": "h1:EXPECTED"},
-		PresentDirs:    map[string]bool{"example.com/dep": true},
-		ComputedHashes: map[string]string{"example.com/dep": "h1:EXPECTED"},
+		GoModRequires: map[string]string{"example.com/dep": "v1.2.0"},
+		GoSum:         map[string]string{"example.com/dep@v1.2.0": "h1:EXPECTED"},
+		PresentDirs:   map[string]bool{"example.com/dep": true},
+		Files: map[string]domain.ModuleFiles{
+			"example.com/dep": {
+				ZipHeld: true,
+				// The published module carries a go.mod, a README and
+				// test files that `go mod vendor` strips, plus a package
+				// the build never imports.
+				Zip: map[string]string{
+					"go.mod":          "sha256:gomod",
+					"README.md":       "sha256:readme",
+					"dep.go":          "sha256:dep",
+					"dep_test.go":     "sha256:deptest",
+					"unused/other.go": "sha256:other",
+					"LICENSE":         "sha256:licence",
+				},
+				// The vendored tree holds the pruned subset, byte-identical.
+				Vendored: map[string]string{
+					"dep.go":  "sha256:dep",
+					"LICENSE": "sha256:licence",
+				},
+			},
+		},
 	}
 }
 
@@ -43,21 +63,103 @@ func TestAggregate_Clean(t *testing.T) {
 	}
 }
 
-// TestAggregate_Drift: one vendored file differs → the recomputed hash no
-// longer matches go.sum; drift is reported with both hashes (case 2).
-func TestAggregate_Drift(t *testing.T) {
+// TestAggregate_PrunedTreeIsNotDrift is the first of three fixtures that
+// together fix the distinction the whole-tree hash could not make. Here the
+// vendored tree is intact but pruned: it holds a strict subset of the published
+// module, byte for byte. Pruning is what `go mod vendor` does to every module,
+// so this fixture stands for the ordinary case, and it must be clean.
+func TestAggregate_PrunedTreeIsNotDrift(t *testing.T) {
 	in := base()
-	in.ComputedHashes["example.com/dep"] = "h1:TAMPERED"
+	_, fs := domain.Aggregate(in)
+	if len(fs) != 0 {
+		t.Fatalf("a pruned but intact vendored tree must report nothing, got %+v", fs)
+	}
+}
+
+// TestAggregate_EditedFileIsDrift is the second fixture: a file vendor/ and the
+// published module both hold, with different bytes. This is the axis the check
+// exists for, and correcting the comparison must not cost it.
+func TestAggregate_EditedFileIsDrift(t *testing.T) {
+	in := base()
+	in.Files["example.com/dep"].Vendored["dep.go"] = "sha256:edited"
+
 	_, fs := domain.Aggregate(in)
 	d, ok := kinds(fs)[domain.FindingDrift]
 	if !ok {
-		t.Fatalf("want drift finding, got %+v", fs)
+		t.Fatalf("an edited vendored file must be drift, got %+v", fs)
 	}
-	if d.Expected != "h1:EXPECTED" || d.Actual != "h1:TAMPERED" {
-		t.Errorf("drift hashes not reported: %+v", d)
+	if d.File != "dep.go" {
+		t.Errorf("drift finding names file %q, want dep.go", d.File)
+	}
+	if d.Expected != "sha256:dep" || d.Actual != "sha256:edited" {
+		t.Errorf("drift must report the published and vendored digests: %+v", d)
 	}
 	if d.Kind.PolicyCategory() != "drift" {
 		t.Errorf("drift maps to %q, want drift", d.Kind.PolicyCategory())
+	}
+}
+
+// TestAggregate_FileTheModuleNeverPublishedIsDrift is the third fixture: a file
+// under vendor/ that the published module has no entry for at all. It is an
+// insertion into the tree the project compiles, so it is drift — and it is the
+// case the pruning exemption must not swallow, since "in one side and not the
+// other" describes both it and ordinary pruning.
+func TestAggregate_FileTheModuleNeverPublishedIsDrift(t *testing.T) {
+	in := base()
+	in.Files["example.com/dep"].Vendored["backdoor.go"] = "sha256:inserted"
+
+	_, fs := domain.Aggregate(in)
+	d, ok := kinds(fs)[domain.FindingDrift]
+	if !ok {
+		t.Fatalf("a vendored file the module never published must be drift, got %+v", fs)
+	}
+	if d.File != "backdoor.go" {
+		t.Errorf("drift finding names file %q, want backdoor.go", d.File)
+	}
+	if d.Expected != "" || d.Actual != "sha256:inserted" {
+		t.Errorf("an unpublished file has no expected digest to report: %+v", d)
+	}
+}
+
+// TestAggregate_IrregularFileIsDrift: a vendored entry that is not a regular
+// file carries the irregular marker instead of a digest. Whatever it resolves
+// to was not measured, and the published module holds only regular files, so it
+// must be drift even when the zip publishes a file of the same name.
+func TestAggregate_IrregularFileIsDrift(t *testing.T) {
+	in := base()
+	in.Files["example.com/dep"].Vendored["dep.go"] = domain.DigestIrregularPrefix + "symlink"
+
+	_, fs := domain.Aggregate(in)
+	d, ok := kinds(fs)[domain.FindingDrift]
+	if !ok {
+		t.Fatalf("a non-regular vendored file must be drift, got %+v", fs)
+	}
+	if d.File != "dep.go" {
+		t.Errorf("drift finding names file %q, want dep.go", d.File)
+	}
+	if d.Actual != domain.DigestIrregularPrefix+"symlink" {
+		t.Errorf("drift must report what the entry is: %+v", d)
+	}
+}
+
+// TestAggregate_UnheldZipIsUnverifiedNotClean: go.sum names a checksum but
+// kanonarion holds no zip to compare against. There is no oracle, so there is
+// no clean answer to give.
+func TestAggregate_UnheldZipIsUnverifiedNotClean(t *testing.T) {
+	in := base()
+	in.Files["example.com/dep"] = domain.ModuleFiles{
+		Vendored: map[string]string{"dep.go": "sha256:dep"},
+	}
+	_, fs := domain.Aggregate(in)
+	u, ok := kinds(fs)[domain.FindingUnverified]
+	if !ok {
+		t.Fatalf("want unverified finding, got %+v", fs)
+	}
+	if u.Expected != "h1:EXPECTED" {
+		t.Errorf("the unverified finding must name the checksum it could not check against: %+v", u)
+	}
+	if domain.OverallStatus(fs) == "clean" {
+		t.Error("an absent oracle must not be reported clean")
 	}
 }
 

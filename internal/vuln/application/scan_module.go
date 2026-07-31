@@ -141,24 +141,109 @@ import (
 // withdrawn: WithdrawnAt is a new field carrying omitzero, so it is absent from
 // the encoding exactly when it is zero, and a v15 record's hash recomputes
 // identically under this generation.
-const PipelineVersion = "v16"
+//
+// It was bumped to "v17" when a govulncheck trace consisting entirely of
+// package-initialisation frames stopped being ingested as a reachability route.
+//
+// Where an advisory entry names no symbols for a module path, govulncheck treats
+// the whole package as vulnerable and the only thing it can report is that the
+// package's own init ran — which follows from the package being linked into the
+// build, not from anything calling the vulnerable code. Those frames were read as
+// a route, so the finding was recorded reachable at High confidence with source
+// fidelity, and "init" was written into affected_symbols, a symbol no advisory
+// ever names. Such a finding is now recorded as affected at package level: no
+// route, no symbol, IsReachable false at Confidence Unknown — the store's existing
+// "not determined" value — and the new AdvisoryNamesNoSymbols field states why, so
+// the absent route is not read as "nothing calls it". The coordinate match is
+// untouched; the module remains Affected.
+//
+// The bump is what makes the fix reachable rather than a shape formality. A "v16"
+// record for such a coordinate asserts reachable/High over init frames, and the
+// claim is not correctable in place: the verdict and the route are both inside the
+// hashed canonical shape, so rewriting them would require re-sealing a v16 record
+// against evidence the earlier generation reached a different conclusion from — the
+// mistake migration 10 was withdrawn for. Read-side queries pin to this constant,
+// so under the bump those records stop being served and a re-scan produces a v17
+// record that states the package-level match, while the v16 row remains readable
+// in the ledger as what the earlier generation concluded. Without the bump the
+// false reachable claim would survive the fix from cache. Measured on a working
+// store: github.com/golang-jwt/jwt@v3.2.2+incompatible and
+// github.com/golang-jwt/jwt/v4@v4.5.1 both carried GO-2025-3553 as reachable/High
+// in the same run, and only the second had a route to the advisory's named symbol.
+//
+// The record's canonical bytes are unchanged for every finding this does not
+// re-classify: AdvisoryNamesNoSymbols is a new field carrying omitzero, so it is
+// absent from the encoding exactly when it is false, and an untouched v16 record's
+// hash recomputes identically under this generation.
+//
+// It was bumped to "v18" when a reachability analysis that was requested and
+// failed stopped being recorded as though it had never been requested.
+//
+// The failure was logged at WARN and the finding kept a nil Reachable, which is
+// also what a scan run without --reachability leaves behind. The two are
+// indistinguishable in the record, so the read side attributed the absence to a
+// missing flag and advised re-running with a flag that had been passed, while the
+// scan exited 0 and reported its finding set as though reachability had not been
+// needed. The failure now travels with the finding as a ReachabilityNote naming
+// the reason, and the read side names that cause instead of assuming one.
+//
+// The bump is what makes the fix reachable rather than a shape formality. A "v17"
+// record on that path carries a nil Reachable and no note, and nothing in it
+// records that the question was ever asked — so no migration can tell it apart
+// from a record where it genuinely was not. Read-side queries pin to this
+// constant, so under the bump those records stop being served and a re-scan
+// either computes the reachability the same run can now load, or records why it
+// could not; the v17 rows remain readable in the ledger as what the earlier
+// generation concluded. Without the bump the silent degradation would survive the
+// fix from cache. Measured on a working store: a 128-module walk scanned with
+// --reachability reported Affected (14) with reachability unavailable and
+// unstated for the findings a security review had called auth-critical.
+//
+// No shape change and no migration is owed with it. ReachabilityNote is an
+// existing hashed field already populated on the callgraph-spawn-failure path,
+// carrying omitzero, so it is absent from the encoding exactly when it is empty
+// and an untouched v17 record's hash recomputes identically under this
+// generation.
+// v19 records the analysis surface — which copy of a module's source the run
+// resolved from — and, for a vendored project, changes which copy that is.
+//
+// The behavioural half is what forces the bump rather than the field. A project
+// carrying vendor/modules.txt is now analysed under -mod=vendor from the tree it
+// compiles, where a v18 run resolved the same build from the artefacts
+// kanonarion fetched. Those can differ — detecting exactly that divergence is
+// the tool's own value proposition — so a re-scan of unchanged inputs can now
+// produce a different verdict for the same coordinate under the same snapshot.
+// Read-side queries pin to this constant, so without the bump the fetched-surface
+// v18 row would keep answering the vendored-surface question, and the run that
+// finally read the built bytes would be served the one that did not.
+//
+// The field is the other half and could not have carried the bump on its own:
+// analysis_surface is omitempty, so an untouched v18 record still recomputes its
+// hash identically under this generation, and the ledger's older rows stay
+// readable as what the earlier generation concluded.
+//
+// No migration is owed. Reads are keyed on the pipeline version, so the v18 rows
+// are already unreachable for a v19 question, and the surface lives inside the
+// serialised record rather than in a column, so no schema changes. Purging them
+// would cost every store an irreversible schema bump to delete rows nothing can
+// read. The cost that IS owed is a full re-scan before a store can answer at
+// v19, which is the price of no longer serving a verdict about the wrong bytes.
+const PipelineVersion = "v19"
 
 // ScanModuleUseCase orchestrates a single module's vulnerability scan.
 type ScanModuleUseCase struct {
-	factStore                 fetchports.FactStore
-	blobs                     fetchports.BlobStore
-	vulnStore                 ports.VulnerabilityStore
-	walkStore                 walkports.WalkStore
-	scanner                   ports.VulnerabilityScanner
-	database                  ports.VulnerabilityDatabase
-	reachability              ports.ReachabilityAnalyser
-	callGraphLoader           ports.CallGraphLoader
-	callGraphSpawner          ports.CallGraphSpawner
-	clock                     fetchports.Clock
-	pipelineVersion           string
-	fetchPipelineVersion      string
-	localFetchPipelineVersion string
-	logger                    *slog.Logger
+	factStore        fetchports.FactStore
+	blobs            fetchports.BlobStore
+	vulnStore        ports.VulnerabilityStore
+	walkStore        walkports.WalkStore
+	scanner          ports.VulnerabilityScanner
+	database         ports.VulnerabilityDatabase
+	reachability     ports.ReachabilityAnalyser
+	callGraphLoader  ports.CallGraphLoader
+	callGraphSpawner ports.CallGraphSpawner
+	clock            fetchports.Clock
+	pipelineVersion  string
+	logger           *slog.Logger
 }
 
 // NewScanModuleUseCase returns a new ScanModuleUseCase.
@@ -172,21 +257,19 @@ func NewScanModuleUseCase(
 	reachability ports.ReachabilityAnalyser,
 	clock fetchports.Clock,
 	pipelineVersion string,
-	fetchPipelineVersion string,
 	logger *slog.Logger,
 ) *ScanModuleUseCase {
 	return &ScanModuleUseCase{
-		factStore:            factStore,
-		blobs:                blobs,
-		vulnStore:            vulnStore,
-		walkStore:            walkStore,
-		scanner:              scanner,
-		database:             database,
-		reachability:         reachability,
-		clock:                clock,
-		pipelineVersion:      pipelineVersion,
-		fetchPipelineVersion: fetchPipelineVersion,
-		logger:               logger,
+		factStore:       factStore,
+		blobs:           blobs,
+		vulnStore:       vulnStore,
+		walkStore:       walkStore,
+		scanner:         scanner,
+		database:        database,
+		reachability:    reachability,
+		clock:           clock,
+		pipelineVersion: pipelineVersion,
+		logger:          logger,
 	}
 }
 
@@ -205,47 +288,61 @@ func (uc *ScanModuleUseCase) WithCallGraphSpawner(spawner ports.CallGraphSpawner
 	return uc
 }
 
-// WithLocalFetchPipelineVersion sets the pipeline version under which locally
-// ingested modules (local-replace targets and the project-walk root) persist
-// their FactRecord, so their source is fully scanned instead of degrading to
-// a metadata-only scan. Returns the receiver for chaining.
-func (uc *ScanModuleUseCase) WithLocalFetchPipelineVersion(v string) *ScanModuleUseCase {
-	uc.localFetchPipelineVersion = v
-	return uc
-}
-
-// metadataOnlyNote returns the note recorded on a metadata-only scan, naming why
-// no source was analysed: the stdlib is toolchain-provided and resolved by
-// coordinate; a go.mod-only record carries no source; otherwise the module was
-// never fetched (a shallow walk).
-func metadataOnlyNote(coord coordinate.ModuleCoordinate, goModOnly bool) string {
+// metadataOnlyNote returns the note and the taxonomy code recorded on a
+// metadata-only scan, naming why no source was analysed.
+//
+// Every branch states only what this call measured. The note is prose for a
+// reader and the code is the same fact for the roll-up, so the two are produced
+// together rather than left for a later classifier to infer from the prose.
+//
+// The default branch used to assert "module not fetched (shallow walk)". All it
+// had measured was that no fetch record exists; the walk's depth is not in hand
+// here, and a full-depth project walk whose local root degrades to the fetched
+// surface arrived at exactly that branch and recorded a shallowness that never
+// happened. Naming a cause the call cannot see is worse than naming none: the
+// invented one is read, believed, and investigated.
+//
+// The local main module gets its own branch for the same reason. It has no
+// published artefact for anything to fetch, so "not fetched" describes it as a
+// gap when it is a property of an unpublished module — its source is analysed
+// from the project directory by a project-rooted run, not from the store.
+func metadataOnlyNote(coord coordinate.ModuleCoordinate, goModOnly bool) (string, domain.UnscanReason) {
 	switch {
 	case coord.Path() == domain.StdlibModulePath:
-		return "Go standard library (toolchain-provided); advisories resolved from OSV metadata by coordinate"
+		return "Go standard library (toolchain-provided); advisories resolved from OSV metadata by coordinate",
+			domain.UnscanReasonStdlibMetadata
 	case goModOnly:
-		return "metadata-only: only go.mod fetched for module-graph resolution; module source not retrieved"
+		return "metadata-only: only go.mod fetched for module-graph resolution; module source not retrieved",
+			domain.UnscanReasonGoModOnly
+	case coord.IsLocal():
+		return "metadata-only: local project source; no published artefact exists to fetch; " +
+				"source is analysed only via the project directory",
+			domain.UnscanReasonLocalProjectSource
 	default:
-		return "metadata-only: module not fetched (shallow walk)"
+		return "metadata-only: module source not in the store", domain.UnscanReasonSourceNotInStore
 	}
 }
 
-// getFetchRecord looks up the FactRecord for coord under the fetch pipeline
-// version first (a proxy-verified record always wins), then the local-ingest
-// pipeline version.
+// getFetchRecord asks the ledger what it has measured about coord, naming no
+// fetch pipeline version.
+//
+// The absence this returns is load-bearing in a way the other stages' is not:
+// Scan reads !ok as "the module's source is not in the store" and routes to
+// scanMetadataOnly, which records a verdict whose note says the module was never
+// fetched. Under the previous version list, a module measured only under a
+// retired fetch generation produced exactly that record — a metadata-only
+// vulnerability verdict, indistinguishable from a deliberate coverage limit,
+// asserting something false about a module whose zip was in the blob store. A
+// wrong absence here is quieter and worse than the loud refusal licence gives.
 func (uc *ScanModuleUseCase) getFetchRecord(ctx context.Context, coord coordinate.ModuleCoordinate) (fetchdomain.FactRecord, bool, error) {
-	for _, v := range []string{uc.fetchPipelineVersion, uc.localFetchPipelineVersion} {
-		if v == "" {
-			continue
-		}
-		r, ok, err := uc.factStore.GetFetchRecord(ctx, coord, v)
-		if err != nil {
-			return fetchdomain.FactRecord{}, false, fmt.Errorf("checking fetch record (pipeline %s): %w", v, err)
-		}
-		if ok {
-			return r.FactRecord, true, nil
-		}
+	r, ok, err := fetchports.ComposedFetchRecord(ctx, uc.factStore, coord)
+	if err != nil {
+		return fetchdomain.FactRecord{}, false, fmt.Errorf("checking fetch record: %w", err)
 	}
-	return fetchdomain.FactRecord{}, false, nil
+	if !ok {
+		return fetchdomain.FactRecord{}, false, nil
+	}
+	return r.FactRecord, true, nil
 }
 
 // Preflight delegates to the underlying scanner's availability check so a
@@ -364,8 +461,12 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 		// marked metadata-only have no AffectedSymbols and nil Reachable, signalling
 		// that call-graph analysis was not performed. A coordinate with no matching
 		// advisory is a real answer here, so the empty status is Clean.
-		note := metadataOnlyNote(params.Coordinate, ok && fact.IsGoModOnly())
-		return uc.scanMetadataOnly(ctx, params, snapshot, derived, note, "", "", domain.StatusClean)
+		// The reason code travels with the note. Recording the prose alone left
+		// these records — the two the scan writes on every run — in the roll-up's
+		// unknown-producer bucket, which then printed their reason directly under a
+		// heading that said no reason was recorded.
+		note, reason := metadataOnlyNote(params.Coordinate, ok && fact.IsGoModOnly())
+		return uc.scanMetadataOnly(ctx, params, snapshot, derived, note, reason, "", domain.StatusClean)
 	}
 
 	// 3.5 Metadata-based Filtering (Optimization)
@@ -388,6 +489,9 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 				PipelineVersion:  uc.pipelineVersion,
 				// Reached by scanning this module alone; see the stamp below.
 				Rooting: domain.RootingIsolated,
+				// This use case resolves from the artefacts kanonarion fetched; it
+				// never roots an analysis at a project's vendored tree.
+				AnalysisSurface: domain.AnalysisSurfaceFetched,
 			}
 			derived.stamp(&record)
 			sealed, herr := domain.VulnerabilityRecordHasher{}.SetContentHash(record)
@@ -455,6 +559,10 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 	// can answer. Recording it is what keeps the two from sharing a row and
 	// silently standing in for each other.
 	record.Rooting = domain.RootingIsolated
+	// And the copy of the source it was reached from. An isolated scan extracts
+	// the published zip kanonarion holds; no path here consults a vendored tree,
+	// so the surface is fetched on both branches.
+	record.AnalysisSurface = domain.AnalysisSurfaceFetched
 	// The verdict names the bytes it was reached from, on both branches: a scan
 	// that failed still failed on a specific artefact.
 	derived.stamp(&record)
@@ -983,6 +1091,10 @@ func (uc *ScanModuleUseCase) scanMetadataOnly(ctx context.Context, params ScanMo
 		// could not be produced, so this record answers the isolated question and
 		// must not be servable as a target-rooted answer.
 		Rooting: domain.RootingIsolated,
+		// The coordinate match consulted no source at all, but the run that
+		// produced it resolved from fetched artefacts, which is what the field
+		// names — leaving it blank would read as a record predating the field.
+		AnalysisSurface: domain.AnalysisSurfaceFetched,
 	}
 	// Empty when the module was never fetched: a coordinate matched against the
 	// advisory database read no artefact, and must not claim to have read one.
@@ -1026,6 +1138,14 @@ func (uc *ScanModuleUseCase) applyReachability(ctx context.Context, params ScanM
 		}
 		result, rerr := uc.reachability.Analyse(ctx, params.Coordinate, syms, uc.callGraphLoader)
 		if rerr != nil {
+			// The failure is recorded on the finding, not only logged. A WARN is not a
+			// record: the scan exits 0 and the finding it belongs to is served for as
+			// long as the record lives, so a leg that was requested and could not be
+			// measured has to travel with the finding or the read side is left to
+			// guess. Reachable stays nil — nothing was determined — and the note is
+			// what tells "requested and failed" apart from "never requested", which
+			// are otherwise the same absence.
+			findings[i].ReachabilityNote = buildReachabilityFailureNote(rerr)
 			uc.logger.Warn("reachability analysis failed", "coordinate", params.Coordinate, "finding", finding.ID, "error", rerr)
 			continue
 		}
@@ -1060,16 +1180,25 @@ func (uc *ScanModuleUseCase) maybeEnsureCallGraph(ctx context.Context, params Sc
 	}
 
 	if !params.Force {
-		_, loadErr := uc.callGraphLoader.Load(ctx, params.Coordinate)
-		if loadErr == nil {
+		proj, loadErr := uc.callGraphLoader.Load(ctx, params.Coordinate)
+		if loadErr == nil && proj.ServableAsCacheHit {
 			return "" // callgraph already in store
 		}
-		if !errors.Is(loadErr, ports.ErrCallGraphNotFound) {
+		switch {
+		case loadErr == nil:
+			// A record is there, but it records a run that could not run rather than
+			// a measurement of this module. Treating its presence as "already done"
+			// is what made one broken toolchain permanent for a coordinate; spawn and
+			// let the child decide, exactly as it would with nothing stored.
+			uc.logger.Info("stored callgraph is not eligible as a cache hit; re-deriving",
+				"coordinate", params.Coordinate)
+		case errors.Is(loadErr, ports.ErrCallGraphNotFound):
+			// Not found — fall through to spawn.
+		default:
 			// Integrity or other store error — don't spawn over a broken record.
 			uc.logger.Warn("callgraph store check failed before spawn", "coordinate", params.Coordinate, "error", loadErr)
 			return fmt.Sprintf("callgraph store check failed: %v", loadErr)
 		}
-		// Not found — fall through to spawn.
 	}
 
 	// Acquire concurrency slot before spawning the SSA-heavy child process.
@@ -1101,6 +1230,14 @@ func buildCallGraphSpawnNote(execErr error, stderr []byte) string {
 		return fmt.Sprintf("callgraph subprocess failed (%v): %s", execErr, stderrStr)
 	}
 	return fmt.Sprintf("callgraph subprocess failed: %v", execErr)
+}
+
+// buildReachabilityFailureNote formats the ReachabilityNote for an analysis that
+// was requested and could not be computed, carrying the reason with it. The
+// reason is the whole point: "the call graph could not be loaded" and "the
+// analyser errored" send an operator to different places.
+func buildReachabilityFailureNote(err error) string {
+	return "reachability analysis failed: " + err.Error()
 }
 
 // buildSymbolRefs converts short symbol strings from govulncheck (e.g.

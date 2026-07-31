@@ -70,7 +70,7 @@ func TestNoticeWith_StatesTheScope(t *testing.T) {
 		}},
 	}
 	var stdout, stderr bytes.Buffer
-	if err := noticeWith(context.Background(), ctr, "W1", "", "", "", &stdout, &stderr); err != nil {
+	if err := noticeWith(context.Background(), ctr, "W1", "", "", "", "", &stdout, &stderr); err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
 	if !strings.Contains(stderr.String(), "scope: walk W1") {
@@ -210,7 +210,7 @@ func TestNoticeWith_DocumentNamesTheReplacedRequirement(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	if err := noticeWith(context.Background(), ctr, "W1", "", "", "", &stdout, &stderr); err != nil {
+	if err := noticeWith(context.Background(), ctr, "W1", "", "", "", "", &stdout, &stderr); err != nil {
 		t.Fatalf("expected success, got: %v", err)
 	}
 	got := stdout.String()
@@ -241,7 +241,7 @@ func TestNoticeWith_ReviewItemNamesTheReplacedRequirement(t *testing.T) {
 	}
 
 	var stdout, stderr bytes.Buffer
-	err := noticeWith(context.Background(), ctr, "W1", "", "", "", &stdout, &stderr)
+	err := noticeWith(context.Background(), ctr, "W1", "", "", "", "", &stdout, &stderr)
 	if err == nil {
 		t.Fatal("expected a review-required error")
 	}

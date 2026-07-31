@@ -123,6 +123,64 @@ func (a *Analyser) AnalyseImports(ctx context.Context, root string) ([]domain.Im
 	return mods, nil
 }
 
+// BuildModules runs the same `go list -json -deps ./...` and projects it onto
+// every non-main module the build resolves, direct and transitive alike.
+//
+// It is a second projection of one command rather than a filter applied to
+// AnalyseImports' result, because AnalyseImports discards the transitive
+// modules before it returns: they are exactly the entries missing from its
+// output, and no consumer can reconstruct them from what it kept.
+func (a *Analyser) BuildModules(ctx context.Context, root string) ([]domain.BuildModule, error) {
+	cmd := exec.CommandContext(ctx, a.goBin(), "list", "-json", "-deps", "./...") // #nosec G204 -- binary path is either "go" (hardcoded) or caller-supplied and trusted
+	cmd.Dir = root
+	out, err := cmd.Output()
+	if err != nil {
+		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
+			return nil, fmt.Errorf("go list: %w\n%s", err, exitErr.Stderr)
+		}
+		return nil, fmt.Errorf("go list: %w", err)
+	}
+
+	pkgs, err := parseGoListOutput(out)
+	if err != nil {
+		return nil, err
+	}
+
+	// Which module each external package belongs to, and which packages the main
+	// module's own non-test files import — the latter only to mark directness,
+	// never to decide membership.
+	pkgToMod := make(map[string]string, len(pkgs))
+	mods := make(map[string]domain.BuildModule)
+	var mainImports []string
+	for _, pkg := range pkgs {
+		if pkg.Standard || pkg.Module == nil {
+			continue
+		}
+		if pkg.Module.Main {
+			mainImports = append(mainImports, pkg.Imports...)
+			continue
+		}
+		pkgToMod[pkg.ImportPath] = pkg.Module.Path
+		if _, seen := mods[pkg.Module.Path]; !seen {
+			mods[pkg.Module.Path] = domain.BuildModule{Path: pkg.Module.Path, Version: pkg.Module.Version}
+		}
+	}
+	for _, imp := range mainImports {
+		if modPath, ok := pkgToMod[imp]; ok {
+			m := mods[modPath]
+			m.Direct = true
+			mods[modPath] = m
+		}
+	}
+
+	out2 := make([]domain.BuildModule, 0, len(mods))
+	for _, m := range mods {
+		out2 = append(out2, m)
+	}
+	sort.Slice(out2, func(i, j int) bool { return out2[i].Path < out2[j].Path })
+	return out2, nil
+}
+
 func parseGoListOutput(data []byte) ([]goListPackage, error) {
 	dec := json.NewDecoder(bytes.NewReader(data))
 	var pkgs []goListPackage
@@ -138,5 +196,8 @@ func parseGoListOutput(data []byte) ([]goListPackage, error) {
 	return pkgs, nil
 }
 
-// Ensure Analyser implements ports.ImportAnalyser at compile time.
-var _ ports.ImportAnalyser = (*Analyser)(nil)
+// Ensure Analyser implements both projections at compile time.
+var (
+	_ ports.ImportAnalyser    = (*Analyser)(nil)
+	_ ports.BuildModuleLister = (*Analyser)(nil)
+)

@@ -12,6 +12,7 @@ import (
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 )
 
 func TestVulnerabilityStatus_Values(t *testing.T) {
@@ -119,17 +120,12 @@ func TestVulnerabilityFinding_Aliases(t *testing.T) {
 
 func TestDatabaseSnapshot_Fields(t *testing.T) {
 	now := time.Now().UTC().Truncate(time.Second)
-	s := domain.DatabaseSnapshot{
-		Source:      "govulndb",
-		Version:     "v2024-01-01",
-		RetrievedAt: now,
-		ContentHash: "abc123",
-	}
-	if s.Source == "" || s.Version == "" || s.ContentHash == "" {
+	s := vulntest.MustSealOver("govulndb", "v2024-01-01", now, []byte("advisories"))
+	if s.Source() == "" || s.Version() == "" || s.ContentHash() == "" {
 		t.Error("snapshot fields must not be empty")
 	}
-	if !s.RetrievedAt.Equal(now) {
-		t.Errorf("retrieved_at: got %v, want %v", s.RetrievedAt, now)
+	if !s.RetrievedAt().Equal(now) {
+		t.Errorf("retrieved_at: got %v, want %v", s.RetrievedAt(), now)
 	}
 }
 

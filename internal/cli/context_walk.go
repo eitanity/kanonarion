@@ -34,7 +34,7 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 	rec, err := ctr.QueryWalks.GetWalk(ctx, f.walkID)
 	if err != nil {
 		if errors.Is(err, walkports.ErrWalkNotFound) {
-			return fmt.Errorf("walk %s not found", f.walkID)
+			return &exitError{code: ExitNotFound, msg: fmt.Sprintf("walk %s not found", f.walkID)}
 		}
 		return fmt.Errorf("loading walk %s: %w", f.walkID, err)
 	}

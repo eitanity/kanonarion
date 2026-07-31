@@ -23,6 +23,13 @@ type composeSpec struct {
 	// the module contains without differing on anything else.
 	symbol string
 	status domain.CallGraphStatus
+	// cause and detail describe a failed extraction. cause is the axis a record
+	// written before it existed carries nothing for, which is what makes it the
+	// material for the supersession cases.
+	cause  domain.FailureCause
+	detail string
+	// nodeless drops the graph entirely, as a failed extraction's record does.
+	nodeless bool
 }
 
 func composeRecord(t *testing.T, spec composeSpec) domain.CallGraphRecord {
@@ -61,6 +68,12 @@ func composeRecord(t *testing.T, spec composeSpec) domain.CallGraphRecord {
 		NodeCount:        1,
 		ExtractedAt:      at,
 		PipelineVersion:  "0.3.0",
+		FailureCause:     spec.cause,
+		FailureDetail:    spec.detail,
+	}
+	if spec.nodeless {
+		r.Nodes = []domain.CallNode{}
+		r.NodeCount = 0
 	}
 	var h domain.CallGraphRecordHasher
 	sealed, err := h.SetContentHash(r)
@@ -631,5 +644,338 @@ func TestAnalysisSource_StringNamesTheZeroValue(t *testing.T) {
 	}
 	if got := domain.AnalysisSourceModuleZip.String(); got != "zip" {
 		t.Errorf("zip renders %q", got)
+	}
+}
+
+// TestCompose_LegacyRecordDoesNotConflictWithTheSourceItPredates is the
+// regression: two records describing an IDENTICAL graph, differing only in that
+// one predates the analysis-source field, must load.
+//
+// Measured on a working store — github.com/golang-jwt/jwt/v4@v4.5.1 at pipeline
+// 0.3.0 held exactly this pair. A full diff of both records' contents showed the
+// same 822 nodes, the same 1579 edges and the same BUILT_WITH_BODIES
+// completeness; the only substantive difference was the absent field. The
+// comparison hashed that field, so the two disagreed on the graph digest and the
+// read refused the graph, which made every reachability query against the
+// coordinate fail.
+func TestCompose_LegacyRecordDoesNotConflictWithTheSourceItPredates(t *testing.T) {
+	t.Parallel()
+	legacy := composeRecord(t, composeSpec{
+		artefact:     "zip:h1:a",
+		completeness: domain.CompletenessBuiltWithBodies, symbol: "Same",
+		extractedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	})
+	named := composeRecord(t, composeSpec{
+		source: domain.AnalysisSourceModuleZip, artefact: "zip:h1:a",
+		completeness: domain.CompletenessBuiltWithBodies, symbol: "Same",
+		extractedAt: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+	})
+	if legacy.ContentHash == named.ContentHash {
+		t.Fatal("the two records seal to one hash, so this test would pass without exercising the comparison")
+	}
+
+	got, err := domain.Compose([]domain.CallGraphRecord{legacy, named}, domain.ComposeRequest{})
+	if err != nil {
+		t.Fatalf("Compose refused two records describing the same graph: %v", err)
+	}
+	// Recency is the last tiebreaker and both sit on the same rung, so the record
+	// that names its source is the one served.
+	if got.ContentHash != named.ContentHash {
+		t.Errorf("served %q, want the later record %q", got.ContentHash, named.ContentHash)
+	}
+}
+
+// TestCompose_LegacyRecordStillConflictsOnAMeasuredDisagreement is the other
+// direction, and it is the one that keeps the narrowing honest.
+//
+// Resolving an absent analysis source must not make two records agree about
+// anything they actually measured. Same coordinate, same completeness, same
+// artefact — different graphs. That is non-determinism in the analyser, it was a
+// conflict before, and it must fail closed still.
+func TestCompose_LegacyRecordStillConflictsOnAMeasuredDisagreement(t *testing.T) {
+	t.Parallel()
+	legacy := composeRecord(t, composeSpec{
+		artefact:     "zip:h1:a",
+		completeness: domain.CompletenessBuiltWithBodies, symbol: "Foo",
+		extractedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	})
+	named := composeRecord(t, composeSpec{
+		source: domain.AnalysisSourceModuleZip, artefact: "zip:h1:a",
+		completeness: domain.CompletenessBuiltWithBodies, symbol: "Bar",
+		extractedAt: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+	})
+
+	_, err := domain.Compose([]domain.CallGraphRecord{legacy, named}, domain.ComposeRequest{})
+	var conflict domain.CallGraphConflict
+	if !errors.As(err, &conflict) {
+		t.Fatalf("two records disagreeing about the graph composed to an answer: err=%v", err)
+	}
+	if conflict.Field != "call_graph" {
+		t.Errorf("conflict field %q, want call_graph", conflict.Field)
+	}
+}
+
+// TestGraphDigest_ResolvesAnAbsentSourceToTheOneItPredates pins that absence is
+// resolved to a source this domain already defines, chosen from the coordinate,
+// rather than collapsed to a single value or represented by an invented one.
+//
+// A pinned version was fetched, so a graph built for it before the field existed
+// was built from a module zip. The synthetic local version is never fetched, so a
+// graph built for it was built from a working tree. Mapping both to one value
+// would make a legacy local record compare equal to a zip record of the same
+// graph, which are answers about different bytes.
+func TestGraphDigest_ResolvesAnAbsentSourceToTheOneItPredates(t *testing.T) {
+	t.Parallel()
+	pinnedLegacy := composeRecord(t, composeSpec{artefact: "zip:h1:a", completeness: domain.CompletenessBuiltWithBodies})
+	pinnedZip := composeRecord(t, composeSpec{
+		source: domain.AnalysisSourceModuleZip, artefact: "zip:h1:a",
+		completeness: domain.CompletenessBuiltWithBodies,
+	})
+	if domain.GraphDigest(pinnedLegacy) != domain.GraphDigest(pinnedZip) {
+		t.Error("a legacy record at a pinned version did not ladder with the module-zip record it predates")
+	}
+
+	localLegacy := composeRecord(t, composeSpec{
+		version: coordinate.LocalVersion, worktree: "sha256:tree",
+		completeness: domain.CompletenessBuiltWithBodies,
+	})
+	localTree := composeRecord(t, composeSpec{
+		version: coordinate.LocalVersion, source: domain.AnalysisSourceWorktree, worktree: "sha256:tree",
+		completeness: domain.CompletenessBuiltWithBodies,
+	})
+	if domain.GraphDigest(localLegacy) != domain.GraphDigest(localTree) {
+		t.Error("a legacy record at the local version did not ladder with the worktree record it predates")
+	}
+
+	localZip := localTree
+	localZip.AnalysisSource = domain.AnalysisSourceModuleZip
+	if domain.GraphDigest(localLegacy) == domain.GraphDigest(localZip) {
+		t.Error("an absent source was collapsed to one value rather than resolved from the coordinate")
+	}
+}
+
+// failurePair builds the two generations the real store holds for the
+// coordinates re-analysed after the failure cause became recordable: one failed
+// extraction recorded twice, the older of the two predating the cause.
+//
+// Everything else about them is identical, and identical in the way the live
+// rows are — same artefact, same METADATA_ONLY completeness, same LoadFailed
+// status, same detail, no graph either time. The whole of the difference is a
+// field the older one had nowhere to say.
+func failurePair(t *testing.T) (older, newer domain.CallGraphRecord) {
+	t.Helper()
+	older = composeRecord(t, composeSpec{
+		artefact:     "zip:h1:z4yfnGrZ7netVz+0EDJ0Wi+5VZCSYp4Z0m2dk6cEM60=",
+		completeness: domain.CompletenessMetadataOnly,
+		status:       domain.CallGraphStatusLoadFailed,
+		detail:       "no packages successfully loaded",
+		nodeless:     true,
+		extractedAt:  time.Date(2026, 7, 28, 14, 1, 38, 0, time.UTC),
+	})
+	newer = composeRecord(t, composeSpec{
+		source:       domain.AnalysisSourceModuleZip,
+		artefact:     "zip:h1:z4yfnGrZ7netVz+0EDJ0Wi+5VZCSYp4Z0m2dk6cEM60=",
+		completeness: domain.CompletenessMetadataOnly,
+		status:       domain.CallGraphStatusLoadFailed,
+		detail:       "no packages successfully loaded",
+		cause:        domain.FailureCauseModule,
+		nodeless:     true,
+		extractedAt:  time.Date(2026, 7, 31, 11, 55, 35, 0, time.UTC),
+	})
+	return older, newer
+}
+
+// TestCompose_RecordPredatingAFieldIsSupersededNotConflicting is the regression.
+//
+// Two generations of ONE failed extraction, the older written before the failure
+// cause was recordable. They do not disagree about the graph — neither states one
+// — and the only field they differ on is one the older predates. That is a
+// lineage, the newest generation answers it, and refusing it left the reader with
+// no answer at all for ten coordinates on the real store.
+func TestCompose_RecordPredatingAFieldIsSupersededNotConflicting(t *testing.T) {
+	t.Parallel()
+	older, newer := failurePair(t)
+
+	// Without this the test could pass on records that were never distinguishable
+	// in the first place: the whole-record comparison is what used to refuse them.
+	if older.ContentHash == newer.ContentHash {
+		t.Fatal("the two generations seal to one hash, so nothing here is being composed")
+	}
+	if domain.GraphDigest(older) == domain.GraphDigest(newer) {
+		t.Fatal("the whole-record digests already agree, so this test cannot show the refinement")
+	}
+
+	got, err := domain.Compose([]domain.CallGraphRecord{older, newer}, domain.ComposeRequest{})
+	if err != nil {
+		t.Fatalf("Compose refused one lineage over a field the older generation predates: %v", err)
+	}
+	if got.ContentHash != newer.ContentHash {
+		t.Errorf("served %q, want the newest generation %q", got.ContentHash, newer.ContentHash)
+	}
+	if got.FailureCause != domain.FailureCauseModule {
+		t.Errorf("served a record stating cause %q, want the recorded cause to survive composition", got.FailureCause)
+	}
+}
+
+// TestCompose_SupersessionIsNotSpecificToOneField says the rule is about fields a
+// record predates rather than about failure_cause, by running it on a field the
+// domain does not treat specially at all.
+//
+// A field added tomorrow gets the same treatment for the same reason: the older
+// generation states nothing for it, so it cannot be contradicting the newer one.
+func TestCompose_SupersessionIsNotSpecificToOneField(t *testing.T) {
+	t.Parallel()
+	older := composeRecord(t, composeSpec{
+		artefact: "zip:h1:a", completeness: domain.CompletenessBuiltWithBodies, symbol: "Same",
+		extractedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	})
+	newer := composeRecord(t, composeSpec{
+		source: domain.AnalysisSourceModuleZip, artefact: "zip:h1:a",
+		completeness: domain.CompletenessBuiltWithBodies, symbol: "Same",
+		extractedAt: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+	})
+	// The failed-package list is omitted from a record that states none, so a
+	// generation carrying it looks to the comparison exactly like a generation
+	// that gained a new field: present on one side, absent on the other. That is
+	// the shape the rule is written against, and failure_cause is only one
+	// instance of it.
+	stated := older
+	stated.FailedPackages = []string{"example.com/mod/internal/x"}
+
+	// Both directions. Which generation states the field must not decide the
+	// outcome — an absent value is not a claim whichever side it is on, and a rule
+	// that only looked forward would refuse as soon as a field stopped being
+	// written.
+	for _, order := range [][]domain.CallGraphRecord{
+		{older, func() domain.CallGraphRecord { r := newer; r.FailedPackages = stated.FailedPackages; return r }()},
+		{stated, newer},
+	} {
+		if _, err := domain.Compose(order, domain.ComposeRequest{}); err != nil {
+			t.Fatalf("Compose refused over a field only one generation states: %v", err)
+		}
+	}
+}
+
+// TestCompose_GenuineGraphDisagreementStillRefuses keeps the narrowing honest.
+// Nodes are stated by every generation, so two records that state different ones
+// are contradicting each other rather than refining each other, and that must
+// still fail closed.
+func TestCompose_GenuineGraphDisagreementStillRefuses(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name string
+		a, b domain.CallGraphRecord
+	}{
+		{
+			name: "two built graphs with different nodes",
+			a: composeRecord(t, composeSpec{
+				artefact: "zip:h1:a", completeness: domain.CompletenessBuiltWithBodies, symbol: "Foo",
+				source: domain.AnalysisSourceModuleZip,
+			}),
+			b: composeRecord(t, composeSpec{
+				artefact: "zip:h1:a", completeness: domain.CompletenessBuiltWithBodies, symbol: "Bar",
+				source: domain.AnalysisSourceModuleZip,
+			}),
+		},
+		{
+			name: "a graph against a failure at the same completeness",
+			a: composeRecord(t, composeSpec{
+				artefact: "zip:h1:a", completeness: domain.CompletenessMetadataOnly, symbol: "Foo",
+				source: domain.AnalysisSourceModuleZip,
+			}),
+			b: composeRecord(t, composeSpec{
+				artefact: "zip:h1:a", completeness: domain.CompletenessMetadataOnly,
+				status: domain.CallGraphStatusLoadFailed, detail: "no packages successfully loaded",
+				cause: domain.FailureCauseModule, nodeless: true,
+				source: domain.AnalysisSourceModuleZip,
+			}),
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			_, err := domain.Compose([]domain.CallGraphRecord{tc.a, tc.b}, domain.ComposeRequest{})
+			var conflict domain.CallGraphConflict
+			if !errors.As(err, &conflict) {
+				t.Fatalf("records disagreeing about the graph composed to an answer: err=%v", err)
+			}
+			if conflict.Field != domain.ConflictFieldCallGraph {
+				t.Errorf("conflict field %q, want %q", conflict.Field, domain.ConflictFieldCallGraph)
+			}
+			if len(conflict.Values) != 2 || conflict.Values[0] == conflict.Values[1] {
+				t.Errorf("conflict reported values %v, want two distinct graph digests", conflict.Values)
+			}
+			// The remedy sends the reader to callgraph-show --history, which prints
+			// each generation's whole-record graph digest. The refusal must name the
+			// same digests, or the reader has nothing to match the two against.
+			byHash := map[string]domain.CallGraphRecord{
+				tc.a.ContentHash: tc.a,
+				tc.b.ContentHash: tc.b,
+			}
+			for i, hash := range conflict.ContentHashes {
+				record, ok := byHash[hash]
+				if !ok {
+					t.Fatalf("conflict names record %q, which is not one of the two composed", hash)
+				}
+				if got := domain.GraphDigest(record); got != conflict.Values[i] {
+					t.Errorf("conflict value %d is %q, want the digest --history prints for %q: %q",
+						i, conflict.Values[i], hash, got)
+				}
+			}
+			// The refusal is permanent under the store's rules, so it has to say what
+			// to run. A dead end is what made the live one unusable.
+			for _, want := range []string{
+				"kanonarion callgraph-show example.com/mod@v1.0.0 --history",
+				"kanonarion callgraph example.com/mod@v1.0.0 --force",
+			} {
+				if !strings.Contains(err.Error(), want) {
+					t.Errorf("refusal does not name %q:\n%s", want, err)
+				}
+			}
+		})
+	}
+}
+
+// TestCallGraphConflict_EveryFieldNamesARemedy: a refusal with no exit is a dead
+// end, and the store rules make it permanent. Enumerating from ConflictFields
+// rather than from a list written out here is what makes a field added later
+// fail this test instead of shipping without a remedy.
+func TestCallGraphConflict_EveryFieldNamesARemedy(t *testing.T) {
+	t.Parallel()
+	coord, err := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	if err != nil {
+		t.Fatalf("NewModuleCoordinate: %v", err)
+	}
+	seen := map[string]bool{}
+	for _, field := range domain.ConflictFields() {
+		conflict := domain.CallGraphConflict{Coordinate: coord, PipelineVersion: "0.3.0", Field: field}
+		remedy := conflict.Remedy()
+		if remedy.Lead == "" || len(remedy.Lines) == 0 {
+			t.Errorf("conflict field %q names no remedy: %+v", field, remedy)
+			continue
+		}
+		for _, line := range remedy.Lines {
+			if !strings.HasPrefix(line, "kanonarion ") {
+				t.Errorf("remedy line %q for %q is not a whole invocation", line, field)
+			}
+		}
+		if !strings.Contains(conflict.Error(), remedy.String()) {
+			t.Errorf("the rendered refusal for %q drops its own remedy:\n%s", field, conflict.Error())
+		}
+		if seen[remedy.String()] {
+			t.Errorf("conflict field %q reuses another field's remedy; the routes out are not the same", field)
+		}
+		seen[remedy.String()] = true
+	}
+}
+
+// TestCallGraphConflict_RemedyRendersOneInvocationPerLine pins the shape the CLI
+// contract test relies on: prose only in the lead, one whole command per line.
+func TestCallGraphConflict_RemedyRendersOneInvocationPerLine(t *testing.T) {
+	t.Parallel()
+	remedy := domain.Remedy{Lead: "Run", Lines: []string{"kanonarion callgraph-show m@v1 --history"}}
+	want := "Run:\n  kanonarion callgraph-show m@v1 --history"
+	if got := remedy.String(); got != want {
+		t.Errorf("Remedy.String() = %q, want %q", got, want)
 	}
 }

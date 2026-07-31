@@ -42,6 +42,26 @@ never established. Such a snapshot therefore reads as *unverifiable*, which is
 what it honestly is; it is still returned and still serves a scan. They age out
 as fresh snapshots are fetched.
 
+The snapshot is also counted. When a scan extracts the pinned database it counts
+the advisories the extracted tree holds, and a database holding none fails the
+scan naming the snapshot and the count. `govulncheck` reports
+`No vulnerabilities found.` and exits 0 against an empty database, so scanning
+against one would seal a `Clean` verdict for every module while consulting
+nothing — a confident negative derived from no analysis, indistinguishable from
+a measured clean. This is a precondition failure, not a per-module outcome: the
+operator asked for a measurement the supplied database cannot produce, and
+recording 128 `Unscannable` modules would bury the one fact that matters.
+
+A populated database records its count onto the snapshot every record in the run
+names, shown as the `Advisories` line of `vuln` and `vuln-scan-show`. That is
+what lets a reader tell a clean scan against six thousand advisories from a clean
+scan against three. Records written before the count existed report it as *not
+recorded* rather than as zero — a measured zero cannot exist, because such a scan
+is refused. Note the limit: the count detects an **empty** database, not a
+truncated one. A database that lost most of itself still parses and still counts,
+and nothing readable from it says how many entries it ought to have had, so the
+count is carried to the reader rather than judged.
+
 The module must have been fetched first (`kanonarion walk` or `kanonarion fetch`).
 
 ### Prerequisites
@@ -181,7 +201,9 @@ fresh each time and is not served from the coordinate cache.
 | `--callgraph-workers` | `1` | Maximum number of concurrent on-demand callgraph subprocesses (SSA builds are memory-heavy; keep low) |
 | `--go-binary` | _(from `PATH`)_ | Path to the `go` binary if not on `PATH` (used by on-demand callgraph extraction) |
 | `--binary-pre-pass` | `false` | Fast binary-mode pre-pass; source mode only for affected modules |
+| `--no-vendor` | `false` | Analyse the fetched artefacts even when the project is vendored. By default a project carrying `vendor/modules.txt` is analysed from `vendor/`, the source it actually compiles |
 | `--operator` | `$USER` | Operator name recorded in the scan run |
+| `--no-progress` | `false` | Suppress stderr progress output (the throttled heartbeat and any per-module progress lines); results and warnings are unaffected |
 | `--log-level` | `warn` | Log level: `debug`, `info`, `warn`, `error` |
 
 **Examples:**
@@ -354,6 +376,7 @@ Operator:    alice
 Started:     2024-01-15T10:29:55Z
 Completed:   2024-01-15T10:30:02Z
 Snapshot:    vuln.go.dev@20240115000000
+Advisories:  6027 in the snapshot scanned against
 Modules:     3
 ```
 
@@ -403,6 +426,7 @@ github.com/gorilla/csrf@v1.7.3 - Affected
   First validated: 2026-06-29T17:19:15Z
   Last validated:  2026-06-29T17:19:15Z
   Snapshot:        vuln.go.dev@2026-06-16T23:55:18Z
+  Advisories:      6027 in the snapshot scanned against
   GO-2025-3884 (CVE-2025-47909): Improper validation of TrustedOrigins allows CSRF attacks in github.com/gorilla/csrf
       affected: >= v1.7.3
       fix:      no fix available
@@ -423,6 +447,7 @@ go.etcd.io/bbolt@v1.4.3 — Withdrawn
   First validated: 2026-07-28T06:06:20Z
   Last validated:  2026-07-28T06:06:20Z
   Snapshot:        vuln.go.dev@2026-07-27T16:28:49Z
+  Advisories:      6027 in the snapshot scanned against
   GO-2026-4923 (CVE-2026-33817, GHSA-6jwv-w5xf-7j27) [not reachable]: WITHDRAWN: out-of-range-index in go.etcd.io/bbolt
       WITHDRAWN: advisory retracted upstream 2026-04-08T13:33:56Z — not a finding against this module
       fix:      no fix available
@@ -512,6 +537,70 @@ genuine build incompatibility that still falls back to metadata logs at `warn`,
 and a hard scanner fault logs at `error`. Nothing is dumped as a warning per
 out-of-toolchain module. Run with `--log-level debug` to see the raw
 `govulncheck` stderr behind an `Unscannable` verdict.
+
+### Which bytes were analysed
+
+A module version has more than one copy on disk: the zip kanonarion fetched and
+holds in its blob store, and — for a vendored project — the tree under `vendor/`
+that the project actually compiles. They can differ, and detecting exactly that
+divergence is what the tool is for, so every vulnerability record names the
+surface its verdict was reached from:
+
+| `analysis_surface` | Meaning |
+|------|---------|
+| `vendored` | The build was analysed from the project's `vendor/` tree under `-mod=vendor`. The bytes measured are the bytes the project compiles |
+| `fetched` | The build was resolved from artefacts kanonarion fetched — the blob-store-populated module cache, or the host cache under `--from-modcache` |
+
+A vendored project is detected automatically: `vendor/modules.txt` alongside the
+target `go.mod` is the signal, and no flag is needed to opt in. The whole build
+is then analysed in one pass from `vendor/`, which means no dependency is
+resolved on its own — so a dependency shipping no `go.mod` (every dependency
+published before Go modules) needs no synthesised one, and MVS is not re-run, so
+no version can be out of the toolchain. Both of those coverage gaps are
+artefacts of isolated resolution and cannot arise on this path.
+
+`--no-vendor` forces the fetched surface for comparison. It is a real override
+rather than an absence of preference: the Go toolchain defaults to `-mod=vendor`
+whenever `vendor/modules.txt` is present, so the fetch path has to be requested
+explicitly, and the run then records `fetched`. Running both surfaces over one
+project is how a divergence between the vendored tree and the published
+artefacts becomes visible.
+
+A module reached through a `replace` directive is vendored under its **original**
+module path, with the replacement named only on the `modules.txt` comment line
+(`# original v1.2.1 => replacement v1.2.4`), while the walk's resolved build list
+keys on the replacement coordinate. The coordinate is resolved through that
+mapping before its presence in the tree is judged, so a replaced dependency is
+analysed like any other.
+
+A module in the walk's build list that `vendor/` holds no files for is recorded
+`Unscannable` with reason `absent-from-vendor`, never quietly fetched and
+scanned in its place. Substituting a fetched artefact for an absent vendored one
+would report findings about bytes the project does not build, under a verdict a
+reader would take for the build's — which is the divergence choosing the
+vendored surface exists to close. The reason's prose distinguishes the two ways
+a module can be absent: listed in `modules.txt` with no files under `vendor/`
+(an incomplete vendor tree, the same inconsistency `kanonarion vendor` reports),
+or not listed at all (`go mod vendor` pruned it as contributing no imported
+package).
+
+Records written before this field existed read as `fetched`: nothing consumed a
+vendored tree then, so that is what those bytes mean.
+
+`kanonarion vuln-scan <walk-id>` reaches the vendored surface too. A project walk
+records the directory it was taken from, and a scan by walk id - which is given
+no directory of its own - reads it back, so the same walk does not answer one way
+under `--gomod` and another way under its id. A directory the caller supplies
+always wins over the recorded one.
+
+The recorded directory is provenance, never an oracle. If it no longer exists, or
+no longer holds `vendor/modules.txt`, the scan does not fail: it proceeds on the
+fetched surface, every record says `fetched`, and the run log names the directory
+and the reason. A moved or deleted checkout must not make a stored walk
+unscannable. `--no-vendor` is honoured before the directory is reached for at
+all, since it is only ever adopted to reach the vendored surface.
+
+---
 
 ### How an `Unscannable` module is displayed
 

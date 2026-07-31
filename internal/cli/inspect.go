@@ -104,7 +104,7 @@ that is tight on memory.`,
 	cmd.Flags().StringVar(&f.gomodPath, "gomod", "", "path to a go.mod file; run the pipeline over the project's code dependencies and print a summary (default: ./go.mod)")
 	cmd.Flags().BoolVar(&f.tool, "tool", false, "scope to the tooling supply chain (the go.mod tool directives' closure)")
 	cmd.Flags().BoolVar(&f.project, "project", false, "scope to the complete set: the project's code AND tooling")
-	cmd.Flags().BoolVar(&f.noProgress, "no-progress", false, "suppress the stderr fetch-progress heartbeat (default: heartbeat on for long runs)")
+	registerNoProgressFlag(cmd, &f.noProgress)
 	registerStdlibFromGoModFlag(cmd, &f.stdlibFromGoMod)
 
 	return cmd
@@ -167,7 +167,7 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 	// reader with the repetitive half of the presentation and threw away the
 	// concise half. stdout stays the clean data channel because inspect always
 	// scans with jsonOut=false, so nothing machine-readable is written here.
-	if err := runVulnScan(ctx, walkID, f.force, f.fresh, f.reachable, 1, false, false, f.goBinary, os.Getenv("USER"), "", f.policyPath, stderr, stderr); err != nil {
+	if err := runVulnScan(ctx, walkID, f.force, f.fresh, f.reachable, 1, false, false, f.goBinary, os.Getenv("USER"), "", f.policyPath, false, f.noProgress, stderr, stderr); err != nil {
 		return fmt.Errorf("vuln-scan: %w", err)
 	}
 
@@ -358,7 +358,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 		// stderr, not io.Discard — see the note on the same call in runInspect:
 		// the grouped roll-up is the concise presentation and belongs to the
 		// reader, while stdout stays reserved for the context output.
-		if verr := runVulnScan(ctx, walkID, f.force, f.fresh, f.reachable, 1, false, false, f.goBinary, os.Getenv("USER"), filepath.Dir(f.gomodPath), f.policyPath, stderr, stderr); verr != nil {
+		if verr := runVulnScan(ctx, walkID, f.force, f.fresh, f.reachable, 1, false, false, f.goBinary, os.Getenv("USER"), filepath.Dir(f.gomodPath), f.policyPath, false, f.noProgress, stderr, stderr); verr != nil {
 			_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", verr)
 			scanFails = 1
 		}
@@ -388,7 +388,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 			if runs[0].FindingsStatus == vuldomain.FindingsAffected {
 				affectedCount = runs[0].Counts.Affected
 			}
-			snapshotVersion = runs[0].Snapshot.Version
+			snapshotVersion = runs[0].Snapshot.Version()
 		}
 	}
 

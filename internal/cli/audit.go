@@ -15,8 +15,8 @@ import (
 	"github.com/spf13/cobra"
 
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
-	fetchapp "github.com/eitanity/kanonarion/internal/fetch/application"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	staleapp "github.com/eitanity/kanonarion/internal/staleness/application"
 
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
@@ -36,6 +36,7 @@ type auditFlags struct {
 	stdlibFromGoMod bool
 	fromModcache    string
 	policyPath      string
+	noProgress      bool
 }
 
 func newAuditCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -57,7 +58,14 @@ This collapses the walk → vuln-scan → license-list workflow into a single ca
 The dependency scope is consistent with every go.mod command: the default is the
 project's own build dependencies (the code your packages import, incl. tests);
 --tool audits the tooling supply chain; --project audits the complete set (code
-+ tooling).`,
++ tooling).
+
+Exit codes:
+  0  every dependency resolved and no licence-policy block
+  5  the governance gate fired: dependencies with an undetermined licence are
+     blocked by policy (unknown_license=block) — the table is still printed
+  10 a walk node failed its integrity check
+  20 bad invocation, unresolvable go.mod, or a policy file that could not be read`,
 		Example: `  kanonarion audit
   kanonarion audit --gomod ./go.mod
   kanonarion audit --gomod ./go.mod --json
@@ -72,7 +80,7 @@ project's own build dependencies (the code your packages import, incl. tests);
 	cmd.Flags().StringVar(&f.gomodPath, "gomod", "", "path to go.mod file (default: ./go.mod)")
 	cmd.Flags().StringVar(&f.goproxy, "goproxy", "", "override GOPROXY (default: $GOPROXY or proxy.golang.org)")
 	cmd.Flags().BoolVar(&f.force, "force", false, "re-fetch and re-scan even if cached records exist")
-	cmd.Flags().BoolVar(&f.fresh, "fresh", false, "fetch fresh vulnerability database snapshot from network")
+	cmd.Flags().BoolVar(&f.fresh, "fresh", false, "bypass cached network answers: fetch a fresh vulnerability database snapshot and re-query latest versions instead of serving the staleness ledger")
 	cmd.Flags().BoolVar(&f.tool, "tool", false, "scope to the tooling supply chain (the go.mod tool directives' closure)")
 	cmd.Flags().BoolVar(&f.project, "project", false, "scope to the complete set: the project's code AND tooling")
 	cmd.Flags().BoolVar(&f.skipVCSVerify, "skip-vcs-verify", false, "skip git cross-verification; sumdb verification still runs")
@@ -80,6 +88,7 @@ project's own build dependencies (the code your packages import, incl. tests);
 	registerStdlibFromGoModFlag(cmd, &f.stdlibFromGoMod)
 	registerFromModcacheFlag(cmd, &f.fromModcache)
 	registerAllowVerificationDowngradeFlag(cmd)
+	registerNoProgressFlag(cmd, &f.noProgress)
 
 	return cmd
 }
@@ -126,6 +135,18 @@ type auditModuleResult struct {
 	IsLatest       bool   `json:"is_latest"`
 	LatestVersion  string `json:"latest_version,omitempty"`
 	DaysBehind     int    `json:"days_behind,omitempty"`
+	// NewerMajorModule/NewerMajorLatest are the SEPARATE major-line fact: a
+	// module's next major version lives at a different path, so IsLatest — which
+	// is about this path — can be true while a whole major line is available.
+	// The two are never merged.
+	NewerMajorModule string `json:"newer_major_module,omitempty"`
+	NewerMajorLatest string `json:"newer_major_latest,omitempty"`
+	// MajorProbed separates "probed, none newer" from "not probed" (offline
+	// runs, or a probe whose request failed).
+	MajorProbed bool `json:"major_probed"`
+	// StalenessLookedUpAt is when the proxy was asked for this row's staleness.
+	// A row served from the ledger carries the original lookup time.
+	StalenessLookedUpAt time.Time `json:"staleness_looked_up_at,omitzero"`
 	// Direct is true when this module is a direct dependency in the audited
 	// go.mod. The report covers the whole scoped build list, so transitive
 	// modules (Direct=false) appear alongside direct ones and the
@@ -192,15 +213,20 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	// The staleness column consults the network proxy for each module's latest
 	// version. In --from-modcache mode the run is fully offline, so the proxy is
 	// left nil and staleness is reported as "current".
-	var proxy *proxyadapter.Proxy
+	var staleness *staleapp.Resolver
 	if !modcacheMode {
-		proxy, err = proxyadapter.New(f.goproxy, false)
-		if err != nil {
-			return fmt.Errorf("creating proxy adapter: %w", err)
+		proxy, perr := proxyadapter.New(f.goproxy, false)
+		if perr != nil {
+			return fmt.Errorf("creating proxy adapter: %w", perr)
 		}
+		// The same ledger `latest` writes. Every successful lookup either
+		// command makes is served to the other inside the TTL, which is the
+		// whole point: the two commands were re-paying the same sweep minutes
+		// apart.
+		staleness = newStalenessResolver(proxy, ctr.StalenessLedger, activeConfig.Staleness.TTL, f.fresh)
 	}
 
-	results, err := auditScope(ctx, coords, scope, f, proxy, ctr, stderr)
+	results, err := auditScope(ctx, coords, scope, f, staleness, ctr, stderr)
 	if err != nil {
 		return err
 	}
@@ -246,7 +272,7 @@ func auditScope(
 	coords []string,
 	scope depScope,
 	f auditFlags,
-	proxy *proxyadapter.Proxy,
+	staleness *staleapp.Resolver,
 	ctr *Container,
 	stderr io.Writer,
 ) ([]auditModuleResult, error) {
@@ -255,9 +281,15 @@ func auditScope(
 		return nil, err
 	}
 
-	_, _ = fmt.Fprintf(stderr, "==> audit: walking project %s (%d %s dependencies)\n", f.gomodPath, len(coords), scope)
+	// audit narrates three stages on stderr and drives a walk and a scan that
+	// narrate per module beneath them. All of it is progress, and all of it goes
+	// to progressOut, which --no-progress silences. The stage failures below keep
+	// writing to stderr: a silenced audit still reports that the walk or the scan
+	// went wrong, because those are not progress.
+	progressOut := progressWriter(stderr, f.noProgress)
+	_, _ = fmt.Fprintf(progressOut, "==> audit: walking project %s (%d %s dependencies)\n", f.gomodPath, len(coords), scope)
 
-	progress := newWalkProgressReporter(stderr, false, activeConfig, logLevel)
+	progress := newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
 	if werr := runWalkProject(ctx, f.gomodPath, f.force, true, 0, "", f.policyPath, f.skipVCSVerify, scope,
 		walkdomain.WalkDepthFull, "", false, f.stdlibFromGoMod, progress, ctr.ExecuteWalk, nil, io.Discard, stderr); werr != nil {
 		// A partial walk is tolerated (allowPartial=true above): individual
@@ -298,14 +330,14 @@ func auditScope(
 		return nil, gateErr
 	}
 
-	_, _ = fmt.Fprintf(stderr, "==> audit: extracting licenses for walk %s\n", walkID)
-	ef := extractFlags{stages: []string{"license"}, force: f.force}
+	_, _ = fmt.Fprintf(progressOut, "==> audit: extracting licenses for walk %s\n", walkID)
+	ef := extractFlags{stages: []string{"license"}, force: f.force, noProgress: f.noProgress}
 	if eerr := runExtract(ctx, walkID, ef, io.Discard, stderr); eerr != nil {
 		_, _ = fmt.Fprintf(stderr, "extract: %v\n", eerr)
 	}
 
-	_, _ = fmt.Fprintf(stderr, "==> audit: scanning vulnerabilities for walk %s\n", walkID)
-	if verr := runVulnScan(ctx, walkID, f.force, f.fresh, false, 1, false, false, "", os.Getenv("USER"), filepath.Dir(f.gomodPath), f.policyPath, io.Discard, stderr); verr != nil {
+	_, _ = fmt.Fprintf(progressOut, "==> audit: scanning vulnerabilities for walk %s\n", walkID)
+	if verr := runVulnScan(ctx, walkID, f.force, f.fresh, false, 1, false, false, "", os.Getenv("USER"), filepath.Dir(f.gomodPath), f.policyPath, false, f.noProgress, io.Discard, stderr); verr != nil {
 		_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", verr)
 	}
 
@@ -320,7 +352,7 @@ func auditScope(
 	depNodes := auditDependencyNodes(rec, localCoord)
 	results := make([]auditModuleResult, 0, len(depNodes))
 	for _, node := range depNodes {
-		res, rerr := buildAuditResult(ctx, node, walkID, string(walkScope), overrides, proxy, ctr)
+		res, rerr := buildAuditResult(ctx, node, walkID, string(walkScope), overrides, staleness, ctr, stderr)
 		if rerr != nil {
 			return nil, rerr
 		}
@@ -347,7 +379,7 @@ func auditDependencyNodes(rec walkdomain.WalkRecord, local coordinate.ModuleCoor
 	return nodes
 }
 
-func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, scope string, overrides licdomain.LicenseOverrideSet, proxy *proxyadapter.Proxy, ctr *Container) (auditModuleResult, error) {
+func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, scope string, overrides licdomain.LicenseOverrideSet, staleness *staleapp.Resolver, ctr *Container, stderr io.Writer) (auditModuleResult, error) {
 	coordStr := node.Coordinate.String()
 	coord, err := parseCoordinate(coordStr)
 	if err != nil {
@@ -371,13 +403,26 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, sc
 		IsLatest:      true,
 	}
 
-	if proxy != nil {
-		if info, lerr := proxy.LatestInfo(ctx, coord.Path()); lerr == nil && info.Version != coord.Version() {
-			res.IsLatest = false
-			res.LatestVersion = info.Version
-			if !info.Time.IsZero() {
-				res.DaysBehind = int(time.Since(info.Time).Hours() / 24)
+	if staleness != nil {
+		ans, lerr := staleness.Resolve(ctx, coord.Path(), coord.Version())
+		if lerr != nil {
+			// Reported, never swallowed: a module whose staleness could not be
+			// resolved keeps MajorProbed false and IsLatest true-by-default, and
+			// the reader is told which one it was.
+			_, _ = fmt.Fprintf(stderr, "staleness %s: %v\n", coord.Path(), lerr)
+		}
+		if ans.LatestVersion != "" {
+			res.StalenessLookedUpAt = ans.LookedUpAt
+			if ans.LatestVersion != coord.Version() {
+				res.IsLatest = false
+				res.LatestVersion = ans.LatestVersion
+				if !ans.LatestPublishedAt.IsZero() {
+					res.DaysBehind = int(time.Since(ans.LatestPublishedAt).Hours() / 24)
+				}
 			}
+			res.MajorProbed = ans.NewerMajor.Probed
+			res.NewerMajorModule = ans.NewerMajor.Path
+			res.NewerMajorLatest = ans.NewerMajor.Version
 		}
 	}
 
@@ -385,7 +430,7 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, sc
 		return res, nil
 	}
 
-	if frec, found, ferr := ctr.QueryFetch.GetFetchRecord(ctx, coord, fetchapp.PipelineVersion); ferr == nil && found {
+	if frec, found, ferr := ctr.QueryFetch.ComposeFetchRecord(ctx, coord); ferr == nil && found {
 		res.Verification = frec.VerificationStatus
 		res.coverage = fetchdomain.CoverageObservation{
 			Bucket:   fetchdomain.BucketForVerification(fetchdomain.VerificationStatus(frec.VerificationStatus)),
@@ -579,7 +624,7 @@ func auditBlockingErr(results []auditModuleResult) error {
 	if len(blocked) == 0 {
 		return nil
 	}
-	return &exitError{code: ExitConfig, msg: fmt.Sprintf(
+	return &exitError{code: ExitPolicy, msg: fmt.Sprintf(
 		"license policy: %d dependency(ies) with an undetermined license blocked by policy (unknown_license=block): %s",
 		len(blocked), strings.Join(blocked, ", "))}
 }
@@ -629,6 +674,12 @@ func printAuditTable(stdout io.Writer, results []auditModuleResult) error {
 				staleness = fmt.Sprintf("latest: %s (%d days ago)", r.LatestVersion, r.DaysBehind)
 			}
 		}
+		// Appended, not substituted. "current" remains true of this module path;
+		// the newer major line is a second fact stated beside it, so a module
+		// several majors behind no longer reads as up to date.
+		if r.MajorProbed && r.NewerMajorModule != "" {
+			staleness += fmt.Sprintf("; newer major: %s@%s", r.NewerMajorModule, r.NewerMajorLatest)
+		}
 		policy := r.PolicyOutcome
 		if r.LicenseCategory != "" {
 			policy = fmt.Sprintf("%s [%s]", r.PolicyOutcome, r.LicenseCategory)
@@ -653,6 +704,24 @@ func printAuditTable(stdout io.Writer, results []auditModuleResult) error {
 			)
 		}
 		if err != nil {
+			return fmt.Errorf("writing output: %w", err)
+		}
+	}
+	// The staleness column is dated by its OLDEST lookup: a table where most
+	// rows were served from the ledger and a few re-queried is only as current
+	// as the row asked about longest ago.
+	var oldest time.Time
+	for _, r := range results {
+		if r.StalenessLookedUpAt.IsZero() {
+			continue
+		}
+		if oldest.IsZero() || r.StalenessLookedUpAt.Before(oldest) {
+			oldest = r.StalenessLookedUpAt
+		}
+	}
+	if asOf := stalenessAsOf(oldest); asOf != "" {
+		if _, err := fmt.Fprintf(stdout, "\nlatest as of %s (staleness.ttl %s; --fresh to re-query)\n",
+			asOf, activeConfig.Staleness.TTL); err != nil {
 			return fmt.Errorf("writing output: %w", err)
 		}
 	}

@@ -8,7 +8,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 	"github.com/eitanity/kanonarion/internal/vuln/application"
-	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -50,14 +50,14 @@ func TestScanWalk_WithRealModcache_UsesProvidedDir(t *testing.T) {
 	// Force the heavy scan (past the metadata pre-filter) so the scanner — and
 	// thus the GOMODCACHE argument — is actually exercised.
 	db := &fakeDatabase{
-		snapshot:    domain.DatabaseSnapshot{Source: "test", Version: "v1"},
+		snapshot:    vulntest.MustNew("test", "v1"),
 		vulnerables: map[coordinate.ModuleCoordinate][]string{coord: {"GO-VULN-ID"}},
 	}
 	vulnStore := newFakeVulnStore()
 	scanner := &fakeScanner{}
 
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", slog.Default(),
 	)
 	const realCache = "/tmp/existing-modcache-fixture"
 	walkUC := application.NewScanWalkUseCase(

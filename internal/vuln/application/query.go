@@ -107,19 +107,25 @@ func (uc *QueryScanRunsUseCase) GetRun(ctx context.Context, id string) (domain.W
 }
 
 // ListRunsForWalk returns all scan runs for the given walk ID.
+//
+// The runs the store could verify are returned even when it also reports rows
+// it could not — see ports.UnreadableRuns. Discarding them here would put the
+// choice beyond every caller's reach: a survey command could then only print a
+// list that omits the faulty rows without saying so, or nothing at all.
 func (uc *QueryScanRunsUseCase) ListRunsForWalk(ctx context.Context, walkID string) ([]domain.WalkScanRun, error) {
 	runs, err := uc.store.ListWalkScanRuns(ctx, walkID)
 	if err != nil {
-		return nil, fmt.Errorf("listing scan runs for walk %q: %w", walkID, err)
+		return runs, fmt.Errorf("listing scan runs for walk %q: %w", walkID, err)
 	}
 	return runs, nil
 }
 
-// ListAllRuns returns all scan runs across all walks, most recent first.
+// ListAllRuns returns all scan runs across all walks, most recent first, on the
+// same partial-result terms as ListRunsForWalk.
 func (uc *QueryScanRunsUseCase) ListAllRuns(ctx context.Context) ([]domain.WalkScanRun, error) {
 	runs, err := uc.store.ListAllWalkScanRuns(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("listing all scan runs: %w", err)
+		return runs, fmt.Errorf("listing all scan runs: %w", err)
 	}
 	return runs, nil
 }

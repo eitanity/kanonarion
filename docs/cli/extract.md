@@ -33,7 +33,7 @@ kanonarion extract 01J1Z... --force
 | `--workers` | `runtime.NumCPU()` | Number of modules to process concurrently |
 | `--json` | false | Output extraction run record as JSON |
 | `--go-binary` | | Path to `go` binary (used for callgraph stage) |
-| `--no-progress` | false | Suppress the stderr extraction-progress heartbeat |
+| `--no-progress` | false | Suppress stderr progress output (the throttled extraction heartbeat); results and warnings are unaffected |
 
 > **Note:** `callgraph` is not run by default. It loads each module's full
 > transitive dependency closure into SSA and will exhaust available RAM on

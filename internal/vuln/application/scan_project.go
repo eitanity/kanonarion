@@ -3,11 +3,14 @@ package application
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/ports"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
@@ -21,7 +24,9 @@ import (
 //
 // It writes one moduleResult per coordinate into out and persists each record,
 // mirroring how the isolated worker pool persists via the module scanner, so the
-// shared tally/status/run-persist path downstream is unchanged.
+// shared tally/status/run-persist path downstream is unchanged. A record the
+// store would not accept is returned as an error, because the tally downstream
+// reads out as the run's set of stored verdicts.
 func (uc *ScanWalkUseCase) scanProjectRooted(
 	ctx context.Context,
 	walk walkdomain.WalkRecord,
@@ -29,25 +34,60 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 	params ScanWalkParams,
 	snapshot *domain.DatabaseSnapshot,
 	vulnDBDir string,
+	closure ports.VendoredClosure,
 	out map[coordinate.ModuleCoordinate]moduleResult,
-) {
+) error {
 	root := walk.Target
 
-	result, err := uc.moduleScanner.scanner.ScanProject(ctx, params.ProjectDir, *snapshot, vulnDBDir)
+	// The surface this run asked for. The scanner reports back the one it could
+	// actually use, which is what every record names; this stands in only when
+	// the scan failed before reporting anything, so a fault is still filed under
+	// the regime the run was operating in rather than under a blank field.
+	requested := domain.AnalysisSurfaceFetched
+	if closure.Vendored {
+		requested = domain.AnalysisSurfaceVendored
+	}
+
+	result, err := uc.moduleScanner.scanner.ScanProject(ctx, ports.ProjectScanRequest{
+		ProjectDir: params.ProjectDir,
+		Snapshot:   *snapshot,
+		DBDir:      vulnDBDir,
+		Vendored:   closure.Vendored,
+	})
 	if err != nil {
 		uc.logger.Error("project-rooted scan failed", "root", root, "error", err)
-		uc.fillProjectFault(ctx, root, allCoords, params, snapshot, out, domain.StatusScanFailed, "", "", err.Error())
-		return
+		return uc.fillProjectFault(ctx, root, allCoords, params, snapshot, closure, requested, out, domain.StatusScanFailed, "", "", err.Error())
+	}
+	surface := result.AnalysisSurface
+	if surface == "" {
+		surface = requested
 	}
 	if result.Status == domain.StatusUnscannable || result.Status == domain.StatusScanFailed {
 		// A genuine fault — no go.mod, OOM, a real build break — surfaces
 		// honestly across the build rather than as a false clean.
-		uc.logger.Warn("project-rooted scan could not analyse the project", "root", root, "status", result.Status)
-		uc.fillProjectFault(ctx, root, allCoords, params, snapshot, out, result.Status, result.UnscanReason, result.UnscannableReason, result.ErrorDetail)
-		return
+		uc.logger.Warn("project-rooted scan could not analyse the project",
+			"root", root, "status", result.Status, "analysis_surface", string(surface))
+		return uc.fillProjectFault(ctx, root, allCoords, params, snapshot, closure, surface, out, result.Status, result.UnscanReason, result.UnscannableReason, result.ErrorDetail)
 	}
 
 	for _, coord := range allCoords {
+		// A module the vendored tree does not hold contributed nothing to the
+		// analysed build, and the honest record says so. The alternative — fetch
+		// this one module from the store and scan it in isolation to fill the gap —
+		// would answer a question about bytes the project does not compile, under a
+		// verdict a reader would take for the build's. That substitution is the
+		// defect the vendored surface exists to close, so the gap is recorded
+		// instead.
+		if reason, absent := absentFromVendor(surface, closure, coord, root); absent {
+			rec, perr := uc.persistProjectRecord(ctx, root, coord, nil, domain.StatusUnscannable,
+				domain.UnscanReasonAbsentFromVendor, reason, "", surface, params, snapshot)
+			if perr != nil {
+				return perr
+			}
+			out[coord] = moduleResult{coord: coord, record: rec}
+			continue
+		}
+
 		// The synthetic standard-library node is analysed like any other module:
 		// govulncheck already reasons over standard-library symbols when run against
 		// the project, so the grouped parse attributes reachable stdlib advisories —
@@ -68,7 +108,10 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 			// checked. Reporting it Clean would be the exact false negative this
 			// path is being fixed for, so it carries the fault instead.
 			uc.logger.Error("project-rooted scan: advisory match by coordinate failed", "coordinate", coord, "error", err)
-			rec := uc.persistProjectRecord(ctx, root, coord, nil, domain.StatusScanFailed, "", "", err.Error(), params, snapshot)
+			rec, perr := uc.persistProjectRecord(ctx, root, coord, nil, domain.StatusScanFailed, "", "", err.Error(), surface, params, snapshot)
+			if perr != nil {
+				return perr
+			}
 			out[coord] = moduleResult{coord: coord, record: rec}
 			continue
 		}
@@ -78,9 +121,13 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 		status := domain.DetermineRecordOverallStatus(
 			domain.CoverageAnalysed, domain.DetermineFindingsAxis(findings),
 		)
-		rec := uc.persistProjectRecord(ctx, root, coord, findings, status, "", "", "", params, snapshot)
+		rec, perr := uc.persistProjectRecord(ctx, root, coord, findings, status, "", "", "", surface, params, snapshot)
+		if perr != nil {
+			return perr
+		}
 		out[coord] = moduleResult{coord: coord, record: rec}
 	}
+	return nil
 }
 
 // mergeCoordinateFindings matches coord's advisory set from the pinned snapshot
@@ -193,27 +240,193 @@ func copyFindings(in []domain.VulnerabilityFinding) []domain.VulnerabilityFindin
 // fillProjectFault records the same honest fault status for every in-build
 // module when the whole project scan could not be produced, so the coverage gap
 // is visible per row rather than silently dropped.
+//
+// The gap is only visible if the rows are there, so a write the store refused is
+// returned as an error rather than skipped.
+//
+// A module the vendored tree does not hold keeps its own, more specific reason
+// even here. The whole-project fault says the build did not analyse; absence
+// from vendor/ says why this particular module could not have been in it, and
+// collapsing the two would hide a structural gap behind a transient one.
 func (uc *ScanWalkUseCase) fillProjectFault(
 	ctx context.Context,
 	root coordinate.ModuleCoordinate,
 	allCoords []coordinate.ModuleCoordinate,
 	params ScanWalkParams,
 	snapshot *domain.DatabaseSnapshot,
+	closure ports.VendoredClosure,
+	surface domain.AnalysisSurface,
 	out map[coordinate.ModuleCoordinate]moduleResult,
 	status domain.VulnerabilityStatus,
 	unscanReason domain.UnscanReason,
 	unscannableReason, errorDetail string,
-) {
+) error {
 	for _, coord := range allCoords {
-		rec := uc.persistProjectRecord(ctx, root, coord, nil, status, unscanReason, unscannableReason, errorDetail, params, snapshot)
+		coordStatus, coordUnscan, coordReason, coordDetail := status, unscanReason, unscannableReason, errorDetail
+		if reason, absent := absentFromVendor(surface, closure, coord, root); absent {
+			coordStatus, coordUnscan, coordReason, coordDetail = domain.StatusUnscannable, domain.UnscanReasonAbsentFromVendor, reason, ""
+		}
+		rec, err := uc.persistProjectRecord(ctx, root, coord, nil, coordStatus, coordUnscan, coordReason, coordDetail, surface, params, snapshot)
+		if err != nil {
+			return err
+		}
 		out[coord] = moduleResult{coord: coord, record: rec}
 	}
+	return nil
+}
+
+// absentFromVendor reports whether coord is a module a vendored analysis could
+// not have measured, and the prose reason naming the absence.
+//
+// It answers only for the vendored surface. On the fetched surface vendor/ is
+// not the source of anything, so its contents say nothing about coverage.
+//
+// The project's own main module is exempt: it is the working tree the analysis
+// is rooted at, and no project vendors itself. So is the synthetic standard
+// library, which the toolchain provides and `go mod vendor` never writes.
+//
+// A coordinate is resolved through the tree's replacement mapping first, and
+// that step is not an optimisation. `go mod vendor` writes a replaced module's
+// files under the ORIGINAL module path and names the replacement only on the
+// modules.txt comment line, while the walk's build list keys on the REPLACEMENT
+// coordinate — so the two names never meet, and a replacement coordinate looked
+// up directly is absent from both Listed and Present no matter how completely
+// the tree holds it. Without the mapping every replaced dependency is dropped
+// from the analysis under a reason that positively asserts `go mod vendor`
+// pruned it, which is a false statement about a module sitting in the tree.
+//
+// The two real absences are distinguished in the prose because they are
+// different facts about the project. A module modules.txt lists but the tree has
+// no files for is an incomplete vendor tree — a real inconsistency, the same one
+// the vendor verifier reports. A module in the walk's build list that modules.txt
+// does not mention at all was pruned by `go mod vendor` as contributing no
+// imported package, which is a coverage gap of the analysis rather than a fault
+// in the project.
+func absentFromVendor(
+	surface domain.AnalysisSurface,
+	closure ports.VendoredClosure,
+	coord, root coordinate.ModuleCoordinate,
+) (string, bool) {
+	if surface != domain.AnalysisSurfaceVendored || !closure.Vendored {
+		return "", false
+	}
+	path := coord.Path()
+	if path == domain.StdlibModulePath || path == root.Path() {
+		return "", false
+	}
+	if original, replaced := closure.ReplacedBy[path]; replaced {
+		path = original
+	}
+	if closure.Present[path] {
+		return "", false
+	}
+	if _, listed := closure.Listed[path]; listed {
+		return "vendor/modules.txt lists this module but the vendored tree holds no files for it, " +
+			"so nothing of it was in the analysed build", true
+	}
+	return "the module is in the walk's build list but vendor/modules.txt does not list it, " +
+		"so `go mod vendor` pruned it and nothing of it was in the analysed build", true
+}
+
+// effectiveProjectDir settles which working tree, if any, this run analyses.
+//
+// A caller that supplied one (--gomod, --tool, --project, the local driver)
+// always wins: it named the tree it means, and the walk's recollection of an
+// older one must not override it. Otherwise — the `vuln-scan <walk-id>` spelling
+// — the walk's own record of where it was taken from is consulted, so a stored
+// walk of a vendored project re-scans onto the source that project compiles
+// rather than onto the fetched artefacts, which is the same walk answering two
+// ways depending on how the operator spelled the command.
+//
+// The recorded directory is provenance, never an oracle. It is adopted only
+// while it still holds the vendored tree that made it worth reaching for; a
+// checkout that has moved, been deleted, or had its vendor/ directory removed
+// leaves the run exactly where it was before this field existed — on the fetched
+// surface, which every record then names — and the reason is logged against the
+// directory itself, so an operator can tell a walk that was never vendored from
+// one whose tree is gone. A moved checkout must not make a stored walk
+// unscannable.
+//
+// --no-vendor is honoured here as an instruction, not merely as a filter later:
+// an operator asking for the fetched surface has no use for a directory that is
+// only ever adopted to reach the vendored one.
+func (uc *ScanWalkUseCase) effectiveProjectDir(params ScanWalkParams, walk walkdomain.WalkRecord) string {
+	if params.ProjectDir != "" {
+		return params.ProjectDir
+	}
+	dir := walk.ProjectDir
+	if dir == "" {
+		// A walk of a published coordinate, or one taken before walks recorded
+		// their root. Neither has a project tree to reach; nothing to say.
+		return ""
+	}
+	if uc.vendoredClosure == nil {
+		// This run cannot read a vendored tree at all, so it cannot reach the
+		// surface the directory exists to reach. Adopting it anyway would only
+		// reroute the analysis — into a project-rooted scan of a tree whose vendor
+		// directory the run is unequipped to account for — which is a different
+		// change from the one the directory was recorded for.
+		return ""
+	}
+	if params.NoVendor {
+		uc.logger.Info("vuln-scan: --no-vendor set, not reaching for the walk's project directory",
+			"walk_id", params.WalkID, "project_dir", dir)
+		return ""
+	}
+	if _, err := os.Stat(dir); err != nil {
+		uc.logger.Warn("vuln-scan: the directory this walk was taken from is no longer available, analysing the fetched artefacts",
+			"walk_id", params.WalkID, "project_dir", dir, "error", err)
+		return ""
+	}
+	if _, err := os.Stat(filepath.Join(dir, "vendor", "modules.txt")); err != nil {
+		uc.logger.Info("vuln-scan: the directory this walk was taken from holds no vendored tree, analysing the fetched artefacts",
+			"walk_id", params.WalkID, "project_dir", dir, "error", err)
+		return ""
+	}
+	uc.logger.Info("vuln-scan: analysing the vendored tree the walk was taken from",
+		"walk_id", params.WalkID, "project_dir", dir)
+	return dir
+}
+
+// resolveVendoredClosure asks the project's working tree whether it is vendored
+// and, if so, which modules its tree holds.
+//
+// A read failure is not fatal and is not silent: the scan continues on the
+// fetched surface, which is a real analysis, and the record every module
+// carries says "fetched" — so the run never claims to have measured the
+// vendored bytes on the strength of a read that did not happen.
+func (uc *ScanWalkUseCase) resolveVendoredClosure(ctx context.Context, params ScanWalkParams) ports.VendoredClosure {
+	if uc.vendoredClosure == nil || params.ProjectDir == "" {
+		return ports.VendoredClosure{}
+	}
+	if params.NoVendor {
+		uc.logger.Info("vuln-scan: --no-vendor set, analysing the fetched artefacts even if the project is vendored",
+			"project_dir", params.ProjectDir)
+		return ports.VendoredClosure{}
+	}
+	closure, err := uc.vendoredClosure.VendoredClosure(ctx, filepath.Join(params.ProjectDir, "go.mod"))
+	if err != nil {
+		uc.logger.Warn("vuln-scan: could not read the project's vendored closure, analysing the fetched artefacts instead",
+			"project_dir", params.ProjectDir, "error", err)
+		return ports.VendoredClosure{}
+	}
+	if closure.Vendored {
+		uc.logger.Info("vuln-scan: project is vendored, analysing the source it compiles",
+			"project_dir", params.ProjectDir, "modules_listed", len(closure.Listed), "modules_present", len(closure.Present))
+	}
+	return closure
 }
 
 // persistProjectRecord builds, hashes and persists one live project-rooted
 // vulnerability record. Record identity (Ecosystem, timestamps, pipeline) is
 // stamped here exactly as the module scanner stamps an isolated record, so the
 // downstream tally, run persistence and queries treat both paths uniformly.
+//
+// A record that could not be sealed or written is returned with an error, the
+// same rule the isolated module scanner and persistSealed apply. This site used
+// to log the failure and hand the in-memory record back: the caller then wrote
+// it into the results map, the tally counted it towards analysed and clean, and
+// the summary described as measured a module whose verdict was never stored.
 func (uc *ScanWalkUseCase) persistProjectRecord(
 	ctx context.Context,
 	root coordinate.ModuleCoordinate,
@@ -222,9 +435,17 @@ func (uc *ScanWalkUseCase) persistProjectRecord(
 	status domain.VulnerabilityStatus,
 	unscanReason domain.UnscanReason,
 	unscannableReason, errorDetail string,
+	surface domain.AnalysisSurface,
 	params ScanWalkParams,
 	snapshot *domain.DatabaseSnapshot,
-) domain.VulnerabilityRecord {
+) (domain.VulnerabilityRecord, error) {
+	if surface == "" {
+		// Every record names a surface. A path that reached here without one
+		// resolved from fetched artefacts — that is the only other regime — so it
+		// is stated rather than left blank, which a reader would have to read as
+		// a record predating the field.
+		surface = domain.AnalysisSurfaceFetched
+	}
 	// No ArtefactIdentity. A project-rooted verdict is derived from one
 	// govulncheck run over the TARGET's build, not from this dependency's own
 	// bytes: the stage never opened the dependency's artefact, so it cannot name
@@ -257,6 +478,11 @@ func (uc *ScanWalkUseCase) persistProjectRecord(
 		// last silently answered for every question; naming the root is what keeps
 		// one consumer's reachability finding from being displaced by another's.
 		Rooting: domain.TargetRootedAt(root),
+		// Which copy of the source this verdict was reached from. A project's
+		// vendored tree and the artefacts kanonarion fetched can differ, so a
+		// verdict that did not name its surface could not be checked against the
+		// build it claims to describe.
+		AnalysisSurface: surface,
 	}
 	domain.SortFindings(rec.Findings)
 	// govulncheck produced these reachability answers and knows nothing of the
@@ -266,14 +492,13 @@ func (uc *ScanWalkUseCase) persistProjectRecord(
 	sealed, herr := domain.VulnerabilityRecordHasher{}.SetContentHash(rec)
 	if herr != nil {
 		// An unsealed record is one the store refuses, so there is nothing to
-		// persist: report the failure and return the unsealed verdict to the
-		// caller rather than following it with a write that cannot succeed.
-		uc.logger.Error("project-rooted scan: failed to compute content hash", "coordinate", coord, "error", herr)
-		return rec
+		// persist: raise the failure rather than following it with a write that
+		// cannot succeed.
+		return rec, fmt.Errorf("hashing target-rooted vulnerability record for %s: %w", coord, herr)
 	}
 	rec = sealed
 	if perr := uc.vulnStore.PutVulnerabilityRecord(ctx, rec); perr != nil {
-		uc.logger.Error("project-rooted scan: failed to persist record", "coordinate", coord, "error", perr)
+		return rec, fmt.Errorf("persisting target-rooted vulnerability record for %s: %w", coord, perr)
 	}
-	return rec
+	return rec, nil
 }

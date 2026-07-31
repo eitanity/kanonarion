@@ -13,6 +13,7 @@ import (
 	"time"
 
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
+	staleapp "github.com/eitanity/kanonarion/internal/staleness/application"
 )
 
 func TestLatestCmd_Help(t *testing.T) {
@@ -174,6 +175,18 @@ func fakeLatestProxy(t *testing.T, versions map[string]string) *httptest.Server 
 	return srv
 }
 
+// latestResolverFor wraps a fake proxy in a ledger-less staleness resolver: no
+// store, so every lookup is live and nothing is written, which is the shape
+// these hermetic tests want.
+func latestResolverFor(t *testing.T, srv *httptest.Server) *staleapp.Resolver {
+	t.Helper()
+	proxy, err := proxyadapter.New(srv.URL, true)
+	if err != nil {
+		t.Fatalf("New: %v", err)
+	}
+	return newStalenessResolver(proxy, nil, time.Hour, false)
+}
+
 // runLatestGomod now resolves its scope via the Go toolchain (go list), so the
 // scope-resolution path is exercised by resolveScopeModules' own tests and the
 // integration fixtures rather than a hermetic fake-go.mod unit test here.
@@ -200,10 +213,7 @@ func TestRunLatestModules_MultipleArgs(t *testing.T) {
 	})
 	defer srv.Close()
 
-	proxy, err := proxyadapter.New(srv.URL, true)
-	if err != nil {
-		t.Fatalf("New: %v", err)
-	}
+	resolver := latestResolverFor(t, srv)
 
 	t.Run("text mode resolves every module", func(t *testing.T) {
 		prev := jsonOut
@@ -213,7 +223,7 @@ func TestRunLatestModules_MultipleArgs(t *testing.T) {
 		var stdout bytes.Buffer
 		err := runLatestModules(context.Background(),
 			[]string{"github.com/spf13/cobra", "github.com/stretchr/testify"},
-			proxy, &stdout)
+			resolver, &stdout)
 		if err != nil {
 			t.Fatalf("runLatestModules: %v", err)
 		}
@@ -240,7 +250,7 @@ func TestRunLatestModules_MultipleArgs(t *testing.T) {
 		var stdout bytes.Buffer
 		err := runLatestModules(context.Background(),
 			[]string{"github.com/spf13/cobra", "github.com/stretchr/testify"},
-			proxy, &stdout)
+			resolver, &stdout)
 		if err != nil {
 			t.Fatalf("runLatestModules: %v", err)
 		}
@@ -268,7 +278,7 @@ func TestRunLatestModules_MultipleArgs(t *testing.T) {
 		var stdout bytes.Buffer
 		err := runLatestModules(context.Background(),
 			[]string{"github.com/spf13/cobra"},
-			proxy, &stdout)
+			resolver, &stdout)
 		if err != nil {
 			t.Fatalf("runLatestModules: %v", err)
 		}
@@ -340,9 +350,88 @@ func TestPrintLatestTable(t *testing.T) {
 			checks: []string{"(error resolving latest)"},
 		},
 		{
+			// The reason the major probe exists: the module is at the newest
+			// version of its own path AND a whole major line is available. Both
+			// must appear; neither may replace the other.
+			name: "current dep with a newer major reports both",
+			results: []latestResult{
+				{
+					Module:           "github.com/minio/minio-go/v6",
+					Pinned:           "v6.0.57",
+					Latest:           "v6.0.57",
+					IsLatest:         true,
+					MajorProbed:      true,
+					NewerMajorModule: "github.com/minio/minio-go/v7",
+					NewerMajorLatest: "v7.2.1",
+				},
+			},
+			checks: []string{"current", "newer major: github.com/minio/minio-go/v7@v7.2.1"},
+		},
+		{
+			// A probe that ran and found nothing must print nothing, and a probe
+			// that never ran must print nothing either — the two are different
+			// answers but neither is a claim about a newer major.
+			name: "probed with no newer major prints no clause",
+			results: []latestResult{
+				{
+					Module:      "github.com/foo/bar",
+					Pinned:      "v1.0.0",
+					Latest:      "v1.0.0",
+					IsLatest:    true,
+					MajorProbed: true,
+				},
+			},
+			checks: []string{"current"},
+			absent: []string{"newer major"},
+		},
+		{
+			name: "an unprobed row never claims a newer major",
+			results: []latestResult{
+				{
+					Module:           "github.com/foo/bar",
+					Pinned:           "v1.0.0",
+					Latest:           "v1.0.0",
+					IsLatest:         true,
+					MajorProbed:      false,
+					NewerMajorModule: "github.com/foo/bar/v2",
+					NewerMajorLatest: "v2.0.0",
+				},
+			},
+			checks: []string{"current"},
+			absent: []string{"newer major"},
+		},
+		{
+			// A served answer must date itself, or it is indistinguishable from
+			// a live one.
+			name: "the table states the lookup time it used",
+			results: []latestResult{
+				{
+					Module:     "github.com/foo/bar",
+					Pinned:     "v1.0.0",
+					Latest:     "v1.0.0",
+					IsLatest:   true,
+					Served:     true,
+					LookedUpAt: time.Date(2026, 7, 31, 9, 14, 0, 0, time.UTC),
+				},
+			},
+			checks: []string{"latest as of 2026-07-31 09:14 UTC", "--fresh"},
+		},
+		{
+			// Dated by the OLDEST row: a mixed run is only as current as the row
+			// asked about longest ago.
+			name: "a mixed table is dated by its oldest row",
+			results: []latestResult{
+				{Module: "a", Pinned: "v1", Latest: "v1", IsLatest: true, LookedUpAt: time.Date(2026, 7, 31, 10, 0, 0, 0, time.UTC)},
+				{Module: "b", Pinned: "v1", Latest: "v1", IsLatest: true, LookedUpAt: time.Date(2026, 7, 31, 9, 0, 0, 0, time.UTC)},
+			},
+			checks: []string{"latest as of 2026-07-31 09:00 UTC"},
+			absent: []string{"as of 2026-07-31 10:00"},
+		},
+		{
 			name:    "empty results",
 			results: []latestResult{},
 			checks:  []string{},
+			absent:  []string{"latest as of"},
 		},
 	}
 

@@ -43,6 +43,23 @@ func (s *fakeFactStore) GetFetchRecord(_ context.Context, coord coordinate.Modul
 	return c, true, nil
 }
 
+// ComposeFetchRecord answers the coordinate-only composed read the populate path
+// now uses, satisfying the optional fetchports.FactRecordComposer capability. It
+// folds every record filed for the coordinate whatever pipeline version wrote it,
+// which is the whole point: a cache entry is written from what the ledger has
+// measured about the artefact, not from a generation of the pipeline.
+func (s *fakeFactStore) ComposeFetchRecord(_ context.Context, coord coordinate.ModuleCoordinate) (fetchdomain.CompositeRecord, bool, error) {
+	if coord.IsZero() {
+		return fetchdomain.CompositeRecord{}, false, coordinate.ErrZeroCoordinate
+	}
+	held := make([]fetchdomain.FactRecord, 0, len(s.records))
+	for _, r := range s.records {
+		held = append(held, r)
+	}
+	//nolint:wrapcheck // test fake; the helper already names the coordinate
+	return fetchtest.ComposeCoordinate(coord, held)
+}
+
 // fakeBlobStore stores blob content in memory. It deliberately does NOT
 // implement fetchports.BlobPathOptimizer, so Populate's type assertion misses
 // and it falls back to the copy path (not the symlink path) — mirroring an
@@ -108,7 +125,7 @@ func TestPopulate_WritesExpectedFiles(t *testing.T) {
 	cacheDir := t.TempDir()
 	coord := newCoord(t, "example.com/mod", "v1.0.0")
 
-	if report := modcache.Populate(context.Background(), facts, blobs, cacheDir, []coordinate.ModuleCoordinate{coord}, "0.1.0"); !report.Complete() {
+	if report := modcache.Populate(context.Background(), facts, blobs, cacheDir, []coordinate.ModuleCoordinate{coord}); !report.Complete() {
 		t.Fatalf("Populate: %s", report.FailureSummary(0))
 	}
 
@@ -148,7 +165,7 @@ func TestPopulate_IdempotentSecondCall(t *testing.T) {
 	coord := newCoord(t, "example.com/mod", "v1.0.0")
 
 	for i := range 2 {
-		if report := modcache.Populate(context.Background(), facts, blobs, cacheDir, []coordinate.ModuleCoordinate{coord}, "0.1.0"); !report.Complete() {
+		if report := modcache.Populate(context.Background(), facts, blobs, cacheDir, []coordinate.ModuleCoordinate{coord}); !report.Complete() {
 			t.Fatalf("call %d: %s", i+1, report.FailureSummary(0))
 		}
 	}
@@ -163,7 +180,7 @@ func TestPopulate_MissingRecordIsReportedNotSwallowed(t *testing.T) {
 	blobs := &fakeBlobStore{blobs: map[string][]byte{}}
 	coord := newCoord(t, "example.com/missing", "v1.0.0")
 
-	report := modcache.Populate(context.Background(), facts, blobs, t.TempDir(), []coordinate.ModuleCoordinate{coord}, "0.1.0")
+	report := modcache.Populate(context.Background(), facts, blobs, t.TempDir(), []coordinate.ModuleCoordinate{coord})
 
 	if report.Written != 0 || report.Requested != 1 {
 		t.Errorf("written/requested = %d/%d, want 0/1", report.Written, report.Requested)
@@ -225,7 +242,7 @@ func TestPopulate_SymlinksWhenPathAvailable(t *testing.T) {
 	cacheDir := t.TempDir()
 	coord := newCoord(t, "example.com/mod", "v1.0.0")
 
-	if report := modcache.Populate(context.Background(), facts, blobs, cacheDir, []coordinate.ModuleCoordinate{coord}, "0.1.0"); !report.Complete() {
+	if report := modcache.Populate(context.Background(), facts, blobs, cacheDir, []coordinate.ModuleCoordinate{coord}); !report.Complete() {
 		t.Fatalf("Populate: %s", report.FailureSummary(0))
 	}
 
@@ -269,7 +286,7 @@ func TestPopulate_WithGoModBlob(t *testing.T) {
 	cacheDir := t.TempDir()
 	coord := newCoord(t, "example.com/mod", "v1.0.0")
 
-	if report := modcache.Populate(context.Background(), facts, blobs, cacheDir, []coordinate.ModuleCoordinate{coord}, "0.1.0"); !report.Complete() {
+	if report := modcache.Populate(context.Background(), facts, blobs, cacheDir, []coordinate.ModuleCoordinate{coord}); !report.Complete() {
 		t.Fatalf("Populate: %s", report.FailureSummary(0))
 	}
 
@@ -305,7 +322,7 @@ func TestPopulateGoMod_WritesModNotZip(t *testing.T) {
 	cacheDir := t.TempDir()
 	c := newCoord(t, "github.com/go-logr/logr", "v1.2.2")
 
-	if report := modcache.PopulateGoMod(context.Background(), facts, blobs, cacheDir, []coordinate.ModuleCoordinate{c}, "0.3.0"); !report.Complete() {
+	if report := modcache.PopulateGoMod(context.Background(), facts, blobs, cacheDir, []coordinate.ModuleCoordinate{c}); !report.Complete() {
 		t.Fatalf("PopulateGoMod: %s", report.FailureSummary(0))
 	}
 
@@ -347,7 +364,7 @@ func TestPopulateGoMod_SkipsRecordWithoutGoMod(t *testing.T) {
 	cacheDir := t.TempDir()
 	c := newCoord(t, "example.com/mod", "v1.0.0")
 
-	report := modcache.PopulateGoMod(context.Background(), facts, blobs, cacheDir, []coordinate.ModuleCoordinate{c}, "0.3.0")
+	report := modcache.PopulateGoMod(context.Background(), facts, blobs, cacheDir, []coordinate.ModuleCoordinate{c})
 	if report.Complete() {
 		t.Fatal("a record carrying no go.mod blob must be reported as a failure")
 	}
@@ -364,7 +381,7 @@ func TestPopulateGoMod_MissingRecordSkipped(t *testing.T) {
 	blobs := &fakeBlobStore{blobs: map[string][]byte{}}
 	c := newCoord(t, "example.com/missing", "v1.0.0")
 
-	report := modcache.PopulateGoMod(context.Background(), facts, blobs, t.TempDir(), []coordinate.ModuleCoordinate{c}, "0.3.0")
+	report := modcache.PopulateGoMod(context.Background(), facts, blobs, t.TempDir(), []coordinate.ModuleCoordinate{c})
 	if report.Complete() || report.Written != 0 {
 		t.Fatalf("a coordinate absent from the fact store must be reported: %+v", report)
 	}
@@ -409,7 +426,7 @@ func TestPopulateGoModClosure_FollowsRequirementsTransitively(t *testing.T) {
 	var ensured []coordinate.ModuleCoordinate
 	report := modcache.PopulateGoModClosure(
 		context.Background(), facts, blobs, cacheDir,
-		[]coordinate.ModuleCoordinate{seed}, "0.3.0",
+		[]coordinate.ModuleCoordinate{seed},
 		func(_ context.Context, batch []coordinate.ModuleCoordinate) { ensured = append(ensured, batch...) },
 	)
 
@@ -447,7 +464,7 @@ func TestPopulateGoModClosure_TerminatesOnRequirementCycle(t *testing.T) {
 
 	report := modcache.PopulateGoModClosure(
 		context.Background(), facts, blobs, t.TempDir(),
-		[]coordinate.ModuleCoordinate{newCoord(t, "example.com/a", "v1.0.0")}, "0.3.0", nil,
+		[]coordinate.ModuleCoordinate{newCoord(t, "example.com/a", "v1.0.0")}, nil,
 	)
 
 	if report.Written != 2 {
@@ -466,7 +483,7 @@ func TestPopulateGoModClosure_ReportsUnreachableLevel(t *testing.T) {
 
 	report := modcache.PopulateGoModClosure(
 		context.Background(), facts, blobs, t.TempDir(),
-		[]coordinate.ModuleCoordinate{newCoord(t, "example.com/seed", "v1.0.0")}, "0.3.0", nil,
+		[]coordinate.ModuleCoordinate{newCoord(t, "example.com/seed", "v1.0.0")}, nil,
 	)
 
 	if report.Complete() {

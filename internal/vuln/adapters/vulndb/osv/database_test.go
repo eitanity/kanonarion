@@ -21,6 +21,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/vuln/adapters/vulndb/osv"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 )
 
 // gzipJSON compresses JSON bytes with gzip.
@@ -146,12 +147,12 @@ func TestSnapshot_ReturnsBulkZipWithLayout(t *testing.T) {
 	}
 	defer func() { _ = rc.Close() }()
 
-	if snap.Source != "vuln.go.dev" {
-		t.Errorf("snapshot source: got %q, want vuln.go.dev", snap.Source)
+	if snap.Source() != "vuln.go.dev" {
+		t.Errorf("snapshot source: got %q, want vuln.go.dev", snap.Source())
 	}
 	// Version comes from index/db.json's modified field inside the zip.
-	if snap.Version != "2024-01-01T00:00:00Z" {
-		t.Errorf("snapshot version: got %q, want 2024-01-01T00:00:00Z", snap.Version)
+	if snap.Version() != "2024-01-01T00:00:00Z" {
+		t.Errorf("snapshot version: got %q, want 2024-01-01T00:00:00Z", snap.Version())
 	}
 
 	data, err := io.ReadAll(rc)
@@ -195,7 +196,7 @@ func TestGetSnapshot_DelegatesToStore(t *testing.T) {
 	store := &fakeVulnStore{content: "snapshot-content"}
 	db := osv.New(nil, store)
 
-	snap := domain.DatabaseSnapshot{Source: "govulndb", Version: "v2024-01-01"}
+	snap := vulntest.MustNew("govulndb", "v2024-01-01")
 	rc, err := db.GetSnapshot(t.Context(), snap)
 	if err != nil {
 		t.Fatalf("GetSnapshot: %v", err)

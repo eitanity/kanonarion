@@ -1,4 +1,4 @@
-# `kanonarion provenance` - Fork/copy provenance facts (name-path heuristic)
+# `kanonarion provenance` - Fork/republication provenance facts
 
 ## Synopsis
 
@@ -8,7 +8,23 @@ kanonarion provenance <module>[@<version>] [flags]
 
 ## Description
 
-`provenance` runs the cheap-tier name-path fork heuristic over a module path:
+`provenance` runs **two independent signals** over a module and reports each
+separately. Both are inferences, never verdicts.
+
+| Signal | Reads | Sees |
+|---|---|---|
+| Name-path heuristic | the module path alone | a fork published under a *different owner at the same name* |
+| Copyright-attribution signal | the module's stored **licence record** | a **republication**: the same project continued under a *different path* |
+
+The two are complementary because each is blind to what the other catches. A
+republication changes the path, so no element of the new path collides with the
+old one and the trailing-name comparison has nothing to fire on. The signal is
+in the licence text instead: a republished `LICENSE` carries the original
+author's copyright line beside the new maintainers'.
+
+### Name-path heuristic
+
+Runs the cheap-tier name-path fork heuristic over a module path:
 when the path shares its trailing name element with a catalogued canonical
 module under a different owner or host, it reports a **caveated fork
 inference** - *"path suggests a fork of `<canonical>` - verify"*.
@@ -38,19 +54,61 @@ Per the absence-vs-zero discipline, `"none"` means *analysed, no fork
 indicators* - it is a distinct state from `"not_analysed"`, which only appears
 on surfaces that did not run the heuristic.
 
+### Copyright-attribution signal
+
+Reads the module's stored licence record and reports a caveated republication
+inference when either rule fires:
+
+- **`multiple_copyright_holders`** - the licence text (excluding vendored
+  licence files, whose holders describe a bundled dependency rather than this
+  module) attributes copyright to more than one distinct holder. A project that
+  has always lived at one path normally carries one.
+- **`holder_matches_other_module_path`** - a copyright holder's name names the
+  owner of a *different* module path the store holds, **and** the two module
+  names overlap. Both conditions are required: the owner match alone fires on
+  every module a large copyright holder appears in, and the name overlap alone
+  fires on any unrelated project sharing a word.
+
+Every indicator **quotes the copyright lines it rests on** as `evidence`, so
+the reader being asked to verify has something to verify against. An unfilled
+licence-template placeholder (`<name of author>`, `[fullname]`, `{yyyy}`) never
+counts as a holder.
+
+This signal needs a stored licence record. A module without one reports
+`not_analysed` with the reason and the command that produces one - never
+`none`, which would assert a negative nothing measured.
+
+**Base rate.** Measured over a working store of 2,454 licence records, 219
+(8.9%) name two or more distinct copyright holders. This is an indicator to
+follow up on, not a rare alarm: derived and vendored-from projects legitimately
+carry a second holder.
+
 ## Output format
 
 ### Text
 
 ```
 github.com/someuser/cobra
-  Fork Heuristic: path_match (catalogue 1.0.0)
+  Fork Heuristic:    path_match (name-path, catalogue 1.0.0)
     path suggests a fork of github.com/spf13/cobra - verify via VCS origin or content comparison
+  Copyright Signal:  not analysed - no licence record for github.com/someuser/cobra; run: kanonarion license github.com/someuser/cobra
+```
+
+```
+example.com/republished/lib@v4.5.1
+  Fork Heuristic:    no indicators (name-path, catalogue 1.0.0)
+  Copyright Signal:  republication (licence record example.com/republished/lib@v4.5.1)
+    licence text attributes copyright to 2 distinct holders (Original Author; New Maintainers) - a project republished under a new path carries the original author's line beside the new maintainers'; verify via VCS origin or content comparison
+      evidence: Copyright (c) 2012 Original Author
+      evidence: Copyright (c) 2021 New Maintainers
+    copyright holder "Original Author" names the owner of example.com/originalauthor/lib-go, a differently-owned module of the same name held in this store - path suggests a republication of it; verify via VCS origin or content comparison
+      evidence: Copyright (c) 2012 Original Author
 ```
 
 ```
 example.com/some/app
-  Fork Heuristic: no fork indicators (catalogue 1.0.0)
+  Fork Heuristic:    no indicators (name-path, catalogue 1.0.0)
+  Copyright Signal:  no indicators (licence copyright lines, record example.com/some/app@v1.0.0)
 ```
 
 ### JSON (`--json`)
@@ -68,9 +126,30 @@ example.com/some/app
         "statement": "path suggests a fork of github.com/spf13/cobra - verify via VCS origin or content comparison"
       }
     ]
+  },
+  "copyright_signal": {
+    "status": "republication",
+    "source": "example.com/republished/lib@v4.5.1",
+    "indicators": [
+      {
+        "signal": "multiple_copyright_holders",
+        "holders": ["New Maintainers", "Original Author"],
+        "evidence": [
+          "Copyright (c) 2012 Original Author",
+          "Copyright (c) 2021 New Maintainers"
+        ],
+        "statement": "licence text attributes copyright to 2 distinct holders (...) - ... verify via VCS origin or content comparison"
+      }
+    ]
   }
 }
 ```
+
+| `copyright_signal.status` | Meaning |
+|---|---|
+| `republication` | At least one rule fired. `indicators` is non-empty, each quoting its evidence. |
+| `none` | The licence record's copyright lines were read; neither rule fired. |
+| `not_analysed` | No licence record was read - absent, unreadable, or carrying no copyright lines. `detail` says which, and names the remedy. Never a negative result. |
 
 | `status` | Meaning |
 |---|---|
@@ -82,15 +161,24 @@ example.com/some/app
 
 | Code | Condition |
 |---|---|
-| 0 | Always - a fork indicator is a fact view, not a policy gate. |
-| ≠0 | Usage error (missing or empty module path). |
+| 0 | Always - an indicator is a fact view, not a policy gate. This includes `not_analysed`: a missing licence record is reported in the payload, not as a failure. |
+| ≠0 | Usage error (missing or empty module path), or the store could not be opened. |
 
 ## Examples
 
 ```bash
-# Bare module path
+# Bare module path: the copyright signal uses the newest licence record
+# the store holds for that path, and names the version it used.
 kanonarion provenance github.com/someuser/cobra
 
-# Machine-readable, with a version echo
+# Pin the record the evidence comes from
 kanonarion provenance github.com/someuser/cobra@v1.0.0 --json
+```
+
+The command opens the store read-only. To populate the copyright signal for a
+module, extract its licence first:
+
+```bash
+kanonarion license <module>@<version>
+kanonarion provenance <module>@<version>
 ```

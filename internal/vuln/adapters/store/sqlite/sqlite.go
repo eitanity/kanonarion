@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -631,6 +632,65 @@ CREATE INDEX IF NOT EXISTS vuln_findings_finding_idx
 ALTER TABLE walk_scan_run_modules ADD COLUMN record_content_hash TEXT NOT NULL DEFAULT '';
 `,
 		},
+		{
+			Module:  "vuln",
+			Version: 15,
+			// Re-notate every stored vulnerability seal from bare hex to the
+			// labelled form the other seven record domains write.
+			//
+			// This domain sealed bare hex for one reason, stated in hasher.go and
+			// in the snapshot hasher's own comment: the rows already written. It
+			// was never a design position, and it cost a real answer — the shared
+			// verifier compared only against the labelled form, so a vulnerability
+			// record could never be classified and a drifted walk scan run was
+			// reported in the wording reserved for altered bytes. A record also
+			// carried both rules at once: its own seal was bare while the database
+			// snapshot hash inside it is labelled, and the snapshot constructor
+			// REFUSES a bare one.
+			//
+			// The whole rewrite lives in the Go step and not in SQL, because its
+			// correctness is the ORDER and the proof, neither of which SQL can
+			// express here: records re-notate by pure prefix and each rewrite is
+			// checked against that property, the membership column follows the
+			// records it names, and only then are the run seals recomputed over
+			// contents that have genuinely changed. See renotateVulnSeals.
+			//
+			// No purge and no PipelineVersion bump: this is the same measurement
+			// from the same pipeline, spelled the way the rest of the project
+			// spells it.
+			Fn: renotateVulnSeals,
+		},
+		{
+			Module:  "vuln",
+			Version: 16,
+			// Drop is_reachable from the findings index.
+			//
+			// The column was written on every indexed finding and preserved by
+			// both table rebuilds this adapter has done, and no SELECT has ever
+			// projected it, filtered on it or ordered by it. The index exists so
+			// vuln-by-id can name the affected modules without decoding every
+			// record; reachability was never part of that question, and the
+			// record remains the authority on it.
+			//
+			// It is dropped rather than corrected because a bool is the wrong
+			// shape for what reachability now means: the domain carries three
+			// states — reachable, not reachable, and not determined — and the
+			// stored rows cannot express the third. Rows written by superseded
+			// generations therefore assert a claim this generation would not
+			// make, with nothing on the row saying so. A column no reader has
+			// ever consulted has never taught a reader that it must filter on
+			// pipeline_version first, so the first cross-store query to reach
+			// for it would inherit that claim silently. Re-adding a
+			// three-valued column when such a query actually exists costs less
+			// than carrying a wrong one until then.
+			//
+			// No purge and no PipelineVersion bump: the index is derived from
+			// the records, not a fact of its own, and every record's own
+			// reachability field is untouched.
+			SQL: `
+ALTER TABLE vulnerability_findings_index DROP COLUMN is_reachable;
+`,
+		},
 	}
 }
 
@@ -689,6 +749,14 @@ func (s *Store) PutVulnerabilityRecord(ctx context.Context, record domain.Vulner
 	if record.Coordinate.IsZero() {
 		return coordinate.ErrZeroCoordinate
 	}
+	// A record whose snapshot is the zero value would key a row on the empty
+	// database at the empty generation. That is worse than the empty coordinate:
+	// the ledger composes on (coordinate, pipeline version, snapshot), so such a
+	// row joins the group holding every other record that also named no snapshot,
+	// and a read composes them as one measurement against one advisory database.
+	if record.DatabaseSnapshot.IsZero() {
+		return fmt.Errorf("putting the vulnerability record for %s: %w", record.Coordinate, domain.ErrZeroSnapshot)
+	}
 	// A record whose hash does not describe its contents is refused before it
 	// reaches the table: the hash is what every later read checks the record
 	// against, so storing one that is already wrong stores a row that can only
@@ -742,7 +810,7 @@ DO NOTHING`
 
 	if _, err = tx.ExecContext(ctx, q,
 		record.Coordinate.Path(), record.Coordinate.Version(), record.PipelineVersion,
-		record.DatabaseSnapshot.Source, record.DatabaseSnapshot.Version,
+		record.DatabaseSnapshot.Source(), record.DatabaseSnapshot.Version(),
 		string(rooting), record.WalkID,
 		string(record.OverallStatus), string(coverage), string(findings), len(record.Findings),
 		record.ScannedAt.UTC().Format(time.RFC3339),
@@ -784,7 +852,7 @@ func (s *Store) reconcileFindingsIndex(
 ) error {
 	generations, err := s.listGenerations(ctx, tx,
 		record.Coordinate.Path(), record.Coordinate.Version(), record.PipelineVersion,
-		record.DatabaseSnapshot.Source, record.DatabaseSnapshot.Version)
+		record.DatabaseSnapshot.Source(), record.DatabaseSnapshot.Version())
 	if err != nil {
 		return err
 	}
@@ -810,36 +878,33 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 
 	if _, err = tx.ExecContext(ctx, clearIdxQ,
 		record.Coordinate.Path(), record.Coordinate.Version(), record.PipelineVersion,
-		record.DatabaseSnapshot.Source, record.DatabaseSnapshot.Version, string(rooting),
+		record.DatabaseSnapshot.Source(), record.DatabaseSnapshot.Version(), string(rooting),
 	); err != nil {
 		return fmt.Errorf("clearing finding index entries for %s: %w", record.Coordinate, err)
 	}
 
 	// Populate the findings index for cross-store queries.
+	//
+	// The row carries the key and nothing else. Reachability deliberately does
+	// not travel with it: the record is the authority on that, it is
+	// three-valued rather than boolean, and an index column carrying a claim no
+	// reader consults is a claim that goes stale unobserved.
 	const idxQ = `
 INSERT INTO vulnerability_findings_index (
     finding_id, module_path, module_version, pipeline_version,
-    snapshot_source, snapshot_version, rooting, is_reachable
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    snapshot_source, snapshot_version, rooting
+) VALUES (?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT DO NOTHING`
 
 	for _, f := range served.Findings {
-		var isReachable *int
-		if f.Reachable != nil {
-			v := 0
-			if f.Reachable.IsReachable {
-				v = 1
-			}
-			isReachable = &v
-		}
 		// Index all aliases too (CVE, GHSA, etc.) so queries by any identifier work.
 		ids := append([]string{f.ID}, f.Aliases...)
 		for _, id := range ids {
 			if _, err = tx.ExecContext(ctx, idxQ,
 				id,
 				record.Coordinate.Path(), record.Coordinate.Version(), record.PipelineVersion,
-				record.DatabaseSnapshot.Source, record.DatabaseSnapshot.Version,
-				string(rooting), isReachable,
+				record.DatabaseSnapshot.Source(), record.DatabaseSnapshot.Version(),
+				string(rooting),
 			); err != nil {
 				return fmt.Errorf("inserting finding index entry %s: %w", id, err)
 			}
@@ -924,7 +989,7 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
 	var raw sql.NullString
 	err := q.QueryRowContext(ctx, stmt,
 		record.Coordinate.Path(), record.Coordinate.Version(), record.PipelineVersion,
-		record.DatabaseSnapshot.Source, record.DatabaseSnapshot.Version,
+		record.DatabaseSnapshot.Source(), record.DatabaseSnapshot.Version(),
 	).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		return time.Time{}, false, nil
@@ -969,8 +1034,15 @@ func (s *Store) GetVulnerabilityRecord(
 	if coord.IsZero() {
 		return domain.VulnerabilityRecord{}, false, coordinate.ErrZeroCoordinate
 	}
+	// The zero snapshot names no advisory database at no generation, so this is a
+	// question about nothing. Answering it with absence would report "no record
+	// here" against a database that was never named — and, worse, would read the
+	// composition group every record that recorded no snapshot fell into.
+	if snapshot.IsZero() {
+		return domain.VulnerabilityRecord{}, false, domain.ErrZeroSnapshot
+	}
 	records, err := s.listGenerations(ctx, s.db.DB(),
-		coord.Path(), coord.Version(), pipelineVersion, snapshot.Source, snapshot.Version)
+		coord.Path(), coord.Version(), pipelineVersion, snapshot.Source(), snapshot.Version())
 	if err != nil {
 		return domain.VulnerabilityRecord{}, false, err
 	}
@@ -1010,8 +1082,15 @@ func (s *Store) GetVulnerabilityRecordAt(
 	if coord.IsZero() {
 		return domain.VulnerabilityRecord{}, false, coordinate.ErrZeroCoordinate
 	}
+	// The zero snapshot names no advisory database at no generation, so this is a
+	// question about nothing. Answering it with absence would report "no record
+	// here" against a database that was never named — and, worse, would read the
+	// composition group every record that recorded no snapshot fell into.
+	if snapshot.IsZero() {
+		return domain.VulnerabilityRecord{}, false, domain.ErrZeroSnapshot
+	}
 	records, err := s.listGenerations(ctx, s.db.DB(),
-		coord.Path(), coord.Version(), pipelineVersion, snapshot.Source, snapshot.Version)
+		coord.Path(), coord.Version(), pipelineVersion, snapshot.Source(), snapshot.Version())
 	if err != nil {
 		return domain.VulnerabilityRecord{}, false, err
 	}
@@ -1044,6 +1123,13 @@ func (s *Store) HasVulnerabilityRecord(
 	if coord.IsZero() {
 		return false, coordinate.ErrZeroCoordinate
 	}
+	// The zero snapshot names no advisory database at no generation, so this is a
+	// question about nothing. Answering it with absence would report "no record
+	// here" against a database that was never named — and, worse, would read the
+	// composition group every record that recorded no snapshot fell into.
+	if snapshot.IsZero() {
+		return false, domain.ErrZeroSnapshot
+	}
 	const q = `
 SELECT 1 FROM vulnerability_records
 WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
@@ -1053,7 +1139,7 @@ LIMIT 1`
 	var one int
 	err := s.db.DB().QueryRowContext(ctx, q,
 		coord.Path(), coord.Version(), pipelineVersion,
-		snapshot.Source, snapshot.Version, contentHash,
+		snapshot.Source(), snapshot.Version(), contentHash,
 	).Scan(&one)
 	if errors.Is(err, sql.ErrNoRows) {
 		return false, nil
@@ -1256,7 +1342,7 @@ ON CONFLICT (id) DO UPDATE SET
     serialised          = excluded.serialised`
 
 	if _, err = tx.ExecContext(ctx, q,
-		run.ID, run.WalkID, run.Snapshot.Source, run.Snapshot.Version,
+		run.ID, run.WalkID, run.Snapshot.Source(), run.Snapshot.Version(),
 		run.StartedAt.UTC().Format(time.RFC3339),
 		run.CompletedAt.UTC().Format(time.RFC3339),
 		string(run.OverallStatus),
@@ -1284,7 +1370,7 @@ ON CONFLICT (walk_scan_run_id, module_path, module_version) DO NOTHING`
 	for coord, contentHash := range run.PerModuleResults {
 		if _, err = tx.ExecContext(ctx, modQ,
 			run.ID, coord.Path(), coord.Version(),
-			run.PipelineVersion, run.Snapshot.Source, run.Snapshot.Version, run.WalkID,
+			run.PipelineVersion, run.Snapshot.Source(), run.Snapshot.Version(), run.WalkID,
 			contentHash,
 		); err != nil {
 			return fmt.Errorf("inserting walk scan run module %s: %w", coord, err)
@@ -1312,7 +1398,14 @@ func (s *Store) GetWalkScanRun(ctx context.Context, id string) (domain.WalkScanR
 
 	run, derr := decodeRun(serialised)
 	if derr != nil {
-		return domain.WalkScanRun{}, false, derr
+		// Reported as the same unreadable-row failure the listings raise, for one
+		// row. The listing is how an operator finds a bad run, and looking at it
+		// is the next thing they do, so the two must speak the same language:
+		// an inspection command can name the row and carry on, and a consuming
+		// caller still matches the integrity sentinel and still fails closed.
+		return domain.WalkScanRun{}, false, unreadableRunsErr([]ports.UnreadableRun{
+			{ID: runIDFrom(serialised), Reason: derr},
+		})
 	}
 	return run, true, nil
 }
@@ -1327,22 +1420,11 @@ func (s *Store) ListWalkScanRuns(ctx context.Context, walkID string) ([]domain.W
 	}
 	defer func() { _ = rows.Close() }()
 
-	var runs []domain.WalkScanRun
-	for rows.Next() {
-		var serialised []byte
-		if err := rows.Scan(&serialised); err != nil {
-			return nil, fmt.Errorf("scanning walk scan run: %w", err)
-		}
-		run, derr := decodeRun(serialised)
-		if derr != nil {
-			return nil, derr
-		}
-		runs = append(runs, run)
+	runs, unreadable, err := collectRuns(rows)
+	if err != nil {
+		return nil, err
 	}
-	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating walk scan runs: %w", err)
-	}
-	return runs, nil
+	return runs, unreadableRunsErr(unreadable)
 }
 
 // ListAllWalkScanRuns lists all scan runs across all walks, most recent first.
@@ -1355,26 +1437,77 @@ func (s *Store) ListAllWalkScanRuns(ctx context.Context) ([]domain.WalkScanRun, 
 	}
 	defer func() { _ = rows.Close() }()
 
-	var runs []domain.WalkScanRun
+	runs, unreadable, err := collectRuns(rows)
+	if err != nil {
+		return nil, err
+	}
+	return runs, unreadableRunsErr(unreadable)
+}
+
+// collectRuns reads every scan run in rows, keeping the ones that verify and
+// naming the ones that do not. It is the single seam both listings go through,
+// so a fix to how an unreadable row is handled cannot apply to one listing and
+// miss the other — vuln-scan-list reaches this store by both routes depending
+// on whether it was given a walk id.
+//
+// Only a seal failure is survivable here. A database that cannot hand over the
+// row at all is a different fault: nothing is known about what was skipped, not
+// even that it exists, so there is no honest partial answer to give.
+func collectRuns(rows *sql.Rows) ([]domain.WalkScanRun, []ports.UnreadableRun, error) {
+	var (
+		runs       []domain.WalkScanRun
+		unreadable []ports.UnreadableRun
+	)
 	for rows.Next() {
 		var serialised []byte
 		if err := rows.Scan(&serialised); err != nil {
-			return nil, fmt.Errorf("scanning walk scan run: %w", err)
+			return nil, nil, fmt.Errorf("scanning walk scan run: %w", err)
 		}
 		run, derr := decodeRun(serialised)
 		if derr != nil {
-			return nil, derr
+			unreadable = append(unreadable, ports.UnreadableRun{ID: runIDFrom(serialised), Reason: derr})
+			continue
 		}
 		runs = append(runs, run)
 	}
 	if err := rows.Err(); err != nil {
-		return nil, fmt.Errorf("iterating walk scan runs: %w", err)
+		return nil, nil, fmt.Errorf("iterating walk scan runs: %w", err)
 	}
-	return runs, nil
+	return runs, unreadable, nil
+}
+
+// unreadableRunsErr wraps the unreadable rows for the caller, or returns nil
+// when there were none.
+func unreadableRunsErr(unreadable []ports.UnreadableRun) error {
+	if len(unreadable) == 0 {
+		return nil
+	}
+	return &ports.UnreadableRuns{Runs: unreadable}
+}
+
+// runIDFrom recovers a run's identifier from stored bytes the seal check
+// rejected, so the row can be named in a report.
+//
+// It reads only the id field and asserts nothing else about the bytes: they are
+// under suspicion, which is precisely why they must not be interpreted as a
+// record. An id that cannot be read comes back empty and the row is reported
+// without one.
+func runIDFrom(serialised []byte) string {
+	var head struct {
+		ID string `json:"id"`
+	}
+	if err := json.Unmarshal(serialised, &head); err != nil {
+		return ""
+	}
+	return head.ID
 }
 
 // PutDatabaseSnapshot persists a snapshot blob.
 func (s *Store) PutDatabaseSnapshot(ctx context.Context, snapshot domain.DatabaseSnapshot, content io.Reader) error {
+	if snapshot.IsZero() {
+		return fmt.Errorf("putting database snapshot: %w", domain.ErrZeroSnapshot)
+	}
+
 	data, err := io.ReadAll(content)
 	if err != nil {
 		return fmt.Errorf("reading snapshot content: %w", err)
@@ -1391,11 +1524,14 @@ func (s *Store) PutDatabaseSnapshot(ctx context.Context, snapshot domain.Databas
 	// simply not sealed; the store seals it, and the snapshot becomes verifiable
 	// from here on.
 	computed := domain.HashSnapshotContent(data)
-	if snapshot.ContentHash != "" && snapshot.ContentHash != computed {
+	if snapshot.ContentHash() != "" && snapshot.ContentHash() != computed {
 		return fmt.Errorf("%w: snapshot %s@%s content hash mismatch: caller declared %q, content is %q",
-			ports.ErrSnapshotIntegrity, snapshot.Source, snapshot.Version, snapshot.ContentHash, computed)
+			ports.ErrSnapshotIntegrity, snapshot.Source(), snapshot.Version(), snapshot.ContentHash(), computed)
 	}
-	snapshot.ContentHash = computed
+	sealed, err := snapshot.WithContentHash(computed)
+	if err != nil {
+		return fmt.Errorf("sealing snapshot %s@%s against the bytes being stored: %w", snapshot.Source(), snapshot.Version(), err)
+	}
 
 	const q = `
 INSERT INTO vulnerability_snapshots (
@@ -1407,9 +1543,9 @@ ON CONFLICT (source, version) DO UPDATE SET
     content      = excluded.content`
 
 	_, err = s.db.DB().ExecContext(ctx, q,
-		snapshot.Source, snapshot.Version,
-		snapshot.RetrievedAt.UTC().Format(time.RFC3339),
-		snapshot.ContentHash, data,
+		sealed.Source(), sealed.Version(),
+		sealed.RetrievedAt().UTC().Format(time.RFC3339),
+		sealed.ContentHash(), data,
 	)
 	if err != nil {
 		return fmt.Errorf("inserting database snapshot: %w", err)
@@ -1444,13 +1580,17 @@ ON CONFLICT (source, version) DO UPDATE SET
 // question about one snapshot with the bytes of another is the failure this
 // whole field exists to prevent.
 func (s *Store) GetDatabaseSnapshot(ctx context.Context, snapshot domain.DatabaseSnapshot) (io.ReadCloser, error) {
+	if snapshot.IsZero() {
+		return nil, fmt.Errorf("getting database snapshot: %w", domain.ErrZeroSnapshot)
+	}
+
 	const q = `SELECT content, content_hash FROM vulnerability_snapshots WHERE source = ? AND version = ?`
 
 	var content []byte
 	var storedHash string
-	err := s.db.DB().QueryRowContext(ctx, q, snapshot.Source, snapshot.Version).Scan(&content, &storedHash)
+	err := s.db.DB().QueryRowContext(ctx, q, snapshot.Source(), snapshot.Version()).Scan(&content, &storedHash)
 	if errors.Is(err, sql.ErrNoRows) {
-		return nil, fmt.Errorf("snapshot not found: %s@%s", snapshot.Source, snapshot.Version)
+		return nil, fmt.Errorf("snapshot not found: %s@%s", snapshot.Source(), snapshot.Version())
 	}
 	if err != nil {
 		return nil, fmt.Errorf("querying database snapshot: %w", err)
@@ -1459,12 +1599,12 @@ func (s *Store) GetDatabaseSnapshot(ctx context.Context, snapshot domain.Databas
 	if storedHash != "" {
 		if computed := domain.HashSnapshotContent(content); computed != storedHash {
 			return nil, fmt.Errorf("%w: snapshot %s@%s content hash mismatch: stored %q, computed %q",
-				ports.ErrSnapshotIntegrity, snapshot.Source, snapshot.Version, storedHash, computed)
+				ports.ErrSnapshotIntegrity, snapshot.Source(), snapshot.Version(), storedHash, computed)
 		}
 	}
-	if snapshot.ContentHash != "" && storedHash != "" && snapshot.ContentHash != storedHash {
+	if snapshot.ContentHash() != "" && storedHash != "" && snapshot.ContentHash() != storedHash {
 		return nil, fmt.Errorf("%w: snapshot %s@%s is not the one requested: caller expected %q, store holds %q",
-			ports.ErrSnapshotIntegrity, snapshot.Source, snapshot.Version, snapshot.ContentHash, storedHash)
+			ports.ErrSnapshotIntegrity, snapshot.Source(), snapshot.Version(), snapshot.ContentHash(), storedHash)
 	}
 
 	return io.NopCloser(bytes.NewReader(content)), nil
@@ -1494,12 +1634,11 @@ func (s *Store) GetLatestDatabaseSnapshot(ctx context.Context) (domain.DatabaseS
 		return domain.DatabaseSnapshot{}, false, fmt.Errorf("parsing snapshot time: %w", err)
 	}
 
-	return domain.DatabaseSnapshot{
-		Source:      source,
-		Version:     version,
-		RetrievedAt: t,
-		ContentHash: contentHash,
-	}, true, nil
+	stored, err := domain.NewDatabaseSnapshot(source, version, t, contentHash)
+	if err != nil {
+		return domain.DatabaseSnapshot{}, false, fmt.Errorf("reading latest snapshot: %w", err)
+	}
+	return stored, true, nil
 }
 
 // ListDatabaseSnapshots returns all stored snapshot metadata, most recent first.
@@ -1522,12 +1661,11 @@ func (s *Store) ListDatabaseSnapshots(ctx context.Context) ([]domain.DatabaseSna
 		if err != nil {
 			return nil, fmt.Errorf("parsing snapshot time: %w", err)
 		}
-		snapshots = append(snapshots, domain.DatabaseSnapshot{
-			Source:      source,
-			Version:     version,
-			RetrievedAt: t,
-			ContentHash: contentHash,
-		})
+		stored, err := domain.NewDatabaseSnapshot(source, version, t, contentHash)
+		if err != nil {
+			return nil, fmt.Errorf("reading snapshot row: %w", err)
+		}
+		snapshots = append(snapshots, stored)
 	}
 	if err := rows.Err(); err != nil {
 		return nil, fmt.Errorf("iterating snapshots: %w", err)
@@ -1867,8 +2005,14 @@ func decodeRecord(serialised []byte) (domain.VulnerabilityRecord, error) {
 		// been altered. recordseal decides which, on the stored bytes alone —
 		// and it is JSON-aware, so the snapshot's embedded content_hash is
 		// treated as the sealed content it is rather than as the seal.
+		//
+		// It is told what the recipe leaves out, because the stored blob and the
+		// sealed bytes are not the same set of fields: a record that has been
+		// re-scanned carries a first-seen anchor the seal never covered, and a
+		// verifier that did not know would report every one of them as altered.
 		return domain.VulnerabilityRecord{}, fmt.Errorf("%w: %s: %w",
-			ports.ErrVulnIntegrity, rec.Coordinate, recordseal.Classify(serialised, rec.ContentHash, verr))
+			ports.ErrVulnIntegrity, rec.Coordinate,
+			recordseal.Excluding(h.SealExcludes()...).Classify(serialised, rec.ContentHash, verr))
 	}
 	return rec, nil
 }
@@ -1883,7 +2027,8 @@ func decodeRun(serialised []byte) (domain.WalkScanRun, error) {
 	}
 	if verr := h.VerifyContentHash(run); verr != nil {
 		return domain.WalkScanRun{}, fmt.Errorf("%w: run %s: %w",
-			ports.ErrVulnIntegrity, run.ID, recordseal.Classify(serialised, run.ContentHash, verr))
+			ports.ErrVulnIntegrity, run.ID,
+			recordseal.Excluding(h.SealExcludes()...).Classify(serialised, run.ContentHash, verr))
 	}
 	return run, nil
 }

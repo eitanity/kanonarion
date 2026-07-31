@@ -31,7 +31,6 @@ func buildNoticeUseCase(
 	return application.NewGenerateNoticeUseCase(
 		licences, facts, blobs,
 		application.PipelineVersion,
-		application.PipelineVersion,
 	)
 }
 

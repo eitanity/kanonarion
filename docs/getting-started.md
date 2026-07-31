@@ -1,4 +1,4 @@
-  # Getting started - understand an unfamiliar Go project
+# Getting started - understand an unfamiliar Go project
 
 ## Why this matters
 
@@ -153,7 +153,10 @@ per-module output. (The vuln-scan phase already prints its own `[n/total]`
 line per module, so it needs no separate heartbeat.) The heartbeat goes to
 stderr only; stdout (and `--json`) is never touched. Suppress it with
 `--no-progress` (or `kanonarion config set preferences.progress false`); a warm
-re-run shorter than the interval prints nothing at all. For full per-module
+re-run shorter than the interval prints nothing at all. `--no-progress` is
+accepted by every command that narrates progress - `walk`, `inspect`, `extract`,
+`vuln-scan`, `audit` and `sbom` - and on the scanning commands it also silences
+the per-module `[n/total]` stream, which is the bulk of a long run's stderr. For full per-module
 detail (`fetch_start`, `fetch_end`, `cache_hit`, extraction lines, and the
 vulnerability-snapshot byte-progress line) pass `--log-level info` instead.
 Set a generous timeout (e.g. 30 min) and let it finish. Every subsequent
@@ -232,15 +235,36 @@ and `sbom` reproducible in CI. The release pipeline sets it on both.
 **Duration:** dominated by the vuln leg. The vulnerability verdict is
 **project-rooted** - one `govulncheck` over the project's live working tree - and
 is recomputed fresh every run (the working tree mutates, so it is never served
-from a cache), which took ~2 min on the reference project. Walk and licence
-columns are cached, but the staleness column is **not**: every run resolves each
-module's latest version live from the module proxy (a `@latest` request per
-module, ~35 s on the reference project), so a warm `audit` always makes those
-outbound calls.
+from a cache), which took ~2 min on the reference project. Walk, licence and
+staleness columns are cached. The staleness column is backed by a store-side
+ledger: every successful `@latest` resolution is recorded against the module
+path, and any command that reports staleness serves a recording younger than
+`staleness.ttl` (default `1h`) instead of re-querying. A cold column still costs
+one `@latest` request per module; a warm one costs nothing outbound. The table
+always states the lookup time it used (`latest as of ...`) so a served answer is
+never mistaken for a live one, and `--fresh` bypasses the ledger.
+
+The staleness column reports **two** facts per module, never merged. The latest
+version at the module path itself, and - because a Go module's next major
+version lives at a *different* path - the newest major path above the pinned one
+that resolves (`newer major: .../v5@v5.3.1`). A dependency pinned several majors
+behind is at the latest version of its own path and is still a whole major line
+behind; reporting only the first would call it `current`.
 
 ### 5. Drill-downs
 
-All of these are warm-store reads and return in **tens of milliseconds**:
+All of these are warm-store reads - nothing below re-analyses anything. They
+are not all the same cost, and the difference is a **record read** versus a
+**graph computation**:
+
+- **Record reads** (`license-compat`, `vuln-show`, `interface-show`) return in
+  **tens of milliseconds** - the store holds the answer and hands it over.
+- **Graph drill-down queries** (`callers`, `callees`, `implementers`) are
+  **seconds** on a mid-sized call graph - measured at 3.7-5.9 s on a
+  25,256-node / 224,272-edge graph. They walk the graph rather than read a row.
+- **Transitive traversals** (`callers`/`callees` with `--transitive`) are **tens
+  of seconds** on the same graph - a depth-3 caller traversal over 465 nodes
+  measured 47.4 s.
 
 ```bash
 # Is this dependency's closure licence-compatible? Omitting --target adopts

@@ -110,11 +110,12 @@ Keys follow the dotted-path structure of `config.yaml`.
 | `version` | string (read-only) | `"1"` |
 | `preferences.json` | bool | `true` |
 | `preferences.log_level` | string | `debug` / `info` / `warn` / `error` |
-| `preferences.progress` | bool | `false` (default `true`) - throttled stderr fetch heartbeat on long `walk`/`inspect` runs; never affects stdout/`--json`. Equivalent to `--no-progress` when `false`. |
+| `preferences.progress` | bool | `false` (default `true`) - throttled stderr fetch heartbeat on long `walk`/`inspect`/`audit`/`sbom` runs; never affects stdout/`--json`. Equivalent to `--no-progress` when `false`. |
 | `license_policy.categories.<name>` | sequence | `[MIT, Apache-2.0]` |
 | `license_policy.rules` | sequence (read-only) | - |
 | `license_overrides.<module>` | string | `MIT` |
 | `callgraph.exclude` | sequence | `[github.com/foo/bar]` |
+| `staleness.ttl` | duration | `1h` |
 
 ## Flags
 
@@ -149,6 +150,7 @@ kanonarion config set preferences.log_level debug
 kanonarion config set license_policy.categories.permissive '[MIT, Apache-2.0, ISC]'
 kanonarion config set license_overrides.golang.org/x/mod MIT
 kanonarion config set callgraph.exclude '[]'
+kanonarion config set staleness.ttl 6h
 ```
 
 ## See also

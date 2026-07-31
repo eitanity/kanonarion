@@ -29,15 +29,14 @@ var (
 
 func buildUseCase(facts *fakeFactStore, blobs *fakeBlobStore, store *fakeCallGraphStore, analyser *fakeAnalyser) *application.ExtractCallGraphUseCase {
 	return application.NewExtractCallGraphUseCase(application.Config{
-		Facts:                facts,
-		Blobs:                blobs,
-		Store:                store,
-		Analyser:             analyser,
-		Clock:                fakeClock{t: testTime},
-		Stopwatch:            fakeStopwatch{},
-		PipelineVersion:      testPipelineV,
-		FetchPipelineVersion: testFetchPipV,
-		Logger:               slog.Default(),
+		Facts:           facts,
+		Blobs:           blobs,
+		Store:           store,
+		Analyser:        analyser,
+		Clock:           fakeClock{t: testTime},
+		Stopwatch:       fakeStopwatch{},
+		PipelineVersion: testPipelineV,
+		Logger:          slog.Default(),
 	})
 }
 
@@ -265,15 +264,14 @@ func TestExecute_DefaultPipelineVersion(t *testing.T) {
 
 	// Config with empty PipelineVersion should use the constant default.
 	uc := application.NewExtractCallGraphUseCase(application.Config{
-		Facts:                facts,
-		Blobs:                blobs,
-		Store:                store,
-		Analyser:             analyser,
-		Clock:                fakeClock{t: testTime},
-		Stopwatch:            fakeStopwatch{},
-		PipelineVersion:      "", // empty → use default
-		FetchPipelineVersion: testFetchPipV,
-		Logger:               testLogger(),
+		Facts:           facts,
+		Blobs:           blobs,
+		Store:           store,
+		Analyser:        analyser,
+		Clock:           fakeClock{t: testTime},
+		Stopwatch:       fakeStopwatch{},
+		PipelineVersion: "", // empty → use default
+		Logger:          testLogger(),
 	})
 	result, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: testCoord})
 	if err != nil {
@@ -284,12 +282,16 @@ func TestExecute_DefaultPipelineVersion(t *testing.T) {
 	}
 }
 
-func TestExecute_SameFetchAndCallgraphPipelineVersion(t *testing.T) {
+// This used to cover the de-duplication of a fetch pipeline version that happened
+// to equal the callgraph stage's own version — the coincidence that made two of
+// the four stages accidentally work. There is no version list left to
+// de-duplicate; what it measures now is that a fetch record filed under a version
+// the stage never names is still found.
+func TestExecute_FetchRecordUnderAVersionTheStageNeverNames(t *testing.T) {
 	facts := &fakeFactStore{}
 	blobs := &fakeBlobStore{}
 	store := &fakeCallGraphStore{}
 
-	// Use identical pipeline versions — requireFetchRecord should de-duplicate.
 	const samePV = "0.1.0"
 	r := fetchtest.Record(t, fetchtest.Coordinate(testCoord), fetchtest.PipelineVersion(samePV), fetchtest.Content("blob:test"))
 	facts.PutFetchRecord(context.Background(), fetchtest.Sealed(t, fetchtest.Coordinate(testCoord), fetchtest.PipelineVersion(samePV), fetchtest.Content("blob:test"))) //nolint:errcheck,gosec
@@ -308,15 +310,14 @@ func TestExecute_SameFetchAndCallgraphPipelineVersion(t *testing.T) {
 	}
 
 	uc := application.NewExtractCallGraphUseCase(application.Config{
-		Facts:                facts,
-		Blobs:                blobs,
-		Store:                store,
-		Analyser:             analyser,
-		Clock:                fakeClock{t: testTime},
-		Stopwatch:            fakeStopwatch{},
-		PipelineVersion:      samePV,
-		FetchPipelineVersion: samePV, // same as pipeline version
-		Logger:               testLogger(),
+		Facts:           facts,
+		Blobs:           blobs,
+		Store:           store,
+		Analyser:        analyser,
+		Clock:           fakeClock{t: testTime},
+		Stopwatch:       fakeStopwatch{},
+		PipelineVersion: samePV,
+		Logger:          testLogger(),
 	})
 	result, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: testCoord})
 	if err != nil {
@@ -343,16 +344,20 @@ func TestExecute_AnalyserInfraError(t *testing.T) {
 	}
 }
 
-func TestExecute_EmptyFetchPipelineVersion(t *testing.T) {
+// The callgraph half of the ticket's acceptance: a module whose only fetch record
+// sits at a retired fetch pipeline version extracts, where the stage's version
+// list used to refuse it with "module not fetched". The version below is
+// deliberately one no stage constant could ever equal — the accidental collisions
+// are what made this defect survive as long as it did.
+func TestExecute_ExtractsFromARetiredFetchPipelineVersion(t *testing.T) {
 	facts := &fakeFactStore{}
 	blobs := &fakeBlobStore{}
 	store := &fakeCallGraphStore{}
 
-	// Register fetch record with one specific pipeline version.
 	r := fetchtest.Record(
 		t,
 		fetchtest.Coordinate(testCoord),
-		fetchtest.PipelineVersion(testPipelineV),
+		fetchtest.PipelineVersion("retired-fetch-0.0.1"),
 		fetchtest.Content("blob:test"),
 	)
 	sealed, serr := fetchdomain.Rehydrate(r)
@@ -374,18 +379,15 @@ func TestExecute_EmptyFetchPipelineVersion(t *testing.T) {
 		},
 	}
 
-	// Empty FetchPipelineVersion forces requireFetchRecord to only check the
-	// callgraph pipeline version, exercising the v == "" skip branch.
 	uc := application.NewExtractCallGraphUseCase(application.Config{
-		Facts:                facts,
-		Blobs:                blobs,
-		Store:                store,
-		Analyser:             analyser,
-		Clock:                fakeClock{t: testTime},
-		Stopwatch:            fakeStopwatch{},
-		PipelineVersion:      testPipelineV,
-		FetchPipelineVersion: "", // empty — exercises the v == "" branch
-		Logger:               testLogger(),
+		Facts:           facts,
+		Blobs:           blobs,
+		Store:           store,
+		Analyser:        analyser,
+		Clock:           fakeClock{t: testTime},
+		Stopwatch:       fakeStopwatch{},
+		PipelineVersion: testPipelineV,
+		Logger:          testLogger(),
 	})
 	result, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: testCoord})
 	if err != nil {
@@ -434,16 +436,15 @@ func TestExecute_ExcludedByConfig(t *testing.T) {
 	storeFetchRecord(t, facts, blobs, testCoord)
 
 	uc := application.NewExtractCallGraphUseCase(application.Config{
-		Facts:                facts,
-		Blobs:                blobs,
-		Store:                store,
-		Analyser:             analyser,
-		Clock:                fakeClock{t: testTime},
-		Stopwatch:            fakeStopwatch{},
-		PipelineVersion:      testPipelineV,
-		FetchPipelineVersion: testFetchPipV,
-		Exclusions:           []string{"other/mod", testCoord.Path(), ""},
-		Logger:               slog.Default(),
+		Facts:           facts,
+		Blobs:           blobs,
+		Store:           store,
+		Analyser:        analyser,
+		Clock:           fakeClock{t: testTime},
+		Stopwatch:       fakeStopwatch{},
+		PipelineVersion: testPipelineV,
+		Exclusions:      []string{"other/mod", testCoord.Path(), ""},
+		Logger:          slog.Default(),
 	})
 
 	result, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: testCoord})
@@ -576,7 +577,7 @@ func TestExecute_MaterialisesBlobWhenNoPathOptimizer(t *testing.T) {
 	uc := application.NewExtractCallGraphUseCase(application.Config{
 		Facts: facts, Blobs: blobs, Store: &fakeCallGraphStore{}, Analyser: analyser,
 		Clock: fakeClock{t: testTime}, Stopwatch: fakeStopwatch{},
-		PipelineVersion: testPipelineV, FetchPipelineVersion: testFetchPipV, Logger: slog.Default(),
+		PipelineVersion: testPipelineV, Logger: slog.Default(),
 	})
 
 	if _, err := uc.Execute(context.Background(), application.ExtractRequest{Coordinate: testCoord}); err != nil {

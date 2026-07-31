@@ -374,14 +374,13 @@ func TestIntegritySentinels_RecordAndSnapshotAreDistinguishable(t *testing.T) {
 	// without error and matches neither sentinel.
 	t.Run("an unverifiable legacy snapshot is not a failure at all", func(t *testing.T) {
 		s := snap("govulndb", "v2024-02-01")
-		s.ContentHash = ""
 		if err := store.PutDatabaseSnapshot(ctx, s, strings.NewReader("advisories")); err != nil {
 			t.Fatalf("PutDatabaseSnapshot: %v", err)
 		}
 		// Clear the hash the store computed on the way in, leaving the pre-hash shape.
 		if _, err := store.InternalDB().DB().ExecContext(ctx,
 			`UPDATE vulnerability_snapshots SET content_hash = '' WHERE source = ? AND version = ?`,
-			s.Source, s.Version); err != nil {
+			s.Source(), s.Version()); err != nil {
 			t.Fatalf("unsealing the stored snapshot: %v", err)
 		}
 		body, err := store.GetDatabaseSnapshot(ctx, s)

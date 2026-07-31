@@ -12,6 +12,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 )
 
 // TestScanModule_RecordsTheArtefactItScanned is the ticket's observable for the
@@ -27,7 +28,7 @@ func TestScanModule_RecordsTheArtefactItScanned(t *testing.T) {
 	vulnStore := newFakeVulnStore()
 	scanner := &fakeScanner{}
 	db := &fakeDatabase{
-		snapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1", RetrievedAt: now},
+		snapshot: vulntest.MustNewAt("test", "v1", now),
 		content:  "vulndb content",
 	}
 
@@ -48,7 +49,7 @@ func TestScanModule_RecordsTheArtefactItScanned(t *testing.T) {
 	}
 
 	uc := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, nil, scanner, db, nil, fixedClock{t: now}, "v1", "v1", slog.Default(),
+		facts, blobs, vulnStore, nil, scanner, db, nil, fixedClock{t: now}, "v1", slog.Default(),
 	)
 	res, err := uc.Scan(ctx, application.ScanModuleParams{
 		Coordinate: coord,
@@ -98,10 +99,10 @@ func TestScanModule_GoModOnlyStillNamesItsArtefact(t *testing.T) {
 	uc := application.NewScanModuleUseCase(
 		facts, newFakeBlob(), newFakeVulnStore(), nil, &fakeScanner{},
 		&fakeDatabase{
-			snapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1", RetrievedAt: now},
+			snapshot: vulntest.MustNewAt("test", "v1", now),
 			content:  "vulndb content",
 		},
-		nil, fixedClock{t: now}, "v1", "v1", slog.Default(),
+		nil, fixedClock{t: now}, "v1", slog.Default(),
 	)
 	res, err := uc.Scan(ctx, application.ScanModuleParams{Coordinate: coord, WalkID: "walk-1"})
 	if err != nil {
@@ -137,10 +138,10 @@ func TestScanModule_MetadataOnlyRecordsNoArtefact(t *testing.T) {
 	uc := application.NewScanModuleUseCase(
 		newFakeFacts(), newFakeBlob(), newFakeVulnStore(), nil, &fakeScanner{},
 		&fakeDatabase{
-			snapshot: domain.DatabaseSnapshot{Source: "test", Version: "v1", RetrievedAt: now},
+			snapshot: vulntest.MustNewAt("test", "v1", now),
 			content:  "vulndb content",
 		},
-		nil, fixedClock{t: now}, "v1", "v1", slog.Default(),
+		nil, fixedClock{t: now}, "v1", slog.Default(),
 	)
 	res, err := uc.Scan(ctx, application.ScanModuleParams{Coordinate: coord, WalkID: "walk-1"})
 	if err != nil {

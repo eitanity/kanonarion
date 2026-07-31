@@ -126,7 +126,12 @@ cannot assert validation from source alone.
 The default policy is opt-in: with fips_required: false in policy.yaml the
 findings are surfaced but never gate. With fips_required: true a
 non-FIPS-capable toolchain, a non-FIPS algorithm import, or a cgo crypto
-dependency exits non-zero so CI can gate.`,
+dependency exits non-zero so CI can gate.
+
+Exit codes:
+  0  no finding resolves to a blocking policy outcome
+  5  the governance gate fired: one or more findings violate fips policy
+  20 bad invocation, or a policy file that could not be read`,
 		Example: `  kanonarion fips
   kanonarion fips --gomod ./go.mod --json`,
 		Args: cobra.NoArgs,
@@ -217,7 +222,7 @@ func printFIPSTable(stdout io.Writer, s fipsSection) error {
 	return nil
 }
 
-// fipsBlockingErr returns a non-zero ExitConfig error when any finding is
+// fipsBlockingErr returns an ExitPolicy error when any finding is
 // policy-blocking — typically a non-FIPS algorithm import under
 // fips_required, or a toolchain not on the catalogue. Surfacing the
 // finding list keeps the error actionable rather than just "policy
@@ -242,6 +247,6 @@ func fipsBlockingErr(s fipsSection) error {
 	if len(blocked) == 0 {
 		return nil
 	}
-	return &exitError{code: ExitConfig, msg: fmt.Sprintf(
+	return &exitError{code: ExitPolicy, msg: fmt.Sprintf(
 		"fips policy: %d finding(s) violate policy: %v", len(blocked), blocked)}
 }

@@ -57,7 +57,7 @@ func runSnapshotList(ctx context.Context, jsonOut bool, uc QueryScanRunsUseCase,
 
 	for _, s := range snapshots {
 		_, _ = fmt.Fprintf(stdout, "%-30s %-20s %s\n",
-			s.Source, s.Version, s.RetrievedAt.UTC().Format("2006-01-02T15:04:05Z"))
+			s.Source(), s.Version(), s.RetrievedAt().UTC().Format("2006-01-02T15:04:05Z"))
 	}
 	return nil
 }
@@ -90,7 +90,7 @@ func runSnapshotShow(ctx context.Context, source, version string, jsonOut bool, 
 	}
 
 	for _, s := range snapshots {
-		if s.Source == source && s.Version == version {
+		if s.Source() == source && s.Version() == version {
 			if jsonOut {
 				enc := json.NewEncoder(stdout)
 				enc.SetIndent("", "  ")
@@ -99,12 +99,12 @@ func runSnapshotShow(ctx context.Context, source, version string, jsonOut bool, 
 				}
 				return nil
 			}
-			_, _ = fmt.Fprintf(stdout, "Source:       %s\n", s.Source)
-			_, _ = fmt.Fprintf(stdout, "Version:      %s\n", s.Version)
-			_, _ = fmt.Fprintf(stdout, "Retrieved at: %s\n", s.RetrievedAt.UTC().Format(time.RFC3339))
-			_, _ = fmt.Fprintf(stdout, "Content hash: %s\n", s.ContentHash)
+			_, _ = fmt.Fprintf(stdout, "Source:       %s\n", s.Source())
+			_, _ = fmt.Fprintf(stdout, "Version:      %s\n", s.Version())
+			_, _ = fmt.Fprintf(stdout, "Retrieved at: %s\n", s.RetrievedAt().UTC().Format(time.RFC3339))
+			_, _ = fmt.Fprintf(stdout, "Content hash: %s\n", s.ContentHash())
 			return nil
 		}
 	}
-	return fmt.Errorf("snapshot not found: %s@%s", source, version)
+	return &exitError{code: ExitNotFound, msg: fmt.Sprintf("snapshot not found: %s@%s", source, version)}
 }
