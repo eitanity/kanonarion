@@ -253,6 +253,22 @@ examined eleven and cleared one.
 | `no stored vulnerability record for this coordinate; it has never been vuln-scanned` | Nothing is known about it either way. This is **not** "no known vulnerabilities" — a record with no findings is an answer and counts as covered. |
 | `the local build resolves this module without a version (a directory replacement), so it names no coordinate to look up` | Nothing asked the store about it. |
 
+### Which binaries the probe read
+
+A workspace with more than one `main` package ships more than one artefact, and
+a symbol linked into only one of them is still in the product. The probe builds
+**every** main the workspace declares and unions the symbol tables: a finding is
+`present` if any binary carries the symbol, and `matched_binaries` names the
+ones that do. Building whichever main sorted first reported `absent` for every
+symbol linked solely into another — a false negative on the exact question the
+probe answers.
+
+`coverage.probed_binaries` names every main package found, probed or not. A main
+that fails to build does not fail the probe and is not dropped from the answer
+either: it appears with a `build_error`, so a reader can see which artefact the
+verdict does not rest on. A workspace with no main is probed through the
+synthetic harness instead and names no binaries.
+
 `coverage.uncovered_remedy` names the route to a wider answer. There is no
 refresh flag on `reachability` and none is needed: `version_id` is a content
 digest recomputed from the working tree on every run, so the probe is never
@@ -303,7 +319,14 @@ JSON shape (text rendering follows the same fields):
         "reason": "no stored vulnerability record for this coordinate; it has never been vuln-scanned"
       }
     ],
-    "uncovered_remedy": "<the commands that widen the next answer>"
+    "uncovered_remedy": "<the commands that widen the next answer>",
+    "probed_binaries": [
+      { "import_path": "github.com/example/app/cmd/server" },
+      {
+        "import_path": "github.com/example/app/cmd/tool",
+        "build_error": "building probe binary: exit status 1\n..."
+      }
+    ]
   },
   "modules": [
     {
@@ -317,7 +340,8 @@ JSON shape (text rendering follows the same fields):
           "verdict": "reachable",
           "verdict_source": "callgraph",
           "reason": "<why>",
-          "matched_symbols": ["pkg.Symbol"]
+          "matched_symbols": ["pkg.Symbol"],
+          "matched_binaries": ["github.com/example/app/cmd/server"]
         }
       ]
     }

@@ -2,8 +2,10 @@
 // from a local Go workspace with inlining disabled (-gcflags='all=-l') and
 // reads the binary's symbol table via go tool nm.
 //
-// For binary targets (package main), the workspace binary is built directly.
-// For library targets, a synthetic main package is generated inside the
+// For binary targets, every main package the workspace declares is built
+// directly and their symbol tables unioned — a project with more than one main
+// ships more than one artefact, and a symbol linked into any of them is in the
+// product. For library targets, a synthetic main package is generated inside the
 // workspace under a _kanonarion_probe directory (excluded from./...) that
 // takes references to all exported functions, preventing dead-code elimination.
 package builder
@@ -47,43 +49,101 @@ func (p *Prober) goBin() string {
 
 // Probe builds a probe binary from the workspace at root with inlining
 // disabled and returns its symbol table.
+//
+// Every main package the workspace declares is built, not the first one only.
+// A project with two mains ships two artefacts, and building whichever sorts
+// first answered "absent" for every symbol linked solely into the other — a
+// false negative on precisely the question the probe exists to answer. The
+// symbol tables are unioned for the verdict and kept per binary for
+// attribution.
 func (p *Prober) Probe(ctx context.Context, root string) (ports.SymbolProbeResult, error) {
 	mainPkgs, err := findMainPackages(ctx, root, p.goBin())
 	if err != nil {
 		return ports.SymbolProbeResult{}, fmt.Errorf("detecting workspace kind: %w", err)
 	}
 
-	tmpBin := filepath.Join(os.TempDir(), "kanonarion_probe_bin")
-
-	var kind string
-	var cleanup func()
-
-	if len(mainPkgs) > 0 {
-		kind = "binary"
-		cleanup = func() { _ = os.Remove(tmpBin) }
-		if err := buildBinary(ctx, root, mainPkgs[0], tmpBin, p.goBin()); err != nil {
-			return ports.SymbolProbeResult{}, fmt.Errorf("building probe binary: %w", err)
-		}
-	} else {
-		kind = "library"
-		harnessDir := filepath.Join(root, probeHarnessDir)
-		cleanup = func() {
-			_ = os.RemoveAll(harnessDir)
-			_ = os.Remove(tmpBin)
-		}
-		if err := buildLibraryProbe(ctx, root, harnessDir, tmpBin, p.goBin()); err != nil {
-			_ = os.RemoveAll(harnessDir)
-			return ports.SymbolProbeResult{}, fmt.Errorf("building library probe: %w", err)
-		}
+	outDir, err := os.MkdirTemp("", "kanonarion_probe_bin")
+	if err != nil {
+		return ports.SymbolProbeResult{}, fmt.Errorf("creating probe output directory: %w", err)
 	}
-	defer cleanup()
+	defer func() { _ = os.RemoveAll(outDir) }()
 
-	symbols, err := readSymbolTable(ctx, root, tmpBin, p.goBin())
+	if len(mainPkgs) == 0 {
+		return p.probeLibrary(ctx, root, filepath.Join(outDir, "probe"))
+	}
+	return p.probeBinaries(ctx, root, outDir, mainPkgs)
+}
+
+// probeBinaries builds every main package and unions their symbol tables.
+//
+// A main that fails to build (or whose symbol table cannot be read) is recorded
+// against its import path rather than aborting the probe: the other binaries
+// still answer for the symbols they carry. The probe fails only when no main at
+// all could be probed, because then there is no symbol table and every finding
+// would read "absent" on the strength of a build that never happened.
+func (p *Prober) probeBinaries(ctx context.Context, root, outDir string, mainPkgs []string) (ports.SymbolProbeResult, error) {
+	sorted := make([]string, len(mainPkgs))
+	copy(sorted, mainPkgs)
+	sort.Strings(sorted)
+
+	union := make(map[string]struct{})
+	binaries := make([]ports.ProbedBinary, 0, len(sorted))
+	probed := 0
+	var firstErr error
+
+	for i, mainPkg := range sorted {
+		entry := ports.ProbedBinary{ImportPath: mainPkg}
+		outBin := filepath.Join(outDir, fmt.Sprintf("probe_%d", i))
+		symbols, err := p.buildAndRead(ctx, root, mainPkg, outBin)
+		if err != nil {
+			entry.BuildError = err.Error()
+			if firstErr == nil {
+				firstErr = err
+			}
+		} else {
+			entry.Symbols = symbols
+			probed++
+			for sym := range symbols {
+				union[sym] = struct{}{}
+			}
+		}
+		_ = os.Remove(outBin)
+		binaries = append(binaries, entry)
+	}
+
+	if probed == 0 {
+		return ports.SymbolProbeResult{}, fmt.Errorf("building probe binary: no main package of %d could be probed: %w", len(sorted), firstErr)
+	}
+
+	return ports.SymbolProbeResult{BinarySymbols: union, Kind: "binary", Binaries: binaries}, nil
+}
+
+// buildAndRead builds one main package and reads the resulting symbol table.
+func (p *Prober) buildAndRead(ctx context.Context, root, mainPkg, outBin string) (map[string]struct{}, error) {
+	if err := buildBinary(ctx, root, mainPkg, outBin, p.goBin()); err != nil {
+		return nil, fmt.Errorf("building probe binary: %w", err)
+	}
+	symbols, err := readSymbolTable(ctx, root, outBin, p.goBin())
+	if err != nil {
+		return nil, fmt.Errorf("reading symbol table: %w", err)
+	}
+	return symbols, nil
+}
+
+// probeLibrary builds the synthetic harness for a workspace with no main
+// package and reads its symbol table.
+func (p *Prober) probeLibrary(ctx context.Context, root, outBin string) (ports.SymbolProbeResult, error) {
+	harnessDir := filepath.Join(root, probeHarnessDir)
+	defer func() { _ = os.RemoveAll(harnessDir) }()
+
+	if err := buildLibraryProbe(ctx, root, harnessDir, outBin, p.goBin()); err != nil {
+		return ports.SymbolProbeResult{}, fmt.Errorf("building library probe: %w", err)
+	}
+	symbols, err := readSymbolTable(ctx, root, outBin, p.goBin())
 	if err != nil {
 		return ports.SymbolProbeResult{}, fmt.Errorf("reading symbol table: %w", err)
 	}
-
-	return ports.SymbolProbeResult{BinarySymbols: symbols, Kind: kind}, nil
+	return ports.SymbolProbeResult{BinarySymbols: symbols, Kind: "library"}, nil
 }
 
 // goListPackage mirrors the fields we need from `go list -json`.

@@ -84,14 +84,38 @@ type BuildModuleLister interface {
 	BuildModules(ctx context.Context, root string) ([]domain.BuildModule, error)
 }
 
+// ProbedBinary is one main package the probe enumerated: its symbol table, or
+// the error that stopped it being built.
+//
+// A project with more than one main ships more than one artefact, and a symbol
+// linked into only one of them is present in the product. Attribution is kept
+// per binary rather than collapsed into the union alone so the answer can name
+// which binary carries the symbol.
+type ProbedBinary struct {
+	// ImportPath is the main package's import path.
+	ImportPath string
+	// Symbols is the set of fully-qualified Go symbol names present in this
+	// binary (as reported by go tool nm). Nil when BuildError is set.
+	Symbols map[string]struct{}
+	// BuildError is the build or symbol-read failure for this main, empty when
+	// the binary was probed. A main that fails to build does not fail the probe;
+	// it is carried here so the answer can say which binary it cannot speak
+	// about, and why.
+	BuildError string
+}
+
 // SymbolProbeResult is returned by SymbolTableProber.Probe.
 type SymbolProbeResult struct {
-	// BinarySymbols is the complete set of fully-qualified Go symbol names
-	// present in the probe binary (as reported by go tool nm).
+	// BinarySymbols is the union of the symbol names present in every probe
+	// binary that built (as reported by go tool nm).
 	BinarySymbols map[string]struct{}
-	// Kind is "binary" when a main package binary was built directly, or
+	// Kind is "binary" when main package binaries were built directly, or
 	// "library" when a synthetic reference harness was compiled.
 	Kind string
+	// Binaries is one entry per main package the enumeration found, built or
+	// failed, sorted by import path. Empty for a library probe, which has no
+	// main package to attribute a symbol to.
+	Binaries []ProbedBinary
 }
 
 // SymbolTableProber builds a probe binary from a local workspace with inlining

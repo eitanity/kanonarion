@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"fmt"
+	"sort"
 	"strings"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -141,6 +142,7 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 
 	var (
 		binarySymbols map[string]struct{}
+		binaries      []ports.ProbedBinary
 		probeKind     = "skipped"
 		notice        string
 	)
@@ -150,7 +152,9 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 			return domain.LocalReachabilityResult{}, fmt.Errorf("building symbol probe: %w", perr)
 		}
 		binarySymbols = probe.BinarySymbols
+		binaries = probe.Binaries
 		probeKind = probe.Kind
+		coverage.Binaries = coverageBinaries(binaries)
 	} else {
 		notice = "no matched finding carried affected symbols; skipped the probe-binary build " +
 			"and fell back to stored govulncheck reachability where available"
@@ -163,7 +167,7 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 			Version: coord.Version(),
 		}
 		for _, f := range cveFindings {
-			finding := probeOneFinding(f, coord.Path(), binarySymbols)
+			finding := probeOneFinding(f, coord.Path(), binarySymbols, binaries)
 			modResult.Findings = append(modResult.Findings, finding)
 		}
 		modResults = append(modResults, modResult)
@@ -181,9 +185,29 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 	}, nil
 }
 
+// coverageBinaries projects the prober's per-binary result onto the coverage
+// block: which main packages the build declares, and which of them the answer
+// could not be drawn from.
+func coverageBinaries(binaries []ports.ProbedBinary) []domain.ProbedBinary {
+	if len(binaries) == 0 {
+		return nil
+	}
+	out := make([]domain.ProbedBinary, 0, len(binaries))
+	for _, b := range binaries {
+		out = append(out, domain.ProbedBinary{ImportPath: b.ImportPath, BuildError: b.BuildError})
+	}
+	domain.SortProbedBinaries(out)
+	return out
+}
+
 // probeOneFinding checks whether any AffectedSymbol from the CVE finding
 // appears in the probe binary's symbol table for the given module.
-func probeOneFinding(f ports.VulnFinding, modPath string, binarySymbols map[string]struct{}) domain.SymbolProbeFinding {
+//
+// binarySymbols is the union across every binary that built, and settles the
+// verdict: a vulnerable symbol shipping in any one of a project's binaries
+// ships in the product. binaries carries the same tables per main package and
+// settles the attribution — which artefact to look in.
+func probeOneFinding(f ports.VulnFinding, modPath string, binarySymbols map[string]struct{}, binaries []ports.ProbedBinary) domain.SymbolProbeFinding {
 	result := domain.SymbolProbeFinding{
 		CVEID:   f.ID,
 		Aliases: f.Aliases,
@@ -224,10 +248,27 @@ func probeOneFinding(f ports.VulnFinding, modPath string, binarySymbols map[stri
 	result.VerdictSource = domain.VerdictSourceSymbolTable
 	if len(result.MatchedSymbols) > 0 {
 		result.Verdict = domain.SymbolProbePresent
+		result.MatchedBinaries = matchingBinaries(result.MatchedSymbols, binaries)
 	} else {
 		result.Verdict = domain.SymbolProbeAbsent
 	}
 	return result
+}
+
+// matchingBinaries names the probed binaries whose symbol table carries at
+// least one of syms, sorted by import path.
+func matchingBinaries(syms []string, binaries []ports.ProbedBinary) []string {
+	var matched []string
+	for _, b := range binaries {
+		for _, sym := range syms {
+			if _, ok := b.Symbols[sym]; ok {
+				matched = append(matched, b.ImportPath)
+				break
+			}
+		}
+	}
+	sort.Strings(matched)
+	return matched
 }
 
 // findInBinary looks for an nm symbol belonging to modPath whose unqualified
@@ -262,9 +303,30 @@ func findInBinary(affSym, modPath string, binarySymbols map[string]struct{}) str
 			continue
 		}
 
-		if unqualified == affSym {
+		if normalizeReceiver(unqualified) == normalizeReceiver(affSym) {
 			return sym
 		}
 	}
 	return ""
+}
+
+// normalizeReceiver rewrites a method symbol's pointer-receiver spelling to the
+// bare "Type.Method" form so the three spellings in play compare equal: the
+// symbol table mangles a method on *Parser as "(*Parser).Method", the stored
+// finding writes "*Parser.Method", and OSV's canonical form is "Parser.Method".
+// A value receiver's "Parser.Method" and a package-level function pass through
+// unchanged; a spelling that opens a receiver without closing it is returned
+// verbatim rather than guessed at.
+func normalizeReceiver(sym string) string {
+	if rest, ok := strings.CutPrefix(sym, "(*"); ok {
+		typ, method, ok := strings.Cut(rest, ").")
+		if !ok {
+			return sym
+		}
+		return typ + "." + method
+	}
+	if rest, ok := strings.CutPrefix(sym, "*"); ok && strings.Contains(rest, ".") {
+		return rest
+	}
+	return sym
 }

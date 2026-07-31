@@ -60,6 +60,29 @@ func SortUncovered(mods []UncoveredModule) {
 	})
 }
 
+// ProbedBinary is one main package of the local build, and whether the probe
+// was able to read its symbol table.
+//
+// Naming the binaries is part of stating the basis of the answer. A project
+// with two mains ships two artefacts, and a probe that read one of them holds
+// no evidence about the symbols linked only into the other. The list carries
+// every main the enumeration found, probed or not, so a reader can see whether
+// the answer covers the artefact they care about.
+type ProbedBinary struct {
+	// ImportPath is the main package's import path.
+	ImportPath string
+	// BuildError is the failure that stopped this binary being probed, empty
+	// when it was probed. A main that fails to build is not fatal to the probe
+	// and is not silent either: the answer rests on the binaries that did
+	// build, and says which one it does not.
+	BuildError string
+}
+
+// SortProbedBinaries sorts bins in place by ImportPath for deterministic output.
+func SortProbedBinaries(bins []ProbedBinary) {
+	sort.Slice(bins, func(i, j int) bool { return bins[i].ImportPath < bins[j].ImportPath })
+}
+
 // ProbeCoverage states what a local probe's answer was drawn from and what it
 // left out, so an incomplete answer is visibly incomplete.
 //
@@ -87,6 +110,11 @@ type ProbeCoverage struct {
 	// about, with its reason. It is never capped: a cap would reintroduce the
 	// silent omission this field exists to end.
 	Uncovered []UncoveredModule
+	// Binaries names every main package of the local build, probed or not, so
+	// the answer states which artefacts it rests on. Empty for a library
+	// workspace, which declares no main and is probed through a synthetic
+	// harness instead.
+	Binaries []ProbedBinary
 }
 
 // SymbolProbeVerdict is the result of checking whether a CVE-affected symbol
@@ -143,9 +171,14 @@ type SymbolProbeFinding struct {
 	VerdictSource VerdictSource
 	// Reason explains an unknown verdict (empty otherwise).
 	Reason string
-	// MatchedSymbols lists the affected symbols that were found in the binary.
-	// Populated only when Verdict == SymbolProbePresent.
+	// MatchedSymbols lists the affected symbols that were found in any probed
+	// binary. Populated only when Verdict == SymbolProbePresent.
 	MatchedSymbols []string
+	// MatchedBinaries names the main packages whose symbol table carried at
+	// least one of MatchedSymbols. A verdict of "present" across a multi-binary
+	// build does not say which artefact ships the vulnerable code; this does.
+	// Empty for a library probe, which has no main to attribute the symbol to.
+	MatchedBinaries []string
 }
 
 // ModuleProbeResult is the reachability verdict for one dependency module.

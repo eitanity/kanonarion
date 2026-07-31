@@ -675,3 +675,145 @@ func TestLocalReachability_SnapshotTimeIsStamped(t *testing.T) {
 		t.Errorf("TakenAt = %v, want %v", result.Coverage.TakenAt, testClockInstant)
 	}
 }
+
+// A project with two mains ships two artefacts. A symbol linked only into the
+// second must read "present", and the answer must name the binary that carries
+// it — probing whichever main sorts first reported "absent" for exactly this
+// case.
+func TestLocalReachability_SymbolInSecondMainOnly_PresentNamingThatMain(t *testing.T) {
+	coord := mustCoord(t, "example.com/dep", "v1.0.0")
+	uc := makeUC(
+		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
+		&fakeBuildLister{modules: []domain.BuildModule{
+			{Path: "example.com/dep", Version: "v1.0.0"},
+		}},
+		&fakeVulnLoader{findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
+			coord: {{ID: "GHSA-0010", AffectedSymbols: []string{"Vulnerable"}}},
+		}},
+		&fakeProber{result: ports.SymbolProbeResult{
+			Kind: "binary",
+			BinarySymbols: map[string]struct{}{
+				"example.com/dep.Other":      {},
+				"example.com/dep.Vulnerable": {},
+			},
+			Binaries: []ports.ProbedBinary{
+				{
+					ImportPath: "example.com/app/cmd/alpha",
+					Symbols:    map[string]struct{}{"example.com/dep.Other": {}},
+				},
+				{
+					ImportPath: "example.com/app/cmd/beta",
+					Symbols:    map[string]struct{}{"example.com/dep.Vulnerable": {}},
+				},
+			},
+		}},
+	)
+
+	result, err := uc.Execute(context.Background(), "/ws")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	f := result.Modules[0].Findings[0]
+	if f.Verdict != domain.SymbolProbePresent {
+		t.Errorf("Verdict = %q, want %q", f.Verdict, domain.SymbolProbePresent)
+	}
+	if len(f.MatchedBinaries) != 1 || f.MatchedBinaries[0] != "example.com/app/cmd/beta" {
+		t.Errorf("MatchedBinaries = %v, want [example.com/app/cmd/beta]", f.MatchedBinaries)
+	}
+	if len(result.Coverage.Binaries) != 2 {
+		t.Fatalf("Coverage.Binaries = %v, want both mains named", result.Coverage.Binaries)
+	}
+	for _, b := range result.Coverage.Binaries {
+		if b.BuildError != "" {
+			t.Errorf("binary %q: BuildError = %q, want empty", b.ImportPath, b.BuildError)
+		}
+	}
+}
+
+// A main that fails to build is neither fatal nor silent: the binaries that did
+// build still answer, and the one that did not is named in the coverage block
+// with its build error.
+func TestLocalReachability_UnbuildableMain_NamedAsUnprobed(t *testing.T) {
+	coord := mustCoord(t, "example.com/dep", "v1.0.0")
+	uc := makeUC(
+		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
+		&fakeBuildLister{modules: []domain.BuildModule{
+			{Path: "example.com/dep", Version: "v1.0.0"},
+		}},
+		&fakeVulnLoader{findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
+			coord: {{ID: "GHSA-0011", AffectedSymbols: []string{"Vulnerable"}}},
+		}},
+		&fakeProber{result: ports.SymbolProbeResult{
+			Kind: "binary",
+			BinarySymbols: map[string]struct{}{
+				"example.com/dep.Vulnerable": {},
+			},
+			Binaries: []ports.ProbedBinary{
+				{
+					ImportPath: "example.com/app/cmd/alpha",
+					Symbols:    map[string]struct{}{"example.com/dep.Vulnerable": {}},
+				},
+				{
+					ImportPath: "example.com/app/cmd/beta",
+					BuildError: "building probe binary: undefined: nope",
+				},
+			},
+		}},
+	)
+
+	result, err := uc.Execute(context.Background(), "/ws")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	f := result.Modules[0].Findings[0]
+	if f.Verdict != domain.SymbolProbePresent {
+		t.Errorf("Verdict = %q, want %q", f.Verdict, domain.SymbolProbePresent)
+	}
+	if len(f.MatchedBinaries) != 1 || f.MatchedBinaries[0] != "example.com/app/cmd/alpha" {
+		t.Errorf("MatchedBinaries = %v, want [example.com/app/cmd/alpha]", f.MatchedBinaries)
+	}
+	if len(result.Coverage.Binaries) != 2 {
+		t.Fatalf("Coverage.Binaries = %v, want both mains named", result.Coverage.Binaries)
+	}
+	unprobed := result.Coverage.Binaries[1]
+	if unprobed.ImportPath != "example.com/app/cmd/beta" {
+		t.Errorf("unprobed binary = %q, want example.com/app/cmd/beta", unprobed.ImportPath)
+	}
+	if unprobed.BuildError == "" {
+		t.Error("unprobed binary carries no build error; the omission would be silent")
+	}
+}
+
+// A library probe has no main package, so nothing is attributed to one. The
+// verdict still comes off the union.
+func TestLocalReachability_LibraryProbe_NoBinariesNamed(t *testing.T) {
+	coord := mustCoord(t, "example.com/dep", "v1.0.0")
+	uc := makeUC(
+		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
+		&fakeBuildLister{modules: []domain.BuildModule{
+			{Path: "example.com/dep", Version: "v1.0.0"},
+		}},
+		&fakeVulnLoader{findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
+			coord: {{ID: "GHSA-0012", AffectedSymbols: []string{"Vulnerable"}}},
+		}},
+		&fakeProber{result: ports.SymbolProbeResult{
+			Kind:          "library",
+			BinarySymbols: map[string]struct{}{"example.com/dep.Vulnerable": {}},
+		}},
+	)
+
+	result, err := uc.Execute(context.Background(), "/ws")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	f := result.Modules[0].Findings[0]
+	if f.Verdict != domain.SymbolProbePresent {
+		t.Errorf("Verdict = %q, want %q", f.Verdict, domain.SymbolProbePresent)
+	}
+	if len(f.MatchedBinaries) != 0 {
+		t.Errorf("MatchedBinaries = %v, want none for a library probe", f.MatchedBinaries)
+	}
+	if len(result.Coverage.Binaries) != 0 {
+		t.Errorf("Coverage.Binaries = %v, want none for a library probe", result.Coverage.Binaries)
+	}
+}
