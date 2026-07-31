@@ -383,6 +383,34 @@ const (
 	// does not build, which is the exact "analysed bytes are not built bytes"
 	// defect that choosing the vendored surface exists to close.
 	UnscanReasonAbsentFromVendor UnscanReason = "absent-from-vendor"
+	// UnscanReasonStdlibMetadata indicates the coordinate is the Go standard
+	// library, which is provided by the toolchain rather than fetched as a
+	// module: there is no artefact in the store to analyse, and its advisories
+	// are resolved from OSV metadata by coordinate. It is a property of how the
+	// stdlib is distributed, not a fault and not a gap a re-run can close.
+	UnscanReasonStdlibMetadata UnscanReason = "stdlib-metadata"
+	// UnscanReasonGoModOnly indicates the store holds only the module's go.mod,
+	// fetched for module-graph resolution, and not its zip. There is source to
+	// analyse in principle — it was simply never retrieved, because nothing in
+	// the walk needed it.
+	UnscanReasonGoModOnly UnscanReason = "go-mod-only"
+	// UnscanReasonLocalProjectSource indicates the coordinate is a local main
+	// module (the synthetic @local version), so no published artefact exists for
+	// the store to hold: its source is on disk in the project directory and is
+	// analysed only by a project-rooted run.
+	//
+	// Distinct from local-replace, which names a DEPENDENCY redirected at a
+	// working-tree path. This names the walk's own root.
+	UnscanReasonLocalProjectSource UnscanReason = "local-project-source"
+	// UnscanReasonSourceNotInStore indicates the store holds no fetch record for
+	// the coordinate at all, so the scan had nothing but the coordinate to match
+	// advisories against.
+	//
+	// It names what was measured — the absence — and stops there. A shallow walk
+	// is one way to arrive here, but so are a coordinate fetched under a retired
+	// pipeline generation and a node the walk listed without resolving, and the
+	// scan cannot tell them apart from where it stands.
+	UnscanReasonSourceNotInStore UnscanReason = "source-not-in-store"
 )
 
 // AnalysisSurface names which copy of a module's source a scan measured.
@@ -451,6 +479,10 @@ func AllUnscanReasons() []UnscanReason {
 		UnscanReasonProjectNoGoMod,
 		UnscanReasonProjectDirUnavailable,
 		UnscanReasonAbsentFromVendor,
+		UnscanReasonStdlibMetadata,
+		UnscanReasonGoModOnly,
+		UnscanReasonLocalProjectSource,
+		UnscanReasonSourceNotInStore,
 	}
 }
 

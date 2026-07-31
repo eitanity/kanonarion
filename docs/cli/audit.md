@@ -117,6 +117,7 @@ the install command.
 | `--json` | `false` | Emit output as a JSON array |
 | `--store-root` | `~/.kanonarion` | Path to fact store root (or `KANONARION_STORE` env var) |
 | `--log-level` | `warn` | Log level: `debug`, `info`, `warn`, `error` |
+| `--no-progress` | `false` | Suppress stderr progress output (the throttled heartbeat and any per-module progress lines); results and warnings are unaffected |
 
 ## Example - code dependencies (default)
 

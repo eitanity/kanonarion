@@ -126,6 +126,7 @@ re-run when `--force` is passed.
 | `--policy` | _(auto-discover `.kanonarion/policy.yaml`)_ | Depth policy file; its fetch stage governs traversal and the `allowed_vcs_hosts` forge allowlist |
 | `--log-level` | `warn` | Log level (`debug`, `info`, `warn`, `error`) |
 | `--log-json` | `false` | Emit logs as JSON |
+| `--no-progress` | `false` | Suppress stderr progress output (the throttled heartbeat and any per-module progress lines); results and warnings are unaffected |
 
 ### Examples
 

@@ -383,6 +383,11 @@ func TestMigration13_CorrectsCoverageBackFilledFromTheCollapsedWord(t *testing.T
 	}
 
 	// Four legacy rows: the two mislabelled shapes, and two that must not move.
+	//
+	// v1.1.0 keeps the retired "(shallow walk)" wording on purpose. It is what the
+	// pipeline of the day actually wrote, it is what these rows still say in every
+	// store, and the migration must move them on the evidence they carry rather
+	// than on wording only a current writer produces.
 	for _, r := range []struct {
 		version           string
 		overall           string

@@ -183,6 +183,7 @@ fresh each time and is not served from the coordinate cache.
 | `--binary-pre-pass` | `false` | Fast binary-mode pre-pass; source mode only for affected modules |
 | `--no-vendor` | `false` | Analyse the fetched artefacts even when the project is vendored. By default a project carrying `vendor/modules.txt` is analysed from `vendor/`, the source it actually compiles |
 | `--operator` | `$USER` | Operator name recorded in the scan run |
+| `--no-progress` | `false` | Suppress stderr progress output (the throttled heartbeat and any per-module progress lines); results and warnings are unaffected |
 | `--log-level` | `warn` | Log level: `debug`, `info`, `warn`, `error` |
 
 **Examples:**

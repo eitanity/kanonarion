@@ -36,6 +36,7 @@ type auditFlags struct {
 	stdlibFromGoMod bool
 	fromModcache    string
 	policyPath      string
+	noProgress      bool
 }
 
 func newAuditCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -87,6 +88,7 @@ Exit codes:
 	registerStdlibFromGoModFlag(cmd, &f.stdlibFromGoMod)
 	registerFromModcacheFlag(cmd, &f.fromModcache)
 	registerAllowVerificationDowngradeFlag(cmd)
+	registerNoProgressFlag(cmd, &f.noProgress)
 
 	return cmd
 }
@@ -279,9 +281,15 @@ func auditScope(
 		return nil, err
 	}
 
-	_, _ = fmt.Fprintf(stderr, "==> audit: walking project %s (%d %s dependencies)\n", f.gomodPath, len(coords), scope)
+	// audit narrates three stages on stderr and drives a walk and a scan that
+	// narrate per module beneath them. All of it is progress, and all of it goes
+	// to progressOut, which --no-progress silences. The stage failures below keep
+	// writing to stderr: a silenced audit still reports that the walk or the scan
+	// went wrong, because those are not progress.
+	progressOut := progressWriter(stderr, f.noProgress)
+	_, _ = fmt.Fprintf(progressOut, "==> audit: walking project %s (%d %s dependencies)\n", f.gomodPath, len(coords), scope)
 
-	progress := newWalkProgressReporter(stderr, false, activeConfig, logLevel)
+	progress := newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
 	if werr := runWalkProject(ctx, f.gomodPath, f.force, true, 0, "", f.policyPath, f.skipVCSVerify, scope,
 		walkdomain.WalkDepthFull, "", false, f.stdlibFromGoMod, progress, ctr.ExecuteWalk, nil, io.Discard, stderr); werr != nil {
 		// A partial walk is tolerated (allowPartial=true above): individual
@@ -322,14 +330,14 @@ func auditScope(
 		return nil, gateErr
 	}
 
-	_, _ = fmt.Fprintf(stderr, "==> audit: extracting licenses for walk %s\n", walkID)
-	ef := extractFlags{stages: []string{"license"}, force: f.force}
+	_, _ = fmt.Fprintf(progressOut, "==> audit: extracting licenses for walk %s\n", walkID)
+	ef := extractFlags{stages: []string{"license"}, force: f.force, noProgress: f.noProgress}
 	if eerr := runExtract(ctx, walkID, ef, io.Discard, stderr); eerr != nil {
 		_, _ = fmt.Fprintf(stderr, "extract: %v\n", eerr)
 	}
 
-	_, _ = fmt.Fprintf(stderr, "==> audit: scanning vulnerabilities for walk %s\n", walkID)
-	if verr := runVulnScan(ctx, walkID, f.force, f.fresh, false, 1, false, false, "", os.Getenv("USER"), filepath.Dir(f.gomodPath), f.policyPath, false, io.Discard, stderr); verr != nil {
+	_, _ = fmt.Fprintf(progressOut, "==> audit: scanning vulnerabilities for walk %s\n", walkID)
+	if verr := runVulnScan(ctx, walkID, f.force, f.fresh, false, 1, false, false, "", os.Getenv("USER"), filepath.Dir(f.gomodPath), f.policyPath, false, f.noProgress, io.Discard, stderr); verr != nil {
 		_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", verr)
 	}
 

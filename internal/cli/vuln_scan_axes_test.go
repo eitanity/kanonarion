@@ -100,9 +100,9 @@ func TestVulnScanStatusLabel_CarriesTheFindingAndTheCoverageGap(t *testing.T) {
 		OverallStatus:     vuldomain.StatusClean,
 		CoverageStatus:    vuldomain.CoverageUnscannable,
 		FindingsStatus:    vuldomain.FindingsRecordClean,
-		UnscannableReason: "metadata-only: module not fetched (shallow walk)",
+		UnscannableReason: "metadata-only: module source not in the store",
 	})
-	if label != "metadata-only: module not fetched (shallow walk)" {
+	if label != "metadata-only: module source not in the store" {
 		t.Errorf("label = %q, want the recorded reason", label)
 	}
 

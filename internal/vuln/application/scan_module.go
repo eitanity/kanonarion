@@ -288,18 +288,38 @@ func (uc *ScanModuleUseCase) WithCallGraphSpawner(spawner ports.CallGraphSpawner
 	return uc
 }
 
-// metadataOnlyNote returns the note recorded on a metadata-only scan, naming why
-// no source was analysed: the stdlib is toolchain-provided and resolved by
-// coordinate; a go.mod-only record carries no source; otherwise the module was
-// never fetched (a shallow walk).
-func metadataOnlyNote(coord coordinate.ModuleCoordinate, goModOnly bool) string {
+// metadataOnlyNote returns the note and the taxonomy code recorded on a
+// metadata-only scan, naming why no source was analysed.
+//
+// Every branch states only what this call measured. The note is prose for a
+// reader and the code is the same fact for the roll-up, so the two are produced
+// together rather than left for a later classifier to infer from the prose.
+//
+// The default branch used to assert "module not fetched (shallow walk)". All it
+// had measured was that no fetch record exists; the walk's depth is not in hand
+// here, and a full-depth project walk whose local root degrades to the fetched
+// surface arrived at exactly that branch and recorded a shallowness that never
+// happened. Naming a cause the call cannot see is worse than naming none: the
+// invented one is read, believed, and investigated.
+//
+// The local main module gets its own branch for the same reason. It has no
+// published artefact for anything to fetch, so "not fetched" describes it as a
+// gap when it is a property of an unpublished module — its source is analysed
+// from the project directory by a project-rooted run, not from the store.
+func metadataOnlyNote(coord coordinate.ModuleCoordinate, goModOnly bool) (string, domain.UnscanReason) {
 	switch {
 	case coord.Path() == domain.StdlibModulePath:
-		return "Go standard library (toolchain-provided); advisories resolved from OSV metadata by coordinate"
+		return "Go standard library (toolchain-provided); advisories resolved from OSV metadata by coordinate",
+			domain.UnscanReasonStdlibMetadata
 	case goModOnly:
-		return "metadata-only: only go.mod fetched for module-graph resolution; module source not retrieved"
+		return "metadata-only: only go.mod fetched for module-graph resolution; module source not retrieved",
+			domain.UnscanReasonGoModOnly
+	case coord.IsLocal():
+		return "metadata-only: local project source; no published artefact exists to fetch; " +
+				"source is analysed only via the project directory",
+			domain.UnscanReasonLocalProjectSource
 	default:
-		return "metadata-only: module not fetched (shallow walk)"
+		return "metadata-only: module source not in the store", domain.UnscanReasonSourceNotInStore
 	}
 }
 
@@ -441,8 +461,12 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 		// marked metadata-only have no AffectedSymbols and nil Reachable, signalling
 		// that call-graph analysis was not performed. A coordinate with no matching
 		// advisory is a real answer here, so the empty status is Clean.
-		note := metadataOnlyNote(params.Coordinate, ok && fact.IsGoModOnly())
-		return uc.scanMetadataOnly(ctx, params, snapshot, derived, note, "", "", domain.StatusClean)
+		// The reason code travels with the note. Recording the prose alone left
+		// these records — the two the scan writes on every run — in the roll-up's
+		// unknown-producer bucket, which then printed their reason directly under a
+		// heading that said no reason was recorded.
+		note, reason := metadataOnlyNote(params.Coordinate, ok && fact.IsGoModOnly())
+		return uc.scanMetadataOnly(ctx, params, snapshot, derived, note, reason, "", domain.StatusClean)
 	}
 
 	// 3.5 Metadata-based Filtering (Optimization)

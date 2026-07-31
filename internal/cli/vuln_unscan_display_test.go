@@ -205,19 +205,21 @@ func TestPrintVulnScanResult_FailedModulesListedOnAffectedRun(t *testing.T) {
 // TestUnscannableRollup_HeadingDoesNotDenyAPrintedReason is the regression guard
 // on the roll-up's one self-contradicting output.
 //
-// A record can carry a free-text reason with no taxonomy code — a metadata-only
-// module records "metadata-only: module not fetched" and no code, because no
-// analysis was attempted for a classifier to categorise. The section collecting
-// those printed "Unscannable — no reason recorded" and then printed the reason on
-// the next line. Measured on a real scan of the maintainer's store: the stdlib
-// node rendered exactly that way. unscanLabelFor already refuses to be false in
-// this way on the per-module line; the heading now does too, and says what is
-// actually missing.
+// A record can carry a free-text reason with no taxonomy code, and the section
+// collecting those printed "Unscannable — no reason recorded" and then printed
+// the reason on the next line. Measured on a real scan of the maintainer's
+// store: the stdlib node and the metadata-only note rendered exactly that way.
+// unscanLabelFor already refuses to be false in this way on the per-module line;
+// the heading now does too, and says what is actually missing.
+//
+// Those two producers now record codes of their own, so the fixture here is an
+// unknown producer — which is the case the bucket is for, and the only one that
+// should still reach it.
 func TestUnscannableRollup_HeadingDoesNotDenyAPrintedReason(t *testing.T) {
-	const detail = "Go standard library (toolchain-provided); advisories resolved from OSV metadata by coordinate"
+	const detail = "some producer's prose reason, recorded without a taxonomy code"
 
 	r := newUnscannableRollup()
-	r.add("", "stdlib@v1.26.5", detail)
+	r.add("", "example.com/uncoded@v1.0.0", detail)
 
 	sections := r.sections()
 	if len(sections) != 1 {
@@ -232,7 +234,7 @@ func TestUnscannableRollup_HeadingDoesNotDenyAPrintedReason(t *testing.T) {
 	if strings.Contains(section.display.heading, "no reason recorded") {
 		t.Errorf("heading %q denies a reason it goes on to print: %q", section.display.heading, detail)
 	}
-	if !strings.Contains(section.display.heading, "no reason code recorded") {
+	if !strings.Contains(section.display.heading, "reason recorded without a structured code") {
 		t.Errorf("heading = %q, want it to name the taxonomy code as the missing part", section.display.heading)
 	}
 }

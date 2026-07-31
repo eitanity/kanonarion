@@ -38,7 +38,7 @@ func NewExtractCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().StringSliceVar(&f.stages, "stages", []string{"license", "interface", "example"}, "Comma-separated list of stages to run (callgraph is excluded by default: it loads each module's full transitive dependency closure into SSA and OOMs on large walks; pass explicitly when needed)")
 	cmd.Flags().BoolVar(&f.force, "force", false, "re-extract even if cached")
 	cmd.Flags().IntVar(&f.workers, "workers", 0, "parallel module extraction workers (0 = number of CPUs; reduce to limit memory use)")
-	cmd.Flags().BoolVar(&f.noProgress, "no-progress", false, "suppress the stderr extraction-progress heartbeat (default: heartbeat on for long runs)")
+	registerNoProgressFlag(cmd, &f.noProgress)
 
 	cmd.AddCommand(newExtractShowCmd(stdout, stderr))
 	cmd.AddCommand(newExtractListCmd(stdout, stderr))

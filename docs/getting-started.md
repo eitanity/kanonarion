@@ -153,7 +153,10 @@ per-module output. (The vuln-scan phase already prints its own `[n/total]`
 line per module, so it needs no separate heartbeat.) The heartbeat goes to
 stderr only; stdout (and `--json`) is never touched. Suppress it with
 `--no-progress` (or `kanonarion config set preferences.progress false`); a warm
-re-run shorter than the interval prints nothing at all. For full per-module
+re-run shorter than the interval prints nothing at all. `--no-progress` is
+accepted by every command that narrates progress - `walk`, `inspect`, `extract`,
+`vuln-scan`, `audit` and `sbom` - and on the scanning commands it also silences
+the per-module `[n/total]` stream, which is the bulk of a long run's stderr. For full per-module
 detail (`fetch_start`, `fetch_end`, `cache_hit`, extraction lines, and the
 vulnerability-snapshot byte-progress line) pass `--log-level info` instead.
 Set a generous timeout (e.g. 30 min) and let it finish. Every subsequent
