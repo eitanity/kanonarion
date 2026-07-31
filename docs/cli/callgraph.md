@@ -217,7 +217,20 @@ Two disagreements are reported rather than resolved by picking: two analyses of
 one pinned version that name **different artefacts**, and two records at the
 **same completeness** that disagree about the graph (the narrow case that
 indicates non-determinism in the analyser). A disputed module is reported on its
-own row in `callgraph-list` rather than failing the whole listing.
+own row in `callgraph-list` rather than failing the whole listing. Every such
+refusal prints the commands that address it — a refusal the append-only ledger
+makes permanent and that names no route out is a dead end.
+
+A generation that says **nothing** about a field has not disagreed with one that
+does. Records are compared over the fields they all state, so a generation
+written before a field existed — and a generation whose value for an optional
+field is simply absent — is superseded by the newer one rather than reported as
+in conflict with it, and the newest generation answers. The comparison is over
+field presence rather than over any particular field name, so a field added in a
+later release behaves the same way without further work. What it does not relax
+is a disagreement between two generations that both state a field: node and edge
+sets are stated by every generation, as empty when there are none, so a graph
+against an empty one is still a conflict.
 
 ### `callgraph-list`
 

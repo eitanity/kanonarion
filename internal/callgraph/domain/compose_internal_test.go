@@ -2,6 +2,7 @@ package domain
 
 import (
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 )
@@ -91,5 +92,57 @@ func TestStatesAGraph_UnknownLevelClaimsNothing(t *testing.T) {
 	t.Parallel()
 	if statesAGraph(CallGraphRecord{Completeness: CompletenessLevel("BUILT_WITH_EVERYTHING")}) {
 		t.Error("an unrecognised completeness level claims to state a graph")
+	}
+}
+
+// TestGraphDisagreement_UnreadableEncodingFallsBackRatherThanAgreeing covers the
+// guard, not its absence.
+//
+// Deciding which fields a record states means reading its canonical encoding as
+// an object. When that cannot be done, which fields are shared is unknown — and
+// "unknown" must not resolve to "they share everything", which would report two
+// records as agreeing about a graph neither could be read.
+func TestGraphDisagreement_UnreadableEncodingFallsBackRatherThanAgreeing(t *testing.T) {
+	tests := []struct {
+		name    string
+		marshal func(any) ([]byte, error)
+	}{
+		{
+			// The encoding could not be produced at all.
+			name:    "marshal fails",
+			marshal: func(any) ([]byte, error) { return nil, errors.New("injected marshal failure") },
+		},
+		{
+			// The encoding was produced but is not an object, so it names no fields.
+			// Each call returns different bytes so the fallback's whole-record digests
+			// differ and the fallback is observable in the result.
+			name: "encoding is not an object",
+			marshal: func() func(any) ([]byte, error) {
+				n := 0
+				return func(any) ([]byte, error) {
+					n++
+					return fmt.Appendf(nil, "[%d]", n), nil
+				}
+			}(),
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			original := canonicalMarshal
+			t.Cleanup(func() { canonicalMarshal = original })
+			canonicalMarshal = tc.marshal
+
+			records := []CallGraphRecord{
+				{ContentHash: "sha256:a", Completeness: CompletenessBuiltWithBodies},
+				{ContentHash: "sha256:b", Completeness: CompletenessBuiltWithBodies},
+			}
+			got := graphDisagreement(records)
+			if got == nil {
+				t.Fatal("an unreadable encoding was composed as agreement about the graph")
+			}
+			if got.Field != ConflictFieldCallGraph {
+				t.Errorf("conflict field %q, want %q", got.Field, ConflictFieldCallGraph)
+			}
+		})
 	}
 }
