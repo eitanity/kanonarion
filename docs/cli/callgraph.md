@@ -136,6 +136,35 @@ describes a directory on disk rather than the published module of that version. 
 record written before the source was recorded prints `source: not recorded`,
 which is a statement rather than a default.
 
+##### Modules published before Go modules
+
+A module published before Go modules ships no `go.mod` in its zip. Extracted into
+a bare directory it would load outside any module — no package would carry the
+module's import path, nothing would be recognised as the target, and the record
+would be an empty graph. For those, and only those, kanonarion writes a minimal
+`go.mod` into the extraction directory before loading:
+
+* the module path is the coordinate's path **verbatim**, never derived from the
+  version. A `+incompatible` module publishes a v2-or-later version under a path
+  with no `/vN` suffix, and adding one would produce a graph whose every node ID
+  named a module that does not exist;
+* the `go` directive is pinned to `1.16` — exactly what the toolchain already
+  assumes when a `go.mod` states none — because a directive of 1.22 or later
+  changes loop-variable scoping, hence the SSA, hence the call graph;
+* a zip that ships its own `go.mod` is **never** touched. Modules that publish
+  one and still fail to load are failing for their own reasons, and overwriting
+  the published file would hide that;
+* if the module also ships a `vendor/` directory, vendor mode is explicitly
+  disabled for the load, so the graph describes the module rather than vendored
+  copies of its dependencies.
+
+The record says so. `fidelity:` gains a `[synthesised go.mod (module …, go …)]`
+note, `--history` appends it to the artefact the generation was computed from,
+and `--json` carries a `synthesised_go_mod` object. The analysis is of the
+published bytes **plus a file kanonarion invented**, and a record that did not
+state that would be claiming to describe the artefact it was sealed against. The
+field is absent — not empty — on every graph analysed as published.
+
 #### Generations
 
 `callgraph_records` is an append-only ledger: re-analysing a module adds a

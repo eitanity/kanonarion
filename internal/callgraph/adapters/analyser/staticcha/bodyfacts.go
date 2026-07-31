@@ -28,13 +28,13 @@ type bodyFacts struct {
 // attachBodyFacts scans the packages present in nodes for body-level capability
 // facts and stamps them onto the matching nodes in place. It is best-effort:
 // packages whose syntax cannot be loaded simply contribute no facts.
-func (a *Analyser) attachBodyFacts(ctx context.Context, nodes []domain.CallNode, dir string) {
+func (a *Analyser) attachBodyFacts(ctx context.Context, nodes []domain.CallNode, dir string, env []string) {
 	pkgPaths := distinctNodePackages(nodes)
 	if len(pkgPaths) == 0 {
 		return
 	}
 
-	facts := scanBodyFacts(ctx, dir, pkgPaths)
+	facts := scanBodyFacts(ctx, dir, pkgPaths, env)
 	if len(facts) == 0 {
 		return
 	}
@@ -93,7 +93,7 @@ func distinctNodePackages(nodes []domain.CallNode) []string {
 //
 // A dedicated FileSet is used because these facts need no source positions and
 // re-parsing into the SSA program's FileSet would bloat it.
-func scanBodyFacts(ctx context.Context, dir string, pkgPaths []string) map[string]bodyFacts {
+func scanBodyFacts(ctx context.Context, dir string, pkgPaths []string, env []string) map[string]bodyFacts {
 	facts := make(map[string]bodyFacts)
 	if len(pkgPaths) == 0 {
 		return facts
@@ -110,7 +110,7 @@ func scanBodyFacts(ctx context.Context, dir string, pkgPaths []string) map[strin
 			Mode:    packages.NeedName | packages.NeedSyntax | packages.NeedFiles | packages.NeedCompiledGoFiles,
 			Dir:     dir,
 			Context: ctx,
-			Env:     isolatedModuleEnv(),
+			Env:     env,
 			Fset:    token.NewFileSet(),
 			Tests:   false,
 		}

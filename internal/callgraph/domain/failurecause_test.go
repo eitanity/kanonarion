@@ -171,3 +171,15 @@ func TestFailureCauseStringNamesTheZeroValue(t *testing.T) {
 		t.Errorf("FailureCauseEnvironment.String() = %q, want %q", got, "environment")
 	}
 }
+
+// TestRecordIsFailure_UnknownStatusIsNotAFailure: a status written by a newer
+// generation is not evidence that the extraction failed. Reading it as one would
+// let this generation discard a graph it simply cannot name the outcome of,
+// which is the opposite of what the axis is for.
+func TestRecordIsFailure_UnknownStatusIsNotAFailure(t *testing.T) {
+	t.Parallel()
+
+	if domain.RecordIsFailure(domain.CallGraphRecord{OverallStatus: domain.CallGraphStatus(99)}) {
+		t.Error("a status this generation does not define was read as a failure")
+	}
+}

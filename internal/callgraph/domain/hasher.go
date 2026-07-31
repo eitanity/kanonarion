@@ -160,6 +160,11 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 		SourceContentHash: c.SourceContentHash,
 		AnalysisSource:    AnalysisSource(c.AnalysisSource),
 		WorktreeDigest:    c.WorktreeDigest,
+		SynthesisedGoMod: SynthesisedGoMod{
+			ModulePath:        c.SynthesisedGoMod.ModulePath,
+			GoDirective:       c.SynthesisedGoMod.GoDirective,
+			VendorTreePresent: c.SynthesisedGoMod.VendorTreePresent,
+		},
 	}, nil
 }
 
@@ -263,9 +268,26 @@ type canonicalRecord struct {
 	PipelineVersion   string                    `json:"pipeline_version"`
 	SchemaVersion     string                    `json:"schema_version"`
 	SourceContentHash string                    `json:"source_content_hash,omitempty"`
-	TestScope         string                    `json:"test_scope,omitempty"`
-	TestScopeDetail   string                    `json:"test_scope_detail,omitempty"`
-	WorktreeDigest    string                    `json:"worktree_digest,omitempty"`
+	// SynthesisedGoMod is omitted when zero so every record sealed before the
+	// field existed marshals to exactly the bytes it always did and keeps its
+	// stored content hash verifiable — the terms every additive field on this
+	// shape has used. An absent value is not "unrecorded": nothing synthesised a
+	// go.mod before this field, so absent means the published tree was analysed
+	// as published.
+	SynthesisedGoMod canonicalSynthesisedGoMod `json:"synthesised_go_mod,omitzero"`
+	TestScope        string                    `json:"test_scope,omitempty"`
+	TestScopeDetail  string                    `json:"test_scope_detail,omitempty"`
+	WorktreeDigest   string                    `json:"worktree_digest,omitempty"`
+}
+
+// canonicalSynthesisedGoMod is the wire shape of domain.SynthesisedGoMod. It is
+// a separate type on purpose: the sealed bytes are pinned here, so a field added
+// to the domain type does not silently change what every stored record hashes
+// over.
+type canonicalSynthesisedGoMod struct {
+	GoDirective       string `json:"go_directive"`
+	ModulePath        string `json:"module_path"`
+	VendorTreePresent bool   `json:"vendor_tree_present"`
 }
 
 func marshalCanonical(r CallGraphRecord) ([]byte, error) {
@@ -406,9 +428,14 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 		PipelineVersion:   r.PipelineVersion,
 		SchemaVersion:     r.SchemaVersion,
 		SourceContentHash: r.SourceContentHash,
-		TestScope:         string(r.TestScope),
-		TestScopeDetail:   r.TestScopeDetail,
-		WorktreeDigest:    r.WorktreeDigest,
+		SynthesisedGoMod: canonicalSynthesisedGoMod{
+			GoDirective:       r.SynthesisedGoMod.GoDirective,
+			ModulePath:        r.SynthesisedGoMod.ModulePath,
+			VendorTreePresent: r.SynthesisedGoMod.VendorTreePresent,
+		},
+		TestScope:       string(r.TestScope),
+		TestScopeDetail: r.TestScopeDetail,
+		WorktreeDigest:  r.WorktreeDigest,
 	}
 	b, err := canonicalMarshal(c)
 	if err != nil {

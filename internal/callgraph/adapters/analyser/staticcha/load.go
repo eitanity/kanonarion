@@ -42,7 +42,7 @@ import (
 // touch, and omitting them made "no callers" a confident false negative for
 // every test-only consumer. The outcome of that decision is recorded on the
 // result so a query can state it rather than imply coverage it does not have.
-func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tempDir string, coord coordinate.ModuleCoordinate, targetPkgPaths []string) (ssaBuildResult, error) {
+func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tempDir string, coord coordinate.ModuleCoordinate, targetPkgPaths []string, env []string) (ssaBuildResult, error) {
 	res := ssaBuildResult{
 		Prog:      ssa.NewProgram(fset, ssa.BuilderMode(0)),
 		TestPkgs:  map[*ssa.Package]bool{},
@@ -72,7 +72,7 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 			Mode:    fullMode,
 			Dir:     tempDir,
 			Context: ctx,
-			Env:     isolatedModuleEnv(),
+			Env:     env,
 			Fset:    fset,
 			Tests:   withTests,
 		}

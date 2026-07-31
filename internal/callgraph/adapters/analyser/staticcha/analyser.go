@@ -2,6 +2,7 @@ package staticcha
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"go/token"
 	"log/slog"
@@ -75,29 +76,71 @@ func (a *Analyser) Analyse(ctx context.Context, zipPath string, coord coordinate
 		// The zip is the module: bytes that will not unpack are a property of what
 		// was published, and unpacking them again tomorrow fails identically.
 		return a.sourced(a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed,
-			domain.FailureCauseModule, "extracting module zip: "+err.Error())), nil
+			domain.FailureCauseModule, "extracting module zip: "+err.Error()), domain.SynthesisedGoMod{}), nil
+	}
+
+	// A module published before Go modules ships no go.mod, and an extraction of
+	// it loads outside any module: nothing carries the module's import path, so
+	// nothing is recognised as the target and the graph comes back empty. Writing
+	// one is what makes the module loadable at all — and makes the analysed tree
+	// something other than the published tree, which the record then says.
+	synth, err := synthesiseGoMod(tempDir, coord)
+	switch {
+	case errors.Is(err, errGoModPresent):
+		// The module ships its own go.mod. Whatever happens next is a statement
+		// about the module as published; nothing here is allowed to mask it.
+		synth = domain.SynthesisedGoMod{}
+	case errors.Is(err, errNeedsDependencyResolution):
+		// A pre-modules module whose own packages import third-party code needs a
+		// require list, and a synthesised file has none. The load proceeds exactly
+		// as it did before this file existed, so the record it produces is
+		// unchanged — deliberately. Naming the cause on the record would classify
+		// the failure as the module's fault, which makes it CACHEABLE, and a
+		// permanently-cached failure is the last thing to hand the work that will
+		// eventually resolve those dependencies. The reason is logged instead.
+		synth = domain.SynthesisedGoMod{}
+		a.logger.InfoContext(ctx, "callgraph_gomod_synthesis_declined",
+			slog.String("module", coord.Path()),
+			slog.String("version", coord.Version()),
+			slog.String("reason", err.Error()),
+		)
+	case err != nil:
+		// Failing to write into a directory this process just created is the run,
+		// not the module: the same zip on a working filesystem extracts and loads.
+		return a.sourced(a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed,
+			domain.FailureCauseEnvironment, "synthesising go.mod: "+err.Error()), domain.SynthesisedGoMod{}), nil
+	default:
+		a.logger.InfoContext(ctx, "callgraph_gomod_synthesised",
+			slog.String("module", coord.Path()),
+			slog.String("version", coord.Version()),
+			slog.String("go_directive", synth.GoDirective),
+			slog.Bool("vendor_tree_present", synth.VendorTreePresent),
+		)
 	}
 
 	if ctx.Err() != nil {
 		return a.sourced(a.failRecord(coord, domain.CallGraphStatusCancelled, domain.CompletenessUnknown,
-			domain.FailureCauseEnvironment, "cancelled before load")), nil
+			domain.FailureCauseEnvironment, "cancelled before load"), synth), nil
 	}
 
-	rec, err := a.analyseDir(ctx, tempDir, coord)
+	rec, err := a.analyseDir(ctx, tempDir, coord, synth)
 	if err != nil {
 		return rec, err
 	}
-	return a.sourced(rec), nil
+	return a.sourced(rec, synth), nil
 }
 
-// sourced stamps a record as built from a fetched module zip.
+// sourced stamps a record as built from a fetched module zip, and states how the
+// tree it read related to the bytes that were published.
 //
 // It is applied on every return path of Analyse, including the failures. A
 // record that says nothing about what it read cannot be told apart from one
 // written before the field existed, and a failed analysis of a zip is still an
-// answer about that zip.
-func (a *Analyser) sourced(r domain.CallGraphRecord) domain.CallGraphRecord {
+// answer about that zip — including a failure of a tree kanonarion had to add a
+// file to, where the caveat is exactly as load-bearing as it is on a success.
+func (a *Analyser) sourced(r domain.CallGraphRecord, synth domain.SynthesisedGoMod) domain.CallGraphRecord {
 	r.AnalysisSource = domain.AnalysisSourceModuleZip
+	r.SynthesisedGoMod = synth
 	return r
 }
 
@@ -123,7 +166,10 @@ func (a *Analyser) AnalyseDir(ctx context.Context, dir string, coord coordinate.
 	}
 	// Cancellation is observed inside analyseDir (packages.Load honours ctx,
 	// plus explicit ctx.Err checkpoints), so no pre-check is needed here.
-	rec, err := a.analyseDir(ctx, dir, coord)
+	// A working tree is analysed exactly as it is on disk: it is the caller's own
+	// module and already declares itself, so nothing is synthesised into it and
+	// the record carries the zero value.
+	rec, err := a.analyseDir(ctx, dir, coord, domain.SynthesisedGoMod{})
 	if err != nil {
 		return rec, err
 	}
@@ -136,8 +182,19 @@ func (a *Analyser) AnalyseDir(ctx context.Context, dir string, coord coordinate.
 // packages from dir, build SSA, run CHA, and walk the graph into a
 // CallGraphRecord. dir is either an extracted-zip temp dir (Analyse) or a
 // local working tree (AnalyseDir).
-func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord coordinate.ModuleCoordinate) (domain.CallGraphRecord, error) {
+//
+// synth describes any go.mod written into tempDir before the load. It reaches
+// here because it changes how the load must run — a synthesised file beside a
+// vendor tree would otherwise auto-select vendor mode — not merely because it is
+// recorded.
+func (a *Analyser) analyseDir(
+	ctx context.Context,
+	tempDir string,
+	coord coordinate.ModuleCoordinate,
+	synth domain.SynthesisedGoMod,
+) (domain.CallGraphRecord, error) {
 	fset := token.NewFileSet()
+	env := analysisEnv(synth)
 
 	envCleanup, err := a.setupGoEnv(ctx, tempDir)
 	if err != nil {
@@ -155,7 +212,7 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord coordin
 		Mode:    packages.NeedName | packages.NeedImports | packages.NeedDeps,
 		Dir:     tempDir,
 		Context: ctx,
-		Env:     isolatedModuleEnv(),
+		Env:     env,
 		Tests:   false,
 	}
 
@@ -187,7 +244,7 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord coordin
 		}
 	})
 
-	build, err := a.loadAndBuildSSA(ctx, fset, tempDir, coord, targetPkgPaths)
+	build, err := a.loadAndBuildSSA(ctx, fset, tempDir, coord, targetPkgPaths, env)
 	if err != nil {
 		// The only error this returns is a syntax-load failure, which is again the
 		// go command failing; same question, same way of answering it.
@@ -246,7 +303,7 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord coordin
 	// leaves — that the call graph and package sink map cannot witness. Scan
 	// only the packages that appear as graph nodes so the extra syntax load is
 	// bounded by the graph rather than the full dependency set.
-	a.attachBodyFacts(ctx, nodes, tempDir)
+	a.attachBodyFacts(ctx, nodes, tempDir, env)
 
 	// Recover client-side interface-dispatch edges CHA drops when the sole
 	// implementer's body was never built into SSA (type-only dep / unbuilt

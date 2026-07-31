@@ -53,6 +53,12 @@ import (
 // purge by another name, and the opposite of what an append-only ledger is for.
 // Bump only when a change makes an OLD record say something false, not merely
 // something less.
+//
+// SynthesisedGoMod joined on the same terms, and for the same reason. It is
+// omitted from the sealed shape when zero, so every stored record re-marshals to
+// the bytes it was sealed over; and an absent value is not an unrecorded third
+// state but the truth — nothing synthesised a go.mod before the field existed,
+// so no old record can be one that did.
 const CallGraphSchemaVersion = "13"
 
 // TestScope records whether a module's _test.go declarations were part of the
@@ -435,6 +441,14 @@ type CallGraphRecord struct {
 	// provenance, and two different trees at one path (a branch switch, a
 	// rebuild) would share it while two copies of one tree would not.
 	WorktreeDigest string
+	// SynthesisedGoMod is non-zero when the analysed tree is not the published
+	// tree: the module zip shipped no go.mod and kanonarion wrote one before
+	// loading. It states which module path and which go directive that file
+	// declared, so the graph's semantics are readable rather than assumed.
+	//
+	// The zero value means the published bytes were analysed as published. See
+	// SynthesisedGoMod for why that is a statement and not merely an absence.
+	SynthesisedGoMod SynthesisedGoMod
 }
 
 // Sort puts all collections into a canonical, deterministic order.

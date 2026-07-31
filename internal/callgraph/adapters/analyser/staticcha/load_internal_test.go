@@ -62,7 +62,7 @@ func TestLoadAndBuildSSA_OnePackagePerImportPath(t *testing.T) {
 	fset, cleanup, targets := loadTargets(t, a, dir, coord)
 	defer cleanup()
 
-	build, err := a.loadAndBuildSSA(context.Background(), fset, dir, coord, targets)
+	build, err := a.loadAndBuildSSA(context.Background(), fset, dir, coord, targets, isolatedModuleEnv())
 	if err != nil {
 		t.Skipf("go/packages could not load the test module: %v", err)
 	}
