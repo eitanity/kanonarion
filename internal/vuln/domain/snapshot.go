@@ -64,6 +64,13 @@ type DatabaseSnapshot struct {
 	// "sha256:<hex>" form. Empty on snapshots recorded before the hash existed;
 	// such a snapshot is unverifiable, never verified-and-clean.
 	contentHash string
+
+	// advisoryCount is how many advisories the extracted database was measured
+	// to hold, established at extraction by whoever handed the directory to a
+	// scanner. Zero means no count was ever established — it is never a measured
+	// reading, because WithAdvisoryCount refuses a non-positive one and a scan
+	// against an empty database is refused rather than sealed.
+	advisoryCount int
 }
 
 // NewDatabaseSnapshot returns the snapshot naming source at version, retrieved
@@ -134,6 +141,47 @@ func (s DatabaseSnapshot) RetrievedAt() time.Time { return s.retrievedAt }
 // recorded before the hash existed.
 func (s DatabaseSnapshot) ContentHash() string { return s.contentHash }
 
+// AdvisoryCount is how many advisories this snapshot was measured to hold, and
+// zero when no measurement was ever established.
+//
+// Zero is unambiguous rather than merely absent. A positive count is the only
+// one WithAdvisoryCount admits, and a scan against a database measured at zero
+// is refused rather than sealed, so no record can carry a measured zero. A zero
+// therefore says "this record predates the measurement", never "this verdict was
+// reached against nothing" — the two readings must not collide, because a
+// pre-count record is unproven while a zero-advisory one would be false.
+//
+// It is deliberately not part of the snapshot's identity: it is a reading of the
+// same bytes ContentHash already pins, so two snapshots that agree on the hash
+// cannot disagree on the count. It is therefore absent from String, from
+// ParseDatabaseSnapshot and from Equal, and no store keys a row on it.
+func (s DatabaseSnapshot) AdvisoryCount() int { return s.advisoryCount }
+
+// WithAdvisoryCount returns the snapshot carrying the advisory count measured
+// from its extracted database.
+//
+// It is the one way a count reaches a snapshot, and it takes only a positive
+// one. Zero is refused rather than stored: a stored zero is what every record
+// written before this field existed already carries, so admitting a measured
+// zero would make an empty database indistinguishable from an unmeasured one —
+// the same collision, one layer down, that this whole measurement exists to
+// close. A database measured at zero is refused as a scan input instead, where
+// the count can be named in the failure rather than buried in a record.
+//
+// The zero snapshot is refused for the reason WithContentHash refuses it:
+// stating a measurement about a value that names no database at all describes
+// nothing.
+func (s DatabaseSnapshot) WithAdvisoryCount(count int) (DatabaseSnapshot, error) {
+	if s.IsZero() {
+		return DatabaseSnapshot{}, fmt.Errorf("counting the advisories of a database snapshot: %w", ErrZeroSnapshot)
+	}
+	if count <= 0 {
+		return DatabaseSnapshot{}, fmt.Errorf("counting the advisories of database snapshot %s: a count must be positive, got %d", s, count)
+	}
+	s.advisoryCount = count
+	return s, nil
+}
+
 // IsZero reports whether the snapshot names no pinned generation of any advisory
 // database — either part missing leaves it naming nothing, because a database
 // with no generation and a generation of no database are equally unusable as a
@@ -167,6 +215,10 @@ func (s DatabaseSnapshot) WithContentHash(contentHash string) (DatabaseSnapshot,
 // database, fetched at the same instant and sealed against the same bytes.
 // RetrievedAt is compared with time.Time.Equal rather than ==, so two readings
 // of one instant in different locations compare equal.
+//
+// AdvisoryCount is not compared: it is a reading of the bytes ContentHash
+// already pins, so it can only restate what the hash decided, and comparing it
+// would make a snapshot unequal to itself before it was counted.
 func (s DatabaseSnapshot) Equal(other DatabaseSnapshot) bool {
 	return s.source == other.source &&
 		s.version == other.version &&
@@ -234,21 +286,29 @@ func ParseDatabaseSnapshot(str string) (DatabaseSnapshot, error) {
 // own JSON encoding, so a change to these bytes would invalidate the hash of
 // every record already in every store. Keeping the object form is what makes
 // this conversion hash-transparent.
+//
+// AdvisoryCount arrived later and carries omitzero for that reason: an unmeasured
+// snapshot emits exactly the four fields it always did, so every record already
+// sealed still marshals to the bytes its content hash was taken over. Only a
+// snapshot that was actually counted adds a fifth key, and only records written
+// after the measurement existed can carry one.
 type snapshotJSON struct {
-	Source      string    `json:"source"`
-	Version     string    `json:"version"`
-	RetrievedAt time.Time `json:"retrieved_at"`
-	ContentHash string    `json:"content_hash"`
+	Source        string    `json:"source"`
+	Version       string    `json:"version"`
+	RetrievedAt   time.Time `json:"retrieved_at"`
+	ContentHash   string    `json:"content_hash"`
+	AdvisoryCount int       `json:"advisory_count,omitzero"`
 }
 
 // MarshalJSON implements json.Marshaler, emitting the object form byte for byte
 // as the exported fields did.
 func (s DatabaseSnapshot) MarshalJSON() ([]byte, error) {
 	b, err := json.Marshal(snapshotJSON{
-		Source:      s.source,
-		Version:     s.version,
-		RetrievedAt: s.retrievedAt,
-		ContentHash: s.contentHash,
+		Source:        s.source,
+		Version:       s.version,
+		RetrievedAt:   s.retrievedAt,
+		ContentHash:   s.contentHash,
+		AdvisoryCount: s.advisoryCount,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("marshalling database snapshot %s: %w", s, err)
@@ -271,6 +331,7 @@ func (s *DatabaseSnapshot) UnmarshalJSON(data []byte) error {
 	}
 	s.source, s.version = obj.Source, obj.Version
 	s.retrievedAt, s.contentHash = obj.RetrievedAt, obj.ContentHash
+	s.advisoryCount = obj.AdvisoryCount
 	return nil
 }
 

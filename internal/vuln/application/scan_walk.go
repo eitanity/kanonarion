@@ -14,6 +14,7 @@ import (
 	"golang.org/x/mod/modfile"
 
 	"github.com/eitanity/kanonarion/internal/adapters/modcache"
+	"github.com/eitanity/kanonarion/internal/adapters/vulndbdir"
 	"github.com/eitanity/kanonarion/internal/adapters/ziparchive"
 	"github.com/eitanity/kanonarion/internal/audit"
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -269,14 +270,19 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	if err != nil {
 		return domain.WalkScanRun{}, err
 	}
-	run.Snapshot = *snapshot
-
-	// 3a. Extract the vulnerability database snapshot once, shared across all module scans.
+	// 3a. Extract the vulnerability database snapshot once, shared across all
+	// module scans. The extraction is also where the snapshot is measured: it
+	// refuses a database holding no advisories, and records how many a populated
+	// one holds onto the snapshot value every record in this run will name.
+	// run.Snapshot is therefore assigned after it, not before — a run that
+	// reported a snapshot its own records carry a fuller reading of would put the
+	// two out of step for no reason.
 	vulnDBDir, cleanupDB, err := uc.preExtractVulnDB(ctx, snapshot)
 	if err != nil {
 		return domain.WalkScanRun{}, err
 	}
 	defer cleanupDB()
+	run.Snapshot = *snapshot
 
 	// 3b. Pre-populate a shared GOMODCACHE from the blob store so govulncheck workers
 	// don't need to download dependencies from the network.
@@ -1298,6 +1304,28 @@ func firstSnapshotIntegrityFailure(
 // that cannot vouch for the snapshot must not produce findings that claim it.
 // The other failures — absent, unreadable, no temp dir — leave the per-module
 // extraction path to answer, which is what the fallback was written for.
+//
+// The extracted database is then counted, and the count decides two things.
+//
+// A database holding no advisories fails the run rather than scanning against
+// it. govulncheck answers such a database with "No vulnerabilities found." and
+// exit 0, so every module would come back Clean and the run would seal verdicts
+// that consulted nothing — a confident negative derived from no analysis, and
+// indistinguishable from a measured clean. This is a precondition failure and is
+// reported as one: the operator asked for a measurement the supplied database
+// cannot produce.
+//
+// A database holding advisories records how many onto the snapshot, which every
+// record in the run then names. That is what lets a later reader tell a clean
+// scan against six thousand advisories from a clean scan against three. The
+// guard itself cannot make that distinction — a truncated database that still
+// parses counts, and nothing in the directory says how many entries it ought to
+// have had — so the count is carried to the reader rather than judged here.
+//
+// A directory that was extracted and then could not be counted fails the run
+// too. It is not the absent-snapshot case the fallback was written for: the
+// bytes are here and unreadable, which is a fact worth stopping on rather than
+// quietly re-extracting per module.
 func (uc *ScanWalkUseCase) preExtractVulnDB(ctx context.Context, snapshot *domain.DatabaseSnapshot) (string, func(), error) {
 	noop := func() {}
 	content, err := uc.vulnStore.GetDatabaseSnapshot(ctx, *snapshot)
@@ -1322,7 +1350,24 @@ func (uc *ScanWalkUseCase) preExtractVulnDB(ctx context.Context, snapshot *domai
 		cleanup()
 		return "", noop, nil
 	}
-	uc.logger.Info("pre-extracted vulnerability database snapshot", "path", dbDir)
+
+	count, err := vulndbdir.CountAdvisories(dbDir)
+	if err != nil {
+		cleanup()
+		return "", noop, fmt.Errorf("measuring the pre-extracted advisory database: %w", err)
+	}
+	if count == 0 {
+		cleanup()
+		return "", noop, fmt.Errorf("pre-extracting the advisory database: %w", ports.EmptySnapshotAbort(*snapshot, count))
+	}
+	counted, err := snapshot.WithAdvisoryCount(count)
+	if err != nil {
+		cleanup()
+		return "", noop, fmt.Errorf("recording the advisory count on the snapshot: %w", err)
+	}
+	*snapshot = counted
+
+	uc.logger.Info("pre-extracted vulnerability database snapshot", "path", dbDir, "advisories", count)
 	return dbDir, cleanup, nil
 }
 

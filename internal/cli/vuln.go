@@ -11,6 +11,24 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// advisoryCountLine renders how many advisories a verdict was measured against.
+//
+// It is the line that makes a clean verdict readable: govulncheck reports "No
+// vulnerabilities found." against a database holding six thousand advisories and
+// against one holding none, so the count is what tells the two apart after the
+// fact. A scan against an empty database is refused outright, so no record can
+// carry a measured zero.
+//
+// A zero is therefore reported as unrecorded rather than as a count. It means
+// the record predates the measurement, which is unproven — not a state that
+// ranks beside a measured one, and never a claim that nothing was consulted.
+func advisoryCountLine(snapshot vuldomain.DatabaseSnapshot) string {
+	if n := snapshot.AdvisoryCount(); n > 0 {
+		return fmt.Sprintf("%d in the snapshot scanned against", n)
+	}
+	return "not recorded (this record predates the advisory count)"
+}
+
 func newVulnCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "vuln <module>@<version>",
@@ -72,6 +90,7 @@ func printVulnRecord(stdout io.Writer, rec vuldomain.VulnerabilityRecord, classi
 	}
 	_, _ = fmt.Fprintf(stdout, "  Last validated:  %s\n", rec.ScannedAt.UTC().Format(time.RFC3339))
 	_, _ = fmt.Fprintf(stdout, "  Snapshot:        %s@%s\n", rec.DatabaseSnapshot.Source(), rec.DatabaseSnapshot.Version())
+	_, _ = fmt.Fprintf(stdout, "  Advisories:      %s\n", advisoryCountLine(rec.DatabaseSnapshot))
 	if !rec.DatabaseSnapshot.RetrievedAt().IsZero() {
 		_, _ = fmt.Fprintf(stdout, "  Snapshot age:    retrieved %s (%d day(s) old at validation)\n",
 			rec.DatabaseSnapshot.RetrievedAt().UTC().Format(time.RFC3339),

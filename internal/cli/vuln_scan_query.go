@@ -229,6 +229,7 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 	_, _ = fmt.Fprintf(stdout, "Started:     %s\n", run.StartedAt.UTC().Format(time.RFC3339))
 	_, _ = fmt.Fprintf(stdout, "Completed:   %s\n", run.CompletedAt.UTC().Format(time.RFC3339))
 	_, _ = fmt.Fprintf(stdout, "Snapshot:    %s@%s\n", run.Snapshot.Source(), run.Snapshot.Version())
+	_, _ = fmt.Fprintf(stdout, "Advisories:  %s\n", advisoryCountLine(run.Snapshot))
 	_, _ = fmt.Fprintf(stdout, "Modules:     %d\n", len(run.PerModuleResults))
 	// One line per reason rather than one for the out-of-toolchain set alone, so
 	// a Partial run is explained whichever reason produced it and no Unscannable

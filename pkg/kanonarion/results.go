@@ -140,9 +140,18 @@ type VulnerabilityRecord = vulndomain.VulnerabilityRecord
 //
 // It is a value object, not a read shape: its fields are unexported and it is
 // built through NewDatabaseSnapshot or ParseDatabaseSnapshot, read back through
-// Source, Version, RetrievedAt, ContentHash and String. A struct literal could
-// state a generation with no database, or neither, and a record keyed on that
-// joins the composition group holding every other record that named no snapshot.
+// Source, Version, RetrievedAt, ContentHash, AdvisoryCount and String. A struct
+// literal could state a generation with no database, or neither, and a record
+// keyed on that joins the composition group holding every other record that
+// named no snapshot.
+//
+// AdvisoryCount is how many advisories the database was measured to hold when the
+// scan was prepared, and zero on a record written before that measurement
+// existed. It is never a measured zero: a scan against a database holding no
+// advisories is refused rather than sealed, because govulncheck clears every
+// module against one at exit 0 and the resulting Clean would be a confident
+// negative derived from no analysis. A reader comparing two clean records uses it
+// to tell a scan against six thousand advisories from a scan against three.
 //
 // Stability: supporting type of the vulnerability result types; unstable pre-v1.
 type DatabaseSnapshot = vulndomain.DatabaseSnapshot

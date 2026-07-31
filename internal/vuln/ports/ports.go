@@ -87,6 +87,43 @@ func SnapshotIntegrityAbort(snapshot domain.DatabaseSnapshot, err error) error {
 		err, snapshot.Source(), snapshot.Version())
 }
 
+// ErrSnapshotEmpty is returned when the advisory database a scan was about to be
+// measured against was found to hold no advisories.
+//
+// It is separate from ErrSnapshotIntegrity because the two describe different
+// failures of the same object. An integrity failure says the bytes are not the
+// bytes that were recorded — something changed them. An empty database says the
+// bytes are exactly what was recorded and there is nothing in them: nobody
+// tampered, the evidence simply never arrived. A caller that would preserve the
+// blob as evidence of a tamper on one, and re-fetch on the other, must be able to
+// tell them apart.
+//
+// It is a precondition failure, not a per-module outcome. The operator asked for
+// a measurement against a database that cannot produce one, and recording every
+// module Unscannable would be technically honest and practically useless — it
+// buries the single fact that matters under one row per module.
+var ErrSnapshotEmpty = errors.New("vulnerability database snapshot holds no advisories")
+
+// EmptySnapshotAbort wraps an empty-database finding into the error that ends the
+// scan, naming the snapshot and the count that was measured.
+//
+// It lives beside the sentinel so every extraction site refuses in the same
+// sentence, on the terms SnapshotIntegrityAbort already set. The count is in the
+// message because it is the whole content of the finding: "no advisories" is what
+// distinguishes this from a database that was merely small, and an operator who
+// sees the number can tell an empty air-gapped mirror from a scan that worked.
+//
+// Nothing is written and nothing is left behind to preserve. Unlike a corrupt
+// snapshot, an empty one is not evidence of anything having happened to it, so
+// the remedy is simply to fetch a database that holds advisories.
+func EmptySnapshotAbort(snapshot domain.DatabaseSnapshot, count int) error {
+	return fmt.Errorf(
+		"%w: the advisory database snapshot %s@%s holds %d advisories, so a scan against it can only report "+
+			"that nothing was found because nothing was consulted; no verdict may be sealed against it — "+
+			"fetch a populated database (--fresh) and re-run",
+		ErrSnapshotEmpty, snapshot.Source(), snapshot.Version(), count)
+}
+
 // UnreadableRun names one stored scan run a listing could not verify, together
 // with the failure the read path reported.
 type UnreadableRun struct {

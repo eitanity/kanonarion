@@ -42,6 +42,26 @@ never established. Such a snapshot therefore reads as *unverifiable*, which is
 what it honestly is; it is still returned and still serves a scan. They age out
 as fresh snapshots are fetched.
 
+The snapshot is also counted. When a scan extracts the pinned database it counts
+the advisories the extracted tree holds, and a database holding none fails the
+scan naming the snapshot and the count. `govulncheck` reports
+`No vulnerabilities found.` and exits 0 against an empty database, so scanning
+against one would seal a `Clean` verdict for every module while consulting
+nothing — a confident negative derived from no analysis, indistinguishable from
+a measured clean. This is a precondition failure, not a per-module outcome: the
+operator asked for a measurement the supplied database cannot produce, and
+recording 128 `Unscannable` modules would bury the one fact that matters.
+
+A populated database records its count onto the snapshot every record in the run
+names, shown as the `Advisories` line of `vuln` and `vuln-scan-show`. That is
+what lets a reader tell a clean scan against six thousand advisories from a clean
+scan against three. Records written before the count existed report it as *not
+recorded* rather than as zero — a measured zero cannot exist, because such a scan
+is refused. Note the limit: the count detects an **empty** database, not a
+truncated one. A database that lost most of itself still parses and still counts,
+and nothing readable from it says how many entries it ought to have had, so the
+count is carried to the reader rather than judged.
+
 The module must have been fetched first (`kanonarion walk` or `kanonarion fetch`).
 
 ### Prerequisites
@@ -356,6 +376,7 @@ Operator:    alice
 Started:     2024-01-15T10:29:55Z
 Completed:   2024-01-15T10:30:02Z
 Snapshot:    vuln.go.dev@20240115000000
+Advisories:  6027 in the snapshot scanned against
 Modules:     3
 ```
 
@@ -405,6 +426,7 @@ github.com/gorilla/csrf@v1.7.3 - Affected
   First validated: 2026-06-29T17:19:15Z
   Last validated:  2026-06-29T17:19:15Z
   Snapshot:        vuln.go.dev@2026-06-16T23:55:18Z
+  Advisories:      6027 in the snapshot scanned against
   GO-2025-3884 (CVE-2025-47909): Improper validation of TrustedOrigins allows CSRF attacks in github.com/gorilla/csrf
       affected: >= v1.7.3
       fix:      no fix available
@@ -425,6 +447,7 @@ go.etcd.io/bbolt@v1.4.3 — Withdrawn
   First validated: 2026-07-28T06:06:20Z
   Last validated:  2026-07-28T06:06:20Z
   Snapshot:        vuln.go.dev@2026-07-27T16:28:49Z
+  Advisories:      6027 in the snapshot scanned against
   GO-2026-4923 (CVE-2026-33817, GHSA-6jwv-w5xf-7j27) [not reachable]: WITHDRAWN: out-of-range-index in go.etcd.io/bbolt
       WITHDRAWN: advisory retracted upstream 2026-04-08T13:33:56Z — not a finding against this module
       fix:      no fix available

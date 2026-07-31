@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/childproc"
+	"github.com/eitanity/kanonarion/internal/adapters/vulndbdir"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
@@ -301,6 +302,19 @@ func locateGoMod(root string) (string, bool) {
 // written names, so answering from it produces a finding that cites a snapshot
 // whose bytes were never consulted. Absent and unreadable snapshots keep the
 // fallback, which is the case it was written for.
+//
+// A snapshot that extracts to a database holding no advisories is fatal for a
+// related reason: govulncheck clears every module against it at exit 0, so the
+// scan would seal a Clean verdict that consulted nothing. This is enforced here
+// as well as at the walk's shared pre-extraction because the two paths reach a
+// database independently, and a decision enforced at only one of them is
+// enforced only while the other stays unused.
+//
+// The count is not attached to the snapshot on this path. The snapshot arrives
+// by value from a caller that has already decided what the record will name, and
+// a reading taken after that decision would be a fact the record cannot carry.
+// The walk's pre-extraction — where the snapshot is still the run's own and every
+// record in the run is built from it — is where the count is recorded.
 func (s *Scanner) prepareDBArg(ctx context.Context, snapshot domain.DatabaseSnapshot, dbDir string) (string, func(), error) {
 	noop := func() {}
 	s.logger.Info("vuln-scan: preparing vulnerability database", "snapshot", snapshot.Version())
@@ -334,7 +348,16 @@ func (s *Scanner) prepareDBArg(ctx context.Context, snapshot domain.DatabaseSnap
 		_ = os.RemoveAll(extractedDir)
 		return "https://vuln.go.dev", noop, nil
 	}
-	s.logger.Info("vuln-scan: using pinned local database", "path", extractedDir)
+	count, err := vulndbdir.CountAdvisories(extractedDir)
+	if err != nil {
+		_ = os.RemoveAll(extractedDir)
+		return "", noop, fmt.Errorf("measuring the extracted advisory database: %w", err)
+	}
+	if count == 0 {
+		_ = os.RemoveAll(extractedDir)
+		return "", noop, fmt.Errorf("preparing the advisory database: %w", ports.EmptySnapshotAbort(snapshot, count))
+	}
+	s.logger.Info("vuln-scan: using pinned local database", "path", extractedDir, "advisories", count)
 	s.logMem(ctx, "db_extracted")
 	return "file://" + extractedDir, func() { _ = os.RemoveAll(extractedDir) }, nil
 }
