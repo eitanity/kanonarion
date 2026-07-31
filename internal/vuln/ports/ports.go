@@ -529,6 +529,16 @@ type CallGraphProjection struct {
 	// it: an application's own code is all reachable, because functions the
 	// runtime dispatches to dynamically are still shipped code.
 	ArtifactKind string
+	// ServableAsCacheHit reports whether the stored graph this projection came
+	// from may stand in for a fresh analysis, or whether the coordinate must be
+	// analysed again. It is false for a record that failed because the analysis
+	// environment could not run: nothing was measured about the module, so the
+	// on-demand spawner must not read its presence as "already done".
+	//
+	// It is a projected boolean rather than the callgraph domain's own rule
+	// because this port must stay free of that domain — the rule lives beside
+	// composition and the reachability adapter applies it.
+	ServableAsCacheHit bool
 }
 
 // CallGraphNode is the subset of a call graph node the analyser needs.

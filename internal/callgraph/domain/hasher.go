@@ -146,6 +146,7 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 		TestScope:         TestScope(c.TestScope),
 		TestScopeDetail:   c.TestScopeDetail,
 		OverallStatus:     CallGraphStatus(c.OverallStatus),
+		FailureCause:      FailureCause(c.FailureCause),
 		FailureDetail:     c.FailureDetail,
 		FailedPackages:    c.FailedPackages,
 		ExclusionReason:   c.ExclusionReason,
@@ -242,7 +243,15 @@ type canonicalRecord struct {
 	ExclusionReason  string          `json:"exclusion_reason,omitempty"`
 	ExtractedAt      string          `json:"extracted_at"`
 	FailedPackages   []string        `json:"failed_packages,omitempty"`
-	FailureDetail    string          `json:"failure_detail"`
+	// FailureCause is omitted when zero so a record written before the cause axis
+	// existed — and every record that did not fail, which is almost all of them —
+	// marshals to exactly the bytes it always did and keeps its stored content
+	// hash verifiable. That is what lets the axis land without a PipelineVersion
+	// bump or a purge, on the same terms every additive field on this shape has
+	// used. An absent failure_cause is the "not recorded" value, not a third
+	// cause.
+	FailureCause  string `json:"failure_cause,omitzero"`
+	FailureDetail string `json:"failure_detail"`
 	// Implementations and Interfaces are omitted when empty so a module that
 	// declares no interfaces hashes the same as one analysed before the axis
 	// existed would have — the same terms every additive field here has used.
@@ -387,6 +396,7 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 		ExclusionReason:   r.ExclusionReason,
 		ExtractedAt:       r.ExtractedAt.UTC().Format(time.RFC3339),
 		FailedPackages:    failedPkgs,
+		FailureCause:      string(r.FailureCause),
 		FailureDetail:     r.FailureDetail,
 		Implementations:   cImpls,
 		Interfaces:        cIfaces,

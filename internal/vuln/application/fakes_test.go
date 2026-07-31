@@ -717,7 +717,11 @@ func (s *callCountingScanner) ScannerMetadata() ports.ScannerMetadata {
 type fakeCallGraphLoader struct {
 	mu      sync.Mutex
 	present bool
-	loadErr error
+	// ineligible makes the stored record one that must not stand in for a fresh
+	// analysis — an environment failure. present says a record exists; this says
+	// whether it may answer.
+	ineligible bool
+	loadErr    error
 }
 
 func (f *fakeCallGraphLoader) setPresent(v bool) {
@@ -735,7 +739,7 @@ func (f *fakeCallGraphLoader) Load(_ context.Context, _ coordinate.ModuleCoordin
 	if !f.present {
 		return ports.CallGraphProjection{}, fmt.Errorf("%w: test coord", ports.ErrCallGraphNotFound)
 	}
-	return ports.CallGraphProjection{}, nil
+	return ports.CallGraphProjection{ServableAsCacheHit: !f.ineligible}, nil
 }
 
 // fakeCallGraphSpawner implements ports.CallGraphSpawner and records all invocations.

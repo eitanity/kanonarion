@@ -368,6 +368,15 @@ type CallGraphRecord struct {
 	TestScopeDetail string
 	OverallStatus   CallGraphStatus
 	FailureDetail   string
+	// FailureCause says what a failing OverallStatus is a statement about: the
+	// module, or the run that tried to analyse it. FailureDetail is the prose a
+	// human reads; this is the machine axis, classified where the failure was
+	// still a value rather than recovered from that prose later.
+	//
+	// Empty on a record that did not fail, and on a failure record written before
+	// the axis existed. Both read as "no cause stated", never as "the module was
+	// at fault" — see FailureCause and RecordIsCacheable.
+	FailureCause FailureCause
 	// FailedPackages is the sorted, deduplicated set of import paths within the
 	// analysed module that failed to typecheck (or failed SSA construction).
 	// It is populated when OverallStatus is Partial and drives sound verdict

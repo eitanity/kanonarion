@@ -140,9 +140,23 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 		if cerr != nil && !errors.Is(cerr, ports.ErrCallGraphIntegrity) {
 			return ExtractResult{}, fmt.Errorf("checking callgraph store: %w", cerr)
 		}
-		if found {
+		// Presence is not eligibility. A record whose failure was the analysis
+		// environment failing — no usable toolchain, a cancelled run — measured
+		// nothing about this module, and serving it back makes one bad run
+		// permanent: every later run reports the same error and only --force ever
+		// clears it. The record stays in the ledger as evidence; it just does not
+		// answer this question. The rule lives in the domain so the vuln stage's
+		// on-demand spawner applies the same one.
+		if found && domain2.RecordIsCacheable(existing) {
 			log.InfoContext(ctx, "callgraph_cache_hit")
 			return ExtractResult{Record: existing, FromCache: true}, nil
+		}
+		if found {
+			log.InfoContext(ctx, "callgraph_cache_ineligible",
+				slog.String("overall_status", existing.OverallStatus.String()),
+				slog.String("failure_cause", existing.FailureCause.String()),
+				slog.String("content_hash", existing.ContentHash),
+			)
 		}
 	}
 

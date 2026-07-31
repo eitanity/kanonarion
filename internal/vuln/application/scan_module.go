@@ -1156,16 +1156,25 @@ func (uc *ScanModuleUseCase) maybeEnsureCallGraph(ctx context.Context, params Sc
 	}
 
 	if !params.Force {
-		_, loadErr := uc.callGraphLoader.Load(ctx, params.Coordinate)
-		if loadErr == nil {
+		proj, loadErr := uc.callGraphLoader.Load(ctx, params.Coordinate)
+		if loadErr == nil && proj.ServableAsCacheHit {
 			return "" // callgraph already in store
 		}
-		if !errors.Is(loadErr, ports.ErrCallGraphNotFound) {
+		switch {
+		case loadErr == nil:
+			// A record is there, but it records a run that could not run rather than
+			// a measurement of this module. Treating its presence as "already done"
+			// is what made one broken toolchain permanent for a coordinate; spawn and
+			// let the child decide, exactly as it would with nothing stored.
+			uc.logger.Info("stored callgraph is not eligible as a cache hit; re-deriving",
+				"coordinate", params.Coordinate)
+		case errors.Is(loadErr, ports.ErrCallGraphNotFound):
+			// Not found — fall through to spawn.
+		default:
 			// Integrity or other store error — don't spawn over a broken record.
 			uc.logger.Warn("callgraph store check failed before spawn", "coordinate", params.Coordinate, "error", loadErr)
 			return fmt.Sprintf("callgraph store check failed: %v", loadErr)
 		}
-		// Not found — fall through to spawn.
 	}
 
 	// Acquire concurrency slot before spawning the SSA-heavy child process.

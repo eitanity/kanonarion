@@ -72,12 +72,15 @@ func (a *Analyser) Analyse(ctx context.Context, zipPath string, coord coordinate
 
 	modulePrefix := coord.Path() + "@" + coord.Version() + "/"
 	if err := extractModuleZip(zipPath, modulePrefix, tempDir); err != nil {
+		// The zip is the module: bytes that will not unpack are a property of what
+		// was published, and unpacking them again tomorrow fails identically.
 		return a.sourced(a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed,
-			"extracting module zip: "+err.Error())), nil
+			domain.FailureCauseModule, "extracting module zip: "+err.Error())), nil
 	}
 
 	if ctx.Err() != nil {
-		return a.sourced(a.failRecord(coord, domain.CallGraphStatusCancelled, domain.CompletenessUnknown, "cancelled before load")), nil
+		return a.sourced(a.failRecord(coord, domain.CallGraphStatusCancelled, domain.CompletenessUnknown,
+			domain.FailureCauseEnvironment, "cancelled before load")), nil
 	}
 
 	rec, err := a.analyseDir(ctx, tempDir, coord)
@@ -138,7 +141,10 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord coordin
 
 	envCleanup, err := a.setupGoEnv(ctx, tempDir)
 	if err != nil {
-		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed, err.Error()), nil
+		// Preparing PATH and GOROOT for the analysis is entirely about the run;
+		// the module has not been touched at this point.
+		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed,
+			domain.FailureCauseEnvironment, err.Error()), nil
 	}
 	defer envCleanup()
 
@@ -155,12 +161,20 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord coordin
 
 	pkgsMeta, err := packages.Load(cfgMeta, "./...")
 	if err != nil {
-		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed, "meta load: "+err.Error()), nil
+		// A Load error is the driver failing, and the driver is the go command. It
+		// is raised both by a module whose graph will not resolve and by a PATH with
+		// no usable toolchain on it, so which one this is has to be established
+		// rather than read off the message.
+		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed,
+			a.classifyLoadFailure(ctx), "meta load: "+err.Error()), nil
 	}
 	a.logMem(ctx, "meta_loaded")
 
 	if len(pkgsMeta) == 0 {
-		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed, "no packages found"), nil
+		// The loader ran and found nothing to analyse: a fact about what the module
+		// ships.
+		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed,
+			domain.FailureCauseModule, "no packages found"), nil
 	}
 
 	// New Architecture: Streaming SSA Construction.
@@ -175,7 +189,10 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord coordin
 
 	build, err := a.loadAndBuildSSA(ctx, fset, tempDir, coord, targetPkgPaths)
 	if err != nil {
-		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed, err.Error()), nil
+		// The only error this returns is a syntax-load failure, which is again the
+		// go command failing; same question, same way of answering it.
+		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed,
+			a.classifyLoadFailure(ctx), err.Error()), nil
 	}
 	prog := build.Prog
 	allLoadErrs := build.LoadErrs
@@ -190,11 +207,15 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord coordin
 		if len(allLoadErrs) > 0 {
 			detail = joinFirst(allLoadErrs, 3)
 		}
-		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessMetadataOnly, detail), nil
+		// Metadata resolved and not one package type-checked from it. The toolchain
+		// demonstrably ran — it produced the metadata — so this is the module.
+		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessMetadataOnly,
+			domain.FailureCauseModule, detail), nil
 	}
 
 	if ctx.Err() != nil {
-		return a.failRecord(coord, domain.CallGraphStatusCancelled, domain.CompletenessUnknown, "cancelled after load"), nil
+		return a.failRecord(coord, domain.CallGraphStatusCancelled, domain.CompletenessUnknown,
+			domain.FailureCauseEnvironment, "cancelled after load"), nil
 	}
 
 	a.logger.InfoContext(ctx, "callgraph_load_completed",
@@ -268,6 +289,13 @@ func (a *Analyser) analyseDir(ctx context.Context, tempDir string, coord coordin
 		EdgeCount:       len(edges),
 		PipelineVersion: a.pipelineVersion,
 	}
+	// A walk cut short by cancellation is the run ending, not the module being
+	// unanalysable, and the record it leaves must not be served as though the
+	// module had been measured. Every other status reaching here carries a graph,
+	// so it states no cause.
+	if overallStatus == domain.CallGraphStatusCancelled {
+		rec.FailureCause = domain.FailureCauseEnvironment
+	}
 	if len(allLoadErrs) > 0 {
 		rec.FailureDetail = joinFirst(allLoadErrs, 3)
 	}
@@ -321,7 +349,17 @@ func artifactKind(targetPkgs []*ssa.Package) domain.ArtifactKind {
 // is the fidelity the module reached before failing: FAILED when nothing usable
 // loaded, METADATA_ONLY when package metadata loaded but no SSA was built, and
 // Unknown for a transient outcome (cancellation) that makes no fidelity claim.
-func (a *Analyser) failRecord(coord coordinate.ModuleCoordinate, status domain.CallGraphStatus, completeness domain.CompletenessLevel, detail string) domain.CallGraphRecord {
+//
+// cause says what the failure is a statement about — the module, or this run.
+// Every failure path names it, so a record written by this generation can never
+// be the unattributed failure the cache gate has to treat as unknown.
+func (a *Analyser) failRecord(
+	coord coordinate.ModuleCoordinate,
+	status domain.CallGraphStatus,
+	completeness domain.CompletenessLevel,
+	cause domain.FailureCause,
+	detail string,
+) domain.CallGraphRecord {
 	return domain.CallGraphRecord{
 		SchemaVersion:   domain.CallGraphSchemaVersion,
 		Ecosystem:       fetchdomain.EcosystemGo,
@@ -329,6 +367,7 @@ func (a *Analyser) failRecord(coord coordinate.ModuleCoordinate, status domain.C
 		Algorithm:       domain.AlgorithmCHA,
 		Completeness:    completeness,
 		OverallStatus:   status,
+		FailureCause:    cause,
 		FailureDetail:   detail,
 		PipelineVersion: a.pipelineVersion,
 	}

@@ -45,6 +45,10 @@ func projectCallGraph(rec callgraphdomain.CallGraphRecord) ports.CallGraphProjec
 		Completeness: string(rec.Completeness),
 		Algorithm:    string(rec.Algorithm),
 		ArtifactKind: string(rec.ArtifactKind),
+		// The eligibility rule is the callgraph domain's, applied here rather than
+		// restated in the vuln context: the on-demand spawner asks the same
+		// question the extraction use case asks, and both must get the same answer.
+		ServableAsCacheHit: callgraphdomain.RecordIsCacheable(rec),
 	}
 	for _, n := range rec.Nodes {
 		proj.Nodes = append(proj.Nodes, ports.CallGraphNode{

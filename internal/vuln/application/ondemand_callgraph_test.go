@@ -167,6 +167,50 @@ func TestOnDemandCallGraph_CacheHit(t *testing.T) {
 	}
 }
 
+// TestOnDemandCallGraph_IneligibleRecordStillSpawns pins that this stage
+// inherits the call-graph ledger's cache-eligibility rule rather than
+// re-deciding it. A stored record whose failure was the analysis environment
+// measured nothing about the module, so its presence is not "already done" —
+// which is what previously made one broken toolchain permanent for a coordinate
+// across every stage that read the store.
+func TestOnDemandCallGraph_IneligibleRecordStillSpawns(t *testing.T) {
+	ctx := t.Context()
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
+
+	facts := newFakeFacts()
+	blobs := newFakeBlob()
+	seedFact(t, facts, blobs, coord)
+
+	vulnStore := newFakeVulnStore()
+	snap := vulntest.MustNew("test", "v1")
+	_ = vulnStore.PutDatabaseSnapshot(ctx, snap, strings.NewReader("")) //nolint:errcheck
+
+	db := &fakeDatabase{
+		snapshot:    snap,
+		vulnerables: map[coordinate.ModuleCoordinate][]string{coord: {"GO-2024-0001"}},
+	}
+	scanner := newAffectedScannerFor(coord, "GO-2024-0001", []string{"Vuln"})
+	reach := &fakeReachabilityAnalyser{}
+
+	loader := &fakeCallGraphLoader{present: true, ineligible: true}
+	spawner := &fakeCallGraphSpawner{}
+
+	uc := newScanUCWith(facts, blobs, vulnStore, scanner, db, reach, loader, spawner)
+
+	if _, err := uc.Scan(ctx, application.ScanModuleParams{
+		Coordinate:         coord,
+		WalkID:             "walk-1",
+		Snapshot:           &snap,
+		EnableReachability: true,
+	}); err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+
+	if spawner.callCount() != 1 {
+		t.Errorf("expected the spawner to re-derive over an ineligible record; got %d calls", spawner.callCount())
+	}
+}
+
 // TestOnDemandCallGraph_SpawnFailureSetsNote verifies that a subprocess failure
 // leaves Reachable nil and sets a non-empty ReachabilityNote; the finding and
 // record are still persisted with StatusAffected.
