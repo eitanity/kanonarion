@@ -25,24 +25,27 @@ func newVulnCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runVuln(cmd.Context(), args[0], jsonOut, ctr.QueryVuln, ctr.QueryScanRuns, ctr.QueryWalks, stdout)
+			return runVuln(cmd.Context(), args[0], jsonOut, ctr.QueryVuln, ctr.QueryScanRuns, ctr.QueryWalks, ctr.QueryCallGraph, stdout)
 		},
 	}
 
 	return cmd
 }
 
-func runVuln(ctx context.Context, arg string, jsonOut bool, uc QueryVulnUseCase, runs QueryScanRunsUseCase, walks QueryWalksUseCase, stdout io.Writer) error {
+func runVuln(ctx context.Context, arg string, jsonOut bool, uc QueryVulnUseCase, runs QueryScanRunsUseCase, walks QueryWalksUseCase, graphs QueryCallGraphUseCase, stdout io.Writer) error {
 	// runs is unused on this path — it only explains a walk-scoped miss, and
 	// this command names no walk — but it is threaded rather than nil so the
 	// two entry points cannot drift into different behaviour. walks is used:
 	// the no-record refusal names a succeeded walk if one exists.
-	return runVulnShow(ctx, arg, "", jsonOut, false, uc, runs, walks, stdout)
+	return runVulnShow(ctx, arg, "", jsonOut, false, uc, runs, walks, graphs, stdout)
 }
 
 // printVulnRecord renders a single VulnerabilityRecord in human-readable form;
 // shared between `vuln`, `vuln-show`, and any future text presenter.
-func printVulnRecord(stdout io.Writer, rec vuldomain.VulnerabilityRecord) {
+func printVulnRecord(stdout io.Writer, rec vuldomain.VulnerabilityRecord, classify routeRootFunc) {
+	if classify == nil {
+		classify = unclassifiedRoutes
+	}
 	coverage, _ := vuldomain.RecordAxes(rec)
 	label := string(rec.OverallStatus)
 	// Whether the summary word needs a coverage caveat beside it is a coverage
@@ -104,7 +107,7 @@ func printVulnRecord(stdout io.Writer, rec vuldomain.VulnerabilityRecord) {
 		}
 		return
 	}
-	printFindingLines(stdout, rec)
+	printFindingLines(stdout, rec, classify)
 }
 
 // reachabilityLabel renders the one-word reachability tag beside a finding.
@@ -138,13 +141,22 @@ func reachabilityLabel(f vuldomain.VulnerabilityFinding, notReachable string) st
 	return notReachable
 }
 
-func printFindingLines(stdout io.Writer, rec vuldomain.VulnerabilityRecord) {
+func printFindingLines(stdout io.Writer, rec vuldomain.VulnerabilityRecord, classify routeRootFunc) {
+	if classify == nil {
+		classify = unclassifiedRoutes
+	}
 	for _, f := range rec.Findings {
 		aliases := ""
 		if len(f.Aliases) > 0 {
 			aliases = " (" + strings.Join(f.Aliases, ", ") + ")"
 		}
-		_, _ = fmt.Fprintf(stdout, "  %s%s%s: %s\n", f.ID, aliases, reachabilityLabel(f, " [not reachable]"), f.Summary)
+		// The first route's root is classified before the heading is printed,
+		// because its kind belongs on the same line as the reachability tag: a
+		// test-scope root beside "[reachable]" is the one pairing that changes what
+		// the whole entry means, and a line further down is a line that is skipped.
+		root := firstRouteRootOf(f, classify)
+		_, _ = fmt.Fprintf(stdout, "  %s%s%s%s: %s\n",
+			f.ID, aliases, reachabilityLabel(f, " [not reachable]"), routeRootTag(root), f.Summary)
 		// The retraction is printed as its own line, ahead of the range and the fix,
 		// because it changes what the rest of the entry means: an affected range and
 		// a fixed version for a retracted advisory describe a report that was
@@ -190,6 +202,19 @@ func printFindingLines(stdout io.Writer, rec vuldomain.VulnerabilityRecord) {
 			_, _ = fmt.Fprintf(stdout, "      route:    entry point first%s\n", caveat)
 			for _, hop := range route {
 				_, _ = fmt.Fprintf(stdout, "        %s\n", hop)
+			}
+			// The evidence behind the tag on the heading, printed where the route it
+			// describes is. Naming the root kind is a fact about what starts the
+			// route; it is not a claim that anything is exploitable, and the reason
+			// is what keeps the reader on the first reading.
+			if root.IsRecorded() {
+				_, _ = fmt.Fprintf(stdout, "      root:     %s\n", root)
+				if root.NodeID != "" {
+					_, _ = fmt.Fprintf(stdout, "        node:   %s\n", root.NodeID)
+				}
+				if root.Remedy != "" {
+					_, _ = fmt.Fprintf(stdout, "        next:   %s\n", root.Remedy)
+				}
 			}
 			if extra := len(f.Reachable.Routes) - 1; extra > 0 {
 				_, _ = fmt.Fprintf(stdout, "        (%d further route(s) recorded)\n", extra)

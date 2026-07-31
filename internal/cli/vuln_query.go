@@ -53,7 +53,7 @@ or was absent because the vulnerability database snapshot predated it.`,
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runVulnShow(cmd.Context(), args[0], walkID, jsonOut, history, ctr.QueryVuln, ctr.QueryScanRuns, ctr.QueryWalks, stdout)
+			return runVulnShow(cmd.Context(), args[0], walkID, jsonOut, history, ctr.QueryVuln, ctr.QueryScanRuns, ctr.QueryWalks, ctr.QueryCallGraph, stdout)
 		},
 	}
 
@@ -70,6 +70,7 @@ func runVulnShow(
 	uc QueryVulnUseCase,
 	runs QueryScanRunsUseCase,
 	walks QueryWalksUseCase,
+	graphs QueryCallGraphUseCase,
 	stdout io.Writer,
 ) error {
 	coord, err := parseCoordinate(arg)
@@ -119,7 +120,7 @@ func runVulnShow(
 		return nil
 	}
 
-	printVulnRecord(stdout, rec)
+	printVulnRecord(stdout, rec, newRouteRootFunc(ctx, graphs, rec))
 	return nil
 }
 

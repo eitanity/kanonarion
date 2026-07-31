@@ -126,7 +126,7 @@ Local probe: 'reachability --local <dir>' analyses the working tree directly
 					return fmt.Errorf("initialising store: %w", err)
 				}
 				defer func() { _ = cleanup() }()
-				return runVulnReachability(cmd.Context(), coordArg, vulnID, jsonOut, ctr.QueryVuln, stdout)
+				return runVulnReachability(cmd.Context(), coordArg, vulnID, jsonOut, ctr.QueryVuln, ctr.QueryCallGraph, stdout)
 			case localPath != "":
 				if coordArg != "" {
 					return fmt.Errorf("reachability --local does not take a module argument; use '<module>@<version> --vuln <id>' to query a stored module")
@@ -149,7 +149,7 @@ Local probe: 'reachability --local <dir>' analyses the working tree directly
 // read-only query: it never scans or recomputes. Absent or undetermined data is
 // surfaced as a non-zero, actionable diagnostic (never a false "not reachable"),
 // distinguishing "not analysed" from "analysed, genuinely not affected/reachable".
-func runVulnReachability(ctx context.Context, arg, vulnID string, jsonOut bool, uc QueryVulnUseCase, stdout io.Writer) error {
+func runVulnReachability(ctx context.Context, arg, vulnID string, jsonOut bool, uc QueryVulnUseCase, graphs QueryCallGraphUseCase, stdout io.Writer) error {
 	coord, err := parseCoordinate(arg)
 	if err != nil {
 		return fmt.Errorf("invalid coordinate %q: %w", arg, err)
@@ -160,7 +160,7 @@ func runVulnReachability(ctx context.Context, arg, vulnID string, jsonOut bool, 
 		return fmt.Errorf("getting vulnerability record: %w", err)
 	}
 
-	res, verr := vulnReachabilityVerdict(coord, rec, found, vulnID)
+	res, verr := vulnReachabilityVerdict(coord, rec, found, vulnID, newRouteRootFunc(ctx, graphs, rec))
 	if verr != nil {
 		return verr
 	}
@@ -202,6 +202,15 @@ type vulnReachabilityQuery struct {
 	// Routes are the paths that reach the vulnerable symbol, entry point first,
 	// each hop naming its module and version where the analyser knew them.
 	Routes []reachabilityRouteOutput `json:"routes,omitempty"`
+	// RouteRoot is the classification of the FIRST route's root, repeated here
+	// from routes[0].root so a consumer asking "is this a test-only reach" does
+	// not have to index into the route list to find out. It is absent when no
+	// route was recorded, because a classification of nothing is not a fact.
+	//
+	// It qualifies the verdict; it never replaces it. A reachable finding whose
+	// root is exported-api is still reachable, and naming the root kind is not a
+	// statement that anything is exploitable.
+	RouteRoot *routeRootOutput `json:"route_root,omitempty"`
 	// WithdrawnAt is set only on the withdrawn verdict, and carries the retraction
 	// timestamp so the answer states its reason rather than asserting a bare
 	// negative the reader has to take on trust.
@@ -216,6 +225,43 @@ type vulnReachabilityQuery struct {
 type reachabilityRouteOutput struct {
 	Versioned bool                      `json:"versioned"`
 	Frames    []reachabilityFrameOutput `json:"frames"`
+	// Root is what sits at this route's entry point, classified against the call
+	// graph the answer was computed over. Absent when nothing classified it.
+	Root *routeRootOutput `json:"root,omitempty"`
+}
+
+// routeRootOutput is one route's root classification in the curated JSON shape.
+//
+// Reason is emitted beside every kind, not only the unrooted one. The kinds are
+// coarse — "ingress" covers a request handler and a package initialiser alike —
+// and a consumer that routes on the kind without the reason is drawing a
+// distinction the field does not carry.
+type routeRootOutput struct {
+	Kind   string `json:"kind"`
+	Reason string `json:"reason,omitempty"`
+	// ClosureRooted says the route does not begin in the module the analysis was
+	// rooted at: the application's own entry points were never analysed, so the
+	// hop above this root is missing rather than absent.
+	ClosureRooted bool `json:"closure_rooted,omitempty"`
+	// NodeID is the call-graph node the classification was read off, so a reader
+	// can re-run the measurement.
+	NodeID string `json:"node_id,omitempty"`
+	// Remedy is the command that would answer what this classification could not.
+	Remedy string `json:"remedy,omitempty"`
+}
+
+// rootToOutput renders a classification, or nil when none was computed.
+func rootToOutput(root vuldomain.RouteRoot) *routeRootOutput {
+	if !root.IsRecorded() {
+		return nil
+	}
+	return &routeRootOutput{
+		Kind:          root.Kind.String(),
+		Reason:        root.Reason,
+		ClosureRooted: root.ClosureRooted,
+		NodeID:        root.NodeID,
+		Remedy:        root.Remedy,
+	}
 }
 
 // reachabilityFrameOutput is one hop.
@@ -227,8 +273,14 @@ type reachabilityFrameOutput struct {
 	Symbol   string `json:"symbol,omitempty"`
 }
 
-// routesToOutput renders stored routes for the curated JSON shape.
-func routesToOutput(routes []vuldomain.ReachabilityRoute) []reachabilityRouteOutput {
+// routesToOutput renders stored routes for the curated JSON shape, classifying
+// each route's root as it goes.
+//
+// Every route is classified, not only the one the text presenter prints. Two
+// routes to one symbol can start in entirely different places — a handler and a
+// test — and a consumer reading the list must not have to assume they share the
+// first one's root.
+func routesToOutput(routes []vuldomain.ReachabilityRoute, classify routeRootFunc) []reachabilityRouteOutput {
 	if len(routes) == 0 {
 		return nil
 	}
@@ -241,16 +293,31 @@ func routesToOutput(routes []vuldomain.ReachabilityRoute) []reachabilityRouteOut
 				Package: f.Package, Receiver: f.Receiver, Symbol: f.Symbol,
 			})
 		}
-		out = append(out, reachabilityRouteOutput{Versioned: r.IsVersioned(), Frames: frames})
+		out = append(out, reachabilityRouteOutput{
+			Versioned: r.IsVersioned(),
+			Frames:    frames,
+			Root:      rootToOutput(classify(r)),
+		})
 	}
 	return out
+}
+
+// firstRouteRoot lifts the first route's classification to the reply level.
+func firstRouteRoot(routes []reachabilityRouteOutput) *routeRootOutput {
+	if len(routes) == 0 {
+		return nil
+	}
+	return routes[0].Root
 }
 
 // vulnReachabilityVerdict is the pure classifier (no I/O) so the intent-aware
 // distinctions are unit-testable from constructed records. It returns either a
 // confident result (reachable / not_reachable / not_affected) for exit 0, or a
 // directing error for the cases where the answer is genuinely unknown.
-func vulnReachabilityVerdict(coord coordinate.ModuleCoordinate, rec vuldomain.VulnerabilityRecord, found bool, vulnID string) (vulnReachabilityQuery, error) {
+func vulnReachabilityVerdict(coord coordinate.ModuleCoordinate, rec vuldomain.VulnerabilityRecord, found bool, vulnID string, classify routeRootFunc) (vulnReachabilityQuery, error) {
+	if classify == nil {
+		classify = unclassifiedRoutes
+	}
 	if !found {
 		return vulnReachabilityQuery{}, &exitError{code: ExitNotFound, msg: fmt.Sprintf(
 			"no vulnerability record for %s: the module has not been vuln-scanned. Run:\n  kanonarion vuln-scan %s --reachability",
@@ -344,6 +411,7 @@ func vulnReachabilityVerdict(coord coordinate.ModuleCoordinate, rec vuldomain.Vu
 	// help here. No graph resolves a symbol the advisory never named, and the
 	// scan that produced this record did run.
 	if f.AdvisoryNamesNoSymbols {
+		routes := routesToOutput(f.Reachable.Routes, classify)
 		return vulnReachabilityQuery{
 			Module:     coord.Path(),
 			Version:    coord.Version(),
@@ -355,7 +423,8 @@ func vulnReachabilityVerdict(coord coordinate.ModuleCoordinate, rec vuldomain.Vu
 			Method:     f.Reachable.DerivedBy.Analyser.String(),
 			Fidelity:   f.Reachable.DerivedBy.Fidelity,
 			Rooting:    f.Reachable.DerivedBy.Rooting.String(),
-			Routes:     routesToOutput(f.Reachable.Routes),
+			Routes:     routes,
+			RouteRoot:  firstRouteRoot(routes),
 			ScannedAt:  rec.ScannedAt.UTC().Format(time.RFC3339),
 		}, nil
 	}
@@ -370,6 +439,7 @@ func vulnReachabilityVerdict(coord coordinate.ModuleCoordinate, rec vuldomain.Vu
 	if f.Reachable.IsReachable {
 		verdict = verdictReachable
 	}
+	routes := routesToOutput(f.Reachable.Routes, classify)
 	return vulnReachabilityQuery{
 		Module:     coord.Path(),
 		Version:    coord.Version(),
@@ -381,7 +451,8 @@ func vulnReachabilityVerdict(coord coordinate.ModuleCoordinate, rec vuldomain.Vu
 		Method:     f.Reachable.DerivedBy.Analyser.String(),
 		Fidelity:   f.Reachable.DerivedBy.Fidelity,
 		Rooting:    f.Reachable.DerivedBy.Rooting.String(),
-		Routes:     routesToOutput(f.Reachable.Routes),
+		Routes:     routes,
+		RouteRoot:  firstRouteRoot(routes),
 		ScannedAt:  rec.ScannedAt.UTC().Format(time.RFC3339),
 	}, nil
 }
@@ -433,8 +504,31 @@ func printRoute(stdout io.Writer, res vulnReachabilityQuery) {
 	for _, f := range r.Frames {
 		_, _ = fmt.Fprintf(stdout, "    %s\n", frameLine(f))
 	}
+	printRouteRoot(stdout, r.Root)
 	if len(res.Routes) > 1 {
 		_, _ = fmt.Fprintf(stdout, "    (%d further route(s) recorded)\n", len(res.Routes)-1)
+	}
+}
+
+// printRouteRoot prints the evidence behind the root tag on the verdict line.
+//
+// The kind is on the verdict line so it cannot be missed; the reason is here,
+// under the route it describes, because that is where a reader checks it. Both
+// are needed: the kind alone is a label, and a label is what turns a measurement
+// into a verdict.
+func printRouteRoot(stdout io.Writer, root *routeRootOutput) {
+	if root == nil {
+		return
+	}
+	_, _ = fmt.Fprintf(stdout, "  root: %s — %s\n", root.Kind, root.Reason)
+	if root.NodeID != "" {
+		_, _ = fmt.Fprintf(stdout, "    node: %s\n", root.NodeID)
+	}
+	if root.ClosureRooted {
+		_, _ = fmt.Fprintln(stdout, "    closure-rooted: the route does not begin in the module the analysis was rooted at, so the application's own entry points were not analysed")
+	}
+	if root.Remedy != "" {
+		_, _ = fmt.Fprintf(stdout, "    to go further: %s\n", root.Remedy)
 	}
 }
 
@@ -466,7 +560,12 @@ func printVulnReachability(stdout io.Writer, res vulnReachabilityQuery) {
 	coord := res.Module + "@" + res.Version
 	switch res.Verdict {
 	case verdictReachable:
-		_, _ = fmt.Fprintf(stdout, "%s is REACHABLE in %s [confidence: %s, %s]\n", res.VulnID, coord, res.Confidence, derivationLine(res))
+		// The root tag rides on the verdict line rather than under the route,
+		// because one of its five values is a warning: a test-scope root read as a
+		// production reach is the misreading this classification exists to prevent,
+		// and a line further down is a line that gets skipped.
+		_, _ = fmt.Fprintf(stdout, "%s is REACHABLE in %s [confidence: %s, %s]%s\n",
+			res.VulnID, coord, res.Confidence, derivationLine(res), rootTagFromOutput(res.RouteRoot))
 		printRoute(stdout, res)
 	case verdictNotReachable:
 		// The derivation is printed on the negative too. "Not reachable" from a
@@ -477,8 +576,8 @@ func printVulnReachability(stdout io.Writer, res vulnReachabilityQuery) {
 		// Says plainly that the module IS affected, then that the question of
 		// whether the vulnerable code runs has no answer here and why. The route is
 		// printed if one somehow exists, so the reply never hides evidence it holds.
-		_, _ = fmt.Fprintf(stdout, "%s affects %s at PACKAGE level; symbol-level reachability is not determined — the advisory names no symbols for this module path [confidence: %s, %s]\n",
-			res.VulnID, coord, res.Confidence, derivationLine(res))
+		_, _ = fmt.Fprintf(stdout, "%s affects %s at PACKAGE level; symbol-level reachability is not determined — the advisory names no symbols for this module path [confidence: %s, %s]%s\n",
+			res.VulnID, coord, res.Confidence, derivationLine(res), rootTagFromOutput(res.RouteRoot))
 		printRoute(stdout, res)
 	case verdictNotAffected:
 		_, _ = fmt.Fprintf(stdout, "%s is not affected by %s (scanned %s)\n", coord, res.VulnID, res.ScannedAt)

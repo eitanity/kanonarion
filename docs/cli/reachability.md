@@ -81,6 +81,39 @@ it is not fixed by computing a call graph, so it is answered before the
 | `… scanned without --reachability` | non-zero | Findings exist but reachability was not computed. |
 | `… reachability is undetermined` | non-zero | Reachability ran but the call graph was unavailable. |
 
+### Root classification
+
+A route says a path exists. It does not say what starts the path, and a route
+rooted at an HTTP handler, at a test helper, and at an exported function nothing
+in the project calls were all reported the same way. Every route now reports what
+sits at its **root**, read from the stored call graph the answer was computed
+over — the test axis, the exported-API flag, and the edges into the node.
+
+| Kind | Means |
+|---|---|
+| `ingress` | The root is entered from outside the module's own call structure: an `http.Handler` implementation, the process entry point, a package initialiser, or a function a dependency calls back into. The `reason` says which. |
+| `exported-api` | The root is exported by the analysed module and called by nothing in it. A consumer could drive it; this project does not. |
+| `internal` | The root has in-project callers and is not itself an entry point — the route begins where the analyser stopped, not where execution starts. The `remedy` names the `kanonarion callers` query that walks the hops above it. |
+| `test` | The root is a test-scope declaration. This is printed **on the same line as the verdict**, so a test-only reach is never read as a production one. |
+| `unrooted` | The graph could not say, with the reason named — no call graph stored for the module, a graph analysed at a fidelity that holds no nodes, or an entry point that is not a node in it. |
+
+Two rules keep this honest:
+
+- **It is not an exploitability claim.** Naming the root kind is a measurement;
+  "exploitable" is a judgement about data flow that kanonarion does not make and
+  this classification does not introduce. Taint analysis is out of scope. The
+  classification is reported **alongside** the verdict and never overrides it: a
+  reachable finding whose root is `exported-api` is still reachable.
+- **A closure-rooted route says so.** Where the analysis was not rooted at an
+  application — an isolated scan, or a `--gomod` walk that roots at the dependency
+  closure — the answer carries `closure_rooted` and the command that would root it
+  at the application, instead of presenting a dependency's own entry point as the
+  project's.
+
+The classification is **derived at read time**, not stored: the facts it reads
+live in the call-graph ledger, so an answer improves as the graph does and no
+re-scan is owed for it.
+
 ```bash
 kanonarion reachability golang.org/x/text@v0.3.7 --vuln GO-2021-0113
 kanonarion reachability golang.org/x/text@v0.3.7 --vuln GO-2021-0113 --json
@@ -90,18 +123,45 @@ JSON shape:
 
 ```json
 {
-  "module": "golang.org/x/text",
-  "version": "v0.3.7",
-  "vuln_id": "GO-2021-0113",
-  "aliases": ["CVE-2021-38561"],
+  "module": "example.com/dep",
+  "version": "v1.2.0",
+  "vuln_id": "GO-2026-0001",
+  "aliases": ["CVE-2026-00001"],
   "summary": "...",
   "verdict": "reachable",
   "confidence": "High",
-  "method": "call-graph",
-  "example_paths": [["main.main", "golang.org/x/text/...Vuln"]],
+  "method": "govulncheck",
+  "fidelity": "source",
+  "rooting": "target-rooted:example.com/app@local",
+  "routes": [
+    {
+      "versioned": true,
+      "frames": [
+        {"module": "example.com/app", "package": "example.com/app/pkg/apigw", "receiver": "*apigw", "symbol": "ServeHTTP"},
+        {"module": "example.com/dep", "version": "v1.2.0", "package": "example.com/dep", "receiver": "*handler", "symbol": "ServeHTTP"}
+      ],
+      "root": {
+        "kind": "ingress",
+        "reason": "an http.Handler implementation (method named ServeHTTP) — an HTTP server invokes it per request",
+        "node_id": "example.com/app/pkg/apigw.(*apigw).ServeHTTP"
+      }
+    }
+  ],
+  "route_root": {
+    "kind": "ingress",
+    "reason": "an http.Handler implementation (method named ServeHTTP) — an HTTP server invokes it per request",
+    "node_id": "example.com/app/pkg/apigw.(*apigw).ServeHTTP"
+  },
   "scanned_at": "2026-06-14T00:00:00Z"
 }
 ```
+
+Every route carries its own `root`; `route_root` repeats the first route's, so a
+consumer asking "is this a test-only reach" does not have to index into the list.
+Both are absent when the answer records no route — an absent route on a
+package-level finding is explained by the advisory naming no symbols, and
+answering `unrooted` there would offer a missing root as the reason for a search
+that was never possible.
 
 A retracted advisory answers with `"verdict": "withdrawn"` and a `withdrawn_at`
 timestamp instead of a reachability determination, so the answer states its reason
@@ -115,7 +175,7 @@ rather than asserting a bare negative the reader has to take on trust:
   "aliases": ["CVE-2026-33817", "GHSA-6jwv-w5xf-7j27"],
   "summary": "WITHDRAWN: out-of-range-index in go.etcd.io/bbolt",
   "verdict": "withdrawn",
-  "method": "call-graph",
+  "method": "none",
   "withdrawn_at": "2026-04-08T13:33:56Z",
   "scanned_at": "2026-07-28T06:06:20Z"
 }

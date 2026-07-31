@@ -80,15 +80,15 @@ func TestExitCodeContract_MissingRecordIsNotFound(t *testing.T) {
 		}},
 		{"vuln-show --walk-id (walk never scanned)", ExitNotFound, func(t *testing.T) error {
 			return runVulnShow(context.Background(), coord.String(), missingWalk, false, false,
-				testfakes.NewFakeQueryVuln(), testfakes.NewFakeQueryScanRuns(), emptyWalks(), &bytes.Buffer{})
+				testfakes.NewFakeQueryVuln(), testfakes.NewFakeQueryScanRuns(), emptyWalks(), nil, &bytes.Buffer{})
 		}},
 		{"vuln-show (no record at all)", ExitNotFound, func(t *testing.T) error {
 			return runVulnShow(context.Background(), coord.String(), "", false, false,
-				testfakes.NewFakeQueryVuln(), testfakes.NewFakeQueryScanRuns(), emptyWalks(), &bytes.Buffer{})
+				testfakes.NewFakeQueryVuln(), testfakes.NewFakeQueryScanRuns(), emptyWalks(), nil, &bytes.Buffer{})
 		}},
 		{"vuln-show --history", ExitNotFound, func(t *testing.T) error {
 			return runVulnShow(context.Background(), coord.String(), "", false, true,
-				testfakes.NewFakeQueryVuln(), testfakes.NewFakeQueryScanRuns(), emptyWalks(), &bytes.Buffer{})
+				testfakes.NewFakeQueryVuln(), testfakes.NewFakeQueryScanRuns(), emptyWalks(), nil, &bytes.Buffer{})
 		}},
 		{"scan-show", ExitNotFound, func(t *testing.T) error {
 			return runScanShow(context.Background(), "vscan-missing", false,

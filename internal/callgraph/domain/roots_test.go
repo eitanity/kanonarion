@@ -2,6 +2,7 @@ package domain_test
 
 import (
 	"reflect"
+	"strings"
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
@@ -133,5 +134,46 @@ func TestSelectReachabilityRoots_AllExternal(t *testing.T) {
 	}, domain.ArtifactLibrary)
 	if len(got) != 0 {
 		t.Errorf("SelectReachabilityRoots = %v, want empty", got)
+	}
+}
+
+// TestExternalEntryPointReason pins both what the predicate witnesses and what
+// it deliberately does not. The negatives matter more than the positives: a
+// registered route is invisible in a node's identity, and a predicate that
+// guessed at one would assert an entry the graph never recorded.
+func TestExternalEntryPointReason(t *testing.T) {
+	tests := []struct {
+		name     string
+		symbol   string
+		receiver string
+		wantIn   string
+	}{
+		{name: "package init", symbol: "init", wantIn: "package initialisation"},
+		{name: "generated package init", symbol: "init#1", wantIn: "package initialisation"},
+		{name: "process entry point", symbol: "main", wantIn: "process entry point"},
+		{name: "http handler method", symbol: "ServeHTTP", receiver: "*Server", wantIn: "http.Handler"},
+
+		{name: "a method named main is not the entry point", symbol: "main", receiver: "*App"},
+		{name: "a free function named ServeHTTP is not a handler method", symbol: "ServeHTTP"},
+		{name: "an init-like name is not init", symbol: "initialise"},
+		{name: "an ordinary exported method", symbol: "CompleteUserAuth", receiver: "*Handler"},
+		{name: "a closure registered as a route is not witnessed here", symbol: "MountHttpRoutes$1"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := domain.ExternalEntryPointReason(tt.symbol, tt.receiver)
+			if tt.wantIn == "" {
+				if got != "" {
+					t.Fatalf("ExternalEntryPointReason(%q, %q) = %q, want no entry-point claim",
+						tt.symbol, tt.receiver, got)
+				}
+				return
+			}
+			if !strings.Contains(got, tt.wantIn) {
+				t.Fatalf("ExternalEntryPointReason(%q, %q) = %q, want it to contain %q",
+					tt.symbol, tt.receiver, got, tt.wantIn)
+			}
+		})
 	}
 }

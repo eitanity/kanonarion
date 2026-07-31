@@ -45,7 +45,7 @@ func withdrawnBboltRecord() vuldomain.VulnerabilityRecord {
 // would pass on the unfixed tree.
 func TestPrintVulnRecord_NamesTheRetractionAndItsDate(t *testing.T) {
 	var out bytes.Buffer
-	printVulnRecord(&out, withdrawnBboltRecord())
+	printVulnRecord(&out, withdrawnBboltRecord(), nil)
 	got := out.String()
 
 	if !strings.Contains(got, "go.etcd.io/bbolt@v1.4.3 — Withdrawn") {
@@ -148,7 +148,7 @@ func TestVulnScanStatusLabel_WithdrawnUnderACoverageGap(t *testing.T) {
 func TestVulnReachabilityVerdict_WithdrawnIsNotAReachabilityAnswer(t *testing.T) {
 	rec := withdrawnBboltRecord()
 
-	q, err := vulnReachabilityVerdict(rec.Coordinate, rec, true, "GO-2026-4923")
+	q, err := vulnReachabilityVerdict(rec.Coordinate, rec, true, "GO-2026-4923", nil)
 	if err != nil {
 		t.Fatalf("vulnReachabilityVerdict: %v", err)
 	}

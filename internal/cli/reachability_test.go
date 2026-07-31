@@ -143,7 +143,7 @@ func TestVulnReachabilityVerdict_ConfidentAnswers(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			res, err := vulnReachabilityVerdict(reachCoord, tt.rec, true, tt.vulnID)
+			res, err := vulnReachabilityVerdict(reachCoord, tt.rec, true, tt.vulnID, nil)
 			if err != nil {
 				t.Fatalf("unexpected error: %v", err)
 			}
@@ -181,7 +181,7 @@ func TestVulnReachabilityVerdict_Unresolved(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			_, err := vulnReachabilityVerdict(reachCoord, tt.rec, tt.found, "GO-2021-0113")
+			_, err := vulnReachabilityVerdict(reachCoord, tt.rec, tt.found, "GO-2021-0113", nil)
 			if err == nil {
 				t.Fatal("want directing error, got nil")
 			}
