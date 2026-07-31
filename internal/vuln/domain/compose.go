@@ -69,11 +69,12 @@ func ComposeAt(records []VulnerabilityRecord, rooting Rooting) (VulnerabilityRec
 	if len(candidates) == 0 {
 		return VulnerabilityRecord{}, false, nil
 	}
-	composed, err := Compose(candidates)
-	if err != nil {
-		return VulnerabilityRecord{}, false, err
-	}
-	return composed, true, nil
+	// best rather than Compose: the only error Compose has is an empty group, and
+	// the line above has just ruled it out. The error stays in the signature —
+	// the store's read paths branch on it — but it is one this function no longer
+	// has a way to produce, and the guard that pretended otherwise was dead code
+	// no test could reach.
+	return best(candidates), true, nil
 }
 
 // ComposeForConsumer returns the record that answers a CONSUMER's question about
