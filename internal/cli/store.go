@@ -127,11 +127,12 @@ func newStoreConfigCmd(stdout io.Writer) *cobra.Command {
 }
 
 type configShowResult struct {
-	Version          string             `json:"version"`
-	Preferences      configPrefsResult  `json:"preferences"`
-	LicensePolicy    configPolicyResult `json:"license_policy"`
-	LicenseOverrides map[string]string  `json:"license_overrides"`
-	Callgraph        configCGResult     `json:"callgraph"`
+	Version          string                `json:"version"`
+	Preferences      configPrefsResult     `json:"preferences"`
+	LicensePolicy    configPolicyResult    `json:"license_policy"`
+	LicenseOverrides map[string]string     `json:"license_overrides"`
+	Callgraph        configCGResult        `json:"callgraph"`
+	Staleness        configStalenessResult `json:"staleness"`
 
 	// Unified supply-chain governance blocks (schema v2). Surfaced
 	// in the effective-config view so the schema bump and the resolved
@@ -205,6 +206,14 @@ type configCGResult struct {
 	Exclude []string `json:"exclude"`
 }
 
+// configStalenessResult reports the resolved latest-version ledger TTL.
+//
+// Rendered as a duration string rather than a number: "1h0m0s" says what unit
+// it is in, and a bare 3600000000000 does not.
+type configStalenessResult struct {
+	TTL string `json:"ttl"`
+}
+
 func newStoreConfigShowCmd(stdout io.Writer) *cobra.Command {
 	return &cobra.Command{
 		Use:   "show",
@@ -245,6 +254,7 @@ func runStoreConfigShow(root string, asJSON bool, stdout io.Writer) error {
 			},
 			LicenseOverrides: cfg.LicenseOverrides,
 			Callgraph:        configCGResult{Exclude: cfg.Callgraph.Exclude},
+			Staleness:        configStalenessResult{TTL: cfg.Staleness.TTL.String()},
 			DirectivePolicy: configDirectiveResult{
 				LocalPathReplace:  string(cfg.DirectivePolicy.LocalPathReplace),
 				ModulePathReplace: string(cfg.DirectivePolicy.ModulePathReplace),

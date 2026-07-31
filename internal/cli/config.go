@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 	"gopkg.in/yaml.v3"
@@ -96,7 +97,8 @@ func newConfigGetCmd(stdout io.Writer) *cobra.Command {
 		Example: `  kanonarion config get preferences.json
   kanonarion config get preferences.log_level
   kanonarion config get license_policy.categories.permissive
-  kanonarion config get callgraph.exclude`,
+  kanonarion config get callgraph.exclude
+  kanonarion config get staleness.ttl`,
 		Args: cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			return runConfigGet(activeConfig, args[0], stdout)
@@ -147,6 +149,8 @@ func configGetValue(cfg domain.Config, key string) (string, error) {
 		return val, nil
 	case key == "callgraph.exclude":
 		return marshalConfigYAML(cfg.Callgraph.Exclude)
+	case key == "staleness.ttl":
+		return cfg.Staleness.TTL.String(), nil
 	case key == "fetch_policy.allowed_vcs_hosts":
 		if cfg.FetchPolicy.AllowedVCSHosts == nil {
 			// Absent is a distinct answer from empty, and printing "[]" would
@@ -177,7 +181,8 @@ func newConfigSetCmd(stdout io.Writer) *cobra.Command {
   kanonarion config set preferences.log_level debug
   kanonarion config set license_policy.categories.permissive '[MIT, Apache-2.0, ISC]'
   kanonarion config set license_overrides.golang.org/x/mod MIT
-  kanonarion config set callgraph.exclude '[]'`,
+  kanonarion config set callgraph.exclude '[]'
+  kanonarion config set staleness.ttl 6h`,
 		Args: cobra.ExactArgs(2),
 		RunE: func(_ *cobra.Command, args []string) error {
 			return runConfigSet(storeRoot, args[0], args[1], stdout)
@@ -257,6 +262,8 @@ func configSetPath(key string) ([]string, error) {
 		return []string{"license_overrides", module}, nil
 	case key == "callgraph.exclude":
 		return []string{"callgraph", "exclude"}, nil
+	case key == "staleness.ttl":
+		return []string{"staleness", "ttl"}, nil
 	case key == "fetch_policy.allowed_vcs_hosts":
 		return []string{"fetch_policy", "allowed_vcs_hosts"}, nil
 	default:
@@ -298,6 +305,13 @@ func parseConfigValue(key, value string) (*yaml.Node, error) {
 		key == "callgraph.exclude":
 		if node.Kind != yaml.SequenceNode {
 			return nil, &exitError{code: ExitConfig, msg: fmt.Sprintf("%s requires a YAML sequence (e.g. '[MIT, Apache-2.0]'), got %q", key, value)}
+		}
+	case key == "staleness.ttl":
+		if node.Kind != yaml.ScalarNode {
+			return nil, &exitError{code: ExitConfig, msg: fmt.Sprintf("staleness.ttl requires a duration string (e.g. 1h, 30m, 0), got %q", value)}
+		}
+		if _, err := time.ParseDuration(node.Value); err != nil {
+			return nil, &exitError{code: ExitConfig, msg: fmt.Sprintf("staleness.ttl must be a duration (e.g. 1h, 30m, 0), got %q", value)}
 		}
 	case key == "fetch_policy.allowed_vcs_hosts":
 		if node.Kind != yaml.SequenceNode {

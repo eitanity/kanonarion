@@ -19,6 +19,7 @@ import (
 // via `config init` and is never appended to an existing file on upgrade.
 var knownSections = []string{
 	"preferences", "license_policy", "license_overrides", "callgraph",
+	"staleness",
 	"directive_policy", "godebug_policy", "vendor_policy", "fips_policy",
 	"fetch_policy",
 }
@@ -79,6 +80,17 @@ callgraph:
   # uncomment to exclude specific packages.
   # exclude:
   #   - github.com/some/huge/package
+`,
+	"staleness": `
+staleness:
+  # How long a recorded latest-version lookup may be served before the module
+  # proxy is asked again. Commands that report staleness (latest, audit) write
+  # every successful lookup to the store and read it back inside this window,
+  # and always state the lookup time they used, so a served answer is never
+  # mistaken for a live one. Pass --fresh to bypass the ledger for one run.
+  #
+  # Set to 0 to disable serving entirely (every command re-pays the sweep).
+  # ttl: 1h
 `,
 	"directive_policy": `
 directive_policy:

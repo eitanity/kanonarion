@@ -1,6 +1,8 @@
 // Package domain contains the core types for the config bounded context.
 package domain
 
+import "time"
+
 // SupportedSchemaVersion is the config schema version this implementation
 // produces and consumes.
 //
@@ -55,6 +57,7 @@ type Config struct {
 	LicensePolicy    LicensePolicy
 	LicenseOverrides map[string]string // module path → SPDX license expression
 	Callgraph        CallgraphConfig
+	Staleness        StalenessConfig
 
 	// Unified supply-chain governance policy. Each block is a
 	// top-level config section; rules are wired by the gap tickets
@@ -131,6 +134,21 @@ type CallgraphConfig struct {
 	Exclude []string // package import paths excluded from analysis
 }
 
+// StalenessConfig governs the store-backed ledger of latest-version lookups.
+type StalenessConfig struct {
+	// TTL is how long a recorded lookup may be served before the proxy is asked
+	// again. Zero (or negative) disables the ledger for reads, which makes every
+	// command re-pay the proxy sweep — the behaviour that predates the ledger,
+	// kept reachable rather than removed.
+	TTL time.Duration
+}
+
+// DefaultStalenessTTL is the built-in staleness.ttl. An hour is short enough
+// that a release published during a working session is picked up the same
+// session, and long enough that a gates-and-staleness cadence pays the proxy
+// sweep once rather than once per command.
+const DefaultStalenessTTL = time.Hour
+
 // DefaultConfig returns a Config populated with the built-in defaults documented in.
 func DefaultConfig() Config {
 	return Config{
@@ -168,6 +186,9 @@ func DefaultConfig() Config {
 		LicenseOverrides: map[string]string{},
 		Callgraph: CallgraphConfig{
 			Exclude: []string{},
+		},
+		Staleness: StalenessConfig{
+			TTL: DefaultStalenessTTL,
 		},
 		// Default governance posture. The highest-risk classes
 		// local-path replace, patched-version exclusion, security-weakening

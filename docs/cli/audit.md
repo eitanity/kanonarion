@@ -108,7 +108,7 @@ the install command.
 | `--tool` | `false` | Scope to the tooling supply chain (the `go.mod` `tool` directives' closure); tags walks `scope=tool`. Mutually exclusive with `--project` |
 | `--project` | `false` | Scope to the complete set: the project's code **and** tooling (the full Go build list). Mutually exclusive with `--tool` |
 | `--force` | `false` | Re-fetch and re-scan even if cached records exist |
-| `--fresh` | `false` | Fetch a fresh vulnerability database snapshot from the network |
+| `--fresh` | `false` | Bypass cached network answers: fetch a fresh vulnerability database snapshot **and** re-query latest versions instead of serving the staleness ledger |
 | `--stdlib-from-gomod` | `false` | Version the `stdlib` node from the `go.mod` directive, not the live toolchain. See [Standard-library version](walk.md#standard-library-version---stdlib-from-gomod). |
 | `--skip-vcs-verify` | `false` | Skip git cross-verification; the checksum-database check still runs. A sumdb-attested module then reports `VerifiedBySumDBOnly`, never the strongest `Verified` (the git leg never ran). Useful when auditing a large closure where git operations are rate-limited or unavailable |
 | `--policy` | _(auto-discover `.kanonarion/policy.yaml`)_ | Depth policy file; its fetch stage governs traversal and the `allowed_vcs_hosts` forge allowlist |
@@ -179,7 +179,8 @@ kanonarion audit --gomod ./go.mod --json
     "license_status": "Detected",
     "vuln_status": "Clean",
     "vuln_findings": 0,
-    "is_latest": true
+    "is_latest": true,
+    "major_probed": true
   },
   {
     "coordinate": "golang.org/x/mod@v0.35.0",
@@ -199,7 +200,8 @@ kanonarion audit --gomod ./go.mod --json
     "license_status": "Detected",
     "vuln_status": "Clean",
     "vuln_findings": 0,
-    "is_latest": true
+    "is_latest": true,
+    "major_probed": true
   },
   {
     "coordinate": "go.etcd.io/bbolt@v1.4.3",
@@ -234,12 +236,26 @@ dependency:
 4. Staleness check - query the proxy for the latest version of each module
 5. Query and report - iterate the walk's dependency nodes (every graph node bar the local root) and join fetch, license, vuln, and staleness into one line each
 
-Walk and licence extraction use cached results on subsequent runs unless
-`--force` is passed. Two stages always do work on every run, warm store or not:
-the project-rooted vuln scan is **always recomputed fresh** (the working tree
-mutates between runs, so its verdict is live and never served from a coordinate
-cache), and the **staleness check queries the module proxy** for each module's
-latest version on every run - a live `@latest` request per module, never cached.
+Walk, licence and staleness use cached results on subsequent runs unless
+`--force` (walk/licence) or `--fresh` (staleness) is passed. One stage always
+does work on every run, warm store or not: the project-rooted vuln scan is
+**always recomputed fresh** (the working tree mutates between runs, so its
+verdict is live and never served from a coordinate cache).
+
+The staleness column reads a **store-side ledger** keyed on module path. Every
+successful `@latest` resolution any command makes is recorded there, and a
+recording younger than `staleness.ttl` (default `1h`, a config key) is served
+instead of re-querying - so `latest --gomod` followed by `audit` pays the proxy
+sweep once between them rather than once each. The table states the lookup time
+it used (`latest as of ...`, dated by its oldest row) so a served answer is
+never mistaken for a live one, and a **failed** lookup is never recorded.
+
+The column reports two facts per module, never merged: `is_latest` is about the
+module **path**, and `newer_major_module` names the newest major-suffixed path
+above the pinned major - a dependency pinned a whole major line behind is at the
+latest version of its own path and is still behind. `major_probed` separates
+"probed, nothing newer" from "not probed" (a `--from-modcache` run, or a probe
+whose request failed).
 
 ### Precursor to `sbom --package`
 
@@ -313,8 +329,10 @@ In this mode `audit`:
   entry, is a **hard failure**: `audit` exits non-zero (code `10`) naming the
   offending modules. Verified modules report `VerifiedBySumDBOnly` (VCS
   cross-verification is skipped in this mode).
-- **Skips the staleness check** (the per-module `@latest` proxy query), so the
-  run makes **zero** network calls to `proxy.golang.org`/`sum.golang.org`. The
+- **Skips the staleness check** entirely - the ledger is not read either, so an
+  offline run never reports a stored latest version as if it had been checked
+  now. The run makes **zero** network calls to
+  `proxy.golang.org`/`sum.golang.org`. Rows carry `major_probed: false`. The
   vulnerability scan still reads the OSV database (`--fresh` to refresh it).
 
 ```bash

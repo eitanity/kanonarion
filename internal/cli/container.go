@@ -75,6 +75,9 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
 
+	stalesqlite "github.com/eitanity/kanonarion/internal/staleness/adapters/store/sqlite"
+	staleports "github.com/eitanity/kanonarion/internal/staleness/ports"
+
 	vulncallgraph "github.com/eitanity/kanonarion/internal/vuln/adapters/callgraph"
 	vulnfetch "github.com/eitanity/kanonarion/internal/vuln/adapters/fetch"
 	"github.com/eitanity/kanonarion/internal/vuln/adapters/reachability"
@@ -172,6 +175,10 @@ type Container struct {
 	// fips
 	ExtractFIPS ExtractFIPSUseCase
 	QueryFIPS   QueryFIPSUseCase
+
+	// staleness. The ledger of latest-version lookups, read and written by
+	// every command that reports how far behind a dependency is.
+	StalenessLedger staleports.Ledger
 }
 
 // NewContainer opens a single mirror.db with all migrations applied, wires all
@@ -181,37 +188,48 @@ type Container struct {
 // cfg is the resolved store configuration; callers should pass activeConfig
 // from the CLI layer. goBinary may be empty (falls back to PATH).
 // skipVCSVerify is forwarded to the fetch use case for the walk pipeline.
+// openMigratedStore opens mirror.db and applies every migration this build
+// knows, refusing a store that already carries migrations it does not.
+//
+// Opened without migrations, then judged, then migrated. This is the operating
+// path's only door into the store, so it is where an older binary meeting a
+// newer store has to be stopped: schema_migrations is keyed on (module,
+// version), so this binary's own migrations all appear applied and nothing
+// errors — the store just holds tables and constraints shaped by a later build.
+// The failure that follows is not an open failure but a write one, per
+// statement, and every one of them was logged and stepped over: a full scan
+// that persisted nothing and still printed a summary.
+//
+// `store info` deliberately does not come through here — it opens with nil
+// migrations and never applies any — so the command that names the remedy stays
+// available after this refuses.
+func openMigratedStore(dbPath string) (sqlitestore.DB, error) {
+	dbHandle, err := sqlitestore.Open(dbPath, nil)
+	if err != nil {
+		return nil, fmt.Errorf("opening database: %w", err)
+	}
+	state, err := readStoreSchemaState(dbHandle)
+	if err != nil {
+		return nil, errors.Join(err, dbHandle.Close())
+	}
+	if state.isNewer() {
+		return nil, errors.Join(newerStoreError(dbPath, state), dbHandle.Close())
+	}
+	if err := sqlitestore.Apply(dbHandle, allMigrations()); err != nil {
+		return nil, errors.Join(fmt.Errorf("opening database: %w", err), dbHandle.Close())
+	}
+	return dbHandle, nil
+}
+
 func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg domain.Config, logger *slog.Logger) (*Container, func() error, error) {
 	if err := os.MkdirAll(storeRoot, 0o750); err != nil {
 		return nil, nil, fmt.Errorf("creating store root %s: %w", storeRoot, err)
 	}
 
 	dbPath := filepath.Join(storeRoot, "mirror.db")
-	// Opened without migrations, then judged, then migrated. This is the operating
-	// path's only door into the store, so it is where an older binary meeting a
-	// newer store has to be stopped: schema_migrations is keyed on (module,
-	// version), so this binary's own migrations all appear applied and nothing
-	// errors — the store just holds tables and constraints shaped by a later build.
-	// The failure that follows is not an open failure but a write one, per
-	// statement, and every one of them was logged and stepped over: a full scan
-	// that persisted nothing and still printed a summary.
-	//
-	// `store info` deliberately does not come through here — it opens with nil
-	// migrations and never applies any — so the command that names the remedy stays
-	// available after this refuses.
-	dbHandle, err := sqlitestore.Open(dbPath, nil)
+	dbHandle, err := openMigratedStore(dbPath)
 	if err != nil {
-		return nil, nil, fmt.Errorf("opening database: %w", err)
-	}
-	state, err := readStoreSchemaState(dbHandle)
-	if err != nil {
-		return nil, nil, errors.Join(err, dbHandle.Close())
-	}
-	if state.isNewer() {
-		return nil, nil, errors.Join(newerStoreError(dbPath, state), dbHandle.Close())
-	}
-	if err := sqlitestore.Apply(dbHandle, allMigrations()); err != nil {
-		return nil, nil, errors.Join(fmt.Errorf("opening database: %w", err), dbHandle.Close())
+		return nil, nil, err
 	}
 
 	cleanup := func() error {
@@ -567,6 +585,8 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 
 		ExtractFIPS: extractFIPSUC,
 		QueryFIPS:   queryFIPSUC,
+
+		StalenessLedger: stalesqlite.New(dbHandle),
 	}
 
 	return ctr, cleanup, nil

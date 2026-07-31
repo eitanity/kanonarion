@@ -115,6 +115,7 @@ Keys follow the dotted-path structure of `config.yaml`.
 | `license_policy.rules` | sequence (read-only) | - |
 | `license_overrides.<module>` | string | `MIT` |
 | `callgraph.exclude` | sequence | `[github.com/foo/bar]` |
+| `staleness.ttl` | duration | `1h` |
 
 ## Flags
 
@@ -149,6 +150,7 @@ kanonarion config set preferences.log_level debug
 kanonarion config set license_policy.categories.permissive '[MIT, Apache-2.0, ISC]'
 kanonarion config set license_overrides.golang.org/x/mod MIT
 kanonarion config set callgraph.exclude '[]'
+kanonarion config set staleness.ttl 6h
 ```
 
 ## See also

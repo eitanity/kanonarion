@@ -26,8 +26,13 @@ import (
 	"golang.org/x/mod/sumdb/dirhash"
 )
 
-// errNotFound is returned by get when the server responds with 404.
-var errNotFound = errors.New("not found")
+// ErrNotFound is returned (wrapped) by get when the server responds with 404.
+//
+// It is exported because 404 is a definitive answer, not a failure, and callers
+// have to be able to tell them apart. The major-version probe is the case that
+// forced it: an absent /vN path is exactly what bounds the probe and is a
+// cacheable negative, whereas a timeout or a 5xx on the same request is neither.
+var ErrNotFound = errors.New("not found")
 
 const (
 	defaultProxy = "https://proxy.golang.org"
@@ -137,7 +142,7 @@ func (p *Proxy) ListVersions(ctx context.Context, path string) (_ []string, retE
 	}
 	url := fmt.Sprintf("%s/%s/@v/list", p.baseURL, escapedPath)
 	body, err := p.get(ctx, url)
-	if errors.Is(err, errNotFound) {
+	if errors.Is(err, ErrNotFound) {
 		return nil, nil
 	}
 	if err != nil {
@@ -383,9 +388,9 @@ func (p *Proxy) get(ctx context.Context, url string) (io.ReadCloser, error) {
 	}
 	if resp.StatusCode == http.StatusNotFound {
 		if cerr := resp.Body.Close(); cerr != nil {
-			return nil, fmt.Errorf("%w: %s (closing body: %w)", errNotFound, url, cerr)
+			return nil, fmt.Errorf("%w: %s (closing body: %w)", ErrNotFound, url, cerr)
 		}
-		return nil, fmt.Errorf("%w: %s", errNotFound, url)
+		return nil, fmt.Errorf("%w: %s", ErrNotFound, url)
 	}
 	if resp.StatusCode != http.StatusOK {
 		// Typed so callers can tell a retryable proxy condition (429, 5xx) from a

@@ -11,6 +11,7 @@ import (
 	"fmt"
 	"maps"
 	"os"
+	"time"
 
 	"gopkg.in/yaml.v3"
 
@@ -48,6 +49,7 @@ type configYAML struct {
 	LicensePolicy    licensePolicyYAML `yaml:"license_policy"`
 	LicenseOverrides map[string]string `yaml:"license_overrides"`
 	Callgraph        callgraphYAML     `yaml:"callgraph"`
+	Staleness        *stalenessYAML    `yaml:"staleness"`
 
 	// Unified supply-chain governance blocks (schema v2). Absent
 	// blocks fall back to DefaultConfig so v1 files load unchanged.
@@ -117,6 +119,13 @@ type callgraphYAML struct {
 	Exclude []string `yaml:"exclude"`
 }
 
+// stalenessYAML is a pointer in configYAML so an absent block inherits the
+// built-in TTL, while an explicit "ttl: 0" can still switch the ledger off for
+// reads. Merging the two would make the off switch unreachable.
+type stalenessYAML struct {
+	TTL string `yaml:"ttl"`
+}
+
 // parseOutcome converts a YAML outcome string to a PolicyOutcome.
 // An empty string maps to the zero value (which callers treat as allow).
 func parseOutcome(s string) (domain.PolicyOutcome, error) {
@@ -152,6 +161,24 @@ func parseUnknownLicense(s string) (domain.UnknownLicensePolicy, error) {
 	}
 }
 
+// parseStalenessTTL reads staleness.ttl as a Go duration ("1h", "30m", "0").
+// An empty value keeps the built-in default rather than silently disabling the
+// ledger: "staleness:" with nothing under it is an unfinished edit, not a
+// decision to re-pay every proxy sweep.
+func parseStalenessTTL(s string) (time.Duration, error) {
+	if s == "" {
+		return domain.DefaultStalenessTTL, nil
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil {
+		return 0, fmt.Errorf("staleness.ttl %q: not a duration (e.g. 1h, 30m, 0): %w", s, err)
+	}
+	if d < 0 {
+		return 0, fmt.Errorf("staleness.ttl %q: must not be negative (use 0 to disable the ledger)", s)
+	}
+	return d, nil
+}
+
 // Parse parses YAML config bytes into a Config. Exported so callers can
 // validate config content without a filesystem path.
 func Parse(data []byte) (domain.Config, error) {
@@ -184,6 +211,15 @@ func Parse(data []byte) (domain.Config, error) {
 		Callgraph: domain.CallgraphConfig{
 			Exclude: y.Callgraph.Exclude,
 		},
+		Staleness: defaults.Staleness,
+	}
+
+	if y.Staleness != nil {
+		ttl, err := parseStalenessTTL(y.Staleness.TTL)
+		if err != nil {
+			return domain.Config{}, err
+		}
+		cfg.Staleness = domain.StalenessConfig{TTL: ttl}
 	}
 
 	// Apply defaults for missing optional fields.

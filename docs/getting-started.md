@@ -232,11 +232,21 @@ and `sbom` reproducible in CI. The release pipeline sets it on both.
 **Duration:** dominated by the vuln leg. The vulnerability verdict is
 **project-rooted** - one `govulncheck` over the project's live working tree - and
 is recomputed fresh every run (the working tree mutates, so it is never served
-from a cache), which took ~2 min on the reference project. Walk and licence
-columns are cached, but the staleness column is **not**: every run resolves each
-module's latest version live from the module proxy (a `@latest` request per
-module, ~35 s on the reference project), so a warm `audit` always makes those
-outbound calls.
+from a cache), which took ~2 min on the reference project. Walk, licence and
+staleness columns are cached. The staleness column is backed by a store-side
+ledger: every successful `@latest` resolution is recorded against the module
+path, and any command that reports staleness serves a recording younger than
+`staleness.ttl` (default `1h`) instead of re-querying. A cold column still costs
+one `@latest` request per module; a warm one costs nothing outbound. The table
+always states the lookup time it used (`latest as of ...`) so a served answer is
+never mistaken for a live one, and `--fresh` bypasses the ledger.
+
+The staleness column reports **two** facts per module, never merged. The latest
+version at the module path itself, and - because a Go module's next major
+version lives at a *different* path - the newest major path above the pinned one
+that resolves (`newer major: .../v5@v5.3.1`). A dependency pinned several majors
+behind is at the latest version of its own path and is still a whole major line
+behind; reporting only the first would call it `current`.
 
 ### 5. Drill-downs
 

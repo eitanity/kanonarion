@@ -11,6 +11,8 @@ import (
 	"github.com/spf13/cobra"
 
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
+	staleapp "github.com/eitanity/kanonarion/internal/staleness/application"
+	staledomain "github.com/eitanity/kanonarion/internal/staleness/domain"
 )
 
 type latestFlags struct {
@@ -18,6 +20,7 @@ type latestFlags struct {
 	goproxy   string
 	tool      bool
 	project   bool
+	fresh     bool
 }
 
 func newLatestCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -32,6 +35,16 @@ more modules.
 With --gomod, it reports the pinned version from go.mod against the latest
 available for every direct dependency, letting you see staleness at a glance.
 
+Two separate facts are reported for each module. The latest version at the
+module path itself, and — because a Go module's next MAJOR version lives at a
+different path — the newest major path above the pinned one that resolves. A
+module pinned several majors behind is current at its own path and still behind;
+both are stated, never merged.
+
+Successful lookups are recorded in the store and served back while they are
+younger than staleness.ttl (default 1h). Every answer states the lookup time it
+used; pass --fresh to bypass the ledger and re-query the proxy.
+
 Without --gomod, one or more module paths may be passed as positional
 arguments; with multiple modules, --json emits an array.`,
 		Example: `  kanonarion latest github.com/spf13/cobra
@@ -40,7 +53,8 @@ arguments; with multiple modules, --json emits an array.`,
   kanonarion latest --gomod
   kanonarion latest --gomod ./go.mod
   kanonarion latest --gomod ./go.mod --json
-  kanonarion latest --gomod ./go.mod --tool`,
+  kanonarion latest --gomod ./go.mod --tool
+  kanonarion latest --gomod ./go.mod --fresh`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if f.gomodPath != "" && len(args) > 0 {
 				return fmt.Errorf("cannot specify both a module path and --gomod")
@@ -56,6 +70,7 @@ arguments; with multiple modules, --json emits an array.`,
 	cmd.Flags().StringVar(&f.goproxy, "goproxy", "", "override GOPROXY (default: $GOPROXY or proxy.golang.org)")
 	cmd.Flags().BoolVar(&f.tool, "tool", false, "scope to the tooling supply chain (the go.mod tool directives' closure)")
 	cmd.Flags().BoolVar(&f.project, "project", false, "scope to the complete set: the project's code AND tooling")
+	cmd.Flags().BoolVar(&f.fresh, "fresh", false, "re-query the proxy instead of serving recorded lookups from the store")
 
 	return cmd
 }
@@ -73,6 +88,47 @@ type latestResult struct {
 	LatestDate time.Time `json:"latest_date,omitzero"`
 	DaysBehind int       `json:"days_behind"`
 	IsLatest   bool      `json:"is_latest"`
+
+	// NewerMajor is the newest major-suffixed path above the pinned major, when
+	// one resolves. It is a SEPARATE field from Latest and is never folded into
+	// IsLatest: a module can be at the latest version of its own path and still
+	// be a whole major line behind, and reporting only the first is the failure
+	// this field exists to correct. Absent when nothing newer was found — or, if
+	// MajorProbed is false, when nothing was asked.
+	NewerMajorModule string    `json:"newer_major_module,omitempty"`
+	NewerMajorLatest string    `json:"newer_major_latest,omitempty"`
+	NewerMajorDate   time.Time `json:"newer_major_date,omitzero"`
+	// MajorProbed distinguishes "probed, no newer major" from "not probed".
+	MajorProbed bool `json:"major_probed"`
+
+	// LookedUpAt is when the proxy was asked for this answer. A served answer
+	// carries the original lookup time, not the time of this run.
+	LookedUpAt time.Time `json:"looked_up_at,omitzero"`
+	// Served is true when the answer came from the store rather than the proxy.
+	Served bool `json:"served_from_store"`
+}
+
+// applyStaleness copies a resolved staleness record onto an output row.
+func (r *latestResult) applyStaleness(ans staleapp.Answer) {
+	r.Latest = ans.LatestVersion
+	r.LatestDate = ans.LatestPublishedAt
+	r.NewerMajorModule = ans.NewerMajor.Path
+	r.NewerMajorLatest = ans.NewerMajor.Version
+	r.NewerMajorDate = ans.NewerMajor.PublishedAt
+	r.MajorProbed = ans.NewerMajor.Probed
+	r.LookedUpAt = ans.LookedUpAt
+	r.Served = ans.Served
+}
+
+// newerMajor rebuilds the domain fact from an output row, so the renderers
+// share one definition of what "has a newer major" means.
+func (r latestResult) newerMajor() staledomain.NewerMajor {
+	return staledomain.NewerMajor{
+		Probed:      r.MajorProbed,
+		Path:        r.NewerMajorModule,
+		Version:     r.NewerMajorLatest,
+		PublishedAt: r.NewerMajorDate,
+	}
 }
 
 func runLatest(ctx context.Context, args []string, f latestFlags, stdout, stderr io.Writer) error {
@@ -80,6 +136,17 @@ func runLatest(ctx context.Context, args []string, f latestFlags, stdout, stderr
 	if err != nil {
 		return fmt.Errorf("creating proxy adapter: %w", err)
 	}
+
+	// The ledger is the only reason this command opens the store. A store that
+	// cannot be opened is reported and the run continues live rather than
+	// failing: the answer is still obtainable, it is just paid for again.
+	ledger, closeLedger, lerr := openStalenessLedger(storeRoot)
+	if lerr != nil {
+		_, _ = fmt.Fprintf(stderr, "staleness ledger unavailable, resolving live: %v\n", lerr)
+	} else {
+		defer func() { _ = closeLedger() }()
+	}
+	resolver := newStalenessResolver(proxy, ledger, activeConfig.Staleness.TTL, f.fresh)
 
 	if len(args) == 0 {
 		gomodPath, err := resolveGoModPath(f.gomodPath)
@@ -90,10 +157,10 @@ func runLatest(ctx context.Context, args []string, f latestFlags, stdout, stderr
 		if serr != nil {
 			return serr
 		}
-		return runLatestGomod(ctx, gomodPath, scope, proxy, stdout, stderr)
+		return runLatestGomod(ctx, gomodPath, scope, resolver, stdout, stderr)
 	}
 
-	return runLatestModules(ctx, args, proxy, stdout)
+	return runLatestModules(ctx, args, resolver, stdout)
 }
 
 // runLatestModules resolves one or more module coordinates from positional
@@ -101,23 +168,26 @@ func runLatest(ctx context.Context, args []string, f latestFlags, stdout, stderr
 // every module is queried and the output mode is determined by jsonOut and
 // arity: a single module renders as a one-line text string or a JSON object,
 // multiple modules render as one text line each or a JSON array.
-func runLatestModules(ctx context.Context, modules []string, proxy *proxyadapter.Proxy, stdout io.Writer) error {
+func runLatestModules(ctx context.Context, modules []string, resolver *staleapp.Resolver, stdout io.Writer) error {
 	results := make([]latestResult, 0, len(modules))
 	for _, modulePath := range modules {
 		if cerr := ctx.Err(); cerr != nil {
 			return fmt.Errorf("context cancelled: %w", cerr)
 		}
-		info, err := proxy.LatestInfo(ctx, modulePath)
+		// No pin is passed: with nothing named on the command line the resolved
+		// latest places the probe's starting major, so a bare path whose newest
+		// release is a +incompatible v2 still probes from /v3.
+		ans, err := resolver.Resolve(ctx, modulePath, "")
 		if err != nil {
 			return fmt.Errorf("querying latest for %s: %w", modulePath, err)
 		}
-		results = append(results, latestResult{
+		res := latestResult{
 			Module:     modulePath,
-			Latest:     info.Version,
-			LatestDate: info.Time,
 			DaysBehind: 0,
 			IsLatest:   true,
-		})
+		}
+		res.applyStaleness(ans)
+		results = append(results, res)
 	}
 
 	if jsonOut {
@@ -151,23 +221,29 @@ func writeLatestSingleLine(stdout io.Writer, r latestResult) error {
 	if !r.LatestDate.IsZero() {
 		days = int(time.Since(r.LatestDate).Hours() / 24)
 	}
-	var writeErr error
+	var line string
 	switch {
 	case r.LatestDate.IsZero():
-		_, writeErr = fmt.Fprintf(stdout, "%s@%s\n", r.Module, r.Latest)
+		line = fmt.Sprintf("%s@%s", r.Module, r.Latest)
 	case days == 0:
-		_, writeErr = fmt.Fprintf(stdout, "%s@%s (released today)\n", r.Module, r.Latest)
+		line = fmt.Sprintf("%s@%s (released today)", r.Module, r.Latest)
 	default:
-		_, writeErr = fmt.Fprintf(stdout, "%s@%s (released %d days ago, %s)\n",
+		line = fmt.Sprintf("%s@%s (released %d days ago, %s)",
 			r.Module, r.Latest, days, r.LatestDate.UTC().Format("2006-01-02"))
 	}
-	if writeErr != nil {
-		return fmt.Errorf("writing output: %w", writeErr)
+	if note := newerMajorNote(r.newerMajor()); note != "" {
+		line += "; " + note
+	}
+	if asOf := stalenessAsOf(r.LookedUpAt); asOf != "" {
+		line += "  [as of " + asOf + "]"
+	}
+	if _, err := fmt.Fprintln(stdout, line); err != nil {
+		return fmt.Errorf("writing output: %w", err)
 	}
 	return nil
 }
 
-func runLatestGomod(ctx context.Context, gomodPath string, scope depScope, proxy *proxyadapter.Proxy, stdout, stderr io.Writer) error {
+func runLatestGomod(ctx context.Context, gomodPath string, scope depScope, resolver *staleapp.Resolver, stdout, stderr io.Writer) error {
 	type pinnedDep struct {
 		path    string
 		version string
@@ -202,8 +278,8 @@ func runLatestGomod(ctx context.Context, gomodPath string, scope depScope, proxy
 		if cerr := ctx.Err(); cerr != nil {
 			return fmt.Errorf("context cancelled: %w", cerr)
 		}
-		info, lerr := proxy.LatestInfo(ctx, dep.path)
-		if lerr != nil {
+		ans, lerr := resolver.Resolve(ctx, dep.path, dep.version)
+		if lerr != nil && ans.LatestVersion == "" {
 			_, _ = fmt.Fprintf(stderr, "latest %s: %v\n", dep.path, lerr)
 			results = append(results, latestResult{
 				Module: dep.path,
@@ -212,18 +288,23 @@ func runLatestGomod(ctx context.Context, gomodPath string, scope depScope, proxy
 			})
 			continue
 		}
+		if lerr != nil {
+			// The same-major answer resolved and the major probe did not. The
+			// module is reported with what was measured and MajorProbed false,
+			// so "no newer major" is never printed for a question that failed.
+			_, _ = fmt.Fprintf(stderr, "latest %s: %v\n", dep.path, lerr)
+		}
 
 		days := 0
-		if !info.Time.IsZero() {
-			days = int(time.Since(info.Time).Hours() / 24)
+		if !ans.LatestPublishedAt.IsZero() {
+			days = int(time.Since(ans.LatestPublishedAt).Hours() / 24)
 		}
 		res := latestResult{
-			Module:     dep.path,
-			Pinned:     dep.version,
-			Latest:     info.Version,
-			LatestDate: info.Time,
-			IsLatest:   info.Version == dep.version,
+			Module:   dep.path,
+			Pinned:   dep.version,
+			IsLatest: ans.LatestVersion == dep.version,
 		}
+		res.applyStaleness(ans)
 		if !res.IsLatest {
 			res.DaysBehind = days
 		}
@@ -244,6 +325,7 @@ func runLatestGomod(ctx context.Context, gomodPath string, scope depScope, proxy
 
 func printLatestTable(stdout io.Writer, results []latestResult) error {
 	const colWidth = 55
+	oldest := oldestLookup(results)
 	for _, r := range results {
 		coord := r.Module + "@" + r.Pinned
 		if len(coord) < colWidth {
@@ -260,9 +342,39 @@ func printLatestTable(stdout io.Writer, results []latestResult) error {
 		default:
 			status = fmt.Sprintf("latest: %s (%d days ago)", r.Latest, r.DaysBehind)
 		}
+		// The newer-major clause is appended, never substituted: "current" stays
+		// true of the module's own path and the major line is stated beside it.
+		if note := newerMajorNote(r.newerMajor()); note != "" {
+			status += "; " + note
+		}
 		if _, err := fmt.Fprintf(stdout, "%s  %s\n", coord, status); err != nil {
 			return fmt.Errorf("writing output: %w", err)
 		}
 	}
+	if asOf := stalenessAsOf(oldest); asOf != "" {
+		if _, err := fmt.Fprintf(stdout, "\nlatest as of %s (staleness.ttl %s; --fresh to re-query)\n",
+			asOf, activeConfig.Staleness.TTL); err != nil {
+			return fmt.Errorf("writing output: %w", err)
+		}
+	}
 	return nil
+}
+
+// oldestLookup returns the earliest lookup time across the table.
+//
+// The table is dated by its OLDEST row, not its newest: a mixed run where most
+// rows were served and a few re-queried is only as current as the row that was
+// asked about longest ago, and dating it by the freshest would overstate the
+// whole table.
+func oldestLookup(results []latestResult) time.Time {
+	var oldest time.Time
+	for _, r := range results {
+		if r.LookedUpAt.IsZero() {
+			continue
+		}
+		if oldest.IsZero() || r.LookedUpAt.Before(oldest) {
+			oldest = r.LookedUpAt
+		}
+	}
+	return oldest
 }

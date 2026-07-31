@@ -48,6 +48,7 @@ import (
 	sbomstore "github.com/eitanity/kanonarion/internal/sbom/adapters/store/sqlite"
 	sbomapp "github.com/eitanity/kanonarion/internal/sbom/application"
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
+	stalesqlite "github.com/eitanity/kanonarion/internal/staleness/adapters/store/sqlite"
 	stdlibgit "github.com/eitanity/kanonarion/internal/stdlib/adapters/gitlsremote"
 	stdlibgodev "github.com/eitanity/kanonarion/internal/stdlib/adapters/godev"
 	stdliblic "github.com/eitanity/kanonarion/internal/stdlib/adapters/licenseident"
@@ -88,6 +89,7 @@ func Migrations() []sqlitestore.Migration {
 	m = append(m, vensqlite.Migrations()...)
 	m = append(m, fipssqlite.Migrations()...)
 	m = append(m, stdlibsqlite.Migrations()...)
+	m = append(m, stalesqlite.Migrations()...)
 	return m
 }
 
