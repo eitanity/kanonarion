@@ -139,6 +139,11 @@ type QueryInterfaceUseCase interface {
 	FindSymbol(ctx context.Context, symbolName, pipelineVersion string, scope coordinate.ModuleSet) ([]ifaceports.SymbolRef, error)
 }
 
+// DiffInterfaceUseCase is the interface for diffing two stored interface records.
+type DiffInterfaceUseCase interface {
+	Diff(ctx context.Context, coordA, coordB coordinate.ModuleCoordinate) (ifacedomain.InterfaceDiff, error)
+}
+
 // --- callgraph context ---
 
 // ExtractCallGraphUseCase is the interface for extracting call graphs.

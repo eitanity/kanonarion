@@ -45,6 +45,24 @@ type InterfaceExtractor interface {
 	Extract(ctx context.Context, sourceTree fs.FS, coord coordinate.ModuleCoordinate) (domain.InterfaceRecord, error)
 }
 
+// SignatureReader is the driven port for reading Go declaration TEXT.
+//
+// An interface record carries formatted signature strings and no type
+// information, so any question about what a signature MEANS — whether two of
+// them denote the same declaration, whether a declared type is a string-keyed
+// registry — has to be answered by parsing that text. Parsing is
+// infrastructure, so the comparison asks this port rather than reaching for
+// go/parser itself. iface/adapters/spelling/goast implements it.
+//
+// It restates domain.SignatureReader because a domain package cannot import
+// ports; the two shapes are checked against each other at compile time in the
+// adapter.
+type SignatureReader interface {
+	DiffersOnlyInSpelling(a, b string) bool
+	RegistryShape(typeText string, localTypes map[string]string) (string, bool)
+	ResultRegistryShape(signature string, localTypes map[string]string) (string, bool)
+}
+
 // InterfaceStore persists InterfaceRecords and supports queries.
 //
 // The zero coordinate is the one value the signatures cannot exclude: Go

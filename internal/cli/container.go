@@ -60,6 +60,7 @@ import (
 	walklocalfs "github.com/eitanity/kanonarion/internal/walk/adapters/localfs"
 
 	ifaceext "github.com/eitanity/kanonarion/internal/iface/adapters/extractor/godoc"
+	goastspelling "github.com/eitanity/kanonarion/internal/iface/adapters/spelling/goast"
 	ifacesqlite "github.com/eitanity/kanonarion/internal/iface/adapters/store/sqlite"
 	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
 
@@ -135,6 +136,7 @@ type Container struct {
 	// iface
 	ExtractInterface ExtractInterfaceUseCase
 	QueryInterface   QueryInterfaceUseCase
+	DiffInterface    DiffInterfaceUseCase
 
 	// callgraph
 	ExtractCallGraph      ExtractCallGraphUseCase
@@ -442,8 +444,9 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		licapp.PipelineVersion,
 	)
 
-	// ---- iface query use case ----
+	// ---- iface query / diff use cases ----
 	queryIfaceUC := ifaceapp.NewQueryInterfaceUseCase(ifaceStore)
+	diffIfaceUC := ifaceapp.NewDiffInterfaceUseCase(ifaceStore, goastspelling.Reader{})
 
 	// ---- callgraph query use case ----
 	queryCGUC := cgapp.NewQueryCallGraphUseCase(cgStore)
@@ -560,6 +563,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 
 		ExtractInterface: ifaceExtractUC,
 		QueryInterface:   queryIfaceUC,
+		DiffInterface:    diffIfaceUC,
 
 		ExtractCallGraph:      cgExtractUC,
 		ExtractLocalCallGraph: cgLocalExtractUC,

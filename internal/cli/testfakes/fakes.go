@@ -352,6 +352,16 @@ func (f *FakeDiffLicense) Diff(_ context.Context, _, _ coordinate.ModuleCoordina
 	return f.Result, f.Err
 }
 
+// FakeDiffInterface implements cli.DiffInterfaceUseCase.
+type FakeDiffInterface struct {
+	Result ifacedomain.InterfaceDiff
+	Err    error
+}
+
+func (f *FakeDiffInterface) Diff(_ context.Context, _, _ coordinate.ModuleCoordinate) (ifacedomain.InterfaceDiff, error) {
+	return f.Result, f.Err
+}
+
 // FakeGenerateNotice implements cli.GenerateNoticeUseCase.
 type FakeGenerateNotice struct {
 	Result licapp.NoticeResult
@@ -502,6 +512,7 @@ type FakeQueryCallGraph struct {
 	records             map[string]cgdomain.CallGraphRecord
 	list                []cgports.CallGraphSummary
 	callers             []cgports.CallEdgeRef
+	callersBySymbol     map[string][]cgports.CallEdgeRef
 	callees             []cgports.CallEdgeRef
 	traverseCallers     []cgports.CallEdgeRef
 	traverseCallerNodes []string
@@ -616,12 +627,28 @@ func (f *FakeQueryCallGraph) SetCallees(refs []cgports.CallEdgeRef) {
 	f.callees = refs
 }
 
-func (f *FakeQueryCallGraph) FindCallers(_ context.Context, _, _ string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error) {
+// SetCallersFor answers one symbol specifically. A command that queries several
+// symbols in one run needs the fake to tell them apart; SetCallers alone would
+// return the same edges for every one of them, and a join that queried the wrong
+// symbol would still pass.
+func (f *FakeQueryCallGraph) SetCallersFor(symbolID string, refs []cgports.CallEdgeRef) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.callersBySymbol == nil {
+		f.callersBySymbol = make(map[string][]cgports.CallEdgeRef)
+	}
+	f.callersBySymbol[symbolID] = refs
+}
+
+func (f *FakeQueryCallGraph) FindCallers(_ context.Context, symbolID, _ string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error) {
 	if f.Err != nil {
 		return nil, f.Err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.callersBySymbol != nil {
+		return scopeEdgeRefs(f.callersBySymbol[symbolID], scope), nil
+	}
 	return scopeEdgeRefs(f.callers, scope), nil
 }
 

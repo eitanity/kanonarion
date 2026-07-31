@@ -76,6 +76,7 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 		newExamplesListCmd(stdout, stderr),
 		newInterfaceCmd(stdout, stderr),
 		newInterfaceShowCmd(stdout, stderr),
+		newInterfaceDiffCmd(stdout, stderr),
 		newInterfaceListCmd(stdout, stderr),
 		newSymbolFindCmd(stdout, stderr),
 		newSymbolContextCmd(stdout, stderr),
