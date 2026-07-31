@@ -118,6 +118,32 @@ none" and is never rendered as one.
 Serving is governed by the `staleness.ttl` config key (default `1h`; `0`
 disables). `--fresh` on `latest`/`audit` bypasses the read and still records.
 
+## Walk store: module `walk`, migration 6
+
+**Additive; a new column, no record shape change and no pipeline bump.** `walks`
+gains `project_dir`: the working-tree directory a walk rooted at a local project
+was taken from. A scan by walk id reads it back so it can reach the same analysis
+surface the original run did - notably a project's `vendor/` tree, which is
+otherwise unreachable without the directory. The whole store's migration count
+goes `v72` -> `v73`.
+
+The column sits **outside** the walk's sealed shape: `canonicalWalkRecord` does
+not carry it, so it is neither hashed nor serialised into the stored blob. That
+is deliberate. The path is machine-local, and admitting it to the hash would make
+two walks of one project taken from two checkouts two different walks, for every
+record that ever names a walk hash. Because the sealed bytes are untouched, no
+`PipelineVersion` bump is owed and no purge is needed: every stored walk still
+verifies against the hash it was written with.
+
+Migration for existing stores: **none required.** Existing rows default to the
+empty directory, which is also what a walk of a published coordinate records -
+that module has no project root. Consumers must read the empty value as "no
+project directory", never as "unrecorded": a scan finding it empty behaves
+exactly as it did before the column existed. The directory is provenance, not an
+oracle - a checkout that has moved or lost its `vendor/` tree degrades the scan
+to the fetched surface with the reason logged, and never makes a stored walk
+unscannable.
+
 ## Audit log (`audit.jsonl`)
 
 Append-only JSONL; **no schema migration** is ever required to add an event

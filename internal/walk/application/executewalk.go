@@ -150,6 +150,14 @@ func (uc *ExecuteWalkUseCase) Execute(ctx context.Context, req WalkRequest) (Exe
 		policy = *req.Policy
 	}
 	rec := domain.NewWalkRecord(id, uc.operator, uc.pipelineVersion, scope, depth, outcome, policy, req.PolicyHash)
+	// The directory this walk was rooted at, so a later re-scan by walk id can
+	// reach the same analysis surface — notably a vendored tree — instead of
+	// silently answering about the fetched artefacts. Empty for a walk of a
+	// published coordinate, which has no project root. It is set outside the
+	// constructor because it is provenance the record carries rather than part
+	// of the walk the constructor seals: NewWalkRecord builds the hashed shape,
+	// and this field is not in it.
+	rec.ProjectDir = req.ProjectDir
 	rec, err = domain.WalkRecordHasher{}.SetContentHash(rec)
 	if err != nil {
 		return ExecuteWalkResult{}, fmt.Errorf("hashing walk record: %w", err)

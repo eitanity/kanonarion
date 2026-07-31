@@ -3,6 +3,7 @@ package application
 import (
 	"context"
 	"fmt"
+	"os"
 	"path/filepath"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -325,6 +326,66 @@ func absentFromVendor(
 	}
 	return "the module is in the walk's build list but vendor/modules.txt does not list it, " +
 		"so `go mod vendor` pruned it and nothing of it was in the analysed build", true
+}
+
+// effectiveProjectDir settles which working tree, if any, this run analyses.
+//
+// A caller that supplied one (--gomod, --tool, --project, the local driver)
+// always wins: it named the tree it means, and the walk's recollection of an
+// older one must not override it. Otherwise — the `vuln-scan <walk-id>` spelling
+// — the walk's own record of where it was taken from is consulted, so a stored
+// walk of a vendored project re-scans onto the source that project compiles
+// rather than onto the fetched artefacts, which is the same walk answering two
+// ways depending on how the operator spelled the command.
+//
+// The recorded directory is provenance, never an oracle. It is adopted only
+// while it still holds the vendored tree that made it worth reaching for; a
+// checkout that has moved, been deleted, or had its vendor/ directory removed
+// leaves the run exactly where it was before this field existed — on the fetched
+// surface, which every record then names — and the reason is logged against the
+// directory itself, so an operator can tell a walk that was never vendored from
+// one whose tree is gone. A moved checkout must not make a stored walk
+// unscannable.
+//
+// --no-vendor is honoured here as an instruction, not merely as a filter later:
+// an operator asking for the fetched surface has no use for a directory that is
+// only ever adopted to reach the vendored one.
+func (uc *ScanWalkUseCase) effectiveProjectDir(params ScanWalkParams, walk walkdomain.WalkRecord) string {
+	if params.ProjectDir != "" {
+		return params.ProjectDir
+	}
+	dir := walk.ProjectDir
+	if dir == "" {
+		// A walk of a published coordinate, or one taken before walks recorded
+		// their root. Neither has a project tree to reach; nothing to say.
+		return ""
+	}
+	if uc.vendoredClosure == nil {
+		// This run cannot read a vendored tree at all, so it cannot reach the
+		// surface the directory exists to reach. Adopting it anyway would only
+		// reroute the analysis — into a project-rooted scan of a tree whose vendor
+		// directory the run is unequipped to account for — which is a different
+		// change from the one the directory was recorded for.
+		return ""
+	}
+	if params.NoVendor {
+		uc.logger.Info("vuln-scan: --no-vendor set, not reaching for the walk's project directory",
+			"walk_id", params.WalkID, "project_dir", dir)
+		return ""
+	}
+	if _, err := os.Stat(dir); err != nil {
+		uc.logger.Warn("vuln-scan: the directory this walk was taken from is no longer available, analysing the fetched artefacts",
+			"walk_id", params.WalkID, "project_dir", dir, "error", err)
+		return ""
+	}
+	if _, err := os.Stat(filepath.Join(dir, "vendor", "modules.txt")); err != nil {
+		uc.logger.Info("vuln-scan: the directory this walk was taken from holds no vendored tree, analysing the fetched artefacts",
+			"walk_id", params.WalkID, "project_dir", dir, "error", err)
+		return ""
+	}
+	uc.logger.Info("vuln-scan: analysing the vendored tree the walk was taken from",
+		"walk_id", params.WalkID, "project_dir", dir)
+	return dir
 }
 
 // resolveVendoredClosure asks the project's working tree whether it is vendored

@@ -24,6 +24,12 @@ type WalkRecordHasher struct{}
 //
 // Depth uses omitempty: WalkDepthFull is serialised as "" (absent) so that
 // records created before the depth field existed continue to verify correctly.
+//
+// WalkRecord.ProjectDir is deliberately absent: the directory a walk was taken
+// from is machine-local provenance, and admitting it here would make two walks
+// of the same project from two checkouts two different walks for good. It is
+// persisted in its own store column instead, so nothing about it can reach the
+// seal. See WalkRecord.ProjectDir.
 type canonicalWalkRecord struct {
 	CompletedAt     string                         `json:"completed_at"`
 	ContentHash     string                         `json:"content_hash"`

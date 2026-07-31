@@ -22,10 +22,14 @@ type fakeVendoredClosure struct {
 	closure ports.VendoredClosure
 	err     error
 	calls   int
+	// gotGoMod records the go.mod the reader was pointed at, so a test can assert
+	// which project's tree was consulted rather than only that one was.
+	gotGoMod string
 }
 
-func (f *fakeVendoredClosure) VendoredClosure(_ context.Context, _ string) (ports.VendoredClosure, error) {
+func (f *fakeVendoredClosure) VendoredClosure(_ context.Context, goModPath string) (ports.VendoredClosure, error) {
 	f.calls++
+	f.gotGoMod = goModPath
 	return f.closure, f.err
 }
 

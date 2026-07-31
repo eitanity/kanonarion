@@ -71,6 +71,30 @@ type WalkRecord struct {
 	StageDepths     map[string]StageDepth                      `json:"stage_depths"`
 	Operator        string                                     `json:"operator"`
 	ContentHash     string                                     `json:"content_hash"`
+	// ProjectDir is the working-tree directory the walk was rooted at: the
+	// directory holding the main module's go.mod. It is set on a walk of a local
+	// project (--gomod, --tool, --project, and the local driver's analysed
+	// walks) and empty on a walk of a published coordinate, which has no project
+	// root. The empty value is that distinction, not a gap.
+	//
+	// It exists so a re-scan by walk id can reach the same analysis surface the
+	// original run did: a project carrying vendor/modules.txt is analysed from
+	// the vendored tree, and without the directory a stored walk could only ever
+	// be re-analysed from fetched artefacts — one walk answering differently
+	// depending on which spelling of the command asked.
+	//
+	// It is provenance, NOT identity, and is deliberately OUTSIDE the content
+	// hash: it is absent from canonicalWalkRecord, so it neither joins the seal
+	// nor survives Marshal/Unmarshal. Two walks that differ only by where on a
+	// machine they were taken from are the same walk, and a machine-local path
+	// in the hash would make them different ones — permanently, for every record
+	// that ever names a walk hash. The store carries it in its own column
+	// beside the sealed blob, which is what a fact that is true of the run but
+	// not of the walk deserves.
+	//
+	// Being provenance, it is never an oracle: a reader that finds the directory
+	// gone must degrade to what it can measure without it, never fail.
+	ProjectDir string `json:"project_dir,omitempty"`
 }
 
 // NewWalkRecord constructs a WalkRecord from a WalkOutcome. ContentHash is

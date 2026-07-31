@@ -563,6 +563,19 @@ package).
 Records written before this field existed read as `fetched`: nothing consumed a
 vendored tree then, so that is what those bytes mean.
 
+`kanonarion vuln-scan <walk-id>` reaches the vendored surface too. A project walk
+records the directory it was taken from, and a scan by walk id - which is given
+no directory of its own - reads it back, so the same walk does not answer one way
+under `--gomod` and another way under its id. A directory the caller supplies
+always wins over the recorded one.
+
+The recorded directory is provenance, never an oracle. If it no longer exists, or
+no longer holds `vendor/modules.txt`, the scan does not fail: it proceeds on the
+fetched surface, every record says `fetched`, and the run log names the directory
+and the reason. A moved or deleted checkout must not make a stored walk
+unscannable. `--no-vendor` is honoured before the directory is reached for at
+all, since it is only ever adopted to reach the vendored surface.
+
 ---
 
 ### How an `Unscannable` module is displayed

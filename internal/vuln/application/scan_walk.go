@@ -249,6 +249,12 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 		return domain.WalkScanRun{}, fmt.Errorf("retrieving walk %q: %w", params.WalkID, err)
 	}
 
+	// A scan by walk id gets no project directory from its caller, but the walk
+	// remembers the one it was taken from. Adopting it is what stops the same
+	// walk answering differently depending on which spelling of the command
+	// asked for the scan.
+	params.ProjectDir = uc.effectiveProjectDir(params, walk)
+
 	run := domain.WalkScanRun{
 		ID:               fmt.Sprintf("vscan-%s-%d", params.WalkID, uc.clock.Now().Unix()),
 		WalkID:           params.WalkID,

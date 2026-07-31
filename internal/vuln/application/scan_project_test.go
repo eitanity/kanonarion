@@ -1,6 +1,7 @@
 package application_test
 
 import (
+	"bytes"
 	"context"
 	"log/slog"
 	"strings"
@@ -25,10 +26,14 @@ type projectScanFixture struct {
 	scanner   *fakeScanner
 	vulnStore *fakeVulnStore
 	db        *fakeDatabase
-	root      coordinate.ModuleCoordinate
-	depA      coordinate.ModuleCoordinate
-	depB      coordinate.ModuleCoordinate
-	walkID    string
+	// logs holds everything the wired use cases logged, so a test can assert on
+	// a decision the run reports but does not record — which surface it chose,
+	// and why — instead of inferring it from the verdicts.
+	logs   *bytes.Buffer
+	root   coordinate.ModuleCoordinate
+	depA   coordinate.ModuleCoordinate
+	depB   coordinate.ModuleCoordinate
+	walkID string
 }
 
 func newProjectScanFixture(t *testing.T, scanner *fakeScanner) projectScanFixture {
@@ -98,15 +103,18 @@ func newProjectScanFixtureFor(
 		}
 	}
 
+	logs := &bytes.Buffer{}
+	logger := slog.New(slog.NewTextHandler(logs, &slog.HandlerOptions{Level: slog.LevelDebug}))
+
 	moduleUC := application.NewScanModuleUseCase(
-		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", slog.Default(),
+		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", logger,
 	)
 	walkUC := application.NewScanWalkUseCase(
-		walkStore, vulnStore, moduleUC, nil, clock, "v1", slog.Default(),
+		walkStore, vulnStore, moduleUC, nil, clock, "v1", logger,
 	)
 
 	return projectScanFixture{
-		walkUC: walkUC, scanner: scanner, vulnStore: vulnStore, db: db,
+		walkUC: walkUC, scanner: scanner, vulnStore: vulnStore, db: db, logs: logs,
 		root: root, walkID: walkID,
 	}
 }
