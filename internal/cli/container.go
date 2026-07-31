@@ -382,6 +382,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		Facts: factStore, Blobs: blobs, Store: ifaceStore,
 		Extractor: ifaceext.New("0.1.0", clk), Clock: clk, Stopwatch: stopwatch, Logger: logger,
 	})
+	cganalyser.SetToolchainProbe(goToolchainVersionProbe)
 	cgAnalyser := cganalyser.New("0.1.0", goBinary, logger)
 	cgExtractUC := cgapp.NewExtractCallGraphUseCase(cgapp.Config{
 		Facts: factStore, Blobs: blobs, Store: cgStore,

@@ -70,13 +70,29 @@ func TestClassifyLoadFailure_CancelledIsEnvironmentWithoutProbing(t *testing.T) 
 	}
 }
 
-// TestRunGoVersionProbe_AnswersOnThisBox is the control for the seam: the real
-// probe must succeed in an environment that can run the test suite at all, or
-// every load failure would be classed as environmental and nothing would ever
-// cache.
-func TestRunGoVersionProbe_AnswersOnThisBox(t *testing.T) {
-	if err := runGoVersionProbe(context.Background()); err != nil {
-		t.Fatalf("the real toolchain probe failed in an environment running the test suite: %v", err)
+// TestClassifyLoadFailure_UnwiredProbeAssumesUsable pins the zero seam: with no
+// probe wired by a composition root, a load failure files as the module's. The
+// real environment check lives with the composition root (this is an extraction
+// package and must not carry process-spawning capability), and its own control
+// test lives beside that implementation.
+func TestClassifyLoadFailure_UnwiredProbeAssumesUsable(t *testing.T) {
+	swapProbe(t, assumeUsableToolchain)
+
+	if got := quietAnalyser().classifyLoadFailure(context.Background()); got != domain.FailureCauseModule {
+		t.Errorf("classifyLoadFailure with the zero seam = %q, want %q", got, domain.FailureCauseModule)
+	}
+}
+
+// TestSetToolchainProbe_NilIsRefused pins that a composition root cannot unwire
+// the seam by passing nil: the previously-installed probe keeps answering.
+func TestSetToolchainProbe_NilIsRefused(t *testing.T) {
+	sentinel := errors.New("sentinel probe")
+	swapProbe(t, func(context.Context) error { return sentinel })
+
+	SetToolchainProbe(nil)
+
+	if err := toolchainProbe(context.Background()); !errors.Is(err, sentinel) {
+		t.Error("SetToolchainProbe(nil) replaced the installed probe")
 	}
 }
 

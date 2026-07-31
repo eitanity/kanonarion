@@ -63,6 +63,10 @@ type reachabilityFinding struct {
 	VerdictSource  string   `json:"verdict_source,omitempty"`
 	Reason         string   `json:"reason,omitempty"`
 	MatchedSymbols []string `json:"matched_symbols,omitempty"`
+	// MatchedBinaries names the main packages whose symbol table carried the
+	// matched symbols — which of a multi-binary build's artefacts ships the
+	// vulnerable code.
+	MatchedBinaries []string `json:"matched_binaries,omitempty"`
 }
 
 type reachabilityModule struct {
@@ -77,6 +81,16 @@ type reachabilityUncovered struct {
 	Path    string `json:"path"`
 	Version string `json:"version,omitempty"`
 	Reason  string `json:"reason"`
+}
+
+// reachabilityProbedBinary is one main package of the local build and whether
+// the probe read its symbol table.
+type reachabilityProbedBinary struct {
+	ImportPath string `json:"import_path"`
+	// BuildError is the failure that stopped this binary being probed, absent
+	// when it was probed. Its presence marks a binary this answer cannot speak
+	// about; the probe still answers from the ones that built.
+	BuildError string `json:"build_error,omitempty"`
 }
 
 // reachabilityCoverage states what the local probe's answer was drawn from and
@@ -108,6 +122,11 @@ type reachabilityCoverage struct {
 	// a later answer. Present exactly when something is uncovered: a remedy for
 	// nothing would read as an outstanding action.
 	UncoveredRemedy string `json:"uncovered_remedy,omitempty"`
+	// ProbedBinaries names every main package of the build, probed or not, so
+	// a multi-binary project's answer states its basis. Absent for a library
+	// workspace and for a probe that was skipped, neither of which built a
+	// main package.
+	ProbedBinaries []reachabilityProbedBinary `json:"probed_binaries,omitempty"`
 }
 
 type reachabilityOutput struct {
@@ -721,13 +740,14 @@ func reachabilityResultToOutput(r localdomain.LocalReachabilityResult) reachabil
 		findings := make([]reachabilityFinding, 0, len(m.Findings))
 		for _, f := range m.Findings {
 			findings = append(findings, reachabilityFinding{
-				CVEID:          f.CVEID,
-				Aliases:        f.Aliases,
-				Summary:        f.Summary,
-				Verdict:        string(f.Verdict),
-				VerdictSource:  string(f.VerdictSource),
-				Reason:         f.Reason,
-				MatchedSymbols: f.MatchedSymbols,
+				CVEID:           f.CVEID,
+				Aliases:         f.Aliases,
+				Summary:         f.Summary,
+				Verdict:         string(f.Verdict),
+				VerdictSource:   string(f.VerdictSource),
+				Reason:          f.Reason,
+				MatchedSymbols:  f.MatchedSymbols,
+				MatchedBinaries: f.MatchedBinaries,
 			})
 		}
 		mods = append(mods, reachabilityModule{
@@ -768,6 +788,11 @@ func coverageToOutput(c localdomain.ProbeCoverage) reachabilityCoverage {
 	}
 	if len(out.UncoveredModules) > 0 {
 		out.UncoveredRemedy = remedyScanUncovered().String()
+	}
+	for _, b := range c.Binaries {
+		out.ProbedBinaries = append(out.ProbedBinaries, reachabilityProbedBinary{
+			ImportPath: b.ImportPath, BuildError: b.BuildError,
+		})
 	}
 	return out
 }

@@ -440,7 +440,11 @@ func spliceTopLevelContentHash(raw []byte, value string) ([]byte, string, error)
 			return nil, "", fmt.Errorf("encoding replacement content_hash: %w", merr)
 		}
 
-		out := make([]byte, 0, len(raw)+len(encoded))
+		// Capacity is a growth hint only: len(raw) covers the common case where
+		// the replacement hash is no longer than the original, and one append
+		// growth covers the rest. Summing the two lengths here trips static
+		// overflow analysis for no measurable gain.
+		out := make([]byte, 0, len(raw))
 		out = append(out, raw[:start]...)
 		out = append(out, encoded...)
 		out = append(out, raw[end:]...)
