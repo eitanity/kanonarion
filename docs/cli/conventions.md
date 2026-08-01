@@ -45,17 +45,21 @@ license_policy:
       notify:  [weak_copyleft]
       warn:    [strong_copyleft, restricted]
       default: allow
+      unknown_license: block
     - scope: tool
       allow:   [permissive, weak_copyleft, strong_copyleft]
       notify:  [restricted]
       default: allow
+      unknown_license: warn
 license_overrides:
   # golang.org/x/mod: MIT
 callgraph:
   exclude: []
 ```
 
-Policy outcomes are `allow`, `notify`, and `warn` - there is no blocking mechanism. Categories not listed in any outcome list resolve to `default`; an absent `default` resolves to `allow`. The same implicit allow applies when no rule exists for a scope.
+Policy outcomes for a *resolved* licence are `allow`, `notify`, and `warn`. Categories not listed in any outcome list resolve to `default`; an absent `default` resolves to `allow`. The same implicit allow applies when no rule exists for a scope.
+
+An *undetermined* licence - one the detector could not resolve to any SPDX identifier at all - does not fall through to `default`. It is governed by `unknown_license`, the per-scope unknown-licence gate, which is the one setting that can fail a build: `block` makes an undetermined dependency a hard compliance failure and `audit` exits `5`. Left unset it resolves to `block` for `scope: production` and `warn` for every other scope, so uncertainty fails closed rather than being reported as a clean allow. See [`config`](config.md#license_policyrulesunknown_license---the-unknown-licence-gate) for the four values and `kanonarion config show` for the value in force.
 
 ---
 

@@ -440,3 +440,119 @@ func TestCheckCompatibilityForWalk_EmptyTargetWithUnclassifiedRootErrs(t *testin
 		t.Fatalf("expected ErrRootLicenceNoSPDX, got %v", err)
 	}
 }
+
+// The standard library carries its licence on the graph node (extracted from
+// the source tarball's LICENSE file) rather than in a fetched licence record.
+// The closure check must read that fact, so the module a project cannot build
+// without is not reported as undetermined — the one class of result the licence
+// gate is built to block.
+func TestCheckCompatibilityForWalk_StdlibLicenceComesFromNodeFacts(t *testing.T) {
+	t.Parallel()
+	root := makeCoord("example.com/root", coordinate.LocalVersion)
+	stdlib := makeCoord(walkdomain.StdlibModulePath, "v1.26.5")
+
+	walkStore := &compatFakeWalkStore{
+		walk: walkdomain.WalkRecord{
+			ID: "walk-stdlib",
+			Graph: walkdomain.Graph{
+				Nodes: []walkdomain.GraphNode{
+					{Coordinate: root},
+					{
+						Coordinate:       stdlib,
+						ResolutionSource: walkdomain.ResolutionStdlib,
+						Stdlib:           &walkdomain.StdlibFacts{LicenseSPDX: "BSD-3-Clause"},
+					},
+				},
+			},
+		},
+	}
+	// No licence record exists for stdlib — it is never fetched through the
+	// proxy, so the store lookup is exactly the thing that must not decide.
+	licStore := &compatFakeLicenseStore{records: map[string]domain.LicenseRecord{}}
+
+	uc := application.NewCheckCompatibilityUseCase(licStore, walkStore)
+	report, err := uc.CheckCompatibilityForWalk(context.Background(), "walk-stdlib", root, "Apache-2.0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !report.Clean {
+		t.Fatalf("stdlib under Apache-2.0 must be clean, got conflicts: %+v", report.Conflicts)
+	}
+}
+
+// A legacy or offline walk carries no stdlib facts. The licence is still known
+// — the Go project publishes it — so the constant answers, and the node is
+// still not reported as undetermined.
+func TestCheckCompatibilityForWalk_StdlibWithoutFactsUsesKnownConstant(t *testing.T) {
+	t.Parallel()
+	root := makeCoord("example.com/root", coordinate.LocalVersion)
+	stdlib := makeCoord(walkdomain.StdlibModulePath, "v1.26.5")
+
+	walkStore := &compatFakeWalkStore{
+		walk: walkdomain.WalkRecord{
+			ID: "walk-stdlib-legacy",
+			Graph: walkdomain.Graph{
+				Nodes: []walkdomain.GraphNode{
+					{Coordinate: root},
+					{Coordinate: stdlib, ResolutionSource: walkdomain.ResolutionStdlib},
+				},
+			},
+		},
+	}
+	licStore := &compatFakeLicenseStore{records: map[string]domain.LicenseRecord{}}
+
+	uc := application.NewCheckCompatibilityUseCase(licStore, walkStore)
+	report, err := uc.CheckCompatibilityForWalk(context.Background(), "walk-stdlib-legacy", root, "Apache-2.0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !report.Clean {
+		t.Fatalf("factless stdlib node must resolve via the known constant, got conflicts: %+v", report.Conflicts)
+	}
+}
+
+// The stdlib carve-out must not widen: an ordinary module with no licence
+// record is genuinely undetermined and keeps reporting as an unknown pair.
+func TestCheckCompatibilityForWalk_StdlibResolutionDoesNotCoverThirdParty(t *testing.T) {
+	t.Parallel()
+	root := makeCoord("example.com/root", coordinate.LocalVersion)
+	stdlib := makeCoord(walkdomain.StdlibModulePath, "v1.26.5")
+	undetermined := makeCoord("github.com/dgryski/dgoogauth", "v0.0.0-20190221195224-5a805980a5f3")
+
+	walkStore := &compatFakeWalkStore{
+		walk: walkdomain.WalkRecord{
+			ID: "walk-mixed",
+			Graph: walkdomain.Graph{
+				Nodes: []walkdomain.GraphNode{
+					{Coordinate: root},
+					{
+						Coordinate:       stdlib,
+						ResolutionSource: walkdomain.ResolutionStdlib,
+						Stdlib:           &walkdomain.StdlibFacts{LicenseSPDX: "BSD-3-Clause"},
+					},
+					{Coordinate: undetermined},
+				},
+			},
+		},
+	}
+	licStore := &compatFakeLicenseStore{records: map[string]domain.LicenseRecord{}}
+
+	uc := application.NewCheckCompatibilityUseCase(licStore, walkStore)
+	report, err := uc.CheckCompatibilityForWalk(context.Background(), "walk-mixed", root, "Apache-2.0")
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(report.Conflicts) != 1 {
+		t.Fatalf("expected exactly the third-party module to be unknown, got %+v", report.Conflicts)
+	}
+	c := report.Conflicts[0]
+	if c.ModulePath != undetermined.Path() {
+		t.Errorf("unknown pair names %s, want %s", c.ModulePath, undetermined.Path())
+	}
+	if c.Verdict != domain.VerdictUnknownPair {
+		t.Errorf("verdict = %s, want unknown pair", c.Verdict)
+	}
+	if c.DepSPDX != "" {
+		t.Errorf("undetermined module reported SPDX %q, want empty", c.DepSPDX)
+	}
+}

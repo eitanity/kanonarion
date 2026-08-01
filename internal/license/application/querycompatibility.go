@@ -9,8 +9,35 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	"github.com/eitanity/kanonarion/internal/license/domain"
+	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
+
+// stdlibLicenseSPDX is the SPDX identifier for the Go standard library. The Go
+// project (and therefore the standard library that ships with the toolchain) is
+// distributed under BSD-3-Clause.
+const stdlibLicenseSPDX = "BSD-3-Clause"
+
+// stdlibClosureSPDX resolves the SPDX identifier for the synthetic
+// standard-library node: the licence extracted from the source tarball's
+// LICENSE file when chain-of-custody facts are present on the node, falling
+// back to the known BSD-3-Clause constant only for a legacy or offline node
+// that carries no facts.
+//
+// The standard library ships with the toolchain rather than through the module
+// proxy, so it has no fetched licence record — a store lookup finds nothing and
+// would report a module whose licence is known, published and already recorded
+// as undetermined. Undetermined is precisely what the licence gate blocks, so
+// leaving the closure check to the store lookup would let a project be blocked
+// by its own standard library. This is the same resolution order the SBOM
+// generator and `audit` apply to the same facts, so the three surfaces give one
+// answer for one module.
+func stdlibClosureSPDX(facts *walkdomain.StdlibFacts) string {
+	if facts != nil && facts.LicenseSPDX != "" {
+		return facts.LicenseSPDX
+	}
+	return stdlibLicenseSPDX
+}
 
 // ErrRootLicenceNotAnalysed is returned when an implicit compatibility target
 // was requested (empty targetSPDX) but the root has no licence record. The
@@ -78,9 +105,16 @@ func (uc *CheckCompatibilityUseCase) CheckCompatibilityForWalk(
 	// at different depths).
 	seen := make(map[coordinate.ModuleCoordinate]struct{})
 	var coords []coordinate.ModuleCoordinate
+	// The standard-library node carries its licence on the graph node rather
+	// than in a licence record, so its SPDX is collected from the walk here and
+	// consulted ahead of the store lookup below.
+	stdlibSPDX := make(map[coordinate.ModuleCoordinate]string, 1)
 	for _, node := range walk.Graph.Nodes {
 		if node.Coordinate == root {
 			continue
+		}
+		if node.ResolutionSource == walkdomain.ResolutionStdlib {
+			stdlibSPDX[node.Coordinate] = stdlibClosureSPDX(node.Stdlib)
 		}
 		if _, dup := seen[node.Coordinate]; dup {
 			continue
@@ -100,6 +134,14 @@ func (uc *CheckCompatibilityUseCase) CheckCompatibilityForWalk(
 	// a bundled GPL component is caught even when the module root is permissive.
 	modules := make([]domain.CompatibilityInput, 0, len(coords))
 	for _, coord := range coords {
+		if spdx, isStdlib := stdlibSPDX[coord]; isStdlib {
+			modules = append(modules, domain.CompatibilityInput{
+				ModulePath:    coord.Path(),
+				ModuleVersion: coord.Version(),
+				SPDX:          spdx,
+			})
+			continue
+		}
 		spdxs := resolveEffectiveSPDXs(ctx, uc.store, coord)
 		if len(spdxs) == 0 {
 			modules = append(modules, domain.CompatibilityInput{

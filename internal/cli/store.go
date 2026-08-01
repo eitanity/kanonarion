@@ -194,12 +194,17 @@ type configPolicyResult struct {
 }
 
 type configRuleResult struct {
-	Scope          string   `json:"scope"`
-	Allow          []string `json:"allow"`
-	Notify         []string `json:"notify"`
-	Warn           []string `json:"warn"`
-	Default        string   `json:"default"`
-	UnknownLicense string   `json:"unknown_license"`
+	Scope   string   `json:"scope"`
+	Allow   []string `json:"allow"`
+	Notify  []string `json:"notify"`
+	Warn    []string `json:"warn"`
+	Default string   `json:"default"`
+	// UnknownLicense is the policy in force for an undetermined licence, which
+	// for an unset rule is the scope default rather than the empty string the
+	// rule literally carries — an empty cell would report "no gate" for a scope
+	// whose gate is "block". UnknownLicenseIsDefault says which of the two it is.
+	UnknownLicense          string `json:"unknown_license"`
+	UnknownLicenseIsDefault bool   `json:"unknown_license_is_default"`
 }
 
 type configCGResult struct {
@@ -230,15 +235,25 @@ func newStoreConfigShowCmd(stdout io.Writer) *cobra.Command {
 func runStoreConfigShow(root string, asJSON bool, stdout io.Writer) error {
 	if asJSON {
 		cfg := activeConfig
+		// Best-effort: an absent file means nothing is set, which is exactly
+		// what the default markers should then say. A present but unparseable
+		// file cannot happen here — the typed load already refused it.
+		rawData, _ := os.ReadFile(filepath.Join(root, "config.yaml")) // #nosec G304 -- operator-supplied store-root path
+		raw, err := parseRawConfigDoc(rawData)
+		if err != nil {
+			return err
+		}
 		rules := make([]configRuleResult, 0, len(cfg.LicensePolicy.Rules))
 		for _, r := range cfg.LicensePolicy.Rules {
+			unknown, explicit := effectiveUnknownLicense(r, raw)
 			rules = append(rules, configRuleResult{
-				Scope:          r.Scope,
-				Allow:          r.Allow,
-				Notify:         r.Notify,
-				Warn:           r.Warn,
-				Default:        string(r.Default),
-				UnknownLicense: string(r.UnknownLicense),
+				Scope:                   r.Scope,
+				Allow:                   r.Allow,
+				Notify:                  r.Notify,
+				Warn:                    r.Warn,
+				Default:                 string(r.Default),
+				UnknownLicense:          string(unknown),
+				UnknownLicenseIsDefault: !explicit,
 			})
 		}
 		result := configShowResult{
@@ -297,7 +312,15 @@ func runStoreConfigShow(root string, asJSON bool, stdout io.Writer) error {
 	if _, err := fmt.Fprint(stdout, string(data)); err != nil {
 		return fmt.Errorf("writing config: %w", err)
 	}
-	return nil
+	// The file alone is not the configuration in force: every key it leaves
+	// commented or absent still resolves to a built-in default, and the licence
+	// gate is one of those. Print the resolved values after it so a setting can
+	// be discovered from the tool rather than by reading the source.
+	raw, err := parseRawConfigDoc(data)
+	if err != nil {
+		return err
+	}
+	return writeEffectiveConfig(stdout, activeConfig, raw)
 }
 
 type storeInfoResult struct {

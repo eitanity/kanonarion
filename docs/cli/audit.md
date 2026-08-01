@@ -258,6 +258,21 @@ latest version of its own path and is still behind. `major_probed` separates
 "probed, nothing newer" from "not probed" (a `--from-modcache` run, or a probe
 whose request failed).
 
+### The unknown-licence gate
+
+`audit` is where the licence policy is enforced. A dependency whose licence
+could not be resolved to any SPDX identifier is **undetermined**, and
+undetermined is governed by `license_policy.rules[].unknown_license` - not by
+the rule's `default`. When that key resolves to `block` for the module's scope,
+`audit` prints the full table and then exits `5`, naming every blocked module.
+
+Left unset the key resolves to `block` for `scope: production` and `warn` for
+every other scope, so an undetermined dependency fails a production audit
+closed rather than passing as a clean allow. Run `kanonarion config show` to see
+the value in force for each scope, and see
+[`config`](config.md#license_policyrulesunknown_license---the-unknown-licence-gate)
+for the four values.
+
 ### Precursor to `sbom --package`
 
 Because `audit` leaves behind exactly the project walk, license records, and
