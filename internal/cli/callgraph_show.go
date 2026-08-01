@@ -32,6 +32,7 @@ func newCallGraphShowCmd(stdout, stderr io.Writer) *cobra.Command {
 		Example: `  kanonarion callgraph-show github.com/spf13/cobra@v1.8.1
   kanonarion callgraph-show github.com/spf13/cobra@v1.8.1 --json
   kanonarion callgraph-show github.com/spf13/cobra@v1.8.1 --node Execute
+  kanonarion callgraph-show github.com/spf13/cobra@v1.8.1 --node github.com/spf13/pflag
   kanonarion callgraph-show github.com/spf13/cobra@v1.8.1 --history
   kanonarion callgraph-show example.com/mod@local --source worktree`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -48,7 +49,7 @@ func newCallGraphShowCmd(stdout, stderr io.Writer) *cobra.Command {
 		},
 	}
 
-	cmd.Flags().StringVar(&f.nodeFilter, "node", "", "filter output to edges involving this symbol name")
+	cmd.Flags().StringVar(&f.nodeFilter, "node", "", "filter to nodes whose fully-qualified ID (package path + symbol) contains this substring, case-insensitively; a module path, a package path or a bare symbol name all select")
 	cmd.Flags().IntVar(&f.limitNodes, "limit-nodes", 50, "max nodes to print (0=unlimited)")
 	cmd.Flags().IntVar(&f.limitEdges, "limit-edges", 100, "max edges to print (0=unlimited)")
 	cmd.Flags().BoolVar(&f.history, "history", false, "show every stored generation for the module instead of the composed answer")
@@ -103,20 +104,26 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 	}
 	nodeFilter, limitNodes, limitEdges := f.nodeFilter, f.limitNodes, f.limitEdges
 
+	var filter nodeFilterOutcome
 	if nodeFilter != "" {
-		r = filterCallGraphRecord(r, nodeFilter)
+		r, filter = filterCallGraphRecord(r, nodeFilter)
 	}
 
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(toCallGraphJSON(r)); err != nil {
+		j := toCallGraphJSON(r)
+		j.NodeFilter = filter.toJSON()
+		if err := enc.Encode(j); err != nil {
 			return fmt.Errorf("encoding JSON: %w", err)
 		}
 		return nil
 	}
 
-	return printCallGraphRecord(r, limitNodes, limitEdges, stdout)
+	if err := printCallGraphRecord(r, limitNodes, limitEdges, stdout); err != nil {
+		return err
+	}
+	return writeNodeFilterNotice(stdout, coord, f.source, filter)
 }
 
 // runCallGraphHistory prints every generation the ledger holds for a coordinate,
@@ -275,6 +282,10 @@ type callGraphRecordJSON struct {
 	// command rather than inlined into every record dump.
 	InterfaceCount      int `json:"interface_count"`
 	ImplementationCount int `json:"implementation_count"`
+	// NodeFilter is present only when --node narrowed this answer. Absent means
+	// the record is unfiltered, which is a different statement from a filter
+	// that matched nothing.
+	NodeFilter *nodeFilterJSON `json:"node_filter,omitempty"`
 }
 
 // synthesisedGoModJSON reports the go.mod kanonarion wrote into an extracted
@@ -430,15 +441,128 @@ func writeTestScopeLine(stdout io.Writer, r domain.CallGraphRecord) error {
 	return nil
 }
 
-func filterCallGraphRecord(r domain.CallGraphRecord, sym string) domain.CallGraphRecord {
+// nodeFilterOutcome records what a --node pattern was compared against and how
+// much of the record it selected.
+//
+// It exists so an unmatched filter cannot be served as an empty graph. "0 nodes"
+// answers two different questions — the region really is empty, or the pattern
+// never matched anything — and a tool whose empty answers state their scope has
+// to say which one it is, and against what the comparison was made.
+type nodeFilterOutcome struct {
+	// pattern is empty when no filter was applied; the zero value therefore
+	// means "unfiltered" and nothing is claimed about matching.
+	pattern string
+	// matched counts the nodes whose ID matched. Connected nodes pulled in by
+	// an edge are not matches and are not counted here.
+	matched int
+	// candidates counts the nodes the pattern was compared against, before
+	// filtering.
+	candidates int
+	// example is one node ID from the unfiltered record, so the refusal can
+	// show the shape the pattern is compared against rather than describe it.
+	example string
+}
+
+// applied reports whether a --node pattern was given at all.
+func (o nodeFilterOutcome) applied() bool { return o.pattern != "" }
+
+// nodeFilterJSON is the machine-readable form of the same statement the text
+// refusal makes: what was compared, against how many nodes, and how many
+// matched. A JSON consumer that saw only "nodes": [] could not tell an
+// unmatched pattern from an empty region either.
+type nodeFilterJSON struct {
+	Pattern         string `json:"pattern"`
+	ComparedAgainst string `json:"compared_against"`
+	CandidateNodes  int    `json:"candidate_nodes"`
+	MatchedNodes    int    `json:"matched_nodes"`
+}
+
+func (o nodeFilterOutcome) toJSON() *nodeFilterJSON {
+	if !o.applied() {
+		return nil
+	}
+	return &nodeFilterJSON{
+		Pattern:         o.pattern,
+		ComparedAgainst: nodeFilterComparand,
+		CandidateNodes:  o.candidates,
+		MatchedNodes:    o.matched,
+	}
+}
+
+// nodeFilterComparand names, in one phrase reused by both renderings, what the
+// --node pattern is matched against.
+const nodeFilterComparand = "fully-qualified node ID (package path + symbol)"
+
+// writeNodeFilterNotice states an unmatched --node filter instead of letting the
+// empty node and edge lists speak for it.
+//
+// An operator filtering by module path — the natural way to ask "what does my
+// project touch in this dependency" — used to get a confident zero with nothing
+// to distinguish a pattern that never matched from a region that is genuinely
+// empty. The line names the comparand and how many nodes it was compared
+// against, and the remedy is an invocation this CLI parses.
+func writeNodeFilterNotice(stdout io.Writer, coord coordinate.ModuleCoordinate, source string, o nodeFilterOutcome) error {
+	if !o.applied() || o.matched > 0 {
+		return nil
+	}
+	line := fmt.Sprintf(
+		"\nno node matched %q — the pattern is compared, case-insensitively and as a substring, against the %s of all %d node(s) in this record, not against the bare symbol name",
+		o.pattern, nodeFilterComparand, o.candidates)
+	if o.example != "" {
+		line += fmt.Sprintf(" (e.g. %s)", o.example)
+	}
+	remedy := fmt.Sprintf("kanonarion callgraph-show %s", coord)
+	if source != "" {
+		remedy += " --source " + source
+	}
+	remedy += " --limit-nodes 0"
+	if _, err := fmt.Fprintf(stdout, "%s\n  to list every node: %s\n", line, remedy); err != nil {
+		return fmt.Errorf("writing node filter notice: %w", err)
+	}
+	return nil
+}
+
+// exampleNodeID picks a node ID that shows the shape the --node pattern is
+// compared against.
+//
+// It prefers an ID carrying a package path, because that is the part an operator
+// filtering by a module or a package is aiming at. Not every node has one — a
+// function whose package the analyser could not attribute is rendered from its
+// signature alone — and offering one of those as the example would illustrate
+// exactly the spelling the refusal is telling the reader not to expect.
+func exampleNodeID(nodes []domain.CallNode) string {
+	for _, n := range nodes {
+		if strings.Contains(n.ID, "/") {
+			return n.ID
+		}
+	}
+	if len(nodes) > 0 {
+		return nodes[0].ID
+	}
+	return ""
+}
+
+// filterCallGraphRecord narrows a record to the nodes a pattern selects plus
+// everything directly connected to them, and reports what the pattern was
+// compared against.
+//
+// The comparison is against the fully-qualified node ID, not the bare symbol
+// name. The ID carries the package path — and with it the module path it
+// extends — so a module path, a package path and a symbol name all select the
+// nodes a reader expects from one pattern. Matching the bare symbol made the
+// most natural filter of all, "the dependency I care about", return a silent
+// zero.
+func filterCallGraphRecord(r domain.CallGraphRecord, sym string) (domain.CallGraphRecord, nodeFilterOutcome) {
 	// Keep the matched nodes plus all nodes and edges directly connected to them.
 	symLower := strings.ToLower(sym)
+	outcome := nodeFilterOutcome{pattern: sym, candidates: len(r.Nodes), example: exampleNodeID(r.Nodes)}
 	wantIDs := make(map[string]bool)
 	for _, n := range r.Nodes {
-		if strings.Contains(strings.ToLower(n.Symbol), symLower) {
+		if strings.Contains(strings.ToLower(n.ID), symLower) {
 			wantIDs[n.ID] = true
 		}
 	}
+	outcome.matched = len(wantIDs)
 	var edges []domain.CallEdge
 	edgeIDs := make(map[string]bool)
 	for _, e := range r.Edges {
@@ -459,7 +583,7 @@ func filterCallGraphRecord(r domain.CallGraphRecord, sym string) domain.CallGrap
 	r.NodeCount = len(nodes)
 	r.EdgeCount = len(edges)
 	r.ContentHash = ""
-	return r
+	return r, outcome
 }
 
 func printCallGraphRecord(r domain.CallGraphRecord, limitNodes, limitEdges int, stdout io.Writer) error {

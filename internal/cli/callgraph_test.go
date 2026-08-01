@@ -659,12 +659,18 @@ func TestFilterCallGraphRecord_MatchNode(t *testing.T) {
 		NodeCount: 2,
 		EdgeCount: 1,
 	}
-	filtered := filterCallGraphRecord(r, "Main")
+	filtered, outcome := filterCallGraphRecord(r, "Main")
 	if filtered.NodeCount != 2 {
 		t.Errorf("expected 2 nodes (matched + connected), got %d", filtered.NodeCount)
 	}
 	if filtered.EdgeCount != 1 {
 		t.Errorf("expected 1 edge, got %d", filtered.EdgeCount)
+	}
+	if outcome.matched != 1 {
+		t.Errorf("expected 1 matched node (the connected one is not a match), got %d", outcome.matched)
+	}
+	if outcome.candidates != 2 {
+		t.Errorf("expected 2 candidates, got %d", outcome.candidates)
 	}
 }
 
@@ -675,9 +681,18 @@ func TestFilterCallGraphRecord_NoMatch(t *testing.T) {
 		Nodes:      []cgdomain.CallNode{{ID: "example.com/cg.Main", Symbol: "Main"}},
 		NodeCount:  1,
 	}
-	filtered := filterCallGraphRecord(r, "NoSuchSymbol")
+	filtered, outcome := filterCallGraphRecord(r, "NoSuchSymbol")
 	if filtered.NodeCount != 0 {
 		t.Errorf("expected 0 nodes after no-match filter, got %d", filtered.NodeCount)
+	}
+	if outcome.matched != 0 {
+		t.Errorf("expected 0 matches, got %d", outcome.matched)
+	}
+	if !outcome.applied() {
+		t.Error("expected the outcome to report that a filter was applied")
+	}
+	if outcome.example != "example.com/cg.Main" {
+		t.Errorf("expected an example node ID from the unfiltered record, got %q", outcome.example)
 	}
 }
 
