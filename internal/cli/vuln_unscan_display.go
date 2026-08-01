@@ -196,6 +196,21 @@ var unscanDisplays = map[vuldomain.UnscanReason]unscanDisplay{
 		explanation: "the store holds no fetched source for these coordinates, so only their advisory match could run; " +
 			"advisories matched, reachability not computed here",
 	},
+	// Not scanned, not metadata-only: the advisory match this reason accompanies
+	// was never performed in the run's own frame, because the frame never
+	// existed. The run asked for an analysis rooted at this module and the
+	// toolchain could not load it.
+	//
+	// oneFault is false. It names exactly one module — the run's root — and the
+	// coordinate is the fact the reader needs, so stating it once and hiding
+	// which module it was would remove the only useful part.
+	vuldomain.UnscanReasonTargetLoadFailed: {
+		label:   notScannedNote + " (the target could not be loaded)",
+		heading: notScannedNote + " — the walk target could not be loaded, so nothing was rooted at it",
+		explanation: "the run asked for an analysis rooted at this module and the toolchain could not load its packages, " +
+			"so no call graph was built and this module has no verdict in the run's own frame; " +
+			"any per-module verdicts this run reports come from isolated scans, which answer a weaker question",
+	},
 }
 
 // unscanDisplayFor returns the display treatment for reason.

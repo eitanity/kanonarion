@@ -297,7 +297,46 @@ func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachab
 		return fmt.Errorf("vuln scan failed: %w", err)
 	}
 
-	return printVulnScanResult(run, affected, withdrawn, failedCoords, unscannable, jsonOut, stdout)
+	if perr := printVulnScanResult(run, affected, withdrawn, failedCoords, unscannable, jsonOut, stdout); perr != nil {
+		return perr
+	}
+	return vulnScanCoverageExit(run)
+}
+
+// vulnScanCoverageExit maps the run's COVERAGE axis onto the process exit code.
+//
+// The exit code has to carry the same statement the headline does. A scan that
+// left part of the build list unanalysed — including, in the worst case, a scan
+// whose target could not be loaded and which therefore measured nothing at all —
+// exited 0, which is the one signal an automation caller reads without parsing
+// prose, and it said the work completed.
+//
+// ExitPartial and ExitFailed, not ExitPolicy: this is the "did the work
+// complete" question the 0/1/2/3 band answers, not a gate firing on real
+// findings. And the gate is on coverage alone. A complete run that found
+// vulnerabilities has completed its work and reports them; whether that should
+// fail a build is a policy question this command is not the one to answer.
+func vulnScanCoverageExit(run vuldomain.WalkScanRun) error {
+	unanalysed := run.Counts.Unscannable + run.Counts.Failed
+	switch run.CoverageStatus {
+	case vuldomain.CoverageFailed:
+		return &exitError{code: ExitFailed, msg: fmt.Sprintf(
+			"no module in the walk was analysed (%d of %d unanalysed); the scan established nothing",
+			unanalysed, run.Counts.Total)}
+	case vuldomain.CoveragePartial:
+		return &exitError{code: ExitPartial, msg: fmt.Sprintf(
+			"%d of %d modules were not analysed; the scan's coverage is incomplete",
+			unanalysed, run.Counts.Total)}
+	case vuldomain.CoverageComplete:
+		return nil
+	default:
+		// A coverage value this binary does not know is not a statement that the
+		// run completed. It degrades to Partial rather than to OK, for the same
+		// reason the tally counts an unrecognised per-module coverage as failed.
+		return &exitError{code: ExitPartial, msg: fmt.Sprintf(
+			"the run reports an unrecognised coverage status %q; its completeness cannot be established",
+			run.CoverageStatus)}
+	}
 }
 
 // reachabilityLocalHint is the intent-aware direction shown for modules that are
@@ -728,7 +767,11 @@ func runScanRescan(ctx context.Context, walkID string, enableReachability bool, 
 	_, _ = fmt.Fprintf(stdout, "Re-scan completed: %s\n", scanCompletionSummary(run))
 	_, _ = fmt.Fprintf(stdout, "Run ID: %s\n", run.ID)
 	_, _ = fmt.Fprintf(stdout, "Snapshot: %s@%s\n", run.Snapshot.Source(), run.Snapshot.Version())
-	return nil
+	// The re-scan reports the same two axes and owes the same exit code. A
+	// re-derivation that could not analyse part of the build list has not
+	// completed its work either, and a caller branching on the code alone must
+	// not read the two runs on different terms.
+	return vulnScanCoverageExit(run)
 }
 
 // resolveSnapshot looks up a stored snapshot by source and version.

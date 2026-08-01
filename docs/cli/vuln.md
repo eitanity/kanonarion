@@ -64,6 +64,36 @@ count is carried to the reader rather than judged.
 
 The module must have been fetched first (`kanonarion walk` or `kanonarion fetch`).
 
+### Coverage decides the exit code
+
+`vuln-scan` exits on what it *established*, not on what it found. A run whose
+coverage is `Complete` exits 0 whether or not it found advisories: it did the
+work it was asked to do, and whether findings should fail a build is a policy
+question this command does not answer. A run that could not analyse part of the
+walk exits `1` (partial coverage), and one that analysed nothing exits `2`.
+
+That distinction matters most for the walk's own target. When a coordinate-keyed
+walk's target-rooted analysis cannot load the module's packages, the run falls
+back to scanning each module in isolation — a weaker question, since an isolated
+scan describes the module built alone rather than the build that consumes it.
+The target's refusal is recorded in the run's own frame under the
+`target-load-failed` reason, carrying the toolchain's own load error, and the
+run counts *that* rather than a verdict derived in another frame. A record from
+the other frame is not destroyed and still answers its own question; the run
+simply declines to present it as coverage of the question that was asked, and
+names the frame it declined in its log.
+
+Without this, a walk whose target never loaded reported `Complete, Clean` at
+exit 0 — an un-run scan indistinguishable from a passing one on the line an
+operator reads.
+
+Note that partial coverage on a **project-scoped** scan (`--gomod`, `--tool`,
+`--project`) means something has genuinely gone unanalysed: the project path is
+rooted at the resolved graph, so modules are not re-resolved in isolation and
+`version not in project build` cannot arise there. Seeing that reason means the
+scan was not project-rooted — for example a walk-id scan whose recorded project
+directory no longer exists, which degrades to the fetched surface by design.
+
 ### Prerequisites
 
 `vuln-scan` invokes `govulncheck` as a subprocess. It must be present in `$PATH`:

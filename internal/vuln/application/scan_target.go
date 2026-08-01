@@ -42,6 +42,15 @@ import (
 // the graph down with it, turning one module's build failure into a walk-wide
 // coverage gap; the isolated path still answers per module, which is a worse
 // analysis but a real one.
+//
+// The fallback is not free of consequence, and frameGaps is where the cost is
+// recorded. When the target itself could not be LOADED, the run's own frame
+// produced nothing about the target: a record from any other frame — an isolated
+// scan, whether run now or reused from an earlier walk — answers a different
+// question and must not be counted as this run's coverage of its own root. The
+// target is entered into frameGaps with a record stating the refusal, and the
+// caller counts that rather than the fallback's, so the run reports Partial
+// coverage instead of a completeness it never established.
 func (uc *ScanWalkUseCase) scanTargetRooted(
 	ctx context.Context,
 	walk walkdomain.WalkRecord,
@@ -51,6 +60,7 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 	vulnDBDir, goModCache string,
 	buildList map[coordinate.ModuleCoordinate]struct{},
 	out map[coordinate.ModuleCoordinate]moduleResult,
+	frameGaps map[coordinate.ModuleCoordinate]domain.VulnerabilityRecord,
 ) (bool, error) {
 	target := walk.Target
 	root := target
@@ -102,6 +112,11 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 	if result.Status == domain.StatusUnscannable || result.Status == domain.StatusScanFailed {
 		uc.logger.Warn("target-rooted scan could not analyse the target, falling back to isolated scans",
 			"target", target, "status", result.Status, "reason", result.UnscannableReason, "error_detail", result.ErrorDetail)
+		rec, perr := uc.recordTargetFrameGap(ctx, root, result, params, snapshot)
+		if perr != nil {
+			return false, perr
+		}
+		frameGaps[target] = rec
 		return false, nil
 	}
 
@@ -147,4 +162,51 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 	}
 	uc.logger.Info("target-rooted scan derived verdicts for the walk", "target", target, "modules", len(allCoords))
 	return true, nil
+}
+
+// recordTargetFrameGap persists the run's own statement that it could not root
+// an analysis at its target, and returns it for the caller to count.
+//
+// The record is written in the run's frame — target-rooted at the target — and
+// that is the whole point of writing it. Before it existed the failure was
+// logged and nothing else: the run row kept no trace, the isolated fallback
+// supplied a record for the target from a different frame, and the tally counted
+// that as the run's coverage. On a warm store the fallback did not even scan —
+// it served a cached isolated record written by an unrelated walk — so a run
+// that performed no analysis at all reported Complete coverage and a Clean
+// verdict, which is the shape of an un-run scan being indistinguishable from a
+// passing one.
+//
+// The reason code is the scanner's own when it classified one, and
+// target-load-failed when it did not. A ScanFailed result is the unclassified
+// case: the toolchain refused before any pattern the classifier recognises could
+// be matched, which is exactly the load failure the code names.
+func (uc *ScanWalkUseCase) recordTargetFrameGap(
+	ctx context.Context,
+	root coordinate.ModuleCoordinate,
+	result domain.ProjectScanResult,
+	params ScanWalkParams,
+	snapshot *domain.DatabaseSnapshot,
+) (domain.VulnerabilityRecord, error) {
+	reason := result.UnscanReason
+	if reason == "" {
+		reason = domain.UnscanReasonTargetLoadFailed
+	}
+	note := result.UnscannableReason
+	if note == "" {
+		note = "the analysis could not be rooted at this module: the toolchain did not load its packages"
+	}
+	// No findings. The analysis never ran, so there is nothing it could have
+	// found, and an empty findings list here states absence of evidence rather
+	// than evidence of absence — the coverage axis, which this record sets to
+	// Unscannable, is what carries that distinction.
+	rec, err := uc.persistProjectRecord(
+		ctx, root, root, nil, domain.StatusUnscannable,
+		reason, note, result.ErrorDetail,
+		domain.AnalysisSurfaceFetched, params, snapshot,
+	)
+	if err != nil {
+		return domain.VulnerabilityRecord{}, err
+	}
+	return rec, nil
 }
