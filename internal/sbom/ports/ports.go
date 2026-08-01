@@ -8,6 +8,7 @@ import (
 
 	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
 	"github.com/eitanity/kanonarion/internal/sbom/domain"
+	vendordomain "github.com/eitanity/kanonarion/internal/vendortree/domain"
 	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
@@ -56,6 +57,31 @@ type GenerateRequest struct {
 	// proxy-fetched, so it has none). Ignored unless the subject is the local
 	// main module and has no existing licence; empty leaves it unlicensed.
 	MainComponentLicense string
+	// VendorScope states how much of the project's vendored tree this document
+	// describes. It is nil when the walk was not rooted at a project, or the
+	// project carries no vendor/ tree — there is then no tree to state scope
+	// over, and inventing a statement would describe a surface that is not
+	// there. Non-nil, it is always rendered, full coverage included: a reader
+	// cannot tell a complete document from a narrowed one that stays silent.
+	VendorScope *vendordomain.VendorScope
+	// ComponentsScopedToBinary reports that the component list was restricted
+	// to one binary's import closure (sbom --package). It changes no scope
+	// arithmetic — the uncovered set is measured against the components the
+	// document carries either way — but it names the reason most of the tree
+	// falls outside such a document: it was asked for a narrower subject, not
+	// that anything went missing from it.
+	ComponentsScopedToBinary bool
+}
+
+// VendorTreeReader reads the module entries of a project's vendor/modules.txt.
+// It is what lets an SBOM state its coverage of the vendored tree: in an
+// air-gapped project the tree IS the build, so the tree is the population the
+// document's component list has to be measured against.
+type VendorTreeReader interface {
+	// VendorTree returns the vendored module entries for the project whose
+	// go.mod is at goModPath. A project with no vendor/modules.txt yields
+	// (nil, nil): not vendored is an answer, not a failure.
+	VendorTree(ctx context.Context, goModPath string) ([]vendordomain.VendoredModule, error)
 }
 
 // SBOMStore is the port for persisting and retrieving SBOM records.

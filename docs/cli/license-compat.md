@@ -134,10 +134,9 @@ GPL component inside an otherwise-permissive module will therefore surface as a
 conflict even when the module root is Apache-2.0 or MIT.
 
 The one exception is a **dual-licensed root**: a record whose expression is a
-pure disjunction (`Apache-2.0 OR GPL-3.0`) offers an election, so its arms are
-evaluated per election rather than as independent obligations — treating each
-arm as if it applied unconditionally would turn an electable module into a
-false incompatibility. The outcomes:
+pure disjunction (`Apache-2.0 OR GPL-3.0`) offers an election, and each arm is
+evaluated as a candidate election rather than as an unconditional obligation.
+The outcomes:
 
 - **every arm compatible** — settled compatible whichever arm is elected; no
   open item;

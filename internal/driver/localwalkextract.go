@@ -111,12 +111,18 @@ func (uc *LocalWalkExtractUseCase) Run(ctx context.Context, req LocalWalkExtract
 	if cErr != nil {
 		return LocalWalkExtractResult{}, fmt.Errorf("project coordinate for %s: %w", modulePath, cErr)
 	}
-	var projectDir string
+	// The driver is always project-rooted — it just read this project's go.mod
+	// off disk — so the walk always records where it happened. Resolution
+	// authority is a separate question: only local-root analysis hands the Go
+	// toolchain in that directory the last word on the module set, and without
+	// it the internal resolver serves the walk exactly as before.
+	projectDir, err := filepath.Abs(dir)
+	if err != nil {
+		return LocalWalkExtractResult{}, fmt.Errorf("resolving project directory %s: %w", dir, err)
+	}
+	var resolutionDir string
 	if req.AnalyseLocalRoot {
-		projectDir, err = filepath.Abs(dir)
-		if err != nil {
-			return LocalWalkExtractResult{}, fmt.Errorf("resolving project directory %s: %w", dir, err)
-		}
+		resolutionDir = projectDir
 	}
 	// The driver analyses the whole project, so it walks the complete build list
 	// (build + tooling); ScopeModules is nil (no scope restriction).
@@ -128,6 +134,7 @@ func (uc *LocalWalkExtractUseCase) Run(ctx context.Context, req LocalWalkExtract
 		MainModuleGoMod:  goModBytes,
 		AnalyseLocalRoot: req.AnalyseLocalRoot,
 		ProjectDir:       projectDir,
+		ResolutionDir:    resolutionDir,
 	})
 	if err != nil {
 		return LocalWalkExtractResult{}, fmt.Errorf("walking local project %s: %w", modulePath, err)

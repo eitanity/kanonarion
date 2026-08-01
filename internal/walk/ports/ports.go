@@ -54,6 +54,18 @@ type ModuleFetchResult struct {
 // walk application layer does not depend on fetch/application directly.
 type ModuleFetcher interface {
 	EnsureFetched(ctx context.Context, coord coordinate.ModuleCoordinate) (ModuleFetchResult, error)
+
+	// EnsureFetchedReplacing fetches coord, which a replace directive put in
+	// place of original. Both identities travel because the module has two, and
+	// different questions want different ones: the fetch, the module zip and
+	// the go.sum entry are all the REPLACEMENT's, while the require entry, the
+	// vendored directory and everything a reader calls the dependency are the
+	// ORIGINAL's.
+	//
+	// Passing only one of them is what lets a fork be reported as anchored
+	// without a reader ever seeing under which name — or, worse, be reported
+	// against a coordinate go.sum was never going to record.
+	EnsureFetchedReplacing(ctx context.Context, coord, original coordinate.ModuleCoordinate) (ModuleFetchResult, error)
 }
 
 // StdlibAcquirer establishes the standard library's chain of custody: it

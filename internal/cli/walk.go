@@ -234,6 +234,7 @@ func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial b
 		MainModuleGoMod:  goModBytes,
 		AnalyseLocalRoot: analyseRoot,
 		ProjectDir:       projectDir,
+		ResolutionDir:    projectDir,
 		StdlibFromGoMod:  stdlibFromGoMod,
 		Progress:         progress,
 	})

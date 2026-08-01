@@ -61,7 +61,7 @@ func (uc *ExtractVendorUseCase) Extract(
 		return domain.Record{}, fmt.Errorf("scanning vendored project: %w", err)
 	}
 
-	mods, findings := domain.Aggregate(res)
+	mods, findings, scope := domain.Aggregate(res)
 	for i := range findings {
 		f := &findings[i]
 		outcome := policy.Evaluate(f.Kind.PolicyCategory())
@@ -79,6 +79,7 @@ func (uc *ExtractVendorUseCase) Extract(
 		Modules:           mods,
 		Findings:          findings,
 		OverallStatus:     domain.OverallStatus(findings),
+		Scope:             scope,
 		ExtractedAt:       uc.clock.Now().UTC(),
 		SchemaVersion:     domain.VendorSchemaVersion,
 		PipelineVersion:   domain.PipelineVersion,

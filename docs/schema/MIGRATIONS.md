@@ -144,6 +144,44 @@ oracle - a checkout that has moved or lost its `vendor/` tree degrades the scan
 to the fetched surface with the reason logged, and never makes a stored walk
 unscannable.
 
+Every project-rooted walk now populates it, the `local` driver's included. The
+walk request carries two values with two meanings: the directory the walk was
+taken from (recorded, always) and the directory whose Go toolchain is the
+authority for the module set (resolution, unchanged). They used to be one field,
+which made recording where a walk happened indistinguishable from handing the
+toolchain the last word on what it contains, so a driver walk that wanted the
+internal resolver had to record no root at all. **Resolution behaviour is
+unchanged**, and no bump or migration is owed: the change populates an existing
+column on a path that previously left it empty, and the column is outside the
+seal.
+
+## Vendor record: schema `3` → `4`, pipeline `0.2.0` → `0.3.0`
+
+**Record shape change and a finding-set change; no store migration.** Vendor
+records are keyed `(project_module_path, pipeline_version)`, so the bump is the
+migration: `0.2.0` rows stay where they are and are never served for a `0.3.0`
+request.
+
+Two changes. Each `VendoredModule` records the **package count** from
+`vendor/modules.txt` — the package lines under its heading — and the record
+carries a **scope statement** naming every module in the tree the report does
+not describe, with the reason. The content hash covers the package count, so an
+unchanged tree hashes differently from its `0.2.0` record.
+
+The behaviour that forced the bump: a module `modules.txt` lists with no package
+under it no longer reports `missing_from_vendor`. No package of the build
+imports it, so `go mod vendor` correctly vendors no directory — the old finding
+described the toolchain's normal output as drift.
+
+## SBOM: pipeline `0.5.0` → `0.6.0`
+
+**Document bytes change; no store migration.** SBOM records are cached on
+`(walk id, scan run id, format, pipeline version)`, so the bump is what stops a
+`0.5.0` document being served for a `0.6.0` request. A document generated over a
+project-rooted walk whose project carries a `vendor/` tree now carries the
+vendor scope annotation. The SBOM record is hashed over the document bytes, not
+over a canonical struct, so there is no sealed shape to migrate.
+
 ## Audit log (`audit.jsonl`)
 
 Append-only JSONL; **no schema migration** is ever required to add an event

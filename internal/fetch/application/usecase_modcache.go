@@ -123,7 +123,7 @@ func (uc *FetchModuleUseCase) executeModcache(ctx context.Context, req FetchRequ
 
 	// Step 3: verify against the local go.sum. A missing entry or a hash
 	// mismatch is a hard failure — no blob is stored and no record is written.
-	if err := uc.verifyAgainstGoSum(ctx, req.Coordinate, dl); err != nil {
+	if err := uc.verifyAgainstGoSum(ctx, req.Coordinate, req.OriginalCoordinate, dl); err != nil {
 		return FetchResult{}, err
 	}
 	log.InfoContext(ctx, "gosum_verified", slog.String("zip_hash", dl.ZipHash.String()))
@@ -238,7 +238,7 @@ func (uc *FetchModuleUseCase) executeGoModOnlyModcache(ctx context.Context, req 
 
 	// Step 3: verify the go.mod h1 against the local go.sum. A missing entry or a
 	// mismatch is a hard failure — no record is written.
-	if err := uc.verifyGoModAgainstGoSum(ctx, req.Coordinate, dl); err != nil {
+	if err := uc.verifyGoModAgainstGoSum(ctx, req.Coordinate, req.OriginalCoordinate, dl); err != nil {
 		return FetchResult{}, err
 	}
 	log.InfoContext(ctx, "gosum_verified", slog.String("go_mod_hash", dl.GoModHash.String()))
@@ -290,14 +290,17 @@ func (uc *FetchModuleUseCase) executeGoModOnlyModcache(ctx context.Context, req 
 // local go.sum entry surfaced by the SumDBClient. A module absent from go.sum,
 // or whose go.mod hash disagrees, yields ErrGoSumVerification. It is the
 // go.mod-only analogue of verifyAgainstGoSum.
-func (uc *FetchModuleUseCase) verifyGoModAgainstGoSum(ctx context.Context, coord coordinate.ModuleCoordinate, dl ports.GoModDownload) error {
+func (uc *FetchModuleUseCase) verifyGoModAgainstGoSum(ctx context.Context, coord, original coordinate.ModuleCoordinate, dl ports.GoModDownload) error {
 	res := uc.sumdb.Lookup(ctx, coord)
 	if !res.Available {
+		if isReplaced(coord, original) {
+			return errReplacedModuleNotInGoSum(coord, original, res.Reason)
+		}
 		return fmt.Errorf("%w: %s: %s", ErrGoSumVerification, coord, res.Reason)
 	}
 	if !res.GoModHash.IsZero() && !res.GoModHash.Equal(dl.GoModHash) {
 		return fmt.Errorf("%w: %s: go.sum expects go.mod %s but module cache has %s",
-			ErrGoSumVerification, coord, res.GoModHash, dl.GoModHash)
+			ErrGoSumVerification, goSumAnchor(coord, original), res.GoModHash, dl.GoModHash)
 	}
 	return nil
 }
@@ -305,21 +308,24 @@ func (uc *FetchModuleUseCase) verifyGoModAgainstGoSum(ctx context.Context, coord
 // verifyAgainstGoSum checks the module's computed h1 hashes against the local
 // go.sum entries surfaced by the SumDBClient. A module absent from go.sum, or
 // whose zip/go.mod hash disagrees, yields ErrGoSumVerification.
-func (uc *FetchModuleUseCase) verifyAgainstGoSum(ctx context.Context, coord coordinate.ModuleCoordinate, dl ports.ModuleDownload) error {
+func (uc *FetchModuleUseCase) verifyAgainstGoSum(ctx context.Context, coord, original coordinate.ModuleCoordinate, dl ports.ModuleDownload) error {
 	res := uc.sumdb.Lookup(ctx, coord)
 	if !res.Available {
+		if isReplaced(coord, original) {
+			return errReplacedModuleNotInGoSum(coord, original, res.Reason)
+		}
 		return fmt.Errorf("%w: %s: %s", ErrGoSumVerification, coord, res.Reason)
 	}
 	if !res.ZipHash.Equal(dl.ZipHash) {
 		return fmt.Errorf("%w: %s: go.sum expects zip %s but module cache has %s",
-			ErrGoSumVerification, coord, res.ZipHash, dl.ZipHash)
+			ErrGoSumVerification, goSumAnchor(coord, original), res.ZipHash, dl.ZipHash)
 	}
 	// The go.mod hash is verified only when go.sum records one (it always does
 	// for module-era dependencies). A zero recorded hash means go.sum has no
 	// /go.mod line — do not manufacture a mismatch from its absence.
 	if !res.GoModHash.IsZero() && !res.GoModHash.Equal(dl.GoModHash) {
 		return fmt.Errorf("%w: %s: go.sum expects go.mod %s but module cache has %s",
-			ErrGoSumVerification, coord, res.GoModHash, dl.GoModHash)
+			ErrGoSumVerification, goSumAnchor(coord, original), res.GoModHash, dl.GoModHash)
 	}
 	return nil
 }

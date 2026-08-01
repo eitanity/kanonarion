@@ -498,9 +498,9 @@ func (r *GraphResolver) resolveFromBuildList(ctx context.Context, target coordin
 	}
 
 	// Phase 2 (concurrent): fetch the listed modules under a bounded worker pool.
-	coords := make([]coordinate.ModuleCoordinate, len(fetchTasks))
+	coords := make([]fetchCoord, len(fetchTasks))
 	for i, t := range fetchTasks {
-		coords[i] = t.coord
+		coords[i] = fetchCoord{coord: t.coord, original: st.nodes[t.path].OriginalCoordinate}
 	}
 	results := r.fetchLevel(ctx, coords, r.workers())
 
@@ -696,12 +696,21 @@ type fetchResult struct {
 	err    error
 }
 
+// fetchCoord names one module to fetch: the coordinate the artefact lives at
+// and, when a replace directive is in force, the coordinate the project
+// requires it under. Both travel because go.sum records the former while the
+// build list, the vendored tree and every human reader name the latter.
+type fetchCoord struct {
+	coord    coordinate.ModuleCoordinate
+	original coordinate.ModuleCoordinate
+}
+
 // fetchLevel fetches every coordinate concurrently under a bounded worker pool,
 // returning results in the same order as coords so the sequential apply phase
 // stays deterministic. It touches no shared state; per-coordinate errors are
 // captured in the result rather than returned, so the group only unwinds on
 // context cancellation. workers≤0 falls back to sequential processing.
-func (r *GraphResolver) fetchLevel(ctx context.Context, coords []coordinate.ModuleCoordinate, workers int) []fetchResult {
+func (r *GraphResolver) fetchLevel(ctx context.Context, coords []fetchCoord, workers int) []fetchResult {
 	results := make([]fetchResult, len(coords))
 	if len(coords) == 0 {
 		return results
@@ -712,7 +721,7 @@ func (r *GraphResolver) fetchLevel(ctx context.Context, coords []coordinate.Modu
 	}
 	for i, c := range coords {
 		g.Go(func() error {
-			fr, err := r.fetcher.EnsureFetched(gctx, c)
+			fr, err := r.fetcher.EnsureFetchedReplacing(gctx, c.coord, c.original)
 			results[i] = fetchResult{record: fr.Record, err: err}
 			return nil
 		})
@@ -872,7 +881,10 @@ func (r *GraphResolver) resolveFromParsed(
 				continue
 			}
 			atMaxDepth := depth.MaxDepth > 0 && item.depth >= depth.MaxDepth
-			bi := bfsItem{coord: coord, key: key, nodeKey: item.nodeKey, depth: item.depth, atMaxDepth: atMaxDepth}
+			bi := bfsItem{
+				coord: coord, original: st.nodes[item.nodeKey].OriginalCoordinate,
+				key: key, nodeKey: item.nodeKey, depth: item.depth, atMaxDepth: atMaxDepth,
+			}
 
 			if !alreadyProcessed {
 				st.processed[key] = true
@@ -1125,7 +1137,11 @@ func (r *GraphResolver) seedDirectDeps(
 // already been resolved against the shared state, so fetch+parse and expansion
 // can be split across the concurrent and sequential phases of a level.
 type bfsItem struct {
-	coord      coordinate.ModuleCoordinate
+	coord coordinate.ModuleCoordinate
+	// original is the coordinate the main module requires this one under, when
+	// a replace directive put coord in its place; zero otherwise. It travels
+	// with the fetch so go.sum verification can name both spellings.
+	original   coordinate.ModuleCoordinate
 	key        string // coord.String() (the selected coordinate)
 	nodeKey    string // resolve-state node key: the module's own (pre-replace) path
 	depth      int
@@ -1168,7 +1184,7 @@ func (r *GraphResolver) fetchParseLevel(ctx context.Context, items []bfsItem, wo
 	}
 	for i, item := range items {
 		g.Go(func() error {
-			out := r.fetchAndParseModule(gctx, item.coord, item.key)
+			out := r.fetchAndParseModule(gctx, item.coord, item.original, item.key)
 			out.nodeKey = item.nodeKey
 			outcomes[i] = out
 			return nil
@@ -1183,10 +1199,10 @@ func (r *GraphResolver) fetchParseLevel(ctx context.Context, items []bfsItem, wo
 // fetchAndParseModule fetches coord and parses its go.mod without touching the
 // shared resolve state, so it is safe to run concurrently across a BFS level.
 // The returned outcome is folded into the state by applyFetchParse.
-func (r *GraphResolver) fetchAndParseModule(ctx context.Context, coord coordinate.ModuleCoordinate, key string) fetchParseOutcome {
+func (r *GraphResolver) fetchAndParseModule(ctx context.Context, coord, original coordinate.ModuleCoordinate, key string) fetchParseOutcome {
 	out := fetchParseOutcome{coord: coord, key: key}
 
-	fetchResult, fetchErr := r.fetcher.EnsureFetched(ctx, coord)
+	fetchResult, fetchErr := r.fetcher.EnsureFetchedReplacing(ctx, coord, original)
 	if fetchErr != nil {
 		out.fetchErr = fetchErr
 		return out

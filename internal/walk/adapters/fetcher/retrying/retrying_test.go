@@ -535,3 +535,9 @@ func TestCapabilityCloneOverIncapableInnerReturnsSelf(t *testing.T) {
 		t.Error("WithForce over an incapable inner did not return the decorator unchanged")
 	}
 }
+
+// EnsureFetchedReplacing delegates: this fake has no replace-aware behaviour of
+// its own, so a replaced module is fetched exactly like an unreplaced one.
+func (f *scriptedFetcher) EnsureFetchedReplacing(ctx context.Context, c, _ coordinate.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
+	return f.EnsureFetched(ctx, c)
+}

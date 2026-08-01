@@ -44,8 +44,8 @@ func SortFindings(fs []Finding) {
 func Hash(ms []VendoredModule, fs []Finding) string {
 	var b strings.Builder
 	for _, m := range ms {
-		fmt.Fprintf(&b, "M|%s|%s|%t|%t|%s\n",
-			m.Path, m.Version, m.Explicit, m.Present, m.ExpectedHash)
+		fmt.Fprintf(&b, "M|%s|%s|%t|%t|%s|%d\n",
+			m.Path, m.Version, m.Explicit, m.Present, m.ExpectedHash, m.PackageCount)
 	}
 	for _, f := range fs {
 		fmt.Fprintf(&b, "F|%s|%s|%s|%s|%s|%s\n",

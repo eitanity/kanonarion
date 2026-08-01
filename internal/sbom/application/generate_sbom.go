@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -16,6 +17,7 @@ import (
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 
 	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
+	vendordomain "github.com/eitanity/kanonarion/internal/vendortree/domain"
 	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
@@ -35,6 +37,18 @@ type GenerateSBOMUseCase struct {
 	// every record once the two diverge.
 	licensePipelineVersion string
 	logger                 *slog.Logger
+	// vendorTree reads the project's vendored module set so the document can
+	// state its coverage of it. Optional: nil means no scope statement, which
+	// is the honest answer when nothing can read the tree.
+	vendorTree ports.VendorTreeReader
+}
+
+// WithVendorTree wires the reader that lets a generated document state how much
+// of the project's vendored tree it describes. Returns the use case for
+// chaining.
+func (uc *GenerateSBOMUseCase) WithVendorTree(r ports.VendorTreeReader) *GenerateSBOMUseCase {
+	uc.vendorTree = r
+	return uc
 }
 
 // NewGenerateSBOMUseCase returns a new GenerateSBOMUseCase.
@@ -182,6 +196,12 @@ func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (d
 		Operator:             req.Operator,
 		MainComponentVersion: req.MainComponentVersion,
 		MainComponentLicense: req.MainComponentLicense,
+		VendorScope:          uc.vendorScope(ctx, walk),
+		// A package-scoped run has already filtered walk.Graph above, so the
+		// scope arithmetic is measured against the components this document
+		// actually carries. Flagging it lets the statement say why so much of
+		// the tree falls outside a document that was asked for one binary.
+		ComponentsScopedToBinary: scoped,
 	}
 	record, err := uc.generator.Generate(ctx, walk, licenses, vulnRecords, genReq)
 	if err != nil {
@@ -203,4 +223,45 @@ func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (d
 		"licenses_incomplete", record.LicensesIncomplete,
 	)
 	return record, nil
+}
+
+// vendorScope states this document's coverage of the vendored tree the walk was
+// rooted at: how many modules the tree holds, how many the component list
+// describes, and every module it does not with the reason.
+//
+// A tree module is covered when the graph holds a node for it under EITHER
+// identity. `go mod vendor` files a replaced module's source under its ORIGINAL
+// path — that is the name modules.txt uses — while a resolved build list names
+// the REPLACEMENT, which is what the node's coordinate carries. Matching on the
+// node coordinate alone therefore reports every replace-to-fork module as
+// absent from a document that describes it perfectly well, under its fork name.
+//
+// Returns nil when there is nothing to measure against: no reader wired, a walk
+// with no recorded project root, or a project with no vendored tree. A read
+// failure is logged and yields nil rather than failing generation — the
+// document is still true, it just cannot state this scope.
+func (uc *GenerateSBOMUseCase) vendorScope(ctx context.Context, walk walkdomain.WalkRecord) *vendordomain.VendorScope {
+	if uc.vendorTree == nil || walk.ProjectDir == "" {
+		return nil
+	}
+	mods, err := uc.vendorTree.VendorTree(ctx, filepath.Join(walk.ProjectDir, "go.mod"))
+	if err != nil {
+		uc.logger.WarnContext(ctx, "sbom.vendor_scope.unavailable",
+			"walk_id", walk.ID, "project_dir", walk.ProjectDir, "error", err)
+		return nil
+	}
+	if len(mods) == 0 {
+		return nil
+	}
+	described := make(map[string]bool, len(walk.Graph.Nodes)*2)
+	for _, n := range walk.Graph.Nodes {
+		described[n.Coordinate.Path()] = true
+		if p := n.OriginalCoordinate.Path(); p != "" {
+			described[p] = true
+		}
+	}
+	scope := vendordomain.ScopeOverTree(mods, func(m vendordomain.VendoredModule) bool {
+		return described[m.Path]
+	})
+	return &scope
 }

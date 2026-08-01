@@ -72,6 +72,7 @@ import (
 
 	sbomcdx "github.com/eitanity/kanonarion/internal/sbom/adapters/generator/cyclonedx"
 	sbomstore "github.com/eitanity/kanonarion/internal/sbom/adapters/store/sqlite"
+	sbomvendortree "github.com/eitanity/kanonarion/internal/sbom/adapters/vendortree"
 	sbomapp "github.com/eitanity/kanonarion/internal/sbom/application"
 
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
@@ -500,12 +501,15 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	diffScanRunsUC := vulnapp.NewDiffScanRunsUseCase(vulnStore)
 
 	// ---- sbom use cases ----
-	const sbomPipelineVersion = "0.5.0"
+	// 0.6.0 adds the vendor scope statement to a document generated over a
+	// project-rooted walk: the document bytes change, so a 0.5.0 record must
+	// not be served for a 0.6.0 request.
+	const sbomPipelineVersion = "0.6.0"
 	generateSBOMUC := sbomapp.NewGenerateSBOMUseCase(
 		walkStore, licStore, vulnStore, sbomStore,
 		sbomcdx.New(sbomPipelineVersion),
 		clk, sbomPipelineVersion, licapp.PipelineVersion, logger,
-	)
+	).WithVendorTree(sbomvendortree.New(venlocalfs.New(nil)))
 	querySBOMUC := sbomapp.NewQuerySBOMUseCase(sbomStore)
 
 	// ---- directive use cases ----

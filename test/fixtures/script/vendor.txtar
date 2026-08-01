@@ -14,8 +14,18 @@ stdout '"kind": "missing_from_vendor"'
 stdout '"module": "example.com/dep"'
 stdout '"overall_status": "findings"'
 stdout '"vendor_only": true'
-stdout '"schema_version": "3"'
+stdout '"schema_version": "4"'
 stdout '"ecosystem": "go"'
+
+# The scope statement: the tree holds two modules and the report describes one
+# of them. example.com/idle contributes no package, so `go mod vendor` wrote no
+# directory for it — an absence that is correct, reported as out of scope by
+# construction and never as missing_from_vendor.
+stdout '"tree_modules": 2'
+stdout '"covered": 1'
+stdout '"path": "example.com/idle"'
+stdout 'contributes no package to the build'
+! stdout '"module": "example.com/idle"'
 stderr 'vendor policy: .* violate policy'
 
 # go.sum records a checksum but kanonarion holds no module zip at that
@@ -44,6 +54,8 @@ require example.com/dep v1.2.0
 # example.com/dep v1.2.0
 ## explicit
 example.com/dep
+# example.com/idle v0.9.0
+## explicit
 
 -- unheld/go.mod --
 module example.com/unheld

@@ -22,7 +22,12 @@ import (
 // 5. files under vendor/ for a module modules.txt
 // does not list → ExtraInVendor
 // 6. go.mod require absent from modules.txt → MissingFromModulesTxt
-func Aggregate(in ParseResult) ([]VendoredModule, []Finding) {
+//
+// It also returns the scope statement: how much of the vendored tree the
+// reconciliation describes, and every module it does not with the reason. A
+// module modules.txt lists with no package under it is out of scope by
+// construction — it emits no finding at all, and appears only there.
+func Aggregate(in ParseResult) ([]VendoredModule, []Finding, VendorScope) {
 	listed := make(map[string]bool, len(in.ModulesTxt))
 	mods := make([]VendoredModule, 0, len(in.ModulesTxt))
 	var findings []Finding
@@ -30,15 +35,23 @@ func Aggregate(in ParseResult) ([]VendoredModule, []Finding) {
 	for _, e := range in.ModulesTxt {
 		listed[e.Path] = true
 		m := VendoredModule{
-			Path:     e.Path,
-			Version:  e.Version,
-			Explicit: e.Explicit,
-			Dir:      in.VendorDir + "/" + e.Path,
-			Present:  in.PresentDirs[e.Path],
+			Path:         e.Path,
+			Version:      e.Version,
+			Explicit:     e.Explicit,
+			Dir:          in.VendorDir + "/" + e.Path,
+			Present:      in.PresentDirs[e.Path],
+			PackageCount: e.PackageCount,
 		}
 		key := e.Path + "@" + e.Version
 
 		switch {
+		case !m.Present && m.PackageCount == 0:
+			// modules.txt names the module and lists no package under it: no
+			// package of the build imports it, so `go mod vendor` wrote no
+			// directory. The tree is exactly as the toolchain left it. This is
+			// not drift and must never be reported as a missing module — the
+			// scope statement is where the reader is told the document
+			// describes nothing of it, and why.
 		case !m.Present:
 			findings = append(findings, Finding{
 				Kind: FindingMissingFromVendor, Module: e.Path, Version: e.Version,
@@ -94,7 +107,7 @@ func Aggregate(in ParseResult) ([]VendoredModule, []Finding) {
 		}
 	}
 
-	return mods, findings
+	return mods, findings, ScopeOverTree(mods, nil)
 }
 
 // driftFindings compares the files vendor/ holds for one module against the

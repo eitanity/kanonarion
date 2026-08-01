@@ -301,3 +301,9 @@ require (
 		}
 	})
 }
+
+// EnsureFetchedReplacing delegates: this fake has no replace-aware behaviour of
+// its own, so a replaced module is fetched exactly like an unreplaced one.
+func (t *concurrencyTracker) EnsureFetchedReplacing(ctx context.Context, c, _ coordinate.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
+	return t.EnsureFetched(ctx, c)
+}

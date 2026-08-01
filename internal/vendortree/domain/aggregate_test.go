@@ -11,7 +11,7 @@ func base() domain.ParseResult {
 		ProjectModulePath: "example.com/proj",
 		VendorDir:         "vendor",
 		ModulesTxt: []domain.VendoredModule{
-			{Path: "example.com/dep", Version: "v1.2.0", Explicit: true},
+			{Path: "example.com/dep", Version: "v1.2.0", Explicit: true, PackageCount: 1},
 		},
 		GoModRequires: map[string]string{"example.com/dep": "v1.2.0"},
 		GoSum:         map[string]string{"example.com/dep@v1.2.0": "h1:EXPECTED"},
@@ -51,7 +51,7 @@ func kinds(fs []domain.Finding) map[domain.FindingKind]domain.Finding {
 // TestAggregate_Clean: vendor matches the go.sum checksum and modules.txt
 // agrees with go.mod — zero findings, confident clean.
 func TestAggregate_Clean(t *testing.T) {
-	mods, fs := domain.Aggregate(base())
+	mods, fs, _ := domain.Aggregate(base())
 	if len(fs) != 0 {
 		t.Fatalf("want clean, got findings %+v", fs)
 	}
@@ -70,7 +70,7 @@ func TestAggregate_Clean(t *testing.T) {
 // so this fixture stands for the ordinary case, and it must be clean.
 func TestAggregate_PrunedTreeIsNotDrift(t *testing.T) {
 	in := base()
-	_, fs := domain.Aggregate(in)
+	_, fs, _ := domain.Aggregate(in)
 	if len(fs) != 0 {
 		t.Fatalf("a pruned but intact vendored tree must report nothing, got %+v", fs)
 	}
@@ -83,7 +83,7 @@ func TestAggregate_EditedFileIsDrift(t *testing.T) {
 	in := base()
 	in.Files["example.com/dep"].Vendored["dep.go"] = "sha256:edited"
 
-	_, fs := domain.Aggregate(in)
+	_, fs, _ := domain.Aggregate(in)
 	d, ok := kinds(fs)[domain.FindingDrift]
 	if !ok {
 		t.Fatalf("an edited vendored file must be drift, got %+v", fs)
@@ -108,7 +108,7 @@ func TestAggregate_FileTheModuleNeverPublishedIsDrift(t *testing.T) {
 	in := base()
 	in.Files["example.com/dep"].Vendored["backdoor.go"] = "sha256:inserted"
 
-	_, fs := domain.Aggregate(in)
+	_, fs, _ := domain.Aggregate(in)
 	d, ok := kinds(fs)[domain.FindingDrift]
 	if !ok {
 		t.Fatalf("a vendored file the module never published must be drift, got %+v", fs)
@@ -129,7 +129,7 @@ func TestAggregate_IrregularFileIsDrift(t *testing.T) {
 	in := base()
 	in.Files["example.com/dep"].Vendored["dep.go"] = domain.DigestIrregularPrefix + "symlink"
 
-	_, fs := domain.Aggregate(in)
+	_, fs, _ := domain.Aggregate(in)
 	d, ok := kinds(fs)[domain.FindingDrift]
 	if !ok {
 		t.Fatalf("a non-regular vendored file must be drift, got %+v", fs)
@@ -150,7 +150,7 @@ func TestAggregate_UnheldZipIsUnverifiedNotClean(t *testing.T) {
 	in.Files["example.com/dep"] = domain.ModuleFiles{
 		Vendored: map[string]string{"dep.go": "sha256:dep"},
 	}
-	_, fs := domain.Aggregate(in)
+	_, fs, _ := domain.Aggregate(in)
 	u, ok := kinds(fs)[domain.FindingUnverified]
 	if !ok {
 		t.Fatalf("want unverified finding, got %+v", fs)
@@ -168,7 +168,7 @@ func TestAggregate_UnheldZipIsUnverifiedNotClean(t *testing.T) {
 func TestAggregate_MissingFromVendor(t *testing.T) {
 	in := base()
 	in.PresentDirs = map[string]bool{}
-	_, fs := domain.Aggregate(in)
+	_, fs, _ := domain.Aggregate(in)
 	f, ok := kinds(fs)[domain.FindingMissingFromVendor]
 	if !ok {
 		t.Fatalf("want missing-from-vendor, got %+v", fs)
@@ -183,7 +183,7 @@ func TestAggregate_MissingFromVendor(t *testing.T) {
 func TestAggregate_Unverified(t *testing.T) {
 	in := base()
 	in.GoSum = map[string]string{}
-	_, fs := domain.Aggregate(in)
+	_, fs, _ := domain.Aggregate(in)
 	if _, ok := kinds(fs)[domain.FindingUnverified]; !ok {
 		t.Fatalf("want unverified finding, got %+v", fs)
 	}
@@ -200,7 +200,7 @@ func TestAggregate_VersionAndModulesTxtDisagree(t *testing.T) {
 		"example.com/dep":   "v1.3.0", // version mismatch vs modules.txt v1.2.0
 		"example.com/other": "v0.1.0", // required but not vendored/listed
 	}
-	_, fs := domain.Aggregate(in)
+	_, fs, _ := domain.Aggregate(in)
 	k := kinds(fs)
 	if vm, ok := k[domain.FindingVersionMismatch]; !ok || vm.Expected != "v1.3.0" || vm.Actual != "v1.2.0" {
 		t.Errorf("version mismatch not reported with both views: %+v", fs)
@@ -224,5 +224,30 @@ func TestSortDeterministic(t *testing.T) {
 	domain.SortFindings(fs2)
 	if domain.Hash(ms2, fs2) != h1 {
 		t.Error("hash not permutation-invariant after sort")
+	}
+}
+
+// TestAggregate_ExtraInVendor: files sit under vendor/ for a module
+// modules.txt does not list. `go mod vendor` writes the manifest and the tree
+// together, so a directory with no entry is something else's work — a stale
+// module the manifest dropped, or an insertion — and either way the build
+// compiles code the manifest does not account for.
+func TestAggregate_ExtraInVendor(t *testing.T) {
+	in := base()
+	in.PresentDirs["example.com/unlisted"] = true
+
+	_, fs, _ := domain.Aggregate(in)
+	f, ok := kinds(fs)[domain.FindingExtraInVendor]
+	if !ok {
+		t.Fatalf("want extra-in-vendor, got %+v", fs)
+	}
+	if f.Module != "example.com/unlisted" {
+		t.Errorf("finding names %q, want the unlisted module", f.Module)
+	}
+	if f.Kind.PolicyCategory() != "inconsistency" {
+		t.Errorf("maps to %q, want inconsistency", f.Kind.PolicyCategory())
+	}
+	if domain.OverallStatus(fs) == "clean" {
+		t.Error("a module the manifest does not account for must not be reported clean")
 	}
 }

@@ -21,6 +21,7 @@ import (
 	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
 	"github.com/eitanity/kanonarion/internal/sbom/domain"
 	"github.com/eitanity/kanonarion/internal/sbom/ports"
+	vendordomain "github.com/eitanity/kanonarion/internal/vendortree/domain"
 	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
@@ -184,6 +185,15 @@ func (g *Generator) buildBOM(
 	deps := buildDependencies(components, bom.Metadata.Component, walk.Graph)
 	bom.Dependencies = &deps
 
+	// Scope statement — what this document covers of the vendored tree it was
+	// made from. Emitted whenever a tree was read, full coverage included: an
+	// artefact that describes a smaller set than the build without saying so
+	// reads as complete, and that is the defect this closes.
+	var annotations []cdx.Annotation
+	if req.VendorScope != nil {
+		annotations = append(annotations, vendorScopeAnnotation(*req.VendorScope, req.ComponentsScopedToBinary, req.PipelineVersion, ts))
+	}
+
 	// Vulnerabilities — dedup/aggregation policy lives in sbom/domain.
 	if len(vulnerabilities) > 0 {
 		findings := make([]domain.FindingInput, 0)
@@ -201,7 +211,9 @@ func (g *Generator) buildBOM(
 		}
 		cdxVulns := buildVulnerabilities(domain.AggregateVulnerabilities(findings))
 		bom.Vulnerabilities = &cdxVulns
-		annotations := []cdx.Annotation{vulnerabilityScopeAnnotation(cdxVulns, req.PipelineVersion, ts)}
+		annotations = append(annotations, vulnerabilityScopeAnnotation(cdxVulns, req.PipelineVersion, ts))
+	}
+	if len(annotations) > 0 {
 		bom.Annotations = &annotations
 	}
 
@@ -279,6 +291,63 @@ func vulnerabilityScopeAnnotation(vulns []cdx.Vulnerability, pipelineVersion str
 		},
 		Timestamp: ts.UTC().Format(timestampFormat),
 		Text:      vulnerabilityScopeText,
+	}
+}
+
+// vendorScopeBOMRef identifies the vendor-scope annotation. Fixed, so the
+// document re-emits byte-identically from the same inputs.
+const vendorScopeBOMRef = "kanonarion:vendor-scope"
+
+// vendorScopeAnnotation states what this document covers of the vendored tree
+// the project holds: the tree's module count, how many the component list
+// describes, and every module it does not with the reason it does not.
+//
+// It is emitted whenever a vendored tree was read, including when coverage is
+// complete. Full coverage stated is a fact a reader can rely on; full coverage
+// left to silence is indistinguishable from a narrowing nobody mentioned, and
+// in an air-gapped project — where the vendored tree IS the build and there is
+// no proxy to check against — walking modules.txt by hand is the only other way
+// to find out.
+//
+// A module contributing no package is named as out of scope by construction,
+// not as a gap. `go mod vendor` writes its heading and vendors no directory, so
+// its absence from the document is correct; rendering a correct absence as
+// drift is the false positive this distinction exists to prevent.
+//
+// Every field derives from inputs the document already carries — the fixed
+// bom-ref, the domain-sorted uncovered list, the generator component and the
+// document's own clock-free timestamp — so determinism is untouched.
+func vendorScopeAnnotation(scope vendordomain.VendorScope, scopedToBinary bool, pipelineVersion string, ts time.Time) cdx.Annotation {
+	var b strings.Builder
+	fmt.Fprintf(&b, "Scope of this document against the project's vendored tree: vendor/modules.txt lists %d module(s); this document describes %d of them.",
+		scope.TreeModules, scope.Covered)
+	if scopedToBinary {
+		b.WriteString(" This document's components are scoped to a single binary's import closure, so it describes the modules that binary reaches rather than the whole build.")
+	}
+	if scope.FullyCovered() {
+		b.WriteString(" Every module in the vendored tree is described here.")
+	} else {
+		fmt.Fprintf(&b, " The %d it does not describe, and why:", len(scope.Uncovered))
+		for _, u := range scope.Uncovered {
+			fmt.Fprintf(&b, " %s %s — %s", u.Path, u.Version, u.Reason)
+			if u.PackageLines > 0 {
+				fmt.Fprintf(&b, " (%d package line(s))", u.PackageLines)
+			}
+			b.WriteString(";")
+		}
+		b.WriteString(" A package line is a package `go mod vendor` wrote under the module heading across all build constraints; it is not a count of what this build compiles.")
+	}
+	return cdx.Annotation{
+		BOMRef: vendorScopeBOMRef,
+		Annotator: &cdx.Annotator{
+			Component: &cdx.Component{
+				Type:    cdx.ComponentTypeApplication,
+				Name:    generatorName,
+				Version: pipelineVersion,
+			},
+		},
+		Timestamp: ts.UTC().Format(timestampFormat),
+		Text:      b.String(),
 	}
 }
 

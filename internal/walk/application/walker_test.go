@@ -1254,3 +1254,21 @@ func TestWalker_ProjectMode_RootsAtLocalMainModule(t *testing.T) {
 		t.Errorf("node count = %d, want 3 (main module + dep + stdlib)", len(outcome.Graph.Nodes))
 	}
 }
+
+// EnsureFetchedReplacing delegates: this fake has no replace-aware behaviour of
+// its own, so a replaced module is fetched exactly like an unreplaced one.
+func (f *walkerFakeFetcher) EnsureFetchedReplacing(ctx context.Context, c, _ coordinate.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
+	return f.EnsureFetched(ctx, c)
+}
+
+// EnsureFetchedReplacing delegates: this fake has no replace-aware behaviour of
+// its own, so a replaced module is fetched exactly like an unreplaced one.
+func (f *productionCacheFetcher) EnsureFetchedReplacing(ctx context.Context, c, _ coordinate.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
+	return f.EnsureFetched(ctx, c)
+}
+
+// EnsureFetchedReplacing delegates: this fake has no replace-aware behaviour of
+// its own, so a replaced module is fetched exactly like an unreplaced one.
+func (f *forcingProductionFetcher) EnsureFetchedReplacing(ctx context.Context, c, _ coordinate.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
+	return f.EnsureFetched(ctx, c)
+}

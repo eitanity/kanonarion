@@ -20,7 +20,7 @@ re-fetching from the proxy, and verifies what is actually on disk.
 | Kind                       | Meaning                                                            | Policy axis     |
 |----------------------------|--------------------------------------------------------------------|-----------------|
 | `drift`                    | a file under `vendor/` is not the file the published module holds   | `on_drift`      |
-| `missing_from_vendor`      | `modules.txt` lists a module with no files under `vendor/`           | `on_inconsistency` |
+| `missing_from_vendor`      | `modules.txt` lists a module that contributes packages and has no files under `vendor/` | `on_inconsistency` |
 | `extra_in_vendor`          | files under `vendor/` for a module `modules.txt` does not list       | `on_inconsistency` |
 | `missing_from_modules_txt` | `go.mod` requires a module `vendor/modules.txt` omits                | `on_inconsistency` |
 | `version_mismatch`         | `modules.txt` version disagrees with the `go.mod` require version    | `on_inconsistency` |
@@ -29,6 +29,53 @@ re-fetching from the proxy, and verifies what is actually on disk.
 `unverified` is deliberate: a vendored module with no checksum to verify
 against - or no held artefact to compare against - is **surfaced as
 uncertainty, never assumed clean** (the absence-as-answer defect class).
+
+A module `modules.txt` names with **no package line under it** is not a finding.
+`go mod vendor` writes its heading and vendors no directory for it. It is
+reported in the scope statement below, never as `missing_from_vendor`.
+
+## Scope statement
+
+Every report states what it covers of the vendored tree: how many modules
+`vendor/modules.txt` lists, how many the report describes, and every module it
+does not with the reason.
+
+```json
+"scope": {
+  "tree_modules": 133,
+  "covered": 126,
+  "uncovered": [
+    {
+      "path": "example.com/mod",
+      "version": "v1.35.0",
+      "reason": "contributes no package to the build; vendor/modules.txt names the module but no package under it, so the tree holds no code for it",
+      "package_lines": 0
+    }
+  ]
+}
+```
+
+Reasons a module appears under `uncovered`:
+
+| `reason` | Circumstance |
+|---|---|
+| `contributes no package to the build; ...` | `modules.txt` names the module with no package line under it |
+| `vendor/modules.txt lists package lines under it that this document does not describe` | `modules.txt` lists packages under the module and the document omits it |
+
+`package_lines` is the number of packages `go mod vendor` wrote under the module
+heading, **across all build constraints**. It is not a count of what a build
+compiles: a package reachable only under a tag such as `//go:build modhack` is
+vendored and never built, so a non-zero `package_lines` does not establish that
+the module contributes to any particular build. Zero does settle it downwards —
+a module with no vendored package under any constraint has none under one.
+
+When the report covers the whole tree, `uncovered` is an empty list and the
+text output reads `the report covers the whole vendored tree`.
+
+The same statement is emitted into a generated SBOM as a CycloneDX annotation.
+A module replaced by a fork counts as covered under either coordinate — the
+original path `go mod vendor` files it under, or the replacement the build list
+names.
 
 ## Integrity check
 

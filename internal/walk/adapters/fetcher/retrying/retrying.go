@@ -190,13 +190,21 @@ func withVCSHosts(self walkports.ModuleFetcher, f *Fetcher, hosts fetchdomain.VC
 //   - an exhausted budget at WARN, so a genuine fetch failure that burned every
 //     attempt is not indistinguishable from one rejected on sight.
 func (f *Fetcher) EnsureFetched(ctx context.Context, coord coordinate.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
+	return f.EnsureFetchedReplacing(ctx, coord, coordinate.ModuleCoordinate{})
+}
+
+// EnsureFetchedReplacing is EnsureFetched carrying the module's pre-replace
+// identity through the retry loop. Retry policy is decided by the error, never
+// by which identities the fetch was given, so both spellings ride along
+// untouched.
+func (f *Fetcher) EnsureFetchedReplacing(ctx context.Context, coord, original coordinate.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
 	var (
 		res          walkports.ModuleFetchResult
 		err          error
 		totalBackoff time.Duration
 	)
 	for attempt := 1; ; attempt++ {
-		res, err = f.inner.EnsureFetched(ctx, coord)
+		res, err = f.inner.EnsureFetchedReplacing(ctx, coord, original)
 		if err == nil {
 			if attempt > 1 {
 				f.logger.InfoContext(ctx, "walk.fetch.retried",

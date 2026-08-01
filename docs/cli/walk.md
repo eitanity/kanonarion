@@ -379,6 +379,27 @@ was unavailable reports `VerifiedByGoSum` (a positive offline anchor) rather tha
 `UnverifiedNoSumDB`; a module that **disagrees** with its `go.sum` entry is
 tamper-evidence and records a fetch failure with the mismatch detail. A module
 **absent** from `go.sum` simply falls through to the network checksum database.
+
+### Replaced modules
+
+`go.sum` records a replaced module's checksum under the **replace target**. The
+lookup keys on the target; the module keeps its original coordinate for identity
+and reporting, and the verification detail names both:
+
+```
+verified against local go.sum under example.com/fork@v1.2.4 (required as example.com/mod@v1.2.1)
+```
+
+A replaced module whose **target** is absent from `go.sum` fails the fetch with
+`ErrGoSumVerification`, naming both coordinates; an unreplaced module absent
+from `go.sum` still falls through to the network checksum database. To settle a
+failure, re-run `go mod tidy` in the project so `go.sum` carries the
+replacement, or point `--gomod` at the project root whose `go.sum` describes
+this build.
+
+A **filesystem** replacement (`=> ./dir`) records `LocalSource` with the detail
+`no checksum is available for a filesystem source, so none was checked`.
+
 See [`audit` › Local `go.sum` verification](audit.md#local-gosum-verification)
 for the full behaviour, which `audit` and `sbom --package` promote to a hard,
 non-zero exit.

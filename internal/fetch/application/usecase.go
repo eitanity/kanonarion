@@ -136,6 +136,19 @@ func NewFetchModuleUseCase(
 // FetchRequest is the input to Execute.
 type FetchRequest struct {
 	Coordinate coordinate.ModuleCoordinate
+	// OriginalCoordinate is the coordinate the project requires this module
+	// under, when a replace directive put Coordinate in its place. Zero for an
+	// unreplaced module.
+	//
+	// It is provenance for the verification report, never an identity: the
+	// record is written under Coordinate, which is the artefact fetched, the
+	// zip hashed and the entry `go.sum` records. What the original buys is the
+	// ability to SAY so — "anchored under the fork path, required as the
+	// upstream one" — and to refuse, naming both, when the fork has no go.sum
+	// entry at all. In an air gap go.sum is the only anchor there is, and a
+	// module that falls outside it silently is unverified in the one
+	// environment where nothing else can cover for it.
+	OriginalCoordinate coordinate.ModuleCoordinate
 	// Force re-fetches even if a record for this pipeline version exists.
 	Force bool
 	// SkipVCSVerify skips the git cross-verification step; sumdb verification
@@ -300,7 +313,7 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 	// so a tampered module fails fast, with no blob written and no record
 	// persisted. A matching entry becomes a positive signal folded into the
 	// verification status below; an absent entry falls through unchanged.
-	goSumMatched, err := uc.checkProjectGoSum(ctx, log, req.Coordinate, dl)
+	goSumAnchoredUnder, err := uc.checkProjectGoSum(ctx, log, req.Coordinate, req.OriginalCoordinate, dl)
 	if err != nil {
 		return FetchResult{}, err
 	}
@@ -331,7 +344,7 @@ func (uc *FetchModuleUseCase) Execute(ctx context.Context, req FetchRequest) (_ 
 	}
 
 	// Step 5: run verification pipeline, accumulating status.
-	verStatus, verDetail, gitRef, retracted, sumdbLookupFailed := uc.verify(ctx, log, req.Coordinate, dl, zipData, goModData, info, req.SkipVCSVerify, goSumMatched, req.VCSHosts)
+	verStatus, verDetail, gitRef, retracted, sumdbLookupFailed := uc.verify(ctx, log, req.Coordinate, dl, zipData, goModData, info, req.SkipVCSVerify, goSumAnchoredUnder, req.VCSHosts)
 
 	// Sign-on-process call site 1: fetch-receive. Sign the received blob over
 	// its canonical content digest, after verification.
@@ -445,7 +458,7 @@ func (uc *FetchModuleUseCase) executeGoModOnly(ctx context.Context, req FetchReq
 	// Step 2.5: cheap offline local go.sum cross-check of the go.mod hash. A
 	// present-but-disagreeing entry is a hard tamper failure with no blob stored
 	// and no record persisted, mirroring the full path.
-	goSumMatched, err := uc.checkProjectGoSumGoMod(ctx, log, req.Coordinate, dl)
+	goSumAnchoredUnder, err := uc.checkProjectGoSumGoMod(ctx, log, req.Coordinate, req.OriginalCoordinate, dl)
 	if err != nil {
 		return FetchResult{}, err
 	}
@@ -461,7 +474,7 @@ func (uc *FetchModuleUseCase) executeGoModOnly(ctx context.Context, req FetchReq
 	log.InfoContext(ctx, "go_mod_blob_stored", slog.String("identity", goModIdentity.String()))
 
 	// Step 4: verify the go.mod h1 against the checksum database.
-	verStatus, verDetail, retracted, sumdbLookupFailed := uc.verifyGoModOnly(ctx, log, req.Coordinate, dl, goModData, goSumMatched)
+	verStatus, verDetail, retracted, sumdbLookupFailed := uc.verifyGoModOnly(ctx, log, req.Coordinate, dl, goModData, goSumAnchoredUnder)
 
 	// Sign the received go.mod over its canonical content digest, after
 	// verification. There is no zip to sign; the go.mod is the artefact received.
@@ -596,7 +609,10 @@ func (uc *FetchModuleUseCase) verifyGoModOnly(
 	coord coordinate.ModuleCoordinate,
 	dl ports.GoModDownload,
 	goModData []byte,
-	goSumMatched bool,
+	// goSumAnchoredUnder names the coordinate the walk root's go.sum entry was
+	// found under, or "" when go.sum did not confirm the go.mod. It is reported
+	// verbatim so a reader can see a fork was anchored under its fork path.
+	goSumAnchoredUnder string,
 ) (domain2.VerificationStatus, string, bool, bool) {
 	retracted := parseRetracted(goModData, coord.Version())
 	if retracted {
@@ -619,9 +635,10 @@ func (uc *FetchModuleUseCase) verifyGoModOnly(
 		case res.GoModHash.IsZero():
 			// The database returned no go.mod hash line (rare). Fall back to the
 			// local go.sum signal rather than manufacturing a pass from absence.
-			if goSumMatched {
+			if goSumAnchoredUnder != "" {
 				return domain2.VerifiedByGoSum,
-					"go.mod-only fetch; go.mod verified against local go.sum; checksum database returned no go.mod hash",
+					"go.mod-only fetch; go.mod verified against local go.sum under " + goSumAnchoredUnder +
+						"; checksum database returned no go.mod hash",
 					retracted, false
 			}
 			return domain2.UnverifiedNoSumDB,
@@ -646,9 +663,10 @@ func (uc *FetchModuleUseCase) verifyGoModOnly(
 		slog.String("reason", res.Reason),
 		slog.Bool("lookup_failed", lookupFailed),
 	)
-	if goSumMatched {
+	if goSumAnchoredUnder != "" {
 		return domain2.VerifiedByGoSum,
-			"go.mod-only fetch; go.mod verified against local go.sum; network checksum database unavailable: " + res.Reason,
+			"go.mod-only fetch; go.mod verified against local go.sum under " + goSumAnchoredUnder +
+				"; network checksum database unavailable: " + res.Reason,
 			retracted, lookupFailed
 	}
 	return domain2.UnverifiedNoSumDB, "go.mod-only fetch; " + res.Reason, retracted, lookupFailed
@@ -658,20 +676,26 @@ func (uc *FetchModuleUseCase) verifyGoModOnly(
 // the walk root's local go.sum, the go.mod-only analogue of checkProjectGoSum.
 // A present entry whose go.mod hash disagrees is a hard tamper failure; an
 // absent entry (or no verifier) falls through to network checksum verification.
-func (uc *FetchModuleUseCase) checkProjectGoSumGoMod(ctx context.Context, log *slog.Logger, coord coordinate.ModuleCoordinate, dl ports.GoModDownload) (bool, error) {
+func (uc *FetchModuleUseCase) checkProjectGoSumGoMod(ctx context.Context, log *slog.Logger, coord, original coordinate.ModuleCoordinate, dl ports.GoModDownload) (string, error) {
 	if uc.goSum == nil {
-		return false, nil
+		return "", nil
 	}
 	res := uc.goSum.Lookup(ctx, coord)
 	if !res.Available {
-		return false, nil
+		if isReplaced(coord, original) {
+			return "", errReplacedModuleNotInGoSum(coord, original, res.Reason)
+		}
+		return "", nil
 	}
 	if !res.GoModHash.IsZero() && !res.GoModHash.Equal(dl.GoModHash) {
-		return false, fmt.Errorf("%w: %s: local go.sum expects go.mod %s but computed %s",
-			ErrGoSumVerification, coord, res.GoModHash, dl.GoModHash)
+		return "", fmt.Errorf("%w: %s: local go.sum expects go.mod %s but computed %s",
+			ErrGoSumVerification, goSumAnchor(coord, original), res.GoModHash, dl.GoModHash)
 	}
-	log.InfoContext(ctx, "project_gosum_verified", slog.String("go_mod_hash", dl.GoModHash.String()))
-	return true, nil
+	anchor := goSumAnchor(coord, original)
+	log.InfoContext(ctx, "project_gosum_verified",
+		slog.String("go_mod_hash", dl.GoModHash.String()),
+		slog.String("anchored_under", anchor))
+	return anchor, nil
 }
 
 // sign invokes the injected Signer over a "sha256:<hex>" subject digest and
@@ -739,7 +763,11 @@ func (uc *FetchModuleUseCase) verify(
 	zipData, goModData []byte,
 	info ports.ModuleInfo,
 	skipVCSVerify bool,
-	goSumMatched bool,
+	// goSumAnchoredUnder names the coordinate the walk root's go.sum entry was
+	// found under, or "" when go.sum did not confirm the module. It is reported
+	// verbatim so a reader can see a fork was anchored under its fork path
+	// rather than having to trust that the right spelling was looked up.
+	goSumAnchoredUnder string,
 	vcsHosts domain2.VCSHostAllowlist,
 ) (domain2.VerificationStatus, string, domain2.GitReference, bool, bool) {
 
@@ -798,13 +826,14 @@ func (uc *FetchModuleUseCase) verify(
 				slog.String("reason", sumdbResult.Reason),
 				slog.Bool("lookup_failed", sumdbLookupFailed),
 			)
-			if goSumMatched {
+			if goSumAnchoredUnder != "" {
 				// Network sumdb is unreachable/absent, but the walk root's local
 				// go.sum (itself populated under a prior transparency-log check)
 				// confirmed the h1. A positive offline integrity signal, not an
 				// un-analysed outcome.
 				earlyStatus = domain2.VerifiedByGoSum
-				earlyDetail = "verified against local go.sum; network checksum database unavailable: " + sumdbResult.Reason
+				earlyDetail = "verified against local go.sum under " + goSumAnchoredUnder +
+					"; network checksum database unavailable: " + sumdbResult.Reason
 			} else {
 				earlyStatus = domain2.UnverifiedNoSumDB
 				earlyDetail = sumdbResult.Reason
@@ -879,43 +908,96 @@ func withOriginRefusal(detail, refusal string) string {
 	}
 }
 
+// goSumAnchor names the coordinate a go.sum entry was found under, for the
+// verification report. For an unreplaced module that is simply the module; for
+// a replaced one it names both, because the entry lives under the REPLACEMENT —
+// the only coordinate the toolchain ever writes — while the project requires
+// the module under the original, and a reader who sees only one of the two
+// cannot tell that a fork was anchored at all.
+func goSumAnchor(coord, original coordinate.ModuleCoordinate) string {
+	if original.Path() == "" || original == coord {
+		return coord.String()
+	}
+	return coord.String() + " (required as " + original.String() + ")"
+}
+
+// errReplacedModuleNotInGoSum builds the hard stop for a replaced module whose
+// replacement has no go.sum entry, naming BOTH coordinates.
+//
+// It is a refusal rather than a fall-through because a replacement is exactly
+// the case where go.sum is guaranteed to carry an entry: the toolchain writes
+// one for every module it selects, under the replacement path. An absent entry
+// therefore means the go.sum being consulted does not describe this build — a
+// stale file, the wrong project root, a hand-edited one — and continuing would
+// report the module as fetched under a trust anchor that never covered it.
+// Naming only one coordinate leaves the reader unable to see which spelling was
+// looked for.
+func errReplacedModuleNotInGoSum(coord, original coordinate.ModuleCoordinate, reason string) error {
+	return fmt.Errorf("%w: %s is replaced by %s, and go.sum has no entry for the replacement: %s",
+		ErrGoSumVerification, original, coord, reason)
+}
+
 // checkProjectGoSum cross-checks the module's already-computed h1 hashes
 // against the walk root's local go.sum, when a project go.sum verifier is
 // configured. It is a cheap, offline complement to the network
-// checksum-database check and adds no hashing or network calls. The outcomes:
+// checksum-database check and adds no hashing or network calls.
 //
-//   - no verifier configured, or the coordinate is absent from go.sum →
-//     (false, nil): the module falls through to network sumdb verification.
-//     go.sum legitimately omits some transitively-cached entries, so absence is
-//     not a failure on the normal path (contrast --from-modcache).
-//   - entry present and both zip and go.mod h1 match → (true, nil): a positive
-//     offline integrity signal that elevates a no-network-sumdb outcome to
+// The lookup keys on coord — the coordinate actually fetched, which for a
+// replaced module is the REPLACEMENT. That is the only coordinate `go.sum`
+// records: the toolchain writes the checksum of the module it selects, under
+// the path it selects it at. Keying on the original would look a fork up under
+// a name go.sum was never going to carry.
+//
+// The outcomes:
+//
+//   - no verifier configured → ("", nil): nothing was consulted.
+//   - coord absent from go.sum and the module is UNREPLACED → ("", nil): the
+//     module falls through to network sumdb verification. go.sum legitimately
+//     omits some transitively-cached entries, so absence is not a failure on
+//     the normal path (contrast --from-modcache).
+//   - coord absent from go.sum and the module IS replaced →
+//     ("", ErrGoSumVerification): a hard stop naming both coordinates.
+//   - entry present and both zip and go.mod h1 match → (anchor, nil), where
+//     anchor names the coordinate the entry was found under: a positive offline
+//     integrity signal that elevates a no-network-sumdb outcome to
 //     VerifiedByGoSum.
-//   - entry present and either h1 disagrees → (false, ErrGoSumVerification): a
+//   - entry present and either h1 disagrees → ("", ErrGoSumVerification): a
 //     hard tamper failure. The caller aborts with no blob stored and no record
 //     persisted; a go.sum mismatch must never be silently downgraded.
-func (uc *FetchModuleUseCase) checkProjectGoSum(ctx context.Context, log *slog.Logger, coord coordinate.ModuleCoordinate, dl ports.ModuleDownload) (bool, error) {
+func (uc *FetchModuleUseCase) checkProjectGoSum(ctx context.Context, log *slog.Logger, coord, original coordinate.ModuleCoordinate, dl ports.ModuleDownload) (string, error) {
 	if uc.goSum == nil {
-		return false, nil
+		return "", nil
 	}
 	res := uc.goSum.Lookup(ctx, coord)
 	if !res.Available {
+		if isReplaced(coord, original) {
+			return "", errReplacedModuleNotInGoSum(coord, original, res.Reason)
+		}
 		// Absent from go.sum — fall through to network sumdb verification.
-		return false, nil
+		return "", nil
 	}
 	if !res.ZipHash.Equal(dl.ZipHash) {
-		return false, fmt.Errorf("%w: %s: local go.sum expects zip %s but computed %s",
-			ErrGoSumVerification, coord, res.ZipHash, dl.ZipHash)
+		return "", fmt.Errorf("%w: %s: local go.sum expects zip %s but computed %s",
+			ErrGoSumVerification, goSumAnchor(coord, original), res.ZipHash, dl.ZipHash)
 	}
 	// The go.mod hash is checked only when go.sum records one (it always does for
 	// module-era dependencies). A zero recorded hash means go.sum has no /go.mod
 	// line — do not manufacture a mismatch from its absence.
 	if !res.GoModHash.IsZero() && !res.GoModHash.Equal(dl.GoModHash) {
-		return false, fmt.Errorf("%w: %s: local go.sum expects go.mod %s but computed %s",
-			ErrGoSumVerification, coord, res.GoModHash, dl.GoModHash)
+		return "", fmt.Errorf("%w: %s: local go.sum expects go.mod %s but computed %s",
+			ErrGoSumVerification, goSumAnchor(coord, original), res.GoModHash, dl.GoModHash)
 	}
-	log.InfoContext(ctx, "project_gosum_verified", slog.String("zip_hash", dl.ZipHash.String()))
-	return true, nil
+	anchor := goSumAnchor(coord, original)
+	log.InfoContext(ctx, "project_gosum_verified",
+		slog.String("zip_hash", dl.ZipHash.String()),
+		slog.String("anchored_under", anchor))
+	return anchor, nil
+}
+
+// isReplaced reports whether original names a coordinate distinct from the one
+// fetched — i.e. a replace directive is in force for this module.
+func isReplaced(coord, original coordinate.ModuleCoordinate) bool {
+	return original.Path() != "" && original != coord
 }
 
 // resolveGitRef determines the GitReference for the module.

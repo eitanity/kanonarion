@@ -33,12 +33,37 @@ type vendorModule struct {
 	Explicit bool   `json:"explicit"`
 	Present  bool   `json:"present"`
 	Dir      string `json:"dir"`
+	// Packages is how many packages vendor/modules.txt lists under this
+	// module. Zero means no package of the build imports it, which is why
+	// `go mod vendor` wrote no directory for it.
+	Packages int `json:"packages"`
 	// ExpectedHash is the go.sum h1 the comparison oracle — the module zip
 	// kanonarion holds — was verified against. There is no counterpart hash
 	// of the vendored tree: `go mod vendor` prunes the tree, so a whole-tree
 	// hash could never equal this value and reporting the pair asserted a
 	// mismatch that was an artefact of the measurement.
 	ExpectedHash string `json:"expected_hash,omitempty"`
+}
+
+// vendorUncoveredModule is one module of the vendored tree the report does not
+// describe, with the reason it does not.
+type vendorUncoveredModule struct {
+	Path    string `json:"path"`
+	Version string `json:"version,omitempty"`
+	Reason  string `json:"reason"`
+	// PackageLines is how many packages vendor/modules.txt lists under the
+	// module — what `go mod vendor` wrote across all build constraints, not a
+	// count of what any one build compiles.
+	PackageLines int `json:"package_lines"`
+}
+
+// vendorScope is the machine-readable scope statement. No field carries
+// omitempty: a CI gate must be able to assert `.covered == .tree_modules`, and
+// a zero that is absent cannot be asserted on.
+type vendorScope struct {
+	TreeModules int                     `json:"tree_modules"`
+	Covered     int                     `json:"covered"`
+	Uncovered   []vendorUncoveredModule `json:"uncovered"`
 }
 
 // vendorSection is the deterministic top-level `vendor` JSON section: modules
@@ -55,6 +80,9 @@ type vendorSection struct {
 	ContentHash     string          `json:"content_hash"`
 	Modules         []vendorModule  `json:"modules"`
 	Findings        []vendorFinding `json:"findings"`
+	// Scope states how much of the vendored tree this section describes and
+	// names every module it does not, so a correct narrowing reads as one.
+	Scope vendorScope `json:"scope"`
 }
 
 // vendorStatusNotVendored is the overall status for a project with no vendor
@@ -78,7 +106,27 @@ func notVendoredSection(vendorOnly bool) vendorSection {
 		OverallStatus:   vendorStatusNotVendored,
 		Modules:         []vendorModule{},
 		Findings:        []vendorFinding{},
+		// There is no vendored tree, so there is nothing to state scope over.
+		Scope: vendorScope{Uncovered: []vendorUncoveredModule{}},
 	}
+}
+
+// toVendorScope projects the domain scope statement into its JSON shape.
+// Uncovered is an empty array rather than nil so full coverage decodes as a
+// list with nothing in it, not as null.
+func toVendorScope(s vendomain.VendorScope) vendorScope {
+	out := vendorScope{
+		TreeModules: s.TreeModules,
+		Covered:     s.Covered,
+		Uncovered:   make([]vendorUncoveredModule, 0, len(s.Uncovered)),
+	}
+	for _, u := range s.Uncovered {
+		out.Uncovered = append(out.Uncovered, vendorUncoveredModule{
+			Path: u.Path, Version: u.Version, Reason: u.Reason,
+			PackageLines: u.PackageLines,
+		})
+	}
+	return out
 }
 
 // toVendorSection projects a domain record into the JSON section. Shared by
@@ -95,11 +143,12 @@ func toVendorSection(rec vendomain.Record) vendorSection {
 		ContentHash:     rec.ContentHash,
 		Modules:         make([]vendorModule, 0, len(rec.Modules)),
 		Findings:        make([]vendorFinding, 0, len(rec.Findings)),
+		Scope:           toVendorScope(rec.Scope),
 	}
 	for _, m := range rec.Modules {
 		out.Modules = append(out.Modules, vendorModule{
 			Path: m.Path, Version: m.Version, Explicit: m.Explicit,
-			Present: m.Present, Dir: m.Dir,
+			Present: m.Present, Dir: m.Dir, Packages: m.PackageCount,
 			ExpectedHash: m.ExpectedHash,
 		})
 	}
@@ -213,6 +262,9 @@ func printVendorTable(stdout io.Writer, s vendorSection) error {
 		s.Project, s.VendorDir, s.OverallStatus, s.VendorOnly); err != nil {
 		return fmt.Errorf("writing output: %w", err)
 	}
+	if err := printVendorScope(stdout, s.Scope); err != nil {
+		return err
+	}
 	if len(s.Findings) == 0 {
 		if _, err := fmt.Fprintf(stdout, "no vendor findings (%d modules reconciled)\n", len(s.Modules)); err != nil {
 			return fmt.Errorf("writing output: %w", err)
@@ -233,6 +285,32 @@ func printVendorTable(stdout io.Writer, s vendorSection) error {
 	}
 	if err := tw.Flush(); err != nil {
 		return fmt.Errorf("flushing output: %w", err)
+	}
+	return nil
+}
+
+// printVendorScope writes the scope statement: how much of the vendored tree
+// this report describes, and every module it does not with the reason. Full
+// coverage is stated rather than left to silence — a reader cannot tell a
+// complete report from a narrowed one that says nothing.
+func printVendorScope(stdout io.Writer, s vendorScope) error {
+	if s.TreeModules == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintf(stdout, "scope: %d of %d vendored modules described\n",
+		s.Covered, s.TreeModules); err != nil {
+		return fmt.Errorf("writing output: %w", err)
+	}
+	if len(s.Uncovered) == 0 {
+		if _, err := fmt.Fprintln(stdout, "  the report covers the whole vendored tree"); err != nil {
+			return fmt.Errorf("writing output: %w", err)
+		}
+		return nil
+	}
+	for _, u := range s.Uncovered {
+		if _, err := fmt.Fprintf(stdout, "  not described: %s %s — %s\n", u.Path, u.Version, u.Reason); err != nil {
+			return fmt.Errorf("writing output: %w", err)
+		}
 	}
 	return nil
 }

@@ -238,6 +238,8 @@ func parseModulesTxt(path string) ([]domain.VendoredModule, map[string]string, e
 	for sc.Scan() {
 		line := strings.TrimSpace(sc.Text())
 		switch {
+		case line == "":
+			continue
 		case strings.HasPrefix(line, "## "):
 			if len(mods) > 0 && strings.Contains(line, "explicit") {
 				mods[len(mods)-1].Explicit = true
@@ -266,6 +268,16 @@ func parseModulesTxt(path string) ([]domain.VendoredModule, map[string]string, e
 			// same way: the target is still the name a consumer may hold.
 			if len(fields) >= 4 && fields[2] == "=>" {
 				replacements[fields[3]] = fields[0]
+			}
+		default:
+			// A bare line is one package `go mod vendor` wrote under the
+			// heading above it. Counting them is what tells a module the build
+			// imports from apart from one the module graph carries and no
+			// package uses — the latter is vendored as a heading with no
+			// directory, which is correct and must not read as a missing
+			// module.
+			if len(mods) > 0 {
+				mods[len(mods)-1].PackageCount++
 			}
 		}
 	}

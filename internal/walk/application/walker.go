@@ -134,11 +134,26 @@ type WalkRequest struct {
 	// is ever served for the root.
 	AnalyseLocalRoot bool
 	// ProjectDir is the absolute path of the local working tree rooting a
-	// project walk (the directory holding go.mod/go.sum). It is the directory the
-	// Go toolchain is invoked in to derive the authoritative build list, and is
-	// also where AnalyseLocalRoot reads the project's own packages. Set whenever
-	// ProjectMode is true.
+	// project walk (the directory holding go.mod/go.sum). It is provenance: the
+	// place the walk happened, copied onto WalkRecord.ProjectDir so a later
+	// re-scan by walk id can reach the same analysis surface. It is also where
+	// AnalyseLocalRoot reads the project's own packages. Every project-rooted
+	// caller sets it, unconditionally.
+	//
+	// It carries no resolution authority — see ResolutionDir. The two were one
+	// field once, which made recording where a walk happened indistinguishable
+	// from choosing who resolves its module set, so a project-rooted walk that
+	// wanted the internal resolver had to record no root at all.
 	ProjectDir string
+	// ResolutionDir names the directory whose Go toolchain is the authority for
+	// this walk's module set. Non-empty routes resolution through the toolchain
+	// build list taken in that directory; empty selects the internal MVS
+	// resolver over MainModuleGoMod. Only honoured in ProjectMode.
+	//
+	// A caller that wants the internal resolver leaves this empty while still
+	// setting ProjectDir, so the walk records where it happened without handing
+	// the toolchain the last word on what it contains.
+	ResolutionDir string
 	// StdlibFromGoMod pins the synthetic standard-library node to the project
 	// go.mod's `toolchain`/`go` directive instead of the effective build toolchain
 	// (`go env GOVERSION`, the default). Only honoured in ProjectMode.
@@ -240,7 +255,7 @@ func (w *Walker) Walk(ctx context.Context, req WalkRequest) (domain2.WalkOutcome
 		// Project mode: root at the local main module. Its go.mod is read from
 		// the working tree, not fetched, so the closure is the union of all
 		// require directives rooted at the project itself.
-		g, perr := resolver.ResolveProject(ctx, req.Target, req.MainModuleGoMod, req.ProjectDir, policy.FetchStage(), req.ScopeModules, req.StdlibFromGoMod, req.Force)
+		g, perr := resolver.ResolveProject(ctx, req.Target, req.MainModuleGoMod, req.ResolutionDir, policy.FetchStage(), req.ScopeModules, req.StdlibFromGoMod, req.Force)
 		if perr != nil {
 			// The local go.mod could not be parsed — terminal, like a target
 			// fetch failure.

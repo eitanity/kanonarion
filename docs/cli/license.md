@@ -1,5 +1,9 @@
 # `kanonarion licence` - Licence Extraction
 
+Every command in this family accepts both spellings: `licence` and `license`
+(likewise `licence-list`/`license-list`, `licence-compat`/`license-compat`,
+`licence-diff`/`license-diff`).
+
 Extracts and persists licence information for a Go module that has already been
 fetched. Extraction reads the module zip from the blob store, scans it for
 licence-named files, classifies each against the SPDX licence corpus, extracts
@@ -48,6 +52,26 @@ github.com/spf13/cobra@v1.8.1: Detected - Apache-2.0
   LICENSE: Apache-2.0 (100%)
 ```
 
+For a dual-licensed module (a disjunctive expression such as
+`Apache-2.0 OR GPL-3.0`), the output prints one obligation set per arm and
+names the election as the operator's to record:
+
+```
+github.com/gorhill/cronexpr@v0.0.0-…: Multiple — Apache-2.0 OR GPL-3.0
+  APLv2: Apache-2.0 (100%)
+  GPLv3: GPL-3.0 (95%)
+  dual licence: obligations depend on the elected arm — the election is an
+  operator decision, recorded as a license_overrides entry for this module
+  obligations if Apache-2.0 is elected (catalogue v1.2.0):
+    …
+  obligations if GPL-3.0 is elected (catalogue v1.2.0):
+    …
+```
+
+To settle the election, record the chosen arm as a `license_overrides` entry
+(see [`config`](config.md)); `audit` and `license-compat` treat the module as
+an open item until one exists.
+
 **Overall statuses:**
 
 | Status | Meaning |
@@ -94,8 +118,7 @@ immediately. A new pipeline version invalidates all existing records for that
 stage (but not fetch records or walk records).
 
 The database schema is versioned via the shared `schema_migrations` table
-(migration version 4 for the `license` module - added the `spdx_expression`
-column). The current pipeline version is `1.0.0`.
+(numbered per module). The current pipeline version is `1.2.0`.
 
 ## Assurance log
 

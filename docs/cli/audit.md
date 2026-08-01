@@ -51,17 +51,16 @@ The scope always includes the **Go standard library** as a first-class row
 (`stdlib@vX.Y.Z`), so standard-library advisories are audited alongside module
 dependencies. Its **Verification** column reports the toolchain-specific chain of
 custody — `VerifiedGoDevChecksum` when the canonical `go{VERSION}.src.tar.gz`
-acquired from `go.dev/dl` matched Go's published checksum — which is deliberately
-distinct from the module sumdb statuses (it is a published checksum plus a
+acquired from `go.dev/dl` matched Go's published checksum — a status distinct
+from the module sumdb ones (it is a published checksum plus a
 `go.googlesource.com/go` tag/commit, never a `go.sum` entry). Its **License** is
 `BSD-3-Clause` extracted from the tarball's `LICENSE` file (licence source
 `stdlib-tarball`). On a fully offline run (`--from-modcache`) the custody chain
 cannot be established and the Verification column reads `(custody
-unavailable)`; the licence column then reports the published `BSD-3-Clause`
-constant labelled `stdlib-known` / status `Known` — the same answer the SBOM
-and `license-compat` give for the same node, stated as knowledge rather than
-extracted evidence, so the stdlib is never carried as an unknown-licence gap
-while the custody gap itself stays visible. See [SBOM standard-library chain of
+unavailable)`; the licence column then reads `BSD-3-Clause` with source
+`stdlib-known` / status `Known` — the licence is reported from published
+knowledge rather than extracted evidence, and `sbom` and `license-compat`
+answer the same for the same node. See [SBOM standard-library chain of
 custody](sbom.md#standard-library-chain-of-custody) for the full evidence set.
 
 Its **Vulnerability** column is **call-graph-analysed against the build
@@ -224,11 +223,9 @@ kanonarion audit --gomod ./go.mod --json
 ]
 ```
 
-`vuln_findings` counts **every** advisory on the record, retracted ones included —
-its meaning is unchanged from before withdrawn advisories were recognised, so a
-consumer written against the older output reads the same fact it always did.
-`vuln_withdrawn` is the retracted subset, present only when non-zero; live advisories
-are the difference between the two.
+`vuln_findings` counts **every** advisory on the record, retracted ones
+included. `vuln_withdrawn` is the retracted subset, present only when non-zero;
+live advisories are the difference between the two.
 
 ## Pipeline
 
@@ -265,15 +262,12 @@ whose request failed).
 
 ### The unknown-licence gate
 
-`audit` is where the licence policy is enforced. The walk scope and the policy
-scope are different vocabularies - walks name dependency sets (`code` / `tool`
-/ `complete`), the policy names rule domains (`production` / `tool`) - so
-`audit` translates at the boundary before evaluating: `code` and `complete`
-are production dependency sets and evaluate under the `production` rule;
-`--tool` evaluates under `tool`. A policy scope that matches no rule is never
-an implicit allow: the gate reports itself **unevaluated** - naming the scope
-in force and the scopes that do carry rules - and exits `5`, because a gate
-that measured nothing must not pass.
+`audit` is where the licence policy is enforced. A default or `--project` run
+evaluates every licence under the policy's `production` rule; `--tool`
+evaluates under `tool`. If evaluation ever finds no rule for the scope in
+force (possible with a hand-edited policy), the gate reports itself
+**unevaluated** — naming that scope and the scopes that do carry rules — and
+exits `5`; it never falls through to an allow.
 
 A dependency whose licence
 could not be resolved to any SPDX identifier is **undetermined**, and
@@ -282,12 +276,11 @@ the rule's `default`. When that key resolves to `block` for the module's scope,
 `audit` prints the full table and then exits `5`, naming every blocked module.
 
 A `Multiple` licence status - detection found more than one licence identity,
-e.g. a dual-licensed module - is an open item under every scope: no rule can
-allow it, so the row is carried as unresolved (uncertainty `multiple`) and
-governed by the same unknown-licence key until an operator records the
-resolution (for a dual licence, the elected arm) as a `license_overrides`
-entry. The primary SPDX stays visible in the licence column as display
-information; it is not a resolution.
+e.g. a dual-licensed module - is carried as unresolved (uncertainty
+`multiple`) under every scope and governed by the same unknown-licence key,
+until an operator records the resolution (for a dual licence, the elected
+arm) as a `license_overrides` entry. The SPDX shown in the licence column for
+such a row is display information, not a resolution.
 
 Left unset the key resolves to `block` for `scope: production` and `warn` for
 every other scope, so an undetermined dependency fails a production audit
@@ -340,9 +333,18 @@ module `audit`:
 - **Disagrees with `go.sum`** - tamper-evidence. `audit` **fails hard**, exiting
   non-zero (code `10`) and naming the offending module. A `go.sum` mismatch is
   never silently downgraded.
-- **Absent from `go.sum`** - not a failure (a `go.sum` legitimately omits some
-  transitively-cached entries); the module falls through to the network checksum
-  database as before.
+- **Absent from `go.sum`** - not a failure for an unreplaced module (a `go.sum`
+  legitimately omits some transitively-cached entries); it falls through to the
+  network checksum database as before. For a **replaced** module the absence is
+  a hard stop naming both coordinates: `go.sum` records a replacement under the
+  replace target, so when it describes the build at all it has an entry for the
+  fork.
+
+A replaced module is looked up under the replace target and reported under
+both spellings — the verification detail reads `verified against local go.sum
+under <fork> (required as <upstream>)`. A module replaced by a filesystem path
+has no checksum and records `no checksum is available for a filesystem source,
+so none was checked`.
 
 Because the check reads only the local `go.sum`, it still fires when
 `sum.golang.org` is unreachable - a working offline integrity signal. This is

@@ -101,6 +101,14 @@ func newRecordingFetcher(
 // while the first is still running waits for it and then returns that same
 // outcome, so one coordinate is never fetched twice by one walk.
 func (r *recordingFetcher) EnsureFetched(ctx context.Context, c coordinate.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
+	return r.EnsureFetchedReplacing(ctx, c, coordinate.ModuleCoordinate{})
+}
+
+// EnsureFetchedReplacing is EnsureFetched for a module a replace directive put
+// in place of original. The single-flight key stays the coordinate actually
+// fetched — the replacement — because that is the artefact; original travels
+// with it so the fetch can say which coordinate it anchored the module under.
+func (r *recordingFetcher) EnsureFetchedReplacing(ctx context.Context, c, original coordinate.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
 	for {
 		r.mu.Lock()
 		if existing, ok := r.outcomes[c]; ok {
@@ -120,7 +128,7 @@ func (r *recordingFetcher) EnsureFetched(ctx context.Context, c coordinate.Modul
 		lead := &inflightFetch{done: make(chan struct{})}
 		r.inflight[c] = lead
 		r.mu.Unlock()
-		return r.fetchAndRecord(ctx, c, lead)
+		return r.fetchAndRecord(ctx, c, original, lead)
 	}
 }
 
@@ -136,7 +144,7 @@ func resultOf(out fetchOutcome) (walkports.ModuleFetchResult, error) {
 // releases any callers waiting on lead. The caller must have registered lead in
 // r.inflight; this method always removes it and closes lead.done, so a waiter
 // cannot be stranded even if the fetch path fails.
-func (r *recordingFetcher) fetchAndRecord(ctx context.Context, c coordinate.ModuleCoordinate, lead *inflightFetch) (walkports.ModuleFetchResult, error) {
+func (r *recordingFetcher) fetchAndRecord(ctx context.Context, c, original coordinate.ModuleCoordinate, lead *inflightFetch) (walkports.ModuleFetchResult, error) {
 	out := fetchOutcome{}
 	done := 0
 	settled := false
@@ -170,7 +178,7 @@ func (r *recordingFetcher) fetchAndRecord(ctx context.Context, c coordinate.Modu
 		slog.String("walk.target", r.walkTarget.String()),
 	)
 
-	fr, err := r.callWithRecover(ctx, c)
+	fr, err := r.callWithRecover(ctx, c, original)
 	dur := lap.Elapsed().Milliseconds()
 
 	out = fetchOutcome{
@@ -216,7 +224,7 @@ func (r *recordingFetcher) fetchAndRecord(ctx context.Context, c coordinate.Modu
 // callWithRecover invokes the inner fetcher and converts any panic into a
 // *panicError so it propagates as a regular fetch error (with stack info)
 // instead of crashing the walk.
-func (r *recordingFetcher) callWithRecover(ctx context.Context, c coordinate.ModuleCoordinate) (fr walkports.ModuleFetchResult, err error) {
+func (r *recordingFetcher) callWithRecover(ctx context.Context, c, original coordinate.ModuleCoordinate) (fr walkports.ModuleFetchResult, err error) {
 	defer func() {
 		if rec := recover(); rec != nil {
 			stack := debug.Stack()
@@ -230,7 +238,7 @@ func (r *recordingFetcher) callWithRecover(ctx context.Context, c coordinate.Mod
 			err = &panicError{msg: msg}
 		}
 	}()
-	fr, err = r.inner.EnsureFetched(ctx, c)
+	fr, err = r.inner.EnsureFetchedReplacing(ctx, c, original)
 	if err != nil {
 		return fr, fmt.Errorf("inner fetcher: %w", err)
 	}

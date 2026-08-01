@@ -29,6 +29,8 @@ in addition to the flat component list, carries:
   ID are aggregated into one entry whose `affects` names every module the ID applies
   to. See below for how a retracted advisory is represented.
 - **A scope statement**, whenever a `vulnerabilities` list is emitted. See below.
+- **A vendor scope statement**, whenever the walk was rooted at a project that
+  carries a `vendor/` tree. See below.
 
 ### What the vulnerability list does and does not claim
 
@@ -69,6 +71,42 @@ Three decisions are deliberate:
 An `annotation` rather than a `metadata` property because metadata is where a
 reader looking at a vulnerability is not; the `subjects` link resolves from the
 entry itself.
+
+### What the document covers of a vendored tree
+
+When the walk records a project root holding a `vendor/` tree, the document
+carries a vendor scope annotation:
+
+```json
+{
+  "annotations": [{
+    "bom-ref": "kanonarion:vendor-scope",
+    "annotator": { "component": { "type": "application", "name": "kanonarion" } },
+    "text": "Scope of this document against the project's vendored tree: vendor/modules.txt lists 133 module(s); this document describes 126 of them. The 7 it does not describe, and why: example.com/mod v1.35.0 — contributes no package to the build; ... A package line is a package `go mod vendor` wrote under the module heading across all build constraints; it is not a count of what this build compiles."
+  }]
+}
+```
+
+The annotation is emitted whenever a tree was read, full coverage included; a
+fully covered tree reads `Every module in the vendored tree is described here.`
+It is absent when the walk records no project root, the project carries no
+`vendor/` tree, or the tree could not be read.
+
+A module `vendor/modules.txt` names with no package line under it is listed as
+contributing no package to the build. A module that does carry package lines is
+listed with the number of lines counted, and the statement says what a line is:
+`go mod vendor` writes one for every package reachable under **any** build
+constraint, so a non-zero count does not assert the module is compiled here.
+
+A module replaced by a fork counts as described under either coordinate — the
+original path `go mod vendor` files it under, or the replacement the build list
+names.
+
+With `--package`, the statement records that the component list is scoped to one
+binary's import closure, so a reader can tell a deliberately narrower subject
+from a gap.
+
+The same statement is reported by [`kanonarion vendor`](vendor.md#scope-statement).
 
 ### Retracted (withdrawn) advisories
 

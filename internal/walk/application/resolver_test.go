@@ -2155,3 +2155,9 @@ replace example.com/forked => example.com/fork v1.2.0
 		t.Errorf("collapsed node must keep OriginalCoordinate so scope filters match either identity, got %+v", forks[0])
 	}
 }
+
+// EnsureFetchedReplacing delegates: this fake has no replace-aware behaviour of
+// its own, so a replaced module is fetched exactly like an unreplaced one.
+func (f *fakeModuleFetcher) EnsureFetchedReplacing(ctx context.Context, c, _ coordinate.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
+	return f.EnsureFetched(ctx, c)
+}

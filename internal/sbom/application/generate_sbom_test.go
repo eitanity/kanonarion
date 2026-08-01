@@ -148,9 +148,11 @@ type fakeSBOMGenerator struct {
 	capturedNodes    []walkdomain.GraphNode
 	capturedEdges    []walkdomain.GraphEdge
 	capturedLicenses map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord
+	capturedReq      ports.GenerateRequest
 }
 
-func (f *fakeSBOMGenerator) Generate(_ context.Context, walk walkdomain.WalkRecord, licenses map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord, _ []vulndomain.VulnerabilityRecord, _ ports.GenerateRequest) (domain.SBOMRecord, error) {
+func (f *fakeSBOMGenerator) Generate(_ context.Context, walk walkdomain.WalkRecord, licenses map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord, _ []vulndomain.VulnerabilityRecord, req ports.GenerateRequest) (domain.SBOMRecord, error) {
+	f.capturedReq = req
 	f.capturedNodes = walk.Graph.Nodes
 	f.capturedEdges = walk.Graph.Edges
 	f.capturedLicenses = licenses

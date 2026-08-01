@@ -320,3 +320,27 @@ func TestEnsureFetchedFromPath_LocalVersionZipUsesLocalPrefix(t *testing.T) {
 		}
 	}
 }
+
+// TestEnsureFetchedFromPath_StatesThatNoChecksumWasAvailable: a filesystem
+// source has no go.sum entry by construction — the toolchain writes a checksum
+// for a module it downloads, never for one it reads off disk. The record says
+// so, so a local-path replacement reads as an unavailability rather than as a
+// check that quietly passed.
+func TestEnsureFetchedFromPath_StatesThatNoChecksumWasAvailable(t *testing.T) {
+	dir := t.TempDir()
+	coord := coordinatetest.MustNew("example.com/local", "v1.0.0")
+	writeLocalModule(t, dir, coord.Path(), coord.Version())
+	f := localfs.New(newFakeBlob(), newFakeFacts(), fixedClock{t: time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)})
+
+	res, err := f.EnsureFetchedFromPath(context.Background(), coord, dir)
+	if err != nil {
+		t.Fatalf("EnsureFetchedFromPath: %v", err)
+	}
+	rec := res.Record
+	if rec.VerificationStatus != string(fetchdomain.LocalSource) {
+		t.Errorf("VerificationStatus = %q, want LocalSource", rec.VerificationStatus)
+	}
+	if !strings.Contains(rec.VerificationDetail, "no checksum is available") {
+		t.Errorf("VerificationDetail %q does not state that no checksum was available", rec.VerificationDetail)
+	}
+}
