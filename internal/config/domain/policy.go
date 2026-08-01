@@ -16,10 +16,19 @@ type PolicyEvaluation struct {
 	// None/Multiple/ExtractionFailed/Cancelled, with no override. Such a
 	// result must never be presented as a clean allow without this flag
 	Uncertain bool
-	// Blocking is true when Uncertain and the scope's UnknownLicensePolicy
-	// is "block" — a hard compliance failure the caller (audit) must
-	// surface with a non-zero exit.
+	// Blocking is true when the result must fail the run: an Uncertain
+	// evaluation under an UnknownLicensePolicy of "block", or an Unevaluated
+	// gate (no rule for the scope) — either way the caller (audit) must
+	// surface it with a non-zero exit.
 	Blocking bool
+	// Unevaluated is true when the (normalised) scope matched no policy rule:
+	// the gate evaluated nothing, which must never read as an allow. When set,
+	// RuleScopes names the scopes that do carry rules so the remedy is visible
+	// without reading the config file.
+	Unevaluated bool
+	// RuleScopes lists the scopes the policy has rules for, populated when
+	// Unevaluated is true.
+	RuleScopes []string
 }
 
 // resolveUnknownLicense returns the effective UnknownLicensePolicy for the
@@ -82,8 +91,8 @@ func (p LicensePolicy) categoryFor(license string) string {
 }
 
 // ruleForScope returns the rule matching the (normalised) scope and whether one
-// was found. When no rule exists for a scope, callers treat the result as an
-// implicit allow.
+// was found. When no rule exists for a scope, EvaluateLicense reports the gate
+// as unevaluated — never an implicit allow.
 func (p LicensePolicy) ruleForScope(scope string) (LicensePolicyRule, bool) {
 	for _, r := range p.Rules {
 		if r.Scope == scope {
@@ -91,6 +100,17 @@ func (p LicensePolicy) ruleForScope(scope string) (LicensePolicyRule, bool) {
 		}
 	}
 	return LicensePolicyRule{}, false
+}
+
+// ruleScopes returns the sorted list of scopes that carry a rule, so an
+// unevaluated result can name where rules do exist.
+func (p LicensePolicy) ruleScopes() []string {
+	scopes := make([]string, 0, len(p.Rules))
+	for _, r := range p.Rules {
+		scopes = append(scopes, r.Scope)
+	}
+	sort.Strings(scopes)
+	return scopes
 }
 
 // resolveOutcome maps a category onto its outcome under a single rule.
@@ -122,8 +142,13 @@ func (r LicensePolicyRule) resolveOutcome(category string) PolicyOutcome {
 // Resolution order:
 // 1. The scope is normalised ("" → production, "test" → tool).
 // 2. The license is mapped to a category (deterministic on collision).
-// 3. The rule for the scope is selected; when no rule exists for the scope
-// the outcome is an implicit allow.
+// 3. The rule for the scope is selected. When no rule exists for the scope
+// the gate has nothing to evaluate: the result is Unevaluated and Blocking —
+// never an implicit allow, which would be indistinguishable from a licence
+// that was evaluated and permitted. RuleScopes names where rules do exist.
+// (The CLI translates its walk scopes onto policy scopes before calling, so
+// this is a guard against a misconfigured or hand-rolled policy, not a path
+// a shipped command reaches.)
 // 4. The category is resolved against the rule's allow/notify/warn lists,
 // falling back to the rule's default (absent default → allow). An unknown
 // license (no category) likewise resolves to the rule's default.
@@ -135,6 +160,21 @@ func (p LicensePolicy) EvaluateLicense(license, scope string) PolicyEvaluation {
 	effScope := normaliseScope(scope)
 	category := p.categoryFor(license)
 	rule, found := p.ruleForScope(effScope)
+
+	// Unmatched scope: no rule means nothing was measured, and a gate that
+	// measured nothing must not pass. Determined and undetermined licences
+	// alike land here — the gap is the scope's, not the licence's.
+	if !found {
+		return PolicyEvaluation{
+			License:     license,
+			Category:    category,
+			Scope:       effScope,
+			Outcome:     PolicyOutcomeUnevaluated,
+			Blocking:    true,
+			Unevaluated: true,
+			RuleScopes:  p.ruleScopes(),
+		}
+	}
 
 	// Undetermined license: the detector resolved no SPDX at all. This is
 	// the uncertainty case — treat it explicitly, never as the
@@ -152,14 +192,6 @@ func (p LicensePolicy) EvaluateLicense(license, scope string) PolicyEvaluation {
 		}
 	}
 
-	if !found {
-		return PolicyEvaluation{
-			License:  license,
-			Category: category,
-			Scope:    effScope,
-			Outcome:  PolicyOutcomeAllow,
-		}
-	}
 	return PolicyEvaluation{
 		License:  license,
 		Category: category,

@@ -54,9 +54,14 @@ custody — `VerifiedGoDevChecksum` when the canonical `go{VERSION}.src.tar.gz`
 acquired from `go.dev/dl` matched Go's published checksum — which is deliberately
 distinct from the module sumdb statuses (it is a published checksum plus a
 `go.googlesource.com/go` tag/commit, never a `go.sum` entry). Its **License** is
-`BSD-3-Clause` extracted from the tarball's `LICENSE` file. On a fully offline
-run (`--from-modcache`) the chain cannot be established and the row reads
-`(custody unavailable)`. See [SBOM standard-library chain of
+`BSD-3-Clause` extracted from the tarball's `LICENSE` file (licence source
+`stdlib-tarball`). On a fully offline run (`--from-modcache`) the custody chain
+cannot be established and the Verification column reads `(custody
+unavailable)`; the licence column then reports the published `BSD-3-Clause`
+constant labelled `stdlib-known` / status `Known` — the same answer the SBOM
+and `license-compat` give for the same node, stated as knowledge rather than
+extracted evidence, so the stdlib is never carried as an unknown-licence gap
+while the custody gap itself stays visible. See [SBOM standard-library chain of
 custody](sbom.md#standard-library-chain-of-custody) for the full evidence set.
 
 Its **Vulnerability** column is **call-graph-analysed against the build
@@ -260,11 +265,29 @@ whose request failed).
 
 ### The unknown-licence gate
 
-`audit` is where the licence policy is enforced. A dependency whose licence
+`audit` is where the licence policy is enforced. The walk scope and the policy
+scope are different vocabularies - walks name dependency sets (`code` / `tool`
+/ `complete`), the policy names rule domains (`production` / `tool`) - so
+`audit` translates at the boundary before evaluating: `code` and `complete`
+are production dependency sets and evaluate under the `production` rule;
+`--tool` evaluates under `tool`. A policy scope that matches no rule is never
+an implicit allow: the gate reports itself **unevaluated** - naming the scope
+in force and the scopes that do carry rules - and exits `5`, because a gate
+that measured nothing must not pass.
+
+A dependency whose licence
 could not be resolved to any SPDX identifier is **undetermined**, and
 undetermined is governed by `license_policy.rules[].unknown_license` - not by
 the rule's `default`. When that key resolves to `block` for the module's scope,
 `audit` prints the full table and then exits `5`, naming every blocked module.
+
+A `Multiple` licence status - detection found more than one licence identity,
+e.g. a dual-licensed module - is an open item under every scope: no rule can
+allow it, so the row is carried as unresolved (uncertainty `multiple`) and
+governed by the same unknown-licence key until an operator records the
+resolution (for a dual licence, the elected arm) as a `license_overrides`
+entry. The primary SPDX stays visible in the licence column as display
+information; it is not a resolution.
 
 Left unset the key resolves to `block` for `scope: production` and `warn` for
 every other scope, so an undetermined dependency fails a production audit

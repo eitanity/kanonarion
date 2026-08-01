@@ -23,6 +23,12 @@ const (
 	PolicyOutcomeNotify PolicyOutcome = "notify"
 	// PolicyOutcomeWarn means the license requires attention before use.
 	PolicyOutcomeWarn PolicyOutcome = "warn"
+	// PolicyOutcomeUnevaluated means the gate ran no rule at all: the scope in
+	// force matched no license_policy rule, so nothing was measured. It is an
+	// evaluation result only — never a valid outcome in a configured rule —
+	// and callers must treat it as non-passing, since an unevaluated gate that
+	// exits clean is indistinguishable from one that evaluated and permitted.
+	PolicyOutcomeUnevaluated PolicyOutcome = "unevaluated"
 )
 
 // UnknownLicensePolicy governs how an *undetermined* license is treated
@@ -106,7 +112,8 @@ type LicensePolicy struct {
 // LicensePolicyRule maps category names to outcomes for a given dependency scope.
 // Categories not listed in Allow, Notify, or Warn resolve to Default.
 // When Default is empty (unset), it resolves to PolicyOutcomeAllow.
-// The same implicit allow applies when no rule exists for a scope.
+// A scope with no rule at all is different: the gate is unevaluated there and
+// EvaluateLicense reports it as blocking, never as an implicit allow.
 type LicensePolicyRule struct {
 	Scope   string        // "production" | "tool" | "test"
 	Allow   []string      // category names with outcome allow

@@ -608,17 +608,21 @@ func unmarshalNodeResult(coord coordinate.ModuleCoordinate, entry canonicalNodeE
 	return nr, nil
 }
 
+// marshalCompositeFetch is a seam over fetch/domain's composite marshalling.
+// Its error path only fires if fetch/domain's own marshal-failure guard fires,
+// which is proven unreachable with real FactRecord data (no
+// float/unsupported-type fields) and reachable there only via that package's
+// unexported test seam — so this seam exists to prove the propagation through
+// canonicalNodeResults and SetContentHash without deleting the guard or
+// adding permanent public API to fetch/domain.
+var marshalCompositeFetch = func(r fetchdomain.CompositeRecord) ([]byte, error) {
+	return fetchdomain.CanonicalHasher{}.MarshalComposite(r)
+}
+
 func toCanonicalNodeEntry(coord coordinate.ModuleCoordinate, r NodeResult) (canonicalNodeEntry, error) {
 	var fetchRaw json.RawMessage
 	if r.FetchRecord != nil {
-		// This error path (and its propagation up through canonicalNodeResults
-		// and SetContentHash) is untested: it only fires if fetch/domain's own
-		// marshal-failure guard fires, which is already proven unreachable with
-		// real FactRecord data (no float/unsupported-type fields), and fetch's
-		// test-only seam for it (canonicalMarshal) is invisible outside that
-		// package — reaching it from here would require permanent, production
-		// public API on fetch/domain for a branch nothing can currently trigger.
-		b, err := fetchdomain.CanonicalHasher{}.MarshalComposite(*r.FetchRecord)
+		b, err := marshalCompositeFetch(*r.FetchRecord)
 		if err != nil {
 			return canonicalNodeEntry{}, fmt.Errorf("marshalling fetch record: %w", err)
 		}

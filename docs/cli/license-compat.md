@@ -133,6 +133,27 @@ the field existed.
 GPL component inside an otherwise-permissive module will therefore surface as a
 conflict even when the module root is Apache-2.0 or MIT.
 
+The one exception is a **dual-licensed root**: a record whose expression is a
+pure disjunction (`Apache-2.0 OR GPL-3.0`) offers an election, so its arms are
+evaluated per election rather than as independent obligations — treating each
+arm as if it applied unconditionally would turn an electable module into a
+false incompatibility. The outcomes:
+
+- **every arm compatible** — settled compatible whichever arm is elected; no
+  open item;
+- **some arm compatible** — verdict `electable` (kind `election_required`):
+  the module is compatible *if* a compatible arm is elected. The election is
+  an operator decision, never resolved silently: record the elected arm as a
+  `license_overrides` entry for the module and re-run. Pending elections exit
+  `2` (review), like unknown pairs;
+- **no arm compatible** — incompatible (or unknown-pair review when an arm is
+  unmodelled) whichever arm is elected.
+
+Embedded component licences are not part of the election — they apply
+regardless of which root arm is elected. A `license_overrides` entry (the
+recorded election, or any operator correction) replaces the scanner's record
+for that module wholesale.
+
 **Notice generator** (`notice`): embedded component licence texts are reproduced
 in a separate "Embedded component" section after the module's root licence text.
 See [`notice`](notice.md) for the output format.

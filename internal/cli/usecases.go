@@ -105,7 +105,7 @@ type GenerateNoticeUseCase interface {
 
 // CheckCompatibilityUseCase is the interface for the license compatibility engine.
 type CheckCompatibilityUseCase interface {
-	CheckCompatibilityForWalk(ctx context.Context, walkID string, root coordinate.ModuleCoordinate, targetSPDX string) (licensedomain.ClosureCompatibilityReport, error)
+	CheckCompatibilityForWalk(ctx context.Context, walkID string, root coordinate.ModuleCoordinate, targetSPDX string, overrides licensedomain.LicenseOverrideSet) (licensedomain.ClosureCompatibilityReport, error)
 }
 
 // DiffLicenseUseCase is the interface for diffing two stored license records.

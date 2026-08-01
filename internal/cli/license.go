@@ -33,8 +33,11 @@ func newLicenseCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f licenseFlags
 
 	cmd := &cobra.Command{
-		Use:   "license <module>@<version>",
-		Short: "Extract and persist license information for a Go module",
+		Use: "license <module>@<version>",
+		// The docs and the store speak British English; accept both spellings so
+		// neither the documented form nor the SPDX-conventional one is wrong.
+		Aliases: []string{"licence"},
+		Short:   "Extract and persist license information for a Go module",
 		Example: `  kanonarion license github.com/spf13/cobra@v1.8.1
   kanonarion license github.com/spf13/cobra@v1.8.1 --json
   kanonarion license github.com/spf13/cobra@v1.8.1 --force`,
@@ -262,10 +265,21 @@ func printLicenseRecord(r domain.LicenseRecord, fromCache bool, jsonOut bool, st
 		type licenseRecordWithObligations struct {
 			domain.LicenseRecord
 			Obligations domain.Obligations `json:"obligations"`
+			// ElectiveObligations carries per-arm obligations when the
+			// expression is a disjunction (a dual licence): the obligations in
+			// force are those of the arm the consumer elects, an operator
+			// decision recorded via license_overrides — never resolved here.
+			ElectiveObligations map[string]domain.Obligations `json:"elective_obligations,omitempty"`
 		}
 		out := licenseRecordWithObligations{
 			LicenseRecord: r,
 			Obligations:   domain.LookupObligations(r.PrimarySPDX),
+		}
+		if arms := domain.DisjunctionArms(r.Expression); len(arms) >= 2 {
+			out.ElectiveObligations = make(map[string]domain.Obligations, len(arms))
+			for _, arm := range arms {
+				out.ElectiveObligations[arm] = domain.LookupObligations(arm)
+			}
 		}
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
@@ -315,7 +329,44 @@ func printLicenseRecord(r domain.LicenseRecord, fromCache bool, jsonOut bool, st
 	if err := printProvenanceSection(r, stdout); err != nil {
 		return err
 	}
+	// A dual licence (disjunctive expression) has no single obligation set:
+	// the obligations in force are those of the elected arm, so each arm is
+	// rendered per election rather than asserting the primary's obligations —
+	// which would claim, e.g., GPL disclose-source of a consumer electing the
+	// Apache arm.
+	if arms := domain.DisjunctionArms(r.Expression); len(arms) >= 2 {
+		return printElectiveObligationsSection(arms, stdout)
+	}
 	return printObligationsSection(r.PrimarySPDX, stdout)
+}
+
+// printElectiveObligationsSection renders per-arm obligations for a
+// dual-licensed module and names the election as an operator decision.
+func printElectiveObligationsSection(arms []string, stdout io.Writer) error {
+	if _, err := fmt.Fprintln(stdout, "  dual licence: obligations depend on the elected arm — the election is an"); err != nil {
+		return fmt.Errorf("writing elective obligations header: %w", err)
+	}
+	if _, err := fmt.Fprintln(stdout, "  operator decision, recorded as a license_overrides entry for this module"); err != nil {
+		return fmt.Errorf("writing elective obligations header: %w", err)
+	}
+	for _, arm := range arms {
+		ob := domain.LookupObligations(arm)
+		if ob.Status == domain.ObligationStatusUnknown {
+			if _, err := fmt.Fprintf(stdout, "  obligations if %s is elected: unknown (%s not in catalogue v%s)\n",
+				arm, arm, domain.ObligationCatalogueVersion); err != nil {
+				return fmt.Errorf("writing obligations: %w", err)
+			}
+			continue
+		}
+		if _, err := fmt.Fprintf(stdout, "  obligations if %s is elected (catalogue v%s):\n",
+			arm, domain.ObligationCatalogueVersion); err != nil {
+			return fmt.Errorf("writing obligations header: %w", err)
+		}
+		if err := printObligationRows(ob, stdout); err != nil {
+			return err
+		}
+	}
+	return nil
 }
 
 func printPackageLicensesSection(r domain.LicenseRecord, stdout io.Writer) error {
@@ -355,6 +406,12 @@ func printObligationsSection(spdxID string, stdout io.Writer) error {
 		spdxID, domain.ObligationCatalogueVersion); err != nil {
 		return fmt.Errorf("writing obligations header: %w", err)
 	}
+	return printObligationRows(ob, stdout)
+}
+
+// printObligationRows renders the labelled obligation rows shared by the
+// single-licence and per-election obligation sections.
+func printObligationRows(ob domain.Obligations, stdout io.Writer) error {
 	rows := []struct {
 		label string
 		value string
@@ -498,8 +555,9 @@ func newLicenseListCmd(stdout, stderr io.Writer) *cobra.Command {
 	var limit int
 
 	cmd := &cobra.Command{
-		Use:   "license-list",
-		Short: "List extracted license records",
+		Use:     "license-list",
+		Aliases: []string{"licence-list"},
+		Short:   "List extracted license records",
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)

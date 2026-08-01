@@ -231,3 +231,97 @@ func TestCopyleftStrengthOf_KnownLicenses(t *testing.T) {
 		}
 	}
 }
+
+// -- dual-licence election ---------------------------------------------------
+
+func electiveInput(path, version string, arms ...string) domain.CompatibilityInput {
+	return domain.CompatibilityInput{ModulePath: path, ModuleVersion: version, ElectiveArms: arms}
+}
+
+// TestCheckClosureCompatibility_ElectableIsOpenNotIncompatible guards the
+// dual-licence rule: a module offering a compatible election is not a
+// conflict, but the election is a human decision — the entry surfaces as
+// electable with the compatible arms named, and the closure is not clean.
+func TestCheckClosureCompatibility_ElectableIsOpenNotIncompatible(t *testing.T) {
+	report := domain.CheckClosureCompatibility(
+		[]domain.CompatibilityInput{electiveInput("example.com/dual", "v1.0.0", "Apache-2.0", "GPL-3.0-only")},
+		"Apache-2.0",
+	)
+	if report.Clean {
+		t.Fatal("a pending election must not report clean")
+	}
+	if len(report.Conflicts) != 1 {
+		t.Fatalf("conflicts = %d, want 1", len(report.Conflicts))
+	}
+	c := report.Conflicts[0]
+	if c.Verdict != domain.VerdictElectable {
+		t.Errorf("verdict = %v, want electable", c.Verdict)
+	}
+	if c.Kind != domain.ConflictElectionRequired {
+		t.Errorf("kind = %v, want election_required", c.Kind)
+	}
+	if c.DepSPDX != "Apache-2.0 OR GPL-3.0-only" {
+		t.Errorf("DepSPDX = %q, want the full disjunction", c.DepSPDX)
+	}
+	if len(c.ElectableArms) != 1 || c.ElectableArms[0] != "Apache-2.0" {
+		t.Errorf("ElectableArms = %v, want [Apache-2.0]", c.ElectableArms)
+	}
+}
+
+// TestCheckClosureCompatibility_AllArmsCompatibleIsSettled guards that a
+// disjunction whose every arm is compatible is settled compatible: whichever
+// arm is elected the answer is the same, so no open item is raised.
+func TestCheckClosureCompatibility_AllArmsCompatibleIsSettled(t *testing.T) {
+	report := domain.CheckClosureCompatibility(
+		[]domain.CompatibilityInput{electiveInput("example.com/dual", "v1.0.0", "Apache-2.0", "MIT")},
+		"Apache-2.0",
+	)
+	if !report.Clean {
+		t.Errorf("all-compatible arms should settle clean, got conflicts %v", report.Conflicts)
+	}
+}
+
+// TestCheckClosureCompatibility_NoCompatibleArmIsIncompatible guards that a
+// disjunction with no compatible arm conflicts whichever arm is elected.
+func TestCheckClosureCompatibility_NoCompatibleArmIsIncompatible(t *testing.T) {
+	report := domain.CheckClosureCompatibility(
+		[]domain.CompatibilityInput{electiveInput("example.com/dual", "v1.0.0", "AGPL-3.0-only", "GPL-3.0-only")},
+		"MIT",
+	)
+	if len(report.Conflicts) != 1 {
+		t.Fatalf("conflicts = %d, want 1", len(report.Conflicts))
+	}
+	c := report.Conflicts[0]
+	if c.Verdict != domain.VerdictIncompatible {
+		t.Errorf("verdict = %v, want incompatible (every election conflicts)", c.Verdict)
+	}
+	if len(c.ElectableArms) != 0 {
+		t.Errorf("ElectableArms = %v, want none", c.ElectableArms)
+	}
+}
+
+// TestCheckClosureCompatibility_UnknownArmWithoutCompatibleIsReview guards
+// that with no compatible arm and an unmodelled one, the answer is review —
+// never a silent compatible, never a hard incompatible the dataset cannot back.
+func TestCheckClosureCompatibility_UnknownArmWithoutCompatibleIsReview(t *testing.T) {
+	report := domain.CheckClosureCompatibility(
+		[]domain.CompatibilityInput{electiveInput("example.com/dual", "v1.0.0", "GPL-3.0-only", "Weird-1.0")},
+		"MIT",
+	)
+	if len(report.Conflicts) != 1 {
+		t.Fatalf("conflicts = %d, want 1", len(report.Conflicts))
+	}
+	if report.Conflicts[0].Verdict != domain.VerdictUnknownPair {
+		t.Errorf("verdict = %v, want unknown_pair", report.Conflicts[0].Verdict)
+	}
+}
+
+// TestVerdictAndKindStrings_Electable pins the wire words for the new verdict.
+func TestVerdictAndKindStrings_Electable(t *testing.T) {
+	if got := domain.VerdictElectable.String(); got != "electable" {
+		t.Errorf("VerdictElectable.String() = %q, want electable", got)
+	}
+	if got := domain.ConflictElectionRequired.String(); got != "election_required" {
+		t.Errorf("ConflictElectionRequired.String() = %q, want election_required", got)
+	}
+}

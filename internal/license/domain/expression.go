@@ -76,6 +76,33 @@ func DeriveExpression(entries []LicenseFileEntry) string {
 	return strings.Join(distinct, " AND ")
 }
 
+// DisjunctionArms returns the distinct arms of a purely disjunctive SPDX
+// expression ("A OR B", "A OR B OR C"): the licences the consumer may elect
+// between. It returns nil for an empty expression, a single identifier, or an
+// expression carrying any non-OR operator (AND/WITH) — those are conjunctive
+// obligations, not an election.
+func DisjunctionArms(expr string) []string {
+	if expr == "" || strings.Contains(expr, " AND ") || strings.Contains(expr, " WITH ") {
+		return nil
+	}
+	parts := strings.Split(expr, " OR ")
+	seen := make(map[string]bool, len(parts))
+	arms := make([]string, 0, len(parts))
+	for _, p := range parts {
+		p = strings.TrimSpace(p)
+		if p == "" || seen[p] {
+			continue
+		}
+		seen[p] = true
+		arms = append(arms, p)
+	}
+	if len(arms) < 2 {
+		return nil
+	}
+	sort.Strings(arms)
+	return arms
+}
+
 // buildORExpression constructs "primary OR alt1 OR alt2..." sorted and deduped.
 func buildORExpression(primary string, alts []AltMatch) string {
 	seen := map[string]bool{primary: true}
@@ -91,8 +118,14 @@ func buildORExpression(primary string, alts []AltMatch) string {
 }
 
 // hasDualLicenseNaming reports whether any root entry uses a license file name
-// that indicates the module is dual-licensed (e.g. LICENSE-MIT, COPYING-BSD).
-// Modules with such names intend the consumer to select one license.
+// that indicates the module is dual-licensed. Modules with such names intend
+// the consumer to select one license. Three naming conventions signal this:
+// a stem-prefixed name (LICENSE-MIT, COPYING-BSD), the reversed form
+// (MIT-LICENSE, MIT-LICENSE.txt, GO-LICENSE), and a bare licence-name
+// shorthand (GPLv2, GPLv3, APLv2, APACHE-LICENSE-2.0) — each names the
+// specific licence the file grants, which is the per-licence naming a
+// dual-licensed module uses (gorhill/cronexpr ships APLv2 beside GPLv3;
+// sergi/go-diff ships APACHE-LICENSE-2.0 beside a plain MIT LICENSE).
 func hasDualLicenseNaming(entries []LicenseFileEntry) bool {
 	for _, e := range entries {
 		base := e.Path
@@ -100,8 +133,23 @@ func hasDualLicenseNaming(entries []LicenseFileEntry) bool {
 			base = e.Path[idx+1:]
 		}
 		upper := strings.ToUpper(base)
+		switch upper {
+		case "GPLV2", "GPLV3", "APLV2", "APACHE-LICENSE-2.0":
+			return true
+		}
 		for _, prefix := range []string{"LICENSE-", "LICENCE-", "COPYING-"} {
 			if strings.HasPrefix(upper, prefix) {
+				return true
+			}
+		}
+		// Reversed form: <NAME>-LICENSE[.ext] names the licence in NAME.
+		for _, stem := range []string{"LICENSE", "LICENCE"} {
+			idx := strings.Index(upper, "-"+stem)
+			if idx <= 0 {
+				continue
+			}
+			rest := upper[idx+1+len(stem):]
+			if rest == "" || strings.HasPrefix(rest, ".") {
 				return true
 			}
 		}

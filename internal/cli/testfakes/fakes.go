@@ -338,7 +338,7 @@ type FakeCheckCompatibility struct {
 	Err    error
 }
 
-func (f *FakeCheckCompatibility) CheckCompatibilityForWalk(_ context.Context, _ string, _ coordinate.ModuleCoordinate, _ string) (licensedomain.ClosureCompatibilityReport, error) {
+func (f *FakeCheckCompatibility) CheckCompatibilityForWalk(_ context.Context, _ string, _ coordinate.ModuleCoordinate, _ string, _ licensedomain.LicenseOverrideSet) (licensedomain.ClosureCompatibilityReport, error) {
 	return f.Report, f.Err
 }
 

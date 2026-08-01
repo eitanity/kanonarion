@@ -92,3 +92,22 @@ func TestModuleCoordinate_RoundTrip(t *testing.T) {
 		t.Errorf("round-trip: got %v, want %v", got, orig)
 	}
 }
+
+func TestWalkStatusUnmarshalJSON_NonString(t *testing.T) {
+	var s domain.WalkStatus
+	if err := s.UnmarshalJSON([]byte(`123`)); err == nil {
+		t.Error("UnmarshalJSON(123) = nil error, want failure for a non-string status")
+	}
+}
+
+func TestNodeStatusString_UnknownValue(t *testing.T) {
+	if got := domain.NodeStatus(99).String(); got != "NodeStatus(99)" {
+		t.Errorf("NodeStatus(99).String() = %q, want NodeStatus(99)", got)
+	}
+}
+
+func TestNodeStatusString_LocalReplace(t *testing.T) {
+	if got := domain.NodeLocalReplace.String(); got != "local_replace" {
+		t.Errorf("NodeLocalReplace.String() = %q, want local_replace", got)
+	}
+}

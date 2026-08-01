@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"strings"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -22,15 +23,17 @@ func newLicenseCompatCmd(stdout, stderr io.Writer) *cobra.Command {
 	var targetSPDX string
 
 	cmd := &cobra.Command{
-		Use:   "license-compat <module>@<version>",
-		Short: "Report license conflicts in a module's dependency closure",
+		Use:     "license-compat <module>@<version>",
+		Aliases: []string{"licence-compat"},
+		Short:   "Report license conflicts in a module's dependency closure",
 		Long: `Evaluates whether the dependency closure of <module>@<version> is
 redistributable under --target.
 
 Exit codes:
-  0  clean — no conflicts, no unknown pairs
+  0  clean — no conflicts, no unknown pairs, no elections pending
   1  conflicts — one or more deps are incompatible with the target license
-  2  unknown pairs — one or more dep licenses are not in the modelled dataset
+  2  unknown pairs or pending elections — dep licenses not in the modelled
+     dataset, or dual-licensed deps whose compatible arm has not been elected
      (requires human review; these are never silently "compatible")
   4  no walk record, or no licence record for the root — the diagnostic names
      the command that produces the missing record
@@ -93,7 +96,19 @@ func licenseCompatWith(ctx context.Context, ctr *Container, coord coordinate.Mod
 	}
 	walkID := summaries[0].ID
 
-	report, err := ctr.CheckCompatibility.CheckCompatibilityForWalk(ctx, walkID, coord, targetSPDX)
+	// license_overrides entries are the operator's recorded decisions —
+	// corrections and dual-licence elections — and must reach the engine so a
+	// recorded election settles the electable verdict. A container wired
+	// without the override store (seam tests) carries no decisions.
+	var overrides domain.LicenseOverrideSet
+	if ctr.LicenseOverrides != nil {
+		overrides, err = ctr.LicenseOverrides.LoadOverrides(ctx)
+		if err != nil {
+			return fmt.Errorf("loading license overrides: %w", err)
+		}
+	}
+
+	report, err := ctr.CheckCompatibility.CheckCompatibilityForWalk(ctx, walkID, coord, targetSPDX, overrides)
 	if err != nil {
 		// Implicit-target resolution failures get intent-aware diagnostics
 		// say what is missing and which command produces it.
@@ -135,6 +150,10 @@ func printCompatReportJSON(report domain.ClosureCompatibilityReport, stdout io.W
 		Target  string `json:"target_spdx"`
 		Verdict string `json:"verdict"`
 		Kind    string `json:"kind"`
+		// ElectableArms lists the compatible arms of a dual-licence
+		// disjunction (verdict "electable"): the module is compatible if one
+		// of these is elected via a license_overrides entry.
+		ElectableArms []string `json:"electable_arms,omitempty"`
 	}
 	type reportJSON struct {
 		TargetSPDX  string         `json:"target_spdx"`
@@ -151,12 +170,13 @@ func printCompatReportJSON(report domain.ClosureCompatibilityReport, stdout io.W
 	}
 	for _, c := range report.Conflicts {
 		out.Conflicts = append(out.Conflicts, conflictJSON{
-			Module:  c.ModulePath,
-			Version: c.ModuleVersion,
-			DepSPDX: c.DepSPDX,
-			Target:  c.TargetSPDX,
-			Verdict: c.Verdict.String(),
-			Kind:    c.Kind.String(),
+			Module:        c.ModulePath,
+			Version:       c.ModuleVersion,
+			DepSPDX:       c.DepSPDX,
+			Target:        c.TargetSPDX,
+			Verdict:       c.Verdict.String(),
+			Kind:          c.Kind.String(),
+			ElectableArms: c.ElectableArms,
 		})
 	}
 
@@ -175,11 +195,14 @@ func printCompatReportText(report domain.ClosureCompatibilityReport, root coordi
 		return
 	}
 
-	var incompatible, unknown []domain.CompatibilityConflict
+	var incompatible, unknown, electable []domain.CompatibilityConflict
 	for _, c := range report.Conflicts {
-		if c.Verdict == domain.VerdictUnknownPair {
+		switch c.Verdict {
+		case domain.VerdictUnknownPair:
 			unknown = append(unknown, c)
-		} else {
+		case domain.VerdictElectable:
+			electable = append(electable, c)
+		default:
 			incompatible = append(incompatible, c)
 		}
 	}
@@ -196,6 +219,18 @@ func printCompatReportText(report domain.ClosureCompatibilityReport, root coordi
 			_, _ = fmt.Fprintf(stdout, "  %-55s %s [%s]\n",
 				c.ModulePath+"@"+c.ModuleVersion, depSPDX, c.Kind.String())
 		}
+	}
+
+	if len(electable) > 0 {
+		_, _ = fmt.Fprintf(stdout, "\nElectable — dual-licensed, election pending (%d):\n", len(electable))
+		for _, c := range electable {
+			_, _ = fmt.Fprintf(stdout, "  %-55s %s\n",
+				c.ModulePath+"@"+c.ModuleVersion, c.DepSPDX)
+			_, _ = fmt.Fprintf(stdout, "  %-55s compatible if %s is elected\n",
+				"", strings.Join(c.ElectableArms, " or "))
+		}
+		_, _ = fmt.Fprintf(stdout, "\nAn election is an operator decision, not the tool's: record the elected\n")
+		_, _ = fmt.Fprintf(stdout, "arm as a license_overrides entry for the module, then re-run license-compat.\n")
 	}
 
 	if len(unknown) > 0 {
@@ -219,27 +254,38 @@ func printCompatReportText(report domain.ClosureCompatibilityReport, root coordi
 }
 
 // compatExitCode returns an exitError for non-clean reports. ExitPartial (1)
-// for confirmed incompatible pairs, ExitFailed (2) for unknown pairs.
+// for confirmed incompatible pairs, ExitFailed (2) for unknown pairs and for
+// dual-licence elections still pending — both require a human decision and are
+// never silently "compatible".
 func compatExitCode(report domain.ClosureCompatibilityReport) error {
 	if report.Clean {
 		return nil
 	}
 	hasIncompat := false
 	hasUnknown := false
+	hasElectable := false
 	for _, c := range report.Conflicts {
 		switch c.Verdict {
 		case domain.VerdictIncompatible:
 			hasIncompat = true
 		case domain.VerdictUnknownPair:
 			hasUnknown = true
+		case domain.VerdictElectable:
+			hasElectable = true
+		case domain.VerdictCompatible:
+			// Compatible entries never reach the conflict list.
 		}
 	}
-	// Unknown pairs take priority: they require human review, which is a
+	// Review items take priority: they require human review, which is a
 	// stronger signal than a confirmed incompatibility.
-	if hasUnknown {
+	switch {
+	case hasUnknown && hasElectable:
+		return &exitError{code: ExitFailed, msg: "closure has unmodelled license pairs and pending dual-licence elections requiring review"}
+	case hasUnknown:
 		return &exitError{code: ExitFailed, msg: "closure has unmodelled license pairs requiring review"}
-	}
-	if hasIncompat {
+	case hasElectable:
+		return &exitError{code: ExitFailed, msg: "closure has dual-licensed modules whose election is pending — record the elected arm via license_overrides"}
+	case hasIncompat:
 		return &exitError{code: ExitPartial, msg: "closure has license conflicts"}
 	}
 	return nil

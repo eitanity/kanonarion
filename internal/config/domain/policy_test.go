@@ -65,7 +65,11 @@ func TestEvaluateLicense_AbsentDefaultResolvesToAllow(t *testing.T) {
 	}
 }
 
-func TestEvaluateLicense_NoRuleForScopeIsImplicitAllow(t *testing.T) {
+// TestEvaluateLicense_NoRuleForScopeIsUnevaluated guards a scope that
+// matches no rule must never resolve to an implicit allow: the gate evaluated
+// nothing, so the result names itself unevaluated, blocks the run, and lists
+// the scopes that do carry rules so the remedy is visible.
+func TestEvaluateLicense_NoRuleForScopeIsUnevaluated(t *testing.T) {
 	p := LicensePolicy{
 		Categories: map[string][]string{"strong_copyleft": {"GPL-3.0-only"}},
 		Rules: []LicensePolicyRule{
@@ -73,11 +77,35 @@ func TestEvaluateLicense_NoRuleForScopeIsImplicitAllow(t *testing.T) {
 		},
 	}
 	got := p.EvaluateLicense("GPL-3.0-only", "tool")
-	if got.Outcome != PolicyOutcomeAllow {
-		t.Errorf("outcome = %q, want allow (no rule for scope)", got.Outcome)
+	if got.Outcome != PolicyOutcomeUnevaluated {
+		t.Errorf("outcome = %q, want unevaluated (no rule for scope)", got.Outcome)
+	}
+	if !got.Unevaluated {
+		t.Errorf("Unevaluated = false, want true")
+	}
+	if !got.Blocking {
+		t.Errorf("Blocking = false, want true (an unevaluated gate must not pass)")
 	}
 	if got.Category != "strong_copyleft" {
 		t.Errorf("category = %q, want strong_copyleft", got.Category)
+	}
+	if len(got.RuleScopes) != 1 || got.RuleScopes[0] != "production" {
+		t.Errorf("RuleScopes = %v, want [production]", got.RuleScopes)
+	}
+}
+
+// TestEvaluateLicense_UndeterminedLicenseUnmatchedScopeIsUnevaluated guards
+// that the unmatched-scope guard also covers an undetermined licence: the gap
+// is the scope's, and it must block rather than fall back to a scope default
+// that implies something was evaluated.
+func TestEvaluateLicense_UndeterminedLicenseUnmatchedScopeIsUnevaluated(t *testing.T) {
+	p := LicensePolicy{
+		Rules: []LicensePolicyRule{{Scope: "production"}},
+	}
+	got := p.EvaluateLicense("", "tool")
+	if !got.Unevaluated || !got.Blocking || got.Outcome != PolicyOutcomeUnevaluated {
+		t.Errorf("got unevaluated=%v blocking=%v outcome=%q, want unevaluated=true blocking=true outcome=unevaluated",
+			got.Unevaluated, got.Blocking, got.Outcome)
 	}
 }
 

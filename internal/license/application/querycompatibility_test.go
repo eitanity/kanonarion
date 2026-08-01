@@ -60,7 +60,7 @@ func TestCheckCompatibilityForWalk_WalkNotFound(t *testing.T) {
 		&compatFakeLicenseStore{},
 		&compatFakeWalkStore{walkErr: walkErr},
 	)
-	_, err := uc.CheckCompatibilityForWalk(context.Background(), "missing-walk", makeCoord("example.com/root", "v1.0.0"), "Apache-2.0")
+	_, err := uc.CheckCompatibilityForWalk(context.Background(), "missing-walk", makeCoord("example.com/root", "v1.0.0"), "Apache-2.0", domain.NewLicenseOverrideSet(nil))
 	if err == nil {
 		t.Fatal("expected error for missing walk, got nil (absence of walk must not produce a clean report)")
 	}
@@ -97,7 +97,7 @@ func TestCheckCompatibilityForWalk_PermissiveClosureIsClean(t *testing.T) {
 	}
 
 	uc := application.NewCheckCompatibilityUseCase(licStore, walkStore)
-	report, err := uc.CheckCompatibilityForWalk(context.Background(), "walk-1", root, "Apache-2.0")
+	report, err := uc.CheckCompatibilityForWalk(context.Background(), "walk-1", root, "Apache-2.0", domain.NewLicenseOverrideSet(nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -131,7 +131,7 @@ func TestCheckCompatibilityForWalk_GPLConflict(t *testing.T) {
 	}
 
 	uc := application.NewCheckCompatibilityUseCase(licStore, walkStore)
-	report, err := uc.CheckCompatibilityForWalk(context.Background(), "walk-2", root, "Apache-2.0")
+	report, err := uc.CheckCompatibilityForWalk(context.Background(), "walk-2", root, "Apache-2.0", domain.NewLicenseOverrideSet(nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -170,7 +170,7 @@ func TestCheckCompatibilityForWalk_UnextractedLicenseIsUnknown(t *testing.T) {
 	licStore := &compatFakeLicenseStore{records: map[string]domain.LicenseRecord{}}
 
 	uc := application.NewCheckCompatibilityUseCase(licStore, walkStore)
-	report, err := uc.CheckCompatibilityForWalk(context.Background(), "walk-3", root, "Apache-2.0")
+	report, err := uc.CheckCompatibilityForWalk(context.Background(), "walk-3", root, "Apache-2.0", domain.NewLicenseOverrideSet(nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -224,7 +224,7 @@ func TestCheckCompatibilityForWalk_EmbeddedGPLConflict(t *testing.T) {
 	}
 
 	uc := application.NewCheckCompatibilityUseCase(licStore, walkStore)
-	report, err := uc.CheckCompatibilityForWalk(context.Background(), "walk-5", root, "Apache-2.0")
+	report, err := uc.CheckCompatibilityForWalk(context.Background(), "walk-5", root, "Apache-2.0", domain.NewLicenseOverrideSet(nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -273,7 +273,7 @@ func TestCheckCompatibilityForWalk_ExpressionFallback(t *testing.T) {
 	}
 
 	uc := application.NewCheckCompatibilityUseCase(licStore, walkStore)
-	report, err := uc.CheckCompatibilityForWalk(context.Background(), "walk-6", root, "Apache-2.0")
+	report, err := uc.CheckCompatibilityForWalk(context.Background(), "walk-6", root, "Apache-2.0", domain.NewLicenseOverrideSet(nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -308,7 +308,7 @@ func TestCheckCompatibilityForWalk_EmptyRecord(t *testing.T) {
 	}
 
 	uc := application.NewCheckCompatibilityUseCase(licStore, walkStore)
-	report, err := uc.CheckCompatibilityForWalk(context.Background(), "walk-7", root, "Apache-2.0")
+	report, err := uc.CheckCompatibilityForWalk(context.Background(), "walk-7", root, "Apache-2.0", domain.NewLicenseOverrideSet(nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -347,7 +347,7 @@ func TestCheckCompatibilityForWalk_DeduplicatesWalkNodes(t *testing.T) {
 	}
 
 	uc := application.NewCheckCompatibilityUseCase(licStore, walkStore)
-	report, err := uc.CheckCompatibilityForWalk(context.Background(), "walk-4", root, "Apache-2.0")
+	report, err := uc.CheckCompatibilityForWalk(context.Background(), "walk-4", root, "Apache-2.0", domain.NewLicenseOverrideSet(nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -394,7 +394,7 @@ func TestCheckCompatibilityForWalk_EmptyTargetAdoptsRootLicence(t *testing.T) {
 	}}
 
 	uc := application.NewCheckCompatibilityUseCase(licStore, walkStore)
-	report, err := uc.CheckCompatibilityForWalk(context.Background(), "walk-1", root, "")
+	report, err := uc.CheckCompatibilityForWalk(context.Background(), "walk-1", root, "", domain.NewLicenseOverrideSet(nil))
 	if err != nil {
 		t.Fatalf("CheckCompatibilityForWalk: %v", err)
 	}
@@ -415,7 +415,7 @@ func TestCheckCompatibilityForWalk_EmptyTargetWithoutRootRecordErrs(t *testing.T
 		&compatFakeLicenseStore{},
 		&compatFakeWalkStore{},
 	)
-	_, err := uc.CheckCompatibilityForWalk(context.Background(), "walk-1", root, "")
+	_, err := uc.CheckCompatibilityForWalk(context.Background(), "walk-1", root, "", domain.NewLicenseOverrideSet(nil))
 	if !errors.Is(err, application.ErrRootLicenceNotAnalysed) {
 		t.Fatalf("expected ErrRootLicenceNotAnalysed, got %v", err)
 	}
@@ -435,7 +435,7 @@ func TestCheckCompatibilityForWalk_EmptyTargetWithUnclassifiedRootErrs(t *testin
 		},
 	}}
 	uc := application.NewCheckCompatibilityUseCase(licStore, &compatFakeWalkStore{})
-	_, err := uc.CheckCompatibilityForWalk(context.Background(), "walk-1", root, "")
+	_, err := uc.CheckCompatibilityForWalk(context.Background(), "walk-1", root, "", domain.NewLicenseOverrideSet(nil))
 	if !errors.Is(err, application.ErrRootLicenceNoSPDX) {
 		t.Fatalf("expected ErrRootLicenceNoSPDX, got %v", err)
 	}
@@ -471,7 +471,7 @@ func TestCheckCompatibilityForWalk_StdlibLicenceComesFromNodeFacts(t *testing.T)
 	licStore := &compatFakeLicenseStore{records: map[string]domain.LicenseRecord{}}
 
 	uc := application.NewCheckCompatibilityUseCase(licStore, walkStore)
-	report, err := uc.CheckCompatibilityForWalk(context.Background(), "walk-stdlib", root, "Apache-2.0")
+	report, err := uc.CheckCompatibilityForWalk(context.Background(), "walk-stdlib", root, "Apache-2.0", domain.NewLicenseOverrideSet(nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -502,7 +502,7 @@ func TestCheckCompatibilityForWalk_StdlibWithoutFactsUsesKnownConstant(t *testin
 	licStore := &compatFakeLicenseStore{records: map[string]domain.LicenseRecord{}}
 
 	uc := application.NewCheckCompatibilityUseCase(licStore, walkStore)
-	report, err := uc.CheckCompatibilityForWalk(context.Background(), "walk-stdlib-legacy", root, "Apache-2.0")
+	report, err := uc.CheckCompatibilityForWalk(context.Background(), "walk-stdlib-legacy", root, "Apache-2.0", domain.NewLicenseOverrideSet(nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -538,7 +538,7 @@ func TestCheckCompatibilityForWalk_StdlibResolutionDoesNotCoverThirdParty(t *tes
 	licStore := &compatFakeLicenseStore{records: map[string]domain.LicenseRecord{}}
 
 	uc := application.NewCheckCompatibilityUseCase(licStore, walkStore)
-	report, err := uc.CheckCompatibilityForWalk(context.Background(), "walk-mixed", root, "Apache-2.0")
+	report, err := uc.CheckCompatibilityForWalk(context.Background(), "walk-mixed", root, "Apache-2.0", domain.NewLicenseOverrideSet(nil))
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -554,5 +554,153 @@ func TestCheckCompatibilityForWalk_StdlibResolutionDoesNotCoverThirdParty(t *tes
 	}
 	if c.DepSPDX != "" {
 		t.Errorf("undetermined module reported SPDX %q, want empty", c.DepSPDX)
+	}
+}
+
+// TestCheckCompatibilityForWalk_DualLicenceIsElectableNotIncompatible guards
+// that a dep whose record carries a disjunctive expression (a dual licence,
+// e.g. cronexpr's Apache-2.0 OR GPL-3.0) is evaluated per election: the GPL
+// arm alone must not turn an electable module into a false incompatibility.
+func TestCheckCompatibilityForWalk_DualLicenceIsElectableNotIncompatible(t *testing.T) {
+	t.Parallel()
+	root := makeCoord("example.com/root", "v1.0.0")
+	dual := makeCoord("example.com/dual", "v1.0.0")
+
+	walkStore := &compatFakeWalkStore{
+		walk: walkdomain.WalkRecord{
+			ID: "walk-dual",
+			Graph: walkdomain.Graph{
+				Nodes: []walkdomain.GraphNode{
+					{Coordinate: root},
+					{Coordinate: dual},
+				},
+			},
+		},
+	}
+	licStore := &compatFakeLicenseStore{
+		records: map[string]domain.LicenseRecord{
+			"example.com/dual@v1.0.0": {
+				PrimarySPDX:   "GPL-3.0-only",
+				Expression:    "Apache-2.0 OR GPL-3.0-only",
+				OverallStatus: domain.LicenseStatusMultiple,
+				EffectiveSet: domain.EffectiveLicenseSet{
+					RootSPDXs: []string{"Apache-2.0", "GPL-3.0-only"},
+					AllSPDXs:  []string{"Apache-2.0", "GPL-3.0-only"},
+				},
+			},
+		},
+	}
+
+	uc := application.NewCheckCompatibilityUseCase(licStore, walkStore)
+	report, err := uc.CheckCompatibilityForWalk(context.Background(), "walk-dual", root, "Apache-2.0", domain.NewLicenseOverrideSet(nil))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if report.Clean {
+		t.Fatal("pending election must not report clean")
+	}
+	if len(report.Conflicts) != 1 {
+		t.Fatalf("conflicts = %d, want 1 (one elective entry, not one per arm)", len(report.Conflicts))
+	}
+	c := report.Conflicts[0]
+	if c.Verdict != domain.VerdictElectable {
+		t.Errorf("verdict = %v, want electable (not a hard incompatibility)", c.Verdict)
+	}
+	if len(c.ElectableArms) != 1 || c.ElectableArms[0] != "Apache-2.0" {
+		t.Errorf("ElectableArms = %v, want [Apache-2.0]", c.ElectableArms)
+	}
+}
+
+// TestCheckCompatibilityForWalk_OverrideRecordsTheElection guards that a
+// license_overrides entry — the operator's recorded election — settles the
+// electable verdict: the module is evaluated under the elected arm alone.
+func TestCheckCompatibilityForWalk_OverrideRecordsTheElection(t *testing.T) {
+	t.Parallel()
+	root := makeCoord("example.com/root", "v1.0.0")
+	dual := makeCoord("example.com/dual", "v1.0.0")
+
+	walkStore := &compatFakeWalkStore{
+		walk: walkdomain.WalkRecord{
+			ID: "walk-dual",
+			Graph: walkdomain.Graph{
+				Nodes: []walkdomain.GraphNode{
+					{Coordinate: root},
+					{Coordinate: dual},
+				},
+			},
+		},
+	}
+	licStore := &compatFakeLicenseStore{
+		records: map[string]domain.LicenseRecord{
+			"example.com/dual@v1.0.0": {
+				PrimarySPDX:   "GPL-3.0-only",
+				Expression:    "Apache-2.0 OR GPL-3.0-only",
+				OverallStatus: domain.LicenseStatusMultiple,
+			},
+		},
+	}
+	overrides := domain.NewLicenseOverrideSet(map[string]string{
+		"example.com/dual": "Apache-2.0",
+	})
+
+	uc := application.NewCheckCompatibilityUseCase(licStore, walkStore)
+	report, err := uc.CheckCompatibilityForWalk(context.Background(), "walk-dual", root, "Apache-2.0", overrides)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !report.Clean {
+		t.Errorf("recorded election should settle clean, got conflicts: %v", report.Conflicts)
+	}
+}
+
+// TestCheckCompatibilityForWalk_ElectionDoesNotHideEmbeddedComponents guards
+// that a root election never absorbs an embedded component's licence: the
+// component's obligations apply regardless of which root arm is elected.
+func TestCheckCompatibilityForWalk_ElectionDoesNotHideEmbeddedComponents(t *testing.T) {
+	t.Parallel()
+	root := makeCoord("example.com/root", "v1.0.0")
+	dual := makeCoord("example.com/dual", "v1.0.0")
+
+	walkStore := &compatFakeWalkStore{
+		walk: walkdomain.WalkRecord{
+			ID: "walk-dual",
+			Graph: walkdomain.Graph{
+				Nodes: []walkdomain.GraphNode{
+					{Coordinate: root},
+					{Coordinate: dual},
+				},
+			},
+		},
+	}
+	licStore := &compatFakeLicenseStore{
+		records: map[string]domain.LicenseRecord{
+			"example.com/dual@v1.0.0": {
+				PrimarySPDX:   "MIT",
+				Expression:    "Apache-2.0 OR MIT",
+				OverallStatus: domain.LicenseStatusMultiple,
+				EffectiveSet: domain.EffectiveLicenseSet{
+					RootSPDXs: []string{"Apache-2.0", "MIT"},
+					Components: []domain.EmbeddedComponent{
+						{PathPrefix: "third_party/gpl", SPDXs: []string{"GPL-3.0-only"}},
+					},
+					AllSPDXs: []string{"Apache-2.0", "GPL-3.0-only", "MIT"},
+				},
+			},
+		},
+	}
+
+	uc := application.NewCheckCompatibilityUseCase(licStore, walkStore)
+	report, err := uc.CheckCompatibilityForWalk(context.Background(), "walk-dual", root, "Apache-2.0", domain.NewLicenseOverrideSet(nil))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if report.Clean {
+		t.Fatal("the embedded GPL component must still conflict")
+	}
+	if len(report.Conflicts) != 1 {
+		t.Fatalf("conflicts = %d, want 1 (the component; the all-compatible root election is settled)", len(report.Conflicts))
+	}
+	if report.Conflicts[0].DepSPDX != "GPL-3.0-only" {
+		t.Errorf("conflict DepSPDX = %q, want the embedded component's GPL-3.0-only", report.Conflicts[0].DepSPDX)
 	}
 }

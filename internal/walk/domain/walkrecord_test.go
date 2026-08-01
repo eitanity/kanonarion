@@ -1030,3 +1030,13 @@ func TestNewWalkRecord_DefaultsEmptyScope(t *testing.T) {
 		t.Errorf("Scope = %q, want default %q when passed empty", rec.Scope, domain3.WalkScopeCode)
 	}
 }
+
+func TestNewWalkRecord_DefaultsEmptyDepthToFull(t *testing.T) {
+	rec := domain3.NewWalkRecord("walk-1", "op", "v1", "", "", domain3.WalkOutcome{}, domain3.DepthPolicy{}, "")
+	if rec.Scope != domain3.WalkScopeCode {
+		t.Errorf("Scope = %q, want the code default", rec.Scope)
+	}
+	if rec.Depth != domain3.WalkDepthFull {
+		t.Errorf("Depth = %q, want the full default", rec.Depth)
+	}
+}

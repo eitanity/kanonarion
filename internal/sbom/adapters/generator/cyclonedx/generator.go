@@ -144,15 +144,17 @@ func (g *Generator) buildBOM(
 	inputs := make([]domain.ComponentInput, 0, len(walk.Graph.Nodes))
 	for _, node := range walk.Graph.Nodes {
 		// The standard library ships with the toolchain under the Go project's
-		// BSD-3-Clause licence and has no fetched licence record. Its licence is
-		// now extracted from the source tarball's LICENSE file (carried on the
-		// node); fall back to the constant only for a legacy or offline node that
-		// carries no facts, so it is never counted as an unknown-licence gap.
+		// BSD-3-Clause licence and has no fetched licence record. Its licence
+		// resolves through walkdomain.StdlibLicense — the source tarball's
+		// extracted LICENSE facts when present, the published constant for a
+		// legacy or offline node that carries none — the shared rule every
+		// surface applies, so it is never counted as an unknown-licence gap.
 		if node.ResolutionSource == walkdomain.ResolutionStdlib {
+			spdx, _ := walkdomain.StdlibLicense(node.Stdlib)
 			inputs = append(inputs, domain.ComponentInput{
 				Module:      moduleRef(node.Coordinate),
 				HasLicense:  true,
-				PrimarySPDX: stdlibComponentLicense(node.Stdlib),
+				PrimarySPDX: spdx,
 			})
 			continue
 		}
@@ -407,24 +409,6 @@ func buildDependencies(components []cdx.Component, root *cdx.Component, graph wa
 	return deps
 }
 
-// stdlibLicenseSPDX is the SPDX identifier for the Go standard library. The Go
-// project (and therefore the standard library that ships with the toolchain) is
-// distributed under BSD-3-Clause, so the synthetic stdlib component carries it
-// rather than being reported as an unknown-licence coverage gap.
-const stdlibLicenseSPDX = "BSD-3-Clause"
-
-// stdlibComponentLicense resolves the SPDX identifier for the stdlib component:
-// the licence extracted from the source tarball's LICENSE file when facts are
-// present, falling back to the known BSD-3-Clause constant only for a legacy or
-// offline node that carries no facts (so the SBOM never counts stdlib as an
-// unknown-licence gap).
-func stdlibComponentLicense(facts *walkdomain.StdlibFacts) string {
-	if facts != nil && facts.LicenseSPDX != "" {
-		return facts.LicenseSPDX
-	}
-	return stdlibLicenseSPDX
-}
-
 // buildStdlibComponent builds the CycloneDX component for the synthetic
 // standard-library node. It differs from an ordinary module component: the
 // stdlib is not a proxy artefact, so it carries the real Go source repository as
@@ -439,7 +423,7 @@ func stdlibComponentLicense(facts *walkdomain.StdlibFacts) string {
 func buildStdlibComponent(mod domain.ModuleRef, spdx, pipelineVersion string, digests fetchdomain.ArtifactDigests, facts *walkdomain.StdlibFacts) cdx.Component {
 	purl := modulePURL(mod)
 	if spdx == "" {
-		spdx = stdlibLicenseSPDX
+		spdx = walkdomain.StdlibLicenseSPDX
 	}
 	comp := cdx.Component{
 		BOMRef:     purl,
