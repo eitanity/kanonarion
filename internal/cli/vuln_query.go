@@ -83,11 +83,24 @@ func runVulnShow(
 	}
 
 	var rec vuldomain.VulnerabilityRecord
+	var isolated vuldomain.VulnerabilityRecord
+	var hasIsolated bool
 	if walkID == "" {
-		r, ok, err := uc.GetLatestRecord(ctx, coord, vulnPipelineVersion)
+		// Every generation is read rather than the store's composed "latest",
+		// because "show me this module's record" is a question a consumer asks
+		// about a module they depend on, and the frame-blind ladder answers it in
+		// whichever frame happens to rank first. The rung that decides is
+		// call-graph completeness, and an isolated scan wins it by construction:
+		// it built the module alone, so it records BUILT_WITH_BODIES, while a
+		// consumer-rooted govulncheck analysis records no completeness at all.
+		// vuln-show therefore headlined an isolated "not reachable" while
+		// reachability, over the same store, served the consumer's route to the
+		// vulnerable symbol. Same read as reachability uses, so the two agree.
+		recs, err := uc.ListRecordsForModule(ctx, coord, vulnPipelineVersion)
 		if err != nil {
 			return fmt.Errorf("getting vulnerability record: %w", err)
 		}
+		r, aside, has, ok := selectConsumerRecord(recs, coord)
 		if !ok {
 			// No walk was named, so there is no "newer than what you passed" to
 			// compute — but a succeeded walk of this module may already exist,
@@ -99,7 +112,7 @@ func runVulnShow(
 			}
 			return &exitError{code: ExitNotFound, msg: msg}
 		}
-		rec = r
+		rec, isolated, hasIsolated = r, aside, has
 	} else {
 		r, ok, err := uc.GetLatestRecordForWalk(ctx, coord, vulnPipelineVersion, walkID)
 		if err != nil {
@@ -112,6 +125,12 @@ func runVulnShow(
 	}
 
 	if jsonOut {
+		// The JSON body stays a bare VulnerabilityRecord: that shape is this
+		// command's published contract, and wrapping it to carry the aside would
+		// break every consumer parsing it. The served record is the consumer-frame
+		// one either way, so --json now agrees with reachability --json on the
+		// verdict; the declined isolated answer is reported on the text surface and
+		// by 'reachability --json', whose result type has a field for it.
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(rec); err != nil {
@@ -121,7 +140,40 @@ func runVulnShow(
 	}
 
 	printVulnRecord(stdout, rec, newRouteRootFunc(ctx, graphs, rec))
+	printDeclinedIsolatedFrame(stdout, isolated, hasIsolated)
 	return nil
+}
+
+// printDeclinedIsolatedFrame prints what the isolated-frame record says about
+// each advisory it saw, under the served record and visibly subordinate to it.
+//
+// It is the record-shaped counterpart of printIsolatedAside, which reports the
+// same thing for a single queried advisory. Both exist for the same reason: the
+// two frames disagreeing is itself information, and a reader who has seen the
+// isolated verdict on another surface is owed the reason it is not the headline.
+func printDeclinedIsolatedFrame(stdout io.Writer, rec vuldomain.VulnerabilityRecord, has bool) {
+	if !has {
+		return
+	}
+	var lines []string
+	for _, f := range rec.Findings {
+		if aside := isolatedAsideFor(rec, true, f.ID); aside != nil {
+			lines = append(lines, fmt.Sprintf("    %s: %s [confidence: %s, by: %s]",
+				f.ID, aside.Verdict, aside.Confidence, aside.Method))
+		}
+	}
+	if len(lines) == 0 {
+		// An isolated record exists but says nothing about reachability, so there
+		// is no second answer to report. Announcing the frame alone would imply a
+		// disagreement that was never measured.
+		return
+	}
+	_, _ = fmt.Fprintf(stdout,
+		"  Isolated frame (a different question — the module built alone, not the build that consumes it), scanned %s:\n",
+		rec.ScannedAt.UTC().Format(time.RFC3339))
+	for _, l := range lines {
+		_, _ = fmt.Fprintln(stdout, l)
+	}
 }
 
 // explainWalkRecordAbsence says why the named walk has no readable record for

@@ -168,6 +168,7 @@ type fakeVulnStore struct {
 	errOnPutRun        error
 	errOnGetRun        error
 	errOnListRecords   error
+	errOnListRuns      error
 	errOnGetLatestSnap error
 	errOnPutSnap       error
 	errOnPutRecord     error
@@ -363,6 +364,9 @@ func (f *fakeVulnStore) GetWalkScanRun(_ context.Context, id string) (domain.Wal
 func (f *fakeVulnStore) ListWalkScanRuns(_ context.Context, walkID string) ([]domain.WalkScanRun, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.errOnListRuns != nil {
+		return nil, f.errOnListRuns
+	}
 	var runs []domain.WalkScanRun
 	for _, run := range f.runs {
 		if run.WalkID == walkID {

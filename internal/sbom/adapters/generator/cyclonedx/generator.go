@@ -199,9 +199,85 @@ func (g *Generator) buildBOM(
 		}
 		cdxVulns := buildVulnerabilities(domain.AggregateVulnerabilities(findings))
 		bom.Vulnerabilities = &cdxVulns
+		annotations := []cdx.Annotation{vulnerabilityScopeAnnotation(cdxVulns, req.PipelineVersion, ts)}
+		bom.Annotations = &annotations
 	}
 
 	return bom, licensesIncomplete, nil
+}
+
+// ReachabilityQueryInvocation is the command a reader of this document runs to
+// get the reachability answer the document itself does not state.
+//
+// It is a constant rather than prose inside the annotation text so a contract
+// test can push it through the CLI's own argument parser. A printed command the
+// tool then rejects costs the reader exactly the round trip that naming it was
+// meant to save, which is the defect
+// TestReachabilityRemedies_EveryLineIsAcceptedByTheParser exists to catch on the
+// CLI's own remedy lines.
+const ReachabilityQueryInvocation = "kanonarion reachability <module>@<version> --vuln <id>"
+
+// vulnerabilityScopeBOMRef identifies the scope annotation. It is fixed, so the
+// document re-emits byte-identically from the same inputs.
+const vulnerabilityScopeBOMRef = "kanonarion:vulnerability-scope"
+
+// vulnerabilityScopeText is what the document says about its own vulnerability
+// list.
+//
+// The claim it withholds is deliberate and is the whole point. Reachability is a
+// property of a call graph that improves as the graph improves, and a per-entry
+// VEX statement would freeze at generation time an answer that the store keeps
+// revising — publishing exactly the context-free verdict kanonarion exists to
+// replace, stripped of the route, the analysis frame and the soundness caveats
+// that make it readable. So the document states its scope and names where the
+// answer lives instead.
+//
+// The last sentence is not hedging. A call-graph analysis that finds no route
+// has not proved there is none: dynamic dispatch, reflection and linkname all
+// reach code no static edge records. A surface that rendered "not reachable" as
+// a proven absence would be wrong in a direction that costs a patch.
+var vulnerabilityScopeText = strings.Join([]string{
+	"Scope of this document's vulnerability list: it reports the advisories that match the coordinates of the components inventoried above.",
+	"It does NOT state whether any of them is reachable in this build, and no entry here should be read as a claim either way.",
+	"Reachability is a property of the call graph, it improves as the graph improves, and an answer frozen at generation time would outlive the evidence for it.",
+	"Ask kanonarion, which holds the route, the analysis frame it was computed in, and the soundness caveats: " + ReachabilityQueryInvocation + ".",
+	"A negative answer from that query states that no route was found; it is not proof that none exists.",
+}, " ")
+
+// vulnerabilityScopeAnnotation states, on the vulnerability list itself, what
+// the list does and does not assert.
+//
+// It is a CycloneDX annotation subject-linked to every vulnerability rather than
+// a metadata property, because metadata is where a reader who is looking at a
+// vulnerability will not be. A consumer resolving "what does this document say
+// about this entry" reaches the annotation by bom-ref; one rendering the list
+// gets a single statement covering it. The alternative shapes were both refused:
+// a per-entry property or analysis block would be a per-advisory reachability
+// claim in all but name, and a metadata property would be the burial this exists
+// to avoid.
+//
+// Every field is derived from inputs the document already carries — the fixed
+// bom-ref, the vulnerability order the domain aggregation already fixed, the
+// generator component, and the document's own clock-free timestamp — so adding
+// it leaves the byte-for-byte determinism of the output intact.
+func vulnerabilityScopeAnnotation(vulns []cdx.Vulnerability, pipelineVersion string, ts time.Time) cdx.Annotation {
+	subjects := make([]cdx.BOMReference, 0, len(vulns))
+	for _, v := range vulns {
+		subjects = append(subjects, cdx.BOMReference(v.BOMRef))
+	}
+	return cdx.Annotation{
+		BOMRef:   vulnerabilityScopeBOMRef,
+		Subjects: &subjects,
+		Annotator: &cdx.Annotator{
+			Component: &cdx.Component{
+				Type:    cdx.ComponentTypeApplication,
+				Name:    generatorName,
+				Version: pipelineVersion,
+			},
+		},
+		Timestamp: ts.UTC().Format(timestampFormat),
+		Text:      vulnerabilityScopeText,
+	}
 }
 
 // moduleRef projects a fetch ModuleCoordinate onto the sbom-domain identity.
@@ -560,6 +636,13 @@ func copyrightString(lic licensedomain.LicenseRecord) string {
 // disappearance as a fix. Emitting it unmarked — what this generator did before —
 // publishes a withdrawn report as a live vulnerability of the component to
 // everyone downstream who consumes the document.
+//
+// Withdrawal is the ONLY thing the analysis block here states, and it is a fact
+// about the advisory rather than a claim about this build: the upstream database
+// retracted it, which is true of every consumer of it. Reachability is the
+// opposite kind of fact — it is about one build's call graph and it changes as
+// that graph is measured better — so no analysis block, and no property, is
+// emitted for it. See vulnerabilityScopeText for what the document says instead.
 func buildVulnerabilities(aggregated []domain.AggregatedVulnerability) []cdx.Vulnerability {
 	result := make([]cdx.Vulnerability, 0, len(aggregated))
 	for _, v := range aggregated {

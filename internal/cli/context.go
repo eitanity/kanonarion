@@ -226,6 +226,13 @@ type contextVulnerabilities struct {
 	Reason       string       `json:"reason,omitempty"`
 	Findings     []contextCVE `json:"findings,omitempty"`
 	WalkID       string       `json:"walk_id,omitempty"`
+	// Frame is the analysis frame the served record was reached in. A
+	// reachability finding means something different in each — isolated answers
+	// "is this advisory reachable in the module examined alone", target-rooted
+	// answers "is it reachable in the build rooted at that target" — so the
+	// section names the question it answered rather than leaving a consumer to
+	// assume it was theirs.
+	Frame string `json:"frame,omitempty"`
 	// Freshness facts: when the verdict was first established, when it was last
 	// re-validated, and how old the database snapshot behind it was at that
 	// validation. Stated for the consumer to judge; kanonarion renders no

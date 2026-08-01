@@ -28,6 +28,47 @@ in addition to the flat component list, carries:
 - **A `vulnerabilities` list**, when `--scan` names a scan run. Findings sharing an
   ID are aggregated into one entry whose `affects` names every module the ID applies
   to. See below for how a retracted advisory is represented.
+- **A scope statement**, whenever a `vulnerabilities` list is emitted. See below.
+
+### What the vulnerability list does and does not claim
+
+The list reports the advisories that match the **coordinates** of the components
+inventoried in the document. It does **not** state whether any of them is
+reachable in this build, and no entry should be read as a claim either way.
+
+That statement is emitted in the document itself, as a CycloneDX `annotation`
+whose `subjects` name every vulnerability entry:
+
+```json
+{
+  "annotations": [{
+    "bom-ref": "kanonarion:vulnerability-scope",
+    "subjects": ["GO-2025-3553", "GO-2024-1111"],
+    "annotator": { "component": { "type": "application", "name": "kanonarion" } },
+    "text": "Scope of this document's vulnerability list: ... Ask kanonarion ...: kanonarion reachability <module>@<version> --vuln <id>. ..."
+  }]
+}
+```
+
+Three decisions are deliberate:
+
+- **No VEX, and no per-advisory reachability property of any other shape.**
+  Reachability is a property of a call graph that improves as the graph improves.
+  A statement baked into the document freezes, at generation time, an answer the
+  store keeps revising — and strips it of the route, the analysis frame it was
+  computed in, and the soundness caveats that make it readable. That is exactly
+  the context-free verdict kanonarion exists to replace.
+- **It names where the answer lives.** `kanonarion reachability
+  <module>@<version> --vuln <id>` answers the question against the store, which
+  holds all of the above. "Not stated here" is a signpost, not a gap.
+- **A negative from that query is not a proven absence.** A call-graph analysis
+  that finds no route has not shown there is none — dynamic dispatch, reflection
+  and `linkname` all reach code no static edge records. The annotation says so,
+  and no kanonarion surface renders "not reachable" as proof.
+
+An `annotation` rather than a `metadata` property because metadata is where a
+reader looking at a vulnerability is not; the `subjects` link resolves from the
+entry itself.
 
 ### Retracted (withdrawn) advisories
 
@@ -44,6 +85,11 @@ An advisory retracted upstream is **emitted, and marked** — not dropped:
   }
 }
 ```
+
+Withdrawal is the only thing `analysis` ever states in a kanonarion SBOM. It is a
+fact about the advisory — the upstream database retracted it, which is true for
+every consumer of it — rather than a claim about this particular build. See above
+for why reachability, which is the opposite kind of fact, gets no `analysis` block.
 
 Two properties of that entry are deliberate:
 

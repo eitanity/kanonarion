@@ -1,5 +1,24 @@
 {
   "$schema": "http://cyclonedx.org/schema/bom-1.6.schema.json",
+  "annotations": [
+    {
+      "annotator": {
+        "component": {
+          "name": "kanonarion",
+          "type": "application",
+          "version": "0.3.0-test"
+        }
+      },
+      "bom-ref": "kanonarion:vulnerability-scope",
+      "subjects": [
+        "GHSA-aonly",
+        "GHSA-shared",
+        "GHSA-zonly"
+      ],
+      "text": "Scope of this document's vulnerability list: it reports the advisories that match the coordinates of the components inventoried above. It does NOT state whether any of them is reachable in this build, and no entry here should be read as a claim either way. Reachability is a property of the call graph, it improves as the graph improves, and an answer frozen at generation time would outlive the evidence for it. Ask kanonarion, which holds the route, the analysis frame it was computed in, and the soundness caveats: kanonarion reachability \u003cmodule\u003e@\u003cversion\u003e --vuln \u003cid\u003e. A negative answer from that query states that no route was found; it is not proof that none exists.",
+      "timestamp": "2026-03-02T12:30:00Z"
+    }
+  ],
   "bomFormat": "CycloneDX",
   "components": [
     {

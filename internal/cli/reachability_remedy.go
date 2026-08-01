@@ -129,10 +129,19 @@ func remedyScanUncovered() reachabilityRemedy {
 // the tree, so the re-run is rooted where the original was. Repeating
 // vuln-scan-rescan would repeat the refusal.
 func remedyRescanProject(dir string) reachabilityRemedy {
+	// An empty directory is not a gap here: the refusal that prints this may have
+	// been raised by a walk that names no tree at all, whose frame was read off
+	// the run's own records instead. "./go.mod" is then the right instruction —
+	// run it from the project — where filepath.Join would have produced a bare
+	// "go.mod" that reads as a file in whatever directory the reader is in.
+	goMod := "./go.mod"
+	if dir != "" {
+		goMod = filepath.Join(dir, "go.mod")
+	}
 	return reachabilityRemedy{
 		lead: "Re-scan rooted at the project itself, from a machine that holds its working tree",
 		lines: []string{
-			"kanonarion vuln-scan --gomod " + filepath.Join(dir, "go.mod") + " --reachability",
+			"kanonarion vuln-scan --gomod " + goMod + " --reachability",
 		},
 	}
 }

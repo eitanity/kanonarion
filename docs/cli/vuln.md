@@ -420,8 +420,32 @@ Show the vulnerability record for a specific module.
 kanonarion vuln-show <module>@<version> [flags]
 ```
 
-When `--walk-id` is omitted, the most recent scan record for the module is
-returned automatically. Pass `--walk-id` to pin to a specific walk.
+When `--walk-id` is omitted, the record that answers a **consumer's** question
+about the module is returned: one produced by an analysis rooted at a project
+that consumes it, if the store holds one. Pass `--walk-id` to pin to a specific
+walk.
+
+That selection is not "newest wins", and the difference is load-bearing. An
+isolated scan builds the module as its own main module, so it records call-graph
+completeness `BUILT_WITH_BODIES`; an analysis rooted at a consuming project
+searched a call graph kanonarion did not build, so it records none. Ranking the
+two against each other on completeness let an older isolated *not reachable*
+outrank a newer consumer-rooted record carrying the route to the vulnerable
+symbol — so `vuln-show` and `reachability` printed opposite headlines from one
+store. The frame is picked first; the ladder decides only within it.
+
+The isolated answer is not discarded. When the store holds one, it is printed
+below the record, labelled, under `Isolated frame` — the two frames disagreeing
+is itself information:
+
+```
+  Isolated frame (a different question — the module built alone, not the build that consumes it), scanned 2026-07-31T17:49:28Z:
+    GO-2025-3553: not_reachable [confidence: High, by: govulncheck]
+```
+
+`Analysis frame:` on the record itself always names the frame the served answer
+was reached in. The same selection backs the `vulnerabilities` section of
+`context` and `inspect`, which report it as `frame`.
 
 Use `--history` to list every stored scan record across all walks and
 snapshots, ordered newest first. This is the primary way to determine

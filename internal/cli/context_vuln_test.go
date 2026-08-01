@@ -48,28 +48,24 @@ func TestBuildVulnerabilities_StoreReadErrorIsReadError(t *testing.T) {
 	}
 }
 
-// latestNotFoundQueryVuln errors on the per-snapshot read but reports a clean
-// miss from the latest-record fallback, isolating the remembered batch read
-// error from the fallback's own error path.
-type latestNotFoundQueryVuln struct {
-	*testfakes.FakeQueryVuln
-}
-
-func (f latestNotFoundQueryVuln) GetLatestRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string) (vuldomain.VulnerabilityRecord, bool, error) {
-	return vuldomain.VulnerabilityRecord{}, false, nil
-}
-
-func TestBuildVulnerabilities_BatchReadErrorSurvivesFallbackMiss(t *testing.T) {
+// A run that covers the coordinate, over a ledger that cannot be read, must
+// report the fault — never the not_run that a caller reads as "never scanned".
+//
+// The two-read shape this used to guard (a per-snapshot read whose error a
+// later fallback miss could mask) is gone: the section now reads every
+// generation once and selects in memory, so there is no second read to lose the
+// error in. What must not regress is the outcome.
+func TestBuildVulnerabilities_UnreadableLedgerIsReadErrorNotNotRun(t *testing.T) {
 	coord := mustContextCoord(t)
-	inner := testfakes.NewFakeQueryVuln()
-	inner.Err = errors.New("record unreadable")
+	uc := testfakes.NewFakeQueryVuln()
+	uc.Err = errors.New("record unreadable")
 	batch := &vulnBatchCtx{
 		runs: map[string][]vuldomain.WalkScanRun{
 			"walk-1": {{PerModuleResults: map[coordinate.ModuleCoordinate]string{coord: ""}}},
 		},
 	}
 
-	v := buildVulnerabilitiesFromBatch(context.Background(), coord, latestNotFoundQueryVuln{inner}, batch)
+	v := buildVulnerabilitiesFromBatch(context.Background(), coord, uc, batch)
 
 	if v.Status != sectionStatusReadError {
 		t.Errorf("Status = %q, want %q", v.Status, sectionStatusReadError)

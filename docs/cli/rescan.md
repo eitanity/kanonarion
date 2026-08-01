@@ -182,6 +182,17 @@ kanonarion vuln-show github.com/some/lib@v1.2.3 --history --store-root ~/.kanona
   explicit fresh snapshot fetch.
 - Prior scan runs are never modified. Storage grows with each re-scan; a
   retention policy is outside Phase 3 scope.
+- **A re-scan reproduces the analysis frame or refuses.** A re-scan is asked for
+  the same evidence against a newer advisory database; answering in a different
+  frame is not a narrower answer, it is an answer to another question. If the run
+  being re-scanned was rooted at a project's working tree and this machine cannot
+  reach that tree, `vuln-scan-rescan` exits with a configuration error naming the
+  project-rooted form to run instead — it does not silently re-derive every
+  module in isolation, where an isolated *not reachable* would then outrank the
+  consumer's route. The frame is read from the run's own records, not only from
+  the walk's provenance: a walk that records no directory may still have been
+  scanned project-rooted, because the scan can be pointed at a tree directly
+  (`--gomod`, `--project`, `kanonarion local`).
 - `vuln-scan-diff` requires both run IDs to belong to the same walk; diffing runs
   from different walks is an error.
 - Snapshot pinning (`--snapshot-source` / `--snapshot-version`) is useful for
