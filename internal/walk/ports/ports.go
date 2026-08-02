@@ -236,9 +236,39 @@ type WalkFilter struct {
 	// rows written before identities were recorded; callers looking for a reusable
 	// walk must never pass it, because an absent identity matches nothing.
 	IdentityHash *string
-	Limit        int // 0 = no limit
-	Offset       int
-	LatestOnly   bool // true: return only the latest unique (target, scope) combination
+	// BuildEnv restricts results to walks resolved for one target platform.
+	// nil = any platform, and it is the ONLY way to say "any": within a non-nil
+	// filter each field is matched exactly, so the empty string selects the
+	// unrecorded frame rather than widening the match. A caller asking for
+	// linux/amd64 therefore never receives a walk written before the platform was
+	// projected into its own columns, and a caller asking for those rows has to
+	// say so with an explicitly empty filter.
+	BuildEnv   *BuildEnvFilter
+	Limit      int // 0 = no limit
+	Offset     int
+	LatestOnly bool // true: return only the latest unique (target, scope) combination
+}
+
+// BuildEnvFilter names the target platform a walk was resolved for, as
+// WalkFilter.BuildEnv matches it. Both fields are matched exactly; see
+// WalkFilter.BuildEnv for what the empty string means.
+//
+// It is deliberately not walkdomain.BuildEnv: that type also carries GoVersion,
+// which the store does not project into a column and therefore cannot filter on.
+// A filter type that accepted a field it silently ignored would be worse than
+// one that cannot express it.
+type BuildEnvFilter struct {
+	// GOOS is the target operating system (e.g. "linux"), as `go env GOOS`
+	// reports it for the project the walk resolved.
+	GOOS string
+	// GOARCH is the target architecture (e.g. "amd64"), as `go env GOARCH`
+	// reports it for the project the walk resolved.
+	GOARCH string
+}
+
+// String renders the platform the way output and refusals name it.
+func (f BuildEnvFilter) String() string {
+	return walkdomain.BuildEnv{GOOS: f.GOOS, GOARCH: f.GOARCH}.Frame()
 }
 
 // WalkSummary is a lightweight projection of a WalkRecord for list views.
@@ -257,4 +287,17 @@ type WalkSummary struct {
 	// IdentityHash names the analysis this walk performed. Empty for a walk
 	// written before identities were recorded.
 	IdentityHash string `json:"identity_hash,omitempty"`
+	// GOOS and GOARCH are the target platform this walk resolved for. Both are
+	// empty when the walk recorded no build environment at all; the pair is
+	// written together, so one empty means both are.
+	GOOS   string `json:"goos,omitempty"`
+	GOARCH string `json:"goarch,omitempty"`
+}
+
+// BuildFrame renders the target platform a walk answers in, for output that
+// names the walk it answered from. A walk that recorded no build environment
+// says so rather than rendering an empty pair or omitting the statement: a
+// reader cannot tell a missing frame from an unstated one.
+func (s WalkSummary) BuildFrame() string {
+	return walkdomain.BuildEnv{GOOS: s.GOOS, GOARCH: s.GOARCH}.Frame()
 }

@@ -230,6 +230,37 @@ project-rooted walk whose project carries a `vendor/` tree now carries the
 vendor scope annotation. The SBOM record is hashed over the document bytes, not
 over a canonical struct, so there is no sealed shape to migrate.
 
+## Walk store: module `walk`, migration 8
+
+**Additive; two new columns, no record shape change and no pipeline bump.**
+`walks` gains `goos` and `goarch`: the target platform a walk resolved for. The
+whole store's migration count goes `v74` -> `v75`.
+
+The value already lived in the sealed blob, as the graph's `BuildEnv`. These
+columns are a projection of it, exactly like `identity_hash` is a projection of
+the record — the canonical shape the content hash covers is unchanged, so every
+stored walk still verifies against the hash it was written with and nothing is
+purged.
+
+**Back-filled**, unlike `identity_hash`. The migration decompresses each stored
+walk once and copies the frame out of its own record. Leaving the columns empty
+would have made every walk already in the store permanently invisible to the
+platform-filtered lookups the columns exist for, and the value is already
+present, so there is nothing to recompute. A row whose record carries no build
+environment back-fills to empty strings; a row this build cannot decode is left
+at empty rather than failing the migration, because an unreadable row's frame is
+genuinely unknown.
+
+Empty means **the frame was never recorded**, and it never matches an explicit
+platform filter. A caller asking for `linux/amd64` must not receive a walk whose
+platform is unknown, so `WalkFilter.BuildEnv` matches both axes exactly and "any
+platform" is expressible only by leaving the filter nil.
+
+Measured on the real store at migration time: 92 rows, 72 back-filled to
+`linux/amd64`, 20 left unrecorded — and those 20 are exactly the module-rooted
+walks. Only the project resolver writes a `BuildEnv`, so a walk rooted at a
+published coordinate structurally has no frame and can never gain one.
+
 ## Audit log (`audit.jsonl`)
 
 Append-only JSONL; **no schema migration** is ever required to add an event

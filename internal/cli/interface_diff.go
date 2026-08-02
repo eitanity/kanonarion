@@ -171,9 +171,14 @@ type usedCaller struct {
 
 // usedByResult is the join of a delta against one project's stored call graph.
 type usedByResult struct {
-	GoMod    string
-	WalkID   string
-	Consumer coordinate.ModuleCoordinate
+	GoMod  string
+	WalkID string
+	// WalkFrame is the GOOS/GOARCH the answering walk resolved for, or
+	// "unrecorded" for a walk written before the frame was projected. GOOS gates
+	// which files build, so the scope this answer is filtered against is one
+	// platform's build list.
+	WalkFrame string
+	Consumer  coordinate.ModuleCoordinate
 	// ScopeSize is how many module versions the walk pins.
 	ScopeSize int
 	// Symbols covers every breaking delta, reached or not, in delta order.
@@ -204,10 +209,11 @@ func (r *usedByResult) Reached() []usedSymbol {
 // already measured and recorded, so it is reproducible and it cannot disagree
 // with what `callers` would say about the same symbol.
 func joinUsedBy(ctx context.Context, ctr *Container, diff ifacedomain.InterfaceDiff, gomod string) (*usedByResult, error) {
-	walkID, err := latestWalkForGoMod(ctx, ctr.QueryWalks, gomod)
+	walkSum, err := latestWalkForGoMod(ctx, ctr.QueryWalks, gomod)
 	if err != nil {
 		return nil, err
 	}
+	walkID := walkSum.ID
 	rec, err := ctr.QueryWalks.GetWalk(ctx, walkID)
 	if err != nil {
 		return nil, fmt.Errorf("loading walk %q: %w", walkID, err)
@@ -217,6 +223,7 @@ func joinUsedBy(ctx context.Context, ctr *Container, diff ifacedomain.InterfaceD
 	res := &usedByResult{
 		GoMod:     gomod,
 		WalkID:    walkID,
+		WalkFrame: rec.Graph.BuildEnv.Frame(),
 		Consumer:  rec.Target,
 		ScopeSize: scope.Len(),
 	}
@@ -520,8 +527,8 @@ func printUsedBySection(used *usedByResult, stdout io.Writer) error {
 		return nil
 	}
 	if _, err := fmt.Fprintf(stdout,
-		"\nUsed by %s (walk %q, %d module versions in scope):\n",
-		used.Consumer.Path(), used.WalkID, used.ScopeSize); err != nil {
+		"\nUsed by %s (walk %q, frame %s, %d module versions in scope):\n",
+		used.Consumer.Path(), used.WalkID, used.WalkFrame, used.ScopeSize); err != nil {
 		return fmt.Errorf("writing used-by header: %w", err)
 	}
 	if !used.CallGraphFound {
@@ -623,8 +630,11 @@ type registrySurfaceJSON struct {
 }
 
 type usedByJSON struct {
-	GoMod          string           `json:"gomod"`
-	WalkID         string           `json:"walk_id"`
+	GoMod  string `json:"gomod"`
+	WalkID string `json:"walk_id"`
+	// WalkFrame is the GOOS/GOARCH the answering walk resolved for, or
+	// "unrecorded" for a walk written before the frame was projected.
+	WalkFrame      string           `json:"walk_frame"`
 	Consumer       string           `json:"consumer"`
 	ScopeSize      int              `json:"scope_size"`
 	CallGraphFound bool             `json:"call_graph_found"`
@@ -728,6 +738,7 @@ func toUsedByJSON(used *usedByResult) *usedByJSON {
 	out := &usedByJSON{
 		GoMod:          used.GoMod,
 		WalkID:         used.WalkID,
+		WalkFrame:      used.WalkFrame,
 		Consumer:       used.Consumer.Path() + "@" + used.Consumer.Version(),
 		ScopeSize:      used.ScopeSize,
 		CallGraphFound: used.CallGraphFound,

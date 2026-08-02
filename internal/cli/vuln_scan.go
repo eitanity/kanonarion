@@ -86,10 +86,10 @@ func newVulnScanCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().BoolVar(&binaryModePrePass, "binary-pre-pass", false, "fast binary-mode pre-pass; source mode only for affected modules")
 	cmd.Flags().StringVar(&goBinary, "go-binary", "", "path to 'go' binary if not in PATH")
 	cmd.Flags().StringVar(&operator, "operator", os.Getenv("USER"), "operator identifier (defaults to $USER)")
-	cmd.Flags().StringVar(&moduleCoord, "module", "", "look up the latest walk ROOTED AT <module@version> (its own target, not a walk that merely contains it as a dependency) and scan it")
-	cmd.Flags().BoolVar(&tool, "tool", false, "scan the tooling supply chain: the latest tool-scoped project walk (requires prior walk --tool)")
-	cmd.Flags().BoolVar(&project, "project", false, "scan the complete set: the latest complete-scope project walk (requires prior walk --project)")
-	cmd.Flags().StringVar(&gomod, "gomod", "", "scan the latest project walk for this go.mod's scope (default: search upward from cwd); default scope is code")
+	cmd.Flags().StringVar(&moduleCoord, "module", "", "look up the latest walk ROOTED AT <module@version> (its own target, not a walk that merely contains it as a dependency) and scan it; such a walk records no target platform, and the scan says so")
+	cmd.Flags().BoolVar(&tool, "tool", false, "scan the tooling supply chain: the latest tool-scoped project walk for this GOOS/GOARCH (requires prior walk --tool)")
+	cmd.Flags().BoolVar(&project, "project", false, "scan the complete set: the latest complete-scope project walk for this GOOS/GOARCH (requires prior walk --project)")
+	cmd.Flags().StringVar(&gomod, "gomod", "", "scan the latest project walk for this go.mod's scope and this GOOS/GOARCH (default: search upward from cwd); default scope is code")
 	cmd.Flags().StringVar(&policyPath, "policy", "", "path to depth policy YAML (default: search upward for .kanonarion/policy.yaml)")
 	cmd.Flags().BoolVar(&noVendor, "no-vendor", false,
 		"analyse the fetched artefacts even when the project is vendored (default: analyse vendor/, the source the project compiles)")
@@ -123,24 +123,53 @@ func runVulnScanScope(ctx context.Context, gomodPath string, scope depScope, for
 	if err != nil {
 		return fmt.Errorf("building project coordinate: %w", err)
 	}
+	// Build constraints select files per platform and govulncheck's reachability
+	// follows those files, so a scan run in this environment must read a walk
+	// resolved for this environment. Without the axis the newest walk answered,
+	// whichever platform produced it.
+	platform := currentBuildEnvFilter(ctx, goBinary, filepath.Dir(gomodPath), logger)
+	selected, err := selectProjectWalkToScan(ctx, ctr.QueryWalks, coord, scope, platform, gomodPath)
+	if err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintf(progressWriter(stderr, noProgress), "scanning %s project walk %s (%s)\n", scope, selected.ID, selected.BuildFrame())
+	return runVulnScan(ctx, selected.ID, force, fresh, enableReachability, callGraphWorkers, false, jsonOut, goBinary, operator, filepath.Dir(gomodPath), policyPath, noVendor, noProgress, true, stdout, stderr)
+}
+
+// selectProjectWalkToScan returns the succeeded project walk of the requested
+// scope that was resolved for platform, or a refusal naming that platform and
+// the command that produces such a walk.
+//
+// The platform is part of the question, not a preference: it is never relaxed
+// to "some other platform's walk of the same project" on a miss, because a
+// reachability answer computed over another platform's file set is not a weaker
+// answer to this question, it is an answer to a different one.
+func selectProjectWalkToScan(
+	ctx context.Context,
+	qw QueryWalksUseCase,
+	coord coordinate.ModuleCoordinate,
+	scope depScope,
+	platform walkports.BuildEnvFilter,
+	gomodPath string,
+) (walkports.WalkSummary, error) {
 	walkScope := walkScopeFor(scope)
 	succeeded := walkdomain.WalkSucceeded
-	walks, err := ctr.QueryWalks.ListWalks(ctx, walkports.WalkFilter{
+	walks, err := qw.ListWalks(ctx, walkports.WalkFilter{
 		Target:        &coord,
 		Scope:         &walkScope,
 		OverallStatus: &succeeded,
+		BuildEnv:      &platform,
 		Limit:         1,
 	})
 	if err != nil {
-		return fmt.Errorf("listing %s project walks for %s: %w", scope, modulePath, err)
+		return walkports.WalkSummary{}, fmt.Errorf("listing %s project walks for %s: %w", scope, coord.Path(), err)
 	}
 	if len(walks) == 0 {
-		return fmt.Errorf("no succeeded %s project walk for %s — run: kanonarion walk --gomod %s%s",
-			scope, modulePath, gomodPath, scopeWalkFlagHint(scope))
+		return walkports.WalkSummary{}, fmt.Errorf("no succeeded %s project walk for %s on %s — run: kanonarion walk --gomod %s%s",
+			scope, coord.Path(), platform, gomodPath, scopeWalkFlagHint(scope))
 	}
-
-	_, _ = fmt.Fprintf(progressWriter(stderr, noProgress), "scanning %s project walk %s\n", scope, walks[0].ID)
-	return runVulnScan(ctx, walks[0].ID, force, fresh, enableReachability, callGraphWorkers, false, jsonOut, goBinary, operator, filepath.Dir(gomodPath), policyPath, noVendor, noProgress, true, stdout, stderr)
+	return walks[0], nil
 }
 
 // scopeWalkFlagHint returns the `walk` flag that produces a walk of the given
@@ -726,6 +755,13 @@ func runVulnScanByModule(ctx context.Context, moduleCoord string, f commonWalkFl
 		}
 	}()
 
+	// Deliberately NOT platform-filtered, unlike the project-scope entry. A walk
+	// rooted at a published coordinate is resolved through the module path, which
+	// records no build environment at all — measured on the real store: of 92
+	// walks, the 20 with no frame are exactly the module-rooted ones, and both
+	// sites that write a BuildEnv sit under the project resolver. Filtering here
+	// would refuse every module-rooted walk there is, forever, so the frame is
+	// stated rather than required.
 	summaries, err := ctr.QueryWalks.ListWalks(ctx, walkports.WalkFilter{
 		Target: &coord,
 		Limit:  1,
@@ -748,7 +784,13 @@ func runVulnScanByModule(ctx context.Context, moduleCoord string, f commonWalkFl
 	}
 
 	walkID := summaries[0].ID
-	logger.Debug("vuln-scan: resolved module to walk", "module", moduleCoord, "walk_id", walkID)
+	// A module-rooted walk carries no frame, so this is "unrecorded" in practice.
+	// It is stated anyway: the reader must be able to tell an unstated frame from
+	// a missing one, and a scan of a frameless walk is a real caveat on its
+	// reachability answer.
+	_, _ = fmt.Fprintf(progressWriter(stderr, noProgress), "scanning walk %s rooted at %s (frame %s)\n",
+		walkID, moduleCoord, summaries[0].BuildFrame())
+	logger.Debug("vuln-scan: resolved module to walk", "module", moduleCoord, "walk_id", walkID, "build_frame", summaries[0].BuildFrame())
 	return runVulnScan(ctx, walkID, force, fresh, enableReachability, callGraphWorkers, false, jsonOut, goBinary, operator, "", policyPath, false, noProgress, true, stdout, stderr)
 }
 

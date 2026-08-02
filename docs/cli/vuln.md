@@ -247,6 +247,29 @@ the complete set; see [`walk` Scopes](walk.md#scopes-code-tool-complete). The
 matching walk must exist first (run `walk --gomod` with the same scope). A scope
 scan is mutually exclusive with a positional walk-id and with `--module`.
 
+**The walk must match this platform.** Selection filters on the current
+environment's `go env GOOS`/`GOARCH`, because build constraints select which
+files compile and reachability follows those files. A store holding walks for
+several platforms therefore never answers a scan from another platform's walk;
+when this platform has no matching walk the scan refuses and names the remedy:
+
+```
+no succeeded code project walk for example.com/myapp on darwin/arm64 — run: kanonarion walk --gomod ./go.mod
+```
+
+To scan another platform's walk deliberately, name it by ID:
+`kanonarion vuln-scan <walk-id>`. The progress line states the frame the
+selected walk was resolved in.
+
+`--module` is **not** filtered this way. A walk rooted at a published
+coordinate records no target platform at all — only project walks (`--gomod`)
+do — so there is nothing to filter on, and the scan states the frame as
+`unrecorded` instead:
+
+```
+scanning walk 01KQDBVW092ER1HNXZ60X27CMD rooted at github.com/spf13/cobra@v1.8.1 (frame unrecorded)
+```
+
 **The project-scoped views are project-rooted.** A `--gomod`/`--tool`/`--project`
 scan (and the project walk behind `audit` and `inspect --gomod`) derives its
 verdict from **one scan of the project's live working tree** - `govulncheck` over
@@ -263,8 +286,8 @@ fresh each time and is not served from the coordinate cache.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Path to fact store root (or `KANONARION_STORE` env var) |
-| `--module` | _(none)_ | Look up the latest walk for `<module@version>` and scan it |
-| `--gomod` | _(search upward from cwd)_ | Scan the latest project walk for this `go.mod`'s scope (default scope `code`) |
+| `--module` | _(none)_ | Look up the latest walk for `<module@version>` and scan it (not platform-filtered; such walks record no platform) |
+| `--gomod` | _(search upward from cwd)_ | Scan the latest project walk for this `go.mod`'s scope (default scope `code`) on this platform |
 | `--tool` | `false` | Scan the tooling supply chain (the latest tool-scoped project walk). Mutually exclusive with `--project` |
 | `--project` | `false` | Scan the complete set (the latest complete-scope project walk). Mutually exclusive with `--tool` |
 | `--force` | `false` | Force re-scan even if results exist; also re-runs on-demand callgraph extraction |

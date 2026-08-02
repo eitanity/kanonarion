@@ -169,7 +169,8 @@ they are stated here rather than left to be inferred.
 | `excluded_testdata_packages` | array of strings | Paths dropped from the comparison |
 | `used_by` | object or absent | Present only with `--used-by` |
 
-`used_by` carries `gomod`, `walk_id`, `consumer`, `scope_size`,
+`used_by` carries `gomod`, `walk_id`, `walk_frame` (the `GOOS/GOARCH` that
+walk resolved for, or `unrecorded`), `consumer`, `scope_size`,
 `call_graph_found`, `reached_count`, `coverage`, and `symbols` - each
 `{package, kind, name, class, node_id, measurable, sites, callers}` with
 `callers` as `{id, file, line}`. Every collection is emitted as `[]` when empty,

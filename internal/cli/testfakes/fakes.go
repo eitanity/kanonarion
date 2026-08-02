@@ -165,6 +165,17 @@ func (f *FakeQueryWalks) ListWalks(_ context.Context, filter walkports.WalkFilte
 		}
 		out = filtered
 	}
+	if filter.BuildEnv != nil {
+		// Mirrors the adapter's `goos = ? AND goarch = ?`: exact on both axes,
+		// with the empty string selecting the unrecorded frame rather than any.
+		var filtered []walkports.WalkSummary
+		for _, s := range out {
+			if s.GOOS == filter.BuildEnv.GOOS && s.GOARCH == filter.BuildEnv.GOARCH {
+				filtered = append(filtered, s)
+			}
+		}
+		out = filtered
+	}
 	if filter.Limit > 0 && len(out) > filter.Limit {
 		out = out[:filter.Limit]
 	}

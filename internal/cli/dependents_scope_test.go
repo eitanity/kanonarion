@@ -66,7 +66,7 @@ func TestDependentsZeroResult_StatesItsScope(t *testing.T) {
 			rec:         rootDoesNot,
 			target:      other,
 			includeRoot: true,
-			wantSubstr:  "No modules in walk w1 depend on example.com/other@v1.0.0\n",
+			wantSubstr:  "No modules in walk w1 (frame linux/amd64) depend on example.com/other@v1.0.0\n",
 			wantAbsent:  "excluded",
 		},
 	} {
@@ -76,7 +76,7 @@ func TestDependentsZeroResult_StatesItsScope(t *testing.T) {
 				t.Fatalf("fixture produced %d dependents, want an empty answer", len(deps))
 			}
 			var buf bytes.Buffer
-			if err := writeDependentsText(&buf, tc.rec.ID, tc.target.String(), deps,
+			if err := writeDependentsText(&buf, tc.rec.ID, "linux/amd64", tc.target.String(), deps,
 				false, rootExcluded, tc.includeRoot); err != nil {
 				t.Fatalf("writeDependentsText: %v", err)
 			}
@@ -111,7 +111,7 @@ func TestDependentsNonZeroHeader_StatesTheWithheldRoot(t *testing.T) {
 			t.Fatalf("got %d dependents, want 1", len(deps))
 		}
 		var buf bytes.Buffer
-		if err := writeDependentsText(&buf, rec.ID, cast.String(), deps, false, rootExcluded, false); err != nil {
+		if err := writeDependentsText(&buf, rec.ID, "linux/amd64", cast.String(), deps, false, rootExcluded, false); err != nil {
 			t.Fatalf("writeDependentsText: %v", err)
 		}
 		if !strings.Contains(buf.String(), "(the walk root does; it is excluded by default — pass --include-root)") {
@@ -125,7 +125,7 @@ func TestDependentsNonZeroHeader_StatesTheWithheldRoot(t *testing.T) {
 			t.Fatalf("got %d dependents, want 2", len(deps))
 		}
 		var buf bytes.Buffer
-		if err := writeDependentsText(&buf, rec.ID, cast.String(), deps, false, rootExcluded, true); err != nil {
+		if err := writeDependentsText(&buf, rec.ID, "linux/amd64", cast.String(), deps, false, rootExcluded, true); err != nil {
 			t.Fatalf("writeDependentsText: %v", err)
 		}
 		if strings.Contains(buf.String(), "excluded") {

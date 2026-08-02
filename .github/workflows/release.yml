@@ -127,13 +127,19 @@ jobs:
           # vulns. Each iteration exports the target pair, inherited by the
           # 'go list' the CLI shells out to.
           #
-          # No --force here (unlike the SBOM step): audit builds a fresh project
-          # walk on every invocation and reports from it, so sequential per-target
-          # runs in one store do not cross-contaminate — verified locally, a
-          # linux run then a windows run yield each platform's own dependency set.
-          # --fresh only on the first target fetches the OSV snapshot into the
-          # store; the rest reuse that one cached snapshot, which also keeps the
-          # vulnerability DB identical across every target in a single release.
+          # No --force here (unlike the SBOM step): a walk's identity covers
+          # GOOS/GOARCH/GoVersion, so each target resolves its own walk, an
+          # unchanged target reuses only its own — never another platform's —
+          # and every leg of an audit (licences, scan, report) is keyed on the
+          # walk that run resolved. Verified on a multi-platform scratch store:
+          # a darwin audit after a newer linux walk reuses the darwin walk in
+          # every output line.
+          # --fresh on the first target refreshes the advisory database; the
+          # runner's store is empty, so that refresh downloads the snapshot.
+          # The remaining targets read the stored snapshot, which also keeps
+          # the vulnerability DB identical across every target in a single
+          # release. A re-scan happens only when the database changed for a
+          # module in that target's own walk; within one release it never does.
           for t in darwin/amd64 darwin/arm64 windows/amd64 windows/arm64 linux/amd64 linux/arm64 linux/arm; do
             os=${t%/*}; arch=${t#*/}
             fresh=""; [ "$t" = darwin/amd64 ] && fresh="--fresh"

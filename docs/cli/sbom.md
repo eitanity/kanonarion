@@ -186,7 +186,10 @@ kanonarion sbom [<walk-id>] [flags]
 
 The walk ID is required unless `--package` is used. With `--package` and no
 walk ID, kanonarion reuses the latest succeeded project walk for the current
-module when one exists. On a cold store (no such walk), it builds the
+module **resolved for this platform** (`go env GOOS`/`GOARCH`) when one exists —
+a walk of the same project for another platform is not reused, because its
+closure is a different one. On a cold store (or when only another platform's
+walk is stored), it builds the
 prerequisites itself, unattended: a project walk over the current `go.mod`
 (equivalent to `kanonarion walk --gomod ./go.mod`), then a licence-extraction
 stage over it (equivalent to `kanonarion extract <walk-id> --stages license`).

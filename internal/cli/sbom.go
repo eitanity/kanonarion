@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"path/filepath"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -386,11 +387,18 @@ func ensureProjectWalkForSBOM(ctx context.Context, ctr *Container, force, stdlib
 		return "", fmt.Errorf("reading module path for project walk: %w", err)
 	}
 
-	walkID, reuse, err := projectWalkToReuse(ctx, ctr.QueryWalks, modulePath, force)
+	// Reuse is gated on the platform, not just the target. A walk resolved for
+	// another GOOS/GOARCH holds another closure, and an SBOM built over it would
+	// inventory components this build never selects. A miss is not a refusal
+	// here: the cold-store path below builds a walk in this environment, which
+	// is the answer a refusal would have asked the operator to produce by hand.
+	platform := currentBuildEnvFilter(ctx, "", filepath.Dir(gomodPath), buildLogger(logLevel, stderr))
+	walkID, reuse, err := projectWalkToReuse(ctx, ctr.QueryWalks, modulePath, force, platform)
 	if err != nil {
 		return "", err
 	}
 	if reuse {
+		_, _ = fmt.Fprintf(progressWriter(stderr, noProgress), "==> sbom: reusing project walk %s (%s)\n", walkID, platform)
 		return walkID, nil
 	}
 
@@ -440,11 +448,11 @@ func ensureProjectWalkForSBOM(ctx context.Context, ctr *Container, force, stdlib
 // also returns reuse=false so the caller builds. Any other lookup error is
 // propagated. Extracted so the reuse/build decision is testable without a live
 // walk pipeline.
-func projectWalkToReuse(ctx context.Context, qw QueryWalksUseCase, modulePath string, force bool) (walkID string, reuse bool, err error) {
+func projectWalkToReuse(ctx context.Context, qw QueryWalksUseCase, modulePath string, force bool, platform walkports.BuildEnvFilter) (walkID string, reuse bool, err error) {
 	if force {
 		return "", false, nil
 	}
-	walkID, err = findLatestProjectWalk(ctx, qw, modulePath)
+	walkID, err = findLatestProjectWalk(ctx, qw, modulePath, platform)
 	if err == nil {
 		return walkID, true, nil
 	}
@@ -475,7 +483,7 @@ func extractLicencesForProjectWalk(ctx context.Context, ex ExtractUseCase, walkI
 // derives its own binary import closure and filters the walk's components to it,
 // and every project scope's set contains the binary's modules. Returns
 // errNoProjectWalk when no succeeded walk exists.
-func findLatestProjectWalk(ctx context.Context, qw QueryWalksUseCase, modulePath string) (string, error) {
+func findLatestProjectWalk(ctx context.Context, qw QueryWalksUseCase, modulePath string, platform walkports.BuildEnvFilter) (string, error) {
 	coord, err := coordinate.NewModuleCoordinate(modulePath, coordinate.LocalVersion)
 	if err != nil {
 		return "", fmt.Errorf("building project coordinate: %w", err)
@@ -484,13 +492,14 @@ func findLatestProjectWalk(ctx context.Context, qw QueryWalksUseCase, modulePath
 	walks, err := qw.ListWalks(ctx, walkports.WalkFilter{
 		Target:        &coord,
 		OverallStatus: &succeeded,
+		BuildEnv:      &platform,
 		Limit:         1,
 	})
 	if err != nil {
 		return "", fmt.Errorf("listing project walks for %s: %w", modulePath, err)
 	}
 	if len(walks) == 0 {
-		return "", fmt.Errorf("%w for %s", errNoProjectWalk, modulePath)
+		return "", fmt.Errorf("%w for %s on %s", errNoProjectWalk, modulePath, platform)
 	}
 	return walks[0].ID, nil
 }

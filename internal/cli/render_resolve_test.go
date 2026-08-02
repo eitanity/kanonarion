@@ -243,12 +243,12 @@ func TestLatestWalkIDForCoord_Found(t *testing.T) {
 		walkSummary("WALK-1", coord, walkdomain.WalkScopeCode),
 	})
 
-	id, err := latestWalkIDForCoord(context.Background(), fake, coord)
+	sum, err := latestWalkIDForCoord(context.Background(), fake, coord)
 	if err != nil {
 		t.Fatalf("latestWalkIDForCoord: %v", err)
 	}
-	if id != "WALK-1" {
-		t.Errorf("want WALK-1, got %q", id)
+	if sum.ID != "WALK-1" {
+		t.Errorf("want WALK-1, got %q", sum.ID)
 	}
 }
 
@@ -283,12 +283,12 @@ func TestLatestWalkIDForCoordScope_FiltersByScope(t *testing.T) {
 		walkSummary("PROD-WALK", coord, walkdomain.WalkScopeCode),
 	})
 
-	id, err := latestWalkIDForCoordScope(context.Background(), fake, coord, walkdomain.WalkScopeCode)
+	sum, err := latestWalkIDForCoordScope(context.Background(), fake, coord, walkdomain.WalkScopeCode)
 	if err != nil {
 		t.Fatalf("latestWalkIDForCoordScope: %v", err)
 	}
-	if id != "PROD-WALK" {
-		t.Errorf("want PROD-WALK (production scope), got %q", id)
+	if sum.ID != "PROD-WALK" {
+		t.Errorf("want PROD-WALK (production scope), got %q", sum.ID)
 	}
 }
 

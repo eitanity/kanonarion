@@ -95,6 +95,11 @@ func licenseCompatWith(ctx context.Context, ctr *Container, coord coordinate.Mod
 		}
 	}
 	walkID := summaries[0].ID
+	// The frame the verdict was measured in. The lookup takes the newest walk of
+	// the root and has no build-environment axis, so a closure judged here is one
+	// platform's build list; a verdict that did not say which would read as a
+	// statement about the module rather than about a build of it.
+	walkFrame := summaries[0].BuildFrame()
 
 	// license_overrides entries are the operator's recorded decisions —
 	// corrections and dual-licence elections — and must reach the engine so a
@@ -132,17 +137,17 @@ func licenseCompatWith(ctx context.Context, ctr *Container, coord coordinate.Mod
 	}
 
 	if jsonOut {
-		if err := printCompatReportJSON(report, stdout); err != nil {
+		if err := printCompatReportJSON(report, walkID, walkFrame, stdout); err != nil {
 			return err
 		}
 	} else {
-		printCompatReportText(report, coord, stdout)
+		printCompatReportText(report, coord, walkID, walkFrame, stdout)
 	}
 
 	return compatExitCode(report)
 }
 
-func printCompatReportJSON(report domain.ClosureCompatibilityReport, stdout io.Writer) error {
+func printCompatReportJSON(report domain.ClosureCompatibilityReport, walkID, walkFrame string, stdout io.Writer) error {
 	type conflictJSON struct {
 		Module  string `json:"module"`
 		Version string `json:"version"`
@@ -156,15 +161,23 @@ func printCompatReportJSON(report domain.ClosureCompatibilityReport, stdout io.W
 		ElectableArms []string `json:"electable_arms,omitempty"`
 	}
 	type reportJSON struct {
-		TargetSPDX  string         `json:"target_spdx"`
-		DataVersion string         `json:"data_version"`
-		Clean       bool           `json:"clean"`
-		Conflicts   []conflictJSON `json:"conflicts"`
+		TargetSPDX  string `json:"target_spdx"`
+		DataVersion string `json:"data_version"`
+		// WalkID and WalkFrame name the walk this verdict was measured over and
+		// the GOOS/GOARCH it resolved for ("unrecorded" for a walk written before
+		// the frame was projected). Always present: the verdict is about a build,
+		// and a build has a platform.
+		WalkID    string         `json:"walk_id"`
+		WalkFrame string         `json:"walk_frame"`
+		Clean     bool           `json:"clean"`
+		Conflicts []conflictJSON `json:"conflicts"`
 	}
 
 	out := reportJSON{
 		TargetSPDX:  report.TargetSPDX,
 		DataVersion: report.DataVersion,
+		WalkID:      walkID,
+		WalkFrame:   walkFrame,
 		Clean:       report.Clean,
 		Conflicts:   make([]conflictJSON, 0, len(report.Conflicts)),
 	}
@@ -188,10 +201,10 @@ func printCompatReportJSON(report domain.ClosureCompatibilityReport, stdout io.W
 	return nil
 }
 
-func printCompatReportText(report domain.ClosureCompatibilityReport, root coordinate.ModuleCoordinate, stdout io.Writer) {
+func printCompatReportText(report domain.ClosureCompatibilityReport, root coordinate.ModuleCoordinate, walkID, walkFrame string, stdout io.Writer) {
 	if report.Clean {
-		_, _ = fmt.Fprintf(stdout, "%s: closure is compatible with %s (data v%s)\n",
-			root, report.TargetSPDX, report.DataVersion)
+		_, _ = fmt.Fprintf(stdout, "%s: closure is compatible with %s (data v%s, walk %s, frame %s)\n",
+			root, report.TargetSPDX, report.DataVersion, walkID, walkFrame)
 		return
 	}
 
@@ -207,7 +220,8 @@ func printCompatReportText(report domain.ClosureCompatibilityReport, root coordi
 		}
 	}
 
-	_, _ = fmt.Fprintf(stdout, "%s vs %s (data v%s):\n", root, report.TargetSPDX, report.DataVersion)
+	_, _ = fmt.Fprintf(stdout, "%s vs %s (data v%s, walk %s, frame %s):\n",
+		root, report.TargetSPDX, report.DataVersion, walkID, walkFrame)
 
 	if len(incompatible) > 0 {
 		_, _ = fmt.Fprintf(stdout, "\nIncompatible (%d):\n", len(incompatible))

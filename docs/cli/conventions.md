@@ -85,6 +85,45 @@ Example policies are available in `docs/examples/policies/`.
 
 ---
 
+## The build frame
+
+A walk records the `GOOS`/`GOARCH` it resolved for. One store can hold walks of
+the same project for several platforms — a cross-compiled release run produces
+one per target — and the two behave differently:
+
+**Commands that run analysis over a walk** select the walk resolved for the
+current environment's `go env GOOS`/`GOARCH`, not the newest one. This covers
+`vuln-scan --gomod` (and `--tool`/`--project`), `vuln-scan <module@version>`,
+and `sbom --package` without `--force`.
+
+`vuln-scan` refuses when no such walk exists, naming the platform and the
+command that produces one:
+
+```
+no succeeded code project walk for example.com/myapp on darwin/arm64 — run: kanonarion walk --gomod ./go.mod
+```
+
+`sbom --package` builds the missing walk itself in the current frame rather
+than refusing.
+
+To scan or inventory another platform's walk deliberately, name it by ID:
+`kanonarion vuln-scan <walk-id>`.
+
+**Query commands** (`inspect`, `license`, `license-compat`, `context`,
+`dependents`, `interface-diff --used-by`, `callers`/`callees`/`implementers`
+with `--gomod`) still answer from the most recent walk of the target, whatever
+its platform, and state which frame answered:
+
+```
+Walk ID:  01KQDBVW092ER1HNXZ60X27CMD
+Frame:    linux/amd64
+```
+
+A walk taken before the frame was recorded reads `unrecorded`. JSON output
+carries the same value in a `frame` / `walk_frame` field.
+
+---
+
 ## Store layout
 
 All state lives under `--store-root` (default `~/.kanonarion`):

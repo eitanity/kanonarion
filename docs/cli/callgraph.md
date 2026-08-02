@@ -283,7 +283,7 @@ kanonarion callers <symbol-id> [flags]
 | `--exclude-tests` | `false` | Omit callers declared in `_test.go` files and external test packages |
 | `--transitive` | `false` | Follow reachable edges transitively instead of only direct call sites |
 | `--depth` | `0` | Maximum traversal depth for `--transitive` (`0` = unlimited) |
-| `--gomod` | `./go.mod` | Restrict results to the latest project walk for this `go.mod` |
+| `--gomod` | `./go.mod` | Restrict results to the latest project walk for this `go.mod`. The scope notice names that walk and the `GOOS/GOARCH` it resolved for |
 | `--walk-id` | _(none)_ | Restrict results to the resolved version set of this walk |
 
 ```
@@ -330,7 +330,7 @@ method — an ID `callers` and `callees` also accept.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--exclude-tests` | `false` | Omit implementations declared in `_test.go` files |
-| `--gomod` | `./go.mod` | Restrict results to the latest project walk for this `go.mod` |
+| `--gomod` | `./go.mod` | Restrict results to the latest project walk for this `go.mod`. The scope notice names that walk and the `GOOS/GOARCH` it resolved for |
 | `--walk-id` | _(none)_ | Restrict results to the resolved version set of this walk |
 | `--json` | `false` | Emit the result, verdict and scope as JSON |
 

@@ -15,16 +15,21 @@ import (
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
+// sbomTestPlatform is the frame these selection tests ask in. The fixtures
+// below record the same one, so a test that is not about platform mismatch
+// still finds its walk.
+var sbomTestPlatform = walkports.BuildEnvFilter{GOOS: "linux", GOARCH: "amd64"}
+
 // ---- findLatestProjectWalk ----
 
 func TestFindLatestProjectWalk_Found(t *testing.T) {
 	qw := testfakes.NewFakeQueryWalks()
 	coord, _ := coordinate.NewModuleCoordinate("example.com/myapp", coordinate.LocalVersion)
 	qw.SetSummaries([]walkports.WalkSummary{
-		{ID: "walk-proj-1", Target: coord, Scope: walkdomain.WalkScopeCode, OverallStatus: walkdomain.WalkSucceeded},
+		{ID: "walk-proj-1", Target: coord, Scope: walkdomain.WalkScopeCode, OverallStatus: walkdomain.WalkSucceeded, GOOS: "linux", GOARCH: "amd64"},
 	})
 
-	id, err := findLatestProjectWalk(context.Background(), qw, "example.com/myapp")
+	id, err := findLatestProjectWalk(context.Background(), qw, "example.com/myapp", sbomTestPlatform)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -38,10 +43,10 @@ func TestFindLatestProjectWalk_NotFound(t *testing.T) {
 	// Store has walks, but none matching this module.
 	other, _ := coordinate.NewModuleCoordinate("example.com/other", coordinate.LocalVersion)
 	qw.SetSummaries([]walkports.WalkSummary{
-		{ID: "walk-other", Target: other, Scope: walkdomain.WalkScopeCode, OverallStatus: walkdomain.WalkSucceeded},
+		{ID: "walk-other", Target: other, Scope: walkdomain.WalkScopeCode, OverallStatus: walkdomain.WalkSucceeded, GOOS: "linux", GOARCH: "amd64"},
 	})
 
-	_, err := findLatestProjectWalk(context.Background(), qw, "example.com/myapp")
+	_, err := findLatestProjectWalk(context.Background(), qw, "example.com/myapp", sbomTestPlatform)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -54,7 +59,7 @@ func TestFindLatestProjectWalk_ListError(t *testing.T) {
 	qw := testfakes.NewFakeQueryWalks()
 	qw.ListErr = walkports.ErrWalkNotFound
 
-	_, err := findLatestProjectWalk(context.Background(), qw, "example.com/myapp")
+	_, err := findLatestProjectWalk(context.Background(), qw, "example.com/myapp", sbomTestPlatform)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -65,10 +70,10 @@ func TestFindLatestProjectWalk_ExcludesFailedWalks(t *testing.T) {
 	coord, _ := coordinate.NewModuleCoordinate("example.com/myapp", coordinate.LocalVersion)
 	// Only a failed walk is present.
 	qw.SetSummaries([]walkports.WalkSummary{
-		{ID: "walk-failed", Target: coord, Scope: walkdomain.WalkScopeCode, OverallStatus: walkdomain.WalkFailed},
+		{ID: "walk-failed", Target: coord, Scope: walkdomain.WalkScopeCode, OverallStatus: walkdomain.WalkFailed, GOOS: "linux", GOARCH: "amd64"},
 	})
 
-	_, err := findLatestProjectWalk(context.Background(), qw, "example.com/myapp")
+	_, err := findLatestProjectWalk(context.Background(), qw, "example.com/myapp", sbomTestPlatform)
 	if err == nil {
 		t.Fatal("expected error for no succeeded walks, got nil")
 	}
@@ -80,10 +85,10 @@ func TestProjectWalkToReuse_ReusesSucceededWalk(t *testing.T) {
 	qw := testfakes.NewFakeQueryWalks()
 	coord, _ := coordinate.NewModuleCoordinate("example.com/myapp", coordinate.LocalVersion)
 	qw.SetSummaries([]walkports.WalkSummary{
-		{ID: "walk-1", Target: coord, Scope: walkdomain.WalkScopeCode, OverallStatus: walkdomain.WalkSucceeded},
+		{ID: "walk-1", Target: coord, Scope: walkdomain.WalkScopeCode, OverallStatus: walkdomain.WalkSucceeded, GOOS: "linux", GOARCH: "amd64"},
 	})
 
-	id, reuse, err := projectWalkToReuse(context.Background(), qw, "example.com/myapp", false)
+	id, reuse, err := projectWalkToReuse(context.Background(), qw, "example.com/myapp", false, sbomTestPlatform)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -96,7 +101,7 @@ func TestProjectWalkToReuse_ReusesSucceededWalk(t *testing.T) {
 func TestProjectWalkToReuse_ColdStoreSignalsBuild(t *testing.T) {
 	qw := testfakes.NewFakeQueryWalks()
 
-	id, reuse, err := projectWalkToReuse(context.Background(), qw, "example.com/myapp", false)
+	id, reuse, err := projectWalkToReuse(context.Background(), qw, "example.com/myapp", false, sbomTestPlatform)
 	if err != nil {
 		t.Fatalf("cold store must not error, got: %v", err)
 	}
@@ -110,10 +115,10 @@ func TestProjectWalkToReuse_ForceAlwaysBuilds(t *testing.T) {
 	qw := testfakes.NewFakeQueryWalks()
 	coord, _ := coordinate.NewModuleCoordinate("example.com/myapp", coordinate.LocalVersion)
 	qw.SetSummaries([]walkports.WalkSummary{
-		{ID: "walk-1", Target: coord, Scope: walkdomain.WalkScopeCode, OverallStatus: walkdomain.WalkSucceeded},
+		{ID: "walk-1", Target: coord, Scope: walkdomain.WalkScopeCode, OverallStatus: walkdomain.WalkSucceeded, GOOS: "linux", GOARCH: "amd64"},
 	})
 
-	_, reuse, err := projectWalkToReuse(context.Background(), qw, "example.com/myapp", true)
+	_, reuse, err := projectWalkToReuse(context.Background(), qw, "example.com/myapp", true, sbomTestPlatform)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -127,7 +132,7 @@ func TestProjectWalkToReuse_ListErrorPropagates(t *testing.T) {
 	qw := testfakes.NewFakeQueryWalks()
 	qw.ListErr = errors.New("db down")
 
-	_, _, err := projectWalkToReuse(context.Background(), qw, "example.com/myapp", false)
+	_, _, err := projectWalkToReuse(context.Background(), qw, "example.com/myapp", false, sbomTestPlatform)
 	if err == nil {
 		t.Fatal("expected the lookup error to propagate, got nil")
 	}

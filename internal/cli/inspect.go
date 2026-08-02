@@ -138,13 +138,16 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 	}
 
 	// Step 2: find the walk ID for this coordinate.
-	walkID, err := latestWalkIDForCoord(ctx, ctr.QueryWalks, coord)
+	walkSum, err := latestWalkIDForCoord(ctx, ctr.QueryWalks, coord)
 	if err != nil {
 		return fmt.Errorf("finding walk ID: %w", err)
 	}
+	walkID := walkSum.ID
 
-	// Step 3: extract
-	if _, err := fmt.Fprintf(stderr, "==> inspect: extracting walk %s\n", walkID); err != nil {
+	// Step 3: extract. The banner names the frame the walk was resolved in:
+	// this lookup takes the newest walk of the coordinate, and on a store
+	// holding several platforms' walks that need not be this platform's.
+	if _, err := fmt.Fprintf(stderr, "==> inspect: extracting walk %s (frame %s)\n", walkID, walkSum.BuildFrame()); err != nil {
 		return fmt.Errorf("writing output: %w", err)
 	}
 	ef := extractFlags{
@@ -158,7 +161,7 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 	}
 
 	// Step 4: vuln-scan
-	if _, err := fmt.Fprintf(stderr, "==> inspect: scanning vulnerabilities for walk %s\n", walkID); err != nil {
+	if _, err := fmt.Fprintf(stderr, "==> inspect: scanning vulnerabilities for walk %s (frame %s)\n", walkID, walkSum.BuildFrame()); err != nil {
 		return fmt.Errorf("writing output: %w", err)
 	}
 	// The scan's result channel goes to stderr, not io.Discard: it carries the
@@ -205,17 +208,21 @@ func resolveCoordForInspect(ctx context.Context, arg, _, goproxy string, stderr 
 
 // inspectSummary is the aggregate result of an inspect --gomod run.
 type inspectSummary struct {
-	ModuleCount     int                `json:"module_count"`
-	NodeFails       int                `json:"node_fails,omitempty"`
-	ExtractFails    int                `json:"extract_fails,omitempty"`
-	ScanFails       int                `json:"scan_fails,omitempty"`
-	OverallStatus   string             `json:"overall_status"`
-	AffectedCount   int                `json:"affected_count"`
-	SnapshotVersion string             `json:"snapshot_version,omitempty"`
-	WalkIDs         []string           `json:"walk_ids"`
-	Directives      *directivesSection `json:"directives,omitempty"`
-	GoDebug         *godebugSection    `json:"godebug,omitempty"`
-	Vendor          *vendorSection     `json:"vendor,omitempty"`
+	ModuleCount     int      `json:"module_count"`
+	NodeFails       int      `json:"node_fails,omitempty"`
+	ExtractFails    int      `json:"extract_fails,omitempty"`
+	ScanFails       int      `json:"scan_fails,omitempty"`
+	OverallStatus   string   `json:"overall_status"`
+	AffectedCount   int      `json:"affected_count"`
+	SnapshotVersion string   `json:"snapshot_version,omitempty"`
+	WalkIDs         []string `json:"walk_ids"`
+	// WalkFrame is the GOOS/GOARCH the answering project walk resolved for, or
+	// "unrecorded" for a walk written before the frame was projected. It is
+	// always present: a reader cannot tell an unstated frame from a missing one.
+	WalkFrame  string             `json:"walk_frame"`
+	Directives *directivesSection `json:"directives,omitempty"`
+	GoDebug    *godebugSection    `json:"godebug,omitempty"`
+	Vendor     *vendorSection     `json:"vendor,omitempty"`
 }
 
 // inspectSummaryStatus derives the aggregate status for inspect's summary.
@@ -323,17 +330,18 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 	}
 
 	// Look up the project walk record for its ID and node counts.
-	walkID, moduleCount, walkFails, qerr := latestProjectWalkSummary(ctx, ctr.QueryWalks, modulePath, scope)
+	projectWalk, qerr := latestProjectWalkSummary(ctx, ctr.QueryWalks, modulePath, scope)
 	if qerr != nil {
 		return qerr
 	}
+	walkID, moduleCount, walkFails := projectWalk.ID, projectWalk.NodeCount, projectWalk.FailureCount
 	if walkFails > 0 && nodeFails == 0 {
 		nodeFails = walkFails
 	}
 
 	var extractFails, scanFails int
 	if walkID != "" {
-		_, _ = fmt.Fprintf(stderr, "==> inspect --gomod: extracting walk %s\n", walkID)
+		_, _ = fmt.Fprintf(stderr, "==> inspect --gomod: extracting walk %s (frame %s)\n", walkID, projectWalk.BuildFrame())
 		ef := extractFlags{
 			goBinary:   f.goBinary,
 			stages:     []string{"license", "interface", "callgraph", "example"},
@@ -432,6 +440,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 			AffectedCount:   affectedCount,
 			SnapshotVersion: snapshotVersion,
 			WalkIDs:         walkIDs,
+			WalkFrame:       projectWalk.BuildFrame(),
 			Directives:      directives,
 			GoDebug:         godebug,
 			Vendor:          vendor,
@@ -455,6 +464,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 	}
 	if walkID != "" {
 		_, _ = fmt.Fprintf(stdout, "Walk ID:  %s\n", walkID)
+		_, _ = fmt.Fprintf(stdout, "Frame:    %s\n", projectWalk.BuildFrame())
 		_, _ = fmt.Fprintf(stdout, "\nTo get module context: kanonarion context --gomod %s\n", f.gomodPath)
 	}
 	return nil
@@ -477,47 +487,50 @@ func printReachabilityClosureBanner(w io.Writer, gomodPath string) {
 	_, _ = fmt.Fprintf(w, "    To root reachability at the application, run: kanonarion local %s\n", projectDir)
 }
 
-// latestWalkIDForCoord returns the ID of the most recent walk for the given coordinate.
-func latestWalkIDForCoord(ctx context.Context, uc QueryWalksUseCase, coord coordinate.ModuleCoordinate) (string, error) {
+// latestWalkIDForCoord returns the most recent walk for the given coordinate.
+// The whole summary is returned, not just the ID, because every line that names
+// the walk has to be able to name the platform it was resolved for: this lookup
+// has no build-environment axis, so on a store holding several platforms'
+// walks of one target it answers with whichever is newest.
+func latestWalkIDForCoord(ctx context.Context, uc QueryWalksUseCase, coord coordinate.ModuleCoordinate) (walkports.WalkSummary, error) {
 	walks, err := uc.ListWalks(ctx, walkports.WalkFilter{Target: &coord, Limit: 1})
 	if err != nil {
-		return "", fmt.Errorf("listing walks for %s: %w", coord, err)
+		return walkports.WalkSummary{}, fmt.Errorf("listing walks for %s: %w", coord, err)
 	}
 	if len(walks) == 0 {
-		return "", fmt.Errorf("no walk found for %s after walk step", coord)
+		return walkports.WalkSummary{}, fmt.Errorf("no walk found for %s after walk step", coord)
 	}
-	return walks[0].ID, nil
+	return walks[0], nil
 }
 
-// latestWalkIDForCoordScope returns the ID of the most recent walk for the given
+// latestWalkIDForCoordScope returns the most recent walk for the given
 // coordinate and scope.
-func latestWalkIDForCoordScope(ctx context.Context, uc QueryWalksUseCase, coord coordinate.ModuleCoordinate, scope domain.WalkScope) (string, error) {
+func latestWalkIDForCoordScope(ctx context.Context, uc QueryWalksUseCase, coord coordinate.ModuleCoordinate, scope domain.WalkScope) (walkports.WalkSummary, error) {
 	walks, err := uc.ListWalks(ctx, walkports.WalkFilter{Target: &coord, Scope: &scope, Limit: 1})
 	if err != nil {
-		return "", fmt.Errorf("listing walks for %s: %w", coord, err)
+		return walkports.WalkSummary{}, fmt.Errorf("listing walks for %s: %w", coord, err)
 	}
 	if len(walks) == 0 {
-		return "", fmt.Errorf("no walk found for %s after walk step", coord)
+		return walkports.WalkSummary{}, fmt.Errorf("no walk found for %s after walk step", coord)
 	}
-	return walks[0].ID, nil
+	return walks[0], nil
 }
 
-// latestProjectWalkSummary returns the id, node count and failure count of the
-// most recent walk rooted at the local main module under scope. All three are
-// zero when no such walk has been recorded, which is not an error: the caller
-// reports on what the store holds.
-func latestProjectWalkSummary(ctx context.Context, q QueryWalksUseCase, modulePath string, scope depScope) (string, int, int, error) {
+// latestProjectWalkSummary returns the most recent walk rooted at the local main
+// module under scope. The zero summary means no such walk has been recorded,
+// which is not an error: the caller reports on what the store holds.
+func latestProjectWalkSummary(ctx context.Context, q QueryWalksUseCase, modulePath string, scope depScope) (walkports.WalkSummary, error) {
 	localCoord, err := coordinate.NewLocalCoordinate(modulePath)
 	if err != nil {
-		return "", 0, 0, fmt.Errorf("project coordinate for %s: %w", modulePath, err)
+		return walkports.WalkSummary{}, fmt.Errorf("project coordinate for %s: %w", modulePath, err)
 	}
 	walkScope := domain.WalkScope(scope)
 	walks, err := q.ListWalks(ctx, walkports.WalkFilter{Target: &localCoord, Scope: &walkScope, Limit: 1})
 	if err != nil {
-		return "", 0, 0, fmt.Errorf("querying project walk: %w", err)
+		return walkports.WalkSummary{}, fmt.Errorf("querying project walk: %w", err)
 	}
 	if len(walks) == 0 {
-		return "", 0, 0, nil
+		return walkports.WalkSummary{}, nil
 	}
-	return walks[0].ID, walks[0].NodeCount, walks[0].FailureCount, nil
+	return walks[0], nil
 }

@@ -71,6 +71,7 @@ func printFullDependencies(w *errWriter, d contextDependencies, mod string) {
 		w.printf("Status:  %s\n", d.Status)
 		if d.WalkID != "" {
 			w.printf("Walk ID: %s\n", d.WalkID)
+			w.printf("Frame:   %s\n", d.Frame)
 		}
 		if d.Partial {
 			w.printf("Partial: true (some transitive deps could not be resolved)\n")

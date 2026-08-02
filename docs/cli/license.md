@@ -42,8 +42,22 @@ kanonarion licence github.com/spf13/cobra@v1.8.1 --per-file
 | `--store-root` | `~/.kanonarion` | Root directory for blobs and SQLite |
 | `--force` | false | Re-extract even if a cached record exists |
 | `--per-file` | false | Scan root-level `.go` files for SPDX headers when no licence file is found |
+| `--recursive` | false | Also report licences for the module's dependency closure |
+| `--all` | false | With `--recursive`, list every dependency instead of a summary |
 | `--json` | false | Emit the full `LicenceRecord` as JSON |
 | `--log-level` | `warn` | Log verbosity: `debug`, `info`, `warn`, `error` |
+
+`--recursive` and `--all` read the closure from the most recent walk of the
+module, whatever platform it resolved for, and print which walk answered before
+the listing:
+
+```
+Answered from walk 01KQDBVW092ER1HNXZ60X27CMD (frame linux/amd64)
+```
+
+The frame reads `unrecorded` for a walk taken before it was recorded. It
+matters because `GOOS` gates which files build, and so which modules the
+closure contains.
 
 **Output (default):**
 

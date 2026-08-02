@@ -203,6 +203,14 @@ func printLicenseRecursive(
 		}
 	}
 
+	// Which walk answered, and in which frame. The lookup takes the newest walk
+	// of the target and cannot tell two platforms apart, so a closure listed here
+	// is the closure of one platform's build — and GOOS gates which files, and so
+	// which modules, that build selects.
+	if _, err := fmt.Fprintf(stdout, "\nAnswered from walk %s (frame %s)\n", summaries[0].ID, summaries[0].BuildFrame()); err != nil {
+		return fmt.Errorf("writing walk frame: %w", err)
+	}
+
 	if f.all {
 		if _, err := fmt.Fprintf(stdout, "\nDependency Licenses:\n"); err != nil {
 			return fmt.Errorf("writing header: %w", err)

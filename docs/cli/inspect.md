@@ -147,9 +147,16 @@ Modules:  21 (0 failed)
 Affected: 0
 Snapshot: 2026-05-07T19:21:40Z
 Walk ID:  01KQDBVW092ER1HNXZ60X27CMD
+Frame:    linux/amd64
 
 To get module context: kanonarion context --gomod ./go.mod
 ```
+
+`Frame` is the `GOOS/GOARCH` the answering walk resolved for, or `unrecorded`
+for a walk taken before the frame was recorded. `inspect` answers from the most
+recent walk of the target regardless of platform, so on a store holding walks
+for several platforms this line says which one answered. JSON output carries it
+as `walk_frame`.
 
 `Status` is the coverage word (`AllClean` / `Affected` / `Partial` /
 `ScanFailed`) and `Affected` is the findings count; the two are independent

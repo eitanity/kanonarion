@@ -27,13 +27,18 @@ it; it always sorts first and is annotated `[root]`.
 ### Text
 
 ```
-N module(s) in walk <id> depend on <target>:
+N module(s) in walk <id> (frame linux/amd64) depend on <target>:
   github.com/caddyserver/caddy/v2@v2.11.2      [root]
   github.com/caddyserver/certmagic@v0.25.2     [direct]
   cloud.google.com/go/auth@v0.18.1             [direct]
   github.com/google/s2a-go@v0.1.9
   ...
 ```
+
+`frame` is the `GOOS/GOARCH` the answering walk resolved for, or `unrecorded`
+for a walk taken before the frame was recorded. Without `--walk-id` the answer
+comes from the most recent walk containing the target, whatever its platform.
+JSON output carries it as `walk_frame`.
 
 **Annotation key**
 

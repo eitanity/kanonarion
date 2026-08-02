@@ -284,8 +284,11 @@ func latestSucceededWalkNote(
 	if !notBefore.IsZero() && !newest.StartedAt.After(notBefore) {
 		return ""
 	}
-	return fmt.Sprintf("note: a newer walk of %s exists (%s, %s); consider scanning that instead",
-		root, newest.ID, walkAge(newest.StartedAt))
+	// The frame is inside the one sentence, not on a line of its own: the note is
+	// concatenated onto an error string. A newer walk of another platform is
+	// still worth naming, and the reader has to be able to see that it is one.
+	return fmt.Sprintf("note: a newer walk of %s exists (%s, frame %s, %s); consider scanning that instead",
+		root, newest.ID, newest.BuildFrame(), walkAge(newest.StartedAt))
 }
 
 // walkAge renders how long ago t was, coarsely — the note exists to say

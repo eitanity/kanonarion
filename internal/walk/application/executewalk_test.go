@@ -96,6 +96,12 @@ func (f *fakeWalkStore) ListWalks(_ context.Context, filter walkports.WalkFilter
 		if filter.IdentityHash != nil && rec.IdentityHash != *filter.IdentityHash {
 			continue
 		}
+		// Mirrors the adapter's `goos = ? AND goarch = ?`: exact on both axes,
+		// with the empty string selecting the unrecorded frame rather than any.
+		if filter.BuildEnv != nil &&
+			(rec.Graph.BuildEnv.GOOS != filter.BuildEnv.GOOS || rec.Graph.BuildEnv.GOARCH != filter.BuildEnv.GOARCH) {
+			continue
+		}
 		matched = append(matched, rec)
 	}
 	if filter.LatestOnly {
@@ -130,6 +136,8 @@ func (f *fakeWalkStore) ListWalks(_ context.Context, filter walkports.WalkFilter
 			FailureCount:  failureCount,
 			Depth:         rec.Depth,
 			IdentityHash:  rec.IdentityHash,
+			GOOS:          rec.Graph.BuildEnv.GOOS,
+			GOARCH:        rec.Graph.BuildEnv.GOARCH,
 		})
 	}
 	// Mimic SQLite ordering: started_at DESC.
