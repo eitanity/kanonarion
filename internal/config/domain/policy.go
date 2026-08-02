@@ -29,6 +29,73 @@ type PolicyEvaluation struct {
 	// RuleScopes lists the scopes the policy has rules for, populated when
 	// Unevaluated is true.
 	RuleScopes []string
+	// ElectableArms names the arms of a disjunction that carry the reported
+	// outcome — the licences the consumer may elect between to obtain it.
+	// Populated only by EvaluateDisjunction, and information rather than a
+	// gate: the outcome already stands on the most favourable arm.
+	ElectableArms []string
+}
+
+// outcomeRank orders the outcomes from most to least favourable so a
+// disjunction can be folded onto the arm the consumer would elect. Lower is
+// more favourable: allow < notify < warn < unevaluated.
+func outcomeRank(o PolicyOutcome) int {
+	switch o {
+	case PolicyOutcomeAllow:
+		return 0
+	case PolicyOutcomeNotify:
+		return 1
+	case PolicyOutcomeWarn:
+		return 2
+	default: // PolicyOutcomeUnevaluated, and any value not yet known here
+		return 3
+	}
+}
+
+// EvaluateDisjunction resolves the policy outcome for a module offering a
+// choice of licences (a pure "A OR B" expression whose arms were identified).
+// Each arm is evaluated on its own and the module takes the most favourable
+// arm's outcome, because that is the licence a consumer would elect: a module
+// offering a choice cannot oblige worse terms than the best arm on offer, and
+// treating the choice as uncertainty ranked it below a determined
+// strong-copyleft licence the same rule merely warns on.
+//
+// The result names the arms sharing that outcome in ElectableArms, so the row
+// says which licences carry it. Nothing here gates: recording an election as a
+// license_overrides entry still settles the row wholesale, but its absence is
+// not itself an open item.
+//
+// Arms are never uncertain — they are identified SPDX identifiers — so the
+// unknown-licence machinery is not consulted. An unresolved disjunction (no
+// arms identified) is not this function's business: the caller routes it
+// through EvaluateLicense with an empty licence, which keeps the guarantee that
+// an undetermined licence never reads as a clean allow. Called with no arms,
+// this does the same.
+func (p LicensePolicy) EvaluateDisjunction(arms []string, scope string) PolicyEvaluation {
+	if len(arms) == 0 {
+		return p.EvaluateLicense("", scope)
+	}
+
+	best := p.EvaluateLicense(arms[0], scope)
+	for _, arm := range arms[1:] {
+		if e := p.EvaluateLicense(arm, scope); outcomeRank(e.Outcome) < outcomeRank(best.Outcome) {
+			best = e
+		}
+	}
+
+	// A scope with no rule leaves every arm unevaluated: the gap is the
+	// scope's, so it is reported exactly as the single-licence path reports
+	// it, with no arms named — none of them was measured.
+	if best.Unevaluated {
+		return best
+	}
+
+	for _, arm := range arms {
+		if p.EvaluateLicense(arm, scope).Outcome == best.Outcome {
+			best.ElectableArms = append(best.ElectableArms, arm)
+		}
+	}
+	return best
 }
 
 // resolveUnknownLicense returns the effective UnknownLicensePolicy for the

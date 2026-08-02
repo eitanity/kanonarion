@@ -253,3 +253,23 @@ func TestDisjunctionArms(t *testing.T) {
 		})
 	}
 }
+
+// TestSoleIdentifier pins the one-identifier reading: an expression naming a
+// single licence resolves to it, and anything carrying an operator resolves to
+// nothing — a choice and a set of obligations are both more than one licence.
+func TestSoleIdentifier(t *testing.T) {
+	cases := map[string]string{
+		"Apache-2.0":                        "Apache-2.0",
+		"  MIT  ":                           "MIT",
+		"":                                  "",
+		"Apache-2.0 OR MIT":                 "",
+		"MIT AND BSD-3-Clause":              "",
+		"GPL-2.0-only WITH Classpath-e":     "",
+		"Apache-2.0 OR BSD-3-Clause OR MIT": "",
+	}
+	for expr, want := range cases {
+		if got := domain.SoleIdentifier(expr); got != want {
+			t.Errorf("SoleIdentifier(%q) = %q, want %q", expr, got, want)
+		}
+	}
+}

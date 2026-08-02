@@ -275,12 +275,32 @@ undetermined is governed by `license_policy.rules[].unknown_license` - not by
 the rule's `default`. When that key resolves to `block` for the module's scope,
 `audit` prints the full table and then exits `5`, naming every blocked module.
 
-A `Multiple` licence status - detection found more than one licence identity,
-e.g. a dual-licensed module - is carried as unresolved (uncertainty
-`multiple`) under every scope and governed by the same unknown-licence key,
-until an operator records the resolution (for a dual licence, the elected
-arm) as a `license_overrides` entry. The SPDX shown in the licence column for
-such a row is display information, not a resolution.
+A `Multiple` licence status - detection found more than one licence identity -
+splits in two.
+
+When the module offers a **choice** (a pure `A OR B` expression whose arms are
+identified SPDX identifiers, e.g. a dual-licensed module), each arm is evaluated
+against the rule and the row takes the most favourable arm's outcome. Every arm
+allowed reads `allow`; one allowed arm among stricter ones also reads `allow`;
+no allowed arm reads whatever the least-bad arm reads (a `warn` licence in a
+disjunction is still a `warn`, never a block). The policy column names the arms
+that carry the outcome — `allow [permissive] [electable: Apache-2.0 or MIT]` —
+and `--json` repeats them in `license_electable_arms`. Such a row is not an open
+item; recording the elected arm as a `license_overrides` entry still settles it
+wholesale and then the row is evaluated under that one licence.
+
+When the expression names a **single** licence, that licence is the row's
+resolution and is evaluated as any determined licence is. A module whose one
+licence file bundles third-party texts (an omnibus attribution file) reads
+`Multiple` in the licence column while its expression names its own licence
+alone; the status describes how detection got there, not that it failed.
+
+When the expression offers neither - a conjunction (`A AND B`), or candidates
+that could not be identified - nothing was determined: the row is carried as
+unresolved (uncertainty `multiple`) under every scope, governed by the same
+unknown-licence key, until an operator records the resolution as a
+`license_overrides` entry. The SPDX shown in the licence column for such a row
+is display information, not a resolution.
 
 Left unset the key resolves to `block` for `scope: production` and `warn` for
 every other scope, so an undetermined dependency fails a production audit

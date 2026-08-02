@@ -73,17 +73,17 @@ func TestDefaultScopeEvaluatesStrongCopyleftAsWarn(t *testing.T) {
 }
 
 // TestAuditLicenceResolution_MultipleIsUnresolved guards the audit rule that a
-// Multiple licence status is an open item: it resolves no SPDX, so the policy
-// path treats it as uncertain rather than evaluating an arbitrary primary.
+// Multiple licence status resolves no single SPDX, and that an identified
+// disjunction is handed to the caller as arms rather than as an uncertainty.
 func TestAuditLicenceResolution_MultipleIsUnresolved(t *testing.T) {
 	rec := licdomain.LicenseRecord{
 		PrimarySPDX:   "GPL-3.0",
 		Expression:    "Apache-2.0 OR GPL-3.0",
 		OverallStatus: licdomain.LicenseStatusMultiple,
 	}
-	display, status, resolved, reason := auditLicenceResolution(rec, true, nil, "(not run)", "(not run)")
+	display, status, resolved, reason, arms := auditLicenceResolution(rec, true, nil, "(not run)", "(not run)")
 	if resolved != "" {
-		t.Errorf("resolvedSPDX = %q, want empty (Multiple cannot be allowed by any rule)", resolved)
+		t.Errorf("resolvedSPDX = %q, want empty (Multiple settles on no single identity)", resolved)
 	}
 	if reason != "multiple" {
 		t.Errorf("uncertaintyReason = %q, want multiple", reason)
@@ -91,16 +91,30 @@ func TestAuditLicenceResolution_MultipleIsUnresolved(t *testing.T) {
 	if display != "GPL-3.0" || status != "Multiple" {
 		t.Errorf("display/status = %q/%q, want GPL-3.0/Multiple (display keeps the fact)", display, status)
 	}
+	if len(arms) != 2 || arms[0] != "Apache-2.0" || arms[1] != "GPL-3.0" {
+		t.Errorf("arms = %v, want [Apache-2.0 GPL-3.0]", arms)
+	}
+
+	// A Multiple whose expression is conjunctive offers no election: no arms,
+	// so the row keeps riding the unknown-licence machinery.
+	conj := licdomain.LicenseRecord{
+		PrimarySPDX:   "MIT",
+		Expression:    "MIT AND BSD-3-Clause",
+		OverallStatus: licdomain.LicenseStatusMultiple,
+	}
+	if _, _, _, _, arms = auditLicenceResolution(conj, true, nil, "(not run)", "(not run)"); arms != nil {
+		t.Errorf("conjunction arms = %v, want none", arms)
+	}
 
 	// A determined single licence still resolves.
 	det := licdomain.LicenseRecord{PrimarySPDX: "MIT", OverallStatus: licdomain.LicenseStatusDetected}
-	_, _, resolved, _ = auditLicenceResolution(det, true, nil, "(not run)", "(not run)")
-	if resolved != "MIT" {
-		t.Errorf("Detected record resolvedSPDX = %q, want MIT", resolved)
+	_, _, resolved, _, arms = auditLicenceResolution(det, true, nil, "(not run)", "(not run)")
+	if resolved != "MIT" || arms != nil {
+		t.Errorf("Detected record resolvedSPDX = %q arms %v, want MIT/none", resolved, arms)
 	}
 
 	// A read error keeps the placeholders and resolves nothing.
-	_, status, resolved, _ = auditLicenceResolution(licdomain.LicenseRecord{}, false, errors.New("boom"), "(not run)", "(not run)")
+	_, status, resolved, _, _ = auditLicenceResolution(licdomain.LicenseRecord{}, false, errors.New("boom"), "(not run)", "(not run)")
 	if resolved != "" || status != "(not run)" {
 		t.Errorf("errored lookup = resolved %q status %q, want empty/(not run)", resolved, status)
 	}

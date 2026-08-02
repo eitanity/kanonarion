@@ -131,6 +131,12 @@ type auditModuleResult struct {
 	// LicenseResolved is false: no_record | none | multiple |
 	// extraction_failed | cancelled | not_run.
 	LicenseUncertainty string `json:"license_uncertainty,omitempty"`
+	// LicenseElectableArms names the arms of a dual-licence disjunction that
+	// carry the reported policy_outcome — the licences a consumer may elect
+	// between to obtain it. Information, not an open item: the outcome already
+	// stands on the most favourable arm, and the row is not blocking for want
+	// of a recorded election.
+	LicenseElectableArms []string `json:"license_electable_arms,omitempty"`
 	// PolicyBlocking is true when this result is a hard compliance failure:
 	// an uncertain licence under scope unknown_license = block, or a policy
 	// scope no rule covers (unevaluated); `audit` exits non-zero when any
@@ -489,19 +495,26 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, po
 
 	lrec, lfound, lerr := ctr.QueryLicense.GetLicenseRecord(ctx, coord, licapp.PipelineVersion)
 	var resolvedSPDX, uncertaintyReason string
-	res.License, res.LicenseStatus, resolvedSPDX, uncertaintyReason = auditLicenceResolution(lrec, lfound, lerr, res.License, res.LicenseStatus)
+	var arms []string
+	res.License, res.LicenseStatus, resolvedSPDX, uncertaintyReason, arms = auditLicenceResolution(lrec, lfound, lerr, res.License, res.LicenseStatus)
 	// Overrides are consulted after the scanner result and can correct both
 	// unknown and positive results; a version-pinned entry beats a
-	// module-level one (resolution lives in license/domain).
+	// module-level one (resolution lives in license/domain). An override also
+	// settles a disjunction wholesale — the recorded election replaces the
+	// arms, so the row is evaluated under that one licence.
 	if ov, ok := overrides.Resolve(coord); ok {
 		resolvedSPDX = ov.SPDX
 		res.License = ov.SPDX
 		res.LicenseSource = "override"
+		arms = nil
 	} else if res.LicenseStatus != "(not run)" {
 		res.LicenseSource = "scanner"
 	}
 
 	eval := activeConfig.LicensePolicy.EvaluateLicense(resolvedSPDX, policyScope)
+	if len(arms) > 0 {
+		eval = activeConfig.LicensePolicy.EvaluateDisjunction(arms, policyScope)
+	}
 	applyPolicyEvaluation(&res, eval, uncertaintyReason)
 
 	vrec, found, verr := ctr.QueryVuln.GetLatestRecordForWalk(ctx, coord, vulnPipelineVersion, walkID)
@@ -512,18 +525,30 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, po
 
 // auditLicenceResolution derives an audit row's licence columns from a licence
 // record lookup: the display licence and status, the SPDX the policy is
-// evaluated against, and the machine-readable uncertainty reason (meaningful
-// only when no SPDX resolves). displayIn/statusIn are the row's current
-// placeholders, kept when the lookup errs.
+// evaluated against, the machine-readable uncertainty reason (meaningful only
+// when no SPDX resolves), and the electable arms when the record carries a
+// resolved disjunction. displayIn/statusIn are the row's current placeholders,
+// kept when the lookup errs.
 //
-// A Multiple status resolves NO SPDX deliberately: detection did not settle on
-// one licence identity, so it is an open item under every scope — the primary
-// SPDX is display information, and clearing the resolution routes the row
-// through the unknown-licence machinery (uncertain, and blocking where the
-// scope blocks unknowns) until an operator records the resolution (e.g. a
-// dual-licence election) as a license_overrides entry. Overrides are consulted
-// by the caller after this and settle it.
-func auditLicenceResolution(lrec licdomain.LicenseRecord, found bool, lerr error, displayIn, statusIn string) (display, status, resolvedSPDX, uncertaintyReason string) {
+// A Multiple status splits in two. When the record's expression is a pure OR of
+// identified licences, the module offers the consumer a choice: the arms are
+// returned and the caller evaluates the policy per arm, taking the most
+// favourable — a choice between allowed licences is not an uncertainty, and
+// routing it through the unknown-licence machinery ranked it below a determined
+// strong-copyleft licence the same rule merely warns on. Recording the election
+// as a license_overrides entry still settles the row, but its absence gates
+// nothing.
+//
+// When the expression names a single identifier, that identifier is the
+// resolution: a module whose one licence file bundles third-party texts is
+// reported Multiple, and its derived expression is still its own licence.
+//
+// A Multiple whose expression yields neither (a conjunction, or candidates that
+// could not be identified) resolves NO SPDX: detection did not settle on any
+// licence identity, so it stays an open item and rides the unknown-licence
+// machinery (uncertain, and blocking where the scope blocks unknowns) until an
+// override settles it. Overrides are consulted by the caller after this.
+func auditLicenceResolution(lrec licdomain.LicenseRecord, found bool, lerr error, displayIn, statusIn string) (display, status, resolvedSPDX, uncertaintyReason string, arms []string) {
 	display, status = displayIn, statusIn
 	uncertaintyReason = "no_record"
 	switch {
@@ -538,6 +563,18 @@ func auditLicenceResolution(lrec licdomain.LicenseRecord, found bool, lerr error
 		case licdomain.LicenseStatusMultiple:
 			resolvedSPDX = ""
 			uncertaintyReason = "multiple"
+			arms = licdomain.DisjunctionArms(lrec.Expression)
+			// The expression is the licence identity detection settled on, and
+			// Multiple describes how it got there, not that it failed. A pure
+			// disjunction is handed to the caller as arms; an expression naming
+			// one identifier — the omnibus-attribution case, where a single
+			// LICENSE file bundles third-party texts and the derived expression
+			// is the module's own licence — resolves to that identifier.
+			// Anything else (a conjunction, or candidates that named nothing)
+			// resolves nothing and keeps riding the unknown-licence machinery.
+			if len(arms) == 0 {
+				resolvedSPDX = licdomain.SoleIdentifier(lrec.Expression)
+			}
 		case licdomain.LicenseStatusExtractionFailed:
 			uncertaintyReason = "extraction_failed"
 		case licdomain.LicenseStatusCancelled:
@@ -547,7 +584,7 @@ func auditLicenceResolution(lrec licdomain.LicenseRecord, found bool, lerr error
 		display = "(not run)"
 		status = "(not run)"
 	}
-	return display, status, resolvedSPDX, uncertaintyReason
+	return display, status, resolvedSPDX, uncertaintyReason, arms
 }
 
 // applyPolicyEvaluation copies a policy evaluation onto an audit row. Shared by
@@ -561,6 +598,7 @@ func applyPolicyEvaluation(res *auditModuleResult, eval configdomain.PolicyEvalu
 	res.PolicyUnevaluated = eval.Unevaluated
 	res.policyScope = eval.Scope
 	res.policyRuleScopes = eval.RuleScopes
+	res.LicenseElectableArms = eval.ElectableArms
 	if eval.Uncertain {
 		res.LicenseUncertainty = uncertaintyReason
 	}
@@ -775,6 +813,11 @@ func printAuditTable(stdout io.Writer, results []auditModuleResult) error {
 		policy := r.PolicyOutcome
 		if r.LicenseCategory != "" {
 			policy = fmt.Sprintf("%s [%s]", r.PolicyOutcome, r.LicenseCategory)
+		}
+		// A disjunction states which licences carry the outcome, so the reader
+		// can see the row was decided on an arm rather than on one identity.
+		if len(r.LicenseElectableArms) > 0 {
+			policy = fmt.Sprintf("%s [electable: %s]", policy, strings.Join(r.LicenseElectableArms, " or "))
 		}
 		// Never let an undetermined license read as a clean verdict: make
 		// the uncertainty (and any hard block) explicit in the table.

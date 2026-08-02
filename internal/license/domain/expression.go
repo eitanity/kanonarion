@@ -103,6 +103,23 @@ func DisjunctionArms(expr string) []string {
 	return arms
 }
 
+// SoleIdentifier returns the one licence identifier an expression names, or ""
+// when it is empty or carries any operator (OR/AND/WITH). It answers a question
+// DisjunctionArms cannot: an expression such as "Apache-2.0" derived from a
+// module whose status is Multiple — an omnibus attribution file bundling
+// third-party texts — names a single determined licence, and a consumer of the
+// expression should read it as such rather than as an unsettled identity.
+func SoleIdentifier(expr string) string {
+	expr = strings.TrimSpace(expr)
+	if expr == "" ||
+		strings.Contains(expr, " OR ") ||
+		strings.Contains(expr, " AND ") ||
+		strings.Contains(expr, " WITH ") {
+		return ""
+	}
+	return expr
+}
+
 // buildORExpression constructs "primary OR alt1 OR alt2..." sorted and deduped.
 func buildORExpression(primary string, alts []AltMatch) string {
 	seen := map[string]bool{primary: true}
