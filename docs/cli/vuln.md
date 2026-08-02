@@ -503,10 +503,36 @@ Show the vulnerability record for a specific module.
 kanonarion vuln-show <module>@<version> [flags]
 ```
 
-When `--walk-id` is omitted, the record that answers a **consumer's** question
-about the module is returned: one produced by an analysis rooted at a project
-that consumes it, if the store holds one. Pass `--walk-id` to pin to a specific
-walk.
+A stored record answers "what did this advisory do in **this** build", so the
+answer depends on which build you mean:
+
+- `--walk-id <id>` answers in the frame of that walk's scans, restricted to the
+  records that walk covered. A `notice:` line names the walk and its frame.
+- `--gomod [path]` does the same for the newest succeeded project walk of that
+  `go.mod`; the valueless form means `./go.mod`. Mutually exclusive with
+  `--walk-id`.
+- With neither, the record that answers a **consumer's** question about the
+  module is returned: one produced by an analysis rooted at a project that
+  consumes it, if the store holds one.
+
+If the store holds the coordinate in more than one consumer's build — two
+projects scanned into one store — the unanchored form **refuses** (exit 20),
+names every frame it found, and names the flags that select one. It does not
+serve the newest: the newest scan of a shared dependency belongs to whichever
+project was scanned last.
+
+```
+$ kanonarion vuln-show github.com/golang-jwt/jwt/v4@v4.5.1
+error: the store holds github.com/golang-jwt/jwt/v4@v4.5.1 in 2 consumer frames, and this question names none:
+  target-rooted:github.com/cortezaproject/corteza/server@local
+  target-rooted:github.com/tmc/langchaingo@v0.1.14
+name the build you mean: kanonarion vuln-show github.com/golang-jwt/jwt/v4@v4.5.1 --walk-id <walk of that build>, or ... --gomod <path/to/go.mod>
+```
+
+A pinned walk that covered the module but holds no record in its own frame is
+refused too (exit 4), naming the frames its records were measured in. It never
+answers from a neighbouring frame, and the walk named in the answer is always
+the walk you pinned.
 
 That selection is not "newest wins", and the difference is load-bearing. An
 isolated scan builds the module as its own main module, so it records call-graph
@@ -540,7 +566,8 @@ vulnerability database snapshot predated it.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Path to fact store root |
-| `--walk-id` | _(none)_ | Walk ID the scan was performed under (optional) |
+| `--walk-id` | _(none)_ | Answer in the frame of this walk's scans |
+| `--gomod` | _(none)_ | Answer in the frame of the latest project walk for this go.mod (valueless form: `./go.mod`) |
 | `--history` | `false` | List all scan records across walks and snapshots |
 | `--json` | `false` | Emit record as JSON |
 

@@ -1190,29 +1190,42 @@ ORDER BY scanned_at ASC, rowid ASC`
 	return composed, true, nil
 }
 
-// GetLatestVulnerabilityRecordForWalk returns the composed record for a
-// coordinate and pipeline version among the records the given walk's scan runs
-// covered, regardless of snapshot.
+// ListVulnerabilityRecordsForModuleInWalk returns every generation of a
+// coordinate the given walk's scan runs covered, regardless of snapshot, oldest
+// first.
 //
 // The membership index answers which MODULES a walk's runs covered, not which
 // generation each run reported — that is the run's own PerModuleResults, and
 // ListVulnerabilityRecords is the read that uses it. So the join is by
-// coordinate and every generation of a covered module is a candidate, with the
-// ladder deciding between them. Narrowing it by the recorded content hash would
-// make a run that named a record the store no longer holds answer "this walk
-// never covered the module", which is a false absence rather than a narrower
-// truth.
-func (s *Store) GetLatestVulnerabilityRecordForWalk(
+// coordinate and every generation of a covered module is a candidate. Narrowing
+// it by the recorded content hash would make a run that named a record the store
+// no longer holds answer "this walk never covered the module", which is a false
+// absence rather than a narrower truth.
+//
+// The walk constraint goes through walk_scan_run_modules rather than the
+// walk_id column on vulnerability_records: since schema v5 that column is
+// provenance for the last walk that triggered the scan, so a record shared by
+// two walks names only one of them and filtering on it would drop the other
+// walk's module. ListVulnerabilityRecordsByFindingID takes the same route.
+//
+// Candidates are returned unranked. The membership key carries no analysis
+// frame, so this join admits every frame the coordinate was measured in at that
+// generation — the walk's own target-rooted record, an isolated scan of the
+// module, and another project's target-rooted record alike. Choosing between
+// them is a question about frames, which is the caller's to answer; this read
+// composed them until it was measured serving a corteza-pinned question from an
+// isolated record written under a different walk.
+func (s *Store) ListVulnerabilityRecordsForModuleInWalk(
 	ctx context.Context,
 	coord coordinate.ModuleCoordinate,
 	pipelineVersion string,
 	walkID string,
-) (domain.VulnerabilityRecord, bool, error) {
+) ([]domain.VulnerabilityRecord, error) {
 	// The zero coordinate names no module, so this is a question about nothing.
 	// Answering it with absence would report "no record here" for a module that
 	// was never asked about — see coordinate.ErrZeroCoordinate.
 	if coord.IsZero() {
-		return domain.VulnerabilityRecord{}, false, coordinate.ErrZeroCoordinate
+		return nil, coordinate.ErrZeroCoordinate
 	}
 	const q = `
 SELECT DISTINCT vr.serialised, vr.scanned_at, vr.rowid
@@ -1232,7 +1245,7 @@ ORDER BY vr.scanned_at ASC, vr.rowid ASC`
 
 	rows, err := s.db.DB().QueryContext(ctx, q, coord.Path(), coord.Version(), pipelineVersion, walkID)
 	if err != nil {
-		return domain.VulnerabilityRecord{}, false, fmt.Errorf("querying vulnerability record for walk: %w", err)
+		return nil, fmt.Errorf("querying vulnerability records for walk: %w", err)
 	}
 	defer func() {
 		_ = rows.Close() //nolint:errcheck // rows.Err() checked below
@@ -1244,25 +1257,18 @@ ORDER BY vr.scanned_at ASC, vr.rowid ASC`
 		var scannedAt string // ordering keys only; the record carries its own timestamp.
 		var rowID int64
 		if serr := rows.Scan(&serialised, &scannedAt, &rowID); serr != nil {
-			return domain.VulnerabilityRecord{}, false, fmt.Errorf("scanning vulnerability record: %w", serr)
+			return nil, fmt.Errorf("scanning vulnerability record: %w", serr)
 		}
 		rec, derr := decodeRecord(serialised)
 		if derr != nil {
-			return domain.VulnerabilityRecord{}, false, derr
+			return nil, derr
 		}
 		records = append(records, rec)
 	}
 	if err := rows.Err(); err != nil {
-		return domain.VulnerabilityRecord{}, false, fmt.Errorf("iterating vulnerability records for walk: %w", err)
+		return nil, fmt.Errorf("iterating vulnerability records for walk: %w", err)
 	}
-	if len(records) == 0 {
-		return domain.VulnerabilityRecord{}, false, nil
-	}
-	composed, cerr := domain.Compose(records)
-	if cerr != nil {
-		return domain.VulnerabilityRecord{}, false, fmt.Errorf("composing vulnerability record for %s: %w", coord, cerr)
-	}
-	return composed, true, nil
+	return records, nil
 }
 
 // queryRecords runs a query selecting only the serialised column and decodes
@@ -1710,7 +1716,7 @@ func (s *Store) ListDatabaseSnapshots(ctx context.Context) ([]domain.DatabaseSna
 // walk_id column on vulnerability_records: since schema v5 that column is
 // provenance for the last walk that triggered the scan, so a record shared by
 // two walks names only one of them and filtering on it would drop the other
-// walk's module. GetLatestVulnerabilityRecordForWalk takes the same route.
+// walk's module. ListVulnerabilityRecordsForModuleInWalk takes the same route.
 //
 // An unknown walkID is an error rather than an empty result: "no modules are
 // affected by this CVE" is the wrong answer to give for a walk that was never

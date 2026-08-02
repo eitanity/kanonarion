@@ -89,7 +89,7 @@ func TestAffectedSetForRun_CountsEveryAffectedModule(t *testing.T) {
 		},
 	}
 
-	got, err := affectedSetForRun(context.Background(), vuln, run)
+	got, err := affectedSetForRun(context.Background(), vuln, run, vulnFrameAnchor{walkID: "walk-1"})
 	if err != nil {
 		t.Fatalf("affectedSetForRun returned error: %v", err)
 	}
@@ -118,7 +118,7 @@ func TestAffectedSetForRun_ReadErrorPropagatedNotFabricated(t *testing.T) {
 		PerModuleResults: map[coordinate.ModuleCoordinate]string{coord: ""},
 	}
 
-	got, err := affectedSetForRun(context.Background(), vuln, run)
+	got, err := affectedSetForRun(context.Background(), vuln, run, vulnFrameAnchor{walkID: "walk-1"})
 	if err == nil {
 		t.Fatalf("affectedSetForRun = %v, nil; want a propagated read error, not a fabricated affected set", got)
 	}

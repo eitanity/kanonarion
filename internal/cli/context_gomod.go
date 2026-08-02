@@ -49,6 +49,13 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 	if err != nil {
 		return fmt.Errorf("loading vuln batch context: %w", err)
 	}
+	// The go.mod names the build, so its own latest project walk is the frame
+	// these verdicts are read in. A project with no walk yet is left unanchored
+	// rather than refused: context is a survey, and every section it prints
+	// states its own basis.
+	if projectWalk, werr := latestWalkForGoMod(ctx, ctr.QueryWalks, f.gomodPath); werr == nil {
+		vulnBatch.anchorTo(ctx, projectWalk.ID)
+	}
 
 	compact := f.compact && !f.full
 

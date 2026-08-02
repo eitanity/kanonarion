@@ -49,7 +49,7 @@ func auditRowForLicence(t *testing.T, path, version string, rec licdomain.Licens
 	}
 	node := walkdomain.GraphNode{Coordinate: coord}
 
-	res, err := buildAuditResult(context.Background(), node, "walk-1", "production",
+	res, err := buildAuditResult(context.Background(), node, vulnFrameAnchor{walkID: "walk-1"}, "production",
 		licdomain.NewLicenseOverrideSet(overrides), nil, ctr, &bytes.Buffer{})
 	if err != nil {
 		t.Fatalf("buildAuditResult: %v", err)

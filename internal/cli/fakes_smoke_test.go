@@ -339,9 +339,9 @@ func TestFakeQueryVuln_AllMethods(t *testing.T) {
 		t.Fatalf("GetLatestRecord: %v %v %v", got, found, err)
 	}
 
-	got, found, err = f.GetLatestRecordForWalk(context.Background(), c, "W1", "0.1.0")
-	if err != nil || !found {
-		t.Fatalf("GetLatestRecordForWalk: %v %v %v", got, found, err)
+	inWalk, err := f.ListRecordsForModuleInWalk(context.Background(), c, "W1", "0.1.0")
+	if err != nil || len(inWalk) != 1 {
+		t.Fatalf("ListRecordsForModuleInWalk: %v %v", inWalk, err)
 	}
 
 	list, err := f.ListRecordsForModule(context.Background(), c, "0.1.0")
@@ -369,7 +369,7 @@ func TestFakeQueryVuln_AllMethods(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error")
 	}
-	_, _, err = f.GetLatestRecordForWalk(context.Background(), c, "W1", "0.1.0")
+	_, err = f.ListRecordsForModuleInWalk(context.Background(), c, "W1", "0.1.0")
 	if err == nil {
 		t.Fatal("expected error")
 	}

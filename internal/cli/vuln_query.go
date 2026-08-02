@@ -26,6 +26,7 @@ const vulnPipelineVersion = vulnapp.PipelineVersion
 
 func newVulnShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	var walkID string
+	var gomod string
 	var history bool
 
 	cmd := &cobra.Command{
@@ -33,16 +34,28 @@ func newVulnShowCmd(stdout, stderr io.Writer) *cobra.Command {
 		Short: "Show the vulnerability record for a module",
 		Long: `Show the vulnerability record for a module.
 
-When --walk-id is omitted, vuln-show returns the most recent scan for the
-module across all walks. Pass --walk-id to pin to a specific walk.
+A stored record answers "what did this advisory do in THIS build", so the
+answer depends on which build you mean. Name it with --walk-id, or with
+--gomod to use the newest project walk for that go.mod (defaults to
+./go.mod). The answer is then drawn from records measured in that build's
+frame only, and a notice states which build it was restricted to.
+
+With neither flag, vuln-show composes across the whole store. On a store
+holding scans of a single project that is the same answer; on a store
+holding two, vuln-show refuses and names the frames it found, because the
+newest scan of a shared dependency belongs to whichever project was scanned
+last.
 
 Use --history to list every stored scan record for the module across all
-walks and snapshots, newest first. This shows when a finding first appeared
-or was absent because the vulnerability database snapshot predated it.`,
+walks and snapshots, newest first — including the frame each was measured
+in. This shows when a finding first appeared or was absent because the
+vulnerability database snapshot predated it.`,
 		Example: `  kanonarion vuln-show github.com/gin-gonic/gin@v1.6.2
   kanonarion vuln-show github.com/gin-gonic/gin@v1.6.2 --json
   kanonarion vuln-show github.com/gin-gonic/gin@v1.6.2 --history
   kanonarion vuln-show github.com/gin-gonic/gin@v1.6.2 --history --json
+  kanonarion vuln-show github.com/gin-gonic/gin@v1.6.2 --gomod
+  kanonarion vuln-show github.com/gin-gonic/gin@v1.6.2 --gomod ./go.mod
   kanonarion vuln-show github.com/gin-gonic/gin@v1.6.2 --walk-id 01KQDBVW092ER1HNXZ60X27CMD
   kanonarion vuln-show github.com/gin-gonic/gin@v1.6.2 --walk-id 01KQDBVW092ER1HNXZ60X27CMD --json`,
 		Args: cobra.ExactArgs(1),
@@ -53,20 +66,26 @@ or was absent because the vulnerability database snapshot predated it.`,
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runVulnShow(cmd.Context(), args[0], walkID, jsonOut, history, ctr.QueryVuln, ctr.QueryScanRuns, ctr.QueryWalks, ctr.QueryCallGraph, stdout)
+			return runVulnShow(cmd.Context(), args[0], walkID, gomod, cmd.Flags().Changed("gomod"), jsonOut, history,
+				ctr.QueryVuln, ctr.QueryScanRuns, ctr.QueryWalks, ctr.QueryCallGraph, stdout)
 		},
 	}
 
 	cmd.Flags().BoolVar(&history, "history", false, "list all scan records across walks and snapshots")
-	cmd.Flags().StringVar(&walkID, "walk-id", "", "walk ID the scan was performed under (optional; defaults to most recent scan)")
+	cmd.Flags().StringVar(&walkID, "walk-id", "", "answer in the frame of this walk's scans")
+	cmd.Flags().StringVar(&gomod, "gomod", "",
+		"answer in the frame of the latest project walk for this go.mod (default: ./go.mod)")
+	// Cobra only allows a valueless --gomod when the flag declares what that
+	// spelling means.
+	cmd.Flags().Lookup("gomod").NoOptDefVal = defaultGoModPath
 
 	return cmd
 }
 
 func runVulnShow(
 	ctx context.Context,
-	arg, walkID string,
-	jsonOut, history bool,
+	arg, walkID, gomod string,
+	gomodSet, jsonOut, history bool,
 	uc QueryVulnUseCase,
 	runs QueryScanRunsUseCase,
 	walks QueryWalksUseCase,
@@ -82,10 +101,15 @@ func runVulnShow(
 		return runVulnShowHistory(ctx, coord, jsonOut, uc, stdout)
 	}
 
+	anchor, anchored, err := resolveVulnFrameAnchor(ctx, walks, walkID, gomod, gomodSet)
+	if err != nil {
+		return err
+	}
+
 	var rec vuldomain.VulnerabilityRecord
 	var isolated vuldomain.VulnerabilityRecord
 	var hasIsolated bool
-	if walkID == "" {
+	if !anchored {
 		// Every generation is read rather than the store's composed "latest",
 		// because "show me this module's record" is a question a consumer asks
 		// about a module they depend on, and the frame-blind ladder answers it in
@@ -99,6 +123,11 @@ func runVulnShow(
 		recs, err := uc.ListRecordsForModule(ctx, coord, vulnPipelineVersion)
 		if err != nil {
 			return fmt.Errorf("getting vulnerability record: %w", err)
+		}
+		// More than one consumer frame and no flag naming one: the question has
+		// several true answers and no way to tell which was asked.
+		if frames := consumerFrames(recs, coord); len(frames) > 1 {
+			return ambiguousFrameRefusal("kanonarion vuln-show "+coord.String(), coord, frames)
 		}
 		r, aside, has, ok := selectConsumerRecord(recs, coord)
 		if !ok {
@@ -114,14 +143,27 @@ func runVulnShow(
 		}
 		rec, isolated, hasIsolated = r, aside, has
 	} else {
-		r, ok, err := uc.GetLatestRecordForWalk(ctx, coord, vulnPipelineVersion, walkID)
+		// The candidates leave the store unranked and the frame decides here. The
+		// walk's membership index keys on (coordinate, pipeline, snapshot) and
+		// carries no frame, so the candidate set for a project walk also contains
+		// the isolated scans and every other project's target-rooted records of
+		// the same generation — which is how a walk-pinned read used to answer
+		// from a different walk without saying so.
+		candidates, err := uc.ListRecordsForModuleInWalk(ctx, coord, vulnPipelineVersion, anchor.walkID)
 		if err != nil {
 			return fmt.Errorf("getting vulnerability record: %w", err)
 		}
-		if !ok {
-			return explainWalkRecordAbsence(ctx, runs, walks, coord, walkID)
+		if len(candidates) == 0 {
+			return explainWalkRecordAbsence(ctx, runs, walks, coord, anchor.walkID)
 		}
-		rec = r
+		r, aside, has, ok, serr := selectAnchoredRecord(candidates, coord, anchor, "kanonarion vuln-show "+coord.String())
+		if serr != nil {
+			return serr
+		}
+		if !ok {
+			return frameRecordAbsence(coord, anchor, candidates)
+		}
+		rec, isolated, hasIsolated = r, aside, has
 	}
 
 	if jsonOut {
@@ -139,9 +181,52 @@ func runVulnShow(
 		return nil
 	}
 
+	writeFrameAnchorNotice(stdout, anchor, anchored)
+	if anchored {
+		// The record's own Walk line is provenance for the scan that wrote it, and
+		// one build's walks share their records, so it routinely names an earlier
+		// walk in the same frame. Beside a pin that reads as a substitution — the
+		// failure this path was rebuilt to stop — so the difference is stated
+		// rather than left for the reader to infer.
+		_, _ = fmt.Fprintln(stdout,
+			"        the Walk line below names the scan that wrote the served record, which may be an earlier walk in the same frame")
+	}
 	printVulnRecord(stdout, rec, newRouteRootFunc(ctx, graphs, rec))
 	printDeclinedIsolatedFrame(stdout, isolated, hasIsolated)
 	return nil
+}
+
+// frameRecordAbsence refuses a pinned read the walk's own frame cannot answer,
+// naming the frames its candidates were measured in instead.
+//
+// The alternative — serving whichever candidate ranks first — is the substitution
+// this path exists to stop: the walk's membership brings in records measured in
+// other frames, so "the pin found nothing" and "the pin found something else"
+// are one step apart, and only one of them is an answer to the question asked.
+func frameRecordAbsence(coord coordinate.ModuleCoordinate, anchor vulnFrameAnchor, candidates []vuldomain.VulnerabilityRecord) error {
+	if len(candidates) == 0 {
+		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
+			"walk %s holds no vulnerability record for %s — the walk may not contain the module, or may not have been scanned; run: kanonarion vuln-scan %s",
+			anchor.walkID, coord, anchor.walkID)}
+	}
+	frame := "that walk's own frame"
+	if anchor.rooting.IsRecorded() {
+		frame = fmt.Sprintf("that walk's own frame (%s)", anchor.rooting)
+	}
+	msg := fmt.Sprintf("walk %s scanned %s, but holds no record for it in %s",
+		anchor.walkID, coord, frame)
+	if frames := framesPresent(candidates); len(frames) > 0 {
+		msg += "\nthe records it did cover were measured in:"
+		for _, f := range frames {
+			label := f.String()
+			if !f.IsRecorded() {
+				label = "(frame not recorded)"
+			}
+			msg += "\n  " + label
+		}
+	}
+	msg += fmt.Sprintf("\nre-run: kanonarion vuln-scan %s", anchor.walkID)
+	return &exitError{code: ExitNotFound, msg: msg}
 }
 
 // printDeclinedIsolatedFrame prints what the isolated-frame record says about

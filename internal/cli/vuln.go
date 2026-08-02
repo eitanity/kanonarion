@@ -55,7 +55,7 @@ func runVuln(ctx context.Context, arg string, jsonOut bool, uc QueryVulnUseCase,
 	// this command names no walk — but it is threaded rather than nil so the
 	// two entry points cannot drift into different behaviour. walks is used:
 	// the no-record refusal names a succeeded walk if one exists.
-	return runVulnShow(ctx, arg, "", jsonOut, false, uc, runs, walks, graphs, stdout)
+	return runVulnShow(ctx, arg, "", "", false, jsonOut, false, uc, runs, walks, graphs, stdout)
 }
 
 // printVulnRecord renders a single VulnerabilityRecord in human-readable form;

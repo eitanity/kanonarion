@@ -520,7 +520,7 @@ func auditScope(
 	// rule domain that governs it rather than under a scope no rule matches.
 	policyScope := policyScopeForWalkScope(walkScope)
 	for _, node := range depNodes {
-		res, rerr := buildAuditResult(ctx, node, walkID, policyScope, overrides, staleness, ctr, stderr)
+		res, rerr := buildAuditResult(ctx, node, walkFrameAnchor(walkID, rec.Target), policyScope, overrides, staleness, ctr, stderr)
 		if rerr != nil {
 			return nil, derivation, rerr
 		}
@@ -550,7 +550,7 @@ func auditDependencyNodes(rec walkdomain.WalkRecord, local coordinate.ModuleCoor
 // buildAuditResult builds one audit row. policyScope is the licence-policy
 // scope (production/tool) the row's licence is evaluated under — already
 // translated from the walk scope by the caller.
-func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, policyScope string, overrides licdomain.LicenseOverrideSet, staleness *staleapp.Resolver, ctr *Container, stderr io.Writer) (auditModuleResult, error) {
+func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, anchor vulnFrameAnchor, policyScope string, overrides licdomain.LicenseOverrideSet, staleness *staleapp.Resolver, ctr *Container, stderr io.Writer) (auditModuleResult, error) {
 	coordStr := node.Coordinate.String()
 	coord, err := parseCoordinate(coordStr)
 	if err != nil {
@@ -562,7 +562,7 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, po
 	// against. Its custody chain (verification status, extracted licence) rides on
 	// the graph node, so it is reported from there rather than the record stores.
 	if node.ResolutionSource == walkdomain.ResolutionStdlib {
-		return buildStdlibAuditResult(ctx, coord, node, policyScope, walkID, ctr), nil
+		return buildStdlibAuditResult(ctx, coord, node, policyScope, anchor, ctr), nil
 	}
 
 	res := auditModuleResult{
@@ -598,7 +598,7 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, po
 		}
 	}
 
-	if walkID == "" {
+	if anchor.walkID == "" {
 		return res, nil
 	}
 
@@ -637,7 +637,11 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, po
 	}
 	applyPolicyEvaluation(&res, eval, uncertaintyReason)
 
-	vrec, found, verr := ctr.QueryVuln.GetLatestRecordForWalk(ctx, coord, vulnPipelineVersion, walkID)
+	// The walk being audited is the frame the vuln column answers in. The
+	// frame-blind read this replaces ranked every frame the coordinate was
+	// measured in against each other, so a store holding a second project's scans
+	// could put that project's verdict in this project's audit row.
+	vrec, found, verr := recordInWalkFrame(ctx, ctr.QueryVuln, coord, anchor)
 	res.VulnStatus, res.VulnReason, res.VulnFindings, res.VulnWithdrawn = vulnAuditStatus(vrec, found, verr)
 
 	return res, nil
@@ -786,7 +790,7 @@ func vulnAuditStatus(rec vulndomain.VulnerabilityRecord, found bool, err error) 
 // exists so standard-library advisories are scanned — but skips the
 // fetch/licence record lookups and the proxy staleness check, which do not
 // apply to a toolchain artefact.
-func buildStdlibAuditResult(ctx context.Context, coord coordinate.ModuleCoordinate, node walkdomain.GraphNode, policyScope, walkID string, ctr *Container) auditModuleResult {
+func buildStdlibAuditResult(ctx context.Context, coord coordinate.ModuleCoordinate, node walkdomain.GraphNode, policyScope string, anchor vulnFrameAnchor, ctr *Container) auditModuleResult {
 	res := auditModuleResult{
 		Coordinate:   coord.String(),
 		Verification: "(custody unavailable)",
@@ -816,7 +820,7 @@ func buildStdlibAuditResult(ctx context.Context, coord coordinate.ModuleCoordina
 	eval := activeConfig.LicensePolicy.EvaluateLicense(resolvedSPDX, policyScope)
 	applyPolicyEvaluation(&res, eval, "")
 
-	vrec, found, verr := ctr.QueryVuln.GetLatestRecordForWalk(ctx, coord, vulnPipelineVersion, walkID)
+	vrec, found, verr := recordInWalkFrame(ctx, ctr.QueryVuln, coord, anchor)
 	res.VulnStatus, res.VulnReason, res.VulnFindings, res.VulnWithdrawn = vulnAuditStatus(vrec, found, verr)
 	return res
 }

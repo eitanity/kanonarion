@@ -944,9 +944,9 @@ type FakeQueryVuln struct {
 	byIDForWalk  map[string][]vulndomain.VulnerabilityRecord
 	byIDWalkSeen string
 	Err          error
-	// ForceLatestRecordForWalkNotFound makes GetLatestRecordForWalk always return
-	// (zero, false, nil) regardless of the records map. Use this to exercise the
-	// fallback path that checks GetLatestRecord for a ScanFailed status.
+	// ForceLatestRecordForWalkNotFound empties the walk-scoped candidate read
+	// regardless of the records map. Use this to exercise the fallback path that
+	// checks GetLatestRecord for a ScanFailed status.
 	ForceLatestRecordForWalkNotFound bool
 }
 
@@ -980,17 +980,26 @@ func (f *FakeQueryVuln) GetLatestRecord(_ context.Context, coord coordinate.Modu
 	return rec, ok, nil
 }
 
-func (f *FakeQueryVuln) GetLatestRecordForWalk(_ context.Context, coord coordinate.ModuleCoordinate, _, _ string) (vulndomain.VulnerabilityRecord, bool, error) {
+// ListRecordsForModuleInWalk returns the walk's candidate records for a
+// coordinate: the ledger's generations when one has been seeded, otherwise the
+// single record the map holds. ForceLatestRecordForWalkNotFound empties it, the
+// same way it empties the composed read below.
+func (f *FakeQueryVuln) ListRecordsForModuleInWalk(_ context.Context, coord coordinate.ModuleCoordinate, _, _ string) ([]vulndomain.VulnerabilityRecord, error) {
 	if f.Err != nil {
-		return vulndomain.VulnerabilityRecord{}, false, f.Err
+		return nil, f.Err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.ForceLatestRecordForWalkNotFound {
-		return vulndomain.VulnerabilityRecord{}, false, nil
+		return nil, nil
 	}
-	rec, ok := f.records[coord.String()]
-	return rec, ok, nil
+	if recs, ok := f.recordLedger[coord.String()]; ok {
+		return recs, nil
+	}
+	if rec, ok := f.records[coord.String()]; ok {
+		return []vulndomain.VulnerabilityRecord{rec}, nil
+	}
+	return nil, nil
 }
 
 // AddRecords seeds every generation the ledger holds for one coordinate, which

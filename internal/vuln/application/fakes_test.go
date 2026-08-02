@@ -290,6 +290,25 @@ func (f *fakeVulnStore) GetLatestVulnerabilityRecord(_ context.Context, coord co
 	})
 }
 
+// ListVulnerabilityRecordsForModuleInWalk is the port method: candidates, not an
+// answer.
+func (f *fakeVulnStore) ListVulnerabilityRecordsForModuleInWalk(_ context.Context, coord coordinate.ModuleCoordinate, pv string, walkID string) ([]domain.VulnerabilityRecord, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []domain.VulnerabilityRecord
+	for _, gens := range f.records {
+		for _, rec := range gens {
+			if rec.Coordinate == coord && rec.PipelineVersion == pv && rec.WalkID == walkID {
+				out = append(out, rec)
+			}
+		}
+	}
+	return out, nil
+}
+
+// GetLatestVulnerabilityRecordForWalk is a read-back convenience for the scan
+// tests, which assert what one run wrote. It is not part of the store port: a
+// frame-blind pick is not something a production read may ask the store for.
 func (f *fakeVulnStore) GetLatestVulnerabilityRecordForWalk(_ context.Context, coord coordinate.ModuleCoordinate, pv string, walkID string) (domain.VulnerabilityRecord, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

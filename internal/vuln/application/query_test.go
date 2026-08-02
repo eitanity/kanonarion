@@ -18,20 +18,19 @@ import (
 
 // queryVulnFakeStore is a minimal VulnerabilityStore for query use-case tests.
 type queryVulnFakeStore struct {
-	record          domain.VulnerabilityRecord
-	recordFound     bool
-	latestRecord    domain.VulnerabilityRecord
-	latestFound     bool
-	latestForWalk   domain.VulnerabilityRecord
-	latestForWalkOK bool
-	moduleRecords   []domain.VulnerabilityRecord
-	findingRecords  []domain.VulnerabilityRecord
-	scanRun         domain.WalkScanRun
-	scanRunFound    bool
-	walkRuns        []domain.WalkScanRun
-	allRuns         []domain.WalkScanRun
-	snapshots       []domain.DatabaseSnapshot
-	storeErr        error
+	record         domain.VulnerabilityRecord
+	recordFound    bool
+	latestRecord   domain.VulnerabilityRecord
+	latestFound    bool
+	walkRecords    []domain.VulnerabilityRecord
+	moduleRecords  []domain.VulnerabilityRecord
+	findingRecords []domain.VulnerabilityRecord
+	scanRun        domain.WalkScanRun
+	scanRunFound   bool
+	walkRuns       []domain.WalkScanRun
+	allRuns        []domain.WalkScanRun
+	snapshots      []domain.DatabaseSnapshot
+	storeErr       error
 }
 
 func (s *queryVulnFakeStore) PutVulnerabilityRecord(_ context.Context, _ domain.VulnerabilityRecord) error {
@@ -52,11 +51,11 @@ func (s *queryVulnFakeStore) GetLatestVulnerabilityRecord(_ context.Context, _ c
 	return s.latestRecord, s.latestFound, nil
 }
 
-func (s *queryVulnFakeStore) GetLatestVulnerabilityRecordForWalk(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ string) (domain.VulnerabilityRecord, bool, error) {
+func (s *queryVulnFakeStore) ListVulnerabilityRecordsForModuleInWalk(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ string) ([]domain.VulnerabilityRecord, error) {
 	if s.storeErr != nil {
-		return domain.VulnerabilityRecord{}, false, s.storeErr
+		return nil, s.storeErr
 	}
-	return s.latestForWalk, s.latestForWalkOK, nil
+	return s.walkRecords, nil
 }
 
 func (s *queryVulnFakeStore) PutWalkScanRun(_ context.Context, _ domain.WalkScanRun) error {
@@ -154,20 +153,23 @@ func TestQueryVulnUseCase_GetLatestRecord(t *testing.T) {
 	}
 }
 
-func TestQueryVulnUseCase_GetLatestRecordForWalk(t *testing.T) {
+// The walk-scoped read hands back every candidate rather than one answer: the
+// use case has no analysis frame to rank them with, and picking without one is
+// what let a walk-pinned question be answered from another build's scan.
+func TestQueryVulnUseCase_ListRecordsForModuleInWalk(t *testing.T) {
 	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
-	want := domain.VulnerabilityRecord{Coordinate: coord, WalkID: "walk-1"}
-	uc := application.NewQueryVulnUseCase(&queryVulnFakeStore{latestForWalk: want, latestForWalkOK: true})
+	want := []domain.VulnerabilityRecord{
+		{Coordinate: coord, WalkID: "walk-1", Rooting: domain.RootingIsolated},
+		{Coordinate: coord, WalkID: "walk-1", Rooting: domain.TargetRootedAt(coord)},
+	}
+	uc := application.NewQueryVulnUseCase(&queryVulnFakeStore{walkRecords: want})
 
-	got, found, err := uc.GetLatestRecordForWalk(context.Background(), coord, "v1", "walk-1")
+	got, err := uc.ListRecordsForModuleInWalk(context.Background(), coord, "v1", "walk-1")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !found {
-		t.Fatal("expected record to be found")
-	}
-	if got.WalkID != "walk-1" {
-		t.Errorf("got walk %q, want walk-1", got.WalkID)
+	if len(got) != len(want) {
+		t.Fatalf("got %d candidate(s), want %d — the read must not rank or drop any", len(got), len(want))
 	}
 }
 

@@ -47,18 +47,26 @@ func (uc *QueryVulnUseCase) GetLatestRecord(
 	return rec, found, nil
 }
 
-// GetLatestRecordForWalk returns the most recently scanned record for a coordinate, pipeline version, and walk ID.
-func (uc *QueryVulnUseCase) GetLatestRecordForWalk(
+// ListRecordsForModuleInWalk returns every generation of a coordinate the named
+// walk's scan runs covered — the candidates, not an answer.
+//
+// Candidates, because ranking them needs an analysis frame the store does not
+// have: a walk's membership index carries none, so its candidate set spans every
+// frame the coordinate was measured in at that generation. The caller knows
+// which build it asked about and selects on it (domain.ComposeAt). There is
+// deliberately no frame-blind convenience beside this: the one that existed
+// answered walk-pinned questions from other projects' scans.
+func (uc *QueryVulnUseCase) ListRecordsForModuleInWalk(
 	ctx context.Context,
 	coord coordinate.ModuleCoordinate,
 	pipelineVersion string,
 	walkID string,
-) (domain.VulnerabilityRecord, bool, error) {
-	rec, found, err := uc.store.GetLatestVulnerabilityRecordForWalk(ctx, coord, pipelineVersion, walkID)
+) ([]domain.VulnerabilityRecord, error) {
+	recs, err := uc.store.ListVulnerabilityRecordsForModuleInWalk(ctx, coord, pipelineVersion, walkID)
 	if err != nil {
-		return domain.VulnerabilityRecord{}, false, fmt.Errorf("getting latest vulnerability record for %s (walk %s): %w", coord, walkID, err)
+		return nil, fmt.Errorf("listing vulnerability records for %s (walk %s): %w", coord, walkID, err)
 	}
-	return rec, found, nil
+	return recs, nil
 }
 
 // ListRecordsForModule returns all stored scan records for a coordinate and pipeline version.

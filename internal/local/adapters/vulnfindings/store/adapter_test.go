@@ -36,8 +36,8 @@ func (s *fakeVulnStore) PutVulnerabilityRecord(_ context.Context, _ vulndomain.V
 func (s *fakeVulnStore) GetVulnerabilityRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ vulndomain.DatabaseSnapshot) (vulndomain.VulnerabilityRecord, bool, error) {
 	panic("unexpected call: GetVulnerabilityRecord")
 }
-func (s *fakeVulnStore) GetLatestVulnerabilityRecordForWalk(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ string) (vulndomain.VulnerabilityRecord, bool, error) {
-	panic("unexpected call: GetLatestVulnerabilityRecordForWalk")
+func (s *fakeVulnStore) ListVulnerabilityRecordsForModuleInWalk(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ string) ([]vulndomain.VulnerabilityRecord, error) {
+	panic("unexpected call: ListVulnerabilityRecordsForModuleInWalk")
 }
 func (s *fakeVulnStore) PutWalkScanRun(_ context.Context, _ vulndomain.WalkScanRun) error {
 	panic("unexpected call: PutWalkScanRun")

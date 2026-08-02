@@ -126,9 +126,9 @@ func TestReadPaths_RefuseTamperedRecord(t *testing.T) {
 		_, found, err := store.GetLatestVulnerabilityRecord(ctx, rec.Coordinate, "v1")
 		assertTamperReported(t, err, found)
 	})
-	t.Run("GetLatestVulnerabilityRecordForWalk", func(t *testing.T) {
-		_, found, err := store.GetLatestVulnerabilityRecordForWalk(ctx, rec.Coordinate, "v1", "walk-1")
-		assertTamperReported(t, err, found)
+	t.Run("ListVulnerabilityRecordsForModuleInWalk", func(t *testing.T) {
+		got, err := store.ListVulnerabilityRecordsForModuleInWalk(ctx, rec.Coordinate, "v1", "walk-1")
+		assertTamperReported(t, err, len(got) > 0)
 	})
 	t.Run("ListVulnerabilityRecordsByFindingID", func(t *testing.T) {
 		got, err := store.ListVulnerabilityRecordsByFindingID(ctx, "GO-2024-0001", "")

@@ -216,7 +216,11 @@ type RescanWalkUseCase interface {
 type QueryVulnUseCase interface {
 	GetRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, snapshot vulndomain.DatabaseSnapshot) (vulndomain.VulnerabilityRecord, bool, error)
 	GetLatestRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (vulndomain.VulnerabilityRecord, bool, error)
-	GetLatestRecordForWalk(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, walkID string) (vulndomain.VulnerabilityRecord, bool, error)
+	// ListRecordsForModuleInWalk returns a walk's candidate records for a
+	// coordinate, unranked. Every caller ranks them within a named frame — see
+	// recordInWalkFrame — because a walk's candidates span every frame the
+	// coordinate was measured in, including other projects' builds.
+	ListRecordsForModuleInWalk(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, walkID string) ([]vulndomain.VulnerabilityRecord, error)
 	ListRecordsForModule(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]vulndomain.VulnerabilityRecord, error)
 	ListRecordsByFindingID(ctx context.Context, findingID, walkID string) ([]vulndomain.VulnerabilityRecord, error)
 	ListRecordsForRun(ctx context.Context, runID string) ([]vulndomain.VulnerabilityRecord, error)

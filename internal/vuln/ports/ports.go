@@ -258,15 +258,26 @@ type VulnerabilityStore interface {
 		pipelineVersion string,
 	) (domain.VulnerabilityRecord, bool, error)
 
-	// GetLatestVulnerabilityRecordForWalk returns the most recently scanned record
-	// for a coordinate, pipeline version, and walk ID, regardless of snapshot.
-	// Returns (zero, false, nil) if no record exists for that walk.
-	GetLatestVulnerabilityRecordForWalk(
+	// ListVulnerabilityRecordsForModuleInWalk returns every generation of a
+	// coordinate the given walk's scan runs covered, regardless of snapshot,
+	// ordered oldest first. An empty slice means that walk covered the module
+	// with no readable record.
+	//
+	// It returns CANDIDATES, never an answer. The store cannot rank them,
+	// because ranking them requires an analysis frame and the store has none:
+	// the membership index keys on (coordinate, pipeline version, snapshot), so
+	// every frame a coordinate was ever measured in at that generation joins to
+	// the same walk — an isolated scan of the module and another project's
+	// target-rooted scan alongside the walk's own. Composing here served
+	// whichever won the frame-blind ladder, which is how a walk-pinned read came
+	// to answer from a different walk entirely. The caller knows which frame it
+	// asked about and selects on it.
+	ListVulnerabilityRecordsForModuleInWalk(
 		ctx context.Context,
 		coord coordinate.ModuleCoordinate,
 		pipelineVersion string,
 		walkID string,
-	) (domain.VulnerabilityRecord, bool, error)
+	) ([]domain.VulnerabilityRecord, error)
 
 	// PutWalkScanRun persists the aggregate result of a walk scan.
 	PutWalkScanRun(ctx context.Context, run domain.WalkScanRun) error

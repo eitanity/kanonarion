@@ -43,6 +43,9 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 	if err != nil {
 		return fmt.Errorf("loading vuln batch context: %w", err)
 	}
+	// The report is about this walk, so every module's verdict is read in this
+	// walk's frame and from this walk's runs.
+	vulnBatch.anchorTo(ctx, f.walkID)
 
 	compact := f.compact && !f.full
 
@@ -208,7 +211,7 @@ func buildAffectedSetForWalk(ctx context.Context, runsUC QueryScanRunsUseCase, v
 	}
 
 	// runs[0] is the most recent (ListWalkScanRuns returns DESC by started_at).
-	return affectedSetForRun(ctx, vulnUC, runs[0])
+	return affectedSetForRun(ctx, vulnUC, runs[0], batch.frameFor(ctx, walkID))
 }
 
 // affectedSetForRun resolves the set of module coordinates that are Affected in
@@ -220,12 +223,13 @@ func buildAffectedSetForWalk(ctx context.Context, runsUC QueryScanRunsUseCase, v
 // run lists the coordinate but nothing backs a verdict): it is no evidence of
 // Affected, so it is skipped. Only a real StatusAffected record adds a
 // coordinate.
-func affectedSetForRun(ctx context.Context, vulnUC QueryVulnUseCase, run vuldomain.WalkScanRun) (map[coordinate.ModuleCoordinate]struct{}, error) {
+func affectedSetForRun(ctx context.Context, vulnUC QueryVulnUseCase, run vuldomain.WalkScanRun, anchor vulnFrameAnchor) (map[coordinate.ModuleCoordinate]struct{}, error) {
 	affected := make(map[coordinate.ModuleCoordinate]struct{}, len(run.PerModuleResults))
 	for coord := range run.PerModuleResults {
-		// Use the walk-scoped lookup (snapshot-agnostic) so snapshot mismatches
-		// don't hide records that were stored under a different snapshot.
-		rec, found, err := vulnUC.GetLatestRecordForWalk(ctx, coord, vulnPipelineVersion, run.WalkID)
+		// Walk-scoped (snapshot-agnostic) so a snapshot mismatch does not hide a
+		// record, and selected in the walk's own frame so another project's scan
+		// of a shared dependency cannot decide whether this walk is affected.
+		rec, found, err := recordInWalkFrame(ctx, vulnUC, coord, anchor)
 		if err != nil {
 			return nil, fmt.Errorf("reading verdict for %s in walk %s: %w", coord, run.WalkID, err)
 		}

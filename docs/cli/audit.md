@@ -63,6 +63,11 @@ knowledge rather than extracted evidence, and `sbom` and `license-compat`
 answer the same for the same node. See [SBOM standard-library chain of
 custody](sbom.md#standard-library-chain-of-custody) for the full evidence set.
 
+Its **Vulnerability** column answers in the frame of the walk this audit ran,
+and reads only records that walk's scans covered. A store holding scans of a
+second project therefore cannot put that project's verdict for a shared
+dependency into this report.
+
 Its **Vulnerability** column is **call-graph-analysed against the build
 toolchain**, not resolved from advisory metadata by coordinate: the same
 project-rooted `govulncheck` run that analyses the dependency graph also reasons

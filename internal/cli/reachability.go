@@ -142,6 +142,8 @@ type reachabilityOutput struct {
 func newReachabilityCmd(stdout, stderr io.Writer) *cobra.Command {
 	var localPath string
 	var vulnID string
+	var walkID string
+	var gomod string
 
 	cmd := &cobra.Command{
 		Use:   "reachability (<module>@<version> --vuln <id> | --local <dir>)",
@@ -153,10 +155,23 @@ reads the reachability verdict that 'vuln-scan --reachability' previously
 computed and persisted for a module, for a single CVE. It never scans or
 recomputes; when the data is absent it tells you which command to run.
 
+A stored verdict is a verdict about one build, so the query names one:
+--walk-id answers in that walk's frame, --gomod in the frame of the newest
+project walk for that go.mod (defaults to ./go.mod). A notice states which
+build the answer was restricted to, and the verdict names its rooting either
+way.
+
+With neither flag, and more than one project's scans of the module in the
+store, the query REFUSES and names the frames it found rather than answering
+from whichever was scanned last. One project's scans in the store answer as
+before.
+
 Local probe: 'reachability --local <dir>' analyses the working tree directly
 (a different, live analysis — not a query of stored facts).`,
 		Example: `  kanonarion reachability golang.org/x/text@v0.3.7 --vuln GO-2021-0113
   kanonarion reachability golang.org/x/text@v0.3.7 --vuln GO-2021-0113 --json
+  kanonarion reachability golang.org/x/text@v0.3.7 --vuln GO-2021-0113 --gomod
+  kanonarion reachability golang.org/x/text@v0.3.7 --vuln GO-2021-0113 --walk-id 01KQDBVW092ER1HNXZ60X27CMD
   kanonarion reachability --local .`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -186,10 +201,17 @@ Local probe: 'reachability --local <dir>' analyses the working tree directly
 					return fmt.Errorf("initialising store: %w", err)
 				}
 				defer func() { _ = cleanup() }()
-				return runVulnReachability(cmd.Context(), coordArg, vulnID, jsonOut, ctr.QueryVuln, ctr.QueryCallGraph, stdout)
+				return runVulnReachability(cmd.Context(), coordArg, vulnID, walkID, gomod, cmd.Flags().Changed("gomod"),
+					jsonOut, ctr.QueryVuln, ctr.QueryWalks, ctr.QueryCallGraph, stdout)
 			case localPath != "":
 				if coordArg != "" {
 					return fmt.Errorf("reachability --local does not take a module argument; use '<module>@<version> --vuln <id>' to query a stored module")
+				}
+				if walkID != "" || cmd.Flags().Changed("gomod") {
+					// The local probe measures the working tree it was pointed at, so
+					// it already has a build: accepting a second name for one would
+					// invite the reader to think the probe was filtered by it.
+					return fmt.Errorf("--walk-id and --gomod name a stored build and do not apply to --local, which measures the working tree it is given")
 				}
 				return runLocalReachability(cmd.Context(), localPath, stdout, stderr)
 			default:
@@ -200,6 +222,12 @@ Local probe: 'reachability --local <dir>' analyses the working tree directly
 
 	cmd.Flags().StringVar(&localPath, "local", "", "path to the local Go workspace to probe")
 	cmd.Flags().StringVar(&vulnID, "vuln", "", "vulnerability ID (e.g. GO-2024-1234, CVE-..., GHSA-...) to query; requires a <module>@<version> argument")
+	cmd.Flags().StringVar(&walkID, "walk-id", "", "answer the stored query in the frame of this walk's scans")
+	cmd.Flags().StringVar(&gomod, "gomod", "",
+		"answer the stored query in the frame of the latest project walk for this go.mod (default: ./go.mod)")
+	// Cobra only allows a valueless --gomod when the flag declares what that
+	// spelling means.
+	cmd.Flags().Lookup("gomod").NoOptDefVal = defaultGoModPath
 
 	return cmd
 }
@@ -209,10 +237,23 @@ Local probe: 'reachability --local <dir>' analyses the working tree directly
 // read-only query: it never scans or recomputes. Absent or undetermined data is
 // surfaced as a non-zero, actionable diagnostic (never a false "not reachable"),
 // distinguishing "not analysed" from "analysed, genuinely not affected/reachable".
-func runVulnReachability(ctx context.Context, arg, vulnID string, jsonOut bool, uc QueryVulnUseCase, graphs QueryCallGraphUseCase, stdout io.Writer) error {
+func runVulnReachability(
+	ctx context.Context,
+	arg, vulnID, walkID, gomod string,
+	gomodSet, jsonOut bool,
+	uc QueryVulnUseCase,
+	walks QueryWalksUseCase,
+	graphs QueryCallGraphUseCase,
+	stdout io.Writer,
+) error {
 	coord, err := parseCoordinate(arg)
 	if err != nil {
 		return fmt.Errorf("invalid coordinate %q: %w", arg, err)
+	}
+
+	anchor, anchored, err := resolveVulnFrameAnchor(ctx, walks, walkID, gomod, gomodSet)
+	if err != nil {
+		return err
 	}
 
 	// Every generation is read, not the composed "latest", because which record
@@ -220,11 +261,46 @@ func runVulnReachability(ctx context.Context, arg, vulnID string, jsonOut bool, 
 	// read has none: it ranks an isolated scan against a consumer-rooted one on
 	// call-graph completeness, a rung the isolated scan always wins. See
 	// vuldomain.ComposeForConsumer.
-	recs, err := uc.ListRecordsForModule(ctx, coord, localVulnPipelineVersion)
-	if err != nil {
-		return fmt.Errorf("getting vulnerability record: %w", err)
+	var (
+		rec      vuldomain.VulnerabilityRecord
+		aside    vuldomain.VulnerabilityRecord
+		hasAside bool
+		found    bool
+	)
+	if anchored {
+		// Anchored: the walk's candidates, ranked within the walk's own frame.
+		// The candidate set spans every frame of that generation, so ranking it
+		// blind is what answered a corteza question from a langchaingo scan.
+		candidates, cerr := uc.ListRecordsForModuleInWalk(ctx, coord, localVulnPipelineVersion, anchor.walkID)
+		if cerr != nil {
+			return fmt.Errorf("getting vulnerability record: %w", cerr)
+		}
+		var serr error
+		rec, aside, hasAside, found, serr = selectAnchoredRecord(candidates, coord, anchor,
+			fmt.Sprintf("kanonarion reachability %s --vuln %s", coord, vulnID))
+		if serr != nil {
+			return serr
+		}
+		if !found {
+			// Refused rather than answered from a neighbouring frame, and refused
+			// here rather than falling through to "the module has not been
+			// vuln-scanned" — which would be false about a walk whose candidates
+			// exist and simply answer someone else's question.
+			return frameRecordAbsence(coord, anchor, candidates)
+		}
+	} else {
+		recs, lerr := uc.ListRecordsForModule(ctx, coord, localVulnPipelineVersion)
+		if lerr != nil {
+			return fmt.Errorf("getting vulnerability record: %w", lerr)
+		}
+		// Two consumers' builds, one coordinate, no flag naming which: the store
+		// holds two true answers and this question distinguishes neither.
+		if frames := consumerFrames(recs, coord); len(frames) > 1 {
+			return ambiguousFrameRefusal(
+				fmt.Sprintf("kanonarion reachability %s --vuln %s", coord, vulnID), coord, frames)
+		}
+		rec, aside, hasAside, found = selectConsumerRecord(recs, coord)
 	}
-	rec, aside, hasAside, found := selectConsumerRecord(recs, coord)
 
 	res, verr := vulnReachabilityVerdict(coord, rec, found, vulnID, newRouteRootFunc(ctx, graphs, rec), isolatedAsideFor(aside, hasAside, vulnID))
 	if verr != nil {
@@ -240,6 +316,7 @@ func runVulnReachability(ctx context.Context, arg, vulnID string, jsonOut bool, 
 		return nil
 	}
 
+	writeFrameAnchorNotice(stdout, anchor, anchored)
 	printVulnReachability(stdout, res)
 	return nil
 }

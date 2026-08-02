@@ -301,6 +301,13 @@ the coverage it saw, never a confident SPDX it cannot stand behind.
 
 ### `vulnerabilities`
 
+When `context` is invoked with `--walk-id`, or with `--gomod` on a project that
+has a walk, every module's `vulnerabilities` section is answered in that build's
+frame and read from that walk's runs. On a store holding scans of more than one
+project this is what keeps a report about your build from carrying another
+project's verdict for a shared dependency; `frame` on each section names the
+frame the served record was measured in.
+
 | Field | Type | Description |
 |---|---|---|
 | `status` | string | `not_run` / `read_error` / scan status (`Clean`, `Affected`, `Withdrawn`, `Unscannable`, `ScanFailed`) |

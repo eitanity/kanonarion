@@ -3,7 +3,7 @@
 ## Synopsis
 
 ```
-kanonarion reachability <module>@<version> --vuln <id> [flags]   # stored-module query
+kanonarion reachability <module>@<version> --vuln <id> [--walk-id <id> | --gomod [path]] [flags]   # stored-module query
 kanonarion reachability --local <dir> [flags]                    # live local probe
 ```
 
@@ -52,6 +52,37 @@ whether it is reachable in a module that has already been scanned with
 `vuln-scan --reachability`. It is **read-only**: it loads the persisted
 finding and reports its verdict and confidence. It never fetches, scans, or
 recomputes.
+
+### Which build the answer is about
+
+A stored verdict is a verdict about one build. Name the build:
+
+- `--walk-id <id>` answers in the frame of that walk's scans, restricted to the
+  records that walk covered.
+- `--gomod [path]` does the same for the newest succeeded project walk of that
+  `go.mod`; the valueless form means `./go.mod`. Mutually exclusive with
+  `--walk-id`, and rejected alongside `--local`, which measures the tree it is
+  given.
+
+Either flag prints a `notice:` line naming the walk and its frame above the
+answer, and the verdict names its rooting as it always has.
+
+With neither flag, and the coordinate present in more than one consumer's build,
+the query **refuses** (exit 20) and names the frames it found plus the flags
+that select one:
+
+```
+$ kanonarion reachability github.com/golang-jwt/jwt/v4@v4.5.1 --vuln GO-2025-3553
+error: the store holds github.com/golang-jwt/jwt/v4@v4.5.1 in 2 consumer frames, and this question names none:
+  target-rooted:github.com/cortezaproject/corteza/server@local
+  target-rooted:github.com/tmc/langchaingo@v0.1.14
+name the build you mean: kanonarion reachability … --walk-id <walk of that build>, or … --gomod <path/to/go.mod>
+```
+
+One project's scans in the store leave nothing to disambiguate, and the query
+answers as before. A pinned walk that covered the module but holds no record in
+its own frame is refused (exit 4) naming that walk — never answered from another
+build's record.
 
 It distinguishes *"not analysed / unknown"* from
 *"analysed, genuinely not affected/reachable"*. Exit `0` answers are
@@ -289,6 +320,8 @@ run from the root of a repository that contains fixture modules under
 | Flag | Default | Description |
 |---|---|---|
 | `--vuln` | *(empty)* | Vulnerability ID to query (stored-module mode); requires a `<module>@<version>` argument |
+| `--walk-id` | *(empty)* | Answer the stored query in the frame of this walk's scans |
+| `--gomod` | *(empty)* | Answer the stored query in the frame of the latest project walk for this go.mod (valueless form: `./go.mod`) |
 | `--local` | *(empty)* | Path to the local Go workspace to probe (live local mode) |
 | `--json` | false | Emit output as JSON (global flag) |
 

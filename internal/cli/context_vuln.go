@@ -27,6 +27,48 @@ type vulnBatchCtx struct {
 	graphCache map[string]*walkdomain.Graph
 	// affectedCache memoises the affected-module set per walkID.
 	affectedCache map[string]map[coordinate.ModuleCoordinate]struct{}
+	// anchor is the build this batch reports on, when the caller named one — a
+	// walk, or the project a go.mod declares. Set means every per-module verdict
+	// is selected in that build's frame and read from that walk's runs alone.
+	// Unset means the batch spans the walk window, as it always did.
+	anchor   vulnFrameAnchor
+	anchored bool
+	// frameCache memoises each walk's analysis frame, which is what a per-module
+	// verdict read for that walk selects on. Cached per walk rather than per
+	// module: it costs one walk-record read and is asked for once per module.
+	frameCache map[string]vulnFrameAnchor
+}
+
+// anchorTo fixes the build this batch answers for. Callers that know which walk
+// the report is about — context in walk mode, and the go.mod modes through the
+// project's own walk — call it, and every module's verdict is then read in that
+// walk's frame instead of in whichever frame the walk window happened to hold.
+func (b *vulnBatchCtx) anchorTo(ctx context.Context, walkID string) {
+	if walkID == "" {
+		return
+	}
+	b.anchor = b.frameFor(ctx, walkID)
+	b.anchored = true
+}
+
+// frameFor returns the frame walkID's scans were rooted at. A walk whose record
+// cannot be read yields a frameless anchor, which still pins the read to that
+// walk's own records and selects a consumer frame within them.
+func (b *vulnBatchCtx) frameFor(ctx context.Context, walkID string) vulnFrameAnchor {
+	if b.frameCache == nil {
+		return vulnFrameAnchor{walkID: walkID}
+	}
+	if a, ok := b.frameCache[walkID]; ok {
+		return a
+	}
+	anchor := vulnFrameAnchor{walkID: walkID}
+	if b.walkUC != nil {
+		if rec, err := b.walkUC.GetWalk(ctx, walkID); err == nil {
+			anchor = walkFrameAnchor(walkID, rec.Target)
+		}
+	}
+	b.frameCache[walkID] = anchor
+	return anchor
 }
 
 func loadVulnBatchCtx(ctx context.Context, runsUC QueryScanRunsUseCase, walkUC QueryWalksUseCase) (*vulnBatchCtx, error) {
@@ -57,6 +99,7 @@ func loadVulnBatchCtx(ctx context.Context, runsUC QueryScanRunsUseCase, walkUC Q
 		walkUC:        walkUC,
 		graphCache:    make(map[string]*walkdomain.Graph),
 		affectedCache: make(map[string]map[coordinate.ModuleCoordinate]struct{}),
+		frameCache:    make(map[string]vulnFrameAnchor),
 	}, nil
 }
 
@@ -102,8 +145,13 @@ func (b *vulnBatchCtx) affectedFor(ctx context.Context, walkID string, vulnUC Qu
 	affected := make(map[coordinate.ModuleCoordinate]struct{})
 	if len(runs) > 0 {
 		run := runs[0] // most recent (DESC by started_at)
+		// Each peer's verdict is read in the walk's own frame. Read frame-blind,
+		// a peer measured in another project's build could be reported affected —
+		// or clean — in this walk's closure on the strength of a scan that never
+		// looked at this build.
+		anchor := b.frameFor(ctx, run.WalkID)
 		for coord := range run.PerModuleResults {
-			rec, found, err := vulnUC.GetLatestRecordForWalk(ctx, coord, vulnPipelineVersion, run.WalkID)
+			rec, found, err := recordInWalkFrame(ctx, vulnUC, coord, anchor)
 			if err != nil {
 				return nil, fmt.Errorf("reading walk-peer verdict for %s in walk %s: %w", coord, run.WalkID, err)
 			}
@@ -193,7 +241,16 @@ func buildVulnerabilitiesFromBatch(ctx context.Context, coord coordinate.ModuleC
 	if err != nil {
 		return contextVulnerabilities{Status: sectionStatusReadError, Error: err.Error()}
 	}
-	for _, runs := range batch.runs {
+	// An anchored batch looks at the anchored walk's runs only. Left to iterate
+	// the whole walk window it answered a walk-pinned report from whichever walk
+	// in that window covered the module first — measured on a real store, 20 of
+	// one project's 128 modules were reported in three other projects' frames,
+	// one of them inverting a reachability verdict.
+	runGroups := batch.runs
+	if batch.anchored {
+		runGroups = map[string][]vuldomain.WalkScanRun{batch.anchor.walkID: batch.runs[batch.anchor.walkID]}
+	}
+	for _, runs := range runGroups {
 		for _, run := range runs {
 			if _, ok := run.PerModuleResults[coord]; !ok {
 				continue
@@ -201,7 +258,7 @@ func buildVulnerabilitiesFromBatch(ctx context.Context, coord coordinate.ModuleC
 			// Narrowed to run.Snapshot (the snapshot the scan used), not the latest
 			// snapshot, exactly as the per-run store read was keyed.
 			atSnapshot := recordsAtSnapshot(recs, run.Snapshot)
-			rec, _, _, found := selectConsumerRecord(atSnapshot, coord)
+			rec, found := batch.selectForBatch(atSnapshot, coord)
 			if !found {
 				continue
 			}
@@ -210,13 +267,26 @@ func buildVulnerabilitiesFromBatch(ctx context.Context, coord coordinate.ModuleC
 			return result
 		}
 	}
-	// No run in the batch's walk window covers the module with a readable record,
-	// so the whole ledger answers — still frame-first.
-	rec, _, _, found := selectConsumerRecord(recs, coord)
+	// No run in scope covers the module with a readable record, so the whole
+	// ledger answers — still in the anchored frame where one was named, and
+	// still frame-first where none was.
+	rec, found := batch.selectForBatch(recs, coord)
 	if found {
 		return vulnRecordToContext(&rec, "", "")
 	}
 	return contextVulnerabilities{Status: sectionStatusNotRun}
+}
+
+// selectForBatch picks the record a batch report serves for one coordinate: in
+// the anchored build's frame when the caller named a build, and frame-first
+// among consumers when it did not.
+func (b *vulnBatchCtx) selectForBatch(recs []vuldomain.VulnerabilityRecord, coord coordinate.ModuleCoordinate) (vuldomain.VulnerabilityRecord, bool) {
+	if b.anchored && b.anchor.rooting.IsRecorded() {
+		rec, _, _, ok := selectRecordInFrame(recs, b.anchor.rooting)
+		return rec, ok
+	}
+	rec, _, _, ok := selectConsumerRecord(recs, coord)
+	return rec, ok
 }
 
 // recordsAtSnapshot narrows a coordinate's generations to the ones reached

@@ -188,7 +188,7 @@ func TestBuildStdlibAuditResult_FactlessAdoptsKnownLicence(t *testing.T) {
 	node := walkdomain.GraphNode{Coordinate: coord, ResolutionSource: walkdomain.ResolutionStdlib}
 	ctr := &Container{QueryVuln: testfakes.NewFakeQueryVuln()}
 
-	res := buildStdlibAuditResult(context.Background(), coord, node, "production", "walk-1", ctr)
+	res := buildStdlibAuditResult(context.Background(), coord, node, "production", vulnFrameAnchor{walkID: "walk-1"}, ctr)
 	if res.License != walkdomain.StdlibLicenseSPDX {
 		t.Errorf("License = %q, want %q", res.License, walkdomain.StdlibLicenseSPDX)
 	}
@@ -210,7 +210,7 @@ func TestBuildStdlibAuditResult_FactlessAdoptsKnownLicence(t *testing.T) {
 
 	// With facts present the row relays the extracted evidence instead.
 	node.Stdlib = &walkdomain.StdlibFacts{LicenseSPDX: "BSD-3-Clause", VerificationStatus: "VerifiedGoDevChecksum"}
-	res = buildStdlibAuditResult(context.Background(), coord, node, "production", "walk-1", ctr)
+	res = buildStdlibAuditResult(context.Background(), coord, node, "production", vulnFrameAnchor{walkID: "walk-1"}, ctr)
 	if res.LicenseSource != "stdlib-tarball" || res.LicenseStatus != "Detected" {
 		t.Errorf("facts present: source/status = %q/%q, want stdlib-tarball/Detected", res.LicenseSource, res.LicenseStatus)
 	}
