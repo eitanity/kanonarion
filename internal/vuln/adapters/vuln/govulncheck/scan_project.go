@@ -81,7 +81,7 @@ func (s *Scanner) ScanProject(ctx context.Context, req ports.ProjectScanRequest)
 
 	surface, env := projectScanSurface(projectDir, req.Vendored)
 
-	dbArg, dbCleanup, err := s.prepareDBArg(ctx, req.Snapshot, req.DBDir)
+	dbArg, advisories, dbCleanup, err := s.prepareDBArg(ctx, req.Snapshot, req.DBDir)
 	if err != nil {
 		return domain.ProjectScanResult{}, err
 	}
@@ -137,6 +137,7 @@ func (s *Scanner) ScanProject(ctx context.Context, req ports.ProjectScanRequest)
 			// the vendored tree does not compile, which is a different fact from the
 			// same break under a fetched resolution.
 			AnalysisSurface: surface,
+			AdvisoryCount:   advisories,
 		}, nil
 	}
 
@@ -151,6 +152,7 @@ func (s *Scanner) ScanProject(ctx context.Context, req ports.ProjectScanRequest)
 		FindingsByModule: byModule,
 		Status:           status,
 		AnalysisSurface:  surface,
+		AdvisoryCount:    advisories,
 	}, nil
 }
 

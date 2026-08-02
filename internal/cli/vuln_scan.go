@@ -829,6 +829,7 @@ func newVulnScanRescanCmd(stdout, stderr io.Writer) *cobra.Command {
 	var snapshotSource string
 	var snapshotVersion string
 	var policyPath string
+	var noProgress bool
 
 	cmd := &cobra.Command{
 		Use:     "vuln-scan-rescan <walk-id>",
@@ -845,7 +846,7 @@ Prior scan runs are preserved unchanged; a new WalkScanRun is appended.`,
 			if cmd.CalledAs() == "vuln-scan-regate" {
 				_, _ = fmt.Fprintln(stderr, "warning: 'vuln-scan-regate' is deprecated; use 'vuln-scan-rescan' instead")
 			}
-			return runScanRescan(cmd.Context(), args[0], enableReachability, goBinary, operator, snapshotSource, snapshotVersion, policyPath, stdout, stderr)
+			return runScanRescan(cmd.Context(), args[0], enableReachability, goBinary, operator, snapshotSource, snapshotVersion, policyPath, noProgress, stdout, stderr)
 		},
 	}
 
@@ -855,6 +856,7 @@ Prior scan runs are preserved unchanged; a new WalkScanRun is appended.`,
 	cmd.Flags().StringVar(&snapshotSource, "snapshot-source", "", "pin to a specific snapshot source (requires --snapshot-version)")
 	cmd.Flags().StringVar(&snapshotVersion, "snapshot-version", "", "pin to a specific snapshot version (requires --snapshot-source)")
 	cmd.Flags().StringVar(&policyPath, "policy", "", "path to depth policy YAML (default: search upward for .kanonarion/policy.yaml)")
+	registerNoProgressFlag(cmd, &noProgress)
 
 	return cmd
 }
@@ -883,7 +885,7 @@ func applyRescanVCSHosts(ctx context.Context, rescan RescanWalkUseCase, policyPa
 	return nil
 }
 
-func runScanRescan(ctx context.Context, walkID string, enableReachability bool, goBinary, operator, snapshotSource, snapshotVersion, policyPath string, stdout, stderr io.Writer) error {
+func runScanRescan(ctx context.Context, walkID string, enableReachability bool, goBinary, operator, snapshotSource, snapshotVersion, policyPath string, noProgress bool, stdout, stderr io.Writer) error {
 	logger := buildLogger(logLevel, stderr)
 
 	if goBinary != "" {
@@ -937,15 +939,47 @@ func runScanRescan(ctx context.Context, walkID string, enableReachability bool, 
 		req.Snapshot = &snap
 	}
 
-	_, _ = fmt.Fprintf(stdout, "Re-scanning walk %s...\n", walkID)
+	return rescanWith(ctx, ctr.RescanWalk, req, policyPath, noProgress, stdout, stderr)
+}
+
+// rescanWith drives an already-resolved re-scan and owns the command's output
+// contract: the narration and the per-module progress stream go to stderr, the
+// result to stdout.
+//
+// It is split from runScanRescan so that contract can be tested without a store
+// or a scanner — the store construction above is the only reason the command was
+// otherwise untestable, and the routing is the part that keeps regressing.
+func rescanWith(
+	ctx context.Context,
+	rescan RescanWalkUseCase,
+	req application2.RescanRequest,
+	policyPath string,
+	noProgress bool,
+	stdout, stderr io.Writer,
+) error {
+	// The narration stream. `Re-scanning walk ...` is said while the run is in
+	// flight, which makes it narration and not a result: stdout is the data
+	// channel, and this is the one scan command that was writing commentary onto
+	// it. Run ID and Snapshot below are results and stay where they are.
+	progressOut := progressWriter(stderr, noProgress)
+	_, _ = fmt.Fprintf(progressOut, "Re-scanning walk %s...\n", req.WalkID)
+
+	// A re-scan forces every module in the walk through the scanner. It is the
+	// most expensive run the CLI offers and it said nothing until it finished;
+	// the per-module line is the same one `vuln-scan` writes, from the same
+	// writer, so the two commands read alike and one flag silences both.
+	req.Progress = func(coord coordinate.ModuleCoordinate, record vuldomain.VulnerabilityRecord, current, total int) {
+		writeVulnScanProgress(record, coord, current, total, progressOut)
+	}
+
 	// A rescan re-runs the same pipeline and may pre-fetch, so it is bound by
 	// the same policy as a scan. Omitting it here would restore the divergence
 	// one command over.
-	if err := applyRescanVCSHosts(ctx, ctr.RescanWalk, policyPath, stderr); err != nil {
+	if err := applyRescanVCSHosts(ctx, rescan, policyPath, stderr); err != nil {
 		return err
 	}
 
-	run, err := ctr.RescanWalk.Rescan(ctx, req)
+	run, err := rescan.Rescan(ctx, req)
 	if err != nil {
 		// A frame the re-scan cannot reproduce is the one failure here that has a
 		// route out, and the route is a different command — so it is named. The

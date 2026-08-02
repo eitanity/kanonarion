@@ -71,7 +71,7 @@ func TestPrepareDBArg_RefusesAnEmptyDatabase(t *testing.T) {
 	}
 
 	t.Run("an empty database fails the scan", func(t *testing.T) {
-		arg, cleanup, err := newScanner(vulnDBZip(t)).prepareDBArg(context.Background(), snapshot, "")
+		arg, _, cleanup, err := newScanner(vulnDBZip(t)).prepareDBArg(context.Background(), snapshot, "")
 		if cleanup != nil {
 			cleanup()
 		}
@@ -95,7 +95,7 @@ func TestPrepareDBArg_RefusesAnEmptyDatabase(t *testing.T) {
 	})
 
 	t.Run("a populated database is used unchanged", func(t *testing.T) {
-		arg, cleanup, err := newScanner(vulnDBZip(t, "GO-2026-0001")).prepareDBArg(context.Background(), snapshot, "")
+		arg, _, cleanup, err := newScanner(vulnDBZip(t, "GO-2026-0001")).prepareDBArg(context.Background(), snapshot, "")
 		if cleanup != nil {
 			cleanup()
 		}
@@ -104,6 +104,93 @@ func TestPrepareDBArg_RefusesAnEmptyDatabase(t *testing.T) {
 		}
 		if !strings.HasPrefix(arg, "file://") {
 			t.Errorf("expected the extracted local database, got %q", arg)
+		}
+	})
+}
+
+// TestPrepareDBArg_ReportsTheAdvisoryCountItMeasured pins the reading this seam
+// takes and hands back.
+//
+// The walk's shared pre-extraction counts the database once and every record in
+// the run names it. A scan that extracts its own database — because the shared
+// extraction could not run — was counting the same thing and dropping it on the
+// floor, so its records carried a snapshot with no count: indistinguishable from
+// a row written before the field existed, and unable to tell a clean verdict
+// reached against four thousand advisories from one reached against three.
+//
+// Zero is reserved for unmeasured. A pre-extracted directory was counted by
+// whoever extracted it, and the live database is a set nothing here opened;
+// reporting a count for either would be an assertion this seam cannot support.
+func TestPrepareDBArg_ReportsTheAdvisoryCountItMeasured(t *testing.T) {
+	snapshot := vulntest.MustNew("vuln.go.dev", "2026-07-30T00:00:00Z")
+	logger := slog.New(slog.NewTextHandler(io.Discard, nil))
+
+	t.Run("a database it extracted is counted", func(t *testing.T) {
+		s := &Scanner{
+			logger:    logger,
+			vulnStore: &snapshotBlobStore{blob: vulnDBZip(t, "GO-2026-0001", "GO-2026-0002", "GO-2026-0003")},
+		}
+		arg, count, cleanup, err := s.prepareDBArg(context.Background(), snapshot, "")
+		if cleanup != nil {
+			cleanup()
+		}
+		if err != nil {
+			t.Fatalf("a populated database must be prepared, got: %v", err)
+		}
+		if !strings.HasPrefix(arg, "file://") {
+			t.Fatalf("expected the extracted local database, got %q", arg)
+		}
+		if count != 3 {
+			t.Errorf("advisory count = %d, want 3 — the record must be able to name what was consulted", count)
+		}
+
+		// And the count reaches the snapshot the record will name.
+		counted, cerr := snapshotCountingAdvisories(snapshot, count)
+		if cerr != nil {
+			t.Fatalf("carrying the count onto the snapshot: %v", cerr)
+		}
+		if counted.AdvisoryCount() != 3 {
+			t.Errorf("snapshot advisory count = %d, want 3", counted.AdvisoryCount())
+		}
+	})
+
+	t.Run("a pre-extracted directory reports no count of its own", func(t *testing.T) {
+		s := &Scanner{logger: logger, vulnStore: &snapshotBlobStore{blob: vulnDBZip(t, "GO-2026-0001")}}
+		_, count, cleanup, err := s.prepareDBArg(context.Background(), snapshot, t.TempDir())
+		if cleanup != nil {
+			cleanup()
+		}
+		if err != nil {
+			t.Fatalf("the shared extraction path must be used as before, got: %v", err)
+		}
+		if count != 0 {
+			t.Errorf("advisory count = %d, want 0: this seam did not open that database", count)
+		}
+		// An unmeasured reading must leave the snapshot alone rather than being
+		// pushed through the domain's positive-only guard as an error.
+		counted, cerr := snapshotCountingAdvisories(snapshot, count)
+		if cerr != nil {
+			t.Fatalf("an unmeasured count must not be an error: %v", cerr)
+		}
+		if counted.AdvisoryCount() != 0 {
+			t.Errorf("snapshot advisory count = %d, want 0", counted.AdvisoryCount())
+		}
+	})
+
+	t.Run("the live-database fallback reports no count", func(t *testing.T) {
+		s := &Scanner{logger: logger}
+		arg, count, cleanup, err := s.prepareDBArg(context.Background(), snapshot, "")
+		if cleanup != nil {
+			cleanup()
+		}
+		if err != nil {
+			t.Fatalf("the fallback must stand, got: %v", err)
+		}
+		if arg != "https://vuln.go.dev" {
+			t.Fatalf("expected the live database, got %q", arg)
+		}
+		if count != 0 {
+			t.Errorf("advisory count = %d, want 0: the live database is unmeasurable from here", count)
 		}
 	})
 }

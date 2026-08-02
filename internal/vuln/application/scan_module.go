@@ -709,6 +709,20 @@ func (uc *ScanModuleUseCase) routeCoverageFallback(
 	derived derivedFrom,
 	record domain.VulnerabilityRecord,
 ) (domain.VulnerabilityRecord, bool, error) {
+	// A scan that had to extract an advisory database of its own counted it and
+	// stated the reading on the snapshot it stamped. The records below are rebuilt
+	// from the caller's snapshot rather than from the scanner's record, so without
+	// this they would name the same database without saying how much of it was
+	// there — the one shape indistinguishable from a row written before the count
+	// existed.
+	if measured := record.DatabaseSnapshot.AdvisoryCount(); measured > snapshot.AdvisoryCount() {
+		counted, err := snapshotCountingAdvisories(snapshot, measured)
+		if err != nil {
+			return domain.VulnerabilityRecord{}, false, err
+		}
+		snapshot = counted
+	}
+
 	// Routing is decided on the coverage axis: both shapes below are statements
 	// about whether the module could be analysed, which is the axis's question. The
 	// scanner adapters state only the collapsed word, so RecordAxes derives it here

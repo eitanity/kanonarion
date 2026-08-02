@@ -532,6 +532,11 @@ type fakeScanner struct {
 	// gotModCache records the GOMODCACHE dir the last Scan was invoked with, so a
 	// test can assert --from-modcache threaded the real cache dir through.
 	gotModCache string
+	// advisoryCount stands in for a scanner that extracted an advisory database
+	// of its own and counted it — what the govulncheck adapter does when the
+	// walk's shared pre-extraction could not supply one. Left zero, the fake
+	// reports the unmeasured reading every other path reports.
+	advisoryCount int
 }
 
 func (f *fakeScanner) Preflight(_ context.Context) error { return f.preflightErr }
@@ -545,6 +550,15 @@ func (f *fakeScanner) Scan(_ context.Context, req ports.ScanRequest) (domain.Vul
 	defer f.mu.Unlock()
 	f.scanCalls++
 	f.gotModCache = goModCache
+	// The real adapter states the reading it took on the snapshot it stamps, so
+	// the fake does too — that stamp is the channel under test.
+	if f.advisoryCount > 0 {
+		counted, err := snapshot.WithAdvisoryCount(f.advisoryCount)
+		if err != nil {
+			return domain.VulnerabilityRecord{}, fmt.Errorf("fakeScanner counting the advisory database: %w", err)
+		}
+		snapshot = counted
+	}
 	res, ok := f.results[coord.String()]
 	if !ok {
 		return domain.VulnerabilityRecord{
@@ -596,6 +610,7 @@ func (f *fakeScanner) ScanProject(_ context.Context, req ports.ProjectScanReques
 		FindingsByModule: f.projectFindings,
 		Status:           status,
 		AnalysisSurface:  surface,
+		AdvisoryCount:    f.advisoryCount,
 	}, nil
 }
 
@@ -627,7 +642,7 @@ func (f *fakeScanner) ScanTargetModule(_ context.Context, req ports.TargetScanRe
 	if len(f.targetFindings) > 0 {
 		status = domain.StatusAffected
 	}
-	return domain.ProjectScanResult{FindingsByModule: f.targetFindings, Status: status}, nil
+	return domain.ProjectScanResult{FindingsByModule: f.targetFindings, Status: status, AdvisoryCount: f.advisoryCount}, nil
 }
 
 func (f *fakeScanner) ScannerMetadata() ports.ScannerMetadata {

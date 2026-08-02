@@ -53,7 +53,12 @@ operator asked for a measurement the supplied database cannot produce, and
 recording 128 `Unscannable` modules would bury the one fact that matters.
 
 A populated database records its count onto the snapshot every record in the run
-names, shown as the `Advisories` line of `vuln` and `vuln-scan-show`. That is
+names, shown as the `Advisories` line of `vuln` and `vuln-scan-show`. A run
+normally extracts the database once and shares it; when it cannot, each module
+scan extracts one of its own and records the count it measured there, so those
+records name the count too. A scan handed an already-extracted database, or
+answered by the live service, records no count — that reading was taken
+elsewhere or not at all. That is
 what lets a reader tell a clean scan against six thousand advisories from a clean
 scan against three. Records written before the count existed report it as *not
 recorded* rather than as zero — a measured zero cannot exist, because such a scan

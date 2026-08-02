@@ -3,6 +3,7 @@ package application_test
 import (
 	"log/slog"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
 
 	"github.com/eitanity/kanonarion/internal/vuln/application"
+	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
@@ -185,5 +187,56 @@ func TestRescan_UnknownWalk(t *testing.T) {
 	_, err := rescanner.Rescan(ctx, application.RescanRequest{WalkID: "nonexistent"})
 	if err == nil {
 		t.Fatal("expected error for unknown walk, got nil")
+	}
+}
+
+// TestRescan_ReportsProgressPerModule pins the callback through to the scan a
+// re-scan drives.
+//
+// A re-scan forces every module in the walk through the scanner — the most
+// expensive run the tool offers — and it passed no Progress callback at all, so
+// it emitted nothing between the command being typed and the run completing. A
+// caller had no way to tell it from a hang. The callback is the scan's own; the
+// only thing that was missing is the wire between the two.
+func TestRescan_ReportsProgressPerModule(t *testing.T) {
+	ctx := t.Context()
+	now := time.Date(2024, 3, 1, 0, 0, 0, 0, time.UTC)
+
+	first := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
+	second := coordinatetest.MustNew("github.com/foo/baz", "v2.0.0")
+	walk, ws, facts, blobs := makeWalkWithModules(t, first, second)
+
+	vulnStore := newFakeVulnStore()
+	scanner := &fakeScanner{}
+	db := &fakeDatabase{snapshot: vulntest.MustNew("test", "v1")}
+	clock := fixedClock{t: now}
+
+	moduleUC := application.NewScanModuleUseCase(
+		facts, blobs, vulnStore, ws, scanner, db, nil, clock, "v1", slog.Default(),
+	)
+	rescanner := application.NewRescanWalkUseCase(ws, vulnStore, moduleUC, nil, clock, "v1", slog.Default())
+
+	var mu sync.Mutex
+	seen := make(map[string]int, 2)
+	totals := make(map[int]struct{}, 1)
+	if _, err := rescanner.Rescan(ctx, application.RescanRequest{
+		WalkID: walk.ID,
+		Progress: func(coord coordinate.ModuleCoordinate, _ vulndomain.VulnerabilityRecord, _, total int) {
+			mu.Lock()
+			defer mu.Unlock()
+			seen[coord.String()]++
+			totals[total] = struct{}{}
+		},
+	}); err != nil {
+		t.Fatalf("Rescan: %v", err)
+	}
+
+	for _, coord := range []coordinate.ModuleCoordinate{first, second} {
+		if seen[coord.String()] != 1 {
+			t.Errorf("progress for %s reported %d times, want exactly 1", coord, seen[coord.String()])
+		}
+	}
+	if _, ok := totals[len(seen)]; !ok || len(totals) != 1 {
+		t.Errorf("progress reported totals %v, want a single total of %d", totals, len(seen))
 	}
 }

@@ -1417,6 +1417,31 @@ func (uc *ScanWalkUseCase) preExtractVulnDB(ctx context.Context, snapshot *domai
 	return dbDir, cleanup, nil
 }
 
+// snapshotCountingAdvisories returns snapshot carrying the advisory count a
+// scanner measured for itself, and snapshot unchanged when it measured none.
+//
+// The pre-extraction above is the usual place a run learns this number, and
+// every record then names it. When that extraction could not run — the snapshot
+// was unreadable, the temp dir could not be made — each scan reaches a database
+// on its own and counts what it opened; this is how that reading reaches the
+// records built from it, instead of being logged in the adapter and dropped.
+//
+// A zero count is unmeasured, not an empty database: a database holding no
+// advisories fails the scan at the seam that counted it. The run row may
+// therefore name a snapshot with no count while its records carry one, and that
+// is the honest ordering — the run settled its snapshot before any scan ran, and
+// the reading belongs to the scans that opened the database.
+func snapshotCountingAdvisories(snapshot domain.DatabaseSnapshot, count int) (domain.DatabaseSnapshot, error) {
+	if count <= 0 {
+		return snapshot, nil
+	}
+	counted, err := snapshot.WithAdvisoryCount(count)
+	if err != nil {
+		return domain.DatabaseSnapshot{}, fmt.Errorf("recording the advisory count on the snapshot: %w", err)
+	}
+	return counted, nil
+}
+
 // persistSealed seals rec with its content hash and persists it, returning the
 // record that was stored.
 //

@@ -57,6 +57,11 @@ func TestQueryCommands_LogsGoToStderrNotStdout(t *testing.T) {
 		{"vuln-scan-show", []string{"vuln-scan-show", "absent"}},
 		{"vuln-scan-history", []string{"vuln-scan-history", "absent"}},
 		{"vuln-scan-diff", []string{"vuln-scan-diff", "absent-a", "absent-b"}},
+		// Not a query, but it reaches the store and narrates before it fails, and
+		// that narration was going to stdout. It belongs in this table for exactly
+		// that reason: the invariant is about the channel, not about the command
+		// being read-only.
+		{"vuln-scan-rescan", []string{"vuln-scan-rescan", "absent"}},
 		{"vuln-snapshot-list", []string{"vuln-snapshot-list"}},
 		{"vuln-snapshot-show", []string{"vuln-snapshot-show", "govulndb", "v0"}},
 		{"walk-show", []string{"walk-show", "absent"}},

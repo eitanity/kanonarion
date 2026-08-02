@@ -109,6 +109,15 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 		uc.logger.Warn("target-rooted scan failed, falling back to isolated scans", "target", target, "error", err)
 		return false, nil
 	}
+	// A scan that extracted its own advisory database counted it. Rebind the
+	// local snapshot — not the caller's, which the run row already names — so
+	// every record built below states the database this analysis consulted.
+	counted, cerr := snapshotCountingAdvisories(*snapshot, result.AdvisoryCount)
+	if cerr != nil {
+		return false, cerr
+	}
+	snapshot = &counted
+
 	if result.Status == domain.StatusUnscannable || result.Status == domain.StatusScanFailed {
 		uc.logger.Warn("target-rooted scan could not analyse the target, falling back to isolated scans",
 			"target", target, "status", result.Status, "reason", result.UnscannableReason, "error_detail", result.ErrorDetail)
