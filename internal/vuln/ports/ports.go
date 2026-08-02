@@ -522,6 +522,17 @@ type VulnerabilityDatabase interface {
 	// already-stored snapshot, read from the store rather than the network.
 	SnapshotAdvisoryIndex(ctx context.Context, identity domain.DatabaseSnapshot) (AdvisoryIndex, error)
 
+	// SnapshotToolchainAdvisories returns what an already-stored snapshot says
+	// under its toolchain key — the advisories against the go command, compiler
+	// and linker, which are keyed separately from stdlib and which no scanned
+	// project imports. Both the index and each advisory record are read out of
+	// the stored snapshot itself, so the read costs no network.
+	//
+	// A snapshot whose index carries no toolchain key returns a set with
+	// KeyPresent false and no error: that snapshot cannot judge a toolchain, and
+	// saying so is the answer rather than a failure.
+	SnapshotToolchainAdvisories(ctx context.Context, identity domain.DatabaseSnapshot) (domain.ToolchainAdvisorySet, error)
+
 	// GetSnapshot retrieves a previously-pinned snapshot by identity,
 	// for replay or re-scanning.
 	GetSnapshot(ctx context.Context, identity domain.DatabaseSnapshot) (io.ReadCloser, error)

@@ -205,6 +205,11 @@ type ScanWalkUseCase interface {
 	// downloading the body only when something that walk is judged on has
 	// changed, and reports what it established.
 	RefreshSnapshot(ctx context.Context, walkID string) (vulnapp.SnapshotRefresh, error)
+
+	// JudgeToolchain derives whether the stored snapshot's toolchain key covers
+	// the toolchain version a walk was built under. It reads the stored snapshot
+	// and records nothing.
+	JudgeToolchain(ctx context.Context, snapshot vulndomain.DatabaseSnapshot, toolchainVersion string) (vulndomain.ToolchainJudgment, error)
 }
 
 // RescanWalkUseCase is the interface for re-gating a walk against a new snapshot.

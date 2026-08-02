@@ -161,6 +161,51 @@ The scan then runs pinned to that cache (`GOPROXY=off`, see the resolution note
 below): the analysis is faithful to the project's verified toolchain rather than
 reaching to the network for versions the project never builds.
 
+**The toolchain axis**
+
+Beside the result, on **stderr**, every scan states what the advisory database
+says about the Go toolchain the walk was built by:
+
+```
+toolchain:
+  go1.26.5: none of the 30 toolchain advisories in vuln.go.dev@2026-07-27T20:14:16Z covers it
+```
+
+```
+toolchain:
+  go1.26.2 is covered by 3 advisories in vuln.go.dev@2026-07-27T20:14:16Z: GO-2026-4978 (fixed in 1.26.3), GO-2026-4979 (fixed in 1.26.3), GO-2026-4984 (fixed in 1.26.3)
+  this is the build toolchain, not a dependency of the artefact: it is reported as its own axis and is counted in no module roll-up
+```
+
+The database keys the toolchain (`cmd/go`, the compiler, the linker) separately
+from `stdlib`, and the two sets are disjoint. No project imports `cmd/*`, so no
+module scan reaches a toolchain advisory; this line is the only place they
+appear. The fix named is the one on **this toolchain's own release branch** — an
+advisory backported to two release lines has two fixes, and only one of them is
+a move forward.
+
+The judgment is derived at report time from the stored snapshot and the walk's
+recorded build toolchain (`go env GOVERSION`): nothing is fetched, nothing is
+recorded, and it is derived identically on a reused run and a fresh one.
+`--stdlib-from-gomod` pins the stdlib node to the `go.mod` directive but does not
+change this line, which always reports the toolchain that ran.
+
+When no judgment can be made the line says so rather than being omitted — a
+missing line reads as a clear:
+
+```
+toolchain:
+  go1.26.5 was not judged against the advisory database's toolchain key: the snapshot's module index carries no toolchain key
+```
+
+The other reasons are `the walk recorded no build toolchain version`, `the
+recorded toolchain version is not comparable to the database's version ranges`
+(a release-candidate or development toolchain), and `no advisory database
+snapshot is stored`.
+
+The axis never changes the exit code, never appears under `--json`, and is
+counted in no roll-up. The SBOM is untouched by it.
+
 **On-demand callgraph extraction with `--reachability`**
 
 When `--reachability` is enabled, kanonarion checks the callgraph store before

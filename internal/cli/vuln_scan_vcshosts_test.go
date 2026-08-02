@@ -27,6 +27,10 @@ func (noHostScan) RefreshSnapshot(context.Context, string) (vulnapp.SnapshotRefr
 	return vulnapp.SnapshotRefresh{}, nil
 }
 
+func (noHostScan) JudgeToolchain(context.Context, vulndomain.DatabaseSnapshot, string) (vulndomain.ToolchainJudgment, error) {
+	return vulndomain.ToolchainJudgment{}, nil
+}
+
 // The store config is a second source of allowed_vcs_hosts, and it reaches the
 // scan through the same loadPolicy path walk and fetch use. An operator who set
 // the host list once at the store level — with no policy.yaml anywhere — must be

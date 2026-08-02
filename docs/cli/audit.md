@@ -453,6 +453,61 @@ count the comparison covered — not a restamping of the run.
 The line appears only under `--fresh`. Without the flag the run reads the stored
 database and makes no claim about its currency.
 
+## The toolchain axis
+
+Every run states, on **stderr**, what the advisory database says about the Go
+toolchain the walk was built by:
+
+```
+toolchain:
+  go1.26.5: none of the 30 toolchain advisories in vuln.go.dev@2026-07-27T20:14:16Z covers it
+```
+
+and when an advisory covers it:
+
+```
+toolchain:
+  go1.26.2 is covered by 3 advisories in vuln.go.dev@2026-07-27T20:14:16Z: GO-2026-4978 (fixed in 1.26.3), GO-2026-4979 (fixed in 1.26.3), GO-2026-4984 (fixed in 1.26.3)
+  this is the build toolchain, not a dependency of the artefact: it is reported as its own axis and is counted in no module roll-up
+```
+
+The advisory database keys the toolchain — `cmd/go`, the compiler, the linker —
+**separately from `stdlib`**, and the two sets are disjoint. No project imports
+`cmd/*`, so no module scan and no reachability analysis of project code can ever
+reach a toolchain advisory. The line is the only place they appear.
+
+Reading it:
+
+| the line says | it means |
+|---|---|
+| `<version>: none of the N toolchain advisories in <snapshot> covers it` | the snapshot's toolchain advisories were read and none covers this toolchain |
+| `<version> is covered by … : <ids>` | those advisories cover it; the fix named is the one on **this toolchain's own release branch** |
+| `… covered only by N advisories … that have since been withdrawn` | advisories cover it, but every one has been retracted by the database that published it |
+| `<version> was not judged …: <reason>` | no judgment was made, and the reason names the missing input |
+
+The judgment is **derived at report time** from the stored advisory snapshot and
+the toolchain version the walk recorded — nothing is fetched and nothing is
+recorded, so it costs one local read (single-digit milliseconds) and it
+classifies every walk ever taken.
+
+The version judged is the walk's build environment (`go env GOVERSION`) — the
+toolchain that actually compiled the project. `--stdlib-from-gomod` pins the
+synthetic stdlib node to the `go.mod` directive instead; it does **not** change
+this line, which always reports the toolchain that ran.
+
+`unjudged` is stated rather than omitted, because a missing line reads as a
+clear. Its reasons:
+
+| reason | remedy |
+|---|---|
+| `the snapshot's module index carries no toolchain key` | `--fresh` to refresh the advisory database |
+| `the walk recorded no build toolchain version` | re-walk with `--force` |
+| `the recorded toolchain version is not comparable to the database's version ranges` | a release-candidate or development toolchain; nothing to judge by version |
+| `no advisory database snapshot is stored` | run once with network access |
+
+The axis never changes the exit code and never appears in the module table, the
+`--json` rows, or the affected/clean roll-ups.
+
 ## Local `go.sum` verification
 
 On the **normal** (network) path, whenever the project's `go.sum` is present next

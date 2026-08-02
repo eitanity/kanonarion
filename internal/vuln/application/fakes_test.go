@@ -670,6 +670,12 @@ type fakeDatabase struct {
 	// indexErr fails both index reads, so a test can drive the fail-closed
 	// fallthrough into the full download.
 	indexErr error
+	// toolchainSet is what the stored snapshot is taken to say under its
+	// toolchain key; toolchainErr fails the read, and toolchainCalls counts them
+	// so a test can prove the judgment read the snapshot exactly once.
+	toolchainSet   domain.ToolchainAdvisorySet
+	toolchainErr   error
+	toolchainCalls atomic.Int64
 	// indexCalls counts index reads, so a test can prove the comparison was made
 	// — or, on the unchanged-generation path, that it never had to be.
 	indexCalls atomic.Int64
@@ -692,6 +698,14 @@ func (f *fakeDatabase) LatestVersion(_ context.Context) (string, error) {
 		return f.latestVersion, nil
 	}
 	return f.snapshot.Version(), nil
+}
+
+func (f *fakeDatabase) SnapshotToolchainAdvisories(_ context.Context, _ domain.DatabaseSnapshot) (domain.ToolchainAdvisorySet, error) {
+	f.toolchainCalls.Add(1)
+	if f.toolchainErr != nil {
+		return domain.ToolchainAdvisorySet{}, f.toolchainErr
+	}
+	return f.toolchainSet, nil
 }
 
 func (f *fakeDatabase) SnapshotAdvisoryIndex(_ context.Context, _ domain.DatabaseSnapshot) (ports.AdvisoryIndex, error) {

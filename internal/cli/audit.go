@@ -54,6 +54,12 @@ For each module, audit shows:
   - License (SPDX identifier)
   - Vulnerability status
 
+Beside the table, on stderr, audit states the toolchain axis: the Go toolchain
+version the walk was built by, the advisory snapshot it was judged against, and
+either that no toolchain advisory covers it or the ones that do. The toolchain
+is not a dependency of the artefact, so it is never a row and is counted in no
+roll-up.
+
 This collapses the walk → vuln-scan → license-list workflow into a single call.
 
 The dependency scope is consistent with every go.mod command: the default is the
@@ -266,6 +272,13 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 		return derr
 	}
 
+	// The toolchain axis, beside the module evidence and never inside it. It is
+	// derived from the same stored snapshot the scan was judged against, so it
+	// costs one local read and states the basis it rests on.
+	if terr := writeToolchainJudgment(stderr, derivation.toolchain); terr != nil {
+		return terr
+	}
+
 	// The aggregate goes to stderr on both paths: a whole-graph collapse in
 	// cross-verification is invisible in a populated status column, and stdout
 	// is the data channel --json callers pipe into jq.
@@ -309,6 +322,11 @@ type auditDerivation struct {
 	// brought up to date at all. The audit continues against the stored database;
 	// the statement is what stops that reading as a checked one.
 	refreshErr error
+	// toolchain is the derived judgment of the toolchain that built the walk
+	// against the same snapshot the module findings were judged against. It rides
+	// here because it shares that snapshot and is stated beside the derivation,
+	// and it is reported on its own axis: no module row and no roll-up sees it.
+	toolchain vulndomain.ToolchainJudgment
 }
 
 // writeAuditDerivation states the provenance of the run's two derived answers.
@@ -504,6 +522,12 @@ func auditScope(
 	if verr := runVulnScan(ctx, walkID, f.force, false, false, 1, false, false, "", os.Getenv("USER"), filepath.Dir(f.gomodPath), f.policyPath, false, f.noProgress, false, io.Discard, stderr); verr != nil {
 		_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", verr)
 	}
+
+	// The toolchain axis, derived once the snapshot this run is judged against is
+	// settled: the scan run names it when one was reused, and the store's latest
+	// otherwise. Both are local reads, and neither the judgment nor its inputs are
+	// written anywhere.
+	derivation.toolchain = judgeWalkToolchain(ctx, ctr, rec, storedSnapshotFor(ctx, ctr, derivation.scanRun))
 
 	overrides, err := ctr.LicenseOverrides.LoadOverrides(ctx)
 	if err != nil {

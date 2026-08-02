@@ -870,6 +870,16 @@ type FakeScanWalk struct {
 	// RefreshSnapshotWalkID records the walk the last refresh restricted its
 	// advisory comparison to.
 	RefreshSnapshotWalkID string
+
+	// ToolchainAdvisories is what the seeded snapshot is taken to say under its
+	// toolchain key; ToolchainErr fails the read instead. JudgeToolchain runs the
+	// real domain judgment over them, so a test seeds advisories rather than a
+	// verdict and the fake cannot disagree with the shipped ranking.
+	ToolchainAdvisories vulndomain.ToolchainAdvisorySet
+	ToolchainErr        error
+	// ToolchainVersion records the version the last judgment was asked about, so
+	// a test can prove which of the walk's two toolchain versions was read.
+	ToolchainVersion string
 }
 
 // FakeScanWalkProgress is one entry delivered to the Progress callback.
@@ -897,6 +907,16 @@ func (f *FakeScanWalk) RefreshSnapshot(_ context.Context, walkID string) (vulnap
 		return vulnapp.SnapshotRefresh{}, f.RefreshSnapshotErr
 	}
 	return f.RefreshSnapshotResult, nil
+}
+
+// JudgeToolchain judges the seeded toolchain advisories with the real domain
+// rule.
+func (f *FakeScanWalk) JudgeToolchain(_ context.Context, snapshot vulndomain.DatabaseSnapshot, toolchainVersion string) (vulndomain.ToolchainJudgment, error) {
+	f.ToolchainVersion = toolchainVersion
+	if f.ToolchainErr != nil {
+		return vulndomain.ToolchainJudgment{}, f.ToolchainErr
+	}
+	return vulndomain.JudgeToolchain(toolchainVersion, snapshot, f.ToolchainAdvisories), nil
 }
 
 func (f *FakeScanWalk) Scan(_ context.Context, params vulnapp.ScanWalkParams) (vulndomain.WalkScanRun, error) {

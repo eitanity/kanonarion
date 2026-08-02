@@ -41,6 +41,14 @@ func newVulnScanCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "vuln-scan [walk-id]",
 		Short: "Scan all modules in a walk for vulnerabilities",
+		Long: `Scan every module in a walk against the advisory database.
+
+Beside the result, on stderr, vuln-scan states the toolchain axis: the Go
+toolchain version the walk was built by, the advisory snapshot it was judged
+against, and either that no toolchain advisory covers it or the ones that do.
+The advisory database keys the toolchain (cmd/go, the compiler, the linker)
+separately from stdlib and no project imports it, so no module scan can reach
+it. It is reported on its own and counted in no roll-up.`,
 		Example: `  kanonarion vuln-scan 01KQDBVW092ER1HNXZ60X27CMD
   kanonarion vuln-scan --module github.com/gin-gonic/gin@v1.6.2
   kanonarion vuln-scan --binary-pre-pass 01KQDBVW092ER1HNXZ60X27CMD
@@ -223,10 +231,11 @@ func applyScanVCSHosts(ctx context.Context, scan ScanWalkUseCase, policyPath str
 	return nil
 }
 
-// announceReuse controls whether a served run announces itself on stderr. It is
-// false only for `audit`, which narrates the whole derivation — walk and scan
-// together — in one statement of its own, and would otherwise say it twice.
-func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachability bool, callGraphWorkers int, binaryModePrePass, jsonOut bool, goBinary, operator, projectDir, policyPath string, noVendor, noProgress, announceReuse bool, stdout, stderr io.Writer) error {
+// narrateRun controls whether this run states the things it says about itself
+// as a whole — that a stored run was served, and what the toolchain axis says.
+// It is false only for `audit`, which narrates the derivation and the toolchain
+// axis in statements of its own and would otherwise say each of them twice.
+func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachability bool, callGraphWorkers int, binaryModePrePass, jsonOut bool, goBinary, operator, projectDir, policyPath string, noVendor, noProgress, narrateRun bool, stdout, stderr io.Writer) error {
 	logger := buildLogger(logLevel, stderr)
 
 	if goBinary != "" {
@@ -299,7 +308,7 @@ func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachab
 		if prior, ok, rerr := ctr.ScanWalk.ReusableRun(ctx, walkID); rerr != nil {
 			return fmt.Errorf("checking for a reusable scan run: %w", rerr)
 		} else if ok {
-			return serveStoredScanRun(ctx, prior, ctr, jsonOut, announceReuse, stdout, stderr)
+			return serveStoredScanRun(ctx, prior, ctr, jsonOut, narrateRun, stdout, stderr)
 		}
 	}
 
@@ -329,6 +338,15 @@ func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachab
 	})
 	if err != nil {
 		return fmt.Errorf("vuln scan failed: %w", err)
+	}
+
+	// The toolchain axis goes to stderr, beside the result and never inside it:
+	// stdout is the data channel a --json caller pipes into jq, and the toolchain
+	// is not one of the modules this run scanned.
+	if narrateRun {
+		if terr := reportToolchainAxis(ctx, ctr, run, stderr); terr != nil {
+			return terr
+		}
 	}
 
 	if perr := printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.failed, rollups.unscannable, jsonOut, stdout); perr != nil {
@@ -454,6 +472,15 @@ func serveStoredScanRun(ctx context.Context, run vuldomain.WalkScanRun, ctr *Con
 			run.Snapshot.Source(), run.Snapshot.Version(),
 		); werr != nil {
 			return fmt.Errorf("writing output: %w", werr)
+		}
+	}
+
+	// The toolchain judgment is derived on a served report exactly as on a
+	// measured one: it is read from the stored snapshot the run names, so reuse
+	// costs it nothing and cannot silently drop it.
+	if announce {
+		if terr := reportToolchainAxis(ctx, ctr, run, stderr); terr != nil {
+			return terr
 		}
 	}
 
