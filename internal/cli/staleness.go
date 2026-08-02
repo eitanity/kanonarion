@@ -16,8 +16,29 @@ import (
 
 // newStalenessResolver wires the staleness resolver over an already-open ledger.
 // ledger may be nil, which makes every lookup live and unwritten.
-func newStalenessResolver(proxy *proxyadapter.Proxy, ledger staleports.Ledger, ttl time.Duration, fresh bool) *staleapp.Resolver {
-	return staleapp.NewResolver(staleproxy.New(proxy), ledger, clock.System{}, ttl, fresh)
+//
+// latest is the port rather than the proxy adapter so the two wirings below can
+// be tested for the one thing that distinguishes them: whether the ledger is
+// read at all.
+func newStalenessResolver(latest staleports.LatestResolver, ledger staleports.Ledger, ttl time.Duration, fresh bool) *staleapp.Resolver {
+	return staleapp.NewResolver(latest, ledger, clock.System{}, ttl, fresh)
+}
+
+// newProxyLatestResolver wraps the module proxy as the port the staleness
+// resolver asks for a module's latest version.
+func newProxyLatestResolver(proxy *proxyadapter.Proxy) staleports.LatestResolver {
+	return staleproxy.New(proxy)
+}
+
+// newAuditStalenessResolver builds the resolver behind an audit's latest column.
+//
+// It takes no fresh parameter. On audit the staleness TTL is what governs that
+// column: the subject of `audit --fresh` is the advisory database, and the
+// command whose subject IS the latest answer — `latest` — keeps its own --fresh
+// for it. Leaving the parameter off is the point; a wiring that could pass it
+// is a wiring that will.
+func newAuditStalenessResolver(latest staleports.LatestResolver, ledger staleports.Ledger, ttl time.Duration) *staleapp.Resolver {
+	return newStalenessResolver(latest, ledger, ttl, false)
 }
 
 // openStalenessLedger opens the store purely for the staleness ledger.

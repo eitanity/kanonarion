@@ -112,7 +112,7 @@ the install command.
 | `--tool` | `false` | Scope to the tooling supply chain (the `go.mod` `tool` directives' closure); tags walks `scope=tool`. Mutually exclusive with `--project` |
 | `--project` | `false` | Scope to the complete set: the project's code **and** tooling (the full Go build list). Mutually exclusive with `--tool` |
 | `--force` | `false` | Re-fetch and re-scan even if cached records exist |
-| `--fresh` | `false` | Bypass cached network answers: fetch a fresh vulnerability database snapshot **and** re-query latest versions instead of serving the staleness ledger |
+| `--fresh` | `false` | Refresh the vulnerability advisory database. The published generation and, if it has moved on, the standalone module index are read first; the database body is downloaded only when an advisory listed for a module in this walk has changed. See [Refreshing the advisory database](#refreshing-the-advisory-database---fresh). Does not affect the staleness/latest column |
 | `--stdlib-from-gomod` | `false` | Version the `stdlib` node from the `go.mod` directive, not the live toolchain. See [Standard-library version](walk.md#standard-library-version---stdlib-from-gomod). |
 | `--skip-vcs-verify` | `false` | Skip git cross-verification; the checksum-database check still runs. A sumdb-attested module then reports `VerifiedBySumDBOnly`, never the strongest `Verified` (the git leg never ran). Useful when auditing a large closure where git operations are rate-limited or unavailable |
 | `--policy` | _(auto-discover `.kanonarion/policy.yaml`)_ | Depth policy file; its fetch stage governs traversal and the `allowed_vcs_hosts` forge allowlist |
@@ -246,7 +246,7 @@ dependency:
 5. Query and report - iterate the walk's dependency nodes (every graph node bar the local root) and join fetch, license, vuln, and staleness into one line each
 
 Walk, licence and staleness use cached results on subsequent runs unless
-`--force` (walk/licence) or `--fresh` (staleness) is passed. One stage always
+`--force` is passed. One stage always
 does work on every run, warm store or not: the project-rooted vuln scan is
 **always recomputed fresh** (the working tree mutates between runs, so its
 verdict is live and never served from a coordinate cache).
@@ -331,11 +331,13 @@ kanonarion sbom --package ./cmd/kanonarion   # reuses audit's project walk
 `audit` is safe to re-run, but a warm re-run is **not** fully offline. The walk,
 licence, and vulnerability-database stages are cached and do no network I/O on a
 warm store (`--force` re-fetches the modules and re-runs the scan; `--fresh`
-re-downloads the vulnerability database).
+checks the advisory database and re-downloads it only if an advisory for one of
+this walk's modules has changed).
 
 - **Staleness** - `audit` queries the module proxy for each module's latest
   version (`@latest`). Answers are served from the staleness ledger inside
-  `staleness.ttl` (default `1h`); `--fresh` bypasses the read and re-queries.
+  `staleness.ttl` (default `1h`). `audit --fresh` does not change this: to
+  re-query a latest answer on demand, run `latest --fresh`.
 - **Walk** - the project's `go.mod` is **always re-resolved**, so an edit to the
   working tree is always picked up. When the resolution matches a walk already
   stored, that walk's record is reused rather than a new one recorded. See
@@ -351,7 +353,7 @@ Every run reports, on **stderr**, where its two expensive answers came from:
 ```
 derivation:
   walk 01KZ0DJEV5XKAV1PSN1JM47D37: re-resolved and found identical to the walk taken 2026-08-02T05:01:29Z; that record was reused
-  vulnerability scan: reused run vscan-01KZ0DJEV5XKAV1PSN1JM47D37-1785646889 of 2026-08-02T05:01:35Z against snapshot vuln.go.dev@2026-07-27T20:14:16Z; nothing was re-scanned (--fresh to re-measure)
+  vulnerability scan: reused run vscan-01KZ0DJEV5XKAV1PSN1JM47D37-1785646889 of 2026-08-02T05:01:35Z against snapshot vuln.go.dev@2026-07-27T20:14:16Z; nothing was re-scanned (--force to re-measure)
 ```
 
 or, when the run measured for itself:
@@ -389,14 +391,62 @@ A stored scan is reused only when **all** of these hold:
 
 To force a fresh measurement:
 
-- `--fresh` — fetches a live advisory snapshot and re-scans. Use this for release
-  evidence that must be measured now. Expect minutes rather than seconds: the
-  advisory database is downloaded and `govulncheck` runs over the whole build.
-- `--force` — re-fetches the modules, records a new walk and re-scans.
+- `--force` — re-fetches the modules, records a new walk and re-scans. This is
+  the flag for release evidence that must be measured now.
+- `--fresh` — refreshes the advisory database. It re-scans only when the refresh
+  changes an advisory listed for a module in this walk; a database that moved for
+  anything else leaves the stored run serving.
 
-Note that `--fresh` re-scans but does **not** force a new walk: an unchanged
-`go.mod` still resolves to the same walk, and the derivation line will report the
-walk as reused and the scan as derived.
+`--fresh` does not force a new walk: an unchanged `go.mod` still resolves to the
+same walk.
+
+## Refreshing the advisory database (`--fresh`)
+
+`--fresh` refreshes the vulnerability advisory database and nothing else. Two
+cheap checks stand between the flag and the multi-megabyte database body:
+
+1. **Has the database changed at all?** The generation `vuln.go.dev` publishes is
+   read from the standalone `index/db.json` — one small request. Unchanged: the
+   stored snapshot is kept and nothing else is asked.
+2. **Has it changed anything this walk is judged on?** A new generation is
+   published whenever any advisory in the ecosystem moves. The standalone
+   `index/modules.json` (~60 KB compressed) is fetched and compared against the
+   stored snapshot's own copy, restricted to the modules this walk holds —
+   `stdlib` among them. Identical for every one of them: no download, and the
+   stored scan run still answers.
+
+Only a change to an advisory listed for a module in the walk — a new advisory, a
+changed fixed version, an upstream edit such as a withdrawal — reaches the
+download, and a re-scan with it.
+
+The refresh states its outcome in the derivation block on **stderr**:
+
+```
+derivation:
+  walk 01KZ0DJEV5XKAV1PSN1JM47D37: re-resolved and found identical to the walk taken 2026-08-02T05:01:29Z; that record was reused
+  advisory database: checked vuln.go.dev and found it unchanged at 2026-07-27T20:14:16Z; nothing was downloaded and the stored snapshot was kept
+  vulnerability scan: reused run vscan-01KZ0DJEV5XKAV1PSN1JM47D37-1785646889 of 2026-08-02T05:01:35Z against snapshot vuln.go.dev@2026-07-27T20:14:16Z; nothing was re-scanned (--force to re-measure)
+```
+
+The outcomes the line distinguishes:
+
+| line says | meaning |
+|---|---|
+| `checked … and found it unchanged at <generation>` | the published generation is the stored one; nothing was transferred |
+| `advanced <old> -> <new>; the advisories listed for all N modules in this walk are identical between the two, so the run judged against <old> remains current for this walk` | the database moved, but not for anything this walk is judged on; nothing was transferred and the stored run still answers |
+| `advanced <old> -> <new> and the advisories changed for a module in this walk` | the database body was downloaded and the walk re-scanned against it |
+| `advanced … but the advisories could not be compared (<error>)` | the comparison failed, so the full download and a re-scan ran instead |
+| `published generation unreadable (<error>)` | the first check failed, so the full download ran instead |
+| `no snapshot was stored; downloaded …` | first refresh on this store |
+| `refresh failed (<error>)` | the database could not be brought up to date at all; the run continues against the stored database |
+
+A reused run always names the snapshot it was **actually judged against**. When
+the second check keeps a stored run alive across an advanced generation, that the
+run remains current is a separate statement with its own basis — the module
+count the comparison covered — not a restamping of the run.
+
+The line appears only under `--fresh`. Without the flag the run reads the stored
+database and makes no claim about its currency.
 
 ## Local `go.sum` verification
 
@@ -457,7 +507,8 @@ In this mode `audit`:
   offline run never reports a stored latest version as if it had been checked
   now. The run makes **zero** network calls to
   `proxy.golang.org`/`sum.golang.org`. Rows carry `major_probed: false`. The
-  vulnerability scan still reads the OSV database (`--fresh` to refresh it).
+  vulnerability scan still reads the stored OSV database (`--fresh` to refresh
+  it).
 
 ```bash
 # After `go build ./...` has populated the module cache:

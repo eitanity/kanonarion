@@ -21,6 +21,7 @@ import (
 
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
+	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
 	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -83,7 +84,7 @@ Exit codes:
 	cmd.Flags().StringVar(&f.gomodPath, "gomod", "", "path to go.mod file (default: ./go.mod)")
 	cmd.Flags().StringVar(&f.goproxy, "goproxy", "", "override GOPROXY (default: $GOPROXY or proxy.golang.org)")
 	cmd.Flags().BoolVar(&f.force, "force", false, "re-fetch and re-scan even if cached records exist")
-	cmd.Flags().BoolVar(&f.fresh, "fresh", false, "bypass cached network answers: fetch a fresh vulnerability database snapshot and re-query latest versions instead of serving the staleness ledger")
+	cmd.Flags().BoolVar(&f.fresh, "fresh", false, "refresh the vulnerability advisory database: download a new snapshot only if an advisory listed for a module in this walk has changed")
 	cmd.Flags().BoolVar(&f.tool, "tool", false, "scope to the tooling supply chain (the go.mod tool directives' closure)")
 	cmd.Flags().BoolVar(&f.project, "project", false, "scope to the complete set: the project's code AND tooling")
 	cmd.Flags().BoolVar(&f.skipVCSVerify, "skip-vcs-verify", false, "skip git cross-verification; sumdb verification still runs")
@@ -251,7 +252,7 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 		// command makes is served to the other inside the TTL, which is the
 		// whole point: the two commands were re-paying the same sweep minutes
 		// apart.
-		staleness = newStalenessResolver(proxy, ctr.StalenessLedger, activeConfig.Staleness.TTL, f.fresh)
+		staleness = newAuditStalenessResolver(newProxyLatestResolver(proxy), ctr.StalenessLedger, activeConfig.Staleness.TTL)
 	}
 
 	results, derivation, err := auditScope(ctx, coords, scope, f, staleness, ctr, stderr)
@@ -300,6 +301,15 @@ type auditDerivation struct {
 	walkRecord walkdomain.WalkRecord
 	scanReused bool
 	scanRun    vulndomain.WalkScanRun
+	// refreshed is set when --fresh made this run check the advisory database;
+	// refresh is what that check established. Without the flag the run reads the
+	// stored database and the derivation says nothing about a check it never made.
+	refreshed bool
+	refresh   vulnapp.SnapshotRefresh
+	// refreshErr is the refresh's own failure, when the database could not be
+	// brought up to date at all. The audit continues against the stored database;
+	// the statement is what stops that reading as a checked one.
+	refreshErr error
 }
 
 // writeAuditDerivation states the provenance of the run's two derived answers.
@@ -319,12 +329,18 @@ func writeAuditDerivation(w io.Writer, d auditDerivation) error {
 
 	scanLine := "vulnerability scan: derived by this run"
 	if d.scanReused {
-		scanLine = fmt.Sprintf("vulnerability scan: reused run %s of %s against snapshot %s@%s; nothing was re-scanned (--fresh to re-measure)",
+		scanLine = fmt.Sprintf("vulnerability scan: reused run %s of %s against snapshot %s@%s; nothing was re-scanned (--force to re-measure)",
 			d.scanRun.ID, d.scanRun.CompletedAt.UTC().Format(time.RFC3339),
 			d.scanRun.Snapshot.Source(), d.scanRun.Snapshot.Version())
 	}
 
-	if _, err := fmt.Fprintf(w, "derivation:\n  %s\n  %s\n", walkLine, scanLine); err != nil {
+	lines := []string{walkLine}
+	if d.refreshed {
+		lines = append(lines, advisoryRefreshLine(d.refresh, d.refreshErr))
+	}
+	lines = append(lines, scanLine)
+
+	if _, err := fmt.Fprintf(w, "derivation:\n  %s\n", strings.Join(lines, "\n  ")); err != nil {
 		return fmt.Errorf("writing output: %w", err)
 	}
 	return nil
@@ -441,19 +457,40 @@ func auditScope(
 		_, _ = fmt.Fprintf(stderr, "extract: %v\n", eerr)
 	}
 
+	// The refresh happens before the reuse question is asked, because it decides
+	// what that question is asked against: a refresh that downloads a new
+	// database makes the stored run unreusable, and one that keeps the stored
+	// snapshot — because the database has not moved, or has not moved for
+	// anything this walk is judged on — leaves it answering. A failed refresh is
+	// reported and the audit continues against the stored database rather than
+	// losing the whole report.
+	if f.fresh {
+		_, _ = fmt.Fprintf(progressOut, "==> audit: refreshing the advisory database\n")
+		derivation.refreshed = true
+		refresh, frerr := ctr.ScanWalk.RefreshSnapshot(ctx, walkID)
+		if frerr != nil {
+			derivation.refreshErr = frerr
+		} else {
+			derivation.refresh = refresh
+		}
+	}
+
 	// Asked before the scan is driven so the derivation statement can name the
 	// run that answered, and answered with the same lookup the scan itself makes:
 	// audit narrates the whole derivation in one place, so runVulnScan is told not
 	// to announce the reuse a second time.
-	if prior, ok, rerr := ctr.ScanWalk.ReusableRun(ctx, walkID, f.fresh); rerr != nil {
+	if prior, ok, rerr := ctr.ScanWalk.ReusableRun(ctx, walkID); rerr != nil {
 		_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", rerr)
 	} else if ok && !f.force {
 		derivation.scanReused = true
 		derivation.scanRun = prior
 	}
 
+	// fresh=false: the refresh above already happened, and the snapshot it
+	// settled on is the stored one the scan now resolves. Passing the flag on
+	// would check the database a second time in the same invocation.
 	_, _ = fmt.Fprintf(progressOut, "==> audit: scanning vulnerabilities for walk %s\n", walkID)
-	if verr := runVulnScan(ctx, walkID, f.force, f.fresh, false, 1, false, false, "", os.Getenv("USER"), filepath.Dir(f.gomodPath), f.policyPath, false, f.noProgress, false, io.Discard, stderr); verr != nil {
+	if verr := runVulnScan(ctx, walkID, f.force, false, false, 1, false, false, "", os.Getenv("USER"), filepath.Dir(f.gomodPath), f.policyPath, false, f.noProgress, false, io.Discard, stderr); verr != nil {
 		_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", verr)
 	}
 
@@ -931,8 +968,10 @@ func printAuditTable(stdout io.Writer, results []auditModuleResult) error {
 			oldest = r.StalenessLookedUpAt
 		}
 	}
+	// No --fresh here: on audit the TTL is what governs this column, and the
+	// command that re-queries a latest answer on demand is `latest --fresh`.
 	if asOf := stalenessAsOf(oldest); asOf != "" {
-		if _, err := fmt.Fprintf(stdout, "\nlatest as of %s (staleness.ttl %s; --fresh to re-query)\n",
+		if _, err := fmt.Fprintf(stdout, "\nlatest as of %s (staleness.ttl %s; `latest --fresh` to re-query)\n",
 			asOf, activeConfig.Staleness.TTL); err != nil {
 			return fmt.Errorf("writing output: %w", err)
 		}

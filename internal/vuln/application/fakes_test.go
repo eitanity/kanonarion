@@ -631,6 +631,29 @@ type fakeDatabase struct {
 	// snapshotCalls counts fresh-snapshot fetches, so a test can prove a run
 	// refused before spending a network round trip.
 	snapshotCalls atomic.Int64
+
+	// latestVersion is the generation the fake database publishes. Empty means
+	// "whatever snapshot reports", the case where upstream has not moved on; set
+	// it to something else to stand for an advanced generation.
+	latestVersion string
+	// latestVersionErr fails the cheap generation read alone, leaving the full
+	// download working, so a test can drive the fail-closed fallback.
+	latestVersionErr error
+	// latestVersionCalls counts generation reads, so a test can prove the cheap
+	// check was made before any body was transferred.
+	latestVersionCalls atomic.Int64
+
+	// storedIndex and publishedIndex are what the two advisory-index reads
+	// report. A nil publishedIndex means "identical to storedIndex", the case
+	// where a new generation changed nothing this walk is judged on.
+	storedIndex    ports.AdvisoryIndex
+	publishedIndex ports.AdvisoryIndex
+	// indexErr fails both index reads, so a test can drive the fail-closed
+	// fallthrough into the full download.
+	indexErr error
+	// indexCalls counts index reads, so a test can prove the comparison was made
+	// — or, on the unchanged-generation path, that it never had to be.
+	indexCalls atomic.Int64
 }
 
 func (f *fakeDatabase) Snapshot(_ context.Context) (domain.DatabaseSnapshot, io.ReadCloser, error) {
@@ -639,6 +662,36 @@ func (f *fakeDatabase) Snapshot(_ context.Context) (domain.DatabaseSnapshot, io.
 		return domain.DatabaseSnapshot{}, nil, f.err
 	}
 	return f.snapshot, io.NopCloser(strings.NewReader(f.content)), nil
+}
+
+func (f *fakeDatabase) LatestVersion(_ context.Context) (string, error) {
+	f.latestVersionCalls.Add(1)
+	if f.latestVersionErr != nil {
+		return "", f.latestVersionErr
+	}
+	if f.latestVersion != "" {
+		return f.latestVersion, nil
+	}
+	return f.snapshot.Version(), nil
+}
+
+func (f *fakeDatabase) SnapshotAdvisoryIndex(_ context.Context, _ domain.DatabaseSnapshot) (ports.AdvisoryIndex, error) {
+	f.indexCalls.Add(1)
+	if f.indexErr != nil {
+		return nil, f.indexErr
+	}
+	return f.storedIndex, nil
+}
+
+func (f *fakeDatabase) PublishedAdvisoryIndex(_ context.Context) (ports.AdvisoryIndex, error) {
+	f.indexCalls.Add(1)
+	if f.indexErr != nil {
+		return nil, f.indexErr
+	}
+	if f.publishedIndex != nil {
+		return f.publishedIndex, nil
+	}
+	return f.storedIndex, nil
 }
 
 func (f *fakeDatabase) GetSnapshot(_ context.Context, identity domain.DatabaseSnapshot) (io.ReadCloser, error) {

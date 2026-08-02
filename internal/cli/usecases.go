@@ -199,7 +199,12 @@ type ScanWalkUseCase interface {
 	// ReusableRun reports a completed stored run that already answers what a new
 	// Scan of this walk against the current snapshot would ask. The caller
 	// decides whether to serve it; Scan itself always measures.
-	ReusableRun(ctx context.Context, walkID string, fresh bool) (vulndomain.WalkScanRun, bool, error)
+	ReusableRun(ctx context.Context, walkID string) (vulndomain.WalkScanRun, bool, error)
+
+	// RefreshSnapshot brings the advisory database up to date for the named walk,
+	// downloading the body only when something that walk is judged on has
+	// changed, and reports what it established.
+	RefreshSnapshot(ctx context.Context, walkID string) (vulnapp.SnapshotRefresh, error)
 }
 
 // RescanWalkUseCase is the interface for re-gating a walk against a new snapshot.

@@ -19,8 +19,12 @@ func (noHostScan) Scan(context.Context, vulnapp.ScanWalkParams) (vulndomain.Walk
 	return vulndomain.WalkScanRun{}, nil
 }
 
-func (noHostScan) ReusableRun(context.Context, string, bool) (vulndomain.WalkScanRun, bool, error) {
+func (noHostScan) ReusableRun(context.Context, string) (vulndomain.WalkScanRun, bool, error) {
 	return vulndomain.WalkScanRun{}, false, nil
+}
+
+func (noHostScan) RefreshSnapshot(context.Context, string) (vulnapp.SnapshotRefresh, error) {
+	return vulnapp.SnapshotRefresh{}, nil
 }
 
 // The store config is a second source of allowed_vcs_hosts, and it reaches the

@@ -184,7 +184,7 @@ When a scan run of the same walk against the same advisory snapshot already
 exists, its result is served and `govulncheck` does not run:
 
 ```
-reusing scan run vscan-01KZ0DJEV5XKAV1PSN1JM47D37-1785646889 of 2026-08-02T05:01:35Z against snapshot vuln.go.dev@2026-07-27T20:14:16Z; nothing was re-scanned (--fresh to re-measure)
+reusing scan run vscan-01KZ0DJEV5XKAV1PSN1JM47D37-1785646889 of 2026-08-02T05:01:35Z against snapshot vuln.go.dev@2026-07-27T20:14:16Z; nothing was re-scanned (--force to re-measure)
 ```
 
 The line names the run whose verdicts you are reading and when it was made. The
@@ -194,7 +194,31 @@ produced, rebuilt from the records it wrote.
 A stored run is served only when the walk, the advisory snapshot (source,
 version, retrieval time and seal) and the scan pipeline version all match, **and**
 the stored run's coverage is complete — a partial or failed run is never served.
-`--fresh` (live advisory snapshot) and `--force` both re-measure.
+`--force` re-measures. `--fresh` refreshes the advisory database and re-measures
+only when the refresh changes an advisory listed for a module in this walk.
+
+**Refreshing the advisory database (`--fresh`)**
+
+Two cheap checks stand between the flag and the multi-megabyte database body:
+the generation `vuln.go.dev` publishes (standalone `index/db.json`, one small
+request), and — when that has moved on — the standalone `index/modules.json`
+(~60 KB compressed), compared against the stored snapshot's own copy and
+restricted to the modules this walk holds, `stdlib` among them. It states what it
+found on stderr before the scan decision:
+
+```
+advisory database: checked vuln.go.dev and found it unchanged at 2026-07-27T20:14:16Z; nothing was downloaded and the stored snapshot was kept
+advisory database: vuln.go.dev advanced 2026-07-27T20:14:16Z -> 2026-08-01T09:00:00Z; the advisories listed for all 322 modules in this walk are identical between the two, so the run judged against 2026-07-27T20:14:16Z remains current for this walk; nothing was downloaded
+advisory database: vuln.go.dev advanced 2026-07-27T20:14:16Z -> 2026-08-01T09:00:00Z and the advisories changed for a module in this walk; downloaded the new database
+advisory database: vuln.go.dev advanced 2026-07-27T20:14:16Z -> 2026-08-01T09:00:00Z, but the advisories could not be compared (<error>); downloaded the new database
+advisory database: vuln.go.dev published generation unreadable (<error>); downloaded the database, now at 2026-07-27T20:14:16Z
+```
+
+The last two are the fail-closed cases: when a cheap check cannot be made the
+body is downloaded anyway, so a refresh never turns into a cache hit on a network
+error. A reused run always names the snapshot it was actually judged against; the
+claim that it remains current is a separate statement carrying the number of
+modules the comparison covered.
 
 **Assurance log**
 
@@ -244,7 +268,7 @@ fresh each time and is not served from the coordinate cache.
 | `--tool` | `false` | Scan the tooling supply chain (the latest tool-scoped project walk). Mutually exclusive with `--project` |
 | `--project` | `false` | Scan the complete set (the latest complete-scope project walk). Mutually exclusive with `--tool` |
 | `--force` | `false` | Force re-scan even if results exist; also re-runs on-demand callgraph extraction |
-| `--fresh` | `false` | Fetch a fresh vulnerability database snapshot from the network |
+| `--fresh` | `false` | Refresh the vulnerability advisory database: read the published generation and module index, and download a new snapshot only if an advisory listed for a module in this walk has changed |
 | `--reachability` | `false` | Enable call-graph reachability analysis; spawns `kanonarion callgraph` on demand for modules with findings but no cached callgraph |
 | `--callgraph-workers` | `1` | Maximum number of concurrent on-demand callgraph subprocesses (SSA builds are memory-heavy; keep low) |
 | `--go-binary` | _(from `PATH`)_ | Path to the `go` binary if not on `PATH` (used by on-demand callgraph extraction) |

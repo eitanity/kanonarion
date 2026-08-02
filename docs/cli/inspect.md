@@ -65,7 +65,7 @@ kanonarion inspect github.com/spf13/cobra@v1.8.1 --json
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Path to fact store root (or `KANONARION_STORE` env var) |
 | `--force` | `false` | Re-fetch and re-extract even if cached records exist |
-| `--fresh` | `false` | Fetch a fresh vulnerability database snapshot from the network |
+| `--fresh` | `false` | Refresh the vulnerability advisory database: read the published generation and module index, and download a new snapshot only if an advisory listed for a module in this walk has changed |
 | `--reachability` | `false` | Enable call-graph reachability analysis during vuln-scan. For `--gomod`, reachability roots at the dependency closure, not the project's own code (see the note under [`inspect --gomod`](#inspect---gomod-path)) |
 | `--skip-vcs-verify` | `false` | Skip git cross-verification; sumdb verification still runs |
 | `--policy` | _(auto-discover `.kanonarion/policy.yaml`)_ | Depth policy file; its fetch stage governs traversal and the `allowed_vcs_hosts` forge allowlist |

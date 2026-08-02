@@ -12,6 +12,7 @@ import (
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
+	"reflect"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -21,6 +22,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/vuln/adapters/vulndb/osv"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/ports"
 	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 )
 
@@ -845,4 +847,143 @@ func (f *fakeVulnStore) GetVulnerabilityRecordAt(_ context.Context, _ coordinate
 
 func (f *fakeVulnStore) HasVulnerabilityRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ domain.DatabaseSnapshot, _ string) (bool, error) {
 	return false, nil
+}
+
+// TestLatestVersion_ReadsTheStandaloneIndexWithoutTheBody is the cheap half of
+// the snapshot. The bulk zip is a multi-megabyte transfer; the published
+// generation is a 35-byte object served on its own, and reading it is how a
+// caller learns whether the transfer would bring anything new.
+func TestLatestVersion_ReadsTheStandaloneIndexWithoutTheBody(t *testing.T) {
+	var zipHits, indexHits int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/vulndb.zip", func(w http.ResponseWriter, _ *http.Request) {
+		zipHits++
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	mux.HandleFunc("/index/db.json", func(w http.ResponseWriter, _ *http.Request) {
+		indexHits++
+		_, _ = w.Write([]byte(`{"modified":"2026-07-27T20:14:16Z"}`))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
+	got, err := db.LatestVersion(t.Context())
+	if err != nil {
+		t.Fatalf("LatestVersion: %v", err)
+	}
+	if got != "2026-07-27T20:14:16Z" {
+		t.Errorf("LatestVersion = %q, want the published generation", got)
+	}
+	if zipHits != 0 {
+		t.Errorf("the bulk database was requested %d times by a generation read", zipHits)
+	}
+	if indexHits != 1 {
+		t.Errorf("the standalone index was requested %d times, want 1", indexHits)
+	}
+}
+
+// TestLatestVersion_RefusesAnEmptyGeneration: the caller's next step is a
+// comparison, and "" compares equal to nothing anyone stored.
+func TestLatestVersion_RefusesAnEmptyGeneration(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		_, _ = w.Write([]byte(`{}`))
+	}))
+	defer srv.Close()
+
+	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
+	if _, err := db.LatestVersion(t.Context()); err == nil {
+		t.Fatal("an index with no modified field was accepted as a generation")
+	}
+}
+
+// TestLatestVersion_ServerError_ReturnsError: the read must fail rather than
+// report a generation it did not obtain, because the caller's fallback on a
+// failure is to download the database anyway.
+func TestLatestVersion_ServerError_ReturnsError(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+
+	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
+	if _, err := db.LatestVersion(t.Context()); err == nil {
+		t.Fatal("expected error on server 500, got nil")
+	}
+}
+
+// TestPublishedAdvisoryIndex_ReadsTheStandaloneIndexWithoutTheBody: the module
+// index is what turns "the generation moved" into a question that can be asked
+// about a particular set of modules, and it is served on its own at a fraction
+// of the body's size.
+func TestPublishedAdvisoryIndex_ReadsTheStandaloneIndexWithoutTheBody(t *testing.T) {
+	var zipHits int
+	mux := http.NewServeMux()
+	mux.HandleFunc("/vulndb.zip", func(w http.ResponseWriter, _ *http.Request) {
+		zipHits++
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+	mux.HandleFunc("/index/modules.json.gz", func(w http.ResponseWriter, _ *http.Request) {
+		modules := []map[string]any{
+			{"path": "example.com/mod", "vulns": []map[string]string{
+				{"id": "GO-2026-0002", "modified": "2026-02-01T00:00:00Z", "fixed": "1.3.0"},
+				{"id": "GO-2026-0001", "modified": "2026-01-01T00:00:00Z", "fixed": "1.2.0"},
+			}},
+		}
+		_, _ = w.Write(gzipJSON(t, modules))
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
+	got, err := db.PublishedAdvisoryIndex(t.Context())
+	if err != nil {
+		t.Fatalf("PublishedAdvisoryIndex: %v", err)
+	}
+	if zipHits != 0 {
+		t.Errorf("the bulk database was requested %d times by an index read", zipHits)
+	}
+	want := []ports.AdvisoryIndexEntry{
+		{ID: "GO-2026-0001", Modified: "2026-01-01T00:00:00Z", Fixed: "1.2.0"},
+		{ID: "GO-2026-0002", Modified: "2026-02-01T00:00:00Z", Fixed: "1.3.0"},
+	}
+	if !reflect.DeepEqual(got["example.com/mod"], want) {
+		t.Errorf("entries = %+v, want them sorted and complete: %+v", got["example.com/mod"], want)
+	}
+}
+
+// TestSnapshotAdvisoryIndex_ReadsTheStoredSnapshotsOwnIndex is the "before" half
+// of a generation comparison: the bytes are the store's, so it costs a local
+// read and no network.
+func TestSnapshotAdvisoryIndex_ReadsTheStoredSnapshotsOwnIndex(t *testing.T) {
+	zipBody := buildVulnDBZip(t, []zipEntry{
+		{name: "index/db.json", content: []byte(`{"modified":"2026-07-27T20:14:16Z"}`)},
+		{name: "index/modules.json", content: []byte(
+			`[{"path":"example.com/mod","vulns":[{"id":"GO-2026-0001","modified":"2026-01-01T00:00:00Z","fixed":"1.2.0"}]}]`)},
+		{name: "ID/GO-2026-0001.json", content: []byte(`{"id":"GO-2026-0001"}`)},
+	})
+
+	db := osv.New(nil, &fakeVulnStore{content: string(zipBody)})
+	got, err := db.SnapshotAdvisoryIndex(t.Context(), vulntest.MustNew("vuln.go.dev", "2026-07-27T20:14:16Z"))
+	if err != nil {
+		t.Fatalf("SnapshotAdvisoryIndex: %v", err)
+	}
+	want := []ports.AdvisoryIndexEntry{{ID: "GO-2026-0001", Modified: "2026-01-01T00:00:00Z", Fixed: "1.2.0"}}
+	if !reflect.DeepEqual(got["example.com/mod"], want) {
+		t.Errorf("entries = %+v, want %+v", got["example.com/mod"], want)
+	}
+}
+
+// TestSnapshotAdvisoryIndex_RefusesASnapshotWithoutAnIndex: a stored blob that
+// carries no module index cannot answer the comparison, and saying so is what
+// makes the caller fall back to the full download instead of assuming.
+func TestSnapshotAdvisoryIndex_RefusesASnapshotWithoutAnIndex(t *testing.T) {
+	zipBody := buildVulnDBZip(t, []zipEntry{
+		{name: "index/db.json", content: []byte(`{"modified":"2026-07-27T20:14:16Z"}`)},
+	})
+
+	db := osv.New(nil, &fakeVulnStore{content: string(zipBody)})
+	if _, err := db.SnapshotAdvisoryIndex(t.Context(), vulntest.MustNew("vuln.go.dev", "2026-07-27T20:14:16Z")); err == nil {
+		t.Fatal("a snapshot with no index/modules.json was accepted")
+	}
 }

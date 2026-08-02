@@ -19,8 +19,7 @@ import (
 //
 // It deliberately does NOT live inside Scan. Scan measures; that is its whole
 // contract, and RescanWalkUseCase depends on it. Whether a measurement is wanted
-// at all is the caller's decision, which is where --fresh and --force already
-// are.
+// at all is the caller's decision, which is where --force already is.
 //
 // Three conditions, each of which refuses rather than approximates:
 //
@@ -35,18 +34,16 @@ import (
 //     generation, same seal. A new advisory generation is a new question, and the
 //     run that predates it did not answer it.
 //
-// fresh short-circuits the whole lookup: --fresh is the operator asking for a
-// live advisory snapshot, and serving a stored run against it would be the
-// opposite of what was asked.
-func (uc *ScanWalkUseCase) ReusableRun(ctx context.Context, walkID string, fresh bool) (domain.WalkScanRun, bool, error) {
-	if fresh {
-		return domain.WalkScanRun{}, false, nil
-	}
-
-	// The snapshot a scan started now would use. Passing fresh=false is not a
-	// second guess at the flag: --fresh already returned above, so this is the
-	// pinned-or-cached snapshot and the call costs a store read, never a fetch.
-	snapshot, err := uc.resolveSnapshot(ctx, nil, false)
+// The advisory database is the whole of what --fresh refreshes, and it is the
+// third condition here. A caller that has just refreshed asks this question
+// afterwards: a refresh that brought in a new generation fails the snapshot
+// check and the walk is re-scanned, and a refresh that found the stored database
+// still current passes it and the stored run answers — which is the same run
+// that answered before, against the same database, and it is still the answer.
+func (uc *ScanWalkUseCase) ReusableRun(ctx context.Context, walkID string) (domain.WalkScanRun, bool, error) {
+	// The snapshot a scan started now would use: the pinned-or-stored snapshot,
+	// at the cost of a store read and never a fetch.
+	snapshot, err := uc.resolveSnapshot(ctx, nil, false, walkID)
 	if err != nil {
 		// A snapshot that cannot be resolved is not evidence that no reusable run
 		// exists. Report no reuse and let Scan surface the same failure with its

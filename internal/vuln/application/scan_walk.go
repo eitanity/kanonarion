@@ -266,7 +266,7 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	}
 
 	// 2. Snapshot resolution.
-	snapshot, err := uc.resolveSnapshot(ctx, params.Snapshot, params.Fresh)
+	snapshot, err := uc.resolveSnapshot(ctx, params.Snapshot, params.Fresh, params.WalkID)
 	if err != nil {
 		return domain.WalkScanRun{}, err
 	}
@@ -1279,16 +1279,19 @@ func (uc *ScanWalkUseCase) nodeGoVersion(ctx context.Context, coord coordinate.M
 }
 
 // resolveSnapshot returns the snapshot to use for a scan.
-// If pinned is non-nil it is used directly. Otherwise the snapshot is fetched
-// from the network (fresh=true) or loaded from the store, falling back to the
-// network if the store has none.
-func (uc *ScanWalkUseCase) resolveSnapshot(ctx context.Context, pinned *domain.DatabaseSnapshot, fresh bool) (*domain.DatabaseSnapshot, error) {
+// If pinned is non-nil it is used directly. Otherwise the database is refreshed
+// against the network (fresh=true) or the stored snapshot is loaded, falling
+// back to the network if the store has none.
+func (uc *ScanWalkUseCase) resolveSnapshot(ctx context.Context, pinned *domain.DatabaseSnapshot, fresh bool, walkID string) (*domain.DatabaseSnapshot, error) {
 	if pinned != nil {
 		return pinned, nil
 	}
 	if fresh {
-		uc.logger.Info("fresh fetch requested: fetching vulnerability database snapshot from network")
-		return uc.fetchAndPersistSnapshot(ctx, "resolving fresh snapshot", "persisting fresh database snapshot")
+		refresh, err := uc.RefreshSnapshot(ctx, walkID)
+		if err != nil {
+			return nil, err
+		}
+		return &refresh.Snapshot, nil
 	}
 	cached, ok, err := uc.vulnStore.GetLatestDatabaseSnapshot(ctx)
 	if err != nil {

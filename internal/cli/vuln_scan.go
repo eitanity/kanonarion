@@ -80,7 +80,7 @@ func newVulnScanCmd(stdout, stderr io.Writer) *cobra.Command {
 	}
 
 	cmd.Flags().BoolVar(&force, "force", false, "force re-scan even if results exist")
-	cmd.Flags().BoolVar(&fresh, "fresh", false, "fetch fresh vulnerability database snapshot from network")
+	cmd.Flags().BoolVar(&fresh, "fresh", false, "refresh the vulnerability advisory database: download a new snapshot only if an advisory listed for a module in this walk has changed")
 	cmd.Flags().BoolVar(&enableReachability, "reachability", false, "enable call-graph reachability analysis")
 	cmd.Flags().IntVar(&callGraphWorkers, "callgraph-workers", 1, "max concurrent on-demand callgraph subprocesses (SSA-heavy; keep low)")
 	cmd.Flags().BoolVar(&binaryModePrePass, "binary-pre-pass", false, "fast binary-mode pre-pass; source mode only for affected modules")
@@ -245,14 +245,29 @@ func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachab
 	// scan — and that stream is the reason the flag exists.
 	progressOut := progressWriter(stderr, noProgress)
 
+	// --fresh refreshes the advisory database and nothing else. It happens before
+	// the reuse question below, which is asked against whatever database the
+	// refresh settled on.
+	if fresh {
+		refresh, rerr := ctr.ScanWalk.RefreshSnapshot(ctx, walkID)
+		if _, werr := fmt.Fprintf(stderr, "%s\n", advisoryRefreshLine(refresh, rerr)); werr != nil {
+			return fmt.Errorf("writing output: %w", werr)
+		}
+		if rerr != nil {
+			return fmt.Errorf("refreshing the advisory database: %w", rerr)
+		}
+	}
+
 	// A scan of the same walk against the same advisory snapshot has already
 	// answered this question. Re-running govulncheck over the whole build list
 	// would reproduce the stored verdicts at the cost of the run — the dominant
 	// cost of the command — so the stored run is served instead, and the report
 	// says so rather than letting a served answer read as a fresh measurement.
-	// --force and --fresh are the two ways to insist on measuring.
+	// --force is the way to insist on measuring; a --fresh that downloaded a new
+	// database re-scans on its own, because the stored run no longer answers
+	// against it.
 	if !force {
-		if prior, ok, rerr := ctr.ScanWalk.ReusableRun(ctx, walkID, fresh); rerr != nil {
+		if prior, ok, rerr := ctr.ScanWalk.ReusableRun(ctx, walkID); rerr != nil {
 			return fmt.Errorf("checking for a reusable scan run: %w", rerr)
 		} else if ok {
 			return serveStoredScanRun(ctx, prior, ctr, jsonOut, announceReuse, stdout, stderr)
@@ -264,9 +279,12 @@ func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachab
 	rollups := newVulnScanRollups()
 
 	run, err := ctr.ScanWalk.Scan(ctx, application2.ScanWalkParams{
-		WalkID:             walkID,
-		Force:              force,
-		Fresh:              fresh,
+		WalkID: walkID,
+		Force:  force,
+		// The refresh above already settled which database this run is judged
+		// against, and stored it; the scan resolves that stored snapshot. Passing
+		// the flag on would check the database a second time in one invocation.
+		Fresh:              false,
 		EnableReachability: enableReachability,
 		CallGraphWorkers:   callGraphWorkers,
 		BinaryModePrePass:  binaryModePrePass,
@@ -288,6 +306,44 @@ func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachab
 		return perr
 	}
 	return vulnScanCoverageExit(run)
+}
+
+// advisoryRefreshLine renders what a --fresh refresh established, in one line.
+//
+// Every outcome is said in its own words, and each says the basis it rests on
+// rather than only its conclusion. Two of them are claims that the stored answer
+// is still current, and a claim of currency with no stated basis is the thing
+// this whole report exists to avoid: "unchanged" is a statement about the
+// database's generation, while "unchanged for this walk" is a statement about a
+// measured comparison over a named number of modules, and a reader has to be
+// able to tell which one they were given.
+//
+// err is the refresh's own failure; when it is set the refresh value is unused.
+func advisoryRefreshLine(r application2.SnapshotRefresh, err error) string {
+	if err != nil {
+		return fmt.Sprintf("advisory database: refresh failed (%v); the stored database is unchanged and this run is judged against it", err)
+	}
+	source, version := r.Snapshot.Source(), r.Snapshot.Version()
+	switch {
+	case r.StampErr != nil:
+		return fmt.Sprintf("advisory database: %s published generation unreadable (%v); downloaded the database, now at %s",
+			source, r.StampErr, version)
+	case r.IndexErr != nil:
+		return fmt.Sprintf("advisory database: %s advanced %s -> %s, but the advisories could not be compared (%v); downloaded the new database",
+			source, r.PriorVersion, r.PublishedVersion, r.IndexErr)
+	case r.Outcome == application2.RefreshUnchanged:
+		return fmt.Sprintf("advisory database: checked %s and found it unchanged at %s; nothing was downloaded and the stored snapshot was kept",
+			source, version)
+	case r.Outcome == application2.RefreshIndexUnchanged:
+		return fmt.Sprintf(
+			"advisory database: %s advanced %s -> %s; the advisories listed for all %d modules in this walk are identical between the two, so the run judged against %s remains current for this walk; nothing was downloaded",
+			source, r.PriorVersion, r.PublishedVersion, r.ModulesCompared, r.PriorVersion)
+	case r.PriorVersion == "":
+		return fmt.Sprintf("advisory database: no snapshot was stored; downloaded %s@%s", source, version)
+	default:
+		return fmt.Sprintf("advisory database: %s advanced %s -> %s and the advisories changed for a module in this walk; downloaded the new database",
+			source, r.PriorVersion, version)
+	}
 }
 
 // vulnScanRollups buckets per-module scan verdicts into the sections the report
@@ -364,7 +420,7 @@ func serveStoredScanRun(ctx context.Context, run vuldomain.WalkScanRun, ctr *Con
 
 	if announce {
 		if _, werr := fmt.Fprintf(stderr,
-			"reusing scan run %s of %s against snapshot %s@%s; nothing was re-scanned (--fresh to re-measure)\n",
+			"reusing scan run %s of %s against snapshot %s@%s; nothing was re-scanned (--force to re-measure)\n",
 			run.ID, run.CompletedAt.UTC().Format(time.RFC3339),
 			run.Snapshot.Source(), run.Snapshot.Version(),
 		); werr != nil {

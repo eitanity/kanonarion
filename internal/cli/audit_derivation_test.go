@@ -41,7 +41,7 @@ func TestAuditDerivation_NamesTheReusedRunsAndTheirDates(t *testing.T) {
 		"vscan-01KZ0AVM2897N6J6YE4GABYG27-1754107449",
 		"2026-08-02T04:14:09Z",
 		"2026-07-27T20:14:16Z",
-		"--fresh",
+		"--force",
 	} {
 		if !strings.Contains(got, want) {
 			t.Errorf("the derivation statement does not name %q:\n%s", want, got)

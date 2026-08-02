@@ -169,7 +169,9 @@ func runLatest(ctx context.Context, args []string, f latestFlags, stdout, stderr
 	} else {
 		defer func() { _ = closeLedger() }()
 	}
-	resolver := newStalenessResolver(proxy, ledger, activeConfig.Staleness.TTL, f.fresh)
+	// --fresh belongs here: the subject of this command IS the latest answer, so
+	// asking for a fresh one is asking for the ledger to be bypassed.
+	resolver := newStalenessResolver(newProxyLatestResolver(proxy), ledger, activeConfig.Staleness.TTL, f.fresh)
 
 	if len(args) == 0 {
 		gomodPath, err := resolveGoModPath(f.gomodPath)

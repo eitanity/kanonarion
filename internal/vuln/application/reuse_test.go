@@ -69,7 +69,7 @@ func TestReusableRun_ServesACompletedRunAgainstTheSameSnapshot(t *testing.T) {
 	seedSnapshot(t, store, snap)
 	want := seedRun(t, store, "vscan-1", "walk-1", snap, "v1", domain.CoverageComplete)
 
-	got, ok, err := uc.ReusableRun(context.Background(), "walk-1", false)
+	got, ok, err := uc.ReusableRun(context.Background(), "walk-1")
 	if err != nil {
 		t.Fatalf("ReusableRun: %v", err)
 	}
@@ -81,22 +81,6 @@ func TestReusableRun_ServesACompletedRunAgainstTheSameSnapshot(t *testing.T) {
 	}
 }
 
-// TestReusableRun_FreshAlwaysRescans pins the opt-out named in the flag's own
-// help: --fresh asks for a live advisory snapshot, so serving a stored run
-// against it would answer the opposite of what was asked.
-func TestReusableRun_FreshAlwaysRescans(t *testing.T) {
-	uc, store := reuseFixture(t, "v1")
-	snap := vulntest.MustNew("vuln.go.dev", "2026-07-27T16:28:49Z")
-	seedSnapshot(t, store, snap)
-	seedRun(t, store, "vscan-1", "walk-1", snap, "v1", domain.CoverageComplete)
-
-	if _, ok, err := uc.ReusableRun(context.Background(), "walk-1", true); err != nil {
-		t.Fatalf("ReusableRun: %v", err)
-	} else if ok {
-		t.Error("--fresh served a stored scan run")
-	}
-}
-
 // TestReusableRun_RefusesADifferentSnapshot is the correctness gate. A new
 // advisory generation is a new question, and the run that predates it did not
 // answer it.
@@ -105,7 +89,7 @@ func TestReusableRun_RefusesADifferentSnapshot(t *testing.T) {
 	seedRun(t, store, "vscan-1", "walk-1", vulntest.MustNew("vuln.go.dev", "2026-07-27T16:28:49Z"), "v1", domain.CoverageComplete)
 	seedSnapshot(t, store, vulntest.MustNew("vuln.go.dev", "2026-08-01T00:00:00Z"))
 
-	if _, ok, err := uc.ReusableRun(context.Background(), "walk-1", false); err != nil {
+	if _, ok, err := uc.ReusableRun(context.Background(), "walk-1"); err != nil {
 		t.Fatalf("ReusableRun: %v", err)
 	} else if ok {
 		t.Error("a run judged against an older advisory snapshot was served for a newer one")
@@ -124,7 +108,7 @@ func TestReusableRun_RefusesAnIncompleteRun(t *testing.T) {
 			seedSnapshot(t, store, snap)
 			seedRun(t, store, "vscan-1", "walk-1", snap, "v1", coverage)
 
-			if _, ok, err := uc.ReusableRun(context.Background(), "walk-1", false); err != nil {
+			if _, ok, err := uc.ReusableRun(context.Background(), "walk-1"); err != nil {
 				t.Fatalf("ReusableRun: %v", err)
 			} else if ok {
 				t.Errorf("a %s run was offered for reuse", coverage)
@@ -143,7 +127,7 @@ func TestReusableRun_RefusesASupersededPipeline(t *testing.T) {
 	seedSnapshot(t, store, snap)
 	seedRun(t, store, "vscan-1", "walk-1", snap, "v1", domain.CoverageComplete)
 
-	if _, ok, err := uc.ReusableRun(context.Background(), "walk-1", false); err != nil {
+	if _, ok, err := uc.ReusableRun(context.Background(), "walk-1"); err != nil {
 		t.Fatalf("ReusableRun: %v", err)
 	} else if ok {
 		t.Error("a run from a superseded pipeline version was served")
@@ -176,7 +160,7 @@ func TestReusableRun_ServesARunAcrossARefetchOfTheSameDatabase(t *testing.T) {
 	// The store hands back the same generation at second precision.
 	seedSnapshot(t, store, sealed)
 
-	if _, ok, rerr := uc.ReusableRun(context.Background(), "walk-1", false); rerr != nil {
+	if _, ok, rerr := uc.ReusableRun(context.Background(), "walk-1"); rerr != nil {
 		t.Fatalf("ReusableRun: %v", rerr)
 	} else if !ok {
 		t.Error("a run judged against this very advisory database was not reused because its download time differed")
@@ -191,7 +175,7 @@ func TestReusableRun_RefusesAnotherWalksRun(t *testing.T) {
 	seedSnapshot(t, store, snap)
 	seedRun(t, store, "vscan-1", "walk-1", snap, "v1", domain.CoverageComplete)
 
-	if _, ok, err := uc.ReusableRun(context.Background(), "walk-2", false); err != nil {
+	if _, ok, err := uc.ReusableRun(context.Background(), "walk-2"); err != nil {
 		t.Fatalf("ReusableRun: %v", err)
 	} else if ok {
 		t.Error("one walk's scan run was offered as another walk's")

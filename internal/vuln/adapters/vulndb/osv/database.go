@@ -97,6 +97,127 @@ func (d *Database) Snapshot(ctx context.Context) (domain.DatabaseSnapshot, io.Re
 	return snapshot, io.NopCloser(bytes.NewReader(zipData)), nil
 }
 
+// LatestVersion reads the generation stamp vuln.go.dev currently publishes from
+// the standalone index/db.json — a single tiny {"modified": "..."} object — and
+// returns it without touching the multi-megabyte bulk body.
+//
+// The stamp is the same string Snapshot reports as the snapshot's Version: both
+// come from index/db.json's modified field, one read out of the downloaded zip
+// and one read directly. An empty stamp is an error rather than a version,
+// because the caller's next step is a comparison and "" compares equal to
+// nothing anyone stored.
+func (d *Database) LatestVersion(ctx context.Context) (string, error) {
+	url := vulnGoDevBase + "/index/db.json"
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return "", fmt.Errorf("create request for %s: %w", url, err)
+	}
+	resp, err := d.client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("fetch %s: %w", url, err)
+	}
+	defer func() { _ = resp.Body.Close() }()
+	if err := responseError(resp, url); err != nil {
+		return "", err
+	}
+	data, err := io.ReadAll(io.LimitReader(resp.Body, maxDBJSONBytes))
+	if err != nil {
+		return "", fmt.Errorf("read %s: %w", url, err)
+	}
+	version, err := decodeDBModified(data)
+	if err != nil {
+		return "", err
+	}
+	if version == "" {
+		return "", fmt.Errorf("%s has empty modified field", url)
+	}
+	return version, nil
+}
+
+// maxModulesIndexBytes caps the index/modules.json read out of a stored
+// snapshot zip. The published index is ~3 MB uncompressed; the bound leaves
+// generous headroom while defending against a decompression bomb.
+const maxModulesIndexBytes = 256 << 20
+
+// PublishedAdvisoryIndex fetches the standalone module index the database
+// publishes — the same index/modules.json the bulk zip carries, served
+// gzip-compressed at a fraction of the body's size — so two generations can be
+// compared without downloading either in full.
+func (d *Database) PublishedAdvisoryIndex(ctx context.Context) (ports.AdvisoryIndex, error) {
+	data, err := d.fetchRawGZ(ctx, vulnGoDevBase+"/index/modules.json.gz")
+	if err != nil {
+		return nil, fmt.Errorf("fetch published modules index: %w", err)
+	}
+	return decodeAdvisoryIndex(data)
+}
+
+// SnapshotAdvisoryIndex reads index/modules.json out of an already-stored
+// snapshot. The bytes are the store's, so this costs a local read and no
+// network: it is the "before" half of a generation comparison.
+func (d *Database) SnapshotAdvisoryIndex(ctx context.Context, identity domain.DatabaseSnapshot) (ports.AdvisoryIndex, error) {
+	rc, err := d.vulnStore.GetDatabaseSnapshot(ctx, identity)
+	if err != nil {
+		return nil, fmt.Errorf("get stored snapshot %s@%s: %w", identity.Source(), identity.Version(), err)
+	}
+	defer func() { _ = rc.Close() }()
+
+	zipData, err := io.ReadAll(rc)
+	if err != nil {
+		return nil, fmt.Errorf("read stored snapshot %s@%s: %w", identity.Source(), identity.Version(), err)
+	}
+	zr, err := zip.NewReader(bytes.NewReader(zipData), int64(len(zipData)))
+	if err != nil {
+		return nil, fmt.Errorf("open stored snapshot %s@%s: %w", identity.Source(), identity.Version(), err)
+	}
+	for _, f := range zr.File {
+		if f.Name != "index/modules.json" {
+			continue
+		}
+		data, rerr := readZipFile(f, maxModulesIndexBytes)
+		if rerr != nil {
+			return nil, rerr
+		}
+		return decodeAdvisoryIndex(data)
+	}
+	return nil, fmt.Errorf("stored snapshot %s@%s has no index/modules.json", identity.Source(), identity.Version())
+}
+
+// decodeAdvisoryIndex parses index/modules.json into the comparison shape,
+// sorting each module's entries so two readings of one generation compare equal
+// regardless of the order the file happened to list them in.
+func decodeAdvisoryIndex(data []byte) (ports.AdvisoryIndex, error) {
+	var index []struct {
+		Path  string `json:"path"`
+		Vulns []struct {
+			ID       string `json:"id"`
+			Modified string `json:"modified"`
+			Fixed    string `json:"fixed"`
+		} `json:"vulns"`
+	}
+	if err := json.Unmarshal(data, &index); err != nil {
+		return nil, fmt.Errorf("unmarshal modules index: %w", err)
+	}
+	out := make(ports.AdvisoryIndex, len(index))
+	for _, m := range index {
+		entries := make([]ports.AdvisoryIndexEntry, 0, len(m.Vulns))
+		for _, v := range m.Vulns {
+			entries = append(entries, ports.AdvisoryIndexEntry{ID: v.ID, Modified: v.Modified, Fixed: v.Fixed})
+		}
+		sort.Slice(entries, func(i, j int) bool {
+			a, b := entries[i], entries[j]
+			if a.ID != b.ID {
+				return a.ID < b.ID
+			}
+			if a.Modified != b.Modified {
+				return a.Modified < b.Modified
+			}
+			return a.Fixed < b.Fixed
+		})
+		out[m.Path] = entries
+	}
+	return out, nil
+}
+
 // fetchVulnDBZip downloads the bulk /vulndb.zip body in one request, logging
 // byte-based progress so a slow first run does not look like a hang.
 func (d *Database) fetchVulnDBZip(ctx context.Context) ([]byte, error) {
