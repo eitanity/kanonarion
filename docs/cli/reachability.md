@@ -283,6 +283,35 @@ examined eleven and cleared one.
 |---|---|
 | `no stored vulnerability record for this coordinate; it has never been vuln-scanned` | Nothing is known about it either way. This is **not** "no known vulnerabilities" — a record with no findings is an answer and counts as covered. |
 | `the local build resolves this module without a version (a directory replacement), so it names no coordinate to look up` | Nothing asked the store about it. |
+| `the store holds a vulnerability record for this coordinate, but only from another build's frame; this build has not been vuln-scanned` | The module has been scanned — for a different project. Nothing measured this build, so nothing seeded the probe. Scan this build to cover it. |
+
+### Which records seeded the probe
+
+The probe is seeded from stored records, and a store shared by several projects
+holds several answers per dependency. The seed is restricted to the records
+measured in **this tree's own frame** — a walk rooted at the module path this
+tree's `go.mod` declares, at any version — plus the **isolated** frame, which
+answers "the module built alone" and belongs to no project. Another project's
+records are never read. `seed_restriction` states this on every run:
+
+```
+seed restricted to stored records measured in this tree's own frame (rooted at
+github.com/example/app) or in the isolated frame; records measured in another
+consumer's build were not read
+```
+
+A dependency whose only records belong to another project therefore seeds
+nothing, and appears in `coverage.uncovered_modules` — the probe still measures
+the tree. To cover it, scan this build: `kanonarion walk` then
+`kanonarion vuln-scan` from this working tree.
+
+A finding whose verdict came from the seed rather than from this probe's symbol
+table says so in `reason`, naming the frame the stored scan was rooted at:
+
+```
+carried from the stored scan (by govulncheck, fidelity source, rooted at
+target-rooted:github.com/example/app@local)
+```
 
 ### Which binaries the probe read
 
@@ -338,6 +367,7 @@ JSON shape (text rendering follows the same fields):
   "module_path": "github.com/example/app",
   "version_id": "local-<sha256>",
   "probe_kind": "",
+  "seed_restriction": "seed restricted to stored records measured in this tree's own frame (rooted at github.com/example/app) or in the isolated frame; records measured in another consumer's build were not read",
   "notice": "<optional diagnostic>",
   "coverage": {
     "snapshot_taken_at": "2026-01-01T00:00:00Z",

@@ -88,16 +88,25 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 		coords = append(coords, coord)
 	}
 
-	set, err := uc.vulnLoader.LoadFindings(ctx, coords)
+	// The tree's own module path is the frame the seed is anchored to. It comes
+	// from the snapshot's go.mod — the same authority that names the tree
+	// everywhere else in this result — so the probe and its seed cannot disagree
+	// about which tree is being measured.
+	set, err := uc.vulnLoader.LoadFindings(ctx, coords, modulePath)
 	if err != nil {
 		return domain.LocalReachabilityResult{}, fmt.Errorf("loading vuln findings: %w", err)
 	}
 	for _, coord := range coords {
-		if _, ok := set.Scanned[coord]; !ok {
-			uncovered = append(uncovered, domain.UncoveredModule{
-				Path: coord.Path(), Version: coord.Version(), Reason: domain.UncoveredNoStoredRecord,
-			})
+		if _, ok := set.Scanned[coord]; ok {
+			continue
 		}
+		reason := domain.UncoveredNoStoredRecord
+		if _, other := set.OtherFrameOnly[coord]; other {
+			reason = domain.UncoveredOtherFrameOnly
+		}
+		uncovered = append(uncovered, domain.UncoveredModule{
+			Path: coord.Path(), Version: coord.Version(), Reason: reason,
+		})
 	}
 	domain.SortUncovered(uncovered)
 	coverage := domain.ProbeCoverage{
@@ -113,12 +122,13 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 	if len(findings) == 0 {
 		// No stored findings for any dependency — skip the expensive probe.
 		return domain.LocalReachabilityResult{
-			Root:       root,
-			ModulePath: modulePath,
-			VersionID:  snap.VersionID,
-			ProbeKind:  "",
-			Modules:    nil,
-			Coverage:   coverage,
+			Root:            root,
+			ModulePath:      modulePath,
+			VersionID:       snap.VersionID,
+			ProbeKind:       "",
+			Modules:         nil,
+			Coverage:        coverage,
+			SeedRestriction: set.Restriction,
 			Notice: fmt.Sprintf("no stored vulnerability findings for the %d module(s) of this build the store holds a record for",
 				len(set.Scanned)),
 		}, nil
@@ -175,13 +185,14 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 
 	domain.SortProbeModules(modResults)
 	return domain.LocalReachabilityResult{
-		Root:       root,
-		ModulePath: modulePath,
-		VersionID:  snap.VersionID,
-		ProbeKind:  probeKind,
-		Modules:    modResults,
-		Coverage:   coverage,
-		Notice:     notice,
+		Root:            root,
+		ModulePath:      modulePath,
+		VersionID:       snap.VersionID,
+		ProbeKind:       probeKind,
+		Modules:         modResults,
+		Coverage:        coverage,
+		SeedRestriction: set.Restriction,
+		Notice:          notice,
 	}, nil
 }
 
@@ -232,9 +243,11 @@ func probeOneFinding(f ports.VulnFinding, modPath string, binarySymbols map[stri
 		case *f.Reachable:
 			result.Verdict = domain.SymbolProbeReachable
 			result.VerdictSource = domain.VerdictSourceGovulncheck
+			result.Reason = seededReason(f.ReachableBasis)
 		default:
 			result.Verdict = domain.SymbolProbeUnreachable
 			result.VerdictSource = domain.VerdictSourceGovulncheck
+			result.Reason = seededReason(f.ReachableBasis)
 		}
 		return result
 	}
@@ -253,6 +266,21 @@ func probeOneFinding(f ports.VulnFinding, modPath string, binarySymbols map[stri
 		result.Verdict = domain.SymbolProbeAbsent
 	}
 	return result
+}
+
+// seededReason states that a verdict was carried from a stored scan rather than
+// measured here, and names the basis that scan recorded — the instrument, how
+// well it could see, and the build it was rooted at.
+//
+// A seeded verdict and a probed one are printed identically otherwise, and they
+// are not the same claim: one is a measurement of this tree's binary and the
+// other is a judgment made about some build, possibly an earlier one of this
+// tree, possibly the module built alone.
+func seededReason(basis string) string {
+	if basis == "" {
+		return "carried from the stored scan, which recorded no derivation for its reachability verdict"
+	}
+	return "carried from the stored scan (" + basis + ")"
 }
 
 // matchingBinaries names the probed binaries whose symbol table carries at

@@ -130,13 +130,18 @@ type reachabilityCoverage struct {
 }
 
 type reachabilityOutput struct {
-	Root       string               `json:"root"`
-	ModulePath string               `json:"module_path"`
-	VersionID  string               `json:"version_id"`
-	ProbeKind  string               `json:"probe_kind"`
-	Notice     string               `json:"notice,omitempty"`
-	Coverage   reachabilityCoverage `json:"coverage"`
-	Modules    []reachabilityModule `json:"modules"`
+	Root       string `json:"root"`
+	ModulePath string `json:"module_path"`
+	VersionID  string `json:"version_id"`
+	ProbeKind  string `json:"probe_kind"`
+	// SeedRestriction names the records the stored-findings seed was drawn from.
+	// It is on the JSON surface as well as the text one because the probe's
+	// consumers are scripts as often as people, and the restriction is part of
+	// what the answer means.
+	SeedRestriction string               `json:"seed_restriction,omitempty"`
+	Notice          string               `json:"notice,omitempty"`
+	Coverage        reachabilityCoverage `json:"coverage"`
+	Modules         []reachabilityModule `json:"modules"`
 }
 
 func newReachabilityCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -167,7 +172,9 @@ from whichever was scanned last. One project's scans in the store answer as
 before.
 
 Local probe: 'reachability --local <dir>' analyses the working tree directly
-(a different, live analysis — not a query of stored facts).`,
+(a different, live analysis — not a query of stored facts). It seeds itself
+only from stored records measured in this tree's own frame or in the isolated
+frame — never another project's — and states that restriction in its output.`,
 		Example: `  kanonarion reachability golang.org/x/text@v0.3.7 --vuln GO-2021-0113
   kanonarion reachability golang.org/x/text@v0.3.7 --vuln GO-2021-0113 --json
   kanonarion reachability golang.org/x/text@v0.3.7 --vuln GO-2021-0113 --gomod
@@ -948,13 +955,14 @@ func reachabilityResultToOutput(r localdomain.LocalReachabilityResult) reachabil
 		})
 	}
 	return reachabilityOutput{
-		Root:       r.Root,
-		ModulePath: r.ModulePath,
-		VersionID:  r.VersionID,
-		ProbeKind:  r.ProbeKind,
-		Notice:     r.Notice,
-		Coverage:   coverageToOutput(r.Coverage),
-		Modules:    mods,
+		Root:            r.Root,
+		ModulePath:      r.ModulePath,
+		VersionID:       r.VersionID,
+		ProbeKind:       r.ProbeKind,
+		SeedRestriction: r.SeedRestriction,
+		Notice:          r.Notice,
+		Coverage:        coverageToOutput(r.Coverage),
+		Modules:         mods,
 	}
 }
 

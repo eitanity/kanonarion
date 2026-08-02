@@ -154,8 +154,16 @@ func printLocalContextText(out localContextOutput, stdout io.Writer) error {
 // context. A populated Notice (no stored findings) is surfaced verbatim so the
 // caller learns which command would populate findings; an analysed-but-empty
 // result is reported as such rather than as a confident "no findings".
+//
+// The seed restriction prints above both, and before the early return: it
+// qualifies "no stored findings" exactly as much as it qualifies a list of them,
+// and it is on the "nothing found" path that a silent narrowing would mislead
+// most.
 func printLocalReachabilityText(w *errWriter, r *reachabilityOutput) {
 	w.printf("  Reachability:\n")
+	if r.SeedRestriction != "" {
+		w.printf("    notice: %s\n", r.SeedRestriction)
+	}
 	if r.Notice != "" {
 		w.printf("    %s\n", r.Notice)
 		return

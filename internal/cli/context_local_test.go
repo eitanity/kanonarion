@@ -84,6 +84,33 @@ func TestPrintLocalContextText_SurfacesReachabilityNotice(t *testing.T) {
 	}
 }
 
+// The seed restriction prints on the text surface, and on the "no stored
+// findings" path as well: that is where a narrowing the reader does not know
+// about is most easily read as "the store holds nothing".
+func TestPrintLocalContextText_StatesTheSeedRestriction(t *testing.T) {
+	out := sampleLocalContext()
+	out.Reachability = &reachabilityOutput{
+		Root:            "/home/dev/proj",
+		ModulePath:      "example.com/proj",
+		SeedRestriction: "seed restricted to stored records measured in this tree's own frame (rooted at example.com/proj) or in the isolated frame; records measured in another consumer's build were not read",
+		Notice:          "no stored vulnerability findings for the 2 module(s) of this build the store holds a record for",
+		Modules:         []reachabilityModule{},
+	}
+
+	var buf bytes.Buffer
+	if err := printLocalContextText(out, &buf); err != nil {
+		t.Fatalf("printLocalContextText: %v", err)
+	}
+	got := buf.String()
+
+	if !strings.Contains(got, out.Reachability.SeedRestriction) {
+		t.Errorf("seed restriction not stated:\n%s", got)
+	}
+	if !strings.Contains(got, out.Reachability.Notice) {
+		t.Errorf("notice dropped when a restriction is stated:\n%s", got)
+	}
+}
+
 // An analysed reachability result with affected modules renders each finding's
 // CVE id and verdict rather than collapsing to an empty/clean summary.
 func TestPrintLocalContextText_RendersReachabilityFindings(t *testing.T) {

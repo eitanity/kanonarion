@@ -39,6 +39,15 @@ const (
 	// UncoveredNoCoordinate means the build resolves the module without a
 	// version — a directory replacement — so there is no coordinate to look up.
 	UncoveredNoCoordinate = "the local build resolves this module without a version (a directory replacement), so it names no coordinate to look up"
+	// UncoveredOtherFrameOnly means the store holds a record for the coordinate,
+	// but every one of them was measured in another build's frame, so none of
+	// them says anything about this tree.
+	//
+	// It is distinct from UncoveredNoStoredRecord because the two take different
+	// remedies and only one of them is true: reporting "it has never been
+	// vuln-scanned" for a coordinate the store HAS scanned — for someone else —
+	// sends a reader looking for a scan that already ran.
+	UncoveredOtherFrameOnly = "the store holds a vulnerability record for this coordinate, but only from another build's frame; this build has not been vuln-scanned"
 )
 
 // UncoveredModule is one module in the local build the probe holds no answer
@@ -169,7 +178,9 @@ type SymbolProbeFinding struct {
 	Verdict SymbolProbeVerdict
 	// VerdictSource records which signal produced Verdict.
 	VerdictSource VerdictSource
-	// Reason explains an unknown verdict (empty otherwise).
+	// Reason explains an unknown verdict, or names the basis of a verdict this
+	// probe did not measure but carried from a stored scan. Empty for a verdict
+	// the symbol table settled here.
 	Reason string
 	// MatchedSymbols lists the affected symbols that were found in any probed
 	// binary. Populated only when Verdict == SymbolProbePresent.
@@ -209,6 +220,11 @@ type LocalReachabilityResult struct {
 	Modules []ModuleProbeResult
 	// Coverage states what this answer was drawn from and what it left out.
 	Coverage ProbeCoverage
+	// SeedRestriction states which stored records the probe was allowed to seed
+	// itself from. A probe reads a shared store, which may hold another
+	// project's answer for the same dependency; this line says that answer was
+	// not read.
+	SeedRestriction string
 	// Notice is a human-readable explanation when the result is empty or
 	// degraded (no stored findings for any dependency, or the probe was
 	// skipped). Empty when a full symbol table probe ran.
