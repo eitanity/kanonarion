@@ -21,6 +21,19 @@ type AuditSink interface {
 	RecordEvent(audit.Event) error
 }
 
+// WalkPresence reports whether the walks a stored scan run names are still held
+// by the store. The walk store satisfies it; this context depends only on the
+// narrow question, never on the walk adapter.
+//
+// A scan run is evidence about a dependency set it does not itself contain: the
+// run says what was found, the walk says what was scanned, at which versions,
+// from which root. Nothing in the schema ties the two, so a run can outlive its
+// walk, and a reader that cannot tell reports the stale reference as though it
+// resolved. Every id asked about is a key of the result.
+type WalkPresence interface {
+	PresentWalks(ctx context.Context, walkIDs []string) (map[string]bool, error)
+}
+
 // ErrCallGraphNotFound is returned by CallGraphLoader when no record exists for the
 // requested coordinate. Callers can use errors.Is to distinguish absence from
 // integrity failures.

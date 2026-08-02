@@ -26,6 +26,7 @@ type ExtractLocalCallGraphUseCase struct {
 	pipelineVersion string
 	logger          *slog.Logger
 	hasher          domain2.CallGraphRecordHasher
+	audit           ports.AuditSink // optional; nil disables audit emission
 }
 
 // LocalConfig holds construction parameters for ExtractLocalCallGraphUseCase.
@@ -51,6 +52,15 @@ func NewExtractLocalCallGraphUseCase(cfg LocalConfig) *ExtractLocalCallGraphUseC
 		pipelineVersion: cfg.PipelineVersion,
 		logger:          cfg.Logger,
 	}
+}
+
+// WithAudit wires an audit sink so local extraction appends one
+// callgraph_extracted event per persisted generation. It is optional — a nil
+// sink (the default) disables emission — and returns the receiver for chaining,
+// mirroring the other stages' optional-dependency builders.
+func (uc *ExtractLocalCallGraphUseCase) WithAudit(sink ports.AuditSink) *ExtractLocalCallGraphUseCase {
+	uc.audit = sink
+	return uc
 }
 
 // LocalExtractRequest is the input to Execute.
@@ -120,6 +130,14 @@ func (uc *ExtractLocalCallGraphUseCase) Execute(ctx context.Context, req LocalEx
 		slog.Int("edge_count", record.EdgeCount),
 		slog.String("content_hash", record.ContentHash),
 	)
+
+	// Assurance log: one callgraph_extracted event per persisted generation. The
+	// working-tree route writes on every invocation — the tree mutates, so it is
+	// never served from cache — which is exactly the traffic a reader watching
+	// the stream for store activity needs to see.
+	if err := emitCallGraphExtracted(uc.audit, record); err != nil {
+		return ExtractResult{}, err
+	}
 
 	return ExtractResult{Record: record, FromCache: false}, nil
 }

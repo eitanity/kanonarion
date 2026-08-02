@@ -186,7 +186,7 @@ func NewQueries(storeRoot string) (*Queries, func() error, error) {
 		Examples:   exapp.NewQueryExamplesUseCase(exsqlite.New(db)),
 		Extraction: extractapp.NewQueryExtractionUseCase(extstore.New(db)),
 		Vuln:       vulnapp.NewQueryVulnUseCase(vulnsqlite.New(db)),
-		ScanRuns:   vulnapp.NewQueryScanRunsUseCase(vulnsqlite.New(db)),
+		ScanRuns:   vulnapp.NewQueryScanRunsUseCase(vulnsqlite.New(db), walkStore),
 		SBOM:       sbomapp.NewQuerySBOMUseCase(sbomstore.New(db)),
 		Directives: dirapp.NewQueryDirectivesUseCase(dirsqlite.New(db)),
 		GoDebug:    gdapp.NewQueryGoDebugUseCase(gdsqlite.New(db)),

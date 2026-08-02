@@ -40,7 +40,23 @@ import (
 // check and the walk is re-scanned, and a refresh that found the stored database
 // still current passes it and the stored run answers — which is the same run
 // that answered before, against the same database, and it is still the answer.
+// A fourth condition guards the subject rather than the question: the walk must
+// still be in the store. Reuse serves a stored run as named evidence — the
+// derivation output names the run and the walk it analysed — and a run whose
+// walk has been purged cannot support that claim: the findings survive, the
+// statement of what was scanned does not. Every caller reaches this having just
+// resolved the walk, so in practice the check never fires; it is here so the
+// guarantee belongs to this method rather than to the habits of its callers.
 func (uc *ScanWalkUseCase) ReusableRun(ctx context.Context, walkID string) (domain.WalkScanRun, bool, error) {
+	if _, err := uc.walkStore.GetWalk(ctx, walkID); err != nil {
+		// A walk that cannot be loaded is not a walk this run can name as the
+		// subject of the evidence it serves, whether it is absent or unreadable.
+		// Refusing costs a re-scan; serving would present findings whose inputs
+		// this store can no longer state.
+		uc.logger.Debug("scan reuse: walk unresolvable, will scan", "walk_id", walkID, "error", err)
+		return domain.WalkScanRun{}, false, nil
+	}
+
 	// The snapshot a scan started now would use: the pinned-or-stored snapshot,
 	// at the cost of a store read and never a fetch.
 	snapshot, err := uc.resolveSnapshot(ctx, nil, false, walkID)

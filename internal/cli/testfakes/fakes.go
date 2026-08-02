@@ -1123,10 +1123,57 @@ type FakeQueryScanRuns struct {
 	snapshots []vulndomain.DatabaseSnapshot
 	GetErr    error
 	ListErr   error
+	// AbsentWalks are the walk ids this store no longer holds — the runs naming
+	// them have inputs that cannot be resolved. Empty (the default) means every
+	// seeded run's walk resolves, which is the healthy store.
+	AbsentWalks map[string]bool
+	// PresenceErr, when set, is what the walk-presence probe fails with. A reader
+	// that cannot check must not answer, so commands surface it rather than
+	// rendering the run as ordinary.
+	PresenceErr error
 }
 
 func NewFakeQueryScanRuns() *FakeQueryScanRuns {
 	return &FakeQueryScanRuns{runs: make(map[string]vulndomain.WalkScanRun)}
+}
+
+// MarkWalkAbsent seeds a walk id as purged from the store, so the runs naming it
+// are the dangling ones.
+func (f *FakeQueryScanRuns) MarkWalkAbsent(walkID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.AbsentWalks == nil {
+		f.AbsentWalks = make(map[string]bool)
+	}
+	f.AbsentWalks[walkID] = true
+}
+
+// UnresolvedWalks names the walks among runs that this fake reports as absent.
+func (f *FakeQueryScanRuns) UnresolvedWalks(
+	_ context.Context, runs []vulndomain.WalkScanRun,
+) (map[string]bool, error) {
+	if f.PresenceErr != nil {
+		return nil, f.PresenceErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make(map[string]bool)
+	for _, r := range runs {
+		if f.AbsentWalks[r.WalkID] {
+			out[r.WalkID] = true
+		}
+	}
+	return out, nil
+}
+
+// WalkPresent reports whether walkID is still held.
+func (f *FakeQueryScanRuns) WalkPresent(_ context.Context, walkID string) (bool, error) {
+	if f.PresenceErr != nil {
+		return false, f.PresenceErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return !f.AbsentWalks[walkID], nil
 }
 
 func (f *FakeQueryScanRuns) AddRun(run vulndomain.WalkScanRun) {

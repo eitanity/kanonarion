@@ -392,10 +392,10 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		Analyser: cgAnalyser, Clock: clk, Logger: logger,
 		Stopwatch:  stopwatch,
 		Exclusions: cfg.Callgraph.Exclude,
-	})
+	}).WithAudit(factStore)
 	cgLocalExtractUC := cgapp.NewExtractLocalCallGraphUseCase(cgapp.LocalConfig{
 		Store: cgStore, Analyser: cgAnalyser, Clock: clk, Stopwatch: stopwatch, Logger: logger,
-	})
+	}).WithAudit(factStore)
 	exExtractUC := exapp.NewExtractExampleUseCase(exapp.Config{
 		Facts: factStore, Blobs: blobs, Examples: exStore,
 		Parser: exgoast.New(),
@@ -497,7 +497,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		rescanWalkUC = rescanWalkUC.WithRealModcache(modcacheDir)
 	}
 	queryVulnUC := vulnapp.NewQueryVulnUseCase(vulnStore)
-	queryScanRunsUC := vulnapp.NewQueryScanRunsUseCase(vulnStore)
+	queryScanRunsUC := vulnapp.NewQueryScanRunsUseCase(vulnStore, walkStore)
 	diffScanRunsUC := vulnapp.NewDiffScanRunsUseCase(vulnStore)
 
 	// ---- sbom use cases ----

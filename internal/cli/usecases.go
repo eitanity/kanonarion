@@ -236,6 +236,13 @@ type QueryScanRunsUseCase interface {
 	GetRun(ctx context.Context, id string) (vulndomain.WalkScanRun, bool, error)
 	ListRunsForWalk(ctx context.Context, walkID string) ([]vulndomain.WalkScanRun, error)
 	ListAllRuns(ctx context.Context) ([]vulndomain.WalkScanRun, error)
+	// UnresolvedWalks names the walks among runs that the store no longer holds,
+	// so a listing can say that those runs' inputs cannot be resolved instead of
+	// printing a walk id that looks like a live reference.
+	UnresolvedWalks(ctx context.Context, runs []vulndomain.WalkScanRun) (map[string]bool, error)
+	// WalkPresent answers the same question for a walk a caller named directly,
+	// where there may be no run to derive the id from.
+	WalkPresent(ctx context.Context, walkID string) (bool, error)
 	ListSnapshots(ctx context.Context) ([]vulndomain.DatabaseSnapshot, error)
 	GetLatestSnapshot(ctx context.Context) (vulndomain.DatabaseSnapshot, bool, error)
 }

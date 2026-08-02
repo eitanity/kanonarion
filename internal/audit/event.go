@@ -106,6 +106,18 @@ const (
 	// trail of when it was resolved and what it contained, not only a mutable
 	// walk record.
 	EventWalkCompleted EventType = "walk_completed"
+
+	// EventCallGraphExtracted records that a module's call graph was analysed and
+	// a generation persisted. Payload carries the module coordinate, what the
+	// analysis read (a fetched artefact or a working tree), the pipeline version,
+	// the completeness level, the overall status and the record's content hash.
+	//
+	// Call graph extraction is what every reachability and capability answer is
+	// derived from, and the ledger is append-only, so a generation that later
+	// underpins such an answer is visible here and not only in the mutable
+	// callgraph ledger. It also restores the stream's use as a tripwire: a store
+	// write that appended nothing let a stable line count read as "nothing ran".
+	EventCallGraphExtracted EventType = "callgraph_extracted"
 )
 
 // knownEventTypes is the closed set of recognised discriminators. A gap
@@ -126,6 +138,7 @@ var knownEventTypes = map[EventType]struct{}{
 	EventVulnFindingObserved:      {},
 	EventLicenseExtracted:         {},
 	EventWalkCompleted:            {},
+	EventCallGraphExtracted:       {},
 }
 
 // Known reports whether t is a recognised event type.

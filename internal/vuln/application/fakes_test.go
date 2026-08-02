@@ -37,6 +37,15 @@ func (f *fakeWalkStore) PutWalk(_ context.Context, rec walkdomain.WalkRecord) er
 	return nil
 }
 
+// forget drops a walk while leaving everything derived from it in place — the
+// half-preserved state a migration that purged walks without considering the
+// scan runs that index them produced.
+func (f *fakeWalkStore) forget(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.walks, id)
+}
+
 func (f *fakeWalkStore) GetWalk(_ context.Context, id string) (walkdomain.WalkRecord, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()

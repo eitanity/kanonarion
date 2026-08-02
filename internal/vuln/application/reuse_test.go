@@ -2,6 +2,7 @@ package application_test
 
 import (
 	"context"
+	"errors"
 	"log/slog"
 	"strings"
 	"testing"
@@ -10,19 +11,79 @@ import (
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
+	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
+// reuseWalkID is the walk every fixture below seeds and its runs analyse.
+const reuseWalkID = "walk-1"
+
 // reuseFixture wires the smallest use case that can answer the reuse question:
-// it needs a vulnerability store (for the snapshot and the stored runs) and a
-// pipeline version, and nothing else. A scanner is deliberately absent — if the
+// it needs a walk store (reuse serves a run as evidence about a walk, so the
+// walk must still be there), a vulnerability store for the snapshot and the
+// stored runs, and a pipeline version. A scanner is deliberately absent — if the
 // lookup ever reaches one, that is the defect.
 func reuseFixture(t testing.TB, pipelineVersion string) (*application.ScanWalkUseCase, *fakeVulnStore) {
 	t.Helper()
+	uc, store, _ := reuseFixtureWithWalks(t, pipelineVersion)
+	return uc, store
+}
+
+func reuseFixtureWithWalks(
+	t testing.TB, pipelineVersion string,
+) (*application.ScanWalkUseCase, *fakeVulnStore, *fakeWalkStore) {
+	t.Helper()
 	vulnStore := newFakeVulnStore()
+	walkStore := newFakeWalkStore()
+	if err := walkStore.PutWalk(context.Background(), walkdomain.WalkRecord{ID: reuseWalkID}); err != nil {
+		t.Fatalf("seeding walk: %v", err)
+	}
 	uc := application.NewScanWalkUseCase(
-		newFakeWalkStore(), vulnStore, nil, nil, nil, pipelineVersion, slog.Default(),
+		walkStore, vulnStore, nil, nil, nil, pipelineVersion, slog.Default(),
 	)
-	return uc, vulnStore
+	return uc, vulnStore, walkStore
+}
+
+// TestReusableRun_RefusesARunWhoseWalkIsGone pins the guarantee that reuse never
+// serves half-preserved evidence. Reuse names the run AND the walk it analysed
+// in the derivation output; a run whose walk has been purged has findings but no
+// statement of what was scanned, so it cannot support that claim. Refusing costs
+// a re-scan.
+func TestReusableRun_RefusesARunWhoseWalkIsGone(t *testing.T) {
+	uc, store, walks := reuseFixtureWithWalks(t, "v1")
+	snap := vulntest.MustNew("vuln.go.dev", "2026-07-27T16:28:49Z")
+	seedSnapshot(t, store, snap)
+	seedRun(t, store, "vscan-1", reuseWalkID, snap, "v1", domain.CoverageComplete)
+
+	// Sanity: this run is reusable while its walk is in the store, so the refusal
+	// below is attributable to the purge and to nothing else.
+	if _, ok, err := uc.ReusableRun(context.Background(), reuseWalkID); err != nil || !ok {
+		t.Fatalf("control: ReusableRun = (%v, %v), want a reusable run", ok, err)
+	}
+
+	walks.forget(reuseWalkID)
+
+	run, ok, err := uc.ReusableRun(context.Background(), reuseWalkID)
+	if err != nil {
+		t.Fatalf("ReusableRun: %v", err)
+	}
+	if ok {
+		t.Fatalf("reused run %q whose walk is absent; the evidence has no subject", run.ID)
+	}
+}
+
+// A walk that is present but unreadable is refused on the same terms: reuse
+// needs a walk it can name, and "cannot be loaded" is not that.
+func TestReusableRun_RefusesAnUnreadableWalk(t *testing.T) {
+	uc, store, walks := reuseFixtureWithWalks(t, "v1")
+	snap := vulntest.MustNew("vuln.go.dev", "2026-07-27T16:28:49Z")
+	seedSnapshot(t, store, snap)
+	seedRun(t, store, "vscan-1", reuseWalkID, snap, "v1", domain.CoverageComplete)
+
+	walks.errOnGet = errors.New("walk record integrity check failed")
+
+	if _, ok, err := uc.ReusableRun(context.Background(), reuseWalkID); err != nil || ok {
+		t.Fatalf("ReusableRun = (%v, %v), want no reuse and no error", ok, err)
+	}
 }
 
 // seedRun stores one completed run of walkID against snapshot.
@@ -67,9 +128,9 @@ func TestReusableRun_ServesACompletedRunAgainstTheSameSnapshot(t *testing.T) {
 	uc, store := reuseFixture(t, "v1")
 	snap := vulntest.MustNew("vuln.go.dev", "2026-07-27T16:28:49Z")
 	seedSnapshot(t, store, snap)
-	want := seedRun(t, store, "vscan-1", "walk-1", snap, "v1", domain.CoverageComplete)
+	want := seedRun(t, store, "vscan-1", reuseWalkID, snap, "v1", domain.CoverageComplete)
 
-	got, ok, err := uc.ReusableRun(context.Background(), "walk-1")
+	got, ok, err := uc.ReusableRun(context.Background(), reuseWalkID)
 	if err != nil {
 		t.Fatalf("ReusableRun: %v", err)
 	}
@@ -86,10 +147,10 @@ func TestReusableRun_ServesACompletedRunAgainstTheSameSnapshot(t *testing.T) {
 // answer it.
 func TestReusableRun_RefusesADifferentSnapshot(t *testing.T) {
 	uc, store := reuseFixture(t, "v1")
-	seedRun(t, store, "vscan-1", "walk-1", vulntest.MustNew("vuln.go.dev", "2026-07-27T16:28:49Z"), "v1", domain.CoverageComplete)
+	seedRun(t, store, "vscan-1", reuseWalkID, vulntest.MustNew("vuln.go.dev", "2026-07-27T16:28:49Z"), "v1", domain.CoverageComplete)
 	seedSnapshot(t, store, vulntest.MustNew("vuln.go.dev", "2026-08-01T00:00:00Z"))
 
-	if _, ok, err := uc.ReusableRun(context.Background(), "walk-1"); err != nil {
+	if _, ok, err := uc.ReusableRun(context.Background(), reuseWalkID); err != nil {
 		t.Fatalf("ReusableRun: %v", err)
 	} else if ok {
 		t.Error("a run judged against an older advisory snapshot was served for a newer one")
@@ -106,9 +167,9 @@ func TestReusableRun_RefusesAnIncompleteRun(t *testing.T) {
 			uc, store := reuseFixture(t, "v1")
 			snap := vulntest.MustNew("vuln.go.dev", "2026-07-27T16:28:49Z")
 			seedSnapshot(t, store, snap)
-			seedRun(t, store, "vscan-1", "walk-1", snap, "v1", coverage)
+			seedRun(t, store, "vscan-1", reuseWalkID, snap, "v1", coverage)
 
-			if _, ok, err := uc.ReusableRun(context.Background(), "walk-1"); err != nil {
+			if _, ok, err := uc.ReusableRun(context.Background(), reuseWalkID); err != nil {
 				t.Fatalf("ReusableRun: %v", err)
 			} else if ok {
 				t.Errorf("a %s run was offered for reuse", coverage)
@@ -125,9 +186,9 @@ func TestReusableRun_RefusesASupersededPipeline(t *testing.T) {
 	uc, store := reuseFixture(t, "v2")
 	snap := vulntest.MustNew("vuln.go.dev", "2026-07-27T16:28:49Z")
 	seedSnapshot(t, store, snap)
-	seedRun(t, store, "vscan-1", "walk-1", snap, "v1", domain.CoverageComplete)
+	seedRun(t, store, "vscan-1", reuseWalkID, snap, "v1", domain.CoverageComplete)
 
-	if _, ok, err := uc.ReusableRun(context.Background(), "walk-1"); err != nil {
+	if _, ok, err := uc.ReusableRun(context.Background(), reuseWalkID); err != nil {
 		t.Fatalf("ReusableRun: %v", err)
 	} else if ok {
 		t.Error("a run from a superseded pipeline version was served")
@@ -155,12 +216,12 @@ func TestReusableRun_ServesARunAcrossARefetchOfTheSameDatabase(t *testing.T) {
 	if err != nil {
 		t.Fatalf("NewDatabaseSnapshot: %v", err)
 	}
-	seedRun(t, store, "vscan-1", "walk-1", withNanos, "v1", domain.CoverageComplete)
+	seedRun(t, store, "vscan-1", reuseWalkID, withNanos, "v1", domain.CoverageComplete)
 
 	// The store hands back the same generation at second precision.
 	seedSnapshot(t, store, sealed)
 
-	if _, ok, rerr := uc.ReusableRun(context.Background(), "walk-1"); rerr != nil {
+	if _, ok, rerr := uc.ReusableRun(context.Background(), reuseWalkID); rerr != nil {
 		t.Fatalf("ReusableRun: %v", rerr)
 	} else if !ok {
 		t.Error("a run judged against this very advisory database was not reused because its download time differed")
@@ -173,7 +234,7 @@ func TestReusableRun_RefusesAnotherWalksRun(t *testing.T) {
 	uc, store := reuseFixture(t, "v1")
 	snap := vulntest.MustNew("vuln.go.dev", "2026-07-27T16:28:49Z")
 	seedSnapshot(t, store, snap)
-	seedRun(t, store, "vscan-1", "walk-1", snap, "v1", domain.CoverageComplete)
+	seedRun(t, store, "vscan-1", reuseWalkID, snap, "v1", domain.CoverageComplete)
 
 	if _, ok, err := uc.ReusableRun(context.Background(), "walk-2"); err != nil {
 		t.Fatalf("ReusableRun: %v", err)

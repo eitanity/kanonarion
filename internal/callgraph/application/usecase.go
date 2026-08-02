@@ -41,6 +41,7 @@ type ExtractCallGraphUseCase struct {
 	exclusions      []string // normalised callgraph.exclude policy
 	logger          *slog.Logger
 	hasher          domain2.CallGraphRecordHasher
+	audit           ports.AuditSink // optional; nil disables audit emission
 }
 
 // Config holds all construction parameters for ExtractCallGraphUseCase.
@@ -74,6 +75,15 @@ func NewExtractCallGraphUseCase(cfg Config) *ExtractCallGraphUseCase {
 		exclusions:      domain2.NormaliseExclusions(cfg.Exclusions),
 		logger:          cfg.Logger,
 	}
+}
+
+// WithAudit wires an audit sink so extraction appends one callgraph_extracted
+// event per persisted generation. It is optional — a nil sink (the default)
+// disables emission — and returns the receiver for chaining, mirroring the
+// other stages' optional-dependency builders.
+func (uc *ExtractCallGraphUseCase) WithAudit(sink ports.AuditSink) *ExtractCallGraphUseCase {
+	uc.audit = sink
+	return uc
 }
 
 // ExtractRequest is the input to Execute.
@@ -184,6 +194,12 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 			slog.String("overall_status", record.OverallStatus.String()),
 			slog.String("content_hash", record.ContentHash),
 		)
+		// An exclusion is still a generation this run wrote, and the decision it
+		// records — these bytes were not analysed — is exactly the kind a later
+		// reader needs anchored in the append-only log.
+		if err := emitCallGraphExtracted(uc.audit, record); err != nil {
+			return ExtractResult{}, err
+		}
 		return ExtractResult{Record: record, FromCache: false}, nil
 	}
 
@@ -231,6 +247,13 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 		slog.Int("edge_count", record.EdgeCount),
 		slog.String("content_hash", record.ContentHash),
 	)
+
+	// Assurance log: one callgraph_extracted event per persisted generation
+	// anchors the graph every reachability and capability answer is derived from
+	// in the tamper-resistant append-only log, not only in the mutable ledger.
+	if err := emitCallGraphExtracted(uc.audit, record); err != nil {
+		return ExtractResult{}, err
+	}
 
 	return ExtractResult{Record: record, FromCache: false}, nil
 }

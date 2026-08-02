@@ -511,6 +511,33 @@ $ kanonarion vuln-scan-list 01KQDBVW092ER1HNXZ60X27CMD
 01KQDBVW092ER1HNXZ60X27CME  walk=01KQDBVW092ER1HNXZ60X27CMD  status=Affected      2024-01-15T10:30:00Z
 ```
 
+**Runs whose inputs no longer resolve.** A scan run names the walk it analysed,
+and the two are separate rows: a walk can be removed while the run and its
+per-module findings stay. Such a run is still listed - it is the only record
+those scans happened - but the walk reference is stated as unresolvable rather
+than printed as though it resolves:
+
+```
+$ kanonarion vuln-scan-list --limit 0
+vscan-01KYBTWG8TW0KY1ME26KXZTH6X-1784956207  walk=01KYBTWG8TW0KY1ME26KXZTH6X  status=Affected      2026-07-25T05:12:12Z  inputs unresolvable: walk absent from this store
+```
+
+The findings stand; what cannot be recovered is *what was scanned* - which
+modules, at which versions, from which project root. Under `--json` the entry
+gains an `inputs_unresolvable` field naming the missing walk; the field is absent
+on a run whose walk resolves, so an existing consumer sees no change. The same
+statement appears on `vuln-scan-show` (on the `Walk ID:` line),
+`vuln-scan-history` (once, above the table, and also for a walk with no runs
+left) and `vuln-scan-diff` (on the `Walk:` line).
+
+The check is a live lookup against the walks table on every read, so it
+classifies any run stranded in future as well as the ones already in the store,
+and it is one indexed read per listing.
+
+A stranded run is never served by scan reuse: `vuln-scan` reuses a stored run
+only when the walk it analysed is still readable, so a re-scan is performed
+instead.
+
 ---
 
 ### `vuln-scan-show`
@@ -541,6 +568,13 @@ Completed:   2024-01-15T10:30:02Z
 Snapshot:    vuln.go.dev@20240115000000
 Advisories:  6027 in the snapshot scanned against
 Modules:     3
+```
+
+When the walk this run analysed is no longer in the store, the reference says so
+on the line it is rendered on, and `--json` gains an `inputs_unresolvable` field:
+
+```
+Walk ID:     01KQDBVW092ER1HNXZ60X27CMD (inputs unresolvable: walk absent from this store)
 ```
 
 ---

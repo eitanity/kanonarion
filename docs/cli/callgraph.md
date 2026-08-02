@@ -460,6 +460,17 @@ migrations deleted both tables wholesale on an analyser shape change; the gate
 achieves what those purges were for — a stale-shape record answers nothing —
 without deleting the evidence, so the row survives for a history read.
 
+## Assurance log
+
+Each persisted generation appends one `callgraph_extracted` event to the
+append-only audit log (`{store-root}/audit.jsonl`): module, version, pipeline
+version, completeness level, overall status, `analysis_source`, node and edge
+counts, the record's content hash, and either the artefact identity the analysis
+read or - on the `kanonarion local` route - the worktree digest. A module skipped
+by `callgraph.exclude` appends one too: the decision that these bytes were not
+analysed is also worth anchoring. A cache hit re-serves the stored record without
+re-extracting, so it appends nothing.
+
 ## Relation to other stages
 
 - **Requires:** `kanonarion fetch` — the module zip must exist in the blob store.

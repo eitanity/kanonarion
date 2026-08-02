@@ -261,6 +261,40 @@ Measured on the real store at migration time: 92 rows, 72 back-filled to
 walks. Only the project resolver writes a `BuildEnv`, so a walk rooted at a
 published coordinate structurally has no frame and can never gain one.
 
+## Purging a table other rows point at
+
+A migration that deletes rows must state what happens to the rows that reference
+them. The reference is by convention, not by foreign key, so nothing in SQLite
+stops a purge leaving a dangling one.
+
+The case that already happened: `walk` migration 5 purged `walks` on a record
+shape change, and `walk_scan_runs` rows kept naming the deleted walks. Their
+findings survived while the statement of *what was scanned* did not, and nothing
+in the run row said so - the `walk_id` looked like a valid reference. (Measured
+on the real store: 16 of 127 runs, all written between the last `vuln`
+migration-8 purge and the `walk` migration-5 purge.)
+
+A migration that purges `walks` therefore chooses one, in the migration comment:
+
+- **Purge together** - delete the dependent `walk_scan_runs` and
+  `walk_scan_run_modules` rows in the same migration. Correct when the dependents
+  are regenerable and worth nothing on their own.
+- **Orphan with the reason recorded** - keep the dependents and say in the
+  migration comment that they are being stranded and why. Correct when the
+  dependents are evidence in their own right, as findings are.
+
+Either way the read side does not depend on the choice: every surface that serves
+a scan run derives whether its walk is still present and states
+`inputs unresolvable` when it is not, so a run stranded by any future purge is
+reported rather than rendered as ordinary. Nothing is stamped on the rows, so
+there is no back-fill and no shape change.
+
+The same rule reaches reuse. `walks.identity_hash` (migration 7) is the key scan
+reuse looks a walk up by; rows written before that column carry the empty identity
+and are never reuse candidates, so **no back-fill is owed** - but a purge of
+`walks` destroys reusability the store has already paid for, which is part of what
+the migration comment must weigh.
+
 ## Audit log (`audit.jsonl`)
 
 Append-only JSONL; **no schema migration** is ever required to add an event
@@ -269,3 +303,7 @@ fact-record line keeps its historical flat layout with `event_type:
 "fact_record_written"` added additively; all other events use the generic
 `{event_type, timestamp, payload}` envelope. Recognised event types are the
 closed set in `internal/audit`.
+
+`callgraph_extracted` is the most recent addition (one per persisted call-graph
+generation, on both the fetched-artefact and working-tree routes). It needed no
+migration, as above.

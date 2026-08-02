@@ -1161,7 +1161,7 @@ func TestRunScanDiff_Success(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := runScanDiff(context.Background(), fixtureScanID, run2.ID, false, ucDiff, &buf); err != nil {
+	if err := runScanDiff(context.Background(), fixtureScanID, run2.ID, false, ucDiff, testfakes.NewFakeQueryScanRuns(), &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -1179,7 +1179,7 @@ func TestRunScanDiff_Error(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	err := runScanDiff(context.Background(), "DOESNOTEXIST", "OTHER", false, ucDiff, &buf)
+	err := runScanDiff(context.Background(), "DOESNOTEXIST", "OTHER", false, ucDiff, testfakes.NewFakeQueryScanRuns(), &buf)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}

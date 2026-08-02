@@ -318,6 +318,15 @@ that bound every downstream verdict in the append-only assurance log, not only
 in a mutable record. Each is emitted only after a successful, freshly computed
 result is persisted; cache hits re-serve without re-emitting.
 
+Call graph extraction records what was *analysed* (`callgraph_extracted`:
+module, version, pipeline version, completeness level, overall status, analysis
+source, node/edge counts, content hash, plus the artefact identity or worktree
+digest the analysis read). It covers both write paths - the fetched-artefact
+route and the working-tree route `kanonarion local` takes - on the same terms:
+one event per persisted generation, nothing on a cache hit. It is what every
+reachability and capability answer is derived from, and without it a store write
+left no trace at all, so a stable audit line count read as "nothing ran".
+
 Walk and every extraction record verify their content hash on every read;
 mismatches are typed integrity errors that callers distinguish from not-found.
 

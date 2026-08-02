@@ -215,7 +215,7 @@ func TestQueryVulnUseCase_ListRecordsByFindingID_Error(t *testing.T) {
 
 func TestQueryScanRunsUseCase_GetRun(t *testing.T) {
 	run := domain.WalkScanRun{ID: "run-1", WalkID: "walk-1"}
-	uc := application.NewQueryScanRunsUseCase(&queryVulnFakeStore{scanRun: run, scanRunFound: true})
+	uc := application.NewQueryScanRunsUseCase(&queryVulnFakeStore{scanRun: run, scanRunFound: true}, fakeWalkPresence{})
 
 	got, found, err := uc.GetRun(context.Background(), "run-1")
 	if err != nil {
@@ -230,7 +230,7 @@ func TestQueryScanRunsUseCase_GetRun(t *testing.T) {
 }
 
 func TestQueryScanRunsUseCase_GetRun_NotFound(t *testing.T) {
-	uc := application.NewQueryScanRunsUseCase(&queryVulnFakeStore{})
+	uc := application.NewQueryScanRunsUseCase(&queryVulnFakeStore{}, fakeWalkPresence{})
 
 	_, found, err := uc.GetRun(context.Background(), "run-1")
 	if err != nil {
@@ -243,7 +243,7 @@ func TestQueryScanRunsUseCase_GetRun_NotFound(t *testing.T) {
 
 func TestQueryScanRunsUseCase_GetRun_Error(t *testing.T) {
 	storeErr := errors.New("db failure")
-	uc := application.NewQueryScanRunsUseCase(&queryVulnFakeStore{storeErr: storeErr})
+	uc := application.NewQueryScanRunsUseCase(&queryVulnFakeStore{storeErr: storeErr}, fakeWalkPresence{})
 
 	_, _, err := uc.GetRun(context.Background(), "run-1")
 	if !errors.Is(err, storeErr) {
@@ -253,7 +253,7 @@ func TestQueryScanRunsUseCase_GetRun_Error(t *testing.T) {
 
 func TestQueryScanRunsUseCase_ListRunsForWalk(t *testing.T) {
 	runs := []domain.WalkScanRun{{ID: "run-1"}, {ID: "run-2"}}
-	uc := application.NewQueryScanRunsUseCase(&queryVulnFakeStore{walkRuns: runs})
+	uc := application.NewQueryScanRunsUseCase(&queryVulnFakeStore{walkRuns: runs}, fakeWalkPresence{})
 
 	got, err := uc.ListRunsForWalk(context.Background(), "walk-1")
 	if err != nil {
@@ -266,7 +266,7 @@ func TestQueryScanRunsUseCase_ListRunsForWalk(t *testing.T) {
 
 func TestQueryScanRunsUseCase_ListAllRuns(t *testing.T) {
 	runs := []domain.WalkScanRun{{ID: "run-1"}}
-	uc := application.NewQueryScanRunsUseCase(&queryVulnFakeStore{allRuns: runs})
+	uc := application.NewQueryScanRunsUseCase(&queryVulnFakeStore{allRuns: runs}, fakeWalkPresence{})
 
 	got, err := uc.ListAllRuns(context.Background())
 	if err != nil {
@@ -281,7 +281,7 @@ func TestQueryScanRunsUseCase_ListSnapshots(t *testing.T) {
 	snaps := []domain.DatabaseSnapshot{
 		vulntest.MustNewAt("govulndb", "v2024-01-01", time.Now()),
 	}
-	uc := application.NewQueryScanRunsUseCase(&queryVulnFakeStore{snapshots: snaps})
+	uc := application.NewQueryScanRunsUseCase(&queryVulnFakeStore{snapshots: snaps}, fakeWalkPresence{})
 
 	got, err := uc.ListSnapshots(context.Background())
 	if err != nil {
@@ -294,7 +294,7 @@ func TestQueryScanRunsUseCase_ListSnapshots(t *testing.T) {
 
 func TestQueryScanRunsUseCase_ListSnapshots_Error(t *testing.T) {
 	storeErr := errors.New("db failure")
-	uc := application.NewQueryScanRunsUseCase(&queryVulnFakeStore{storeErr: storeErr})
+	uc := application.NewQueryScanRunsUseCase(&queryVulnFakeStore{storeErr: storeErr}, fakeWalkPresence{})
 
 	_, err := uc.ListSnapshots(context.Background())
 	if !errors.Is(err, storeErr) {
@@ -311,4 +311,23 @@ func (s *queryVulnFakeStore) GetVulnerabilityRecordAt(_ context.Context, _ coord
 
 func (s *queryVulnFakeStore) HasVulnerabilityRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ domain.DatabaseSnapshot, _ string) (bool, error) {
 	return s.recordFound, s.storeErr
+}
+
+// fakeWalkPresence answers the walk-presence probe. A walk is held unless it is
+// named in absent, so the zero value is the healthy store every test above
+// assumes.
+type fakeWalkPresence struct {
+	absent map[string]bool
+	err    error
+}
+
+func (f fakeWalkPresence) PresentWalks(_ context.Context, ids []string) (map[string]bool, error) {
+	if f.err != nil {
+		return nil, f.err
+	}
+	out := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		out[id] = !f.absent[id]
+	}
+	return out, nil
 }

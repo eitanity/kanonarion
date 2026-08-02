@@ -57,6 +57,15 @@ kanonarion implementers 'example.com/mod/internal/vuln/ports.VulnerabilityStore'
 | `--json` | false | Emit the call-graph record as JSON |
 | `--store-root <path>` | `~/.kanonarion` | Root directory for blobs and SQLite |
 
+## Assurance log
+
+Every run appends one `callgraph_extracted` event to the append-only audit log
+(`{store-root}/audit.jsonl`): module, version, pipeline version, completeness
+level, overall status, `analysis_source` (`worktree`), node and edge counts, the
+record's content hash, and the worktree digest. Because `local` never serves a
+cached result, every invocation appends a line - so a run of `local` is visible
+in the log as well as in the call-graph ledger.
+
 ## Relationship to other commands
 
 - **Enables:** `callers` / `callees` / `implementers` over first-party symbols
