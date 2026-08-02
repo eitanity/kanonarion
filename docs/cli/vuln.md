@@ -92,7 +92,8 @@ Note that partial coverage on a **project-scoped** scan (`--gomod`, `--tool`,
 rooted at the resolved graph, so modules are not re-resolved in isolation and
 `version not in project build` cannot arise there. Seeing that reason means the
 scan was not project-rooted — for example a walk-id scan whose recorded project
-directory no longer exists, which degrades to the fetched surface by design.
+directory no longer exists, which degrades to per-module isolation by design and
+names the missing directory in its log.
 
 ### Prerequisites
 
@@ -276,10 +277,27 @@ verdict from **one scan of the project's live working tree** - `govulncheck` ove
 the project's real import graph, with each finding attributed to the module that
 owns the vulnerable symbol and every other in-build module analysed-and-clean.
 No dependency is scanned in isolation on this path, so the per-module-isolation
-and out-of-toolchain behaviour documented below applies **only to the
-coordinate-keyed `--module` / positional-walk-id path**, never to a project scan.
-Because the working tree mutates between runs, a project scan is recomputed
-fresh each time and is not served from the coordinate cache.
+and out-of-toolchain behaviour documented below applies **only to a scan with no
+project build in hand**, never to a project scan. Because the working tree
+mutates between runs, a project scan is recomputed fresh each time and is not
+served from the coordinate cache.
+
+**A positional walk id is project-rooted when the walk is.** A project walk
+records the directory it was taken from, so `kanonarion vuln-scan <walk-id>`
+reads that back and scans exactly as `--gomod` does over the same walk — one
+pass over the project's build, the standard library analysed from it, no
+dependency re-resolved alone. One walk gets one coverage answer however the
+command was spelled, and either command's run is reusable by the other. A walk
+rooted at a published coordinate (`--module`, or its id) has no project build to
+be rooted at and keeps the per-module route.
+
+If the recorded directory has moved or is no longer readable, the run does not
+fail and does not scan some other tree: it degrades to the per-module route and
+says so, naming the directory and the stat error. Such a run reports the
+coverage that route leaves — the standard library metadata-only, plus any module
+whose isolated build re-resolves a version the project never selected — so its
+coverage is `Partial` and it exits non-zero. Re-run it from the checkout
+(`--gomod`) or re-walk to record the current directory.
 
 **Flags:**
 
@@ -612,9 +630,11 @@ field with a machine-readable cause code alongside the human-readable `unscannab
 | `project-dir-unavailable` | The project directory supplied for a project-rooted scan could not be stat'ed (missing or unreadable) — an operator-side input fault; the scan never got far enough to check for a `go.mod` |
 | `local-replace` | Node is a local filesystem replacement (a `replace` pointing at a working-tree path), not a fetched version, so there is no fetched source to scan; `unscannable_reason` retains the local path |
 
-On the **coordinate-keyed path** (`--module` and a positional walk-id) each
-module is scanned in isolation as its own main module. (A project scan -
-`--gomod`/`--tool`/`--project`, `audit`, `inspect --gomod` - does not: it is
+On the **coordinate-keyed path** (`--module`, and a positional walk-id whose walk
+is not a project walk or whose recorded directory is gone) each module is
+scanned in isolation as its own main module. (A project scan -
+`--gomod`/`--tool`/`--project`, `audit`, `inspect --gomod`, and a positional
+walk-id naming a project walk whose directory is still there - does not: it is
 project-rooted, so none of the isolation, out-of-toolchain, or dropped-replace
 behaviour in this section applies to it.) Before invoking
 `govulncheck`, kanonarion drops any **filesystem (local-path) replace
@@ -712,12 +732,19 @@ no directory of its own - reads it back, so the same walk does not answer one wa
 under `--gomod` and another way under its id. A directory the caller supplies
 always wins over the recorded one.
 
-The recorded directory is provenance, never an oracle. If it no longer exists, or
-no longer holds `vendor/modules.txt`, the scan does not fail: it proceeds on the
-fetched surface, every record says `fetched`, and the run log names the directory
-and the reason. A moved or deleted checkout must not make a stored walk
-unscannable. `--no-vendor` is honoured before the directory is reached for at
-all, since it is only ever adopted to reach the vendored surface.
+Whether that directory holds `vendor/modules.txt` decides which **source** the
+run reads, not whether the project's build is the frame. A project walk with no
+vendor tree is still scanned rooted at its own build, on the fetched surface,
+and every record says `fetched`. `--no-vendor` likewise selects a surface and
+not a frame: the vendored closure is never read, the toolchain is forced onto
+`-mod=mod`, and the run is still one pass over the project's build.
+
+The recorded directory is provenance, never an oracle. If it no longer exists or
+cannot be stat'ed, the scan does not fail and does not substitute another tree:
+it falls back to scanning each module in isolation, on the fetched surface, and
+the run log names the directory and the stat error. A moved or deleted checkout
+must not make a stored walk unscannable - but the fallback measures less, so
+such a run reports `Partial` coverage.
 
 ---
 

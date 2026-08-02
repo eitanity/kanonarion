@@ -131,22 +131,32 @@ func TestScanWalk_ByWalkID_RemovedDirectoryDegradesToFetched(t *testing.T) {
 	}
 	assertRecordSurface(t, ctx, f, f.depA, domain.AnalysisSurfaceFetched)
 
-	if got := f.logs.String(); !strings.Contains(got, dir) || !strings.Contains(got, "no longer available") {
+	if got := f.logs.String(); !strings.Contains(got, dir) || !strings.Contains(got, "no longer readable") {
 		t.Errorf("the run does not name the absent directory as the reason it analysed the fetched artefacts; logs:\n%s", got)
+	}
+	if got := f.logs.String(); !strings.Contains(got, "scanning each module in isolation") {
+		t.Errorf("the run does not say what it did instead of rooting at the project; logs:\n%s", got)
 	}
 }
 
-// TestScanWalk_ByWalkID_UnvendoredDirectoryStaysOnFetched covers the second
-// degradation the field allows: the directory is still there but no longer holds
-// a vendor tree. There is no vendored surface to reach, so the scan stays
-// exactly where it was before the directory was recorded, and says why.
-func TestScanWalk_ByWalkID_UnvendoredDirectoryStaysOnFetched(t *testing.T) {
+// TestScanWalk_ByWalkID_UnvendoredDirectoryIsStillRootedAtTheProject is the
+// headline regression. A project that carries no vendor tree — the ordinary
+// case — must still be scanned rooted at its own build when the walk is named
+// by id, not re-derived module by module. The isolated route is where the
+// standard library goes metadata-only and where a dependency whose isolated
+// build re-selects a version the project never chose is reported as an
+// unanalysed coverage gap, so a run that took it reports Partial for a walk the
+// same tool reports Complete when the directory is spelled out on the command
+// line. Which surface the project compiles from decides which SOURCE is read,
+// never whether the project's build is the frame.
+func TestScanWalk_ByWalkID_UnvendoredDirectoryIsStillRootedAtTheProject(t *testing.T) {
 	ctx := t.Context()
 	f, closure, dir := recordedProjectFixture(t)
 
 	if err := os.RemoveAll(filepath.Join(dir, "vendor")); err != nil {
 		t.Fatalf("removing the vendor tree: %v", err)
 	}
+	closure.closure = ports.VendoredClosure{}
 
 	if _, err := f.walkUC.Scan(ctx, application.ScanWalkParams{
 		WalkID: f.walkID, Operator: "tester",
@@ -154,12 +164,50 @@ func TestScanWalk_ByWalkID_UnvendoredDirectoryStaysOnFetched(t *testing.T) {
 		t.Fatalf("Scan: %v", err)
 	}
 
-	if closure.calls != 0 {
-		t.Errorf("a directory with no vendor tree was still read as a vendored closure %d times", closure.calls)
+	if f.scanner.projectCalls != 1 {
+		t.Fatalf("project-rooted scans = %d, want 1: an unvendored project walk was re-derived module by module", f.scanner.projectCalls)
+	}
+	if f.scanner.gotProjectDir != dir {
+		t.Errorf("project scan ran in %q, want the directory the walk was taken from (%q)", f.scanner.gotProjectDir, dir)
+	}
+	if f.scanner.gotProjectVendored {
+		t.Error("the scanner was asked for a vendored surface a project with no vendor tree cannot supply")
 	}
 	assertRecordSurface(t, ctx, f, f.depA, domain.AnalysisSurfaceFetched)
-	if got := f.logs.String(); !strings.Contains(got, dir) || !strings.Contains(got, "no vendored tree") {
-		t.Errorf("the run does not say why it left the recorded directory alone; logs:\n%s", got)
+}
+
+// TestScanWalk_ByWalkID_NonProjectWalkStaysIsolated is the other side of the
+// same decision. A walk of a published coordinate has no working tree to be
+// rooted at; the isolated per-module route is the honest one there, and nothing
+// in the project-rooted path may be reached for it.
+func TestScanWalk_ByWalkID_NonProjectWalkStaysIsolated(t *testing.T) {
+	ctx := t.Context()
+
+	target := coordinatetest.MustNew("github.com/example/lib", "v1.2.3")
+	dep := coordinatetest.MustNew("gopkg.in/yaml.v3", "v3.0.1")
+	scanner := &fakeScanner{}
+	f := newProjectScanFixtureFor(t, scanner, walkdomain.WalkRecord{
+		ID:     "walk-coordinate",
+		Target: target,
+		Graph: walkdomain.Graph{
+			Target: target,
+			Nodes: []walkdomain.GraphNode{
+				{Coordinate: target, ResolutionSource: walkdomain.ResolutionMVS},
+				{Coordinate: dep, DirectDependency: true, ResolutionSource: walkdomain.ResolutionMVS},
+			},
+		},
+	}, target, dep)
+	f.walkUC = f.walkUC.WithVendoredClosure(&fakeVendoredClosure{})
+
+	if _, err := f.walkUC.Scan(ctx, application.ScanWalkParams{
+		WalkID: f.walkID, Operator: "tester",
+	}); err != nil {
+		t.Fatalf("Scan: %v", err)
+	}
+
+	if f.scanner.projectCalls != 0 {
+		t.Errorf("a walk of a published coordinate was scanned as a project (%d calls, dir %q)",
+			f.scanner.projectCalls, f.scanner.gotProjectDir)
 	}
 }
 
@@ -183,13 +231,16 @@ func TestScanWalk_SuppliedProjectDirWinsOverTheRecordedOne(t *testing.T) {
 	}
 }
 
-// TestScanWalk_ByWalkID_NoVendorLeavesTheRecordedDirectoryAlone asserts
-// --no-vendor is honoured before the directory is reached for, not merely
-// afterwards. The operator has asked for the fetched surface, and the recorded
-// directory is only ever adopted to reach the vendored one.
-func TestScanWalk_ByWalkID_NoVendorLeavesTheRecordedDirectoryAlone(t *testing.T) {
+// TestScanWalk_ByWalkID_NoVendorKeepsTheProjectFrameOnTheFetchedSurface asserts
+// what --no-vendor selects and what it does not. It names a surface — analyse
+// the artefacts kanonarion fetched, not the tree the project compiles — so the
+// vendored closure is never read and the scanner is never asked for the vendored
+// source. It does not name a frame: the project's own build is still what the
+// run derives its verdicts from, because answering a narrower question about
+// every dependency in isolation is not what the operator asked for.
+func TestScanWalk_ByWalkID_NoVendorKeepsTheProjectFrameOnTheFetchedSurface(t *testing.T) {
 	ctx := t.Context()
-	f, closure, _ := recordedProjectFixture(t)
+	f, closure, dir := recordedProjectFixture(t)
 
 	if _, err := f.walkUC.Scan(ctx, application.ScanWalkParams{
 		WalkID: f.walkID, Operator: "tester", NoVendor: true,
@@ -202,6 +253,9 @@ func TestScanWalk_ByWalkID_NoVendorLeavesTheRecordedDirectoryAlone(t *testing.T)
 	}
 	if f.scanner.gotProjectVendored {
 		t.Error("--no-vendor still asked the scanner for the vendored surface")
+	}
+	if f.scanner.gotProjectDir != dir {
+		t.Errorf("project scan ran in %q, want the directory the walk was taken from (%q): --no-vendor changed the frame, not only the surface", f.scanner.gotProjectDir, dir)
 	}
 	assertRecordSurface(t, ctx, f, f.depA, domain.AnalysisSurfaceFetched)
 }
