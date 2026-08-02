@@ -136,48 +136,14 @@ func TestProjectWalkToReuse_ListErrorPropagates(t *testing.T) {
 	}
 }
 
-// ---- latestProjectWalkByScope ----
-
-// After a build, a partial walk (not just succeeded) must still be found so its
-// resolved nodes get licensed.
-func TestLatestProjectWalkByScope_FindsPartialWalk(t *testing.T) {
-	qw := testfakes.NewFakeQueryWalks()
-	coord, _ := coordinate.NewModuleCoordinate("example.com/myapp", coordinate.LocalVersion)
-	qw.SetSummaries([]walkports.WalkSummary{
-		{ID: "walk-partial", Target: coord, Scope: walkdomain.WalkScopeCode, OverallStatus: walkdomain.WalkPartial},
-	})
-
-	id, err := latestProjectWalkByScope(context.Background(), qw, "example.com/myapp", walkdomain.WalkScopeCode)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if id != "walk-partial" {
-		t.Errorf("want walk-partial, got %q", id)
-	}
-}
-
-func TestLatestProjectWalkByScope_NoRecord(t *testing.T) {
-	qw := testfakes.NewFakeQueryWalks()
-
-	_, err := latestProjectWalkByScope(context.Background(), qw, "example.com/myapp", walkdomain.WalkScopeCode)
-	if err == nil {
-		t.Fatal("expected error when no walk record exists, got nil")
-	}
-}
-
 // ---- extractLicencesForProjectWalk ----
 
-// The freshly built walk gets exactly the licence stage extracted, with force
+// The walk the caller names gets exactly the licence stage extracted, with force
 // threaded through, and its ID returned.
 func TestExtractLicencesForProjectWalk_RunsLicenceStage(t *testing.T) {
-	qw := testfakes.NewFakeQueryWalks()
-	coord, _ := coordinate.NewModuleCoordinate("example.com/myapp", coordinate.LocalVersion)
-	qw.SetSummaries([]walkports.WalkSummary{
-		{ID: "walk-1", Target: coord, Scope: walkdomain.WalkScopeCode, OverallStatus: walkdomain.WalkSucceeded},
-	})
 	ex := &testfakes.FakeExtract{}
 
-	id, err := extractLicencesForProjectWalk(context.Background(), qw, ex, "example.com/myapp", true, io.Discard)
+	id, err := extractLicencesForProjectWalk(context.Background(), ex, "walk-1", true, io.Discard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -201,30 +167,11 @@ func TestExtractLicencesForProjectWalk_RunsLicenceStage(t *testing.T) {
 
 // A failing extraction surfaces wrapped, never swallowed.
 func TestExtractLicencesForProjectWalk_ExtractError(t *testing.T) {
-	qw := testfakes.NewFakeQueryWalks()
-	coord, _ := coordinate.NewModuleCoordinate("example.com/myapp", coordinate.LocalVersion)
-	qw.SetSummaries([]walkports.WalkSummary{
-		{ID: "walk-1", Target: coord, Scope: walkdomain.WalkScopeCode, OverallStatus: walkdomain.WalkSucceeded},
-	})
 	ex := &testfakes.FakeExtract{Err: errors.New("boom")}
 
-	_, err := extractLicencesForProjectWalk(context.Background(), qw, ex, "example.com/myapp", false, io.Discard)
+	_, err := extractLicencesForProjectWalk(context.Background(), ex, "walk-1", false, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "extracting licences") {
 		t.Fatalf("want wrapped extraction error, got: %v", err)
-	}
-}
-
-// When the just-built walk cannot be found, extraction is never attempted.
-func TestExtractLicencesForProjectWalk_WalkLookupError(t *testing.T) {
-	qw := testfakes.NewFakeQueryWalks()
-	ex := &testfakes.FakeExtract{}
-
-	_, err := extractLicencesForProjectWalk(context.Background(), qw, ex, "example.com/myapp", false, io.Discard)
-	if err == nil {
-		t.Fatal("expected error when the built walk cannot be located, got nil")
-	}
-	if len(ex.Calls) != 0 {
-		t.Error("extraction must not run when the walk lookup fails")
 	}
 }
 

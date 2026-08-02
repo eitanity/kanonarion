@@ -399,7 +399,8 @@ func ensureProjectWalkForSBOM(ctx context.Context, ctr *Container, force, stdlib
 	// unfetchable node does not abort the SBOM; the SBOM records what resolved.
 	progress := newWalkProgressReporter(stderr, noProgress, activeConfig, logLevel)
 	_, _ = fmt.Fprintf(progressWriter(stderr, noProgress), "==> sbom: building project walk for %s\n", modulePath)
-	if _, werr := runWalkProject(ctx, gomodPath, force, true, 0, "", policyPath, false, scopeCode, walkdomain.WalkDepthFull, "", false, stdlibFromGoMod, progress, ctr.ExecuteWalk, nil, io.Discard, stderr); werr != nil {
+	walkResult, werr := runWalkProject(ctx, gomodPath, force, true, 0, "", policyPath, false, scopeCode, walkdomain.WalkDepthFull, "", false, stdlibFromGoMod, progress, ctr.ExecuteWalk, nil, io.Discard, stderr)
+	if werr != nil {
 		return "", fmt.Errorf("building project walk: %w", werr)
 	}
 
@@ -411,13 +412,17 @@ func ensureProjectWalkForSBOM(ctx context.Context, ctr *Container, force, stdlib
 	if cErr != nil {
 		return "", fmt.Errorf("project coordinate for %s: %w", modulePath, cErr)
 	}
-	walkID, werr := latestProjectWalkByScope(ctx, ctr.QueryWalks, modulePath, walkdomain.WalkScopeCode)
-	if werr != nil {
-		return "", werr
+	// The walk this run just executed or reused, taken from its own result. The
+	// latest-for-target lookup this replaces carries no build-environment axis,
+	// so a cross-compiled run could gate, licence and inventory another
+	// platform's walk whenever that one was newer.
+	if walkResult.Record.ID == "" {
+		return "", fmt.Errorf("project walk produced no record for %s", modulePath)
 	}
-	walkRec, werr := ctr.QueryWalks.GetWalk(ctx, walkID)
-	if werr != nil {
-		return "", fmt.Errorf("loading project walk %s: %w", walkID, werr)
+	walkID = walkResult.Record.ID
+	walkRec, gerr := ctr.QueryWalks.GetWalk(ctx, walkID)
+	if gerr != nil {
+		return "", fmt.Errorf("loading project walk %s: %w", walkID, gerr)
 	}
 	if gateErr := modcacheWalkGate(walkRec, localCoord); gateErr != nil {
 		return "", gateErr
@@ -426,7 +431,7 @@ func ensureProjectWalkForSBOM(ctx context.Context, ctr *Container, force, stdlib
 		return "", gateErr
 	}
 
-	return extractLicencesForProjectWalk(ctx, ctr.QueryWalks, ctr.Extract, modulePath, force, stderr)
+	return extractLicencesForProjectWalk(ctx, ctr.Extract, walkID, force, stderr)
 }
 
 // projectWalkToReuse decides whether an existing project walk can be reused.
@@ -449,16 +454,11 @@ func projectWalkToReuse(ctx context.Context, qw QueryWalksUseCase, modulePath st
 	return "", false, err
 }
 
-// extractLicencesForProjectWalk runs the licence extraction stage over the
-// freshly built project walk and returns its ID. It looks the walk up by target
-// and code scope (accepting a partial walk, which a strictly-succeeded lookup
-// would miss) so that a walk with some unfetchable nodes still yields a licensed
+// extractLicencesForProjectWalk runs the licence extraction stage over walkID —
+// the walk the caller just executed or reused — and returns it. A partial walk
+// is accepted, so a walk with some unfetchable nodes still yields a licensed
 // SBOM for the nodes that resolved.
-func extractLicencesForProjectWalk(ctx context.Context, qw QueryWalksUseCase, ex ExtractUseCase, modulePath string, force bool, stderr io.Writer) (string, error) {
-	walkID, err := latestProjectWalkByScope(ctx, qw, modulePath, walkdomain.WalkScopeCode)
-	if err != nil {
-		return "", err
-	}
+func extractLicencesForProjectWalk(ctx context.Context, ex ExtractUseCase, walkID string, force bool, stderr io.Writer) (string, error) {
 	_, _ = fmt.Fprintf(stderr, "==> sbom: extracting licences for walk %s\n", walkID)
 	if _, err := ex.Execute(ctx, extractapp.ExtractRequest{
 		WalkID: walkID,
@@ -491,29 +491,6 @@ func findLatestProjectWalk(ctx context.Context, qw QueryWalksUseCase, modulePath
 	}
 	if len(walks) == 0 {
 		return "", fmt.Errorf("%w for %s", errNoProjectWalk, modulePath)
-	}
-	return walks[0].ID, nil
-}
-
-// latestProjectWalkByScope returns the latest project walk rooted at
-// modulePath@local for the given scope, regardless of overall status. Used
-// straight after building a walk, where a partial result is still usable and a
-// succeeded-only lookup would find nothing.
-func latestProjectWalkByScope(ctx context.Context, qw QueryWalksUseCase, modulePath string, scope walkdomain.WalkScope) (string, error) {
-	coord, err := coordinate.NewModuleCoordinate(modulePath, coordinate.LocalVersion)
-	if err != nil {
-		return "", fmt.Errorf("building project coordinate: %w", err)
-	}
-	walks, err := qw.ListWalks(ctx, walkports.WalkFilter{
-		Target: &coord,
-		Scope:  &scope,
-		Limit:  1,
-	})
-	if err != nil {
-		return "", fmt.Errorf("listing project walks for %s: %w", modulePath, err)
-	}
-	if len(walks) == 0 {
-		return "", fmt.Errorf("project walk produced no record for %s", modulePath)
 	}
 	return walks[0].ID, nil
 }

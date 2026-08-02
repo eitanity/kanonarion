@@ -842,6 +842,10 @@ type FakeScanWalk struct {
 	ReusableRunResult vulndomain.WalkScanRun
 	ReusableRunFound  bool
 	ReusableRunErr    error
+	// ReusableRunWalkID records the walk the last ReusableRun call asked about,
+	// so a test can prove the reuse question was asked about the walk the run
+	// executed rather than some other walk of the same target.
+	ReusableRunWalkID string
 	// ScanCalls counts Scan invocations, so a test can prove a served run did not
 	// re-measure.
 	ScanCalls int
@@ -852,6 +856,9 @@ type FakeScanWalk struct {
 	RefreshSnapshotResult vulnapp.SnapshotRefresh
 	RefreshSnapshotErr    error
 	RefreshSnapshotCalls  int
+	// RefreshSnapshotWalkID records the walk the last refresh restricted its
+	// advisory comparison to.
+	RefreshSnapshotWalkID string
 }
 
 // FakeScanWalkProgress is one entry delivered to the Progress callback.
@@ -863,7 +870,8 @@ type FakeScanWalkProgress struct {
 }
 
 // ReusableRun reports the seeded reusable run, if any.
-func (f *FakeScanWalk) ReusableRun(_ context.Context, _ string) (vulndomain.WalkScanRun, bool, error) {
+func (f *FakeScanWalk) ReusableRun(_ context.Context, walkID string) (vulndomain.WalkScanRun, bool, error) {
+	f.ReusableRunWalkID = walkID
 	if f.ReusableRunErr != nil {
 		return vulndomain.WalkScanRun{}, false, f.ReusableRunErr
 	}
@@ -871,8 +879,9 @@ func (f *FakeScanWalk) ReusableRun(_ context.Context, _ string) (vulndomain.Walk
 }
 
 // RefreshSnapshot reports the seeded refresh outcome and counts the call.
-func (f *FakeScanWalk) RefreshSnapshot(_ context.Context, _ string) (vulnapp.SnapshotRefresh, error) {
+func (f *FakeScanWalk) RefreshSnapshot(_ context.Context, walkID string) (vulnapp.SnapshotRefresh, error) {
 	f.RefreshSnapshotCalls++
+	f.RefreshSnapshotWalkID = walkID
 	if f.RefreshSnapshotErr != nil {
 		return vulnapp.SnapshotRefresh{}, f.RefreshSnapshotErr
 	}

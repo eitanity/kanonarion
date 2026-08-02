@@ -24,7 +24,6 @@ import (
 	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
 	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
 type auditFlags struct {
@@ -419,20 +418,32 @@ func auditScope(
 	derivation.walkReused = walkResult.Reused
 	derivation.walkRecord = walkResult.Record
 
-	// The project walk's target is the local main module; find its record.
+	// The project walk's target is the local main module.
 	localCoord, cErr := coordinate.NewLocalCoordinate(modulePath)
 	if cErr != nil {
 		return nil, derivation, fmt.Errorf("project coordinate for %s: %w", modulePath, cErr)
 	}
 	walkScope := walkdomain.WalkScope(scope)
-	walks, qerr := ctr.QueryWalks.ListWalks(ctx, walkports.WalkFilter{Target: &localCoord, Scope: &walkScope, Limit: 1})
-	if qerr != nil {
-		return nil, derivation, fmt.Errorf("querying project walk: %w", qerr)
-	}
-	if len(walks) == 0 {
+
+	// Every downstream leg — licence extraction, the reuse question, the scan,
+	// the rows, the derivation — is keyed on THIS walk, the one the walk leg just
+	// executed or reused. It is taken from that leg's own result and never looked
+	// up again.
+	//
+	// The lookup it replaces asked the store for the latest walk of this target
+	// and scope, which is not the same question. Two walks of one target differ
+	// on more than target and scope — the build environment among them, and
+	// WalkFilter carries no axis for it — so a cross-compiled audit of one
+	// platform would extract, scan and report against another platform's walk
+	// whenever that one happened to be newer, while the derivation line named the
+	// walk this run actually resolved. One audit, two walks, and the report said
+	// nothing about the disagreement. This was invisible while every audit minted
+	// a fresh walk, because then the latest walk always was this run's; walk reuse
+	// is what let the two come apart.
+	if walkResult.Record.ID == "" {
 		return nil, derivation, fmt.Errorf("project walk produced no record for %s", localCoord)
 	}
-	walkID := walks[0].ID
+	walkID := walkResult.Record.ID
 
 	rec, gerr := ctr.QueryWalks.GetWalk(ctx, walkID)
 	if gerr != nil {
