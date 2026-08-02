@@ -3,13 +3,13 @@ package ports
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
 	"github.com/eitanity/kanonarion/internal/sbom/domain"
 	vendordomain "github.com/eitanity/kanonarion/internal/vendortree/domain"
-	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
@@ -24,14 +24,13 @@ type GeneratorMetadata struct {
 
 // SBOMGenerator is the port for producing SBOM documents from walk facts.
 type SBOMGenerator interface {
-	// Generate produces an SBOMRecord from the supplied walk, licence, and
-	// optional vulnerability data. The resulting Content is deterministic:
-	// identical inputs always produce byte-identical output.
+	// Generate produces an SBOMRecord from the supplied walk and licence data.
+	// The resulting Content is deterministic: identical inputs always produce
+	// byte-identical output.
 	Generate(
 		ctx context.Context,
 		walk walkdomain.WalkRecord,
 		licenses map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord,
-		vulnerabilities []vulndomain.VulnerabilityRecord,
 		req GenerateRequest,
 	) (domain.SBOMRecord, error)
 
@@ -41,10 +40,22 @@ type SBOMGenerator interface {
 
 // GenerateRequest carries the caller-supplied parameters for a single generation.
 type GenerateRequest struct {
-	WalkScanRunID   *string
 	Format          domain.SBOMFormat
 	PipelineVersion string
 	Operator        string
+	// DocumentTimestamp is when this document is being created, supplied by the
+	// caller. It is what the document's metadata timestamp carries, which
+	// CycloneDX defines as "the date and time (timestamp) when the BOM was
+	// created" — a reading of a clock nobody in this package is allowed to take,
+	// because a generator that reads one cannot re-emit a document byte for byte.
+	// Making it an input keeps both properties: the caller holds the clock, and
+	// the same inputs still produce the same bytes.
+	//
+	// Zero means the caller supplied none. The document then falls back to the
+	// newest licence extraction time among its inputs and labels the timestamp as
+	// derived, so a reader is never told a document was created at a moment it
+	// was not.
+	DocumentTimestamp time.Time
 	// MainComponentVersion overrides the version stamped on the subject
 	// (metadata.component) of a project SBOM. The subject's graph target is the
 	// local main module at the synthetic version "local", which is not a
@@ -97,12 +108,11 @@ type SBOMStore interface {
 	ListSBOMRecords(ctx context.Context, walkID string) ([]domain.SBOMRecord, error)
 
 	// FindSBOMRecord looks up a cached record by the cache key
-	// (walkID, walkScanRunID, format, pipelineVersion).
+	// (walkID, format, pipelineVersion).
 	// Returns (zero, false, nil) when not found.
 	FindSBOMRecord(
 		ctx context.Context,
 		walkID string,
-		walkScanRunID *string,
 		format domain.SBOMFormat,
 		pipelineVersion string,
 	) (domain.SBOMRecord, bool, error)

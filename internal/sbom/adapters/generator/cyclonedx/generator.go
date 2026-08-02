@@ -22,7 +22,6 @@ import (
 	"github.com/eitanity/kanonarion/internal/sbom/domain"
 	"github.com/eitanity/kanonarion/internal/sbom/ports"
 	vendordomain "github.com/eitanity/kanonarion/internal/vendortree/domain"
-	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
@@ -55,10 +54,9 @@ func (g *Generator) Generate(
 	ctx context.Context,
 	walk walkdomain.WalkRecord,
 	licenses map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord,
-	vulnerabilities []vulndomain.VulnerabilityRecord,
 	req ports.GenerateRequest,
 ) (domain.SBOMRecord, error) {
-	bom, licensesIncomplete, err := g.buildBOM(walk, licenses, vulnerabilities, req)
+	bom, undetermined, err := g.buildBOM(walk, licenses, req)
 	if err != nil {
 		return domain.SBOMRecord{}, fmt.Errorf("building cyclonedx bom: %w", err)
 	}
@@ -71,40 +69,42 @@ func (g *Generator) Generate(
 	sum := sha256.Sum256(content)
 	contentHash := hex.EncodeToString(sum[:])
 
-	id := deterministicID(walk.ID, req.WalkScanRunID, req.PipelineVersion)
+	id := deterministicID(walk.ID, req.PipelineVersion)
+
+	ts, _ := documentTimestamp(walk, licenses, req)
 
 	return domain.SBOMRecord{
 		ID:                 id,
 		Ecosystem:          domain.EcosystemGo,
 		WalkID:             walk.ID,
-		WalkScanRunID:      req.WalkScanRunID,
 		Format:             domain.CycloneDX16,
 		Content:            content,
 		ContentHash:        contentHash,
-		GeneratedAt:        deterministicTimestamp(walk, licenses),
+		GeneratedAt:        ts,
 		PipelineVersion:    req.PipelineVersion,
 		Operator:           req.Operator,
-		LicensesIncomplete: licensesIncomplete,
+		LicensesIncomplete: len(undetermined) > 0,
 	}, nil
 }
 
-// buildBOM constructs the CycloneDX BOM document from the supplied facts.
+// buildBOM constructs the CycloneDX BOM document from the supplied facts,
+// returning the bom-refs of every component in it that carries no licence
+// identity.
 func (g *Generator) buildBOM(
 	walk walkdomain.WalkRecord,
 	licenses map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord,
-	vulnerabilities []vulndomain.VulnerabilityRecord,
 	req ports.GenerateRequest,
-) (*cdx.BOM, bool, error) {
+) (*cdx.BOM, []string, error) {
 	bom := &cdx.BOM{
 		BOMFormat:    "CycloneDX",
 		SpecVersion:  cdx.SpecVersion1_6,
 		JSONSchema:   "http://cyclonedx.org/schema/bom-1.6.schema.json",
 		Version:      1,
-		SerialNumber: "urn:uuid:" + deterministicUUID(walk.ID, req.WalkScanRunID, req.PipelineVersion),
+		SerialNumber: "urn:uuid:" + deterministicUUID(walk.ID, req.PipelineVersion),
 	}
 
 	// Metadata.
-	ts := deterministicTimestamp(walk, licenses)
+	ts, tsDerived := documentTimestamp(walk, licenses, req)
 	bom.Metadata = &cdx.Metadata{
 		Timestamp: ts.UTC().Format(timestampFormat),
 		Tools: &cdx.ToolsChoice{
@@ -121,8 +121,10 @@ func (g *Generator) buildBOM(
 	// Record the build environment the graph was resolved for. GOOS/GOARCH gate
 	// build-constraint file selection, so the component set is only valid for this
 	// platform; a consumer must know it to reproduce or trust the SBOM.
-	if props := buildEnvProperties(walk.Graph.BuildEnv); props != nil {
-		bom.Metadata.Properties = props
+	props := buildEnvProperties(walk.Graph.BuildEnv)
+	props = append(props, timestampBasisProperties(tsDerived, licenceExtractionTime(licenses))...)
+	if len(props) > 0 {
+		bom.Metadata.Properties = &props
 	}
 
 	// Artefact digests are carried on the graph nodes (from the fetch fact
@@ -168,12 +170,12 @@ func (g *Generator) buildBOM(
 			Copyright:   copyrightString(lic),
 		})
 	}
-	assembled, licensesIncomplete := domain.AssembleComponents(inputs)
+	assembled, undeterminedRefs := domain.AssembleComponents(inputs)
 	components := make([]cdx.Component, 0, len(assembled))
 	for _, c := range assembled {
 		comp := buildComponent(c.Module, c.License, c.Copyright, req.PipelineVersion, digestsByRef[c.Module], stdlibFactsByRef[c.Module])
 		if !strings.HasPrefix(comp.PackageURL, "pkg:"+purlTypeGolang+"/") {
-			return nil, false, fmt.Errorf("%w: %q", domain.ErrNonGoComponent, comp.PackageURL)
+			return nil, nil, fmt.Errorf("%w: %q", domain.ErrNonGoComponent, comp.PackageURL)
 		}
 		components = append(components, comp)
 	}
@@ -185,102 +187,93 @@ func (g *Generator) buildBOM(
 	deps := buildDependencies(components, bom.Metadata.Component, walk.Graph)
 	bom.Dependencies = &deps
 
-	// Scope statement — what this document covers of the vendored tree it was
-	// made from. Emitted whenever a tree was read, full coverage included: an
-	// artefact that describes a smaller set than the build without saying so
-	// reads as complete, and that is the defect this closes.
-	var annotations []cdx.Annotation
-	if req.VendorScope != nil {
-		annotations = append(annotations, vendorScopeAnnotation(*req.VendorScope, req.ComponentsScopedToBinary, req.PipelineVersion, ts))
+	// The document's subject is the artefact being shipped, so it is judged by
+	// the same rule as everything it links: the assembly policy never sees it —
+	// it is not a graph node — and a subject with no licence clause would
+	// otherwise be the one component in a distributed document whose licensing
+	// nobody counted.
+	undetermined := make([]string, 0, len(undeterminedRefs)+1)
+	seen := make(map[string]struct{}, len(undeterminedRefs)+1)
+	addUndetermined := func(ref string) {
+		if ref == "" {
+			return
+		}
+		if _, dup := seen[ref]; dup {
+			return
+		}
+		seen[ref] = struct{}{}
+		undetermined = append(undetermined, ref)
+	}
+	if bom.Metadata.Component != nil && bom.Metadata.Component.Licenses == nil {
+		addUndetermined(bom.Metadata.Component.BOMRef)
+	}
+	for _, m := range undeterminedRefs {
+		addUndetermined(modulePURL(m))
 	}
 
-	// Vulnerabilities — dedup/aggregation policy lives in sbom/domain.
-	if len(vulnerabilities) > 0 {
-		findings := make([]domain.FindingInput, 0)
-		for _, rec := range vulnerabilities {
-			ref := moduleRef(rec.Coordinate)
-			for _, f := range rec.Findings {
-				findings = append(findings, domain.FindingInput{
-					Module:        ref,
-					ID:            f.ID,
-					Summary:       f.Summary,
-					SeverityLabel: severityLabel(f.Severity),
-					WithdrawnAt:   f.WithdrawnAt,
-				})
-			}
-		}
-		cdxVulns := buildVulnerabilities(domain.AggregateVulnerabilities(findings))
-		bom.Vulnerabilities = &cdxVulns
-		annotations = append(annotations, vulnerabilityScopeAnnotation(cdxVulns, req.PipelineVersion, ts))
+	// Scope statements. Vendor coverage is emitted whenever a tree was read, full
+	// coverage included: an artefact that describes a smaller set than the build
+	// without saying so reads as complete. Licence completeness is emitted only
+	// when something is undetermined, because the schema requires an annotation
+	// to name its subjects and a complete document has none to name; the
+	// component list saying so of every entry is the statement in that case.
+	var annotations []cdx.Annotation
+	if req.VendorScope != nil {
+		annotations = append(annotations, vendorScopeAnnotation(*req.VendorScope, req.ComponentsScopedToBinary, req.PipelineVersion, ts, documentSubject(bom)))
+	}
+	if len(undetermined) > 0 {
+		annotations = append(annotations, licenceCompletenessAnnotation(undetermined, len(components), req.PipelineVersion, ts))
 	}
 	if len(annotations) > 0 {
 		bom.Annotations = &annotations
 	}
 
-	return bom, licensesIncomplete, nil
+	return bom, undetermined, nil
 }
 
-// ReachabilityQueryInvocation is the command a reader of this document runs to
-// get the reachability answer the document itself does not state.
-//
-// It is a constant rather than prose inside the annotation text so a contract
-// test can push it through the CLI's own argument parser. A printed command the
-// tool then rejects costs the reader exactly the round trip that naming it was
-// meant to save, which is the defect
-// TestReachabilityRemedies_EveryLineIsAcceptedByTheParser exists to catch on the
-// CLI's own remedy lines.
-const ReachabilityQueryInvocation = "kanonarion reachability <module>@<version> --vuln <id>"
+// documentSubject returns the bom-ref of the document's subject component, which
+// is what a statement about the document as a whole is annotating. Empty when
+// there is no subject, in which case the annotation carries no subjects and the
+// caller has nothing to point at.
+func documentSubject(bom *cdx.BOM) []cdx.BOMReference {
+	if bom.Metadata == nil || bom.Metadata.Component == nil || bom.Metadata.Component.BOMRef == "" {
+		return nil
+	}
+	return []cdx.BOMReference{cdx.BOMReference(bom.Metadata.Component.BOMRef)}
+}
 
-// vulnerabilityScopeBOMRef identifies the scope annotation. It is fixed, so the
-// document re-emits byte-identically from the same inputs.
-const vulnerabilityScopeBOMRef = "kanonarion:vulnerability-scope"
+// licenceCompletenessBOMRef identifies the licence-completeness annotation.
+// Fixed, so the document re-emits byte-identically from the same inputs.
+const licenceCompletenessBOMRef = "kanonarion:licence-completeness"
 
-// vulnerabilityScopeText is what the document says about its own vulnerability
-// list.
+// licenceCompletenessAnnotation states, where a reader meets the component list,
+// how many of this document's components carry no licence identity and which
+// they are.
 //
-// The claim it withholds is deliberate and is the whole point. Reachability is a
-// property of a call graph that improves as the graph improves, and a per-entry
-// VEX statement would freeze at generation time an answer that the store keeps
-// revising — publishing exactly the context-free verdict kanonarion exists to
-// replace, stripped of the route, the analysis frame and the soundness caveats
-// that make it readable. So the document states its scope and names where the
-// answer lives instead.
+// The console that produced the document is not where the document is read. A
+// consumer who receives only the artefact has no other way to tell a component
+// whose licence is genuinely undetermined from one whose licence nobody looked
+// for, and either reading is a licensing decision made on silence. Naming them
+// with their count makes the omission part of what the document says.
 //
-// The last sentence is not hedging. A call-graph analysis that finds no route
-// has not proved there is none: dynamic dispatch, reflection and linkname all
-// reach code no static edge records. A surface that rendered "not reachable" as
-// a proven absence would be wrong in a direction that costs a patch.
-var vulnerabilityScopeText = strings.Join([]string{
-	"Scope of this document's vulnerability list: it reports the advisories that match the coordinates of the components inventoried above.",
-	"It does NOT state whether any of them is reachable in this build, and no entry here should be read as a claim either way.",
-	"Reachability is a property of the call graph, it improves as the graph improves, and an answer frozen at generation time would outlive the evidence for it.",
-	"Ask kanonarion, which holds the route, the analysis frame it was computed in, and the soundness caveats: " + ReachabilityQueryInvocation + ".",
-	"A negative answer from that query states that no route was found; it is not proof that none exists.",
-}, " ")
-
-// vulnerabilityScopeAnnotation states, on the vulnerability list itself, what
-// the list does and does not assert.
-//
-// It is a CycloneDX annotation subject-linked to every vulnerability rather than
-// a metadata property, because metadata is where a reader who is looking at a
-// vulnerability will not be. A consumer resolving "what does this document say
-// about this entry" reaches the annotation by bom-ref; one rendering the list
-// gets a single statement covering it. The alternative shapes were both refused:
-// a per-entry property or analysis block would be a per-advisory reachability
-// claim in all but name, and a metadata property would be the burial this exists
-// to avoid.
-//
-// Every field is derived from inputs the document already carries — the fixed
-// bom-ref, the vulnerability order the domain aggregation already fixed, the
-// generator component, and the document's own clock-free timestamp — so adding
-// it leaves the byte-for-byte determinism of the output intact.
-func vulnerabilityScopeAnnotation(vulns []cdx.Vulnerability, pipelineVersion string, ts time.Time) cdx.Annotation {
-	subjects := make([]cdx.BOMReference, 0, len(vulns))
-	for _, v := range vulns {
-		subjects = append(subjects, cdx.BOMReference(v.BOMRef))
+// The subjects are the undetermined components themselves, so a consumer
+// resolving "what does this document say about this component" reaches the
+// statement by bom-ref rather than having to read the whole annotation list.
+func licenceCompletenessAnnotation(undetermined []string, componentCount int, pipelineVersion string, ts time.Time) cdx.Annotation {
+	subjects := make([]cdx.BOMReference, 0, len(undetermined))
+	for _, ref := range undetermined {
+		subjects = append(subjects, cdx.BOMReference(ref))
+	}
+	var b strings.Builder
+	fmt.Fprintf(&b, "Licence completeness of this document: %d of the %d component(s) inventoried here carry no licence identity, and are named as this annotation's subjects.",
+		len(undetermined), componentCount)
+	b.WriteString(" A component with no licences block is one whose licence kanonarion could not determine — no licence file was found for it, or the files that were found match no known SPDX licence text.")
+	b.WriteString(" It is not a statement that the component is unlicensed, and it must not be read as permission to use it:")
+	for _, ref := range undetermined {
+		fmt.Fprintf(&b, " %s;", ref)
 	}
 	return cdx.Annotation{
-		BOMRef:   vulnerabilityScopeBOMRef,
+		BOMRef:   licenceCompletenessBOMRef,
 		Subjects: &subjects,
 		Annotator: &cdx.Annotator{
 			Component: &cdx.Component{
@@ -290,7 +283,7 @@ func vulnerabilityScopeAnnotation(vulns []cdx.Vulnerability, pipelineVersion str
 			},
 		},
 		Timestamp: ts.UTC().Format(timestampFormat),
-		Text:      vulnerabilityScopeText,
+		Text:      b.String(),
 	}
 }
 
@@ -317,7 +310,7 @@ const vendorScopeBOMRef = "kanonarion:vendor-scope"
 // Every field derives from inputs the document already carries — the fixed
 // bom-ref, the domain-sorted uncovered list, the generator component and the
 // document's own clock-free timestamp — so determinism is untouched.
-func vendorScopeAnnotation(scope vendordomain.VendorScope, scopedToBinary bool, pipelineVersion string, ts time.Time) cdx.Annotation {
+func vendorScopeAnnotation(scope vendordomain.VendorScope, scopedToBinary bool, pipelineVersion string, ts time.Time, subjects []cdx.BOMReference) cdx.Annotation {
 	var b strings.Builder
 	fmt.Fprintf(&b, "Scope of this document against the project's vendored tree: vendor/modules.txt lists %d module(s); this document describes %d of them.",
 		scope.TreeModules, scope.Covered)
@@ -338,7 +331,8 @@ func vendorScopeAnnotation(scope vendordomain.VendorScope, scopedToBinary bool, 
 		b.WriteString(" A package line is a package `go mod vendor` wrote under the module heading across all build constraints; it is not a count of what this build compiles.")
 	}
 	return cdx.Annotation{
-		BOMRef: vendorScopeBOMRef,
+		BOMRef:   vendorScopeBOMRef,
+		Subjects: &subjects,
 		Annotator: &cdx.Annotator{
 			Component: &cdx.Component{
 				Type:    cdx.ComponentTypeApplication,
@@ -571,9 +565,9 @@ func stdlibProperties(pipelineVersion string, facts *walkdomain.StdlibFacts) *[]
 // buildEnvProperties renders the resolved build environment as CycloneDX
 // metadata properties, emitting only the values that were captured so a record
 // with no build environment (a non-project walk, or a pre-BuildEnv record)
-// produces no properties block. The ordering is fixed (goos, goarch, go_version)
-// for deterministic output.
-func buildEnvProperties(env walkdomain.BuildEnv) *[]cdx.Property {
+// contributes none. The ordering is fixed (goos, goarch, go_version) for
+// deterministic output.
+func buildEnvProperties(env walkdomain.BuildEnv) []cdx.Property {
 	var props []cdx.Property
 	add := func(key, value string) {
 		if value != "" {
@@ -583,10 +577,7 @@ func buildEnvProperties(env walkdomain.BuildEnv) *[]cdx.Property {
 	add("goos", env.GOOS)
 	add("goarch", env.GOARCH)
 	add("go_version", env.GoVersion)
-	if len(props) == 0 {
-		return nil
-	}
-	return &props
+	return props
 }
 
 // mainComponentOptions carries the subject-specific overrides applied to the
@@ -680,106 +671,78 @@ func copyrightString(lic licensedomain.LicenseRecord) string {
 	return strings.Join(parts, "\n")
 }
 
-// buildVulnerabilities maps aggregated domain vulnerabilities to CycloneDX.
-//
-// A retracted advisory is emitted rather than dropped, carrying the VEX analysis
-// state that says what it is. Omitting it would be the quieter bug: the document
-// would then be indistinguishable from one produced before the advisory was ever
-// published, and a consumer diffing two SBOMs across the retraction would read the
-// disappearance as a fix. Emitting it unmarked — what this generator did before —
-// publishes a withdrawn report as a live vulnerability of the component to
-// everyone downstream who consumes the document.
-//
-// Withdrawal is the ONLY thing the analysis block here states, and it is a fact
-// about the advisory rather than a claim about this build: the upstream database
-// retracted it, which is true of every consumer of it. Reachability is the
-// opposite kind of fact — it is about one build's call graph and it changes as
-// that graph is measured better — so no analysis block, and no property, is
-// emitted for it. See vulnerabilityScopeText for what the document says instead.
-func buildVulnerabilities(aggregated []domain.AggregatedVulnerability) []cdx.Vulnerability {
-	result := make([]cdx.Vulnerability, 0, len(aggregated))
-	for _, v := range aggregated {
-		affects := make([]cdx.Affects, 0, len(v.Affected))
-		for _, m := range v.Affected {
-			affects = append(affects, cdx.Affects{Ref: modulePURL(m)})
-		}
-		vuln := cdx.Vulnerability{
-			BOMRef:      v.ID,
-			ID:          v.ID,
-			Description: v.Summary,
-			Affects:     &affects,
-		}
-		if !v.IsWithdrawn() {
-			// A rating is a claim about how severely this advisory affects the
-			// component. A retracted advisory makes no such claim, so it carries none:
-			// a consumer that tallies severities across the document — the common
-			// dashboard shape, and one that need not read the analysis block to do it —
-			// would otherwise count severity for a report that does not stand. The
-			// analysis block below is where a retracted entry states what it is.
-			vuln.Ratings = &[]cdx.VulnerabilityRating{
-				{Severity: mapSeverityLabel(v.SeverityLabel)},
-			}
-		}
-		if v.IsWithdrawn() {
-			// false_positive is the CycloneDX state for a report that does not stand
-			// against the component. The schema has no "withdrawn" state, so the reason
-			// goes in detail with the date, where a VEX consumer that only routes on
-			// state still excludes it and a reader gets the attribution.
-			vuln.Analysis = &cdx.VulnerabilityAnalysis{
-				State:  cdx.IASFalsePositive,
-				Detail: "advisory withdrawn upstream " + v.WithdrawnAt.UTC().Format(time.RFC3339) + "; retained so its retraction is stated rather than inferred from absence",
-			}
-		}
-		result = append(result, vuln)
-	}
-	return result
-}
-
-// severityLabel extracts the severity label from a kanonarion Severity,
-// returning "" when severity is absent.
-func severityLabel(s *vulndomain.Severity) string {
-	if s == nil {
-		return ""
-	}
-	return s.Label
-}
-
-// mapSeverityLabel converts a kanonarion severity label to a CycloneDX Severity.
-func mapSeverityLabel(label string) cdx.Severity {
-	switch label {
-	case "CRITICAL":
-		return cdx.SeverityCritical
-	case "HIGH":
-		return cdx.SeverityHigh
-	case "MEDIUM":
-		return cdx.SeverityMedium
-	case "LOW":
-		return cdx.SeverityLow
-	default:
-		return cdx.SeverityUnknown
-	}
-}
-
 // modulePURL returns the Package URL for a module.
 func modulePURL(mod domain.ModuleRef) string {
 	return "pkg:" + purlTypeGolang + "/" + mod.Path + "@" + mod.Version
 }
 
-// deterministicTimestamp returns the maximum ExtractedAt from licence records,
-// rounded to second precision. When no licence data is present it falls back
-// through the walk's own clock-injected timestamps so empty or failed-target
-// walks (which have a zero Graph.ResolvedAt) still get a meaningful,
-// deterministic GeneratedAt rather than the zero time.
-func deterministicTimestamp(
+// documentTimestamp resolves what this document's metadata timestamp carries and
+// whether that value is derived rather than a creation time.
+//
+// CycloneDX defines metadata.timestamp as when the BOM was created. A caller who
+// supplies one is answering that question, and it is used verbatim. A caller who
+// supplies none leaves the question unanswerable here — this generator holds no
+// clock, because reading one would mean the same recorded inputs stop producing
+// the same bytes — so the document falls back to the newest licence extraction
+// time among its inputs and says, in its own metadata, that it did. A derived
+// value labelled as derived is a true statement about the evidence; the same
+// value in an unlabelled creation field is a false statement about the document.
+func documentTimestamp(
 	walk walkdomain.WalkRecord,
 	licenses map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord,
-) time.Time {
+	req ports.GenerateRequest,
+) (ts time.Time, derived bool) {
+	if !req.DocumentTimestamp.IsZero() {
+		return req.DocumentTimestamp.UTC().Truncate(time.Second), false
+	}
+	return derivedTimestamp(walk, licenses), true
+}
+
+// timestampBasisProperties record what metadata.timestamp means in this document
+// and, separately, the input-derived time it might otherwise be confused with.
+//
+// The licence extraction time is emitted whichever basis applies. It is a fact
+// about the evidence — when the licence facts under these components were last
+// measured — and a reader who wants it should not have to infer it from a field
+// that may or may not be it. CycloneDX metadata.lifecycles is the other candidate
+// home and is not one: its entries name a phase, and carry no timestamp.
+func timestampBasisProperties(derived bool, licenceExtraction time.Time) []cdx.Property {
+	basis := "caller-supplied document creation time"
+	if derived {
+		basis = "derived: newest licence extraction time among this document's inputs; no creation time was supplied, and this generator reads no clock"
+	}
+	props := []cdx.Property{{Name: "kanonarion:document:timestamp_basis", Value: basis}}
+	if !licenceExtraction.IsZero() {
+		props = append(props, cdx.Property{
+			Name:  "kanonarion:licence:newest_extraction",
+			Value: licenceExtraction.UTC().Format(timestampFormat),
+		})
+	}
+	return props
+}
+
+// licenceExtractionTime returns the newest ExtractedAt among the licence records
+// this document was built from, zero when there are none.
+func licenceExtractionTime(licenses map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord) time.Time {
 	var t time.Time
 	for _, lic := range licenses {
 		if lic.ExtractedAt.After(t) {
 			t = lic.ExtractedAt
 		}
 	}
+	return t.UTC().Truncate(time.Second)
+}
+
+// derivedTimestamp returns the maximum ExtractedAt from licence records, rounded
+// to second precision. When no licence data is present it falls back through the
+// walk's own clock-injected timestamps so empty or failed-target walks (which
+// have a zero Graph.ResolvedAt) still get a meaningful, deterministic value
+// rather than the zero time.
+func derivedTimestamp(
+	walk walkdomain.WalkRecord,
+	licenses map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord,
+) time.Time {
+	t := licenceExtractionTime(licenses)
 	for _, fallback := range []time.Time{
 		walk.Graph.ResolvedAt,
 		walk.CompletedAt,
@@ -794,22 +757,16 @@ func deterministicTimestamp(
 }
 
 // deterministicID returns a stable record ID derived from the generation inputs.
-func deterministicID(walkID string, scanRunID *string, pipelineVersion string) string {
+func deterministicID(walkID string, pipelineVersion string) string {
 	key := walkID + "|" + pipelineVersion
-	if scanRunID != nil {
-		key += "|" + *scanRunID
-	}
 	sum := sha256.Sum256([]byte(key))
 	return "sbom-" + hex.EncodeToString(sum[:])[:24]
 }
 
 // deterministicUUID returns a UUID-shaped string derived from the generation inputs.
 // It is not a proper UUID v5 but is stable and unique for the same inputs.
-func deterministicUUID(walkID string, scanRunID *string, pipelineVersion string) string {
+func deterministicUUID(walkID string, pipelineVersion string) string {
 	key := "sbom-uuid|" + walkID + "|" + pipelineVersion
-	if scanRunID != nil {
-		key += "|" + *scanRunID
-	}
 	sum := sha256.Sum256([]byte(key))
 	h := hex.EncodeToString(sum[:])
 	// Format as 8-4-4-4-12.

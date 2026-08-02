@@ -14,17 +14,16 @@ import (
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
-	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
 // TestGoldenByteLock locks generator output byte-for-byte. The fixture was
 // produced by the pre- generator; this test guarantees the policy
 // extraction into sbom/domain did not alter a single byte and guards against
-// future drift. Scenario exercises: multi-module ordering, mixed license
-// states (licensed / empty-SPDX / absent), licensesIncomplete, and a
-// vulnerability finding shared across two modules (cross-module dedup with
-// first-occurrence summary/severity).
+// future drift. Scenario exercises: multi-module ordering, mixed license states
+// (licensed / empty-SPDX / absent), the licence-completeness statement over the
+// two components with no licence identity, a caller-supplied document timestamp,
+// and the absence of any vulnerability list.
 func TestGoldenByteLock(t *testing.T) {
 	mc := func(p, v string) coordinate.ModuleCoordinate {
 		c, err := coordinate.NewModuleCoordinate(p, v)
@@ -70,21 +69,12 @@ func TestGoldenByteLock(t *testing.T) {
 		depA:   {PrimarySPDX: "", ExtractedAt: time.Date(2026, 3, 2, 11, 0, 0, 0, time.UTC)},
 		// depB intentionally absent -> licensesIncomplete
 	}
-	sev := func(l string) *vulndomain.Severity { return &vulndomain.Severity{Label: l, Score: 7.5} }
-	scan := "scan-golden-007"
-	vulns := []vulndomain.VulnerabilityRecord{
-		{Coordinate: depB, Findings: []vulndomain.VulnerabilityFinding{
-			{ID: "GHSA-shared", Summary: "shared across modules", Severity: sev("HIGH")},
-			{ID: "GHSA-zonly", Summary: "z only", Severity: sev("LOW")},
-		}},
-		{Coordinate: depA, Findings: []vulndomain.VulnerabilityFinding{
-			{ID: "GHSA-shared", Summary: "second occurrence ignored", Severity: sev("CRITICAL")},
-			{ID: "GHSA-aonly", Summary: "a only", Severity: nil},
-		}},
-	}
 	gen := cyclonedx.New("0.3.0-test")
-	rec, err := gen.Generate(t.Context(), walk, licenses, vulns, ports.GenerateRequest{
-		WalkScanRunID: &scan, Format: domain.CycloneDX16, PipelineVersion: "0.3.0-test", Operator: "golden",
+	rec, err := gen.Generate(t.Context(), walk, licenses, ports.GenerateRequest{
+		Format:            domain.CycloneDX16,
+		PipelineVersion:   "0.3.0-test",
+		Operator:          "golden",
+		DocumentTimestamp: time.Date(2026, 3, 3, 9, 15, 0, 0, time.UTC),
 	})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
@@ -107,6 +97,6 @@ func TestGoldenByteLock(t *testing.T) {
 			len(rec.Content), len(want))
 	}
 	if !rec.LicensesIncomplete {
-		t.Error("LicensesIncomplete = false, want true (depB had no license data)")
+		t.Error("LicensesIncomplete = false, want true (depA identified no licence, depB had no record)")
 	}
 }

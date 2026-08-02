@@ -2,7 +2,15 @@
 
 Generate and inspect Software Bills of Materials (SBOMs) for walks.
 SBOMs are produced in CycloneDX 1.6 JSON format and are deterministic:
-the same walk and scan inputs always produce byte-identical output.
+the same walk, licence and `--generated-at` inputs always produce byte-identical
+output.
+
+> **The document is an inventory.** It describes components, their identity,
+> hashes, licences and dependency graph. It carries **no `vulnerabilities` list**
+> and no VEX `analysis`, under any flag. Vulnerability and reachability answers
+> come from [`vuln-show`](vuln.md) and [`reachability`](reachability.md), which
+> state the advisory snapshot and the analysis frame the answer was measured
+> against.
 
 > **Go-only scope.** kanonarion analyses Go modules exclusively. Every
 > component in an emitted SBOM uses a `pkg:golang/…` Package URL, and
@@ -25,52 +33,71 @@ in addition to the flat component list, carries:
   source tarball rather than a module zip (see below). Only the local main
   component (the SBOM subject) carries no hashes; a missing hash block is never an
   error.
-- **A `vulnerabilities` list**, when `--scan` names a scan run. Findings sharing an
-  ID are aggregated into one entry whose `affects` names every module the ID applies
-  to. See below for how a retracted advisory is represented.
-- **A scope statement**, whenever a `vulnerabilities` list is emitted. See below.
+- **A licence-completeness statement**, whenever any component carries no licence
+  identity. See below.
 - **A vendor scope statement**, whenever the walk was rooted at a project that
   carries a `vendor/` tree. See below.
+- **Metadata properties stating what `metadata.timestamp` means** and, separately,
+  the newest licence extraction time among the document's inputs. See
+  [Document timestamp](#document-timestamp).
 
-### What the vulnerability list does and does not claim
+### Document timestamp
 
-The list reports the advisories that match the **coordinates** of the components
-inventoried in the document. It does **not** state whether any of them is
-reachable in this build, and no entry should be read as a claim either way.
+`metadata.timestamp` is what CycloneDX defines it to be: when the document was
+created. Pass `--generated-at <RFC3339>` to supply that moment. Two generations
+with the same `--generated-at` and the same store inputs are byte-identical; two
+with different values differ only in that field.
 
-That statement is emitted in the document itself, as a CycloneDX `annotation`
-whose `subjects` name every vulnerability entry:
+The generator reads no clock of its own — one that did could not re-emit a
+document byte for byte from the same recorded inputs. With no `--generated-at`,
+the document falls back to the newest licence extraction time among its inputs
+and says so, rather than presenting a derived value as a creation time:
+
+```json
+"metadata": {
+  "timestamp": "2026-07-29T04:44:15Z",
+  "properties": [
+    { "name": "kanonarion:document:timestamp_basis",
+      "value": "derived: newest licence extraction time among this document's inputs; no creation time was supplied, and this generator reads no clock" },
+    { "name": "kanonarion:licence:newest_extraction", "value": "2026-07-29T04:44:15Z" }
+  ]
+}
+```
+
+With `--generated-at`, `kanonarion:document:timestamp_basis` reads
+`caller-supplied document creation time`. `kanonarion:licence:newest_extraction`
+is emitted either way, so a reader never has to work out whether the timestamp is
+the extraction time.
+
+A supplied `--generated-at` bypasses the SBOM cache: the value is not part of the
+cache key, so a cached document would answer with another generation's timestamp.
+
+### Licence completeness in the document
+
+A component carrying no `licenses` block is one whose licence kanonarion could
+not determine — no licence file was found for it, or the files found match no
+known SPDX licence text. Whenever a document carries any such component, it says
+so where a reader meets the component list, as a CycloneDX `annotation` whose
+`subjects` name each of them:
 
 ```json
 {
   "annotations": [{
-    "bom-ref": "kanonarion:vulnerability-scope",
-    "subjects": ["GO-2025-3553", "GO-2024-1111"],
+    "bom-ref": "kanonarion:licence-completeness",
+    "subjects": ["pkg:golang/github.com/example/mod@v1.0.0"],
     "annotator": { "component": { "type": "application", "name": "kanonarion" } },
-    "text": "Scope of this document's vulnerability list: ... Ask kanonarion ...: kanonarion reachability <module>@<version> --vuln <id>. ..."
+    "text": "Licence completeness of this document: 1 of the 19 component(s) inventoried here carry no licence identity ... It is not a statement that the component is unlicensed, and it must not be read as permission to use it: ..."
   }]
 }
 ```
 
-Three decisions are deliberate:
+The document's subject (`metadata.component`) is counted with everything it
+links. A subject with no licence — a binary built from a module with no
+`--main-license` and no fetched licence record — is the one component in a
+distributed document whose licensing would otherwise go uncounted.
 
-- **No VEX, and no per-advisory reachability property of any other shape.**
-  Reachability is a property of a call graph that improves as the graph improves.
-  A statement baked into the document freezes, at generation time, an answer the
-  store keeps revising — and strips it of the route, the analysis frame it was
-  computed in, and the soundness caveats that make it readable. That is exactly
-  the context-free verdict kanonarion exists to replace.
-- **It names where the answer lives.** `kanonarion reachability
-  <module>@<version> --vuln <id>` answers the question against the store, which
-  holds all of the above. "Not stated here" is a signpost, not a gap.
-- **A negative from that query is not a proven absence.** A call-graph analysis
-  that finds no route has not shown there is none — dynamic dispatch, reflection
-  and `linkname` all reach code no static edge records. The annotation says so,
-  and no kanonarion surface renders "not reachable" as proof.
-
-An `annotation` rather than a `metadata` property because metadata is where a
-reader looking at a vulnerability is not; the `subjects` link resolves from the
-entry itself.
+The same condition sets the command's non-zero exit; see
+[Licence completeness](#licence-completeness).
 
 ### What the document covers of a vendored tree
 
@@ -107,41 +134,6 @@ binary's import closure, so a reader can tell a deliberately narrower subject
 from a gap.
 
 The same statement is reported by [`kanonarion vendor`](vendor.md#scope-statement).
-
-### Retracted (withdrawn) advisories
-
-An advisory retracted upstream is **emitted, and marked** — not dropped:
-
-```json
-{
-  "id": "GO-2026-4923",
-  "description": "WITHDRAWN: out-of-range-index in go.etcd.io/bbolt",
-  "affects": [{ "ref": "pkg:golang/go.etcd.io/bbolt@v1.4.3" }],
-  "analysis": {
-    "state": "false_positive",
-    "detail": "advisory withdrawn upstream 2026-04-08T13:33:56Z; retained so its retraction is stated rather than inferred from absence"
-  }
-}
-```
-
-Withdrawal is the only thing `analysis` ever states in a kanonarion SBOM. It is a
-fact about the advisory — the upstream database retracted it, which is true for
-every consumer of it — rather than a claim about this particular build. See above
-for why reachability, which is the opposite kind of fact, gets no `analysis` block.
-
-Two properties of that entry are deliberate:
-
-- **`analysis.state` is `false_positive`.** CycloneDX has no `withdrawn` state, so
-  the reason and the date go in `detail`: a VEX consumer that routes only on `state`
-  still excludes it, and a human reader gets the attribution. Omitting the entry
-  entirely would be the quieter bug — the document would then be indistinguishable
-  from one produced before the advisory was ever published, and a consumer diffing
-  two SBOMs across the retraction would read the disappearance as a fix.
-- **No `ratings` block.** A rating claims how severely the advisory affects the
-  component, and a retracted advisory makes no such claim. Leaving one on meant a
-  consumer tallying severities across the document counted a report that does not
-  stand — and such a consumer need never read `analysis` to do that tally. Live
-  advisories carry `ratings` exactly as before.
 
 ### Standard-library chain of custody
 
@@ -202,10 +194,10 @@ re-run when `--force` is passed.
 | Flag | Default | Description |
 |---|---|---|
 | `--store-root` | `~/.kanonarion` | Path to fact store root (or `KANONARION_STORE` env var) |
-| `--scan <id>` | _(none)_ | Include vulnerabilities from this scan run ID |
 | `--format` | `cyclonedx-1.6` | SBOM format |
 | `--output <path>` | _(stdout)_ | Write SBOM content to a file |
 | `--force` | `false` | Re-generate even if a cached SBOM exists |
+| `--generated-at <time>` | _(derived)_ | RFC3339 time the document is being created; becomes `metadata.timestamp`. Omitted, the document is stamped with the newest licence extraction time among its inputs and says so. Supplying it bypasses the cache |
 | `--operator` | _(empty)_ | Identity of the operator requesting generation |
 | `--stdlib-from-gomod` | `false` | Version the `stdlib` component from the `go.mod` directive, not the live toolchain (applies when `sbom` builds a project walk, e.g. `--package`). See [Standard-library version](walk.md#standard-library-version---stdlib-from-gomod). |
 | `--package <pattern>` | _(none)_ | Go package pattern (e.g. `./cmd/foo`); scopes `components` to modules in that binary's import closure |
@@ -221,10 +213,10 @@ re-run when `--force` is passed.
 # Generate an SBOM and print to stdout
 kanonarion sbom 01KQDBVW092ER1HNXZ60X27CMD --store-root ~/.kanonarion
 
-# Generate with vulnerability data from a scan run
+# Date the document to now rather than to the licence extraction time
 kanonarion sbom 01KQDBVW092ER1HNXZ60X27CMD \
-  --scan vscan-01KQDBVW092ER1HNXZ60X27CMD-1234 \
-  --store-root ~/.kanonarion
+  --generated-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --output sbom.json
 
 # Write to a file
 kanonarion sbom 01KQDBVW092ER1HNXZ60X27CMD \
@@ -270,20 +262,37 @@ tool dependencies in `go.mod` should be excluded from the SBOM.
 
 ### Caching
 
-Generation is cached by `(walkID, scanRunID, format, pipelineVersion)`.
+Generation is cached by `(walkID, format, pipelineVersion)`.
 A second call with the same inputs is served from the store — a record read,
 measured at **48 ms** for a 128-module walk, rather than a regeneration.
-Use `--force` to bypass the cache. Scoped (`--package`) results are never
-cached.
+Use `--force` to bypass the cache. `--generated-at` also bypasses it. Scoped
+(`--package`) results are never cached.
 
 ### Licence completeness
 
-If licence data is missing for one or more modules, the SBOM is still
-generated — and still written when `--output` is given — but the command
-**exits non-zero** and reports `sbom generated with incomplete licence data`
-on stderr, and `LicensesIncomplete` is set in the stored record. The failure
-signal never goes to stdout, so it cannot corrupt a piped SBOM. An incomplete
-SBOM never exits zero, letting CI gate on it instead of publishing a
+A component carries no licence identity when no licence record was found for it,
+**or** when the record that was found identified no SPDX licence — no licence
+file at the module root, or files matching no known SPDX text. Both produce a
+component with no `licenses` block, and both count here; so does the document's
+subject (`metadata.component`), which `--main-license` supplies for a local main
+module.
+
+When any component is in that state the SBOM is still generated — and still
+written when `--output` is given — but the command **exits 1** and reports on
+stderr:
+
+```
+sbom generated with undetermined licences: 2 component(s) with no licence
+identity: github.com/dgryski/dgoogauth@v0.0.0-20190221195224-5a805980a5f3, ...
+```
+
+The components are named from the document that was written, so the message is
+the same whether the document was generated now or served from the cache.
+`LicensesIncomplete` is set in the stored record, and the document itself carries
+the `kanonarion:licence-completeness` annotation naming them.
+
+The failure signal never goes to stdout, so it cannot corrupt a piped SBOM. An
+incomplete SBOM never exits zero, letting CI gate on it instead of publishing a
 licence-less artefact.
 
 ---
@@ -355,17 +364,15 @@ kanonarion walk github.com/gin-gonic/gin@v1.9.1 --store-root ~/.kanonarion
 # 2. Extract licence data
 kanonarion extract --store-root ~/.kanonarion
 
-# 3. (Optional) Scan for vulnerabilities
-kanonarion vuln-scan <walk-id> --store-root ~/.kanonarion
-
-# 4. Generate SBOM (without vulnerabilities)
-kanonarion sbom <walk-id> --output sbom.json --store-root ~/.kanonarion
-
-# 5. Generate SBOM (with vulnerabilities)
+# 3. Generate the SBOM, dated to now
 kanonarion sbom <walk-id> \
-  --scan <scan-run-id> \
-  --output sbom-with-vulns.json \
+  --generated-at "$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  --output sbom.json \
   --store-root ~/.kanonarion
+
+# 4. Vulnerabilities are a separate question, asked of the store
+kanonarion vuln-scan <walk-id> --store-root ~/.kanonarion
+kanonarion vuln-show <walk-id> --store-root ~/.kanonarion
 ```
 
 ## Binary-scoped workflow

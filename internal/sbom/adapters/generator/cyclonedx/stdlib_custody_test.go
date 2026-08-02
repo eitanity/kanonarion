@@ -69,7 +69,7 @@ func walkWithStdlibCustody(t *testing.T) walkdomain.WalkRecord {
 
 func TestGenerate_StdlibCustodyChain(t *testing.T) {
 	gen := cyclonedx.New(testPipelineVersion)
-	rec, err := gen.Generate(t.Context(), walkWithStdlibCustody(t), nil, nil, makeGenReq(nil))
+	rec, err := gen.Generate(t.Context(), walkWithStdlibCustody(t), nil, makeGenReq())
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}

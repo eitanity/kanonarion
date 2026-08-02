@@ -4,10 +4,13 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"testing"
+	"time"
 
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
+	sbomdomain "github.com/eitanity/kanonarion/internal/sbom/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
@@ -173,6 +176,29 @@ func TestExitCodeContract_UnfiredGateIsNil(t *testing.T) {
 			t.Errorf("%s: an unfired gate must return nil, got %v", name, err)
 		}
 	}
+}
+
+// ---- class: the artefact was produced but is known-incomplete -> ExitPartial(1)
+
+// An SBOM whose components do not all carry a licence identity is written and
+// then fails. The document exists — a consumer can read what is missing — and the
+// exit code is what a release step branches on, so this code is the whole reason
+// a licence-less artefact cannot be published by a pipeline that checks it.
+func TestExitCodeContract_IncompleteArtefactIsPartial(t *testing.T) {
+	runExitCases(t, []exitCase{
+		{"sbom with a component carrying no licence identity", ExitPartial, func(t *testing.T) error {
+			ctr := &Container{GenerateSBOM: &testfakes.FakeGenerateSBOM{
+				Result: sbomdomain.SBOMRecord{
+					ID:                 "S1",
+					Content:            []byte(`{"components":[{"name":"example.com/mod","version":"v1.0.0"}]}`),
+					LicensesIncomplete: true,
+				},
+			}}
+			var stdout bytes.Buffer
+			return sbomGenerateWith(context.Background(), ctr, "W1", "", time.Time{},
+				"cyclonedx-1.6", "", false, false, false, "", "", "tester", "", &stdout, io.Discard)
+		}},
+	})
 }
 
 // ---- class: the invocation was wrong -> ExitConfig(20) --------------------

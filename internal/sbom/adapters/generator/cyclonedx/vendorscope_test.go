@@ -7,9 +7,37 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
 	"github.com/eitanity/kanonarion/internal/sbom/adapters/generator/cyclonedx"
 	vendordomain "github.com/eitanity/kanonarion/internal/vendortree/domain"
 )
+
+// licensedEverything gives every supplied coordinate, and the walk target these
+// fixtures share, an identified licence.
+func licensedEverything(t *testing.T, coords ...coordinate.ModuleCoordinate) map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord {
+	t.Helper()
+	licenses := make(map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord, len(coords))
+	for _, c := range coords {
+		licenses[c] = licensedomain.LicenseRecord{PrimarySPDX: "MIT", ExtractedAt: mustTime("2026-03-02T11:00:00Z")}
+	}
+	return licenses
+}
+
+// scopeBOM is the slice of a generated document these tests read: the
+// annotations it carries and their annotator.
+type scopeBOM struct {
+	Annotations []struct {
+		BOMRef    string   `json:"bom-ref"`
+		Subjects  []string `json:"subjects"`
+		Timestamp string   `json:"timestamp"`
+		Text      string   `json:"text"`
+		Annotator struct {
+			Component struct {
+				Name string `json:"name"`
+			} `json:"component"`
+		} `json:"annotator"`
+	} `json:"annotations"`
+}
 
 // generateWithVendorScope renders a document carrying the supplied scope
 // statement and returns the annotations it emitted.
@@ -24,11 +52,14 @@ func generateWithVendorScopeScoped(t *testing.T, scope vendordomain.VendorScope,
 	t.Helper()
 	coord := mustCoord(t, "github.com/example/foo", "v1.0.0")
 	walk := makeWalk(t, []coordinate.ModuleCoordinate{coord})
-	req := makeGenReq(nil)
+	req := makeGenReq()
 	req.VendorScope = &scope
 	req.ComponentsScopedToBinary = scopedToBinary
+	// Fully licensed, so these fixtures isolate the vendor-scope statement from
+	// the licence-completeness one.
+	licenses := licensedEverything(t, coord)
 
-	rec, err := cyclonedx.New(testPipelineVersion).Generate(t.Context(), walk, nil, nil, req)
+	rec, err := cyclonedx.New(testPipelineVersion).Generate(t.Context(), walk, licenses, req)
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -89,7 +120,7 @@ func TestGenerate_NoVendorTreeNoScopeAnnotation(t *testing.T) {
 	coord := mustCoord(t, "github.com/example/foo", "v1.0.0")
 	walk := makeWalk(t, []coordinate.ModuleCoordinate{coord})
 
-	rec, err := cyclonedx.New(testPipelineVersion).Generate(t.Context(), walk, nil, nil, makeGenReq(nil))
+	rec, err := cyclonedx.New(testPipelineVersion).Generate(t.Context(), walk, licensedEverything(t, coord), makeGenReq())
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -98,7 +129,7 @@ func TestGenerate_NoVendorTreeNoScopeAnnotation(t *testing.T) {
 		t.Fatalf("unmarshal bom: %v", err)
 	}
 	if len(bom.Annotations) != 0 {
-		t.Errorf("annotations emitted with no vendored tree and no advisories: %+v", bom.Annotations)
+		t.Errorf("annotations emitted with no vendored tree and nothing undetermined: %+v", bom.Annotations)
 	}
 }
 
@@ -172,5 +203,30 @@ func TestGenerate_VendorScopeNamesABinaryScopedComponentList(t *testing.T) {
 	_, whole := generateWithVendorScopeScoped(t, scope, false)
 	if strings.Contains(whole.Annotations[0].Text, "scoped to a single binary") {
 		t.Errorf("a whole-build document claims a binary scope it does not have:\n%s", whole.Annotations[0].Text)
+	}
+}
+
+// Every annotation this generator emits must carry the four fields CycloneDX 1.6
+// requires of one — subjects, annotator, timestamp and text. A statement about
+// the document that names no subject is not a valid annotation, and a document
+// that carries one does not validate against the schema it declares.
+func TestGenerate_EveryAnnotationCarriesItsRequiredFields(t *testing.T) {
+	_, bom := generateWithVendorScope(t, vendordomain.VendorScope{TreeModules: 4, Covered: 4})
+	if len(bom.Annotations) == 0 {
+		t.Fatal("no annotations emitted; this test measures nothing")
+	}
+	for _, a := range bom.Annotations {
+		if len(a.Subjects) == 0 {
+			t.Errorf("annotation %q names no subjects", a.BOMRef)
+		}
+		if a.Annotator.Component.Name == "" {
+			t.Errorf("annotation %q names no annotator", a.BOMRef)
+		}
+		if a.Timestamp == "" {
+			t.Errorf("annotation %q carries no timestamp", a.BOMRef)
+		}
+		if a.Text == "" {
+			t.Errorf("annotation %q carries no text", a.BOMRef)
+		}
 	}
 }

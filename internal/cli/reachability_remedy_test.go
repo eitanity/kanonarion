@@ -7,7 +7,6 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
-	"github.com/eitanity/kanonarion/internal/sbom/adapters/generator/cyclonedx"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 )
 
@@ -234,17 +233,5 @@ func TestVulnReachability_AdvisoryNamesNoSymbols_NamesTheAbsentTarget(t *testing
 		if !strings.Contains(msg, want) {
 			t.Errorf("refusal missing %q:\n%s", want, msg)
 		}
-	}
-}
-
-// The SBOM does not state whether an advisory is reachable; it names the query
-// that does. That command line leaves this codebase inside a published document,
-// where a reader who follows it verbatim has no way to ask what went wrong — so
-// it is held to the same contract as every remedy line the CLI prints, and
-// parsed here by the CLI's own argument parser.
-func TestSBOMScopeStatement_NamesACommandTheParserAccepts(t *testing.T) {
-	if err := parseInvocation(t, cyclonedx.ReachabilityQueryInvocation); err != nil {
-		t.Errorf("the SBOM's reachability query %q is rejected by the CLI's own parser: %v",
-			cyclonedx.ReachabilityQueryInvocation, err)
 	}
 }

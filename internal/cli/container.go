@@ -501,12 +501,16 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	diffScanRunsUC := vulnapp.NewDiffScanRunsUseCase(vulnStore)
 
 	// ---- sbom use cases ----
-	// 0.6.0 adds the vendor scope statement to a document generated over a
-	// project-rooted walk: the document bytes change, so a 0.5.0 record must
-	// not be served for a 0.6.0 request.
-	const sbomPipelineVersion = "0.6.0"
+	// 0.7.0 drops the vulnerability list and its scope annotation, adds the
+	// licence-completeness annotation and the metadata properties stating what
+	// the document's timestamp is derived from. The document bytes change on
+	// every one of those, so a 0.6.0 record must not be served for a 0.7.0
+	// request. The version bump is the whole migration: SBOM records are a cache
+	// keyed on it, so every stored document of the previous shape simply stops
+	// being reachable and is regenerated on demand.
+	const sbomPipelineVersion = "0.7.0"
 	generateSBOMUC := sbomapp.NewGenerateSBOMUseCase(
-		walkStore, licStore, vulnStore, sbomStore,
+		walkStore, licStore, sbomStore,
 		sbomcdx.New(sbomPipelineVersion),
 		clk, sbomPipelineVersion, licapp.PipelineVersion, logger,
 	).WithVendorTree(sbomvendortree.New(venlocalfs.New(nil)))

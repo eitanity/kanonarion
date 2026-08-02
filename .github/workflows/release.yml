@@ -181,9 +181,16 @@ jobs:
           # project walk under the current GOOS/GOARCH so walk and allow-list agree.
           #
           # 'sbom --package' bootstraps its own prerequisites (project walk +
-          # licence extraction) and exits non-zero if any linked module has no
-          # licence record, so 'set -e' gates the release on complete licensing
-          # per target rather than publishing a licence-less artefact.
+          # licence extraction) and exits non-zero if any component of the
+          # document — the linked modules and the released binary itself —
+          # carries no licence identity, so 'set -e' gates the release on
+          # complete licensing per target rather than publishing an artefact
+          # whose licensing is undetermined.
+          #
+          # Every target is stamped with one creation time, taken once here, so
+          # the seven documents of a release agree on when the release evidence
+          # was produced and each re-emits byte-identically from it.
+          SBOM_CREATED_AT=$(date -u +%Y-%m-%dT%H:%M:%SZ)
           for t in darwin/amd64 darwin/arm64 windows/amd64 windows/arm64 linux/amd64 linux/arm64 linux/arm; do
             os=${t%/*}; arch=${t#*/}
             echo "sbom for $t"
@@ -206,6 +213,7 @@ jobs:
               --stdlib-from-gomod \
               --main-version "${VERSION}" \
               --main-license Apache-2.0 \
+              --generated-at "${SBOM_CREATED_AT}" \
               --format cyclonedx-1.6 \
               --output "dist/kanonarion-${VERSION}-${os}-${arch}.cdx.json"
           done

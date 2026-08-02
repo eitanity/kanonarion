@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
 	sbomdomain "github.com/eitanity/kanonarion/internal/sbom/domain"
@@ -20,7 +21,7 @@ func TestSBOMGenerateWith_Stdout(t *testing.T) {
 		Result: sbomdomain.SBOMRecord{ID: "S1", Content: []byte("<bom/>")},
 	}}
 	var stdout bytes.Buffer
-	err := sbomGenerateWith(context.Background(), ctr, "W1", "", nil, "cyclonedx-json", "", false, false, false, "", "", "tester", "", &stdout, io.Discard)
+	err := sbomGenerateWith(context.Background(), ctr, "W1", "", time.Time{}, "cyclonedx-json", "", false, false, false, "", "", "tester", "", &stdout, io.Discard)
 	if err != nil {
 		t.Fatalf("sbomGenerateWith: %v", err)
 	}
@@ -37,7 +38,7 @@ func TestSBOMGenerateWith_MainComponentFlagsPropagate(t *testing.T) {
 	}
 	ctr := &Container{GenerateSBOM: fake}
 	var stdout bytes.Buffer
-	err := sbomGenerateWith(context.Background(), ctr, "W1", "", nil, "cyclonedx-json", "", false, false, false, "v9.9.9", "Apache-2.0", "tester", "", &stdout, io.Discard)
+	err := sbomGenerateWith(context.Background(), ctr, "W1", "", time.Time{}, "cyclonedx-json", "", false, false, false, "v9.9.9", "Apache-2.0", "tester", "", &stdout, io.Discard)
 	if err != nil {
 		t.Fatalf("sbomGenerateWith: %v", err)
 	}
@@ -63,7 +64,7 @@ func TestSBOMGenerateWith_FileOutputComplete(t *testing.T) {
 		},
 	}}
 	var stdout bytes.Buffer
-	err := sbomGenerateWith(context.Background(), ctr, "W1", "", nil, "cyclonedx-json", dst, false, false, false, "", "", "tester", "", &stdout, io.Discard)
+	err := sbomGenerateWith(context.Background(), ctr, "W1", "", time.Time{}, "cyclonedx-json", dst, false, false, false, "", "", "tester", "", &stdout, io.Discard)
 	if err != nil {
 		t.Fatalf("sbomGenerateWith: %v", err)
 	}
@@ -93,7 +94,7 @@ func TestSBOMGenerateWith_FileOutputIncompleteLicencesFailsLoud(t *testing.T) {
 		},
 	}}
 	var stdout bytes.Buffer
-	err := sbomGenerateWith(context.Background(), ctr, "W1", "", nil, "cyclonedx-json", dst, false, false, false, "", "", "tester", "", &stdout, io.Discard)
+	err := sbomGenerateWith(context.Background(), ctr, "W1", "", time.Time{}, "cyclonedx-json", dst, false, false, false, "", "", "tester", "", &stdout, io.Discard)
 	assertIncompleteLicenceExit(t, err)
 
 	got, rerr := os.ReadFile(dst) // #nosec G304 -- dst is a test-controlled t.TempDir() path
@@ -109,8 +110,8 @@ func TestSBOMGenerateWith_FileOutputIncompleteLicencesFailsLoud(t *testing.T) {
 	}
 	// The failure signal must never land on stdout — that carries the SBOM
 	// confirmation and, on the bare path, the SBOM bytes.
-	if strings.Contains(out, "incomplete licence data") {
-		t.Errorf("incomplete-licence signal must not be on stdout, got: %q", out)
+	if strings.Contains(out, "undetermined licence") {
+		t.Errorf("undetermined-licence signal must not be on stdout, got: %q", out)
 	}
 }
 
@@ -126,7 +127,7 @@ func TestSBOMGenerateWith_StdoutIncompleteLicencesFailsLoud(t *testing.T) {
 		},
 	}}
 	var stdout bytes.Buffer
-	err := sbomGenerateWith(context.Background(), ctr, "W1", "", nil, "cyclonedx-json", "", false, false, false, "", "", "tester", "", &stdout, io.Discard)
+	err := sbomGenerateWith(context.Background(), ctr, "W1", "", time.Time{}, "cyclonedx-json", "", false, false, false, "", "", "tester", "", &stdout, io.Discard)
 	assertIncompleteLicenceExit(t, err)
 
 	if stdout.String() != "<bom/>" {
@@ -138,7 +139,7 @@ func TestSBOMGenerateWith_StdoutIncompleteLicencesFailsLoud(t *testing.T) {
 func TestSBOMGenerateWith_GenerateError(t *testing.T) {
 	ctr := &Container{GenerateSBOM: &testfakes.FakeGenerateSBOM{Err: errors.New("boom")}}
 	var stdout bytes.Buffer
-	err := sbomGenerateWith(context.Background(), ctr, "W1", "", nil, "cyclonedx-json", "", false, false, false, "", "", "tester", "", &stdout, io.Discard)
+	err := sbomGenerateWith(context.Background(), ctr, "W1", "", time.Time{}, "cyclonedx-json", "", false, false, false, "", "", "tester", "", &stdout, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "generating sbom") {
 		t.Fatalf("want wrapped generation error, got: %v", err)
 	}
@@ -152,7 +153,7 @@ func TestSBOMGenerateWith_FileWriteError(t *testing.T) {
 		Result: sbomdomain.SBOMRecord{ID: "S1", Content: []byte("<bom/>")},
 	}}
 	var stdout bytes.Buffer
-	err := sbomGenerateWith(context.Background(), ctr, "W1", "", nil, "cyclonedx-json", dst, false, false, false, "", "", "tester", "", &stdout, io.Discard)
+	err := sbomGenerateWith(context.Background(), ctr, "W1", "", time.Time{}, "cyclonedx-json", dst, false, false, false, "", "", "tester", "", &stdout, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "writing SBOM to") {
 		t.Fatalf("want file-write error, got: %v", err)
 	}
@@ -168,9 +169,87 @@ func TestSBOMGenerateWith_StdoutWriteError(t *testing.T) {
 	ctr := &Container{GenerateSBOM: &testfakes.FakeGenerateSBOM{
 		Result: sbomdomain.SBOMRecord{ID: "S1", Content: []byte("<bom/>")},
 	}}
-	err := sbomGenerateWith(context.Background(), ctr, "W1", "", nil, "cyclonedx-json", "", false, false, false, "", "", "tester", "", failWriter{}, io.Discard)
+	err := sbomGenerateWith(context.Background(), ctr, "W1", "", time.Time{}, "cyclonedx-json", "", false, false, false, "", "", "tester", "", failWriter{}, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "writing sbom to stdout") {
 		t.Fatalf("want stdout write error, got: %v", err)
+	}
+}
+
+// A document whose components carry no licences block is named in the failure
+// message, component by component, so the operator learns which they are without
+// opening the artefact. The names come from the document, so the message says the
+// same thing for a cached document as for a freshly generated one.
+func TestSBOMGenerateWith_UndeterminedLicencesAreNamed(t *testing.T) {
+	doc := `{"metadata":{"component":{"name":"github.com/example/app","version":"local"}},` +
+		`"components":[` +
+		`{"name":"github.com/example/licensed","version":"v1.0.0","licenses":[{"license":{"id":"MIT"}}]},` +
+		`{"name":"github.com/example/unclassified","version":"v0.0.1"}]}`
+	ctr := &Container{GenerateSBOM: &testfakes.FakeGenerateSBOM{
+		Result: sbomdomain.SBOMRecord{
+			ID:                 "S1",
+			Content:            []byte(doc),
+			LicensesIncomplete: true,
+		},
+	}}
+	var stdout bytes.Buffer
+	err := sbomGenerateWith(context.Background(), ctr, "W1", "", time.Time{}, "cyclonedx-json", "", false, false, false, "", "", "tester", "", &stdout, io.Discard)
+	assertIncompleteLicenceExit(t, err)
+	msg := err.Error()
+	for _, want := range []string{
+		"2 component(s)",
+		"github.com/example/app@local (the document's subject)",
+		"github.com/example/unclassified@v0.0.1",
+	} {
+		if !strings.Contains(msg, want) {
+			t.Errorf("failure message missing %q:\n%s", want, msg)
+		}
+	}
+	if strings.Contains(msg, "github.com/example/licensed") {
+		t.Errorf("a licensed component must not be named as undetermined:\n%s", msg)
+	}
+}
+
+// A document this process cannot re-read still fails, and says why it cannot name
+// the components rather than reporting a clean run or none.
+func TestSBOMGenerateWith_UnreadableDocumentStillFailsAndSaysSo(t *testing.T) {
+	ctr := &Container{GenerateSBOM: &testfakes.FakeGenerateSBOM{
+		Result: sbomdomain.SBOMRecord{ID: "S1", Content: []byte("<bom/>"), LicensesIncomplete: true},
+	}}
+	var stdout bytes.Buffer
+	err := sbomGenerateWith(context.Background(), ctr, "W1", "", time.Time{}, "cyclonedx-json", "", false, false, false, "", "", "tester", "", &stdout, io.Discard)
+	assertIncompleteLicenceExit(t, err)
+	if !strings.Contains(err.Error(), "could not be re-read") {
+		t.Errorf("want the message to state it could not name them, got: %v", err)
+	}
+}
+
+// --generated-at is the caller's document-creation clock; it must reach the
+// request, and an unparseable value must be refused rather than silently
+// dropped back to the derived timestamp.
+func TestSBOMGeneratedAtFlag_ParsesAndPropagates(t *testing.T) {
+	want := time.Date(2026, 1, 31, 9, 0, 0, 0, time.UTC)
+	got, err := parseGeneratedAt("2026-01-31T09:00:00Z")
+	if err != nil {
+		t.Fatalf("parseGeneratedAt: %v", err)
+	}
+	if !got.Equal(want) {
+		t.Errorf("parseGeneratedAt = %s, want %s", got, want)
+	}
+	if zero, zerr := parseGeneratedAt(""); zerr != nil || !zero.IsZero() {
+		t.Errorf("empty --generated-at = (%s, %v), want (zero, nil)", zero, zerr)
+	}
+	if _, berr := parseGeneratedAt("yesterday"); berr == nil {
+		t.Error("want a refusal for an unparseable --generated-at, got none")
+	}
+
+	fake := &testfakes.FakeGenerateSBOM{Result: sbomdomain.SBOMRecord{ID: "S1", Content: []byte("<bom/>")}}
+	ctr := &Container{GenerateSBOM: fake}
+	var stdout bytes.Buffer
+	if err := sbomGenerateWith(context.Background(), ctr, "W1", "", want, "cyclonedx-json", "", false, false, false, "", "", "tester", "", &stdout, io.Discard); err != nil {
+		t.Fatalf("sbomGenerateWith: %v", err)
+	}
+	if !fake.LastRequest.GeneratedAt.Equal(want) {
+		t.Errorf("SBOMRequest.GeneratedAt = %s, want %s", fake.LastRequest.GeneratedAt, want)
 	}
 }
 

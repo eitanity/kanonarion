@@ -147,7 +147,7 @@ and repeated in that command's `--help`.
 | Code | Name | Meaning |
 |---|---|---|
 | 0 | OK | Success |
-| 1 | Partial | The work completed but is known-incomplete: walk partial, or an SBOM generated with incomplete licence data |
+| 1 | Partial | The work completed but is known-incomplete: walk partial, or an SBOM generated with one or more components carrying no licence identity |
 | 2 | Failed | The work could not complete: walk failed, or `license-compat` found unmodelled licence pairs needing review |
 | 3 | Cancelled | The context was cancelled before the work completed |
 | 4 | NotFound | A record requested by ID or coordinate does not exist. The message names the command that produces it |
@@ -165,7 +165,7 @@ the invocation itself was wrong.
 
 | Code | Commands |
 |---|---|
-| 1 | `walk`, `inspect` (partial closure); `sbom` (incomplete licence data — the document IS still written); `license-compat` (confirmed incompatible pairs) |
+| 1 | `walk`, `inspect` (partial closure); `sbom` (a component with no licence identity — the document IS still written and names it); `license-compat` (confirmed incompatible pairs) |
 | 2 | `walk`, `inspect` (target unfetchable); `license-compat` (unknown pairs, never silently "compatible"); `license-compat` (root has a licence record but no SPDX identity) |
 | 4 | `walk-show`, `walk-list --walk-id`, `walk-diff`, `dependents`, `context --walk-id`, `verification-coverage`, `vuln-show`, `vuln --history`, `scan-show`, `snapshot-show`, `vuln-scan --snapshot`, `reachability --vuln`, `callgraph-show`, `interface-show`, `interface-list`, `examples-show`, `examples-list`, `license`, `license-compat`, `license-diff`, `directives-show`, `directives-diff`, `use` |
 | 5 | `audit` (unknown licence blocked by policy), `directives`, `godebug`, `vendor`, `fips`, `notice` (modules require human review) |

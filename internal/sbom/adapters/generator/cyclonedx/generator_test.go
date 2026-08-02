@@ -16,7 +16,6 @@ import (
 	"github.com/eitanity/kanonarion/internal/sbom/ports"
 
 	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
-	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
@@ -52,9 +51,8 @@ func makeWalk(t *testing.T, nodes []coordinate.ModuleCoordinate) walkdomain.Walk
 	}
 }
 
-func makeGenReq(scanRunID *string) ports.GenerateRequest {
+func makeGenReq() ports.GenerateRequest {
 	return ports.GenerateRequest{
-		WalkScanRunID:   scanRunID,
 		Format:          domain.CycloneDX16,
 		PipelineVersion: testPipelineVersion,
 		Operator:        "test",
@@ -67,7 +65,7 @@ func TestGenerateOneModule(t *testing.T) {
 	walk := makeWalk(t, []coordinate.ModuleCoordinate{coord})
 	gen := cyclonedx.New(testPipelineVersion)
 
-	rec, err := gen.Generate(t.Context(), walk, nil, nil, makeGenReq(nil))
+	rec, err := gen.Generate(t.Context(), walk, nil, makeGenReq())
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -95,7 +93,7 @@ func TestComponentsSortedByPURL(t *testing.T) {
 	walk := makeWalk(t, coords)
 	gen := cyclonedx.New(testPipelineVersion)
 
-	rec, err := gen.Generate(t.Context(), walk, nil, nil, makeGenReq(nil))
+	rec, err := gen.Generate(t.Context(), walk, nil, makeGenReq())
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -116,47 +114,6 @@ func TestComponentsSortedByPURL(t *testing.T) {
 	}
 }
 
-// TestVulnerabilitiesSortedByID verifies vulnerabilities are sorted by ID.
-func TestVulnerabilitiesSortedByID(t *testing.T) {
-	coord := mustCoord(t, "github.com/example/foo", "v1.0.0")
-	walk := makeWalk(t, []coordinate.ModuleCoordinate{coord})
-
-	vulnRecords := []vulndomain.VulnerabilityRecord{
-		{
-			Coordinate: coord,
-			Findings: []vulndomain.VulnerabilityFinding{
-				{ID: "GHSA-zzz-zzz-zzz", Summary: "last"},
-				{ID: "GHSA-aaa-aaa-aaa", Summary: "first"},
-				{ID: "GHSA-mmm-mmm-mmm", Summary: "middle"},
-			},
-		},
-	}
-
-	gen := cyclonedx.New(testPipelineVersion)
-	rec, err := gen.Generate(t.Context(), walk, nil, vulnRecords, makeGenReq(nil))
-	if err != nil {
-		t.Fatalf("Generate: %v", err)
-	}
-
-	var bom map[string]any
-	if err := json.Unmarshal(rec.Content, &bom); err != nil {
-		t.Fatalf("unmarshal bom: %v", err)
-	}
-	vulns, ok := bom["vulnerabilities"].([]any)
-	if !ok {
-		t.Fatal("expected vulnerabilities array")
-	}
-	ids := make([]string, len(vulns))
-	for i, v := range vulns {
-		ids[i] = v.(map[string]any)["id"].(string)
-	}
-	for i := 1; i < len(ids); i++ {
-		if ids[i] < ids[i-1] {
-			t.Errorf("vulnerabilities not sorted: %q before %q", ids[i-1], ids[i])
-		}
-	}
-}
-
 // TestDeterminism verifies that two generations from the same inputs produce byte-identical SBOMs.
 func TestDeterminism(t *testing.T) {
 	coord := mustCoord(t, "github.com/example/foo", "v1.0.0")
@@ -165,13 +122,13 @@ func TestDeterminism(t *testing.T) {
 		coord: {PrimarySPDX: "MIT", ExtractedAt: time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)},
 	}
 	gen := cyclonedx.New(testPipelineVersion)
-	req := makeGenReq(nil)
+	req := makeGenReq()
 
-	rec1, err := gen.Generate(context.Background(), walk, licenses, nil, req)
+	rec1, err := gen.Generate(context.Background(), walk, licenses, req)
 	if err != nil {
 		t.Fatalf("Generate 1: %v", err)
 	}
-	rec2, err := gen.Generate(context.Background(), walk, licenses, nil, req)
+	rec2, err := gen.Generate(context.Background(), walk, licenses, req)
 	if err != nil {
 		t.Fatalf("Generate 2: %v", err)
 	}
@@ -187,14 +144,15 @@ func TestDeterminism(t *testing.T) {
 	}
 }
 
-// TestMissingLicenseIncomplete verifies that a module without licence data sets LicensesIncomplete.
+// A module with no licence record at all leaves the document with no licences
+// block for it, which is incomplete licensing.
 func TestMissingLicenseIncomplete(t *testing.T) {
 	coord := mustCoord(t, "github.com/example/foo", "v1.0.0")
 	walk := makeWalk(t, []coordinate.ModuleCoordinate{coord})
 	gen := cyclonedx.New(testPipelineVersion)
 
 	// No licenses provided.
-	rec, err := gen.Generate(t.Context(), walk, nil, nil, makeGenReq(nil))
+	rec, err := gen.Generate(t.Context(), walk, nil, makeGenReq())
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -212,7 +170,7 @@ func TestWithLicenseComplete(t *testing.T) {
 	}
 	gen := cyclonedx.New(testPipelineVersion)
 
-	rec, err := gen.Generate(t.Context(), walk, licenses, nil, makeGenReq(nil))
+	rec, err := gen.Generate(t.Context(), walk, licenses, makeGenReq())
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -227,7 +185,7 @@ func TestValidCycloneDXStructure(t *testing.T) {
 	walk := makeWalk(t, []coordinate.ModuleCoordinate{coord})
 	gen := cyclonedx.New(testPipelineVersion)
 
-	rec, err := gen.Generate(t.Context(), walk, nil, nil, makeGenReq(nil))
+	rec, err := gen.Generate(t.Context(), walk, nil, makeGenReq())
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -250,43 +208,6 @@ func TestValidCycloneDXStructure(t *testing.T) {
 	}
 }
 
-// TestWithAndWithoutVulnsOnlyDifferInVulnerabilities verifies that two SBOMs for the same walk
-// differ only in the vulnerabilities array.
-func TestWithAndWithoutVulnsOnlyDifferInVulnerabilities(t *testing.T) {
-	coord := mustCoord(t, "github.com/example/foo", "v1.0.0")
-	walk := makeWalk(t, []coordinate.ModuleCoordinate{coord})
-	gen := cyclonedx.New(testPipelineVersion)
-
-	recNoVulns, err := gen.Generate(t.Context(), walk, nil, nil, makeGenReq(nil))
-	if err != nil {
-		t.Fatalf("Generate (no vulns): %v", err)
-	}
-
-	scanRunID := "scan-001"
-	vulnRecords := []vulndomain.VulnerabilityRecord{
-		{Coordinate: coord, Findings: []vulndomain.VulnerabilityFinding{{ID: "GHSA-aaa-aaa-aaa", Summary: "test"}}},
-	}
-	recWithVulns, err := gen.Generate(t.Context(), walk, nil, vulnRecords, makeGenReq(&scanRunID))
-	if err != nil {
-		t.Fatalf("Generate (with vulns): %v", err)
-	}
-
-	var bomNoVulns, bomWithVulns map[string]any
-	if err := json.Unmarshal(recNoVulns.Content, &bomNoVulns); err != nil {
-		t.Fatalf("unmarshal no-vulns bom: %v", err)
-	}
-	if err := json.Unmarshal(recWithVulns.Content, &bomWithVulns); err != nil {
-		t.Fatalf("unmarshal with-vulns bom: %v", err)
-	}
-
-	if _, hasVulns := bomNoVulns["vulnerabilities"]; hasVulns {
-		t.Error("expected no vulnerabilities field in SBOM without scan run")
-	}
-	if _, hasVulns := bomWithVulns["vulnerabilities"]; !hasVulns {
-		t.Error("expected vulnerabilities field in SBOM with scan run")
-	}
-}
-
 // TestEmptyWalkTimestampFallback verifies that an empty/failed-target walk
 // (zero Graph.ResolvedAt, no licences) gets a non-zero GeneratedAt sourced
 // from the walk's own clock-injected timestamps.
@@ -306,7 +227,7 @@ func TestEmptyWalkTimestampFallback(t *testing.T) {
 	}
 	gen := cyclonedx.New(testPipelineVersion)
 
-	rec, err := gen.Generate(t.Context(), walk, nil, nil, makeGenReq(nil))
+	rec, err := gen.Generate(t.Context(), walk, nil, makeGenReq())
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -326,42 +247,6 @@ func TestGeneratorMetadata(t *testing.T) {
 	}
 	if meta.Version != testPipelineVersion {
 		t.Errorf("GeneratorMetadata().Version = %q, want %q", meta.Version, testPipelineVersion)
-	}
-}
-
-func TestMapSeverity_ViaGenerate(t *testing.T) {
-	coord := mustCoord(t, "github.com/example/severity", "v1.0.0")
-	walk := makeWalk(t, []coordinate.ModuleCoordinate{coord})
-
-	sev := func(label string) *vulndomain.Severity { return &vulndomain.Severity{Label: label, Score: 9.0} }
-
-	vulnRecords := []vulndomain.VulnerabilityRecord{
-		{
-			Coordinate: coord,
-			Findings: []vulndomain.VulnerabilityFinding{
-				{ID: "GHSA-crit", Summary: "critical", Severity: sev("CRITICAL")},
-				{ID: "GHSA-high", Summary: "high", Severity: sev("HIGH")},
-				{ID: "GHSA-med", Summary: "medium", Severity: sev("MEDIUM")},
-				{ID: "GHSA-low", Summary: "low", Severity: sev("LOW")},
-				{ID: "GHSA-unk", Summary: "unknown label", Severity: sev("NONE")},
-				{ID: "GHSA-nil", Summary: "nil severity"},
-			},
-		},
-	}
-
-	gen := cyclonedx.New(testPipelineVersion)
-	rec, err := gen.Generate(t.Context(), walk, nil, vulnRecords, makeGenReq(nil))
-	if err != nil {
-		t.Fatalf("Generate: %v", err)
-	}
-
-	var bom map[string]any
-	if err := json.Unmarshal(rec.Content, &bom); err != nil {
-		t.Fatalf("unmarshal bom: %v", err)
-	}
-	vulns, ok := bom["vulnerabilities"].([]any)
-	if !ok || len(vulns) == 0 {
-		t.Fatal("expected non-empty vulnerabilities array")
 	}
 }
 
@@ -395,7 +280,7 @@ func TestCopyrightField(t *testing.T) {
 	}
 
 	gen := cyclonedx.New(testPipelineVersion)
-	rec, err := gen.Generate(t.Context(), walk, licenses, nil, makeGenReq(nil))
+	rec, err := gen.Generate(t.Context(), walk, licenses, makeGenReq())
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -455,7 +340,7 @@ func TestCopyrightDeduplicates(t *testing.T) {
 	}
 
 	gen := cyclonedx.New(testPipelineVersion)
-	rec, err := gen.Generate(t.Context(), walk, licenses, nil, makeGenReq(nil))
+	rec, err := gen.Generate(t.Context(), walk, licenses, makeGenReq())
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -495,13 +380,13 @@ func TestCopyrightDeterminism(t *testing.T) {
 		},
 	}
 	gen := cyclonedx.New(testPipelineVersion)
-	req := makeGenReq(nil)
+	req := makeGenReq()
 
-	rec1, err := gen.Generate(t.Context(), walk, licenses, nil, req)
+	rec1, err := gen.Generate(t.Context(), walk, licenses, req)
 	if err != nil {
 		t.Fatalf("Generate 1: %v", err)
 	}
-	rec2, err := gen.Generate(t.Context(), walk, licenses, nil, req)
+	rec2, err := gen.Generate(t.Context(), walk, licenses, req)
 	if err != nil {
 		t.Fatalf("Generate 2: %v", err)
 	}
@@ -522,7 +407,7 @@ func TestAllComponentsHaveGoPURL(t *testing.T) {
 	walk := makeWalk(t, coords)
 	gen := cyclonedx.New(testPipelineVersion)
 
-	rec, err := gen.Generate(t.Context(), walk, nil, nil, makeGenReq(nil))
+	rec, err := gen.Generate(t.Context(), walk, nil, makeGenReq())
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -562,7 +447,7 @@ func TestComponentsHaveEcosystemProperty(t *testing.T) {
 	walk := makeWalk(t, coords)
 	gen := cyclonedx.New(testPipelineVersion)
 
-	rec, err := gen.Generate(t.Context(), walk, nil, nil, makeGenReq(nil))
+	rec, err := gen.Generate(t.Context(), walk, nil, makeGenReq())
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -624,7 +509,7 @@ func TestProjectWalkSubjectIsLocalModule(t *testing.T) {
 	walk := makeWalk(t, coords)
 	gen := cyclonedx.New(testPipelineVersion)
 
-	rec, err := gen.Generate(t.Context(), walk, nil, nil, makeGenReq(nil))
+	rec, err := gen.Generate(t.Context(), walk, nil, makeGenReq())
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -677,11 +562,11 @@ func TestMainComponentOverrides(t *testing.T) {
 	walk := makeWalk(t, []coordinate.ModuleCoordinate{mainModule})
 	gen := cyclonedx.New(testPipelineVersion)
 
-	req := makeGenReq(nil)
+	req := makeGenReq()
 	req.MainComponentVersion = "v1.2.3"
 	req.MainComponentLicense = "Apache-2.0"
 
-	rec, err := gen.Generate(t.Context(), walk, nil, nil, req)
+	rec, err := gen.Generate(t.Context(), walk, nil, req)
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -737,11 +622,11 @@ func TestMainComponentOverridesIgnoredForPublishedTarget(t *testing.T) {
 	walk := makeWalk(t, []coordinate.ModuleCoordinate{target})
 	gen := cyclonedx.New(testPipelineVersion)
 
-	req := makeGenReq(nil)
+	req := makeGenReq()
 	req.MainComponentVersion = "v9.9.9"
 	req.MainComponentLicense = "MIT"
 
-	rec, err := gen.Generate(t.Context(), walk, nil, nil, req)
+	rec, err := gen.Generate(t.Context(), walk, nil, req)
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -756,5 +641,154 @@ func TestMainComponentOverridesIgnoredForPublishedTarget(t *testing.T) {
 	}
 	if primary["type"] != "library" {
 		t.Errorf("type = %v, want library (override must not apply)", primary["type"])
+	}
+}
+
+// The document carries no vulnerability list under any request. It is an
+// inventory of components and their identity, hashes and licences; an advisory
+// list frozen into a distributed artefact ages against a store whose answer
+// keeps improving, and kanonarion supplies evidence for an assertion rather than
+// authoring one.
+func TestGenerate_NeverEmitsAVulnerabilityList(t *testing.T) {
+	coord := mustCoord(t, "github.com/example/foo", "v1.0.0")
+	walk := makeWalk(t, []coordinate.ModuleCoordinate{coord})
+	rec, err := cyclonedx.New(testPipelineVersion).Generate(t.Context(), walk, nil, makeGenReq())
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	var bom map[string]any
+	if err := json.Unmarshal(rec.Content, &bom); err != nil {
+		t.Fatalf("unmarshal bom: %v", err)
+	}
+	if _, has := bom["vulnerabilities"]; has {
+		t.Error("the document carries a vulnerabilities array")
+	}
+	if strings.Contains(string(rec.Content), "kanonarion:vulnerability-scope") {
+		t.Error("the vulnerability-scope annotation survives with no list to scope")
+	}
+}
+
+// A licence record that identified no SPDX licence produces a component with no
+// licences block. The document must report that as incomplete licensing: a
+// consumer sees an absent licence either way, and the extraction having run is
+// not an answer to what the component is licensed under.
+func TestGenerate_RecordWithNoSPDXIsIncompleteAndNamed(t *testing.T) {
+	// The target is licensed, so the subject is not what this measures: the
+	// undetermined component is a dependency whose extraction ran and identified
+	// nothing.
+	target := mustCoord(t, "github.com/example/app", "v1.0.0")
+	coord := mustCoord(t, "github.com/example/unclassified", "v1.0.0")
+	walk := makeWalk(t, []coordinate.ModuleCoordinate{target, coord})
+	licenses := map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord{
+		target: {PrimarySPDX: "Apache-2.0", ExtractedAt: mustTime("2026-01-02T03:04:05Z")},
+		coord:  {OverallStatus: licensedomain.LicenseStatusUnclassified, ExtractedAt: mustTime("2026-01-02T03:04:05Z")},
+	}
+	rec, err := cyclonedx.New(testPipelineVersion).Generate(t.Context(), walk, licenses, makeGenReq())
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	if !rec.LicensesIncomplete {
+		t.Error("LicensesIncomplete = false for a component the document gives no licence")
+	}
+	text := string(rec.Content)
+	if !strings.Contains(text, "kanonarion:licence-completeness") {
+		t.Fatalf("no licence-completeness annotation in:\n%s", text)
+	}
+	if !strings.Contains(text, "pkg:golang/github.com/example/unclassified@v1.0.0") {
+		t.Error("the licence-completeness statement does not name the component")
+	}
+	if strings.Contains(text, "1 of the 2 component(s)") == false {
+		t.Errorf("the statement does not count one undetermined of two components:\n%s", text)
+	}
+}
+
+// metadata.timestamp is when the document was created. A caller who supplies
+// that moment gets it verbatim; a caller who supplies none gets the derived
+// value labelled as derived, never passed off as a creation time.
+func TestGenerate_DocumentTimestampIsTheCallersCreationTime(t *testing.T) {
+	coord := mustCoord(t, "github.com/example/foo", "v1.0.0")
+	walk := makeWalk(t, []coordinate.ModuleCoordinate{coord})
+	licenses := map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord{
+		coord: {PrimarySPDX: "MIT", ExtractedAt: mustTime("2026-07-29T04:44:15Z")},
+	}
+
+	created := mustTime("2026-08-01T12:00:00Z")
+	req := makeGenReq()
+	req.DocumentTimestamp = created
+	rec, err := cyclonedx.New(testPipelineVersion).Generate(t.Context(), walk, licenses, req)
+	if err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+	var bom struct {
+		Metadata struct {
+			Timestamp  string `json:"timestamp"`
+			Properties []struct {
+				Name  string `json:"name"`
+				Value string `json:"value"`
+			} `json:"properties"`
+		} `json:"metadata"`
+	}
+	if err := json.Unmarshal(rec.Content, &bom); err != nil {
+		t.Fatalf("unmarshal bom: %v", err)
+	}
+	if bom.Metadata.Timestamp != "2026-08-01T12:00:00Z" {
+		t.Errorf("metadata.timestamp = %q, want the supplied creation time", bom.Metadata.Timestamp)
+	}
+	if !rec.GeneratedAt.Equal(created) {
+		t.Errorf("record GeneratedAt = %s, want %s", rec.GeneratedAt, created)
+	}
+	props := map[string]string{}
+	for _, p := range bom.Metadata.Properties {
+		props[p.Name] = p.Value
+	}
+	if !strings.Contains(props["kanonarion:document:timestamp_basis"], "caller-supplied") {
+		t.Errorf("timestamp basis = %q, want it to state the caller supplied it", props["kanonarion:document:timestamp_basis"])
+	}
+	// The licence extraction time is stated separately, whichever basis applies,
+	// so a reader never has to guess whether the timestamp is it.
+	if props["kanonarion:licence:newest_extraction"] != "2026-07-29T04:44:15Z" {
+		t.Errorf("newest licence extraction = %q, want 2026-07-29T04:44:15Z", props["kanonarion:licence:newest_extraction"])
+	}
+
+	// No supplied time: the derived value, said to be derived.
+	fallback, err := cyclonedx.New(testPipelineVersion).Generate(t.Context(), walk, licenses, makeGenReq())
+	if err != nil {
+		t.Fatalf("Generate (no supplied time): %v", err)
+	}
+	if err := json.Unmarshal(fallback.Content, &bom); err != nil {
+		t.Fatalf("unmarshal fallback bom: %v", err)
+	}
+	if bom.Metadata.Timestamp != "2026-07-29T04:44:15Z" {
+		t.Errorf("fallback metadata.timestamp = %q, want the derived value", bom.Metadata.Timestamp)
+	}
+	for _, p := range bom.Metadata.Properties {
+		if p.Name == "kanonarion:document:timestamp_basis" && !strings.Contains(p.Value, "derived") {
+			t.Errorf("fallback timestamp basis = %q, want it to say the value is derived", p.Value)
+		}
+	}
+}
+
+// Two generations with the same supplied timestamp are byte-identical; two with
+// different supplied timestamps differ, and the document that says when it was
+// created is the only thing that moved.
+func TestGenerate_SuppliedTimestampKeepsDeterminism(t *testing.T) {
+	coord := mustCoord(t, "github.com/example/foo", "v1.0.0")
+	walk := makeWalk(t, []coordinate.ModuleCoordinate{coord})
+	gen := cyclonedx.New(testPipelineVersion)
+	at := func(ts string) []byte {
+		req := makeGenReq()
+		req.DocumentTimestamp = mustTime(ts)
+		rec, err := gen.Generate(t.Context(), walk, nil, req)
+		if err != nil {
+			t.Fatalf("Generate: %v", err)
+		}
+		return rec.Content
+	}
+	first, second := at("2026-08-01T12:00:00Z"), at("2026-08-01T12:00:00Z")
+	if !bytes.Equal(first, second) {
+		t.Error("two generations with the same supplied timestamp differ")
+	}
+	if bytes.Equal(first, at("2026-08-02T12:00:00Z")) {
+		t.Error("two generations with different supplied timestamps are identical")
 	}
 }

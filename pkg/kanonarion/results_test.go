@@ -192,12 +192,16 @@ var allowedResultFields = map[string][]string{
 	"ExtractionRun":       {"CompletedAt", "ContentHash", "Ecosystem", "ID", "Operator", "OverallStatus", "PerModuleResults", "PipelineVersions", "RequestedStages", "SchemaVersion", "StartedAt", "WalkID"},
 	"VulnerabilityRecord": {"ContentHash", "Coordinate", "DatabaseSnapshot", "Ecosystem", "ErrorDetail", "Findings", "OverallStatus", "PipelineVersion", "ScannedAt", "UnscannableReason", "WalkID"},
 	"WalkScanRun":         {"CompletedAt", "ContentHash", "ID", "Operator", "OverallStatus", "PerModuleResults", "PipelineVersion", "Snapshot", "StartedAt", "WalkID"},
-	"SBOMRecord":          {"Content", "ContentHash", "Ecosystem", "Format", "GeneratedAt", "ID", "LicensesIncomplete", "Operator", "PipelineVersion", "WalkID", "WalkScanRunID"},
-	"Component":           {"Copyright", "License", "Module"},
-	"DirectiveRecord":     {"CompletedAt", "ContentHash", "Directives", "Ecosystem", "ExtractedAt", "ID", "PipelineVersion", "ProjectModulePath", "ResolvedVersions", "SchemaVersion", "StartedAt"},
-	"GoDebugRecord":       {"ContentHash", "Ecosystem", "ExtractedAt", "PipelineVersion", "ProjectModulePath", "SchemaVersion", "Settings", "TaxonomyVersion"},
-	"VendorRecord":        {"ContentHash", "Ecosystem", "ExtractedAt", "Findings", "Modules", "OverallStatus", "PipelineVersion", "ProjectModulePath", "SchemaVersion", "VendorDir", "VendorOnly"},
-	"FIPSRecord":          {"CatalogueVersion", "Caveat", "ComplianceAssessment", "ContentHash", "Ecosystem", "ExtractedAt", "FIPSModeStaticallyEnabled", "Findings", "PipelineVersion", "ProjectModulePath", "SchemaVersion", "ToolchainCapable", "ToolchainRaw", "ToolchainVariant"},
+	// WalkScanRunID was dropped pre-v1 with the vulnerability list it keyed. The
+	// document is an inventory and emits no advisories, so the field could only
+	// ever have been nil; a permanently-nil field naming a scan run no document
+	// carries is a worse compatibility surface than its absence.
+	"SBOMRecord":      {"Content", "ContentHash", "Ecosystem", "Format", "GeneratedAt", "ID", "LicensesIncomplete", "Operator", "PipelineVersion", "WalkID"},
+	"Component":       {"Copyright", "License", "Module"},
+	"DirectiveRecord": {"CompletedAt", "ContentHash", "Directives", "Ecosystem", "ExtractedAt", "ID", "PipelineVersion", "ProjectModulePath", "ResolvedVersions", "SchemaVersion", "StartedAt"},
+	"GoDebugRecord":   {"ContentHash", "Ecosystem", "ExtractedAt", "PipelineVersion", "ProjectModulePath", "SchemaVersion", "Settings", "TaxonomyVersion"},
+	"VendorRecord":    {"ContentHash", "Ecosystem", "ExtractedAt", "Findings", "Modules", "OverallStatus", "PipelineVersion", "ProjectModulePath", "SchemaVersion", "VendorDir", "VendorOnly"},
+	"FIPSRecord":      {"CatalogueVersion", "Caveat", "ComplianceAssessment", "ContentHash", "Ecosystem", "ExtractedAt", "FIPSModeStaticallyEnabled", "Findings", "PipelineVersion", "ProjectModulePath", "SchemaVersion", "ToolchainCapable", "ToolchainRaw", "ToolchainVariant"},
 }
 
 // resultMethodViolations is the pure checker behind

@@ -3,7 +3,6 @@ package domain
 import (
 	"slices"
 	"strings"
-	"time"
 )
 
 // ModuleRef is the module identity the SBOM assembly policy operates on.
@@ -50,14 +49,20 @@ type Component struct {
 
 // AssembleComponents applies the SBOM component policy: one component per
 // graph node, license attached per LicenseClause, ordered deterministically
-// by module identity. licensesIncomplete is true when at least one node
-// lacked license data.
-func AssembleComponents(nodes []ComponentInput) (components []Component, licensesIncomplete bool) {
+// by module identity.
+//
+// undetermined names every component the document will carry with no license
+// identity on it, in the same order as components. The test is what the
+// document ends up saying, not whether a license record was found: an
+// extraction that ran, read the module and could identify nothing — no license
+// file at the root, or files that match no known SPDX text — writes a record
+// whose expression is empty, and a component built from it carries no licenses
+// block at all. Counting that as complete because a row exists reports the
+// extraction's coverage where a reader is asking about the artefact's licensing,
+// and publishes an undetermined license as an absent question.
+func AssembleComponents(nodes []ComponentInput) (components []Component, undetermined []ModuleRef) {
 	components = make([]Component, 0, len(nodes))
 	for _, n := range nodes {
-		if !n.HasLicense {
-			licensesIncomplete = true
-		}
 		components = append(components, Component{
 			Module:    n.Module,
 			License:   LicenseClause(n.HasLicense, n.PrimarySPDX, n.Expression),
@@ -67,96 +72,10 @@ func AssembleComponents(nodes []ComponentInput) (components []Component, license
 	slices.SortFunc(components, func(a, b Component) int {
 		return strings.Compare(a.Module.sortKey(), b.Module.sortKey())
 	})
-	return components, licensesIncomplete
-}
-
-// FindingInput is one vulnerability finding projected to the fields the
-// aggregation policy depends on. SeverityLabel is "" when severity is
-// unknown or absent.
-type FindingInput struct {
-	Module        ModuleRef
-	ID            string
-	Summary       string
-	SeverityLabel string
-	// WithdrawnAt is the moment the advisory was retracted upstream, zero when it
-	// is live or when the record predates the field being read. It travels this far
-	// because a retracted advisory that reaches an SBOM unmarked is published to
-	// third parties as a live vulnerability of the component, which is the same
-	// silence in a document that outlives the scan that produced it.
-	WithdrawnAt time.Time
-}
-
-// AggregatedVulnerability is the policy decision for a single deduplicated
-// vulnerability. Summary and SeverityLabel come from the first occurrence of
-// the ID in input order; Affected is the deduplicated, ordered set of
-// modules the vulnerability applies to.
-type AggregatedVulnerability struct {
-	ID            string
-	Summary       string
-	SeverityLabel string
-	Affected      []ModuleRef
-	// WithdrawnAt is the retraction timestamp, taken from the first occurrence that
-	// carries one rather than from the first occurrence outright — see
-	// AggregateVulnerabilities for why the two rules differ.
-	WithdrawnAt time.Time
-}
-
-// IsWithdrawn reports whether this advisory has been retracted upstream.
-func (v AggregatedVulnerability) IsWithdrawn() bool {
-	return !v.WithdrawnAt.IsZero()
-}
-
-// AggregateVulnerabilities collapses findings that share an ID into a single
-// vulnerability, accumulating affected modules. Summary/severity are taken
-// from the first occurrence (input order); affected modules are deduplicated
-// and ordered by module identity. The result is ordered by vulnerability ID.
-//
-// Withdrawal follows a different rule from summary and severity: the first
-// occurrence that carries a timestamp wins, not the first occurrence. Retraction
-// is a property of the advisory rather than of any module it names, so occurrences
-// cannot legitimately disagree about it — but they can differ in whether they were
-// written by a generation that read the field at all, and a zero there means "not
-// asked", never "confirmed live". Taking the first occurrence outright would let
-// one older record republish a retracted advisory as live.
-func AggregateVulnerabilities(findings []FindingInput) []AggregatedVulnerability {
-	type acc struct {
-		v       AggregatedVulnerability
-		modKeys map[string]struct{}
-	}
-	byID := make(map[string]*acc, len(findings))
-
-	for _, f := range findings {
-		a, ok := byID[f.ID]
-		if !ok {
-			a = &acc{
-				v: AggregatedVulnerability{
-					ID:            f.ID,
-					Summary:       f.Summary,
-					SeverityLabel: f.SeverityLabel,
-				},
-				modKeys: make(map[string]struct{}),
-			}
-			byID[f.ID] = a
-		}
-		if a.v.WithdrawnAt.IsZero() && !f.WithdrawnAt.IsZero() {
-			a.v.WithdrawnAt = f.WithdrawnAt
-		}
-		k := f.Module.sortKey()
-		if _, dup := a.modKeys[k]; !dup {
-			a.modKeys[k] = struct{}{}
-			a.v.Affected = append(a.v.Affected, f.Module)
+	for _, c := range components {
+		if c.License == "" {
+			undetermined = append(undetermined, c.Module)
 		}
 	}
-
-	result := make([]AggregatedVulnerability, 0, len(byID))
-	for _, a := range byID {
-		slices.SortFunc(a.v.Affected, func(x, y ModuleRef) int {
-			return strings.Compare(x.sortKey(), y.sortKey())
-		})
-		result = append(result, a.v)
-	}
-	slices.SortFunc(result, func(a, b AggregatedVulnerability) int {
-		return strings.Compare(a.ID, b.ID)
-	})
-	return result
+	return components, undetermined
 }

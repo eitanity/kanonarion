@@ -61,7 +61,7 @@ func vendoredWalk(t *testing.T, projectDir string) walkdomain.WalkRecord {
 func generateWith(t *testing.T, walk walkdomain.WalkRecord, tree *fakeVendorTree) *fakeSBOMGenerator {
 	t.Helper()
 	gen := &fakeSBOMGenerator{record: domain.SBOMRecord{ID: "sbom-1", WalkID: walk.ID}}
-	uc := makeUC(&fakeWalkStore{walk: walk}, &fakeVulnStore{}, &fakeSBOMStore{}, gen)
+	uc := makeUC(&fakeWalkStore{walk: walk}, &fakeSBOMStore{}, gen)
 	if tree != nil {
 		uc = uc.WithVendorTree(tree)
 	}
@@ -173,7 +173,7 @@ func TestGenerateSBOM_BinaryScopedRequestIsFlaggedToTheGenerator(t *testing.T) {
 		{Path: "example.com/upstream", Version: "v1.2.1", PackageCount: 1},
 	}}
 	gen := &fakeSBOMGenerator{record: domain.SBOMRecord{ID: "sbom-1", WalkID: walk.ID}}
-	uc := makeUC(&fakeWalkStore{walk: walk}, &fakeVulnStore{}, &fakeSBOMStore{}, gen).WithVendorTree(tree)
+	uc := makeUC(&fakeWalkStore{walk: walk}, &fakeSBOMStore{}, gen).WithVendorTree(tree)
 
 	// Only the plain dependency is in the binary's closure; the fork is not.
 	if _, err := uc.Generate(context.Background(), application.SBOMRequest{
