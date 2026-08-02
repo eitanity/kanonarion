@@ -27,8 +27,15 @@ that a flat SPDX identifier cannot represent:
 | Single root file, single SPDX id, no close alternatives | bare identifier (e.g. `MIT`) |
 | Single root file, multiple full texts at ≤ 0.5% confidence gap ("compound file") | `OR` of all identified ids, sorted |
 | Multiple root files, all with the same SPDX id | bare identifier |
-| Multiple root files, distinct ids, any file has a dual-license name (`LICENSE-MIT`, `LICENSE-APACHE`, `COPYING-BSD`) | `OR` of distinct ids, sorted |
-| Multiple root files, distinct ids, no dual-license naming | `AND` of distinct ids, sorted |
+| Multiple root files, distinct ids, any file has a dual-licence name — stem-prefixed (`LICENSE-MIT`, `COPYING-BSD`), reversed (`MIT-LICENSE`, `MIT-LICENSE.txt`, `GO-LICENSE`), or a bare licence-name shorthand (`GPLv2`, `GPLv3`, `APLv2`, `APACHE-LICENSE-2.0`) | `OR` of distinct ids, sorted |
+| Multiple root files, distinct ids, no dual-licence naming | `AND` of distinct ids, sorted |
+
+The bare-name and reversed forms are accepted by licence-file **detection**
+itself, so a lone `MIT-LICENSE.txt` or an `APLv2` beside a `GPLv3` is
+extracted (`gorhill/cronexpr` reads `Apache-2.0 OR GPL-3.0`). For a
+disjunction, `licence` prints one obligation set **per arm**; to settle which
+arm applies, record the elected arm as a `license_overrides` entry — the tool
+does not choose one.
 
 **JSON output includes both fields:**
 

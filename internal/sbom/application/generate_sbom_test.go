@@ -3,7 +3,6 @@ package application_test
 import (
 	"context"
 	"errors"
-	"io"
 	"log/slog"
 	"strings"
 	"testing"
@@ -16,7 +15,6 @@ import (
 	"github.com/eitanity/kanonarion/internal/sbom/application"
 	"github.com/eitanity/kanonarion/internal/sbom/domain"
 	"github.com/eitanity/kanonarion/internal/sbom/ports"
-	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
@@ -66,60 +64,6 @@ func (f *fakeLicenseStore) ListLicenseRecords(_ context.Context, _ licenseports.
 	return nil, nil
 }
 
-type fakeVulnStore struct {
-	run     vulndomain.WalkScanRun
-	runOK   bool
-	runErr  error
-	recs    []vulndomain.VulnerabilityRecord
-	recsErr error
-}
-
-func (f *fakeVulnStore) PutVulnerabilityRecord(_ context.Context, _ vulndomain.VulnerabilityRecord) error {
-	return nil
-}
-func (f *fakeVulnStore) GetVulnerabilityRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ vulndomain.DatabaseSnapshot) (vulndomain.VulnerabilityRecord, bool, error) {
-	return vulndomain.VulnerabilityRecord{}, false, nil
-}
-func (f *fakeVulnStore) ListVulnerabilityRecordsByFindingID(_ context.Context, _, _ string) ([]vulndomain.VulnerabilityRecord, error) {
-	return nil, nil
-}
-func (f *fakeVulnStore) ListVulnerabilityRecords(_ context.Context, _ string) ([]vulndomain.VulnerabilityRecord, error) {
-	return f.recs, f.recsErr
-}
-func (f *fakeVulnStore) PutWalkScanRun(_ context.Context, _ vulndomain.WalkScanRun) error {
-	return nil
-}
-func (f *fakeVulnStore) GetWalkScanRun(_ context.Context, _ string) (vulndomain.WalkScanRun, bool, error) {
-	return f.run, f.runOK, f.runErr
-}
-func (f *fakeVulnStore) ListWalkScanRuns(_ context.Context, _ string) ([]vulndomain.WalkScanRun, error) {
-	return nil, nil
-}
-func (f *fakeVulnStore) ListAllWalkScanRuns(_ context.Context) ([]vulndomain.WalkScanRun, error) {
-	return nil, nil
-}
-func (f *fakeVulnStore) PutDatabaseSnapshot(_ context.Context, _ vulndomain.DatabaseSnapshot, _ io.Reader) error {
-	return nil
-}
-func (f *fakeVulnStore) GetDatabaseSnapshot(_ context.Context, _ vulndomain.DatabaseSnapshot) (io.ReadCloser, error) {
-	return nil, nil
-}
-func (f *fakeVulnStore) GetLatestDatabaseSnapshot(_ context.Context) (vulndomain.DatabaseSnapshot, bool, error) {
-	return vulndomain.DatabaseSnapshot{}, false, nil
-}
-func (f *fakeVulnStore) ListDatabaseSnapshots(_ context.Context) ([]vulndomain.DatabaseSnapshot, error) {
-	return nil, nil
-}
-func (f *fakeVulnStore) GetLatestVulnerabilityRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string) (vulndomain.VulnerabilityRecord, bool, error) {
-	return vulndomain.VulnerabilityRecord{}, false, nil
-}
-func (f *fakeVulnStore) GetLatestVulnerabilityRecordForWalk(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ string) (vulndomain.VulnerabilityRecord, bool, error) {
-	return vulndomain.VulnerabilityRecord{}, false, nil
-}
-func (f *fakeVulnStore) ListVulnerabilityRecordsForModule(_ context.Context, _ coordinate.ModuleCoordinate, _ string) ([]vulndomain.VulnerabilityRecord, error) {
-	return nil, nil
-}
-
 type fakeSBOMStore struct {
 	cached   domain.SBOMRecord
 	cachedOK bool
@@ -128,7 +72,7 @@ type fakeSBOMStore struct {
 	stored   *domain.SBOMRecord
 }
 
-func (f *fakeSBOMStore) FindSBOMRecord(_ context.Context, _ string, _ *string, _ domain.SBOMFormat, _ string) (domain.SBOMRecord, bool, error) {
+func (f *fakeSBOMStore) FindSBOMRecord(_ context.Context, _ string, _ domain.SBOMFormat, _ string) (domain.SBOMRecord, bool, error) {
 	return f.cached, f.cachedOK, f.findErr
 }
 func (f *fakeSBOMStore) PutSBOMRecord(_ context.Context, r domain.SBOMRecord) error {
@@ -148,9 +92,11 @@ type fakeSBOMGenerator struct {
 	capturedNodes    []walkdomain.GraphNode
 	capturedEdges    []walkdomain.GraphEdge
 	capturedLicenses map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord
+	capturedReq      ports.GenerateRequest
 }
 
-func (f *fakeSBOMGenerator) Generate(_ context.Context, walk walkdomain.WalkRecord, licenses map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord, _ []vulndomain.VulnerabilityRecord, _ ports.GenerateRequest) (domain.SBOMRecord, error) {
+func (f *fakeSBOMGenerator) Generate(_ context.Context, walk walkdomain.WalkRecord, licenses map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord, req ports.GenerateRequest) (domain.SBOMRecord, error) {
+	f.capturedReq = req
 	f.capturedNodes = walk.Graph.Nodes
 	f.capturedEdges = walk.Graph.Edges
 	f.capturedLicenses = licenses
@@ -191,15 +137,14 @@ func makeMultiNodeWalk(id string, coords []coordinate.ModuleCoordinate) walkdoma
 	}
 }
 
-func makeUC(ws *fakeWalkStore, vs *fakeVulnStore, ss *fakeSBOMStore, gen *fakeSBOMGenerator) *application.GenerateSBOMUseCase {
-	return makeUCWithLicenses(ws, &fakeLicenseStore{}, vs, ss, gen)
+func makeUC(ws *fakeWalkStore, ss *fakeSBOMStore, gen *fakeSBOMGenerator) *application.GenerateSBOMUseCase {
+	return makeUCWithLicenses(ws, &fakeLicenseStore{}, ss, gen)
 }
 
-func makeUCWithLicenses(ws *fakeWalkStore, ls *fakeLicenseStore, vs *fakeVulnStore, ss *fakeSBOMStore, gen *fakeSBOMGenerator) *application.GenerateSBOMUseCase {
+func makeUCWithLicenses(ws *fakeWalkStore, ls *fakeLicenseStore, ss *fakeSBOMStore, gen *fakeSBOMGenerator) *application.GenerateSBOMUseCase {
 	return application.NewGenerateSBOMUseCase(
 		ws,
 		ls,
-		vs,
 		ss,
 		gen,
 		fakeClock{},
@@ -214,7 +159,7 @@ func makeUCWithLicenses(ws *fakeWalkStore, ls *fakeLicenseStore, vs *fakeVulnSto
 func TestGenerateSBOM_CacheHit(t *testing.T) {
 	cached := domain.SBOMRecord{ID: "sbom-cached", WalkID: "walk-1"}
 	ss := &fakeSBOMStore{cached: cached, cachedOK: true}
-	uc := makeUC(&fakeWalkStore{}, &fakeVulnStore{}, ss, &fakeSBOMGenerator{})
+	uc := makeUC(&fakeWalkStore{}, ss, &fakeSBOMGenerator{})
 
 	got, err := uc.Generate(t.Context(), application.SBOMRequest{WalkID: "walk-1"})
 	if err != nil {
@@ -227,7 +172,7 @@ func TestGenerateSBOM_CacheHit(t *testing.T) {
 
 func TestGenerateSBOM_WalkNotFound(t *testing.T) {
 	ws := &fakeWalkStore{err: walkports.ErrWalkNotFound}
-	uc := makeUC(ws, &fakeVulnStore{}, &fakeSBOMStore{}, &fakeSBOMGenerator{})
+	uc := makeUC(ws, &fakeSBOMStore{}, &fakeSBOMGenerator{})
 
 	_, err := uc.Generate(t.Context(), application.SBOMRequest{WalkID: "walk-missing"})
 	if err == nil {
@@ -240,7 +185,7 @@ func TestGenerateSBOM_NoVulns(t *testing.T) {
 	ss := &fakeSBOMStore{}
 	expected := domain.SBOMRecord{ID: "sbom-1", WalkID: "walk-1", Content: []byte(`{}`)}
 	gen := &fakeSBOMGenerator{record: expected}
-	uc := makeUC(ws, &fakeVulnStore{}, ss, gen)
+	uc := makeUC(ws, ss, gen)
 
 	got, err := uc.Generate(t.Context(), application.SBOMRequest{WalkID: "walk-1"})
 	if err != nil {
@@ -254,50 +199,13 @@ func TestGenerateSBOM_NoVulns(t *testing.T) {
 	}
 }
 
-func TestGenerateSBOM_WithScanRun(t *testing.T) {
-	ws := &fakeWalkStore{walk: makeWalk("walk-1")}
-	scanRunID := "run-1"
-	vs := &fakeVulnStore{
-		run:   vulndomain.WalkScanRun{ID: "run-1", WalkID: "walk-1"},
-		runOK: true,
-		recs:  []vulndomain.VulnerabilityRecord{},
-	}
-	ss := &fakeSBOMStore{}
-	expected := domain.SBOMRecord{ID: "sbom-2", WalkID: "walk-1"}
-	gen := &fakeSBOMGenerator{record: expected}
-	uc := makeUC(ws, vs, ss, gen)
-
-	got, err := uc.Generate(t.Context(), application.SBOMRequest{WalkID: "walk-1", WalkScanRunID: &scanRunID})
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
-	if got.ID != "sbom-2" {
-		t.Errorf("expected sbom-2, got %q", got.ID)
-	}
-}
-
-func TestGenerateSBOM_ScanRunNotFound(t *testing.T) {
-	ws := &fakeWalkStore{walk: makeWalk("walk-1")}
-	scanRunID := "run-missing"
-	vs := &fakeVulnStore{runOK: false}
-	uc := makeUC(ws, vs, &fakeSBOMStore{}, &fakeSBOMGenerator{})
-
-	_, err := uc.Generate(t.Context(), application.SBOMRequest{WalkID: "walk-1", WalkScanRunID: &scanRunID})
-	if err == nil {
-		t.Fatal("expected error, got nil")
-	}
-	if !errors.Is(err, application.ErrWalkScanRunNotFound) {
-		t.Errorf("expected ErrWalkScanRunNotFound, got %v", err)
-	}
-}
-
 func TestGenerateSBOM_Force(t *testing.T) {
 	cached := domain.SBOMRecord{ID: "sbom-cached", WalkID: "walk-1"}
 	ss := &fakeSBOMStore{cached: cached, cachedOK: true}
 	ws := &fakeWalkStore{walk: makeWalk("walk-1")}
 	fresh := domain.SBOMRecord{ID: "sbom-fresh", WalkID: "walk-1", Content: []byte(`{}`)}
 	gen := &fakeSBOMGenerator{record: fresh}
-	uc := makeUC(ws, &fakeVulnStore{}, ss, gen)
+	uc := makeUC(ws, ss, gen)
 
 	got, err := uc.Generate(t.Context(), application.SBOMRequest{WalkID: "walk-1", Force: true})
 	if err != nil {
@@ -324,7 +232,7 @@ func TestGenerateSBOM_AllowList(t *testing.T) {
 	ss := &fakeSBOMStore{cached: cached, cachedOK: true}
 
 	gen := &fakeSBOMGenerator{record: domain.SBOMRecord{ID: "sbom-scoped", WalkID: "walk-1", Content: []byte(`{}`)}}
-	uc := makeUC(ws, &fakeVulnStore{}, ss, gen)
+	uc := makeUC(ws, ss, gen)
 
 	_, err := uc.Generate(t.Context(), application.SBOMRequest{
 		WalkID:    "walk-1",
@@ -369,7 +277,7 @@ func TestGenerateSBOM_AllowListKeepsStdlibNode(t *testing.T) {
 	walk.Graph.Edges = []walkdomain.GraphEdge{{From: coordA, To: stdlib}}
 	ws := &fakeWalkStore{walk: walk}
 	gen := &fakeSBOMGenerator{record: domain.SBOMRecord{ID: "sbom-scoped", WalkID: "walk-1", Content: []byte(`{}`)}}
-	uc := makeUC(ws, &fakeVulnStore{}, &fakeSBOMStore{}, gen)
+	uc := makeUC(ws, &fakeSBOMStore{}, gen)
 
 	if _, err := uc.Generate(t.Context(), application.SBOMRequest{
 		WalkID:    "walk-1",
@@ -410,7 +318,7 @@ func TestGenerateSBOM_AllowListKeepsReplaceToForkNode(t *testing.T) {
 	walk.Graph.Edges = []walkdomain.GraphEdge{{From: rootDep, To: fork}}
 	ws := &fakeWalkStore{walk: walk}
 	gen := &fakeSBOMGenerator{record: domain.SBOMRecord{ID: "sbom-scoped", WalkID: "walk-1", Content: []byte(`{}`)}}
-	uc := makeUC(ws, &fakeVulnStore{}, &fakeSBOMStore{}, gen)
+	uc := makeUC(ws, &fakeSBOMStore{}, gen)
 
 	// The allow-list holds the ORIGINAL coordinate, as `go list -deps` reports it.
 	if _, err := uc.Generate(t.Context(), application.SBOMRequest{
@@ -447,7 +355,7 @@ func TestGenerateSBOM_LooksUpLicencesUnderLicencePipelineVersion(t *testing.T) {
 	}
 	gen := &fakeSBOMGenerator{record: domain.SBOMRecord{ID: "sbom-1", WalkID: "walk-1"}}
 
-	uc := makeUCWithLicenses(ws, ls, &fakeVulnStore{}, &fakeSBOMStore{}, gen)
+	uc := makeUCWithLicenses(ws, ls, &fakeSBOMStore{}, gen)
 	if _, err := uc.Generate(t.Context(), application.SBOMRequest{WalkID: "walk-1"}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -472,7 +380,7 @@ func TestGenerateSBOM_AllowListPrunesDanglingEdges(t *testing.T) {
 	walk.Graph.Edges = []walkdomain.GraphEdge{{From: coordA, To: coordB}}
 	ws := &fakeWalkStore{walk: walk}
 	gen := &fakeSBOMGenerator{record: domain.SBOMRecord{ID: "sbom-scoped", WalkID: "walk-1", Content: []byte(`{}`)}}
-	uc := makeUC(ws, &fakeVulnStore{}, &fakeSBOMStore{}, gen)
+	uc := makeUC(ws, &fakeSBOMStore{}, gen)
 
 	if _, err := uc.Generate(t.Context(), application.SBOMRequest{
 		WalkID:    "walk-1",
@@ -492,7 +400,7 @@ func TestGenerateSBOM_AllowListPrunesDanglingEdges(t *testing.T) {
 
 func TestGenerateSBOM_CacheLookupError(t *testing.T) {
 	ss := &fakeSBOMStore{findErr: errors.New("db down")}
-	uc := makeUC(&fakeWalkStore{walk: makeWalk("walk-1")}, &fakeVulnStore{}, ss, &fakeSBOMGenerator{})
+	uc := makeUC(&fakeWalkStore{walk: makeWalk("walk-1")}, ss, &fakeSBOMGenerator{})
 	_, err := uc.Generate(t.Context(), application.SBOMRequest{WalkID: "walk-1"})
 	if err == nil || !strings.Contains(err.Error(), "checking sbom cache") {
 		t.Fatalf("want cache-lookup error, got: %v", err)
@@ -501,36 +409,16 @@ func TestGenerateSBOM_CacheLookupError(t *testing.T) {
 
 func TestGenerateSBOM_LicenseLoadError(t *testing.T) {
 	ls := &fakeLicenseStore{err: errors.New("licence store down")}
-	uc := makeUCWithLicenses(&fakeWalkStore{walk: makeWalk("walk-1")}, ls, &fakeVulnStore{}, &fakeSBOMStore{}, &fakeSBOMGenerator{})
+	uc := makeUCWithLicenses(&fakeWalkStore{walk: makeWalk("walk-1")}, ls, &fakeSBOMStore{}, &fakeSBOMGenerator{})
 	_, err := uc.Generate(t.Context(), application.SBOMRequest{WalkID: "walk-1"})
 	if err == nil || !strings.Contains(err.Error(), "loading license") {
 		t.Fatalf("want licence-load error, got: %v", err)
 	}
 }
 
-func TestGenerateSBOM_ScanRunLookupError(t *testing.T) {
-	scanRunID := "scan-1"
-	vs := &fakeVulnStore{runErr: errors.New("scan run store down")}
-	uc := makeUC(&fakeWalkStore{walk: makeWalk("walk-1")}, vs, &fakeSBOMStore{}, &fakeSBOMGenerator{})
-	_, err := uc.Generate(t.Context(), application.SBOMRequest{WalkID: "walk-1", WalkScanRunID: &scanRunID})
-	if err == nil || !strings.Contains(err.Error(), "loading scan run") {
-		t.Fatalf("want scan-run lookup error, got: %v", err)
-	}
-}
-
-func TestGenerateSBOM_VulnRecordsError(t *testing.T) {
-	scanRunID := "scan-1"
-	vs := &fakeVulnStore{runOK: true, recsErr: errors.New("vuln records down")}
-	uc := makeUC(&fakeWalkStore{walk: makeWalk("walk-1")}, vs, &fakeSBOMStore{}, &fakeSBOMGenerator{})
-	_, err := uc.Generate(t.Context(), application.SBOMRequest{WalkID: "walk-1", WalkScanRunID: &scanRunID})
-	if err == nil || !strings.Contains(err.Error(), "loading vulnerability records") {
-		t.Fatalf("want vuln-records error, got: %v", err)
-	}
-}
-
 func TestGenerateSBOM_GeneratorError(t *testing.T) {
 	gen := &fakeSBOMGenerator{err: errors.New("marshal failed")}
-	uc := makeUC(&fakeWalkStore{walk: makeWalk("walk-1")}, &fakeVulnStore{}, &fakeSBOMStore{}, gen)
+	uc := makeUC(&fakeWalkStore{walk: makeWalk("walk-1")}, &fakeSBOMStore{}, gen)
 	_, err := uc.Generate(t.Context(), application.SBOMRequest{WalkID: "walk-1"})
 	if err == nil || !strings.Contains(err.Error(), "generating sbom") {
 		t.Fatalf("want generator error, got: %v", err)
@@ -540,17 +428,9 @@ func TestGenerateSBOM_GeneratorError(t *testing.T) {
 func TestGenerateSBOM_PersistError(t *testing.T) {
 	ss := &fakeSBOMStore{putErr: errors.New("disk full")}
 	gen := &fakeSBOMGenerator{record: domain.SBOMRecord{ID: "sbom-1", WalkID: "walk-1", Content: []byte(`{}`)}}
-	uc := makeUC(&fakeWalkStore{walk: makeWalk("walk-1")}, &fakeVulnStore{}, ss, gen)
+	uc := makeUC(&fakeWalkStore{walk: makeWalk("walk-1")}, ss, gen)
 	_, err := uc.Generate(t.Context(), application.SBOMRequest{WalkID: "walk-1"})
 	if err == nil || !strings.Contains(err.Error(), "persisting sbom record") {
 		t.Fatalf("want persist error, got: %v", err)
 	}
-}
-
-func (f *fakeVulnStore) GetVulnerabilityRecordAt(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ vulndomain.DatabaseSnapshot, _ vulndomain.Rooting) (vulndomain.VulnerabilityRecord, bool, error) {
-	return vulndomain.VulnerabilityRecord{}, false, nil
-}
-
-func (f *fakeVulnStore) HasVulnerabilityRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ vulndomain.DatabaseSnapshot, _ string) (bool, error) {
-	return false, nil
 }

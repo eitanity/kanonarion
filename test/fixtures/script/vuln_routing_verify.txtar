@@ -8,7 +8,12 @@ seedvulnforwalk $WORK/stores
 # stdout: findings summary + "Scan completed"; no progress lines
 # stderr: progress lines; no JSON
 
-kanonarion vuln-scan 01ARZ3NDEKTSV4RRFFQ69G5FBB --store-root=$WORK/stores
+# The fixture's target module carries no buildable packages, so the
+# target-rooted analysis cannot load it and the run reports Partial coverage —
+# which exits non-zero. This script is about STREAM ROUTING, not the verdict, so
+# each invocation is negated and the assertions below are unchanged.
+
+! kanonarion vuln-scan 01ARZ3NDEKTSV4RRFFQ69G5FBB --store-root=$WORK/stores
 
 stdout 'Scan completed'
 ! stdout 'Scanning walk'
@@ -19,7 +24,7 @@ stderr 'Scanning walk'
 # stdout: JSON object; no progress lines
 # stderr: progress lines (logger switches to JSON format in --json mode)
 
-kanonarion vuln-scan 01ARZ3NDEKTSV4RRFFQ69G5FBB --store-root=$WORK/stores --json
+! kanonarion vuln-scan 01ARZ3NDEKTSV4RRFFQ69G5FBB --store-root=$WORK/stores --json
 
 stdout '^\{'
 ! stdout 'Scanning walk'
@@ -28,7 +33,7 @@ stderr 'Scanning walk'
 # --- --json=false (explicit false) ---
 # behaves identically to text mode
 
-kanonarion vuln-scan 01ARZ3NDEKTSV4RRFFQ69G5FBB --store-root=$WORK/stores --json=false
+! kanonarion vuln-scan 01ARZ3NDEKTSV4RRFFQ69G5FBB --store-root=$WORK/stores --json=false
 
 stdout 'Scan completed'
 ! stdout 'Scanning walk'

@@ -104,7 +104,7 @@ kanonarion callgraph-show <module>@<version> [flags]
 
 | Flag | Default | Description |
 |------|---------|-------------|
-| `--node` | _(all)_ | Filter to nodes/edges whose symbol contains this substring |
+| `--node` | _(all)_ | Filter to nodes whose fully-qualified ID contains this substring (case-insensitive), plus everything directly connected to them |
 | `--limit-nodes` | `50` | Maximum nodes to print (`0` = unlimited) |
 | `--limit-edges` | `100` | Maximum edges to print (`0` = unlimited) |
 | `--history` | `false` | List every stored generation for the module instead of the composed answer |
@@ -128,6 +128,34 @@ Edges (4201 total, showing 2):
 
 The `test scope:` line is printed on every record, including when the axis was
 not measured — silence there would read as "there was no test code".
+
+`--node` is compared against the **fully-qualified node ID** — the package path
+plus the symbol, e.g. `example.com/mod/render.(*Engine).Render` — so a module
+path, a package path and a bare symbol name all select the nodes a reader
+expects from one flag. Filtering by the dependency you care about
+(`--node example.com/tmpl`) is therefore as valid a question as filtering by a
+function name (`--node Render`).
+
+A pattern that matches nothing says so, and says what it was compared against,
+rather than serving an empty graph that reads as an empty region:
+
+```
+$ kanonarion callgraph-show example.com/mod@v1.0.0 --node example.com/absent
+...
+Nodes (0 total, showing 0):
+
+Edges (0 total, showing 0):
+
+no node matched "example.com/absent" — the pattern is compared, case-insensitively
+and as a substring, against the fully-qualified node ID (package path + symbol) of
+all 1039 node(s) in this record, not against the bare symbol name (e.g.
+example.com/mod/render.(*Engine).Render)
+  to list every node: kanonarion callgraph-show example.com/mod@v1.0.0 --limit-nodes 0
+```
+
+Under `--json` the same statement is the `node_filter` object (`pattern`,
+`compared_against`, `candidate_nodes`, `matched_nodes`), present only when
+`--node` was given.
 
 The `fidelity:` line reports how much of the module was actually built and what
 the analysis read. Both matter to how an empty answer should be taken: only
@@ -255,7 +283,7 @@ kanonarion callers <symbol-id> [flags]
 | `--exclude-tests` | `false` | Omit callers declared in `_test.go` files and external test packages |
 | `--transitive` | `false` | Follow reachable edges transitively instead of only direct call sites |
 | `--depth` | `0` | Maximum traversal depth for `--transitive` (`0` = unlimited) |
-| `--gomod` | `./go.mod` | Restrict results to the latest project walk for this `go.mod` |
+| `--gomod` | `./go.mod` | Restrict results to the latest project walk for this `go.mod`. The scope notice names that walk and the `GOOS/GOARCH` it resolved for |
 | `--walk-id` | _(none)_ | Restrict results to the resolved version set of this walk |
 
 ```
@@ -302,7 +330,7 @@ method — an ID `callers` and `callees` also accept.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--exclude-tests` | `false` | Omit implementations declared in `_test.go` files |
-| `--gomod` | `./go.mod` | Restrict results to the latest project walk for this `go.mod` |
+| `--gomod` | `./go.mod` | Restrict results to the latest project walk for this `go.mod`. The scope notice names that walk and the `GOOS/GOARCH` it resolved for |
 | `--walk-id` | _(none)_ | Restrict results to the resolved version set of this walk |
 | `--json` | `false` | Emit the result, verdict and scope as JSON |
 

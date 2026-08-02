@@ -36,21 +36,24 @@ type SBOMRecord struct {
 	Ecosystem string
 	// WalkID is the walk this SBOM was generated from.
 	WalkID string
-	// WalkScanRunID is the optional scan run that contributed vulnerability data.
-	// Nil when the SBOM was generated without vulnerability inclusion.
-	WalkScanRunID *string
 	// Format is the serialisation format of the SBOM document.
 	Format SBOMFormat
 	// Content is the canonical SBOM document bytes.
 	Content []byte
 	// ContentHash is the SHA-256 hex digest of Content.
 	ContentHash string
-	// GeneratedAt is when this record was created.
+	// GeneratedAt is when the document this record holds was created, and is the
+	// value its metadata timestamp carries. It is the caller-supplied creation
+	// time when one was given, and otherwise the newest licence extraction time
+	// among the document's inputs — a derived value the document labels as such
+	// rather than passing off as a clock reading.
 	GeneratedAt time.Time
 	// PipelineVersion is the kanonarion version that produced this record.
 	PipelineVersion string
 	// Operator is the identity that requested generation.
 	Operator string
-	// LicensesIncomplete is true when at least one module had no licence data.
+	// LicensesIncomplete is true when at least one component in the document
+	// carries no licence identity — either no licence record was found for it,
+	// or the record that was found identified no SPDX licence.
 	LicensesIncomplete bool
 }

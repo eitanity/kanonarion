@@ -333,23 +333,26 @@ func absentFromVendor(
 // A caller that supplied one (--gomod, --tool, --project, the local driver)
 // always wins: it named the tree it means, and the walk's recollection of an
 // older one must not override it. Otherwise — the `vuln-scan <walk-id>` spelling
-// — the walk's own record of where it was taken from is consulted, so a stored
-// walk of a vendored project re-scans onto the source that project compiles
-// rather than onto the fetched artefacts, which is the same walk answering two
-// ways depending on how the operator spelled the command.
+// — the walk's own record of where it was taken from is consulted, so a walk of
+// a project is scanned rooted at that project's build no matter which command
+// asked. Without this, one walk answered two ways depending on how the operator
+// spelled the command: the direct form re-derived every dependency in isolation,
+// which leaves the standard library metadata-only and reports a self-inflicted
+// version-not-in-project-build gap for any module whose isolated build re-selects
+// a version the project never chose — while the project's build was in hand the
+// whole time. It is also the slower of the two, by one govulncheck per module.
 //
-// The recorded directory is provenance, never an oracle. It is adopted only
-// while it still holds the vendored tree that made it worth reaching for; a
-// checkout that has moved, been deleted, or had its vendor/ directory removed
-// leaves the run exactly where it was before this field existed — on the fetched
-// surface, which every record then names — and the reason is logged against the
-// directory itself, so an operator can tell a walk that was never vendored from
-// one whose tree is gone. A moved checkout must not make a stored walk
-// unscannable.
+// Whether the tree is vendored decides which SOURCE the project-rooted scan
+// reads, not whether it happens. --no-vendor and an unwired closure reader both
+// leave the run on the fetched surface, which the scanner selects for itself and
+// every record then names; neither is a reason to abandon the project's build as
+// the frame.
 //
-// --no-vendor is honoured here as an instruction, not merely as a filter later:
-// an operator asking for the fetched surface has no use for a directory that is
-// only ever adopted to reach the vendored one.
+// The recorded directory is provenance, never an oracle. A checkout that has
+// moved or been deleted cannot be analysed, so the run degrades to scanning each
+// module in isolation and says so against the directory itself — a moved
+// checkout must not make a stored walk unscannable, and must not be silently
+// replaced by some other tree either.
 func (uc *ScanWalkUseCase) effectiveProjectDir(params ScanWalkParams, walk walkdomain.WalkRecord) string {
 	if params.ProjectDir != "" {
 		return params.ProjectDir
@@ -360,30 +363,12 @@ func (uc *ScanWalkUseCase) effectiveProjectDir(params ScanWalkParams, walk walkd
 		// their root. Neither has a project tree to reach; nothing to say.
 		return ""
 	}
-	if uc.vendoredClosure == nil {
-		// This run cannot read a vendored tree at all, so it cannot reach the
-		// surface the directory exists to reach. Adopting it anyway would only
-		// reroute the analysis — into a project-rooted scan of a tree whose vendor
-		// directory the run is unequipped to account for — which is a different
-		// change from the one the directory was recorded for.
-		return ""
-	}
-	if params.NoVendor {
-		uc.logger.Info("vuln-scan: --no-vendor set, not reaching for the walk's project directory",
-			"walk_id", params.WalkID, "project_dir", dir)
-		return ""
-	}
 	if _, err := os.Stat(dir); err != nil {
-		uc.logger.Warn("vuln-scan: the directory this walk was taken from is no longer available, analysing the fetched artefacts",
+		uc.logger.Warn("vuln-scan: the directory this walk was taken from is no longer readable, so this run cannot be rooted at the project's build; scanning each module in isolation instead, which leaves the standard library and any module the isolated build re-resolves unanalysed",
 			"walk_id", params.WalkID, "project_dir", dir, "error", err)
 		return ""
 	}
-	if _, err := os.Stat(filepath.Join(dir, "vendor", "modules.txt")); err != nil {
-		uc.logger.Info("vuln-scan: the directory this walk was taken from holds no vendored tree, analysing the fetched artefacts",
-			"walk_id", params.WalkID, "project_dir", dir, "error", err)
-		return ""
-	}
-	uc.logger.Info("vuln-scan: analysing the vendored tree the walk was taken from",
+	uc.logger.Info("vuln-scan: rooting this run at the project the walk was taken from",
 		"walk_id", params.WalkID, "project_dir", dir)
 	return dir
 }

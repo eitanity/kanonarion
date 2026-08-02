@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -347,4 +348,37 @@ func TestVulnShow_NoteFailureLeavesTheRefusalIntact(t *testing.T) {
 		t.Errorf("the refusal must survive a failed note lookup, got: %v", err)
 	}
 	requireExit(t, err, ExitNotFound)
+}
+
+// ---- licence family spelling contract --------------------------------------
+
+// TestLicenceSpellings_ResolveToSameCommand guards the spelling contract for
+// the whole licence command family: the project's docs (and its store schema)
+// speak British English while the binary registers the SPDX-conventional
+// spelling, so both must resolve — to the same command, not to parallel
+// implementations. A reader following docs/cli/license.md's `kanonarion
+// licence …` lost a 126-module retry to the missing alias.
+func TestLicenceSpellings_ResolveToSameCommand(t *testing.T) {
+	root := newRootCmd(io.Discard, io.Discard)
+	for _, pair := range [][2]string{
+		{"license", "licence"},
+		{"license-compat", "licence-compat"},
+		{"license-list", "licence-list"},
+		{"license-diff", "licence-diff"},
+	} {
+		us, _, err := root.Find([]string{pair[0]})
+		if err != nil {
+			t.Fatalf("Find(%q): %v", pair[0], err)
+		}
+		uk, _, err := root.Find([]string{pair[1]})
+		if err != nil {
+			t.Fatalf("Find(%q): %v (the British spelling must resolve)", pair[1], err)
+		}
+		if us != uk {
+			t.Errorf("%q and %q resolve to different commands", pair[0], pair[1])
+		}
+		if us.Name() != pair[0] {
+			t.Errorf("Find(%q).Name() = %q, want %q", pair[0], us.Name(), pair[0])
+		}
+	}
 }

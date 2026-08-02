@@ -36,7 +36,26 @@ kanonarion config show [--store-root <dir>] [--json]
 ```
 
 When `--json` is not given, the raw `config.yaml` file is printed (including
-comments). When `--json` is given, the resolved config is emitted as JSON.
+comments), followed by an **effective configuration** block: every enforced key,
+the value actually in force, and `(default)` when that value comes from the
+built-in default rather than from the file.
+
+```
+# effective configuration (resolved; (default) = not set in this file)
+preferences.log_level                             warn  (default)
+license_policy.rules[production].unknown_license  block  (default)
+license_policy.rules[tool].unknown_license        warn  (default)
+fetch_policy.allowed_vcs_hosts                    (unset: built-in host set, advisory)  (default)
+...
+```
+
+The file alone does not answer "what is in force" - a key you never wrote is
+absent from it and still resolves to a built-in default at runtime. The block
+below the file is the answer.
+
+When `--json` is given, the resolved config is emitted as JSON. Each licence
+rule carries `unknown_license` (the value in force) and
+`unknown_license_is_default` (whether it came from the built-in default).
 
 ---
 
@@ -113,9 +132,57 @@ Keys follow the dotted-path structure of `config.yaml`.
 | `preferences.progress` | bool | `false` (default `true`) - throttled stderr fetch heartbeat on long `walk`/`inspect`/`audit`/`sbom` runs; never affects stdout/`--json`. Equivalent to `--no-progress` when `false`. |
 | `license_policy.categories.<name>` | sequence | `[MIT, Apache-2.0]` |
 | `license_policy.rules` | sequence (read-only) | - |
+| `license_policy.rules[].unknown_license` | string (read-only, edit the file) | `allow` / `notify` / `warn` / `block` - see below |
 | `license_overrides.<module>` | string | `MIT` |
 | `callgraph.exclude` | sequence | `[github.com/foo/bar]` |
 | `staleness.ttl` | duration | `1h` |
+| `fetch_policy.allowed_vcs_hosts` | sequence | `[github.com, git.example.org]` - absent leaves the built-in host set advisory; naming it switches to enforcing |
+
+The unified governance blocks (`directive_policy`, `godebug_policy`,
+`vendor_policy`, `fips_policy`) are edited in the file rather than through
+`config set`; each is documented on its own page
+([`directives`](directives.md), [`godebug`](godebug.md),
+[`vendor`](vendor.md), [`fips`](fips.md)). All of them appear in the effective
+configuration block of `config show`.
+
+### `license_policy.rules[].unknown_license` - the unknown-licence gate
+
+A dependency whose licence could not be resolved to any SPDX identifier is
+**undetermined** - no licence record, or an extraction that produced
+`None` / `Multiple` / `ExtractionFailed` / `Cancelled`, with no
+`license_overrides` entry. Undetermined is not the same as "uncategorised": a
+named-but-unlisted licence like `Totally-Unknown-1.0` still resolves through the
+rule's `default`.
+
+`unknown_license` is the per-scope control for undetermined licences, and it is
+the only setting that can fail a build:
+
+| Value | Effect |
+|-------|--------|
+| `allow` | accepted silently |
+| `notify` | surfaced for awareness |
+| `warn` | flagged as needing attention |
+| `block` | hard compliance failure - `audit` exits non-zero (code `5`) and names the blocked modules |
+
+**Defaults, when the key is not set:** `block` for `scope: production`, `warn`
+for every other scope. Uncertainty fails closed in production rather than being
+rendered as a clean allow.
+
+```yaml
+license_policy:
+  rules:
+    - scope: production
+      allow: [permissive]
+      default: allow
+      unknown_license: block
+    - scope: tool
+      allow: [permissive, weak_copyleft, strong_copyleft]
+      default: allow
+      unknown_license: warn
+```
+
+Run `kanonarion config show` to see the value in force for each scope, including
+whether it is the default.
 
 ## Flags
 

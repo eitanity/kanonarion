@@ -128,3 +128,9 @@ func TestRecordingFetcher_WaiterHonoursContextCancellation(t *testing.T) {
 	close(gate.release)
 	wg.Wait()
 }
+
+// EnsureFetchedReplacing delegates: this fake has no replace-aware behaviour of
+// its own, so a replaced module is fetched exactly like an unreplaced one.
+func (b *blockingFetcher) EnsureFetchedReplacing(ctx context.Context, c, _ coordinate.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
+	return b.EnsureFetched(ctx, c)
+}

@@ -519,7 +519,7 @@ func runInterfaceListForModule(ctx context.Context, moduleArg string, jsonOut bo
 		return fmt.Errorf("getting interface record: %w", err)
 	}
 	if !found {
-		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("no interface record for %s — run 'kanonarion interface %s' first", coord, moduleArg)}
+		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("no interface record for %s — run: kanonarion interface %s", coord, moduleArg)}
 	}
 
 	if jsonOut {
@@ -623,7 +623,7 @@ func printInterfaceList(sums []ports.InterfaceSummary, jsonOut bool, stdout io.W
 			conflicts = append(conflicts, s.Conflict)
 			if _, err := fmt.Fprintf(stdout, "%-50s %-12s %s\n",
 				s.ModulePath+"@"+s.ModuleVersion, "CONFLICT",
-				"run 'kanonarion interface "+s.ModulePath+"@"+s.ModuleVersion+" --history'"); err != nil {
+				"run: kanonarion interface "+s.ModulePath+"@"+s.ModuleVersion+" --history"); err != nil {
 				return fmt.Errorf("writing output: %w", err)
 			}
 			continue

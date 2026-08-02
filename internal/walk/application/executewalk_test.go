@@ -54,20 +54,90 @@ func (f *fakeWalkStore) GetWalk(_ context.Context, id string) (domain.WalkRecord
 	return rec, nil
 }
 
+// effectiveScope mirrors the sqlite adapter's storage convention: an empty
+// scope is written and read back as the code scope.
+func effectiveScope(rec domain.WalkRecord) domain.WalkScope {
+	if rec.Scope == "" {
+		return domain.WalkScopeCode
+	}
+	return rec.Scope
+}
+
+// effectiveDepth mirrors the sqlite adapter's storage convention: full walks
+// are stored as the empty string.
+func effectiveDepth(rec domain.WalkRecord) domain.WalkDepth {
+	if rec.Depth == "" {
+		return domain.WalkDepthFull
+	}
+	return rec.Depth
+}
+
 func (f *fakeWalkStore) ListWalks(_ context.Context, filter walkports.WalkFilter) ([]walkports.WalkSummary, error) {
-	var summaries []walkports.WalkSummary
+	var matched []domain.WalkRecord
 	for _, rec := range f.walks {
 		if filter.Target != nil && (rec.Target.Path() != filter.Target.Path() || rec.Target.Version() != filter.Target.Version()) {
 			continue
 		}
+		if filter.Since != nil && rec.StartedAt.Before(*filter.Since) {
+			continue
+		}
+		if filter.Until != nil && rec.StartedAt.After(*filter.Until) {
+			continue
+		}
+		if filter.OverallStatus != nil && rec.OverallStatus != *filter.OverallStatus {
+			continue
+		}
+		if filter.Scope != nil && effectiveScope(rec) != *filter.Scope {
+			continue
+		}
+		if filter.Depth != nil && effectiveDepth(rec) != *filter.Depth {
+			continue
+		}
+		if filter.IdentityHash != nil && rec.IdentityHash != *filter.IdentityHash {
+			continue
+		}
+		// Mirrors the adapter's `goos = ? AND goarch = ?`: exact on both axes,
+		// with the empty string selecting the unrecorded frame rather than any.
+		if filter.BuildEnv != nil &&
+			(rec.Graph.BuildEnv.GOOS != filter.BuildEnv.GOOS || rec.Graph.BuildEnv.GOARCH != filter.BuildEnv.GOARCH) {
+			continue
+		}
+		matched = append(matched, rec)
+	}
+	if filter.LatestOnly {
+		latest := make(map[string]domain.WalkRecord)
+		for _, rec := range matched {
+			key := rec.Target.Path() + "@" + rec.Target.Version() + "|" + string(effectiveScope(rec))
+			if prev, ok := latest[key]; !ok || rec.StartedAt.After(prev.StartedAt) {
+				latest[key] = rec
+			}
+		}
+		matched = matched[:0]
+		for _, rec := range latest {
+			matched = append(matched, rec)
+		}
+	}
+	var summaries []walkports.WalkSummary
+	for _, rec := range matched {
+		failureCount := 0
+		for _, nr := range rec.PerNodeResults {
+			if nr.Status != domain.NodeSucceeded {
+				failureCount++
+			}
+		}
 		summaries = append(summaries, walkports.WalkSummary{
 			ID:            rec.ID,
 			Target:        rec.Target,
+			Scope:         effectiveScope(rec),
 			StartedAt:     rec.StartedAt,
 			CompletedAt:   rec.CompletedAt,
 			OverallStatus: rec.OverallStatus,
 			NodeCount:     len(rec.PerNodeResults),
+			FailureCount:  failureCount,
 			Depth:         rec.Depth,
+			IdentityHash:  rec.IdentityHash,
+			GOOS:          rec.Graph.BuildEnv.GOOS,
+			GOARCH:        rec.Graph.BuildEnv.GOARCH,
 		})
 	}
 	// Mimic SQLite ordering: started_at DESC.

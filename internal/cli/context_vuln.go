@@ -174,24 +174,34 @@ func (b *vulnBatchCtx) filterWalkAnnotation(ctx context.Context, result *context
 }
 
 func buildVulnerabilitiesFromBatch(ctx context.Context, coord coordinate.ModuleCoordinate, vulnUC QueryVulnUseCase, batch *vulnBatchCtx) contextVulnerabilities {
-	// A store read failure must surface as read_error like every other
-	// section — analysed-but-unreadable presented as not_run is the
-	// absence-as-answer defect class. A later run may still read
-	// fine, so remember the first error and keep going.
-	var readErr error
+	// Every generation the ledger holds for the coordinate, read once, rather
+	// than one composed answer per scan run.
+	//
+	// context is asked about a module a build depends on, so it is a consumer's
+	// question and it is selected for in a consumer's frame — the same read
+	// reachability and vuln-show use. The composed store reads this replaces
+	// name no frame: their ladder decides on call-graph completeness, a rung an
+	// isolated scan wins by construction (it built the module alone, so it
+	// records BUILT_WITH_BODIES, while a consumer-rooted analysis records no
+	// completeness at all), so context headlined the isolated verdict for every
+	// module a project-rooted scan had computed a route through.
+	//
+	// A store read failure must surface as read_error like every other section —
+	// analysed-but-unreadable presented as not_run is the absence-as-answer
+	// defect class.
+	recs, err := vulnUC.ListRecordsForModule(ctx, coord, vulnPipelineVersion)
+	if err != nil {
+		return contextVulnerabilities{Status: sectionStatusReadError, Error: err.Error()}
+	}
 	for _, runs := range batch.runs {
 		for _, run := range runs {
 			if _, ok := run.PerModuleResults[coord]; !ok {
 				continue
 			}
-			// Use run.Snapshot (the snapshot used during the scan), not the latest snapshot.
-			rec, found, err := vulnUC.GetRecord(ctx, coord, vulnPipelineVersion, run.Snapshot)
-			if err != nil {
-				if readErr == nil {
-					readErr = err
-				}
-				continue
-			}
+			// Narrowed to run.Snapshot (the snapshot the scan used), not the latest
+			// snapshot, exactly as the per-run store read was keyed.
+			atSnapshot := recordsAtSnapshot(recs, run.Snapshot)
+			rec, _, _, found := selectConsumerRecord(atSnapshot, coord)
 			if !found {
 				continue
 			}
@@ -200,18 +210,29 @@ func buildVulnerabilitiesFromBatch(ctx context.Context, coord coordinate.ModuleC
 			return result
 		}
 	}
-	// Fall back to GetLatestVulnerabilityRecord in case the module was scanned
-	// outside the batch's walk window.
-	rec, found, err := vulnUC.GetLatestRecord(ctx, coord, vulnPipelineVersion)
-	switch {
-	case err != nil:
-		return contextVulnerabilities{Status: sectionStatusReadError, Error: err.Error()}
-	case found:
+	// No run in the batch's walk window covers the module with a readable record,
+	// so the whole ledger answers — still frame-first.
+	rec, _, _, found := selectConsumerRecord(recs, coord)
+	if found {
 		return vulnRecordToContext(&rec, "", "")
-	case readErr != nil:
-		return contextVulnerabilities{Status: sectionStatusReadError, Error: readErr.Error()}
 	}
 	return contextVulnerabilities{Status: sectionStatusNotRun}
+}
+
+// recordsAtSnapshot narrows a coordinate's generations to the ones reached
+// against one advisory-database snapshot.
+//
+// Source and version are the whole of snapshot identity here because they are
+// what the store's own per-snapshot read keys on; the retrieval instant travels
+// with the record and is not part of the key.
+func recordsAtSnapshot(recs []vuldomain.VulnerabilityRecord, snap vuldomain.DatabaseSnapshot) []vuldomain.VulnerabilityRecord {
+	out := make([]vuldomain.VulnerabilityRecord, 0, len(recs))
+	for _, r := range recs {
+		if r.DatabaseSnapshot.Source() == snap.Source() && r.DatabaseSnapshot.Version() == snap.Version() {
+			out = append(out, r)
+		}
+	}
+	return out
 }
 
 // walkCoverageCaveat returns the coverage-axis annotation for a run when it left
@@ -236,6 +257,7 @@ func vulnRecordToContext(rec *vuldomain.VulnerabilityRecord, walkStatus, walkCov
 		WalkCoverage:    walkCoverage,
 		Reason:          rec.UnscannableReason,
 		WalkID:          rec.WalkID,
+		Frame:           string(vuldomain.RecordRooting(*rec)),
 		LastValidatedAt: isoTime(rec.ScannedAt),
 		SnapshotVersion: rec.DatabaseSnapshot.Version(),
 		PipelineVersion: rec.PipelineVersion,

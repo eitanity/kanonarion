@@ -197,3 +197,79 @@ func TestDeriveExpression_FiltersPseudoIdentifier(t *testing.T) {
 		t.Errorf("pseudo-id filtered = %q, want BSD-3-Clause", got)
 	}
 }
+
+func TestDeriveExpression_BareNameDualLicence_OR(t *testing.T) {
+	// gorhill/cronexpr ships APLv2 beside GPLv3: bare licence-name files are
+	// per-licence naming, so the consumer elects one arm → OR, never AND.
+	entries := []domain.LicenseFileEntry{
+		{Path: "APLv2", SPDX: "Apache-2.0", Confidence: 0.99},
+		{Path: "GPLv3", SPDX: "GPL-3.0", Confidence: 0.95},
+	}
+	got := domain.DeriveExpression(entries)
+	if got != "Apache-2.0 OR GPL-3.0" {
+		t.Errorf("bare-name dual licence = %q, want Apache-2.0 OR GPL-3.0", got)
+	}
+}
+
+func TestDeriveExpression_ReversedNameBesidePlainLicence_OR(t *testing.T) {
+	// sergi/go-diff ships APACHE-LICENSE-2.0 beside a plain MIT LICENSE: the
+	// licence-naming file signals the election even when its sibling is plain.
+	entries := []domain.LicenseFileEntry{
+		{Path: "LICENSE", SPDX: "MIT", Confidence: 0.99},
+		{Path: "APACHE-LICENSE-2.0", SPDX: "Apache-2.0", Confidence: 0.99},
+	}
+	got := domain.DeriveExpression(entries)
+	if got != "Apache-2.0 OR MIT" {
+		t.Errorf("reversed-name dual licence = %q, want Apache-2.0 OR MIT", got)
+	}
+}
+
+func TestDisjunctionArms(t *testing.T) {
+	cases := []struct {
+		name string
+		expr string
+		want []string
+	}{
+		{"empty", "", nil},
+		{"single identifier", "MIT", nil},
+		{"two arms", "Apache-2.0 OR GPL-3.0", []string{"Apache-2.0", "GPL-3.0"}},
+		{"three arms", "Apache-2.0 OR GPL-3.0 OR MIT", []string{"Apache-2.0", "GPL-3.0", "MIT"}},
+		{"conjunction is not an election", "Apache-2.0 AND GPL-2.0-only", nil},
+		{"mixed operators are not an election", "MIT OR Apache-2.0 AND GPL-2.0-only", nil},
+		{"WITH exception is not an election", "GPL-3.0 WITH Classpath-exception-2.0 OR MIT", nil},
+		{"duplicate arms collapse below two", "MIT OR MIT", nil},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			got := domain.DisjunctionArms(tc.expr)
+			if len(got) != len(tc.want) {
+				t.Fatalf("DisjunctionArms(%q) = %v, want %v", tc.expr, got, tc.want)
+			}
+			for i := range got {
+				if got[i] != tc.want[i] {
+					t.Errorf("DisjunctionArms(%q)[%d] = %q, want %q", tc.expr, i, got[i], tc.want[i])
+				}
+			}
+		})
+	}
+}
+
+// TestSoleIdentifier pins the one-identifier reading: an expression naming a
+// single licence resolves to it, and anything carrying an operator resolves to
+// nothing — a choice and a set of obligations are both more than one licence.
+func TestSoleIdentifier(t *testing.T) {
+	cases := map[string]string{
+		"Apache-2.0":                        "Apache-2.0",
+		"  MIT  ":                           "MIT",
+		"":                                  "",
+		"Apache-2.0 OR MIT":                 "",
+		"MIT AND BSD-3-Clause":              "",
+		"GPL-2.0-only WITH Classpath-e":     "",
+		"Apache-2.0 OR BSD-3-Clause OR MIT": "",
+	}
+	for expr, want := range cases {
+		if got := domain.SoleIdentifier(expr); got != want {
+			t.Errorf("SoleIdentifier(%q) = %q, want %q", expr, got, want)
+		}
+	}
+}

@@ -45,17 +45,21 @@ license_policy:
       notify:  [weak_copyleft]
       warn:    [strong_copyleft, restricted]
       default: allow
+      unknown_license: block
     - scope: tool
       allow:   [permissive, weak_copyleft, strong_copyleft]
       notify:  [restricted]
       default: allow
+      unknown_license: warn
 license_overrides:
   # golang.org/x/mod: MIT
 callgraph:
   exclude: []
 ```
 
-Policy outcomes are `allow`, `notify`, and `warn` - there is no blocking mechanism. Categories not listed in any outcome list resolve to `default`; an absent `default` resolves to `allow`. The same implicit allow applies when no rule exists for a scope.
+Policy outcomes for a *resolved* licence are `allow`, `notify`, and `warn`. Categories not listed in any outcome list resolve to `default`; an absent `default` resolves to `allow`. The same implicit allow applies when no rule exists for a scope.
+
+An *undetermined* licence - one the detector could not resolve to any SPDX identifier at all - does not fall through to `default`. It is governed by `unknown_license`, the per-scope unknown-licence gate, which is the one setting that can fail a build: `block` makes an undetermined dependency a hard compliance failure and `audit` exits `5`. Left unset it resolves to `block` for `scope: production` and `warn` for every other scope, so uncertainty fails closed rather than being reported as a clean allow. See [`config`](config.md#license_policyrulesunknown_license---the-unknown-licence-gate) for the four values and `kanonarion config show` for the value in force.
 
 ---
 
@@ -78,6 +82,45 @@ stages:
 The `stages` map is keyed by stage name. Only `fetch` is used in Phase 1; additional stages (`licence`, `interface`) will be consumed in later phases and are preserved for forward compatibility.
 
 Example policies are available in `docs/examples/policies/`.
+
+---
+
+## The build frame
+
+A walk records the `GOOS`/`GOARCH` it resolved for. One store can hold walks of
+the same project for several platforms — a cross-compiled release run produces
+one per target — and the two behave differently:
+
+**Commands that run analysis over a walk** select the walk resolved for the
+current environment's `go env GOOS`/`GOARCH`, not the newest one. This covers
+`vuln-scan --gomod` (and `--tool`/`--project`), `vuln-scan <module@version>`,
+and `sbom --package` without `--force`.
+
+`vuln-scan` refuses when no such walk exists, naming the platform and the
+command that produces one:
+
+```
+no succeeded code project walk for example.com/myapp on darwin/arm64 — run: kanonarion walk --gomod ./go.mod
+```
+
+`sbom --package` builds the missing walk itself in the current frame rather
+than refusing.
+
+To scan or inventory another platform's walk deliberately, name it by ID:
+`kanonarion vuln-scan <walk-id>`.
+
+**Query commands** (`inspect`, `license`, `license-compat`, `context`,
+`dependents`, `interface-diff --used-by`, `callers`/`callees`/`implementers`
+with `--gomod`) still answer from the most recent walk of the target, whatever
+its platform, and state which frame answered:
+
+```
+Walk ID:  01KQDBVW092ER1HNXZ60X27CMD
+Frame:    linux/amd64
+```
+
+A walk taken before the frame was recorded reads `unrecorded`. JSON output
+carries the same value in a `frame` / `walk_frame` field.
 
 ---
 
@@ -104,7 +147,7 @@ and repeated in that command's `--help`.
 | Code | Name | Meaning |
 |---|---|---|
 | 0 | OK | Success |
-| 1 | Partial | The work completed but is known-incomplete: walk partial, or an SBOM generated with incomplete licence data |
+| 1 | Partial | The work completed but is known-incomplete: walk partial, or an SBOM generated with one or more components carrying no licence identity |
 | 2 | Failed | The work could not complete: walk failed, or `license-compat` found unmodelled licence pairs needing review |
 | 3 | Cancelled | The context was cancelled before the work completed |
 | 4 | NotFound | A record requested by ID or coordinate does not exist. The message names the command that produces it |
@@ -122,7 +165,7 @@ the invocation itself was wrong.
 
 | Code | Commands |
 |---|---|
-| 1 | `walk`, `inspect` (partial closure); `sbom` (incomplete licence data — the document IS still written); `license-compat` (confirmed incompatible pairs) |
+| 1 | `walk`, `inspect` (partial closure); `sbom` (a component with no licence identity — the document IS still written and names it); `license-compat` (confirmed incompatible pairs) |
 | 2 | `walk`, `inspect` (target unfetchable); `license-compat` (unknown pairs, never silently "compatible"); `license-compat` (root has a licence record but no SPDX identity) |
 | 4 | `walk-show`, `walk-list --walk-id`, `walk-diff`, `dependents`, `context --walk-id`, `verification-coverage`, `vuln-show`, `vuln --history`, `scan-show`, `snapshot-show`, `vuln-scan --snapshot`, `reachability --vuln`, `callgraph-show`, `interface-show`, `interface-list`, `examples-show`, `examples-list`, `license`, `license-compat`, `license-diff`, `directives-show`, `directives-diff`, `use` |
 | 5 | `audit` (unknown licence blocked by policy), `directives`, `godebug`, `vendor`, `fips`, `notice` (modules require human review) |

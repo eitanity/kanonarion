@@ -144,6 +144,123 @@ oracle - a checkout that has moved or lost its `vendor/` tree degrades the scan
 to the fetched surface with the reason logged, and never makes a stored walk
 unscannable.
 
+Every project-rooted walk now populates it, the `local` driver's included. The
+walk request carries two values with two meanings: the directory the walk was
+taken from (recorded, always) and the directory whose Go toolchain is the
+authority for the module set (resolution, unchanged). They used to be one field,
+which made recording where a walk happened indistinguishable from handing the
+toolchain the last word on what it contains, so a driver walk that wanted the
+internal resolver had to record no root at all. **Resolution behaviour is
+unchanged**, and no bump or migration is owed: the change populates an existing
+column on a path that previously left it empty, and the column is outside the
+seal.
+
+## Walk store: module `walk`, migration 7
+
+**Additive; a new column, no record shape change and no pipeline bump.** `walks`
+gains `identity_hash`: a name for the ANALYSIS a walk performed, as opposed to
+`content_hash`, which seals the RECORD. The whole store's migration count goes
+`v73` -> `v74`.
+
+The two answer different questions and both are needed. `content_hash` covers
+everything the record says, so a stored row cannot be altered without detection
+— which means it covers the walk id, `started_at`, `completed_at`,
+`graph.resolved_at` and the per-node fetch durations. Two runs of an unchanged
+checkout differ in every one of those, so they produced two content hashes and,
+with them, two walk ids; every record keyed on a walk id (licences,
+vulnerability verdicts, SBOMs) became unreachable from the next run, and a full
+re-scan followed because the cache key was fresh by construction rather than
+because anything had changed.
+
+`identity_hash` covers the target, scope, depth, ecosystem, both pipeline
+versions, the policy version and hash, the stage depths, the build environment,
+the resolved graph (every node with its coordinate, resolution source, digests,
+stdlib custody and replace origin, plus every edge), each node's status and
+error, and the overall status. It deliberately excludes the walk id, the three
+timestamps, per-node `duration_ms` and `from_cache`, the operator, and the
+composed fetch record — the last because that record carries `first_fetched_at`,
+`latest_fetched_at`, `measurement_count` and per-leg dates, all of which move
+when the ledger re-measures bytes that never changed. What the identity keeps
+from a fetch is the **artefact identity** (the `h1` hash), which is precisely
+"these bytes".
+
+The column sits **outside** the sealed shape, like `project_dir`:
+`canonicalWalkRecord` does not carry it, so it is neither hashed nor serialised
+into the stored blob. Admitting a derived value to the seal would make the seal
+cover a function of itself and would stop every previously-written walk from
+verifying. A reader that distrusts a stored identity recomputes it from the
+record it came with, which costs one hash.
+
+Migration for existing stores: **none required, and no purge.** Existing rows
+default to the empty identity. **Empty is an ABSENT identity, never a matching
+one** — the reuse lookup filters on a non-empty value, so a pre-existing row is
+never served as a reusable walk. Such a project is re-walked once, which writes
+its identity, and is reusable from then on. Back-filling was rejected: the
+identity is a function of the record, so filling it would mean decompressing and
+rehashing every stored walk during a migration to save one re-walk per project.
+
+Nothing verifies `identity_hash` on read and no stored hash is ever compared
+across the old and new styles: an old-style walk has no identity at all, so the
+comparison cannot arise. Reads of existing walks are unchanged in every respect.
+
+## Vendor record: schema `3` → `4`, pipeline `0.2.0` → `0.3.0`
+
+**Record shape change and a finding-set change; no store migration.** Vendor
+records are keyed `(project_module_path, pipeline_version)`, so the bump is the
+migration: `0.2.0` rows stay where they are and are never served for a `0.3.0`
+request.
+
+Two changes. Each `VendoredModule` records the **package count** from
+`vendor/modules.txt` — the package lines under its heading — and the record
+carries a **scope statement** naming every module in the tree the report does
+not describe, with the reason. The content hash covers the package count, so an
+unchanged tree hashes differently from its `0.2.0` record.
+
+The behaviour that forced the bump: a module `modules.txt` lists with no package
+under it no longer reports `missing_from_vendor`. No package of the build
+imports it, so `go mod vendor` correctly vendors no directory — the old finding
+described the toolchain's normal output as drift.
+
+## SBOM: pipeline `0.5.0` → `0.6.0`
+
+**Document bytes change; no store migration.** SBOM records are cached on
+`(walk id, scan run id, format, pipeline version)`, so the bump is what stops a
+`0.5.0` document being served for a `0.6.0` request. A document generated over a
+project-rooted walk whose project carries a `vendor/` tree now carries the
+vendor scope annotation. The SBOM record is hashed over the document bytes, not
+over a canonical struct, so there is no sealed shape to migrate.
+
+## Walk store: module `walk`, migration 8
+
+**Additive; two new columns, no record shape change and no pipeline bump.**
+`walks` gains `goos` and `goarch`: the target platform a walk resolved for. The
+whole store's migration count goes `v74` -> `v75`.
+
+The value already lived in the sealed blob, as the graph's `BuildEnv`. These
+columns are a projection of it, exactly like `identity_hash` is a projection of
+the record — the canonical shape the content hash covers is unchanged, so every
+stored walk still verifies against the hash it was written with and nothing is
+purged.
+
+**Back-filled**, unlike `identity_hash`. The migration decompresses each stored
+walk once and copies the frame out of its own record. Leaving the columns empty
+would have made every walk already in the store permanently invisible to the
+platform-filtered lookups the columns exist for, and the value is already
+present, so there is nothing to recompute. A row whose record carries no build
+environment back-fills to empty strings; a row this build cannot decode is left
+at empty rather than failing the migration, because an unreadable row's frame is
+genuinely unknown.
+
+Empty means **the frame was never recorded**, and it never matches an explicit
+platform filter. A caller asking for `linux/amd64` must not receive a walk whose
+platform is unknown, so `WalkFilter.BuildEnv` matches both axes exactly and "any
+platform" is expressible only by leaving the filter nil.
+
+Measured on the real store at migration time: 92 rows, 72 back-filled to
+`linux/amd64`, 20 left unrecorded — and those 20 are exactly the module-rooted
+walks. Only the project resolver writes a `BuildEnv`, so a walk rooted at a
+published coordinate structurally has no frame and can never gain one.
+
 ## Audit log (`audit.jsonl`)
 
 Append-only JSONL; **no schema migration** is ever required to add an event

@@ -65,7 +65,7 @@ kanonarion inspect github.com/spf13/cobra@v1.8.1 --json
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Path to fact store root (or `KANONARION_STORE` env var) |
 | `--force` | `false` | Re-fetch and re-extract even if cached records exist |
-| `--fresh` | `false` | Fetch a fresh vulnerability database snapshot from the network |
+| `--fresh` | `false` | Refresh the vulnerability advisory database: read the published generation and module index, and download a new snapshot only if an advisory listed for a module in this walk has changed |
 | `--reachability` | `false` | Enable call-graph reachability analysis during vuln-scan. For `--gomod`, reachability roots at the dependency closure, not the project's own code (see the note under [`inspect --gomod`](#inspect---gomod-path)) |
 | `--skip-vcs-verify` | `false` | Skip git cross-verification; sumdb verification still runs |
 | `--policy` | _(auto-discover `.kanonarion/policy.yaml`)_ | Depth policy file; its fetch stage governs traversal and the `allowed_vcs_hosts` forge allowlist |
@@ -147,9 +147,16 @@ Modules:  21 (0 failed)
 Affected: 0
 Snapshot: 2026-05-07T19:21:40Z
 Walk ID:  01KQDBVW092ER1HNXZ60X27CMD
+Frame:    linux/amd64
 
 To get module context: kanonarion context --gomod ./go.mod
 ```
+
+`Frame` is the `GOOS/GOARCH` the answering walk resolved for, or `unrecorded`
+for a walk taken before the frame was recorded. `inspect` answers from the most
+recent walk of the target regardless of platform, so on a store holding walks
+for several platforms this line says which one answered. JSON output carries it
+as `walk_frame`.
 
 `Status` is the coverage word (`AllClean` / `Affected` / `Partial` /
 `ScanFailed`) and `Affected` is the findings count; the two are independent

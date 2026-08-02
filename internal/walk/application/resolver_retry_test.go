@@ -119,3 +119,9 @@ func TestResolve_PermanentFetchErrorIsNotRetried(t *testing.T) {
 		t.Errorf("fetcher called %d times, want 1 (no retry for a permanent error)", flaky.calls)
 	}
 }
+
+// EnsureFetchedReplacing delegates: this fake has no replace-aware behaviour of
+// its own, so a replaced module is fetched exactly like an unreplaced one.
+func (f *flakyFetcher) EnsureFetchedReplacing(ctx context.Context, c, _ coordinate.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
+	return f.EnsureFetched(ctx, c)
+}

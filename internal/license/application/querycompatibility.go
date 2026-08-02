@@ -9,6 +9,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	"github.com/eitanity/kanonarion/internal/license/domain"
+	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
@@ -55,11 +56,17 @@ func NewCheckCompatibilityUseCase(store licenseStoreReader, walks walkports.Walk
 // Per if a module's license record has not been extracted, it is
 // represented as an empty SPDX (VerdictUnknownPair), not silently skipped.
 // The root module (target coordinate) is excluded from the closure.
+//
+// overrides carries the operator's license_overrides entries. An override is
+// the recorded human decision for a module — including the election of one arm
+// of a dual licence — so a module it resolves is evaluated under exactly that
+// SPDX instead of the scanner's record.
 func (uc *CheckCompatibilityUseCase) CheckCompatibilityForWalk(
 	ctx context.Context,
 	walkID string,
 	root coordinate.ModuleCoordinate,
 	targetSPDX string,
+	overrides domain.LicenseOverrideSet,
 ) (domain.ClosureCompatibilityReport, error) {
 	if targetSPDX == "" {
 		resolved, err := uc.resolveRootTarget(ctx, root)
@@ -78,9 +85,19 @@ func (uc *CheckCompatibilityUseCase) CheckCompatibilityForWalk(
 	// at different depths).
 	seen := make(map[coordinate.ModuleCoordinate]struct{})
 	var coords []coordinate.ModuleCoordinate
+	// The standard-library node carries its licence on the graph node rather
+	// than in a licence record, so its SPDX is collected from the walk here
+	// (walkdomain.StdlibLicense: node facts first, then the published
+	// BSD-3-Clause constant — the shared rule every surface applies) and
+	// consulted ahead of the store lookup below.
+	stdlibSPDX := make(map[coordinate.ModuleCoordinate]string, 1)
 	for _, node := range walk.Graph.Nodes {
 		if node.Coordinate == root {
 			continue
+		}
+		if node.ResolutionSource == walkdomain.ResolutionStdlib {
+			spdx, _ := walkdomain.StdlibLicense(node.Stdlib)
+			stdlibSPDX[node.Coordinate] = spdx
 		}
 		if _, dup := seen[node.Coordinate]; dup {
 			continue
@@ -95,27 +112,31 @@ func (uc *CheckCompatibilityUseCase) CheckCompatibilityForWalk(
 		return coords[i].Version() < coords[j].Version()
 	})
 
-	// Expand each module into one CompatibilityInput per effective SPDX.
-	// Embedded components with their own licenses produce additional entries so
-	// a bundled GPL component is caught even when the module root is permissive.
+	// Expand each module into CompatibilityInputs. A dual-licensed root (a
+	// purely disjunctive expression) becomes one elective input; embedded
+	// components with their own licenses produce additional entries so a
+	// bundled GPL component is caught even when the module root is permissive.
 	modules := make([]domain.CompatibilityInput, 0, len(coords))
 	for _, coord := range coords {
-		spdxs := resolveEffectiveSPDXs(ctx, uc.store, coord)
-		if len(spdxs) == 0 {
-			modules = append(modules, domain.CompatibilityInput{
-				ModulePath:    coord.Path(),
-				ModuleVersion: coord.Version(),
-				SPDX:          "", // unknown — treated as VerdictUnknownPair
-			})
-			continue
-		}
-		for _, spdx := range spdxs {
+		if spdx, isStdlib := stdlibSPDX[coord]; isStdlib {
 			modules = append(modules, domain.CompatibilityInput{
 				ModulePath:    coord.Path(),
 				ModuleVersion: coord.Version(),
 				SPDX:          spdx,
 			})
+			continue
 		}
+		// An override is the operator's recorded decision (correction or
+		// dual-licence election) and replaces the scanner's answer wholesale.
+		if ov, ok := overrides.Resolve(coord); ok {
+			modules = append(modules, domain.CompatibilityInput{
+				ModulePath:    coord.Path(),
+				ModuleVersion: coord.Version(),
+				SPDX:          ov.SPDX,
+			})
+			continue
+		}
+		modules = append(modules, compatibilityInputsFor(ctx, uc.store, coord)...)
 	}
 
 	report := domain.CheckClosureCompatibility(modules, targetSPDX)
@@ -145,24 +166,75 @@ func (uc *CheckCompatibilityUseCase) resolveRootTarget(
 	return "", fmt.Errorf("%w: %s resolved to status %s", ErrRootLicenceNoSPDX, root, rec.OverallStatus)
 }
 
-// resolveEffectiveSPDXs returns all distinct SPDX identifiers for coord, drawn
-// from its EffectiveSet (root + embedded components). Falls back to a single
-// expression/primary SPDX for records that predate. Returns nil when
-// the record is absent or an error occurs — the caller treats nil as unknown
-func resolveEffectiveSPDXs(ctx context.Context, store licenseStoreReader, coord coordinate.ModuleCoordinate) []string {
+// compatibilityInputsFor derives the CompatibilityInputs for one module from
+// its licence record.
+//
+// A purely disjunctive expression ("Apache-2.0 OR GPL-3.0") is a dual licence:
+// the consumer elects one arm, so the module contributes a single elective
+// input the engine evaluates per election rather than one input per arm —
+// which would have asserted that every arm applies and turned an electable
+// dual licence into a false incompatibility. Embedded components keep their
+// own single-licence entries: their licences apply regardless of the root
+// election.
+//
+// Otherwise all distinct SPDX identifiers apply (EffectiveSet: root + embedded
+// components), falling back to a single expression/primary SPDX for records
+// that predate the EffectiveSet. A nil result (record absent, or a read error)
+// is treated as unknown by the caller.
+func compatibilityInputsFor(ctx context.Context, store licenseStoreReader, coord coordinate.ModuleCoordinate) []domain.CompatibilityInput {
+	unknown := []domain.CompatibilityInput{{
+		ModulePath:    coord.Path(),
+		ModuleVersion: coord.Version(),
+		SPDX:          "", // unknown — treated as VerdictUnknownPair
+	}}
 	rec, found, err := store.GetLicenseRecord(ctx, coord, PipelineVersion)
 	if err != nil || !found {
-		return nil
+		return unknown
 	}
-	if len(rec.EffectiveSet.AllSPDXs) > 0 {
-		return rec.EffectiveSet.AllSPDXs
+
+	if arms := domain.DisjunctionArms(rec.Expression); len(arms) >= 2 {
+		inputs := []domain.CompatibilityInput{{
+			ModulePath:    coord.Path(),
+			ModuleVersion: coord.Version(),
+			ElectiveArms:  arms,
+		}}
+		// Embedded component licences are not part of the election.
+		seen := make(map[string]bool)
+		for _, comp := range rec.EffectiveSet.Components {
+			for _, spdx := range comp.SPDXs {
+				if seen[spdx] {
+					continue
+				}
+				seen[spdx] = true
+				inputs = append(inputs, domain.CompatibilityInput{
+					ModulePath:    coord.Path(),
+					ModuleVersion: coord.Version(),
+					SPDX:          spdx,
+				})
+			}
+		}
+		return inputs
 	}
-	// Fall back for records without EffectiveSet populated (LicenseStatusNone etc.).
-	if rec.Expression != "" {
-		return []string{rec.Expression}
+
+	spdxs := rec.EffectiveSet.AllSPDXs
+	if len(spdxs) == 0 {
+		// Fall back for records without EffectiveSet populated (LicenseStatusNone etc.).
+		switch {
+		case rec.Expression != "":
+			spdxs = []string{rec.Expression}
+		case rec.PrimarySPDX != "":
+			spdxs = []string{rec.PrimarySPDX}
+		default:
+			return unknown
+		}
 	}
-	if rec.PrimarySPDX != "" {
-		return []string{rec.PrimarySPDX}
+	inputs := make([]domain.CompatibilityInput, 0, len(spdxs))
+	for _, spdx := range spdxs {
+		inputs = append(inputs, domain.CompatibilityInput{
+			ModulePath:    coord.Path(),
+			ModuleVersion: coord.Version(),
+			SPDX:          spdx,
+		})
 	}
-	return nil
+	return inputs
 }

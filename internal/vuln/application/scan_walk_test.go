@@ -14,6 +14,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/vuln/application"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/vuln/ports"
 	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
@@ -381,9 +382,15 @@ func TestScanWalk_FreshFetch(t *testing.T) {
 	cachedSnap := vulntest.MustNewAt("test", "v1", now.Add(-time.Hour))
 	_ = vulnStore.PutDatabaseSnapshot(ctx, cachedSnap, strings.NewReader("cached"))
 
-	// 2. Mock database returns a newer snapshot.
+	// 2. Mock database publishes a newer snapshot, and publishes a different
+	// advisory for the module this walk holds — so the refresh has a reason to
+	// download the body rather than keeping the one it holds.
 	freshSnap := vulntest.MustNewAt("test", "v2", now)
-	db := &fakeDatabase{snapshot: freshSnap, content: "fresh"}
+	db := &fakeDatabase{
+		snapshot: freshSnap, content: "fresh",
+		storedIndex:    ports.AdvisoryIndex{"m1": {{ID: "GO-2024-0001", Modified: "2024-01-01T00:00:00Z"}}},
+		publishedIndex: ports.AdvisoryIndex{"m1": {{ID: "GO-2024-0001", Modified: "2024-06-01T00:00:00Z"}}},
+	}
 
 	moduleUC := application.NewScanModuleUseCase(
 		facts, blobs, vulnStore, walkStore, scanner, db, nil, clock, "v1", slog.Default(),
@@ -401,7 +408,8 @@ func TestScanWalk_FreshFetch(t *testing.T) {
 		t.Errorf("expected cached version v1, got %s", run.Snapshot.Version())
 	}
 
-	// 4. Scan WITH fresh=true -> should fetch fresh.
+	// 4. Scan WITH fresh=true, against a generation whose advisories for this
+	// walk's module changed -> should fetch fresh.
 	run, err = walkUC.Scan(ctx, application.ScanWalkParams{WalkID: "w1", Fresh: true})
 	if err != nil {
 		t.Fatalf("Scan: %v", err)

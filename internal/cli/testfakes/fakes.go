@@ -165,6 +165,17 @@ func (f *FakeQueryWalks) ListWalks(_ context.Context, filter walkports.WalkFilte
 		}
 		out = filtered
 	}
+	if filter.BuildEnv != nil {
+		// Mirrors the adapter's `goos = ? AND goarch = ?`: exact on both axes,
+		// with the empty string selecting the unrecorded frame rather than any.
+		var filtered []walkports.WalkSummary
+		for _, s := range out {
+			if s.GOOS == filter.BuildEnv.GOOS && s.GOARCH == filter.BuildEnv.GOARCH {
+				filtered = append(filtered, s)
+			}
+		}
+		out = filtered
+	}
 	if filter.Limit > 0 && len(out) > filter.Limit {
 		out = out[:filter.Limit]
 	}
@@ -338,7 +349,7 @@ type FakeCheckCompatibility struct {
 	Err    error
 }
 
-func (f *FakeCheckCompatibility) CheckCompatibilityForWalk(_ context.Context, _ string, _ coordinate.ModuleCoordinate, _ string) (licensedomain.ClosureCompatibilityReport, error) {
+func (f *FakeCheckCompatibility) CheckCompatibilityForWalk(_ context.Context, _ string, _ coordinate.ModuleCoordinate, _ string, _ licensedomain.LicenseOverrideSet) (licensedomain.ClosureCompatibilityReport, error) {
 	return f.Report, f.Err
 }
 
@@ -349,6 +360,16 @@ type FakeDiffLicense struct {
 }
 
 func (f *FakeDiffLicense) Diff(_ context.Context, _, _ coordinate.ModuleCoordinate) (licensedomain.LicenseDiff, error) {
+	return f.Result, f.Err
+}
+
+// FakeDiffInterface implements cli.DiffInterfaceUseCase.
+type FakeDiffInterface struct {
+	Result ifacedomain.InterfaceDiff
+	Err    error
+}
+
+func (f *FakeDiffInterface) Diff(_ context.Context, _, _ coordinate.ModuleCoordinate) (ifacedomain.InterfaceDiff, error) {
 	return f.Result, f.Err
 }
 
@@ -502,6 +523,7 @@ type FakeQueryCallGraph struct {
 	records             map[string]cgdomain.CallGraphRecord
 	list                []cgports.CallGraphSummary
 	callers             []cgports.CallEdgeRef
+	callersBySymbol     map[string][]cgports.CallEdgeRef
 	callees             []cgports.CallEdgeRef
 	traverseCallers     []cgports.CallEdgeRef
 	traverseCallerNodes []string
@@ -616,12 +638,28 @@ func (f *FakeQueryCallGraph) SetCallees(refs []cgports.CallEdgeRef) {
 	f.callees = refs
 }
 
-func (f *FakeQueryCallGraph) FindCallers(_ context.Context, _, _ string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error) {
+// SetCallersFor answers one symbol specifically. A command that queries several
+// symbols in one run needs the fake to tell them apart; SetCallers alone would
+// return the same edges for every one of them, and a join that queried the wrong
+// symbol would still pass.
+func (f *FakeQueryCallGraph) SetCallersFor(symbolID string, refs []cgports.CallEdgeRef) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.callersBySymbol == nil {
+		f.callersBySymbol = make(map[string][]cgports.CallEdgeRef)
+	}
+	f.callersBySymbol[symbolID] = refs
+}
+
+func (f *FakeQueryCallGraph) FindCallers(_ context.Context, symbolID, _ string, scope coordinate.ModuleSet, opts cgports.EdgeQueryOptions) ([]cgports.CallEdgeRef, error) {
 	if f.Err != nil {
 		return nil, f.Err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if f.callersBySymbol != nil {
+		return scopeEdgeRefs(f.callersBySymbol[symbolID], scope), nil
+	}
 	return scopeEdgeRefs(f.callers, scope), nil
 }
 
@@ -808,6 +846,30 @@ type FakeScanWalk struct {
 	// ProgressRecords are delivered to the Progress callback (if set) before
 	// the result is returned. Use this to test output routing in callers.
 	ProgressRecords []FakeScanWalkProgress
+
+	// ReusableRunResult and ReusableRunFound are what ReusableRun reports. The
+	// zero value reports no reusable run, so a fake that says nothing about reuse
+	// drives the measuring path, which is what most callers want.
+	ReusableRunResult vulndomain.WalkScanRun
+	ReusableRunFound  bool
+	ReusableRunErr    error
+	// ReusableRunWalkID records the walk the last ReusableRun call asked about,
+	// so a test can prove the reuse question was asked about the walk the run
+	// executed rather than some other walk of the same target.
+	ReusableRunWalkID string
+	// ScanCalls counts Scan invocations, so a test can prove a served run did not
+	// re-measure.
+	ScanCalls int
+
+	// RefreshSnapshotResult and RefreshSnapshotErr are what RefreshSnapshot
+	// reports; RefreshSnapshotCalls counts the calls, so a test can prove a run
+	// checked the advisory database exactly once — or not at all.
+	RefreshSnapshotResult vulnapp.SnapshotRefresh
+	RefreshSnapshotErr    error
+	RefreshSnapshotCalls  int
+	// RefreshSnapshotWalkID records the walk the last refresh restricted its
+	// advisory comparison to.
+	RefreshSnapshotWalkID string
 }
 
 // FakeScanWalkProgress is one entry delivered to the Progress callback.
@@ -818,7 +880,27 @@ type FakeScanWalkProgress struct {
 	Total  int // 0 means use len(ProgressRecords)
 }
 
+// ReusableRun reports the seeded reusable run, if any.
+func (f *FakeScanWalk) ReusableRun(_ context.Context, walkID string) (vulndomain.WalkScanRun, bool, error) {
+	f.ReusableRunWalkID = walkID
+	if f.ReusableRunErr != nil {
+		return vulndomain.WalkScanRun{}, false, f.ReusableRunErr
+	}
+	return f.ReusableRunResult, f.ReusableRunFound, nil
+}
+
+// RefreshSnapshot reports the seeded refresh outcome and counts the call.
+func (f *FakeScanWalk) RefreshSnapshot(_ context.Context, walkID string) (vulnapp.SnapshotRefresh, error) {
+	f.RefreshSnapshotCalls++
+	f.RefreshSnapshotWalkID = walkID
+	if f.RefreshSnapshotErr != nil {
+		return vulnapp.SnapshotRefresh{}, f.RefreshSnapshotErr
+	}
+	return f.RefreshSnapshotResult, nil
+}
+
 func (f *FakeScanWalk) Scan(_ context.Context, params vulnapp.ScanWalkParams) (vulndomain.WalkScanRun, error) {
+	f.ScanCalls++
 	if params.Progress != nil {
 		total := len(f.ProgressRecords)
 		for i, p := range f.ProgressRecords {
@@ -854,6 +936,11 @@ type FakeQueryVuln struct {
 	// byIDForWalk holds the walk-scoped answers for ListRecordsByFindingID. A
 	// walk with no entry is unknown to the store, which is an error rather than
 	// an empty result — the same distinction the sqlite adapter makes.
+	// recordLedger holds every generation for a coordinate, for the reads that
+	// pick between analysis frames rather than taking the composed answer.
+	recordLedger map[string][]vulndomain.VulnerabilityRecord
+	// runRecords holds the records a given scan run wrote.
+	runRecords   map[string][]vulndomain.VulnerabilityRecord
 	byIDForWalk  map[string][]vulndomain.VulnerabilityRecord
 	byIDWalkSeen string
 	Err          error
@@ -906,16 +993,55 @@ func (f *FakeQueryVuln) GetLatestRecordForWalk(_ context.Context, coord coordina
 	return rec, ok, nil
 }
 
+// AddRecords seeds every generation the ledger holds for one coordinate, which
+// is what a frame-aware read consults. The first is also the coordinate's
+// single-record answer, so a test that seeds a ledger does not have to seed the
+// composed read separately.
+func (f *FakeQueryVuln) AddRecords(coord coordinate.ModuleCoordinate, recs ...vulndomain.VulnerabilityRecord) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.recordLedger == nil {
+		f.recordLedger = make(map[string][]vulndomain.VulnerabilityRecord)
+	}
+	f.recordLedger[coord.String()] = recs
+	if len(recs) > 0 {
+		f.records[coord.String()] = recs[0]
+	}
+}
+
 func (f *FakeQueryVuln) ListRecordsForModule(_ context.Context, coord coordinate.ModuleCoordinate, _ string) ([]vulndomain.VulnerabilityRecord, error) {
 	if f.Err != nil {
 		return nil, f.Err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	if recs, ok := f.recordLedger[coord.String()]; ok {
+		return recs, nil
+	}
 	if rec, ok := f.records[coord.String()]; ok {
 		return []vulndomain.VulnerabilityRecord{rec}, nil
 	}
 	return nil, nil
+}
+
+// SetRunRecords seeds the records one scan run wrote, which is what a served
+// run's report is rebuilt from.
+func (f *FakeQueryVuln) SetRunRecords(runID string, recs []vulndomain.VulnerabilityRecord) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.runRecords == nil {
+		f.runRecords = make(map[string][]vulndomain.VulnerabilityRecord)
+	}
+	f.runRecords[runID] = recs
+}
+
+func (f *FakeQueryVuln) ListRecordsForRun(_ context.Context, runID string) ([]vulndomain.VulnerabilityRecord, error) {
+	if f.Err != nil {
+		return nil, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.runRecords[runID], nil
 }
 
 func (f *FakeQueryVuln) SetByID(recs []vulndomain.VulnerabilityRecord) {

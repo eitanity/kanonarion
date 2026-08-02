@@ -38,10 +38,17 @@ func TestAssembleComponents_OrderingAndLicense(t *testing.T) {
 		{Module: domain.ModuleRef{Path: "github.com/aaa/first", Version: "v1.0.0"}, HasLicense: false},
 		{Module: domain.ModuleRef{Path: "github.com/mmm/mid", Version: "v2.0.0"}, HasLicense: true, PrimarySPDX: ""},
 	}
-	got, incomplete := domain.AssembleComponents(in)
+	got, undetermined := domain.AssembleComponents(in)
 
-	if !incomplete {
-		t.Error("licensesIncomplete = false, want true (one node lacked license data)")
+	// Both the node with no record at all and the node whose record identified no
+	// SPDX licence are undetermined: the document carries no licences block for
+	// either, which is the only thing a reader of it can see.
+	wantUndetermined := []domain.ModuleRef{
+		{Path: "github.com/aaa/first", Version: "v1.0.0"},
+		{Path: "github.com/mmm/mid", Version: "v2.0.0"},
+	}
+	if !reflect.DeepEqual(undetermined, wantUndetermined) {
+		t.Errorf("undetermined = %+v, want %+v", undetermined, wantUndetermined)
 	}
 	want := []domain.Component{
 		{Module: domain.ModuleRef{Path: "github.com/aaa/first", Version: "v1.0.0"}, License: ""},
@@ -57,9 +64,27 @@ func TestAssembleComponents_AllLicensed(t *testing.T) {
 	in := []domain.ComponentInput{
 		{Module: domain.ModuleRef{Path: "a", Version: "v1"}, HasLicense: true, PrimarySPDX: "Apache-2.0"},
 	}
-	_, incomplete := domain.AssembleComponents(in)
-	if incomplete {
-		t.Error("licensesIncomplete = true, want false")
+	_, undetermined := domain.AssembleComponents(in)
+	if len(undetermined) != 0 {
+		t.Errorf("undetermined = %+v, want none", undetermined)
+	}
+}
+
+// A licence record that ran and identified nothing — no licence file at the
+// module root, or files matching no known SPDX text — is the case the store holds
+// most of, and it produces a component with no licences block. Counting it as
+// complete is what let a document ship components with no licence identity at
+// exit 0.
+func TestAssembleComponents_RecordWithNoSPDXIsUndetermined(t *testing.T) {
+	in := []domain.ComponentInput{
+		{Module: domain.ModuleRef{Path: "github.com/x/unclassified", Version: "v1"}, HasLicense: true, PrimarySPDX: "", Expression: ""},
+	}
+	got, undetermined := domain.AssembleComponents(in)
+	if got[0].License != "" {
+		t.Fatalf("License = %q, want empty (the fixture identifies no licence)", got[0].License)
+	}
+	if len(undetermined) != 1 || undetermined[0].Path != "github.com/x/unclassified" {
+		t.Errorf("undetermined = %+v, want the single unclassified module", undetermined)
 	}
 }
 
@@ -76,43 +101,5 @@ func TestAssembleComponents_CopyrightPassthrough(t *testing.T) {
 	}
 	if !reflect.DeepEqual(got, want) {
 		t.Errorf("AssembleComponents copyright passthrough: got %+v, want %+v", got, want)
-	}
-}
-
-func TestAggregateVulnerabilities_DedupAndOrder(t *testing.T) {
-	modFoo := domain.ModuleRef{Path: "github.com/example/foo", Version: "v1.0.0"}
-	modBar := domain.ModuleRef{Path: "github.com/example/bar", Version: "v2.0.0"}
-
-	findings := []domain.FindingInput{
-		{Module: modFoo, ID: "GHSA-zzz", Summary: "z summary", SeverityLabel: "HIGH"},
-		{Module: modFoo, ID: "GHSA-aaa", Summary: "first summary", SeverityLabel: "CRITICAL"},
-		{Module: modBar, ID: "GHSA-aaa", Summary: "second summary (ignored)", SeverityLabel: "LOW"},
-		{Module: modFoo, ID: "GHSA-aaa", Summary: "dup module (ignored)", SeverityLabel: "LOW"},
-	}
-
-	got := domain.AggregateVulnerabilities(findings)
-
-	want := []domain.AggregatedVulnerability{
-		{
-			ID:            "GHSA-aaa",
-			Summary:       "first summary",
-			SeverityLabel: "CRITICAL",
-			Affected:      []domain.ModuleRef{modBar, modFoo}, // sorted by path@version
-		},
-		{
-			ID:            "GHSA-zzz",
-			Summary:       "z summary",
-			SeverityLabel: "HIGH",
-			Affected:      []domain.ModuleRef{modFoo},
-		},
-	}
-	if !reflect.DeepEqual(got, want) {
-		t.Errorf("AggregateVulnerabilities() = %+v, want %+v", got, want)
-	}
-}
-
-func TestAggregateVulnerabilities_Empty(t *testing.T) {
-	if got := domain.AggregateVulnerabilities(nil); len(got) != 0 {
-		t.Errorf("expected empty result, got %+v", got)
 	}
 }

@@ -113,10 +113,14 @@ func runDependents(ctx context.Context, moduleArg, storeRoot, walkID string, jso
 		deps = filtered
 	}
 
+	// The frame comes off the record, so it is stated whether the walk was named
+	// with --walk-id or found by the containment search — the search takes the
+	// newest walk containing the coordinate and cannot tell two platforms apart.
+	walkFrame := rec.Graph.BuildEnv.Frame()
 	if jsonOut {
-		return writeDependentsJSON(stdout, walkID, coord.String(), deps)
+		return writeDependentsJSON(stdout, walkID, walkFrame, coord.String(), deps)
 	}
-	return writeDependentsText(stdout, walkID, coord.String(), deps, directOnly, rootExcluded, includeRoot)
+	return writeDependentsText(stdout, walkID, walkFrame, coord.String(), deps, directOnly, rootExcluded, includeRoot)
 }
 
 // dependentResult holds a single module that depends on the queried target.
@@ -184,7 +188,10 @@ func walkDependents(rec walkdomain.WalkRecord, coord coordinate.ModuleCoordinate
 }
 
 type dependentsJSON struct {
-	WalkID     string               `json:"walk_id"`
+	WalkID string `json:"walk_id"`
+	// WalkFrame is the GOOS/GOARCH the answering walk resolved for, or
+	// "unrecorded" for a walk written before the frame was projected.
+	WalkFrame  string               `json:"walk_frame"`
 	Target     string               `json:"target"`
 	Dependents []dependentEntryJSON `json:"dependents"`
 }
@@ -196,7 +203,7 @@ type dependentEntryJSON struct {
 	Root    bool   `json:"root"`
 }
 
-func writeDependentsJSON(w io.Writer, walkID, target string, deps []dependentResult) error {
+func writeDependentsJSON(w io.Writer, walkID, walkFrame, target string, deps []dependentResult) error {
 	entries := make([]dependentEntryJSON, len(deps))
 	for i, d := range deps {
 		entries[i] = dependentEntryJSON{
@@ -208,6 +215,7 @@ func writeDependentsJSON(w io.Writer, walkID, target string, deps []dependentRes
 	}
 	result := dependentsJSON{
 		WalkID:     walkID,
+		WalkFrame:  walkFrame,
 		Target:     target,
 		Dependents: entries,
 	}
@@ -270,14 +278,14 @@ func dependentsScopeSuffix(rootExcluded, includeRoot bool) string {
 	}
 }
 
-func writeDependentsText(w io.Writer, walkID, target string, deps []dependentResult, directOnly, rootExcluded, includeRoot bool) error {
+func writeDependentsText(w io.Writer, walkID, walkFrame, target string, deps []dependentResult, directOnly, rootExcluded, includeRoot bool) error {
 	qualifier := ""
 	if directOnly {
 		qualifier = "direct "
 	}
 	if len(deps) == 0 {
-		if _, err := fmt.Fprintf(w, "No %smodules in walk %s depend on %s%s\n",
-			qualifier, walkID, target, dependentsScopeSuffix(rootExcluded, includeRoot)); err != nil {
+		if _, err := fmt.Fprintf(w, "No %smodules in walk %s (frame %s) depend on %s%s\n",
+			qualifier, walkID, walkFrame, target, dependentsScopeSuffix(rootExcluded, includeRoot)); err != nil {
 			return fmt.Errorf("writing output: %w", err)
 		}
 		return nil
@@ -289,8 +297,8 @@ func writeDependentsText(w io.Writer, walkID, target string, deps []dependentRes
 	if rootExcluded && !includeRoot {
 		header = rootDependsSuffix
 	}
-	if _, err := fmt.Fprintf(w, "%d %smodule(s) in walk %s depend on %s%s:\n",
-		len(deps), qualifier, walkID, target, header); err != nil {
+	if _, err := fmt.Fprintf(w, "%d %smodule(s) in walk %s (frame %s) depend on %s%s:\n",
+		len(deps), qualifier, walkID, walkFrame, target, header); err != nil {
 		return fmt.Errorf("writing header: %w", err)
 	}
 	for _, d := range deps {

@@ -136,7 +136,7 @@ a whole major line is available. The clause is appended, never substituted.
   "module": "github.com/spf13/cobra",
   "latest": "v1.10.2",
   "latest_date": "2025-03-28T...",
-  "days_behind": 0,
+  "latest_release_age_days": 491,
   "is_latest": true,
   "major_probed": true,
   "looked_up_at": "2026-07-31T09:14:02Z",
@@ -153,7 +153,7 @@ a whole major line is available. The clause is appended, never substituted.
     "pinned": "v0.35.0",
     "latest": "v0.36.0",
     "latest_date": "2025-05-08T...",
-    "days_behind": 6,
+    "latest_release_age_days": 6,
     "is_latest": false,
     "major_probed": true,
     "looked_up_at": "2026-07-31T09:14:02Z",
@@ -164,7 +164,7 @@ a whole major line is available. The clause is appended, never substituted.
     "pinned": "v6.0.57",
     "latest": "v6.0.57",
     "latest_date": "2020-12-21T...",
-    "days_behind": 0,
+    "latest_release_age_days": 2050,
     "is_latest": true,
     "newer_major_module": "github.com/minio/minio-go/v7",
     "newer_major_latest": "v7.2.1",
@@ -175,6 +175,32 @@ a whole major line is available. The clause is appended, never substituted.
   }
 ]
 ```
+
+### `latest_release_age_days`
+
+`latest_release_age_days` is **how long ago the latest release shipped** — the
+age of `latest`, measured from `latest_date` to now.
+
+It is not how far behind the pin is, and the two differ whenever a module's
+release cadence differs from your upgrade cadence:
+
+| module | pinned | latest | `latest_date` | `latest_release_age_days` | how far behind the pin is |
+|---|---|---|---|---|---|
+| `google.golang.org/grpc` | `v1.61.1` | `v1.83.0` | 2 days ago | `2` | ~18 months |
+| `github.com/joho/godotenv` | `v1.5.1` | `v1.5.1` | 1272 days ago | `1272` | nothing — it is current |
+
+A badly-stale pin on an actively released module reports a **small** number; a
+perfectly current pin on a quiet module reports a **large** one. Do not sort by
+this field to rank upgrade urgency — use the version distance (`pinned` vs
+`latest`, and `newer_major_module`).
+
+There is no `days_behind` field. The pin's own publication date is not available
+offline or from the store, so the distance from the pin to the latest release is
+not reported at all.
+
+The field is populated whether or not the pin is current, and is **omitted
+entirely** when the proxy supplied no publication date for the latest version —
+the same condition that omits `latest_date`.
 
 `latest_date` is **omitted entirely** when the proxy supplied no publication date for
 the version, rather than being emitted as the zero time. A module whose date is

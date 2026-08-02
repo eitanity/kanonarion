@@ -68,11 +68,11 @@ func (s *Store) Close() error {
 }
 
 // PutSBOMRecord inserts or replaces an SBOM record. Idempotent on ID.
+//
+// walk_scan_run_id is written NULL and never read back. The column survives from
+// the generation whose documents carried a vulnerability list; those rows keep it
+// so their own provenance stays readable, and nothing writes it again.
 func (s *Store) PutSBOMRecord(ctx context.Context, r domain.SBOMRecord) error {
-	scanRunID := sql.NullString{}
-	if r.WalkScanRunID != nil {
-		scanRunID = sql.NullString{String: *r.WalkScanRunID, Valid: true}
-	}
 	licensesIncomplete := 0
 	if r.LicensesIncomplete {
 		licensesIncomplete = 1
@@ -81,14 +81,14 @@ func (s *Store) PutSBOMRecord(ctx context.Context, r domain.SBOMRecord) error {
 INSERT INTO sbom_records
     (id, ecosystem, walk_id, walk_scan_run_id, format, pipeline_version, generated_at,
      content_hash, content, operator, licenses_incomplete)
-VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+VALUES (?, ?, ?, NULL, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT(id) DO UPDATE SET
     ecosystem           = excluded.ecosystem,
     content_hash        = excluded.content_hash,
     content             = excluded.content,
     generated_at        = excluded.generated_at,
     licenses_incomplete = excluded.licenses_incomplete`,
-		r.ID, ecosystemOrDefault(r.Ecosystem), r.WalkID, scanRunID, string(r.Format), r.PipelineVersion,
+		r.ID, ecosystemOrDefault(r.Ecosystem), r.WalkID, string(r.Format), r.PipelineVersion,
 		r.GeneratedAt.UTC().Format(time.RFC3339),
 		r.ContentHash, r.Content, r.Operator, licensesIncomplete,
 	)
@@ -101,7 +101,7 @@ ON CONFLICT(id) DO UPDATE SET
 // GetSBOMRecord retrieves an SBOM record by ID.
 func (s *Store) GetSBOMRecord(ctx context.Context, id string) (domain.SBOMRecord, error) {
 	row := s.db.DB().QueryRowContext(ctx, `
-SELECT id, ecosystem, walk_id, walk_scan_run_id, format, pipeline_version, generated_at,
+SELECT id, ecosystem, walk_id, format, pipeline_version, generated_at,
        content_hash, content, operator, licenses_incomplete
 FROM sbom_records WHERE id = ?`, id)
 	r, err := scanRecord(row)
@@ -122,13 +122,13 @@ func (s *Store) ListSBOMRecords(ctx context.Context, walkID string) ([]domain.SB
 	)
 	if walkID == "" {
 		rows, err = s.db.DB().QueryContext(ctx, `
-SELECT id, ecosystem, walk_id, walk_scan_run_id, format, pipeline_version, generated_at,
+SELECT id, ecosystem, walk_id, format, pipeline_version, generated_at,
        content_hash, content, operator, licenses_incomplete
 FROM sbom_records
 ORDER BY generated_at DESC`)
 	} else {
 		rows, err = s.db.DB().QueryContext(ctx, `
-SELECT id, ecosystem, walk_id, walk_scan_run_id, format, pipeline_version, generated_at,
+SELECT id, ecosystem, walk_id, format, pipeline_version, generated_at,
        content_hash, content, operator, licenses_incomplete
 FROM sbom_records WHERE walk_id = ?
 ORDER BY generated_at DESC`, walkID)
@@ -144,30 +144,24 @@ ORDER BY generated_at DESC`, walkID)
 	return scanRecords(rows)
 }
 
-// FindSBOMRecord looks up a cached record by (walkID, walkScanRunID, format, pipelineVersion).
+// FindSBOMRecord looks up a cached record by (walkID, format, pipelineVersion).
+//
+// The scan-run leg of the old key is gone with the vulnerability list it keyed:
+// a walk now has one document per format and pipeline version. Rows written by
+// the generation that carried a list are excluded by their pipeline version, so
+// none is ever served here.
 func (s *Store) FindSBOMRecord(
 	ctx context.Context,
 	walkID string,
-	walkScanRunID *string,
 	format domain.SBOMFormat,
 	pipelineVersion string,
 ) (domain.SBOMRecord, bool, error) {
-	var row *sql.Row
-	if walkScanRunID == nil {
-		row = s.db.DB().QueryRowContext(ctx, `
-SELECT id, ecosystem, walk_id, walk_scan_run_id, format, pipeline_version, generated_at,
+	row := s.db.DB().QueryRowContext(ctx, `
+SELECT id, ecosystem, walk_id, format, pipeline_version, generated_at,
        content_hash, content, operator, licenses_incomplete
 FROM sbom_records
-WHERE walk_id = ? AND walk_scan_run_id IS NULL AND format = ? AND pipeline_version = ?
+WHERE walk_id = ? AND format = ? AND pipeline_version = ?
 ORDER BY generated_at DESC LIMIT 1`, walkID, string(format), pipelineVersion)
-	} else {
-		row = s.db.DB().QueryRowContext(ctx, `
-SELECT id, ecosystem, walk_id, walk_scan_run_id, format, pipeline_version, generated_at,
-       content_hash, content, operator, licenses_incomplete
-FROM sbom_records
-WHERE walk_id = ? AND walk_scan_run_id = ? AND format = ? AND pipeline_version = ?
-ORDER BY generated_at DESC LIMIT 1`, walkID, *walkScanRunID, string(format), pipelineVersion)
-	}
 	r, err := scanRecord(row)
 	if errors.Is(err, sql.ErrNoRows) {
 		return domain.SBOMRecord{}, false, nil
@@ -193,11 +187,10 @@ type scanner interface {
 
 func scanRecord(row scanner) (domain.SBOMRecord, error) {
 	var r domain.SBOMRecord
-	var scanRunID sql.NullString
 	var generatedAtStr string
 	var licensesIncomplete int
 	if err := row.Scan(
-		&r.ID, &r.Ecosystem, &r.WalkID, &scanRunID, &r.Format,
+		&r.ID, &r.Ecosystem, &r.WalkID, &r.Format,
 		&r.PipelineVersion, &generatedAtStr,
 		&r.ContentHash, &r.Content, &r.Operator, &licensesIncomplete,
 	); err != nil {
@@ -205,9 +198,6 @@ func scanRecord(row scanner) (domain.SBOMRecord, error) {
 	}
 	if r.Ecosystem != domain.EcosystemGo {
 		return domain.SBOMRecord{}, fmt.Errorf("%w: got %q, want %q", domain.ErrUnsupportedEcosystem, r.Ecosystem, domain.EcosystemGo)
-	}
-	if scanRunID.Valid {
-		r.WalkScanRunID = &scanRunID.String
 	}
 	t, err := time.Parse(time.RFC3339, generatedAtStr)
 	if err != nil {

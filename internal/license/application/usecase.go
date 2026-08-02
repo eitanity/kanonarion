@@ -24,7 +24,7 @@ import (
 // PipelineVersion identifies this release of the license extraction pipeline.
 // Bump this constant whenever extraction logic changes to ensure old records
 // are not confused with new ones.
-const PipelineVersion = "1.1.0"
+const PipelineVersion = "1.2.0"
 
 // ExtractLicenseUseCase extracts and persists license information for a
 // single Go module at a pinned version.
@@ -752,8 +752,14 @@ func parseSPDXHeader(content []byte) string {
 // LICENSE.code, COPYING.md). The dotted form covers both file extensions and
 // the per-license naming (LICENSE.<spdx>) used by dual-licensed modules such
 // as go-errors/errors (LICENSE.MIT) and spdx/tools-golang (LICENSE.code,
-// LICENSE.docs). COPYRIGHT, NOTICE, and the GPLv2/GPLv3 shorthands are matched
-// verbatim only.
+// LICENSE.docs). The reversed naming <NAME>-LICENSE[.ext] (mrjones/oauth's
+// MIT-LICENSE.txt, modernc.org/gc's GO-LICENSE) is accepted alongside the
+// LICENSE-<NAME> form. COPYRIGHT, NOTICE, and the bare licence-name shorthands
+// (GPLv2, GPLv3, APLv2, APACHE-LICENSE-2.0, MIT-LICENSE, GO-LICENSE) are
+// matched verbatim only; the shorthand list carries the permissive names
+// observed in the wild alongside the GPL ones, because listing only the GPL
+// shorthands biased detection toward copyleft on dual-licensed modules
+// (gorhill/cronexpr ships APLv2 and GPLv3 side by side).
 //
 // The dotted suffix is rejected when it is a known source-code extension
 // (e.g. LICENSE.go): a Go source file is never the license grant for a
@@ -766,7 +772,7 @@ func isLicenceFilename(relPath string) bool {
 	}
 	upper := strings.ToUpper(base)
 	switch upper {
-	case "COPYRIGHT", "NOTICE", "GPLV2", "GPLV3":
+	case "COPYRIGHT", "NOTICE", "GPLV2", "GPLV3", "APLV2", "APACHE-LICENSE-2.0", "MIT-LICENSE", "GO-LICENSE":
 		return true
 	}
 	for _, stem := range []string{"LICENSE", "LICENCE", "COPYING", "UNLICENSE"} {
@@ -775,6 +781,21 @@ func isLicenceFilename(relPath string) bool {
 		}
 		if strings.HasPrefix(upper, stem+".") {
 			return upper[len(stem)+1:] != "GO"
+		}
+	}
+	// Reversed form: <NAME>-LICENSE or <NAME>-LICENCE, optionally with a dotted
+	// extension (MIT-LICENSE.txt). The same source-extension rejection applies.
+	for _, stem := range []string{"LICENSE", "LICENCE"} {
+		idx := strings.Index(upper, "-"+stem)
+		if idx <= 0 {
+			continue
+		}
+		rest := upper[idx+1+len(stem):]
+		if rest == "" {
+			return true
+		}
+		if strings.HasPrefix(rest, ".") {
+			return rest[1:] != "GO"
 		}
 	}
 	return false

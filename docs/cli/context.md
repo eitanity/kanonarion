@@ -60,6 +60,7 @@ Fork Heuristic: none (name-path heuristic, catalogue 1.0.0)
 === Dependencies ===
 Status:  succeeded
 Walk ID: 01KQN2KMSRQ6EJHMAYBG8139NG
+Frame:   linux/amd64
   github.com/davecgh/go-spew@v1.1.1
   github.com/kr/pretty@v0.1.0
   github.com/pmezard/go-difflib@v1.0.0
@@ -131,6 +132,7 @@ go.uber.org/goleak@v1.3.0
   "dependencies": {
     "status": "succeeded",
     "walk_id": "01KQN2KMSRQ6EJHMAYBG8139NG",
+    "frame": "linux/amd64",
     "count": 6,
     "dependencies": [
       { "path": "github.com/davecgh/go-spew", "version": "v1.1.1" },
@@ -186,12 +188,17 @@ selection). The list is sorted lexicographically by module path.
 |---|---|---|
 | `status` | string | `not_run` / `read_error` / walk status (`succeeded`, `partial`, `failed`, `cancelled`) |
 | `walk_id` | string | ID of the walk record this was drawn from |
+| `frame` | string | `GOOS/GOARCH` that walk resolved for, or `unrecorded` for a walk taken before the frame was recorded |
 | `count` | int | Number of direct dependencies |
 | `partial` | bool | True when the walk graph was partial - some transitive deps could not be resolved, so the direct dep list may be incomplete |
 | `dependencies` | array | Direct dependencies sorted by path |
 | `dependencies[].path` | string | Module import path |
 | `dependencies[].version` | string | MVS-selected version |
 | `error` | string | Set when `status` is `read_error` |
+
+The dependency list is the list for one platform: `GOOS` gates which files
+build. `context` answers from the most recent walk of the module whatever its
+platform, so `frame` says which one answered.
 
 The `walk_id` field is present so an agent can call `kanonarion walk-show
 <walk_id>` to retrieve the full transitive closure, or `kanonarion dependents

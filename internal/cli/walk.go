@@ -140,7 +140,8 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
 			defer func() { _ = cleanup() }()
 			progress := newWalkProgressReporter(stderr, noProgress, activeConfig, logLevel)
 			if isGoMod {
-				return runWalkProject(cmd.Context(), gomodPath, force, allowPartial, workerCount, operator, policyPath, skipVCSVerify, scope, depth, localReplaceBase, analyseRoot, stdlibFromGoMod, progress, ctr.ExecuteWalk, ctr.QueryFetch, stdout, stderr)
+				_, werr := runWalkProject(cmd.Context(), gomodPath, force, allowPartial, workerCount, operator, policyPath, skipVCSVerify, scope, depth, localReplaceBase, analyseRoot, stdlibFromGoMod, progress, ctr.ExecuteWalk, ctr.QueryFetch, stdout, stderr)
+				return werr
 			}
 			return runWalk(cmd.Context(), args[0], f, force, allowPartial, workerCount, policyPath, skipVCSVerify, domain.WalkScopeCode, depth, localReplaceBase, progress, ctr.ExecuteWalk, ctr.QueryFetch, stdout, stderr)
 		},
@@ -175,36 +176,36 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
 // scopeTool the tooling supply chain, scopeComplete the whole build list. For
 // code/tool the build-list graph is restricted to the scope's module set,
 // resolved via the shared Go-toolchain resolver.
-func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial bool, workerCount int, operator, policyPath string, skipVCSVerify bool, scope depScope, depth domain.WalkDepth, localReplaceBase string, analyseRoot, stdlibFromGoMod bool, progress walkports.ProgressReporter, uc ExecuteWalkUseCase, records fetchRecordReader, stdout, stderr io.Writer) error {
+func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial bool, workerCount int, operator, policyPath string, skipVCSVerify bool, scope depScope, depth domain.WalkDepth, localReplaceBase string, analyseRoot, stdlibFromGoMod bool, progress walkports.ProgressReporter, uc ExecuteWalkUseCase, records fetchRecordReader, stdout, stderr io.Writer) (application.ExecuteWalkResult, error) {
 	_ = operator // operator is bound on the use case at construction, as in runWalk
 	logger := buildLogger(logLevel, stderr)
 
 	modulePath, err := readGoModulePath(gomodPath)
 	if err != nil {
-		return err
+		return application.ExecuteWalkResult{}, err
 	}
 	goModBytes, err := os.ReadFile(filepath.Clean(gomodPath))
 	if err != nil {
-		return fmt.Errorf("reading go.mod %q: %w", gomodPath, err)
+		return application.ExecuteWalkResult{}, fmt.Errorf("reading go.mod %q: %w", gomodPath, err)
 	}
 	// The project directory (holding go.mod/go.sum) roots the Go-toolchain build
 	// list and, when --analyse-root is set, the project's own package analysis.
 	// Always resolve it for a project walk.
 	projectDir, err := filepath.Abs(filepath.Dir(gomodPath))
 	if err != nil {
-		return fmt.Errorf("resolving project directory of %q: %w", gomodPath, err)
+		return application.ExecuteWalkResult{}, fmt.Errorf("resolving project directory of %q: %w", gomodPath, err)
 	}
 
 	// The main module is local and unpublished; pin it at the synthetic
 	// LocalVersion rather than a semver.
 	target, err := coordinate.NewLocalCoordinate(modulePath)
 	if err != nil {
-		return fmt.Errorf("project coordinate for %s: %w", modulePath, err)
+		return application.ExecuteWalkResult{}, fmt.Errorf("project coordinate for %s: %w", modulePath, err)
 	}
 
 	policy, policyHash, err := loadPolicy(ctx, policyPath, logger)
 	if err != nil {
-		return fmt.Errorf("loading policy: %w", err)
+		return application.ExecuteWalkResult{}, fmt.Errorf("loading policy: %w", err)
 	}
 
 	// The complete scope keeps the whole build list (nil = no restriction); the
@@ -214,7 +215,7 @@ func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial b
 	if scope != scopeComplete {
 		scopeModules, err = resolveScopeModules(gomodPath, scope)
 		if err != nil {
-			return fmt.Errorf("resolving %s scope: %w", scope, err)
+			return application.ExecuteWalkResult{}, fmt.Errorf("resolving %s scope: %w", scope, err)
 		}
 		scopeModules = coordsToPaths(scopeModules)
 	}
@@ -234,22 +235,23 @@ func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial b
 		MainModuleGoMod:  goModBytes,
 		AnalyseLocalRoot: analyseRoot,
 		ProjectDir:       projectDir,
+		ResolutionDir:    projectDir,
 		StdlibFromGoMod:  stdlibFromGoMod,
 		Progress:         progress,
 	})
 	if err != nil {
-		return fmt.Errorf("executing walk: %w", err)
+		return application.ExecuteWalkResult{}, fmt.Errorf("executing walk: %w", err)
 	}
 
 	rec := result.Record
 	// The aggregate goes to stderr, never stdout: the walk record on stdout is
 	// the content-hashed artefact, and a report about the run is not part of it.
 	if cerr := reportGraphVerificationCoverage(ctx, rec.Graph.Nodes, records, stderr); cerr != nil {
-		return cerr
+		return result, cerr
 	}
 	if jsonOut {
 		if encErr := writeWalkRecordJSON(stdout, rec); encErr != nil {
-			return fmt.Errorf("encoding JSON: %w", encErr)
+			return result, fmt.Errorf("encoding JSON: %w", encErr)
 		}
 	} else {
 		if _, pErr := fmt.Fprintf(stdout, "walk %s: %s depth=%s (%d nodes, %d failed)\n",
@@ -257,21 +259,21 @@ func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial b
 			len(rec.Graph.Nodes),
 			countFailures(rec),
 		); pErr != nil {
-			return fmt.Errorf("writing output: %w", pErr)
+			return result, fmt.Errorf("writing output: %w", pErr)
 		}
 	}
 
 	switch rec.OverallStatus {
 	case domain.WalkFailed:
-		return &exitError{code: ExitFailed, msg: "walk failed: project go.mod could not be resolved"}
+		return result, &exitError{code: ExitFailed, msg: "walk failed: project go.mod could not be resolved"}
 	case domain.WalkCancelled:
-		return &exitError{code: ExitCancelled, msg: "walk cancelled"}
+		return result, &exitError{code: ExitCancelled, msg: "walk cancelled"}
 	case domain.WalkPartial:
 		if !allowPartial {
-			return &exitError{code: ExitPartial, msg: "walk partial: some dependencies could not be fetched"}
+			return result, &exitError{code: ExitPartial, msg: "walk partial: some dependencies could not be fetched"}
 		}
 	}
-	return nil
+	return result, nil
 }
 
 func runWalk(ctx context.Context, arg string, f commonWalkFlags, force, allowPartial bool, workerCount int, policyPath string, skipVCSVerify bool, scope domain.WalkScope, depth domain.WalkDepth, localReplaceBase string, progress walkports.ProgressReporter, uc ExecuteWalkUseCase, records fetchRecordReader, stdout, stderr io.Writer) error {

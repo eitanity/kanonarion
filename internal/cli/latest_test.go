@@ -184,7 +184,7 @@ func latestResolverFor(t *testing.T, srv *httptest.Server) *staleapp.Resolver {
 	if err != nil {
 		t.Fatalf("New: %v", err)
 	}
-	return newStalenessResolver(proxy, nil, time.Hour, false)
+	return newStalenessResolver(newProxyLatestResolver(proxy), nil, time.Hour, false)
 }
 
 // runLatestGomod now resolves its scope via the Go toolchain (go list), so the
@@ -316,11 +316,11 @@ func TestPrintLatestTable(t *testing.T) {
 			name: "stale dep",
 			results: []latestResult{
 				{
-					Module:     "github.com/foo/bar",
-					Pinned:     "v1.0.0",
-					Latest:     "v1.2.0",
-					IsLatest:   false,
-					DaysBehind: 30,
+					Module:               "github.com/foo/bar",
+					Pinned:               "v1.0.0",
+					Latest:               "v1.2.0",
+					IsLatest:             false,
+					LatestReleaseAgeDays: 30,
 				},
 			},
 			checks: []string{"github.com/foo/bar@v1.0.0", "latest: v1.2.0", "30 days ago"},
@@ -329,11 +329,11 @@ func TestPrintLatestTable(t *testing.T) {
 			name: "stale dep released today",
 			results: []latestResult{
 				{
-					Module:     "github.com/foo/bar",
-					Pinned:     "v1.0.0",
-					Latest:     "v1.1.0",
-					IsLatest:   false,
-					DaysBehind: 0,
+					Module:               "github.com/foo/bar",
+					Pinned:               "v1.0.0",
+					Latest:               "v1.1.0",
+					IsLatest:             false,
+					LatestReleaseAgeDays: 0,
 				},
 			},
 			checks: []string{"latest: v1.1.0", "released today"},

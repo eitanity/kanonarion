@@ -25,7 +25,10 @@ import (
 // the offending file on a drift finding: drift is now decided per file against
 // the go.sum-verified module zip, so a single tree-wide hash describes nothing
 // a reader can act on.
-const VendorSchemaVersion = "3"
+// v4 records each module's package count and adds the scope statement, so a
+// record says how much of the vendored tree it describes rather than leaving a
+// correct narrowing to read as completeness.
+const VendorSchemaVersion = "4"
 
 // EcosystemGo is the only ecosystem kanonarion records describe. The ecosystem
 // field declares the schema's scope — kanonarion is fitted for Go — rather than
@@ -44,7 +47,13 @@ var ErrUnsupportedEcosystem = errors.New("unsupported ecosystem: kanonarion reco
 // against the go.sum-verified module zip. A re-scan of an unchanged tree now
 // produces a different finding set from a 0.1.0 record, so the records are not
 // interchangeable and must not be served for one another.
-const PipelineVersion = "0.2.0"
+//
+// 0.3.0 stops reporting a module that contributes no package as missing from
+// the vendored tree: `go mod vendor` correctly writes no directory for it, so
+// the old finding described the toolchain's normal output as drift. The
+// finding set for an unchanged tree therefore differs from a 0.2.0 record's,
+// and the content hash covers each module's package count as well.
+const PipelineVersion = "0.3.0"
 
 // FindingKind classifies a vendor reconciliation discrepancy.
 type FindingKind string
@@ -107,6 +116,16 @@ type VendoredModule struct {
 	// Present is false when modules.txt lists the module but no files for
 	// it exist under vendor/.
 	Present bool
+	// PackageCount is how many packages modules.txt lists under this entry —
+	// the package lines that follow its `# path version` heading.
+	//
+	// It is zero for a module the build list carries but no package of the
+	// build imports. `go mod vendor` writes the heading anyway (the module is
+	// in the graph) and vendors no directory for it, so a zero-package entry is
+	// correctly absent from the tree. Without this count that absence is
+	// indistinguishable from a module whose files went missing, and the tree
+	// reports drift for a tree that is exactly as `go mod vendor` left it.
+	PackageCount int
 	// ExpectedHash is the go.sum h1 for Path@Version ("" when go.sum has no
 	// entry). It names the checksum the comparison oracle — the module zip
 	// kanonarion holds — was verified against, not a hash of anything under
@@ -217,6 +236,10 @@ type Record struct {
 	Findings          []Finding
 	// OverallStatus is "clean" when there are no findings, else "findings".
 	OverallStatus string
+	// Scope states how much of the vendored tree this record describes, and
+	// names every module it does not. A record that covers a smaller set than
+	// the tree and does not say so reads as complete.
+	Scope VendorScope
 
 	ExtractedAt     time.Time
 	SchemaVersion   string

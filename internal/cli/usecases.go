@@ -105,7 +105,7 @@ type GenerateNoticeUseCase interface {
 
 // CheckCompatibilityUseCase is the interface for the license compatibility engine.
 type CheckCompatibilityUseCase interface {
-	CheckCompatibilityForWalk(ctx context.Context, walkID string, root coordinate.ModuleCoordinate, targetSPDX string) (licensedomain.ClosureCompatibilityReport, error)
+	CheckCompatibilityForWalk(ctx context.Context, walkID string, root coordinate.ModuleCoordinate, targetSPDX string, overrides licensedomain.LicenseOverrideSet) (licensedomain.ClosureCompatibilityReport, error)
 }
 
 // DiffLicenseUseCase is the interface for diffing two stored license records.
@@ -137,6 +137,11 @@ type QueryInterfaceUseCase interface {
 	InterfaceHistory(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]ifacedomain.InterfaceRecord, error)
 	ListInterfaceRecords(ctx context.Context, filter ifaceports.InterfaceFilter) ([]ifaceports.InterfaceSummary, error)
 	FindSymbol(ctx context.Context, symbolName, pipelineVersion string, scope coordinate.ModuleSet) ([]ifaceports.SymbolRef, error)
+}
+
+// DiffInterfaceUseCase is the interface for diffing two stored interface records.
+type DiffInterfaceUseCase interface {
+	Diff(ctx context.Context, coordA, coordB coordinate.ModuleCoordinate) (ifacedomain.InterfaceDiff, error)
 }
 
 // --- callgraph context ---
@@ -190,6 +195,16 @@ type ScanModuleUseCase interface {
 // ScanWalkUseCase is the interface for scanning a full walk.
 type ScanWalkUseCase interface {
 	Scan(ctx context.Context, params vulnapp.ScanWalkParams) (vulndomain.WalkScanRun, error)
+
+	// ReusableRun reports a completed stored run that already answers what a new
+	// Scan of this walk against the current snapshot would ask. The caller
+	// decides whether to serve it; Scan itself always measures.
+	ReusableRun(ctx context.Context, walkID string) (vulndomain.WalkScanRun, bool, error)
+
+	// RefreshSnapshot brings the advisory database up to date for the named walk,
+	// downloading the body only when something that walk is judged on has
+	// changed, and reports what it established.
+	RefreshSnapshot(ctx context.Context, walkID string) (vulnapp.SnapshotRefresh, error)
 }
 
 // RescanWalkUseCase is the interface for re-gating a walk against a new snapshot.
@@ -204,6 +219,7 @@ type QueryVulnUseCase interface {
 	GetLatestRecordForWalk(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, walkID string) (vulndomain.VulnerabilityRecord, bool, error)
 	ListRecordsForModule(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]vulndomain.VulnerabilityRecord, error)
 	ListRecordsByFindingID(ctx context.Context, findingID, walkID string) ([]vulndomain.VulnerabilityRecord, error)
+	ListRecordsForRun(ctx context.Context, runID string) ([]vulndomain.VulnerabilityRecord, error)
 }
 
 // QueryScanRunsUseCase is the interface for querying scan runs and snapshots.

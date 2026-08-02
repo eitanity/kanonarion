@@ -25,6 +25,22 @@ of data is never presented as an answer):
 | No licence record for the root | Exit 4 (not found) with a diagnostic naming the command that produces it (`walk --gomod ./go.mod --analyse-root` + `extract` for a local root, `license <mod@ver>` otherwise) |
 | Record exists but no SPDX identity (proprietary / `Unclassified` root) | Exit 2: the record is a valid outcome but cannot serve as an implicit SPDX target - pass `--target` explicitly |
 
+## The answering walk
+
+The closure checked is the closure of one walk — the most recent succeeded walk
+of the root, whatever platform it resolved for. Both output forms name it, so a
+verdict is always attributable to a build rather than to the module in the
+abstract:
+
+```
+example.com/myapp@local vs Apache-2.0 (data v1.0.0, walk 01KQDBVW092ER1HNXZ60X27CMD, frame linux/amd64):
+```
+
+JSON output carries the same two values as `walk_id` and `walk_frame`. The
+frame reads `unrecorded` for a walk taken before it was recorded.
+
+---
+
 ## Obligations catalogue
 
 Every `licence` record includes an **obligations** section that describes what
@@ -132,6 +148,26 @@ the field existed.
 `AllSPDXs` is evaluated independently against the target licence. A bundled
 GPL component inside an otherwise-permissive module will therefore surface as a
 conflict even when the module root is Apache-2.0 or MIT.
+
+The one exception is a **dual-licensed root**: a record whose expression is a
+pure disjunction (`Apache-2.0 OR GPL-3.0`) offers an election, and each arm is
+evaluated as a candidate election rather than as an unconditional obligation.
+The outcomes:
+
+- **every arm compatible** — settled compatible whichever arm is elected; no
+  open item;
+- **some arm compatible** — verdict `electable` (kind `election_required`):
+  the module is compatible *if* a compatible arm is elected. The election is
+  an operator decision, never resolved silently: record the elected arm as a
+  `license_overrides` entry for the module and re-run. Pending elections exit
+  `2` (review), like unknown pairs;
+- **no arm compatible** — incompatible (or unknown-pair review when an arm is
+  unmodelled) whichever arm is elected.
+
+Embedded component licences are not part of the election — they apply
+regardless of which root arm is elected. A `license_overrides` entry (the
+recorded election, or any operator correction) replaces the scanner's record
+for that module wholesale.
 
 **Notice generator** (`notice`): embedded component licence texts are reproduced
 in a separate "Embedded component" section after the module's root licence text.

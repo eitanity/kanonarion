@@ -326,3 +326,9 @@ func TestRecordingFetcher_NilProgressIsSafe(t *testing.T) {
 		t.Fatalf("EnsureFetched with nil progress: %v", err)
 	}
 }
+
+// EnsureFetchedReplacing delegates: this fake has no replace-aware behaviour of
+// its own, so a replaced module is fetched exactly like an unreplaced one.
+func (f *recorderFakeFetcher) EnsureFetchedReplacing(ctx context.Context, c, _ coordinate.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
+	return f.EnsureFetched(ctx, c)
+}

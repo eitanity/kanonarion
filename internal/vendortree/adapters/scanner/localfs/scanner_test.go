@@ -134,7 +134,7 @@ func findingsFor(t *testing.T, vendored map[string]string) []domain.Finding {
 	if !res.VendorOnly {
 		t.Error("vendor-only flag not recorded")
 	}
-	_, findings := domain.Aggregate(res)
+	_, findings, _ := domain.Aggregate(res)
 	return findings
 }
 
@@ -230,7 +230,7 @@ func TestScan_SymlinkedFileIsDrift(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ScanProject: %v", err)
 	}
-	_, findings := domain.Aggregate(res)
+	_, findings, _ := domain.Aggregate(res)
 	drift := only(t, findings, domain.FindingDrift)
 	if drift.File != "dep.go" {
 		t.Errorf("drift names file %q, want dep.go", drift.File)
@@ -251,7 +251,7 @@ func TestScan_UnheldZipIsUnverified(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ScanProject: %v", err)
 	}
-	_, findings := domain.Aggregate(res)
+	_, findings, _ := domain.Aggregate(res)
 	if u := only(t, findings, domain.FindingUnverified); u.Expected == "" {
 		t.Errorf("the unverified finding must name the checksum it could not check against: %+v", u)
 	}
@@ -274,7 +274,7 @@ func TestScan_NestedModuleFilesBelongToTheNestedModule(t *testing.T) {
 	if _, ok := res.Files[depPath].Vendored["v2/dep.go"]; ok {
 		t.Error("the nested module's file was attributed to its parent")
 	}
-	_, findings := domain.Aggregate(res)
+	_, findings, _ := domain.Aggregate(res)
 	for _, f := range findings {
 		if f.Kind == domain.FindingDrift {
 			t.Errorf("a separately vendored nested module must not read as drift in its parent: %+v", f)
@@ -315,7 +315,7 @@ func TestScan_MissingModule(t *testing.T) {
 	if err != nil {
 		t.Fatalf("ScanProject: %v", err)
 	}
-	_, findings := domain.Aggregate(res)
+	_, findings, _ := domain.Aggregate(res)
 	found := false
 	for _, f := range findings {
 		if f.Kind == domain.FindingMissingFromVendor && f.Module == depPath {
@@ -335,5 +335,42 @@ func TestScan_NotVendored(t *testing.T) {
 		filepath.Join("../../../../../test/fixtures/supplychain/godebug/clean", "go.mod"), false)
 	if !errors.Is(err, ports.ErrNotVendored) {
 		t.Fatalf("want ErrNotVendored, got %v", err)
+	}
+}
+
+// TestScan_PackageLinesAreCounted: the package lines under a module heading are
+// what distinguish a module the build imports from one the module graph merely
+// carries. The zero-package module below is the shape `go mod vendor` writes
+// for a module no package uses — a heading and no directory — and it must be
+// read as contributing nothing rather than as a module whose files went
+// missing.
+func TestScan_PackageLinesAreCounted(t *testing.T) {
+	goMod, scanner := project(t, pruned)
+	write(t, filepath.Join(filepath.Dir(goMod), "vendor", "modules.txt"),
+		"# "+depPath+" "+depVersion+"\n## explicit; go 1.21\n"+depPath+"\n"+depPath+"/sub\n"+
+			"# example.com/idle v9.9.9\n## explicit; go 1.21\n")
+
+	res, err := scanner.ScanProject(t.Context(), goMod, true)
+	if err != nil {
+		t.Fatalf("ScanProject: %v", err)
+	}
+	byPath := map[string]domain.VendoredModule{}
+	for _, m := range res.ModulesTxt {
+		byPath[m.Path] = m
+	}
+	if got := byPath[depPath].PackageCount; got != 2 {
+		t.Errorf("%s package count = %d, want 2", depPath, got)
+	}
+	if got := byPath["example.com/idle"].PackageCount; got != 0 {
+		t.Errorf("idle module package count = %d, want 0", got)
+	}
+	_, findings, scope := domain.Aggregate(res)
+	for _, f := range findings {
+		if f.Module == "example.com/idle" {
+			t.Errorf("zero-package module reported as %s: %+v", f.Kind, f)
+		}
+	}
+	if scope.TreeModules != 2 || scope.Covered != 1 || len(scope.Uncovered) != 1 {
+		t.Errorf("scope = %+v, want 1 of 2 covered with the idle module named", scope)
 	}
 }

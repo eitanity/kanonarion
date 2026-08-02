@@ -3,12 +3,13 @@ package ports
 import (
 	"context"
 	"errors"
+	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
 	"github.com/eitanity/kanonarion/internal/sbom/domain"
-	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	vendordomain "github.com/eitanity/kanonarion/internal/vendortree/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
@@ -23,14 +24,13 @@ type GeneratorMetadata struct {
 
 // SBOMGenerator is the port for producing SBOM documents from walk facts.
 type SBOMGenerator interface {
-	// Generate produces an SBOMRecord from the supplied walk, licence, and
-	// optional vulnerability data. The resulting Content is deterministic:
-	// identical inputs always produce byte-identical output.
+	// Generate produces an SBOMRecord from the supplied walk and licence data.
+	// The resulting Content is deterministic: identical inputs always produce
+	// byte-identical output.
 	Generate(
 		ctx context.Context,
 		walk walkdomain.WalkRecord,
 		licenses map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord,
-		vulnerabilities []vulndomain.VulnerabilityRecord,
 		req GenerateRequest,
 	) (domain.SBOMRecord, error)
 
@@ -40,10 +40,22 @@ type SBOMGenerator interface {
 
 // GenerateRequest carries the caller-supplied parameters for a single generation.
 type GenerateRequest struct {
-	WalkScanRunID   *string
 	Format          domain.SBOMFormat
 	PipelineVersion string
 	Operator        string
+	// DocumentTimestamp is when this document is being created, supplied by the
+	// caller. It is what the document's metadata timestamp carries, which
+	// CycloneDX defines as "the date and time (timestamp) when the BOM was
+	// created" — a reading of a clock nobody in this package is allowed to take,
+	// because a generator that reads one cannot re-emit a document byte for byte.
+	// Making it an input keeps both properties: the caller holds the clock, and
+	// the same inputs still produce the same bytes.
+	//
+	// Zero means the caller supplied none. The document then falls back to the
+	// newest licence extraction time among its inputs and labels the timestamp as
+	// derived, so a reader is never told a document was created at a moment it
+	// was not.
+	DocumentTimestamp time.Time
 	// MainComponentVersion overrides the version stamped on the subject
 	// (metadata.component) of a project SBOM. The subject's graph target is the
 	// local main module at the synthetic version "local", which is not a
@@ -56,6 +68,31 @@ type GenerateRequest struct {
 	// proxy-fetched, so it has none). Ignored unless the subject is the local
 	// main module and has no existing licence; empty leaves it unlicensed.
 	MainComponentLicense string
+	// VendorScope states how much of the project's vendored tree this document
+	// describes. It is nil when the walk was not rooted at a project, or the
+	// project carries no vendor/ tree — there is then no tree to state scope
+	// over, and inventing a statement would describe a surface that is not
+	// there. Non-nil, it is always rendered, full coverage included: a reader
+	// cannot tell a complete document from a narrowed one that stays silent.
+	VendorScope *vendordomain.VendorScope
+	// ComponentsScopedToBinary reports that the component list was restricted
+	// to one binary's import closure (sbom --package). It changes no scope
+	// arithmetic — the uncovered set is measured against the components the
+	// document carries either way — but it names the reason most of the tree
+	// falls outside such a document: it was asked for a narrower subject, not
+	// that anything went missing from it.
+	ComponentsScopedToBinary bool
+}
+
+// VendorTreeReader reads the module entries of a project's vendor/modules.txt.
+// It is what lets an SBOM state its coverage of the vendored tree: in an
+// air-gapped project the tree IS the build, so the tree is the population the
+// document's component list has to be measured against.
+type VendorTreeReader interface {
+	// VendorTree returns the vendored module entries for the project whose
+	// go.mod is at goModPath. A project with no vendor/modules.txt yields
+	// (nil, nil): not vendored is an answer, not a failure.
+	VendorTree(ctx context.Context, goModPath string) ([]vendordomain.VendoredModule, error)
 }
 
 // SBOMStore is the port for persisting and retrieving SBOM records.
@@ -71,12 +108,11 @@ type SBOMStore interface {
 	ListSBOMRecords(ctx context.Context, walkID string) ([]domain.SBOMRecord, error)
 
 	// FindSBOMRecord looks up a cached record by the cache key
-	// (walkID, walkScanRunID, format, pipelineVersion).
+	// (walkID, format, pipelineVersion).
 	// Returns (zero, false, nil) when not found.
 	FindSBOMRecord(
 		ctx context.Context,
 		walkID string,
-		walkScanRunID *string,
 		format domain.SBOMFormat,
 		pipelineVersion string,
 	) (domain.SBOMRecord, bool, error)

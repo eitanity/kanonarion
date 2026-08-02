@@ -439,3 +439,75 @@ func TestSelectedVersions_ExcludesStdlibAndLocalNodes(t *testing.T) {
 		t.Error("the ordinary fetched dependency must be selected")
 	}
 }
+
+func TestDepthBoundedReason_EmbedsTheBound(t *testing.T) {
+	if got := domain.DepthBoundedReason(3); got != "depth_bounded: max_depth=3" {
+		t.Errorf("DepthBoundedReason(3) = %q, want depth_bounded: max_depth=3", got)
+	}
+}
+
+func TestSupersededRequirementsFrom_restrictsToGivenOrigins(t *testing.T) {
+	g := domain.Graph{
+		Nodes: []domain.GraphNode{
+			{Coordinate: coord("example.com/dep", "v1.4.0")},
+		},
+		Edges: []domain.GraphEdge{
+			{From: coord("example.com/main", "v1.0.0"), To: coord("example.com/dep", "v1.4.0"), ConstraintVersion: "v1.2.0"},
+			{From: coord("example.com/other", "v1.0.0"), To: coord("example.com/dep", "v1.4.0"), ConstraintVersion: "v1.1.0"},
+		},
+	}
+	from := map[coordinate.ModuleCoordinate]struct{}{
+		coord("example.com/main", "v1.0.0"): {},
+	}
+	got := g.SupersededRequirementsFrom(from)
+	if len(got) != 1 {
+		t.Fatalf("SupersededRequirementsFrom = %v, want exactly the main module's superseded version", got)
+	}
+	if got[0].Version() != "v1.2.0" {
+		t.Errorf("got %s, want example.com/dep@v1.2.0 (the other origin's edge is out of scope)", got[0])
+	}
+}
+
+func TestSupersededRequirements_skipsInvalidConstraintVersion(t *testing.T) {
+	// A constraint that is not a semver version names no module that was
+	// demoted, so the edge contributes nothing rather than fabricating a
+	// coordinate.
+	g := domain.Graph{
+		Edges: []domain.GraphEdge{
+			{From: coord("example.com/main", "v1.0.0"), To: coord("example.com/dep", "v1.4.0"), ConstraintVersion: "not-a-version"},
+		},
+	}
+	if got := g.SupersededRequirements(); len(got) != 0 {
+		t.Errorf("SupersededRequirements = %v, want none for a non-semver constraint", got)
+	}
+}
+
+func TestGraphReachableFrom_diamondVisitsOnce(t *testing.T) {
+	// a→b, a→c, b→d, c→d: d is reached twice; the second visit must be a no-op.
+	g := domain.Graph{Edges: []domain.GraphEdge{
+		{From: coord("a", "v1.0.0"), To: coord("b", "v1.0.0")},
+		{From: coord("a", "v1.0.0"), To: coord("c", "v1.0.0")},
+		{From: coord("b", "v1.0.0"), To: coord("d", "v1.0.0")},
+		{From: coord("c", "v1.0.0"), To: coord("d", "v1.0.0")},
+	}}
+	got := g.ReachableFrom(coord("a", "v1.0.0"))
+	if len(got) != 3 {
+		t.Errorf("ReachableFrom(a) = %d nodes, want 3 (b, c, d once)", len(got))
+	}
+}
+
+func TestSupersededRequirements_sortsAcrossPaths(t *testing.T) {
+	g := domain.Graph{
+		Edges: []domain.GraphEdge{
+			{From: coord("example.com/main", "v1.0.0"), To: coord("example.com/zeta", "v1.4.0"), ConstraintVersion: "v1.2.0"},
+			{From: coord("example.com/main", "v1.0.0"), To: coord("example.com/alpha", "v2.0.0"), ConstraintVersion: "v1.9.0"},
+		},
+	}
+	got := g.SupersededRequirements()
+	if len(got) != 2 {
+		t.Fatalf("SupersededRequirements = %v, want two entries", got)
+	}
+	if got[0].Path() != "example.com/alpha" || got[1].Path() != "example.com/zeta" {
+		t.Errorf("order = [%s, %s], want alpha before zeta", got[0], got[1])
+	}
+}

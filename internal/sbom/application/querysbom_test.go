@@ -54,7 +54,7 @@ func (s *querySBOMFakeStore) ListSBOMRecords(_ context.Context, walkID string) (
 	return out, nil
 }
 
-func (s *querySBOMFakeStore) FindSBOMRecord(_ context.Context, _ string, _ *string, _ domain.SBOMFormat, _ string) (domain.SBOMRecord, bool, error) {
+func (s *querySBOMFakeStore) FindSBOMRecord(_ context.Context, _ string, _ domain.SBOMFormat, _ string) (domain.SBOMRecord, bool, error) {
 	return domain.SBOMRecord{}, false, nil
 }
 

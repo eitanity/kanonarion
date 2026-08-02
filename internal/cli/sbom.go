@@ -7,6 +7,9 @@ import (
 	"fmt"
 	"io"
 	"log/slog"
+	"path/filepath"
+	"strings"
+	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -21,7 +24,6 @@ import (
 )
 
 func newSBOMCmd(stdout, stderr io.Writer) *cobra.Command {
-	var scanRunID string
 	var format string
 	var output string
 	var force bool
@@ -34,20 +36,29 @@ func newSBOMCmd(stdout, stderr io.Writer) *cobra.Command {
 	var fromModcache string
 	var policyPath string
 	var noProgress bool
+	var generatedAt string
 
 	cmd := &cobra.Command{
 		Use:   "sbom [<walk-id>]",
 		Short: "Generate a Software Bill of Materials for a walk",
 		Long: `Generate a Software Bill of Materials (CycloneDX) for a walk.
 
+The document is an inventory: components, their identity, hashes, licences and
+dependency graph. It carries no vulnerability list. Vulnerability and
+reachability answers come from 'kanonarion vuln-show' and
+'kanonarion reachability', which state the frame and the advisory snapshot the
+answer was measured against.
+
 Exit codes:
-  0  SBOM generated with complete licence data
-  1  SBOM generated, but one or more modules have no licence record — the
-     document IS written; a licence-less SBOM must never pass as complete
-  4  the walk, scan run or package scope named does not exist
-  20 bad invocation (missing walk id and --package, unparseable coordinate, ...)`,
+  0  SBOM generated, every component carrying a licence identity
+  1  SBOM generated, but one or more components carry no licence identity —
+     no licence record was found, or the record found identified no SPDX
+     licence. The document IS written and names them; a licence-less SBOM
+     must never pass as complete
+  4  the walk or package scope named does not exist
+  20 bad invocation (missing walk id and --package, unparseable coordinate,
+     unparseable --generated-at, ...)`,
 		Example: `  kanonarion sbom 01KQDBVW092ER1HNXZ60X27CMD
-  kanonarion sbom 01KQDBVW092ER1HNXZ60X27CMD --scan vscan-01KQDBVW092ER1HNXZ60X27CMD-1234
   kanonarion sbom 01KQDBVW092ER1HNXZ60X27CMD --output sbom.json
   kanonarion sbom 01KQDBVW092ER1HNXZ60X27CMD --package ./cmd/kanonarion
   kanonarion sbom --package ./cmd/kanonarion`,
@@ -69,16 +80,15 @@ Exit codes:
 					return merr
 				}
 			}
-			var scanRunPtr *string
-			if scanRunID != "" {
-				scanRunPtr = &scanRunID
+			docTime, terr := parseGeneratedAt(generatedAt)
+			if terr != nil {
+				return terr
 			}
 			logger := buildLogger(logLevel, stderr)
-			return runSBOMGenerate(cmd.Context(), walkID, storeRoot, packagePattern, scanRunPtr, format, output, force, stdlibFromGoMod, noProgress, mainVersion, mainLicense, operator, policyPath, logger, stdout, stderr)
+			return runSBOMGenerate(cmd.Context(), walkID, storeRoot, packagePattern, docTime, format, output, force, stdlibFromGoMod, noProgress, mainVersion, mainLicense, operator, policyPath, logger, stdout, stderr)
 		},
 	}
 
-	cmd.Flags().StringVar(&scanRunID, "scan", "", "include vulnerabilities from this scan run ID")
 	cmd.Flags().StringVar(&format, "format", "cyclonedx-1.6", "SBOM format (cyclonedx-1.6)")
 	cmd.Flags().StringVar(&output, "output", "", "write SBOM content to this file (default: stdout)")
 	cmd.Flags().BoolVar(&force, "force", false, "re-generate even if cached")
@@ -88,6 +98,7 @@ Exit codes:
 	cmd.Flags().StringVar(&policyPath, "policy", "", "path to depth policy YAML (default: search for .kanonarion/policy.yaml)")
 	cmd.Flags().StringVar(&mainVersion, "main-version", "", "version to stamp on the SBOM subject (metadata.component) instead of the synthetic \"local\"; use a release tag (e.g. v0.1.1) so the subject is a resolvable coordinate")
 	cmd.Flags().StringVar(&mainLicense, "main-license", "", "SPDX id/expression (e.g. Apache-2.0) to attach to the SBOM subject, which has no fetched licence record of its own")
+	cmd.Flags().StringVar(&generatedAt, "generated-at", "", "RFC3339 time this document is being created (e.g. 2026-01-31T09:00:00Z); becomes metadata.timestamp. Omitted, the document is stamped with the newest licence extraction time among its inputs and says so")
 	registerStdlibFromGoModFlag(cmd, &stdlibFromGoMod)
 	registerFromModcacheFlag(cmd, &fromModcache)
 	registerAllowVerificationDowngradeFlag(cmd)
@@ -130,7 +141,7 @@ func runSBOMGenerate(
 	ctx context.Context,
 	walkID, storeRoot string,
 	packagePattern string,
-	scanRunID *string,
+	generatedAt time.Time,
 	format, output string,
 	force bool,
 	stdlibFromGoMod bool,
@@ -155,7 +166,7 @@ func runSBOMGenerate(
 	}
 	defer func() { _ = cleanup() }()
 
-	return sbomGenerateWith(ctx, ctr, walkID, packagePattern, scanRunID, format, output, force, stdlibFromGoMod, noProgress, mainVersion, mainLicense, operator, policyPath, stdout, stderr)
+	return sbomGenerateWith(ctx, ctr, walkID, packagePattern, generatedAt, format, output, force, stdlibFromGoMod, noProgress, mainVersion, mainLicense, operator, policyPath, stdout, stderr)
 }
 
 // sbomGenerateWith holds the sbom-generate logic over an injected Container:
@@ -168,7 +179,7 @@ func sbomGenerateWith(
 	ctx context.Context,
 	ctr *Container,
 	walkID, packagePattern string,
-	scanRunID *string,
+	generatedAt time.Time,
 	format, output string,
 	force bool,
 	stdlibFromGoMod bool,
@@ -196,7 +207,7 @@ func sbomGenerateWith(
 
 	req := application.SBOMRequest{
 		WalkID:               walkID,
-		WalkScanRunID:        scanRunID,
+		GeneratedAt:          generatedAt,
 		Format:               domain.SBOMFormat(format),
 		Force:                force,
 		Operator:             operator,
@@ -226,10 +237,85 @@ func sbomGenerateWith(
 	// never dropped as it was on the bare stdout path. The artifact is still
 	// emitted (as audit prints its table before blocking) so the gap can be
 	// inspected; absence of licence data is surfaced, never presented clean.
+	//
+	// The components are named from the document that was just written rather
+	// than from the record, so the message describes the artefact a consumer
+	// will hold, and says the same thing whether the document was generated now
+	// or served from the cache.
 	if record.LicensesIncomplete {
-		return &exitError{code: ExitPartial, msg: "sbom generated with incomplete licence data: one or more modules have no licence record"}
+		return &exitError{
+			code: ExitPartial,
+			msg:  "sbom generated with undetermined licences: " + undeterminedLicenceSummary(record.Content),
+		}
 	}
 	return nil
+}
+
+// parseGeneratedAt reads the --generated-at flag. An empty value is not an
+// error: it means the caller supplied no creation time, and the document falls
+// back to a derived timestamp it labels as derived.
+func parseGeneratedAt(v string) (time.Time, error) {
+	if v == "" {
+		return time.Time{}, nil
+	}
+	t, err := time.Parse(time.RFC3339, v)
+	if err != nil {
+		return time.Time{}, fmt.Errorf("--generated-at %q: expected an RFC3339 time such as 2026-01-31T09:00:00Z: %w", v, err)
+	}
+	return t, nil
+}
+
+// undeterminedLicenceSummary names the components of a generated document that
+// carry no licence identity, so the operator learns which they are without
+// opening the artefact.
+//
+// It reads the document rather than the record because the document is the thing
+// being judged and is present on every path, cached included. A document this
+// process cannot re-read is reported as such: the exit code has already been
+// decided by the record, and a parse failure here must not turn a stated gap
+// into a silent one.
+func undeterminedLicenceSummary(content []byte) string {
+	var doc struct {
+		Components []struct {
+			Name     string            `json:"name"`
+			Version  string            `json:"version"`
+			Licenses []json.RawMessage `json:"licenses"`
+		} `json:"components"`
+		Metadata struct {
+			Component struct {
+				Name     string            `json:"name"`
+				Version  string            `json:"version"`
+				Licenses []json.RawMessage `json:"licenses"`
+			} `json:"component"`
+		} `json:"metadata"`
+	}
+	if err := json.Unmarshal(content, &doc); err != nil {
+		return "one or more components carry no licence identity (the generated document could not be re-read to name them: " + err.Error() + ")"
+	}
+	// The subject is deduplicated against the component list: a walk rooted at a
+	// module carries that module as both, and counting it twice would put the
+	// message at odds with the count the document itself states.
+	var names []string
+	seen := make(map[string]struct{}, len(doc.Components))
+	add := func(coord, suffix string) {
+		if _, dup := seen[coord]; dup {
+			return
+		}
+		seen[coord] = struct{}{}
+		names = append(names, coord+suffix)
+	}
+	if m := doc.Metadata.Component; m.Name != "" && len(m.Licenses) == 0 {
+		add(m.Name+"@"+m.Version, " (the document's subject)")
+	}
+	for _, c := range doc.Components {
+		if len(c.Licenses) == 0 {
+			add(c.Name+"@"+c.Version, "")
+		}
+	}
+	if len(names) == 0 {
+		return "one or more components carry no licence identity"
+	}
+	return fmt.Sprintf("%d component(s) with no licence identity: %s", len(names), strings.Join(names, ", "))
 }
 
 func runSBOMShow(ctx context.Context, id, storeRoot string, jsonOut bool, stdout, stderr io.Writer) error {
@@ -247,22 +333,20 @@ func runSBOMShow(ctx context.Context, id, storeRoot string, jsonOut bool, stdout
 
 	if jsonOut {
 		type meta struct {
-			ID                 string  `json:"id"`
-			Ecosystem          string  `json:"ecosystem"`
-			WalkID             string  `json:"walk_id"`
-			WalkScanRunID      *string `json:"walk_scan_run_id,omitempty"`
-			Format             string  `json:"format"`
-			PipelineVersion    string  `json:"pipeline_version"`
-			GeneratedAt        string  `json:"generated_at"`
-			ContentHash        string  `json:"content_hash"`
-			Operator           string  `json:"operator"`
-			LicensesIncomplete bool    `json:"licenses_incomplete"`
+			ID                 string `json:"id"`
+			Ecosystem          string `json:"ecosystem"`
+			WalkID             string `json:"walk_id"`
+			Format             string `json:"format"`
+			PipelineVersion    string `json:"pipeline_version"`
+			GeneratedAt        string `json:"generated_at"`
+			ContentHash        string `json:"content_hash"`
+			Operator           string `json:"operator"`
+			LicensesIncomplete bool   `json:"licenses_incomplete"`
 		}
 		m := meta{
 			ID:                 record.ID,
 			Ecosystem:          record.Ecosystem,
 			WalkID:             record.WalkID,
-			WalkScanRunID:      record.WalkScanRunID,
 			Format:             string(record.Format),
 			PipelineVersion:    record.PipelineVersion,
 			GeneratedAt:        record.GeneratedAt.Format("2006-01-02T15:04:05Z"),
@@ -299,14 +383,13 @@ func runSBOMList(ctx context.Context, storeRoot, walkID string, jsonOut bool, st
 
 	if jsonOut {
 		type row struct {
-			ID              string  `json:"id"`
-			Ecosystem       string  `json:"ecosystem"`
-			WalkID          string  `json:"walk_id"`
-			WalkScanRunID   *string `json:"walk_scan_run_id,omitempty"`
-			Format          string  `json:"format"`
-			PipelineVersion string  `json:"pipeline_version"`
-			GeneratedAt     string  `json:"generated_at"`
-			ContentHash     string  `json:"content_hash"`
+			ID              string `json:"id"`
+			Ecosystem       string `json:"ecosystem"`
+			WalkID          string `json:"walk_id"`
+			Format          string `json:"format"`
+			PipelineVersion string `json:"pipeline_version"`
+			GeneratedAt     string `json:"generated_at"`
+			ContentHash     string `json:"content_hash"`
 		}
 		rows := make([]row, len(records))
 		for i, r := range records {
@@ -314,7 +397,6 @@ func runSBOMList(ctx context.Context, storeRoot, walkID string, jsonOut bool, st
 				ID:              r.ID,
 				Ecosystem:       r.Ecosystem,
 				WalkID:          r.WalkID,
-				WalkScanRunID:   r.WalkScanRunID,
 				Format:          string(r.Format),
 				PipelineVersion: r.PipelineVersion,
 				GeneratedAt:     r.GeneratedAt.Format("2006-01-02T15:04:05Z"),
@@ -334,12 +416,8 @@ func runSBOMList(ctx context.Context, storeRoot, walkID string, jsonOut bool, st
 		return nil
 	}
 	for _, r := range records {
-		scanRun := "-"
-		if r.WalkScanRunID != nil {
-			scanRun = *r.WalkScanRunID
-		}
-		_, _ = fmt.Fprintf(stdout, "%s  walk=%-26s  scan=%-26s  format=%-14s  %s\n",
-			r.ID, r.WalkID, scanRun, string(r.Format),
+		_, _ = fmt.Fprintf(stdout, "%s  walk=%-26s  format=%-14s  %s\n",
+			r.ID, r.WalkID, string(r.Format),
 			r.GeneratedAt.Format("2006-01-02T15:04:05Z"))
 	}
 	return nil
@@ -386,11 +464,18 @@ func ensureProjectWalkForSBOM(ctx context.Context, ctr *Container, force, stdlib
 		return "", fmt.Errorf("reading module path for project walk: %w", err)
 	}
 
-	walkID, reuse, err := projectWalkToReuse(ctx, ctr.QueryWalks, modulePath, force)
+	// Reuse is gated on the platform, not just the target. A walk resolved for
+	// another GOOS/GOARCH holds another closure, and an SBOM built over it would
+	// inventory components this build never selects. A miss is not a refusal
+	// here: the cold-store path below builds a walk in this environment, which
+	// is the answer a refusal would have asked the operator to produce by hand.
+	platform := currentBuildEnvFilter(ctx, "", filepath.Dir(gomodPath), buildLogger(logLevel, stderr))
+	walkID, reuse, err := projectWalkToReuse(ctx, ctr.QueryWalks, modulePath, force, platform)
 	if err != nil {
 		return "", err
 	}
 	if reuse {
+		_, _ = fmt.Fprintf(progressWriter(stderr, noProgress), "==> sbom: reusing project walk %s (%s)\n", walkID, platform)
 		return walkID, nil
 	}
 
@@ -399,7 +484,8 @@ func ensureProjectWalkForSBOM(ctx context.Context, ctr *Container, force, stdlib
 	// unfetchable node does not abort the SBOM; the SBOM records what resolved.
 	progress := newWalkProgressReporter(stderr, noProgress, activeConfig, logLevel)
 	_, _ = fmt.Fprintf(progressWriter(stderr, noProgress), "==> sbom: building project walk for %s\n", modulePath)
-	if werr := runWalkProject(ctx, gomodPath, force, true, 0, "", policyPath, false, scopeCode, walkdomain.WalkDepthFull, "", false, stdlibFromGoMod, progress, ctr.ExecuteWalk, nil, io.Discard, stderr); werr != nil {
+	walkResult, werr := runWalkProject(ctx, gomodPath, force, true, 0, "", policyPath, false, scopeCode, walkdomain.WalkDepthFull, "", false, stdlibFromGoMod, progress, ctr.ExecuteWalk, nil, io.Discard, stderr)
+	if werr != nil {
 		return "", fmt.Errorf("building project walk: %w", werr)
 	}
 
@@ -411,13 +497,17 @@ func ensureProjectWalkForSBOM(ctx context.Context, ctr *Container, force, stdlib
 	if cErr != nil {
 		return "", fmt.Errorf("project coordinate for %s: %w", modulePath, cErr)
 	}
-	walkID, werr := latestProjectWalkByScope(ctx, ctr.QueryWalks, modulePath, walkdomain.WalkScopeCode)
-	if werr != nil {
-		return "", werr
+	// The walk this run just executed or reused, taken from its own result. The
+	// latest-for-target lookup this replaces carries no build-environment axis,
+	// so a cross-compiled run could gate, licence and inventory another
+	// platform's walk whenever that one was newer.
+	if walkResult.Record.ID == "" {
+		return "", fmt.Errorf("project walk produced no record for %s", modulePath)
 	}
-	walkRec, werr := ctr.QueryWalks.GetWalk(ctx, walkID)
-	if werr != nil {
-		return "", fmt.Errorf("loading project walk %s: %w", walkID, werr)
+	walkID = walkResult.Record.ID
+	walkRec, gerr := ctr.QueryWalks.GetWalk(ctx, walkID)
+	if gerr != nil {
+		return "", fmt.Errorf("loading project walk %s: %w", walkID, gerr)
 	}
 	if gateErr := modcacheWalkGate(walkRec, localCoord); gateErr != nil {
 		return "", gateErr
@@ -426,7 +516,7 @@ func ensureProjectWalkForSBOM(ctx context.Context, ctr *Container, force, stdlib
 		return "", gateErr
 	}
 
-	return extractLicencesForProjectWalk(ctx, ctr.QueryWalks, ctr.Extract, modulePath, force, stderr)
+	return extractLicencesForProjectWalk(ctx, ctr.Extract, walkID, force, stderr)
 }
 
 // projectWalkToReuse decides whether an existing project walk can be reused.
@@ -435,11 +525,11 @@ func ensureProjectWalkForSBOM(ctx context.Context, ctr *Container, force, stdlib
 // also returns reuse=false so the caller builds. Any other lookup error is
 // propagated. Extracted so the reuse/build decision is testable without a live
 // walk pipeline.
-func projectWalkToReuse(ctx context.Context, qw QueryWalksUseCase, modulePath string, force bool) (walkID string, reuse bool, err error) {
+func projectWalkToReuse(ctx context.Context, qw QueryWalksUseCase, modulePath string, force bool, platform walkports.BuildEnvFilter) (walkID string, reuse bool, err error) {
 	if force {
 		return "", false, nil
 	}
-	walkID, err = findLatestProjectWalk(ctx, qw, modulePath)
+	walkID, err = findLatestProjectWalk(ctx, qw, modulePath, platform)
 	if err == nil {
 		return walkID, true, nil
 	}
@@ -449,16 +539,11 @@ func projectWalkToReuse(ctx context.Context, qw QueryWalksUseCase, modulePath st
 	return "", false, err
 }
 
-// extractLicencesForProjectWalk runs the licence extraction stage over the
-// freshly built project walk and returns its ID. It looks the walk up by target
-// and code scope (accepting a partial walk, which a strictly-succeeded lookup
-// would miss) so that a walk with some unfetchable nodes still yields a licensed
+// extractLicencesForProjectWalk runs the licence extraction stage over walkID —
+// the walk the caller just executed or reused — and returns it. A partial walk
+// is accepted, so a walk with some unfetchable nodes still yields a licensed
 // SBOM for the nodes that resolved.
-func extractLicencesForProjectWalk(ctx context.Context, qw QueryWalksUseCase, ex ExtractUseCase, modulePath string, force bool, stderr io.Writer) (string, error) {
-	walkID, err := latestProjectWalkByScope(ctx, qw, modulePath, walkdomain.WalkScopeCode)
-	if err != nil {
-		return "", err
-	}
+func extractLicencesForProjectWalk(ctx context.Context, ex ExtractUseCase, walkID string, force bool, stderr io.Writer) (string, error) {
 	_, _ = fmt.Fprintf(stderr, "==> sbom: extracting licences for walk %s\n", walkID)
 	if _, err := ex.Execute(ctx, extractapp.ExtractRequest{
 		WalkID: walkID,
@@ -475,7 +560,7 @@ func extractLicencesForProjectWalk(ctx context.Context, qw QueryWalksUseCase, ex
 // derives its own binary import closure and filters the walk's components to it,
 // and every project scope's set contains the binary's modules. Returns
 // errNoProjectWalk when no succeeded walk exists.
-func findLatestProjectWalk(ctx context.Context, qw QueryWalksUseCase, modulePath string) (string, error) {
+func findLatestProjectWalk(ctx context.Context, qw QueryWalksUseCase, modulePath string, platform walkports.BuildEnvFilter) (string, error) {
 	coord, err := coordinate.NewModuleCoordinate(modulePath, coordinate.LocalVersion)
 	if err != nil {
 		return "", fmt.Errorf("building project coordinate: %w", err)
@@ -484,36 +569,14 @@ func findLatestProjectWalk(ctx context.Context, qw QueryWalksUseCase, modulePath
 	walks, err := qw.ListWalks(ctx, walkports.WalkFilter{
 		Target:        &coord,
 		OverallStatus: &succeeded,
+		BuildEnv:      &platform,
 		Limit:         1,
 	})
 	if err != nil {
 		return "", fmt.Errorf("listing project walks for %s: %w", modulePath, err)
 	}
 	if len(walks) == 0 {
-		return "", fmt.Errorf("%w for %s", errNoProjectWalk, modulePath)
-	}
-	return walks[0].ID, nil
-}
-
-// latestProjectWalkByScope returns the latest project walk rooted at
-// modulePath@local for the given scope, regardless of overall status. Used
-// straight after building a walk, where a partial result is still usable and a
-// succeeded-only lookup would find nothing.
-func latestProjectWalkByScope(ctx context.Context, qw QueryWalksUseCase, modulePath string, scope walkdomain.WalkScope) (string, error) {
-	coord, err := coordinate.NewModuleCoordinate(modulePath, coordinate.LocalVersion)
-	if err != nil {
-		return "", fmt.Errorf("building project coordinate: %w", err)
-	}
-	walks, err := qw.ListWalks(ctx, walkports.WalkFilter{
-		Target: &coord,
-		Scope:  &scope,
-		Limit:  1,
-	})
-	if err != nil {
-		return "", fmt.Errorf("listing project walks for %s: %w", modulePath, err)
-	}
-	if len(walks) == 0 {
-		return "", fmt.Errorf("project walk produced no record for %s", modulePath)
+		return "", fmt.Errorf("%w for %s on %s", errNoProjectWalk, modulePath, platform)
 	}
 	return walks[0].ID, nil
 }

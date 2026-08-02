@@ -15,14 +15,15 @@ import (
 	"github.com/spf13/cobra"
 
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
+	configdomain "github.com/eitanity/kanonarion/internal/config/domain"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	staleapp "github.com/eitanity/kanonarion/internal/staleness/application"
 
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
+	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
 	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
 type auditFlags struct {
@@ -63,7 +64,9 @@ project's own build dependencies (the code your packages import, incl. tests);
 Exit codes:
   0  every dependency resolved and no licence-policy block
   5  the governance gate fired: dependencies with an undetermined licence are
-     blocked by policy (unknown_license=block) — the table is still printed
+     blocked by policy (unknown_license=block), or the licence gate could not
+     be evaluated because the policy scope in force matches no license_policy
+     rule — the table is still printed either way
   10 a walk node failed its integrity check
   20 bad invocation, unresolvable go.mod, or a policy file that could not be read`,
 		Example: `  kanonarion audit
@@ -80,7 +83,7 @@ Exit codes:
 	cmd.Flags().StringVar(&f.gomodPath, "gomod", "", "path to go.mod file (default: ./go.mod)")
 	cmd.Flags().StringVar(&f.goproxy, "goproxy", "", "override GOPROXY (default: $GOPROXY or proxy.golang.org)")
 	cmd.Flags().BoolVar(&f.force, "force", false, "re-fetch and re-scan even if cached records exist")
-	cmd.Flags().BoolVar(&f.fresh, "fresh", false, "bypass cached network answers: fetch a fresh vulnerability database snapshot and re-query latest versions instead of serving the staleness ledger")
+	cmd.Flags().BoolVar(&f.fresh, "fresh", false, "refresh the vulnerability advisory database: download a new snapshot only if an advisory listed for a module in this walk has changed")
 	cmd.Flags().BoolVar(&f.tool, "tool", false, "scope to the tooling supply chain (the go.mod tool directives' closure)")
 	cmd.Flags().BoolVar(&f.project, "project", false, "scope to the complete set: the project's code AND tooling")
 	cmd.Flags().BoolVar(&f.skipVCSVerify, "skip-vcs-verify", false, "skip git cross-verification; sumdb verification still runs")
@@ -128,13 +131,31 @@ type auditModuleResult struct {
 	// LicenseResolved is false: no_record | none | multiple |
 	// extraction_failed | cancelled | not_run.
 	LicenseUncertainty string `json:"license_uncertainty,omitempty"`
-	// PolicyBlocking is true when this uncertain result is a hard
-	// compliance failure (scope unknown_license = block); `audit` exits
-	// non-zero when any result is blocking.
-	PolicyBlocking bool   `json:"policy_blocking,omitempty"`
-	IsLatest       bool   `json:"is_latest"`
-	LatestVersion  string `json:"latest_version,omitempty"`
-	DaysBehind     int    `json:"days_behind,omitempty"`
+	// LicenseElectableArms names the arms of a dual-licence disjunction that
+	// carry the reported policy_outcome — the licences a consumer may elect
+	// between to obtain it. Information, not an open item: the outcome already
+	// stands on the most favourable arm, and the row is not blocking for want
+	// of a recorded election.
+	LicenseElectableArms []string `json:"license_electable_arms,omitempty"`
+	// PolicyBlocking is true when this result is a hard compliance failure:
+	// an uncertain licence under scope unknown_license = block, or a policy
+	// scope no rule covers (unevaluated); `audit` exits non-zero when any
+	// result is blocking.
+	PolicyBlocking bool `json:"policy_blocking,omitempty"`
+	// PolicyUnevaluated is true when the policy scope in force matched no
+	// license_policy rule: the gate evaluated nothing for this row, which is
+	// reported and blocking — never an implicit allow.
+	PolicyUnevaluated bool   `json:"policy_unevaluated,omitempty"`
+	IsLatest          bool   `json:"is_latest"`
+	LatestVersion     string `json:"latest_version,omitempty"`
+	// LatestReleaseAgeDays is how long ago the LATEST release shipped, not how
+	// far behind the pin is. It replaces the `days_behind` key, which named a
+	// quantity the value never held: the number is the age of the newest release,
+	// so an eighteen-month-old pin on an actively released module reported a
+	// smaller figure than a current pin on a quiet one. See latestResult in
+	// latest.go for why the genuine pin-to-latest distance is not emitted at all
+	// rather than approximated.
+	LatestReleaseAgeDays int `json:"latest_release_age_days,omitempty"`
 	// NewerMajorModule/NewerMajorLatest are the SEPARATE major-line fact: a
 	// module's next major version lives at a different path, so IsLatest — which
 	// is about this path — can be true while a whole major line is available.
@@ -152,6 +173,13 @@ type auditModuleResult struct {
 	// modules (Direct=false) appear alongside direct ones and the
 	// compliance picture spans the full closure, not just the require lines.
 	Direct bool `json:"direct"`
+
+	// policyScope and policyRuleScopes carry the evaluation's scope facts for
+	// the unevaluated diagnostic (which scope was in force, which scopes have
+	// rules). Unexported: the JSON row already names the condition via
+	// PolicyUnevaluated, and these feed the human-readable remedy only.
+	policyScope      string
+	policyRuleScopes []string
 
 	// coverage is this module's contribution to the run's verification-coverage
 	// aggregate, captured from the same record read that filled Verification.
@@ -223,12 +251,19 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 		// command makes is served to the other inside the TTL, which is the
 		// whole point: the two commands were re-paying the same sweep minutes
 		// apart.
-		staleness = newStalenessResolver(proxy, ctr.StalenessLedger, activeConfig.Staleness.TTL, f.fresh)
+		staleness = newAuditStalenessResolver(newProxyLatestResolver(proxy), ctr.StalenessLedger, activeConfig.Staleness.TTL)
 	}
 
-	results, err := auditScope(ctx, coords, scope, f, staleness, ctr, stderr)
+	results, derivation, err := auditScope(ctx, coords, scope, f, staleness, ctr, stderr)
 	if err != nil {
 		return err
+	}
+
+	// Where the answer came from, before the answer itself. On stderr for the
+	// same reason the coverage aggregate is: a --json caller pipes stdout into
+	// jq, and a statement about the run is not one of the run's rows.
+	if derr := writeAuditDerivation(stderr, derivation); derr != nil {
+		return derr
 	}
 
 	// The aggregate goes to stderr on both paths: a whole-graph collapse in
@@ -253,9 +288,90 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	return auditBlockingErr(results)
 }
 
+// auditDerivation records where an audit's two expensive answers came from: the
+// walk that fixed the dependency set, and the vulnerability scan judged against
+// it. It exists so the report can say which parts of the answer were measured by
+// this invocation and which were served from records, because a reader cannot
+// otherwise tell a fresh measurement from a stored one — and the two carry
+// different weight in exactly the cases (release evidence, incident response)
+// where the distinction decides what the answer is worth.
+type auditDerivation struct {
+	walkReused bool
+	walkRecord walkdomain.WalkRecord
+	scanReused bool
+	scanRun    vulndomain.WalkScanRun
+	// refreshed is set when --fresh made this run check the advisory database;
+	// refresh is what that check established. Without the flag the run reads the
+	// stored database and the derivation says nothing about a check it never made.
+	refreshed bool
+	refresh   vulnapp.SnapshotRefresh
+	// refreshErr is the refresh's own failure, when the database could not be
+	// brought up to date at all. The audit continues against the stored database;
+	// the statement is what stops that reading as a checked one.
+	refreshErr error
+}
+
+// writeAuditDerivation states the provenance of the run's two derived answers.
+//
+// Reuse is named with the record it served and the date that record was made, so
+// the statement is checkable; a re-derivation names what it produced. The walk
+// line says "re-resolved" even when reused, because that is what happened: the
+// go.mod was resolved again and the resolution turned out to be identical to a
+// stored one. Calling that "skipped" would claim less work than was done, and
+// calling it "fresh" would claim a new record exists when none was written.
+func writeAuditDerivation(w io.Writer, d auditDerivation) error {
+	walkLine := fmt.Sprintf("walk %s: derived by this run", d.walkRecord.ID)
+	if d.walkReused {
+		walkLine = fmt.Sprintf("walk %s: re-resolved and found identical to the walk taken %s; that record was reused",
+			d.walkRecord.ID, d.walkRecord.CompletedAt.UTC().Format(time.RFC3339))
+	}
+
+	scanLine := "vulnerability scan: derived by this run"
+	if d.scanReused {
+		scanLine = fmt.Sprintf("vulnerability scan: reused run %s of %s against snapshot %s@%s; nothing was re-scanned (--force to re-measure)",
+			d.scanRun.ID, d.scanRun.CompletedAt.UTC().Format(time.RFC3339),
+			d.scanRun.Snapshot.Source(), d.scanRun.Snapshot.Version())
+	}
+
+	lines := []string{walkLine}
+	if d.refreshed {
+		lines = append(lines, advisoryRefreshLine(d.refresh, d.refreshErr))
+	}
+	lines = append(lines, scanLine)
+
+	if _, err := fmt.Fprintf(w, "derivation:\n  %s\n", strings.Join(lines, "\n  ")); err != nil {
+		return fmt.Errorf("writing output: %w", err)
+	}
+	return nil
+}
+
 // walkScopeFor maps a CLI depScope to the walk-record WalkScope tag. The string
 // values are identical, so this is a direct conversion documented for clarity.
 func walkScopeFor(s depScope) walkdomain.WalkScope { return walkdomain.WalkScope(s) }
+
+// policyScopeForWalkScope translates a walk scope onto the policy scope whose
+// license_policy rule governs it. The two vocabularies are distinct: walk
+// scopes name dependency sets (code / tool / complete), policy scopes name
+// rule domains (production / tool), and only "tool" appears in both. Passing a
+// walk scope straight through meant the default scope ("code") matched no rule
+// and every licence resolved to an implicit allow — the gate never fired on
+// the command operators actually run. code and complete are production
+// dependency sets (modules linked into, or spanning, the shipped binary), so
+// both normalise to production. The translation lives here at the boundary
+// deliberately: the shipped config's two-scope vocabulary is the intended one
+// and must not grow walk-scope mirror rules.
+func policyScopeForWalkScope(s walkdomain.WalkScope) string {
+	switch s {
+	case walkdomain.WalkScopeCode, walkdomain.WalkScopeComplete:
+		return "production"
+	case walkdomain.WalkScopeTool:
+		return "tool"
+	}
+	// Unknown walk scope: pass through and let the policy engine's
+	// unmatched-scope guard report the gate as unevaluated rather than
+	// guessing a rule domain here.
+	return string(s)
+}
 
 // auditScope performs a single project walk rooted at the local module and
 // derives one auditModuleResult per dependency by iterating that walk's graph
@@ -275,10 +391,11 @@ func auditScope(
 	staleness *staleapp.Resolver,
 	ctr *Container,
 	stderr io.Writer,
-) ([]auditModuleResult, error) {
+) ([]auditModuleResult, auditDerivation, error) {
+	var derivation auditDerivation
 	modulePath, err := readGoModulePath(f.gomodPath)
 	if err != nil {
-		return nil, err
+		return nil, derivation, err
 	}
 
 	// audit narrates three stages on stderr and drives a walk and a scan that
@@ -290,44 +407,59 @@ func auditScope(
 	_, _ = fmt.Fprintf(progressOut, "==> audit: walking project %s (%d %s dependencies)\n", f.gomodPath, len(coords), scope)
 
 	progress := newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
-	if werr := runWalkProject(ctx, f.gomodPath, f.force, true, 0, "", f.policyPath, f.skipVCSVerify, scope,
-		walkdomain.WalkDepthFull, "", false, f.stdlibFromGoMod, progress, ctr.ExecuteWalk, nil, io.Discard, stderr); werr != nil {
+	walkResult, werr := runWalkProject(ctx, f.gomodPath, f.force, true, 0, "", f.policyPath, f.skipVCSVerify, scope,
+		walkdomain.WalkDepthFull, "", false, f.stdlibFromGoMod, progress, ctr.ExecuteWalk, nil, io.Discard, stderr)
+	if werr != nil {
 		// A partial walk is tolerated (allowPartial=true above): individual
 		// unfetchable nodes surface as "(not fetched)" rows. Only a hard walk
 		// failure or cancellation leaves no usable record.
 		_, _ = fmt.Fprintf(stderr, "walk: %v\n", werr)
 	}
+	derivation.walkReused = walkResult.Reused
+	derivation.walkRecord = walkResult.Record
 
-	// The project walk's target is the local main module; find its record.
+	// The project walk's target is the local main module.
 	localCoord, cErr := coordinate.NewLocalCoordinate(modulePath)
 	if cErr != nil {
-		return nil, fmt.Errorf("project coordinate for %s: %w", modulePath, cErr)
+		return nil, derivation, fmt.Errorf("project coordinate for %s: %w", modulePath, cErr)
 	}
 	walkScope := walkdomain.WalkScope(scope)
-	walks, qerr := ctr.QueryWalks.ListWalks(ctx, walkports.WalkFilter{Target: &localCoord, Scope: &walkScope, Limit: 1})
-	if qerr != nil {
-		return nil, fmt.Errorf("querying project walk: %w", qerr)
+
+	// Every downstream leg — licence extraction, the reuse question, the scan,
+	// the rows, the derivation — is keyed on THIS walk, the one the walk leg just
+	// executed or reused. It is taken from that leg's own result and never looked
+	// up again.
+	//
+	// The lookup it replaces asked the store for the latest walk of this target
+	// and scope, which is not the same question. Two walks of one target differ
+	// on more than target and scope — the build environment among them, and
+	// WalkFilter carries no axis for it — so a cross-compiled audit of one
+	// platform would extract, scan and report against another platform's walk
+	// whenever that one happened to be newer, while the derivation line named the
+	// walk this run actually resolved. One audit, two walks, and the report said
+	// nothing about the disagreement. This was invisible while every audit minted
+	// a fresh walk, because then the latest walk always was this run's; walk reuse
+	// is what let the two come apart.
+	if walkResult.Record.ID == "" {
+		return nil, derivation, fmt.Errorf("project walk produced no record for %s", localCoord)
 	}
-	if len(walks) == 0 {
-		return nil, fmt.Errorf("project walk produced no record for %s", localCoord)
-	}
-	walkID := walks[0].ID
+	walkID := walkResult.Record.ID
 
 	rec, gerr := ctr.QueryWalks.GetWalk(ctx, walkID)
 	if gerr != nil {
-		return nil, fmt.Errorf("loading project walk %s: %w", walkID, gerr)
+		return nil, derivation, fmt.Errorf("loading project walk %s: %w", walkID, gerr)
 	}
 
 	// In --from-modcache mode a module that fails go.sum verification is a hard
 	// error: stop before extract/scan and exit non-zero rather than reporting a
 	// row for it.
 	if gateErr := modcacheWalkGate(rec, localCoord); gateErr != nil {
-		return nil, gateErr
+		return nil, derivation, gateErr
 	}
 	// On the normal path, a local go.sum mismatch is tamper-evidence: fail hard
 	// before extract/scan rather than reporting a row for the tampered module.
 	if gateErr := goSumWalkGate(rec, localCoord); gateErr != nil {
-		return nil, gateErr
+		return nil, derivation, gateErr
 	}
 
 	_, _ = fmt.Fprintf(progressOut, "==> audit: extracting licenses for walk %s\n", walkID)
@@ -336,14 +468,46 @@ func auditScope(
 		_, _ = fmt.Fprintf(stderr, "extract: %v\n", eerr)
 	}
 
+	// The refresh happens before the reuse question is asked, because it decides
+	// what that question is asked against: a refresh that downloads a new
+	// database makes the stored run unreusable, and one that keeps the stored
+	// snapshot — because the database has not moved, or has not moved for
+	// anything this walk is judged on — leaves it answering. A failed refresh is
+	// reported and the audit continues against the stored database rather than
+	// losing the whole report.
+	if f.fresh {
+		_, _ = fmt.Fprintf(progressOut, "==> audit: refreshing the advisory database\n")
+		derivation.refreshed = true
+		refresh, frerr := ctr.ScanWalk.RefreshSnapshot(ctx, walkID)
+		if frerr != nil {
+			derivation.refreshErr = frerr
+		} else {
+			derivation.refresh = refresh
+		}
+	}
+
+	// Asked before the scan is driven so the derivation statement can name the
+	// run that answered, and answered with the same lookup the scan itself makes:
+	// audit narrates the whole derivation in one place, so runVulnScan is told not
+	// to announce the reuse a second time.
+	if prior, ok, rerr := ctr.ScanWalk.ReusableRun(ctx, walkID); rerr != nil {
+		_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", rerr)
+	} else if ok && !f.force {
+		derivation.scanReused = true
+		derivation.scanRun = prior
+	}
+
+	// fresh=false: the refresh above already happened, and the snapshot it
+	// settled on is the stored one the scan now resolves. Passing the flag on
+	// would check the database a second time in the same invocation.
 	_, _ = fmt.Fprintf(progressOut, "==> audit: scanning vulnerabilities for walk %s\n", walkID)
-	if verr := runVulnScan(ctx, walkID, f.force, f.fresh, false, 1, false, false, "", os.Getenv("USER"), filepath.Dir(f.gomodPath), f.policyPath, false, f.noProgress, io.Discard, stderr); verr != nil {
+	if verr := runVulnScan(ctx, walkID, f.force, false, false, 1, false, false, "", os.Getenv("USER"), filepath.Dir(f.gomodPath), f.policyPath, false, f.noProgress, false, io.Discard, stderr); verr != nil {
 		_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", verr)
 	}
 
 	overrides, err := ctr.LicenseOverrides.LoadOverrides(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("loading license overrides: %w", err)
+		return nil, derivation, fmt.Errorf("loading license overrides: %w", err)
 	}
 
 	// Iterate the walk's dependency nodes (every graph node bar the local root):
@@ -351,15 +515,19 @@ func auditScope(
 	// already sorted (Graph.Sort), so row order is deterministic.
 	depNodes := auditDependencyNodes(rec, localCoord)
 	results := make([]auditModuleResult, 0, len(depNodes))
+	// The walk scope names a dependency set; the licence policy speaks in
+	// policy scopes. Translate once here so every row is evaluated under the
+	// rule domain that governs it rather than under a scope no rule matches.
+	policyScope := policyScopeForWalkScope(walkScope)
 	for _, node := range depNodes {
-		res, rerr := buildAuditResult(ctx, node, walkID, string(walkScope), overrides, staleness, ctr, stderr)
+		res, rerr := buildAuditResult(ctx, node, walkID, policyScope, overrides, staleness, ctr, stderr)
 		if rerr != nil {
-			return nil, rerr
+			return nil, derivation, rerr
 		}
 		res.Direct = node.DirectDependency
 		results = append(results, res)
 	}
-	return results, nil
+	return results, derivation, nil
 }
 
 // auditDependencyNodes returns the dependency nodes of a project walk: every
@@ -379,7 +547,10 @@ func auditDependencyNodes(rec walkdomain.WalkRecord, local coordinate.ModuleCoor
 	return nodes
 }
 
-func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, scope string, overrides licdomain.LicenseOverrideSet, staleness *staleapp.Resolver, ctr *Container, stderr io.Writer) (auditModuleResult, error) {
+// buildAuditResult builds one audit row. policyScope is the licence-policy
+// scope (production/tool) the row's licence is evaluated under — already
+// translated from the walk scope by the caller.
+func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, policyScope string, overrides licdomain.LicenseOverrideSet, staleness *staleapp.Resolver, ctr *Container, stderr io.Writer) (auditModuleResult, error) {
 	coordStr := node.Coordinate.String()
 	coord, err := parseCoordinate(coordStr)
 	if err != nil {
@@ -391,7 +562,7 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, sc
 	// against. Its custody chain (verification status, extracted licence) rides on
 	// the graph node, so it is reported from there rather than the record stores.
 	if node.ResolutionSource == walkdomain.ResolutionStdlib {
-		return buildStdlibAuditResult(ctx, coord, node, scope, walkID, ctr), nil
+		return buildStdlibAuditResult(ctx, coord, node, policyScope, walkID, ctr), nil
 	}
 
 	res := auditModuleResult{
@@ -413,12 +584,13 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, sc
 		}
 		if ans.LatestVersion != "" {
 			res.StalenessLookedUpAt = ans.LookedUpAt
+			// The release age is a fact about the release, so it is recorded
+			// whether or not the pin is current; only LatestVersion, which names a
+			// version the project is not on, is gated on the pin being behind.
+			res.LatestReleaseAgeDays = latestReleaseAgeDays(ans.LatestPublishedAt)
 			if ans.LatestVersion != coord.Version() {
 				res.IsLatest = false
 				res.LatestVersion = ans.LatestVersion
-				if !ans.LatestPublishedAt.IsZero() {
-					res.DaysBehind = int(time.Since(ans.LatestPublishedAt).Hours() / 24)
-				}
 			}
 			res.MajorProbed = ans.NewerMajor.Probed
 			res.NewerMajorModule = ans.NewerMajor.Path
@@ -441,58 +613,115 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, sc
 		res.Verification = "(not fetched)"
 	}
 
-	// resolvedSPDX is the SPDX identifier the policy is evaluated against:
-	// the detected primary license, overridden by any license_overrides entry
-	// for this module path. Empty when nothing was detected.
-	var resolvedSPDX string
-	// uncertaintyReason records *why* no SPDX was resolved, for the
-	// machine-readable license_uncertainty field. Empty once an SPDX is
-	// resolved (by the scanner or an override).
-	uncertaintyReason := "no_record"
-	if lrec, found, lerr := ctr.QueryLicense.GetLicenseRecord(ctx, coord, licapp.PipelineVersion); lerr == nil && found {
-		res.License = lrec.PrimarySPDX
-		res.LicenseStatus = lrec.OverallStatus.String()
-		resolvedSPDX = lrec.PrimarySPDX
-		switch lrec.OverallStatus {
-		case licdomain.LicenseStatusNone:
-			res.License = "(none)"
-			uncertaintyReason = "none"
-		case licdomain.LicenseStatusMultiple:
-			uncertaintyReason = "multiple"
-		case licdomain.LicenseStatusExtractionFailed:
-			uncertaintyReason = "extraction_failed"
-		case licdomain.LicenseStatusCancelled:
-			uncertaintyReason = "cancelled"
-		}
-	} else if !found {
-		res.License = "(not run)"
-		res.LicenseStatus = "(not run)"
-		uncertaintyReason = "no_record"
-	}
+	lrec, lfound, lerr := ctr.QueryLicense.GetLicenseRecord(ctx, coord, licapp.PipelineVersion)
+	var resolvedSPDX, uncertaintyReason string
+	var arms []string
+	res.License, res.LicenseStatus, resolvedSPDX, uncertaintyReason, arms = auditLicenceResolution(lrec, lfound, lerr, res.License, res.LicenseStatus)
 	// Overrides are consulted after the scanner result and can correct both
 	// unknown and positive results; a version-pinned entry beats a
-	// module-level one (resolution lives in license/domain).
+	// module-level one (resolution lives in license/domain). An override also
+	// settles a disjunction wholesale — the recorded election replaces the
+	// arms, so the row is evaluated under that one licence.
 	if ov, ok := overrides.Resolve(coord); ok {
 		resolvedSPDX = ov.SPDX
 		res.License = ov.SPDX
 		res.LicenseSource = "override"
+		arms = nil
 	} else if res.LicenseStatus != "(not run)" {
 		res.LicenseSource = "scanner"
 	}
 
-	eval := activeConfig.LicensePolicy.EvaluateLicense(resolvedSPDX, scope)
-	res.LicenseCategory = eval.Category
-	res.PolicyOutcome = string(eval.Outcome)
-	res.LicenseResolved = !eval.Uncertain
-	res.PolicyBlocking = eval.Blocking
-	if eval.Uncertain {
-		res.LicenseUncertainty = uncertaintyReason
+	eval := activeConfig.LicensePolicy.EvaluateLicense(resolvedSPDX, policyScope)
+	if len(arms) > 0 {
+		eval = activeConfig.LicensePolicy.EvaluateDisjunction(arms, policyScope)
 	}
+	applyPolicyEvaluation(&res, eval, uncertaintyReason)
 
 	vrec, found, verr := ctr.QueryVuln.GetLatestRecordForWalk(ctx, coord, vulnPipelineVersion, walkID)
 	res.VulnStatus, res.VulnReason, res.VulnFindings, res.VulnWithdrawn = vulnAuditStatus(vrec, found, verr)
 
 	return res, nil
+}
+
+// auditLicenceResolution derives an audit row's licence columns from a licence
+// record lookup: the display licence and status, the SPDX the policy is
+// evaluated against, the machine-readable uncertainty reason (meaningful only
+// when no SPDX resolves), and the electable arms when the record carries a
+// resolved disjunction. displayIn/statusIn are the row's current placeholders,
+// kept when the lookup errs.
+//
+// A Multiple status splits in two. When the record's expression is a pure OR of
+// identified licences, the module offers the consumer a choice: the arms are
+// returned and the caller evaluates the policy per arm, taking the most
+// favourable — a choice between allowed licences is not an uncertainty, and
+// routing it through the unknown-licence machinery ranked it below a determined
+// strong-copyleft licence the same rule merely warns on. Recording the election
+// as a license_overrides entry still settles the row, but its absence gates
+// nothing.
+//
+// When the expression names a single identifier, that identifier is the
+// resolution: a module whose one licence file bundles third-party texts is
+// reported Multiple, and its derived expression is still its own licence.
+//
+// A Multiple whose expression yields neither (a conjunction, or candidates that
+// could not be identified) resolves NO SPDX: detection did not settle on any
+// licence identity, so it stays an open item and rides the unknown-licence
+// machinery (uncertain, and blocking where the scope blocks unknowns) until an
+// override settles it. Overrides are consulted by the caller after this.
+func auditLicenceResolution(lrec licdomain.LicenseRecord, found bool, lerr error, displayIn, statusIn string) (display, status, resolvedSPDX, uncertaintyReason string, arms []string) {
+	display, status = displayIn, statusIn
+	uncertaintyReason = "no_record"
+	switch {
+	case lerr == nil && found:
+		display = lrec.PrimarySPDX
+		status = lrec.OverallStatus.String()
+		resolvedSPDX = lrec.PrimarySPDX
+		switch lrec.OverallStatus {
+		case licdomain.LicenseStatusNone:
+			display = "(none)"
+			uncertaintyReason = "none"
+		case licdomain.LicenseStatusMultiple:
+			resolvedSPDX = ""
+			uncertaintyReason = "multiple"
+			arms = licdomain.DisjunctionArms(lrec.Expression)
+			// The expression is the licence identity detection settled on, and
+			// Multiple describes how it got there, not that it failed. A pure
+			// disjunction is handed to the caller as arms; an expression naming
+			// one identifier — the omnibus-attribution case, where a single
+			// LICENSE file bundles third-party texts and the derived expression
+			// is the module's own licence — resolves to that identifier.
+			// Anything else (a conjunction, or candidates that named nothing)
+			// resolves nothing and keeps riding the unknown-licence machinery.
+			if len(arms) == 0 {
+				resolvedSPDX = licdomain.SoleIdentifier(lrec.Expression)
+			}
+		case licdomain.LicenseStatusExtractionFailed:
+			uncertaintyReason = "extraction_failed"
+		case licdomain.LicenseStatusCancelled:
+			uncertaintyReason = "cancelled"
+		}
+	case lerr == nil:
+		display = "(not run)"
+		status = "(not run)"
+	}
+	return display, status, resolvedSPDX, uncertaintyReason, arms
+}
+
+// applyPolicyEvaluation copies a policy evaluation onto an audit row. Shared by
+// the module and stdlib row builders so the two cannot drift in how they
+// surface uncertainty or an unevaluated gate.
+func applyPolicyEvaluation(res *auditModuleResult, eval configdomain.PolicyEvaluation, uncertaintyReason string) {
+	res.LicenseCategory = eval.Category
+	res.PolicyOutcome = string(eval.Outcome)
+	res.LicenseResolved = !eval.Uncertain
+	res.PolicyBlocking = eval.Blocking
+	res.PolicyUnevaluated = eval.Unevaluated
+	res.policyScope = eval.Scope
+	res.policyRuleScopes = eval.RuleScopes
+	res.LicenseElectableArms = eval.ElectableArms
+	if eval.Uncertain {
+		res.LicenseUncertainty = uncertaintyReason
+	}
 }
 
 // vulnAuditStatus renders the vulnerability columns of an audit row from a
@@ -546,50 +775,46 @@ func vulnAuditStatus(rec vulndomain.VulnerabilityRecord, found bool, err error) 
 
 // buildStdlibAuditResult reports the standard-library node's custody chain from
 // the facts carried on the graph node: the go.dev/dl verification status and the
-// licence extracted from the source tarball, with the licence policy evaluated
-// against that SPDX. It still consults the vuln store — the stdlib node exists so
-// standard-library advisories are scanned — but skips the fetch/licence record
-// lookups and the proxy staleness check, which do not apply to a toolchain
-// artefact. A nil Stdlib (an offline walk that could not acquire the chain)
-// degrades to "(custody unavailable)" rather than an error.
-func buildStdlibAuditResult(ctx context.Context, coord coordinate.ModuleCoordinate, node walkdomain.GraphNode, scope, walkID string, ctr *Container) auditModuleResult {
+// licence resolved by walkdomain.StdlibLicense — the tarball-extracted SPDX
+// when facts are present, the published BSD-3-Clause constant when they are
+// not — with the licence policy evaluated against that SPDX. The constant is
+// the same answer the SBOM and license-compat give for the same node, and the
+// row says which of the two answered: LicenseSource "stdlib-tarball" relays
+// extracted evidence, "stdlib-known" relays published knowledge, and the
+// custody gap itself stays visible in the Verification column's
+// "(custody unavailable)". It still consults the vuln store — the stdlib node
+// exists so standard-library advisories are scanned — but skips the
+// fetch/licence record lookups and the proxy staleness check, which do not
+// apply to a toolchain artefact.
+func buildStdlibAuditResult(ctx context.Context, coord coordinate.ModuleCoordinate, node walkdomain.GraphNode, policyScope, walkID string, ctr *Container) auditModuleResult {
 	res := auditModuleResult{
-		Coordinate:    coord.String(),
-		Verification:  "(custody unavailable)",
-		License:       "(not run)",
-		LicenseStatus: "(not run)",
-		VulnStatus:    "(not scanned)",
-		IsLatest:      true, // pinned to the build toolchain; no proxy "latest" applies
+		Coordinate:   coord.String(),
+		Verification: "(custody unavailable)",
+		VulnStatus:   "(not scanned)",
+		IsLatest:     true, // pinned to the build toolchain; no proxy "latest" applies
 	}
 
-	var resolvedSPDX string
-	uncertaintyReason := "no_record"
-	if node.Stdlib != nil {
-		if node.Stdlib.VerificationStatus != "" {
-			res.Verification = node.Stdlib.VerificationStatus
-			// The stdlib's custody rides on the graph node, not a fetch record,
-			// and it carries no validation legs — so it reports as measured for
-			// the status buckets and as not-measured for the ledger, which is
-			// exactly what it is.
-			res.coverage = stdlibCoverageObservation(node)
-		}
+	if node.Stdlib != nil && node.Stdlib.VerificationStatus != "" {
+		res.Verification = node.Stdlib.VerificationStatus
+		// The stdlib's custody rides on the graph node, not a fetch record,
+		// and it carries no validation legs — so it reports as measured for
+		// the status buckets and as not-measured for the ledger, which is
+		// exactly what it is.
+		res.coverage = stdlibCoverageObservation(node)
+	}
+
+	resolvedSPDX, fromFacts := walkdomain.StdlibLicense(node.Stdlib)
+	res.License = resolvedSPDX
+	if fromFacts {
+		res.LicenseStatus = "Detected"
 		res.LicenseSource = "stdlib-tarball"
-		if node.Stdlib.LicenseSPDX != "" {
-			res.License = node.Stdlib.LicenseSPDX
-			res.LicenseStatus = "Detected"
-			resolvedSPDX = node.Stdlib.LicenseSPDX
-			uncertaintyReason = ""
-		}
+	} else {
+		res.LicenseStatus = "Known"
+		res.LicenseSource = "stdlib-known"
 	}
 
-	eval := activeConfig.LicensePolicy.EvaluateLicense(resolvedSPDX, scope)
-	res.LicenseCategory = eval.Category
-	res.PolicyOutcome = string(eval.Outcome)
-	res.LicenseResolved = !eval.Uncertain
-	res.PolicyBlocking = eval.Blocking
-	if eval.Uncertain {
-		res.LicenseUncertainty = uncertaintyReason
-	}
+	eval := activeConfig.LicensePolicy.EvaluateLicense(resolvedSPDX, policyScope)
+	applyPolicyEvaluation(&res, eval, "")
 
 	vrec, found, verr := ctr.QueryVuln.GetLatestRecordForWalk(ctx, coord, vulnPipelineVersion, walkID)
 	res.VulnStatus, res.VulnReason, res.VulnFindings, res.VulnWithdrawn = vulnAuditStatus(vrec, found, verr)
@@ -611,22 +836,47 @@ func auditVerificationCoverage(results []auditModuleResult) fetchdomain.Verifica
 
 // auditBlockingErr returns a non-nil error when any result is a hard
 // compliance failure — an undetermined license under a scope whose
-// unknown_license policy is "block" — so `audit` exits non-zero for CI
-// gating instead of silently passing uncertain dependencies.
+// unknown_license policy is "block", or a gate left unevaluated because the
+// policy scope in force matches no rule — so `audit` exits non-zero for CI
+// gating instead of silently passing uncertain or unmeasured dependencies.
+// The unevaluated diagnostic names the scope in force and the scopes that do
+// carry rules, so the remedy is visible without reading the config file.
 // The full result table/JSON is still emitted before this is returned.
 func auditBlockingErr(results []auditModuleResult) error {
-	var blocked []string
+	var blocked, unevaluated []string
+	scopeInForce := ""
+	var ruleScopes []string
 	for _, r := range results {
-		if r.PolicyBlocking {
-			blocked = append(blocked, r.Coordinate)
+		if !r.PolicyBlocking {
+			continue
 		}
+		if r.PolicyUnevaluated {
+			unevaluated = append(unevaluated, r.Coordinate)
+			scopeInForce = r.policyScope
+			ruleScopes = r.policyRuleScopes
+			continue
+		}
+		blocked = append(blocked, r.Coordinate)
 	}
-	if len(blocked) == 0 {
+	var msgs []string
+	if len(unevaluated) > 0 {
+		rules := "none"
+		if len(ruleScopes) > 0 {
+			rules = strings.Join(ruleScopes, ", ")
+		}
+		msgs = append(msgs, fmt.Sprintf(
+			"license policy: gate unevaluated for %d dependency(ies) — scope %q matches no license_policy rule (scopes with rules: %s)",
+			len(unevaluated), scopeInForce, rules))
+	}
+	if len(blocked) > 0 {
+		msgs = append(msgs, fmt.Sprintf(
+			"license policy: %d dependency(ies) with an undetermined license blocked by policy (unknown_license=block): %s",
+			len(blocked), strings.Join(blocked, ", ")))
+	}
+	if len(msgs) == 0 {
 		return nil
 	}
-	return &exitError{code: ExitPolicy, msg: fmt.Sprintf(
-		"license policy: %d dependency(ies) with an undetermined license blocked by policy (unknown_license=block): %s",
-		len(blocked), strings.Join(blocked, ", "))}
+	return &exitError{code: ExitPolicy, msg: strings.Join(msgs, "\n")}
 }
 
 func printAuditTable(stdout io.Writer, results []auditModuleResult) error {
@@ -668,10 +918,10 @@ func printAuditTable(stdout io.Writer, results []auditModuleResult) error {
 		}
 		staleness := "current"
 		if !r.IsLatest {
-			if r.DaysBehind == 0 {
+			if r.LatestReleaseAgeDays == 0 {
 				staleness = fmt.Sprintf("latest: %s (today)", r.LatestVersion)
 			} else {
-				staleness = fmt.Sprintf("latest: %s (%d days ago)", r.LatestVersion, r.DaysBehind)
+				staleness = fmt.Sprintf("latest: %s (%d days ago)", r.LatestVersion, r.LatestReleaseAgeDays)
 			}
 		}
 		// Appended, not substituted. "current" remains true of this module path;
@@ -684,6 +934,11 @@ func printAuditTable(stdout io.Writer, results []auditModuleResult) error {
 		if r.LicenseCategory != "" {
 			policy = fmt.Sprintf("%s [%s]", r.PolicyOutcome, r.LicenseCategory)
 		}
+		// A disjunction states which licences carry the outcome, so the reader
+		// can see the row was decided on an arm rather than on one identity.
+		if len(r.LicenseElectableArms) > 0 {
+			policy = fmt.Sprintf("%s [electable: %s]", policy, strings.Join(r.LicenseElectableArms, " or "))
+		}
 		// Never let an undetermined license read as a clean verdict: make
 		// the uncertainty (and any hard block) explicit in the table.
 		if !r.LicenseResolved {
@@ -692,6 +947,11 @@ func printAuditTable(stdout io.Writer, results []auditModuleResult) error {
 				marker = "BLOCKED"
 			}
 			policy = fmt.Sprintf("%s [%s: %s]", r.PolicyOutcome, marker, r.LicenseUncertainty)
+		}
+		// An unevaluated gate measured nothing: name the scope gap in the row
+		// so the table never shows a bare word that could read as a verdict.
+		if r.PolicyUnevaluated {
+			policy = fmt.Sprintf("unevaluated [no rule for scope %s]", r.policyScope)
 		}
 		var err error
 		if showScope {
@@ -719,8 +979,10 @@ func printAuditTable(stdout io.Writer, results []auditModuleResult) error {
 			oldest = r.StalenessLookedUpAt
 		}
 	}
+	// No --fresh here: on audit the TTL is what governs this column, and the
+	// command that re-queries a latest answer on demand is `latest --fresh`.
 	if asOf := stalenessAsOf(oldest); asOf != "" {
-		if _, err := fmt.Fprintf(stdout, "\nlatest as of %s (staleness.ttl %s; --fresh to re-query)\n",
+		if _, err := fmt.Fprintf(stdout, "\nlatest as of %s (staleness.ttl %s; `latest --fresh` to re-query)\n",
 			asOf, activeConfig.Staleness.TTL); err != nil {
 			return fmt.Errorf("writing output: %w", err)
 		}

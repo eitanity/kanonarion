@@ -157,6 +157,163 @@ type canonicalStoredErr struct {
 	Type    string `json:"type"`
 }
 
+// canonicalWalkIdentity is the fixed-field-order struct hashed to produce a
+// walk's IDENTITY. Fields are listed in sorted JSON-key order.
+//
+// Identity answers a different question from ContentHash. ContentHash seals a
+// record: it covers everything the record says, so that a stored row cannot be
+// altered without detection, and it therefore covers the walk id, the three
+// timestamps and the per-node durations. Identity answers "was this the same
+// walk" — the same module set, resolved the same way, under the same
+// parameters — and every element that varies between two runs of an unchanged
+// input is deliberately absent from it:
+//
+//   - ID, StartedAt, CompletedAt and Graph.ResolvedAt: when the run happened,
+//     and what it was called. Two runs minutes apart differ in all four.
+//   - NodeResult.DurationMs and NodeResult.FromCache: how long a fetch took and
+//     whether it was served from the cache. Wall-clock and cache state, not
+//     dependency facts.
+//   - The composed fetch record: it carries FirstFetchedAt, LatestFetchedAt,
+//     MeasurementCount and per-leg establishment dates, all of which move
+//     whenever the ledger re-measures an artefact whose bytes never changed.
+//     What the identity keeps instead is the artefact identity (the h1 hash) —
+//     which is precisely "these bytes" and nothing about when they were seen.
+//   - Operator: who ran it. Two operators walking one tree walked one walk.
+//
+// Everything else is in: the target, scope, depth, ecosystem, both pipeline
+// versions, the policy version and hash, the stage depths, the build
+// environment, the resolved graph (nodes with their coordinates, resolution
+// sources, digests, stdlib custody and replace origins, plus every edge), the
+// per-node status and error, and the overall status. A change in any of them is
+// a change in what was analysed, and must yield a different walk.
+type canonicalWalkIdentity struct {
+	Depth           string                         `json:"depth,omitempty"`
+	Ecosystem       string                         `json:"ecosystem"`
+	Graph           canonicalIdentityGraph         `json:"graph"`
+	NodeResults     []canonicalIdentityNodeResult  `json:"node_results"`
+	OverallStatus   int                            `json:"overall_status"`
+	PipelineVersion string                         `json:"pipeline_version"`
+	PolicyHash      string                         `json:"policy_hash"`
+	PolicyVersion   string                         `json:"policy_version"`
+	SchemaVersion   string                         `json:"schema_version"`
+	Scope           string                         `json:"scope"`
+	StageDepths     map[string]canonicalStageDepth `json:"stage_depths"`
+	Target          canonicalWalkCoord             `json:"target"`
+}
+
+// canonicalIdentityGraph is canonicalWalkGraph without ResolvedAt.
+type canonicalIdentityGraph struct {
+	BuildEnv        *canonicalBuildEnv  `json:"build_env,omitempty"`
+	Edges           []canonicalWalkEdge `json:"edges"`
+	HasLocalReplace bool                `json:"has_local_replace"`
+	Nodes           []canonicalWalkNode `json:"nodes"`
+	Partial         bool                `json:"partial"`
+	PartialReason   string              `json:"partial_reason"`
+	PipelineVersion string              `json:"pipeline_version"`
+	Target          canonicalWalkCoord  `json:"target"`
+}
+
+// canonicalIdentityNodeResult is the identity-bearing part of a NodeResult:
+// which module, how it came out, and which artefact was measured.
+type canonicalIdentityNodeResult struct {
+	ArtefactIdentity string              `json:"artefact_identity"`
+	Coordinate       canonicalWalkCoord  `json:"coordinate"`
+	Error            *canonicalStoredErr `json:"error"`
+	Status           int                 `json:"status"`
+}
+
+// IdentityHash computes the walk's identity hash: a stable name for the walk
+// two runs of an unchanged input both produce. See canonicalWalkIdentity for
+// exactly what it covers and what it deliberately does not.
+//
+// It is NOT the content hash and never replaces it. A record is still sealed by
+// ContentHash; identity is a second, coarser name used to recognise that an
+// already-stored walk describes the same analysis, so its downstream work can be
+// served instead of re-derived.
+func (WalkRecordHasher) IdentityHash(r WalkRecord) (string, error) {
+	// WalkDepthFull is serialised as "" (omitempty), matching the content hash's
+	// treatment, so full walks are not distinguished from unset-depth ones.
+	depth := string(r.Depth)
+	if depth == string(WalkDepthFull) {
+		depth = ""
+	}
+
+	stageDepths := make(map[string]canonicalStageDepth, len(r.StageDepths))
+	for k, v := range r.StageDepths {
+		stageDepths[k] = canonicalStageDepth{
+			AllowedVCSHosts: canonicalVCSHosts(v.AllowedVCSHosts),
+			FollowIndirect:  v.FollowIndirect,
+			FollowReplace:   v.FollowReplace,
+			FollowTest:      v.FollowTest,
+			MaxDepth:        v.MaxDepth,
+		}
+	}
+
+	c := canonicalWalkIdentity{
+		Depth:     depth,
+		Ecosystem: r.Ecosystem,
+		Graph: canonicalIdentityGraph{
+			BuildEnv:        toCanonicalBuildEnv(r.Graph.BuildEnv),
+			Edges:           canonicalWalkEdges(r.Graph.Edges),
+			HasLocalReplace: r.Graph.HasLocalReplace,
+			Nodes:           canonicalWalkNodes(r.Graph.Nodes),
+			Partial:         r.Graph.Partial,
+			PartialReason:   r.Graph.PartialReason,
+			PipelineVersion: r.Graph.PipelineVersion,
+			Target:          toCanonicalCoord(r.Graph.Target),
+		},
+		NodeResults:     canonicalIdentityNodeResults(r.PerNodeResults),
+		OverallStatus:   int(r.OverallStatus),
+		PipelineVersion: r.PipelineVersion,
+		PolicyHash:      r.PolicyHash,
+		PolicyVersion:   r.PolicyVersion,
+		SchemaVersion:   r.SchemaVersion,
+		Scope:           string(r.Scope),
+		StageDepths:     stageDepths,
+		Target:          toCanonicalCoord(r.Target),
+	}
+
+	data, err := canonicalMarshal(c)
+	if err != nil {
+		return "", fmt.Errorf("marshalling canonical walk identity: %w", err)
+	}
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:]), nil
+}
+
+// canonicalIdentityNodeResults converts the per-node results map into a sorted
+// slice of its identity-bearing fields, so the output is independent of map
+// iteration order and free of the run's wall-clock measurements.
+func canonicalIdentityNodeResults(results map[coordinate.ModuleCoordinate]NodeResult) []canonicalIdentityNodeResult {
+	keys := make([]coordinate.ModuleCoordinate, 0, len(results))
+	for k := range results {
+		keys = append(keys, k)
+	}
+	sort.Slice(keys, func(i, j int) bool {
+		if keys[i].Path() != keys[j].Path() {
+			return keys[i].Path() < keys[j].Path()
+		}
+		return keys[i].Version() < keys[j].Version()
+	})
+
+	out := make([]canonicalIdentityNodeResult, 0, len(keys))
+	for _, k := range keys {
+		r := results[k]
+		entry := canonicalIdentityNodeResult{
+			Coordinate: toCanonicalCoord(k),
+			Status:     int(r.Status),
+		}
+		if r.Error != nil {
+			entry.Error = &canonicalStoredErr{Message: r.Error.Message, Type: r.Error.Type}
+		}
+		if r.FetchRecord != nil {
+			entry.ArtefactIdentity = r.FetchRecord.Identity.String()
+		}
+		out = append(out, entry)
+	}
+	return out
+}
+
 // SetContentHash computes the canonical hash of r (with ContentHash zeroed),
 // sets r.ContentHash, and returns the updated record.
 func (WalkRecordHasher) SetContentHash(r WalkRecord) (WalkRecord, error) {
@@ -608,17 +765,21 @@ func unmarshalNodeResult(coord coordinate.ModuleCoordinate, entry canonicalNodeE
 	return nr, nil
 }
 
+// marshalCompositeFetch is a seam over fetch/domain's composite marshalling.
+// Its error path only fires if fetch/domain's own marshal-failure guard fires,
+// which is proven unreachable with real FactRecord data (no
+// float/unsupported-type fields) and reachable there only via that package's
+// unexported test seam — so this seam exists to prove the propagation through
+// canonicalNodeResults and SetContentHash without deleting the guard or
+// adding permanent public API to fetch/domain.
+var marshalCompositeFetch = func(r fetchdomain.CompositeRecord) ([]byte, error) {
+	return fetchdomain.CanonicalHasher{}.MarshalComposite(r)
+}
+
 func toCanonicalNodeEntry(coord coordinate.ModuleCoordinate, r NodeResult) (canonicalNodeEntry, error) {
 	var fetchRaw json.RawMessage
 	if r.FetchRecord != nil {
-		// This error path (and its propagation up through canonicalNodeResults
-		// and SetContentHash) is untested: it only fires if fetch/domain's own
-		// marshal-failure guard fires, which is already proven unreachable with
-		// real FactRecord data (no float/unsupported-type fields), and fetch's
-		// test-only seam for it (canonicalMarshal) is invisible outside that
-		// package — reaching it from here would require permanent, production
-		// public API on fetch/domain for a branch nothing can currently trigger.
-		b, err := fetchdomain.CanonicalHasher{}.MarshalComposite(*r.FetchRecord)
+		b, err := marshalCompositeFetch(*r.FetchRecord)
 		if err != nil {
 			return canonicalNodeEntry{}, fmt.Errorf("marshalling fetch record: %w", err)
 		}

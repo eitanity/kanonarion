@@ -95,6 +95,26 @@ type WalkRecord struct {
 	// Being provenance, it is never an oracle: a reader that finds the directory
 	// gone must degrade to what it can measure without it, never fail.
 	ProjectDir string `json:"project_dir,omitempty"`
+
+	// IdentityHash names the ANALYSIS this walk performed, as opposed to
+	// ContentHash which seals the RECORD. Two runs of an unchanged checkout
+	// resolve the same module set under the same parameters and share an
+	// identity hash; they do not — and must not — share a content hash, because
+	// they happened at different times under different ids and the seal covers
+	// exactly that. See canonicalWalkIdentity for the full membership.
+	//
+	// Like ProjectDir it lives OUTSIDE the content hash and outside the
+	// serialised blob, in its own store column: it is derived from the record,
+	// so admitting it to the seal would make the seal cover a function of
+	// itself, and every walk written before the field existed would stop
+	// verifying. A reader that distrusts a stored identity recomputes it from
+	// the record it came with — that is the only check it needs, and it costs a
+	// hash.
+	//
+	// Empty means the walk was written before identities were recorded. That is
+	// an absent name, not a matching one: a lookup keyed on identity must never
+	// treat the empty string as a hit.
+	IdentityHash string `json:"-"`
 }
 
 // NewWalkRecord constructs a WalkRecord from a WalkOutcome. ContentHash is

@@ -64,8 +64,12 @@ func TestRunStoreConfigShow_Text(t *testing.T) {
 		t.Fatalf("unexpected error: %v", err)
 	}
 
-	if got := buf.String(); got != configContent {
-		t.Errorf("text output: got %q, want %q", got, configContent)
+	got := buf.String()
+	if !strings.HasPrefix(got, configContent) {
+		t.Errorf("text output does not start with the raw file:\ngot:\n%s\nwant prefix:\n%s", got, configContent)
+	}
+	if !strings.Contains(got, "# effective configuration") {
+		t.Errorf("text output carries no effective-configuration section:\n%s", got)
 	}
 }
 

@@ -60,6 +60,7 @@ import (
 	walklocalfs "github.com/eitanity/kanonarion/internal/walk/adapters/localfs"
 
 	ifaceext "github.com/eitanity/kanonarion/internal/iface/adapters/extractor/godoc"
+	goastspelling "github.com/eitanity/kanonarion/internal/iface/adapters/spelling/goast"
 	ifacesqlite "github.com/eitanity/kanonarion/internal/iface/adapters/store/sqlite"
 	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
 
@@ -71,6 +72,7 @@ import (
 
 	sbomcdx "github.com/eitanity/kanonarion/internal/sbom/adapters/generator/cyclonedx"
 	sbomstore "github.com/eitanity/kanonarion/internal/sbom/adapters/store/sqlite"
+	sbomvendortree "github.com/eitanity/kanonarion/internal/sbom/adapters/vendortree"
 	sbomapp "github.com/eitanity/kanonarion/internal/sbom/application"
 
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
@@ -135,6 +137,7 @@ type Container struct {
 	// iface
 	ExtractInterface ExtractInterfaceUseCase
 	QueryInterface   QueryInterfaceUseCase
+	DiffInterface    DiffInterfaceUseCase
 
 	// callgraph
 	ExtractCallGraph      ExtractCallGraphUseCase
@@ -442,8 +445,9 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		licapp.PipelineVersion,
 	)
 
-	// ---- iface query use case ----
+	// ---- iface query / diff use cases ----
 	queryIfaceUC := ifaceapp.NewQueryInterfaceUseCase(ifaceStore)
+	diffIfaceUC := ifaceapp.NewDiffInterfaceUseCase(ifaceStore, goastspelling.Reader{})
 
 	// ---- callgraph query use case ----
 	queryCGUC := cgapp.NewQueryCallGraphUseCase(cgStore)
@@ -479,7 +483,13 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		walkStore, vulnStore, moduleScannerUC,
 		vulnfetch.NewFetchModuleAdapter(fetchUC),
 		clk, vulnapp.PipelineVersion, logger,
-	).WithAudit(factStore).WithHostMemory(meminfo.New())
+	).WithAudit(factStore).WithHostMemory(meminfo.New()).
+		// The same reader the scan gets, for the same reason and one more: a
+		// re-scan reaches for the walk's project directory to reproduce the frame
+		// the run it re-scans was rooted in, and without this it could only
+		// re-derive every module in isolation — which is a different question, and
+		// one whose answer then outranks the consumer's on the compose ladder.
+		WithVendoredClosure(vulnvendorclosure.New(venlocalfs.New(nil)))
 	if modcacheMode {
 		// --from-modcache: govulncheck reads the caller's existing module cache
 		// directly instead of a blob-store-populated temp cache.
@@ -491,12 +501,19 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	diffScanRunsUC := vulnapp.NewDiffScanRunsUseCase(vulnStore)
 
 	// ---- sbom use cases ----
-	const sbomPipelineVersion = "0.5.0"
+	// 0.7.0 drops the vulnerability list and its scope annotation, adds the
+	// licence-completeness annotation and the metadata properties stating what
+	// the document's timestamp is derived from. The document bytes change on
+	// every one of those, so a 0.6.0 record must not be served for a 0.7.0
+	// request. The version bump is the whole migration: SBOM records are a cache
+	// keyed on it, so every stored document of the previous shape simply stops
+	// being reachable and is regenerated on demand.
+	const sbomPipelineVersion = "0.7.0"
 	generateSBOMUC := sbomapp.NewGenerateSBOMUseCase(
-		walkStore, licStore, vulnStore, sbomStore,
+		walkStore, licStore, sbomStore,
 		sbomcdx.New(sbomPipelineVersion),
 		clk, sbomPipelineVersion, licapp.PipelineVersion, logger,
-	)
+	).WithVendorTree(sbomvendortree.New(venlocalfs.New(nil)))
 	querySBOMUC := sbomapp.NewQuerySBOMUseCase(sbomStore)
 
 	// ---- directive use cases ----
@@ -554,6 +571,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 
 		ExtractInterface: ifaceExtractUC,
 		QueryInterface:   queryIfaceUC,
+		DiffInterface:    diffIfaceUC,
 
 		ExtractCallGraph:      cgExtractUC,
 		ExtractLocalCallGraph: cgLocalExtractUC,

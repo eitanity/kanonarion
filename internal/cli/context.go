@@ -113,8 +113,13 @@ type contextDependency struct {
 }
 
 type contextDependencies struct {
-	Status       string              `json:"status"`
-	WalkID       string              `json:"walk_id,omitempty"`
+	Status string `json:"status"`
+	WalkID string `json:"walk_id,omitempty"`
+	// Frame is the GOOS/GOARCH the answering walk resolved for, or "unrecorded"
+	// for a walk written before the frame was projected. Present whenever a walk
+	// answered: GOOS gates which files build, so a dependency list is a list for
+	// one platform.
+	Frame        string              `json:"frame,omitempty"`
 	Count        int                 `json:"count,omitempty"`
 	Partial      bool                `json:"partial,omitempty"`
 	Dependencies []contextDependency `json:"dependencies,omitempty"`
@@ -226,6 +231,13 @@ type contextVulnerabilities struct {
 	Reason       string       `json:"reason,omitempty"`
 	Findings     []contextCVE `json:"findings,omitempty"`
 	WalkID       string       `json:"walk_id,omitempty"`
+	// Frame is the analysis frame the served record was reached in. A
+	// reachability finding means something different in each — isolated answers
+	// "is this advisory reachable in the module examined alone", target-rooted
+	// answers "is it reachable in the build rooted at that target" — so the
+	// section names the question it answered rather than leaving a consumer to
+	// assume it was theirs.
+	Frame string `json:"frame,omitempty"`
 	// Freshness facts: when the verdict was first established, when it was last
 	// re-validated, and how old the database snapshot behind it was at that
 	// validation. Stated for the consumer to judge; kanonarion renders no

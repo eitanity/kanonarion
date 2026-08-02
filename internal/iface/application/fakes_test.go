@@ -136,6 +136,10 @@ func (s *fakeBlobStore) GetPath(_ context.Context, identity fetchports.BlobIdent
 type fakeInterfaceStore struct {
 	records map[ifaceKey]domain.InterfaceRecord
 	putErr  error
+	// getErr makes the read leg fail, which is the only way to reach a caller's
+	// store-failure branch: a fake that can only be empty proves absence
+	// handling and nothing else.
+	getErr error
 }
 
 type ifaceKey struct{ path, version, pipeline string }
@@ -152,6 +156,9 @@ func (s *fakeInterfaceStore) PutInterfaceRecord(_ context.Context, r domain.Inte
 }
 
 func (s *fakeInterfaceStore) GetInterfaceRecord(_ context.Context, coord coordinate.ModuleCoordinate, pv string) (domain.InterfaceRecord, bool, error) {
+	if s.getErr != nil {
+		return domain.InterfaceRecord{}, false, s.getErr
+	}
 	if s.records == nil {
 		return domain.InterfaceRecord{}, false, nil
 	}

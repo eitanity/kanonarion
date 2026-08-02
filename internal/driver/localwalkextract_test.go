@@ -172,8 +172,39 @@ func TestRun_DefaultLeavesRootUnanalysed(t *testing.T) {
 	if w.gotReq.AnalyseLocalRoot {
 		t.Error("AnalyseLocalRoot must default off (root stays skipped per current behaviour)")
 	}
-	if w.gotReq.ProjectDir != "" {
-		t.Errorf("ProjectDir = %q, want empty when root analysis is off", w.gotReq.ProjectDir)
+	// The walk is project-rooted whether or not the root's own packages are
+	// analysed, so it records where it happened — while leaving resolution
+	// authority where it was, with the internal resolver.
+	wantDir, err := filepath.Abs(dir)
+	if err != nil {
+		t.Fatalf("Abs: %v", err)
+	}
+	if w.gotReq.ProjectDir != wantDir {
+		t.Errorf("ProjectDir = %q, want the directory the walk was taken from (%q)", w.gotReq.ProjectDir, wantDir)
+	}
+	if w.gotReq.ResolutionDir != "" {
+		t.Errorf("ResolutionDir = %q, want empty so the internal resolver still serves this walk", w.gotReq.ResolutionDir)
+	}
+}
+
+// TestRun_AnalyseLocalRootGivesResolutionAuthorityToTheProjectDir pins the other
+// half of the split: local-root analysis is what hands the Go toolchain in the
+// project directory the last word on the module set.
+func TestRun_AnalyseLocalRootGivesResolutionAuthorityToTheProjectDir(t *testing.T) {
+	dir := writeGoMod(t, "example.com/widget")
+	w := &fakeWalk{rec: walkdomain.WalkRecord{ID: "w"}}
+	e := &fakeExtract{run: extractdomain.ExtractionRun{ID: "r"}}
+	uc := newDriver(w, e)
+
+	if _, err := uc.Run(context.Background(), LocalWalkExtractRequest{Dir: dir, AnalyseLocalRoot: true}); err != nil {
+		t.Fatalf("Run: %v", err)
+	}
+	wantDir, err := filepath.Abs(dir)
+	if err != nil {
+		t.Fatalf("Abs: %v", err)
+	}
+	if w.gotReq.ResolutionDir != wantDir {
+		t.Errorf("ResolutionDir = %q, want %q", w.gotReq.ResolutionDir, wantDir)
 	}
 }
 

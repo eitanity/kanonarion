@@ -19,6 +19,14 @@ func (noHostScan) Scan(context.Context, vulnapp.ScanWalkParams) (vulndomain.Walk
 	return vulndomain.WalkScanRun{}, nil
 }
 
+func (noHostScan) ReusableRun(context.Context, string) (vulndomain.WalkScanRun, bool, error) {
+	return vulndomain.WalkScanRun{}, false, nil
+}
+
+func (noHostScan) RefreshSnapshot(context.Context, string) (vulnapp.SnapshotRefresh, error) {
+	return vulnapp.SnapshotRefresh{}, nil
+}
+
 // The store config is a second source of allowed_vcs_hosts, and it reaches the
 // scan through the same loadPolicy path walk and fetch use. An operator who set
 // the host list once at the store level — with no policy.yaml anywhere — must be

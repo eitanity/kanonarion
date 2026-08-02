@@ -411,6 +411,20 @@ const (
 	// pipeline generation and a node the walk listed without resolving, and the
 	// scan cannot tell them apart from where it stands.
 	UnscanReasonSourceNotInStore UnscanReason = "source-not-in-store"
+	// UnscanReasonTargetLoadFailed indicates the analysis a run was asked for
+	// could not be rooted at its target: the toolchain failed to LOAD the
+	// target's packages, so no call graph was ever built and the run's own frame
+	// produced nothing.
+	//
+	// It is deliberately not source-not-in-store — the source IS in the store,
+	// and was extracted — and deliberately not the build-incompatible catch-all,
+	// which names a module that does not build on this host and says nothing
+	// about whose question went unanswered. The distinguishing fact here is
+	// positional: the module that failed is the ROOT of the run, so every other
+	// verdict in that run comes from a weaker frame than the one requested, and
+	// a reader who cannot tell this from an ordinary per-module build failure
+	// cannot tell a degraded run from a complete one.
+	UnscanReasonTargetLoadFailed UnscanReason = "target-load-failed"
 )
 
 // AnalysisSurface names which copy of a module's source a scan measured.
@@ -483,6 +497,7 @@ func AllUnscanReasons() []UnscanReason {
 		UnscanReasonGoModOnly,
 		UnscanReasonLocalProjectSource,
 		UnscanReasonSourceNotInStore,
+		UnscanReasonTargetLoadFailed,
 	}
 }
 

@@ -64,6 +64,37 @@ count is carried to the reader rather than judged.
 
 The module must have been fetched first (`kanonarion walk` or `kanonarion fetch`).
 
+### Coverage decides the exit code
+
+`vuln-scan` exits on what it *established*, not on what it found. A run whose
+coverage is `Complete` exits 0 whether or not it found advisories: it did the
+work it was asked to do, and whether findings should fail a build is a policy
+question this command does not answer. A run that could not analyse part of the
+walk exits `1` (partial coverage), and one that analysed nothing exits `2`.
+
+That distinction matters most for the walk's own target. When a coordinate-keyed
+walk's target-rooted analysis cannot load the module's packages, the run falls
+back to scanning each module in isolation — a weaker question, since an isolated
+scan describes the module built alone rather than the build that consumes it.
+The target's refusal is recorded in the run's own frame under the
+`target-load-failed` reason, carrying the toolchain's own load error, and the
+run counts *that* rather than a verdict derived in another frame. A record from
+the other frame is not destroyed and still answers its own question; the run
+simply declines to present it as coverage of the question that was asked, and
+names the frame it declined in its log.
+
+Without this, a walk whose target never loaded reported `Complete, Clean` at
+exit 0 — an un-run scan indistinguishable from a passing one on the line an
+operator reads.
+
+Note that partial coverage on a **project-scoped** scan (`--gomod`, `--tool`,
+`--project`) means something has genuinely gone unanalysed: the project path is
+rooted at the resolved graph, so modules are not re-resolved in isolation and
+`version not in project build` cannot arise there. Seeing that reason means the
+scan was not project-rooted — for example a walk-id scan whose recorded project
+directory no longer exists, which degrades to per-module isolation by design and
+names the missing directory in its log.
+
 ### Prerequisites
 
 `vuln-scan` invokes `govulncheck` as a subprocess. It must be present in `$PATH`:
@@ -148,6 +179,48 @@ This limits expensive SSA work to the modules that actually need it.
 - Modules with `StatusClean`, `StatusUnscannable`, or findings without
   `AffectedSymbols` never trigger a subprocess.
 
+**Reuse of an existing run**
+
+When a scan run of the same walk against the same advisory snapshot already
+exists, its result is served and `govulncheck` does not run:
+
+```
+reusing scan run vscan-01KZ0DJEV5XKAV1PSN1JM47D37-1785646889 of 2026-08-02T05:01:35Z against snapshot vuln.go.dev@2026-07-27T20:14:16Z; nothing was re-scanned (--force to re-measure)
+```
+
+The line names the run whose verdicts you are reading and when it was made. The
+findings, roll-ups, exit code and `--json` document are the ones **that run**
+produced, rebuilt from the records it wrote.
+
+A stored run is served only when the walk, the advisory snapshot (source,
+version, retrieval time and seal) and the scan pipeline version all match, **and**
+the stored run's coverage is complete — a partial or failed run is never served.
+`--force` re-measures. `--fresh` refreshes the advisory database and re-measures
+only when the refresh changes an advisory listed for a module in this walk.
+
+**Refreshing the advisory database (`--fresh`)**
+
+Two cheap checks stand between the flag and the multi-megabyte database body:
+the generation `vuln.go.dev` publishes (standalone `index/db.json`, one small
+request), and — when that has moved on — the standalone `index/modules.json`
+(~60 KB compressed), compared against the stored snapshot's own copy and
+restricted to the modules this walk holds, `stdlib` among them. It states what it
+found on stderr before the scan decision:
+
+```
+advisory database: checked vuln.go.dev and found it unchanged at 2026-07-27T20:14:16Z; nothing was downloaded and the stored snapshot was kept
+advisory database: vuln.go.dev advanced 2026-07-27T20:14:16Z -> 2026-08-01T09:00:00Z; the advisories listed for all 322 modules in this walk are identical between the two, so the run judged against 2026-07-27T20:14:16Z remains current for this walk; nothing was downloaded
+advisory database: vuln.go.dev advanced 2026-07-27T20:14:16Z -> 2026-08-01T09:00:00Z and the advisories changed for a module in this walk; downloaded the new database
+advisory database: vuln.go.dev advanced 2026-07-27T20:14:16Z -> 2026-08-01T09:00:00Z, but the advisories could not be compared (<error>); downloaded the new database
+advisory database: vuln.go.dev published generation unreadable (<error>); downloaded the database, now at 2026-07-27T20:14:16Z
+```
+
+The last two are the fail-closed cases: when a cheap check cannot be made the
+body is downloaded anyway, so a refresh never turns into a cache hit on a network
+error. A reused run always names the snapshot it was actually judged against; the
+claim that it remains current is a separate statement carrying the number of
+modules the comparison covered.
+
 **Assurance log**
 
 Each scan run appends events to the append-only audit log
@@ -175,28 +248,68 @@ the complete set; see [`walk` Scopes](walk.md#scopes-code-tool-complete). The
 matching walk must exist first (run `walk --gomod` with the same scope). A scope
 scan is mutually exclusive with a positional walk-id and with `--module`.
 
+**The walk must match this platform.** Selection filters on the current
+environment's `go env GOOS`/`GOARCH`, because build constraints select which
+files compile and reachability follows those files. A store holding walks for
+several platforms therefore never answers a scan from another platform's walk;
+when this platform has no matching walk the scan refuses and names the remedy:
+
+```
+no succeeded code project walk for example.com/myapp on darwin/arm64 — run: kanonarion walk --gomod ./go.mod
+```
+
+To scan another platform's walk deliberately, name it by ID:
+`kanonarion vuln-scan <walk-id>`. The progress line states the frame the
+selected walk was resolved in.
+
+`--module` is **not** filtered this way. A walk rooted at a published
+coordinate records no target platform at all — only project walks (`--gomod`)
+do — so there is nothing to filter on, and the scan states the frame as
+`unrecorded` instead:
+
+```
+scanning walk 01KQDBVW092ER1HNXZ60X27CMD rooted at github.com/spf13/cobra@v1.8.1 (frame unrecorded)
+```
+
 **The project-scoped views are project-rooted.** A `--gomod`/`--tool`/`--project`
 scan (and the project walk behind `audit` and `inspect --gomod`) derives its
 verdict from **one scan of the project's live working tree** - `govulncheck` over
 the project's real import graph, with each finding attributed to the module that
 owns the vulnerable symbol and every other in-build module analysed-and-clean.
 No dependency is scanned in isolation on this path, so the per-module-isolation
-and out-of-toolchain behaviour documented below applies **only to the
-coordinate-keyed `--module` / positional-walk-id path**, never to a project scan.
-Because the working tree mutates between runs, a project scan is recomputed
-fresh each time and is not served from the coordinate cache.
+and out-of-toolchain behaviour documented below applies **only to a scan with no
+project build in hand**, never to a project scan. Because the working tree
+mutates between runs, a project scan is recomputed fresh each time and is not
+served from the coordinate cache.
+
+**A positional walk id is project-rooted when the walk is.** A project walk
+records the directory it was taken from, so `kanonarion vuln-scan <walk-id>`
+reads that back and scans exactly as `--gomod` does over the same walk — one
+pass over the project's build, the standard library analysed from it, no
+dependency re-resolved alone. One walk gets one coverage answer however the
+command was spelled, and either command's run is reusable by the other. A walk
+rooted at a published coordinate (`--module`, or its id) has no project build to
+be rooted at and keeps the per-module route.
+
+If the recorded directory has moved or is no longer readable, the run does not
+fail and does not scan some other tree: it degrades to the per-module route and
+says so, naming the directory and the stat error. Such a run reports the
+coverage that route leaves — the standard library metadata-only, plus any module
+whose isolated build re-resolves a version the project never selected — so its
+coverage is `Partial` and it exits non-zero. Re-run it from the checkout
+(`--gomod`) or re-walk to record the current directory.
 
 **Flags:**
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Path to fact store root (or `KANONARION_STORE` env var) |
-| `--module` | _(none)_ | Look up the latest walk for `<module@version>` and scan it |
-| `--gomod` | _(search upward from cwd)_ | Scan the latest project walk for this `go.mod`'s scope (default scope `code`) |
+| `--module` | _(none)_ | Look up the latest walk for `<module@version>` and scan it (not platform-filtered; such walks record no platform) |
+| `--gomod` | _(search upward from cwd)_ | Scan the latest project walk for this `go.mod`'s scope (default scope `code`) on this platform |
 | `--tool` | `false` | Scan the tooling supply chain (the latest tool-scoped project walk). Mutually exclusive with `--project` |
 | `--project` | `false` | Scan the complete set (the latest complete-scope project walk). Mutually exclusive with `--tool` |
 | `--force` | `false` | Force re-scan even if results exist; also re-runs on-demand callgraph extraction |
-| `--fresh` | `false` | Fetch a fresh vulnerability database snapshot from the network |
+| `--fresh` | `false` | Refresh the vulnerability advisory database: read the published generation and module index, and download a new snapshot only if an advisory listed for a module in this walk has changed |
 | `--reachability` | `false` | Enable call-graph reachability analysis; spawns `kanonarion callgraph` on demand for modules with findings but no cached callgraph |
 | `--callgraph-workers` | `1` | Maximum number of concurrent on-demand callgraph subprocesses (SSA builds are memory-heavy; keep low) |
 | `--go-binary` | _(from `PATH`)_ | Path to the `go` binary if not on `PATH` (used by on-demand callgraph extraction) |
@@ -390,8 +503,32 @@ Show the vulnerability record for a specific module.
 kanonarion vuln-show <module>@<version> [flags]
 ```
 
-When `--walk-id` is omitted, the most recent scan record for the module is
-returned automatically. Pass `--walk-id` to pin to a specific walk.
+When `--walk-id` is omitted, the record that answers a **consumer's** question
+about the module is returned: one produced by an analysis rooted at a project
+that consumes it, if the store holds one. Pass `--walk-id` to pin to a specific
+walk.
+
+That selection is not "newest wins", and the difference is load-bearing. An
+isolated scan builds the module as its own main module, so it records call-graph
+completeness `BUILT_WITH_BODIES`; an analysis rooted at a consuming project
+searched a call graph kanonarion did not build, so it records none. Ranking the
+two against each other on completeness let an older isolated *not reachable*
+outrank a newer consumer-rooted record carrying the route to the vulnerable
+symbol — so `vuln-show` and `reachability` printed opposite headlines from one
+store. The frame is picked first; the ladder decides only within it.
+
+The isolated answer is not discarded. When the store holds one, it is printed
+below the record, labelled, under `Isolated frame` — the two frames disagreeing
+is itself information:
+
+```
+  Isolated frame (a different question — the module built alone, not the build that consumes it), scanned 2026-07-31T17:49:28Z:
+    GO-2025-3553: not_reachable [confidence: High, by: govulncheck]
+```
+
+`Analysis frame:` on the record itself always names the frame the served answer
+was reached in. The same selection backs the `vulnerabilities` section of
+`context` and `inspect`, which report it as `frame`.
 
 Use `--history` to list every stored scan record across all walks and
 snapshots, ordered newest first. This is the primary way to determine
@@ -493,9 +630,11 @@ field with a machine-readable cause code alongside the human-readable `unscannab
 | `project-dir-unavailable` | The project directory supplied for a project-rooted scan could not be stat'ed (missing or unreadable) — an operator-side input fault; the scan never got far enough to check for a `go.mod` |
 | `local-replace` | Node is a local filesystem replacement (a `replace` pointing at a working-tree path), not a fetched version, so there is no fetched source to scan; `unscannable_reason` retains the local path |
 
-On the **coordinate-keyed path** (`--module` and a positional walk-id) each
-module is scanned in isolation as its own main module. (A project scan -
-`--gomod`/`--tool`/`--project`, `audit`, `inspect --gomod` - does not: it is
+On the **coordinate-keyed path** (`--module`, and a positional walk-id whose walk
+is not a project walk or whose recorded directory is gone) each module is
+scanned in isolation as its own main module. (A project scan -
+`--gomod`/`--tool`/`--project`, `audit`, `inspect --gomod`, and a positional
+walk-id naming a project walk whose directory is still there - does not: it is
 project-rooted, so none of the isolation, out-of-toolchain, or dropped-replace
 behaviour in this section applies to it.) Before invoking
 `govulncheck`, kanonarion drops any **filesystem (local-path) replace
@@ -593,12 +732,19 @@ no directory of its own - reads it back, so the same walk does not answer one wa
 under `--gomod` and another way under its id. A directory the caller supplies
 always wins over the recorded one.
 
-The recorded directory is provenance, never an oracle. If it no longer exists, or
-no longer holds `vendor/modules.txt`, the scan does not fail: it proceeds on the
-fetched surface, every record says `fetched`, and the run log names the directory
-and the reason. A moved or deleted checkout must not make a stored walk
-unscannable. `--no-vendor` is honoured before the directory is reached for at
-all, since it is only ever adopted to reach the vendored surface.
+Whether that directory holds `vendor/modules.txt` decides which **source** the
+run reads, not whether the project's build is the frame. A project walk with no
+vendor tree is still scanned rooted at its own build, on the fetched surface,
+and every record says `fetched`. `--no-vendor` likewise selects a surface and
+not a frame: the vendored closure is never read, the toolchain is forced onto
+`-mod=mod`, and the run is still one pass over the project's build.
+
+The recorded directory is provenance, never an oracle. If it no longer exists or
+cannot be stat'ed, the scan does not fail and does not substitute another tree:
+it falls back to scanning each module in isolation, on the fetched surface, and
+the run log names the directory and the stat error. A moved or deleted checkout
+must not make a stored walk unscannable - but the fallback measures less, so
+such a run reports `Partial` coverage.
 
 ---
 

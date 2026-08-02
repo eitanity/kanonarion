@@ -175,6 +175,17 @@ func (e BuildEnv) IsZero() bool {
 	return e.GOOS == "" && e.GOARCH == "" && e.GoVersion == ""
 }
 
+// Frame renders the target platform the way output names it. A walk that
+// captured no platform says so rather than rendering an empty pair: a reader
+// cannot tell an unstated frame from a missing one, and both would print as
+// "/".
+func (e BuildEnv) Frame() string {
+	if e.GOOS == "" && e.GOARCH == "" {
+		return "unrecorded"
+	}
+	return e.GOOS + "/" + e.GOARCH
+}
+
 // GraphNode is a single module in the dependency graph.
 type GraphNode struct {
 	// Coordinate is the module path and MVS-selected version.

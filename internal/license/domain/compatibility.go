@@ -1,6 +1,9 @@
 package domain
 
-import "sort"
+import (
+	"sort"
+	"strings"
+)
 
 // CompatibilityDataVersion identifies the version of the static compatibility
 // dataset. Bump deliberately when a new license pair is researched and added.
@@ -54,6 +57,13 @@ const (
 	// dataset. Per this is never treated as compatible — it requires
 	// human review.
 	VerdictUnknownPair
+	// VerdictElectable means the dep is dual-licensed (a disjunctive SPDX
+	// expression) and at least one arm is compatible with the target: the
+	// combined work is compatible IF that arm is elected. The election is a
+	// human decision recorded via the license_overrides mechanism, never
+	// resolved silently by the tool, so this verdict is surfaced as an open
+	// item rather than folded into compatible or incompatible.
+	VerdictElectable
 )
 
 // String returns the human-readable name of the verdict.
@@ -65,6 +75,8 @@ func (v CompatibilityVerdict) String() string {
 		return "incompatible"
 	case VerdictUnknownPair:
 		return "unknown_pair"
+	case VerdictElectable:
+		return "electable"
 	default:
 		return "unknown"
 	}
@@ -87,6 +99,11 @@ const (
 	// ConflictUnknownPair means one or both licenses are not in the dataset;
 	// human review is required.
 	ConflictUnknownPair
+	// ConflictElectionRequired means the dep offers a licence election
+	// (disjunctive expression) with at least one compatible arm; the operator
+	// must record which arm is elected (license_overrides) before the answer
+	// can settle to compatible.
+	ConflictElectionRequired
 )
 
 // String returns the human-readable name of the conflict kind.
@@ -100,6 +117,8 @@ func (k ConflictKind) String() string {
 		return "network_trigger"
 	case ConflictUnknownPair:
 		return "unknown_pair"
+	case ConflictElectionRequired:
+		return "election_required"
 	default:
 		return "unknown"
 	}
@@ -114,6 +133,10 @@ type CompatibilityConflict struct {
 	TargetSPDX    string
 	Verdict       CompatibilityVerdict
 	Kind          ConflictKind
+	// ElectableArms lists the arms of a dual-licence disjunction that are
+	// individually compatible with the target. Populated only for
+	// VerdictElectable, where DepSPDX carries the full disjunction.
+	ElectableArms []string
 }
 
 // CompatibilityInput describes a single module's resolved license for
@@ -122,6 +145,12 @@ type CompatibilityInput struct {
 	ModulePath    string
 	ModuleVersion string
 	SPDX          string // empty when the module has no detected license
+	// ElectiveArms carries the arms of a purely disjunctive licence expression
+	// (a dual-licensed module: the consumer elects ONE arm). When it holds two
+	// or more arms the engine evaluates each arm as a candidate election and
+	// SPDX is ignored; otherwise SPDX is evaluated as a single licence that
+	// applies unconditionally.
+	ElectiveArms []string
 }
 
 // ClosureCompatibilityReport is the result of checking all dependencies in a
@@ -129,12 +158,13 @@ type CompatibilityInput struct {
 type ClosureCompatibilityReport struct {
 	TargetSPDX  string
 	DataVersion string
-	// Conflicts lists every dep that is incompatible with or unmodelled against
-	// the target license. Sorted by ModulePath then ModuleVersion for
+	// Conflicts lists every dep whose answer is not settled compatible: pairs
+	// that are incompatible, unmodelled against the target license, or awaiting
+	// a dual-licence election. Sorted by ModulePath then ModuleVersion for
 	// determinism.
 	Conflicts []CompatibilityConflict
-	// Clean reports whether the entire closure is compatible (no conflicts and no
-	// unknown pairs).
+	// Clean reports whether the entire closure is compatible (no conflicts, no
+	// unknown pairs, and no elections still open).
 	Clean bool
 }
 
@@ -254,6 +284,62 @@ func CheckPairCompatibility(depSPDX, targetSPDX string) CompatibilityVerdict {
 	return VerdictUnknownPair
 }
 
+// evaluateElection evaluates a dual-licensed module (a disjunctive licence
+// expression) against the target by evaluating each arm as a candidate
+// election. The consumer may take the module under any ONE arm, so:
+//
+//   - every arm compatible → settled compatible whichever arm is elected; no
+//     open item (the election still matters for obligations, not for this
+//     question);
+//   - some arm compatible → VerdictElectable: compatible IF such an arm is
+//     elected. The election is an operator decision recorded via
+//     license_overrides, never resolved silently, so it stays an open item;
+//   - no arm compatible, any arm unmodelled → VerdictUnknownPair (review);
+//   - every arm known-incompatible → VerdictIncompatible whichever arm is
+//     elected, with the kind derived from the first arm for determinism.
+//
+// The returned bool reports whether the entry is an open item to record.
+func evaluateElection(m CompatibilityInput, targetSPDX string) (CompatibilityConflict, bool) {
+	expr := strings.Join(m.ElectiveArms, " OR ")
+	var compatible []string
+	anyUnknown := false
+	for _, arm := range m.ElectiveArms {
+		switch CheckPairCompatibility(arm, targetSPDX) {
+		case VerdictCompatible:
+			compatible = append(compatible, arm)
+		case VerdictUnknownPair:
+			anyUnknown = true
+		case VerdictIncompatible, VerdictElectable:
+			// Incompatible arms need no tracking beyond "not compatible";
+			// VerdictElectable is never returned for a single identifier.
+		}
+	}
+
+	if len(compatible) == len(m.ElectiveArms) {
+		return CompatibilityConflict{}, false
+	}
+
+	c := CompatibilityConflict{
+		ModulePath:    m.ModulePath,
+		ModuleVersion: m.ModuleVersion,
+		DepSPDX:       expr,
+		TargetSPDX:    targetSPDX,
+	}
+	switch {
+	case len(compatible) > 0:
+		c.Verdict = VerdictElectable
+		c.Kind = ConflictElectionRequired
+		c.ElectableArms = compatible
+	case anyUnknown:
+		c.Verdict = VerdictUnknownPair
+		c.Kind = ConflictUnknownPair
+	default:
+		c.Verdict = VerdictIncompatible
+		c.Kind = conflictKindFor(m.ElectiveArms[0])
+	}
+	return c, true
+}
+
 // conflictKindFor derives the ConflictKind for a known-incompatible dep/target pair.
 func conflictKindFor(depSPDX string) ConflictKind {
 	strength, _ := CopyleftStrengthOf(depSPDX)
@@ -279,6 +365,12 @@ func CheckClosureCompatibility(modules []CompatibilityInput, targetSPDX string) 
 	}
 
 	for _, m := range modules {
+		if len(m.ElectiveArms) >= 2 {
+			if c, open := evaluateElection(m, targetSPDX); open {
+				report.Conflicts = append(report.Conflicts, c)
+			}
+			continue
+		}
 		spdx := m.SPDX
 		if spdx == "" {
 			report.Conflicts = append(report.Conflicts, CompatibilityConflict{

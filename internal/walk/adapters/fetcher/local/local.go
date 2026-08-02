@@ -55,11 +55,20 @@ func (f *Fetcher) WithVCSHosts(hosts fetchdomain.VCSHostAllowlist) walkports.Mod
 }
 
 func (f *Fetcher) EnsureFetched(ctx context.Context, coord coordinate.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
+	return f.EnsureFetchedReplacing(ctx, coord, coordinate.ModuleCoordinate{})
+}
+
+// EnsureFetchedReplacing fetches coord as the replacement for original, so the
+// fetch can anchor the module under the coordinate go.sum actually records —
+// the replacement — while still being able to name the coordinate the project
+// requires it under.
+func (f *Fetcher) EnsureFetchedReplacing(ctx context.Context, coord, original coordinate.ModuleCoordinate) (walkports.ModuleFetchResult, error) {
 	result, err := f.uc.Execute(ctx, fetchapplication.FetchRequest{
-		Coordinate:    coord,
-		SkipVCSVerify: f.skipVCSVerify,
-		Force:         f.force,
-		VCSHosts:      f.vcsHosts,
+		Coordinate:         coord,
+		OriginalCoordinate: original,
+		SkipVCSVerify:      f.skipVCSVerify,
+		Force:              f.force,
+		VCSHosts:           f.vcsHosts,
 	})
 	if err != nil {
 		return walkports.ModuleFetchResult{}, fmt.Errorf("fetching module: %w", err)

@@ -116,7 +116,7 @@ func TestReachabilityVerdictCarriesTheRoot(t *testing.T) {
 			Reason:        "an http.Handler implementation",
 			ClosureRooted: true,
 			Remedy:        "kanonarion vuln-scan --project --reachability",
-		}))
+		}), nil)
 	if err != nil {
 		t.Fatalf("vulnReachabilityVerdict: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestReachabilityVerdictCarriesTheRoot(t *testing.T) {
 func TestReachabilityVerdictNeverCallsItExploitable(t *testing.T) {
 	rec := rootedRecord()
 	res, err := vulnReachabilityVerdict(rec.Coordinate, rec, true, "GO-2026-0001",
-		classifyAs(vuldomain.RouteRoot{Kind: vuldomain.RootIngress, Reason: "an http.Handler implementation"}))
+		classifyAs(vuldomain.RouteRoot{Kind: vuldomain.RootIngress, Reason: "an http.Handler implementation"}), nil)
 	if err != nil {
 		t.Fatalf("vulnReachabilityVerdict: %v", err)
 	}

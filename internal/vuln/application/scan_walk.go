@@ -266,7 +266,7 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	}
 
 	// 2. Snapshot resolution.
-	snapshot, err := uc.resolveSnapshot(ctx, params.Snapshot, params.Fresh)
+	snapshot, err := uc.resolveSnapshot(ctx, params.Snapshot, params.Fresh, params.WalkID)
 	if err != nil {
 		return domain.WalkScanRun{}, err
 	}
@@ -349,11 +349,17 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	// gap when their imports demand versions the build never selected. It falls
 	// back to the isolated pool rather than failing the walk when the target
 	// cannot be analysed as a whole.
+	//
+	// frameGaps holds the modules this run could not analyse in its OWN frame.
+	// It is filled by the target-rooted attempt and applied after the fallback
+	// has run, so a record produced or reused in another frame cannot stand in
+	// for coverage the run never established. See applyFrameGaps.
+	frameGaps := make(map[coordinate.ModuleCoordinate]domain.VulnerabilityRecord, 1)
 	targetRooted := false
 	if !walk.Target.IsLocal() {
 		uc.logger.Info("target-rooted vuln scan", "walk_id", params.WalkID, "root", walk.Target)
 		var terr error
-		targetRooted, terr = uc.scanTargetRooted(ctx, walk, allCoords, params, snapshot, vulnDBDir, goModCache, selectedVersions, finalResults)
+		targetRooted, terr = uc.scanTargetRooted(ctx, walk, allCoords, params, snapshot, vulnDBDir, goModCache, selectedVersions, finalResults, frameGaps)
 		if terr != nil {
 			return domain.WalkScanRun{}, terr
 		}
@@ -413,6 +419,8 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 			finalResults[r.coord] = r
 		}
 	}
+
+	uc.applyFrameGaps(frameGaps, finalResults, walk.Target)
 
 	// A module scan that reached the snapshot itself and found it corrupt is not
 	// one module's failure. The pool would otherwise fold it into a per-module
@@ -575,6 +583,41 @@ type scanCounts struct {
 	// was read. Such a module is not affected, so it does not degrade the run's
 	// findings word; it is reported so the transition is visible rather than silent.
 	withdrawn int
+}
+
+// applyFrameGaps replaces the run's counted result for every module the run
+// could not analyse in its own frame, and names the frame of the record it is
+// declining to count.
+//
+// A walk rooted at a target asks one question: is this advisory reachable in
+// that target's build. When the analysis cannot be rooted there, the isolated
+// fallback answers a different, weaker question — and on a warm store it may
+// answer it entirely from a record an unrelated walk wrote, so the run performs
+// no analysis whatsoever. Letting that record satisfy the run's coverage is how
+// a scan that measured nothing came to print Complete, Clean.
+//
+// The fallback's record is not discarded. It is a real measurement in its own
+// frame, it is already persisted, and a reader asking the isolated question
+// still gets it. What changes is only which record this RUN counts as its
+// coverage of that module, and therefore what its coverage axis is allowed to
+// claim.
+func (uc *ScanWalkUseCase) applyFrameGaps(
+	frameGaps map[coordinate.ModuleCoordinate]domain.VulnerabilityRecord,
+	finalResults map[coordinate.ModuleCoordinate]moduleResult,
+	target coordinate.ModuleCoordinate,
+) {
+	for coord, gap := range frameGaps {
+		declined := "none"
+		if prev, ok := finalResults[coord]; ok && prev.err == nil {
+			declined = domain.RecordRooting(prev.record).String()
+		}
+		uc.logger.Warn("module has no verdict in this run's frame; not counting a record from another frame as its coverage",
+			"coordinate", coord,
+			"run_frame", string(domain.TargetRootedAt(target)),
+			"declined_frame", declined,
+			"reason", string(gap.UnscanReason))
+		finalResults[coord] = moduleResult{coord: coord, record: gap}
+	}
 }
 
 // tallyModuleResults walks the per-module results in deterministic allCoords
@@ -1236,16 +1279,19 @@ func (uc *ScanWalkUseCase) nodeGoVersion(ctx context.Context, coord coordinate.M
 }
 
 // resolveSnapshot returns the snapshot to use for a scan.
-// If pinned is non-nil it is used directly. Otherwise the snapshot is fetched
-// from the network (fresh=true) or loaded from the store, falling back to the
-// network if the store has none.
-func (uc *ScanWalkUseCase) resolveSnapshot(ctx context.Context, pinned *domain.DatabaseSnapshot, fresh bool) (*domain.DatabaseSnapshot, error) {
+// If pinned is non-nil it is used directly. Otherwise the database is refreshed
+// against the network (fresh=true) or the stored snapshot is loaded, falling
+// back to the network if the store has none.
+func (uc *ScanWalkUseCase) resolveSnapshot(ctx context.Context, pinned *domain.DatabaseSnapshot, fresh bool, walkID string) (*domain.DatabaseSnapshot, error) {
 	if pinned != nil {
 		return pinned, nil
 	}
 	if fresh {
-		uc.logger.Info("fresh fetch requested: fetching vulnerability database snapshot from network")
-		return uc.fetchAndPersistSnapshot(ctx, "resolving fresh snapshot", "persisting fresh database snapshot")
+		refresh, err := uc.RefreshSnapshot(ctx, walkID)
+		if err != nil {
+			return nil, err
+		}
+		return &refresh.Snapshot, nil
 	}
 	cached, ok, err := uc.vulnStore.GetLatestDatabaseSnapshot(ctx)
 	if err != nil {

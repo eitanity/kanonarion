@@ -467,11 +467,49 @@ type ScannerMetadata struct {
 }
 
 // VulnerabilityDatabase defines the port for managing vulnerability database snapshots.
+// AdvisoryIndexEntry is one advisory as the database's module index lists it.
+//
+// All three fields are compared when two generations are diffed for a module,
+// and each carries a different change: a new ID is a new advisory, a changed
+// Fixed is a changed remediation, and a changed Modified is any other edit the
+// upstream made to the advisory — a withdrawal among them. Comparing only IDs
+// would report a withdrawn or re-scoped advisory as no change at all.
+type AdvisoryIndexEntry struct {
+	// ID is the advisory identifier, e.g. GO-2026-5579.
+	ID string
+	// Modified is the advisory's own last-modified stamp as the index states it.
+	Modified string
+	// Fixed is the version that fixes the advisory; empty when unfixed.
+	Fixed string
+}
+
+// AdvisoryIndex maps a module path to the advisories the database lists for it.
+// A module absent from the map has no advisories, which is the same statement as
+// an empty slice and is compared as one.
+type AdvisoryIndex map[string][]AdvisoryIndexEntry
+
 type VulnerabilityDatabase interface {
 	// Snapshot returns a pinned snapshot of the database at this point.
 	// Subsequent calls may return different snapshots; the snapshot
 	// itself is immutable.
 	Snapshot(ctx context.Context) (domain.DatabaseSnapshot, io.ReadCloser, error)
+
+	// LatestVersion returns the generation the database currently publishes,
+	// without downloading its body. It is the cheap half of Snapshot: the same
+	// string Snapshot would report as the snapshot's Version, read from the
+	// database's own index, so a caller can tell whether a download would bring
+	// anything new before paying for one.
+	LatestVersion(ctx context.Context) (string, error)
+
+	// PublishedAdvisoryIndex returns the module index the database currently
+	// publishes, without downloading its body. It is what makes "the generation
+	// advanced" a question that can be asked about a particular set of modules
+	// rather than about the database as a whole.
+	PublishedAdvisoryIndex(ctx context.Context) (AdvisoryIndex, error)
+
+	// SnapshotAdvisoryIndex returns the same index as carried by an
+	// already-stored snapshot, read from the store rather than the network.
+	SnapshotAdvisoryIndex(ctx context.Context, identity domain.DatabaseSnapshot) (AdvisoryIndex, error)
 
 	// GetSnapshot retrieves a previously-pinned snapshot by identity,
 	// for replay or re-scanning.

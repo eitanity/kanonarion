@@ -51,12 +51,16 @@ The scope always includes the **Go standard library** as a first-class row
 (`stdlib@vX.Y.Z`), so standard-library advisories are audited alongside module
 dependencies. Its **Verification** column reports the toolchain-specific chain of
 custody — `VerifiedGoDevChecksum` when the canonical `go{VERSION}.src.tar.gz`
-acquired from `go.dev/dl` matched Go's published checksum — which is deliberately
-distinct from the module sumdb statuses (it is a published checksum plus a
+acquired from `go.dev/dl` matched Go's published checksum — a status distinct
+from the module sumdb ones (it is a published checksum plus a
 `go.googlesource.com/go` tag/commit, never a `go.sum` entry). Its **License** is
-`BSD-3-Clause` extracted from the tarball's `LICENSE` file. On a fully offline
-run (`--from-modcache`) the chain cannot be established and the row reads
-`(custody unavailable)`. See [SBOM standard-library chain of
+`BSD-3-Clause` extracted from the tarball's `LICENSE` file (licence source
+`stdlib-tarball`). On a fully offline run (`--from-modcache`) the custody chain
+cannot be established and the Verification column reads `(custody
+unavailable)`; the licence column then reads `BSD-3-Clause` with source
+`stdlib-known` / status `Known` — the licence is reported from published
+knowledge rather than extracted evidence, and `sbom` and `license-compat`
+answer the same for the same node. See [SBOM standard-library chain of
 custody](sbom.md#standard-library-chain-of-custody) for the full evidence set.
 
 Its **Vulnerability** column is **call-graph-analysed against the build
@@ -108,7 +112,7 @@ the install command.
 | `--tool` | `false` | Scope to the tooling supply chain (the `go.mod` `tool` directives' closure); tags walks `scope=tool`. Mutually exclusive with `--project` |
 | `--project` | `false` | Scope to the complete set: the project's code **and** tooling (the full Go build list). Mutually exclusive with `--tool` |
 | `--force` | `false` | Re-fetch and re-scan even if cached records exist |
-| `--fresh` | `false` | Bypass cached network answers: fetch a fresh vulnerability database snapshot **and** re-query latest versions instead of serving the staleness ledger |
+| `--fresh` | `false` | Refresh the vulnerability advisory database. The published generation and, if it has moved on, the standalone module index are read first; the database body is downloaded only when an advisory listed for a module in this walk has changed. See [Refreshing the advisory database](#refreshing-the-advisory-database---fresh). Does not affect the staleness/latest column |
 | `--stdlib-from-gomod` | `false` | Version the `stdlib` node from the `go.mod` directive, not the live toolchain. See [Standard-library version](walk.md#standard-library-version---stdlib-from-gomod). |
 | `--skip-vcs-verify` | `false` | Skip git cross-verification; the checksum-database check still runs. A sumdb-attested module then reports `VerifiedBySumDBOnly`, never the strongest `Verified` (the git leg never ran). Useful when auditing a large closure where git operations are rate-limited or unavailable |
 | `--policy` | _(auto-discover `.kanonarion/policy.yaml`)_ | Depth policy file; its fetch stage governs traversal and the `allowed_vcs_hosts` forge allowlist |
@@ -192,7 +196,7 @@ kanonarion audit --gomod ./go.mod --json
     "vuln_findings": 0,
     "is_latest": false,
     "latest_version": "v0.36.0",
-    "days_behind": 6
+    "latest_release_age_days": 6
   },
   {
     "coordinate": "golang.org/x/vuln@v1.3.0",
@@ -214,16 +218,20 @@ kanonarion audit --gomod ./go.mod --json
     "vuln_withdrawn": 1,
     "is_latest": false,
     "latest_version": "v1.5.0",
-    "days_behind": 54
+    "latest_release_age_days": 54
   }
 ]
 ```
 
-`vuln_findings` counts **every** advisory on the record, retracted ones included —
-its meaning is unchanged from before withdrawn advisories were recognised, so a
-consumer written against the older output reads the same fact it always did.
-`vuln_withdrawn` is the retracted subset, present only when non-zero; live advisories
-are the difference between the two.
+`vuln_findings` counts **every** advisory on the record, retracted ones
+included. `vuln_withdrawn` is the retracted subset, present only when non-zero;
+live advisories are the difference between the two.
+
+`latest_release_age_days` is **how long ago the latest release shipped**, not how
+far behind the pin is. A stale pin on an actively released module reports a small
+number; a current pin on a quiet module reports a large one. There is no
+`days_behind` field. See
+[`latest`](latest.md#latest_release_age_days) for the worked example.
 
 ## Pipeline
 
@@ -238,7 +246,7 @@ dependency:
 5. Query and report - iterate the walk's dependency nodes (every graph node bar the local root) and join fetch, license, vuln, and staleness into one line each
 
 Walk, licence and staleness use cached results on subsequent runs unless
-`--force` (walk/licence) or `--fresh` (staleness) is passed. One stage always
+`--force` is passed. One stage always
 does work on every run, warm store or not: the project-rooted vuln scan is
 **always recomputed fresh** (the working tree mutates between runs, so its
 verdict is live and never served from a coordinate cache).
@@ -258,6 +266,55 @@ latest version of its own path and is still behind. `major_probed` separates
 "probed, nothing newer" from "not probed" (a `--from-modcache` run, or a probe
 whose request failed).
 
+### The unknown-licence gate
+
+`audit` is where the licence policy is enforced. A default or `--project` run
+evaluates every licence under the policy's `production` rule; `--tool`
+evaluates under `tool`. If evaluation ever finds no rule for the scope in
+force (possible with a hand-edited policy), the gate reports itself
+**unevaluated** — naming that scope and the scopes that do carry rules — and
+exits `5`; it never falls through to an allow.
+
+A dependency whose licence
+could not be resolved to any SPDX identifier is **undetermined**, and
+undetermined is governed by `license_policy.rules[].unknown_license` - not by
+the rule's `default`. When that key resolves to `block` for the module's scope,
+`audit` prints the full table and then exits `5`, naming every blocked module.
+
+A `Multiple` licence status - detection found more than one licence identity -
+splits in two.
+
+When the module offers a **choice** (a pure `A OR B` expression whose arms are
+identified SPDX identifiers, e.g. a dual-licensed module), each arm is evaluated
+against the rule and the row takes the most favourable arm's outcome. Every arm
+allowed reads `allow`; one allowed arm among stricter ones also reads `allow`;
+no allowed arm reads whatever the least-bad arm reads (a `warn` licence in a
+disjunction is still a `warn`, never a block). The policy column names the arms
+that carry the outcome — `allow [permissive] [electable: Apache-2.0 or MIT]` —
+and `--json` repeats them in `license_electable_arms`. Such a row is not an open
+item; recording the elected arm as a `license_overrides` entry still settles it
+wholesale and then the row is evaluated under that one licence.
+
+When the expression names a **single** licence, that licence is the row's
+resolution and is evaluated as any determined licence is. A module whose one
+licence file bundles third-party texts (an omnibus attribution file) reads
+`Multiple` in the licence column while its expression names its own licence
+alone; the status describes how detection got there, not that it failed.
+
+When the expression offers neither - a conjunction (`A AND B`), or candidates
+that could not be identified - nothing was determined: the row is carried as
+unresolved (uncertainty `multiple`) under every scope, governed by the same
+unknown-licence key, until an operator records the resolution as a
+`license_overrides` entry. The SPDX shown in the licence column for such a row
+is display information, not a resolution.
+
+Left unset the key resolves to `block` for `scope: production` and `warn` for
+every other scope, so an undetermined dependency fails a production audit
+closed rather than passing as a clean allow. Run `kanonarion config show` to see
+the value in force for each scope, and see
+[`config`](config.md#license_policyrulesunknown_license---the-unknown-licence-gate)
+for the four values.
+
 ### Precursor to `sbom --package`
 
 Because `audit` leaves behind exactly the project walk, license records, and
@@ -274,15 +331,122 @@ kanonarion sbom --package ./cmd/kanonarion   # reuses audit's project walk
 `audit` is safe to re-run, but a warm re-run is **not** fully offline. The walk,
 licence, and vulnerability-database stages are cached and do no network I/O on a
 warm store (`--force` re-fetches the modules and re-runs the scan; `--fresh`
-re-downloads the vulnerability database). Two stages always do work on every run:
+checks the advisory database and re-downloads it only if an advisory for one of
+this walk's modules has changed).
 
 - **Staleness** - `audit` queries the module proxy for each module's latest
-  version (`@latest`) on every run. This is a live network call per module and
-  is never cached.
-- **Project-rooted vuln scan** - `govulncheck` re-runs over the live working
-  tree every time (never served from a coordinate cache - see Pipeline above).
-  This is local CPU work, not a network fetch, and reuses the cached
-  vulnerability database unless `--fresh` is passed.
+  version (`@latest`). Answers are served from the staleness ledger inside
+  `staleness.ttl` (default `1h`). `audit --fresh` does not change this: to
+  re-query a latest answer on demand, run `latest --fresh`.
+- **Walk** - the project's `go.mod` is **always re-resolved**, so an edit to the
+  working tree is always picked up. When the resolution matches a walk already
+  stored, that walk's record is reused rather than a new one recorded. See
+  [Reuse and re-derivation](#reuse-and-re-derivation).
+- **Project-rooted vuln scan** - `govulncheck` runs over the live working tree
+  when the walk or the advisory snapshot has changed, and is served from the
+  stored run when neither has.
+
+## Reuse and re-derivation
+
+Every run reports, on **stderr**, where its two expensive answers came from:
+
+```
+derivation:
+  walk 01KZ0DJEV5XKAV1PSN1JM47D37: re-resolved and found identical to the walk taken 2026-08-02T05:01:29Z; that record was reused
+  vulnerability scan: reused run vscan-01KZ0DJEV5XKAV1PSN1JM47D37-1785646889 of 2026-08-02T05:01:35Z against snapshot vuln.go.dev@2026-07-27T20:14:16Z; nothing was re-scanned (--force to re-measure)
+```
+
+or, when the run measured for itself:
+
+```
+derivation:
+  walk 01KZ0DJEV5XKAV1PSN1JM47D37: derived by this run
+  vulnerability scan: derived by this run
+```
+
+Reading the walk line: **"re-resolved and found identical"** means the `go.mod`
+was resolved again this run and produced the same dependency set as the named
+walk, so that walk's record — and every licence, vulnerability and SBOM record
+keyed to it — answers this run too. **"derived by this run"** means a new walk
+was recorded.
+
+Reading the scan line: **"reused run … of &lt;date&gt;"** names the scan run whose
+verdicts you are reading and when it was made; `govulncheck` did not run. The
+findings, roll-ups and exit code are the ones that run produced.
+
+A new walk is recorded whenever the target, scope, depth, policy, build
+environment, resolved graph (every module at every selected version, every edge,
+every artefact hash) or per-node outcome differs — so editing `go.mod`, bumping a
+dependency, switching scope or changing the policy all produce a new walk and a
+new scan.
+
+A stored scan is reused only when **all** of these hold:
+
+| condition | |
+|---|---|
+| same walk | verdicts belong to the dependency set they were derived over |
+| same advisory snapshot (source, version, retrieval time and seal) | a newer advisory database re-scans |
+| same scan pipeline version | a newer kanonarion re-scans |
+| the stored run's coverage is **complete** | a partial or failed run is never served |
+
+To force a fresh measurement:
+
+- `--force` — re-fetches the modules, records a new walk and re-scans. This is
+  the flag for release evidence that must be measured now.
+- `--fresh` — refreshes the advisory database. It re-scans only when the refresh
+  changes an advisory listed for a module in this walk; a database that moved for
+  anything else leaves the stored run serving.
+
+`--fresh` does not force a new walk: an unchanged `go.mod` still resolves to the
+same walk.
+
+## Refreshing the advisory database (`--fresh`)
+
+`--fresh` refreshes the vulnerability advisory database and nothing else. Two
+cheap checks stand between the flag and the multi-megabyte database body:
+
+1. **Has the database changed at all?** The generation `vuln.go.dev` publishes is
+   read from the standalone `index/db.json` — one small request. Unchanged: the
+   stored snapshot is kept and nothing else is asked.
+2. **Has it changed anything this walk is judged on?** A new generation is
+   published whenever any advisory in the ecosystem moves. The standalone
+   `index/modules.json` (~60 KB compressed) is fetched and compared against the
+   stored snapshot's own copy, restricted to the modules this walk holds —
+   `stdlib` among them. Identical for every one of them: no download, and the
+   stored scan run still answers.
+
+Only a change to an advisory listed for a module in the walk — a new advisory, a
+changed fixed version, an upstream edit such as a withdrawal — reaches the
+download, and a re-scan with it.
+
+The refresh states its outcome in the derivation block on **stderr**:
+
+```
+derivation:
+  walk 01KZ0DJEV5XKAV1PSN1JM47D37: re-resolved and found identical to the walk taken 2026-08-02T05:01:29Z; that record was reused
+  advisory database: checked vuln.go.dev and found it unchanged at 2026-07-27T20:14:16Z; nothing was downloaded and the stored snapshot was kept
+  vulnerability scan: reused run vscan-01KZ0DJEV5XKAV1PSN1JM47D37-1785646889 of 2026-08-02T05:01:35Z against snapshot vuln.go.dev@2026-07-27T20:14:16Z; nothing was re-scanned (--force to re-measure)
+```
+
+The outcomes the line distinguishes:
+
+| line says | meaning |
+|---|---|
+| `checked … and found it unchanged at <generation>` | the published generation is the stored one; nothing was transferred |
+| `advanced <old> -> <new>; the advisories listed for all N modules in this walk are identical between the two, so the run judged against <old> remains current for this walk` | the database moved, but not for anything this walk is judged on; nothing was transferred and the stored run still answers |
+| `advanced <old> -> <new> and the advisories changed for a module in this walk` | the database body was downloaded and the walk re-scanned against it |
+| `advanced … but the advisories could not be compared (<error>)` | the comparison failed, so the full download and a re-scan ran instead |
+| `published generation unreadable (<error>)` | the first check failed, so the full download ran instead |
+| `no snapshot was stored; downloaded …` | first refresh on this store |
+| `refresh failed (<error>)` | the database could not be brought up to date at all; the run continues against the stored database |
+
+A reused run always names the snapshot it was **actually judged against**. When
+the second check keeps a stored run alive across an advanced generation, that the
+run remains current is a separate statement with its own basis — the module
+count the comparison covered — not a restamping of the run.
+
+The line appears only under `--fresh`. Without the flag the run reads the stored
+database and makes no claim about its currency.
 
 ## Local `go.sum` verification
 
@@ -302,9 +466,18 @@ module `audit`:
 - **Disagrees with `go.sum`** - tamper-evidence. `audit` **fails hard**, exiting
   non-zero (code `10`) and naming the offending module. A `go.sum` mismatch is
   never silently downgraded.
-- **Absent from `go.sum`** - not a failure (a `go.sum` legitimately omits some
-  transitively-cached entries); the module falls through to the network checksum
-  database as before.
+- **Absent from `go.sum`** - not a failure for an unreplaced module (a `go.sum`
+  legitimately omits some transitively-cached entries); it falls through to the
+  network checksum database as before. For a **replaced** module the absence is
+  a hard stop naming both coordinates: `go.sum` records a replacement under the
+  replace target, so when it describes the build at all it has an entry for the
+  fork.
+
+A replaced module is looked up under the replace target and reported under
+both spellings — the verification detail reads `verified against local go.sum
+under <fork> (required as <upstream>)`. A module replaced by a filesystem path
+has no checksum and records `no checksum is available for a filesystem source,
+so none was checked`.
 
 Because the check reads only the local `go.sum`, it still fires when
 `sum.golang.org` is unreachable - a working offline integrity signal. This is
@@ -334,7 +507,8 @@ In this mode `audit`:
   offline run never reports a stored latest version as if it had been checked
   now. The run makes **zero** network calls to
   `proxy.golang.org`/`sum.golang.org`. Rows carry `major_probed: false`. The
-  vulnerability scan still reads the OSV database (`--fresh` to refresh it).
+  vulnerability scan still reads the stored OSV database (`--fresh` to refresh
+  it).
 
 ```bash
 # After `go build ./...` has populated the module cache:

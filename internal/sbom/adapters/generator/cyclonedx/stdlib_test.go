@@ -69,7 +69,7 @@ func TestGenerate_StdlibComponent(t *testing.T) {
 		walk.Graph.Target: {PrimarySPDX: "MIT"},
 	}
 	gen := cyclonedx.New(testPipelineVersion)
-	rec, err := gen.Generate(t.Context(), walk, licenses, nil, makeGenReq(nil))
+	rec, err := gen.Generate(t.Context(), walk, licenses, makeGenReq())
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -110,7 +110,7 @@ func TestGenerate_StdlibComponent(t *testing.T) {
 // set is valid for.
 func TestGenerate_BuildEnvProperties(t *testing.T) {
 	gen := cyclonedx.New(testPipelineVersion)
-	rec, err := gen.Generate(t.Context(), walkWithStdlibAndEnv(t), nil, nil, makeGenReq(nil))
+	rec, err := gen.Generate(t.Context(), walkWithStdlibAndEnv(t), nil, makeGenReq())
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}
@@ -142,7 +142,7 @@ func TestGenerate_BuildEnvProperties(t *testing.T) {
 func TestGenerate_NoBuildEnv_NoProperties(t *testing.T) {
 	walk := makeWalk(t, []coordinate.ModuleCoordinate{mustCoord(t, "example.com/a", "v1.0.0")})
 	gen := cyclonedx.New(testPipelineVersion)
-	rec, err := gen.Generate(t.Context(), walk, nil, nil, makeGenReq(nil))
+	rec, err := gen.Generate(t.Context(), walk, nil, makeGenReq())
 	if err != nil {
 		t.Fatalf("Generate: %v", err)
 	}

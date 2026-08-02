@@ -62,8 +62,8 @@ func (f buildScopeFlags) requested() bool {
 // rather than reporting a bare empty result.
 type buildScope struct {
 	modules coordinate.ModuleSet
-	// source names the build for diagnostics, e.g. `walk "abc123"`. Empty when
-	// no build was named and modules is unrestricted.
+	// source names the build for diagnostics, e.g. `walk "abc123" (frame
+	// linux/amd64)`. Empty when no build was named and modules is unrestricted.
 	source string
 }
 
@@ -83,14 +83,20 @@ func (f buildScopeFlags) resolve(ctx context.Context, walks QueryWalksUseCase) (
 		if err != nil {
 			return buildScope{}, err
 		}
-		walkID = resolved
+		walkID = resolved.ID
 	}
 
 	rec, err := walks.GetWalk(ctx, walkID)
 	if err != nil {
 		return buildScope{}, fmt.Errorf("loading walk %q: %w", walkID, err)
 	}
-	return buildScope{modules: walkModuleSet(rec), source: fmt.Sprintf("walk %q", walkID)}, nil
+	// The frame comes off the record, not the summary, so a scope named by
+	// --walk-id states it too: both routes end at the same walk, and the notice
+	// must not say more for one than the other.
+	return buildScope{
+		modules: walkModuleSet(rec),
+		source:  fmt.Sprintf("walk %q (frame %s)", walkID, rec.Graph.BuildEnv.Frame()),
+	}, nil
 }
 
 // writeScopeNotice prints, in text mode, the build a scoped result was filtered
@@ -112,20 +118,25 @@ func writeScopeNotice(stdout io.Writer, sc buildScope) error {
 	return nil
 }
 
-// latestWalkForGoMod returns the ID of the most recent succeeded project walk
-// rooted at the module declared in gomod (or ./go.mod when gomod is empty).
-func latestWalkForGoMod(ctx context.Context, walks QueryWalksUseCase, gomod string) (string, error) {
+// latestWalkForGoMod returns the most recent succeeded project walk rooted at
+// the module declared in gomod (or ./go.mod when gomod is empty).
+//
+// The whole summary is returned rather than the ID alone because a scope
+// derived from this walk has to be able to say which platform's build it pins:
+// the lookup has no build-environment axis, so on a store holding several
+// platforms' walks of one project it answers with whichever is newest.
+func latestWalkForGoMod(ctx context.Context, walks QueryWalksUseCase, gomod string) (walkports.WalkSummary, error) {
 	gomodPath, err := resolveGoModPath(gomod)
 	if err != nil {
-		return "", err
+		return walkports.WalkSummary{}, err
 	}
 	modulePath, err := readGoModulePath(gomodPath)
 	if err != nil {
-		return "", err
+		return walkports.WalkSummary{}, err
 	}
 	coord, err := coordinate.NewLocalCoordinate(modulePath)
 	if err != nil {
-		return "", fmt.Errorf("building project coordinate for %s: %w", modulePath, err)
+		return walkports.WalkSummary{}, fmt.Errorf("building project coordinate for %s: %w", modulePath, err)
 	}
 	succeeded := walkdomain.WalkSucceeded
 	summaries, err := walks.ListWalks(ctx, walkports.WalkFilter{
@@ -134,12 +145,12 @@ func latestWalkForGoMod(ctx context.Context, walks QueryWalksUseCase, gomod stri
 		Limit:         1,
 	})
 	if err != nil {
-		return "", fmt.Errorf("listing project walks for %s: %w", modulePath, err)
+		return walkports.WalkSummary{}, fmt.Errorf("listing project walks for %s: %w", modulePath, err)
 	}
 	if len(summaries) == 0 {
-		return "", fmt.Errorf("no succeeded project walk for %s — run: kanonarion walk --gomod %s", modulePath, gomodPath)
+		return walkports.WalkSummary{}, fmt.Errorf("no succeeded project walk for %s — run: kanonarion walk --gomod %s", modulePath, gomodPath)
 	}
-	return summaries[0].ID, nil
+	return summaries[0], nil
 }
 
 // walkModuleSet is the version set of the build a walk recorded: every module in

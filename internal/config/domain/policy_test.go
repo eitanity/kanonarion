@@ -65,7 +65,11 @@ func TestEvaluateLicense_AbsentDefaultResolvesToAllow(t *testing.T) {
 	}
 }
 
-func TestEvaluateLicense_NoRuleForScopeIsImplicitAllow(t *testing.T) {
+// TestEvaluateLicense_NoRuleForScopeIsUnevaluated guards a scope that
+// matches no rule must never resolve to an implicit allow: the gate evaluated
+// nothing, so the result names itself unevaluated, blocks the run, and lists
+// the scopes that do carry rules so the remedy is visible.
+func TestEvaluateLicense_NoRuleForScopeIsUnevaluated(t *testing.T) {
 	p := LicensePolicy{
 		Categories: map[string][]string{"strong_copyleft": {"GPL-3.0-only"}},
 		Rules: []LicensePolicyRule{
@@ -73,11 +77,35 @@ func TestEvaluateLicense_NoRuleForScopeIsImplicitAllow(t *testing.T) {
 		},
 	}
 	got := p.EvaluateLicense("GPL-3.0-only", "tool")
-	if got.Outcome != PolicyOutcomeAllow {
-		t.Errorf("outcome = %q, want allow (no rule for scope)", got.Outcome)
+	if got.Outcome != PolicyOutcomeUnevaluated {
+		t.Errorf("outcome = %q, want unevaluated (no rule for scope)", got.Outcome)
+	}
+	if !got.Unevaluated {
+		t.Errorf("Unevaluated = false, want true")
+	}
+	if !got.Blocking {
+		t.Errorf("Blocking = false, want true (an unevaluated gate must not pass)")
 	}
 	if got.Category != "strong_copyleft" {
 		t.Errorf("category = %q, want strong_copyleft", got.Category)
+	}
+	if len(got.RuleScopes) != 1 || got.RuleScopes[0] != "production" {
+		t.Errorf("RuleScopes = %v, want [production]", got.RuleScopes)
+	}
+}
+
+// TestEvaluateLicense_UndeterminedLicenseUnmatchedScopeIsUnevaluated guards
+// that the unmatched-scope guard also covers an undetermined licence: the gap
+// is the scope's, and it must block rather than fall back to a scope default
+// that implies something was evaluated.
+func TestEvaluateLicense_UndeterminedLicenseUnmatchedScopeIsUnevaluated(t *testing.T) {
+	p := LicensePolicy{
+		Rules: []LicensePolicyRule{{Scope: "production"}},
+	}
+	got := p.EvaluateLicense("", "tool")
+	if !got.Unevaluated || !got.Blocking || got.Outcome != PolicyOutcomeUnevaluated {
+		t.Errorf("got unevaluated=%v blocking=%v outcome=%q, want unevaluated=true blocking=true outcome=unevaluated",
+			got.Unevaluated, got.Blocking, got.Outcome)
 	}
 }
 
@@ -130,7 +158,13 @@ func TestEvaluateLicense_UnknownLicensePolicyConfigurable(t *testing.T) {
 		Rules: []LicensePolicyRule{
 			{Scope: "production", UnknownLicense: UnknownLicenseAllow},
 			{Scope: "tool"}, // unset → scope default (warn, not block)
+			{Scope: "vendor", UnknownLicense: UnknownLicenseNotify},
 		},
+	}
+	vendor := p.EvaluateLicense("", "vendor")
+	if !vendor.Uncertain || vendor.Blocking || vendor.Outcome != PolicyOutcomeNotify {
+		t.Errorf("vendor notify: got uncertain=%v blocking=%v outcome=%q, want uncertain=true blocking=false outcome=notify",
+			vendor.Uncertain, vendor.Blocking, vendor.Outcome)
 	}
 	prod := p.EvaluateLicense("", "production")
 	if !prod.Uncertain || prod.Blocking || prod.Outcome != PolicyOutcomeAllow {
@@ -155,5 +189,112 @@ func TestEvaluateLicense_NamedUncategorisedStillDefaults(t *testing.T) {
 	}
 	if got.Outcome != PolicyOutcomeAllow {
 		t.Errorf("outcome = %q, want allow (default production rule default)", got.Outcome)
+	}
+}
+
+// TestEvaluateDisjunction_MostFavourableArm pins the per-arm evaluation: a
+// module offering a choice of licences takes the best arm's outcome and names
+// the arms that carry it, and it is never blocking for want of an election.
+func TestEvaluateDisjunction_MostFavourableArm(t *testing.T) {
+	p := defaultPolicy()
+
+	tests := []struct {
+		name     string
+		arms     []string
+		scope    string
+		want     PolicyOutcome
+		wantArms []string
+	}{
+		{
+			name:     "every arm allowed",
+			arms:     []string{"Apache-2.0", "BSD-3-Clause", "MIT"},
+			scope:    "production",
+			want:     PolicyOutcomeAllow,
+			wantArms: []string{"Apache-2.0", "BSD-3-Clause", "MIT"},
+		},
+		{
+			name:     "one permissive arm carries the choice",
+			arms:     []string{"Apache-2.0", "GPL-3.0-only"},
+			scope:    "production",
+			want:     PolicyOutcomeAllow,
+			wantArms: []string{"Apache-2.0"},
+		},
+		{
+			name:     "no allowed arm keeps the least-bad outcome",
+			arms:     []string{"GPL-2.0-only", "GPL-3.0-only"},
+			scope:    "production",
+			want:     PolicyOutcomeWarn,
+			wantArms: []string{"GPL-2.0-only", "GPL-3.0-only"},
+		},
+		{
+			name:     "weak copyleft beats strong copyleft",
+			arms:     []string{"GPL-3.0-only", "MPL-2.0"},
+			scope:    "production",
+			want:     PolicyOutcomeNotify,
+			wantArms: []string{"MPL-2.0"},
+		},
+		{
+			name:     "an unversioned identifier falls to the rule default",
+			arms:     []string{"Apache-2.0", "GPL-3.0"},
+			scope:    "production",
+			want:     PolicyOutcomeAllow,
+			wantArms: []string{"Apache-2.0", "GPL-3.0"},
+		},
+	}
+
+	for _, tc := range tests {
+		got := p.EvaluateDisjunction(tc.arms, tc.scope)
+		if got.Outcome != tc.want {
+			t.Errorf("%s: outcome = %q, want %q", tc.name, got.Outcome, tc.want)
+		}
+		if got.Uncertain || got.Blocking || got.Unevaluated {
+			t.Errorf("%s: uncertain=%v blocking=%v unevaluated=%v, want all false — an identified choice is not an uncertainty",
+				tc.name, got.Uncertain, got.Blocking, got.Unevaluated)
+		}
+		if len(got.ElectableArms) != len(tc.wantArms) {
+			t.Fatalf("%s: electable arms = %v, want %v", tc.name, got.ElectableArms, tc.wantArms)
+		}
+		for i, arm := range tc.wantArms {
+			if got.ElectableArms[i] != arm {
+				t.Errorf("%s: electable arms = %v, want %v", tc.name, got.ElectableArms, tc.wantArms)
+				break
+			}
+		}
+		if got.License != tc.wantArms[0] {
+			t.Errorf("%s: evaluated licence = %q, want the elected arm %q", tc.name, got.License, tc.wantArms[0])
+		}
+	}
+}
+
+// TestEvaluateDisjunction_NoArmsIsUndetermined guards that the disjunction path
+// never invents a permissive answer out of nothing: with no identified arms it
+// falls back to the undetermined-licence evaluation, which the production
+// default blocks.
+func TestEvaluateDisjunction_NoArmsIsUndetermined(t *testing.T) {
+	p := defaultPolicy()
+	got := p.EvaluateDisjunction(nil, "production")
+	if !got.Uncertain || !got.Blocking {
+		t.Errorf("no arms: uncertain=%v blocking=%v, want both true", got.Uncertain, got.Blocking)
+	}
+	if len(got.ElectableArms) != 0 {
+		t.Errorf("no arms: electable arms = %v, want none", got.ElectableArms)
+	}
+}
+
+// TestEvaluateDisjunction_UnmatchedScopeStaysUnevaluated guards that a scope
+// carrying no rule reports the gate gap rather than electing an arm: nothing
+// was measured, so no arm is named.
+func TestEvaluateDisjunction_UnmatchedScopeStaysUnevaluated(t *testing.T) {
+	p := defaultPolicy()
+	got := p.EvaluateDisjunction([]string{"MIT", "Apache-2.0"}, "no-such-scope")
+	if !got.Unevaluated || !got.Blocking || got.Outcome != PolicyOutcomeUnevaluated {
+		t.Errorf("unmatched scope: unevaluated=%v blocking=%v outcome=%q, want true/true/unevaluated",
+			got.Unevaluated, got.Blocking, got.Outcome)
+	}
+	if len(got.ElectableArms) != 0 {
+		t.Errorf("unmatched scope: electable arms = %v, want none — no arm was measured", got.ElectableArms)
+	}
+	if len(got.RuleScopes) == 0 {
+		t.Errorf("unmatched scope: RuleScopes empty, want the scopes that do carry rules")
 	}
 }

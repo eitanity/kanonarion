@@ -56,6 +56,19 @@ func (uc *ExecuteWalkUseCase) WithAudit(sink walkports.AuditSink) *ExecuteWalkUs
 // ExecuteWalkResult is the output of Execute.
 type ExecuteWalkResult struct {
 	Record domain.WalkRecord
+
+	// Reused reports that this run did not mint a new walk: the analysis it
+	// performed was identical to one already stored, so Record is that stored
+	// walk. It is not the same claim as "nothing ran" — the resolution itself
+	// was re-derived, and finding it identical is the measurement. What is
+	// reused is the walk's IDENTITY, and with it everything downstream that is
+	// keyed on a walk id.
+	//
+	// The short-circuit above it (a cached successful walk served without
+	// walking at all) also reports Reused, because from the caller's side the
+	// distinction that matters is the same: the returned record was not
+	// produced by this run.
+	Reused bool
 }
 
 // Execute runs the walk for req and persists the resulting WalkRecord.
@@ -119,7 +132,7 @@ func (uc *ExecuteWalkUseCase) Execute(ctx context.Context, req WalkRequest) (Exe
 					slog.String("target", req.Target.String()),
 					slog.String("reason", "cached successful walk exists"),
 				)
-				return ExecuteWalkResult{Record: fullRec}, nil
+				return ExecuteWalkResult{Record: fullRec, Reused: true}, nil
 			}
 		}
 	}
@@ -158,6 +171,36 @@ func (uc *ExecuteWalkUseCase) Execute(ctx context.Context, req WalkRequest) (Exe
 	// of the walk the constructor seals: NewWalkRecord builds the hashed shape,
 	// and this field is not in it.
 	rec.ProjectDir = req.ProjectDir
+	// The identity of the analysis just performed, computed before the seal
+	// because the seal does not cover it. It is what makes an unchanged input
+	// resolve to the walk it resolved to last time instead of to a new one.
+	identity, err := domain.WalkRecordHasher{}.IdentityHash(rec)
+	if err != nil {
+		return ExecuteWalkResult{}, fmt.Errorf("hashing walk identity: %w", err)
+	}
+	rec.IdentityHash = identity
+
+	// A walk that analysed exactly what an already-stored walk analysed IS that
+	// walk. Minting a second id for it is what made every downstream record —
+	// licences, vulnerability scans, SBOMs, all keyed on the walk id — unreachable
+	// from the next run, so the tool re-derived a full scan because its own cache
+	// key was fresh by construction rather than because anything had changed.
+	//
+	// --force is the operator saying "measure it again anyway", and it skips this
+	// for the same reason it skips the cache above.
+	if !req.Force {
+		if prior, ok := uc.reusableWalk(ctx, req.Target, scope, identity, id); ok {
+			uc.logger.InfoContext(ctx, "walk_identity_reused",
+				slog.String("walk_id", prior.ID),
+				slog.String("discarded_walk_id", id),
+				slog.String("target", req.Target.String()),
+				slog.String("identity_hash", identity),
+				slog.String("reason", "an existing walk records the same analysis"),
+			)
+			return ExecuteWalkResult{Record: prior, Reused: true}, nil
+		}
+	}
+
 	rec, err = domain.WalkRecordHasher{}.SetContentHash(rec)
 	if err != nil {
 		return ExecuteWalkResult{}, fmt.Errorf("hashing walk record: %w", err)
@@ -204,6 +247,55 @@ func walkCompletedEvent(rec domain.WalkRecord) audit.Event {
 			"content_hash": rec.ContentHash,
 		},
 	}
+}
+
+// reusableWalk returns a stored walk for target and scope whose identity is
+// identity, if one exists and can be read back intact.
+//
+// currentID is the id this run would otherwise write under. A match on it is not
+// a reuse — it is the same row, and the run should persist over it normally,
+// which is what a resumed partial walk relies on.
+//
+// Every failure here is answered by falling through to a normal write. A lookup
+// that could not be made is not evidence that no prior walk exists, and the
+// worst outcome of writing a second record is the behaviour that shipped before
+// identities existed; the worst outcome of trusting a failed read would be
+// serving a record this run never established.
+func (uc *ExecuteWalkUseCase) reusableWalk(
+	ctx context.Context,
+	target coordinate.ModuleCoordinate,
+	scope domain.WalkScope,
+	identity string,
+	currentID string,
+) (domain.WalkRecord, bool) {
+	// An empty identity names no analysis; it is what the rows written before the
+	// column existed carry, and matching on it would serve an arbitrary old walk.
+	if identity == "" {
+		return domain.WalkRecord{}, false
+	}
+	summaries, err := uc.store.ListWalks(ctx, walkports.WalkFilter{
+		Target:       &target,
+		Scope:        &scope,
+		IdentityHash: &identity,
+		Limit:        1,
+	})
+	if err != nil || len(summaries) == 0 {
+		return domain.WalkRecord{}, false
+	}
+	if summaries[0].ID == currentID {
+		return domain.WalkRecord{}, false
+	}
+	prior, err := uc.store.GetWalk(ctx, summaries[0].ID)
+	if err != nil {
+		uc.logger.WarnContext(ctx, "walk_identity_match_unreadable",
+			slog.String("walk_id", summaries[0].ID),
+			slog.String("identity_hash", identity),
+			slog.String("error", err.Error()),
+			slog.String("reason", "re-walking rather than serving a record that could not be read back"),
+		)
+		return domain.WalkRecord{}, false
+	}
+	return prior, true
 }
 
 // resolveWalkID returns the walk ID to use. If the most recent stored walk for

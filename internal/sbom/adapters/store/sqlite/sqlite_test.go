@@ -21,12 +21,11 @@ func openTestStore(t *testing.T) *sbomstore.Store {
 	return s
 }
 
-func makeRecord(id, walkID string, scanRunID *string) domain.SBOMRecord {
+func makeRecord(id, walkID string) domain.SBOMRecord {
 	return domain.SBOMRecord{
 		ID:              id,
 		Ecosystem:       domain.EcosystemGo,
 		WalkID:          walkID,
-		WalkScanRunID:   scanRunID,
 		Format:          domain.CycloneDX16,
 		Content:         []byte(`{"bomFormat":"CycloneDX"}`),
 		ContentHash:     "abc123",
@@ -38,7 +37,7 @@ func makeRecord(id, walkID string, scanRunID *string) domain.SBOMRecord {
 
 func TestPutAndGetSBOMRecord(t *testing.T) {
 	s := openTestStore(t)
-	rec := makeRecord("sbom-001", "walk-001", nil)
+	rec := makeRecord("sbom-001", "walk-001")
 
 	if err := s.PutSBOMRecord(t.Context(), rec); err != nil {
 		t.Fatalf("PutSBOMRecord: %v", err)
@@ -54,9 +53,6 @@ func TestPutAndGetSBOMRecord(t *testing.T) {
 	if got.WalkID != rec.WalkID {
 		t.Errorf("WalkID: got %q, want %q", got.WalkID, rec.WalkID)
 	}
-	if got.WalkScanRunID != nil {
-		t.Errorf("WalkScanRunID: got %v, want nil", got.WalkScanRunID)
-	}
 	if got.ContentHash != rec.ContentHash {
 		t.Errorf("ContentHash: got %q, want %q", got.ContentHash, rec.ContentHash)
 	}
@@ -64,7 +60,7 @@ func TestPutAndGetSBOMRecord(t *testing.T) {
 
 func TestSBOMRecord_EcosystemPresentAfterRoundTrip(t *testing.T) {
 	s := openTestStore(t)
-	rec := makeRecord("sbom-eco", "walk-eco", nil)
+	rec := makeRecord("sbom-eco", "walk-eco")
 	if err := s.PutSBOMRecord(t.Context(), rec); err != nil {
 		t.Fatalf("PutSBOMRecord: %v", err)
 	}
@@ -79,7 +75,7 @@ func TestSBOMRecord_EcosystemPresentAfterRoundTrip(t *testing.T) {
 
 func TestSBOMRecord_RejectsForeignEcosystem(t *testing.T) {
 	s := openTestStore(t)
-	rec := makeRecord("sbom-npm", "walk-npm", nil)
+	rec := makeRecord("sbom-npm", "walk-npm")
 	rec.Ecosystem = "npm"
 	if err := s.PutSBOMRecord(t.Context(), rec); err != nil {
 		t.Fatalf("PutSBOMRecord: %v", err)
@@ -99,7 +95,7 @@ func TestGetSBOMRecordNotFound(t *testing.T) {
 
 func TestPutSBOMRecordIdempotent(t *testing.T) {
 	s := openTestStore(t)
-	rec := makeRecord("sbom-001", "walk-001", nil)
+	rec := makeRecord("sbom-001", "walk-001")
 
 	if err := s.PutSBOMRecord(t.Context(), rec); err != nil {
 		t.Fatalf("first PutSBOMRecord: %v", err)
@@ -120,11 +116,10 @@ func TestPutSBOMRecordIdempotent(t *testing.T) {
 
 func TestListSBOMRecords(t *testing.T) {
 	s := openTestStore(t)
-	scanRunID := "scan-001"
 	recs := []domain.SBOMRecord{
-		makeRecord("sbom-001", "walk-001", nil),
-		makeRecord("sbom-002", "walk-001", &scanRunID),
-		makeRecord("sbom-003", "walk-002", nil),
+		makeRecord("sbom-001", "walk-001"),
+		makeRecord("sbom-002", "walk-001"),
+		makeRecord("sbom-003", "walk-002"),
 	}
 	for _, r := range recs {
 		if err := s.PutSBOMRecord(t.Context(), r); err != nil {
@@ -141,14 +136,14 @@ func TestListSBOMRecords(t *testing.T) {
 	}
 }
 
-func TestFindSBOMRecordNilScanRun(t *testing.T) {
+func TestFindSBOMRecordByWalk(t *testing.T) {
 	s := openTestStore(t)
-	rec := makeRecord("sbom-001", "walk-001", nil)
+	rec := makeRecord("sbom-001", "walk-001")
 	if err := s.PutSBOMRecord(t.Context(), rec); err != nil {
 		t.Fatalf("PutSBOMRecord: %v", err)
 	}
 
-	found, ok, err := s.FindSBOMRecord(t.Context(), "walk-001", nil, domain.CycloneDX16, "0.3.0")
+	found, ok, err := s.FindSBOMRecord(t.Context(), "walk-001", domain.CycloneDX16, "0.3.0")
 	if err != nil {
 		t.Fatalf("FindSBOMRecord: %v", err)
 	}
@@ -160,30 +155,10 @@ func TestFindSBOMRecordNilScanRun(t *testing.T) {
 	}
 }
 
-func TestFindSBOMRecordWithScanRun(t *testing.T) {
-	s := openTestStore(t)
-	scanRunID := "scan-001"
-	rec := makeRecord("sbom-002", "walk-001", &scanRunID)
-	if err := s.PutSBOMRecord(t.Context(), rec); err != nil {
-		t.Fatalf("PutSBOMRecord: %v", err)
-	}
-
-	found, ok, err := s.FindSBOMRecord(t.Context(), "walk-001", &scanRunID, domain.CycloneDX16, "0.3.0")
-	if err != nil {
-		t.Fatalf("FindSBOMRecord: %v", err)
-	}
-	if !ok {
-		t.Fatal("expected record to be found")
-	}
-	if found.ID != "sbom-002" {
-		t.Errorf("ID: got %q, want sbom-002", found.ID)
-	}
-}
-
 func TestFindSBOMRecordMiss(t *testing.T) {
 	s := openTestStore(t)
 
-	_, ok, err := s.FindSBOMRecord(t.Context(), "walk-999", nil, domain.CycloneDX16, "0.3.0")
+	_, ok, err := s.FindSBOMRecord(t.Context(), "walk-999", domain.CycloneDX16, "0.3.0")
 	if err != nil {
 		t.Fatalf("FindSBOMRecord: %v", err)
 	}
@@ -196,9 +171,9 @@ func TestFindSBOMRecordMiss(t *testing.T) {
 func TestListSBOMRecordsAllWalks(t *testing.T) {
 	s := openTestStore(t)
 	for _, r := range []domain.SBOMRecord{
-		makeRecord("sbom-001", "walk-001", nil),
-		makeRecord("sbom-002", "walk-002", nil),
-		makeRecord("sbom-003", "walk-003", nil),
+		makeRecord("sbom-001", "walk-001"),
+		makeRecord("sbom-002", "walk-002"),
+		makeRecord("sbom-003", "walk-003"),
 	} {
 		if err := s.PutSBOMRecord(t.Context(), r); err != nil {
 			t.Fatalf("PutSBOMRecord %q: %v", r.ID, err)
@@ -217,7 +192,7 @@ func TestListSBOMRecordsAllWalks(t *testing.T) {
 // than being rejected on read.
 func TestPutSBOMRecordDefaultsEmptyEcosystem(t *testing.T) {
 	s := openTestStore(t)
-	rec := makeRecord("sbom-empty-eco", "walk-1", nil)
+	rec := makeRecord("sbom-empty-eco", "walk-1")
 	rec.Ecosystem = ""
 	if err := s.PutSBOMRecord(t.Context(), rec); err != nil {
 		t.Fatalf("PutSBOMRecord: %v", err)
@@ -234,7 +209,7 @@ func TestPutSBOMRecordDefaultsEmptyEcosystem(t *testing.T) {
 // An incomplete-licence flag round-trips through the store.
 func TestPutSBOMRecordLicensesIncompleteRoundTrip(t *testing.T) {
 	s := openTestStore(t)
-	rec := makeRecord("sbom-incomplete", "walk-1", nil)
+	rec := makeRecord("sbom-incomplete", "walk-1")
 	rec.LicensesIncomplete = true
 	if err := s.PutSBOMRecord(t.Context(), rec); err != nil {
 		t.Fatalf("PutSBOMRecord: %v", err)
@@ -256,7 +231,7 @@ func TestNewWrapsRawHandle(t *testing.T) {
 	}
 	t.Cleanup(func() { _ = db.Close() })
 	s := sbomstore.New(db)
-	rec := makeRecord("sbom-raw", "walk-1", nil)
+	rec := makeRecord("sbom-raw", "walk-1")
 	if err := s.PutSBOMRecord(t.Context(), rec); err != nil {
 		t.Fatalf("PutSBOMRecord via New: %v", err)
 	}

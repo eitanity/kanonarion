@@ -1,5 +1,23 @@
 {
   "$schema": "http://cyclonedx.org/schema/bom-1.6.schema.json",
+  "annotations": [
+    {
+      "annotator": {
+        "component": {
+          "name": "kanonarion",
+          "type": "application",
+          "version": "0.3.0-test"
+        }
+      },
+      "bom-ref": "kanonarion:licence-completeness",
+      "subjects": [
+        "pkg:golang/github.com/example/aaa@v0.4.0",
+        "pkg:golang/github.com/example/zzz@v2.0.0"
+      ],
+      "text": "Licence completeness of this document: 2 of the 3 component(s) inventoried here carry no licence identity, and are named as this annotation's subjects. A component with no licences block is one whose licence kanonarion could not determine — no licence file was found for it, or the files that were found match no known SPDX licence text. It is not a statement that the component is unlicensed, and it must not be read as permission to use it: pkg:golang/github.com/example/aaa@v0.4.0; pkg:golang/github.com/example/zzz@v2.0.0;",
+      "timestamp": "2026-03-03T09:15:00Z"
+    }
+  ],
   "bomFormat": "CycloneDX",
   "components": [
     {
@@ -172,7 +190,17 @@
       "type": "library",
       "version": "v1.2.0"
     },
-    "timestamp": "2026-03-02T12:30:00Z",
+    "properties": [
+      {
+        "name": "kanonarion:document:timestamp_basis",
+        "value": "caller-supplied document creation time"
+      },
+      {
+        "name": "kanonarion:licence:newest_extraction",
+        "value": "2026-03-02T12:30:00Z"
+      }
+    ],
+    "timestamp": "2026-03-03T09:15:00Z",
     "tools": {
       "components": [
         {
@@ -183,60 +211,7 @@
       ]
     }
   },
-  "serialNumber": "urn:uuid:70864a8d-7abf-fbd7-c0a3-f1c60a1cbebb",
+  "serialNumber": "urn:uuid:d03751f0-26f5-f7fa-1f52-7a573ad48fd5",
   "specVersion": "1.6",
-  "version": 1,
-  "vulnerabilities": [
-    {
-      "affects": [
-        {
-          "ref": "pkg:golang/github.com/example/aaa@v0.4.0"
-        }
-      ],
-      "bom-ref": "GHSA-aonly",
-      "description": "a only",
-      "id": "GHSA-aonly",
-      "ratings": [
-        {
-          "method": "other",
-          "severity": "unknown"
-        }
-      ]
-    },
-    {
-      "affects": [
-        {
-          "ref": "pkg:golang/github.com/example/aaa@v0.4.0"
-        },
-        {
-          "ref": "pkg:golang/github.com/example/zzz@v2.0.0"
-        }
-      ],
-      "bom-ref": "GHSA-shared",
-      "description": "shared across modules",
-      "id": "GHSA-shared",
-      "ratings": [
-        {
-          "method": "other",
-          "severity": "high"
-        }
-      ]
-    },
-    {
-      "affects": [
-        {
-          "ref": "pkg:golang/github.com/example/zzz@v2.0.0"
-        }
-      ],
-      "bom-ref": "GHSA-zonly",
-      "description": "z only",
-      "id": "GHSA-zonly",
-      "ratings": [
-        {
-          "method": "other",
-          "severity": "low"
-        }
-      ]
-    }
-  ]
+  "version": 1
 }

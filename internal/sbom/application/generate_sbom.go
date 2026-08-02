@@ -2,9 +2,10 @@ package application
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log/slog"
+	"path/filepath"
+	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -12,11 +13,10 @@ import (
 	licenseports "github.com/eitanity/kanonarion/internal/license/ports"
 	"github.com/eitanity/kanonarion/internal/sbom/domain"
 	"github.com/eitanity/kanonarion/internal/sbom/ports"
-	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 
 	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
-	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	vendordomain "github.com/eitanity/kanonarion/internal/vendortree/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
 
@@ -24,7 +24,6 @@ import (
 type GenerateSBOMUseCase struct {
 	walkStore       walkports.WalkStore
 	licenseStore    licenseports.LicenseStore
-	vulnStore       vulnports.VulnerabilityStore
 	sbomStore       ports.SBOMStore
 	generator       ports.SBOMGenerator
 	clock           fetchports.Clock
@@ -35,6 +34,18 @@ type GenerateSBOMUseCase struct {
 	// every record once the two diverge.
 	licensePipelineVersion string
 	logger                 *slog.Logger
+	// vendorTree reads the project's vendored module set so the document can
+	// state its coverage of it. Optional: nil means no scope statement, which
+	// is the honest answer when nothing can read the tree.
+	vendorTree ports.VendorTreeReader
+}
+
+// WithVendorTree wires the reader that lets a generated document state how much
+// of the project's vendored tree it describes. Returns the use case for
+// chaining.
+func (uc *GenerateSBOMUseCase) WithVendorTree(r ports.VendorTreeReader) *GenerateSBOMUseCase {
+	uc.vendorTree = r
+	return uc
 }
 
 // NewGenerateSBOMUseCase returns a new GenerateSBOMUseCase.
@@ -43,7 +54,6 @@ type GenerateSBOMUseCase struct {
 func NewGenerateSBOMUseCase(
 	walkStore walkports.WalkStore,
 	licenseStore licenseports.LicenseStore,
-	vulnStore vulnports.VulnerabilityStore,
 	sbomStore ports.SBOMStore,
 	generator ports.SBOMGenerator,
 	clock fetchports.Clock,
@@ -54,7 +64,6 @@ func NewGenerateSBOMUseCase(
 	return &GenerateSBOMUseCase{
 		walkStore:              walkStore,
 		licenseStore:           licenseStore,
-		vulnStore:              vulnStore,
 		sbomStore:              sbomStore,
 		generator:              generator,
 		clock:                  clock,
@@ -66,11 +75,18 @@ func NewGenerateSBOMUseCase(
 
 // SBOMRequest defines the input for SBOM generation.
 type SBOMRequest struct {
-	WalkID        string
-	WalkScanRunID *string // nil = generate without vulnerability data
-	Format        domain.SBOMFormat
-	Force         bool
-	Operator      string
+	WalkID   string
+	Format   domain.SBOMFormat
+	Force    bool
+	Operator string
+	// GeneratedAt is when the caller is creating this document; it becomes the
+	// document's metadata timestamp. Zero means none was supplied, and the
+	// document falls back to a derived timestamp it labels as derived.
+	//
+	// A supplied value bypasses the cache: it is not part of the cache key, so a
+	// cached record would answer with another moment's timestamp under the
+	// caller's request.
+	GeneratedAt time.Time
 	// AllowList restricts the component list to a specific set of modules —
 	// typically the import closure of a single binary (sbom --package).
 	// When non-empty the result is ephemeral: cache and persistence are skipped.
@@ -85,12 +101,10 @@ type SBOMRequest struct {
 	MainComponentLicense string
 }
 
-// ErrWalkScanRunNotFound is returned when the requested scan run does not exist.
-var ErrWalkScanRunNotFound = errors.New("walk scan run not found")
-
 // Generate produces and persists an SBOM for the given walk.
-// If a cached record exists for the same (walkID, scanRunID, format, pipelineVersion)
-// and Force is false, the cached record is returned without re-generation.
+// If a cached record exists for the same (walkID, format, pipelineVersion)
+// and neither Force nor GeneratedAt is set, the cached record is returned
+// without re-generation.
 // When req.AllowList is non-empty the SBOM is scoped to only those modules;
 // the result is ephemeral (cache skipped, not persisted).
 func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (domain.SBOMRecord, error) {
@@ -102,9 +116,10 @@ func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (d
 	// Package-scoped requests are ephemeral: skip cache entirely.
 	scoped := len(req.AllowList) > 0
 
-	// Cache lookup.
-	if !req.Force && !scoped {
-		if cached, ok, err := uc.sbomStore.FindSBOMRecord(ctx, req.WalkID, req.WalkScanRunID, format, uc.pipelineVersion); err != nil {
+	// Cache lookup. A caller-supplied creation time is not part of the key, so
+	// serving a cached document under one would date it to another generation.
+	if !req.Force && !scoped && req.GeneratedAt.IsZero() {
+		if cached, ok, err := uc.sbomStore.FindSBOMRecord(ctx, req.WalkID, format, uc.pipelineVersion); err != nil {
 			return domain.SBOMRecord{}, fmt.Errorf("checking sbom cache: %w", err)
 		} else if ok {
 			uc.logger.InfoContext(ctx, "sbom.cache_hit", "walk_id", req.WalkID, "format", format)
@@ -158,37 +173,29 @@ func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (d
 		// Missing licence is allowed; the generator will flag LicensesIncomplete.
 	}
 
-	// 3. Optionally load vulnerability records.
-	var vulnRecords []vulndomain.VulnerabilityRecord
-	if req.WalkScanRunID != nil {
-		run, ok, verr := uc.vulnStore.GetWalkScanRun(ctx, *req.WalkScanRunID)
-		if verr != nil {
-			return domain.SBOMRecord{}, fmt.Errorf("loading scan run %q: %w", *req.WalkScanRunID, verr)
-		}
-		if !ok {
-			return domain.SBOMRecord{}, fmt.Errorf("%w: %s", ErrWalkScanRunNotFound, *req.WalkScanRunID)
-		}
-		vulnRecords, err = uc.vulnStore.ListVulnerabilityRecords(ctx, run.ID)
-		if err != nil {
-			return domain.SBOMRecord{}, fmt.Errorf("loading vulnerability records for run %q: %w", run.ID, err)
-		}
-	}
-
-	// 4. Generate.
+	// 3. Generate. The document is an inventory of components and their identity,
+	// hashes and licences; it carries no vulnerability list, so no scan run is
+	// read here and none can be attached.
 	genReq := ports.GenerateRequest{
-		WalkScanRunID:        req.WalkScanRunID,
 		Format:               format,
+		DocumentTimestamp:    req.GeneratedAt,
 		PipelineVersion:      uc.pipelineVersion,
 		Operator:             req.Operator,
 		MainComponentVersion: req.MainComponentVersion,
 		MainComponentLicense: req.MainComponentLicense,
+		VendorScope:          uc.vendorScope(ctx, walk),
+		// A package-scoped run has already filtered walk.Graph above, so the
+		// scope arithmetic is measured against the components this document
+		// actually carries. Flagging it lets the statement say why so much of
+		// the tree falls outside a document that was asked for one binary.
+		ComponentsScopedToBinary: scoped,
 	}
-	record, err := uc.generator.Generate(ctx, walk, licenses, vulnRecords, genReq)
+	record, err := uc.generator.Generate(ctx, walk, licenses, genReq)
 	if err != nil {
 		return domain.SBOMRecord{}, fmt.Errorf("generating sbom: %w", err)
 	}
 
-	// 5. Persist — skipped for scoped (package-filtered) requests.
+	// 4. Persist — skipped for scoped (package-filtered) requests.
 	if !scoped {
 		if err := uc.sbomStore.PutSBOMRecord(ctx, record); err != nil {
 			return domain.SBOMRecord{}, fmt.Errorf("persisting sbom record: %w", err)
@@ -203,4 +210,45 @@ func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (d
 		"licenses_incomplete", record.LicensesIncomplete,
 	)
 	return record, nil
+}
+
+// vendorScope states this document's coverage of the vendored tree the walk was
+// rooted at: how many modules the tree holds, how many the component list
+// describes, and every module it does not with the reason.
+//
+// A tree module is covered when the graph holds a node for it under EITHER
+// identity. `go mod vendor` files a replaced module's source under its ORIGINAL
+// path — that is the name modules.txt uses — while a resolved build list names
+// the REPLACEMENT, which is what the node's coordinate carries. Matching on the
+// node coordinate alone therefore reports every replace-to-fork module as
+// absent from a document that describes it perfectly well, under its fork name.
+//
+// Returns nil when there is nothing to measure against: no reader wired, a walk
+// with no recorded project root, or a project with no vendored tree. A read
+// failure is logged and yields nil rather than failing generation — the
+// document is still true, it just cannot state this scope.
+func (uc *GenerateSBOMUseCase) vendorScope(ctx context.Context, walk walkdomain.WalkRecord) *vendordomain.VendorScope {
+	if uc.vendorTree == nil || walk.ProjectDir == "" {
+		return nil
+	}
+	mods, err := uc.vendorTree.VendorTree(ctx, filepath.Join(walk.ProjectDir, "go.mod"))
+	if err != nil {
+		uc.logger.WarnContext(ctx, "sbom.vendor_scope.unavailable",
+			"walk_id", walk.ID, "project_dir", walk.ProjectDir, "error", err)
+		return nil
+	}
+	if len(mods) == 0 {
+		return nil
+	}
+	described := make(map[string]bool, len(walk.Graph.Nodes)*2)
+	for _, n := range walk.Graph.Nodes {
+		described[n.Coordinate.Path()] = true
+		if p := n.OriginalCoordinate.Path(); p != "" {
+			described[p] = true
+		}
+	}
+	scope := vendordomain.ScopeOverTree(mods, func(m vendordomain.VendoredModule) bool {
+		return described[m.Path]
+	})
+	return &scope
 }

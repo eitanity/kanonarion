@@ -136,13 +136,18 @@ func (f *Fetcher) EnsureFetchedFromPath(
 		ModuleHash:         zipHash,
 		GoModHash:          goModHash,
 		VerificationStatus: fetchdomain.LocalSource,
-		VerificationDetail: "local filesystem path: " + absPath,
-		FetchedAt:          f.clock.Now().UTC(),
-		PipelineVersion:    PipelineVersion,
-		ContentLocation:    zipIdentity.String(),
-		GoModLocation:      goModIdentity.String(),
-		AcquisitionMode:    fetchdomain.AcquisitionLocal,
-		MeasurementKind:    fetchdomain.MeasurementAcquired,
+		// A directory has no go.sum entry by construction — the toolchain
+		// writes a checksum for a module it downloads, never for one it reads
+		// off disk — so the absence is stated rather than left to look like a
+		// check that passed. Nothing verified this tree; that is the fact.
+		VerificationDetail: "local filesystem path: " + absPath +
+			"; no checksum is available for a filesystem source, so none was checked",
+		FetchedAt:       f.clock.Now().UTC(),
+		PipelineVersion: PipelineVersion,
+		ContentLocation: zipIdentity.String(),
+		GoModLocation:   goModIdentity.String(),
+		AcquisitionMode: fetchdomain.AcquisitionLocal,
+		MeasurementKind: fetchdomain.MeasurementAcquired,
 	}
 	sealed, err := fetchdomain.Seal(m)
 	if err != nil {

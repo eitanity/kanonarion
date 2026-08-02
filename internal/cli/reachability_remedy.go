@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"path/filepath"
 	"strings"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -120,6 +121,31 @@ func remedyScanUncovered() reachabilityRemedy {
 	}
 }
 
+// remedyRescanProject is the remedy for a re-scan that refused because it could
+// not reproduce the project-rooted frame of the run it was asked to re-scan.
+//
+// It names the project spelling of the scan rather than the walk spelling,
+// because that is the form that carries the root: --gomod points the analysis at
+// the tree, so the re-run is rooted where the original was. Repeating
+// vuln-scan-rescan would repeat the refusal.
+func remedyRescanProject(dir string) reachabilityRemedy {
+	// An empty directory is not a gap here: the refusal that prints this may have
+	// been raised by a walk that names no tree at all, whose frame was read off
+	// the run's own records instead. "./go.mod" is then the right instruction —
+	// run it from the project — where filepath.Join would have produced a bare
+	// "go.mod" that reads as a file in whatever directory the reader is in.
+	goMod := "./go.mod"
+	if dir != "" {
+		goMod = filepath.Join(dir, "go.mod")
+	}
+	return reachabilityRemedy{
+		lead: "Re-scan rooted at the project itself, from a machine that holds its working tree",
+		lines: []string{
+			"kanonarion vuln-scan --gomod " + goMod + " --reachability",
+		},
+	}
+}
+
 // remedyShowRecord points at the record itself, for a refusal that no re-run
 // resolves.
 func remedyShowRecord(coord coordinate.ModuleCoordinate) reachabilityRemedy {
@@ -142,6 +168,7 @@ func reachabilityRemedies(coord coordinate.ModuleCoordinate) []reachabilityRemed
 		remedyRebuildGraphThenRescan(coord),
 		remedyProjectRooted(),
 		remedyScanUncovered(),
+		remedyRescanProject("/srv/checkouts/project"),
 		remedyShowRecord(coord),
 	}
 }

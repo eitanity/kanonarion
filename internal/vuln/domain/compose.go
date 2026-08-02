@@ -3,6 +3,8 @@ package domain
 import (
 	"errors"
 	"sort"
+
+	"github.com/eitanity/kanonarion/internal/coordinate"
 )
 
 // ErrNoRecordsToCompose is returned by Compose when handed no records. It is a
@@ -36,10 +38,17 @@ func Compose(records []VulnerabilityRecord) (VulnerabilityRecord, error) {
 	if len(records) == 0 {
 		return VulnerabilityRecord{}, ErrNoRecordsToCompose
 	}
+	return best(records), nil
+}
+
+// best returns the record the ladder serves first. It is separate from Compose
+// so a caller that has already established the group is non-empty does not have
+// to handle an error it has just ruled out.
+func best(records []VulnerabilityRecord) VulnerabilityRecord {
 	ordered := make([]VulnerabilityRecord, len(records))
 	copy(ordered, records)
 	sort.SliceStable(ordered, func(i, j int) bool { return servesBefore(ordered[i], ordered[j]) })
-	return ordered[0], nil
+	return ordered[0]
 }
 
 // ComposeAt returns the record a reader gets for one coordinate within one
@@ -60,11 +69,65 @@ func ComposeAt(records []VulnerabilityRecord, rooting Rooting) (VulnerabilityRec
 	if len(candidates) == 0 {
 		return VulnerabilityRecord{}, false, nil
 	}
-	composed, err := Compose(candidates)
-	if err != nil {
-		return VulnerabilityRecord{}, false, err
+	// best rather than Compose: the only error Compose has is an empty group, and
+	// the line above has just ruled it out. The error stays in the signature —
+	// the store's read paths branch on it — but it is one this function no longer
+	// has a way to produce, and the guard that pretended otherwise was dead code
+	// no test could reach.
+	return best(candidates), true, nil
+}
+
+// ComposeForConsumer returns the record that answers a CONSUMER's question about
+// coord — "is this advisory reachable in a build that consumes the module" —
+// together with the isolated-frame record it declined to answer from, if the
+// ledger holds one.
+//
+// It exists because the ladder in servesBefore ranks records that answer
+// different questions against each other, and the rung that decides is
+// call-graph completeness. An isolated scan builds the module alone, so it
+// records BUILT_WITH_BODIES; a govulncheck analysis rooted at the consuming
+// project records no completeness at all, because the call graph it searched was
+// not one this tool built. Every target-rooted record therefore sits on the
+// bottom completeness rung and every isolated one on the top, and the isolated
+// answer wins on that rung no matter how much older it is. Measured on a real
+// store, an isolated "NOT reachable" from 17:49 was served over two
+// target-rooted records from 17:52 and 17:54 that carried the consumer's route
+// to the vulnerable symbol.
+//
+// The rule here is not a new rung. Rooting stays a dimension: this picks the
+// frame FIRST and lets the ladder decide only within it. A record rooted at a
+// consumer answers the consumer's question; an isolated record answers a
+// different one and is returned as an aside so a caller can report it, labelled,
+// rather than as the answer.
+//
+// A record rooted at coord ITSELF is not a consumer frame — the module is its
+// own root, so there is no consumer above it for a route to start from — and it
+// is neither the answer nor the aside.
+//
+// When the ledger holds no consumer-rooted record at all the question cannot be
+// answered in its own frame, so the whole group competes exactly as Compose
+// would rank it and no aside is returned: nothing was declined.
+func ComposeForConsumer(records []VulnerabilityRecord, coord coordinate.ModuleCoordinate) (VulnerabilityRecord, VulnerabilityRecord, bool, error) {
+	if len(records) == 0 {
+		return VulnerabilityRecord{}, VulnerabilityRecord{}, false, ErrNoRecordsToCompose
 	}
-	return composed, true, nil
+	consumer := make([]VulnerabilityRecord, 0, len(records))
+	isolated := make([]VulnerabilityRecord, 0, len(records))
+	for _, r := range records {
+		switch rooting := RecordRooting(r); {
+		case rooting.IsTargetRooted() && !rooting.IsRootedAt(coord):
+			consumer = append(consumer, r)
+		case rooting == RootingIsolated:
+			isolated = append(isolated, r)
+		}
+	}
+	if len(consumer) == 0 {
+		return best(records), VulnerabilityRecord{}, false, nil
+	}
+	if len(isolated) == 0 {
+		return best(consumer), VulnerabilityRecord{}, false, nil
+	}
+	return best(consumer), best(isolated), true, nil
 }
 
 // atRooting narrows records to the requested frame, falling back to the whole
