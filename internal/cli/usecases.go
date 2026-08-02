@@ -195,6 +195,11 @@ type ScanModuleUseCase interface {
 // ScanWalkUseCase is the interface for scanning a full walk.
 type ScanWalkUseCase interface {
 	Scan(ctx context.Context, params vulnapp.ScanWalkParams) (vulndomain.WalkScanRun, error)
+
+	// ReusableRun reports a completed stored run that already answers what a new
+	// Scan of this walk against the current snapshot would ask. The caller
+	// decides whether to serve it; Scan itself always measures.
+	ReusableRun(ctx context.Context, walkID string, fresh bool) (vulndomain.WalkScanRun, bool, error)
 }
 
 // RescanWalkUseCase is the interface for re-gating a walk against a new snapshot.
@@ -209,6 +214,7 @@ type QueryVulnUseCase interface {
 	GetLatestRecordForWalk(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, walkID string) (vulndomain.VulnerabilityRecord, bool, error)
 	ListRecordsForModule(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]vulndomain.VulnerabilityRecord, error)
 	ListRecordsByFindingID(ctx context.Context, findingID, walkID string) ([]vulndomain.VulnerabilityRecord, error)
+	ListRecordsForRun(ctx context.Context, runID string) ([]vulndomain.VulnerabilityRecord, error)
 }
 
 // QueryScanRunsUseCase is the interface for querying scan runs and snapshots.

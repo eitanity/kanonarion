@@ -71,6 +71,20 @@ func Migrations() []sqlitestore.Migration {
 		// stored row still hashes to exactly what it did, and simply reports the
 		// empty directory that rows written before this column mean.
 		{Module: "walk", Version: 6, SQL: `ALTER TABLE walks ADD COLUMN project_dir TEXT NOT NULL DEFAULT ''`},
+		// The identity of the analysis a walk performed, as distinct from the seal
+		// over the record. Like project_dir it is outside the content hash and
+		// outside the serialised blob, so it needs a column of its own and no
+		// purge: every stored row still hashes to exactly what it did, and simply
+		// reports the empty identity that rows written before this column mean.
+		//
+		// Empty is not a match. The reuse lookup filters on a non-empty identity,
+		// so the pre-existing rows are never served as a reusable walk — they are
+		// re-walked once, which writes their identity, and are reusable from then
+		// on. Back-filling was rejected: the identity is a function of the record,
+		// so filling it would mean decompressing and rehashing every stored walk
+		// during a migration to save one re-walk per project.
+		{Module: "walk", Version: 7, SQL: `ALTER TABLE walks ADD COLUMN identity_hash TEXT NOT NULL DEFAULT '';
+        CREATE INDEX IF NOT EXISTS walks_identity_idx ON walks(identity_hash, target_path, target_version, scope)`},
 	}
 }
 
@@ -135,8 +149,8 @@ INSERT INTO walks (
     id, target_path, target_version,
     started_at, completed_at, overall_status,
     pipeline_version, operator, content_hash,
-    node_count, failure_count, scope, depth, project_dir, serialised
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    node_count, failure_count, scope, depth, project_dir, identity_hash, serialised
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (id) DO UPDATE SET
     target_path      = excluded.target_path,
     target_version   = excluded.target_version,
@@ -151,6 +165,7 @@ ON CONFLICT (id) DO UPDATE SET
     scope            = excluded.scope,
     depth            = excluded.depth,
     project_dir      = excluded.project_dir,
+    identity_hash    = excluded.identity_hash,
     serialised       = excluded.serialised`
 
 	_, err = s.db.DB().ExecContext(ctx, q,
@@ -159,7 +174,7 @@ ON CONFLICT (id) DO UPDATE SET
 		rec.CompletedAt.UTC().Format(time.RFC3339),
 		int(rec.OverallStatus),
 		rec.PipelineVersion, rec.Operator, rec.ContentHash,
-		nodeCount, failureCount, scope, depth, rec.ProjectDir, blob,
+		nodeCount, failureCount, scope, depth, rec.ProjectDir, rec.IdentityHash, blob,
 	)
 	if err != nil {
 		return fmt.Errorf("inserting walk record: %w", err)
@@ -170,13 +185,14 @@ ON CONFLICT (id) DO UPDATE SET
 // GetWalk retrieves a walk record by ID. Returns ErrWalkNotFound if absent.
 // Returns ErrWalkIntegrity if the stored hash does not verify.
 func (s *Store) GetWalk(ctx context.Context, id string) (domain.WalkRecord, error) {
-	const q = `SELECT serialised, content_hash, project_dir FROM walks WHERE id = ?`
+	const q = `SELECT serialised, content_hash, project_dir, identity_hash FROM walks WHERE id = ?`
 	row := s.db.DB().QueryRowContext(ctx, q, id)
 
 	var blob []byte
 	var storedHash string
 	var projectDir string
-	if err := row.Scan(&blob, &storedHash, &projectDir); errors.Is(err, sql.ErrNoRows) {
+	var identityHash string
+	if err := row.Scan(&blob, &storedHash, &projectDir, &identityHash); errors.Is(err, sql.ErrNoRows) {
 		return domain.WalkRecord{}, walkports.ErrWalkNotFound
 	} else if err != nil {
 		return domain.WalkRecord{}, fmt.Errorf("querying walk record: %w", err)
@@ -200,6 +216,11 @@ func (s *Store) GetWalk(ctx context.Context, id string) (domain.WalkRecord, erro
 	// between two checkouts of one project cannot make their walks differ. It is
 	// restored after the verification it plays no part in.
 	rec.ProjectDir = projectDir
+	// The identity rides beside the sealed blob for the same reason the project
+	// directory does: it is derived from the record rather than part of it, so
+	// the canonical form the hash covers has no such field. Restored after the
+	// verification it plays no part in.
+	rec.IdentityHash = identityHash
 	return rec, nil
 }
 
@@ -226,7 +247,7 @@ func (s *Store) ListWalks(ctx context.Context, filter walkports.WalkFilter) ([]w
 			&startedAt, &completedAt,
 			&status,
 			&sum.NodeCount, &sum.FailureCount,
-			&scope, &depth,
+			&scope, &depth, &sum.IdentityHash,
 		); serr != nil {
 			return nil, fmt.Errorf("scanning walk summary: %w", serr)
 		}
@@ -270,7 +291,7 @@ func buildListQuery(f walkports.WalkFilter) (string, []any) {
 	var q string
 	if f.LatestOnly {
 		q = `SELECT id, target_path, target_version, started_at, completed_at,
-	             overall_status, node_count, failure_count, scope, depth
+	             overall_status, node_count, failure_count, scope, depth, identity_hash
 	      FROM walks w1
 	      WHERE started_at = (
 	          SELECT MAX(started_at) FROM walks w2
@@ -279,7 +300,7 @@ func buildListQuery(f walkports.WalkFilter) (string, []any) {
 	      )`
 	} else {
 		q = `SELECT id, target_path, target_version, started_at, completed_at,
-	             overall_status, node_count, failure_count, scope, depth
+	             overall_status, node_count, failure_count, scope, depth, identity_hash
 	      FROM walks`
 	}
 	var conditions []string
@@ -304,6 +325,10 @@ func buildListQuery(f walkports.WalkFilter) (string, []any) {
 	if f.Scope != nil {
 		conditions = append(conditions, "scope = ?")
 		args = append(args, string(*f.Scope))
+	}
+	if f.IdentityHash != nil {
+		conditions = append(conditions, "identity_hash = ?")
+		args = append(args, *f.IdentityHash)
 	}
 	if f.Depth != nil {
 		// Full walks are stored as "" in the DB (omitempty convention).

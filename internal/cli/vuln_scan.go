@@ -75,7 +75,7 @@ func newVulnScanCmd(stdout, stderr io.Writer) *cobra.Command {
 			if moduleCoord != "" {
 				return runVulnScanByModule(cmd.Context(), moduleCoord, f, force, fresh, enableReachability, callGraphWorkers, jsonOut, goBinary, operator, policyPath, noProgress, stdout, stderr)
 			}
-			return runVulnScan(cmd.Context(), args[0], force, fresh, enableReachability, callGraphWorkers, binaryModePrePass, jsonOut, goBinary, operator, "", policyPath, noVendor, noProgress, stdout, stderr)
+			return runVulnScan(cmd.Context(), args[0], force, fresh, enableReachability, callGraphWorkers, binaryModePrePass, jsonOut, goBinary, operator, "", policyPath, noVendor, noProgress, true, stdout, stderr)
 		},
 	}
 
@@ -140,7 +140,7 @@ func runVulnScanScope(ctx context.Context, gomodPath string, scope depScope, for
 	}
 
 	_, _ = fmt.Fprintf(progressWriter(stderr, noProgress), "scanning %s project walk %s\n", scope, walks[0].ID)
-	return runVulnScan(ctx, walks[0].ID, force, fresh, enableReachability, callGraphWorkers, false, jsonOut, goBinary, operator, filepath.Dir(gomodPath), policyPath, noVendor, noProgress, stdout, stderr)
+	return runVulnScan(ctx, walks[0].ID, force, fresh, enableReachability, callGraphWorkers, false, jsonOut, goBinary, operator, filepath.Dir(gomodPath), policyPath, noVendor, noProgress, true, stdout, stderr)
 }
 
 // scopeWalkFlagHint returns the `walk` flag that produces a walk of the given
@@ -194,7 +194,10 @@ func applyScanVCSHosts(ctx context.Context, scan ScanWalkUseCase, policyPath str
 	return nil
 }
 
-func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachability bool, callGraphWorkers int, binaryModePrePass, jsonOut bool, goBinary, operator, projectDir, policyPath string, noVendor, noProgress bool, stdout, stderr io.Writer) error {
+// announceReuse controls whether a served run announces itself on stderr. It is
+// false only for `audit`, which narrates the whole derivation — walk and scan
+// together — in one statement of its own, and would otherwise say it twice.
+func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachability bool, callGraphWorkers int, binaryModePrePass, jsonOut bool, goBinary, operator, projectDir, policyPath string, noVendor, noProgress, announceReuse bool, stdout, stderr io.Writer) error {
 	logger := buildLogger(logLevel, stderr)
 
 	if goBinary != "" {
@@ -241,11 +244,24 @@ func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachab
 	// walk of any size emits one of these lines per module — 321 on a project
 	// scan — and that stream is the reason the flag exists.
 	progressOut := progressWriter(stderr, noProgress)
+
+	// A scan of the same walk against the same advisory snapshot has already
+	// answered this question. Re-running govulncheck over the whole build list
+	// would reproduce the stored verdicts at the cost of the run — the dominant
+	// cost of the command — so the stored run is served instead, and the report
+	// says so rather than letting a served answer read as a fresh measurement.
+	// --force and --fresh are the two ways to insist on measuring.
+	if !force {
+		if prior, ok, rerr := ctr.ScanWalk.ReusableRun(ctx, walkID, fresh); rerr != nil {
+			return fmt.Errorf("checking for a reusable scan run: %w", rerr)
+		} else if ok {
+			return serveStoredScanRun(ctx, prior, ctr, jsonOut, announceReuse, stdout, stderr)
+		}
+	}
+
 	_, _ = fmt.Fprintf(progressOut, "Scanning walk %s...\n", walkID)
 
-	var affected, withdrawn []vulnScanAffected
-	var failedCoords []string
-	unscannable := newUnscannableRollup()
+	rollups := newVulnScanRollups()
 
 	run, err := ctr.ScanWalk.Scan(ctx, application2.ScanWalkParams{
 		WalkID:             walkID,
@@ -261,43 +277,102 @@ func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachab
 			// Only the line is suppressed; the bucketing below always runs, because
 			// the roll-ups it feeds are the result, printed to stdout.
 			writeVulnScanProgress(record, coord, current, total, progressOut)
-			// Bucketed by axis, not by the collapsed word, so a module can appear in
-			// both roll-ups. A metadata-only record that matched an advisory is both
-			// a finding and a coverage gap; routing on the single word put it in the
-			// affected list and silently left it out of the coverage roll-up, which
-			// is where the reader learns the match was never checked for
-			// reachability.
-			coverage, findings := vuldomain.RecordAxes(record)
-			// Three findings values, three destinations. A withdrawn module is not
-			// affected and must leave the affected roll-up; it is also not silent and
-			// must not thereby leave the report.
-			switch findings {
-			case vuldomain.FindingsRecordAffected:
-				affected = append(affected, vulnScanAffected{coord: coord.Path() + "@" + coord.Version(), record: record})
-			case vuldomain.FindingsRecordWithdrawn:
-				withdrawn = append(withdrawn, vulnScanAffected{coord: coord.Path() + "@" + coord.Version(), record: record})
-			case vuldomain.FindingsRecordClean:
-				// No advisory matched: neither findings roll-up names it.
-			}
-			// Every Unscannable is bucketed, not just the out-of-toolchain one:
-			// the same advisory matching ran for all of them, so a record that
-			// appeared in no roll-up was being hidden from the reader on the
-			// strength of its reason code alone.
-			switch coverage {
-			case vuldomain.CoverageFailedScan:
-				failedCoords = append(failedCoords, coord.Path()+"@"+coord.Version())
-			case vuldomain.CoverageUnscannable:
-				unscannable.add(record.UnscanReason, coord.Path()+"@"+coord.Version(), record.UnscannableReason)
-			case vuldomain.CoverageAnalysed:
-				// Analysed: the findings bucket above is the whole answer.
-			}
+			rollups.add(coord, record)
 		},
 	})
 	if err != nil {
 		return fmt.Errorf("vuln scan failed: %w", err)
 	}
 
-	if perr := printVulnScanResult(run, affected, withdrawn, failedCoords, unscannable, jsonOut, stdout); perr != nil {
+	if perr := printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.failed, rollups.unscannable, jsonOut, stdout); perr != nil {
+		return perr
+	}
+	return vulnScanCoverageExit(run)
+}
+
+// vulnScanRollups buckets per-module scan verdicts into the sections the report
+// prints. It is filled identically whether the verdicts came from a scan running
+// now or from the records a stored run wrote, so a served report is assembled by
+// the same code as a measured one and cannot drift from it.
+type vulnScanRollups struct {
+	affected    []vulnScanAffected
+	withdrawn   []vulnScanAffected
+	failed      []string
+	unscannable *unscannableRollup
+}
+
+func newVulnScanRollups() *vulnScanRollups {
+	return &vulnScanRollups{unscannable: newUnscannableRollup()}
+}
+
+// add buckets one module's record.
+//
+// Bucketed by axis, not by the collapsed word, so a module can appear in both
+// roll-ups. A metadata-only record that matched an advisory is both a finding
+// and a coverage gap; routing on the single word put it in the affected list and
+// silently left it out of the coverage roll-up, which is where the reader learns
+// the match was never checked for reachability.
+func (r *vulnScanRollups) add(coord coordinate.ModuleCoordinate, record vuldomain.VulnerabilityRecord) {
+	coverage, findings := vuldomain.RecordAxes(record)
+	// Three findings values, three destinations. A withdrawn module is not
+	// affected and must leave the affected roll-up; it is also not silent and
+	// must not thereby leave the report.
+	switch findings {
+	case vuldomain.FindingsRecordAffected:
+		r.affected = append(r.affected, vulnScanAffected{coord: coord.Path() + "@" + coord.Version(), record: record})
+	case vuldomain.FindingsRecordWithdrawn:
+		r.withdrawn = append(r.withdrawn, vulnScanAffected{coord: coord.Path() + "@" + coord.Version(), record: record})
+	case vuldomain.FindingsRecordClean:
+		// No advisory matched: neither findings roll-up names it.
+	}
+	// Every Unscannable is bucketed, not just the out-of-toolchain one: the same
+	// advisory matching ran for all of them, so a record that appeared in no
+	// roll-up was being hidden from the reader on the strength of its reason code
+	// alone.
+	switch coverage {
+	case vuldomain.CoverageFailedScan:
+		r.failed = append(r.failed, coord.Path()+"@"+coord.Version())
+	case vuldomain.CoverageUnscannable:
+		r.unscannable.add(record.UnscanReason, coord.Path()+"@"+coord.Version(), record.UnscannableReason)
+	case vuldomain.CoverageAnalysed:
+		// Analysed: the findings bucket above is the whole answer.
+	}
+}
+
+// serveStoredScanRun reports a scan run that already exists instead of
+// re-deriving it, and states on stderr that it did.
+//
+// The statement goes to stderr for the same reason the verification-coverage
+// aggregate does: stdout is the data channel a --json caller pipes into jq, and
+// the provenance of the answer is a report about the run, not part of it. The
+// run's own JSON is unchanged and already carries its id, its dates and its
+// snapshot, so a machine reader can see the answer's age without a new field.
+//
+// The roll-ups are rebuilt from the records THAT RUN wrote, so the report is the
+// one that run produced rather than a fresh summary over whatever each module's
+// latest verdict has since become.
+func serveStoredScanRun(ctx context.Context, run vuldomain.WalkScanRun, ctr *Container, jsonOut, announce bool, stdout, stderr io.Writer) error {
+	recs, err := ctr.QueryVuln.ListRecordsForRun(ctx, run.ID)
+	if err != nil {
+		return fmt.Errorf("reading the reused scan run's records: %w", err)
+	}
+
+	rollups := newVulnScanRollups()
+	for _, rec := range recs {
+		rollups.add(rec.Coordinate, rec)
+	}
+
+	if announce {
+		if _, werr := fmt.Fprintf(stderr,
+			"reusing scan run %s of %s against snapshot %s@%s; nothing was re-scanned (--fresh to re-measure)\n",
+			run.ID, run.CompletedAt.UTC().Format(time.RFC3339),
+			run.Snapshot.Source(), run.Snapshot.Version(),
+		); werr != nil {
+			return fmt.Errorf("writing output: %w", werr)
+		}
+	}
+
+	if perr := printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.failed, rollups.unscannable, jsonOut, stdout); perr != nil {
 		return perr
 	}
 	return vulnScanCoverageExit(run)
@@ -618,7 +693,7 @@ func runVulnScanByModule(ctx context.Context, moduleCoord string, f commonWalkFl
 
 	walkID := summaries[0].ID
 	logger.Debug("vuln-scan: resolved module to walk", "module", moduleCoord, "walk_id", walkID)
-	return runVulnScan(ctx, walkID, force, fresh, enableReachability, callGraphWorkers, false, jsonOut, goBinary, operator, "", policyPath, false, noProgress, stdout, stderr)
+	return runVulnScan(ctx, walkID, force, fresh, enableReachability, callGraphWorkers, false, jsonOut, goBinary, operator, "", policyPath, false, noProgress, true, stdout, stderr)
 }
 
 // newVulnScanRescanCmd returns the vuln-scan-rescan command.

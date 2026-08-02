@@ -230,9 +230,15 @@ type WalkFilter struct {
 	OverallStatus *walkdomain.WalkStatus       // nil = any status
 	Scope         *walkdomain.WalkScope        // nil = any scope
 	Depth         *walkdomain.WalkDepth        // nil = any depth
-	Limit         int                          // 0 = no limit
-	Offset        int
-	LatestOnly    bool // true: return only the latest unique (target, scope) combination
+	// IdentityHash restricts results to walks that performed the same analysis
+	// (see walkdomain.WalkRecord.IdentityHash). nil = any identity. The empty
+	// string is a legitimate filter value only in the sense that it selects the
+	// rows written before identities were recorded; callers looking for a reusable
+	// walk must never pass it, because an absent identity matches nothing.
+	IdentityHash *string
+	Limit        int // 0 = no limit
+	Offset       int
+	LatestOnly   bool // true: return only the latest unique (target, scope) combination
 }
 
 // WalkSummary is a lightweight projection of a WalkRecord for list views.
@@ -248,4 +254,7 @@ type WalkSummary struct {
 	OverallStatus walkdomain.WalkStatus `json:"overall_status"`
 	NodeCount     int                   `json:"node_count"`
 	FailureCount  int                   `json:"failure_count"`
+	// IdentityHash names the analysis this walk performed. Empty for a walk
+	// written before identities were recorded.
+	IdentityHash string `json:"identity_hash,omitempty"`
 }

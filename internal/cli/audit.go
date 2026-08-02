@@ -148,7 +148,14 @@ type auditModuleResult struct {
 	PolicyUnevaluated bool   `json:"policy_unevaluated,omitempty"`
 	IsLatest          bool   `json:"is_latest"`
 	LatestVersion     string `json:"latest_version,omitempty"`
-	DaysBehind        int    `json:"days_behind,omitempty"`
+	// LatestReleaseAgeDays is how long ago the LATEST release shipped, not how
+	// far behind the pin is. It replaces the `days_behind` key, which named a
+	// quantity the value never held: the number is the age of the newest release,
+	// so an eighteen-month-old pin on an actively released module reported a
+	// smaller figure than a current pin on a quiet one. See latestResult in
+	// latest.go for why the genuine pin-to-latest distance is not emitted at all
+	// rather than approximated.
+	LatestReleaseAgeDays int `json:"latest_release_age_days,omitempty"`
 	// NewerMajorModule/NewerMajorLatest are the SEPARATE major-line fact: a
 	// module's next major version lives at a different path, so IsLatest — which
 	// is about this path — can be true while a whole major line is available.
@@ -247,9 +254,16 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 		staleness = newStalenessResolver(proxy, ctr.StalenessLedger, activeConfig.Staleness.TTL, f.fresh)
 	}
 
-	results, err := auditScope(ctx, coords, scope, f, staleness, ctr, stderr)
+	results, derivation, err := auditScope(ctx, coords, scope, f, staleness, ctr, stderr)
 	if err != nil {
 		return err
+	}
+
+	// Where the answer came from, before the answer itself. On stderr for the
+	// same reason the coverage aggregate is: a --json caller pipes stdout into
+	// jq, and a statement about the run is not one of the run's rows.
+	if derr := writeAuditDerivation(stderr, derivation); derr != nil {
+		return derr
 	}
 
 	// The aggregate goes to stderr on both paths: a whole-graph collapse in
@@ -272,6 +286,48 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 		return err
 	}
 	return auditBlockingErr(results)
+}
+
+// auditDerivation records where an audit's two expensive answers came from: the
+// walk that fixed the dependency set, and the vulnerability scan judged against
+// it. It exists so the report can say which parts of the answer were measured by
+// this invocation and which were served from records, because a reader cannot
+// otherwise tell a fresh measurement from a stored one — and the two carry
+// different weight in exactly the cases (release evidence, incident response)
+// where the distinction decides what the answer is worth.
+type auditDerivation struct {
+	walkReused bool
+	walkRecord walkdomain.WalkRecord
+	scanReused bool
+	scanRun    vulndomain.WalkScanRun
+}
+
+// writeAuditDerivation states the provenance of the run's two derived answers.
+//
+// Reuse is named with the record it served and the date that record was made, so
+// the statement is checkable; a re-derivation names what it produced. The walk
+// line says "re-resolved" even when reused, because that is what happened: the
+// go.mod was resolved again and the resolution turned out to be identical to a
+// stored one. Calling that "skipped" would claim less work than was done, and
+// calling it "fresh" would claim a new record exists when none was written.
+func writeAuditDerivation(w io.Writer, d auditDerivation) error {
+	walkLine := fmt.Sprintf("walk %s: derived by this run", d.walkRecord.ID)
+	if d.walkReused {
+		walkLine = fmt.Sprintf("walk %s: re-resolved and found identical to the walk taken %s; that record was reused",
+			d.walkRecord.ID, d.walkRecord.CompletedAt.UTC().Format(time.RFC3339))
+	}
+
+	scanLine := "vulnerability scan: derived by this run"
+	if d.scanReused {
+		scanLine = fmt.Sprintf("vulnerability scan: reused run %s of %s against snapshot %s@%s; nothing was re-scanned (--fresh to re-measure)",
+			d.scanRun.ID, d.scanRun.CompletedAt.UTC().Format(time.RFC3339),
+			d.scanRun.Snapshot.Source(), d.scanRun.Snapshot.Version())
+	}
+
+	if _, err := fmt.Fprintf(w, "derivation:\n  %s\n  %s\n", walkLine, scanLine); err != nil {
+		return fmt.Errorf("writing output: %w", err)
+	}
+	return nil
 }
 
 // walkScopeFor maps a CLI depScope to the walk-record WalkScope tag. The string
@@ -320,10 +376,11 @@ func auditScope(
 	staleness *staleapp.Resolver,
 	ctr *Container,
 	stderr io.Writer,
-) ([]auditModuleResult, error) {
+) ([]auditModuleResult, auditDerivation, error) {
+	var derivation auditDerivation
 	modulePath, err := readGoModulePath(f.gomodPath)
 	if err != nil {
-		return nil, err
+		return nil, derivation, err
 	}
 
 	// audit narrates three stages on stderr and drives a walk and a scan that
@@ -335,44 +392,47 @@ func auditScope(
 	_, _ = fmt.Fprintf(progressOut, "==> audit: walking project %s (%d %s dependencies)\n", f.gomodPath, len(coords), scope)
 
 	progress := newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
-	if werr := runWalkProject(ctx, f.gomodPath, f.force, true, 0, "", f.policyPath, f.skipVCSVerify, scope,
-		walkdomain.WalkDepthFull, "", false, f.stdlibFromGoMod, progress, ctr.ExecuteWalk, nil, io.Discard, stderr); werr != nil {
+	walkResult, werr := runWalkProject(ctx, f.gomodPath, f.force, true, 0, "", f.policyPath, f.skipVCSVerify, scope,
+		walkdomain.WalkDepthFull, "", false, f.stdlibFromGoMod, progress, ctr.ExecuteWalk, nil, io.Discard, stderr)
+	if werr != nil {
 		// A partial walk is tolerated (allowPartial=true above): individual
 		// unfetchable nodes surface as "(not fetched)" rows. Only a hard walk
 		// failure or cancellation leaves no usable record.
 		_, _ = fmt.Fprintf(stderr, "walk: %v\n", werr)
 	}
+	derivation.walkReused = walkResult.Reused
+	derivation.walkRecord = walkResult.Record
 
 	// The project walk's target is the local main module; find its record.
 	localCoord, cErr := coordinate.NewLocalCoordinate(modulePath)
 	if cErr != nil {
-		return nil, fmt.Errorf("project coordinate for %s: %w", modulePath, cErr)
+		return nil, derivation, fmt.Errorf("project coordinate for %s: %w", modulePath, cErr)
 	}
 	walkScope := walkdomain.WalkScope(scope)
 	walks, qerr := ctr.QueryWalks.ListWalks(ctx, walkports.WalkFilter{Target: &localCoord, Scope: &walkScope, Limit: 1})
 	if qerr != nil {
-		return nil, fmt.Errorf("querying project walk: %w", qerr)
+		return nil, derivation, fmt.Errorf("querying project walk: %w", qerr)
 	}
 	if len(walks) == 0 {
-		return nil, fmt.Errorf("project walk produced no record for %s", localCoord)
+		return nil, derivation, fmt.Errorf("project walk produced no record for %s", localCoord)
 	}
 	walkID := walks[0].ID
 
 	rec, gerr := ctr.QueryWalks.GetWalk(ctx, walkID)
 	if gerr != nil {
-		return nil, fmt.Errorf("loading project walk %s: %w", walkID, gerr)
+		return nil, derivation, fmt.Errorf("loading project walk %s: %w", walkID, gerr)
 	}
 
 	// In --from-modcache mode a module that fails go.sum verification is a hard
 	// error: stop before extract/scan and exit non-zero rather than reporting a
 	// row for it.
 	if gateErr := modcacheWalkGate(rec, localCoord); gateErr != nil {
-		return nil, gateErr
+		return nil, derivation, gateErr
 	}
 	// On the normal path, a local go.sum mismatch is tamper-evidence: fail hard
 	// before extract/scan rather than reporting a row for the tampered module.
 	if gateErr := goSumWalkGate(rec, localCoord); gateErr != nil {
-		return nil, gateErr
+		return nil, derivation, gateErr
 	}
 
 	_, _ = fmt.Fprintf(progressOut, "==> audit: extracting licenses for walk %s\n", walkID)
@@ -381,14 +441,25 @@ func auditScope(
 		_, _ = fmt.Fprintf(stderr, "extract: %v\n", eerr)
 	}
 
+	// Asked before the scan is driven so the derivation statement can name the
+	// run that answered, and answered with the same lookup the scan itself makes:
+	// audit narrates the whole derivation in one place, so runVulnScan is told not
+	// to announce the reuse a second time.
+	if prior, ok, rerr := ctr.ScanWalk.ReusableRun(ctx, walkID, f.fresh); rerr != nil {
+		_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", rerr)
+	} else if ok && !f.force {
+		derivation.scanReused = true
+		derivation.scanRun = prior
+	}
+
 	_, _ = fmt.Fprintf(progressOut, "==> audit: scanning vulnerabilities for walk %s\n", walkID)
-	if verr := runVulnScan(ctx, walkID, f.force, f.fresh, false, 1, false, false, "", os.Getenv("USER"), filepath.Dir(f.gomodPath), f.policyPath, false, f.noProgress, io.Discard, stderr); verr != nil {
+	if verr := runVulnScan(ctx, walkID, f.force, f.fresh, false, 1, false, false, "", os.Getenv("USER"), filepath.Dir(f.gomodPath), f.policyPath, false, f.noProgress, false, io.Discard, stderr); verr != nil {
 		_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", verr)
 	}
 
 	overrides, err := ctr.LicenseOverrides.LoadOverrides(ctx)
 	if err != nil {
-		return nil, fmt.Errorf("loading license overrides: %w", err)
+		return nil, derivation, fmt.Errorf("loading license overrides: %w", err)
 	}
 
 	// Iterate the walk's dependency nodes (every graph node bar the local root):
@@ -403,12 +474,12 @@ func auditScope(
 	for _, node := range depNodes {
 		res, rerr := buildAuditResult(ctx, node, walkID, policyScope, overrides, staleness, ctr, stderr)
 		if rerr != nil {
-			return nil, rerr
+			return nil, derivation, rerr
 		}
 		res.Direct = node.DirectDependency
 		results = append(results, res)
 	}
-	return results, nil
+	return results, derivation, nil
 }
 
 // auditDependencyNodes returns the dependency nodes of a project walk: every
@@ -465,12 +536,13 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, po
 		}
 		if ans.LatestVersion != "" {
 			res.StalenessLookedUpAt = ans.LookedUpAt
+			// The release age is a fact about the release, so it is recorded
+			// whether or not the pin is current; only LatestVersion, which names a
+			// version the project is not on, is gated on the pin being behind.
+			res.LatestReleaseAgeDays = latestReleaseAgeDays(ans.LatestPublishedAt)
 			if ans.LatestVersion != coord.Version() {
 				res.IsLatest = false
 				res.LatestVersion = ans.LatestVersion
-				if !ans.LatestPublishedAt.IsZero() {
-					res.DaysBehind = int(time.Since(ans.LatestPublishedAt).Hours() / 24)
-				}
 			}
 			res.MajorProbed = ans.NewerMajor.Probed
 			res.NewerMajorModule = ans.NewerMajor.Path
@@ -798,10 +870,10 @@ func printAuditTable(stdout io.Writer, results []auditModuleResult) error {
 		}
 		staleness := "current"
 		if !r.IsLatest {
-			if r.DaysBehind == 0 {
+			if r.LatestReleaseAgeDays == 0 {
 				staleness = fmt.Sprintf("latest: %s (today)", r.LatestVersion)
 			} else {
-				staleness = fmt.Sprintf("latest: %s (%d days ago)", r.LatestVersion, r.DaysBehind)
+				staleness = fmt.Sprintf("latest: %s (%d days ago)", r.LatestVersion, r.LatestReleaseAgeDays)
 			}
 		}
 		// Appended, not substituted. "current" remains true of this module path;

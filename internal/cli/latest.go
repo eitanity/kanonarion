@@ -86,8 +86,30 @@ type latestResult struct {
 	// no date at all. omitzero is the form that actually omits it (and is the form
 	// WalkSummary.CompletedAt already uses for the same reason).
 	LatestDate time.Time `json:"latest_date,omitzero"`
-	DaysBehind int       `json:"days_behind"`
-	IsLatest   bool      `json:"is_latest"`
+	// LatestReleaseAgeDays is how long ago the LATEST release shipped — the age
+	// of Latest, measured from LatestDate to now. It is not how far behind the
+	// pin is, and it was emitted as `days_behind` until that name was corrected:
+	// under the old key a project pinned eighteen months back on an actively
+	// released module read as "2", while a current pin on a quiet module read as
+	// "1272", inverting the order a reader sorting by it expects.
+	//
+	// How far behind the pin actually is would need the PINNED version's
+	// publication date. Nothing kanonarion records carries it: the staleness
+	// ledger holds one row per module path with the LATEST version's publication
+	// time, and the fetch ledger holds when kanonarion fetched an artefact, which
+	// is a fact about this machine and not about the release. Obtaining it would
+	// mean one extra proxy request per module — a second network sweep, on the
+	// command whose sweep cost the ledger exists to remove — and would still be
+	// unavailable to an offline run. So the field is not emitted at all rather
+	// than approximated under a name that promises precision.
+	//
+	// Absent (omitempty) when the proxy supplied no publication date for the
+	// latest version, which is the same condition that leaves LatestDate absent.
+	// It is populated whether or not the pin is current: the age of a release is
+	// a fact about the release, and suppressing it for an up-to-date pin would
+	// make the field mean something different on different rows.
+	LatestReleaseAgeDays int  `json:"latest_release_age_days,omitempty"`
+	IsLatest             bool `json:"is_latest"`
 
 	// NewerMajor is the newest major-suffixed path above the pinned major, when
 	// one resolves. It is a SEPARATE field from Latest and is never folded into
@@ -112,6 +134,7 @@ type latestResult struct {
 func (r *latestResult) applyStaleness(ans staleapp.Answer) {
 	r.Latest = ans.LatestVersion
 	r.LatestDate = ans.LatestPublishedAt
+	r.LatestReleaseAgeDays = latestReleaseAgeDays(ans.LatestPublishedAt)
 	r.NewerMajorModule = ans.NewerMajor.Path
 	r.NewerMajorLatest = ans.NewerMajor.Version
 	r.NewerMajorDate = ans.NewerMajor.PublishedAt
@@ -182,9 +205,8 @@ func runLatestModules(ctx context.Context, modules []string, resolver *staleapp.
 			return fmt.Errorf("querying latest for %s: %w", modulePath, err)
 		}
 		res := latestResult{
-			Module:     modulePath,
-			DaysBehind: 0,
-			IsLatest:   true,
+			Module:   modulePath,
+			IsLatest: true,
 		}
 		res.applyStaleness(ans)
 		results = append(results, res)
@@ -243,6 +265,16 @@ func writeLatestSingleLine(stdout io.Writer, r latestResult) error {
 	return nil
 }
 
+// latestReleaseAgeDays is how many whole days ago publishedAt was. A zero
+// publication time yields zero: the proxy supplied no date, so there is no age
+// to report and the field is omitted rather than filled with one.
+func latestReleaseAgeDays(publishedAt time.Time) int {
+	if publishedAt.IsZero() {
+		return 0
+	}
+	return int(time.Since(publishedAt).Hours() / 24)
+}
+
 func runLatestGomod(ctx context.Context, gomodPath string, scope depScope, resolver *staleapp.Resolver, stdout, stderr io.Writer) error {
 	type pinnedDep struct {
 		path    string
@@ -295,19 +327,12 @@ func runLatestGomod(ctx context.Context, gomodPath string, scope depScope, resol
 			_, _ = fmt.Fprintf(stderr, "latest %s: %v\n", dep.path, lerr)
 		}
 
-		days := 0
-		if !ans.LatestPublishedAt.IsZero() {
-			days = int(time.Since(ans.LatestPublishedAt).Hours() / 24)
-		}
 		res := latestResult{
 			Module:   dep.path,
 			Pinned:   dep.version,
 			IsLatest: ans.LatestVersion == dep.version,
 		}
 		res.applyStaleness(ans)
-		if !res.IsLatest {
-			res.DaysBehind = days
-		}
 		results = append(results, res)
 	}
 
@@ -337,10 +362,10 @@ func printLatestTable(stdout io.Writer, results []latestResult) error {
 			status = "(error resolving latest)"
 		case r.IsLatest:
 			status = "current"
-		case r.DaysBehind == 0:
+		case r.LatestReleaseAgeDays == 0:
 			status = fmt.Sprintf("latest: %s (released today)", r.Latest)
 		default:
-			status = fmt.Sprintf("latest: %s (%d days ago)", r.Latest, r.DaysBehind)
+			status = fmt.Sprintf("latest: %s (%d days ago)", r.Latest, r.LatestReleaseAgeDays)
 		}
 		// The newer-major clause is appended, never substituted: "current" stays
 		// true of the module's own path and the major line is stated beside it.

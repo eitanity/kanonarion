@@ -196,7 +196,7 @@ kanonarion audit --gomod ./go.mod --json
     "vuln_findings": 0,
     "is_latest": false,
     "latest_version": "v0.36.0",
-    "days_behind": 6
+    "latest_release_age_days": 6
   },
   {
     "coordinate": "golang.org/x/vuln@v1.3.0",
@@ -218,7 +218,7 @@ kanonarion audit --gomod ./go.mod --json
     "vuln_withdrawn": 1,
     "is_latest": false,
     "latest_version": "v1.5.0",
-    "days_behind": 54
+    "latest_release_age_days": 54
   }
 ]
 ```
@@ -226,6 +226,12 @@ kanonarion audit --gomod ./go.mod --json
 `vuln_findings` counts **every** advisory on the record, retracted ones
 included. `vuln_withdrawn` is the retracted subset, present only when non-zero;
 live advisories are the difference between the two.
+
+`latest_release_age_days` is **how long ago the latest release shipped**, not how
+far behind the pin is. A stale pin on an actively released module reports a small
+number; a current pin on a quiet module reports a large one. There is no
+`days_behind` field. See
+[`latest`](latest.md#latest_release_age_days) for the worked example.
 
 ## Pipeline
 
@@ -325,15 +331,72 @@ kanonarion sbom --package ./cmd/kanonarion   # reuses audit's project walk
 `audit` is safe to re-run, but a warm re-run is **not** fully offline. The walk,
 licence, and vulnerability-database stages are cached and do no network I/O on a
 warm store (`--force` re-fetches the modules and re-runs the scan; `--fresh`
-re-downloads the vulnerability database). Two stages always do work on every run:
+re-downloads the vulnerability database).
 
 - **Staleness** - `audit` queries the module proxy for each module's latest
-  version (`@latest`) on every run. This is a live network call per module and
-  is never cached.
-- **Project-rooted vuln scan** - `govulncheck` re-runs over the live working
-  tree every time (never served from a coordinate cache - see Pipeline above).
-  This is local CPU work, not a network fetch, and reuses the cached
-  vulnerability database unless `--fresh` is passed.
+  version (`@latest`). Answers are served from the staleness ledger inside
+  `staleness.ttl` (default `1h`); `--fresh` bypasses the read and re-queries.
+- **Walk** - the project's `go.mod` is **always re-resolved**, so an edit to the
+  working tree is always picked up. When the resolution matches a walk already
+  stored, that walk's record is reused rather than a new one recorded. See
+  [Reuse and re-derivation](#reuse-and-re-derivation).
+- **Project-rooted vuln scan** - `govulncheck` runs over the live working tree
+  when the walk or the advisory snapshot has changed, and is served from the
+  stored run when neither has.
+
+## Reuse and re-derivation
+
+Every run reports, on **stderr**, where its two expensive answers came from:
+
+```
+derivation:
+  walk 01KZ0DJEV5XKAV1PSN1JM47D37: re-resolved and found identical to the walk taken 2026-08-02T05:01:29Z; that record was reused
+  vulnerability scan: reused run vscan-01KZ0DJEV5XKAV1PSN1JM47D37-1785646889 of 2026-08-02T05:01:35Z against snapshot vuln.go.dev@2026-07-27T20:14:16Z; nothing was re-scanned (--fresh to re-measure)
+```
+
+or, when the run measured for itself:
+
+```
+derivation:
+  walk 01KZ0DJEV5XKAV1PSN1JM47D37: derived by this run
+  vulnerability scan: derived by this run
+```
+
+Reading the walk line: **"re-resolved and found identical"** means the `go.mod`
+was resolved again this run and produced the same dependency set as the named
+walk, so that walk's record — and every licence, vulnerability and SBOM record
+keyed to it — answers this run too. **"derived by this run"** means a new walk
+was recorded.
+
+Reading the scan line: **"reused run … of &lt;date&gt;"** names the scan run whose
+verdicts you are reading and when it was made; `govulncheck` did not run. The
+findings, roll-ups and exit code are the ones that run produced.
+
+A new walk is recorded whenever the target, scope, depth, policy, build
+environment, resolved graph (every module at every selected version, every edge,
+every artefact hash) or per-node outcome differs — so editing `go.mod`, bumping a
+dependency, switching scope or changing the policy all produce a new walk and a
+new scan.
+
+A stored scan is reused only when **all** of these hold:
+
+| condition | |
+|---|---|
+| same walk | verdicts belong to the dependency set they were derived over |
+| same advisory snapshot (source, version, retrieval time and seal) | a newer advisory database re-scans |
+| same scan pipeline version | a newer kanonarion re-scans |
+| the stored run's coverage is **complete** | a partial or failed run is never served |
+
+To force a fresh measurement:
+
+- `--fresh` — fetches a live advisory snapshot and re-scans. Use this for release
+  evidence that must be measured now. Expect minutes rather than seconds: the
+  advisory database is downloaded and `govulncheck` runs over the whole build.
+- `--force` — re-fetches the modules, records a new walk and re-scans.
+
+Note that `--fresh` re-scans but does **not** force a new walk: an unchanged
+`go.mod` still resolves to the same walk, and the derivation line will report the
+walk as reused and the scan as derived.
 
 ## Local `go.sum` verification
 

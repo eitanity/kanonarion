@@ -74,6 +74,19 @@ func (uc *QueryVulnUseCase) ListRecordsForModule(
 	return recs, nil
 }
 
+// ListRecordsForRun returns the vulnerability records one scan run wrote — the
+// per-module verdicts that run established, not the latest verdict each module
+// has since acquired. It is the read a caller serving a stored run needs: a
+// report assembled from "latest per module" could mix generations and present a
+// summary no single run ever produced.
+func (uc *QueryVulnUseCase) ListRecordsForRun(ctx context.Context, runID string) ([]domain.VulnerabilityRecord, error) {
+	recs, err := uc.store.ListVulnerabilityRecords(ctx, runID)
+	if err != nil {
+		return nil, fmt.Errorf("listing vulnerability records for scan run %q: %w", runID, err)
+	}
+	return recs, nil
+}
+
 // ListRecordsByFindingID returns the vulnerability records containing a finding
 // with the given ID. An empty walkID spans the whole store; a non-empty one
 // restricts the answer to the modules that walk's scan runs covered.

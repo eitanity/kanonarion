@@ -60,6 +60,9 @@ func (f *fakeWalkStore) ListWalks(_ context.Context, filter walkports.WalkFilter
 		if filter.Target != nil && (rec.Target.Path() != filter.Target.Path() || rec.Target.Version() != filter.Target.Version()) {
 			continue
 		}
+		if filter.IdentityHash != nil && rec.IdentityHash != *filter.IdentityHash {
+			continue
+		}
 		summaries = append(summaries, walkports.WalkSummary{
 			ID:            rec.ID,
 			Target:        rec.Target,
@@ -68,6 +71,7 @@ func (f *fakeWalkStore) ListWalks(_ context.Context, filter walkports.WalkFilter
 			OverallStatus: rec.OverallStatus,
 			NodeCount:     len(rec.PerNodeResults),
 			Depth:         rec.Depth,
+			IdentityHash:  rec.IdentityHash,
 		})
 	}
 	// Mimic SQLite ordering: started_at DESC.

@@ -835,6 +835,19 @@ type FakeScanWalk struct {
 	// ProgressRecords are delivered to the Progress callback (if set) before
 	// the result is returned. Use this to test output routing in callers.
 	ProgressRecords []FakeScanWalkProgress
+
+	// ReusableRunResult and ReusableRunFound are what ReusableRun reports. The
+	// zero value reports no reusable run, so a fake that says nothing about reuse
+	// drives the measuring path, which is what most callers want.
+	ReusableRunResult vulndomain.WalkScanRun
+	ReusableRunFound  bool
+	ReusableRunErr    error
+	// ReusableRunFreshSeen records the fresh flag the last ReusableRun call
+	// carried, so a test can prove --fresh reached the lookup.
+	ReusableRunFreshSeen bool
+	// ScanCalls counts Scan invocations, so a test can prove a served run did not
+	// re-measure.
+	ScanCalls int
 }
 
 // FakeScanWalkProgress is one entry delivered to the Progress callback.
@@ -845,7 +858,20 @@ type FakeScanWalkProgress struct {
 	Total  int // 0 means use len(ProgressRecords)
 }
 
+// ReusableRun reports the seeded reusable run, if any.
+func (f *FakeScanWalk) ReusableRun(_ context.Context, _ string, fresh bool) (vulndomain.WalkScanRun, bool, error) {
+	f.ReusableRunFreshSeen = fresh
+	if f.ReusableRunErr != nil {
+		return vulndomain.WalkScanRun{}, false, f.ReusableRunErr
+	}
+	if fresh {
+		return vulndomain.WalkScanRun{}, false, nil
+	}
+	return f.ReusableRunResult, f.ReusableRunFound, nil
+}
+
 func (f *FakeScanWalk) Scan(_ context.Context, params vulnapp.ScanWalkParams) (vulndomain.WalkScanRun, error) {
+	f.ScanCalls++
 	if params.Progress != nil {
 		total := len(f.ProgressRecords)
 		for i, p := range f.ProgressRecords {
@@ -884,6 +910,8 @@ type FakeQueryVuln struct {
 	// recordLedger holds every generation for a coordinate, for the reads that
 	// pick between analysis frames rather than taking the composed answer.
 	recordLedger map[string][]vulndomain.VulnerabilityRecord
+	// runRecords holds the records a given scan run wrote.
+	runRecords   map[string][]vulndomain.VulnerabilityRecord
 	byIDForWalk  map[string][]vulndomain.VulnerabilityRecord
 	byIDWalkSeen string
 	Err          error
@@ -965,6 +993,26 @@ func (f *FakeQueryVuln) ListRecordsForModule(_ context.Context, coord coordinate
 		return []vulndomain.VulnerabilityRecord{rec}, nil
 	}
 	return nil, nil
+}
+
+// SetRunRecords seeds the records one scan run wrote, which is what a served
+// run's report is rebuilt from.
+func (f *FakeQueryVuln) SetRunRecords(runID string, recs []vulndomain.VulnerabilityRecord) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.runRecords == nil {
+		f.runRecords = make(map[string][]vulndomain.VulnerabilityRecord)
+	}
+	f.runRecords[runID] = recs
+}
+
+func (f *FakeQueryVuln) ListRecordsForRun(_ context.Context, runID string) ([]vulndomain.VulnerabilityRecord, error) {
+	if f.Err != nil {
+		return nil, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.runRecords[runID], nil
 }
 
 func (f *FakeQueryVuln) SetByID(recs []vulndomain.VulnerabilityRecord) {

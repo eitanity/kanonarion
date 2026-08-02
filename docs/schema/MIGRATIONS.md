@@ -155,6 +155,54 @@ unchanged**, and no bump or migration is owed: the change populates an existing
 column on a path that previously left it empty, and the column is outside the
 seal.
 
+## Walk store: module `walk`, migration 7
+
+**Additive; a new column, no record shape change and no pipeline bump.** `walks`
+gains `identity_hash`: a name for the ANALYSIS a walk performed, as opposed to
+`content_hash`, which seals the RECORD. The whole store's migration count goes
+`v73` -> `v74`.
+
+The two answer different questions and both are needed. `content_hash` covers
+everything the record says, so a stored row cannot be altered without detection
+— which means it covers the walk id, `started_at`, `completed_at`,
+`graph.resolved_at` and the per-node fetch durations. Two runs of an unchanged
+checkout differ in every one of those, so they produced two content hashes and,
+with them, two walk ids; every record keyed on a walk id (licences,
+vulnerability verdicts, SBOMs) became unreachable from the next run, and a full
+re-scan followed because the cache key was fresh by construction rather than
+because anything had changed.
+
+`identity_hash` covers the target, scope, depth, ecosystem, both pipeline
+versions, the policy version and hash, the stage depths, the build environment,
+the resolved graph (every node with its coordinate, resolution source, digests,
+stdlib custody and replace origin, plus every edge), each node's status and
+error, and the overall status. It deliberately excludes the walk id, the three
+timestamps, per-node `duration_ms` and `from_cache`, the operator, and the
+composed fetch record — the last because that record carries `first_fetched_at`,
+`latest_fetched_at`, `measurement_count` and per-leg dates, all of which move
+when the ledger re-measures bytes that never changed. What the identity keeps
+from a fetch is the **artefact identity** (the `h1` hash), which is precisely
+"these bytes".
+
+The column sits **outside** the sealed shape, like `project_dir`:
+`canonicalWalkRecord` does not carry it, so it is neither hashed nor serialised
+into the stored blob. Admitting a derived value to the seal would make the seal
+cover a function of itself and would stop every previously-written walk from
+verifying. A reader that distrusts a stored identity recomputes it from the
+record it came with, which costs one hash.
+
+Migration for existing stores: **none required, and no purge.** Existing rows
+default to the empty identity. **Empty is an ABSENT identity, never a matching
+one** — the reuse lookup filters on a non-empty value, so a pre-existing row is
+never served as a reusable walk. Such a project is re-walked once, which writes
+its identity, and is reusable from then on. Back-filling was rejected: the
+identity is a function of the record, so filling it would mean decompressing and
+rehashing every stored walk during a migration to save one re-walk per project.
+
+Nothing verifies `identity_hash` on read and no stored hash is ever compared
+across the old and new styles: an old-style walk has no identity at all, so the
+comparison cannot arise. Reads of existing walks are unchanged in every respect.
+
 ## Vendor record: schema `3` → `4`, pipeline `0.2.0` → `0.3.0`
 
 **Record shape change and a finding-set change; no store migration.** Vendor

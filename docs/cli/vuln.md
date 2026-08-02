@@ -178,6 +178,24 @@ This limits expensive SSA work to the modules that actually need it.
 - Modules with `StatusClean`, `StatusUnscannable`, or findings without
   `AffectedSymbols` never trigger a subprocess.
 
+**Reuse of an existing run**
+
+When a scan run of the same walk against the same advisory snapshot already
+exists, its result is served and `govulncheck` does not run:
+
+```
+reusing scan run vscan-01KZ0DJEV5XKAV1PSN1JM47D37-1785646889 of 2026-08-02T05:01:35Z against snapshot vuln.go.dev@2026-07-27T20:14:16Z; nothing was re-scanned (--fresh to re-measure)
+```
+
+The line names the run whose verdicts you are reading and when it was made. The
+findings, roll-ups, exit code and `--json` document are the ones **that run**
+produced, rebuilt from the records it wrote.
+
+A stored run is served only when the walk, the advisory snapshot (source,
+version, retrieval time and seal) and the scan pipeline version all match, **and**
+the stored run's coverage is complete — a partial or failed run is never served.
+`--fresh` (live advisory snapshot) and `--force` both re-measure.
+
 **Assurance log**
 
 Each scan run appends events to the append-only audit log
