@@ -296,7 +296,7 @@ func undeterminedLicenceSummary(content []byte) string {
 	// module carries that module as both, and counting it twice would put the
 	// message at odds with the count the document itself states.
 	var names []string
-	seen := make(map[string]struct{}, len(doc.Components)+1)
+	seen := make(map[string]struct{}, len(doc.Components))
 	add := func(coord, suffix string) {
 		if _, dup := seen[coord]; dup {
 			return

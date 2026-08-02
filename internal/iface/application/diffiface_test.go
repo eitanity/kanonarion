@@ -82,7 +82,7 @@ func TestDiffInterfaceUseCase_MissingRecordIsRefused(t *testing.T) {
 			if notFound.Coordinate != tc.want {
 				t.Errorf("refusal names %s, want %s", notFound.Coordinate, tc.want)
 			}
-			if !strings.Contains(err.Error(), "run 'kanonarion interface") {
+			if !strings.Contains(err.Error(), "run: kanonarion interface") {
 				t.Errorf("refusal names no remedy: %v", err)
 			}
 		})
@@ -101,8 +101,7 @@ func TestDiffInterfaceUseCase_StoreFailureIsNotAbsence(t *testing.T) {
 	if !errors.Is(err, boom) {
 		t.Fatalf("err = %v, want the store failure", err)
 	}
-	var notFound *application.ErrInterfaceRecordNotFound
-	if errors.As(err, &notFound) {
+	if _, ok := errors.AsType[*application.ErrInterfaceRecordNotFound](err); ok {
 		t.Error("a store failure was reported as a missing record")
 	}
 }

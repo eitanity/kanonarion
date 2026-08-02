@@ -40,7 +40,7 @@ type ErrInterfaceRecordNotFound struct {
 }
 
 func (e *ErrInterfaceRecordNotFound) Error() string {
-	return fmt.Sprintf("interface record not found: %s — run 'kanonarion interface %s' first",
+	return fmt.Sprintf("interface record not found: %s — run: kanonarion interface %s",
 		e.Coordinate, e.Coordinate)
 }
 
