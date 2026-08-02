@@ -196,6 +196,14 @@ func (a *Analyser) analyseDir(
 	fset := token.NewFileSet()
 	env := analysisEnv(synth)
 
+	// classifyLoad names the cause of a load failure raised below. The directory
+	// is bound once, here, rather than passed at each call site: every load in
+	// this function reads tempDir, and a classification asked about any other
+	// directory is precisely the defect the probe exists to avoid — it would
+	// report a usable toolchain for a load that had none, and file the run's
+	// failure as the module's property.
+	classifyLoad := func() domain.FailureCause { return a.classifyLoadFailure(ctx, tempDir) }
+
 	envCleanup, err := a.setupGoEnv(ctx, tempDir)
 	if err != nil {
 		// Preparing PATH and GOROOT for the analysis is entirely about the run;
@@ -223,7 +231,7 @@ func (a *Analyser) analyseDir(
 		// no usable toolchain on it, so which one this is has to be established
 		// rather than read off the message.
 		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed,
-			a.classifyLoadFailure(ctx), "meta load: "+err.Error()), nil
+			classifyLoad(), "meta load: "+err.Error()), nil
 	}
 	a.logMem(ctx, "meta_loaded")
 
@@ -249,7 +257,7 @@ func (a *Analyser) analyseDir(
 		// The only error this returns is a syntax-load failure, which is again the
 		// go command failing; same question, same way of answering it.
 		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed,
-			a.classifyLoadFailure(ctx), err.Error()), nil
+			classifyLoad(), err.Error()), nil
 	}
 	prog := build.Prog
 	allLoadErrs := build.LoadErrs

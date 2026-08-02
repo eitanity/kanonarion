@@ -251,7 +251,7 @@ func (s *Scanner) prepareScanDir(
 		// real: the module is analysable, and treating it as permanently
 		// unscannable would leave its advisories matched by coordinate alone,
 		// with no reachability, for a condition kanonarion can lift.
-		root, skipped, werr := writeSynthesisedGoMod(scanDir, coord, toolchainGoVersion(ctx, env), buildList)
+		root, skipped, werr := writeSynthesisedGoMod(scanDir, coord, toolchainGoVersion(ctx, scanDir, env), buildList)
 		if len(skipped) > 0 {
 			// The require set was assembled from less than the whole module. Name
 			// the files so a later unresolved-package failure is attributable here

@@ -9,7 +9,12 @@ import (
 
 // ToolchainProbe reports whether the Go toolchain the analysis is about to use —
 // or has just failed to use — can be run at all. A nil error means it answered.
-type ToolchainProbe func(context.Context) error
+//
+// dir is the directory the load it is being asked about ran in. A toolchain is
+// resolved per directory — a version manager reads a version file from the tree
+// it is invoked in — so a probe that answered from anywhere else would be
+// answering about a different toolchain from the one that failed.
+type ToolchainProbe func(ctx context.Context, dir string) error
 
 // toolchainProbe is the probe classifyLoadFailure consults. It defaults to
 // assumeUsableToolchain and is replaced by the composition root via
@@ -36,7 +41,7 @@ func SetToolchainProbe(fn ToolchainProbe) {
 // about the module. That is the classification a real probe returns wherever
 // the suite itself runs; a composition root that wants environment failures
 // told apart must wire a real probe.
-func assumeUsableToolchain(context.Context) error { return nil }
+func assumeUsableToolchain(context.Context, string) error { return nil }
 
 // classifyLoadFailure decides whether a failure raised by the package loader is
 // a fact about the module or about the run.
@@ -52,18 +57,26 @@ func assumeUsableToolchain(context.Context) error { return nil }
 // served back. If it can, the loader ran and reported about the module, and the
 // failure is a finding worth caching.
 //
+// The question is asked about dir — the directory the loader was pointed at, not
+// wherever the process happens to be running. A version manager resolves the
+// toolchain from a version file in the tree it is invoked in, so a probe asked
+// from the caller's own working directory can report a usable toolchain for a
+// load that had none, and the run's failure is then filed as the module's
+// property and cached forever.
+//
 // This is the classification the ticket for this axis calls "at the boundary,
 // where the go/packages error is still a value rather than prose": the decision
 // is made here, once, at the moment of failure, and travels on the record. No
 // later reader re-derives it from a string.
-func (a *Analyser) classifyLoadFailure(ctx context.Context) domain.FailureCause {
+func (a *Analyser) classifyLoadFailure(ctx context.Context, dir string) domain.FailureCause {
 	// A cancelled or expired context is environmental on its own terms, and would
 	// also make the probe fail for a reason that says nothing about the toolchain.
 	if ctx.Err() != nil {
 		return domain.FailureCauseEnvironment
 	}
-	if err := toolchainProbe(ctx); err != nil {
+	if err := toolchainProbe(ctx, dir); err != nil {
 		a.logger.WarnContext(ctx, "callgraph_toolchain_unusable",
+			slog.String("dir", dir),
 			slog.String("error", err.Error()),
 		)
 		return domain.FailureCauseEnvironment
