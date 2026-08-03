@@ -127,6 +127,22 @@ This allows resuming interrupted extraction runs efficiently.
 The database schema is versioned via the shared `schema_migrations` table
 (migration version 7).
 
+## Assurance log
+
+Each run appends one `extraction_run_completed` event to the append-only audit
+log (`{store-root}/audit.jsonl`): run id, walk id, the requested stages, the
+module count, the per-stage outcome counts (`stages_succeeded`, `stages_failed`,
+`stages_skipped`), the overall status and the run's content hash. The stages
+themselves append their own events (`license_extracted`, `interface_extracted`,
+`examples_extracted`, `callgraph_extracted`) as they persist records; this event
+is what says those belong to one orchestrated run rather than to separate
+single-module re-extractions.
+
+A run record is written on every outcome, including a cancelled one, so every
+invocation appends a line. A stage served from cache re-serves the stored record
+without re-extracting and appends nothing of its own - so a run over a fully
+warm store still appends its own event, with the stages silent beneath it.
+
 ## Fetch pipeline version dependency
 
 Each extraction stage looks up the module's fact record (the stored zip blob

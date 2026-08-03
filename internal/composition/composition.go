@@ -309,7 +309,12 @@ func NewDriver(storeRoot string) (*Driver, func() error, error) {
 		proxy, fetchvcs.New(), blobs, factStore,
 		fetchsumdb.New(filepath.Join(storeRoot, "sumdb")),
 		clk, stopwatch, "", logger,
-	).WithSigner(noopsigner.New(), factStore)
+	).WithSigner(noopsigner.New(), factStore).
+		// The write side emits a refused demotion (or a permitted downgrade) into
+		// the same append-only log the writes go to. Wired here as well as in the
+		// CLI so the two paths append identically: a library consumer's assurance
+		// log is not a quieter one.
+		WithAudit(factStore)
 
 	kanonarionBinary, err := os.Executable()
 	if err != nil {
@@ -360,23 +365,23 @@ func newLocalWalkExtract(
 		WithBuildListResolver(walkbuildlist.New("", logger)).
 		WithStdlibAcquirer(NewStdlibAcquirer(db, blobs, clk, logger), false)
 	walker := walkapp.NewWalker(resolver, fetcher, localFetcher, clk, stopwatch, 0, logger)
-	executeWalkUC := walkapp.NewExecuteWalkUseCase(walker, walkStore, "", "", logger)
+	executeWalkUC := walkapp.NewExecuteWalkUseCase(walker, walkStore, "", "", logger).WithAudit(factStore)
 
 	// ---- extraction pipeline (full built-in stage set) ----
 	licExtractUC := licapp.NewExtractLicenseUseCase(licapp.Config{
 		Facts: factStore, Blobs: blobs, Licenses: licStore,
 		Detector: licdet.New(), Clock: clk, Stopwatch: stopwatch, Logger: logger,
-	})
+	}).WithAudit(factStore)
 	ifaceExtractUC := ifaceapp.NewExtractInterfaceUseCase(ifaceapp.Config{
 		Facts: factStore, Blobs: blobs, Store: ifaceStore,
 		Extractor: ifaceext.New(stagePipelineVersion, clk), Clock: clk, Stopwatch: stopwatch, Logger: logger,
-	})
+	}).WithAudit(factStore)
 	cgSubprocessExec := extextractor.NewOsSubprocessExecutor(kanonarionBinary)
 	exExtractUC := exapp.NewExtractExampleUseCase(exapp.Config{
 		Facts: factStore, Blobs: blobs, Examples: exStore,
 		Parser: exgoast.New(),
 		Clock:  clk, Stopwatch: stopwatch, Logger: logger,
-	})
+	}).WithAudit(factStore)
 	stages := extstages.New()
 	extractUC := extractapp.NewExtractUseCase(extractapp.Config{
 		Runs:      extStore,
@@ -392,7 +397,7 @@ func newLocalWalkExtract(
 			"example":   stagePipelineVersion,
 		},
 		Logger: logger,
-	})
+	}).WithAudit(factStore)
 
 	return driver.NewLocalWalkExtractUseCase(executeWalkUC, extractUC, stages.Stages())
 }

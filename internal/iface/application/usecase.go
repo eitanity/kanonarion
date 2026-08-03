@@ -32,6 +32,7 @@ type ExtractInterfaceUseCase struct {
 	pipelineVersion string
 	logger          *slog.Logger
 	hasher          domain3.InterfaceRecordHasher
+	audit           ports.AuditSink // optional; nil disables audit emission
 }
 
 // Config holds all construction parameters for ExtractInterfaceUseCase.
@@ -61,6 +62,15 @@ func NewExtractInterfaceUseCase(cfg Config) *ExtractInterfaceUseCase {
 		pipelineVersion: cfg.PipelineVersion,
 		logger:          cfg.Logger,
 	}
+}
+
+// WithAudit wires an audit sink so extraction appends one interface_extracted
+// event per persisted generation. It is optional — a nil sink (the default)
+// disables emission — and returns the receiver for chaining, mirroring the
+// other stages' optional-dependency builders.
+func (uc *ExtractInterfaceUseCase) WithAudit(sink ports.AuditSink) *ExtractInterfaceUseCase {
+	uc.audit = sink
+	return uc
 }
 
 // ExtractRequest is the input to Execute.
@@ -190,6 +200,15 @@ func (uc *ExtractInterfaceUseCase) Execute(ctx context.Context, req ExtractReque
 		slog.Int("package_count", len(record.Packages)),
 		slog.String("content_hash", record.ContentHash),
 	)
+
+	// Assurance log: one interface_extracted event per persisted generation
+	// anchors the public API every compatibility answer is derived from in the
+	// append-only log, not only in the mutable interface ledger. The record is
+	// written first, so a failed append reports that the write is unlogged — it
+	// never undoes it.
+	if err := emitInterfaceExtracted(uc.audit, record); err != nil {
+		return ExtractResult{}, err
+	}
 
 	return ExtractResult{Record: record, FromCache: false}, nil
 }

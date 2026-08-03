@@ -327,6 +327,25 @@ one event per persisted generation, nothing on a cache hit. It is what every
 reachability and capability answer is derived from, and without it a store write
 left no trace at all, so a stable audit line count read as "nothing ran".
 
+Interface and example extraction record what was *read out of the source*
+(`interface_extracted`: module, version, pipeline version, overall status,
+package count, content hash, plus the artefact identity and the fetch record's
+content hash; `examples_extracted`: the same identifying fields with example and
+parse-failure counts). Both state a `failure_detail` when the record carries a
+reason. One event per persisted generation, nothing on a cache hit.
+
+The extraction orchestrator records the *campaign* those per-stage events belong
+to (`extraction_run_completed`: run id, walk id, requested stages, module count,
+per-stage outcome counts, overall status, content hash). It writes a run record
+on every outcome - including a cancelled one - so it has no cache branch and
+every run appends. Without it, a batch of stage events could not be told apart
+from a series of single-module re-extractions.
+
+Both composition roots wire the same sinks. The CLI container and the library
+composition root behind `pkg/kanonarion` append identical events for the same
+operation; a consumer driving the pipeline as a library does not get a quieter
+assurance log than one driving it from the command line.
+
 Walk and every extraction record verify their content hash on every read;
 mismatches are typed integrity errors that callers distinguish from not-found.
 

@@ -118,6 +118,38 @@ const (
 	// callgraph ledger. It also restores the stream's use as a tripwire: a store
 	// write that appended nothing let a stable line count read as "nothing ran".
 	EventCallGraphExtracted EventType = "callgraph_extracted"
+
+	// EventInterfaceExtracted records that a module's public API was extracted
+	// and a generation persisted. Payload carries the module coordinate, the
+	// artefact the extraction read, the pipeline version, the overall status, the
+	// package count and the record's content hash.
+	//
+	// The interface record is what every API-compatibility answer — what a bump
+	// removes, what a migration must rewrite — is derived from, so a generation
+	// that later underpins such an answer is visible in the append-only log and
+	// not only in the mutable interface ledger.
+	EventInterfaceExtracted EventType = "interface_extracted"
+
+	// EventExamplesExtracted records that a module's Example* functions were
+	// harvested and a generation persisted. Payload carries the module
+	// coordinate, the artefact the extraction read, the pipeline version, the
+	// overall status, the example count and the record's content hash.
+	//
+	// Examples are evidence of how an API is meant to be called, quoted back in
+	// adoption and migration answers; anchoring each extraction here means the
+	// generation that supplied a quoted example is stated in the append-only log.
+	EventExamplesExtracted EventType = "examples_extracted"
+
+	// EventExtractionRunCompleted records that an extraction run over a walk
+	// finished and its run record was persisted. Payload carries the run id, the
+	// walk it ran over, the requested stages, the module count, the per-stage
+	// outcome counts, the overall status and the run's content hash.
+	//
+	// The per-stage events say what each module produced; this one says which
+	// campaign asked for them and what it concluded overall, so a reader can tell
+	// a full pipeline run from a single-module re-extraction without inferring it
+	// from the timestamps of the events around it.
+	EventExtractionRunCompleted EventType = "extraction_run_completed"
 )
 
 // knownEventTypes is the closed set of recognised discriminators. A gap
@@ -139,6 +171,9 @@ var knownEventTypes = map[EventType]struct{}{
 	EventLicenseExtracted:         {},
 	EventWalkCompleted:            {},
 	EventCallGraphExtracted:       {},
+	EventInterfaceExtracted:       {},
+	EventExamplesExtracted:        {},
+	EventExtractionRunCompleted:   {},
 }
 
 // Known reports whether t is a recognised event type.

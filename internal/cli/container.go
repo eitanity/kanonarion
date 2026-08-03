@@ -384,7 +384,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	ifaceExtractUC := ifaceapp.NewExtractInterfaceUseCase(ifaceapp.Config{
 		Facts: factStore, Blobs: blobs, Store: ifaceStore,
 		Extractor: ifaceext.New("0.1.0", clk), Clock: clk, Stopwatch: stopwatch, Logger: logger,
-	})
+	}).WithAudit(factStore)
 	cganalyser.SetToolchainProbe(goToolchainVersionProbe)
 	cgAnalyser := cganalyser.New("0.1.0", goBinary, logger)
 	cgExtractUC := cgapp.NewExtractCallGraphUseCase(cgapp.Config{
@@ -400,7 +400,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		Facts: factStore, Blobs: blobs, Examples: exStore,
 		Parser: exgoast.New(),
 		Clock:  clk, Stopwatch: stopwatch, Logger: logger,
-	})
+	}).WithAudit(factStore)
 
 	kanonarionBinary, err := os.Executable()
 	if err != nil {
@@ -433,7 +433,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		Stopwatch:        stopwatch,
 		PipelineVersions: pipelineVersions,
 		Logger:           logger,
-	})
+	}).WithAudit(factStore)
 	queryExtractUC := extractapp.NewQueryExtractionUseCase(extStore)
 
 	// ---- license query / notice / compatibility / diff use cases ----
