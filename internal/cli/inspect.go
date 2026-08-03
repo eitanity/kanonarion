@@ -111,6 +111,17 @@ that is tight on memory.`,
 }
 
 func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr io.Writer) error {
+	// --stdlib-from-gomod pins the stdlib node to a project go.mod's toolchain
+	// directive; a coordinate walk has no project go.mod to read one from, so
+	// the flag cannot apply here. Refuse it by name rather than parse and drop
+	// it.
+	if f.stdlibFromGoMod {
+		if err := refuseInapplicableFlags("inspect <module>@<version>",
+			[]inapplicableFlag{{flag: "--stdlib-from-gomod", where: "inspect --gomod"}}); err != nil {
+			return err
+		}
+	}
+
 	wf := commonWalkFlags{
 		goproxy: f.goproxy,
 	}
@@ -293,12 +304,29 @@ func writeEmptyInspectScope(scope depScope, gomodPath string, stdout io.Writer) 
 // validated build inputs every other go.mod command uses), then extract and
 // vuln-scan operate on that one walk record.
 func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout, stderr io.Writer) error {
+	// A --gomod inspect prints a pipeline summary, never a context document, so
+	// there is no rendering for --full to act on. Refuse it by name rather than
+	// parse and drop it.
+	if f.full {
+		if err := refuseInapplicableFlags("inspect --gomod",
+			[]inapplicableFlag{{flag: "--full", where: "inspect <module>@<version>"}}); err != nil {
+			return err
+		}
+	}
+
 	// For code and tool scopes, check whether the scope is empty before
 	// spinning up the project walk. An empty import closure is valid but
 	// produces no dependency analysis; surface it early and clearly.
 	if scope != scopeComplete {
 		coords, cerr := resolveScopeModules(f.gomodPath, scope)
 		if cerr == nil && len(coords) == 0 {
+			if f.sizeOnly {
+				// A size question about an empty scope gets the zero-module size
+				// report, matching what 'context --gomod --size-only' answers for
+				// the same scope.
+				var report contextSizeReport
+				return report.write(jsonOut, stdout)
+			}
 			return writeEmptyInspectScope(scope, f.gomodPath, stdout)
 		}
 	}
@@ -372,33 +400,21 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 		}
 	}
 
-	var affectedCount int
-	var snapshotVersion string
-	// scanStatus stays empty when the run cannot be read or none was recorded.
-	// That is reported, not swallowed: inspectSummaryStatus treats an unknown
-	// scan outcome as not-clean rather than assuming the best.
-	var scanStatus vuldomain.WalkScanStatus
-	if walkID != "" {
-		runs, rerr := ctr.QueryScanRuns.ListRunsForWalk(ctx, walkID)
-		switch {
-		case rerr != nil:
-			_, _ = fmt.Fprintf(stderr, "==> inspect: reading scan run for walk %s: %v\n", walkID, rerr)
-		case len(runs) == 0:
-			_, _ = fmt.Fprintf(stderr, "==> inspect: no scan run recorded for walk %s\n", walkID)
-		default:
-			scanStatus = runs[0].OverallStatus
-			// Key the affected count on the findings axis, not the collapsed
-			// OverallStatus: a run left Partial by an unscannable module still
-			// reports FindingsStatus == Affected, so keying on OverallStatus made
-			// the count 0 over real findings. Read the real count from the
-			// run's stored counts rather than re-deriving it — a walk with 100
-			// affected modules must report 100, not a 0/1 flag.
-			if runs[0].FindingsStatus == vuldomain.FindingsAffected {
-				affectedCount = runs[0].Counts.Affected
-			}
-			snapshotVersion = runs[0].Snapshot.Version()
-		}
+	// --size-only asks what the context this pipeline just made answerable
+	// would cost to pull, so it replaces the summary — the summary's own job is
+	// to point at 'context --gomod' for the context step, and that is the path
+	// that answers the size question. Delegating keeps one answer shape: a
+	// total plus a per-module breakdown, the same report the same question gets
+	// from 'context --gomod --size-only' and 'context --walk-id --size-only'.
+	if f.sizeOnly {
+		return runContextGoMod(ctx, contextFlags{
+			sizeOnly:  true,
+			compact:   true,
+			gomodPath: f.gomodPath,
+		}, scope, stdout, stderr)
 	}
+
+	affectedCount, snapshotVersion, scanStatus := readInspectScanRun(ctx, ctr, walkID, stderr)
 
 	walkIDs := []string{}
 	if walkID != "" {
@@ -533,4 +549,34 @@ func latestProjectWalkSummary(ctx context.Context, q QueryWalksUseCase, modulePa
 		return walkports.WalkSummary{}, nil
 	}
 	return walks[0], nil
+}
+
+// readInspectScanRun reads the walk's latest scan run for the --gomod summary.
+// scanStatus stays empty when the run cannot be read or none was recorded.
+// That is reported, not swallowed: inspectSummaryStatus treats an unknown
+// scan outcome as not-clean rather than assuming the best.
+func readInspectScanRun(ctx context.Context, ctr *Container, walkID string, stderr io.Writer) (affectedCount int, snapshotVersion string, scanStatus vuldomain.WalkScanStatus) {
+	if walkID == "" {
+		return 0, "", ""
+	}
+	runs, rerr := ctr.QueryScanRuns.ListRunsForWalk(ctx, walkID)
+	switch {
+	case rerr != nil:
+		_, _ = fmt.Fprintf(stderr, "==> inspect: reading scan run for walk %s: %v\n", walkID, rerr)
+	case len(runs) == 0:
+		_, _ = fmt.Fprintf(stderr, "==> inspect: no scan run recorded for walk %s\n", walkID)
+	default:
+		scanStatus = runs[0].OverallStatus
+		// Key the affected count on the findings axis, not the collapsed
+		// OverallStatus: a run left Partial by an unscannable module still
+		// reports FindingsStatus == Affected, so keying on OverallStatus made
+		// the count 0 over real findings. Read the real count from the
+		// run's stored counts rather than re-deriving it — a walk with 100
+		// affected modules must report 100, not a 0/1 flag.
+		if runs[0].FindingsStatus == vuldomain.FindingsAffected {
+			affectedCount = runs[0].Counts.Affected
+		}
+		snapshotVersion = runs[0].Snapshot.Version()
+	}
+	return affectedCount, snapshotVersion, scanStatus
 }

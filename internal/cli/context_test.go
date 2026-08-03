@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 
@@ -888,5 +890,56 @@ func TestPrintFullLicense_CopyrightNoneFound(t *testing.T) {
 
 	if !strings.Contains(got, "none found") {
 		t.Errorf("expected 'none found', got: %q", got)
+	}
+}
+
+// TestContextSizeHintMeasuresJSONDocument pins the "Context size" hint under a
+// rendered text block to the figures --size-only reports for the same module:
+// the byte and token size of the full JSON document, not of the text digest on
+// screen. A hint re-derived from the rendered text fails this test — the
+// fixture is checked to make the two derivations disagree, so the pin cannot
+// pass vacuously.
+func TestContextSizeHintMeasuresJSONDocument(t *testing.T) {
+	out := makeNotRunOutput(contextCommands{
+		License:         "kanonarion license example.com/app@v1.0.0",
+		Interface:       "kanonarion interface-show example.com/app@v1.0.0",
+		CallGraph:       "kanonarion callgraph-show example.com/app@v1.0.0",
+		Examples:        "kanonarion examples-find <symbol>",
+		Vulnerabilities: "kanonarion vuln-show example.com/app@v1.0.0",
+	})
+
+	wantBytes, err := jsonDocumentBytes(out)
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	hintRe := regexp.MustCompile(`Context size: ~(\d+) tokens \((\d+) bytes\) of JSON for this module`)
+
+	for _, compact := range []bool{true, false} {
+		rendered, err := renderContextText(out, compact)
+		if err != nil {
+			t.Fatal(err)
+		}
+		// The control: the text digest and the JSON document must disagree, or
+		// this test could not tell a hint measuring one from a hint measuring
+		// the other.
+		if len(rendered)/4 == wantBytes/4 {
+			t.Fatalf("fixture inadequate: rendered text (%d bytes) and JSON document (%d bytes) round to the same token estimate", len(rendered), wantBytes)
+		}
+
+		var buf strings.Builder
+		if err := printContextText(out, compact, &buf); err != nil {
+			t.Fatal(err)
+		}
+		m := hintRe.FindStringSubmatch(buf.String())
+		if m == nil {
+			t.Fatalf("compact=%t: no Context size hint naming its document in output:\n%s", compact, buf.String())
+		}
+		gotTokens, _ := strconv.Atoi(m[1])
+		gotBytes, _ := strconv.Atoi(m[2])
+		if gotBytes != wantBytes || gotTokens != wantBytes/4 {
+			t.Errorf("compact=%t: hint reports ~%d tokens (%d bytes); the JSON document measures ~%d tokens (%d bytes)",
+				compact, gotTokens, gotBytes, wantBytes/4, wantBytes)
+		}
 	}
 }

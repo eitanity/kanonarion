@@ -187,7 +187,7 @@ golang.org/x/mod@v0.36.0
   Examples:        3 (Found)
   Vulnerabilities: Clean
 
-Context size: ~106 tokens  (use --full for complete docs, --json for machine-readable)
+Context size: ~6627 tokens (26510 bytes) of JSON for this module  (use --full for complete docs, --json for machine-readable)
 ```
 
 With `--json`, each module becomes one NDJSON line carrying the full

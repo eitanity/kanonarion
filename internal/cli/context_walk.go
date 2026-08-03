@@ -18,6 +18,10 @@ import (
 )
 
 func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Writer) error {
+	if err := refuseInapplicableFlags("context --walk-id", contextLocalOnlyFlags(f)); err != nil {
+		return err
+	}
+
 	logger := buildLogger(logLevel, stderr)
 
 	dbPath := filepath.Join(storeRoot, "mirror.db")
@@ -246,12 +250,6 @@ func affectedSetForRun(ctx context.Context, vulnUC QueryVulnUseCase, run vuldoma
 	return affected, nil
 }
 
-type walkModuleSize struct {
-	Module          string `json:"module"`
-	EstimatedTokens int    `json:"estimated_tokens"`
-	ByteCount       int    `json:"byte_count"`
-}
-
 // runContextWalkSizeOnly accumulates JSON sizes for each filtered node and
 // prints a total + per-module breakdown without writing context output.
 func runContextWalkSizeOnly(
@@ -269,8 +267,7 @@ func runContextWalkSizeOnly(
 	walkUC QueryWalksUseCase,
 	stdout io.Writer,
 ) error {
-	var totalBytes int
-	sizes := make([]walkModuleSize, 0, len(nodes))
+	var report contextSizeReport
 
 	for _, node := range nodes {
 		if err := ctx.Err(); err != nil {
@@ -294,47 +291,10 @@ func runContextWalkSizeOnly(
 			Vulnerabilities: vulns,
 			Commands:        buildCommandsWithWalk(coord, cmdWalkID),
 		}
-		raw, err := json.MarshalIndent(out, "", "  ")
-		if err != nil {
-			return fmt.Errorf("encoding context for %s: %w", coord, err)
+		if err := report.add(coord.String(), out); err != nil {
+			return err
 		}
-		byteCount := len(raw) + 1
-		totalBytes += byteCount
-		sizes = append(sizes, walkModuleSize{
-			Module:          coord.String(),
-			EstimatedTokens: byteCount / 4,
-			ByteCount:       byteCount,
-		})
 	}
 
-	if jsonOut {
-		type sizeReport struct {
-			EstimatedTokens int              `json:"estimated_tokens"`
-			ByteCount       int              `json:"byte_count"`
-			ModuleCount     int              `json:"module_count"`
-			Modules         []walkModuleSize `json:"modules"`
-		}
-		enc := json.NewEncoder(stdout)
-		enc.SetIndent("", "  ")
-		if err := enc.Encode(sizeReport{
-			EstimatedTokens: totalBytes / 4,
-			ByteCount:       totalBytes,
-			ModuleCount:     len(sizes),
-			Modules:         sizes,
-		}); err != nil {
-			return fmt.Errorf("encoding size report: %w", err)
-		}
-		return nil
-	}
-
-	if _, err := fmt.Fprintf(stdout, "Total: ~%d tokens (%d bytes) across %d modules\n\nPer-module breakdown:\n",
-		totalBytes/4, totalBytes, len(sizes)); err != nil {
-		return fmt.Errorf("writing size summary: %w", err)
-	}
-	for _, m := range sizes {
-		if _, err := fmt.Fprintf(stdout, "  %s: ~%d tokens (%d bytes)\n", m.Module, m.EstimatedTokens, m.ByteCount); err != nil {
-			return fmt.Errorf("writing size entry: %w", err)
-		}
-	}
-	return nil
+	return report.write(jsonOut, stdout)
 }

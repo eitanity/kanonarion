@@ -30,6 +30,10 @@ type contextFlags struct {
 	modulesFile     string
 	symbol          bool // local workspace: enable symbol-level analysis
 	reachability    bool // local workspace: build probe binary and check CVE symbol presence
+	// compactSet records whether the caller typed --compact. The flag defaults
+	// to true, so its value alone cannot distinguish "asked for compact" from
+	// "did not ask"; a path that has to refuse the flag needs the difference.
+	compactSet bool
 }
 
 // -- output types --
@@ -277,6 +281,7 @@ no-arg pair composes: run 'kanonarion inspect', then 'kanonarion context'.`,
   kanonarion context --gomod ./go.mod --json`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			f.compactSet = cmd.Flags().Changed("compact")
 			if f.stream && len(args) > 0 {
 				return fmt.Errorf("--stream requires --walk-id or --gomod")
 			}
@@ -333,6 +338,11 @@ no-arg pair composes: run 'kanonarion inspect', then 'kanonarion context'.`,
 }
 
 func runContext(ctx context.Context, arg string, f contextFlags, stdout, stderr io.Writer) error {
+	if err := refuseInapplicableFlags("context <module>@<version>",
+		append(contextWalkOnlyFlags(f), contextLocalOnlyFlags(f)...)); err != nil {
+		return err
+	}
+
 	logger := buildLogger(logLevel, stderr)
 
 	coord, err := parseCoordinate(arg)
@@ -380,7 +390,7 @@ func runContext(ctx context.Context, arg string, f contextFlags, stdout, stderr 
 	}
 
 	if f.sizeOnly {
-		return printContextSize(out, jsonOut, stdout)
+		return printDocumentSize(out, jsonOut, stdout)
 	}
 
 	if jsonOut {

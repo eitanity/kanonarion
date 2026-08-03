@@ -19,6 +19,11 @@ import (
 // inspect side. Output is NDJSON when --json is set; otherwise text blocks
 // separated by a blank line, each prefixed with a "==> <module>" header line.
 func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout, stderr io.Writer) error {
+	if err := refuseInapplicableFlags("context --gomod",
+		append(contextWalkOnlyFlags(f), contextLocalOnlyFlags(f)...)); err != nil {
+		return err
+	}
+
 	logger := buildLogger(logLevel, stderr)
 
 	coords, err := resolveScopeModules(f.gomodPath, scope)
@@ -26,6 +31,13 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 		return fmt.Errorf("resolving %s scope: %w", scope, err)
 	}
 	if len(coords) == 0 {
+		if f.sizeOnly {
+			// --size-only asks a size question, so an empty scope answers it with a
+			// zero-module report rather than the NDJSON empty stream: empty and
+			// populated size answers decode into the same type.
+			var report contextSizeReport
+			return report.write(jsonOut, stdout)
+		}
 		// NDJSON: an empty stream is how "nothing matched" is spelled, so under
 		// --json emit zero stdout bytes. The prose stays on the text path only.
 		if !jsonOut {
@@ -58,6 +70,12 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 	}
 
 	compact := f.compact && !f.full
+
+	// --size-only asks how much this scope's context would cost before pulling
+	// it. Answering with the context itself — 7.9 MB of the very document the
+	// caller was budgeting against — is the one answer the flag exists to avoid,
+	// so nothing but the report is written.
+	var report contextSizeReport
 
 	var errs []error
 	for _, coordStr := range coords {
@@ -92,7 +110,13 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 			Vulnerabilities: vulns,
 		}
 
-		if jsonOut {
+		switch {
+		case f.sizeOnly:
+			if serr := report.add(coordStr, out); serr != nil {
+				errs = append(errs, serr)
+				continue
+			}
+		case jsonOut:
 			line, merr := json.Marshal(out)
 			if merr != nil {
 				errs = append(errs, fmt.Errorf("%s: encoding: %w", coordStr, merr))
@@ -101,7 +125,7 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 			if _, werr := fmt.Fprintf(stdout, "%s\n", line); werr != nil {
 				return fmt.Errorf("writing output: %w", werr)
 			}
-		} else {
+		default:
 			_, _ = fmt.Fprintf(stdout, "==> %s\n", coordStr)
 			if perr := printContextText(out, compact, stdout); perr != nil {
 				errs = append(errs, fmt.Errorf("%s: %w", coordStr, perr))
@@ -116,6 +140,10 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 			_, _ = fmt.Fprintf(stderr, "error: %v\n", e)
 		}
 		return fmt.Errorf("%d module(s) failed", len(errs))
+	}
+
+	if f.sizeOnly {
+		return report.write(jsonOut, stdout)
 	}
 	return nil
 }

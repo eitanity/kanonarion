@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -55,32 +54,6 @@ func renderContextText(out contextOutput, compact bool) ([]byte, error) {
 	return buf.Bytes(), nil
 }
 
-// printContextSize measures the full JSON representation of out and reports
-// estimated token count and byte size. JSON is always used for measurement
-// because it represents the full document, not the compact text summary.
-func printContextSize(out contextOutput, jsonOut bool, stdout io.Writer) error {
-	raw, err := json.MarshalIndent(out, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encoding context: %w", err)
-	}
-	byteCount := len(raw) + 1 // +1 for trailing newline
-	if jsonOut {
-		type sizeResult struct {
-			EstimatedTokens int `json:"estimated_tokens"`
-			ByteCount       int `json:"byte_count"`
-		}
-		enc := json.NewEncoder(stdout)
-		if err := enc.Encode(sizeResult{EstimatedTokens: byteCount / 4, ByteCount: byteCount}); err != nil {
-			return fmt.Errorf("encoding size: %w", err)
-		}
-		return nil
-	}
-	if _, err := fmt.Fprintf(stdout, "~%d tokens (%d bytes)\n", byteCount/4, byteCount); err != nil {
-		return fmt.Errorf("writing size: %w", err)
-	}
-	return nil
-}
-
 // errWriter accumulates the first write error so callers avoid repetitive
 // error checks on every fmt.Fprintf call.
 type errWriter struct {
@@ -103,17 +76,31 @@ func (ew *errWriter) indented(prefix, text string) {
 	}
 }
 
+// printContextText renders the module's text block and closes it with the
+// context-size hint.
+//
+// The hint measures the module's full JSON document, not the block above it:
+// that is what --size-only reports for the same module under the same flags, and
+// what a caller deciding whether to pull the context is budgeting against. The
+// text block is a digest of that document, four orders of magnitude smaller for
+// a large module, so reporting its length under the words "context size" gave a
+// number that barely moved between modules and answered a question nobody asked.
+// The line therefore names what it is a size of.
 func printContextText(out contextOutput, compact bool, stdout io.Writer) error {
 	data, err := renderContextText(out, compact)
 	if err != nil {
 		return err
 	}
-	tokenEst := len(data) / 4
+	byteCount, err := jsonDocumentBytes(out)
+	if err != nil {
+		return err
+	}
+	tokenEst := byteCount / 4
 	var hint string
 	if compact {
-		hint = fmt.Sprintf("\nContext size: ~%d tokens  (use --full for complete docs, --json for machine-readable)\n", tokenEst)
+		hint = fmt.Sprintf("\nContext size: ~%d tokens (%d bytes) of JSON for this module  (use --full for complete docs, --json for machine-readable)\n", tokenEst, byteCount)
 	} else {
-		hint = fmt.Sprintf("\nContext size: ~%d tokens  (use --json for machine-readable)\n", tokenEst)
+		hint = fmt.Sprintf("\nContext size: ~%d tokens (%d bytes) of JSON for this module  (use --json for machine-readable)\n", tokenEst, byteCount)
 	}
 	if _, err = fmt.Fprint(stdout, string(data)+hint); err != nil {
 		return fmt.Errorf("writing context: %w", err)

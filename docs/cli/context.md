@@ -361,7 +361,7 @@ fully-clean, complete walk adds no annotation to a clean module.
 | `--json` | false | Emit context as JSON to stdout |
 | `--compact` | true | Strip doc comments from signatures; truncate example bodies at 500 chars (the default) |
 | `--full` | false | Include full doc comments and complete example bodies; overrides `--compact` |
-| `--size-only` | false | Print estimated token count and byte size, then exit |
+| `--size-only` | false | Print estimated token count and byte size of the full JSON context, then exit. Multi-module forms (`--gomod`, `--walk-id`) print a total plus a per-module breakdown |
 | `--entry-points-full` | false | Include flat `entry_points` list alongside `entry_points_by_package` |
 | `--package <path>` | | Restrict `interface`, `call_graph`, and `examples` sections to a single import path |
 | `--gomod <path>` | `./go.mod` when no module/`--walk-id` given | Emit context for every module in the `go.mod`'s code scope as NDJSON |
@@ -425,6 +425,12 @@ kanonarion context go.uber.org/goleak@v1.3.0 --json \
 
 ## Notes
 
+- A flag that does not apply to the form in use — for example `--package` on a
+  local path, or `--symbol` outside one — is refused with a message naming the
+  form that honours it, rather than accepted and ignored.
+- The `Context size` line under a text block reports the size of the module's
+  full JSON document — the same figure `--size-only` prints — not the size of
+  the text summary on screen.
 - The `dependencies` section shows direct dependencies only - modules that
   appear as `require` directives in this module's `go.mod`. For the full
   transitive closure use `kanonarion walk-show <walk_id>`.

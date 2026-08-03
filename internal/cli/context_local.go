@@ -49,7 +49,19 @@ func isLocalPath(arg string) bool {
 
 // runContextLocal builds a local workspace context using progressive analysis.
 // The default level is import (go list -json); --symbol enables type-checking.
+//
+// A working-tree context is a different document from a stored-record context:
+// it reports the tree's imported modules and has no interface, call-graph or
+// example sections. The flags that shape those sections, and the flags that
+// select modules out of a walk, are therefore refused here by name rather than
+// parsed and dropped — every one of them previously left the output
+// byte-identical.
 func runContextLocal(ctx context.Context, dir string, f contextFlags, stdout, stderr io.Writer) error {
+	if err := refuseInapplicableFlags("context <local path>",
+		append(contextWalkOnlyFlags(f), contextRenderFlags(f)...)); err != nil {
+		return err
+	}
+
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return fmt.Errorf("resolving path %q: %w", dir, err)
@@ -100,6 +112,13 @@ func runContextLocal(ctx context.Context, dir string, f contextFlags, stdout, st
 			return fmt.Errorf("local reachability: %w", err)
 		}
 		out.Reachability = &reach
+	}
+
+	// --size-only asks what this document costs before pulling it. The answer
+	// measures the same JSON the --json path writes — the one definition of
+	// "context size" every surface of the command reports.
+	if f.sizeOnly {
+		return printDocumentSize(out, jsonOut, stdout)
 	}
 
 	if !jsonOut {
