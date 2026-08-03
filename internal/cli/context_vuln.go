@@ -19,6 +19,12 @@ type vulnBatchCtx struct {
 	snap        vuldomain.DatabaseSnapshot
 	// runs maps walkID → scan runs; populated for the walkLimit most recent walks.
 	runs map[string][]vuldomain.WalkScanRun
+	// window is the same walk set as runs, in the recency order ListWalks
+	// returned it in, and it is what an unanchored read iterates. runs stays the
+	// lookup. The two are populated together: a batch carrying runs but no window
+	// answers as though the window were empty, so only loadVulnBatchCtx builds
+	// one outside tests.
+	window []string
 	// walkUC backs the lazy graph loader used to filter walk-level annotations
 	// by transitive reachability. nil when no snapshot exists.
 	walkUC QueryWalksUseCase
@@ -85,17 +91,22 @@ func loadVulnBatchCtx(ctx context.Context, runsUC QueryScanRunsUseCase, walkUC Q
 		return nil, fmt.Errorf("listing walks: %w", err)
 	}
 	runsMap := make(map[string][]vuldomain.WalkScanRun, len(walks))
+	// ListWalks returns the window in recency order and that order is preserved
+	// here, because it is what an unanchored read answers in.
+	window := make([]string, 0, len(walks))
 	for _, w := range walks {
 		runs, err := runsUC.ListRunsForWalk(ctx, w.ID)
 		if err != nil {
 			continue
 		}
 		runsMap[w.ID] = runs
+		window = append(window, w.ID)
 	}
 	return &vulnBatchCtx{
 		hasSnapshot:   true,
 		snap:          snap,
 		runs:          runsMap,
+		window:        window,
 		walkUC:        walkUC,
 		graphCache:    make(map[string]*walkdomain.Graph),
 		affectedCache: make(map[string]map[coordinate.ModuleCoordinate]struct{}),
@@ -246,12 +257,19 @@ func buildVulnerabilitiesFromBatch(ctx context.Context, coord coordinate.ModuleC
 	// in that window covered the module first — measured on a real store, 20 of
 	// one project's 128 modules were reported in three other projects' frames,
 	// one of them inverting a reachability verdict.
-	runGroups := batch.runs
+	//
+	// An unanchored batch iterates the window in recency order, so the newest
+	// covering walk answers every time. Ranging the runs map instead let Go's
+	// randomised map order pick the covering walk: measured on a real store, 4 of
+	// 60 identical runs of one coordinate carried a walk annotation the other 56
+	// did not, and with a mixed-snapshot window the headline verdict flaps too,
+	// because the served record is narrowed to the visited run's snapshot.
+	order := batch.window
 	if batch.anchored {
-		runGroups = map[string][]vuldomain.WalkScanRun{batch.anchor.walkID: batch.runs[batch.anchor.walkID]}
+		order = []string{batch.anchor.walkID}
 	}
-	for _, runs := range runGroups {
-		for _, run := range runs {
+	for _, walkID := range order {
+		for _, run := range batch.runs[walkID] {
 			if _, ok := run.PerModuleResults[coord]; !ok {
 				continue
 			}
@@ -264,6 +282,7 @@ func buildVulnerabilitiesFromBatch(ctx context.Context, coord coordinate.ModuleC
 			}
 			result := vulnRecordToContext(&rec, string(run.OverallStatus), walkCoverageCaveat(run))
 			batch.filterWalkAnnotation(ctx, &result, coord, run, vulnUC)
+			batch.nameWindowBasis(ctx, &result, walkID)
 			return result
 		}
 	}
@@ -275,6 +294,24 @@ func buildVulnerabilitiesFromBatch(ctx context.Context, coord coordinate.ModuleC
 		return vulnRecordToContext(&rec, "", "")
 	}
 	return contextVulnerabilities{Status: sectionStatusNotRun}
+}
+
+// nameWindowBasis states which walk an unanchored answer was read from, and the
+// frame that walk was rooted at.
+//
+// A window answer is a fact about one build: "affected via <peer>" is true in
+// the walk that found the peer and says nothing about any other, and the verdict
+// itself is selected within that walk's snapshot. Stated without the walk, it is
+// a frame-dependent claim with the frame withheld. An anchored batch is silent
+// here because its caller already names the build it pinned to.
+func (b *vulnBatchCtx) nameWindowBasis(ctx context.Context, result *contextVulnerabilities, walkID string) {
+	if b.anchored || walkID == "" {
+		return
+	}
+	result.WalkBasisID = walkID
+	if anchor := b.frameFor(ctx, walkID); anchor.rooting.IsRecorded() {
+		result.WalkBasisFrame = string(anchor.rooting)
+	}
 }
 
 // selectForBatch picks the record a batch report serves for one coordinate: in

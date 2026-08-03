@@ -308,6 +308,16 @@ project this is what keeps a report about your build from carrying another
 project's verdict for a shared dependency; `frame` on each section names the
 frame the served record was measured in.
 
+A bare `context <module>@<version>` names no build, so it answers from the walk
+window — the ten most recent walks — and the newest walk covering the module
+answers. That walk is stated: `walk_basis_id` and `walk_basis_frame` name it and
+the frame it was rooted at, and the text output prints a `Walk basis:` line
+beneath the verdict. The pair is set only on this unanchored form; `--walk-id`
+and `--gomod` name their build themselves. Read it: the verdict and any
+`[walk: affected via …]` annotation are facts about that one build, and another
+walk in the window may hold a different answer for the same module. To ask about
+a specific build, pass `--walk-id` or `--gomod`.
+
 | Field | Type | Description |
 |---|---|---|
 | `status` | string | `not_run` / `read_error` / scan status (`Clean`, `Affected`, `Withdrawn`, `Unscannable`, `ScanFailed`) |
@@ -331,6 +341,8 @@ or `Affected (2 finding(s), 1 retracted)` for a mixture.
 | `walk_affected` | array | Affected walk peers (`module@version`) that lie in **this module's own transitive dependency closure**, sorted; empty/omitted when no affected peer is reachable from this module |
 | `walk_error` | string | Set when a walk-peer's verdict could not be read from the store while resolving `walk_affected`. The peer set may be incomplete; the fault is surfaced rather than fabricated into an affected verdict or misattributed to this module's own status |
 | `walk_id` | string | Walk used for reachability analysis |
+| `walk_basis_id` | string | The walk whose scan run answered, when the answer came from the walk window rather than a build named with `--walk-id` / `--gomod`. Omitted on those anchored forms |
+| `walk_basis_frame` | string | The frame that walk was rooted at (e.g. `target-rooted:example.com/app@v1.0.0`). Omitted when the walk record is no longer in the store, which loses the frame but not the walk's identity |
 | `snapshot_version` | string | Vulnerability database snapshot date |
 | `extracted_at` | string | RFC3339 scan timestamp |
 | `error` | string | Set when `status` is `read_error` |

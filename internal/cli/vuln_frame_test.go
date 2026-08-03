@@ -205,6 +205,7 @@ func TestContextVulnerabilities_ServesTheConsumerFrameWithinTheRunsSnapshot(t *t
 	uc.AddRecords(coord, twoFrameLedger(t, snap)...)
 
 	batch := &vulnBatchCtx{
+		window: []string{"walk-frame"},
 		runs: map[string][]vuldomain.WalkScanRun{
 			"walk-frame": {{
 				WalkID:           "walk-frame",
@@ -252,6 +253,7 @@ func TestContextVulnerabilities_ARunAnswersOnlyFromItsOwnSnapshot(t *testing.T) 
 	uc.AddRecords(coord, twoFrameLedger(t, vulntest.MustNew("test", "v1"))...)
 
 	batch := &vulnBatchCtx{
+		window: []string{"walk-frame"},
 		runs: map[string][]vuldomain.WalkScanRun{
 			"walk-frame": {{
 				WalkID:           "walk-frame",

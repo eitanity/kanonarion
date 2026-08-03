@@ -228,6 +228,7 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 			line += " " + ann
 		}
 		w.printf("  Vulnerabilities: %s\n", line)
+		printWalkBasis(w, "  Walk basis:      %s\n", out.Vulnerabilities)
 		printScanProvenance(w, out.Vulnerabilities)
 	}
 
@@ -250,6 +251,26 @@ func printScanProvenance(w *errWriter, v contextVulnerabilities) {
 	case v.PipelineVersion != "":
 		w.printf("  Pipeline:        %s\n", v.PipelineVersion)
 	}
+}
+
+// printWalkBasis names the walk an unanchored answer was read from. The verdict
+// and the walk annotation above it hold in that build; another walk in the
+// window may answer differently, so the one that answered is named rather than
+// left for the reader to assume. Silent when the caller anchored the read, which
+// states its own build.
+//
+// The frame is stated when the walk record could be read and its absence is said
+// in words, because a missing frame is a gap in what is known about the answer,
+// not a property of the answer.
+func printWalkBasis(w *errWriter, format string, v contextVulnerabilities) {
+	if v.WalkBasisID == "" {
+		return
+	}
+	if v.WalkBasisFrame == "" {
+		w.printf(format, fmt.Sprintf("%s (frame unknown — the walk record is not in the store)", v.WalkBasisID))
+		return
+	}
+	w.printf(format, fmt.Sprintf("%s (frame %s)", v.WalkBasisID, v.WalkBasisFrame))
 }
 
 // walkAnnotation renders the inline walk-level note appended to a module's

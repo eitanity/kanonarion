@@ -226,15 +226,22 @@ type contextCVE struct {
 }
 
 type contextVulnerabilities struct {
-	ExtractedAt  string       `json:"extracted_at,omitempty"`
-	Status       string       `json:"status"`
-	WalkStatus   string       `json:"walk_status,omitempty"`   // the walk run's collapsed OverallStatus (compatibility summary)
-	WalkCoverage string       `json:"walk_coverage,omitempty"` // coverage axis (Partial/Failed) when the run left modules unanalysed
-	WalkAffected []string     `json:"walk_affected,omitempty"` // affected walk peers in this module's transitive dep closure
-	WalkError    string       `json:"walk_error,omitempty"`    // set when a walk-peer verdict could not be read; the affected-peer set may be incomplete
-	Reason       string       `json:"reason,omitempty"`
-	Findings     []contextCVE `json:"findings,omitempty"`
-	WalkID       string       `json:"walk_id,omitempty"`
+	ExtractedAt  string   `json:"extracted_at,omitempty"`
+	Status       string   `json:"status"`
+	WalkStatus   string   `json:"walk_status,omitempty"`   // the walk run's collapsed OverallStatus (compatibility summary)
+	WalkCoverage string   `json:"walk_coverage,omitempty"` // coverage axis (Partial/Failed) when the run left modules unanalysed
+	WalkAffected []string `json:"walk_affected,omitempty"` // affected walk peers in this module's transitive dep closure
+	WalkError    string   `json:"walk_error,omitempty"`    // set when a walk-peer verdict could not be read; the affected-peer set may be incomplete
+	// WalkBasisID and WalkBasisFrame name the walk whose scan run answered, and
+	// the frame that walk was rooted at, when the answer came from the walk
+	// window rather than from a build the caller named. The window's verdict and
+	// its walk annotation are facts about that one build, so the build is stated.
+	// Empty on a caller-anchored read, which names its build itself.
+	WalkBasisID    string       `json:"walk_basis_id,omitempty"`
+	WalkBasisFrame string       `json:"walk_basis_frame,omitempty"`
+	Reason         string       `json:"reason,omitempty"`
+	Findings       []contextCVE `json:"findings,omitempty"`
+	WalkID         string       `json:"walk_id,omitempty"`
 	// Frame is the analysis frame the served record was reached in. A
 	// reachability finding means something different in each — isolated answers
 	// "is this advisory reachable in the module examined alone", target-rooted

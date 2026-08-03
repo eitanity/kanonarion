@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"strings"
@@ -60,6 +61,7 @@ func TestBuildVulnerabilities_UnreadableLedgerIsReadErrorNotNotRun(t *testing.T)
 	uc := testfakes.NewFakeQueryVuln()
 	uc.Err = errors.New("record unreadable")
 	batch := &vulnBatchCtx{
+		window: []string{"walk-1"},
 		runs: map[string][]vuldomain.WalkScanRun{
 			"walk-1": {{PerModuleResults: map[coordinate.ModuleCoordinate]string{coord: ""}}},
 		},
@@ -137,6 +139,7 @@ func walkAffectedFixtureCoverage(t *testing.T, overall vuldomain.WalkScanStatus,
 	})
 
 	batch := &vulnBatchCtx{
+		window: []string{"walk-1"},
 		runs: map[string][]vuldomain.WalkScanRun{
 			"walk-1": {{
 				WalkID:           "walk-1",
@@ -287,6 +290,7 @@ func TestBuildVulnerabilities_WalkGraphUnavailable_KeepsGenericAnnotation(t *tes
 	vuln.AddRecord(subject, cln(subject))
 	vuln.AddRecord(peer, aff(peer))
 	batch := &vulnBatchCtx{
+		window: []string{"walk-1"},
 		runs: map[string][]vuldomain.WalkScanRun{
 			"walk-1": {{
 				WalkID:           "walk-1",
@@ -337,4 +341,124 @@ func TestWalkAnnotation_rendering(t *testing.T) {
 			}
 		})
 	}
+}
+
+// The window answers from its newest covering walk, every time.
+//
+// Before, an unanchored batch ranged the runs map, so whichever covering walk
+// Go's randomised order reached first answered: on a real store 4 of 60
+// identical runs of one coordinate carried a walk annotation the other 56 did
+// not. The window here holds two walks that answer differently — the newer one
+// scanned against a later snapshot and found the module Affected, the older
+// found it Clean — so map order would flip this test with probability
+// 1 - 2^-iterations.
+func TestBuildVulnerabilities_WindowAnswersFromTheNewestCoveringWalk(t *testing.T) {
+	coord := mustContextCoord(t)
+	root := coordinatetest.MustNew("example.com/app", "v1.0.0")
+	snapOld := vulntest.MustNew("test", "v1")
+	snapNew := vulntest.MustNew("test", "v2")
+
+	recOld := cln(coord)
+	recOld.DatabaseSnapshot = snapOld
+	recNew := aff(coord)
+	recNew.DatabaseSnapshot = snapNew
+
+	uc := testfakes.NewFakeQueryVuln()
+	uc.AddRecords(coord, recOld, recNew)
+
+	walks := testfakes.NewFakeQueryWalks()
+	walks.AddWalk(walkdomain.WalkRecord{ID: "walk-new", Target: root})
+
+	newBatch := func() *vulnBatchCtx {
+		return &vulnBatchCtx{
+			// Recency order, newest first, as ListWalks returns it.
+			window: []string{"walk-new", "walk-old"},
+			runs: map[string][]vuldomain.WalkScanRun{
+				"walk-new": {{
+					WalkID:           "walk-new",
+					Snapshot:         snapNew,
+					OverallStatus:    vuldomain.WalkStatusAffected,
+					PerModuleResults: map[coordinate.ModuleCoordinate]string{coord: ""},
+				}},
+				"walk-old": {{
+					WalkID:           "walk-old",
+					Snapshot:         snapOld,
+					OverallStatus:    vuldomain.WalkStatusAllClean,
+					PerModuleResults: map[coordinate.ModuleCoordinate]string{coord: ""},
+				}},
+			},
+			walkUC:     walks,
+			frameCache: map[string]vulnFrameAnchor{},
+		}
+	}
+
+	const iterations = 200
+	for i := range iterations {
+		v := buildVulnerabilitiesFromBatch(context.Background(), coord, uc, newBatch())
+		if v.Status != string(vuldomain.StatusAffected) {
+			t.Fatalf("iteration %d: Status = %q, want the newest covering walk's %q", i, v.Status, vuldomain.StatusAffected)
+		}
+		if v.WalkStatus != string(vuldomain.WalkStatusAffected) {
+			t.Fatalf("iteration %d: WalkStatus = %q, want the newest covering walk's run status", i, v.WalkStatus)
+		}
+		if v.WalkBasisID != "walk-new" {
+			t.Fatalf("iteration %d: WalkBasisID = %q, want walk-new", i, v.WalkBasisID)
+		}
+	}
+}
+
+// A window answer names the walk it was read from and that walk's frame; an
+// anchored answer does not, because its caller already named the build.
+func TestBuildVulnerabilities_WindowAnswerNamesItsWalkAndFrame(t *testing.T) {
+	coord := mustContextCoord(t)
+	root := coordinatetest.MustNew("example.com/app", "v1.0.0")
+
+	uc := testfakes.NewFakeQueryVuln()
+	uc.AddRecord(coord, cln(coord))
+
+	walks := testfakes.NewFakeQueryWalks()
+	walks.AddWalk(walkdomain.WalkRecord{ID: "walk-1", Target: root})
+
+	batch := &vulnBatchCtx{
+		window: []string{"walk-1"},
+		runs: map[string][]vuldomain.WalkScanRun{
+			"walk-1": {{
+				WalkID:           "walk-1",
+				OverallStatus:    vuldomain.WalkStatusAllClean,
+				PerModuleResults: map[coordinate.ModuleCoordinate]string{coord: ""},
+			}},
+		},
+		walkUC:     walks,
+		frameCache: map[string]vulnFrameAnchor{},
+	}
+
+	v := buildVulnerabilitiesFromBatch(context.Background(), coord, uc, batch)
+
+	if v.WalkBasisID != "walk-1" {
+		t.Errorf("WalkBasisID = %q, want walk-1", v.WalkBasisID)
+	}
+	if want := string(vuldomain.TargetRootedAt(root)); v.WalkBasisFrame != want {
+		t.Errorf("WalkBasisFrame = %q, want %q", v.WalkBasisFrame, want)
+	}
+	if got := renderWalkBasisLine(t, v); got != "Walk basis: walk-1 (frame "+string(vuldomain.TargetRootedAt(root))+")\n" {
+		t.Errorf("rendered basis = %q, want the walk and frame named", got)
+	}
+
+	batch.anchorTo(context.Background(), "walk-1")
+	anchored := buildVulnerabilitiesFromBatch(context.Background(), coord, uc, batch)
+	if anchored.WalkBasisID != "" || anchored.WalkBasisFrame != "" {
+		t.Errorf("anchored read named a window basis: %q / %q", anchored.WalkBasisID, anchored.WalkBasisFrame)
+	}
+}
+
+// renderWalkBasisLine runs the text renderer's basis line for one section.
+func renderWalkBasisLine(t *testing.T, v contextVulnerabilities) string {
+	t.Helper()
+	var buf bytes.Buffer
+	w := &errWriter{w: &buf}
+	printWalkBasis(w, "Walk basis: %s\n", v)
+	if w.err != nil {
+		t.Fatalf("rendering walk basis: %v", w.err)
+	}
+	return buf.String()
 }
