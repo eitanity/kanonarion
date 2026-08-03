@@ -283,11 +283,24 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		// file with no network to flake, so it is left undecorated.
 		sumdb = sumdbretry.New(fetchsumdb.New(filepath.Join(storeRoot, "sumdb")), logger)
 		dp, perr := fetchproxy.New(goproxy, false)
-		if perr != nil {
+		switch {
+		case fetchproxy.IsRefusal(perr):
+			// The environment declares no module fetching (GOPROXY=off), or a
+			// fetch route this adapter has not got (direct). The container is
+			// still built: every command that only reads the store must keep
+			// working inside an air gap, and most of them wire this adapter
+			// without ever fetching through it. What is withdrawn is the
+			// fetching, and the refusal arrives at the attempt — before any
+			// network I/O — rather than being quietly re-pointed at the
+			// default proxy, which is what breached the gap.
+			logger.Warn("module fetching refused by the environment; reads continue, fetches will fail", "reason", perr)
+			proxyAdapter = fetchproxy.Refusing(perr)
+		case perr != nil:
 			_ = dbHandle.Close()
 			return nil, nil, fmt.Errorf("creating proxy adapter: %w", perr)
+		default:
+			proxyAdapter = dp
 		}
-		proxyAdapter = dp
 	}
 
 	// ---- factstore (auditing) ----

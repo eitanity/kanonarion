@@ -48,6 +48,17 @@ other modules still proceed.
 - **Complementary:** `fetch` populates the store from the network; `use`
   projects the store into a consumable module cache.
 
+## Air-gapped operation
+
+`use --recursive` is the offline remedy the fetch-capable commands name. In an
+environment that declares no module fetching (`GOPROXY=off`), `fetch`, `walk`,
+`latest` and `audit` refuse before any network I/O and exit `20`; the way to
+put a module and its whole closure in front of a `go build` there is this
+command, whose bytes come from the store and are re-verified against the
+recorded hashes on the way out. `use` itself is unaffected by `GOPROXY` - it
+never opens a socket. See
+[`fetch`: `GOPROXY=off` and `direct`](fetch.md#goproxyoff-and-direct).
+
 ## Notes
 
 - The destination layout matches what the Go toolchain expects under

@@ -329,6 +329,36 @@ To scan another platform's walk deliberately, name it by ID:
 `kanonarion vuln-scan <walk-id>`. The progress line states the frame the
 selected walk was resolved in.
 
+**The walk must still describe this manifest.** The lookup above finds a walk by
+the project's module path, which does not change when the `go.mod` does, so
+before anything is served the scan re-resolves the scope and compares the module
+set against the selected walk's own nodes. Two outcomes, both stated on stderr:
+
+```
+manifest re-resolved: 126 module versions, identical to walk 01KZ3VA296P8KTP265M6CDBCHB
+```
+
+The build is the one that walk recorded, so the run proceeds exactly as before —
+including serving a stored scan run for it.
+
+```
+the manifest no longer resolves to walk 01KZ3VA296P8KTP265M6CDBCHB: 1 changed (github.com/golang-jwt/jwt/v4 v4.5.1 -> v4.5.2); it now resolves 126 module versions, that walk recorded 126
+re-walking ./go.mod before scanning: no stored run describes this build
+```
+
+Drift is never served. The scan walks the manifest as it stands, then scans that
+walk. An edit that is later reverted converges back onto the original walk — the
+walk machinery reuses an identical analysis by identity — and with it onto that
+walk's stored run, so a revert is cheap rather than a re-measurement.
+`--force` on a drifted manifest re-walks too, rather than re-measuring a walk
+that describes a build you no longer have.
+
+The re-resolution is a `go list` over the scope, so it costs about a second on a
+320-module project against the fraction of one a stored answer takes to serve.
+The read-only surfaces do not pay it: `vuln-show`/`vuln-list --gomod`, the
+build-scoped call-graph and interface queries, and `context --gomod` state in
+their notice that the manifest was not re-resolved for the read.
+
 `--module` is **not** filtered this way. A walk rooted at a published
 coordinate records no target platform at all — only project walks (`--gomod`)
 do — so there is nothing to filter on, and the scan states the frame as
@@ -668,7 +698,7 @@ vulnerability database snapshot predated it.
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Path to fact store root |
 | `--walk-id` | _(none)_ | Answer in the frame of this walk's scans |
-| `--gomod` | _(none)_ | Answer in the frame of the latest project walk for this go.mod (valueless form: `./go.mod`) |
+| `--gomod` | _(none)_ | Answer in the frame of the latest project walk for this go.mod (valueless form: `./go.mod`). The notice states that the go.mod was not re-resolved for the read, so an edit made since that walk is not reflected |
 | `--history` | `false` | List all scan records across walks and snapshots |
 | `--json` | `false` | Emit record as JSON |
 

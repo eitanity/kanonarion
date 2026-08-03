@@ -69,7 +69,7 @@ kanonarion inspect github.com/spf13/cobra@v1.8.1 --json
 | `--reachability` | `false` | Enable call-graph reachability analysis during vuln-scan. For `--gomod`, reachability roots at the dependency closure, not the project's own code (see the note under [`inspect --gomod`](#inspect---gomod-path)) |
 | `--skip-vcs-verify` | `false` | Skip git cross-verification; sumdb verification still runs |
 | `--policy` | _(auto-discover `.kanonarion/policy.yaml`)_ | Depth policy file; its fetch stage governs traversal and the `allowed_vcs_hosts` forge allowlist |
-| `--goproxy` | `$GOPROXY` | Override the Go module proxy |
+| `--goproxy` | `$GOPROXY` | Override the Go module proxy. `off` and `direct` are honoured, not rewritten: resolving `@latest` refuses before any network I/O and exits `20`. See [`fetch`: `GOPROXY=off` and `direct`](fetch.md#goproxyoff-and-direct) |
 | `--go-binary` | | Path to `go` binary if not in `$PATH` |
 | `--json` | `false` | Emit final context as JSON |
 | `--full` | `false` | Include full doc comments and complete example bodies in context. Refused with `--gomod`, which prints a summary rather than context |

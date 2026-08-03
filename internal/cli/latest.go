@@ -108,8 +108,19 @@ type latestResult struct {
 	// It is populated whether or not the pin is current: the age of a release is
 	// a fact about the release, and suppressing it for an up-to-date pin would
 	// make the field mean something different on different rows.
-	LatestReleaseAgeDays int  `json:"latest_release_age_days,omitempty"`
-	IsLatest             bool `json:"is_latest"`
+	LatestReleaseAgeDays int `json:"latest_release_age_days,omitempty"`
+	// IsLatest answers "is the pin the newest version of this module path".
+	//
+	// It is a POINTER because the question is not always answered. A lookup that
+	// failed measured nothing, and a module named with no pin was never asked the
+	// question at all; both used to emit a bool, and the zero value of a bool on
+	// a failed lookup is the claim "your pin is behind" about a row nothing was
+	// established for. Unanswered is null, with StalenessUnmeasured naming why.
+	IsLatest *bool `json:"is_latest"`
+	// StalenessUnmeasured is the machine-readable reason IsLatest is null, from
+	// the vocabulary shared with `audit` and `fetch` (see staleness.go). Absent on
+	// a measured row.
+	StalenessUnmeasured string `json:"staleness_unmeasured,omitempty"`
 
 	// NewerMajor is the newest major-suffixed path above the pinned major, when
 	// one resolves. It is a SEPARATE field from Latest and is never folded into
@@ -157,7 +168,7 @@ func (r latestResult) newerMajor() staledomain.NewerMajor {
 func runLatest(ctx context.Context, args []string, f latestFlags, stdout, stderr io.Writer) error {
 	proxy, err := proxyadapter.New(f.goproxy, false)
 	if err != nil {
-		return fmt.Errorf("creating proxy adapter: %w", err)
+		return proxyAdapterError(err)
 	}
 
 	// The ledger is the only reason this command opens the store. A store that
@@ -206,9 +217,14 @@ func runLatestModules(ctx context.Context, modules []string, resolver *staleapp.
 		if err != nil {
 			return fmt.Errorf("querying latest for %s: %w", modulePath, err)
 		}
+		// No pin was named, so there is no comparison to report: is_latest is null
+		// with the reason "not asked", never true. `latest <module>` answers "what
+		// is the newest version", and answering the unasked staleness question in
+		// the affirmative beside it is how a caller ends up reading a bare path
+		// lookup as a clean bill of health for a version it never mentioned.
 		res := latestResult{
-			Module:   modulePath,
-			IsLatest: true,
+			Module:              modulePath,
+			StalenessUnmeasured: stalenessNotAsked,
 		}
 		res.applyStaleness(ans)
 		results = append(results, res)
@@ -277,7 +293,50 @@ func latestReleaseAgeDays(publishedAt time.Time) int {
 	return int(time.Since(publishedAt).Hours() / 24)
 }
 
-func runLatestGomod(ctx context.Context, gomodPath string, scope depScope, resolver *staleapp.Resolver, stdout, stderr io.Writer) error {
+// latestRowFor resolves one pinned dependency into an output row.
+//
+// The failed lookup is the row this function exists to get right: nothing was
+// measured, so is_latest is null with the reason, and the table keeps the error
+// line it already printed. The row used to carry a bare zero-value IsLatest,
+// which --json emitted as `"is_latest": false` — the claim "your pin is behind"
+// contradicting the very text line beside it that said the lookup errored.
+func latestRowFor(ctx context.Context, lookup stalenessLookup, path, pinned string, stderr io.Writer) latestResult {
+	ans, lerr := lookup.Resolve(ctx, path, pinned)
+	if ans.LatestVersion == "" {
+		if lerr != nil {
+			_, _ = fmt.Fprintf(stderr, "latest %s: %v\n", path, lerr)
+		}
+		return latestResult{
+			Module: path,
+			Pinned: pinned,
+			// The sentinel the table has always keyed its error cell on stays,
+			// so the text output is unchanged; what changes is that the JSON now
+			// says the column is unmeasured instead of answering it.
+			Latest:              "(error)",
+			StalenessUnmeasured: stalenessLookupFailed,
+		}
+	}
+	if lerr != nil {
+		// The same-major answer resolved and the major probe did not. The module
+		// is reported with what was measured and MajorProbed false, so "no newer
+		// major" is never printed for a question that failed.
+		_, _ = fmt.Fprintf(stderr, "latest %s: %v\n", path, lerr)
+	}
+
+	isLatest := ans.LatestVersion == pinned
+	res := latestResult{
+		Module:   path,
+		Pinned:   pinned,
+		IsLatest: &isLatest,
+	}
+	res.applyStaleness(ans)
+	return res
+}
+
+// runLatestGomod takes the lookup as an interface, not the concrete resolver, so
+// the row above can be exercised against a lookup that fails — the leg no live
+// proxy can be asked to produce on demand.
+func runLatestGomod(ctx context.Context, gomodPath string, scope depScope, lookup stalenessLookup, stdout, stderr io.Writer) error {
 	type pinnedDep struct {
 		path    string
 		version string
@@ -312,30 +371,7 @@ func runLatestGomod(ctx context.Context, gomodPath string, scope depScope, resol
 		if cerr := ctx.Err(); cerr != nil {
 			return fmt.Errorf("context cancelled: %w", cerr)
 		}
-		ans, lerr := resolver.Resolve(ctx, dep.path, dep.version)
-		if lerr != nil && ans.LatestVersion == "" {
-			_, _ = fmt.Fprintf(stderr, "latest %s: %v\n", dep.path, lerr)
-			results = append(results, latestResult{
-				Module: dep.path,
-				Pinned: dep.version,
-				Latest: "(error)",
-			})
-			continue
-		}
-		if lerr != nil {
-			// The same-major answer resolved and the major probe did not. The
-			// module is reported with what was measured and MajorProbed false,
-			// so "no newer major" is never printed for a question that failed.
-			_, _ = fmt.Fprintf(stderr, "latest %s: %v\n", dep.path, lerr)
-		}
-
-		res := latestResult{
-			Module:   dep.path,
-			Pinned:   dep.version,
-			IsLatest: ans.LatestVersion == dep.version,
-		}
-		res.applyStaleness(ans)
-		results = append(results, res)
+		results = append(results, latestRowFor(ctx, lookup, dep.path, dep.version, stderr))
 	}
 
 	if jsonOut {
@@ -362,7 +398,11 @@ func printLatestTable(stdout io.Writer, results []latestResult) error {
 		switch {
 		case r.Latest == "(error)":
 			status = "(error resolving latest)"
-		case r.IsLatest:
+		case r.IsLatest == nil:
+			// Any other unmeasured row states the absence in the cell rather than
+			// falling through to one of the answers below.
+			status = stalenessUnmeasuredLabel(r.StalenessUnmeasured)
+		case *r.IsLatest:
 			status = "current"
 		case r.LatestReleaseAgeDays == 0:
 			status = fmt.Sprintf("latest: %s (released today)", r.Latest)

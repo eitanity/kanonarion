@@ -44,7 +44,7 @@ kanonarion walk --gomod ./go.mod [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Root directory for blobs and SQLite |
-| `--goproxy` | `$GOPROXY` or `proxy.golang.org` | Override the module proxy |
+| `--goproxy` | `$GOPROXY` or `proxy.golang.org` | Override the module proxy. `off` and `direct` are honoured, not rewritten: a walk that would fetch refuses before any network I/O and exits `20`. See [`fetch`: `GOPROXY=off` and `direct`](fetch.md#goproxyoff-and-direct) |
 | `--force` | `false` | Re-fetch and re-verify every module in the closure, bypassing the fact-store cache. Wall time scales with the closure size; `per_node_results[].from_cache` will be `false` for every node. |
 | `--allow-partial` | `false` | Exit 0 even when the walk status is partial |
 | `--workers` | `16` | Concurrent fetch workers |
@@ -217,6 +217,20 @@ anchors instead to the local toolchain - digests over `$GOROOT/src` and the
 licence from `$GOROOT/LICENSE`, recorded as `VerifiedLocalToolchain`, with no
 go.dev/dl checksum consulted. See [SBOM standard-library chain of
 custody](sbom.md#standard-library-chain-of-custody).
+
+### Offline and air-gapped walks
+
+`--from-modcache` is the offline walk: module bytes come from `$GOMODCACHE`,
+verification is against the local `go.sum`, and the standard-library anchor is
+the local toolchain. It is the mode to use inside an air gap.
+
+A walk **without** `--from-modcache` is fetch-capable, so an environment that
+declares no module fetching stops it: under `GOPROXY=off` the walk refuses
+before any network I/O and exits `20`, naming `--from-modcache` and
+[`use --recursive`](use.md) rather than falling back to `proxy.golang.org`.
+Reading walks already recorded (`walk show`, `callgraph`, `interface`,
+`license`, `vuln show`) is unaffected - the refusal withdraws fetching, not the
+store.
 
 ## Scope and depth
 

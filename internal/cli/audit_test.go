@@ -122,7 +122,7 @@ func TestPrintAuditTable_ScopeColumn(t *testing.T) {
 			License:       "MIT",
 			LicenseStatus: "Detected",
 			VulnStatus:    "Clean",
-			IsLatest:      true,
+			IsLatest:      measuredIsLatest(true),
 		},
 		{
 			Coordinate:    "golang.org/x/tools@v0.30.0",
@@ -131,7 +131,7 @@ func TestPrintAuditTable_ScopeColumn(t *testing.T) {
 			License:       "BSD-3-Clause",
 			LicenseStatus: "Detected",
 			VulnStatus:    "Clean",
-			IsLatest:      true,
+			IsLatest:      measuredIsLatest(true),
 		},
 	}
 	var buf strings.Builder
@@ -156,7 +156,7 @@ func TestPrintAuditTable_NoScopeColumn(t *testing.T) {
 			License:       "MIT",
 			LicenseStatus: "Detected",
 			VulnStatus:    "Clean",
-			IsLatest:      true,
+			IsLatest:      measuredIsLatest(true),
 		},
 	}
 	var buf strings.Builder
@@ -186,7 +186,7 @@ func TestPrintAuditTable(t *testing.T) {
 					License:       "MIT",
 					LicenseStatus: "Detected",
 					VulnStatus:    "Clean",
-					IsLatest:      true,
+					IsLatest:      measuredIsLatest(true),
 				},
 			},
 			checks: []string{"github.com/foo/bar@v1.0.0", "Verified", "MIT", "Clean", "current"},
@@ -202,7 +202,7 @@ func TestPrintAuditTable(t *testing.T) {
 					License:       "Apache-2.0",
 					LicenseStatus: "Ambiguous",
 					VulnStatus:    "Clean",
-					IsLatest:      true,
+					IsLatest:      measuredIsLatest(true),
 				},
 			},
 			checks: []string{"Apache-2.0 [Ambiguous]"},
@@ -217,7 +217,7 @@ func TestPrintAuditTable(t *testing.T) {
 					LicenseStatus: "Detected",
 					VulnStatus:    "Affected",
 					VulnFindings:  3,
-					IsLatest:      true,
+					IsLatest:      measuredIsLatest(true),
 				},
 			},
 			checks: []string{"Affected (3 findings)"},
@@ -231,7 +231,7 @@ func TestPrintAuditTable(t *testing.T) {
 					License:              "MIT",
 					LicenseStatus:        "Detected",
 					VulnStatus:           "Clean",
-					IsLatest:             false,
+					IsLatest:             measuredIsLatest(false),
 					LatestVersion:        "v1.5.0",
 					LatestReleaseAgeDays: 45,
 				},
@@ -248,7 +248,7 @@ func TestPrintAuditTable(t *testing.T) {
 					License:              "MIT",
 					LicenseStatus:        "Detected",
 					VulnStatus:           "Clean",
-					IsLatest:             false,
+					IsLatest:             measuredIsLatest(false),
 					LatestVersion:        "v1.1.0",
 					LatestReleaseAgeDays: 0,
 				},
@@ -264,7 +264,7 @@ func TestPrintAuditTable(t *testing.T) {
 					License:       "(not run)",
 					LicenseStatus: "(not run)",
 					VulnStatus:    "(not run)",
-					IsLatest:      true,
+					IsLatest:      measuredIsLatest(true),
 				},
 			},
 			checks: []string{"github.com/foo/bar@v1.0.0", "(walk failed)", "(not run)"},
@@ -452,3 +452,8 @@ func TestAuditCmd_EmptyCodeScopeJSON(t *testing.T) {
 		t.Errorf("expected no results for an empty scope, got %d", len(results))
 	}
 }
+
+// measuredIsLatest builds the pointer a MEASURED staleness answer sets. The
+// field is a pointer precisely so a row nobody asked about carries no answer, so
+// a hand-built row that means "measured, and current" has to say so.
+func measuredIsLatest(b bool) *bool { return &b }

@@ -107,6 +107,13 @@ performs - and asks the **stored** call graph which of the breaking deltas the
 project's own code calls. It never re-parses the consumer's source, so the
 answer cannot disagree with what `callers` says about the same symbol.
 
+The walk is found by the module path the `go.mod` declares, and the `go.mod` is
+not re-resolved for the read: the section header says so beneath itself, because
+"your code does not call the removed symbol" is the answer a scope taken before
+your last dependency edit gets wrong quietly. `walk --gomod` records the current
+resolution. `gomod` in the JSON is the manifest path that was resolved to find
+the walk.
+
 For each breaking delta the output reports one of three things:
 
 - `!` - reached: the number of recorded call sites, and each calling function

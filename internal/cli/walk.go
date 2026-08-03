@@ -315,7 +315,7 @@ func runWalk(ctx context.Context, arg string, f commonWalkFlags, force, allowPar
 	if version == "latest" {
 		proxy, proxyErr := fetchadapterproxy.New(f.goproxy, false)
 		if proxyErr != nil {
-			return fmt.Errorf("creating proxy: %w", proxyErr)
+			return proxyAdapterError(proxyErr)
 		}
 		coord, err = resolveLatest(ctx, path, proxy, stderr)
 		if err != nil {

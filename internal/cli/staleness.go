@@ -1,6 +1,8 @@
 package cli
 
 import (
+	"context"
+	"errors"
 	"fmt"
 	"path/filepath"
 	"time"
@@ -39,6 +41,117 @@ func newProxyLatestResolver(proxy *proxyadapter.Proxy) staleports.LatestResolver
 // is a wiring that will.
 func newAuditStalenessResolver(latest staleports.LatestResolver, ledger staleports.Ledger, ttl time.Duration) *staleapp.Resolver {
 	return newStalenessResolver(latest, ledger, ttl, false)
+}
+
+// The vocabulary for a staleness answer that was NOT measured. It is shared by
+// every command that reports staleness — `audit`, `latest` and `fetch` — because
+// a reader parsing one of them must not have to learn a second set of words for
+// the same absence, and because a per-command vocabulary is how one surface ends
+// up rendering an unmeasured row as an affirmative answer while its neighbour
+// states the truth.
+const (
+	// stalenessOfflineNoEntry: a fully offline run (--from-modcache) whose
+	// ledger holds no lookup for this module inside the staleness TTL. Nothing
+	// was asked and nothing recorded could be served.
+	stalenessOfflineNoEntry = "offline_no_ledger_entry"
+	// stalenessLookupFailed: the lookup was attempted and failed (proxy error,
+	// probe failure with nothing cached behind it).
+	stalenessLookupFailed = "lookup_failed"
+	// stalenessToolchainPinned: the standard library, whose version is the build
+	// toolchain's. There is no proxy "latest" for it, so the question does not
+	// apply rather than resolving in the pin's favour.
+	stalenessToolchainPinned = "toolchain_pinned"
+	// stalenessNotAsked: the question was never put. A `fetch <module>@latest`
+	// resolves the newest version and installs it, so there is no pin to compare
+	// against; `latest <module>` with no pin is the same shape. "Current" is not
+	// the answer to a question nobody asked — it is the absence of one.
+	stalenessNotAsked = "not_asked"
+)
+
+// stalenessUnmeasuredLabel renders the machine reason as the phrase the tables,
+// the coverage line and the fetch note show. An unrecognised reason is passed
+// through rather than dropped: a reason nobody has taught this function is still
+// more informative than none, and an unstated one still says "unmeasured".
+func stalenessUnmeasuredLabel(reason string) string {
+	switch reason {
+	case "":
+		return "unmeasured"
+	case stalenessOfflineNoEntry:
+		return "unmeasured (offline)"
+	case stalenessLookupFailed:
+		return "unmeasured (lookup failed)"
+	case stalenessToolchainPinned:
+		return "unmeasured (toolchain-pinned)"
+	case stalenessNotAsked:
+		return "unmeasured (not asked)"
+	}
+	return "unmeasured (" + reason + ")"
+}
+
+// stalenessLookup is what an audit row's staleness column is answered by. Two
+// implementations satisfy it: the resolver that may ask the proxy, and the
+// offline lookup below that may not. Naming the capability as an interface is
+// what lets the offline mode be a different ANSWER rather than a skipped column
+// silently rendered as the affirmative one.
+type stalenessLookup interface {
+	Resolve(ctx context.Context, path, pinnedVersion string) (staleapp.Answer, error)
+}
+
+// errStalenessOffline reports that an offline run had no recorded lookup it
+// could serve for a module. It is not a failure — nothing went wrong and nothing
+// is retryable offline — so callers render it as an unmeasured column rather
+// than an error line per module.
+var errStalenessOffline = errors.New("offline: no staleness lookup inside the TTL")
+
+// offlineStalenessLookup answers the staleness column on a fully offline run
+// (--from-modcache) from the ledger alone.
+//
+// A recorded lookup inside the TTL is a measurement and is served — with the
+// answer's own date, so the caller can state its age. Anything else is
+// errStalenessOffline. It NEVER writes: an offline run learns no new upstream
+// fact, and it never probes, because a probe is a network call and the mode's
+// contract is that there are none.
+type offlineStalenessLookup struct {
+	ledger staleports.Ledger
+	clk    staleports.Clock
+	ttl    time.Duration
+}
+
+func newOfflineStalenessLookup(ledger staleports.Ledger, ttl time.Duration) *offlineStalenessLookup {
+	return &offlineStalenessLookup{ledger: ledger, clk: clock.System{}, ttl: ttl}
+}
+
+// Resolve serves path's ledger row when it is inside the TTL.
+func (o *offlineStalenessLookup) Resolve(ctx context.Context, path, pinnedVersion string) (staleapp.Answer, error) {
+	if o.ledger == nil {
+		return staleapp.Answer{}, errStalenessOffline
+	}
+	rec, found, err := o.ledger.GetStaleness(ctx, path)
+	if err != nil {
+		return staleapp.Answer{}, fmt.Errorf("reading staleness ledger for %s: %w", path, err)
+	}
+	if !found || !rec.FreshAt(o.clk.Now(), o.ttl) {
+		return staleapp.Answer{}, errStalenessOffline
+	}
+
+	out := staledomain.Record{
+		ModulePath:        path,
+		LatestVersion:     rec.LatestVersion,
+		LatestPublishedAt: rec.LatestPublishedAt,
+		LookedUpAt:        rec.LookedUpAt,
+	}
+	// The stored probe is reusable only when it started at the same major, by the
+	// same rule the online resolver applies (see domain.NewerMajor.FromMajor).
+	// Otherwise it stays unprobed here: MajorProbed false says "not asked", which
+	// is what an offline run that cannot probe has to say.
+	pin := pinnedVersion
+	if pin == "" {
+		pin = out.LatestVersion
+	}
+	if rec.NewerMajor.Probed && rec.NewerMajor.FromMajor == staledomain.ProbeStartMajor(path, pin) {
+		out.NewerMajor = rec.NewerMajor
+	}
+	return staleapp.Answer{Record: out, Served: true}, nil
 }
 
 // openStalenessLedger opens the store purely for the staleness ledger.
