@@ -27,6 +27,11 @@ type vulnFrameAnchor struct {
 	// source names the anchor for the notice, e.g.
 	// `walk "01K…" (frame target-rooted:example.com/app@local)`.
 	source string
+	// staleness is the clause the notice appends when --gomod named the build:
+	// the walk was found by the module path the manifest declares, and this read
+	// did not re-resolve the manifest to check the walk still describes it. Empty
+	// for --walk-id, which names a record and cannot go stale against a file.
+	staleness string
 }
 
 // resolveVulnFrameAnchor turns --walk-id / --gomod into the frame a read is
@@ -54,12 +59,14 @@ func resolveVulnFrameAnchor(
 			msg: "no walk store is available, so a build cannot be named"}
 	}
 
+	var staleness string
 	if gomodSet {
-		resolved, err := latestWalkForGoMod(ctx, walks, gomod)
+		resolved, gomodPath, err := latestWalkForGoMod(ctx, walks, gomod)
 		if err != nil {
 			return vulnFrameAnchor{}, false, err
 		}
 		walkID = resolved.ID
+		staleness = manifestStalenessNote(gomodPath)
 	}
 
 	rec, err := walks.GetWalk(ctx, walkID)
@@ -72,8 +79,9 @@ func resolveVulnFrameAnchor(
 			// anchor is returned frameless and selection falls back to consumer-frame
 			// ranking, which refuses rather than guesses when it is ambiguous.
 			return vulnFrameAnchor{
-				walkID: walkID,
-				source: fmt.Sprintf("walk %q (frame unknown — the walk record is not in the store)", walkID),
+				walkID:    walkID,
+				source:    fmt.Sprintf("walk %q (frame unknown — the walk record is not in the store)", walkID),
+				staleness: staleness,
 			}, true, nil
 		}
 		return vulnFrameAnchor{}, false, fmt.Errorf("loading walk %q: %w", walkID, err)
@@ -81,9 +89,10 @@ func resolveVulnFrameAnchor(
 
 	rooting := vuldomain.TargetRootedAt(rec.Target)
 	return vulnFrameAnchor{
-		walkID:  walkID,
-		rooting: rooting,
-		source:  fmt.Sprintf("walk %q (frame %s)", walkID, rooting),
+		walkID:    walkID,
+		rooting:   rooting,
+		source:    fmt.Sprintf("walk %q (frame %s)", walkID, rooting),
+		staleness: staleness,
 	}, true, nil
 }
 
@@ -98,7 +107,7 @@ func writeFrameAnchorNotice(stdout io.Writer, anchor vulnFrameAnchor, ok bool) {
 	if !ok {
 		return
 	}
-	_, _ = fmt.Fprintf(stdout, "notice: results restricted to the records %s scanned\n", anchor.source)
+	_, _ = fmt.Fprintf(stdout, "notice: results restricted to the records %s scanned%s\n", anchor.source, anchor.staleness)
 }
 
 // selectRecordInFrame picks the record answering for one frame out of a

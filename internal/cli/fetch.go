@@ -171,7 +171,7 @@ func fetchOne(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.W
 
 	proxyAdapter, err := proxyadapter.New(f.goproxy, f.insecure)
 	if err != nil {
-		return fmt.Errorf("creating proxy adapter: %w", err)
+		return proxyAdapterError(err)
 	}
 
 	if f.listVersions {
@@ -240,21 +240,7 @@ func fetchOne(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.W
 
 	// Check staleness for pinned versions. The proxy call is fast relative to
 	// the fetch itself and the result is informative for both humans and agents.
-	type stalenessInfo struct {
-		IsLatest      bool   `json:"is_latest"`
-		LatestVersion string `json:"latest_version,omitempty"`
-		DaysSince     int    `json:"days_since_latest,omitempty"`
-	}
-	stale := stalenessInfo{IsLatest: true}
-	if version != "latest" {
-		if info, lerr := proxyAdapter.LatestInfo(ctx, coord.Path()); lerr == nil && info.Version != coord.Version() {
-			stale.IsLatest = false
-			stale.LatestVersion = info.Version
-			if !info.Time.IsZero() {
-				stale.DaysSince = int(time.Since(info.Time).Hours() / 24)
-			}
-		}
-	}
+	stale := fetchStalenessFor(ctx, proxyAdapter, coord, version, stderr)
 
 	if jsonOut {
 		type fetchOutput struct {
@@ -280,14 +266,7 @@ func fetchOne(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.W
 		if version == "latest" {
 			resolved = " (resolved from @latest)"
 		}
-		stalenessNote := ""
-		if !stale.IsLatest {
-			if stale.DaysSince == 0 {
-				stalenessNote = fmt.Sprintf(" [latest: %s, released today]", stale.LatestVersion)
-			} else {
-				stalenessNote = fmt.Sprintf(" [latest: %s, %d days ago]", stale.LatestVersion, stale.DaysSince)
-			}
-		}
+		stalenessNote := fetchStalenessNote(stale)
 		if _, err := fmt.Fprintf(stdout, "%s: %s%s%s%s%s\n", coord.String(), status, retracted, resolved, cached, stalenessNote); err != nil {
 			return fmt.Errorf("writing output: %w", err)
 		}
@@ -302,6 +281,77 @@ func fetchOne(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.W
 		return fmt.Errorf("verification failed: %s", result.Record.VerificationStatus)
 	}
 	return nil
+}
+
+// stalenessInfo is the `staleness` block of `fetch --json`, and the note beside
+// the text line. It is OUTPUT ONLY: nothing here is persisted or hashed — the
+// fetch record the run seals is result.Record, which this type never touches —
+// so stating an unmeasured column costs no migration and no pipeline version.
+type stalenessInfo struct {
+	// IsLatest is null when the comparison was not made: a lookup that failed, or
+	// an @latest fetch, which resolves the newest version and therefore has no pin
+	// to be behind. It used to default to true through both, so a failed lookup
+	// and an unasked question both reported the module as current.
+	IsLatest *bool `json:"is_latest"`
+	// Unmeasured names why IsLatest is null, from the vocabulary shared with
+	// `audit` and `latest` (see staleness.go). Absent on a measured row, which
+	// keeps a measured block byte-identical to what it has always emitted.
+	Unmeasured    string `json:"staleness_unmeasured,omitempty"`
+	LatestVersion string `json:"latest_version,omitempty"`
+	DaysSince     int    `json:"days_since_latest,omitempty"`
+}
+
+// latestInfoLookup asks the proxy for a module path's newest version. The proxy
+// adapter satisfies it; narrowing the dependency here is what lets the failed
+// lookup — the case whose rendering this exists to fix — be exercised.
+type latestInfoLookup interface {
+	LatestInfo(ctx context.Context, path string) (proxyadapter.LatestVersionInfo, error)
+}
+
+// fetchStalenessFor answers "is the fetched coordinate the newest version", or
+// states that it did not.
+//
+// requestedVersion is what the user wrote, not what was resolved: "@latest" is
+// the never-asked case even though the coordinate it produced is pinned.
+func fetchStalenessFor(ctx context.Context, proxy latestInfoLookup, coord coordinate.ModuleCoordinate, requestedVersion string, stderr io.Writer) stalenessInfo {
+	if requestedVersion == "latest" {
+		return stalenessInfo{Unmeasured: stalenessNotAsked}
+	}
+	info, lerr := proxy.LatestInfo(ctx, coord.Path())
+	if lerr != nil || info.Version == "" {
+		// An empty version with no error is the same absence as an error: there
+		// is no version to compare the pin against, so there is no comparison.
+		if lerr != nil {
+			_, _ = fmt.Fprintf(stderr, "staleness %s: %v\n", coord.Path(), lerr)
+		}
+		return stalenessInfo{Unmeasured: stalenessLookupFailed}
+	}
+	isLatest := info.Version == coord.Version()
+	out := stalenessInfo{IsLatest: &isLatest}
+	if !isLatest {
+		out.LatestVersion = info.Version
+		if !info.Time.IsZero() {
+			out.DaysSince = int(time.Since(info.Time).Hours() / 24)
+		}
+	}
+	return out
+}
+
+// fetchStalenessNote renders the clause the text line carries after the
+// verification status. A current pin adds nothing — silence there means
+// "measured, and current", which the unmeasured cases must therefore not
+// borrow: they say so in words.
+func fetchStalenessNote(stale stalenessInfo) string {
+	if stale.IsLatest == nil {
+		return " [staleness " + stalenessUnmeasuredLabel(stale.Unmeasured) + "]"
+	}
+	if *stale.IsLatest {
+		return ""
+	}
+	if stale.DaysSince == 0 {
+		return fmt.Sprintf(" [latest: %s, released today]", stale.LatestVersion)
+	}
+	return fmt.Sprintf(" [latest: %s, %d days ago]", stale.LatestVersion, stale.DaysSince)
 }
 
 // latestResolver resolves a module path's @latest to a pinned coordinate. The

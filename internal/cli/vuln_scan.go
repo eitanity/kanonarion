@@ -171,8 +171,67 @@ func runVulnScanScope(ctx context.Context, f vulnScanFlags, stdout, stderr io.Wr
 		return err
 	}
 
-	_, _ = fmt.Fprintf(progressWriter(stderr, f.noProgress), "scanning %s project walk %s (%s)\n", scope, selected.ID, selected.BuildFrame())
-	return runVulnScan(ctx, selected.ID, f.force, f.fresh, f.enableReachability, f.callGraphWorkers, false, jsonOut, f.goBinary, f.operator, filepath.Dir(gomodPath), f.policyPath, application2.ServeSurfaceVulnScan, f.noVendor, f.noProgress, true, stdout, stderr)
+	// The walk was found by the project's module path, and a module path is not
+	// content: on a local coordinate the working tree moves under the name. Prove
+	// the walk still describes this manifest before anything is served from it.
+	walkID, err := scanWalkForCurrentManifest(ctx, ctr, selected, gomodPath, scope, f, stderr)
+	if err != nil {
+		return err
+	}
+
+	_, _ = fmt.Fprintf(progressWriter(stderr, f.noProgress), "scanning %s project walk %s (%s)\n", scope, walkID, selected.BuildFrame())
+	return runVulnScan(ctx, walkID, f.force, f.fresh, f.enableReachability, f.callGraphWorkers, false, jsonOut, f.goBinary, f.operator, filepath.Dir(gomodPath), f.policyPath, application2.ServeSurfaceVulnScan, f.noVendor, f.noProgress, true, stdout, stderr)
+}
+
+// scanWalkForCurrentManifest returns the walk this scan may answer from: the
+// selected one when the manifest still resolves to it, and a walk of the
+// manifest as it stands now when it does not.
+//
+// The drifted case re-walks rather than refusing, and re-walks whether or not
+// --force was passed: a caller whose go.mod moved does not want an error, they
+// want the answer for the build they have. The walk machinery reuses an
+// identical analysis by identity, so a manifest edited and reverted converges
+// back onto the original walk — and onto its stored scan run — without a
+// re-measurement.
+//
+// The drift statement goes to stderr rather than the progress stream: it is the
+// reason this run measured instead of serving, and --no-progress silences
+// narration, not reasons.
+func scanWalkForCurrentManifest(
+	ctx context.Context,
+	ctr *Container,
+	selected walkports.WalkSummary,
+	gomodPath string,
+	scope depScope,
+	f vulnScanFlags,
+	stderr io.Writer,
+) (string, error) {
+	drift, _, err := manifestDriftAgainstWalk(ctx, ctr.QueryWalks, selected.ID, gomodPath, scope)
+	if err != nil {
+		return "", err
+	}
+	if !drift.drifted() {
+		_, _ = fmt.Fprintf(stderr, "%s\n", drift.agreement(selected.ID))
+		return selected.ID, nil
+	}
+
+	_, _ = fmt.Fprintf(stderr, "%s\n", drift.reason(selected.ID))
+	_, _ = fmt.Fprintf(stderr, "re-walking %s before scanning: no stored run describes this build\n", gomodPath)
+
+	progress := newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
+	// allowPartial: a project whose dependencies cannot all be fetched still gets
+	// scanned for the ones that can, exactly as `audit` and `inspect` treat their
+	// own walks. A hard failure still stops here.
+	result, werr := runWalkProject(ctx, gomodPath, f.force, true, 0, f.operator, f.policyPath, false, scope,
+		walkdomain.WalkDepthFull, "", false, false, progress, ctr.ExecuteWalk, nil, io.Discard, stderr)
+	if werr != nil {
+		return "", werr
+	}
+	if result.Record.ID == "" {
+		return "", fmt.Errorf("re-walking %s produced no walk record", gomodPath)
+	}
+	_, _ = fmt.Fprintf(stderr, "walk %s now describes %s\n", result.Record.ID, gomodPath)
+	return result.Record.ID, nil
 }
 
 // selectProjectWalkToScan returns the succeeded project walk of the requested

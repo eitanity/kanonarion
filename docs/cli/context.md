@@ -344,6 +344,18 @@ the verdict. `walk_basis_id` always equals the section's own `walk_id`, so every
 field under one heading describes one build. The pair is set only on this
 unanchored form; `--walk-id` and `--gomod` name their build themselves.
 
+`--gomod` names it on stderr, and says what the naming does not prove:
+
+```
+notice: vulnerability verdicts read in walk "01KZ3VA296P8KTP265M6CDBCHB" (frame linux/amd64); ./go.mod was not re-resolved for this read, so an edit made to it since that walk is not reflected — kanonarion walk --gomod ./go.mod records the current resolution
+```
+
+The walk is found by the module path the manifest declares, and a survey does
+not pay a re-resolution to check that the walk still describes the manifest.
+`vuln-scan --gomod` does pay it and re-walks on drift; run it (or `walk --gomod`)
+when the tree has moved since the walk this notice names. The notice is on
+stderr, so `--json` / `--stream` stdout is unaffected.
+
 Read the annotation accordingly: `[walk: affected via …]` names affected peers in
 the closure of the build that produced this verdict, not in the newest build that
 happens to cover the module. Another walk may hold a different answer for the

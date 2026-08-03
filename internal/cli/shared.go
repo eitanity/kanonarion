@@ -19,6 +19,7 @@ import (
 	"github.com/spf13/cobra"
 	"golang.org/x/mod/modfile"
 
+	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
 	"github.com/eitanity/kanonarion/internal/adapters/recordseal"
 	configstore "github.com/eitanity/kanonarion/internal/config/adapters/store/yaml"
 	"github.com/eitanity/kanonarion/internal/config/domain"
@@ -853,6 +854,24 @@ type exitError struct {
 }
 
 func (e *exitError) Error() string { return e.msg }
+
+// proxyAdapterError renders a failure to build the module proxy for a command
+// that was about to use it.
+//
+// An environment refusal — GOPROXY=off, or a GOPROXY naming a fetch route this
+// build has not got — is passed through as the operator-facing sentence it
+// already is, carrying ExitConfig explicitly rather than arriving there by the
+// catch-all: the run never reached an answer because the environment said it
+// must not, which is a precondition, and a script must be able to read that off
+// the exit code. It is not prefixed with "creating proxy adapter", because
+// nothing about the adapter is what the operator has to act on. A malformed
+// proxy URL keeps the wiring prefix; that one IS about the adapter.
+func proxyAdapterError(err error) error {
+	if proxyadapter.IsRefusal(err) {
+		return &exitError{code: ExitConfig, msg: err.Error()}
+	}
+	return fmt.Errorf("creating proxy adapter: %w", err)
+}
 
 // ExitCodeFromError reports the exit code carried by err's chain, if any.
 // Used by main to translate categorised errors (e.g. ExitNotFound) into

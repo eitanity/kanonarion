@@ -72,8 +72,18 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 	// these verdicts are read in. A project with no walk yet is left unanchored
 	// rather than refused: context is a survey, and every section it prints
 	// states its own basis.
-	if projectWalk, werr := latestWalkForGoMod(ctx, ctr.QueryWalks, f.gomodPath); werr == nil {
+	//
+	// The anchor is stated on stderr, and it states its own limit: the walk was
+	// found by the module path this manifest declares, and a survey does not
+	// re-resolve the manifest to check that the walk still describes it. An
+	// anchored batch prints no per-module walk basis — the caller is held to name
+	// the build it pinned to — so without this line the pin is invisible, and an
+	// invisible pin to a walk taken before the last go.mod edit reads as a
+	// statement about the tree in front of the reader.
+	if projectWalk, gomodPath, werr := latestWalkForGoMod(ctx, ctr.QueryWalks, f.gomodPath); werr == nil {
 		vulnBatch.anchorTo(ctx, projectWalk.ID)
+		_, _ = fmt.Fprintf(stderr, "notice: vulnerability verdicts read in walk %q (frame %s)%s\n",
+			projectWalk.ID, projectWalk.BuildFrame(), manifestStalenessNote(gomodPath))
 	}
 
 	compact := f.compact && !f.full

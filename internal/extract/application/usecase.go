@@ -222,10 +222,6 @@ func (uc *ExtractUseCase) Execute(ctx context.Context, req ExtractRequest) (doma
 						cancelled.Store(true)
 						break
 					}
-					if stage == "callgraph" && !requestedStagesSet["interface"] {
-						_ = requestedStagesSet
-					}
-
 					lap := uc.stopwatch.Start()
 					res, extractErr := uc.extractor.Extract(ctx, j.node.Coordinate, stage, req.Force)
 					duration := lap.Elapsed().Milliseconds()

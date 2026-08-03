@@ -209,7 +209,7 @@ func resolveCoordForInspect(ctx context.Context, arg, _, goproxy string, stderr 
 	if version == "latest" {
 		proxy, err := proxyadapter.New(goproxy, false)
 		if err != nil {
-			return coordinate.ModuleCoordinate{}, fmt.Errorf("creating proxy: %w", err)
+			return coordinate.ModuleCoordinate{}, proxyAdapterError(err)
 		}
 		return resolveLatest(ctx, path, proxy, stderr)
 	}

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -259,20 +260,40 @@ func TestProxy_ErrorResponse(t *testing.T) {
 
 func TestResolveProxy(t *testing.T) {
 	tests := []struct {
+		name    string
 		goproxy string
 		want    string
+		wantErr error
 	}{
-		{"", "https://proxy.golang.org"},
-		{"https://custom.proxy", "https://custom.proxy"},
-		{"https://custom.proxy,direct", "https://custom.proxy"},
-		{"direct", "https://proxy.golang.org"},
-		{"off", "https://proxy.golang.org"},
+		{"unset falls back to the default proxy", "", "https://proxy.golang.org", nil},
+		{"a URL is used as given", "https://custom.proxy", "https://custom.proxy", nil},
+		{"the first entry wins", "https://custom.proxy,direct", "https://custom.proxy", nil},
+		{"pipe separates entries too", "https://custom.proxy|https://other.proxy", "https://custom.proxy", nil},
+		// The two values whose meaning is "do not use a proxy" must never
+		// resolve to one.
+		{"direct refuses", "direct", "", proxyadapter.ErrProxyDirectUnsupported},
+		{"off refuses", "off", "", proxyadapter.ErrProxyOff},
+		{"off terminates the chain", "off,https://custom.proxy", "", proxyadapter.ErrProxyOff},
+		{"direct first refuses even with a proxy behind it", "direct|https://custom.proxy", "", proxyadapter.ErrProxyDirectUnsupported},
+		{"whitespace does not disguise off", "  off  ", "", proxyadapter.ErrProxyOff},
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.goproxy, func(t *testing.T) {
+		t.Run(tt.name, func(t *testing.T) {
 			t.Setenv("GOPROXY", tt.goproxy)
-			got := proxyadapter.NewProxyForTest().ResolveProxy()
+			got, err := proxyadapter.NewProxyForTest().ResolveProxy()
+			if tt.wantErr != nil {
+				if !errors.Is(err, tt.wantErr) {
+					t.Fatalf("resolveProxy() error = %v, want %v", err, tt.wantErr)
+				}
+				if got != "" {
+					t.Errorf("resolveProxy() returned %q alongside a refusal", got)
+				}
+				return
+			}
+			if err != nil {
+				t.Fatalf("resolveProxy(): %v", err)
+			}
 			if got != tt.want {
 				t.Errorf("resolveProxy() = %q, want %q", got, tt.want)
 			}
