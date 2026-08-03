@@ -209,7 +209,7 @@ func (r *usedByResult) Reached() []usedSymbol {
 // already measured and recorded, so it is reproducible and it cannot disagree
 // with what `callers` would say about the same symbol.
 func joinUsedBy(ctx context.Context, ctr *Container, diff ifacedomain.InterfaceDiff, gomod string) (*usedByResult, error) {
-	walkSum, err := latestWalkForGoMod(ctx, ctr.QueryWalks, gomod)
+	walkSum, gomodPath, err := latestWalkForGoMod(ctx, ctr.QueryWalks, gomod)
 	if err != nil {
 		return nil, err
 	}
@@ -221,7 +221,7 @@ func joinUsedBy(ctx context.Context, ctr *Container, diff ifacedomain.InterfaceD
 	scope := walkModuleSet(rec)
 
 	res := &usedByResult{
-		GoMod:     gomod,
+		GoMod:     gomodPath,
 		WalkID:    walkID,
 		WalkFrame: rec.Graph.BuildEnv.Frame(),
 		Consumer:  rec.Target,
@@ -530,6 +530,15 @@ func printUsedBySection(used *usedByResult, stdout io.Writer) error {
 		"\nUsed by %s (walk %q, frame %s, %d module versions in scope):\n",
 		used.Consumer.Path(), used.WalkID, used.WalkFrame, used.ScopeSize); err != nil {
 		return fmt.Errorf("writing used-by header: %w", err)
+	}
+	// The walk was found by the module path the manifest declares, so the scope
+	// above is that walk's build list and not, provably, the one this go.mod
+	// resolves to now. Stated here because "your code does not call the removed
+	// symbol" is exactly the answer an out-of-date scope gets wrong quietly.
+	if used.GoMod != "" {
+		if _, err := fmt.Fprintf(stdout, "  %s\n", strings.TrimPrefix(manifestStalenessNote(used.GoMod), "; ")); err != nil {
+			return fmt.Errorf("writing used-by staleness: %w", err)
+		}
 	}
 	if !used.CallGraphFound {
 		if _, err := fmt.Fprintf(stdout,
