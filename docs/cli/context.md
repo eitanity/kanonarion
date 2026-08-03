@@ -308,15 +308,25 @@ project this is what keeps a report about your build from carrying another
 project's verdict for a shared dependency; `frame` on each section names the
 frame the served record was measured in.
 
-A bare `context <module>@<version>` names no build, so it answers from the walk
-window — the ten most recent walks — and the newest walk covering the module
-answers. That walk is stated: `walk_basis_id` and `walk_basis_frame` name it and
-the frame it was rooted at, and the text output prints a `Walk basis:` line
-beneath the verdict. The pair is set only on this unanchored form; `--walk-id`
-and `--gomod` name their build themselves. Read it: the verdict and any
-`[walk: affected via …]` annotation are facts about that one build, and another
-walk in the window may hold a different answer for the same module. To ask about
-a specific build, pass `--walk-id` or `--gomod`.
+A bare `context <module>@<version>` names no build. It serves the best-founded
+consumer-frame record the ledger holds for the coordinate, and then reads the
+rest of the section — the walk status word, the coverage caveat, the
+`[walk: affected via …]` annotation — from the walk that record was measured in.
+That walk is stated: `walk_basis_id` and `walk_basis_frame` name it and the
+frame it was rooted at, and the text output prints a `Walk basis:` line beneath
+the verdict. `walk_basis_id` always equals the section's own `walk_id`, so every
+field under one heading describes one build. The pair is set only on this
+unanchored form; `--walk-id` and `--gomod` name their build themselves.
+
+Read the annotation accordingly: `[walk: affected via …]` names affected peers in
+the closure of the build that produced this verdict, not in the newest build that
+happens to cover the module. Another walk may hold a different answer for the
+same module; the answer moves only when better-founded evidence lands, not when a
+neighbouring project walks a tree containing it. A walk older than the ten most
+recent — the window whose runs are loaded — still serves its record and names
+itself as the basis, but has no run context to report, so no walk status word or
+peer annotation appears. To ask about a specific build, pass `--walk-id` or
+`--gomod`.
 
 | Field | Type | Description |
 |---|---|---|

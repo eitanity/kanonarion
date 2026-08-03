@@ -108,6 +108,14 @@ func aff(c coordinate.ModuleCoordinate) vuldomain.VulnerabilityRecord {
 	return vuldomain.VulnerabilityRecord{Coordinate: c, OverallStatus: vuldomain.StatusAffected}
 }
 
+// inWalk stamps the walk a record was measured in. An unanchored read resolves
+// its run context from that walk, so a fixture record without it describes a
+// measurement with no build behind it.
+func inWalk(r vuldomain.VulnerabilityRecord, walkID string) vuldomain.VulnerabilityRecord {
+	r.WalkID = walkID
+	return r
+}
+
 // walkAffectedFixture wires a single Affected walk run whose root depends on
 // `subject`, plus a separate affected peer, and returns the batch context and
 // vuln fake. The graph is: root → subject (clean); root → peer (affected).
@@ -127,6 +135,10 @@ func walkAffectedFixtureCoverage(t *testing.T, overall vuldomain.WalkScanStatus,
 	vuln := testfakes.NewFakeQueryVuln()
 	perModule := map[coordinate.ModuleCoordinate]string{}
 	for _, r := range records {
+		// The fixture models one walk's scan run, so its records carry that
+		// walk's provenance: an unanchored read resolves the run context from
+		// the walk the served record was measured in.
+		r.WalkID = "walk-1"
 		vuln.AddRecord(r.Coordinate, r)
 		perModule[r.Coordinate] = ""
 	}
@@ -287,8 +299,8 @@ func TestBuildVulnerabilities_WalkGraphUnavailable_KeepsGenericAnnotation(t *tes
 	// No walkUC / graphCache wired → graph cannot be loaded, so the generic
 	// walk annotation is preserved rather than silently dropped.
 	vuln := testfakes.NewFakeQueryVuln()
-	vuln.AddRecord(subject, cln(subject))
-	vuln.AddRecord(peer, aff(peer))
+	vuln.AddRecord(subject, inWalk(cln(subject), "walk-1"))
+	vuln.AddRecord(peer, inWalk(aff(peer), "walk-1"))
 	batch := &vulnBatchCtx{
 		window: []string{"walk-1"},
 		runs: map[string][]vuldomain.WalkScanRun{
@@ -343,24 +355,24 @@ func TestWalkAnnotation_rendering(t *testing.T) {
 	}
 }
 
-// The window answers from its newest covering walk, every time.
+// An unanchored read answers the same way every time, from the walk that
+// produced the record it serves.
 //
 // Before, an unanchored batch ranged the runs map, so whichever covering walk
 // Go's randomised order reached first answered: on a real store 4 of 60
 // identical runs of one coordinate carried a walk annotation the other 56 did
-// not. The window here holds two walks that answer differently — the newer one
-// scanned against a later snapshot and found the module Affected, the older
-// found it Clean — so map order would flip this test with probability
-// 1 - 2^-iterations.
-func TestBuildVulnerabilities_WindowAnswersFromTheNewestCoveringWalk(t *testing.T) {
+// not. The window here holds two walks that answer differently — one scanned
+// against a later snapshot and found the module Affected, the other found it
+// Clean — so map order would flip this test with probability 1 - 2^-iterations.
+func TestBuildVulnerabilities_UnanchoredReadIsDeterministic(t *testing.T) {
 	coord := mustContextCoord(t)
 	root := coordinatetest.MustNew("example.com/app", "v1.0.0")
 	snapOld := vulntest.MustNew("test", "v1")
 	snapNew := vulntest.MustNew("test", "v2")
 
-	recOld := cln(coord)
+	recOld := inWalk(cln(coord), "walk-old")
 	recOld.DatabaseSnapshot = snapOld
-	recNew := aff(coord)
+	recNew := inWalk(aff(coord), "walk-new")
 	recNew.DatabaseSnapshot = snapNew
 
 	uc := testfakes.NewFakeQueryVuln()
@@ -396,14 +408,115 @@ func TestBuildVulnerabilities_WindowAnswersFromTheNewestCoveringWalk(t *testing.
 	for i := range iterations {
 		v := buildVulnerabilitiesFromBatch(context.Background(), coord, uc, newBatch())
 		if v.Status != string(vuldomain.StatusAffected) {
-			t.Fatalf("iteration %d: Status = %q, want the newest covering walk's %q", i, v.Status, vuldomain.StatusAffected)
+			t.Fatalf("iteration %d: Status = %q, want the served record's %q", i, v.Status, vuldomain.StatusAffected)
 		}
 		if v.WalkStatus != string(vuldomain.WalkStatusAffected) {
-			t.Fatalf("iteration %d: WalkStatus = %q, want the newest covering walk's run status", i, v.WalkStatus)
+			t.Fatalf("iteration %d: WalkStatus = %q, want the run status of the record's own walk", i, v.WalkStatus)
 		}
 		if v.WalkBasisID != "walk-new" {
 			t.Fatalf("iteration %d: WalkBasisID = %q, want walk-new", i, v.WalkBasisID)
 		}
+	}
+}
+
+// Record-first: when the window's newest covering walk is not the walk that
+// produced the best-ranked record, every field of the section comes from the
+// latter — the verdict, the run's status word and coverage caveat, the affected
+// peer named from that build's closure, and the basis line.
+//
+// The newest walk here (walk-new) covers the module and found it Clean with
+// complete coverage and no peer. The older walk (walk-old) is where the
+// consumer-frame record that reports an advisory was measured, under partial
+// coverage, with an affected peer in the subject's closure. Composing the run
+// from the window head and the record from the ledger put those two builds
+// under one heading: an Affected verdict described by a Clean run.
+func TestBuildVulnerabilities_ServesTheRecordsOwnWalkNotTheNewest(t *testing.T) {
+	subject := mustContextCoord(t)
+	newRoot := coordinatetest.MustNew("example.com/newer", "local")
+	oldRoot := coordinatetest.MustNew("example.com/older", "local")
+	peer := coordinatetest.MustNew("example.com/peer", "v2.0.0")
+	snap := vulntest.MustNew("test", "v1")
+
+	// The record the ledger ranks first: it reports an advisory, and it was
+	// measured in walk-old, rooted at a consumer of the subject.
+	best := inWalk(aff(subject), "walk-old")
+	best.DatabaseSnapshot = snap
+	best.Rooting = vuldomain.TargetRootedAt(oldRoot)
+	// The newest walk's own record for the subject: clean, so the ladder ranks
+	// it below the one that reports an advisory.
+	newest := inWalk(cln(subject), "walk-new")
+	newest.DatabaseSnapshot = snap
+	newest.Rooting = vuldomain.TargetRootedAt(newRoot)
+	// The affected peer, measured in walk-old too, so walk-old's closure names it.
+	peerRec := inWalk(aff(peer), "walk-old")
+	peerRec.DatabaseSnapshot = snap
+	peerRec.Rooting = vuldomain.TargetRootedAt(oldRoot)
+
+	uc := testfakes.NewFakeQueryVuln()
+	uc.AddRecords(subject, newest, best)
+	uc.AddRecord(peer, peerRec)
+
+	walks := testfakes.NewFakeQueryWalks()
+	walks.AddWalk(walkdomain.WalkRecord{ID: "walk-new", Target: newRoot})
+	walks.AddWalk(walkdomain.WalkRecord{
+		ID:     "walk-old",
+		Target: oldRoot,
+		// oldRoot → subject → peer: the peer is in the subject's closure.
+		Graph: walkdomain.Graph{Edges: []walkdomain.GraphEdge{
+			{From: oldRoot, To: subject},
+			{From: subject, To: peer},
+		}},
+	})
+
+	batch := &vulnBatchCtx{
+		// Recency order, newest first, as ListWalks returns it.
+		window: []string{"walk-new", "walk-old"},
+		runs: map[string][]vuldomain.WalkScanRun{
+			"walk-new": {{
+				WalkID:           "walk-new",
+				Snapshot:         snap,
+				OverallStatus:    vuldomain.WalkStatusAllClean,
+				CoverageStatus:   vuldomain.CoverageComplete,
+				FindingsStatus:   vuldomain.FindingsClean,
+				PerModuleResults: map[coordinate.ModuleCoordinate]string{subject: ""},
+			}},
+			"walk-old": {{
+				WalkID:           "walk-old",
+				Snapshot:         snap,
+				OverallStatus:    vuldomain.WalkStatusAffected,
+				CoverageStatus:   vuldomain.CoveragePartial,
+				FindingsStatus:   vuldomain.FindingsAffected,
+				PerModuleResults: map[coordinate.ModuleCoordinate]string{subject: "", peer: ""},
+			}},
+		},
+		walkUC:        walks,
+		graphCache:    map[string]*walkdomain.Graph{},
+		affectedCache: map[string]map[coordinate.ModuleCoordinate]struct{}{},
+		frameCache:    map[string]vulnFrameAnchor{},
+	}
+
+	v := buildVulnerabilitiesFromBatch(context.Background(), subject, uc, batch)
+
+	if v.WalkID != "walk-old" {
+		t.Fatalf("WalkID = %q, want the best record's walk-old", v.WalkID)
+	}
+	if v.WalkBasisID != v.WalkID {
+		t.Errorf("WalkBasisID = %q, want the served record's walk %q", v.WalkBasisID, v.WalkID)
+	}
+	if want := string(vuldomain.TargetRootedAt(oldRoot)); v.WalkBasisFrame != want {
+		t.Errorf("WalkBasisFrame = %q, want %q", v.WalkBasisFrame, want)
+	}
+	if v.Status != string(vuldomain.StatusAffected) {
+		t.Errorf("Status = %q, want %q", v.Status, vuldomain.StatusAffected)
+	}
+	if v.WalkStatus != string(vuldomain.WalkStatusAffected) {
+		t.Errorf("WalkStatus = %q, want walk-old's run status %q", v.WalkStatus, vuldomain.WalkStatusAffected)
+	}
+	if v.WalkCoverage != string(vuldomain.CoveragePartial) {
+		t.Errorf("WalkCoverage = %q, want walk-old's %q", v.WalkCoverage, vuldomain.CoveragePartial)
+	}
+	if len(v.WalkAffected) != 1 || v.WalkAffected[0] != peer.String() {
+		t.Errorf("WalkAffected = %v, want [%s] from walk-old's closure", v.WalkAffected, peer.String())
 	}
 }
 
@@ -414,7 +527,7 @@ func TestBuildVulnerabilities_WindowAnswerNamesItsWalkAndFrame(t *testing.T) {
 	root := coordinatetest.MustNew("example.com/app", "v1.0.0")
 
 	uc := testfakes.NewFakeQueryVuln()
-	uc.AddRecord(coord, cln(coord))
+	uc.AddRecord(coord, inWalk(cln(coord), "walk-1"))
 
 	walks := testfakes.NewFakeQueryWalks()
 	walks.AddWalk(walkdomain.WalkRecord{ID: "walk-1", Target: root})
