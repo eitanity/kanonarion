@@ -85,7 +85,9 @@ Version staleness is baked into the two most common commands, so agents rarely
 need to call `latest` directly:
 
 - **`fetch <module@pinned>`** - annotates its output with `[latest: vX.Y.Z, N
-  days ago]` when the pinned version is not the current latest.
+  days ago]` when the pinned version is not the current latest, and with
+  `[staleness unmeasured (...)]` when the question was not answered - see
+  [`fetch` staleness](fetch.md#staleness-annotation).
 - **`audit --gomod ./go.mod`** - includes a staleness column for every direct
   dependency alongside verification, license, and vulnerability status.
 
@@ -137,12 +139,18 @@ a whole major line is available. The clause is appended, never substituted.
   "latest": "v1.10.2",
   "latest_date": "2025-03-28T...",
   "latest_release_age_days": 491,
-  "is_latest": true,
+  "is_latest": null,
+  "staleness_unmeasured": "not_asked",
   "major_probed": true,
   "looked_up_at": "2026-07-31T09:14:02Z",
   "served_from_store": false
 }
 ```
+
+A bare module path names **no pin**, so there is nothing for `is_latest` to
+compare against: it is `null` with `staleness_unmeasured: not_asked`. Pass the
+version you care about through `--gomod` (or `audit`) to get the comparison
+answered.
 
 ### `--gomod` array
 
@@ -172,9 +180,36 @@ a whole major line is available. The clause is appended, never substituted.
     "major_probed": true,
     "looked_up_at": "2026-07-31T09:14:02Z",
     "served_from_store": true
+  },
+  {
+    "module": "example.com/mod",
+    "pinned": "v1.0.0",
+    "latest": "(error)",
+    "is_latest": null,
+    "staleness_unmeasured": "lookup_failed",
+    "major_probed": false,
+    "served_from_store": false
   }
 ]
 ```
+
+### When the column was not measured
+
+`is_latest` is **null**, never `false`, when nothing was measured. `false` is
+the claim "your pin is behind", and a lookup that failed established no such
+thing. `staleness_unmeasured` names why:
+
+| Text output | `is_latest` | `staleness_unmeasured` |
+|---|---|---|
+| `current` / `latest: ...` | `true` / `false` | absent |
+| `(error resolving latest)` | `null` | `lookup_failed` |
+| no staleness clause (bare path, no pin) | `null` | `not_asked` |
+
+The failing module is also named on **stderr** with the error, one line per
+module; the sweep continues over the rest. A reader filtering for upgrade work
+should select `is_latest == false`, which now excludes the rows nobody
+answered — under the old shape those rows were indistinguishable from
+genuinely-behind pins.
 
 ### `latest_release_age_days`
 
@@ -224,7 +259,9 @@ kanonarion fetch github.com/foo/bar@v1.5.0 --json
 `audit` resolves staleness for every module in scope through the same ledger
 `latest` writes, so running both back to back pays the proxy sweep once. Note
 that `is_latest: true` is about the module *path*: check `newer_major_module`
-as well, or a dependency a whole major line behind will read as up to date.
+as well, or a dependency a whole major line behind will read as up to date. A
+`null` there is not an answer at all — see
+[When the column was not measured](#when-the-column-was-not-measured).
 
 ## Examples
 

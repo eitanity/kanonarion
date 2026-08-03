@@ -684,24 +684,13 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, anchor vul
 }
 
 // The staleness column's provenance vocabulary. Every audit row carries one of
-// the three sources; an unmeasured row additionally carries one of the reasons,
-// so "the column is empty" is never left for the reader to interpret.
+// these three sources; an unmeasured row additionally carries one of the shared
+// reasons in staleness.go, so "the column is empty" is never left for the reader
+// to interpret.
 const (
 	stalenessSourceProxy      = "proxy"
 	stalenessSourceLedger     = "ledger"
 	stalenessSourceUnmeasured = "unmeasured"
-
-	// stalenessOfflineNoEntry: a fully offline run (--from-modcache) whose
-	// ledger holds no lookup for this module inside the staleness TTL. Nothing
-	// was asked and nothing recorded could be served.
-	stalenessOfflineNoEntry = "offline_no_ledger_entry"
-	// stalenessLookupFailed: the lookup was attempted and failed (proxy error,
-	// probe failure with nothing cached behind it).
-	stalenessLookupFailed = "lookup_failed"
-	// stalenessToolchainPinned: the standard library, whose version is the build
-	// toolchain's. There is no proxy "latest" for it, so the question does not
-	// apply rather than resolving in the pin's favour.
-	stalenessToolchainPinned = "toolchain_pinned"
 )
 
 // applyAuditStaleness fills a row's staleness columns from one lookup.
@@ -1147,24 +1136,6 @@ func roundedAge(d time.Duration) string {
 		return d.Round(time.Minute).String()
 	}
 	return d.Round(time.Hour).String()
-}
-
-// stalenessUnmeasuredLabel renders the machine reason as the phrase the table
-// and the coverage line show. An unrecognised reason is passed through rather
-// than dropped: a reason nobody has taught this function is still more
-// informative than none, and an unstated one still says "unmeasured".
-func stalenessUnmeasuredLabel(reason string) string {
-	switch reason {
-	case "":
-		return "unmeasured"
-	case stalenessOfflineNoEntry:
-		return "unmeasured (offline)"
-	case stalenessLookupFailed:
-		return "unmeasured (lookup failed)"
-	case stalenessToolchainPinned:
-		return "unmeasured (toolchain-pinned)"
-	}
-	return "unmeasured (" + reason + ")"
 }
 
 func printAuditTable(stdout io.Writer, results []auditModuleResult) error {

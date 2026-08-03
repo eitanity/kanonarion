@@ -101,6 +101,45 @@ the file named by `--policy`.
 The allowlist governs **which** forges are trusted, never **whether**
 cross-verification runs; to skip the git leg entirely use `--skip-vcs-verify`.
 
+### Staleness annotation
+
+A fetch of a pinned version asks the proxy whether that pin is the module's
+newest version, and reports the answer beside the verification status - in text
+as a trailing clause, in `--json` as the `staleness` block:
+
+```json
+{
+  "record": { "...": "..." },
+  "staleness": {
+    "is_latest": false,
+    "latest_version": "v1.2.0",
+    "days_since_latest": 3
+  }
+}
+```
+
+A current pin emits `{"is_latest": true}` and no text clause.
+
+The question is not always asked, and is not always answerable. `is_latest` is
+then **null** with `staleness_unmeasured` naming why, and the text line says so
+rather than staying silent - silence there means "measured, and current":
+
+| Situation | Text clause | `is_latest` | `staleness_unmeasured` |
+|---|---|---|---|
+| Pin is the newest version | _(none)_ | `true` | absent |
+| Pin is behind | `[latest: v1.2.0, 3 days ago]` | `false` | absent |
+| Proxy lookup failed | `[staleness unmeasured (lookup failed)]` | `null` | `lookup_failed` |
+| `@latest` was requested | `[staleness unmeasured (not asked)]` | `null` | `not_asked` |
+
+`@latest` resolves the newest version and fetches **that**, so there is no pin
+to be behind and no comparison was made; a failed lookup measured nothing. Both
+used to report `is_latest: true` with no note, which reads as "this module is
+current" - an answer to a question that was never put or never came back. The
+failed lookup is also named on stderr; it does not fail the fetch.
+
+The `staleness` block is **output only**. It is not part of the fact record
+written to the store, so nothing about it is persisted or hashed.
+
 ## Storage
 
 Fetched zips are stored content-addressed under `<store-root>/blobs/`. Fact

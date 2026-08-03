@@ -29,7 +29,7 @@ func TestLatestJSON_NamesTheAgeOfTheLatestRelease(t *testing.T) {
 	var res latestResult
 	res.Module = "google.golang.org/grpc"
 	res.Pinned = "v1.61.1"
-	res.IsLatest = false
+	res.IsLatest = measuredIsLatest(false)
 	res.applyStaleness(answerWithLatest("v1.83.0", 2))
 
 	data, err := json.Marshal(res)
@@ -61,7 +61,7 @@ func TestLatestJSON_ReportsTheReleaseAgeForACurrentPin(t *testing.T) {
 	var res latestResult
 	res.Module = "github.com/joho/godotenv"
 	res.Pinned = "v1.5.1"
-	res.IsLatest = true
+	res.IsLatest = measuredIsLatest(true)
 	res.applyStaleness(answerWithLatest("v1.5.1", 1272))
 
 	if res.LatestReleaseAgeDays != 1272 {
