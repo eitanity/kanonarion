@@ -72,6 +72,14 @@ it. It is reported on its own and counted in no roll-up.`,
 				if err != nil {
 					return err
 				}
+				// The scope path resolves the project walk and scans it in
+				// source mode; the pre-pass is a lens on a named walk and this
+				// path has never passed it on. Refuse it rather than accept it
+				// and scan without it.
+				if rerr := refuseInapplicableFlags("vuln-scan --gomod/--tool/--project",
+					binaryPrePassFlag(binaryModePrePass)); rerr != nil {
+					return rerr
+				}
 				return runVulnScanScope(cmd.Context(), gomodPath, scope, force, fresh, enableReachability, callGraphWorkers, jsonOut, goBinary, operator, policyPath, noVendor, noProgress, stdout, stderr)
 			}
 			if moduleCoord != "" && len(args) > 0 {
@@ -81,6 +89,19 @@ it. It is reported on its own and counted in no roll-up.`,
 				return fmt.Errorf("provide either a walk-id argument, --module <module@version>, --gomod, --tool, or --project")
 			}
 			if moduleCoord != "" {
+				// --module scans the walk rooted at a published coordinate:
+				// there is no project tree behind it to vendor, and the
+				// pre-pass never travelled down this path either.
+				refused := binaryPrePassFlag(binaryModePrePass)
+				if noVendor {
+					refused = append(refused, inapplicableFlag{
+						flag:  "--no-vendor",
+						where: "vuln-scan <walk-id> or a go.mod scope scan",
+					})
+				}
+				if rerr := refuseInapplicableFlags("vuln-scan --module", refused); rerr != nil {
+					return rerr
+				}
 				return runVulnScanByModule(cmd.Context(), moduleCoord, f, force, fresh, enableReachability, callGraphWorkers, jsonOut, goBinary, operator, policyPath, noProgress, stdout, stderr)
 			}
 			return runVulnScan(cmd.Context(), args[0], force, fresh, enableReachability, callGraphWorkers, binaryModePrePass, jsonOut, goBinary, operator, "", policyPath, noVendor, noProgress, true, stdout, stderr)

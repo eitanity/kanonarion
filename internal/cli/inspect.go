@@ -112,14 +112,16 @@ that is tight on memory.`,
 
 func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr io.Writer) error {
 	// --stdlib-from-gomod pins the stdlib node to a project go.mod's toolchain
-	// directive; a coordinate walk has no project go.mod to read one from, so
-	// the flag cannot apply here. Refuse it by name rather than parse and drop
-	// it.
+	// directive, and --gomod/--tool/--project name a go.mod scope; a coordinate
+	// walk has no project go.mod behind it, so it can act on none of them.
+	// Refuse them by name rather than parse and drop them.
+	var refused []inapplicableFlag
 	if f.stdlibFromGoMod {
-		if err := refuseInapplicableFlags("inspect <module>@<version>",
-			[]inapplicableFlag{{flag: "--stdlib-from-gomod", where: "inspect --gomod"}}); err != nil {
-			return err
-		}
+		refused = append(refused, inapplicableFlag{flag: "--stdlib-from-gomod", where: "inspect --gomod"})
+	}
+	refused = append(refused, inspectGoModOnlyFlags(f)...)
+	if err := refuseInapplicableFlags("inspect <module>@<version>", refused); err != nil {
+		return err
 	}
 
 	wf := commonWalkFlags{
@@ -138,7 +140,7 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 		return fmt.Errorf("writing output: %w", err)
 	}
 	progress := newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
-	if err := runWalk(ctx, arg, wf, f.force, true, 0, f.policyPath, f.skipVCS, domain.WalkScopeCode, domain.WalkDepthFull, "", progress, ctr.ExecuteWalk, nil, io.Discard, stderr); err != nil {
+	if err := runWalk(ctx, arg, wf, f.force, true, 0, "", f.policyPath, f.skipVCS, domain.WalkScopeCode, domain.WalkDepthFull, "", progress, ctr.ExecuteWalk, nil, io.Discard, stderr); err != nil {
 		return fmt.Errorf("walk: %w", err)
 	}
 

@@ -162,6 +162,11 @@ type WalkRequest struct {
 	// show proof of life. nil disables reporting. The reporter is invoked once per
 	// distinct module fetched during resolution.
 	Progress walkports.ProgressReporter
+	// Operator identifies who asked for this walk, recorded on the resulting
+	// record. Empty falls back to the operator the use case was constructed
+	// with. It is provenance only: the walk's identity deliberately excludes it,
+	// so two operators walking one unchanged tree still resolve to one walk.
+	Operator string
 }
 
 // Walk resolves the dependency graph for req.Target and fetches every module in

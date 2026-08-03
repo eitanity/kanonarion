@@ -65,8 +65,8 @@ kanonarion fetch <module>@<version> [flags]
 | `--goproxy` | `$GOPROXY` or `proxy.golang.org` | Override the module proxy |
 | `--list-versions` | `false` | List available versions from the proxy and exit without fetching |
 | `--gomod` | _(search upward from cwd)_ | Path to a `go.mod` file; fetch its dependency scope instead of a positional module |
-| `--tool` | `false` | Fetch the tooling supply chain (the `go.mod` tool directives' closure) instead of a positional module. Mutually exclusive with `--project` |
-| `--project` | `false` | Fetch the complete set: the project's code **and** tooling (the full Go build list). Mutually exclusive with `--tool` |
+| `--tool` | `false` | Fetch the tooling supply chain (the `go.mod` tool directives' closure) instead of a positional module. Mutually exclusive with `--project`; refused by name alongside a positional module |
+| `--project` | `false` | Fetch the complete set: the project's code **and** tooling (the full Go build list). Mutually exclusive with `--tool`; refused by name alongside a positional module |
 | `--policy` | _(auto-discover `.kanonarion/policy.yaml`)_ | Depth policy file; its fetch stage's `allowed_vcs_hosts` selects which forges may be cross-verified |
 | `--json` | `false` | Emit the fact record as JSON |
 

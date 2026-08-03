@@ -57,8 +57,10 @@ func isLocalPath(arg string) bool {
 // parsed and dropped — every one of them previously left the output
 // byte-identical.
 func runContextLocal(ctx context.Context, dir string, f contextFlags, stdout, stderr io.Writer) error {
-	if err := refuseInapplicableFlags("context <local path>",
-		append(contextWalkOnlyFlags(f), contextRenderFlags(f)...)); err != nil {
+	refused := append(contextWalkOnlyFlags(f), contextRenderFlags(f)...)
+	refused = append(refused, contextGoModOnlyFlags(f)...)
+	refused = append(refused, contextStreamFlag(f)...)
+	if err := refuseInapplicableFlags("context <local path>", refused); err != nil {
 		return err
 	}
 

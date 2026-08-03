@@ -363,8 +363,8 @@ coverage is `Partial` and it exits non-zero. Re-run it from the checkout
 | `--reachability` | `false` | Enable call-graph reachability analysis; spawns `kanonarion callgraph` on demand for modules with findings but no cached callgraph |
 | `--callgraph-workers` | `1` | Maximum number of concurrent on-demand callgraph subprocesses (SSA builds are memory-heavy; keep low) |
 | `--go-binary` | _(from `PATH`)_ | Path to the `go` binary if not on `PATH` (used by on-demand callgraph extraction) |
-| `--binary-pre-pass` | `false` | Fast binary-mode pre-pass; source mode only for affected modules |
-| `--no-vendor` | `false` | Analyse the fetched artefacts even when the project is vendored. By default a project carrying `vendor/modules.txt` is analysed from `vendor/`, the source it actually compiles |
+| `--binary-pre-pass` | `false` | Fast binary-mode pre-pass; source mode only for affected modules. Applies to a walk-id scan; refused by name with `--module` and with a `--gomod`/`--tool`/`--project` scope scan, neither of which carries it into the scan |
+| `--no-vendor` | `false` | Analyse the fetched artefacts even when the project is vendored. By default a project carrying `vendor/modules.txt` is analysed from `vendor/`, the source it actually compiles. Refused by name with `--module`, which scans a walk rooted at a published coordinate and has no project tree to vendor |
 | `--operator` | `$USER` | Operator name recorded in the scan run |
 | `--no-progress` | `false` | Suppress stderr progress output (the throttled heartbeat and any per-module progress lines); results and warnings are unaffected |
 | `--log-level` | `warn` | Log level: `debug`, `info`, `warn`, `error` |

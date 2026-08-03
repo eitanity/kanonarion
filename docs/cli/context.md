@@ -365,9 +365,10 @@ fully-clean, complete walk adds no annotation to a clean module.
 | `--entry-points-full` | false | Include flat `entry_points` list alongside `entry_points_by_package` |
 | `--package <path>` | | Restrict `interface`, `call_graph`, and `examples` sections to a single import path |
 | `--gomod <path>` | `./go.mod` when no module/`--walk-id` given | Emit context for every module in the `go.mod`'s code scope as NDJSON |
-| `--tool` | false | Scope to the tooling supply chain (the `go.mod` tool directives' closure). Mutually exclusive with `--project` |
-| `--project` | false | Scope to the complete set: the project's code **and** tooling (the full Go build list). Mutually exclusive with `--tool` |
+| `--tool` | false | Scope to the tooling supply chain (the `go.mod` tool directives' closure). Mutually exclusive with `--project`. `--gomod` only: refused by name on the coordinate, `--walk-id` and local-path forms |
+| `--project` | false | Scope to the complete set: the project's code **and** tooling (the full Go build list). Mutually exclusive with `--tool`. `--gomod` only: refused by name on the coordinate, `--walk-id` and local-path forms |
 | `--walk-id <id>` | | Emit context for every module in the walk as NDJSON |
+| `--stream` | false | With `--walk-id` or `--gomod`: emit NDJSON (one document per module) without `--json`. Refused on the coordinate and local-path forms, which emit one document |
 | `--store-root <path>` | `~/.kanonarion` | Root directory for blobs and SQLite |
 | `--log-level <level>` | `warn` | Log verbosity: `debug` \| `info` \| `warn` \| `error` |
 

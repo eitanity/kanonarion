@@ -32,11 +32,77 @@ func refuseInapplicableFlags(path string, flags []inapplicableFlag) error {
 	return fmt.Errorf("%s does not act on %s", path, strings.Join(parts, "; "))
 }
 
+// fetchGoModOnlyFlags returns the fetch flags that only a go.mod scope fetch
+// can act on, for whichever of them the caller set. A positional fetch names
+// its own module, so there is no scope for them to project.
+func fetchGoModOnlyFlags(f fetchFlags) []inapplicableFlag {
+	const where = "fetch --gomod"
+	var out []inapplicableFlag
+	if f.gomod != "" {
+		out = append(out, inapplicableFlag{flag: "--gomod", where: where})
+	}
+	if f.tool {
+		out = append(out, inapplicableFlag{flag: "--tool", where: where})
+	}
+	if f.project {
+		out = append(out, inapplicableFlag{flag: "--project", where: where})
+	}
+	return out
+}
+
+// inspectGoModOnlyFlags returns the inspect flags that only a go.mod scan can
+// act on, for whichever of them the caller set.
+func inspectGoModOnlyFlags(f inspectFlags) []inapplicableFlag {
+	const where = "inspect --gomod"
+	var out []inapplicableFlag
+	if f.gomodPath != "" {
+		out = append(out, inapplicableFlag{flag: "--gomod", where: where})
+	}
+	if f.tool {
+		out = append(out, inapplicableFlag{flag: "--tool", where: where})
+	}
+	if f.project {
+		out = append(out, inapplicableFlag{flag: "--project", where: where})
+	}
+	return out
+}
+
+// binaryPrePassFlag returns --binary-pre-pass when the caller set it. Only a
+// scan of a named walk carries the pre-pass into the scan request.
+func binaryPrePassFlag(set bool) []inapplicableFlag {
+	if !set {
+		return nil
+	}
+	return []inapplicableFlag{{flag: "--binary-pre-pass", where: "vuln-scan <walk-id>"}}
+}
+
+// walkGoModOnlyFlags returns the walk flags that only a go.mod walk can act on,
+// for whichever of them the caller set. --stdlib-from-gomod reads a toolchain
+// directive out of a project go.mod, and --analyse-local resolves local-replace
+// targets relative to one; a positional walk has neither.
+func walkGoModOnlyFlags(f walkFlags) []inapplicableFlag {
+	const where = "walk --gomod"
+	var out []inapplicableFlag
+	if f.gomodPath != "" {
+		out = append(out, inapplicableFlag{flag: "--gomod", where: where})
+	}
+	if f.analyseLocal {
+		out = append(out, inapplicableFlag{flag: "--analyse-local", where: where})
+	}
+	if f.stdlibFromGoMod {
+		out = append(out, inapplicableFlag{flag: "--stdlib-from-gomod", where: where})
+	}
+	return out
+}
+
 // contextWalkOnlyFlags returns the context flags that only the --walk-id path
 // can act on, for whichever of them the caller set.
 func contextWalkOnlyFlags(f contextFlags) []inapplicableFlag {
 	const where = "context --walk-id"
 	var out []inapplicableFlag
+	if f.walkID != "" {
+		out = append(out, inapplicableFlag{flag: "--walk-id", where: where})
+	}
 	if f.directOnly {
 		out = append(out, inapplicableFlag{flag: "--direct-only", where: where})
 	}
@@ -47,6 +113,36 @@ func contextWalkOnlyFlags(f contextFlags) []inapplicableFlag {
 		out = append(out, inapplicableFlag{flag: "--modules", where: where})
 	}
 	return out
+}
+
+// contextGoModOnlyFlags returns the context flags that only the --gomod path
+// can act on, for whichever of them the caller set. --tool and --project select
+// a projection of a go.mod's build list; a coordinate, a walk id and a local
+// tree each name their own module set, and none of them has a go.mod scope to
+// project.
+func contextGoModOnlyFlags(f contextFlags) []inapplicableFlag {
+	const where = "context --gomod"
+	var out []inapplicableFlag
+	if f.gomodPath != "" {
+		out = append(out, inapplicableFlag{flag: "--gomod", where: where})
+	}
+	if f.tool {
+		out = append(out, inapplicableFlag{flag: "--tool", where: where})
+	}
+	if f.project {
+		out = append(out, inapplicableFlag{flag: "--project", where: where})
+	}
+	return out
+}
+
+// contextStreamFlag returns --stream when the caller set it. Only the two
+// multi-module paths emit a stream; a single-document path has one object to
+// print and nothing to stream.
+func contextStreamFlag(f contextFlags) []inapplicableFlag {
+	if !f.stream {
+		return nil
+	}
+	return []inapplicableFlag{{flag: "--stream", where: "context --walk-id or --gomod"}}
 }
 
 // contextLocalOnlyFlags returns the context flags that only a local working-tree

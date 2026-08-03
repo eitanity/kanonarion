@@ -18,11 +18,17 @@ import (
 // every module enumerated here was walked, extracted, and vuln-scanned by the
 // inspect side. Output is NDJSON when --json is set; otherwise text blocks
 // separated by a blank line, each prefixed with a "==> <module>" header line.
+//
+// --stream selects the NDJSON stream without --json, exactly as it does on the
+// --walk-id path: both emit one document per module, and a caller that wants
+// the stream but not --json's effect on the rest of its invocation asks for it
+// the same way here.
 func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout, stderr io.Writer) error {
 	if err := refuseInapplicableFlags("context --gomod",
 		append(contextWalkOnlyFlags(f), contextLocalOnlyFlags(f)...)); err != nil {
 		return err
 	}
+	ndjson := jsonOut || f.stream
 
 	logger := buildLogger(logLevel, stderr)
 
@@ -39,8 +45,9 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 			return report.write(jsonOut, stdout)
 		}
 		// NDJSON: an empty stream is how "nothing matched" is spelled, so under
-		// --json emit zero stdout bytes. The prose stays on the text path only.
-		if !jsonOut {
+		// --json (or --stream) emit zero stdout bytes. The prose stays on the
+		// text path only.
+		if !ndjson {
 			_, _ = fmt.Fprintf(stdout, "no %s dependencies found in %s\n", scope, f.gomodPath)
 		}
 		return nil
@@ -116,7 +123,7 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 				errs = append(errs, serr)
 				continue
 			}
-		case jsonOut:
+		case ndjson:
 			line, merr := json.Marshal(out)
 			if merr != nil {
 				errs = append(errs, fmt.Errorf("%s: encoding: %w", coordStr, merr))

@@ -195,8 +195,8 @@ func TestExitCodeContract_IncompleteArtefactIsPartial(t *testing.T) {
 				},
 			}}
 			var stdout bytes.Buffer
-			return sbomGenerateWith(context.Background(), ctr, "W1", "", time.Time{},
-				"cyclonedx-1.6", "", false, false, false, "", "", "tester", "", &stdout, io.Discard)
+			return sbomGenerateWith(context.Background(), ctr, "W1",
+				sbomFlags{format: "cyclonedx-1.6", operator: "tester"}, time.Time{}, &stdout, io.Discard)
 		}},
 	})
 }

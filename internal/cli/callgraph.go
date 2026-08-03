@@ -44,19 +44,6 @@ func newCallGraphCmd(stdout, stderr io.Writer) *cobra.Command {
 			if len(args) > 1 {
 				return fmt.Errorf("accepts 1 arg, received %d", len(args))
 			}
-			// A module fetched via --from-modcache is stored under a
-			// "modcache:zip:" blob handle, not a content-addressed one; the
-			// call-graph extractor needs the same modcache-aware blob store
-			// that fetched it, or blob resolution fails.
-			if f.fromModcache != "" {
-				gomodPath, gerr := resolveGoModPath("")
-				if gerr != nil {
-					return fmt.Errorf("--from-modcache: locating go.mod: %w", gerr)
-				}
-				if merr := resolveModcacheMode(f.fromModcache, gomodPath); merr != nil {
-					return merr
-				}
-			}
 			return runCallGraphExtract(cmd.Context(), args[0], f, stdout, stderr)
 		},
 	}
@@ -71,6 +58,21 @@ func newCallGraphCmd(stdout, stderr io.Writer) *cobra.Command {
 }
 
 func runCallGraphExtract(ctx context.Context, arg string, f cgFlags, stdout, stderr io.Writer) error {
+	// A module fetched via --from-modcache is stored under a "modcache:zip:"
+	// blob handle, not a content-addressed one; the call-graph extractor needs
+	// the same modcache-aware blob store that fetched it, or blob resolution
+	// fails. Resolved on the path that consumes it, so the flag is answered for
+	// where the work happens rather than in the constructor.
+	if f.fromModcache != "" {
+		gomodPath, gerr := resolveGoModPath("")
+		if gerr != nil {
+			return fmt.Errorf("--from-modcache: locating go.mod: %w", gerr)
+		}
+		if merr := resolveModcacheMode(f.fromModcache, gomodPath); merr != nil {
+			return merr
+		}
+	}
+
 	logger := buildLogger(logLevel, stderr)
 
 	coord, err := parseCoordinate(arg)

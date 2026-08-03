@@ -23,20 +23,26 @@ import (
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
+// sbomFlags holds every flag the sbom command registers. They live in one
+// struct, rather than in a local variable each, so that a flag the command
+// parses but never acts on is visible per field.
+type sbomFlags struct {
+	format          string
+	output          string
+	force           bool
+	operator        string
+	packagePattern  string
+	stdlibFromGoMod bool
+	mainVersion     string
+	mainLicense     string
+	fromModcache    string
+	policyPath      string
+	noProgress      bool
+	generatedAt     string
+}
+
 func newSBOMCmd(stdout, stderr io.Writer) *cobra.Command {
-	var format string
-	var output string
-	var force bool
-	var operator string
-	var logJSON bool
-	var packagePattern string
-	var stdlibFromGoMod bool
-	var mainVersion string
-	var mainLicense string
-	var fromModcache string
-	var policyPath string
-	var noProgress bool
-	var generatedAt string
+	var f sbomFlags
 
 	cmd := &cobra.Command{
 		Use:   "sbom [<walk-id>]",
@@ -68,41 +74,31 @@ Exit codes:
 			if len(args) > 0 {
 				walkID = args[0]
 			}
-			if walkID == "" && packagePattern == "" {
+			if walkID == "" && f.packagePattern == "" {
 				return fmt.Errorf("a walk ID argument or --package is required")
 			}
-			if fromModcache != "" {
-				gomodPath, gerr := resolveGoModPath("")
-				if gerr != nil {
-					return fmt.Errorf("--from-modcache: locating go.mod: %w", gerr)
-				}
-				if merr := resolveModcacheMode(fromModcache, gomodPath); merr != nil {
-					return merr
-				}
-			}
-			docTime, terr := parseGeneratedAt(generatedAt)
+			docTime, terr := parseGeneratedAt(f.generatedAt)
 			if terr != nil {
 				return terr
 			}
 			logger := buildLogger(logLevel, stderr)
-			return runSBOMGenerate(cmd.Context(), walkID, storeRoot, packagePattern, docTime, format, output, force, stdlibFromGoMod, noProgress, mainVersion, mainLicense, operator, policyPath, logger, stdout, stderr)
+			return runSBOMGenerate(cmd.Context(), walkID, storeRoot, f, docTime, logger, stdout, stderr)
 		},
 	}
 
-	cmd.Flags().StringVar(&format, "format", "cyclonedx-1.6", "SBOM format (cyclonedx-1.6)")
-	cmd.Flags().StringVar(&output, "output", "", "write SBOM content to this file (default: stdout)")
-	cmd.Flags().BoolVar(&force, "force", false, "re-generate even if cached")
-	cmd.Flags().StringVar(&operator, "operator", "", "operator identifier (defaults to $USER)")
-	cmd.Flags().BoolVar(&logJSON, "log-json", false, "emit logs as JSON")
-	cmd.Flags().StringVar(&packagePattern, "package", "", "Go package pattern (e.g. ./cmd/kanonarion); scopes components to that binary's import closure")
-	cmd.Flags().StringVar(&policyPath, "policy", "", "path to depth policy YAML (default: search for .kanonarion/policy.yaml)")
-	cmd.Flags().StringVar(&mainVersion, "main-version", "", "version to stamp on the SBOM subject (metadata.component) instead of the synthetic \"local\"; use a release tag (e.g. v0.1.1) so the subject is a resolvable coordinate")
-	cmd.Flags().StringVar(&mainLicense, "main-license", "", "SPDX id/expression (e.g. Apache-2.0) to attach to the SBOM subject, which has no fetched licence record of its own")
-	cmd.Flags().StringVar(&generatedAt, "generated-at", "", "RFC3339 time this document is being created (e.g. 2026-01-31T09:00:00Z); becomes metadata.timestamp. Omitted, the document is stamped with the newest licence extraction time among its inputs and says so")
-	registerStdlibFromGoModFlag(cmd, &stdlibFromGoMod)
-	registerFromModcacheFlag(cmd, &fromModcache)
+	cmd.Flags().StringVar(&f.format, "format", "cyclonedx-1.6", "SBOM format (cyclonedx-1.6)")
+	cmd.Flags().StringVar(&f.output, "output", "", "write SBOM content to this file (default: stdout)")
+	cmd.Flags().BoolVar(&f.force, "force", false, "re-generate even if cached")
+	cmd.Flags().StringVar(&f.operator, "operator", "", "operator identifier (defaults to $USER)")
+	cmd.Flags().StringVar(&f.packagePattern, "package", "", "Go package pattern (e.g. ./cmd/kanonarion); scopes components to that binary's import closure")
+	cmd.Flags().StringVar(&f.policyPath, "policy", "", "path to depth policy YAML (default: search for .kanonarion/policy.yaml)")
+	cmd.Flags().StringVar(&f.mainVersion, "main-version", "", "version to stamp on the SBOM subject (metadata.component) instead of the synthetic \"local\"; use a release tag (e.g. v0.1.1) so the subject is a resolvable coordinate")
+	cmd.Flags().StringVar(&f.mainLicense, "main-license", "", "SPDX id/expression (e.g. Apache-2.0) to attach to the SBOM subject, which has no fetched licence record of its own")
+	cmd.Flags().StringVar(&f.generatedAt, "generated-at", "", "RFC3339 time this document is being created (e.g. 2026-01-31T09:00:00Z); becomes metadata.timestamp. Omitted, the document is stamped with the newest licence extraction time among its inputs and says so")
+	registerStdlibFromGoModFlag(cmd, &f.stdlibFromGoMod)
+	registerFromModcacheFlag(cmd, &f.fromModcache)
 	registerAllowVerificationDowngradeFlag(cmd)
-	registerNoProgressFlag(cmd, &noProgress)
+	registerNoProgressFlag(cmd, &f.noProgress)
 	return cmd
 }
 
@@ -140,22 +136,29 @@ func newSBOMListCmd(stdout, stderr io.Writer) *cobra.Command {
 func runSBOMGenerate(
 	ctx context.Context,
 	walkID, storeRoot string,
-	packagePattern string,
+	f sbomFlags,
 	generatedAt time.Time,
-	format, output string,
-	force bool,
-	stdlibFromGoMod bool,
-	noProgress bool,
-	mainVersion, mainLicense string,
-	operator string,
-	policyPath string,
 	logger *slog.Logger,
 	stdout, stderr io.Writer,
 ) error {
+	// A module fetched via --from-modcache is stored under a "modcache:zip:"
+	// blob handle, not a content-addressed one; every stage that reads those
+	// blobs needs the same modcache-aware store that fetched them. Resolved on
+	// the path that consumes it, so the flag is answered for where the work
+	// happens rather than in the constructor.
+	if f.fromModcache != "" {
+		gomodPath, gerr := resolveGoModPath("")
+		if gerr != nil {
+			return fmt.Errorf("--from-modcache: locating go.mod: %w", gerr)
+		}
+		if merr := resolveModcacheMode(f.fromModcache, gomodPath); merr != nil {
+			return merr
+		}
+	}
 	// --package builds (or reuses) a project walk, so a local go.sum can anchor
 	// each fetched module's integrity on the normal path. Resolve it
 	// before the container so the fetch use case is wired with the verifier.
-	if packagePattern != "" {
+	if f.packagePattern != "" {
 		if gomodPath, gerr := resolveGoModPath(""); gerr == nil {
 			resolveProjectGoSum(gomodPath)
 		}
@@ -166,7 +169,7 @@ func runSBOMGenerate(
 	}
 	defer func() { _ = cleanup() }()
 
-	return sbomGenerateWith(ctx, ctr, walkID, packagePattern, generatedAt, format, output, force, stdlibFromGoMod, noProgress, mainVersion, mainLicense, operator, policyPath, stdout, stderr)
+	return sbomGenerateWith(ctx, ctr, walkID, f, generatedAt, stdout, stderr)
 }
 
 // sbomGenerateWith holds the sbom-generate logic over an injected Container:
@@ -178,27 +181,34 @@ func runSBOMGenerate(
 func sbomGenerateWith(
 	ctx context.Context,
 	ctr *Container,
-	walkID, packagePattern string,
+	walkID string,
+	f sbomFlags,
 	generatedAt time.Time,
-	format, output string,
-	force bool,
-	stdlibFromGoMod bool,
-	noProgress bool,
-	mainVersion, mainLicense string,
-	operator string,
-	policyPath string,
 	stdout, stderr io.Writer,
 ) error {
+	// --stdlib-from-gomod shapes the project walk this command builds when it
+	// has none. Named a walk, there is nothing left for it to shape: the walk
+	// exists, its stdlib node is already pinned one way or the other, and the
+	// document is generated from what that walk recorded. Refuse it by name
+	// rather than accept it and emit a byte-identical document.
+	if walkID != "" && f.stdlibFromGoMod {
+		if err := refuseInapplicableFlags("sbom <walk-id>", []inapplicableFlag{
+			{flag: "--stdlib-from-gomod", where: "sbom --package, which builds the walk"},
+		}); err != nil {
+			return err
+		}
+	}
+
 	var err error
 	var allowList []coordinate.ModuleCoordinate
-	if packagePattern != "" {
+	if f.packagePattern != "" {
 		var aerr error
-		allowList, aerr = buildPackageAllowList(packagePattern)
+		allowList, aerr = buildPackageAllowList(f.packagePattern)
 		if aerr != nil {
 			return aerr
 		}
 		if walkID == "" {
-			walkID, err = ensureProjectWalkForSBOM(ctx, ctr, force, stdlibFromGoMod, noProgress, policyPath, stderr)
+			walkID, err = ensureProjectWalkForSBOM(ctx, ctr, f.force, f.stdlibFromGoMod, f.noProgress, f.policyPath, stderr)
 			if err != nil {
 				return err
 			}
@@ -208,12 +218,12 @@ func sbomGenerateWith(
 	req := application.SBOMRequest{
 		WalkID:               walkID,
 		GeneratedAt:          generatedAt,
-		Format:               domain.SBOMFormat(format),
-		Force:                force,
-		Operator:             operator,
+		Format:               domain.SBOMFormat(f.format),
+		Force:                f.force,
+		Operator:             f.operator,
 		AllowList:            allowList,
-		MainComponentVersion: mainVersion,
-		MainComponentLicense: mainLicense,
+		MainComponentVersion: f.mainVersion,
+		MainComponentLicense: f.mainLicense,
 	}
 
 	record, err := ctr.GenerateSBOM.Generate(ctx, req)
@@ -221,8 +231,8 @@ func sbomGenerateWith(
 		return fmt.Errorf("generating sbom: %w", err)
 	}
 
-	if output != "" {
-		if err := writeArtefactFile("SBOM", output, record.Content, stdout); err != nil {
+	if f.output != "" {
+		if err := writeArtefactFile("SBOM", f.output, record.Content, stdout); err != nil {
 			return err
 		}
 		_, _ = fmt.Fprintf(stdout, "ID:           %s\n", record.ID)

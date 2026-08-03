@@ -327,7 +327,7 @@ no-arg pair composes: run 'kanonarion inspect', then 'kanonarion context'.`,
 	cmd.Flags().StringVar(&f.gomodPath, "gomod", "", "path to a go.mod file; emit context for the project's code dependencies as NDJSON (default: ./go.mod)")
 	cmd.Flags().BoolVar(&f.tool, "tool", false, "scope to the tooling supply chain (the go.mod tool directives' closure)")
 	cmd.Flags().BoolVar(&f.project, "project", false, "scope to the complete set: the project's code AND tooling")
-	cmd.Flags().BoolVar(&f.stream, "stream", false, "emit NDJSON output (implied by --walk-id or --gomod)")
+	cmd.Flags().BoolVar(&f.stream, "stream", false, "with --walk-id or --gomod: emit NDJSON (one document per module) without --json")
 	cmd.Flags().BoolVar(&f.directOnly, "direct-only", false, "with --walk-id: emit context only for direct dependencies of the walk root")
 	cmd.Flags().BoolVar(&f.affectedOnly, "affected-only", false, "with --walk-id: emit context only for modules with vulnerability findings")
 	cmd.Flags().StringVar(&f.modulesFile, "modules", "", "with --walk-id: emit context only for module coordinates listed in this file (newline-delimited)")
@@ -338,8 +338,10 @@ no-arg pair composes: run 'kanonarion inspect', then 'kanonarion context'.`,
 }
 
 func runContext(ctx context.Context, arg string, f contextFlags, stdout, stderr io.Writer) error {
-	if err := refuseInapplicableFlags("context <module>@<version>",
-		append(contextWalkOnlyFlags(f), contextLocalOnlyFlags(f)...)); err != nil {
+	refused := append(contextWalkOnlyFlags(f), contextLocalOnlyFlags(f)...)
+	refused = append(refused, contextGoModOnlyFlags(f)...)
+	refused = append(refused, contextStreamFlag(f)...)
+	if err := refuseInapplicableFlags("context <module>@<version>", refused); err != nil {
 		return err
 	}
 

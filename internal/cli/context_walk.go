@@ -18,7 +18,8 @@ import (
 )
 
 func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Writer) error {
-	if err := refuseInapplicableFlags("context --walk-id", contextLocalOnlyFlags(f)); err != nil {
+	if err := refuseInapplicableFlags("context --walk-id",
+		append(contextLocalOnlyFlags(f), contextGoModOnlyFlags(f)...)); err != nil {
 		return err
 	}
 

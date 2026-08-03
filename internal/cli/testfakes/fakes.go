@@ -86,10 +86,14 @@ type FakeExecuteWalk struct {
 	Err         error
 	Result      walkapp.ExecuteWalkResult
 	LastRequest walkapp.WalkRequest
+	// Calls counts Execute invocations, so a test can assert that a refused
+	// flag combination never reached the walk at all.
+	Calls int
 }
 
 func (f *FakeExecuteWalk) Execute(_ context.Context, req walkapp.WalkRequest) (walkapp.ExecuteWalkResult, error) {
 	f.LastRequest = req
+	f.Calls++
 	return f.Result, f.Err
 }
 
