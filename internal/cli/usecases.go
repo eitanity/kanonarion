@@ -201,6 +201,12 @@ type ScanWalkUseCase interface {
 	// decides whether to serve it; Scan itself always measures.
 	ReusableRun(ctx context.Context, walkID string) (vulndomain.WalkScanRun, bool, error)
 
+	// ServeReusableRun witnesses in the assurance log that a stored run was
+	// handed back instead of measured. It is separate from ReusableRun because
+	// asking whether a run could serve is not serving it: some callers ask only
+	// to narrate, and some ask and then discard the answer.
+	ServeReusableRun(run vulndomain.WalkScanRun, surface string) error
+
 	// RefreshSnapshot brings the advisory database up to date for the named walk,
 	// downloading the body only when something that walk is judged on has
 	// changed, and reports what it established.

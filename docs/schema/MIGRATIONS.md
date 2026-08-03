@@ -317,6 +317,7 @@ they landed. None needed a migration, as above:
 | `sbom_generated` | persisted SBOM record |
 | `sbom_served` | stored SBOM document handed back from the cache |
 | `advisory_snapshot_recorded` | persisted advisory database snapshot, by whichever route acquired it |
+| `vuln_scan_served` | stored walk scan run handed back instead of measured, naming the run, the walk it answered for and the surface that asked |
 
 The rule this table exists to serve: **this file and the event-vocabulary docs
 are updated in the same commit as the change they describe.** It went stale by
@@ -324,7 +325,46 @@ four event types before this one, and a reader checking whether a write is
 witnessed cannot tell an omission from an absence.
 
 Each of these is emitted only where the write happened, so a cache hit or a
-reused snapshot appends nothing (`sbom_served` is the deliberate exception: a
-document handed to a caller is an observation in its own right). That asymmetry
-is why a stable line count in `audit.jsonl` is evidence about **writes**, not
-about runs.
+reused snapshot appends nothing. There are two deliberate exceptions, and they
+share one reason: `sbom_served` and `vuln_scan_served` witness an ASKING rather
+than a write, because a document handed to a caller and a stored scan run served
+without re-measuring are both observations in their own right. Without them, an
+unchanged store answers from existing rows indefinitely and the ledger's
+timestamps track only when evidence was DERIVED — so "when did we first learn X"
+stays answerable while "when did we last check X" becomes unrecoverable. Every
+other event is a write, which is why a stable line count in `audit.jsonl` is
+evidence about **writes**, not about runs.
+
+### What the log does NOT witness
+
+Several record kinds are persisted and append no event. `kanonarion store ledger`
+states this on every reading, because silence in an append-only stream otherwise
+reads as proof that nothing happened:
+
+| Not witnessed | Note |
+|---|---|
+| individual vulnerability record generations | `vuln_scan_completed` **counts** them and `vuln_finding_observed` names each finding, but no event names a per-module verdict; a Clean generation is only an increment, and a single-module scan names no generation either — it appends only the advisory snapshot it acquired, if it acquired one. Enumerating generations is a store query, not a ledger query |
+| attestations | additive provenance recorded beside a fact record, not mirrored into the log |
+| latest-version (staleness) ledger entries | the staleness context has no audit sink wired at all |
+| blob content writes | `fact_record_written` names the blob identity; the write of the bytes appends nothing |
+| directive / GODEBUG / FIPS scans that found nothing | those events are emitted per finding, so a clean scan writes a record and appends no event |
+
+This table is covered by the same rule as the one above: it is updated in the
+same commit as any change to what emits.
+
+### Reading the log
+
+`audit.jsonl` is read by `kanonarion store ledger` (see
+[`docs/cli/store.md`](../cli/store.md)). Two properties of the on-disk artefact
+that the reader is built for, and that any other consumer must also handle:
+
+- **Torn lines exist.** The reference store carries three (lines 4601, 4618,
+  4636 of 33,012), all `license_extracted` events written inside one 8-second
+  window by the pre-refactor writer, each showing a second event's JSON spliced
+  mid-line. The current writer (`sync.Mutex` + `O_APPEND` per append) is safe
+  within a process; the mutex does not cross processes. A strict line-by-line
+  parse **aborts** at the first of them, so a reader must tolerate and COUNT them
+  rather than abort or skip silently, and must state that the event count for the
+  affected window is a lower bound.
+- **File order is not guaranteed to be time order**, though in practice it is.
+  The reader sorts by timestamp.

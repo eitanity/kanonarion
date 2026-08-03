@@ -519,7 +519,7 @@ func auditScope(
 	// settled on is the stored one the scan now resolves. Passing the flag on
 	// would check the database a second time in the same invocation.
 	_, _ = fmt.Fprintf(progressOut, "==> audit: scanning vulnerabilities for walk %s\n", walkID)
-	if verr := runVulnScan(ctx, walkID, f.force, false, false, 1, false, false, "", os.Getenv("USER"), filepath.Dir(f.gomodPath), f.policyPath, false, f.noProgress, false, io.Discard, stderr); verr != nil {
+	if verr := runVulnScan(ctx, walkID, f.force, false, false, 1, false, false, "", os.Getenv("USER"), filepath.Dir(f.gomodPath), f.policyPath, vulnapp.ServeSurfaceAudit, false, f.noProgress, false, io.Discard, stderr); verr != nil {
 		_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", verr)
 	}
 

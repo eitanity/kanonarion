@@ -16,6 +16,7 @@ import (
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
 
 	vendports "github.com/eitanity/kanonarion/internal/vendortree/ports"
+	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	domain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -183,7 +184,7 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 	// reader with the repetitive half of the presentation and threw away the
 	// concise half. stdout stays the clean data channel because inspect always
 	// scans with jsonOut=false, so nothing machine-readable is written here.
-	if err := runVulnScan(ctx, walkID, f.force, f.fresh, f.reachable, 1, false, false, f.goBinary, os.Getenv("USER"), "", f.policyPath, false, f.noProgress, true, stderr, stderr); err != nil {
+	if err := runVulnScan(ctx, walkID, f.force, f.fresh, f.reachable, 1, false, false, f.goBinary, os.Getenv("USER"), "", f.policyPath, vulnapp.ServeSurfaceInspect, false, f.noProgress, true, stderr, stderr); err != nil {
 		return fmt.Errorf("vuln-scan: %w", err)
 	}
 
@@ -396,7 +397,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 		// stderr, not io.Discard — see the note on the same call in runInspect:
 		// the grouped roll-up is the concise presentation and belongs to the
 		// reader, while stdout stays reserved for the context output.
-		if verr := runVulnScan(ctx, walkID, f.force, f.fresh, f.reachable, 1, false, false, f.goBinary, os.Getenv("USER"), filepath.Dir(f.gomodPath), f.policyPath, false, f.noProgress, true, stderr, stderr); verr != nil {
+		if verr := runVulnScan(ctx, walkID, f.force, f.fresh, f.reachable, 1, false, false, f.goBinary, os.Getenv("USER"), filepath.Dir(f.gomodPath), f.policyPath, vulnapp.ServeSurfaceInspect, false, f.noProgress, true, stderr, stderr); verr != nil {
 			_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", verr)
 			scanFails = 1
 		}

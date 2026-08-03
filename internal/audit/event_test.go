@@ -30,6 +30,7 @@ func TestEventType_Known(t *testing.T) {
 		audit.EventSBOMGenerated,
 		audit.EventSBOMServed,
 		audit.EventAdvisorySnapshotRecorded,
+		audit.EventVulnScanServed,
 	}
 	for _, et := range known {
 		if !et.Known() {

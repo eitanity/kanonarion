@@ -353,10 +353,22 @@ func localsReadOutsideDispatch(ctor *ast.FuncDecl, locals []string, targets []di
 	return out
 }
 
-// funcTakesContext reports whether fn accepts a context.Context, which is how
-// this guard tells a command's dispatch paths — every run function takes the
-// command's context — from the small helpers a constructor calls to resolve a
-// value before dispatching.
+// isDispatchTarget reports whether fn is one of a command's run functions, as
+// opposed to a small helper a constructor calls to resolve a value before
+// dispatching.
+//
+// Two signals, because neither alone is sufficient. Taking a context.Context is
+// the usual one: a run function is handed the command's context. But it is not
+// universal — a command whose whole job is a synchronous read of one file on
+// disk takes no context and would otherwise fall out of this guard entirely,
+// silently, which is the same shape of hole the guard exists to close. So a
+// `run` prefix qualifies as well. The prefix is the package's own naming rule
+// for run functions and nothing else uses it.
+func isDispatchTarget(fn *ast.FuncDecl) bool {
+	return funcTakesContext(fn) || strings.HasPrefix(fn.Name.Name, "run")
+}
+
+// funcTakesContext reports whether fn accepts a context.Context.
 func funcTakesContext(fn *ast.FuncDecl) bool {
 	for _, field := range fn.Type.Params.List {
 		sel, ok := field.Type.(*ast.SelectorExpr)
@@ -493,7 +505,7 @@ func dispatchTargets(ctor *ast.FuncDecl, flagVar string, locals []string, funcs 
 			return true
 		}
 		fn, ok := funcs[id.Name]
-		if !ok || seen[id.Name] || !funcTakesContext(fn) {
+		if !ok || seen[id.Name] || !isDispatchTarget(fn) {
 			return true
 		}
 		param := ""

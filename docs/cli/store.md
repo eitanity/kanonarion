@@ -41,6 +41,75 @@ touched.
 kanonarion store clean [--store-root <dir>]
 ```
 
+### `kanonarion store ledger`
+
+List the events in the store's append-only assurance log (`audit.jsonl`), in
+chronological order.
+
+```
+kanonarion store ledger [--since <RFC3339>] [--until <RFC3339>]
+                        [--module <path>] [--event-type <type>]
+                        [--limit <n>] [--store-root <dir>] [--json]
+```
+
+Every reading states three things besides the events themselves:
+
+| Statement | Why it is there |
+|---|---|
+| **coverage** — the ledger's first and last event | Distinguishes "no event in this window" from "the ledger never spanned this window". Only the first supports a claim that nothing happened. An empty ledger reports `coverage: none` |
+| **unreadable** — the count and line numbers of lines that could not be read | A torn line is reported and skipped, never dropped silently and never fatal. When one falls inside the window queried, the matched count is additionally flagged as a lower bound for that window |
+| **not witnessed** — the persisted record kinds that append no event at all | Silence in the log is not proof that nothing happened; see below |
+
+The command is read-only: it opens no database, applies no migration, and never
+writes to the ledger.
+
+#### Which question a query answers
+
+The log carries two kinds of event and they answer different questions:
+
+- **when did we first learn X** — the *derivation* events (`fact_record_written`,
+  `vuln_finding_observed`, `license_extracted`, `walk_completed`, …). Each dates
+  a measurement.
+- **when did we last check X** — the *served* events (`vuln_scan_served`,
+  `sbom_served`). Each dates an asking that was answered from the store without
+  re-measuring. A scan that reuses a stored run measures nothing, so without
+  these the last check is invisible.
+
+#### What the ledger does not witness
+
+These are persisted and append no event, so their absence from a query is not
+evidence they did not happen:
+
+- individual vulnerability record generations — a walk scan *counts* them
+  (`vuln_scan_completed`) and names each finding (`vuln_finding_observed`), but
+  no event names a per-module verdict, and a Clean generation is only an
+  increment. A single-module scan names no generation either, and appends only
+  the advisory snapshot it acquired, if it acquired one. Enumerating
+  generations is a store query (`vuln-scan-show`), not a ledger query.
+- attestations — additive provenance recorded beside a fact record.
+- latest-version (staleness) ledger entries.
+- blob content writes — `fact_record_written` names the blob identity; the write
+  of the bytes appends nothing.
+- directive, GODEBUG and FIPS scans that found nothing — those events are
+  emitted per finding, so a clean scan writes a record and appends no event.
+
+#### Filters
+
+| Flag | Effect |
+|---|---|
+| `--since` / `--until` | Restrict to a time window (RFC3339, inclusive). An unparseable or inverted bound is refused |
+| `--module` | Restrict to events naming this module path. Matches the `module`, `module_path` (the flat fact-record layout) and `project` (directive/GODEBUG/FIPS/vendor) fields |
+| `--event-type` | Restrict to one event type, e.g. `vuln_finding_observed` |
+| `--limit` | List at most N events (0 = unlimited). The matched count is still the full total, and the output says it was truncated |
+
+Because events come back in chronological order, `--limit 1` is the
+first-awareness query:
+
+```
+kanonarion store ledger --event-type vuln_finding_observed \
+  --module github.com/golang-jwt/jwt/v4 --limit 1
+```
+
 ### `kanonarion store config show`
 
 Show the effective configuration for this store (the resolved settings the
@@ -52,12 +121,13 @@ kanonarion store config show [--store-root <dir>] [--json]
 
 ## Flags
 
-These commands take no command-specific flags; only the global flags apply:
+Only `ledger` takes command-specific flags (listed above). The global flags
+apply to every subcommand:
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Root directory for blobs and SQLite |
-| `--json` | `false` | Emit output as JSON (`info`, `config show`) |
+| `--json` | `false` | Emit output as JSON (`info`, `config show`, `ledger`) |
 | `--log-level` | `warn` | Log level: `debug`/`info`/`warn`/`error` |
 
 ## Exit codes
@@ -73,6 +143,8 @@ These commands take no command-specific flags; only the global flags apply:
 kanonarion store info --store-root ~/kanonarion/.mirror
 kanonarion store config show
 kanonarion store clean
+kanonarion store ledger --since 2026-07-23T00:00:00Z --until 2026-07-24T00:00:00Z
+kanonarion store ledger --event-type vuln_scan_served --json
 ```
 
 ## See also

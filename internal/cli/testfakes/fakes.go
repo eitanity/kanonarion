@@ -861,6 +861,11 @@ type FakeScanWalk struct {
 	// so a test can prove the reuse question was asked about the walk the run
 	// executed rather than some other walk of the same target.
 	ReusableRunWalkID string
+	// ServedRuns records every (run id, surface) pair ServeReusableRun was told
+	// about, so a test can prove a served answer was witnessed exactly once and
+	// attributed to the surface that asked. ServeReusableRunErr fails the append.
+	ServedRuns          []ServedRun
+	ServeReusableRunErr error
 	// ScanCalls counts Scan invocations, so a test can prove a served run did not
 	// re-measure.
 	ScanCalls int
@@ -901,6 +906,22 @@ func (f *FakeScanWalk) ReusableRun(_ context.Context, walkID string) (vulndomain
 		return vulndomain.WalkScanRun{}, false, f.ReusableRunErr
 	}
 	return f.ReusableRunResult, f.ReusableRunFound, nil
+}
+
+// ServedRun is one witnessed serving of a stored scan run.
+type ServedRun struct {
+	RunID   string
+	WalkID  string
+	Surface string
+}
+
+// ServeReusableRun records the serving the caller witnessed.
+func (f *FakeScanWalk) ServeReusableRun(run vulndomain.WalkScanRun, surface string) error {
+	if f.ServeReusableRunErr != nil {
+		return f.ServeReusableRunErr
+	}
+	f.ServedRuns = append(f.ServedRuns, ServedRun{RunID: run.ID, WalkID: run.WalkID, Surface: surface})
+	return nil
 }
 
 // RefreshSnapshot reports the seeded refresh outcome and counts the call.

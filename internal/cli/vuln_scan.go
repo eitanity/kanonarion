@@ -110,7 +110,7 @@ func runVulnScanByWalkID(ctx context.Context, walkID string, f vulnScanFlags, st
 		append(vulnScanModuleFlag(f), vulnScanGoModScopeFlags(f)...)); rerr != nil {
 		return rerr
 	}
-	return runVulnScan(ctx, walkID, f.force, f.fresh, f.enableReachability, f.callGraphWorkers, f.binaryModePrePass, jsonOut, f.goBinary, f.operator, "", f.policyPath, f.noVendor, f.noProgress, true, stdout, stderr)
+	return runVulnScan(ctx, walkID, f.force, f.fresh, f.enableReachability, f.callGraphWorkers, f.binaryModePrePass, jsonOut, f.goBinary, f.operator, "", f.policyPath, application2.ServeSurfaceVulnScan, f.noVendor, f.noProgress, true, stdout, stderr)
 }
 
 // runVulnScanScope finds the latest succeeded project walk for the requested
@@ -172,7 +172,7 @@ func runVulnScanScope(ctx context.Context, f vulnScanFlags, stdout, stderr io.Wr
 	}
 
 	_, _ = fmt.Fprintf(progressWriter(stderr, f.noProgress), "scanning %s project walk %s (%s)\n", scope, selected.ID, selected.BuildFrame())
-	return runVulnScan(ctx, selected.ID, f.force, f.fresh, f.enableReachability, f.callGraphWorkers, false, jsonOut, f.goBinary, f.operator, filepath.Dir(gomodPath), f.policyPath, f.noVendor, f.noProgress, true, stdout, stderr)
+	return runVulnScan(ctx, selected.ID, f.force, f.fresh, f.enableReachability, f.callGraphWorkers, false, jsonOut, f.goBinary, f.operator, filepath.Dir(gomodPath), f.policyPath, application2.ServeSurfaceVulnScan, f.noVendor, f.noProgress, true, stdout, stderr)
 }
 
 // selectProjectWalkToScan returns the succeeded project walk of the requested
@@ -265,7 +265,13 @@ func applyScanVCSHosts(ctx context.Context, scan ScanWalkUseCase, policyPath str
 // as a whole — that a stored run was served, and what the toolchain axis says.
 // It is false only for `audit`, which narrates the derivation and the toolchain
 // axis in statements of its own and would otherwise say each of them twice.
-func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachability bool, callGraphWorkers int, binaryModePrePass, jsonOut bool, goBinary, operator, projectDir, policyPath string, noVendor, noProgress, narrateRun bool, stdout, stderr io.Writer) error {
+//
+// surface names the command the caller reached this through. It is what a served
+// run is attributed to in the assurance log, and it is a parameter rather than
+// something derived here because the same function is the scan behind three
+// different commands, and "who asked" is the only part of a served answer that
+// is not already in the store.
+func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachability bool, callGraphWorkers int, binaryModePrePass, jsonOut bool, goBinary, operator, projectDir, policyPath, surface string, noVendor, noProgress, narrateRun bool, stdout, stderr io.Writer) error {
 	logger := buildLogger(logLevel, stderr)
 
 	if goBinary != "" {
@@ -338,7 +344,7 @@ func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachab
 		if prior, ok, rerr := ctr.ScanWalk.ReusableRun(ctx, walkID); rerr != nil {
 			return fmt.Errorf("checking for a reusable scan run: %w", rerr)
 		} else if ok {
-			return serveStoredScanRun(ctx, prior, ctr, jsonOut, narrateRun, stdout, stderr)
+			return serveStoredScanRun(ctx, prior, ctr, jsonOut, narrateRun, surface, stdout, stderr)
 		}
 	}
 
@@ -484,7 +490,15 @@ func (r *vulnScanRollups) add(coord coordinate.ModuleCoordinate, record vuldomai
 // The roll-ups are rebuilt from the records THAT RUN wrote, so the report is the
 // one that run produced rather than a fresh summary over whatever each module's
 // latest verdict has since become.
-func serveStoredScanRun(ctx context.Context, run vuldomain.WalkScanRun, ctr *Container, jsonOut, announce bool, stdout, stderr io.Writer) error {
+func serveStoredScanRun(ctx context.Context, run vuldomain.WalkScanRun, ctr *Container, jsonOut, announce bool, surface string, stdout, stderr io.Writer) error {
+	// Witnessed before the answer is assembled, and never after: a serving that
+	// failed to report still happened, and the ledger's whole use here is that
+	// "when did we last check" survives a run that measured nothing. A failed
+	// append fails the serving rather than handing back an untraced answer.
+	if err := ctr.ScanWalk.ServeReusableRun(run, surface); err != nil {
+		return fmt.Errorf("witnessing the served scan run: %w", err)
+	}
+
 	recs, err := ctr.QueryVuln.ListRecordsForRun(ctx, run.ID)
 	if err != nil {
 		return fmt.Errorf("reading the reused scan run's records: %w", err)
@@ -865,7 +879,7 @@ func runVulnScanByModule(ctx context.Context, f vulnScanFlags, stdout, stderr io
 	_, _ = fmt.Fprintf(progressWriter(stderr, f.noProgress), "scanning walk %s rooted at %s (frame %s)\n",
 		walkID, f.moduleCoord, summaries[0].BuildFrame())
 	logger.Debug("vuln-scan: resolved module to walk", "module", f.moduleCoord, "walk_id", walkID, "build_frame", summaries[0].BuildFrame())
-	return runVulnScan(ctx, walkID, f.force, f.fresh, f.enableReachability, f.callGraphWorkers, false, jsonOut, f.goBinary, f.operator, "", f.policyPath, false, f.noProgress, true, stdout, stderr)
+	return runVulnScan(ctx, walkID, f.force, f.fresh, f.enableReachability, f.callGraphWorkers, false, jsonOut, f.goBinary, f.operator, "", f.policyPath, application2.ServeSurfaceVulnScan, false, f.noProgress, true, stdout, stderr)
 }
 
 // vulnScanRescanFlags holds every flag the vuln-scan-rescan command registers,

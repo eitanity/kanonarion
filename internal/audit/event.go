@@ -204,6 +204,25 @@ const (
 	// snapshot, which the content identity reaches. A scan that reuses a stored
 	// snapshot appends nothing, because reuse is not an acquisition.
 	EventAdvisorySnapshotRecorded EventType = "advisory_snapshot_recorded"
+
+	// EventVulnScanServed records that a stored walk scan run was served to a
+	// caller instead of being measured again. Payload names the run served, the
+	// walk identity it answered for, the advisory database that run was judged
+	// against, and the surface that asked.
+	//
+	// It is named for the act, not for the run: nothing was scanned, so what the
+	// event witnesses is an ASKING. Without it reuse is invisible — record and
+	// ledger timestamps then track only when evidence was DERIVED, and an
+	// unchanged store answers from existing rows indefinitely with no observation
+	// trace, so "when did we last check" becomes unrecoverable while "when did we
+	// first learn" stays answerable from the derivation events. Those are two
+	// different questions, and this event is what makes the second one askable.
+	//
+	// It restates none of the run's conclusions: the findings, the per-module
+	// statuses and the coverage are the RUN's, reachable through the scan id.
+	// Copying them here would make the log an unsealed second summary of a run
+	// the store already holds sealed, and one that would go stale silently.
+	EventVulnScanServed EventType = "vuln_scan_served"
 )
 
 // knownEventTypes is the closed set of recognised discriminators. A gap
@@ -232,6 +251,7 @@ var knownEventTypes = map[EventType]struct{}{
 	EventSBOMGenerated:            {},
 	EventSBOMServed:               {},
 	EventAdvisorySnapshotRecorded: {},
+	EventVulnScanServed:           {},
 }
 
 // Known reports whether t is a recognised event type.
