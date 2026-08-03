@@ -190,6 +190,7 @@ kanonarion audit --gomod ./go.mod --json
     "vuln_status": "Clean",
     "vuln_findings": 0,
     "is_latest": true,
+    "staleness_source": "proxy",
     "major_probed": true
   },
   {
@@ -200,6 +201,8 @@ kanonarion audit --gomod ./go.mod --json
     "vuln_status": "Clean",
     "vuln_findings": 0,
     "is_latest": false,
+    "staleness_source": "ledger",
+    "staleness_looked_up_at": "2026-08-03T09:41:02Z",
     "latest_version": "v0.36.0",
     "latest_release_age_days": 6
   },
@@ -211,6 +214,7 @@ kanonarion audit --gomod ./go.mod --json
     "vuln_status": "Clean",
     "vuln_findings": 0,
     "is_latest": true,
+    "staleness_source": "proxy",
     "major_probed": true
   },
   {
@@ -222,6 +226,7 @@ kanonarion audit --gomod ./go.mod --json
     "vuln_findings": 1,
     "vuln_withdrawn": 1,
     "is_latest": false,
+    "staleness_source": "proxy",
     "latest_version": "v1.5.0",
     "latest_release_age_days": 54
   }
@@ -247,7 +252,7 @@ dependency:
 1. `walk` - one project walk rooted at the local module (`modulePath@local`), equivalent to `walk --gomod` for the selected scope. It resolves the whole scoped closure into a single graph holding the local root, every scoped node, and the edges between them.
 2. `extract --stages license` - extract license records once over the project walk
 3. `vuln-scan` - one **project-rooted** scan of the live working tree: `govulncheck` runs once over the project's real import graph from its real entry points, and each finding is attributed to the module that owns the vulnerable symbol. Every other in-build module is analysed-and-clean. This is not a per-module isolated scan, so it never re-selects a dependency version the project's build does not use.
-4. Staleness check - query the proxy for the latest version of each module
+4. Staleness check - query the proxy for the latest version of each module (offline under `--from-modcache`: the ledger alone, see [When the column was not measured](#when-the-column-was-not-measured))
 5. Query and report - iterate the walk's dependency nodes (every graph node bar the local root) and join fetch, license, vuln, and staleness into one line each
 
 Walk, licence and staleness use cached results on subsequent runs unless
@@ -270,6 +275,38 @@ above the pinned major - a dependency pinned a whole major line behind is at the
 latest version of its own path and is still behind. `major_probed` separates
 "probed, nothing newer" from "not probed" (a `--from-modcache` run, or a probe
 whose request failed).
+
+### When the column was not measured
+
+The staleness column is not always answerable, and it says so rather than
+falling back on the affirmative answer:
+
+| Table cell | `is_latest` | `staleness_source` | `staleness_unmeasured` |
+|---|---|---|---|
+| `current` / `latest: ...` | `true` / `false` | `proxy` or `ledger` | absent |
+| `unmeasured (offline)` | `null` | `unmeasured` | `offline_no_ledger_entry` |
+| `unmeasured (lookup failed)` | `null` | `unmeasured` | `lookup_failed` |
+| `unmeasured (toolchain-pinned)` | `null` | `unmeasured` | `toolchain_pinned` |
+
+`is_latest` is **null**, never `false`, on an unmeasured row: `false` is the
+claim "your pin is behind", which nobody established. `staleness_source` names
+which side answered a measured row - `proxy` (this run asked upstream) or
+`ledger` (a lookup recorded inside `staleness.ttl`, dated by
+`staleness_looked_up_at`). `toolchain_pinned` is the standard-library row, whose
+version is the build toolchain's and has no proxy `@latest` to compare against.
+
+Beside the table, on stderr, `audit` states the column's **coverage** the way it
+already states verification coverage - measured split into asked-upstream and
+served-from-ledger, then a count per unmeasured reason:
+
+```text
+staleness coverage over 127 module(s):
+  measured                               0    0.0%
+  unmeasured (offline)                 127  100.0%
+```
+
+The measured line prints even at zero: that is the entire point on an offline
+run, where a row that disappeared at zero could not report the collapse.
 
 ### The unknown-licence gate
 
@@ -563,10 +600,15 @@ In this mode `audit`:
   entry, is a **hard failure**: `audit` exits non-zero (code `10`) naming the
   offending modules. Verified modules report `VerifiedBySumDBOnly` (VCS
   cross-verification is skipped in this mode).
-- **Skips the staleness check** entirely - the ledger is not read either, so an
-  offline run never reports a stored latest version as if it had been checked
-  now. The run makes **zero** network calls to
-  `proxy.golang.org`/`sum.golang.org`. Rows carry `major_probed: false`. The
+- **Asks nothing upstream about staleness.** The run makes **zero** network
+  calls to `proxy.golang.org`/`sum.golang.org`, so no module's latest version is
+  probed and rows carry `major_probed: false`. The column reports what that
+  leaves it: a module with a lookup recorded in the staleness ledger **inside
+  `staleness.ttl`** is served that recording, and the row states its age
+  (`latest: v0.57.0 (3 days ago) [from ledger, 20m0s old]`); every other module
+  reads `unmeasured (offline)`, with `is_latest: null` and
+  `staleness_unmeasured: offline_no_ledger_entry` in `--json`. The stderr
+  coverage line counts both. Nothing is written to the ledger. The
   vulnerability scan still reads the stored OSV database (`--fresh` to refresh
   it).
 

@@ -3,10 +3,12 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"os"
 	"path/filepath"
+	"sort"
 	"strings"
 	"time"
 
@@ -17,7 +19,6 @@ import (
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
 	configdomain "github.com/eitanity/kanonarion/internal/config/domain"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	staleapp "github.com/eitanity/kanonarion/internal/staleness/application"
 
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
@@ -151,9 +152,26 @@ type auditModuleResult struct {
 	// PolicyUnevaluated is true when the policy scope in force matched no
 	// license_policy rule: the gate evaluated nothing for this row, which is
 	// reported and blocking — never an implicit allow.
-	PolicyUnevaluated bool   `json:"policy_unevaluated,omitempty"`
-	IsLatest          bool   `json:"is_latest"`
-	LatestVersion     string `json:"latest_version,omitempty"`
+	PolicyUnevaluated bool `json:"policy_unevaluated,omitempty"`
+	// IsLatest answers "is the pin the newest version of this module path".
+	//
+	// It is a pointer because the question is not always asked. A fully offline
+	// run makes no proxy call, and where it has no recorded lookup to serve it
+	// has nothing to answer with: the field is then null and StalenessUnmeasured
+	// says why. It previously defaulted to true, which rendered an unasked
+	// question as the affirmative claim "current" on every offline row.
+	IsLatest *bool `json:"is_latest"`
+	// StalenessSource names where this row's staleness column came from:
+	// "proxy" (this run asked upstream), "ledger" (a recorded lookup inside the
+	// staleness TTL, dated by StalenessLookedUpAt), or "unmeasured". A reader
+	// that does not care which measured it still gets a measured/unmeasured
+	// split from one key.
+	StalenessSource string `json:"staleness_source"`
+	// StalenessUnmeasured is the machine-readable reason the column is
+	// unmeasured: offline_no_ledger_entry | lookup_failed | toolchain_pinned.
+	// Empty on a measured row.
+	StalenessUnmeasured string `json:"staleness_unmeasured,omitempty"`
+	LatestVersion       string `json:"latest_version,omitempty"`
 	// LatestReleaseAgeDays is how long ago the LATEST release shipped, not how
 	// far behind the pin is. It replaces the `days_behind` key, which named a
 	// quantity the value never held: the number is the age of the newest release,
@@ -179,6 +197,13 @@ type auditModuleResult struct {
 	// modules (Direct=false) appear alongside direct ones and the
 	// compliance picture spans the full closure, not just the require lines.
 	Direct bool `json:"direct"`
+
+	// stalenessLedgerAge is how old the served ledger lookup was when this row
+	// was built, set only on the offline path — there the recorded lookup IS the
+	// whole answer, so the row states its age beside it. Unexported: the JSON
+	// already dates the answer with staleness_looked_up_at, from which an age is
+	// a subtraction, and the table is where the statement is needed.
+	stalenessLedgerAge time.Duration
 
 	// policyScope and policyRuleScopes carry the evaluation's scope facts for
 	// the unevaluated diagnostic (which scope was in force, which scopes have
@@ -245,9 +270,12 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	defer func() { _ = cleanup() }()
 
 	// The staleness column consults the network proxy for each module's latest
-	// version. In --from-modcache mode the run is fully offline, so the proxy is
-	// left nil and staleness is reported as "current".
-	var staleness *staleapp.Resolver
+	// version. In --from-modcache mode the run is fully offline, so the column is
+	// answered from the staleness ledger alone: a lookup recorded inside the TTL
+	// is a measurement and is served with its age stated, and a module with no
+	// such lookup is reported unmeasured. No probe is added to the offline path —
+	// that would break the mode's whole contract — and nothing is written.
+	var staleness stalenessLookup = newOfflineStalenessLookup(ctr.StalenessLedger, activeConfig.Staleness.TTL)
 	if !modcacheMode {
 		proxy, perr := proxyadapter.New(f.goproxy, false)
 		if perr != nil {
@@ -283,6 +311,14 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	// cross-verification is invisible in a populated status column, and stdout
 	// is the data channel --json callers pipe into jq.
 	if cerr := writeVerificationCoverage(stderr, auditVerificationCoverage(results)); cerr != nil {
+		return cerr
+	}
+
+	// The staleness column gets its own coverage line for the same reason the
+	// verification column does: a run that could not measure the column at all
+	// is invisible in a populated table, and the count is what makes the gap a
+	// stated quantity rather than something the reader must total by eye.
+	if cerr := writeStalenessCoverage(stderr, auditStalenessCoverageOf(results)); cerr != nil {
 		return cerr
 	}
 
@@ -406,7 +442,7 @@ func auditScope(
 	coords []string,
 	scope depScope,
 	f auditFlags,
-	staleness *staleapp.Resolver,
+	staleness stalenessLookup,
 	ctr *Container,
 	stderr io.Writer,
 ) ([]auditModuleResult, auditDerivation, error) {
@@ -574,7 +610,7 @@ func auditDependencyNodes(rec walkdomain.WalkRecord, local coordinate.ModuleCoor
 // buildAuditResult builds one audit row. policyScope is the licence-policy
 // scope (production/tool) the row's licence is evaluated under — already
 // translated from the walk scope by the caller.
-func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, anchor vulnFrameAnchor, policyScope string, overrides licdomain.LicenseOverrideSet, staleness *staleapp.Resolver, ctr *Container, stderr io.Writer) (auditModuleResult, error) {
+func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, anchor vulnFrameAnchor, policyScope string, overrides licdomain.LicenseOverrideSet, staleness stalenessLookup, ctr *Container, stderr io.Writer) (auditModuleResult, error) {
 	coordStr := node.Coordinate.String()
 	coord, err := parseCoordinate(coordStr)
 	if err != nil {
@@ -595,32 +631,8 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, anchor vul
 		License:       "(not run)",
 		LicenseStatus: "(not run)",
 		VulnStatus:    "(not run)",
-		IsLatest:      true,
 	}
-
-	if staleness != nil {
-		ans, lerr := staleness.Resolve(ctx, coord.Path(), coord.Version())
-		if lerr != nil {
-			// Reported, never swallowed: a module whose staleness could not be
-			// resolved keeps MajorProbed false and IsLatest true-by-default, and
-			// the reader is told which one it was.
-			_, _ = fmt.Fprintf(stderr, "staleness %s: %v\n", coord.Path(), lerr)
-		}
-		if ans.LatestVersion != "" {
-			res.StalenessLookedUpAt = ans.LookedUpAt
-			// The release age is a fact about the release, so it is recorded
-			// whether or not the pin is current; only LatestVersion, which names a
-			// version the project is not on, is gated on the pin being behind.
-			res.LatestReleaseAgeDays = latestReleaseAgeDays(ans.LatestPublishedAt)
-			if ans.LatestVersion != coord.Version() {
-				res.IsLatest = false
-				res.LatestVersion = ans.LatestVersion
-			}
-			res.MajorProbed = ans.NewerMajor.Probed
-			res.NewerMajorModule = ans.NewerMajor.Path
-			res.NewerMajorLatest = ans.NewerMajor.Version
-		}
-	}
+	applyAuditStaleness(ctx, &res, coord, staleness, stderr)
 
 	if anchor.walkID == "" {
 		return res, nil
@@ -669,6 +681,96 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, anchor vul
 	res.VulnStatus, res.VulnReason, res.VulnFindings, res.VulnWithdrawn = vulnAuditStatus(vrec, found, verr)
 
 	return res, nil
+}
+
+// The staleness column's provenance vocabulary. Every audit row carries one of
+// the three sources; an unmeasured row additionally carries one of the reasons,
+// so "the column is empty" is never left for the reader to interpret.
+const (
+	stalenessSourceProxy      = "proxy"
+	stalenessSourceLedger     = "ledger"
+	stalenessSourceUnmeasured = "unmeasured"
+
+	// stalenessOfflineNoEntry: a fully offline run (--from-modcache) whose
+	// ledger holds no lookup for this module inside the staleness TTL. Nothing
+	// was asked and nothing recorded could be served.
+	stalenessOfflineNoEntry = "offline_no_ledger_entry"
+	// stalenessLookupFailed: the lookup was attempted and failed (proxy error,
+	// probe failure with nothing cached behind it).
+	stalenessLookupFailed = "lookup_failed"
+	// stalenessToolchainPinned: the standard library, whose version is the build
+	// toolchain's. There is no proxy "latest" for it, so the question does not
+	// apply rather than resolving in the pin's favour.
+	stalenessToolchainPinned = "toolchain_pinned"
+)
+
+// applyAuditStaleness fills a row's staleness columns from one lookup.
+//
+// The lookup answers in three states and the row keeps all three apart: served
+// from the ledger, resolved live, or unmeasured. Unmeasured is never folded into
+// the answer a measured-and-current module would give — the offline path used to
+// leave IsLatest at its true default and print "current" for every module it had
+// not asked about, which is the same absence-as-answer the vulnerability columns
+// were taught not to give.
+func applyAuditStaleness(ctx context.Context, res *auditModuleResult, coord coordinate.ModuleCoordinate, lookup stalenessLookup, stderr io.Writer) {
+	// No lookup at all is the offline case by construction: runAudit wires the
+	// ledger-only lookup for --from-modcache and the resolver otherwise, so a nil
+	// here is a caller with no staleness source, which measures nothing.
+	if lookup == nil {
+		res.markStalenessUnmeasured(stalenessOfflineNoEntry)
+		return
+	}
+	ans, lerr := lookup.Resolve(ctx, coord.Path(), coord.Version())
+	if ans.LatestVersion == "" {
+		// Reported, never swallowed — except for the offline sentinel, which is
+		// the mode working as designed and is already stated in the column, the
+		// coverage line and the JSON.
+		if lerr != nil && !errors.Is(lerr, errStalenessOffline) {
+			_, _ = fmt.Fprintf(stderr, "staleness %s: %v\n", coord.Path(), lerr)
+			res.markStalenessUnmeasured(stalenessLookupFailed)
+			return
+		}
+		res.markStalenessUnmeasured(stalenessOfflineNoEntry)
+		return
+	}
+	// A partial failure (cached latest, live probe that errored) still reports
+	// the half it has, and the half it does not keeps MajorProbed false.
+	if lerr != nil {
+		_, _ = fmt.Fprintf(stderr, "staleness %s: %v\n", coord.Path(), lerr)
+	}
+
+	res.StalenessSource = stalenessSourceProxy
+	if ans.Served {
+		res.StalenessSource = stalenessSourceLedger
+		if modcacheMode {
+			// Offline, so this row's whole answer is the recorded one: it states
+			// its own age. On the network path the table's dated footer already
+			// carries that statement for the run as a whole.
+			res.stalenessLedgerAge = time.Since(ans.LookedUpAt)
+		}
+	}
+	isLatest := ans.LatestVersion == coord.Version()
+	res.IsLatest = &isLatest
+	res.StalenessLookedUpAt = ans.LookedUpAt
+	// The release age is a fact about the release, so it is recorded
+	// whether or not the pin is current; only LatestVersion, which names a
+	// version the project is not on, is gated on the pin being behind.
+	res.LatestReleaseAgeDays = latestReleaseAgeDays(ans.LatestPublishedAt)
+	if !isLatest {
+		res.LatestVersion = ans.LatestVersion
+	}
+	res.MajorProbed = ans.NewerMajor.Probed
+	res.NewerMajorModule = ans.NewerMajor.Path
+	res.NewerMajorLatest = ans.NewerMajor.Version
+}
+
+// markStalenessUnmeasured records that the column was not answered, and why. It
+// leaves IsLatest nil: there is no version comparison to report, and the zero
+// value of a bool is a claim.
+func (r *auditModuleResult) markStalenessUnmeasured(reason string) {
+	r.IsLatest = nil
+	r.StalenessSource = stalenessSourceUnmeasured
+	r.StalenessUnmeasured = reason
 }
 
 // auditLicenceResolution derives an audit row's licence columns from a licence
@@ -819,8 +921,11 @@ func buildStdlibAuditResult(ctx context.Context, coord coordinate.ModuleCoordina
 		Coordinate:   coord.String(),
 		Verification: "(custody unavailable)",
 		VulnStatus:   "(not scanned)",
-		IsLatest:     true, // pinned to the build toolchain; no proxy "latest" applies
 	}
+	// Pinned to the build toolchain: there is no proxy "latest" to compare
+	// against, so the column says the question does not apply instead of
+	// resolving it in the pin's favour.
+	res.markStalenessUnmeasured(stalenessToolchainPinned)
 
 	if node.Stdlib != nil && node.Stdlib.VerificationStatus != "" {
 		res.Verification = node.Stdlib.VerificationStatus
@@ -860,6 +965,91 @@ func auditVerificationCoverage(results []auditModuleResult) fetchdomain.Verifica
 		obs = append(obs, r.coverage)
 	}
 	return fetchdomain.VerificationCoverageOf(obs)
+}
+
+// auditStalenessCoverage is the run's own tally of how its staleness column was
+// answered. It is the staleness analogue of the verification coverage aggregate,
+// and it exists for the same reason: a column every row of which says
+// "unmeasured" is a fact about the run, and a reader should not have to count
+// rows to learn it.
+type auditStalenessCoverage struct {
+	Total  int
+	Proxy  int
+	Ledger int
+	// Unmeasured is keyed by the machine reason, so the line distinguishes an
+	// offline run from a proxy that failed mid-sweep.
+	Unmeasured map[string]int
+}
+
+// Measured is the count of rows the column actually answers for.
+func (c auditStalenessCoverage) Measured() int { return c.Proxy + c.Ledger }
+
+// auditStalenessCoverageOf tallies the rows the run itself produced, for the
+// same reason auditVerificationCoverage does: the aggregate equals the table by
+// construction rather than by a second read agreeing with the first.
+func auditStalenessCoverageOf(results []auditModuleResult) auditStalenessCoverage {
+	c := auditStalenessCoverage{Total: len(results), Unmeasured: map[string]int{}}
+	for _, r := range results {
+		if r.IsLatest == nil {
+			c.Unmeasured[r.StalenessUnmeasured]++
+			continue
+		}
+		if r.StalenessSource == stalenessSourceLedger {
+			c.Ledger++
+			continue
+		}
+		c.Proxy++
+	}
+	return c
+}
+
+// writeStalenessCoverage states the staleness column's coverage on stderr,
+// beside the verification one and on the same channel for the same reason: it is
+// a statement about the run, not one of the run's rows.
+//
+// The measured line is printed even at zero. That is the whole point on an
+// offline run: a coverage row that vanishes when it hits zero cannot report the
+// collapse it exists to report.
+func writeStalenessCoverage(w io.Writer, c auditStalenessCoverage) error {
+	if c.Total == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintf(w, "staleness coverage over %d module(s):\n", c.Total); err != nil {
+		return fmt.Errorf("writing coverage header: %w", err)
+	}
+	rows := []struct {
+		label string
+		count int
+	}{
+		{"measured", c.Measured()},
+		{"  measured (asked upstream)", c.Proxy},
+		{"  measured (served from ledger)", c.Ledger},
+	}
+	for _, reason := range sortedStalenessReasons(c.Unmeasured) {
+		rows = append(rows, struct {
+			label string
+			count int
+		}{stalenessUnmeasuredLabel(reason), c.Unmeasured[reason]})
+	}
+	for _, row := range rows {
+		if row.count == 0 && row.label != "measured" {
+			continue
+		}
+		if _, err := fmt.Fprintf(w, "  %-34s %5d  %5.1f%%\n",
+			row.label, row.count, percentOf(row.count, c.Total)); err != nil {
+			return fmt.Errorf("writing coverage row: %w", err)
+		}
+	}
+	return nil
+}
+
+func sortedStalenessReasons(m map[string]int) []string {
+	reasons := make([]string, 0, len(m))
+	for k := range m {
+		reasons = append(reasons, k)
+	}
+	sort.Strings(reasons)
+	return reasons
 }
 
 // auditBlockingErr returns a non-nil error when any result is a hard
@@ -907,6 +1097,76 @@ func auditBlockingErr(results []auditModuleResult) error {
 	return &exitError{code: ExitPolicy, msg: strings.Join(msgs, "\n")}
 }
 
+// auditStalenessColumn renders one row's staleness cell.
+//
+// An unmeasured row says so in words, with the reason in the same cell: the
+// column is read left to right beside a verification and a vulnerability status,
+// and a blank or a bare "current" there is read as an answer.
+func auditStalenessColumn(r auditModuleResult) string {
+	// The absent comparison is what makes a row unmeasured — not the source
+	// label, which is a detail about a measurement that exists.
+	if r.IsLatest == nil {
+		return stalenessUnmeasuredLabel(r.StalenessUnmeasured)
+	}
+	switch {
+	case !*r.IsLatest && r.LatestReleaseAgeDays == 0:
+		return withStalenessNotes(fmt.Sprintf("latest: %s (today)", r.LatestVersion), r)
+	case !*r.IsLatest:
+		return withStalenessNotes(fmt.Sprintf("latest: %s (%d days ago)", r.LatestVersion, r.LatestReleaseAgeDays), r)
+	}
+	return withStalenessNotes("current", r)
+}
+
+// withStalenessNotes appends the facts that stand beside a measured answer
+// rather than replacing it: the newer major line, and — offline — the age of the
+// recorded lookup the answer came from.
+//
+// Appended, not substituted. "current" remains true of this module path; the
+// newer major line is a second fact stated beside it, so a module several majors
+// behind no longer reads as up to date.
+func withStalenessNotes(s string, r auditModuleResult) string {
+	if r.MajorProbed && r.NewerMajorModule != "" {
+		s += fmt.Sprintf("; newer major: %s@%s", r.NewerMajorModule, r.NewerMajorLatest)
+	}
+	if r.stalenessLedgerAge > 0 {
+		s += fmt.Sprintf(" [from ledger, %s old]", roundedAge(r.stalenessLedgerAge))
+	}
+	return s
+}
+
+// roundedAge renders a ledger age at a resolution a reader can use: minutes
+// under an hour, hours above it. The TTL that admitted the row is measured in
+// the same units.
+func roundedAge(d time.Duration) string {
+	if d < time.Minute {
+		// A lookup made moments ago is stated as such: "0s old" reads as a
+		// precision the minute-resolution rendering does not have.
+		return "under a minute"
+	}
+	if d < time.Hour {
+		return d.Round(time.Minute).String()
+	}
+	return d.Round(time.Hour).String()
+}
+
+// stalenessUnmeasuredLabel renders the machine reason as the phrase the table
+// and the coverage line show. An unrecognised reason is passed through rather
+// than dropped: a reason nobody has taught this function is still more
+// informative than none, and an unstated one still says "unmeasured".
+func stalenessUnmeasuredLabel(reason string) string {
+	switch reason {
+	case "":
+		return "unmeasured"
+	case stalenessOfflineNoEntry:
+		return "unmeasured (offline)"
+	case stalenessLookupFailed:
+		return "unmeasured (lookup failed)"
+	case stalenessToolchainPinned:
+		return "unmeasured (toolchain-pinned)"
+	}
+	return "unmeasured (" + reason + ")"
+}
+
 func printAuditTable(stdout io.Writer, results []auditModuleResult) error {
 	const colWidth = 55
 	showScope := false
@@ -944,20 +1204,7 @@ func printAuditTable(stdout io.Writer, results []auditModuleResult) error {
 		if len(coord) < colWidth {
 			coord = fmt.Sprintf("%-*s", colWidth, coord)
 		}
-		staleness := "current"
-		if !r.IsLatest {
-			if r.LatestReleaseAgeDays == 0 {
-				staleness = fmt.Sprintf("latest: %s (today)", r.LatestVersion)
-			} else {
-				staleness = fmt.Sprintf("latest: %s (%d days ago)", r.LatestVersion, r.LatestReleaseAgeDays)
-			}
-		}
-		// Appended, not substituted. "current" remains true of this module path;
-		// the newer major line is a second fact stated beside it, so a module
-		// several majors behind no longer reads as up to date.
-		if r.MajorProbed && r.NewerMajorModule != "" {
-			staleness += fmt.Sprintf("; newer major: %s@%s", r.NewerMajorModule, r.NewerMajorLatest)
-		}
+		staleness := auditStalenessColumn(r)
 		policy := r.PolicyOutcome
 		if r.LicenseCategory != "" {
 			policy = fmt.Sprintf("%s [%s]", r.PolicyOutcome, r.LicenseCategory)
