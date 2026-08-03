@@ -2,6 +2,7 @@ package godoc_test
 
 import (
 	"context"
+	"fmt"
 	"io/fs"
 	"strings"
 	"testing"
@@ -581,5 +582,177 @@ func (c Container[T]) Get() T { return c.Value }
 	typ := r.Packages[0].Types[0]
 	if typ.Name != "Container" {
 		t.Errorf("got %s, want Container", typ.Name)
+	}
+}
+
+// TestExtractor_PartialRecordsItsReason pins that a Partial record states why it
+// is partial. The status word alone was unactionable and unfalsifiable: nothing
+// named which package failed or why, and re-deriving the record was the only way
+// to find out.
+func TestExtractor_PartialRecordsItsReason(t *testing.T) {
+	fsys := fstest.MapFS{
+		"good.go":    &fstest.MapFile{Data: []byte("package mypkg\n\ntype Foo struct{}\n")},
+		"bad/bad.go": &fstest.MapFile{Data: []byte("package bad\n\nthis is not valid go !!!\n")},
+		"worse/w.go": &fstest.MapFile{Data: []byte("package worse\n\nalso not valid !!!\n")},
+	}
+
+	r, err := makeExtractor().Extract(context.Background(), fsys, coord(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.OverallStatus != domain2.InterfaceStatusPartial {
+		t.Fatalf("OverallStatus = %s, want Partial", r.OverallStatus)
+	}
+	if r.FailureDetail == "" {
+		t.Fatal("Partial record recorded no FailureDetail")
+	}
+	// The detail must name a failing package and its parse error, not merely
+	// count them.
+	if !strings.Contains(r.FailureDetail, "example.com/m/bad") {
+		t.Errorf("FailureDetail names no failing package: %q", r.FailureDetail)
+	}
+	if !strings.Contains(r.FailureDetail, "bad/bad.go") {
+		t.Errorf("FailureDetail carries no parse error: %q", r.FailureDetail)
+	}
+	if !strings.Contains(r.FailureDetail, "2 package(s)") {
+		t.Errorf("FailureDetail does not count the failing packages: %q", r.FailureDetail)
+	}
+	if !strings.Contains(r.FailureDetail, "+1 more") {
+		t.Errorf("FailureDetail does not account for the unnamed failures: %q", r.FailureDetail)
+	}
+	if strings.Contains(r.FailureDetail, "\n") {
+		t.Errorf("FailureDetail spans several lines: %q", r.FailureDetail)
+	}
+}
+
+// TestExtractor_PartialDetailIsDeterministic pins that the reason does not vary
+// between two extractions of the same tree. The package directories are
+// collected through a map, so a detail taken in iteration order would make two
+// identical extractions two records with different content hashes.
+func TestExtractor_PartialDetailIsDeterministic(t *testing.T) {
+	fsys := fstest.MapFS{
+		"a/a.go": &fstest.MapFile{Data: []byte("package a\n\ninvalid !!!\n")},
+		"b/b.go": &fstest.MapFile{Data: []byte("package b\n\ninvalid !!!\n")},
+		"c/c.go": &fstest.MapFile{Data: []byte("package c\n\ninvalid !!!\n")},
+	}
+	first := ""
+	for i := range 8 {
+		r, err := makeExtractor().Extract(context.Background(), fsys, coord(t))
+		if err != nil {
+			t.Fatal(err)
+		}
+		if i == 0 {
+			first = r.FailureDetail
+			continue
+		}
+		if r.FailureDetail != first {
+			t.Fatalf("FailureDetail varies between extractions:\n %q\n %q", first, r.FailureDetail)
+		}
+	}
+}
+
+// TestExtractor_ExtractedRecordsNoReason is the control: a complete extraction
+// records no detail, because it has none. "No detail recorded" is the true value
+// for it, and a record that stated one would be making a claim it cannot support
+// — as well as changing the content hash of every complete record in the store.
+func TestExtractor_ExtractedRecordsNoReason(t *testing.T) {
+	fsys := fstest.MapFS{
+		"client.go": &fstest.MapFile{Data: []byte("package mypkg\n\ntype Client struct{}\n")},
+	}
+	r, err := makeExtractor().Extract(context.Background(), fsys, coord(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.OverallStatus != domain2.InterfaceStatusExtracted {
+		t.Fatalf("OverallStatus = %s, want Extracted", r.OverallStatus)
+	}
+	if r.FailureDetail != "" {
+		t.Errorf("complete extraction recorded a detail it does not have: %q", r.FailureDetail)
+	}
+}
+
+// countingFS is a fault seam for the directory-read failure path. The extractor
+// reads each package directory twice — once collecting the directories, once
+// parsing one — and this fails the second read of one directory, which is the
+// transient I/O error the silent skip used to swallow whole.
+type countingFS struct {
+	fstest.MapFS
+	target string
+	seen   map[string]int
+}
+
+func (c *countingFS) ReadDir(name string) ([]fs.DirEntry, error) {
+	c.seen[name]++
+	if name == c.target && c.seen[name] > 1 {
+		return nil, fs.ErrPermission
+	}
+	entries, err := c.MapFS.ReadDir(name)
+	if err != nil {
+		return nil, fmt.Errorf("reading %s: %w", name, err)
+	}
+	return entries, nil
+}
+
+// TestExtractor_UnreadableDirRecordsItsReason pins that a directory the
+// extractor could not turn into a package is recorded rather than skipped
+// silently. The skip discarded the only statement about that directory a reader
+// could act on, and left the record claiming the directory did not exist.
+func TestExtractor_UnreadableDirRecordsItsReason(t *testing.T) {
+	fsys := &countingFS{
+		MapFS: fstest.MapFS{
+			"good.go":     &fstest.MapFile{Data: []byte("package mypkg\n\ntype Foo struct{}\n")},
+			"locked/l.go": &fstest.MapFile{Data: []byte("package locked\n\ntype Bar struct{}\n")},
+		},
+		target: "locked",
+		seen:   map[string]int{},
+	}
+
+	r, err := makeExtractor().Extract(context.Background(), fsys, coord(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.OverallStatus != domain2.InterfaceStatusPartial {
+		t.Fatalf("OverallStatus = %s, want Partial", r.OverallStatus)
+	}
+	if !strings.Contains(r.FailureDetail, "example.com/m/locked") {
+		t.Errorf("FailureDetail does not name the unreadable directory: %q", r.FailureDetail)
+	}
+	var found *domain2.PackageInterface
+	for i := range r.Packages {
+		if r.Packages[i].ImportPath == "example.com/m/locked" {
+			found = &r.Packages[i]
+		}
+	}
+	if found == nil {
+		t.Fatalf("the unreadable directory is absent from the record entirely: %v", r.Packages)
+	}
+	if len(found.ParseFailures) != 1 || found.ParseFailures[0].File != "locked" {
+		t.Fatalf("directory failure not recorded on the package: %+v", found.ParseFailures)
+	}
+	if !strings.Contains(found.ParseFailures[0].Error, "permission") {
+		t.Errorf("recorded failure does not carry the cause: %q", found.ParseFailures[0].Error)
+	}
+}
+
+// TestExtractor_CancelledRecordsItsReason pins that an interrupted extraction
+// states what it got through, so the record reads as a measurement that stopped
+// rather than as a module with almost no API.
+func TestExtractor_CancelledRecordsItsReason(t *testing.T) {
+	fsys := fstest.MapFS{
+		"a/a.go": &fstest.MapFile{Data: []byte("package a\n\ntype A struct{}\n")},
+		"b/b.go": &fstest.MapFile{Data: []byte("package b\n\ntype B struct{}\n")},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	r, err := makeExtractor().Extract(ctx, fsys, coord(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if r.OverallStatus != domain2.InterfaceStatusCancelled {
+		t.Fatalf("OverallStatus = %s, want Cancelled", r.OverallStatus)
+	}
+	if !strings.Contains(r.FailureDetail, "cancelled") || !strings.Contains(r.FailureDetail, "context canceled") {
+		t.Errorf("cancelled record does not state its cause: %q", r.FailureDetail)
 	}
 }

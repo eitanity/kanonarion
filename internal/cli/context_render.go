@@ -40,6 +40,35 @@ func coveragePercent(frac float64) int {
 	return pct
 }
 
+// statusWithReason renders a section's status word together with the reason the
+// record recorded for it, in the "(status: detail)" shape the read-error
+// branches already print as "(failed: %s)".
+//
+// Without it a section printed the status word alone while the reason sat in the
+// same struct, reachable only under --json: the same two words were printed for
+// a module whose analysis environment was unusable and for one with a genuine
+// fault of its own, and the text output could not tell a measurement that never
+// happened from a finding about the module. Text and --json now carry the same
+// facts.
+//
+// A record that recorded no detail renders the bare status word. That is the
+// true value for it — records written before a stage recorded its reason state
+// nothing, and there is no reason here to invent one from.
+func statusWithReason(status, detail string) string {
+	if detail == "" {
+		return status
+	}
+	return status + ": " + collapseLines(detail)
+}
+
+// collapseLines folds a multi-line detail onto a single line so a summary
+// section keeps its one-row-per-section shape. The detail is never truncated:
+// it is the fact the row exists to carry, and a cut one could hide the clause
+// that distinguishes an environment failure from a module fault.
+func collapseLines(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
 func renderContextText(out contextOutput, compact bool) ([]byte, error) {
 	var buf bytes.Buffer
 	if compact {
@@ -165,7 +194,14 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 	case sectionStatusReadError:
 		w.printf("  License:         (failed: %s)\n", out.License.Error)
 	default:
-		w.printf("  License:         %s\n", licenseSummaryLine(out.License))
+		line := licenseSummaryLine(out.License)
+		if out.License.Error != "" {
+			// The licence summary line carries no status word of its own when a
+			// SPDX identifier was matched, so the recorded reason is appended as
+			// its own clause rather than folded into one that may not be printed.
+			line += " (" + statusWithReason(out.License.Status, out.License.Error) + ")"
+		}
+		w.printf("  License:         %s\n", line)
 	}
 
 	switch out.Interface.Status {
@@ -183,7 +219,8 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 			total += len(p.Types) + len(p.Funcs) + len(p.Consts) + len(p.Vars)
 		}
 		w.printf("  Interface:       %d package(s), %d symbol(s) (%s)\n",
-			len(out.Interface.Packages), total, out.Interface.Status)
+			len(out.Interface.Packages), total,
+			statusWithReason(out.Interface.Status, out.Interface.Error))
 	}
 
 	switch out.CallGraph.Status {
@@ -197,7 +234,8 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 		w.printf("  Call Graph:      (failed: %s)\n", out.CallGraph.Error)
 	default:
 		w.printf("  Call Graph:      %d nodes, %d edges (%s)\n",
-			out.CallGraph.NodeCount, out.CallGraph.EdgeCount, out.CallGraph.Status)
+			out.CallGraph.NodeCount, out.CallGraph.EdgeCount,
+			statusWithReason(out.CallGraph.Status, out.CallGraph.Error))
 	}
 
 	switch out.Examples.Status {
@@ -210,7 +248,8 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 	case sectionStatusReadError:
 		w.printf("  Examples:        (failed: %s)\n", out.Examples.Error)
 	default:
-		w.printf("  Examples:        %d (%s)\n", out.Examples.Count, out.Examples.Status)
+		w.printf("  Examples:        %d (%s)\n", out.Examples.Count,
+			statusWithReason(out.Examples.Status, out.Examples.Error))
 	}
 
 	switch out.Vulnerabilities.Status {

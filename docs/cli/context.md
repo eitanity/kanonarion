@@ -110,6 +110,32 @@ go.uber.org/goleak@v1.3.0
   Vulnerabilities: Clean
 ```
 
+#### Failure and partial reasons
+
+The License, Interface, Call Graph and Examples sections print the reason the
+record recorded for its status, in the same `(status: reason)` shape the store
+read-error branches use for `(failed: …)`:
+
+```
+  License:         MIT (Partial: vendor/LICENSE unreadable)
+  Interface:       315 package(s), 1034 symbol(s) (Partial: parse failures in 11 package(s): golang.org/x/tools/go/loader/testdata: go/loader/testdata/badpkgdecl.go:1:34: expected 'package', found 'EOF' (+10 more package(s)))
+  Call Graph:      0 nodes, 0 edges (LoadFailed: meta load: err: exit status 1: stderr: go: missing go.sum entry for go.mod file)
+  Examples:        0 (ExtractionFailed: zip corrupt)
+```
+
+This is the same fact `--json` carries in each section's `error` field, so the
+two outputs no longer disagree about what is known. It matters for telling an
+unusable analysis environment from a fault in the module: both render as the
+same status word, and only the reason separates them.
+
+A record that recorded no reason prints the bare status word — `(LoadFailed)`.
+That is not a rendering gap: records written before a stage recorded its reason
+state nothing, and no reason is invented for them. The reason is a fact about the
+record, not about the coordinate, so re-deriving the record is what supplies one.
+
+A multi-line reason is folded onto the section's single row. It is never
+truncated.
+
 ### JSON (`--json`)
 
 ```json

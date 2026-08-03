@@ -943,3 +943,91 @@ func TestContextSizeHintMeasuresJSONDocument(t *testing.T) {
 		}
 	}
 }
+
+// TestPrintContextSummary_RecordedReasons pins that a section which read a
+// record carrying a recorded failure or partial reason prints that reason in
+// text mode, not only under --json. The four sections populate Error from the
+// record's own FailureDetail, and printing the status word alone made an
+// unusable analysis environment and a genuine module fault render identically.
+func TestPrintContextSummary_RecordedReasons(t *testing.T) {
+	out := contextOutput{
+		Module:  contextModuleInfo{Path: "example.com/app", Version: "v1.0.0"},
+		License: contextLicense{Status: "Partial", SPDX: "MIT", Error: "vendor/LICENSE unreadable"},
+		Interface: contextInterface{
+			Status:   "Partial",
+			Error:    "parse failures in 2 package(s): example.com/app/bad: bad.go:3:1: expected declaration",
+			Packages: []contextPackage{{ImportPath: "example.com/app"}},
+		},
+		CallGraph: contextCallGraph{
+			Status: "LoadFailed",
+			Error:  "meta load: err: exit status 1: stderr: missing go.sum entry for go.mod file",
+		},
+		Examples: contextExamples{Status: "ExtractionFailed", Error: "zip corrupt"},
+	}
+
+	var buf strings.Builder
+	if err := printContextSummary(out, &buf); err != nil {
+		t.Fatal(err)
+	}
+	got := buf.String()
+
+	for _, want := range []string{
+		"MIT (Partial: vendor/LICENSE unreadable)",
+		"(Partial: parse failures in 2 package(s): example.com/app/bad: bad.go:3:1: expected declaration)",
+		"(LoadFailed: meta load: err: exit status 1: stderr: missing go.sum entry for go.mod file)",
+		"(ExtractionFailed: zip corrupt)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing recorded reason %q in summary output:\n%s", want, got)
+		}
+	}
+}
+
+// TestPrintContextSummary_NoRecordedReason is the control for the test above: a
+// record that recorded no detail prints the bare status word. "No detail
+// recorded" is the true value for records written before a stage recorded its
+// reason, and the renderer must not manufacture one or leave a dangling colon.
+func TestPrintContextSummary_NoRecordedReason(t *testing.T) {
+	out := contextOutput{
+		Module:    contextModuleInfo{Path: "example.com/app", Version: "v1.0.0"},
+		License:   contextLicense{Status: "Extracted", SPDX: "MIT"},
+		Interface: contextInterface{Status: "Partial", Packages: []contextPackage{{ImportPath: "example.com/app"}}},
+		CallGraph: contextCallGraph{Status: "LoadFailed"},
+		Examples:  contextExamples{Status: "None"},
+	}
+
+	var buf strings.Builder
+	if err := printContextSummary(out, &buf); err != nil {
+		t.Fatal(err)
+	}
+	got := buf.String()
+
+	for _, want := range []string{
+		"  License:         MIT\n",
+		"(Partial)",
+		"0 nodes, 0 edges (LoadFailed)\n",
+		"(None)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("missing bare status %q in summary output:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, ": )") || strings.Contains(got, "Partial: \n") {
+		t.Errorf("empty reason rendered as a dangling separator:\n%s", got)
+	}
+}
+
+// TestStatusWithReason_CollapsesLines pins that a multi-line recorded detail is
+// folded onto the section's single row and never truncated: the clause that
+// distinguishes an environment failure from a module fault can sit anywhere in
+// it.
+func TestStatusWithReason_CollapsesLines(t *testing.T) {
+	got := statusWithReason("LoadFailed", "meta load:\n\tgo: missing go.sum entry\n\tfor go.mod file")
+	want := "LoadFailed: meta load: go: missing go.sum entry for go.mod file"
+	if got != want {
+		t.Errorf("statusWithReason = %q, want %q", got, want)
+	}
+	if statusWithReason("Extracted", "") != "Extracted" {
+		t.Errorf("a record with no detail must render the bare status word, got %q", statusWithReason("Extracted", ""))
+	}
+}
