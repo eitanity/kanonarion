@@ -38,6 +38,18 @@ type GenerateSBOMUseCase struct {
 	// state its coverage of it. Optional: nil means no scope statement, which
 	// is the honest answer when nothing can read the tree.
 	vendorTree ports.VendorTreeReader
+	// audit appends the assurance-log events a generation and a serving leave.
+	// Optional; nil disables emission.
+	audit ports.AuditSink
+}
+
+// WithAudit wires an audit sink so a persisted document appends one
+// sbom_generated event and a document served from cache appends one
+// sbom_served. A nil sink (the default) disables emission. Returns the use case
+// for chaining, mirroring WithVendorTree.
+func (uc *GenerateSBOMUseCase) WithAudit(sink ports.AuditSink) *GenerateSBOMUseCase {
+	uc.audit = sink
+	return uc
 }
 
 // WithVendorTree wires the reader that lets a generated document state how much
@@ -123,6 +135,15 @@ func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (d
 			return domain.SBOMRecord{}, fmt.Errorf("checking sbom cache: %w", err)
 		} else if ok {
 			uc.logger.InfoContext(ctx, "sbom.cache_hit", "walk_id", req.WalkID, "format", format)
+			// Assurance log: a stored document handed back is still a document that
+			// left the building, and "when did we last produce this artefact, and how
+			// often has it gone out" is unanswerable if only the first generation is
+			// visible. The event names the record served and who asked for this
+			// serving; it is a distinct type from the generation event, so a reader
+			// never mistakes a re-serve for a fresh production.
+			if err := emitSBOMServed(uc.audit, cached, req.Operator); err != nil {
+				return domain.SBOMRecord{}, err
+			}
 			return cached, nil
 		}
 	}
@@ -199,6 +220,13 @@ func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (d
 	if !scoped {
 		if err := uc.sbomStore.PutSBOMRecord(ctx, record); err != nil {
 			return domain.SBOMRecord{}, fmt.Errorf("persisting sbom record: %w", err)
+		}
+		// Assurance log: one event per persisted document, written after the record
+		// so a failed append reports an unlogged write rather than undoing it. A
+		// package-scoped request persisted nothing and so appends nothing — the
+		// event states that a record exists, and an ephemeral document leaves none.
+		if err := emitSBOMGenerated(uc.audit, record, !req.GeneratedAt.IsZero()); err != nil {
+			return domain.SBOMRecord{}, err
 		}
 	}
 

@@ -352,6 +352,28 @@ carries the claims - the content hash is what reaches them. A cache hit re-serve
 without appending, and a run that could not establish custody at all wrote no
 record and so appends nothing, since an absence is not an observation.
 
+SBOM generation records what *left the building*. It is the only artefact
+kanonarion hands to someone else, so both halves are logged: `sbom_generated`
+(record id, walk, format, pipeline version, the document's content hash, and
+whether the creation timestamp was caller-supplied) for a document produced and
+persisted, and `sbom_served` (the record served plus the identity that requested
+*this* serving) for a stored document handed back from the cache. Two types, not
+one, because a produced document and a re-served one are different facts and
+"how often has this gone out" needs both. A `--package` run is ephemeral - no
+cache lookup, nothing persisted - and appends nothing, since the events state
+that a record exists.
+
+The advisory database snapshot records what the findings are *judged against*
+(`advisory_snapshot_recorded`: source, that database's own generation of itself,
+the retrieval instant, the content identity of the persisted bytes, and the
+acquisition route - `walk_scan`, `module_scan`, `advisory_refresh`,
+`walk_rescan`). Every persist site emits, so an advisory set is witnessed once
+by whichever run fetched it. It states nothing about the advisories themselves,
+their count, or any module's standing: those are the snapshot's and the scan
+records' claims, reachable through the content identity. A run that reuses a
+stored snapshot appends nothing - reuse is not an acquisition, and dating an
+earlier arrival to this run would report an event that never happened.
+
 Both composition roots wire the same sinks. The CLI container and the library
 composition root behind `pkg/kanonarion` append identical events for the same
 operation; a consumer driving the pipeline as a library does not get a quieter

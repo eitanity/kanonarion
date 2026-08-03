@@ -164,6 +164,46 @@ const (
 	// sharpest form of the gap — an operator could see that the stdlib was
 	// verified but not when, or by which run, that was established.
 	EventStdlibCustodyRecorded EventType = "stdlib_custody_recorded"
+
+	// EventSBOMGenerated records that an SBOM document was produced and its
+	// record persisted. Payload carries the record id, the walk the document
+	// describes, the format, the pipeline version, the document's content hash
+	// and whether the document's creation timestamp was supplied by the caller.
+	//
+	// The SBOM is the artefact that leaves the building: it is handed to
+	// customers, attached to releases and read by regulators. A document could be
+	// produced and re-produced with no trace of when, from which walk, or how
+	// often, so this anchors the production itself. It witnesses the write — the
+	// document's own claims (its components, their licences, its completeness
+	// statements) are the DOCUMENT's, reachable through the content hash, and
+	// restating them here would make the log a second unsealed copy.
+	EventSBOMGenerated EventType = "sbom_generated"
+
+	// EventSBOMServed records that a stored SBOM record was served to a caller
+	// instead of being generated afresh. Payload carries the record served (id,
+	// walk, format, pipeline version, content hash) and the identity that
+	// requested this serving.
+	//
+	// A served answer is an observation: "when did we last produce this artefact,
+	// and how often has it gone out" stays answerable only if a re-serve is
+	// visible. It is deliberately distinct from sbom_generated — a reader must be
+	// able to tell a document that was produced from one that was handed over
+	// again — and the requester is the serving's own, not the record's operator,
+	// which named whoever asked for the original generation.
+	EventSBOMServed EventType = "sbom_served"
+
+	// EventAdvisorySnapshotRecorded records that an advisory database snapshot
+	// was persisted. Payload carries the database the snapshot came from, that
+	// database's own generation of itself, when it was retrieved, the content
+	// identity of the persisted bytes and the route that acquired it.
+	//
+	// "What did we know and when" turns exactly on when a snapshot arrived, and
+	// the arrival was the one remaining silent write. It witnesses the persist
+	// and its route: it states nothing about the advisories the snapshot holds,
+	// how many there are, or any module's standing — those are questions for the
+	// snapshot, which the content identity reaches. A scan that reuses a stored
+	// snapshot appends nothing, because reuse is not an acquisition.
+	EventAdvisorySnapshotRecorded EventType = "advisory_snapshot_recorded"
 )
 
 // knownEventTypes is the closed set of recognised discriminators. A gap
@@ -189,6 +229,9 @@ var knownEventTypes = map[EventType]struct{}{
 	EventExamplesExtracted:        {},
 	EventExtractionRunCompleted:   {},
 	EventStdlibCustodyRecorded:    {},
+	EventSBOMGenerated:            {},
+	EventSBOMServed:               {},
+	EventAdvisorySnapshotRecorded: {},
 }
 
 // Known reports whether t is a recognised event type.

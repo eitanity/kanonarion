@@ -304,6 +304,27 @@ fact-record line keeps its historical flat layout with `event_type:
 `{event_type, timestamp, payload}` envelope. Recognised event types are the
 closed set in `internal/audit`.
 
-`callgraph_extracted` is the most recent addition (one per persisted call-graph
-generation, on both the fetched-artefact and working-tree routes). It needed no
-migration, as above.
+The event types added since `callgraph_extracted` (one per persisted call-graph
+generation, on both the fetched-artefact and working-tree routes), in the order
+they landed. None needed a migration, as above:
+
+| Event type | One per |
+|---|---|
+| `interface_extracted` | persisted interface generation |
+| `examples_extracted` | persisted examples generation |
+| `extraction_run_completed` | extraction run over a walk, on every outcome including a cancelled one |
+| `stdlib_custody_recorded` | persisted standard-library custody measurement, on both acquisition routes |
+| `sbom_generated` | persisted SBOM record |
+| `sbom_served` | stored SBOM document handed back from the cache |
+| `advisory_snapshot_recorded` | persisted advisory database snapshot, by whichever route acquired it |
+
+The rule this table exists to serve: **this file and the event-vocabulary docs
+are updated in the same commit as the change they describe.** It went stale by
+four event types before this one, and a reader checking whether a write is
+witnessed cannot tell an omission from an absence.
+
+Each of these is emitted only where the write happened, so a cache hit or a
+reused snapshot appends nothing (`sbom_served` is the deliberate exception: a
+document handed to a caller is an observation in its own right). That asymmetry
+is why a stable line count in `audit.jsonl` is evidence about **writes**, not
+about runs.

@@ -282,6 +282,23 @@ status). This anchors *when* a module was first observed affected in the
 append-only assurance log, independent of the mutable vuln DB's `first_scanned_at`.
 `vuln-scan-rescan` emits the same events for its fresh run.
 
+A run that **downloads and stores an advisory database snapshot** appends one
+`advisory_snapshot_recorded` event for it: the database it came from, that
+database's own generation of itself, when this store retrieved it, the content
+hash of the persisted bytes, and the route that acquired it — `walk_scan`,
+`module_scan` (a single-module scan resolving its own snapshot),
+`advisory_refresh` (`--fresh`) or `walk_rescan`. "What did we know and when"
+turns on when an advisory set arrived, and the arrival is the fact this states.
+
+It witnesses the persist and its route only. The advisories the snapshot holds,
+how many there are and any module's standing against them are not in the
+payload: those are the snapshot's and the scan records' claims, and the content
+hash is what reaches them. A run that reuses a stored snapshot appends nothing —
+reuse is not an acquisition, and dating an earlier arrival to this run would
+report something that never happened. That includes a `--fresh` refresh that
+found the stored generation still current: nothing was transferred, so nothing
+is appended.
+
 ```
 kanonarion vuln-scan [walk-id] [flags]
 kanonarion vuln-scan --module <module>@<version> [flags]

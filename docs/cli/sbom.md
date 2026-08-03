@@ -267,6 +267,35 @@ measured at **48 ms** for a 128-module walk, rather than a regeneration.
 Use `--force` to bypass the cache. `--generated-at` also bypasses it. Scoped
 (`--package`) results are never cached.
 
+### Assurance log
+
+The SBOM is the artefact that leaves the building, so both making one and
+handing a stored one back are appended to the append-only assurance log
+(`{store-root}/audit.jsonl`).
+
+| Event | When | Payload |
+|---|---|---|
+| `sbom_generated` | a document was produced and its record persisted | record id, walk id, format, pipeline version, the document's content hash, and whether the creation timestamp was caller-supplied (`--generated-at`) |
+| `sbom_served` | a stored document was handed back from the cache | the record served (id, walk id, format, pipeline version, content hash) and `requested_by`, the `--operator` of *this* request |
+
+The two are separate types on purpose: a reader must be able to tell a document
+that was produced from one that was handed over again, and "when did we last
+produce this artefact, and how often has it gone out" needs both. `requested_by`
+is the requester of the serving, not the record's stored `operator` — that named
+whoever asked for the original generation, possibly another person on another
+day. It is omitted when no `--operator` was given.
+
+Neither event restates the document. Its component list, its licences and its
+completeness statements are the document's own claims; the content hash is what
+reaches them, and repeating them in the log would leave an unsealed second copy
+of the artefact.
+
+A `--package` run appends nothing: the result is ephemeral (no cache lookup, no
+record persisted), and the events state that a record exists. `--force` and
+`--generated-at` skip the cache, so they append `sbom_generated` rather than
+`sbom_served`. `sbom-show` and `sbom-list` read stored records and append
+nothing.
+
 ### Licence completeness
 
 A component carries no licence identity when no licence record was found for it,

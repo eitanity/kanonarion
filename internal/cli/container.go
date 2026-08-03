@@ -467,7 +467,12 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		scanner, database, reach,
 		clk, vulnapp.PipelineVersion, logger,
 	).WithCallGraphLoader(cgLoader).
-		WithCallGraphSpawner(cgSpawner)
+		WithCallGraphSpawner(cgSpawner).
+		// A module scan resolves its own snapshot when no walk scan handed it one,
+		// and that download is a persist like any other. The walk and re-scan use
+		// cases carry the same sink, so an advisory set arriving by any route is
+		// witnessed once, by the route that fetched it.
+		WithAudit(factStore)
 	walkScannerUC := vulnapp.NewScanWalkUseCase(
 		walkStore, vulnStore, moduleScannerUC,
 		vulnfetch.NewFetchModuleAdapter(fetchUC),
@@ -513,7 +518,10 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		walkStore, licStore, sbomStore,
 		sbomcdx.New(sbomPipelineVersion),
 		clk, sbomPipelineVersion, licapp.PipelineVersion, logger,
-	).WithVendorTree(sbomvendortree.New(venlocalfs.New(nil)))
+	).WithVendorTree(sbomvendortree.New(venlocalfs.New(nil))).
+		// The SBOM is the artefact that leaves the building, so both producing one
+		// and handing a stored one back are appended to the assurance log.
+		WithAudit(factStore)
 	querySBOMUC := sbomapp.NewQuerySBOMUseCase(sbomStore)
 
 	// ---- directive use cases ----

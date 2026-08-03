@@ -5,6 +5,7 @@ import (
 	"errors"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/audit"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
@@ -12,6 +13,13 @@ import (
 	vendordomain "github.com/eitanity/kanonarion/internal/vendortree/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
+
+// AuditSink appends an audit event to the assurance log. The shared JSONL
+// AuditLog satisfies this; the application depends only on this narrow port,
+// not on the factstore adapter that persists it.
+type AuditSink interface {
+	RecordEvent(audit.Event) error
+}
 
 // ErrSBOMNotFound is returned when a requested SBOM record does not exist.
 var ErrSBOMNotFound = errors.New("sbom record not found")

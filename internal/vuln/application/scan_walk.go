@@ -1302,12 +1302,13 @@ func (uc *ScanWalkUseCase) resolveSnapshot(ctx context.Context, pinned *domain.D
 		return &cached, nil
 	}
 	uc.logger.Info("no cached snapshot: fetching vulnerability database snapshot from network")
-	return uc.fetchAndPersistSnapshot(ctx, "resolving snapshot", "persisting database snapshot")
+	return uc.fetchAndPersistSnapshot(ctx, "resolving snapshot", "persisting database snapshot", snapshotRouteWalkScan)
 }
 
 // fetchAndPersistSnapshot fetches a fresh snapshot from the database source and
-// stores it. errFetch and errPersist are used as error message prefixes.
-func (uc *ScanWalkUseCase) fetchAndPersistSnapshot(ctx context.Context, errFetch, errPersist string) (*domain.DatabaseSnapshot, error) {
+// stores it. errFetch and errPersist are used as error message prefixes, and
+// route names the run this acquisition belongs to in the assurance log.
+func (uc *ScanWalkUseCase) fetchAndPersistSnapshot(ctx context.Context, errFetch, errPersist, route string) (*domain.DatabaseSnapshot, error) {
 	s, body, err := uc.moduleScanner.database.Snapshot(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("%s: %w", errFetch, err)
@@ -1316,6 +1317,12 @@ func (uc *ScanWalkUseCase) fetchAndPersistSnapshot(ctx context.Context, errFetch
 		defer func() { _ = body.Close() }()
 		if err := uc.vulnStore.PutDatabaseSnapshot(ctx, s, body); err != nil {
 			return nil, fmt.Errorf("%s: %w", errPersist, err)
+		}
+		// Assurance log: one event per persisted snapshot, after the write. A
+		// refresh that found the stored generation still current transferred no
+		// body and appends nothing — nothing was acquired to witness.
+		if err := emitSnapshotRecorded(uc.audit, s, route); err != nil {
+			return nil, err
 		}
 	}
 	return &s, nil

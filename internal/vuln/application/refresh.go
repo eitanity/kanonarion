@@ -224,7 +224,7 @@ func (uc *ScanWalkUseCase) walkModulePaths(ctx context.Context, walkID string) (
 // downloadRefresh fetches and stores the full database, reporting the refresh it
 // completed on top of whatever the checks above already established.
 func (uc *ScanWalkUseCase) downloadRefresh(ctx context.Context, base SnapshotRefresh) (SnapshotRefresh, error) {
-	s, err := uc.fetchAndPersistSnapshot(ctx, "resolving fresh snapshot", "persisting fresh database snapshot")
+	s, err := uc.fetchAndPersistSnapshot(ctx, "resolving fresh snapshot", "persisting fresh database snapshot", snapshotRouteRefresh)
 	if err != nil {
 		return SnapshotRefresh{}, err
 	}
