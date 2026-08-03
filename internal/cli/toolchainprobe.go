@@ -21,8 +21,15 @@ import (
 // load failed for environmental reasons — a shim that resolves but has no
 // version behind it is the reproduction that motivated the whole axis, and
 // naming the binary directly would have stepped around it.
-func goToolchainVersionProbe(ctx context.Context) error {
-	out, err := exec.CommandContext(ctx, "go", "env", "GOVERSION").CombinedOutput() // #nosec G204 -- fixed command and arguments; the binary is resolved through the analysis PATH by design
+//
+// It runs in dir, the directory the loader was pointed at. A version manager
+// resolves the toolchain from a version file in the tree it is invoked in, so a
+// probe left to inherit the CLI process's own working directory can report a
+// usable toolchain for a load that had none.
+func goToolchainVersionProbe(ctx context.Context, dir string) error {
+	cmd := exec.CommandContext(ctx, "go", "env", "GOVERSION") // #nosec G204 -- fixed command and arguments; the binary is resolved through the analysis PATH by design
+	cmd.Dir = dir
+	out, err := cmd.CombinedOutput()
 	if err != nil {
 		return err //nolint:wrapcheck // the error is classified, never rendered
 	}

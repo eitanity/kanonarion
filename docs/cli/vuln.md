@@ -53,7 +53,12 @@ operator asked for a measurement the supplied database cannot produce, and
 recording 128 `Unscannable` modules would bury the one fact that matters.
 
 A populated database records its count onto the snapshot every record in the run
-names, shown as the `Advisories` line of `vuln` and `vuln-scan-show`. That is
+names, shown as the `Advisories` line of `vuln` and `vuln-scan-show`. A run
+normally extracts the database once and shares it; when it cannot, each module
+scan extracts one of its own and records the count it measured there, so those
+records name the count too. A scan handed an already-extracted database, or
+answered by the live service, records no count — that reading was taken
+elsewhere or not at all. That is
 what lets a reader tell a clean scan against six thousand advisories from a clean
 scan against three. Records written before the count existed report it as *not
 recorded* rather than as zero — a measured zero cannot exist, because such a scan
@@ -161,6 +166,51 @@ The scan then runs pinned to that cache (`GOPROXY=off`, see the resolution note
 below): the analysis is faithful to the project's verified toolchain rather than
 reaching to the network for versions the project never builds.
 
+**The toolchain axis**
+
+Beside the result, on **stderr**, every scan states what the advisory database
+says about the Go toolchain the walk was built by:
+
+```
+toolchain:
+  go1.26.5: none of the 30 toolchain advisories in vuln.go.dev@2026-07-27T20:14:16Z covers it
+```
+
+```
+toolchain:
+  go1.26.2 is covered by 3 advisories in vuln.go.dev@2026-07-27T20:14:16Z: GO-2026-4978 (fixed in 1.26.3), GO-2026-4979 (fixed in 1.26.3), GO-2026-4984 (fixed in 1.26.3)
+  this is the build toolchain, not a dependency of the artefact: it is reported as its own axis and is counted in no module roll-up
+```
+
+The database keys the toolchain (`cmd/go`, the compiler, the linker) separately
+from `stdlib`, and the two sets are disjoint. No project imports `cmd/*`, so no
+module scan reaches a toolchain advisory; this line is the only place they
+appear. The fix named is the one on **this toolchain's own release branch** — an
+advisory backported to two release lines has two fixes, and only one of them is
+a move forward.
+
+The judgment is derived at report time from the stored snapshot and the walk's
+recorded build toolchain (`go env GOVERSION`): nothing is fetched, nothing is
+recorded, and it is derived identically on a reused run and a fresh one.
+`--stdlib-from-gomod` pins the stdlib node to the `go.mod` directive but does not
+change this line, which always reports the toolchain that ran.
+
+When no judgment can be made the line says so rather than being omitted — a
+missing line reads as a clear:
+
+```
+toolchain:
+  go1.26.5 was not judged against the advisory database's toolchain key: the snapshot's module index carries no toolchain key
+```
+
+The other reasons are `the walk recorded no build toolchain version`, `the
+recorded toolchain version is not comparable to the database's version ranges`
+(a release-candidate or development toolchain), and `no advisory database
+snapshot is stored`.
+
+The axis never changes the exit code, never appears under `--json`, and is
+counted in no roll-up. The SBOM is untouched by it.
+
 **On-demand callgraph extraction with `--reachability`**
 
 When `--reachability` is enabled, kanonarion checks the callgraph store before
@@ -231,6 +281,23 @@ scan-run id, snapshot source/version, overall status, and the
 status). This anchors *when* a module was first observed affected in the
 append-only assurance log, independent of the mutable vuln DB's `first_scanned_at`.
 `vuln-scan-rescan` emits the same events for its fresh run.
+
+A run that **downloads and stores an advisory database snapshot** appends one
+`advisory_snapshot_recorded` event for it: the database it came from, that
+database's own generation of itself, when this store retrieved it, the content
+hash of the persisted bytes, and the route that acquired it — `walk_scan`,
+`module_scan` (a single-module scan resolving its own snapshot),
+`advisory_refresh` (`--fresh`) or `walk_rescan`. "What did we know and when"
+turns on when an advisory set arrived, and the arrival is the fact this states.
+
+It witnesses the persist and its route only. The advisories the snapshot holds,
+how many there are and any module's standing against them are not in the
+payload: those are the snapshot's and the scan records' claims, and the content
+hash is what reaches them. A run that reuses a stored snapshot appends nothing —
+reuse is not an acquisition, and dating an earlier arrival to this run would
+report something that never happened. That includes a `--fresh` refresh that
+found the stored generation still current: nothing was transferred, so nothing
+is appended.
 
 ```
 kanonarion vuln-scan [walk-id] [flags]
@@ -313,8 +380,8 @@ coverage is `Partial` and it exits non-zero. Re-run it from the checkout
 | `--reachability` | `false` | Enable call-graph reachability analysis; spawns `kanonarion callgraph` on demand for modules with findings but no cached callgraph |
 | `--callgraph-workers` | `1` | Maximum number of concurrent on-demand callgraph subprocesses (SSA builds are memory-heavy; keep low) |
 | `--go-binary` | _(from `PATH`)_ | Path to the `go` binary if not on `PATH` (used by on-demand callgraph extraction) |
-| `--binary-pre-pass` | `false` | Fast binary-mode pre-pass; source mode only for affected modules |
-| `--no-vendor` | `false` | Analyse the fetched artefacts even when the project is vendored. By default a project carrying `vendor/modules.txt` is analysed from `vendor/`, the source it actually compiles |
+| `--binary-pre-pass` | `false` | Fast binary-mode pre-pass; source mode only for affected modules. Applies to a walk-id scan; refused by name with `--module` and with a `--gomod`/`--tool`/`--project` scope scan, neither of which carries it into the scan |
+| `--no-vendor` | `false` | Analyse the fetched artefacts even when the project is vendored. By default a project carrying `vendor/modules.txt` is analysed from `vendor/`, the source it actually compiles. Refused by name with `--module`, which scans a walk rooted at a published coordinate and has no project tree to vendor |
 | `--operator` | `$USER` | Operator name recorded in the scan run |
 | `--no-progress` | `false` | Suppress stderr progress output (the throttled heartbeat and any per-module progress lines); results and warnings are unaffected |
 | `--log-level` | `warn` | Log level: `debug`, `info`, `warn`, `error` |
@@ -461,6 +528,33 @@ $ kanonarion vuln-scan-list 01KQDBVW092ER1HNXZ60X27CMD
 01KQDBVW092ER1HNXZ60X27CME  walk=01KQDBVW092ER1HNXZ60X27CMD  status=Affected      2024-01-15T10:30:00Z
 ```
 
+**Runs whose inputs no longer resolve.** A scan run names the walk it analysed,
+and the two are separate rows: a walk can be removed while the run and its
+per-module findings stay. Such a run is still listed - it is the only record
+those scans happened - but the walk reference is stated as unresolvable rather
+than printed as though it resolves:
+
+```
+$ kanonarion vuln-scan-list --limit 0
+vscan-01KYBTWG8TW0KY1ME26KXZTH6X-1784956207  walk=01KYBTWG8TW0KY1ME26KXZTH6X  status=Affected      2026-07-25T05:12:12Z  inputs unresolvable: walk absent from this store
+```
+
+The findings stand; what cannot be recovered is *what was scanned* - which
+modules, at which versions, from which project root. Under `--json` the entry
+gains an `inputs_unresolvable` field naming the missing walk; the field is absent
+on a run whose walk resolves, so an existing consumer sees no change. The same
+statement appears on `vuln-scan-show` (on the `Walk ID:` line),
+`vuln-scan-history` (once, above the table, and also for a walk with no runs
+left) and `vuln-scan-diff` (on the `Walk:` line).
+
+The check is a live lookup against the walks table on every read, so it
+classifies any run stranded in future as well as the ones already in the store,
+and it is one indexed read per listing.
+
+A stranded run is never served by scan reuse: `vuln-scan` reuses a stored run
+only when the walk it analysed is still readable, so a re-scan is performed
+instead.
+
 ---
 
 ### `vuln-scan-show`
@@ -493,6 +587,13 @@ Advisories:  6027 in the snapshot scanned against
 Modules:     3
 ```
 
+When the walk this run analysed is no longer in the store, the reference says so
+on the line it is rendered on, and `--json` gains an `inputs_unresolvable` field:
+
+```
+Walk ID:     01KQDBVW092ER1HNXZ60X27CMD (inputs unresolvable: walk absent from this store)
+```
+
 ---
 
 ### `vuln-show`
@@ -503,10 +604,36 @@ Show the vulnerability record for a specific module.
 kanonarion vuln-show <module>@<version> [flags]
 ```
 
-When `--walk-id` is omitted, the record that answers a **consumer's** question
-about the module is returned: one produced by an analysis rooted at a project
-that consumes it, if the store holds one. Pass `--walk-id` to pin to a specific
-walk.
+A stored record answers "what did this advisory do in **this** build", so the
+answer depends on which build you mean:
+
+- `--walk-id <id>` answers in the frame of that walk's scans, restricted to the
+  records that walk covered. A `notice:` line names the walk and its frame.
+- `--gomod [path]` does the same for the newest succeeded project walk of that
+  `go.mod`; the valueless form means `./go.mod`. Mutually exclusive with
+  `--walk-id`.
+- With neither, the record that answers a **consumer's** question about the
+  module is returned: one produced by an analysis rooted at a project that
+  consumes it, if the store holds one.
+
+If the store holds the coordinate in more than one consumer's build — two
+projects scanned into one store — the unanchored form **refuses** (exit 20),
+names every frame it found, and names the flags that select one. It does not
+serve the newest: the newest scan of a shared dependency belongs to whichever
+project was scanned last.
+
+```
+$ kanonarion vuln-show github.com/golang-jwt/jwt/v4@v4.5.1
+error: the store holds github.com/golang-jwt/jwt/v4@v4.5.1 in 2 consumer frames, and this question names none:
+  target-rooted:github.com/cortezaproject/corteza/server@local
+  target-rooted:github.com/tmc/langchaingo@v0.1.14
+name the build you mean: kanonarion vuln-show github.com/golang-jwt/jwt/v4@v4.5.1 --walk-id <walk of that build>, or ... --gomod <path/to/go.mod>
+```
+
+A pinned walk that covered the module but holds no record in its own frame is
+refused too (exit 4), naming the frames its records were measured in. It never
+answers from a neighbouring frame, and the walk named in the answer is always
+the walk you pinned.
 
 That selection is not "newest wins", and the difference is load-bearing. An
 isolated scan builds the module as its own main module, so it records call-graph
@@ -540,7 +667,8 @@ vulnerability database snapshot predated it.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Path to fact store root |
-| `--walk-id` | _(none)_ | Walk ID the scan was performed under (optional) |
+| `--walk-id` | _(none)_ | Answer in the frame of this walk's scans |
+| `--gomod` | _(none)_ | Answer in the frame of the latest project walk for this go.mod (valueless form: `./go.mod`) |
 | `--history` | `false` | List all scan records across walks and snapshots |
 | `--json` | `false` | Emit record as JSON |
 

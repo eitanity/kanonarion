@@ -155,6 +155,28 @@ func (d *Database) PublishedAdvisoryIndex(ctx context.Context) (ports.AdvisoryIn
 // snapshot. The bytes are the store's, so this costs a local read and no
 // network: it is the "before" half of a generation comparison.
 func (d *Database) SnapshotAdvisoryIndex(ctx context.Context, identity domain.DatabaseSnapshot) (ports.AdvisoryIndex, error) {
+	zr, err := d.openStoredSnapshot(ctx, identity)
+	if err != nil {
+		return nil, err
+	}
+	for _, f := range zr.File {
+		if f.Name != "index/modules.json" {
+			continue
+		}
+		data, rerr := readZipFile(f, maxModulesIndexBytes)
+		if rerr != nil {
+			return nil, rerr
+		}
+		return decodeAdvisoryIndex(data)
+	}
+	return nil, fmt.Errorf("stored snapshot %s@%s has no index/modules.json", identity.Source(), identity.Version())
+}
+
+// openStoredSnapshot reads a stored snapshot's bytes out of the store and opens
+// them as a zip. Every read of a stored snapshot goes through here so that
+// "already stored" means the same thing to each of them — a local read, and no
+// network under any circumstance.
+func (d *Database) openStoredSnapshot(ctx context.Context, identity domain.DatabaseSnapshot) (*zip.Reader, error) {
 	rc, err := d.vulnStore.GetDatabaseSnapshot(ctx, identity)
 	if err != nil {
 		return nil, fmt.Errorf("get stored snapshot %s@%s: %w", identity.Source(), identity.Version(), err)
@@ -169,17 +191,7 @@ func (d *Database) SnapshotAdvisoryIndex(ctx context.Context, identity domain.Da
 	if err != nil {
 		return nil, fmt.Errorf("open stored snapshot %s@%s: %w", identity.Source(), identity.Version(), err)
 	}
-	for _, f := range zr.File {
-		if f.Name != "index/modules.json" {
-			continue
-		}
-		data, rerr := readZipFile(f, maxModulesIndexBytes)
-		if rerr != nil {
-			return nil, rerr
-		}
-		return decodeAdvisoryIndex(data)
-	}
-	return nil, fmt.Errorf("stored snapshot %s@%s has no index/modules.json", identity.Source(), identity.Version())
+	return zr, nil
 }
 
 // decodeAdvisoryIndex parses index/modules.json into the comparison shape,

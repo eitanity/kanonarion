@@ -52,3 +52,37 @@ func TestRootingIsRootedAt(t *testing.T) {
 		})
 	}
 }
+
+// A working tree declares a module path and no version — a main module has none
+// in a Go build — while the walks that scanned it recorded a root coordinate
+// carrying whatever version the walk assigned. The path is therefore what the
+// tree's own frame is recognised by.
+func TestRootingIsRootedAtPath(t *testing.T) {
+	app := "example.com/app"
+
+	for _, tc := range []struct {
+		name    string
+		rooting Rooting
+		path    string
+		want    bool
+	}{
+		{name: "local root", rooting: TargetRootedAt(mustRootingCoord(t, app, "local")), path: app, want: true},
+		{name: "tagged root", rooting: TargetRootedAt(mustRootingCoord(t, app, "v1.2.3")), path: app, want: true},
+		{name: "different path", rooting: TargetRootedAt(mustRootingCoord(t, "example.com/other", "local")), path: app},
+		{
+			// A path that extends the root's is a different module, and the cut at
+			// "@" is what keeps it one.
+			name: "submodule of the root path", rooting: TargetRootedAt(mustRootingCoord(t, app+"/sub", "local")), path: app,
+		},
+		{name: "bare target-rooted names no target", rooting: RootingTargetRooted, path: app},
+		{name: "isolated", rooting: RootingIsolated, path: app},
+		{name: "unrecorded", rooting: RootingUnrecorded, path: app},
+		{name: "empty path matches nothing", rooting: TargetRootedAt(mustRootingCoord(t, app, "local")), path: ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.rooting.IsRootedAtPath(tc.path); got != tc.want {
+				t.Errorf("Rooting(%q).IsRootedAtPath(%q) = %v, want %v", tc.rooting, tc.path, got, tc.want)
+			}
+		})
+	}
+}

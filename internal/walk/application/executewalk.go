@@ -162,7 +162,11 @@ func (uc *ExecuteWalkUseCase) Execute(ctx context.Context, req WalkRequest) (Exe
 	if req.Policy != nil {
 		policy = *req.Policy
 	}
-	rec := domain.NewWalkRecord(id, uc.operator, uc.pipelineVersion, scope, depth, outcome, policy, req.PolicyHash)
+	operator := uc.operator
+	if req.Operator != "" {
+		operator = req.Operator
+	}
+	rec := domain.NewWalkRecord(id, operator, uc.pipelineVersion, scope, depth, outcome, policy, req.PolicyHash)
 	// The directory this walk was rooted at, so a later re-scan by walk id can
 	// reach the same analysis surface — notably a vendored tree — instead of
 	// silently answering about the fetched artefacts. Empty for a walk of a

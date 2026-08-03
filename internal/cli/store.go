@@ -31,6 +31,7 @@ func newStoreCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.AddCommand(newStoreInfoCmd(stdout, stderr))
 	cmd.AddCommand(newStoreConfigCmd(stdout))
 	cmd.AddCommand(newStoreCleanCmd(stdout))
+	cmd.AddCommand(newStoreLedgerCmd(stdout))
 	return cmd
 }
 

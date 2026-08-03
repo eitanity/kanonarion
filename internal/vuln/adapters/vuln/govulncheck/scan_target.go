@@ -68,7 +68,7 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 		}, nil
 	}
 
-	dbArg, dbCleanup, err := s.prepareDBArg(ctx, req.Snapshot, req.DBDir)
+	dbArg, advisories, dbCleanup, err := s.prepareDBArg(ctx, req.Snapshot, req.DBDir)
 	if err != nil {
 		return domain.ProjectScanResult{}, err
 	}
@@ -132,6 +132,7 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 			UnscanReason:      unscanReason,
 			ErrorDetail:       errorDetail,
 			UnscannableReason: unscannableReason,
+			AdvisoryCount:     advisories,
 		}, nil
 	}
 	if perr != nil {
@@ -146,5 +147,6 @@ func (s *Scanner) ScanTargetModule(ctx context.Context, req ports.TargetScanRequ
 	return domain.ProjectScanResult{
 		FindingsByModule: byModule,
 		Status:           status,
+		AdvisoryCount:    advisories,
 	}, nil
 }

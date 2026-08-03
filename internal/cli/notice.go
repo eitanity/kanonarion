@@ -23,11 +23,18 @@ import (
 
 // newNoticeCmd returns the 'notice' command that generates a deterministic
 // THIRD-PARTY-LICENSES attribution document from stored license records.
+// noticeFlags holds every flag the notice command registers. They live in one
+// struct, rather than in a local variable each, so that a flag a dispatch path
+// never receives is visible per field rather than only as a missing argument.
+type noticeFlags struct {
+	walkID         string
+	gomodPath      string
+	packagePattern string
+	output         string
+}
+
 func newNoticeCmd(stdout, stderr io.Writer) *cobra.Command {
-	var walkID string
-	var gomodPath string
-	var packagePattern string
-	var output string
+	var f noticeFlags
 
 	cmd := &cobra.Command{
 		Use:   "notice [<walk-id>]",
@@ -63,19 +70,19 @@ that appear in go.mod but are never distributed.`,
 				// Both spellings naming a walk is a conflict, not a precedence
 				// rule: silently picking one of two scopes is the same defect
 				// as silently discarding the argument.
-				if walkID != "" {
-					return fmt.Errorf("walk id given twice: %q positionally and %q via --walk-id; pass it once", args[0], walkID)
+				if f.walkID != "" {
+					return fmt.Errorf("walk id given twice: %q positionally and %q via --walk-id; pass it once", args[0], f.walkID)
 				}
-				walkID = args[0]
+				f.walkID = args[0]
 			}
 			flags := 0
-			if walkID != "" {
+			if f.walkID != "" {
 				flags++
 			}
-			if gomodPath != "" {
+			if f.gomodPath != "" {
 				flags++
 			}
-			if packagePattern != "" {
+			if f.packagePattern != "" {
 				flags++
 			}
 			if flags > 1 {
@@ -83,19 +90,19 @@ that appear in go.mod but are never distributed.`,
 			}
 			if flags == 0 {
 				var rerr error
-				gomodPath, rerr = resolveGoModPath("")
+				f.gomodPath, rerr = resolveGoModPath("")
 				if rerr != nil {
 					return rerr
 				}
 			}
-			return runNotice(cmd.Context(), walkID, gomodPath, packagePattern, snippetRoot(gomodPath), output, stdout, stderr)
+			return runNotice(cmd.Context(), f, stdout, stderr)
 		},
 	}
 
-	cmd.Flags().StringVar(&walkID, "walk-id", "", "walk to generate notice for")
-	cmd.Flags().StringVar(&gomodPath, "gomod", "", "path to go.mod — the project's code dependencies; prefer --package to scope to a distributed binary")
-	cmd.Flags().StringVar(&packagePattern, "package", "", "Go package pattern (e.g. ./cmd/kanonarion); scopes notice to modules linked into that binary")
-	cmd.Flags().StringVar(&output, "output", "", "write the document to this file (default: stdout)")
+	cmd.Flags().StringVar(&f.walkID, "walk-id", "", "walk to generate notice for")
+	cmd.Flags().StringVar(&f.gomodPath, "gomod", "", "path to go.mod — the project's code dependencies; prefer --package to scope to a distributed binary")
+	cmd.Flags().StringVar(&f.packagePattern, "package", "", "Go package pattern (e.g. ./cmd/kanonarion); scopes notice to modules linked into that binary")
+	cmd.Flags().StringVar(&f.output, "output", "", "write the document to this file (default: stdout)")
 	return cmd
 }
 
@@ -139,7 +146,7 @@ func snippetRoot(gomodPath string) string {
 	return dir
 }
 
-func runNotice(ctx context.Context, walkID, gomodPath, packagePattern, snippetDir, output string, stdout, stderr io.Writer) error {
+func runNotice(ctx context.Context, f noticeFlags, stdout, stderr io.Writer) error {
 	logger := buildLogger(logLevel, stderr)
 
 	dbPath := filepath.Join(storeRoot, "mirror.db")
@@ -153,7 +160,10 @@ func runNotice(ctx context.Context, walkID, gomodPath, packagePattern, snippetDi
 	}
 	defer func() { _ = cleanup() }()
 
-	return noticeWith(ctx, ctr, walkID, gomodPath, packagePattern, snippetDir, output, stdout, stderr)
+	// The snippet root is the directory holding the resolved go.mod, derived
+	// here rather than by the caller so the two scopes it depends on arrive
+	// together with the flags that set them.
+	return noticeWith(ctx, ctr, f.walkID, f.gomodPath, f.packagePattern, snippetRoot(f.gomodPath), f.output, stdout, stderr)
 }
 
 // noticeWith holds the notice logic over an injected Container: it resolves the

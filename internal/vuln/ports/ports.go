@@ -21,6 +21,19 @@ type AuditSink interface {
 	RecordEvent(audit.Event) error
 }
 
+// WalkPresence reports whether the walks a stored scan run names are still held
+// by the store. The walk store satisfies it; this context depends only on the
+// narrow question, never on the walk adapter.
+//
+// A scan run is evidence about a dependency set it does not itself contain: the
+// run says what was found, the walk says what was scanned, at which versions,
+// from which root. Nothing in the schema ties the two, so a run can outlive its
+// walk, and a reader that cannot tell reports the stale reference as though it
+// resolved. Every id asked about is a key of the result.
+type WalkPresence interface {
+	PresentWalks(ctx context.Context, walkIDs []string) (map[string]bool, error)
+}
+
 // ErrCallGraphNotFound is returned by CallGraphLoader when no record exists for the
 // requested coordinate. Callers can use errors.Is to distinguish absence from
 // integrity failures.
@@ -258,15 +271,26 @@ type VulnerabilityStore interface {
 		pipelineVersion string,
 	) (domain.VulnerabilityRecord, bool, error)
 
-	// GetLatestVulnerabilityRecordForWalk returns the most recently scanned record
-	// for a coordinate, pipeline version, and walk ID, regardless of snapshot.
-	// Returns (zero, false, nil) if no record exists for that walk.
-	GetLatestVulnerabilityRecordForWalk(
+	// ListVulnerabilityRecordsForModuleInWalk returns every generation of a
+	// coordinate the given walk's scan runs covered, regardless of snapshot,
+	// ordered oldest first. An empty slice means that walk covered the module
+	// with no readable record.
+	//
+	// It returns CANDIDATES, never an answer. The store cannot rank them,
+	// because ranking them requires an analysis frame and the store has none:
+	// the membership index keys on (coordinate, pipeline version, snapshot), so
+	// every frame a coordinate was ever measured in at that generation joins to
+	// the same walk — an isolated scan of the module and another project's
+	// target-rooted scan alongside the walk's own. Composing here served
+	// whichever won the frame-blind ladder, which is how a walk-pinned read came
+	// to answer from a different walk entirely. The caller knows which frame it
+	// asked about and selects on it.
+	ListVulnerabilityRecordsForModuleInWalk(
 		ctx context.Context,
 		coord coordinate.ModuleCoordinate,
 		pipelineVersion string,
 		walkID string,
-	) (domain.VulnerabilityRecord, bool, error)
+	) ([]domain.VulnerabilityRecord, error)
 
 	// PutWalkScanRun persists the aggregate result of a walk scan.
 	PutWalkScanRun(ctx context.Context, run domain.WalkScanRun) error
@@ -510,6 +534,17 @@ type VulnerabilityDatabase interface {
 	// SnapshotAdvisoryIndex returns the same index as carried by an
 	// already-stored snapshot, read from the store rather than the network.
 	SnapshotAdvisoryIndex(ctx context.Context, identity domain.DatabaseSnapshot) (AdvisoryIndex, error)
+
+	// SnapshotToolchainAdvisories returns what an already-stored snapshot says
+	// under its toolchain key — the advisories against the go command, compiler
+	// and linker, which are keyed separately from stdlib and which no scanned
+	// project imports. Both the index and each advisory record are read out of
+	// the stored snapshot itself, so the read costs no network.
+	//
+	// A snapshot whose index carries no toolchain key returns a set with
+	// KeyPresent false and no error: that snapshot cannot judge a toolchain, and
+	// saying so is the answer rather than a failure.
+	SnapshotToolchainAdvisories(ctx context.Context, identity domain.DatabaseSnapshot) (domain.ToolchainAdvisorySet, error)
 
 	// GetSnapshot retrieves a previously-pinned snapshot by identity,
 	// for replay or re-scanning.

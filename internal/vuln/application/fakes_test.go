@@ -37,6 +37,15 @@ func (f *fakeWalkStore) PutWalk(_ context.Context, rec walkdomain.WalkRecord) er
 	return nil
 }
 
+// forget drops a walk while leaving everything derived from it in place — the
+// half-preserved state a migration that purged walks without considering the
+// scan runs that index them produced.
+func (f *fakeWalkStore) forget(id string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	delete(f.walks, id)
+}
+
 func (f *fakeWalkStore) GetWalk(_ context.Context, id string) (walkdomain.WalkRecord, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -290,6 +299,25 @@ func (f *fakeVulnStore) GetLatestVulnerabilityRecord(_ context.Context, coord co
 	})
 }
 
+// ListVulnerabilityRecordsForModuleInWalk is the port method: candidates, not an
+// answer.
+func (f *fakeVulnStore) ListVulnerabilityRecordsForModuleInWalk(_ context.Context, coord coordinate.ModuleCoordinate, pv string, walkID string) ([]domain.VulnerabilityRecord, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []domain.VulnerabilityRecord
+	for _, gens := range f.records {
+		for _, rec := range gens {
+			if rec.Coordinate == coord && rec.PipelineVersion == pv && rec.WalkID == walkID {
+				out = append(out, rec)
+			}
+		}
+	}
+	return out, nil
+}
+
+// GetLatestVulnerabilityRecordForWalk is a read-back convenience for the scan
+// tests, which assert what one run wrote. It is not part of the store port: a
+// frame-blind pick is not something a production read may ask the store for.
 func (f *fakeVulnStore) GetLatestVulnerabilityRecordForWalk(_ context.Context, coord coordinate.ModuleCoordinate, pv string, walkID string) (domain.VulnerabilityRecord, bool, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -513,6 +541,11 @@ type fakeScanner struct {
 	// gotModCache records the GOMODCACHE dir the last Scan was invoked with, so a
 	// test can assert --from-modcache threaded the real cache dir through.
 	gotModCache string
+	// advisoryCount stands in for a scanner that extracted an advisory database
+	// of its own and counted it — what the govulncheck adapter does when the
+	// walk's shared pre-extraction could not supply one. Left zero, the fake
+	// reports the unmeasured reading every other path reports.
+	advisoryCount int
 }
 
 func (f *fakeScanner) Preflight(_ context.Context) error { return f.preflightErr }
@@ -526,6 +559,15 @@ func (f *fakeScanner) Scan(_ context.Context, req ports.ScanRequest) (domain.Vul
 	defer f.mu.Unlock()
 	f.scanCalls++
 	f.gotModCache = goModCache
+	// The real adapter states the reading it took on the snapshot it stamps, so
+	// the fake does too — that stamp is the channel under test.
+	if f.advisoryCount > 0 {
+		counted, err := snapshot.WithAdvisoryCount(f.advisoryCount)
+		if err != nil {
+			return domain.VulnerabilityRecord{}, fmt.Errorf("fakeScanner counting the advisory database: %w", err)
+		}
+		snapshot = counted
+	}
 	res, ok := f.results[coord.String()]
 	if !ok {
 		return domain.VulnerabilityRecord{
@@ -577,6 +619,7 @@ func (f *fakeScanner) ScanProject(_ context.Context, req ports.ProjectScanReques
 		FindingsByModule: f.projectFindings,
 		Status:           status,
 		AnalysisSurface:  surface,
+		AdvisoryCount:    f.advisoryCount,
 	}, nil
 }
 
@@ -608,7 +651,7 @@ func (f *fakeScanner) ScanTargetModule(_ context.Context, req ports.TargetScanRe
 	if len(f.targetFindings) > 0 {
 		status = domain.StatusAffected
 	}
-	return domain.ProjectScanResult{FindingsByModule: f.targetFindings, Status: status}, nil
+	return domain.ProjectScanResult{FindingsByModule: f.targetFindings, Status: status, AdvisoryCount: f.advisoryCount}, nil
 }
 
 func (f *fakeScanner) ScannerMetadata() ports.ScannerMetadata {
@@ -651,6 +694,12 @@ type fakeDatabase struct {
 	// indexErr fails both index reads, so a test can drive the fail-closed
 	// fallthrough into the full download.
 	indexErr error
+	// toolchainSet is what the stored snapshot is taken to say under its
+	// toolchain key; toolchainErr fails the read, and toolchainCalls counts them
+	// so a test can prove the judgment read the snapshot exactly once.
+	toolchainSet   domain.ToolchainAdvisorySet
+	toolchainErr   error
+	toolchainCalls atomic.Int64
 	// indexCalls counts index reads, so a test can prove the comparison was made
 	// — or, on the unchanged-generation path, that it never had to be.
 	indexCalls atomic.Int64
@@ -673,6 +722,14 @@ func (f *fakeDatabase) LatestVersion(_ context.Context) (string, error) {
 		return f.latestVersion, nil
 	}
 	return f.snapshot.Version(), nil
+}
+
+func (f *fakeDatabase) SnapshotToolchainAdvisories(_ context.Context, _ domain.DatabaseSnapshot) (domain.ToolchainAdvisorySet, error) {
+	f.toolchainCalls.Add(1)
+	if f.toolchainErr != nil {
+		return domain.ToolchainAdvisorySet{}, f.toolchainErr
+	}
+	return f.toolchainSet, nil
 }
 
 func (f *fakeDatabase) SnapshotAdvisoryIndex(_ context.Context, _ domain.DatabaseSnapshot) (ports.AdvisoryIndex, error) {

@@ -3,6 +3,7 @@ package application_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
 	"time"
 
@@ -43,13 +44,20 @@ type fakeVulnLoader struct {
 	// no findings against. Coordinates in findings are always scanned.
 	scanned []coordinate.ModuleCoordinate
 	err     error
+	// otherFrameOnly is the set of coordinates the store holds records for that
+	// were all measured in another build's frame.
+	otherFrameOnly []coordinate.ModuleCoordinate
+	// gotConsumer records the module path the use case anchored the seed to, so
+	// a test can assert the probe named the tree it is measuring.
+	gotConsumer string
 }
 
 // LoadFindings answers ONLY about the coordinates it was asked about. A fake
 // that returned its whole table regardless of the query would answer for
 // modules the caller never queried, and a narrowing bug in the caller would
 // pass every test in this file.
-func (f *fakeVulnLoader) LoadFindings(_ context.Context, coords []coordinate.ModuleCoordinate) (ports.FindingSet, error) {
+func (f *fakeVulnLoader) LoadFindings(_ context.Context, coords []coordinate.ModuleCoordinate, consumerModulePath string) (ports.FindingSet, error) {
+	f.gotConsumer = consumerModulePath
 	if f.err != nil {
 		return ports.FindingSet{}, f.err
 	}
@@ -58,8 +66,16 @@ func (f *fakeVulnLoader) LoadFindings(_ context.Context, coords []coordinate.Mod
 		asked[c] = struct{}{}
 	}
 	set := ports.FindingSet{
-		Findings: make(map[coordinate.ModuleCoordinate][]ports.VulnFinding),
-		Scanned:  make(map[coordinate.ModuleCoordinate]struct{}),
+		Findings:       make(map[coordinate.ModuleCoordinate][]ports.VulnFinding),
+		Scanned:        make(map[coordinate.ModuleCoordinate]struct{}),
+		OtherFrameOnly: make(map[coordinate.ModuleCoordinate]struct{}),
+		Restriction:    "seed restricted to " + consumerModulePath,
+	}
+	for _, c := range f.otherFrameOnly {
+		if _, ok := asked[c]; !ok {
+			continue
+		}
+		set.OtherFrameOnly[c] = struct{}{}
 	}
 	for c, fs := range f.findings {
 		if _, ok := asked[c]; !ok {
@@ -443,6 +459,145 @@ func TestLocalReachability_ResultFieldsPopulated(t *testing.T) {
 	}
 	if f.Summary != "A bad bug" {
 		t.Errorf("Summary = %q, want 'A bad bug'", f.Summary)
+	}
+}
+
+// The seed is anchored to the tree being probed, and the authority for which
+// tree that is has to be the snapshot's go.mod — the same one the result names.
+// A probe that asked the store a question about some other tree could be seeded
+// with that tree's answers.
+func TestLocalReachability_SeedIsAnchoredToTheProbedTree(t *testing.T) {
+	loader := &fakeVulnLoader{}
+	uc := makeUC(
+		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
+		&fakeBuildLister{modules: []domain.BuildModule{{Path: "example.com/dep", Version: "v1.0.0"}}},
+		loader,
+		&fakeProber{},
+	)
+
+	result, err := uc.Execute(context.Background(), "/ws")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if loader.gotConsumer != "example.com/app" {
+		t.Errorf("seed anchored to %q, want the probed tree's own module path", loader.gotConsumer)
+	}
+	if result.SeedRestriction != "seed restricted to example.com/app" {
+		t.Errorf("SeedRestriction = %q, want the loader's statement carried verbatim", result.SeedRestriction)
+	}
+}
+
+// The restriction is reported on the no-findings path too: it qualifies "no
+// stored findings" exactly as much as it qualifies a list of them.
+func TestLocalReachability_SeedRestrictionStatedWhenNothingSeeded(t *testing.T) {
+	uc := makeUC(
+		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
+		&fakeBuildLister{modules: []domain.BuildModule{{Path: "example.com/dep", Version: "v1.0.0"}}},
+		&fakeVulnLoader{findings: nil},
+		&fakeProber{},
+	)
+
+	result, err := uc.Execute(context.Background(), "/ws")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if result.SeedRestriction != "seed restricted to example.com/app" {
+		t.Errorf("SeedRestriction = %q, want it stated on the empty result too", result.SeedRestriction)
+	}
+}
+
+// A verdict the probe did not measure but carried from a stored scan says so,
+// and names the frame that scan was rooted at.
+func TestLocalReachability_SeededVerdictNamesItsBasis(t *testing.T) {
+	coord := mustCoord(t, "example.com/dep", "v1.0.0")
+	reachable := true
+	prober := &fakeProber{}
+	uc := makeUC(
+		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
+		&fakeBuildLister{modules: []domain.BuildModule{{Path: "example.com/dep", Version: "v1.0.0"}}},
+		&fakeVulnLoader{findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
+			coord: {{
+				ID:             "GHSA-0009",
+				Reachable:      &reachable,
+				ReachableBasis: "by govulncheck, rooted at target-rooted:example.com/app@local",
+			}},
+		}},
+		prober,
+	)
+
+	result, err := uc.Execute(context.Background(), "/ws")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	f := result.Modules[0].Findings[0]
+	if f.Verdict != domain.SymbolProbeReachable {
+		t.Fatalf("Verdict = %q, want reachable", f.Verdict)
+	}
+	if !strings.Contains(f.Reason, "target-rooted:example.com/app@local") {
+		t.Errorf("Reason = %q, want it to name the frame the stored verdict was derived in", f.Reason)
+	}
+	if !strings.Contains(f.Reason, "carried from the stored scan") {
+		t.Errorf("Reason = %q, want it to say the verdict was not measured here", f.Reason)
+	}
+}
+
+// A stored verdict with no recorded derivation still says it was carried rather
+// than measured — the absence of a basis is not a reason to present it as one
+// of this probe's own findings.
+func TestLocalReachability_SeededVerdictWithNoBasisStillSaysItWasCarried(t *testing.T) {
+	coord := mustCoord(t, "example.com/dep", "v1.0.0")
+	unreachable := false
+	uc := makeUC(
+		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
+		&fakeBuildLister{modules: []domain.BuildModule{{Path: "example.com/dep", Version: "v1.0.0"}}},
+		&fakeVulnLoader{findings: map[coordinate.ModuleCoordinate][]ports.VulnFinding{
+			coord: {{ID: "GHSA-0010", Reachable: &unreachable}},
+		}},
+		&fakeProber{},
+	)
+
+	result, err := uc.Execute(context.Background(), "/ws")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	f := result.Modules[0].Findings[0]
+	if f.Verdict != domain.SymbolProbeUnreachable {
+		t.Fatalf("Verdict = %q, want unreachable", f.Verdict)
+	}
+	if !strings.Contains(f.Reason, "no derivation") {
+		t.Errorf("Reason = %q, want it to state that the stored scan recorded no derivation", f.Reason)
+	}
+}
+
+// A coordinate the store holds only in another build's frame is uncovered for a
+// different reason than one it has never seen, and the two take different
+// remedies. Reporting the first as "never been vuln-scanned" sends a reader
+// looking for a scan that already ran.
+func TestLocalReachability_OtherFrameOnlyModuleNamesItsOwnReason(t *testing.T) {
+	coord := mustCoord(t, "example.com/dep", "v1.0.0")
+	uc := makeUC(
+		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
+		&fakeBuildLister{modules: []domain.BuildModule{
+			{Path: "example.com/dep", Version: "v1.0.0"},
+			{Path: "example.com/unknown", Version: "v1.0.0"},
+		}},
+		&fakeVulnLoader{otherFrameOnly: []coordinate.ModuleCoordinate{coord}},
+		&fakeProber{},
+	)
+
+	result, err := uc.Execute(context.Background(), "/ws")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	reasons := map[string]string{}
+	for _, u := range result.Coverage.Uncovered {
+		reasons[u.Path] = u.Reason
+	}
+	if got := reasons["example.com/dep"]; got != domain.UncoveredOtherFrameOnly {
+		t.Errorf("reason for the other-frame module = %q, want UncoveredOtherFrameOnly", got)
+	}
+	if got := reasons["example.com/unknown"]; got != domain.UncoveredNoStoredRecord {
+		t.Errorf("reason for the unknown module = %q, want UncoveredNoStoredRecord", got)
 	}
 }
 

@@ -38,6 +38,9 @@ func TestNoProgressFlag_RegisteredOnEveryProgressEmittingCommand(t *testing.T) {
 		"sbom":    newSBOMCmd(io.Discard, io.Discard),
 		// Per-module progress lines, one per coordinate in the walk.
 		"vuln-scan": newVulnScanCmd(io.Discard, io.Discard),
+		// The same per-module stream, over every module in the walk: a re-scan
+		// forces the lot, so it is the longest of them.
+		"vuln-scan-rescan": newVulnScanRescanCmd(io.Discard, io.Discard),
 		// Both: audit drives a walk and a scan beneath its own stage narration.
 		"audit": newAuditCmd(io.Discard, io.Discard),
 	}

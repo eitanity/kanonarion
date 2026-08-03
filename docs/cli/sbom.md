@@ -199,12 +199,11 @@ re-run when `--force` is passed.
 | `--force` | `false` | Re-generate even if a cached SBOM exists |
 | `--generated-at <time>` | _(derived)_ | RFC3339 time the document is being created; becomes `metadata.timestamp`. Omitted, the document is stamped with the newest licence extraction time among its inputs and says so. Supplying it bypasses the cache |
 | `--operator` | _(empty)_ | Identity of the operator requesting generation |
-| `--stdlib-from-gomod` | `false` | Version the `stdlib` component from the `go.mod` directive, not the live toolchain (applies when `sbom` builds a project walk, e.g. `--package`). See [Standard-library version](walk.md#standard-library-version---stdlib-from-gomod). |
+| `--stdlib-from-gomod` | `false` | Version the `stdlib` component from the `go.mod` directive, not the live toolchain. Applies when `sbom` builds a project walk (`--package` with no walk id); refused by name when a walk id is given, because that walk's `stdlib` node is already pinned. See [Standard-library version](walk.md#standard-library-version---stdlib-from-gomod). |
 | `--package <pattern>` | _(none)_ | Go package pattern (e.g. `./cmd/foo`); scopes `components` to modules in that binary's import closure |
 | `--from-modcache[=dir]` | _(off)_ | When `sbom` builds a project walk (e.g. `--package` on a cold store), source modules from an existing Go module cache instead of the network proxy and verify each against the local `go.sum`. Passed bare it uses `go env GOMODCACHE`; an optional value names the cache directory. A `go.sum` mismatch or missing entry fails the command (exit code `10`). See [`audit --from-modcache`](audit.md#sourcing-from-an-existing-module-cache---from-modcache) for the full semantics. |
 | `--policy` | _(auto-discover `.kanonarion/policy.yaml`)_ | Depth policy file; its fetch stage governs traversal and the `allowed_vcs_hosts` forge allowlist |
 | `--log-level` | `warn` | Log level (`debug`, `info`, `warn`, `error`) |
-| `--log-json` | `false` | Emit logs as JSON |
 | `--no-progress` | `false` | Suppress stderr progress output (the throttled heartbeat and any per-module progress lines); results and warnings are unaffected |
 
 ### Examples
@@ -267,6 +266,35 @@ A second call with the same inputs is served from the store — a record read,
 measured at **48 ms** for a 128-module walk, rather than a regeneration.
 Use `--force` to bypass the cache. `--generated-at` also bypasses it. Scoped
 (`--package`) results are never cached.
+
+### Assurance log
+
+The SBOM is the artefact that leaves the building, so both making one and
+handing a stored one back are appended to the append-only assurance log
+(`{store-root}/audit.jsonl`).
+
+| Event | When | Payload |
+|---|---|---|
+| `sbom_generated` | a document was produced and its record persisted | record id, walk id, format, pipeline version, the document's content hash, and whether the creation timestamp was caller-supplied (`--generated-at`) |
+| `sbom_served` | a stored document was handed back from the cache | the record served (id, walk id, format, pipeline version, content hash) and `requested_by`, the `--operator` of *this* request |
+
+The two are separate types on purpose: a reader must be able to tell a document
+that was produced from one that was handed over again, and "when did we last
+produce this artefact, and how often has it gone out" needs both. `requested_by`
+is the requester of the serving, not the record's stored `operator` — that named
+whoever asked for the original generation, possibly another person on another
+day. It is omitted when no `--operator` was given.
+
+Neither event restates the document. Its component list, its licences and its
+completeness statements are the document's own claims; the content hash is what
+reaches them, and repeating them in the log would leave an unsealed second copy
+of the artefact.
+
+A `--package` run appends nothing: the result is ephemeral (no cache lookup, no
+record persisted), and the events state that a record exists. `--force` and
+`--generated-at` skip the cache, so they append `sbom_generated` rather than
+`sbom_served`. `sbom-show` and `sbom-list` read stored records and append
+nothing.
 
 ### Licence completeness
 

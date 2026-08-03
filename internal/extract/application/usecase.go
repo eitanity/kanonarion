@@ -30,6 +30,7 @@ type ExtractUseCase struct {
 	pipelineVersions map[string]string
 	logger           *slog.Logger
 	workers          int
+	audit            ports.AuditSink // optional; nil disables audit emission
 }
 
 type Config struct {
@@ -59,6 +60,15 @@ func NewExtractUseCase(cfg Config) *ExtractUseCase {
 		logger:           cfg.Logger,
 		workers:          cfg.Workers,
 	}
+}
+
+// WithAudit wires an audit sink so a run appends one extraction_run_completed
+// event per persisted run record. It is optional — a nil sink (the default)
+// disables emission — and returns the receiver for chaining, mirroring the
+// stages' optional-dependency builders.
+func (uc *ExtractUseCase) WithAudit(sink ports.AuditSink) *ExtractUseCase {
+	uc.audit = sink
+	return uc
 }
 
 type ExtractRequest struct {
@@ -262,13 +272,29 @@ func (uc *ExtractUseCase) Execute(ctx context.Context, req ExtractRequest) (doma
 
 	run.CompletedAt = uc.clock.Now().UTC()
 
-	run, err = uc.hasher.SetContentHash(run)
+	return uc.sealAndPersist(ctx, run)
+}
+
+// sealAndPersist hashes the completed run, writes it, and records it in the
+// assurance log. It is a separate step from the orchestration above because the
+// three are one operation: a run is not finished until it is sealed, stored and
+// stated.
+func (uc *ExtractUseCase) sealAndPersist(ctx context.Context, run domain.ExtractionRun) (domain.ExtractionRun, error) {
+	run, err := uc.hasher.SetContentHash(run)
 	if err != nil {
 		return domain.ExtractionRun{}, fmt.Errorf("hashing run: %w", err)
 	}
 
 	if err := uc.runs.PutExtractionRun(ctx, run); err != nil {
 		return domain.ExtractionRun{}, fmt.Errorf("persisting run: %w", err)
+	}
+
+	// Assurance log: one extraction_run_completed event per persisted run says
+	// which campaign asked for the per-stage generations around it and what it
+	// concluded. The run is written first, so a failed append reports that the
+	// write is unlogged — it never undoes it.
+	if err := uc.emitRunCompleted(run); err != nil {
+		return domain.ExtractionRun{}, err
 	}
 
 	return run, nil

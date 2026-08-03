@@ -72,12 +72,12 @@ kanonarion inspect github.com/spf13/cobra@v1.8.1 --json
 | `--goproxy` | `$GOPROXY` | Override the Go module proxy |
 | `--go-binary` | | Path to `go` binary if not in `$PATH` |
 | `--json` | `false` | Emit final context as JSON |
-| `--full` | `false` | Include full doc comments and complete example bodies in context |
-| `--size-only` | `false` | Print estimated token count and byte size, then exit |
+| `--full` | `false` | Include full doc comments and complete example bodies in context. Refused with `--gomod`, which prints a summary rather than context |
+| `--size-only` | `false` | Print estimated token count and byte size of the context, then exit. With `--gomod`, prints a total plus a per-module breakdown in place of the summary |
 | `--gomod` | _(none; `./go.mod` when no positional module)_ | Run the pipeline over a project-rooted walk and print a summary |
 | `--tool` | `false` | Scope the `go.mod` run to the tooling supply chain. Mutually exclusive with `--project` |
 | `--project` | `false` | Scope the `go.mod` run to the complete set: code **and** tooling. Mutually exclusive with `--tool` |
-| `--stdlib-from-gomod` | `false` | Version the `stdlib` node from the `go.mod` directive, not the live toolchain (project-mode `--gomod` run). See [Standard-library version](walk.md#standard-library-version---stdlib-from-gomod). |
+| `--stdlib-from-gomod` | `false` | Version the `stdlib` node from the `go.mod` directive, not the live toolchain (project-mode `--gomod` run; refused on a positional module run). See [Standard-library version](walk.md#standard-library-version---stdlib-from-gomod). |
 | `--log-level` | `warn` | Log level: `debug`, `info`, `warn`, `error` |
 
 **Example output:**
@@ -92,7 +92,7 @@ github.com/spf13/cobra@v1.8.1
   Examples:        2 (Found)
   Vulnerabilities: Clean
 
-Context size: ~90 tokens  (use --full for complete docs, --json for machine-readable)
+Context size: ~3562 tokens (14249 bytes) of JSON for this module  (use --full for complete docs, --json for machine-readable)
 ```
 
 ---

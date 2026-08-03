@@ -82,15 +82,15 @@ func TestExitCodeContract_MissingRecordIsNotFound(t *testing.T) {
 				emptyWalks(), &bytes.Buffer{}, &bytes.Buffer{})
 		}},
 		{"vuln-show --walk-id (walk never scanned)", ExitNotFound, func(t *testing.T) error {
-			return runVulnShow(context.Background(), coord.String(), missingWalk, false, false,
+			return runVulnShow(context.Background(), coord.String(), missingWalk, "", false, false, false,
 				testfakes.NewFakeQueryVuln(), testfakes.NewFakeQueryScanRuns(), emptyWalks(), nil, &bytes.Buffer{})
 		}},
 		{"vuln-show (no record at all)", ExitNotFound, func(t *testing.T) error {
-			return runVulnShow(context.Background(), coord.String(), "", false, false,
+			return runVulnShow(context.Background(), coord.String(), "", "", false, false, false,
 				testfakes.NewFakeQueryVuln(), testfakes.NewFakeQueryScanRuns(), emptyWalks(), nil, &bytes.Buffer{})
 		}},
 		{"vuln-show --history", ExitNotFound, func(t *testing.T) error {
-			return runVulnShow(context.Background(), coord.String(), "", false, true,
+			return runVulnShow(context.Background(), coord.String(), "", "", false, false, true,
 				testfakes.NewFakeQueryVuln(), testfakes.NewFakeQueryScanRuns(), emptyWalks(), nil, &bytes.Buffer{})
 		}},
 		{"scan-show", ExitNotFound, func(t *testing.T) error {
@@ -195,8 +195,8 @@ func TestExitCodeContract_IncompleteArtefactIsPartial(t *testing.T) {
 				},
 			}}
 			var stdout bytes.Buffer
-			return sbomGenerateWith(context.Background(), ctr, "W1", "", time.Time{},
-				"cyclonedx-1.6", "", false, false, false, "", "", "tester", "", &stdout, io.Discard)
+			return sbomGenerateWith(context.Background(), ctr, "W1",
+				sbomFlags{format: "cyclonedx-1.6", operator: "tester"}, time.Time{}, &stdout, io.Discard)
 		}},
 	})
 }
@@ -211,6 +211,54 @@ func TestExitCodeContract_UsageAndPreconditionsStayConfig(t *testing.T) {
 	runExitCases(t, []exitCase{
 		{"store schema newer than binary", ExitConfig, func(t *testing.T) error {
 			return newerStoreError("/tmp/mirror.db", storeSchemaState{unknown: []string{"999_future"}})
+		}},
+	})
+}
+
+// A question that names no build, on a store holding the coordinate in more
+// than one consumer's build, is a missing selector rather than a missing record:
+// every record it could serve exists, and the invocation does not say which one
+// was meant. It shares ExitConfig with the other "never got as far as an answer"
+// cases, and it must never share exit 0 with an answer about another project.
+func TestExitCodeContract_AmbiguousFrameIsConfig(t *testing.T) {
+	coord := twoProjectCoord(t)
+
+	runExitCases(t, []exitCase{
+		{"vuln-show, two consumer frames, no anchor", ExitConfig, func(t *testing.T) error {
+			uc, walks := twoProjectFakes(t)
+			return runVulnShow(context.Background(), coord.String(), "", "", false, false, false,
+				uc, testfakes.NewFakeQueryScanRuns(), walks, nil, &bytes.Buffer{})
+		}},
+		{"reachability, two consumer frames, no anchor", ExitConfig, func(t *testing.T) error {
+			uc, walks := twoProjectFakes(t)
+			return runVulnReachability(context.Background(), coord.String(), twoProjectVulnID, "", "", false, false,
+				uc, walks, nil, &bytes.Buffer{})
+		}},
+		{"vuln-show, --walk-id and --gomod together", ExitConfig, func(t *testing.T) error {
+			uc, walks := twoProjectFakes(t)
+			return runVulnShow(context.Background(), coord.String(), walkA, "./go.mod", true, false, false,
+				uc, testfakes.NewFakeQueryScanRuns(), walks, nil, &bytes.Buffer{})
+		}},
+	})
+}
+
+// A pin the store cannot answer in the pinned build's own frame is the
+// not-found class: the walk exists, the module was covered, and the record the
+// question asks for is not there. Serving a neighbouring frame instead would be
+// exit 0 with another build's verdict — which is the defect, not the code.
+func TestExitCodeContract_PinnedFrameWithNoRecordIsNotFound(t *testing.T) {
+	coord := twoProjectCoord(t)
+
+	runExitCases(t, []exitCase{
+		{"vuln-show --walk-id (walk holds no record in its own frame)", ExitNotFound, func(t *testing.T) error {
+			uc, walks := twoProjectFakes(t)
+			return runVulnShow(context.Background(), coord.String(), walkC, "", false, false, false,
+				uc, testfakes.NewFakeQueryScanRuns(), walks, nil, &bytes.Buffer{})
+		}},
+		{"reachability --walk-id (walk holds no record in its own frame)", ExitNotFound, func(t *testing.T) error {
+			uc, walks := twoProjectFakes(t)
+			return runVulnReachability(context.Background(), coord.String(), twoProjectVulnID, walkC, "", false, false,
+				uc, walks, nil, &bytes.Buffer{})
 		}},
 	})
 }

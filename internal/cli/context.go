@@ -30,6 +30,10 @@ type contextFlags struct {
 	modulesFile     string
 	symbol          bool // local workspace: enable symbol-level analysis
 	reachability    bool // local workspace: build probe binary and check CVE symbol presence
+	// compactSet records whether the caller typed --compact. The flag defaults
+	// to true, so its value alone cannot distinguish "asked for compact" from
+	// "did not ask"; a path that has to refuse the flag needs the difference.
+	compactSet bool
 }
 
 // -- output types --
@@ -222,15 +226,22 @@ type contextCVE struct {
 }
 
 type contextVulnerabilities struct {
-	ExtractedAt  string       `json:"extracted_at,omitempty"`
-	Status       string       `json:"status"`
-	WalkStatus   string       `json:"walk_status,omitempty"`   // the walk run's collapsed OverallStatus (compatibility summary)
-	WalkCoverage string       `json:"walk_coverage,omitempty"` // coverage axis (Partial/Failed) when the run left modules unanalysed
-	WalkAffected []string     `json:"walk_affected,omitempty"` // affected walk peers in this module's transitive dep closure
-	WalkError    string       `json:"walk_error,omitempty"`    // set when a walk-peer verdict could not be read; the affected-peer set may be incomplete
-	Reason       string       `json:"reason,omitempty"`
-	Findings     []contextCVE `json:"findings,omitempty"`
-	WalkID       string       `json:"walk_id,omitempty"`
+	ExtractedAt  string   `json:"extracted_at,omitempty"`
+	Status       string   `json:"status"`
+	WalkStatus   string   `json:"walk_status,omitempty"`   // the walk run's collapsed OverallStatus (compatibility summary)
+	WalkCoverage string   `json:"walk_coverage,omitempty"` // coverage axis (Partial/Failed) when the run left modules unanalysed
+	WalkAffected []string `json:"walk_affected,omitempty"` // affected walk peers in this module's transitive dep closure
+	WalkError    string   `json:"walk_error,omitempty"`    // set when a walk-peer verdict could not be read; the affected-peer set may be incomplete
+	// WalkBasisID and WalkBasisFrame name the walk whose scan run answered, and
+	// the frame that walk was rooted at, when the answer came from the walk
+	// window rather than from a build the caller named. The window's verdict and
+	// its walk annotation are facts about that one build, so the build is stated.
+	// Empty on a caller-anchored read, which names its build itself.
+	WalkBasisID    string       `json:"walk_basis_id,omitempty"`
+	WalkBasisFrame string       `json:"walk_basis_frame,omitempty"`
+	Reason         string       `json:"reason,omitempty"`
+	Findings       []contextCVE `json:"findings,omitempty"`
+	WalkID         string       `json:"walk_id,omitempty"`
 	// Frame is the analysis frame the served record was reached in. A
 	// reachability finding means something different in each — isolated answers
 	// "is this advisory reachable in the module examined alone", target-rooted
@@ -277,6 +288,7 @@ no-arg pair composes: run 'kanonarion inspect', then 'kanonarion context'.`,
   kanonarion context --gomod ./go.mod --json`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			f.compactSet = cmd.Flags().Changed("compact")
 			if f.stream && len(args) > 0 {
 				return fmt.Errorf("--stream requires --walk-id or --gomod")
 			}
@@ -322,7 +334,7 @@ no-arg pair composes: run 'kanonarion inspect', then 'kanonarion context'.`,
 	cmd.Flags().StringVar(&f.gomodPath, "gomod", "", "path to a go.mod file; emit context for the project's code dependencies as NDJSON (default: ./go.mod)")
 	cmd.Flags().BoolVar(&f.tool, "tool", false, "scope to the tooling supply chain (the go.mod tool directives' closure)")
 	cmd.Flags().BoolVar(&f.project, "project", false, "scope to the complete set: the project's code AND tooling")
-	cmd.Flags().BoolVar(&f.stream, "stream", false, "emit NDJSON output (implied by --walk-id or --gomod)")
+	cmd.Flags().BoolVar(&f.stream, "stream", false, "with --walk-id or --gomod: emit NDJSON (one document per module) without --json")
 	cmd.Flags().BoolVar(&f.directOnly, "direct-only", false, "with --walk-id: emit context only for direct dependencies of the walk root")
 	cmd.Flags().BoolVar(&f.affectedOnly, "affected-only", false, "with --walk-id: emit context only for modules with vulnerability findings")
 	cmd.Flags().StringVar(&f.modulesFile, "modules", "", "with --walk-id: emit context only for module coordinates listed in this file (newline-delimited)")
@@ -333,6 +345,13 @@ no-arg pair composes: run 'kanonarion inspect', then 'kanonarion context'.`,
 }
 
 func runContext(ctx context.Context, arg string, f contextFlags, stdout, stderr io.Writer) error {
+	refused := append(contextWalkOnlyFlags(f), contextLocalOnlyFlags(f)...)
+	refused = append(refused, contextGoModOnlyFlags(f)...)
+	refused = append(refused, contextStreamFlag(f)...)
+	if err := refuseInapplicableFlags("context <module>@<version>", refused); err != nil {
+		return err
+	}
+
 	logger := buildLogger(logLevel, stderr)
 
 	coord, err := parseCoordinate(arg)
@@ -380,7 +399,7 @@ func runContext(ctx context.Context, arg string, f contextFlags, stdout, stderr 
 	}
 
 	if f.sizeOnly {
-		return printContextSize(out, jsonOut, stdout)
+		return printDocumentSize(out, jsonOut, stdout)
 	}
 
 	if jsonOut {

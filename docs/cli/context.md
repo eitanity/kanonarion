@@ -110,6 +110,32 @@ go.uber.org/goleak@v1.3.0
   Vulnerabilities: Clean
 ```
 
+#### Failure and partial reasons
+
+The License, Interface, Call Graph and Examples sections print the reason the
+record recorded for its status, in the same `(status: reason)` shape the store
+read-error branches use for `(failed: …)`:
+
+```
+  License:         MIT (Partial: vendor/LICENSE unreadable)
+  Interface:       315 package(s), 1034 symbol(s) (Partial: parse failures in 11 package(s): golang.org/x/tools/go/loader/testdata: go/loader/testdata/badpkgdecl.go:1:34: expected 'package', found 'EOF' (+10 more package(s)))
+  Call Graph:      0 nodes, 0 edges (LoadFailed: meta load: err: exit status 1: stderr: go: missing go.sum entry for go.mod file)
+  Examples:        0 (ExtractionFailed: zip corrupt)
+```
+
+This is the same fact `--json` carries in each section's `error` field, so the
+two outputs no longer disagree about what is known. It matters for telling an
+unusable analysis environment from a fault in the module: both render as the
+same status word, and only the reason separates them.
+
+A record that recorded no reason prints the bare status word — `(LoadFailed)`.
+That is not a rendering gap: records written before a stage recorded its reason
+state nothing, and no reason is invented for them. The reason is a fact about the
+record, not about the coordinate, so re-deriving the record is what supplies one.
+
+A multi-line reason is folded onto the section's single row. It is never
+truncated.
+
 ### JSON (`--json`)
 
 ```json
@@ -301,6 +327,33 @@ the coverage it saw, never a confident SPDX it cannot stand behind.
 
 ### `vulnerabilities`
 
+When `context` is invoked with `--walk-id`, or with `--gomod` on a project that
+has a walk, every module's `vulnerabilities` section is answered in that build's
+frame and read from that walk's runs. On a store holding scans of more than one
+project this is what keeps a report about your build from carrying another
+project's verdict for a shared dependency; `frame` on each section names the
+frame the served record was measured in.
+
+A bare `context <module>@<version>` names no build. It serves the best-founded
+consumer-frame record the ledger holds for the coordinate, and then reads the
+rest of the section — the walk status word, the coverage caveat, the
+`[walk: affected via …]` annotation — from the walk that record was measured in.
+That walk is stated: `walk_basis_id` and `walk_basis_frame` name it and the
+frame it was rooted at, and the text output prints a `Walk basis:` line beneath
+the verdict. `walk_basis_id` always equals the section's own `walk_id`, so every
+field under one heading describes one build. The pair is set only on this
+unanchored form; `--walk-id` and `--gomod` name their build themselves.
+
+Read the annotation accordingly: `[walk: affected via …]` names affected peers in
+the closure of the build that produced this verdict, not in the newest build that
+happens to cover the module. Another walk may hold a different answer for the
+same module; the answer moves only when better-founded evidence lands, not when a
+neighbouring project walks a tree containing it. A walk older than the ten most
+recent — the window whose runs are loaded — still serves its record and names
+itself as the basis, but has no run context to report, so no walk status word or
+peer annotation appears. To ask about a specific build, pass `--walk-id` or
+`--gomod`.
+
 | Field | Type | Description |
 |---|---|---|
 | `status` | string | `not_run` / `read_error` / scan status (`Clean`, `Affected`, `Withdrawn`, `Unscannable`, `ScanFailed`) |
@@ -324,6 +377,8 @@ or `Affected (2 finding(s), 1 retracted)` for a mixture.
 | `walk_affected` | array | Affected walk peers (`module@version`) that lie in **this module's own transitive dependency closure**, sorted; empty/omitted when no affected peer is reachable from this module |
 | `walk_error` | string | Set when a walk-peer's verdict could not be read from the store while resolving `walk_affected`. The peer set may be incomplete; the fault is surfaced rather than fabricated into an affected verdict or misattributed to this module's own status |
 | `walk_id` | string | Walk used for reachability analysis |
+| `walk_basis_id` | string | The walk whose scan run answered, when the answer came from the walk window rather than a build named with `--walk-id` / `--gomod`. Omitted on those anchored forms |
+| `walk_basis_frame` | string | The frame that walk was rooted at (e.g. `target-rooted:example.com/app@v1.0.0`). Omitted when the walk record is no longer in the store, which loses the frame but not the walk's identity |
 | `snapshot_version` | string | Vulnerability database snapshot date |
 | `extracted_at` | string | RFC3339 scan timestamp |
 | `error` | string | Set when `status` is `read_error` |
@@ -354,13 +409,14 @@ fully-clean, complete walk adds no annotation to a clean module.
 | `--json` | false | Emit context as JSON to stdout |
 | `--compact` | true | Strip doc comments from signatures; truncate example bodies at 500 chars (the default) |
 | `--full` | false | Include full doc comments and complete example bodies; overrides `--compact` |
-| `--size-only` | false | Print estimated token count and byte size, then exit |
+| `--size-only` | false | Print estimated token count and byte size of the full JSON context, then exit. Multi-module forms (`--gomod`, `--walk-id`) print a total plus a per-module breakdown |
 | `--entry-points-full` | false | Include flat `entry_points` list alongside `entry_points_by_package` |
 | `--package <path>` | | Restrict `interface`, `call_graph`, and `examples` sections to a single import path |
 | `--gomod <path>` | `./go.mod` when no module/`--walk-id` given | Emit context for every module in the `go.mod`'s code scope as NDJSON |
-| `--tool` | false | Scope to the tooling supply chain (the `go.mod` tool directives' closure). Mutually exclusive with `--project` |
-| `--project` | false | Scope to the complete set: the project's code **and** tooling (the full Go build list). Mutually exclusive with `--tool` |
+| `--tool` | false | Scope to the tooling supply chain (the `go.mod` tool directives' closure). Mutually exclusive with `--project`. `--gomod` only: refused by name on the coordinate, `--walk-id` and local-path forms |
+| `--project` | false | Scope to the complete set: the project's code **and** tooling (the full Go build list). Mutually exclusive with `--tool`. `--gomod` only: refused by name on the coordinate, `--walk-id` and local-path forms |
 | `--walk-id <id>` | | Emit context for every module in the walk as NDJSON |
+| `--stream` | false | With `--walk-id` or `--gomod`: emit NDJSON (one document per module) without `--json`. Refused on the coordinate and local-path forms, which emit one document |
 | `--store-root <path>` | `~/.kanonarion` | Root directory for blobs and SQLite |
 | `--log-level <level>` | `warn` | Log verbosity: `debug` \| `info` \| `warn` \| `error` |
 
@@ -418,6 +474,12 @@ kanonarion context go.uber.org/goleak@v1.3.0 --json \
 
 ## Notes
 
+- A flag that does not apply to the form in use — for example `--package` on a
+  local path, or `--symbol` outside one — is refused with a message naming the
+  form that honours it, rather than accepted and ignored.
+- The `Context size` line under a text block reports the size of the module's
+  full JSON document — the same figure `--size-only` prints — not the size of
+  the text summary on screen.
 - The `dependencies` section shows direct dependencies only - modules that
   appear as `require` directives in this module's `go.mod`. For the full
   transitive closure use `kanonarion walk-show <walk_id>`.

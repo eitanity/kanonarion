@@ -23,8 +23,14 @@ func (noHostScan) ReusableRun(context.Context, string) (vulndomain.WalkScanRun, 
 	return vulndomain.WalkScanRun{}, false, nil
 }
 
+func (noHostScan) ServeReusableRun(vulndomain.WalkScanRun, string) error { return nil }
+
 func (noHostScan) RefreshSnapshot(context.Context, string) (vulnapp.SnapshotRefresh, error) {
 	return vulnapp.SnapshotRefresh{}, nil
+}
+
+func (noHostScan) JudgeToolchain(context.Context, vulndomain.DatabaseSnapshot, string) (vulndomain.ToolchainJudgment, error) {
+	return vulndomain.ToolchainJudgment{}, nil
 }
 
 // The store config is a second source of allowed_vcs_hosts, and it reaches the

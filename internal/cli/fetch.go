@@ -139,7 +139,7 @@ func runFetchScope(ctx context.Context, gomodPath string, scope depScope, f fetc
 	_, _ = fmt.Fprintf(stderr, "fetching %d %s modules from %s\n", len(coords), scope, gomodPath)
 	var errs []error
 	for _, coord := range coords {
-		if ferr := runFetch(ctx, coord, f, stdout, stderr); ferr != nil {
+		if ferr := fetchOne(ctx, coord, f, stdout, stderr); ferr != nil {
 			_, _ = fmt.Fprintf(stderr, "fetch %s: %v\n", coord, ferr)
 			errs = append(errs, fmt.Errorf("%s: %w", coord, ferr))
 		}
@@ -150,7 +150,18 @@ func runFetchScope(ctx context.Context, gomodPath string, scope depScope, f fetc
 	return nil
 }
 
-func runFetch(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.Writer) (err error) {
+// runFetch fetches the single module named positionally. The go.mod scope
+// flags select the other path entirely, so a positional fetch refuses them by
+// name rather than parsing and dropping them; the scope loop calls fetchOne
+// directly, where they have already been acted on.
+func runFetch(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.Writer) error {
+	if err := refuseInapplicableFlags("fetch <module>[@<version>]", fetchGoModOnlyFlags(f)); err != nil {
+		return err
+	}
+	return fetchOne(ctx, arg, f, stdout, stderr)
+}
+
+func fetchOne(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.Writer) (err error) {
 	logger := buildLogger(logLevel, stderr)
 
 	path, version, err := parseModuleArg(arg)

@@ -365,10 +365,10 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// network I/O either way leaves the stdlib node populated.
 	if modcacheMode {
 		resolver = resolver.WithStdlibAcquirer(
-			composition.NewOfflineStdlibAcquirer(dbHandle, goBinary, clk, logger), skipVCSVerify)
+			composition.NewOfflineStdlibAcquirer(dbHandle, goBinary, clk, factStore, logger), skipVCSVerify)
 	} else {
 		resolver = resolver.WithStdlibAcquirer(
-			composition.NewStdlibAcquirer(dbHandle, blobs, clk, logger), skipVCSVerify)
+			composition.NewStdlibAcquirer(dbHandle, blobs, clk, factStore, logger), skipVCSVerify)
 	}
 	walker := walkapp.NewWalker(resolver, fetcher, localFetcher, clk, stopwatch, 0, logger)
 
@@ -384,7 +384,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	ifaceExtractUC := ifaceapp.NewExtractInterfaceUseCase(ifaceapp.Config{
 		Facts: factStore, Blobs: blobs, Store: ifaceStore,
 		Extractor: ifaceext.New("0.1.0", clk), Clock: clk, Stopwatch: stopwatch, Logger: logger,
-	})
+	}).WithAudit(factStore)
 	cganalyser.SetToolchainProbe(goToolchainVersionProbe)
 	cgAnalyser := cganalyser.New("0.1.0", goBinary, logger)
 	cgExtractUC := cgapp.NewExtractCallGraphUseCase(cgapp.Config{
@@ -392,15 +392,15 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		Analyser: cgAnalyser, Clock: clk, Logger: logger,
 		Stopwatch:  stopwatch,
 		Exclusions: cfg.Callgraph.Exclude,
-	})
+	}).WithAudit(factStore)
 	cgLocalExtractUC := cgapp.NewExtractLocalCallGraphUseCase(cgapp.LocalConfig{
 		Store: cgStore, Analyser: cgAnalyser, Clock: clk, Stopwatch: stopwatch, Logger: logger,
-	})
+	}).WithAudit(factStore)
 	exExtractUC := exapp.NewExtractExampleUseCase(exapp.Config{
 		Facts: factStore, Blobs: blobs, Examples: exStore,
 		Parser: exgoast.New(),
 		Clock:  clk, Stopwatch: stopwatch, Logger: logger,
-	})
+	}).WithAudit(factStore)
 
 	kanonarionBinary, err := os.Executable()
 	if err != nil {
@@ -433,7 +433,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		Stopwatch:        stopwatch,
 		PipelineVersions: pipelineVersions,
 		Logger:           logger,
-	})
+	}).WithAudit(factStore)
 	queryExtractUC := extractapp.NewQueryExtractionUseCase(extStore)
 
 	// ---- license query / notice / compatibility / diff use cases ----
@@ -467,7 +467,12 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		scanner, database, reach,
 		clk, vulnapp.PipelineVersion, logger,
 	).WithCallGraphLoader(cgLoader).
-		WithCallGraphSpawner(cgSpawner)
+		WithCallGraphSpawner(cgSpawner).
+		// A module scan resolves its own snapshot when no walk scan handed it one,
+		// and that download is a persist like any other. The walk and re-scan use
+		// cases carry the same sink, so an advisory set arriving by any route is
+		// witnessed once, by the route that fetched it.
+		WithAudit(factStore)
 	walkScannerUC := vulnapp.NewScanWalkUseCase(
 		walkStore, vulnStore, moduleScannerUC,
 		vulnfetch.NewFetchModuleAdapter(fetchUC),
@@ -497,7 +502,7 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		rescanWalkUC = rescanWalkUC.WithRealModcache(modcacheDir)
 	}
 	queryVulnUC := vulnapp.NewQueryVulnUseCase(vulnStore)
-	queryScanRunsUC := vulnapp.NewQueryScanRunsUseCase(vulnStore)
+	queryScanRunsUC := vulnapp.NewQueryScanRunsUseCase(vulnStore, walkStore)
 	diffScanRunsUC := vulnapp.NewDiffScanRunsUseCase(vulnStore)
 
 	// ---- sbom use cases ----
@@ -513,7 +518,10 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 		walkStore, licStore, sbomStore,
 		sbomcdx.New(sbomPipelineVersion),
 		clk, sbomPipelineVersion, licapp.PipelineVersion, logger,
-	).WithVendorTree(sbomvendortree.New(venlocalfs.New(nil)))
+	).WithVendorTree(sbomvendortree.New(venlocalfs.New(nil))).
+		// The SBOM is the artefact that leaves the building, so both producing one
+		// and handing a stored one back are appended to the assurance log.
+		WithAudit(factStore)
 	querySBOMUC := sbomapp.NewQuerySBOMUseCase(sbomStore)
 
 	// ---- directive use cases ----

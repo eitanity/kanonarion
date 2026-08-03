@@ -8,8 +8,16 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
+	"github.com/eitanity/kanonarion/internal/audit"
 	"github.com/eitanity/kanonarion/internal/iface/domain"
 )
+
+// AuditSink appends an audit event to the assurance log. The shared JSONL
+// AuditLog satisfies this; the application depends only on this narrow port,
+// not on the factstore adapter that persists it.
+type AuditSink interface {
+	RecordEvent(audit.Event) error
+}
 
 // ErrModuleNotFetched is returned when extraction is attempted for a module
 // that has no FactRecord in the store. Callers should run 'kanonarion fetch' first.

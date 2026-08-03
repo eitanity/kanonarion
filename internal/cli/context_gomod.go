@@ -18,7 +18,18 @@ import (
 // every module enumerated here was walked, extracted, and vuln-scanned by the
 // inspect side. Output is NDJSON when --json is set; otherwise text blocks
 // separated by a blank line, each prefixed with a "==> <module>" header line.
+//
+// --stream selects the NDJSON stream without --json, exactly as it does on the
+// --walk-id path: both emit one document per module, and a caller that wants
+// the stream but not --json's effect on the rest of its invocation asks for it
+// the same way here.
 func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout, stderr io.Writer) error {
+	if err := refuseInapplicableFlags("context --gomod",
+		append(contextWalkOnlyFlags(f), contextLocalOnlyFlags(f)...)); err != nil {
+		return err
+	}
+	ndjson := jsonOut || f.stream
+
 	logger := buildLogger(logLevel, stderr)
 
 	coords, err := resolveScopeModules(f.gomodPath, scope)
@@ -26,9 +37,17 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 		return fmt.Errorf("resolving %s scope: %w", scope, err)
 	}
 	if len(coords) == 0 {
+		if f.sizeOnly {
+			// --size-only asks a size question, so an empty scope answers it with a
+			// zero-module report rather than the NDJSON empty stream: empty and
+			// populated size answers decode into the same type.
+			var report contextSizeReport
+			return report.write(jsonOut, stdout)
+		}
 		// NDJSON: an empty stream is how "nothing matched" is spelled, so under
-		// --json emit zero stdout bytes. The prose stays on the text path only.
-		if !jsonOut {
+		// --json (or --stream) emit zero stdout bytes. The prose stays on the
+		// text path only.
+		if !ndjson {
 			_, _ = fmt.Fprintf(stdout, "no %s dependencies found in %s\n", scope, f.gomodPath)
 		}
 		return nil
@@ -49,8 +68,21 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 	if err != nil {
 		return fmt.Errorf("loading vuln batch context: %w", err)
 	}
+	// The go.mod names the build, so its own latest project walk is the frame
+	// these verdicts are read in. A project with no walk yet is left unanchored
+	// rather than refused: context is a survey, and every section it prints
+	// states its own basis.
+	if projectWalk, werr := latestWalkForGoMod(ctx, ctr.QueryWalks, f.gomodPath); werr == nil {
+		vulnBatch.anchorTo(ctx, projectWalk.ID)
+	}
 
 	compact := f.compact && !f.full
+
+	// --size-only asks how much this scope's context would cost before pulling
+	// it. Answering with the context itself — 7.9 MB of the very document the
+	// caller was budgeting against — is the one answer the flag exists to avoid,
+	// so nothing but the report is written.
+	var report contextSizeReport
 
 	var errs []error
 	for _, coordStr := range coords {
@@ -85,7 +117,13 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 			Vulnerabilities: vulns,
 		}
 
-		if jsonOut {
+		switch {
+		case f.sizeOnly:
+			if serr := report.add(coordStr, out); serr != nil {
+				errs = append(errs, serr)
+				continue
+			}
+		case ndjson:
 			line, merr := json.Marshal(out)
 			if merr != nil {
 				errs = append(errs, fmt.Errorf("%s: encoding: %w", coordStr, merr))
@@ -94,7 +132,7 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 			if _, werr := fmt.Fprintf(stdout, "%s\n", line); werr != nil {
 				return fmt.Errorf("writing output: %w", werr)
 			}
-		} else {
+		default:
 			_, _ = fmt.Fprintf(stdout, "==> %s\n", coordStr)
 			if perr := printContextText(out, compact, stdout); perr != nil {
 				errs = append(errs, fmt.Errorf("%s: %w", coordStr, perr))
@@ -109,6 +147,10 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 			_, _ = fmt.Fprintf(stderr, "error: %v\n", e)
 		}
 		return fmt.Errorf("%d module(s) failed", len(errs))
+	}
+
+	if f.sizeOnly {
+		return report.write(jsonOut, stdout)
 	}
 	return nil
 }

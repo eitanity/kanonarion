@@ -4,7 +4,9 @@ import (
 	"context"
 	"errors"
 	"io"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -14,19 +16,31 @@ import (
 	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
 )
 
+// probedTree is the module path of the working tree under probe in these tests.
+// Another consumer's records are written against otherConsumer, which is the
+// shared-store situation the frame filter exists for.
+const (
+	probedTree    = "example.com/app"
+	otherConsumer = "example.com/other"
+)
+
 // fakeVulnStore is an in-memory implementation of vulnports.VulnerabilityStore.
-// Only GetLatestVulnerabilityRecord is implemented; all other methods panic.
+// Only ListVulnerabilityRecordsForModule is implemented; all other methods
+// panic.
+//
+// It holds every generation per coordinate rather than one composed record,
+// because the frame filter under test is exactly the choice among them: a fake
+// that pre-composed would answer the question the adapter is supposed to ask.
 type fakeVulnStore struct {
-	records map[string]vulndomain.VulnerabilityRecord // keyed by coord.Path
+	records map[string][]vulndomain.VulnerabilityRecord // keyed by coord.Path
 	err     error
 }
 
-func (s *fakeVulnStore) GetLatestVulnerabilityRecord(_ context.Context, coord coordinate.ModuleCoordinate, _ string) (vulndomain.VulnerabilityRecord, bool, error) {
+func (s *fakeVulnStore) ListVulnerabilityRecordsForModule(_ context.Context, coord coordinate.ModuleCoordinate, _ string) ([]vulndomain.VulnerabilityRecord, error) {
 	if s.err != nil {
-		return vulndomain.VulnerabilityRecord{}, false, s.err
+		return nil, s.err
 	}
-	r, ok := s.records[coord.Path()]
-	return r, ok, nil
+	return s.records[coord.Path()], nil
 }
 
 // Unused methods — panic so test failures are obvious if they're accidentally called.
@@ -36,8 +50,11 @@ func (s *fakeVulnStore) PutVulnerabilityRecord(_ context.Context, _ vulndomain.V
 func (s *fakeVulnStore) GetVulnerabilityRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ vulndomain.DatabaseSnapshot) (vulndomain.VulnerabilityRecord, bool, error) {
 	panic("unexpected call: GetVulnerabilityRecord")
 }
-func (s *fakeVulnStore) GetLatestVulnerabilityRecordForWalk(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ string) (vulndomain.VulnerabilityRecord, bool, error) {
-	panic("unexpected call: GetLatestVulnerabilityRecordForWalk")
+func (s *fakeVulnStore) GetLatestVulnerabilityRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string) (vulndomain.VulnerabilityRecord, bool, error) {
+	panic("unexpected call: GetLatestVulnerabilityRecord")
+}
+func (s *fakeVulnStore) ListVulnerabilityRecordsForModuleInWalk(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ string) ([]vulndomain.VulnerabilityRecord, error) {
+	panic("unexpected call: ListVulnerabilityRecordsForModuleInWalk")
 }
 func (s *fakeVulnStore) PutWalkScanRun(_ context.Context, _ vulndomain.WalkScanRun) error {
 	panic("unexpected call: PutWalkScanRun")
@@ -69,9 +86,6 @@ func (s *fakeVulnStore) ListVulnerabilityRecordsByFindingID(_ context.Context, _
 func (s *fakeVulnStore) ListVulnerabilityRecords(_ context.Context, _ string) ([]vulndomain.VulnerabilityRecord, error) {
 	panic("unexpected call: ListVulnerabilityRecords")
 }
-func (s *fakeVulnStore) ListVulnerabilityRecordsForModule(_ context.Context, _ coordinate.ModuleCoordinate, _ string) ([]vulndomain.VulnerabilityRecord, error) {
-	panic("unexpected call: ListVulnerabilityRecordsForModule")
-}
 
 var _ vulnports.VulnerabilityStore = (*fakeVulnStore)(nil)
 
@@ -86,32 +100,261 @@ func mustCoord(t *testing.T, path, ver string) coordinate.ModuleCoordinate {
 	return c
 }
 
-// -- tests --
+// rootedAt is the frame of a walk rooted at a project working tree, which is
+// what a consumer's scans of a dependency are recorded in.
+func rootedAt(t *testing.T, path string) vulndomain.Rooting {
+	t.Helper()
+	c, err := coordinate.NewLocalCoordinate(path)
+	if err != nil {
+		t.Fatalf("NewLocalCoordinate(%q): %v", path, err)
+	}
+	return vulndomain.TargetRootedAt(c)
+}
+
+// recordSpec is the minimum a seeding test needs to state about one stored
+// generation: the frame it was measured in, and the finding it carries.
+type recordSpec struct {
+	rooting   vulndomain.Rooting
+	findings  []vulndomain.VulnerabilityFinding
+	scannedAt time.Time
+}
+
+func record(coord coordinate.ModuleCoordinate, spec recordSpec) vulndomain.VulnerabilityRecord {
+	return vulndomain.VulnerabilityRecord{
+		Coordinate: coord,
+		Rooting:    spec.rooting,
+		Findings:   spec.findings,
+		ScannedAt:  spec.scannedAt,
+	}
+}
+
+// reachableFinding is a finding whose reachability verdict was settled by the
+// stored scan — the value the seed carries across, and the one that must not
+// come from another build.
+func reachableFinding(id string, reachable bool, rooting vulndomain.Rooting) vulndomain.VulnerabilityFinding {
+	return vulndomain.VulnerabilityFinding{
+		ID:      id,
+		Summary: id + " summary",
+		Reachable: &vulndomain.ReachabilityResult{
+			IsReachable: reachable,
+			DerivedBy: vulndomain.ReachabilityDerivation{
+				Analyser: vulndomain.AnalyserGovulncheck,
+				Rooting:  rooting,
+			},
+		},
+	}
+}
+
+func loadOne(t *testing.T, s *fakeVulnStore, coord coordinate.ModuleCoordinate) ports.FindingSet {
+	t.Helper()
+	adapter := store.New(s, "v1")
+	set, err := adapter.LoadFindings(context.Background(), []coordinate.ModuleCoordinate{coord}, probedTree)
+	if err != nil {
+		t.Fatalf("LoadFindings: %v", err)
+	}
+	return set
+}
+
+// -- frame anchoring --
+
+// TestLoadFindings_AnotherConsumersRecordDoesNotSeed is the headline: a shared
+// store holds another project's target-rooted record and an isolated one, and
+// the probe of THIS tree must be seeded from the isolated record alone.
+func TestLoadFindings_AnotherConsumersRecordDoesNotSeed(t *testing.T) {
+	coord := mustCoord(t, "example.com/dep", "v1.0.0")
+	other := rootedAt(t, otherConsumer)
+	s := &fakeVulnStore{records: map[string][]vulndomain.VulnerabilityRecord{
+		"example.com/dep": {
+			record(coord, recordSpec{
+				rooting:   other,
+				scannedAt: time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC),
+				findings:  []vulndomain.VulnerabilityFinding{reachableFinding("GO-2026-0001", true, other)},
+			}),
+			record(coord, recordSpec{
+				rooting:   vulndomain.RootingIsolated,
+				scannedAt: time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC),
+				findings: []vulndomain.VulnerabilityFinding{
+					reachableFinding("GO-2026-0001", false, vulndomain.RootingIsolated),
+				},
+			}),
+		},
+	}}
+
+	set := loadOne(t, s, coord)
+	findings := set.Findings[coord]
+	if len(findings) != 1 {
+		t.Fatalf("findings = %d, want 1", len(findings))
+	}
+	if findings[0].Reachable == nil {
+		t.Fatal("Reachable = nil, want the isolated frame's verdict")
+	}
+	if *findings[0].Reachable {
+		t.Error("seeded Reachable = true — that is the OTHER consumer's build's verdict; " +
+			"the isolated record said not reachable")
+	}
+	if !strings.Contains(findings[0].ReachableBasis, string(vulndomain.RootingIsolated)) {
+		t.Errorf("ReachableBasis = %q, want it to name the isolated frame", findings[0].ReachableBasis)
+	}
+}
+
+// TestLoadFindings_OwnFrameSeeds: the tree's own target-rooted record is the
+// one that seeds, over an isolated record that would otherwise be preferred.
+func TestLoadFindings_OwnFrameSeeds(t *testing.T) {
+	coord := mustCoord(t, "example.com/dep", "v1.0.0")
+	own := rootedAt(t, probedTree)
+	s := &fakeVulnStore{records: map[string][]vulndomain.VulnerabilityRecord{
+		"example.com/dep": {
+			record(coord, recordSpec{
+				rooting:   vulndomain.RootingIsolated,
+				scannedAt: time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC),
+				findings: []vulndomain.VulnerabilityFinding{
+					reachableFinding("GO-2026-0001", false, vulndomain.RootingIsolated),
+				},
+			}),
+			record(coord, recordSpec{
+				rooting:   own,
+				scannedAt: time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC),
+				findings:  []vulndomain.VulnerabilityFinding{reachableFinding("GO-2026-0001", true, own)},
+			}),
+		},
+	}}
+
+	set := loadOne(t, s, coord)
+	findings := set.Findings[coord]
+	if len(findings) != 1 {
+		t.Fatalf("findings = %d, want 1", len(findings))
+	}
+	if findings[0].Reachable == nil || !*findings[0].Reachable {
+		t.Errorf("Reachable = %v, want the tree's own frame's true", findings[0].Reachable)
+	}
+	if !strings.Contains(findings[0].ReachableBasis, probedTree) {
+		t.Errorf("ReachableBasis = %q, want it to name this tree's frame", findings[0].ReachableBasis)
+	}
+}
+
+// TestLoadFindings_OwnFrameMatchesOnPathNotVersion: a walk of this tree records
+// its root as a coordinate with a version the tree's go.mod cannot state, so
+// the anchor compares module paths.
+func TestLoadFindings_OwnFrameMatchesOnPathNotVersion(t *testing.T) {
+	coord := mustCoord(t, "example.com/dep", "v1.0.0")
+	tagged, err := coordinate.NewModuleCoordinate(probedTree, "v1.2.3")
+	if err != nil {
+		t.Fatalf("NewModuleCoordinate: %v", err)
+	}
+	own := vulndomain.TargetRootedAt(tagged)
+	s := &fakeVulnStore{records: map[string][]vulndomain.VulnerabilityRecord{
+		"example.com/dep": {
+			record(coord, recordSpec{
+				rooting:   own,
+				scannedAt: time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC),
+				findings:  []vulndomain.VulnerabilityFinding{reachableFinding("GO-2026-0001", true, own)},
+			}),
+		},
+	}}
+
+	set := loadOne(t, s, coord)
+	if len(set.Findings[coord]) != 1 {
+		t.Fatalf("findings = %d, want 1 — a walk-assigned root version must not hide the tree's own frame",
+			len(set.Findings[coord]))
+	}
+}
+
+// TestLoadFindings_NoAcceptableRecordSeedsNothing: only another consumer's
+// records exist, so the probe seeds nothing for the coordinate — and does not
+// report it as scanned, because this build was not the one measured.
+func TestLoadFindings_NoAcceptableRecordSeedsNothing(t *testing.T) {
+	coord := mustCoord(t, "example.com/dep", "v1.0.0")
+	other := rootedAt(t, otherConsumer)
+	s := &fakeVulnStore{records: map[string][]vulndomain.VulnerabilityRecord{
+		"example.com/dep": {
+			record(coord, recordSpec{
+				rooting:   other,
+				scannedAt: time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC),
+				findings:  []vulndomain.VulnerabilityFinding{reachableFinding("GO-2026-0001", true, other)},
+			}),
+		},
+	}}
+
+	set := loadOne(t, s, coord)
+	if len(set.Findings) != 0 {
+		t.Errorf("findings = %d, want 0", len(set.Findings))
+	}
+	if _, ok := set.Scanned[coord]; ok {
+		t.Error("coord reported as scanned — no record measures THIS build, so it is uncovered")
+	}
+	if _, ok := set.OtherFrameOnly[coord]; !ok {
+		t.Error("coord not reported as held in another frame — that absence is not the same as never scanned")
+	}
+}
+
+// TestLoadFindings_FramelessRecordsStillSeed: a store written before the frame
+// was recorded still seeds, on the same narrow terms composition uses — nothing
+// in the group states a frame.
+func TestLoadFindings_FramelessRecordsStillSeed(t *testing.T) {
+	coord := mustCoord(t, "example.com/dep", "v1.0.0")
+	s := &fakeVulnStore{records: map[string][]vulndomain.VulnerabilityRecord{
+		"example.com/dep": {
+			record(coord, recordSpec{
+				scannedAt: time.Date(2026, 8, 1, 12, 0, 0, 0, time.UTC),
+				findings:  []vulndomain.VulnerabilityFinding{{ID: "GO-2026-0001", Summary: "s"}},
+			}),
+		},
+	}}
+
+	set := loadOne(t, s, coord)
+	if len(set.Findings[coord]) != 1 {
+		t.Fatalf("findings = %d, want 1", len(set.Findings[coord]))
+	}
+}
+
+// TestLoadFindings_StatesItsRestriction: the seed's restriction is reported, so
+// the answer says what it was drawn from.
+func TestLoadFindings_StatesItsRestriction(t *testing.T) {
+	s := &fakeVulnStore{records: map[string][]vulndomain.VulnerabilityRecord{}}
+	adapter := store.New(s, "v1")
+	set, err := adapter.LoadFindings(context.Background(), nil, probedTree)
+	if err != nil {
+		t.Fatalf("LoadFindings: %v", err)
+	}
+	if !strings.Contains(set.Restriction, probedTree) {
+		t.Errorf("Restriction = %q, want it to name the probed tree", set.Restriction)
+	}
+	if !strings.Contains(set.Restriction, "isolated") {
+		t.Errorf("Restriction = %q, want it to name the isolated fallback", set.Restriction)
+	}
+
+	set, err = adapter.LoadFindings(context.Background(), nil, "")
+	if err != nil {
+		t.Fatalf("LoadFindings: %v", err)
+	}
+	if !strings.Contains(set.Restriction, "no module path") {
+		t.Errorf("Restriction = %q, want it to say the tree declares no module path", set.Restriction)
+	}
+}
+
+// -- mapping --
 
 func TestLoadFindings_MapsFields(t *testing.T) {
 	coord := mustCoord(t, "example.com/dep", "v1.0.0")
 	s := &fakeVulnStore{
-		records: map[string]vulndomain.VulnerabilityRecord{
-			"example.com/dep": {
-				Coordinate: coord,
-				Findings: []vulndomain.VulnerabilityFinding{
+		records: map[string][]vulndomain.VulnerabilityRecord{
+			"example.com/dep": {record(coord, recordSpec{
+				rooting: vulndomain.RootingIsolated,
+				findings: []vulndomain.VulnerabilityFinding{
 					{
-						ID:              "GHSA-0001",
-						Aliases:         []string{"CVE-2024-0001"},
-						Summary:         "A test vulnerability",
-						AffectedSymbols: []string{"VulnFunc", "(*VulnType).Method"},
+						ID:                     "GHSA-0001",
+						Aliases:                []string{"CVE-2024-0001"},
+						Summary:                "A test vulnerability",
+						AffectedSymbols:        []string{"VulnFunc", "(*VulnType).Method"},
+						AdvisoryNamesNoSymbols: true,
 					},
 				},
-			},
+			})},
 		},
 	}
-	adapter := store.New(s, "v1")
 
-	result, err := adapter.LoadFindings(context.Background(), []coordinate.ModuleCoordinate{coord})
-	if err != nil {
-		t.Fatalf("LoadFindings: %v", err)
-	}
-	findings, ok := result.Findings[coord]
+	set := loadOne(t, s, coord)
+	findings, ok := set.Findings[coord]
 	if !ok {
 		t.Fatal("coord not present in result")
 	}
@@ -131,37 +374,41 @@ func TestLoadFindings_MapsFields(t *testing.T) {
 	if len(f.AffectedSymbols) != 2 {
 		t.Errorf("AffectedSymbols = %v, want 2 entries", f.AffectedSymbols)
 	}
+	if !f.AdvisoryNamesNoSymbols {
+		t.Error("AdvisoryNamesNoSymbols = false, want true")
+	}
+	if f.ReachableBasis != "" {
+		t.Errorf("ReachableBasis = %q, want empty for a finding with no stored verdict", f.ReachableBasis)
+	}
 }
 
 func TestLoadFindings_OmitsCoordWithNoRecord(t *testing.T) {
 	coord := mustCoord(t, "example.com/dep", "v1.0.0")
-	s := &fakeVulnStore{records: map[string]vulndomain.VulnerabilityRecord{}} // no records
-	adapter := store.New(s, "v1")
+	s := &fakeVulnStore{records: map[string][]vulndomain.VulnerabilityRecord{}} // no records
 
-	result, err := adapter.LoadFindings(context.Background(), []coordinate.ModuleCoordinate{coord})
-	if err != nil {
-		t.Fatalf("LoadFindings: %v", err)
+	set := loadOne(t, s, coord)
+	if len(set.Findings) != 0 {
+		t.Errorf("result len = %d, want 0 (coord with no record should be omitted)", len(set.Findings))
 	}
-	if len(result.Findings) != 0 {
-		t.Errorf("result len = %d, want 0 (coord with no record should be omitted)", len(result.Findings))
+	if len(set.Scanned) != 0 {
+		t.Errorf("scanned len = %d, want 0", len(set.Scanned))
 	}
 }
 
-func TestLoadFindings_OmitsCoordWithEmptyFindings(t *testing.T) {
+func TestLoadFindings_ScannedWithEmptyFindings(t *testing.T) {
 	coord := mustCoord(t, "example.com/dep", "v1.0.0")
 	s := &fakeVulnStore{
-		records: map[string]vulndomain.VulnerabilityRecord{
-			"example.com/dep": {Coordinate: coord, Findings: nil},
+		records: map[string][]vulndomain.VulnerabilityRecord{
+			"example.com/dep": {record(coord, recordSpec{rooting: vulndomain.RootingIsolated})},
 		},
 	}
-	adapter := store.New(s, "v1")
 
-	result, err := adapter.LoadFindings(context.Background(), []coordinate.ModuleCoordinate{coord})
-	if err != nil {
-		t.Fatalf("LoadFindings: %v", err)
+	set := loadOne(t, s, coord)
+	if len(set.Findings) != 0 {
+		t.Errorf("result len = %d, want 0 (coord with no findings should be omitted)", len(set.Findings))
 	}
-	if len(result.Findings) != 0 {
-		t.Errorf("result len = %d, want 0 (coord with no findings should be omitted)", len(result.Findings))
+	if _, ok := set.Scanned[coord]; !ok {
+		t.Error("coord missing from Scanned — a clean record is coverage, not absence")
 	}
 }
 
@@ -170,20 +417,21 @@ func TestLoadFindings_MultipleCoords(t *testing.T) {
 	coordB := mustCoord(t, "example.com/b", "v2.0.0")
 	coordC := mustCoord(t, "example.com/c", "v3.0.0") // no record
 	s := &fakeVulnStore{
-		records: map[string]vulndomain.VulnerabilityRecord{
-			"example.com/a": {
-				Coordinate: coordA,
-				Findings:   []vulndomain.VulnerabilityFinding{{ID: "GHSA-A", Summary: "vuln A"}},
-			},
-			"example.com/b": {
-				Coordinate: coordB,
-				Findings:   []vulndomain.VulnerabilityFinding{{ID: "GHSA-B", Summary: "vuln B"}},
-			},
+		records: map[string][]vulndomain.VulnerabilityRecord{
+			"example.com/a": {record(coordA, recordSpec{
+				rooting:  vulndomain.RootingIsolated,
+				findings: []vulndomain.VulnerabilityFinding{{ID: "GHSA-A", Summary: "vuln A"}},
+			})},
+			"example.com/b": {record(coordB, recordSpec{
+				rooting:  vulndomain.RootingIsolated,
+				findings: []vulndomain.VulnerabilityFinding{{ID: "GHSA-B", Summary: "vuln B"}},
+			})},
 		},
 	}
 	adapter := store.New(s, "v1")
 
-	result, err := adapter.LoadFindings(context.Background(), []coordinate.ModuleCoordinate{coordA, coordB, coordC})
+	result, err := adapter.LoadFindings(context.Background(),
+		[]coordinate.ModuleCoordinate{coordA, coordB, coordC}, probedTree)
 	if err != nil {
 		t.Fatalf("LoadFindings: %v", err)
 	}
@@ -207,17 +455,17 @@ func TestLoadFindings_StoreError_Propagates(t *testing.T) {
 	s := &fakeVulnStore{err: storeErr}
 	adapter := store.New(s, "v1")
 
-	_, err := adapter.LoadFindings(context.Background(), []coordinate.ModuleCoordinate{coord})
+	_, err := adapter.LoadFindings(context.Background(), []coordinate.ModuleCoordinate{coord}, probedTree)
 	if !errors.Is(err, storeErr) {
 		t.Errorf("error = %v, want wrapping %v", err, storeErr)
 	}
 }
 
 func TestLoadFindings_EmptyCoords(t *testing.T) {
-	s := &fakeVulnStore{records: map[string]vulndomain.VulnerabilityRecord{}}
+	s := &fakeVulnStore{records: map[string][]vulndomain.VulnerabilityRecord{}}
 	adapter := store.New(s, "v1")
 
-	result, err := adapter.LoadFindings(context.Background(), nil)
+	result, err := adapter.LoadFindings(context.Background(), nil, probedTree)
 	if err != nil {
 		t.Fatalf("LoadFindings: %v", err)
 	}

@@ -106,6 +106,123 @@ const (
 	// trail of when it was resolved and what it contained, not only a mutable
 	// walk record.
 	EventWalkCompleted EventType = "walk_completed"
+
+	// EventCallGraphExtracted records that a module's call graph was analysed and
+	// a generation persisted. Payload carries the module coordinate, what the
+	// analysis read (a fetched artefact or a working tree), the pipeline version,
+	// the completeness level, the overall status and the record's content hash.
+	//
+	// Call graph extraction is what every reachability and capability answer is
+	// derived from, and the ledger is append-only, so a generation that later
+	// underpins such an answer is visible here and not only in the mutable
+	// callgraph ledger. It also restores the stream's use as a tripwire: a store
+	// write that appended nothing let a stable line count read as "nothing ran".
+	EventCallGraphExtracted EventType = "callgraph_extracted"
+
+	// EventInterfaceExtracted records that a module's public API was extracted
+	// and a generation persisted. Payload carries the module coordinate, the
+	// artefact the extraction read, the pipeline version, the overall status, the
+	// package count and the record's content hash.
+	//
+	// The interface record is what every API-compatibility answer — what a bump
+	// removes, what a migration must rewrite — is derived from, so a generation
+	// that later underpins such an answer is visible in the append-only log and
+	// not only in the mutable interface ledger.
+	EventInterfaceExtracted EventType = "interface_extracted"
+
+	// EventExamplesExtracted records that a module's Example* functions were
+	// harvested and a generation persisted. Payload carries the module
+	// coordinate, the artefact the extraction read, the pipeline version, the
+	// overall status, the example count and the record's content hash.
+	//
+	// Examples are evidence of how an API is meant to be called, quoted back in
+	// adoption and migration answers; anchoring each extraction here means the
+	// generation that supplied a quoted example is stated in the append-only log.
+	EventExamplesExtracted EventType = "examples_extracted"
+
+	// EventExtractionRunCompleted records that an extraction run over a walk
+	// finished and its run record was persisted. Payload carries the run id, the
+	// walk it ran over, the requested stages, the module count, the per-stage
+	// outcome counts, the overall status and the run's content hash.
+	//
+	// The per-stage events say what each module produced; this one says which
+	// campaign asked for them and what it concluded overall, so a reader can tell
+	// a full pipeline run from a single-module re-extraction without inferring it
+	// from the timestamps of the events around it.
+	EventExtractionRunCompleted EventType = "extraction_run_completed"
+
+	// EventStdlibCustodyRecorded records that a standard-library chain-of-custody
+	// measurement was persisted. Payload carries the toolchain version, the route
+	// the bytes were acquired by (the published go.dev/dl tarball or the local
+	// toolchain's source tree), the verification anchors that acquisition
+	// established, the bytes it was taken over and the measurement's content hash.
+	//
+	// It is named for the write, not for the verification: the event WITNESSES
+	// that a custody record exists and by which route it was obtained, and the
+	// record itself carries the claims. Custody is the one record whose whole
+	// value is provable observation, so the observation being unwitnessed was the
+	// sharpest form of the gap — an operator could see that the stdlib was
+	// verified but not when, or by which run, that was established.
+	EventStdlibCustodyRecorded EventType = "stdlib_custody_recorded"
+
+	// EventSBOMGenerated records that an SBOM document was produced and its
+	// record persisted. Payload carries the record id, the walk the document
+	// describes, the format, the pipeline version, the document's content hash
+	// and whether the document's creation timestamp was supplied by the caller.
+	//
+	// The SBOM is the artefact that leaves the building: it is handed to
+	// customers, attached to releases and read by regulators. A document could be
+	// produced and re-produced with no trace of when, from which walk, or how
+	// often, so this anchors the production itself. It witnesses the write — the
+	// document's own claims (its components, their licences, its completeness
+	// statements) are the DOCUMENT's, reachable through the content hash, and
+	// restating them here would make the log a second unsealed copy.
+	EventSBOMGenerated EventType = "sbom_generated"
+
+	// EventSBOMServed records that a stored SBOM record was served to a caller
+	// instead of being generated afresh. Payload carries the record served (id,
+	// walk, format, pipeline version, content hash) and the identity that
+	// requested this serving.
+	//
+	// A served answer is an observation: "when did we last produce this artefact,
+	// and how often has it gone out" stays answerable only if a re-serve is
+	// visible. It is deliberately distinct from sbom_generated — a reader must be
+	// able to tell a document that was produced from one that was handed over
+	// again — and the requester is the serving's own, not the record's operator,
+	// which named whoever asked for the original generation.
+	EventSBOMServed EventType = "sbom_served"
+
+	// EventAdvisorySnapshotRecorded records that an advisory database snapshot
+	// was persisted. Payload carries the database the snapshot came from, that
+	// database's own generation of itself, when it was retrieved, the content
+	// identity of the persisted bytes and the route that acquired it.
+	//
+	// "What did we know and when" turns exactly on when a snapshot arrived, and
+	// the arrival was the one remaining silent write. It witnesses the persist
+	// and its route: it states nothing about the advisories the snapshot holds,
+	// how many there are, or any module's standing — those are questions for the
+	// snapshot, which the content identity reaches. A scan that reuses a stored
+	// snapshot appends nothing, because reuse is not an acquisition.
+	EventAdvisorySnapshotRecorded EventType = "advisory_snapshot_recorded"
+
+	// EventVulnScanServed records that a stored walk scan run was served to a
+	// caller instead of being measured again. Payload names the run served, the
+	// walk identity it answered for, the advisory database that run was judged
+	// against, and the surface that asked.
+	//
+	// It is named for the act, not for the run: nothing was scanned, so what the
+	// event witnesses is an ASKING. Without it reuse is invisible — record and
+	// ledger timestamps then track only when evidence was DERIVED, and an
+	// unchanged store answers from existing rows indefinitely with no observation
+	// trace, so "when did we last check" becomes unrecoverable while "when did we
+	// first learn" stays answerable from the derivation events. Those are two
+	// different questions, and this event is what makes the second one askable.
+	//
+	// It restates none of the run's conclusions: the findings, the per-module
+	// statuses and the coverage are the RUN's, reachable through the scan id.
+	// Copying them here would make the log an unsealed second summary of a run
+	// the store already holds sealed, and one that would go stale silently.
+	EventVulnScanServed EventType = "vuln_scan_served"
 )
 
 // knownEventTypes is the closed set of recognised discriminators. A gap
@@ -126,6 +243,15 @@ var knownEventTypes = map[EventType]struct{}{
 	EventVulnFindingObserved:      {},
 	EventLicenseExtracted:         {},
 	EventWalkCompleted:            {},
+	EventCallGraphExtracted:       {},
+	EventInterfaceExtracted:       {},
+	EventExamplesExtracted:        {},
+	EventExtractionRunCompleted:   {},
+	EventStdlibCustodyRecorded:    {},
+	EventSBOMGenerated:            {},
+	EventSBOMServed:               {},
+	EventAdvisorySnapshotRecorded: {},
+	EventVulnScanServed:           {},
 }
 
 // Known reports whether t is a recognised event type.

@@ -9,6 +9,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobcodec"
@@ -258,6 +259,77 @@ ON CONFLICT (id) DO UPDATE SET
 	)
 	if err != nil {
 		return fmt.Errorf("inserting walk record: %w", err)
+	}
+	return nil
+}
+
+// PresentWalks reports, for each id in walkIDs, whether this store still holds
+// a walk under it. Every id asked about is a key of the result, so a caller
+// never has to read absence out of a missing map entry.
+//
+// It exists so a reader of something that REFERENCES a walk — a stored scan run
+// — can state whether the reference resolves without loading the walk itself.
+// The record is a compressed blob of the whole graph; presence is a primary-key
+// probe, so a listing of a hundred runs costs one indexed read rather than a
+// hundred decompressions.
+//
+// Presence is not readability: a row that is here but no longer decodes still
+// answers true. That is the honest split — this method answers "is the subject
+// still in the store", and GetWalk answers "can it be read back".
+func (s *Store) PresentWalks(ctx context.Context, walkIDs []string) (map[string]bool, error) {
+	present := make(map[string]bool, len(walkIDs))
+	for _, id := range walkIDs {
+		present[id] = false
+	}
+	if len(present) == 0 {
+		return present, nil
+	}
+
+	// SQLite caps a statement's bound parameters (999 by default), so the probe
+	// is chunked. The chunk size is well under the cap and the query is a
+	// primary-key lookup, so the chunking is invisible in the cost.
+	const chunk = 400
+	ids := make([]string, 0, len(present))
+	for id := range present {
+		ids = append(ids, id)
+	}
+	for start := 0; start < len(ids); start += chunk {
+		end := min(start+chunk, len(ids))
+		batch := ids[start:end]
+		args := make([]any, len(batch))
+		placeholders := make([]string, len(batch))
+		for i, id := range batch {
+			args[i] = id
+			placeholders[i] = "?"
+		}
+		q := `SELECT id FROM walks WHERE id IN (` + strings.Join(placeholders, ",") + `)`
+		rows, err := s.db.DB().QueryContext(ctx, q, args...)
+		if err != nil {
+			return nil, fmt.Errorf("querying walk presence: %w", err)
+		}
+		if err := scanPresentIDs(rows, present); err != nil {
+			return nil, err
+		}
+	}
+	return present, nil
+}
+
+// scanPresentIDs marks every id the rows report as present. It closes rows.
+func scanPresentIDs(rows *sql.Rows, present map[string]bool) (retErr error) {
+	defer func() {
+		if cerr := rows.Close(); cerr != nil && retErr == nil {
+			retErr = fmt.Errorf("closing walk presence rows: %w", cerr)
+		}
+	}()
+	for rows.Next() {
+		var id string
+		if err := rows.Scan(&id); err != nil {
+			return fmt.Errorf("scanning walk presence row: %w", err)
+		}
+		present[id] = true
+	}
+	if err := rows.Err(); err != nil {
+		return fmt.Errorf("iterating walk presence rows: %w", err)
 	}
 	return nil
 }

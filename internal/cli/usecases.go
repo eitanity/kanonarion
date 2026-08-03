@@ -201,10 +201,21 @@ type ScanWalkUseCase interface {
 	// decides whether to serve it; Scan itself always measures.
 	ReusableRun(ctx context.Context, walkID string) (vulndomain.WalkScanRun, bool, error)
 
+	// ServeReusableRun witnesses in the assurance log that a stored run was
+	// handed back instead of measured. It is separate from ReusableRun because
+	// asking whether a run could serve is not serving it: some callers ask only
+	// to narrate, and some ask and then discard the answer.
+	ServeReusableRun(run vulndomain.WalkScanRun, surface string) error
+
 	// RefreshSnapshot brings the advisory database up to date for the named walk,
 	// downloading the body only when something that walk is judged on has
 	// changed, and reports what it established.
 	RefreshSnapshot(ctx context.Context, walkID string) (vulnapp.SnapshotRefresh, error)
+
+	// JudgeToolchain derives whether the stored snapshot's toolchain key covers
+	// the toolchain version a walk was built under. It reads the stored snapshot
+	// and records nothing.
+	JudgeToolchain(ctx context.Context, snapshot vulndomain.DatabaseSnapshot, toolchainVersion string) (vulndomain.ToolchainJudgment, error)
 }
 
 // RescanWalkUseCase is the interface for re-gating a walk against a new snapshot.
@@ -216,7 +227,11 @@ type RescanWalkUseCase interface {
 type QueryVulnUseCase interface {
 	GetRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, snapshot vulndomain.DatabaseSnapshot) (vulndomain.VulnerabilityRecord, bool, error)
 	GetLatestRecord(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (vulndomain.VulnerabilityRecord, bool, error)
-	GetLatestRecordForWalk(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, walkID string) (vulndomain.VulnerabilityRecord, bool, error)
+	// ListRecordsForModuleInWalk returns a walk's candidate records for a
+	// coordinate, unranked. Every caller ranks them within a named frame — see
+	// recordInWalkFrame — because a walk's candidates span every frame the
+	// coordinate was measured in, including other projects' builds.
+	ListRecordsForModuleInWalk(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, walkID string) ([]vulndomain.VulnerabilityRecord, error)
 	ListRecordsForModule(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]vulndomain.VulnerabilityRecord, error)
 	ListRecordsByFindingID(ctx context.Context, findingID, walkID string) ([]vulndomain.VulnerabilityRecord, error)
 	ListRecordsForRun(ctx context.Context, runID string) ([]vulndomain.VulnerabilityRecord, error)
@@ -227,6 +242,13 @@ type QueryScanRunsUseCase interface {
 	GetRun(ctx context.Context, id string) (vulndomain.WalkScanRun, bool, error)
 	ListRunsForWalk(ctx context.Context, walkID string) ([]vulndomain.WalkScanRun, error)
 	ListAllRuns(ctx context.Context) ([]vulndomain.WalkScanRun, error)
+	// UnresolvedWalks names the walks among runs that the store no longer holds,
+	// so a listing can say that those runs' inputs cannot be resolved instead of
+	// printing a walk id that looks like a live reference.
+	UnresolvedWalks(ctx context.Context, runs []vulndomain.WalkScanRun) (map[string]bool, error)
+	// WalkPresent answers the same question for a walk a caller named directly,
+	// where there may be no run to derive the id from.
+	WalkPresent(ctx context.Context, walkID string) (bool, error)
 	ListSnapshots(ctx context.Context) ([]vulndomain.DatabaseSnapshot, error)
 	GetLatestSnapshot(ctx context.Context) (vulndomain.DatabaseSnapshot, bool, error)
 }

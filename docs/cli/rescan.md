@@ -29,6 +29,8 @@ kanonarion vuln-scan-rescan <walk-id> [flags]
 | `--operator` | `$USER` | Operator name recorded in the scan run |
 | `--snapshot-source` | _(fresh)_ | Pin to a specific snapshot source (requires `--snapshot-version`) |
 | `--snapshot-version` | _(fresh)_ | Pin to a specific snapshot version (requires `--snapshot-source`) |
+| `--policy` | _(search upward for `.kanonarion/policy.yaml`)_ | Path to depth policy YAML |
+| `--no-progress` | `false` | Suppress stderr progress output (the throttled heartbeat and any per-module progress lines); results and warnings are unaffected |
 | `--log-level` | `warn` | Log level: `debug\|info\|warn\|error` |
 
 **Examples**
@@ -49,12 +51,25 @@ kanonarion vuln-scan-rescan 01KQDBVW092ER1HNXZ60X27CMD \
 
 **Output**
 
+A re-scan forces every module in the walk through the scanner, so it narrates as
+it goes. The narration — the opening line and one line per module, in the same
+format `vuln-scan` uses — goes to **stderr**; the result goes to **stdout**.
+Redirecting stdout gives the result alone.
+
 ```
-Re-scanning walk 01KQDBVW092ER1HNXZ60X27CMD...
-Re-scan completed: Complete, Affected (2)
-Run ID: vscan-01KQDBVW092ER1HNXZ60X27CMD-1711929600
-Snapshot: osv.dev/go@v2024-04-01T00-00-00
+$ kanonarion vuln-scan-rescan 01KQDBVW092ER1HNXZ60X27CMD
+Re-scanning walk 01KQDBVW092ER1HNXZ60X27CMD...          # stderr
+  [1/3] github.com/gin-gonic/gin@v1.6.2 — Affected      # stderr
+  [2/3] github.com/spf13/cobra@v1.8.1 — Clean           # stderr
+  [3/3] golang.org/x/net@v0.0.0-20210405180319 — Clean  # stderr
+Re-scan completed: Complete, Affected (2)               # stdout
+Run ID: vscan-01KQDBVW092ER1HNXZ60X27CMD-1711929600     # stdout
+Snapshot: osv.dev/go@v2024-04-01T00-00-00               # stdout
 ```
+
+`--no-progress` silences the opening line and the per-module lines. Warnings,
+diagnostics and the result are unaffected, so a silenced run still says what went
+wrong.
 
 ---
 

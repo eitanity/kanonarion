@@ -49,7 +49,21 @@ func isLocalPath(arg string) bool {
 
 // runContextLocal builds a local workspace context using progressive analysis.
 // The default level is import (go list -json); --symbol enables type-checking.
+//
+// A working-tree context is a different document from a stored-record context:
+// it reports the tree's imported modules and has no interface, call-graph or
+// example sections. The flags that shape those sections, and the flags that
+// select modules out of a walk, are therefore refused here by name rather than
+// parsed and dropped — every one of them previously left the output
+// byte-identical.
 func runContextLocal(ctx context.Context, dir string, f contextFlags, stdout, stderr io.Writer) error {
+	refused := append(contextWalkOnlyFlags(f), contextRenderFlags(f)...)
+	refused = append(refused, contextGoModOnlyFlags(f)...)
+	refused = append(refused, contextStreamFlag(f)...)
+	if err := refuseInapplicableFlags("context <local path>", refused); err != nil {
+		return err
+	}
+
 	abs, err := filepath.Abs(dir)
 	if err != nil {
 		return fmt.Errorf("resolving path %q: %w", dir, err)
@@ -100,6 +114,13 @@ func runContextLocal(ctx context.Context, dir string, f contextFlags, stdout, st
 			return fmt.Errorf("local reachability: %w", err)
 		}
 		out.Reachability = &reach
+	}
+
+	// --size-only asks what this document costs before pulling it. The answer
+	// measures the same JSON the --json path writes — the one definition of
+	// "context size" every surface of the command reports.
+	if f.sizeOnly {
+		return printDocumentSize(out, jsonOut, stdout)
 	}
 
 	if !jsonOut {
@@ -154,8 +175,16 @@ func printLocalContextText(out localContextOutput, stdout io.Writer) error {
 // context. A populated Notice (no stored findings) is surfaced verbatim so the
 // caller learns which command would populate findings; an analysed-but-empty
 // result is reported as such rather than as a confident "no findings".
+//
+// The seed restriction prints above both, and before the early return: it
+// qualifies "no stored findings" exactly as much as it qualifies a list of them,
+// and it is on the "nothing found" path that a silent narrowing would mislead
+// most.
 func printLocalReachabilityText(w *errWriter, r *reachabilityOutput) {
 	w.printf("  Reachability:\n")
+	if r.SeedRestriction != "" {
+		w.printf("    notice: %s\n", r.SeedRestriction)
+	}
 	if r.Notice != "" {
 		w.printf("    %s\n", r.Notice)
 		return

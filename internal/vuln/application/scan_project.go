@@ -58,6 +58,15 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 		uc.logger.Error("project-rooted scan failed", "root", root, "error", err)
 		return uc.fillProjectFault(ctx, root, allCoords, params, snapshot, closure, requested, out, domain.StatusScanFailed, "", "", err.Error())
 	}
+	// A scan that extracted its own advisory database counted it. Rebind the
+	// local snapshot — not the caller's, which the run row already names — so
+	// every record built below states the database this analysis consulted.
+	counted, cerr := snapshotCountingAdvisories(*snapshot, result.AdvisoryCount)
+	if cerr != nil {
+		return cerr
+	}
+	snapshot = &counted
+
 	surface := result.AnalysisSurface
 	if surface == "" {
 		surface = requested

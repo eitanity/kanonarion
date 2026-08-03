@@ -56,11 +56,22 @@ func (s *Scanner) Scan(ctx context.Context, req ports.ScanRequest) (domain.Vulne
 	}
 
 	// 2. Prepare vulnerability database argument.
-	dbArg, dbCleanup, err := s.prepareDBArg(ctx, snapshot, dbDir)
+	dbArg, advisories, dbCleanup, err := s.prepareDBArg(ctx, snapshot, dbDir)
 	if err != nil {
 		return domain.VulnerabilityRecord{}, err
 	}
 	defer dbCleanup()
+
+	// When this scan extracted its own database it also counted it, and the count
+	// belongs on the snapshot every record below names — otherwise a verdict
+	// reached against a database of four thousand advisories is indistinguishable
+	// from one reached against three, and from a record written before the count
+	// existed at all. The fault record above is deliberately outside this: it was
+	// sealed before any database was prepared, so there is nothing to state.
+	snapshot, err = snapshotCountingAdvisories(snapshot, advisories)
+	if err != nil {
+		return domain.VulnerabilityRecord{}, err
+	}
 
 	govulncheckBin, err := lookupGovulncheck()
 	if err != nil {
@@ -240,7 +251,7 @@ func (s *Scanner) prepareScanDir(
 		// real: the module is analysable, and treating it as permanently
 		// unscannable would leave its advisories matched by coordinate alone,
 		// with no reachability, for a condition kanonarion can lift.
-		root, skipped, werr := writeSynthesisedGoMod(scanDir, coord, toolchainGoVersion(ctx, env), buildList)
+		root, skipped, werr := writeSynthesisedGoMod(scanDir, coord, toolchainGoVersion(ctx, scanDir, env), buildList)
 		if len(skipped) > 0 {
 			// The require set was assembled from less than the whole module. Name
 			// the files so a later unresolved-package failure is attributable here
@@ -310,28 +321,29 @@ func locateGoMod(root string) (string, bool) {
 // database independently, and a decision enforced at only one of them is
 // enforced only while the other stays unused.
 //
-// The count is not attached to the snapshot on this path. The snapshot arrives
-// by value from a caller that has already decided what the record will name, and
-// a reading taken after that decision would be a fact the record cannot carry.
-// The walk's pre-extraction — where the snapshot is still the run's own and every
-// record in the run is built from it — is where the count is recorded.
-func (s *Scanner) prepareDBArg(ctx context.Context, snapshot domain.DatabaseSnapshot, dbDir string) (string, func(), error) {
+// The advisory count this path measures is returned to the caller, which carries
+// it onto the snapshot the record names. It is a positive number only when this
+// function extracted and counted a database itself; the pre-extracted dir was
+// already counted by the walk that supplied it, and the live-database fallback
+// is a set nothing here has read, so both report zero — unmeasured, which is
+// what the snapshot's own invariant admits.
+func (s *Scanner) prepareDBArg(ctx context.Context, snapshot domain.DatabaseSnapshot, dbDir string) (string, int, func(), error) {
 	noop := func() {}
 	s.logger.Info("vuln-scan: preparing vulnerability database", "snapshot", snapshot.Version())
 	if dbDir != "" {
 		s.logger.Info("vuln-scan: using pre-extracted local database", "path", dbDir)
-		return "file://" + dbDir, noop, nil
+		return "file://" + dbDir, 0, noop, nil
 	}
 	if s.vulnStore == nil {
-		return "https://vuln.go.dev", noop, nil
+		return "https://vuln.go.dev", 0, noop, nil
 	}
 	snapshotContent, err := s.vulnStore.GetDatabaseSnapshot(ctx, snapshot)
 	if err != nil {
 		if errors.Is(err, ports.ErrSnapshotIntegrity) {
-			return "", noop, fmt.Errorf("preparing the advisory database: %w", ports.SnapshotIntegrityAbort(snapshot, err))
+			return "", 0, noop, fmt.Errorf("preparing the advisory database: %w", ports.SnapshotIntegrityAbort(snapshot, err))
 		}
 		s.logger.Warn("vuln-scan: failed to retrieve snapshot, falling back to live DB", "error", err)
-		return "https://vuln.go.dev", noop, nil
+		return "https://vuln.go.dev", 0, noop, nil
 	}
 	defer func() {
 		if cerr := snapshotContent.Close(); cerr != nil {
@@ -341,25 +353,45 @@ func (s *Scanner) prepareDBArg(ctx context.Context, snapshot domain.DatabaseSnap
 	extractedDir, err := os.MkdirTemp("", "kanonarion-vulndb-*")
 	if err != nil {
 		s.logger.Warn("vuln-scan: failed to create temp dir for snapshot, falling back to live DB", "error", err)
-		return "https://vuln.go.dev", noop, nil
+		return "https://vuln.go.dev", 0, noop, nil
 	}
 	if err := s.extractZip(ctx, snapshotContent, extractedDir); err != nil {
 		s.logger.Warn("vuln-scan: failed to extract snapshot, falling back to live DB", "error", err)
 		_ = os.RemoveAll(extractedDir)
-		return "https://vuln.go.dev", noop, nil
+		return "https://vuln.go.dev", 0, noop, nil
 	}
 	count, err := vulndbdir.CountAdvisories(extractedDir)
 	if err != nil {
 		_ = os.RemoveAll(extractedDir)
-		return "", noop, fmt.Errorf("measuring the extracted advisory database: %w", err)
+		return "", 0, noop, fmt.Errorf("measuring the extracted advisory database: %w", err)
 	}
 	if count == 0 {
 		_ = os.RemoveAll(extractedDir)
-		return "", noop, fmt.Errorf("preparing the advisory database: %w", ports.EmptySnapshotAbort(snapshot, count))
+		return "", 0, noop, fmt.Errorf("preparing the advisory database: %w", ports.EmptySnapshotAbort(snapshot, count))
 	}
 	s.logger.Info("vuln-scan: using pinned local database", "path", extractedDir, "advisories", count)
 	s.logMem(ctx, "db_extracted")
-	return "file://" + extractedDir, func() { _ = os.RemoveAll(extractedDir) }, nil
+	return "file://" + extractedDir, count, func() { _ = os.RemoveAll(extractedDir) }, nil
+}
+
+// snapshotCountingAdvisories returns snapshot carrying the advisory count a
+// database preparation measured, and snapshot unchanged when it measured none.
+//
+// Zero is the unmeasured reading, not a database of zero advisories: an empty
+// database is refused at the seam that would have counted it, so the only way to
+// arrive here with nothing is to have consulted a database this process did not
+// open (a dir another stage extracted and counted, or the live service). The
+// domain refuses a non-positive count for the same reason, so the guard here is
+// what keeps that refusal from turning an unmeasured scan into an error.
+func snapshotCountingAdvisories(snapshot domain.DatabaseSnapshot, count int) (domain.DatabaseSnapshot, error) {
+	if count <= 0 {
+		return snapshot, nil
+	}
+	counted, err := snapshot.WithAdvisoryCount(count)
+	if err != nil {
+		return domain.DatabaseSnapshot{}, fmt.Errorf("recording the advisory count on the snapshot: %w", err)
+	}
+	return counted, nil
 }
 
 // scanEnv builds the process environment for the Go toolchain and govulncheck.

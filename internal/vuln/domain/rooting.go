@@ -95,6 +95,29 @@ func (r Rooting) RootTarget() string {
 	return target
 }
 
+// IsRootedAtPath reports whether the frame is an analysis rooted at the module
+// path, at whatever version the root was recorded as.
+//
+// It is the version-blind form of IsRootedAt, and it exists for the one reader
+// that holds a module path and no version: a probe of a working tree. A tree's
+// go.mod declares a path and nothing else — the main module of a Go build has no
+// version — while the walks that scanned it recorded a root coordinate whose
+// version is whatever the walk assigned (`@local` for a project walk, a tag for
+// a module walk). Comparing the two as coordinates would say "not this tree" for
+// every record of this very tree, so the path is what is compared.
+//
+// A frame that names no target answers false, for the reason IsRootedAt gives:
+// reading a rootless "target-rooted" as this path would assert a root the record
+// never recorded.
+func (r Rooting) IsRootedAtPath(path string) bool {
+	target := r.RootTarget()
+	if target == "" || path == "" {
+		return false
+	}
+	rootPath, _, _ := strings.Cut(target, "@")
+	return rootPath == path
+}
+
 // IsRootedAt reports whether the frame is an analysis rooted at coord itself —
 // the module is its own root, reached from no consumer.
 //

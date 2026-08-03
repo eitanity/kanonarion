@@ -57,6 +57,7 @@ import (
 	stdlibtoolchain "github.com/eitanity/kanonarion/internal/stdlib/adapters/toolchainenv"
 	stdlibbridge "github.com/eitanity/kanonarion/internal/stdlib/adapters/walkbridge"
 	stdlibapp "github.com/eitanity/kanonarion/internal/stdlib/application"
+	stdlibports "github.com/eitanity/kanonarion/internal/stdlib/ports"
 	vensqlite "github.com/eitanity/kanonarion/internal/vendortree/adapters/store/sqlite"
 	venapp "github.com/eitanity/kanonarion/internal/vendortree/application"
 	vulnsqlite "github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
@@ -98,8 +99,10 @@ func Migrations() []sqlitestore.Migration {
 // googlesource commit resolver, the licence detector, and the version-keyed
 // fact cache. It is returned as a walk StdlibAcquirer via the bridge so the
 // resolver depends only on the narrow port. Both composition roots (the driver
-// here and the CLI container) share it so stdlib custody behaves identically.
-func NewStdlibAcquirer(db sqlitestore.DB, blobs fetchports.BlobStore, clk fetchports.Clock, logger *slog.Logger) *stdlibbridge.Bridge {
+// here and the CLI container) share it so stdlib custody behaves identically —
+// including the assurance log: audit is wired here rather than at each call site
+// so neither root can be the quieter one.
+func NewStdlibAcquirer(db sqlitestore.DB, blobs fetchports.BlobStore, clk fetchports.Clock, audit stdlibports.AuditSink, logger *slog.Logger) *stdlibbridge.Bridge {
 	godev := stdlibgodev.New()
 	acquirer := stdlibapp.NewAcquirer(
 		godev, godev,
@@ -107,7 +110,7 @@ func NewStdlibAcquirer(db sqlitestore.DB, blobs fetchports.BlobStore, clk fetchp
 		stdliblic.New(licdet.New()),
 		stdlibsqlite.New(db),
 		blobs, clk, logger,
-	)
+	).WithAudit(audit)
 	return stdlibbridge.New(acquirer)
 }
 
@@ -118,14 +121,14 @@ func NewStdlibAcquirer(db sqlitestore.DB, blobs fetchports.BlobStore, clk fetchp
 // the same licence detector and version-keyed fact cache the online path uses
 // classify and persist the result. No network client is wired — the offline path
 // performs no I/O beyond the local filesystem. goBinary may be empty (PATH "go").
-func NewOfflineStdlibAcquirer(db sqlitestore.DB, goBinary string, clk fetchports.Clock, logger *slog.Logger) *stdlibbridge.Bridge {
+func NewOfflineStdlibAcquirer(db sqlitestore.DB, goBinary string, clk fetchports.Clock, audit stdlibports.AuditSink, logger *slog.Logger) *stdlibbridge.Bridge {
 	acquirer := stdlibapp.NewLocalAcquirer(
 		stdlibtoolchain.New(goBinary, logger),
 		stdliblocalsrc.New(),
 		stdliblic.New(licdet.New()),
 		stdlibsqlite.New(db),
 		clk, logger,
-	)
+	).WithAudit(audit)
 	return stdlibbridge.New(acquirer)
 }
 
@@ -186,7 +189,7 @@ func NewQueries(storeRoot string) (*Queries, func() error, error) {
 		Examples:   exapp.NewQueryExamplesUseCase(exsqlite.New(db)),
 		Extraction: extractapp.NewQueryExtractionUseCase(extstore.New(db)),
 		Vuln:       vulnapp.NewQueryVulnUseCase(vulnsqlite.New(db)),
-		ScanRuns:   vulnapp.NewQueryScanRunsUseCase(vulnsqlite.New(db)),
+		ScanRuns:   vulnapp.NewQueryScanRunsUseCase(vulnsqlite.New(db), walkStore),
 		SBOM:       sbomapp.NewQuerySBOMUseCase(sbomstore.New(db)),
 		Directives: dirapp.NewQueryDirectivesUseCase(dirsqlite.New(db)),
 		GoDebug:    gdapp.NewQueryGoDebugUseCase(gdsqlite.New(db)),
@@ -309,7 +312,12 @@ func NewDriver(storeRoot string) (*Driver, func() error, error) {
 		proxy, fetchvcs.New(), blobs, factStore,
 		fetchsumdb.New(filepath.Join(storeRoot, "sumdb")),
 		clk, stopwatch, "", logger,
-	).WithSigner(noopsigner.New(), factStore)
+	).WithSigner(noopsigner.New(), factStore).
+		// The write side emits a refused demotion (or a permitted downgrade) into
+		// the same append-only log the writes go to. Wired here as well as in the
+		// CLI so the two paths append identically: a library consumer's assurance
+		// log is not a quieter one.
+		WithAudit(factStore)
 
 	kanonarionBinary, err := os.Executable()
 	if err != nil {
@@ -358,25 +366,25 @@ func newLocalWalkExtract(
 	localFetcher := walklocalfs.New(blobs, factStore, clk)
 	resolver := walkapp.NewGraphResolver(walkgomod.New(), fetcher, blobs, clk, "", logger).
 		WithBuildListResolver(walkbuildlist.New("", logger)).
-		WithStdlibAcquirer(NewStdlibAcquirer(db, blobs, clk, logger), false)
+		WithStdlibAcquirer(NewStdlibAcquirer(db, blobs, clk, factStore, logger), false)
 	walker := walkapp.NewWalker(resolver, fetcher, localFetcher, clk, stopwatch, 0, logger)
-	executeWalkUC := walkapp.NewExecuteWalkUseCase(walker, walkStore, "", "", logger)
+	executeWalkUC := walkapp.NewExecuteWalkUseCase(walker, walkStore, "", "", logger).WithAudit(factStore)
 
 	// ---- extraction pipeline (full built-in stage set) ----
 	licExtractUC := licapp.NewExtractLicenseUseCase(licapp.Config{
 		Facts: factStore, Blobs: blobs, Licenses: licStore,
 		Detector: licdet.New(), Clock: clk, Stopwatch: stopwatch, Logger: logger,
-	})
+	}).WithAudit(factStore)
 	ifaceExtractUC := ifaceapp.NewExtractInterfaceUseCase(ifaceapp.Config{
 		Facts: factStore, Blobs: blobs, Store: ifaceStore,
 		Extractor: ifaceext.New(stagePipelineVersion, clk), Clock: clk, Stopwatch: stopwatch, Logger: logger,
-	})
+	}).WithAudit(factStore)
 	cgSubprocessExec := extextractor.NewOsSubprocessExecutor(kanonarionBinary)
 	exExtractUC := exapp.NewExtractExampleUseCase(exapp.Config{
 		Facts: factStore, Blobs: blobs, Examples: exStore,
 		Parser: exgoast.New(),
 		Clock:  clk, Stopwatch: stopwatch, Logger: logger,
-	})
+	}).WithAudit(factStore)
 	stages := extstages.New()
 	extractUC := extractapp.NewExtractUseCase(extractapp.Config{
 		Runs:      extStore,
@@ -392,7 +400,7 @@ func newLocalWalkExtract(
 			"example":   stagePipelineVersion,
 		},
 		Logger: logger,
-	})
+	}).WithAudit(factStore)
 
 	return driver.NewLocalWalkExtractUseCase(executeWalkUC, extractUC, stages.Stages())
 }

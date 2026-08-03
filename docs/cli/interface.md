@@ -152,6 +152,16 @@ tables:
 The database schema is versioned via the shared `schema_migrations` table
 (migration version 4).
 
+## Assurance log
+
+Each persisted generation appends one `interface_extracted` event to the
+append-only audit log (`{store-root}/audit.jsonl`): module, version, pipeline
+version, overall status, package count, the record's content hash, the identity
+of the artefact the extraction read and the content hash of the fetch record that
+supplied it. A failed or partial extraction carries its recorded reason as
+`failure_detail`. A cache hit re-serves the stored record without re-extracting,
+so it appends nothing; `--force` re-extracts and appends.
+
 ## Relation to other stages
 
 - **Requires:** `kanonarion fetch` - the module zip must exist in the blob store.

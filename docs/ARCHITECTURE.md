@@ -196,8 +196,8 @@ and cgo-crypto usage (`adapters/scanner/gosrc`).
 
 **local** - ingests the local working tree so `callers`/`callees` resolve
 internal symbols and reachability can be probed against uncommitted code. Its
-adapters wrap the Go tooling directly (`importer/golist`, `workspace/goast`,
-`symbols/gopackages`, `probe/builder`, `snapshot/walkdir`). Local source
+adapters wrap the Go tooling directly (`importer/golist`, `symbols/gopackages`,
+`probe/builder`, `snapshot/walkdir`). Local source
 analysis is intentionally **never cached** - the working tree mutates, so each
 run recomputes fresh.
 
@@ -317,6 +317,67 @@ records what was *resolved* (`walk_completed`: walk id, root, scope
 that bound every downstream verdict in the append-only assurance log, not only
 in a mutable record. Each is emitted only after a successful, freshly computed
 result is persisted; cache hits re-serve without re-emitting.
+
+Call graph extraction records what was *analysed* (`callgraph_extracted`:
+module, version, pipeline version, completeness level, overall status, analysis
+source, node/edge counts, content hash, plus the artefact identity or worktree
+digest the analysis read). It covers both write paths - the fetched-artefact
+route and the working-tree route `kanonarion local` takes - on the same terms:
+one event per persisted generation, nothing on a cache hit. It is what every
+reachability and capability answer is derived from, and without it a store write
+left no trace at all, so a stable audit line count read as "nothing ran".
+
+Interface and example extraction record what was *read out of the source*
+(`interface_extracted`: module, version, pipeline version, overall status,
+package count, content hash, plus the artefact identity and the fetch record's
+content hash; `examples_extracted`: the same identifying fields with example and
+parse-failure counts). Both state a `failure_detail` when the record carries a
+reason. One event per persisted generation, nothing on a cache hit.
+
+The extraction orchestrator records the *campaign* those per-stage events belong
+to (`extraction_run_completed`: run id, walk id, requested stages, module count,
+per-stage outcome counts, overall status, content hash). It writes a run record
+on every outcome - including a cancelled one - so it has no cache branch and
+every run appends. Without it, a batch of stage events could not be told apart
+from a series of single-module re-extractions.
+
+Standard-library custody records that a *measurement was taken*
+(`stdlib_custody_recorded`: toolchain version, acquisition route (`godev` /
+`local-toolchain`), the verification anchors that acquisition established, the
+artefact identity it was taken over, and the measurement's content hash). Both
+acquisition routes emit on the same terms. The payload deliberately omits the
+verification status, the published checksum and the licence: the event
+*witnesses* that a custody record was written and by which route, and the record
+carries the claims - the content hash is what reaches them. A cache hit re-serves
+without appending, and a run that could not establish custody at all wrote no
+record and so appends nothing, since an absence is not an observation.
+
+SBOM generation records what *left the building*. It is the only artefact
+kanonarion hands to someone else, so both halves are logged: `sbom_generated`
+(record id, walk, format, pipeline version, the document's content hash, and
+whether the creation timestamp was caller-supplied) for a document produced and
+persisted, and `sbom_served` (the record served plus the identity that requested
+*this* serving) for a stored document handed back from the cache. Two types, not
+one, because a produced document and a re-served one are different facts and
+"how often has this gone out" needs both. A `--package` run is ephemeral - no
+cache lookup, nothing persisted - and appends nothing, since the events state
+that a record exists.
+
+The advisory database snapshot records what the findings are *judged against*
+(`advisory_snapshot_recorded`: source, that database's own generation of itself,
+the retrieval instant, the content identity of the persisted bytes, and the
+acquisition route - `walk_scan`, `module_scan`, `advisory_refresh`,
+`walk_rescan`). Every persist site emits, so an advisory set is witnessed once
+by whichever run fetched it. It states nothing about the advisories themselves,
+their count, or any module's standing: those are the snapshot's and the scan
+records' claims, reachable through the content identity. A run that reuses a
+stored snapshot appends nothing - reuse is not an acquisition, and dating an
+earlier arrival to this run would report an event that never happened.
+
+Both composition roots wire the same sinks. The CLI container and the library
+composition root behind `pkg/kanonarion` append identical events for the same
+operation; a consumer driving the pipeline as a library does not get a quieter
+assurance log than one driving it from the command line.
 
 Walk and every extraction record verify their content hash on every read;
 mismatches are typed integrity errors that callers distinguish from not-found.

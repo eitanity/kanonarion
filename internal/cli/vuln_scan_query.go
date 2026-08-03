@@ -15,6 +15,22 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// A scan run names the walk it analysed, and nothing ties the two rows
+// together: a migration that purged walks left runs behind, and their findings
+// survive while the statement of what was scanned — at which versions, from
+// which root — does not. Such a run is still evidence that a scan happened, so
+// it is listed; what it must never do is render a walk id that reads as a live
+// reference.
+//
+// The two phrasings share the leading clause so one grep finds every surface.
+const unresolvableInputsShort = "inputs unresolvable: walk absent from this store"
+
+// unresolvableInputsNote names the walk, for surfaces where the id is not
+// already on the line the note joins.
+func unresolvableInputsNote(walkID string) string {
+	return fmt.Sprintf("inputs unresolvable: walk %s absent from this store", walkID)
+}
+
 func newVulnScanListCmd(stdout, stderr io.Writer) *cobra.Command {
 	var limit int
 
@@ -63,6 +79,12 @@ func runScanList(ctx context.Context, walkID string, limit int, uc QueryScanRuns
 	if limit > 0 && len(runs) > limit {
 		runs = runs[:limit]
 	}
+	// Derived after the limit is applied: the probe only has to classify the runs
+	// this invocation will print, and it is one indexed read over their walks.
+	unresolved, uerr := uc.UnresolvedWalks(ctx, runs)
+	if uerr != nil {
+		return fmt.Errorf("listing scan runs: %w", uerr)
+	}
 	if jsonOut {
 		type entry struct {
 			ID          string `json:"id"`
@@ -70,10 +92,18 @@ func runScanList(ctx context.Context, walkID string, limit int, uc QueryScanRuns
 			Status      string `json:"status"`
 			CompletedAt string `json:"completed_at"`
 			Reason      string `json:"reason,omitempty"`
+			// InputsUnresolvable states, when present, that the walk this run
+			// names is gone. Absent on a run whose walk resolves, so an existing
+			// consumer sees no change.
+			InputsUnresolvable string `json:"inputs_unresolvable,omitempty"`
 		}
 		out := make([]entry, 0, len(runs)+len(unreadable))
 		for _, r := range runs {
-			out = append(out, entry{r.ID, r.WalkID, string(r.OverallStatus), isoTime(r.CompletedAt), ""})
+			e := entry{ID: r.ID, WalkID: r.WalkID, Status: string(r.OverallStatus), CompletedAt: isoTime(r.CompletedAt)}
+			if unresolved[r.WalkID] {
+				e.InputsUnresolvable = unresolvableInputsNote(r.WalkID)
+			}
+			out = append(out, e)
 		}
 		// The unreadable rows join the same array rather than a section of their
 		// own: a caller that reads this output as "the runs in the store" must
@@ -93,8 +123,12 @@ func runScanList(ctx context.Context, walkID string, limit int, uc QueryScanRuns
 		return nil
 	}
 	for _, r := range runs {
-		_, _ = fmt.Fprintf(stdout, "%-26s  walk=%-26s  status=%-12s  %s\n",
+		line := fmt.Sprintf("%-26s  walk=%-26s  status=%-12s  %s",
 			r.ID, r.WalkID, string(r.OverallStatus), r.CompletedAt.UTC().Format("2006-01-02T15:04:05Z"))
+		if unresolved[r.WalkID] {
+			line += "  " + unresolvableInputsShort
+		}
+		_, _ = fmt.Fprintln(stdout, line)
 	}
 	writeUnreadableRuns(stdout, unreadable)
 	return nil
@@ -147,6 +181,10 @@ type scanShowJSON struct {
 	ScanFailures     []scanRecordFault    `json:"scan_failures,omitempty"`
 	ReadErrors       []scanRecordFault    `json:"read_errors,omitempty"`
 	MissingRecords   []string             `json:"missing_records,omitempty"`
+	// InputsUnresolvable states, when present, that the walk this run names is
+	// gone: the findings below stand, but what was scanned cannot be recovered
+	// from this store. Absent on a run whose walk resolves.
+	InputsUnresolvable string `json:"inputs_unresolvable,omitempty"`
 }
 
 // scanRecordFault is a coordinate whose VulnerabilityRecord could not be read,
@@ -192,6 +230,11 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("scan run not found: %s", runID)}
 	}
 
+	walkPresent, perr := ucRuns.WalkPresent(ctx, run.WalkID)
+	if perr != nil {
+		return fmt.Errorf("getting scan run: %w", perr)
+	}
+
 	summary := buildScanAffectedModules(ctx, run, ucVuln)
 	affected := summary.affected
 	unscannable := summary.unscannable
@@ -214,6 +257,9 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 			ReadErrors:       summary.readErrors,
 			MissingRecords:   summary.missing,
 		}
+		if !walkPresent {
+			out.InputsUnresolvable = unresolvableInputsNote(run.WalkID)
+		}
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(out); err != nil {
@@ -223,7 +269,13 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 	}
 
 	_, _ = fmt.Fprintf(stdout, "ID:          %s\n", run.ID)
-	_, _ = fmt.Fprintf(stdout, "Walk ID:     %s\n", run.WalkID)
+	if walkPresent {
+		_, _ = fmt.Fprintf(stdout, "Walk ID:     %s\n", run.WalkID)
+	} else {
+		// Stated on the line the reference is rendered on, so a reader cannot take
+		// the id for a resolvable one without also reading that it is not.
+		_, _ = fmt.Fprintf(stdout, "Walk ID:     %s (%s)\n", run.WalkID, unresolvableInputsShort)
+	}
 	_, _ = fmt.Fprintf(stdout, "Status:      %s\n", run.OverallStatus)
 	_, _ = fmt.Fprintf(stdout, "Operator:    %s\n", run.Operator)
 	_, _ = fmt.Fprintf(stdout, "Started:     %s\n", run.StartedAt.UTC().Format(time.RFC3339))
@@ -445,6 +497,13 @@ func runScanHistory(ctx context.Context, walkID string, jsonOut bool, uc QuerySc
 	if err != nil && !survivable {
 		return fmt.Errorf("listing scan runs: %w", err)
 	}
+	// The walk is named by the caller here, so it is asked about directly rather
+	// than derived from the runs: a walk that is gone owes the same statement
+	// even when it has no readable run left to hang it on.
+	walkPresent, perr := uc.WalkPresent(ctx, walkID)
+	if perr != nil {
+		return fmt.Errorf("listing scan runs: %w", perr)
+	}
 	// The empty case is answered on the caller's own channel: under --json an
 	// empty array, never a human sentence that fails to parse. Only the text
 	// path gets the prose.
@@ -458,12 +517,18 @@ func runScanHistory(ctx context.Context, walkID string, jsonOut bool, uc QuerySc
 		// into the run array, whose elements are whole WalkScanRuns: an entry
 		// that is not one would have to be faked, and a fabricated run is a
 		// worse answer than an omitted one. The key is absent when there are
-		// none, so an existing consumer sees no change.
-		if len(unreadable) > 0 {
+		// none, so an existing consumer sees no change. The unresolvable-inputs
+		// statement joins on the same terms and for the same reason: it is a fact
+		// about the walk, not a field of any run.
+		if len(unreadable) > 0 || !walkPresent {
 			payload := struct {
-				Runs       []vuldomain.WalkScanRun `json:"runs"`
-				Unreadable []unreadableRunEntry    `json:"unreadable"`
+				Runs               []vuldomain.WalkScanRun `json:"runs"`
+				Unreadable         []unreadableRunEntry    `json:"unreadable,omitempty"`
+				InputsUnresolvable string                  `json:"inputs_unresolvable,omitempty"`
 			}{Runs: runs, Unreadable: unreadable}
+			if !walkPresent {
+				payload.InputsUnresolvable = unresolvableInputsNote(walkID)
+			}
 			if err := enc.Encode(payload); err != nil {
 				return fmt.Errorf("encoding scan runs: %w", err)
 			}
@@ -475,6 +540,9 @@ func runScanHistory(ctx context.Context, walkID string, jsonOut bool, uc QuerySc
 		return nil
 	}
 
+	if !walkPresent {
+		_, _ = fmt.Fprintf(stdout, "%s\n", unresolvableInputsNote(walkID))
+	}
 	if len(runs) == 0 && len(unreadable) == 0 {
 		_, _ = fmt.Fprintf(stdout, "no scan runs found for walk %s\n", walkID)
 		return nil
@@ -513,17 +581,26 @@ func newVulnScanDiffCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runScanDiff(cmd.Context(), args[0], args[1], jsonOut, ctr.DiffScanRuns, stdout)
+			return runScanDiff(cmd.Context(), args[0], args[1], jsonOut, ctr.DiffScanRuns, ctr.QueryScanRuns, stdout)
 		},
 	}
 
 	return cmd
 }
 
-func runScanDiff(ctx context.Context, runIDA, runIDB string, jsonOut bool, ucDiff DiffScanRunsUseCase, stdout io.Writer) error {
+func runScanDiff(
+	ctx context.Context, runIDA, runIDB string, jsonOut bool,
+	ucDiff DiffScanRunsUseCase, ucRuns QueryScanRunsUseCase, stdout io.Writer,
+) error {
 	diff, err := ucDiff.Diff(ctx, runIDA, runIDB)
 	if err != nil {
 		return fmt.Errorf("computing scan diff: %w", err)
+	}
+	// A diff is a claim about two runs of one walk, so the walk it names carries
+	// the same statement it does everywhere else.
+	walkPresent, perr := ucRuns.WalkPresent(ctx, diff.RunA.WalkID)
+	if perr != nil {
+		return fmt.Errorf("computing scan diff: %w", perr)
 	}
 
 	if jsonOut {
@@ -536,7 +613,11 @@ func runScanDiff(ctx context.Context, runIDA, runIDB string, jsonOut bool, ucDif
 	}
 
 	_, _ = fmt.Fprintf(stdout, "Diff: %s → %s\n", runIDA, runIDB)
-	_, _ = fmt.Fprintf(stdout, "Walk: %s\n\n", diff.RunA.WalkID)
+	if walkPresent {
+		_, _ = fmt.Fprintf(stdout, "Walk: %s\n\n", diff.RunA.WalkID)
+	} else {
+		_, _ = fmt.Fprintf(stdout, "Walk: %s (%s)\n\n", diff.RunA.WalkID, unresolvableInputsShort)
+	}
 
 	if len(diff.NewFindings) == 0 && len(diff.ResolvedFindings) == 0 && len(diff.WithdrawnFindings) == 0 &&
 		len(diff.ReachabilityChanges) == 0 && len(diff.UnresolvedFindings) == 0 {

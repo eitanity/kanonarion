@@ -48,16 +48,16 @@ kanonarion walk --gomod ./go.mod [flags]
 | `--force` | `false` | Re-fetch and re-verify every module in the closure, bypassing the fact-store cache. Wall time scales with the closure size; `per_node_results[].from_cache` will be `false` for every node. |
 | `--allow-partial` | `false` | Exit 0 even when the walk status is partial |
 | `--workers` | `16` | Concurrent fetch workers |
-| `--operator` | `$USER` | Operator identifier |
+| `--operator` | *(unrecorded)* | Operator identifier recorded on the walk record; absent the flag the field is empty. Honoured on both forms; it is provenance only, and the walk's identity excludes it, so two operators walking one unchanged tree still resolve to one walk |
 | `--policy` | _(search for `.kanonarion/policy.yaml`)_ | Path to depth policy YAML |
 | `--gomod` | _(none)_ | Walk this `go.mod` as a project: one record rooted at the local main module. The dependency **scope** is `code` by default. See [`go.mod` walks](#gomod-walks). Defaults to `./go.mod`. |
 | `--tool` | `false` | Scope the project walk to the **tooling** supply chain: the import closure of the `go.mod` `tool` directives (scope `tool`). Mutually exclusive with `--project`. See [Scopes](#scopes-code-tool-complete). |
 | `--project` | `false` | Scope the project walk to the **complete** set: the project's code **and** tooling (the full Go build list, `go list -m all`, scope `complete`). Mutually exclusive with `--tool`. See [Scopes](#scopes-code-tool-complete). |
 | `--shallow` | `false` | Fetch only the target; list its `go.mod` requires without recursing (positional module walk only) |
 | `--skip-vcs-verify` | `false` | Skip git cross-verification (checksum still runs) |
-| `--analyse-local` | `false` | Ingest `replace` targets that point to local directories so callgraph/iface/license can analyse them (requires `--gomod`) |
+| `--analyse-local` | `false` | Ingest `replace` targets that point to local directories so callgraph/iface/license can analyse them. Requires `--gomod`; refused by name on a positional module walk, which has no local source context |
 | `--analyse-root` | `false` | Ingest the project's own working tree so all extraction stages analyse the project's own packages. Re-reads the tree fresh on every run. Requires a `go.mod` walk; incompatible with `--tool` (a tool walk does not cover the project's own packages). See [Analysing the project root](#analysing-the-project-root---analyse-root). |
-| `--stdlib-from-gomod` | `false` | Version the `stdlib` node from the `go.mod` directive, not the live toolchain. See [Standard-library version](#standard-library-version---stdlib-from-gomod). |
+| `--stdlib-from-gomod` | `false` | Version the `stdlib` node from the `go.mod` directive, not the live toolchain. Requires a `go.mod` walk; refused by name on a positional module walk, which has no project `go.mod` to read the directive from. See [Standard-library version](#standard-library-version---stdlib-from-gomod). |
 | `--json` | `false` | Emit the walk record as JSON |
 
 ### `walk-list`
@@ -213,7 +213,9 @@ digests and `go.googlesource.com/go` tag → commit recorded, and its
 into `audit` and `sbom`. The tarball is cached per Go version; `--force`
 re-acquires and re-verifies it, and `--skip-vcs-verify` omits the commit anchor
 (the checksum verification still runs). A fully offline run (`--from-modcache`)
-leaves the node without the custody chain. See [SBOM standard-library chain of
+anchors instead to the local toolchain - digests over `$GOROOT/src` and the
+licence from `$GOROOT/LICENSE`, recorded as `VerifiedLocalToolchain`, with no
+go.dev/dl checksum consulted. See [SBOM standard-library chain of
 custody](sbom.md#standard-library-chain-of-custody).
 
 ## Scope and depth
@@ -435,6 +437,19 @@ append-only assurance log - independent of the mutable walk record in SQLite. On
 `succeeded` walk emits: a `partial` or `cancelled` walk defines no complete
 population to anchor, and a cached succeeded walk (no `--force`) re-serves the
 stored record without re-walking, so neither appends anything.
+
+Each standard-library custody measurement the walk persists appends one
+`stdlib_custody_recorded` event: the toolchain version, the acquisition route
+(`godev` for the published tarball, `local-toolchain` for a `--from-modcache`
+run), the verification anchors that acquisition established (`godev_checksum`,
+`googlesource_commit`, `local_toolchain_source`), the artefact identity it was
+taken over, and the record's content hash. It witnesses the write, not the
+verdict - the custody record itself carries the verification status, the
+published checksum and the licence, and the content hash is what reaches them.
+The tarball is cached per Go version, so a re-used measurement appends nothing
+and `--force` re-acquires and appends again; a run that could not establish
+custody (no network, no probeable toolchain) leaves the node bare and appends
+nothing.
 
 ## Exit codes
 

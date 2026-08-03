@@ -21,26 +21,41 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// vulnScanFlags holds every flag the vuln-scan command registers. They live in
+// one struct, rather than in a local variable each, so that a flag one of the
+// command's three dispatch paths never receives is visible per field rather
+// than only as a missing argument.
+type vulnScanFlags struct {
+	force              bool
+	fresh              bool
+	enableReachability bool
+	callGraphWorkers   int
+	goBinary           string
+	operator           string
+	moduleCoord        string
+	binaryModePrePass  bool
+	tool               bool
+	project            bool
+	gomod              string
+	policyPath         string
+	noVendor           bool
+	noProgress         bool
+}
+
 func newVulnScanCmd(stdout, stderr io.Writer) *cobra.Command {
-	var f commonWalkFlags
-	var force bool
-	var fresh bool
-	var enableReachability bool
-	var callGraphWorkers int
-	var goBinary string
-	var operator string
-	var moduleCoord string
-	var binaryModePrePass bool
-	var tool bool
-	var project bool
-	var gomod string
-	var policyPath string
-	var noVendor bool
-	var noProgress bool
+	var f vulnScanFlags
 
 	cmd := &cobra.Command{
 		Use:   "vuln-scan [walk-id]",
 		Short: "Scan all modules in a walk for vulnerabilities",
+		Long: `Scan every module in a walk against the advisory database.
+
+Beside the result, on stderr, vuln-scan states the toolchain axis: the Go
+toolchain version the walk was built by, the advisory snapshot it was judged
+against, and either that no toolchain advisory covers it or the ones that do.
+The advisory database keys the toolchain (cmd/go, the compiler, the linker)
+separately from stdlib and no project imports it, so no module scan can reach
+it. It is reported on its own and counted in no roll-up.`,
 		Example: `  kanonarion vuln-scan 01KQDBVW092ER1HNXZ60X27CMD
   kanonarion vuln-scan --module github.com/gin-gonic/gin@v1.6.2
   kanonarion vuln-scan --binary-pre-pass 01KQDBVW092ER1HNXZ60X27CMD
@@ -48,68 +63,91 @@ func newVulnScanCmd(stdout, stderr io.Writer) *cobra.Command {
   kanonarion vuln-scan --tool --gomod ./go.mod`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			goModScope := gomod != "" || tool || project
+			goModScope := f.gomod != "" || f.tool || f.project
 			if goModScope {
 				if len(args) > 0 {
 					return fmt.Errorf("a go.mod scope scan (--gomod/--tool/--project) and a positional walk-id are mutually exclusive")
 				}
-				if moduleCoord != "" {
-					return fmt.Errorf("a go.mod scope scan and --module are mutually exclusive")
-				}
-				scope, serr := scopeFromFlags(tool, project)
-				if serr != nil {
-					return serr
-				}
-				gomodPath, err := resolveGoModPath(gomod)
-				if err != nil {
-					return err
-				}
-				return runVulnScanScope(cmd.Context(), gomodPath, scope, force, fresh, enableReachability, callGraphWorkers, jsonOut, goBinary, operator, policyPath, noVendor, noProgress, stdout, stderr)
+				return runVulnScanScope(cmd.Context(), f, stdout, stderr)
 			}
-			if moduleCoord != "" && len(args) > 0 {
+			if f.moduleCoord != "" && len(args) > 0 {
 				return fmt.Errorf("--module and a positional walk-id are mutually exclusive")
 			}
-			if moduleCoord == "" && len(args) == 0 {
+			if f.moduleCoord == "" && len(args) == 0 {
 				return fmt.Errorf("provide either a walk-id argument, --module <module@version>, --gomod, --tool, or --project")
 			}
-			if moduleCoord != "" {
-				return runVulnScanByModule(cmd.Context(), moduleCoord, f, force, fresh, enableReachability, callGraphWorkers, jsonOut, goBinary, operator, policyPath, noProgress, stdout, stderr)
+			if f.moduleCoord != "" {
+				return runVulnScanByModule(cmd.Context(), f, stdout, stderr)
 			}
-			return runVulnScan(cmd.Context(), args[0], force, fresh, enableReachability, callGraphWorkers, binaryModePrePass, jsonOut, goBinary, operator, "", policyPath, noVendor, noProgress, true, stdout, stderr)
+			return runVulnScanByWalkID(cmd.Context(), args[0], f, stdout, stderr)
 		},
 	}
 
-	cmd.Flags().BoolVar(&force, "force", false, "force re-scan even if results exist")
-	cmd.Flags().BoolVar(&fresh, "fresh", false, "refresh the vulnerability advisory database: download a new snapshot only if an advisory listed for a module in this walk has changed")
-	cmd.Flags().BoolVar(&enableReachability, "reachability", false, "enable call-graph reachability analysis")
-	cmd.Flags().IntVar(&callGraphWorkers, "callgraph-workers", 1, "max concurrent on-demand callgraph subprocesses (SSA-heavy; keep low)")
-	cmd.Flags().BoolVar(&binaryModePrePass, "binary-pre-pass", false, "fast binary-mode pre-pass; source mode only for affected modules")
-	cmd.Flags().StringVar(&goBinary, "go-binary", "", "path to 'go' binary if not in PATH")
-	cmd.Flags().StringVar(&operator, "operator", os.Getenv("USER"), "operator identifier (defaults to $USER)")
-	cmd.Flags().StringVar(&moduleCoord, "module", "", "look up the latest walk ROOTED AT <module@version> (its own target, not a walk that merely contains it as a dependency) and scan it; such a walk records no target platform, and the scan says so")
-	cmd.Flags().BoolVar(&tool, "tool", false, "scan the tooling supply chain: the latest tool-scoped project walk for this GOOS/GOARCH (requires prior walk --tool)")
-	cmd.Flags().BoolVar(&project, "project", false, "scan the complete set: the latest complete-scope project walk for this GOOS/GOARCH (requires prior walk --project)")
-	cmd.Flags().StringVar(&gomod, "gomod", "", "scan the latest project walk for this go.mod's scope and this GOOS/GOARCH (default: search upward from cwd); default scope is code")
-	cmd.Flags().StringVar(&policyPath, "policy", "", "path to depth policy YAML (default: search upward for .kanonarion/policy.yaml)")
-	cmd.Flags().BoolVar(&noVendor, "no-vendor", false,
+	cmd.Flags().BoolVar(&f.force, "force", false, "force re-scan even if results exist")
+	cmd.Flags().BoolVar(&f.fresh, "fresh", false, "refresh the vulnerability advisory database: download a new snapshot only if an advisory listed for a module in this walk has changed")
+	cmd.Flags().BoolVar(&f.enableReachability, "reachability", false, "enable call-graph reachability analysis")
+	cmd.Flags().IntVar(&f.callGraphWorkers, "callgraph-workers", 1, "max concurrent on-demand callgraph subprocesses (SSA-heavy; keep low)")
+	cmd.Flags().BoolVar(&f.binaryModePrePass, "binary-pre-pass", false, "fast binary-mode pre-pass; source mode only for affected modules")
+	cmd.Flags().StringVar(&f.goBinary, "go-binary", "", "path to 'go' binary if not in PATH")
+	cmd.Flags().StringVar(&f.operator, "operator", os.Getenv("USER"), "operator identifier (defaults to $USER)")
+	cmd.Flags().StringVar(&f.moduleCoord, "module", "", "look up the latest walk ROOTED AT <module@version> (its own target, not a walk that merely contains it as a dependency) and scan it; such a walk records no target platform, and the scan says so")
+	cmd.Flags().BoolVar(&f.tool, "tool", false, "scan the tooling supply chain: the latest tool-scoped project walk for this GOOS/GOARCH (requires prior walk --tool)")
+	cmd.Flags().BoolVar(&f.project, "project", false, "scan the complete set: the latest complete-scope project walk for this GOOS/GOARCH (requires prior walk --project)")
+	cmd.Flags().StringVar(&f.gomod, "gomod", "", "scan the latest project walk for this go.mod's scope and this GOOS/GOARCH (default: search upward from cwd); default scope is code")
+	cmd.Flags().StringVar(&f.policyPath, "policy", "", "path to depth policy YAML (default: search upward for .kanonarion/policy.yaml)")
+	cmd.Flags().BoolVar(&f.noVendor, "no-vendor", false,
 		"analyse the fetched artefacts even when the project is vendored (default: analyse vendor/, the source the project compiles)")
-	registerNoProgressFlag(cmd, &noProgress)
+	registerNoProgressFlag(cmd, &f.noProgress)
 
 	return cmd
+}
+
+// runVulnScanByWalkID is the vuln-scan command's positional dispatch path. A
+// named walk is scanned as it stands, so the flags that select a walk for the
+// caller are refused by name rather than parsed and dropped.
+func runVulnScanByWalkID(ctx context.Context, walkID string, f vulnScanFlags, stdout, stderr io.Writer) error {
+	if rerr := refuseInapplicableFlags("vuln-scan <walk-id>",
+		append(vulnScanModuleFlag(f), vulnScanGoModScopeFlags(f)...)); rerr != nil {
+		return rerr
+	}
+	return runVulnScan(ctx, walkID, f.force, f.fresh, f.enableReachability, f.callGraphWorkers, f.binaryModePrePass, jsonOut, f.goBinary, f.operator, "", f.policyPath, application2.ServeSurfaceVulnScan, f.noVendor, f.noProgress, true, stdout, stderr)
 }
 
 // runVulnScanScope finds the latest succeeded project walk for the requested
 // dependency scope (the single record produced by `walk --gomod [--tool|--project]`)
 // and scans it. The project walk is rooted at the local main module, so its
 // closure is the scope's full set in one record — one scan, not one per module.
-func runVulnScanScope(ctx context.Context, gomodPath string, scope depScope, force, fresh, enableReachability bool, callGraphWorkers int, jsonOut bool, goBinary, operator, policyPath string, noVendor, noProgress bool, stdout, stderr io.Writer) error {
+//
+// It is the command's go.mod dispatch path, so it resolves the scope and the
+// go.mod itself: both are decisions this path alone makes, and both must be
+// made in the order the refusals below expect.
+func runVulnScanScope(ctx context.Context, f vulnScanFlags, stdout, stderr io.Writer) error {
+	if f.moduleCoord != "" {
+		return fmt.Errorf("a go.mod scope scan and --module are mutually exclusive")
+	}
+	scope, serr := scopeFromFlags(f.tool, f.project)
+	if serr != nil {
+		return serr
+	}
+	gomodPath, err := resolveGoModPath(f.gomod)
+	if err != nil {
+		return err
+	}
+	// The scope path resolves the project walk and scans it in source mode; the
+	// pre-pass is a lens on a named walk and this path has never passed it on.
+	// Refuse it rather than accept it and scan without it.
+	if rerr := refuseInapplicableFlags("vuln-scan --gomod/--tool/--project",
+		binaryPrePassFlag(f.binaryModePrePass)); rerr != nil {
+		return rerr
+	}
+
 	modulePath, err := readGoModulePath(gomodPath)
 	if err != nil {
 		return err
 	}
 
 	logger := buildLogger(logLevel, stderr)
-	ctr, cleanup, err := NewContainer(storeRoot, "", goBinary, false, activeConfig, logger)
+	ctr, cleanup, err := NewContainer(storeRoot, "", f.goBinary, false, activeConfig, logger)
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
@@ -127,14 +165,14 @@ func runVulnScanScope(ctx context.Context, gomodPath string, scope depScope, for
 	// follows those files, so a scan run in this environment must read a walk
 	// resolved for this environment. Without the axis the newest walk answered,
 	// whichever platform produced it.
-	platform := currentBuildEnvFilter(ctx, goBinary, filepath.Dir(gomodPath), logger)
+	platform := currentBuildEnvFilter(ctx, f.goBinary, filepath.Dir(gomodPath), logger)
 	selected, err := selectProjectWalkToScan(ctx, ctr.QueryWalks, coord, scope, platform, gomodPath)
 	if err != nil {
 		return err
 	}
 
-	_, _ = fmt.Fprintf(progressWriter(stderr, noProgress), "scanning %s project walk %s (%s)\n", scope, selected.ID, selected.BuildFrame())
-	return runVulnScan(ctx, selected.ID, force, fresh, enableReachability, callGraphWorkers, false, jsonOut, goBinary, operator, filepath.Dir(gomodPath), policyPath, noVendor, noProgress, true, stdout, stderr)
+	_, _ = fmt.Fprintf(progressWriter(stderr, f.noProgress), "scanning %s project walk %s (%s)\n", scope, selected.ID, selected.BuildFrame())
+	return runVulnScan(ctx, selected.ID, f.force, f.fresh, f.enableReachability, f.callGraphWorkers, false, jsonOut, f.goBinary, f.operator, filepath.Dir(gomodPath), f.policyPath, application2.ServeSurfaceVulnScan, f.noVendor, f.noProgress, true, stdout, stderr)
 }
 
 // selectProjectWalkToScan returns the succeeded project walk of the requested
@@ -223,10 +261,17 @@ func applyScanVCSHosts(ctx context.Context, scan ScanWalkUseCase, policyPath str
 	return nil
 }
 
-// announceReuse controls whether a served run announces itself on stderr. It is
-// false only for `audit`, which narrates the whole derivation — walk and scan
-// together — in one statement of its own, and would otherwise say it twice.
-func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachability bool, callGraphWorkers int, binaryModePrePass, jsonOut bool, goBinary, operator, projectDir, policyPath string, noVendor, noProgress, announceReuse bool, stdout, stderr io.Writer) error {
+// narrateRun controls whether this run states the things it says about itself
+// as a whole — that a stored run was served, and what the toolchain axis says.
+// It is false only for `audit`, which narrates the derivation and the toolchain
+// axis in statements of its own and would otherwise say each of them twice.
+//
+// surface names the command the caller reached this through. It is what a served
+// run is attributed to in the assurance log, and it is a parameter rather than
+// something derived here because the same function is the scan behind three
+// different commands, and "who asked" is the only part of a served answer that
+// is not already in the store.
+func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachability bool, callGraphWorkers int, binaryModePrePass, jsonOut bool, goBinary, operator, projectDir, policyPath, surface string, noVendor, noProgress, narrateRun bool, stdout, stderr io.Writer) error {
 	logger := buildLogger(logLevel, stderr)
 
 	if goBinary != "" {
@@ -299,7 +344,7 @@ func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachab
 		if prior, ok, rerr := ctr.ScanWalk.ReusableRun(ctx, walkID); rerr != nil {
 			return fmt.Errorf("checking for a reusable scan run: %w", rerr)
 		} else if ok {
-			return serveStoredScanRun(ctx, prior, ctr, jsonOut, announceReuse, stdout, stderr)
+			return serveStoredScanRun(ctx, prior, ctr, jsonOut, narrateRun, surface, stdout, stderr)
 		}
 	}
 
@@ -329,6 +374,15 @@ func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachab
 	})
 	if err != nil {
 		return fmt.Errorf("vuln scan failed: %w", err)
+	}
+
+	// The toolchain axis goes to stderr, beside the result and never inside it:
+	// stdout is the data channel a --json caller pipes into jq, and the toolchain
+	// is not one of the modules this run scanned.
+	if narrateRun {
+		if terr := reportToolchainAxis(ctx, ctr, run, stderr); terr != nil {
+			return terr
+		}
 	}
 
 	if perr := printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.failed, rollups.unscannable, jsonOut, stdout); perr != nil {
@@ -436,7 +490,15 @@ func (r *vulnScanRollups) add(coord coordinate.ModuleCoordinate, record vuldomai
 // The roll-ups are rebuilt from the records THAT RUN wrote, so the report is the
 // one that run produced rather than a fresh summary over whatever each module's
 // latest verdict has since become.
-func serveStoredScanRun(ctx context.Context, run vuldomain.WalkScanRun, ctr *Container, jsonOut, announce bool, stdout, stderr io.Writer) error {
+func serveStoredScanRun(ctx context.Context, run vuldomain.WalkScanRun, ctr *Container, jsonOut, announce bool, surface string, stdout, stderr io.Writer) error {
+	// Witnessed before the answer is assembled, and never after: a serving that
+	// failed to report still happened, and the ledger's whole use here is that
+	// "when did we last check" survives a run that measured nothing. A failed
+	// append fails the serving rather than handing back an untraced answer.
+	if err := ctr.ScanWalk.ServeReusableRun(run, surface); err != nil {
+		return fmt.Errorf("witnessing the served scan run: %w", err)
+	}
+
 	recs, err := ctr.QueryVuln.ListRecordsForRun(ctx, run.ID)
 	if err != nil {
 		return fmt.Errorf("reading the reused scan run's records: %w", err)
@@ -454,6 +516,15 @@ func serveStoredScanRun(ctx context.Context, run vuldomain.WalkScanRun, ctr *Con
 			run.Snapshot.Source(), run.Snapshot.Version(),
 		); werr != nil {
 			return fmt.Errorf("writing output: %w", werr)
+		}
+	}
+
+	// The toolchain judgment is derived on a served report exactly as on a
+	// measured one: it is read from the stored snapshot the run names, so reuse
+	// costs it nothing and cannot silently drop it.
+	if announce {
+		if terr := reportToolchainAxis(ctx, ctr, run, stderr); terr != nil {
+			return terr
 		}
 	}
 
@@ -737,15 +808,32 @@ func pluralModules(n int) string {
 	return fmt.Sprintf("%d modules", n)
 }
 
-func runVulnScanByModule(ctx context.Context, moduleCoord string, f commonWalkFlags, force, fresh, enableReachability bool, callGraphWorkers int, jsonOut bool, goBinary, operator, policyPath string, noProgress bool, stdout, stderr io.Writer) error {
-	logger := buildLogger(logLevel, stderr)
-
-	coord, err := parseCoordinate(moduleCoord)
-	if err != nil {
-		return fmt.Errorf("invalid module coordinate %q: %w", moduleCoord, err)
+func runVulnScanByModule(ctx context.Context, f vulnScanFlags, stdout, stderr io.Writer) error {
+	// --module scans the walk rooted at a published coordinate: there is no
+	// project tree behind it to vendor, and the pre-pass never travelled down
+	// this path either. The go.mod scope flags select a different path
+	// entirely, and are refused here rather than left for a dispatch change to
+	// drop silently.
+	refused := binaryPrePassFlag(f.binaryModePrePass)
+	if f.noVendor {
+		refused = append(refused, inapplicableFlag{
+			flag:  "--no-vendor",
+			where: "vuln-scan <walk-id> or a go.mod scope scan",
+		})
+	}
+	if rerr := refuseInapplicableFlags("vuln-scan --module",
+		append(refused, vulnScanGoModScopeFlags(f)...)); rerr != nil {
+		return rerr
 	}
 
-	ctr, cleanup, err := NewContainer(storeRoot, f.goproxy, goBinary, false, activeConfig, logger)
+	logger := buildLogger(logLevel, stderr)
+
+	coord, err := parseCoordinate(f.moduleCoord)
+	if err != nil {
+		return fmt.Errorf("invalid module coordinate %q: %w", f.moduleCoord, err)
+	}
+
+	ctr, cleanup, err := NewContainer(storeRoot, "", f.goBinary, false, activeConfig, logger)
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
@@ -767,7 +855,7 @@ func runVulnScanByModule(ctx context.Context, moduleCoord string, f commonWalkFl
 		Limit:  1,
 	})
 	if err != nil {
-		return fmt.Errorf("listing walks for %s: %w", moduleCoord, err)
+		return fmt.Errorf("listing walks for %s: %w", f.moduleCoord, err)
 	}
 	if len(summaries) == 0 {
 		// The filter is Target, so this searched walks ROOTED AT the coordinate, not
@@ -780,7 +868,7 @@ func runVulnScanByModule(ctx context.Context, moduleCoord string, f commonWalkFl
 			"a walk that merely contains it as a dependency is not one). Either walk it as its own target:\n"+
 			"  kanonarion walk %s\n"+
 			"or scan the walk that already contains it, by ID:\n"+
-			"  kanonarion vuln-scan <walk-id>", moduleCoord, moduleCoord)
+			"  kanonarion vuln-scan <walk-id>", f.moduleCoord, f.moduleCoord)
 	}
 
 	walkID := summaries[0].ID
@@ -788,20 +876,28 @@ func runVulnScanByModule(ctx context.Context, moduleCoord string, f commonWalkFl
 	// It is stated anyway: the reader must be able to tell an unstated frame from
 	// a missing one, and a scan of a frameless walk is a real caveat on its
 	// reachability answer.
-	_, _ = fmt.Fprintf(progressWriter(stderr, noProgress), "scanning walk %s rooted at %s (frame %s)\n",
-		walkID, moduleCoord, summaries[0].BuildFrame())
-	logger.Debug("vuln-scan: resolved module to walk", "module", moduleCoord, "walk_id", walkID, "build_frame", summaries[0].BuildFrame())
-	return runVulnScan(ctx, walkID, force, fresh, enableReachability, callGraphWorkers, false, jsonOut, goBinary, operator, "", policyPath, false, noProgress, true, stdout, stderr)
+	_, _ = fmt.Fprintf(progressWriter(stderr, f.noProgress), "scanning walk %s rooted at %s (frame %s)\n",
+		walkID, f.moduleCoord, summaries[0].BuildFrame())
+	logger.Debug("vuln-scan: resolved module to walk", "module", f.moduleCoord, "walk_id", walkID, "build_frame", summaries[0].BuildFrame())
+	return runVulnScan(ctx, walkID, f.force, f.fresh, f.enableReachability, f.callGraphWorkers, false, jsonOut, f.goBinary, f.operator, "", f.policyPath, application2.ServeSurfaceVulnScan, false, f.noProgress, true, stdout, stderr)
+}
+
+// vulnScanRescanFlags holds every flag the vuln-scan-rescan command registers,
+// in one struct rather than a local variable each, so a flag a dispatch path
+// never receives is visible per field.
+type vulnScanRescanFlags struct {
+	enableReachability bool
+	goBinary           string
+	operator           string
+	snapshotSource     string
+	snapshotVersion    string
+	policyPath         string
+	noProgress         bool
 }
 
 // newVulnScanRescanCmd returns the vuln-scan-rescan command.
 func newVulnScanRescanCmd(stdout, stderr io.Writer) *cobra.Command {
-	var enableReachability bool
-	var goBinary string
-	var operator string
-	var snapshotSource string
-	var snapshotVersion string
-	var policyPath string
+	var f vulnScanRescanFlags
 
 	cmd := &cobra.Command{
 		Use:     "vuln-scan-rescan <walk-id>",
@@ -818,16 +914,17 @@ Prior scan runs are preserved unchanged; a new WalkScanRun is appended.`,
 			if cmd.CalledAs() == "vuln-scan-regate" {
 				_, _ = fmt.Fprintln(stderr, "warning: 'vuln-scan-regate' is deprecated; use 'vuln-scan-rescan' instead")
 			}
-			return runScanRescan(cmd.Context(), args[0], enableReachability, goBinary, operator, snapshotSource, snapshotVersion, policyPath, stdout, stderr)
+			return runScanRescan(cmd.Context(), args[0], f, stdout, stderr)
 		},
 	}
 
-	cmd.Flags().BoolVar(&enableReachability, "reachability", false, "enable call-graph reachability analysis")
-	cmd.Flags().StringVar(&goBinary, "go-binary", "", "path to 'go' binary if not in PATH")
-	cmd.Flags().StringVar(&operator, "operator", os.Getenv("USER"), "operator identifier (defaults to $USER)")
-	cmd.Flags().StringVar(&snapshotSource, "snapshot-source", "", "pin to a specific snapshot source (requires --snapshot-version)")
-	cmd.Flags().StringVar(&snapshotVersion, "snapshot-version", "", "pin to a specific snapshot version (requires --snapshot-source)")
-	cmd.Flags().StringVar(&policyPath, "policy", "", "path to depth policy YAML (default: search upward for .kanonarion/policy.yaml)")
+	cmd.Flags().BoolVar(&f.enableReachability, "reachability", false, "enable call-graph reachability analysis")
+	cmd.Flags().StringVar(&f.goBinary, "go-binary", "", "path to 'go' binary if not in PATH")
+	cmd.Flags().StringVar(&f.operator, "operator", os.Getenv("USER"), "operator identifier (defaults to $USER)")
+	cmd.Flags().StringVar(&f.snapshotSource, "snapshot-source", "", "pin to a specific snapshot source (requires --snapshot-version)")
+	cmd.Flags().StringVar(&f.snapshotVersion, "snapshot-version", "", "pin to a specific snapshot version (requires --snapshot-source)")
+	cmd.Flags().StringVar(&f.policyPath, "policy", "", "path to depth policy YAML (default: search upward for .kanonarion/policy.yaml)")
+	registerNoProgressFlag(cmd, &f.noProgress)
 
 	return cmd
 }
@@ -856,15 +953,15 @@ func applyRescanVCSHosts(ctx context.Context, rescan RescanWalkUseCase, policyPa
 	return nil
 }
 
-func runScanRescan(ctx context.Context, walkID string, enableReachability bool, goBinary, operator, snapshotSource, snapshotVersion, policyPath string, stdout, stderr io.Writer) error {
+func runScanRescan(ctx context.Context, walkID string, f vulnScanRescanFlags, stdout, stderr io.Writer) error {
 	logger := buildLogger(logLevel, stderr)
 
-	if goBinary != "" {
-		goDir := filepath.Dir(goBinary)
+	if f.goBinary != "" {
+		goDir := filepath.Dir(f.goBinary)
 		binDir, err := os.MkdirTemp("", "kanonarion-bin-*")
 		if err == nil {
 			goSymlink := filepath.Join(binDir, "go")
-			_ = os.Symlink(goBinary, goSymlink)
+			_ = os.Symlink(f.goBinary, goSymlink)
 			goDir = binDir
 			defer func() { _ = os.RemoveAll(binDir) }()
 		}
@@ -879,11 +976,11 @@ func runScanRescan(ctx context.Context, walkID string, enableReachability bool, 
 		}
 	}
 
-	if (snapshotSource == "") != (snapshotVersion == "") {
+	if (f.snapshotSource == "") != (f.snapshotVersion == "") {
 		return fmt.Errorf("--snapshot-source and --snapshot-version must be provided together")
 	}
 
-	ctr, cleanup, err := NewContainer(storeRoot, "", goBinary, false, activeConfig, logger)
+	ctr, cleanup, err := NewContainer(storeRoot, "", f.goBinary, false, activeConfig, logger)
 	if err != nil {
 		return fmt.Errorf("initialising store: %w", err)
 	}
@@ -895,30 +992,62 @@ func runScanRescan(ctx context.Context, walkID string, enableReachability bool, 
 
 	req := application2.RescanRequest{
 		WalkID:             walkID,
-		EnableReachability: enableReachability,
-		Operator:           operator,
+		EnableReachability: f.enableReachability,
+		Operator:           f.operator,
 	}
 
-	if snapshotSource != "" {
-		snap, found, err := resolveSnapshot(ctx, ctr.QueryScanRuns, snapshotSource, snapshotVersion)
+	if f.snapshotSource != "" {
+		snap, found, err := resolveSnapshot(ctx, ctr.QueryScanRuns, f.snapshotSource, f.snapshotVersion)
 		if err != nil {
 			return err
 		}
 		if !found {
-			return &exitError{code: ExitNotFound, msg: fmt.Sprintf("snapshot not found: %s@%s", snapshotSource, snapshotVersion)}
+			return &exitError{code: ExitNotFound, msg: fmt.Sprintf("snapshot not found: %s@%s", f.snapshotSource, f.snapshotVersion)}
 		}
 		req.Snapshot = &snap
 	}
 
-	_, _ = fmt.Fprintf(stdout, "Re-scanning walk %s...\n", walkID)
+	return rescanWith(ctx, ctr.RescanWalk, req, f.policyPath, f.noProgress, stdout, stderr)
+}
+
+// rescanWith drives an already-resolved re-scan and owns the command's output
+// contract: the narration and the per-module progress stream go to stderr, the
+// result to stdout.
+//
+// It is split from runScanRescan so that contract can be tested without a store
+// or a scanner — the store construction above is the only reason the command was
+// otherwise untestable, and the routing is the part that keeps regressing.
+func rescanWith(
+	ctx context.Context,
+	rescan RescanWalkUseCase,
+	req application2.RescanRequest,
+	policyPath string,
+	noProgress bool,
+	stdout, stderr io.Writer,
+) error {
+	// The narration stream. `Re-scanning walk ...` is said while the run is in
+	// flight, which makes it narration and not a result: stdout is the data
+	// channel, and this is the one scan command that was writing commentary onto
+	// it. Run ID and Snapshot below are results and stay where they are.
+	progressOut := progressWriter(stderr, noProgress)
+	_, _ = fmt.Fprintf(progressOut, "Re-scanning walk %s...\n", req.WalkID)
+
+	// A re-scan forces every module in the walk through the scanner. It is the
+	// most expensive run the CLI offers and it said nothing until it finished;
+	// the per-module line is the same one `vuln-scan` writes, from the same
+	// writer, so the two commands read alike and one flag silences both.
+	req.Progress = func(coord coordinate.ModuleCoordinate, record vuldomain.VulnerabilityRecord, current, total int) {
+		writeVulnScanProgress(record, coord, current, total, progressOut)
+	}
+
 	// A rescan re-runs the same pipeline and may pre-fetch, so it is bound by
 	// the same policy as a scan. Omitting it here would restore the divergence
 	// one command over.
-	if err := applyRescanVCSHosts(ctx, ctr.RescanWalk, policyPath, stderr); err != nil {
+	if err := applyRescanVCSHosts(ctx, rescan, policyPath, stderr); err != nil {
 		return err
 	}
 
-	run, err := ctr.RescanWalk.Rescan(ctx, req)
+	run, err := rescan.Rescan(ctx, req)
 	if err != nil {
 		// A frame the re-scan cannot reproduce is the one failure here that has a
 		// route out, and the route is a different command — so it is named. The

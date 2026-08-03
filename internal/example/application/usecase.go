@@ -31,6 +31,7 @@ type ExtractExampleUseCase struct {
 	pipelineVersion string
 	logger          *slog.Logger
 	hasher          domain2.ExampleRecordHasher
+	audit           ports.AuditSink // optional; nil disables audit emission
 }
 
 // Config holds all construction parameters for ExtractExampleUseCase.
@@ -60,6 +61,15 @@ func NewExtractExampleUseCase(cfg Config) *ExtractExampleUseCase {
 		pipelineVersion: cfg.PipelineVersion,
 		logger:          cfg.Logger,
 	}
+}
+
+// WithAudit wires an audit sink so extraction appends one examples_extracted
+// event per persisted generation. It is optional — a nil sink (the default)
+// disables emission — and returns the receiver for chaining, mirroring the
+// other stages' optional-dependency builders.
+func (uc *ExtractExampleUseCase) WithAudit(sink ports.AuditSink) *ExtractExampleUseCase {
+	uc.audit = sink
+	return uc
 }
 
 // ExtractRequest is the input to Execute.
@@ -187,6 +197,15 @@ func (uc *ExtractExampleUseCase) Execute(ctx context.Context, req ExtractRequest
 		slog.Int("example_count", len(record.Examples)),
 		slog.String("content_hash", record.ContentHash),
 	)
+
+	// Assurance log: one examples_extracted event per persisted generation
+	// anchors the examples a later adoption or migration answer quotes in the
+	// append-only log, not only in the mutable example ledger. The record is
+	// written first, so a failed append reports that the write is unlogged — it
+	// never undoes it.
+	if err := emitExamplesExtracted(uc.audit, record); err != nil {
+		return ExtractResult{}, err
+	}
 
 	return ExtractResult{Record: record, FromCache: false}, nil
 }

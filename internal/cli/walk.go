@@ -34,22 +34,30 @@ func registerStdlibFromGoModFlag(cmd *cobra.Command, p *bool) {
 
 // ---- walk command ----
 
+// walkFlags holds every flag the walk command registers. They live in one
+// struct, rather than in a local variable each, so that a flag one dispatch
+// path never receives is visible per field rather than only as a missing
+// argument.
+type walkFlags struct {
+	goproxy         string
+	force           bool
+	allowPartial    bool
+	workerCount     int
+	operator        string
+	policyPath      string
+	gomodPath       string
+	skipVCSVerify   bool
+	tool            bool
+	project         bool
+	shallow         bool
+	analyseLocal    bool
+	analyseRoot     bool
+	stdlibFromGoMod bool
+	noProgress      bool
+}
+
 func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
-	var f commonWalkFlags
-	var force bool
-	var allowPartial bool
-	var workerCount int
-	var operator string
-	var policyPath string
-	var gomodPath string
-	var skipVCSVerify bool
-	var toolScope bool
-	var shallow bool
-	var analyseLocal bool
-	var projectComplete bool
-	var analyseRoot bool
-	var stdlibFromGoMod bool
-	var noProgress bool
+	var f walkFlags
 
 	cmd := &cobra.Command{
 		Use:   "walk <module@version>",
@@ -68,15 +76,15 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
 		RunE: func(cmd *cobra.Command, args []string) error {
 			// With no positional module, default to a go.mod walk; --gomod
 			// defaults to./go.mod via resolveGoModPath.
-			if gomodPath != "" || len(args) == 0 {
+			if f.gomodPath != "" || len(args) == 0 {
 				if len(args) > 0 {
 					return fmt.Errorf("--gomod and positional module argument are mutually exclusive")
 				}
-				resolved, rerr := resolveGoModPath(gomodPath)
+				resolved, rerr := resolveGoModPath(f.gomodPath)
 				if rerr != nil {
 					return rerr
 				}
-				gomodPath = resolved
+				f.gomodPath = resolved
 			} else {
 				if len(args) > 1 {
 					return fmt.Errorf("accepts 1 arg, received %d", len(args))
@@ -89,81 +97,97 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
 					return fmt.Errorf("version required: use %s@<version> or %s@latest", path, path)
 				}
 			}
-			// A go.mod walk produces one project-rooted record. The dependency
-			// scope is consistent with every other go.mod command: default = code
-			// (the project's own build deps — the vuln/licence/copyright triage
-			// set), --tool = the tooling supply chain, --project = complete (build
-			// + tooling). --shallow is a positional-only depth lens.
-			isGoMod := gomodPath != ""
-			scope, scopeErr := scopeFromFlags(toolScope, projectComplete)
-			if scopeErr != nil {
-				return scopeErr
-			}
-			if !isGoMod {
-				if toolScope || projectComplete {
-					return fmt.Errorf("--tool and --project apply to a go.mod walk, not a positional module walk")
-				}
-				if analyseRoot {
-					return fmt.Errorf("--analyse-root requires a go.mod walk (only a project walk has a local root to analyse)")
-				}
-			} else {
-				if shallow {
-					return fmt.Errorf("--shallow applies to a positional module walk, not a go.mod walk")
-				}
-				if analyseRoot && scope == scopeTool {
-					return fmt.Errorf("--analyse-root analyses the project's own packages, which a --tool walk does not cover; drop --tool")
-				}
-			}
-			depth := domain.WalkDepthFull
-			if shallow {
-				depth = domain.WalkDepthShallow
-			}
-
-			// Derive LocalReplaceBase from the go.mod directory when
-			// --analyse-local is set. For positional walks there is no local
-			// source context, so the flag has no effect.
-			var localReplaceBase string
-			if analyseLocal && isGoMod {
-				localReplaceBase = filepath.Dir(gomodPath)
-			}
+			isGoMod := f.gomodPath != ""
 
 			// A go.mod (project) walk has a local go.sum available: layer it on as
 			// an always-on offline integrity check.
 			if isGoMod {
-				resolveProjectGoSum(gomodPath)
+				resolveProjectGoSum(f.gomodPath)
 			}
 			logger := buildLogger(logLevel, stderr)
-			ctr, cleanup, err := NewContainer(storeRoot, f.goproxy, "", skipVCSVerify, activeConfig, logger)
+			ctr, cleanup, err := NewContainer(storeRoot, f.goproxy, "", f.skipVCSVerify, activeConfig, logger)
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			progress := newWalkProgressReporter(stderr, noProgress, activeConfig, logLevel)
+			progress := newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
 			if isGoMod {
-				_, werr := runWalkProject(cmd.Context(), gomodPath, force, allowPartial, workerCount, operator, policyPath, skipVCSVerify, scope, depth, localReplaceBase, analyseRoot, stdlibFromGoMod, progress, ctr.ExecuteWalk, ctr.QueryFetch, stdout, stderr)
-				return werr
+				return runWalkCmdProject(cmd.Context(), f, progress, ctr.ExecuteWalk, ctr.QueryFetch, stdout, stderr)
 			}
-			return runWalk(cmd.Context(), args[0], f, force, allowPartial, workerCount, policyPath, skipVCSVerify, domain.WalkScopeCode, depth, localReplaceBase, progress, ctr.ExecuteWalk, ctr.QueryFetch, stdout, stderr)
+			return runWalkCmdModule(cmd.Context(), args[0], f, progress, ctr.ExecuteWalk, ctr.QueryFetch, stdout, stderr)
 		},
 	}
 
 	cmd.Flags().StringVar(&f.goproxy, "goproxy", "", "override GOPROXY (default: $GOPROXY or proxy.golang.org)")
-	cmd.Flags().BoolVar(&force, "force", false, "re-fetch all modules even if cached")
+	cmd.Flags().BoolVar(&f.force, "force", false, "re-fetch all modules even if cached")
 	registerAllowVerificationDowngradeFlag(cmd)
-	cmd.Flags().BoolVar(&allowPartial, "allow-partial", false, "exit 0 even when walk status is partial")
-	cmd.Flags().IntVar(&workerCount, "workers", 0, "concurrent fetch workers (default: 16)")
-	cmd.Flags().StringVar(&operator, "operator", "", "operator identifier (defaults to $USER)")
-	cmd.Flags().StringVar(&policyPath, "policy", "", "path to depth policy YAML (default: search for .kanonarion/policy.yaml)")
-	cmd.Flags().StringVar(&gomodPath, "gomod", "", "path to a go.mod file; walk the project's code dependencies (default: ./go.mod)")
-	cmd.Flags().BoolVar(&skipVCSVerify, "skip-vcs-verify", false, "skip git cross-verification; sumdb verification still runs")
-	cmd.Flags().BoolVar(&toolScope, "tool", false, "scope to the tooling supply chain (the go.mod tool directives' closure) instead of the project's own code")
-	cmd.Flags().BoolVar(&projectComplete, "project", false, "scope to the complete set: the project's code AND tooling (the full Go build list)")
-	cmd.Flags().BoolVar(&shallow, "shallow", false, "fetch only the target module; list go.mod require entries as unresolved nodes (positional module walk only)")
-	cmd.Flags().BoolVar(&analyseLocal, "analyse-local", false, "ingest local-replace targets from disk so callgraph/iface/license analyse them (requires --gomod)")
-	cmd.Flags().BoolVar(&analyseRoot, "analyse-root", false, "ingest the project's own working tree so all extraction stages analyse the project's own packages; re-reads the tree fresh on every run (requires a go.mod walk)")
-	registerStdlibFromGoModFlag(cmd, &stdlibFromGoMod)
-	registerNoProgressFlag(cmd, &noProgress)
+	cmd.Flags().BoolVar(&f.allowPartial, "allow-partial", false, "exit 0 even when walk status is partial")
+	cmd.Flags().IntVar(&f.workerCount, "workers", 0, "concurrent fetch workers (default: 16)")
+	cmd.Flags().StringVar(&f.operator, "operator", "", "operator identifier recorded on the walk record (default: unrecorded)")
+	cmd.Flags().StringVar(&f.policyPath, "policy", "", "path to depth policy YAML (default: search for .kanonarion/policy.yaml)")
+	cmd.Flags().StringVar(&f.gomodPath, "gomod", "", "path to a go.mod file; walk the project's code dependencies (default: ./go.mod)")
+	cmd.Flags().BoolVar(&f.skipVCSVerify, "skip-vcs-verify", false, "skip git cross-verification; sumdb verification still runs")
+	cmd.Flags().BoolVar(&f.tool, "tool", false, "scope to the tooling supply chain (the go.mod tool directives' closure) instead of the project's own code")
+	cmd.Flags().BoolVar(&f.project, "project", false, "scope to the complete set: the project's code AND tooling (the full Go build list)")
+	cmd.Flags().BoolVar(&f.shallow, "shallow", false, "fetch only the target module; list go.mod require entries as unresolved nodes (positional module walk only)")
+	cmd.Flags().BoolVar(&f.analyseLocal, "analyse-local", false, "ingest local-replace targets from disk so callgraph/iface/license analyse them (requires --gomod)")
+	cmd.Flags().BoolVar(&f.analyseRoot, "analyse-root", false, "ingest the project's own working tree so all extraction stages analyse the project's own packages; re-reads the tree fresh on every run (requires a go.mod walk)")
+	registerStdlibFromGoModFlag(cmd, &f.stdlibFromGoMod)
+	registerNoProgressFlag(cmd, &f.noProgress)
 	return cmd
+}
+
+// runWalkCmdProject is the walk command's go.mod dispatch path. It resolves the
+// dependency scope — default = code (the project's own build deps), --tool = the
+// tooling supply chain, --project = complete (build + tooling) — refuses the
+// flags a project walk cannot act on, and hands the rest to the shared project
+// walk that audit, sbom and inspect also drive.
+func runWalkCmdProject(ctx context.Context, f walkFlags, progress walkports.ProgressReporter, uc ExecuteWalkUseCase, records fetchRecordReader, stdout, stderr io.Writer) error {
+	if f.shallow {
+		return fmt.Errorf("--shallow applies to a positional module walk, not a go.mod walk")
+	}
+	scope, scopeErr := scopeFromFlags(f.tool, f.project)
+	if scopeErr != nil {
+		return scopeErr
+	}
+	if f.analyseRoot && scope == scopeTool {
+		return fmt.Errorf("--analyse-root analyses the project's own packages, which a --tool walk does not cover; drop --tool")
+	}
+	// LocalReplaceBase resolves local-path replace targets against the go.mod's
+	// own directory, so it is derived here, on the only path that has one.
+	var localReplaceBase string
+	if f.analyseLocal {
+		localReplaceBase = filepath.Dir(f.gomodPath)
+	}
+	_, err := runWalkProject(ctx, f.gomodPath, f.force, f.allowPartial, f.workerCount, f.operator,
+		f.policyPath, f.skipVCSVerify, scope, domain.WalkDepthFull, localReplaceBase, f.analyseRoot,
+		f.stdlibFromGoMod, progress, uc, records, stdout, stderr)
+	return err
+}
+
+// runWalkCmdModule is the walk command's positional dispatch path. A walk of a
+// published coordinate has no project go.mod and no local working tree behind
+// it, so the flags that read one are refused by name here rather than parsed
+// and dropped: each left the output byte-identical to a run without it.
+func runWalkCmdModule(ctx context.Context, arg string, f walkFlags, progress walkports.ProgressReporter, uc ExecuteWalkUseCase, records fetchRecordReader, stdout, stderr io.Writer) error {
+	if f.tool || f.project {
+		return fmt.Errorf("--tool and --project apply to a go.mod walk, not a positional module walk")
+	}
+	if f.analyseRoot {
+		return fmt.Errorf("--analyse-root requires a go.mod walk (only a project walk has a local root to analyse)")
+	}
+	if err := refuseInapplicableFlags("walk <module@version>", walkGoModOnlyFlags(f)); err != nil {
+		return err
+	}
+	depth := domain.WalkDepthFull
+	if f.shallow {
+		depth = domain.WalkDepthShallow
+	}
+	// No local source context, so no local-replace base: a positional walk
+	// resolves replace targets from the proxy or not at all.
+	return runWalk(ctx, arg, commonWalkFlags{goproxy: f.goproxy}, f.force, f.allowPartial, f.workerCount,
+		f.operator, f.policyPath, f.skipVCSVerify, domain.WalkScopeCode, depth, "", progress, uc, records,
+		stdout, stderr)
 }
 
 // runWalkProject runs a single project-rooted walk: the local main module is
@@ -177,7 +201,6 @@ func newWalkCmd(stdout, stderr io.Writer) *cobra.Command {
 // code/tool the build-list graph is restricted to the scope's module set,
 // resolved via the shared Go-toolchain resolver.
 func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial bool, workerCount int, operator, policyPath string, skipVCSVerify bool, scope depScope, depth domain.WalkDepth, localReplaceBase string, analyseRoot, stdlibFromGoMod bool, progress walkports.ProgressReporter, uc ExecuteWalkUseCase, records fetchRecordReader, stdout, stderr io.Writer) (application.ExecuteWalkResult, error) {
-	_ = operator // operator is bound on the use case at construction, as in runWalk
 	logger := buildLogger(logLevel, stderr)
 
 	modulePath, err := readGoModulePath(gomodPath)
@@ -231,6 +254,7 @@ func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial b
 		ScopeModules:     scopeModules,
 		Depth:            depth,
 		LocalReplaceBase: localReplaceBase,
+		Operator:         operator,
 		ProjectMode:      true,
 		MainModuleGoMod:  goModBytes,
 		AnalyseLocalRoot: analyseRoot,
@@ -276,7 +300,7 @@ func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial b
 	return result, nil
 }
 
-func runWalk(ctx context.Context, arg string, f commonWalkFlags, force, allowPartial bool, workerCount int, policyPath string, skipVCSVerify bool, scope domain.WalkScope, depth domain.WalkDepth, localReplaceBase string, progress walkports.ProgressReporter, uc ExecuteWalkUseCase, records fetchRecordReader, stdout, stderr io.Writer) error {
+func runWalk(ctx context.Context, arg string, f commonWalkFlags, force, allowPartial bool, workerCount int, operator, policyPath string, skipVCSVerify bool, scope domain.WalkScope, depth domain.WalkDepth, localReplaceBase string, progress walkports.ProgressReporter, uc ExecuteWalkUseCase, records fetchRecordReader, stdout, stderr io.Writer) error {
 	logger := buildLogger(logLevel, stderr)
 
 	path, version, err := parseModuleArg(arg)
@@ -319,6 +343,7 @@ func runWalk(ctx context.Context, arg string, f commonWalkFlags, force, allowPar
 		Scope:            scope,
 		Depth:            depth,
 		LocalReplaceBase: localReplaceBase,
+		Operator:         operator,
 		Progress:         progress,
 	})
 	if err != nil {

@@ -6,6 +6,7 @@ import (
 	"log/slog"
 	"os"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	fetchports "github.com/eitanity/kanonarion/internal/fetch/ports"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -236,6 +237,14 @@ type RescanRequest struct {
 	Snapshot           *domain.DatabaseSnapshot // nil = take a fresh snapshot from the network
 	EnableReachability bool
 	Operator           string
+	// Progress is called after each module is re-scanned, exactly as it is on a
+	// scan. It may be nil.
+	//
+	// A re-scan forces every module in the walk through the scanner, so it is the
+	// most expensive thing the CLI runs; without this it emitted nothing at all
+	// between the command being typed and the run finishing, and a caller could
+	// not tell it from a hang.
+	Progress func(coord coordinate.ModuleCoordinate, record domain.VulnerabilityRecord, current, total int)
 }
 
 // Rescan performs the re-scan scan and returns the new WalkScanRun.
@@ -270,6 +279,13 @@ func (uc *RescanWalkUseCase) Rescan(ctx context.Context, req RescanRequest) (dom
 			if err := uc.vulnStore.PutDatabaseSnapshot(ctx, s, body); err != nil {
 				return domain.WalkScanRun{}, fmt.Errorf("persisting fresh snapshot: %w", err)
 			}
+			// Assurance log: a re-scan's whole purpose is to judge against a newer
+			// advisory set, so the moment that set arrived is the fact the re-scan
+			// rests on. Emitted after the write; a caller-supplied snapshot acquired
+			// nothing here and appends nothing.
+			if err := emitSnapshotRecorded(uc.audit, s, snapshotRouteRescan); err != nil {
+				return domain.WalkScanRun{}, err
+			}
 		}
 		snapshot = &s
 	}
@@ -300,6 +316,7 @@ func (uc *RescanWalkUseCase) Rescan(ctx context.Context, req RescanRequest) (dom
 		// one here (this reaches for it to reproduce the ROOT). A project that
 		// never vendored would otherwise re-scan isolated.
 		ProjectDir: projectDir,
+		Progress:   req.Progress,
 	})
 	if err != nil {
 		return domain.WalkScanRun{}, fmt.Errorf("rescan scan: %w", err)

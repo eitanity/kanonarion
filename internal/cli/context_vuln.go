@@ -19,6 +19,13 @@ type vulnBatchCtx struct {
 	snap        vuldomain.DatabaseSnapshot
 	// runs maps walkID → scan runs; populated for the walkLimit most recent walks.
 	runs map[string][]vuldomain.WalkScanRun
+	// window is the same walk set as runs, in the recency order ListWalks
+	// returned it in, and it is what an unanchored read resolves a record's walk
+	// against: a record measured outside this set has no run to read. runs stays
+	// the lookup. The two are populated together: a batch carrying runs but no
+	// window answers as though the window were empty, so only loadVulnBatchCtx
+	// builds one outside tests.
+	window []string
 	// walkUC backs the lazy graph loader used to filter walk-level annotations
 	// by transitive reachability. nil when no snapshot exists.
 	walkUC QueryWalksUseCase
@@ -27,6 +34,48 @@ type vulnBatchCtx struct {
 	graphCache map[string]*walkdomain.Graph
 	// affectedCache memoises the affected-module set per walkID.
 	affectedCache map[string]map[coordinate.ModuleCoordinate]struct{}
+	// anchor is the build this batch reports on, when the caller named one — a
+	// walk, or the project a go.mod declares. Set means every per-module verdict
+	// is selected in that build's frame and read from that walk's runs alone.
+	// Unset means the batch spans the walk window, as it always did.
+	anchor   vulnFrameAnchor
+	anchored bool
+	// frameCache memoises each walk's analysis frame, which is what a per-module
+	// verdict read for that walk selects on. Cached per walk rather than per
+	// module: it costs one walk-record read and is asked for once per module.
+	frameCache map[string]vulnFrameAnchor
+}
+
+// anchorTo fixes the build this batch answers for. Callers that know which walk
+// the report is about — context in walk mode, and the go.mod modes through the
+// project's own walk — call it, and every module's verdict is then read in that
+// walk's frame instead of in whichever frame the walk window happened to hold.
+func (b *vulnBatchCtx) anchorTo(ctx context.Context, walkID string) {
+	if walkID == "" {
+		return
+	}
+	b.anchor = b.frameFor(ctx, walkID)
+	b.anchored = true
+}
+
+// frameFor returns the frame walkID's scans were rooted at. A walk whose record
+// cannot be read yields a frameless anchor, which still pins the read to that
+// walk's own records and selects a consumer frame within them.
+func (b *vulnBatchCtx) frameFor(ctx context.Context, walkID string) vulnFrameAnchor {
+	if b.frameCache == nil {
+		return vulnFrameAnchor{walkID: walkID}
+	}
+	if a, ok := b.frameCache[walkID]; ok {
+		return a
+	}
+	anchor := vulnFrameAnchor{walkID: walkID}
+	if b.walkUC != nil {
+		if rec, err := b.walkUC.GetWalk(ctx, walkID); err == nil {
+			anchor = walkFrameAnchor(walkID, rec.Target)
+		}
+	}
+	b.frameCache[walkID] = anchor
+	return anchor
 }
 
 func loadVulnBatchCtx(ctx context.Context, runsUC QueryScanRunsUseCase, walkUC QueryWalksUseCase) (*vulnBatchCtx, error) {
@@ -43,20 +92,26 @@ func loadVulnBatchCtx(ctx context.Context, runsUC QueryScanRunsUseCase, walkUC Q
 		return nil, fmt.Errorf("listing walks: %w", err)
 	}
 	runsMap := make(map[string][]vuldomain.WalkScanRun, len(walks))
+	// ListWalks returns the window in recency order and that order is preserved
+	// here, because it is what an unanchored read answers in.
+	window := make([]string, 0, len(walks))
 	for _, w := range walks {
 		runs, err := runsUC.ListRunsForWalk(ctx, w.ID)
 		if err != nil {
 			continue
 		}
 		runsMap[w.ID] = runs
+		window = append(window, w.ID)
 	}
 	return &vulnBatchCtx{
 		hasSnapshot:   true,
 		snap:          snap,
 		runs:          runsMap,
+		window:        window,
 		walkUC:        walkUC,
 		graphCache:    make(map[string]*walkdomain.Graph),
 		affectedCache: make(map[string]map[coordinate.ModuleCoordinate]struct{}),
+		frameCache:    make(map[string]vulnFrameAnchor),
 	}, nil
 }
 
@@ -102,8 +157,13 @@ func (b *vulnBatchCtx) affectedFor(ctx context.Context, walkID string, vulnUC Qu
 	affected := make(map[coordinate.ModuleCoordinate]struct{})
 	if len(runs) > 0 {
 		run := runs[0] // most recent (DESC by started_at)
+		// Each peer's verdict is read in the walk's own frame. Read frame-blind,
+		// a peer measured in another project's build could be reported affected —
+		// or clean — in this walk's closure on the strength of a scan that never
+		// looked at this build.
+		anchor := b.frameFor(ctx, run.WalkID)
 		for coord := range run.PerModuleResults {
-			rec, found, err := vulnUC.GetLatestRecordForWalk(ctx, coord, vulnPipelineVersion, run.WalkID)
+			rec, found, err := recordInWalkFrame(ctx, vulnUC, coord, anchor)
 			if err != nil {
 				return nil, fmt.Errorf("reading walk-peer verdict for %s in walk %s: %w", coord, run.WalkID, err)
 			}
@@ -193,30 +253,144 @@ func buildVulnerabilitiesFromBatch(ctx context.Context, coord coordinate.ModuleC
 	if err != nil {
 		return contextVulnerabilities{Status: sectionStatusReadError, Error: err.Error()}
 	}
-	for _, runs := range batch.runs {
-		for _, run := range runs {
-			if _, ok := run.PerModuleResults[coord]; !ok {
-				continue
-			}
-			// Narrowed to run.Snapshot (the snapshot the scan used), not the latest
-			// snapshot, exactly as the per-run store read was keyed.
-			atSnapshot := recordsAtSnapshot(recs, run.Snapshot)
-			rec, _, _, found := selectConsumerRecord(atSnapshot, coord)
-			if !found {
-				continue
-			}
-			result := vulnRecordToContext(&rec, string(run.OverallStatus), walkCoverageCaveat(run))
-			batch.filterWalkAnnotation(ctx, &result, coord, run, vulnUC)
-			return result
-		}
+	if batch.anchored {
+		return batch.anchoredVulnerabilities(ctx, coord, recs, vulnUC)
 	}
-	// No run in the batch's walk window covers the module with a readable record,
-	// so the whole ledger answers — still frame-first.
-	rec, _, _, found := selectConsumerRecord(recs, coord)
+	return batch.recordFirstVulnerabilities(ctx, coord, recs, vulnUC)
+}
+
+// anchoredVulnerabilities answers for the build the caller named. It looks at
+// that walk's runs only: left to iterate the whole walk window it answered a
+// walk-pinned report from whichever walk in that window covered the module
+// first — measured on a real store, 20 of one project's 128 modules were
+// reported in three other projects' frames, one of them inverting a
+// reachability verdict.
+func (b *vulnBatchCtx) anchoredVulnerabilities(ctx context.Context, coord coordinate.ModuleCoordinate, recs []vuldomain.VulnerabilityRecord, vulnUC QueryVulnUseCase) contextVulnerabilities {
+	for _, run := range b.runs[b.anchor.walkID] {
+		if _, ok := run.PerModuleResults[coord]; !ok {
+			continue
+		}
+		// Narrowed to run.Snapshot (the snapshot the scan used), not the latest
+		// snapshot, exactly as the per-run store read was keyed.
+		atSnapshot := recordsAtSnapshot(recs, run.Snapshot)
+		rec, found := b.selectForBatch(atSnapshot, coord)
+		if !found {
+			continue
+		}
+		result := vulnRecordToContext(&rec, string(run.OverallStatus), walkCoverageCaveat(run))
+		b.filterWalkAnnotation(ctx, &result, coord, run, vulnUC)
+		return result
+	}
+	// No run of the anchored walk covers the module with a readable record, so
+	// the whole ledger answers — still in the anchored frame.
+	rec, found := b.selectForBatch(recs, coord)
 	if found {
 		return vulnRecordToContext(&rec, "", "")
 	}
 	return contextVulnerabilities{Status: sectionStatusNotRun}
+}
+
+// recordFirstVulnerabilities answers an unanchored read: the best consumer-frame
+// record the ledger holds is selected first, and the run context — status word,
+// coverage caveat, peer annotation and the named basis — is then read from the
+// walk that record was measured in.
+//
+// Selecting the run first put two builds under one heading: the window's newest
+// covering walk gated the run while the record was ranked ledger-wide, so the
+// verdict described one build and the peers-in-closure claim another. Keying
+// everything to the record makes the whole section one build's answer, and it
+// changes only when better evidence lands rather than whenever a neighbouring
+// project walks a tree that happens to contain the module.
+//
+// The peer annotation therefore means "affected peers in the closure of the
+// build that produced this verdict", not "in the newest build covering the
+// module".
+func (b *vulnBatchCtx) recordFirstVulnerabilities(ctx context.Context, coord coordinate.ModuleCoordinate, recs []vuldomain.VulnerabilityRecord, vulnUC QueryVulnUseCase) contextVulnerabilities {
+	rec, found := b.selectForBatch(recs, coord)
+	if !found {
+		return contextVulnerabilities{Status: sectionStatusNotRun}
+	}
+	result := vulnRecordToContext(&rec, "", "")
+	if run, ok := b.runThatProduced(rec, coord); ok {
+		result = vulnRecordToContext(&rec, string(run.OverallStatus), walkCoverageCaveat(run))
+		b.filterWalkAnnotation(ctx, &result, coord, run, vulnUC)
+	}
+	b.nameRecordBasis(ctx, &result, rec.WalkID)
+	return result
+}
+
+// runThatProduced returns the scan run the served record came out of: the run
+// of the record's own walk that covers coord and judged it against the record's
+// own advisory snapshot.
+//
+// It is resolved through the window, which is the set of walks whose runs this
+// batch loaded. A record measured in a walk outside that set has no run context
+// to read, and the section then states only what the record itself says rather
+// than borrowing another build's status word.
+func (b *vulnBatchCtx) runThatProduced(rec vuldomain.VulnerabilityRecord, coord coordinate.ModuleCoordinate) (vuldomain.WalkScanRun, bool) {
+	if rec.WalkID == "" || !b.inWindow(rec.WalkID) {
+		return vuldomain.WalkScanRun{}, false
+	}
+	for _, run := range b.runs[rec.WalkID] {
+		if _, ok := run.PerModuleResults[coord]; !ok {
+			continue
+		}
+		if !sameSnapshot(run.Snapshot, rec.DatabaseSnapshot) {
+			continue
+		}
+		return run, true
+	}
+	return vuldomain.WalkScanRun{}, false
+}
+
+// inWindow reports whether walkID is one of the walks this batch loaded runs
+// for.
+func (b *vulnBatchCtx) inWindow(walkID string) bool {
+	for _, id := range b.window {
+		if id == walkID {
+			return true
+		}
+	}
+	return false
+}
+
+// sameSnapshot reports whether two records name the same advisory-database
+// generation. Source and version are the whole of snapshot identity here, the
+// same key the store's own per-snapshot read uses; the retrieval instant travels
+// with the record and is not part of it.
+func sameSnapshot(a, b vuldomain.DatabaseSnapshot) bool {
+	return a.Source() == b.Source() && a.Version() == b.Version()
+}
+
+// nameRecordBasis states which walk an unanchored answer was read from, and the
+// frame that walk was rooted at.
+//
+// The answer is a fact about one build: "affected via <peer>" is true in the
+// walk that found the peer and says nothing about any other, and the verdict
+// itself was measured there. Stated without the walk, it is a frame-dependent
+// claim with the frame withheld. The walk named is always the served record's
+// own, so the basis and the record's provenance cannot disagree. An anchored
+// batch is silent here because its caller already names the build it pinned to.
+func (b *vulnBatchCtx) nameRecordBasis(ctx context.Context, result *contextVulnerabilities, walkID string) {
+	if b.anchored || walkID == "" {
+		return
+	}
+	result.WalkBasisID = walkID
+	if anchor := b.frameFor(ctx, walkID); anchor.rooting.IsRecorded() {
+		result.WalkBasisFrame = string(anchor.rooting)
+	}
+}
+
+// selectForBatch picks the record a batch report serves for one coordinate: in
+// the anchored build's frame when the caller named a build, and frame-first
+// among consumers when it did not.
+func (b *vulnBatchCtx) selectForBatch(recs []vuldomain.VulnerabilityRecord, coord coordinate.ModuleCoordinate) (vuldomain.VulnerabilityRecord, bool) {
+	if b.anchored && b.anchor.rooting.IsRecorded() {
+		rec, _, _, ok := selectRecordInFrame(recs, b.anchor.rooting)
+		return rec, ok
+	}
+	rec, _, _, ok := selectConsumerRecord(recs, coord)
+	return rec, ok
 }
 
 // recordsAtSnapshot narrows a coordinate's generations to the ones reached

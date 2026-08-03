@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -47,18 +48,26 @@ func (uc *QueryVulnUseCase) GetLatestRecord(
 	return rec, found, nil
 }
 
-// GetLatestRecordForWalk returns the most recently scanned record for a coordinate, pipeline version, and walk ID.
-func (uc *QueryVulnUseCase) GetLatestRecordForWalk(
+// ListRecordsForModuleInWalk returns every generation of a coordinate the named
+// walk's scan runs covered — the candidates, not an answer.
+//
+// Candidates, because ranking them needs an analysis frame the store does not
+// have: a walk's membership index carries none, so its candidate set spans every
+// frame the coordinate was measured in at that generation. The caller knows
+// which build it asked about and selects on it (domain.ComposeAt). There is
+// deliberately no frame-blind convenience beside this: the one that existed
+// answered walk-pinned questions from other projects' scans.
+func (uc *QueryVulnUseCase) ListRecordsForModuleInWalk(
 	ctx context.Context,
 	coord coordinate.ModuleCoordinate,
 	pipelineVersion string,
 	walkID string,
-) (domain.VulnerabilityRecord, bool, error) {
-	rec, found, err := uc.store.GetLatestVulnerabilityRecordForWalk(ctx, coord, pipelineVersion, walkID)
+) ([]domain.VulnerabilityRecord, error) {
+	recs, err := uc.store.ListVulnerabilityRecordsForModuleInWalk(ctx, coord, pipelineVersion, walkID)
 	if err != nil {
-		return domain.VulnerabilityRecord{}, false, fmt.Errorf("getting latest vulnerability record for %s (walk %s): %w", coord, walkID, err)
+		return nil, fmt.Errorf("listing vulnerability records for %s (walk %s): %w", coord, walkID, err)
 	}
-	return rec, found, nil
+	return recs, nil
 }
 
 // ListRecordsForModule returns all stored scan records for a coordinate and pipeline version.
@@ -100,14 +109,83 @@ func (uc *QueryVulnUseCase) ListRecordsByFindingID(ctx context.Context, findingI
 	return recs, nil
 }
 
+// ErrWalkPresenceUnavailable is returned when a caller asks whether a run's
+// inputs still resolve and this use case was constructed without a walk-presence
+// port. It is deliberately an error rather than an assumed "resolves": a reader
+// that cannot check must not answer the question, because the wrong answer here
+// presents a run whose subject is gone as ordinary evidence.
+var ErrWalkPresenceUnavailable = errors.New(
+	"walk presence unavailable: cannot state whether a scan run's inputs resolve")
+
 // QueryScanRunsUseCase provides read-only access to walk scan runs and database snapshots.
 type QueryScanRunsUseCase struct {
 	store ports.VulnerabilityStore
+	walks ports.WalkPresence
 }
 
 // NewQueryScanRunsUseCase constructs a QueryScanRunsUseCase.
-func NewQueryScanRunsUseCase(store ports.VulnerabilityStore) *QueryScanRunsUseCase {
-	return &QueryScanRunsUseCase{store: store}
+//
+// walks is what lets a caller state that a run's inputs no longer resolve. It is
+// a constructor argument rather than an optional builder so that every reader of
+// scan runs is built having decided whether it can answer that; a nil one makes
+// UnresolvedWalks and WalkPresent fail rather than assume.
+func NewQueryScanRunsUseCase(store ports.VulnerabilityStore, walks ports.WalkPresence) *QueryScanRunsUseCase {
+	return &QueryScanRunsUseCase{store: store, walks: walks}
+}
+
+// UnresolvedWalks returns the walk ids named by runs that this store no longer
+// holds — the runs whose inputs cannot be resolved. A run in the result reports
+// what was found by a scan whose subject is gone: the finding rows survive, the
+// walk that says what was scanned, at which versions, from which root, does not.
+//
+// It is derived on every read rather than stamped on the rows. A stamp would
+// need a migration, would classify only the runs present when it ran, and would
+// go stale the moment a later purge stranded another run; a live probe of the
+// walks table classifies every run, present and future, at the cost of one
+// indexed read per listing.
+func (uc *QueryScanRunsUseCase) UnresolvedWalks(
+	ctx context.Context, runs []domain.WalkScanRun,
+) (map[string]bool, error) {
+	if uc.walks == nil {
+		return nil, ErrWalkPresenceUnavailable
+	}
+	ids := make([]string, 0, len(runs))
+	seen := make(map[string]struct{}, len(runs))
+	for _, run := range runs {
+		if run.WalkID == "" {
+			continue
+		}
+		if _, dup := seen[run.WalkID]; dup {
+			continue
+		}
+		seen[run.WalkID] = struct{}{}
+		ids = append(ids, run.WalkID)
+	}
+	present, err := uc.walks.PresentWalks(ctx, ids)
+	if err != nil {
+		return nil, fmt.Errorf("checking whether the walks these runs name still exist: %w", err)
+	}
+	unresolved := make(map[string]bool, len(ids))
+	for _, id := range ids {
+		if !present[id] {
+			unresolved[id] = true
+		}
+	}
+	return unresolved, nil
+}
+
+// WalkPresent reports whether the store still holds walkID. It answers for a
+// walk named directly by a caller — a history query names one — where there may
+// be no run to derive the id from.
+func (uc *QueryScanRunsUseCase) WalkPresent(ctx context.Context, walkID string) (bool, error) {
+	if uc.walks == nil {
+		return false, ErrWalkPresenceUnavailable
+	}
+	present, err := uc.walks.PresentWalks(ctx, []string{walkID})
+	if err != nil {
+		return false, fmt.Errorf("checking whether walk %q still exists: %w", walkID, err)
+	}
+	return present[walkID], nil
 }
 
 // GetRun retrieves a walk scan run by its ID.

@@ -32,6 +32,14 @@ type VulnFinding struct {
 	// verdict and reports "unreachable", which claims a search that could not
 	// have been run.
 	AdvisoryNamesNoSymbols bool
+	// ReachableBasis states how the stored Reachable verdict was derived and in
+	// which analysis frame — the record's own derivation, rendered. It is empty
+	// when Reachable is nil.
+	//
+	// It is carried because Reachable is a bool and a bool cannot say whose build
+	// it is about. A verdict seeded from a stored scan is reported with its basis
+	// so a reader can tell it from one this probe measured.
+	ReachableBasis string
 }
 
 // Clock supplies the current time. The local probe stamps when its answer was
@@ -58,16 +66,32 @@ type FindingSet struct {
 	// Scanned is every coordinate the store held a vulnerability record for,
 	// with or without findings.
 	Scanned map[coordinate.ModuleCoordinate]struct{}
+	// OtherFrameOnly is every coordinate the store held records for that were
+	// all measured in some other build's frame. They are not scanned — nothing
+	// measured THIS build — but they are not unknown to the store either, and
+	// the two absences take different remedies.
+	OtherFrameOnly map[coordinate.ModuleCoordinate]struct{}
+	// Restriction states, in one line, which records the loader was willing to
+	// draw this seed from. It is reported with the answer: a store holding
+	// several projects' scans holds several answers per coordinate, and which of
+	// them a probe was seeded from is not a detail the tool may settle silently.
+	Restriction string
 }
 
-// VulnFindingLoader loads stored CVE findings for a set of module coordinates.
-// It is the read-only bridge between the global vuln store and a local
-// reachability analysis run.
+// VulnFindingLoader loads stored CVE findings for a set of module coordinates,
+// as measured for one consumer. It is the read-only bridge between the global
+// vuln store and a local reachability analysis run.
 type VulnFindingLoader interface {
 	// LoadFindings returns the stored findings for each coordinate that has at
 	// least one, and the set of coordinates a record was held for at all.
 	// Errors for individual modules are surfaced in the error return.
-	LoadFindings(ctx context.Context, coords []coordinate.ModuleCoordinate) (FindingSet, error)
+	//
+	// consumerModulePath is the module path of the tree being probed, and it is
+	// what the seed is anchored to: a record measured in another consumer's build
+	// answers a question about that build, and must not seed this one. A
+	// coordinate with no acceptable record simply seeds nothing — the probe
+	// measures, and an empty seed is an absence rather than an error.
+	LoadFindings(ctx context.Context, coords []coordinate.ModuleCoordinate, consumerModulePath string) (FindingSet, error)
 }
 
 // BuildModuleLister enumerates every module the local build resolves.
@@ -143,25 +167,6 @@ type DependencyLoader interface {
 	// have no stored record are silently omitted from the result — the caller
 	// decides how to handle gaps in coverage.
 	LoadCallGraphRecords(ctx context.Context, coords []coordinate.ModuleCoordinate, pipelineVersion string) ([]callgraphdomain.CallGraphRecord, error)
-}
-
-// WorkspaceInfo carries the parsed metadata extracted from a Snapshot.
-// It is the input to scope auto-detection and root selection.
-type WorkspaceInfo struct {
-	// Kind classifies the workspace for scope auto-detection.
-	Kind domain.WorkspaceKind
-	// Funcs contains all function and method declarations found in the snapshot.
-	Funcs []domain.FuncDecl
-}
-
-// WorkspaceAnalyser parses a Snapshot and extracts the function declarations
-// needed for dynamic callgraph root selection. Implementations may use
-// go/ast or go/packages; the interface is intentionally narrow.
-type WorkspaceAnalyser interface {
-	// Analyse parses the Go source files in snap and returns the workspace
-	// metadata needed to select callgraph roots. Files in the snapshot are
-	// read from snap.Files; no disk access is performed.
-	Analyse(ctx context.Context, snap domain.Snapshot) (WorkspaceInfo, error)
 }
 
 // ImportAnalyser identifies which packages from dependency modules are

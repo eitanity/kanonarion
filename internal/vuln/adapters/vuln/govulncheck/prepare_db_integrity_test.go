@@ -43,7 +43,7 @@ func TestPrepareDBArg_IntegrityFailsWhileOtherFailuresFallBack(t *testing.T) {
 	}
 
 	t.Run("integrity failure is fatal", func(t *testing.T) {
-		arg, cleanup, err := newScanner(fmt.Errorf("reading blob: %w", ports.ErrSnapshotIntegrity)).
+		arg, _, cleanup, err := newScanner(fmt.Errorf("reading blob: %w", ports.ErrSnapshotIntegrity)).
 			prepareDBArg(context.Background(), snapshot, "")
 		if cleanup != nil {
 			cleanup()
@@ -66,7 +66,7 @@ func TestPrepareDBArg_IntegrityFailsWhileOtherFailuresFallBack(t *testing.T) {
 	})
 
 	t.Run("an absent snapshot keeps the live-database fallback", func(t *testing.T) {
-		arg, cleanup, err := newScanner(errors.New("snapshot not found")).
+		arg, _, cleanup, err := newScanner(errors.New("snapshot not found")).
 			prepareDBArg(context.Background(), snapshot, "")
 		if cleanup != nil {
 			cleanup()
@@ -81,7 +81,7 @@ func TestPrepareDBArg_IntegrityFailsWhileOtherFailuresFallBack(t *testing.T) {
 
 	// The record sentinel has a different blast radius and must not trip this.
 	t.Run("the record sentinel keeps the fallback", func(t *testing.T) {
-		arg, cleanup, err := newScanner(fmt.Errorf("reading: %w", ports.ErrVulnIntegrity)).
+		arg, _, cleanup, err := newScanner(fmt.Errorf("reading: %w", ports.ErrVulnIntegrity)).
 			prepareDBArg(context.Background(), snapshot, "")
 		if cleanup != nil {
 			cleanup()
@@ -101,7 +101,7 @@ func TestPrepareDBArg_IntegrityFailsWhileOtherFailuresFallBack(t *testing.T) {
 			logger:    slog.New(slog.NewTextHandler(io.Discard, nil)),
 			vulnStore: &snapshotFaultStore{err: ports.ErrSnapshotIntegrity},
 		}
-		arg, cleanup, err := s.prepareDBArg(context.Background(), snapshot, "/tmp/pre-extracted")
+		arg, _, cleanup, err := s.prepareDBArg(context.Background(), snapshot, "/tmp/pre-extracted")
 		if cleanup != nil {
 			cleanup()
 		}

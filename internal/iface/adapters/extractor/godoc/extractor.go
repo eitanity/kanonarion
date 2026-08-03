@@ -41,7 +41,6 @@ func (e *Extractor) Extract(ctx context.Context, sourceTree fs.FS, coord coordin
 	}
 
 	var pkgs []domain.PackageInterface
-	anyPartial := false
 
 	for _, dir := range dirs {
 		if ctx.Err() != nil {
@@ -55,24 +54,31 @@ func (e *Extractor) Extract(ctx context.Context, sourceTree fs.FS, coord coordin
 				PipelineVersion: e.pipelineVersion,
 			}
 			r.Sort()
+			r.FailureDetail = cancelDetail(ctx.Err(), len(r.Packages), len(dirs), r.Packages)
 			return r, nil //nolint:nilerr // intentional: context cancellation is reported via OverallStatus, not error
 		}
 
 		pkg, err := parsePackageDir(sourceTree, dir, coord)
 		if err != nil {
-			// A directory with no parseable Go files is skipped silently.
+			// A directory that yields no package at all still yields a fact: the
+			// reason it could not be read. It is recorded as a package carrying
+			// only that failure — the shape parsePackageDir already returns when
+			// every file in a directory failed to parse — so the skip survives
+			// into the stored record and is answerable later. Skipping silently
+			// discarded the only statement about that directory a reader could
+			// act on, and left the record claiming the directory did not exist.
+			//
+			// ParseFailure.File names the DIRECTORY here, not a file: the failure
+			// is about the directory as a whole (it could not be read, or nothing
+			// in it composed into a package), so there is no one file to blame.
+			pkgs = append(pkgs, domain.PackageInterface{
+				ImportPath:    packageImportPath(coord.Path(), dir),
+				ParseFailures: []domain.ParseFailure{{File: dir, Error: err.Error()}},
+			})
 			continue
 		}
 
-		if len(pkg.ParseFailures) > 0 {
-			anyPartial = true
-		}
 		pkgs = append(pkgs, pkg)
-	}
-
-	status := domain.InterfaceStatusExtracted
-	if anyPartial {
-		status = domain.InterfaceStatusPartial
 	}
 
 	r := domain.InterfaceRecord{
@@ -80,12 +86,71 @@ func (e *Extractor) Extract(ctx context.Context, sourceTree fs.FS, coord coordin
 		Ecosystem:       fetchdomain.EcosystemGo,
 		Coordinate:      coord,
 		Packages:        pkgs,
-		OverallStatus:   status,
+		OverallStatus:   domain.InterfaceStatusExtracted,
 		ExtractedAt:     e.clock.Now().UTC(),
 		PipelineVersion: e.pipelineVersion,
 	}
 	r.Sort()
+	// Status and reason are derived from the same fact, after the sort, so a
+	// record can never say Partial without saying why — the boolean this
+	// replaced collapsed every parse failure to one word and left the reason
+	// nowhere in the record at all.
+	if detail := partialDetail(r.Packages); detail != "" {
+		r.OverallStatus = domain.InterfaceStatusPartial
+		r.FailureDetail = detail
+	}
 	return r, nil
+}
+
+// partialDetail states in one line why a record is Partial: how many packages
+// lost source to a failure, one of them named with its first error, and a count
+// of the rest. Empty when nothing failed, which is the true value for a complete
+// extraction — a record states a reason only when it has one.
+//
+// It is computed from the sorted package list, and takes each package's first
+// (also sorted) failure, so the same extraction always states the same reason.
+// The detail is inside the record's canonical hash, and one that varied with map
+// iteration order would make two identical extractions two different records.
+func partialDetail(pkgs []domain.PackageInterface) string {
+	failed := 0
+	first := ""
+	for _, p := range pkgs {
+		if len(p.ParseFailures) == 0 {
+			continue
+		}
+		failed++
+		if first == "" {
+			f := p.ParseFailures[0]
+			first = fmt.Sprintf("%s: %s", p.ImportPath, oneLine(f.Error))
+		}
+	}
+	if failed == 0 {
+		return ""
+	}
+	detail := fmt.Sprintf("parse failures in %d package(s): %s", failed, first)
+	if failed > 1 {
+		detail += fmt.Sprintf(" (+%d more package(s))", failed-1)
+	}
+	return detail
+}
+
+// cancelDetail states what a cancelled extraction got through before it stopped,
+// so the record is read as an interrupted measurement rather than as a module
+// with almost no API. Any parse failures among the packages it did reach are
+// named too: the record is both cancelled and incomplete, and reporting only the
+// cancellation would drop the second fact.
+func cancelDetail(cause error, done, total int, pkgs []domain.PackageInterface) string {
+	detail := fmt.Sprintf("cancelled after %d of %d package directories: %v", done, total, cause)
+	if pd := partialDetail(pkgs); pd != "" {
+		detail += "; " + pd
+	}
+	return detail
+}
+
+// oneLine folds an error onto a single line. A recorded reason is rendered on
+// one row by the surfaces that print it, and a go/doc error can span several.
+func oneLine(s string) string {
+	return strings.Join(strings.Fields(s), " ")
 }
 
 // collectPackageDirs walks sourceTree and returns every directory that

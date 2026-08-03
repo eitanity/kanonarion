@@ -86,10 +86,14 @@ type FakeExecuteWalk struct {
 	Err         error
 	Result      walkapp.ExecuteWalkResult
 	LastRequest walkapp.WalkRequest
+	// Calls counts Execute invocations, so a test can assert that a refused
+	// flag combination never reached the walk at all.
+	Calls int
 }
 
 func (f *FakeExecuteWalk) Execute(_ context.Context, req walkapp.WalkRequest) (walkapp.ExecuteWalkResult, error) {
 	f.LastRequest = req
+	f.Calls++
 	return f.Result, f.Err
 }
 
@@ -857,6 +861,11 @@ type FakeScanWalk struct {
 	// so a test can prove the reuse question was asked about the walk the run
 	// executed rather than some other walk of the same target.
 	ReusableRunWalkID string
+	// ServedRuns records every (run id, surface) pair ServeReusableRun was told
+	// about, so a test can prove a served answer was witnessed exactly once and
+	// attributed to the surface that asked. ServeReusableRunErr fails the append.
+	ServedRuns          []ServedRun
+	ServeReusableRunErr error
 	// ScanCalls counts Scan invocations, so a test can prove a served run did not
 	// re-measure.
 	ScanCalls int
@@ -870,6 +879,16 @@ type FakeScanWalk struct {
 	// RefreshSnapshotWalkID records the walk the last refresh restricted its
 	// advisory comparison to.
 	RefreshSnapshotWalkID string
+
+	// ToolchainAdvisories is what the seeded snapshot is taken to say under its
+	// toolchain key; ToolchainErr fails the read instead. JudgeToolchain runs the
+	// real domain judgment over them, so a test seeds advisories rather than a
+	// verdict and the fake cannot disagree with the shipped ranking.
+	ToolchainAdvisories vulndomain.ToolchainAdvisorySet
+	ToolchainErr        error
+	// ToolchainVersion records the version the last judgment was asked about, so
+	// a test can prove which of the walk's two toolchain versions was read.
+	ToolchainVersion string
 }
 
 // FakeScanWalkProgress is one entry delivered to the Progress callback.
@@ -889,6 +908,22 @@ func (f *FakeScanWalk) ReusableRun(_ context.Context, walkID string) (vulndomain
 	return f.ReusableRunResult, f.ReusableRunFound, nil
 }
 
+// ServedRun is one witnessed serving of a stored scan run.
+type ServedRun struct {
+	RunID   string
+	WalkID  string
+	Surface string
+}
+
+// ServeReusableRun records the serving the caller witnessed.
+func (f *FakeScanWalk) ServeReusableRun(run vulndomain.WalkScanRun, surface string) error {
+	if f.ServeReusableRunErr != nil {
+		return f.ServeReusableRunErr
+	}
+	f.ServedRuns = append(f.ServedRuns, ServedRun{RunID: run.ID, WalkID: run.WalkID, Surface: surface})
+	return nil
+}
+
 // RefreshSnapshot reports the seeded refresh outcome and counts the call.
 func (f *FakeScanWalk) RefreshSnapshot(_ context.Context, walkID string) (vulnapp.SnapshotRefresh, error) {
 	f.RefreshSnapshotCalls++
@@ -897,6 +932,16 @@ func (f *FakeScanWalk) RefreshSnapshot(_ context.Context, walkID string) (vulnap
 		return vulnapp.SnapshotRefresh{}, f.RefreshSnapshotErr
 	}
 	return f.RefreshSnapshotResult, nil
+}
+
+// JudgeToolchain judges the seeded toolchain advisories with the real domain
+// rule.
+func (f *FakeScanWalk) JudgeToolchain(_ context.Context, snapshot vulndomain.DatabaseSnapshot, toolchainVersion string) (vulndomain.ToolchainJudgment, error) {
+	f.ToolchainVersion = toolchainVersion
+	if f.ToolchainErr != nil {
+		return vulndomain.ToolchainJudgment{}, f.ToolchainErr
+	}
+	return vulndomain.JudgeToolchain(toolchainVersion, snapshot, f.ToolchainAdvisories), nil
 }
 
 func (f *FakeScanWalk) Scan(_ context.Context, params vulnapp.ScanWalkParams) (vulndomain.WalkScanRun, error) {
@@ -944,9 +989,9 @@ type FakeQueryVuln struct {
 	byIDForWalk  map[string][]vulndomain.VulnerabilityRecord
 	byIDWalkSeen string
 	Err          error
-	// ForceLatestRecordForWalkNotFound makes GetLatestRecordForWalk always return
-	// (zero, false, nil) regardless of the records map. Use this to exercise the
-	// fallback path that checks GetLatestRecord for a ScanFailed status.
+	// ForceLatestRecordForWalkNotFound empties the walk-scoped candidate read
+	// regardless of the records map. Use this to exercise the fallback path that
+	// checks GetLatestRecord for a ScanFailed status.
 	ForceLatestRecordForWalkNotFound bool
 }
 
@@ -980,17 +1025,26 @@ func (f *FakeQueryVuln) GetLatestRecord(_ context.Context, coord coordinate.Modu
 	return rec, ok, nil
 }
 
-func (f *FakeQueryVuln) GetLatestRecordForWalk(_ context.Context, coord coordinate.ModuleCoordinate, _, _ string) (vulndomain.VulnerabilityRecord, bool, error) {
+// ListRecordsForModuleInWalk returns the walk's candidate records for a
+// coordinate: the ledger's generations when one has been seeded, otherwise the
+// single record the map holds. ForceLatestRecordForWalkNotFound empties it, the
+// same way it empties the composed read below.
+func (f *FakeQueryVuln) ListRecordsForModuleInWalk(_ context.Context, coord coordinate.ModuleCoordinate, _, _ string) ([]vulndomain.VulnerabilityRecord, error) {
 	if f.Err != nil {
-		return vulndomain.VulnerabilityRecord{}, false, f.Err
+		return nil, f.Err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
 	if f.ForceLatestRecordForWalkNotFound {
-		return vulndomain.VulnerabilityRecord{}, false, nil
+		return nil, nil
 	}
-	rec, ok := f.records[coord.String()]
-	return rec, ok, nil
+	if recs, ok := f.recordLedger[coord.String()]; ok {
+		return recs, nil
+	}
+	if rec, ok := f.records[coord.String()]; ok {
+		return []vulndomain.VulnerabilityRecord{rec}, nil
+	}
+	return nil, nil
 }
 
 // AddRecords seeds every generation the ledger holds for one coordinate, which
@@ -1094,10 +1148,57 @@ type FakeQueryScanRuns struct {
 	snapshots []vulndomain.DatabaseSnapshot
 	GetErr    error
 	ListErr   error
+	// AbsentWalks are the walk ids this store no longer holds — the runs naming
+	// them have inputs that cannot be resolved. Empty (the default) means every
+	// seeded run's walk resolves, which is the healthy store.
+	AbsentWalks map[string]bool
+	// PresenceErr, when set, is what the walk-presence probe fails with. A reader
+	// that cannot check must not answer, so commands surface it rather than
+	// rendering the run as ordinary.
+	PresenceErr error
 }
 
 func NewFakeQueryScanRuns() *FakeQueryScanRuns {
 	return &FakeQueryScanRuns{runs: make(map[string]vulndomain.WalkScanRun)}
+}
+
+// MarkWalkAbsent seeds a walk id as purged from the store, so the runs naming it
+// are the dangling ones.
+func (f *FakeQueryScanRuns) MarkWalkAbsent(walkID string) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.AbsentWalks == nil {
+		f.AbsentWalks = make(map[string]bool)
+	}
+	f.AbsentWalks[walkID] = true
+}
+
+// UnresolvedWalks names the walks among runs that this fake reports as absent.
+func (f *FakeQueryScanRuns) UnresolvedWalks(
+	_ context.Context, runs []vulndomain.WalkScanRun,
+) (map[string]bool, error) {
+	if f.PresenceErr != nil {
+		return nil, f.PresenceErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	out := make(map[string]bool)
+	for _, r := range runs {
+		if f.AbsentWalks[r.WalkID] {
+			out[r.WalkID] = true
+		}
+	}
+	return out, nil
+}
+
+// WalkPresent reports whether walkID is still held.
+func (f *FakeQueryScanRuns) WalkPresent(_ context.Context, walkID string) (bool, error) {
+	if f.PresenceErr != nil {
+		return false, f.PresenceErr
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return !f.AbsentWalks[walkID], nil
 }
 
 func (f *FakeQueryScanRuns) AddRun(run vulndomain.WalkScanRun) {

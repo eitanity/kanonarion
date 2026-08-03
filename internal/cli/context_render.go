@@ -2,7 +2,6 @@ package cli
 
 import (
 	"bytes"
-	"encoding/json"
 	"fmt"
 	"io"
 	"strings"
@@ -41,6 +40,35 @@ func coveragePercent(frac float64) int {
 	return pct
 }
 
+// statusWithReason renders a section's status word together with the reason the
+// record recorded for it, in the "(status: detail)" shape the read-error
+// branches already print as "(failed: %s)".
+//
+// Without it a section printed the status word alone while the reason sat in the
+// same struct, reachable only under --json: the same two words were printed for
+// a module whose analysis environment was unusable and for one with a genuine
+// fault of its own, and the text output could not tell a measurement that never
+// happened from a finding about the module. Text and --json now carry the same
+// facts.
+//
+// A record that recorded no detail renders the bare status word. That is the
+// true value for it — records written before a stage recorded its reason state
+// nothing, and there is no reason here to invent one from.
+func statusWithReason(status, detail string) string {
+	if detail == "" {
+		return status
+	}
+	return status + ": " + collapseLines(detail)
+}
+
+// collapseLines folds a multi-line detail onto a single line so a summary
+// section keeps its one-row-per-section shape. The detail is never truncated:
+// it is the fact the row exists to carry, and a cut one could hide the clause
+// that distinguishes an environment failure from a module fault.
+func collapseLines(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
 func renderContextText(out contextOutput, compact bool) ([]byte, error) {
 	var buf bytes.Buffer
 	if compact {
@@ -53,32 +81,6 @@ func renderContextText(out contextOutput, compact bool) ([]byte, error) {
 		}
 	}
 	return buf.Bytes(), nil
-}
-
-// printContextSize measures the full JSON representation of out and reports
-// estimated token count and byte size. JSON is always used for measurement
-// because it represents the full document, not the compact text summary.
-func printContextSize(out contextOutput, jsonOut bool, stdout io.Writer) error {
-	raw, err := json.MarshalIndent(out, "", "  ")
-	if err != nil {
-		return fmt.Errorf("encoding context: %w", err)
-	}
-	byteCount := len(raw) + 1 // +1 for trailing newline
-	if jsonOut {
-		type sizeResult struct {
-			EstimatedTokens int `json:"estimated_tokens"`
-			ByteCount       int `json:"byte_count"`
-		}
-		enc := json.NewEncoder(stdout)
-		if err := enc.Encode(sizeResult{EstimatedTokens: byteCount / 4, ByteCount: byteCount}); err != nil {
-			return fmt.Errorf("encoding size: %w", err)
-		}
-		return nil
-	}
-	if _, err := fmt.Fprintf(stdout, "~%d tokens (%d bytes)\n", byteCount/4, byteCount); err != nil {
-		return fmt.Errorf("writing size: %w", err)
-	}
-	return nil
 }
 
 // errWriter accumulates the first write error so callers avoid repetitive
@@ -103,17 +105,31 @@ func (ew *errWriter) indented(prefix, text string) {
 	}
 }
 
+// printContextText renders the module's text block and closes it with the
+// context-size hint.
+//
+// The hint measures the module's full JSON document, not the block above it:
+// that is what --size-only reports for the same module under the same flags, and
+// what a caller deciding whether to pull the context is budgeting against. The
+// text block is a digest of that document, four orders of magnitude smaller for
+// a large module, so reporting its length under the words "context size" gave a
+// number that barely moved between modules and answered a question nobody asked.
+// The line therefore names what it is a size of.
 func printContextText(out contextOutput, compact bool, stdout io.Writer) error {
 	data, err := renderContextText(out, compact)
 	if err != nil {
 		return err
 	}
-	tokenEst := len(data) / 4
+	byteCount, err := jsonDocumentBytes(out)
+	if err != nil {
+		return err
+	}
+	tokenEst := byteCount / 4
 	var hint string
 	if compact {
-		hint = fmt.Sprintf("\nContext size: ~%d tokens  (use --full for complete docs, --json for machine-readable)\n", tokenEst)
+		hint = fmt.Sprintf("\nContext size: ~%d tokens (%d bytes) of JSON for this module  (use --full for complete docs, --json for machine-readable)\n", tokenEst, byteCount)
 	} else {
-		hint = fmt.Sprintf("\nContext size: ~%d tokens  (use --json for machine-readable)\n", tokenEst)
+		hint = fmt.Sprintf("\nContext size: ~%d tokens (%d bytes) of JSON for this module  (use --json for machine-readable)\n", tokenEst, byteCount)
 	}
 	if _, err = fmt.Fprint(stdout, string(data)+hint); err != nil {
 		return fmt.Errorf("writing context: %w", err)
@@ -178,7 +194,14 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 	case sectionStatusReadError:
 		w.printf("  License:         (failed: %s)\n", out.License.Error)
 	default:
-		w.printf("  License:         %s\n", licenseSummaryLine(out.License))
+		line := licenseSummaryLine(out.License)
+		if out.License.Error != "" {
+			// The licence summary line carries no status word of its own when a
+			// SPDX identifier was matched, so the recorded reason is appended as
+			// its own clause rather than folded into one that may not be printed.
+			line += " (" + statusWithReason(out.License.Status, out.License.Error) + ")"
+		}
+		w.printf("  License:         %s\n", line)
 	}
 
 	switch out.Interface.Status {
@@ -196,7 +219,8 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 			total += len(p.Types) + len(p.Funcs) + len(p.Consts) + len(p.Vars)
 		}
 		w.printf("  Interface:       %d package(s), %d symbol(s) (%s)\n",
-			len(out.Interface.Packages), total, out.Interface.Status)
+			len(out.Interface.Packages), total,
+			statusWithReason(out.Interface.Status, out.Interface.Error))
 	}
 
 	switch out.CallGraph.Status {
@@ -210,7 +234,8 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 		w.printf("  Call Graph:      (failed: %s)\n", out.CallGraph.Error)
 	default:
 		w.printf("  Call Graph:      %d nodes, %d edges (%s)\n",
-			out.CallGraph.NodeCount, out.CallGraph.EdgeCount, out.CallGraph.Status)
+			out.CallGraph.NodeCount, out.CallGraph.EdgeCount,
+			statusWithReason(out.CallGraph.Status, out.CallGraph.Error))
 	}
 
 	switch out.Examples.Status {
@@ -223,7 +248,8 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 	case sectionStatusReadError:
 		w.printf("  Examples:        (failed: %s)\n", out.Examples.Error)
 	default:
-		w.printf("  Examples:        %d (%s)\n", out.Examples.Count, out.Examples.Status)
+		w.printf("  Examples:        %d (%s)\n", out.Examples.Count,
+			statusWithReason(out.Examples.Status, out.Examples.Error))
 	}
 
 	switch out.Vulnerabilities.Status {
@@ -241,6 +267,7 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 			line += " " + ann
 		}
 		w.printf("  Vulnerabilities: %s\n", line)
+		printWalkBasis(w, "  Walk basis:      %s\n", out.Vulnerabilities)
 		printScanProvenance(w, out.Vulnerabilities)
 	}
 
@@ -263,6 +290,26 @@ func printScanProvenance(w *errWriter, v contextVulnerabilities) {
 	case v.PipelineVersion != "":
 		w.printf("  Pipeline:        %s\n", v.PipelineVersion)
 	}
+}
+
+// printWalkBasis names the walk an unanchored answer was read from. The verdict
+// and the walk annotation above it hold in that build; another walk in the
+// window may answer differently, so the one that answered is named rather than
+// left for the reader to assume. Silent when the caller anchored the read, which
+// states its own build.
+//
+// The frame is stated when the walk record could be read and its absence is said
+// in words, because a missing frame is a gap in what is known about the answer,
+// not a property of the answer.
+func printWalkBasis(w *errWriter, format string, v contextVulnerabilities) {
+	if v.WalkBasisID == "" {
+		return
+	}
+	if v.WalkBasisFrame == "" {
+		w.printf(format, fmt.Sprintf("%s (frame unknown — the walk record is not in the store)", v.WalkBasisID))
+		return
+	}
+	w.printf(format, fmt.Sprintf("%s (frame %s)", v.WalkBasisID, v.WalkBasisFrame))
 }
 
 // walkAnnotation renders the inline walk-level note appended to a module's

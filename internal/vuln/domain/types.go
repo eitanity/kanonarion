@@ -812,6 +812,14 @@ type ProjectScanResult struct {
 	// asks for a vendored analysis; only the scanner knows whether the project
 	// on disk could supply one, so the record names what ran.
 	AnalysisSurface AnalysisSurface
+	// AdvisoryCount is how many advisories the database this scan consulted was
+	// measured to hold, when this scan is what extracted and measured it. Zero
+	// means unmeasured here — the database was supplied already-counted by the
+	// walk's shared pre-extraction, or it was the live service, which no local
+	// reading covers. It is carried on the result rather than on the snapshot
+	// because the snapshot reaches the adapter by value: only the caller can put
+	// the reading on the snapshot the records it goes on to build will name.
+	AdvisoryCount int
 }
 
 // StdlibModulePath is govulncheck's pseudo-module path for Go standard-library

@@ -261,6 +261,40 @@ Measured on the real store at migration time: 92 rows, 72 back-filled to
 walks. Only the project resolver writes a `BuildEnv`, so a walk rooted at a
 published coordinate structurally has no frame and can never gain one.
 
+## Purging a table other rows point at
+
+A migration that deletes rows must state what happens to the rows that reference
+them. The reference is by convention, not by foreign key, so nothing in SQLite
+stops a purge leaving a dangling one.
+
+The case that already happened: `walk` migration 5 purged `walks` on a record
+shape change, and `walk_scan_runs` rows kept naming the deleted walks. Their
+findings survived while the statement of *what was scanned* did not, and nothing
+in the run row said so - the `walk_id` looked like a valid reference. (Measured
+on the real store: 16 of 127 runs, all written between the last `vuln`
+migration-8 purge and the `walk` migration-5 purge.)
+
+A migration that purges `walks` therefore chooses one, in the migration comment:
+
+- **Purge together** - delete the dependent `walk_scan_runs` and
+  `walk_scan_run_modules` rows in the same migration. Correct when the dependents
+  are regenerable and worth nothing on their own.
+- **Orphan with the reason recorded** - keep the dependents and say in the
+  migration comment that they are being stranded and why. Correct when the
+  dependents are evidence in their own right, as findings are.
+
+Either way the read side does not depend on the choice: every surface that serves
+a scan run derives whether its walk is still present and states
+`inputs unresolvable` when it is not, so a run stranded by any future purge is
+reported rather than rendered as ordinary. Nothing is stamped on the rows, so
+there is no back-fill and no shape change.
+
+The same rule reaches reuse. `walks.identity_hash` (migration 7) is the key scan
+reuse looks a walk up by; rows written before that column carry the empty identity
+and are never reuse candidates, so **no back-fill is owed** - but a purge of
+`walks` destroys reusability the store has already paid for, which is part of what
+the migration comment must weigh.
+
 ## Audit log (`audit.jsonl`)
 
 Append-only JSONL; **no schema migration** is ever required to add an event
@@ -269,3 +303,68 @@ fact-record line keeps its historical flat layout with `event_type:
 "fact_record_written"` added additively; all other events use the generic
 `{event_type, timestamp, payload}` envelope. Recognised event types are the
 closed set in `internal/audit`.
+
+The event types added since `callgraph_extracted` (one per persisted call-graph
+generation, on both the fetched-artefact and working-tree routes), in the order
+they landed. None needed a migration, as above:
+
+| Event type | One per |
+|---|---|
+| `interface_extracted` | persisted interface generation |
+| `examples_extracted` | persisted examples generation |
+| `extraction_run_completed` | extraction run over a walk, on every outcome including a cancelled one |
+| `stdlib_custody_recorded` | persisted standard-library custody measurement, on both acquisition routes |
+| `sbom_generated` | persisted SBOM record |
+| `sbom_served` | stored SBOM document handed back from the cache |
+| `advisory_snapshot_recorded` | persisted advisory database snapshot, by whichever route acquired it |
+| `vuln_scan_served` | stored walk scan run handed back instead of measured, naming the run, the walk it answered for and the surface that asked |
+
+The rule this table exists to serve: **this file and the event-vocabulary docs
+are updated in the same commit as the change they describe.** It went stale by
+four event types before this one, and a reader checking whether a write is
+witnessed cannot tell an omission from an absence.
+
+Each of these is emitted only where the write happened, so a cache hit or a
+reused snapshot appends nothing. There are two deliberate exceptions, and they
+share one reason: `sbom_served` and `vuln_scan_served` witness an ASKING rather
+than a write, because a document handed to a caller and a stored scan run served
+without re-measuring are both observations in their own right. Without them, an
+unchanged store answers from existing rows indefinitely and the ledger's
+timestamps track only when evidence was DERIVED — so "when did we first learn X"
+stays answerable while "when did we last check X" becomes unrecoverable. Every
+other event is a write, which is why a stable line count in `audit.jsonl` is
+evidence about **writes**, not about runs.
+
+### What the log does NOT witness
+
+Several record kinds are persisted and append no event. `kanonarion store ledger`
+states this on every reading, because silence in an append-only stream otherwise
+reads as proof that nothing happened:
+
+| Not witnessed | Note |
+|---|---|
+| individual vulnerability record generations | `vuln_scan_completed` **counts** them and `vuln_finding_observed` names each finding, but no event names a per-module verdict; a Clean generation is only an increment, and a single-module scan names no generation either — it appends only the advisory snapshot it acquired, if it acquired one. Enumerating generations is a store query, not a ledger query |
+| attestations | additive provenance recorded beside a fact record, not mirrored into the log |
+| latest-version (staleness) ledger entries | the staleness context has no audit sink wired at all |
+| blob content writes | `fact_record_written` names the blob identity; the write of the bytes appends nothing |
+| directive / GODEBUG / FIPS scans that found nothing | those events are emitted per finding, so a clean scan writes a record and appends no event |
+
+This table is covered by the same rule as the one above: it is updated in the
+same commit as any change to what emits.
+
+### Reading the log
+
+`audit.jsonl` is read by `kanonarion store ledger` (see
+[`docs/cli/store.md`](../cli/store.md)). Two properties of the on-disk artefact
+that the reader is built for, and that any other consumer must also handle:
+
+- **Torn lines exist.** The reference store carries three (lines 4601, 4618,
+  4636 of 33,012), all `license_extracted` events written inside one 8-second
+  window by the pre-refactor writer, each showing a second event's JSON spliced
+  mid-line. The current writer (`sync.Mutex` + `O_APPEND` per append) is safe
+  within a process; the mutex does not cross processes. A strict line-by-line
+  parse **aborts** at the first of them, so a reader must tolerate and COUNT them
+  rather than abort or skip silently, and must state that the event count for the
+  affected window is a lower bound.
+- **File order is not guaranteed to be time order**, though in practice it is.
+  The reader sorts by timestamp.

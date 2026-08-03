@@ -112,6 +112,16 @@ For each `Example*` function found in a `_test.go` file:
 The database schema is versioned via the shared `schema_migrations` table
 (migration version 3).
 
+## Assurance log
+
+Each persisted generation appends one `examples_extracted` event to the
+append-only audit log (`{store-root}/audit.jsonl`): module, version, pipeline
+version, overall status, example count, parse-failure count, the record's content
+hash, the identity of the artefact the extraction read and the content hash of
+the fetch record that supplied it. A failed extraction carries its recorded
+reason as `failure_detail`. A cache hit re-serves the stored record without
+re-extracting, so it appends nothing; `--force` re-extracts and appends.
+
 ## Limitations
 
 - No fetched code is executed. Extraction is purely lexical/syntactic.

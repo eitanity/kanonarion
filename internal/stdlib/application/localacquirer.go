@@ -33,6 +33,7 @@ type LocalAcquirer struct {
 	store     ports.Store
 	clock     fetchports.Clock
 	logger    *slog.Logger
+	audit     ports.AuditSink // optional; nil disables audit emission
 }
 
 // NewLocalAcquirer constructs a LocalAcquirer over the toolchain inspector, the
@@ -54,6 +55,15 @@ func NewLocalAcquirer(
 		clock:     clock,
 		logger:    logger,
 	}
+}
+
+// WithAudit wires an audit sink so offline acquisition appends one
+// stdlib_custody_recorded event per persisted measurement, on the same terms as
+// the online route: the two paths write the same record, so they must leave the
+// same trace. A nil sink (the default) disables emission.
+func (a *LocalAcquirer) WithAudit(sink ports.AuditSink) *LocalAcquirer {
+	a.audit = sink
+	return a
 }
 
 // Acquire establishes (or serves from cache) the offline chain-of-custody facts
@@ -148,6 +158,15 @@ func (a *LocalAcquirer) Acquire(ctx context.Context, goVersionRaw string, opts O
 		slog.String("verification", string(facts.VerificationStatus)),
 		slog.String("license", facts.LicenseSPDX),
 	)
+
+	// Assurance log: one event per persisted measurement, written after the
+	// record and reported rather than swallowed when the append fails. The
+	// offline route is the one whose anchor is this machine, so when it was
+	// established is the whole of what makes it checkable later.
+	if err := emitCustodyRecorded(a.audit, facts); err != nil {
+		return domain.Facts{}, err
+	}
+
 	return facts, nil
 }
 

@@ -130,6 +130,64 @@ func ComposeForConsumer(records []VulnerabilityRecord, coord coordinate.ModuleCo
 	return best(consumer), best(isolated), true, nil
 }
 
+// ComposeForTree returns the record that may seed a probe of the working tree
+// whose go.mod declares modulePath, and ok is false when the ledger holds none
+// it may be seeded from.
+//
+// The frame of a probe is the tree itself, which is not a walk and has no walk
+// id to pin against, so the tree's own module path is the anchor. Two kinds of
+// record answer for it:
+//
+//   - a record rooted at this module path, at whatever version the walk that
+//     produced it assigned the root. That IS the tree's own build, measured
+//     earlier.
+//   - an isolated record, which answers "does the module, built alone, reach the
+//     advisory" — a question with no consumer in it, so it belongs to no project
+//     and misattributes nothing. It is the same fallback the anchored read paths
+//     take, and it is the one that carries most stores: a walk scans its
+//     dependencies through an isolated per-module pool.
+//
+// Another consumer's target-rooted record is never returned. It answers a
+// question about a build the probe was not asked about, and seeding a fresh
+// probe of THIS tree with it carries that build's reachability judgments into an
+// answer about this one.
+//
+// Records that state no frame at all are considered only when NO record in the
+// group states one, on the same narrow terms as ComposeAt: a store not re-scanned
+// since the frame was recorded still seeds, while a coordinate that HAS been
+// measured in a stated frame stops matching against rows that cannot say which
+// question they answer.
+func ComposeForTree(records []VulnerabilityRecord, modulePath string) (VulnerabilityRecord, bool, error) {
+	if len(records) == 0 {
+		return VulnerabilityRecord{}, false, ErrNoRecordsToCompose
+	}
+	own := make([]VulnerabilityRecord, 0, len(records))
+	isolated := make([]VulnerabilityRecord, 0, len(records))
+	anyStated := false
+	for _, r := range records {
+		rooting := RecordRooting(r)
+		if rooting.IsRecorded() {
+			anyStated = true
+		}
+		switch {
+		case rooting.IsRootedAtPath(modulePath):
+			own = append(own, r)
+		case rooting == RootingIsolated:
+			isolated = append(isolated, r)
+		}
+	}
+	if len(own) > 0 {
+		return best(own), true, nil
+	}
+	if len(isolated) > 0 {
+		return best(isolated), true, nil
+	}
+	if !anyStated {
+		return best(records), true, nil
+	}
+	return VulnerabilityRecord{}, false, nil
+}
+
 // atRooting narrows records to the requested frame, falling back to the whole
 // group only when no record in it states a frame.
 func atRooting(records []VulnerabilityRecord, rooting Rooting) []VulnerabilityRecord {

@@ -3,13 +3,16 @@ package sqlite_test
 import (
 	"context"
 	"errors"
+	"strings"
 	"testing"
+	"testing/fstest"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/fetchtest"
+	"github.com/eitanity/kanonarion/internal/iface/adapters/extractor/godoc"
 	"github.com/eitanity/kanonarion/internal/iface/adapters/store/sqlite"
 	domain2 "github.com/eitanity/kanonarion/internal/iface/domain"
 	"github.com/eitanity/kanonarion/internal/iface/ports"
@@ -345,3 +348,112 @@ func TestStore_Put_RebuildIndex(t *testing.T) {
 		t.Errorf("expected exactly 1 symbol ref after double-put, got %d", len(refs))
 	}
 }
+
+// TestStore_PartialRecordStatesItsReasonThroughTheReadPath is the end-to-end
+// evidence that a Partial extraction is actionable: a real extraction over a
+// tree with a broken source file is sealed, appended, and read back through the
+// store's own path, and the record that comes back names a failing package and
+// its parse error. Asserting the extractor's in-memory value would not have
+// shown this — the question is what a later reader of the store is told.
+func TestStore_PartialRecordStatesItsReasonThroughTheReadPath(t *testing.T) {
+	fsys := fstest.MapFS{
+		"good.go":    &fstest.MapFile{Data: []byte("package mod\n\ntype Client struct{}\n")},
+		"bad/bad.go": &fstest.MapFile{Data: []byte("package bad\n\nthis is not valid go !!!\n")},
+	}
+	coord, err := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ext := godoc.New("0.1.0", fixedClock{t: time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)})
+	rec, err := ext.Extract(context.Background(), fsys, coord)
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	if rec.OverallStatus != domain2.InterfaceStatusPartial {
+		t.Fatalf("OverallStatus = %s, want Partial", rec.OverallStatus)
+	}
+	rec.ArtefactIdentity = fetchtest.ZipArtefact("partial-zip=").String()
+	var h domain2.InterfaceRecordHasher
+	rec, err = h.SetContentHash(rec)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+
+	s := openStore(t)
+	if err := s.PutInterfaceRecord(context.Background(), rec); err != nil {
+		t.Fatalf("PutInterfaceRecord: %v", err)
+	}
+
+	got, found, err := s.GetInterfaceRecord(context.Background(), coord, "0.1.0")
+	if err != nil {
+		t.Fatalf("GetInterfaceRecord: %v", err)
+	}
+	if !found {
+		t.Fatal("record not found through the store's read path")
+	}
+	if got.OverallStatus != domain2.InterfaceStatusPartial {
+		t.Fatalf("read-back OverallStatus = %s, want Partial", got.OverallStatus)
+	}
+	if !strings.Contains(got.FailureDetail, "example.com/mod/bad") {
+		t.Errorf("read-back FailureDetail names no failing package: %q", got.FailureDetail)
+	}
+	if !strings.Contains(got.FailureDetail, "bad/bad.go") {
+		t.Errorf("read-back FailureDetail carries no parse error: %q", got.FailureDetail)
+	}
+	// The per-package failures survive the round trip too: the detail names one
+	// package, the packages carry every one of them.
+	var failures int
+	for _, p := range got.Packages {
+		failures += len(p.ParseFailures)
+	}
+	if failures == 0 {
+		t.Error("no per-package ParseFailures survived the round trip")
+	}
+}
+
+// TestStore_CompleteRecordStatesNoReasonThroughTheReadPath is the control: a
+// complete extraction round-trips with no detail, and its content hash is the
+// one the extractor computed. This is what pins that recording a reason on
+// Partial records leaves every complete record in the store byte-identical.
+func TestStore_CompleteRecordStatesNoReasonThroughTheReadPath(t *testing.T) {
+	fsys := fstest.MapFS{
+		"good.go": &fstest.MapFile{Data: []byte("package mod\n\ntype Client struct{}\n")},
+	}
+	coord, err := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	ext := godoc.New("0.1.0", fixedClock{t: time.Date(2026, 1, 1, 12, 0, 0, 0, time.UTC)})
+	rec, err := ext.Extract(context.Background(), fsys, coord)
+	if err != nil {
+		t.Fatalf("Extract: %v", err)
+	}
+	rec.ArtefactIdentity = fetchtest.ZipArtefact("complete-zip=").String()
+	var h domain2.InterfaceRecordHasher
+	rec, err = h.SetContentHash(rec)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+
+	s := openStore(t)
+	if err := s.PutInterfaceRecord(context.Background(), rec); err != nil {
+		t.Fatalf("PutInterfaceRecord: %v", err)
+	}
+	got, found, err := s.GetInterfaceRecord(context.Background(), coord, "0.1.0")
+	if err != nil || !found {
+		t.Fatalf("GetInterfaceRecord: %v found=%t", err, found)
+	}
+	if got.OverallStatus != domain2.InterfaceStatusExtracted {
+		t.Fatalf("read-back OverallStatus = %s, want Extracted", got.OverallStatus)
+	}
+	if got.FailureDetail != "" {
+		t.Errorf("complete record states a detail it does not have: %q", got.FailureDetail)
+	}
+	if got.ContentHash != rec.ContentHash {
+		t.Errorf("content hash changed across the round trip: %q vs %q", got.ContentHash, rec.ContentHash)
+	}
+}
+
+type fixedClock struct{ t time.Time }
+
+func (c fixedClock) Now() time.Time { return c.t }

@@ -282,6 +282,7 @@ func printFullVulnerabilities(w *errWriter, v contextVulnerabilities, cmd contex
 		if v.WalkID != "" {
 			w.printf("Walk ID:      %s\n", v.WalkID)
 		}
+		printWalkBasis(w, "Walk Basis:   %s\n", v)
 		if v.SnapshotVersion != "" {
 			w.printf("Snapshot:     %s\n", v.SnapshotVersion)
 		}

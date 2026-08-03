@@ -244,6 +244,7 @@ type ScanModuleUseCase struct {
 	clock            fetchports.Clock
 	pipelineVersion  string
 	logger           *slog.Logger
+	audit            ports.AuditSink // optional; nil disables audit emission
 }
 
 // NewScanModuleUseCase returns a new ScanModuleUseCase.
@@ -271,6 +272,16 @@ func NewScanModuleUseCase(
 		pipelineVersion: pipelineVersion,
 		logger:          logger,
 	}
+}
+
+// WithAudit wires an audit sink so a module scan that downloads and persists an
+// advisory database snapshot appends one advisory_snapshot_recorded event. It
+// emits nothing else: the findings a scan produces are the walk scan's events,
+// and a module scan that reuses a stored snapshot appends nothing at all. A nil
+// sink (the default) disables emission; returns the receiver for chaining.
+func (uc *ScanModuleUseCase) WithAudit(sink ports.AuditSink) *ScanModuleUseCase {
+	uc.audit = sink
+	return uc
 }
 
 // WithCallGraphLoader sets the loader used to retrieve call graph records for
@@ -406,26 +417,46 @@ func (uc *ScanModuleUseCase) openModuleSource(ctx context.Context, fact fetchdom
 	return blob, nil
 }
 
+// resolveScanSnapshot returns the advisory database snapshot this scan is
+// judged against: the one the caller pinned, or a fresh one from the database,
+// persisted and witnessed.
+//
+// A caller-supplied snapshot is used as given — it was acquired by whoever
+// resolved it, and re-persisting or re-logging it here would date another run's
+// acquisition to this one.
+func (uc *ScanModuleUseCase) resolveScanSnapshot(ctx context.Context, params ScanModuleParams) (domain.DatabaseSnapshot, error) {
+	if params.Snapshot != nil {
+		return *params.Snapshot, nil
+	}
+	snapshot, body, err := uc.database.Snapshot(ctx)
+	if err != nil {
+		return domain.DatabaseSnapshot{}, fmt.Errorf("getting latest database snapshot: %w", err)
+	}
+	if body == nil {
+		return snapshot, nil
+	}
+	defer func() { _ = body.Close() }()
+	// Persist the snapshot if it's new
+	if err := uc.vulnStore.PutDatabaseSnapshot(ctx, snapshot, body); err != nil {
+		return domain.DatabaseSnapshot{}, fmt.Errorf("persisting database snapshot: %w", err)
+	}
+	// Assurance log: the arrival of an advisory set is what "what did we know and
+	// when" turns on, and it was persisted silently. Emitted after the write, so
+	// a failed append says a stored snapshot is unlogged rather than discarding
+	// it. A body is handed over only when there is a new generation to store, so
+	// a reused snapshot never reaches here.
+	if err := emitSnapshotRecorded(uc.audit, snapshot, snapshotRouteModuleScan); err != nil {
+		return domain.DatabaseSnapshot{}, err
+	}
+	return snapshot, nil
+}
+
 // Scan performs the scan.
 func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) (domain.VulnerabilityRecord, error) {
 	// 1. Snapshot Resolution
-	var snapshot domain.DatabaseSnapshot
-	if params.Snapshot != nil {
-		snapshot = *params.Snapshot
-	} else {
-		var err error
-		var body io.ReadCloser
-		snapshot, body, err = uc.database.Snapshot(ctx)
-		if err != nil {
-			return domain.VulnerabilityRecord{}, fmt.Errorf("getting latest database snapshot: %w", err)
-		}
-		if body != nil {
-			defer func() { _ = body.Close() }()
-			// Persist the snapshot if it's new
-			if err := uc.vulnStore.PutDatabaseSnapshot(ctx, snapshot, body); err != nil {
-				return domain.VulnerabilityRecord{}, fmt.Errorf("persisting database snapshot: %w", err)
-			}
-		}
+	snapshot, err := uc.resolveScanSnapshot(ctx, params)
+	if err != nil {
+		return domain.VulnerabilityRecord{}, err
 	}
 
 	// 2. Cache Check (T1: Memoization).
@@ -709,6 +740,20 @@ func (uc *ScanModuleUseCase) routeCoverageFallback(
 	derived derivedFrom,
 	record domain.VulnerabilityRecord,
 ) (domain.VulnerabilityRecord, bool, error) {
+	// A scan that had to extract an advisory database of its own counted it and
+	// stated the reading on the snapshot it stamped. The records below are rebuilt
+	// from the caller's snapshot rather than from the scanner's record, so without
+	// this they would name the same database without saying how much of it was
+	// there — the one shape indistinguishable from a row written before the count
+	// existed.
+	if measured := record.DatabaseSnapshot.AdvisoryCount(); measured > snapshot.AdvisoryCount() {
+		counted, err := snapshotCountingAdvisories(snapshot, measured)
+		if err != nil {
+			return domain.VulnerabilityRecord{}, false, err
+		}
+		snapshot = counted
+	}
+
 	// Routing is decided on the coverage axis: both shapes below are statements
 	// about whether the module could be analysed, which is the axis's question. The
 	// scanner adapters state only the collapsed word, so RecordAxes derives it here

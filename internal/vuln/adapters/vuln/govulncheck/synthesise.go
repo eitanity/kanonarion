@@ -27,8 +27,13 @@ import (
 // return means the toolchain could not be queried, and the caller omits the
 // directive rather than inventing a version, since a wrong one silently changes
 // which files build constraints select.
-func toolchainGoVersion(ctx context.Context, env []string) string {
+//
+// It is asked in dir — the scratch directory the scan will run in. A toolchain
+// is resolved per directory, so asking from the caller's own working directory
+// can name a version that is not the one that will compile the module.
+func toolchainGoVersion(ctx context.Context, dir string, env []string) string {
 	cmd := exec.CommandContext(ctx, "go", "env", "GOVERSION")
+	cmd.Dir = dir
 	cmd.Env = env
 	out, err := cmd.Output()
 	if err != nil {

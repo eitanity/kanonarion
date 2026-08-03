@@ -54,6 +54,12 @@ For each module, audit shows:
   - License (SPDX identifier)
   - Vulnerability status
 
+Beside the table, on stderr, audit states the toolchain axis: the Go toolchain
+version the walk was built by, the advisory snapshot it was judged against, and
+either that no toolchain advisory covers it or the ones that do. The toolchain
+is not a dependency of the artefact, so it is never a row and is counted in no
+roll-up.
+
 This collapses the walk → vuln-scan → license-list workflow into a single call.
 
 The dependency scope is consistent with every go.mod command: the default is the
@@ -266,6 +272,13 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 		return derr
 	}
 
+	// The toolchain axis, beside the module evidence and never inside it. It is
+	// derived from the same stored snapshot the scan was judged against, so it
+	// costs one local read and states the basis it rests on.
+	if terr := writeToolchainJudgment(stderr, derivation.toolchain); terr != nil {
+		return terr
+	}
+
 	// The aggregate goes to stderr on both paths: a whole-graph collapse in
 	// cross-verification is invisible in a populated status column, and stdout
 	// is the data channel --json callers pipe into jq.
@@ -309,6 +322,11 @@ type auditDerivation struct {
 	// brought up to date at all. The audit continues against the stored database;
 	// the statement is what stops that reading as a checked one.
 	refreshErr error
+	// toolchain is the derived judgment of the toolchain that built the walk
+	// against the same snapshot the module findings were judged against. It rides
+	// here because it shares that snapshot and is stated beside the derivation,
+	// and it is reported on its own axis: no module row and no roll-up sees it.
+	toolchain vulndomain.ToolchainJudgment
 }
 
 // writeAuditDerivation states the provenance of the run's two derived answers.
@@ -501,9 +519,15 @@ func auditScope(
 	// settled on is the stored one the scan now resolves. Passing the flag on
 	// would check the database a second time in the same invocation.
 	_, _ = fmt.Fprintf(progressOut, "==> audit: scanning vulnerabilities for walk %s\n", walkID)
-	if verr := runVulnScan(ctx, walkID, f.force, false, false, 1, false, false, "", os.Getenv("USER"), filepath.Dir(f.gomodPath), f.policyPath, false, f.noProgress, false, io.Discard, stderr); verr != nil {
+	if verr := runVulnScan(ctx, walkID, f.force, false, false, 1, false, false, "", os.Getenv("USER"), filepath.Dir(f.gomodPath), f.policyPath, vulnapp.ServeSurfaceAudit, false, f.noProgress, false, io.Discard, stderr); verr != nil {
 		_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", verr)
 	}
+
+	// The toolchain axis, derived once the snapshot this run is judged against is
+	// settled: the scan run names it when one was reused, and the store's latest
+	// otherwise. Both are local reads, and neither the judgment nor its inputs are
+	// written anywhere.
+	derivation.toolchain = judgeWalkToolchain(ctx, ctr, rec, storedSnapshotFor(ctx, ctr, derivation.scanRun))
 
 	overrides, err := ctr.LicenseOverrides.LoadOverrides(ctx)
 	if err != nil {
@@ -520,7 +544,7 @@ func auditScope(
 	// rule domain that governs it rather than under a scope no rule matches.
 	policyScope := policyScopeForWalkScope(walkScope)
 	for _, node := range depNodes {
-		res, rerr := buildAuditResult(ctx, node, walkID, policyScope, overrides, staleness, ctr, stderr)
+		res, rerr := buildAuditResult(ctx, node, walkFrameAnchor(walkID, rec.Target), policyScope, overrides, staleness, ctr, stderr)
 		if rerr != nil {
 			return nil, derivation, rerr
 		}
@@ -550,7 +574,7 @@ func auditDependencyNodes(rec walkdomain.WalkRecord, local coordinate.ModuleCoor
 // buildAuditResult builds one audit row. policyScope is the licence-policy
 // scope (production/tool) the row's licence is evaluated under — already
 // translated from the walk scope by the caller.
-func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, policyScope string, overrides licdomain.LicenseOverrideSet, staleness *staleapp.Resolver, ctr *Container, stderr io.Writer) (auditModuleResult, error) {
+func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, anchor vulnFrameAnchor, policyScope string, overrides licdomain.LicenseOverrideSet, staleness *staleapp.Resolver, ctr *Container, stderr io.Writer) (auditModuleResult, error) {
 	coordStr := node.Coordinate.String()
 	coord, err := parseCoordinate(coordStr)
 	if err != nil {
@@ -562,7 +586,7 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, po
 	// against. Its custody chain (verification status, extracted licence) rides on
 	// the graph node, so it is reported from there rather than the record stores.
 	if node.ResolutionSource == walkdomain.ResolutionStdlib {
-		return buildStdlibAuditResult(ctx, coord, node, policyScope, walkID, ctr), nil
+		return buildStdlibAuditResult(ctx, coord, node, policyScope, anchor, ctr), nil
 	}
 
 	res := auditModuleResult{
@@ -598,7 +622,7 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, po
 		}
 	}
 
-	if walkID == "" {
+	if anchor.walkID == "" {
 		return res, nil
 	}
 
@@ -637,7 +661,11 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, walkID, po
 	}
 	applyPolicyEvaluation(&res, eval, uncertaintyReason)
 
-	vrec, found, verr := ctr.QueryVuln.GetLatestRecordForWalk(ctx, coord, vulnPipelineVersion, walkID)
+	// The walk being audited is the frame the vuln column answers in. The
+	// frame-blind read this replaces ranked every frame the coordinate was
+	// measured in against each other, so a store holding a second project's scans
+	// could put that project's verdict in this project's audit row.
+	vrec, found, verr := recordInWalkFrame(ctx, ctr.QueryVuln, coord, anchor)
 	res.VulnStatus, res.VulnReason, res.VulnFindings, res.VulnWithdrawn = vulnAuditStatus(vrec, found, verr)
 
 	return res, nil
@@ -786,7 +814,7 @@ func vulnAuditStatus(rec vulndomain.VulnerabilityRecord, found bool, err error) 
 // exists so standard-library advisories are scanned — but skips the
 // fetch/licence record lookups and the proxy staleness check, which do not
 // apply to a toolchain artefact.
-func buildStdlibAuditResult(ctx context.Context, coord coordinate.ModuleCoordinate, node walkdomain.GraphNode, policyScope, walkID string, ctr *Container) auditModuleResult {
+func buildStdlibAuditResult(ctx context.Context, coord coordinate.ModuleCoordinate, node walkdomain.GraphNode, policyScope string, anchor vulnFrameAnchor, ctr *Container) auditModuleResult {
 	res := auditModuleResult{
 		Coordinate:   coord.String(),
 		Verification: "(custody unavailable)",
@@ -816,7 +844,7 @@ func buildStdlibAuditResult(ctx context.Context, coord coordinate.ModuleCoordina
 	eval := activeConfig.LicensePolicy.EvaluateLicense(resolvedSPDX, policyScope)
 	applyPolicyEvaluation(&res, eval, "")
 
-	vrec, found, verr := ctr.QueryVuln.GetLatestRecordForWalk(ctx, coord, vulnPipelineVersion, walkID)
+	vrec, found, verr := recordInWalkFrame(ctx, ctr.QueryVuln, coord, anchor)
 	res.VulnStatus, res.VulnReason, res.VulnFindings, res.VulnWithdrawn = vulnAuditStatus(vrec, found, verr)
 	return res
 }
