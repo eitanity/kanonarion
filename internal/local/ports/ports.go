@@ -169,25 +169,6 @@ type DependencyLoader interface {
 	LoadCallGraphRecords(ctx context.Context, coords []coordinate.ModuleCoordinate, pipelineVersion string) ([]callgraphdomain.CallGraphRecord, error)
 }
 
-// WorkspaceInfo carries the parsed metadata extracted from a Snapshot.
-// It is the input to scope auto-detection and root selection.
-type WorkspaceInfo struct {
-	// Kind classifies the workspace for scope auto-detection.
-	Kind domain.WorkspaceKind
-	// Funcs contains all function and method declarations found in the snapshot.
-	Funcs []domain.FuncDecl
-}
-
-// WorkspaceAnalyser parses a Snapshot and extracts the function declarations
-// needed for dynamic callgraph root selection. Implementations may use
-// go/ast or go/packages; the interface is intentionally narrow.
-type WorkspaceAnalyser interface {
-	// Analyse parses the Go source files in snap and returns the workspace
-	// metadata needed to select callgraph roots. Files in the snapshot are
-	// read from snap.Files; no disk access is performed.
-	Analyse(ctx context.Context, snap domain.Snapshot) (WorkspaceInfo, error)
-}
-
 // ImportAnalyser identifies which packages from dependency modules are
 // actually imported by the local workspace. Implementations run go list -json.
 type ImportAnalyser interface {
