@@ -150,6 +150,20 @@ const (
 	// a full pipeline run from a single-module re-extraction without inferring it
 	// from the timestamps of the events around it.
 	EventExtractionRunCompleted EventType = "extraction_run_completed"
+
+	// EventStdlibCustodyRecorded records that a standard-library chain-of-custody
+	// measurement was persisted. Payload carries the toolchain version, the route
+	// the bytes were acquired by (the published go.dev/dl tarball or the local
+	// toolchain's source tree), the verification anchors that acquisition
+	// established, the bytes it was taken over and the measurement's content hash.
+	//
+	// It is named for the write, not for the verification: the event WITNESSES
+	// that a custody record exists and by which route it was obtained, and the
+	// record itself carries the claims. Custody is the one record whose whole
+	// value is provable observation, so the observation being unwitnessed was the
+	// sharpest form of the gap — an operator could see that the stdlib was
+	// verified but not when, or by which run, that was established.
+	EventStdlibCustodyRecorded EventType = "stdlib_custody_recorded"
 )
 
 // knownEventTypes is the closed set of recognised discriminators. A gap
@@ -174,6 +188,7 @@ var knownEventTypes = map[EventType]struct{}{
 	EventInterfaceExtracted:       {},
 	EventExamplesExtracted:        {},
 	EventExtractionRunCompleted:   {},
+	EventStdlibCustodyRecorded:    {},
 }
 
 // Known reports whether t is a recognised event type.

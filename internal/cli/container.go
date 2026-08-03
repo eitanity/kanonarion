@@ -365,10 +365,10 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// network I/O either way leaves the stdlib node populated.
 	if modcacheMode {
 		resolver = resolver.WithStdlibAcquirer(
-			composition.NewOfflineStdlibAcquirer(dbHandle, goBinary, clk, logger), skipVCSVerify)
+			composition.NewOfflineStdlibAcquirer(dbHandle, goBinary, clk, factStore, logger), skipVCSVerify)
 	} else {
 		resolver = resolver.WithStdlibAcquirer(
-			composition.NewStdlibAcquirer(dbHandle, blobs, clk, logger), skipVCSVerify)
+			composition.NewStdlibAcquirer(dbHandle, blobs, clk, factStore, logger), skipVCSVerify)
 	}
 	walker := walkapp.NewWalker(resolver, fetcher, localFetcher, clk, stopwatch, 0, logger)
 

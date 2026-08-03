@@ -26,6 +26,7 @@ func TestEventType_Known(t *testing.T) {
 		audit.EventInterfaceExtracted,
 		audit.EventExamplesExtracted,
 		audit.EventExtractionRunCompleted,
+		audit.EventStdlibCustodyRecorded,
 	}
 	for _, et := range known {
 		if !et.Known() {

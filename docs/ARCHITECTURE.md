@@ -341,6 +341,17 @@ on every outcome - including a cancelled one - so it has no cache branch and
 every run appends. Without it, a batch of stage events could not be told apart
 from a series of single-module re-extractions.
 
+Standard-library custody records that a *measurement was taken*
+(`stdlib_custody_recorded`: toolchain version, acquisition route (`godev` /
+`local-toolchain`), the verification anchors that acquisition established, the
+artefact identity it was taken over, and the measurement's content hash). Both
+acquisition routes emit on the same terms. The payload deliberately omits the
+verification status, the published checksum and the licence: the event
+*witnesses* that a custody record was written and by which route, and the record
+carries the claims - the content hash is what reaches them. A cache hit re-serves
+without appending, and a run that could not establish custody at all wrote no
+record and so appends nothing, since an absence is not an observation.
+
 Both composition roots wire the same sinks. The CLI container and the library
 composition root behind `pkg/kanonarion` append identical events for the same
 operation; a consumer driving the pipeline as a library does not get a quieter

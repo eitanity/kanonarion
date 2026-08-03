@@ -213,7 +213,9 @@ digests and `go.googlesource.com/go` tag → commit recorded, and its
 into `audit` and `sbom`. The tarball is cached per Go version; `--force`
 re-acquires and re-verifies it, and `--skip-vcs-verify` omits the commit anchor
 (the checksum verification still runs). A fully offline run (`--from-modcache`)
-leaves the node without the custody chain. See [SBOM standard-library chain of
+anchors instead to the local toolchain - digests over `$GOROOT/src` and the
+licence from `$GOROOT/LICENSE`, recorded as `VerifiedLocalToolchain`, with no
+go.dev/dl checksum consulted. See [SBOM standard-library chain of
 custody](sbom.md#standard-library-chain-of-custody).
 
 ## Scope and depth
@@ -435,6 +437,19 @@ append-only assurance log - independent of the mutable walk record in SQLite. On
 `succeeded` walk emits: a `partial` or `cancelled` walk defines no complete
 population to anchor, and a cached succeeded walk (no `--force`) re-serves the
 stored record without re-walking, so neither appends anything.
+
+Each standard-library custody measurement the walk persists appends one
+`stdlib_custody_recorded` event: the toolchain version, the acquisition route
+(`godev` for the published tarball, `local-toolchain` for a `--from-modcache`
+run), the verification anchors that acquisition established (`godev_checksum`,
+`googlesource_commit`, `local_toolchain_source`), the artefact identity it was
+taken over, and the record's content hash. It witnesses the write, not the
+verdict - the custody record itself carries the verification status, the
+published checksum and the licence, and the content hash is what reaches them.
+The tarball is cached per Go version, so a re-used measurement appends nothing
+and `--force` re-acquires and appends again; a run that could not establish
+custody (no network, no probeable toolchain) leaves the node bare and appends
+nothing.
 
 ## Exit codes
 

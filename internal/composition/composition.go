@@ -57,6 +57,7 @@ import (
 	stdlibtoolchain "github.com/eitanity/kanonarion/internal/stdlib/adapters/toolchainenv"
 	stdlibbridge "github.com/eitanity/kanonarion/internal/stdlib/adapters/walkbridge"
 	stdlibapp "github.com/eitanity/kanonarion/internal/stdlib/application"
+	stdlibports "github.com/eitanity/kanonarion/internal/stdlib/ports"
 	vensqlite "github.com/eitanity/kanonarion/internal/vendortree/adapters/store/sqlite"
 	venapp "github.com/eitanity/kanonarion/internal/vendortree/application"
 	vulnsqlite "github.com/eitanity/kanonarion/internal/vuln/adapters/store/sqlite"
@@ -98,8 +99,10 @@ func Migrations() []sqlitestore.Migration {
 // googlesource commit resolver, the licence detector, and the version-keyed
 // fact cache. It is returned as a walk StdlibAcquirer via the bridge so the
 // resolver depends only on the narrow port. Both composition roots (the driver
-// here and the CLI container) share it so stdlib custody behaves identically.
-func NewStdlibAcquirer(db sqlitestore.DB, blobs fetchports.BlobStore, clk fetchports.Clock, logger *slog.Logger) *stdlibbridge.Bridge {
+// here and the CLI container) share it so stdlib custody behaves identically —
+// including the assurance log: audit is wired here rather than at each call site
+// so neither root can be the quieter one.
+func NewStdlibAcquirer(db sqlitestore.DB, blobs fetchports.BlobStore, clk fetchports.Clock, audit stdlibports.AuditSink, logger *slog.Logger) *stdlibbridge.Bridge {
 	godev := stdlibgodev.New()
 	acquirer := stdlibapp.NewAcquirer(
 		godev, godev,
@@ -107,7 +110,7 @@ func NewStdlibAcquirer(db sqlitestore.DB, blobs fetchports.BlobStore, clk fetchp
 		stdliblic.New(licdet.New()),
 		stdlibsqlite.New(db),
 		blobs, clk, logger,
-	)
+	).WithAudit(audit)
 	return stdlibbridge.New(acquirer)
 }
 
@@ -118,14 +121,14 @@ func NewStdlibAcquirer(db sqlitestore.DB, blobs fetchports.BlobStore, clk fetchp
 // the same licence detector and version-keyed fact cache the online path uses
 // classify and persist the result. No network client is wired — the offline path
 // performs no I/O beyond the local filesystem. goBinary may be empty (PATH "go").
-func NewOfflineStdlibAcquirer(db sqlitestore.DB, goBinary string, clk fetchports.Clock, logger *slog.Logger) *stdlibbridge.Bridge {
+func NewOfflineStdlibAcquirer(db sqlitestore.DB, goBinary string, clk fetchports.Clock, audit stdlibports.AuditSink, logger *slog.Logger) *stdlibbridge.Bridge {
 	acquirer := stdlibapp.NewLocalAcquirer(
 		stdlibtoolchain.New(goBinary, logger),
 		stdliblocalsrc.New(),
 		stdliblic.New(licdet.New()),
 		stdlibsqlite.New(db),
 		clk, logger,
-	)
+	).WithAudit(audit)
 	return stdlibbridge.New(acquirer)
 }
 
@@ -363,7 +366,7 @@ func newLocalWalkExtract(
 	localFetcher := walklocalfs.New(blobs, factStore, clk)
 	resolver := walkapp.NewGraphResolver(walkgomod.New(), fetcher, blobs, clk, "", logger).
 		WithBuildListResolver(walkbuildlist.New("", logger)).
-		WithStdlibAcquirer(NewStdlibAcquirer(db, blobs, clk, logger), false)
+		WithStdlibAcquirer(NewStdlibAcquirer(db, blobs, clk, factStore, logger), false)
 	walker := walkapp.NewWalker(resolver, fetcher, localFetcher, clk, stopwatch, 0, logger)
 	executeWalkUC := walkapp.NewExecuteWalkUseCase(walker, walkStore, "", "", logger).WithAudit(factStore)
 

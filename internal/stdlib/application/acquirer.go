@@ -43,6 +43,7 @@ type Acquirer struct {
 	blobs    fetchports.BlobStore // optional; when nil the tarball bytes are not retained
 	clock    fetchports.Clock
 	logger   *slog.Logger
+	audit    ports.AuditSink // optional; nil disables audit emission
 }
 
 // NewAcquirer constructs an Acquirer. blobs may be nil, in which case the source
@@ -68,6 +69,15 @@ func NewAcquirer(
 		clock:    clock,
 		logger:   logger,
 	}
+}
+
+// WithAudit wires an audit sink so acquisition appends one
+// stdlib_custody_recorded event per persisted measurement. It is optional — a
+// nil sink (the default) disables emission — and returns the receiver for
+// chaining, mirroring the extraction stages' optional-dependency builders.
+func (a *Acquirer) WithAudit(sink ports.AuditSink) *Acquirer {
+	a.audit = sink
+	return a
 }
 
 // Acquire establishes (or serves from cache) the chain-of-custody facts for the
@@ -160,6 +170,16 @@ func (a *Acquirer) Acquire(ctx context.Context, goVersionRaw string, opts Option
 		slog.String("license", facts.LicenseSPDX),
 		slog.Bool("vcs_resolved", facts.VCSCommit != ""),
 	)
+
+	// Assurance log: one event per persisted measurement, so the custody the SBOM
+	// and the verification-coverage report rest on has a dated observation behind
+	// it and not only a row in a version-keyed cache. The measurement is written
+	// first, so a failed append reports that the write is unlogged — it never
+	// undoes it.
+	if err := emitCustodyRecorded(a.audit, facts); err != nil {
+		return domain.Facts{}, err
+	}
+
 	return facts, nil
 }
 
