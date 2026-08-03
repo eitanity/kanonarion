@@ -67,6 +67,35 @@ func inspectGoModOnlyFlags(f inspectFlags) []inapplicableFlag {
 	return out
 }
 
+// vulnScanGoModScopeFlags returns the vuln-scan flags that only a go.mod scope
+// scan can act on, for whichever of them the caller set. Setting any of them is
+// what selects that path, so the two other paths never see one set; they are
+// named here so a change of dispatch cannot turn a scope flag into a silent
+// no-op on the path it lands on.
+func vulnScanGoModScopeFlags(f vulnScanFlags) []inapplicableFlag {
+	const where = "vuln-scan --gomod/--tool/--project"
+	var out []inapplicableFlag
+	if f.gomod != "" {
+		out = append(out, inapplicableFlag{flag: "--gomod", where: where})
+	}
+	if f.tool {
+		out = append(out, inapplicableFlag{flag: "--tool", where: where})
+	}
+	if f.project {
+		out = append(out, inapplicableFlag{flag: "--project", where: where})
+	}
+	return out
+}
+
+// vulnScanModuleFlag returns --module when the caller set it. Only the module
+// path resolves a coordinate to the walk rooted at it.
+func vulnScanModuleFlag(f vulnScanFlags) []inapplicableFlag {
+	if f.moduleCoord == "" {
+		return nil
+	}
+	return []inapplicableFlag{{flag: "--module", where: "vuln-scan --module"}}
+}
+
 // binaryPrePassFlag returns --binary-pre-pass when the caller set it. Only a
 // scan of a named walk carries the pre-pass into the scan request.
 func binaryPrePassFlag(set bool) []inapplicableFlag {

@@ -144,11 +144,19 @@ type reachabilityOutput struct {
 	Modules         []reachabilityModule `json:"modules"`
 }
 
+// reachabilityFlags holds every flag the reachability command registers. They
+// live in one struct, rather than in a local variable each, so that a flag one
+// of the command's two dispatch paths never receives is visible per field
+// rather than only as a missing argument.
+type reachabilityFlags struct {
+	localPath string
+	vulnID    string
+	walkID    string
+	gomod     string
+}
+
 func newReachabilityCmd(stdout, stderr io.Writer) *cobra.Command {
-	var localPath string
-	var vulnID string
-	var walkID string
-	var gomod string
+	var f reachabilityFlags
 
 	cmd := &cobra.Command{
 		Use:   "reachability (<module>@<version> --vuln <id> | --local <dir>)",
@@ -188,55 +196,83 @@ frame — never another project's — and states that restriction in its output.
 			}
 
 			switch {
-			case vulnID != "":
-				// Mutual exclusion is checked FIRST. The default branch below
-				// offers --local as a peer target, so '--local . --vuln <id>' is
-				// exactly what an operator who read that message types next;
-				// checking the missing coordinate first answered them with
-				// "requires a <module>@<version> argument" — a complaint about
-				// the wrong thing, and one that made the conflict message
-				// unreachable precisely when it was the accurate one.
-				if localPath != "" {
-					return fmt.Errorf("--vuln and --local are mutually exclusive: --vuln queries a stored module, --local analyses the working tree")
-				}
-				if coordArg == "" {
-					return fmt.Errorf("reachability --vuln requires a <module>@<version> argument")
-				}
-				logger := buildLogger(logLevel, stderr)
-				ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
-				if err != nil {
-					return fmt.Errorf("initialising store: %w", err)
-				}
-				defer func() { _ = cleanup() }()
-				return runVulnReachability(cmd.Context(), coordArg, vulnID, walkID, gomod, cmd.Flags().Changed("gomod"),
-					jsonOut, ctr.QueryVuln, ctr.QueryWalks, ctr.QueryCallGraph, stdout)
-			case localPath != "":
-				if coordArg != "" {
-					return fmt.Errorf("reachability --local does not take a module argument; use '<module>@<version> --vuln <id>' to query a stored module")
-				}
-				if walkID != "" || cmd.Flags().Changed("gomod") {
-					// The local probe measures the working tree it was pointed at, so
-					// it already has a build: accepting a second name for one would
-					// invite the reader to think the probe was filtered by it.
-					return fmt.Errorf("--walk-id and --gomod name a stored build and do not apply to --local, which measures the working tree it is given")
-				}
-				return runLocalReachability(cmd.Context(), localPath, stdout, stderr)
+			case f.vulnID != "":
+				return runReachabilityStoredQuery(cmd.Context(), coordArg, f, cmd.Flags().Changed("gomod"), stdout, stderr)
+			case f.localPath != "":
+				return runReachabilityLocalProbe(cmd.Context(), coordArg, f, cmd.Flags().Changed("gomod"), stdout, stderr)
 			default:
 				return fmt.Errorf("specify a target: '<module>@<version> --vuln <id>' to query a scanned module, or '--local <dir>' for the working tree")
 			}
 		},
 	}
 
-	cmd.Flags().StringVar(&localPath, "local", "", "path to the local Go workspace to probe")
-	cmd.Flags().StringVar(&vulnID, "vuln", "", "vulnerability ID (e.g. GO-2024-1234, CVE-..., GHSA-...) to query; requires a <module>@<version> argument")
-	cmd.Flags().StringVar(&walkID, "walk-id", "", "answer the stored query in the frame of this walk's scans")
-	cmd.Flags().StringVar(&gomod, "gomod", "",
+	cmd.Flags().StringVar(&f.localPath, "local", "", "path to the local Go workspace to probe")
+	cmd.Flags().StringVar(&f.vulnID, "vuln", "", "vulnerability ID (e.g. GO-2024-1234, CVE-..., GHSA-...) to query; requires a <module>@<version> argument")
+	cmd.Flags().StringVar(&f.walkID, "walk-id", "", "answer the stored query in the frame of this walk's scans")
+	cmd.Flags().StringVar(&f.gomod, "gomod", "",
 		"answer the stored query in the frame of the latest project walk for this go.mod (default: ./go.mod)")
 	// Cobra only allows a valueless --gomod when the flag declares what that
 	// spelling means.
 	cmd.Flags().Lookup("gomod").NoOptDefVal = defaultGoModPath
 
 	return cmd
+}
+
+// refuseBothReachabilityTargets refuses a run that names both targets. It is
+// asked by both dispatch paths, so which flag cobra saw first cannot decide
+// whether the conflict is reported.
+func refuseBothReachabilityTargets(f reachabilityFlags) error {
+	if f.vulnID != "" && f.localPath != "" {
+		return fmt.Errorf("--vuln and --local are mutually exclusive: --vuln queries a stored module, --local analyses the working tree")
+	}
+	return nil
+}
+
+// runReachabilityStoredQuery is the command's stored-query dispatch path: it
+// reads a persisted verdict and never measures anything. The store is opened
+// after the refusals below, so an invocation this path cannot answer costs no
+// store access.
+func runReachabilityStoredQuery(ctx context.Context, coordArg string, f reachabilityFlags, gomodSet bool, stdout, stderr io.Writer) error {
+	// Mutual exclusion is checked FIRST. The default branch of the dispatch
+	// offers --local as a peer target, so '--local . --vuln <id>' is exactly
+	// what an operator who read that message types next; checking the missing
+	// coordinate first answered them with "requires a <module>@<version>
+	// argument" — a complaint about the wrong thing, and one that made the
+	// conflict message unreachable precisely when it was the accurate one.
+	if err := refuseBothReachabilityTargets(f); err != nil {
+		return err
+	}
+	if coordArg == "" {
+		return fmt.Errorf("reachability --vuln requires a <module>@<version> argument")
+	}
+	logger := buildLogger(logLevel, stderr)
+	ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
+	if err != nil {
+		return fmt.Errorf("initialising store: %w", err)
+	}
+	defer func() { _ = cleanup() }()
+	return runVulnReachability(ctx, coordArg, f.vulnID, f.walkID, f.gomod, gomodSet,
+		jsonOut, ctr.QueryVuln, ctr.QueryWalks, ctr.QueryCallGraph, stdout)
+}
+
+// runReachabilityLocalProbe is the command's local dispatch path: a live
+// analysis of the working tree it is given, not a query of stored facts.
+func runReachabilityLocalProbe(ctx context.Context, coordArg string, f reachabilityFlags, gomodSet bool, stdout, stderr io.Writer) error {
+	if err := refuseBothReachabilityTargets(f); err != nil {
+		return err
+	}
+	if coordArg != "" {
+		return fmt.Errorf("reachability --local does not take a module argument; use '<module>@<version> --vuln <id>' to query a stored module")
+	}
+	// The local probe measures the working tree it was pointed at, so it
+	// already has a build: accepting a second name for one would invite the
+	// reader to think the probe was filtered by it. --gomod carries meaning by
+	// its spelling alone (it has a NoOptDefVal), so its presence is asked of
+	// cobra as well as of its value, which is empty only when unset.
+	if f.walkID != "" || f.gomod != "" || gomodSet {
+		return fmt.Errorf("--walk-id and --gomod name a stored build and do not apply to --local, which measures the working tree it is given")
+	}
+	return runLocalReachability(ctx, f.localPath, stdout, stderr)
 }
 
 // runVulnReachability answers "is <vulnID> reachable in <arg>?" by reading the
