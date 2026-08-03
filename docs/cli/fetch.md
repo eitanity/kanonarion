@@ -62,7 +62,7 @@ kanonarion fetch <module>@<version> [flags]
 | `--strict` | `false` | Exit non-zero on verification failure |
 | `--insecure` | `false` | Allow plain HTTP proxy URLs (forces unverified status) |
 | `--skip-vcs-verify` | `false` | Skip git cross-verification (requires `git` on `PATH`); checksum verification still runs |
-| `--goproxy` | `$GOPROXY` or `proxy.golang.org` | Override the module proxy |
+| `--goproxy` | `$GOPROXY` or `proxy.golang.org` | Override the module proxy. `off` and `direct` mean the same here as in `$GOPROXY` - see [`GOPROXY=off` and `direct`](#goproxyoff-and-direct) |
 | `--list-versions` | `false` | List available versions from the proxy and exit without fetching |
 | `--gomod` | _(search upward from cwd)_ | Path to a `go.mod` file; fetch its dependency scope instead of a positional module |
 | `--tool` | `false` | Fetch the tooling supply chain (the `go.mod` tool directives' closure) instead of a positional module. Mutually exclusive with `--project`; refused by name alongside a positional module |
@@ -100,6 +100,44 @@ the file named by `--policy`.
 
 The allowlist governs **which** forges are trusted, never **whether**
 cross-verification runs; to skip the git leg entirely use `--skip-vcs-verify`.
+
+### `GOPROXY=off` and `direct`
+
+`GOPROXY=off` is Go's declaration that this environment does no module
+fetching. kanonarion honours it: every fetch-capable command - `fetch`,
+`walk`, `latest`, `audit`, `inspect` against `@latest` - refuses before it
+opens a socket and exits `20`, naming the offline ways to proceed:
+
+```
+$ GOPROXY=off kanonarion fetch github.com/spf13/cobra@v1.8.1
+GOPROXY=off: the environment declares no module fetching; run offline instead:
+--from-modcache reads the bytes already in $GOMODCACHE, and `kanonarion use
+--recursive` reconstitutes a module from the store
+$ echo $?
+20
+```
+
+The refusal withdraws **fetching**, not the store. Reading what has already
+been measured keeps working under `GOPROXY=off` - `callgraph`, `interface`,
+`license`, `capability`, `vendor`, `extract`, `vuln show`, `walk show` and the
+rest - and so do the offline acquisition modes: `--from-modcache` reads
+`$GOMODCACHE` and never the network, and `kanonarion use --recursive`
+reconstitutes a module and its closure from the store into a module cache a
+plain `go build` can consume.
+
+`GOPROXY=direct` selects VCS-origin fetching, which this build does not
+implement. It refuses the same way, naming the unsupported mode. What neither
+value does is fall back to `proxy.golang.org`: `off` and `direct` are the two
+values whose meaning is "not that proxy", and treating them as "unset" would
+cross exactly the boundary the operator drew.
+
+The list form follows Go's own resolution: entries are separated by `,` or
+`|` and tried in order, so `GOPROXY=https://proxy.example.com,direct` uses the
+first entry, while an `off` reached first terminates the chain and nothing
+after it is tried. Note that other network paths are not governed by this
+variable - the checksum database, the advisory snapshot download, the standard
+library's `go.dev/dl` acquisition and `git` cross-verification have their own
+switches (`GOSUMDB=off`, `--from-modcache`, `--skip-vcs-verify`).
 
 ### Staleness annotation
 
@@ -155,7 +193,7 @@ records are stored in `<store-root>/mirror.db` (SQLite), keyed by
 | `2` | Fetch or (with `--strict`) verification failed |
 | `3` | Cancelled |
 | `10` | Integrity check failed |
-| `20` | Configuration error (e.g. invalid flag combination) |
+| `20` | Configuration or precondition error: an invalid flag combination, or an environment that forbids fetching (`GOPROXY=off`, `GOPROXY=direct`) |
 
 ## Examples
 
@@ -165,6 +203,7 @@ kanonarion fetch github.com/spf13/cobra@latest --json
 kanonarion fetch github.com/spf13/cobra --list-versions
 kanonarion fetch github.com/spf13/cobra@v1.8.1 --force --strict --store-root /var/mirror
 kanonarion fetch --tool --gomod ./go.mod
+GOPROXY=off kanonarion fetch github.com/spf13/cobra@v1.8.1   # refuses, exit 20
 ```
 
 ## Relation to other stages

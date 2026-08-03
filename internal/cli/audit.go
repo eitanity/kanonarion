@@ -279,7 +279,7 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	if !modcacheMode {
 		proxy, perr := proxyadapter.New(f.goproxy, false)
 		if perr != nil {
-			return fmt.Errorf("creating proxy adapter: %w", perr)
+			return proxyAdapterError(perr)
 		}
 		// The same ledger `latest` writes. Every successful lookup either
 		// command makes is served to the other inside the TTL, which is the

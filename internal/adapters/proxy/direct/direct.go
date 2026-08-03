@@ -1,6 +1,13 @@
 // Package direct implements ports.ModuleProxy against a Go module proxy
-// (default: proxy.golang.org). It honours $GOPROXY, $GONOSUMCHECK, and
-// $GONOSUMDB environment variables via the standard go/env resolution.
+// (default: proxy.golang.org).
+//
+// It reads $GOPROXY under Go's own grammar, including the two values whose
+// meaning is that no proxy is to be used: `off` (this environment does no
+// module fetching) and `direct` (fetch from the VCS origin instead). Both
+// refuse — see ErrProxyOff and ErrProxyDirectUnsupported — because rewriting
+// either to the default proxy would cross the boundary the operator drew, and
+// would do it silently. $GONOSUMCHECK and $GONOSUMDB govern the checksum
+// database, not this adapter; they are read by the sumdb adapter.
 package direct
 
 import (
@@ -34,6 +41,31 @@ import (
 // cacheable negative, whereas a timeout or a 5xx on the same request is neither.
 var ErrNotFound = errors.New("not found")
 
+// ErrProxyOff reports that the environment declares no module fetching
+// (GOPROXY=off) and the operation was refused before any network request.
+//
+// It is a refusal, never a fall-back. GOPROXY=off is an operator's statement
+// that this process is on the wrong side of an air gap; treating it as
+// "unset" and reaching for the default proxy breaches the contract AND
+// records network-acquired evidence in a store that is meant to hold only
+// what the enclave itself can see.
+var ErrProxyOff = errors.New("GOPROXY=off: the environment declares no module fetching")
+
+// ErrProxyDirectUnsupported reports that GOPROXY selects direct VCS-origin
+// fetching, which this adapter does not implement.
+//
+// It is separate from ErrProxyOff because the two say different things: `off`
+// forbids the network, `direct` asks for a fetch route this adapter has not
+// got. Both refuse; neither may quietly become the default proxy, which is
+// what an operator who wrote `direct` was specifically avoiding.
+var ErrProxyDirectUnsupported = errors.New("GOPROXY=direct: direct VCS-origin module fetching is not supported by this adapter")
+
+// offlineRemedies names the ways to proceed without the network. It is
+// appended to every no-network refusal so the message that stops the run also
+// says what to run instead.
+const offlineRemedies = "run offline instead: --from-modcache reads the bytes already in $GOMODCACHE, " +
+	"and `kanonarion use --recursive` reconstitutes a module from the store"
+
 const (
 	defaultProxy = "https://proxy.golang.org"
 	// maxZipBytes matches Go's own limit for module zips (500 MB).
@@ -50,11 +82,21 @@ type Proxy struct {
 }
 
 // New constructs a Proxy adapter. If baseURL is empty it uses $GOPROXY (first
-// entry) or proxy.golang.org. Returns an error when baseURL uses plain HTTP
-// and insecure is false.
+// entry) or proxy.golang.org; a non-empty baseURL (the --goproxy override) is
+// read with the same grammar, so `off` and `direct` mean the same thing from
+// the flag as from the environment.
+//
+// Returns an error when the resolved value forbids proxy fetching (ErrProxyOff,
+// ErrProxyDirectUnsupported) or when baseURL uses plain HTTP and insecure is
+// false. Construction is the gate on purpose: a caller that builds this adapter
+// in order to make a request on the next line is refused before a socket is
+// opened rather than after a request has already gone out. A caller that wires
+// the adapter into a container it may never fetch through takes Refusing
+// instead, so reading a warm store offline still works.
 func New(baseURL string, insecure bool) (*Proxy, error) {
-	if baseURL == "" {
-		baseURL = resolveProxy()
+	baseURL, err := resolveProxyValue(baseURL)
+	if err != nil {
+		return nil, err
 	}
 	baseURL = strings.TrimRight(baseURL, "/")
 	if !insecure && strings.HasPrefix(strings.ToLower(baseURL), "http://") {
@@ -69,17 +111,39 @@ func New(baseURL string, insecure bool) (*Proxy, error) {
 	}, nil
 }
 
-func resolveProxy() string {
-	goproxy := os.Getenv("GOPROXY")
-	if goproxy == "" {
-		return defaultProxy
+// resolveProxy reads $GOPROXY under Go's own grammar and reports the proxy
+// base URL to use, or the refusal that value demands.
+func resolveProxy() (string, error) {
+	return resolveProxyValue("")
+}
+
+// resolveProxyValue resolves an explicit GOPROXY-shaped value, falling back to
+// $GOPROXY when value is empty and to proxy.golang.org when that is empty too.
+//
+// The list grammar is Go's: entries separated by "," or "|", tried in order.
+// This adapter speaks to exactly one proxy, so only the first usable entry is
+// ever consulted — which is also why an `off` or `direct` after a URL is not
+// an error here: Go would try that URL first as well, and never reach the rest
+// unless the first entry failed, which this adapter does not survive anyway.
+// An `off` reached as the first entry terminates the chain, exactly as it does
+// in the go command: nothing after it is tried, and nothing is fetched.
+func resolveProxyValue(value string) (string, error) {
+	if strings.TrimSpace(value) == "" {
+		value = os.Getenv("GOPROXY")
 	}
-	parts := strings.SplitN(goproxy, ",", 2)
-	first := strings.TrimSpace(parts[0])
-	if first == "direct" || first == "off" {
-		return defaultProxy
+	for entry := range strings.FieldsFuncSeq(value, func(r rune) bool { return r == ',' || r == '|' }) {
+		entry = strings.TrimSpace(entry)
+		switch entry {
+		case "":
+			continue
+		case "off":
+			return "", fmt.Errorf("%w; %s", ErrProxyOff, offlineRemedies)
+		case "direct":
+			return "", fmt.Errorf("%w; set GOPROXY to a module proxy URL, or %s", ErrProxyDirectUnsupported, offlineRemedies)
+		}
+		return entry, nil
 	}
-	return first
+	return defaultProxy, nil
 }
 
 // Info fetches the.info endpoint for the module version.
@@ -407,7 +471,7 @@ func (p *Proxy) get(ctx context.Context, url string) (io.ReadCloser, error) {
 // Exported for testing.
 type ProxyTest struct{}
 
-func (ProxyTest) ResolveProxy() string {
+func (ProxyTest) ResolveProxy() (string, error) {
 	return resolveProxy()
 }
 

@@ -122,7 +122,7 @@ the install command.
 | `--skip-vcs-verify` | `false` | Skip git cross-verification; the checksum-database check still runs. A sumdb-attested module then reports `VerifiedBySumDBOnly`, never the strongest `Verified` (the git leg never ran). Useful when auditing a large closure where git operations are rate-limited or unavailable |
 | `--policy` | _(auto-discover `.kanonarion/policy.yaml`)_ | Depth policy file; its fetch stage governs traversal and the `allowed_vcs_hosts` forge allowlist |
 | `--from-modcache[=dir]` | _(off)_ | Source modules from an existing Go module cache instead of the network proxy, verifying each against the local `go.sum`. Passed bare it uses `go env GOMODCACHE`; an optional value names the cache directory. See [Sourcing from an existing module cache](#sourcing-from-an-existing-module-cache---from-modcache) |
-| `--goproxy` | `$GOPROXY` | Override the Go module proxy (ignored under `--from-modcache`) |
+| `--goproxy` | `$GOPROXY` | Override the Go module proxy (ignored under `--from-modcache`). `off` and `direct` are honoured, not rewritten: an online audit refuses before any network I/O and exits `20`, naming `--from-modcache`, which answers the staleness column from the ledger alone. See [`fetch`: `GOPROXY=off` and `direct`](fetch.md#goproxyoff-and-direct) |
 | `--json` | `false` | Emit output as a JSON array |
 | `--store-root` | `~/.kanonarion` | Path to fact store root (or `KANONARION_STORE` env var) |
 | `--log-level` | `warn` | Log level: `debug`, `info`, `warn`, `error` |

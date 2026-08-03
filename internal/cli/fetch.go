@@ -171,7 +171,7 @@ func fetchOne(ctx context.Context, arg string, f fetchFlags, stdout, stderr io.W
 
 	proxyAdapter, err := proxyadapter.New(f.goproxy, f.insecure)
 	if err != nil {
-		return fmt.Errorf("creating proxy adapter: %w", err)
+		return proxyAdapterError(err)
 	}
 
 	if f.listVersions {

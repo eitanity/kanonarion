@@ -168,7 +168,7 @@ func (r latestResult) newerMajor() staledomain.NewerMajor {
 func runLatest(ctx context.Context, args []string, f latestFlags, stdout, stderr io.Writer) error {
 	proxy, err := proxyadapter.New(f.goproxy, false)
 	if err != nil {
-		return fmt.Errorf("creating proxy adapter: %w", err)
+		return proxyAdapterError(err)
 	}
 
 	// The ledger is the only reason this command opens the store. A store that

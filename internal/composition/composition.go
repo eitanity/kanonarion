@@ -298,10 +298,21 @@ func NewDriver(storeRoot string) (*Driver, func() error, error) {
 		return nil, nil, fmt.Errorf("creating auditing fetch store: %w", err)
 	}
 
-	proxy, err := fetchproxy.New("", false)
-	if err != nil {
+	// The driver serves the offline half of the product too — extract and the
+	// air-gap bundle's ingest side — so an environment that declares no module
+	// fetching does not stop it being built. It gets an adapter that refuses
+	// every fetch, before any network I/O, instead of one silently re-pointed at
+	// the default proxy.
+	var proxy fetchports.ModuleProxy
+	dp, err := fetchproxy.New("", false)
+	switch {
+	case fetchproxy.IsRefusal(err):
+		proxy = fetchproxy.Refusing(err)
+	case err != nil:
 		_ = db.Close()
 		return nil, nil, fmt.Errorf("creating proxy adapter: %w", err)
+	default:
+		proxy = dp
 	}
 
 	blobs := localfs.New(storeRoot)
