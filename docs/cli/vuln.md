@@ -547,6 +547,9 @@ kanonarion vuln-scan-list [walk-id] [flags]
 | `--store-root` | `~/.kanonarion` | Path to fact store root |
 | `--limit` | `20` | Maximum number of results (0 = unlimited) |
 
+A zero result distinguishes "that walk has no scan run" from "nothing has been
+scanned", per [Zero-result listings](conventions.md#zero-result-listings).
+
 **Examples:**
 
 ```
@@ -639,8 +642,9 @@ answer depends on which build you mean:
 
 - `--walk-id <id>` answers in the frame of that walk's scans, restricted to the
   records that walk covered. A `notice:` line names the walk and its frame.
-- `--gomod [path]` does the same for the newest succeeded project walk of that
-  `go.mod`; the valueless form means `./go.mod`. Mutually exclusive with
+- `--gomod <path>` does the same for the newest succeeded project walk of that
+  `go.mod`. The path is required and may be written either way round
+  (`--gomod ./go.mod` or `--gomod=./go.mod`). Mutually exclusive with
   `--walk-id`.
 - With neither, the record that answers a **consumer's** question about the
   module is returned: one produced by an analysis rooted at a project that
@@ -698,7 +702,7 @@ vulnerability database snapshot predated it.
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Path to fact store root |
 | `--walk-id` | _(none)_ | Answer in the frame of this walk's scans |
-| `--gomod` | _(none)_ | Answer in the frame of the latest project walk for this go.mod (valueless form: `./go.mod`). The notice states that the go.mod was not re-resolved for the read, so an edit made since that walk is not reflected |
+| `--gomod <path>` | _(none)_ | Answer in the frame of the latest project walk for this go.mod. Takes a path, e.g. `--gomod ./go.mod`. The notice states that the go.mod was not re-resolved for the read, so an edit made since that walk is not reflected |
 | `--history` | `false` | List all scan records across walks and snapshots |
 | `--json` | `false` | Emit record as JSON |
 
@@ -1112,3 +1116,7 @@ kanonarion vuln-snapshot-list --store-root ~/.kanonarion
   version selection reads. The scan is then pinned to that cache (`GOPROXY=off`),
   so the analysis is faithful to the project's verified toolchain and never
   fetches a version the project's build list did not resolve.
+
+## Modules resolved under pre-modules semantics
+
+A `+incompatible` coordinate resolves no requirement edges at all, so what this command can show is bounded: reachability under such a coordinate is measured over a call graph built from a module whose own requirements the toolchain never resolved, so a not-reached verdict rests on less than the completeness axis alone states. The answer states that and names the coordinates responsible; see [pre-modules modules](conventions.md#modules-resolved-under-pre-modules-semantics).

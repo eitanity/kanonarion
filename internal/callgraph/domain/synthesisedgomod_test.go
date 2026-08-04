@@ -1,6 +1,7 @@
 package domain_test
 
 import (
+	"reflect"
 	"strings"
 	"testing"
 
@@ -91,7 +92,7 @@ func TestSynthesisedGoMod_SurvivesRoundTrip(t *testing.T) {
 	if err != nil {
 		t.Fatalf("Unmarshal: %v", err)
 	}
-	if back.SynthesisedGoMod != rec.SynthesisedGoMod {
+	if !reflect.DeepEqual(back.SynthesisedGoMod, rec.SynthesisedGoMod) {
 		t.Errorf("round trip = %+v, want %+v", back.SynthesisedGoMod, rec.SynthesisedGoMod)
 	}
 	if err := h.VerifyContentHash(back); err != nil {

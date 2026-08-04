@@ -10,6 +10,8 @@ import (
 	"testing"
 	"time"
 
+	"github.com/spf13/cobra"
+
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
@@ -381,4 +383,102 @@ func TestLicenceSpellings_ResolveToSameCommand(t *testing.T) {
 			t.Errorf("Find(%q).Name() = %q, want %q", pair[0], us.Name(), pair[0])
 		}
 	}
+}
+
+// ---- --gomod flag grammar --------------------------------------------------
+
+// gomodCommands collects every command in the tree that declares --gomod, named
+// by its full path so a failure says which one broke the contract.
+func gomodCommands(t *testing.T) map[string]*cobra.Command {
+	t.Helper()
+	found := make(map[string]*cobra.Command)
+	var walk func(*cobra.Command)
+	walk = func(c *cobra.Command) {
+		if c.Flags().Lookup("gomod") != nil {
+			found[c.CommandPath()] = c
+		}
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(newRootCmd(io.Discard, io.Discard))
+	if len(found) == 0 {
+		t.Fatal("no command declares --gomod; the sweep found nothing to check")
+	}
+	return found
+}
+
+// One flag name must mean one grammar. `--gomod <path>` is the form the docs and
+// the walk examples teach, and it is the form a caller types first; a command
+// that accepts only `--gomod=<path>` answers it with "invalid arguments" and
+// never says the value has to be attached. Cobra detaches the value exactly when
+// the flag declares a NoOptDefVal, so that declaration is what this pins.
+func TestGoModFlag_AcceptsTheSpaceSeparatedFormEverywhere(t *testing.T) {
+	for path, cmd := range gomodCommands(t) {
+		t.Run(path, func(t *testing.T) {
+			if noOpt := cmd.Flags().Lookup("gomod").NoOptDefVal; noOpt != "" {
+				t.Errorf("--gomod declares NoOptDefVal %q, which detaches the value and makes "+
+					"`--gomod %s` parse as a positional", noOpt, defaultGoModPath)
+			}
+			// Re-resolve from a fresh tree so an earlier subtest's parse cannot
+			// leave flag state behind.
+			fresh := gomodCommands(t)[path]
+			if err := fresh.ParseFlags([]string{"--gomod", defaultGoModPath}); err != nil {
+				t.Fatalf("parsing `--gomod %s`: %v", defaultGoModPath, err)
+			}
+			if got := fresh.Flags().Lookup("gomod").Value.String(); got != defaultGoModPath {
+				t.Errorf("--gomod bound %q, want %q", got, defaultGoModPath)
+			}
+			if rest := fresh.Flags().Args(); len(rest) != 0 {
+				t.Errorf("the path leaked into the positionals as %v", rest)
+			}
+		})
+	}
+}
+
+// The help text has to carry the path a caller should pass, since the flag no
+// longer has a valueless spelling that supplies one.
+func TestGoModFlag_HelpTextNamesThePathToPass(t *testing.T) {
+	for path, cmd := range gomodCommands(t) {
+		usage := cmd.Flags().Lookup("gomod").Usage
+		if !strings.Contains(usage, "go.mod") {
+			t.Errorf("%s: --gomod usage %q does not name the manifest it takes", path, usage)
+		}
+	}
+}
+
+// A command's own Example block is the first grammar a caller copies, so a line
+// there that the parser refuses is a taught error. This walks every example in
+// the tree and pushes it through the CLI's own parser.
+//
+// The examples are checked as written, so a flag whose spelling changes takes
+// its examples with it — which is how a valueless --gomod survived in six
+// Example blocks after the spelling stopped being accepted.
+func TestCommandExamples_ParseAsWritten(t *testing.T) {
+	var walk func(*cobra.Command)
+	walk = func(c *cobra.Command) {
+		for _, raw := range strings.Split(c.Example, "\n") {
+			line := strings.TrimSpace(raw)
+			if !strings.HasPrefix(line, "kanonarion ") {
+				continue
+			}
+			// A pipeline or redirection is shell, not an invocation; only the
+			// part this parser is meant to see is checked. The cut is on the
+			// space-delimited operator, so a `<id>` placeholder is not mistaken
+			// for one.
+			for _, op := range []string{" | ", " > ", " >> ", " < "} {
+				if i := strings.Index(line, op); i >= 0 {
+					line = strings.TrimSpace(line[:i])
+				}
+			}
+			if err := parseInvocation(t, line); err != nil {
+				t.Errorf("%s: example %q is rejected by the CLI's own parser: %v",
+					c.CommandPath(), line, err)
+			}
+		}
+		for _, sub := range c.Commands() {
+			walk(sub)
+		}
+	}
+	walk(newRootCmd(io.Discard, io.Discard))
 }

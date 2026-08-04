@@ -632,3 +632,7 @@ checksum database, and VCS cross-verification all run as before.
 - `vuln-scan` - run vulnerability scanning independently for a walk
 - `license-list` - list all stored license records
 - `context` - query and display full stored context for a single module
+
+## Modules resolved under pre-modules semantics
+
+A `+incompatible` coordinate resolves no requirement edges at all, so what this command can show is bounded: a row for such a module is honest about that module, but nothing UNDER it was resolved, so the audited set is narrower than the build. The caveat is written to **stderr**, beside the other run-level axis lines, so `--json` on stdout is unchanged. The answer states that and names the coordinates responsible; see [pre-modules modules](conventions.md#modules-resolved-under-pre-modules-semantics).

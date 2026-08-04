@@ -24,7 +24,7 @@ import (
 // asked, whether the parser or the use case is what says so.
 func parseInvocation(t *testing.T, line string) error {
 	t.Helper()
-	fields := strings.Fields(line)
+	fields := splitInvocation(line)
 	if len(fields) == 0 || fields[0] != "kanonarion" {
 		t.Fatalf("remedy line %q does not start with the binary name", line)
 	}
@@ -52,6 +52,43 @@ func parseInvocation(t *testing.T, line string) error {
 		}
 	}
 	return nil
+}
+
+// splitInvocation splits a printed command line into arguments the way a shell
+// would, so a quoted value carrying a space stays one argument. strings.Fields
+// alone turned `config set k '[MIT, Apache-2.0]'` into four positionals and
+// reported the command's own example as a grammar error.
+func splitInvocation(line string) []string {
+	var fields []string
+	var cur strings.Builder
+	var quote rune
+	started := false
+	for _, r := range line {
+		switch {
+		case quote != 0:
+			if r == quote {
+				quote = 0
+				continue
+			}
+			cur.WriteRune(r)
+		case r == '\'' || r == '"':
+			quote = r
+			started = true
+		case r == ' ' || r == '\t':
+			if started {
+				fields = append(fields, cur.String())
+				cur.Reset()
+				started = false
+			}
+		default:
+			cur.WriteRune(r)
+			started = true
+		}
+	}
+	if started {
+		fields = append(fields, cur.String())
+	}
+	return fields
 }
 
 // declaresModulePositional reports whether a command's Use line declares a

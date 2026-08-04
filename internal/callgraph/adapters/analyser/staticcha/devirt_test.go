@@ -16,7 +16,7 @@ func analyseFiles(t *testing.T, files map[string]string) domain.CallGraphRecord 
 	t.Helper()
 	a := staticcha.New("0.1.0", "", slog.Default())
 	zipPath := writeZipToTemp(t, makeZip(t, testCoord, files))
-	rec, err := a.Analyse(context.Background(), zipPath, testCoord)
+	rec, err := a.Analyse(context.Background(), zipPath, testCoord, domain.AnalysisInputs{})
 	if err != nil {
 		t.Fatalf("Analyse: %v", err)
 	}

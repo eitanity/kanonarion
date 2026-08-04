@@ -707,6 +707,11 @@ func forGraphComparison(r CallGraphRecord) CallGraphRecord {
 	// different content hashes, and this comparison only ever runs between records
 	// whose artefact identity already matches.
 	r.SourceContentHash = ""
+	// WHICH walk's build list was offered is provenance; WHAT it pinned is the
+	// claim, and that stays. Two walks that resolved the same versions produce the
+	// same require directives and therefore the same graph, so comparing the walk
+	// identifier would make two identical graphs disagree about nothing.
+	r.BuildListSource = ""
 	// A record that predates the source field did not analyse a different kind of
 	// source; it analysed the only kind that existed when it was written and had
 	// nowhere to say so. Comparing the absent value as if it contradicted the named

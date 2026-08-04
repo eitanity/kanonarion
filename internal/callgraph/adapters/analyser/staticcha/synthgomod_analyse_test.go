@@ -58,7 +58,7 @@ func TestAnalyse_PreModulesZipAnalysesToAGraph(t *testing.T) {
 	coord := mustTestCoord(t, "example.com/premod", "v0.0.0-20180430131211-7c2a214ada46")
 	a := staticcha.New("0.1.0", "", slog.Default())
 
-	rec, err := a.Analyse(context.Background(), writeZipToTemp(t, makeZip(t, coord, preModulesFiles)), coord)
+	rec, err := a.Analyse(context.Background(), writeZipToTemp(t, makeZip(t, coord, preModulesFiles)), coord, domain.AnalysisInputs{})
 	if err != nil {
 		t.Fatalf("Analyse returned error: %v", err)
 	}
@@ -102,7 +102,7 @@ func TestAnalyse_PreModulesIncompatibleKeepsPublishedPath(t *testing.T) {
 	coord := mustTestCoord(t, "example.com/premod", "v2.22.0+incompatible")
 	a := staticcha.New("0.1.0", "", slog.Default())
 
-	rec, err := a.Analyse(context.Background(), writeZipToTemp(t, makeZip(t, coord, preModulesFiles)), coord)
+	rec, err := a.Analyse(context.Background(), writeZipToTemp(t, makeZip(t, coord, preModulesFiles)), coord, domain.AnalysisInputs{})
 	if err != nil {
 		t.Fatalf("Analyse returned error: %v", err)
 	}
@@ -128,7 +128,7 @@ func TestAnalyse_ZipShippingGoModIsNotSynthesised(t *testing.T) {
 	a := staticcha.New("0.1.0", "", slog.Default())
 
 	t.Run("a module that loads keeps its own file", func(t *testing.T) {
-		rec, err := a.Analyse(context.Background(), writeZipToTemp(t, makeZip(t, testCoord, testModuleFiles)), testCoord)
+		rec, err := a.Analyse(context.Background(), writeZipToTemp(t, makeZip(t, testCoord, testModuleFiles)), testCoord, domain.AnalysisInputs{})
 		if err != nil {
 			t.Fatalf("Analyse returned error: %v", err)
 		}
@@ -147,7 +147,7 @@ func TestAnalyse_ZipShippingGoModIsNotSynthesised(t *testing.T) {
 			"a.go":   "package notthecoordinate\n\n// F is exported.\nfunc F() {}\n",
 		}
 		coord := mustTestCoord(t, "example.com/premod", "v1.0.0")
-		rec, err := a.Analyse(context.Background(), writeZipToTemp(t, makeZip(t, coord, files)), coord)
+		rec, err := a.Analyse(context.Background(), writeZipToTemp(t, makeZip(t, coord, files)), coord, domain.AnalysisInputs{})
 		if err != nil {
 			t.Fatalf("Analyse returned error: %v", err)
 		}
@@ -173,7 +173,7 @@ func TestAnalyse_PreModulesNeedingDependenciesIsLeftUnchanged(t *testing.T) {
 	}
 
 	a := staticcha.New("0.1.0", "", slog.Default())
-	rec, err := a.Analyse(context.Background(), writeZipToTemp(t, makeZip(t, coord, files)), coord)
+	rec, err := a.Analyse(context.Background(), writeZipToTemp(t, makeZip(t, coord, files)), coord, domain.AnalysisInputs{})
 	if err != nil {
 		t.Fatalf("Analyse returned error: %v", err)
 	}
@@ -202,7 +202,7 @@ func TestAnalyse_PreModulesWithVendorTreeDisablesVendorMode(t *testing.T) {
 	files["vendor/example.com/dep/dep.go"] = "package dep\n\n// Vendored is a vendored leaf.\nfunc Vendored() {}\n"
 
 	a := staticcha.New("0.1.0", "", slog.Default())
-	rec, err := a.Analyse(context.Background(), writeZipToTemp(t, makeZip(t, coord, files)), coord)
+	rec, err := a.Analyse(context.Background(), writeZipToTemp(t, makeZip(t, coord, files)), coord, domain.AnalysisInputs{})
 	if err != nil {
 		t.Fatalf("Analyse returned error: %v", err)
 	}

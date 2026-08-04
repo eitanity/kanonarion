@@ -117,10 +117,21 @@ func runDependents(ctx context.Context, moduleArg, storeRoot, walkID string, jso
 	// with --walk-id or found by the containment search — the search takes the
 	// newest walk containing the coordinate and cannot tell two platforms apart.
 	walkFrame := rec.Graph.BuildEnv.Frame()
+	// Both directions of the question are bounded by the same fact. Asking about a
+	// +incompatible target, the answer covers only edges the module system
+	// resolved; asking about anything else, a +incompatible module in the walk can
+	// never appear as a dependent, because no requirement edge was resolved under
+	// it. Naming the coordinates responsible is what stops an absence being read
+	// as a measurement.
+	preModules := preModulesNodesIn(rec.Graph)
 	if jsonOut {
-		return writeDependentsJSON(stdout, walkID, walkFrame, coord.String(), deps)
+		return writeDependentsJSON(stdout, walkID, walkFrame, coord.String(), deps,
+			preModulesCaveatFor(append(preModules, coord)...))
 	}
-	return writeDependentsText(stdout, walkID, walkFrame, coord.String(), deps, directOnly, rootExcluded, includeRoot)
+	if err := writeDependentsText(stdout, walkID, walkFrame, coord.String(), deps, directOnly, rootExcluded, includeRoot); err != nil {
+		return err
+	}
+	return writeWalkPreModulesCaveat(stdout, rec.Graph)
 }
 
 // dependentResult holds a single module that depends on the queried target.
@@ -194,6 +205,10 @@ type dependentsJSON struct {
 	WalkFrame  string               `json:"walk_frame"`
 	Target     string               `json:"target"`
 	Dependents []dependentEntryJSON `json:"dependents"`
+	// PreModulesCaveat is present only when the answer is bounded by a module
+	// resolved under pre-modules semantics; absent means no coordinate in scope is
+	// one, so an answer that never meets the class marshals exactly as before.
+	PreModulesCaveat *preModulesCaveatJSON `json:"pre_modules_caveat,omitempty"`
 }
 
 type dependentEntryJSON struct {
@@ -203,7 +218,12 @@ type dependentEntryJSON struct {
 	Root    bool   `json:"root"`
 }
 
-func writeDependentsJSON(w io.Writer, walkID, walkFrame, target string, deps []dependentResult) error {
+func writeDependentsJSON(
+	w io.Writer,
+	walkID, walkFrame, target string,
+	deps []dependentResult,
+	caveat *preModulesCaveatJSON,
+) error {
 	entries := make([]dependentEntryJSON, len(deps))
 	for i, d := range deps {
 		entries[i] = dependentEntryJSON{
@@ -214,10 +234,11 @@ func writeDependentsJSON(w io.Writer, walkID, walkFrame, target string, deps []d
 		}
 	}
 	result := dependentsJSON{
-		WalkID:     walkID,
-		WalkFrame:  walkFrame,
-		Target:     target,
-		Dependents: entries,
+		WalkID:           walkID,
+		WalkFrame:        walkFrame,
+		Target:           target,
+		Dependents:       entries,
+		PreModulesCaveat: caveat,
 	}
 	enc := json.NewEncoder(w)
 	enc.SetIndent("", "  ")

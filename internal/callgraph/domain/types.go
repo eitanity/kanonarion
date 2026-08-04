@@ -59,6 +59,14 @@ import (
 // the bytes it was sealed over; and an absent value is not an unrecorded third
 // state but the truth — nothing synthesised a go.mod before the field existed,
 // so no old record can be one that did.
+//
+// SynthesisedGoMod.Requires and BuildListSource joined on those same terms
+// again. Both are omitted when empty, so no stored record's bytes move; and
+// neither can read as an unrecorded third state, because nothing pinned a
+// require directive or was offered a build list before they existed. The pins
+// are part of the graph's identity and feed the graph digest — two analyses of
+// one artefact pinned differently are two graphs — while the build list's
+// identity is provenance and is cleared before that comparison.
 const CallGraphSchemaVersion = "13"
 
 // TestScope records whether a module's _test.go declarations were part of the
@@ -449,6 +457,19 @@ type CallGraphRecord struct {
 	// The zero value means the published bytes were analysed as published. See
 	// SynthesisedGoMod for why that is a statement and not merely an absence.
 	SynthesisedGoMod SynthesisedGoMod
+	// BuildListSource names the walk whose resolved build list was OFFERED to this
+	// analysis, whether or not anything was pinned from it.
+	//
+	// It is provenance rather than claim — two walks that resolved the same
+	// versions produce the same graph — so it is cleared before a graph digest is
+	// taken. It is on the record because it is what tells a record produced
+	// without any build list from one produced with a build list that pinned
+	// nothing, and only the first is worth re-deriving when one becomes available.
+	//
+	// Empty means no build list reached this analysis. That is the truth about
+	// every record written before the field existed, so there is no unrecorded
+	// third state to ladder against.
+	BuildListSource string
 }
 
 // Sort puts all collections into a canonical, deterministic order.

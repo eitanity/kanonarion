@@ -1,5 +1,7 @@
 package domain
 
+import "strconv"
+
 // SynthesisedGoMod records that the tree an analysis read is NOT the tree that
 // was published: the module zip shipped no go.mod, so kanonarion wrote one into
 // the extraction directory before loading.
@@ -51,10 +53,34 @@ type SynthesisedGoMod struct {
 	// field is what makes that decision readable off the record rather than
 	// inferable from the analyser's source.
 	VendorTreePresent bool
+	// Requires are the require directives written into the synthesised file,
+	// ordered by module path.
+	//
+	// They are pinned from a walk's resolved build list, never resolved by the
+	// toolchain: a synthesised go.mod with no require list makes the loader go
+	// looking for whatever is latest, and the resulting edges name coordinates
+	// nobody selected and nothing else in the ledger joins. Empty means the
+	// module needed none — every import it makes is satisfied by the standard
+	// library or by the module itself.
+	//
+	// They are part of what the graph claims, not provenance: two analyses of the
+	// same bytes pinned to different versions are two different graphs, and the
+	// digest has to say so. Which build list supplied them is a separate question,
+	// answered by CallGraphRecord.BuildListSource.
+	Requires []SynthesisedRequire
+}
+
+// SynthesisedRequire is one require directive written into a synthesised go.mod:
+// a module path at the exact version some walk resolved for it.
+type SynthesisedRequire struct {
+	Path    string
+	Version string
 }
 
 // IsZero reports whether no go.mod was synthesised for this analysis.
-func (s SynthesisedGoMod) IsZero() bool { return s == SynthesisedGoMod{} }
+func (s SynthesisedGoMod) IsZero() bool {
+	return s.ModulePath == "" && s.GoDirective == "" && !s.VendorTreePresent && len(s.Requires) == 0
+}
 
 // String renders the synthesis for a human reading a record's provenance,
 // returning the empty string when nothing was synthesised so a caller can append
@@ -64,6 +90,13 @@ func (s SynthesisedGoMod) String() string {
 		return ""
 	}
 	out := "synthesised go.mod (module " + s.ModulePath + ", go " + s.GoDirective + ")"
+	if len(s.Requires) > 0 {
+		out += " [" + strconv.Itoa(len(s.Requires)) + " require directive"
+		if len(s.Requires) != 1 {
+			out += "s"
+		}
+		out += " pinned from a resolved build list, not resolved by the toolchain]"
+	}
 	if s.VendorTreePresent {
 		out += " [vendor tree present, vendor mode disabled]"
 	}

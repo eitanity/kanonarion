@@ -173,22 +173,26 @@ func (s *fakeCallGraphStore) FindCallees(_ context.Context, _ string, _ string, 
 }
 
 type fakeAnalyser struct {
-	record  domain.CallGraphRecord
-	err     error
-	lastDir string
-	calls   int
+	record     domain.CallGraphRecord
+	err        error
+	lastDir    string
+	calls      int
+	lastInputs domain.AnalysisInputs
 }
 
 func (f *fakeAnalyser) AnalyserMetadata() ports.AnalyserMetadata {
 	return ports.AnalyserMetadata{Algorithm: domain.AlgorithmCHA, Version: "test"}
 }
 
-func (f *fakeAnalyser) Analyse(_ context.Context, _ string, coord coordinate.ModuleCoordinate) (domain.CallGraphRecord, error) {
+func (f *fakeAnalyser) Analyse(_ context.Context, _ string, coord coordinate.ModuleCoordinate, inputs domain.AnalysisInputs) (domain.CallGraphRecord, error) {
+	f.calls++
+	f.lastInputs = inputs
 	if f.err != nil {
 		return domain.CallGraphRecord{}, f.err
 	}
 	r := f.record
 	r.Coordinate = coord
+	r.BuildListSource = inputs.Source
 	return r, nil
 }
 

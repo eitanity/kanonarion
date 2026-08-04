@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -246,8 +247,11 @@ func TestCallGraphList_EmptyStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "No call graph records") {
-		t.Errorf("expected empty message, got: %q", stdout.String())
+	if !strings.Contains(stdout.String(), "the store holds no call graph record at all") {
+		t.Errorf("expected the empty-store statement, got: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "to produce one: kanonarion callgraph") {
+		t.Errorf("expected the produce-a-record remedy, got: %q", stdout.String())
 	}
 }
 
@@ -264,7 +268,7 @@ func TestRunCallGraphList_WithRecords(t *testing.T) {
 		},
 	})
 	var buf bytes.Buffer
-	err := runCallGraphList(context.Background(), "", 20, 0, uc, &buf)
+	err := runCallGraphList(context.Background(), "", 20, 0, uc, &buf, io.Discard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -280,12 +284,12 @@ func TestRunCallGraphList_WithRecords(t *testing.T) {
 func TestRunCallGraphList_NoMatchingPipelineVersion(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
 	var buf bytes.Buffer
-	err := runCallGraphList(context.Background(), "", 20, 0, uc, &buf)
+	err := runCallGraphList(context.Background(), "", 20, 0, uc, &buf, io.Discard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(buf.String(), "No call graph records found") {
-		t.Errorf("expected empty message, got: %q", buf.String())
+	if !strings.Contains(buf.String(), "the store holds no call graph record at all") {
+		t.Errorf("expected the empty-store statement, got: %q", buf.String())
 	}
 }
 
@@ -295,7 +299,7 @@ func TestRunCallGraphList_WithModuleFilter(t *testing.T) {
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: "0.2.0"},
 	})
 	var buf bytes.Buffer
-	err := runCallGraphList(context.Background(), "example.com/app", 20, 0, uc, &buf)
+	err := runCallGraphList(context.Background(), "example.com/app", 20, 0, uc, &buf, io.Discard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -773,8 +777,11 @@ func TestSBOMList_EmptyStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "No SBOM records") {
-		t.Errorf("expected empty message, got: %q", stdout.String())
+	if !strings.Contains(stdout.String(), "the store holds no SBOM record at all") {
+		t.Errorf("expected the empty-store statement, got: %q", stdout.String())
+	}
+	if !strings.Contains(stdout.String(), "to produce one: kanonarion sbom") {
+		t.Errorf("expected the produce-a-record remedy, got: %q", stdout.String())
 	}
 }
 

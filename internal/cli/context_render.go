@@ -182,6 +182,7 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 			line += " [partial]"
 		}
 		w.printf("  Dependencies:    %s\n", line)
+		printPreModulesCaveat(w, out.Dependencies.PreModulesCaveat)
 	}
 
 	switch out.License.Status {

@@ -51,7 +51,7 @@ func newVulnScanListCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runScanList(cmd.Context(), walkID, limit, ctr.QueryScanRuns, stdout)
+			return runScanList(cmd.Context(), walkID, limit, ctr.QueryScanRuns, stdout, stderr)
 		},
 	}
 
@@ -60,7 +60,7 @@ func newVulnScanListCmd(stdout, stderr io.Writer) *cobra.Command {
 	return cmd
 }
 
-func runScanList(ctx context.Context, walkID string, limit int, uc QueryScanRunsUseCase, stdout io.Writer) error {
+func runScanList(ctx context.Context, walkID string, limit int, uc QueryScanRunsUseCase, stdout, stderr io.Writer) error {
 	var (
 		runs []vuldomain.WalkScanRun
 		err  error
@@ -116,11 +116,21 @@ func runScanList(ctx context.Context, walkID string, limit int, uc QueryScanRuns
 		if err := enc.Encode(out); err != nil {
 			return fmt.Errorf("encoding JSON: %w", err)
 		}
+		if len(out) == 0 {
+			scope, serr := scanListZeroScope(ctx, walkID, uc)
+			if serr != nil {
+				return serr
+			}
+			return writeListZeroNoticeJSON(stderr, scope)
+		}
 		return nil
 	}
 	if len(runs) == 0 && len(unreadable) == 0 {
-		_, _ = fmt.Fprintln(stdout, "no scan runs found")
-		return nil
+		scope, serr := scanListZeroScope(ctx, walkID, uc)
+		if serr != nil {
+			return serr
+		}
+		return writeListZeroNotice(stdout, scope)
 	}
 	for _, r := range runs {
 		line := fmt.Sprintf("%-26s  walk=%-26s  status=%-12s  %s",
@@ -132,6 +142,33 @@ func runScanList(ctx context.Context, walkID string, limit int, uc QueryScanRuns
 	}
 	writeUnreadableRuns(stdout, unreadable)
 	return nil
+}
+
+// scanListZeroScope lifts the walk-id filter and re-asks the store, so a zero
+// distinguishes "that walk has no scan run" from "nothing has been scanned".
+// Reached only when the listing came back empty.
+func scanListZeroScope(ctx context.Context, walkID string, uc QueryScanRunsUseCase) (listZeroScope, error) {
+	all, err := uc.ListAllRuns(ctx)
+	// A store that cannot be surveyed still answers the question the listing was
+	// asked; what it cannot do is size the corpus, and a count of zero would
+	// assert exactly the thing it failed to measure.
+	if _, survivable := unreadableRunReport(err); err != nil && !survivable {
+		return listZeroScope{}, fmt.Errorf("counting scan runs for the zero-result notice: %w", err)
+	}
+	scope := listZeroScope{
+		subject:     "scan run",
+		filterName:  "walk id",
+		filterValue: walkID,
+		field:       "walk id each run was recorded against",
+		matchKind:   matchExact,
+		considered:  len(all),
+		produce:     "kanonarion vuln-scan <walk-id>",
+		listAll:     "kanonarion vuln-scan-list",
+	}
+	if len(all) > 0 {
+		scope.example = all[0].WalkID
+	}
+	return scope, nil
 }
 
 func newVulnScanShowCmd(stdout, stderr io.Writer) *cobra.Command {

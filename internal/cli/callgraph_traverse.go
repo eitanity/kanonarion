@@ -34,7 +34,7 @@ func newCallersCmd(stdout, stderr io.Writer) *cobra.Command {
 		Use:   "callers <symbol-id>",
 		Short: "Find all callers of a symbol across the call graph store",
 		Example: `  kanonarion callers 'github.com/spf13/cobra.(*Command).Execute'
-  kanonarion callers 'golang.org/x/text/unicode/norm.(Form).String' --gomod
+  kanonarion callers 'golang.org/x/text/unicode/norm.(Form).String' --gomod ./go.mod
   kanonarion callers 'golang.org/x/text/unicode/norm.(Form).String' --walk-id abc123`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
@@ -63,10 +63,6 @@ func newCallersCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().IntVar(&depth, "depth", 0, "maximum traversal depth for --transitive (0 = unlimited)")
 	registerEdgeScopeFlag(cmd, &excludeTests)
 	registerBuildScopeFlags(cmd, &scopeFlags)
-	// Cobra only allows a valueless --gomod when the flag declares what that
-	// means, and the default has to be the literal path so it is both what the
-	// resolver receives and what --help prints.
-	cmd.Flags().Lookup("gomod").NoOptDefVal = defaultGoModPath
 
 	return cmd
 }
@@ -133,7 +129,7 @@ func newCalleesCmd(stdout, stderr io.Writer) *cobra.Command {
 		Use:   "callees <symbol-id>",
 		Short: "Find all callees of a symbol across the call graph store",
 		Example: `  kanonarion callees 'github.com/spf13/cobra.(*Command).Execute'
-  kanonarion callees 'github.com/spf13/cobra.(*Command).Execute' --gomod`,
+  kanonarion callees 'github.com/spf13/cobra.(*Command).Execute' --gomod ./go.mod`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
 				return usageErr(cmd)
@@ -161,10 +157,6 @@ func newCalleesCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().IntVar(&depth, "depth", 0, "maximum traversal depth for --transitive (0 = unlimited)")
 	registerEdgeScopeFlag(cmd, &excludeTests)
 	registerBuildScopeFlags(cmd, &scopeFlags)
-	// Cobra only allows a valueless --gomod when the flag declares what that
-	// means, and the default has to be the literal path so it is both what the
-	// resolver receives and what --help prints.
-	cmd.Flags().Lookup("gomod").NoOptDefVal = defaultGoModPath
 
 	return cmd
 }

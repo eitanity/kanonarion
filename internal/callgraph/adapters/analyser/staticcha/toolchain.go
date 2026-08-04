@@ -3,6 +3,7 @@ package staticcha
 import (
 	"context"
 	"log/slog"
+	"strings"
 
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 )
@@ -82,4 +83,27 @@ func (a *Analyser) classifyLoadFailure(ctx context.Context, dir string) domain.F
 		return domain.FailureCauseEnvironment
 	}
 	return domain.FailureCauseModule
+}
+
+// offlineLookupMarker is what the go command says when a module it needs is
+// absent from the local cache and it is not permitted to fetch one.
+const offlineLookupMarker = "module lookup disabled by GOPROXY=off"
+
+// isOfflineCacheMiss reports whether a load failure is the analyser's own
+// offline posture meeting a cold module cache.
+//
+// A pinned synthesis runs with GOPROXY=off so a version nobody chose can never
+// enter the graph. That guarantee has a cost the record must attribute
+// correctly: minimal version selection reads the go.mod of every module in the
+// transitive requirement graph, and one absent from GOMODCACHE fails the load
+// with this marker. The bytes are fine and the module is fine; the HOST is
+// missing a file. Filing it as the module's fault would make it cacheable, and a
+// warm cache tomorrow would never get the chance to answer.
+//
+// It matches on the go command's own sentence because that is the only place the
+// distinction exists: go/packages returns the driver's stderr as prose, and the
+// classification has to be made here, at the boundary, rather than re-derived by
+// a later reader.
+func isOfflineCacheMiss(detail string) bool {
+	return strings.Contains(detail, offlineLookupMarker)
 }

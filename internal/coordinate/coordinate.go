@@ -170,6 +170,26 @@ func (c ModuleCoordinate) IsPseudoVersion() bool {
 // suffix nor a go.mod declaring one.
 const incompatibleSuffix = "+incompatible"
 
+// IsPreModulesIncompatible reports whether this coordinate names a module the
+// Go module system resolves under PRE-MODULES semantics: major version 2 or
+// above reached without adopting modules, marked by the +incompatible suffix the
+// go command appends.
+//
+// It is a question about what can be KNOWN of the module, not a stylistic note.
+// The go command ignores such a module's go.mod entirely — that is the rule that
+// produces the suffix — so resolution yields no requirements for it: a walk of
+// one records its own node and no requirement edges, and the module's real
+// dependencies are absent from the graph rather than measured to be none. Every
+// answer read out of dependency structure or version identity under such a
+// coordinate is bounded by that, and has to say so.
+//
+// It answers only about the coordinate it is asked about. A consumer that
+// depends on a +incompatible module is itself resolved normally; it is the edges
+// UNDER this coordinate that are structurally unavailable.
+func (c ModuleCoordinate) IsPreModulesIncompatible() bool {
+	return strings.HasSuffix(c.version, incompatibleSuffix)
+}
+
 // GitTagVersion returns the version as the repository spells it as a tag.
 //
 // That differs from Version only for a +incompatible coordinate. The suffix is

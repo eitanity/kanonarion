@@ -427,7 +427,12 @@ func printInterfaceDiff(diff ifacedomain.InterfaceDiff, used *usedByResult, stdo
 	if _, err := fmt.Fprintf(stdout, "\n%s\n", interfaceDiffCoverageNote); err != nil {
 		return fmt.Errorf("writing coverage note: %w", err)
 	}
-	return nil
+	// A +incompatible side is a version the module system resolves under
+	// pre-modules rules, so the two coordinates being compared are not two points
+	// on one module's version line in the way the rest of this output implies.
+	return writePreModulesCaveatForSet(stdout, []coordinate.ModuleCoordinate{
+		diff.RecordA.Coordinate, diff.RecordB.Coordinate,
+	})
 }
 
 func printPackageDelta(diff ifacedomain.InterfaceDiff, stdout io.Writer) error {

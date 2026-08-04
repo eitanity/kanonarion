@@ -292,19 +292,43 @@ type callGraphRecordJSON struct {
 // module that shipped none, so a machine consumer can see that the analysed tree
 // is not the published tree and under which language semantics it was built.
 type synthesisedGoModJSON struct {
-	ModulePath        string `json:"module_path"`
-	GoDirective       string `json:"go_directive"`
-	VendorTreePresent bool   `json:"vendor_tree_present"`
+	ModulePath  string `json:"module_path"`
+	GoDirective string `json:"go_directive"`
+	// Requires are the require directives written into that file, pinned from a
+	// walk's resolved build list rather than resolved by the toolchain. They are
+	// SCAN INPUTS — what the analysis was pointed at — and never resolved
+	// dependency edges of the module: nothing in the module system validated the
+	// pre-modules go.mod they stand in for.
+	Requires          []synthesisedRequireJSON `json:"requires,omitempty"`
+	VendorTreePresent bool                     `json:"vendor_tree_present"`
+	// BuildListSource names the walk those versions were read from, so a reader
+	// can tell two analyses pinned by different builds apart.
+	BuildListSource string `json:"build_list_source,omitempty"`
 }
 
-func synthesisedGoModToJSON(s domain.SynthesisedGoMod) *synthesisedGoModJSON {
+// synthesisedRequireJSON is one pinned require directive.
+type synthesisedRequireJSON struct {
+	Path    string `json:"path"`
+	Version string `json:"version"`
+}
+
+func synthesisedGoModToJSON(s domain.SynthesisedGoMod, buildListSource string) *synthesisedGoModJSON {
 	if s.IsZero() {
 		return nil
+	}
+	reqs := make([]synthesisedRequireJSON, 0, len(s.Requires))
+	for _, r := range s.Requires {
+		reqs = append(reqs, synthesisedRequireJSON{Path: r.Path, Version: r.Version})
+	}
+	if len(reqs) == 0 {
+		reqs = nil
 	}
 	return &synthesisedGoModJSON{
 		ModulePath:        s.ModulePath,
 		GoDirective:       s.GoDirective,
+		Requires:          reqs,
 		VendorTreePresent: s.VendorTreePresent,
+		BuildListSource:   buildListSource,
 	}
 }
 
@@ -362,7 +386,7 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 		AnalysisSource: string(r.AnalysisSource),
 		WorktreeDigest: r.WorktreeDigest,
 
-		SynthesisedGoMod: synthesisedGoModToJSON(r.SynthesisedGoMod),
+		SynthesisedGoMod: synthesisedGoModToJSON(r.SynthesisedGoMod, r.BuildListSource),
 
 		Nodes:           nodes,
 		Edges:           edges,

@@ -674,5 +674,8 @@ type CallGraphEdge struct {
 // the CallGraphLoader. The raw stderr and any exec error are returned so the
 // caller can compose an actionable ReachabilityNote.
 type CallGraphSpawner interface {
-	Spawn(ctx context.Context, coord coordinate.ModuleCoordinate, force bool) (stderr []byte, err error)
+	// walkID names the walk whose resolved build list the child may pin a
+	// pre-modules module's require directives against; empty when the scan names
+	// no walk.
+	Spawn(ctx context.Context, coord coordinate.ModuleCoordinate, force bool, walkID string) (stderr []byte, err error)
 }

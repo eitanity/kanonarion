@@ -223,7 +223,7 @@ func (uc *ExtractUseCase) Execute(ctx context.Context, req ExtractRequest) (doma
 						break
 					}
 					lap := uc.stopwatch.Start()
-					res, extractErr := uc.extractor.Extract(ctx, j.node.Coordinate, stage, req.Force)
+					res, extractErr := uc.extractor.Extract(ctx, j.node.Coordinate, stage, req.Force, req.WalkID)
 					duration := lap.Elapsed().Milliseconds()
 
 					stageRes := domain.StageResult{

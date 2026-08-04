@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -211,7 +212,7 @@ func TestRunWalkList_ListError(t *testing.T) {
 func TestRunWalkShow_NotFound(t *testing.T) {
 	uc := testfakes.NewFakeQueryWalks()
 	var buf bytes.Buffer
-	err := runWalkShow(context.Background(), "MISSING", uc, &buf)
+	err := runWalkShow(context.Background(), "MISSING", uc, &buf, io.Discard)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -237,7 +238,7 @@ func TestRunWalkShow_Found(t *testing.T) {
 	uc.AddWalk(rec)
 
 	var buf bytes.Buffer
-	err := runWalkShow(context.Background(), "WALK003", uc, &buf)
+	err := runWalkShow(context.Background(), "WALK003", uc, &buf, io.Discard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -536,7 +537,7 @@ func TestRunWalkShow_JSONOutput(t *testing.T) {
 	uc := testfakes.NewFakeQueryWalks()
 	uc.AddWalk(buildFixtureWalkRecordA(t))
 	var buf bytes.Buffer
-	err := runWalkShow(context.Background(), "01ARZ3NDEKTSV4RRFFQ69G5FAV", uc, &buf)
+	err := runWalkShow(context.Background(), "01ARZ3NDEKTSV4RRFFQ69G5FAV", uc, &buf, io.Discard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

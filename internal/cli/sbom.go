@@ -241,6 +241,16 @@ func sbomGenerateWith(
 		return fmt.Errorf("writing sbom to stdout: %w", err)
 	}
 
+	// On stderr, never in the document: an SBOM is an inventory, and a caveat
+	// injected into it would be a claim the format does not have a field for.
+	// The statement is still owed — a component resolved under pre-modules
+	// semantics contributed no requirements to the walk this inventory was built
+	// from, so its own dependencies are absent from the component list rather
+	// than absent from the build.
+	if cerr := writePreModulesCaveatForSet(stderr, sbomPreModulesCoords(ctx, ctr, record.WalkID)); cerr != nil {
+		return cerr
+	}
+
 	// A licence-less SBOM must never pass as complete. Surface the gap as a
 	// non-zero exit on every output path: the message travels on stderr via
 	// main, never on stdout where it would corrupt the SBOM bytes, and is
@@ -418,12 +428,22 @@ func runSBOMList(ctx context.Context, storeRoot, walkID string, jsonOut bool, st
 		if err := enc.Encode(rows); err != nil {
 			return fmt.Errorf("encoding sbom list: %w", err)
 		}
+		if len(rows) == 0 {
+			scope, serr := sbomListZeroScope(ctx, walkID, ctr)
+			if serr != nil {
+				return serr
+			}
+			return writeListZeroNoticeJSON(stderr, scope)
+		}
 		return nil
 	}
 
 	if len(records) == 0 {
-		_, _ = fmt.Fprintln(stdout, "No SBOM records found.")
-		return nil
+		scope, serr := sbomListZeroScope(ctx, walkID, ctr)
+		if serr != nil {
+			return serr
+		}
+		return writeListZeroNotice(stdout, scope)
 	}
 	for _, r := range records {
 		_, _ = fmt.Fprintf(stdout, "%s  walk=%-26s  format=%-14s  %s\n",
@@ -431,6 +451,30 @@ func runSBOMList(ctx context.Context, storeRoot, walkID string, jsonOut bool, st
 			r.GeneratedAt.Format("2006-01-02T15:04:05Z"))
 	}
 	return nil
+}
+
+// sbomListZeroScope lifts the --walk filter and re-asks the store, so a zero
+// distinguishes "no SBOM for that walk" from "no SBOM has been generated".
+// Reached only when the listing came back empty.
+func sbomListZeroScope(ctx context.Context, walkID string, ctr *Container) (listZeroScope, error) {
+	all, err := ctr.QuerySBOM.ListSBOMRecords(ctx, "")
+	if err != nil {
+		return listZeroScope{}, fmt.Errorf("counting sbom records for the zero-result notice: %w", err)
+	}
+	scope := listZeroScope{
+		subject:     "SBOM record",
+		filterName:  "walk id",
+		filterValue: walkID,
+		field:       "walk id each SBOM was generated from",
+		matchKind:   matchExact,
+		considered:  len(all),
+		produce:     "kanonarion sbom <walk-id>",
+		listAll:     "kanonarion sbom-list",
+	}
+	if len(all) > 0 {
+		scope.example = all[0].WalkID
+	}
+	return scope, nil
 }
 
 // buildPackageAllowList resolves the module coordinates for the binary's import

@@ -32,7 +32,7 @@ func newCallGraphListCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runCallGraphList(cmd.Context(), moduleFilter, limit, offset, ctr.QueryCallGraph, stdout)
+			return runCallGraphList(cmd.Context(), moduleFilter, limit, offset, ctr.QueryCallGraph, stdout, stderr)
 		},
 	}
 
@@ -42,7 +42,7 @@ func newCallGraphListCmd(stdout, stderr io.Writer) *cobra.Command {
 	return cmd
 }
 
-func runCallGraphList(ctx context.Context, moduleFilter string, limit, offset int, uc QueryCallGraphUseCase, stdout io.Writer) error {
+func runCallGraphList(ctx context.Context, moduleFilter string, limit, offset int, uc QueryCallGraphUseCase, stdout, stderr io.Writer) error {
 	summaries, err := uc.ListCallGraphRecords(ctx, ports.CallGraphFilter{
 		ModulePath: moduleFilter,
 		Limit:      limit,
@@ -70,14 +70,22 @@ func runCallGraphList(ctx context.Context, moduleFilter string, limit, offset in
 		if err := enc.Encode(out); err != nil {
 			return fmt.Errorf("encoding JSON: %w", err)
 		}
+		if len(summaries) == 0 {
+			scope, serr := callGraphListZeroScope(ctx, moduleFilter, offset, uc)
+			if serr != nil {
+				return serr
+			}
+			return writeListZeroNoticeJSON(stderr, scope)
+		}
 		return nil
 	}
 
 	if len(summaries) == 0 {
-		if _, err := fmt.Fprintln(stdout, "No call graph records found."); err != nil {
-			return fmt.Errorf("writing output: %w", err)
+		scope, serr := callGraphListZeroScope(ctx, moduleFilter, offset, uc)
+		if serr != nil {
+			return serr
 		}
-		return nil
+		return writeListZeroNotice(stdout, scope)
 	}
 
 	for _, s := range summaries {
@@ -89,4 +97,33 @@ func runCallGraphList(ctx context.Context, moduleFilter string, limit, offset in
 		}
 	}
 	return nil
+}
+
+// callGraphListZeroScope lifts the filter and paging and re-asks the store, so a
+// zero can say whether the module path matched nothing or there was nothing to
+// match. Reached only when the listing came back empty.
+func callGraphListZeroScope(ctx context.Context, moduleFilter string, offset int, uc QueryCallGraphUseCase) (listZeroScope, error) {
+	all, err := uc.ListCallGraphRecords(ctx, ports.CallGraphFilter{})
+	if err != nil {
+		return listZeroScope{}, fmt.Errorf("counting callgraph records for the zero-result notice: %w", err)
+	}
+	scope := listZeroScope{
+		subject:     "call graph record",
+		filterName:  "module path",
+		filterValue: moduleFilter,
+		field:       "module path",
+		matchKind:   matchExact,
+		considered:  len(all),
+		produce:     "kanonarion callgraph <module>@<version>",
+		listAll:     "kanonarion callgraph-list",
+	}
+	if len(all) > 0 {
+		scope.example = all[0].ModulePath
+	}
+	// An offset past the end empties the page without the filter having anything
+	// to do with it, and the two look identical from the rows alone.
+	if moduleFilter == "" && offset > 0 && offset >= len(all) {
+		scope.pagedPast = fmt.Sprintf("--offset %d starts past the last one", offset)
+	}
+	return scope, nil
 }

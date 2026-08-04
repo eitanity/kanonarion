@@ -71,7 +71,7 @@ func TestExitCodeContract_MissingRecordIsNotFound(t *testing.T) {
 
 	runExitCases(t, []exitCase{
 		{"walk-show", ExitNotFound, func(t *testing.T) error {
-			return runWalkShow(context.Background(), missingWalk, emptyWalks(), &bytes.Buffer{})
+			return runWalkShow(context.Background(), missingWalk, emptyWalks(), &bytes.Buffer{}, io.Discard)
 		}},
 		{"walk-diff", ExitNotFound, func(t *testing.T) error {
 			return runWalkDiff(context.Background(), missingWalk, missingWalk,
@@ -112,7 +112,7 @@ func TestExitCodeContract_WalkByIDAgreesAcrossCommands(t *testing.T) {
 	const missingWalk = "01JWALKMISSING0000000001"
 
 	for name, err := range map[string]error{
-		"walk-show": runWalkShow(context.Background(), missingWalk, testfakes.NewFakeQueryWalks(), &bytes.Buffer{}),
+		"walk-show": runWalkShow(context.Background(), missingWalk, testfakes.NewFakeQueryWalks(), &bytes.Buffer{}, io.Discard),
 		"walk-diff": runWalkDiff(context.Background(), missingWalk, missingWalk,
 			&testfakes.FakeDiffWalks{Err: walkports.ErrWalkNotFound}, &bytes.Buffer{}),
 		"walk-list --walk-id": runWalkList(context.Background(), "", "", "", "", missingWalk, 0, false, false,

@@ -128,6 +128,10 @@ type contextDependencies struct {
 	Partial      bool                `json:"partial,omitempty"`
 	Dependencies []contextDependency `json:"dependencies,omitempty"`
 	Error        string              `json:"error,omitempty"`
+	// PreModulesCaveat is present only when the module itself, or a module in the
+	// answering walk, resolved under pre-modules semantics — the case in which an
+	// empty dependency list is an absence of resolution rather than a measurement.
+	PreModulesCaveat *preModulesCaveatJSON `json:"pre_modules_caveat,omitempty"`
 }
 
 type contextCopyrightStatement struct {

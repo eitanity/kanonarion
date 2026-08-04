@@ -124,6 +124,82 @@ carries the same value in a `frame` / `walk_frame` field.
 
 ---
 
+## Modules resolved under pre-modules semantics
+
+A module that reached major version 2 or above without adopting Go modules is
+resolved with the `+incompatible` suffix, and the go command **ignores its
+`go.mod` entirely**. No requirement edge is ever resolved under such a
+coordinate: a walk of one records its own node and no edges, and inside a
+project walk its dependencies are either absent or attributed to whichever
+consumer also requires them.
+
+The record is honest — it holds exactly what the module system resolved — so
+every answer surface that reads dependency structure or version identity states
+the limitation rather than letting an empty list read as a measurement:
+
+```
+caveat: 1 module(s) in this walk resolved under pre-modules semantics
+(github.com/Masterminds/sprig@v2.22.0+incompatible) — the Go module system
+ignores a +incompatible module's own go.mod, so no requirement edges are
+resolved under it: its dependencies are ABSENT from this answer, not measured to
+be none. They can therefore neither show their own dependencies nor appear as
+the dependent of anything. if the project later published a /vN major it is a
+proper module and resolves normally.
+```
+
+It appears on `walk-show`, `dependents` (both directions), `context`'s
+dependencies section, `interface-diff`, `license-compat` and `vuln-show`; on
+`audit` and `sbom` it goes to **stderr**, beside the other run-level axis lines,
+so `--json` and the SBOM document itself stay exactly what they were. `latest`
+needs no caveat: it already probes for and reports a newer major line, which is
+the remedy the caveat can only name conditionally.
+
+Under `--json` the same statement is a `pre_modules_caveat` object
+(`coordinates`, `limitation`, `remedy`), present only when the answer is
+actually bounded by one. `walk-show --json` is the exception: its stdout is the
+walk record's own sealed bytes, so the caveat goes to stderr there too.
+
+No synthetic edges are ever produced to fill the gap. The `require` directives
+kanonarion pins into a synthesised `go.mod` for a pre-modules module are **scan
+inputs** — see [callgraph](callgraph.md#modules-published-before-go-modules) —
+and are never presented as resolved dependency edges anywhere.
+
+---
+
+## Zero-result listings
+
+A record listing that returns nothing says which of three things happened,
+because the remedies differ:
+
+- **The store holds no record of that kind at all.** The line says so and offers
+  the invocation that produces one.
+- **A filter matched nothing.** The line names the filter, the value given, what
+  that value was compared against, and how many records it was compared with —
+  plus one example in the shape the comparison uses. Every filter on these
+  listings is an exact-equality match on one indexed column, not a substring or
+  prefix test, so a module path shortened by one segment matches nothing; the
+  line states that rather than leaving it to be inferred.
+- **Paging skipped past the end.** The line names the `--offset` that did it.
+
+Every remedy printed is an invocation this CLI's own parser accepts.
+
+Under `--json` the data channel is unchanged — an empty array is still an empty
+array, so a consumer never has to branch on the row count to know the output's
+type. The same statement is emitted on **stderr** as a single JSON object:
+
+```json
+{"subject":"call graph record","filter":{"name":"module path","value":"no-such-module","compared_against":"module path, compared for exact equality"},"records_considered":312,"store_empty":false,"paged_past":false,"remedy":["kanonarion callgraph-list"]}
+```
+
+A listing that returned rows prints no such statement, on either channel.
+
+This applies to `callgraph-list`, `vuln-scan-list`, `licence-list`/`license-list`
+and `sbom-list`. `interface-list` and `examples-list` take a module coordinate
+rather than a filter and already refuse an absent one by name, with a remedy and
+a non-zero exit.
+
+---
+
 ## Store layout
 
 All state lives under `--store-root` (default `~/.kanonarion`):

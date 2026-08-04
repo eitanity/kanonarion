@@ -3,7 +3,7 @@
 ## Synopsis
 
 ```
-kanonarion reachability <module>@<version> --vuln <id> [--walk-id <id> | --gomod [path]] [flags]   # stored-module query
+kanonarion reachability <module>@<version> --vuln <id> [--walk-id <id> | --gomod <path>] [flags]   # stored-module query
 kanonarion reachability --local <dir> [flags]                    # live local probe
 ```
 
@@ -59,8 +59,9 @@ A stored verdict is a verdict about one build. Name the build:
 
 - `--walk-id <id>` answers in the frame of that walk's scans, restricted to the
   records that walk covered.
-- `--gomod [path]` does the same for the newest succeeded project walk of that
-  `go.mod`; the valueless form means `./go.mod`. Mutually exclusive with
+- `--gomod <path>` does the same for the newest succeeded project walk of that
+  `go.mod`. The path is required and may be written either way round
+  (`--gomod ./go.mod` or `--gomod=./go.mod`). Mutually exclusive with
   `--walk-id`, and rejected alongside `--local`, which measures the tree it is
   given.
 
@@ -350,7 +351,7 @@ run from the root of a repository that contains fixture modules under
 |---|---|---|
 | `--vuln` | *(empty)* | Vulnerability ID to query (stored-module mode); requires a `<module>@<version>` argument |
 | `--walk-id` | *(empty)* | Answer the stored query in the frame of this walk's scans |
-| `--gomod` | *(empty)* | Answer the stored query in the frame of the latest project walk for this go.mod (valueless form: `./go.mod`) |
+| `--gomod <path>` | *(empty)* | Answer the stored query in the frame of the latest project walk for this go.mod. Takes a path, e.g. `--gomod ./go.mod` |
 | `--local` | *(empty)* | Path to the local Go workspace to probe (live local mode) |
 | `--json` | false | Emit output as JSON (global flag) |
 

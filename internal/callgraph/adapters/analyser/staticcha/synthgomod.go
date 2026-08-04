@@ -39,24 +39,38 @@ const synthesisedGoDirective = "1.16"
 var errGoModPresent = errors.New("module ships its own go.mod")
 
 // errNeedsDependencyResolution reports that the module ships no go.mod AND
-// imports packages a synthesised one could not name, so nothing was synthesised.
+// imports packages a synthesised one could not pin, so nothing was synthesised.
 //
 // A go.mod with no require list is only honest for a module that needs none. For
 // a module that imports third-party packages it is a file that states something
 // false: the load would go looking for versions nobody chose, and any edge it
-// did produce would name coordinates that join nothing else in the ledger.
-// Refusing leaves the module failing exactly as it did, which is the correct
-// answer until a require list can be derived.
+// did produce would name coordinates that join nothing else in the ledger. The
+// requesting walk's resolved build list answers that for the imports it covers;
+// an import it does not cover leaves the same false file, so synthesis still
+// refuses — all of them or none.
 var errNeedsDependencyResolution = errors.New("module ships no go.mod and imports packages outside the standard library")
 
 // unresolvableImportsError carries the imports that made synthesis refuse, so
-// the record can name them instead of reporting an unattributed empty graph.
+// the record can name them instead of reporting an unattributed empty graph. It
+// also names the build list that failed to pin them, because "no build list was
+// offered" and "the offered build list does not contain these" are different
+// facts about the same refusal.
 type unresolvableImportsError struct {
 	Imports []string
+	// BuildListSource is the walk whose resolved versions were consulted, empty
+	// when the request offered none.
+	BuildListSource string
+	// BuildListSize is how many coordinates that walk resolved.
+	BuildListSize int
 }
 
 func (e *unresolvableImportsError) Error() string {
-	return errNeedsDependencyResolution.Error() + ": " + strings.Join(e.Imports, ", ")
+	out := errNeedsDependencyResolution.Error() + ": " + strings.Join(e.Imports, ", ")
+	if e.BuildListSource == "" {
+		return out + " (no resolved build list was offered to pin them)"
+	}
+	return out + " (not pinnable from the " + strconv.Itoa(e.BuildListSize) +
+		" versions resolved by walk " + e.BuildListSource + ")"
 }
 
 func (e *unresolvableImportsError) Unwrap() error { return errNeedsDependencyResolution }
@@ -81,12 +95,18 @@ func (e *unresolvableImportsError) Unwrap() error { return errNeedsDependencyRes
 // with NO major-version suffix, and adding one produces a graph whose every node
 // ID names a module that does not exist.
 //
-// It also refuses when the module's own packages import third-party code. A
-// synthesised go.mod carries no require list, so it can only be honest for a
-// module that needs none; deriving one is a separate problem, and until it is
-// solved such a module is left failing rather than analysed against versions
-// nobody chose.
-func synthesiseGoMod(dir string, coord coordinate.ModuleCoordinate) (domain.SynthesisedGoMod, error) {
+// When the module's own packages import third-party code, the require directives
+// are PINNED from the requesting walk's resolved build list — the versions that
+// build actually selected — and written into the file. Nothing is resolved by the
+// toolchain: the load runs offline against the local module cache, so a version
+// nobody chose can never enter the graph. If any one import cannot be pinned,
+// synthesis refuses outright rather than writing a file that names some
+// dependencies and sends the loader hunting for the rest.
+func synthesiseGoMod(
+	dir string,
+	coord coordinate.ModuleCoordinate,
+	inputs domain.AnalysisInputs,
+) (domain.SynthesisedGoMod, error) {
 	goModPath := filepath.Join(dir, "go.mod")
 	switch _, err := os.Lstat(goModPath); {
 	case err == nil:
@@ -95,17 +115,21 @@ func synthesiseGoMod(dir string, coord coordinate.ModuleCoordinate) (domain.Synt
 		return domain.SynthesisedGoMod{}, fmt.Errorf("checking for go.mod in %s: %w", dir, err)
 	}
 
-	// A synthesised go.mod carries no require list, so it can only be honest for a
-	// module that needs none. Deriving one is a separate problem — a version
-	// nobody chose produces edges that join nothing — and until it is solved, a
-	// module with third-party imports is left failing rather than analysed against
-	// dependencies kanonarion picked for it.
+	// A synthesised go.mod carries only the require directives kanonarion can name
+	// from a build that already resolved them. An import left unpinned would send
+	// the loader looking for whatever is latest, producing edges into coordinates
+	// nobody selected, so one unpinnable import refuses the whole file.
 	external, err := importsOutsideStandardLibrary(dir, coord.Path())
 	if err != nil {
 		return domain.SynthesisedGoMod{}, err
 	}
-	if len(external) > 0 {
-		return domain.SynthesisedGoMod{}, &unresolvableImportsError{Imports: external}
+	pinned, unpinned := domain.PinRequires(coord, external, inputs)
+	if len(unpinned) > 0 {
+		return domain.SynthesisedGoMod{}, &unresolvableImportsError{
+			Imports:         unpinned,
+			BuildListSource: inputs.Source,
+			BuildListSize:   len(inputs.BuildList),
+		}
 	}
 
 	vendored, err := hasVendorTree(dir)
@@ -117,12 +141,27 @@ func synthesiseGoMod(dir string, coord coordinate.ModuleCoordinate) (domain.Synt
 		ModulePath:        coord.Path(),
 		GoDirective:       synthesisedGoDirective,
 		VendorTreePresent: vendored,
+		Requires:          pinned,
 	}
-	body := "module " + synth.ModulePath + "\n\ngo " + synth.GoDirective + "\n"
-	if err := os.WriteFile(goModPath, []byte(body), 0o600); err != nil {
+	if err := os.WriteFile(goModPath, []byte(renderSynthesisedGoMod(synth)), 0o600); err != nil {
 		return domain.SynthesisedGoMod{}, fmt.Errorf("writing synthesised go.mod in %s: %w", dir, err)
 	}
 	return synth, nil
+}
+
+// renderSynthesisedGoMod writes the file the record describes, so what was
+// recorded and what was loaded cannot drift apart.
+func renderSynthesisedGoMod(synth domain.SynthesisedGoMod) string {
+	var b strings.Builder
+	b.WriteString("module " + synth.ModulePath + "\n\ngo " + synth.GoDirective + "\n")
+	if len(synth.Requires) > 0 {
+		b.WriteString("\nrequire (\n")
+		for _, r := range synth.Requires {
+			b.WriteString("\t" + r.Path + " " + r.Version + "\n")
+		}
+		b.WriteString(")\n")
+	}
+	return b.String()
 }
 
 // importsOutsideStandardLibrary lists, sorted and deduplicated, the import paths
@@ -249,11 +288,29 @@ func hasVendorTree(dir string) (bool, error) {
 // on that instead. Neither outcome is the analysis that was asked for, so the
 // choice is made here and recorded on the record rather than left to the
 // toolchain's default.
+// It also pins the load offline whenever require directives were synthesised.
+// Those versions came from a build that already resolved them, and the module
+// cache the analyser documents as its precondition is where they live; letting
+// the toolchain reach a proxy would let it substitute something the walk never
+// selected, and would put a network call on a path that had none. GOSUMDB is
+// disabled with it because a synthesised module has no go.sum and no published
+// checksum line to check one against — the artefact's own integrity was already
+// established by the fetch that stored it.
 func analysisEnv(synth domain.SynthesisedGoMod) []string {
 	env := isolatedModuleEnv()
-	if synth.VendorTreePresent {
+	if len(synth.Requires) > 0 {
+		// GOPROXY=off is the whole point: the versions are already chosen, so the
+		// only legitimate source for them is the local module cache. GOSUMDB=off
+		// keeps the checksum database — a network service — out of a load that must
+		// not make one, for a go.mod that no published go.sum corresponds to.
+		env = append(env, "GOPROXY=off", "GOSUMDB=off")
+	}
+	if synth.VendorTreePresent || len(synth.Requires) > 0 {
 		// Appended last: os/exec keeps the final occurrence of a duplicate key, so
-		// this also overrides an inherited GOFLAGS selecting vendor mode.
+		// this also overrides an inherited GOFLAGS selecting vendor mode, and lets
+		// the toolchain write the go.sum lines for the pinned requires from the
+		// cache rather than refusing the load for want of a file the module never
+		// published.
 		env = append(env, "GOFLAGS=-mod=mod")
 	}
 	return env

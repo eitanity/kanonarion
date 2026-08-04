@@ -63,7 +63,6 @@ the callers and callees queries also accept.`,
 
 	registerEdgeScopeFlag(cmd, &excludeTests)
 	registerBuildScopeFlags(cmd, &scopeFlags)
-	cmd.Flags().Lookup("gomod").NoOptDefVal = defaultGoModPath
 
 	return cmd
 }

@@ -54,7 +54,6 @@ vulnerability database snapshot predated it.`,
   kanonarion vuln-show github.com/gin-gonic/gin@v1.6.2 --json
   kanonarion vuln-show github.com/gin-gonic/gin@v1.6.2 --history
   kanonarion vuln-show github.com/gin-gonic/gin@v1.6.2 --history --json
-  kanonarion vuln-show github.com/gin-gonic/gin@v1.6.2 --gomod
   kanonarion vuln-show github.com/gin-gonic/gin@v1.6.2 --gomod ./go.mod
   kanonarion vuln-show github.com/gin-gonic/gin@v1.6.2 --walk-id 01KQDBVW092ER1HNXZ60X27CMD
   kanonarion vuln-show github.com/gin-gonic/gin@v1.6.2 --walk-id 01KQDBVW092ER1HNXZ60X27CMD --json`,
@@ -74,10 +73,7 @@ vulnerability database snapshot predated it.`,
 	cmd.Flags().BoolVar(&history, "history", false, "list all scan records across walks and snapshots")
 	cmd.Flags().StringVar(&walkID, "walk-id", "", "answer in the frame of this walk's scans")
 	cmd.Flags().StringVar(&gomod, "gomod", "",
-		"answer in the frame of the latest project walk for this go.mod (default: ./go.mod)")
-	// Cobra only allows a valueless --gomod when the flag declares what that
-	// spelling means.
-	cmd.Flags().Lookup("gomod").NoOptDefVal = defaultGoModPath
+		"answer in the frame of the latest project walk for this go.mod; takes a path, e.g. --gomod "+defaultGoModPath)
 
 	return cmd
 }

@@ -1257,7 +1257,7 @@ func (uc *ScanModuleUseCase) maybeEnsureCallGraph(ctx context.Context, params Sc
 	}
 
 	uc.logger.Info("spawning callgraph subprocess", "coordinate", params.Coordinate, "force", params.Force)
-	stderr, spawnErr := uc.callGraphSpawner.Spawn(ctx, params.Coordinate, params.Force)
+	stderr, spawnErr := uc.callGraphSpawner.Spawn(ctx, params.Coordinate, params.Force, params.WalkID)
 	if spawnErr != nil {
 		note := buildCallGraphSpawnNote(spawnErr, stderr)
 		uc.logger.Warn("callgraph subprocess failed", "coordinate", params.Coordinate, "note", note)

@@ -332,7 +332,7 @@ func newSymbolFindCmd(stdout, stderr io.Writer) *cobra.Command {
 		Example: `  kanonarion symbol-find Client
   kanonarion symbol-find Marshal
   kanonarion symbol-find Marshal --json
-  kanonarion symbol-find Marshal --gomod`,
+  kanonarion symbol-find Marshal --gomod ./go.mod`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
 				return usageErr(cmd)
@@ -343,10 +343,6 @@ func newSymbolFindCmd(stdout, stderr io.Writer) *cobra.Command {
 	}
 
 	registerBuildScopeFlags(cmd, &scopeFlags)
-	// Cobra only allows a valueless --gomod when the flag declares what that
-	// means, and the default has to be the literal path so it is both what the
-	// resolver receives and what --help prints.
-	cmd.Flags().Lookup("gomod").NoOptDefVal = defaultGoModPath
 
 	return cmd
 }

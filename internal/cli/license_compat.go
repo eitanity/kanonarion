@@ -144,6 +144,16 @@ func licenseCompatWith(ctx context.Context, ctr *Container, coord coordinate.Mod
 		printCompatReportText(report, coord, walkID, walkFrame, stdout)
 	}
 
+	// The caveat is derived from the WALK, not from the conflict rows: a clean
+	// verdict is a claim about the whole closure, and a pre-modules module that
+	// raised no conflict still contributed none of its own dependencies to the
+	// closure the verdict covers.
+	if rec, gerr := ctr.QueryWalks.GetWalk(ctx, walkID); gerr == nil {
+		if werr := writePreModulesCaveatForSet(stdout, preModulesNodesIn(rec.Graph)); werr != nil {
+			return werr
+		}
+	}
+
 	return compatExitCode(report)
 }
 

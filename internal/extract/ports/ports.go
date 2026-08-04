@@ -52,7 +52,12 @@ type ExtractionRunSummary struct {
 // routes by stage name to concrete use cases; a gRPC implementation would
 // delegate to a remote service.
 type Extractor interface {
-	Extract(ctx context.Context, coord coordinate.ModuleCoordinate, stage string, force bool) (StageResult, error)
+	// walkID names the walk whose resolved build list a stage may pin against. It
+	// is empty for a request that names no walk, and a stage that has no use for
+	// one ignores it; the call-graph stage passes it to the child process so a
+	// module published before Go modules can be analysed against the versions this
+	// build selected rather than against none.
+	Extract(ctx context.Context, coord coordinate.ModuleCoordinate, stage string, force bool, walkID string) (StageResult, error)
 }
 
 // StageRegistry knows which extraction stages exist and their canonical
