@@ -80,7 +80,6 @@ too: 'symbol-context <module>@<version> <name>' is exactly equivalent to
 
 	cmd.Flags().StringVar(&f.module, "module", "", "narrow results to a specific module@version")
 	registerBuildScopeFlags(cmd, &f.scope)
-	cmd.Flags().Lookup("gomod").NoOptDefVal = defaultGoModPath
 
 	return cmd
 }

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -49,7 +50,7 @@ func TestRunScanList_ListsReadableRunsAndNamesTheUnreadable(t *testing.T) {
 	fake.ListErr = driftedRuns("vscan-bad")
 
 	var out bytes.Buffer
-	if err := runScanList(t.Context(), "", 0, fake, &out); err != nil {
+	if err := runScanList(t.Context(), "", 0, fake, &out, io.Discard); err != nil {
 		t.Fatalf("runScanList() = %v, want nil — a survey command reports the fault and exits 0", err)
 	}
 
@@ -84,7 +85,7 @@ func TestRunScanList_JSONCarriesTheUnreadableRow(t *testing.T) {
 	t.Cleanup(func() { jsonOut = prev })
 
 	var out bytes.Buffer
-	if err := runScanList(t.Context(), "", 0, fake, &out); err != nil {
+	if err := runScanList(t.Context(), "", 0, fake, &out, io.Discard); err != nil {
 		t.Fatalf("runScanList(--json) = %v, want nil", err)
 	}
 
@@ -118,7 +119,7 @@ func TestRunScanList_NeutralWordingWhenDriftCannotBeShown(t *testing.T) {
 	}}}
 
 	var out bytes.Buffer
-	if err := runScanList(t.Context(), "", 0, fake, &out); err != nil {
+	if err := runScanList(t.Context(), "", 0, fake, &out, io.Discard); err != nil {
 		t.Fatalf("runScanList() = %v, want nil", err)
 	}
 	got := out.String()
@@ -137,7 +138,7 @@ func TestRunScanList_CleanStoreIsUnchanged(t *testing.T) {
 	fake.AddRun(listableRun("vscan-good-1", "walk-1"))
 
 	var out bytes.Buffer
-	if err := runScanList(t.Context(), "", 0, fake, &out); err != nil {
+	if err := runScanList(t.Context(), "", 0, fake, &out, io.Discard); err != nil {
 		t.Fatalf("runScanList() = %v, want nil", err)
 	}
 	got := out.String()
@@ -158,7 +159,7 @@ func TestRunScanList_OtherErrorsStillAbort(t *testing.T) {
 	fake.ListErr = errors.New("database is locked")
 
 	var out bytes.Buffer
-	if err := runScanList(t.Context(), "", 0, fake, &out); err == nil {
+	if err := runScanList(t.Context(), "", 0, fake, &out, io.Discard); err == nil {
 		t.Fatalf("runScanList() = nil, want the database failure to abort the listing:\n%s", out.String())
 	}
 }

@@ -28,14 +28,16 @@ import (
 type buildScopeFlags struct {
 	walkID string
 	gomod  string
-	// gomodSet distinguishes "--gomod was not passed" from "--gomod was passed
-	// with no value", which means the working tree's ./go.mod. The flag's string
-	// value cannot carry that difference, so it is read from cobra at run time.
+	// gomodSet distinguishes "--gomod was not passed" from "--gomod was passed".
+	// A path is always given, so the two cases differ only in whether the caller
+	// spelled the flag, which the string value cannot carry: it is read from
+	// cobra at run time.
 	gomodSet bool
 }
 
-// defaultGoModPath is what a valueless --gomod means: the working tree's own
-// go.mod.
+// defaultGoModPath is the manifest a caller means when they name no other: the
+// working tree's own go.mod. It is what --gomod's help text and the docs offer
+// as the path to pass, and what resolveGoModPath falls back to.
 const defaultGoModPath = "./go.mod"
 
 // registerBuildScopeFlags adds --walk-id and --gomod to a query command.
@@ -43,7 +45,7 @@ func registerBuildScopeFlags(cmd *cobra.Command, f *buildScopeFlags) {
 	cmd.Flags().StringVar(&f.walkID, "walk-id", "",
 		"restrict results to the resolved version set of this walk")
 	cmd.Flags().StringVar(&f.gomod, "gomod", "",
-		"restrict results to the latest project walk for this go.mod (default: ./go.mod)")
+		"restrict results to the latest project walk for this go.mod; takes a path, e.g. --gomod "+defaultGoModPath)
 }
 
 // bind reads the flag state cobra holds but a string variable cannot express.

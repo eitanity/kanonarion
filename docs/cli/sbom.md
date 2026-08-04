@@ -365,8 +365,11 @@ kanonarion sbom-list [flags]
 | Flag | Default | Description |
 |---|---|---|
 | `--store-root` | `~/.kanonarion` | Path to fact store root |
-| `--walk <id>` | _(all)_ | Filter by walk ID |
+| `--walk <id>` | _(all)_ | Filter by walk ID, matched for exact equality |
 | `--json` | `false` | Output as JSON array |
+
+A zero result distinguishes "no SBOM for that walk" from "no SBOM has been
+generated", per [Zero-result listings](conventions.md#zero-result-listings).
 
 ### Examples
 

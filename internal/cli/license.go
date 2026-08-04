@@ -566,6 +566,10 @@ func newLicenseListCmd(stdout, stderr io.Writer) *cobra.Command {
 		Use:     "license-list",
 		Aliases: []string{"licence-list"},
 		Short:   "List extracted license records",
+		// The command filters by flag only. Without this a stray positional was
+		// accepted and silently ignored, so `license-list <module>` printed the
+		// whole store and read as "this module holds every one of these".
+		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
@@ -577,7 +581,7 @@ func newLicenseListCmd(stdout, stderr io.Writer) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("loading license overrides: %w", err)
 			}
-			return runLicenseList(cmd.Context(), spdx, copyright, limit, ctr.QueryLicense, ovSet, stdout)
+			return runLicenseList(cmd.Context(), spdx, copyright, limit, ctr.QueryLicense, ovSet, stdout, stderr)
 		},
 	}
 
@@ -588,7 +592,7 @@ func newLicenseListCmd(stdout, stderr io.Writer) *cobra.Command {
 	return cmd
 }
 
-func runLicenseList(ctx context.Context, spdx, copyright string, limit int, uc QueryLicenseUseCase, overrides domain.LicenseOverrideSet, stdout io.Writer) error {
+func runLicenseList(ctx context.Context, spdx, copyright string, limit int, uc QueryLicenseUseCase, overrides domain.LicenseOverrideSet, stdout, stderr io.Writer) error {
 	// When copyright filtering is active, fetch without a limit so we can
 	// post-filter by full record; re-apply the caller's limit afterwards.
 	fetchLimit := limit
@@ -666,13 +670,21 @@ func runLicenseList(ctx context.Context, spdx, copyright string, limit int, uc Q
 		if len(jsonConflicts) > 0 {
 			return fmt.Errorf("%d module(s) hold conflicting license records: %w", len(jsonConflicts), errors.Join(jsonConflicts...))
 		}
+		if len(out) == 0 {
+			scope, serr := licenseListZeroScope(ctx, spdx, copyright, uc)
+			if serr != nil {
+				return serr
+			}
+			return writeListZeroNoticeJSON(stderr, scope)
+		}
 		return nil
 	}
 	if len(sums) == 0 {
-		if _, err := fmt.Fprintln(stdout, "no license records found"); err != nil {
-			return fmt.Errorf("writing output: %w", err)
+		scope, serr := licenseListZeroScope(ctx, spdx, copyright, uc)
+		if serr != nil {
+			return serr
 		}
-		return nil
+		return writeListZeroNotice(stdout, scope)
 	}
 	var conflicts []error
 	for _, s := range sums {
@@ -713,4 +725,48 @@ func runLicenseList(ctx context.Context, spdx, copyright string, limit int, uc Q
 		return fmt.Errorf("%d module(s) hold conflicting license records: %w", len(conflicts), errors.Join(conflicts...))
 	}
 	return nil
+}
+
+// licenseListZeroScope lifts both filters and re-asks the store, so a zero
+// distinguishes an identifier or holder that matched nothing from a store with
+// no licence records in it. Reached only when the listing came back empty.
+//
+// The two filters are named together when both are set: dropping one from the
+// statement would send the reader to check a spelling that was not the one that
+// excluded their module.
+func licenseListZeroScope(ctx context.Context, spdx, copyright string, uc QueryLicenseUseCase) (listZeroScope, error) {
+	all, err := uc.ListLicenseRecords(ctx, ports.LicenseFilter{})
+	if err != nil {
+		return listZeroScope{}, fmt.Errorf("counting license records for the zero-result notice: %w", err)
+	}
+	scope := listZeroScope{
+		subject:    "license record",
+		considered: len(all),
+		produce:    "kanonarion license <module>@<version>",
+		listAll:    "kanonarion license-list",
+	}
+	if len(all) > 0 {
+		scope.example = all[0].PrimarySPDX
+	}
+	switch {
+	case spdx != "" && copyright != "":
+		scope.filterName = "SPDX identifier and copyright holder"
+		scope.filterValue = spdx + " / " + copyright
+		scope.field = "primary SPDX identifier, then the copyright holder in the licence files"
+		scope.matchKind = matchExact + " then " + matchSubstring
+	case spdx != "":
+		scope.filterName = "SPDX identifier"
+		scope.filterValue = spdx
+		scope.field = "primary SPDX identifier"
+		scope.matchKind = matchExact
+	case copyright != "":
+		scope.filterName = "copyright holder"
+		scope.filterValue = copyright
+		scope.field = "copyright holder recorded in the licence files"
+		scope.matchKind = matchSubstring
+		// The illustration has to be in the shape the filter compares against,
+		// and an SPDX identifier is not one.
+		scope.example = ""
+	}
+	return scope, nil
 }

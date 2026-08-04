@@ -121,8 +121,13 @@ kanonarion licence-list --limit 100
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Root directory for blobs and SQLite |
-| `--spdx` | | Filter by SPDX identifier (e.g. `MIT`, `Apache-2.0`) |
+| `--spdx` | | Filter by SPDX identifier (e.g. `MIT`, `Apache-2.0`), matched for exact equality |
+| `--copyright` | | Filter by copyright holder, as a case-insensitive substring of the licence files (loads full records) |
 | `--limit` | 50 | Maximum records to show (0 = unlimited) |
+
+The command takes no positional argument; one is refused rather than ignored. A
+zero result names the filter it applied and what it was compared against, per
+[Zero-result listings](conventions.md#zero-result-listings).
 
 ## Caching
 

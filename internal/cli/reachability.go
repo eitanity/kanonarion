@@ -185,7 +185,7 @@ only from stored records measured in this tree's own frame or in the isolated
 frame — never another project's — and states that restriction in its output.`,
 		Example: `  kanonarion reachability golang.org/x/text@v0.3.7 --vuln GO-2021-0113
   kanonarion reachability golang.org/x/text@v0.3.7 --vuln GO-2021-0113 --json
-  kanonarion reachability golang.org/x/text@v0.3.7 --vuln GO-2021-0113 --gomod
+  kanonarion reachability golang.org/x/text@v0.3.7 --vuln GO-2021-0113 --gomod ./go.mod
   kanonarion reachability golang.org/x/text@v0.3.7 --vuln GO-2021-0113 --walk-id 01KQDBVW092ER1HNXZ60X27CMD
   kanonarion reachability --local .`,
 		Args: cobra.MaximumNArgs(1),
@@ -210,10 +210,7 @@ frame — never another project's — and states that restriction in its output.
 	cmd.Flags().StringVar(&f.vulnID, "vuln", "", "vulnerability ID (e.g. GO-2024-1234, CVE-..., GHSA-...) to query; requires a <module>@<version> argument")
 	cmd.Flags().StringVar(&f.walkID, "walk-id", "", "answer the stored query in the frame of this walk's scans")
 	cmd.Flags().StringVar(&f.gomod, "gomod", "",
-		"answer the stored query in the frame of the latest project walk for this go.mod (default: ./go.mod)")
-	// Cobra only allows a valueless --gomod when the flag declares what that
-	// spelling means.
-	cmd.Flags().Lookup("gomod").NoOptDefVal = defaultGoModPath
+		"answer the stored query in the frame of the latest project walk for this go.mod; takes a path, e.g. --gomod "+defaultGoModPath)
 
 	return cmd
 }
@@ -266,9 +263,9 @@ func runReachabilityLocalProbe(ctx context.Context, coordArg string, f reachabil
 	}
 	// The local probe measures the working tree it was pointed at, so it
 	// already has a build: accepting a second name for one would invite the
-	// reader to think the probe was filtered by it. --gomod carries meaning by
-	// its spelling alone (it has a NoOptDefVal), so its presence is asked of
-	// cobra as well as of its value, which is empty only when unset.
+	// reader to think the probe was filtered by it. Both the value and cobra's
+	// record of the spelling are consulted, so the refusal fires on the flag the
+	// caller typed and not only on the path it carried.
 	if f.walkID != "" || f.gomod != "" || gomodSet {
 		return fmt.Errorf("--walk-id and --gomod name a stored build and do not apply to --local, which measures the working tree it is given")
 	}

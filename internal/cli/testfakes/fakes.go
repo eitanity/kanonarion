@@ -329,13 +329,26 @@ func (f *FakeQueryLicense) LicenseHistory(_ context.Context, coord coordinate.Mo
 	return f.history[coord.String()+"|"+pipelineVersion], nil
 }
 
-func (f *FakeQueryLicense) ListLicenseRecords(_ context.Context, _ licenseports.LicenseFilter) ([]licenseports.LicenseSummary, error) {
+// ListLicenseRecords applies the filter the SQLite adapter applies: exact
+// equality on the primary SPDX identifier, then limit.
+func (f *FakeQueryLicense) ListLicenseRecords(_ context.Context, filter licenseports.LicenseFilter) ([]licenseports.LicenseSummary, error) {
 	if f.Err != nil {
 		return nil, f.Err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.list, nil
+	// nil, not an empty slice, when nothing matches, as the adapter does.
+	var out []licenseports.LicenseSummary
+	for _, s := range f.list {
+		if filter.SPDX != "" && s.PrimarySPDX != filter.SPDX {
+			continue
+		}
+		out = append(out, s)
+	}
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
+	return out, nil
 }
 
 func (f *FakeQueryLicense) ResolveForWalk(_ context.Context, _ string, _ coordinate.ModuleCoordinate, _ func(context.Context, coordinate.ModuleCoordinate) (licensedomain.LicenseRecord, error)) ([]licapp.DepLicenseResult, error) {
@@ -621,13 +634,37 @@ func (f *FakeQueryCallGraph) CallGraphHistory(ctx context.Context, coord coordin
 	return []cgdomain.CallGraphRecord{rec}, nil
 }
 
-func (f *FakeQueryCallGraph) ListCallGraphRecords(_ context.Context, _ cgports.CallGraphFilter) ([]cgports.CallGraphSummary, error) {
+// ListCallGraphRecords applies the filter the SQLite adapter applies: exact
+// equality on the module path, then offset, then limit. A fake that returned
+// everything regardless would let a filter defect pass every test that used it.
+func (f *FakeQueryCallGraph) ListCallGraphRecords(_ context.Context, filter cgports.CallGraphFilter) ([]cgports.CallGraphSummary, error) {
 	if f.Err != nil {
 		return nil, f.Err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.list, nil
+	// nil, not an empty slice, when nothing matches: the store's own adapter
+	// returns nil and every caller is written against that.
+	var out []cgports.CallGraphSummary
+	for _, s := range f.list {
+		if filter.ModulePath != "" && s.ModulePath != filter.ModulePath {
+			continue
+		}
+		if filter.PipelineVersion != "" && s.PipelineVersion != filter.PipelineVersion {
+			continue
+		}
+		out = append(out, s)
+	}
+	if filter.Offset > 0 {
+		if filter.Offset >= len(out) {
+			return nil, nil
+		}
+		out = out[filter.Offset:]
+	}
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
+	return out, nil
 }
 
 func (f *FakeQueryCallGraph) SetCallers(refs []cgports.CallEdgeRef) {

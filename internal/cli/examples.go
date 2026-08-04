@@ -269,7 +269,7 @@ func newExamplesFindCmd(stdout, stderr io.Writer) *cobra.Command {
 		Example: `  kanonarion examples-find Client.Do
   kanonarion examples-find Marshal
   kanonarion examples-find Marshal --json
-  kanonarion examples-find Marshal --gomod`,
+  kanonarion examples-find Marshal --gomod ./go.mod`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 1 {
 				return usageErr(cmd)
@@ -290,7 +290,6 @@ func newExamplesFindCmd(stdout, stderr io.Writer) *cobra.Command {
 	}
 
 	registerBuildScopeFlags(cmd, &scopeFlags)
-	cmd.Flags().Lookup("gomod").NoOptDefVal = defaultGoModPath
 
 	return cmd
 }

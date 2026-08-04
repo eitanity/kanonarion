@@ -283,12 +283,23 @@ against an empty one is still a conflict.
 ### `callgraph-list`
 
 List modules with extracted call graph records, newest first. The optional
-`<module>` argument filters to one module path.
+`<module>` argument filters to one module path, matched for **exact equality** —
+`github.com/spf13/cobra` matches, `github.com/spf13` does not.
 
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--limit` | `20` | Maximum records to show (`0` = unlimited) |
 | `--offset` | `0` | Skip this many records before listing |
+
+A zero result names its own scope — whether the store is empty, the filter
+matched nothing, or `--offset` skipped past the end — per
+[Zero-result listings](conventions.md#zero-result-listings):
+
+```
+$ kanonarion callgraph-list no-such-module-anywhere
+no call graph record matched module path "no-such-module-anywhere" — the value is compared against the module path, compared for exact equality, of all 312 call graph record(s) in the store (e.g. github.com/spf13/cobra)
+  to list every call graph record: kanonarion callgraph-list
+```
 
 ### `callers`
 
@@ -303,7 +314,7 @@ kanonarion callers <symbol-id> [flags]
 | `--exclude-tests` | `false` | Omit callers declared in `_test.go` files and external test packages |
 | `--transitive` | `false` | Follow reachable edges transitively instead of only direct call sites |
 | `--depth` | `0` | Maximum traversal depth for `--transitive` (`0` = unlimited) |
-| `--gomod` | `./go.mod` | Restrict results to the latest project walk for this `go.mod`. The scope notice names that walk, the `GOOS/GOARCH` it resolved for, and that the `go.mod` was not re-resolved for the read (an edit made since that walk is not reflected; `walk --gomod` records the current resolution) |
+| `--gomod <path>` | _(none; unrestricted)_ | Restrict results to the latest project walk for this `go.mod`. Takes a path, e.g. `--gomod ./go.mod`. The scope notice names that walk, the `GOOS/GOARCH` it resolved for, and that the `go.mod` was not re-resolved for the read (an edit made since that walk is not reflected; `walk --gomod` records the current resolution) |
 | `--walk-id` | _(none)_ | Restrict results to the resolved version set of this walk |
 
 ```
@@ -350,7 +361,7 @@ method — an ID `callers` and `callees` also accept.
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--exclude-tests` | `false` | Omit implementations declared in `_test.go` files |
-| `--gomod` | `./go.mod` | Restrict results to the latest project walk for this `go.mod`. The scope notice names that walk, the `GOOS/GOARCH` it resolved for, and that the `go.mod` was not re-resolved for the read (an edit made since that walk is not reflected; `walk --gomod` records the current resolution) |
+| `--gomod <path>` | _(none; unrestricted)_ | Restrict results to the latest project walk for this `go.mod`. Takes a path, e.g. `--gomod ./go.mod`. The scope notice names that walk, the `GOOS/GOARCH` it resolved for, and that the `go.mod` was not re-resolved for the read (an edit made since that walk is not reflected; `walk --gomod` records the current resolution) |
 | `--walk-id` | _(none)_ | Restrict results to the resolved version set of this walk |
 | `--json` | `false` | Emit the result, verdict and scope as JSON |
 

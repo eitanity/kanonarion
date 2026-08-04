@@ -50,7 +50,6 @@ arguments; with multiple modules, --json emits an array.`,
 		Example: `  kanonarion latest github.com/spf13/cobra
   kanonarion latest github.com/spf13/cobra github.com/stretchr/testify
   kanonarion latest github.com/spf13/cobra --json
-  kanonarion latest --gomod
   kanonarion latest --gomod ./go.mod
   kanonarion latest --gomod ./go.mod --json
   kanonarion latest --gomod ./go.mod --tool

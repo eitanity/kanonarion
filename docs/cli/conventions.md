@@ -166,6 +166,40 @@ and are never presented as resolved dependency edges anywhere.
 
 ---
 
+## Zero-result listings
+
+A record listing that returns nothing says which of three things happened,
+because the remedies differ:
+
+- **The store holds no record of that kind at all.** The line says so and offers
+  the invocation that produces one.
+- **A filter matched nothing.** The line names the filter, the value given, what
+  that value was compared against, and how many records it was compared with —
+  plus one example in the shape the comparison uses. Every filter on these
+  listings is an exact-equality match on one indexed column, not a substring or
+  prefix test, so a module path shortened by one segment matches nothing; the
+  line states that rather than leaving it to be inferred.
+- **Paging skipped past the end.** The line names the `--offset` that did it.
+
+Every remedy printed is an invocation this CLI's own parser accepts.
+
+Under `--json` the data channel is unchanged — an empty array is still an empty
+array, so a consumer never has to branch on the row count to know the output's
+type. The same statement is emitted on **stderr** as a single JSON object:
+
+```json
+{"subject":"call graph record","filter":{"name":"module path","value":"no-such-module","compared_against":"module path, compared for exact equality"},"records_considered":312,"store_empty":false,"paged_past":false,"remedy":["kanonarion callgraph-list"]}
+```
+
+A listing that returned rows prints no such statement, on either channel.
+
+This applies to `callgraph-list`, `vuln-scan-list`, `licence-list`/`license-list`
+and `sbom-list`. `interface-list` and `examples-list` take a module coordinate
+rather than a filter and already refuse an absent one by name, with a remedy and
+a non-zero exit.
+
+---
+
 ## Store layout
 
 All state lives under `--store-root` (default `~/.kanonarion`):

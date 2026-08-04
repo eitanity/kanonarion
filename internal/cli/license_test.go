@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -271,8 +272,8 @@ func TestLicenseList_EmptyStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "no license records found") {
-		t.Errorf("expected empty message, got: %q", stdout.String())
+	if !strings.Contains(stdout.String(), "the store holds no license record at all") {
+		t.Errorf("expected the empty-store statement, got: %q", stdout.String())
 	}
 }
 
@@ -282,7 +283,7 @@ func TestRunLicenseList_WithRecords(t *testing.T) {
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PrimarySPDX: "MIT", OverallStatus: domain.LicenseStatusDetected},
 	})
 	var buf bytes.Buffer
-	err := runLicenseList(context.Background(), "", "", 50, uc, domain.NewLicenseOverrideSet(nil), &buf)
+	err := runLicenseList(context.Background(), "", "", 50, uc, domain.NewLicenseOverrideSet(nil), &buf, io.Discard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -308,7 +309,7 @@ func TestRunLicenseList_OverrideProvenance(t *testing.T) {
 	})
 	ovSet := domain.NewLicenseOverrideSet(map[string]string{"example.com/app": "MIT"})
 	var buf bytes.Buffer
-	if err := runLicenseList(context.Background(), "", "", 50, uc, ovSet, &buf); err != nil {
+	if err := runLicenseList(context.Background(), "", "", 50, uc, ovSet, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -323,12 +324,14 @@ func TestRunLicenseList_OverrideProvenance(t *testing.T) {
 func TestRunLicenseList_SPDXFilter_NoMatch(t *testing.T) {
 	uc := testfakes.NewFakeQueryLicense()
 	var buf bytes.Buffer
-	err := runLicenseList(context.Background(), "Apache-2.0", "", 50, uc, domain.NewLicenseOverrideSet(nil), &buf)
+	err := runLicenseList(context.Background(), "Apache-2.0", "", 50, uc, domain.NewLicenseOverrideSet(nil), &buf, io.Discard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(buf.String(), "no license records found") {
-		t.Errorf("expected empty message, got: %q", buf.String())
+	// An empty store is not the filter's doing, and the statement says so
+	// rather than sending the reader to check a spelling that was never reached.
+	if !strings.Contains(buf.String(), `the store holds no license record at all, so SPDX identifier "Apache-2.0" is not what made this empty`) {
+		t.Errorf("expected the empty-store statement naming the filter, got: %q", buf.String())
 	}
 }
 
