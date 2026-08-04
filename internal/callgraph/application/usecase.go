@@ -91,6 +91,12 @@ type ExtractRequest struct {
 	Coordinate coordinate.ModuleCoordinate
 	// Force re-extracts even if a record for this pipeline version exists.
 	Force bool
+	// Inputs carries the requesting walk's resolved build list, which is what
+	// lets a module published before Go modules be analysed against the versions
+	// that build selected rather than against nothing. The zero value is a
+	// request that offers none, and the analysis behaves exactly as it did before
+	// the field existed.
+	Inputs domain2.AnalysisInputs
 }
 
 // ExtractResult is the output of Execute.
@@ -157,9 +163,25 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 		// clears it. The record stays in the ledger as evidence; it just does not
 		// answer this question. The rule lives in the domain so the vuln stage's
 		// on-demand spawner applies the same one.
-		if found && domain2.RecordIsCacheable(existing) {
+		// A cached record answers a question that was asked with the inputs it had.
+		// One produced before any build list existed, that never built the module
+		// with bodies, is the pre-feature generation of a module whose require
+		// directives could not be pinned — and serving it back is what would make
+		// that failure permanent. Re-analysis APPENDS; the ladder in composition
+		// decides which generation answers afterwards, so nothing is overwritten.
+		superseded := domain2.PinnedAnalysisSupersedes(existing, req.Inputs)
+		if found && domain2.RecordIsCacheable(existing) && !superseded {
 			log.InfoContext(ctx, "callgraph_cache_hit")
 			return ExtractResult{Record: existing, FromCache: true}, nil
+		}
+		if found && superseded {
+			log.InfoContext(ctx, "callgraph_cache_superseded_by_build_list",
+				slog.String("completeness", string(existing.Completeness)),
+				slog.String("failure_cause", existing.FailureCause.String()),
+				slog.String("recorded_build_list_source", existing.BuildListSource),
+				slog.String("requested_build_list_source", req.Inputs.Source),
+				slog.String("content_hash", existing.ContentHash),
+			)
 		}
 		if found {
 			log.InfoContext(ctx, "callgraph_cache_ineligible",
@@ -183,6 +205,7 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 		// says which bytes.
 		record.ArtefactIdentity = artefact.String()
 		record.SourceContentHash = factRecord.ContentHash
+		record.BuildListSource = req.Inputs.Source
 		record, err = uc.hasher.SetContentHash(record)
 		if err != nil {
 			return ExtractResult{}, fmt.Errorf("computing content hash: %w", err)
@@ -218,7 +241,7 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 	}
 	defer cleanup()
 
-	record, err := uc.analyser.Analyse(ctx, zipPath, req.Coordinate)
+	record, err := uc.analyser.Analyse(ctx, zipPath, req.Coordinate, req.Inputs)
 	if err != nil {
 		return ExtractResult{}, fmt.Errorf("running call graph analyser: %w", err)
 	}

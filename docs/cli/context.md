@@ -495,6 +495,11 @@ kanonarion context go.uber.org/goleak@v1.3.0 --json \
 - The `dependencies` section shows direct dependencies only - modules that
   appear as `require` directives in this module's `go.mod`. For the full
   transitive closure use `kanonarion walk-show <walk_id>`.
+- Under a `+incompatible` coordinate the dependencies section carries a caveat:
+  the go command ignores such a module's `go.mod`, so `(no direct dependencies)`
+  is an absence of resolution rather than a measurement. Under `--json` it is the
+  section's `pre_modules_caveat` object. See
+  [pre-modules modules](conventions.md#modules-resolved-under-pre-modules-semantics).
 - If multiple walks exist for the same module, the most recent one (by
   `started_at`) is used.
 - All section timestamps are UTC RFC3339.

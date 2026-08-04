@@ -143,7 +143,11 @@ func TestResultTypes_TableNamesUnique(t *testing.T) {
 // that the new method is still read-shape plumbing, never a hasher (which
 // behaviourMethodMarkers rejects outright regardless of this list).
 var allowedResultMethods = map[string][]string{
-	"ModuleCoordinate":    {"ExtractCommitPrefix", "GitTagVersion", "HasVersion", "IsLocal", "IsPseudoVersion", "IsZero", "MarshalJSON", "MarshalText", "Path", "String", "UnmarshalJSON", "UnmarshalText", "Version"},
+	// IsPreModulesIncompatible joins the accessor list rather than the
+	// behaviour one: it reads the version string the coordinate already holds
+	// and reports how the module system resolves it, exactly as
+	// IsPseudoVersion and IsLocal do. Nothing is measured, fetched or hashed.
+	"ModuleCoordinate":    {"ExtractCommitPrefix", "GitTagVersion", "HasVersion", "IsLocal", "IsPreModulesIncompatible", "IsPseudoVersion", "IsZero", "MarshalJSON", "MarshalText", "Path", "String", "UnmarshalJSON", "UnmarshalText", "Version"},
 	"FactRecord":          {"Coordinate", "IsGoModOnly"},
 	"WalkRecord":          {},
 	"LicenseRecord":       {"SortFiles"},

@@ -1112,3 +1112,7 @@ kanonarion vuln-snapshot-list --store-root ~/.kanonarion
   version selection reads. The scan is then pinned to that cache (`GOPROXY=off`),
   so the analysis is faithful to the project's verified toolchain and never
   fetches a version the project's build list did not resolve.
+
+## Modules resolved under pre-modules semantics
+
+A `+incompatible` coordinate resolves no requirement edges at all, so what this command can show is bounded: reachability under such a coordinate is measured over a call graph built from a module whose own requirements the toolchain never resolved, so a not-reached verdict rests on less than the completeness axis alone states. The answer states that and names the coordinates responsible; see [pre-modules modules](conventions.md#modules-resolved-under-pre-modules-semantics).

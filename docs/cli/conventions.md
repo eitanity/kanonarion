@@ -124,6 +124,48 @@ carries the same value in a `frame` / `walk_frame` field.
 
 ---
 
+## Modules resolved under pre-modules semantics
+
+A module that reached major version 2 or above without adopting Go modules is
+resolved with the `+incompatible` suffix, and the go command **ignores its
+`go.mod` entirely**. No requirement edge is ever resolved under such a
+coordinate: a walk of one records its own node and no edges, and inside a
+project walk its dependencies are either absent or attributed to whichever
+consumer also requires them.
+
+The record is honest — it holds exactly what the module system resolved — so
+every answer surface that reads dependency structure or version identity states
+the limitation rather than letting an empty list read as a measurement:
+
+```
+caveat: 1 module(s) in this walk resolved under pre-modules semantics
+(github.com/Masterminds/sprig@v2.22.0+incompatible) — the Go module system
+ignores a +incompatible module's own go.mod, so no requirement edges are
+resolved under it: its dependencies are ABSENT from this answer, not measured to
+be none. They can therefore neither show their own dependencies nor appear as
+the dependent of anything. if the project later published a /vN major it is a
+proper module and resolves normally.
+```
+
+It appears on `walk-show`, `dependents` (both directions), `context`'s
+dependencies section, `interface-diff`, `license-compat` and `vuln-show`; on
+`audit` and `sbom` it goes to **stderr**, beside the other run-level axis lines,
+so `--json` and the SBOM document itself stay exactly what they were. `latest`
+needs no caveat: it already probes for and reports a newer major line, which is
+the remedy the caveat can only name conditionally.
+
+Under `--json` the same statement is a `pre_modules_caveat` object
+(`coordinates`, `limitation`, `remedy`), present only when the answer is
+actually bounded by one. `walk-show --json` is the exception: its stdout is the
+walk record's own sealed bytes, so the caveat goes to stderr there too.
+
+No synthetic edges are ever produced to fill the gap. The `require` directives
+kanonarion pins into a synthesised `go.mod` for a pre-modules module are **scan
+inputs** — see [callgraph](callgraph.md#modules-published-before-go-modules) —
+and are never presented as resolved dependency edges anywhere.
+
+---
+
 ## Store layout
 
 All state lives under `--store-root` (default `~/.kanonarion`):

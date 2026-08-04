@@ -74,6 +74,13 @@ func printVulnRecord(stdout io.Writer, rec vuldomain.VulnerabilityRecord, classi
 		label = fmt.Sprintf("%s (%s)", rec.OverallStatus, rec.UnscanReason)
 	}
 	_, _ = fmt.Fprintf(stdout, "%s@%s — %s\n", rec.Coordinate.Path(), rec.Coordinate.Version(), label)
+	// Reachability under a pre-modules coordinate is measured over a call graph
+	// built from a module whose own requirements the toolchain never resolved, so
+	// a not-reached verdict here is bounded by more than the graph's own
+	// completeness axis says.
+	if line := preModulesCaveat(rec.Coordinate); line != "" {
+		_, _ = fmt.Fprintf(stdout, "  %s\n", line)
+	}
 	_, _ = fmt.Fprintf(stdout, "  Walk:            %s\n", rec.WalkID)
 	// The analysis frame is printed on every record, including "not recorded".
 	// A reachability finding means something different in each: isolated answers

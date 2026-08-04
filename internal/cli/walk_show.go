@@ -24,12 +24,12 @@ func newWalkShowCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runWalkShow(cmd.Context(), args[0], ctr.QueryWalks, stdout)
+			return runWalkShow(cmd.Context(), args[0], ctr.QueryWalks, stdout, stderr)
 		},
 	}
 	return cmd
 }
-func runWalkShow(ctx context.Context, id string, uc QueryWalksUseCase, stdout io.Writer) error {
+func runWalkShow(ctx context.Context, id string, uc QueryWalksUseCase, stdout, stderr io.Writer) error {
 	rec, err := uc.GetWalk(ctx, id)
 	if err != nil {
 		if isWalkNotFound(err) {
@@ -45,7 +45,10 @@ func runWalkShow(ctx context.Context, id string, uc QueryWalksUseCase, stdout io
 		if encErr := writeWalkRecordJSON(stdout, rec); encErr != nil {
 			return fmt.Errorf("encoding JSON: %w", encErr)
 		}
-		return nil
+		// stdout is the record's own sealed bytes and nothing else — a caveat
+		// added there would change what the record hashes over. It goes to stderr,
+		// where it reaches the reader without touching the artefact.
+		return writeWalkPreModulesCaveat(stderr, rec.Graph)
 	}
 
 	if _, pErr := fmt.Fprintf(stdout, "Walk %s\n", rec.ID); pErr != nil {
@@ -57,7 +60,17 @@ func runWalkShow(ctx context.Context, id string, uc QueryWalksUseCase, stdout io
 	if _, pErr := fmt.Fprintf(stdout, "Status: %s\n", rec.OverallStatus.String()); pErr != nil {
 		return fmt.Errorf("writing output: %w", pErr)
 	}
-	return nil
+	// A walk of a +incompatible module is one node and no edges, and the three
+	// lines above give a reader no way to tell that from a module that genuinely
+	// requires nothing. The target gets its own line only when the graph statement
+	// would not already name it, so the ordinary case — a walk rooted AT the
+	// pre-modules module — says it once.
+	if !containsCoordinate(preModulesNodesIn(rec.Graph), rec.Target) {
+		if err := writePreModulesCaveat(stdout, rec.Target); err != nil {
+			return err
+		}
+	}
+	return writeWalkPreModulesCaveat(stdout, rec.Graph)
 }
 func writeWalkRecordJSON(w io.Writer, r domain.WalkRecord) error {
 	var h domain.WalkRecordHasher

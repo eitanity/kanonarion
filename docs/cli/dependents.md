@@ -164,6 +164,12 @@ kanonarion dependents golang.org/x/crypto@v0.48.0 \
 - A zero-result response is not an error (exit 0). It means either the module is
   not present in the walk, or it is only the walk root (which is excluded by
   default).
+- A module in the walk that resolved under pre-modules semantics can never
+  appear as a dependent, in either direction of the question: the go command
+  ignores its `go.mod`, so no requirement edge was resolved under it. The answer
+  states this and names the coordinates — see
+  [pre-modules modules](conventions.md#modules-resolved-under-pre-modules-semantics).
+  Under `--json` it is the `pre_modules_caveat` object.
 - The `direct` field reflects `GraphNode.DirectDependency`: true when the node
   appears as a `require` directive in the walk root's `go.mod`. The root module
   itself always has `direct: false` regardless of how many things it requires;

@@ -83,6 +83,7 @@ kanonarion callgraph <module>@<version> [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--force` | `false` | Re-extract even if a cached record exists |
+| `--from-walk` | _(none)_ | Pin a pre-modules module's `require` directives to the versions this walk resolved. See [Modules published before Go modules](#modules-published-before-go-modules). |
 | `--go-binary` | _(from `PATH`)_ | Path to the `go` binary if not on `PATH` |
 | `--json` | `false` | Emit the record as JSON to stdout |
 
@@ -184,11 +185,30 @@ would be an empty graph. For those, and only those, kanonarion writes a minimal
   the published file would hide that;
 * if the module also ships a `vendor/` directory, vendor mode is explicitly
   disabled for the load, so the graph describes the module rather than vendored
-  copies of its dependencies.
+  copies of its dependencies;
+* if the module's own packages import third-party code, the `require` directives
+  are taken from the resolved build list of the walk named by `--from-walk` —
+  the versions that build actually selected. The load then runs with
+  `GOPROXY=off` against the local module cache, so a version nobody chose can
+  never enter the graph. Without `--from-walk`, or when the build list does not
+  provide *every* one of those imports, synthesis is refused outright and the
+  module is left failing exactly as before: a file naming some dependencies
+  still sends the loader hunting for the rest. The refusal names the imports and
+  the walk consulted, in the `callgraph_gomod_synthesis_declined` log line.
+
+The walk stages pass `--from-walk` to the callgraph subprocess automatically, so
+a module analysed as part of `kanonarion walk` already gets its build list. It
+only has to be given by hand when running `callgraph` for a single coordinate.
 
 The record says so. `fidelity:` gains a `[synthesised go.mod (module …, go …)]`
-note, `--history` appends it to the artefact the generation was computed from,
-and `--json` carries a `synthesised_go_mod` object. The analysis is of the
+note naming how many `require` directives were pinned, `--history` appends it to
+the artefact the generation was computed from, and `--json` carries a
+`synthesised_go_mod` object whose `requires` list and `build_list_source` name
+the pins and the walk they came from. Those requires are **scan inputs** — what
+the analysis was pointed at — and are never resolved dependency edges of the
+module; no answer surface presents them as such. Two analyses of the same bytes
+pinned to different versions are two different graphs and carry different graph
+digests, while identical pins from two different walks do not. The analysis is of the
 published bytes **plus a file kanonarion invented**, and a record that did not
 state that would be claiming to describe the artefact it was sealed against. The
 field is absent — not empty — on every graph analysed as published.

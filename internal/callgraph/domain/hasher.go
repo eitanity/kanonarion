@@ -160,12 +160,44 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 		SourceContentHash: c.SourceContentHash,
 		AnalysisSource:    AnalysisSource(c.AnalysisSource),
 		WorktreeDigest:    c.WorktreeDigest,
+		BuildListSource:   c.BuildListSource,
 		SynthesisedGoMod: SynthesisedGoMod{
 			ModulePath:        c.SynthesisedGoMod.ModulePath,
 			GoDirective:       c.SynthesisedGoMod.GoDirective,
 			VendorTreePresent: c.SynthesisedGoMod.VendorTreePresent,
+			Requires:          domainRequires(c.SynthesisedGoMod.Requires),
 		},
 	}, nil
+}
+
+// canonicalRequires renders the pinned require directives onto the wire, keeping
+// nil as nil so a module that needed none marshals to the bytes it always did.
+func canonicalRequires(reqs []SynthesisedRequire) []canonicalRequire {
+	if len(reqs) == 0 {
+		return nil
+	}
+	out := make([]canonicalRequire, 0, len(reqs))
+	for _, r := range reqs {
+		// The wire and domain shapes are deliberately separate types; the conversion
+		// is legal only while their fields coincide, so a field added to either
+		// stops compiling here rather than silently changing what stored records
+		// hash over. Same rule as canonicalImplementation's methods above.
+		out = append(out, canonicalRequire(r))
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out
+}
+
+// domainRequires reads the pinned require directives back off the wire.
+func domainRequires(reqs []canonicalRequire) []SynthesisedRequire {
+	if len(reqs) == 0 {
+		return nil
+	}
+	out := make([]SynthesisedRequire, 0, len(reqs))
+	for _, r := range reqs {
+		out = append(out, SynthesisedRequire(r))
+	}
+	return out
 }
 
 // -- canonical wire types --
@@ -238,16 +270,20 @@ type canonicalRecord struct {
 	// ArtefactIdentity and SourceContentHash are omitted when empty so
 	// records that predate them keep their stored content hash verifiable,
 	// on the same terms every additive field on this shape has used.
-	ArtefactIdentity string          `json:"artefact_identity,omitempty"`
-	ContentHash      string          `json:"content_hash"`
-	Coordinate       canonicalCoord  `json:"coordinate"`
-	Ecosystem        string          `json:"ecosystem"`
-	EdgeCount        int             `json:"edge_count"`
-	Edges            []canonicalEdge `json:"edges"`
-	ExclusionList    []string        `json:"exclusion_list,omitempty"`
-	ExclusionReason  string          `json:"exclusion_reason,omitempty"`
-	ExtractedAt      string          `json:"extracted_at"`
-	FailedPackages   []string        `json:"failed_packages,omitempty"`
+	ArtefactIdentity string `json:"artefact_identity,omitempty"`
+	// BuildListSource is omitted when empty on the same terms: no record written
+	// before the field existed was offered a build list, so absent is the truth
+	// about it rather than an unrecorded third state.
+	BuildListSource string          `json:"build_list_source,omitzero"`
+	ContentHash     string          `json:"content_hash"`
+	Coordinate      canonicalCoord  `json:"coordinate"`
+	Ecosystem       string          `json:"ecosystem"`
+	EdgeCount       int             `json:"edge_count"`
+	Edges           []canonicalEdge `json:"edges"`
+	ExclusionList   []string        `json:"exclusion_list,omitempty"`
+	ExclusionReason string          `json:"exclusion_reason,omitempty"`
+	ExtractedAt     string          `json:"extracted_at"`
+	FailedPackages  []string        `json:"failed_packages,omitempty"`
 	// FailureCause is omitted when zero so a record written before the cause axis
 	// existed — and every record that did not fail, which is almost all of them —
 	// marshals to exactly the bytes it always did and keeps its stored content
@@ -285,9 +321,19 @@ type canonicalRecord struct {
 // to the domain type does not silently change what every stored record hashes
 // over.
 type canonicalSynthesisedGoMod struct {
-	GoDirective       string `json:"go_directive"`
-	ModulePath        string `json:"module_path"`
-	VendorTreePresent bool   `json:"vendor_tree_present"`
+	GoDirective string `json:"go_directive"`
+	ModulePath  string `json:"module_path"`
+	// Requires is omitted when empty so every record sealed while synthesis could
+	// only ever produce a require-less file marshals to exactly the bytes it was
+	// sealed over. An absent list means the module needed none.
+	Requires          []canonicalRequire `json:"requires,omitzero"`
+	VendorTreePresent bool               `json:"vendor_tree_present"`
+}
+
+// canonicalRequire is the wire shape of domain.SynthesisedRequire.
+type canonicalRequire struct {
+	Path    string `json:"path"`
+	Version string `json:"version"`
 }
 
 func marshalCanonical(r CallGraphRecord) ([]byte, error) {
@@ -428,9 +474,11 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 		PipelineVersion:   r.PipelineVersion,
 		SchemaVersion:     r.SchemaVersion,
 		SourceContentHash: r.SourceContentHash,
+		BuildListSource:   r.BuildListSource,
 		SynthesisedGoMod: canonicalSynthesisedGoMod{
 			GoDirective:       r.SynthesisedGoMod.GoDirective,
 			ModulePath:        r.SynthesisedGoMod.ModulePath,
+			Requires:          canonicalRequires(r.SynthesisedGoMod.Requires),
 			VendorTreePresent: r.SynthesisedGoMod.VendorTreePresent,
 		},
 		TestScope:       string(r.TestScope),

@@ -527,7 +527,7 @@ func (a *pathReadingAnalyser) AnalyserMetadata() ports.AnalyserMetadata {
 	return ports.AnalyserMetadata{Algorithm: domain2.AlgorithmCHA, Version: "test"}
 }
 
-func (a *pathReadingAnalyser) Analyse(_ context.Context, path string, coord coordinate.ModuleCoordinate) (domain2.CallGraphRecord, error) {
+func (a *pathReadingAnalyser) Analyse(_ context.Context, path string, coord coordinate.ModuleCoordinate, _ domain2.AnalysisInputs) (domain2.CallGraphRecord, error) {
 	a.gotPath = path
 	b, err := os.ReadFile(path) // #nosec G304 -- path produced by the use case from a temp file
 	if err != nil {

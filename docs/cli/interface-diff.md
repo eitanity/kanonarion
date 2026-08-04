@@ -232,3 +232,7 @@ whoever fixes broken invocations.
 
 See also: [`interface`](interface.md), [`callgraph`](callgraph.md),
 [`local`](local.md), [`license-diff`](license-diff.md).
+
+## Modules resolved under pre-modules semantics
+
+A `+incompatible` coordinate resolves no requirement edges at all, so what this command can show about such a version is bounded — the two coordinates being compared are not two points on one module's version line the way the rest of the output implies. The answer states that and names the coordinates responsible; see [pre-modules modules](conventions.md#modules-resolved-under-pre-modules-semantics).

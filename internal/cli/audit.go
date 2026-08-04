@@ -322,6 +322,14 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 		return cerr
 	}
 
+	// The pre-modules axis, on stderr with the others. Rows for a +incompatible
+	// module are honest about that module; what they cannot show is anything
+	// UNDER it, because the module system resolved no requirements there — so the
+	// audited set is narrower than the build the reader is auditing.
+	if cerr := writePreModulesCaveatForSet(stderr, auditPreModulesCoords(results)); cerr != nil {
+		return cerr
+	}
+
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")

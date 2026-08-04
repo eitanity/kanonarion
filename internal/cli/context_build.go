@@ -109,13 +109,18 @@ func buildDependencies(ctx context.Context, coord coordinate.ModuleCoordinate, w
 	}
 	// Graph.Nodes is sorted lexicographically by (Path, Version) after Sort.
 
+	// "(no direct dependencies)" under a +incompatible coordinate is the exact
+	// sentence this caveat exists to qualify: the module system never resolved
+	// any, so the list is empty for a reason that has nothing to do with the
+	// module's real dependency set.
 	return contextDependencies{
-		Status:       rec.OverallStatus.String(),
-		WalkID:       rec.ID,
-		Frame:        rec.Graph.BuildEnv.Frame(),
-		Count:        len(deps),
-		Partial:      rec.Graph.Partial,
-		Dependencies: deps,
+		Status:           rec.OverallStatus.String(),
+		WalkID:           rec.ID,
+		Frame:            rec.Graph.BuildEnv.Frame(),
+		Count:            len(deps),
+		Partial:          rec.Graph.Partial,
+		Dependencies:     deps,
+		PreModulesCaveat: preModulesCaveatFor(append(preModulesNodesIn(rec.Graph), coord)...),
 	}
 }
 

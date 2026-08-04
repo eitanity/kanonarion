@@ -119,7 +119,7 @@ func TestAnalyse_NamesTheModuleZipSource(t *testing.T) {
 	a := staticcha.New("0.3.0", "", testLogger())
 	// A path that is not a zip: the extraction fails, and the failure record is
 	// still an answer about a module zip.
-	rec, err := a.Analyse(context.Background(), filepath.Join(t.TempDir(), "not-a.zip"), coord)
+	rec, err := a.Analyse(context.Background(), filepath.Join(t.TempDir(), "not-a.zip"), coord, domain.AnalysisInputs{})
 	if err != nil {
 		t.Fatalf("Analyse returned an infrastructure error: %v", err)
 	}

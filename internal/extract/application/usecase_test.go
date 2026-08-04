@@ -99,7 +99,7 @@ type extractorCall struct {
 	stage string
 }
 
-func (m *mockExtractor) Extract(ctx context.Context, coord coordinate.ModuleCoordinate, stage string, force bool) (ports.StageResult, error) {
+func (m *mockExtractor) Extract(ctx context.Context, coord coordinate.ModuleCoordinate, stage string, force bool, _ string) (ports.StageResult, error) {
 	if m.onExtract != nil {
 		m.onExtract()
 	}

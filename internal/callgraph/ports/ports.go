@@ -63,10 +63,16 @@ type CallGraphAnalyser interface {
 	//
 	// zipPath is the local filesystem path to the module zip file.
 	//
+	// inputs carries what the requesting build already resolved. A module
+	// published before Go modules ships no go.mod, and the require directives that
+	// make it loadable are a property of the build asking, not of the artefact;
+	// the zero value offers none and synthesis refuses such a module exactly as it
+	// did before the parameter existed.
+	//
 	// Failures that are a property of the module (load errors, partial parse)
 	// are returned in the record's OverallStatus; only infrastructure errors
 	// return a non-nil error.
-	Analyse(ctx context.Context, zipPath string, coord coordinate.ModuleCoordinate) (domain.CallGraphRecord, error)
+	Analyse(ctx context.Context, zipPath string, coord coordinate.ModuleCoordinate, inputs domain.AnalysisInputs) (domain.CallGraphRecord, error)
 
 	// AnalyserMetadata returns the algorithm and version of this implementation.
 	AnalyserMetadata() AnalyserMetadata

@@ -80,7 +80,7 @@ func TestAnalyse_BasicCallGraph(t *testing.T) {
 
 	zipData := makeZip(t, testCoord, testModuleFiles)
 	zipPath := writeZipToTemp(t, zipData)
-	rec, err := a.Analyse(context.Background(), zipPath, testCoord)
+	rec, err := a.Analyse(context.Background(), zipPath, testCoord, domain.AnalysisInputs{})
 	if err != nil {
 		t.Fatalf("Analyse returned error: %v", err)
 	}
@@ -145,7 +145,7 @@ func TestAnalyse_DirectConfidence(t *testing.T) {
 	a := staticcha.New("0.1.0", "", slog.Default())
 	zipData := makeZip(t, testCoord, testModuleFiles)
 	zipPath := writeZipToTemp(t, zipData)
-	rec, err := a.Analyse(context.Background(), zipPath, testCoord)
+	rec, err := a.Analyse(context.Background(), zipPath, testCoord, domain.AnalysisInputs{})
 	if err != nil {
 		t.Fatalf("Analyse: %v", err)
 	}
@@ -187,7 +187,7 @@ func CallDoer(d Doer) {
 	a := staticcha.New("0.1.0", "", slog.Default())
 	zipData := makeZip(t, testCoord, files)
 	zipPath := writeZipToTemp(t, zipData)
-	rec, err := a.Analyse(context.Background(), zipPath, testCoord)
+	rec, err := a.Analyse(context.Background(), zipPath, testCoord, domain.AnalysisInputs{})
 	if err != nil {
 		t.Fatalf("Analyse: %v", err)
 	}
@@ -213,11 +213,11 @@ func TestAnalyse_Deterministic(t *testing.T) {
 	zipData := makeZip(t, testCoord, testModuleFiles)
 	zipPath := writeZipToTemp(t, zipData)
 
-	r1, err := a.Analyse(context.Background(), zipPath, testCoord)
+	r1, err := a.Analyse(context.Background(), zipPath, testCoord, domain.AnalysisInputs{})
 	if err != nil {
 		t.Fatalf("first Analyse: %v", err)
 	}
-	r2, err := a.Analyse(context.Background(), zipPath, testCoord)
+	r2, err := a.Analyse(context.Background(), zipPath, testCoord, domain.AnalysisInputs{})
 	if err != nil {
 		t.Fatalf("second Analyse: %v", err)
 	}
@@ -233,7 +233,7 @@ func TestAnalyse_Deterministic(t *testing.T) {
 func TestAnalyse_InvalidZip(t *testing.T) {
 	a := staticcha.New("0.1.0", "", slog.Default())
 	zipPath := writeZipToTemp(t, []byte("not a zip"))
-	rec, err := a.Analyse(context.Background(), zipPath, testCoord)
+	rec, err := a.Analyse(context.Background(), zipPath, testCoord, domain.AnalysisInputs{})
 	if err != nil {
 		t.Fatalf("Analyse: %v", err)
 	}
@@ -246,7 +246,7 @@ func TestAnalyse_IsExportedAPI(t *testing.T) {
 	a := staticcha.New("0.1.0", "", slog.Default())
 	zipData := makeZip(t, testCoord, testModuleFiles)
 	zipPath := writeZipToTemp(t, zipData)
-	rec, err := a.Analyse(context.Background(), zipPath, testCoord)
+	rec, err := a.Analyse(context.Background(), zipPath, testCoord, domain.AnalysisInputs{})
 	if err != nil {
 		t.Fatalf("Analyse: %v", err)
 	}
@@ -297,7 +297,7 @@ func greet() {
 	a := staticcha.New("0.1.0", "", slog.Default())
 	zipData := makeZip(t, testCoord, files)
 	zipPath := writeZipToTemp(t, zipData)
-	rec, err := a.Analyse(context.Background(), zipPath, testCoord)
+	rec, err := a.Analyse(context.Background(), zipPath, testCoord, domain.AnalysisInputs{})
 	if err != nil {
 		t.Fatalf("Analyse: %v", err)
 	}
@@ -341,7 +341,7 @@ func TestAnalyse_PathTraversalInZip(t *testing.T) {
 
 	a := staticcha.New("0.1.0", "", slog.Default())
 	zipPath := writeZipToTemp(t, buf.Bytes())
-	rec, err := a.Analyse(context.Background(), zipPath, testCoord)
+	rec, err := a.Analyse(context.Background(), zipPath, testCoord, domain.AnalysisInputs{})
 	if err != nil {
 		t.Fatalf("Analyse: %v", err)
 	}
@@ -366,7 +366,7 @@ func UseReflect(v any) string {
 	a := staticcha.New("0.1.0", "", slog.Default())
 	zipData := makeZip(t, testCoord, files)
 	zipPath := writeZipToTemp(t, zipData)
-	rec, err := a.Analyse(context.Background(), zipPath, testCoord)
+	rec, err := a.Analyse(context.Background(), zipPath, testCoord, domain.AnalysisInputs{})
 	if err != nil {
 		t.Fatalf("Analyse: %v", err)
 	}
@@ -421,7 +421,7 @@ func TestAnalyse_ZipWithDirectoryEntries(t *testing.T) {
 
 	a := staticcha.New("0.1.0", "", slog.Default())
 	zipPath := writeZipToTemp(t, buf.Bytes())
-	rec, err := a.Analyse(context.Background(), zipPath, testCoord)
+	rec, err := a.Analyse(context.Background(), zipPath, testCoord, domain.AnalysisInputs{})
 	if err != nil {
 		t.Fatalf("Analyse: %v", err)
 	}
@@ -447,7 +447,7 @@ func(  // intentional syntax error
 	a := staticcha.New("0.1.0", "", slog.Default())
 	zipData := makeZip(t, testCoord, files)
 	zipPath := writeZipToTemp(t, zipData)
-	rec, err := a.Analyse(context.Background(), zipPath, testCoord)
+	rec, err := a.Analyse(context.Background(), zipPath, testCoord, domain.AnalysisInputs{})
 	if err != nil {
 		t.Fatalf("Analyse: %v", err)
 	}
@@ -495,7 +495,7 @@ func Broken() int { return notDefined() }
 	a := staticcha.New("0.1.0", "", slog.Default())
 	zipData := makeZip(t, testCoord, files)
 	zipPath := writeZipToTemp(t, zipData)
-	rec, err := a.Analyse(context.Background(), zipPath, testCoord)
+	rec, err := a.Analyse(context.Background(), zipPath, testCoord, domain.AnalysisInputs{})
 	if err != nil {
 		t.Fatalf("Analyse: %v", err)
 	}
@@ -527,7 +527,7 @@ func TestAnalyse_ContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	cancel() // cancel immediately
 
-	rec, err := a.Analyse(ctx, zipPath, testCoord)
+	rec, err := a.Analyse(ctx, zipPath, testCoord, domain.AnalysisInputs{})
 	if err != nil {
 		t.Fatalf("Analyse: %v", err)
 	}
@@ -585,7 +585,7 @@ func Root() {
 	a := staticcha.New("0.1.0", "", slog.Default())
 	zipData := makeZip(t, testCoord, files)
 	zipPath := writeZipToTemp(t, zipData)
-	rec, err := a.Analyse(context.Background(), zipPath, testCoord)
+	rec, err := a.Analyse(context.Background(), zipPath, testCoord, domain.AnalysisInputs{})
 	if err != nil {
 		t.Fatalf("Analyse: %v", err)
 	}
@@ -671,7 +671,7 @@ func (b *B) Run() { func() { sinkB() }() }
 	}
 	a := staticcha.New("0.1.0", "", slog.Default())
 	zipPath := writeZipToTemp(t, makeZip(t, testCoord, files))
-	rec, err := a.Analyse(context.Background(), zipPath, testCoord)
+	rec, err := a.Analyse(context.Background(), zipPath, testCoord, domain.AnalysisInputs{})
 	if err != nil {
 		t.Fatalf("Analyse: %v", err)
 	}
@@ -742,7 +742,7 @@ func (c *C) Work() {
 	}
 	a := staticcha.New("0.1.0", "", slog.Default())
 	zipPath := writeZipToTemp(t, makeZip(t, testCoord, files))
-	rec, err := a.Analyse(context.Background(), zipPath, testCoord)
+	rec, err := a.Analyse(context.Background(), zipPath, testCoord, domain.AnalysisInputs{})
 	if err != nil {
 		t.Fatalf("Analyse: %v", err)
 	}
@@ -786,7 +786,7 @@ func (e *Engine) Exported() { func() { helper() }() }
 	}
 	a := staticcha.New("0.1.0", "", slog.Default())
 	zipPath := writeZipToTemp(t, makeZip(t, testCoord, files))
-	rec, err := a.Analyse(context.Background(), zipPath, testCoord)
+	rec, err := a.Analyse(context.Background(), zipPath, testCoord, domain.AnalysisInputs{})
 	if err != nil {
 		t.Fatalf("Analyse: %v", err)
 	}

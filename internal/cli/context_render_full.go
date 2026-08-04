@@ -82,6 +82,7 @@ func printFullDependencies(w *errWriter, d contextDependencies, mod string) {
 		if len(d.Dependencies) == 0 {
 			w.printf("(no direct dependencies)\n")
 		}
+		printPreModulesCaveat(w, d.PreModulesCaveat)
 	}
 }
 

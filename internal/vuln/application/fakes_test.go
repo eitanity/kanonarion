@@ -875,7 +875,7 @@ type fakeCallGraphSpawner struct {
 	onSpawn func()
 }
 
-func (f *fakeCallGraphSpawner) Spawn(_ context.Context, coord coordinate.ModuleCoordinate, _ bool) ([]byte, error) {
+func (f *fakeCallGraphSpawner) Spawn(_ context.Context, coord coordinate.ModuleCoordinate, _ bool, _ string) ([]byte, error) {
 	f.mu.Lock()
 	f.calls = append(f.calls, coord)
 	onSpawn := f.onSpawn

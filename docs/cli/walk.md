@@ -91,6 +91,12 @@ Print a single stored walk record by ID.
 kanonarion walk-show <walk-id> [--json]
 ```
 
+When the walk's target, or any module in its graph, resolved under pre-modules
+semantics, the output carries a caveat naming those coordinates — see
+[pre-modules modules](conventions.md#modules-resolved-under-pre-modules-semantics).
+Under `--json` it is written to **stderr**, because stdout is the walk record's
+own sealed bytes and nothing may be added to them.
+
 ### `walk-diff`
 
 Print the difference between two walk records (added, removed, and

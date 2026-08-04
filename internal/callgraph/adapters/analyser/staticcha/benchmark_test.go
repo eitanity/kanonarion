@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha"
+	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 )
 
 func BenchmarkAnalyse_Basic(b *testing.B) {
@@ -31,7 +32,7 @@ func BenchmarkAnalyse_Basic(b *testing.B) {
 	b.ResetTimer()
 	b.ReportAllocs()
 	for b.Loop() {
-		_, err := a.Analyse(ctx, zipPath, testCoord)
+		_, err := a.Analyse(ctx, zipPath, testCoord, domain.AnalysisInputs{})
 		if err != nil {
 			b.Fatalf("Analyse returned error: %v", err)
 		}

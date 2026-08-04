@@ -17,6 +17,7 @@ type cgFlags struct {
 	goBinary     string
 	force        bool
 	fromModcache string
+	fromWalk     string
 }
 
 func newCallGraphCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -28,7 +29,8 @@ func newCallGraphCmd(stdout, stderr io.Writer) *cobra.Command {
 		Short: "Extract and summarise the call graph of a Go module",
 		Example: `  kanonarion callgraph github.com/spf13/cobra@v1.8.1
   kanonarion callgraph github.com/spf13/cobra@v1.8.1 --json
-  kanonarion callgraph github.com/spf13/cobra@v1.8.1 --force`,
+  kanonarion callgraph github.com/spf13/cobra@v1.8.1 --force
+  kanonarion callgraph github.com/Masterminds/sprig@v2.22.0+incompatible --from-walk 01KZ3WD9JM9X4S5TWR31HF64H7`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if localShim {
 				// Direct, never execute: 'callgraph' analyses fetched
@@ -50,6 +52,8 @@ func newCallGraphCmd(stdout, stderr io.Writer) *cobra.Command {
 
 	cmd.Flags().StringVar(&f.goBinary, "go-binary", "", "path to 'go' binary if not in PATH")
 	cmd.Flags().BoolVar(&f.force, "force", false, "re-extract even if cached")
+	cmd.Flags().StringVar(&f.fromWalk, "from-walk", "",
+		"pin a pre-modules module's require directives to the versions this walk resolved")
 	cmd.Flags().BoolVar(&localShim, "local", false, "")
 	_ = cmd.Flags().MarkHidden("local")
 	registerFromModcacheFlag(cmd, &f.fromModcache)
@@ -86,9 +90,15 @@ func runCallGraphExtract(ctx context.Context, arg string, f cgFlags, stdout, std
 	}
 	defer func() { _ = cleanup() }()
 
+	inputs, err := analysisInputsForWalk(ctx, ctr.QueryWalks, f.fromWalk)
+	if err != nil {
+		return err
+	}
+
 	result, err := ctr.ExtractCallGraph.Execute(ctx, cgapp.ExtractRequest{
 		Coordinate: coord,
 		Force:      f.force,
+		Inputs:     inputs,
 	})
 	if err != nil {
 		return fmt.Errorf("extracting call graph: %w", err)

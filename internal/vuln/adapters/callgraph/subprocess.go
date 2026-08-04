@@ -28,16 +28,22 @@ func NewOsCallGraphSpawner(binary string) *OsCallGraphSpawner {
 	return &OsCallGraphSpawner{binary: binary}
 }
 
-// Spawn runs `<binary> callgraph <module@version> [--force]` as a child process under
+// Spawn runs `<binary> callgraph <module@version> [--force] [--from-walk <id>]` as a child process under
 // a 10-minute timeout. It captures stderr and returns it alongside any exec error.
 // A non-zero exit, timeout, or OOM kill results in a non-nil error.
-func (s *OsCallGraphSpawner) Spawn(ctx context.Context, coord coordinate.ModuleCoordinate, force bool) ([]byte, error) {
+func (s *OsCallGraphSpawner) Spawn(ctx context.Context, coord coordinate.ModuleCoordinate, force bool, walkID string) ([]byte, error) {
 	spawnCtx, cancel := context.WithTimeout(ctx, spawnTimeout)
 	defer cancel()
 
 	args := []string{"callgraph", coord.String()}
 	if force {
 		args = append(args, "--force")
+	}
+	// Named on the command line because the child opens the store fresh and knows
+	// only its arguments: without it a module published before Go modules is
+	// analysed against no build list at all.
+	if walkID != "" {
+		args = append(args, "--from-walk", walkID)
 	}
 
 	// childproc, not exec directly: the child builds an SSA closure that can hold

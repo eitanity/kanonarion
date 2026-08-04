@@ -193,3 +193,7 @@ The root `LICENSE` file is a compound Apache-2.0 attribution document, but
 BSD-3-Clause or MIT licence files. Without `EffectiveSet`, these would be
 invisible to the compatibility and notice pipelines.
 
+
+## Modules resolved under pre-modules semantics
+
+A `+incompatible` coordinate resolves no requirement edges at all, so what this command can show is bounded: a pre-modules module contributes its own licence and none of its dependencies', because none were resolved, so a clean verdict is clean over a closure smaller than the build. The answer states that and names the coordinates responsible; see [pre-modules modules](conventions.md#modules-resolved-under-pre-modules-semantics).

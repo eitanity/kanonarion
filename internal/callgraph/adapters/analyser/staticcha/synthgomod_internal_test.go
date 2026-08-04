@@ -30,7 +30,7 @@ func TestSynthesiseGoMod_WritesCoordinatePathAndPinnedDirective(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	synth, err := synthesiseGoMod(dir, mustCoord(t, "example.com/premod", "v0.0.0-20180430131211-7c2a214ada46"))
+	synth, err := synthesiseGoMod(dir, mustCoord(t, "example.com/premod", "v0.0.0-20180430131211-7c2a214ada46"), domain.AnalysisInputs{})
 	if err != nil {
 		t.Fatalf("synthesiseGoMod: %v", err)
 	}
@@ -62,7 +62,7 @@ func TestSynthesiseGoMod_IncompatibleVersionAddsNoMajorSuffix(t *testing.T) {
 	t.Parallel()
 	dir := t.TempDir()
 
-	synth, err := synthesiseGoMod(dir, mustCoord(t, "github.com/example/sprigalike", "v2.22.0+incompatible"))
+	synth, err := synthesiseGoMod(dir, mustCoord(t, "github.com/example/sprigalike", "v2.22.0+incompatible"), domain.AnalysisInputs{})
 	if err != nil {
 		t.Fatalf("synthesiseGoMod: %v", err)
 	}
@@ -90,7 +90,7 @@ func TestSynthesiseGoMod_RefusesWhenModuleShipsOne(t *testing.T) {
 		t.Fatalf("seeding published go.mod: %v", err)
 	}
 
-	synth, err := synthesiseGoMod(dir, mustCoord(t, "example.com/other", "v1.0.0"))
+	synth, err := synthesiseGoMod(dir, mustCoord(t, "example.com/other", "v1.0.0"), domain.AnalysisInputs{})
 	if err == nil {
 		t.Fatal("synthesiseGoMod succeeded on a module that ships its own go.mod")
 	}
@@ -119,7 +119,7 @@ func TestSynthesiseGoMod_RefusesWhenDependenciesMustBeResolved(t *testing.T) {
 		t.Fatalf("writing source: %v", err)
 	}
 
-	synth, err := synthesiseGoMod(dir, mustCoord(t, "example.com/premod", "v1.0.0"))
+	synth, err := synthesiseGoMod(dir, mustCoord(t, "example.com/premod", "v1.0.0"), domain.AnalysisInputs{})
 	if !errors.Is(err, errNeedsDependencyResolution) {
 		t.Fatalf("err = %v, want errNeedsDependencyResolution", err)
 	}
@@ -151,7 +151,7 @@ func TestSynthesiseGoMod_TestOnlyDependencyDoesNotBlock(t *testing.T) {
 		}
 	}
 
-	if _, err := synthesiseGoMod(dir, mustCoord(t, "example.com/premod", "v1.0.0")); err != nil {
+	if _, err := synthesiseGoMod(dir, mustCoord(t, "example.com/premod", "v1.0.0"), domain.AnalysisInputs{}); err != nil {
 		t.Fatalf("synthesiseGoMod refused a module whose only external import is in a test file: %v", err)
 	}
 }
@@ -181,7 +181,7 @@ func TestSynthesiseGoMod_IgnoresNonPackageDirectories(t *testing.T) {
 		}
 	}
 
-	synth, err := synthesiseGoMod(dir, mustCoord(t, "example.com/premod", "v1.0.0"))
+	synth, err := synthesiseGoMod(dir, mustCoord(t, "example.com/premod", "v1.0.0"), domain.AnalysisInputs{})
 	if err != nil {
 		t.Fatalf("synthesiseGoMod refused on imports outside the module's own packages: %v", err)
 	}
@@ -200,7 +200,7 @@ func TestSynthesiseGoMod_DetectsVendorTree(t *testing.T) {
 		t.Fatalf("creating vendor tree: %v", err)
 	}
 
-	synth, err := synthesiseGoMod(dir, mustCoord(t, "example.com/vendored", "v1.0.0"))
+	synth, err := synthesiseGoMod(dir, mustCoord(t, "example.com/vendored", "v1.0.0"), domain.AnalysisInputs{})
 	if err != nil {
 		t.Fatalf("synthesiseGoMod: %v", err)
 	}
@@ -234,5 +234,129 @@ func TestAnalysisEnv_DisablesVendorModeOnlyWhenVendored(t *testing.T) {
 	}
 	if !slices.Contains(vendored, "GOWORK=off") {
 		t.Error("analysisEnv dropped the workspace isolation it inherits from isolatedModuleEnv")
+	}
+}
+
+// TestSynthesiseGoMod_PinsRequiresFromTheOfferedBuildList is the half the
+// refusal above was holding open. The versions come from a build that already
+// resolved them, so the file names coordinates the rest of the ledger holds and
+// the load never has to ask a proxy what "latest" means today.
+func TestSynthesiseGoMod_PinsRequiresFromTheOfferedBuildList(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	src := "package premod\n\nimport \"github.com/example/dep/sub\"\n\n// F uses a dependency.\nfunc F() { sub.G() }\n"
+	if err := os.WriteFile(filepath.Join(dir, "premod.go"), []byte(src), 0o600); err != nil {
+		t.Fatalf("writing source: %v", err)
+	}
+
+	dep := mustCoord(t, "github.com/example/dep", "v1.4.2")
+	synth, err := synthesiseGoMod(dir, mustCoord(t, "example.com/premod", "v1.0.0"), domain.AnalysisInputs{
+		BuildList: map[coordinate.ModuleCoordinate]struct{}{dep: {}},
+		Source:    "01WALKAAAAAAAAAAAAAAAAAAAA",
+	})
+	if err != nil {
+		t.Fatalf("synthesiseGoMod: %v", err)
+	}
+	if len(synth.Requires) != 1 || synth.Requires[0].Path != dep.Path() || synth.Requires[0].Version != dep.Version() {
+		t.Fatalf("Requires = %+v, want the one coordinate the build list resolved", synth.Requires)
+	}
+
+	body, err := os.ReadFile(filepath.Join(dir, "go.mod")) /* #nosec G304 -- dir is this test's own t.TempDir() */
+	if err != nil {
+		t.Fatalf("reading synthesised go.mod: %v", err)
+	}
+	want := "module example.com/premod\n\ngo 1.16\n\nrequire (\n\tgithub.com/example/dep v1.4.2\n)\n"
+	if string(body) != want {
+		t.Errorf("synthesised go.mod =\n%q\nwant\n%q", body, want)
+	}
+}
+
+// TestSynthesiseGoMod_RefusesWhenTheBuildListMissesOneImport keeps the
+// all-or-nothing rule at the level that writes the file. A go.mod naming one of
+// two dependencies still sends the loader hunting for the other.
+func TestSynthesiseGoMod_RefusesWhenTheBuildListMissesOneImport(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	src := "package premod\n\nimport (\n\t\"github.com/example/dep\"\n\t\"github.com/example/absent\"\n)\n\n" +
+		"// F uses two dependencies.\nfunc F() { dep.G(); absent.H() }\n"
+	if err := os.WriteFile(filepath.Join(dir, "premod.go"), []byte(src), 0o600); err != nil {
+		t.Fatalf("writing source: %v", err)
+	}
+
+	dep := mustCoord(t, "github.com/example/dep", "v1.4.2")
+	synth, err := synthesiseGoMod(dir, mustCoord(t, "example.com/premod", "v1.0.0"), domain.AnalysisInputs{
+		BuildList: map[coordinate.ModuleCoordinate]struct{}{dep: {}},
+		Source:    "01WALKAAAAAAAAAAAAAAAAAAAA",
+	})
+	if !errors.Is(err, errNeedsDependencyResolution) {
+		t.Fatalf("err = %v, want errNeedsDependencyResolution", err)
+	}
+	if !strings.Contains(err.Error(), "github.com/example/absent") {
+		t.Errorf("refusal %q does not name the import the build list could not pin", err)
+	}
+	if !strings.Contains(err.Error(), "01WALKAAAAAAAAAAAAAAAAAAAA") {
+		t.Errorf("refusal %q does not name the build list that was consulted", err)
+	}
+	if !synth.IsZero() {
+		t.Errorf("SynthesisedGoMod = %+v, want the zero value", synth)
+	}
+	if _, statErr := os.Stat(filepath.Join(dir, "go.mod")); !errors.Is(statErr, fs.ErrNotExist) {
+		t.Error("a partially-pinned go.mod was written")
+	}
+}
+
+// TestAnalysisEnv_PinnedRequiresLoadOffline pins the posture the pinning rests
+// on: the versions are already chosen, so the only legitimate source for them is
+// the local module cache, and a load that could reach a proxy could substitute
+// something the walk never selected.
+func TestAnalysisEnv_PinnedRequiresLoadOffline(t *testing.T) {
+	t.Parallel()
+	pinned := analysisEnv(domain.SynthesisedGoMod{
+		ModulePath:  "example.com/premod",
+		GoDirective: "1.16",
+		Requires:    []domain.SynthesisedRequire{{Path: "github.com/example/dep", Version: "v1.4.2"}},
+	})
+	for _, want := range []string{"GOPROXY=off", "GOSUMDB=off", "GOFLAGS=-mod=mod"} {
+		if !slices.Contains(pinned, want) {
+			t.Errorf("analysisEnv for a pinned synthesis does not set %s", want)
+		}
+	}
+	// The control that must be absent: an analysis that pinned nothing keeps the
+	// ambient posture it always had, so this change adds no offline constraint to
+	// any path that did not gain a require list.
+	plain := analysisEnv(domain.SynthesisedGoMod{ModulePath: "example.com/premod", GoDirective: "1.16"})
+	if slices.Contains(plain, "GOPROXY=off") {
+		t.Error("an unpinned analysis was forced offline; that is a behaviour change on a path " +
+			"this feature does not touch")
+	}
+}
+
+// TestOfflineCacheMissIsNotTheModulesFault. The offline posture a pinned
+// synthesis imposes belongs to this host, so a dependency absent from the local
+// module cache must never be recorded as a property of the published bytes: a
+// module fault is CACHEABLE, and caching a cold cache makes a warm one
+// irrelevant forever.
+//
+// Measured on the reference store: sprig@v2.22.0+incompatible pinned all seven
+// of its requires from the corteza build list and then failed minimal version
+// selection because the transitive go.mod graph was not in GOMODCACHE.
+func TestOfflineCacheMissIsNotTheModulesFault(t *testing.T) {
+	t.Parallel()
+	const detail = "meta load: err: exit status 1: stderr: go: golang.org/x/crypto@v0.31.0 requires\n" +
+		"\tgolang.org/x/text@v0.21.0 requires\n" +
+		"\tgolang.org/x/net@v0.25.0: module lookup disabled by GOPROXY=off"
+	if !isOfflineCacheMiss(detail) {
+		t.Error("a load that failed because the module cache is cold was not recognised as such; " +
+			"the record would file this host's missing file as the module's permanent fault")
+	}
+	// The control that must be false: a genuine module fault stays the module's.
+	for _, real := range []string{
+		"no packages successfully loaded",
+		"err: exit status 1: stderr: premod.go:3:8: undefined: nope",
+		"",
+	} {
+		if isOfflineCacheMiss(real) {
+			t.Errorf("a genuine module failure was reclassified as environmental: %q", real)
+		}
 	}
 }

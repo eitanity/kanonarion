@@ -432,3 +432,7 @@ kanonarion extract "$WALK_ID"
 # 3. Generate the binary-scoped SBOM from that walk
 kanonarion sbom --package ./cmd/myapp --output sbom-myapp.json
 ```
+
+## Modules resolved under pre-modules semantics
+
+A `+incompatible` coordinate resolves no requirement edges at all, so what this command can show is bounded: such a component contributed no requirements to the walk the inventory was built from, so its own dependencies are absent from the component list. The caveat is written to **stderr**, never into the document — an SBOM has no field for it. The answer states that and names the coordinates responsible; see [pre-modules modules](conventions.md#modules-resolved-under-pre-modules-semantics).

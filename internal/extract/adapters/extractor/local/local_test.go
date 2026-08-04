@@ -99,7 +99,7 @@ func TestAdapterExtractor_Extract_License(t *testing.T) {
 			},
 		}
 		adapter := NewAdapterExtractor(lic, nil, nil, nil, "", nil, nil)
-		res, err := adapter.Extract(ctx, coord, "license", false)
+		res, err := adapter.Extract(ctx, coord, "license", false, "")
 		if err != nil {
 			t.Fatalf("Extract failed: %v", err)
 		}
@@ -120,7 +120,7 @@ func TestAdapterExtractor_Extract_License(t *testing.T) {
 			},
 		}
 		adapter := NewAdapterExtractor(lic, nil, nil, nil, "", nil, nil)
-		res, err := adapter.Extract(ctx, coord, "license", false)
+		res, err := adapter.Extract(ctx, coord, "license", false, "")
 		if err != nil {
 			t.Fatalf("Extract failed: %v", err)
 		}
@@ -138,7 +138,7 @@ func TestAdapterExtractor_Extract_License(t *testing.T) {
 			},
 		}
 		adapter := NewAdapterExtractor(lic, nil, nil, nil, "", nil, nil)
-		res, err := adapter.Extract(ctx, coord, "license", false)
+		res, err := adapter.Extract(ctx, coord, "license", false, "")
 		if err != nil {
 			t.Fatalf("Extract failed: %v", err)
 		}
@@ -156,7 +156,7 @@ func TestAdapterExtractor_Extract_License(t *testing.T) {
 			},
 		}
 		adapter := NewAdapterExtractor(lic, nil, nil, nil, "", nil, nil)
-		res, err := adapter.Extract(ctx, coord, "license", false)
+		res, err := adapter.Extract(ctx, coord, "license", false, "")
 		if err != nil {
 			t.Fatalf("Extract failed: %v", err)
 		}
@@ -168,7 +168,7 @@ func TestAdapterExtractor_Extract_License(t *testing.T) {
 	t.Run("license error", func(t *testing.T) {
 		lic := &mockLicenseUseCase{err: errors.New("boom")}
 		adapter := NewAdapterExtractor(lic, nil, nil, nil, "", nil, nil)
-		_, err := adapter.Extract(ctx, coord, "license", false)
+		_, err := adapter.Extract(ctx, coord, "license", false, "")
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -189,7 +189,7 @@ func TestAdapterExtractor_Extract_Interface(t *testing.T) {
 			},
 		}
 		adapter := NewAdapterExtractor(nil, iface, nil, nil, "", nil, nil)
-		res, err := adapter.Extract(ctx, coord, "interface", false)
+		res, err := adapter.Extract(ctx, coord, "interface", false, "")
 		if err != nil {
 			t.Fatalf("Extract failed: %v", err)
 		}
@@ -207,7 +207,7 @@ func TestAdapterExtractor_Extract_Interface(t *testing.T) {
 			},
 		}
 		adapter := NewAdapterExtractor(nil, iface, nil, nil, "", nil, nil)
-		res, err := adapter.Extract(ctx, coord, "interface", false)
+		res, err := adapter.Extract(ctx, coord, "interface", false, "")
 		if err != nil {
 			t.Fatalf("Extract failed: %v", err)
 		}
@@ -225,7 +225,7 @@ func TestAdapterExtractor_Extract_Interface(t *testing.T) {
 			},
 		}
 		adapter := NewAdapterExtractor(nil, iface, nil, nil, "", nil, nil)
-		res, err := adapter.Extract(ctx, coord, "interface", false)
+		res, err := adapter.Extract(ctx, coord, "interface", false, "")
 		if err != nil {
 			t.Fatalf("Extract failed: %v", err)
 		}
@@ -243,7 +243,7 @@ func TestAdapterExtractor_Extract_Interface(t *testing.T) {
 			},
 		}
 		adapter := NewAdapterExtractor(nil, iface, nil, nil, "", nil, nil)
-		res, err := adapter.Extract(ctx, coord, "interface", false)
+		res, err := adapter.Extract(ctx, coord, "interface", false, "")
 		if err != nil {
 			t.Fatalf("Extract failed: %v", err)
 		}
@@ -255,7 +255,7 @@ func TestAdapterExtractor_Extract_Interface(t *testing.T) {
 	t.Run("interface error", func(t *testing.T) {
 		iface := &mockInterfaceUseCase{err: errors.New("boom")}
 		adapter := NewAdapterExtractor(nil, iface, nil, nil, "", nil, nil)
-		_, err := adapter.Extract(ctx, coord, "interface", false)
+		_, err := adapter.Extract(ctx, coord, "interface", false, "")
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -276,7 +276,7 @@ func TestAdapterExtractor_Extract_CallGraph(t *testing.T) {
 			},
 		}
 		adapter := newCallgraphAdapter(exec, reader)
-		res, err := adapter.Extract(ctx, coord, "callgraph", false)
+		res, err := adapter.Extract(ctx, coord, "callgraph", false, "")
 		if err != nil {
 			t.Fatalf("Extract failed: %v", err)
 		}
@@ -298,7 +298,7 @@ func TestAdapterExtractor_Extract_CallGraph(t *testing.T) {
 		exec := &fakeSubprocessExecutor{}
 		reader := &fakeCallGraphReader{found: true, rec: cgdomain.CallGraphRecord{OverallStatus: cgdomain.CallGraphStatusExtracted}}
 		adapter := newCallgraphAdapter(exec, reader)
-		_, err := adapter.Extract(ctx, coord, "callgraph", true)
+		_, err := adapter.Extract(ctx, coord, "callgraph", true, "")
 		if err != nil {
 			t.Fatalf("Extract failed: %v", err)
 		}
@@ -318,7 +318,7 @@ func TestAdapterExtractor_Extract_CallGraph(t *testing.T) {
 		exec := &fakeSubprocessExecutor{}
 		reader := &fakeCallGraphReader{found: true, rec: cgdomain.CallGraphRecord{OverallStatus: cgdomain.CallGraphStatusExtracted}}
 		adapter := NewAdapterExtractor(nil, nil, exec, reader, "0.1.0", []string{"--store-root=/tmp/store", "--from-modcache=/tmp/modcache"}, nil)
-		_, err := adapter.Extract(ctx, coord, "callgraph", true)
+		_, err := adapter.Extract(ctx, coord, "callgraph", true, "")
 		if err != nil {
 			t.Fatalf("Extract failed: %v", err)
 		}
@@ -341,7 +341,7 @@ func TestAdapterExtractor_Extract_CallGraph(t *testing.T) {
 			err:    errors.New("exit status 137"),
 		}
 		adapter := newCallgraphAdapter(exec, &fakeCallGraphReader{})
-		res, err := adapter.Extract(ctx, coord, "callgraph", false)
+		res, err := adapter.Extract(ctx, coord, "callgraph", false, "")
 		if err != nil {
 			t.Fatalf("Extract returned error: %v", err)
 		}
@@ -386,7 +386,7 @@ func TestAdapterExtractor_Extract_CallGraph(t *testing.T) {
 
 		// Call with an already-cancelled context so the subprocess timeout
 		// path is exercised.
-		res, err := adapter.Extract(shortCtx, coord, "callgraph", false)
+		res, err := adapter.Extract(shortCtx, coord, "callgraph", false, "")
 		if err != nil {
 			t.Fatalf("Extract returned error: %v", err)
 		}
@@ -405,7 +405,7 @@ func TestAdapterExtractor_Extract_CallGraph(t *testing.T) {
 			rec:   cgdomain.CallGraphRecord{OverallStatus: cgdomain.CallGraphStatusPartial},
 		}
 		adapter := newCallgraphAdapter(exec, reader)
-		res, err := adapter.Extract(ctx, coord, "callgraph", false)
+		res, err := adapter.Extract(ctx, coord, "callgraph", false, "")
 		if err != nil {
 			t.Fatalf("Extract failed: %v", err)
 		}
@@ -421,7 +421,7 @@ func TestAdapterExtractor_Extract_CallGraph(t *testing.T) {
 			rec:   cgdomain.CallGraphRecord{OverallStatus: cgdomain.CallGraphStatusUnknown},
 		}
 		adapter := newCallgraphAdapter(exec, reader)
-		res, err := adapter.Extract(ctx, coord, "callgraph", false)
+		res, err := adapter.Extract(ctx, coord, "callgraph", false, "")
 		if err != nil {
 			t.Fatalf("Extract failed: %v", err)
 		}
@@ -434,7 +434,7 @@ func TestAdapterExtractor_Extract_CallGraph(t *testing.T) {
 		exec := &fakeSubprocessExecutor{}
 		reader := &fakeCallGraphReader{found: false}
 		adapter := newCallgraphAdapter(exec, reader)
-		res, err := adapter.Extract(ctx, coord, "callgraph", false)
+		res, err := adapter.Extract(ctx, coord, "callgraph", false, "")
 		if err != nil {
 			t.Fatalf("Extract failed: %v", err)
 		}
@@ -450,7 +450,7 @@ func TestAdapterExtractor_Extract_CallGraph(t *testing.T) {
 		exec := &fakeSubprocessExecutor{}
 		reader := &fakeCallGraphReader{err: errors.New("db locked")}
 		adapter := newCallgraphAdapter(exec, reader)
-		_, err := adapter.Extract(ctx, coord, "callgraph", false)
+		_, err := adapter.Extract(ctx, coord, "callgraph", false, "")
 		if err == nil {
 			t.Fatal("expected error from store read failure, got nil")
 		}
@@ -501,7 +501,7 @@ func TestAdapterExtractor_CallGraph_WorkerConcurrency(t *testing.T) {
 			sem <- struct{}{}
 			defer func() { <-sem }()
 			coord, _ := coordinate.NewModuleCoordinate("github.com/foo/mod", "v1.0.0")
-			res, err := adapter.Extract(t.Context(), coord, "callgraph", false)
+			res, err := adapter.Extract(t.Context(), coord, "callgraph", false, "")
 			if err != nil {
 				t.Errorf("Extract failed: %v", err)
 				return
@@ -538,7 +538,7 @@ func TestAdapterExtractor_Extract_Example(t *testing.T) {
 			},
 		}
 		adapter := NewAdapterExtractor(nil, nil, nil, nil, "", nil, ex)
-		res, err := adapter.Extract(ctx, coord, "example", false)
+		res, err := adapter.Extract(ctx, coord, "example", false, "")
 		if err != nil {
 			t.Fatalf("Extract failed: %v", err)
 		}
@@ -556,7 +556,7 @@ func TestAdapterExtractor_Extract_Example(t *testing.T) {
 			},
 		}
 		adapter := NewAdapterExtractor(nil, nil, nil, nil, "", nil, ex)
-		res, err := adapter.Extract(ctx, coord, "example", false)
+		res, err := adapter.Extract(ctx, coord, "example", false, "")
 		if err != nil {
 			t.Fatalf("Extract failed: %v", err)
 		}
@@ -574,7 +574,7 @@ func TestAdapterExtractor_Extract_Example(t *testing.T) {
 			},
 		}
 		adapter := NewAdapterExtractor(nil, nil, nil, nil, "", nil, ex)
-		res, err := adapter.Extract(ctx, coord, "example", false)
+		res, err := adapter.Extract(ctx, coord, "example", false, "")
 		if err != nil {
 			t.Fatalf("Extract failed: %v", err)
 		}
@@ -586,7 +586,7 @@ func TestAdapterExtractor_Extract_Example(t *testing.T) {
 	t.Run("example error", func(t *testing.T) {
 		ex := &mockExampleUseCase{err: errors.New("boom")}
 		adapter := NewAdapterExtractor(nil, nil, nil, nil, "", nil, ex)
-		_, err := adapter.Extract(ctx, coord, "example", false)
+		_, err := adapter.Extract(ctx, coord, "example", false, "")
 		if err == nil {
 			t.Fatal("expected error, got nil")
 		}
@@ -612,7 +612,7 @@ func TestAdapterExtractor_FailureReason_Propagation(t *testing.T) {
 			},
 		}
 		adapter := NewAdapterExtractor(lic, nil, nil, nil, "", nil, nil)
-		res, _ := adapter.Extract(ctx, coord, "license", false)
+		res, _ := adapter.Extract(ctx, coord, "license", false, "")
 		if res.Status != domain.StageFailed {
 			t.Fatalf("Status = %v, want Failed", res.Status)
 		}
@@ -636,7 +636,7 @@ func TestAdapterExtractor_FailureReason_Propagation(t *testing.T) {
 			},
 		}
 		adapter := newCallgraphAdapter(exec, reader)
-		res, _ := adapter.Extract(ctx, coord, "callgraph", false)
+		res, _ := adapter.Extract(ctx, coord, "callgraph", false, "")
 		if res.Status != domain.StageFailed {
 			t.Fatalf("Status = %v, want Failed", res.Status)
 		}
@@ -660,7 +660,7 @@ func TestAdapterExtractor_FailureReason_Propagation(t *testing.T) {
 			},
 		}
 		adapter := NewAdapterExtractor(nil, iface, nil, nil, "", nil, nil)
-		res, _ := adapter.Extract(ctx, coord, "interface", false)
+		res, _ := adapter.Extract(ctx, coord, "interface", false, "")
 		if res.Status != domain.StageFailed {
 			t.Fatalf("Status = %v, want Failed", res.Status)
 		}
@@ -679,7 +679,7 @@ func TestAdapterExtractor_FailureReason_Propagation(t *testing.T) {
 			},
 		}
 		adapter := NewAdapterExtractor(nil, nil, nil, nil, "", nil, ex)
-		res, _ := adapter.Extract(ctx, coord, "example", false)
+		res, _ := adapter.Extract(ctx, coord, "example", false, "")
 		if res.Status != domain.StageFailed {
 			t.Fatalf("Status = %v, want Failed", res.Status)
 		}
@@ -691,14 +691,14 @@ func TestAdapterExtractor_FailureReason_Propagation(t *testing.T) {
 	t.Run("succeeded stages do not pollute Error", func(t *testing.T) {
 		t.Run("license", func(t *testing.T) {
 			lic := &mockLicenseUseCase{res: licapp.ExtractResult{Record: licdomain.LicenseRecord{OverallStatus: licdomain.LicenseStatusDetected}}}
-			res, _ := NewAdapterExtractor(lic, nil, nil, nil, "", nil, nil).Extract(ctx, coord, "license", false)
+			res, _ := NewAdapterExtractor(lic, nil, nil, nil, "", nil, nil).Extract(ctx, coord, "license", false, "")
 			if res.Error != "" {
 				t.Errorf("succeeded license Error = %q, want empty", res.Error)
 			}
 		})
 		t.Run("interface", func(t *testing.T) {
 			iface := &mockInterfaceUseCase{res: ifaceapp.ExtractResult{Record: ifacedomain.InterfaceRecord{OverallStatus: ifacedomain.InterfaceStatusExtracted}}}
-			res, _ := NewAdapterExtractor(nil, iface, nil, nil, "", nil, nil).Extract(ctx, coord, "interface", false)
+			res, _ := NewAdapterExtractor(nil, iface, nil, nil, "", nil, nil).Extract(ctx, coord, "interface", false, "")
 			if res.Error != "" {
 				t.Errorf("succeeded interface Error = %q, want empty", res.Error)
 			}
@@ -706,14 +706,14 @@ func TestAdapterExtractor_FailureReason_Propagation(t *testing.T) {
 		t.Run("callgraph", func(t *testing.T) {
 			exec := &fakeSubprocessExecutor{}
 			reader := &fakeCallGraphReader{found: true, rec: cgdomain.CallGraphRecord{OverallStatus: cgdomain.CallGraphStatusExtracted}}
-			res, _ := newCallgraphAdapter(exec, reader).Extract(ctx, coord, "callgraph", false)
+			res, _ := newCallgraphAdapter(exec, reader).Extract(ctx, coord, "callgraph", false, "")
 			if res.Error != "" {
 				t.Errorf("succeeded callgraph Error = %q, want empty", res.Error)
 			}
 		})
 		t.Run("example", func(t *testing.T) {
 			ex := &mockExampleUseCase{res: exapp.ExtractResult{Record: exdomain.ExampleRecord{OverallStatus: exdomain.ExampleStatusFound}}}
-			res, _ := NewAdapterExtractor(nil, nil, nil, nil, "", nil, ex).Extract(ctx, coord, "example", false)
+			res, _ := NewAdapterExtractor(nil, nil, nil, nil, "", nil, ex).Extract(ctx, coord, "example", false, "")
 			if res.Error != "" {
 				t.Errorf("succeeded example Error = %q, want empty", res.Error)
 			}
@@ -818,7 +818,7 @@ func TestAdapterExtractor_Extract_Misc(t *testing.T) {
 
 	t.Run("unknown stage", func(t *testing.T) {
 		adapter := NewAdapterExtractor(nil, nil, nil, nil, "", nil, nil)
-		_, err := adapter.Extract(ctx, coord, "unknown", false)
+		_, err := adapter.Extract(ctx, coord, "unknown", false, "")
 		if err == nil {
 			t.Fatal("expected error for unknown stage")
 		}

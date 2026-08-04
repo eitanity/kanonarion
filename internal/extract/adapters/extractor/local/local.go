@@ -88,7 +88,7 @@ func NewAdapterExtractor(
 	}
 }
 
-func (a *AdapterExtractor) Extract(ctx context.Context, coord coordinate.ModuleCoordinate, stage string, force bool) (ports.StageResult, error) {
+func (a *AdapterExtractor) Extract(ctx context.Context, coord coordinate.ModuleCoordinate, stage string, force bool, walkID string) (ports.StageResult, error) {
 	switch stage {
 	case "license":
 		res, err := a.license.Execute(ctx, licapp.ExtractRequest{Coordinate: coord, Force: force})
@@ -123,7 +123,7 @@ func (a *AdapterExtractor) Extract(ctx context.Context, coord coordinate.ModuleC
 		}, nil
 
 	case "callgraph":
-		return a.extractCallgraphSubprocess(ctx, coord, force)
+		return a.extractCallgraphSubprocess(ctx, coord, force, walkID)
 
 	case "example":
 		res, err := a.example.Execute(ctx, exapp.ExtractRequest{Coordinate: coord, Force: force})
@@ -149,7 +149,7 @@ func (a *AdapterExtractor) Extract(ctx context.Context, coord coordinate.ModuleC
 // extractCallgraphSubprocess runs the callgraph stage by spawning a child
 // process. The child runs the full callgraph extraction and persists the record
 // to the store. The parent reads the record back on success.
-func (a *AdapterExtractor) extractCallgraphSubprocess(ctx context.Context, coord coordinate.ModuleCoordinate, force bool) (ports.StageResult, error) {
+func (a *AdapterExtractor) extractCallgraphSubprocess(ctx context.Context, coord coordinate.ModuleCoordinate, force bool, walkID string) (ports.StageResult, error) {
 	cgCtx, cancel := context.WithTimeout(ctx, callgraphSubprocessTimeout)
 	defer cancel()
 
@@ -157,6 +157,13 @@ func (a *AdapterExtractor) extractCallgraphSubprocess(ctx context.Context, coord
 	args = append(args, a.cgExtraArgs...)
 	if force {
 		args = append(args, "--force")
+	}
+	// The walk is lost at the process boundary unless it is named on the command
+	// line: the child opens the store fresh and knows only its arguments. Without
+	// it a pre-modules module is analysed with no build list, which is what left
+	// this population failing.
+	if walkID != "" {
+		args = append(args, "--from-walk", walkID)
 	}
 
 	stderr, execErr := a.cgExec.Execute(cgCtx, args)

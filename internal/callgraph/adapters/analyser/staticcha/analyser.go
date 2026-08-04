@@ -56,7 +56,12 @@ func (a *Analyser) logMem(ctx context.Context, phase string) {
 }
 
 // Analyse extracts the call graph from a module zip using CHA.
-func (a *Analyser) Analyse(ctx context.Context, zipPath string, coord coordinate.ModuleCoordinate) (domain.CallGraphRecord, error) {
+func (a *Analyser) Analyse(
+	ctx context.Context,
+	zipPath string,
+	coord coordinate.ModuleCoordinate,
+	inputs domain.AnalysisInputs,
+) (domain.CallGraphRecord, error) {
 	a.logMem(ctx, "start")
 	tempDir, err := os.MkdirTemp("", "kanonarion-cg-*")
 	if err != nil {
@@ -76,7 +81,7 @@ func (a *Analyser) Analyse(ctx context.Context, zipPath string, coord coordinate
 		// The zip is the module: bytes that will not unpack are a property of what
 		// was published, and unpacking them again tomorrow fails identically.
 		return a.sourced(a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed,
-			domain.FailureCauseModule, "extracting module zip: "+err.Error()), domain.SynthesisedGoMod{}), nil
+			domain.FailureCauseModule, "extracting module zip: "+err.Error()), domain.SynthesisedGoMod{}, inputs.Source), nil
 	}
 
 	// A module published before Go modules ships no go.mod, and an extraction of
@@ -84,7 +89,7 @@ func (a *Analyser) Analyse(ctx context.Context, zipPath string, coord coordinate
 	// nothing is recognised as the target and the graph comes back empty. Writing
 	// one is what makes the module loadable at all — and makes the analysed tree
 	// something other than the published tree, which the record then says.
-	synth, err := synthesiseGoMod(tempDir, coord)
+	synth, err := synthesiseGoMod(tempDir, coord, inputs)
 	switch {
 	case errors.Is(err, errGoModPresent):
 		// The module ships its own go.mod. Whatever happens next is a statement
@@ -92,42 +97,47 @@ func (a *Analyser) Analyse(ctx context.Context, zipPath string, coord coordinate
 		synth = domain.SynthesisedGoMod{}
 	case errors.Is(err, errNeedsDependencyResolution):
 		// A pre-modules module whose own packages import third-party code needs a
-		// require list, and a synthesised file has none. The load proceeds exactly
-		// as it did before this file existed, so the record it produces is
-		// unchanged — deliberately. Naming the cause on the record would classify
-		// the failure as the module's fault, which makes it CACHEABLE, and a
-		// permanently-cached failure is the last thing to hand the work that will
-		// eventually resolve those dependencies. The reason is logged instead.
+		// require list, and the requesting build list could not pin every one of
+		// them. The load proceeds exactly as it did before this file existed, so
+		// the record it produces is unchanged — deliberately. Naming the cause on
+		// the record would classify the failure as the module's fault, which makes
+		// it CACHEABLE, and a permanently-cached failure is the last thing to hand
+		// the work that will eventually resolve those dependencies. The reason is
+		// logged instead.
 		synth = domain.SynthesisedGoMod{}
 		a.logger.InfoContext(ctx, "callgraph_gomod_synthesis_declined",
 			slog.String("module", coord.Path()),
 			slog.String("version", coord.Version()),
 			slog.String("reason", err.Error()),
+			slog.String("build_list_source", inputs.Source),
+			slog.Int("build_list_size", len(inputs.BuildList)),
 		)
 	case err != nil:
 		// Failing to write into a directory this process just created is the run,
 		// not the module: the same zip on a working filesystem extracts and loads.
 		return a.sourced(a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed,
-			domain.FailureCauseEnvironment, "synthesising go.mod: "+err.Error()), domain.SynthesisedGoMod{}), nil
+			domain.FailureCauseEnvironment, "synthesising go.mod: "+err.Error()), domain.SynthesisedGoMod{}, inputs.Source), nil
 	default:
 		a.logger.InfoContext(ctx, "callgraph_gomod_synthesised",
 			slog.String("module", coord.Path()),
 			slog.String("version", coord.Version()),
 			slog.String("go_directive", synth.GoDirective),
 			slog.Bool("vendor_tree_present", synth.VendorTreePresent),
+			slog.Int("pinned_requires", len(synth.Requires)),
+			slog.String("build_list_source", inputs.Source),
 		)
 	}
 
 	if ctx.Err() != nil {
 		return a.sourced(a.failRecord(coord, domain.CallGraphStatusCancelled, domain.CompletenessUnknown,
-			domain.FailureCauseEnvironment, "cancelled before load"), synth), nil
+			domain.FailureCauseEnvironment, "cancelled before load"), synth, inputs.Source), nil
 	}
 
 	rec, err := a.analyseDir(ctx, tempDir, coord, synth)
 	if err != nil {
 		return rec, err
 	}
-	return a.sourced(rec, synth), nil
+	return a.sourced(rec, synth, inputs.Source), nil
 }
 
 // sourced stamps a record as built from a fetched module zip, and states how the
@@ -138,9 +148,10 @@ func (a *Analyser) Analyse(ctx context.Context, zipPath string, coord coordinate
 // written before the field existed, and a failed analysis of a zip is still an
 // answer about that zip — including a failure of a tree kanonarion had to add a
 // file to, where the caveat is exactly as load-bearing as it is on a success.
-func (a *Analyser) sourced(r domain.CallGraphRecord, synth domain.SynthesisedGoMod) domain.CallGraphRecord {
+func (a *Analyser) sourced(r domain.CallGraphRecord, synth domain.SynthesisedGoMod, buildListSource string) domain.CallGraphRecord {
 	r.AnalysisSource = domain.AnalysisSourceModuleZip
 	r.SynthesisedGoMod = synth
+	r.BuildListSource = buildListSource
 	return r
 }
 
@@ -202,7 +213,18 @@ func (a *Analyser) analyseDir(
 	// directory is precisely the defect the probe exists to avoid — it would
 	// report a usable toolchain for a load that had none, and file the run's
 	// failure as the module's property.
-	classifyLoad := func() domain.FailureCause { return a.classifyLoadFailure(ctx, tempDir) }
+	classifyLoad := func(detail string) domain.FailureCause {
+		// The offline posture a pinned synthesis imposes is this host's, not the
+		// module's. A dependency absent from the local module cache fails the load
+		// with GOPROXY=off in the message, and filing that as the module's fault
+		// would cache a warm-cache problem as a permanent property of published
+		// bytes — the same permanence this stage keeps off the synthesis-refusal
+		// path for the same reason.
+		if isOfflineCacheMiss(detail) {
+			return domain.FailureCauseEnvironment
+		}
+		return a.classifyLoadFailure(ctx, tempDir)
+	}
 
 	envCleanup, err := a.setupGoEnv(ctx, tempDir)
 	if err != nil {
@@ -231,7 +253,7 @@ func (a *Analyser) analyseDir(
 		// no usable toolchain on it, so which one this is has to be established
 		// rather than read off the message.
 		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed,
-			classifyLoad(), "meta load: "+err.Error()), nil
+			classifyLoad(err.Error()), "meta load: "+err.Error()), nil
 	}
 	a.logMem(ctx, "meta_loaded")
 
@@ -257,7 +279,7 @@ func (a *Analyser) analyseDir(
 		// The only error this returns is a syntax-load failure, which is again the
 		// go command failing; same question, same way of answering it.
 		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed,
-			classifyLoad(), err.Error()), nil
+			classifyLoad(err.Error()), err.Error()), nil
 	}
 	prog := build.Prog
 	allLoadErrs := build.LoadErrs
@@ -273,9 +295,15 @@ func (a *Analyser) analyseDir(
 			detail = joinFirst(allLoadErrs, 3)
 		}
 		// Metadata resolved and not one package type-checked from it. The toolchain
-		// demonstrably ran — it produced the metadata — so this is the module.
+		// demonstrably ran — it produced the metadata — so this is the module,
+		// unless the load could not reach a dependency the local cache does not
+		// hold, which is this host and not these bytes.
+		cause := domain.FailureCauseModule
+		if isOfflineCacheMiss(detail) {
+			cause = domain.FailureCauseEnvironment
+		}
 		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessMetadataOnly,
-			domain.FailureCauseModule, detail), nil
+			cause, detail), nil
 	}
 
 	if ctx.Err() != nil {

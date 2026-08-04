@@ -241,6 +241,16 @@ func sbomGenerateWith(
 		return fmt.Errorf("writing sbom to stdout: %w", err)
 	}
 
+	// On stderr, never in the document: an SBOM is an inventory, and a caveat
+	// injected into it would be a claim the format does not have a field for.
+	// The statement is still owed — a component resolved under pre-modules
+	// semantics contributed no requirements to the walk this inventory was built
+	// from, so its own dependencies are absent from the component list rather
+	// than absent from the build.
+	if cerr := writePreModulesCaveatForSet(stderr, sbomPreModulesCoords(ctx, ctr, record.WalkID)); cerr != nil {
+		return cerr
+	}
+
 	// A licence-less SBOM must never pass as complete. Surface the gap as a
 	// non-zero exit on every output path: the message travels on stderr via
 	// main, never on stdout where it would corrupt the SBOM bytes, and is
