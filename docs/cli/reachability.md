@@ -178,6 +178,45 @@ The classification is **derived at read time**, not stored: the facts it reads
 live in the call-graph ledger, so an answer improves as the graph does and no
 re-scan is owed for it.
 
+#### Entry-point distance
+
+The kind is read off the root node's own identity, and a handler that runs only
+because it was *registered* with a router has nothing in its identity that says
+so. It classifies `internal`, correctly — and on a 21,713-node application graph
+70.7% of the owned nodes sit transitively under an entry point while classifying
+that way. So every classified root also carries how far it sits below the
+nearest entry point:
+
+```
+  root: internal — called from within the analysed module (1 caller), so the route begins where the analyser stopped, not where execution starts
+    node: example.com/app/auth/external.(*externalSamlAuthHandler).CompleteUserAuth
+    entry-point distance: 4 hops below example.com/app/pkg/apigw.(*apigw).ServeHTTP (an http.Handler implementation (method named ServeHTTP) — an HTTP server invokes it per request), weakest edge on that path CHA-overapprox
+```
+
+| Field (`entry_point_ancestry`) | Means |
+|---|---|
+| `found` | Whether an entry-point ancestor was reached. `false` is a **measurement**: nothing in the analysed graph enters this code. The whole object is absent when no search ran — an unresolved root, or no graph — so "not measured" and "measured, none" never look alike. |
+| `hops` | Edges from the nearest entry-point ancestor down to the root. `0` with `found` means the root **is** the entry point. |
+| `entry_point_id` / `entry_point_reason` | Which ancestor, and what made it one — the same reason string the `ingress` kind carries, so a package initialiser is never mistaken for a request handler. |
+| `weakest_confidence` | The weakest edge on that path. It is what stops a distance being read as a certainty: four hops of CHA over-approximation are not four hops of resolved calls. |
+| `via_reference` | At least one hop is a **registration rather than a call** (see [callgraph](callgraph.md#calls-and-references)). Carried apart from the confidence because a reference resolves exactly and would otherwise report `Direct`. |
+| `search_bound` | The hop limit used. `0` is unbounded, which is what the search uses, so `found: false` means "nothing enters this code" and not "not within N hops". |
+
+The kind is **not** made transitive, and the distance is not a kind. On the same
+graph a majority of the edges into owned nodes are not `Direct`, so a transitive
+`ingress` rule would inherit that over-approximation wholesale and label most of
+a codebase `ingress` — as useless as labelling all of it `internal`, and
+considerably more misleading. "internal, 4 hops below an ingress, weakest edge
+CHA-overapprox" is a fact. "ingress" would be a claim.
+
+A path where `weakest_confidence` is `Direct` and `via_reference` is false is a
+chain of statically-resolved calls, and is the one case the transitive reading
+is sound without caveat. It is a small set — 121 of 10,405 owned nodes on one
+real graph, 345 of 21,713 on another — and it has no separate field, because
+those two fields already say it.
+
+None of this is an exploitability claim. It is a statement about graph shape.
+
 ```bash
 kanonarion reachability golang.org/x/text@v0.3.7 --vuln GO-2021-0113
 kanonarion reachability golang.org/x/text@v0.3.7 --vuln GO-2021-0113 --json
@@ -207,7 +246,14 @@ JSON shape:
       "root": {
         "kind": "ingress",
         "reason": "an http.Handler implementation (method named ServeHTTP) — an HTTP server invokes it per request",
-        "node_id": "example.com/app/pkg/apigw.(*apigw).ServeHTTP"
+        "node_id": "example.com/app/pkg/apigw.(*apigw).ServeHTTP",
+        "entry_point_ancestry": {
+          "found": true,
+          "hops": 0,
+          "entry_point_id": "example.com/app/pkg/apigw.(*apigw).ServeHTTP",
+          "entry_point_reason": "an http.Handler implementation (method named ServeHTTP) — an HTTP server invokes it per request",
+          "search_bound": 0
+        }
       }
     }
   ],

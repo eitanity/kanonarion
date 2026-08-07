@@ -109,6 +109,12 @@ type RouteRoot struct {
 	// Remedy is the command that would answer what this classification could
 	// not. Empty when nothing further is owed.
 	Remedy string
+	// Ancestry is how far this root sits below the nearest entry point, and how
+	// strong the weakest edge on that path was. It QUALIFIES the kind rather
+	// than replacing it: a node stays `internal` while stating that a request
+	// handler is four hops above it. See EntryPointAncestry for why the kind is
+	// not simply made transitive.
+	Ancestry EntryPointAncestry
 }
 
 // IsRecorded reports whether a classification was computed.
@@ -123,6 +129,9 @@ func (r RouteRoot) String() string {
 	parts := []string{r.Kind.String()}
 	if r.Reason != "" {
 		parts = append(parts, r.Reason)
+	}
+	if ancestry := r.Ancestry.String(); ancestry != "" {
+		parts = append(parts, ancestry)
 	}
 	if r.ClosureRooted {
 		parts = append(parts, "closure-rooted: the analysis was not rooted at an application, so the application root was not analysed")
@@ -161,4 +170,9 @@ type RootFacts struct {
 	// InProjectCallers is how many edges in the analysed module's own graph call
 	// the node.
 	InProjectCallers int
+	// Ancestry is the upward search result the adapter measured against the same
+	// graph. The domain does not compute it — walking edges needs the graph, and
+	// the graph is the adapter's — but it carries it onto the classification so
+	// every presenter reads one shape.
+	Ancestry EntryPointAncestry
 }

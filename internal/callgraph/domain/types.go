@@ -67,6 +67,21 @@ import (
 // are part of the graph's identity and feed the graph digest — two analyses of
 // one artefact pinned differently are two graphs — while the build list's
 // identity is provenance and is cleared before that comparison.
+//
+// CallEdge.Kind and CallGraphRecord.ReferenceScope joined on those same terms,
+// and the argument is worth stating because a new EDGE kind looks like the sort
+// of change that must bump. Both are omitted from the sealed shape when zero, so
+// every stored record re-marshals to the bytes it was sealed over and still
+// verifies. And neither reads as an unrecorded third state: no analysis before
+// them extracted a reference edge, so a stored edge with no kind IS a call, and
+// a record with no reference scope DID NOT measure the axis. The rule at the top
+// of this comment decides it — bump only when a change makes an OLD record say
+// something FALSE, not merely something less. An old record without reference
+// edges said something false only while `callers` read its silence as a measured
+// absence; ReferenceScope closes that by making the silence self-describing, and
+// the verdict layer downgrades to UNRESOLVED over it. Bumping instead would take
+// every stored graph out of every answer until re-extraction — a purge by
+// another name, to replace a fact the record can simply state.
 const CallGraphSchemaVersion = "13"
 
 // TestScope records whether a module's _test.go declarations were part of the
@@ -209,6 +224,58 @@ const (
 	ConfidenceUnknown EdgeConfidence = "Unknown"
 )
 
+// EdgeKind names what an edge records: a call, or a reference to a function as
+// a value.
+//
+// The two are not the same fact and must not be read as one. A call edge says
+// control transfers from the caller to the callee at that site. A reference edge
+// says the callee's function VALUE was taken there — the shape of every Go HTTP
+// registration, `r.Get(path, h.Handle)` — and says nothing about when, or
+// whether, it is subsequently invoked. Reporting a registration as a call would
+// assert an invocation the analysis never witnessed; reporting nothing at all,
+// which is what the graph did before this kind existed, made a symbol that is
+// driven on every request look like one nothing reaches.
+//
+// The zero value is a call, which is the truth about every edge recorded before
+// the kind existed: reference edges were not extracted, so no stored edge is one.
+type EdgeKind string
+
+const (
+	// EdgeKindCall is an invocation. It is the zero value.
+	EdgeKindCall EdgeKind = ""
+	// EdgeKindReference is a function value taken at the FromID site, naming
+	// ToID. It is not an invocation and never counts as one.
+	EdgeKindReference EdgeKind = "Reference"
+)
+
+// IsReference reports whether the edge records a value being taken rather than a
+// call being made.
+func (k EdgeKind) IsReference() bool { return k == EdgeKindReference }
+
+// ReferenceScope records whether an analysis looked for reference edges at all.
+//
+// It exists for the same reason TestScope does, and answers the same class of
+// question: without it, a record produced before reference extraction existed is
+// indistinguishable from one whose analysis looked and found no method values,
+// and `callers` would present the first as a measured absence. A record that did
+// not measure the axis says so, and a negative answer over it is UNRESOLVED
+// rather than RESOLVED-ABSENT.
+type ReferenceScope string
+
+const (
+	// ReferenceScopeUnknown is the zero value: the record makes no claim, which
+	// every consumer must read as "not measured" and never as "no references".
+	// It is the truth about every record written before reference edges existed.
+	ReferenceScopeUnknown ReferenceScope = ""
+	// ReferenceScopeAnalysed means function-value references were extracted
+	// alongside calls. An empty callers answer over such a record covers both
+	// kinds of edge.
+	ReferenceScopeAnalysed ReferenceScope = "Analysed"
+)
+
+// IsMeasured reports whether the record's reference axis was actually analysed.
+func (r ReferenceScope) IsMeasured() bool { return r == ReferenceScopeAnalysed }
+
 // MigrateConfidence maps a legacy stored confidence string onto the current
 // vocabulary, deterministically. The pre-v7 values DynamicDispatch and
 // Reflection are folded: DynamicDispatch becomes CHA-overapprox, and Reflection
@@ -342,6 +409,10 @@ type CallEdge struct {
 	// verdict-soundness layer can attribute the UNRESOLVED signal to reflection
 	// specifically rather than a generic unresolved dispatch.
 	ReflectDispatch bool
+	// Kind says whether this edge is a call or a reference to a function value.
+	// The zero value is a call; see EdgeKind for why the distinction may never
+	// be collapsed.
+	Kind EdgeKind
 }
 
 // CallGraphRecord is the aggregate root for a module's call graph extraction
@@ -380,8 +451,13 @@ type CallGraphRecord struct {
 	TestScope TestScope
 	// TestScopeDetail explains a TestScopeExcluded value. Empty otherwise.
 	TestScopeDetail string
-	OverallStatus   CallGraphStatus
-	FailureDetail   string
+	// ReferenceScope records whether function-value references were extracted
+	// alongside calls. The zero value means the record makes no claim, which
+	// consumers must treat as unmeasured rather than as an absence of
+	// references — see ReferenceScope.
+	ReferenceScope ReferenceScope
+	OverallStatus  CallGraphStatus
+	FailureDetail  string
 	// FailureCause says what a failing OverallStatus is a statement about: the
 	// module, or the run that tried to analyse it. FailureDetail is the prose a
 	// human reads; this is the machine axis, classified where the failure was
@@ -490,7 +566,10 @@ func (r *CallGraphRecord) Sort() {
 		if r.Edges[i].CallSite.File != r.Edges[j].CallSite.File {
 			return r.Edges[i].CallSite.File < r.Edges[j].CallSite.File
 		}
-		return r.Edges[i].CallSite.Line < r.Edges[j].CallSite.Line
+		if r.Edges[i].CallSite.Line != r.Edges[j].CallSite.Line {
+			return r.Edges[i].CallSite.Line < r.Edges[j].CallSite.Line
+		}
+		return r.Edges[i].Kind < r.Edges[j].Kind
 	})
 	sort.Slice(r.Interfaces, func(i, j int) bool {
 		return r.Interfaces[i].ID < r.Interfaces[j].ID

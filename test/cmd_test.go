@@ -382,6 +382,10 @@ func cmdSeedCallGraph(args []string) {
 		// alongside the production one, so the fixture exercises both the default
 		// (include) and the --exclude-tests view.
 		TestScope: cgdomain.TestScopeAnalysed,
+		// The reference axis is measured too. Without it every empty answer over
+		// this fixture would downgrade to UNRESOLVED for a reason that has
+		// nothing to do with what the fixture is exercising.
+		ReferenceScope: cgdomain.ReferenceScopeAnalysed,
 		Nodes: []cgdomain.CallNode{
 			{ID: "example.com/app.Main", Package: "example.com/app", Symbol: "Main", IsExportedAPI: true},
 			{ID: "example.com/app.Helper", Package: "example.com/app", Symbol: "Helper"},

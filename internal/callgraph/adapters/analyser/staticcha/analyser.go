@@ -347,6 +347,13 @@ func (a *Analyser) analyseDir(
 	// devirtualized leaf targets carry no onward edges.
 	nodes, edges = a.devirtualizeSingleImplementer(ctx, prog, coord, fset, tempDir, nodes, edges)
 
+	// Record the function values the code takes but does not call. A method
+	// registered with a router is passed, never called, so CHA sees nothing —
+	// and a handler an HTTP request drives on every hit ends up with no in-edge.
+	// Runs after devirtualisation so an edge a call already witnesses keeps the
+	// call's key rather than being recorded twice under two kinds.
+	nodes, edges = a.collectReferenceEdges(ctx, prog, coord, fset, tempDir, nodes, edges)
+
 	// Record the type-level relation: which of the module's concrete types
 	// satisfy which of its interfaces. An interface method has no callers — calls
 	// go to implementations — so the edge collections cannot answer "what must
@@ -377,6 +384,11 @@ func (a *Analyser) analyseDir(
 		Implementations: impls,
 		TestScope:       build.TestScope,
 		TestScopeDetail: build.TestScopeDetail,
+		// The axis was walked: whatever references exist in this graph are the
+		// ones the code takes. A record that does not say this was produced
+		// before references were extracted, and an empty callers answer over it
+		// is unproven rather than absent.
+		ReferenceScope:  domain.ReferenceScopeAnalysed,
 		OverallStatus:   overallStatus,
 		NodeCount:       len(nodes),
 		EdgeCount:       len(edges),

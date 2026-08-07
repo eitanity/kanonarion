@@ -286,6 +286,10 @@ func negativeCallVerdict(ctx context.Context, symbolID string, scanDispatch bool
 		// a symbol answered from several analysed versions is only as measured as
 		// the least-measured of them.
 		TestScope: domain.TestScopeAnalysed,
+		// Same rule for the reference axis: a graph extracted before function
+		// values were recorded says nothing about registrations, and one record
+		// that did not look is enough to make the answer unproven.
+		ReferenceScope: domain.ReferenceScopeAnalysed,
 	}
 	belowFull := domain.CompletenessUnknown
 	for _, s := range owning {
@@ -318,6 +322,9 @@ func negativeCallVerdict(ctx context.Context, symbolID string, scanDispatch bool
 			in.TestScope = rec.TestScope
 			in.TestScopeDetail = rec.TestScopeDetail
 		}
+		if !rec.ReferenceScope.IsMeasured() {
+			in.ReferenceScope = rec.ReferenceScope
+		}
 	}
 	// When the symbol is not itself a node (e.g. its package was built type-only
 	// so it produced no SSA node), fall back to the least-complete level seen so a
@@ -329,6 +336,7 @@ func negativeCallVerdict(ctx context.Context, symbolID string, scanDispatch bool
 	// measured, so it has not been.
 	if len(owning) == 0 {
 		in.TestScope = domain.TestScopeUnknown
+		in.ReferenceScope = domain.ReferenceScopeUnknown
 	}
 
 	return domain.ClassifyNegativeVerdict(in), nil

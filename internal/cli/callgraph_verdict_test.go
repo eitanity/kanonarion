@@ -15,15 +15,17 @@ import (
 )
 
 // builtRecord is a fully-built module record with the given nodes and edges.
-// Its test scope is Analysed: these fixtures exist to exercise the dispatch and
-// completeness gates, and a record that made no claim about test files would be
-// downgraded to UNRESOLVED by the test-scope gate before those ever ran.
+// Its test and reference scopes are Analysed: these fixtures exist to exercise
+// the dispatch and completeness gates, and a record that made no claim about
+// test files or function-value references would be downgraded to UNRESOLVED by
+// those axis gates before the dispatch gate ever ran.
 func builtRecord(nodes []cgdomain.CallNode, edges []cgdomain.CallEdge) cgdomain.CallGraphRecord {
 	return cgdomain.CallGraphRecord{
-		Completeness: cgdomain.CompletenessBuiltWithBodies,
-		TestScope:    cgdomain.TestScopeAnalysed,
-		Nodes:        nodes,
-		Edges:        edges,
+		Completeness:   cgdomain.CompletenessBuiltWithBodies,
+		TestScope:      cgdomain.TestScopeAnalysed,
+		ReferenceScope: cgdomain.ReferenceScopeAnalysed,
+		Nodes:          nodes,
+		Edges:          edges,
 	}
 }
 

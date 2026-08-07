@@ -8,6 +8,7 @@ import (
 	"strings"
 
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
+	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/spf13/cobra"
 )
@@ -223,6 +224,11 @@ type callEdgeRefJSON struct {
 	ToID            string `json:"to_id"`
 	Confidence      string `json:"confidence"`
 	IsTest          bool   `json:"is_test"`
+	// Kind is "call" or "reference". A reference names the site where the
+	// symbol's value was TAKEN — a route registration, a callback handed to a
+	// framework — which is not a claim that it was invoked there. Always
+	// populated, so a consumer never has to read an absent field as "call".
+	Kind string `json:"kind"`
 }
 
 // toEdgeRefsJSON maps to the curated shape. The result is always non-nil so
@@ -238,6 +244,7 @@ func toEdgeRefsJSON(refs []ports.CallEdgeRef) []callEdgeRefJSON {
 			ToID:            r.ToID,
 			Confidence:      string(r.Confidence),
 			IsTest:          r.IsTest,
+			Kind:            edgeKindLabel(r.Kind),
 		})
 	}
 	return out
@@ -272,8 +279,14 @@ func printEdgeRefs(kind, symbolID string, refs []ports.CallEdgeRef, jsonOut bool
 		if ref.IsTest {
 			testTag = "  [test]"
 		}
-		if _, err := fmt.Fprintf(stdout, "  %s  [%s]%s  (%s@%s)\n",
-			other, string(ref.Confidence), testTag,
+		kindTag := ""
+		if ref.Kind.IsReference() {
+			// Said on the line rather than in a footnote: a reader scanning a
+			// caller list must not take a registration for an invocation.
+			kindTag = "  [reference — the symbol's value is taken here, not called]"
+		}
+		if _, err := fmt.Fprintf(stdout, "  %s  [%s]%s%s  (%s@%s)\n",
+			other, string(ref.Confidence), kindTag, testTag,
 			ref.ModulePath, ref.ModuleVersion,
 		); err != nil {
 			return fmt.Errorf("writing ref: %w", err)
@@ -431,4 +444,13 @@ func printTransitiveResult(direction, root string, maxDepth int, nodes []string,
 		}
 	}
 	return nil
+}
+
+// edgeKindLabel renders an edge kind for JSON consumers, naming the zero value
+// rather than emitting an empty string a reader would have to know to interpret.
+func edgeKindLabel(k domain.EdgeKind) string {
+	if k.IsReference() {
+		return "reference"
+	}
+	return "call"
 }

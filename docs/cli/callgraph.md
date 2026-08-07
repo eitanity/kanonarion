@@ -46,6 +46,45 @@ verdict: UNRESOLVED — callers of pkg.(*T).Do cannot be confirmed absent:
   test-scope-unmeasured at pkg.(*T).Do (_test.go declarations were not analysed for this module)
 ```
 
+## Calls and references
+
+Two things can connect a caller to a function, and they are not the same fact.
+
+- A **call** transfers control: `h.Confirm(w, r)`.
+- A **reference** takes the function's value: `r.Get("/confirm", h.Confirm)`.
+  Nothing is invoked at that line — a value is handed to a router, a framework,
+  a callback slot — and whether it is ever called is not something the graph
+  witnesses.
+
+Both are edges; the reference carries `kind: reference` in JSON and a label in
+the text output:
+
+```
+1 caller of pkg.(*H).confirmEmail:
+  pkg.(*H).MountRoutes  [Direct]  [reference — the symbol's value is taken here, not called]  (example.com/app@local)
+```
+
+This is the answer to the most common shape of "nothing calls this handler". A
+method registered with a router has no call edge, and before references were
+recorded `callers` reported that as `RESOLVED-ABSENT` — a measured absence for a
+function an HTTP request drives on every hit.
+
+What is recorded as a reference: a method value (`h.Method`), a method
+expression (`T.Method`), a plain function passed or stored as a value, and a
+closure. The synthetic wrapper Go's SSA form materialises for a method value is
+resolved through, so the answer names the method you wrote, not a `$bound`
+symbol nobody wrote.
+
+**A reference never counts as a call.** `--transitive` follows both, but a path
+that crosses a reference is not a chain of invocations, and the
+[reachability](reachability.md) entry-point distance says so on the line.
+
+Records state whether the axis was measured. A graph extracted before references
+existed downgrades an empty `callers` answer to `UNRESOLVED` naming
+`reference-scope-unmeasured`, rather than claiming an absence it could not have
+seen. Re-extract the module (`kanonarion callgraph <module>@<version>`, or
+`kanonarion local .` for a working tree) to get the measured answer.
+
 ## Test scope
 
 `_test.go` declarations are part of the graph. A module's fakes and
@@ -69,6 +108,20 @@ is never read as a wider one:
 ```
 verdict: RESOLVED-ABSENT — no callers of pkg.(*T).Do across a fully-built path (production only; --exclude-tests was given)
 ```
+
+A **test entry point** — `TestX`, `BenchmarkX`, `FuzzX`, `ExampleX`, `TestMain`
+— never has a caller in the graph, because the `go test` harness invokes it
+through a `main` package the go command synthesises at build time and the
+analysis does not read. `callers` on one answers `UNRESOLVED` naming
+`test-harness-entry`, not a confident absence:
+
+```
+verdict: UNRESOLVED — callers of pkg.TestThing cannot be confirmed absent:
+  test-harness-entry at pkg.TestThing (the go test harness invokes it through a synthesised main package that is not part of the analysed graph)
+```
+
+A method on a test fake is not an entry point — it is reached by dispatch or not
+at all — so its absence is still a measurement.
 
 ## Commands
 
@@ -440,6 +493,12 @@ where each is a leaf soundness sink that downgrades a negative answer.
 Reflect-dispatched calls carry `Unknown` plus a separate `reflect_dispatch`
 attribute, so the reflect provenance is preserved without inventing a
 confidence rank for it.
+
+Confidence answers *how was the target resolved*, which is a different question
+from *what kind of edge is it*. A reference edge is usually `Direct` — the
+analyser knows exactly whose value was taken — and that is not a claim that a
+call happens. Read `kind` alongside `confidence`; a path is a chain of resolved
+calls only when every hop is `Direct` **and** no hop is a reference.
 
 ## Overall status
 

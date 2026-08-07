@@ -340,6 +340,21 @@ CREATE INDEX IF NOT EXISTS callgraph_records_generation_idx
 		// METADATA_ONLY) and 218 carry a graph and are untouched by the rule.
 		{Module: "callgraph", Version: 11, SQL: `
 ALTER TABLE callgraph_records ADD COLUMN failure_cause TEXT NOT NULL DEFAULT ''`},
+		// Migration v12: edges gain a kind, so a function value taken can be told
+		// from a function called. Existing rows back-fill '' — the zero value,
+		// which reads as a call, and which is the truth about every edge written
+		// before reference extraction existed: nothing recorded a reference, so
+		// nothing stored is one.
+		//
+		// No purge, and no schema-version bump above it. The kind is omitted from
+		// the sealed shape when empty, so every stored record still re-marshals to
+		// the bytes it was sealed over; and the one thing an old record would
+		// otherwise say falsely — that an empty callers answer is a measured
+		// absence — is closed by CallGraphRecord.ReferenceScope, which reads
+		// "not measured" on every record written before it and downgrades the
+		// verdict rather than deleting the evidence.
+		{Module: "callgraph", Version: 12, SQL: `
+ALTER TABLE callgraph_edges ADD COLUMN kind TEXT NOT NULL DEFAULT ''`},
 	}
 }
 
@@ -589,8 +604,8 @@ INSERT OR IGNORE INTO callgraph_edges (
     record_content_hash,
     from_module, from_version, pipeline_version,
     from_id, to_id, confidence,
-    call_site_file, call_site_line, reflect_dispatch, is_test
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    call_site_file, call_site_line, reflect_dispatch, is_test, kind
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
 
 	stmtEdge, err := tx.PrepareContext(ctx, qEdge)
 	if err != nil {
@@ -617,6 +632,7 @@ INSERT OR IGNORE INTO callgraph_edges (
 			e.FromID, e.ToID, string(e.Confidence),
 			e.CallSite.File, e.CallSite.Line, e.ReflectDispatch,
 			testNode[e.FromID] || testNode[e.ToID],
+			string(e.Kind),
 		); err != nil {
 			return fmt.Errorf("inserting callgraph edge %s→%s: %w", e.FromID, e.ToID, err)
 		}
@@ -899,7 +915,7 @@ func (s *Store) decodeRecord(ctx context.Context, blob []byte, storedHash string
 // every other generation's — and the hash verification over the reconstructed
 // record would then fail on a record nothing had tampered with.
 func (s *Store) fetchEdges(ctx context.Context, recordContentHash string) ([]domain2.CallEdge, error) {
-	const q = `SELECT from_id, to_id, confidence, call_site_file, call_site_line, reflect_dispatch
+	const q = `SELECT from_id, to_id, confidence, call_site_file, call_site_line, reflect_dispatch, kind
 	    FROM callgraph_edges
 	    WHERE record_content_hash = ?
 	    ORDER BY from_id, to_id, call_site_file, call_site_line`
@@ -915,11 +931,12 @@ func (s *Store) fetchEdges(ctx context.Context, recordContentHash string) ([]dom
 	var edges []domain2.CallEdge
 	for rows.Next() {
 		var e domain2.CallEdge
-		var conf string
+		var conf, kind string
 		var reflectDispatch bool
-		if serr := rows.Scan(&e.FromID, &e.ToID, &conf, &e.CallSite.File, &e.CallSite.Line, &reflectDispatch); serr != nil {
+		if serr := rows.Scan(&e.FromID, &e.ToID, &conf, &e.CallSite.File, &e.CallSite.Line, &reflectDispatch, &kind); serr != nil {
 			return nil, fmt.Errorf("scanning callgraph edge: %w", serr)
 		}
+		e.Kind = domain2.EdgeKind(kind)
 		// Normalise any legacy vocabulary lingering in the table; a stored
 		// Reflection string also implies the reflect origin.
 		e.Confidence, e.ReflectDispatch = domain2.MigrateConfidence(conf)
@@ -1141,7 +1158,7 @@ LIMIT 2`
 // to edges owned by a module in scope (see ports.CallGraphStore).
 func (s *Store) FindCallers(ctx context.Context, symbolID string, pipelineVersion string, scope coordinate.ModuleSet, opts ports.EdgeQueryOptions) ([]ports.CallEdgeRef, error) {
 	q := `SELECT DISTINCT record_content_hash, from_module, from_version, pipeline_version,
-	                   from_id, to_id, confidence, is_test
+	                   from_id, to_id, confidence, is_test, kind
 	            FROM callgraph_edges
 	            WHERE to_id = ? AND pipeline_version = ?`
 	if opts.ExcludeTests {
@@ -1155,7 +1172,7 @@ func (s *Store) FindCallers(ctx context.Context, symbolID string, pipelineVersio
 // to edges owned by a module in scope (see ports.CallGraphStore).
 func (s *Store) FindCallees(ctx context.Context, symbolID string, pipelineVersion string, scope coordinate.ModuleSet, opts ports.EdgeQueryOptions) ([]ports.CallEdgeRef, error) {
 	q := `SELECT DISTINCT record_content_hash, from_module, from_version, pipeline_version,
-	                   from_id, to_id, confidence, is_test
+	                   from_id, to_id, confidence, is_test, kind
 	            FROM callgraph_edges
 	            WHERE from_id = ? AND pipeline_version = ?`
 	if opts.ExcludeTests {
@@ -1181,11 +1198,11 @@ func (s *Store) queryEdges(ctx context.Context, q, symbolID, pipelineVersion str
 	var candidates []edgeCandidate
 	for rows.Next() {
 		var c edgeCandidate
-		var conf string
+		var conf, kind string
 		if serr := rows.Scan(
 			&c.recordHash,
 			&c.ref.ModulePath, &c.ref.ModuleVersion, &c.ref.PipelineVersion,
-			&c.ref.FromID, &c.ref.ToID, &conf, &c.ref.IsTest,
+			&c.ref.FromID, &c.ref.ToID, &conf, &c.ref.IsTest, &kind,
 		); serr != nil {
 			_ = rows.Close() //nolint:errcheck // returning the scan error
 			return nil, fmt.Errorf("scanning callgraph edge ref: %w", serr)
@@ -1196,6 +1213,7 @@ func (s *Store) queryEdges(ctx context.Context, q, symbolID, pipelineVersion str
 		// Normalise any legacy vocabulary lingering in the table so query
 		// consumers only ever see the current confidence tags.
 		c.ref.Confidence, _ = domain2.MigrateConfidence(conf)
+		c.ref.Kind = domain2.EdgeKind(kind)
 		candidates = append(candidates, c)
 	}
 	if err := rows.Err(); err != nil {

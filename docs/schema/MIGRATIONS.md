@@ -261,6 +261,46 @@ Measured on the real store at migration time: 92 rows, 72 back-filled to
 walks. Only the project resolver writes a `BuildEnv`, so a walk rooted at a
 published coordinate structurally has no frame and can never gain one.
 
+## Call graph store: module `callgraph`, migration 12
+
+**Additive; one new column, no record-shape purge, no schema-version bump and no
+pipeline bump.** `callgraph_edges` gains `kind`: whether an edge is a call, or a
+REFERENCE to a function value — the shape of `r.Get("/confirm", h.Confirm)`,
+where nothing is invoked and a value is handed to a router. The whole store's
+migration count goes `v75` -> `v76`.
+
+**Back-filled `''`, and that is the truth rather than a default.** Nothing before
+this migration extracted a reference edge, so every stored edge IS a call, and
+the zero value of `EdgeKind` is `call`. There is no unrecorded third state to
+ladder against.
+
+**Why no bump, when a new edge kind looks exactly like the sort of change that
+owes one.** The rule this repository applies is in
+`CallGraphSchemaVersion`'s own doc comment: *bump only when a change makes an OLD
+record say something FALSE, not merely something less*. Two facts settle it.
+
+- The record shape is unchanged for stored bytes. `kind` on the canonical edge
+  and `reference_scope` on the canonical record are both `omitempty` from birth,
+  so every stored record re-marshals to the bytes it was sealed over and still
+  verifies. (See the fetch-record precedent for the same exemption.)
+- The one thing an old record WOULD have said falsely is now stated by the
+  record itself. `CallGraphRecord.ReferenceScope` reads "not measured" on every
+  record written before references existed, and the verdict layer downgrades an
+  empty `callers` answer over such a record to `UNRESOLVED` naming
+  `reference-scope-unmeasured` — instead of the `RESOLVED-ABSENT` that was the
+  actual defect.
+
+Bumping either version would have taken every stored call graph out of every
+answer until re-extraction — a purge by another name — to replace a fact the
+record can simply carry. Re-extraction costs roughly 52 MiB per module and the
+largest graphs in the store take minutes; the ledger exists precisely so that
+cost is paid when a measurement is wanted, not when a column is added.
+
+**What a reader sees change without re-extracting anything:** `callers` on a
+symbol with no edges over a pre-existing record answers `UNRESOLVED` where it
+previously answered `RESOLVED-ABSENT`. That is the correction, not a regression.
+Re-extract the module to get the measured answer back.
+
 ## Purging a table other rows point at
 
 A migration that deletes rows must state what happens to the rows that reference

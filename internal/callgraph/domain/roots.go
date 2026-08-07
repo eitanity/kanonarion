@@ -51,10 +51,13 @@ func IsInitSymbol(symbol string) bool {
 //     and the reason string says what was matched so a reader can check it.
 //
 // A registered route — a handler function stored into a router — is NOT
-// witnessed here. Registration is a value flowing into a data structure, and
-// nothing in a node's identity records it; the caller edges do, several hops
-// up. Claiming it from a node fact would be a guess, so a root reached only that
-// way classifies on its callers instead.
+// witnessed here, and cannot be. Registration is a value flowing into a data
+// structure, so nothing in a NODE's identity records it. The edges do: the graph
+// carries a reference edge from the registration site (see EdgeKind), and the
+// distance measurement built on it says how far a node sits below an entry
+// point. Claiming ingress from a node fact would be a guess; measuring the hops
+// is not, so a root reached only that way keeps its kind and states the
+// distance.
 func ExternalEntryPointReason(symbol, receiver string) string {
 	switch {
 	case IsInitSymbol(symbol):
@@ -107,4 +110,37 @@ func SelectReachabilityRoots(candidates []RootCandidate, kind ArtifactKind) []st
 	}
 	sort.Strings(owned)
 	return owned
+}
+
+// ConfidenceRank orders the edge-confidence vocabulary from most to least
+// precise, so a traversal can carry the WEAKEST confidence it has crossed
+// without every consumer re-deriving the ordering and drifting.
+//
+// It is a rank, not a score: the gaps between tiers carry no meaning and must
+// not be averaged. An unrecognised value ranks with Unknown, because a
+// confidence this build does not know is one it cannot vouch for.
+func ConfidenceRank(c EdgeConfidence) int {
+	switch c {
+	case ConfidenceDirect:
+		return 4
+	case ConfidenceVTA:
+		return 3
+	case ConfidenceFramework:
+		return 2
+	case ConfidenceCHAOverapprox:
+		return 1
+	case ConfidenceUnknown:
+		return 0
+	default:
+		return 0
+	}
+}
+
+// WeakestConfidence returns whichever of two confidences a path may claim after
+// crossing both: the weaker one. A path is only as good as its worst hop.
+func WeakestConfidence(a, b EdgeConfidence) EdgeConfidence {
+	if ConfidenceRank(b) < ConfidenceRank(a) {
+		return b
+	}
+	return a
 }

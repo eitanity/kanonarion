@@ -233,6 +233,10 @@ type CallEdgeRef struct {
 	// IsTest is true when either endpoint is a test-scope node, so a reader can
 	// see which part of an answer is the test surface without a second query.
 	IsTest bool
+	// Kind says whether the edge is a call or a reference to a function value.
+	// It is on the ref because an answer that presents a registration as a call
+	// asserts an invocation nothing measured — see domain.EdgeKind.
+	Kind domain.EdgeKind
 }
 
 // CallEdgeRefLess is the canonical ordering for CallEdgeRef slices produced by

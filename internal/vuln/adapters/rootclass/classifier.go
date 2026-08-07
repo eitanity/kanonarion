@@ -78,6 +78,22 @@ type graph struct {
 	// project drives the root, the second whether something outside it does.
 	callers         map[string]int
 	externalCallers map[string]int
+	// parents is the reverse adjacency the entry-point search walks: for each
+	// node, the edges INTO it. It is built once with the rest of the index
+	// because the search runs per finding and a record with forty findings would
+	// otherwise rebuild it forty times.
+	parents map[string][]parentEdge
+	// entryReason names why a node is an entry point, for the nodes that are
+	// one. A miss is not an entry point; the map is only over the witnesses.
+	entryReason map[string]string
+}
+
+// parentEdge is one edge into a node, carrying what the upward search needs to
+// weigh the path it is on.
+type parentEdge struct {
+	from       string
+	confidence callgraphdomain.EdgeConfidence
+	reference  bool
 }
 
 type frameKey struct{ pkg, receiver, symbol string }
@@ -131,6 +147,7 @@ func (c *Classifier) facts(ctx context.Context, coord coordinate.ModuleCoordinat
 		IsExportedAPI:      node.IsExportedAPI,
 		ExternalInvocation: externalInvocation(g, node),
 		InProjectCallers:   g.callers[node.ID],
+		Ancestry:           g.entryPointAncestry(node.ID),
 	}
 }
 
@@ -219,10 +236,15 @@ func (c *Classifier) read(ctx context.Context, coord coordinate.ModuleCoordinate
 		nodes:           make(map[frameKey]callgraphdomain.CallNode, len(rec.Nodes)),
 		callers:         make(map[string]int),
 		externalCallers: make(map[string]int),
+		parents:         make(map[string][]parentEdge, len(rec.Nodes)),
+		entryReason:     make(map[string]string),
 	}
 	external := make(map[string]bool, len(rec.Nodes))
 	for _, n := range rec.Nodes {
 		external[n.ID] = n.IsExternal
+		if reason := callgraphdomain.ExternalEntryPointReason(n.Symbol, n.Receiver); reason != "" && !n.IsExternal {
+			g.entryReason[n.ID] = reason
+		}
 		if n.IsExternal {
 			// A route frame in the analysed module can only match a node the module
 			// owns. Indexing external nodes too would let a dependency's identically
@@ -232,6 +254,11 @@ func (c *Classifier) read(ctx context.Context, coord coordinate.ModuleCoordinate
 		g.nodes[frameKey{pkg: n.Package, receiver: n.Receiver, symbol: n.Symbol}] = n
 	}
 	for _, e := range rec.Edges {
+		g.parents[e.ToID] = append(g.parents[e.ToID], parentEdge{
+			from:       e.FromID,
+			confidence: e.Confidence,
+			reference:  e.Kind.IsReference(),
+		})
 		if external[e.FromID] {
 			g.externalCallers[e.ToID]++
 			continue
@@ -239,6 +266,109 @@ func (c *Classifier) read(ctx context.Context, coord coordinate.ModuleCoordinate
 		g.callers[e.ToID]++
 	}
 	return g
+}
+
+// ancestrySearchBound is the hop limit of the upward entry-point search. Zero is
+// unbounded, and unbounded is what the measurement chose.
+//
+// A bound was the obvious economy, and the graphs say it would lie. On a
+// 21,713-node application graph the distances from an entry point down to owned
+// code run out to 14 hops, and 8.9% of the owned nodes with an ancestor sit
+// further than 6 hops from it. Stopping at 6 would report "nothing enters this"
+// for one owned node in eleven that something demonstrably does. The search is
+// one breadth-first walk over an index built once per command, so the honest
+// answer is also the affordable one.
+const ancestrySearchBound = 0
+
+// entryPointAncestry measures how far nodeID sits below the nearest entry point,
+// and how weak the path that reaches it is.
+//
+// The search is breadth-first over the reverse edges, so the first level holding
+// an entry point is the nearest one. Among the paths of that same shortest
+// length it keeps the STRONGEST — the one whose weakest hop ranks highest — so
+// the caveat attached to a distance is the mildest one that distance actually
+// earns, rather than the worst path that happens to share its length.
+//
+// A reference hop is carried separately from the confidence rather than folded
+// into it. The analyser resolves a reference exactly, so it would otherwise
+// report Direct and launder a registration into an all-calls chain; see
+// domain.EntryPointAncestry.
+func (g *graph) entryPointAncestry(nodeID string) vuldomain.EntryPointAncestry {
+	out := vuldomain.EntryPointAncestry{Computed: true, SearchBound: ancestrySearchBound}
+	if reason, ok := g.entryReason[nodeID]; ok {
+		out.Found = true
+		out.EntryPointID = nodeID
+		out.EntryPointReason = reason
+		return out
+	}
+
+	seen := map[string]bool{nodeID: true}
+	frontier := map[string]pathState{nodeID: {weakest: callgraphdomain.ConfidenceDirect}}
+
+	for hops := 1; len(frontier) > 0; hops++ {
+		if ancestrySearchBound > 0 && hops > ancestrySearchBound {
+			break
+		}
+		next := make(map[string]pathState, len(frontier))
+		for id, st := range frontier {
+			for _, p := range g.parents[id] {
+				if seen[p.from] {
+					continue
+				}
+				cand := pathState{
+					weakest:   callgraphdomain.WeakestConfidence(st.weakest, p.confidence),
+					reference: st.reference || p.reference,
+				}
+				if prev, ok := next[p.from]; ok && !stronger(cand, prev) {
+					continue
+				}
+				next[p.from] = cand
+			}
+		}
+		// This level is now complete, so any entry point in it is a nearest one.
+		var bestID string
+		var best pathState
+		for id, st := range next {
+			if _, ok := g.entryReason[id]; !ok {
+				continue
+			}
+			if bestID == "" || stronger(st, best) {
+				bestID, best = id, st
+			}
+		}
+		if bestID != "" {
+			out.Found = true
+			out.Hops = hops
+			out.EntryPointID = bestID
+			out.EntryPointReason = g.entryReason[bestID]
+			out.Weakest = string(best.weakest)
+			out.ViaReference = best.reference
+			return out
+		}
+		for id := range next {
+			seen[id] = true
+		}
+		frontier = next
+	}
+	return out
+}
+
+// pathState is what an upward search carries about the path it took to reach a
+// node: the weakest hop crossed, and whether any hop was a reference rather than
+// a call.
+type pathState struct {
+	weakest   callgraphdomain.EdgeConfidence
+	reference bool
+}
+
+// stronger reports whether a is the better path of two of equal length: a
+// reference hop is a weakening no confidence rank makes up for, and otherwise
+// the higher-ranked weakest hop wins.
+func stronger(a, b pathState) bool {
+	if a.reference != b.reference {
+		return !a.reference
+	}
+	return callgraphdomain.ConfidenceRank(a.weakest) > callgraphdomain.ConfidenceRank(b.weakest)
 }
 
 // rootedAtModule returns the module path the analysis was rooted at, or empty

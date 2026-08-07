@@ -130,6 +130,7 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 			CallSite:        SourcePosition{File: ce.CallSite.File, Line: ce.CallSite.Line},
 			Confidence:      EdgeConfidence(ce.Confidence),
 			ReflectDispatch: ce.ReflectDispatch,
+			Kind:            EdgeKind(ce.Kind),
 		}
 	}
 	return CallGraphRecord{
@@ -145,6 +146,7 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 		Implementations:   impls,
 		TestScope:         TestScope(c.TestScope),
 		TestScopeDetail:   c.TestScopeDetail,
+		ReferenceScope:    ReferenceScope(c.ReferenceScope),
 		OverallStatus:     CallGraphStatus(c.OverallStatus),
 		FailureCause:      FailureCause(c.FailureCause),
 		FailureDetail:     c.FailureDetail,
@@ -251,11 +253,14 @@ type canonicalImplementation struct {
 }
 
 type canonicalEdge struct {
-	CallSite        canonicalPos `json:"call_site"`
-	Confidence      string       `json:"confidence"`
-	FromID          string       `json:"from_id"`
-	ReflectDispatch bool         `json:"reflect_dispatch"`
-	ToID            string       `json:"to_id"`
+	CallSite   canonicalPos `json:"call_site"`
+	Confidence string       `json:"confidence"`
+	FromID     string       `json:"from_id"`
+	// Kind is omitted for a call edge, which is what every edge sealed before
+	// the kind existed is. See EdgeKind.
+	Kind            string `json:"kind,omitempty"`
+	ReflectDispatch bool   `json:"reflect_dispatch"`
+	ToID            string `json:"to_id"`
 }
 
 type canonicalRecord struct {
@@ -311,9 +316,12 @@ type canonicalRecord struct {
 	// go.mod before this field, so absent means the published tree was analysed
 	// as published.
 	SynthesisedGoMod canonicalSynthesisedGoMod `json:"synthesised_go_mod,omitzero"`
-	TestScope        string                    `json:"test_scope,omitempty"`
-	TestScopeDetail  string                    `json:"test_scope_detail,omitempty"`
-	WorktreeDigest   string                    `json:"worktree_digest,omitempty"`
+	// ReferenceScope is omitted when unmeasured, which is the truth about every
+	// record sealed before reference edges were extracted.
+	ReferenceScope  string `json:"reference_scope,omitempty"`
+	TestScope       string `json:"test_scope,omitempty"`
+	TestScopeDetail string `json:"test_scope_detail,omitempty"`
+	WorktreeDigest  string `json:"worktree_digest,omitempty"`
 }
 
 // canonicalSynthesisedGoMod is the wire shape of domain.SynthesisedGoMod. It is
@@ -379,6 +387,7 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 			CallSite:        canonicalPos{File: e.CallSite.File, Line: e.CallSite.Line},
 			Confidence:      string(e.Confidence),
 			FromID:          e.FromID,
+			Kind:            string(e.Kind),
 			ReflectDispatch: e.ReflectDispatch,
 			ToID:            e.ToID,
 		}
@@ -481,6 +490,7 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 			Requires:          canonicalRequires(r.SynthesisedGoMod.Requires),
 			VendorTreePresent: r.SynthesisedGoMod.VendorTreePresent,
 		},
+		ReferenceScope:  string(r.ReferenceScope),
 		TestScope:       string(r.TestScope),
 		TestScopeDetail: r.TestScopeDetail,
 		WorktreeDigest:  r.WorktreeDigest,

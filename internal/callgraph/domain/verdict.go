@@ -75,6 +75,20 @@ const (
 	// package (plugin.Open / (*Plugin).Lookup): the loaded targets are resolved
 	// at runtime and are never present in the static graph.
 	SinkPluginLeaf SinkKind = "plugin-leaf"
+	// SinkReferenceScopeUnmeasured is a record whose analysis never looked for
+	// function-value references. A method registered with a router is passed,
+	// not called, so a graph built from call instructions alone cannot witness
+	// what drives it — and an empty callers answer over such a record covers
+	// calls only. Absence may be claimed when both kinds of edge were
+	// measurable; over a record that measured one, it may not.
+	SinkReferenceScopeUnmeasured SinkKind = "reference-scope-unmeasured"
+	// SinkTestHarnessEntry is a test, benchmark, fuzz or example entry point.
+	// The `go test` harness invokes it through a main package the analysis never
+	// sees, so nothing in the graph calls it and nothing ever will — reporting
+	// that as a measured absence claims a function certainly invoked is
+	// unreached. It is named rather than hidden: the entry point is real, and so
+	// is the fact that its caller is outside the graph.
+	SinkTestHarnessEntry SinkKind = "test-harness-entry"
 	// SinkTestScopeUnmeasured is a module whose _test.go declarations were not
 	// part of the analysis. Test fakes and table-driven callers are a systematic
 	// part of what calls a port, so an empty answer over such a module measures
@@ -169,6 +183,10 @@ type NegativeVerdictInputs struct {
 	// TestScopeDetail explains an excluded test scope, when the record recorded
 	// a reason.
 	TestScopeDetail string
+	// ReferenceScope is the owning module's reference axis. Anything other than
+	// Analysed means the answer covers call edges only, which cannot see a
+	// symbol reached by having its value registered somewhere.
+	ReferenceScope ReferenceScope
 	// TestsExcludedByRequest is set when the caller asked for the test surface
 	// to be dropped. It is not a soundness sink — the scope was chosen, not
 	// missed — but it still narrows what an empty answer means, so it is named
@@ -217,6 +235,31 @@ func ClassifyNegativeVerdict(in NegativeVerdictInputs) Verdict {
 			Kind:   SinkTestScopeUnmeasured,
 			Site:   site,
 			Detail: detail,
+		})
+	}
+
+	// The analysis never looked for function values, so a symbol registered with
+	// a router rather than called could not have produced an edge of any kind.
+	if !in.ReferenceScope.IsMeasured() {
+		site := in.QueriedNode.ID
+		if site == "" {
+			site = in.MethodName
+		}
+		sinks = append(sinks, SoundnessSink{
+			Kind:   SinkReferenceScopeUnmeasured,
+			Site:   site,
+			Detail: "function-value references were not extracted for this module, so a registered-but-uncalled symbol has no edge to find",
+		})
+	}
+
+	// The queried symbol is a test entry point. The harness that runs it is
+	// synthesised by the go command and is not in the graph, so no edge into it
+	// can exist and its absence proves nothing.
+	if in.Found && IsTestHarnessEntry(in.QueriedNode) {
+		sinks = append(sinks, SoundnessSink{
+			Kind:   SinkTestHarnessEntry,
+			Site:   in.QueriedNode.ID,
+			Detail: "the go test harness invokes it through a synthesised main package that is not part of the analysed graph",
 		})
 	}
 
@@ -303,4 +346,43 @@ func dedupeSinks(sinks []SoundnessSink) []SoundnessSink {
 		return out[i].Site < out[j].Site
 	})
 	return out
+}
+
+// IsTestHarnessEntry reports whether a node is a function the `go test` harness
+// invokes: a Test/Benchmark/Fuzz/Example function, or TestMain, declared in test
+// scope with no receiver.
+//
+// It exists because such a node's caller is real and is not in the graph. The go
+// command synthesises a main package that calls every one of them, and that
+// package is deliberately not analysed — it is generated build output, not the
+// module's code. The consequence is that every test function looks exactly like
+// dead code to an edge query, and the three-valued verdict must say so rather
+// than report a confident absence for a function that runs on every `go test`.
+//
+// The name test is the whole test, which is what the go command itself uses, and
+// the receiver test is what keeps a method named Test on a fake — reached by
+// dispatch, not by the harness — out of it.
+func IsTestHarnessEntry(n CallNode) bool {
+	if !n.IsTest || n.Receiver != "" {
+		return false
+	}
+	if n.Symbol == "TestMain" {
+		return true
+	}
+	for _, prefix := range []string{"Test", "Benchmark", "Fuzz", "Example"} {
+		rest, ok := strings.CutPrefix(n.Symbol, prefix)
+		if !ok {
+			continue
+		}
+		// "Test" alone is not a test function, and "Testing" is not one either:
+		// the go command requires the next rune to be non-lower-case.
+		if rest == "" {
+			return prefix == "Example"
+		}
+		r := rune(rest[0])
+		if r < 'a' || r > 'z' {
+			return true
+		}
+	}
+	return false
 }
