@@ -50,6 +50,31 @@ type SignatureChange struct {
 	To     string
 	// PtrReceiver mirrors Symbol.PtrReceiver on the B side.
 	PtrReceiver bool
+	// MovedTo is the B-side identity when the declaration's import path changed
+	// along with its signature, which happens across a major-version path pair.
+	// Zero when both sides carry the same identity, which is every same-path
+	// comparison.
+	//
+	// Symbol stays the A-side identity because that is what a consumer of the
+	// baseline version calls, and therefore what its recorded call-graph nodes
+	// are spelled as.
+	MovedTo SymbolID
+}
+
+// RenamedSymbol is one declaration that exists in both records under the same
+// package-relative identity and with the same signature, and whose import path
+// differs only because the module path does.
+//
+// It is an obligation on the consumer — the import must be rewritten — and it is
+// not a removal, an addition or a signature change, so it is reported on its own
+// and excluded from the breaking count, exactly as a spelling change is.
+type RenamedSymbol struct {
+	From SymbolID
+	To   SymbolID
+	// Signature is the text both sides carry; they are equal by construction.
+	Signature string
+	// PtrReceiver mirrors Symbol.PtrReceiver on the B side.
+	PtrReceiver bool
 }
 
 // RegistrySide names which record a registry-shaped surface was seen in.
@@ -138,6 +163,19 @@ type InterfaceDiff struct {
 	// It is reported separately and is NOT part of BreakingCount.
 	Spelling []SignatureChange
 
+	// RenamedPath is declarations carried across a major-version path pair
+	// unchanged: same package-relative identity, same signature, different import
+	// path. It is reported separately and is NOT part of BreakingCount.
+	//
+	// It is empty for every same-path comparison, where the two sides spell every
+	// identity the same way and nothing can be renamed.
+	RenamedPath []RenamedSymbol
+
+	// MajorPathPair records that the two coordinates are the same module path
+	// after a trailing "/vN" is stripped from either side — a cross-major bump,
+	// where every import path changes whether or not any declaration did.
+	MajorPathPair bool
+
 	// Registries are string-keyed function/value tables either record exports.
 	Registries []RegistrySurface
 
@@ -154,10 +192,25 @@ func (d InterfaceDiff) BreakingCount() int {
 	return len(d.Removed) + len(d.Changed)
 }
 
-// HasChanges reports whether the comparison found any delta at all, spelling
-// included.
+// HasChanges reports whether the comparison found any delta at all — spelling
+// and path renames included.
 func (d InterfaceDiff) HasChanges() bool {
-	return len(d.Added) > 0 || len(d.Removed) > 0 || len(d.Changed) > 0 || len(d.Spelling) > 0
+	return len(d.Added) > 0 || len(d.Removed) > 0 || len(d.Changed) > 0 ||
+		len(d.Spelling) > 0 || len(d.RenamedPath) > 0
+}
+
+// ZeroBreakingOverNonTrivialDelta reports the case a reader is most likely to
+// misread: the comparison found no breaking change, and it did find something.
+//
+// A zero next to a delta is not a safety result. This comparison reads exported
+// signatures, so it cannot see behaviour, and a release that respells a surface,
+// adds to it or moves it to a new import path has plainly been worked on. That
+// is precisely when "no breaking change" wants checking against something this
+// command does not measure.
+//
+// A genuinely empty delta is excluded: there is nothing there to misread.
+func (d InterfaceDiff) ZeroBreakingOverNonTrivialDelta() bool {
+	return d.BreakingCount() == 0 && d.HasChanges()
 }
 
 // DiffRecords computes the deterministic delta between two InterfaceRecords. It
@@ -176,32 +229,55 @@ func DiffRecords(a, b InterfaceRecord, reader SignatureReader) InterfaceDiff {
 	pkgsB, exclB := comparablePackages(b)
 	diff.ExcludedTestdataPackages = mergeSorted(exclA, exclB)
 
-	diff.PackagesAdded = missingFrom(pkgsB, pkgsA)
-	diff.PackagesRemoved = missingFrom(pkgsA, pkgsB)
+	// A cross-major bump changes every import path in the module, so comparing by
+	// fully-qualified identity would report the entire surface as removed and
+	// re-added. Under a major-version path pair the comparison keys on the
+	// identity the path change does not touch: the package path relative to the
+	// module, the kind, and the name.
+	pathA, pathB := a.Coordinate.Path(), b.Coordinate.Path()
+	diff.MajorPathPair = isMajorPathPair(pathA, pathB)
+	relA, relB := "", ""
+	if diff.MajorPathPair {
+		relA, relB = pathA, pathB
+	}
+
+	diff.PackagesAdded = missingFrom(pkgsB, pkgsA, relB, relA)
+	diff.PackagesRemoved = missingFrom(pkgsA, pkgsB, relA, relB)
 
 	symsA := collectSymbols(pkgsA)
 	symsB := collectSymbols(pkgsB)
+	keyedB := indexByIdentity(symsB, relB)
 
-	for _, id := range sortedIDs(symsB) {
-		if _, ok := symsA[id]; !ok {
-			diff.Added = append(diff.Added, symsB[id])
+	matchedA := make(map[SymbolID]struct{}, len(symsA))
+	matchedB := make(map[SymbolID]struct{}, len(symsB))
+	for _, idA := range sortedIDs(symsA) {
+		idB, ok := keyedB[identityOf(idA, relA)]
+		if !ok {
+			continue
 		}
-	}
-	for _, id := range sortedIDs(symsA) {
-		if _, ok := symsB[id]; !ok {
-			diff.Removed = append(diff.Removed, symsA[id])
-		}
-	}
-	for _, id := range sortedIDs(symsA) {
-		symB, ok := symsB[id]
-		if !ok || symsA[id].Signature == symB.Signature {
+		matchedA[idA] = struct{}{}
+		matchedB[idB] = struct{}{}
+
+		symA, symB := symsA[idA], symsB[idB]
+		if symA.Signature == symB.Signature {
+			if idA != idB {
+				diff.RenamedPath = append(diff.RenamedPath, RenamedSymbol{
+					From:        idA,
+					To:          idB,
+					Signature:   symB.Signature,
+					PtrReceiver: symB.PtrReceiver,
+				})
+			}
 			continue
 		}
 		change := SignatureChange{
-			Symbol:      id,
-			From:        symsA[id].Signature,
+			Symbol:      idA,
+			From:        symA.Signature,
 			To:          symB.Signature,
 			PtrReceiver: symB.PtrReceiver,
+		}
+		if idA != idB {
+			change.MovedTo = idB
 		}
 		if reader.DiffersOnlyInSpelling(change.From, change.To) {
 			diff.Spelling = append(diff.Spelling, change)
@@ -210,9 +286,104 @@ func DiffRecords(a, b InterfaceRecord, reader SignatureReader) InterfaceDiff {
 		diff.Changed = append(diff.Changed, change)
 	}
 
+	for _, id := range sortedIDs(symsB) {
+		if _, ok := matchedB[id]; !ok {
+			diff.Added = append(diff.Added, symsB[id])
+		}
+	}
+	for _, id := range sortedIDs(symsA) {
+		if _, ok := matchedA[id]; !ok {
+			diff.Removed = append(diff.Removed, symsA[id])
+		}
+	}
+
 	diff.Registries = detectRegistries(pkgsA, pkgsB, reader)
 
 	return diff
+}
+
+// isMajorPathPair reports whether two module paths are the same module under two
+// major versions: equal once a trailing "/vN" is stripped from either, and not
+// already equal.
+//
+// The "+incompatible" side needs no special handling — a pre-modules major
+// carries no path suffix at all, so github.com/x/y and github.com/x/y/v3 are the
+// pair, and the version string never enters this comparison.
+func isMajorPathPair(a, b string) bool {
+	return a != b && stripMajorSuffix(a) == stripMajorSuffix(b)
+}
+
+// stripMajorSuffix removes a trailing major-version element from a module path.
+// Only /v2 and above are module path suffixes: /v0 and /v1 are not, and a path
+// that ends in one of those is a path element that happens to look like a major.
+func stripMajorSuffix(path string) string {
+	i := strings.LastIndex(path, "/v")
+	if i < 0 {
+		return path
+	}
+	digits := path[i+2:]
+	if len(digits) == 0 || digits == "0" || digits == "1" || digits[0] == '0' {
+		return path
+	}
+	for _, r := range digits {
+		if r < '0' || r > '9' {
+			return path
+		}
+	}
+	return path[:i]
+}
+
+// symbolIdentity is the identity a symbol keeps across a module path change: the
+// package path relative to the module, the kind and the name.
+type symbolIdentity struct {
+	RelPackage string
+	Kind       SymbolKind
+	Name       string
+}
+
+// identityOf renders a symbol's path-independent identity. modulePath is empty
+// for a same-path comparison, where the identity is the fully-qualified one and
+// this reduces to today's exact comparison.
+func identityOf(id SymbolID, modulePath string) symbolIdentity {
+	return symbolIdentity{
+		RelPackage: relativePackage(id.Package, modulePath),
+		Kind:       id.Kind,
+		Name:       id.Name,
+	}
+}
+
+// relativePackage returns an import path relative to its module path, or the
+// import path unchanged when it does not sit under that module — which the
+// records should never contain, and which must not be silently folded onto some
+// other package's identity if they do.
+func relativePackage(importPath, modulePath string) string {
+	if modulePath == "" {
+		return importPath
+	}
+	if importPath == modulePath {
+		return ""
+	}
+	if rest, ok := strings.CutPrefix(importPath, modulePath+"/"); ok {
+		return "/" + rest
+	}
+	return importPath
+}
+
+// indexByIdentity maps each path-independent identity to the symbol carrying it.
+//
+// The mapping is one-to-one and needs no collision handling: identityOf differs
+// from the symbol's own identity only in the package component, and
+// relativePackage sends a package under the module to "" or to a "/"-prefixed
+// path while sending anything else to its own import path unchanged. An import
+// path cannot begin with "/", so no two distinct packages of one record can
+// reduce to the same component, and the symbols themselves are already keyed by
+// a unique SymbolID.
+func indexByIdentity(syms map[SymbolID]Symbol, modulePath string) map[symbolIdentity]SymbolID {
+	out := make(map[symbolIdentity]SymbolID, len(syms))
+	for id := range syms {
+		out[identityOf(id, modulePath)] = id
+	}
+	return out
 }
 
 // comparablePackages splits a record's packages into the ones this comparison
@@ -287,15 +458,23 @@ func compareSymbolID(x, y SymbolID) int {
 	return strings.Compare(x.Name, y.Name)
 }
 
-// missingFrom returns the import paths of want that have no package in have.
-func missingFrom(want, have []PackageInterface) []string {
+// missingFrom returns the import paths of want that have no package in have,
+// compared relative to each side's module path.
+//
+// wantModule and haveModule are empty for a same-path comparison and the
+// comparison is then on the import paths themselves. Across a major path pair
+// they make the pair's own path shift invisible: sprig and sprig/v3 both hold
+// the module's root package, so neither is a package added or removed, while a
+// genuinely new subpackage still is — reported under the import path the side it
+// exists on actually spells.
+func missingFrom(want, have []PackageInterface, wantModule, haveModule string) []string {
 	index := make(map[string]struct{}, len(have))
 	for _, p := range have {
-		index[p.ImportPath] = struct{}{}
+		index[relativePackage(p.ImportPath, haveModule)] = struct{}{}
 	}
 	var out []string
 	for _, p := range want {
-		if _, ok := index[p.ImportPath]; !ok {
+		if _, ok := index[relativePackage(p.ImportPath, wantModule)]; !ok {
 			out = append(out, p.ImportPath)
 		}
 	}
