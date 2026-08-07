@@ -1,6 +1,16 @@
 // Package gosum implements ports.SumDBClient using golang.org/x/mod/sumdb.
 // It queries the Go checksum database (sum.golang.org by default) and performs
 // full Merkle-tree verification of returned hash entries.
+//
+// Every environment variable it honours is resolved the way the go command
+// resolves them — the variable, then Go's own env file — so `go env -w
+// GOSUMDB=off` means here what it means to `go build`.
+//
+// It answers to GOPROXY as well as to GOSUMDB, because the go command proxies
+// checksum-database traffic through $GOPROXY: an environment that declares
+// GOPROXY=off has declared that this traffic does not happen either, and a
+// client that dialled sum.golang.org anyway would be reaching the network on a
+// run whose whole premise is that it does not.
 package gosum
 
 import (
@@ -11,11 +21,13 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"sync"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/goenv"
 
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
@@ -38,19 +50,39 @@ type Client struct {
 	// newOps builds a fresh ops for a rebuilt sumdb.Client.
 	newOps func() *ops
 
-	server   string
-	disabled bool
+	server string
+	// disabledReason, when non-empty, is the policy answer every Lookup returns
+	// without building a client or opening a socket. It carries the reason
+	// rather than a bare bool so the caller's verification detail names which
+	// declaration switched the checksum database off, which is the difference
+	// between "the operator chose this" and "something went wrong".
+	disabledReason string
 }
 
 // New constructs a Client. cacheDir is the directory used to persist Merkle
 // tree tiles and lookup results across invocations. If empty, $GOMODCACHE or
 // $GOPATH is used; without any cache the Merkle tree is re-fetched each time.
 //
-// The client honours GOSUMDB, GOPRIVATE, and GONOSUMCHECK environment variables.
+// The client honours GOSUMDB, GOPROXY, GOPRIVATE, GONOSUMCHECK and GONOSUMDB,
+// each resolved as the go command resolves it.
+//
+// Three of those switch the database off outright, and all three are decided
+// here rather than at the socket: construction is where the caller learns it
+// has a client that will never dial, and a Lookup that never builds a
+// sumdb.Client never builds its transport either.
 func New(cacheDir string) *Client {
-	gosumdb := os.Getenv("GOSUMDB")
-	if gosumdb == "off" {
-		return &Client{disabled: true}
+	gosumdb := goenv.Value("GOSUMDB")
+	switch {
+	case gosumdb == "off":
+		return &Client{disabledReason: "GOSUMDB=off"}
+	case goenv.NetworkForbidden():
+		// The go command reaches the checksum database through $GOPROXY, so
+		// GOPROXY=off withdraws this traffic exactly as it withdraws a module
+		// fetch. Reported as a policy answer, not a failure: retrying cannot
+		// change an operator's declaration.
+		return &Client{disabledReason: "GOPROXY=off: the environment declares no checksum-database traffic"}
+	case noSumCheckDisablesAll():
+		return &Client{disabledReason: "GONOSUMCHECK=" + goenv.Value("GONOSUMCHECK")}
 	}
 
 	server, key := defaultServer, defaultKey
@@ -118,10 +150,10 @@ func (c *Client) discard(sc *sumdb.Client) {
 // discriminated by SumDBResult.Unavailability: a deliberate policy answer versus
 // a lookup that failed and may succeed on a later attempt.
 func (c *Client) Lookup(_ context.Context, coord coordinate.ModuleCoordinate) ports.SumDBResult {
-	if c.disabled {
+	if c.disabledReason != "" {
 		return ports.SumDBResult{
 			Available:      false,
-			Reason:         "GOSUMDB=off",
+			Reason:         c.disabledReason,
 			Unavailability: ports.SumDBUnavailabilityPolicy,
 		}
 	}
@@ -391,11 +423,14 @@ func (o *ops) configPath(file string) string {
 
 // resolveCacheDir returns a suitable directory for persisting sumdb state,
 // mirroring the layout the Go tool uses: $GOMODCACHE/download/sumdb/<server>/.
+// Both variables are resolved the go command's way, so a cache relocated with
+// `go env -w GOMODCACHE=...` is the one this writes to rather than a second
+// copy beside it.
 func resolveCacheDir(server string) string {
-	if modcache := os.Getenv("GOMODCACHE"); modcache != "" {
+	if modcache := goenv.Value("GOMODCACHE"); modcache != "" {
 		return filepath.Join(modcache, "download", "sumdb", server)
 	}
-	if gopath := os.Getenv("GOPATH"); gopath != "" {
+	if gopath := goenv.Value("GOPATH"); gopath != "" {
 		return filepath.Join(gopath, "pkg", "mod", "cache", "download", "sumdb", server)
 	}
 	// Fall back to UserCacheDir so Merkle tiles persist across invocations
@@ -425,16 +460,32 @@ func matchesNoSum(modulePath string) bool {
 
 func noSumPatterns() []string {
 	var patterns []string
-	if v := os.Getenv("GOPRIVATE"); v != "" {
+	if v := goenv.Value("GOPRIVATE"); v != "" {
 		patterns = append(patterns, strings.Split(v, ",")...)
 	}
-	if v := os.Getenv("GONOSUMCHECK"); v != "" {
+	// GONOSUMCHECK in its boolean form is not a pattern list and must not be
+	// read as one: as a pattern, "1" matches the module path "1" and nothing
+	// else, so an operator who switched the checksum database off got it left
+	// on for every module they own.
+	if v := goenv.Value("GONOSUMCHECK"); v != "" && !isBooleanTrue(v) {
 		patterns = append(patterns, strings.Split(v, ",")...)
 	}
-	if v := os.Getenv("GONOSUMDB"); v != "" {
+	if v := goenv.Value("GONOSUMDB"); v != "" {
 		patterns = append(patterns, strings.Split(v, ",")...)
 	}
 	return patterns
+}
+
+// noSumCheckDisablesAll reports whether GONOSUMCHECK carries its legacy boolean
+// meaning — switch the checksum database off for everything — rather than a
+// pattern list.
+func noSumCheckDisablesAll() bool { return isBooleanTrue(goenv.Value("GONOSUMCHECK")) }
+
+// isBooleanTrue reports whether v is one of the spellings of "yes" that Go's
+// own boolean environment variables accept. A value that is not one of them is
+// a pattern list, which is the variable's other historical meaning.
+func isBooleanTrue(v string) bool {
+	return slices.Contains([]string{"1", "t", "true", "y", "yes", "on"}, strings.ToLower(strings.TrimSpace(v)))
 }
 
 // matchesPathPattern reports whether path equals pattern, has pattern as a

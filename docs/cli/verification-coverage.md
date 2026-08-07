@@ -21,6 +21,8 @@ The causes are ordinary operational ones:
 - `GOPROXY` pointing at a proxy that does not publish `Origin` metadata;
 - an egress rule blocking a forge, so every VCS checkout fails;
 - `--skip-vcs-verify` left set in a CI job;
+- `GOPROXY=off`, which refuses the `git` subprocess for the same reason it
+  refuses a fetch, and is counted the same way;
 - a policy whose `allowed_vcs_hosts` is narrower than the forges the graph
   actually resolves to.
 

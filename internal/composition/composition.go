@@ -39,6 +39,7 @@ import (
 	fipsapp "github.com/eitanity/kanonarion/internal/fips/application"
 	gdsqlite "github.com/eitanity/kanonarion/internal/godebug/adapters/store/sqlite"
 	gdapp "github.com/eitanity/kanonarion/internal/godebug/application"
+	"github.com/eitanity/kanonarion/internal/goenv"
 	ifaceext "github.com/eitanity/kanonarion/internal/iface/adapters/extractor/godoc"
 	ifacesqlite "github.com/eitanity/kanonarion/internal/iface/adapters/store/sqlite"
 	ifaceapp "github.com/eitanity/kanonarion/internal/iface/application"
@@ -375,9 +376,20 @@ func newLocalWalkExtract(
 	// retried with bounded backoff before a module degrades to a fetch-failure node.
 	fetcher := walkretry.New(walkfetcher.New(fetchUC, false), logger)
 	localFetcher := walklocalfs.New(blobs, factStore, clk)
+	// The driver's stdlib anchor follows the same rule the CLI's does: an
+	// environment that declares no network gets the local-toolchain acquirer,
+	// which reaches nothing, instead of the go.dev/dl one. Wired here as well as
+	// in the container so a library consumer inside an air gap is not the one
+	// that dials.
+	var stdlibAcquirer *stdlibbridge.Bridge
+	if goenv.NetworkForbidden() {
+		stdlibAcquirer = NewOfflineStdlibAcquirer(db, "", clk, factStore, logger)
+	} else {
+		stdlibAcquirer = NewStdlibAcquirer(db, blobs, clk, factStore, logger)
+	}
 	resolver := walkapp.NewGraphResolver(walkgomod.New(), fetcher, blobs, clk, "", logger).
 		WithBuildListResolver(walkbuildlist.New("", logger)).
-		WithStdlibAcquirer(NewStdlibAcquirer(db, blobs, clk, factStore, logger), false)
+		WithStdlibAcquirer(stdlibAcquirer, false)
 	walker := walkapp.NewWalker(resolver, fetcher, localFetcher, clk, stopwatch, 0, logger)
 	executeWalkUC := walkapp.NewExecuteWalkUseCase(walker, walkStore, "", "", logger).WithAudit(factStore)
 

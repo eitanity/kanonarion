@@ -16,7 +16,7 @@ func TestNew(t *testing.T) {
 	// Test default initialization
 	t.Setenv("GOSUMDB", "")
 	client := New("")
-	if client.disabled {
+	if client.disabledReason != "" {
 		t.Error("client should not be disabled by default")
 	}
 	if client.server != defaultServer {
@@ -26,7 +26,7 @@ func TestNew(t *testing.T) {
 	// Test GOSUMDB=off
 	t.Setenv("GOSUMDB", "off")
 	clientOff := New("")
-	if !clientOff.disabled {
+	if clientOff.disabledReason == "" {
 		t.Error("client should be disabled when GOSUMDB=off")
 	}
 
@@ -178,13 +178,13 @@ func TestLookup(t *testing.T) {
 	// and signed notes which are hard to mock without a lot of boilerplate.
 	// Instead we test the wrapping logic and some error paths.
 
-	client := &Client{disabled: true}
+	client := &Client{disabledReason: "GOSUMDB=off"}
 	res := client.Lookup(context.Background(), coordinatetest.MustNew("any", "v1.0.0"))
 	if res.Available {
 		t.Error("Lookup should not be available when disabled")
 	}
 
-	client = &Client{disabled: false}
+	client = &Client{}
 	t.Setenv("GONOSUMCHECK", "private.com")
 	res = client.Lookup(context.Background(), coordinatetest.MustNew("private.com/foo", "v1.0.0"))
 	if res.Available {
@@ -215,7 +215,7 @@ func TestResolveCacheDir_NoEnv(t *testing.T) {
 }
 
 func TestLookupDisabled(t *testing.T) {
-	client := &Client{disabled: true}
+	client := &Client{disabledReason: "GOSUMDB=off"}
 	res := client.Lookup(context.Background(), coordinatetest.MustNew("any", "v1.0.0"))
 	if res.Available {
 		t.Error("Lookup should not be available when disabled")

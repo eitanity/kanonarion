@@ -48,7 +48,7 @@ func TestLookupPolicyReasonsAreNotFailures(t *testing.T) {
 	t.Setenv("GONOSUMDB", "")
 
 	t.Run("GOSUMDB off", func(t *testing.T) {
-		res := (&Client{disabled: true}).Lookup(context.Background(), testCoord)
+		res := (&Client{disabledReason: "GOSUMDB=off"}).Lookup(context.Background(), testCoord)
 		assertPolicy(t, res, "GOSUMDB=off")
 	})
 

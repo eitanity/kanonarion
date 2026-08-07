@@ -238,6 +238,13 @@ Reading walks already recorded (`walk show`, `callgraph`, `interface`,
 `license`, `vuln show`) is unaffected - the refusal withdraws fetching, not the
 store.
 
+`GOPROXY=off` also selects the local-toolchain standard-library anchor without
+`--from-modcache`, and stops `git` cross-verification from spawning, which is
+counted as a missing VCS leg the way `--skip-vcs-verify` is. The value is read
+the way the go command reads it, so `go env -w GOPROXY=off` is honoured with
+nothing set in the shell. See
+[`fetch`: what else `GOPROXY=off` withdraws](fetch.md#what-else-goproxyoff-withdraws).
+
 ## Scope and depth
 
 | Field | Values | Meaning |

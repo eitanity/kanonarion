@@ -17,6 +17,7 @@ import (
 	factstoresqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
 
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
+	"github.com/eitanity/kanonarion/internal/goenv"
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
 	walksqlite "github.com/eitanity/kanonarion/internal/walk/adapters/walks/sqlite"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -83,9 +84,9 @@ func runUse(ctx context.Context, f useFlags, targetArg string, stdout, stderr io
 
 	modCache := f.modCache
 	if modCache == "" {
-		modCache = os.Getenv("GOMODCACHE")
+		modCache = goenv.Value("GOMODCACHE")
 		if modCache == "" {
-			gopath := os.Getenv("GOPATH")
+			gopath := goenv.Value("GOPATH")
 			if gopath == "" {
 				home, err := os.UserHomeDir()
 				if err != nil {

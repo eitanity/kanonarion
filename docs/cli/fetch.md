@@ -134,10 +134,34 @@ cross exactly the boundary the operator drew.
 The list form follows Go's own resolution: entries are separated by `,` or
 `|` and tried in order, so `GOPROXY=https://proxy.example.com,direct` uses the
 first entry, while an `off` reached first terminates the chain and nothing
-after it is tried. Note that other network paths are not governed by this
-variable - the checksum database, the advisory snapshot download, the standard
-library's `go.dev/dl` acquisition and `git` cross-verification have their own
-switches (`GOSUMDB=off`, `--from-modcache`, `--skip-vcs-verify`).
+after it is tried.
+
+`GOPROXY` is read from Go's own sources, not just the shell: the environment
+variable first, then the env file `go env -w` writes to. `go env -w
+GOPROXY=off` therefore declares the air gap for kanonarion exactly as it does
+for `go build`, with nothing set in the environment.
+
+### What else `GOPROXY=off` withdraws
+
+The declaration is not the module proxy's alone. Under `GOPROXY=off` every
+network path kanonarion owns refuses before it opens a socket or starts a
+subprocess:
+
+| Path | Under `GOPROXY=off` | What still answers |
+|---|---|---|
+| Module fetch | Refuses, exit `20` | `--from-modcache`, [`use --recursive`](use.md) |
+| Advisory snapshot download (`vuln-scan`, `audit`, `inspect`) | Refuses the download | A snapshot the store already holds - see [`vuln`](vuln.md#air-gapped-scanning) |
+| Checksum database (`sum.golang.org`) | Treated as `GOSUMDB=off`: modules record `UnverifiedNoSumDB`, or `VerifiedByGoSum` where a project `go.sum` anchors them | The local `go.sum` anchor |
+| Standard-library `go.dev/dl` acquisition | Not used; the local-toolchain anchor is selected instead, as under `--from-modcache` | `$GOROOT/src` + `$GOROOT/LICENSE`, recorded `VerifiedLocalToolchain` |
+| `git` cross-verification (`ls-remote`, shallow fetch) | Refuses to spawn; counted as a missing VCS leg, exactly as `--skip-vcs-verify` is | Checksum-database or `go.sum` verification, landing on `VerifiedBySumDBOnly` |
+
+`GOSUMDB=off`, `--from-modcache` and `--skip-vcs-verify` remain the ways to
+withdraw those paths individually. `GOPROXY=off` withdraws all of them at once,
+which is what an air gap is. Reading the store is unaffected throughout.
+
+`GONOSUMCHECK=1` is honoured as the boolean it is - the checksum database is
+switched off for every module. A `GONOSUMCHECK` naming module prefixes keeps
+its pattern meaning.
 
 ### Staleness annotation
 

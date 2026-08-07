@@ -10,9 +10,23 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/goenv"
 	"github.com/eitanity/kanonarion/internal/stdlib/domain"
 	"github.com/eitanity/kanonarion/internal/stdlib/ports"
 )
+
+// ErrNetworkForbidden reports that the environment declares no network access
+// and the go.dev/dl request was refused before any I/O.
+//
+// The offline acquirer is the answer, not an error: it anchors the standard
+// library to the local toolchain ($GOROOT/src and $GOROOT/LICENSE) and reaches
+// nothing. Both composition roots select it whenever the environment forbids
+// the network, so reaching this refusal means a client was built anyway and
+// then used — the second line of defence rather than the first.
+var ErrNetworkForbidden = fmt.Errorf(
+	"%w: the environment declares no standard-library download from go.dev/dl; "+
+		"the offline acquirer anchors to the local toolchain instead",
+	goenv.ErrNetworkForbidden)
 
 const (
 	// defaultTimeout bounds a single HTTP request. The source tarball is tens of
@@ -74,6 +88,9 @@ func (c *Client) Download(ctx context.Context, url string) ([]byte, error) {
 // non-2xx status so a proxy error page is never mistaken for a manifest or a
 // tarball.
 func (c *Client) get(ctx context.Context, url string, maxBytes int64) ([]byte, error) {
+	if goenv.NetworkForbidden() {
+		return nil, fmt.Errorf("%w: %s not fetched", ErrNetworkForbidden, url)
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, fmt.Errorf("building request: %w", err)

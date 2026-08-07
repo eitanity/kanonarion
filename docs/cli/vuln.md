@@ -111,6 +111,25 @@ go install golang.org/x/vuln/cmd/govulncheck@latest
 If the binary is not found, `vuln-scan` returns a descriptive error with the
 install command rather than a generic failure.
 
+### Air-gapped scanning
+
+Under `GOPROXY=off` - read as the go command reads it, so `go env -w
+GOPROXY=off` counts - the advisory snapshot is **not downloaded**. What that
+means in practice:
+
+- A store that already holds a snapshot **scans normally**. Snapshot resolution
+  prefers the stored generation, so nothing changes: the run is judged against
+  the snapshot the store carries, and the scan-run record names it as always.
+- `--fresh` refuses. Refreshing means reading the published generation from
+  `vuln.go.dev`, which is the network.
+- A store with **no** snapshot refuses, naming the remedy: drop `--fresh`, pin
+  one with `--snapshot-source`/`--snapshot-version`, or carry in a store that
+  holds one. `vuln-snapshot-list` shows what the store has.
+
+The scan itself is already offline - `govulncheck` is run with `GOPROXY=off`
+against the verified module cache, which is unchanged. See
+[`fetch`: what else `GOPROXY=off` withdraws](fetch.md#what-else-goproxyoff-withdraws).
+
 ## Commands
 
 ### `vuln`

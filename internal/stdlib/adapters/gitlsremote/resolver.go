@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/vcs/gitenv"
+	"github.com/eitanity/kanonarion/internal/goenv"
 	"github.com/eitanity/kanonarion/internal/stdlib/ports"
 )
 
@@ -34,6 +35,18 @@ const defaultTimeout = 30 * time.Second
 
 // ErrGitNotInstalled is returned when the git binary cannot be found in PATH.
 var ErrGitNotInstalled = errors.New("git not found in PATH")
+
+// ErrNetworkForbidden is returned instead of starting git when the environment
+// declares no network access.
+//
+// The acquirer already records an unresolved commit rather than a failure when
+// this lookup cannot answer, so an air gap costs the standard library its VCS
+// anchor and nothing else — which is the same accounting an absent git gets,
+// and the same one --skip-vcs-verify asks for explicitly.
+var ErrNetworkForbidden = fmt.Errorf(
+	"%w: resolving the Go release tag reaches go.googlesource.com over the network; "+
+		"the standard-library record is anchored without its VCS commit",
+	goenv.ErrNetworkForbidden)
 
 // Resolver resolves tags to commits via git ls-remote.
 type Resolver struct {
@@ -53,6 +66,12 @@ func New() *Resolver {
 // the commit it points at rather than the tag object; a lightweight tag has no
 // peeled ref and its direct SHA is used.
 func (r *Resolver) ResolveCommit(ctx context.Context, repoURL, tag string) (string, error) {
+	// Before LookPath, and long before exec: a child process is invisible to an
+	// in-process dial assertion, so the only place this contract can be
+	// enforced is on this side of the fork.
+	if goenv.NetworkForbidden() {
+		return "", ErrNetworkForbidden
+	}
 	if _, err := exec.LookPath("git"); err != nil {
 		return "", ErrGitNotInstalled
 	}
