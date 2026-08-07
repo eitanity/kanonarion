@@ -433,6 +433,27 @@ See [`audit` › Local `go.sum` verification](audit.md#local-gosum-verification)
 for the full behaviour, which `audit` and `sbom --package` promote to a hard,
 non-zero exit.
 
+## Vendored builds
+
+A project carrying `vendor/modules.txt` beside its `go.mod` compiles the bytes
+under `vendor/`, which need not be the bytes the proxy would serve for the same
+coordinates. This command resolves the manifest, so its answer describes the
+modules `go.mod` **resolves**, not what ships. Where the two can differ, the run
+says so on its basis channel (stderr, with the other basis lines, on both the
+text and `--json` paths):
+
+```
+vendored build:
+  …/vendor/modules.txt is present beside go.mod, so this project compiles the bytes under vendor/
+  this answer describes the modules the manifest resolves, not those bytes; `kanonarion vendor` is what measures the vendored tree
+```
+
+It states a fact and changes no verdict: a vendored project answers exactly as
+before, with one more line of basis. `kanonarion vendor` is the command that
+compares the shipped bytes against the published module zips.
+
+An unvendored project states nothing - its answer was never ambiguous.
+
 ## Storage
 
 Walk records are stored in `<store-root>/mirror.db` (SQLite). The walk schema

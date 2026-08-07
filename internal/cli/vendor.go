@@ -43,6 +43,19 @@ type vendorModule struct {
 	// hash could never equal this value and reporting the pair asserted a
 	// mismatch that was an artefact of the measurement.
 	ExpectedHash string `json:"expected_hash,omitempty"`
+	// ReplacementPath and ReplacementVersion name the module vendor/modules.txt
+	// says stands in for this one. Both are emitted so a consumer can see, in
+	// the row itself, that the directory named `path` holds another module's
+	// bytes — and that expected_hash is that other module's checksum.
+	// ReplacementVersion is absent for a filesystem replacement, which has no
+	// version and no published artefact.
+	ReplacementPath    string `json:"replacement_path,omitempty"`
+	ReplacementVersion string `json:"replacement_version,omitempty"`
+	// FilesCompared is how many files under this module's directory were
+	// compared, file by file, against the verified zip. It carries no omitempty:
+	// zero is the value that says the module was not compared at all, and a
+	// field that vanishes at zero cannot be asserted on.
+	FilesCompared int `json:"files_compared"`
 }
 
 // vendorUncoveredModule is one module of the vendored tree the report does not
@@ -80,6 +93,11 @@ type vendorSection struct {
 	ContentHash     string          `json:"content_hash"`
 	Modules         []vendorModule  `json:"modules"`
 	Findings        []vendorFinding `json:"findings"`
+	// FilesCompared is the total across every module: the size of the
+	// measurement the status rests on. "Clean" over a hundred modules means
+	// nothing until it says how many files were looked at, and a zero here
+	// beside a clean status is a run that compared nothing.
+	FilesCompared int `json:"files_compared"`
 	// Scope states how much of the vendored tree this section describes and
 	// names every module it does not, so a correct narrowing reads as one.
 	Scope vendorScope `json:"scope"`
@@ -149,8 +167,12 @@ func toVendorSection(rec vendomain.Record) vendorSection {
 		out.Modules = append(out.Modules, vendorModule{
 			Path: m.Path, Version: m.Version, Explicit: m.Explicit,
 			Present: m.Present, Dir: m.Dir, Packages: m.PackageCount,
-			ExpectedHash: m.ExpectedHash,
+			ExpectedHash:       m.ExpectedHash,
+			ReplacementPath:    m.ReplacementPath,
+			ReplacementVersion: m.ReplacementVersion,
+			FilesCompared:      m.FilesCompared,
 		})
+		out.FilesCompared += m.FilesCompared
 	}
 	for _, f := range rec.Findings {
 		out.Findings = append(out.Findings, vendorFinding{
@@ -265,6 +287,12 @@ func printVendorTable(stdout io.Writer, s vendorSection) error {
 	if err := printVendorScope(stdout, s.Scope); err != nil {
 		return err
 	}
+	if err := printVendorMeasurementSize(stdout, s); err != nil {
+		return err
+	}
+	if err := printVendorReplacements(stdout, s); err != nil {
+		return err
+	}
 	if len(s.Findings) == 0 {
 		if _, err := fmt.Fprintf(stdout, "no vendor findings (%d modules reconciled)\n", len(s.Modules)); err != nil {
 			return fmt.Errorf("writing output: %w", err)
@@ -313,6 +341,85 @@ func printVendorScope(stdout io.Writer, s vendorScope) error {
 		}
 	}
 	return nil
+}
+
+// printVendorMeasurementSize states how much the run actually looked at: how
+// many files were compared, across how many modules. A status is a verdict and
+// this is its size, and only one of the two can be argued with — "no drift
+// across 133 modules" is not falsifiable until the reader is told whether that
+// was twelve files or twelve thousand. Zero is printed rather than suppressed:
+// a clean status over nothing compared is the case the line exists to expose.
+func printVendorMeasurementSize(stdout io.Writer, s vendorSection) error {
+	compared := 0
+	for _, m := range s.Modules {
+		if m.FilesCompared > 0 {
+			compared++
+		}
+	}
+	if _, err := fmt.Fprintf(stdout,
+		"compared: %d file(s) across %d of %d module(s) against their published module zips\n",
+		s.FilesCompared, compared, len(s.Modules)); err != nil {
+		return fmt.Errorf("writing output: %w", err)
+	}
+	return nil
+}
+
+// printVendorReplacements names every module whose directory and whose bytes
+// come from two different modules, with both coordinates and what was checked.
+//
+// `go mod vendor` writes a replaced module's files under the ORIGINAL path, so
+// the tree gives a reader no way to see that upstream's name covers a fork's
+// bytes. Without this block a clean run reports "github.com/PaesslerAG/gval
+// v1.2.1" as verified, and the reader would reasonably take that to mean the
+// upstream module was checked. It was not; a fork was, and the line says so.
+func printVendorReplacements(stdout io.Writer, s vendorSection) error {
+	var replaced []vendorModule
+	for _, m := range s.Modules {
+		if m.ReplacementPath != "" {
+			replaced = append(replaced, m)
+		}
+	}
+	if len(replaced) == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintf(stdout,
+		"replacements: %d vendored module(s) hold another module's source\n", len(replaced)); err != nil {
+		return fmt.Errorf("writing output: %w", err)
+	}
+	for _, m := range replaced {
+		if _, err := fmt.Fprintf(stdout, "  %s %s => %s — %s\n",
+			m.Path, m.Version, replacementCoordinate(m), replacementAttestation(m)); err != nil {
+			return fmt.Errorf("writing output: %w", err)
+		}
+	}
+	return nil
+}
+
+// replacementCoordinate renders the replacement side, versionless for the
+// filesystem form because there is no version to render.
+func replacementCoordinate(m vendorModule) string {
+	if m.ReplacementVersion == "" {
+		return m.ReplacementPath
+	}
+	return m.ReplacementPath + " " + m.ReplacementVersion
+}
+
+// replacementAttestation says what the vendored bytes were held to. The three
+// answers are kept apart because they are three different things: a checksum on
+// the replacement that the bytes were compared against, a replacement that
+// publishes nothing so no checksum can exist, and a checksum that exists but
+// whose artefact is not held. Collapsing the second into the first would turn an
+// honest gap into a claim; collapsing it into the third would blame the store
+// for an absence the build's own shape guarantees.
+func replacementAttestation(m vendorModule) string {
+	switch {
+	case m.ReplacementVersion == "":
+		return "filesystem replacement: publishes no module, so no go.sum checksum exists to check the vendored bytes against"
+	case m.ExpectedHash == "" || m.FilesCompared == 0:
+		return "not checked against the replacement (see findings)"
+	default:
+		return fmt.Sprintf("%d file(s) checked against the replacement's go.sum-verified zip", m.FilesCompared)
+	}
 }
 
 // vendorBlockingErr returns an ExitPolicy error when any finding

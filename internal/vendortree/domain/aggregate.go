@@ -13,9 +13,9 @@ import (
 // Axes, in the order findings are emitted per module then globally:
 //
 // 1. modules.txt entry with no files under vendor/ → MissingFromVendor
-// 2. vendored module with no go.sum entry, or whose go.sum-verified zip
-// kanonarion does not hold → Unverified (absence of an oracle is uncertainty,
-// never a clean pass)
+// 2. vendored module with no go.sum entry for the coordinate its bytes are, or
+// whose go.sum-verified zip kanonarion does not hold → Unverified (absence of
+// an oracle is uncertainty, never a clean pass)
 // 3. a file under vendor/ that the verified zip does not publish, or publishes
 // with different bytes → Drift, one finding per file
 // 4. modules.txt version ≠ go.mod require version → VersionMismatch
@@ -27,6 +27,17 @@ import (
 // reconciliation describes, and every module it does not with the reason. A
 // module modules.txt lists with no package under it is out of scope by
 // construction — it emits no finding at all, and appears only there.
+//
+// Every go.sum lookup goes through the module's ATTESTED coordinate, not the
+// name of the directory its files sit in. A replaced module is vendored under
+// the original path while go.sum attests the replacement, so keying the lookup
+// on the directory's name asks go.sum about bytes the tree does not hold. The
+// three answers that lookup can give are kept apart in the finding text, because
+// they are three different things a reader has to act on differently: the bytes
+// were checked against the replacement (no finding, and both coordinates are on
+// the module record); nothing exists to check them against, which a filesystem
+// replacement guarantees; or a checksum exists and the bytes disagree with it,
+// which stays a hard stop.
 func Aggregate(in ParseResult) ([]VendoredModule, []Finding, VendorScope) {
 	listed := make(map[string]bool, len(in.ModulesTxt))
 	mods := make([]VendoredModule, 0, len(in.ModulesTxt))
@@ -35,14 +46,16 @@ func Aggregate(in ParseResult) ([]VendoredModule, []Finding, VendorScope) {
 	for _, e := range in.ModulesTxt {
 		listed[e.Path] = true
 		m := VendoredModule{
-			Path:         e.Path,
-			Version:      e.Version,
-			Explicit:     e.Explicit,
-			Dir:          in.VendorDir + "/" + e.Path,
-			Present:      in.PresentDirs[e.Path],
-			PackageCount: e.PackageCount,
+			Path:               e.Path,
+			Version:            e.Version,
+			Explicit:           e.Explicit,
+			Dir:                in.VendorDir + "/" + e.Path,
+			Present:            in.PresentDirs[e.Path],
+			PackageCount:       e.PackageCount,
+			ReplacementPath:    e.ReplacementPath,
+			ReplacementVersion: e.ReplacementVersion,
 		}
-		key := e.Path + "@" + e.Version
+		attPath, attVersion, attested := e.AttestedCoordinate()
 
 		switch {
 		case !m.Present && m.PackageCount == 0:
@@ -58,22 +71,32 @@ func Aggregate(in ParseResult) ([]VendoredModule, []Finding, VendorScope) {
 				Detail: "modules.txt lists this module but no files exist under vendor/",
 			})
 		default:
-			m.ExpectedHash = in.GoSum[key]
+			if attested {
+				m.ExpectedHash = in.GoSum[attPath+"@"+attVersion]
+			}
 			files := in.Files[e.Path]
 			switch {
+			case !attested:
+				findings = append(findings, Finding{
+					Kind: FindingUnverified, Module: e.Path, Version: e.Version,
+					Detail: "vendor/modules.txt replaces this module with the filesystem path " + e.ReplacementPath +
+						", which publishes no module and so has no go.sum checksum by construction; there is nothing for the vendored bytes to be checked against",
+				})
 			case m.ExpectedHash == "":
 				findings = append(findings, Finding{
 					Kind: FindingUnverified, Module: e.Path, Version: e.Version,
-					Detail: "no go.sum entry; vendored tree integrity cannot be verified",
+					Detail: noChecksumDetail(e, attPath, attVersion),
 				})
 			case !files.ZipHeld:
 				findings = append(findings, Finding{
 					Kind: FindingUnverified, Module: e.Path, Version: e.Version,
-					Detail:   "go.sum records a checksum but the module zip it verifies is not held; the vendored tree has nothing to be compared against",
+					Detail: "go.sum records a checksum for " + attPath + " " + attVersion +
+						" but the module zip it verifies is not held; the vendored tree has nothing to be compared against",
 					Expected: m.ExpectedHash,
 				})
 			default:
-				findings = append(findings, driftFindings(e.Path, e.Version, files)...)
+				m.FilesCompared = len(files.Vendored)
+				findings = append(findings, driftFindings(e.Path, e.Version, oracleName(e, attPath, attVersion), files)...)
 			}
 		}
 
@@ -110,6 +133,32 @@ func Aggregate(in ParseResult) ([]VendoredModule, []Finding, VendorScope) {
 	return mods, findings, ScopeOverTree(mods, nil)
 }
 
+// noChecksumDetail is the statement owed a module whose attested coordinate
+// genuinely has no go.sum line. It names that coordinate, and for a replaced
+// module names both — a reader told only that "github.com/PaesslerAG/gval has
+// no checksum" would go looking in go.sum under a name the build never
+// resolved, and conclude the tool was wrong.
+func noChecksumDetail(m VendoredModule, attPath, attVersion string) string {
+	if !m.IsReplaced() {
+		return "no go.sum entry; vendored tree integrity cannot be verified"
+	}
+	return "vendor/modules.txt replaces this module with " + attPath + " " + attVersion +
+		", which is the coordinate go.sum would attest, and go.sum records no entry for it;" +
+		" vendored tree integrity cannot be verified"
+}
+
+// oracleName describes, for a finding a reader has to act on, which module's
+// published zip the vendored files were held against. For a replaced module
+// that is not the module the directory is named for, and saying so is the
+// difference between a reader who can reproduce the check and one who cannot.
+func oracleName(m VendoredModule, attPath, attVersion string) string {
+	if !m.IsReplaced() {
+		return "the module's go.sum-verified zip"
+	}
+	return "the go.sum-verified zip of " + attPath + " " + attVersion +
+		", the replacement vendor/modules.txt names for this module"
+}
+
 // driftFindings compares the files vendor/ holds for one module against the
 // files the module's go.sum-verified zip publishes, and returns one finding per
 // file that is not what the zip says it is.
@@ -124,7 +173,11 @@ func Aggregate(in ParseResult) ([]VendoredModule, []Finding, VendorScope) {
 //
 // Findings are emitted in file-path order so a re-scan of an unchanged tree
 // hashes identically.
-func driftFindings(path, version string, files ModuleFiles) []Finding {
+//
+// oracle names the published artefact the comparison was made against, in the
+// reader's words, so a replaced module's findings say which module's zip they
+// were held to.
+func driftFindings(path, version, oracle string, files ModuleFiles) []Finding {
 	names := make([]string, 0, len(files.Vendored))
 	for name := range files.Vendored {
 		names = append(names, name)
@@ -139,19 +192,20 @@ func driftFindings(path, version string, files ModuleFiles) []Finding {
 		case strings.HasPrefix(vendored, DigestIrregularPrefix):
 			out = append(out, Finding{
 				Kind: FindingDrift, Module: path, Version: version, File: name,
-				Detail:   "this path under vendor/ is not a regular file, so its content is not what the scan measured; the published module zip holds only regular files",
+				Detail: "this path under vendor/ is not a regular file, so its content is not what the scan measured; " +
+					oracle + " holds only regular files",
 				Expected: published, Actual: vendored,
 			})
 		case !ok:
 			out = append(out, Finding{
 				Kind: FindingDrift, Module: path, Version: version, File: name,
-				Detail: "this file exists under vendor/ but the module's go.sum-verified zip does not publish it",
+				Detail: "this file exists under vendor/ but " + oracle + " does not publish it",
 				Actual: vendored,
 			})
 		case published != vendored:
 			out = append(out, Finding{
 				Kind: FindingDrift, Module: path, Version: version, File: name,
-				Detail:   "this vendored file's content differs from the module's go.sum-verified zip",
+				Detail:   "this vendored file's content differs from " + oracle,
 				Expected: published, Actual: vendored,
 			})
 		}

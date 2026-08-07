@@ -44,8 +44,14 @@ func SortFindings(fs []Finding) {
 func Hash(ms []VendoredModule, fs []Finding) string {
 	var b strings.Builder
 	for _, m := range ms {
-		fmt.Fprintf(&b, "M|%s|%s|%t|%t|%s|%d\n",
-			m.Path, m.Version, m.Explicit, m.Present, m.ExpectedHash, m.PackageCount)
+		// The replacement coordinate and the files-compared count are in the
+		// hash because both are facts about the measurement this record IS: a
+		// tree re-vendored against a different fork, or a run that compared
+		// fewer files, is a different reconciliation and must not hash to the
+		// same value as the one before it.
+		fmt.Fprintf(&b, "M|%s|%s|%t|%t|%s|%d|%s|%s|%d\n",
+			m.Path, m.Version, m.Explicit, m.Present, m.ExpectedHash, m.PackageCount,
+			m.ReplacementPath, m.ReplacementVersion, m.FilesCompared)
 	}
 	for _, f := range fs {
 		fmt.Fprintf(&b, "F|%s|%s|%s|%s|%s|%s\n",

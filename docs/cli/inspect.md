@@ -181,6 +181,33 @@ not counted as findings)` with its retraction date. See
 }
 ```
 
+## Vendored builds
+
+A project carrying `vendor/modules.txt` beside its `go.mod` compiles the bytes
+under `vendor/`, which need not be the bytes the proxy would serve for the same
+coordinates. This command resolves the manifest, so its answer describes the
+modules `go.mod` **resolves**, not what ships. Where the two can differ, the run
+says so on its basis channel (stderr, with the other basis lines, on both the
+text and `--json` paths):
+
+```
+vendored build:
+  …/vendor/modules.txt is present beside go.mod, so this project compiles the bytes under vendor/
+  this answer describes the modules the manifest resolves, not those bytes; `kanonarion vendor` is what measures the vendored tree
+```
+
+It states a fact and changes no verdict: a vendored project answers exactly as
+before, with one more line of basis. `kanonarion vendor` is the command that
+compares the shipped bytes against the published module zips.
+
+An unvendored project states nothing - its answer was never ambiguous.
+
+`inspect --json` also carries the answer in the document, under `build`
+(`vendoring_known`, `vendored`, `vendor_modules_txt`), so a consumer can see
+which of two things the rest of the document describes. `build` is absent only
+when there was no project directory to look in - an unanswered question, which
+must not decode the same as a negative answer.
+
 ## Workflow
 
 `inspect` is equivalent to running these commands in sequence:

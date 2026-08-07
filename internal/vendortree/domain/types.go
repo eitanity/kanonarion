@@ -28,7 +28,11 @@ import (
 // v4 records each module's package count and adds the scope statement, so a
 // record says how much of the vendored tree it describes rather than leaving a
 // correct narrowing to read as completeness.
-const VendorSchemaVersion = "4"
+// v5 carries the replacement coordinate a module's bytes actually are, and the
+// number of files the comparison looked at, per module and in total: without
+// the first a record names a module whose bytes it does not describe, and
+// without the second "no drift" is a claim with no stated size.
+const VendorSchemaVersion = "5"
 
 // EcosystemGo is the only ecosystem kanonarion records describe. The ecosystem
 // field declares the schema's scope — kanonarion is fitted for Go — rather than
@@ -53,7 +57,15 @@ var ErrUnsupportedEcosystem = errors.New("unsupported ecosystem: kanonarion reco
 // the old finding described the toolchain's normal output as drift. The
 // finding set for an unchanged tree therefore differs from a 0.2.0 record's,
 // and the content hash covers each module's package count as well.
-const PipelineVersion = "0.3.0"
+//
+// 0.4.0 resolves a module through vendor/modules.txt's replace clause before
+// looking up go.sum, so a replaced module is checked against the checksum of
+// the coordinate the build actually resolves. A 0.3.0 record reports every
+// replaced module as having no go.sum entry, which is not merely less than this
+// one says but the opposite of what go.sum holds, so the two records are not
+// interchangeable and must not be served for one another. The content hash
+// covers the replacement coordinate and the files-compared count as well.
+const PipelineVersion = "0.4.0"
 
 // FindingKind classifies a vendor reconciliation discrepancy.
 type FindingKind string
@@ -126,14 +138,90 @@ type VendoredModule struct {
 	// indistinguishable from a module whose files went missing, and the tree
 	// reports drift for a tree that is exactly as `go mod vendor` left it.
 	PackageCount int
-	// ExpectedHash is the go.sum h1 for Path@Version ("" when go.sum has no
-	// entry). It names the checksum the comparison oracle — the module zip
+	// ReplacementPath and ReplacementVersion name the module vendor/modules.txt
+	// says stands in for this one: the right-hand side of its `=> …` clause,
+	// both empty when the entry carries none.
+	//
+	// They are carried because `go mod vendor` writes a replaced module's files
+	// under the ORIGINAL module path, recording the replacement only on the
+	// heading comment. The directory is therefore named for a module whose bytes
+	// it does not hold, while the coordinate the build resolves — and so the
+	// coordinate go.sum attests — is the replacement. A record naming only the
+	// left-hand side describes a module that was never compiled. It is the same
+	// one-node-two-names shape the walk's OriginalCoordinate already reads.
+	//
+	// A filesystem replacement (`=> ../fork`) carries a path and no version.
+	// That absence is load-bearing rather than incidental: such a replacement
+	// publishes no module zip, so go.sum can hold no line for it and there is
+	// nothing for the vendored bytes to be checked against.
+	ReplacementPath    string
+	ReplacementVersion string
+	// FilesCompared is how many files under vendor/<Path> were compared against
+	// the verified module zip, file by file. It is zero for every module that
+	// was not verified — an unverified module compared nothing — so the total
+	// over a record is the size of the measurement the record's clean status
+	// rests on. "No drift across 133 modules" says nothing a reader can argue
+	// with until it says whether that was twelve files or twelve thousand.
+	FilesCompared int
+	// ExpectedHash is the go.sum h1 for the module's attested coordinate ("" when
+	// go.sum has no entry for it, and always for a filesystem replacement, which
+	// has no such coordinate). For a replaced module that is the REPLACEMENT's
+	// h1, because the replacement is what the bytes under vendor/ are.
+	// It names the checksum the comparison oracle — the module zip
 	// kanonarion holds — was verified against, not a hash of anything under
 	// vendor/. There is deliberately no counterpart hash of the vendored
 	// tree: a pruned tree's whole-directory hash can never equal this value,
 	// so reporting the pair side by side asserted a mismatch that was an
 	// artefact of the measurement rather than a property of the tree.
 	ExpectedHash string
+}
+
+// AttestedCoordinate returns the module path and version whose published
+// artefact the bytes under vendor/<Path> actually are, and whether such an
+// artefact exists at all.
+//
+// For an unreplaced module that is the module's own coordinate. For a module
+// replaced by another module it is the REPLACEMENT: `go mod vendor` copied the
+// replacement's source into a directory named for the original, so looking
+// go.sum up under the original asks for a checksum of bytes the tree does not
+// hold — and finding none, reports the two modules a project most needs
+// verified, the ones whose bytes are not upstream's, as the two it cannot
+// verify.
+//
+// attested is false for a filesystem replacement. There is no published module
+// behind `=> ../fork` and go.sum can carry no line for it, so the honest answer
+// is that nothing exists to check against — which is a different statement from
+// a checksum that is missing, and must not borrow the original coordinate's
+// checksum to look like one. Borrowing it would be worse than useless: go.sum
+// may well still hold the upstream line, and comparing a fork's files against
+// upstream's zip reports the fork as wholesale drift.
+func (m VendoredModule) AttestedCoordinate() (path, version string, attested bool) {
+	switch {
+	case m.ReplacementPath == "":
+		return m.Path, m.Version, true
+	case m.ReplacementVersion == "":
+		return "", "", false
+	default:
+		return m.ReplacementPath, m.ReplacementVersion, true
+	}
+}
+
+// IsReplaced reports whether vendor/modules.txt names a replacement for this
+// module — whether the directory's name and its bytes come from two modules.
+func (m VendoredModule) IsReplaced() bool { return m.ReplacementPath != "" }
+
+// ReplacementCoordinate renders the replacement for a reader, as
+// "path version" or just "path" for the versionless filesystem form. Empty for
+// an unreplaced module.
+func (m VendoredModule) ReplacementCoordinate() string {
+	switch {
+	case m.ReplacementPath == "":
+		return ""
+	case m.ReplacementVersion == "":
+		return m.ReplacementPath
+	default:
+		return m.ReplacementPath + " " + m.ReplacementVersion
+	}
 }
 
 // DigestIrregularPrefix marks a vendored directory entry that is not a regular

@@ -93,12 +93,22 @@ func (s *Scanner) ScanProject(ctx context.Context, goModPath string, vendorOnly 
 		present[m.Path] = true
 
 		mf := domain.ModuleFiles{Vendored: vendored}
-		if h1 := goSum[m.Path+"@"+m.Version]; h1 != "" && s.zips != nil {
-			published, found, zerr := s.zips.PublishedFiles(ctx, m.Path, m.Version, h1)
-			if zerr != nil {
-				return domain.ParseResult{}, fmt.Errorf("reading the verified module zip for %s@%s: %w", m.Path, m.Version, zerr)
+		// The oracle is looked up under the coordinate the module's bytes ARE,
+		// which for a replaced module is the replacement — `go mod vendor` wrote
+		// the replacement's source into a directory named for the original, so
+		// the directory's name is the one coordinate go.sum was never asked to
+		// attest. A filesystem replacement reports no attested coordinate at all
+		// and is deliberately left with no oracle rather than falling back to
+		// the original's: go.sum may still carry the upstream line, and holding
+		// a fork's files to upstream's zip reports the fork as wholesale drift.
+		if attPath, attVersion, attested := m.AttestedCoordinate(); attested {
+			if h1 := goSum[attPath+"@"+attVersion]; h1 != "" && s.zips != nil {
+				published, found, zerr := s.zips.PublishedFiles(ctx, attPath, attVersion, h1)
+				if zerr != nil {
+					return domain.ParseResult{}, fmt.Errorf("reading the verified module zip for %s@%s: %w", attPath, attVersion, zerr)
+				}
+				mf.ZipHeld, mf.Zip = found, published
 			}
-			mf.ZipHeld, mf.Zip = found, published
 		}
 		files[m.Path] = mf
 	}
@@ -268,6 +278,16 @@ func parseModulesTxt(path string) ([]domain.VendoredModule, map[string]string, e
 			// same way: the target is still the name a consumer may hold.
 			if len(fields) >= 4 && fields[2] == "=>" {
 				replacements[fields[3]] = fields[0]
+				entry := &mods[len(mods)-1]
+				entry.ReplacementPath = fields[3]
+				// A version is recorded only for a module replacement. The
+				// directory-path check is belt and braces over the field count:
+				// `go mod vendor` writes no version after a filesystem target,
+				// and reading one there would hand the domain an attestable
+				// coordinate for a replacement that publishes nothing.
+				if len(fields) >= 5 && !modfile.IsDirectoryPath(fields[3]) {
+					entry.ReplacementVersion = fields[4]
+				}
 			}
 		default:
 			// A bare line is one package `go mod vendor` wrote under the

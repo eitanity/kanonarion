@@ -118,7 +118,7 @@ func TestExitCodeContract_WalkByIDAgreesAcrossCommands(t *testing.T) {
 		"walk-list --walk-id": runWalkList(context.Background(), "", "", "", "", missingWalk, 0, false, false,
 			testfakes.NewFakeQueryWalks(), &bytes.Buffer{}, &bytes.Buffer{}),
 		"verification-coverage": runVerificationCoverage(context.Background(), missingWalk,
-			testfakes.NewFakeQueryWalks(), fakeFetchRecords{}, &bytes.Buffer{}),
+			testfakes.NewFakeQueryWalks(), fakeFetchRecords{}, false, &bytes.Buffer{}),
 	} {
 		if code := ExitCodeForError(err); code != ExitNotFound {
 			t.Errorf("%s answers a missing walk with exit %d; every walk-by-ID read must answer %d",

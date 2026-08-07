@@ -203,6 +203,33 @@ Nothing verifies `identity_hash` on read and no stored hash is ever compared
 across the old and new styles: an old-style walk has no identity at all, so the
 comparison cannot arise. Reads of existing walks are unchanged in every respect.
 
+## Vendor record: schema `4` → `5`, pipeline `0.3.0` → `0.4.0`
+
+**Record shape change and a finding-set change; no store migration.** Vendor
+records are keyed `(project_module_path, pipeline_version)` and `GetVendorRecord`
+selects on the current one, so the bump is the migration: `0.3.0` rows stay
+where they are, become unreachable, and are never served for a `0.4.0` request.
+The cost is one re-scan per project on its next `vendor` run.
+
+Each `VendoredModule` records the **replacement coordinate**
+(`replacement_path` / `replacement_version`) `vendor/modules.txt` names for it,
+and the **number of files compared** against the verified zip; the record
+carries the total. The content hash covers all three.
+
+The behaviour that forced the bump: a module is resolved through
+`vendor/modules.txt`'s replace clause before the `go.sum` lookup, so a replaced
+module is verified against the **replacement's** `h1` — the coordinate the build
+resolves, and the only one `go.sum` attests. A `0.3.0` record reports every
+replaced module as having no `go.sum` entry. That is not merely less than a
+`0.4.0` record says, it is the opposite of what `go.sum` holds, so the two must
+not be served for one another.
+
+`expected_hash` on a replaced module is now the replacement's checksum, and is
+absent for a filesystem replacement (`=> ../fork`), which publishes no module
+and so has no checksum anywhere. A filesystem replacement is reported
+`unverified` naming the path, never verified against the original coordinate's
+retained `go.sum` line.
+
 ## Vendor record: schema `3` → `4`, pipeline `0.2.0` → `0.3.0`
 
 **Record shape change and a finding-set change; no store migration.** Vendor

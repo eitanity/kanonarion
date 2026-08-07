@@ -24,11 +24,58 @@ re-fetching from the proxy, and verifies what is actually on disk.
 | `extra_in_vendor`          | files under `vendor/` for a module `modules.txt` does not list       | `on_inconsistency` |
 | `missing_from_modules_txt` | `go.mod` requires a module `vendor/modules.txt` omits                | `on_inconsistency` |
 | `version_mismatch`         | `modules.txt` version disagrees with the `go.mod` require version    | `on_inconsistency` |
-| `unverified`               | vendored module with **no `go.sum` entry**, or whose verified module zip is not held - integrity unconfirmed | `on_inconsistency` |
+| `unverified`               | vendored module with **no `go.sum` entry** for the coordinate its bytes are, or whose verified module zip is not held - integrity unconfirmed | `on_inconsistency` |
 
 `unverified` is deliberate: a vendored module with no checksum to verify
 against - or no held artefact to compare against - is **surfaced as
 uncertainty, never assumed clean** (the absence-as-answer defect class).
+
+## Replaced modules
+
+`go mod vendor` writes a replaced module's source under the **original** module
+path, recording the replacement only on the `modules.txt` heading:
+
+```
+# github.com/PaesslerAG/gval v1.2.1 => github.com/cortezaproject/gval v1.2.4
+```
+
+The directory is therefore named for a module whose bytes it does not hold. Each
+module is resolved through that clause before the `go.sum` lookup, so a replaced
+module is verified against the **replacement's** `h1` - the coordinate the build
+resolves, and the only one `go.sum` attests. Three outcomes, kept apart because
+they call for different actions:
+
+| Outcome | What it means | Reported as |
+|---|---|---|
+| replaced by a module `go.sum` attests | the vendored bytes were compared, file by file, against the replacement's verified zip | no finding; the module row carries `replacement_path` / `replacement_version`, and the text report names both coordinates |
+| replaced by a filesystem path (`=> ../fork`) | such a replacement publishes no module, so no checksum for it can exist anywhere | `unverified`, naming the path |
+| a checksum exists and the bytes disagree | tampering or an edited tree | `drift`, per file, naming the replacement's zip |
+
+A filesystem replacement never falls back to the original coordinate's `go.sum`
+line. A project that once required upstream keeps that line, and holding a fork's
+files to upstream's zip reports an intact tree as wholesale drift.
+
+The clean case is stated rather than left silent, because a report naming only
+`github.com/PaesslerAG/gval` would read as "upstream was verified":
+
+```
+replacements: 1 vendored module(s) hold another module's source
+  github.com/PaesslerAG/gval v1.2.1 => github.com/cortezaproject/gval v1.2.4 — 12 file(s) checked against the replacement's go.sum-verified zip
+```
+
+## How much was compared
+
+Every report states the number of files compared, in total and per module:
+
+```
+compared: 3355 file(s) across 133 of 133 module(s) against their published module zips
+```
+
+The count is the measurement's own size. "No drift across 133 modules" cannot be
+argued with until it says whether that was twelve files or twelve thousand, and a
+zero beside a clean status is a run that compared nothing. It is printed at zero
+rather than suppressed, and `files_compared` carries no `omitempty` in the JSON
+for the same reason.
 
 A module `modules.txt` names with **no package line under it** is not a finding.
 `go mod vendor` writes its heading and vendors no directory for it. It is
@@ -128,17 +175,23 @@ a no-op there, not a failure.
 Each finding is evaluated against the `vendor_policy` governance block
 (config schema v2). The default policy flags both **drift** and
 **inconsistency** (`warn`). When any finding resolves to `warn`, the command
-exits **20** (`ExitConfig`) - suitable as a CI gate.
+exits **5** (`ExitPolicy`) - suitable as a CI gate. A bad invocation, an
+unreadable policy file or a project with no `vendor/` tree exits **20**.
 
 ## Output
 
 `--json` emits the deterministic top-level `vendor` section
 (`schema_version`, `ecosystem`, `project`, `vendor_dir`, `vendor_only`,
-`overall_status`, `content_hash`, `modules[]`, `findings[]`). `ecosystem` is
+`overall_status`, `content_hash`, `files_compared`, `modules[]`, `findings[]`,
+`scope`). `ecosystem` is
 always `"go"` - it declares the schema's scope (kanonarion is fitted for Go),
-not a polyglot mode. Each module carries its reachability `dir` and the
-`expected_hash` its oracle zip was verified against; a `drift` finding carries
-the `file` it is about. There is deliberately no hash of the vendored tree:
+not a polyglot mode. Each module carries its reachability `dir`, its `files_compared` count, the
+`expected_hash` its oracle zip was verified against, and - when
+`vendor/modules.txt` names one - `replacement_path` and `replacement_version`;
+a `drift` finding carries the `file` it is about. `expected_hash` is the
+replacement's checksum for a replaced module, because that is what the bytes
+are, and it is absent for a filesystem replacement, which has no published
+artefact. There is deliberately no hash of the vendored tree:
 a pruned tree's whole-directory hash can never equal `expected_hash`, so
 reporting the pair asserted a mismatch that was an artefact of the
 measurement. The same section appears in

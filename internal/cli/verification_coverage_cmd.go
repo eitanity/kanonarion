@@ -24,6 +24,7 @@ import (
 // is covered by the same code: an audit leaves the project walk behind, so the
 // graph this reads is the graph the audit reported on.
 func newVerificationCoverageCmd(stdout, stderr io.Writer) *cobra.Command {
+	var detail bool
 	cmd := &cobra.Command{
 		Use:   "verification-coverage <walk-id>",
 		Short: "Report how a walk's modules were verified",
@@ -41,7 +42,17 @@ a policy narrower than the forges a graph resolves to all degrade a graph the
 same way, and a coverage figure catches all of them.
 
 With --json the aggregate is emitted under stable field names, so a CI gate can
-assert on cross_verified or collapsed directly.`,
+assert on cross_verified or collapsed directly, and every module is listed with
+its class and the reason recorded for it. --detail prints that per-module list on
+the text path: a count says how many modules are checksum-database-only, and the
+reason says whether that was a proxy without Origin metadata, a forge that could
+not be reached, or a skip flag left set — which is the answer a tampering
+question actually needs.
+
+Where the walk was taken from a project directory that is still present, the
+report also states whether that project is vendored, because coverage describes
+the modules the manifest resolved and a vendored project compiles the bytes under
+vendor/.`,
 		Example: `  kanonarion verification-coverage 01KQDBVW092ER1HNXZ60X27CMD
   kanonarion verification-coverage <walk-id> --json | jq -e '.collapsed | not'`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -54,9 +65,10 @@ assert on cross_verified or collapsed directly.`,
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runVerificationCoverage(cmd.Context(), args[0], ctr.QueryWalks, ctr.QueryFetch, stdout)
+			return runVerificationCoverage(cmd.Context(), args[0], ctr.QueryWalks, ctr.QueryFetch, detail, stdout)
 		},
 	}
+	cmd.Flags().BoolVar(&detail, "detail", false, "list every module with its verification class and the reason recorded for it")
 	return cmd
 }
 
@@ -69,6 +81,7 @@ func runVerificationCoverage(
 	walkID string,
 	walks QueryWalksUseCase,
 	records fetchRecordReader,
+	detail bool,
 	stdout io.Writer,
 ) error {
 	rec, err := walks.GetWalk(ctx, walkID)
@@ -85,12 +98,22 @@ func runVerificationCoverage(
 		return fmt.Errorf("getting walk: %w", err)
 	}
 
-	coverage := graphVerificationCoverage(ctx, rec.Graph.Nodes, records)
+	rows := graphVerificationRows(ctx, rec.Graph.Nodes, records)
+	obs := make([]fetchdomain.CoverageObservation, 0, len(rows))
+	for _, r := range rows {
+		obs = append(obs, r.observation)
+	}
+	coverage := fetchdomain.VerificationCoverageOf(obs)
+	// The walk's project directory is provenance, never an oracle: a tree that
+	// has moved or gone answers "unknown", which the disclosure states by saying
+	// nothing rather than by reporting a project as unvendored on the strength of
+	// a path that no longer resolves.
+	vendoring := detectBuildVendoringInDir(rec.ProjectDir)
 
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if encErr := enc.Encode(verificationCoverageJSON(rec.ID, coverage)); encErr != nil {
+		if encErr := enc.Encode(verificationCoverageJSON(rec.ID, coverage, rows, vendoring)); encErr != nil {
 			return fmt.Errorf("encoding coverage: %w", encErr)
 		}
 		return nil
@@ -99,7 +122,63 @@ func runVerificationCoverage(
 	if _, werr := fmt.Fprintf(stdout, "walk %s\n", rec.ID); werr != nil {
 		return fmt.Errorf("writing output: %w", werr)
 	}
-	return writeVerificationCoverage(stdout, coverage)
+	if verr := writeBuildVendoring(stdout, vendoring); verr != nil {
+		return verr
+	}
+	if err := writeVerificationCoverage(stdout, coverage); err != nil {
+		return err
+	}
+	if !detail {
+		return nil
+	}
+	return writeVerificationDetail(stdout, rows)
+}
+
+// writeVerificationDetail lists every module with its class and its recorded
+// reason. The rows keep the graph's order rather than being grouped by class:
+// the reader arrived with a module in mind at least as often as with a class,
+// and a stable order is what a diff between two runs needs.
+//
+// A module whose record recorded no reason says so in words rather than leaving
+// the column blank. A blank reads as "nothing to report", which is the opposite
+// of what an unrecorded basis means.
+func writeVerificationDetail(stdout io.Writer, rows []moduleVerification) error {
+	if len(rows) == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintf(stdout, "per-module verification (%d module(s)):\n", len(rows)); err != nil {
+		return fmt.Errorf("writing detail header: %w", err)
+	}
+	for _, r := range rows {
+		name := r.Coordinate
+		if r.OriginalCoordinate != "" {
+			name = r.Coordinate + " (replacing " + r.OriginalCoordinate + ")"
+		}
+		if _, err := fmt.Fprintf(stdout, "  %-36s %s\n    %s\n",
+			r.Class, name, verificationReasonLine(r)); err != nil {
+			return fmt.Errorf("writing detail row: %w", err)
+		}
+	}
+	return nil
+}
+
+// verificationReasonLine renders one module's recorded basis: the status the
+// record holds, and the prose it recorded beside it when it recorded any.
+//
+// A record with no status at all says so in words. Leaving the line blank would
+// read as "nothing to report", which is the opposite of what an unrecorded basis
+// means, and it is precisely the reading this whole surface exists to stop.
+func verificationReasonLine(r moduleVerification) string {
+	switch {
+	case r.Status == "" && r.Reason == "":
+		return "no verification status or reason is recorded for this module"
+	case r.Reason == "":
+		return "recorded status: " + r.Status
+	case r.Status == "":
+		return r.Reason
+	default:
+		return "recorded status: " + r.Status + " — " + r.Reason
+	}
 }
 
 // coverageJSON is the machine-readable coverage document.
@@ -139,6 +218,20 @@ type coverageJSON struct {
 	Collapsed bool `json:"collapsed"`
 
 	VCS coverageVCSJSON `json:"vcs"`
+
+	// Build states whether the project this walk was taken from compiles from a
+	// vendored tree — what the coverage figures are therefore about. Absent when
+	// the walk names no project directory, or names one that is no longer there:
+	// an unanswered question, which must not decode the same as a negative
+	// answer.
+	Build *buildVendoring `json:"build,omitempty"`
+
+	// Modules is every node with its class and the reason recorded for it. It is
+	// always present on the JSON path — the classes without their reasons is
+	// exactly the shape that sent readers to python3 over another command's
+	// output, and a flag to opt into being told why is a flag to opt into an
+	// answer that can be checked.
+	Modules []moduleVerification `json:"modules"`
 }
 
 // coverageVCSJSON is what the fetch ledger says, which the status cannot: not
@@ -156,8 +249,22 @@ type coverageVCSJSON struct {
 	NotMeasured int `json:"not_measured"`
 }
 
-func verificationCoverageJSON(walkID string, c fetchdomain.VerificationCoverage) coverageJSON {
+func verificationCoverageJSON(
+	walkID string,
+	c fetchdomain.VerificationCoverage,
+	rows []moduleVerification,
+	vendoring buildVendoring,
+) coverageJSON {
+	if rows == nil {
+		rows = []moduleVerification{}
+	}
+	var build *buildVendoring
+	if vendoring.Known {
+		build = &vendoring
+	}
 	return coverageJSON{
+		Build:           build,
+		Modules:         rows,
 		WalkID:          walkID,
 		Total:           c.Total,
 		Recorded:        c.Recorded(),

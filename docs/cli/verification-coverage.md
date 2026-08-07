@@ -38,7 +38,7 @@ anything.
 ## Usage
 
 ```
-kanonarion verification-coverage <walk-id> [--json]
+kanonarion verification-coverage <walk-id> [--detail] [--json]
 ```
 
 The walk id is one `kanonarion walk-list` prints. An `audit` run leaves its
@@ -65,6 +65,55 @@ for its own main module, which has no remote artefact to anchor.
 
 `collapsed` is `true` when a graph had something to cross-verify and none of it
 was. It is derived in the output so every gate agrees on what a collapse is.
+
+## Per-module class and reason
+
+A count says how many modules are `checksum_db_only`. It does not say whether
+that was a proxy stripping `Origin` metadata, a forge that could not be reached,
+or a `--skip-vcs-verify` left set in CI - which is the answer a tampering
+question actually needs.
+
+`--detail` prints every module with its class and the basis recorded for it:
+
+```
+per-module verification (128 module(s)):
+  checksum database only               go.uber.org/zap@v1.21.0
+    recorded status: VerifiedBySumDBOnly — resolving tag refs/tags/v1.21.0: ls-remote https://go.uber.org/zap: …
+  cross-verified (checksum db + VCS)   github.com/cortezaproject/gval@v1.2.4 (replacing github.com/PaesslerAG/gval@v1.2.1)
+    recorded status: Verified
+```
+
+The JSON always carries the list, under `modules[]`, whether or not `--detail`
+is given - the classes without their reasons is exactly the shape that sent
+readers to `python3` over another command's output. Each row carries
+`coordinate`, `path`, `version`, `class`, the recorded `status`, and `reason`
+where the record recorded one.
+
+Most records record a status and no prose: the detail is written when there is
+something worth saying, so its absence is not a gap. A row with neither says so
+in words rather than leaving a blank, which would read as "nothing to report".
+
+A replaced module is keyed on the coordinate the build resolved - the
+replacement, which is what its bytes are - and carries `original_coordinate` so
+it is findable under the name the manifest used.
+
+## Vendored builds
+
+Where the walk records a project directory that is still present, the report
+states whether that project is vendored:
+
+```
+vendored build:
+  …/vendor/modules.txt is present beside go.mod, so this project compiles the bytes under vendor/
+  this answer describes the modules the manifest resolves, not those bytes; `kanonarion vendor` is what measures the vendored tree
+```
+
+Coverage describes the modules the manifest resolved. A vendored project
+compiles `vendor/`, and `kanonarion vendor` is what measures those bytes. An
+unvendored project states nothing - there is no ambiguity to resolve. A walk of
+a published coordinate, or one whose project directory has since moved, also
+states nothing, and the JSON omits `build` entirely: an unanswered question must
+not decode the same as a negative answer.
 
 ## VCS evidence
 
