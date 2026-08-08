@@ -24,7 +24,7 @@ func TestExamplesListCmd_EmptyStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "no example records found") {
+	if !strings.Contains(stdout.String(), "the store holds no example record at all") {
 		t.Errorf("expected empty message, got: %q", stdout.String())
 	}
 }
@@ -84,7 +84,7 @@ func TestRunExamplesList_Empty(t *testing.T) {
 	if err := runExamplesList(context.Background(), 50, 0, uc, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(buf.String(), "no example records found") {
+	if !strings.Contains(buf.String(), "the store holds no example record at all") {
 		t.Errorf("expected empty message, got: %q", buf.String())
 	}
 }

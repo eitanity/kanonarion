@@ -356,6 +356,31 @@ func runExamplesFind(ctx context.Context, symbol string, jsonOut bool, uc QueryE
 	return conflictErr
 }
 
+// examplesListZeroScope lifts the paging and re-asks the store, so a zero says
+// whether the store holds no example record at all or the page starts past the
+// last one. This listing takes no filter — a module argument routes to the
+// single-module rendering, which fails with ExitNotFound — so the filter cause
+// cannot arise and the notice never claims it did. Reached only when the
+// listing came back empty.
+func examplesListZeroScope(ctx context.Context, offset int, uc QueryExamplesUseCase) (listZeroScope, error) {
+	all, err := uc.ListExampleRecords(ctx, ports.ExampleFilter{})
+	if err != nil {
+		return listZeroScope{}, fmt.Errorf("counting example records for the zero-result notice: %w", err)
+	}
+	scope := listZeroScope{
+		subject:    "example record",
+		considered: len(all),
+		produce:    "kanonarion examples <module>@<version>",
+		listAll:    "kanonarion examples-list",
+	}
+	// An empty corpus is not something a page can start past, so a zero over it
+	// keeps the store-empty statement and its produce-a-record remedy.
+	if len(all) > 0 && offset > 0 && offset >= len(all) {
+		scope.pagedPast = fmt.Sprintf("--offset %d starts past the last one", offset)
+	}
+	return scope, nil
+}
+
 // -- examples-list command --
 
 func newExamplesListCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -482,6 +507,14 @@ func runExamplesList(ctx context.Context, limit, offset int, uc QueryExamplesUse
 			if terr := writeListTruncationJSON(stderr, trunc); terr != nil {
 				return terr
 			}
+		} else {
+			scope, serr := examplesListZeroScope(ctx, offset, uc)
+			if serr != nil {
+				return serr
+			}
+			if zerr := writeListZeroNoticeJSON(stderr, scope); zerr != nil {
+				return zerr
+			}
 		}
 		if len(jsonConflicts) > 0 {
 			return fmt.Errorf("%d module(s) hold conflicting example records: %w",
@@ -490,10 +523,11 @@ func runExamplesList(ctx context.Context, limit, offset int, uc QueryExamplesUse
 		return nil
 	}
 	if len(sums) == 0 {
-		if _, err := fmt.Fprintln(stdout, "no example records found"); err != nil {
-			return fmt.Errorf("writing output: %w", err)
+		scope, serr := examplesListZeroScope(ctx, offset, uc)
+		if serr != nil {
+			return serr
 		}
-		return nil
+		return writeListZeroNotice(stdout, scope)
 	}
 	var conflicts []error
 	for _, s := range sums {

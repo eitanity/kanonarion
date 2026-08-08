@@ -21,6 +21,12 @@ type listZeroScope struct {
 	// subject names one record in the listing's corpus, singular: "call graph
 	// record", "scan run". Every sentence below is built around it.
 	subject string
+	// subjectPlural is the plural of subject, for the listings whose corpus is
+	// named rather than counted — "directive scans for example.com/proj" cannot
+	// be pluralised by appending "(s)" to the project path. Empty means the
+	// default "<subject>(s)", which is what every listing whose subject is a
+	// bare noun uses.
+	subjectPlural string
 	// filterName names the filter in the reader's terms — "module path", "walk
 	// id" — and filterValue is what they gave. Empty filterValue means the
 	// listing was unfiltered, and the zero is about the store, not the filter.
@@ -52,17 +58,44 @@ type listZeroScope struct {
 // "check the filter".
 func (s listZeroScope) storeEmpty() bool { return s.considered == 0 }
 
+// plural renders the subject in the plural the counting sentences need.
+func (s listZeroScope) plural() string {
+	if s.subjectPlural != "" {
+		return s.subjectPlural
+	}
+	return s.subject + "(s)"
+}
+
 // writeListZeroNotice states a zero-result listing's own scope on the text path.
 //
 // It is only ever reached with an empty result, so the extra store read that
 // fills `considered` is paid exactly when the alternative is a line the reader
 // cannot act on, and never on a listing that returned rows.
 func writeListZeroNotice(stdout io.Writer, s listZeroScope) error {
-	var line, remedyLabel, remedy string
+	line, remedyLabel, remedy := listZeroStatement(s)
+	if _, err := fmt.Fprintf(stdout, "%s\n  %s: %s\n", line, remedyLabel, remedy); err != nil {
+		return fmt.Errorf("writing zero-result notice: %w", err)
+	}
+	return nil
+}
+
+// listZeroLine is the same statement on one line, for the surfaces whose zero
+// is an error rather than an empty page: a single-record selector that matched
+// nothing returns a non-zero exit, and the message it carries is the only place
+// it can say what it searched. Sharing the wording with the listings is the
+// point — a reader who has seen one has seen both.
+func listZeroLine(s listZeroScope) string {
+	line, remedyLabel, remedy := listZeroStatement(s)
+	return fmt.Sprintf("%s; %s: %s", line, remedyLabel, remedy)
+}
+
+// listZeroStatement renders the prose halves of the notice: what was looked at,
+// and the invocation that changes the answer.
+func listZeroStatement(s listZeroScope) (line, remedyLabel, remedy string) {
 	switch {
 	case s.pagedPast != "":
-		line = fmt.Sprintf("no %s on this page — the store holds %d %s(s), and %s",
-			s.subject, s.considered, s.subject, s.pagedPast)
+		line = fmt.Sprintf("no %s on this page — the store holds %d %s, and %s",
+			s.subject, s.considered, s.plural(), s.pagedPast)
 		remedyLabel, remedy = "to list from the start", s.listAll
 	case s.storeEmpty() && s.filterValue == "":
 		line = fmt.Sprintf("the store holds no %s at all", s.subject)
@@ -72,8 +105,8 @@ func writeListZeroNotice(stdout io.Writer, s listZeroScope) error {
 			s.subject, s.filterName, s.filterValue)
 		remedyLabel, remedy = "to produce one", s.produce
 	case s.filterValue != "":
-		line = fmt.Sprintf("no %s matched %s %q — the value is compared %s against the %s of all %d %s(s) in the store",
-			s.subject, s.filterName, s.filterValue, s.matchKind, s.field, s.considered, s.subject)
+		line = fmt.Sprintf("no %s matched %s %q — the value is compared %s against the %s of all %d %s in the store",
+			s.subject, s.filterName, s.filterValue, s.matchKind, s.field, s.considered, s.plural())
 		if s.example != "" {
 			line += fmt.Sprintf(" (e.g. %s)", s.example)
 		}
@@ -82,14 +115,11 @@ func writeListZeroNotice(stdout io.Writer, s listZeroScope) error {
 		// An unfiltered listing that returned nothing over a non-empty corpus.
 		// Nothing in this command explains it, so the line says exactly that
 		// rather than borrowing one of the explanations above.
-		line = fmt.Sprintf("no %s was returned, though the store holds %d %s(s)",
-			s.subject, s.considered, s.subject)
+		line = fmt.Sprintf("no %s was returned, though the store holds %d %s",
+			s.subject, s.considered, s.plural())
 		remedyLabel, remedy = fmt.Sprintf("to list every %s", s.subject), s.listAll
 	}
-	if _, err := fmt.Fprintf(stdout, "%s\n  %s: %s\n", line, remedyLabel, remedy); err != nil {
-		return fmt.Errorf("writing zero-result notice: %w", err)
-	}
-	return nil
+	return line, remedyLabel, remedy
 }
 
 // listZeroFilterJSON carries the filter half of the statement.
@@ -149,4 +179,9 @@ func writeListZeroNoticeJSON(stderr io.Writer, s listZeroScope) error {
 const (
 	matchExact     = "for exact equality"
 	matchSubstring = "as a case-insensitive substring"
+	// matchLowerBound phrases a range filter: --since keeps every record at or
+	// after an instant rather than one that equals it, and a reader told their
+	// value was compared "for exact equality" would go and check a timestamp
+	// that was never required to match.
+	matchLowerBound = "as a lower bound"
 )

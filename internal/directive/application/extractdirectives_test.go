@@ -40,6 +40,13 @@ func (s *fakeStore) ListScans(context.Context, string, int, int) ([]domain.Recor
 	return []domain.Record{*s.put}, nil
 }
 
+func (s *fakeStore) CountScans(context.Context) (int, error) {
+	if s.put == nil {
+		return 0, nil
+	}
+	return 1, nil
+}
+
 type fakeSink struct{ events []audit.Event }
 
 func (s *fakeSink) RecordEvent(e audit.Event) error {

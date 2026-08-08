@@ -117,6 +117,9 @@ type DiffLicenseUseCase interface {
 type QueryDirectivesUseCase interface {
 	GetScan(ctx context.Context, scanID string) (directivedomain.Record, bool, error)
 	ListScans(ctx context.Context, projectModulePath string, limit, offset int) ([]directivedomain.Record, error)
+	// CountScans sizes the whole store, which ListScans cannot: it is keyed on
+	// a project, so an empty page can only speak for that project's history.
+	CountScans(ctx context.Context) (int, error)
 }
 
 // DiffDirectivesUseCase is the interface for diffing two directive scans.

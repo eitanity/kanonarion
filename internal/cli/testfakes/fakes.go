@@ -99,6 +99,10 @@ func (f *FakeExecuteWalk) Execute(_ context.Context, req walkapp.WalkRequest) (w
 
 // FakeQueryWalks implements cli.QueryWalksUseCase.
 type FakeQueryWalks struct {
+	// ListCalls counts calls to this fake's listing method, so a test can
+	// assert that a listing which returned rows read the store exactly once and
+	// did not also pay the survey read the zero-result notice needs.
+	ListCalls int
 	mu        sync.Mutex
 	walks     map[string]walkdomain.WalkRecord
 	summaries []walkports.WalkSummary
@@ -141,6 +145,7 @@ func (f *FakeQueryWalks) ListWalks(_ context.Context, filter walkports.WalkFilte
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.ListCalls++
 	out := f.summaries
 	if filter.Scope != nil {
 		var filtered []walkports.WalkSummary
@@ -219,10 +224,14 @@ func (f *FakeExtract) Execute(_ context.Context, req extractapp.ExtractRequest) 
 
 // FakeQueryExtraction implements cli.QueryExtractionUseCase.
 type FakeQueryExtraction struct {
-	mu   sync.Mutex
-	runs map[string]extractdomain.ExtractionRun
-	list []extractports.ExtractionRunSummary
-	Err  error
+	// ListCalls counts calls to this fake's listing method, so a test can
+	// assert that a listing which returned rows read the store exactly once and
+	// did not also pay the survey read the zero-result notice needs.
+	ListCalls int
+	mu        sync.Mutex
+	runs      map[string]extractdomain.ExtractionRun
+	list      []extractports.ExtractionRunSummary
+	Err       error
 }
 
 func NewFakeQueryExtraction() *FakeQueryExtraction {
@@ -261,6 +270,7 @@ func (f *FakeQueryExtraction) ListExtractionRuns(_ context.Context, filter extra
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.ListCalls++
 	out := f.list
 	if filter.Offset > 0 {
 		if filter.Offset >= len(out) {
@@ -292,6 +302,10 @@ func (f *FakeExtractLicense) GetLicenseStore() licenseports.LicenseStore {
 
 // FakeQueryLicense implements cli.QueryLicenseUseCase.
 type FakeQueryLicense struct {
+	// ListCalls counts calls to this fake's listing method, so a test can
+	// assert that a listing which returned rows read the store exactly once and
+	// did not also pay the survey read the zero-result notice needs.
+	ListCalls     int
 	mu            sync.Mutex
 	records       map[string]licensedomain.LicenseRecord
 	history       map[string][]licensedomain.LicenseRecord
@@ -360,6 +374,7 @@ func (f *FakeQueryLicense) ListLicenseRecords(_ context.Context, filter licensep
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.ListCalls++
 	// nil, not an empty slice, when nothing matches, as the adapter does.
 	var out []licenseports.LicenseSummary
 	for _, s := range f.list {
@@ -438,6 +453,16 @@ type FakeQueryDirectives struct {
 	Scans   []directivedomain.Record
 	GetErr  error
 	ListErr error
+	// StoreScans is how many scans the whole store holds, across every project.
+	// Zero means "the same as Scans": the common fixture has one project and no
+	// reason to distinguish the two, and a fixture that wants a store holding
+	// scans for OTHER projects sets it explicitly.
+	StoreScans int
+	CountErr   error
+	// ListCalls counts calls to ListScans, so a test can assert that a listing
+	// which returned rows read the store once and did not also pay the
+	// zero-result survey.
+	ListCalls int
 }
 
 func (f *FakeQueryDirectives) GetScan(_ context.Context, _ string) (directivedomain.Record, bool, error) {
@@ -448,6 +473,7 @@ func (f *FakeQueryDirectives) GetScan(_ context.Context, _ string) (directivedom
 }
 
 func (f *FakeQueryDirectives) ListScans(_ context.Context, _ string, limit, offset int) ([]directivedomain.Record, error) {
+	f.ListCalls++
 	if f.ListErr != nil {
 		return nil, f.ListErr
 	}
@@ -464,6 +490,16 @@ func (f *FakeQueryDirectives) ListScans(_ context.Context, _ string, limit, offs
 		out = out[:limit]
 	}
 	return out, nil
+}
+
+func (f *FakeQueryDirectives) CountScans(context.Context) (int, error) {
+	if f.CountErr != nil {
+		return 0, f.CountErr
+	}
+	if f.StoreScans > 0 {
+		return f.StoreScans, nil
+	}
+	return len(f.Scans), nil
 }
 
 // FakeDiffDirectives implements cli.DiffDirectivesUseCase.
@@ -490,12 +526,16 @@ func (f *FakeExtractInterface) Execute(_ context.Context, _ ifaceapp.ExtractRequ
 
 // FakeQueryInterface implements cli.QueryInterfaceUseCase.
 type FakeQueryInterface struct {
-	mu      sync.Mutex
-	records map[string]ifacedomain.InterfaceRecord
-	history map[string][]ifacedomain.InterfaceRecord
-	list    []ifaceports.InterfaceSummary
-	symbols []ifaceports.SymbolRef
-	Err     error
+	// ListCalls counts calls to this fake's listing method, so a test can
+	// assert that a listing which returned rows read the store exactly once and
+	// did not also pay the survey read the zero-result notice needs.
+	ListCalls int
+	mu        sync.Mutex
+	records   map[string]ifacedomain.InterfaceRecord
+	history   map[string][]ifacedomain.InterfaceRecord
+	list      []ifaceports.InterfaceSummary
+	symbols   []ifaceports.SymbolRef
+	Err       error
 }
 
 func NewFakeQueryInterface() *FakeQueryInterface {
@@ -552,6 +592,7 @@ func (f *FakeQueryInterface) ListInterfaceRecords(_ context.Context, filter ifac
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.ListCalls++
 	// Paging is honoured as the adapter honours it. A fake that ignored the
 	// limit could not fail a listing that mis-states how much it withheld.
 	out := f.list
@@ -599,6 +640,10 @@ func (f *FakeExtractCallGraph) Execute(_ context.Context, _ cgapp.ExtractRequest
 
 // FakeQueryCallGraph implements cli.QueryCallGraphUseCase.
 type FakeQueryCallGraph struct {
+	// ListCalls counts calls to this fake's listing method, so a test can
+	// assert that a listing which returned rows read the store exactly once and
+	// did not also pay the survey read the zero-result notice needs.
+	ListCalls           int
 	mu                  sync.Mutex
 	records             map[string]cgdomain.CallGraphRecord
 	list                []cgports.CallGraphSummary
@@ -706,6 +751,7 @@ func (f *FakeQueryCallGraph) ListCallGraphRecords(_ context.Context, filter cgpo
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.ListCalls++
 	// nil, not an empty slice, when nothing matches: the store's own adapter
 	// returns nil and every caller is written against that.
 	var out []cgports.CallGraphSummary
@@ -838,12 +884,16 @@ func (f *FakeExtractExample) Execute(_ context.Context, _ exapp.ExtractRequest) 
 
 // FakeQueryExamples implements cli.QueryExamplesUseCase.
 type FakeQueryExamples struct {
-	mu      sync.Mutex
-	records map[string]exdomain.ExampleRecord
-	history map[string][]exdomain.ExampleRecord
-	list    []exports.ExampleSummary
-	refs    []exports.ExampleRef
-	Err     error
+	// ListCalls counts calls to this fake's listing method, so a test can
+	// assert that a listing which returned rows read the store exactly once and
+	// did not also pay the survey read the zero-result notice needs.
+	ListCalls int
+	mu        sync.Mutex
+	records   map[string]exdomain.ExampleRecord
+	history   map[string][]exdomain.ExampleRecord
+	list      []exports.ExampleSummary
+	refs      []exports.ExampleRef
+	Err       error
 }
 
 func NewFakeQueryExamples() *FakeQueryExamples {
@@ -903,6 +953,7 @@ func (f *FakeQueryExamples) ListExampleRecords(_ context.Context, filter exports
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.ListCalls++
 	out := f.list
 	if filter.Offset > 0 {
 		if filter.Offset >= len(out) {
@@ -1252,6 +1303,10 @@ func (f *FakeQueryVuln) ListRecordsByFindingID(_ context.Context, _, walkID stri
 
 // FakeQueryScanRuns implements cli.QueryScanRunsUseCase.
 type FakeQueryScanRuns struct {
+	// ListCalls counts calls to this fake's listing method, so a test can
+	// assert that a listing which returned rows read the store exactly once and
+	// did not also pay the survey read the zero-result notice needs.
+	ListCalls int
 	mu        sync.Mutex
 	runs      map[string]vulndomain.WalkScanRun
 	allRuns   []vulndomain.WalkScanRun
@@ -1341,6 +1396,7 @@ func (f *FakeQueryScanRuns) GetRun(_ context.Context, id string) (vulndomain.Wal
 func (f *FakeQueryScanRuns) ListRunsForWalk(_ context.Context, walkID string) ([]vulndomain.WalkScanRun, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.ListCalls++
 	var out []vulndomain.WalkScanRun
 	for _, r := range f.allRuns {
 		if r.WalkID == walkID {
@@ -1355,6 +1411,7 @@ func (f *FakeQueryScanRuns) ListRunsForWalk(_ context.Context, walkID string) ([
 func (f *FakeQueryScanRuns) ListAllRuns(_ context.Context) ([]vulndomain.WalkScanRun, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
+	f.ListCalls++
 	return f.allRuns, f.ListErr
 }
 

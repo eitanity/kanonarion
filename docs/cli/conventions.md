@@ -191,12 +191,42 @@ type. The same statement is emitted on **stderr** as a single JSON object:
 {"subject":"call graph record","filter":{"name":"module path","value":"no-such-module","compared_against":"module path, compared for exact equality"},"records_considered":312,"store_empty":false,"paged_past":false,"remedy":["kanonarion callgraph-list"]}
 ```
 
-A listing that returned rows prints no such statement, on either channel.
+A listing that returned rows prints no such statement, on either channel, and
+performs no extra store read to decide that: the survey that sizes the corpus is
+reached only once the page has come back empty.
 
-This applies to `callgraph-list`, `vuln-scan-list`, `licence-list`/`license-list`
-and `sbom-list`. `interface-list` and `examples-list` take a module coordinate
-rather than a filter and already refuse an absent one by name, with a remedy and
-a non-zero exit.
+The same statement answers a **single-record selector** that matched nothing —
+`walk-list --walk-id`, `walk-list --latest-success`, `directives show`,
+`vuln-snapshot-show`. Those exit `4` and carry the statement on the error rather
+than on stdout, on one line, so the data channel stays the data channel; under
+`--json` the object is emitted on stderr as well.
+
+This applies to every record listing: `callgraph-list`, `vuln-scan-list`,
+`licence-list`/`license-list`, `sbom-list`, `interface-list`, `examples-list`,
+`walk-list`, `extract list`, `directives list` and `vuln-snapshot-list`.
+
+`interface-list`, `examples-list` and `extract list` take no filter, so only the
+empty-store and the paged-past causes can arise on them. Given a module
+coordinate, `interface-list` and `examples-list` render that one module instead
+of listing, and an absent record is refused by name with a remedy and a non-zero
+exit rather than answered with a zero-result notice.
+
+`vuln-snapshot-list` takes neither a filter nor a `--limit`, so it has exactly
+one cause it can have and states that one: the store holds no snapshot. It does
+not offer a paging remedy, because it cannot page.
+
+`directives list` reports one project, and which of the two remaining causes it
+names follows from that project's own scan count. With scans for the project,
+the project is the corpus and paging is the only remaining explanation, so the
+notice names the project in the subject and counts its history. With none, the
+project is what excluded them: it moves into the filter slot and the count
+becomes the whole store's, so "the store holds no directive scan at all" is said
+only when that is what was measured. There is no store-wide directive listing —
+every read is keyed on a project — so the remedy names the `--project` slot.
+
+`store ledger` is not a record listing and states its scope its own way: a
+coverage line, the `matched` count over the whole window, and how many events
+the offset stepped over.
 
 ---
 

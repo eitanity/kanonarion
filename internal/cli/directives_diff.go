@@ -166,14 +166,21 @@ func directivesListWith(ctx context.Context, ctr *Container, project string, lim
 			return fmt.Errorf("encoding scans: %w", err)
 		}
 		if len(out) == 0 {
-			return nil
+			scope, serr := directivesListZeroScope(ctx, ctr, project, offset)
+			if serr != nil {
+				return serr
+			}
+			return writeListZeroNoticeJSON(stderr, scope)
 		}
 		return writeListTruncationJSON(stderr, trunc)
 	}
 
 	if len(scans) == 0 {
-		_, _ = fmt.Fprintf(stdout, "no directive scans for %s\n", project)
-		return nil
+		scope, serr := directivesListZeroScope(ctx, ctr, project, offset)
+		if serr != nil {
+			return serr
+		}
+		return writeListZeroNotice(stdout, scope)
 	}
 
 	tw := tabwriter.NewWriter(stdout, 0, 2, 2, ' ', 0)
@@ -190,6 +197,108 @@ func directivesListWith(ctx context.Context, ctr *Container, project string, lim
 		return fmt.Errorf("flushing output: %w", err)
 	}
 	return writeListTruncationNotice(stdout, trunc)
+}
+
+// directivesListZeroScope lifts the paging and re-asks the store, and then asks
+// the store how many scans it holds in total, so a zero says which of the three
+// things happened: the project has scans and the page starts past its last one,
+// the project has none while other projects do, or nothing has ever been
+// scanned.
+//
+// Two reads, because one cannot answer both halves. ListScans is keyed on the
+// project — it is mandatory, inferred from go.mod when it is not passed — so it
+// can only ever size that project's own history; a caller who mistyped the path
+// and one whose project has genuinely never been scanned get the same rows from
+// it. CountScans is the store-wide half, and putting the project in the filter
+// slot without it would report the whole store empty on one project's evidence.
+//
+// Which framing the notice takes follows from the project's own count. With
+// scans for the project, the project IS the corpus and paging is the only
+// remaining cause, so the subject names it and the count is its own. With none,
+// the project is exactly what excluded them, so it moves to the filter slot and
+// the count becomes the store's — which is what lets the sentence say "the store
+// holds no directive scan at all" only when that is what was measured.
+//
+// Reached only when the listing came back empty.
+func directivesListZeroScope(ctx context.Context, ctr *Container, project string, offset int) (listZeroScope, error) {
+	all, err := ctr.QueryDirectives.ListScans(ctx, project, 0, 0)
+	if err != nil {
+		return listZeroScope{}, fmt.Errorf("counting directive scans for the zero-result notice: %w", err)
+	}
+	if len(all) > 0 {
+		scope := listZeroScope{
+			subject:       "directive scan for " + project,
+			subjectPlural: "directive scans for " + project,
+			considered:    len(all),
+			produce:       "kanonarion directives",
+			// The project is named in the remedy, not left to inference: a bare
+			// "directives list" re-infers the project from the working tree's
+			// go.mod, which is not necessarily the one the reader asked about,
+			// so the invocation offered has to be the one that reproduces this
+			// query from the start.
+			listAll: "kanonarion directives list --project " + project,
+		}
+		// An offset past the end empties the page while the project has scans,
+		// and the two are the same zero rows from the caller's side.
+		if offset > 0 && offset >= len(all) {
+			scope.pagedPast = fmt.Sprintf("--offset %d starts past the last one", offset)
+		}
+		return scope, nil
+	}
+	total, cerr := ctr.QueryDirectives.CountScans(ctx)
+	if cerr != nil {
+		return listZeroScope{}, fmt.Errorf("counting directive scans across the store for the zero-result notice: %w", cerr)
+	}
+	// An empty corpus is not something a page can start past, so no offset the
+	// caller passed is offered as the explanation here: the store-empty and
+	// no-scans-for-this-project statements both keep their own remedy.
+	return listZeroScope{
+		subject:     "directive scan",
+		filterName:  "project",
+		filterValue: project,
+		field:       "project module path",
+		matchKind:   matchExact,
+		considered:  total,
+		produce:     "kanonarion directives",
+		// This CLI has no store-wide directive listing — every read is keyed on
+		// a project — so the remedy names the project slot rather than claiming
+		// an unfiltered invocation that does not exist. A caller whose project
+		// has no scans over a store that holds some has mistyped it or is
+		// standing in the wrong tree, and naming the right one is what they do
+		// next.
+		listAll: "kanonarion directives list --project <module-path>",
+	}, nil
+}
+
+// directiveScanMiss answers a `directives show` that named a scan the store
+// does not hold.
+//
+// The same statement the listing makes, for the same reason: "directive scan
+// not found: X" reads as "this store has never been scanned" whether the store
+// holds nothing or holds seventy, and the two have different remedies. The
+// count is the store-wide one, because a scan id is not keyed on a project —
+// the caller's project is not what excluded it.
+func directiveScanMiss(ctx context.Context, ctr *Container, scanID string, stderr io.Writer) error {
+	total, err := ctr.QueryDirectives.CountScans(ctx)
+	if err != nil {
+		return fmt.Errorf("counting directive scans for the not-found notice: %w", err)
+	}
+	scope := listZeroScope{
+		subject:     "directive scan",
+		filterName:  "scan id",
+		filterValue: scanID,
+		field:       "scan id",
+		matchKind:   matchExact,
+		considered:  total,
+		produce:     "kanonarion directives",
+		listAll:     "kanonarion directives list --project <module-path>",
+	}
+	if jsonOut {
+		if werr := writeListZeroNoticeJSON(stderr, scope); werr != nil {
+			return werr
+		}
+	}
+	return &exitError{code: ExitNotFound, msg: listZeroLine(scope)}
 }
 
 func newDirectivesShowCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -212,20 +321,20 @@ func runDirectivesShow(ctx context.Context, scanID string, stdout, stderr io.Wri
 	}
 	defer func() { _ = cleanup() }()
 
-	return directivesShowWith(ctx, ctr, scanID, stdout)
+	return directivesShowWith(ctx, ctr, scanID, stdout, stderr)
 }
 
 // directivesShowWith holds the directives-show logic over an injected
 // Container: a missing scan is surfaced as ExitNotFound (never an empty
 // success), otherwise the scan is rendered. Split from runDirectivesShow so the
 // not-found contract is testable without a live store.
-func directivesShowWith(ctx context.Context, ctr *Container, scanID string, stdout io.Writer) error {
+func directivesShowWith(ctx context.Context, ctr *Container, scanID string, stdout, stderr io.Writer) error {
 	rec, found, err := ctr.QueryDirectives.GetScan(ctx, scanID)
 	if err != nil {
 		return fmt.Errorf("loading directive scan: %w", err)
 	}
 	if !found {
-		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("directive scan not found: %s", scanID)}
+		return directiveScanMiss(ctx, ctr, scanID, stderr)
 	}
 	section := toDirectivesSection(rec)
 

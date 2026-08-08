@@ -98,7 +98,7 @@ func TestInterfaceList_EmptyStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "no interface records found") {
+	if !strings.Contains(stdout.String(), "the store holds no interface record at all") {
 		t.Errorf("expected empty message, got: %q", stdout.String())
 	}
 }

@@ -43,6 +43,11 @@ type listingSurface struct {
 	run func(t *testing.T, limit, offset int, asJSON bool) (string, string)
 	// rows counts the records the JSON payload carried.
 	rows func(t *testing.T, stdout string) int
+	// listCalls reads how many times the run just made asked the store for its
+	// rows. The zero-result notice re-lists the corpus unfiltered to size it,
+	// and that read is correct only because it is unreachable when rows came
+	// back; nothing but a count of the reads can hold that.
+	listCalls func() int
 }
 
 func mustCoord(t *testing.T, path, version string) coordinate.ModuleCoordinate {
@@ -88,6 +93,7 @@ func licenseSurface() listingSurface {
 	uc.SetList(sums)
 	return listingSurface{
 		name: "license-list", population: truncPopulation, subject: "license records",
+		listCalls: func() int { return uc.ListCalls },
 		run: func(t *testing.T, limit, offset int, asJSON bool) (string, string) {
 			t.Helper()
 			withJSON(t, asJSON)
@@ -113,6 +119,7 @@ func interfaceSurface() listingSurface {
 	uc.SetList(sums)
 	return listingSurface{
 		name: "interface-list", population: truncPopulation, subject: "interface records",
+		listCalls: func() int { return uc.ListCalls },
 		run: func(t *testing.T, limit, offset int, asJSON bool) (string, string) {
 			t.Helper()
 			withJSON(t, asJSON)
@@ -137,6 +144,7 @@ func examplesSurface() listingSurface {
 	uc.SetList(sums)
 	return listingSurface{
 		name: "examples-list", population: truncPopulation, subject: "example records",
+		listCalls: func() int { return uc.ListCalls },
 		run: func(t *testing.T, limit, offset int, asJSON bool) (string, string) {
 			t.Helper()
 			withJSON(t, asJSON)
@@ -162,6 +170,7 @@ func callGraphSurface() listingSurface {
 	uc.SetList(sums)
 	return listingSurface{
 		name: "callgraph-list", population: truncPopulation, subject: "call graph records",
+		listCalls: func() int { return uc.ListCalls },
 		run: func(t *testing.T, limit, offset int, asJSON bool) (string, string) {
 			t.Helper()
 			withJSON(t, asJSON)
@@ -186,6 +195,7 @@ func vulnScanSurface() listingSurface {
 	}
 	return listingSurface{
 		name: "vuln-scan-list", population: truncPopulation, subject: "scan runs",
+		listCalls: func() int { return uc.ListCalls },
 		run: func(t *testing.T, limit, offset int, asJSON bool) (string, string) {
 			t.Helper()
 			withJSON(t, asJSON)
@@ -215,6 +225,7 @@ func walkSurface(t *testing.T) listingSurface {
 	uc.SetSummaries(sums)
 	return listingSurface{
 		name: "walk-list", population: truncPopulation, subject: "walk records",
+		listCalls: func() int { return uc.ListCalls },
 		run: func(t *testing.T, limit, offset int, asJSON bool) (string, string) {
 			t.Helper()
 			withJSON(t, asJSON)
@@ -241,6 +252,7 @@ func extractSurface() listingSurface {
 	uc.SetList(sums)
 	return listingSurface{
 		name: "extract list", population: truncPopulation, subject: "extraction runs",
+		listCalls: func() int { return uc.ListCalls },
 		run: func(t *testing.T, limit, offset int, asJSON bool) (string, string) {
 			t.Helper()
 			withJSON(t, asJSON)
@@ -263,9 +275,11 @@ func directivesSurface() listingSurface {
 			ContentHash: "sha256:abc", PipelineVersion: "dir-1",
 		})
 	}
-	ctr := &Container{QueryDirectives: &testfakes.FakeQueryDirectives{Scans: scans}}
+	uc := &testfakes.FakeQueryDirectives{Scans: scans}
+	ctr := &Container{QueryDirectives: uc}
 	return listingSurface{
 		name: "directives list", population: truncPopulation, subject: "directive scans",
+		listCalls: func() int { return uc.ListCalls },
 		run: func(t *testing.T, limit, offset int, asJSON bool) (string, string) {
 			t.Helper()
 			withJSON(t, asJSON)

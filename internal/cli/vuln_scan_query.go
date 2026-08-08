@@ -177,7 +177,9 @@ func scanListZeroScope(ctx context.Context, walkID string, offset int, uc QueryS
 	}
 	// An offset past the end empties the page without the filter having anything
 	// to do with it, and the two look identical from the rows alone.
-	if walkID == "" && offset > 0 && offset >= len(all) {
+	// An empty corpus is not something a page can start past, so a zero over it
+	// keeps the store-empty statement and its produce-a-record remedy.
+	if walkID == "" && len(all) > 0 && offset > 0 && offset >= len(all) {
 		scope.pagedPast = fmt.Sprintf("--offset %d starts past the last one", offset)
 	}
 	return scope, nil

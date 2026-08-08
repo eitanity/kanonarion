@@ -201,6 +201,21 @@ ORDER BY completed_at DESC, scan_id DESC`
 	return out, nil
 }
 
+// CountScans returns how many scans this pipeline version holds across every
+// project.
+//
+// The pipeline-version predicate is ListScans's, for the same reason: a count
+// that included scans this binary cannot decode would size a corpus the listing
+// can never return a row from.
+func (s *Store) CountScans(ctx context.Context) (int, error) {
+	const q = `SELECT COUNT(*) FROM directive_scans WHERE pipeline_version = ?`
+	var n int
+	if err := s.db.DB().QueryRowContext(ctx, q, domain.PipelineVersion).Scan(&n); err != nil {
+		return 0, fmt.Errorf("counting directive scans: %w", err)
+	}
+	return n, nil
+}
+
 func scanOneRecord(row *sql.Row) (domain.Record, bool, error) {
 	var scanID, completedAt string
 	var blob []byte

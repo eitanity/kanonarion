@@ -81,6 +81,24 @@ func TestExitCodeContract_MissingRecordIsNotFound(t *testing.T) {
 			return runWalkList(context.Background(), "", "", "", "", missingWalk, 0, 0, false, false,
 				emptyWalks(), &bytes.Buffer{}, &bytes.Buffer{})
 		}},
+		// --latest-success names one record too — the most recent succeeded
+		// walk — and answered its absence with a bare error that landed on the
+		// invocation-error catch-all. Nothing was malformed about the request:
+		// the record it selects is not there, which is the same class as every
+		// other selector above.
+		{"walk-list --latest-success", ExitNotFound, func(t *testing.T) error {
+			return runWalkList(context.Background(), "", "", "succeeded", "", "", 1, 0, false, true,
+				emptyWalks(), &bytes.Buffer{}, &bytes.Buffer{})
+		}},
+		{"directives show", ExitNotFound, func(t *testing.T) error {
+			return directivesShowWith(context.Background(),
+				&Container{QueryDirectives: &testfakes.FakeQueryDirectives{}}, "missing-scan",
+				&bytes.Buffer{}, &bytes.Buffer{})
+		}},
+		{"vuln-snapshot-show", ExitNotFound, func(t *testing.T) error {
+			return runSnapshotShow(context.Background(), "govulndb", "v9999-01-01T00-00-00", false,
+				testfakes.NewFakeQueryScanRuns(), &bytes.Buffer{}, &bytes.Buffer{})
+		}},
 		{"vuln-show --walk-id (walk never scanned)", ExitNotFound, func(t *testing.T) error {
 			return runVulnShow(context.Background(), coord.String(), missingWalk, "", false, false, false,
 				testfakes.NewFakeQueryVuln(), testfakes.NewFakeQueryScanRuns(), emptyWalks(), nil, &bytes.Buffer{})

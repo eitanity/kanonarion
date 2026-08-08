@@ -48,3 +48,14 @@ func (uc *QueryDirectivesUseCase) ListScans(ctx context.Context, projectModulePa
 	}
 	return scans, nil
 }
+
+// CountScans returns how many scans the store holds across every project, so a
+// caller whose project has none can be told whether anything has ever been
+// scanned.
+func (uc *QueryDirectivesUseCase) CountScans(ctx context.Context) (int, error) {
+	n, err := uc.store.CountScans(ctx)
+	if err != nil {
+		return 0, fmt.Errorf("counting directive scans: %w", err)
+	}
+	return n, nil
+}

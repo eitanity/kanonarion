@@ -1071,6 +1071,18 @@ vuln.go.dev                    20240115000000       2024-01-15T00:00:00Z
 vuln.go.dev                    20240101000000       2024-01-01T00:00:00Z
 ```
 
+This command takes no filter and no `--limit`, so an empty answer has exactly one
+cause and says it:
+
+```
+$ kanonarion vuln-snapshot-list
+the store holds no vulnerability database snapshot at all
+  to produce one: kanonarion vuln-scan <walk-id>
+```
+
+A snapshot is pinned by the scan that judged a walk against it; there is no
+command whose job is to fetch one on its own.
+
 ---
 
 ### `vuln-snapshot-show`
@@ -1096,6 +1108,17 @@ Source:       vuln.go.dev
 Version:      20240115000000
 Retrieved at: 2024-01-15T00:00:00Z
 Content hash: sha256:abc123...
+```
+
+A snapshot that is not there exits `4` and the message says how many snapshots
+were searched, so an unrecognised version over a stocked store cannot be read as
+an empty one:
+
+```
+no vulnerability database snapshot matched source and version "vuln.go.dev@20991231000000" — the value is
+compared for exact equality against the source and version of all 2 vulnerability database snapshot(s) in
+the store (e.g. vuln.go.dev@20240115000000); to list every vulnerability database snapshot: kanonarion
+vuln-snapshot-list
 ```
 
 ---

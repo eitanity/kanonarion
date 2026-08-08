@@ -227,9 +227,23 @@ func runExtractList(ctx context.Context, limit, offset int, uc QueryExtractionUs
 			return fmt.Errorf("encoding JSON: %w", encErr)
 		}
 		if len(out) == 0 {
-			return nil
+			scope, serr := extractListZeroScope(ctx, offset, uc)
+			if serr != nil {
+				return serr
+			}
+			return writeListZeroNoticeJSON(stderr, scope)
 		}
 		return writeListTruncationJSON(stderr, trunc)
+	}
+
+	// The notice replaces the header rather than following it: a table with no
+	// rows under it is not a short answer, it is no answer at all.
+	if len(runs) == 0 {
+		scope, serr := extractListZeroScope(ctx, offset, uc)
+		if serr != nil {
+			return serr
+		}
+		return writeListZeroNotice(stdout, scope)
 	}
 
 	_, _ = fmt.Fprintf(stdout, "%-26s %-26s %-10s %-12s %s\n", "RUN ID", "WALK ID", "STATUS", "MODULES", "STARTED")
@@ -238,4 +252,27 @@ func runExtractList(ctx context.Context, limit, offset int, uc QueryExtractionUs
 			r.ID, r.WalkID, r.OverallStatus, r.ModuleCount, r.StartedAt.Format(time.RFC3339))
 	}
 	return writeListTruncationNotice(stdout, trunc)
+}
+
+// extractListZeroScope lifts the paging and re-asks the store, so a zero says
+// whether the store holds no extraction run at all or the page starts past the
+// last one. This listing takes no filter, so the filter cause cannot arise and
+// the notice never claims it did. Reached only when the listing came back empty.
+func extractListZeroScope(ctx context.Context, offset int, uc QueryExtractionUseCase) (listZeroScope, error) {
+	all, err := uc.ListExtractionRuns(ctx, ports.ExtractionRunFilter{})
+	if err != nil {
+		return listZeroScope{}, fmt.Errorf("counting extraction runs for the zero-result notice: %w", err)
+	}
+	scope := listZeroScope{
+		subject:    "extraction run",
+		considered: len(all),
+		produce:    "kanonarion extract <walk-id>",
+		listAll:    "kanonarion extract list",
+	}
+	// An empty corpus is not something a page can start past, so a zero over it
+	// keeps the store-empty statement and its produce-a-record remedy.
+	if len(all) > 0 && offset > 0 && offset >= len(all) {
+		scope.pagedPast = fmt.Sprintf("--offset %d starts past the last one", offset)
+	}
+	return scope, nil
 }

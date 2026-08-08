@@ -82,6 +82,13 @@ kanonarion walk-list [--scope code|tool|complete] [--json]
 
 When the limit bites, the listing says so on both output paths and names the
 invocation that lifts it, per [Truncated listings](conventions.md#truncated-listings).
+A listing that comes back empty says which of its three causes emptied it, per
+[Zero-result listings](conventions.md#zero-result-listings).
+
+`--walk-id` and `--latest-success` select a single record rather than listing, so
+a miss on either exits `4` and the message names how many walk records were
+searched and the invocation that lists them.
+
 | `--walk-id` | _(none)_ | Fetch a single walk summary by ID |
 | `--latest` | `false` | Return only the latest unique `(target, scope)` combination |
 | `--latest-success` | `false` | Return only the single most recent succeeded walk (as a JSON object, not an array) |
@@ -511,6 +518,7 @@ nothing.
 | `1` | Partial walk (without `--allow-partial`) |
 | `2` | Failed walk |
 | `3` | Cancelled |
+| `4` | The walk you named does not exist (`walk-show`, `walk-list --walk-id`, `walk-list --latest-success`) |
 | `10` | Walk record integrity check failed |
 | `20` | Configuration error / walk ID not found (`walk-diff`) |
 

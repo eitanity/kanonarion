@@ -62,6 +62,17 @@ func (s *fakeDirectiveStore) ListScans(_ context.Context, path string, limit, _ 
 	return all, nil
 }
 
+func (s *fakeDirectiveStore) CountScans(context.Context) (int, error) {
+	if s.err != nil {
+		return 0, s.err
+	}
+	var n int
+	for _, scans := range s.scans {
+		n += len(scans)
+	}
+	return n, nil
+}
+
 func TestQueryDirectives_GetFound(t *testing.T) {
 	store := newFakeDirectiveStore()
 	rec := domain.Record{ID: "S1", ProjectModulePath: "example.com/proj"}

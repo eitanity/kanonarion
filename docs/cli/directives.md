@@ -74,6 +74,24 @@ inferred from `./go.mod` when omitted.
 When the limit bites, the listing says so on both output paths and names the
 invocation that lifts it, per [Truncated listings](conventions.md#truncated-listings).
 
+An empty history distinguishes the project from the store. Where the project has
+scans, the count is that project's and the remaining cause is paging; where it
+has none, the count is the whole store's, so a mistyped `--project` over a
+stocked store reads differently from a store nothing has ever been scanned into:
+
+```
+$ kanonarion directives list --project example.com/typo
+no directive scan matched project "example.com/typo" — the value is compared for exact equality
+against the project module path of all 7 directive scan(s) in the store
+  to list every directive scan: kanonarion directives list --project <module-path>
+```
+
+Every read is keyed on a project, so there is no invocation that lists the store
+unfiltered; the remedy names the `--project` slot instead.
+
+`directives show <scan-id>` answers a scan id it does not hold the same way, on
+one line, exiting `4`.
+
 ## Scope notes
 
 - The scan records each replace's `reachability_target` (the module/local path

@@ -569,7 +569,42 @@ func interfaceListWith(ctx context.Context, limit, offset int, uc QueryInterface
 	if err != nil {
 		return fmt.Errorf("listing interface records: %w", err)
 	}
-	return printInterfaceList(sums, jsonOut, limit, offset, stdout, stderr)
+	// The scope is measured only when the page came back empty: it is the read
+	// the notice is built from, and a listing that returned rows never pays it.
+	var zero listZeroScope
+	if len(sums) == 0 {
+		zero, err = interfaceListZeroScope(ctx, offset, uc)
+		if err != nil {
+			return err
+		}
+	}
+	return printInterfaceList(sums, jsonOut, limit, offset, zero, stdout, stderr)
+}
+
+// interfaceListZeroScope lifts the paging and re-asks the store, so a zero says
+// whether the store holds no interface record at all or the page simply starts
+// past the last one. This listing takes no filter — a module argument routes to
+// interface-list's single-module rendering, which fails with ExitNotFound — so
+// the filter cause cannot arise and the notice never claims it did.
+func interfaceListZeroScope(ctx context.Context, offset int, uc QueryInterfaceUseCase) (listZeroScope, error) {
+	all, err := uc.ListInterfaceRecords(ctx, ports.InterfaceFilter{})
+	if err != nil {
+		return listZeroScope{}, fmt.Errorf("counting interface records for the zero-result notice: %w", err)
+	}
+	scope := listZeroScope{
+		subject:    "interface record",
+		considered: len(all),
+		produce:    "kanonarion interface <module>@<version>",
+		listAll:    "kanonarion interface-list",
+	}
+	// An offset past the end empties the page while the store holds records, and
+	// the two are the same zero rows from the caller's side.
+	// An empty corpus is not something a page can start past, so a zero over it
+	// keeps the store-empty statement and its produce-a-record remedy.
+	if len(all) > 0 && offset > 0 && offset >= len(all) {
+		scope.pagedPast = fmt.Sprintf("--offset %d starts past the last one", offset)
+	}
+	return scope, nil
 }
 
 // printInterfaceList renders the collapsed list.
@@ -578,7 +613,7 @@ func interfaceListWith(ctx context.Context, limit, offset int, uc QueryInterface
 // own row and the command fails afterwards: every module is listed first, so one
 // module in dispute does not delete the answers for all the others, and the run
 // still does not read as clean.
-func printInterfaceList(sums []ports.InterfaceSummary, jsonOut bool, limit, offset int, stdout, stderr io.Writer) error {
+func printInterfaceList(sums []ports.InterfaceSummary, jsonOut bool, limit, offset int, zero listZeroScope, stdout, stderr io.Writer) error {
 	sums, truncated := truncateList(sums, limit)
 	trunc := listTruncation{limit: limit, subject: "interface records", truncated: truncated, offset: offset}
 	if jsonOut {
@@ -616,6 +651,8 @@ func printInterfaceList(sums []ports.InterfaceSummary, jsonOut bool, limit, offs
 			if terr := writeListTruncationJSON(stderr, trunc); terr != nil {
 				return terr
 			}
+		} else if zerr := writeListZeroNoticeJSON(stderr, zero); zerr != nil {
+			return zerr
 		}
 		if len(jsonConflicts) > 0 {
 			return fmt.Errorf("%d module(s) hold conflicting interface records: %w",
@@ -624,10 +661,7 @@ func printInterfaceList(sums []ports.InterfaceSummary, jsonOut bool, limit, offs
 		return nil
 	}
 	if len(sums) == 0 {
-		if _, err := fmt.Fprintln(stdout, "no interface records found"); err != nil {
-			return fmt.Errorf("writing output: %w", err)
-		}
-		return nil
+		return writeListZeroNotice(stdout, zero)
 	}
 	var conflicts []error
 	for _, s := range sums {

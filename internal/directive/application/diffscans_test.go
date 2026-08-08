@@ -22,6 +22,7 @@ func (s *diffFakeStore) GetScanByID(_ context.Context, scanID string) (domain.Re
 func (s *diffFakeStore) ListScans(context.Context, string, int, int) ([]domain.Record, error) {
 	return nil, nil
 }
+func (s *diffFakeStore) CountScans(context.Context) (int, error) { return len(s.records), nil }
 
 // DiffScansUseCase loads two scans by ID and returns the deterministic
 // delta. A missing scan ID yields *ErrScanNotFound so the CLI can map to an

@@ -137,7 +137,7 @@ func TestRunWalkList_Empty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(buf.String(), "no walk records found") {
+	if !strings.Contains(buf.String(), "the store holds no walk record at all") {
 		t.Errorf("expected empty message, got: %q", buf.String())
 	}
 }
@@ -172,8 +172,13 @@ func TestRunWalkList_ByID_NotFound(t *testing.T) {
 	if err == nil {
 		t.Fatal("expected error for missing walk")
 	}
-	if !strings.Contains(err.Error(), "not found") {
-		t.Errorf("expected not-found error, got: %v", err)
+	// The message names the corpus it searched rather than reporting a flat
+	// absence; the exit code is what a script branches on.
+	if !strings.Contains(err.Error(), `walk id "MISSING"`) {
+		t.Errorf("expected the missing selector to be named, got: %v", err)
+	}
+	if code := ExitCodeForError(err); code != ExitNotFound {
+		t.Errorf("exit code = %d, want %d", code, ExitNotFound)
 	}
 }
 
@@ -335,7 +340,7 @@ func TestRunWalkList_ToolScope_Empty(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(buf.String(), "no walk records found") {
+	if !strings.Contains(buf.String(), "the store holds no walk record at all") {
 		t.Errorf("expected empty message, got: %q", buf.String())
 	}
 }
@@ -500,7 +505,7 @@ func TestRunWalkList_FilterStatusFailed(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(buf.String(), "no walk records found") {
+	if !strings.Contains(buf.String(), "the store holds no walk record at all") {
 		t.Errorf("expected empty message, got: %q", buf.String())
 	}
 }
