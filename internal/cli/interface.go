@@ -556,11 +556,19 @@ func runInterfaceList(ctx context.Context, limit int, stdout, stderr io.Writer) 
 	}
 	defer func() { _ = cleanup() }()
 
-	sums, err := ctr.QueryInterface.ListInterfaceRecords(ctx, ports.InterfaceFilter{Limit: limit})
+	return interfaceListWith(ctx, limit, ctr.QueryInterface, stdout, stderr)
+}
+
+// interfaceListWith holds the collapsed listing over an injected use case, so
+// the row cap it applies is exercisable without a live store.
+func interfaceListWith(ctx context.Context, limit int, uc QueryInterfaceUseCase, stdout, stderr io.Writer) error {
+	// One row more than will be printed: the extra row answers whether the limit
+	// bit, and costs one row rather than a second read.
+	sums, err := uc.ListInterfaceRecords(ctx, ports.InterfaceFilter{Limit: truncationFetchLimit(limit)})
 	if err != nil {
 		return fmt.Errorf("listing interface records: %w", err)
 	}
-	return printInterfaceList(sums, jsonOut, stdout)
+	return printInterfaceList(sums, jsonOut, limit, stdout, stderr)
 }
 
 // printInterfaceList renders the collapsed list.
@@ -569,7 +577,9 @@ func runInterfaceList(ctx context.Context, limit int, stdout, stderr io.Writer) 
 // own row and the command fails afterwards: every module is listed first, so one
 // module in dispute does not delete the answers for all the others, and the run
 // still does not read as clean.
-func printInterfaceList(sums []ports.InterfaceSummary, jsonOut bool, stdout io.Writer) error {
+func printInterfaceList(sums []ports.InterfaceSummary, jsonOut bool, limit int, stdout, stderr io.Writer) error {
+	sums, truncated := truncateList(sums, limit)
+	trunc := listTruncation{limit: limit, subject: "interface records", truncated: truncated}
 	if jsonOut {
 		type interfaceListEntry struct {
 			Module       string `json:"module"`
@@ -601,6 +611,11 @@ func printInterfaceList(sums []ports.InterfaceSummary, jsonOut bool, stdout io.W
 		if err := enc.Encode(entries); err != nil {
 			return fmt.Errorf("encoding JSON: %w", err)
 		}
+		if len(entries) > 0 {
+			if terr := writeListTruncationJSON(stderr, trunc); terr != nil {
+				return terr
+			}
+		}
 		if len(jsonConflicts) > 0 {
 			return fmt.Errorf("%d module(s) hold conflicting interface records: %w",
 				len(jsonConflicts), errors.Join(jsonConflicts...))
@@ -631,6 +646,9 @@ func printInterfaceList(sums []ports.InterfaceSummary, jsonOut bool, stdout io.W
 		); err != nil {
 			return fmt.Errorf("writing output: %w", err)
 		}
+	}
+	if terr := writeListTruncationNotice(stdout, trunc); terr != nil {
+		return terr
 	}
 	// Every module is listed first, then the command fails. A module whose
 	// records disagree must not be reported as a clean run.

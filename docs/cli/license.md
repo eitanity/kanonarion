@@ -125,6 +125,9 @@ kanonarion licence-list --limit 100
 | `--copyright` | | Filter by copyright holder, as a case-insensitive substring of the licence files (loads full records) |
 | `--limit` | 50 | Maximum records to show (0 = unlimited) |
 
+When the limit bites, the listing says so on both output paths and names the
+invocation that lifts it, per [Truncated listings](conventions.md#truncated-listings).
+
 The command takes no positional argument; one is refused rather than ignored. A
 zero result names the filter it applied and what it was compared against, per
 [Zero-result listings](conventions.md#zero-result-listings).

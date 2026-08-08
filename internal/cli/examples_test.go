@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -68,7 +69,7 @@ func TestRunExamplesList_WithRecords(t *testing.T) {
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", ExampleCount: 1, OverallStatus: exdomain.ExampleStatusFound},
 	})
 	var buf bytes.Buffer
-	err := runExamplesList(context.Background(), 50, uc, &buf)
+	err := runExamplesList(context.Background(), 50, uc, &buf, io.Discard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -80,7 +81,7 @@ func TestRunExamplesList_WithRecords(t *testing.T) {
 func TestRunExamplesList_Empty(t *testing.T) {
 	uc := testfakes.NewFakeQueryExamples()
 	var buf bytes.Buffer
-	if err := runExamplesList(context.Background(), 50, uc, &buf); err != nil {
+	if err := runExamplesList(context.Background(), 50, uc, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "no example records found") {

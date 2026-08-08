@@ -379,7 +379,7 @@ func newExamplesListCmd(stdout, stderr io.Writer) *cobra.Command {
 			if len(args) == 1 {
 				return runExamplesListForModule(cmd.Context(), args[0], ctr.QueryExamples, stdout)
 			}
-			return runExamplesList(cmd.Context(), limit, ctr.QueryExamples, stdout)
+			return runExamplesList(cmd.Context(), limit, ctr.QueryExamples, stdout, stderr)
 		},
 	}
 
@@ -441,11 +441,15 @@ func runExamplesListForModule(ctx context.Context, moduleArg string, uc QueryExa
 	return nil
 }
 
-func runExamplesList(ctx context.Context, limit int, uc QueryExamplesUseCase, stdout io.Writer) error {
-	sums, err := uc.ListExampleRecords(ctx, ports.ExampleFilter{Limit: limit})
+func runExamplesList(ctx context.Context, limit int, uc QueryExamplesUseCase, stdout, stderr io.Writer) error {
+	// One row more than will be printed, so the extra row answers whether the
+	// limit bit without a second read.
+	sums, err := uc.ListExampleRecords(ctx, ports.ExampleFilter{Limit: truncationFetchLimit(limit)})
 	if err != nil {
 		return fmt.Errorf("listing example records: %w", err)
 	}
+	sums, truncated := truncateList(sums, limit)
+	trunc := listTruncation{limit: limit, subject: "example records", truncated: truncated}
 	if jsonOut {
 		type entry struct {
 			Module       string `json:"module"`
@@ -472,6 +476,11 @@ func runExamplesList(ctx context.Context, limit int, uc QueryExamplesUseCase, st
 		enc.SetIndent("", "  ")
 		if err := enc.Encode(out); err != nil {
 			return fmt.Errorf("encoding JSON: %w", err)
+		}
+		if len(out) > 0 {
+			if terr := writeListTruncationJSON(stderr, trunc); terr != nil {
+				return terr
+			}
 		}
 		if len(jsonConflicts) > 0 {
 			return fmt.Errorf("%d module(s) hold conflicting example records: %w",
@@ -503,6 +512,9 @@ func runExamplesList(ctx context.Context, limit int, uc QueryExamplesUseCase, st
 		); err != nil {
 			return fmt.Errorf("writing output: %w", err)
 		}
+	}
+	if terr := writeListTruncationNotice(stdout, trunc); terr != nil {
+		return terr
 	}
 	// Every module is listed first, then the command fails. A module in dispute
 	// must not be reported as a clean run.

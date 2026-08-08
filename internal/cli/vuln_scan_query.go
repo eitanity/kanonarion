@@ -76,9 +76,11 @@ func runScanList(ctx context.Context, walkID string, limit int, uc QueryScanRuns
 	if err != nil && !survivable {
 		return fmt.Errorf("listing scan runs: %w", err)
 	}
-	if limit > 0 && len(runs) > limit {
-		runs = runs[:limit]
-	}
+	// This listing already holds every run, so the extra row the other listings
+	// over-fetch for is free here: the cap is applied in memory and what it
+	// dropped is known exactly.
+	runs, truncated := truncateList(runs, limit)
+	trunc := listTruncation{limit: limit, subject: "scan runs", truncated: truncated}
 	// Derived after the limit is applied: the probe only has to classify the runs
 	// this invocation will print, and it is one indexed read over their walks.
 	unresolved, uerr := uc.UnresolvedWalks(ctx, runs)
@@ -123,7 +125,7 @@ func runScanList(ctx context.Context, walkID string, limit int, uc QueryScanRuns
 			}
 			return writeListZeroNoticeJSON(stderr, scope)
 		}
-		return nil
+		return writeListTruncationJSON(stderr, trunc)
 	}
 	if len(runs) == 0 && len(unreadable) == 0 {
 		scope, serr := scanListZeroScope(ctx, walkID, uc)
@@ -141,7 +143,7 @@ func runScanList(ctx context.Context, walkID string, limit int, uc QueryScanRuns
 		_, _ = fmt.Fprintln(stdout, line)
 	}
 	writeUnreadableRuns(stdout, unreadable)
-	return nil
+	return writeListTruncationNotice(stdout, trunc)
 }
 
 // scanListZeroScope lifts the walk-id filter and re-asks the store, so a zero

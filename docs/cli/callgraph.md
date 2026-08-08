@@ -377,6 +377,9 @@ List modules with extracted call graph records, newest first. The optional
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--limit` | `20` | Maximum records to show (`0` = unlimited) |
+
+When the limit bites, the listing says so on both output paths and names the
+invocation that lifts it, per [Truncated listings](conventions.md#truncated-listings).
 | `--offset` | `0` | Skip this many records before listing |
 
 A zero result names its own scope — whether the store is empty, the filter

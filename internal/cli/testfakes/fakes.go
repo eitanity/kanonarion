@@ -242,13 +242,30 @@ func (f *FakeQueryExtraction) GetExtractionRun(_ context.Context, id string) (ex
 	return run, nil
 }
 
-func (f *FakeQueryExtraction) ListExtractionRuns(_ context.Context, _ extractports.ExtractionRunFilter) ([]extractports.ExtractionRunSummary, error) {
+// SetList sets the summaries ListExtractionRuns pages over.
+func (f *FakeQueryExtraction) SetList(sums []extractports.ExtractionRunSummary) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.list = sums
+}
+
+func (f *FakeQueryExtraction) ListExtractionRuns(_ context.Context, filter extractports.ExtractionRunFilter) ([]extractports.ExtractionRunSummary, error) {
 	if f.Err != nil {
 		return nil, f.Err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.list, nil
+	out := f.list
+	if filter.Offset > 0 {
+		if filter.Offset >= len(out) {
+			return nil, nil
+		}
+		out = out[filter.Offset:]
+	}
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
+	return out, nil
 }
 
 // ---- license context ----
@@ -418,8 +435,15 @@ func (f *FakeQueryDirectives) GetScan(_ context.Context, _ string) (directivedom
 	return f.Scan, f.Found, nil
 }
 
-func (f *FakeQueryDirectives) ListScans(_ context.Context, _ string, _ int) ([]directivedomain.Record, error) {
-	return f.Scans, f.ListErr
+func (f *FakeQueryDirectives) ListScans(_ context.Context, _ string, limit int) ([]directivedomain.Record, error) {
+	if f.ListErr != nil {
+		return nil, f.ListErr
+	}
+	out := f.Scans
+	if limit > 0 && len(out) > limit {
+		out = out[:limit]
+	}
+	return out, nil
 }
 
 // FakeDiffDirectives implements cli.DiffDirectivesUseCase.
@@ -495,13 +519,32 @@ func (f *FakeQueryInterface) GetInterfaceRecord(_ context.Context, coord coordin
 	return rec, ok, nil
 }
 
-func (f *FakeQueryInterface) ListInterfaceRecords(_ context.Context, _ ifaceports.InterfaceFilter) ([]ifaceports.InterfaceSummary, error) {
+// SetList sets the summaries ListInterfaceRecords pages over.
+func (f *FakeQueryInterface) SetList(sums []ifaceports.InterfaceSummary) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.list = sums
+}
+
+func (f *FakeQueryInterface) ListInterfaceRecords(_ context.Context, filter ifaceports.InterfaceFilter) ([]ifaceports.InterfaceSummary, error) {
 	if f.Err != nil {
 		return nil, f.Err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.list, nil
+	// Paging is honoured as the adapter honours it. A fake that ignored the
+	// limit could not fail a listing that mis-states how much it withheld.
+	out := f.list
+	if filter.Offset > 0 {
+		if filter.Offset >= len(out) {
+			return nil, nil
+		}
+		out = out[filter.Offset:]
+	}
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
+	return out, nil
 }
 
 func (f *FakeQueryInterface) FindSymbol(_ context.Context, _, _ string, scope coordinate.ModuleSet) ([]ifaceports.SymbolRef, error) {
@@ -834,13 +877,23 @@ func (f *FakeQueryExamples) GetExampleRecord(_ context.Context, coord coordinate
 	return rec, ok, nil
 }
 
-func (f *FakeQueryExamples) ListExampleRecords(_ context.Context, _ exports.ExampleFilter) ([]exports.ExampleSummary, error) {
+func (f *FakeQueryExamples) ListExampleRecords(_ context.Context, filter exports.ExampleFilter) ([]exports.ExampleSummary, error) {
 	if f.Err != nil {
 		return nil, f.Err
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	return f.list, nil
+	out := f.list
+	if filter.Offset > 0 {
+		if filter.Offset >= len(out) {
+			return nil, nil
+		}
+		out = out[filter.Offset:]
+	}
+	if filter.Limit > 0 && len(out) > filter.Limit {
+		out = out[:filter.Limit]
+	}
+	return out, nil
 }
 
 func (f *FakeQueryExamples) FindBySymbol(_ context.Context, _, _ string, _ coordinate.ModuleSet) ([]exports.ExampleRef, error) {

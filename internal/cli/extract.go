@@ -174,55 +174,67 @@ func newExtractListCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List extraction runs",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-
-			runs, err := ctr.QueryExtract.ListExtractionRuns(cmd.Context(), ports.ExtractionRunFilter{Limit: limit})
-			if err != nil {
-				return fmt.Errorf("failed to list extraction runs: %w", err)
-			}
-
-			if jsonOut {
-				type runJSON struct {
-					ID          string                     `json:"id"`
-					WalkID      string                     `json:"walk_id"`
-					Status      domain.ExtractionRunStatus `json:"status"`
-					ModuleCount int                        `json:"module_count"`
-					StartedAt   time.Time                  `json:"started_at"`
-					CompletedAt time.Time                  `json:"completed_at"`
-				}
-				out := make([]runJSON, len(runs))
-				for i, r := range runs {
-					out[i] = runJSON{
-						ID:          r.ID,
-						WalkID:      r.WalkID,
-						Status:      r.OverallStatus,
-						ModuleCount: r.ModuleCount,
-						StartedAt:   r.StartedAt,
-						CompletedAt: r.CompletedAt,
-					}
-				}
-				enc := json.NewEncoder(stdout)
-				enc.SetIndent("", "  ")
-				if encErr := enc.Encode(out); encErr != nil {
-					return fmt.Errorf("encoding JSON: %w", encErr)
-				}
-				return nil
-			}
-
-			_, _ = fmt.Fprintf(stdout, "%-26s %-26s %-10s %-12s %s\n", "RUN ID", "WALK ID", "STATUS", "MODULES", "STARTED")
-			for _, r := range runs {
-				_, _ = fmt.Fprintf(stdout, "%-26s %-26s %-10s %-12d %s\n",
-					r.ID, r.WalkID, r.OverallStatus, r.ModuleCount, r.StartedAt.Format(time.RFC3339))
-			}
-			return nil
+			return runExtractList(cmd.Context(), limit, ctr.QueryExtract, stdout, stderr)
 		},
 	}
 	cmd.Flags().IntVar(&limit, "limit", 20, "maximum number of runs to return (0 = unlimited)")
 	return cmd
+}
+
+// runExtractList renders the extraction-run listing. Split from the command so
+// the row cap it applies is exercisable without a live store.
+func runExtractList(ctx context.Context, limit int, uc QueryExtractionUseCase, stdout, stderr io.Writer) error {
+	// One row more than will be printed, so the extra row answers whether the
+	// limit bit without a second read.
+	runs, err := uc.ListExtractionRuns(ctx, ports.ExtractionRunFilter{Limit: truncationFetchLimit(limit)})
+	if err != nil {
+		return fmt.Errorf("failed to list extraction runs: %w", err)
+	}
+	runs, truncated := truncateList(runs, limit)
+	trunc := listTruncation{limit: limit, subject: "extraction runs", truncated: truncated}
+
+	if jsonOut {
+		type runJSON struct {
+			ID          string                     `json:"id"`
+			WalkID      string                     `json:"walk_id"`
+			Status      domain.ExtractionRunStatus `json:"status"`
+			ModuleCount int                        `json:"module_count"`
+			StartedAt   time.Time                  `json:"started_at"`
+			CompletedAt time.Time                  `json:"completed_at"`
+		}
+		out := make([]runJSON, len(runs))
+		for i, r := range runs {
+			out[i] = runJSON{
+				ID:          r.ID,
+				WalkID:      r.WalkID,
+				Status:      r.OverallStatus,
+				ModuleCount: r.ModuleCount,
+				StartedAt:   r.StartedAt,
+				CompletedAt: r.CompletedAt,
+			}
+		}
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if encErr := enc.Encode(out); encErr != nil {
+			return fmt.Errorf("encoding JSON: %w", encErr)
+		}
+		if len(out) == 0 {
+			return nil
+		}
+		return writeListTruncationJSON(stderr, trunc)
+	}
+
+	_, _ = fmt.Fprintf(stdout, "%-26s %-26s %-10s %-12s %s\n", "RUN ID", "WALK ID", "STATUS", "MODULES", "STARTED")
+	for _, r := range runs {
+		_, _ = fmt.Fprintf(stdout, "%-26s %-26s %-10s %-12d %s\n",
+			r.ID, r.WalkID, r.OverallStatus, r.ModuleCount, r.StartedAt.Format(time.RFC3339))
+	}
+	return writeListTruncationNotice(stdout, trunc)
 }

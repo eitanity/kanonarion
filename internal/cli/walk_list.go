@@ -61,7 +61,7 @@ func newWalkListCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().BoolVar(&latestSuccess, "latest-success", false, "return only the single most recent succeeded walk (as a JSON object, not an array)")
 	return cmd
 }
-func runWalkList(ctx context.Context, targetArg, sinceArg, statusArg, scopeArg, walkID string, limit int, latest, latestSuccess bool, uc QueryWalksUseCase, stdout, _ io.Writer) error {
+func runWalkList(ctx context.Context, targetArg, sinceArg, statusArg, scopeArg, walkID string, limit int, latest, latestSuccess bool, uc QueryWalksUseCase, stdout, stderr io.Writer) error {
 	if walkID != "" {
 		rec, rerr := uc.GetWalk(ctx, walkID)
 		if rerr != nil {
@@ -97,7 +97,14 @@ func runWalkList(ctx context.Context, targetArg, sinceArg, statusArg, scopeArg, 
 		}
 		return nil
 	}
-	filter := walkports.WalkFilter{Limit: limit, LatestOnly: latest}
+	// One row more than will be printed, so the extra row's presence answers
+	// whether the limit bit. --latest-success is not a listing — it selects a
+	// single record by definition — so it keeps its own limit and states nothing.
+	fetchLimit := truncationFetchLimit(limit)
+	if latestSuccess {
+		fetchLimit = limit
+	}
+	filter := walkports.WalkFilter{Limit: fetchLimit, LatestOnly: latest}
 
 	if targetArg != "" {
 		coord, cerr := parseCoordinate(targetArg)
@@ -155,13 +162,19 @@ func runWalkList(ctx context.Context, targetArg, sinceArg, statusArg, scopeArg, 
 		return nil
 	}
 
+	summaries, truncated := truncateList(summaries, limit)
+	trunc := listTruncation{limit: limit, subject: "walk records", truncated: truncated}
+
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		if encErr := enc.Encode(summaries); encErr != nil {
 			return fmt.Errorf("encoding JSON: %w", encErr)
 		}
-		return nil
+		if len(summaries) == 0 {
+			return nil
+		}
+		return writeListTruncationJSON(stderr, trunc)
 	}
 
 	if len(summaries) == 0 {
@@ -178,8 +191,9 @@ func runWalkList(ctx context.Context, targetArg, sinceArg, statusArg, scopeArg, 
 			return fmt.Errorf("writing output: %w", pErr)
 		}
 	}
-	return nil
+	return writeListTruncationNotice(stdout, trunc)
 }
+
 func parseWalkStatus(s string) (domain.WalkStatus, error) {
 	switch strings.ToLower(s) {
 	case "succeeded":

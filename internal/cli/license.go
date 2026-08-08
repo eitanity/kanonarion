@@ -595,7 +595,10 @@ func newLicenseListCmd(stdout, stderr io.Writer) *cobra.Command {
 func runLicenseList(ctx context.Context, spdx, copyright string, limit int, uc QueryLicenseUseCase, overrides domain.LicenseOverrideSet, stdout, stderr io.Writer) error {
 	// When copyright filtering is active, fetch without a limit so we can
 	// post-filter by full record; re-apply the caller's limit afterwards.
-	fetchLimit := limit
+	// One row more than will be printed, so the extra row's presence answers
+	// whether the limit bit. No count is taken: how many were withheld would
+	// cost a second read this listing does not otherwise pay.
+	fetchLimit := truncationFetchLimit(limit)
 	if copyright != "" {
 		fetchLimit = 0
 	}
@@ -621,10 +624,9 @@ func runLicenseList(ctx context.Context, spdx, copyright string, limit int, uc Q
 			}
 		}
 		sums = matched
-		if limit > 0 && len(sums) > limit {
-			sums = sums[:limit]
-		}
 	}
+	sums, truncated := truncateList(sums, limit)
+	trunc := listTruncation{limit: limit, subject: "license records", truncated: truncated}
 	if jsonOut {
 		type entry struct {
 			Module     string `json:"module"`
@@ -667,15 +669,18 @@ func runLicenseList(ctx context.Context, spdx, copyright string, limit int, uc Q
 		if err := enc.Encode(out); err != nil {
 			return fmt.Errorf("encoding JSON: %w", err)
 		}
-		if len(jsonConflicts) > 0 {
-			return fmt.Errorf("%d module(s) hold conflicting license records: %w", len(jsonConflicts), errors.Join(jsonConflicts...))
-		}
 		if len(out) == 0 {
 			scope, serr := licenseListZeroScope(ctx, spdx, copyright, uc)
 			if serr != nil {
 				return serr
 			}
 			return writeListZeroNoticeJSON(stderr, scope)
+		}
+		if terr := writeListTruncationJSON(stderr, trunc); terr != nil {
+			return terr
+		}
+		if len(jsonConflicts) > 0 {
+			return fmt.Errorf("%d module(s) hold conflicting license records: %w", len(jsonConflicts), errors.Join(jsonConflicts...))
 		}
 		return nil
 	}
@@ -718,6 +723,9 @@ func runLicenseList(ctx context.Context, spdx, copyright string, limit int, uc Q
 		); err != nil {
 			return fmt.Errorf("writing output: %w", err)
 		}
+	}
+	if terr := writeListTruncationNotice(stdout, trunc); terr != nil {
+		return terr
 	}
 	// Every module is listed first, then the command fails. A licence in dispute
 	// must not be reported as a clean run.

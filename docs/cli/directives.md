@@ -55,6 +55,24 @@ Enterprise.
 whether a replacement is approved. The same section appears in
 `kanonarion inspect --gomod … --json` as the aggregate surface.
 
+## Scan history
+
+```
+kanonarion directives list [--project <module>] [--gomod ./go.mod] [--limit <n>] [--json]
+```
+
+Prints the directive scan history for a project, newest first. `--project` is
+inferred from `./go.mod` when omitted.
+
+| Flag | Default | Description |
+|------|---------|-------------|
+| `--project` | inferred from `go.mod` | Project module path |
+| `--gomod` | `./go.mod` | `go.mod` used to infer `--project` |
+| `--limit` | `20` | Maximum number of scans to list (0 = unlimited) |
+
+When the limit bites, the listing says so on both output paths and names the
+invocation that lifts it, per [Truncated listings](conventions.md#truncated-listings).
+
 ## Scope notes
 
 - The scan records each replace's `reachability_target` (the module/local path

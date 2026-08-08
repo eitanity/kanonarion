@@ -122,18 +122,22 @@ func runDirectivesList(ctx context.Context, project, gomodPath string, limit int
 	}
 	defer func() { _ = cleanup() }()
 
-	return directivesListWith(ctx, ctr, project, limit, stdout)
+	return directivesListWith(ctx, ctr, project, limit, stdout, stderr)
 }
 
 // directivesListWith holds the directives-list logic over an injected
 // Container: it lists scans for a project, reports an empty set explicitly, and
 // renders JSON or a table. Split from runDirectivesList so listing and render
 // selection are testable without a live store.
-func directivesListWith(ctx context.Context, ctr *Container, project string, limit int, stdout io.Writer) error {
-	scans, err := ctr.QueryDirectives.ListScans(ctx, project, limit)
+func directivesListWith(ctx context.Context, ctr *Container, project string, limit int, stdout, stderr io.Writer) error {
+	// One row more than will be printed, so the extra row answers whether the
+	// limit bit without a second read.
+	scans, err := ctr.QueryDirectives.ListScans(ctx, project, truncationFetchLimit(limit))
 	if err != nil {
 		return fmt.Errorf("listing directive scans: %w", err)
 	}
+	scans, truncated := truncateList(scans, limit)
+	trunc := listTruncation{limit: limit, subject: "directive scans", truncated: truncated}
 	if jsonOut {
 		type scanJSON struct {
 			ID              string    `json:"id"`
@@ -159,7 +163,10 @@ func directivesListWith(ctx context.Context, ctr *Container, project string, lim
 		if err := enc.Encode(out); err != nil {
 			return fmt.Errorf("encoding scans: %w", err)
 		}
-		return nil
+		if len(out) == 0 {
+			return nil
+		}
+		return writeListTruncationJSON(stderr, trunc)
 	}
 
 	if len(scans) == 0 {
@@ -180,7 +187,7 @@ func directivesListWith(ctx context.Context, ctr *Container, project string, lim
 	if err := tw.Flush(); err != nil {
 		return fmt.Errorf("flushing output: %w", err)
 	}
-	return nil
+	return writeListTruncationNotice(stdout, trunc)
 }
 
 func newDirectivesShowCmd(stdout, stderr io.Writer) *cobra.Command {

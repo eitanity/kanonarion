@@ -200,6 +200,42 @@ a non-zero exit.
 
 ---
 
+## Truncated listings
+
+Every listing that applies a `--limit` states when the limit bit. On the text
+path it prints one trailing line:
+
+```
+showing first 50 license records — more exist (--limit 0 for all)
+```
+
+The line appears **only when a further record exists**. A listing that happens to
+hold exactly its limit and nothing more prints nothing, so silence means "these
+are all of them".
+
+Under `--json` the array on stdout is unchanged — a consumer's payload keeps its
+shape — and the same statement is emitted on **stderr** as a single JSON object:
+
+```json
+{"truncated":true,"limit":50,"subject":"license records","remedy":"--limit 0"}
+```
+
+Unlike the text line, the JSON object is emitted whenever a limit was applied,
+with `truncated` true or false, so a machine reader can tell "nothing was
+withheld" from "this output does not say". `--limit 0` applies no limit and
+prints nothing on either channel.
+
+**No total is reported.** The listing asks the store for one row more than it
+will print and reports on that row's presence; it never counts. Knowing *that*
+records were withheld costs one extra row, knowing *how many* would cost a second
+read every listing would then pay.
+
+This applies to `licence-list`/`license-list`, `interface-list`, `examples-list`,
+`callgraph-list`, `vuln-scan-list`, `walk-list`, `extract list` and
+`directives list`. `sbom-list` applies no limit and returns its whole population.
+
+---
+
 ## Store layout
 
 All state lives under `--store-root` (default `~/.kanonarion`):

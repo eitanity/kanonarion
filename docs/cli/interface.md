@@ -110,6 +110,9 @@ kanonarion interface-list [flags]
 | `--store-root` | `~/.kanonarion` | Root directory for blobs and SQLite |
 | `--limit` | `50` | Maximum records to show (`0` = unlimited) |
 
+When the limit bites, the listing says so on both output paths and names the
+invocation that lifts it, per [Truncated listings](conventions.md#truncated-listings).
+
 **Example:**
 
 ```

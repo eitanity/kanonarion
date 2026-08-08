@@ -164,8 +164,14 @@ func TestRunCallGraphList_JSONEmptyStoreSaysStoreEmpty(t *testing.T) {
 	}
 }
 
-// A populated JSON listing carries no notice at all.
-func TestRunCallGraphList_JSONPopulatedLeavesStderrClean(t *testing.T) {
+// A populated JSON listing carries no zero-result notice at all.
+//
+// The scope statement it does carry is the truncation marker, and that is a
+// different statement with a different rule: it reports the cap this invocation
+// applied, true or false, because a consumer cannot read a line that is not
+// there. What must never appear on a listing that returned rows is the
+// explanation for a zero.
+func TestRunCallGraphList_JSONPopulatedCarriesNoZeroNotice(t *testing.T) {
 	prev := jsonOut
 	jsonOut = true
 	defer func() { jsonOut = prev }()
@@ -175,8 +181,15 @@ func TestRunCallGraphList_JSONPopulatedLeavesStderrClean(t *testing.T) {
 		populatedCallGraphList(), &stdout, &stderr); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if stderr.Len() != 0 {
-		t.Errorf("stderr must stay clean on a populated listing, got: %q", stderr.String())
+	if strings.Contains(stderr.String(), "records_considered") || strings.Contains(stderr.String(), "store_empty") {
+		t.Errorf("a populated listing must carry no zero-result notice, got: %q", stderr.String())
+	}
+	var marker listTruncationJSON
+	if err := json.Unmarshal(stderr.Bytes(), &marker); err != nil {
+		t.Fatalf("expected the truncation marker on stderr: %v (got %q)", err, stderr.String())
+	}
+	if marker.Truncated {
+		t.Errorf("two records under a limit of 20 withheld nothing, got %+v", marker)
 	}
 }
 

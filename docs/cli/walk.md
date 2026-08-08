@@ -78,6 +78,9 @@ kanonarion walk-list [--scope code|tool|complete] [--json]
 | `--scope` | _(all)_ | Filter by walk scope (`code`, `tool`, or `complete`) |
 | `--tool` | `false` | Shorthand for `--scope tool` |
 | `--limit` | `20` | Maximum number of results to return (`0` = unlimited) |
+
+When the limit bites, the listing says so on both output paths and names the
+invocation that lifts it, per [Truncated listings](conventions.md#truncated-listings).
 | `--walk-id` | _(none)_ | Fetch a single walk summary by ID |
 | `--latest` | `false` | Return only the latest unique `(target, scope)` combination |
 | `--latest-success` | `false` | Return only the single most recent succeeded walk (as a JSON object, not an array) |

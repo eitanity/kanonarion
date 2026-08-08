@@ -566,6 +566,9 @@ kanonarion vuln-scan-list [walk-id] [flags]
 | `--store-root` | `~/.kanonarion` | Path to fact store root |
 | `--limit` | `20` | Maximum number of results (0 = unlimited) |
 
+When the limit bites, the listing says so on both output paths and names the
+invocation that lifts it, per [Truncated listings](conventions.md#truncated-listings).
+
 A zero result distinguishes "that walk has no scan run" from "nothing has been
 scanned", per [Zero-result listings](conventions.md#zero-result-listings).
 

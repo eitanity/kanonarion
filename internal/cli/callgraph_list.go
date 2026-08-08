@@ -43,14 +43,19 @@ func newCallGraphListCmd(stdout, stderr io.Writer) *cobra.Command {
 }
 
 func runCallGraphList(ctx context.Context, moduleFilter string, limit, offset int, uc QueryCallGraphUseCase, stdout, stderr io.Writer) error {
+	// One row more than will be printed: the extra row's presence is what tells
+	// this listing whether it withheld anything, and it costs one row rather
+	// than a second read.
 	summaries, err := uc.ListCallGraphRecords(ctx, ports.CallGraphFilter{
 		ModulePath: moduleFilter,
-		Limit:      limit,
+		Limit:      truncationFetchLimit(limit),
 		Offset:     offset,
 	})
 	if err != nil {
 		return fmt.Errorf("listing callgraph records: %w", err)
 	}
+	summaries, truncated := truncateList(summaries, limit)
+	trunc := listTruncation{limit: limit, subject: "call graph records", truncated: truncated}
 
 	if jsonOut {
 		type entry struct {
@@ -77,7 +82,7 @@ func runCallGraphList(ctx context.Context, moduleFilter string, limit, offset in
 			}
 			return writeListZeroNoticeJSON(stderr, scope)
 		}
-		return nil
+		return writeListTruncationJSON(stderr, trunc)
 	}
 
 	if len(summaries) == 0 {
@@ -96,7 +101,7 @@ func runCallGraphList(ctx context.Context, moduleFilter string, limit, offset in
 			return fmt.Errorf("writing summary: %w", err)
 		}
 	}
-	return nil
+	return writeListTruncationNotice(stdout, trunc)
 }
 
 // callGraphListZeroScope lifts the filter and paging and re-asks the store, so a
