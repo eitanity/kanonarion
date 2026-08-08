@@ -180,6 +180,12 @@ func (f *FakeQueryWalks) ListWalks(_ context.Context, filter walkports.WalkFilte
 		}
 		out = filtered
 	}
+	if filter.Offset > 0 {
+		if filter.Offset >= len(out) {
+			return nil, nil
+		}
+		out = out[filter.Offset:]
+	}
 	if filter.Limit > 0 && len(out) > filter.Limit {
 		out = out[:filter.Limit]
 	}
@@ -347,7 +353,7 @@ func (f *FakeQueryLicense) LicenseHistory(_ context.Context, coord coordinate.Mo
 }
 
 // ListLicenseRecords applies the filter the SQLite adapter applies: exact
-// equality on the primary SPDX identifier, then limit.
+// equality on the primary SPDX identifier, then the offset, then the limit.
 func (f *FakeQueryLicense) ListLicenseRecords(_ context.Context, filter licenseports.LicenseFilter) ([]licenseports.LicenseSummary, error) {
 	if f.Err != nil {
 		return nil, f.Err
@@ -361,6 +367,12 @@ func (f *FakeQueryLicense) ListLicenseRecords(_ context.Context, filter licensep
 			continue
 		}
 		out = append(out, s)
+	}
+	if filter.Offset > 0 {
+		if filter.Offset >= len(out) {
+			return nil, nil
+		}
+		out = out[filter.Offset:]
 	}
 	if filter.Limit > 0 && len(out) > filter.Limit {
 		out = out[:filter.Limit]
@@ -435,11 +447,19 @@ func (f *FakeQueryDirectives) GetScan(_ context.Context, _ string) (directivedom
 	return f.Scan, f.Found, nil
 }
 
-func (f *FakeQueryDirectives) ListScans(_ context.Context, _ string, limit int) ([]directivedomain.Record, error) {
+func (f *FakeQueryDirectives) ListScans(_ context.Context, _ string, limit, offset int) ([]directivedomain.Record, error) {
 	if f.ListErr != nil {
 		return nil, f.ListErr
 	}
 	out := f.Scans
+	// Paging is honoured as the adapter honours it: a fake that ignored the
+	// offset could not fail a listing that never passed one on.
+	if offset > 0 {
+		if offset >= len(out) {
+			return nil, nil
+		}
+		out = out[offset:]
+	}
 	if limit > 0 && len(out) > limit {
 		out = out[:limit]
 	}

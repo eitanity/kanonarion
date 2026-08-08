@@ -206,7 +206,7 @@ Every listing that applies a `--limit` states when the limit bit. On the text
 path it prints one trailing line:
 
 ```
-showing first 50 license records — more exist (--limit 0 for all)
+showing first 50 license records — more exist (--limit 0 for all, --offset 50 for the next page)
 ```
 
 The line appears **only when a further record exists**. A listing that happens to
@@ -217,7 +217,7 @@ Under `--json` the array on stdout is unchanged — a consumer's payload keeps i
 shape — and the same statement is emitted on **stderr** as a single JSON object:
 
 ```json
-{"truncated":true,"limit":50,"subject":"license records","remedy":"--limit 0"}
+{"truncated":true,"limit":50,"subject":"license records","remedy":"--limit 0","offset":0,"next_offset":50}
 ```
 
 Unlike the text line, the JSON object is emitted whenever a limit was applied,
@@ -233,6 +233,37 @@ read every listing would then pay.
 This applies to `licence-list`/`license-list`, `interface-list`, `examples-list`,
 `callgraph-list`, `vuln-scan-list`, `walk-list`, `extract list` and
 `directives list`. `sbom-list` applies no limit and returns its whole population.
+
+---
+
+## Paging
+
+Every command that takes `--limit` also takes `--offset`: the number of records
+to skip before listing. `--limit N --offset M` returns records M+1 to M+N of the
+same ordering the unpaged listing produces, so a caller told "more exist" can
+read the next page instead of re-fetching the whole population and slicing it.
+
+```
+$ kanonarion license-list --limit 50 --offset 50
+...
+showing license records 51-100 — more exist (--limit 0 for all, --offset 100 for the next page)
+```
+
+`--offset 0` is the default and is byte-identical to passing no offset at all.
+An offset past the last record returns no rows — with the zero-result notice
+saying that paging, not the filter, emptied the page — rather than an error. The
+last partial page states no truncation, because it withheld nothing.
+
+Under `--json` the stderr object carries `offset` and `next_offset`, so a
+consumer pages by reading `next_offset` back into the next invocation.
+
+Every paged listing is ordered on a timestamp with the row's primary key as
+tiebreak, so the ordering is total: two calls order the population identically
+and a page is exactly the rows the previous page did not show.
+
+`store ledger` pages the same way, over the events its filter matched:
+`matched` still reports the whole window and the output states how many events
+the offset stepped over.
 
 ---
 

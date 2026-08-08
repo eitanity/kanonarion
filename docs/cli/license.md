@@ -124,6 +124,7 @@ kanonarion licence-list --limit 100
 | `--spdx` | | Filter by SPDX identifier (e.g. `MIT`, `Apache-2.0`), matched for exact equality |
 | `--copyright` | | Filter by copyright holder, as a case-insensitive substring of the licence files (loads full records) |
 | `--limit` | 50 | Maximum records to show (0 = unlimited) |
+| `--offset` | 0 | Skip this many records before listing. With `--copyright` the offset applies to the records that matched the holder, not to the records read from the store |
 
 When the limit bites, the listing says so on both output paths and names the
 invocation that lifts it, per [Truncated listings](conventions.md#truncated-listings).

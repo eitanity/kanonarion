@@ -32,7 +32,7 @@ func unresolvableInputsNote(walkID string) string {
 }
 
 func newVulnScanListCmd(stdout, stderr io.Writer) *cobra.Command {
-	var limit int
+	var limit, offset int
 
 	cmd := &cobra.Command{
 		Use:   "vuln-scan-list [walk-id]",
@@ -51,16 +51,17 @@ func newVulnScanListCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runScanList(cmd.Context(), walkID, limit, ctr.QueryScanRuns, stdout, stderr)
+			return runScanList(cmd.Context(), walkID, limit, offset, ctr.QueryScanRuns, stdout, stderr)
 		},
 	}
 
 	cmd.Flags().IntVar(&limit, "limit", 20, "maximum number of results to return (0 = unlimited)")
+	cmd.Flags().IntVar(&offset, "offset", 0, "skip this many results")
 
 	return cmd
 }
 
-func runScanList(ctx context.Context, walkID string, limit int, uc QueryScanRunsUseCase, stdout, stderr io.Writer) error {
+func runScanList(ctx context.Context, walkID string, limit, offset int, uc QueryScanRunsUseCase, stdout, stderr io.Writer) error {
 	var (
 		runs []vuldomain.WalkScanRun
 		err  error
@@ -79,8 +80,12 @@ func runScanList(ctx context.Context, walkID string, limit int, uc QueryScanRuns
 	// This listing already holds every run, so the extra row the other listings
 	// over-fetch for is free here: the cap is applied in memory and what it
 	// dropped is known exactly.
+	// The port hands this listing its whole population — there is no filter to
+	// carry an offset into — so the page is taken here, on the same ordering the
+	// unpaged listing prints, before the cap is applied.
+	runs = skipList(runs, offset)
 	runs, truncated := truncateList(runs, limit)
-	trunc := listTruncation{limit: limit, subject: "scan runs", truncated: truncated}
+	trunc := listTruncation{limit: limit, subject: "scan runs", truncated: truncated, offset: offset}
 	// Derived after the limit is applied: the probe only has to classify the runs
 	// this invocation will print, and it is one indexed read over their walks.
 	unresolved, uerr := uc.UnresolvedWalks(ctx, runs)
@@ -119,7 +124,7 @@ func runScanList(ctx context.Context, walkID string, limit int, uc QueryScanRuns
 			return fmt.Errorf("encoding JSON: %w", err)
 		}
 		if len(out) == 0 {
-			scope, serr := scanListZeroScope(ctx, walkID, uc)
+			scope, serr := scanListZeroScope(ctx, walkID, offset, uc)
 			if serr != nil {
 				return serr
 			}
@@ -128,7 +133,7 @@ func runScanList(ctx context.Context, walkID string, limit int, uc QueryScanRuns
 		return writeListTruncationJSON(stderr, trunc)
 	}
 	if len(runs) == 0 && len(unreadable) == 0 {
-		scope, serr := scanListZeroScope(ctx, walkID, uc)
+		scope, serr := scanListZeroScope(ctx, walkID, offset, uc)
 		if serr != nil {
 			return serr
 		}
@@ -149,7 +154,7 @@ func runScanList(ctx context.Context, walkID string, limit int, uc QueryScanRuns
 // scanListZeroScope lifts the walk-id filter and re-asks the store, so a zero
 // distinguishes "that walk has no scan run" from "nothing has been scanned".
 // Reached only when the listing came back empty.
-func scanListZeroScope(ctx context.Context, walkID string, uc QueryScanRunsUseCase) (listZeroScope, error) {
+func scanListZeroScope(ctx context.Context, walkID string, offset int, uc QueryScanRunsUseCase) (listZeroScope, error) {
 	all, err := uc.ListAllRuns(ctx)
 	// A store that cannot be surveyed still answers the question the listing was
 	// asked; what it cannot do is size the corpus, and a count of zero would
@@ -169,6 +174,11 @@ func scanListZeroScope(ctx context.Context, walkID string, uc QueryScanRunsUseCa
 	}
 	if len(all) > 0 {
 		scope.example = all[0].WalkID
+	}
+	// An offset past the end empties the page without the filter having anything
+	// to do with it, and the two look identical from the rows alone.
+	if walkID == "" && offset > 0 && offset >= len(all) {
+		scope.pagedPast = fmt.Sprintf("--offset %d starts past the last one", offset)
 	}
 	return scope, nil
 }

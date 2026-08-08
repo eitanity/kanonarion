@@ -64,7 +64,7 @@ func TestDirectivesDiffWith_NoChanges(t *testing.T) {
 func TestDirectivesListWith_Empty(t *testing.T) {
 	ctr := &Container{QueryDirectives: &testfakes.FakeQueryDirectives{Scans: nil}}
 	var out bytes.Buffer
-	if err := directivesListWith(context.Background(), ctr, "example.com/proj", 10, &out, io.Discard); err != nil {
+	if err := directivesListWith(context.Background(), ctr, "example.com/proj", 10, 0, &out, io.Discard); err != nil {
 		t.Fatalf("directivesListWith: %v", err)
 	}
 	if !strings.Contains(out.String(), "no directive scans for example.com/proj") {
@@ -78,7 +78,7 @@ func TestDirectivesListWith_Renders(t *testing.T) {
 		Scans: []directivedomain.Record{{ID: "SCAN-1", ProjectModulePath: "example.com/proj"}},
 	}}
 	var out bytes.Buffer
-	if err := directivesListWith(context.Background(), ctr, "example.com/proj", 10, &out, io.Discard); err != nil {
+	if err := directivesListWith(context.Background(), ctr, "example.com/proj", 10, 0, &out, io.Discard); err != nil {
 		t.Fatalf("directivesListWith: %v", err)
 	}
 	got := out.String()
@@ -95,7 +95,7 @@ func TestDirectivesListWith_SnakeCaseJSON(t *testing.T) {
 		Scans: []directivedomain.Record{{ID: "SCAN-1", ProjectModulePath: "example.com/proj"}},
 	}}
 	var out bytes.Buffer
-	if err := directivesListWith(context.Background(), ctr, "example.com/proj", 10, &out, io.Discard); err != nil {
+	if err := directivesListWith(context.Background(), ctr, "example.com/proj", 10, 0, &out, io.Discard); err != nil {
 		t.Fatalf("directivesListWith: %v", err)
 	}
 	got := out.String()

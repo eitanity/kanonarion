@@ -40,6 +40,28 @@ for a walk taken before the frame was recorded. Without `--walk-id` the answer
 comes from the most recent walk containing the target, whatever its platform.
 JSON output carries it as `walk_frame`.
 
+### Without `--walk-id`: the search is bounded, and says so
+
+The containment search reads the **50 most recent walks**. When it finds no walk
+containing the target, the failure states which of two things happened:
+
+```
+no walk in this store contains example.com/dep@v1.2.3 (all 14 walk(s) searched)
+```
+
+The store held fewer walks than the bound, so the search exhausted it: this is a
+plain absence.
+
+```
+no walk containing example.com/dep@v1.2.3 among the 50 most recent walks searched
+ — the store holds 132; name the walk to query with --walk-id, or list them with:
+kanonarion walk-list --limit 0
+```
+
+The bound stopped the search first, so the coordinate may sit in an older walk.
+A negative that has not exhausted the population is never phrased as a plain
+absence.
+
 **Annotation key**
 
 | Annotation | Meaning |

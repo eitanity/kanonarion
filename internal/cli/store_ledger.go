@@ -22,6 +22,7 @@ type storeLedgerFlags struct {
 	module    string
 	eventType string
 	limit     int
+	offset    int
 }
 
 // ledgerNotEmitted names the persisted record kinds that append NOTHING to the
@@ -80,6 +81,7 @@ are never dropped and never abort the read.`,
 	cmd.Flags().StringVar(&f.module, "module", "", "list only events naming this module path")
 	cmd.Flags().StringVar(&f.eventType, "event-type", "", "list only events of this type")
 	cmd.Flags().IntVar(&f.limit, "limit", 0, "maximum number of events to list (0 = unlimited)")
+	cmd.Flags().IntVar(&f.offset, "offset", 0, "skip this many matched events")
 	return cmd
 }
 
@@ -121,12 +123,16 @@ type ledgerResult struct {
 	// queried. When it is non-zero the matched count is a lower bound for that
 	// window, which is a caveat the answer owes rather than one a reader should
 	// have to derive.
-	UnreadableInWindow int                 `json:"unreadable_in_window"`
-	Matched            int                 `json:"matched"`
-	Truncated          bool                `json:"truncated"`
-	Events             []ledgerEventResult `json:"events"`
-	NotWitnessed       []string            `json:"not_witnessed"`
-	Questions          []string            `json:"questions_answered"`
+	UnreadableInWindow int  `json:"unreadable_in_window"`
+	Matched            int  `json:"matched"`
+	Truncated          bool `json:"truncated"`
+	// Skipped is how many matched events the offset stepped over. Stated
+	// because Matched counts the whole window and Events carries one page of
+	// it, and the difference is otherwise unattributable to either bound.
+	Skipped      int                 `json:"skipped"`
+	Events       []ledgerEventResult `json:"events"`
+	NotWitnessed []string            `json:"not_witnessed"`
+	Questions    []string            `json:"questions_answered"`
 }
 
 func runStoreLedger(root string, f storeLedgerFlags, asJSON bool, stdout io.Writer) error {
@@ -143,6 +149,9 @@ func runStoreLedger(root string, f storeLedgerFlags, asJSON bool, stdout io.Writ
 	}
 	if f.limit < 0 {
 		return &exitError{code: ExitConfig, msg: fmt.Sprintf("--limit must not be negative, got %d", f.limit)}
+	}
+	if f.offset < 0 {
+		return &exitError{code: ExitConfig, msg: fmt.Sprintf("--offset must not be negative, got %d", f.offset)}
 	}
 
 	path := factsqlite.AuditLogPath(root)
@@ -180,6 +189,13 @@ func runStoreLedger(root string, f storeLedgerFlags, asJSON bool, stdout io.Writ
 			continue
 		}
 		result.Matched++
+		// The offset walks the matched events, not the ledger's lines: a page is
+		// taken from the answer the filter produced, so paging and filtering
+		// compose rather than one silently re-scoping the other.
+		if result.Skipped < f.offset {
+			result.Skipped++
+			continue
+		}
 		if f.limit > 0 && len(result.Events) >= f.limit {
 			result.Truncated = true
 			continue
@@ -299,8 +315,17 @@ func writeLedgerText(w io.Writer, r ledgerResult) error {
 	if _, err := fmt.Fprintf(w, "matched: %d event(s)", r.Matched); err != nil {
 		return fmt.Errorf("writing output: %w", err)
 	}
-	if r.Truncated {
-		if _, err := fmt.Fprintf(w, " (%d listed; raise --limit to see the rest)", len(r.Events)); err != nil {
+	switch {
+	case r.Truncated:
+		// The next page is named as well as the whole set, so a reader told the
+		// listing stopped short is not left choosing between this page and all
+		// of it.
+		if _, err := fmt.Fprintf(w, " (%d listed from %d; raise --limit to see the rest, or --offset %d for the next page)",
+			len(r.Events), r.Skipped, r.Skipped+len(r.Events)); err != nil {
+			return fmt.Errorf("writing output: %w", err)
+		}
+	case r.Skipped > 0:
+		if _, err := fmt.Fprintf(w, " (%d listed from %d; the last page)", len(r.Events), r.Skipped); err != nil {
 			return fmt.Errorf("writing output: %w", err)
 		}
 	}

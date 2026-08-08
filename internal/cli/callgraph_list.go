@@ -55,7 +55,7 @@ func runCallGraphList(ctx context.Context, moduleFilter string, limit, offset in
 		return fmt.Errorf("listing callgraph records: %w", err)
 	}
 	summaries, truncated := truncateList(summaries, limit)
-	trunc := listTruncation{limit: limit, subject: "call graph records", truncated: truncated}
+	trunc := listTruncation{limit: limit, subject: "call graph records", truncated: truncated, offset: offset}
 
 	if jsonOut {
 		type entry struct {

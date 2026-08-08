@@ -209,14 +209,25 @@ func buildListQuery(f ports.ExtractionRunFilter) (string, []any) {
 		sb.WriteString(strings.Join(where, " AND "))
 	}
 
-	sb.WriteString(" ORDER BY started_at DESC")
+	// id breaks the tie. started_at is a second-resolution timestamp and two runs
+	// can share it, and an ordering that is not total makes a page boundary
+	// arbitrary: the same row could appear on both pages or on neither.
+	sb.WriteString(" ORDER BY started_at DESC, id DESC")
 
-	if f.Limit > 0 {
+	// SQLite parses OFFSET only after a LIMIT. Written as two independent ifs
+	// this emitted `ORDER BY ... OFFSET ?` for an unlimited paged read, which is
+	// a syntax error, so the one filter combination paging exists for could not
+	// be asked at all.
+	switch {
+	case f.Limit > 0:
 		sb.WriteString(" LIMIT ?")
 		args = append(args, f.Limit)
-	}
-	if f.Offset > 0 {
-		sb.WriteString(" OFFSET ?")
+		if f.Offset > 0 {
+			sb.WriteString(" OFFSET ?")
+			args = append(args, f.Offset)
+		}
+	case f.Offset > 0:
+		sb.WriteString(" LIMIT -1 OFFSET ?")
 		args = append(args, f.Offset)
 	}
 

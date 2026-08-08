@@ -19,7 +19,7 @@ func newWalkListCmd(stdout, stderr io.Writer) *cobra.Command {
 	var statusStr string
 	var scopeStr string
 	var tool bool
-	var limit int
+	var limit, offset int
 	var walkID string
 	var latest bool
 	var latestSuccess bool
@@ -47,7 +47,7 @@ func newWalkListCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runWalkList(cmd.Context(), target, since, statusStr, scopeStr, walkID, limit, latest, latestSuccess, ctr.QueryWalks, stdout, stderr)
+			return runWalkList(cmd.Context(), target, since, statusStr, scopeStr, walkID, limit, offset, latest, latestSuccess, ctr.QueryWalks, stdout, stderr)
 		},
 	}
 	cmd.Flags().StringVar(&target, "target", "", "filter by target module@version")
@@ -56,12 +56,13 @@ func newWalkListCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().StringVar(&scopeStr, "scope", "", "filter by walk scope (code|tool|complete)")
 	cmd.Flags().BoolVar(&tool, "tool", false, "shorthand for --scope tool")
 	cmd.Flags().IntVar(&limit, "limit", 20, "maximum number of results to return (0 = unlimited)")
+	cmd.Flags().IntVar(&offset, "offset", 0, "skip this many results")
 	cmd.Flags().StringVar(&walkID, "walk-id", "", "fetch a single walk summary by ID")
 	cmd.Flags().BoolVar(&latest, "latest", false, "return only the latest unique (target, scope) combination")
 	cmd.Flags().BoolVar(&latestSuccess, "latest-success", false, "return only the single most recent succeeded walk (as a JSON object, not an array)")
 	return cmd
 }
-func runWalkList(ctx context.Context, targetArg, sinceArg, statusArg, scopeArg, walkID string, limit int, latest, latestSuccess bool, uc QueryWalksUseCase, stdout, stderr io.Writer) error {
+func runWalkList(ctx context.Context, targetArg, sinceArg, statusArg, scopeArg, walkID string, limit, offset int, latest, latestSuccess bool, uc QueryWalksUseCase, stdout, stderr io.Writer) error {
 	if walkID != "" {
 		rec, rerr := uc.GetWalk(ctx, walkID)
 		if rerr != nil {
@@ -104,7 +105,7 @@ func runWalkList(ctx context.Context, targetArg, sinceArg, statusArg, scopeArg, 
 	if latestSuccess {
 		fetchLimit = limit
 	}
-	filter := walkports.WalkFilter{Limit: fetchLimit, LatestOnly: latest}
+	filter := walkports.WalkFilter{Limit: fetchLimit, Offset: offset, LatestOnly: latest}
 
 	if targetArg != "" {
 		coord, cerr := parseCoordinate(targetArg)
@@ -163,7 +164,7 @@ func runWalkList(ctx context.Context, targetArg, sinceArg, statusArg, scopeArg, 
 	}
 
 	summaries, truncated := truncateList(summaries, limit)
-	trunc := listTruncation{limit: limit, subject: "walk records", truncated: truncated}
+	trunc := listTruncation{limit: limit, subject: "walk records", truncated: truncated, offset: offset}
 
 	if jsonOut {
 		enc := json.NewEncoder(stdout)

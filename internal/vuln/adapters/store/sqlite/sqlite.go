@@ -1418,7 +1418,7 @@ func (s *Store) GetWalkScanRun(ctx context.Context, id string) (domain.WalkScanR
 
 // ListWalkScanRuns lists scan runs for a walk.
 func (s *Store) ListWalkScanRuns(ctx context.Context, walkID string) ([]domain.WalkScanRun, error) {
-	const q = `SELECT serialised FROM walk_scan_runs WHERE walk_id = ? ORDER BY started_at DESC`
+	const q = `SELECT serialised FROM walk_scan_runs WHERE walk_id = ? ORDER BY started_at DESC, id DESC`
 
 	rows, err := s.db.DB().QueryContext(ctx, q, walkID)
 	if err != nil {
@@ -1434,8 +1434,12 @@ func (s *Store) ListWalkScanRuns(ctx context.Context, walkID string) ([]domain.W
 }
 
 // ListAllWalkScanRuns lists all scan runs across all walks, most recent first.
+//
+// id breaks the started_at tie, so the order is total. vuln-scan-list pages this
+// listing in memory, and a page is only the rows the previous page did not show
+// if two calls order the population identically.
 func (s *Store) ListAllWalkScanRuns(ctx context.Context) ([]domain.WalkScanRun, error) {
-	const q = `SELECT serialised FROM walk_scan_runs ORDER BY started_at DESC`
+	const q = `SELECT serialised FROM walk_scan_runs ORDER BY started_at DESC, id DESC`
 
 	rows, err := s.db.DB().QueryContext(ctx, q)
 	if err != nil {

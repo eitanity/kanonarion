@@ -49,7 +49,7 @@ chronological order.
 ```
 kanonarion store ledger [--since <RFC3339>] [--until <RFC3339>]
                         [--module <path>] [--event-type <type>]
-                        [--limit <n>] [--store-root <dir>] [--json]
+                        [--limit <n>] [--offset <n>] [--store-root <dir>] [--json]
 ```
 
 Every reading states three things besides the events themselves:
@@ -101,6 +101,7 @@ evidence they did not happen:
 | `--module` | Restrict to events naming this module path. Matches the `module`, `module_path` (the flat fact-record layout) and `project` (directive/GODEBUG/FIPS/vendor) fields |
 | `--event-type` | Restrict to one event type, e.g. `vuln_finding_observed` |
 | `--limit` | List at most N events (0 = unlimited). The matched count is still the full total, and the output says it was truncated |
+| `--offset` | Skip this many **matched** events before listing, so paging composes with the filters rather than re-scoping them. The output states how many were stepped over |
 
 Because events come back in chronological order, `--limit 1` is the
 first-awareness query:

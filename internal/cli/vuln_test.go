@@ -572,7 +572,7 @@ func TestRunScanList_WithResults(t *testing.T) {
 	uc.AddRun(run)
 
 	var buf bytes.Buffer
-	if err := runScanList(context.Background(), fixtureWalkID, 50, uc, &buf, io.Discard); err != nil {
+	if err := runScanList(context.Background(), fixtureWalkID, 50, 0, uc, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -590,7 +590,7 @@ func TestRunScanList_AllRuns(t *testing.T) {
 	uc.AddRun(run)
 
 	var buf bytes.Buffer
-	if err := runScanList(context.Background(), "", 50, uc, &buf, io.Discard); err != nil {
+	if err := runScanList(context.Background(), "", 50, 0, uc, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), fixtureScanID) {
@@ -602,7 +602,7 @@ func TestRunScanList_UnknownWalk(t *testing.T) {
 	uc := testfakes.NewFakeQueryScanRuns()
 
 	var buf bytes.Buffer
-	if err := runScanList(context.Background(), "DOESNOTEXIST", 50, uc, &buf, io.Discard); err != nil {
+	if err := runScanList(context.Background(), "DOESNOTEXIST", 50, 0, uc, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), `the store holds no scan run at all, so walk id "DOESNOTEXIST" is not what made this empty`) {

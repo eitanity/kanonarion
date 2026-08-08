@@ -283,7 +283,7 @@ func TestRunLicenseList_WithRecords(t *testing.T) {
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PrimarySPDX: "MIT", OverallStatus: domain.LicenseStatusDetected},
 	})
 	var buf bytes.Buffer
-	err := runLicenseList(context.Background(), "", "", 50, uc, domain.NewLicenseOverrideSet(nil), &buf, io.Discard)
+	err := runLicenseList(context.Background(), "", "", 50, 0, uc, domain.NewLicenseOverrideSet(nil), &buf, io.Discard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -309,7 +309,7 @@ func TestRunLicenseList_OverrideProvenance(t *testing.T) {
 	})
 	ovSet := domain.NewLicenseOverrideSet(map[string]string{"example.com/app": "MIT"})
 	var buf bytes.Buffer
-	if err := runLicenseList(context.Background(), "", "", 50, uc, ovSet, &buf, io.Discard); err != nil {
+	if err := runLicenseList(context.Background(), "", "", 50, 0, uc, ovSet, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -324,7 +324,7 @@ func TestRunLicenseList_OverrideProvenance(t *testing.T) {
 func TestRunLicenseList_SPDXFilter_NoMatch(t *testing.T) {
 	uc := testfakes.NewFakeQueryLicense()
 	var buf bytes.Buffer
-	err := runLicenseList(context.Background(), "Apache-2.0", "", 50, uc, domain.NewLicenseOverrideSet(nil), &buf, io.Discard)
+	err := runLicenseList(context.Background(), "Apache-2.0", "", 50, 0, uc, domain.NewLicenseOverrideSet(nil), &buf, io.Discard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

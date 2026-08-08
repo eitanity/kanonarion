@@ -116,7 +116,7 @@ type DiffLicenseUseCase interface {
 // QueryDirectivesUseCase is the interface for reading stored directive scans.
 type QueryDirectivesUseCase interface {
 	GetScan(ctx context.Context, scanID string) (directivedomain.Record, bool, error)
-	ListScans(ctx context.Context, projectModulePath string, limit int) ([]directivedomain.Record, error)
+	ListScans(ctx context.Context, projectModulePath string, limit, offset int) ([]directivedomain.Record, error)
 }
 
 // DiffDirectivesUseCase is the interface for diffing two directive scans.

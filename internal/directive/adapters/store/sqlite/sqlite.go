@@ -150,15 +150,30 @@ func (s *Store) GetScanByID(ctx context.Context, scanID string) (domain.Record, 
 }
 
 // ListScans returns the most recent scans for a project, newest first.
-// limit 0 means unlimited.
-func (s *Store) ListScans(ctx context.Context, projectModulePath string, limit int) ([]domain.Record, error) {
+// limit 0 means unlimited; offset skips that many scans first.
+//
+// The ordering is total — completed_at is not unique, scan_id is the table's
+// primary key — which is what makes the offset mean anything: page 2 is only
+// the rows page 1 did not show if the two calls order the population the same
+// way.
+func (s *Store) ListScans(ctx context.Context, projectModulePath string, limit, offset int) ([]domain.Record, error) {
 	q := `SELECT scan_id, completed_at, serialised FROM directive_scans
 WHERE project_module_path = ? AND pipeline_version = ?
 ORDER BY completed_at DESC, scan_id DESC`
 	args := []any{projectModulePath, domain.PipelineVersion}
-	if limit > 0 {
+	// SQLite parses OFFSET only after a LIMIT, so an unlimited page past an
+	// offset spells the absent cap as -1 rather than dropping the offset.
+	switch {
+	case limit > 0:
 		q += ` LIMIT ?`
 		args = append(args, limit)
+		if offset > 0 {
+			q += ` OFFSET ?`
+			args = append(args, offset)
+		}
+	case offset > 0:
+		q += ` LIMIT -1 OFFSET ?`
+		args = append(args, offset)
 	}
 
 	rows, err := s.db.DB().QueryContext(ctx, q, args...)

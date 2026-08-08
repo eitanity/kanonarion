@@ -95,7 +95,7 @@ func TestExamplesList_ConflictRowDoesNotDeleteTheOtherModules(t *testing.T) {
 	})
 
 	var stdout bytes.Buffer
-	err := runExamplesList(context.Background(), 0, uc, &stdout, io.Discard)
+	err := runExamplesList(context.Background(), 0, 0, uc, &stdout, io.Discard)
 	if !errors.Is(err, exports.ErrExampleConflict) {
 		t.Errorf("examples-list returned %v; a module in dispute must not read as a clean run", err)
 	}
@@ -176,7 +176,7 @@ func TestInterfaceList_ConflictRowDoesNotDeleteTheOtherModules(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	err := printInterfaceList(sums, false, 0, &stdout, io.Discard)
+	err := printInterfaceList(sums, false, 0, 0, &stdout, io.Discard)
 	if !errors.Is(err, ifaceports.ErrInterfaceConflict) {
 		t.Errorf("interface-list returned %v; a module in dispute must not read as a clean run", err)
 	}

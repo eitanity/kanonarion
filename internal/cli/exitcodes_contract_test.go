@@ -78,7 +78,7 @@ func TestExitCodeContract_MissingRecordIsNotFound(t *testing.T) {
 				&testfakes.FakeDiffWalks{Err: walkports.ErrWalkNotFound}, &bytes.Buffer{})
 		}},
 		{"walk-list --walk-id", ExitNotFound, func(t *testing.T) error {
-			return runWalkList(context.Background(), "", "", "", "", missingWalk, 0, false, false,
+			return runWalkList(context.Background(), "", "", "", "", missingWalk, 0, 0, false, false,
 				emptyWalks(), &bytes.Buffer{}, &bytes.Buffer{})
 		}},
 		{"vuln-show --walk-id (walk never scanned)", ExitNotFound, func(t *testing.T) error {
@@ -115,7 +115,7 @@ func TestExitCodeContract_WalkByIDAgreesAcrossCommands(t *testing.T) {
 		"walk-show": runWalkShow(context.Background(), missingWalk, testfakes.NewFakeQueryWalks(), &bytes.Buffer{}, io.Discard),
 		"walk-diff": runWalkDiff(context.Background(), missingWalk, missingWalk,
 			&testfakes.FakeDiffWalks{Err: walkports.ErrWalkNotFound}, &bytes.Buffer{}),
-		"walk-list --walk-id": runWalkList(context.Background(), "", "", "", "", missingWalk, 0, false, false,
+		"walk-list --walk-id": runWalkList(context.Background(), "", "", "", "", missingWalk, 0, 0, false, false,
 			testfakes.NewFakeQueryWalks(), &bytes.Buffer{}, &bytes.Buffer{}),
 		"verification-coverage": runVerificationCoverage(context.Background(), missingWalk,
 			testfakes.NewFakeQueryWalks(), fakeFetchRecords{}, false, &bytes.Buffer{}),

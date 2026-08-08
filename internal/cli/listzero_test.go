@@ -204,7 +204,7 @@ func TestListCommands_ZeroResultsNameTheirScope(t *testing.T) {
 		{
 			name: "vuln-scan-list",
 			run: func(stdout, stderr io.Writer) error {
-				return runScanList(context.Background(), "DOESNOTEXIST", 20,
+				return runScanList(context.Background(), "DOESNOTEXIST", 20, 0,
 					testfakes.NewFakeQueryScanRuns(), stdout, stderr)
 			},
 			want: []string{"the store holds no scan run at all", `walk id "DOESNOTEXIST"`,
@@ -213,7 +213,7 @@ func TestListCommands_ZeroResultsNameTheirScope(t *testing.T) {
 		{
 			name: "license-list",
 			run: func(stdout, stderr io.Writer) error {
-				return runLicenseList(context.Background(), "NOSUCHLICENSE", "", 50,
+				return runLicenseList(context.Background(), "NOSUCHLICENSE", "", 50, 0,
 					testfakes.NewFakeQueryLicense(), licdomain.NewLicenseOverrideSet(nil), stdout, stderr)
 			},
 			want: []string{"the store holds no license record at all", `SPDX identifier "NOSUCHLICENSE"`,
@@ -242,7 +242,7 @@ func TestRunLicenseList_BothFiltersAreNamed(t *testing.T) {
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PrimarySPDX: "MIT"},
 	})
 	var stdout, stderr bytes.Buffer
-	if err := runLicenseList(context.Background(), "Apache-2.0", "Acme Corp", 50,
+	if err := runLicenseList(context.Background(), "Apache-2.0", "Acme Corp", 50, 0,
 		uc, licdomain.NewLicenseOverrideSet(nil), &stdout, &stderr); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -263,7 +263,7 @@ func TestRunLicenseList_CopyrightFilterOffersNoSPDXExample(t *testing.T) {
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PrimarySPDX: "MIT"},
 	})
 	var stdout, stderr bytes.Buffer
-	if err := runLicenseList(context.Background(), "", "zzz-no-such-holder", 50,
+	if err := runLicenseList(context.Background(), "", "zzz-no-such-holder", 50, 0,
 		uc, licdomain.NewLicenseOverrideSet(nil), &stdout, &stderr); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

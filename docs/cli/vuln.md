@@ -565,6 +565,7 @@ kanonarion vuln-scan-list [walk-id] [flags]
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Path to fact store root |
 | `--limit` | `20` | Maximum number of results (0 = unlimited) |
+| `--offset` | `0` | Skip this many results before listing |
 
 When the limit bites, the listing says so on both output paths and names the
 invocation that lifts it, per [Truncated listings](conventions.md#truncated-listings).

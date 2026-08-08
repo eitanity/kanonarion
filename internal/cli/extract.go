@@ -170,7 +170,7 @@ func newExtractShowCmd(stdout, stderr io.Writer) *cobra.Command {
 }
 
 func newExtractListCmd(stdout, stderr io.Writer) *cobra.Command {
-	var limit int
+	var limit, offset int
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List extraction runs",
@@ -181,24 +181,25 @@ func newExtractListCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runExtractList(cmd.Context(), limit, ctr.QueryExtract, stdout, stderr)
+			return runExtractList(cmd.Context(), limit, offset, ctr.QueryExtract, stdout, stderr)
 		},
 	}
 	cmd.Flags().IntVar(&limit, "limit", 20, "maximum number of runs to return (0 = unlimited)")
+	cmd.Flags().IntVar(&offset, "offset", 0, "skip this many runs")
 	return cmd
 }
 
 // runExtractList renders the extraction-run listing. Split from the command so
 // the row cap it applies is exercisable without a live store.
-func runExtractList(ctx context.Context, limit int, uc QueryExtractionUseCase, stdout, stderr io.Writer) error {
+func runExtractList(ctx context.Context, limit, offset int, uc QueryExtractionUseCase, stdout, stderr io.Writer) error {
 	// One row more than will be printed, so the extra row answers whether the
 	// limit bit without a second read.
-	runs, err := uc.ListExtractionRuns(ctx, ports.ExtractionRunFilter{Limit: truncationFetchLimit(limit)})
+	runs, err := uc.ListExtractionRuns(ctx, ports.ExtractionRunFilter{Limit: truncationFetchLimit(limit), Offset: offset})
 	if err != nil {
 		return fmt.Errorf("failed to list extraction runs: %w", err)
 	}
 	runs, truncated := truncateList(runs, limit)
-	trunc := listTruncation{limit: limit, subject: "extraction runs", truncated: truncated}
+	trunc := listTruncation{limit: limit, subject: "extraction runs", truncated: truncated, offset: offset}
 
 	if jsonOut {
 		type runJSON struct {

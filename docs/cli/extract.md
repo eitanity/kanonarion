@@ -57,6 +57,7 @@ kanonarion extract list --limit 50
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Root directory for storage |
 | `--limit` | `20` | Maximum number of runs to list (0 = unlimited) |
+| `--offset` | `0` | Skip this many runs before listing |
 
 When the limit bites, the listing says so on both output paths and names the
 invocation that lifts it, per [Truncated listings](conventions.md#truncated-listings).

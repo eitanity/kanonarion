@@ -40,9 +40,9 @@ func (uc *QueryDirectivesUseCase) GetScan(ctx context.Context, scanID string) (d
 }
 
 // ListScans returns the scan history for a project, newest first.
-// limit 0 means unlimited.
-func (uc *QueryDirectivesUseCase) ListScans(ctx context.Context, projectModulePath string, limit int) ([]domain.Record, error) {
-	scans, err := uc.store.ListScans(ctx, projectModulePath, limit)
+// limit 0 means unlimited; offset skips that many scans first.
+func (uc *QueryDirectivesUseCase) ListScans(ctx context.Context, projectModulePath string, limit, offset int) ([]domain.Record, error) {
+	scans, err := uc.store.ListScans(ctx, projectModulePath, limit, offset)
 	if err != nil {
 		return nil, fmt.Errorf("listing directive scans: %w", err)
 	}

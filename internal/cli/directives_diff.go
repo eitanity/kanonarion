@@ -82,6 +82,7 @@ func newDirectivesListCmd(stdout, stderr io.Writer) *cobra.Command {
 		project   string
 		gomodPath string
 		limit     int
+		offset    int
 	)
 	cmd := &cobra.Command{
 		Use:   "list",
@@ -93,16 +94,17 @@ is omitted, so running 'kanonarion directives list' inside a Go module's root
 works without any flags.`,
 		Args: cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runDirectivesList(cmd.Context(), project, gomodPath, limit, stdout, stderr)
+			return runDirectivesList(cmd.Context(), project, gomodPath, limit, offset, stdout, stderr)
 		},
 	}
 	cmd.Flags().StringVar(&project, "project", "", "project module path (default: inferred from go.mod)")
 	cmd.Flags().StringVar(&gomodPath, "gomod", "", "path to go.mod used to infer --project (default: ./go.mod)")
 	cmd.Flags().IntVar(&limit, "limit", 20, "maximum number of scans to list (0 = unlimited)")
+	cmd.Flags().IntVar(&offset, "offset", 0, "skip this many scans")
 	return cmd
 }
 
-func runDirectivesList(ctx context.Context, project, gomodPath string, limit int, stdout, stderr io.Writer) error {
+func runDirectivesList(ctx context.Context, project, gomodPath string, limit, offset int, stdout, stderr io.Writer) error {
 	if project == "" {
 		resolved, err := resolveGoModPath(gomodPath)
 		if err != nil {
@@ -122,22 +124,22 @@ func runDirectivesList(ctx context.Context, project, gomodPath string, limit int
 	}
 	defer func() { _ = cleanup() }()
 
-	return directivesListWith(ctx, ctr, project, limit, stdout, stderr)
+	return directivesListWith(ctx, ctr, project, limit, offset, stdout, stderr)
 }
 
 // directivesListWith holds the directives-list logic over an injected
 // Container: it lists scans for a project, reports an empty set explicitly, and
 // renders JSON or a table. Split from runDirectivesList so listing and render
 // selection are testable without a live store.
-func directivesListWith(ctx context.Context, ctr *Container, project string, limit int, stdout, stderr io.Writer) error {
+func directivesListWith(ctx context.Context, ctr *Container, project string, limit, offset int, stdout, stderr io.Writer) error {
 	// One row more than will be printed, so the extra row answers whether the
 	// limit bit without a second read.
-	scans, err := ctr.QueryDirectives.ListScans(ctx, project, truncationFetchLimit(limit))
+	scans, err := ctr.QueryDirectives.ListScans(ctx, project, truncationFetchLimit(limit), offset)
 	if err != nil {
 		return fmt.Errorf("listing directive scans: %w", err)
 	}
 	scans, truncated := truncateList(scans, limit)
-	trunc := listTruncation{limit: limit, subject: "directive scans", truncated: truncated}
+	trunc := listTruncation{limit: limit, subject: "directive scans", truncated: truncated, offset: offset}
 	if jsonOut {
 		type scanJSON struct {
 			ID              string    `json:"id"`

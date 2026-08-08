@@ -78,6 +78,7 @@ kanonarion walk-list [--scope code|tool|complete] [--json]
 | `--scope` | _(all)_ | Filter by walk scope (`code`, `tool`, or `complete`) |
 | `--tool` | `false` | Shorthand for `--scope tool` |
 | `--limit` | `20` | Maximum number of results to return (`0` = unlimited) |
+| `--offset` | `0` | Skip this many results before listing |
 
 When the limit bites, the listing says so on both output paths and names the
 invocation that lifts it, per [Truncated listings](conventions.md#truncated-listings).

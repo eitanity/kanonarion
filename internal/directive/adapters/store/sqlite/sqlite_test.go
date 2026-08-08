@@ -109,7 +109,7 @@ func TestStore_PutAndGetRoundTrip(t *testing.T) {
 	if err := store.PutDirectiveRecord(ctx, rec); err != nil {
 		t.Fatalf("PutDirectiveRecord (upsert): %v", err)
 	}
-	scans, err := store.ListScans(ctx, "example.com/proj", 0)
+	scans, err := store.ListScans(ctx, "example.com/proj", 0, 0)
 	if err != nil {
 		t.Fatalf("ListScans: %v", err)
 	}
@@ -132,7 +132,7 @@ func TestStore_ListScansOrderAndLimit(t *testing.T) {
 		}
 	}
 
-	all, err := store.ListScans(ctx, "example.com/proj", 0)
+	all, err := store.ListScans(ctx, "example.com/proj", 0, 0)
 	if err != nil {
 		t.Fatalf("ListScans: %v", err)
 	}
@@ -143,12 +143,31 @@ func TestStore_ListScansOrderAndLimit(t *testing.T) {
 		t.Errorf("ListScans not newest-first: %v", []string{all[0].ID, all[1].ID, all[2].ID})
 	}
 
-	limited, err := store.ListScans(ctx, "example.com/proj", 2)
+	limited, err := store.ListScans(ctx, "example.com/proj", 2, 0)
 	if err != nil {
 		t.Fatalf("ListScans (limit): %v", err)
 	}
 	if len(limited) != 2 {
 		t.Errorf("limit=2 returned %d rows", len(limited))
+	}
+
+	// Paging. The offset is the caller's way past the limit, so the page it
+	// names must be the same rows the unpaged listing holds there — and an
+	// offset with no limit ("everything from row N") has to be answerable at
+	// all, which is the shape SQLite rejects if OFFSET is emitted without one.
+	page, err := store.ListScans(ctx, "example.com/proj", 1, 1)
+	if err != nil {
+		t.Fatalf("ListScans (limit+offset): %v", err)
+	}
+	if len(page) != 1 || page[0].ID != all[1].ID {
+		t.Errorf("limit=1 offset=1 returned %v, want the second row %s", page, all[1].ID)
+	}
+	rest, err := store.ListScans(ctx, "example.com/proj", 0, 1)
+	if err != nil {
+		t.Fatalf("ListScans (offset, no limit): %v", err)
+	}
+	if len(rest) != 2 || rest[0].ID != all[1].ID {
+		t.Errorf("offset=1 with no limit returned %d rows starting %v, want 2 starting %s", len(rest), rest, all[1].ID)
 	}
 
 	// GetDirectiveRecord (latest) consistent with ListScans[0].
@@ -172,7 +191,7 @@ func TestStore_MissingReturnsNotFound(t *testing.T) {
 	if _, found, err := store.GetDirectiveRecord(ctx, "example.com/never-scanned"); err != nil || found {
 		t.Errorf("GetDirectiveRecord unscanned: found=%t err=%v", found, err)
 	}
-	scans, err := store.ListScans(ctx, "example.com/never-scanned", 0)
+	scans, err := store.ListScans(ctx, "example.com/never-scanned", 0, 0)
 	if err != nil {
 		t.Fatalf("ListScans: %v", err)
 	}

@@ -33,10 +33,20 @@ type listTruncation struct {
 	// limit. It is measured, never assumed: a listing holding exactly its limit
 	// and nothing more must not claim to have withheld anything.
 	truncated bool
+	// offset is how many records the caller skipped to reach this page. It is
+	// carried so the statement can name the NEXT page and not only the whole
+	// population: a reader told "more exist" and offered --limit 0 alone must
+	// choose between this page and all of it, which is exactly the choice paging
+	// exists to remove.
+	offset int
 }
 
 // applied reports whether this listing capped anything at all.
 func (t listTruncation) applied() bool { return t.limit > 0 }
+
+// nextOffset is the offset that starts the page after this one. It is only ever
+// read on a truncated listing, where a further page is known to exist.
+func (t listTruncation) nextOffset() int { return t.offset + t.limit }
 
 // truncationFetchLimit converts a caller's limit into the number of rows the
 // port is asked for: one more than will be printed, so the extra row's presence
@@ -64,6 +74,25 @@ func truncateList[T any](rows []T, limit int) ([]T, bool) {
 	return rows[:limit], true
 }
 
+// skipList applies a caller's offset to rows a port could not page itself.
+//
+// It exists for the two listings whose page is not the port's page: one that
+// post-filters the port's rows in the CLI, and one whose port hands back its
+// whole population by design. Everywhere else the offset goes to the filter, so
+// the store does the skipping and the CLI never holds rows it will not print.
+//
+// An offset at or past the end yields no rows rather than an error: paging past
+// the population is a page that is empty, and the zero-result notice says so.
+func skipList[T any](rows []T, offset int) []T {
+	if offset <= 0 {
+		return rows
+	}
+	if offset >= len(rows) {
+		return nil
+	}
+	return rows[offset:]
+}
+
 // writeListTruncationNotice states a truncated listing's cap on the text path.
 //
 // It writes nothing when no limit was applied, and nothing when the limit was
@@ -74,8 +103,15 @@ func writeListTruncationNotice(stdout io.Writer, t listTruncation) error {
 	if !t.applied() || !t.truncated {
 		return nil
 	}
-	if _, err := fmt.Fprintf(stdout, "showing first %d %s — more exist (--limit 0 for all)\n",
-		t.limit, t.subject); err != nil {
+	shown := fmt.Sprintf("showing first %d %s", t.limit, t.subject)
+	if t.offset > 0 {
+		// A page that did not start at the beginning must not describe itself as
+		// the first anything: the rows are the ones the caller asked to skip to,
+		// and naming the range is what lets them be placed in the population.
+		shown = fmt.Sprintf("showing %s %d-%d", t.subject, t.offset+1, t.offset+t.limit)
+	}
+	if _, err := fmt.Fprintf(stdout, "%s — more exist (--limit 0 for all, --offset %d for the next page)\n",
+		shown, t.nextOffset()); err != nil {
 		return fmt.Errorf("writing truncation notice: %w", err)
 	}
 	return nil
@@ -87,6 +123,12 @@ type listTruncationJSON struct {
 	Limit     int    `json:"limit"`
 	Subject   string `json:"subject"`
 	Remedy    string `json:"remedy"`
+	// Offset is the page this listing returned, and NextOffset the one after it.
+	// NextOffset is stated whenever a limit applied, not only when it bit: a
+	// consumer paging a listing reads the same field every time rather than
+	// branching on whether the previous page happened to be full.
+	Offset     int `json:"offset"`
+	NextOffset int `json:"next_offset"`
 }
 
 // writeListTruncationJSON states the cap for a machine reader.
@@ -108,10 +150,12 @@ func writeListTruncationJSON(stderr io.Writer, t listTruncation) error {
 	}
 	enc := json.NewEncoder(stderr)
 	if err := enc.Encode(listTruncationJSON{
-		Truncated: t.truncated,
-		Limit:     t.limit,
-		Subject:   t.subject,
-		Remedy:    "--limit 0",
+		Truncated:  t.truncated,
+		Limit:      t.limit,
+		Subject:    t.subject,
+		Remedy:     "--limit 0",
+		Offset:     t.offset,
+		NextOffset: t.nextOffset(),
 	}); err != nil {
 		return fmt.Errorf("encoding truncation notice: %w", err)
 	}

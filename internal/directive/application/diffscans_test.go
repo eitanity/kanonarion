@@ -19,7 +19,7 @@ func (s *diffFakeStore) GetScanByID(_ context.Context, scanID string) (domain.Re
 	r, ok := s.records[scanID]
 	return r, ok, nil
 }
-func (s *diffFakeStore) ListScans(context.Context, string, int) ([]domain.Record, error) {
+func (s *diffFakeStore) ListScans(context.Context, string, int, int) ([]domain.Record, error) {
 	return nil, nil
 }
 

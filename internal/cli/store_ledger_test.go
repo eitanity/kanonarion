@@ -250,10 +250,11 @@ func TestStoreLedger_RefusesUnusableQueries(t *testing.T) {
 	var out bytes.Buffer
 
 	for name, f := range map[string]storeLedgerFlags{
-		"bad since":      {since: "yesterday"},
-		"bad until":      {until: "yesterday"},
-		"until < since":  {since: "2026-08-01T00:00:00Z", until: "2026-07-01T00:00:00Z"},
-		"negative limit": {limit: -1},
+		"bad since":       {since: "yesterday"},
+		"bad until":       {until: "yesterday"},
+		"until < since":   {since: "2026-08-01T00:00:00Z", until: "2026-07-01T00:00:00Z"},
+		"negative limit":  {limit: -1},
+		"negative offset": {offset: -1},
 	} {
 		if err := runStoreLedger(root, f, false, &out); err == nil {
 			t.Errorf("%s: accepted an unusable query", name)
@@ -262,6 +263,55 @@ func TestStoreLedger_RefusesUnusableQueries(t *testing.T) {
 
 	if err := runStoreLedger(t.TempDir(), storeLedgerFlags{}, false, &out); err == nil {
 		t.Error("a store with no ledger read as an empty one")
+	}
+}
+
+// The ledger is paged like every other capped listing: --offset steps over
+// MATCHED events, so paging and filtering compose rather than one silently
+// re-scoping the other, and the answer states how many it stepped over.
+//
+// The zero-paired control is the last page: it has withheld nothing and must
+// not offer a next page, which is what stops the remedy line being boilerplate.
+func TestStoreLedger_PagesTheMatchedEvents(t *testing.T) {
+	root := ledgerFixture(t, ledgerFactWritten, ledgerFindingJWT, ledgerFindingLater, ledgerScanServed)
+
+	all := decodeLedger(t, runLedger(t, root, storeLedgerFlags{}, true))
+	if len(all.Events) != 4 {
+		t.Fatalf("the fixture holds %d events, want 4", len(all.Events))
+	}
+
+	page := decodeLedger(t, runLedger(t, root, storeLedgerFlags{limit: 2, offset: 1}, true))
+	if len(page.Events) != 2 {
+		t.Fatalf("page holds %d events, want 2", len(page.Events))
+	}
+	if page.Skipped != 1 {
+		t.Errorf("skipped = %d, want 1", page.Skipped)
+	}
+	if page.Matched != all.Matched {
+		t.Errorf("matched = %d on a paged read, want the whole window %d", page.Matched, all.Matched)
+	}
+	for i := range page.Events {
+		if page.Events[i].Line != all.Events[i+1].Line {
+			t.Errorf("paged event %d is line %d, want line %d", i, page.Events[i].Line, all.Events[i+1].Line)
+		}
+	}
+
+	// The offset walks matched events, not ledger lines: with a filter applied
+	// it pages the filtered answer.
+	filtered := decodeLedger(t, runLedger(t, root,
+		storeLedgerFlags{eventType: "vuln_finding_observed", offset: 1}, true))
+	if len(filtered.Events) != 1 || filtered.Matched != 2 || filtered.Skipped != 1 {
+		t.Errorf("paging a filtered window gave %d event(s), matched %d, skipped %d; want 1/2/1",
+			len(filtered.Events), filtered.Matched, filtered.Skipped)
+	}
+
+	text := runLedger(t, root, storeLedgerFlags{limit: 2, offset: 0}, false)
+	if !strings.Contains(text, "--offset 2 for the next page") {
+		t.Errorf("a truncated ledger read does not name the next page:\n%s", text)
+	}
+	last := runLedger(t, root, storeLedgerFlags{limit: 2, offset: 2}, false)
+	if strings.Contains(last, "for the next page") {
+		t.Errorf("the last page offered a next one:\n%s", last)
 	}
 }
 

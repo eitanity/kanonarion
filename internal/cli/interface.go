@@ -473,7 +473,7 @@ type packageSummary struct {
 }
 
 func newInterfaceListCmd(stdout, stderr io.Writer) *cobra.Command {
-	var limit int
+	var limit, offset int
 
 	cmd := &cobra.Command{
 		Use:   "interface-list [<module>@<version>]",
@@ -488,11 +488,12 @@ func newInterfaceListCmd(stdout, stderr io.Writer) *cobra.Command {
 			if len(args) == 1 {
 				return runInterfaceListForModule(cmd.Context(), args[0], jsonOut, stdout, stderr)
 			}
-			return runInterfaceList(cmd.Context(), limit, stdout, stderr)
+			return runInterfaceList(cmd.Context(), limit, offset, stdout, stderr)
 		},
 	}
 
 	cmd.Flags().IntVar(&limit, "limit", 50, "maximum number of records to return without a module arg (0 = unlimited)")
+	cmd.Flags().IntVar(&offset, "offset", 0, "skip this many records")
 
 	return cmd
 }
@@ -548,7 +549,7 @@ func runInterfaceListForModule(ctx context.Context, moduleArg string, jsonOut bo
 	return nil
 }
 
-func runInterfaceList(ctx context.Context, limit int, stdout, stderr io.Writer) error {
+func runInterfaceList(ctx context.Context, limit, offset int, stdout, stderr io.Writer) error {
 	logger := buildLogger(logLevel, stderr)
 	ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 	if err != nil {
@@ -556,19 +557,19 @@ func runInterfaceList(ctx context.Context, limit int, stdout, stderr io.Writer) 
 	}
 	defer func() { _ = cleanup() }()
 
-	return interfaceListWith(ctx, limit, ctr.QueryInterface, stdout, stderr)
+	return interfaceListWith(ctx, limit, offset, ctr.QueryInterface, stdout, stderr)
 }
 
 // interfaceListWith holds the collapsed listing over an injected use case, so
 // the row cap it applies is exercisable without a live store.
-func interfaceListWith(ctx context.Context, limit int, uc QueryInterfaceUseCase, stdout, stderr io.Writer) error {
+func interfaceListWith(ctx context.Context, limit, offset int, uc QueryInterfaceUseCase, stdout, stderr io.Writer) error {
 	// One row more than will be printed: the extra row answers whether the limit
 	// bit, and costs one row rather than a second read.
-	sums, err := uc.ListInterfaceRecords(ctx, ports.InterfaceFilter{Limit: truncationFetchLimit(limit)})
+	sums, err := uc.ListInterfaceRecords(ctx, ports.InterfaceFilter{Limit: truncationFetchLimit(limit), Offset: offset})
 	if err != nil {
 		return fmt.Errorf("listing interface records: %w", err)
 	}
-	return printInterfaceList(sums, jsonOut, limit, stdout, stderr)
+	return printInterfaceList(sums, jsonOut, limit, offset, stdout, stderr)
 }
 
 // printInterfaceList renders the collapsed list.
@@ -577,9 +578,9 @@ func interfaceListWith(ctx context.Context, limit int, uc QueryInterfaceUseCase,
 // own row and the command fails afterwards: every module is listed first, so one
 // module in dispute does not delete the answers for all the others, and the run
 // still does not read as clean.
-func printInterfaceList(sums []ports.InterfaceSummary, jsonOut bool, limit int, stdout, stderr io.Writer) error {
+func printInterfaceList(sums []ports.InterfaceSummary, jsonOut bool, limit, offset int, stdout, stderr io.Writer) error {
 	sums, truncated := truncateList(sums, limit)
-	trunc := listTruncation{limit: limit, subject: "interface records", truncated: truncated}
+	trunc := listTruncation{limit: limit, subject: "interface records", truncated: truncated, offset: offset}
 	if jsonOut {
 		type interfaceListEntry struct {
 			Module       string `json:"module"`

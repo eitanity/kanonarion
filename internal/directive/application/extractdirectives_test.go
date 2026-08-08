@@ -33,7 +33,7 @@ func (s *fakeStore) GetScanByID(_ context.Context, scanID string) (domain.Record
 	}
 	return *s.put, true, nil
 }
-func (s *fakeStore) ListScans(context.Context, string, int) ([]domain.Record, error) {
+func (s *fakeStore) ListScans(context.Context, string, int, int) ([]domain.Record, error) {
 	if s.put == nil {
 		return nil, nil
 	}

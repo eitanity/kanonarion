@@ -359,7 +359,7 @@ func runExamplesFind(ctx context.Context, symbol string, jsonOut bool, uc QueryE
 // -- examples-list command --
 
 func newExamplesListCmd(stdout, stderr io.Writer) *cobra.Command {
-	var limit int
+	var limit, offset int
 
 	cmd := &cobra.Command{
 		Use:   "examples-list [<module>@<version>]",
@@ -379,11 +379,12 @@ func newExamplesListCmd(stdout, stderr io.Writer) *cobra.Command {
 			if len(args) == 1 {
 				return runExamplesListForModule(cmd.Context(), args[0], ctr.QueryExamples, stdout)
 			}
-			return runExamplesList(cmd.Context(), limit, ctr.QueryExamples, stdout, stderr)
+			return runExamplesList(cmd.Context(), limit, offset, ctr.QueryExamples, stdout, stderr)
 		},
 	}
 
 	cmd.Flags().IntVar(&limit, "limit", 50, "maximum number of records to return without a module arg (0 = unlimited)")
+	cmd.Flags().IntVar(&offset, "offset", 0, "skip this many records")
 
 	return cmd
 }
@@ -441,15 +442,15 @@ func runExamplesListForModule(ctx context.Context, moduleArg string, uc QueryExa
 	return nil
 }
 
-func runExamplesList(ctx context.Context, limit int, uc QueryExamplesUseCase, stdout, stderr io.Writer) error {
+func runExamplesList(ctx context.Context, limit, offset int, uc QueryExamplesUseCase, stdout, stderr io.Writer) error {
 	// One row more than will be printed, so the extra row answers whether the
 	// limit bit without a second read.
-	sums, err := uc.ListExampleRecords(ctx, ports.ExampleFilter{Limit: truncationFetchLimit(limit)})
+	sums, err := uc.ListExampleRecords(ctx, ports.ExampleFilter{Limit: truncationFetchLimit(limit), Offset: offset})
 	if err != nil {
 		return fmt.Errorf("listing example records: %w", err)
 	}
 	sums, truncated := truncateList(sums, limit)
-	trunc := listTruncation{limit: limit, subject: "example records", truncated: truncated}
+	trunc := listTruncation{limit: limit, subject: "example records", truncated: truncated, offset: offset}
 	if jsonOut {
 		type entry struct {
 			Module       string `json:"module"`

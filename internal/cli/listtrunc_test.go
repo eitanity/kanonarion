@@ -37,8 +37,10 @@ type listingSurface struct {
 	population int
 	// subject is the plural noun the truncation line must use.
 	subject string
-	// run invokes the listing at the given limit and returns stdout and stderr.
-	run func(t *testing.T, limit int, asJSON bool) (string, string)
+	// run invokes the listing at the given limit and offset and returns stdout
+	// and stderr. Offset is part of the shape because a limit a caller cannot
+	// step past leaves them re-fetching the whole population to read row 51.
+	run func(t *testing.T, limit, offset int, asJSON bool) (string, string)
 	// rows counts the records the JSON payload carried.
 	rows func(t *testing.T, stdout string) int
 }
@@ -86,11 +88,11 @@ func licenseSurface() listingSurface {
 	uc.SetList(sums)
 	return listingSurface{
 		name: "license-list", population: truncPopulation, subject: "license records",
-		run: func(t *testing.T, limit int, asJSON bool) (string, string) {
+		run: func(t *testing.T, limit, offset int, asJSON bool) (string, string) {
 			t.Helper()
 			withJSON(t, asJSON)
 			var stdout, stderr bytes.Buffer
-			if err := runLicenseList(context.Background(), "", "", limit, uc,
+			if err := runLicenseList(context.Background(), "", "", limit, offset, uc,
 				licdomain.LicenseOverrideSet{}, &stdout, &stderr); err != nil {
 				t.Fatalf("runLicenseList: %v", err)
 			}
@@ -111,11 +113,11 @@ func interfaceSurface() listingSurface {
 	uc.SetList(sums)
 	return listingSurface{
 		name: "interface-list", population: truncPopulation, subject: "interface records",
-		run: func(t *testing.T, limit int, asJSON bool) (string, string) {
+		run: func(t *testing.T, limit, offset int, asJSON bool) (string, string) {
 			t.Helper()
 			withJSON(t, asJSON)
 			var stdout, stderr bytes.Buffer
-			if err := interfaceListWith(context.Background(), limit, uc, &stdout, &stderr); err != nil {
+			if err := interfaceListWith(context.Background(), limit, offset, uc, &stdout, &stderr); err != nil {
 				t.Fatalf("interfaceListWith: %v", err)
 			}
 			return stdout.String(), stderr.String()
@@ -135,11 +137,11 @@ func examplesSurface() listingSurface {
 	uc.SetList(sums)
 	return listingSurface{
 		name: "examples-list", population: truncPopulation, subject: "example records",
-		run: func(t *testing.T, limit int, asJSON bool) (string, string) {
+		run: func(t *testing.T, limit, offset int, asJSON bool) (string, string) {
 			t.Helper()
 			withJSON(t, asJSON)
 			var stdout, stderr bytes.Buffer
-			if err := runExamplesList(context.Background(), limit, uc, &stdout, &stderr); err != nil {
+			if err := runExamplesList(context.Background(), limit, offset, uc, &stdout, &stderr); err != nil {
 				t.Fatalf("runExamplesList: %v", err)
 			}
 			return stdout.String(), stderr.String()
@@ -160,11 +162,11 @@ func callGraphSurface() listingSurface {
 	uc.SetList(sums)
 	return listingSurface{
 		name: "callgraph-list", population: truncPopulation, subject: "call graph records",
-		run: func(t *testing.T, limit int, asJSON bool) (string, string) {
+		run: func(t *testing.T, limit, offset int, asJSON bool) (string, string) {
 			t.Helper()
 			withJSON(t, asJSON)
 			var stdout, stderr bytes.Buffer
-			if err := runCallGraphList(context.Background(), "", limit, 0, uc, &stdout, &stderr); err != nil {
+			if err := runCallGraphList(context.Background(), "", limit, offset, uc, &stdout, &stderr); err != nil {
 				t.Fatalf("runCallGraphList: %v", err)
 			}
 			return stdout.String(), stderr.String()
@@ -184,11 +186,11 @@ func vulnScanSurface() listingSurface {
 	}
 	return listingSurface{
 		name: "vuln-scan-list", population: truncPopulation, subject: "scan runs",
-		run: func(t *testing.T, limit int, asJSON bool) (string, string) {
+		run: func(t *testing.T, limit, offset int, asJSON bool) (string, string) {
 			t.Helper()
 			withJSON(t, asJSON)
 			var stdout, stderr bytes.Buffer
-			if err := runScanList(context.Background(), "", limit, uc, &stdout, &stderr); err != nil {
+			if err := runScanList(context.Background(), "", limit, offset, uc, &stdout, &stderr); err != nil {
 				t.Fatalf("runScanList: %v", err)
 			}
 			return stdout.String(), stderr.String()
@@ -213,11 +215,11 @@ func walkSurface(t *testing.T) listingSurface {
 	uc.SetSummaries(sums)
 	return listingSurface{
 		name: "walk-list", population: truncPopulation, subject: "walk records",
-		run: func(t *testing.T, limit int, asJSON bool) (string, string) {
+		run: func(t *testing.T, limit, offset int, asJSON bool) (string, string) {
 			t.Helper()
 			withJSON(t, asJSON)
 			var stdout, stderr bytes.Buffer
-			if err := runWalkList(context.Background(), "", "", "", "", "", limit, false, false,
+			if err := runWalkList(context.Background(), "", "", "", "", "", limit, offset, false, false,
 				uc, &stdout, &stderr); err != nil {
 				t.Fatalf("runWalkList: %v", err)
 			}
@@ -239,11 +241,11 @@ func extractSurface() listingSurface {
 	uc.SetList(sums)
 	return listingSurface{
 		name: "extract list", population: truncPopulation, subject: "extraction runs",
-		run: func(t *testing.T, limit int, asJSON bool) (string, string) {
+		run: func(t *testing.T, limit, offset int, asJSON bool) (string, string) {
 			t.Helper()
 			withJSON(t, asJSON)
 			var stdout, stderr bytes.Buffer
-			if err := runExtractList(context.Background(), limit, uc, &stdout, &stderr); err != nil {
+			if err := runExtractList(context.Background(), limit, offset, uc, &stdout, &stderr); err != nil {
 				t.Fatalf("runExtractList: %v", err)
 			}
 			return stdout.String(), stderr.String()
@@ -264,11 +266,11 @@ func directivesSurface() listingSurface {
 	ctr := &Container{QueryDirectives: &testfakes.FakeQueryDirectives{Scans: scans}}
 	return listingSurface{
 		name: "directives list", population: truncPopulation, subject: "directive scans",
-		run: func(t *testing.T, limit int, asJSON bool) (string, string) {
+		run: func(t *testing.T, limit, offset int, asJSON bool) (string, string) {
 			t.Helper()
 			withJSON(t, asJSON)
 			var stdout, stderr bytes.Buffer
-			if err := directivesListWith(context.Background(), ctr, "example.com/proj", limit, &stdout, &stderr); err != nil {
+			if err := directivesListWith(context.Background(), ctr, "example.com/proj", limit, offset, &stdout, &stderr); err != nil {
 				t.Fatalf("directivesListWith: %v", err)
 			}
 			return stdout.String(), stderr.String()
@@ -295,8 +297,8 @@ func TestListings_TruncatedTextStatesTheLimit(t *testing.T) {
 	for _, s := range listingSurfaces(t) {
 		t.Run(s.name, func(t *testing.T) {
 			const limit = 3
-			stdout, _ := s.run(t, limit, false)
-			want := fmt.Sprintf("showing first %d %s — more exist (--limit 0 for all)", limit, s.subject)
+			stdout, _ := s.run(t, limit, 0, false)
+			want := fmt.Sprintf("showing first %d %s — more exist (--limit 0 for all, --offset %d for the next page)", limit, s.subject, limit)
 			if !strings.Contains(stdout, want) {
 				t.Errorf("truncated listing did not state its limit\nwant line: %q\ngot:\n%s", want, stdout)
 			}
@@ -311,7 +313,7 @@ func TestListings_TruncatedJSONCarriesTheMarker(t *testing.T) {
 	for _, s := range listingSurfaces(t) {
 		t.Run(s.name, func(t *testing.T) {
 			const limit = 3
-			stdout, stderr := s.run(t, limit, true)
+			stdout, stderr := s.run(t, limit, 0, true)
 			if got := s.rows(t, stdout); got != limit {
 				t.Fatalf("payload rows = %d, want %d", got, limit)
 			}
@@ -341,11 +343,11 @@ func TestListings_UnderLimitDoesNotClaimTruncation(t *testing.T) {
 	for _, s := range listingSurfaces(t) {
 		t.Run(s.name, func(t *testing.T) {
 			limit := s.population + 1
-			stdout, _ := s.run(t, limit, false)
+			stdout, _ := s.run(t, limit, 0, false)
 			if strings.Contains(stdout, "showing first") {
 				t.Errorf("a listing holding fewer records than its limit claimed truncation:\n%s", stdout)
 			}
-			stdout, stderr := s.run(t, limit, true)
+			stdout, stderr := s.run(t, limit, 0, true)
 			if got := s.rows(t, stdout); got != s.population {
 				t.Fatalf("payload rows = %d, want the whole population %d", got, s.population)
 			}
@@ -365,11 +367,11 @@ func TestListings_UnderLimitDoesNotClaimTruncation(t *testing.T) {
 func TestListings_ExactlyAtLimitDoesNotClaimTruncation(t *testing.T) {
 	for _, s := range listingSurfaces(t) {
 		t.Run(s.name, func(t *testing.T) {
-			stdout, _ := s.run(t, s.population, false)
+			stdout, _ := s.run(t, s.population, 0, false)
 			if strings.Contains(stdout, "showing first") {
 				t.Errorf("a listing holding exactly its limit claimed truncation:\n%s", stdout)
 			}
-			_, stderr := s.run(t, s.population, true)
+			_, stderr := s.run(t, s.population, 0, true)
 			var marker listTruncationJSON
 			if err := json.Unmarshal([]byte(stderr), &marker); err != nil {
 				t.Fatalf("no truncation marker on stderr: %v\nstderr: %q", err, stderr)
@@ -386,8 +388,8 @@ func TestListings_ExactlyAtLimitDoesNotClaimTruncation(t *testing.T) {
 func TestListings_UnlimitedStatesNothingAndReturnsMore(t *testing.T) {
 	for _, s := range listingSurfaces(t) {
 		t.Run(s.name, func(t *testing.T) {
-			capped, _ := s.run(t, 3, true)
-			full, stderr := s.run(t, 0, true)
+			capped, _ := s.run(t, 3, 0, true)
+			full, stderr := s.run(t, 0, 0, true)
 			if s.rows(t, full) <= s.rows(t, capped) {
 				t.Errorf("--limit 0 returned %d rows, not more than the capped %d",
 					s.rows(t, full), s.rows(t, capped))
@@ -395,7 +397,7 @@ func TestListings_UnlimitedStatesNothingAndReturnsMore(t *testing.T) {
 			if strings.TrimSpace(stderr) != "" {
 				t.Errorf("an unlimited listing has no cap to state, got stderr: %q", stderr)
 			}
-			textOut, _ := s.run(t, 0, false)
+			textOut, _ := s.run(t, 0, 0, false)
 			if strings.Contains(textOut, "showing first") {
 				t.Errorf("an unlimited listing claimed truncation:\n%s", textOut)
 			}
