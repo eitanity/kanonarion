@@ -69,8 +69,8 @@ func TestPrintCompatReportText_IncompatibleConflict(t *testing.T) {
 	}
 }
 
-// TestPrintCompatReportText_UnknownWithNoRecord: dep with empty SPDX
-// shows "(no license detected)" and the extraction hint.
+// TestPrintCompatReportText_UnknownWithNoRecord: a dep with no licence record
+// says so and gets the extraction hint, which is the action that can change it.
 func TestPrintCompatReportText_UnknownWithNoRecord(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer
@@ -85,8 +85,8 @@ func TestPrintCompatReportText_UnknownWithNoRecord(t *testing.T) {
 	coord := coordinatetest.MustNew("example.com/root", "v1.0.0")
 	printCompatReportText(report, coord, "walk-test", "linux/amd64", &buf)
 	out := buf.String()
-	if !strings.Contains(out, "no license detected") {
-		t.Errorf("'no license detected' label missing, got: %q", out)
+	if !strings.Contains(out, "no licence record") {
+		t.Errorf("'no licence record' label missing, got: %q", out)
 	}
 	// extraction hint must appear when dep_spdx is empty.
 	if !strings.Contains(out, "kanonarion extract") {
@@ -127,7 +127,7 @@ func TestPrintCompatReportJSON_CleanShape(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer
 	report := makeCompatReport(true)
-	if err := printCompatReportJSON(report, "walk-test", "linux/amd64", &buf); err != nil {
+	if err := printCompatReportJSON(report, "walk-test", "linux/amd64", nil, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	var out map[string]any
@@ -159,7 +159,7 @@ func TestPrintCompatReportJSON_ConflictFields(t *testing.T) {
 		Verdict:       domain.VerdictIncompatible,
 		Kind:          domain.ConflictNetworkTrigger,
 	})
-	if err := printCompatReportJSON(report, "walk-test", "linux/amd64", &buf); err != nil {
+	if err := printCompatReportJSON(report, "walk-test", "linux/amd64", nil, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	var out struct {

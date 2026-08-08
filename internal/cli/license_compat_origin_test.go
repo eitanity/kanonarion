@@ -51,10 +51,24 @@ var _ walkports.WalkStore = (*originFakeWalkStore)(nil)
 // a Container ready for licenseCompatWith, plus the root coordinate.
 func compatFromRecords(t *testing.T, records map[string]licdomain.LicenseRecord) (*Container, coordinate.ModuleCoordinate) {
 	t.Helper()
+	return compatFromClosure(t, records, nil)
+}
+
+// compatFromClosure is compatFromRecords with modules that are IN the closure
+// and have no licence record at all. The distinction is the point of some of
+// these tests: a module the walk saw and extraction never reached is not the
+// same as a module extraction measured and could not classify, and only a
+// closure that holds both can tell the two renderings apart.
+func compatFromClosure(t *testing.T, records map[string]licdomain.LicenseRecord, unrecorded []string) (*Container, coordinate.ModuleCoordinate) {
+	t.Helper()
 	root := coordinatetest.MustNew("example.com/root", "local")
 
 	nodes := []walkdomain.GraphNode{{Coordinate: root}}
 	for key := range records {
+		at := strings.LastIndex(key, "@")
+		nodes = append(nodes, walkdomain.GraphNode{Coordinate: coordinatetest.MustNew(key[:at], key[at+1:])})
+	}
+	for _, key := range unrecorded {
 		at := strings.LastIndex(key, "@")
 		nodes = append(nodes, walkdomain.GraphNode{Coordinate: coordinatetest.MustNew(key[:at], key[at+1:])})
 	}

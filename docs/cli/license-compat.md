@@ -245,6 +245,43 @@ When the operator has recorded a `license_overrides` entry for a module, the
 override is the module's licence for all of these fields: the reported answer is
 the decision, not the scan it replaced.
 
+## A licence that was never measured vs. one that could not be classified
+
+Both come back with no identifier, and they are not the same open item:
+
+```
+Requires review — unmodelled license pair (2):
+  example.com/never-extracted@v1.0.0                      (no licence record)
+      nothing to attribute — no licence record exists for this module
+  github.com/termie/go-shutil@v0.0.0-20140729215957-bcacb06fecae (licence unclassifiable)
+      nothing to attribute — the licence record exists and determined no identifier
+
+Tip: 1 dep(s) have no licence record. Run 'kanonarion extract <walk-id>' to
+     populate them, then re-run license-compat.
+
+Note: 1 dep(s) have a licence record whose files determined no identifier.
+      Extraction has already run for these and cannot settle them: record a
+      human determination as a license_overrides entry, or carry them as
+      accepted open items.
+```
+
+The extraction hint fires only for the first case — only where running the
+extraction it names can still change the answer. For the second, extraction has
+run: `go-shutil` ships a `LICENSE` file reading *"I guess Python's? If that
+doesn't apply then MIT. Have fun."*, which is classified `Unclassified` rather
+than guessed at. Re-running extraction produces that same result forever, so the
+remedy is a recorded human determination (`license_overrides`), or carrying the
+module as an accepted open item.
+
+Both remain review items and both keep the exit code at `2`. In JSON every
+conflict entry carries `license_measurement`:
+
+| Value | Meaning |
+|-------|---------|
+| `classified` | an identifier was determined; `dep_spdx` carries it |
+| `unmeasured` | no licence record exists — extraction has not run for this module and can still change the answer |
+| `unclassifiable` | a record exists and the shipped files determined no identifier — extraction cannot change it |
+
 ## Dataset coverage — a gap reported once, not once per module
 
 An identifier the compatibility dataset does not model produces a review item on
@@ -277,3 +314,21 @@ bundling Boost-licensed or public-domain-equivalent code raises nothing.
 ## Modules resolved under pre-modules semantics
 
 A `+incompatible` coordinate resolves no requirement edges at all, so what this command can show is bounded: a pre-modules module contributes its own licence and none of its dependencies', because none were resolved, so a clean verdict is clean over a closure smaller than the build. The answer states that and names the coordinates responsible; see [pre-modules modules](conventions.md#modules-resolved-under-pre-modules-semantics).
+
+Under `--json` the caveat is a field of the document, `pre_modules_caveat`,
+carrying `coordinates`, `limitation` and `remedy` — never a line after the
+closing brace. It is omitted entirely when no module in the closure resolved
+that way, so its presence is the signal:
+
+```
+$ kanonarion license-compat github.com/henomis/phero@v1.0.1 --target Apache-2.0 --json \
+    | jq '.pre_modules_caveat.coordinates'
+[
+  "github.com/docker/docker@v28.5.2+incompatible",
+  "github.com/willf/bloom@v2.0.3+incompatible"
+]
+```
+
+A consumer that ignores it reads the verdict as covering the whole build. It
+does not: those modules' dependencies are absent from the answer rather than
+measured to be none.

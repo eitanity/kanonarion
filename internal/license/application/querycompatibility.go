@@ -200,14 +200,20 @@ func (uc *CheckCompatibilityUseCase) resolveRootTarget(
 // DeriveEffectiveLicenseSet: see domain.IsTestCorpusPath for why the exclusion
 // belongs to this consumer and not to the derivation.
 func compatibilityInputsFor(ctx context.Context, store licenseStoreReader, coord coordinate.ModuleCoordinate) []domain.CompatibilityInput {
-	unknown := []domain.CompatibilityInput{{
+	// No record, or a record that could not be read: nothing has been measured
+	// for this module, so extraction is still the action that can change the
+	// answer. A read error is reported the same way deliberately — the fact
+	// that settles the question was not obtained, and claiming the stronger
+	// "measured, unclassifiable" on a failed read would be a fabrication.
+	unmeasured := []domain.CompatibilityInput{{
 		ModulePath:    coord.Path(),
 		ModuleVersion: coord.Version(),
 		SPDX:          "", // unknown — treated as VerdictUnknownPair
+		Measurement:   domain.MeasurementUnmeasured,
 	}}
 	rec, found, err := store.GetLicenseRecord(ctx, coord, PipelineVersion)
 	if err != nil || !found {
-		return unknown
+		return unmeasured
 	}
 
 	// The module's OWN licence, carried on every input so the report can always
@@ -265,7 +271,13 @@ func compatibilityInputsFor(ctx context.Context, store licenseStoreReader, coord
 	if len(inputs) == 0 {
 		// Fall back for records without EffectiveSet populated (LicenseStatusNone etc.).
 		if moduleExpr == "" {
-			return unknown
+			// The record EXISTS and yielded no identifier: extraction ran and
+			// the shipped files did not determine one. Re-running it produces
+			// this same result, so the entry must not be reported as an
+			// unmeasured module.
+			unclassifiable := newInput()
+			unclassifiable.Measurement = domain.MeasurementUnclassifiable
+			return []domain.CompatibilityInput{unclassifiable}
 		}
 		in := newInput()
 		in.SPDX = moduleExpr

@@ -154,6 +154,44 @@ func (o LicenceOrigin) String() string {
 	return "module_root"
 }
 
+// LicenceMeasurement says what was MEASURED about a module's licence, as
+// opposed to what the licence turned out to be. It exists because two entries
+// that both carry no identifier mean different things and call for different
+// actions: one has never been looked at, the other has been read and could not
+// be classified. Reporting them alike sends the operator to an extraction that
+// provably cannot change the answer.
+type LicenceMeasurement int
+
+const (
+	// MeasurementUnmeasured means no licence record exists for the module:
+	// extraction has not run for it, and running it can still change the
+	// answer. It is the zero value, so an input built before this axis existed
+	// keeps exactly the reading it always had — an empty identifier with no
+	// record behind it.
+	MeasurementUnmeasured LicenceMeasurement = iota
+	// MeasurementUnclassifiable means a licence record exists and determined no
+	// identifier: the shipped files were read and did not yield one. Re-running
+	// extraction produces the same result; the remedy is a human determination,
+	// recorded as a license_overrides entry.
+	MeasurementUnclassifiable
+	// MeasurementClassified means an identifier was determined. It is derived
+	// from the identifier rather than declared, so it can never disagree with
+	// the SPDX the entry carries.
+	MeasurementClassified
+)
+
+// String returns the wire name of the measurement.
+func (m LicenceMeasurement) String() string {
+	switch m {
+	case MeasurementUnclassifiable:
+		return "unclassifiable"
+	case MeasurementClassified:
+		return "classified"
+	default:
+		return "unmeasured"
+	}
+}
+
 // CompatibilityConflict records a concrete conflict between a dep license and
 // the target distribution license.
 type CompatibilityConflict struct {
@@ -183,6 +221,10 @@ type CompatibilityConflict struct {
 	// individually compatible with the target. Populated only for
 	// VerdictElectable, where DepSPDX carries the full disjunction.
 	ElectableArms []string
+	// Measurement says whether an identifier was determined for this entry
+	// and, when none was, whether that is because nothing has been measured or
+	// because what was measured yielded none.
+	Measurement LicenceMeasurement
 }
 
 // CompatibilityInput describes a single module's resolved license for
@@ -203,6 +245,11 @@ type CompatibilityInput struct {
 	Origin           LicenceOrigin
 	OriginPath       string
 	ModuleExpression string
+	// Measurement is read only when no identifier is carried: it says whether
+	// the module has no licence record at all or a record that determined none.
+	// Its zero value is MeasurementUnmeasured, the reading an empty SPDX has
+	// always had.
+	Measurement LicenceMeasurement
 }
 
 // ClosureCompatibilityReport is the result of checking all dependencies in a
@@ -471,6 +518,7 @@ func evaluateElection(m CompatibilityInput, targetSPDX string) (CompatibilityCon
 		Origin:           m.Origin,
 		OriginPath:       m.OriginPath,
 		ModuleExpression: m.ModuleExpression,
+		Measurement:      measurementOf(m),
 	}
 	switch {
 	case len(compatible) > 0:
@@ -485,6 +533,17 @@ func evaluateElection(m CompatibilityInput, targetSPDX string) (CompatibilityCon
 		c.Kind = conflictKindFor(m.ElectiveArms[0])
 	}
 	return c, true
+}
+
+// measurementOf derives the entry's measurement from the identifier it carries,
+// falling back to what the input recorded when it carries none. Deriving it
+// here rather than trusting the input is what keeps an entry from claiming
+// "unmeasured" while holding an identifier.
+func measurementOf(m CompatibilityInput) LicenceMeasurement {
+	if len(m.ElectiveArms) >= 2 || m.SPDX != "" {
+		return MeasurementClassified
+	}
+	return m.Measurement
 }
 
 // conflictKindFor derives the ConflictKind for a known-incompatible dep/target pair.
@@ -535,6 +594,7 @@ func CheckClosureCompatibility(modules []CompatibilityInput, targetSPDX string) 
 				Origin:           m.Origin,
 				OriginPath:       m.OriginPath,
 				ModuleExpression: m.ModuleExpression,
+				Measurement:      measurementOf(m),
 			})
 			continue
 		}
@@ -559,6 +619,7 @@ func CheckClosureCompatibility(modules []CompatibilityInput, targetSPDX string) 
 			Origin:           m.Origin,
 			OriginPath:       m.OriginPath,
 			ModuleExpression: m.ModuleExpression,
+			Measurement:      measurementOf(m),
 		})
 	}
 

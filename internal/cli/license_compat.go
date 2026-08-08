@@ -136,20 +136,26 @@ func licenseCompatWith(ctx context.Context, ctr *Container, coord coordinate.Mod
 		return fmt.Errorf("checking compatibility: %w", err)
 	}
 
-	if jsonOut {
-		if err := printCompatReportJSON(report, walkID, walkFrame, stdout); err != nil {
-			return err
-		}
-	} else {
-		printCompatReportText(report, coord, walkID, walkFrame, stdout)
-	}
-
 	// The caveat is derived from the WALK, not from the conflict rows: a clean
 	// verdict is a claim about the whole closure, and a pre-modules module that
 	// raised no conflict still contributed none of its own dependencies to the
 	// closure the verdict covers.
+	var preModules []coordinate.ModuleCoordinate
 	if rec, gerr := ctr.QueryWalks.GetWalk(ctx, walkID); gerr == nil {
-		if werr := writePreModulesCaveatForSet(stdout, preModulesNodesIn(rec.Graph)); werr != nil {
+		preModules = preModulesNodesIn(rec.Graph)
+	}
+
+	if jsonOut {
+		// Under --json the caveat is a FIELD of the document, never a line
+		// after it: appended prose breaks every parser, and a consumer that
+		// recovers by reading stdout as JSON would lose the one statement that
+		// says what the licence answer does not cover.
+		if err := printCompatReportJSON(report, walkID, walkFrame, preModulesCaveatFor(preModules...), stdout); err != nil {
+			return err
+		}
+	} else {
+		printCompatReportText(report, coord, walkID, walkFrame, stdout)
+		if werr := writePreModulesCaveatForSet(stdout, preModules); werr != nil {
 			return werr
 		}
 	}
@@ -157,7 +163,7 @@ func licenseCompatWith(ctx context.Context, ctr *Container, coord coordinate.Mod
 	return compatExitCode(report)
 }
 
-func printCompatReportJSON(report domain.ClosureCompatibilityReport, walkID, walkFrame string, stdout io.Writer) error {
+func printCompatReportJSON(report domain.ClosureCompatibilityReport, walkID, walkFrame string, caveat *preModulesCaveatJSON, stdout io.Writer) error {
 	type conflictJSON struct {
 		Module  string `json:"module"`
 		Version string `json:"version"`
@@ -182,6 +188,13 @@ func printCompatReportJSON(report domain.ClosureCompatibilityReport, walkID, wal
 		// disjunction (verdict "electable"): the module is compatible if one
 		// of these is elected via a license_overrides entry.
 		ElectableArms []string `json:"electable_arms,omitempty"`
+		// LicenseMeasurement is "classified", "unmeasured" (no licence record
+		// exists — extraction has not run and can still change this) or
+		// "unclassifiable" (a record exists and the shipped files determined no
+		// identifier — extraction cannot change it, a recorded human
+		// determination can). It is what separates an open measurement from an
+		// open question.
+		LicenseMeasurement string `json:"license_measurement"`
 	}
 	type coverageHoleJSON struct {
 		SPDX    string `json:"spdx"`
@@ -211,30 +224,38 @@ func printCompatReportJSON(report domain.ClosureCompatibilityReport, walkID, wal
 		// closure ONCE, with how many modules carry it — the dataset gap, as
 		// opposed to its per-module consequences in conflicts.
 		CoverageHoles []coverageHoleJSON `json:"coverage_holes"`
+		// PreModulesCaveat is present only when the closure holds a module
+		// resolved under pre-modules semantics, whose own dependencies are
+		// therefore ABSENT from this answer rather than measured to be none.
+		// It narrows what the verdict covers, so a consumer needs it more than
+		// a reader does; absent means no module in the closure is one.
+		PreModulesCaveat *preModulesCaveatJSON `json:"pre_modules_caveat,omitempty"`
 	}
 
 	out := reportJSON{
-		TargetSPDX:     report.TargetSPDX,
-		DataVersion:    report.DataVersion,
-		WalkID:         walkID,
-		WalkFrame:      walkFrame,
-		TargetModelled: report.TargetModelled,
-		Clean:          report.Clean,
-		Conflicts:      make([]conflictJSON, 0, len(report.Conflicts)),
-		CoverageHoles:  make([]coverageHoleJSON, 0, len(report.CoverageHoles)),
+		TargetSPDX:       report.TargetSPDX,
+		DataVersion:      report.DataVersion,
+		WalkID:           walkID,
+		WalkFrame:        walkFrame,
+		TargetModelled:   report.TargetModelled,
+		Clean:            report.Clean,
+		Conflicts:        make([]conflictJSON, 0, len(report.Conflicts)),
+		CoverageHoles:    make([]coverageHoleJSON, 0, len(report.CoverageHoles)),
+		PreModulesCaveat: caveat,
 	}
 	for _, c := range report.Conflicts {
 		out.Conflicts = append(out.Conflicts, conflictJSON{
-			Module:         c.ModulePath,
-			Version:        c.ModuleVersion,
-			DepSPDX:        c.DepSPDX,
-			SPDXOrigin:     c.Origin.String(),
-			SPDXOriginPath: c.OriginPath,
-			ModuleSPDX:     c.ModuleExpression,
-			Target:         c.TargetSPDX,
-			Verdict:        c.Verdict.String(),
-			Kind:           c.Kind.String(),
-			ElectableArms:  c.ElectableArms,
+			Module:             c.ModulePath,
+			Version:            c.ModuleVersion,
+			DepSPDX:            c.DepSPDX,
+			SPDXOrigin:         c.Origin.String(),
+			SPDXOriginPath:     c.OriginPath,
+			ModuleSPDX:         c.ModuleExpression,
+			Target:             c.TargetSPDX,
+			Verdict:            c.Verdict.String(),
+			Kind:               c.Kind.String(),
+			ElectableArms:      c.ElectableArms,
+			LicenseMeasurement: c.Measurement.String(),
 		})
 	}
 	for _, h := range report.CoverageHoles {
@@ -264,10 +285,14 @@ func printCompatReportJSON(report domain.ClosureCompatibilityReport, walkID, wal
 // unknown.
 func compatOriginLine(c domain.CompatibilityConflict) string {
 	if c.DepSPDX == "" && c.ModuleExpression == "" {
-		// No licence record at all. There is no identifier, so there is nothing
-		// to attribute — saying "the module's own licence" here would assert
-		// the module has one.
-		return "no licence record — there is no identifier to attribute"
+		// No identifier, so there is nothing to attribute — saying "the
+		// module's own licence" here would assert the module has one. WHY
+		// there is none is the operator's next action, so it is said here
+		// rather than in a third line under the row.
+		if c.Measurement == domain.MeasurementUnclassifiable {
+			return "nothing to attribute — the licence record exists and determined no identifier"
+		}
+		return "nothing to attribute — no licence record exists for this module"
 	}
 	moduleLicence := c.ModuleExpression
 	if moduleLicence == "" {
@@ -372,21 +397,37 @@ func printCompatReportText(report domain.ClosureCompatibilityReport, root coordi
 
 	if len(unknown) > 0 {
 		_, _ = fmt.Fprintf(stdout, "\nRequires review — unmodelled license pair (%d):\n", len(unknown))
-		hasNoRecord := false
+		unmeasured, unclassifiable := 0, 0
 		for _, c := range unknown {
 			depSPDX := c.DepSPDX
-			if depSPDX == "" {
-				depSPDX = "(no license detected)"
-				hasNoRecord = true
+			switch {
+			case depSPDX != "":
+			case c.Measurement == domain.MeasurementUnclassifiable:
+				depSPDX = "(licence unclassifiable)"
+				unclassifiable++
+			default:
+				depSPDX = "(no licence record)"
+				unmeasured++
 			}
 			_, _ = fmt.Fprintf(stdout, "  %-55s %s\n",
 				c.ModulePath+"@"+c.ModuleVersion, depSPDX)
 			writeCompatOrigin(stdout, c)
 		}
-		// hint so the user knows whether extraction is the next step.
-		if hasNoRecord {
-			_, _ = fmt.Fprintf(stdout, "\nTip: some deps show no license. Run 'kanonarion extract <walk-id>' to\n")
-			_, _ = fmt.Fprintf(stdout, "     populate missing records, then re-run license-compat.\n")
+		// The two states have two different next actions, so each gets its own
+		// statement and neither is printed for the other's modules. Each is
+		// stated ONCE, here, rather than on every row it applies to: a real
+		// closure holds nine of these in a row (corteza), and the same sentence
+		// repeated nine times is what a reader skips. The row says which state
+		// it is; this says what to do about it.
+		if unmeasured > 0 {
+			_, _ = fmt.Fprintf(stdout, "\nTip: %d dep(s) have no licence record. Run 'kanonarion extract <walk-id>' to\n", unmeasured)
+			_, _ = fmt.Fprintf(stdout, "     populate them, then re-run license-compat.\n")
+		}
+		if unclassifiable > 0 {
+			_, _ = fmt.Fprintf(stdout, "\nNote: %d dep(s) have a licence record whose files determined no identifier.\n", unclassifiable)
+			_, _ = fmt.Fprintf(stdout, "      Extraction has already run for these and cannot settle them: record a\n")
+			_, _ = fmt.Fprintf(stdout, "      human determination as a license_overrides entry, or carry them as\n")
+			_, _ = fmt.Fprintf(stdout, "      accepted open items.\n")
 		}
 	}
 
