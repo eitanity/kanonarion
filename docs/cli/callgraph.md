@@ -71,13 +71,48 @@ function an HTTP request drives on every hit.
 
 What is recorded as a reference: a method value (`h.Method`), a method
 expression (`T.Method`), a plain function passed or stored as a value, and a
-closure. The synthetic wrapper Go's SSA form materialises for a method value is
-resolved through, so the answer names the method you wrote, not a `$bound`
-symbol nobody wrote.
+closure. For a method value on a **concrete** type, the synthetic wrapper Go's
+SSA form materialises is resolved through, so the answer names the method you
+wrote, not a `$bound` symbol nobody wrote. For a method value taken on an
+**interface** — `s.Save` where `s` is an interface — there is no single written
+method to resolve to, so the reference names the wrapper; the `$bound` symbol
+spells out the interface and method you wrote, and its own callees are the
+implementations.
 
 **A reference never counts as a call.** `--transitive` follows both, but a path
 that crosses a reference is not a chain of invocations, and the
 [reachability](reachability.md) entry-point distance says so on the line.
+
+### The wrapper hop
+
+A method value that is later invoked — `h(1)` on a func the router stored —
+reaches the method through the `$bound` wrapper, and both hops are recorded:
+
+```
+$ kanonarion callees 'example.com/app.(*Router).Serve'
+  (*example.com/app.Handlers).ConfirmEmail$bound  [Unknown]
+
+$ kanonarion callees '(*example.com/app.Handlers).ConfirmEmail$bound'
+  example.com/app.(*Handlers).ConfirmEmail  [Direct]
+```
+
+Two things follow for a query:
+
+- `callers` of a method invoked through a method value lists the `$bound`
+  wrapper alongside the registration site. Ask `callers` of the wrapper, or use
+  `--transitive`, to reach whoever invokes it. A concrete method value that is
+  only ever registered, never invoked, has no wrapper in the answer at all — the
+  registration already names the method.
+- the wrapper is a hop of its own, so `--depth 1` stops on it and a
+  [reachability](reachability.md) entry-point distance across a method value
+  counts one more hop than the source suggests.
+
+Confidence is per hop and the two hops rarely match. A wrapper over a concrete
+method calls exactly one function, so its outgoing edge is `Direct`; a wrapper
+over an interface method calls whatever implements that interface, so its
+outgoing edges are `CHA-overapprox`, one per implementation. The hop *into* the
+wrapper is usually `Unknown` — the call site holds a func value, not a name. A
+path is only as strong as its weakest hop.
 
 Records state whether the axis was measured. A graph extracted before references
 existed downgrades an empty `callers` answer to `UNRESOLVED` naming

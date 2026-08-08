@@ -196,7 +196,7 @@ nearest entry point:
 | Field (`entry_point_ancestry`) | Means |
 |---|---|
 | `found` | Whether an entry-point ancestor was reached. `false` is a **measurement**: nothing in the analysed graph enters this code. The whole object is absent when no search ran — an unresolved root, or no graph — so "not measured" and "measured, none" never look alike. |
-| `hops` | Edges from the nearest entry-point ancestor down to the root. `0` with `found` means the root **is** the entry point. |
+| `hops` | Edges from the nearest entry-point ancestor down to the root. `0` with `found` means the root **is** the entry point. A method value costs one hop more than the source reads, because the path goes through the synthetic wrapper (see [callgraph](callgraph.md#the-wrapper-hop)). |
 | `entry_point_id` / `entry_point_reason` | Which ancestor, and what made it one — the same reason string the `ingress` kind carries, so a package initialiser is never mistaken for a request handler. |
 | `weakest_confidence` | The weakest edge on that path. It is what stops a distance being read as a certainty: four hops of CHA over-approximation are not four hops of resolved calls. |
 | `via_reference` | At least one hop is a **registration rather than a call** (see [callgraph](callgraph.md#calls-and-references)). Carried apart from the confidence because a reference resolves exactly and would otherwise report `Direct`. |

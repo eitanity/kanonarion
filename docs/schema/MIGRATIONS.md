@@ -328,6 +328,42 @@ symbol with no edges over a pre-existing record answers `UNRESOLVED` where it
 previously answered `RESOLVED-ABSENT`. That is the correction, not a regression.
 Re-extract the module to get the measured answer back.
 
+## Call graph records: the wrapper hop, no migration and no bump
+
+**No store migration, no schema-version bump, no pipeline bump.** The analyser
+now records the outgoing edges of the synthetic wrapper a method value goes
+through, so an invocation path reaches the method that runs rather than stopping
+on the wrapper. Nothing about the record's SHAPE changes: the recovered hop is a
+`CallEdge` like any other, in columns that already exist.
+
+**The counter-argument, because it is real.** An old record does not merely say
+less here — it can say something false. Measured on a fixture: a method invoked
+only through a method value is a node in the graph (it calls other things) with
+ZERO in-edges, in a record whose `ReferenceScope` is `Analysed`. `callers` over
+that record answers `RESOLVED-ABSENT` — a measured "nothing calls this" — for a
+method every request runs. That is exactly the condition
+`CallGraphSchemaVersion`'s rule names.
+
+**Why it still does not earn a bump.** The population that can make that false
+claim is bounded by `ReferenceScope`, and it is small and self-healing. Measured
+read-only against the store: 461 stored call-graph records, all schema v13; 456
+have no `ReferenceScope`, so the verdict layer already downgrades an empty
+`callers` answer over them to `UNRESOLVED` naming `reference-scope-unmeasured`
+and they cannot claim an absence at all. The remaining 5 are one module's local
+working-tree generations, which the next `kanonarion local .` supersedes. A bump
+would darken 461 records to correct 5 — the purge-by-another-name the rule exists
+to avoid — and would not even correct them, only hide them.
+
+**What is owed instead, and is not in this change.** The instrument that fits is
+the one migration 12 introduced: an axis the record carries about itself, so the
+silence describes itself and the verdict downgrades over a record written before
+wrapper hops were recorded. Until that lands, the residual is the 5 records
+above, and re-extraction closes it.
+
+**What a reader sees change after re-extracting:** a `$bound` wrapper appears as
+a caller, paths across a method value are one hop longer, and a method reachable
+only through a method value stops answering "no callers".
+
 ## Purging a table other rows point at
 
 A migration that deletes rows must state what happens to the rows that reference
