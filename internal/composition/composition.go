@@ -271,6 +271,18 @@ type Driver struct {
 // surface only re-shapes the result, never the integrity checks. Diagnostics
 // are discarded: a serving consumer drives its own logging around the call.
 func NewDriver(storeRoot string) (*Driver, func() error, error) {
+	kanonarionBinary, err := os.Executable()
+	if err != nil {
+		return nil, nil, fmt.Errorf("resolving executable path for callgraph subprocess: %w", err)
+	}
+	return newDriver(storeRoot, extextractor.NewOsSubprocessExecutor(kanonarionBinary))
+}
+
+// newDriver is NewDriver with the callgraph child's executor injected. The
+// executor is the only seam: it is what turns the child's argv into a process,
+// so it is also the only place a test can observe the arguments the driver
+// builds without spawning anything.
+func newDriver(storeRoot string, cgSubprocessExec extextractor.SubprocessExecutor) (*Driver, func() error, error) {
 	if err := os.MkdirAll(storeRoot, 0o750); err != nil {
 		return nil, nil, fmt.Errorf("creating store root %s: %w", storeRoot, err)
 	}
@@ -331,15 +343,9 @@ func NewDriver(storeRoot string) (*Driver, func() error, error) {
 		// log is not a quieter one.
 		WithAudit(factStore)
 
-	kanonarionBinary, err := os.Executable()
-	if err != nil {
-		_ = db.Close()
-		return nil, nil, fmt.Errorf("resolving executable path for callgraph subprocess: %w", err)
-	}
-
 	d := &Driver{
 		FetchServe:       fetchapp.NewServeModuleUseCase(fetchUC, blobs).WithAudit(factStore),
-		LocalWalkExtract: newLocalWalkExtract(db, blobs, factStore, fetchUC, clk, stopwatch, logger, kanonarionBinary),
+		LocalWalkExtract: newLocalWalkExtract(db, blobs, factStore, fetchUC, clk, stopwatch, logger, cgSubprocessExec, storeRoot),
 		ValidateIngest:   fetchapp.NewValidateAndIngestUseCase(factStore).WithAudit(factStore),
 	}
 	return d, cleanup, nil
@@ -362,7 +368,8 @@ func newLocalWalkExtract(
 	clk clock.System,
 	stopwatch clock.Monotonic,
 	logger *slog.Logger,
-	kanonarionBinary string,
+	cgSubprocessExec extextractor.SubprocessExecutor,
+	storeRoot string,
 ) *driver.LocalWalkExtractUseCase {
 	walkStore := walksqlite.New(db)
 	extStore := extstore.New(db)
@@ -402,7 +409,6 @@ func newLocalWalkExtract(
 		Facts: factStore, Blobs: blobs, Store: ifaceStore,
 		Extractor: ifaceext.New(stagePipelineVersion, clk), Clock: clk, Stopwatch: stopwatch, Logger: logger,
 	}).WithAudit(factStore)
-	cgSubprocessExec := extextractor.NewOsSubprocessExecutor(kanonarionBinary)
 	exExtractUC := exapp.NewExtractExampleUseCase(exapp.Config{
 		Facts: factStore, Blobs: blobs, Examples: exStore,
 		Parser: exgoast.New(),
@@ -410,9 +416,18 @@ func newLocalWalkExtract(
 	}).WithAudit(factStore)
 	stages := extstages.New()
 	extractUC := extractapp.NewExtractUseCase(extractapp.Config{
-		Runs:      extStore,
-		Walks:     walkStore,
-		Extractor: extextractor.NewAdapterExtractor(licExtractUC, ifaceExtractUC, cgSubprocessExec, cgStore, cgapp.PipelineVersion, nil, exExtractUC),
+		Runs:  extStore,
+		Walks: walkStore,
+		// The callgraph stage is a fresh kanonarion process; it inherits none of
+		// this one's state. Without its store root on the command line the child
+		// resolves the DEFAULT store, so a driver constructed on a scratch or
+		// tenant root would read, write and migrate ~/.kanonarion instead. The
+		// arg list is built by the same constructor the CLI uses, so the two
+		// composition roots cannot drift. The driver passes no modcache
+		// directory: it has no --from-modcache concept and always reads bytes
+		// through the content-addressed blob store.
+		Extractor: extextractor.NewAdapterExtractor(licExtractUC, ifaceExtractUC, cgSubprocessExec, cgStore, cgapp.PipelineVersion,
+			extextractor.CallGraphSubprocessArgs(storeRoot, ""), exExtractUC),
 		Stages:    stages,
 		Clock:     clk,
 		Stopwatch: stopwatch,

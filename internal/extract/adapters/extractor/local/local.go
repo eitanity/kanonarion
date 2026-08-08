@@ -68,6 +68,27 @@ type AdapterExtractor struct {
 	example     ExampleUseCase
 }
 
+// CallGraphSubprocessArgs builds the extra arguments a callgraph child needs to
+// run against the same store — and the same module source — as its parent. The
+// child is a fresh kanonarion process: it inherits none of the parent's
+// process-global CLI state, so anything that state selects must be named on its
+// command line or the child silently resolves the DEFAULT store root, reading,
+// writing and migrating a store its caller never named.
+//
+// Every composition root that wires the callgraph stage MUST build its extra
+// args here rather than assembling the list itself: a hand-copied argv list is
+// how the library driver came to run its children against the default store.
+// An empty modcacheDir means "no module-cache mode", which is the library
+// driver's case — it has no --from-modcache concept and always reads bytes
+// through the content-addressed blob store.
+func CallGraphSubprocessArgs(storeRoot, modcacheDir string) []string {
+	args := []string{"--store-root=" + storeRoot}
+	if modcacheDir != "" {
+		args = append(args, "--from-modcache="+modcacheDir)
+	}
+	return args
+}
+
 func NewAdapterExtractor(
 	lic LicenseUseCase,
 	iface InterfaceUseCase,

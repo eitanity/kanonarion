@@ -448,10 +448,11 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// state. Without these the child falls back to the default store root and
 	// the plain content-addressed blob store, and a modcache-sourced module
 	// (a "modcache:zip:" blob handle) fails to resolve.
-	cgExtraArgs := []string{"--store-root=" + storeRoot}
+	cgModcacheDir := ""
 	if modcacheMode {
-		cgExtraArgs = append(cgExtraArgs, "--from-modcache="+modcacheDir)
+		cgModcacheDir = modcacheDir
 	}
+	cgExtraArgs := extextractor.CallGraphSubprocessArgs(storeRoot, cgModcacheDir)
 	adapterExtractor := extextractor.NewAdapterExtractor(licExtractUC, ifaceExtractUC, cgSubprocessExec, cgStore, cgapp.PipelineVersion, cgExtraArgs, exExtractUC)
 	pipelineVersions := map[string]string{
 		"license":   "0.1.0",
