@@ -75,7 +75,7 @@ func TestExitCodeContract_MissingRecordIsNotFound(t *testing.T) {
 		}},
 		{"walk-diff", ExitNotFound, func(t *testing.T) error {
 			return runWalkDiff(context.Background(), missingWalk, missingWalk,
-				&testfakes.FakeDiffWalks{Err: walkports.ErrWalkNotFound}, &bytes.Buffer{})
+				&testfakes.FakeDiffWalks{Err: walkports.ErrWalkNotFound}, emptyWalks(), &bytes.Buffer{}, io.Discard)
 		}},
 		{"walk-list --walk-id", ExitNotFound, func(t *testing.T) error {
 			return runWalkList(context.Background(), "", "", "", "", missingWalk, 0, 0, false, false,
@@ -113,11 +113,11 @@ func TestExitCodeContract_MissingRecordIsNotFound(t *testing.T) {
 		}},
 		{"scan-show", ExitNotFound, func(t *testing.T) error {
 			return runScanShow(context.Background(), "vscan-missing", false,
-				testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryVuln(), &bytes.Buffer{})
+				testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryVuln(), &bytes.Buffer{}, io.Discard)
 		}},
 		{"license-compat (no walk record)", ExitNotFound, func(t *testing.T) error {
 			return licenseCompatWith(context.Background(),
-				&Container{QueryWalks: emptyWalks()}, coord, "Apache-2.0", &bytes.Buffer{})
+				&Container{QueryWalks: emptyWalks()}, coord, "Apache-2.0", &bytes.Buffer{}, io.Discard)
 		}},
 	})
 }
@@ -132,11 +132,11 @@ func TestExitCodeContract_WalkByIDAgreesAcrossCommands(t *testing.T) {
 	for name, err := range map[string]error{
 		"walk-show": runWalkShow(context.Background(), missingWalk, testfakes.NewFakeQueryWalks(), &bytes.Buffer{}, io.Discard),
 		"walk-diff": runWalkDiff(context.Background(), missingWalk, missingWalk,
-			&testfakes.FakeDiffWalks{Err: walkports.ErrWalkNotFound}, &bytes.Buffer{}),
+			&testfakes.FakeDiffWalks{Err: walkports.ErrWalkNotFound}, testfakes.NewFakeQueryWalks(), &bytes.Buffer{}, io.Discard),
 		"walk-list --walk-id": runWalkList(context.Background(), "", "", "", "", missingWalk, 0, 0, false, false,
 			testfakes.NewFakeQueryWalks(), &bytes.Buffer{}, &bytes.Buffer{}),
 		"verification-coverage": runVerificationCoverage(context.Background(), missingWalk,
-			testfakes.NewFakeQueryWalks(), fakeFetchRecords{}, false, &bytes.Buffer{}),
+			testfakes.NewFakeQueryWalks(), fakeFetchRecords{}, false, &bytes.Buffer{}, io.Discard),
 	} {
 		if code := ExitCodeForError(err); code != ExitNotFound {
 			t.Errorf("%s answers a missing walk with exit %d; every walk-by-ID read must answer %d",

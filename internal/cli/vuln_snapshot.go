@@ -129,10 +129,21 @@ func runSnapshotShow(ctx context.Context, source, version string, jsonOut bool, 
 			return nil
 		}
 	}
-	// The corpus was already read to answer the question, so saying how big it
-	// was costs nothing: a flat "snapshot not found" reads as "none have ever
-	// been pinned" over a store holding a dozen, and the remedy for those two
-	// is not the same one.
+	return snapshotMiss(snapshots, source, version, jsonOut, stderr)
+}
+
+// snapshotMiss answers a snapshot named by source and version that the store
+// does not hold, for `vuln-snapshot-show` and for the `--snapshot-source` /
+// `--snapshot-version` pin on `vuln-scan-rescan`.
+//
+// The corpus was already read to answer the question, so saying how big it was
+// costs nothing: a flat "snapshot not found" reads as "none have ever been
+// pinned" over a store holding a dozen, and the remedy for those two is not the
+// same one. Both surfaces say it the same way — the pin is the same lookup the
+// show command makes, and a caller who has seen one has seen both.
+func snapshotMiss(snapshots []vuldomain.DatabaseSnapshot, source, version string,
+	jsonOut bool, stderr io.Writer,
+) error {
 	scope := listZeroScope{
 		subject:     "vulnerability database snapshot",
 		filterName:  "source and version",

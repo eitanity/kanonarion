@@ -83,6 +83,16 @@ func runDependents(ctx context.Context, moduleArg, storeRoot, walkID string, jso
 	}
 	defer func() { _ = cleanup() }()
 
+	return dependentsWith(ctx, ctr, coord, walkID, jsonOut, directOnly, includeRoot, stdout, stderr)
+}
+
+// dependentsWith holds the query over an injected Container, so the walk
+// selection — the named --walk-id and the containment search that stands in for
+// it — is exercisable without a live store. Split from runDependents on the
+// same terms as licenseCompatWith.
+func dependentsWith(ctx context.Context, ctr *Container, coord coordinate.ModuleCoordinate, walkID string,
+	jsonOut, directOnly, includeRoot bool, stdout, stderr io.Writer,
+) error {
 	if walkID == "" {
 		resolved, rerr := findWalkContaining(ctx, ctr.QueryWalks, coord)
 		if rerr != nil {
@@ -94,7 +104,7 @@ func runDependents(ctx context.Context, moduleArg, storeRoot, walkID string, jso
 	rec, err := ctr.QueryWalks.GetWalk(ctx, walkID)
 	if err != nil {
 		if isWalkNotFound(err) {
-			return &exitError{code: ExitNotFound, msg: fmt.Sprintf("walk record %q not found", walkID)}
+			return walkIDMiss(ctx, ctr.QueryWalks, walkID, stderr)
 		}
 		if isWalkIntegrity(err) {
 			return &exitError{code: ExitIntegrity, msg: fmt.Sprintf("walk record %q failed integrity check", walkID)}

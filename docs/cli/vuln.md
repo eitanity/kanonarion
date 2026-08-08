@@ -650,6 +650,17 @@ on the line it is rendered on, and `--json` gains an `inputs_unresolvable` field
 Walk ID:     01KQDBVW092ER1HNXZ60X27CMD (inputs unresolvable: walk absent from this store)
 ```
 
+A run id that is not there exits `4` and the message says how many runs were
+searched, so a mistyped id over a stocked store cannot be read as an unscanned
+one. The corpus is every run in the store: a run id is not keyed on a walk, so
+the walk you were looking at is not what excluded it.
+
+```
+no scan run matched run id "vscan-NOPE" — the value is compared for exact equality against the run id of
+all 15 scan run(s) in the store (e.g. vscan-01KQDBVW092ER1HNXZ60X27CMD-1786116020); to list every scan
+run: kanonarion vuln-scan-list --limit 0
+```
+
 ---
 
 ### `vuln-show`

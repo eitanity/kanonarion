@@ -117,6 +117,16 @@ version-changed modules).
 kanonarion walk-diff <walk-id-a> <walk-id-b> [--json]
 ```
 
+If either ID is not in the store the command exits `4` and names **which** of
+the two was missing — or both when both are — followed by how many walk records
+the ID was compared against:
+
+```
+the <id-b> argument named a walk the store does not hold; no walk record matched walk id "01NOPE" — the
+value is compared for exact equality against the walk id of all 14 walk record(s) in the store (e.g.
+01KZECZ66M1BM4NT10RWXN359N); to list every walk record: kanonarion walk-list --limit 0
+```
+
 ## `go.mod` walks
 
 `walk --gomod ./go.mod` produces a **single** record whose root is the local
@@ -518,9 +528,9 @@ nothing.
 | `1` | Partial walk (without `--allow-partial`) |
 | `2` | Failed walk |
 | `3` | Cancelled |
-| `4` | The walk you named does not exist (`walk-show`, `walk-list --walk-id`, `walk-list --latest-success`) |
+| `4` | The walk you named does not exist (`walk-show`, `walk-diff`, `walk-list --walk-id`, `walk-list --latest-success`). `walk-diff` names which of its two IDs was missing |
 | `10` | Walk record integrity check failed |
-| `20` | Configuration error / walk ID not found (`walk-diff`) |
+| `20` | Configuration error |
 
 ## Relation to other stages
 

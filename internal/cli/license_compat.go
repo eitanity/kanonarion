@@ -71,7 +71,7 @@ func runLicenseCompat(ctx context.Context, arg, targetSPDX string, stdout, stder
 	}
 	defer func() { _ = cleanup() }()
 
-	return licenseCompatWith(ctx, ctr, coord, targetSPDX, stdout)
+	return licenseCompatWith(ctx, ctr, coord, targetSPDX, stdout, stderr)
 }
 
 // licenseCompatWith holds the license-compat logic over an injected Container:
@@ -80,7 +80,9 @@ func runLicenseCompat(ctx context.Context, arg, targetSPDX string, stdout, stder
 // clean/conflict/unknown verdict to exit codes, and renders the report. Split
 // from runLicenseCompat so the exit-code and diagnostic decisions are testable
 // without a live store.
-func licenseCompatWith(ctx context.Context, ctr *Container, coord coordinate.ModuleCoordinate, targetSPDX string, stdout io.Writer) error {
+func licenseCompatWith(ctx context.Context, ctr *Container, coord coordinate.ModuleCoordinate, targetSPDX string,
+	stdout, stderr io.Writer,
+) error {
 	// Require an existing walk record for the root module.
 	target := coord
 	summaries, err := ctr.QueryWalks.ListWalks(ctx, walkports.WalkFilter{Target: &target, Limit: 1})
@@ -88,11 +90,9 @@ func licenseCompatWith(ctx context.Context, ctr *Container, coord coordinate.Mod
 		return fmt.Errorf("listing walks: %w", err)
 	}
 	if len(summaries) == 0 {
-		// return error once via exitError; main prints it. No fmt.Fprintf here.
-		return &exitError{
-			code: ExitNotFound,
-			msg:  fmt.Sprintf("no walk record found for %s — run 'kanonarion walk %s' first", coord, coord),
-		}
+		// The answer travels on the error, once: main prints it, and no
+		// fmt.Fprintf here puts a second copy on the data channel.
+		return walkTargetMiss(ctx, ctr.QueryWalks, target, stderr)
 	}
 	walkID := summaries[0].ID
 	// The frame the verdict was measured in. The lookup takes the newest walk of

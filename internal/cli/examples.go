@@ -208,14 +208,14 @@ func newExamplesShowCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runExamplesShow(cmd.Context(), args[0], args[1], jsonOut, ctr.QueryExamples, stdout)
+			return runExamplesShow(cmd.Context(), args[0], args[1], jsonOut, ctr.QueryExamples, stdout, stderr)
 		},
 	}
 
 	return cmd
 }
 
-func runExamplesShow(ctx context.Context, moduleArg, exampleName string, jsonOut bool, uc QueryExamplesUseCase, stdout io.Writer) error {
+func runExamplesShow(ctx context.Context, moduleArg, exampleName string, jsonOut bool, uc QueryExamplesUseCase, stdout, stderr io.Writer) error {
 	coord, err := parseCoordinate(moduleArg)
 	if err != nil {
 		return fmt.Errorf("invalid coordinate %q: %w", moduleArg, err)
@@ -226,7 +226,7 @@ func runExamplesShow(ctx context.Context, moduleArg, exampleName string, jsonOut
 		return fmt.Errorf("getting example record: %w", err)
 	}
 	if !found {
-		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("no example record for %s — run 'kanonarion examples' first", coord)}
+		return exampleRecordMiss(ctx, uc, coord, jsonOut, stderr)
 	}
 
 	for _, e := range r.Examples {
@@ -356,6 +356,44 @@ func runExamplesFind(ctx context.Context, symbol string, jsonOut bool, uc QueryE
 	return conflictErr
 }
 
+// exampleRecordMiss answers the two commands that name a module whose example
+// record the store does not hold. Both already carried the remedy — run
+// `kanonarion examples` — and it is kept beside the corpus statement rather than
+// replaced by it: a caller whose module has never been harvested needs it
+// whether or not other modules have been.
+//
+// The survey read is on the miss branch. A module whose record was found never
+// reaches here, which is what keeps the count off the path these commands take
+// on almost every call.
+func exampleRecordMiss(ctx context.Context, uc QueryExamplesUseCase, coord coordinate.ModuleCoordinate,
+	jsonOut bool, stderr io.Writer,
+) error {
+	all, err := uc.ListExampleRecords(ctx, ports.ExampleFilter{})
+	if err != nil {
+		return fmt.Errorf("counting example records for the not-found notice: %w", err)
+	}
+	scope := listZeroScope{
+		subject:     "example record",
+		filterName:  "module coordinate",
+		filterValue: coord.String(),
+		field:       "module coordinate",
+		matchKind:   matchExact,
+		considered:  len(all),
+		produce:     "kanonarion examples " + coord.String(),
+		listAll:     "kanonarion examples-list",
+		keepProduce: true,
+	}
+	if len(all) > 0 {
+		scope.example = all[0].ModulePath + "@" + all[0].ModuleVersion
+	}
+	if jsonOut {
+		if werr := writeListZeroNoticeJSON(stderr, scope); werr != nil {
+			return werr
+		}
+	}
+	return &exitError{code: ExitNotFound, msg: listZeroLine(scope)}
+}
+
 // examplesListZeroScope lifts the paging and re-asks the store, so a zero says
 // whether the store holds no example record at all or the page starts past the
 // last one. This listing takes no filter — a module argument routes to the
@@ -402,7 +440,7 @@ func newExamplesListCmd(stdout, stderr io.Writer) *cobra.Command {
 			}
 			defer func() { _ = cleanup() }()
 			if len(args) == 1 {
-				return runExamplesListForModule(cmd.Context(), args[0], ctr.QueryExamples, stdout)
+				return runExamplesListForModule(cmd.Context(), args[0], ctr.QueryExamples, stdout, stderr)
 			}
 			return runExamplesList(cmd.Context(), limit, offset, ctr.QueryExamples, stdout, stderr)
 		},
@@ -414,7 +452,7 @@ func newExamplesListCmd(stdout, stderr io.Writer) *cobra.Command {
 	return cmd
 }
 
-func runExamplesListForModule(ctx context.Context, moduleArg string, uc QueryExamplesUseCase, stdout io.Writer) error {
+func runExamplesListForModule(ctx context.Context, moduleArg string, uc QueryExamplesUseCase, stdout, stderr io.Writer) error {
 	coord, err := parseCoordinate(moduleArg)
 	if err != nil {
 		return fmt.Errorf("invalid coordinate %q: %w", moduleArg, err)
@@ -425,7 +463,7 @@ func runExamplesListForModule(ctx context.Context, moduleArg string, uc QueryExa
 		return fmt.Errorf("getting example record: %w", err)
 	}
 	if !found {
-		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("no example record for %s — run 'kanonarion examples %s' first", coord, moduleArg)}
+		return exampleRecordMiss(ctx, uc, coord, jsonOut, stderr)
 	}
 	if jsonOut {
 		out := make([]exampleRefJSON, 0, len(r.Examples))

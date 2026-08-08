@@ -65,7 +65,7 @@ vendor/.`,
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runVerificationCoverage(cmd.Context(), args[0], ctr.QueryWalks, ctr.QueryFetch, detail, stdout)
+			return runVerificationCoverage(cmd.Context(), args[0], ctr.QueryWalks, ctr.QueryFetch, detail, stdout, stderr)
 		},
 	}
 	cmd.Flags().BoolVar(&detail, "detail", false, "list every module with its verification class and the reason recorded for it")
@@ -82,7 +82,7 @@ func runVerificationCoverage(
 	walks QueryWalksUseCase,
 	records fetchRecordReader,
 	detail bool,
-	stdout io.Writer,
+	stdout, stderr io.Writer,
 ) error {
 	rec, err := walks.GetWalk(ctx, walkID)
 	if err != nil {
@@ -90,7 +90,7 @@ func runVerificationCoverage(
 			// ExitNotFound, not ExitConfig: the code exists so a script can tell
 			// "no such record" from a policy denial, and this command is a new
 			// surface with no older spelling to preserve.
-			return &exitError{code: ExitNotFound, msg: fmt.Sprintf("walk record %q not found", walkID)}
+			return walkIDMiss(ctx, walks, walkID, stderr)
 		}
 		if isWalkIntegrity(err) {
 			return &exitError{code: ExitIntegrity, msg: fmt.Sprintf("walk record %q failed integrity check", walkID)}

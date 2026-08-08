@@ -39,7 +39,8 @@ stdout 'example.com/app@v1.0.0.*\[root\]'
 
 # Missing walk ID errors
 ! kanonarion dependents example.com/dep@v1.0.0 --walk-id=NOSUCHID --store-root=$WORK/stores
-stderr 'not found'
+stderr 'no walk record matched walk id "NOSUCHID"'
+stderr 'to list every walk record: kanonarion walk-list --limit 0'
 
 # Without --walk-id, auto-resolves to the most recent walk containing the module
 kanonarion dependents example.com/dep@v1.0.0 --store-root=$WORK/stores --include-root

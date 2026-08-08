@@ -61,7 +61,8 @@ stdout 'example.com/dep'
 
 # unknown walk ID returns a clear error
 ! kanonarion context --walk-id=unknownid --store-root=$WORK/stores
-stderr 'walk unknownid not found'
+stderr 'no walk record matched walk id "unknownid"'
+stderr 'walk record\(s\) in the store'
 
 -- modules.txt --
 example.com/dep@v1.1.0

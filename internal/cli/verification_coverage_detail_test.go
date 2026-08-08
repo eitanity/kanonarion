@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
@@ -73,7 +74,7 @@ func TestRunVerificationCoverage_JSONCarriesEveryModuleWithItsReason(t *testing.
 	t.Cleanup(func() { jsonOut = false })
 
 	var buf bytes.Buffer
-	if err := runVerificationCoverage(context.Background(), id, walks, records, false, &buf); err != nil {
+	if err := runVerificationCoverage(context.Background(), id, walks, records, false, &buf, io.Discard); err != nil {
 		t.Fatalf("runVerificationCoverage: %v", err)
 	}
 
@@ -126,7 +127,7 @@ func TestRunVerificationCoverage_DetailPrintsClassAndReason(t *testing.T) {
 	walks, records, id := reasonedCoverageFixture(t, "")
 
 	var without bytes.Buffer
-	if err := runVerificationCoverage(context.Background(), id, walks, records, false, &without); err != nil {
+	if err := runVerificationCoverage(context.Background(), id, walks, records, false, &without, io.Discard); err != nil {
 		t.Fatalf("runVerificationCoverage: %v", err)
 	}
 	if strings.Contains(without.String(), degradedReason) {
@@ -134,7 +135,7 @@ func TestRunVerificationCoverage_DetailPrintsClassAndReason(t *testing.T) {
 	}
 
 	var with bytes.Buffer
-	if err := runVerificationCoverage(context.Background(), id, walks, records, true, &with); err != nil {
+	if err := runVerificationCoverage(context.Background(), id, walks, records, true, &with, io.Discard); err != nil {
 		t.Fatalf("runVerificationCoverage --detail: %v", err)
 	}
 	out := with.String()
@@ -166,7 +167,7 @@ func TestRunVerificationCoverage_StatesAVendoredBuild(t *testing.T) {
 		walks, records, id := reasonedCoverageFixture(t, root)
 
 		var buf bytes.Buffer
-		if err := runVerificationCoverage(context.Background(), id, walks, records, false, &buf); err != nil {
+		if err := runVerificationCoverage(context.Background(), id, walks, records, false, &buf, io.Discard); err != nil {
 			t.Fatalf("%s: runVerificationCoverage: %v", name, err)
 		}
 		if got := strings.Contains(buf.String(), "vendored build:"); got != vendored {

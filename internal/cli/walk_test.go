@@ -255,7 +255,7 @@ func TestRunWalkShow_Found(t *testing.T) {
 func TestRunWalkDiff_NotFound(t *testing.T) {
 	uc := &testfakes.FakeDiffWalks{Err: walkports.ErrWalkNotFound}
 	var buf bytes.Buffer
-	err := runWalkDiff(context.Background(), "A", "B", uc, &buf)
+	err := runWalkDiff(context.Background(), "A", "B", uc, testfakes.NewFakeQueryWalks(), &buf, io.Discard)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -273,7 +273,7 @@ func TestRunWalkDiff_EmptyDiff(t *testing.T) {
 		Result: walkapp.WalkDiff{WalkA: "A", WalkB: "B"},
 	}
 	var buf bytes.Buffer
-	err := runWalkDiff(context.Background(), "A", "B", uc, &buf)
+	err := runWalkDiff(context.Background(), "A", "B", uc, testfakes.NewFakeQueryWalks(), &buf, io.Discard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -572,7 +572,7 @@ func TestRunWalkDiff_TextOutput(t *testing.T) {
 		},
 	}
 	var buf bytes.Buffer
-	err := runWalkDiff(context.Background(), "01ARZ3NDEKTSV4RRFFQ69G5FAV", "01ARZ3NDEKTSV4RRFFQ69G5FBB", uc, &buf)
+	err := runWalkDiff(context.Background(), "01ARZ3NDEKTSV4RRFFQ69G5FAV", "01ARZ3NDEKTSV4RRFFQ69G5FBB", uc, testfakes.NewFakeQueryWalks(), &buf, io.Discard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -601,7 +601,7 @@ func TestRunWalkDiff_JSONOutput(t *testing.T) {
 		},
 	}
 	var buf bytes.Buffer
-	err := runWalkDiff(context.Background(), "01ARZ3NDEKTSV4RRFFQ69G5FAV", "01ARZ3NDEKTSV4RRFFQ69G5FBB", uc, &buf)
+	err := runWalkDiff(context.Background(), "01ARZ3NDEKTSV4RRFFQ69G5FAV", "01ARZ3NDEKTSV4RRFFQ69G5FBB", uc, testfakes.NewFakeQueryWalks(), &buf, io.Discard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

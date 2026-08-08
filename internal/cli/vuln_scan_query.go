@@ -185,6 +185,43 @@ func scanListZeroScope(ctx context.Context, walkID string, offset int, uc QueryS
 	return scope, nil
 }
 
+// scanRunMiss answers a `vuln-scan-show` that named a run the store does not
+// hold. `scan run not found: X` reads the same over an empty store and over
+// fifteen runs, and the two have different remedies: one caller has never
+// scanned anything, the other has mistyped an id the store could show them.
+//
+// The corpus is every run in the store, not the runs of any one walk: a run id
+// is not keyed on a walk, so the caller's walk is not what excluded it. The
+// survey read is on the miss branch, where a found run never goes.
+func scanRunMiss(ctx context.Context, uc QueryScanRunsUseCase, runID string, jsonOut bool, stderr io.Writer) error {
+	all, err := uc.ListAllRuns(ctx)
+	// A store with unreadable rows can still be counted; one that cannot be read
+	// at all has nothing honest to say, and a zero substituted for a failed count
+	// would assert exactly the thing it failed to measure.
+	if _, survivable := unreadableRunReport(err); err != nil && !survivable {
+		return fmt.Errorf("counting scan runs for the not-found notice: %w", err)
+	}
+	scope := listZeroScope{
+		subject:     "scan run",
+		filterName:  "run id",
+		filterValue: runID,
+		field:       "run id",
+		matchKind:   matchExact,
+		considered:  len(all),
+		produce:     "kanonarion vuln-scan <walk-id>",
+		listAll:     "kanonarion vuln-scan-list --limit 0",
+	}
+	if len(all) > 0 {
+		scope.example = all[0].ID
+	}
+	if jsonOut {
+		if werr := writeListZeroNoticeJSON(stderr, scope); werr != nil {
+			return werr
+		}
+	}
+	return &exitError{code: ExitNotFound, msg: listZeroLine(scope)}
+}
+
 func newVulnScanShowCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "vuln-scan-show <run-id>",
@@ -199,7 +236,7 @@ func newVulnScanShowCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runScanShow(cmd.Context(), args[0], jsonOut, ctr.QueryScanRuns, ctr.QueryVuln, stdout)
+			return runScanShow(cmd.Context(), args[0], jsonOut, ctr.QueryScanRuns, ctr.QueryVuln, stdout, stderr)
 		},
 	}
 
@@ -265,7 +302,7 @@ type scanShowSummary struct {
 	scanFailed  []scanRecordFault
 }
 
-func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QueryScanRunsUseCase, ucVuln QueryVulnUseCase, stdout io.Writer) error {
+func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QueryScanRunsUseCase, ucVuln QueryVulnUseCase, stdout, stderr io.Writer) error {
 	run, found, err := ucRuns.GetRun(ctx, runID)
 	// vuln-scan-list names the rows it could not verify, and this is the command
 	// an operator runs next against one of those names. Refusing here would send
@@ -278,7 +315,7 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 		return fmt.Errorf("getting scan run: %w", err)
 	}
 	if !found {
-		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("scan run not found: %s", runID)}
+		return scanRunMiss(ctx, ucRuns, runID, jsonOut, stderr)
 	}
 
 	walkPresent, perr := ucRuns.WalkPresent(ctx, run.WalkID)

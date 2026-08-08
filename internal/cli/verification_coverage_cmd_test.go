@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -62,7 +63,7 @@ func TestRunVerificationCoverage_JSONFieldNames(t *testing.T) {
 	t.Cleanup(func() { jsonOut = false })
 
 	var buf bytes.Buffer
-	if err := runVerificationCoverage(context.Background(), id, walks, records, false, &buf); err != nil {
+	if err := runVerificationCoverage(context.Background(), id, walks, records, false, &buf, io.Discard); err != nil {
 		t.Fatalf("runVerificationCoverage: %v", err)
 	}
 
@@ -136,7 +137,7 @@ func TestRunVerificationCoverage_ReportsCollapse(t *testing.T) {
 	t.Cleanup(func() { jsonOut = false })
 
 	var buf bytes.Buffer
-	if err := runVerificationCoverage(context.Background(), id, walks, records, false, &buf); err != nil {
+	if err := runVerificationCoverage(context.Background(), id, walks, records, false, &buf, io.Discard); err != nil {
 		t.Fatalf("runVerificationCoverage: %v", err)
 	}
 	var doc map[string]any
@@ -158,7 +159,7 @@ func TestRunVerificationCoverage_HumanOutputOnStdout(t *testing.T) {
 	walks, records, id := coverageFixture(t)
 
 	var buf bytes.Buffer
-	if err := runVerificationCoverage(context.Background(), id, walks, records, false, &buf); err != nil {
+	if err := runVerificationCoverage(context.Background(), id, walks, records, false, &buf, io.Discard); err != nil {
 		t.Fatalf("runVerificationCoverage: %v", err)
 	}
 	out := buf.String()
@@ -177,7 +178,7 @@ func TestRunVerificationCoverage_UnknownWalk(t *testing.T) {
 	walks := testfakes.NewFakeQueryWalks()
 
 	var buf bytes.Buffer
-	err := runVerificationCoverage(context.Background(), "01KQDBVW092ER1HNXZ60X27CMZ", walks, records, false, &buf)
+	err := runVerificationCoverage(context.Background(), "01KQDBVW092ER1HNXZ60X27CMZ", walks, records, false, &buf, io.Discard)
 	if err == nil {
 		t.Fatal("an unknown walk must be an error, not an empty report")
 	}

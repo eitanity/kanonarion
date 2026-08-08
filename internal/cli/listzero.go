@@ -52,6 +52,13 @@ type listZeroScope struct {
 	// pagedPast is set when --offset, not the filter, emptied the page; it
 	// carries the clause naming the paging that did it.
 	pagedPast string
+	// keepProduce carries both remedies on a miss over a non-empty corpus,
+	// instead of only the one that lists it. It is for the selectors whose flat
+	// negative already told the caller how to produce the record they asked for:
+	// dropping that to make room for the corpus statement would trade one half
+	// of the answer for the other, and a caller whose module has simply never
+	// been walked needs the produce invocation whether or not other modules have.
+	keepProduce bool
 }
 
 // storeEmpty reports the case whose remedy is "produce a record", as opposed to
@@ -86,7 +93,13 @@ func writeListZeroNotice(stdout io.Writer, s listZeroScope) error {
 // point — a reader who has seen one has seen both.
 func listZeroLine(s listZeroScope) string {
 	line, remedyLabel, remedy := listZeroStatement(s)
-	return fmt.Sprintf("%s; %s: %s", line, remedyLabel, remedy)
+	out := fmt.Sprintf("%s; %s: %s", line, remedyLabel, remedy)
+	// The store-empty statement already offers the produce invocation, so adding
+	// it again would print the same remedy twice.
+	if s.keepProduce && !s.storeEmpty() {
+		out += fmt.Sprintf("; to produce one: %s", s.produce)
+	}
+	return out
 }
 
 // listZeroStatement renders the prose halves of the notice: what was looked at,
@@ -156,6 +169,8 @@ func writeListZeroNoticeJSON(stderr io.Writer, s listZeroScope) error {
 	}
 	if s.storeEmpty() {
 		out.Remedy = []string{s.produce}
+	} else if s.keepProduce {
+		out.Remedy = []string{s.listAll, s.produce}
 	}
 	if s.filterValue != "" {
 		out.Filter = &listZeroFilterJSON{

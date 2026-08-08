@@ -196,10 +196,30 @@ performs no extra store read to decide that: the survey that sizes the corpus is
 reached only once the page has come back empty.
 
 The same statement answers a **single-record selector** that matched nothing —
-`walk-list --walk-id`, `walk-list --latest-success`, `directives show`,
-`vuln-snapshot-show`. Those exit `4` and carry the statement on the error rather
-than on stdout, on one line, so the data channel stays the data channel; under
-`--json` the object is emitted on stderr as well.
+a command given one name that is not in the store. Those exit `4` and carry the
+statement on the error rather than on stdout, on one line, so the data channel
+stays the data channel; under `--json` the object is emitted on stderr as well.
+The selectors are `walk-list --walk-id`, `walk-list --latest-success`,
+`directives show`, `vuln-snapshot-show`, `walk-show`, `verification-coverage`,
+`dependents --walk-id`, `context --walk-id`, `walk-diff`, `vuln-scan-show`,
+`examples-show`, `examples-list <module>`, `interface-show`,
+`interface-list <module>`, `use`, `license --recursive` and `license-compat`.
+
+Every command that reads a walk by ID answers a missing one with the identical
+sentence, whichever command it was.
+
+`walk-diff` takes two IDs, so it names **which** of them is missing — or both
+when both are. The corpus it counts is the store's, not the two IDs it was
+given.
+
+Where the older message already carried a remedy — `use`, `license-compat`,
+`license --recursive`, `examples-show`, `examples-list <module>`,
+`interface-show`, `interface-list <module>` — that remedy is kept and the corpus
+statement is added beside it, so the answer offers both the invocation that
+produces the record and the one that lists what is there.
+
+The survey that sizes the corpus runs only on the miss. A lookup that found its
+record performs no extra read and prints no statement, on either channel.
 
 This applies to every record listing: `callgraph-list`, `vuln-scan-list`,
 `licence-list`/`license-list`, `sbom-list`, `interface-list`, `examples-list`,
@@ -208,8 +228,9 @@ This applies to every record listing: `callgraph-list`, `vuln-scan-list`,
 `interface-list`, `examples-list` and `extract list` take no filter, so only the
 empty-store and the paged-past causes can arise on them. Given a module
 coordinate, `interface-list` and `examples-list` render that one module instead
-of listing, and an absent record is refused by name with a remedy and a non-zero
-exit rather than answered with a zero-result notice.
+of listing, and an absent record is refused with a non-zero exit carrying the
+single-record statement above: the remedy that produces it, and the corpus the
+coordinate was compared against.
 
 `vuln-snapshot-list` takes neither a filter nor a `--limit`, so it has exactly
 one cause it can have and states that one: the store holds no snapshot. It does

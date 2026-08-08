@@ -20,6 +20,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/goenv"
 	"github.com/eitanity/kanonarion/internal/sqlitestore"
 	walksqlite "github.com/eitanity/kanonarion/internal/walk/adapters/walks/sqlite"
+	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 	"github.com/spf13/cobra"
 	"golang.org/x/mod/sumdb/dirhash"
@@ -47,6 +48,26 @@ func newUseCmd(stdout, stderr io.Writer) *cobra.Command {
 	return cmd
 }
 
+// useTargetWalk selects the walk `use` will copy from, and is the seam its miss
+// is exercisable through: the command opens the store itself, so the branch that
+// answers a module which has never been walked would otherwise need a live one.
+func useTargetWalk(ctx context.Context, walks QueryWalksUseCase, coord coordinate.ModuleCoordinate,
+	stderr io.Writer,
+) (walkdomain.WalkRecord, error) {
+	summaries, err := walks.ListWalks(ctx, walkports.WalkFilter{Target: &coord, Limit: 1})
+	if err != nil {
+		return walkdomain.WalkRecord{}, fmt.Errorf("listing walks: %w", err)
+	}
+	if len(summaries) == 0 {
+		return walkdomain.WalkRecord{}, walkTargetMiss(ctx, walks, coord, stderr)
+	}
+	walk, err := walks.GetWalk(ctx, summaries[0].ID)
+	if err != nil {
+		return walkdomain.WalkRecord{}, fmt.Errorf("getting walk %s: %w", summaries[0].ID, err)
+	}
+	return walk, nil
+}
+
 func runUse(ctx context.Context, f useFlags, targetArg string, stdout, stderr io.Writer) error {
 	logger := buildLogger(logLevel, stderr)
 	coord, err := parseCoordinate(targetArg)
@@ -66,20 +87,9 @@ func runUse(ctx context.Context, f useFlags, targetArg string, stdout, stderr io
 	blobStore := localfs.New(storeRoot)
 
 	// 1. Find the latest successful walk for this target.
-	summaries, err := walkStore.ListWalks(ctx, walkports.WalkFilter{
-		Target: &coord,
-		Limit:  1,
-	})
+	walk, err := useTargetWalk(ctx, walkStore, coord, stderr)
 	if err != nil {
-		return fmt.Errorf("listing walks: %w", err)
-	}
-	if len(summaries) == 0 {
-		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("no walk record found for %s — run 'kanonarion walk' first", coord)}
-	}
-
-	walk, err := walkStore.GetWalk(ctx, summaries[0].ID)
-	if err != nil {
-		return fmt.Errorf("getting walk %s: %w", summaries[0].ID, err)
+		return err
 	}
 
 	modCache := f.modCache

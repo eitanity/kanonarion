@@ -1056,12 +1056,12 @@ func runScanRescan(ctx context.Context, walkID string, f vulnScanRescanFlags, st
 	}
 
 	if f.snapshotSource != "" {
-		snap, found, err := resolveSnapshot(ctx, ctr.QueryScanRuns, f.snapshotSource, f.snapshotVersion)
+		snap, snapshots, found, err := resolveSnapshotIn(ctx, ctr.QueryScanRuns, f.snapshotSource, f.snapshotVersion)
 		if err != nil {
 			return err
 		}
 		if !found {
-			return &exitError{code: ExitNotFound, msg: fmt.Sprintf("snapshot not found: %s@%s", f.snapshotSource, f.snapshotVersion)}
+			return snapshotMiss(snapshots, f.snapshotSource, f.snapshotVersion, jsonOut, stderr)
 		}
 		req.Snapshot = &snap
 	}
@@ -1137,14 +1137,23 @@ func rescanWith(
 
 // resolveSnapshot looks up a stored snapshot by source and version.
 func resolveSnapshot(ctx context.Context, uc QueryScanRunsUseCase, source, version string) (vuldomain.DatabaseSnapshot, bool, error) {
+	snap, _, found, err := resolveSnapshotIn(ctx, uc, source, version)
+	return snap, found, err
+}
+
+// resolveSnapshotIn is resolveSnapshot with the corpus it searched, so a pin
+// that misses can say how many snapshots it was compared against instead of
+// re-reading the list to find out.
+func resolveSnapshotIn(ctx context.Context, uc QueryScanRunsUseCase, source, version string,
+) (vuldomain.DatabaseSnapshot, []vuldomain.DatabaseSnapshot, bool, error) {
 	snapshots, err := uc.ListSnapshots(ctx)
 	if err != nil {
-		return vuldomain.DatabaseSnapshot{}, false, fmt.Errorf("listing snapshots: %w", err)
+		return vuldomain.DatabaseSnapshot{}, nil, false, fmt.Errorf("listing snapshots: %w", err)
 	}
 	for _, s := range snapshots {
 		if s.Source() == source && s.Version() == version {
-			return s, true, nil
+			return s, snapshots, true, nil
 		}
 	}
-	return vuldomain.DatabaseSnapshot{}, false, nil
+	return vuldomain.DatabaseSnapshot{}, snapshots, false, nil
 }

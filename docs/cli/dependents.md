@@ -140,7 +140,7 @@ dependency, not both. To find all first-party-relevant entries, filter on
 |---|---|
 | 0 | Success (zero results is not an error) |
 | 10 | Walk record integrity check failed |
-| 20 | Walk ID not found |
+| 4 | Walk ID not found |
 
 ## Examples
 

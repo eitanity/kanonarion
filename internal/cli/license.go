@@ -93,7 +93,7 @@ func runLicenseExtract(ctx context.Context, arg string, f licenseFlags, stdout, 
 	}
 
 	if (f.recursive || f.all) && !jsonOut {
-		if err := printLicenseRecursive(ctx, coord, ctr.QueryWalks, ctr.ExtractLicense, ctr.QueryLicense, f, stdout); err != nil {
+		if err := printLicenseRecursive(ctx, coord, ctr.QueryWalks, ctr.ExtractLicense, ctr.QueryLicense, f, stdout, stderr); err != nil {
 			return fmt.Errorf("recursive license report: %w", err)
 		}
 	}
@@ -168,14 +168,14 @@ func printLicenseRecursive(
 	extractUC ExtractLicenseUseCase,
 	queryUC QueryLicenseUseCase,
 	f licenseFlags,
-	stdout io.Writer,
+	stdout, stderr io.Writer,
 ) error {
 	summaries, err := walksUC.ListWalks(ctx, walkports.WalkFilter{Target: &target, Limit: 1})
 	if err != nil {
 		return fmt.Errorf("listing walks: %w", err)
 	}
 	if len(summaries) == 0 {
-		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("no walk record found for %s — run 'kanonarion walk' first", target)}
+		return walkTargetMiss(ctx, walksUC, target, stderr)
 	}
 
 	extractFn := func(ctx context.Context, coord coordinate.ModuleCoordinate) (domain.LicenseRecord, error) {

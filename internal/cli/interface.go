@@ -215,7 +215,7 @@ func runInterfaceShow(ctx context.Context, moduleArg, pkgFilter, symbolFilter st
 		return fmt.Errorf("getting interface record: %w", err)
 	}
 	if !found {
-		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("no interface record for %s — run 'kanonarion interface' first", coord)}
+		return interfaceRecordMiss(ctx, ctr.QueryInterface, coord, jsonOut, stderr)
 	}
 
 	// Apply filters.
@@ -516,7 +516,7 @@ func runInterfaceListForModule(ctx context.Context, moduleArg string, jsonOut bo
 		return fmt.Errorf("getting interface record: %w", err)
 	}
 	if !found {
-		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("no interface record for %s — run: kanonarion interface %s", coord, moduleArg)}
+		return interfaceRecordMiss(ctx, ctr.QueryInterface, coord, jsonOut, stderr)
 	}
 
 	if jsonOut {
@@ -605,6 +605,40 @@ func interfaceListZeroScope(ctx context.Context, offset int, uc QueryInterfaceUs
 		scope.pagedPast = fmt.Sprintf("--offset %d starts past the last one", offset)
 	}
 	return scope, nil
+}
+
+// interfaceRecordMiss answers the two commands that name a module whose
+// interface record the store does not hold, on the same terms as the example
+// pair beside it: the remedy they already carried is kept, and the corpus they
+// searched is stated next to it. The survey read is on the miss branch, so a
+// module whose record is there pays nothing for it.
+func interfaceRecordMiss(ctx context.Context, uc QueryInterfaceUseCase, coord coordinate.ModuleCoordinate,
+	jsonOut bool, stderr io.Writer,
+) error {
+	all, err := uc.ListInterfaceRecords(ctx, ports.InterfaceFilter{})
+	if err != nil {
+		return fmt.Errorf("counting interface records for the not-found notice: %w", err)
+	}
+	scope := listZeroScope{
+		subject:     "interface record",
+		filterName:  "module coordinate",
+		filterValue: coord.String(),
+		field:       "module coordinate",
+		matchKind:   matchExact,
+		considered:  len(all),
+		produce:     "kanonarion interface " + coord.String(),
+		listAll:     "kanonarion interface-list",
+		keepProduce: true,
+	}
+	if len(all) > 0 {
+		scope.example = all[0].ModulePath + "@" + all[0].ModuleVersion
+	}
+	if jsonOut {
+		if werr := writeListZeroNoticeJSON(stderr, scope); werr != nil {
+			return werr
+		}
+	}
+	return &exitError{code: ExitNotFound, msg: listZeroLine(scope)}
 }
 
 // printInterfaceList renders the collapsed list.

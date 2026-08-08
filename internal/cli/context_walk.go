@@ -17,6 +17,22 @@ import (
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
+// contextWalkRecord loads the walk `context --walk-id` was pointed at, and is
+// the seam the miss is exercisable through: the command builds its own
+// container, so without it the one branch that answers a mistyped id could only
+// be reached with a live store.
+func contextWalkRecord(ctx context.Context, uc QueryWalksUseCase, walkID string, stderr io.Writer,
+) (walkdomain.WalkRecord, error) {
+	rec, err := uc.GetWalk(ctx, walkID)
+	if err != nil {
+		if errors.Is(err, walkports.ErrWalkNotFound) {
+			return walkdomain.WalkRecord{}, walkIDMiss(ctx, uc, walkID, stderr)
+		}
+		return walkdomain.WalkRecord{}, fmt.Errorf("loading walk %s: %w", walkID, err)
+	}
+	return rec, nil
+}
+
 func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Writer) error {
 	if err := refuseInapplicableFlags("context --walk-id",
 		append(contextLocalOnlyFlags(f), contextGoModOnlyFlags(f)...)); err != nil {
@@ -36,12 +52,9 @@ func runContextWalk(ctx context.Context, f contextFlags, stdout, stderr io.Write
 	}
 	defer func() { _ = cleanup() }()
 
-	rec, err := ctr.QueryWalks.GetWalk(ctx, f.walkID)
+	rec, err := contextWalkRecord(ctx, ctr.QueryWalks, f.walkID, stderr)
 	if err != nil {
-		if errors.Is(err, walkports.ErrWalkNotFound) {
-			return &exitError{code: ExitNotFound, msg: fmt.Sprintf("walk %s not found", f.walkID)}
-		}
-		return fmt.Errorf("loading walk %s: %w", f.walkID, err)
+		return err
 	}
 
 	vulnBatch, err := loadVulnBatchCtx(ctx, ctr.QueryScanRuns, ctr.QueryWalks)

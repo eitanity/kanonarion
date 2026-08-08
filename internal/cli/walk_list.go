@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 	"github.com/spf13/cobra"
@@ -243,6 +244,44 @@ func walkSelectorZeroScope(ctx context.Context, uc QueryWalksUseCase, filterName
 func walkIDZeroScope(ctx context.Context, walkID string, uc QueryWalksUseCase) (listZeroScope, error) {
 	return walkSelectorZeroScope(ctx, uc, "walk id", walkID, "walk id",
 		func(s walkports.WalkSummary) string { return s.ID })
+}
+
+// walkIDMiss answers every command that reads a walk by ID and did not find it.
+//
+// It is one function rather than one message per command because the answer is
+// not about the command: `walk-show`, `verification-coverage`, `dependents
+// --walk-id`, `context --walk-id` and `walk-diff` were all asked the same
+// question, all searched the same corpus, and three of them spelled the miss
+// differently — `walk record "X" not found`, `walk X not found`, and `one or
+// both walk IDs not found`. A caller who learned to read one of those learned
+// nothing about the next.
+//
+// The survey read it pays is on the miss branch only: a walk that was found
+// never reaches here, which is what keeps the statement off the path these
+// commands take almost every time they run.
+func walkIDMiss(ctx context.Context, uc QueryWalksUseCase, walkID string, stderr io.Writer) error {
+	scope, serr := walkIDZeroScope(ctx, walkID, uc)
+	return walkSelectorMiss(scope, serr, stderr)
+}
+
+// walkTargetMiss answers the commands that select a walk by the module it was
+// rooted at rather than by ID — `use`, `license --recursive`, `license-compat`.
+//
+// Their flat negative already carried the remedy (`run 'kanonarion walk' first`)
+// and it is kept: keepProduce puts it beside the corpus statement rather than
+// having one displace the other. What it could not say is how many walks the
+// target was compared against, which is the difference between a store that has
+// never been walked and one holding fifty walks of other modules.
+func walkTargetMiss(ctx context.Context, uc QueryWalksUseCase, target coordinate.ModuleCoordinate,
+	stderr io.Writer,
+) error {
+	scope, serr := walkSelectorZeroScope(ctx, uc, "target module", target.String(), "target coordinate",
+		func(s walkports.WalkSummary) string { return s.Target.String() })
+	if serr == nil {
+		scope.produce = "kanonarion walk " + target.String()
+		scope.keepProduce = true
+	}
+	return walkSelectorMiss(scope, serr, stderr)
 }
 
 // latestSuccessZeroScope sizes the store a --latest-success found no succeeded

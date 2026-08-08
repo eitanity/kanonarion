@@ -33,7 +33,7 @@ func runWalkShow(ctx context.Context, id string, uc QueryWalksUseCase, stdout, s
 	rec, err := uc.GetWalk(ctx, id)
 	if err != nil {
 		if isWalkNotFound(err) {
-			return &exitError{code: ExitNotFound, msg: fmt.Sprintf("walk record %q not found", id)}
+			return walkIDMiss(ctx, uc, id, stderr)
 		}
 		if isWalkIntegrity(err) {
 			return &exitError{code: ExitIntegrity, msg: fmt.Sprintf("walk record %q failed integrity check", id)}
