@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"sort"
+	"strings"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -119,20 +120,26 @@ func (uc *CheckCompatibilityUseCase) CheckCompatibilityForWalk(
 	modules := make([]domain.CompatibilityInput, 0, len(coords))
 	for _, coord := range coords {
 		if spdx, isStdlib := stdlibSPDX[coord]; isStdlib {
+			// The stdlib's licence is the stdlib's own: module root origin.
 			modules = append(modules, domain.CompatibilityInput{
-				ModulePath:    coord.Path(),
-				ModuleVersion: coord.Version(),
-				SPDX:          spdx,
+				ModulePath:       coord.Path(),
+				ModuleVersion:    coord.Version(),
+				SPDX:             spdx,
+				ModuleExpression: spdx,
 			})
 			continue
 		}
 		// An override is the operator's recorded decision (correction or
-		// dual-licence election) and replaces the scanner's answer wholesale.
+		// dual-licence election) and replaces the scanner's answer wholesale —
+		// including what the module's own licence is taken to be, so the
+		// reported module licence is the decision rather than the scan it
+		// overrode.
 		if ov, ok := overrides.Resolve(coord); ok {
 			modules = append(modules, domain.CompatibilityInput{
-				ModulePath:    coord.Path(),
-				ModuleVersion: coord.Version(),
-				SPDX:          ov.SPDX,
+				ModulePath:       coord.Path(),
+				ModuleVersion:    coord.Version(),
+				SPDX:             ov.SPDX,
+				ModuleExpression: ov.SPDX,
 			})
 			continue
 		}
@@ -181,6 +188,17 @@ func (uc *CheckCompatibilityUseCase) resolveRootTarget(
 // components), falling back to a single expression/primary SPDX for records
 // that predate the EffectiveSet. A nil result (record absent, or a read error)
 // is treated as unknown by the caller.
+//
+// Every input carries WHERE its identifier came from — the module's own root
+// licence files, or the path prefix of a component bundled inside the module —
+// together with the module's own licence expression, reported whole. Without
+// that a bundled component's licence reaches the report in the column every
+// other surface fills with the module's own, and a reader cannot tell the two
+// apart.
+//
+// Components under a testdata directory are excluded here rather than in
+// DeriveEffectiveLicenseSet: see domain.IsTestCorpusPath for why the exclusion
+// belongs to this consumer and not to the derivation.
 func compatibilityInputsFor(ctx context.Context, store licenseStoreReader, coord coordinate.ModuleCoordinate) []domain.CompatibilityInput {
 	unknown := []domain.CompatibilityInput{{
 		ModulePath:    coord.Path(),
@@ -192,49 +210,99 @@ func compatibilityInputsFor(ctx context.Context, store licenseStoreReader, coord
 		return unknown
 	}
 
+	// The module's OWN licence, carried on every input so the report can always
+	// name it whatever the entry's identifier turned out to belong to.
+	moduleExpr := rec.Expression
+	if moduleExpr == "" {
+		moduleExpr = rec.PrimarySPDX
+	}
+
+	newInput := func() domain.CompatibilityInput {
+		return domain.CompatibilityInput{
+			ModulePath:       coord.Path(),
+			ModuleVersion:    coord.Version(),
+			ModuleExpression: moduleExpr,
+		}
+	}
+
 	if arms := domain.DisjunctionArms(rec.Expression); len(arms) >= 2 {
-		inputs := []domain.CompatibilityInput{{
-			ModulePath:    coord.Path(),
-			ModuleVersion: coord.Version(),
-			ElectiveArms:  arms,
-		}}
+		elective := newInput()
+		elective.ElectiveArms = arms
+		inputs := []domain.CompatibilityInput{elective}
 		// Embedded component licences are not part of the election.
-		seen := make(map[string]bool)
-		for _, comp := range rec.EffectiveSet.Components {
-			for _, spdx := range comp.SPDXs {
-				if seen[spdx] {
-					continue
-				}
-				seen[spdx] = true
-				inputs = append(inputs, domain.CompatibilityInput{
-					ModulePath:    coord.Path(),
-					ModuleVersion: coord.Version(),
-					SPDX:          spdx,
-				})
-			}
+		for _, comp := range componentSPDXs(rec) {
+			in := newInput()
+			in.SPDX = comp.spdx
+			in.Origin = domain.OriginBundledComponent
+			in.OriginPath = comp.prefixes
+			inputs = append(inputs, in)
 		}
 		return inputs
 	}
 
-	spdxs := rec.EffectiveSet.AllSPDXs
-	if len(spdxs) == 0 {
+	var inputs []domain.CompatibilityInput
+	rootSeen := make(map[string]bool, len(rec.EffectiveSet.RootSPDXs))
+	for _, spdx := range rec.EffectiveSet.RootSPDXs {
+		rootSeen[spdx] = true
+		in := newInput()
+		in.SPDX = spdx
+		inputs = append(inputs, in)
+	}
+	for _, comp := range componentSPDXs(rec) {
+		// An identifier the module's own root already declares is the module's
+		// licence; a component repeating it adds no distinct obligation and
+		// must not be re-attributed to the component.
+		if rootSeen[comp.spdx] {
+			continue
+		}
+		in := newInput()
+		in.SPDX = comp.spdx
+		in.Origin = domain.OriginBundledComponent
+		in.OriginPath = comp.prefixes
+		inputs = append(inputs, in)
+	}
+
+	if len(inputs) == 0 {
 		// Fall back for records without EffectiveSet populated (LicenseStatusNone etc.).
-		switch {
-		case rec.Expression != "":
-			spdxs = []string{rec.Expression}
-		case rec.PrimarySPDX != "":
-			spdxs = []string{rec.PrimarySPDX}
-		default:
+		if moduleExpr == "" {
 			return unknown
 		}
-	}
-	inputs := make([]domain.CompatibilityInput, 0, len(spdxs))
-	for _, spdx := range spdxs {
-		inputs = append(inputs, domain.CompatibilityInput{
-			ModulePath:    coord.Path(),
-			ModuleVersion: coord.Version(),
-			SPDX:          spdx,
-		})
+		in := newInput()
+		in.SPDX = moduleExpr
+		return []domain.CompatibilityInput{in}
 	}
 	return inputs
+}
+
+// componentAttribution is one identifier a module bundles, with the component
+// prefixes it was found under.
+type componentAttribution struct {
+	spdx     string
+	prefixes string // comma-separated, sorted by the record's component order
+}
+
+// componentSPDXs returns the distinct identifiers contributed by the module's
+// bundled components, each naming every prefix it was found under, in sorted
+// identifier order. Test-corpus components are dropped: they are shipped bytes
+// but never linked code.
+func componentSPDXs(rec domain.LicenseRecord) []componentAttribution {
+	prefixes := make(map[string][]string)
+	var order []string
+	for _, comp := range rec.EffectiveSet.Components {
+		if domain.IsTestCorpusPath(comp.PathPrefix) {
+			continue
+		}
+		for _, spdx := range comp.SPDXs {
+			if _, seen := prefixes[spdx]; !seen {
+				order = append(order, spdx)
+			}
+			prefixes[spdx] = append(prefixes[spdx], comp.PathPrefix)
+		}
+	}
+	sort.Strings(order)
+	out := make([]componentAttribution, 0, len(order))
+	for _, spdx := range order {
+		out = append(out, componentAttribution{spdx: spdx, prefixes: strings.Join(prefixes[spdx], ", ")})
+	}
+	return out
 }

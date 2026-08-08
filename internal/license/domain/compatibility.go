@@ -7,7 +7,7 @@ import (
 
 // CompatibilityDataVersion identifies the version of the static compatibility
 // dataset. Bump deliberately when a new license pair is researched and added.
-const CompatibilityDataVersion = "1.0.0"
+const CompatibilityDataVersion = "1.1.0"
 
 // CopyleftStrength describes the copyleft obligations imposed by a license.
 type CopyleftStrength int
@@ -124,15 +124,61 @@ func (k ConflictKind) String() string {
 	}
 }
 
+// LicenceOrigin says whose licence an identifier under evaluation is. A module
+// contributes its own root licence AND the licences of the components it
+// bundles, and both bind a redistributor — but only one of them is "the
+// module's licence", which is what every other surface reports. Carrying the
+// origin is what keeps a bundled component's identifier from reading as the
+// module's own.
+type LicenceOrigin int
+
+const (
+	// OriginModuleRoot means the identifier came from the module's own
+	// root-level licence files — the licence every other surface reports for
+	// the module. It is the zero value: an input carrying no component
+	// attribution is the module's own licence, which is the honest reading for
+	// entries built before components were distinguished.
+	OriginModuleRoot LicenceOrigin = iota
+	// OriginBundledComponent means the identifier came from a third-party
+	// component bundled inside the module (a vendor/ tree, a
+	// THIRD_PARTY_LICENSES directory). The obligation is real; the licence is
+	// not the module's.
+	OriginBundledComponent
+)
+
+// String returns the wire name of the origin.
+func (o LicenceOrigin) String() string {
+	if o == OriginBundledComponent {
+		return "bundled_component"
+	}
+	return "module_root"
+}
+
 // CompatibilityConflict records a concrete conflict between a dep license and
 // the target distribution license.
 type CompatibilityConflict struct {
 	ModulePath    string
 	ModuleVersion string
-	DepSPDX       string
-	TargetSPDX    string
-	Verdict       CompatibilityVerdict
-	Kind          ConflictKind
+	// DepSPDX is the identifier that was EVALUATED. It is the module's own
+	// licence only when Origin is OriginModuleRoot; when the identifier was
+	// attributed to a bundled component it is that component's licence, and
+	// Origin/OriginPath say so. ModuleExpression always carries the module's
+	// own licence, so a consumer can recover it without re-reading the record.
+	DepSPDX    string
+	TargetSPDX string
+	Verdict    CompatibilityVerdict
+	Kind       ConflictKind
+	// Origin says whose licence DepSPDX is.
+	Origin LicenceOrigin
+	// OriginPath names the bundled component's path prefix within the module,
+	// comma-separated when one identifier was found under several. Empty for
+	// OriginModuleRoot.
+	OriginPath string
+	// ModuleExpression is the module's OWN licence expression, reported whole:
+	// a conjunction such as "Apache-2.0 AND CC-BY-SA-4.0" appears in full with
+	// DepSPDX naming the arm that raised this entry, never reduced to that arm.
+	// Empty only when the module has no licence expression at all.
+	ModuleExpression string
 	// ElectableArms lists the arms of a dual-licence disjunction that are
 	// individually compatible with the target. Populated only for
 	// VerdictElectable, where DepSPDX carries the full disjunction.
@@ -151,6 +197,12 @@ type CompatibilityInput struct {
 	// SPDX is ignored; otherwise SPDX is evaluated as a single licence that
 	// applies unconditionally.
 	ElectiveArms []string
+	// Origin, OriginPath and ModuleExpression carry the attribution through to
+	// the conflict entry unchanged; see CompatibilityConflict for what each
+	// means.
+	Origin           LicenceOrigin
+	OriginPath       string
+	ModuleExpression string
 }
 
 // ClosureCompatibilityReport is the result of checking all dependencies in a
@@ -166,6 +218,31 @@ type ClosureCompatibilityReport struct {
 	// Clean reports whether the entire closure is compatible (no conflicts, no
 	// unknown pairs, and no elections still open).
 	Clean bool
+	// CoverageHoles lists, once each, the distinct SPDX identifiers this
+	// closure carries that the dataset assigns no copyleft strength. It answers
+	// a different question from Conflicts: a single unmodelled identifier on
+	// twelve modules is ONE dataset gap, and reading it off twelve review items
+	// makes it look like twelve legal questions. Sorted by SPDX.
+	CoverageHoles []CoverageHole
+	// TargetModelled reports whether the target identifier itself is in the
+	// dataset. When false every module in the closure comes back unmodelled for
+	// one reason — the target — and the per-module rows are a consequence, not
+	// twelve findings.
+	TargetModelled bool
+}
+
+// CoverageHole is one SPDX identifier a closure carries that the compatibility
+// dataset does not model.
+type CoverageHole struct {
+	SPDX string
+	// Modules counts the distinct modules in the closure the identifier was
+	// attributed to.
+	Modules int
+	// Deliberate reports whether the dataset declines to model this identifier
+	// on purpose, and Reason carries why. Deliberate=false is a gap in the
+	// dataset: the identifier has been neither researched nor ruled out.
+	Deliberate bool
+	Reason     string
 }
 
 // copyleftStrengths maps known SPDX identifiers to their copyleft strength.
@@ -184,6 +261,22 @@ var copyleftStrengths = map[string]CopyleftStrength{
 	"CC0-1.0":       CopyleftNone,
 	"BlueOak-1.0.0": CopyleftNone,
 	"BSD-4-Clause":  CopyleftNone,
+	// BSL-1.0 (Boost) is OSI-approved and imposes no copyleft: the licence
+	// notice need not even accompany a compiled binary. It is bundled by
+	// numerics libraries that vendor Boost-derived routines, so its absence
+	// showed up as a review item on an otherwise permissive closure.
+	"BSL-1.0": CopyleftNone,
+	// Python-2.0 (PSF) is permissive with a notice-retention and
+	// state-changes condition; no copyleft propagation.
+	"Python-2.0": CopyleftNone,
+	// WTFPL grants unconditional permission — public-domain-equivalent, in the
+	// same family as Unlicense and CC0-1.0.
+	"WTFPL": CopyleftNone,
+	// BSD-2-Clause-Views is BSD-2-Clause plus a views-are-the-authors' notice;
+	// the obligations catalogue already models it, so the two datasets agreeing
+	// keeps a licence from being permissive on one surface and unmodelled on
+	// another.
+	"BSD-2-Clause-Views": CopyleftNone,
 
 	// Weak copyleft — file/library-level, linking permitted
 	"MPL-2.0":           CopyleftWeak,
@@ -214,6 +307,57 @@ var copyleftStrengths = map[string]CopyleftStrength{
 	"BUSL-1.1":    CopyleftStrong, // Business Source License: strong restriction, modelled as strong copyleft for compat purposes
 	"SSPL-1.0":    CopyleftStrong,
 	"Elastic-2.0": CopyleftStrong,
+}
+
+// unmodelledDeliberately records the SPDX identifiers the compatibility
+// dataset does NOT model on purpose, each with the reason.
+//
+// It exists so that "unmodelled" can be read as a decision rather than as a
+// gap. An identifier in copyleftStrengths has a researched verdict; an
+// identifier here has a researched reason for having none; an identifier in
+// neither is a coverage hole, and CoverageHolesFor reports it as one.
+//
+// Every entry here is a licence whose obligations attach to material other
+// than the linked Go code — documentation, media, fonts — so a single
+// copyleft strength would misstate the question rather than answer it. The
+// honest answer for these is that a human decides, which is exactly what
+// VerdictUnknownPair asks for.
+var unmodelledDeliberately = map[string]string{
+	"CC-BY-4.0":    "Creative Commons attribution licence for content, not code; its obligations attach to the covered material (docs, data, media), not to a linked Go package",
+	"CC-BY-SA-3.0": "Creative Commons share-alike for content; the reciprocity arm has no settled reading against software redistribution, so the pair is a legal question rather than a dataset entry",
+	"CC-BY-SA-4.0": "Creative Commons share-alike for content; same reasoning as CC-BY-SA-3.0. Commonly seen on a module's LICENSE.docs alongside a permissive code licence",
+	"OFL-1.1":      "SIL Open Font Licence; its reciprocity applies to the font files, not to software that merely ships them",
+}
+
+// UnmodelledReason returns the recorded reason for an identifier the dataset
+// deliberately does not model, and whether such a reason exists. A false
+// second return for an identifier CopyleftStrengthOf also does not know means
+// the dataset has a gap, not a decision.
+func UnmodelledReason(spdx string) (string, bool) {
+	reason, ok := unmodelledDeliberately[CanonicalSPDXID(spdx)]
+	return reason, ok
+}
+
+// ModelledSPDXIDs returns the sorted identifiers the compatibility dataset
+// assigns a copyleft strength to.
+func ModelledSPDXIDs() []string {
+	ids := make([]string, 0, len(copyleftStrengths))
+	for id := range copyleftStrengths {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
+}
+
+// DeliberatelyUnmodelledSPDXIDs returns the sorted identifiers the dataset
+// declines to model on purpose.
+func DeliberatelyUnmodelledSPDXIDs() []string {
+	ids := make([]string, 0, len(unmodelledDeliberately))
+	for id := range unmodelledDeliberately {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 // permissiveTargets is the set of known target licenses that are permissive
@@ -320,10 +464,13 @@ func evaluateElection(m CompatibilityInput, targetSPDX string) (CompatibilityCon
 	}
 
 	c := CompatibilityConflict{
-		ModulePath:    m.ModulePath,
-		ModuleVersion: m.ModuleVersion,
-		DepSPDX:       expr,
-		TargetSPDX:    targetSPDX,
+		ModulePath:       m.ModulePath,
+		ModuleVersion:    m.ModuleVersion,
+		DepSPDX:          expr,
+		TargetSPDX:       targetSPDX,
+		Origin:           m.Origin,
+		OriginPath:       m.OriginPath,
+		ModuleExpression: m.ModuleExpression,
 	}
 	switch {
 	case len(compatible) > 0:
@@ -359,12 +506,17 @@ func conflictKindFor(depSPDX string) ConflictKind {
 // Modules with an empty SPDX are treated as unmodelled (VerdictUnknownPair).
 // The Conflicts slice in the result is sorted by ModulePath then ModuleVersion.
 func CheckClosureCompatibility(modules []CompatibilityInput, targetSPDX string) ClosureCompatibilityReport {
+	_, targetKnown := CopyleftStrengthOf(targetSPDX)
 	report := ClosureCompatibilityReport{
-		TargetSPDX:  targetSPDX,
-		DataVersion: CompatibilityDataVersion,
+		TargetSPDX:     targetSPDX,
+		DataVersion:    CompatibilityDataVersion,
+		TargetModelled: targetKnown,
 	}
 
+	holes := newCoverageHoleTally()
+
 	for _, m := range modules {
+		holes.observe(m)
 		if len(m.ElectiveArms) >= 2 {
 			if c, open := evaluateElection(m, targetSPDX); open {
 				report.Conflicts = append(report.Conflicts, c)
@@ -374,12 +526,15 @@ func CheckClosureCompatibility(modules []CompatibilityInput, targetSPDX string) 
 		spdx := m.SPDX
 		if spdx == "" {
 			report.Conflicts = append(report.Conflicts, CompatibilityConflict{
-				ModulePath:    m.ModulePath,
-				ModuleVersion: m.ModuleVersion,
-				DepSPDX:       "",
-				TargetSPDX:    targetSPDX,
-				Verdict:       VerdictUnknownPair,
-				Kind:          ConflictUnknownPair,
+				ModulePath:       m.ModulePath,
+				ModuleVersion:    m.ModuleVersion,
+				DepSPDX:          "",
+				TargetSPDX:       targetSPDX,
+				Verdict:          VerdictUnknownPair,
+				Kind:             ConflictUnknownPair,
+				Origin:           m.Origin,
+				OriginPath:       m.OriginPath,
+				ModuleExpression: m.ModuleExpression,
 			})
 			continue
 		}
@@ -395,12 +550,15 @@ func CheckClosureCompatibility(modules []CompatibilityInput, targetSPDX string) 
 		}
 
 		report.Conflicts = append(report.Conflicts, CompatibilityConflict{
-			ModulePath:    m.ModulePath,
-			ModuleVersion: m.ModuleVersion,
-			DepSPDX:       spdx,
-			TargetSPDX:    targetSPDX,
-			Verdict:       verdict,
-			Kind:          kind,
+			ModulePath:       m.ModulePath,
+			ModuleVersion:    m.ModuleVersion,
+			DepSPDX:          spdx,
+			TargetSPDX:       targetSPDX,
+			Verdict:          verdict,
+			Kind:             kind,
+			Origin:           m.Origin,
+			OriginPath:       m.OriginPath,
+			ModuleExpression: m.ModuleExpression,
 		})
 	}
 
@@ -409,9 +567,68 @@ func CheckClosureCompatibility(modules []CompatibilityInput, targetSPDX string) 
 		if a.ModulePath != b.ModulePath {
 			return a.ModulePath < b.ModulePath
 		}
-		return a.ModuleVersion < b.ModuleVersion
+		if a.ModuleVersion != b.ModuleVersion {
+			return a.ModuleVersion < b.ModuleVersion
+		}
+		return a.DepSPDX < b.DepSPDX
 	})
 
+	report.CoverageHoles = holes.result()
 	report.Clean = len(report.Conflicts) == 0
 	return report
+}
+
+// coverageHoleTally counts the distinct modules each unmodelled identifier was
+// seen on, so one dataset gap is reported once rather than once per module.
+type coverageHoleTally struct {
+	modules map[string]map[string]struct{} // SPDX → set of module@version
+}
+
+func newCoverageHoleTally() *coverageHoleTally {
+	return &coverageHoleTally{modules: make(map[string]map[string]struct{})}
+}
+
+// observe records every identifier the input carries that the dataset does not
+// model. An empty SPDX is NOT a coverage hole: it means the module has no
+// licence record to read, which is a missing measurement rather than a gap in
+// the dataset, and the per-module review item already says so.
+func (t *coverageHoleTally) observe(m CompatibilityInput) {
+	ids := m.ElectiveArms
+	if len(ids) < 2 {
+		ids = nil
+		if m.SPDX != "" {
+			ids = []string{m.SPDX}
+		}
+	}
+	for _, id := range ids {
+		if _, known := CopyleftStrengthOf(id); known {
+			continue
+		}
+		if t.modules[id] == nil {
+			t.modules[id] = make(map[string]struct{})
+		}
+		t.modules[id][m.ModulePath+"@"+m.ModuleVersion] = struct{}{}
+	}
+}
+
+func (t *coverageHoleTally) result() []CoverageHole {
+	if len(t.modules) == 0 {
+		return nil
+	}
+	ids := make([]string, 0, len(t.modules))
+	for id := range t.modules {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	holes := make([]CoverageHole, 0, len(ids))
+	for _, id := range ids {
+		reason, deliberate := UnmodelledReason(id)
+		holes = append(holes, CoverageHole{
+			SPDX:       id,
+			Modules:    len(t.modules[id]),
+			Deliberate: deliberate,
+			Reason:     reason,
+		})
+	}
+	return holes
 }

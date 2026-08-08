@@ -3,6 +3,7 @@ package domain
 import (
 	"encoding/json"
 	"fmt"
+	"sort"
 )
 
 // ObligationCatalogueVersion identifies the version of the static obligations
@@ -358,6 +359,20 @@ var obligationsCatalogue = map[string]Obligations{
 		NetworkUseTrigger:   true,
 		ExplicitPatentGrant: true,
 	},
+}
+
+// ObligationCatalogueSPDXIDs returns the sorted identifiers the obligations
+// catalogue has a researched entry for. It exists so the compatibility dataset
+// can be swept against it: a licence researched well enough to state its
+// obligations but absent from the compatibility dataset is a hole one dataset
+// knows about and the other does not.
+func ObligationCatalogueSPDXIDs() []string {
+	ids := make([]string, 0, len(obligationsCatalogue))
+	for id := range obligationsCatalogue {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	return ids
 }
 
 // LookupObligations returns the obligation set for the given SPDX identifier.

@@ -161,14 +161,36 @@ func printCompatReportJSON(report domain.ClosureCompatibilityReport, walkID, wal
 	type conflictJSON struct {
 		Module  string `json:"module"`
 		Version string `json:"version"`
+		// DepSPDX is the identifier that was EVALUATED, which is the module's
+		// own licence only when spdx_origin is "module_root". Read it together
+		// with spdx_origin and module_spdx; on its own it does not say whose
+		// licence it is.
 		DepSPDX string `json:"dep_spdx"`
-		Target  string `json:"target_spdx"`
-		Verdict string `json:"verdict"`
-		Kind    string `json:"kind"`
+		// SPDXOrigin is "module_root" or "bundled_component" and says whose
+		// licence dep_spdx is; spdx_origin_path names the component.
+		SPDXOrigin     string `json:"spdx_origin"`
+		SPDXOriginPath string `json:"spdx_origin_path,omitempty"`
+		// ModuleSPDX is the module's OWN licence expression, whole: a
+		// conjunction appears in full with dep_spdx naming the arm that raised
+		// this entry. This is the field that answers "what is this module
+		// licensed under", and it agrees with license, sbom and audit.
+		ModuleSPDX string `json:"module_spdx"`
+		Target     string `json:"target_spdx"`
+		Verdict    string `json:"verdict"`
+		Kind       string `json:"kind"`
 		// ElectableArms lists the compatible arms of a dual-licence
 		// disjunction (verdict "electable"): the module is compatible if one
 		// of these is elected via a license_overrides entry.
 		ElectableArms []string `json:"electable_arms,omitempty"`
+	}
+	type coverageHoleJSON struct {
+		SPDX    string `json:"spdx"`
+		Modules int    `json:"modules"`
+		// Deliberate false means the dataset has a gap for this identifier —
+		// neither researched nor ruled out. True means it is unmodelled on
+		// purpose and reason says why.
+		Deliberate bool   `json:"deliberate"`
+		Reason     string `json:"reason,omitempty"`
 	}
 	type reportJSON struct {
 		TargetSPDX  string `json:"target_spdx"`
@@ -177,29 +199,50 @@ func printCompatReportJSON(report domain.ClosureCompatibilityReport, walkID, wal
 		// the GOOS/GOARCH it resolved for ("unrecorded" for a walk written before
 		// the frame was projected). Always present: the verdict is about a build,
 		// and a build has a platform.
-		WalkID    string         `json:"walk_id"`
-		WalkFrame string         `json:"walk_frame"`
-		Clean     bool           `json:"clean"`
-		Conflicts []conflictJSON `json:"conflicts"`
+		WalkID    string `json:"walk_id"`
+		WalkFrame string `json:"walk_frame"`
+		// TargetModelled false means the TARGET identifier is the one the
+		// dataset does not model, so every conflict row below follows from that
+		// single fact rather than from N independent findings.
+		TargetModelled bool           `json:"target_modelled"`
+		Clean          bool           `json:"clean"`
+		Conflicts      []conflictJSON `json:"conflicts"`
+		// CoverageHoles reports each distinct unmodelled identifier in this
+		// closure ONCE, with how many modules carry it — the dataset gap, as
+		// opposed to its per-module consequences in conflicts.
+		CoverageHoles []coverageHoleJSON `json:"coverage_holes"`
 	}
 
 	out := reportJSON{
-		TargetSPDX:  report.TargetSPDX,
-		DataVersion: report.DataVersion,
-		WalkID:      walkID,
-		WalkFrame:   walkFrame,
-		Clean:       report.Clean,
-		Conflicts:   make([]conflictJSON, 0, len(report.Conflicts)),
+		TargetSPDX:     report.TargetSPDX,
+		DataVersion:    report.DataVersion,
+		WalkID:         walkID,
+		WalkFrame:      walkFrame,
+		TargetModelled: report.TargetModelled,
+		Clean:          report.Clean,
+		Conflicts:      make([]conflictJSON, 0, len(report.Conflicts)),
+		CoverageHoles:  make([]coverageHoleJSON, 0, len(report.CoverageHoles)),
 	}
 	for _, c := range report.Conflicts {
 		out.Conflicts = append(out.Conflicts, conflictJSON{
-			Module:        c.ModulePath,
-			Version:       c.ModuleVersion,
-			DepSPDX:       c.DepSPDX,
-			Target:        c.TargetSPDX,
-			Verdict:       c.Verdict.String(),
-			Kind:          c.Kind.String(),
-			ElectableArms: c.ElectableArms,
+			Module:         c.ModulePath,
+			Version:        c.ModuleVersion,
+			DepSPDX:        c.DepSPDX,
+			SPDXOrigin:     c.Origin.String(),
+			SPDXOriginPath: c.OriginPath,
+			ModuleSPDX:     c.ModuleExpression,
+			Target:         c.TargetSPDX,
+			Verdict:        c.Verdict.String(),
+			Kind:           c.Kind.String(),
+			ElectableArms:  c.ElectableArms,
+		})
+	}
+	for _, h := range report.CoverageHoles {
+		out.CoverageHoles = append(out.CoverageHoles, coverageHoleJSON{
+			SPDX:       h.SPDX,
+			Modules:    h.Modules,
+			Deliberate: h.Deliberate,
+			Reason:     h.Reason,
 		})
 	}
 
@@ -209,6 +252,74 @@ func printCompatReportJSON(report domain.ClosureCompatibilityReport, walkID, wal
 		return fmt.Errorf("encoding JSON: %w", err)
 	}
 	return nil
+}
+
+// compatOriginLine renders the attribution line printed under every conflict
+// row: whose licence the identifier is, and what the module's own licence is.
+//
+// It is printed even when the two coincide. A reader scanning the column has to
+// be able to tell "this IS the module's licence" from "this is something the
+// module bundles" without knowing which entries carry the extra line, and an
+// origin that appears only sometimes is read as an origin that is sometimes
+// unknown.
+func compatOriginLine(c domain.CompatibilityConflict) string {
+	if c.DepSPDX == "" && c.ModuleExpression == "" {
+		// No licence record at all. There is no identifier, so there is nothing
+		// to attribute — saying "the module's own licence" here would assert
+		// the module has one.
+		return "no licence record — there is no identifier to attribute"
+	}
+	moduleLicence := c.ModuleExpression
+	if moduleLicence == "" {
+		moduleLicence = "(none detected)"
+	}
+	if c.Origin == domain.OriginBundledComponent {
+		where := c.OriginPath
+		if where == "" {
+			where = "(path not recorded)"
+		}
+		return fmt.Sprintf("from bundled component %s — the module's own licence is %s", where, moduleLicence)
+	}
+	if c.DepSPDX != "" && c.DepSPDX != c.ModuleExpression {
+		// A conjunction: the module's licence is reported whole and this row
+		// names the arm that raised it.
+		return fmt.Sprintf("from the module's own licence %s — arm %s", moduleLicence, c.DepSPDX)
+	}
+	return "the module's own licence"
+}
+
+func writeCompatOrigin(stdout io.Writer, c domain.CompatibilityConflict) {
+	_, _ = fmt.Fprintf(stdout, "      %s\n", compatOriginLine(c))
+}
+
+// printCompatCoverage reports the dataset's coverage holes for this closure:
+// each unmodelled identifier once, with the modules it was seen on and whether
+// it is unmodelled by decision or by gap. Printing it separately from the
+// per-module rows is the point — one identifier the dataset has never been
+// taught is one gap, not one open legal question per module that carries it.
+func printCompatCoverage(report domain.ClosureCompatibilityReport, stdout io.Writer) {
+	if !report.TargetModelled {
+		_, _ = fmt.Fprintf(stdout, "\nThe TARGET licence %s is not in the compatibility dataset (data v%s):\n",
+			report.TargetSPDX, report.DataVersion)
+		_, _ = fmt.Fprintf(stdout, "every module below is unmodelled for that one reason, not on its own merits.\n")
+	}
+	if len(report.CoverageHoles) == 0 {
+		return
+	}
+	noun, verb := "identifiers", "are"
+	if len(report.CoverageHoles) == 1 {
+		noun, verb = "identifier", "is"
+	}
+	_, _ = fmt.Fprintf(stdout, "\nDataset coverage — %d licence %s in this closure %s not modelled (data v%s):\n",
+		len(report.CoverageHoles), noun, verb, report.DataVersion)
+	for _, h := range report.CoverageHoles {
+		_, _ = fmt.Fprintf(stdout, "  %-24s %d module(s)\n", h.SPDX, h.Modules)
+		if h.Deliberate {
+			_, _ = fmt.Fprintf(stdout, "      unmodelled by decision: %s\n", h.Reason)
+		} else {
+			_, _ = fmt.Fprintf(stdout, "      not yet researched — a gap in the dataset, not a property of the licence\n")
+		}
+	}
 }
 
 func printCompatReportText(report domain.ClosureCompatibilityReport, root coordinate.ModuleCoordinate, walkID, walkFrame string, stdout io.Writer) {
@@ -242,6 +353,7 @@ func printCompatReportText(report domain.ClosureCompatibilityReport, root coordi
 			}
 			_, _ = fmt.Fprintf(stdout, "  %-55s %s [%s]\n",
 				c.ModulePath+"@"+c.ModuleVersion, depSPDX, c.Kind.String())
+			writeCompatOrigin(stdout, c)
 		}
 	}
 
@@ -252,6 +364,7 @@ func printCompatReportText(report domain.ClosureCompatibilityReport, root coordi
 				c.ModulePath+"@"+c.ModuleVersion, c.DepSPDX)
 			_, _ = fmt.Fprintf(stdout, "  %-55s compatible if %s is elected\n",
 				"", strings.Join(c.ElectableArms, " or "))
+			writeCompatOrigin(stdout, c)
 		}
 		_, _ = fmt.Fprintf(stdout, "\nAn election is an operator decision, not the tool's: record the elected\n")
 		_, _ = fmt.Fprintf(stdout, "arm as a license_overrides entry for the module, then re-run license-compat.\n")
@@ -268,6 +381,7 @@ func printCompatReportText(report domain.ClosureCompatibilityReport, root coordi
 			}
 			_, _ = fmt.Fprintf(stdout, "  %-55s %s\n",
 				c.ModulePath+"@"+c.ModuleVersion, depSPDX)
+			writeCompatOrigin(stdout, c)
 		}
 		// hint so the user knows whether extraction is the next step.
 		if hasNoRecord {
@@ -275,6 +389,8 @@ func printCompatReportText(report domain.ClosureCompatibilityReport, root coordi
 			_, _ = fmt.Fprintf(stdout, "     populate missing records, then re-run license-compat.\n")
 		}
 	}
+
+	printCompatCoverage(report, stdout)
 }
 
 // compatExitCode returns an exitError for non-clean reports. ExitPartial (1)
