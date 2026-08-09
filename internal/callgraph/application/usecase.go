@@ -35,6 +35,16 @@ import (
 // pruned, and a load that resolves nothing now records which of those it was.
 // Records written by the previous logic can be right or wrong and there is no
 // way to tell from the record, so they are re-derived rather than served.
+//
+// NOT bumped when the exported-API rule stopped mis-reading a synthetic method
+// wrapper on a package-main type as library API. A bump is owed when a change
+// makes a stored record say something FALSE, and every record this version
+// serves was decoded and counted before deciding: the false claim appears only
+// in records written by older logic, which this version already declines to
+// serve, and in none of the records written at this version. Those keep serving
+// what they say, correctly. Re-extraction under the fixed rule is what corrects
+// an older record, and a bump would have stranded every served graph to correct
+// nothing.
 const PipelineVersion = "0.4.1"
 
 // ExtractCallGraphUseCase extracts the call graph of a module and persists a

@@ -120,20 +120,40 @@ func isTestPackagePath(pkgPath string) bool {
 // no module and marked it external, which mis-scopes reachability rooting and
 // module attribution for a symbol that is the module's own code.
 func funcPackagePath(fn *ssa.Function) string {
-	if fn == nil {
+	pkg := funcPackage(fn)
+	if pkg == nil {
 		return ""
 	}
+	return pkg.Path()
+}
+
+// funcPackage returns the package that declares a function, and is the single
+// resolution every package-derived fact goes through — the import path a node
+// is attributed to, and whether that package is a command.
+//
+// Package() is documented to be nil for the shared functions SSA synthesises:
+// method wrappers, thunks, bound-method values, error.Error. Those functions
+// are not package-less, they are shared, and the object records the method they
+// stand for. Object() is nil in turn for a function literal and a synthetic
+// init, and a literal inherits the package of whatever encloses it.
+//
+// It returns nil when nothing names the function, which every caller must read
+// as the absence of an answer rather than as a package.
+func funcPackage(fn *ssa.Function) *types.Package {
+	if fn == nil {
+		return nil
+	}
 	if pkg := fn.Package(); pkg != nil && pkg.Pkg != nil {
-		return pkg.Pkg.Path()
+		return pkg.Pkg
 	}
 	if obj := fn.Object(); obj != nil && obj.Pkg() != nil {
-		return obj.Pkg().Path()
+		return obj.Pkg()
 	}
 	// A closure inherits the package of whatever encloses it.
 	if parent := fn.Parent(); parent != nil {
-		return funcPackagePath(parent)
+		return funcPackage(parent)
 	}
-	return ""
+	return nil
 }
 
 // nodeID returns a stable, unique identifier for an SSA function.
@@ -265,11 +285,27 @@ func isInternalPkg(path string) bool {
 	return strings.Contains(path, "/internal/") ||
 		strings.HasSuffix(path, "/internal")
 }
+
+// isMainPkg reports whether a function belongs to a command — a package nothing
+// can import, and so nothing can call from outside the binary.
+//
+// It resolves the package through funcPackage rather than Package() alone. A
+// value-receiver method on a package-main type, reached through a pointer, is
+// carried by a synthetic wrapper whose own Package() is nil; reading only that
+// answered "not main" and minted the method as exported library API, which is
+// a false claim rather than a weaker one and roots library reachability at an
+// entry no consumer could ever reach.
+//
+// Where no package can be resolved the guard fails closed and answers true: a
+// symbol nothing can name is not library API by default. Failing open would
+// trade a false root for a missing one, which is harder to notice because
+// nothing appears.
 func isMainPkg(fn *ssa.Function) bool {
-	if fn.Package() == nil || fn.Package().Pkg == nil {
-		return false
+	pkg := funcPackage(fn)
+	if pkg == nil {
+		return true
 	}
-	return fn.Package().Pkg.Name() == "main"
+	return pkg.Name() == "main"
 }
 
 // relativePath strips tempDir prefix from path for cleaner output.

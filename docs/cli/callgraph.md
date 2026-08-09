@@ -559,7 +559,7 @@ constructing them by hand.
 | Field | Meaning |
 |-------|---------|
 | `is_external` | The node is outside the analysed module |
-| `is_exported_api` | The node is part of the module's public API |
+| `is_exported_api` | The node is part of the module's public API: an exported symbol of the analysed module, in a package a consumer can import (not `internal`, not `main`), and not a closure or a synthesised bound-method or thunk symbol |
 | `is_test` | The node is declared in a `_test.go` file or an external test package |
 | `uses_unsafe_pointer` | The body performs an `unsafe.Pointer` conversion |
 | `is_assembly_or_linkname` | The function has no Go body (assembly or `//go:linkname`) |
