@@ -323,6 +323,23 @@ func TestScanWalk_CoordinateKeyed_DependencyCoordinateMatchIsNotReachableWithCon
 	if r.IsReachable || r.Confidence != domain.ConfidenceHigh {
 		t.Errorf("depA reachability = %+v, want not-reachable/high-confidence", r)
 	}
+
+	// The soundness rung is derived from this answer, so it is asserted against
+	// the answer the real producer wrote rather than against a hand-built one.
+	// That is the whole guard: if this path ever starts naming a different
+	// analyser or fidelity, the rung moves with it and this fails, instead of a
+	// silence-inference quietly reading as a search.
+	soundness, reason := domain.NegativeSoundness(rec.Findings[0])
+	if soundness != domain.SoundnessInferred {
+		t.Errorf("coordinate-matched negative soundness = %s, want %s: govulncheck emits findings for what it REACHED, so its silence about a module is an inference, never a search that came back empty",
+			soundness, domain.SoundnessInferred)
+	}
+	if soundness.IsConfirmed() {
+		t.Error("a negative read off an analyser's silence reports itself confirmed")
+	}
+	if reason == "" {
+		t.Error("the rung was stated with no basis")
+	}
 }
 
 // TestScanWalk_CoordinateKeyed_FallsBackWhenTargetCannotBeAnalysed asserts the

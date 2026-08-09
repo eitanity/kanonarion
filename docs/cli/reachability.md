@@ -93,7 +93,7 @@ you which command to run - it is never reported as a false "not reachable".
 | Result | Exit | Meaning |
 |---|---|---|
 | `<id> is REACHABLE in <m>@<v>` | 0 | Affected symbol is reachable from an entry point. |
-| `<id> affects <m>@<v> but is NOT reachable` | 0 | Affected symbol is present but unreachable. |
+| `<id> affects <m>@<v> but is NOT reachable` | 0 | Affected symbol is present but unreachable. The line also states the **soundness** of the search behind it — see below. |
 | `<id> affects <m>@<v> at PACKAGE level; symbol-level reachability is not determined` | 0 | The advisory names no symbols for this module path, so there is no symbol for a route to reach. The module **is** affected. |
 | `<id> was WITHDRAWN upstream <date>` | 0 | The advisory was retracted upstream; the module is not affected by it. |
 | `<m>@<v> is not affected by <id>` | 0 | Module was scanned; this CVE is not among its findings. |
@@ -114,6 +114,57 @@ as vulnerable and the only trace it can report is the package's own `init` runni
 calling the vulnerable code. That is neither `reachable` nor `not_reachable`, and
 it is not fixed by computing a call graph, so it is answered before the
 "run this command" diagnostics rather than through them.
+
+## A negative states how sound the search behind it was
+
+A positive carries a route: a hop-by-hop path that either exists or does not, and
+you can check it against your own build. A negative is the *absence* of a route,
+and an absence is worth exactly as much as the search that failed to find one. So
+every not-reachable and package-level answer carries a `soundness` rung and the
+reason for it, beside the confidence:
+
+```
+GO-2025-3487 affects golang.org/x/crypto@v0.31.0 but is NOT reachable
+  [confidence: High, soundness: inferred, by: govulncheck, fidelity: source, rooted at: target-rooted:…]
+  soundness: inferred — govulncheck analysed this build from source and reported no
+  route to the vulnerable symbol; the negative reads that silence, not a search over
+  a call graph that ran and came back empty
+```
+
+`confidence` says how sure the verdict is. `soundness` says what was actually
+searched, which is the question you are asking if you are about to *not* upgrade.
+The rungs, most to least sound:
+
+| `soundness` | What was searched |
+|---|---|
+| `confirmed` | A call-graph search ran over a graph built with function bodies and found no path. The only rung a clean negative may rest on. |
+| `inferred` | No search ran for this finding. An analysis loaded the whole build from source and never reported a route; the negative reads that silence. |
+| `unconfirmed` | An analysis ran that could not have found a route at all — a symbol table inspected in binary mode, a call graph below `BUILT_WITH_BODIES`, or an answer that does not say what produced it. |
+| `unsearchable` | The advisory names no symbols for this module path, so there was never a target to search for. Unlike the rungs above, no re-scan at any fidelity changes this. |
+
+Two consequences worth knowing before you read a negative:
+
+- **govulncheck never produces a `confirmed` negative, in either mode.** It emits
+  findings for what it *reached*, so a module it examined and did not report
+  produces no finding at all; the negative you are reading was manufactured
+  afterwards by matching the advisory database against the module's coordinate.
+  Source mode is the strongest form of that silence and reports `inferred`; binary
+  mode inspected a symbol table with no call graph behind it and reports
+  `unconfirmed`.
+- **A reachable answer states no soundness.** A route is its own evidence, and the
+  field is absent from both the text and the JSON for a positive.
+
+The rung is derived from the answer you already have — the analyser it names and
+that analyser's own fidelity — so it appears on records that were scanned long
+before it existed, and it improves whenever the analysis behind them does.
+
+The same rung is appended to the per-finding label in `vuln-show` and
+`vuln-scan-show`, where a bare `[not reachable]` used to read the same whether a
+call graph had been searched or nothing had looked at all:
+
+```
+GO-2025-3487 (CVE-2025-22869) [not reachable — inferred]: Potential denial of service in golang.org/x/crypto
+```
 | `… has not been vuln-scanned` | non-zero | No record. Walk the module, then scan that walk. |
 | `… ScanFailed` / `… is unscannable` | non-zero | Module could not be scanned; reachability is unknown. |
 | `… scanned without --reachability` | non-zero | Findings exist and the scan was rooted elsewhere, so the flag was genuinely not passed. |
@@ -265,6 +316,21 @@ JSON shape:
   "scanned_at": "2026-06-14T00:00:00Z"
 }
 ```
+
+The example above is a positive, so it carries no `soundness`. A negative adds two
+fields and drops `routes`:
+
+```json
+{
+  "verdict": "not_reachable",
+  "confidence": "High",
+  "method": "govulncheck",
+  "fidelity": "source",
+  "soundness": "inferred",
+  "soundness_reason": "govulncheck analysed this build from source and reported no route to the vulnerable symbol; the negative reads that silence, not a search over a call graph that ran and came back empty"
+}
+```
+
 
 Every route carries its own `root`; `route_root` repeats the first route's, so a
 consumer asking "is this a test-only reach" does not have to index into the list.

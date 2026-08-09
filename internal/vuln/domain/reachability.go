@@ -229,3 +229,83 @@ func StampReachabilityRooting(record *VulnerabilityRecord) {
 		r.DerivedBy.Rooting = record.Rooting
 	}
 }
+
+// completenessBuiltWithBodies is the one call-graph fidelity a confident
+// negative may rest on, as a string because a VulnerabilityRecord and a
+// ReachabilityDerivation both store the level as one and this domain does not
+// depend on the call-graph domain — the same reason completenessRung compares
+// strings. TestNegativeSoundness_CoversEveryCallGraphLevel pins the two
+// together, so a level added there cannot quietly acquire a confirmed negative.
+const completenessBuiltWithBodies = "BUILT_WITH_BODIES"
+
+// NegativeSoundness states how thorough the search behind a negative
+// reachability answer was, and why, deriving both from what the finding already
+// records rather than from a field a scan would have had to write.
+//
+// Deriving is the point. The producing analyser and its own fidelity are already
+// on every answer, so a rung computed here classifies every record in a working
+// store the moment it lands — including the 1,209 written before this existed —
+// and improves whenever the inputs improve. A recorded rung would freeze the
+// answer at scan time and be blank on all of them.
+//
+// The rules, in the order they are applied:
+//
+//  1. A finding with no reachability answer, and a REACHABLE one, state no
+//     soundness. A route is its own evidence; there is no absence to qualify.
+//  2. An advisory that names no symbols for this module path is unsearchable,
+//     checked before everything else because it is the one cause no fidelity and
+//     no re-run can change. The read side already orders these the same way, for
+//     the same reason: advice to go and build a better call graph cannot help
+//     resolve a symbol the advisory never named.
+//  3. A call-graph search confirms a negative only at BUILT_WITH_BODIES. Every
+//     lower rung of that ladder — TYPE_ONLY, METADATA_ONLY, FAILED, unrecorded —
+//     leaves call edges unbuilt, so a route may exist that the search could not
+//     see.
+//  4. GOVULNCHECK NEVER CONFIRMS A NEGATIVE, at any fidelity. This is structural,
+//     not a judgement about the tool: govulncheck emits findings for what it
+//     REACHED, so a module it examined and did not report produces no finding at
+//     all, and the negative kanonarion holds for it was manufactured by matching
+//     the advisory database against the coordinate afterwards. Measured on a
+//     working store: every one of the 236 confident negatives arrived by that
+//     route, and none by a search. Source mode is the strongest form of that
+//     silence — packages loaded, call graph built over the whole build — and is
+//     inferred; binary mode inspected a symbol table with no call graph behind it
+//     and is unconfirmed.
+//  5. An answer that does not name its analyser is unconfirmed. It may have come
+//     from anywhere, and a search that cannot be identified cannot be weighed.
+//
+// reason is always non-empty when a rung is returned, and it names the basis in
+// the producing analyser's own terms. A bare rung is a label, and a label is what
+// turns a measurement into a verdict.
+func NegativeSoundness(f VulnerabilityFinding) (soundness ReachabilitySoundness, reason string) {
+	if f.Reachable == nil || f.Reachable.IsReachable {
+		return SoundnessNotStated, ""
+	}
+	if f.AdvisoryNamesNoSymbols {
+		return SoundnessUnsearchable, "the advisory names no symbols for this module path, so there was never a symbol for a search to look for; no fidelity and no re-scan changes that"
+	}
+
+	d := f.Reachable.DerivedBy
+	switch d.Analyser {
+	case AnalyserCallGraphBFS:
+		if d.Fidelity == completenessBuiltWithBodies {
+			return SoundnessConfirmed, "a call-graph search ran over a graph built with function bodies and found no path from an entry point to the vulnerable symbol"
+		}
+		if d.Fidelity == "" {
+			return SoundnessUnconfirmed, "a call-graph search ran, but the graph does not state the fidelity it was built at, so the absence of a path cannot be weighed"
+		}
+		return SoundnessUnconfirmed, "the call graph was " + d.Fidelity + ", not " + completenessBuiltWithBodies +
+			" — call edges out of unbuilt bodies are absent, so a route may exist that this search could not see"
+	case AnalyserGovulncheck:
+		switch ScanMode(d.Fidelity) {
+		case ScanModeSource:
+			return SoundnessInferred, "govulncheck analysed this build from source and reported no route to the vulnerable symbol; the negative reads that silence, not a search over a call graph that ran and came back empty"
+		case ScanModeBinary:
+			return SoundnessUnconfirmed, "govulncheck inspected a symbol table in binary mode; no call graph existed, so no route could have been found whether or not one exists"
+		default:
+			return SoundnessUnconfirmed, "the answer came from govulncheck but does not state the mode it ran in, so it cannot be told from a binary-mode one"
+		}
+	default:
+		return SoundnessUnconfirmed, "the answer does not name the analyser that produced it, so the search behind it cannot be weighed"
+	}
+}
