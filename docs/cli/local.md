@@ -17,9 +17,22 @@ in the working tree.
 The tree is stored under the module's own path at the version `local` - a
 working tree has no semver to pin, and `local` is the marker a project walk
 already uses for the module nothing published. The record additionally names
-its **analysis source** as `worktree` and carries a **worktree digest**, a hash
-over the Go source the analysis could see, so two checkouts of the same module
-path are two records rather than one overwritten row.
+its **analysis source** as `worktree`, carries a **worktree digest** and records
+the **directory it analysed**, so two checkouts of the same module path are two
+records rather than one overwritten row.
+
+The digest is a hash over the source the loader actually resolved - symlinks
+followed, build tags applied, `testdata` and nested modules excluded - so it
+moves when the analysed code moves and not otherwise. It carries a scheme
+prefix: `analysed-sha256:` for that list, `scanned-sha256:` when the load failed
+before resolving any files and the tree had to be scanned instead, and a bare
+`sha256:` on records written before the schemes existed. The three are not
+comparable and nothing compares them.
+
+The directory is what a query routes on. A `callers` query run inside a checkout
+is answered from the generation analysed in THAT directory rather than from
+whichever checkout ran `local` most recently - see
+[`callgraph`](callgraph.md#which-working-tree-answered).
 
 This record carries **no freshness meaning**: a tree mutates between runs, so
 `local` always re-analyses and never serves a cached result. (This is the same

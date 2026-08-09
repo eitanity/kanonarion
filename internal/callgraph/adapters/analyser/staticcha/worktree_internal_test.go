@@ -1,9 +1,13 @@
 package staticcha
 
 import (
+	"context"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
+
+	"github.com/eitanity/kanonarion/internal/coordinate"
 )
 
 func write(t *testing.T, path, content string) {
@@ -152,5 +156,122 @@ func TestWorktreeDigest_UnreadableTreeIsAnError(t *testing.T) {
 
 	if _, err := worktreeDigest(dir); err == nil {
 		t.Fatal("an unreadable source file produced a digest instead of an error")
+	}
+}
+
+// analyseTree runs AnalyseDir over dir and returns the digest the record carries.
+// The digest is what the ANALYSIS says it read, so it has to be taken from a real
+// load rather than from the file lister: the two disagree exactly where this
+// matters.
+func analyseTree(t *testing.T, dir, modulePath string) string {
+	t.Helper()
+	coord, err := coordinate.NewModuleCoordinate(modulePath, coordinate.LocalVersion)
+	if err != nil {
+		t.Fatalf("coordinate: %v", err)
+	}
+	rec, err := quietAnalyser().AnalyseDir(context.Background(), dir, coord)
+	if err != nil {
+		t.Fatalf("AnalyseDir: %v", err)
+	}
+	if rec.WorktreeDigest == "" {
+		t.Fatalf("AnalyseDir recorded no tree digest (status %s: %s)", rec.OverallStatus, rec.FailureDetail)
+	}
+	return rec.WorktreeDigest
+}
+
+// TestWorktreeDigest_MovesWhenOutOfRootSymlinkTargetChanges is the collision the
+// digest exists to prevent: source reached through a symlink whose target sits
+// outside the analysed root is read by the loader and analysed, so two trees that
+// differ only in that target are two trees.
+//
+// A filesystem walk cannot see it — a symlink is not a regular file, so the walk
+// skips the link and never reaches the target — which is why the digest is taken
+// from the loader's own file list.
+func TestWorktreeDigest_MovesWhenOutOfRootSymlinkTargetChanges(t *testing.T) {
+	outside := t.TempDir()
+	target := filepath.Join(outside, "shared.go")
+	write(t, target, "package pkg\n\n// Shared is reached through a link.\nfunc Shared() string { return \"a\" }\n")
+
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "go.mod"), "module example.com/symout\n\ngo 1.24\n")
+	write(t, filepath.Join(dir, "pkg", "keep.go"), "package pkg\n\n// Keep anchors the package.\nfunc Keep() {}\n")
+	if err := os.Symlink(target, filepath.Join(dir, "pkg", "shared.go")); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+
+	before := analyseTree(t, dir, "example.com/symout")
+	write(t, target, "package pkg\n\n// Shared is reached through a link.\nfunc Shared() string { return \"b\" }\n")
+	if after := analyseTree(t, dir, "example.com/symout"); after == before {
+		t.Fatalf("editing an out-of-root symlink target left the digest at %s: "+
+			"the analysis read different code and the ledger recorded the same tree", before)
+	}
+}
+
+// TestWorktreeDigest_IgnoresFilesTheLoaderNeverReads. The digest describes the
+// bytes that were ANALYSED. A file the loader never opens cannot change the graph,
+// so a digest that moved with it would mint a generation recording the identical
+// graph and — under a tree-scoped read — make the caller's own tree look foreign.
+func TestWorktreeDigest_IgnoresFilesTheLoaderNeverReads(t *testing.T) {
+	cases := []struct {
+		name  string
+		apply func(t *testing.T, dir string)
+	}{
+		{"a .go file under testdata", func(t *testing.T, dir string) {
+			write(t, filepath.Join(dir, "pkg", "testdata", "fixture.go"), "package fixture\n\nvar V = 2\n")
+		}},
+		{"a build-tag-excluded file", func(t *testing.T, dir string) {
+			write(t, filepath.Join(dir, "pkg", "excluded.go"),
+				"//go:build never_set_by_any_build\n\npackage pkg\n\nvar Excluded = 2\n")
+		}},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			write(t, filepath.Join(dir, "go.mod"), "module example.com/unread\n\ngo 1.24\n")
+			write(t, filepath.Join(dir, "pkg", "a.go"), "package pkg\n\n// Use does nothing.\nfunc Use() {}\n")
+			write(t, filepath.Join(dir, "pkg", "testdata", "fixture.go"), "package fixture\n\nvar V = 1\n")
+			write(t, filepath.Join(dir, "pkg", "excluded.go"),
+				"//go:build never_set_by_any_build\n\npackage pkg\n\nvar Excluded = 1\n")
+
+			before := analyseTree(t, dir, "example.com/unread")
+			tc.apply(t, dir)
+			if after := analyseTree(t, dir, "example.com/unread"); after != before {
+				t.Fatalf("%s moved the digest: %s -> %s", tc.name, before, after)
+			}
+		})
+	}
+}
+
+// TestAnalysedDigest_IsStableAcrossLocation is the location half at the analysis
+// level: two copies of one tree, analysed at different paths, are one tree. It is
+// the property that stops the digest degenerating into the absolute path, which
+// would call one tree two.
+func TestAnalysedDigest_IsStableAcrossLocation(t *testing.T) {
+	build := func(t *testing.T) string {
+		t.Helper()
+		dir := t.TempDir()
+		write(t, filepath.Join(dir, "go.mod"), "module example.com/located\n\ngo 1.24\n")
+		write(t, filepath.Join(dir, "pkg", "a.go"), "package pkg\n\n// Use does nothing.\nfunc Use() {}\n")
+		return dir
+	}
+	a, b := analyseTree(t, build(t), "example.com/located"), analyseTree(t, build(t), "example.com/located")
+	if a != b {
+		t.Fatalf("two copies of one tree hashed differently: %s vs %s", a, b)
+	}
+}
+
+// TestAnalysedDigest_FallsBackWhenTheLoadResolvedNothing. A load that resolved no
+// files still produced a record, and a worktree record with no digest merges
+// silently with every other checkout of the module path. The fallback says so in
+// the value: it carries its own scheme, so nothing compares it with a digest over
+// what was actually analysed.
+func TestAnalysedDigest_FallsBackWhenTheLoadResolvedNothing(t *testing.T) {
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "go.mod"), "module example.com/broken\n\ngo 1.24\n\nrequire !!!unparseable\n")
+	write(t, filepath.Join(dir, "pkg", "a.go"), "package pkg\n")
+
+	got := analyseTree(t, dir, "example.com/broken")
+	if !strings.HasPrefix(got, scannedDigestScheme) {
+		t.Fatalf("a load that resolved nothing produced %q, want the %q scheme", got, scannedDigestScheme)
 	}
 }

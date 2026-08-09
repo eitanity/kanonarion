@@ -68,6 +68,25 @@ import (
 // one artefact pinned differently are two graphs — while the build list's
 // identity is provenance and is cleared before that comparison.
 //
+// AnalysisRoot joined on those same terms, and the worktree digest CHANGED THE
+// VALUE it takes for an unchanged tree at the same time, without a bump either.
+// Both deserve the argument.
+//
+// The root is omitted when empty, so no stored record's bytes move, and an absent
+// root is the truth about a record written before the field existed rather than a
+// third state — nothing stated where its tree was, because nothing could.
+//
+// The digest now hashes the loader's file list rather than a filesystem walk, so
+// re-analysing an UNCHANGED tree mints a different value than it did before. That
+// makes no stored record say anything false: each still identifies the tree it
+// read, by the rule in force when it was written, and the scheme prefix on the
+// new values is what keeps the two from being compared as one. What it does mean
+// is that a digest from before the change can never equal one from after, which
+// is why the read that routes a query to the caller's tree routes on
+// AnalysisRoot and uses the digest only to REPORT which tree answered. Bumping
+// PipelineVersion instead would take every stored generation out of every answer
+// to restore a comparison nothing performs.
+//
 // CallEdge.Kind and CallGraphRecord.ReferenceScope joined on those same terms,
 // and the argument is worth stating because a new EDGE kind looks like the sort
 // of change that must bump. Both are omitted from the sealed shape when zero, so
@@ -515,8 +534,17 @@ type CallGraphRecord struct {
 	// recorded" and never as "analysed from nothing".
 	AnalysisSource AnalysisSource
 	// WorktreeDigest identifies WHICH working tree a worktree analysis read, as a
-	// digest over the Go source the analysis could see. Empty for every other
+	// digest over the source the loader actually resolved. Empty for every other
 	// source.
+	//
+	// The value carries a SCHEME PREFIX saying how the identity was established,
+	// because more than one way has been used and they are not comparable:
+	// "analysed-sha256:" is taken over the loader's own file list (symlinks
+	// followed, build tags applied), "scanned-sha256:" over a filesystem walk of
+	// the tree, used only when a failed load resolved no files. A bare "sha256:"
+	// is a record written before the schemes existed, when the walk was the only
+	// method — a truthful identity of that tree under the rule it was computed by,
+	// and one nothing may compare against a digest computed since.
 	//
 	// It is here because a worktree record has no artefact identity — nothing was
 	// fetched, so there is nothing to name — and without a discriminator two
@@ -525,6 +553,27 @@ type CallGraphRecord struct {
 	// provenance, and two different trees at one path (a branch switch, a
 	// rebuild) would share it while two copies of one tree would not.
 	WorktreeDigest string
+	// AnalysisRoot is the absolute, symlink-free directory a worktree analysis
+	// ran in. Empty for every other source, and on worktree records written
+	// before the field existed.
+	//
+	// It answers a different question from WorktreeDigest, and the pair is only
+	// coherent because they are different. The digest is the tree's IDENTITY —
+	// what it contains — and a path is wrong for that in both directions: two
+	// different trees at one path (a branch switch, a rebuild) share it, and two
+	// copies of one tree do not. The root is the tree's LOCATION, and location is
+	// exactly what a reader standing in a checkout is asking about when they query
+	// a symbol: "the tree I am in", not "a tree whose every byte matches mine".
+	//
+	// Routing on identity instead would answer nothing the moment the caller had an
+	// uncommitted edit, because the tree in front of them would then match no
+	// content state the ledger holds. Measured on the maintainer's store, one local
+	// coordinate held eighteen generations across sixteen distinct digests: one
+	// working tree at sixteen content states, not sixteen checkouts.
+	//
+	// It is provenance rather than claim — two copies of one tree at two paths
+	// describe the same graph — so it is cleared before a graph digest is taken.
+	AnalysisRoot string
 	// SynthesisedGoMod is non-zero when the analysed tree is not the published
 	// tree: the module zip shipped no go.mod and kanonarion wrote one before
 	// loading. It states which module path and which go directive that file

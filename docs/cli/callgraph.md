@@ -612,10 +612,10 @@ Records live in `<store-root>/mirror.db` (SQLite):
 - `callgraph_records` — an append-only ledger keyed on
   `(module_path, module_version, pipeline_version, extracted_at, content_hash)`.
   One serialised blob per generation, holding the nodes, the interface relation
-  and the test-scope axis, alongside `completeness`, `analysis_source` and
-  `worktree_digest` columns so the fidelity and the source are queryable without
-  decoding a blob. Nothing is ever updated; writing the same record twice is a
-  no-op.
+  and the test-scope axis, alongside `completeness`, `analysis_source`,
+  `worktree_digest` and `analysis_root` columns so the fidelity, the source and
+  the working tree are queryable without decoding a blob. Nothing is ever
+  updated; writing the same record twice is a no-op.
 - `callgraph_edges` — edge rows keyed on the **parent record's** content hash,
   plus denormalised coordinate columns and `is_test` (true when either endpoint
   is a test node, which is what `--exclude-tests` filters on), with two covering
@@ -629,7 +629,7 @@ generation first and answer from its edges alone, so a superseded generation's
 edges stay in the table as history and answer nothing.
 
 The callgraph schema is tracked in the shared `schema_migrations` table under
-module key `callgraph` (current version: 8). A record whose `schema_version`
+module key `callgraph` (current version: 13). A record whose `schema_version`
 differs from the binary's is treated as not found, so a schema bump is
 self-enforcing: stale records are re-derived rather than read with later fields
 silently zeroed.
@@ -638,6 +638,48 @@ That read gate is also why the ledger does not purge. Four of the first seven
 migrations deleted both tables wholesale on an analyser shape change; the gate
 achieves what those purges were for — a stale-shape record answers nothing —
 without deleting the evidence, so the row survives for a history read.
+
+## Which working tree answered
+
+A local coordinate is shared by every checkout of the module path, so a project
+checked out twice has generations from both. A query about such a symbol is
+answered from **the working tree you are standing in**: the read resolves the
+current directory to its module root and serves the newest generation analysed
+in that directory.
+
+Standing somewhere the ledger has no generation of - a fresh clone, a checkout
+never passed to `kanonarion local`, or anywhere outside the module - the read
+falls back to the newest generation of any tree, which is what every query did
+before this existed. Nothing returns empty because of routing.
+
+The decision is printed, once, whenever there is one to see:
+
+```
+notice: answered from the working tree you are in, /src/feature (tree analysed-sha256:5252…);
+        the ledger holds 2 working trees for example.com/mod@local
+```
+
+```
+notice: NOT answered from the working tree you are in: /src/fresh-clone has no analysed
+        generation, so the answer comes from the working tree at /src/main (tree analysed-sha256:0aae…);
+        the ledger holds 2 working trees for example.com/mod@local. Analyse this tree to be
+        answered from it:
+          kanonarion local /src/fresh-clone
+```
+
+A single checkout that has been analysed has no decision to show and prints
+nothing. Generations written before the analysed directory was recorded state no
+tree; they still answer, and the notice names them as predating the field rather
+than attributing them to a checkout they may not be from.
+
+Routing is on the analysed **directory**, not on the worktree digest. The digest
+hashes content, so the tree in front of a developer with one uncommitted edit
+matches no stored generation - filtering on it would answer nothing in the
+ordinary case. The digest still says WHICH tree answered, which is what the
+notice reports.
+
+`callgraph-show --history` is unaffected: it lists every generation of every
+tree, marking the one the composed read serves.
 
 ## Assurance log
 

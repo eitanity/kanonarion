@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -140,7 +141,7 @@ func (a *Analyser) Analyse(
 			domain.FailureCauseEnvironment, "cancelled before load"), synth, inputs.Source), nil
 	}
 
-	rec, err := a.analyseDir(ctx, tempDir, coord, synth)
+	rec, err := a.analyseDir(ctx, tempDir, coord, synth, nil)
 	if err != nil {
 		return rec, err
 	}
@@ -201,31 +202,93 @@ func (a *Analyser) sourced(r domain.CallGraphRecord, synth domain.SynthesisedGoM
 // directory's go.mod; coord.Version is coordinate.LocalVersion, the marker for a
 // module nothing published.
 //
-// The record it returns names its source as a working tree and carries a digest
-// of that tree. The digest is computed BEFORE the analysis, so it describes the
-// bytes the analysis is about to read rather than whatever the tree became while
-// SSA construction was running.
+// The record it returns names its source as a working tree, carries a digest of
+// that tree, and states WHERE the tree was.
+//
+// The digest is computed AFTER the analysis, from the loader's own file list, so
+// it describes the bytes that were ANALYSED rather than the bytes that were on
+// disk beforehand — which is the claim the field is supposed to make. A load
+// that resolved no files at all still has to identify the tree it failed on, and
+// falls back to scanning it; the two carry different scheme prefixes, because
+// they are different claims.
+//
+// The root is recorded alongside, and is a different question from the digest.
+// The digest says WHICH TREE this is; the root says WHERE it was, which is what
+// a reader standing in a checkout is actually asking when they query it. See
+// CallGraphRecord.AnalysisRoot.
 func (a *Analyser) AnalyseDir(ctx context.Context, dir string, coord coordinate.ModuleCoordinate) (domain.CallGraphRecord, error) {
 	a.logMem(ctx, "start")
-	digest, err := worktreeDigest(dir)
+	root, err := analysisRoot(dir)
 	if err != nil {
-		// Infrastructure, not a property of the module: a tree that cannot be read
-		// cannot be identified, and a worktree record with no digest is one that
-		// silently merges with every other checkout of the same module path.
-		return domain.CallGraphRecord{}, fmt.Errorf("identifying working tree %s: %w", dir, err)
+		// Infrastructure, not a property of the module: a tree whose own location
+		// cannot be resolved cannot be told apart from another checkout by a reader
+		// standing in one of them.
+		return domain.CallGraphRecord{}, fmt.Errorf("locating working tree %s: %w", dir, err)
 	}
 	// Cancellation is observed inside analyseDir (packages.Load honours ctx,
 	// plus explicit ctx.Err checkpoints), so no pre-check is needed here.
 	// A working tree is analysed exactly as it is on disk: it is the caller's own
 	// module and already declares itself, so nothing is synthesised into it and
 	// the record carries the zero value.
-	rec, err := a.analyseDir(ctx, dir, coord, domain.SynthesisedGoMod{})
+	var read []string
+	rec, err := a.analyseDir(ctx, dir, coord, domain.SynthesisedGoMod{}, &read)
 	if err != nil {
 		return rec, err
 	}
+	digest, err := treeDigest(root, read)
+	if err != nil {
+		// A tree that cannot be read cannot be identified, and a worktree record
+		// with no digest is one that silently merges with every other checkout of
+		// the same module path.
+		return domain.CallGraphRecord{}, fmt.Errorf("identifying working tree %s: %w", dir, err)
+	}
 	rec.AnalysisSource = domain.AnalysisSourceWorktree
 	rec.WorktreeDigest = digest
+	rec.AnalysisRoot = root
 	return rec, nil
+}
+
+// analysisRoot resolves dir to the absolute, symlink-free path the record states
+// it analysed.
+//
+// Symlinks are evaluated so that one tree reached by two names is one root. The
+// alternative — recording whatever spelling the caller typed — would make a
+// query run through /home/me/work/project miss every generation analysed at the
+// path that symlink resolves to, which is the same tree.
+func analysisRoot(dir string) (string, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("resolving %s: %w", dir, err)
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", fmt.Errorf("resolving symlinks in %s: %w", abs, err)
+	}
+	return resolved, nil
+}
+
+// treeDigest identifies the tree at root, preferring what the loader read.
+//
+// read is empty exactly when the load resolved no packages — a failed analysis —
+// and the tree is then scanned instead. The fallback is never silent: it carries
+// its own scheme prefix, so a reader can see that this record identifies its tree
+// by a proxy for what was analysed rather than by what was analysed.
+func treeDigest(root string, read []string) (string, error) {
+	if len(read) == 0 {
+		return worktreeDigest(root)
+	}
+	// go.mod and go.sum are not package source and the loader does not list them,
+	// but they decide the build list the graph was constructed against, so a change
+	// to either is a change to what was analysed.
+	for _, name := range []string{"go.mod", "go.sum"} {
+		path := filepath.Join(root, name)
+		if _, err := os.Stat(path); err == nil {
+			read = append(read, path)
+		} else if !os.IsNotExist(err) {
+			return "", fmt.Errorf("stating %s for worktree digest: %w", name, err)
+		}
+	}
+	return analysedTreeDigest(root, read)
 }
 
 // analyseDir holds the shared post-extraction analysis pipeline: load
@@ -237,11 +300,18 @@ func (a *Analyser) AnalyseDir(ctx context.Context, dir string, coord coordinate.
 // here because it changes how the load must run — a synthesised file beside a
 // vendor tree would otherwise auto-select vendor mode — not merely because it is
 // recorded.
+//
+// read, when non-nil, is filled with the absolute paths the loader resolved, for
+// the caller that identifies the analysed tree by them. It is an out-parameter
+// rather than a second result because every failure return here is a RECORD —
+// a load that failed is an answer about the module, not an error — and threading
+// a second value through a dozen of them would obscure that.
 func (a *Analyser) analyseDir(
 	ctx context.Context,
 	tempDir string,
 	coord coordinate.ModuleCoordinate,
 	synth domain.SynthesisedGoMod,
+	read *[]string,
 ) (domain.CallGraphRecord, error) {
 	fset := token.NewFileSet()
 	env := analysisEnv(synth)
@@ -348,6 +418,9 @@ func (a *Analyser) analyseDir(
 		// go command failing; same question, same way of answering it.
 		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed,
 			classifyLoad(err.Error()), err.Error()), nil
+	}
+	if read != nil {
+		*read = build.SourceFiles
 	}
 	prog := build.Prog
 	allLoadErrs := build.LoadErrs

@@ -162,6 +162,7 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 		SourceContentHash: c.SourceContentHash,
 		AnalysisSource:    AnalysisSource(c.AnalysisSource),
 		WorktreeDigest:    c.WorktreeDigest,
+		AnalysisRoot:      c.AnalysisRoot,
 		BuildListSource:   c.BuildListSource,
 		SynthesisedGoMod: SynthesisedGoMod{
 			ModulePath:        c.SynthesisedGoMod.ModulePath,
@@ -322,6 +323,17 @@ type canonicalRecord struct {
 	TestScope       string `json:"test_scope,omitempty"`
 	TestScopeDetail string `json:"test_scope_detail,omitempty"`
 	WorktreeDigest  string `json:"worktree_digest,omitempty"`
+	// AnalysisRoot is omitted when empty, on the terms every additive field on
+	// this shape has used: no record written before it stated where its tree was,
+	// so absent is the truth about one rather than an unrecorded third state, and
+	// every stored record re-marshals to the bytes it was sealed over.
+	//
+	// It IS inside the sealed shape, which matters for a reason the omission
+	// argument does not cover: two checkouts of one module path can hold trees
+	// whose contents are identical, and without the root in the hash they would
+	// carry one content hash — a primary-key column — and collapse onto one row.
+	// The thing that makes them two trees is exactly the field being added.
+	AnalysisRoot string `json:"analysis_root,omitempty"`
 }
 
 // canonicalSynthesisedGoMod is the wire shape of domain.SynthesisedGoMod. It is
@@ -494,6 +506,7 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 		TestScope:       string(r.TestScope),
 		TestScopeDetail: r.TestScopeDetail,
 		WorktreeDigest:  r.WorktreeDigest,
+		AnalysisRoot:    r.AnalysisRoot,
 	}
 	b, err := canonicalMarshal(c)
 	if err != nil {

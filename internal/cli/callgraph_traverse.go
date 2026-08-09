@@ -105,6 +105,9 @@ func runCallers(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 		if err := writeCompletenessNotice(ctx, symbolID, uc, stdout, sc.modules); err != nil {
 			return err
 		}
+		if err := writeWorktreeNotice(ctx, symbolID, uc, stdout, sc.modules); err != nil {
+			return err
+		}
 	}
 
 	if err := printEdgeRefs("callers", symbolID, refs, jsonOut, stdout); err != nil {
@@ -197,6 +200,9 @@ func runCallees(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 	}
 	if !jsonOut {
 		if err := writeCompletenessNotice(ctx, symbolID, uc, stdout, sc.modules); err != nil {
+			return err
+		}
+		if err := writeWorktreeNotice(ctx, symbolID, uc, stdout, sc.modules); err != nil {
 			return err
 		}
 	}
@@ -345,6 +351,9 @@ func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, js
 		if err := writeCompletenessNotice(ctx, symbolID, uc, stdout, sc.modules); err != nil {
 			return err
 		}
+		if err := writeWorktreeNotice(ctx, symbolID, uc, stdout, sc.modules); err != nil {
+			return err
+		}
 	}
 	if err := printTransitiveResult("callers", symbolID, maxDepth, nodes, edges, jsonOut, stdout); err != nil {
 		return err
@@ -386,6 +395,9 @@ func runCalleesTransitive(ctx context.Context, symbolID string, maxDepth int, js
 	}
 	if !jsonOut {
 		if err := writeCompletenessNotice(ctx, symbolID, uc, stdout, sc.modules); err != nil {
+			return err
+		}
+		if err := writeWorktreeNotice(ctx, symbolID, uc, stdout, sc.modules); err != nil {
 			return err
 		}
 	}

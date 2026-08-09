@@ -73,6 +73,25 @@ func (uc *QueryCallGraphUseCase) GetCallGraphRecordFrom(ctx context.Context, coo
 	return rec, found, nil
 }
 
+// WorktreeRouting reports which working tree answered for a local coordinate,
+// and how many the ledger holds for it. found is false when the store cannot
+// distinguish trees, or holds no worktree generation for the coordinate.
+//
+// It is a capability question first: a store with no notion of a tree does not
+// implement the read, and the caller then prints no notice rather than inventing
+// one that says the answer came from somewhere it cannot know.
+func (uc *QueryCallGraphUseCase) WorktreeRouting(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (cgports.WorktreeRouting, bool, error) {
+	router, ok := uc.store.(cgports.CallGraphWorktreeRouter)
+	if !ok {
+		return cgports.WorktreeRouting{}, false, nil
+	}
+	r, found, err := router.WorktreeRouting(ctx, coord, pipelineVersion)
+	if err != nil {
+		return cgports.WorktreeRouting{}, false, fmt.Errorf("resolving the working tree that answers for %s: %w", coord, err)
+	}
+	return r, found, nil
+}
+
 // ListCallGraphRecords returns summaries matching the given filter.
 func (uc *QueryCallGraphUseCase) ListCallGraphRecords(ctx context.Context, filter cgports.CallGraphFilter) ([]cgports.CallGraphSummary, error) {
 	sums, err := uc.store.ListCallGraphRecords(ctx, filter)

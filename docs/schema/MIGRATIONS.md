@@ -358,6 +358,57 @@ record can simply carry. Re-extraction costs roughly 52 MiB per module and the
 largest graphs in the store take minutes; the ledger exists precisely so that
 cost is paid when a measurement is wanted, not when a column is added.
 
+## Call graph store: module `callgraph`, migration 13
+
+**Additive; one new column, no back-fill, no purge, no schema-version bump and no
+pipeline bump.** `callgraph_records` gains `analysis_root`: the absolute,
+symlink-free directory a worktree analysis ran in. The whole store's migration
+count goes `v76` -> `v77`.
+
+**Why a record needs it when it already carries a worktree digest.** The digest
+is the tree's IDENTITY — a hash of what it contains — and it is the right answer
+to "are these two measurements of the same code". It is the wrong key for
+"answer me from the tree I am standing in", because a tree with one uncommitted
+edit matches no content state the ledger holds. Measured on the maintainer's
+store before this landed: one local coordinate held **eighteen generations across
+sixteen distinct digests** — one working tree at sixteen content states, not
+sixteen checkouts. A read filtering on digest equality would have answered
+nothing for the developer it exists for. The root survives edits, and it is what
+"the tree the caller is in" actually means.
+
+**No back-fill.** `''` is the true value for every existing row. No record
+written before this states where its tree was, and the decoded record carries the
+same empty value. Inventing a root — the store's directory, the module path,
+anything — would answer "which tree did this come from" with a guess, in the one
+table whose job is keeping two checkouts apart.
+
+**No purge, and no bump.** `analysis_root` is `omitempty` on the canonical
+record, so every stored record marshals to the bytes it was sealed over and still
+verifies against its stored hash. It IS inside the sealed shape, which matters
+for a different reason: two checkouts can hold byte-identical trees, and without
+the root in the hash they would share a `content_hash` — a primary-key column —
+and collapse onto one row.
+
+**What an unlocated generation does now.** It still answers. The tree-scoped read
+tries the caller's root first and falls back to the newest generation of any tree
+when nothing matches, so no reader loses an answer they had. What changes is that
+the fall-back is stated: a `callers` query run inside a module whose only
+generations predate this migration prints one notice naming what answered and
+what to run to be answered from this tree. The generations are neither superseded
+nor silently trusted — they are named as unattributable, which is what they are.
+
+**The worktree digest changed VALUE at the same migration, and did not bump
+either.** It is now hashed over the file list the loader resolved rather than a
+filesystem walk of the tree, so it follows an out-of-root symlink the walk could
+not see and ignores `testdata`, nested modules and build-tag-excluded files the
+walk counted. Re-analysing an unchanged tree therefore mints a different digest
+than it did before. That makes no stored record say anything false — each still
+identifies the tree it read, under the rule in force when it was written — and
+the values now carry a scheme prefix (`analysed-sha256:`, `scanned-sha256:`; a
+bare `sha256:` is a pre-migration record) so the two can never be compared as
+though they were one. Nothing routes on digest equality, so nothing needed the
+comparison the change breaks.
+
 **What a reader sees change without re-extracting anything:** `callers` on a
 symbol with no edges over a pre-existing record answers `UNRESOLVED` where it
 previously answered `RESOLVED-ABSENT`. That is the correction, not a regression.

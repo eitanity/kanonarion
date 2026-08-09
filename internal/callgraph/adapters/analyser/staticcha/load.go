@@ -107,6 +107,7 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 		}
 	}
 	a.logMem(ctx, "syntax_loaded")
+	res.SourceFiles = loadedSourceFiles(loaded)
 
 	// Pass 1: register every target package from syntax. This must complete
 	// before any Build, and before the type-only dependency sweep below: a
@@ -229,6 +230,12 @@ type ssaBuildResult struct {
 	FailedPkgs      []string
 	TestScope       domain.TestScope
 	TestScopeDetail string
+	// SourceFiles are the absolute paths the LOADER resolved for the packages it
+	// returned: compiled Go files, the Go files as written, and the non-Go source
+	// (assembly, cgo) that goes into the same packages. They are what the worktree
+	// digest is taken over, so the digest describes the bytes that were analysed
+	// rather than the bytes that happened to be on disk beforehand.
+	SourceFiles []string
 }
 
 // Registered returns every package registered from syntax, production and test
@@ -236,6 +243,29 @@ type ssaBuildResult struct {
 // joined the SSA program; it does not mean its bodies were built — see
 // BodiesBuilt.
 func (r ssaBuildResult) Registered() int { return len(r.TargetPkgs) + len(r.TestPkgs) }
+
+// loadedSourceFiles lists every file the loader resolved for the packages it
+// was asked to load, absolute, in no particular order and with duplicates.
+//
+// Only the ROOT packages are read, not their dependencies. The roots are the
+// analysed module's own packages — every one of them lives in the tree — while a
+// dependency's files live in the module cache and are not part of it. Walking
+// the transitive graph would add a string per file of the whole dependency set
+// for the digest to discard, in the one pipeline whose peak memory is measured.
+//
+// The synthetic test-binary main is NOT skipped, unlike everywhere the graph is
+// built from these packages: its generated source lives in the build cache and
+// the digest drops anything outside the analysed root, so skipping it on a guess
+// is the only way this list could under-report a file that IS in the tree.
+func loadedSourceFiles(pkgs []*packages.Package) []string {
+	var out []string
+	for _, p := range pkgs {
+		out = append(out, p.CompiledGoFiles...)
+		out = append(out, p.GoFiles...)
+		out = append(out, p.OtherFiles...)
+	}
+	return out
+}
 
 // isSyntheticTestMain reports whether p is the test binary main go/packages
 // synthesises for a package under test. Its import path is the package path

@@ -48,6 +48,80 @@ var ErrCallGraphConflict = errors.New("conflicting call graph records")
 // into a single answer.
 var ErrUnidentifiedWorktree = errors.New("worktree call graph record identifies no tree")
 
+// WorktreePreference names the working tree a reader is standing in, so a query
+// about a local coordinate can be answered from THAT tree rather than from
+// whichever tree happened to be analysed last.
+//
+// The zero value expresses no preference, which is the truth for a caller who is
+// not inside any module — running a query from elsewhere — and leaves the read
+// exactly as it was.
+type WorktreePreference struct {
+	// ModulePath is the module the tree at Root declares. The preference applies
+	// only to that module's local coordinate: standing in project A says nothing
+	// about which checkout of project B should answer.
+	ModulePath string
+	// Root is the absolute, symlink-free directory of the tree, resolved the same
+	// way the analysis resolved its own, so one tree reached by two names is one
+	// root.
+	Root string
+}
+
+// IsZero reports whether the preference names no tree.
+func (p WorktreePreference) IsZero() bool { return p.ModulePath == "" || p.Root == "" }
+
+// WorktreeRouting reports which working tree answered for one local coordinate,
+// and what else the ledger holds for it.
+//
+// It exists because a routing decision the reader cannot see is the same failure
+// as no routing at all: replacing a silent wrong tree with a silent right one
+// leaves the reader unable to tell which they got.
+type WorktreeRouting struct {
+	// LocatedTrees is how many distinct working trees the ledger holds generations
+	// from for this coordinate, counted by analysis root.
+	LocatedTrees int
+	// UnlocatedGenerations is how many worktree generations state no root at all,
+	// because they were written before roots were recorded. They are NOT counted
+	// as trees: nothing says how many trees they came from, and guessing one
+	// either way is a claim the records do not support. What can be said about
+	// them is that none of them can be shown to be the caller's, which is what
+	// Matched already says.
+	UnlocatedGenerations int
+	// ServedRoot and ServedDigest describe the generation the read serves. The
+	// root is empty when the served generation predates the field.
+	ServedRoot   string
+	ServedDigest string
+	// CallerRoot is the tree the reader is standing in, empty when they are not
+	// inside this module.
+	CallerRoot string
+	// Matched reports whether the served generation was analysed in CallerRoot.
+	// False with a non-empty CallerRoot is the miss: the caller's own tree has no
+	// generation, and an answer from another tree — or from a generation that
+	// states no tree — was served instead.
+	Matched bool
+}
+
+// WorthReporting reports whether a reader has a routing decision to see.
+//
+// Two cases, and only two. Several located trees means the read chose between
+// them. A caller standing in a tree that did not answer means the read could not
+// choose theirs — including the upgrade case, where every generation predates
+// location recording and none of them can be shown to be the tree in front of
+// them. Everything else is a single checkout answering for itself, and a line
+// saying so on every query is noise on every query.
+func (r WorktreeRouting) WorthReporting() bool {
+	return r.LocatedTrees >= 2 || (r.CallerRoot != "" && !r.Matched)
+}
+
+// ErrUnlocatedWorktree is returned when a record says it was built from a
+// working tree but states no root directory for it.
+//
+// The digest says which tree; this says where it was, and a reader querying a
+// symbol from inside a checkout is asking the second question. Without it every
+// generation of the coordinate is equally eligible, and the answer comes from
+// whichever tree was analysed last — which is a silent wrong answer whenever
+// more than one checkout exists.
+var ErrUnlocatedWorktree = errors.New("worktree call graph record states no analysis root")
+
 // AnalyserMetadata describes the algorithm and version of a CallGraphAnalyser
 // implementation.
 type AnalyserMetadata struct {
@@ -253,4 +327,12 @@ func CallEdgeRefLess(a, b CallEdgeRef) bool {
 		return a.ToID < b.ToID
 	}
 	return a.ModulePath < b.ModulePath
+}
+
+// CallGraphWorktreeRouter is the optional read that reports which working tree
+// answered for a local coordinate. A store that cannot distinguish trees does
+// not implement it, and a caller that cannot ask simply prints no notice —
+// rather than inventing one.
+type CallGraphWorktreeRouter interface {
+	WorktreeRouting(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (WorktreeRouting, bool, error)
 }

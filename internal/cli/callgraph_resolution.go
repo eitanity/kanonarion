@@ -12,6 +12,8 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/callgraph/ports"
+
+	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 )
 
 // listScopedSummaries lists the analysed call graph records, keeping only those
@@ -438,6 +440,122 @@ func writeCompletenessNotice(ctx context.Context, symbolID string, uc QueryCallG
 		return fmt.Errorf("writing completeness notice: %w", werr)
 	}
 	return nil
+}
+
+// worktreeRouter is the optional read that says which working tree answered.
+//
+// It is asserted at the call site rather than added to QueryCallGraphUseCase so
+// that a caller wired to a use case that cannot answer it prints no notice,
+// which is the honest outcome: nothing is known about which tree served, so
+// nothing is claimed.
+type worktreeRouter interface {
+	WorktreeRouting(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (ports.WorktreeRouting, bool, error)
+}
+
+// writeWorktreeNotice states, in text mode, which working tree answered a query
+// about a local coordinate — but only when the ledger holds more than one.
+//
+// The condition is the whole design. A routing decision the reader cannot see is
+// the defect this exists to close, and replacing a silent wrong tree with a
+// silent right one would not close it; but a reader with a single checkout has
+// no decision to see, and a line on every answer would be noise on every answer.
+//
+// The miss is stated as loudly as the hit. A caller standing in a tree the
+// ledger has no generation of gets an answer from another tree — which is what
+// they got before any of this existed — and being told so is the difference
+// between a stale answer and a stale answer they can act on.
+func writeWorktreeNotice(ctx context.Context, symbolID string, uc QueryCallGraphUseCase, stdout io.Writer, scope coordinate.ModuleSet) error {
+	router, ok := uc.(worktreeRouter)
+	if !ok {
+		return nil
+	}
+	coord, ok, err := localCoordinateOwning(ctx, symbolID, uc, scope)
+	if err != nil || !ok {
+		return err
+	}
+	r, found, err := router.WorktreeRouting(ctx, coord, cgapp.PipelineVersion)
+	if err != nil {
+		return fmt.Errorf("resolving which working tree answers for %s: %w", coord, err)
+	}
+	if !found || !r.WorthReporting() {
+		return nil
+	}
+	if _, werr := fmt.Fprintf(stdout, "notice: %s\n", worktreeNoticeText(coord, r)); werr != nil {
+		return fmt.Errorf("writing worktree notice: %w", werr)
+	}
+	return nil
+}
+
+// worktreeNoticeText renders the routing decision for one coordinate.
+func worktreeNoticeText(coord coordinate.ModuleCoordinate, r ports.WorktreeRouting) string {
+	served := "an earlier generation that recorded no working tree"
+	if r.ServedRoot != "" {
+		served = "the working tree at " + r.ServedRoot
+	}
+	predating := fmt.Sprintf("%d %s written before the analysed tree was recorded",
+		r.UnlocatedGenerations, pluralise(r.UnlocatedGenerations, "generation", "generations"))
+	var held string
+	switch {
+	case r.LocatedTrees == 0:
+		held = fmt.Sprintf("the ledger names no working tree for %s at all — only %s", coord, predating)
+	case r.UnlocatedGenerations == 0:
+		held = fmt.Sprintf("the ledger holds %d working %s for %s",
+			r.LocatedTrees, pluralise(r.LocatedTrees, "tree", "trees"), coord)
+	default:
+		held = fmt.Sprintf("the ledger holds %d working %s for %s, plus %s",
+			r.LocatedTrees, pluralise(r.LocatedTrees, "tree", "trees"), coord, predating)
+	}
+	switch {
+	case r.Matched:
+		return fmt.Sprintf("answered from the working tree you are in, %s (tree %s); %s",
+			r.ServedRoot, r.ServedDigest, held)
+	case r.CallerRoot != "":
+		return fmt.Sprintf("NOT answered from the working tree you are in: %s has no analysed generation, "+
+			"so the answer comes from %s (tree %s); %s. Analyse this tree to be answered from it:\n"+
+			"  kanonarion local %s",
+			r.CallerRoot, served, r.ServedDigest, held, r.CallerRoot)
+	default:
+		return fmt.Sprintf("answered from %s (tree %s); %s, and you are not standing in any of them",
+			served, r.ServedDigest, held)
+	}
+}
+
+// pluralise picks the singular or plural form for n.
+func pluralise(n int, one, many string) string {
+	if n == 1 {
+		return one
+	}
+	return many
+}
+
+// localCoordinateOwning resolves the symbol to the local coordinate of the
+// module that declares it, when the store holds one. Everything else — a symbol
+// in a published dependency, a symbol in a module never analysed locally — has
+// no working tree behind it and nothing to say about one.
+func localCoordinateOwning(ctx context.Context, symbolID string, uc QueryCallGraphUseCase, scope coordinate.ModuleSet) (coordinate.ModuleCoordinate, bool, error) {
+	sums, err := listScopedSummaries(ctx, uc, scope)
+	if err != nil {
+		return coordinate.ModuleCoordinate{}, false, err
+	}
+	paths := make([]string, 0, len(sums))
+	for _, sum := range sums {
+		paths = append(paths, sum.ModulePath)
+	}
+	modulePath, ok := domain.ResolveSymbolModule(symbolID, paths)
+	if !ok {
+		return coordinate.ModuleCoordinate{}, false, nil
+	}
+	for _, sum := range sums {
+		if sum.ModulePath != modulePath || sum.ModuleVersion != coordinate.LocalVersion {
+			continue
+		}
+		coord, cErr := coordinate.NewLocalCoordinate(modulePath)
+		if cErr != nil {
+			return coordinate.ModuleCoordinate{}, false, fmt.Errorf("constructing the local coordinate for %s: %w", modulePath, cErr)
+		}
+		return coord, true, nil
+	}
+	return coordinate.ModuleCoordinate{}, false, nil
 }
 
 // symbolIsKnownNode reports whether symbolID is a node in any analysed call

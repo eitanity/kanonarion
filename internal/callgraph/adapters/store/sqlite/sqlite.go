@@ -28,11 +28,41 @@ const syntheticLocalVersion = "v0.0.0"
 // Store is the SQLite-backed call graph store.
 type Store struct {
 	db sqlitestore.DB
+	// worktree is the tree the reader is standing in. It is configuration of the
+	// read rather than an argument to it, because it must reach BOTH answer paths
+	// — the record read and the edge read, which resolves the served generation
+	// through the same composition — and threading a working directory through
+	// every caller of a port method would put a process detail in a dozen
+	// signatures to be forgotten in one of them.
+	worktree ports.WorktreePreference
 }
 
 // New returns a new Store using the provided database handle.
 func New(db sqlitestore.DB) *Store {
 	return &Store{db: db}
+}
+
+// PreferWorktree states which working tree the reader is standing in, so a query
+// about that module's local coordinate is answered from that tree's newest
+// generation rather than from whichever tree was analysed last.
+//
+// A preference for a tree the ledger holds no generation of is not an error and
+// not an empty answer: the read falls back to the newest generation of any tree,
+// exactly as it did before, and WorktreeRouting reports that it did. The
+// alternative — answering nothing — would be the common case rather than the
+// edge one, because the caller's tree only matches a stored generation while it
+// is unedited.
+func (s *Store) PreferWorktree(p ports.WorktreePreference) { s.worktree = p }
+
+// preferredRoot returns the root a read of coord should prefer, and whether
+// there is one. The preference applies only to the local coordinate of the
+// module the caller's tree declares: standing in one project says nothing about
+// which checkout of another should answer.
+func (s *Store) preferredRoot(coord coordinate.ModuleCoordinate) (string, bool) {
+	if s.worktree.IsZero() || !coord.IsLocal() || s.worktree.ModulePath != coord.Path() {
+		return "", false
+	}
+	return s.worktree.Root, true
 }
 
 // Migrations returns the schema migrations for the callgraph module.
@@ -355,6 +385,30 @@ ALTER TABLE callgraph_records ADD COLUMN failure_cause TEXT NOT NULL DEFAULT ''`
 		// verdict rather than deleting the evidence.
 		{Module: "callgraph", Version: 12, SQL: `
 ALTER TABLE callgraph_edges ADD COLUMN kind TEXT NOT NULL DEFAULT ''`},
+		// Migration v13: add the analysis_root column, so a query can be answered
+		// from the working tree the caller is standing in rather than from whichever
+		// tree was analysed last.
+		//
+		// It lives inside the serialised record like every other fact; this column is
+		// the denormalised copy, on the same terms completeness, analysis_source and
+		// worktree_digest are, so the fast path that already decides the served
+		// generation from columns can add one predicate rather than decode a blob per
+		// generation.
+		//
+		// NO BACK-FILL. '' is the true value for every existing row: no record
+		// written before this states where its tree was, and the decoded record
+		// carries exactly the same empty value. Inventing a root — the store's own
+		// directory, the module path, anything — would answer "which tree did this
+		// come from" with a guess, in the one table whose whole job is to keep two
+		// checkouts apart.
+		//
+		// NO PURGE. The record shape did not move: the field is omitted from the
+		// canonical encoding when empty, so every stored record marshals to the bytes
+		// it was sealed over and verifies against the hash it was written with. What
+		// an unlocated generation cannot do is match a caller's tree, and it is not
+		// silently dropped for that — the read falls back to it and says so.
+		{Module: "callgraph", Version: 13, SQL: `
+ALTER TABLE callgraph_records ADD COLUMN analysis_root TEXT NOT NULL DEFAULT ''`},
 	}
 }
 
@@ -551,6 +605,19 @@ func (s *Store) PutCallGraphRecord(ctx context.Context, r domain2.CallGraphRecor
 		return fmt.Errorf("worktree call graph record for %s identifies no tree: %w",
 			r.Coordinate, ports.ErrUnidentifiedWorktree)
 	}
+	// And it must say WHERE that tree was, for the same reason and on the same
+	// leg. The digest tells two trees apart; the root is what lets a reader
+	// standing in one of them be answered from it. A record that states neither is
+	// not merely less useful — it is served to a caller whose tree it may have
+	// nothing to do with, silently, which is the defect the field exists to close.
+	//
+	// The read leg deliberately does NOT refuse. Records written before the field
+	// existed carry an empty root legitimately; they are read, never rewritten, and
+	// the routing read names them as unlocated rather than dropping them.
+	if r.AnalysisSource == domain2.AnalysisSourceWorktree && r.AnalysisRoot == "" {
+		return fmt.Errorf("worktree call graph record for %s states no analysis root: %w",
+			r.Coordinate, ports.ErrUnlocatedWorktree)
+	}
 	var h domain2.CallGraphRecordHasher
 	if err := h.VerifyContentHash(r); err != nil {
 		return fmt.Errorf("verifying content hash before put: %w", err)
@@ -579,10 +646,11 @@ func (s *Store) PutCallGraphRecord(ctx context.Context, r domain2.CallGraphRecor
 INSERT INTO callgraph_records (
     module_path, module_version, pipeline_version,
     algorithm, overall_status, completeness, analysis_source, worktree_digest,
+    analysis_root,
     failure_cause,
     node_count, edge_count,
     extracted_at, content_hash, serialised
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (module_path, module_version, pipeline_version, extracted_at, content_hash)
 DO NOTHING`
 
@@ -590,6 +658,7 @@ DO NOTHING`
 		r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
 		string(r.Algorithm), int(r.OverallStatus),
 		string(r.Completeness), string(r.AnalysisSource), r.WorktreeDigest,
+		r.AnalysisRoot,
 		string(r.FailureCause),
 		r.NodeCount, r.EdgeCount,
 		r.ExtractedAt.UTC().Format(time.RFC3339),
@@ -763,19 +832,12 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 		}
 	}
 
-	// "Last" is by insertion order, because extracted_at persists at second
-	// precision and two runs within one second share it.
-	const qLatest = `SELECT serialised, content_hash FROM callgraph_records
-WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
-ORDER BY extracted_at DESC, rowid DESC
-LIMIT 1`
-	var blob []byte
-	var storedHash string
-	if serr := s.db.DB().QueryRowContext(ctx, qLatest,
-		coord.Path(), coord.Version(), pipelineVersion).Scan(&blob, &storedHash); errors.Is(serr, sql.ErrNoRows) {
+	blob, storedHash, found, qerr := s.latestGenerationRow(ctx, coord, pipelineVersion)
+	if qerr != nil {
+		return domain2.CallGraphRecord{}, false, qerr
+	}
+	if !found {
 		return domain2.CallGraphRecord{}, false, nil
-	} else if serr != nil {
-		return domain2.CallGraphRecord{}, false, fmt.Errorf("querying latest generation for %s: %w", coord, serr)
 	}
 	rec, ok, derr := s.decodeRecord(ctx, blob, storedHash)
 	if derr != nil {
@@ -787,6 +849,100 @@ LIMIT 1`
 		return domain2.CallGraphRecord{}, false, nil
 	}
 	return rec, true, nil
+}
+
+// latestGenerationRow returns the newest generation's blob for one coordinate,
+// preferring the working tree the reader is standing in.
+//
+// "Newest" is by insertion order, because extracted_at persists at second
+// precision — the precision the canonical hash covers — and two runs within one
+// second share it.
+//
+// The tree filter is one extra predicate on the same indexed lookup, and it is
+// tried FIRST rather than instead: a caller standing in a checkout the ledger
+// has never been run in gets the answer they got before this existed, not an
+// empty one. That fallback is not a rare corner. The digest identifies a tree by
+// its CONTENT, so a caller with one uncommitted edit is standing in a tree no
+// stored generation matches; the root is what survives the edit, and it is what
+// this filters on.
+func (s *Store) latestGenerationRow(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]byte, string, bool, error) {
+	const qLatest = `SELECT serialised, content_hash FROM callgraph_records
+WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
+	const order = `
+ORDER BY extracted_at DESC, rowid DESC
+LIMIT 1`
+
+	if root, ok := s.preferredRoot(coord); ok {
+		var blob []byte
+		var hash string
+		serr := s.db.DB().QueryRowContext(ctx, qLatest+" AND analysis_root = ?"+order,
+			coord.Path(), coord.Version(), pipelineVersion, root).Scan(&blob, &hash)
+		switch {
+		case serr == nil:
+			return blob, hash, true, nil
+		case !errors.Is(serr, sql.ErrNoRows):
+			return nil, "", false, fmt.Errorf("querying latest generation of %s at %s: %w", coord, root, serr)
+		}
+	}
+
+	var blob []byte
+	var hash string
+	serr := s.db.DB().QueryRowContext(ctx, qLatest+order,
+		coord.Path(), coord.Version(), pipelineVersion).Scan(&blob, &hash)
+	switch {
+	case errors.Is(serr, sql.ErrNoRows):
+		return nil, "", false, nil
+	case serr != nil:
+		return nil, "", false, fmt.Errorf("querying latest generation for %s: %w", coord, serr)
+	}
+	return blob, hash, true, nil
+}
+
+// WorktreeRouting reports which tree answered for a local coordinate, and how
+// many the ledger holds.
+//
+// It is a separate read rather than a value returned alongside the record
+// because the notice it feeds is printed once per answer, while the record is
+// fetched several times over the course of one — by the verdict helpers, the
+// completeness caveat and the edge resolution — and a routing fact attached to
+// each of them would be reported as many times as the read happened.
+func (s *Store) WorktreeRouting(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (ports.WorktreeRouting, bool, error) {
+	if !coord.IsLocal() {
+		return ports.WorktreeRouting{}, false, nil
+	}
+	const qTrees = `SELECT
+    COUNT(DISTINCT CASE WHEN analysis_root <> '' THEN analysis_root END),
+    COUNT(CASE WHEN analysis_root = '' THEN 1 END)
+FROM callgraph_records
+WHERE module_path = ? AND module_version = ? AND pipeline_version = ? AND analysis_source = ?`
+	var located, unlocated int
+	if serr := s.db.DB().QueryRowContext(ctx, qTrees,
+		coord.Path(), coord.Version(), pipelineVersion,
+		string(domain2.AnalysisSourceWorktree)).Scan(&located, &unlocated); serr != nil {
+		return ports.WorktreeRouting{}, false, fmt.Errorf("counting worktrees for %s: %w", coord, serr)
+	}
+	if located+unlocated == 0 {
+		return ports.WorktreeRouting{}, false, nil
+	}
+
+	rec, found, err := s.composeFor(ctx, coord, pipelineVersion, domain2.ComposeRequest{})
+	if err != nil || !found {
+		return ports.WorktreeRouting{}, false, err
+	}
+	out := ports.WorktreeRouting{
+		LocatedTrees:         located,
+		UnlocatedGenerations: unlocated,
+		ServedRoot:           rec.AnalysisRoot,
+		ServedDigest:         rec.WorktreeDigest,
+	}
+	if root, ok := s.preferredRoot(coord); ok {
+		out.CallerRoot = root
+		// An unlocated generation never matches. It may well BE this tree; nothing
+		// records that it was, and asserting it would be the silent wrong answer
+		// with an extra step.
+		out.Matched = rec.AnalysisRoot != "" && rec.AnalysisRoot == root
+	}
+	return out, true, nil
 }
 
 // ListCallGraphRecordsFor returns every generation the ledger holds for one
@@ -1297,7 +1453,8 @@ func (s *Store) servedEdges(ctx context.Context, candidates []edgeCandidate, pip
 // Ensure Store implements ports.CallGraphStore and the optional ledger reads at
 // compile time.
 var (
-	_ ports.CallGraphStore        = (*Store)(nil)
-	_ ports.CallGraphRecordLister = (*Store)(nil)
-	_ ports.CallGraphSourceReader = (*Store)(nil)
+	_ ports.CallGraphStore          = (*Store)(nil)
+	_ ports.CallGraphRecordLister   = (*Store)(nil)
+	_ ports.CallGraphSourceReader   = (*Store)(nil)
+	_ ports.CallGraphWorktreeRouter = (*Store)(nil)
 )
