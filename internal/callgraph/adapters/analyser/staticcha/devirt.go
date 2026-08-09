@@ -317,6 +317,7 @@ func leafNodeFromFunc(
 	symbol := methodObj.Name()
 
 	isExternal := pkgPath != coord.Path() && !strings.HasPrefix(pkgPath, coord.Path()+"/")
+	isMain := methodObj.Pkg().Name() == "main"
 
 	pos := domain.SourcePosition{}
 	if methodObj.Pos() != token.NoPos && fset != nil {
@@ -340,7 +341,7 @@ func leafNodeFromFunc(
 		Symbol:        symbol,
 		Receiver:      recv,
 		IsExternal:    isExternal,
-		IsExportedAPI: !isExternal && token.IsExported(symbol) && !isInternalPkg(pkgPath),
+		IsExportedAPI: isExportedAPI(isExternal, hasSyntheticSymbolMarker(symbol), symbol, pkgPath, isMain),
 		Position:      pos,
 		IsTest:        isTestDeclaration(methodObj.Pos(), fset, pkgPath),
 	}

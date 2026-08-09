@@ -34,20 +34,11 @@ func buildNode(fn *ssa.Function, coord coordinate.ModuleCoordinate, fset *token.
 	}
 
 	// A function with an enclosing function is never public API: no consumer can
-	// name a closure, only reach it by calling what encloses it. token.IsExported
-	// inspects the first rune only, and an anonymous function's name is the
-	// enclosing function's name plus the SSA anon marker ("Method$1"), so without
-	// this guard every closure inside an exported function reads as exported and
-	// becomes a library reachability root that cannot actually be triggered.
-	// The "$" test covers the same way for bound-method and thunk wrappers.
-	isSynthetic := fn.Parent() != nil || strings.Contains(symbol, "$")
+	// name a closure, only reach it by calling what encloses it. See
+	// isExportedAPI for the rest of the rule.
+	isSynthetic := fn.Parent() != nil || hasSyntheticSymbolMarker(symbol)
 
-	isExportedAPI := !isExternal &&
-		len(symbol) > 0 &&
-		!isSynthetic &&
-		token.IsExported(symbol) &&
-		!isInternalPkg(pkgPath) &&
-		!isMainPkg(fn)
+	exportedAPI := isExportedAPI(isExternal, isSynthetic, symbol, pkgPath, isMainPkg(fn))
 
 	modulePath := ""
 	if !isExternal {
@@ -61,7 +52,7 @@ func buildNode(fn *ssa.Function, coord coordinate.ModuleCoordinate, fset *token.
 		Symbol:        symbol,
 		Receiver:      receiver,
 		IsExternal:    isExternal,
-		IsExportedAPI: isExportedAPI,
+		IsExportedAPI: exportedAPI,
 		Position:      pos,
 		IsTest:        isTestFunc(fn, fset, pkgPath),
 	}
@@ -237,6 +228,39 @@ func classifyConfidence(edge *callgraph.Edge) (domain.EdgeConfidence, bool) {
 	}
 	return domain.ConfidenceUnknown, false
 }
+
+// isExportedAPI reports whether a node is consumable public API of the module
+// under analysis. It is the single definition of that rule: every node builder
+// must use it, because IsExportedAPI feeds reachability rooting and a symbol
+// that is API on one construction path and not on another makes the axis mean
+// two things.
+//
+// token.IsExported inspects the first rune only, and an anonymous function's
+// name is the enclosing function's name plus the SSA anon marker ("Method$1"),
+// so without the synthetic guard every closure inside an exported function
+// reads as exported and becomes a library reachability root that cannot
+// actually be triggered; the same holds for bound-method and thunk wrappers.
+// Package-main symbols are not consumable API either: nothing can import them.
+//
+// isSynthetic and isMain are passed in rather than derived because the callers
+// hold different evidence — a builder working from go/types has no
+// *ssa.Function to ask.
+func isExportedAPI(isExternal, isSynthetic bool, symbol, pkgPath string, isMain bool) bool {
+	return !isExternal &&
+		len(symbol) > 0 &&
+		!isSynthetic &&
+		token.IsExported(symbol) &&
+		!isInternalPkg(pkgPath) &&
+		!isMain
+}
+
+// hasSyntheticSymbolMarker reports whether a symbol name carries the SSA marker
+// that distinguishes a closure, bound-method or thunk wrapper from a declared
+// function.
+func hasSyntheticSymbolMarker(symbol string) bool {
+	return strings.Contains(symbol, "$")
+}
+
 func isInternalPkg(path string) bool {
 	return strings.Contains(path, "/internal/") ||
 		strings.HasSuffix(path, "/internal")
