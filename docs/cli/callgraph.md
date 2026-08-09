@@ -171,7 +171,7 @@ kanonarion callgraph <module>@<version> [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--force` | `false` | Re-extract even if a cached record exists |
-| `--from-walk` | _(none)_ | Pin a pre-modules module's `require` directives to the versions this walk resolved. See [Modules published before Go modules](#modules-published-before-go-modules). |
+| `--from-walk` | _(auto-discovered)_ | Pin a pre-modules module's `require` directives to the versions this walk resolved. Unset, the most recent walk containing the module is used. See [Modules published before Go modules](#modules-published-before-go-modules). |
 | `--go-binary` | _(from `PATH`)_ | Path to the `go` binary if not on `PATH` |
 | `--json` | `false` | Emit the record as JSON to stdout |
 
@@ -179,6 +179,43 @@ kanonarion callgraph <module>@<version> [flags]
 $ kanonarion callgraph golang.org/x/mod@v0.30.0
 golang.org/x/mod@v0.30.0: Extracted — 1039 nodes, 4201 edges [CHA]
 ```
+
+### Exit codes
+
+`callgraph` and [`local`](local.md) exit on what the extraction **established**:
+
+| Code | Meaning |
+|---|---|
+| `0` | A graph exists — `Extracted`, or `Partial` with its incompleteness scoped to the packages named on the `failed packages` line |
+| `2` | `LoadFailed`: no graph at all. The message repeats the recorded failure detail |
+| `3` | `Cancelled`: the run ended before the graph was walked |
+
+A `Partial` graph is an answer and exits `0`. Findings about the module never
+change the code — whether an unanalysable dependency should fail a build is a
+policy question this command does not answer.
+
+### When a module does not load
+
+A load failure names its own cause on the record, and `callgraph-show` reprints
+it. The causes that recur:
+
+| Message | What it means |
+|---|---|
+| `no go.mod was synthesised: … imports packages outside the standard library: …` | A module published before Go modules whose imports no build list in this store resolves. Name a build that does with `--from-walk`, or walk a project that uses it |
+| `no package under <path>: the loader resolved N package(s) (…)` | Nothing the loader returned belongs to the module. The named packages say what it found instead — a nested module's `replace` target absent from the published zip is the usual reason |
+| `no packages found for <goos>/<goarch> …` | The module ships no Go source this platform compiles. A Windows-only module has no graph on Linux, and that is a joint fact about the module and the frame |
+| `none of the N package(s) under <path> type-checked: …` | The packages were found and the type-check failed; the loader's own errors follow |
+
+Package membership is decided by the module path the analysed tree **declares**,
+not by the coordinate it was published under. A fork republished at a new path
+that never rewrote its own `module` directive — and which consumers therefore
+reach through a `replace` — has all its packages under the declared path, and
+its nodes carry that path.
+
+The load does not require the artefact to ship a `go.sum` covering its own
+module graph. `go.sum` is an obligation of whatever is being *built*, and a
+module analysed on its own is a main module for the first time in its life; the
+artefact's own integrity was established by the fetch that stored it.
 
 A second run is served from the store and says so with `(cached)`; `--force`
 re-extracts.
@@ -265,9 +302,12 @@ would be an empty graph. For those, and only those, kanonarion writes a minimal
   version. A `+incompatible` module publishes a v2-or-later version under a path
   with no `/vN` suffix, and adding one would produce a graph whose every node ID
   named a module that does not exist;
-* the `go` directive is pinned to `1.16` — exactly what the toolchain already
-  assumes when a `go.mod` states none — because a directive of 1.22 or later
-  changes loop-variable scoping, hence the SSA, hence the call graph;
+* the `go` directive is pinned to `1.17`, which is the lowest version that makes
+  the file work: below it the toolchain loads the complete, unpruned module
+  graph and reads the `go.mod` of every module reachable through every
+  requirement, so a load fails on a version nothing in the build compiles. It
+  stays well below 1.22, where loop-variable scoping changes and with it the SSA
+  and the call graph; between 1.16 and 1.17 the language does not move at all;
 * a zip that ships its own `go.mod` is **never** touched. Modules that publish
   one and still fail to load are failing for their own reasons, and overwriting
   the published file would hide that;
@@ -280,13 +320,24 @@ would be an empty graph. For those, and only those, kanonarion writes a minimal
   `GOPROXY=off` against the local module cache, so a version nobody chose can
   never enter the graph. Without `--from-walk`, or when the build list does not
   provide *every* one of those imports, synthesis is refused outright and the
-  module is left failing exactly as before: a file naming some dependencies
-  still sends the loader hunting for the rest. The refusal names the imports and
-  the walk consulted, in the `callgraph_gomod_synthesis_declined` log line.
+  module is left failing: a file naming some dependencies still sends the loader
+  hunting for the rest. The refusal is on **the record**, naming the imports
+  that could not be pinned and the build list that failed to pin them, and it
+  records **no failure cause** — a build list can arrive tomorrow, so the
+  refusal states nothing about the artefact and must never be cached as though
+  it did.
 
 The walk stages pass `--from-walk` to the callgraph subprocess automatically, so
-a module analysed as part of `kanonarion walk` already gets its build list. It
-only has to be given by hand when running `callgraph` for a single coordinate.
+a module analysed as part of `kanonarion walk` already gets its build list.
+
+Asked for a single coordinate with no `--from-walk`, `callgraph` finds one
+itself: the most recent walk in the store that resolved this module supplies the
+pins, and the command says on stderr which walk it chose and how many versions
+that walk resolved. `--from-walk` always wins where it is given. The search runs
+before the analysis, not as a retry after one failed, because analysing twice
+would persist two failure generations differing only in which build list they
+were denied — and two generations disagreeing at one completeness are a
+divergence the composed read refuses outright.
 
 The record says so. `fidelity:` gains a `[synthesised go.mod (module …, go …)]`
 note naming how many `require` directives were pinned, `--history` appends it to

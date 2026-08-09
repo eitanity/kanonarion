@@ -203,6 +203,41 @@ Nothing verifies `identity_hash` on read and no stored hash is ever compared
 across the old and new styles: an old-style walk has no identity at all, so the
 comparison cannot arise. Reads of existing walks are unchanged in every respect.
 
+## Call graph record: pipeline `0.3.0` → `0.4.1`
+
+**Behaviour change in what gets loaded; no record shape change, no schema bump,
+no store migration.** Call graph records are keyed
+`(module, version, pipeline_version)`, so the bump is the migration: `0.3.0`
+rows stay where they are, become unreachable, and are never served for a
+`0.4.1` request. The cost is one re-extraction per coordinate on its next
+`callgraph` run.
+
+Four changes to what the loader is pointed at, each of which can turn an empty
+graph into a real one and so must not be served for the other:
+
+- **Package membership follows the module path the analysed tree DECLARES**, not
+  the coordinate it was published under. A fork republished at a new path that
+  never rewrote its own `module` directive matched none of its own packages, so
+  the target set was empty and the record was an empty graph.
+- **The load no longer requires the artefact to ship a `go.sum` covering its own
+  module graph** (`-mod=mod` on every load, not only synthesised ones). `go.sum`
+  is an obligation of whatever is being built; a module analysed alone is a main
+  module for the first time, and its published zip was never required to carry
+  one.
+- **A synthesised `go.mod` pins `go 1.17` rather than `go 1.16`**, so the module
+  graph is pruned to what the build reads. Unpruned, minimal version selection
+  reads the `go.mod` of every module reachable through every requirement, and
+  one absent from the local cache failed the load on a version nothing compiles.
+  Records carrying `synthesised_go_mod.go_directive: "1.16"` were built under
+  the older selection; the language does not differ between the two versions.
+- **A load that resolves nothing records which of those it was.** The old
+  records said `no packages successfully loaded`, which named neither what was
+  sought, nor what the loader found, nor what it reported.
+
+Nothing in the sealed shape moved, and no field was added or removed, so every
+stored record keeps its content hash verifiable. The version skips `0.4.0`,
+which was consumed by an intermediate measurement.
+
 ## Vendor record: schema `4` → `5`, pipeline `0.3.0` → `0.4.0`
 
 **Record shape change and a finding-set change; no store migration.** Vendor

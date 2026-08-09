@@ -21,18 +21,30 @@ import (
 // kanonarion synthesises. It is a constant, not a default, because it decides
 // what the graph says.
 //
-// 1.16 is chosen for one reason: it is exactly what the toolchain already
-// assumes for a module whose go.mod states no go directive. Every module this
-// applies to predates modules entirely, so 1.16 is also the newest semantics its
-// authors could not have been writing against. The alternative — tracking the
-// host toolchain — would silently move a module across the 1.22 loop-variable
-// boundary, changing the SSA and therefore the call graph, and two runs of the
-// same tool on the same bytes would disagree with no field saying why.
+// 1.17 is the lowest directive that makes the file WORK, and it is chosen for
+// that and nothing else.
+//
+// Below 1.17 the main module loads the complete, unpruned module graph: minimal
+// version selection reads the go.mod of every module reachable through every
+// requirement, transitively, and one absent from the local cache fails the whole
+// load. Pinned requires do not help — the pins are correct and it is their own
+// dependencies' dependencies that are missing. Measured on this store, five
+// coordinates whose requires pinned perfectly still failed at
+// golang.org/x/telemetry, a test-only dependency of a dependency of a
+// dependency, which nothing in the build ever compiles. From 1.17 the graph is
+// pruned to what the build actually reads, and the same five load.
+//
+// It stays as far below 1.22 as the pruning allows, which is the constraint the
+// original choice of 1.16 was really protecting: from 1.22 loop variables are
+// per-iteration, and that changes the SSA and therefore the call graph. Between
+// 1.16 and 1.17 the language does not move at all — 1.17 only ADDS the
+// slice-to-array-pointer conversion, which no existing program's meaning depends
+// on — so a module whose graph built under 1.16 builds the same graph here.
 //
 // Changing this value changes graphs. It belongs on the record (see
 // domain.SynthesisedGoMod.GoDirective) so a stored graph names the semantics it
 // was built under rather than inheriting whatever this constant says today.
-const synthesisedGoDirective = "1.16"
+const synthesisedGoDirective = "1.17"
 
 // errGoModPresent reports that the extracted module already ships a go.mod, so
 // nothing was synthesised.
@@ -305,13 +317,24 @@ func analysisEnv(synth domain.SynthesisedGoMod) []string {
 		// not make one, for a go.mod that no published go.sum corresponds to.
 		env = append(env, "GOPROXY=off", "GOSUMDB=off")
 	}
-	if synth.VendorTreePresent || len(synth.Requires) > 0 {
-		// Appended last: os/exec keeps the final occurrence of a duplicate key, so
-		// this also overrides an inherited GOFLAGS selecting vendor mode, and lets
-		// the toolchain write the go.sum lines for the pinned requires from the
-		// cache rather than refusing the load for want of a file the module never
-		// published.
-		env = append(env, "GOFLAGS=-mod=mod")
-	}
+	// -mod=mod on every load, not only the synthesised ones. Two reasons, and the
+	// second is why it moved out of the synthesis branch.
+	//
+	// It overrides an inherited GOFLAGS selecting vendor mode, which a synthesised
+	// go.mod beside a vendor tree would otherwise auto-select.
+	//
+	// And it lifts a main-module obligation off an artefact that never took it on.
+	// go.sum covers the module graph of whatever is being BUILT; a module analysed
+	// on its own is being treated as a main module for the first time in its life,
+	// and a published zip carrying an incomplete go.sum — or none — then fails the
+	// load with "missing go.sum entry for go.mod file" before a single package is
+	// type-checked. gopkg.in/yaml.v2 and github.com/kr/text are exactly this: both
+	// ship a go.mod naming a test-only dependency and no go.sum line for it. The
+	// artefact's own integrity is not what go.sum is being asked about here — the
+	// fetch stage established that against the checksum database and sealed it —
+	// and the extraction directory is a temporary copy nothing is built from
+	// twice, so letting the toolchain complete its own bookkeeping there costs
+	// nothing and recovers the graph.
+	env = append(env, "GOFLAGS=-mod=mod")
 	return env
 }
