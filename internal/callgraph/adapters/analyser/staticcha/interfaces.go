@@ -6,10 +6,8 @@ import (
 	"go/types"
 	"log/slog"
 	"sort"
-	"strings"
 
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	"golang.org/x/tools/go/ssa"
 )
@@ -35,15 +33,15 @@ import (
 func (a *Analyser) extractInterfaces(
 	ctx context.Context,
 	prog *ssa.Program,
-	coord coordinate.ModuleCoordinate,
+	mem moduleMembership,
 	fset *token.FileSet,
 	tempDir string,
 ) ([]domain.InterfaceType, []domain.InterfaceImplementation) {
-	ifaces := collectModuleInterfaces(prog, coord, fset, tempDir)
+	ifaces := collectModuleInterfaces(prog, mem, fset, tempDir)
 	if len(ifaces) == 0 {
 		return nil, nil
 	}
-	concretes := collectModuleConcreteTypes(prog, coord, fset, tempDir)
+	concretes := collectModuleConcreteTypes(prog, mem, fset, tempDir)
 	if len(concretes) == 0 {
 		return interfaceTypes(ifaces), nil
 	}
@@ -152,10 +150,10 @@ func interfaceTypes(ifaces []*moduleInterface) []domain.InterfaceType {
 // The empty interface and its aliases are skipped: every type satisfies them,
 // so recording their implementers would answer "which types exist", not "what
 // must change together".
-func collectModuleInterfaces(prog *ssa.Program, coord coordinate.ModuleCoordinate, fset *token.FileSet, tempDir string) []*moduleInterface {
+func collectModuleInterfaces(prog *ssa.Program, mem moduleMembership, fset *token.FileSet, tempDir string) []*moduleInterface {
 	byID := make(map[string]*moduleInterface)
 	var order []string
-	forEachModuleTypeName(prog, coord, func(pkgPath string, tn *types.TypeName, named *types.Named) {
+	forEachModuleTypeName(prog, mem, func(pkgPath string, tn *types.TypeName, named *types.Named) {
 		iface, ok := named.Underlying().(*types.Interface)
 		if !ok || iface.NumMethods() == 0 {
 			return
@@ -190,10 +188,10 @@ func collectModuleInterfaces(prog *ssa.Program, coord coordinate.ModuleCoordinat
 
 // collectModuleConcreteTypes returns the module's named non-interface types,
 // keyed by ID for the same reason collectModuleInterfaces is.
-func collectModuleConcreteTypes(prog *ssa.Program, coord coordinate.ModuleCoordinate, fset *token.FileSet, tempDir string) []*concreteType {
+func collectModuleConcreteTypes(prog *ssa.Program, mem moduleMembership, fset *token.FileSet, tempDir string) []*concreteType {
 	byID := make(map[string]*concreteType)
 	var order []string
-	forEachModuleTypeName(prog, coord, func(pkgPath string, tn *types.TypeName, named *types.Named) {
+	forEachModuleTypeName(prog, mem, func(pkgPath string, tn *types.TypeName, named *types.Named) {
 		if _, isIface := named.Underlying().(*types.Interface); isIface {
 			return
 		}
@@ -230,13 +228,13 @@ func collectModuleConcreteTypes(prog *ssa.Program, coord coordinate.ModuleCoordi
 // module declares, across every package instance in the program. Generic types
 // are skipped: an uninstantiated type parameter has no method set to satisfy an
 // interface with.
-func forEachModuleTypeName(prog *ssa.Program, coord coordinate.ModuleCoordinate, fn func(pkgPath string, tn *types.TypeName, named *types.Named)) {
+func forEachModuleTypeName(prog *ssa.Program, mem moduleMembership, fn func(pkgPath string, tn *types.TypeName, named *types.Named)) {
 	for _, pkg := range prog.AllPackages() {
 		if pkg == nil || pkg.Pkg == nil {
 			continue
 		}
 		pkgPath := pkg.Pkg.Path()
-		if !pathInModule(pkgPath, coord) {
+		if !mem.contains(pkgPath) {
 			continue
 		}
 		scope := pkg.Pkg.Scope()
@@ -333,13 +331,6 @@ func lookupConcreteMethod(named *types.Named, method string) *types.Func {
 		}
 	}
 	return nil
-}
-
-// pathInModule reports whether an import path belongs to the analysed module.
-// The external test package of a module package ("<pkg>_test") is inside it:
-// its declarations are the module's own test code.
-func pathInModule(pkgPath string, coord coordinate.ModuleCoordinate) bool {
-	return pkgPath == coord.Path() || strings.HasPrefix(pkgPath, coord.Path()+"/")
 }
 
 // declPosition renders a declaration's module-relative source position.

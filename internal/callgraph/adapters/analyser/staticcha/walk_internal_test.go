@@ -28,6 +28,30 @@ func (t *Thing) Work() {}
 func init() { sink = nil }
 
 func Register(t *Thing) { sink = t.Work }
+
+// Saver's method value is taken through the INTERFACE, which is the case
+// admitReachedWrappers exists for: the reference cannot resolve through the
+// wrapper, so the wrapper itself is what the graph names.
+type Saver interface{ Save() }
+
+type memSaver struct{}
+
+func (m *memSaver) Save() {}
+
+var isink func()
+
+func RegisterSaver(s Saver) { isink = s.Save }
+
+type pinger interface{ Ping() }
+
+// Idle's method set forces SSA to materialise a (*Idle).Ping wrapper for the
+// interface value below, and nothing in the module ever invokes Ping — so that
+// wrapper is the unreached one the admission rule must leave out.
+type Idle struct{}
+
+func (i Idle) Ping() {}
+
+var idle pinger = &Idle{}
 `,
 }
 

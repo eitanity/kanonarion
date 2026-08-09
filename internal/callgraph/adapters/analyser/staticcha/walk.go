@@ -4,8 +4,6 @@ import (
 	"context"
 	"go/token"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 
 	"golang.org/x/tools/go/callgraph"
@@ -27,13 +25,13 @@ import (
 // it belongs to no package — but it is the hop a method value goes through, and
 // dropping its outgoing edge truncates the invocation path one short of the
 // function that actually runs. See admitReachedWrappers.
-func recordedCallerNodes(cg *callgraph.Graph, coord coordinate.ModuleCoordinate) map[*callgraph.Node]bool {
+func recordedCallerNodes(cg *callgraph.Graph, mem moduleMembership) map[*callgraph.Node]bool {
 	recorded := make(map[*callgraph.Node]bool)
 	for fn, node := range cg.Nodes {
 		if fn == nil {
 			continue
 		}
-		if fnInModule(fn, coord) || fnHasRealBody(fn) {
+		if fnInModule(fn, mem) || fnHasRealBody(fn) {
 			recorded[node] = true
 		}
 	}
@@ -142,7 +140,7 @@ func (a *Analyser) walkGraph(
 	ctx context.Context,
 	cg *callgraph.Graph,
 	recordedCallers map[*callgraph.Node]bool,
-	coord coordinate.ModuleCoordinate,
+	mem moduleMembership,
 	fset *token.FileSet,
 	tempDir string,
 ) ([]domain.CallNode, []domain.CallEdge, domain.CallGraphStatus) {
@@ -172,13 +170,13 @@ func (a *Analyser) walkGraph(
 
 		callerNode, ok := nodeCache[callerFunc]
 		if !ok {
-			callerNode = buildNode(callerFunc, coord, fset, tempDir)
+			callerNode = buildNode(callerFunc, mem, fset, tempDir)
 			nodeCache[callerFunc] = callerNode
 		}
 
 		calleeNode, ok := nodeCache[calleeFunc]
 		if !ok {
-			calleeNode = buildNode(calleeFunc, coord, fset, tempDir)
+			calleeNode = buildNode(calleeFunc, mem, fset, tempDir)
 			nodeCache[calleeFunc] = calleeNode
 		}
 

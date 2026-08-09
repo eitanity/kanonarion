@@ -392,8 +392,15 @@ func (a *Analyser) analyseDir(
 	// testing against the coordinate matched none of its own packages.
 	target := targetCoordinate(tempDir, coord)
 
-	// New Architecture: Streaming SSA Construction.
-	// We load and process target packages in small batches to keep peak memory low.
+	// The pattern list for the syntax load below. This is deliberately NOT the
+	// membership rule, and the prefix here is not a fifth spelling of it: this
+	// decides what to BUILD, and moduleMembership decides what a built package is
+	// CLAIMED to be. Building wide and claiming narrowly is the safe pairing —
+	// a nested module's packages are built with bodies, so its dispatch is
+	// resolved rather than lost, and every node it contributes is then attributed
+	// to the module the toolchain says it came from. Narrowing this test instead
+	// would drop those bodies, which is a change to the graph's fidelity and a
+	// separate decision from correcting who owns a node.
 	var targetPkgPaths []string
 	packages.Visit(pkgsMeta, nil, func(p *packages.Package) {
 		isTarget := p.PkgPath == target.Path() || strings.HasPrefix(p.PkgPath, target.Path()+"/")
@@ -474,12 +481,13 @@ func (a *Analyser) analyseDir(
 
 	// Pre-filter to the caller nodes walkGraph records — module functions plus
 	// dependency functions built with real bodies — to save memory during walk.
-	recordedCallers := recordedCallerNodes(cg, target)
+	mem := build.Membership
+	recordedCallers := recordedCallerNodes(cg, mem)
 
 	// Ensure GC can reclaim memory before starting walk
 	runtime.GC()
 
-	nodes, edges, overallStatus := a.walkGraph(ctx, cg, recordedCallers, target, fset, tempDir)
+	nodes, edges, overallStatus := a.walkGraph(ctx, cg, recordedCallers, mem, fset, tempDir)
 
 	// Attach body-level capability facts. These are properties of a
 	// function's own body — unsafe.Pointer conversions, assembly/linkname
@@ -492,21 +500,21 @@ func (a *Analyser) analyseDir(
 	// implementer's body was never built into SSA (type-only dep / unbuilt
 	// package). Runs after body facts so those only scan built module bodies;
 	// devirtualized leaf targets carry no onward edges.
-	nodes, edges = a.devirtualizeSingleImplementer(ctx, prog, target, fset, tempDir, nodes, edges)
+	nodes, edges = a.devirtualizeSingleImplementer(ctx, prog, mem, fset, tempDir, nodes, edges)
 
 	// Record the function values the code takes but does not call. A method
 	// registered with a router is passed, never called, so CHA sees nothing —
 	// and a handler an HTTP request drives on every hit ends up with no in-edge.
 	// Runs after devirtualisation so an edge a call already witnesses keeps the
 	// call's key rather than being recorded twice under two kinds.
-	nodes, edges = a.collectReferenceEdges(ctx, prog, target, fset, tempDir, nodes, edges)
+	nodes, edges = a.collectReferenceEdges(ctx, prog, mem, fset, tempDir, nodes, edges)
 
 	// Record the type-level relation: which of the module's concrete types
 	// satisfy which of its interfaces. An interface method has no callers — calls
 	// go to implementations — so the edge collections cannot answer "what must
 	// change with this port", and a grep for the method name cannot tell an
 	// implementation from a call.
-	ifaces, impls := a.extractInterfaces(ctx, prog, target, fset, tempDir)
+	ifaces, impls := a.extractInterfaces(ctx, prog, mem, fset, tempDir)
 
 	// A failed package (or any load error) means the graph is incomplete;
 	// never report Extracted when some target package did not resolve. Keeping
@@ -555,6 +563,11 @@ func (a *Analyser) analyseDir(
 	// not typecheck, so callers/callees/reachability verdicts over this Partial
 	// graph can be caveated per package rather than by node/edge totals.
 	rec.FailedPackages = failedPkgs
+	// Every package this analysis admitted to the module by path prefix, because
+	// the toolchain placed it in no module at all. Empty is the ordinary case and
+	// says the loader named every in-module package itself; non-empty is the
+	// reconstruction, stated rather than hidden inside the membership answer.
+	rec.PrefixAttributedPackages = mem.prefixAttributed()
 	rec.Sort()
 	return rec, nil
 }

@@ -134,36 +134,37 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 		}
 	}
 	return CallGraphRecord{
-		SchemaVersion:     c.SchemaVersion,
-		Ecosystem:         c.Ecosystem,
-		Coordinate:        coord,
-		Algorithm:         CallGraphAlgorithm(c.Algorithm),
-		ArtifactKind:      ArtifactKind(c.ArtifactKind),
-		Completeness:      CompletenessLevel(c.Completeness),
-		Nodes:             nodes,
-		Edges:             edges,
-		Interfaces:        ifaces,
-		Implementations:   impls,
-		TestScope:         TestScope(c.TestScope),
-		TestScopeDetail:   c.TestScopeDetail,
-		ReferenceScope:    ReferenceScope(c.ReferenceScope),
-		OverallStatus:     CallGraphStatus(c.OverallStatus),
-		FailureCause:      FailureCause(c.FailureCause),
-		FailureDetail:     c.FailureDetail,
-		FailedPackages:    c.FailedPackages,
-		ExclusionReason:   c.ExclusionReason,
-		ExclusionList:     c.ExclusionList,
-		NodeCount:         c.NodeCount,
-		EdgeCount:         c.EdgeCount,
-		ExtractedAt:       extractedAt.UTC(),
-		PipelineVersion:   c.PipelineVersion,
-		ContentHash:       c.ContentHash,
-		ArtefactIdentity:  c.ArtefactIdentity,
-		SourceContentHash: c.SourceContentHash,
-		AnalysisSource:    AnalysisSource(c.AnalysisSource),
-		WorktreeDigest:    c.WorktreeDigest,
-		AnalysisRoot:      c.AnalysisRoot,
-		BuildListSource:   c.BuildListSource,
+		SchemaVersion:            c.SchemaVersion,
+		Ecosystem:                c.Ecosystem,
+		Coordinate:               coord,
+		Algorithm:                CallGraphAlgorithm(c.Algorithm),
+		ArtifactKind:             ArtifactKind(c.ArtifactKind),
+		Completeness:             CompletenessLevel(c.Completeness),
+		Nodes:                    nodes,
+		Edges:                    edges,
+		Interfaces:               ifaces,
+		Implementations:          impls,
+		TestScope:                TestScope(c.TestScope),
+		TestScopeDetail:          c.TestScopeDetail,
+		ReferenceScope:           ReferenceScope(c.ReferenceScope),
+		OverallStatus:            CallGraphStatus(c.OverallStatus),
+		FailureCause:             FailureCause(c.FailureCause),
+		FailureDetail:            c.FailureDetail,
+		FailedPackages:           c.FailedPackages,
+		PrefixAttributedPackages: c.PrefixAttributedPackages,
+		ExclusionReason:          c.ExclusionReason,
+		ExclusionList:            c.ExclusionList,
+		NodeCount:                c.NodeCount,
+		EdgeCount:                c.EdgeCount,
+		ExtractedAt:              extractedAt.UTC(),
+		PipelineVersion:          c.PipelineVersion,
+		ContentHash:              c.ContentHash,
+		ArtefactIdentity:         c.ArtefactIdentity,
+		SourceContentHash:        c.SourceContentHash,
+		AnalysisSource:           AnalysisSource(c.AnalysisSource),
+		WorktreeDigest:           c.WorktreeDigest,
+		AnalysisRoot:             c.AnalysisRoot,
+		BuildListSource:          c.BuildListSource,
 		SynthesisedGoMod: SynthesisedGoMod{
 			ModulePath:        c.SynthesisedGoMod.ModulePath,
 			GoDirective:       c.SynthesisedGoMod.GoDirective,
@@ -302,14 +303,20 @@ type canonicalRecord struct {
 	// Implementations and Interfaces are omitted when empty so a module that
 	// declares no interfaces hashes the same as one analysed before the axis
 	// existed would have — the same terms every additive field here has used.
-	Implementations   []canonicalImplementation `json:"implementations,omitempty"`
-	Interfaces        []canonicalInterface      `json:"interfaces,omitempty"`
-	NodeCount         int                       `json:"node_count"`
-	Nodes             []canonicalNode           `json:"nodes"`
-	OverallStatus     int                       `json:"overall_status"`
-	PipelineVersion   string                    `json:"pipeline_version"`
-	SchemaVersion     string                    `json:"schema_version"`
-	SourceContentHash string                    `json:"source_content_hash,omitempty"`
+	Implementations []canonicalImplementation `json:"implementations,omitempty"`
+	Interfaces      []canonicalInterface      `json:"interfaces,omitempty"`
+	NodeCount       int                       `json:"node_count"`
+	// PrefixAttributedPackages is omitted when empty, on the terms every additive
+	// field on this shape has used: every record sealed before it marshals to
+	// exactly the bytes it always did and keeps its stored content hash
+	// verifiable. Absent is "no prefix attribution recorded", not "none happened"
+	// — see the domain field.
+	PrefixAttributedPackages []string        `json:"prefix_attributed_packages,omitempty"`
+	Nodes                    []canonicalNode `json:"nodes"`
+	OverallStatus            int             `json:"overall_status"`
+	PipelineVersion          string          `json:"pipeline_version"`
+	SchemaVersion            string          `json:"schema_version"`
+	SourceContentHash        string          `json:"source_content_hash,omitempty"`
 	// SynthesisedGoMod is omitted when zero so every record sealed before the
 	// field existed marshals to exactly the bytes it always did and keeps its
 	// stored content hash verifiable — the terms every additive field on this
@@ -470,32 +477,40 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 		sort.Strings(failedPkgs)
 	}
 
+	var prefixAttributed []string
+	if len(r.PrefixAttributedPackages) > 0 {
+		prefixAttributed = make([]string, len(r.PrefixAttributedPackages))
+		copy(prefixAttributed, r.PrefixAttributedPackages)
+		sort.Strings(prefixAttributed)
+	}
+
 	c := canonicalRecord{
-		Algorithm:         string(r.Algorithm),
-		AnalysisSource:    string(r.AnalysisSource),
-		ArtefactIdentity:  r.ArtefactIdentity,
-		ArtifactKind:      string(r.ArtifactKind),
-		Completeness:      string(r.Completeness),
-		ContentHash:       r.ContentHash,
-		Coordinate:        canonicalCoord{Path: r.Coordinate.Path(), Version: r.Coordinate.Version()},
-		Ecosystem:         r.Ecosystem,
-		EdgeCount:         r.EdgeCount,
-		Edges:             cEdges,
-		ExclusionList:     exclusions,
-		ExclusionReason:   r.ExclusionReason,
-		ExtractedAt:       r.ExtractedAt.UTC().Format(time.RFC3339),
-		FailedPackages:    failedPkgs,
-		FailureCause:      string(r.FailureCause),
-		FailureDetail:     r.FailureDetail,
-		Implementations:   cImpls,
-		Interfaces:        cIfaces,
-		NodeCount:         r.NodeCount,
-		Nodes:             cNodes,
-		OverallStatus:     int(r.OverallStatus),
-		PipelineVersion:   r.PipelineVersion,
-		SchemaVersion:     r.SchemaVersion,
-		SourceContentHash: r.SourceContentHash,
-		BuildListSource:   r.BuildListSource,
+		Algorithm:                string(r.Algorithm),
+		AnalysisSource:           string(r.AnalysisSource),
+		ArtefactIdentity:         r.ArtefactIdentity,
+		ArtifactKind:             string(r.ArtifactKind),
+		Completeness:             string(r.Completeness),
+		ContentHash:              r.ContentHash,
+		Coordinate:               canonicalCoord{Path: r.Coordinate.Path(), Version: r.Coordinate.Version()},
+		Ecosystem:                r.Ecosystem,
+		EdgeCount:                r.EdgeCount,
+		Edges:                    cEdges,
+		ExclusionList:            exclusions,
+		ExclusionReason:          r.ExclusionReason,
+		ExtractedAt:              r.ExtractedAt.UTC().Format(time.RFC3339),
+		FailedPackages:           failedPkgs,
+		FailureCause:             string(r.FailureCause),
+		FailureDetail:            r.FailureDetail,
+		Implementations:          cImpls,
+		Interfaces:               cIfaces,
+		NodeCount:                r.NodeCount,
+		Nodes:                    cNodes,
+		PrefixAttributedPackages: prefixAttributed,
+		OverallStatus:            int(r.OverallStatus),
+		PipelineVersion:          r.PipelineVersion,
+		SchemaVersion:            r.SchemaVersion,
+		SourceContentHash:        r.SourceContentHash,
+		BuildListSource:          r.BuildListSource,
 		SynthesisedGoMod: canonicalSynthesisedGoMod{
 			GoDirective:       r.SynthesisedGoMod.GoDirective,
 			ModulePath:        r.SynthesisedGoMod.ModulePath,

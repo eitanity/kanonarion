@@ -595,6 +595,25 @@ type CallGraphRecord struct {
 	// every record written before the field existed, so there is no unrecorded
 	// third state to ladder against.
 	BuildListSource string
+	// PrefixAttributedPackages is the sorted, deduplicated set of import paths
+	// this analysis admitted to the analysed module by PATH PREFIX rather than by
+	// the toolchain's own answer.
+	//
+	// Membership is normally taken from go/packages' Package.Module.Path, which is
+	// correct by definition: kanonarion reports on what the build contains and does
+	// not get to define it. The prefix rule survives only for packages the loader
+	// places in no module at all — a module published before modules existed ships
+	// no go.mod, and its packages come back with no module attached. For those the
+	// prefix is the only test available, and every path decided that way is named
+	// here so a reconstruction is never read as a measurement.
+	//
+	// Empty means the toolchain named every in-module package itself. That is also
+	// what a record written before the field existed says, and it is a weaker claim
+	// than those records were entitled to make — they decided every package by
+	// prefix — so it is read as "no prefix attribution recorded" rather than as
+	// "none happened". Nothing may infer from an empty list that a record's
+	// membership was measured.
+	PrefixAttributedPackages []string
 }
 
 // Sort puts all collections into a canonical, deterministic order.
@@ -602,6 +621,7 @@ type CallGraphRecord struct {
 func (r *CallGraphRecord) Sort() {
 	sort.Strings(r.ExclusionList)
 	sort.Strings(r.FailedPackages)
+	sort.Strings(r.PrefixAttributedPackages)
 	sort.Slice(r.Nodes, func(i, j int) bool {
 		return r.Nodes[i].ID < r.Nodes[j].ID
 	})

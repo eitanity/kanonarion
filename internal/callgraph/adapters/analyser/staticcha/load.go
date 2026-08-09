@@ -64,8 +64,15 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 		return res, nil
 	}
 
+	// NeedModule is what makes membership a measurement rather than a guess. Go
+	// module paths nest, so a package path that begins with the analysed module's
+	// path may belong to a different module entirely, and only the go command
+	// knows which. It is requested on the load that produces the SSA program
+	// because that is the load every node in the graph comes from; the same flag
+	// is already carried by the symbol analyser's load for the same reason.
 	const fullMode = packages.NeedName | packages.NeedSyntax | packages.NeedTypes |
-		packages.NeedTypesInfo | packages.NeedFiles | packages.NeedImports | packages.NeedDeps
+		packages.NeedTypesInfo | packages.NeedFiles | packages.NeedImports | packages.NeedDeps |
+		packages.NeedModule
 
 	load := func(withTests bool) ([]*packages.Package, error) {
 		cfg := &packages.Config{
@@ -108,6 +115,10 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 	}
 	a.logMem(ctx, "syntax_loaded")
 	res.SourceFiles = loadedSourceFiles(loaded)
+	// Taken here, while the loader's own answer is still in hand: p.Syntax and
+	// p.TypesInfo are dropped further down, and the module a package belongs to is
+	// not recoverable from the ssa.Program afterwards.
+	res.Membership = newModuleMembership(coord, loaded)
 
 	// Pass 1: register every target package from syntax. This must complete
 	// before any Build, and before the type-only dependency sweep below: a
@@ -230,6 +241,11 @@ type ssaBuildResult struct {
 	FailedPkgs      []string
 	TestScope       domain.TestScope
 	TestScopeDetail string
+	// Membership decides which packages in the program belong to the analysed
+	// module, from the loader's own answer where it has one. See
+	// moduleMembership: this is the only place the loader's answer is available,
+	// so it is captured here rather than reconstructed downstream.
+	Membership moduleMembership
 	// SourceFiles are the absolute paths the LOADER resolved for the packages it
 	// returned: compiled Go files, the Go files as written, and the non-Go source
 	// (assembly, cgo) that goes into the same packages. They are what the worktree

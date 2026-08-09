@@ -6,18 +6,15 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 
 	"golang.org/x/tools/go/callgraph"
 	"golang.org/x/tools/go/ssa"
 )
 
-func buildNode(fn *ssa.Function, coord coordinate.ModuleCoordinate, fset *token.FileSet, tempDir string) domain.CallNode {
+func buildNode(fn *ssa.Function, mem moduleMembership, fset *token.FileSet, tempDir string) domain.CallNode {
 	pkgPath := funcPackagePath(fn)
-	isExternal := pkgPath == "" ||
-		(pkgPath != coord.Path() && !strings.HasPrefix(pkgPath, coord.Path()+"/"))
+	isExternal := !mem.contains(pkgPath)
 
 	symbol := fn.Name()
 	receiver := extractReceiverName(fn)
@@ -42,7 +39,7 @@ func buildNode(fn *ssa.Function, coord coordinate.ModuleCoordinate, fset *token.
 
 	modulePath := ""
 	if !isExternal {
-		modulePath = coord.Path()
+		modulePath = mem.path()
 	}
 
 	return domain.CallNode{

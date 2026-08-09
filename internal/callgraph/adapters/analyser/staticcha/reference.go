@@ -6,7 +6,6 @@ import (
 	"log/slog"
 
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
-	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	"golang.org/x/tools/go/ssa"
 	"golang.org/x/tools/go/ssa/ssautil"
@@ -48,7 +47,7 @@ import (
 func (a *Analyser) collectReferenceEdges(
 	ctx context.Context,
 	prog *ssa.Program,
-	coord coordinate.ModuleCoordinate,
+	mem moduleMembership,
 	fset *token.FileSet,
 	tempDir string,
 	nodes []domain.CallNode,
@@ -75,7 +74,7 @@ func (a *Analyser) collectReferenceEdges(
 		if n, ok := nodeCache[fn]; ok {
 			return n
 		}
-		n := buildNode(fn, coord, fset, tempDir)
+		n := buildNode(fn, mem, fset, tempDir)
 		nodeCache[fn] = n
 		return n
 	}
@@ -87,7 +86,7 @@ func (a *Analyser) collectReferenceEdges(
 		}
 		// The same caller set walkGraph records edges out of: the module's own
 		// functions, plus any dependency whose real body was built into SSA.
-		if !fnInModule(fn, coord) && !fnHasRealBody(fn) {
+		if !fnInModule(fn, mem) && !fnHasRealBody(fn) {
 			continue
 		}
 		for _, blk := range fn.Blocks {

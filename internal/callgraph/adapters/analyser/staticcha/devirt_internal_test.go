@@ -117,7 +117,7 @@ func TestLeafNodeFromFunc(t *testing.T) {
 				symbol = "Run"
 			}
 			m := makeNamedMethod(tc.pkgPath, pkgName, symbol, tc.pointerRecv)
-			node := leafNodeFromFunc(m, coord, token.NewFileSet(), "")
+			node := leafNodeFromFunc(m, membershipByPrefix(coord), token.NewFileSet(), "")
 
 			if node.ID != tc.wantID {
 				t.Errorf("ID = %q, want %q", node.ID, tc.wantID)

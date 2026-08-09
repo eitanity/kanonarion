@@ -6,9 +6,6 @@ import (
 	"go/token"
 	"go/types"
 	"log/slog"
-	"strings"
-
-	"github.com/eitanity/kanonarion/internal/coordinate"
 
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 
@@ -44,7 +41,7 @@ import (
 func (a *Analyser) devirtualizeSingleImplementer(
 	ctx context.Context,
 	prog *ssa.Program,
-	coord coordinate.ModuleCoordinate,
+	mem moduleMembership,
 	fset *token.FileSet,
 	tempDir string,
 	nodes []domain.CallNode,
@@ -81,7 +78,7 @@ func (a *Analyser) devirtualizeSingleImplementer(
 		// default, so the dependency set is empty until the dependency-body tier
 		// builds their syntax; the same single-implementer rule then recovers
 		// their internal dispatch with no further change here.
-		if !fnInModule(fn, coord) && !fnHasRealBody(fn) {
+		if !fnInModule(fn, mem) && !fnHasRealBody(fn) {
 			continue
 		}
 
@@ -111,7 +108,7 @@ func (a *Analyser) devirtualizeSingleImplementer(
 				if methodObj == nil {
 					continue
 				}
-				target := a.devirtTargetNode(prog, methodObj, coord, fset, tempDir)
+				target := a.devirtTargetNode(prog, methodObj, mem, fset, tempDir)
 				if target.ID == "" {
 					continue
 				}
@@ -119,7 +116,7 @@ func (a *Analyser) devirtualizeSingleImplementer(
 				// Build the caller node lazily so functions with no
 				// devirtualizable site cost nothing.
 				if !callerBuilt {
-					callerNode = buildNode(fn, coord, fset, tempDir)
+					callerNode = buildNode(fn, mem, fset, tempDir)
 					callerBuilt = true
 				}
 
@@ -289,14 +286,14 @@ func implementerMethod(named *types.Named, ifaceMethod *types.Func) *types.Func 
 func (a *Analyser) devirtTargetNode(
 	prog *ssa.Program,
 	methodObj *types.Func,
-	coord coordinate.ModuleCoordinate,
+	mem moduleMembership,
 	fset *token.FileSet,
 	tempDir string,
 ) domain.CallNode {
 	if fn := prog.FuncValue(methodObj); fn != nil {
-		return buildNode(fn, coord, fset, tempDir)
+		return buildNode(fn, mem, fset, tempDir)
 	}
-	return leafNodeFromFunc(methodObj, coord, fset, tempDir)
+	return leafNodeFromFunc(methodObj, mem, fset, tempDir)
 }
 
 // leafNodeFromFunc builds a CallNode for a method whose SSA function was never
@@ -304,7 +301,7 @@ func (a *Analyser) devirtTargetNode(
 // buildNode would have produced for the same method.
 func leafNodeFromFunc(
 	methodObj *types.Func,
-	coord coordinate.ModuleCoordinate,
+	mem moduleMembership,
 	fset *token.FileSet,
 	tempDir string,
 ) domain.CallNode {
@@ -316,7 +313,7 @@ func leafNodeFromFunc(
 	recv := recvTypeStr(sig.Recv().Type())
 	symbol := methodObj.Name()
 
-	isExternal := pkgPath != coord.Path() && !strings.HasPrefix(pkgPath, coord.Path()+"/")
+	isExternal := !mem.contains(pkgPath)
 	isMain := methodObj.Pkg().Name() == "main"
 
 	pos := domain.SourcePosition{}
@@ -331,7 +328,7 @@ func leafNodeFromFunc(
 
 	module := ""
 	if !isExternal {
-		module = coord.Path()
+		module = mem.path()
 	}
 
 	return domain.CallNode{
@@ -359,12 +356,19 @@ func fnHasRealBody(fn *ssa.Function) bool {
 }
 
 // fnInModule reports whether fn belongs to a package in the analysed module.
-func fnInModule(fn *ssa.Function, coord coordinate.ModuleCoordinate) bool {
+//
+// The nil-package answer is FALSE, and deliberately so. SSA gives no package to
+// the method wrappers it materialises, and resolving those through the wrapped
+// object instead would admit every wrapper of every in-module type — the
+// floating subgraph admitReachedWrappers exists to avoid. "Which module does
+// this package belong to" and "is this package-less wrapper in-module" are
+// different questions; this one answers the first, and recordedCallerNodes
+// compensates for the second by reachability rather than by membership.
+func fnInModule(fn *ssa.Function, mem moduleMembership) bool {
 	if fn.Package() == nil || fn.Package().Pkg == nil {
 		return false
 	}
-	p := fn.Package().Pkg.Path()
-	return p == coord.Path() || strings.HasPrefix(p, coord.Path()+"/")
+	return mem.contains(fn.Package().Pkg.Path())
 }
 
 // sitePosition returns the module-relative file and line of a call

@@ -56,8 +56,9 @@ Two things can connect a caller to a function, and they are not the same fact.
   a callback slot — and whether it is ever called is not something the graph
   witnesses.
 
-Both are edges; the reference carries `kind: reference` in JSON and a label in
-the text output:
+Both are edges. Every edge states its `kind` in JSON — `"Call"` or
+`"Reference"`, spelled out on both so a consumer never has to infer one from a
+missing field — and a reference carries a label in the text output:
 
 ```
 1 caller of pkg.(*H).confirmEmail:
@@ -254,6 +255,41 @@ Edges (4201 total, showing 2):
 
 The `test scope:` line is printed on every record, including when the axis was
 not measured — silence there would read as "there was no test code".
+
+A `reference scope:` line is printed on every record for the same reason, and it
+is the axis a confident negative rests on:
+
+```
+  reference scope: analysed — 1818 of 165766 edges record a function value being taken, not called
+```
+
+A record that never looked says so, and says what that costs:
+
+```
+  reference scope: not recorded — this record never looked for function-value
+  references, so an empty callers answer over it is UNRESOLVED, not a measured absence
+```
+
+In JSON the axis is `reference_scope` (empty when unmeasured) beside
+`reference_edge_count`, both always present.
+
+A `module membership:` line appears only when the record needed it:
+
+```
+  module membership: 2 package(s) attributed by PATH PREFIX — the toolchain placed
+  them in no module: example.com/legacy, example.com/legacy/util
+```
+
+Which module a package belongs to is normally taken from the Go toolchain's own
+answer, which matters because module paths nest: `cloud.google.com/go/auth` is a
+separate module from `cloud.google.com/go`, not a part of it, and a record that
+decided membership by path prefix would report one module's code — and its
+exported API — as the other's. The prefix rule survives only for packages the
+toolchain places in no module at all, which is what a pre-modules module's
+packages come back as, and this line names every package decided that way. No
+line means every in-module package was named by the build. On a record written
+before the line existed, its absence says nothing either way: those records
+decided every package by prefix and had nowhere to record it.
 
 `--node` is compared against the **fully-qualified node ID** — the package path
 plus the symbol, e.g. `example.com/mod/render.(*Engine).Render` — so a module
