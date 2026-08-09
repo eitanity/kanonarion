@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/goenv"
 
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
@@ -35,6 +36,25 @@ const downloadProgressInterval = 512 * 1024
 // file is a tiny {"modified": "..."} object; the bound defends the version
 // probe against a decompression bomb in an adversarial zip.
 const maxDBJSONBytes = 1 << 20
+
+// ErrNetworkForbidden reports that the environment declares no network access
+// and the advisory-database request was refused before any I/O.
+//
+// The advisory set is the thing a scan is judged against, so acquiring it
+// across a boundary the operator closed is not a lesser breach than fetching a
+// module across it: the finding would carry a basis this enclave was never
+// allowed to see. It wraps goenv.ErrNetworkForbidden, so the refusal reads the
+// same to a caller as the module proxy's.
+var ErrNetworkForbidden = fmt.Errorf("%w: the environment declares no advisory-database download", goenv.ErrNetworkForbidden)
+
+// snapshotRemedies names the ways to judge a scan without the network. It is
+// appended to the refusal so the message that stops the run also says what to
+// run instead — and what already works: a store that carries a snapshot answers
+// scans offline without any of this, because the scan use cases prefer the
+// stored generation and only reach the network when there is none.
+const snapshotRemedies = "a store that already holds a snapshot still answers scans offline: " +
+	"drop --fresh so the stored generation is used, or pin one with " +
+	"--snapshot-source/--snapshot-version (kanonarion vuln-snapshot-list shows what is held)"
 
 // modulevuln holds a single OSV entry from the modules index.
 type modulevuln struct {
@@ -108,18 +128,11 @@ func (d *Database) Snapshot(ctx context.Context) (domain.DatabaseSnapshot, io.Re
 // nothing anyone stored.
 func (d *Database) LatestVersion(ctx context.Context) (string, error) {
 	url := vulnGoDevBase + "/index/db.json"
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	resp, err := d.request(ctx, url)
 	if err != nil {
-		return "", fmt.Errorf("create request for %s: %w", url, err)
-	}
-	resp, err := d.client.Do(req)
-	if err != nil {
-		return "", fmt.Errorf("fetch %s: %w", url, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if err := responseError(resp, url); err != nil {
 		return "", err
 	}
+	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxDBJSONBytes))
 	if err != nil {
 		return "", fmt.Errorf("read %s: %w", url, err)
@@ -234,18 +247,11 @@ func decodeAdvisoryIndex(data []byte) (ports.AdvisoryIndex, error) {
 // byte-based progress so a slow first run does not look like a hang.
 func (d *Database) fetchVulnDBZip(ctx context.Context) ([]byte, error) {
 	url := vulnGoDevBase + "/vulndb.zip"
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	resp, err := d.request(ctx, url)
 	if err != nil {
-		return nil, fmt.Errorf("create request for %s: %w", url, err)
-	}
-	resp, err := d.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetch %s: %w", url, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if err := responseError(resp, url); err != nil {
 		return nil, err
 	}
+	defer func() { _ = resp.Body.Close() }()
 
 	d.logger.Info("vulnerability database snapshot: downloading",
 		"source", "vuln.go.dev", "content_length", resp.ContentLength)
@@ -289,6 +295,33 @@ func (d *Database) readWithProgress(body io.Reader, contentLength int64) ([]byte
 // responseError maps a vuln.go.dev HTTP response to an error, distinguishing
 // rate limiting (429, surfacing Retry-After when present) from other non-200
 // statuses. It returns nil for HTTP 200.
+// request performs every outbound GET this adapter makes, so the no-network
+// contract is asked once instead of at four call sites that could each forget
+// to — which is how the advisory download stayed outside the contract while the
+// module proxy honoured it.
+//
+// The refusal is returned before the request is even built: no socket, no DNS,
+// no timeout. On a non-2xx the body is closed here, so a caller only ever holds
+// a response it must close.
+func (d *Database) request(ctx context.Context, url string) (*http.Response, error) {
+	if goenv.NetworkForbidden() {
+		return nil, fmt.Errorf("%w: %s not fetched; %s", ErrNetworkForbidden, url, snapshotRemedies)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("create request for %s: %w", url, err)
+	}
+	resp, err := d.client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("fetch %s: %w", url, err)
+	}
+	if err := responseError(resp, url); err != nil {
+		_ = resp.Body.Close()
+		return nil, err
+	}
+	return resp, nil
+}
+
 func responseError(resp *http.Response, url string) error {
 	if resp.StatusCode == http.StatusTooManyRequests {
 		if retryAfter := resp.Header.Get("Retry-After"); retryAfter != "" {
@@ -368,18 +401,11 @@ func readZipFile(f *zip.File, limit int64) ([]byte, error) {
 
 // fetchRawGZ fetches a gzip-compressed URL and returns the decompressed bytes.
 func (d *Database) fetchRawGZ(ctx context.Context, url string) ([]byte, error) {
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	resp, err := d.request(ctx, url)
 	if err != nil {
-		return nil, fmt.Errorf("create request for %s: %w", url, err)
-	}
-	resp, err := d.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetch %s: %w", url, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if err := responseError(resp, url); err != nil {
 		return nil, err
 	}
+	defer func() { _ = resp.Body.Close() }()
 	gr, err := gzip.NewReader(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("create gzip reader for %s: %w", url, err)
@@ -692,18 +718,11 @@ func (d *Database) LookupFindings(ctx context.Context, coord coordinate.ModuleCo
 // fetchAdvisory retrieves and decodes a single ID/<ID>.json OSV advisory.
 func (d *Database) fetchAdvisory(ctx context.Context, id string) (*osvAdvisory, error) {
 	url := vulnGoDevBase + "/ID/" + id + ".json"
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	resp, err := d.request(ctx, url)
 	if err != nil {
-		return nil, fmt.Errorf("create request for %s: %w", url, err)
-	}
-	resp, err := d.client.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("fetch %s: %w", url, err)
-	}
-	defer func() { _ = resp.Body.Close() }()
-	if err := responseError(resp, url); err != nil {
 		return nil, err
 	}
+	defer func() { _ = resp.Body.Close() }()
 	data, err := io.ReadAll(io.LimitReader(resp.Body, maxAdvisoryBytes))
 	if err != nil {
 		return nil, fmt.Errorf("read advisory %s: %w", url, err)

@@ -237,6 +237,13 @@ type inspectSummary struct {
 	Directives *directivesSection `json:"directives,omitempty"`
 	GoDebug    *godebugSection    `json:"godebug,omitempty"`
 	Vendor     *vendorSection     `json:"vendor,omitempty"`
+	// Build states whether the project compiles from a vendored tree, so a
+	// consumer of this document can see which of two things every other section
+	// describes: the modules the manifest resolves, or the bytes that ship. It
+	// is absent only when there was no project directory to look in — an
+	// unanswered question, which is not the same as a negative answer, and the
+	// two must not decode alike.
+	Build *buildVendoring `json:"build,omitempty"`
 }
 
 // inspectSummaryStatus derives the aggregate status for inspect's summary.
@@ -278,6 +285,18 @@ func inspectSummaryStatus(nodeFails, extractFails, scanFails int, scanStatus vul
 	default:
 		return string(vuldomain.WalkStatusPartial)
 	}
+}
+
+// inspectBuildSection carries the vendoring answer into the summary document,
+// and carries nothing when the question could not be answered. A pointer rather
+// than a value because the absent case must decode as absent: a zero-valued
+// object would read as "asked, and not vendored", which is a stronger claim
+// than the run is entitled to make.
+func inspectBuildSection(v buildVendoring) *buildVendoring {
+	if !v.Known {
+		return nil
+	}
+	return &v
 }
 
 // writeEmptyInspectScope emits inspect's answer for a scope that resolved to no
@@ -426,6 +445,15 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 
 	overallStatus := inspectSummaryStatus(nodeFails, extractFails, scanFails, scanStatus)
 
+	// What every section below is about. inspect runs the whole pipeline over a
+	// manifest, so the ambiguity it carries is the widest of the four: the
+	// vendor section measures shipped bytes and every other section measures
+	// resolved modules, in one document.
+	vendoring := detectBuildVendoringForGoMod(f.gomodPath)
+	if verr := writeBuildVendoring(stderr, vendoring); verr != nil {
+		return verr
+	}
+
 	if jsonOut {
 		var directives *directivesSection
 		if rec, derr := ctr.ExtractDirectives.Extract(ctx, f.gomodPath, activeConfig.DirectivePolicy); derr == nil {
@@ -463,6 +491,7 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 			Directives:      directives,
 			GoDebug:         godebug,
 			Vendor:          vendor,
+			Build:           inspectBuildSection(vendoring),
 		}); err != nil {
 			return fmt.Errorf("encoding summary: %w", err)
 		}

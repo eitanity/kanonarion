@@ -477,3 +477,292 @@ func keysOf[V any](m map[string]V) []string {
 	}
 	return out
 }
+
+// -- cross-major path pairs --
+
+// recordAt builds a record for an arbitrary module path, which the same-path
+// helper above cannot: a cross-major comparison is precisely one where the two
+// sides do not share a module path.
+func recordAt(t *testing.T, path, version string, pkgs ...domain.PackageInterface) domain.InterfaceRecord {
+	t.Helper()
+	return domain.InterfaceRecord{
+		Coordinate:    coordinatetest.MustNew(path, version),
+		Packages:      pkgs,
+		OverallStatus: domain.InterfaceStatusExtracted,
+	}
+}
+
+// The sprig shape: every declaration carried over byte-identical under a new
+// module path. Comparing by fully-qualified identity called that seven removals
+// and seven additions; it is one import rewrite and no breaking change at all.
+func TestDiffRecords_CrossMajorCarriesTheSurfaceOverAsRenamedPath(t *testing.T) {
+	a := recordAt(t, "example.com/mod", "v2.22.0+incompatible", pkg("example.com/mod",
+		withFunc("TxtFuncMap", "func TxtFuncMap() ttemplate.FuncMap"),
+		withType("DSAKeyFormat", "type DSAKeyFormat int"),
+	))
+	b := recordAt(t, "example.com/mod/v3", "v3.3.0", pkg("example.com/mod/v3",
+		withFunc("TxtFuncMap", "func TxtFuncMap() ttemplate.FuncMap"),
+		withType("DSAKeyFormat", "type DSAKeyFormat int"),
+	))
+
+	diff := domain.DiffRecords(a, b, nil)
+
+	if !diff.MajorPathPair {
+		t.Error("a /v3 bump was not recognised as a major-version path pair")
+	}
+	if diff.BreakingCount() != 0 {
+		t.Errorf("breaking count = %d, want 0: nothing was removed and no signature changed",
+			diff.BreakingCount())
+	}
+	if len(diff.Added) != 0 || len(diff.Removed) != 0 || len(diff.Changed) != 0 {
+		t.Errorf("added=%d removed=%d changed=%d, want all zero", len(diff.Added), len(diff.Removed), len(diff.Changed))
+	}
+	if len(diff.RenamedPath) != 2 {
+		t.Fatalf("renamed-path = %d, want 2:\n%+v", len(diff.RenamedPath), diff.RenamedPath)
+	}
+	// The pair's own path shift is not a package coming or going.
+	if len(diff.PackagesAdded) != 0 || len(diff.PackagesRemoved) != 0 {
+		t.Errorf("packages added=%v removed=%v; the pair's own path shift must not read as either",
+			diff.PackagesAdded, diff.PackagesRemoved)
+	}
+	got := diff.RenamedPath[0]
+	if got.From.Package != "example.com/mod" || got.To.Package != "example.com/mod/v3" {
+		t.Errorf("rename does not name both sides: %+v", got)
+	}
+	if got.Signature != "func TxtFuncMap() ttemplate.FuncMap" {
+		t.Errorf("rename carries no signature: %+v", got)
+	}
+	if !diff.HasChanges() {
+		t.Error("a surface that must be re-imported reported no change at all")
+	}
+	if !diff.ZeroBreakingOverNonTrivialDelta() {
+		t.Error("a zero over seven forced import rewrites was treated as an empty delta")
+	}
+}
+
+// The control the reclassification must not swallow: a declaration that really
+// is gone across the major bump still counts, and a really new one is still an
+// addition.
+func TestDiffRecords_CrossMajorGenuineRemovalStillBreaks(t *testing.T) {
+	a := recordAt(t, "example.com/mod", "v1.5.0", pkg("example.com/mod",
+		withFunc("Kept", "func Kept() error"),
+		withFunc("Gone", "func Gone() error"),
+	))
+	b := recordAt(t, "example.com/mod/v3", "v3.3.0", pkg("example.com/mod/v3",
+		withFunc("Kept", "func Kept() error"),
+		withFunc("Fresh", "func Fresh() error"),
+	))
+
+	diff := domain.DiffRecords(a, b, nil)
+
+	if diff.BreakingCount() != 1 {
+		t.Errorf("breaking count = %d, want 1", diff.BreakingCount())
+	}
+	if len(diff.Removed) != 1 || diff.Removed[0].ID.Name != "Gone" {
+		t.Errorf("removed = %+v, want only Gone", diff.Removed)
+	}
+	if len(diff.Added) != 1 || diff.Added[0].ID.Name != "Fresh" {
+		t.Errorf("added = %+v, want only Fresh", diff.Added)
+	}
+	if len(diff.RenamedPath) != 1 || diff.RenamedPath[0].From.Name != "Kept" {
+		t.Errorf("renamed-path = %+v, want only Kept", diff.RenamedPath)
+	}
+}
+
+// A declaration that matches on identity and whose signature genuinely changed
+// is ONE breaking change, not a removal and an addition. Counting it twice
+// inflated both columns and told the reader to look for a symbol that is still
+// there.
+func TestDiffRecords_CrossMajorSignatureChangeIsOneChangeNotTwo(t *testing.T) {
+	a := recordAt(t, "example.com/mod", "v1.5.0", pkg("example.com/mod",
+		withFunc("Parse", "func Parse(s string) (*Token, error)"),
+	))
+	b := recordAt(t, "example.com/mod/v3", "v3.3.0", pkg("example.com/mod/v3",
+		withFunc("Parse", "func Parse(s string, opts ...ParserOption) (*Token, error)"),
+	))
+
+	diff := domain.DiffRecords(a, b, nil)
+
+	if diff.BreakingCount() != 1 {
+		t.Errorf("breaking count = %d, want 1", diff.BreakingCount())
+	}
+	if len(diff.Removed) != 0 || len(diff.Added) != 0 {
+		t.Errorf("a changed declaration was double-counted: removed=%+v added=%+v", diff.Removed, diff.Added)
+	}
+	if len(diff.Changed) != 1 {
+		t.Fatalf("changed = %+v, want one", diff.Changed)
+	}
+	c := diff.Changed[0]
+	// Symbol is the A side — what a consumer of the baseline calls today, and
+	// what its recorded call-graph nodes are spelled as.
+	if c.Symbol.Package != "example.com/mod" || c.MovedTo.Package != "example.com/mod/v3" {
+		t.Errorf("change does not name both identities: %+v", c)
+	}
+	if diff.ZeroBreakingOverNonTrivialDelta() {
+		t.Error("a delta with a real breaking change claimed to be zero-breaking")
+	}
+}
+
+// The spelling discount survives the identity change: a signature that differs
+// only in a spelling the language treats as identical is a spelling change on a
+// cross-major pair too, and stays out of the breaking count.
+func TestDiffRecords_CrossMajorSpellingIsStillSpelling(t *testing.T) {
+	a := recordAt(t, "example.com/mod", "v1.0.0", pkg("example.com/mod",
+		withFunc("Cast", "func Cast(i interface{}) error"),
+	))
+	b := recordAt(t, "example.com/mod/v2", "v2.0.0", pkg("example.com/mod/v2",
+		withFunc("Cast", "func Cast(i any) error"),
+	))
+
+	diff := domain.DiffRecords(a, b, respelt(
+		[2]string{"func Cast(i interface{}) error", "func Cast(i any) error"},
+	))
+
+	if diff.BreakingCount() != 0 {
+		t.Errorf("breaking count = %d, want 0", diff.BreakingCount())
+	}
+	if len(diff.Spelling) != 1 || diff.Spelling[0].MovedTo.Package != "example.com/mod/v2" {
+		t.Errorf("spelling = %+v, want one naming both identities", diff.Spelling)
+	}
+	if len(diff.RenamedPath) != 0 {
+		t.Errorf("a respelt declaration was also reported as a pure rename: %+v", diff.RenamedPath)
+	}
+}
+
+// A subpackage that really came or went across the major bump is still reported,
+// under the import path the side it exists on actually spells. Only the pair's
+// own path shift is suppressed.
+func TestDiffRecords_CrossMajorSubpackageDeltaSurvivesSuppression(t *testing.T) {
+	a := recordAt(t, "example.com/mod", "v1.0.0",
+		pkg("example.com/mod", withFunc("Kept", "func Kept()")),
+		pkg("example.com/mod/old", withFunc("Old", "func Old()")),
+	)
+	b := recordAt(t, "example.com/mod/v2", "v2.0.0",
+		pkg("example.com/mod/v2", withFunc("Kept", "func Kept()")),
+		pkg("example.com/mod/v2/fresh", withFunc("Fresh", "func Fresh()")),
+	)
+
+	diff := domain.DiffRecords(a, b, nil)
+
+	if len(diff.PackagesRemoved) != 1 || diff.PackagesRemoved[0] != "example.com/mod/old" {
+		t.Errorf("packages removed = %v, want the A-side path of the dropped subpackage", diff.PackagesRemoved)
+	}
+	if len(diff.PackagesAdded) != 1 || diff.PackagesAdded[0] != "example.com/mod/v2/fresh" {
+		t.Errorf("packages added = %v, want the B-side path of the new subpackage", diff.PackagesAdded)
+	}
+}
+
+// A same-path comparison is untouched: no pair is recognised, nothing is
+// renamed, and the categories are what they were.
+func TestDiffRecords_SamePathIsNotAMajorPair(t *testing.T) {
+	a := record(t, "v1.0.0", pkg("example.com/mod", withFunc("Gone", "func Gone()")))
+	b := record(t, "v2.0.0", pkg("example.com/mod", withFunc("Fresh", "func Fresh()")))
+
+	diff := domain.DiffRecords(a, b, nil)
+
+	if diff.MajorPathPair {
+		t.Error("two versions of one module path were called a major path pair")
+	}
+	if len(diff.RenamedPath) != 0 {
+		t.Errorf("renamed-path = %+v on a same-path comparison", diff.RenamedPath)
+	}
+	if len(diff.Removed) != 1 || len(diff.Added) != 1 || diff.BreakingCount() != 1 {
+		t.Errorf("same-path categories changed: removed=%d added=%d breaking=%d",
+			len(diff.Removed), len(diff.Added), diff.BreakingCount())
+	}
+}
+
+// /v0 and /v1 are not module path suffixes, and a trailing element that merely
+// looks like one is not a major. Treating them as a pair would fold two
+// unrelated modules' symbols onto each other.
+func TestDiffRecords_OnlyRealMajorSuffixesPair(t *testing.T) {
+	cases := []struct{ pathA, pathB string }{
+		{"example.com/mod", "example.com/mod/v1"},
+		{"example.com/mod", "example.com/mod/v0"},
+		{"example.com/mod", "example.com/mod/v02"},
+		{"example.com/mod", "example.com/mod/vNext"},
+		{"example.com/mod", "example.com/other/v2"},
+		{"example.com/mod", "example.com/mod/v"},
+	}
+	for _, tc := range cases {
+		t.Run(tc.pathA+" vs "+tc.pathB, func(t *testing.T) {
+			a := recordAt(t, tc.pathA, "v1.0.0", pkg(tc.pathA, withFunc("F", "func F()")))
+			b := recordAt(t, tc.pathB, "v1.0.0", pkg(tc.pathB, withFunc("F", "func F()")))
+			diff := domain.DiffRecords(a, b, nil)
+			if diff.MajorPathPair {
+				t.Errorf("%s and %s were paired as one module's two majors", tc.pathA, tc.pathB)
+			}
+			if len(diff.RenamedPath) != 0 {
+				t.Errorf("symbols were folded together across unrelated paths: %+v", diff.RenamedPath)
+			}
+			if diff.BreakingCount() != 1 {
+				t.Errorf("breaking count = %d, want 1 — F is gone from the A path", diff.BreakingCount())
+			}
+		})
+	}
+}
+
+// The real pair is recognised in both directions, including from one /vN to a
+// higher one.
+func TestDiffRecords_MajorPairBetweenTwoSuffixedPaths(t *testing.T) {
+	a := recordAt(t, "example.com/mod/v4", "v4.5.2", pkg("example.com/mod/v4", withFunc("F", "func F()")))
+	b := recordAt(t, "example.com/mod/v5", "v5.3.0", pkg("example.com/mod/v5", withFunc("F", "func F()")))
+	diff := domain.DiffRecords(a, b, nil)
+	if !diff.MajorPathPair || len(diff.RenamedPath) != 1 {
+		t.Errorf("v4 → v5 was not paired: major=%v renamed=%+v", diff.MajorPathPair, diff.RenamedPath)
+	}
+}
+
+// A package a record carries that does not sit under its own module path keeps
+// its full import path as its identity, so it cannot be folded onto some other
+// package's declarations by accident.
+func TestDiffRecords_ForeignPackageIsNotFoldedOntoTheModuleRoot(t *testing.T) {
+	a := recordAt(t, "example.com/mod", "v1.0.0",
+		pkg("elsewhere.com/other", withFunc("F", "func F()")),
+	)
+	b := recordAt(t, "example.com/mod/v2", "v2.0.0",
+		pkg("example.com/mod/v2", withFunc("F", "func F()")),
+	)
+
+	diff := domain.DiffRecords(a, b, nil)
+
+	if len(diff.RenamedPath) != 0 {
+		t.Errorf("a package outside the module was folded onto the module root: %+v", diff.RenamedPath)
+	}
+	if len(diff.Removed) != 1 || len(diff.Added) != 1 {
+		t.Errorf("removed=%+v added=%+v, want the conservative reading", diff.Removed, diff.Added)
+	}
+}
+
+// The statement's own gate: a zero over an empty delta is not the case the
+// statement is for, and a non-zero breaking count never is.
+func TestInterfaceDiff_ZeroBreakingOverNonTrivialDelta(t *testing.T) {
+	sym := domain.SymbolID{Package: "example.com/mod", Kind: domain.SymbolFunc, Name: "F"}
+	cases := []struct {
+		name string
+		diff domain.InterfaceDiff
+		want bool
+	}{
+		{"empty delta", domain.InterfaceDiff{}, false},
+		{"spelling only", domain.InterfaceDiff{Spelling: []domain.SignatureChange{{Symbol: sym}}}, true},
+		{"addition only", domain.InterfaceDiff{Added: []domain.Symbol{{ID: sym}}}, true},
+		{"rename only", domain.InterfaceDiff{RenamedPath: []domain.RenamedSymbol{{From: sym, To: sym}}}, true},
+		{"a removal is breaking", domain.InterfaceDiff{Removed: []domain.Symbol{{ID: sym}}}, false},
+		{"a change is breaking", domain.InterfaceDiff{Changed: []domain.SignatureChange{{Symbol: sym}}}, false},
+		{
+			"a removal beside a respelling is still breaking",
+			domain.InterfaceDiff{
+				Removed:  []domain.Symbol{{ID: sym}},
+				Spelling: []domain.SignatureChange{{Symbol: sym}},
+			},
+			false,
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.diff.ZeroBreakingOverNonTrivialDelta(); got != tc.want {
+				t.Errorf("ZeroBreakingOverNonTrivialDelta = %v, want %v", got, tc.want)
+			}
+		})
+	}
+}

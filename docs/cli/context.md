@@ -344,6 +344,21 @@ the verdict. `walk_basis_id` always equals the section's own `walk_id`, so every
 field under one heading describes one build. The pair is set only on this
 unanchored form; `--walk-id` and `--gomod` name their build themselves.
 
+The run context — the walk status word, the coverage caveat, the affected-peer
+annotation — is read from the **10 most recent walks**, a recency window that
+keeps the report from reading every walk's runs on every invocation. The verdict
+itself does not come from that window, so the window cannot make a module look
+clean; what it can do is leave a verdict without its run context. When that is
+why the context is missing, the section says so:
+
+```
+  Walk basis:      no run context: this record was measured in a walk outside the 10 most recent this report loaded runs for
+```
+
+JSON carries the same statement as `walk_window_note`. It is emitted only when
+the window was smaller than the store: on a store holding 10 walks or fewer the
+window covered everything and there is nothing to disclose.
+
 `--gomod` names it on stderr, and says what the naming does not prove:
 
 ```
@@ -391,6 +406,7 @@ or `Affected (2 finding(s), 1 retracted)` for a mixture.
 | `walk_id` | string | Walk used for reachability analysis |
 | `walk_basis_id` | string | The walk whose scan run answered, when the answer came from the walk window rather than a build named with `--walk-id` / `--gomod`. Omitted on those anchored forms |
 | `walk_basis_frame` | string | The frame that walk was rooted at (e.g. `target-rooted:example.com/app@v1.0.0`). Omitted when the walk record is no longer in the store, which loses the frame but not the walk's identity |
+| `walk_window_note` | string | Why this section carries no run context: the record's walk falls outside the 10-walk recency window the report loaded runs for. Omitted whenever the window covered every walk in the store |
 | `snapshot_version` | string | Vulnerability database snapshot date |
 | `extracted_at` | string | RFC3339 scan timestamp |
 | `error` | string | Set when `status` is `read_error` |

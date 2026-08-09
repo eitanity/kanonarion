@@ -83,6 +83,16 @@ func runDependents(ctx context.Context, moduleArg, storeRoot, walkID string, jso
 	}
 	defer func() { _ = cleanup() }()
 
+	return dependentsWith(ctx, ctr, coord, walkID, jsonOut, directOnly, includeRoot, stdout, stderr)
+}
+
+// dependentsWith holds the query over an injected Container, so the walk
+// selection — the named --walk-id and the containment search that stands in for
+// it — is exercisable without a live store. Split from runDependents on the
+// same terms as licenseCompatWith.
+func dependentsWith(ctx context.Context, ctr *Container, coord coordinate.ModuleCoordinate, walkID string,
+	jsonOut, directOnly, includeRoot bool, stdout, stderr io.Writer,
+) error {
 	if walkID == "" {
 		resolved, rerr := findWalkContaining(ctx, ctr.QueryWalks, coord)
 		if rerr != nil {
@@ -94,7 +104,7 @@ func runDependents(ctx context.Context, moduleArg, storeRoot, walkID string, jso
 	rec, err := ctr.QueryWalks.GetWalk(ctx, walkID)
 	if err != nil {
 		if isWalkNotFound(err) {
-			return &exitError{code: ExitNotFound, msg: fmt.Sprintf("walk record %q not found", walkID)}
+			return walkIDMiss(ctx, ctr.QueryWalks, walkID, stderr)
 		}
 		if isWalkIntegrity(err) {
 			return &exitError{code: ExitIntegrity, msg: fmt.Sprintf("walk record %q failed integrity check", walkID)}
@@ -248,15 +258,31 @@ func writeDependentsJSON(
 	return nil
 }
 
+// walkSearchLimit is how many of the newest walks the containment search reads.
+// It is a bound on cost — each candidate costs a whole walk record read — and
+// not a statement that older walks hold nothing.
+const walkSearchLimit = 50
+
 // findWalkContaining returns the ID of the most recent walk (by started_at) that
-// contains coord as a node in its graph. Returns an error if no such walk exists.
+// contains coord as a node in its graph.
+//
+// The search is bounded, and its failure says so. A negative from a search that
+// did not exhaust the population is not an absence: phrased flat, "no walk found
+// containing X" reads as "this store has never seen X" while the walk holding it
+// sits at position 51. That is the same rule the call-graph verdict applies —
+// RESOLVED-ABSENT only where the axis was measurable — on a store search.
+//
+// One extra row is fetched so the search knows whether its own bound bit,
+// exactly as the listings do. When it did not, the population WAS exhausted and
+// the negative is stated plainly: a caveat emitted unconditionally would teach
+// the reader to discount it in the case where it is real.
 func findWalkContaining(ctx context.Context, uc QueryWalksUseCase, coord coordinate.ModuleCoordinate) (string, error) {
-	const searchLimit = 50
-	summaries, err := uc.ListWalks(ctx, walkports.WalkFilter{Limit: searchLimit})
+	summaries, err := uc.ListWalks(ctx, walkports.WalkFilter{Limit: truncationFetchLimit(walkSearchLimit)})
 	if err != nil {
 		return "", fmt.Errorf("listing walks: %w", err)
 	}
-	for _, s := range summaries {
+	searched, bounded := truncateList(summaries, walkSearchLimit)
+	for _, s := range searched {
 		rec, rerr := uc.GetWalk(ctx, s.ID)
 		if rerr != nil {
 			continue
@@ -267,7 +293,18 @@ func findWalkContaining(ctx context.Context, uc QueryWalksUseCase, coord coordin
 			}
 		}
 	}
-	return "", fmt.Errorf("no walk found containing %s", coord)
+	if !bounded {
+		return "", fmt.Errorf("no walk in this store contains %s (all %d walk(s) searched)", coord, len(searched))
+	}
+	// Only now is the store's own size worth a read: it is what turns "the
+	// search stopped" into a number the caller can act on.
+	total := len(searched)
+	if all, aerr := uc.ListWalks(ctx, walkports.WalkFilter{}); aerr == nil {
+		total = len(all)
+	}
+	return "", fmt.Errorf("no walk containing %s among the %d most recent walks searched — the store holds %d; "+
+		"name the walk to query with --walk-id, or list them with: kanonarion walk-list --limit 0",
+		coord, walkSearchLimit, total)
 }
 
 // Scope suffixes for the answer line. The root is excluded by default, so

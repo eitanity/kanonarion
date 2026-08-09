@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -53,9 +54,11 @@ func containerWithWalk(coord coordinate.ModuleCoordinate, report licdomain.Closu
 func TestLicenseCompatWith_NoWalk(t *testing.T) {
 	ctr := &Container{QueryWalks: testfakes.NewFakeQueryWalks()} // empty
 	var out bytes.Buffer
-	err := licenseCompatWith(context.Background(), ctr, compatCoord(), "Apache-2.0", &out)
+	err := licenseCompatWith(context.Background(), ctr, compatCoord(), "Apache-2.0", &out, io.Discard)
 	requireExit(t, err, ExitNotFound)
-	if !strings.Contains(err.Error(), "no walk record found") {
+	// The remedy the flat negative carried is kept — an empty store still says
+	// how to produce the record — and it now also says what was searched.
+	if !strings.Contains(err.Error(), "kanonarion walk example.com/m@v1.0.0") {
 		t.Errorf("missing walk diagnostic: %v", err)
 	}
 }
@@ -65,7 +68,7 @@ func TestLicenseCompatWith_NoWalk(t *testing.T) {
 func TestLicenseCompatWith_RootNotAnalysed(t *testing.T) {
 	ctr := containerWithWalk(compatCoord(), licdomain.ClosureCompatibilityReport{}, licapp.ErrRootLicenceNotAnalysed)
 	var out bytes.Buffer
-	err := licenseCompatWith(context.Background(), ctr, compatCoord(), "", &out)
+	err := licenseCompatWith(context.Background(), ctr, compatCoord(), "", &out, io.Discard)
 	requireExit(t, err, ExitNotFound)
 	if !strings.Contains(err.Error(), "kanonarion license") {
 		t.Errorf("diagnostic should name the license command: %v", err)
@@ -77,7 +80,7 @@ func TestLicenseCompatWith_RootNotAnalysed(t *testing.T) {
 func TestLicenseCompatWith_RootNoSPDX(t *testing.T) {
 	ctr := containerWithWalk(compatCoord(), licdomain.ClosureCompatibilityReport{}, licapp.ErrRootLicenceNoSPDX)
 	var out bytes.Buffer
-	err := licenseCompatWith(context.Background(), ctr, compatCoord(), "", &out)
+	err := licenseCompatWith(context.Background(), ctr, compatCoord(), "", &out, io.Discard)
 	requireExit(t, err, ExitFailed)
 	if !strings.Contains(err.Error(), "--target") {
 		t.Errorf("diagnostic should suggest --target: %v", err)
@@ -89,7 +92,7 @@ func TestLicenseCompatWith_Clean(t *testing.T) {
 	report := licdomain.ClosureCompatibilityReport{TargetSPDX: "Apache-2.0", Clean: true}
 	ctr := containerWithWalk(compatCoord(), report, nil)
 	var out bytes.Buffer
-	if err := licenseCompatWith(context.Background(), ctr, compatCoord(), "Apache-2.0", &out); err != nil {
+	if err := licenseCompatWith(context.Background(), ctr, compatCoord(), "Apache-2.0", &out, io.Discard); err != nil {
 		t.Fatalf("clean closure should exit 0, got: %v", err)
 	}
 	if out.Len() == 0 {
@@ -111,6 +114,6 @@ func TestLicenseCompatWith_ConflictPropagates(t *testing.T) {
 	}
 	ctr := containerWithWalk(compatCoord(), report, nil)
 	var out bytes.Buffer
-	err := licenseCompatWith(context.Background(), ctr, compatCoord(), "Apache-2.0", &out)
+	err := licenseCompatWith(context.Background(), ctr, compatCoord(), "Apache-2.0", &out, io.Discard)
 	requireExit(t, err, ExitFailed)
 }

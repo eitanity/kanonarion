@@ -20,7 +20,7 @@ func ClassifyRouteRoot(route ReachabilityRoute, rooting Rooting, rootModule stri
 		return RouteRoot{}
 	}
 
-	root := RouteRoot{NodeID: facts.NodeID}
+	root := RouteRoot{NodeID: facts.NodeID, Ancestry: facts.Ancestry}
 
 	// The route is target-rooted only when it begins inside the module the
 	// analysis was rooted at. An isolated or unrecorded frame had no application

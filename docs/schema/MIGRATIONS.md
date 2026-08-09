@@ -203,6 +203,68 @@ Nothing verifies `identity_hash` on read and no stored hash is ever compared
 across the old and new styles: an old-style walk has no identity at all, so the
 comparison cannot arise. Reads of existing walks are unchanged in every respect.
 
+## Call graph record: pipeline `0.3.0` → `0.4.1`
+
+**Behaviour change in what gets loaded; no record shape change, no schema bump,
+no store migration.** Call graph records are keyed
+`(module, version, pipeline_version)`, so the bump is the migration: `0.3.0`
+rows stay where they are, become unreachable, and are never served for a
+`0.4.1` request. The cost is one re-extraction per coordinate on its next
+`callgraph` run.
+
+Four changes to what the loader is pointed at, each of which can turn an empty
+graph into a real one and so must not be served for the other:
+
+- **Package membership follows the module path the analysed tree DECLARES**, not
+  the coordinate it was published under. A fork republished at a new path that
+  never rewrote its own `module` directive matched none of its own packages, so
+  the target set was empty and the record was an empty graph.
+- **The load no longer requires the artefact to ship a `go.sum` covering its own
+  module graph** (`-mod=mod` on every load, not only synthesised ones). `go.sum`
+  is an obligation of whatever is being built; a module analysed alone is a main
+  module for the first time, and its published zip was never required to carry
+  one.
+- **A synthesised `go.mod` pins `go 1.17` rather than `go 1.16`**, so the module
+  graph is pruned to what the build reads. Unpruned, minimal version selection
+  reads the `go.mod` of every module reachable through every requirement, and
+  one absent from the local cache failed the load on a version nothing compiles.
+  Records carrying `synthesised_go_mod.go_directive: "1.16"` were built under
+  the older selection; the language does not differ between the two versions.
+- **A load that resolves nothing records which of those it was.** The old
+  records said `no packages successfully loaded`, which named neither what was
+  sought, nor what the loader found, nor what it reported.
+
+Nothing in the sealed shape moved, and no field was added or removed, so every
+stored record keeps its content hash verifiable. The version skips `0.4.0`,
+which was consumed by an intermediate measurement.
+
+## Vendor record: schema `4` → `5`, pipeline `0.3.0` → `0.4.0`
+
+**Record shape change and a finding-set change; no store migration.** Vendor
+records are keyed `(project_module_path, pipeline_version)` and `GetVendorRecord`
+selects on the current one, so the bump is the migration: `0.3.0` rows stay
+where they are, become unreachable, and are never served for a `0.4.0` request.
+The cost is one re-scan per project on its next `vendor` run.
+
+Each `VendoredModule` records the **replacement coordinate**
+(`replacement_path` / `replacement_version`) `vendor/modules.txt` names for it,
+and the **number of files compared** against the verified zip; the record
+carries the total. The content hash covers all three.
+
+The behaviour that forced the bump: a module is resolved through
+`vendor/modules.txt`'s replace clause before the `go.sum` lookup, so a replaced
+module is verified against the **replacement's** `h1` — the coordinate the build
+resolves, and the only one `go.sum` attests. A `0.3.0` record reports every
+replaced module as having no `go.sum` entry. That is not merely less than a
+`0.4.0` record says, it is the opposite of what `go.sum` holds, so the two must
+not be served for one another.
+
+`expected_hash` on a replaced module is now the replacement's checksum, and is
+absent for a filesystem replacement (`=> ../fork`), which publishes no module
+and so has no checksum anywhere. A filesystem replacement is reported
+`unverified` naming the path, never verified against the original coordinate's
+retained `go.sum` line.
+
 ## Vendor record: schema `3` → `4`, pipeline `0.2.0` → `0.3.0`
 
 **Record shape change and a finding-set change; no store migration.** Vendor
@@ -260,6 +322,133 @@ Measured on the real store at migration time: 92 rows, 72 back-filled to
 `linux/amd64`, 20 left unrecorded — and those 20 are exactly the module-rooted
 walks. Only the project resolver writes a `BuildEnv`, so a walk rooted at a
 published coordinate structurally has no frame and can never gain one.
+
+## Call graph store: module `callgraph`, migration 12
+
+**Additive; one new column, no record-shape purge, no schema-version bump and no
+pipeline bump.** `callgraph_edges` gains `kind`: whether an edge is a call, or a
+REFERENCE to a function value — the shape of `r.Get("/confirm", h.Confirm)`,
+where nothing is invoked and a value is handed to a router. The whole store's
+migration count goes `v75` -> `v76`.
+
+**Back-filled `''`, and that is the truth rather than a default.** Nothing before
+this migration extracted a reference edge, so every stored edge IS a call, and
+the zero value of `EdgeKind` is `call`. There is no unrecorded third state to
+ladder against.
+
+**Why no bump, when a new edge kind looks exactly like the sort of change that
+owes one.** The rule this repository applies is in
+`CallGraphSchemaVersion`'s own doc comment: *bump only when a change makes an OLD
+record say something FALSE, not merely something less*. Two facts settle it.
+
+- The record shape is unchanged for stored bytes. `kind` on the canonical edge
+  and `reference_scope` on the canonical record are both `omitempty` from birth,
+  so every stored record re-marshals to the bytes it was sealed over and still
+  verifies. (See the fetch-record precedent for the same exemption.)
+- The one thing an old record WOULD have said falsely is now stated by the
+  record itself. `CallGraphRecord.ReferenceScope` reads "not measured" on every
+  record written before references existed, and the verdict layer downgrades an
+  empty `callers` answer over such a record to `UNRESOLVED` naming
+  `reference-scope-unmeasured` — instead of the `RESOLVED-ABSENT` that was the
+  actual defect.
+
+Bumping either version would have taken every stored call graph out of every
+answer until re-extraction — a purge by another name — to replace a fact the
+record can simply carry. Re-extraction costs roughly 52 MiB per module and the
+largest graphs in the store take minutes; the ledger exists precisely so that
+cost is paid when a measurement is wanted, not when a column is added.
+
+## Call graph store: module `callgraph`, migration 13
+
+**Additive; one new column, no back-fill, no purge, no schema-version bump and no
+pipeline bump.** `callgraph_records` gains `analysis_root`: the absolute,
+symlink-free directory a worktree analysis ran in. The whole store's migration
+count goes `v76` -> `v77`.
+
+**Why a record needs it when it already carries a worktree digest.** The digest
+is the tree's IDENTITY — a hash of what it contains — and it is the right answer
+to "are these two measurements of the same code". It is the wrong key for
+"answer me from the tree I am standing in", because a tree with one uncommitted
+edit matches no content state the ledger holds. Measured on the maintainer's
+store before this landed: one local coordinate held **eighteen generations across
+sixteen distinct digests** — one working tree at sixteen content states, not
+sixteen checkouts. A read filtering on digest equality would have answered
+nothing for the developer it exists for. The root survives edits, and it is what
+"the tree the caller is in" actually means.
+
+**No back-fill.** `''` is the true value for every existing row. No record
+written before this states where its tree was, and the decoded record carries the
+same empty value. Inventing a root — the store's directory, the module path,
+anything — would answer "which tree did this come from" with a guess, in the one
+table whose job is keeping two checkouts apart.
+
+**No purge, and no bump.** `analysis_root` is `omitempty` on the canonical
+record, so every stored record marshals to the bytes it was sealed over and still
+verifies against its stored hash. It IS inside the sealed shape, which matters
+for a different reason: two checkouts can hold byte-identical trees, and without
+the root in the hash they would share a `content_hash` — a primary-key column —
+and collapse onto one row.
+
+**What an unlocated generation does now.** It still answers. The tree-scoped read
+tries the caller's root first and falls back to the newest generation of any tree
+when nothing matches, so no reader loses an answer they had. What changes is that
+the fall-back is stated: a `callers` query run inside a module whose only
+generations predate this migration prints one notice naming what answered and
+what to run to be answered from this tree. The generations are neither superseded
+nor silently trusted — they are named as unattributable, which is what they are.
+
+**The worktree digest changed VALUE at the same migration, and did not bump
+either.** It is now hashed over the file list the loader resolved rather than a
+filesystem walk of the tree, so it follows an out-of-root symlink the walk could
+not see and ignores `testdata`, nested modules and build-tag-excluded files the
+walk counted. Re-analysing an unchanged tree therefore mints a different digest
+than it did before. That makes no stored record say anything false — each still
+identifies the tree it read, under the rule in force when it was written — and
+the values now carry a scheme prefix (`analysed-sha256:`, `scanned-sha256:`; a
+bare `sha256:` is a pre-migration record) so the two can never be compared as
+though they were one. Nothing routes on digest equality, so nothing needed the
+comparison the change breaks.
+
+**What a reader sees change without re-extracting anything:** `callers` on a
+symbol with no edges over a pre-existing record answers `UNRESOLVED` where it
+previously answered `RESOLVED-ABSENT`. That is the correction, not a regression.
+Re-extract the module to get the measured answer back.
+
+## Call graph records: the wrapper hop, no migration and no bump
+
+**No store migration, no schema-version bump, no pipeline bump.** The analyser
+now records the outgoing edges of the synthetic wrapper a method value goes
+through, so an invocation path reaches the method that runs rather than stopping
+on the wrapper. Nothing about the record's SHAPE changes: the recovered hop is a
+`CallEdge` like any other, in columns that already exist.
+
+**The counter-argument, because it is real.** An old record does not merely say
+less here — it can say something false. Measured on a fixture: a method invoked
+only through a method value is a node in the graph (it calls other things) with
+ZERO in-edges, in a record whose `ReferenceScope` is `Analysed`. `callers` over
+that record answers `RESOLVED-ABSENT` — a measured "nothing calls this" — for a
+method every request runs. That is exactly the condition
+`CallGraphSchemaVersion`'s rule names.
+
+**Why it still does not earn a bump.** The population that can make that false
+claim is bounded by `ReferenceScope`, and it is small and self-healing. Measured
+read-only against the store: 461 stored call-graph records, all schema v13; 456
+have no `ReferenceScope`, so the verdict layer already downgrades an empty
+`callers` answer over them to `UNRESOLVED` naming `reference-scope-unmeasured`
+and they cannot claim an absence at all. The remaining 5 are one module's local
+working-tree generations, which the next `kanonarion local .` supersedes. A bump
+would darken 461 records to correct 5 — the purge-by-another-name the rule exists
+to avoid — and would not even correct them, only hide them.
+
+**What is owed instead, and is not in this change.** The instrument that fits is
+the one migration 12 introduced: an axis the record carries about itself, so the
+silence describes itself and the verdict downgrades over a record written before
+wrapper hops were recorded. Until that lands, the residual is the 5 records
+above, and re-extraction closes it.
+
+**What a reader sees change after re-extracting:** a `$bound` wrapper appears as
+a caller, paths across a method value are one hop longer, and a method reachable
+only through a method value stops answering "no callers".
 
 ## Purging a table other rows point at
 

@@ -1,9 +1,12 @@
 // Package direct implements ports.ModuleProxy against a Go module proxy
 // (default: proxy.golang.org).
 //
-// It reads $GOPROXY under Go's own grammar, including the two values whose
-// meaning is that no proxy is to be used: `off` (this environment does no
-// module fetching) and `direct` (fetch from the VCS origin instead). Both
+// It reads $GOPROXY under Go's own grammar — and from Go's own sources: the
+// process environment first, then the env file `go env -w` writes to, so an
+// operator who declared the air gap with `go env -w GOPROXY=off` is honoured
+// rather than silently read as unset. The two values whose meaning is that no
+// proxy is to be used are `off` (this environment does no module fetching) and
+// `direct` (fetch from the VCS origin instead). Both
 // refuse — see ErrProxyOff and ErrProxyDirectUnsupported — because rewriting
 // either to the default proxy would cross the boundary the operator drew, and
 // would do it silently. $GONOSUMCHECK and $GONOSUMDB govern the checksum
@@ -19,12 +22,12 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"os"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
+	"github.com/eitanity/kanonarion/internal/goenv"
 
 	domain2 "github.com/eitanity/kanonarion/internal/fetch/domain"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
@@ -44,12 +47,17 @@ var ErrNotFound = errors.New("not found")
 // ErrProxyOff reports that the environment declares no module fetching
 // (GOPROXY=off) and the operation was refused before any network request.
 //
+// It wraps goenv.ErrNetworkForbidden, the fact the whole no-network contract is
+// built on, so a caller that only needs to know the operator forbade the
+// network recognises this refusal alongside the advisory, checksum-database,
+// standard-library and VCS refusals without importing this adapter.
+//
 // It is a refusal, never a fall-back. GOPROXY=off is an operator's statement
 // that this process is on the wrong side of an air gap; treating it as
 // "unset" and reaching for the default proxy breaches the contract AND
 // records network-acquired evidence in a store that is meant to hold only
 // what the enclave itself can see.
-var ErrProxyOff = errors.New("GOPROXY=off: the environment declares no module fetching")
+var ErrProxyOff = fmt.Errorf("%w: the environment declares no module fetching", goenv.ErrNetworkForbidden)
 
 // ErrProxyDirectUnsupported reports that GOPROXY selects direct VCS-origin
 // fetching, which this adapter does not implement.
@@ -118,7 +126,9 @@ func resolveProxy() (string, error) {
 }
 
 // resolveProxyValue resolves an explicit GOPROXY-shaped value, falling back to
-// $GOPROXY when value is empty and to proxy.golang.org when that is empty too.
+// the resolved $GOPROXY when value is empty and to proxy.golang.org when that is
+// empty too. "Resolved" is goenv's job and means what it means to the go
+// command: the environment variable, then Go's env file.
 //
 // The list grammar is Go's: entries separated by "," or "|", tried in order.
 // This adapter speaks to exactly one proxy, so only the first usable entry is
@@ -129,21 +139,18 @@ func resolveProxy() (string, error) {
 // in the go command: nothing after it is tried, and nothing is fetched.
 func resolveProxyValue(value string) (string, error) {
 	if strings.TrimSpace(value) == "" {
-		value = os.Getenv("GOPROXY")
+		value = goenv.Proxy()
 	}
-	for entry := range strings.FieldsFuncSeq(value, func(r rune) bool { return r == ',' || r == '|' }) {
-		entry = strings.TrimSpace(entry)
-		switch entry {
-		case "":
-			continue
-		case "off":
-			return "", fmt.Errorf("%w; %s", ErrProxyOff, offlineRemedies)
-		case "direct":
-			return "", fmt.Errorf("%w; set GOPROXY to a module proxy URL, or %s", ErrProxyDirectUnsupported, offlineRemedies)
-		}
+	switch entry := goenv.FirstProxyEntry(value); entry {
+	case "":
+		return defaultProxy, nil
+	case "off":
+		return "", fmt.Errorf("%w; %s", ErrProxyOff, offlineRemedies)
+	case "direct":
+		return "", fmt.Errorf("%w; set GOPROXY to a module proxy URL, or %s", ErrProxyDirectUnsupported, offlineRemedies)
+	default:
 		return entry, nil
 	}
-	return defaultProxy, nil
 }
 
 // Info fetches the.info endpoint for the module version.

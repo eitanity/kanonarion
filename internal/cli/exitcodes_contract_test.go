@@ -75,11 +75,29 @@ func TestExitCodeContract_MissingRecordIsNotFound(t *testing.T) {
 		}},
 		{"walk-diff", ExitNotFound, func(t *testing.T) error {
 			return runWalkDiff(context.Background(), missingWalk, missingWalk,
-				&testfakes.FakeDiffWalks{Err: walkports.ErrWalkNotFound}, &bytes.Buffer{})
+				&testfakes.FakeDiffWalks{Err: walkports.ErrWalkNotFound}, emptyWalks(), &bytes.Buffer{}, io.Discard)
 		}},
 		{"walk-list --walk-id", ExitNotFound, func(t *testing.T) error {
-			return runWalkList(context.Background(), "", "", "", "", missingWalk, 0, false, false,
+			return runWalkList(context.Background(), "", "", "", "", missingWalk, 0, 0, false, false,
 				emptyWalks(), &bytes.Buffer{}, &bytes.Buffer{})
+		}},
+		// --latest-success names one record too — the most recent succeeded
+		// walk — and answered its absence with a bare error that landed on the
+		// invocation-error catch-all. Nothing was malformed about the request:
+		// the record it selects is not there, which is the same class as every
+		// other selector above.
+		{"walk-list --latest-success", ExitNotFound, func(t *testing.T) error {
+			return runWalkList(context.Background(), "", "", "succeeded", "", "", 1, 0, false, true,
+				emptyWalks(), &bytes.Buffer{}, &bytes.Buffer{})
+		}},
+		{"directives show", ExitNotFound, func(t *testing.T) error {
+			return directivesShowWith(context.Background(),
+				&Container{QueryDirectives: &testfakes.FakeQueryDirectives{}}, "missing-scan",
+				&bytes.Buffer{}, &bytes.Buffer{})
+		}},
+		{"vuln-snapshot-show", ExitNotFound, func(t *testing.T) error {
+			return runSnapshotShow(context.Background(), "govulndb", "v9999-01-01T00-00-00", false,
+				testfakes.NewFakeQueryScanRuns(), &bytes.Buffer{}, &bytes.Buffer{})
 		}},
 		{"vuln-show --walk-id (walk never scanned)", ExitNotFound, func(t *testing.T) error {
 			return runVulnShow(context.Background(), coord.String(), missingWalk, "", false, false, false,
@@ -95,11 +113,11 @@ func TestExitCodeContract_MissingRecordIsNotFound(t *testing.T) {
 		}},
 		{"scan-show", ExitNotFound, func(t *testing.T) error {
 			return runScanShow(context.Background(), "vscan-missing", false,
-				testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryVuln(), &bytes.Buffer{})
+				testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryVuln(), &bytes.Buffer{}, io.Discard)
 		}},
 		{"license-compat (no walk record)", ExitNotFound, func(t *testing.T) error {
 			return licenseCompatWith(context.Background(),
-				&Container{QueryWalks: emptyWalks()}, coord, "Apache-2.0", &bytes.Buffer{})
+				&Container{QueryWalks: emptyWalks()}, coord, "Apache-2.0", &bytes.Buffer{}, io.Discard)
 		}},
 	})
 }
@@ -114,11 +132,11 @@ func TestExitCodeContract_WalkByIDAgreesAcrossCommands(t *testing.T) {
 	for name, err := range map[string]error{
 		"walk-show": runWalkShow(context.Background(), missingWalk, testfakes.NewFakeQueryWalks(), &bytes.Buffer{}, io.Discard),
 		"walk-diff": runWalkDiff(context.Background(), missingWalk, missingWalk,
-			&testfakes.FakeDiffWalks{Err: walkports.ErrWalkNotFound}, &bytes.Buffer{}),
-		"walk-list --walk-id": runWalkList(context.Background(), "", "", "", "", missingWalk, 0, false, false,
+			&testfakes.FakeDiffWalks{Err: walkports.ErrWalkNotFound}, testfakes.NewFakeQueryWalks(), &bytes.Buffer{}, io.Discard),
+		"walk-list --walk-id": runWalkList(context.Background(), "", "", "", "", missingWalk, 0, 0, false, false,
 			testfakes.NewFakeQueryWalks(), &bytes.Buffer{}, &bytes.Buffer{}),
 		"verification-coverage": runVerificationCoverage(context.Background(), missingWalk,
-			testfakes.NewFakeQueryWalks(), fakeFetchRecords{}, &bytes.Buffer{}),
+			testfakes.NewFakeQueryWalks(), fakeFetchRecords{}, false, &bytes.Buffer{}, io.Discard),
 	} {
 		if code := ExitCodeForError(err); code != ExitNotFound {
 			t.Errorf("%s answers a missing walk with exit %d; every walk-by-ID read must answer %d",

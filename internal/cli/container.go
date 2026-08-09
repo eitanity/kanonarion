@@ -21,10 +21,12 @@ import (
 	gosumfile "github.com/eitanity/kanonarion/internal/adapters/sumdb/gosumfile"
 	sumdbretry "github.com/eitanity/kanonarion/internal/adapters/sumdb/retrying"
 	fetchvcs "github.com/eitanity/kanonarion/internal/adapters/vcs/gitexec"
+	"github.com/eitanity/kanonarion/internal/goenv"
 
 	cganalyser "github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha"
 	cgsqlite "github.com/eitanity/kanonarion/internal/callgraph/adapters/store/sqlite"
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
+	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 
 	"github.com/eitanity/kanonarion/internal/composition"
 
@@ -224,6 +226,19 @@ func openMigratedStore(dbPath string) (sqlitestore.DB, error) {
 	return dbHandle, nil
 }
 
+// offlineStdlibAnchor reports whether this run anchors the standard library to
+// the local toolchain rather than to go.dev/dl.
+//
+// Two independent circumstances select it, and naming the decision keeps them
+// from being confused for one: --from-modcache says where module bytes come
+// from, and a declared air gap says whether this process may leave the
+// building. Either one alone is enough, which is the correction — the choice
+// used to be made on the acquisition mode alone, so an air-gapped run without
+// --from-modcache still reached go.dev/dl.
+func offlineStdlibAnchor(modcacheMode bool) bool {
+	return modcacheMode || goenv.NetworkForbidden()
+}
+
 func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg domain.Config, logger *slog.Logger) (*Container, func() error, error) {
 	if err := os.MkdirAll(storeRoot, 0o750); err != nil {
 		return nil, nil, fmt.Errorf("creating store root %s: %w", storeRoot, err)
@@ -324,6 +339,11 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	licStore := licsqlite.New(dbHandle)
 	ifaceStore := ifacesqlite.New(dbHandle)
 	cgStore := cgsqlite.New(dbHandle)
+	// Which working tree the reader is standing in. A query about a local
+	// coordinate is then answered from THAT tree's newest generation rather than
+	// from whichever tree was analysed last — and from outside any module, or in a
+	// module the ledger has never been run in, the read is exactly what it was.
+	cgStore.PreferWorktree(callerWorktree(logger))
 	exStore := exsqlite.New(dbHandle)
 	vulnStore := vulnsqlite.New(dbHandle)
 	sbomStore := sbomstore.New(dbHandle)
@@ -376,7 +396,15 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// mode the run is fully offline, so it anchors instead to the local toolchain
 	// ($GOROOT/src + $GOROOT/LICENSE), recorded as VerifiedLocalToolchain — no
 	// network I/O either way leaves the stdlib node populated.
-	if modcacheMode {
+	//
+	// An environment that declares no network selects the offline anchor for the
+	// same reason --from-modcache does, and this is the whole of the fix: the
+	// offline acquirer already existed and already anchors without I/O, but the
+	// choice was made on the acquisition MODE alone, so an air-gapped run that
+	// had not also passed --from-modcache reached go.dev/dl. The two are
+	// different questions — where the module bytes come from, and whether this
+	// environment may leave the building — and only the second one governs here.
+	if offlineStdlibAnchor(modcacheMode) {
 		resolver = resolver.WithStdlibAcquirer(
 			composition.NewOfflineStdlibAcquirer(dbHandle, goBinary, clk, factStore, logger), skipVCSVerify)
 	} else {
@@ -426,10 +454,11 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	// state. Without these the child falls back to the default store root and
 	// the plain content-addressed blob store, and a modcache-sourced module
 	// (a "modcache:zip:" blob handle) fails to resolve.
-	cgExtraArgs := []string{"--store-root=" + storeRoot}
+	cgModcacheDir := ""
 	if modcacheMode {
-		cgExtraArgs = append(cgExtraArgs, "--from-modcache="+modcacheDir)
+		cgModcacheDir = modcacheDir
 	}
+	cgExtraArgs := extextractor.CallGraphSubprocessArgs(storeRoot, cgModcacheDir)
 	adapterExtractor := extextractor.NewAdapterExtractor(licExtractUC, ifaceExtractUC, cgSubprocessExec, cgStore, cgapp.PipelineVersion, cgExtraArgs, exExtractUC)
 	pipelineVersions := map[string]string{
 		"license":   "0.1.0",
@@ -630,4 +659,43 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	}
 
 	return ctr, cleanup, nil
+}
+
+// callerWorktree resolves the working tree the process is standing in: the
+// nearest enclosing directory holding a go.mod, and the module path that file
+// declares.
+//
+// It returns the zero preference — no preference — for every case where the
+// question has no answer: not inside a module, a go.mod that will not parse, a
+// working directory that cannot be resolved. None of those is an error worth
+// failing a command over. The read they leave in place is the one every command
+// had before trees could be told apart, so the cost of not knowing is the
+// behaviour that was previously the only behaviour.
+func callerWorktree(logger *slog.Logger) cgports.WorktreePreference {
+	cwd, err := os.Getwd()
+	if err != nil {
+		logger.Debug("worktree_preference_unresolved", slog.String("reason", err.Error()))
+		return cgports.WorktreePreference{}
+	}
+	dir, err := filepath.EvalSymlinks(cwd)
+	if err != nil {
+		logger.Debug("worktree_preference_unresolved", slog.String("reason", err.Error()))
+		return cgports.WorktreePreference{}
+	}
+	for {
+		gomod := filepath.Join(dir, "go.mod")
+		if _, statErr := os.Stat(gomod); statErr == nil {
+			modulePath, mErr := readGoModulePath(gomod)
+			if mErr != nil {
+				logger.Debug("worktree_preference_unresolved", slog.String("reason", mErr.Error()))
+				return cgports.WorktreePreference{}
+			}
+			return cgports.WorktreePreference{ModulePath: modulePath, Root: dir}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			return cgports.WorktreePreference{}
+		}
+		dir = parent
+	}
 }

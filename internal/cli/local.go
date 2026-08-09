@@ -89,5 +89,8 @@ func runLocalCallGraph(ctx context.Context, dir string, f localFlags, stdout, st
 		return fmt.Errorf("extracting local call graph: %w", err)
 	}
 
-	return printCallGraphSummary(result.Record, result.FromCache, jsonOut, stdout)
+	if err := printCallGraphSummary(result.Record, result.FromCache, jsonOut, stdout); err != nil {
+		return err
+	}
+	return callGraphExtractionExit(result.Record)
 }

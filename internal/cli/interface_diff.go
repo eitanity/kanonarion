@@ -36,6 +36,35 @@ const usedByCoverageNote = "coverage: reached/not-reached is measured over recor
 	"Types, constants and variables have no call-graph node at all and are reported as " +
 	"unmeasured rather than as unreached."
 
+// zeroBreakingBehaviourNote is what the output says when it found no breaking
+// change over a delta that is not empty.
+//
+// It is printed where the reader meets the zero rather than in a scope footer,
+// because the footer was already there and was read past: three independent
+// upgrade-triage runs saw the passive scope note beside a zero and still called
+// the bump safe. It is an active statement about what the zero does not mean.
+//
+// It deliberately avoids every word the seam test forbids — the statement is
+// about what the zero does NOT establish, and reaching for a verdict adjective
+// to say so would defeat it.
+const zeroBreakingBehaviourNote = "a zero here is not reassurance. This comparison reads exported " +
+	"signatures, so it cannot see behaviour: a release that changes no signature at all can still change " +
+	"what your calls return. A zero-breaking bump is the case that most needs checking against something " +
+	"this command does not measure."
+
+// zeroBreakingCrossMajorNote is added to the statement when the zero sits on a
+// cross-major pair. A new major version is the author declaring an incompatible
+// change, so a zero-breaking signature comparison there narrows where to look
+// rather than settling it.
+const zeroBreakingCrossMajorNote = "this is a new major version, which is the author declaring something " +
+	"incompatible changed. The signatures above show none of it, which is a reason to look harder rather " +
+	"than a reason to stop."
+
+// zeroBreakingNoUsedByNote names what would answer the question, in the
+// consumer's own hands, when no call graph was joined.
+const zeroBreakingNoUsedByNote = "what would answer it: exercise your own tests over the call sites this " +
+	"bump touches. Pass --used-by ./go.mod to have them enumerated here."
+
 type interfaceDiffFlags struct {
 	usedBy string
 }
@@ -46,7 +75,7 @@ func newInterfaceDiffCmd(stdout, stderr io.Writer) *cobra.Command {
 	var f interfaceDiffFlags
 
 	cmd := &cobra.Command{
-		Use:   "interface-diff <module>@<versionA> <module>@<versionB>",
+		Use:   "interface-diff <moduleA>@<versionA> <moduleB>@<versionB>",
 		Short: "Report exported API changes between two versions of a module",
 		Long: `interface-diff compares two stored interface records and reports the exported
 declarations added, removed and changed between them.
@@ -55,13 +84,22 @@ A signature that changed only in a spelling the language treats as identical —
 interface{} rewritten as any, a result that stopped being named — is reported
 separately as a spelling change and is NOT counted as breaking.
 
+The two module paths may differ by a major-version suffix. Given a cross-major
+pair — example.com/mod and example.com/mod/v3 — declarations are matched by
+package-relative path, kind and name rather than by import path, so a surface
+that only moved is reported as renamed-path rather than as a wall of removals
+and additions. Renamed-path is not counted as breaking; the import rewrite it
+obliges is stated on its own line.
+
 The count is a count of exported signatures. It is not a claim about behaviour:
-a release that changes no signature at all can still change what the code does.
+a release that changes no signature at all can still change what the code does,
+and a zero-breaking result over a non-empty delta says so where it is printed.
 
 Both records must already be extracted — run 'kanonarion interface' first.`,
 		Example: `  kanonarion interface-diff github.com/spf13/cast@v1.4.1 github.com/spf13/cast@v1.10.0
   kanonarion interface-diff github.com/spf13/cast@v1.4.1 github.com/spf13/cast@v1.10.0 --json
-  kanonarion interface-diff github.com/spf13/cast@v1.4.1 github.com/spf13/cast@v1.10.0 --used-by ./go.mod`,
+  kanonarion interface-diff github.com/spf13/cast@v1.4.1 github.com/spf13/cast@v1.10.0 --used-by ./go.mod
+  kanonarion interface-diff example.com/mod@v2.22.0+incompatible example.com/mod/v3@v3.3.0`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) != 2 {
 				return usageErr(cmd)
@@ -183,6 +221,16 @@ type usedByResult struct {
 	ScopeSize int
 	// Symbols covers every breaking delta, reached or not, in delta order.
 	Symbols []usedSymbol
+	// Touched covers the declarations a zero-breaking delta moved without
+	// breaking anything: the respellings and the cross-major path renames. It is
+	// the evidence for the zero-breaking statement — "zero breaking, 341 reached
+	// call sites" is a materially different statement from "zero breaking, 2" —
+	// and it NEVER gates: there is nothing here for a consumer to be broken by.
+	//
+	// It is joined only when that statement will be printed, because nothing else
+	// reads it and a large respelt surface would otherwise cost one call-graph
+	// query per declaration for no reader.
+	Touched []usedSymbol
 	// CallGraphFound is false when the consumer module has no stored call graph
 	// at all — in which case every "not reached" below is an absence of
 	// evidence, not evidence of absence, and the command says so.
@@ -198,6 +246,18 @@ func (r *usedByResult) Reached() []usedSymbol {
 		}
 	}
 	return out
+}
+
+// TouchedReach summarises the non-breaking touched set: how many of those
+// declarations the consumer's own code calls, and at how many recorded sites.
+func (r *usedByResult) TouchedReach() (decls, sites int) {
+	for _, s := range r.Touched {
+		if s.Sites > 0 {
+			decls++
+			sites += s.Sites
+		}
+	}
+	return decls, sites
 }
 
 // joinUsedBy resolves a go.mod to the latest succeeded project walk for the
@@ -234,19 +294,37 @@ func joinUsedBy(ctx context.Context, ctr *Container, diff ifacedomain.InterfaceD
 	}
 	res.CallGraphFound = found
 
-	for _, sym := range breakingSymbols(diff) {
+	join := func(sym breakingDelta) (usedSymbol, error) {
 		entry := usedSymbol{Symbol: sym.Symbol, Removed: sym.Removed}
 		nodeID, measurable := callGraphNodeID(sym.Symbol, sym.PtrReceiver)
 		entry.Measurable = measurable
 		entry.NodeID = nodeID
-		if measurable {
-			refs, ferr := ctr.QueryCallGraph.FindCallers(ctx, nodeID, cgapp.PipelineVersion, scope, cgports.EdgeQueryOptions{})
-			if ferr != nil {
-				return nil, fmt.Errorf("finding callers of %s: %w", nodeID, ferr)
-			}
-			entry.Sites, entry.Callers = consumerCallers(refs, rec.Target, positions)
+		if !measurable {
+			return entry, nil
+		}
+		refs, ferr := ctr.QueryCallGraph.FindCallers(ctx, nodeID, cgapp.PipelineVersion, scope, cgports.EdgeQueryOptions{})
+		if ferr != nil {
+			return usedSymbol{}, fmt.Errorf("finding callers of %s: %w", nodeID, ferr)
+		}
+		entry.Sites, entry.Callers = consumerCallers(refs, rec.Target, positions)
+		return entry, nil
+	}
+
+	for _, sym := range breakingSymbols(diff) {
+		entry, jerr := join(sym)
+		if jerr != nil {
+			return nil, jerr
 		}
 		res.Symbols = append(res.Symbols, entry)
+	}
+	if diff.ZeroBreakingOverNonTrivialDelta() {
+		for _, sym := range touchedSymbols(diff) {
+			entry, jerr := join(sym)
+			if jerr != nil {
+				return nil, jerr
+			}
+			res.Touched = append(res.Touched, entry)
+		}
 	}
 	return res, nil
 }
@@ -270,6 +348,24 @@ func breakingSymbols(diff ifacedomain.InterfaceDiff) []breakingDelta {
 	}
 	for _, c := range diff.Changed {
 		out = append(out, breakingDelta{Symbol: c.Symbol, PtrReceiver: c.PtrReceiver})
+	}
+	return out
+}
+
+// touchedSymbols enumerates the declarations a delta moved without breaking
+// anything: the respellings and the cross-major path renames.
+//
+// They are named on the A-side identity, which is what the consumer's recorded
+// call-graph nodes are spelled as — it still depends on version A. Nothing here
+// gates: the gate is for a consumer that will be broken, and by construction
+// none of these breaks one.
+func touchedSymbols(diff ifacedomain.InterfaceDiff) []breakingDelta {
+	out := make([]breakingDelta, 0, len(diff.Spelling)+len(diff.RenamedPath))
+	for _, c := range diff.Spelling {
+		out = append(out, breakingDelta{Symbol: c.Symbol, PtrReceiver: c.PtrReceiver})
+	}
+	for _, r := range diff.RenamedPath {
+		out = append(out, breakingDelta{Symbol: r.From, PtrReceiver: r.PtrReceiver})
 	}
 	return out
 }
@@ -393,9 +489,22 @@ func printInterfaceDiff(diff ifacedomain.InterfaceDiff, used *usedByResult, stdo
 		diff.BreakingCount(), a.Path(), a.Version(), b.Path(), b.Version()); err != nil {
 		return fmt.Errorf("writing headline: %w", err)
 	}
-	if _, err := fmt.Fprintf(stdout, "added: %d  removed: %d  changed: %d  spelling: %d\n",
-		len(diff.Added), len(diff.Removed), len(diff.Changed), len(diff.Spelling)); err != nil {
+	counts := fmt.Sprintf("added: %d  removed: %d  changed: %d  spelling: %d",
+		len(diff.Added), len(diff.Removed), len(diff.Changed), len(diff.Spelling))
+	// Printed only for the pair that can have one, so a same-path comparison is
+	// not given a column that is structurally always zero.
+	if diff.MajorPathPair {
+		counts += fmt.Sprintf("  renamed-path: %d", len(diff.RenamedPath))
+	}
+	if _, err := fmt.Fprintln(stdout, counts); err != nil {
 		return fmt.Errorf("writing counts: %w", err)
+	}
+
+	if err := printCrossMajorStatement(diff, stdout); err != nil {
+		return err
+	}
+	if err := printZeroBreakingStatement(diff, used, stdout); err != nil {
+		return err
 	}
 
 	if err := printPackageDelta(diff, stdout); err != nil {
@@ -412,6 +521,9 @@ func printInterfaceDiff(diff ifacedomain.InterfaceDiff, used *usedByResult, stdo
 	}
 	if err := printChangeSection(stdout,
 		"Spelling (type-alias-equivalent, not breaking)", diff.Spelling); err != nil {
+		return err
+	}
+	if err := printRenamedPathSection(diff, stdout); err != nil {
 		return err
 	}
 	if err := printRegistrySection(diff, stdout); err != nil {
@@ -433,6 +545,73 @@ func printInterfaceDiff(diff ifacedomain.InterfaceDiff, used *usedByResult, stdo
 	return writePreModulesCaveatForSet(stdout, []coordinate.ModuleCoordinate{
 		diff.RecordA.Coordinate, diff.RecordB.Coordinate,
 	})
+}
+
+// printCrossMajorStatement says what a cross-major pair costs a consumer, which
+// the counts on their own do not: every import path changes, so every reached
+// declaration needs rewriting whether or not its signature moved.
+func printCrossMajorStatement(diff ifacedomain.InterfaceDiff, stdout io.Writer) error {
+	if !diff.MajorPathPair {
+		return nil
+	}
+	if _, err := fmt.Fprintf(stdout,
+		"cross-major pair: the module path changes from %s to %s, so every import of it must be "+
+			"rewritten — including the %d declaration(s) that carried over otherwise unchanged "+
+			"(renamed-path: an import rewrite, not a breaking change). Declarations are matched by "+
+			"package-relative path, kind and name rather than by import path.\n",
+		diff.RecordA.Coordinate.Path(), diff.RecordB.Coordinate.Path(), len(diff.RenamedPath)); err != nil {
+		return fmt.Errorf("writing cross-major statement: %w", err)
+	}
+	return nil
+}
+
+// printZeroBreakingStatement is the statement a zero-breaking result over a
+// non-empty delta carries. See zeroBreakingBehaviourNote for why it is here and
+// not in the footer.
+func printZeroBreakingStatement(diff ifacedomain.InterfaceDiff, used *usedByResult, stdout io.Writer) error {
+	if !diff.ZeroBreakingOverNonTrivialDelta() {
+		return nil
+	}
+	if _, err := fmt.Fprintf(stdout, "%s\n", zeroBreakingBehaviourNote); err != nil {
+		return fmt.Errorf("writing zero-breaking statement: %w", err)
+	}
+	if diff.MajorPathPair {
+		if _, err := fmt.Fprintf(stdout, "  %s\n", zeroBreakingCrossMajorNote); err != nil {
+			return fmt.Errorf("writing zero-breaking statement: %w", err)
+		}
+	}
+	if used == nil {
+		if _, err := fmt.Fprintf(stdout, "  %s\n", zeroBreakingNoUsedByNote); err != nil {
+			return fmt.Errorf("writing zero-breaking statement: %w", err)
+		}
+		return nil
+	}
+	decls, sites := used.TouchedReach()
+	if _, err := fmt.Fprintf(stdout,
+		"  what would answer it: exercise your own tests over the call sites this bump touches — "+
+			"%s own code calls %d of the %d declaration(s) it moved, at %s.\n",
+		used.Consumer.Path(), decls, len(used.Touched), countOf(sites, "recorded call sites")); err != nil {
+		return fmt.Errorf("writing zero-breaking statement: %w", err)
+	}
+	return nil
+}
+
+func printRenamedPathSection(diff ifacedomain.InterfaceDiff, stdout io.Writer) error {
+	if len(diff.RenamedPath) == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintf(stdout,
+		"\nRenamed path (%d) — same declaration under the new module path, not breaking:\n",
+		len(diff.RenamedPath)); err != nil {
+		return fmt.Errorf("writing renamed-path header: %w", err)
+	}
+	for _, r := range diff.RenamedPath {
+		if _, err := fmt.Fprintf(stdout, "  → %s\n      → %s\n",
+			r.From.String(), r.To.String()); err != nil {
+			return fmt.Errorf("writing renamed-path symbol: %w", err)
+		}
+	}
+	return nil
 }
 
 func printPackageDelta(diff ifacedomain.InterfaceDiff, stdout io.Writer) error {
@@ -477,8 +656,15 @@ func printChangeSection(stdout io.Writer, title string, changes []ifacedomain.Si
 		return fmt.Errorf("writing section header: %w", err)
 	}
 	for _, c := range changes {
+		// Across a major path pair the declaration changed AND moved. Naming both
+		// identities keeps the row honest about which symbol the consumer calls
+		// today and which one it will be calling.
+		name := c.Symbol.String()
+		if (c.MovedTo != ifacedomain.SymbolID{}) {
+			name += " → " + c.MovedTo.String()
+		}
 		if _, err := fmt.Fprintf(stdout, "  ~ %s\n      - %s\n      + %s\n",
-			c.Symbol.String(),
+			name,
 			ifacedomain.NormalizeSignature(c.From),
 			ifacedomain.NormalizeSignature(c.To)); err != nil {
 			return fmt.Errorf("writing change: %w", err)
@@ -615,9 +801,15 @@ type interfaceDiffJSON struct {
 	Removed          []symbolDeltaJSON     `json:"removed"`
 	Changed          []signatureChangeJSON `json:"changed"`
 	Spelling         []signatureChangeJSON `json:"spelling"`
+	MajorPathPair    bool                  `json:"major_path_pair"`
+	RenamedPath      []renamedSymbolJSON   `json:"renamed_path"`
 	Registries       []registrySurfaceJSON `json:"registries"`
 	ExcludedTestdata []string              `json:"excluded_testdata_packages"`
-	UsedBy           *usedByJSON           `json:"used_by,omitempty"`
+	// ZeroBreakingAdvisory carries the statement the text output prints beside a
+	// zero over a non-empty delta, and is absent exactly when that statement is
+	// not printed — so a machine consumer sees the same distinction a reader does.
+	ZeroBreakingAdvisory string      `json:"zero_breaking_advisory,omitempty"`
+	UsedBy               *usedByJSON `json:"used_by,omitempty"`
 }
 
 type symbolDeltaJSON struct {
@@ -633,6 +825,20 @@ type signatureChangeJSON struct {
 	Name    string `json:"name"`
 	From    string `json:"from"`
 	To      string `json:"to"`
+	// MovedToPackage is the B-side import path when the declaration moved as well
+	// as changed, which happens across a major path pair. Absent otherwise.
+	MovedToPackage string `json:"moved_to_package,omitempty"`
+}
+
+// renamedSymbolJSON is one declaration carried across a major path pair
+// unchanged. Package/Kind/Name are the A side — what the consumer calls today —
+// and MovedToPackage is the import path it must be rewritten to.
+type renamedSymbolJSON struct {
+	Package        string `json:"package"`
+	Kind           string `json:"kind"`
+	Name           string `json:"name"`
+	MovedToPackage string `json:"moved_to_package"`
+	Signature      string `json:"signature,omitempty"`
 }
 
 type registrySurfaceJSON struct {
@@ -654,7 +860,13 @@ type usedByJSON struct {
 	CallGraphFound bool             `json:"call_graph_found"`
 	ReachedCount   int              `json:"reached_count"`
 	Symbols        []usedSymbolJSON `json:"symbols"`
-	Coverage       string           `json:"coverage"`
+	// Touched is the non-breaking declarations this bump moved — respellings and
+	// path renames — joined only when the zero-breaking statement is printed, and
+	// never part of the gate.
+	Touched             []usedSymbolJSON `json:"touched"`
+	TouchedReachedCount int              `json:"touched_reached_count"`
+	TouchedSites        int              `json:"touched_call_sites"`
+	Coverage            string           `json:"coverage"`
 }
 
 type usedSymbolJSON struct {
@@ -691,11 +903,33 @@ func toInterfaceDiffJSON(diff ifacedomain.InterfaceDiff, used *usedByResult) int
 		Removed:          toSymbolDeltasJSON(diff.Removed),
 		Changed:          toSignatureChangesJSON(diff.Changed),
 		Spelling:         toSignatureChangesJSON(diff.Spelling),
+		MajorPathPair:    diff.MajorPathPair,
+		RenamedPath:      toRenamedPathJSON(diff.RenamedPath),
 		Registries:       toRegistriesJSON(diff.Registries),
 		ExcludedTestdata: nonNilStrings(diff.ExcludedTestdataPackages),
 	}
+	if diff.ZeroBreakingOverNonTrivialDelta() {
+		out.ZeroBreakingAdvisory = zeroBreakingBehaviourNote
+		if diff.MajorPathPair {
+			out.ZeroBreakingAdvisory += " " + zeroBreakingCrossMajorNote
+		}
+	}
 	if used != nil {
 		out.UsedBy = toUsedByJSON(used)
+	}
+	return out
+}
+
+func toRenamedPathJSON(renamed []ifacedomain.RenamedSymbol) []renamedSymbolJSON {
+	out := make([]renamedSymbolJSON, 0, len(renamed))
+	for _, r := range renamed {
+		out = append(out, renamedSymbolJSON{
+			Package:        r.From.Package,
+			Kind:           string(r.From.Kind),
+			Name:           r.From.Name,
+			MovedToPackage: r.To.Package,
+			Signature:      ifacedomain.NormalizeSignature(r.Signature),
+		})
 	}
 	return out
 }
@@ -723,13 +957,17 @@ func toSymbolDeltasJSON(syms []ifacedomain.Symbol) []symbolDeltaJSON {
 func toSignatureChangesJSON(changes []ifacedomain.SignatureChange) []signatureChangeJSON {
 	out := make([]signatureChangeJSON, 0, len(changes))
 	for _, c := range changes {
-		out = append(out, signatureChangeJSON{
+		row := signatureChangeJSON{
 			Package: c.Symbol.Package,
 			Kind:    string(c.Symbol.Kind),
 			Name:    c.Symbol.Name,
 			From:    ifacedomain.NormalizeSignature(c.From),
 			To:      ifacedomain.NormalizeSignature(c.To),
-		})
+		}
+		if (c.MovedTo != ifacedomain.SymbolID{}) {
+			row.MovedToPackage = c.MovedTo.Package
+		}
+		out = append(out, row)
 	}
 	return out
 }
@@ -749,31 +987,45 @@ func toRegistriesJSON(surfaces []ifacedomain.RegistrySurface) []registrySurfaceJ
 }
 
 func toUsedByJSON(used *usedByResult) *usedByJSON {
+	touchedDecls, touchedSites := used.TouchedReach()
 	out := &usedByJSON{
-		GoMod:          used.GoMod,
-		WalkID:         used.WalkID,
-		WalkFrame:      used.WalkFrame,
-		Consumer:       used.Consumer.Path() + "@" + used.Consumer.Version(),
-		ScopeSize:      used.ScopeSize,
-		CallGraphFound: used.CallGraphFound,
-		ReachedCount:   len(used.Reached()),
-		Symbols:        make([]usedSymbolJSON, 0, len(used.Symbols)),
-		Coverage:       usedByCoverageNote,
+		GoMod:               used.GoMod,
+		WalkID:              used.WalkID,
+		WalkFrame:           used.WalkFrame,
+		Consumer:            used.Consumer.Path() + "@" + used.Consumer.Version(),
+		ScopeSize:           used.ScopeSize,
+		CallGraphFound:      used.CallGraphFound,
+		ReachedCount:        len(used.Reached()),
+		Symbols:             toUsedSymbolsJSON(used.Symbols, ""),
+		Touched:             toUsedSymbolsJSON(used.Touched, "touched"),
+		TouchedReachedCount: touchedDecls,
+		TouchedSites:        touchedSites,
+		Coverage:            usedByCoverageNote,
 	}
-	for _, s := range used.Symbols {
-		class := "changed"
-		if s.Removed {
-			class = "removed"
+	return out
+}
+
+// toUsedSymbolsJSON renders one joined set. class, when non-empty, overrides the
+// removed/changed classification: a touched declaration is neither.
+func toUsedSymbolsJSON(syms []usedSymbol, class string) []usedSymbolJSON {
+	out := make([]usedSymbolJSON, 0, len(syms))
+	for _, s := range syms {
+		rowClass := class
+		if rowClass == "" {
+			rowClass = "changed"
+			if s.Removed {
+				rowClass = "removed"
+			}
 		}
 		callers := make([]usedCallerJSON, 0, len(s.Callers))
 		for _, c := range s.Callers {
 			callers = append(callers, usedCallerJSON(c))
 		}
-		out.Symbols = append(out.Symbols, usedSymbolJSON{
+		out = append(out, usedSymbolJSON{
 			Package:    s.Symbol.Package,
 			Kind:       string(s.Symbol.Kind),
 			Name:       s.Symbol.Name,
-			Class:      class,
+			Class:      rowClass,
 			NodeID:     s.NodeID,
 			Measurable: s.Measurable,
 			Sites:      s.Sites,

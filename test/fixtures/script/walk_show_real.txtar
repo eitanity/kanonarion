@@ -5,5 +5,9 @@ seedwalk $WORK/stores
 kanonarion walk-show --store-root=$WORK/stores --json 01ARZ3NDEKTSV4RRFFQ69G5FAV
 stdout '01ARZ3NDEKTSV4RRFFQ69G5FAV'
 mkdir $WORK/stores
+# A named walk that is not there says how many were searched, so a mistyped id
+# over a stocked store cannot be read as a store that has never been walked.
 ! kanonarion walk-show --store-root=$WORK/stores NOT_A_ULID
-stderr 'not found'
+stderr 'no walk record matched walk id "NOT_A_ULID"'
+stderr 'walk record\(s\) in the store'
+stderr 'to list every walk record: kanonarion walk-list --limit 0'

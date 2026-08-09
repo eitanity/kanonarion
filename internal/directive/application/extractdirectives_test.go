@@ -33,11 +33,18 @@ func (s *fakeStore) GetScanByID(_ context.Context, scanID string) (domain.Record
 	}
 	return *s.put, true, nil
 }
-func (s *fakeStore) ListScans(context.Context, string, int) ([]domain.Record, error) {
+func (s *fakeStore) ListScans(context.Context, string, int, int) ([]domain.Record, error) {
 	if s.put == nil {
 		return nil, nil
 	}
 	return []domain.Record{*s.put}, nil
+}
+
+func (s *fakeStore) CountScans(context.Context) (int, error) {
+	if s.put == nil {
+		return 0, nil
+	}
+	return 1, nil
 }
 
 type fakeSink struct{ events []audit.Event }

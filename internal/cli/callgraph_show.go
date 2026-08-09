@@ -235,6 +235,22 @@ type callEdgeJSON struct {
 	CallSiteFile string `json:"call_site_file,omitempty"`
 	CallSiteLine int    `json:"call_site_line,omitempty"`
 	Confidence   string `json:"confidence"`
+	// Kind says whether the edge is an invocation or a place the callee's value
+	// was taken. It is spelled out on every edge rather than omitted for calls:
+	// the whole point of the axis is that a registration must not read as a
+	// call, and an absent field would put the reader back where they started.
+	// The domain's zero value is a call and every edge stored before the axis
+	// existed is one, so "Call" is a true statement about all of them.
+	Kind string `json:"kind"`
+}
+
+// edgeKindJSON renders an edge kind for the curated shape, naming the zero
+// value instead of emitting it as the empty string.
+func edgeKindJSON(k domain.EdgeKind) string {
+	if k.IsReference() {
+		return string(domain.EdgeKindReference)
+	}
+	return "Call"
 }
 
 type coordinateJSON struct {
@@ -277,6 +293,14 @@ type callGraphRecordJSON struct {
 	TestScope       string `json:"test_scope"`
 	TestScopeDetail string `json:"test_scope_detail,omitempty"`
 	TestNodeCount   int    `json:"test_node_count"`
+	// ReferenceScope says whether the analysis looked for function-value
+	// references at all. Emitted even when empty, for the reason TestScope is:
+	// a record that never searched for references and one that searched and
+	// found none are different answers, and an absent field collapses them.
+	// ReferenceEdgeCount is how many it found, so the axis can be read without
+	// walking the edge list.
+	ReferenceScope     string `json:"reference_scope"`
+	ReferenceEdgeCount int    `json:"reference_edge_count"`
 	// InterfaceCount and ImplementationCount summarise the type-level relation
 	// the implementers query reads; the relation itself is listed by that
 	// command rather than inlined into every record dump.
@@ -370,6 +394,7 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 			CallSiteFile: e.CallSite.File,
 			CallSiteLine: e.CallSite.Line,
 			Confidence:   string(e.Confidence),
+			Kind:         edgeKindJSON(e.Kind),
 		}
 	}
 	testNodes := 0
@@ -404,6 +429,8 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 		TestScope:           string(r.TestScope),
 		TestScopeDetail:     r.TestScopeDetail,
 		TestNodeCount:       testNodes,
+		ReferenceScope:      string(r.ReferenceScope),
+		ReferenceEdgeCount:  referenceEdgeCount(r),
 		InterfaceCount:      len(r.Interfaces),
 		ImplementationCount: len(r.Implementations),
 	}
@@ -463,6 +490,69 @@ func writeTestScopeLine(stdout io.Writer, r domain.CallGraphRecord) error {
 		return fmt.Errorf("writing test scope: %w", err)
 	}
 	return nil
+}
+
+// referenceEdgeCount is how many of a record's edges record a function value
+// being taken rather than called.
+func referenceEdgeCount(r domain.CallGraphRecord) int {
+	n := 0
+	for i := range r.Edges {
+		if r.Edges[i].Kind.IsReference() {
+			n++
+		}
+	}
+	return n
+}
+
+// writeReferenceScopeLine reports the reference axis on every record, including
+// when it was not measured.
+//
+// It is the axis a confident negative rests on: `callers` may only answer
+// RESOLVED-ABSENT when both calls and references were measurable, so a reader
+// who cannot see the axis on the record cannot tell whether the verdict they
+// got was entitled to be confident. The axis was stored and never printed,
+// which is the same defect writeTestScopeLine exists to fix, on the other axis.
+func writeReferenceScopeLine(stdout io.Writer, r domain.CallGraphRecord) error {
+	var line string
+	if r.ReferenceScope.IsMeasured() {
+		line = fmt.Sprintf("  reference scope: analysed — %d of %d edges record a function value being taken, not called",
+			referenceEdgeCount(r), r.EdgeCount)
+	} else {
+		line = "  reference scope: not recorded — this record never looked for function-value references, " +
+			"so an empty callers answer over it is UNRESOLVED, not a measured absence"
+	}
+	if _, err := fmt.Fprintln(stdout, line); err != nil {
+		return fmt.Errorf("writing reference scope: %w", err)
+	}
+	return nil
+}
+
+// writeModuleMembershipLine reports the packages this record attributed to the
+// module by PATH PREFIX rather than by the toolchain's own answer.
+//
+// It prints only when there are some. Membership is normally taken from
+// go/packages' Package.Module.Path, and a line saying so on every record would
+// be noise; a reconstruction, though, has to be readable, because "in module"
+// derived from a path prefix and "in module" derived from the build are the same
+// words behind two different amounts of evidence.
+func writeModuleMembershipLine(stdout io.Writer, r domain.CallGraphRecord) error {
+	if len(r.PrefixAttributedPackages) == 0 {
+		return nil
+	}
+	line := fmt.Sprintf("  module membership: %d package(s) attributed by PATH PREFIX — the toolchain placed them in no module: %s",
+		len(r.PrefixAttributedPackages), joinWithOverflow(r.PrefixAttributedPackages, 5))
+	if _, err := fmt.Fprintln(stdout, line); err != nil {
+		return fmt.Errorf("writing module membership: %w", err)
+	}
+	return nil
+}
+
+// joinWithOverflow renders at most n of ss, naming how many were not shown.
+func joinWithOverflow(ss []string, n int) string {
+	if len(ss) <= n {
+		return strings.Join(ss, ", ")
+	}
+	return strings.Join(ss[:n], ", ") + fmt.Sprintf(", and %d more", len(ss)-n)
 }
 
 // nodeFilterOutcome records what a --node pattern was compared against and how
@@ -633,6 +723,12 @@ func printCallGraphRecord(r domain.CallGraphRecord, limitNodes, limitEdges int, 
 		return err
 	}
 	if err := writeTestScopeLine(stdout, r); err != nil {
+		return err
+	}
+	if err := writeReferenceScopeLine(stdout, r); err != nil {
+		return err
+	}
+	if err := writeModuleMembershipLine(stdout, r); err != nil {
 		return err
 	}
 	if len(r.Interfaces) > 0 {

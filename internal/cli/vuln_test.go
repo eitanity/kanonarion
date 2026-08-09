@@ -572,7 +572,7 @@ func TestRunScanList_WithResults(t *testing.T) {
 	uc.AddRun(run)
 
 	var buf bytes.Buffer
-	if err := runScanList(context.Background(), fixtureWalkID, 50, uc, &buf, io.Discard); err != nil {
+	if err := runScanList(context.Background(), fixtureWalkID, 50, 0, uc, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -590,7 +590,7 @@ func TestRunScanList_AllRuns(t *testing.T) {
 	uc.AddRun(run)
 
 	var buf bytes.Buffer
-	if err := runScanList(context.Background(), "", 50, uc, &buf, io.Discard); err != nil {
+	if err := runScanList(context.Background(), "", 50, 0, uc, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), fixtureScanID) {
@@ -602,7 +602,7 @@ func TestRunScanList_UnknownWalk(t *testing.T) {
 	uc := testfakes.NewFakeQueryScanRuns()
 
 	var buf bytes.Buffer
-	if err := runScanList(context.Background(), "DOESNOTEXIST", 50, uc, &buf, io.Discard); err != nil {
+	if err := runScanList(context.Background(), "DOESNOTEXIST", 50, 0, uc, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), `the store holds no scan run at all, so walk id "DOESNOTEXIST" is not what made this empty`) {
@@ -723,7 +723,7 @@ func TestRunScanShow_TextOutput(t *testing.T) {
 	ucVuln.AddRecord(app, vulnRec)
 
 	var buf bytes.Buffer
-	if err := runScanShow(context.Background(), fixtureScanID, false, ucRuns, ucVuln, &buf); err != nil {
+	if err := runScanShow(context.Background(), fixtureScanID, false, ucRuns, ucVuln, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -739,12 +739,12 @@ func TestRunScanShow_NotFound(t *testing.T) {
 	ucVuln := testfakes.NewFakeQueryVuln()
 
 	var buf bytes.Buffer
-	err := runScanShow(context.Background(), "DOESNOTEXIST", false, ucRuns, ucVuln, &buf)
+	err := runScanShow(context.Background(), "DOESNOTEXIST", false, ucRuns, ucVuln, &buf, io.Discard)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "scan run not found") {
-		t.Errorf("expected 'scan run not found' in error, got: %v", err)
+	if !strings.Contains(err.Error(), `run id "DOESNOTEXIST"`) {
+		t.Errorf("expected the missing run id to be named, got: %v", err)
 	}
 }
 
@@ -761,7 +761,7 @@ func TestRunScanShow_ReadErrorReported(t *testing.T) {
 	ucVuln.Err = errors.New("store unavailable")
 
 	var buf bytes.Buffer
-	if err := runScanShow(context.Background(), fixtureScanID, false, ucRuns, ucVuln, &buf); err != nil {
+	if err := runScanShow(context.Background(), fixtureScanID, false, ucRuns, ucVuln, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -789,7 +789,7 @@ func TestRunScanShow_MissingRecordReported(t *testing.T) {
 	ucVuln := testfakes.NewFakeQueryVuln()
 
 	var buf bytes.Buffer
-	if err := runScanShow(context.Background(), fixtureScanID, false, ucRuns, ucVuln, &buf); err != nil {
+	if err := runScanShow(context.Background(), fixtureScanID, false, ucRuns, ucVuln, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -821,7 +821,7 @@ func TestRunScanShow_ScanFailedReported(t *testing.T) {
 	ucVuln.AddRecord(app, rec)
 
 	var buf bytes.Buffer
-	if err := runScanShow(context.Background(), fixtureScanID, false, ucRuns, ucVuln, &buf); err != nil {
+	if err := runScanShow(context.Background(), fixtureScanID, false, ucRuns, ucVuln, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -1057,7 +1057,7 @@ func TestRunSnapshotList_WithResults(t *testing.T) {
 	uc.AddSnapshot(fixtureSnap)
 
 	var buf bytes.Buffer
-	if err := runSnapshotList(context.Background(), false, uc, &buf); err != nil {
+	if err := runSnapshotList(context.Background(), false, uc, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -1073,11 +1073,11 @@ func TestRunSnapshotList_Empty(t *testing.T) {
 	uc := testfakes.NewFakeQueryScanRuns()
 
 	var buf bytes.Buffer
-	if err := runSnapshotList(context.Background(), false, uc, &buf); err != nil {
+	if err := runSnapshotList(context.Background(), false, uc, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(buf.String(), "no snapshots found") {
-		t.Errorf("expected 'no snapshots found', got: %q", buf.String())
+	if !strings.Contains(buf.String(), "the store holds no vulnerability database snapshot at all") {
+		t.Errorf("expected the empty-store statement, got: %q", buf.String())
 	}
 }
 
@@ -1088,7 +1088,7 @@ func TestRunSnapshotShow_Found(t *testing.T) {
 	uc.AddSnapshot(fixtureSnap)
 
 	var buf bytes.Buffer
-	if err := runSnapshotShow(context.Background(), "govulndb", "v2025-01-01T00-00-00", false, uc, &buf); err != nil {
+	if err := runSnapshotShow(context.Background(), "govulndb", "v2025-01-01T00-00-00", false, uc, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -1104,12 +1104,38 @@ func TestRunSnapshotShow_NotFound(t *testing.T) {
 	uc := testfakes.NewFakeQueryScanRuns()
 
 	var buf bytes.Buffer
-	err := runSnapshotShow(context.Background(), "govulndb", "v9999-01-01T00-00-00", false, uc, &buf)
+	err := runSnapshotShow(context.Background(), "govulndb", "v9999-01-01T00-00-00", false, uc, &buf, io.Discard)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
-	if !strings.Contains(err.Error(), "snapshot not found") {
-		t.Errorf("expected 'snapshot not found' in error, got: %v", err)
+	if code := ExitCodeForError(err); code != ExitNotFound {
+		t.Errorf("exit code = %d, want %d", code, ExitNotFound)
+	}
+	if !strings.Contains(err.Error(), `"govulndb@v9999-01-01T00-00-00"`) {
+		t.Errorf("the coordinate that missed is not named: %v", err)
+	}
+}
+
+// The same miss over a store that HAS snapshots: a flat negative read as "none
+// have ever been pinned" over a corpus it never sized. The count comes off the
+// read the command already made, so the statement costs no extra store access.
+func TestRunSnapshotShow_NotFoundNamesTheCorpus(t *testing.T) {
+	uc := testfakes.NewFakeQueryScanRuns()
+	uc.AddSnapshot(fixtureSnap)
+
+	var buf bytes.Buffer
+	err := runSnapshotShow(context.Background(), "govulndb", "v9999-01-01T00-00-00", false, uc, &buf, io.Discard)
+	if err == nil {
+		t.Fatal("expected error, got nil")
+	}
+	for _, want := range []string{
+		`no vulnerability database snapshot matched source and version "govulndb@v9999-01-01T00-00-00"`,
+		"of all 1 vulnerability database snapshot(s) in the store",
+		"to list every vulnerability database snapshot: kanonarion vuln-snapshot-list",
+	} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("the message is missing %q, got: %v", want, err)
+		}
 	}
 }
 

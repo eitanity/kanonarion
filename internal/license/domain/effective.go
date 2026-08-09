@@ -93,3 +93,24 @@ func embeddedComponentPrefix(relPath string) string {
 	}
 	return relPath
 }
+
+// IsTestCorpusPath reports whether a component path prefix names a Go test
+// corpus directory — a "testdata" segment at any depth.
+//
+// The go tool ignores "testdata" directories at every level: their contents are
+// never built and never linked into a distributed binary. A licence file found
+// there governs a fixture — a sample graph, a captured document — and the
+// attribution is correct as attribution: the bytes are in the module zip and a
+// redistributor of the zip carries the notice. What it is not is a constraint
+// on code that links the module, which is the question compatibility asks. So
+// this predicate is applied where the compatibility engine consumes the
+// effective set, not where the set is derived: NOTICE generation and the SBOM
+// still see the component, because they are about what is shipped.
+func IsTestCorpusPath(prefix string) bool {
+	for _, seg := range strings.Split(prefix, "/") {
+		if seg == "testdata" {
+			return true
+		}
+	}
+	return false
+}

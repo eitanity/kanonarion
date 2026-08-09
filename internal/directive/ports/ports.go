@@ -35,8 +35,18 @@ type DirectiveStore interface {
 	// no scan with that ID exists.
 	GetScanByID(ctx context.Context, scanID string) (r domain.Record, found bool, err error)
 	// ListScans returns scan summaries for a project module path, newest
-	// first. limit 0 means "all".
-	ListScans(ctx context.Context, projectModulePath string, limit int) ([]domain.Record, error)
+	// first. limit 0 means "all"; offset skips that many scans before the
+	// limit is applied, so a caller can page rather than re-read from the top.
+	ListScans(ctx context.Context, projectModulePath string, limit, offset int) ([]domain.Record, error)
+	// CountScans returns how many scans the store holds across every project.
+	//
+	// ListScans is keyed on a project, so a listing that came back empty can
+	// only report that project's own history; it cannot tell a caller who
+	// mistyped the path from one whose project has genuinely never been
+	// scanned. Answering that needs a count the project does not bound, and
+	// re-using the project-keyed read for it would report the whole store empty
+	// on one project's evidence.
+	CountScans(ctx context.Context) (int, error)
 }
 
 // AuditSink appends an audit event to the assurance log. The shared

@@ -125,7 +125,7 @@ func TestPrintLicenseRecursive_NoWalks(t *testing.T) {
 	extractUC := &testfakes.FakeExtractLicense{}
 	queryUC := testfakes.NewFakeQueryLicense()
 
-	err := printLicenseRecursive(context.Background(), coord, walksUC, extractUC, queryUC, licenseFlags{}, &bytes.Buffer{})
+	err := printLicenseRecursive(context.Background(), coord, walksUC, extractUC, queryUC, licenseFlags{}, &bytes.Buffer{}, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "no walk record") {
 		t.Fatalf("expected no-walk error, got: %v", err)
 	}
@@ -138,7 +138,7 @@ func TestPrintLicenseRecursive_ListWalksError(t *testing.T) {
 	extractUC := &testfakes.FakeExtractLicense{}
 	queryUC := testfakes.NewFakeQueryLicense()
 
-	err := printLicenseRecursive(context.Background(), coord, walksUC, extractUC, queryUC, licenseFlags{}, &bytes.Buffer{})
+	err := printLicenseRecursive(context.Background(), coord, walksUC, extractUC, queryUC, licenseFlags{}, &bytes.Buffer{}, io.Discard)
 	if err == nil || !strings.Contains(err.Error(), "listing walks") {
 		t.Fatalf("expected listing-walks error, got: %v", err)
 	}
@@ -165,7 +165,7 @@ func TestPrintLicenseRecursive_AllSameLicense(t *testing.T) {
 	extractUC := &testfakes.FakeExtractLicense{}
 
 	var buf bytes.Buffer
-	if err := printLicenseRecursive(context.Background(), coord, walksUC, extractUC, queryUC, licenseFlags{}, &buf); err != nil {
+	if err := printLicenseRecursive(context.Background(), coord, walksUC, extractUC, queryUC, licenseFlags{}, &buf, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), "All") {
@@ -192,7 +192,7 @@ func TestPrintLicenseRecursive_DifferentLicenses(t *testing.T) {
 	extractUC := &testfakes.FakeExtractLicense{}
 
 	var buf bytes.Buffer
-	if err := printLicenseRecursive(context.Background(), coord, walksUC, extractUC, queryUC, licenseFlags{}, &buf); err != nil {
+	if err := printLicenseRecursive(context.Background(), coord, walksUC, extractUC, queryUC, licenseFlags{}, &buf, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), "Apache-2.0") {
@@ -216,7 +216,7 @@ func TestPrintLicenseRecursive_AllFlag(t *testing.T) {
 	extractUC := &testfakes.FakeExtractLicense{}
 
 	var buf bytes.Buffer
-	if err := printLicenseRecursive(context.Background(), coord, walksUC, extractUC, queryUC, licenseFlags{all: true}, &buf); err != nil {
+	if err := printLicenseRecursive(context.Background(), coord, walksUC, extractUC, queryUC, licenseFlags{all: true}, &buf, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), "example.com/dep") {
@@ -240,7 +240,7 @@ func TestPrintLicenseRecursive_AllFlagWithError(t *testing.T) {
 	extractUC := &testfakes.FakeExtractLicense{}
 
 	var buf bytes.Buffer
-	if err := printLicenseRecursive(context.Background(), coord, walksUC, extractUC, queryUC, licenseFlags{all: true}, &buf); err != nil {
+	if err := printLicenseRecursive(context.Background(), coord, walksUC, extractUC, queryUC, licenseFlags{all: true}, &buf, io.Discard); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(buf.String(), "Error:") {
@@ -261,7 +261,7 @@ func TestPrintLicenseRecursive_EmptyDepResults(t *testing.T) {
 	extractUC := &testfakes.FakeExtractLicense{}
 
 	var buf bytes.Buffer
-	if err := printLicenseRecursive(context.Background(), coord, walksUC, extractUC, queryUC, licenseFlags{}, &buf); err != nil {
+	if err := printLicenseRecursive(context.Background(), coord, walksUC, extractUC, queryUC, licenseFlags{}, &buf, io.Discard); err != nil {
 		t.Fatalf("expected nil for empty deps, got: %v", err)
 	}
 }
@@ -283,7 +283,7 @@ func TestRunLicenseList_WithRecords(t *testing.T) {
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PrimarySPDX: "MIT", OverallStatus: domain.LicenseStatusDetected},
 	})
 	var buf bytes.Buffer
-	err := runLicenseList(context.Background(), "", "", 50, uc, domain.NewLicenseOverrideSet(nil), &buf, io.Discard)
+	err := runLicenseList(context.Background(), "", "", 50, 0, uc, domain.NewLicenseOverrideSet(nil), &buf, io.Discard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -309,7 +309,7 @@ func TestRunLicenseList_OverrideProvenance(t *testing.T) {
 	})
 	ovSet := domain.NewLicenseOverrideSet(map[string]string{"example.com/app": "MIT"})
 	var buf bytes.Buffer
-	if err := runLicenseList(context.Background(), "", "", 50, uc, ovSet, &buf, io.Discard); err != nil {
+	if err := runLicenseList(context.Background(), "", "", 50, 0, uc, ovSet, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -324,7 +324,7 @@ func TestRunLicenseList_OverrideProvenance(t *testing.T) {
 func TestRunLicenseList_SPDXFilter_NoMatch(t *testing.T) {
 	uc := testfakes.NewFakeQueryLicense()
 	var buf bytes.Buffer
-	err := runLicenseList(context.Background(), "Apache-2.0", "", 50, uc, domain.NewLicenseOverrideSet(nil), &buf, io.Discard)
+	err := runLicenseList(context.Background(), "Apache-2.0", "", 50, 0, uc, domain.NewLicenseOverrideSet(nil), &buf, io.Discard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

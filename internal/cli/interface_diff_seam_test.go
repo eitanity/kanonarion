@@ -567,3 +567,386 @@ func TestInterfaceDiffRemedies_EveryLineIsAcceptedByTheParser(t *testing.T) {
 		t.Errorf("the not-found refusal does not print a runnable invocation: %s", notFound)
 	}
 }
+
+// -- cross-major pairs --
+
+// crossMajorDiff is the sprig shape: the whole surface carried over under a new
+// module path, nothing else changed.
+func crossMajorDiff(t *testing.T) ifacedomain.InterfaceDiff {
+	t.Helper()
+	a := coordinatetest.MustNew("example.com/mod", "v2.22.0+incompatible")
+	b := coordinatetest.MustNew("example.com/mod/v3", "v3.3.0")
+	return ifacedomain.InterfaceDiff{
+		RecordA:       ifacedomain.InterfaceRecord{Coordinate: a},
+		RecordB:       ifacedomain.InterfaceRecord{Coordinate: b},
+		MajorPathPair: true,
+		RenamedPath: []ifacedomain.RenamedSymbol{
+			{
+				From:      ifacedomain.SymbolID{Package: "example.com/mod", Kind: ifacedomain.SymbolFunc, Name: "TxtFuncMap"},
+				To:        ifacedomain.SymbolID{Package: "example.com/mod/v3", Kind: ifacedomain.SymbolFunc, Name: "TxtFuncMap"},
+				Signature: "func TxtFuncMap() ttemplate.FuncMap",
+			},
+			{
+				From: ifacedomain.SymbolID{Package: "example.com/mod", Kind: ifacedomain.SymbolType, Name: "DSAKeyFormat"},
+				To:   ifacedomain.SymbolID{Package: "example.com/mod/v3", Kind: ifacedomain.SymbolType, Name: "DSAKeyFormat"},
+			},
+		},
+	}
+}
+
+// A cross-major pair says what it costs — every import rewritten — and reports
+// the carried-over surface as renamed-path rather than as a wall of removals.
+// The pair's own path shift is not a package coming or going.
+func TestPrintInterfaceDiff_CrossMajorStatesTheRewrite(t *testing.T) {
+	var out bytes.Buffer
+	if err := printInterfaceDiff(crossMajorDiff(t), nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	for _, want := range []string{
+		"0 breaking change(s)",
+		"renamed-path: 2",
+		"cross-major pair: the module path changes from example.com/mod to example.com/mod/v3",
+		"every import of it must be rewritten",
+		"Renamed path (2) — same declaration under the new module path, not breaking:",
+		"example.com/mod.TxtFuncMap (func)",
+		"example.com/mod/v3.TxtFuncMap (func)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("cross-major output missing %q:\n%s", want, got)
+		}
+	}
+	for _, forbidden := range []string{"package removed:", "package added:"} {
+		if strings.Contains(got, forbidden) {
+			t.Errorf("the pair's own path shift was reported as %q:\n%s", forbidden, got)
+		}
+	}
+}
+
+// The control: a same-path comparison gains no renamed-path column and no
+// cross-major line, so the change is confined to the pair it is about.
+func TestPrintInterfaceDiff_SamePathGainsNoCrossMajorOutput(t *testing.T) {
+	var out bytes.Buffer
+	if err := printInterfaceDiff(diffWithOneRemoval(t), nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	for _, forbidden := range []string{"renamed-path:", "cross-major pair:", "Renamed path ("} {
+		if strings.Contains(got, forbidden) {
+			t.Errorf("a same-path comparison printed %q:\n%s", forbidden, got)
+		}
+	}
+}
+
+// -- the zero-breaking statement --
+
+// A zero over a delta that is not empty carries the statement, where the reader
+// meets the zero rather than in the footer, and names what would answer it.
+func TestPrintInterfaceDiff_ZeroBreakingStatementFires(t *testing.T) {
+	a, b := ifaceDiffCoords()
+	diff := ifacedomain.InterfaceDiff{
+		RecordA: ifacedomain.InterfaceRecord{Coordinate: a},
+		RecordB: ifacedomain.InterfaceRecord{Coordinate: b},
+		Spelling: []ifacedomain.SignatureChange{{
+			Symbol: ifacedomain.SymbolID{Package: "example.com/mod", Kind: ifacedomain.SymbolFunc, Name: "Cast"},
+			From:   "func Cast(i interface{}) error", To: "func Cast(i any) error",
+		}},
+	}
+	var out bytes.Buffer
+	if err := printInterfaceDiff(diff, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if !strings.Contains(got, zeroBreakingBehaviourNote) {
+		t.Errorf("zero-breaking statement missing:\n%s", got)
+	}
+	if !strings.Contains(got, zeroBreakingNoUsedByNote) {
+		t.Errorf("the statement names nothing that would answer it:\n%s", got)
+	}
+	// Where the reader meets the zero: before the sections, not after the
+	// coverage footer that three triage runs already read past.
+	if strings.Index(got, zeroBreakingBehaviourNote) > strings.Index(got, "Spelling (") {
+		t.Errorf("the statement is printed after the delta it qualifies:\n%s", got)
+	}
+	if strings.Contains(got, zeroBreakingCrossMajorNote) {
+		t.Errorf("a same-path pair was given the cross-major clause:\n%s", got)
+	}
+}
+
+// A genuinely empty delta keeps today's terse output. The statement is for the
+// case that looks safe and is not; there is nothing here to misread.
+func TestPrintInterfaceDiff_EmptyDeltaStaysTerse(t *testing.T) {
+	a, b := ifaceDiffCoords()
+	diff := ifacedomain.InterfaceDiff{
+		RecordA: ifacedomain.InterfaceRecord{Coordinate: a},
+		RecordB: ifacedomain.InterfaceRecord{Coordinate: b},
+	}
+	var out bytes.Buffer
+	if err := printInterfaceDiff(diff, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), zeroBreakingBehaviourNote) {
+		t.Errorf("an empty delta carried the zero-breaking statement:\n%s", out.String())
+	}
+}
+
+// The statement never appears beside a non-zero breaking count, where it would
+// dilute a real finding into a general caution.
+func TestPrintInterfaceDiff_StatementNeverBesideARealFinding(t *testing.T) {
+	diff := diffWithOneRemoval(t)
+	diff.Spelling = []ifacedomain.SignatureChange{{
+		Symbol: ifacedomain.SymbolID{Package: "example.com/mod", Kind: ifacedomain.SymbolFunc, Name: "Cast"},
+	}}
+	var out bytes.Buffer
+	if err := printInterfaceDiff(diff, nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	if strings.Contains(out.String(), zeroBreakingBehaviourNote) {
+		t.Errorf("the statement appeared beside a breaking change:\n%s", out.String())
+	}
+}
+
+// The interaction between the two changes: a cross-major pair whose surface only
+// moved now HAS a zero-breaking headline, and that is exactly the reader who
+// needs the statement — a new major is the author declaring an incompatible
+// change. The clause says so without pretending it is a signature finding.
+func TestPrintInterfaceDiff_ZeroBreakingStatementFiresOnAManufacturedZero(t *testing.T) {
+	var out bytes.Buffer
+	if err := printInterfaceDiff(crossMajorDiff(t), nil, &out); err != nil {
+		t.Fatal(err)
+	}
+	got := out.String()
+	if !strings.Contains(got, zeroBreakingBehaviourNote) {
+		t.Errorf("the zero a cross-major reclassification manufactured carries no statement:\n%s", got)
+	}
+	if !strings.Contains(got, zeroBreakingCrossMajorNote) {
+		t.Errorf("the cross-major clause is missing from a cross-major zero:\n%s", got)
+	}
+}
+
+// -- the zero-breaking statement over --used-by --
+
+// zeroBreakingUsedByContainer wires a consumer that calls a respelt declaration:
+// zero breaking changes, and call sites that a reader must be told about.
+func zeroBreakingUsedByContainer(t *testing.T) (*Container, string) {
+	t.Helper()
+	ctr, gomod := usedByContainer(t, nil)
+	a, b := ifaceDiffCoords()
+	ctr.DiffInterface = &testfakes.FakeDiffInterface{Result: ifacedomain.InterfaceDiff{
+		RecordA: ifacedomain.InterfaceRecord{Coordinate: a},
+		RecordB: ifacedomain.InterfaceRecord{Coordinate: b},
+		Spelling: []ifacedomain.SignatureChange{{
+			Symbol: ifacedomain.SymbolID{Package: "example.com/mod", Kind: ifacedomain.SymbolFunc, Name: "Cast"},
+			From:   "func Cast(i interface{}) error", To: "func Cast(i any) error",
+		}},
+	}}
+	cg := testfakes.NewFakeQueryCallGraph()
+	consumer, err := coordinate.NewLocalCoordinate("example.com/app")
+	if err != nil {
+		t.Fatal(err)
+	}
+	cg.AddRecord(consumer, cgapp.PipelineVersion, cgdomain.CallGraphRecord{
+		Coordinate: consumer,
+		Nodes: []cgdomain.CallNode{{
+			ID:       "example.com/app/service.Handle",
+			Position: cgdomain.SourcePosition{File: "service/handle.go", Line: 42},
+		}},
+	})
+	cg.SetCallersFor("example.com/mod.Cast", []cgports.CallEdgeRef{
+		{
+			ModulePath: "example.com/app", ModuleVersion: coordinate.LocalVersion,
+			FromID: "example.com/app/service.Handle", ToID: "example.com/mod.Cast",
+		},
+		{
+			ModulePath: "example.com/app", ModuleVersion: coordinate.LocalVersion,
+			FromID: "example.com/app/service.Handle", ToID: "example.com/mod.Cast",
+		},
+	})
+	ctr.QueryCallGraph = cg
+	return ctr, gomod
+}
+
+// "zero breaking, 2 reached call sites" is a materially different statement from
+// "zero breaking, none", and the tool already knows which it is. It reports the
+// count — and it does NOT gate: there is nothing here to be broken by.
+func TestInterfaceDiffWith_ZeroBreakingReportsReachedSitesAndDoesNotGate(t *testing.T) {
+	ctr, gomod := zeroBreakingUsedByContainer(t)
+	a, b := ifaceDiffCoords()
+
+	var out bytes.Buffer
+	if err := interfaceDiffWith(context.Background(), ctr, a, b, interfaceDiffFlags{usedBy: gomod}, &out); err != nil {
+		t.Fatalf("a zero-breaking delta fired the used-set gate: %v", err)
+	}
+	got := out.String()
+	for _, want := range []string{
+		zeroBreakingBehaviourNote,
+		"example.com/app own code calls 1 of the 1 declaration(s) it moved, at 2 recorded call sites",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("zero-breaking used-by output missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, zeroBreakingNoUsedByNote) {
+		t.Errorf("the join was made and the output still told the reader to make it:\n%s", got)
+	}
+}
+
+// The control for the line above: the same consumer against a delta that really
+// does break it still gates.
+func TestInterfaceDiffWith_BreakingStillGatesAlongsideTheStatement(t *testing.T) {
+	ctr, gomod := usedByContainer(t, []cgports.CallEdgeRef{{
+		ModulePath: "example.com/app", ModuleVersion: coordinate.LocalVersion,
+		FromID: "example.com/app/service.Handle", ToID: "example.com/mod.Gone",
+	}})
+	a, b := ifaceDiffCoords()
+
+	var out bytes.Buffer
+	err := interfaceDiffWith(context.Background(), ctr, a, b, interfaceDiffFlags{usedBy: gomod}, &out)
+	requireExit(t, err, ExitPolicy)
+	if strings.Contains(out.String(), zeroBreakingBehaviourNote) {
+		t.Errorf("the statement diluted a real finding:\n%s", out.String())
+	}
+}
+
+// -- JSON parity --
+
+// The machine-readable answer gains everything the text answer did. A JSON
+// consumer that cannot see the renamed-path category or the statement would be
+// reading a different diff from the one on screen.
+func TestInterfaceDiffJSON_CarriesRenamedPathAndTheStatement(t *testing.T) {
+	raw, err := json.Marshal(toInterfaceDiffJSON(crossMajorDiff(t), nil))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var decoded struct {
+		BreakingCount        int    `json:"breaking_count"`
+		MajorPathPair        bool   `json:"major_path_pair"`
+		ZeroBreakingAdvisory string `json:"zero_breaking_advisory"`
+		PackagesAdded        []any  `json:"packages_added"`
+		RenamedPath          []struct {
+			Package        string `json:"package"`
+			Kind           string `json:"kind"`
+			Name           string `json:"name"`
+			MovedToPackage string `json:"moved_to_package"`
+			Signature      string `json:"signature"`
+		} `json:"renamed_path"`
+	}
+	if err := json.Unmarshal(raw, &decoded); err != nil {
+		t.Fatal(err)
+	}
+	if decoded.BreakingCount != 0 || !decoded.MajorPathPair {
+		t.Errorf("breaking_count=%d major_path_pair=%v", decoded.BreakingCount, decoded.MajorPathPair)
+	}
+	if len(decoded.RenamedPath) != 2 {
+		t.Fatalf("renamed_path = %+v", decoded.RenamedPath)
+	}
+	r := decoded.RenamedPath[0]
+	if r.Package != "example.com/mod" || r.MovedToPackage != "example.com/mod/v3" ||
+		r.Name != "TxtFuncMap" || r.Kind != "func" || r.Signature == "" {
+		t.Errorf("renamed_path row = %+v", r)
+	}
+	if !strings.Contains(decoded.ZeroBreakingAdvisory, zeroBreakingBehaviourNote) ||
+		!strings.Contains(decoded.ZeroBreakingAdvisory, zeroBreakingCrossMajorNote) {
+		t.Errorf("zero_breaking_advisory = %q", decoded.ZeroBreakingAdvisory)
+	}
+	if !strings.Contains(string(raw), `"renamed_path":[`) {
+		t.Errorf("renamed_path is not rendered as an array: %s", raw)
+	}
+}
+
+// The control: an empty delta and a breaking delta both carry no advisory, and a
+// same-path comparison spells renamed_path as an empty array rather than null.
+func TestInterfaceDiffJSON_AdvisoryAbsentWhereTheTextIsSilent(t *testing.T) {
+	a, b := ifaceDiffCoords()
+	for _, tc := range []struct {
+		name string
+		diff ifacedomain.InterfaceDiff
+	}{
+		{"empty delta", ifacedomain.InterfaceDiff{
+			RecordA: ifacedomain.InterfaceRecord{Coordinate: a},
+			RecordB: ifacedomain.InterfaceRecord{Coordinate: b},
+		}},
+		{"breaking delta", diffWithOneRemoval(t)},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			raw, err := json.Marshal(toInterfaceDiffJSON(tc.diff, nil))
+			if err != nil {
+				t.Fatal(err)
+			}
+			if strings.Contains(string(raw), "zero_breaking_advisory") {
+				t.Errorf("advisory present where the text is silent: %s", raw)
+			}
+			if !strings.Contains(string(raw), `"renamed_path":[]`) {
+				t.Errorf("renamed_path not rendered as []: %s", raw)
+			}
+			if !strings.Contains(string(raw), `"major_path_pair":false`) {
+				t.Errorf("major_path_pair not stated: %s", raw)
+			}
+		})
+	}
+}
+
+// The touched join is in the JSON with its counts, and it is a separate set from
+// the gating one so a machine consumer cannot mistake it for a breaking finding.
+func TestInterfaceDiffJSON_TouchedJoinIsSeparateFromTheGate(t *testing.T) {
+	ctr, gomod := zeroBreakingUsedByContainer(t)
+	a, b := ifaceDiffCoords()
+
+	jsonOut = true
+	defer func() { jsonOut = false }()
+
+	var out bytes.Buffer
+	if err := interfaceDiffWith(context.Background(), ctr, a, b, interfaceDiffFlags{usedBy: gomod}, &out); err != nil {
+		t.Fatalf("the zero-breaking join gated: %v", err)
+	}
+	var decoded struct {
+		UsedBy struct {
+			ReachedCount        int `json:"reached_count"`
+			TouchedReachedCount int `json:"touched_reached_count"`
+			TouchedSites        int `json:"touched_call_sites"`
+			Symbols             []struct {
+				Name string `json:"name"`
+			} `json:"symbols"`
+			Touched []struct {
+				Name  string `json:"name"`
+				Class string `json:"class"`
+				Sites int    `json:"sites"`
+			} `json:"touched"`
+		} `json:"used_by"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &decoded); err != nil {
+		t.Fatalf("decoding JSON: %v\n%s", err, out.String())
+	}
+	if decoded.UsedBy.ReachedCount != 0 || len(decoded.UsedBy.Symbols) != 0 {
+		t.Errorf("a non-breaking declaration reached the gating set: %+v", decoded.UsedBy)
+	}
+	if decoded.UsedBy.TouchedReachedCount != 1 || decoded.UsedBy.TouchedSites != 2 {
+		t.Errorf("touched counts = %+v", decoded.UsedBy)
+	}
+	if len(decoded.UsedBy.Touched) != 1 || decoded.UsedBy.Touched[0].Name != "Cast" ||
+		decoded.UsedBy.Touched[0].Class != "touched" || decoded.UsedBy.Touched[0].Sites != 2 {
+		t.Errorf("touched = %+v", decoded.UsedBy.Touched)
+	}
+}
+
+// A cross-major rename is joined on the A-side identity — what the consumer
+// calls today, and what its recorded call-graph nodes are spelled as. Joining on
+// the B side would find nothing and read as "you do not use this".
+func TestTouchedSymbols_RenamesAreNamedOnTheSideTheConsumerCalls(t *testing.T) {
+	got := touchedSymbols(crossMajorDiff(t))
+	if len(got) != 2 {
+		t.Fatalf("touchedSymbols = %+v", got)
+	}
+	for _, d := range got {
+		if d.Symbol.Package != "example.com/mod" {
+			t.Errorf("touched symbol named on the B side: %+v", d)
+		}
+		if d.Removed {
+			t.Errorf("a touched declaration was classed as removed: %+v", d)
+		}
+	}
+	// And the gating set stays empty: nothing here can break a consumer.
+	if bs := breakingSymbols(crossMajorDiff(t)); len(bs) != 0 {
+		t.Errorf("breakingSymbols = %+v on a pure rename", bs)
+	}
+}

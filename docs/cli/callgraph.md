@@ -46,6 +46,81 @@ verdict: UNRESOLVED — callers of pkg.(*T).Do cannot be confirmed absent:
   test-scope-unmeasured at pkg.(*T).Do (_test.go declarations were not analysed for this module)
 ```
 
+## Calls and references
+
+Two things can connect a caller to a function, and they are not the same fact.
+
+- A **call** transfers control: `h.Confirm(w, r)`.
+- A **reference** takes the function's value: `r.Get("/confirm", h.Confirm)`.
+  Nothing is invoked at that line — a value is handed to a router, a framework,
+  a callback slot — and whether it is ever called is not something the graph
+  witnesses.
+
+Both are edges. Every edge states its `kind` in JSON — `"Call"` or
+`"Reference"`, spelled out on both so a consumer never has to infer one from a
+missing field — and a reference carries a label in the text output:
+
+```
+1 caller of pkg.(*H).confirmEmail:
+  pkg.(*H).MountRoutes  [Direct]  [reference — the symbol's value is taken here, not called]  (example.com/app@local)
+```
+
+This is the answer to the most common shape of "nothing calls this handler". A
+method registered with a router has no call edge, and before references were
+recorded `callers` reported that as `RESOLVED-ABSENT` — a measured absence for a
+function an HTTP request drives on every hit.
+
+What is recorded as a reference: a method value (`h.Method`), a method
+expression (`T.Method`), a plain function passed or stored as a value, and a
+closure. For a method value on a **concrete** type, the synthetic wrapper Go's
+SSA form materialises is resolved through, so the answer names the method you
+wrote, not a `$bound` symbol nobody wrote. For a method value taken on an
+**interface** — `s.Save` where `s` is an interface — there is no single written
+method to resolve to, so the reference names the wrapper; the `$bound` symbol
+spells out the interface and method you wrote, and its own callees are the
+implementations.
+
+**A reference never counts as a call.** `--transitive` follows both, but a path
+that crosses a reference is not a chain of invocations, and the
+[reachability](reachability.md) entry-point distance says so on the line.
+
+### The wrapper hop
+
+A method value that is later invoked — `h(1)` on a func the router stored —
+reaches the method through the `$bound` wrapper, and both hops are recorded:
+
+```
+$ kanonarion callees 'example.com/app.(*Router).Serve'
+  (*example.com/app.Handlers).ConfirmEmail$bound  [Unknown]
+
+$ kanonarion callees '(*example.com/app.Handlers).ConfirmEmail$bound'
+  example.com/app.(*Handlers).ConfirmEmail  [Direct]
+```
+
+Two things follow for a query:
+
+- `callers` of a method invoked through a method value lists the `$bound`
+  wrapper alongside the registration site. Ask `callers` of the wrapper, or use
+  `--transitive`, to reach whoever invokes it. A concrete method value that is
+  only ever registered, never invoked, has no wrapper in the answer at all — the
+  registration already names the method.
+- the wrapper is a hop of its own, so `--depth 1` stops on it and a
+  [reachability](reachability.md) entry-point distance across a method value
+  counts one more hop than the source suggests.
+
+Confidence is per hop and the two hops rarely match. A wrapper over a concrete
+method calls exactly one function, so its outgoing edge is `Direct`; a wrapper
+over an interface method calls whatever implements that interface, so its
+outgoing edges are `CHA-overapprox`, one per implementation. The hop *into* the
+wrapper is usually `Unknown` — the call site holds a func value, not a name. A
+path is only as strong as its weakest hop.
+
+Records state whether the axis was measured. A graph extracted before references
+existed downgrades an empty `callers` answer to `UNRESOLVED` naming
+`reference-scope-unmeasured`, rather than claiming an absence it could not have
+seen. Re-extract the module (`kanonarion callgraph <module>@<version>`, or
+`kanonarion local .` for a working tree) to get the measured answer.
+
 ## Test scope
 
 `_test.go` declarations are part of the graph. A module's fakes and
@@ -70,6 +145,20 @@ is never read as a wider one:
 verdict: RESOLVED-ABSENT — no callers of pkg.(*T).Do across a fully-built path (production only; --exclude-tests was given)
 ```
 
+A **test entry point** — `TestX`, `BenchmarkX`, `FuzzX`, `ExampleX`, `TestMain`
+— never has a caller in the graph, because the `go test` harness invokes it
+through a `main` package the go command synthesises at build time and the
+analysis does not read. `callers` on one answers `UNRESOLVED` naming
+`test-harness-entry`, not a confident absence:
+
+```
+verdict: UNRESOLVED — callers of pkg.TestThing cannot be confirmed absent:
+  test-harness-entry at pkg.TestThing (the go test harness invokes it through a synthesised main package that is not part of the analysed graph)
+```
+
+A method on a test fake is not an entry point — it is reached by dispatch or not
+at all — so its absence is still a measurement.
+
 ## Commands
 
 ### `callgraph`
@@ -83,7 +172,7 @@ kanonarion callgraph <module>@<version> [flags]
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--force` | `false` | Re-extract even if a cached record exists |
-| `--from-walk` | _(none)_ | Pin a pre-modules module's `require` directives to the versions this walk resolved. See [Modules published before Go modules](#modules-published-before-go-modules). |
+| `--from-walk` | _(auto-discovered)_ | Pin a pre-modules module's `require` directives to the versions this walk resolved. Unset, the most recent walk containing the module is used. See [Modules published before Go modules](#modules-published-before-go-modules). |
 | `--go-binary` | _(from `PATH`)_ | Path to the `go` binary if not on `PATH` |
 | `--json` | `false` | Emit the record as JSON to stdout |
 
@@ -91,6 +180,43 @@ kanonarion callgraph <module>@<version> [flags]
 $ kanonarion callgraph golang.org/x/mod@v0.30.0
 golang.org/x/mod@v0.30.0: Extracted — 1039 nodes, 4201 edges [CHA]
 ```
+
+### Exit codes
+
+`callgraph` and [`local`](local.md) exit on what the extraction **established**:
+
+| Code | Meaning |
+|---|---|
+| `0` | A graph exists — `Extracted`, or `Partial` with its incompleteness scoped to the packages named on the `failed packages` line |
+| `2` | `LoadFailed`: no graph at all. The message repeats the recorded failure detail |
+| `3` | `Cancelled`: the run ended before the graph was walked |
+
+A `Partial` graph is an answer and exits `0`. Findings about the module never
+change the code — whether an unanalysable dependency should fail a build is a
+policy question this command does not answer.
+
+### When a module does not load
+
+A load failure names its own cause on the record, and `callgraph-show` reprints
+it. The causes that recur:
+
+| Message | What it means |
+|---|---|
+| `no go.mod was synthesised: … imports packages outside the standard library: …` | A module published before Go modules whose imports no build list in this store resolves. Name a build that does with `--from-walk`, or walk a project that uses it |
+| `no package under <path>: the loader resolved N package(s) (…)` | Nothing the loader returned belongs to the module. The named packages say what it found instead — a nested module's `replace` target absent from the published zip is the usual reason |
+| `no packages found for <goos>/<goarch> …` | The module ships no Go source this platform compiles. A Windows-only module has no graph on Linux, and that is a joint fact about the module and the frame |
+| `none of the N package(s) under <path> type-checked: …` | The packages were found and the type-check failed; the loader's own errors follow |
+
+Package membership is decided by the module path the analysed tree **declares**,
+not by the coordinate it was published under. A fork republished at a new path
+that never rewrote its own `module` directive — and which consumers therefore
+reach through a `replace` — has all its packages under the declared path, and
+its nodes carry that path.
+
+The load does not require the artefact to ship a `go.sum` covering its own
+module graph. `go.sum` is an obligation of whatever is being *built*, and a
+module analysed on its own is a main module for the first time in its life; the
+artefact's own integrity was established by the fetch that stored it.
 
 A second run is served from the store and says so with `(cached)`; `--force`
 re-extracts.
@@ -129,6 +255,41 @@ Edges (4201 total, showing 2):
 
 The `test scope:` line is printed on every record, including when the axis was
 not measured — silence there would read as "there was no test code".
+
+A `reference scope:` line is printed on every record for the same reason, and it
+is the axis a confident negative rests on:
+
+```
+  reference scope: analysed — 1818 of 165766 edges record a function value being taken, not called
+```
+
+A record that never looked says so, and says what that costs:
+
+```
+  reference scope: not recorded — this record never looked for function-value
+  references, so an empty callers answer over it is UNRESOLVED, not a measured absence
+```
+
+In JSON the axis is `reference_scope` (empty when unmeasured) beside
+`reference_edge_count`, both always present.
+
+A `module membership:` line appears only when the record needed it:
+
+```
+  module membership: 2 package(s) attributed by PATH PREFIX — the toolchain placed
+  them in no module: example.com/legacy, example.com/legacy/util
+```
+
+Which module a package belongs to is normally taken from the Go toolchain's own
+answer, which matters because module paths nest: `cloud.google.com/go/auth` is a
+separate module from `cloud.google.com/go`, not a part of it, and a record that
+decided membership by path prefix would report one module's code — and its
+exported API — as the other's. The prefix rule survives only for packages the
+toolchain places in no module at all, which is what a pre-modules module's
+packages come back as, and this line names every package decided that way. No
+line means every in-module package was named by the build. On a record written
+before the line existed, its absence says nothing either way: those records
+decided every package by prefix and had nowhere to record it.
 
 `--node` is compared against the **fully-qualified node ID** — the package path
 plus the symbol, e.g. `example.com/mod/render.(*Engine).Render` — so a module
@@ -177,9 +338,12 @@ would be an empty graph. For those, and only those, kanonarion writes a minimal
   version. A `+incompatible` module publishes a v2-or-later version under a path
   with no `/vN` suffix, and adding one would produce a graph whose every node ID
   named a module that does not exist;
-* the `go` directive is pinned to `1.16` — exactly what the toolchain already
-  assumes when a `go.mod` states none — because a directive of 1.22 or later
-  changes loop-variable scoping, hence the SSA, hence the call graph;
+* the `go` directive is pinned to `1.17`, which is the lowest version that makes
+  the file work: below it the toolchain loads the complete, unpruned module
+  graph and reads the `go.mod` of every module reachable through every
+  requirement, so a load fails on a version nothing in the build compiles. It
+  stays well below 1.22, where loop-variable scoping changes and with it the SSA
+  and the call graph; between 1.16 and 1.17 the language does not move at all;
 * a zip that ships its own `go.mod` is **never** touched. Modules that publish
   one and still fail to load are failing for their own reasons, and overwriting
   the published file would hide that;
@@ -192,13 +356,24 @@ would be an empty graph. For those, and only those, kanonarion writes a minimal
   `GOPROXY=off` against the local module cache, so a version nobody chose can
   never enter the graph. Without `--from-walk`, or when the build list does not
   provide *every* one of those imports, synthesis is refused outright and the
-  module is left failing exactly as before: a file naming some dependencies
-  still sends the loader hunting for the rest. The refusal names the imports and
-  the walk consulted, in the `callgraph_gomod_synthesis_declined` log line.
+  module is left failing: a file naming some dependencies still sends the loader
+  hunting for the rest. The refusal is on **the record**, naming the imports
+  that could not be pinned and the build list that failed to pin them, and it
+  records **no failure cause** — a build list can arrive tomorrow, so the
+  refusal states nothing about the artefact and must never be cached as though
+  it did.
 
 The walk stages pass `--from-walk` to the callgraph subprocess automatically, so
-a module analysed as part of `kanonarion walk` already gets its build list. It
-only has to be given by hand when running `callgraph` for a single coordinate.
+a module analysed as part of `kanonarion walk` already gets its build list.
+
+Asked for a single coordinate with no `--from-walk`, `callgraph` finds one
+itself: the most recent walk in the store that resolved this module supplies the
+pins, and the command says on stderr which walk it chose and how many versions
+that walk resolved. `--from-walk` always wins where it is given. The search runs
+before the analysis, not as a retry after one failed, because analysing twice
+would persist two failure generations differing only in which build list they
+were denied — and two generations disagreeing at one completeness are a
+divergence the composed read refuses outright.
 
 The record says so. `fidelity:` gains a `[synthesised go.mod (module …, go …)]`
 note naming how many `require` directives were pinned, `--history` appends it to
@@ -289,6 +464,9 @@ List modules with extracted call graph records, newest first. The optional
 | Flag | Default | Description |
 |------|---------|-------------|
 | `--limit` | `20` | Maximum records to show (`0` = unlimited) |
+
+When the limit bites, the listing says so on both output paths and names the
+invocation that lifts it, per [Truncated listings](conventions.md#truncated-listings).
 | `--offset` | `0` | Skip this many records before listing |
 
 A zero result names its own scope — whether the store is empty, the filter
@@ -417,7 +595,7 @@ constructing them by hand.
 | Field | Meaning |
 |-------|---------|
 | `is_external` | The node is outside the analysed module |
-| `is_exported_api` | The node is part of the module's public API |
+| `is_exported_api` | The node is part of the module's public API: an exported symbol of the analysed module, in a package a consumer can import (not `internal`, not `main`), and not a closure or a synthesised bound-method or thunk symbol |
 | `is_test` | The node is declared in a `_test.go` file or an external test package |
 | `uses_unsafe_pointer` | The body performs an `unsafe.Pointer` conversion |
 | `is_assembly_or_linkname` | The function has no Go body (assembly or `//go:linkname`) |
@@ -440,6 +618,12 @@ where each is a leaf soundness sink that downgrades a negative answer.
 Reflect-dispatched calls carry `Unknown` plus a separate `reflect_dispatch`
 attribute, so the reflect provenance is preserved without inventing a
 confidence rank for it.
+
+Confidence answers *how was the target resolved*, which is a different question
+from *what kind of edge is it*. A reference edge is usually `Direct` — the
+analyser knows exactly whose value was taken — and that is not a claim that a
+call happens. Read `kind` alongside `confidence`; a path is a chain of resolved
+calls only when every hop is `Direct` **and** no hop is a reference.
 
 ## Overall status
 
@@ -464,10 +648,10 @@ Records live in `<store-root>/mirror.db` (SQLite):
 - `callgraph_records` — an append-only ledger keyed on
   `(module_path, module_version, pipeline_version, extracted_at, content_hash)`.
   One serialised blob per generation, holding the nodes, the interface relation
-  and the test-scope axis, alongside `completeness`, `analysis_source` and
-  `worktree_digest` columns so the fidelity and the source are queryable without
-  decoding a blob. Nothing is ever updated; writing the same record twice is a
-  no-op.
+  and the test-scope axis, alongside `completeness`, `analysis_source`,
+  `worktree_digest` and `analysis_root` columns so the fidelity, the source and
+  the working tree are queryable without decoding a blob. Nothing is ever
+  updated; writing the same record twice is a no-op.
 - `callgraph_edges` — edge rows keyed on the **parent record's** content hash,
   plus denormalised coordinate columns and `is_test` (true when either endpoint
   is a test node, which is what `--exclude-tests` filters on), with two covering
@@ -481,7 +665,7 @@ generation first and answer from its edges alone, so a superseded generation's
 edges stay in the table as history and answer nothing.
 
 The callgraph schema is tracked in the shared `schema_migrations` table under
-module key `callgraph` (current version: 8). A record whose `schema_version`
+module key `callgraph` (current version: 13). A record whose `schema_version`
 differs from the binary's is treated as not found, so a schema bump is
 self-enforcing: stale records are re-derived rather than read with later fields
 silently zeroed.
@@ -490,6 +674,48 @@ That read gate is also why the ledger does not purge. Four of the first seven
 migrations deleted both tables wholesale on an analyser shape change; the gate
 achieves what those purges were for — a stale-shape record answers nothing —
 without deleting the evidence, so the row survives for a history read.
+
+## Which working tree answered
+
+A local coordinate is shared by every checkout of the module path, so a project
+checked out twice has generations from both. A query about such a symbol is
+answered from **the working tree you are standing in**: the read resolves the
+current directory to its module root and serves the newest generation analysed
+in that directory.
+
+Standing somewhere the ledger has no generation of - a fresh clone, a checkout
+never passed to `kanonarion local`, or anywhere outside the module - the read
+falls back to the newest generation of any tree, which is what every query did
+before this existed. Nothing returns empty because of routing.
+
+The decision is printed, once, whenever there is one to see:
+
+```
+notice: answered from the working tree you are in, /src/feature (tree analysed-sha256:5252…);
+        the ledger holds 2 working trees for example.com/mod@local
+```
+
+```
+notice: NOT answered from the working tree you are in: /src/fresh-clone has no analysed
+        generation, so the answer comes from the working tree at /src/main (tree analysed-sha256:0aae…);
+        the ledger holds 2 working trees for example.com/mod@local. Analyse this tree to be
+        answered from it:
+          kanonarion local /src/fresh-clone
+```
+
+A single checkout that has been analysed has no decision to show and prints
+nothing. Generations written before the analysed directory was recorded state no
+tree; they still answer, and the notice names them as predating the field rather
+than attributing them to a checkout they may not be from.
+
+Routing is on the analysed **directory**, not on the worktree digest. The digest
+hashes content, so the tree in front of a developer with one uncommitted edit
+matches no stored generation - filtering on it would answer nothing in the
+ordinary case. The digest still says WHICH tree answered, which is what the
+notice reports.
+
+`callgraph-show --history` is unaffected: it lists every generation of every
+tree, marking the one the composed read serves.
 
 ## Assurance log
 

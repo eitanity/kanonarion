@@ -125,3 +125,65 @@ func TestInterfaceRecord_Sort_Methods(t *testing.T) {
 		t.Errorf("embedded types not sorted: %v", embedded)
 	}
 }
+
+// Every collection Sort touches is put in a canonical order, including the ones
+// nested inside a type declaration. The record is hashed after this, so a
+// collection left in source order would make the seal depend on the order the
+// extractor happened to walk the file.
+func TestInterfaceRecord_Sort_EveryNestedCollection(t *testing.T) {
+	r := domain.InterfaceRecord{
+		Packages: []domain.PackageInterface{{
+			ImportPath: "example.com/mod",
+			Types: []domain.TypeDecl{{
+				Name: "Client",
+				Fields: []domain.FieldDecl{
+					{Name: "Zeta"}, {Name: "Alpha"},
+				},
+				Methods: []domain.MethodDecl{
+					{Name: "Send"}, {Name: "Close"},
+				},
+				EmbeddedTypes: []string{"io.Writer", "io.Closer"},
+				TypeParams: []domain.TypeParam{
+					{Name: "V", Constraint: "any"}, {Name: "K", Constraint: "comparable"},
+				},
+			}},
+			Funcs: []domain.FuncDecl{{
+				Name: "New",
+				TypeParams: []domain.TypeParam{
+					{Name: "T", Constraint: "any"}, {Name: "S", Constraint: "any"},
+				},
+			}},
+			Consts: []domain.ValueDecl{{Name: "Limit"}, {Name: "Default"}},
+			Vars:   []domain.ValueDecl{{Name: "Registry"}, {Name: "Client"}},
+			ParseFailures: []domain.ParseFailure{
+				{File: "z.go", Error: "boom"}, {File: "a.go", Error: "boom"},
+			},
+		}},
+	}
+
+	r.Sort()
+
+	p := r.Packages[0]
+	tt := p.Types[0]
+	if tt.Fields[0].Name != "Alpha" || tt.Fields[1].Name != "Zeta" {
+		t.Errorf("fields unsorted: %+v", tt.Fields)
+	}
+	if tt.Methods[0].Name != "Close" || tt.Methods[1].Name != "Send" {
+		t.Errorf("methods unsorted: %+v", tt.Methods)
+	}
+	if tt.EmbeddedTypes[0] != "io.Closer" || tt.EmbeddedTypes[1] != "io.Writer" {
+		t.Errorf("embedded types unsorted: %v", tt.EmbeddedTypes)
+	}
+	if tt.TypeParams[0].Name != "K" || tt.TypeParams[1].Name != "V" {
+		t.Errorf("type params unsorted: %+v", tt.TypeParams)
+	}
+	if p.Funcs[0].TypeParams[0].Name != "S" || p.Funcs[0].TypeParams[1].Name != "T" {
+		t.Errorf("func type params unsorted: %+v", p.Funcs[0].TypeParams)
+	}
+	if p.Consts[0].Name != "Default" || p.Vars[0].Name != "Client" {
+		t.Errorf("consts/vars unsorted: %+v %+v", p.Consts, p.Vars)
+	}
+	if p.ParseFailures[0].File != "a.go" {
+		t.Errorf("parse failures unsorted: %+v", p.ParseFailures)
+	}
+}

@@ -51,7 +51,7 @@ func (s *fakeDirectiveStore) GetScanByID(_ context.Context, id string) (domain.R
 	return r, ok, nil
 }
 
-func (s *fakeDirectiveStore) ListScans(_ context.Context, path string, limit int) ([]domain.Record, error) {
+func (s *fakeDirectiveStore) ListScans(_ context.Context, path string, limit, _ int) ([]domain.Record, error) {
 	if s.err != nil {
 		return nil, s.err
 	}
@@ -60,6 +60,17 @@ func (s *fakeDirectiveStore) ListScans(_ context.Context, path string, limit int
 		return all[:limit], nil
 	}
 	return all, nil
+}
+
+func (s *fakeDirectiveStore) CountScans(context.Context) (int, error) {
+	if s.err != nil {
+		return 0, s.err
+	}
+	var n int
+	for _, scans := range s.scans {
+		n += len(scans)
+	}
+	return n, nil
 }
 
 func TestQueryDirectives_GetFound(t *testing.T) {
@@ -130,12 +141,12 @@ func TestQueryDirectives_ListScans(t *testing.T) {
 	}
 
 	uc := application.NewQueryDirectivesUseCase(store)
-	all, err := uc.ListScans(ctx, "example.com/proj", 0)
+	all, err := uc.ListScans(ctx, "example.com/proj", 0, 0)
 	if err != nil || len(all) != 3 {
 		t.Fatalf("ListScans: err=%v len=%d", err, len(all))
 	}
 
-	limited, err := uc.ListScans(ctx, "example.com/proj", 2)
+	limited, err := uc.ListScans(ctx, "example.com/proj", 2, 0)
 	if err != nil || len(limited) != 2 {
 		t.Fatalf("limited ListScans: err=%v len=%d", err, len(limited))
 	}
@@ -145,7 +156,7 @@ func TestQueryDirectives_ListScansError(t *testing.T) {
 	store := newFakeDirectiveStore()
 	store.err = errors.New("db down")
 	uc := application.NewQueryDirectivesUseCase(store)
-	_, err := uc.ListScans(context.Background(), "example.com/proj", 0)
+	_, err := uc.ListScans(context.Background(), "example.com/proj", 0, 0)
 	if err == nil {
 		t.Fatal("expected error")
 	}

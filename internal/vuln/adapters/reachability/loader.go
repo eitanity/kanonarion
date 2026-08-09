@@ -61,6 +61,14 @@ func projectCallGraph(rec callgraphdomain.CallGraphRecord) ports.CallGraphProjec
 			IsExportedAPI: n.IsExportedAPI,
 		})
 	}
+	// Reference edges are projected alongside calls, deliberately. A handler
+	// registered with a router is code the application really runs, and dropping
+	// the registration would leave its whole subgraph unreachable — the
+	// false-negative direction, which is the one that matters here. Reachability
+	// already drops confidence for the same reason: it asks whether a path
+	// exists, and the strength of that path is stated by the root
+	// classification's entry-point distance rather than by silently omitting
+	// hops.
 	for _, e := range rec.Edges {
 		proj.Edges = append(proj.Edges, ports.CallGraphEdge{FromID: e.FromID, ToID: e.ToID})
 	}

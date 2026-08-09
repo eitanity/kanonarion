@@ -7,6 +7,7 @@ import (
 	"go/token"
 	"log/slog"
 	"os"
+	"path/filepath"
 	"runtime"
 	"strings"
 
@@ -89,6 +90,12 @@ func (a *Analyser) Analyse(
 	// nothing is recognised as the target and the graph comes back empty. Writing
 	// one is what makes the module loadable at all — and makes the analysed tree
 	// something other than the published tree, which the record then says.
+	// Why nothing was written, when nothing was written for a reason the load is
+	// then going to fail on. It travels to the record because the load's own
+	// account of that failure is a symptom — "directory prefix . does not contain
+	// main module" says nothing about a missing require list — and a reader given
+	// only the symptom cannot act.
+	declined := ""
 	synth, err := synthesiseGoMod(tempDir, coord, inputs)
 	switch {
 	case errors.Is(err, errGoModPresent):
@@ -105,6 +112,7 @@ func (a *Analyser) Analyse(
 		// the work that will eventually resolve those dependencies. The reason is
 		// logged instead.
 		synth = domain.SynthesisedGoMod{}
+		declined = err.Error()
 		a.logger.InfoContext(ctx, "callgraph_gomod_synthesis_declined",
 			slog.String("module", coord.Path()),
 			slog.String("version", coord.Version()),
@@ -133,11 +141,43 @@ func (a *Analyser) Analyse(
 			domain.FailureCauseEnvironment, "cancelled before load"), synth, inputs.Source), nil
 	}
 
-	rec, err := a.analyseDir(ctx, tempDir, coord, synth)
+	rec, err := a.analyseDir(ctx, tempDir, coord, synth, nil)
 	if err != nil {
 		return rec, err
 	}
-	return a.sourced(rec, synth, inputs.Source), nil
+	return a.sourced(withDeclinedSynthesis(rec, declined), synth, inputs.Source), nil
+}
+
+// withDeclinedSynthesis prefixes a failed record's detail with the reason no
+// go.mod was written for a module that ships none.
+//
+// Only a failure carries it. A module that loaded anyway needed no file and has
+// nothing to explain; a module that failed did so BECAUSE it was loaded outside
+// any module, and the loader's account of that ("directory prefix . does not
+// contain main module or its selected dependencies") names a consequence three
+// steps downstream of the cause. The refusal itself names the imports that could
+// not be pinned and the build list that failed to pin them, which is the fact a
+// reader has to act on.
+//
+// The record's FAILURE CAUSE is CLEARED. A refusal for want of require
+// directives is not a property of the artefact — a build list can arrive
+// tomorrow — and the load, knowing nothing about the refusal, files the empty
+// target set it then meets as the module's fault. That is what makes the failure
+// cacheable, and a cacheable failure here is a permanent wrong answer for a
+// module the store already holds the versions for. An unattributed cause is the
+// truthful value: nothing has been established about these bytes.
+func withDeclinedSynthesis(r domain.CallGraphRecord, declined string) domain.CallGraphRecord {
+	if declined == "" || !domain.RecordIsFailure(r) {
+		return r
+	}
+	detail := "no go.mod was synthesised: " + declined +
+		" — name a walk that resolved them with --from-walk"
+	if r.FailureDetail != "" {
+		detail += "; the load then reported: " + r.FailureDetail
+	}
+	r.FailureDetail = detail
+	r.FailureCause = domain.FailureCauseUnrecorded
+	return r
 }
 
 // sourced stamps a record as built from a fetched module zip, and states how the
@@ -162,31 +202,93 @@ func (a *Analyser) sourced(r domain.CallGraphRecord, synth domain.SynthesisedGoM
 // directory's go.mod; coord.Version is coordinate.LocalVersion, the marker for a
 // module nothing published.
 //
-// The record it returns names its source as a working tree and carries a digest
-// of that tree. The digest is computed BEFORE the analysis, so it describes the
-// bytes the analysis is about to read rather than whatever the tree became while
-// SSA construction was running.
+// The record it returns names its source as a working tree, carries a digest of
+// that tree, and states WHERE the tree was.
+//
+// The digest is computed AFTER the analysis, from the loader's own file list, so
+// it describes the bytes that were ANALYSED rather than the bytes that were on
+// disk beforehand — which is the claim the field is supposed to make. A load
+// that resolved no files at all still has to identify the tree it failed on, and
+// falls back to scanning it; the two carry different scheme prefixes, because
+// they are different claims.
+//
+// The root is recorded alongside, and is a different question from the digest.
+// The digest says WHICH TREE this is; the root says WHERE it was, which is what
+// a reader standing in a checkout is actually asking when they query it. See
+// CallGraphRecord.AnalysisRoot.
 func (a *Analyser) AnalyseDir(ctx context.Context, dir string, coord coordinate.ModuleCoordinate) (domain.CallGraphRecord, error) {
 	a.logMem(ctx, "start")
-	digest, err := worktreeDigest(dir)
+	root, err := analysisRoot(dir)
 	if err != nil {
-		// Infrastructure, not a property of the module: a tree that cannot be read
-		// cannot be identified, and a worktree record with no digest is one that
-		// silently merges with every other checkout of the same module path.
-		return domain.CallGraphRecord{}, fmt.Errorf("identifying working tree %s: %w", dir, err)
+		// Infrastructure, not a property of the module: a tree whose own location
+		// cannot be resolved cannot be told apart from another checkout by a reader
+		// standing in one of them.
+		return domain.CallGraphRecord{}, fmt.Errorf("locating working tree %s: %w", dir, err)
 	}
 	// Cancellation is observed inside analyseDir (packages.Load honours ctx,
 	// plus explicit ctx.Err checkpoints), so no pre-check is needed here.
 	// A working tree is analysed exactly as it is on disk: it is the caller's own
 	// module and already declares itself, so nothing is synthesised into it and
 	// the record carries the zero value.
-	rec, err := a.analyseDir(ctx, dir, coord, domain.SynthesisedGoMod{})
+	var read []string
+	rec, err := a.analyseDir(ctx, dir, coord, domain.SynthesisedGoMod{}, &read)
 	if err != nil {
 		return rec, err
 	}
+	digest, err := treeDigest(root, read)
+	if err != nil {
+		// A tree that cannot be read cannot be identified, and a worktree record
+		// with no digest is one that silently merges with every other checkout of
+		// the same module path.
+		return domain.CallGraphRecord{}, fmt.Errorf("identifying working tree %s: %w", dir, err)
+	}
 	rec.AnalysisSource = domain.AnalysisSourceWorktree
 	rec.WorktreeDigest = digest
+	rec.AnalysisRoot = root
 	return rec, nil
+}
+
+// analysisRoot resolves dir to the absolute, symlink-free path the record states
+// it analysed.
+//
+// Symlinks are evaluated so that one tree reached by two names is one root. The
+// alternative — recording whatever spelling the caller typed — would make a
+// query run through /home/me/work/project miss every generation analysed at the
+// path that symlink resolves to, which is the same tree.
+func analysisRoot(dir string) (string, error) {
+	abs, err := filepath.Abs(dir)
+	if err != nil {
+		return "", fmt.Errorf("resolving %s: %w", dir, err)
+	}
+	resolved, err := filepath.EvalSymlinks(abs)
+	if err != nil {
+		return "", fmt.Errorf("resolving symlinks in %s: %w", abs, err)
+	}
+	return resolved, nil
+}
+
+// treeDigest identifies the tree at root, preferring what the loader read.
+//
+// read is empty exactly when the load resolved no packages — a failed analysis —
+// and the tree is then scanned instead. The fallback is never silent: it carries
+// its own scheme prefix, so a reader can see that this record identifies its tree
+// by a proxy for what was analysed rather than by what was analysed.
+func treeDigest(root string, read []string) (string, error) {
+	if len(read) == 0 {
+		return worktreeDigest(root)
+	}
+	// go.mod and go.sum are not package source and the loader does not list them,
+	// but they decide the build list the graph was constructed against, so a change
+	// to either is a change to what was analysed.
+	for _, name := range []string{"go.mod", "go.sum"} {
+		path := filepath.Join(root, name)
+		if _, err := os.Stat(path); err == nil {
+			read = append(read, path)
+		} else if !os.IsNotExist(err) {
+			return "", fmt.Errorf("stating %s for worktree digest: %w", name, err)
+		}
+	}
+	return analysedTreeDigest(root, read)
 }
 
 // analyseDir holds the shared post-extraction analysis pipeline: load
@@ -198,11 +300,18 @@ func (a *Analyser) AnalyseDir(ctx context.Context, dir string, coord coordinate.
 // here because it changes how the load must run — a synthesised file beside a
 // vendor tree would otherwise auto-select vendor mode — not merely because it is
 // recorded.
+//
+// read, when non-nil, is filled with the absolute paths the loader resolved, for
+// the caller that identifies the analysed tree by them. It is an out-parameter
+// rather than a second result because every failure return here is a RECORD —
+// a load that failed is an answer about the module, not an error — and threading
+// a second value through a dozen of them would obscure that.
 func (a *Analyser) analyseDir(
 	ctx context.Context,
 	tempDir string,
 	coord coordinate.ModuleCoordinate,
 	synth domain.SynthesisedGoMod,
+	read *[]string,
 ) (domain.CallGraphRecord, error) {
 	fset := token.NewFileSet()
 	env := analysisEnv(synth)
@@ -257,29 +366,68 @@ func (a *Analyser) analyseDir(
 	}
 	a.logMem(ctx, "meta_loaded")
 
+	// Every error the driver attached to a package rather than returning. A load
+	// that resolved nothing still returns a nil error when the go command reported
+	// its failures this way, so these strings are the only account of what went
+	// wrong — and they were being discarded, which is how nineteen coordinates
+	// came to be recorded with a failure line that named no cause at all.
+	metaErrs := metaLoadErrors(pkgsMeta)
+
 	if len(pkgsMeta) == 0 {
 		// The loader ran and found nothing to analyse: a fact about what the module
-		// ships.
+		// ships — unless the loader also said why, in which case that is the finding
+		// and the count is a symptom of it.
+		detail := "no packages found for " + platformFrame() +
+			" (the module ships no Go source, or build constraints exclude every file it does ship)"
+		if len(metaErrs) > 0 {
+			detail += "; the loader reported: " + joinFirst(metaErrs, 3)
+		}
 		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed,
-			domain.FailureCauseModule, "no packages found"), nil
+			classifyLoad(detail), detail), nil
 	}
 
-	// New Architecture: Streaming SSA Construction.
-	// We load and process target packages in small batches to keep peak memory low.
+	// The membership test asks the tree what module it is, not the coordinate. A
+	// fork republished under a new path that never rewrote its module directive
+	// still declares — and its consumers still import — the original path, and
+	// testing against the coordinate matched none of its own packages.
+	target := targetCoordinate(tempDir, coord)
+
+	// The pattern list for the syntax load below. This is deliberately NOT the
+	// membership rule, and the prefix here is not a fifth spelling of it: this
+	// decides what to BUILD, and moduleMembership decides what a built package is
+	// CLAIMED to be. Building wide and claiming narrowly is the safe pairing —
+	// a nested module's packages are built with bodies, so its dispatch is
+	// resolved rather than lost, and every node it contributes is then attributed
+	// to the module the toolchain says it came from. Narrowing this test instead
+	// would drop those bodies, which is a change to the graph's fidelity and a
+	// separate decision from correcting who owns a node.
 	var targetPkgPaths []string
 	packages.Visit(pkgsMeta, nil, func(p *packages.Package) {
-		isTarget := p.PkgPath == coord.Path() || strings.HasPrefix(p.PkgPath, coord.Path()+"/")
+		isTarget := p.PkgPath == target.Path() || strings.HasPrefix(p.PkgPath, target.Path()+"/")
 		if isTarget {
 			targetPkgPaths = append(targetPkgPaths, p.PkgPath)
 		}
 	})
 
-	build, err := a.loadAndBuildSSA(ctx, fset, tempDir, coord, targetPkgPaths, env)
+	if len(targetPkgPaths) == 0 {
+		// The loader ran, returned packages, and not one of them belongs to the
+		// module under analysis. Loading on would register nothing and report "no
+		// packages successfully loaded", which names neither what was sought nor
+		// what was found nor what the toolchain said about it.
+		detail := describeEmptyTargetSet(target, pkgsMeta, metaErrs)
+		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessMetadataOnly,
+			classifyLoad(detail), detail), nil
+	}
+
+	build, err := a.loadAndBuildSSA(ctx, fset, tempDir, target, targetPkgPaths, env)
 	if err != nil {
 		// The only error this returns is a syntax-load failure, which is again the
 		// go command failing; same question, same way of answering it.
 		return a.failRecord(coord, domain.CallGraphStatusLoadFailed, domain.CompletenessFailed,
 			classifyLoad(err.Error()), err.Error()), nil
+	}
+	if read != nil {
+		*read = build.SourceFiles
 	}
 	prog := build.Prog
 	allLoadErrs := build.LoadErrs
@@ -290,9 +438,15 @@ func (a *Analyser) analyseDir(
 	a.logMem(ctx, "all_packages_processed")
 
 	if build.Registered() == 0 {
-		detail := "no packages successfully loaded"
-		if len(allLoadErrs) > 0 {
-			detail = joinFirst(allLoadErrs, 3)
+		// Named target packages, and not one of them type-checked. Whatever the
+		// syntax load said comes first; the metadata load's own errors are the
+		// fallback, and only with neither is there nothing to report but the count.
+		detail := fmt.Sprintf("none of the %d package(s) under %s type-checked", len(targetPkgPaths), target.Path())
+		switch {
+		case len(allLoadErrs) > 0:
+			detail += ": " + joinFirst(allLoadErrs, 3)
+		case len(metaErrs) > 0:
+			detail += "; the loader reported: " + joinFirst(metaErrs, 3)
 		}
 		// Metadata resolved and not one package type-checked from it. The toolchain
 		// demonstrably ran — it produced the metadata — so this is the module,
@@ -327,12 +481,13 @@ func (a *Analyser) analyseDir(
 
 	// Pre-filter to the caller nodes walkGraph records — module functions plus
 	// dependency functions built with real bodies — to save memory during walk.
-	recordedCallers := recordedCallerNodes(cg, coord)
+	mem := build.Membership
+	recordedCallers := recordedCallerNodes(cg, mem)
 
 	// Ensure GC can reclaim memory before starting walk
 	runtime.GC()
 
-	nodes, edges, overallStatus := a.walkGraph(ctx, cg, recordedCallers, coord, fset, tempDir)
+	nodes, edges, overallStatus := a.walkGraph(ctx, cg, recordedCallers, mem, fset, tempDir)
 
 	// Attach body-level capability facts. These are properties of a
 	// function's own body — unsafe.Pointer conversions, assembly/linkname
@@ -345,14 +500,21 @@ func (a *Analyser) analyseDir(
 	// implementer's body was never built into SSA (type-only dep / unbuilt
 	// package). Runs after body facts so those only scan built module bodies;
 	// devirtualized leaf targets carry no onward edges.
-	nodes, edges = a.devirtualizeSingleImplementer(ctx, prog, coord, fset, tempDir, nodes, edges)
+	nodes, edges = a.devirtualizeSingleImplementer(ctx, prog, mem, fset, tempDir, nodes, edges)
+
+	// Record the function values the code takes but does not call. A method
+	// registered with a router is passed, never called, so CHA sees nothing —
+	// and a handler an HTTP request drives on every hit ends up with no in-edge.
+	// Runs after devirtualisation so an edge a call already witnesses keeps the
+	// call's key rather than being recorded twice under two kinds.
+	nodes, edges = a.collectReferenceEdges(ctx, prog, mem, fset, tempDir, nodes, edges)
 
 	// Record the type-level relation: which of the module's concrete types
 	// satisfy which of its interfaces. An interface method has no callers — calls
 	// go to implementations — so the edge collections cannot answer "what must
 	// change with this port", and a grep for the method name cannot tell an
 	// implementation from a call.
-	ifaces, impls := a.extractInterfaces(ctx, prog, coord, fset, tempDir)
+	ifaces, impls := a.extractInterfaces(ctx, prog, mem, fset, tempDir)
 
 	// A failed package (or any load error) means the graph is incomplete;
 	// never report Extracted when some target package did not resolve. Keeping
@@ -377,6 +539,11 @@ func (a *Analyser) analyseDir(
 		Implementations: impls,
 		TestScope:       build.TestScope,
 		TestScopeDetail: build.TestScopeDetail,
+		// The axis was walked: whatever references exist in this graph are the
+		// ones the code takes. A record that does not say this was produced
+		// before references were extracted, and an empty callers answer over it
+		// is unproven rather than absent.
+		ReferenceScope:  domain.ReferenceScopeAnalysed,
 		OverallStatus:   overallStatus,
 		NodeCount:       len(nodes),
 		EdgeCount:       len(edges),
@@ -396,6 +563,11 @@ func (a *Analyser) analyseDir(
 	// not typecheck, so callers/callees/reachability verdicts over this Partial
 	// graph can be caveated per package rather than by node/edge totals.
 	rec.FailedPackages = failedPkgs
+	// Every package this analysis admitted to the module by path prefix, because
+	// the toolchain placed it in no module at all. Empty is the ordinary case and
+	// says the loader named every in-module package itself; non-empty is the
+	// reconstruction, stated rather than hidden inside the membership answer.
+	rec.PrefixAttributedPackages = mem.prefixAttributed()
 	rec.Sort()
 	return rec, nil
 }

@@ -111,6 +111,25 @@ go install golang.org/x/vuln/cmd/govulncheck@latest
 If the binary is not found, `vuln-scan` returns a descriptive error with the
 install command rather than a generic failure.
 
+### Air-gapped scanning
+
+Under `GOPROXY=off` - read as the go command reads it, so `go env -w
+GOPROXY=off` counts - the advisory snapshot is **not downloaded**. What that
+means in practice:
+
+- A store that already holds a snapshot **scans normally**. Snapshot resolution
+  prefers the stored generation, so nothing changes: the run is judged against
+  the snapshot the store carries, and the scan-run record names it as always.
+- `--fresh` refuses. Refreshing means reading the published generation from
+  `vuln.go.dev`, which is the network.
+- A store with **no** snapshot refuses, naming the remedy: drop `--fresh`, pin
+  one with `--snapshot-source`/`--snapshot-version`, or carry in a store that
+  holds one. `vuln-snapshot-list` shows what the store has.
+
+The scan itself is already offline - `govulncheck` is run with `GOPROXY=off`
+against the verified module cache, which is unchanged. See
+[`fetch`: what else `GOPROXY=off` withdraws](fetch.md#what-else-goproxyoff-withdraws).
+
 ## Commands
 
 ### `vuln`
@@ -546,6 +565,10 @@ kanonarion vuln-scan-list [walk-id] [flags]
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Path to fact store root |
 | `--limit` | `20` | Maximum number of results (0 = unlimited) |
+| `--offset` | `0` | Skip this many results before listing |
+
+When the limit bites, the listing says so on both output paths and names the
+invocation that lifts it, per [Truncated listings](conventions.md#truncated-listings).
 
 A zero result distinguishes "that walk has no scan run" from "nothing has been
 scanned", per [Zero-result listings](conventions.md#zero-result-listings).
@@ -625,6 +648,17 @@ on the line it is rendered on, and `--json` gains an `inputs_unresolvable` field
 
 ```
 Walk ID:     01KQDBVW092ER1HNXZ60X27CMD (inputs unresolvable: walk absent from this store)
+```
+
+A run id that is not there exits `4` and the message says how many runs were
+searched, so a mistyped id over a stocked store cannot be read as an unscanned
+one. The corpus is every run in the store: a run id is not keyed on a walk, so
+the walk you were looking at is not what excluded it.
+
+```
+no scan run matched run id "vscan-NOPE" — the value is compared for exact equality against the run id of
+all 15 scan run(s) in the store (e.g. vscan-01KQDBVW092ER1HNXZ60X27CMD-1786116020); to list every scan
+run: kanonarion vuln-scan-list --limit 0
 ```
 
 ---
@@ -1048,6 +1082,18 @@ vuln.go.dev                    20240115000000       2024-01-15T00:00:00Z
 vuln.go.dev                    20240101000000       2024-01-01T00:00:00Z
 ```
 
+This command takes no filter and no `--limit`, so an empty answer has exactly one
+cause and says it:
+
+```
+$ kanonarion vuln-snapshot-list
+the store holds no vulnerability database snapshot at all
+  to produce one: kanonarion vuln-scan <walk-id>
+```
+
+A snapshot is pinned by the scan that judged a walk against it; there is no
+command whose job is to fetch one on its own.
+
 ---
 
 ### `vuln-snapshot-show`
@@ -1073,6 +1119,17 @@ Source:       vuln.go.dev
 Version:      20240115000000
 Retrieved at: 2024-01-15T00:00:00Z
 Content hash: sha256:abc123...
+```
+
+A snapshot that is not there exits `4` and the message says how many snapshots
+were searched, so an unrecognised version over a stocked store cannot be read as
+an empty one:
+
+```
+no vulnerability database snapshot matched source and version "vuln.go.dev@20991231000000" — the value is
+compared for exact equality against the source and version of all 2 vulnerability database snapshot(s) in
+the store (e.g. vuln.go.dev@20240115000000); to list every vulnerability database snapshot: kanonarion
+vuln-snapshot-list
 ```
 
 ---

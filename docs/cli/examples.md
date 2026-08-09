@@ -92,6 +92,10 @@ kanonarion examples-list --limit 100
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Root directory |
 | `--limit` | `50` | Maximum records to show (0 = unlimited) |
+| `--offset` | `0` | Skip this many records before listing |
+
+When the limit bites, the listing says so on both output paths and names the
+invocation that lifts it, per [Truncated listings](conventions.md#truncated-listings).
 
 ## What gets extracted
 

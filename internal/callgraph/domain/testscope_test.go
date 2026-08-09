@@ -55,6 +55,7 @@ func TestClassifyNegativeVerdict_ExcludedByRequestIsNotASink(t *testing.T) {
 		Found:                  true,
 		ModuleLevel:            domain.CompletenessBuiltWithBodies,
 		TestScope:              domain.TestScopeUnknown,
+		ReferenceScope:         domain.ReferenceScopeAnalysed,
 		TestsExcludedByRequest: true,
 	})
 	if v.Outcome != domain.VerdictResolvedAbsent {

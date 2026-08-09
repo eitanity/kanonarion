@@ -72,6 +72,18 @@ func init() {
 		producerGuarded[modulePath+"/internal/vuln/domain."+name] = true
 	}
 
+	// The soundness ladder a negative reachability answer is reported on. It is
+	// DERIVED rather than stored, and that makes the guard more necessary, not
+	// less: a rung no derivation ever returns is a rung the renderer branches on
+	// and nothing can reach, which is exactly the dead-rung shape this guard was
+	// built for. The zero value is excluded — it is what a positive carries, by
+	// omission.
+	for _, name := range []string{
+		"SoundnessConfirmed", "SoundnessInferred", "SoundnessUnconfirmed", "SoundnessUnsearchable",
+	} {
+		producerGuarded[modulePath+"/internal/vuln/domain."+name] = true
+	}
+
 	// The standard library's acquisition route. Same reasoning: it is stated by
 	// the acquirer that took it, not derived from the verification status that
 	// happens to correlate with it today.

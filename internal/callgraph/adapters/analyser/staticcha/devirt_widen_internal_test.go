@@ -140,7 +140,7 @@ func TestDevirt_WidensToBuiltDependencyBody(t *testing.T) {
 		t.Fatalf("coord: %v", err)
 	}
 
-	nodes, edges := a.devirtualizeSingleImplementer(context.Background(), prog, coord, fset, "", nil, nil)
+	nodes, edges := a.devirtualizeSingleImplementer(context.Background(), prog, membershipByPrefix(coord), fset, "", nil, nil)
 
 	const (
 		fromID = "example.com/testmod/dep.Drive"
@@ -177,16 +177,18 @@ func TestDevirt_NoOpWhenDependencyBodyUnbuilt(t *testing.T) {
 		t.Fatalf("coord: %v", err)
 	}
 
-	nodes, edges := a.devirtualizeSingleImplementer(context.Background(), prog, coord, fset, "", nil, nil)
+	nodes, edges := a.devirtualizeSingleImplementer(context.Background(), prog, membershipByPrefix(coord), fset, "", nil, nil)
 
 	if len(edges) != 0 || len(nodes) != 0 {
 		t.Fatalf("expected no recovery with dependency unbuilt, got %d nodes, %d edges", len(nodes), len(edges))
 	}
 }
 
-// TestFnHasRealBody covers the predicate that gates both the sweep and the
-// recorded-caller set: a built body is real, a nil function and a synthetic
-// wrapper are not.
+// TestFnHasRealBody covers the predicate that gates the devirtualization sweep
+// and the base of the recorded-caller set: a built body is real, a nil function
+// and a synthetic wrapper are not. Whether a wrapper's OWN outgoing edges are
+// recorded is a different question with a different predicate; see
+// fnIsMethodWrapper and the split test beside it.
 func TestFnHasRealBody(t *testing.T) {
 	prog, _ := buildDepWidenProg(t, true)
 
@@ -228,7 +230,7 @@ func TestRecordedCallerNodes(t *testing.T) {
 	if err != nil {
 		t.Fatalf("coord: %v", err)
 	}
-	recorded := recordedCallerNodes(cg, coord)
+	recorded := recordedCallerNodes(cg, membershipByPrefix(coord))
 
 	drive := findFunc(prog, "example.com/testmod/dep.Drive")
 	if drive == nil {

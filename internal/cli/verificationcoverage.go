@@ -32,39 +32,120 @@ func graphVerificationCoverage(
 	nodes []walkdomain.GraphNode,
 	records fetchRecordReader,
 ) fetchdomain.VerificationCoverage {
-	obs := make([]fetchdomain.CoverageObservation, 0, len(nodes))
+	rows := graphVerificationRows(ctx, nodes, records)
+	obs := make([]fetchdomain.CoverageObservation, 0, len(rows))
+	for _, r := range rows {
+		obs = append(obs, r.observation)
+	}
+	return fetchdomain.VerificationCoverageOf(obs)
+}
+
+// moduleVerification is one module's contribution to the coverage aggregate,
+// with the reason that was RECORDED for it rather than one derived here.
+//
+// The counts alone cannot answer the question they are usually asked in service
+// of. "Seven modules are checksum-database-only" is a number; whether that is a
+// proxy stripping Origin metadata, a forge that could not be reached, or
+// --skip-vcs-verify left set in CI is the answer, and until now establishing it
+// meant parsing another command's JSON with python3 — a status without its basis
+// is a claim the reader cannot check.
+type moduleVerification struct {
+	// Coordinate is the module as the walk resolved it.
+	Coordinate string `json:"coordinate"`
+	Path       string `json:"path"`
+	Version    string `json:"version"`
+	// OriginalCoordinate is the coordinate a replace directive stood in for,
+	// present only on a replaced node. The class and the reason belong to the
+	// bytes, which are the replacement's, but the name a reader arrives with is
+	// usually the original — a row carrying only the fork's name is unfindable
+	// by anyone reading the manifest that named upstream.
+	OriginalCoordinate string `json:"original_coordinate,omitempty"`
+	// Class is the coverage bucket this module fell in — the same vocabulary the
+	// aggregate counts, so a reader can sum the rows and get the totals.
+	Class string `json:"class"`
+	// Status is the verification status the record itself recorded. It is the
+	// finer of the two words and it is the one that answers "why": a bucket folds
+	// several statuses together on purpose — every Unverified* status carries the
+	// same amount of assurance, namely none — and what to DO about a module
+	// differs entirely between them. Empty where nothing recorded a status.
+	Status string `json:"status,omitempty"`
+	// Reason is the prose the record recorded alongside that status. Most records
+	// carry none: a measurement that went as expected records the status and
+	// nothing else, and the detail is written when something is worth saying —
+	// a hash that disagreed, a database that could not be reached. Its absence is
+	// therefore not a gap in this report, and the report says so in words rather
+	// than leaving a blank that reads as "nothing to report".
+	Reason string `json:"reason,omitempty"`
+
+	// observation is the row's contribution to the aggregate. It is unexported
+	// and derived here, beside the row, so the per-module report and the totals
+	// are one measurement rather than two that may disagree.
+	observation fetchdomain.CoverageObservation
+}
+
+// graphVerificationRows classifies every node of a walk's graph and records why.
+// It is the single pass both the aggregate and the per-module report are built
+// from.
+func graphVerificationRows(
+	ctx context.Context,
+	nodes []walkdomain.GraphNode,
+	records fetchRecordReader,
+) []moduleVerification {
+	rows := make([]moduleVerification, 0, len(nodes))
 	for _, n := range nodes {
+		row := moduleVerification{
+			Coordinate: n.Coordinate.String(),
+			Path:       n.Coordinate.Path(),
+			Version:    n.Coordinate.Version(),
+		}
+		if !n.OriginalCoordinate.IsZero() {
+			row.OriginalCoordinate = n.OriginalCoordinate.String()
+		}
+		switch n.ResolutionSource {
 		// The standard library is toolchain-provided: its custody rides on the
 		// graph node, and there is no fetch record to look up. Reading it from
 		// the node reports the assurance it actually has instead of the absence
 		// a record lookup would invent.
-		if n.ResolutionSource == walkdomain.ResolutionStdlib {
-			obs = append(obs, stdlibCoverageObservation(n))
-			continue
-		}
+		case walkdomain.ResolutionStdlib:
+			row.observation = stdlibCoverageObservation(n)
+			if n.Stdlib != nil {
+				row.Status = n.Stdlib.VerificationStatus
+				row.Reason = n.Stdlib.VerificationDetail
+			}
 		// A module built from a local source tree has no remote artefact and so
 		// no fetch record. Counting it as an absent measurement would report a
 		// project walk as short of its own main module on every run.
-		if n.ResolutionSource == walkdomain.ResolutionLocalMainModule ||
-			n.ResolutionSource == walkdomain.ResolutionLocalReplace {
-			obs = append(obs, fetchdomain.CoverageObservation{
+		case walkdomain.ResolutionLocalMainModule, walkdomain.ResolutionLocalReplace:
+			row.observation = fetchdomain.CoverageObservation{
 				Bucket:   fetchdomain.BucketLocalSource,
 				Recorded: true,
-			})
-			continue
+			}
+			row.Status = "local source"
+			row.Reason = "built from a local source tree; there is no published artefact to check a checksum against"
+		default:
+			rec, found, err := records.ComposeFetchRecord(ctx, n.Coordinate)
+			switch {
+			case err != nil:
+				row.Reason = "the fetch record for this module could not be read, so nothing here describes how it was verified"
+			case !found:
+				row.Reason = "no fetch record is stored for this coordinate, so no verification of it was ever measured"
+			default:
+				row.observation = fetchdomain.CoverageObservation{
+					Bucket:   fetchdomain.BucketForVerification(fetchdomain.VerificationStatus(rec.VerificationStatus)),
+					Legs:     rec.Legs,
+					Recorded: true,
+				}
+				row.Status = rec.VerificationStatus
+				row.Reason = rec.VerificationDetail
+			}
 		}
-		rec, found, err := records.ComposeFetchRecord(ctx, n.Coordinate)
-		if err != nil || !found {
-			obs = append(obs, fetchdomain.CoverageObservation{})
-			continue
+		row.Class = row.observation.Bucket.String()
+		if !row.observation.Recorded {
+			row.Class = fetchdomain.BucketUnrecorded.String()
 		}
-		obs = append(obs, fetchdomain.CoverageObservation{
-			Bucket:   fetchdomain.BucketForVerification(fetchdomain.VerificationStatus(rec.VerificationStatus)),
-			Legs:     rec.Legs,
-			Recorded: true,
-		})
+		rows = append(rows, row)
 	}
-	return fetchdomain.VerificationCoverageOf(obs)
+	return rows
 }
 
 // stdlibCoverageObservation reads the standard library's custody off the graph

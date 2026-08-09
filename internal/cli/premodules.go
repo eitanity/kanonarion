@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"slices"
 	"sort"
 	"strings"
 
@@ -148,7 +149,9 @@ func writeWalkPreModulesCaveat(w io.Writer, g walkdomain.Graph) error {
 func indentedList(named []string) string {
 	var b strings.Builder
 	for _, n := range named {
-		b.WriteString("  " + n + "\n")
+		b.WriteString("  ")
+		b.WriteString(n)
+		b.WriteString("\n")
 	}
 	return b.String()
 }
@@ -244,10 +247,5 @@ func sbomPreModulesCoords(ctx context.Context, ctr *Container, walkID string) []
 // containsCoordinate reports whether coords already names c, so a surface does
 // not state the same limitation twice about the same module.
 func containsCoordinate(coords []coordinate.ModuleCoordinate, c coordinate.ModuleCoordinate) bool {
-	for _, got := range coords {
-		if got == c {
-			return true
-		}
-	}
-	return false
+	return slices.Contains(coords, c)
 }

@@ -828,3 +828,84 @@ func (e *Engine) Exported() { func() { helper() }() }
 		}
 	}
 }
+
+// TestAnalyse_MainPackageWrapperIsNotExportedAPI is the false-root regression
+// and its paired control in one fixture, because either assertion alone is
+// satisfiable by the wrong fix.
+//
+// SSA materialises a synthetic wrapper when a value-receiver method is reached
+// through a pointer, and that wrapper has no package of its own. The zero: a
+// wrapper standing for a method on a `package main` type must not be
+// IsExportedAPI — nothing can import a command, so a route rooted there is a
+// route no consumer could trigger.
+//
+// The control: the identical shape on a LIBRARY package must still be
+// IsExportedAPI. A fix that stops tagging wrappers wholesale satisfies the zero
+// and must fail this, because it would delete real library roots.
+func TestAnalyse_MainPackageWrapperIsNotExportedAPI(t *testing.T) {
+	files := map[string]string{
+		"go.mod": "module example.com/cgtestmod\n\ngo 1.21\n",
+		"lib/lib.go": `package lib
+
+type Namer interface{ Name() string }
+
+// Val has a VALUE receiver; storing *Val in an interface makes SSA build the
+// (*Val).Name wrapper, which carries no package of its own.
+type Val struct{}
+
+func (v Val) Name() string { return "lib" }
+
+func Use() string {
+	var n Namer = &Val{}
+	return n.Name()
+}
+`,
+		"cmd/tool/main.go": `package main
+
+type Namer interface{ Name() string }
+
+// Input is the same shape as lib.Val, in a package nothing can import.
+type Input struct{}
+
+func (i Input) Name() string { return "cmd" }
+
+func main() {
+	var n Namer = &Input{}
+	_ = n.Name()
+}
+`,
+	}
+	a := staticcha.New("0.1.0", "", slog.Default())
+	zipPath := writeZipToTemp(t, makeZip(t, testCoord, files))
+	rec, err := a.Analyse(context.Background(), zipPath, testCoord, domain.AnalysisInputs{})
+	if err != nil {
+		t.Fatalf("Analyse: %v", err)
+	}
+	if rec.OverallStatus == domain.CallGraphStatusLoadFailed {
+		t.Skip("go/packages load failed; skipping main-package wrapper test")
+	}
+
+	const (
+		mainWrapper = "(*example.com/cgtestmod/cmd/tool.Input).Name"
+		libWrapper  = "(*example.com/cgtestmod/lib.Val).Name"
+	)
+	var sawMain, sawLib bool
+	for _, n := range rec.Nodes {
+		switch n.ID {
+		case mainWrapper:
+			sawMain = true
+			if n.IsExportedAPI {
+				t.Errorf("wrapper %q flagged IsExportedAPI: package main is not consumable API", n.ID)
+			}
+		case libWrapper:
+			sawLib = true
+			if !n.IsExportedAPI {
+				t.Errorf("wrapper %q lost IsExportedAPI: a library wrapper is still a public entry", n.ID)
+			}
+		}
+	}
+	if !sawMain || !sawLib {
+		t.Fatalf("fixture did not produce both wrappers (main=%v lib=%v); nodes: %v",
+			sawMain, sawLib, sortedIDs(rec))
+	}
+}

@@ -29,6 +29,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/adapters/vcs/gitenv"
 	"github.com/eitanity/kanonarion/internal/fetch/ports"
+	"github.com/eitanity/kanonarion/internal/goenv"
 )
 
 const (
@@ -63,6 +64,38 @@ const (
 var ErrGitNotInstalled = fmt.Errorf(
 	"%w: git not found in PATH — install git or pass --skip-vcs-verify "+
 		"(checksum verification still runs)", ports.ErrVCSToolMissing)
+
+// ErrNetworkForbidden is returned instead of starting a git subprocess when the
+// environment declares no network access.
+//
+// Cross-verification is the one assurance leg in this tool that reaches the
+// network through a child process, and a child is invisible to any in-process
+// dial assertion: this is where the contract has to be enforced, because
+// nothing downstream can see the socket git opens. The refusal happens before
+// exec, so there is no subprocess to leak the request.
+//
+// It wraps ports.ErrVCSToolMissing so the fetch pipeline counts it exactly as
+// it already counts an absent git or --skip-vcs-verify: the git leg did not
+// run, the record says so, and a module whose checksum-database verification
+// passed still lands on VerifiedBySumDBOnly rather than failing. An air gap
+// withdraws a leg of verification; it does not invalidate the legs that remain.
+var ErrNetworkForbidden = fmt.Errorf(
+	"%w: %w — git cross-verification reaches the forge over the network; "+
+		"pass --skip-vcs-verify to record the run as checksum-verified only",
+	ports.ErrVCSToolMissing, goenv.ErrNetworkForbidden)
+
+// checkEgressAllowed refuses a remote git operation under a declared air gap.
+//
+// It guards the two operations that talk to a forge — ResolveTag and
+// CheckoutToDir — rather than run(), because the local steps a checkout is
+// built from (init, remote add, cat-file, checkout) reach nothing and refusing
+// them would state a contract the network never had a part in.
+func checkEgressAllowed() error {
+	if goenv.NetworkForbidden() {
+		return ErrNetworkForbidden
+	}
+	return nil
+}
 
 // Client shells out to git for VCS operations.
 type Client struct {
@@ -104,6 +137,9 @@ func checkGitAvailable() error {
 // ResolveTag returns the full commit SHA a tag or ref points to in the
 // remote repository, using git ls-remote.
 func (c *Client) ResolveTag(ctx context.Context, url, ref string) (string, error) {
+	if err := checkEgressAllowed(); err != nil {
+		return "", err
+	}
 	if err := checkGitAvailable(); err != nil {
 		return "", err
 	}
@@ -136,6 +172,9 @@ func parseLsRemoteOutput(out []byte, url, ref string) (string, error) {
 // CheckoutToDir clones the repository at url and checks out commit into dir.
 // dir must exist. This does a shallow clone to the specific commit.
 func (c *Client) CheckoutToDir(ctx context.Context, url, commit, dir string) error {
+	if err := checkEgressAllowed(); err != nil {
+		return err
+	}
 	if err := checkGitAvailable(); err != nil {
 		return err
 	}

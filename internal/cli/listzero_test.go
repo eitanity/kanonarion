@@ -164,8 +164,14 @@ func TestRunCallGraphList_JSONEmptyStoreSaysStoreEmpty(t *testing.T) {
 	}
 }
 
-// A populated JSON listing carries no notice at all.
-func TestRunCallGraphList_JSONPopulatedLeavesStderrClean(t *testing.T) {
+// A populated JSON listing carries no zero-result notice at all.
+//
+// The scope statement it does carry is the truncation marker, and that is a
+// different statement with a different rule: it reports the cap this invocation
+// applied, true or false, because a consumer cannot read a line that is not
+// there. What must never appear on a listing that returned rows is the
+// explanation for a zero.
+func TestRunCallGraphList_JSONPopulatedCarriesNoZeroNotice(t *testing.T) {
 	prev := jsonOut
 	jsonOut = true
 	defer func() { jsonOut = prev }()
@@ -175,14 +181,26 @@ func TestRunCallGraphList_JSONPopulatedLeavesStderrClean(t *testing.T) {
 		populatedCallGraphList(), &stdout, &stderr); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if stderr.Len() != 0 {
-		t.Errorf("stderr must stay clean on a populated listing, got: %q", stderr.String())
+	if strings.Contains(stderr.String(), "records_considered") || strings.Contains(stderr.String(), "store_empty") {
+		t.Errorf("a populated listing must carry no zero-result notice, got: %q", stderr.String())
+	}
+	var marker listTruncationJSON
+	if err := json.Unmarshal(stderr.Bytes(), &marker); err != nil {
+		t.Fatalf("expected the truncation marker on stderr: %v (got %q)", err, stderr.String())
+	}
+	if marker.Truncated {
+		t.Errorf("two records under a limit of 20 withheld nothing, got %+v", marker)
 	}
 }
 
 // The sibling listings answer their own zeros the same way, or the convention is
 // not one. Each is asked with a filter it cannot match over an empty store.
+//
+// The output mode is pinned rather than inherited: this test reads prose, and a
+// test whose result depends on whether some earlier test left the process in
+// --json mode is a test whose result depends on how it was invoked.
 func TestListCommands_ZeroResultsNameTheirScope(t *testing.T) {
+	withJSON(t, false)
 	for _, tc := range []struct {
 		name string
 		run  func(stdout, stderr io.Writer) error
@@ -191,7 +209,7 @@ func TestListCommands_ZeroResultsNameTheirScope(t *testing.T) {
 		{
 			name: "vuln-scan-list",
 			run: func(stdout, stderr io.Writer) error {
-				return runScanList(context.Background(), "DOESNOTEXIST", 20,
+				return runScanList(context.Background(), "DOESNOTEXIST", 20, 0,
 					testfakes.NewFakeQueryScanRuns(), stdout, stderr)
 			},
 			want: []string{"the store holds no scan run at all", `walk id "DOESNOTEXIST"`,
@@ -200,11 +218,56 @@ func TestListCommands_ZeroResultsNameTheirScope(t *testing.T) {
 		{
 			name: "license-list",
 			run: func(stdout, stderr io.Writer) error {
-				return runLicenseList(context.Background(), "NOSUCHLICENSE", "", 50,
+				return runLicenseList(context.Background(), "NOSUCHLICENSE", "", 50, 0,
 					testfakes.NewFakeQueryLicense(), licdomain.NewLicenseOverrideSet(nil), stdout, stderr)
 			},
 			want: []string{"the store holds no license record at all", `SPDX identifier "NOSUCHLICENSE"`,
 				"to produce one: kanonarion license <module>@<version>"},
+		},
+		{
+			name: "interface-list",
+			run: func(stdout, stderr io.Writer) error {
+				return interfaceListWith(context.Background(), 20, 0,
+					testfakes.NewFakeQueryInterface(), stdout, stderr)
+			},
+			want: []string{"the store holds no interface record at all",
+				"to produce one: kanonarion interface <module>@<version>"},
+		},
+		{
+			name: "examples-list",
+			run: func(stdout, stderr io.Writer) error {
+				return runExamplesList(context.Background(), 20, 0,
+					testfakes.NewFakeQueryExamples(), stdout, stderr)
+			},
+			want: []string{"the store holds no example record at all",
+				"to produce one: kanonarion examples <module>@<version>"},
+		},
+		{
+			name: "walk-list",
+			run: func(stdout, stderr io.Writer) error {
+				return runWalkList(context.Background(), "", "", "", "", "", 20, 0, false, false,
+					testfakes.NewFakeQueryWalks(), stdout, stderr)
+			},
+			want: []string{"the store holds no walk record at all",
+				"to produce one: kanonarion walk <module>@<version>"},
+		},
+		{
+			name: "extract list",
+			run: func(stdout, stderr io.Writer) error {
+				return runExtractList(context.Background(), 20, 0,
+					testfakes.NewFakeQueryExtraction(), stdout, stderr)
+			},
+			want: []string{"the store holds no extraction run at all",
+				"to produce one: kanonarion extract <walk-id>"},
+		},
+		{
+			name: "directives list",
+			run: func(stdout, stderr io.Writer) error {
+				return directivesListWith(context.Background(), directivesContainer(nil),
+					"example.com/proj", 20, 0, stdout, stderr)
+			},
+			want: []string{`the store holds no directive scan at all, so project "example.com/proj" is not what made this empty`,
+				"to produce one: kanonarion directives"},
 		},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -229,7 +292,7 @@ func TestRunLicenseList_BothFiltersAreNamed(t *testing.T) {
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PrimarySPDX: "MIT"},
 	})
 	var stdout, stderr bytes.Buffer
-	if err := runLicenseList(context.Background(), "Apache-2.0", "Acme Corp", 50,
+	if err := runLicenseList(context.Background(), "Apache-2.0", "Acme Corp", 50, 0,
 		uc, licdomain.NewLicenseOverrideSet(nil), &stdout, &stderr); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -250,7 +313,7 @@ func TestRunLicenseList_CopyrightFilterOffersNoSPDXExample(t *testing.T) {
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PrimarySPDX: "MIT"},
 	})
 	var stdout, stderr bytes.Buffer
-	if err := runLicenseList(context.Background(), "", "zzz-no-such-holder", 50,
+	if err := runLicenseList(context.Background(), "", "zzz-no-such-holder", 50, 0,
 		uc, licdomain.NewLicenseOverrideSet(nil), &stdout, &stderr); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -282,6 +345,16 @@ func TestListZeroNotices_RemediesParse(t *testing.T) {
 		{subject: "scan run", produce: "kanonarion vuln-scan <walk-id>", listAll: "kanonarion vuln-scan-list"},
 		{subject: "license record", produce: "kanonarion license <module>@<version>", listAll: "kanonarion license-list"},
 		{subject: "SBOM record", produce: "kanonarion sbom <walk-id>", listAll: "kanonarion sbom-list"},
+		{subject: "interface record", produce: "kanonarion interface <module>@<version>", listAll: "kanonarion interface-list"},
+		{subject: "example record", produce: "kanonarion examples <module>@<version>", listAll: "kanonarion examples-list"},
+		{subject: "walk record", produce: "kanonarion walk <module>@<version>", listAll: "kanonarion walk-list"},
+		{subject: "extraction run", produce: "kanonarion extract <walk-id>", listAll: "kanonarion extract list"},
+		{subject: "directive scan", produce: "kanonarion directives", listAll: "kanonarion directives list"},
+		{subject: "directive scan", produce: "kanonarion directives", listAll: "kanonarion directives list --project example.com/proj"},
+		{subject: "vulnerability database snapshot", produce: "kanonarion vuln-scan <walk-id>", listAll: "kanonarion vuln-snapshot-list"},
+		// The single-record selectors' remedies go through the same parser: an
+		// unfiltered listing has to spell its own limit off.
+		{subject: "walk record", produce: "kanonarion walk <module>@<version>", listAll: "kanonarion walk-list --limit 0"},
 	}
 	for _, s := range scopes {
 		for _, line := range []string{s.produce, s.listAll} {

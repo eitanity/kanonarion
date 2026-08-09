@@ -6,18 +6,15 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
-
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 
 	"golang.org/x/tools/go/callgraph"
 	"golang.org/x/tools/go/ssa"
 )
 
-func buildNode(fn *ssa.Function, coord coordinate.ModuleCoordinate, fset *token.FileSet, tempDir string) domain.CallNode {
+func buildNode(fn *ssa.Function, mem moduleMembership, fset *token.FileSet, tempDir string) domain.CallNode {
 	pkgPath := funcPackagePath(fn)
-	isExternal := pkgPath == "" ||
-		(pkgPath != coord.Path() && !strings.HasPrefix(pkgPath, coord.Path()+"/"))
+	isExternal := !mem.contains(pkgPath)
 
 	symbol := fn.Name()
 	receiver := extractReceiverName(fn)
@@ -34,24 +31,15 @@ func buildNode(fn *ssa.Function, coord coordinate.ModuleCoordinate, fset *token.
 	}
 
 	// A function with an enclosing function is never public API: no consumer can
-	// name a closure, only reach it by calling what encloses it. token.IsExported
-	// inspects the first rune only, and an anonymous function's name is the
-	// enclosing function's name plus the SSA anon marker ("Method$1"), so without
-	// this guard every closure inside an exported function reads as exported and
-	// becomes a library reachability root that cannot actually be triggered.
-	// The "$" test covers the same way for bound-method and thunk wrappers.
-	isSynthetic := fn.Parent() != nil || strings.Contains(symbol, "$")
+	// name a closure, only reach it by calling what encloses it. See
+	// isExportedAPI for the rest of the rule.
+	isSynthetic := fn.Parent() != nil || hasSyntheticSymbolMarker(symbol)
 
-	isExportedAPI := !isExternal &&
-		len(symbol) > 0 &&
-		!isSynthetic &&
-		token.IsExported(symbol) &&
-		!isInternalPkg(pkgPath) &&
-		!isMainPkg(fn)
+	exportedAPI := isExportedAPI(isExternal, isSynthetic, symbol, pkgPath, isMainPkg(fn))
 
 	modulePath := ""
 	if !isExternal {
-		modulePath = coord.Path()
+		modulePath = mem.path()
 	}
 
 	return domain.CallNode{
@@ -61,7 +49,7 @@ func buildNode(fn *ssa.Function, coord coordinate.ModuleCoordinate, fset *token.
 		Symbol:        symbol,
 		Receiver:      receiver,
 		IsExternal:    isExternal,
-		IsExportedAPI: isExportedAPI,
+		IsExportedAPI: exportedAPI,
 		Position:      pos,
 		IsTest:        isTestFunc(fn, fset, pkgPath),
 	}
@@ -129,20 +117,40 @@ func isTestPackagePath(pkgPath string) bool {
 // no module and marked it external, which mis-scopes reachability rooting and
 // module attribution for a symbol that is the module's own code.
 func funcPackagePath(fn *ssa.Function) string {
-	if fn == nil {
+	pkg := funcPackage(fn)
+	if pkg == nil {
 		return ""
 	}
+	return pkg.Path()
+}
+
+// funcPackage returns the package that declares a function, and is the single
+// resolution every package-derived fact goes through — the import path a node
+// is attributed to, and whether that package is a command.
+//
+// Package() is documented to be nil for the shared functions SSA synthesises:
+// method wrappers, thunks, bound-method values, error.Error. Those functions
+// are not package-less, they are shared, and the object records the method they
+// stand for. Object() is nil in turn for a function literal and a synthetic
+// init, and a literal inherits the package of whatever encloses it.
+//
+// It returns nil when nothing names the function, which every caller must read
+// as the absence of an answer rather than as a package.
+func funcPackage(fn *ssa.Function) *types.Package {
+	if fn == nil {
+		return nil
+	}
 	if pkg := fn.Package(); pkg != nil && pkg.Pkg != nil {
-		return pkg.Pkg.Path()
+		return pkg.Pkg
 	}
 	if obj := fn.Object(); obj != nil && obj.Pkg() != nil {
-		return obj.Pkg().Path()
+		return obj.Pkg()
 	}
 	// A closure inherits the package of whatever encloses it.
 	if parent := fn.Parent(); parent != nil {
-		return funcPackagePath(parent)
+		return funcPackage(parent)
 	}
-	return ""
+	return nil
 }
 
 // nodeID returns a stable, unique identifier for an SSA function.
@@ -237,15 +245,64 @@ func classifyConfidence(edge *callgraph.Edge) (domain.EdgeConfidence, bool) {
 	}
 	return domain.ConfidenceUnknown, false
 }
+
+// isExportedAPI reports whether a node is consumable public API of the module
+// under analysis. It is the single definition of that rule: every node builder
+// must use it, because IsExportedAPI feeds reachability rooting and a symbol
+// that is API on one construction path and not on another makes the axis mean
+// two things.
+//
+// token.IsExported inspects the first rune only, and an anonymous function's
+// name is the enclosing function's name plus the SSA anon marker ("Method$1"),
+// so without the synthetic guard every closure inside an exported function
+// reads as exported and becomes a library reachability root that cannot
+// actually be triggered; the same holds for bound-method and thunk wrappers.
+// Package-main symbols are not consumable API either: nothing can import them.
+//
+// isSynthetic and isMain are passed in rather than derived because the callers
+// hold different evidence — a builder working from go/types has no
+// *ssa.Function to ask.
+func isExportedAPI(isExternal, isSynthetic bool, symbol, pkgPath string, isMain bool) bool {
+	return !isExternal &&
+		len(symbol) > 0 &&
+		!isSynthetic &&
+		token.IsExported(symbol) &&
+		!isInternalPkg(pkgPath) &&
+		!isMain
+}
+
+// hasSyntheticSymbolMarker reports whether a symbol name carries the SSA marker
+// that distinguishes a closure, bound-method or thunk wrapper from a declared
+// function.
+func hasSyntheticSymbolMarker(symbol string) bool {
+	return strings.Contains(symbol, "$")
+}
+
 func isInternalPkg(path string) bool {
 	return strings.Contains(path, "/internal/") ||
 		strings.HasSuffix(path, "/internal")
 }
+
+// isMainPkg reports whether a function belongs to a command — a package nothing
+// can import, and so nothing can call from outside the binary.
+//
+// It resolves the package through funcPackage rather than Package() alone. A
+// value-receiver method on a package-main type, reached through a pointer, is
+// carried by a synthetic wrapper whose own Package() is nil; reading only that
+// answered "not main" and minted the method as exported library API, which is
+// a false claim rather than a weaker one and roots library reachability at an
+// entry no consumer could ever reach.
+//
+// Where no package can be resolved the guard fails closed and answers true: a
+// symbol nothing can name is not library API by default. Failing open would
+// trade a false root for a missing one, which is harder to notice because
+// nothing appears.
 func isMainPkg(fn *ssa.Function) bool {
-	if fn.Package() == nil || fn.Package().Pkg == nil {
-		return false
+	pkg := funcPackage(fn)
+	if pkg == nil {
+		return true
 	}
-	return fn.Package().Pkg.Name() == "main"
+	return pkg.Name() == "main"
 }
 
 // relativePath strips tempDir prefix from path for cleaner output.

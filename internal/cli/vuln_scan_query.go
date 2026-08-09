@@ -32,7 +32,7 @@ func unresolvableInputsNote(walkID string) string {
 }
 
 func newVulnScanListCmd(stdout, stderr io.Writer) *cobra.Command {
-	var limit int
+	var limit, offset int
 
 	cmd := &cobra.Command{
 		Use:   "vuln-scan-list [walk-id]",
@@ -51,16 +51,17 @@ func newVulnScanListCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runScanList(cmd.Context(), walkID, limit, ctr.QueryScanRuns, stdout, stderr)
+			return runScanList(cmd.Context(), walkID, limit, offset, ctr.QueryScanRuns, stdout, stderr)
 		},
 	}
 
 	cmd.Flags().IntVar(&limit, "limit", 20, "maximum number of results to return (0 = unlimited)")
+	cmd.Flags().IntVar(&offset, "offset", 0, "skip this many results")
 
 	return cmd
 }
 
-func runScanList(ctx context.Context, walkID string, limit int, uc QueryScanRunsUseCase, stdout, stderr io.Writer) error {
+func runScanList(ctx context.Context, walkID string, limit, offset int, uc QueryScanRunsUseCase, stdout, stderr io.Writer) error {
 	var (
 		runs []vuldomain.WalkScanRun
 		err  error
@@ -76,9 +77,15 @@ func runScanList(ctx context.Context, walkID string, limit int, uc QueryScanRuns
 	if err != nil && !survivable {
 		return fmt.Errorf("listing scan runs: %w", err)
 	}
-	if limit > 0 && len(runs) > limit {
-		runs = runs[:limit]
-	}
+	// This listing already holds every run, so the extra row the other listings
+	// over-fetch for is free here: the cap is applied in memory and what it
+	// dropped is known exactly.
+	// The port hands this listing its whole population — there is no filter to
+	// carry an offset into — so the page is taken here, on the same ordering the
+	// unpaged listing prints, before the cap is applied.
+	runs = skipList(runs, offset)
+	runs, truncated := truncateList(runs, limit)
+	trunc := listTruncation{limit: limit, subject: "scan runs", truncated: truncated, offset: offset}
 	// Derived after the limit is applied: the probe only has to classify the runs
 	// this invocation will print, and it is one indexed read over their walks.
 	unresolved, uerr := uc.UnresolvedWalks(ctx, runs)
@@ -117,16 +124,16 @@ func runScanList(ctx context.Context, walkID string, limit int, uc QueryScanRuns
 			return fmt.Errorf("encoding JSON: %w", err)
 		}
 		if len(out) == 0 {
-			scope, serr := scanListZeroScope(ctx, walkID, uc)
+			scope, serr := scanListZeroScope(ctx, walkID, offset, uc)
 			if serr != nil {
 				return serr
 			}
 			return writeListZeroNoticeJSON(stderr, scope)
 		}
-		return nil
+		return writeListTruncationJSON(stderr, trunc)
 	}
 	if len(runs) == 0 && len(unreadable) == 0 {
-		scope, serr := scanListZeroScope(ctx, walkID, uc)
+		scope, serr := scanListZeroScope(ctx, walkID, offset, uc)
 		if serr != nil {
 			return serr
 		}
@@ -141,13 +148,13 @@ func runScanList(ctx context.Context, walkID string, limit int, uc QueryScanRuns
 		_, _ = fmt.Fprintln(stdout, line)
 	}
 	writeUnreadableRuns(stdout, unreadable)
-	return nil
+	return writeListTruncationNotice(stdout, trunc)
 }
 
 // scanListZeroScope lifts the walk-id filter and re-asks the store, so a zero
 // distinguishes "that walk has no scan run" from "nothing has been scanned".
 // Reached only when the listing came back empty.
-func scanListZeroScope(ctx context.Context, walkID string, uc QueryScanRunsUseCase) (listZeroScope, error) {
+func scanListZeroScope(ctx context.Context, walkID string, offset int, uc QueryScanRunsUseCase) (listZeroScope, error) {
 	all, err := uc.ListAllRuns(ctx)
 	// A store that cannot be surveyed still answers the question the listing was
 	// asked; what it cannot do is size the corpus, and a count of zero would
@@ -168,7 +175,51 @@ func scanListZeroScope(ctx context.Context, walkID string, uc QueryScanRunsUseCa
 	if len(all) > 0 {
 		scope.example = all[0].WalkID
 	}
+	// An offset past the end empties the page without the filter having anything
+	// to do with it, and the two look identical from the rows alone.
+	// An empty corpus is not something a page can start past, so a zero over it
+	// keeps the store-empty statement and its produce-a-record remedy.
+	if walkID == "" && len(all) > 0 && offset > 0 && offset >= len(all) {
+		scope.pagedPast = fmt.Sprintf("--offset %d starts past the last one", offset)
+	}
 	return scope, nil
+}
+
+// scanRunMiss answers a `vuln-scan-show` that named a run the store does not
+// hold. `scan run not found: X` reads the same over an empty store and over
+// fifteen runs, and the two have different remedies: one caller has never
+// scanned anything, the other has mistyped an id the store could show them.
+//
+// The corpus is every run in the store, not the runs of any one walk: a run id
+// is not keyed on a walk, so the caller's walk is not what excluded it. The
+// survey read is on the miss branch, where a found run never goes.
+func scanRunMiss(ctx context.Context, uc QueryScanRunsUseCase, runID string, jsonOut bool, stderr io.Writer) error {
+	all, err := uc.ListAllRuns(ctx)
+	// A store with unreadable rows can still be counted; one that cannot be read
+	// at all has nothing honest to say, and a zero substituted for a failed count
+	// would assert exactly the thing it failed to measure.
+	if _, survivable := unreadableRunReport(err); err != nil && !survivable {
+		return fmt.Errorf("counting scan runs for the not-found notice: %w", err)
+	}
+	scope := listZeroScope{
+		subject:     "scan run",
+		filterName:  "run id",
+		filterValue: runID,
+		field:       "run id",
+		matchKind:   matchExact,
+		considered:  len(all),
+		produce:     "kanonarion vuln-scan <walk-id>",
+		listAll:     "kanonarion vuln-scan-list --limit 0",
+	}
+	if len(all) > 0 {
+		scope.example = all[0].ID
+	}
+	if jsonOut {
+		if werr := writeListZeroNoticeJSON(stderr, scope); werr != nil {
+			return werr
+		}
+	}
+	return &exitError{code: ExitNotFound, msg: listZeroLine(scope)}
 }
 
 func newVulnScanShowCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -185,7 +236,7 @@ func newVulnScanShowCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runScanShow(cmd.Context(), args[0], jsonOut, ctr.QueryScanRuns, ctr.QueryVuln, stdout)
+			return runScanShow(cmd.Context(), args[0], jsonOut, ctr.QueryScanRuns, ctr.QueryVuln, stdout, stderr)
 		},
 	}
 
@@ -251,7 +302,7 @@ type scanShowSummary struct {
 	scanFailed  []scanRecordFault
 }
 
-func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QueryScanRunsUseCase, ucVuln QueryVulnUseCase, stdout io.Writer) error {
+func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QueryScanRunsUseCase, ucVuln QueryVulnUseCase, stdout, stderr io.Writer) error {
 	run, found, err := ucRuns.GetRun(ctx, runID)
 	// vuln-scan-list names the rows it could not verify, and this is the command
 	// an operator runs next against one of those names. Refusing here would send
@@ -264,7 +315,7 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 		return fmt.Errorf("getting scan run: %w", err)
 	}
 	if !found {
-		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("scan run not found: %s", runID)}
+		return scanRunMiss(ctx, ucRuns, runID, jsonOut, stderr)
 	}
 
 	walkPresent, perr := ucRuns.WalkPresent(ctx, run.WalkID)

@@ -9,7 +9,8 @@ import (
 	"strings"
 
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
-	"github.com/eitanity/kanonarion/internal/callgraph/domain"
+	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/spf13/cobra"
 )
 
@@ -94,6 +95,9 @@ func runCallGraphExtract(ctx context.Context, arg string, f cgFlags, stdout, std
 	if err != nil {
 		return err
 	}
+	if f.fromWalk == "" {
+		inputs = discoveredBuildList(ctx, ctr.QueryWalks, coord, stderr)
+	}
 
 	result, err := ctr.ExtractCallGraph.Execute(ctx, cgapp.ExtractRequest{
 		Coordinate: coord,
@@ -104,10 +108,41 @@ func runCallGraphExtract(ctx context.Context, arg string, f cgFlags, stdout, std
 		return fmt.Errorf("extracting call graph: %w", err)
 	}
 
-	return printCallGraphSummary(result.Record, result.FromCache, jsonOut, stdout)
+	if err := printCallGraphSummary(result.Record, result.FromCache, jsonOut, stdout); err != nil {
+		return err
+	}
+	return callGraphExtractionExit(result.Record)
 }
 
-func printCallGraphSummary(r domain.CallGraphRecord, fromCache bool, jsonOut bool, stdout io.Writer) error {
+// callGraphExtractionExit maps an extraction outcome onto the process exit code.
+//
+// An extraction that produced no graph at all used to exit 0 while printing
+// LoadFailed, so any caller that branched on the exit code — a script, a make
+// rule, a batch loop over a build list — read a failed extraction as a
+// successful one and moved on. The record already carries the distinction; the
+// exit code simply was not reading it.
+//
+// Only the no-graph outcomes are mapped. A Partial graph is a real graph with a
+// named scope of incompleteness (FailedPackages), and callers that treat 0 as
+// "an answer exists" are right about it; promoting it to ExitPartial would
+// change the meaning of a hundred existing outcomes to make a point this defect
+// does not raise.
+func callGraphExtractionExit(r cgdomain.CallGraphRecord) error {
+	msg := fmt.Sprintf("%s: %s", r.Coordinate, r.OverallStatus.String())
+	if r.FailureDetail != "" {
+		msg += " — " + r.FailureDetail
+	}
+	switch r.OverallStatus {
+	case cgdomain.CallGraphStatusLoadFailed:
+		return &exitError{code: ExitFailed, msg: msg}
+	case cgdomain.CallGraphStatusCancelled:
+		return &exitError{code: ExitCancelled, msg: msg}
+	default:
+		return nil
+	}
+}
+
+func printCallGraphSummary(r cgdomain.CallGraphRecord, fromCache bool, jsonOut bool, stdout io.Writer) error {
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
@@ -147,7 +182,7 @@ func printCallGraphSummary(r domain.CallGraphRecord, fromCache bool, jsonOut boo
 // writeFailedPackages lists the packages that failed to typecheck (Partial
 // graphs only). It scopes the graph's incompleteness to exact packages so a
 // reader never infers completeness from the node/edge totals on the line above.
-func writeFailedPackages(stdout io.Writer, r domain.CallGraphRecord) error {
+func writeFailedPackages(stdout io.Writer, r cgdomain.CallGraphRecord) error {
 	if len(r.FailedPackages) == 0 {
 		return nil
 	}
@@ -161,7 +196,7 @@ func writeFailedPackages(stdout io.Writer, r domain.CallGraphRecord) error {
 // writeExclusionInfo prints the exclusion reason (when the module was skipped)
 // and the callgraph.exclude policy that was active when the record was
 // computed. No output when no exclusion policy was in force.
-func writeExclusionInfo(stdout io.Writer, r domain.CallGraphRecord) error {
+func writeExclusionInfo(stdout io.Writer, r cgdomain.CallGraphRecord) error {
 	if r.ExclusionReason != "" {
 		if _, err := fmt.Fprintf(stdout, "  excluded: %s\n", r.ExclusionReason); err != nil {
 			return fmt.Errorf("writing exclusion reason: %w", err)
@@ -174,4 +209,47 @@ func writeExclusionInfo(stdout io.Writer, r domain.CallGraphRecord) error {
 		}
 	}
 	return nil
+}
+
+// discoveredBuildList answers a module that needs a build list nobody named.
+//
+// A module published before Go modules ships no go.mod, and a synthesised one is
+// only honest for a module that imports nothing outside the standard library.
+// The versions that make the rest analysable are a property of a BUILD, and this
+// store holds several — but until now the operator had to know that, know which
+// walk resolved the module, and pass --from-walk. Nobody asking "what does this
+// module call" knows any of that, so the default path recorded an empty graph
+// while the store held everything needed to fill it.
+//
+// It runs BEFORE the extraction rather than as a retry after one failed, and
+// that ordering is the whole of the design. A retry would analyse the module
+// twice and persist both outcomes, and two failure generations differing only in
+// which build list they were denied are a divergence: the composed read then
+// refuses the coordinate outright, which is a worse answer than the empty graph
+// it replaced. One request, one analysis, one generation.
+//
+// A search that finds nothing is not an error and says nothing. The extraction
+// that follows fails exactly as it would have anyway, and the failure it records
+// already names the imports it could not pin — the more useful of the two
+// messages. --from-walk always wins: an operator who scoped the analysis to a
+// build keeps that scope.
+func discoveredBuildList(
+	ctx context.Context,
+	walks QueryWalksUseCase,
+	coord coordinate.ModuleCoordinate,
+	stderr io.Writer,
+) cgdomain.AnalysisInputs {
+	walkID, err := findWalkContaining(ctx, walks, coord)
+	if err != nil {
+		return cgdomain.AnalysisInputs{}
+	}
+	inputs, err := analysisInputsForWalk(ctx, walks, walkID)
+	if err != nil || !inputs.HasBuildList() {
+		return cgdomain.AnalysisInputs{}
+	}
+	// The choice is announced, never enforced: an unwritable stderr does not make
+	// a discovered build list the wrong input to analyse with.
+	_, _ = fmt.Fprintf(stderr, "no build list was named; a pre-modules module will be pinned to walk %s, "+
+		"which resolved %d version(s) and includes this module\n", walkID, len(inputs.BuildList))
+	return inputs
 }

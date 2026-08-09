@@ -71,11 +71,12 @@ func TestSymbolMethodName(t *testing.T) {
 // no leaf sink, no unresolved dispatch — a confident RESOLVED-ABSENT.
 func TestClassifyNegativeVerdict_GenuineAbsence(t *testing.T) {
 	in := domain.NegativeVerdictInputs{
-		TestScope:   domain.TestScopeAnalysed,
-		MethodName:  "Root",
-		QueriedNode: domain.CallNode{ID: "m.Root", Symbol: "Root"},
-		Found:       true,
-		ModuleLevel: domain.CompletenessBuiltWithBodies,
+		TestScope:      domain.TestScopeAnalysed,
+		ReferenceScope: domain.ReferenceScopeAnalysed,
+		MethodName:     "Root",
+		QueriedNode:    domain.CallNode{ID: "m.Root", Symbol: "Root"},
+		Found:          true,
+		ModuleLevel:    domain.CompletenessBuiltWithBodies,
 	}
 	v := domain.ClassifyNegativeVerdict(in)
 	if v.Outcome != domain.VerdictResolvedAbsent {
@@ -93,11 +94,12 @@ func TestClassifyNegativeVerdict_GenuineAbsence(t *testing.T) {
 // no completeness level does not by itself force UNRESOLVED.
 func TestClassifyNegativeVerdict_UnknownLevelIsNotDowngraded(t *testing.T) {
 	in := domain.NegativeVerdictInputs{
-		TestScope:   domain.TestScopeAnalysed,
-		MethodName:  "Root",
-		QueriedNode: domain.CallNode{ID: "m.Root", Symbol: "Root"},
-		Found:       true,
-		ModuleLevel: domain.CompletenessUnknown,
+		TestScope:      domain.TestScopeAnalysed,
+		ReferenceScope: domain.ReferenceScopeAnalysed,
+		MethodName:     "Root",
+		QueriedNode:    domain.CallNode{ID: "m.Root", Symbol: "Root"},
+		Found:          true,
+		ModuleLevel:    domain.CompletenessUnknown,
 	}
 	if got := domain.ClassifyNegativeVerdict(in).Outcome; got != domain.VerdictResolvedAbsent {
 		t.Errorf("unknown level should stay RESOLVED-ABSENT, got %s", got)
@@ -108,11 +110,12 @@ func TestClassifyNegativeVerdict_UnknownLevelIsNotDowngraded(t *testing.T) {
 // downgrades to UNRESOLVED, using the node ID as the site when found.
 func TestClassifyNegativeVerdict_TypeOnlyModule(t *testing.T) {
 	in := domain.NegativeVerdictInputs{
-		TestScope:   domain.TestScopeAnalysed,
-		MethodName:  "Root",
-		QueriedNode: domain.CallNode{ID: "m.Root", Symbol: "Root"},
-		Found:       true,
-		ModuleLevel: domain.CompletenessTypeOnly,
+		TestScope:      domain.TestScopeAnalysed,
+		ReferenceScope: domain.ReferenceScopeAnalysed,
+		MethodName:     "Root",
+		QueriedNode:    domain.CallNode{ID: "m.Root", Symbol: "Root"},
+		Found:          true,
+		ModuleLevel:    domain.CompletenessTypeOnly,
 	}
 	v := domain.ClassifyNegativeVerdict(in)
 	if v.Outcome != domain.VerdictUnresolved {
@@ -131,10 +134,11 @@ func TestClassifyNegativeVerdict_TypeOnlyModule(t *testing.T) {
 // method name.
 func TestClassifyNegativeVerdict_TypeOnlyModuleNodeAbsent(t *testing.T) {
 	in := domain.NegativeVerdictInputs{
-		TestScope:   domain.TestScopeAnalysed,
-		MethodName:  "Ghost",
-		Found:       false,
-		ModuleLevel: domain.CompletenessMetadataOnly,
+		TestScope:      domain.TestScopeAnalysed,
+		ReferenceScope: domain.ReferenceScopeAnalysed,
+		MethodName:     "Ghost",
+		Found:          false,
+		ModuleLevel:    domain.CompletenessMetadataOnly,
 	}
 	v := domain.ClassifyNegativeVerdict(in)
 	if v.Outcome != domain.VerdictUnresolved {
@@ -149,8 +153,9 @@ func TestClassifyNegativeVerdict_TypeOnlyModuleNodeAbsent(t *testing.T) {
 // and/or asm/linkname leaf facts downgrades, and only a found node is inspected.
 func TestClassifyNegativeVerdict_LeafSinks(t *testing.T) {
 	in := domain.NegativeVerdictInputs{
-		TestScope:  domain.TestScopeAnalysed,
-		MethodName: "Leaf",
+		TestScope:      domain.TestScopeAnalysed,
+		ReferenceScope: domain.ReferenceScopeAnalysed,
+		MethodName:     "Leaf",
 		QueriedNode: domain.CallNode{
 			ID: "m.Leaf", Symbol: "Leaf",
 			UsesUnsafePointer:    true,
@@ -184,8 +189,9 @@ func TestClassifyNegativeVerdict_LeafSinks(t *testing.T) {
 // plugin site named, since the loaded targets are absent from the static graph.
 func TestClassifyNegativeVerdict_PluginLeafSink(t *testing.T) {
 	in := domain.NegativeVerdictInputs{
-		TestScope:  domain.TestScopeAnalysed,
-		MethodName: "Load",
+		TestScope:      domain.TestScopeAnalysed,
+		ReferenceScope: domain.ReferenceScopeAnalysed,
+		MethodName:     "Load",
 		QueriedNode: domain.CallNode{
 			ID: "m.Load", Symbol: "Load",
 			UsesPlugin: true,
@@ -230,13 +236,14 @@ func TestClassifyNegativeVerdict_InterfaceDispatchScan(t *testing.T) {
 		"m.(*X).Nope":       {ID: "m.(*X).Nope", Symbol: "Nope"},
 	}
 	base := domain.NegativeVerdictInputs{
-		TestScope:   domain.TestScopeAnalysed,
-		MethodName:  "Do",
-		QueriedNode: domain.CallNode{ID: "m.(*Target).Do", Symbol: "Do"},
-		Found:       true,
-		ModuleLevel: domain.CompletenessBuiltWithBodies,
-		Edges:       edges,
-		NodesByID:   nodes,
+		TestScope:      domain.TestScopeAnalysed,
+		ReferenceScope: domain.ReferenceScopeAnalysed,
+		MethodName:     "Do",
+		QueriedNode:    domain.CallNode{ID: "m.(*Target).Do", Symbol: "Do"},
+		Found:          true,
+		ModuleLevel:    domain.CompletenessBuiltWithBodies,
+		Edges:          edges,
+		NodesByID:      nodes,
 	}
 
 	// callers query: scans dispatch, finds the over-approx site.
@@ -263,14 +270,15 @@ func TestClassifyNegativeVerdict_InterfaceDispatchScan(t *testing.T) {
 // so it contributes no sink.
 func TestClassifyNegativeVerdict_UnknownEdgeUnindexedCallee(t *testing.T) {
 	in := domain.NegativeVerdictInputs{
-		TestScope:    domain.TestScopeAnalysed,
-		MethodName:   "Do",
-		Found:        true,
-		QueriedNode:  domain.CallNode{ID: "m.(*Target).Do", Symbol: "Do"},
-		ModuleLevel:  domain.CompletenessBuiltWithBodies,
-		ScanDispatch: true,
-		Edges:        []domain.CallEdge{{FromID: "m.C", ToID: "m.Missing", Confidence: domain.ConfidenceUnknown}},
-		NodesByID:    map[string]domain.CallNode{}, // callee not indexed
+		TestScope:      domain.TestScopeAnalysed,
+		ReferenceScope: domain.ReferenceScopeAnalysed,
+		MethodName:     "Do",
+		Found:          true,
+		QueriedNode:    domain.CallNode{ID: "m.(*Target).Do", Symbol: "Do"},
+		ModuleLevel:    domain.CompletenessBuiltWithBodies,
+		ScanDispatch:   true,
+		Edges:          []domain.CallEdge{{FromID: "m.C", ToID: "m.Missing", Confidence: domain.ConfidenceUnknown}},
+		NodesByID:      map[string]domain.CallNode{}, // callee not indexed
 	}
 	if got := domain.ClassifyNegativeVerdict(in).Outcome; got != domain.VerdictResolvedAbsent {
 		t.Errorf("unindexed callee must not produce a sink, got %s", got)
@@ -281,14 +289,15 @@ func TestClassifyNegativeVerdict_UnknownEdgeUnindexedCallee(t *testing.T) {
 // no interface-dispatch sinks even with ScanDispatch set.
 func TestClassifyNegativeVerdict_EmptyMethodNameNoScan(t *testing.T) {
 	in := domain.NegativeVerdictInputs{
-		TestScope:    domain.TestScopeAnalysed,
-		MethodName:   "",
-		Found:        true,
-		QueriedNode:  domain.CallNode{ID: "m.Root"},
-		ModuleLevel:  domain.CompletenessBuiltWithBodies,
-		ScanDispatch: true,
-		Edges:        []domain.CallEdge{{FromID: "m.C", ToID: "m.T", Confidence: domain.ConfidenceCHAOverapprox}},
-		NodesByID:    map[string]domain.CallNode{"m.T": {ID: "m.T", Symbol: ""}},
+		TestScope:      domain.TestScopeAnalysed,
+		ReferenceScope: domain.ReferenceScopeAnalysed,
+		MethodName:     "",
+		Found:          true,
+		QueriedNode:    domain.CallNode{ID: "m.Root"},
+		ModuleLevel:    domain.CompletenessBuiltWithBodies,
+		ScanDispatch:   true,
+		Edges:          []domain.CallEdge{{FromID: "m.C", ToID: "m.T", Confidence: domain.ConfidenceCHAOverapprox}},
+		NodesByID:      map[string]domain.CallNode{"m.T": {ID: "m.T", Symbol: ""}},
 	}
 	if got := domain.ClassifyNegativeVerdict(in).Outcome; got != domain.VerdictResolvedAbsent {
 		t.Errorf("empty method name must not scan, got %s", got)
@@ -309,14 +318,15 @@ func TestClassifyNegativeVerdict_DedupeAndOrder(t *testing.T) {
 		"m.(*C).Do": {Symbol: "Do"},
 	}
 	in := domain.NegativeVerdictInputs{
-		TestScope:    domain.TestScopeAnalysed,
-		MethodName:   "Do",
-		Found:        true,
-		QueriedNode:  domain.CallNode{ID: "m.(*Target).Do", Symbol: "Do", UsesUnsafePointer: true},
-		ModuleLevel:  domain.CompletenessBuiltWithBodies,
-		ScanDispatch: true,
-		Edges:        edges,
-		NodesByID:    nodes,
+		TestScope:      domain.TestScopeAnalysed,
+		ReferenceScope: domain.ReferenceScopeAnalysed,
+		MethodName:     "Do",
+		Found:          true,
+		QueriedNode:    domain.CallNode{ID: "m.(*Target).Do", Symbol: "Do", UsesUnsafePointer: true},
+		ModuleLevel:    domain.CompletenessBuiltWithBodies,
+		ScanDispatch:   true,
+		Edges:          edges,
+		NodesByID:      nodes,
 	}
 	v := domain.ClassifyNegativeVerdict(in)
 	// Two interface-dispatch sites (m.Aaa, m.Client) + one unsafe-pointer leaf.

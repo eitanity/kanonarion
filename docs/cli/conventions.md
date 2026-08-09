@@ -191,12 +191,130 @@ type. The same statement is emitted on **stderr** as a single JSON object:
 {"subject":"call graph record","filter":{"name":"module path","value":"no-such-module","compared_against":"module path, compared for exact equality"},"records_considered":312,"store_empty":false,"paged_past":false,"remedy":["kanonarion callgraph-list"]}
 ```
 
-A listing that returned rows prints no such statement, on either channel.
+A listing that returned rows prints no such statement, on either channel, and
+performs no extra store read to decide that: the survey that sizes the corpus is
+reached only once the page has come back empty.
 
-This applies to `callgraph-list`, `vuln-scan-list`, `licence-list`/`license-list`
-and `sbom-list`. `interface-list` and `examples-list` take a module coordinate
-rather than a filter and already refuse an absent one by name, with a remedy and
-a non-zero exit.
+The same statement answers a **single-record selector** that matched nothing —
+a command given one name that is not in the store. Those exit `4` and carry the
+statement on the error rather than on stdout, on one line, so the data channel
+stays the data channel; under `--json` the object is emitted on stderr as well.
+The selectors are `walk-list --walk-id`, `walk-list --latest-success`,
+`directives show`, `vuln-snapshot-show`, `walk-show`, `verification-coverage`,
+`dependents --walk-id`, `context --walk-id`, `walk-diff`, `vuln-scan-show`,
+`examples-show`, `examples-list <module>`, `interface-show`,
+`interface-list <module>`, `use`, `license --recursive` and `license-compat`.
+
+Every command that reads a walk by ID answers a missing one with the identical
+sentence, whichever command it was.
+
+`walk-diff` takes two IDs, so it names **which** of them is missing — or both
+when both are. The corpus it counts is the store's, not the two IDs it was
+given.
+
+Where the older message already carried a remedy — `use`, `license-compat`,
+`license --recursive`, `examples-show`, `examples-list <module>`,
+`interface-show`, `interface-list <module>` — that remedy is kept and the corpus
+statement is added beside it, so the answer offers both the invocation that
+produces the record and the one that lists what is there.
+
+The survey that sizes the corpus runs only on the miss. A lookup that found its
+record performs no extra read and prints no statement, on either channel.
+
+This applies to every record listing: `callgraph-list`, `vuln-scan-list`,
+`licence-list`/`license-list`, `sbom-list`, `interface-list`, `examples-list`,
+`walk-list`, `extract list`, `directives list` and `vuln-snapshot-list`.
+
+`interface-list`, `examples-list` and `extract list` take no filter, so only the
+empty-store and the paged-past causes can arise on them. Given a module
+coordinate, `interface-list` and `examples-list` render that one module instead
+of listing, and an absent record is refused with a non-zero exit carrying the
+single-record statement above: the remedy that produces it, and the corpus the
+coordinate was compared against.
+
+`vuln-snapshot-list` takes neither a filter nor a `--limit`, so it has exactly
+one cause it can have and states that one: the store holds no snapshot. It does
+not offer a paging remedy, because it cannot page.
+
+`directives list` reports one project, and which of the two remaining causes it
+names follows from that project's own scan count. With scans for the project,
+the project is the corpus and paging is the only remaining explanation, so the
+notice names the project in the subject and counts its history. With none, the
+project is what excluded them: it moves into the filter slot and the count
+becomes the whole store's, so "the store holds no directive scan at all" is said
+only when that is what was measured. There is no store-wide directive listing —
+every read is keyed on a project — so the remedy names the `--project` slot.
+
+`store ledger` is not a record listing and states its scope its own way: a
+coverage line, the `matched` count over the whole window, and how many events
+the offset stepped over.
+
+---
+
+## Truncated listings
+
+Every listing that applies a `--limit` states when the limit bit. On the text
+path it prints one trailing line:
+
+```
+showing first 50 license records — more exist (--limit 0 for all, --offset 50 for the next page)
+```
+
+The line appears **only when a further record exists**. A listing that happens to
+hold exactly its limit and nothing more prints nothing, so silence means "these
+are all of them".
+
+Under `--json` the array on stdout is unchanged — a consumer's payload keeps its
+shape — and the same statement is emitted on **stderr** as a single JSON object:
+
+```json
+{"truncated":true,"limit":50,"subject":"license records","remedy":"--limit 0","offset":0,"next_offset":50}
+```
+
+Unlike the text line, the JSON object is emitted whenever a limit was applied,
+with `truncated` true or false, so a machine reader can tell "nothing was
+withheld" from "this output does not say". `--limit 0` applies no limit and
+prints nothing on either channel.
+
+**No total is reported.** The listing asks the store for one row more than it
+will print and reports on that row's presence; it never counts. Knowing *that*
+records were withheld costs one extra row, knowing *how many* would cost a second
+read every listing would then pay.
+
+This applies to `licence-list`/`license-list`, `interface-list`, `examples-list`,
+`callgraph-list`, `vuln-scan-list`, `walk-list`, `extract list` and
+`directives list`. `sbom-list` applies no limit and returns its whole population.
+
+---
+
+## Paging
+
+Every command that takes `--limit` also takes `--offset`: the number of records
+to skip before listing. `--limit N --offset M` returns records M+1 to M+N of the
+same ordering the unpaged listing produces, so a caller told "more exist" can
+read the next page instead of re-fetching the whole population and slicing it.
+
+```
+$ kanonarion license-list --limit 50 --offset 50
+...
+showing license records 51-100 — more exist (--limit 0 for all, --offset 100 for the next page)
+```
+
+`--offset 0` is the default and is byte-identical to passing no offset at all.
+An offset past the last record returns no rows — with the zero-result notice
+saying that paging, not the filter, emptied the page — rather than an error. The
+last partial page states no truncation, because it withheld nothing.
+
+Under `--json` the stderr object carries `offset` and `next_offset`, so a
+consumer pages by reading `next_offset` back into the next invocation.
+
+Every paged listing is ordered on a timestamp with the row's primary key as
+tiebreak, so the ordering is total: two calls order the population identically
+and a page is exactly the rows the previous page did not show.
+
+`store ledger` pages the same way, over the events its filter matched:
+`matched` still reports the whole window and the output states how many events
+the offset stepped over.
 
 ---
 

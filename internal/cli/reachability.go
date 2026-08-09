@@ -440,6 +440,16 @@ type vulnReachabilityQuery struct {
 	// as a property of the module, and it is a property of one build.
 	Fidelity string `json:"fidelity,omitempty"`
 	Rooting  string `json:"rooting,omitempty"`
+	// Soundness states how thorough the search behind a NEGATIVE was, and
+	// SoundnessReason names the basis for that rung in the producing analyser's
+	// own terms. Both are absent on a reachable verdict: a route is its own
+	// evidence, and only an absence needs qualifying.
+	//
+	// They are derived from the stored answer rather than read off a field a scan
+	// wrote, so every record already in a store carries them — see
+	// vuldomain.NegativeSoundness.
+	Soundness       string `json:"soundness,omitempty"`
+	SoundnessReason string `json:"soundness_reason,omitempty"`
 	// Routes are the paths that reach the vulnerable symbol, entry point first,
 	// each hop naming its module and version where the analyser knew them.
 	Routes []reachabilityRouteOutput `json:"routes,omitempty"`
@@ -494,6 +504,33 @@ type routeRootOutput struct {
 	NodeID string `json:"node_id,omitempty"`
 	// Remedy is the command that would answer what this classification could not.
 	Remedy string `json:"remedy,omitempty"`
+	// Ancestry is how far this root sits below the nearest entry point. It is
+	// absent when nothing was computed, which a consumer must read as "not
+	// measured" and never as "no entry point above it".
+	Ancestry *rootAncestryOutput `json:"entry_point_ancestry,omitempty"`
+}
+
+// rootAncestryOutput is the entry-point distance in the curated JSON shape.
+//
+// found is always emitted, even when false, because a computed search that
+// reached no entry point is a MEASUREMENT — nothing in the analysed graph enters
+// this code — and omitting it would make that answer indistinguishable from the
+// search never having run. The parent object's absence carries the latter.
+type rootAncestryOutput struct {
+	Found bool `json:"found"`
+	// Hops is the distance from the nearest entry-point ancestor. Zero with
+	// found means the root is itself an entry point.
+	Hops             int    `json:"hops"`
+	EntryPointID     string `json:"entry_point_id,omitempty"`
+	EntryPointReason string `json:"entry_point_reason,omitempty"`
+	// Weakest is the weakest edge confidence on that path — the caveat the
+	// distance carries. A distance read without it is a claim.
+	Weakest string `json:"weakest_confidence,omitempty"`
+	// ViaReference says at least one hop is a registration rather than a call.
+	ViaReference bool `json:"via_reference,omitempty"`
+	// SearchBound is the hop limit the search used; 0 means unbounded, so
+	// found:false is "nothing enters this code" rather than "not within N hops".
+	SearchBound int `json:"search_bound"`
 }
 
 // rootToOutput renders a classification, or nil when none was computed.
@@ -501,13 +538,25 @@ func rootToOutput(root vuldomain.RouteRoot) *routeRootOutput {
 	if !root.IsRecorded() {
 		return nil
 	}
-	return &routeRootOutput{
+	out := &routeRootOutput{
 		Kind:          root.Kind.String(),
 		Reason:        root.Reason,
 		ClosureRooted: root.ClosureRooted,
 		NodeID:        root.NodeID,
 		Remedy:        root.Remedy,
 	}
+	if a := root.Ancestry; a.IsRecorded() {
+		out.Ancestry = &rootAncestryOutput{
+			Found:            a.Found,
+			Hops:             a.Hops,
+			EntryPointID:     a.EntryPointID,
+			EntryPointReason: a.EntryPointReason,
+			Weakest:          a.Weakest,
+			ViaReference:     a.ViaReference,
+			SearchBound:      a.SearchBound,
+		}
+	}
+	return out
 }
 
 // reachabilityFrameOutput is one hop.
@@ -672,20 +721,23 @@ func vulnReachabilityAnswer(coord coordinate.ModuleCoordinate, rec vuldomain.Vul
 	// scan that produced this record did run.
 	if f.AdvisoryNamesNoSymbols {
 		routes := routesToOutput(f.Reachable.Routes, classify)
+		soundness, soundnessReason := vuldomain.NegativeSoundness(f)
 		return vulnReachabilityQuery{
-			Module:     coord.Path(),
-			Version:    coord.Version(),
-			VulnID:     f.ID,
-			Aliases:    f.Aliases,
-			Summary:    f.Summary,
-			Verdict:    verdictPackageLevelOnly,
-			Confidence: string(f.Reachable.Confidence),
-			Method:     f.Reachable.DerivedBy.Analyser.String(),
-			Fidelity:   f.Reachable.DerivedBy.Fidelity,
-			Rooting:    f.Reachable.DerivedBy.Rooting.String(),
-			Routes:     routes,
-			RouteRoot:  firstRouteRoot(routes),
-			ScannedAt:  rec.ScannedAt.UTC().Format(time.RFC3339),
+			Module:          coord.Path(),
+			Version:         coord.Version(),
+			VulnID:          f.ID,
+			Aliases:         f.Aliases,
+			Summary:         f.Summary,
+			Verdict:         verdictPackageLevelOnly,
+			Confidence:      string(f.Reachable.Confidence),
+			Method:          f.Reachable.DerivedBy.Analyser.String(),
+			Fidelity:        f.Reachable.DerivedBy.Fidelity,
+			Rooting:         f.Reachable.DerivedBy.Rooting.String(),
+			Soundness:       string(soundness),
+			SoundnessReason: soundnessReason,
+			Routes:          routes,
+			RouteRoot:       firstRouteRoot(routes),
+			ScannedAt:       rec.ScannedAt.UTC().Format(time.RFC3339),
 		}, nil
 	}
 
@@ -700,20 +752,25 @@ func vulnReachabilityAnswer(coord coordinate.ModuleCoordinate, rec vuldomain.Vul
 		verdict = verdictReachable
 	}
 	routes := routesToOutput(f.Reachable.Routes, classify)
+	// Empty on the positive: NegativeSoundness states a rung only where there is
+	// an absence to qualify, and a route answers its own soundness question.
+	soundness, soundnessReason := vuldomain.NegativeSoundness(f)
 	return vulnReachabilityQuery{
-		Module:     coord.Path(),
-		Version:    coord.Version(),
-		VulnID:     f.ID,
-		Aliases:    f.Aliases,
-		Summary:    f.Summary,
-		Verdict:    verdict,
-		Confidence: string(f.Reachable.Confidence),
-		Method:     f.Reachable.DerivedBy.Analyser.String(),
-		Fidelity:   f.Reachable.DerivedBy.Fidelity,
-		Rooting:    f.Reachable.DerivedBy.Rooting.String(),
-		Routes:     routes,
-		RouteRoot:  firstRouteRoot(routes),
-		ScannedAt:  rec.ScannedAt.UTC().Format(time.RFC3339),
+		Module:          coord.Path(),
+		Version:         coord.Version(),
+		VulnID:          f.ID,
+		Aliases:         f.Aliases,
+		Summary:         f.Summary,
+		Verdict:         verdict,
+		Confidence:      string(f.Reachable.Confidence),
+		Method:          f.Reachable.DerivedBy.Analyser.String(),
+		Fidelity:        f.Reachable.DerivedBy.Fidelity,
+		Rooting:         f.Reachable.DerivedBy.Rooting.String(),
+		Soundness:       string(soundness),
+		SoundnessReason: soundnessReason,
+		Routes:          routes,
+		RouteRoot:       firstRouteRoot(routes),
+		ScannedAt:       rec.ScannedAt.UTC().Format(time.RFC3339),
 	}, nil
 }
 
@@ -785,7 +842,15 @@ func findFindingByID(findings []vuldomain.VulnerabilityFinding, vulnID string) (
 // derivationLine renders the instrument, how well it could see and what it was
 // rooted at, for the one-line summary.
 func derivationLine(res vulnReachabilityQuery) string {
-	parts := []string{"by: " + res.Method}
+	var parts []string
+	// Soundness leads, because on a negative it is the field that decides whether
+	// the answer may be acted on at all. Confidence says how sure the verdict is;
+	// soundness says what was searched, and an operator who is about to NOT
+	// upgrade is asking the second question.
+	if res.Soundness != "" {
+		parts = append(parts, "soundness: "+res.Soundness)
+	}
+	parts = append(parts, "by: "+res.Method)
 	if res.Fidelity != "" {
 		parts = append(parts, "fidelity: "+res.Fidelity)
 	}
@@ -832,12 +897,29 @@ func printRouteRoot(stdout io.Writer, root *routeRootOutput) {
 	if root.NodeID != "" {
 		_, _ = fmt.Fprintf(stdout, "    node: %s\n", root.NodeID)
 	}
+	if a := root.Ancestry; a != nil {
+		_, _ = fmt.Fprintf(stdout, "    entry-point distance: %s\n", ancestryLine(a))
+	}
 	if root.ClosureRooted {
 		_, _ = fmt.Fprintln(stdout, "    closure-rooted: the route does not begin in the module the analysis was rooted at, so the application's own entry points were not analysed")
 	}
 	if root.Remedy != "" {
 		_, _ = fmt.Fprintf(stdout, "    to go further: %s\n", root.Remedy)
 	}
+}
+
+// printSoundness prints the basis behind the rung on the verdict line.
+//
+// The rung is on the verdict line so it cannot be missed; the reason is here,
+// because a rung alone is a label and a label is what turns a measurement into a
+// verdict. Nothing is printed for a positive: NegativeSoundness states no rung
+// there, and an operator reading a route does not need to be told the route was
+// found by finding it.
+func printSoundness(stdout io.Writer, res vulnReachabilityQuery) {
+	if res.Soundness == "" || res.SoundnessReason == "" {
+		return
+	}
+	_, _ = fmt.Fprintf(stdout, "  soundness: %s — %s\n", res.Soundness, res.SoundnessReason)
 }
 
 // frameLine renders one hop, omitting the parts the analyser could not supply.
@@ -897,12 +979,14 @@ func printVulnReachability(stdout io.Writer, res vulnReachabilityQuery) {
 		// metadata-only graph and from a built one are different claims, and the
 		// negative is the one an operator acts on by NOT upgrading.
 		_, _ = fmt.Fprintf(stdout, "%s affects %s but is NOT reachable [confidence: %s, %s]\n", res.VulnID, coord, res.Confidence, derivationLine(res))
+		printSoundness(stdout, res)
 	case verdictPackageLevelOnly:
 		// Says plainly that the module IS affected, then that the question of
 		// whether the vulnerable code runs has no answer here and why. The route is
 		// printed if one somehow exists, so the reply never hides evidence it holds.
 		_, _ = fmt.Fprintf(stdout, "%s affects %s at PACKAGE level; symbol-level reachability is not determined — the advisory names no symbols for this module path [confidence: %s, %s]%s\n",
 			res.VulnID, coord, res.Confidence, derivationLine(res), rootTagFromOutput(res.RouteRoot))
+		printSoundness(stdout, res)
 		printRoute(stdout, res)
 	case verdictNotAffected:
 		_, _ = fmt.Fprintf(stdout, "%s is not affected by %s (scanned %s)\n", coord, res.VulnID, res.ScannedAt)
@@ -1027,4 +1111,26 @@ func coverageToOutput(c localdomain.ProbeCoverage) reachabilityCoverage {
 		})
 	}
 	return out
+}
+
+// ancestryLine renders the entry-point distance for the text presenter. It never
+// says "ingress": the distance is a fact about graph shape and the kind above it
+// is what the node itself witnesses, and collapsing the two is the misreading
+// this measurement exists to prevent.
+func ancestryLine(a *rootAncestryOutput) string {
+	if !a.Found {
+		if a.SearchBound > 0 {
+			return fmt.Sprintf("no entry-point ancestor within %d hops", a.SearchBound)
+		}
+		return "no entry-point ancestor anywhere in the analysed graph"
+	}
+	if a.Hops == 0 {
+		return "this root IS the entry point — " + a.EntryPointReason
+	}
+	line := fmt.Sprintf("%d hops below %s (%s), weakest edge on that path %s",
+		a.Hops, a.EntryPointID, a.EntryPointReason, a.Weakest)
+	if a.ViaReference {
+		line += "; at least one hop is a reference, so the value was registered rather than invoked"
+	}
+	return line
 }

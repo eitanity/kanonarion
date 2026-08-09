@@ -93,7 +93,7 @@ func runLicenseExtract(ctx context.Context, arg string, f licenseFlags, stdout, 
 	}
 
 	if (f.recursive || f.all) && !jsonOut {
-		if err := printLicenseRecursive(ctx, coord, ctr.QueryWalks, ctr.ExtractLicense, ctr.QueryLicense, f, stdout); err != nil {
+		if err := printLicenseRecursive(ctx, coord, ctr.QueryWalks, ctr.ExtractLicense, ctr.QueryLicense, f, stdout, stderr); err != nil {
 			return fmt.Errorf("recursive license report: %w", err)
 		}
 	}
@@ -168,14 +168,14 @@ func printLicenseRecursive(
 	extractUC ExtractLicenseUseCase,
 	queryUC QueryLicenseUseCase,
 	f licenseFlags,
-	stdout io.Writer,
+	stdout, stderr io.Writer,
 ) error {
 	summaries, err := walksUC.ListWalks(ctx, walkports.WalkFilter{Target: &target, Limit: 1})
 	if err != nil {
 		return fmt.Errorf("listing walks: %w", err)
 	}
 	if len(summaries) == 0 {
-		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("no walk record found for %s — run 'kanonarion walk' first", target)}
+		return walkTargetMiss(ctx, walksUC, target, stderr)
 	}
 
 	extractFn := func(ctx context.Context, coord coordinate.ModuleCoordinate) (domain.LicenseRecord, error) {
@@ -560,7 +560,7 @@ func printProvenanceSection(r domain.LicenseRecord, stdout io.Writer) error {
 func newLicenseListCmd(stdout, stderr io.Writer) *cobra.Command {
 	var spdx string
 	var copyright string
-	var limit int
+	var limit, offset int
 
 	cmd := &cobra.Command{
 		Use:     "license-list",
@@ -581,25 +581,36 @@ func newLicenseListCmd(stdout, stderr io.Writer) *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("loading license overrides: %w", err)
 			}
-			return runLicenseList(cmd.Context(), spdx, copyright, limit, ctr.QueryLicense, ovSet, stdout, stderr)
+			return runLicenseList(cmd.Context(), spdx, copyright, limit, offset, ctr.QueryLicense, ovSet, stdout, stderr)
 		},
 	}
 
 	cmd.Flags().StringVar(&spdx, "spdx", "", "filter by SPDX identifier (e.g. MIT)")
 	cmd.Flags().StringVar(&copyright, "copyright", "", "filter by copyright holder substring (case-insensitive; loads full records)")
 	cmd.Flags().IntVar(&limit, "limit", 50, "maximum number of records to return (0 = unlimited)")
+	cmd.Flags().IntVar(&offset, "offset", 0, "skip this many records")
 
 	return cmd
 }
 
-func runLicenseList(ctx context.Context, spdx, copyright string, limit int, uc QueryLicenseUseCase, overrides domain.LicenseOverrideSet, stdout, stderr io.Writer) error {
+func runLicenseList(ctx context.Context, spdx, copyright string, limit, offset int, uc QueryLicenseUseCase, overrides domain.LicenseOverrideSet, stdout, stderr io.Writer) error {
 	// When copyright filtering is active, fetch without a limit so we can
 	// post-filter by full record; re-apply the caller's limit afterwards.
-	fetchLimit := limit
+	// One row more than will be printed, so the extra row's presence answers
+	// whether the limit bit. No count is taken: how many were withheld would
+	// cost a second read this listing does not otherwise pay.
+	// Paging goes to the port, which applies it to the same ordering the unpaged
+	// listing produces — except under --copyright, where the population being
+	// paged is the post-filtered set and a port offset would skip records the
+	// filter had not yet seen. There the skip is applied to the filtered rows
+	// below, on the only set that is the caller's page.
+	fetchLimit := truncationFetchLimit(limit)
+	fetchOffset := offset
 	if copyright != "" {
 		fetchLimit = 0
+		fetchOffset = 0
 	}
-	filter := ports.LicenseFilter{SPDX: spdx, Limit: fetchLimit}
+	filter := ports.LicenseFilter{SPDX: spdx, Limit: fetchLimit, Offset: fetchOffset}
 	sums, err := uc.ListLicenseRecords(ctx, filter)
 	if err != nil {
 		return fmt.Errorf("listing license records: %w", err)
@@ -621,10 +632,10 @@ func runLicenseList(ctx context.Context, spdx, copyright string, limit int, uc Q
 			}
 		}
 		sums = matched
-		if limit > 0 && len(sums) > limit {
-			sums = sums[:limit]
-		}
+		sums = skipList(sums, offset)
 	}
+	sums, truncated := truncateList(sums, limit)
+	trunc := listTruncation{limit: limit, subject: "license records", truncated: truncated, offset: offset}
 	if jsonOut {
 		type entry struct {
 			Module     string `json:"module"`
@@ -667,20 +678,23 @@ func runLicenseList(ctx context.Context, spdx, copyright string, limit int, uc Q
 		if err := enc.Encode(out); err != nil {
 			return fmt.Errorf("encoding JSON: %w", err)
 		}
-		if len(jsonConflicts) > 0 {
-			return fmt.Errorf("%d module(s) hold conflicting license records: %w", len(jsonConflicts), errors.Join(jsonConflicts...))
-		}
 		if len(out) == 0 {
-			scope, serr := licenseListZeroScope(ctx, spdx, copyright, uc)
+			scope, serr := licenseListZeroScope(ctx, spdx, copyright, offset, uc)
 			if serr != nil {
 				return serr
 			}
 			return writeListZeroNoticeJSON(stderr, scope)
 		}
+		if terr := writeListTruncationJSON(stderr, trunc); terr != nil {
+			return terr
+		}
+		if len(jsonConflicts) > 0 {
+			return fmt.Errorf("%d module(s) hold conflicting license records: %w", len(jsonConflicts), errors.Join(jsonConflicts...))
+		}
 		return nil
 	}
 	if len(sums) == 0 {
-		scope, serr := licenseListZeroScope(ctx, spdx, copyright, uc)
+		scope, serr := licenseListZeroScope(ctx, spdx, copyright, offset, uc)
 		if serr != nil {
 			return serr
 		}
@@ -719,6 +733,9 @@ func runLicenseList(ctx context.Context, spdx, copyright string, limit int, uc Q
 			return fmt.Errorf("writing output: %w", err)
 		}
 	}
+	if terr := writeListTruncationNotice(stdout, trunc); terr != nil {
+		return terr
+	}
 	// Every module is listed first, then the command fails. A licence in dispute
 	// must not be reported as a clean run.
 	if len(conflicts) > 0 {
@@ -734,7 +751,7 @@ func runLicenseList(ctx context.Context, spdx, copyright string, limit int, uc Q
 // The two filters are named together when both are set: dropping one from the
 // statement would send the reader to check a spelling that was not the one that
 // excluded their module.
-func licenseListZeroScope(ctx context.Context, spdx, copyright string, uc QueryLicenseUseCase) (listZeroScope, error) {
+func licenseListZeroScope(ctx context.Context, spdx, copyright string, offset int, uc QueryLicenseUseCase) (listZeroScope, error) {
 	all, err := uc.ListLicenseRecords(ctx, ports.LicenseFilter{})
 	if err != nil {
 		return listZeroScope{}, fmt.Errorf("counting license records for the zero-result notice: %w", err)
@@ -767,6 +784,13 @@ func licenseListZeroScope(ctx context.Context, spdx, copyright string, uc QueryL
 		// The illustration has to be in the shape the filter compares against,
 		// and an SPDX identifier is not one.
 		scope.example = ""
+	}
+	// An offset past the end empties the page without the filter having anything
+	// to do with it, and the two look identical from the rows alone.
+	// An empty corpus is not something a page can start past, so a zero over it
+	// keeps the store-empty statement and its produce-a-record remedy.
+	if scope.filterValue == "" && len(all) > 0 && offset > 0 && offset >= len(all) {
+		scope.pagedPast = fmt.Sprintf("--offset %d starts past the last one", offset)
 	}
 	return scope, nil
 }

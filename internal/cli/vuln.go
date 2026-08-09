@@ -164,6 +164,14 @@ func reachabilityLabel(f vuldomain.VulnerabilityFinding, notReachable string) st
 	if f.Reachable.Confidence == vuldomain.ConfidenceUnknown {
 		return " [reachability not determined]"
 	}
+	// The negative is the entry an operator acts on by NOT upgrading, so the
+	// label says how thorough the search behind it was. A bare "[not reachable]"
+	// reads the same whether a call graph was searched or an analyser simply
+	// never mentioned the module, and on a working store every one of them was
+	// the second.
+	if soundness, _ := vuldomain.NegativeSoundness(f); soundness != vuldomain.SoundnessNotStated {
+		return strings.TrimSuffix(notReachable, "]") + " — " + soundness.String() + "]"
+	}
 	return notReachable
 }
 

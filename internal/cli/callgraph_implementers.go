@@ -136,6 +136,11 @@ func runImplementers(ctx context.Context, queryID string, jsonOut bool, uc Query
 	if jsonOut {
 		return writeImplementersJSON(stdout, interfaceID, method, perMethod, impls, verdict, scopeLine)
 	}
+	// The implementer relation is read out of the served record, so the same
+	// routing question applies: which working tree's types are these.
+	if err := writeWorktreeNotice(ctx, interfaceID, uc, stdout, sc.modules); err != nil {
+		return err
+	}
 	return writeImplementersText(stdout, queryID, method, perMethod, impls, verdict, scopeLine, sc)
 }
 

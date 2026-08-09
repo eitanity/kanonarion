@@ -26,7 +26,26 @@ import (
 // the module was stored as a LoadFailed record with an empty graph. Those
 // records are indistinguishable from a genuine load failure once written, so
 // they must be re-derived rather than served.
-const PipelineVersion = "0.3.0"
+//
+// Bumped to "0.4.1" when four things about what gets loaded changed at once:
+// package membership is decided by the module path the analysed tree DECLARES
+// rather than by the coordinate it was published under, the load no longer
+// requires the artefact to carry a go.sum covering its own module graph, a
+// synthesised go.mod pins its language version at 1.17 so the module graph is
+// pruned, and a load that resolves nothing now records which of those it was.
+// Records written by the previous logic can be right or wrong and there is no
+// way to tell from the record, so they are re-derived rather than served.
+//
+// NOT bumped when the exported-API rule stopped mis-reading a synthetic method
+// wrapper on a package-main type as library API. A bump is owed when a change
+// makes a stored record say something FALSE, and every record this version
+// serves was decoded and counted before deciding: the false claim appears only
+// in records written by older logic, which this version already declines to
+// serve, and in none of the records written at this version. Those keep serving
+// what they say, correctly. Re-extraction under the fixed rule is what corrects
+// an older record, and a bump would have stranded every served graph to correct
+// nothing.
+const PipelineVersion = "0.4.1"
 
 // ExtractCallGraphUseCase extracts the call graph of a module and persists a
 // CallGraphRecord.

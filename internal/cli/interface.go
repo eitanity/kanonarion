@@ -215,7 +215,7 @@ func runInterfaceShow(ctx context.Context, moduleArg, pkgFilter, symbolFilter st
 		return fmt.Errorf("getting interface record: %w", err)
 	}
 	if !found {
-		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("no interface record for %s — run 'kanonarion interface' first", coord)}
+		return interfaceRecordMiss(ctx, ctr.QueryInterface, coord, jsonOut, stderr)
 	}
 
 	// Apply filters.
@@ -473,7 +473,7 @@ type packageSummary struct {
 }
 
 func newInterfaceListCmd(stdout, stderr io.Writer) *cobra.Command {
-	var limit int
+	var limit, offset int
 
 	cmd := &cobra.Command{
 		Use:   "interface-list [<module>@<version>]",
@@ -488,11 +488,12 @@ func newInterfaceListCmd(stdout, stderr io.Writer) *cobra.Command {
 			if len(args) == 1 {
 				return runInterfaceListForModule(cmd.Context(), args[0], jsonOut, stdout, stderr)
 			}
-			return runInterfaceList(cmd.Context(), limit, stdout, stderr)
+			return runInterfaceList(cmd.Context(), limit, offset, stdout, stderr)
 		},
 	}
 
 	cmd.Flags().IntVar(&limit, "limit", 50, "maximum number of records to return without a module arg (0 = unlimited)")
+	cmd.Flags().IntVar(&offset, "offset", 0, "skip this many records")
 
 	return cmd
 }
@@ -515,7 +516,7 @@ func runInterfaceListForModule(ctx context.Context, moduleArg string, jsonOut bo
 		return fmt.Errorf("getting interface record: %w", err)
 	}
 	if !found {
-		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("no interface record for %s — run: kanonarion interface %s", coord, moduleArg)}
+		return interfaceRecordMiss(ctx, ctr.QueryInterface, coord, jsonOut, stderr)
 	}
 
 	if jsonOut {
@@ -548,7 +549,7 @@ func runInterfaceListForModule(ctx context.Context, moduleArg string, jsonOut bo
 	return nil
 }
 
-func runInterfaceList(ctx context.Context, limit int, stdout, stderr io.Writer) error {
+func runInterfaceList(ctx context.Context, limit, offset int, stdout, stderr io.Writer) error {
 	logger := buildLogger(logLevel, stderr)
 	ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 	if err != nil {
@@ -556,11 +557,88 @@ func runInterfaceList(ctx context.Context, limit int, stdout, stderr io.Writer) 
 	}
 	defer func() { _ = cleanup() }()
 
-	sums, err := ctr.QueryInterface.ListInterfaceRecords(ctx, ports.InterfaceFilter{Limit: limit})
+	return interfaceListWith(ctx, limit, offset, ctr.QueryInterface, stdout, stderr)
+}
+
+// interfaceListWith holds the collapsed listing over an injected use case, so
+// the row cap it applies is exercisable without a live store.
+func interfaceListWith(ctx context.Context, limit, offset int, uc QueryInterfaceUseCase, stdout, stderr io.Writer) error {
+	// One row more than will be printed: the extra row answers whether the limit
+	// bit, and costs one row rather than a second read.
+	sums, err := uc.ListInterfaceRecords(ctx, ports.InterfaceFilter{Limit: truncationFetchLimit(limit), Offset: offset})
 	if err != nil {
 		return fmt.Errorf("listing interface records: %w", err)
 	}
-	return printInterfaceList(sums, jsonOut, stdout)
+	// The scope is measured only when the page came back empty: it is the read
+	// the notice is built from, and a listing that returned rows never pays it.
+	var zero listZeroScope
+	if len(sums) == 0 {
+		zero, err = interfaceListZeroScope(ctx, offset, uc)
+		if err != nil {
+			return err
+		}
+	}
+	return printInterfaceList(sums, jsonOut, limit, offset, zero, stdout, stderr)
+}
+
+// interfaceListZeroScope lifts the paging and re-asks the store, so a zero says
+// whether the store holds no interface record at all or the page simply starts
+// past the last one. This listing takes no filter — a module argument routes to
+// interface-list's single-module rendering, which fails with ExitNotFound — so
+// the filter cause cannot arise and the notice never claims it did.
+func interfaceListZeroScope(ctx context.Context, offset int, uc QueryInterfaceUseCase) (listZeroScope, error) {
+	all, err := uc.ListInterfaceRecords(ctx, ports.InterfaceFilter{})
+	if err != nil {
+		return listZeroScope{}, fmt.Errorf("counting interface records for the zero-result notice: %w", err)
+	}
+	scope := listZeroScope{
+		subject:    "interface record",
+		considered: len(all),
+		produce:    "kanonarion interface <module>@<version>",
+		listAll:    "kanonarion interface-list",
+	}
+	// An offset past the end empties the page while the store holds records, and
+	// the two are the same zero rows from the caller's side.
+	// An empty corpus is not something a page can start past, so a zero over it
+	// keeps the store-empty statement and its produce-a-record remedy.
+	if len(all) > 0 && offset > 0 && offset >= len(all) {
+		scope.pagedPast = fmt.Sprintf("--offset %d starts past the last one", offset)
+	}
+	return scope, nil
+}
+
+// interfaceRecordMiss answers the two commands that name a module whose
+// interface record the store does not hold, on the same terms as the example
+// pair beside it: the remedy they already carried is kept, and the corpus they
+// searched is stated next to it. The survey read is on the miss branch, so a
+// module whose record is there pays nothing for it.
+func interfaceRecordMiss(ctx context.Context, uc QueryInterfaceUseCase, coord coordinate.ModuleCoordinate,
+	jsonOut bool, stderr io.Writer,
+) error {
+	all, err := uc.ListInterfaceRecords(ctx, ports.InterfaceFilter{})
+	if err != nil {
+		return fmt.Errorf("counting interface records for the not-found notice: %w", err)
+	}
+	scope := listZeroScope{
+		subject:     "interface record",
+		filterName:  "module coordinate",
+		filterValue: coord.String(),
+		field:       "module coordinate",
+		matchKind:   matchExact,
+		considered:  len(all),
+		produce:     "kanonarion interface " + coord.String(),
+		listAll:     "kanonarion interface-list",
+		keepProduce: true,
+	}
+	if len(all) > 0 {
+		scope.example = all[0].ModulePath + "@" + all[0].ModuleVersion
+	}
+	if jsonOut {
+		if werr := writeListZeroNoticeJSON(stderr, scope); werr != nil {
+			return werr
+		}
+	}
+	return &exitError{code: ExitNotFound, msg: listZeroLine(scope)}
 }
 
 // printInterfaceList renders the collapsed list.
@@ -569,7 +647,9 @@ func runInterfaceList(ctx context.Context, limit int, stdout, stderr io.Writer) 
 // own row and the command fails afterwards: every module is listed first, so one
 // module in dispute does not delete the answers for all the others, and the run
 // still does not read as clean.
-func printInterfaceList(sums []ports.InterfaceSummary, jsonOut bool, stdout io.Writer) error {
+func printInterfaceList(sums []ports.InterfaceSummary, jsonOut bool, limit, offset int, zero listZeroScope, stdout, stderr io.Writer) error {
+	sums, truncated := truncateList(sums, limit)
+	trunc := listTruncation{limit: limit, subject: "interface records", truncated: truncated, offset: offset}
 	if jsonOut {
 		type interfaceListEntry struct {
 			Module       string `json:"module"`
@@ -601,6 +681,13 @@ func printInterfaceList(sums []ports.InterfaceSummary, jsonOut bool, stdout io.W
 		if err := enc.Encode(entries); err != nil {
 			return fmt.Errorf("encoding JSON: %w", err)
 		}
+		if len(entries) > 0 {
+			if terr := writeListTruncationJSON(stderr, trunc); terr != nil {
+				return terr
+			}
+		} else if zerr := writeListZeroNoticeJSON(stderr, zero); zerr != nil {
+			return zerr
+		}
 		if len(jsonConflicts) > 0 {
 			return fmt.Errorf("%d module(s) hold conflicting interface records: %w",
 				len(jsonConflicts), errors.Join(jsonConflicts...))
@@ -608,10 +695,7 @@ func printInterfaceList(sums []ports.InterfaceSummary, jsonOut bool, stdout io.W
 		return nil
 	}
 	if len(sums) == 0 {
-		if _, err := fmt.Fprintln(stdout, "no interface records found"); err != nil {
-			return fmt.Errorf("writing output: %w", err)
-		}
-		return nil
+		return writeListZeroNotice(stdout, zero)
 	}
 	var conflicts []error
 	for _, s := range sums {
@@ -631,6 +715,9 @@ func printInterfaceList(sums []ports.InterfaceSummary, jsonOut bool, stdout io.W
 		); err != nil {
 			return fmt.Errorf("writing output: %w", err)
 		}
+	}
+	if terr := writeListTruncationNotice(stdout, trunc); terr != nil {
+		return terr
 	}
 	// Every module is listed first, then the command fails. A module whose
 	// records disagree must not be reported as a clean run.

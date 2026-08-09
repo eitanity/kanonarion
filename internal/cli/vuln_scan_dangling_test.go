@@ -27,7 +27,7 @@ func TestRunScanList_NamesTheRunWhoseWalkIsGone(t *testing.T) {
 	fake.MarkWalkAbsent("walk-purged")
 
 	var out bytes.Buffer
-	if err := runScanList(t.Context(), "", 0, fake, &out, io.Discard); err != nil {
+	if err := runScanList(t.Context(), "", 0, 0, fake, &out, io.Discard); err != nil {
 		t.Fatalf("runScanList() = %v, want nil", err)
 	}
 	got := out.String()
@@ -66,7 +66,7 @@ func TestRunScanList_JSONStatesUnresolvableInputs(t *testing.T) {
 	t.Cleanup(func() { jsonOut = prev })
 
 	var out bytes.Buffer
-	if err := runScanList(t.Context(), "", 0, fake, &out, io.Discard); err != nil {
+	if err := runScanList(t.Context(), "", 0, 0, fake, &out, io.Discard); err != nil {
 		t.Fatalf("runScanList(--json) = %v, want nil", err)
 	}
 
@@ -97,7 +97,7 @@ func TestRunScanList_RefusesToGuessWhenPresenceCannotBeChecked(t *testing.T) {
 	fake.PresenceErr = probeErr
 
 	var out bytes.Buffer
-	err := runScanList(t.Context(), "", 0, fake, &out, io.Discard)
+	err := runScanList(t.Context(), "", 0, 0, fake, &out, io.Discard)
 	if !errors.Is(err, probeErr) {
 		t.Fatalf("runScanList() = %v, want the probe failure; a reader that cannot check must not answer", err)
 	}
@@ -110,7 +110,7 @@ func TestRunScanShow_StatesUnresolvableInputsOnTheWalkLine(t *testing.T) {
 	fake.MarkWalkAbsent("walk-purged")
 
 	var out bytes.Buffer
-	if err := runScanShow(t.Context(), "vscan-dangling", false, fake, testfakes.NewFakeQueryVuln(), &out); err != nil {
+	if err := runScanShow(t.Context(), "vscan-dangling", false, fake, testfakes.NewFakeQueryVuln(), &out, io.Discard); err != nil {
 		t.Fatalf("runScanShow() = %v, want nil", err)
 	}
 	got := out.String()
@@ -134,7 +134,7 @@ func TestRunScanShow_HealthyRunIsUnchanged(t *testing.T) {
 	fake.AddRun(run)
 
 	var out bytes.Buffer
-	if err := runScanShow(t.Context(), "vscan-healthy", false, fake, testfakes.NewFakeQueryVuln(), &out); err != nil {
+	if err := runScanShow(t.Context(), "vscan-healthy", false, fake, testfakes.NewFakeQueryVuln(), &out, io.Discard); err != nil {
 		t.Fatalf("runScanShow() = %v, want nil", err)
 	}
 	got := out.String()

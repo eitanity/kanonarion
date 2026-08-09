@@ -18,12 +18,14 @@ func TestExtractListCmd_EmptyStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
+	// A header with no rows under it is not an answer, so an empty store gets
+	// the zero-result statement in place of the table.
 	out := stdout.String()
-	if !strings.Contains(out, "RUN ID") {
-		t.Errorf("expected 'RUN ID' header, got: %q", out)
+	if !strings.Contains(out, "the store holds no extraction run at all") {
+		t.Errorf("expected the empty-store statement, got: %q", out)
 	}
-	if !strings.Contains(out, "STATUS") {
-		t.Errorf("expected 'STATUS' header, got: %q", out)
+	if strings.Contains(out, "RUN ID") {
+		t.Errorf("a listing with no rows must not print column headings, got: %q", out)
 	}
 }
 

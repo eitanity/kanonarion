@@ -209,16 +209,20 @@ func TestSynthesiseGoMod_DetectsVendorTree(t *testing.T) {
 	}
 }
 
-// TestAnalysisEnv_DisablesVendorModeOnlyWhenVendored checks the decision the
-// vendor flag drives. Vendor mode is left alone for every other analysis: a
-// module that ships both a go.mod and a vendor tree is entitled to be read the
-// way its own configuration says.
-func TestAnalysisEnv_DisablesVendorModeOnlyWhenVendored(t *testing.T) {
+// TestAnalysisEnv_PinsModuleModeOnEveryLoad holds the two things -mod=mod is
+// doing. It overrides an inherited vendor selection, which a synthesised go.mod
+// beside a vendor tree would otherwise auto-select; and it lifts the main-module
+// go.sum obligation off an artefact that never took it on, which is why it is on
+// every load rather than only the synthesised ones. It must be LAST, because
+// os/exec keeps the final occurrence of a duplicate key.
+func TestAnalysisEnv_PinsModuleModeOnEveryLoad(t *testing.T) {
 	t.Parallel()
 
 	plain := analysisEnv(domain.SynthesisedGoMod{})
-	if slices.Contains(plain, "GOFLAGS=-mod=mod") {
-		t.Error("analysisEnv disabled vendor mode for an analysis that synthesised nothing")
+	if idx := slices.Index(plain, "GOFLAGS=-mod=mod"); idx != len(plain)-1 {
+		t.Errorf("GOFLAGS at position %d of %d on a load that synthesised nothing: "+
+			"a published zip carrying no go.sum for its own module graph fails the load without it",
+			idx, len(plain))
 	}
 
 	vendored := analysisEnv(domain.SynthesisedGoMod{
@@ -265,7 +269,7 @@ func TestSynthesiseGoMod_PinsRequiresFromTheOfferedBuildList(t *testing.T) {
 	if err != nil {
 		t.Fatalf("reading synthesised go.mod: %v", err)
 	}
-	want := "module example.com/premod\n\ngo 1.16\n\nrequire (\n\tgithub.com/example/dep v1.4.2\n)\n"
+	want := "module example.com/premod\n\ngo " + synthesisedGoDirective + "\n\nrequire (\n\tgithub.com/example/dep v1.4.2\n)\n"
 	if string(body) != want {
 		t.Errorf("synthesised go.mod =\n%q\nwant\n%q", body, want)
 	}

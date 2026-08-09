@@ -130,37 +130,41 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 			CallSite:        SourcePosition{File: ce.CallSite.File, Line: ce.CallSite.Line},
 			Confidence:      EdgeConfidence(ce.Confidence),
 			ReflectDispatch: ce.ReflectDispatch,
+			Kind:            EdgeKind(ce.Kind),
 		}
 	}
 	return CallGraphRecord{
-		SchemaVersion:     c.SchemaVersion,
-		Ecosystem:         c.Ecosystem,
-		Coordinate:        coord,
-		Algorithm:         CallGraphAlgorithm(c.Algorithm),
-		ArtifactKind:      ArtifactKind(c.ArtifactKind),
-		Completeness:      CompletenessLevel(c.Completeness),
-		Nodes:             nodes,
-		Edges:             edges,
-		Interfaces:        ifaces,
-		Implementations:   impls,
-		TestScope:         TestScope(c.TestScope),
-		TestScopeDetail:   c.TestScopeDetail,
-		OverallStatus:     CallGraphStatus(c.OverallStatus),
-		FailureCause:      FailureCause(c.FailureCause),
-		FailureDetail:     c.FailureDetail,
-		FailedPackages:    c.FailedPackages,
-		ExclusionReason:   c.ExclusionReason,
-		ExclusionList:     c.ExclusionList,
-		NodeCount:         c.NodeCount,
-		EdgeCount:         c.EdgeCount,
-		ExtractedAt:       extractedAt.UTC(),
-		PipelineVersion:   c.PipelineVersion,
-		ContentHash:       c.ContentHash,
-		ArtefactIdentity:  c.ArtefactIdentity,
-		SourceContentHash: c.SourceContentHash,
-		AnalysisSource:    AnalysisSource(c.AnalysisSource),
-		WorktreeDigest:    c.WorktreeDigest,
-		BuildListSource:   c.BuildListSource,
+		SchemaVersion:            c.SchemaVersion,
+		Ecosystem:                c.Ecosystem,
+		Coordinate:               coord,
+		Algorithm:                CallGraphAlgorithm(c.Algorithm),
+		ArtifactKind:             ArtifactKind(c.ArtifactKind),
+		Completeness:             CompletenessLevel(c.Completeness),
+		Nodes:                    nodes,
+		Edges:                    edges,
+		Interfaces:               ifaces,
+		Implementations:          impls,
+		TestScope:                TestScope(c.TestScope),
+		TestScopeDetail:          c.TestScopeDetail,
+		ReferenceScope:           ReferenceScope(c.ReferenceScope),
+		OverallStatus:            CallGraphStatus(c.OverallStatus),
+		FailureCause:             FailureCause(c.FailureCause),
+		FailureDetail:            c.FailureDetail,
+		FailedPackages:           c.FailedPackages,
+		PrefixAttributedPackages: c.PrefixAttributedPackages,
+		ExclusionReason:          c.ExclusionReason,
+		ExclusionList:            c.ExclusionList,
+		NodeCount:                c.NodeCount,
+		EdgeCount:                c.EdgeCount,
+		ExtractedAt:              extractedAt.UTC(),
+		PipelineVersion:          c.PipelineVersion,
+		ContentHash:              c.ContentHash,
+		ArtefactIdentity:         c.ArtefactIdentity,
+		SourceContentHash:        c.SourceContentHash,
+		AnalysisSource:           AnalysisSource(c.AnalysisSource),
+		WorktreeDigest:           c.WorktreeDigest,
+		AnalysisRoot:             c.AnalysisRoot,
+		BuildListSource:          c.BuildListSource,
 		SynthesisedGoMod: SynthesisedGoMod{
 			ModulePath:        c.SynthesisedGoMod.ModulePath,
 			GoDirective:       c.SynthesisedGoMod.GoDirective,
@@ -251,11 +255,14 @@ type canonicalImplementation struct {
 }
 
 type canonicalEdge struct {
-	CallSite        canonicalPos `json:"call_site"`
-	Confidence      string       `json:"confidence"`
-	FromID          string       `json:"from_id"`
-	ReflectDispatch bool         `json:"reflect_dispatch"`
-	ToID            string       `json:"to_id"`
+	CallSite   canonicalPos `json:"call_site"`
+	Confidence string       `json:"confidence"`
+	FromID     string       `json:"from_id"`
+	// Kind is omitted for a call edge, which is what every edge sealed before
+	// the kind existed is. See EdgeKind.
+	Kind            string `json:"kind,omitempty"`
+	ReflectDispatch bool   `json:"reflect_dispatch"`
+	ToID            string `json:"to_id"`
 }
 
 type canonicalRecord struct {
@@ -296,14 +303,20 @@ type canonicalRecord struct {
 	// Implementations and Interfaces are omitted when empty so a module that
 	// declares no interfaces hashes the same as one analysed before the axis
 	// existed would have — the same terms every additive field here has used.
-	Implementations   []canonicalImplementation `json:"implementations,omitempty"`
-	Interfaces        []canonicalInterface      `json:"interfaces,omitempty"`
-	NodeCount         int                       `json:"node_count"`
-	Nodes             []canonicalNode           `json:"nodes"`
-	OverallStatus     int                       `json:"overall_status"`
-	PipelineVersion   string                    `json:"pipeline_version"`
-	SchemaVersion     string                    `json:"schema_version"`
-	SourceContentHash string                    `json:"source_content_hash,omitempty"`
+	Implementations []canonicalImplementation `json:"implementations,omitempty"`
+	Interfaces      []canonicalInterface      `json:"interfaces,omitempty"`
+	NodeCount       int                       `json:"node_count"`
+	// PrefixAttributedPackages is omitted when empty, on the terms every additive
+	// field on this shape has used: every record sealed before it marshals to
+	// exactly the bytes it always did and keeps its stored content hash
+	// verifiable. Absent is "no prefix attribution recorded", not "none happened"
+	// — see the domain field.
+	PrefixAttributedPackages []string        `json:"prefix_attributed_packages,omitempty"`
+	Nodes                    []canonicalNode `json:"nodes"`
+	OverallStatus            int             `json:"overall_status"`
+	PipelineVersion          string          `json:"pipeline_version"`
+	SchemaVersion            string          `json:"schema_version"`
+	SourceContentHash        string          `json:"source_content_hash,omitempty"`
 	// SynthesisedGoMod is omitted when zero so every record sealed before the
 	// field existed marshals to exactly the bytes it always did and keeps its
 	// stored content hash verifiable — the terms every additive field on this
@@ -311,9 +324,23 @@ type canonicalRecord struct {
 	// go.mod before this field, so absent means the published tree was analysed
 	// as published.
 	SynthesisedGoMod canonicalSynthesisedGoMod `json:"synthesised_go_mod,omitzero"`
-	TestScope        string                    `json:"test_scope,omitempty"`
-	TestScopeDetail  string                    `json:"test_scope_detail,omitempty"`
-	WorktreeDigest   string                    `json:"worktree_digest,omitempty"`
+	// ReferenceScope is omitted when unmeasured, which is the truth about every
+	// record sealed before reference edges were extracted.
+	ReferenceScope  string `json:"reference_scope,omitempty"`
+	TestScope       string `json:"test_scope,omitempty"`
+	TestScopeDetail string `json:"test_scope_detail,omitempty"`
+	WorktreeDigest  string `json:"worktree_digest,omitempty"`
+	// AnalysisRoot is omitted when empty, on the terms every additive field on
+	// this shape has used: no record written before it stated where its tree was,
+	// so absent is the truth about one rather than an unrecorded third state, and
+	// every stored record re-marshals to the bytes it was sealed over.
+	//
+	// It IS inside the sealed shape, which matters for a reason the omission
+	// argument does not cover: two checkouts of one module path can hold trees
+	// whose contents are identical, and without the root in the hash they would
+	// carry one content hash — a primary-key column — and collapse onto one row.
+	// The thing that makes them two trees is exactly the field being added.
+	AnalysisRoot string `json:"analysis_root,omitempty"`
 }
 
 // canonicalSynthesisedGoMod is the wire shape of domain.SynthesisedGoMod. It is
@@ -379,6 +406,7 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 			CallSite:        canonicalPos{File: e.CallSite.File, Line: e.CallSite.Line},
 			Confidence:      string(e.Confidence),
 			FromID:          e.FromID,
+			Kind:            string(e.Kind),
 			ReflectDispatch: e.ReflectDispatch,
 			ToID:            e.ToID,
 		}
@@ -449,41 +477,51 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 		sort.Strings(failedPkgs)
 	}
 
+	var prefixAttributed []string
+	if len(r.PrefixAttributedPackages) > 0 {
+		prefixAttributed = make([]string, len(r.PrefixAttributedPackages))
+		copy(prefixAttributed, r.PrefixAttributedPackages)
+		sort.Strings(prefixAttributed)
+	}
+
 	c := canonicalRecord{
-		Algorithm:         string(r.Algorithm),
-		AnalysisSource:    string(r.AnalysisSource),
-		ArtefactIdentity:  r.ArtefactIdentity,
-		ArtifactKind:      string(r.ArtifactKind),
-		Completeness:      string(r.Completeness),
-		ContentHash:       r.ContentHash,
-		Coordinate:        canonicalCoord{Path: r.Coordinate.Path(), Version: r.Coordinate.Version()},
-		Ecosystem:         r.Ecosystem,
-		EdgeCount:         r.EdgeCount,
-		Edges:             cEdges,
-		ExclusionList:     exclusions,
-		ExclusionReason:   r.ExclusionReason,
-		ExtractedAt:       r.ExtractedAt.UTC().Format(time.RFC3339),
-		FailedPackages:    failedPkgs,
-		FailureCause:      string(r.FailureCause),
-		FailureDetail:     r.FailureDetail,
-		Implementations:   cImpls,
-		Interfaces:        cIfaces,
-		NodeCount:         r.NodeCount,
-		Nodes:             cNodes,
-		OverallStatus:     int(r.OverallStatus),
-		PipelineVersion:   r.PipelineVersion,
-		SchemaVersion:     r.SchemaVersion,
-		SourceContentHash: r.SourceContentHash,
-		BuildListSource:   r.BuildListSource,
+		Algorithm:                string(r.Algorithm),
+		AnalysisSource:           string(r.AnalysisSource),
+		ArtefactIdentity:         r.ArtefactIdentity,
+		ArtifactKind:             string(r.ArtifactKind),
+		Completeness:             string(r.Completeness),
+		ContentHash:              r.ContentHash,
+		Coordinate:               canonicalCoord{Path: r.Coordinate.Path(), Version: r.Coordinate.Version()},
+		Ecosystem:                r.Ecosystem,
+		EdgeCount:                r.EdgeCount,
+		Edges:                    cEdges,
+		ExclusionList:            exclusions,
+		ExclusionReason:          r.ExclusionReason,
+		ExtractedAt:              r.ExtractedAt.UTC().Format(time.RFC3339),
+		FailedPackages:           failedPkgs,
+		FailureCause:             string(r.FailureCause),
+		FailureDetail:            r.FailureDetail,
+		Implementations:          cImpls,
+		Interfaces:               cIfaces,
+		NodeCount:                r.NodeCount,
+		Nodes:                    cNodes,
+		PrefixAttributedPackages: prefixAttributed,
+		OverallStatus:            int(r.OverallStatus),
+		PipelineVersion:          r.PipelineVersion,
+		SchemaVersion:            r.SchemaVersion,
+		SourceContentHash:        r.SourceContentHash,
+		BuildListSource:          r.BuildListSource,
 		SynthesisedGoMod: canonicalSynthesisedGoMod{
 			GoDirective:       r.SynthesisedGoMod.GoDirective,
 			ModulePath:        r.SynthesisedGoMod.ModulePath,
 			Requires:          canonicalRequires(r.SynthesisedGoMod.Requires),
 			VendorTreePresent: r.SynthesisedGoMod.VendorTreePresent,
 		},
+		ReferenceScope:  string(r.ReferenceScope),
 		TestScope:       string(r.TestScope),
 		TestScopeDetail: r.TestScopeDetail,
 		WorktreeDigest:  r.WorktreeDigest,
+		AnalysisRoot:    r.AnalysisRoot,
 	}
 	b, err := canonicalMarshal(c)
 	if err != nil {

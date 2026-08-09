@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 
@@ -23,7 +24,7 @@ func TestExamplesListCmd_EmptyStore(t *testing.T) {
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(stdout.String(), "no example records found") {
+	if !strings.Contains(stdout.String(), "the store holds no example record at all") {
 		t.Errorf("expected empty message, got: %q", stdout.String())
 	}
 }
@@ -68,7 +69,7 @@ func TestRunExamplesList_WithRecords(t *testing.T) {
 		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", ExampleCount: 1, OverallStatus: exdomain.ExampleStatusFound},
 	})
 	var buf bytes.Buffer
-	err := runExamplesList(context.Background(), 50, uc, &buf)
+	err := runExamplesList(context.Background(), 50, 0, uc, &buf, io.Discard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -80,10 +81,10 @@ func TestRunExamplesList_WithRecords(t *testing.T) {
 func TestRunExamplesList_Empty(t *testing.T) {
 	uc := testfakes.NewFakeQueryExamples()
 	var buf bytes.Buffer
-	if err := runExamplesList(context.Background(), 50, uc, &buf); err != nil {
+	if err := runExamplesList(context.Background(), 50, 0, uc, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(buf.String(), "no example records found") {
+	if !strings.Contains(buf.String(), "the store holds no example record at all") {
 		t.Errorf("expected empty message, got: %q", buf.String())
 	}
 }
@@ -94,7 +95,7 @@ func TestRunExamplesListForModule_WithRecord(t *testing.T) {
 	coord := makeExampleCoord(t)
 	uc.AddRecord(coord, exapp.PipelineVersion, rec)
 	var buf bytes.Buffer
-	err := runExamplesListForModule(context.Background(), "example.com/app@v1.0.0", uc, &buf)
+	err := runExamplesListForModule(context.Background(), "example.com/app@v1.0.0", uc, &buf, io.Discard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -110,7 +111,7 @@ func TestRunExamplesListForModule_WithRecord(t *testing.T) {
 func TestRunExamplesListForModule_NotFound(t *testing.T) {
 	uc := testfakes.NewFakeQueryExamples()
 	var buf bytes.Buffer
-	err := runExamplesListForModule(context.Background(), "non-existent@v1.0.0", uc, &buf)
+	err := runExamplesListForModule(context.Background(), "non-existent@v1.0.0", uc, &buf, io.Discard)
 	if err == nil {
 		t.Fatal("expected error for missing record")
 	}
@@ -128,7 +129,7 @@ func TestRunExamplesListForModule_JSON_WithRecord(t *testing.T) {
 	var buf bytes.Buffer
 	jsonOut = true
 	defer func() { jsonOut = false }()
-	if err := runExamplesListForModule(context.Background(), "example.com/app@v1.0.0", uc, &buf); err != nil {
+	if err := runExamplesListForModule(context.Background(), "example.com/app@v1.0.0", uc, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -163,7 +164,7 @@ func TestRunExamplesListForModule_JSON_Empty(t *testing.T) {
 	var buf bytes.Buffer
 	jsonOut = true
 	defer func() { jsonOut = false }()
-	if err := runExamplesListForModule(context.Background(), "example.com/app@v1.0.0", uc, &buf); err != nil {
+	if err := runExamplesListForModule(context.Background(), "example.com/app@v1.0.0", uc, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if got := strings.TrimSpace(buf.String()); got != "[]" {
@@ -177,7 +178,7 @@ func TestRunExamplesShow_Found(t *testing.T) {
 	coord := makeExampleCoord(t)
 	uc.AddRecord(coord, exapp.PipelineVersion, rec)
 	var buf bytes.Buffer
-	err := runExamplesShow(context.Background(), "example.com/app@v1.0.0", "ExampleMain", false, uc, &buf)
+	err := runExamplesShow(context.Background(), "example.com/app@v1.0.0", "ExampleMain", false, uc, &buf, io.Discard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -193,7 +194,7 @@ func TestRunExamplesShow_Found(t *testing.T) {
 func TestRunExamplesShow_NotFoundModule(t *testing.T) {
 	uc := testfakes.NewFakeQueryExamples()
 	var buf bytes.Buffer
-	err := runExamplesShow(context.Background(), "non-existent@v1.0.0", "ExampleMain", false, uc, &buf)
+	err := runExamplesShow(context.Background(), "non-existent@v1.0.0", "ExampleMain", false, uc, &buf, io.Discard)
 	if err == nil {
 		t.Fatal("expected error")
 	}
@@ -208,7 +209,7 @@ func TestRunExamplesShow_ExampleNotFound(t *testing.T) {
 	coord := makeExampleCoord(t)
 	uc.AddRecord(coord, exapp.PipelineVersion, rec)
 	var buf bytes.Buffer
-	err := runExamplesShow(context.Background(), "example.com/app@v1.0.0", "ExampleNotExist", false, uc, &buf)
+	err := runExamplesShow(context.Background(), "example.com/app@v1.0.0", "ExampleNotExist", false, uc, &buf, io.Discard)
 	if err == nil {
 		t.Fatal("expected error for missing example")
 	}
@@ -223,7 +224,7 @@ func TestRunExamplesShow_JSON(t *testing.T) {
 	coord := makeExampleCoord(t)
 	uc.AddRecord(coord, exapp.PipelineVersion, rec)
 	var buf bytes.Buffer
-	err := runExamplesShow(context.Background(), "example.com/app@v1.0.0", "ExampleMain", true, uc, &buf)
+	err := runExamplesShow(context.Background(), "example.com/app@v1.0.0", "ExampleMain", true, uc, &buf, io.Discard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -305,7 +306,7 @@ func TestRunExamplesShow_WithDoc(t *testing.T) {
 	uc.AddRecord(coord, exapp.PipelineVersion, rec)
 
 	var buf bytes.Buffer
-	err := runExamplesShow(context.Background(), "example.com/app@v1.0.0", "ExampleFunc", false, uc, &buf)
+	err := runExamplesShow(context.Background(), "example.com/app@v1.0.0", "ExampleFunc", false, uc, &buf, io.Discard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -318,7 +319,7 @@ func TestRunExamplesShow_GetError(t *testing.T) {
 	uc := testfakes.NewFakeQueryExamples()
 	uc.Err = errors.New("store unavailable")
 	var buf bytes.Buffer
-	err := runExamplesShow(context.Background(), "example.com/app@v1.0.0", "ExampleMain", false, uc, &buf)
+	err := runExamplesShow(context.Background(), "example.com/app@v1.0.0", "ExampleMain", false, uc, &buf, io.Discard)
 	if err == nil {
 		t.Fatal("expected error from store")
 	}

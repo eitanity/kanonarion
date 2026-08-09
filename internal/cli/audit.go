@@ -293,6 +293,17 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 		return err
 	}
 
+	// What the answer is ABOUT, before where it came from. A vendored project
+	// compiles the bytes under vendor/, and every row below describes the
+	// modules go.mod resolves; the reader is told which of the two they have.
+	// It goes on stderr with the other basis lines because audit's stdout is a
+	// documented array of per-module rows that consumers index into — there is
+	// no envelope on that channel to add a field to, and inventing one would
+	// break every existing caller to state a fact about the run.
+	if verr := writeBuildVendoring(stderr, detectBuildVendoringForGoMod(gomodPath)); verr != nil {
+		return verr
+	}
+
 	// Where the answer came from, before the answer itself. On stderr for the
 	// same reason the coverage aggregate is: a --json caller pipes stdout into
 	// jq, and a statement about the run is not one of the run's rows.

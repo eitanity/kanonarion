@@ -208,14 +208,14 @@ func newExamplesShowCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runExamplesShow(cmd.Context(), args[0], args[1], jsonOut, ctr.QueryExamples, stdout)
+			return runExamplesShow(cmd.Context(), args[0], args[1], jsonOut, ctr.QueryExamples, stdout, stderr)
 		},
 	}
 
 	return cmd
 }
 
-func runExamplesShow(ctx context.Context, moduleArg, exampleName string, jsonOut bool, uc QueryExamplesUseCase, stdout io.Writer) error {
+func runExamplesShow(ctx context.Context, moduleArg, exampleName string, jsonOut bool, uc QueryExamplesUseCase, stdout, stderr io.Writer) error {
 	coord, err := parseCoordinate(moduleArg)
 	if err != nil {
 		return fmt.Errorf("invalid coordinate %q: %w", moduleArg, err)
@@ -226,7 +226,7 @@ func runExamplesShow(ctx context.Context, moduleArg, exampleName string, jsonOut
 		return fmt.Errorf("getting example record: %w", err)
 	}
 	if !found {
-		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("no example record for %s — run 'kanonarion examples' first", coord)}
+		return exampleRecordMiss(ctx, uc, coord, jsonOut, stderr)
 	}
 
 	for _, e := range r.Examples {
@@ -356,10 +356,73 @@ func runExamplesFind(ctx context.Context, symbol string, jsonOut bool, uc QueryE
 	return conflictErr
 }
 
+// exampleRecordMiss answers the two commands that name a module whose example
+// record the store does not hold. Both already carried the remedy — run
+// `kanonarion examples` — and it is kept beside the corpus statement rather than
+// replaced by it: a caller whose module has never been harvested needs it
+// whether or not other modules have been.
+//
+// The survey read is on the miss branch. A module whose record was found never
+// reaches here, which is what keeps the count off the path these commands take
+// on almost every call.
+func exampleRecordMiss(ctx context.Context, uc QueryExamplesUseCase, coord coordinate.ModuleCoordinate,
+	jsonOut bool, stderr io.Writer,
+) error {
+	all, err := uc.ListExampleRecords(ctx, ports.ExampleFilter{})
+	if err != nil {
+		return fmt.Errorf("counting example records for the not-found notice: %w", err)
+	}
+	scope := listZeroScope{
+		subject:     "example record",
+		filterName:  "module coordinate",
+		filterValue: coord.String(),
+		field:       "module coordinate",
+		matchKind:   matchExact,
+		considered:  len(all),
+		produce:     "kanonarion examples " + coord.String(),
+		listAll:     "kanonarion examples-list",
+		keepProduce: true,
+	}
+	if len(all) > 0 {
+		scope.example = all[0].ModulePath + "@" + all[0].ModuleVersion
+	}
+	if jsonOut {
+		if werr := writeListZeroNoticeJSON(stderr, scope); werr != nil {
+			return werr
+		}
+	}
+	return &exitError{code: ExitNotFound, msg: listZeroLine(scope)}
+}
+
+// examplesListZeroScope lifts the paging and re-asks the store, so a zero says
+// whether the store holds no example record at all or the page starts past the
+// last one. This listing takes no filter — a module argument routes to the
+// single-module rendering, which fails with ExitNotFound — so the filter cause
+// cannot arise and the notice never claims it did. Reached only when the
+// listing came back empty.
+func examplesListZeroScope(ctx context.Context, offset int, uc QueryExamplesUseCase) (listZeroScope, error) {
+	all, err := uc.ListExampleRecords(ctx, ports.ExampleFilter{})
+	if err != nil {
+		return listZeroScope{}, fmt.Errorf("counting example records for the zero-result notice: %w", err)
+	}
+	scope := listZeroScope{
+		subject:    "example record",
+		considered: len(all),
+		produce:    "kanonarion examples <module>@<version>",
+		listAll:    "kanonarion examples-list",
+	}
+	// An empty corpus is not something a page can start past, so a zero over it
+	// keeps the store-empty statement and its produce-a-record remedy.
+	if len(all) > 0 && offset > 0 && offset >= len(all) {
+		scope.pagedPast = fmt.Sprintf("--offset %d starts past the last one", offset)
+	}
+	return scope, nil
+}
+
 // -- examples-list command --
 
 func newExamplesListCmd(stdout, stderr io.Writer) *cobra.Command {
-	var limit int
+	var limit, offset int
 
 	cmd := &cobra.Command{
 		Use:   "examples-list [<module>@<version>]",
@@ -377,18 +440,19 @@ func newExamplesListCmd(stdout, stderr io.Writer) *cobra.Command {
 			}
 			defer func() { _ = cleanup() }()
 			if len(args) == 1 {
-				return runExamplesListForModule(cmd.Context(), args[0], ctr.QueryExamples, stdout)
+				return runExamplesListForModule(cmd.Context(), args[0], ctr.QueryExamples, stdout, stderr)
 			}
-			return runExamplesList(cmd.Context(), limit, ctr.QueryExamples, stdout)
+			return runExamplesList(cmd.Context(), limit, offset, ctr.QueryExamples, stdout, stderr)
 		},
 	}
 
 	cmd.Flags().IntVar(&limit, "limit", 50, "maximum number of records to return without a module arg (0 = unlimited)")
+	cmd.Flags().IntVar(&offset, "offset", 0, "skip this many records")
 
 	return cmd
 }
 
-func runExamplesListForModule(ctx context.Context, moduleArg string, uc QueryExamplesUseCase, stdout io.Writer) error {
+func runExamplesListForModule(ctx context.Context, moduleArg string, uc QueryExamplesUseCase, stdout, stderr io.Writer) error {
 	coord, err := parseCoordinate(moduleArg)
 	if err != nil {
 		return fmt.Errorf("invalid coordinate %q: %w", moduleArg, err)
@@ -399,7 +463,7 @@ func runExamplesListForModule(ctx context.Context, moduleArg string, uc QueryExa
 		return fmt.Errorf("getting example record: %w", err)
 	}
 	if !found {
-		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("no example record for %s — run 'kanonarion examples %s' first", coord, moduleArg)}
+		return exampleRecordMiss(ctx, uc, coord, jsonOut, stderr)
 	}
 	if jsonOut {
 		out := make([]exampleRefJSON, 0, len(r.Examples))
@@ -441,11 +505,15 @@ func runExamplesListForModule(ctx context.Context, moduleArg string, uc QueryExa
 	return nil
 }
 
-func runExamplesList(ctx context.Context, limit int, uc QueryExamplesUseCase, stdout io.Writer) error {
-	sums, err := uc.ListExampleRecords(ctx, ports.ExampleFilter{Limit: limit})
+func runExamplesList(ctx context.Context, limit, offset int, uc QueryExamplesUseCase, stdout, stderr io.Writer) error {
+	// One row more than will be printed, so the extra row answers whether the
+	// limit bit without a second read.
+	sums, err := uc.ListExampleRecords(ctx, ports.ExampleFilter{Limit: truncationFetchLimit(limit), Offset: offset})
 	if err != nil {
 		return fmt.Errorf("listing example records: %w", err)
 	}
+	sums, truncated := truncateList(sums, limit)
+	trunc := listTruncation{limit: limit, subject: "example records", truncated: truncated, offset: offset}
 	if jsonOut {
 		type entry struct {
 			Module       string `json:"module"`
@@ -473,6 +541,19 @@ func runExamplesList(ctx context.Context, limit int, uc QueryExamplesUseCase, st
 		if err := enc.Encode(out); err != nil {
 			return fmt.Errorf("encoding JSON: %w", err)
 		}
+		if len(out) > 0 {
+			if terr := writeListTruncationJSON(stderr, trunc); terr != nil {
+				return terr
+			}
+		} else {
+			scope, serr := examplesListZeroScope(ctx, offset, uc)
+			if serr != nil {
+				return serr
+			}
+			if zerr := writeListZeroNoticeJSON(stderr, scope); zerr != nil {
+				return zerr
+			}
+		}
 		if len(jsonConflicts) > 0 {
 			return fmt.Errorf("%d module(s) hold conflicting example records: %w",
 				len(jsonConflicts), errors.Join(jsonConflicts...))
@@ -480,10 +561,11 @@ func runExamplesList(ctx context.Context, limit int, uc QueryExamplesUseCase, st
 		return nil
 	}
 	if len(sums) == 0 {
-		if _, err := fmt.Fprintln(stdout, "no example records found"); err != nil {
-			return fmt.Errorf("writing output: %w", err)
+		scope, serr := examplesListZeroScope(ctx, offset, uc)
+		if serr != nil {
+			return serr
 		}
-		return nil
+		return writeListZeroNotice(stdout, scope)
 	}
 	var conflicts []error
 	for _, s := range sums {
@@ -503,6 +585,9 @@ func runExamplesList(ctx context.Context, limit int, uc QueryExamplesUseCase, st
 		); err != nil {
 			return fmt.Errorf("writing output: %w", err)
 		}
+	}
+	if terr := writeListTruncationNotice(stdout, trunc); terr != nil {
+		return terr
 	}
 	// Every module is listed first, then the command fails. A module in dispute
 	// must not be reported as a clean run.

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -94,7 +95,7 @@ func TestExamplesList_ConflictRowDoesNotDeleteTheOtherModules(t *testing.T) {
 	})
 
 	var stdout bytes.Buffer
-	err := runExamplesList(context.Background(), 0, uc, &stdout)
+	err := runExamplesList(context.Background(), 0, 0, uc, &stdout, io.Discard)
 	if !errors.Is(err, exports.ErrExampleConflict) {
 		t.Errorf("examples-list returned %v; a module in dispute must not read as a clean run", err)
 	}
@@ -175,7 +176,9 @@ func TestInterfaceList_ConflictRowDoesNotDeleteTheOtherModules(t *testing.T) {
 	}
 
 	var stdout bytes.Buffer
-	err := printInterfaceList(sums, false, &stdout)
+	// The scope is the zero-result statement, and this listing returns rows, so
+	// it is never read.
+	err := printInterfaceList(sums, false, 0, 0, listZeroScope{}, &stdout, io.Discard)
 	if !errors.Is(err, ifaceports.ErrInterfaceConflict) {
 		t.Errorf("interface-list returned %v; a module in dispute must not read as a clean run", err)
 	}

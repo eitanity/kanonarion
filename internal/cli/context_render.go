@@ -303,6 +303,12 @@ func printScanProvenance(w *errWriter, v contextVulnerabilities) {
 // in words, because a missing frame is a gap in what is known about the answer,
 // not a property of the answer.
 func printWalkBasis(w *errWriter, format string, v contextVulnerabilities) {
+	if v.WalkWindowNote != "" {
+		// Printed even without a basis id: the note is precisely the case where
+		// the run context is missing, and a reader has to be able to tell a
+		// bounded read from a scan that found nothing to say.
+		w.printf(format, v.WalkWindowNote)
+	}
 	if v.WalkBasisID == "" {
 		return
 	}

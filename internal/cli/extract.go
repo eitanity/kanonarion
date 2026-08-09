@@ -170,59 +170,109 @@ func newExtractShowCmd(stdout, stderr io.Writer) *cobra.Command {
 }
 
 func newExtractListCmd(stdout, stderr io.Writer) *cobra.Command {
-	var limit int
+	var limit, offset int
 	cmd := &cobra.Command{
 		Use:   "list",
 		Short: "List extraction runs",
-		RunE: func(cmd *cobra.Command, args []string) error {
+		RunE: func(cmd *cobra.Command, _ []string) error {
 			logger := buildLogger(logLevel, stderr)
 			ctr, cleanup, err := NewContainer(storeRoot, "", "", false, activeConfig, logger)
 			if err != nil {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-
-			runs, err := ctr.QueryExtract.ListExtractionRuns(cmd.Context(), ports.ExtractionRunFilter{Limit: limit})
-			if err != nil {
-				return fmt.Errorf("failed to list extraction runs: %w", err)
-			}
-
-			if jsonOut {
-				type runJSON struct {
-					ID          string                     `json:"id"`
-					WalkID      string                     `json:"walk_id"`
-					Status      domain.ExtractionRunStatus `json:"status"`
-					ModuleCount int                        `json:"module_count"`
-					StartedAt   time.Time                  `json:"started_at"`
-					CompletedAt time.Time                  `json:"completed_at"`
-				}
-				out := make([]runJSON, len(runs))
-				for i, r := range runs {
-					out[i] = runJSON{
-						ID:          r.ID,
-						WalkID:      r.WalkID,
-						Status:      r.OverallStatus,
-						ModuleCount: r.ModuleCount,
-						StartedAt:   r.StartedAt,
-						CompletedAt: r.CompletedAt,
-					}
-				}
-				enc := json.NewEncoder(stdout)
-				enc.SetIndent("", "  ")
-				if encErr := enc.Encode(out); encErr != nil {
-					return fmt.Errorf("encoding JSON: %w", encErr)
-				}
-				return nil
-			}
-
-			_, _ = fmt.Fprintf(stdout, "%-26s %-26s %-10s %-12s %s\n", "RUN ID", "WALK ID", "STATUS", "MODULES", "STARTED")
-			for _, r := range runs {
-				_, _ = fmt.Fprintf(stdout, "%-26s %-26s %-10s %-12d %s\n",
-					r.ID, r.WalkID, r.OverallStatus, r.ModuleCount, r.StartedAt.Format(time.RFC3339))
-			}
-			return nil
+			return runExtractList(cmd.Context(), limit, offset, ctr.QueryExtract, stdout, stderr)
 		},
 	}
 	cmd.Flags().IntVar(&limit, "limit", 20, "maximum number of runs to return (0 = unlimited)")
+	cmd.Flags().IntVar(&offset, "offset", 0, "skip this many runs")
 	return cmd
+}
+
+// runExtractList renders the extraction-run listing. Split from the command so
+// the row cap it applies is exercisable without a live store.
+func runExtractList(ctx context.Context, limit, offset int, uc QueryExtractionUseCase, stdout, stderr io.Writer) error {
+	// One row more than will be printed, so the extra row answers whether the
+	// limit bit without a second read.
+	runs, err := uc.ListExtractionRuns(ctx, ports.ExtractionRunFilter{Limit: truncationFetchLimit(limit), Offset: offset})
+	if err != nil {
+		return fmt.Errorf("failed to list extraction runs: %w", err)
+	}
+	runs, truncated := truncateList(runs, limit)
+	trunc := listTruncation{limit: limit, subject: "extraction runs", truncated: truncated, offset: offset}
+
+	if jsonOut {
+		type runJSON struct {
+			ID          string                     `json:"id"`
+			WalkID      string                     `json:"walk_id"`
+			Status      domain.ExtractionRunStatus `json:"status"`
+			ModuleCount int                        `json:"module_count"`
+			StartedAt   time.Time                  `json:"started_at"`
+			CompletedAt time.Time                  `json:"completed_at"`
+		}
+		out := make([]runJSON, len(runs))
+		for i, r := range runs {
+			out[i] = runJSON{
+				ID:          r.ID,
+				WalkID:      r.WalkID,
+				Status:      r.OverallStatus,
+				ModuleCount: r.ModuleCount,
+				StartedAt:   r.StartedAt,
+				CompletedAt: r.CompletedAt,
+			}
+		}
+		enc := json.NewEncoder(stdout)
+		enc.SetIndent("", "  ")
+		if encErr := enc.Encode(out); encErr != nil {
+			return fmt.Errorf("encoding JSON: %w", encErr)
+		}
+		if len(out) == 0 {
+			scope, serr := extractListZeroScope(ctx, offset, uc)
+			if serr != nil {
+				return serr
+			}
+			return writeListZeroNoticeJSON(stderr, scope)
+		}
+		return writeListTruncationJSON(stderr, trunc)
+	}
+
+	// The notice replaces the header rather than following it: a table with no
+	// rows under it is not a short answer, it is no answer at all.
+	if len(runs) == 0 {
+		scope, serr := extractListZeroScope(ctx, offset, uc)
+		if serr != nil {
+			return serr
+		}
+		return writeListZeroNotice(stdout, scope)
+	}
+
+	_, _ = fmt.Fprintf(stdout, "%-26s %-26s %-10s %-12s %s\n", "RUN ID", "WALK ID", "STATUS", "MODULES", "STARTED")
+	for _, r := range runs {
+		_, _ = fmt.Fprintf(stdout, "%-26s %-26s %-10s %-12d %s\n",
+			r.ID, r.WalkID, r.OverallStatus, r.ModuleCount, r.StartedAt.Format(time.RFC3339))
+	}
+	return writeListTruncationNotice(stdout, trunc)
+}
+
+// extractListZeroScope lifts the paging and re-asks the store, so a zero says
+// whether the store holds no extraction run at all or the page starts past the
+// last one. This listing takes no filter, so the filter cause cannot arise and
+// the notice never claims it did. Reached only when the listing came back empty.
+func extractListZeroScope(ctx context.Context, offset int, uc QueryExtractionUseCase) (listZeroScope, error) {
+	all, err := uc.ListExtractionRuns(ctx, ports.ExtractionRunFilter{})
+	if err != nil {
+		return listZeroScope{}, fmt.Errorf("counting extraction runs for the zero-result notice: %w", err)
+	}
+	scope := listZeroScope{
+		subject:    "extraction run",
+		considered: len(all),
+		produce:    "kanonarion extract <walk-id>",
+		listAll:    "kanonarion extract list",
+	}
+	// An empty corpus is not something a page can start past, so a zero over it
+	// keeps the store-empty statement and its produce-a-record remedy.
+	if len(all) > 0 && offset > 0 && offset >= len(all) {
+		scope.pagedPast = fmt.Sprintf("--offset %d starts past the last one", offset)
+	}
+	return scope, nil
 }

@@ -93,7 +93,7 @@ you which command to run - it is never reported as a false "not reachable".
 | Result | Exit | Meaning |
 |---|---|---|
 | `<id> is REACHABLE in <m>@<v>` | 0 | Affected symbol is reachable from an entry point. |
-| `<id> affects <m>@<v> but is NOT reachable` | 0 | Affected symbol is present but unreachable. |
+| `<id> affects <m>@<v> but is NOT reachable` | 0 | Affected symbol is present but unreachable. The line also states the **soundness** of the search behind it — see below. |
 | `<id> affects <m>@<v> at PACKAGE level; symbol-level reachability is not determined` | 0 | The advisory names no symbols for this module path, so there is no symbol for a route to reach. The module **is** affected. |
 | `<id> was WITHDRAWN upstream <date>` | 0 | The advisory was retracted upstream; the module is not affected by it. |
 | `<m>@<v> is not affected by <id>` | 0 | Module was scanned; this CVE is not among its findings. |
@@ -114,6 +114,57 @@ as vulnerable and the only trace it can report is the package's own `init` runni
 calling the vulnerable code. That is neither `reachable` nor `not_reachable`, and
 it is not fixed by computing a call graph, so it is answered before the
 "run this command" diagnostics rather than through them.
+
+## A negative states how sound the search behind it was
+
+A positive carries a route: a hop-by-hop path that either exists or does not, and
+you can check it against your own build. A negative is the *absence* of a route,
+and an absence is worth exactly as much as the search that failed to find one. So
+every not-reachable and package-level answer carries a `soundness` rung and the
+reason for it, beside the confidence:
+
+```
+GO-2025-3487 affects golang.org/x/crypto@v0.31.0 but is NOT reachable
+  [confidence: High, soundness: inferred, by: govulncheck, fidelity: source, rooted at: target-rooted:…]
+  soundness: inferred — govulncheck analysed this build from source and reported no
+  route to the vulnerable symbol; the negative reads that silence, not a search over
+  a call graph that ran and came back empty
+```
+
+`confidence` says how sure the verdict is. `soundness` says what was actually
+searched, which is the question you are asking if you are about to *not* upgrade.
+The rungs, most to least sound:
+
+| `soundness` | What was searched |
+|---|---|
+| `confirmed` | A call-graph search ran over a graph built with function bodies and found no path. The only rung a clean negative may rest on. |
+| `inferred` | No search ran for this finding. An analysis loaded the whole build from source and never reported a route; the negative reads that silence. |
+| `unconfirmed` | An analysis ran that could not have found a route at all — a symbol table inspected in binary mode, a call graph below `BUILT_WITH_BODIES`, or an answer that does not say what produced it. |
+| `unsearchable` | The advisory names no symbols for this module path, so there was never a target to search for. Unlike the rungs above, no re-scan at any fidelity changes this. |
+
+Two consequences worth knowing before you read a negative:
+
+- **govulncheck never produces a `confirmed` negative, in either mode.** It emits
+  findings for what it *reached*, so a module it examined and did not report
+  produces no finding at all; the negative you are reading was manufactured
+  afterwards by matching the advisory database against the module's coordinate.
+  Source mode is the strongest form of that silence and reports `inferred`; binary
+  mode inspected a symbol table with no call graph behind it and reports
+  `unconfirmed`.
+- **A reachable answer states no soundness.** A route is its own evidence, and the
+  field is absent from both the text and the JSON for a positive.
+
+The rung is derived from the answer you already have — the analyser it names and
+that analyser's own fidelity — so it appears on records that were scanned long
+before it existed, and it improves whenever the analysis behind them does.
+
+The same rung is appended to the per-finding label in `vuln-show` and
+`vuln-scan-show`, where a bare `[not reachable]` used to read the same whether a
+call graph had been searched or nothing had looked at all:
+
+```
+GO-2025-3487 (CVE-2025-22869) [not reachable — inferred]: Potential denial of service in golang.org/x/crypto
+```
 | `… has not been vuln-scanned` | non-zero | No record. Walk the module, then scan that walk. |
 | `… ScanFailed` / `… is unscannable` | non-zero | Module could not be scanned; reachability is unknown. |
 | `… scanned without --reachability` | non-zero | Findings exist and the scan was rooted elsewhere, so the flag was genuinely not passed. |
@@ -178,6 +229,45 @@ The classification is **derived at read time**, not stored: the facts it reads
 live in the call-graph ledger, so an answer improves as the graph does and no
 re-scan is owed for it.
 
+#### Entry-point distance
+
+The kind is read off the root node's own identity, and a handler that runs only
+because it was *registered* with a router has nothing in its identity that says
+so. It classifies `internal`, correctly — and on a 21,713-node application graph
+70.7% of the owned nodes sit transitively under an entry point while classifying
+that way. So every classified root also carries how far it sits below the
+nearest entry point:
+
+```
+  root: internal — called from within the analysed module (1 caller), so the route begins where the analyser stopped, not where execution starts
+    node: example.com/app/auth/external.(*externalSamlAuthHandler).CompleteUserAuth
+    entry-point distance: 4 hops below example.com/app/pkg/apigw.(*apigw).ServeHTTP (an http.Handler implementation (method named ServeHTTP) — an HTTP server invokes it per request), weakest edge on that path CHA-overapprox
+```
+
+| Field (`entry_point_ancestry`) | Means |
+|---|---|
+| `found` | Whether an entry-point ancestor was reached. `false` is a **measurement**: nothing in the analysed graph enters this code. The whole object is absent when no search ran — an unresolved root, or no graph — so "not measured" and "measured, none" never look alike. |
+| `hops` | Edges from the nearest entry-point ancestor down to the root. `0` with `found` means the root **is** the entry point. A method value costs one hop more than the source reads, because the path goes through the synthetic wrapper (see [callgraph](callgraph.md#the-wrapper-hop)). |
+| `entry_point_id` / `entry_point_reason` | Which ancestor, and what made it one — the same reason string the `ingress` kind carries, so a package initialiser is never mistaken for a request handler. |
+| `weakest_confidence` | The weakest edge on that path. It is what stops a distance being read as a certainty: four hops of CHA over-approximation are not four hops of resolved calls. |
+| `via_reference` | At least one hop is a **registration rather than a call** (see [callgraph](callgraph.md#calls-and-references)). Carried apart from the confidence because a reference resolves exactly and would otherwise report `Direct`. |
+| `search_bound` | The hop limit used. `0` is unbounded, which is what the search uses, so `found: false` means "nothing enters this code" and not "not within N hops". |
+
+The kind is **not** made transitive, and the distance is not a kind. On the same
+graph a majority of the edges into owned nodes are not `Direct`, so a transitive
+`ingress` rule would inherit that over-approximation wholesale and label most of
+a codebase `ingress` — as useless as labelling all of it `internal`, and
+considerably more misleading. "internal, 4 hops below an ingress, weakest edge
+CHA-overapprox" is a fact. "ingress" would be a claim.
+
+A path where `weakest_confidence` is `Direct` and `via_reference` is false is a
+chain of statically-resolved calls, and is the one case the transitive reading
+is sound without caveat. It is a small set — 121 of 10,405 owned nodes on one
+real graph, 345 of 21,713 on another — and it has no separate field, because
+those two fields already say it.
+
+None of this is an exploitability claim. It is a statement about graph shape.
+
 ```bash
 kanonarion reachability golang.org/x/text@v0.3.7 --vuln GO-2021-0113
 kanonarion reachability golang.org/x/text@v0.3.7 --vuln GO-2021-0113 --json
@@ -207,7 +297,14 @@ JSON shape:
       "root": {
         "kind": "ingress",
         "reason": "an http.Handler implementation (method named ServeHTTP) — an HTTP server invokes it per request",
-        "node_id": "example.com/app/pkg/apigw.(*apigw).ServeHTTP"
+        "node_id": "example.com/app/pkg/apigw.(*apigw).ServeHTTP",
+        "entry_point_ancestry": {
+          "found": true,
+          "hops": 0,
+          "entry_point_id": "example.com/app/pkg/apigw.(*apigw).ServeHTTP",
+          "entry_point_reason": "an http.Handler implementation (method named ServeHTTP) — an HTTP server invokes it per request",
+          "search_bound": 0
+        }
       }
     }
   ],
@@ -219,6 +316,21 @@ JSON shape:
   "scanned_at": "2026-06-14T00:00:00Z"
 }
 ```
+
+The example above is a positive, so it carries no `soundness`. A negative adds two
+fields and drops `routes`:
+
+```json
+{
+  "verdict": "not_reachable",
+  "confidence": "High",
+  "method": "govulncheck",
+  "fidelity": "source",
+  "soundness": "inferred",
+  "soundness_reason": "govulncheck analysed this build from source and reported no route to the vulnerable symbol; the negative reads that silence, not a search over a call graph that ran and came back empty"
+}
+```
+
 
 Every route carries its own `root`; `route_root` repeats the first route's, so a
 consumer asking "is this a test-only reach" does not have to index into the list.

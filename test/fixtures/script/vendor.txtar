@@ -14,8 +14,14 @@ stdout '"kind": "missing_from_vendor"'
 stdout '"module": "example.com/dep"'
 stdout '"overall_status": "findings"'
 stdout '"vendor_only": true'
-stdout '"schema_version": "4"'
+stdout '"schema_version": "5"'
+stdout '"pipeline_version": "0.4.0"'
 stdout '"ecosystem": "go"'
+
+# The measurement's own size, stated even at zero: a clean or a findings status
+# over nothing compared is exactly the case the count exists to expose, so the
+# field carries no omitempty and the total is present on every document.
+stdout '"files_compared": 0'
 
 # The scope statement: the tree holds two modules and the report describes one
 # of them. example.com/idle contributes no package, so `go mod vendor` wrote no

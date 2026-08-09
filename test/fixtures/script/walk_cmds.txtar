@@ -36,7 +36,8 @@ stdout 'Status: succeeded'
 # Test walk-list with no records
 mkdir $WORK/empty
 kanonarion walk-list --store-root=$WORK/empty
-stdout 'no walk records found'
+stdout 'the store holds no walk record at all'
+stdout 'to produce one: kanonarion walk'
 
 # Test walk-diff with JSON
 kanonarion walk-diff 01ARZ3NDEKTSV4RRFFQ69G5FAV 01ARZ3NDEKTSV4RRFFQ69G5FBB --store-root=$WORK/stores --json

@@ -19,6 +19,11 @@ type vulnBatchCtx struct {
 	snap        vuldomain.DatabaseSnapshot
 	// runs maps walkID → scan runs; populated for the walkLimit most recent walks.
 	runs map[string][]vuldomain.WalkScanRun
+	// windowCapped is true when the store held at least one walk beyond the
+	// window. Measured by over-fetching one row, never assumed: on a store with
+	// fewer walks than the cap the window IS the population, and a note saying
+	// otherwise would hedge an answer that has nothing to hedge.
+	windowCapped bool
 	// window is the same walk set as runs, in the recency order ListWalks
 	// returned it in, and it is what an unanchored read resolves a record's walk
 	// against: a record measured outside this set has no run to read. runs stays
@@ -78,8 +83,19 @@ func (b *vulnBatchCtx) frameFor(ctx context.Context, walkID string) vulnFrameAnc
 	return anchor
 }
 
+// vulnContextWalkWindow is how many of the newest walks a context report loads
+// scan runs for.
+//
+// It is a recency window and it stays one: the alternative is reading every
+// walk's runs on every context invocation, which is the friction the window
+// exists to avoid. Unlike the containment search it cannot report a false
+// absence — a module's verdict comes from the vulnerability ledger, not from
+// this set — so what it owes is a stated basis, not a wider search. What the
+// window does bound is the RUN CONTEXT attached to a verdict, and the surface
+// says so whenever the bound bit.
+const vulnContextWalkWindow = 10
+
 func loadVulnBatchCtx(ctx context.Context, runsUC QueryScanRunsUseCase, walkUC QueryWalksUseCase) (*vulnBatchCtx, error) {
-	const walkLimit = 10
 	snap, found, err := runsUC.GetLatestSnapshot(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("reading vuln snapshot: %w", err)
@@ -87,10 +103,13 @@ func loadVulnBatchCtx(ctx context.Context, runsUC QueryScanRunsUseCase, walkUC Q
 	if !found {
 		return &vulnBatchCtx{}, nil
 	}
-	walks, err := walkUC.ListWalks(ctx, walkports.WalkFilter{Limit: walkLimit})
+	// One walk more than the window keeps: the extra row is what tells the report
+	// whether the window was the whole store or a slice of it.
+	walks, err := walkUC.ListWalks(ctx, walkports.WalkFilter{Limit: truncationFetchLimit(vulnContextWalkWindow)})
 	if err != nil {
 		return nil, fmt.Errorf("listing walks: %w", err)
 	}
+	walks, capped := truncateList(walks, vulnContextWalkWindow)
 	runsMap := make(map[string][]vuldomain.WalkScanRun, len(walks))
 	// ListWalks returns the window in recency order and that order is preserved
 	// here, because it is what an unanchored read answers in.
@@ -108,6 +127,7 @@ func loadVulnBatchCtx(ctx context.Context, runsUC QueryScanRunsUseCase, walkUC Q
 		snap:          snap,
 		runs:          runsMap,
 		window:        window,
+		windowCapped:  capped,
 		walkUC:        walkUC,
 		graphCache:    make(map[string]*walkdomain.Graph),
 		affectedCache: make(map[string]map[coordinate.ModuleCoordinate]struct{}),
@@ -316,7 +336,23 @@ func (b *vulnBatchCtx) recordFirstVulnerabilities(ctx context.Context, coord coo
 		b.filterWalkAnnotation(ctx, &result, coord, run, vulnUC)
 	}
 	b.nameRecordBasis(ctx, &result, rec.WalkID)
+	b.nameWindowBound(&result, rec.WalkID)
 	return result
+}
+
+// nameWindowBound states the recency window when it, rather than the scan, is
+// why this section carries no run context.
+//
+// Silent when the window covered every walk the store holds: that answer did
+// exhaust the population, and saying so anyway would make the note unreadable in
+// the case it exists for.
+func (b *vulnBatchCtx) nameWindowBound(result *contextVulnerabilities, walkID string) {
+	if !b.windowCapped || walkID == "" || b.inWindow(walkID) {
+		return
+	}
+	result.WalkWindowNote = fmt.Sprintf(
+		"no run context: this record was measured in a walk outside the %d most recent this report loaded runs for",
+		vulnContextWalkWindow)
 }
 
 // runThatProduced returns the scan run the served record came out of: the run

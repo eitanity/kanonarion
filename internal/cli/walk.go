@@ -268,6 +268,21 @@ func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial b
 	}
 
 	rec := result.Record
+	// A project walk resolves a manifest; a vendored project compiles something
+	// else. The disclosure rides on stderr with the coverage aggregate and for
+	// the same reason: the walk record on stdout is the content-hashed artefact,
+	// and a fact about the run is not part of what the seal covers.
+	//
+	// It is gated on the same nil reader the coverage aggregate is, and this is
+	// what that gate means here: a nil reader is a caller using the walk as a
+	// means rather than presenting it as the answer — audit, inspect and sbom —
+	// and each of those states the disclosure itself, about its own answer.
+	// Without the gate a single audit says it twice.
+	if records != nil {
+		if verr := writeBuildVendoring(stderr, detectBuildVendoringForGoMod(gomodPath)); verr != nil {
+			return result, verr
+		}
+	}
 	// The aggregate goes to stderr, never stdout: the walk record on stdout is
 	// the content-hashed artefact, and a report about the run is not part of it.
 	if cerr := reportGraphVerificationCoverage(ctx, rec.Graph.Nodes, records, stderr); cerr != nil {

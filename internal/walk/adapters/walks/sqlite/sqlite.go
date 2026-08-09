@@ -509,7 +509,11 @@ func buildListQuery(f walkports.WalkFilter) (string, []any) {
 			q += " AND " + c
 		}
 	}
-	q += " ORDER BY started_at DESC"
+	// id breaks the tie. started_at is a second-resolution timestamp and two
+	// walks can share it; without a tiebreak the row order within a second is
+	// whatever the query plan produced, and a page boundary falling inside one
+	// can repeat a row or drop it.
+	q += " ORDER BY started_at DESC, id DESC"
 	if f.Limit > 0 {
 		q += " LIMIT ?"
 		args = append(args, f.Limit)

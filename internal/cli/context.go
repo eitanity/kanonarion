@@ -241,8 +241,16 @@ type contextVulnerabilities struct {
 	// window rather than from a build the caller named. The window's verdict and
 	// its walk annotation are facts about that one build, so the build is stated.
 	// Empty on a caller-anchored read, which names its build itself.
-	WalkBasisID    string       `json:"walk_basis_id,omitempty"`
-	WalkBasisFrame string       `json:"walk_basis_frame,omitempty"`
+	WalkBasisID    string `json:"walk_basis_id,omitempty"`
+	WalkBasisFrame string `json:"walk_basis_frame,omitempty"`
+	// WalkWindowNote states why a verdict carries no run context: the walk the
+	// served record was measured in sits outside the recency window this report
+	// loaded runs for. The window is a deliberate cost bound, not a claim about
+	// the store, and the difference is invisible from the answer — a section
+	// silently missing its status word, coverage caveat and affected peers looks
+	// exactly like one where the scan had nothing to say. Empty whenever the
+	// window covered every walk in the store, so it never reads as boilerplate.
+	WalkWindowNote string       `json:"walk_window_note,omitempty"`
 	Reason         string       `json:"reason,omitempty"`
 	Findings       []contextCVE `json:"findings,omitempty"`
 	WalkID         string       `json:"walk_id,omitempty"`

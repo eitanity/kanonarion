@@ -78,6 +78,17 @@ kanonarion walk-list [--scope code|tool|complete] [--json]
 | `--scope` | _(all)_ | Filter by walk scope (`code`, `tool`, or `complete`) |
 | `--tool` | `false` | Shorthand for `--scope tool` |
 | `--limit` | `20` | Maximum number of results to return (`0` = unlimited) |
+| `--offset` | `0` | Skip this many results before listing |
+
+When the limit bites, the listing says so on both output paths and names the
+invocation that lifts it, per [Truncated listings](conventions.md#truncated-listings).
+A listing that comes back empty says which of its three causes emptied it, per
+[Zero-result listings](conventions.md#zero-result-listings).
+
+`--walk-id` and `--latest-success` select a single record rather than listing, so
+a miss on either exits `4` and the message names how many walk records were
+searched and the invocation that lists them.
+
 | `--walk-id` | _(none)_ | Fetch a single walk summary by ID |
 | `--latest` | `false` | Return only the latest unique `(target, scope)` combination |
 | `--latest-success` | `false` | Return only the single most recent succeeded walk (as a JSON object, not an array) |
@@ -104,6 +115,16 @@ version-changed modules).
 
 ```
 kanonarion walk-diff <walk-id-a> <walk-id-b> [--json]
+```
+
+If either ID is not in the store the command exits `4` and names **which** of
+the two was missing — or both when both are — followed by how many walk records
+the ID was compared against:
+
+```
+the <id-b> argument named a walk the store does not hold; no walk record matched walk id "01NOPE" — the
+value is compared for exact equality against the walk id of all 14 walk record(s) in the store (e.g.
+01KZECZ66M1BM4NT10RWXN359N); to list every walk record: kanonarion walk-list --limit 0
 ```
 
 ## `go.mod` walks
@@ -237,6 +258,13 @@ before any network I/O and exits `20`, naming `--from-modcache` and
 Reading walks already recorded (`walk show`, `callgraph`, `interface`,
 `license`, `vuln show`) is unaffected - the refusal withdraws fetching, not the
 store.
+
+`GOPROXY=off` also selects the local-toolchain standard-library anchor without
+`--from-modcache`, and stops `git` cross-verification from spawning, which is
+counted as a missing VCS leg the way `--skip-vcs-verify` is. The value is read
+the way the go command reads it, so `go env -w GOPROXY=off` is honoured with
+nothing set in the shell. See
+[`fetch`: what else `GOPROXY=off` withdraws](fetch.md#what-else-goproxyoff-withdraws).
 
 ## Scope and depth
 
@@ -426,6 +454,27 @@ See [`audit` › Local `go.sum` verification](audit.md#local-gosum-verification)
 for the full behaviour, which `audit` and `sbom --package` promote to a hard,
 non-zero exit.
 
+## Vendored builds
+
+A project carrying `vendor/modules.txt` beside its `go.mod` compiles the bytes
+under `vendor/`, which need not be the bytes the proxy would serve for the same
+coordinates. This command resolves the manifest, so its answer describes the
+modules `go.mod` **resolves**, not what ships. Where the two can differ, the run
+says so on its basis channel (stderr, with the other basis lines, on both the
+text and `--json` paths):
+
+```
+vendored build:
+  …/vendor/modules.txt is present beside go.mod, so this project compiles the bytes under vendor/
+  this answer describes the modules the manifest resolves, not those bytes; `kanonarion vendor` is what measures the vendored tree
+```
+
+It states a fact and changes no verdict: a vendored project answers exactly as
+before, with one more line of basis. `kanonarion vendor` is the command that
+compares the shipped bytes against the published module zips.
+
+An unvendored project states nothing - its answer was never ambiguous.
+
 ## Storage
 
 Walk records are stored in `<store-root>/mirror.db` (SQLite). The walk schema
@@ -479,8 +528,9 @@ nothing.
 | `1` | Partial walk (without `--allow-partial`) |
 | `2` | Failed walk |
 | `3` | Cancelled |
+| `4` | The walk you named does not exist (`walk-show`, `walk-diff`, `walk-list --walk-id`, `walk-list --latest-success`). `walk-diff` names which of its two IDs was missing |
 | `10` | Walk record integrity check failed |
-| `20` | Configuration error / walk ID not found (`walk-diff`) |
+| `20` | Configuration error |
 
 ## Relation to other stages
 

@@ -1,7 +1,8 @@
 # `kanonarion interface-diff` - Exported API Changes Between Two Versions
 
 Compares two stored interface records and reports the exported declarations
-**added**, **removed**, **changed**, and **respelt** between them. With
+**added**, **removed**, **changed**, and **respelt** between them - and, across a
+major-version path pair, the ones that only moved to a new import path. With
 `--used-by` it joins the delta against a project's stored call graph and reports
 which of the breaking changes that project's own code actually calls.
 
@@ -18,6 +19,24 @@ scope it holds over on one line, and nothing more:
 ```
 0 breaking change(s) among exported Go declarations (github.com/spf13/cast@v1.4.1 → github.com/spf13/cast@v1.10.0); behaviour and string-keyed registries are outside this comparison
 ```
+
+When that zero sits on top of a delta that is **not** empty - anything respelt,
+added, or carried to a new import path - the output says so where the zero is
+printed, not in the footer:
+
+```
+a zero here is not reassurance. This comparison reads exported signatures, so it cannot see behaviour: a release that changes no signature at all can still change what your calls return. A zero-breaking bump is the case that most needs checking against something this command does not measure.
+  what would answer it: exercise your own tests over the call sites this bump touches. Pass --used-by ./go.mod to have them enumerated here.
+```
+
+With `--used-by` the second line is replaced by the measurement: how many of the
+declarations this bump moved the project's own code calls, and at how many
+recorded call sites. `zero breaking, 2 reached call sites` and `zero breaking,
+none reached` are different answers and the command already knows which it has.
+
+A **genuinely empty** delta - nothing added, changed, respelt or renamed - keeps
+the terse two-line output. The statement is for the result that looks like
+nothing happened when something did.
 
 ## Prerequisites
 
@@ -37,9 +56,11 @@ never as "no change".
 kanonarion interface-diff <module>@<versionA> <module>@<versionB> [--used-by <path-to-go.mod>] [--json]
 ```
 
-The two coordinates can be the same module at two versions (the normal case) or
-different module paths entirely - comparing `example.com/lib` with
-`example.com/lib/v2` is how a major-version migration is sized.
+The usage line reads `<moduleA>@<versionA> <moduleB>@<versionB>` because the two
+paths need not match. They can be the same module at two versions (the normal
+case) or a **major-version path pair** - `example.com/lib` against
+`example.com/lib/v2` - which is how a major-version migration is sized. See
+[cross-major pairs](#cross-major-pairs) for what changes in that case.
 
 **Flags:**
 
@@ -57,8 +78,11 @@ different module paths entirely - comparing `example.com/lib` with
 | `removed` | Declaration present only in A | **yes** |
 | `changed` | Signature differs in a way the language does not treat as identical | **yes** |
 | `spelling` | Signature text differs, meaning does not | no |
+| `renamed-path` | Same declaration, same signature, new import path (cross-major pairs only) | no |
 
-`breaking_count` is `removed + changed`. Spelling is excluded by construction.
+`breaking_count` is `removed + changed`. Spelling and renamed-path are excluded
+by construction. The `renamed-path` count is printed only for a cross-major pair,
+which is the only comparison that can produce one.
 
 ### What counts as spelling
 
@@ -81,6 +105,41 @@ spelling-equivalent - an unreadable signature is not evidence of sameness.
 Source **positions are not compared at all**: a declaration that moved down its
 file is the same declaration. `github.com/golang-jwt/jwt/v4` v4.5.1 → v4.5.2
 moves five declarations and changes nothing, and reads as zero deltas.
+
+## Cross-major pairs
+
+Two coordinates whose module paths are equal once a trailing `/vN` is stripped -
+`github.com/Masterminds/sprig` and `github.com/Masterminds/sprig/v3`, or
+`.../jwt/v4` and `.../jwt/v5` - are a **major-version path pair**. Only `/v2` and
+above are module path suffixes; a trailing `/v0`, `/v1` or `/vNext` is an
+ordinary path element and does not pair.
+
+Across such a pair every import path changes. Declarations are therefore matched
+by **package-relative path, kind and name** rather than by import path, and the
+output differs from a same-path comparison in four ways:
+
+- declarations that carried over with an identical signature are reported as
+  `renamed-path` and are **not** breaking - the consumer owes an import rewrite,
+  not a search for a symbol that is gone;
+- a declaration that matched on identity but whose signature really changed is
+  **one** `changed` entry naming both identities (`old.Parse (func) → new.Parse
+  (func)`), not a removal plus an addition;
+- declarations that genuinely disappeared or appeared are still `removed` and
+  `added`, and still count;
+- the pair's own `package removed` / `package added` lines are suppressed, since
+  the module root did not come or go. A subpackage that really was dropped or
+  introduced is still reported, under the import path the side it exists on
+  spells.
+
+A line above the delta states the pair and what it costs:
+
+```
+cross-major pair: the module path changes from github.com/Masterminds/sprig to github.com/Masterminds/sprig/v3, so every import of it must be rewritten — including the 7 declaration(s) that carried over otherwise unchanged (renamed-path: an import rewrite, not a breaking change). Declarations are matched by package-relative path, kind and name rather than by import path.
+```
+
+`--used-by` is unaffected: it still enumerates the breaking deltas and still
+exits 5 when the project's own code calls one. A rename the consumer must
+perform is work, but it is not a broken build, and it does not fire the gate.
 
 ## Blind spots the output names
 
@@ -141,8 +200,11 @@ evidence of absence.
 # Size an upgrade
 kanonarion interface-diff github.com/spf13/cast@v1.4.1 github.com/spf13/cast@v1.10.0
 
-# Size a major-version migration
+# Size a major-version migration (a cross-major pair)
 kanonarion interface-diff github.com/golang-jwt/jwt/v4@v4.5.1 github.com/golang-jwt/jwt/v5@v5.3.1
+
+# A pre-modules major against a proper /vN one - also a pair
+kanonarion interface-diff github.com/Masterminds/sprig@v2.22.0+incompatible github.com/Masterminds/sprig/v3@v3.3.0
 
 # Does my project actually touch any of what broke?
 kanonarion interface-diff github.com/golang-jwt/jwt/v4@v4.5.1 github.com/golang-jwt/jwt/v5@v5.3.1 \
@@ -172,6 +234,9 @@ they are stated here rather than left to be inferred.
 | `removed` | array | `{package, kind, name, signature}` |
 | `changed` | array | `{package, kind, name, from, to}` |
 | `spelling` | array | `{package, kind, name, from, to}` - not breaking |
+| `major_path_pair` | bool | The two coordinates are one module's two majors |
+| `renamed_path` | array | `{package, kind, name, moved_to_package, signature}` - not breaking |
+| `zero_breaking_advisory` | string or absent | Present exactly when the text output prints the zero-breaking statement |
 | `registries` | array | `{package, kind, name, shape, side}` - `side` is `A`, `B` or `both` |
 | `excluded_testdata_packages` | array of strings | Paths dropped from the comparison |
 | `used_by` | object or absent | Present only with `--used-by` |
@@ -182,6 +247,13 @@ walk resolved for, or `unrecorded`), `consumer`, `scope_size`,
 `{package, kind, name, class, node_id, measurable, sites, callers}` with
 `callers` as `{id, file, line}`. Every collection is emitted as `[]` when empty,
 never as `null`.
+
+It also carries `touched`, `touched_reached_count` and `touched_call_sites`: the
+non-breaking declarations this bump moved - respellings and path renames - joined
+against the same call graph. They are populated only when the zero-breaking
+statement applies, they are named on the **A-side** identity (what the consumer
+calls today), and they never affect the exit code. `changed` and `renamed_path`
+rows carry `moved_to_package` when the declaration moved as well.
 
 ```json
 {
@@ -199,6 +271,8 @@ never as `null`.
     { "package": "github.com/example/lib", "kind": "func", "name": "Cast",
       "from": "func Cast(i interface{}) error", "to": "func Cast(i any) error" }
   ],
+  "major_path_pair": false,
+  "renamed_path": [],
   "registries": [],
   "excluded_testdata_packages": []
 }
@@ -226,6 +300,9 @@ whoever fixes broken invocations.
   an older one will not be found; re-run `kanonarion interface` to refresh it.
 - Churn across a series of versions is not measured here: `interface-diff`
   compares exactly two records.
+- A cross-major pair is recognised from the module **paths** alone. The version
+  strings are never consulted for it, so a `+incompatible` side pairs with a
+  `/vN` side exactly as two `/vN` sides do.
 - Packages under `internal/` **are** compared. Their declarations are exported
   Go declarations and appear in the record; that they are not importable from
   outside the module is not something this command's counts distinguish.

@@ -1030,3 +1030,75 @@ func TestSymbolFailedPackage(t *testing.T) {
 		}
 	}
 }
+
+// TestWorktreeNotice_SpeaksOnlyWhenThereIsADecision. The notice exists because a
+// routing decision the reader cannot see is the same failure as no routing at
+// all — but a reader with one checkout has no decision, and a line on every
+// answer would be noise on every answer.
+func TestWorktreeNotice_SpeaksOnlyWhenThereIsADecision(t *testing.T) {
+	cases := []struct {
+		name   string
+		r      cgports.WorktreeRouting
+		report bool
+	}{
+		{"one analysed checkout, standing in it",
+			cgports.WorktreeRouting{LocatedTrees: 1, CallerRoot: "/src/mod", ServedRoot: "/src/mod", Matched: true}, false},
+		{"one analysed checkout, standing outside any module",
+			cgports.WorktreeRouting{LocatedTrees: 1, ServedRoot: "/src/mod"}, false},
+		{"two checkouts",
+			cgports.WorktreeRouting{LocatedTrees: 2, CallerRoot: "/src/a", ServedRoot: "/src/a", Matched: true}, true},
+		{"standing in a tree that has never been analysed",
+			cgports.WorktreeRouting{LocatedTrees: 1, CallerRoot: "/src/fresh", ServedRoot: "/src/mod"}, true},
+		{"every generation predates the recorded tree",
+			cgports.WorktreeRouting{UnlocatedGenerations: 3, CallerRoot: "/src/mod"}, true},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			if got := tc.r.WorthReporting(); got != tc.report {
+				t.Fatalf("WorthReporting() = %v, want %v", got, tc.report)
+			}
+		})
+	}
+}
+
+// TestWorktreeNoticeText_NamesTheTreeAndTheRemedy. A reader served from another
+// checkout has to be able to see that, and to see what to run about it;
+// otherwise a silent wrong tree has been replaced by a slightly better silence.
+func TestWorktreeNoticeText_NamesTheTreeAndTheRemedy(t *testing.T) {
+	coord, err := coordinate.NewLocalCoordinate("example.com/mod")
+	if err != nil {
+		t.Fatalf("NewLocalCoordinate: %v", err)
+	}
+
+	hit := worktreeNoticeText(coord, cgports.WorktreeRouting{
+		LocatedTrees: 2, CallerRoot: "/src/a", ServedRoot: "/src/a",
+		ServedDigest: "analysed-sha256:aaa", Matched: true,
+	})
+	for _, want := range []string{"you are in", "/src/a", "analysed-sha256:aaa", "2 working trees"} {
+		if !strings.Contains(hit, want) {
+			t.Errorf("the matched notice does not mention %q: %s", want, hit)
+		}
+	}
+
+	miss := worktreeNoticeText(coord, cgports.WorktreeRouting{
+		LocatedTrees: 2, CallerRoot: "/src/fresh", ServedRoot: "/src/b",
+		ServedDigest: "analysed-sha256:bbb",
+	})
+	for _, want := range []string{"NOT answered", "/src/fresh", "/src/b", "kanonarion local /src/fresh"} {
+		if !strings.Contains(miss, want) {
+			t.Errorf("the miss notice does not mention %q: %s", want, miss)
+		}
+	}
+
+	// Generations written before the tree was recorded are named as that, not
+	// attributed to a checkout nothing says they came from.
+	predating := worktreeNoticeText(coord, cgports.WorktreeRouting{
+		UnlocatedGenerations: 2, CallerRoot: "/src/mod", ServedDigest: "sha256:old",
+	})
+	if !strings.Contains(predating, "before the analysed tree was recorded") {
+		t.Errorf("an unlocated generation was not named as one: %s", predating)
+	}
+	if strings.Contains(predating, "working tree at ") {
+		t.Errorf("an unlocated generation was reported as a located tree: %s", predating)
+	}
+}

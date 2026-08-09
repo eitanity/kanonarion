@@ -721,6 +721,12 @@ func forGraphComparison(r CallGraphRecord) CallGraphRecord {
 	// 0.3.0 held two records whose full contents differed only in this field, and
 	// every reachability query against them failed.
 	r.AnalysisSource = analysedFrom(r)
+	// WHERE a tree was mounted is provenance. Two copies of one tree at two paths
+	// contain the same code and produce the same graph, so comparing the root
+	// would make two identical graphs disagree about nothing — the same argument
+	// the digest itself is built on, applied to the field that deliberately does
+	// not follow it.
+	r.AnalysisRoot = ""
 	return r
 }
 

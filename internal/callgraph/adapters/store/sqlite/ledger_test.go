@@ -22,6 +22,7 @@ type ledgerSpec struct {
 	completeness domain2.CompletenessLevel
 	artefact     string
 	worktree     string
+	root         string
 	at           time.Time
 	// callee varies the edge set, which is what makes two generations hold
 	// different satellite rows.
@@ -72,6 +73,13 @@ func ledgerRecord(t *testing.T, spec ledgerSpec) domain2.CallGraphRecord {
 		PipelineVersion:  testPipeline,
 		ArtefactIdentity: spec.artefact,
 		WorktreeDigest:   spec.worktree,
+		AnalysisRoot:     spec.root,
+	}
+	if r.AnalysisSource == domain2.AnalysisSourceWorktree && r.AnalysisRoot == "" {
+		// A worktree record must say where its tree was. Defaulting from the digest
+		// keeps every test that only cares about the digest writing one tree per
+		// digest, which is what those tests mean by two trees.
+		r.AnalysisRoot = "/trees/" + spec.worktree
 	}
 	r.Sort()
 	var h domain2.CallGraphRecordHasher
@@ -928,5 +936,148 @@ func TestLedger_WorktreeFastPathStandsAsideWhenAZipRecordExists(t *testing.T) {
 	}
 	if got.ContentHash != zip.ContentHash {
 		t.Fatal("the fast path fired past a zip record and served the newest worktree generation")
+	}
+}
+
+// TestLedger_QueryIsAnsweredFromTheTreeTheCallerIsIn is the routing gap: two
+// checkouts of one module path, both analysed, and the read served whichever ran
+// last regardless of which tree the reader was standing in.
+//
+// It routes on the analysis ROOT rather than on the tree digest, and the reason
+// is the case below it: the caller's tree has an edit, so its content matches no
+// stored generation, and a digest-equality filter would answer nothing for the
+// developer this exists for.
+func TestLedger_QueryIsAnsweredFromTheTreeTheCallerIsIn(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	local, err := coordinate.NewLocalCoordinate("example.com/mod")
+	if err != nil {
+		t.Fatalf("NewLocalCoordinate: %v", err)
+	}
+	checkoutA, checkoutB := "/src/a/mod", "/src/b/mod"
+	for _, spec := range []ledgerSpec{
+		{coord: local, source: domain2.AnalysisSourceWorktree, worktree: "analysed-sha256:a1",
+			root: checkoutA, completeness: domain2.CompletenessBuiltWithBodies,
+			at: testTime, callee: "example.com/mod.FromTreeA"},
+		{coord: local, source: domain2.AnalysisSourceWorktree, worktree: "analysed-sha256:b1",
+			root: checkoutB, completeness: domain2.CompletenessBuiltWithBodies,
+			at: testTime.Add(time.Hour), callee: "example.com/mod.FromTreeB"},
+	} {
+		if perr := s.PutCallGraphRecord(ctx, ledgerRecord(t, spec)); perr != nil {
+			t.Fatalf("PutCallGraphRecord: %v", perr)
+		}
+	}
+
+	// The control: with no preference the newest generation answers, which is what
+	// every reader got before this and is what a reader outside any module still
+	// gets.
+	got, found, err := s.GetCallGraphRecord(ctx, local, testPipeline)
+	if err != nil || !found {
+		t.Fatalf("GetCallGraphRecord: found=%v err=%v", found, err)
+	}
+	if got.AnalysisRoot != checkoutB {
+		t.Fatalf("with no preference the read served %q, want the newest generation %q", got.AnalysisRoot, checkoutB)
+	}
+
+	// Standing in checkout A, whose generation is the OLDER one.
+	s.PreferWorktree(ports.WorktreePreference{ModulePath: "example.com/mod", Root: checkoutA})
+	got, found, err = s.GetCallGraphRecord(ctx, local, testPipeline)
+	if err != nil || !found {
+		t.Fatalf("GetCallGraphRecord: found=%v err=%v", found, err)
+	}
+	if got.AnalysisRoot != checkoutA {
+		t.Fatalf("a query from %s was answered from %s", checkoutA, got.AnalysisRoot)
+	}
+	if got.Edges[0].ToID != "example.com/mod.FromTreeA" {
+		t.Fatalf("the edges came from another tree: %s", got.Edges[0].ToID)
+	}
+
+	// The edge read resolves the served generation through the same composition,
+	// so it must route the same way. It is the path `callers` actually takes.
+	refs, err := s.FindCallers(ctx, "example.com/mod.FromTreeA", testPipeline, coordinate.ModuleSet{}, ports.EdgeQueryOptions{})
+	if err != nil {
+		t.Fatalf("FindCallers: %v", err)
+	}
+	if len(refs) != 1 {
+		t.Fatalf("the edge read returned %d edges from tree A, want 1", len(refs))
+	}
+
+	// The routing decision is reportable, or the reader cannot see it.
+	r, ok, err := s.WorktreeRouting(ctx, local, testPipeline)
+	if err != nil || !ok {
+		t.Fatalf("WorktreeRouting: ok=%v err=%v", ok, err)
+	}
+	if r.LocatedTrees != 2 || !r.Matched || r.ServedRoot != checkoutA {
+		t.Fatalf("routing report = %+v, want 2 trees matched at %s", r, checkoutA)
+	}
+}
+
+// TestLedger_UnanalysedTreeFallsBackAndSaysSo is the miss, and it is the common
+// case rather than the corner: a caller standing in a checkout the ledger holds
+// no generation of. Answering nothing would be a regression on every reader who
+// has one; answering silently from another tree is the defect. It answers, and
+// the report says the tree was not theirs.
+func TestLedger_UnanalysedTreeFallsBackAndSaysSo(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	local, err := coordinate.NewLocalCoordinate("example.com/mod")
+	if err != nil {
+		t.Fatalf("NewLocalCoordinate: %v", err)
+	}
+	for _, spec := range []ledgerSpec{
+		{coord: local, source: domain2.AnalysisSourceWorktree, worktree: "analysed-sha256:a1",
+			root: "/src/a/mod", completeness: domain2.CompletenessBuiltWithBodies, at: testTime},
+		{coord: local, source: domain2.AnalysisSourceWorktree, worktree: "analysed-sha256:b1",
+			root: "/src/b/mod", completeness: domain2.CompletenessBuiltWithBodies,
+			at: testTime.Add(time.Hour), callee: "example.com/mod.FromTreeB"},
+	} {
+		if perr := s.PutCallGraphRecord(ctx, ledgerRecord(t, spec)); perr != nil {
+			t.Fatalf("PutCallGraphRecord: %v", perr)
+		}
+	}
+
+	s.PreferWorktree(ports.WorktreePreference{ModulePath: "example.com/mod", Root: "/src/never-analysed"})
+	got, found, err := s.GetCallGraphRecord(ctx, local, testPipeline)
+	if err != nil || !found {
+		t.Fatalf("a caller in an unanalysed tree got no answer at all: found=%v err=%v", found, err)
+	}
+	if got.AnalysisRoot != "/src/b/mod" {
+		t.Fatalf("the fallback served %q, want the newest generation", got.AnalysisRoot)
+	}
+	r, ok, err := s.WorktreeRouting(ctx, local, testPipeline)
+	if err != nil || !ok {
+		t.Fatalf("WorktreeRouting: ok=%v err=%v", ok, err)
+	}
+	if r.Matched {
+		t.Fatal("the report claims the answer came from the caller's tree; no generation was analysed there")
+	}
+	if r.CallerRoot != "/src/never-analysed" || r.ServedRoot != "/src/b/mod" || r.LocatedTrees != 2 {
+		t.Fatalf("routing report = %+v", r)
+	}
+}
+
+// TestLedger_WorktreeRecordMustStateItsRoot. The digest tells two trees apart;
+// the root is what lets a reader standing in one be answered from it. A record
+// with neither is served to a caller whose tree it may have nothing to do with.
+func TestLedger_WorktreeRecordMustStateItsRoot(t *testing.T) {
+	s := openTestStore(t)
+	local, err := coordinate.NewLocalCoordinate("example.com/mod")
+	if err != nil {
+		t.Fatalf("NewLocalCoordinate: %v", err)
+	}
+	rec := ledgerRecord(t, ledgerSpec{
+		coord: local, source: domain2.AnalysisSourceWorktree, worktree: "analysed-sha256:a1",
+		completeness: domain2.CompletenessBuiltWithBodies,
+	})
+	rec.AnalysisRoot = ""
+	var h domain2.CallGraphRecordHasher
+	rec, err = h.SetContentHash(rec)
+	if err != nil {
+		t.Fatalf("SetContentHash: %v", err)
+	}
+	if perr := s.PutCallGraphRecord(context.Background(), rec); !errors.Is(perr, ports.ErrUnlocatedWorktree) {
+		t.Fatalf("PutCallGraphRecord accepted an unlocated worktree record: %v", perr)
 	}
 }

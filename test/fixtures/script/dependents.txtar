@@ -39,15 +39,20 @@ stdout 'example.com/app@v1.0.0.*\[root\]'
 
 # Missing walk ID errors
 ! kanonarion dependents example.com/dep@v1.0.0 --walk-id=NOSUCHID --store-root=$WORK/stores
-stderr 'not found'
+stderr 'no walk record matched walk id "NOSUCHID"'
+stderr 'to list every walk record: kanonarion walk-list --limit 0'
 
 # Without --walk-id, auto-resolves to the most recent walk containing the module
 kanonarion dependents example.com/dep@v1.0.0 --store-root=$WORK/stores --include-root
 stdout 'example.com/app@v1.0.0'
 
-# Without --walk-id, module not in any walk returns a clear error
+# Without --walk-id, module not in any walk returns a clear error. This store
+# holds fewer walks than the search bound, so the search exhausted it and the
+# negative is a plain absence with no hedge attached.
 ! kanonarion dependents example.com/notpresent@v9.9.9 --store-root=$WORK/stores
-stderr 'no walk found containing'
+stderr 'no walk in this store contains example.com/notpresent@v9.9.9'
+stderr 'walk\(s\) searched'
+! stderr 'most recent walks searched'
 
 # Invalid coordinate errors
 ! kanonarion dependents nodot --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FAV --store-root=$WORK/stores
