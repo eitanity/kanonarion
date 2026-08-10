@@ -791,6 +791,116 @@ func TestInterfaceDiffWith_ZeroBreakingReportsReachedSitesAndDoesNotGate(t *test
 	}
 }
 
+// The reach count in the zero-breaking statement is a join against the stored
+// call graph, so a consumer with no stored graph joins against nothing and the
+// count is 0 for a reason that has nothing to do with the consumer's code. It
+// must not be printed as a measurement: "calls none of what moved" reads as
+// permission to bump, and it is the one line of the block a reader quotes.
+func TestInterfaceDiffWith_ZeroBreakingReachIsNotMeasuredWithoutAStoredGraph(t *testing.T) {
+	ctr, gomod := zeroBreakingUsedByContainer(t)
+	ctr.QueryCallGraph = testfakes.NewFakeQueryCallGraph()
+	a, b := ifaceDiffCoords()
+
+	var out bytes.Buffer
+	if err := interfaceDiffWith(context.Background(), ctr, a, b, interfaceDiffFlags{usedBy: gomod}, &out); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := out.String()
+	if strings.Contains(got, "own code calls 0 of the") {
+		t.Errorf("an empty join was printed as a measured zero:\n%s", got)
+	}
+	for _, want := range []string{
+		"could NOT be measured",
+		"no stored call graph for it",
+		"kanonarion local .",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("the unmeasured reach is missing %q:\n%s", want, got)
+		}
+	}
+	// The statement still names the size of what moved: that count comes from
+	// the delta, not from the graph, and it is what the reader has to test.
+	if !strings.Contains(got, "1 declaration(s) it moved") {
+		t.Errorf("the statement dropped the size of the moved set:\n%s", got)
+	}
+	// The caveat qualifies what it is printed beside, in both directions. It may
+	// not point down the page at a number that is above it.
+	if strings.Contains(got, "nothing below is a measurement") {
+		t.Errorf("the caveat still aims below itself:\n%s", got)
+	}
+	if !strings.Contains(got, "every reach count and per-declaration row in this report is an absence of evidence") {
+		t.Errorf("the caveat does not name what it qualifies:\n%s", got)
+	}
+}
+
+// The negative control for the test above: a consumer that DOES have a stored
+// graph still gets the counts, unchanged. The guard must suppress an absence,
+// not a measurement.
+func TestInterfaceDiffWith_ZeroBreakingReachIsStillPrintedWithAStoredGraph(t *testing.T) {
+	ctr, gomod := zeroBreakingUsedByContainer(t)
+	a, b := ifaceDiffCoords()
+
+	var out bytes.Buffer
+	if err := interfaceDiffWith(context.Background(), ctr, a, b, interfaceDiffFlags{usedBy: gomod}, &out); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	got := out.String()
+	if !strings.Contains(got, "example.com/app own code calls 1 of the 1 declaration(s) it moved, at 2 recorded call sites") {
+		t.Errorf("a measured reach was suppressed:\n%s", got)
+	}
+	if strings.Contains(got, "could NOT be measured") {
+		t.Errorf("a measured reach was reported as unmeasurable:\n%s", got)
+	}
+	if strings.Contains(got, "no stored call graph") {
+		t.Errorf("a consumer with a stored graph was told it has none:\n%s", got)
+	}
+}
+
+// The JSON shape carries the same discriminator the text does. Every reach
+// count in the document is joined against the stored call graph, so a zero is
+// only readable beside call_graph_found — which is emitted unconditionally, in
+// the same object, with no omitempty to drop it when it is false.
+func TestInterfaceDiffJSON_ZeroReachIsAccompaniedByTheAbsenceOfAGraph(t *testing.T) {
+	ctr, gomod := zeroBreakingUsedByContainer(t)
+	ctr.QueryCallGraph = testfakes.NewFakeQueryCallGraph()
+	a, b := ifaceDiffCoords()
+
+	jsonOut = true
+	defer func() { jsonOut = false }()
+
+	var out bytes.Buffer
+	if err := interfaceDiffWith(context.Background(), ctr, a, b, interfaceDiffFlags{usedBy: gomod}, &out); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var decoded struct {
+		UsedBy *map[string]any `json:"used_by"`
+	}
+	if err := json.Unmarshal(out.Bytes(), &decoded); err != nil {
+		t.Fatalf("decoding JSON: %v\n%s", err, out.String())
+	}
+	if decoded.UsedBy == nil {
+		t.Fatalf("used_by absent from JSON:\n%s", out.String())
+	}
+	got := *decoded.UsedBy
+	found, present := got["call_graph_found"]
+	if !present {
+		t.Fatalf("the counts ship without the field that qualifies them: %+v", got)
+	}
+	if found != false {
+		t.Errorf("call_graph_found = %v, want false", found)
+	}
+	for _, k := range []string{"reached_count", "touched_reached_count", "touched_call_sites"} {
+		v, ok := got[k]
+		if !ok {
+			t.Errorf("%s absent from the document", k)
+			continue
+		}
+		if v != float64(0) {
+			t.Errorf("%s = %v with no stored graph, want 0", k, v)
+		}
+	}
+}
+
 // The control for the line above: the same consumer against a delta that really
 // does break it still gates.
 func TestInterfaceDiffWith_BreakingStillGatesAlongsideTheStatement(t *testing.T) {

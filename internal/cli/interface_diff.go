@@ -586,6 +586,21 @@ func printZeroBreakingStatement(diff ifacedomain.InterfaceDiff, used *usedByResu
 		}
 		return nil
 	}
+	// The counts below are a join against the stored call graph. With no graph
+	// stored for the consumer, that join is empty and TouchedReach() returns
+	// 0, 0 — which would print as a measured "calls none of them" and read as
+	// permission to bump. Say instead that it was not measured, and name the
+	// same remedy the used-by section names.
+	if !used.CallGraphFound {
+		if _, err := fmt.Fprintf(stdout,
+			"  what would answer it: exercise your own tests over the call sites this bump touches — "+
+				"whether %s own code calls any of the %d declaration(s) it moved could NOT be measured: "+
+				"there is no stored call graph for it; run: kanonarion local .\n",
+			used.Consumer.Path(), len(used.Touched)); err != nil {
+			return fmt.Errorf("writing zero-breaking statement: %w", err)
+		}
+		return nil
+	}
 	decls, sites := used.TouchedReach()
 	if _, err := fmt.Fprintf(stdout,
 		"  what would answer it: exercise your own tests over the call sites this bump touches — "+
@@ -733,7 +748,8 @@ func printUsedBySection(used *usedByResult, stdout io.Writer) error {
 	}
 	if !used.CallGraphFound {
 		if _, err := fmt.Fprintf(stdout,
-			"  no stored call graph for %s — nothing below is a measurement of reach; "+
+			"  no stored call graph for %s — every reach count and per-declaration row in this "+
+				"report is an absence of evidence, not a measurement of reach; "+
 				"run: kanonarion local .\n", used.Consumer.Path()); err != nil {
 			return fmt.Errorf("writing used-by absence: %w", err)
 		}
