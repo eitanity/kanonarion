@@ -314,11 +314,14 @@ type CallEdgeRef struct {
 }
 
 // CallEdgeRefLess is the canonical ordering for CallEdgeRef slices produced by
-// transitive caller/callee queries. It deliberately diverges from
-// domain.CallGraphRecord.Sort: that comparator sorts edges within a single
-// module record and tiebreaks on CallSite (File then Line), but a query result
-// spans multiple modules and CallEdgeRef carries no CallSite, so ModulePath is
-// the meaningful final tiebreak at query scope.
+// transitive caller/callee queries. It is the same key as domain.CallEdgeLess,
+// carried onto the shape a query result has: endpoints first, then where the
+// edge was measured, then the edge's own facts, and it covers every field the
+// ref carries so no two distinct refs compare equal.
+//
+// The one substitution is in the middle. domain.CallEdgeLess tiebreaks on the
+// call site, which a CallEdgeRef does not carry; a query result instead spans
+// modules, so the module a ref came from takes that slot.
 func CallEdgeRefLess(a, b CallEdgeRef) bool {
 	if a.FromID != b.FromID {
 		return a.FromID < b.FromID
@@ -326,7 +329,25 @@ func CallEdgeRefLess(a, b CallEdgeRef) bool {
 	if a.ToID != b.ToID {
 		return a.ToID < b.ToID
 	}
-	return a.ModulePath < b.ModulePath
+	if a.ModulePath != b.ModulePath {
+		return a.ModulePath < b.ModulePath
+	}
+	if a.ModuleVersion != b.ModuleVersion {
+		return a.ModuleVersion < b.ModuleVersion
+	}
+	if a.PipelineVersion != b.PipelineVersion {
+		return a.PipelineVersion < b.PipelineVersion
+	}
+	if a.Kind != b.Kind {
+		return a.Kind < b.Kind
+	}
+	if a.Confidence != b.Confidence {
+		return a.Confidence < b.Confidence
+	}
+	if a.IsTest != b.IsTest {
+		return !a.IsTest
+	}
+	return false
 }
 
 // CallGraphWorktreeRouter is the optional read that reports which working tree

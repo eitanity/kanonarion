@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
+
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 )
@@ -17,7 +19,7 @@ import (
 func TestRunCallers_UnmeasuredTestScopeIsNotAnAbsence(t *testing.T) {
 	rec := builtRecord([]cgdomain.CallNode{{ID: "example.com/m.Root", Symbol: "Root"}}, nil)
 	rec.TestScope = cgdomain.TestScopeUnknown
-	uc := fakeWithRecord("example.com/m", "v1.0.0", "0.2.0", rec)
+	uc := fakeWithRecord("example.com/m", "v1.0.0", cgapp.PipelineVersion, rec)
 
 	var buf bytes.Buffer
 	if err := runCallers(context.Background(), "example.com/m.Root", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
@@ -38,7 +40,7 @@ func TestRunCallers_UnmeasuredTestScopeIsNotAnAbsence(t *testing.T) {
 func TestRunCallers_ExcludeTestsStatesTheNarrowing(t *testing.T) {
 	rec := builtRecord([]cgdomain.CallNode{{ID: "example.com/m.Root", Symbol: "Root"}}, nil)
 	rec.TestScope = cgdomain.TestScopeUnknown
-	uc := fakeWithRecord("example.com/m", "v1.0.0", "0.2.0", rec)
+	uc := fakeWithRecord("example.com/m", "v1.0.0", cgapp.PipelineVersion, rec)
 
 	var buf bytes.Buffer
 	if err := runCallers(context.Background(), "example.com/m.Root", false, uc, &buf, buildScope{},

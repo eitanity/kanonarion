@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/spf13/cobra"
 )
@@ -100,6 +102,15 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 				"no %s-sourced callgraph record for %s — the ledger may hold one from another source; try --history",
 				source, coord)}
 		}
+		note, nerr := supersededGenerationsNote(ctx, coord, uc)
+		if nerr != nil {
+			return nerr
+		}
+		if note != "" {
+			return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
+				"no callgraph record for %s at pipeline %s — %s. Re-analyse it:\n  kanonarion callgraph %s",
+				coord, cgapp.PipelineVersion, note, coord)}
+		}
 		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("no callgraph record for %s — run 'kanonarion callgraph' first", coord)}
 	}
 	nodeFilter, limitNodes, limitEdges := f.nodeFilter, f.limitNodes, f.limitEdges
@@ -142,7 +153,18 @@ func runCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 		return fmt.Errorf("reading callgraph history: %w", err)
 	}
 	if len(recs) == 0 {
-		if _, werr := fmt.Fprintf(stdout, "no callgraph records for %s\n", coord); werr != nil {
+		// The history view is where an operator lands after a bump, so it must
+		// distinguish a coordinate the store has never held from one whose every
+		// generation this build has stopped serving.
+		note, nerr := supersededGenerationsNote(ctx, coord, uc)
+		if nerr != nil {
+			return nerr
+		}
+		line := fmt.Sprintf("no callgraph records for %s at pipeline %s", coord, cgapp.PipelineVersion)
+		if note != "" {
+			line += " — " + note + ".\n  re-analyse it: kanonarion callgraph " + coord.String()
+		}
+		if _, werr := fmt.Fprintln(stdout, line); werr != nil {
 			return fmt.Errorf("writing output: %w", werr)
 		}
 		return nil
@@ -780,4 +802,33 @@ func printCallGraphRecord(r domain.CallGraphRecord, limitNodes, limitEdges int, 
 		}
 	}
 	return nil
+}
+
+// supersededGenerationsNote describes the generations the store holds for a
+// coordinate under pipeline versions this build no longer serves, or "" when it
+// holds none. It is the difference between "this was never analysed" and "this
+// was analysed by logic that has since been superseded", which are different
+// facts with different remedies.
+func supersededGenerationsNote(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryCallGraphUseCase) (string, error) {
+	sums, err := uc.ListCallGraphRecords(ctx, ports.CallGraphFilter{ModulePath: coord.Path()})
+	if err != nil {
+		return "", fmt.Errorf("listing stored generations for %s: %w", coord, err)
+	}
+	seen := make(map[string]bool)
+	var versions []string
+	for _, s := range sums {
+		if s.ModuleVersion != coord.Version() || s.PipelineVersion == cgapp.PipelineVersion {
+			continue
+		}
+		if !seen[s.PipelineVersion] {
+			seen[s.PipelineVersion] = true
+			versions = append(versions, s.PipelineVersion)
+		}
+	}
+	if len(versions) == 0 {
+		return "", nil
+	}
+	sort.Strings(versions)
+	return fmt.Sprintf("the store holds it at superseded pipeline %s, which this build does not serve",
+		strings.Join(versions, ", ")), nil
 }

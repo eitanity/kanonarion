@@ -16,17 +16,40 @@ import (
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 )
 
-// listScopedSummaries lists the analysed call graph records, keeping only those
-// whose module@version is in scope.
+// listScopedSummaries lists the call graph records this binary serves, keeping
+// only those whose module@version is in scope.
 //
-// Every verdict helper below reasons over the records owning the queried symbol,
-// and a module the store holds at four versions contributes four of them. Left
-// unscoped they would read completeness, Partial status and dispatch evidence
-// out of versions the build does not contain — so a query restricted to one
-// build would still be answered, in part, by another. The filter belongs here
-// rather than at the call sites so no helper can forget it.
+// Two filters, and both are about answering from the right records.
+//
+// The pipeline version is the first. A record produced by superseded extraction
+// logic is not served — that is what a pipeline bump means — so a helper that
+// reasoned over one would describe an answer the query itself refused to draw
+// on. That is not hypothetical: read unfiltered, an empty answer would take its
+// soundness axes from a generation the edge query never consulted and report a
+// cause that belongs to a record nobody is being served. A coordinate with no
+// record at this version is a distinct condition with its own diagnostic; see
+// supersededPipelineError.
+//
+// The build scope is the second. Every verdict helper below reasons over the
+// records owning the queried symbol, and a module the store holds at four
+// versions contributes four of them. Left unscoped they would read
+// completeness, Partial status and dispatch evidence out of versions the build
+// does not contain — so a query restricted to one build would still be
+// answered, in part, by another. Both filters belong here rather than at the
+// call sites so no helper can forget either.
 func listScopedSummaries(ctx context.Context, uc QueryCallGraphUseCase, scope coordinate.ModuleSet) ([]ports.CallGraphSummary, error) {
-	sums, err := uc.ListCallGraphRecords(ctx, ports.CallGraphFilter{})
+	return listSummaries(ctx, uc, scope, ports.CallGraphFilter{PipelineVersion: cgapp.PipelineVersion})
+}
+
+// listStoredSummaries lists every record in scope whatever pipeline version
+// produced it. It answers "what does the store hold for this module", which is
+// what a diagnostic needs; nothing may answer a query from what it returns.
+func listStoredSummaries(ctx context.Context, uc QueryCallGraphUseCase, scope coordinate.ModuleSet) ([]ports.CallGraphSummary, error) {
+	return listSummaries(ctx, uc, scope, ports.CallGraphFilter{})
+}
+
+func listSummaries(ctx context.Context, uc QueryCallGraphUseCase, scope coordinate.ModuleSet, filter ports.CallGraphFilter) ([]ports.CallGraphSummary, error) {
+	sums, err := uc.ListCallGraphRecords(ctx, filter)
 	if err != nil {
 		return nil, fmt.Errorf("listing analysed modules: %w", err)
 	}
@@ -40,6 +63,65 @@ func listScopedSummaries(ctx context.Context, uc QueryCallGraphUseCase, scope co
 		}
 	}
 	return out, nil
+}
+
+// supersededPipelineError is the diagnostic for a module the store has analysed
+// only under superseded extraction logic. It is a false-negative case exactly
+// like a module that was never analysed: the query found nothing because there
+// is nothing here it is allowed to serve, and every other cause an empty answer
+// could name — no callers, references unmeasured, a package that failed to
+// typecheck — would send a reader after the wrong thing.
+//
+// It names the versions the store does hold, because "re-analyse" is only
+// actionable against a coordinate, and the store's generations are the only
+// place those coordinates are written down.
+func supersededPipelineError(symbolID, modulePath string, stored []ports.CallGraphSummary) error {
+	versions := make([]string, 0, len(stored))
+	pipelines := make(map[string]bool)
+	seen := make(map[string]bool)
+	local := false
+	for _, s := range stored {
+		if s.ModulePath != modulePath {
+			continue
+		}
+		pipelines[s.PipelineVersion] = true
+		if s.ModuleVersion == coordinate.LocalVersion {
+			local = true
+		}
+		if !seen[s.ModuleVersion] {
+			seen[s.ModuleVersion] = true
+			versions = append(versions, s.ModuleVersion)
+		}
+	}
+	sort.Strings(versions)
+	was := make([]string, 0, len(pipelines))
+	for p := range pipelines {
+		was = append(was, p)
+	}
+	sort.Strings(was)
+
+	remedy := "  kanonarion callgraph " + modulePath + "@" + versions[0]
+	if local {
+		remedy = "  kanonarion local <dir>"
+	}
+	return fmt.Errorf(
+		"symbol %q belongs to module %q, whose every stored call graph was produced by "+
+			"superseded extraction logic: this build serves pipeline %s and the store holds "+
+			"%s at pipeline %s. A superseded record is not served, so this answer is empty for want "+
+			"of a measurement of this module, not because the code holds nothing. Re-analyse it:\n%s",
+		symbolID, modulePath, cgapp.PipelineVersion,
+		strings.Join(versions, ", "), strings.Join(was, ", "), remedy)
+}
+
+// moduleServedAtThisPipeline reports whether any served record covers
+// modulePath. It reads summaries already filtered to the serving version.
+func moduleServedAtThisPipeline(modulePath string, served []ports.CallGraphSummary) bool {
+	for _, s := range served {
+		if s.ModulePath == modulePath {
+			return true
+		}
+	}
+	return false
 }
 
 // checkSymbolInScope refuses a scoped query whose symbol belongs to a module the
@@ -113,17 +195,28 @@ func checkSymbolInScope(ctx context.Context, symbolID string, uc QueryCallGraphU
 // - the module was analysed but the symbol is not a node in its graph
 // (a typo, or unexported/unreachable code).
 func classifyEmptyEdgeResult(ctx context.Context, symbolID string, uc QueryCallGraphUseCase, scope coordinate.ModuleSet) error {
-	sums, err := listScopedSummaries(ctx, uc, scope)
+	// The module is resolved against everything the store holds, not only what
+	// is served: a module analysed solely under superseded logic still owns its
+	// symbol, and reporting it as never analysed would name the wrong remedy.
+	stored, err := listStoredSummaries(ctx, uc, scope)
 	if err != nil {
 		return err
 	}
-	paths := make([]string, 0, len(sums))
-	for _, s := range sums {
+	paths := make([]string, 0, len(stored))
+	for _, s := range stored {
 		paths = append(paths, s.ModulePath)
 	}
 	modulePath, ok := domain.ResolveSymbolModule(symbolID, paths)
 	if !ok {
 		return unresolvedSymbolError(symbolID) // module never analysed
+	}
+
+	sums, err := listScopedSummaries(ctx, uc, scope)
+	if err != nil {
+		return err
+	}
+	if !moduleServedAtThisPipeline(modulePath, sums) {
+		return supersededPipelineError(symbolID, modulePath, stored)
 	}
 	// The module was analysed. Zero edges is only a genuine answer if the
 	// symbol is actually a vertex in the graph; otherwise "no callers/callees"

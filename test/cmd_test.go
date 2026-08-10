@@ -435,7 +435,6 @@ func cmdSeedCallGraph(args []string) {
 		AnalysisSource:   cgdomain.AnalysisSourceModuleZip,
 		ArtefactIdentity: appArtefact.String(),
 	}
-	rec.Sort()
 	var hasher cgdomain.CallGraphRecordHasher
 	rec, _ = hasher.SetContentHash(rec)
 
@@ -525,7 +524,6 @@ func cmdSeedIface(args []string) {
 		PipelineVersion:  ifapp.PipelineVersion,
 		ArtefactIdentity: fetchtest.ZipArtefact("fixture-zip=").String(),
 	}
-	rec.Sort()
 	var hasher ifdomain.InterfaceRecordHasher
 	rec, _ = hasher.SetContentHash(rec)
 

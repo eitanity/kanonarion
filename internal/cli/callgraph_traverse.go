@@ -337,6 +337,16 @@ func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, js
 	if err != nil {
 		return fmt.Errorf("traversing callers: %w", err)
 	}
+
+	// A transitive walk is emptied by the same conditions a single hop is —
+	// a module never analysed, a symbol that is not a node, a module served by
+	// nothing at this pipeline version — and an empty walk that names none of
+	// them reads as a measured absence.
+	if len(edges) == 0 {
+		if cerr := classifyEmptyEdgeResult(ctx, symbolID, uc, sc.modules); cerr != nil {
+			return cerr
+		}
+	}
 	if !jsonOut {
 		if err := writeScopeNotice(stdout, sc); err != nil {
 			return err
@@ -382,6 +392,16 @@ func runCalleesTransitive(ctx context.Context, symbolID string, maxDepth int, js
 	edges, nodes, err := uc.TraverseCallees(ctx, symbolID, cgapp.PipelineVersion, maxDepth, sc.modules, opts)
 	if err != nil {
 		return fmt.Errorf("traversing callees: %w", err)
+	}
+
+	// A transitive walk is emptied by the same conditions a single hop is —
+	// a module never analysed, a symbol that is not a node, a module served by
+	// nothing at this pipeline version — and an empty walk that names none of
+	// them reads as a measured absence.
+	if len(edges) == 0 {
+		if cerr := classifyEmptyEdgeResult(ctx, symbolID, uc, sc.modules); cerr != nil {
+			return cerr
+		}
 	}
 	if !jsonOut {
 		if err := writeScopeNotice(stdout, sc); err != nil {

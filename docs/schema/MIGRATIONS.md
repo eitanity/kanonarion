@@ -203,6 +203,45 @@ Nothing verifies `identity_hash` on read and no stored hash is ever compared
 across the old and new styles: an old-style walk has no identity at all, so the
 comparison cannot arise. Reads of existing walks are unchanged in every respect.
 
+## Call graph record: pipeline `0.4.1` → `0.5.0`
+
+**Behaviour change in what gets analysed; no record shape change, no schema
+bump, no store migration.** Call graph records are keyed
+`(module, version, pipeline_version)`, so the bump is the migration: `0.4.1`
+rows stay where they are, become unreachable, and are never served for a
+`0.5.0` request. The cost is one re-extraction per coordinate on its next
+`callgraph` run.
+
+The analyser no longer takes its function set from the SSA library's
+`AllFunctions`, and builds the class-hierarchy graph over a set it closes
+itself. The library derives most of that set by enumerating the program's
+runtime types, and that enumeration is not reproducible: it de-duplicates types
+by identity while walking them under two spellings, so meeting an alias first
+consumes the entry its named twin needed and the pointer type — and with it the
+pointer-receiver method wrapper — is never derived. Measured on one unchanged
+tree, five consecutive enumerations of one program returned five different sets.
+
+The effect on a record is small and always in one direction: a graph could be
+missing a wrapper and the interface call sites the class hierarchy would have
+resolved to it. Ten consecutive analyses of one unchanged working tree produced
+three different graphs before this change and one after it, and that one graph
+is set-identical to the most complete of the three — same nodes, same edges,
+same interfaces, same implementations. Nothing is added that the analysis did
+not already find on a good run; what changes is that every run is now that run.
+
+Until a coordinate is re-analysed, every query for it refuses rather than
+answering empty: `callers`, `callees`, their transitive forms, `implementers`
+and `callgraph-show` name the superseded versions the store holds and the
+command that re-derives them. An empty answer would otherwise be read as a fact
+about the code, and its stated cause would be read off a generation the query
+never consulted.
+
+A `0.4.1` record can therefore say that nothing calls a method that was simply
+never enumerated, and nothing in the record distinguishes that from a measured
+absence. Two `0.4.1` records of one artefact can also disagree with no cause
+recorded, which is the conflicting-generations condition composition already
+refuses on. Both are why the old rows are re-derived rather than served.
+
 ## Call graph record: pipeline `0.3.0` → `0.4.1`
 
 **Behaviour change in what gets loaded; no record shape change, no schema bump,

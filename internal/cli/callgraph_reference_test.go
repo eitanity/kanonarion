@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
+
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 )
@@ -15,7 +17,7 @@ import (
 // used to answer "no callers". It now answers with the registrar, labelled a
 // reference so nobody reads the registration as an invocation.
 func TestRunCallers_ReferenceEdgeReportsTheRegistrationSite(t *testing.T) {
-	uc := fakeWithRecord("example.com/m", "v1.0.0", "0.2.0",
+	uc := fakeWithRecord("example.com/m", "v1.0.0", cgapp.PipelineVersion,
 		builtRecord([]cgdomain.CallNode{{ID: "example.com/m.(*H).confirmEmail", Symbol: "confirmEmail", Receiver: "*H"}}, nil))
 	uc.SetCallers([]cgports.CallEdgeRef{{
 		ModulePath:    "example.com/m",
@@ -47,7 +49,7 @@ func TestRunCallers_ReferenceEdgeReportsTheRegistrationSite(t *testing.T) {
 func TestRunCallers_UnmeasuredReferenceScopeIsUnresolved(t *testing.T) {
 	unmeasured := builtRecord([]cgdomain.CallNode{{ID: "example.com/m.Root", Symbol: "Root"}}, nil)
 	unmeasured.ReferenceScope = cgdomain.ReferenceScopeUnknown
-	uc := fakeWithRecord("example.com/m", "v1.0.0", "0.2.0", unmeasured)
+	uc := fakeWithRecord("example.com/m", "v1.0.0", cgapp.PipelineVersion, unmeasured)
 
 	var buf bytes.Buffer
 	if err := runCallers(context.Background(), "example.com/m.Root", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
@@ -63,7 +65,7 @@ func TestRunCallers_UnmeasuredReferenceScopeIsUnresolved(t *testing.T) {
 
 	// The control. Same symbol, same empty answer, a record that measured both
 	// axes — still a confident negative.
-	measured := fakeWithRecord("example.com/m", "v1.0.0", "0.2.0",
+	measured := fakeWithRecord("example.com/m", "v1.0.0", cgapp.PipelineVersion,
 		builtRecord([]cgdomain.CallNode{{ID: "example.com/m.Root", Symbol: "Root"}}, nil))
 	var ctrl bytes.Buffer
 	if err := runCallers(context.Background(), "example.com/m.Root", false, measured, &ctrl, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
@@ -83,7 +85,7 @@ func TestRunCallers_TestHarnessEntryIsUnresolved(t *testing.T) {
 		{ID: "example.com/m.TestThing", Symbol: "TestThing", IsTest: true},
 		{ID: "example.com/m.(*fake).TestHook", Symbol: "TestHook", Receiver: "*fake", IsTest: true},
 	}, nil)
-	uc := fakeWithRecord("example.com/m", "v1.0.0", "0.2.0", rec)
+	uc := fakeWithRecord("example.com/m", "v1.0.0", cgapp.PipelineVersion, rec)
 
 	var buf bytes.Buffer
 	if err := runCallers(context.Background(), "example.com/m.TestThing", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {

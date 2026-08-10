@@ -664,6 +664,28 @@ names every generation at once. `callers` and `callees` resolve the served
 generation first and answer from its edges alone, so a superseded generation's
 edges stay in the table as history and answer nothing.
 
+### After a pipeline-version bump
+
+A record is served only at the pipeline version the binary was built with. When
+the extraction pipeline is bumped, every stored record for a coordinate becomes
+unreachable until it is re-analysed, and a query for one does not answer empty —
+`callers`, `callees`, their `--transitive` forms and `implementers` refuse with
+exit 20, naming the versions the store holds and the command that re-derives
+them:
+
+```
+$ kanonarion callers 'github.com/golang-jwt/jwt/v4.(*Parser).ParseUnverified'
+error: symbol "…ParseUnverified" belongs to module "github.com/golang-jwt/jwt/v4",
+whose every stored call graph was produced by superseded extraction logic: this
+build serves pipeline 0.5.0 and the store holds v4.5.0, v4.5.1, v4.5.2 at
+pipeline 0.3.0, 0.4.1. …
+  kanonarion callgraph github.com/golang-jwt/jwt/v4@v4.5.0
+```
+
+`callgraph-show` and `callgraph-show --history` say the same thing for the
+coordinate they were asked about. A module the store holds at both a superseded
+and the serving version is answered normally from the served generation.
+
 The callgraph schema is tracked in the shared `schema_migrations` table under
 module key `callgraph` (current version: 13). A record whose `schema_version`
 differs from the binary's is treated as not found, so a schema bump is

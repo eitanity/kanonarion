@@ -15,7 +15,6 @@ import (
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"golang.org/x/tools/go/callgraph/cha"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
 )
@@ -472,8 +471,17 @@ func (a *Analyser) analyseDir(
 	)
 
 	// Step 3: Call Graph Construction (CHA)
+	//
+	// The function set is computed once, here, and every later pass reads that
+	// same set. It is not an optimisation: the SSA library's own enumeration
+	// answers differently on successive calls to one unchanged program, so a
+	// pass that enumerates for itself analyses a different program from the one
+	// before it. See functionset.go.
 	a.logMem(ctx, "pre_cha")
-	cg := cha.CallGraph(prog)
+	funcs := closedFunctionSet(prog)
+	ordered := orderedFunctions(funcs)
+	a.logger.InfoContext(ctx, "callgraph_function_set_closed", slog.Int("function_count", len(ordered)))
+	cg := chaCallGraph(funcs)
 	a.logMem(ctx, "post_cha")
 
 	// Ensure GC can reclaim memory before starting walk
@@ -500,14 +508,14 @@ func (a *Analyser) analyseDir(
 	// implementer's body was never built into SSA (type-only dep / unbuilt
 	// package). Runs after body facts so those only scan built module bodies;
 	// devirtualized leaf targets carry no onward edges.
-	nodes, edges = a.devirtualizeSingleImplementer(ctx, prog, mem, fset, tempDir, nodes, edges)
+	nodes, edges = a.devirtualizeSingleImplementer(ctx, prog, ordered, mem, fset, tempDir, nodes, edges)
 
 	// Record the function values the code takes but does not call. A method
 	// registered with a router is passed, never called, so CHA sees nothing —
 	// and a handler an HTTP request drives on every hit ends up with no in-edge.
 	// Runs after devirtualisation so an edge a call already witnesses keeps the
 	// call's key rather than being recorded twice under two kinds.
-	nodes, edges = a.collectReferenceEdges(ctx, prog, mem, fset, tempDir, nodes, edges)
+	nodes, edges = a.collectReferenceEdges(ctx, prog, ordered, mem, fset, tempDir, nodes, edges)
 
 	// Record the type-level relation: which of the module's concrete types
 	// satisfy which of its interfaces. An interface method has no callers — calls
@@ -568,7 +576,6 @@ func (a *Analyser) analyseDir(
 	// says the loader named every in-module package itself; non-empty is the
 	// reconstruction, stated rather than hidden inside the membership answer.
 	rec.PrefixAttributedPackages = mem.prefixAttributed()
-	rec.Sort()
 	return rec, nil
 }
 

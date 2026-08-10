@@ -81,7 +81,6 @@ func ledgerRecord(t *testing.T, spec ledgerSpec) domain2.CallGraphRecord {
 		// digest, which is what those tests mean by two trees.
 		r.AnalysisRoot = "/trees/" + spec.worktree
 	}
-	r.Sort()
 	var h domain2.CallGraphRecordHasher
 	sealed, err := h.SetContentHash(r)
 	if err != nil {

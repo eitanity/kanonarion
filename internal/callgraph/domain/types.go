@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"sort"
 	"strings"
 	"time"
 
@@ -614,48 +613,6 @@ type CallGraphRecord struct {
 	// "none happened". Nothing may infer from an empty list that a record's
 	// membership was measured.
 	PrefixAttributedPackages []string
-}
-
-// Sort puts all collections into a canonical, deterministic order.
-// Must be called before hashing.
-func (r *CallGraphRecord) Sort() {
-	sort.Strings(r.ExclusionList)
-	sort.Strings(r.FailedPackages)
-	sort.Strings(r.PrefixAttributedPackages)
-	sort.Slice(r.Nodes, func(i, j int) bool {
-		return r.Nodes[i].ID < r.Nodes[j].ID
-	})
-	sort.Slice(r.Edges, func(i, j int) bool {
-		if r.Edges[i].FromID != r.Edges[j].FromID {
-			return r.Edges[i].FromID < r.Edges[j].FromID
-		}
-		if r.Edges[i].ToID != r.Edges[j].ToID {
-			return r.Edges[i].ToID < r.Edges[j].ToID
-		}
-		if r.Edges[i].CallSite.File != r.Edges[j].CallSite.File {
-			return r.Edges[i].CallSite.File < r.Edges[j].CallSite.File
-		}
-		if r.Edges[i].CallSite.Line != r.Edges[j].CallSite.Line {
-			return r.Edges[i].CallSite.Line < r.Edges[j].CallSite.Line
-		}
-		return r.Edges[i].Kind < r.Edges[j].Kind
-	})
-	sort.Slice(r.Interfaces, func(i, j int) bool {
-		return r.Interfaces[i].ID < r.Interfaces[j].ID
-	})
-	for i := range r.Interfaces {
-		sort.Strings(r.Interfaces[i].Methods)
-	}
-	sort.Slice(r.Implementations, func(i, j int) bool {
-		if r.Implementations[i].InterfaceID != r.Implementations[j].InterfaceID {
-			return r.Implementations[i].InterfaceID < r.Implementations[j].InterfaceID
-		}
-		return r.Implementations[i].TypeID < r.Implementations[j].TypeID
-	})
-	for i := range r.Implementations {
-		ms := r.Implementations[i].Methods
-		sort.Slice(ms, func(a, b int) bool { return ms[a].Method < ms[b].Method })
-	}
 }
 
 // ImplementersOf returns the implementations of interfaceID recorded in rec,

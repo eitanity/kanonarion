@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
+
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
@@ -32,9 +34,9 @@ func traverseFake(t *testing.T, partial bool) *testfakes.FakeQueryCallGraph {
 	}
 	uc := testfakes.NewFakeQueryCallGraph()
 	uc.SetList([]cgports.CallGraphSummary{
-		{ModulePath: "example.com/m", ModuleVersion: "v1.0.0", PipelineVersion: "0.2.0"},
+		{ModulePath: "example.com/m", ModuleVersion: "v1.0.0", PipelineVersion: cgapp.PipelineVersion},
 	})
-	uc.AddRecord(coordinatetest.MustNew("example.com/m", "v1.0.0"), "0.2.0", rec)
+	uc.AddRecord(coordinatetest.MustNew("example.com/m", "v1.0.0"), cgapp.PipelineVersion, rec)
 	uc.SetCallers([]cgports.CallEdgeRef{
 		{ModulePath: "example.com/m", ModuleVersion: "v1.0.0", FromID: "example.com/m.Caller", ToID: "example.com/m.Target", Confidence: cgdomain.ConfidenceDirect},
 		{ModulePath: "example.com/m", ModuleVersion: "v1.0.0", FromID: "example.com/m_test.TestCaller", ToID: "example.com/m.Target", Confidence: cgdomain.ConfidenceDirect, IsTest: true},
