@@ -160,6 +160,23 @@ and names the disagreement.
 
 ---
 
+## The default licence record
+
+`provenance` answers from a licence record rather than a walk, and follows the
+same discipline. With `<module>@<version>` the record is that coordinate's.
+Without a version the record is the one for the **newest version** the store
+holds — never the most recently extracted, which changes the stated basis
+whenever an unrelated walk lands.
+
+The choice is stated when there was one to make: a module the store holds one
+version of says nothing, and a module it holds several of says which versions
+were candidates, which one answered, and how to pin a different one. Where the
+candidates disagree about the copyright signal, the disagreement is reported
+instead of being resolved by picking. Under `--json` the same facts are a
+`selection` object.
+
+---
+
 ## Modules resolved under pre-modules semantics
 
 A module that reached major version 2 or above without adopting Go modules is

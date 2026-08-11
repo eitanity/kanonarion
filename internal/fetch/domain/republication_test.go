@@ -16,11 +16,11 @@ func TestInferRepublication_JWTTwoHolders(t *testing.T) {
 		{Holder: "Dave Grijalva", Verbatim: "Copyright (c) 2012 Dave Grijalva"},
 		{Holder: "golang-jwt maintainers", Verbatim: "Copyright (c) 2021 golang-jwt maintainers"},
 	}
-	got := InferRepublication("github.com/golang-jwt/jwt/v4", attributions, []string{
+	got := InferRepublication("github.com/golang-jwt/jwt/v4", attributions, LedgerModules([]string{
 		"github.com/dgrijalva/jwt-go",
 		"github.com/golang-jwt/jwt/v4",
 		"golang.org/x/text",
-	})
+	}))
 	if len(got) != 2 {
 		t.Fatalf("indicators = %d, want 2 (multiple holders + holder names another path)\n%+v", len(got), got)
 	}
@@ -63,7 +63,7 @@ func TestInferRepublication_JWTTwoHolders(t *testing.T) {
 func TestInferRepublication_SingleHolderYieldsNothing(t *testing.T) {
 	got := InferRepublication("github.com/spf13/cobra", []CopyrightAttribution{
 		{Holder: "Steve Francia", Verbatim: "Copyright © 2013 Steve Francia"},
-	}, []string{"github.com/spf13/pflag", "github.com/dgrijalva/jwt-go"})
+	}, LedgerModules([]string{"github.com/spf13/pflag", "github.com/dgrijalva/jwt-go"}))
 	if len(got) != 0 {
 		t.Fatalf("indicators = %+v, want none", got)
 	}
@@ -87,7 +87,7 @@ func TestInferRepublication_RepeatedHolderIsNotTwoHolders(t *testing.T) {
 func TestInferRepublication_HolderMatchNeedsNameOverlap(t *testing.T) {
 	got := InferRepublication("example.com/widget", []CopyrightAttribution{
 		{Holder: "Grijalva Software", Verbatim: "Copyright (c) 2020 Grijalva Software"},
-	}, []string{"github.com/dgrijalva/jwt-go"})
+	}, LedgerModules([]string{"github.com/dgrijalva/jwt-go"}))
 	if len(got) != 0 {
 		t.Fatalf("indicators = %+v, want none: widget and jwt-go are different libraries", got)
 	}
@@ -99,7 +99,7 @@ func TestInferRepublication_HolderMatchNeedsNameOverlap(t *testing.T) {
 func TestInferRepublication_NameOverlapAloneIsNotEnough(t *testing.T) {
 	got := InferRepublication("example.com/jwt", []CopyrightAttribution{
 		{Holder: "Unrelated Author", Verbatim: "Copyright (c) 2020 Unrelated Author"},
-	}, []string{"github.com/dgrijalva/jwt-go"})
+	}, LedgerModules([]string{"github.com/dgrijalva/jwt-go"}))
 	if len(got) != 0 {
 		t.Fatalf("indicators = %+v, want none: no holder ties the two together", got)
 	}
@@ -109,7 +109,7 @@ func TestInferRepublication_NameOverlapAloneIsNotEnough(t *testing.T) {
 func TestInferRepublication_SelfPathIsNeverACandidate(t *testing.T) {
 	got := InferRepublication("github.com/golang-jwt/jwt/v4", []CopyrightAttribution{
 		{Holder: "golang-jwt maintainers", Verbatim: "Copyright (c) 2021 golang-jwt maintainers"},
-	}, []string{"github.com/golang-jwt/jwt/v5", "github.com/golang-jwt/jwt/v4"})
+	}, LedgerModules([]string{"github.com/golang-jwt/jwt/v5", "github.com/golang-jwt/jwt/v4"}))
 	for _, ind := range got {
 		if ind.Signal == RepublicationHolderMatchesPath && strings.HasPrefix(ind.Canonical, "github.com/golang-jwt/jwt") {
 			t.Errorf("module matched a major-version sibling of itself: %+v", ind)
@@ -122,7 +122,7 @@ func TestInferRepublication_SelfPathIsNeverACandidate(t *testing.T) {
 func TestInferRepublication_ShortHolderTokensDoNotMatch(t *testing.T) {
 	got := InferRepublication("example.com/jwt-go", []CopyrightAttribution{
 		{Holder: "Dave", Verbatim: "Copyright (c) 2012 Dave"},
-	}, []string{"github.com/dave/jwt-go"})
+	}, LedgerModules([]string{"github.com/dave/jwt-go"}))
 	if len(got) != 0 {
 		t.Fatalf("indicators = %+v, want none: 'Dave' is too short to name an owner", got)
 	}
@@ -178,7 +178,7 @@ func TestInferRepublication_HostOnlyCandidateNamesNoOwner(t *testing.T) {
 func TestInferRepublication_DuplicateStorePathsYieldOneIndicator(t *testing.T) {
 	got := InferRepublication("github.com/golang-jwt/jwt/v4", []CopyrightAttribution{
 		{Holder: "Dave Grijalva", Verbatim: "Copyright (c) 2012 Dave Grijalva"},
-	}, []string{"github.com/dgrijalva/jwt-go", "github.com/dgrijalva/jwt-go"})
+	}, LedgerModules([]string{"github.com/dgrijalva/jwt-go", "github.com/dgrijalva/jwt-go"}))
 	if len(got) != 1 {
 		t.Fatalf("indicators = %+v, want exactly one", got)
 	}
@@ -217,10 +217,10 @@ func TestInferRepublication_MultipleHolderMatchesSortByPath(t *testing.T) {
 	got := InferRepublication("example.com/newowner/jwt", []CopyrightAttribution{
 		{Holder: "Dave Grijalva", Verbatim: "Copyright (c) 2012 Dave Grijalva"},
 		{Holder: "Zeta Grijalva", Verbatim: "Copyright (c) 2015 Zeta Grijalva"},
-	}, []string{
+	}, LedgerModules([]string{
 		"github.com/zgrijalva/jwt-fork",
 		"github.com/dgrijalva/jwt-go",
-	})
+	}))
 	var canonicals []string
 	for _, ind := range got {
 		if ind.Signal == RepublicationHolderMatchesPath {

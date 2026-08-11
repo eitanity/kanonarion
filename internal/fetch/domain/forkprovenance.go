@@ -167,11 +167,64 @@ const (
 	// author's line and the new maintainers'.
 	RepublicationMultipleHolders RepublicationSignal = iota + 1
 	// RepublicationHolderMatchesPath means a copyright holder's name matches the
-	// owner element of a DIFFERENT module path the store holds, whose name
-	// overlaps this module's. That is the shape of a project republished under
-	// new ownership.
+	// owner element of a DIFFERENT module path this store knows of, related to
+	// this one either by a shared module name or by a go.mod replace directive.
+	// That is the shape of a project republished under new ownership.
 	RepublicationHolderMatchesPath
 )
+
+// ModuleRelation says how another module path came to be a candidate for the
+// holder-matches-path rule. The rule is one rule; the relation is what put the
+// other path in front of it, and it changes both what still has to be checked
+// and what the resulting statement can honestly claim.
+type ModuleRelation int
+
+const (
+	// RelatedByLedger is a path the licence ledger happens to hold. Nothing
+	// connects it to this module except its name, so the name overlap is still
+	// required before a holder match means anything.
+	RelatedByLedger ModuleRelation = iota
+	// RelatedByReplace is the module path this one replaces under a go.mod
+	// replace directive, as a walk in this store recorded it. The directive is
+	// itself the statement that the two are the same library, so no name
+	// comparison is needed or wanted: a fork published under a different name is
+	// exactly the case the name comparison cannot see, and the directive names it
+	// outright.
+	RelatedByReplace
+)
+
+// RelatedModule is one other module path the copyright tier compares a holder
+// against, with the relation that produced it.
+//
+// The relation is carried rather than the candidate lists being merged because
+// the rule reads the two differently: a ledger neighbour has to earn the
+// comparison with a matching module name, and a replace counterpart has already
+// earned it by being named in the manifest.
+type RelatedModule struct {
+	// Path is the other module path.
+	Path string
+	// Relation says why it is a candidate.
+	Relation ModuleRelation
+}
+
+// LedgerModules projects plain module paths onto ledger-related candidates.
+func LedgerModules(paths []string) []RelatedModule {
+	out := make([]RelatedModule, 0, len(paths))
+	for _, p := range paths {
+		out = append(out, RelatedModule{Path: p, Relation: RelatedByLedger})
+	}
+	return out
+}
+
+// ReplacedModules projects replaced module paths onto replace-related
+// candidates.
+func ReplacedModules(paths []string) []RelatedModule {
+	out := make([]RelatedModule, 0, len(paths))
+	for _, p := range paths {
+		out = append(out, RelatedModule{Path: p, Relation: RelatedByReplace})
+	}
+	return out
+}
 
 // String returns the stable machine-readable name of the signal.
 func (s RepublicationSignal) String() string {
@@ -235,10 +288,10 @@ type RepublicationIndicator struct {
 // InferRepublication runs the copyright-attribution tier over one module's
 // licence copyright lines.
 //
-// storePaths are other module paths known to the store, used only by the
+// related are other module paths known to this store, used only by the
 // holder-matches-path rule; passing none disables that rule and leaves the
 // multiple-holders rule intact. The result is an inference, never a verdict.
-func InferRepublication(modulePath string, attributions []CopyrightAttribution, storePaths []string) []RepublicationIndicator {
+func InferRepublication(modulePath string, attributions []CopyrightAttribution, related []RelatedModule) []RepublicationIndicator {
 	holders := distinctHolders(attributions)
 	var indicators []RepublicationIndicator
 
@@ -254,7 +307,7 @@ func InferRepublication(modulePath string, attributions []CopyrightAttribution, 
 		})
 	}
 
-	indicators = append(indicators, holderPathMatches(modulePath, attributions, holders, storePaths)...)
+	indicators = append(indicators, holderPathMatches(modulePath, attributions, holders, dedupeRelated(related))...)
 
 	sort.Slice(indicators, func(i, j int) bool {
 		if indicators[i].Signal != indicators[j].Signal {
@@ -265,49 +318,90 @@ func InferRepublication(modulePath string, attributions []CopyrightAttribution, 
 	return indicators
 }
 
-// holderPathMatches finds store module paths that a copyright holder's name
-// names the owner of, and whose module name overlaps modulePath's.
+// dedupeRelated collapses the candidate list to one entry per path, in path
+// order, keeping the strongest relation for each.
 //
-// Both conditions are required. The owner match alone fires on every module a
-// large copyright holder appears in; the name overlap alone fires on every
-// unrelated project that happens to share a word. Together they describe the one
-// shape this rule is for: the same library, under a different owner, still
-// carrying that owner's copyright.
-func holderPathMatches(modulePath string, attributions []CopyrightAttribution, holders []string, storePaths []string) []RepublicationIndicator {
+// A replace counterpart can also sit in the licence ledger, and the two
+// relations are not equal evidence: the directive says the two modules stand in
+// for each other, while ledger membership says only that both were analysed
+// here. Ordering by path keeps the indicator list deterministic under a store
+// whose listing order is not.
+func dedupeRelated(related []RelatedModule) []RelatedModule {
+	strongest := make(map[string]ModuleRelation, len(related))
+	for _, r := range related {
+		if r.Path == "" {
+			continue
+		}
+		if prev, ok := strongest[r.Path]; ok && prev >= r.Relation {
+			continue
+		}
+		strongest[r.Path] = r.Relation
+	}
+	out := make([]RelatedModule, 0, len(strongest))
+	for path, rel := range strongest {
+		out = append(out, RelatedModule{Path: path, Relation: rel})
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].Path < out[j].Path })
+	return out
+}
+
+// holderPathMatches finds related module paths that a copyright holder's name
+// names the owner of.
+//
+// For a ledger neighbour the module names must overlap as well. The owner match
+// alone fires on every module a large copyright holder appears in; the name
+// overlap alone fires on every unrelated project that happens to share a word.
+// Together they describe the one shape this rule is for: the same library, under
+// a different owner, still carrying that owner's copyright.
+//
+// For a replace counterpart the name comparison is skipped, because the manifest
+// already asserted what the comparison was standing in for. Requiring it there
+// re-acquires the blindness the name-path heuristic is documented as having: the
+// replaced module is the one a fork was published to displace, whatever it was
+// renamed to on the way.
+func holderPathMatches(modulePath string, attributions []CopyrightAttribution, holders []string, related []RelatedModule) []RepublicationIndicator {
 	self := normalizeModulePath(modulePath)
 	selfBase := moduleBaseName(modulePath)
-	seen := make(map[string]struct{})
 	var out []RepublicationIndicator
 
-	for _, candidate := range storePaths {
-		if normalizeModulePath(candidate) == self {
+	for _, candidate := range related {
+		if normalizeModulePath(candidate.Path) == self {
 			continue
 		}
-		if _, done := seen[candidate]; done {
+		if candidate.Relation == RelatedByLedger && !baseNamesOverlap(selfBase, moduleBaseName(candidate.Path)) {
 			continue
 		}
-		if !baseNamesOverlap(selfBase, moduleBaseName(candidate)) {
-			continue
-		}
-		owners := pathOwnerElements(candidate)
+		owners := pathOwnerElements(candidate.Path)
 		for _, holder := range holders {
 			if !holderNamesOwner(holder, owners) {
 				continue
 			}
-			seen[candidate] = struct{}{}
 			out = append(out, RepublicationIndicator{
 				Signal:    RepublicationHolderMatchesPath,
 				Holders:   []string{holder},
 				Evidence:  verbatimForHolder(attributions, holder),
-				Canonical: candidate,
-				Statement: fmt.Sprintf(
-					"copyright holder %q names the owner of %s, a differently-owned module of the same name held in this store — path suggests a republication of it; verify via VCS origin or content comparison",
-					holder, candidate),
+				Canonical: candidate.Path,
+				Statement: relatedStatement(holder, candidate),
 			})
 			break
 		}
 	}
 	return out
+}
+
+// relatedStatement phrases the inference in the terms of the relation that
+// produced the candidate, so a reader can tell which fact the tool is standing
+// on: a module of the same name that happens to be in this store, or a replace
+// directive naming the module this one stands in for.
+func relatedStatement(holder string, candidate RelatedModule) string {
+	if candidate.Relation == RelatedByReplace {
+		return fmt.Sprintf(
+			"copyright holder %q names the owner of %s, the module this one replaces under a go.mod replace directive recorded in this store — the replacement carries the replaced module's copyright and no line of its own; verify via VCS origin or content comparison",
+			holder, candidate.Path)
+	}
+	return fmt.Sprintf(
+		"copyright holder %q names the owner of %s, a differently-owned module of the same name held in this store — path suggests a republication of it; verify via VCS origin or content comparison",
+		holder, candidate.Path)
 }
 
 // holderMinTokenLen is the shortest holder-name token allowed to match a path
