@@ -569,6 +569,32 @@ covers it. A record written before this change and one written after may list
 the same values in two orders; they are the same measurement, and the older one
 is not superseded by the arrangement alone.
 
+## SBOM: pipeline `0.7.0` → `0.8.0`
+
+**Document bytes change; no store migration.** SBOM records are cached on
+`(walk id, scan run id, format, pipeline version)`, so the bump is what stops a
+`0.7.0` document being served for a `0.8.0` request. The SBOM record is hashed
+over the document bytes, not over a canonical struct, so there is no sealed
+shape to migrate and nothing is purged: the stored `0.7.0` documents stay
+readable and simply stop being reachable, and a request regenerates.
+
+The behaviour that forced the bump: the standard-library component's
+`kanonarion:stdlib:anchor_limitation` property was one fixed sentence — anchored
+to the go.dev/dl published checksum and the googlesource tag/commit — emitted
+whatever the measurement had reached. An offline run records
+`VerifiedLocalToolchain`, whose detail says the published checksum was not
+consulted and the commit anchor was skipped, and the fixed sentence asserted both
+of them three lines later. The property is now derived from the verification
+status and from whether a commit anchor was resolved, so it names the anchors
+reached and, separately, those that were not. Every stdlib-bearing document
+changes bytes, including the connected-side ones, because the wording changed on
+all routes.
+
+**The stored `0.7.0` documents are wrong where they were generated offline.** The
+bump makes them unreachable through the cache; it does not correct copies already
+shipped. A document already handed to a consumer states an anchor its own
+verification detail denies, and re-issuing it is the only fix for that copy.
+
 ## Purging a table other rows point at
 
 A migration that deletes rows must state what happens to the rows that reference

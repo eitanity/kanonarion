@@ -154,17 +154,30 @@ equivalent, necessarily different-anchored chain and emits it on the component:
   checksum), `kanonarion:stdlib:verification_detail`,
   `kanonarion:stdlib:published_sha256`, and `kanonarion:stdlib:anchor_limitation`.
 
-The `anchor_limitation` property states the honest ceiling: this anchor is a
-**published checksum plus a source-repo tag/commit**, weaker than a module's
-sumdb transparency-log entry, and it never appears in the project's `go.sum`. The
-verification status is deliberately distinct from the module sumdb statuses so
-the two are never read as equivalent.
+`anchor_limitation` states what this component's integrity actually rests on. It
+is **derived from the verification status the measurement reached**, not a fixed
+sentence: it names the anchor that was established, says separately whether the
+`go.googlesource.com/go` tag/commit anchor was established, and ends with the
+ceiling that holds on every route — weaker than a module's sumdb
+transparency-log entry, and never present in the project's `go.sum`. So a
+document generated offline says integrity rests on the locally-held toolchain
+source with the published checksum not consulted, and a connected one names the
+published checksum it matched. A status this build does not recognise names no
+anchor at all. The verification status is deliberately distinct from the module
+sumdb statuses so the two are never read as equivalent.
 
 The tarball is acquired once per Go version and cached; `--force` re-acquires and
-re-verifies it. On a fully offline run (`--from-modcache`) the acquirer is not
-wired and the `stdlib` component is emitted without the custody chain (a
-best-effort coverage gap, never a failure). Skipping VCS cross-verification
-(`--skip-vcs-verify`) omits the commit anchor but keeps the checksum verification.
+re-verifies it. On a fully offline run (`--from-modcache`) the offline acquirer
+runs instead: it anchors to the installed toolchain's `$GOROOT/src` and
+`$GOROOT/LICENSE`, records `VerifiedLocalToolchain`, and consults neither
+go.dev/dl nor googlesource. Skipping VCS cross-verification (`--skip-vcs-verify`)
+omits the commit anchor but keeps the checksum verification, and the limitation
+property says so.
+
+Both anchors are recorded per measurement, and a read composes them by strength
+rather than recency: once a connected run has recorded `VerifiedGoDevChecksum`
+for a toolchain version, a later offline run does not downgrade what a
+connected-side document serves.
 
 ---
 

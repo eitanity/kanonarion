@@ -21,6 +21,7 @@ import (
 	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
 	"github.com/eitanity/kanonarion/internal/sbom/domain"
 	"github.com/eitanity/kanonarion/internal/sbom/ports"
+	stdlibdomain "github.com/eitanity/kanonarion/internal/stdlib/domain"
 	vendordomain "github.com/eitanity/kanonarion/internal/vendortree/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
@@ -478,11 +479,12 @@ func buildDependencies(components []cdx.Component, root *cdx.Component, graph wa
 // its VCS reference and no proxy-zip distribution URL (which would 404).
 //
 // When chain-of-custody facts are present it emits the source-tarball digests as
-// <hashes>, the go.dev/dl source tarball as a distribution reference, the
+// <hashes>, the acquired source tarball as a distribution reference, the
 // googlesource commit as a VCS reference, and properties recording the
-// verification status and the honest limitation — the stdlib anchor is a
-// published checksum plus a source-repo tag, weaker than a module's sumdb
-// transparency-log entry, and it never appears in the project's go.sum.
+// verification status and the anchor limitation — which anchors that particular
+// measurement reached, which it did not, and the ceiling that holds on every
+// route: weaker than a module's sumdb transparency-log entry, and never present
+// in the project's go.sum.
 func buildStdlibComponent(mod domain.ModuleRef, spdx, pipelineVersion string, digests fetchdomain.ArtifactDigests, facts *walkdomain.StdlibFacts) cdx.Component {
 	purl := modulePURL(mod)
 	if spdx == "" {
@@ -537,7 +539,9 @@ func stdlibExternalReferences(facts *walkdomain.StdlibFacts) *[]cdx.ExternalRefe
 // stdlibProperties builds the stdlib component's properties. Beyond the base
 // ecosystem/pipeline/stdlib markers it records, when facts are present, the
 // go.dev/dl verification status and detail, the published tarball checksum, and
-// an explicit note that this anchor is weaker than sumdb and absent from go.sum.
+// the anchor limitation — what this component's integrity actually rests on,
+// derived from the status that was reached rather than stated as a fixed
+// sentence about the route a connected run happens to take.
 func stdlibProperties(pipelineVersion string, facts *walkdomain.StdlibFacts) *[]cdx.Property {
 	props := []cdx.Property{
 		{Name: "kanonarion:ecosystem", Value: domain.EcosystemGo},
@@ -556,7 +560,7 @@ func stdlibProperties(pipelineVersion string, facts *walkdomain.StdlibFacts) *[]
 		}
 		props = append(props, cdx.Property{
 			Name:  "kanonarion:stdlib:anchor_limitation",
-			Value: "integrity anchored to go.dev/dl published checksum and googlesource tag/commit; weaker than a module sumdb transparency-log entry and never present in go.sum",
+			Value: stdlibdomain.AnchorLimitation(stdlibdomain.VerificationStatus(facts.VerificationStatus), facts.VCSCommit != ""),
 		})
 	}
 	return &props

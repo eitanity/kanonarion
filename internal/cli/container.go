@@ -548,14 +548,23 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	diffScanRunsUC := vulnapp.NewDiffScanRunsUseCase(vulnStore)
 
 	// ---- sbom use cases ----
-	// 0.7.0 drops the vulnerability list and its scope annotation, adds the
-	// licence-completeness annotation and the metadata properties stating what
-	// the document's timestamp is derived from. The document bytes change on
-	// every one of those, so a 0.6.0 record must not be served for a 0.7.0
-	// request. The version bump is the whole migration: SBOM records are a cache
-	// keyed on it, so every stored document of the previous shape simply stops
-	// being reachable and is regenerated on demand.
-	const sbomPipelineVersion = "0.7.0"
+	// 0.8.0 derives the stdlib component's anchor_limitation property from the
+	// verification status the measurement reached, instead of stating one fixed
+	// sentence naming the go.dev/dl checksum and the googlesource commit. A
+	// document generated offline carried that sentence beside a detail saying
+	// neither anchor was consulted, so the stored 0.7.0 documents assert an
+	// anchor their own evidence denies and must not be served for a 0.8.0
+	// request.
+	//
+	// The preceding bump, for the record: 0.7.0 dropped the vulnerability list
+	// and its scope annotation, and added the licence-completeness annotation
+	// and the metadata properties stating what the document's timestamp is
+	// derived from.
+	//
+	// The version bump is the whole migration in both cases. SBOM records are a
+	// cache keyed on it, so every stored document of a previous shape simply
+	// stops being reachable and is regenerated on demand.
+	const sbomPipelineVersion = "0.8.0"
 	generateSBOMUC := sbomapp.NewGenerateSBOMUseCase(
 		walkStore, licStore, sbomStore,
 		sbomcdx.New(sbomPipelineVersion),
