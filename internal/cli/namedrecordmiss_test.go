@@ -272,13 +272,13 @@ func missSurfaces() []missSurface {
 			miss: func(t *testing.T) (string, error) {
 				var stderr bytes.Buffer
 				_, err := useTargetWalk(context.Background(), walksWithRecords(t),
-					mustCoord(t, "example.com/never-walked", "v9.9.9"), &stderr)
+					mustCoord(t, "example.com/never-walked", "v9.9.9"), "", &stderr)
 				return stderr.String(), err
 			},
 			found: func(t *testing.T) (string, int, error) {
 				uc := walksWithRecords(t)
 				var stderr bytes.Buffer
-				_, err := useTargetWalk(context.Background(), uc, missTargetCoord(t), &stderr)
+				_, err := useTargetWalk(context.Background(), uc, missTargetCoord(t), "", &stderr)
 				return stderr.String(), uc.ListCalls, err
 			},
 			foundListCalls: 1,
@@ -579,7 +579,7 @@ func TestNamedRecordMisses_EmptyStoreSaysSo(t *testing.T) {
 	stdout.Reset()
 	stderr.Reset()
 	unwalked := mustCoord(t, "example.com/never-walked", "v9.9.9")
-	_, err = useTargetWalk(context.Background(), testfakes.NewFakeQueryWalks(), unwalked, &stderr)
+	_, err = useTargetWalk(context.Background(), testfakes.NewFakeQueryWalks(), unwalked, "", &stderr)
 	if err == nil {
 		t.Fatal("a missing target over an empty store returned a nil error")
 	}
@@ -595,7 +595,7 @@ func TestNamedRecordMisses_KeepTheRemedyTheyAlreadyCarried(t *testing.T) {
 	withJSON(t, true)
 	unwalked := mustCoord(t, "example.com/never-walked", "v9.9.9")
 	var stderr bytes.Buffer
-	if _, err := useTargetWalk(context.Background(), walksWithRecords(t), unwalked, &stderr); err == nil {
+	if _, err := useTargetWalk(context.Background(), walksWithRecords(t), unwalked, "", &stderr); err == nil {
 		t.Fatal("a missing target returned a nil error")
 	}
 	notice := decodeZeroNotice(t, stderr.String())

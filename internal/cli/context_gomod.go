@@ -109,6 +109,10 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 		vulns := buildVulnerabilitiesFromBatch(ctx, coord, ctr.QueryVuln, vulnBatch)
 		var cmdWalkID string
 		if vulns.Status == sectionStatusNotRun {
+			// The id only fills in a suggested `vuln-scan <walk-id>` command line,
+			// exactly as in the single-coordinate path; no answer is read from this
+			// walk, so no selection rule applies to it. See the same lookup in
+			// runContext for why.
 			if walks, werr := ctr.QueryWalks.ListWalks(ctx, walkports.WalkFilter{Target: &coord, Limit: 1}); werr == nil && len(walks) > 0 {
 				cmdWalkID = walks[0].ID
 			}

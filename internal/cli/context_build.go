@@ -83,8 +83,25 @@ func buildProvenance(coord coordinate.ModuleCoordinate) contextProvenance {
 	return contextProvenance{ForkHeuristic: out}
 }
 
+// buildDependencies lists the module's direct dependencies as one walk resolved
+// them.
+//
+// Which walk is a choice wherever the store holds more than one of this target,
+// and the different walks carry different sets: two scopes of one project select
+// different modules, and two platforms select different files and so different
+// modules again. The choice therefore runs the same rule every other defaulting
+// read runs — prefer a walk whose recorded resolution still agrees with the
+// manifest it was taken from, fall back to recency — rather than taking whatever
+// is newest.
+//
+// The rule is applied but not narrated here. This section is a JSON field of a
+// document with no prose channel, and the pin the notice would advertise does
+// not exist for this command: `context --walk-id` means "emit a document per
+// module of that walk", not "answer this module in that walk". What the document
+// does carry is WalkID and Frame, so the walk that answered is always nameable
+// from the answer.
 func buildDependencies(ctx context.Context, coord coordinate.ModuleCoordinate, walkUC QueryWalksUseCase) contextDependencies {
-	walks, err := walkUC.ListWalks(ctx, walkports.WalkFilter{Target: &coord, Limit: 1})
+	walks, err := walkUC.ListWalks(ctx, walkports.WalkFilter{Target: &coord})
 	if err != nil {
 		return contextDependencies{Status: sectionStatusReadError, Error: err.Error()}
 	}
@@ -92,7 +109,7 @@ func buildDependencies(ctx context.Context, coord coordinate.ModuleCoordinate, w
 		return contextDependencies{Status: sectionStatusNotRun}
 	}
 
-	rec, err := walkUC.GetWalk(ctx, walks[0].ID)
+	rec, err := chooseWalk(ctx, walkUC, walks, "").walkRecord(ctx, walkUC)
 	if err != nil {
 		return contextDependencies{Status: sectionStatusReadError, Error: err.Error()}
 	}

@@ -13,6 +13,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
+	walkapp "github.com/eitanity/kanonarion/internal/walk/application"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
@@ -438,5 +439,167 @@ func TestLicenseCompat_WalkIDTypedPositionallyNamesTheFlag(t *testing.T) {
 	requireExit(t, err, ExitConfig)
 	if !strings.Contains(err.Error(), "--walk-id "+id) {
 		t.Errorf("refusal does not name the selector: %v", err)
+	}
+}
+
+// -- use --
+
+// useWalks builds two walks of ONE published coordinate whose version sets
+// differ, which is the case `use` materialises on disk: the newer resolved uuid
+// at v1.6.0, the older at v1.3.0.
+func useWalks() (*testfakes.FakeQueryWalks, coordinate.ModuleCoordinate) {
+	coord := coordinatetest.MustNew("example.com/m", "v1.0.0")
+	mk := func(id, uuidVersion string) walkdomain.WalkRecord {
+		return walkdomain.WalkRecord{
+			ID: id, Target: coord, OverallStatus: walkdomain.WalkSucceeded,
+			Graph: walkdomain.Graph{
+				Target: coord,
+				Nodes: []walkdomain.GraphNode{
+					{Coordinate: coord},
+					{Coordinate: coordinatetest.MustNew("github.com/google/uuid", uuidVersion)},
+				},
+			},
+		}
+	}
+	return selectionStore(mk("W-newer", "v1.6.0"), mk("W-older", "v1.3.0")), coord
+}
+
+// The acceptance case. `use --recursive` copies the walk's version set into a
+// module cache a later build compiles against, so a pin has to reach the bytes:
+// the pinned run must copy the pinned walk's set, not the newest walk's.
+func TestUse_PinnedWalkSuppliesTheVersionSetNotTheNewest(t *testing.T) {
+	walks, coord := useWalks()
+
+	var unpinned bytes.Buffer
+	rec, err := useTargetWalk(context.Background(), walks, coord, "", &unpinned)
+	if err != nil {
+		t.Fatalf("unpinned: %v", err)
+	}
+	if rec.ID != "W-newer" {
+		t.Fatalf("the default copied walk %s, want the most recent W-newer", rec.ID)
+	}
+
+	var pinned bytes.Buffer
+	rec, err = useTargetWalk(context.Background(), walks, coord, "W-older", &pinned)
+	if err != nil {
+		t.Fatalf("pinned: %v", err)
+	}
+	if rec.ID != "W-older" {
+		t.Fatalf("the pinned run copied walk %s, want W-older", rec.ID)
+	}
+	if got := rec.Graph.Nodes[1].Coordinate.Version(); got != "v1.3.0" {
+		t.Errorf("pinned run would copy uuid %s, want the pinned walk's v1.3.0", got)
+	}
+	if strings.Contains(pinned.String(), "no walk was named") {
+		t.Errorf("a pinned copy stated that a walk was chosen for the caller: %s", pinned.String())
+	}
+	if !strings.Contains(pinned.String(), "W-older") {
+		t.Errorf("the copy does not name the walk that supplied the bytes: %s", pinned.String())
+	}
+}
+
+// Unpinned, the copy says which walk supplied the bytes, that the walk was
+// chosen rather than named, and how to name one. Nothing else in a `use` run
+// records where the cache entries came from.
+func TestUse_UnpinnedCopyNamesTheWalkAndHowToPin(t *testing.T) {
+	walks, coord := useWalks()
+
+	var stderr bytes.Buffer
+	if _, err := useTargetWalk(context.Background(), walks, coord, "", &stderr); err != nil {
+		t.Fatalf("useTargetWalk: %v", err)
+	}
+	for _, want := range []string{
+		"==> use: copying the version set of walk W-newer",
+		"no walk was named",
+		"the store holds 2",
+		"--walk-id",
+	} {
+		if !strings.Contains(stderr.String(), want) {
+			t.Errorf("the copy did not state %q; got:\n%s", want, stderr.String())
+		}
+	}
+}
+
+// A walk id the store does not hold is refused before anything is written to a
+// cache, and the refusal names the command that lists ids that would work.
+func TestUse_UnknownWalkIDRefusesNamingTheRemedy(t *testing.T) {
+	walks, coord := useWalks()
+
+	var stderr bytes.Buffer
+	_, err := useTargetWalk(context.Background(), walks, coord, "W-nope", &stderr)
+	requireExit(t, err, ExitConfig)
+	if !strings.Contains(err.Error(), "kanonarion walk-list --target") {
+		t.Errorf("refusal does not name the remedy: %v", err)
+	}
+	if stderr.Len() != 0 {
+		t.Errorf("a refused copy announced a walk: %s", stderr.String())
+	}
+}
+
+// A walk rooted at another target would put another project's version set in
+// the cache. It is refused by name.
+func TestUse_WalkIDRootedElsewhereIsRefused(t *testing.T) {
+	walks, coord := useWalks()
+	other := coordinatetest.MustNew("example.com/other", "v2.0.0")
+	walks.AddWalk(walkdomain.WalkRecord{ID: "W-theirs", Target: other, OverallStatus: walkdomain.WalkSucceeded})
+
+	var stderr bytes.Buffer
+	_, err := useTargetWalk(context.Background(), walks, coord, "W-theirs", &stderr)
+	requireExit(t, err, ExitConfig)
+	if !strings.Contains(err.Error(), "is rooted at example.com/other") {
+		t.Errorf("refusal does not name the walk's own root: %v", err)
+	}
+}
+
+// -- the walk a run produced --
+
+// A command that walks and then reads what it walked must be handed the record
+// the run produced. Identity reuse serves an existing record when the resolution
+// is unchanged and keeps its original started_at, so the walk a run produced can
+// be older than another walk of the same target — and "the newest walk of this
+// coordinate" then names the wrong one.
+func TestRunWalk_ReturnsTheRecordTheRunProduced(t *testing.T) {
+	coord := coordinatetest.MustNew("example.com/m", "v1.0.0")
+	reused := walkdomain.WalkRecord{
+		ID: "W-reused", Target: coord, OverallStatus: walkdomain.WalkSucceeded,
+		Graph: walkdomain.Graph{Target: coord, BuildEnv: walkdomain.BuildEnv{GOOS: "linux", GOARCH: "amd64"}},
+	}
+	uc := &testfakes.FakeExecuteWalk{Result: walkapp.ExecuteWalkResult{Record: reused, Reused: true}}
+
+	result, err := runWalk(context.Background(), "example.com/m@v1.0.0", commonWalkFlags{}, false, true, 0,
+		"", "", false, walkdomain.WalkScopeCode, walkdomain.WalkDepthFull, "", nil, uc, nil, io.Discard, io.Discard)
+	if err != nil {
+		t.Fatalf("runWalk: %v", err)
+	}
+	if result.Record.ID != reused.ID {
+		t.Errorf("runWalk returned walk %q, want the record the run resolved to (%q)", result.Record.ID, reused.ID)
+	}
+	if got := walkSummaryOf(result.Record); got.ID != reused.ID || got.BuildFrame() != "linux/amd64" {
+		t.Errorf("summary of the produced record = %+v, want id %q and frame linux/amd64", got, reused.ID)
+	}
+}
+
+// -- context's dependency section --
+
+// The dependency list is a list for one build, and a project with several walks
+// has several. The section runs the same rule as every other defaulting read
+// rather than taking the newest walk, and the walk it answered from is on the
+// document.
+func TestBuildDependencies_AnswersFromTheManifestMatchingWalk(t *testing.T) {
+	const modulePath = "example.com/app"
+	dir := selectionProject(t, modulePath, "v4.5.1")
+	rehearsal := selectionWalk(t, "W-rehearsal", modulePath, dir, "v4.5.2")
+	matching := selectionWalk(t, "W-matching", modulePath, dir, "v4.5.1")
+	for i := range matching.Graph.Nodes {
+		matching.Graph.Nodes[i].DirectDependency = true
+	}
+	walks := selectionStore(rehearsal, matching)
+
+	got := buildDependencies(context.Background(), matching.Target, walks)
+	if got.WalkID != matching.ID {
+		t.Errorf("dependency section answered from walk %q, want the manifest-matching %q", got.WalkID, matching.ID)
+	}
+	if got.Count != len(matching.Graph.Nodes) {
+		t.Errorf("count = %d, want the matching walk's %d direct nodes", got.Count, len(matching.Graph.Nodes))
 	}
 }

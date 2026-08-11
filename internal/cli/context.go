@@ -413,8 +413,16 @@ func runContext(ctx context.Context, arg string, f contextFlags, stdout, stderr 
 	vulns := buildVulnerabilitiesFromBatch(ctx, coord, ctr.QueryVuln, vulnBatch)
 	var cmdWalkID string
 	if vulns.Status == sectionStatusNotRun {
-		// No scan result found; surface the most recent walk so the agent can
-		// run vuln-scan <walk-id> directly.
+		// No scan result found; surface a walk so the agent can run
+		// vuln-scan <walk-id> directly.
+		//
+		// This is the one walk lookup in the command that is not a frame choice
+		// and does not run the default selection rule. Nothing is read out of the
+		// walk: its id is substituted into a suggested command line, and the
+		// suggestion is to go and MEASURE the coordinate, not to report anything
+		// about it. Any walk of this target makes that command runnable, so the
+		// cheapest one does, and if the reader wants a different frame scanned
+		// they name it on the vuln-scan they are being pointed at.
 		if walks, err := ctr.QueryWalks.ListWalks(ctx, walkports.WalkFilter{Target: &coord, Limit: 1}); err == nil && len(walks) > 0 {
 			cmdWalkID = walks[0].ID
 		}

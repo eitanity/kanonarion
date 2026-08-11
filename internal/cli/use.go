@@ -29,6 +29,7 @@ import (
 type useFlags struct {
 	modCache  string
 	recursive bool
+	walkID    string
 }
 
 func newUseCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -44,6 +45,7 @@ func newUseCmd(stdout, stderr io.Writer) *cobra.Command {
 
 	cmd.Flags().StringVar(&f.modCache, "mod-cache", "", "destination Go module cache directory (defaults to GOMODCACHE or GOPATH/pkg/mod)")
 	cmd.Flags().BoolVar(&f.recursive, "recursive", false, "copy dependencies as well (based on walk record)")
+	cmd.Flags().StringVar(&f.walkID, "walk-id", "", "copy the version set of this walk instead of the one the default rule picks")
 
 	return cmd
 }
@@ -51,21 +53,54 @@ func newUseCmd(stdout, stderr io.Writer) *cobra.Command {
 // useTargetWalk selects the walk `use` will copy from, and is the seam its miss
 // is exercisable through: the command opens the store itself, so the branch that
 // answers a module which has never been walked would otherwise need a live one.
+//
+// The walk is the version set that lands on disk. `use --recursive` copies every
+// node of it into a module cache a later `go build` compiles against, so picking
+// the wrong walk of a target that has several is not a wrong answer the caller
+// can re-run — it is the wrong bytes, sitting in a cache, with nothing on them
+// saying which walk put them there. So the walk is either the one the caller
+// pinned with --walk-id, or one picked by the shared rule, and the copy names it
+// either way.
 func useTargetWalk(ctx context.Context, walks QueryWalksUseCase, coord coordinate.ModuleCoordinate,
-	stderr io.Writer,
+	walkID string, stderr io.Writer,
 ) (walkdomain.WalkRecord, error) {
-	summaries, err := walks.ListWalks(ctx, walkports.WalkFilter{Target: &coord, Limit: 1})
+	if walkID != "" {
+		rec, err := resolvePinnedWalk(ctx, walks, walkID, coord)
+		if err != nil {
+			return walkdomain.WalkRecord{}, err
+		}
+		useWalkProvenance(pinnedWalkChoice(rec), stderr)
+		return rec, nil
+	}
+	summaries, err := walks.ListWalks(ctx, walkports.WalkFilter{Target: &coord})
 	if err != nil {
 		return walkdomain.WalkRecord{}, fmt.Errorf("listing walks: %w", err)
 	}
 	if len(summaries) == 0 {
 		return walkdomain.WalkRecord{}, walkTargetMiss(ctx, walks, coord, stderr)
 	}
-	walk, err := walks.GetWalk(ctx, summaries[0].ID)
+	choice := chooseWalk(ctx, walks, summaries, "")
+	rec, err := choice.walkRecord(ctx, walks)
 	if err != nil {
-		return walkdomain.WalkRecord{}, fmt.Errorf("getting walk %s: %w", summaries[0].ID, err)
+		return walkdomain.WalkRecord{}, err
 	}
-	return walk, nil
+	useWalkProvenance(choice, stderr)
+	return rec, nil
+}
+
+// useWalkProvenance writes, to stderr, which walk supplied the bytes and — when
+// there was more than one to choose from — which rule chose it and how to pin
+// another. It goes on stderr because stdout carries the list of modules copied.
+//
+// The walk is named on every run, not only when a choice was made: the copy
+// leaves no record of its own on disk, so the run's output is the only place the
+// provenance of the cache entries is ever stated.
+func useWalkProvenance(choice walkChoice, stderr io.Writer) {
+	_, _ = fmt.Fprintf(stderr, "==> use: copying the version set of walk %s (frame %s)\n",
+		choice.summary.ID, choice.summary.BuildFrame())
+	if note := choice.statement(); note != "" {
+		_, _ = fmt.Fprint(stderr, note)
+	}
 }
 
 func runUse(ctx context.Context, f useFlags, targetArg string, stdout, stderr io.Writer) error {
@@ -86,8 +121,8 @@ func runUse(ctx context.Context, f useFlags, targetArg string, stdout, stderr io
 	factStore := factstoresqlite.New(dbHandle)
 	blobStore := localfs.New(storeRoot)
 
-	// 1. Find the latest successful walk for this target.
-	walk, err := useTargetWalk(ctx, walkStore, coord, stderr)
+	// 1. Find the walk whose version set is copied.
+	walk, err := useTargetWalk(ctx, walkStore, coord, f.walkID, stderr)
 	if err != nil {
 		return err
 	}

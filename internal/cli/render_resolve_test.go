@@ -2,18 +2,12 @@ package cli
 
 import (
 	"bytes"
-	"context"
 	"strings"
 	"testing"
 
-	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 
-	"github.com/eitanity/kanonarion/internal/cli/testfakes"
-
 	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
-	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
-	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
 // -- directives table --
@@ -227,83 +221,5 @@ func TestWriteNoticeDocument_Empty(t *testing.T) {
 	// No entries => no divider lines after the preamble.
 	if strings.Contains(got, noticeDiv) {
 		t.Errorf("empty document should not emit entry dividers:\n%s", got)
-	}
-}
-
-// -- walk-id resolution --
-
-func walkSummary(id string, coord coordinate.ModuleCoordinate, scope walkdomain.WalkScope) walkports.WalkSummary {
-	return walkports.WalkSummary{ID: id, Target: coord, Scope: scope}
-}
-
-func TestLatestWalkIDForCoord_Found(t *testing.T) {
-	coord := coordinatetest.MustNew("example.com/m", "v1.0.0")
-	fake := testfakes.NewFakeQueryWalks()
-	fake.SetSummaries([]walkports.WalkSummary{
-		walkSummary("WALK-1", coord, walkdomain.WalkScopeCode),
-	})
-
-	sum, err := latestWalkIDForCoord(context.Background(), fake, coord)
-	if err != nil {
-		t.Fatalf("latestWalkIDForCoord: %v", err)
-	}
-	if sum.ID != "WALK-1" {
-		t.Errorf("want WALK-1, got %q", sum.ID)
-	}
-}
-
-func TestLatestWalkIDForCoord_NotFound(t *testing.T) {
-	coord := coordinatetest.MustNew("example.com/m", "v1.0.0")
-	fake := testfakes.NewFakeQueryWalks() // no summaries => empty result
-
-	if _, err := latestWalkIDForCoord(context.Background(), fake, coord); err == nil {
-		t.Fatal("expected error when no walk exists for the coordinate")
-	} else if !strings.Contains(err.Error(), "no walk found") {
-		t.Errorf("unexpected error: %v", err)
-	}
-}
-
-func TestLatestWalkIDForCoord_ListError(t *testing.T) {
-	coord := coordinatetest.MustNew("example.com/m", "v1.0.0")
-	fake := testfakes.NewFakeQueryWalks()
-	fake.ListErr = context.DeadlineExceeded
-
-	if _, err := latestWalkIDForCoord(context.Background(), fake, coord); err == nil {
-		t.Fatal("expected the store list error to propagate")
-	}
-}
-
-// Scope-aware resolution must ignore walks of a different scope even when their
-// coordinate matches.
-func TestLatestWalkIDForCoordScope_FiltersByScope(t *testing.T) {
-	coord := coordinatetest.MustNew("example.com/m", "v1.0.0")
-	fake := testfakes.NewFakeQueryWalks()
-	fake.SetSummaries([]walkports.WalkSummary{
-		walkSummary("TOOL-WALK", coord, walkdomain.WalkScopeTool),
-		walkSummary("PROD-WALK", coord, walkdomain.WalkScopeCode),
-	})
-
-	sum, err := latestWalkIDForCoordScope(context.Background(), fake, coord, walkdomain.WalkScopeCode)
-	if err != nil {
-		t.Fatalf("latestWalkIDForCoordScope: %v", err)
-	}
-	if sum.ID != "PROD-WALK" {
-		t.Errorf("want PROD-WALK (production scope), got %q", sum.ID)
-	}
-}
-
-// A coordinate that exists only under a different scope resolves to not-found,
-// not to the wrong-scope walk.
-func TestLatestWalkIDForCoordScope_NotFoundForScope(t *testing.T) {
-	coord := coordinatetest.MustNew("example.com/m", "v1.0.0")
-	fake := testfakes.NewFakeQueryWalks()
-	fake.SetSummaries([]walkports.WalkSummary{
-		walkSummary("TOOL-WALK", coord, walkdomain.WalkScopeTool),
-	})
-
-	if _, err := latestWalkIDForCoordScope(context.Background(), fake, coord, walkdomain.WalkScopeCode); err == nil {
-		t.Fatal("expected not-found when no walk matches the requested scope")
-	} else if !strings.Contains(err.Error(), "no walk found") {
-		t.Errorf("unexpected error: %v", err)
 	}
 }
