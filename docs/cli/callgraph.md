@@ -417,6 +417,15 @@ measurement time and the fetch provenance blanked. It is there because the
 that produced the identical graph carry different record hashes, so a comparison
 on those would report every re-analysis as a disagreement.
 
+A generation whose analysis failed carries a `failure:` line between `from:` and
+`graph:`, naming the recorded cause and detail:
+
+```
+    failure:  environment: go: module lookup disabled by GOFLAGS=-mod=vendor
+```
+
+Generations that did not record a failure print no such line.
+
 #### Composition
 
 A read returns one answer composed from the generations, on a stated ordering:
@@ -444,16 +453,32 @@ own row in `callgraph-list` rather than failing the whole listing. Every such
 refusal prints the commands that address it — a refusal the append-only ledger
 makes permanent and that names no route out is a dead end.
 
+The graph comparison is over the **graph** and nothing else: the node, edge,
+interface and implementation collections and the counts stated with them. Two
+generations that recorded the same graph and described their run differently —
+different `failure_cause`, different `failure_detail`, a different set of failed
+packages — are **not** in conflict, because no answer the tool serves depends on
+the difference. That difference is not thrown away: `--history` prints each
+generation's failure on its own line, so two analyses that failed for different
+reasons are still visible side by side.
+
 A generation that says **nothing** about a field has not disagreed with one that
 does. Records are compared over the fields they all state, so a generation
 written before a field existed — and a generation whose value for an optional
 field is simply absent — is superseded by the newer one rather than reported as
-in conflict with it, and the newest generation answers. The comparison is over
-field presence rather than over any particular field name, so a field added in a
-later release behaves the same way without further work. What it does not relax
-is a disagreement between two generations that both state a field: node and edge
-sets are stated by every generation, as empty when there are none, so a graph
-against an empty one is still a conflict.
+in conflict with it, and the newest generation answers. What it does not relax
+is a disagreement between two generations that both state a graph field: node
+and edge sets are stated by every generation, as empty when there are none, so a
+graph against an empty one is still a conflict.
+
+Re-analysis clears a graph conflict only by getting **further** than the
+disagreeing generations did. Composition compares every generation at the highest
+completeness present, and the ledger is append-only, so an analysis that lands at
+the same completeness adds a third generation and the disagreement stands. The
+refusal names `kanonarion callgraph <module> --force` where a higher completeness
+is still available, and where the disagreeing generations are already
+`BUILT_WITH_BODIES` it says instead that nothing clears the conflict from the
+outside and sends you to `--history` to decide which measurement to trust.
 
 ### `callgraph-list`
 

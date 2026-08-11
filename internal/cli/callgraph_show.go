@@ -194,10 +194,10 @@ func runCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 			marker = "*"
 		}
 		if _, werr := fmt.Fprintf(stdout,
-			"%s %s  %-16s %-17s %d node(s) / %d edge(s)\n    source:   %s\n    from:     %s\n    graph:    %s\n    record:   %s\n",
+			"%s %s  %-16s %-17s %d node(s) / %d edge(s)\n    source:   %s\n    from:     %s\n%s    graph:    %s\n    record:   %s\n",
 			marker, r.ExtractedAt.UTC().Format(time.RFC3339), r.OverallStatus.String(),
 			r.Completeness.String(), r.NodeCount, r.EdgeCount,
-			r.AnalysisSource.String(), historyOrigin(r), domain.GraphDigest(r), r.ContentHash); werr != nil {
+			r.AnalysisSource.String(), historyOrigin(r), historyFailure(r), domain.GraphDigest(r), r.ContentHash); werr != nil {
 			return fmt.Errorf("writing output: %w", werr)
 		}
 	}
@@ -206,6 +206,30 @@ func runCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 		return fmt.Errorf("writing output: %w", werr)
 	}
 	return nil
+}
+
+// historyFailure renders how a generation's analysis failed, as its own line,
+// or nothing when it did not.
+//
+// It is here because composition deliberately does NOT report two generations
+// that recorded different failures as a conflict — their graphs agree, so no
+// answer depends on the difference, and refusing over it left coordinates
+// permanently unreadable. Dropping the refusal must not drop the signal too:
+// "these two analyses of one artefact failed for different reasons" is worth
+// knowing, and the history view is where an operator goes to see the
+// generations side by side. Silent everywhere would be the wrong trade.
+func historyFailure(r domain.CallGraphRecord) string {
+	if r.FailureDetail == "" && r.FailureCause == domain.FailureCauseUnrecorded {
+		return ""
+	}
+	detail := r.FailureDetail
+	if detail == "" {
+		detail = "(no detail recorded)"
+	}
+	if r.FailureCause == domain.FailureCauseUnrecorded {
+		return "    failure:  " + detail + "\n"
+	}
+	return "    failure:  " + r.FailureCause.String() + ": " + detail + "\n"
 }
 
 // historyOrigin renders what a generation was computed from: the artefact for a

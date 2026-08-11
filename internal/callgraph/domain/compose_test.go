@@ -865,9 +865,17 @@ func TestCompose_GenuineGraphDisagreementStillRefuses(t *testing.T) {
 	tests := []struct {
 		name string
 		a, b domain.CallGraphRecord
+		// wantLines are the whole invocations the refusal must print. They differ by
+		// completeness on purpose: only an analysis that gets FURTHER than the
+		// disagreeing pair clears the conflict, so at the top rung there is nothing
+		// to run and the refusal must not pretend otherwise.
+		wantLines []string
 	}{
 		{
 			name: "two built graphs with different nodes",
+			wantLines: []string{
+				"kanonarion callgraph-show example.com/mod@v1.0.0 --history",
+			},
 			a: composeRecord(t, composeSpec{
 				artefact: "zip:h1:a", completeness: domain.CompletenessBuiltWithBodies, symbol: "Foo",
 				source: domain.AnalysisSourceModuleZip,
@@ -879,6 +887,10 @@ func TestCompose_GenuineGraphDisagreementStillRefuses(t *testing.T) {
 		},
 		{
 			name: "a graph against a failure at the same completeness",
+			wantLines: []string{
+				"kanonarion callgraph-show example.com/mod@v1.0.0 --history",
+				"kanonarion callgraph example.com/mod@v1.0.0 --force",
+			},
 			a: composeRecord(t, composeSpec{
 				artefact: "zip:h1:a", completeness: domain.CompletenessMetadataOnly, symbol: "Foo",
 				source: domain.AnalysisSourceModuleZip,
@@ -924,13 +936,14 @@ func TestCompose_GenuineGraphDisagreementStillRefuses(t *testing.T) {
 			}
 			// The refusal is permanent under the store's rules, so it has to say what
 			// to run. A dead end is what made the live one unusable.
-			for _, want := range []string{
-				"kanonarion callgraph-show example.com/mod@v1.0.0 --history",
-				"kanonarion callgraph example.com/mod@v1.0.0 --force",
-			} {
+			for _, want := range tc.wantLines {
 				if !strings.Contains(err.Error(), want) {
 					t.Errorf("refusal does not name %q:\n%s", want, err)
 				}
+			}
+			if conflict.Completeness != tc.a.Completeness {
+				t.Errorf("conflict reports completeness %q, want the level the records share, %q",
+					conflict.Completeness, tc.a.Completeness)
 			}
 		})
 	}
@@ -977,5 +990,75 @@ func TestCallGraphConflict_RemedyRendersOneInvocationPerLine(t *testing.T) {
 	want := "Run:\n  kanonarion callgraph-show m@v1 --history"
 	if got := remedy.String(); got != want {
 		t.Errorf("Remedy.String() = %q, want %q", got, want)
+	}
+}
+
+// TestCompose_DifferingFailureDiagnosticsAreNotAGraphConflict is the defect this
+// narrowing was measured against.
+//
+// Two analyses of one module at the same completeness, each recording zero nodes
+// and zero edges, are agreeing about the graph completely. Measured on the real
+// store: seven generations of one coordinate, diffed within same-completeness
+// groups with content_hash and extracted_at excluded, differed only on
+// failure_cause, failure_detail and build_list_source — and every composed read
+// of them refused, citing the call graph. There is no graph difference there for
+// a caller to act on, and no answer the tool would have served that depends on
+// which day the build broke or how.
+func TestCompose_DifferingFailureDiagnosticsAreNotAGraphConflict(t *testing.T) {
+	t.Parallel()
+	first := composeRecord(t, composeSpec{
+		artefact: "zip:h1:a", completeness: domain.CompletenessMetadataOnly,
+		source: domain.AnalysisSourceModuleZip, nodeless: true,
+		status: domain.CallGraphStatusLoadFailed,
+		cause:  domain.FailureCauseModule, detail: "no packages successfully loaded",
+		extractedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	})
+	second := composeRecord(t, composeSpec{
+		artefact: "zip:h1:a", completeness: domain.CompletenessMetadataOnly,
+		source: domain.AnalysisSourceModuleZip, nodeless: true,
+		status: domain.CallGraphStatusLoadFailed,
+		cause:  domain.FailureCauseEnvironment, detail: "go: module lookup disabled by GOFLAGS=-mod=vendor",
+		extractedAt: time.Date(2026, 2, 1, 0, 0, 0, 0, time.UTC),
+	})
+	if first.ContentHash == second.ContentHash {
+		t.Fatal("the two generations are the same record, so the case is not being exercised")
+	}
+	got, err := domain.Compose([]domain.CallGraphRecord{first, second}, domain.ComposeRequest{})
+	if err != nil {
+		t.Fatalf("Compose refused over failure diagnostics on two identical graphs: %v", err)
+	}
+	if got.ContentHash != second.ContentHash {
+		t.Errorf("Compose served %q, want the more recent generation %q", got.ContentHash, second.ContentHash)
+	}
+}
+
+// TestCallGraphConflict_RemedyDoesNotFeedTheCondition: the ledger is
+// append-only and composition compares every generation at the top completeness
+// present, so a re-analysis landing at the SAME level adds a third record to the
+// disagreement instead of settling it. The remedy may therefore only name a
+// re-analysis where there is a rung above the one the conflict sits at.
+func TestCallGraphConflict_RemedyDoesNotFeedTheCondition(t *testing.T) {
+	t.Parallel()
+	coord, err := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
+	if err != nil {
+		t.Fatalf("NewModuleCoordinate: %v", err)
+	}
+	fullyBuilt := domain.CallGraphConflict{
+		Coordinate: coord, PipelineVersion: "0.5.0",
+		Field: domain.ConflictFieldCallGraph, Completeness: domain.CompletenessBuiltWithBodies,
+	}
+	if strings.Contains(fullyBuilt.Error(), "--force") {
+		t.Errorf("a conflict between two fully built graphs names a re-analysis that cannot clear it:\n%s", fullyBuilt.Error())
+	}
+	if !strings.Contains(fullyBuilt.Error(), "kanonarion callgraph-show example.com/mod@v1.0.0 --history") {
+		t.Errorf("the refusal names no way to read the generations:\n%s", fullyBuilt.Error())
+	}
+
+	// Below the top rung a further analysis genuinely does clear it, by leaving
+	// the disagreeing pair out of the comparison, so the remedy still names one.
+	partial := fullyBuilt
+	partial.Completeness = domain.CompletenessMetadataOnly
+	if !strings.Contains(partial.Error(), "kanonarion callgraph example.com/mod@v1.0.0 --force") {
+		t.Errorf("a conflict below the top completeness names no re-analysis:\n%s", partial.Error())
 	}
 }

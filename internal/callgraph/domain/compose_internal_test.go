@@ -3,6 +3,7 @@ package domain
 import (
 	"errors"
 	"fmt"
+	"reflect"
 	"strings"
 	"testing"
 )
@@ -144,5 +145,81 @@ func TestGraphDisagreement_UnreadableEncodingFallsBackRatherThanAgreeing(t *test
 				t.Errorf("conflict field %q, want %q", got.Field, ConflictFieldCallGraph)
 			}
 		})
+	}
+}
+
+// TestGraphClaimFields_ClassifiesEveryCanonicalField establishes the graph
+// comparison's field list FROM the canonical record shape rather than from a
+// list somebody kept in their head.
+//
+// Every field the sealed shape carries is either part of the graph claim or not,
+// and this enumerates the shape by reflection so that adding a field to it
+// without deciding which fails here. That matters in one direction more than the
+// other: a collection added to the record and forgotten here would be a graph
+// difference the conflict check stopped seeing, which is the failure mode a
+// silent comparison is supposed to prevent.
+func TestGraphClaimFields_ClassifiesEveryCanonicalField(t *testing.T) {
+	t.Parallel()
+
+	// notTheGraph is every canonical field that carries something OTHER than the
+	// graph: identity and keying, provenance forGraphComparison already blanks,
+	// the scope an analysis ran under, and diagnostics describing the run. A
+	// record differing on any of these while holding the same nodes and edges has
+	// not contradicted anything about the graph.
+	notTheGraph := map[string]string{
+		"algorithm":                  "how the graph was derived, not what it says",
+		"analysis_root":              "where a tree was mounted: provenance",
+		"analysis_source":            "which kind of source was read: a dimension",
+		"artefact_identity":          "which bytes were read: compared as its own conflict first",
+		"artifact_kind":              "what sort of artefact was analysed",
+		"build_list_source":          "which walk offered the build list: provenance",
+		"completeness":               "how far the analysis got: the ladder, and already tied before comparing",
+		"content_hash":               "the record's own seal",
+		"coordinate":                 "which module: the key",
+		"ecosystem":                  "which ecosystem: the key",
+		"exclusion_list":             "what was left out, which shows up in the nodes if it changed the graph",
+		"exclusion_reason":           "why something was left out",
+		"extracted_at":               "when: provenance",
+		"failed_packages":            "which packages did not load: a diagnostic",
+		"failure_cause":              "why the analysis failed: a diagnostic",
+		"failure_detail":             "how the analysis failed: a diagnostic",
+		"overall_status":             "the status derived from the run",
+		"pipeline_version":           "which pipeline wrote it: the key",
+		"prefix_attributed_packages": "how packages were attributed: a diagnostic",
+		"reference_scope":            "whether reference edges were extracted, which shows up in the edges",
+		"schema_version":             "which shape: the key",
+		"source_content_hash":        "which fetch supplied the bytes: provenance",
+		"synthesised_go_mod":         "what kanonarion wrote to make the build work",
+		"test_scope":                 "whether tests were analysed, which shows up in the nodes",
+		"test_scope_detail":          "how the test scope was decided",
+		"worktree_digest":            "what the tree contained: identity, not graph",
+	}
+	claim := map[string]bool{}
+	for _, name := range GraphClaimFields() {
+		claim[name] = true
+	}
+
+	seen := map[string]bool{}
+	shape := reflect.TypeOf(canonicalRecord{})
+	for i := range shape.NumField() {
+		tag := shape.Field(i).Tag.Get("json")
+		name, _, _ := strings.Cut(tag, ",")
+		if name == "" || name == "-" {
+			t.Fatalf("canonical field %q carries no json name", shape.Field(i).Name)
+		}
+		seen[name] = true
+		_, excluded := notTheGraph[name]
+		switch {
+		case claim[name] && excluded:
+			t.Errorf("canonical field %q is classified both as the graph and as not the graph", name)
+		case !claim[name] && !excluded:
+			t.Errorf("canonical field %q is in the sealed shape but classified neither way: "+
+				"decide whether it is part of the graph claim and add it to GraphClaimFields or to notTheGraph", name)
+		}
+	}
+	for name := range claim {
+		if !seen[name] {
+			t.Errorf("GraphClaimFields names %q, which the canonical shape does not carry, so it is compared on nothing", name)
+		}
 	}
 }
