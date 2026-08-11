@@ -111,8 +111,8 @@ To scan or inventory another platform's walk deliberately, name it by ID:
 
 **Query commands** (`inspect`, `license`, `license-compat`, `context`,
 `dependents`, `interface-diff --used-by`, `callers`/`callees`/`implementers`
-with `--gomod`) still answer from the most recent walk of the target, whatever
-its platform, and state which frame answered:
+with `--gomod`) answer from one walk of the target whatever its platform, and
+state which frame answered:
 
 ```
 Walk ID:  01KQDBVW092ER1HNXZ60X27CMD
@@ -121,6 +121,42 @@ Frame:    linux/amd64
 
 A walk taken before the frame was recorded reads `unrecorded`. JSON output
 carries the same value in a `frame` / `walk_frame` field.
+
+---
+
+## The default walk
+
+Every query command that answers in a walk takes a selector — `--walk-id`, or
+`--gomod` for the ones that start from a manifest. Where none is given the walk
+is chosen, by this rule:
+
+1. the most recent walk whose recorded resolution still agrees with the
+   `go.mod` on disk — the path `--gomod` named, or the project directory the
+   walk itself recorded;
+2. failing that, the most recent walk.
+
+The choice is always stated when there was one to make: a store holding one walk
+of the target says nothing, and a store holding several says which walk answered
+and which of the two rules picked it. Under `--json` the same fact is a
+`walk_selection` object rather than a line.
+
+Rule 1 exists because recency alone answers from the wrong build after any
+rehearsal. A walk taken while a manifest was temporarily edited stays the newest
+walk of that project after the tree is restored: re-walking an unchanged
+resolution reuses the existing record rather than writing a newer one, so the
+walk that matches the tree is permanently the older row. Recency alone would
+serve the rehearsal forever, and only `walk --force` could displace it.
+
+The comparison parses the manifest's `require` directives and checks them
+against the walk's recorded module versions. It is not a re-resolution through
+the toolchain — the commands that MEASURE (`vuln-scan --gomod`) pay that, and
+say so — so a read still states that the manifest was not re-resolved. A module
+the manifest requires that the walk does not carry is not a disagreement: that
+is the difference between a `code` walk and a `complete` one, and only a version
+both name differently counts.
+
+The eight most recent walks are compared. When none agrees, the answer says so
+and names the disagreement.
 
 ---
 

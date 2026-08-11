@@ -407,10 +407,20 @@ func (f *FakeQueryLicense) ResolveForWalk(_ context.Context, _ string, _ coordin
 // FakeCheckCompatibility implements cli.CheckCompatibilityUseCase.
 type FakeCheckCompatibility struct {
 	Report licensedomain.ClosureCompatibilityReport
-	Err    error
+	// ReportByWalk answers per walk id, so a test can give two walks of one
+	// target genuinely different licence positions — which is the whole point of
+	// being able to pin one. A walk id absent from the map falls back to Report.
+	ReportByWalk map[string]licensedomain.ClosureCompatibilityReport
+	Err          error
+	// AskedWalkIDs records, in order, the walks the command asked about.
+	AskedWalkIDs []string
 }
 
-func (f *FakeCheckCompatibility) CheckCompatibilityForWalk(_ context.Context, _ string, _ coordinate.ModuleCoordinate, _ string, _ licensedomain.LicenseOverrideSet) (licensedomain.ClosureCompatibilityReport, error) {
+func (f *FakeCheckCompatibility) CheckCompatibilityForWalk(_ context.Context, walkID string, _ coordinate.ModuleCoordinate, _ string, _ licensedomain.LicenseOverrideSet) (licensedomain.ClosureCompatibilityReport, error) {
+	f.AskedWalkIDs = append(f.AskedWalkIDs, walkID)
+	if rep, ok := f.ReportByWalk[walkID]; ok {
+		return rep, f.Err
+	}
 	return f.Report, f.Err
 }
 

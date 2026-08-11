@@ -117,7 +117,7 @@ func TestExitCodeContract_MissingRecordIsNotFound(t *testing.T) {
 		}},
 		{"license-compat (no walk record)", ExitNotFound, func(t *testing.T) error {
 			return licenseCompatWith(context.Background(),
-				&Container{QueryWalks: emptyWalks()}, coord, "Apache-2.0", &bytes.Buffer{}, io.Discard)
+				&Container{QueryWalks: emptyWalks()}, coord, "Apache-2.0", "", &bytes.Buffer{}, io.Discard)
 		}},
 	})
 }

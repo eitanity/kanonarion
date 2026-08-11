@@ -59,8 +59,10 @@ A stored verdict is a verdict about one build. Name the build:
 
 - `--walk-id <id>` answers in the frame of that walk's scans, restricted to the
   records that walk covered.
-- `--gomod <path>` does the same for the newest succeeded project walk of that
-  `go.mod`. The path is required and may be written either way round
+- `--gomod <path>` does the same for the succeeded project walk of that `go.mod`
+  that the [default-frame rule](conventions.md#the-default-walk) picks — the
+  most recent one whose recorded resolution still agrees with the manifest,
+  else the most recent. The path is required and may be written either way round
   (`--gomod ./go.mod` or `--gomod=./go.mod`). Mutually exclusive with
   `--walk-id`, and rejected alongside `--local`, which measures the tree it is
   given.

@@ -127,7 +127,7 @@ func TestPrintCompatReportJSON_CleanShape(t *testing.T) {
 	t.Parallel()
 	var buf bytes.Buffer
 	report := makeCompatReport(true)
-	if err := printCompatReportJSON(report, "walk-test", "linux/amd64", nil, &buf); err != nil {
+	if err := printCompatReportJSON(report, "walk-test", "linux/amd64", pinnedSelection(), nil, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	var out map[string]any
@@ -159,7 +159,7 @@ func TestPrintCompatReportJSON_ConflictFields(t *testing.T) {
 		Verdict:       domain.VerdictIncompatible,
 		Kind:          domain.ConflictNetworkTrigger,
 	})
-	if err := printCompatReportJSON(report, "walk-test", "linux/amd64", nil, &buf); err != nil {
+	if err := printCompatReportJSON(report, "walk-test", "linux/amd64", pinnedSelection(), nil, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	var out struct {

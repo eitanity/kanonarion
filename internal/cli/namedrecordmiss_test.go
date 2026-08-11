@@ -291,7 +291,7 @@ func missSurfaces() []missSurface {
 				ctr := &Container{QueryWalks: walksWithRecords(t)}
 				var stdout, stderr bytes.Buffer
 				err := licenseCompatWith(context.Background(), ctr,
-					mustCoord(t, "example.com/never-walked", "v9.9.9"), "Apache-2.0", &stdout, &stderr)
+					mustCoord(t, "example.com/never-walked", "v9.9.9"), "Apache-2.0", "", &stdout, &stderr)
 				return stderr.String(), err
 			},
 			foundListCalls: 1,
@@ -416,7 +416,7 @@ func TestLicenseCompatWith_FoundWalkPaysNoSurveyRead(t *testing.T) {
 		t.Fatalf("fixture walk store is %T, not the counting fake", ctr.QueryWalks)
 	}
 	var stdout, stderr bytes.Buffer
-	if err := licenseCompatWith(context.Background(), ctr, coord, "Apache-2.0", &stdout, &stderr); err != nil {
+	if err := licenseCompatWith(context.Background(), ctr, coord, "Apache-2.0", "", &stdout, &stderr); err != nil {
 		t.Fatalf("licenseCompatWith: %v", err)
 	}
 	if fqw.ListCalls != 1 {

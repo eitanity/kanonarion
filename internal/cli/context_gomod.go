@@ -80,10 +80,10 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 	// the build it pinned to — so without this line the pin is invisible, and an
 	// invisible pin to a walk taken before the last go.mod edit reads as a
 	// statement about the tree in front of the reader.
-	if projectWalk, gomodPath, werr := latestWalkForGoMod(ctx, ctr.QueryWalks, f.gomodPath); werr == nil {
-		vulnBatch.anchorTo(ctx, projectWalk.ID)
-		_, _ = fmt.Fprintf(stderr, "notice: vulnerability verdicts read in walk %q (frame %s)%s\n",
-			projectWalk.ID, projectWalk.BuildFrame(), manifestStalenessNote(gomodPath))
+	if choice, werr := latestWalkForGoMod(ctx, ctr.QueryWalks, f.gomodPath); werr == nil {
+		vulnBatch.anchorTo(ctx, choice.summary.ID)
+		_, _ = fmt.Fprintf(stderr, "notice: vulnerability verdicts read in walk %q (frame %s)%s%s\n",
+			choice.summary.ID, choice.summary.BuildFrame(), choice.stalenessNote(), choice.statementClause())
 	}
 
 	compact := f.compact && !f.full

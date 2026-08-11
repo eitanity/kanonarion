@@ -3,8 +3,12 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
+
+	"golang.org/x/mod/modfile"
 
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
@@ -129,20 +133,7 @@ func manifestDriftAgainstWalk(
 // directive as drift on every run, and a check that always fires is a check that
 // gets ignored.
 func driftAgainstWalk(resolved []string, rec walkdomain.WalkRecord) manifestDrift {
-	walked := make(map[string]string, len(rec.Graph.Nodes))
-	for _, n := range rec.Graph.Nodes {
-		if n.ResolutionSource == walkdomain.ResolutionStdlib || n.Coordinate.IsLocal() {
-			continue
-		}
-		named := n.Coordinate
-		if !n.OriginalCoordinate.IsZero() {
-			named = n.OriginalCoordinate
-		}
-		if named.IsLocal() {
-			continue
-		}
-		walked[named.Path()] = named.Version()
-	}
+	walked := walkNamedVersions(rec)
 
 	d := manifestDrift{resolved: len(resolved), walked: len(walked)}
 	seen := make(map[string]struct{}, len(resolved))
@@ -186,4 +177,81 @@ func driftAgainstWalk(resolved []string, rec walkdomain.WalkRecord) manifestDrif
 func manifestStalenessNote(gomodPath string) string {
 	return fmt.Sprintf("; %s was not re-resolved for this read, so an edit made to it since that walk is not reflected — kanonarion walk --gomod %s records the current resolution",
 		gomodPath, gomodPath)
+}
+
+// walkNamedVersions maps each module a walk resolved to the version it resolved
+// it at, under the name the MANIFEST uses for it.
+//
+// Two node classes are dropped because no require line names them: the synthetic
+// standard-library node, and any local coordinate — the main module itself and
+// local-path replace targets, which carry no version. A replaced node is keyed
+// on the require entry the replace acted on rather than on the replacement that
+// was fetched, so a replace directive is not read as a disagreement.
+func walkNamedVersions(rec walkdomain.WalkRecord) map[string]string {
+	walked := make(map[string]string, len(rec.Graph.Nodes))
+	for _, n := range rec.Graph.Nodes {
+		if n.ResolutionSource == walkdomain.ResolutionStdlib || n.Coordinate.IsLocal() {
+			continue
+		}
+		named := n.Coordinate
+		if !n.OriginalCoordinate.IsZero() {
+			named = n.OriginalCoordinate
+		}
+		if named.IsLocal() {
+			continue
+		}
+		walked[named.Path()] = named.Version()
+	}
+	return walked
+}
+
+// manifestRequireDisagreement compares the require directives of the go.mod at
+// path against what a walk recorded, and returns the versions the two disagree
+// on ("path walked -> required"). An empty result means the manifest and the
+// walk agree on every module both name.
+//
+// It is deliberately weaker than manifestDriftAgainstWalk, and cheaper by the
+// same amount: that one re-resolves the manifest through the toolchain, which
+// costs about a second on a 320-module project, and is paid by the surfaces that
+// MEASURE. This one parses one file and is paid by the surfaces that READ, on
+// every default frame choice — so it has to cost nothing a reader would notice.
+//
+// A module the manifest requires but the walk does not carry is NOT a
+// disagreement. That is the difference between a code-scope walk and a
+// complete-scope one of the same tree, and reading it as drift would declare
+// every narrower walk stale against the manifest it was taken from.
+//
+// A manifest naming no module the walk resolved cannot settle anything, so it is
+// an error rather than an agreement: an empty comparison and a clean one are the
+// same value and not the same fact.
+func manifestRequireDisagreement(path string, rec walkdomain.WalkRecord) ([]string, error) {
+	data, err := os.ReadFile(filepath.Clean(path)) // #nosec G304 — the path comes from --gomod or from the walk's own recorded project directory
+	if err != nil {
+		return nil, fmt.Errorf("reading %s to compare it against walk %s: %w", path, rec.ID, err)
+	}
+	f, err := modfile.Parse(path, data, nil)
+	if err != nil {
+		return nil, fmt.Errorf("parsing %s to compare it against walk %s: %w", path, rec.ID, err)
+	}
+	walked := walkNamedVersions(rec)
+	compared := 0
+	var disagreements []string
+	for _, r := range f.Require {
+		if r == nil {
+			continue
+		}
+		walkedVersion, ok := walked[r.Mod.Path]
+		if !ok {
+			continue
+		}
+		compared++
+		if walkedVersion != r.Mod.Version {
+			disagreements = append(disagreements, fmt.Sprintf("%s %s -> %s", r.Mod.Path, walkedVersion, r.Mod.Version))
+		}
+	}
+	if compared == 0 {
+		return nil, fmt.Errorf("%s requires no module walk %s resolved, so the two cannot be compared", path, rec.ID)
+	}
+	sort.Strings(disagreements)
+	return disagreements, nil
 }

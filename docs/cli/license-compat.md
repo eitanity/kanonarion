@@ -27,8 +27,7 @@ of data is never presented as an answer):
 
 ## The answering walk
 
-The closure checked is the closure of one walk — the most recent succeeded walk
-of the root, whatever platform it resolved for. Both output forms name it, so a
+The closure checked is the closure of one walk. Both output forms name it, so a
 verdict is always attributable to a build rather than to the module in the
 abstract:
 
@@ -38,6 +37,48 @@ example.com/myapp@local vs Apache-2.0 (data v1.1.0, walk 01KQDBVW092ER1HNXZ60X27
 
 JSON output carries the same two values as `walk_id` and `walk_frame`. The
 frame reads `unrecorded` for a walk taken before it was recorded.
+
+### Choosing it
+
+`--walk-id <id>` answers in that walk. It is the way to compare a project's
+licence position across scopes or platforms — a `code` walk and a `complete`
+walk of one tree carry different module sets and therefore different positions
+— and the way to re-read an older answer without re-walking.
+
+A walk id the store does not hold, or one rooted at a different project, is
+refused with exit 20 and the refusal names `walk-list --target <coord>`. The
+positional slot takes a coordinate, so a walk id typed there is refused with the
+`--walk-id` invocation spelled out.
+
+Without `--walk-id` the walk is chosen for you, by this rule:
+
+1. the most recent walk whose recorded resolution still agrees with the
+   `go.mod` in the directory that walk was taken from;
+2. failing that, the most recent walk.
+
+Where the store holds more than one walk of the coordinate, the answer states
+which rule applied, on a `notice:` line above the report in text output and in
+the `walk_selection` object under `--json`. A store with one walk of the
+coordinate states nothing: there was no choice to make.
+
+Rule 1 exists because recency alone is not enough. A walk taken while a
+manifest was temporarily edited — an upgrade rehearsal, a bumped dependency —
+stays the newest walk of that project after the tree is restored, because
+re-walking an unchanged resolution reuses the existing record rather than
+writing a newer one. Under recency alone that rehearsal would answer every
+later question about the project, and nothing short of `walk --force` could
+displace it.
+
+The comparison is a parse of the manifest's `require` directives against the
+walk's recorded module versions, not a re-resolution through the toolchain: it
+costs one file read. A module the manifest requires that the walk does not
+carry is not a disagreement — that is the difference between a `code` walk and
+a `complete` one. Only a version both name differently counts.
+
+The eight most recent walks are compared. Where none of them agrees, the answer
+says so, names the disagreement, and names `walk --gomod <path>`, which does
+record a new walk in that situation because no stored walk holds that
+resolution.
 
 ---
 

@@ -211,6 +211,11 @@ type usedCaller struct {
 type usedByResult struct {
 	GoMod  string
 	WalkID string
+	// choice is how WalkID was arrived at: which rule picked it out of the store's
+	// walks of this project, and what that rule could compare against. --used-by
+	// names a manifest, not a walk, so the walk is always chosen for the caller
+	// and the choice is always stated, on both surfaces.
+	choice walkChoice
 	// WalkFrame is the GOOS/GOARCH the answering walk resolved for, or
 	// "unrecorded" for a walk written before the frame was projected. GOOS gates
 	// which files build, so the scope this answer is filtered against is one
@@ -278,19 +283,20 @@ func (r *usedByResult) TouchedReach() (decls, sites int) {
 // already measured and recorded, so it is reproducible and it cannot disagree
 // with what `callers` would say about the same symbol.
 func joinUsedBy(ctx context.Context, ctr *Container, diff ifacedomain.InterfaceDiff, gomod string) (*usedByResult, error) {
-	walkSum, gomodPath, err := latestWalkForGoMod(ctx, ctr.QueryWalks, gomod)
+	choice, err := latestWalkForGoMod(ctx, ctr.QueryWalks, gomod)
 	if err != nil {
 		return nil, err
 	}
-	walkID := walkSum.ID
-	rec, err := ctr.QueryWalks.GetWalk(ctx, walkID)
+	walkID := choice.summary.ID
+	rec, err := choice.walkRecord(ctx, ctr.QueryWalks)
 	if err != nil {
-		return nil, fmt.Errorf("loading walk %q: %w", walkID, err)
+		return nil, err
 	}
 	scope := walkModuleSet(rec)
 
 	res := &usedByResult{
-		GoMod:     gomodPath,
+		GoMod:     choice.manifestPath,
+		choice:    choice,
 		WalkID:    walkID,
 		WalkFrame: rec.Graph.BuildEnv.Frame(),
 		Consumer:  rec.Target,
@@ -780,7 +786,8 @@ func printUsedBySection(used *usedByResult, stdout io.Writer) error {
 	// resolves to now. Stated here because "your code does not call the removed
 	// symbol" is exactly the answer an out-of-date scope gets wrong quietly.
 	if used.GoMod != "" {
-		if _, err := fmt.Fprintf(stdout, "  %s\n", strings.TrimPrefix(manifestStalenessNote(used.GoMod), "; ")); err != nil {
+		basis := used.choice.stalenessNote() + used.choice.statementClause()
+		if _, err := fmt.Fprintf(stdout, "  %s\n", strings.TrimPrefix(basis, "; ")); err != nil {
 			return fmt.Errorf("writing used-by staleness: %w", err)
 		}
 	}
@@ -911,10 +918,14 @@ type usedByJSON struct {
 	WalkID string `json:"walk_id"`
 	// WalkFrame is the GOOS/GOARCH the answering walk resolved for, or
 	// "unrecorded" for a walk written before the frame was projected.
-	WalkFrame      string `json:"walk_frame"`
-	Consumer       string `json:"consumer"`
-	ScopeSize      int    `json:"scope_size"`
-	CallGraphFound bool   `json:"call_graph_found"`
+	WalkFrame string `json:"walk_frame"`
+	// WalkSelection says how walk_id was arrived at. --used-by names a manifest,
+	// never a walk, so the walk is always chosen for the caller: a consumer
+	// reading walk_id has to be able to tell which rule picked it.
+	WalkSelection  selectionJSON `json:"walk_selection"`
+	Consumer       string        `json:"consumer"`
+	ScopeSize      int           `json:"scope_size"`
+	CallGraphFound bool          `json:"call_graph_found"`
 	// DroppedPackages are the consumer's own packages that failed to typecheck,
 	// so a call site declared in one of them cannot appear in any count here.
 	DroppedPackages []string         `json:"dropped_packages,omitempty"`
@@ -1052,6 +1063,7 @@ func toUsedByJSON(used *usedByResult) *usedByJSON {
 		GoMod:               used.GoMod,
 		WalkID:              used.WalkID,
 		WalkFrame:           used.WalkFrame,
+		WalkSelection:       used.choice.selection(),
 		Consumer:            used.Consumer.Path() + "@" + used.Consumer.Version(),
 		ScopeSize:           used.ScopeSize,
 		CallGraphFound:      used.CallGraphFound,
