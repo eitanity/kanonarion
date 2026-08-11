@@ -215,10 +215,12 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 		}
 	case sectionStatusReadError:
 		w.printf("  Interface:       (failed: %s)\n", out.Interface.Error)
+	case sectionStatusSuperseded:
+		w.printf("  Interface:       (superseded — %s)\n", out.Interface.Error)
 	default:
 		total := 0
 		for _, p := range out.Interface.Packages {
-			total += len(p.Types) + len(p.Funcs) + len(p.Consts) + len(p.Vars)
+			total += len(p.Types) + len(p.Methods) + len(p.Funcs) + len(p.Consts) + len(p.Vars)
 		}
 		w.printf("  Interface:       %d package(s), %d symbol(s) (%s)\n",
 			len(out.Interface.Packages), total,

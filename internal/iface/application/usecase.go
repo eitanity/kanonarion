@@ -18,7 +18,7 @@ import (
 // PipelineVersion identifies this release of the interface extraction pipeline.
 // Bump whenever extraction logic changes to ensure old records are not confused
 // with new ones.
-const PipelineVersion = "0.3.0"
+const PipelineVersion = "0.4.0"
 
 // ExtractInterfaceUseCase extracts the public API of a module and persists an
 // InterfaceRecord.

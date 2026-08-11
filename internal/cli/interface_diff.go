@@ -137,6 +137,19 @@ func runInterfaceDiff(ctx context.Context, argA, argB string, f interfaceDiffFla
 	return interfaceDiffWith(ctx, ctr, coordA, coordB, f, stdout)
 }
 
+// interfaceMissMessage states why one side of the diff is absent. The use case
+// reports a missing record; only the store can say whether the coordinate was
+// never extracted or was extracted under logic this build no longer serves, and
+// those have opposite remedies. A store that cannot be read leaves the use
+// case's own message standing.
+func interfaceMissMessage(ctx context.Context, uc QueryInterfaceUseCase, notFound *ifaceapp.ErrInterfaceRecordNotFound) string {
+	all := storedInterfaceSummaries(ctx, uc)
+	if pipelines, superseded := supersededInterfacePipelines(notFound.Coordinate, all); superseded {
+		return supersededInterfaceLine(notFound.Coordinate, pipelines)
+	}
+	return notFound.Error()
+}
+
 // interfaceDiffWith holds the interface-diff logic over an injected Container:
 // it runs the diff, maps a missing record to ExitNotFound (absence is surfaced,
 // never reported as "no change"), optionally joins the delta against a stored
@@ -151,7 +164,7 @@ func interfaceDiffWith(
 	diff, err := ctr.DiffInterface.Diff(ctx, coordA, coordB)
 	if err != nil {
 		if notFound, ok := errors.AsType[*ifaceapp.ErrInterfaceRecordNotFound](err); ok {
-			return &exitError{code: ExitNotFound, msg: notFound.Error()}
+			return &exitError{code: ExitNotFound, msg: interfaceMissMessage(ctx, ctr.QueryInterface, notFound)}
 		}
 		return fmt.Errorf("diffing interface records: %w", err)
 	}

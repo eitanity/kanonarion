@@ -286,10 +286,12 @@ the coverage it saw, never a confident SPDX it cannot stand behind.
 
 | Field | Type | Description |
 |---|---|---|
-| `status` | string | `not_run` / `read_error` / extractor status |
+| `status` | string | `not_run` / `superseded` / `read_error` / extractor status |
+| | | `superseded`: a record exists for this module but every stored generation predates this build's extraction logic, so none is served. `error` carries the statement and the re-extraction to run. |
 | `packages` | array | Public packages (internal and `main` packages excluded) |
 | `packages[].import_path` | string | Package import path |
 | `packages[].types` | array | Exported type signatures (doc comment included only with `--full`) |
+| `packages[].methods` | array | Signatures of the methods declared on those types (doc comment included only with `--full`) |
 | `packages[].funcs` | array | Exported function signatures |
 | `packages[].consts` | array | Exported constant names (with type if present) |
 | `packages[].vars` | array | Exported variable names (with type if present) |

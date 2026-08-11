@@ -95,6 +95,11 @@ const (
 	sectionStatusNotFetched = "not_fetched" // verification: module not yet fetched
 	sectionStatusNotRun     = "not_run"     // extraction pipeline has not run for this section
 	sectionStatusReadError  = "read_error"  // store returned an error when reading the record
+	// sectionStatusSuperseded: a record exists for this coordinate, but every
+	// stored generation was produced by superseded pipeline logic, so this
+	// build serves none of them. Distinct from not_run: the work was done and
+	// must be done again, which is a different instruction to the reader.
+	sectionStatusSuperseded = "superseded"
 )
 
 // Fork-heuristic status strings, mirrored from the domain status names so the
@@ -175,9 +180,14 @@ type contextLicense struct {
 type contextPackage struct {
 	ImportPath string   `json:"import_path"`
 	Types      []string `json:"types,omitempty"`
-	Funcs      []string `json:"funcs,omitempty"`
-	Consts     []string `json:"consts,omitempty"`
-	Vars       []string `json:"vars,omitempty"`
+	// Methods are the methods declared on those types. A struct's type
+	// signature names its fields and nothing else, so without these the
+	// section describes a package as having no methods at all — and the
+	// symbol count beside it would say so too.
+	Methods []string `json:"methods,omitempty"`
+	Funcs   []string `json:"funcs,omitempty"`
+	Consts  []string `json:"consts,omitempty"`
+	Vars    []string `json:"vars,omitempty"`
 }
 
 type contextInterface struct {

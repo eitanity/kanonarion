@@ -93,6 +93,12 @@ type interfaceRecordJSON struct {
 	ExtractedAt     string                 `json:"extracted_at"`
 	PipelineVersion string                 `json:"pipeline_version"`
 	ContentHash     string                 `json:"content_hash"`
+	// ArtefactIdentity and SourceContentHash name the bytes this record was
+	// read from and the fetch measurement that supplied them — the link the
+	// coordinate cannot make. Absent together on a record that names no
+	// artefact, which reads as "not recorded", never as "derived from nothing".
+	ArtefactIdentity  string `json:"artefact_identity,omitempty"`
+	SourceContentHash string `json:"source_content_hash,omitempty"`
 }
 
 func toPosJSON(p ifacedomain.SourcePosition) sourcePositionJSON {
@@ -161,13 +167,15 @@ func toInterfaceRecordJSON(r ifacedomain.InterfaceRecord) interfaceRecordJSON {
 		})
 	}
 	return interfaceRecordJSON{
-		SchemaVersion:   r.SchemaVersion,
-		Coordinate:      coordinateJSON{Path: r.Coordinate.Path(), Version: r.Coordinate.Version()},
-		Packages:        pkgs,
-		OverallStatus:   r.OverallStatus.String(),
-		FailureDetail:   r.FailureDetail,
-		ExtractedAt:     isoTime(r.ExtractedAt),
-		PipelineVersion: r.PipelineVersion,
-		ContentHash:     r.ContentHash,
+		SchemaVersion:     r.SchemaVersion,
+		Coordinate:        coordinateJSON{Path: r.Coordinate.Path(), Version: r.Coordinate.Version()},
+		Packages:          pkgs,
+		OverallStatus:     r.OverallStatus.String(),
+		FailureDetail:     r.FailureDetail,
+		ExtractedAt:       isoTime(r.ExtractedAt),
+		PipelineVersion:   r.PipelineVersion,
+		ContentHash:       r.ContentHash,
+		ArtefactIdentity:  r.ArtefactIdentity,
+		SourceContentHash: r.SourceContentHash,
 	}
 }

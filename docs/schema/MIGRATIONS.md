@@ -43,6 +43,47 @@ pinned to the prior shape are unaffected (unknown-section rule above):
 | `vendor`     | reserved              |
 | `fips`       | reserved              |
 
+## Interface record: pipeline `0.3.0` → `0.4.0`
+
+**Record shape change; no store migration.** Interface records are keyed
+`(module_path, module_version, pipeline_version)` and `GetInterfaceRecord`
+selects on the current one, so the bump is the migration: `0.3.0` rows stay
+where they are and are never served for a `0.4.0` request. The cost is one
+re-extraction per module on its next `interface` run — 472 stored records at the
+time of the bump, each of which answers `interface-show`, `interface-diff` and
+`symbol-find` as a not-found until it is re-extracted, naming the command that
+produces it.
+
+Two extraction reads changed, and both change what the record says a module
+exports.
+
+A **constant group carries its declared type to every member.** A spec with no
+expression list repeats the previous spec's type and expression — that is what
+makes an `iota` enumeration work. Reading each spec on its own left every member
+but the first with no type at all: on `github.com/golang-jwt/jwt/v4@v4.5.1`, 9 of
+11 constants. A constant's type is also the whole of its signature in
+`interface-diff`, so a `0.3.0` record cannot see a grouped constant's type change
+and a `0.4.0` record can. That is not less than the old record said, it is a
+different answer, so the two must not be served for one another.
+
+An **embedded type from another package is recorded as a field.** Exportedness
+belongs to the embedded type's own identifier, not to the lower-case package
+qualifier in front of it: an embedded `time.Time` publishes `x.Time`. A `0.3.0`
+record dropped every such embedding, and with it the promotions it explains.
+
+The content hash covers both, so an unchanged module hashes differently from its
+`0.3.0` record.
+
+Because the bump darkens records that are still in the ledger, every reader that
+can come up empty tells "never extracted" from "extracted under superseded
+logic", names the pipeline versions held against the one this build serves, and
+gives `kanonarion interface <coord>` as the remedy: `interface-show`,
+`interface-list <module>`, `interface --history`, `interface-diff`,
+`symbol-find`, `symbol-context` and the `context` interface section (status
+`superseded`). `interface-list` marks each superseded row and counts them. The
+wording is the call graph's `supersededPipelineError`, which answers the same
+condition on the other side of the binary.
+
 ## Vulnerability record: pipeline `v14` → `v15`
 
 **Additive.** Two changes to `VulnerabilityRecord`'s stored shape, both of which

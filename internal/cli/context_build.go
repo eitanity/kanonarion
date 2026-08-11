@@ -196,6 +196,17 @@ func buildInterface(ctx context.Context, coord coordinate.ModuleCoordinate, uc Q
 		return contextInterface{Status: sectionStatusReadError, Error: err.Error()}
 	}
 	if !found {
+		// "Never extracted" and "extracted under logic this build no longer
+		// serves" both read as an absent record here, and the section's remedy
+		// differs: one is still waiting to be run, the other has been run and
+		// must be run again. Reported with the reason rather than as a bare
+		// not_run, which a reader would take as "nobody has looked yet".
+		if pipelines, superseded := supersededInterfacePipelines(coord, storedInterfaceSummaries(ctx, uc)); superseded {
+			return contextInterface{
+				Status: sectionStatusSuperseded,
+				Error:  supersededInterfaceLine(coord, pipelines),
+			}
+		}
 		return contextInterface{Status: sectionStatusNotRun}
 	}
 	out := contextInterface{
@@ -217,6 +228,13 @@ func buildInterface(ctx context.Context, coord coordinate.ModuleCoordinate, uc Q
 				sig = stripDocComment(sig)
 			}
 			cp.Types = append(cp.Types, sig)
+			for _, m := range t.Methods {
+				msig := m.Signature
+				if compact {
+					msig = stripDocComment(msig)
+				}
+				cp.Methods = append(cp.Methods, msig)
+			}
 		}
 		for _, fn := range pkg.Funcs {
 			sig := fn.Signature

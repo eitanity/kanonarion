@@ -756,3 +756,122 @@ func TestExtractor_CancelledRecordsItsReason(t *testing.T) {
 		t.Errorf("cancelled record does not state its cause: %q", r.FailureDetail)
 	}
 }
+
+// TestExtractor_GroupedConstCarriesType: every member of a constant group
+// carries the group's declared type, not just the first one. A spec with no
+// expression list repeats the previous spec's type and expression — that is
+// how an iota enumeration is written, and reading each spec on its own reports
+// every member but the first as having no type at all.
+func TestExtractor_GroupedConstCarriesType(t *testing.T) {
+	fsys := fstest.MapFS{
+		"values.go": &fstest.MapFile{
+			Data: []byte(`package mypkg
+
+const (
+	First uint32 = 1 << iota
+	Second
+	Third
+)
+
+const (
+	Typed   int = 1
+	Untyped     = "s"
+	Repeats
+)
+
+var (
+	VarTyped   int = 1
+	VarUntyped     = 2
+)
+`),
+		},
+	}
+
+	r, err := makeExtractor().Extract(context.Background(), fsys, coord(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	pkg := r.Packages[0]
+
+	got := map[string]string{}
+	for _, c := range pkg.Consts {
+		got[c.Name] = c.Type
+	}
+	for _, v := range pkg.Vars {
+		got[v.Name] = v.Type
+	}
+
+	want := map[string]string{
+		"First":  "uint32",
+		"Second": "uint32",
+		"Third":  "uint32",
+		"Typed":  "int",
+		// Untyped brings its own expression and declares no type; Repeats
+		// repeats that expression, so neither has a declared type.
+		"Untyped":    "",
+		"Repeats":    "",
+		"VarTyped":   "int",
+		"VarUntyped": "",
+	}
+	for name, wantType := range want {
+		if got[name] != wantType {
+			t.Errorf("%s type = %q, want %q", name, got[name], wantType)
+		}
+	}
+}
+
+// TestExtractor_EmbeddedFieldFromAnotherPackage: an embedded type from another
+// package is recorded. Exportedness belongs to the embedded type's own
+// identifier, not to the lower-case package qualifier in front of it —
+// bytes.Buffer embedded in an exported struct publishes x.Buffer.
+func TestExtractor_EmbeddedFieldFromAnotherPackage(t *testing.T) {
+	fsys := fstest.MapFS{
+		"embed.go": &fstest.MapFile{
+			Data: []byte(`package mypkg
+
+import (
+	"bytes"
+	"sync"
+)
+
+// Buf embeds two types from other packages.
+type Buf struct {
+	bytes.Buffer
+	*sync.Mutex
+	local
+	N int
+}
+
+type local struct{}
+`),
+		},
+	}
+
+	r, err := makeExtractor().Extract(context.Background(), fsys, coord(t))
+	if err != nil {
+		t.Fatal(err)
+	}
+	var buf domain2.TypeDecl
+	for _, ty := range r.Packages[0].Types {
+		if ty.Name == "Buf" {
+			buf = ty
+		}
+	}
+	if buf.Name == "" {
+		t.Fatal("type Buf not extracted")
+	}
+	embedded := map[string]bool{}
+	for _, f := range buf.Fields {
+		if f.Embedded {
+			embedded[f.Name] = true
+		}
+	}
+	for _, want := range []string{"bytes.Buffer", "*sync.Mutex"} {
+		if !embedded[want] {
+			t.Errorf("embedded field %q missing; fields: %+v", want, buf.Fields)
+		}
+	}
+	if embedded["local"] {
+		t.Error("unexported embedded type recorded as an exported field")
+	}
+}
