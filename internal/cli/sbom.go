@@ -241,6 +241,17 @@ func sbomGenerateWith(
 		return fmt.Errorf("writing sbom to stdout: %w", err)
 	}
 
+	// A subject stamp names this document rather than the walk, so it was
+	// generated fresh and left unstored — the walk's stored SBOM still carries
+	// the subject the walk itself resolved. Say so: the operator is handed a
+	// content hash and an ID for a document the store does not hold, and a
+	// later 'sbom-show' of that ID would answer with a different document.
+	if f.mainVersion != "" || f.mainLicense != "" {
+		_, _ = fmt.Fprintf(stderr,
+			"note: --main-version/--main-license name this document's subject, so it was generated now and not stored; the stored SBOM for walk %s is unchanged\n",
+			record.WalkID)
+	}
+
 	// On stderr, never in the document: an SBOM is an inventory, and a caveat
 	// injected into it would be a claim the format does not have a field for.
 	// The statement is still owed — a component resolved under pre-modules

@@ -216,8 +216,8 @@ re-run when `--force` is passed.
 | `--package <pattern>` | _(none)_ | Go package pattern (e.g. `./cmd/foo`); scopes `components` to modules in that binary's import closure |
 | `--from-modcache[=dir]` | _(off)_ | When `sbom` builds a project walk (e.g. `--package` on a cold store), source modules from an existing Go module cache instead of the network proxy and verify each against the local `go.sum`. Passed bare it uses `go env GOMODCACHE`; an optional value names the cache directory. A `go.sum` mismatch or missing entry fails the command (exit code `10`). See [`audit --from-modcache`](audit.md#sourcing-from-an-existing-module-cache---from-modcache) for the full semantics. |
 | `--allow-verification-downgrade` | `false` | Permit a weaker re-measurement of a module to be recorded alongside a stronger stored one. Without it the weaker measurement is refused, the stronger record is kept and answers, and the run warns. See [Re-measuring with a weaker anchor](fetch.md#re-measuring-with-a-weaker-anchor---allow-verification-downgrade) |
-| `--main-version <version>` | _(none)_ | Version to stamp on the SBOM subject (`metadata.component`) in place of the synthetic `local`. See [Naming the subject](#naming-the-subject---main-version-and---main-license) |
-| `--main-license <spdx>` | _(none)_ | SPDX id or expression to attach to the SBOM subject, which as a local main module has no fetched licence record of its own. See [Naming the subject](#naming-the-subject---main-version-and---main-license) |
+| `--main-version <version>` | _(none)_ | Version to stamp on the SBOM subject (`metadata.component`) in place of the synthetic `local`. Supplying it bypasses the cache, and the document is not stored. See [Naming the subject](#naming-the-subject---main-version-and---main-license) |
+| `--main-license <spdx>` | _(none)_ | SPDX id or expression to attach to the SBOM subject, which as a local main module has no fetched licence record of its own. Supplying it bypasses the cache, and the document is not stored. See [Naming the subject](#naming-the-subject---main-version-and---main-license) |
 | `--policy` | _(auto-discover `.kanonarion/policy.yaml`)_ | Depth policy file; its fetch stage governs traversal and the `allowed_vcs_hosts` forge allowlist |
 | `--log-level` | `warn` | Log level (`debug`, `info`, `warn`, `error`) |
 | `--no-progress` | `false` | Suppress stderr progress output (the throttled heartbeat and any per-module progress lines); results and warnings are unaffected |
@@ -241,10 +241,23 @@ Both apply **only** when the subject is the local main module. A walk rooted at
 a published module carries that module's own version and licence record, and
 neither flag changes it.
 
-Neither flag is part of the SBOM cache key. A document already cached for the
-same walk, format and pipeline version is re-served as it was stored, so pass
-`--force` (or `--generated-at`, or a `--package` scope, each of which skips the
-cache) when generating a release document over a warm store.
+Neither flag is part of the SBOM cache key, so a run that passes either is
+never answered from the cache and never writes to it. The document is generated
+on the spot — no `--force` needed over a warm store — and is not stored. The
+stored SBOM for the walk keeps the subject the walk itself resolved, so a later
+run that passes neither flag is never handed a release stamp somebody else's run
+put there.
+
+Because nothing is stored, the `ID:` and `Content-Hash:` lines printed under
+`--output` name a document the store does not hold, and `sbom-show` of that id
+answers with the stored one instead. The run says so on stderr:
+
+```
+note: --main-version/--main-license name this document's subject, so it was
+generated now and not stored; the stored SBOM for walk <walk-id> is unchanged
+```
+
+Keep the release document from `--output`; it is the artefact.
 
 ### Examples
 
@@ -304,8 +317,12 @@ tool dependencies in `go.mod` should be excluded from the SBOM.
 Generation is cached by `(walkID, format, pipelineVersion)`.
 A second call with the same inputs is served from the store — a record read,
 measured at **48 ms** for a 128-module walk, rather than a regeneration.
-Use `--force` to bypass the cache. `--generated-at` also bypasses it. Scoped
-(`--package`) results are never cached.
+Use `--force` to bypass the cache. `--generated-at`, `--main-version` and
+`--main-license` also bypass it: none of the three is part of the key, so a
+stored document would answer under a timestamp or a subject the caller did not
+ask for. Scoped (`--package`) results, and results with a `--main-version` or
+`--main-license` subject stamp, are never cached — they are generated on the
+spot and not written back.
 
 ### Assurance log
 
@@ -331,10 +348,11 @@ reaches them, and repeating them in the log would leave an unsealed second copy
 of the artefact.
 
 A `--package` run appends nothing: the result is ephemeral (no cache lookup, no
-record persisted), and the events state that a record exists. `--force` and
-`--generated-at` skip the cache, so they append `sbom_generated` rather than
-`sbom_served`. `sbom-show` and `sbom-list` read stored records and append
-nothing.
+record persisted), and the events state that a record exists. A run with
+`--main-version` or `--main-license` is ephemeral for the same reason and
+likewise appends nothing. `--force` and `--generated-at` skip the cache but
+still persist, so they append `sbom_generated` rather than `sbom_served`.
+`sbom-show` and `sbom-list` read stored records and append nothing.
 
 ### Licence completeness
 

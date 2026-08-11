@@ -268,3 +268,38 @@ func assertIncompleteLicenceExit(t *testing.T, err error) {
 		t.Errorf("exit code = %d, want ExitPartial (%d)", ee.code, ExitPartial)
 	}
 }
+
+// A stamped document is generated on the spot and not stored, so the ID and
+// content hash printed for it name nothing in the store. The run must say so
+// rather than let the operator read them as a store handle.
+func TestSBOMGenerateWith_SubjectStampSaysTheDocumentIsNotStored(t *testing.T) {
+	for _, tc := range []struct {
+		name  string
+		flags sbomFlags
+		want  bool
+	}{
+		{"version", sbomFlags{format: "cyclonedx-json", mainVersion: "v9.9.9"}, true},
+		{"licence", sbomFlags{format: "cyclonedx-json", mainLicense: "Apache-2.0"}, true},
+		{"neither", sbomFlags{format: "cyclonedx-json"}, false},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ctr := &Container{
+				GenerateSBOM: &testfakes.FakeGenerateSBOM{
+					Result: sbomdomain.SBOMRecord{ID: "S1", WalkID: "W1", Content: []byte("<bom/>")},
+				},
+				QueryWalks: testfakes.NewFakeQueryWalks(),
+			}
+			var stdout, stderr bytes.Buffer
+			if err := sbomGenerateWith(context.Background(), ctr, "W1", tc.flags, time.Time{}, &stdout, &stderr); err != nil {
+				t.Fatalf("sbomGenerateWith: %v", err)
+			}
+			got := strings.Contains(stderr.String(), "not stored")
+			if got != tc.want {
+				t.Errorf("stderr says the document is not stored = %v, want %v; stderr = %q", got, tc.want, stderr.String())
+			}
+			if tc.want && !strings.Contains(stderr.String(), "W1") {
+				t.Errorf("the note must name the walk whose stored SBOM is unchanged, got: %q", stderr.String())
+			}
+		})
+	}
+}
