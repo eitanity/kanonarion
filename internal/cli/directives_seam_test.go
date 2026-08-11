@@ -48,15 +48,20 @@ func TestDirectivesDiffWith_ScanNotFound(t *testing.T) {
 
 // A diff with no changes reports that explicitly (text mode).
 func TestDirectivesDiffWith_NoChanges(t *testing.T) {
+	scan := directivedomain.Record{Directives: []directivedomain.Directive{{}, {}}}
 	ctr := &Container{DiffDirectives: &testfakes.FakeDiffDirectives{
-		Result: directivedomain.DirectiveDiff{},
+		Result: directivedomain.DirectiveDiff{ScanA: scan, ScanB: scan},
 	}}
 	var out bytes.Buffer
 	if err := directivesDiffWith(context.Background(), ctr, "SCAN-A", "SCAN-B", &out); err != nil {
 		t.Fatalf("directivesDiffWith: %v", err)
 	}
-	if !strings.Contains(out.String(), "No directive changes") {
-		t.Errorf("expected 'No directive changes', got:\n%s", out.String())
+	// The population is stated with the zero: two scans agreeing on two
+	// directives and two scans that each found none are different findings.
+	for _, want := range []string{"No directive changes", "the same 2 directives"} {
+		if !strings.Contains(out.String(), want) {
+			t.Errorf("expected %q, got:\n%s", want, out.String())
+		}
 	}
 }
 

@@ -117,6 +117,22 @@ version-changed modules).
 kanonarion walk-diff <walk-id-a> <walk-id-b> [--json]
 ```
 
+When the two walks do not differ, the command says so and names what it
+compared — both ids, the build frame each walk was resolved in, and the node
+count on each side:
+
+```
+diff 01KZ...A..01KZ...B
+no difference: 01KZ...A (frame linux/amd64, 128 node(s)) and 01KZ...B (frame linux/amd64, 128 node(s))
+name the same modules at the same versions, and no node status changed
+```
+
+Passing the same id twice says that instead, since nothing was compared with
+anything. When the two walks were resolved at unequal completeness the empty
+result is additionally flagged as not a confident "identical". Under `--json`
+the statement is an object on **stderr**; stdout keeps the diff document
+unchanged.
+
 If either ID is not in the store the command exits `4` and names **which** of
 the two was missing — or both when both are — followed by how many walk records
 the ID was compared against:

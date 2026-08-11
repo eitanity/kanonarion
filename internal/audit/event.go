@@ -12,7 +12,10 @@
 // the vocabulary here, never on the JSONL adapter that persists it.
 package audit
 
-import "fmt"
+import (
+	"fmt"
+	"sort"
+)
 
 // EventType is the discriminator stored as the `event_type` field of every
 // audit envelope. Adding a value here is the *entire* cost of introducing a
@@ -252,6 +255,23 @@ var knownEventTypes = map[EventType]struct{}{
 	EventSBOMServed:               {},
 	EventAdvisorySnapshotRecorded: {},
 	EventVulnScanServed:           {},
+}
+
+// KnownEventTypes returns the recognised discriminators, sorted.
+//
+// It reads the same map Known() does, which is the gate every emitter passes
+// through: Event.Validate refuses an envelope whose type is not in it, so a
+// type that can be emitted is a type this function names. A reader that
+// enumerates the vocabulary — the ledger command's --event-type help and its
+// refusal of an unrecognised value — therefore cannot fall behind the emitters
+// the way a second, hand-written list would.
+func KnownEventTypes() []EventType {
+	out := make([]EventType, 0, len(knownEventTypes))
+	for t := range knownEventTypes {
+		out = append(out, t)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i] < out[j] })
+	return out
 }
 
 // Known reports whether t is a recognised event type.

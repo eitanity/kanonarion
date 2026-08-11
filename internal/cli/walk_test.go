@@ -268,17 +268,131 @@ func TestRunWalkDiff_NotFound(t *testing.T) {
 	}
 }
 
+// TestRunWalkDiff_EmptyDiff asserts a diff with no delta states what it
+// compared.
+//
+// The header alone was the entire output for two walks that agree. An empty
+// diff is the evidence for "the dependency set did not move between these two
+// builds" — a claim someone puts in a release note — and a bare header is
+// indistinguishable from a command that compared nothing.
 func TestRunWalkDiff_EmptyDiff(t *testing.T) {
 	uc := &testfakes.FakeDiffWalks{
-		Result: walkapp.WalkDiff{WalkA: "A", WalkB: "B"},
+		Result: walkapp.WalkDiff{
+			WalkA: "A", WalkB: "B",
+			NodesA: 128, NodesB: 128,
+			FrameA: "linux/amd64", FrameB: "linux/amd64",
+		},
 	}
 	var buf bytes.Buffer
 	err := runWalkDiff(context.Background(), "A", "B", uc, testfakes.NewFakeQueryWalks(), &buf, io.Discard)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(buf.String(), "diff A..B") {
-		t.Errorf("expected diff header, got: %q", buf.String())
+	out := buf.String()
+	for _, want := range []string{
+		"diff A..B",
+		"no difference:",
+		"A (frame linux/amd64, 128 node(s))",
+		"B (frame linux/amd64, 128 node(s))",
+		"no node status changed",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q in output, got:\n%s", want, out)
+		}
+	}
+}
+
+// TestRunWalkDiff_EmptyDiffSameWalk asserts the identical-pair case names the
+// cause that emptied it: the two arguments were one walk, so nothing was
+// compared with anything.
+func TestRunWalkDiff_EmptyDiffSameWalk(t *testing.T) {
+	uc := &testfakes.FakeDiffWalks{
+		Result: walkapp.WalkDiff{
+			WalkA: "01KZ3VA296P8KTP265M6CDBCHB", WalkB: "01KZ3VA296P8KTP265M6CDBCHB",
+			NodesA: 128, NodesB: 128,
+			FrameA: "linux/amd64", FrameB: "linux/amd64",
+		},
+	}
+	var buf bytes.Buffer
+	err := runWalkDiff(context.Background(), "01KZ3VA296P8KTP265M6CDBCHB", "01KZ3VA296P8KTP265M6CDBCHB",
+		uc, testfakes.NewFakeQueryWalks(), &buf, io.Discard)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := buf.String()
+	for _, want := range []string{
+		"both arguments name the same walk",
+		"01KZ3VA296P8KTP265M6CDBCHB, frame linux/amd64, 128 node(s)",
+		"compared it with itself",
+	} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q in output, got:\n%s", want, out)
+		}
+	}
+}
+
+// TestRunWalkDiff_EmptyDiffUnderMismatchIsNotIdentical asserts a zero delta over
+// an asymmetric comparison does not read as two walks agreeing.
+func TestRunWalkDiff_EmptyDiffUnderMismatchIsNotIdentical(t *testing.T) {
+	uc := &testfakes.FakeDiffWalks{
+		Result: walkapp.WalkDiff{
+			WalkA: "A", WalkB: "B",
+			NodesA: 4, NodesB: 128,
+			FrameA:               "linux/amd64",
+			FrameB:               "linux/amd64",
+			CompletenessMismatch: "walk scope differs: code vs complete",
+		},
+	}
+	var buf bytes.Buffer
+	err := runWalkDiff(context.Background(), "A", "B", uc, testfakes.NewFakeQueryWalks(), &buf, io.Discard)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(buf.String(), `not a confident "identical"`) {
+		t.Errorf("empty diff over unequal completeness reads as identical:\n%s", buf.String())
+	}
+}
+
+// TestRunWalkDiff_EmptyDiffJSONStatesItOnStderr asserts the machine form: the
+// statement is a structured object on stderr and the document on stdout is
+// unchanged, so a consumer's parse does not depend on how empty the answer was.
+func TestRunWalkDiff_EmptyDiffJSONStatesItOnStderr(t *testing.T) {
+	jsonOut = true
+	t.Cleanup(func() { jsonOut = false })
+	uc := &testfakes.FakeDiffWalks{
+		Result: walkapp.WalkDiff{
+			WalkA: "A", WalkB: "B",
+			NodesA: 128, NodesB: 128,
+			FrameA: "linux/amd64", FrameB: "darwin/arm64",
+		},
+	}
+	var stdout, stderr bytes.Buffer
+	err := runWalkDiff(context.Background(), "A", "B", uc, testfakes.NewFakeQueryWalks(), &stdout, &stderr)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	var doc walkDiffJSON
+	if uerr := json.Unmarshal(stdout.Bytes(), &doc); uerr != nil {
+		t.Fatalf("stdout is not the diff document: %v\n%s", uerr, stdout.String())
+	}
+	if len(doc.Added) != 0 || len(doc.Removed) != 0 {
+		t.Errorf("stdout document changed shape on an empty diff: %+v", doc)
+	}
+	var notice walkDiffEmptyJSON
+	if uerr := json.Unmarshal(stderr.Bytes(), &notice); uerr != nil {
+		t.Fatalf("stderr carries no empty-diff statement: %v\n%s", uerr, stderr.String())
+	}
+	if notice.NodesA != 128 || notice.NodesB != 128 {
+		t.Errorf("node counts = %d/%d, want 128/128", notice.NodesA, notice.NodesB)
+	}
+	if notice.FrameA != "linux/amd64" || notice.FrameB != "darwin/arm64" {
+		t.Errorf("frames = %q/%q, want the two frames compared", notice.FrameA, notice.FrameB)
+	}
+	if notice.SameWalk {
+		t.Error("two different ids were reported as the same walk")
+	}
+	if !strings.Contains(notice.Statement, "no difference") {
+		t.Errorf("statement does not state the finding: %q", notice.Statement)
 	}
 }
 
@@ -585,6 +699,9 @@ func TestRunWalkDiff_TextOutput(t *testing.T) {
 		if !strings.Contains(out, want) {
 			t.Errorf("expected %q in output, got:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "no difference") {
+		t.Errorf("a diff with a delta claimed no difference:\n%s", out)
 	}
 }
 

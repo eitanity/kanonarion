@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	factsqlite "github.com/eitanity/kanonarion/internal/adapters/factstore/sqlite"
+	"github.com/eitanity/kanonarion/internal/audit"
 )
 
 // storeLedgerFlags are the query shapes the assurance log is asked in. They are
@@ -67,7 +68,16 @@ Events are listed in chronological order. The ledger's own coverage window —
 its first and last event — is always stated, so an empty result over a window
 the log never spanned is distinguishable from a window in which nothing
 happened. Lines that cannot be read are counted and named by line number; they
-are never dropped and never abort the read.`,
+are never dropped and never abort the read. A reading that matched nothing says
+which filter emptied it.
+
+--module takes a module path (example.com/mod) or a coordinate
+(example.com/mod@v1.2.3). A coordinate additionally requires the version, for
+the events whose payload carries one; an event that names the module and no
+version still matches.
+
+--event-type accepts one of:
+` + ledgerEventTypeHelp(),
 		Example: `  kanonarion store ledger --since 2026-07-23T00:00:00Z --until 2026-07-24T00:00:00Z
   kanonarion store ledger --event-type vuln_finding_observed --module github.com/golang-jwt/jwt/v4 --limit 1
   kanonarion store ledger --event-type vuln_scan_served --json`,
@@ -78,8 +88,8 @@ are never dropped and never abort the read.`,
 	}
 	cmd.Flags().StringVar(&f.since, "since", "", "list only events at or after this time (RFC3339)")
 	cmd.Flags().StringVar(&f.until, "until", "", "list only events at or before this time (RFC3339)")
-	cmd.Flags().StringVar(&f.module, "module", "", "list only events naming this module path")
-	cmd.Flags().StringVar(&f.eventType, "event-type", "", "list only events of this type")
+	cmd.Flags().StringVar(&f.module, "module", "", "list only events naming this module path, or <path>@<version> to require the version too")
+	cmd.Flags().StringVar(&f.eventType, "event-type", "", "list only events of this type (--help names the accepted values)")
 	cmd.Flags().IntVar(&f.limit, "limit", 0, "maximum number of events to list (0 = unlimited)")
 	cmd.Flags().IntVar(&f.offset, "offset", 0, "skip this many matched events")
 	return cmd
@@ -129,10 +139,14 @@ type ledgerResult struct {
 	// Skipped is how many matched events the offset stepped over. Stated
 	// because Matched counts the whole window and Events carries one page of
 	// it, and the difference is otherwise unattributable to either bound.
-	Skipped      int                 `json:"skipped"`
-	Events       []ledgerEventResult `json:"events"`
-	NotWitnessed []string            `json:"not_witnessed"`
-	Questions    []string            `json:"questions_answered"`
+	Skipped int                 `json:"skipped"`
+	Events  []ledgerEventResult `json:"events"`
+	// ZeroReasons is stated only on a reading that matched nothing: which of the
+	// filters emptied it, and what its value was compared against. A confident
+	// zero that names no cause is the one answer this command must not give.
+	ZeroReasons  []string `json:"zero_reasons,omitempty"`
+	NotWitnessed []string `json:"not_witnessed"`
+	Questions    []string `json:"questions_answered"`
 }
 
 func runStoreLedger(root string, f storeLedgerFlags, asJSON bool, stdout io.Writer) error {
@@ -154,10 +168,21 @@ func runStoreLedger(root string, f storeLedgerFlags, asJSON bool, stdout io.Writ
 		return &exitError{code: ExitConfig, msg: fmt.Sprintf("--offset must not be negative, got %d", f.offset)}
 	}
 
+	mod, err := parseLedgerModule(f.module)
+	if err != nil {
+		return err
+	}
+
 	path := factsqlite.AuditLogPath(root)
 	led, err := factsqlite.ReadLedger(path)
 	if err != nil {
 		return fmt.Errorf("reading the assurance log: %w", err)
+	}
+	// Validated against the log in hand as well as against the vocabulary, so a
+	// type this build no longer declares is still queryable in a log written by
+	// one that did.
+	if err := validateLedgerEventType(f.eventType, led); err != nil {
+		return err
 	}
 
 	first, last := led.Coverage()
@@ -185,7 +210,7 @@ func runStoreLedger(root string, f storeLedgerFlags, asJSON bool, stdout io.Writ
 	}
 
 	for _, e := range led.Entries {
-		if !ledgerEntryMatches(e, since, until, f.module, f.eventType) {
+		if !ledgerEntryMatches(e, since, until, mod, f.eventType) {
 			continue
 		}
 		result.Matched++
@@ -208,6 +233,10 @@ func runStoreLedger(root string, f storeLedgerFlags, asJSON bool, stdout io.Writ
 		})
 	}
 
+	if result.Matched == 0 {
+		result.ZeroReasons = ledgerZeroReasons(led, mod, f.eventType, since, until)
+	}
+
 	if asJSON {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
@@ -220,7 +249,7 @@ func runStoreLedger(root string, f storeLedgerFlags, asJSON bool, stdout io.Writ
 }
 
 // ledgerEntryMatches applies the query. An empty filter never restricts.
-func ledgerEntryMatches(e factsqlite.LedgerEntry, since, until time.Time, module, eventType string) bool {
+func ledgerEntryMatches(e factsqlite.LedgerEntry, since, until time.Time, mod ledgerModuleFilter, eventType string) bool {
 	if !since.IsZero() && e.Timestamp.Before(since) {
 		return false
 	}
@@ -230,10 +259,52 @@ func ledgerEntryMatches(e factsqlite.LedgerEntry, since, until time.Time, module
 	if eventType != "" && string(e.Type) != eventType {
 		return false
 	}
-	if module != "" && !ledgerEntryNamesModule(e, module) {
+	if mod.active() && !ledgerEntryNamesModule(e, mod) {
 		return false
 	}
 	return true
+}
+
+// ledgerModuleFilter is a --module argument in the two forms it is asked in: a
+// bare module path, and a coordinate that also carries a version.
+//
+// Both are accepted because the ledger's headline question — when did we first
+// learn about this module@version — is asked in coordinates, while every payload
+// key the filter compares against holds a bare path. Comparing the whole
+// coordinate to a path is not a mis-parse, it is a comparison that can never be
+// equal, and it answered "no events" for modules the log holds hundreds of
+// events for.
+type ledgerModuleFilter struct {
+	path    string
+	version string
+}
+
+// active reports whether the filter restricts anything.
+func (m ledgerModuleFilter) active() bool { return m.path != "" }
+
+// String renders the filter the way it was typed, for the statements that quote
+// it back.
+func (m ledgerModuleFilter) String() string {
+	if m.version == "" {
+		return m.path
+	}
+	return m.path + "@" + m.version
+}
+
+// parseLedgerModule splits a --module argument into the path and the version it
+// may carry. A value that is neither — an empty path, or an "@" with nothing
+// after it — is refused rather than filtered on, on the model --since and
+// --until already set for a filter value the command cannot use.
+func parseLedgerModule(value string) (ledgerModuleFilter, error) {
+	if value == "" {
+		return ledgerModuleFilter{}, nil
+	}
+	path, version, hasVersion := strings.Cut(value, "@")
+	if path == "" || (hasVersion && version == "") {
+		return ledgerModuleFilter{}, &exitError{code: ExitConfig, msg: fmt.Sprintf(
+			"parsing --module %q: want a module path (example.com/mod) or a coordinate (example.com/mod@v1.2.3)", value)}
+	}
+	return ledgerModuleFilter{path: path, version: version}, nil
 }
 
 // ledgerModuleKeys are the payload keys under which an event names a module
@@ -244,13 +315,181 @@ func ledgerEntryMatches(e factsqlite.LedgerEntry, since, until time.Time, module
 // events" for whole families of the log.
 var ledgerModuleKeys = []string{"module", "module_path", "project"}
 
-func ledgerEntryNamesModule(e factsqlite.LedgerEntry, module string) bool {
+// ledgerVersionKeys are the payload keys under which an event names the version
+// of the module it named: module_version on the flat fact-record line, version
+// on the generic per-module envelopes.
+//
+// They are read only to REFINE a path match, never to make one. An event that
+// names the module and carries no version at all — a vendor-tree scan, a
+// directive observation — is still an event about that module, and dropping it
+// because the caller happened to type a coordinate would re-create, one level
+// down, the silence the coordinate form was accepted to end.
+var ledgerVersionKeys = []string{"module_version", "version"}
+
+func ledgerEntryNamesModule(e factsqlite.LedgerEntry, mod ledgerModuleFilter) bool {
+	named := false
 	for _, k := range ledgerModuleKeys {
-		if s, ok := e.Fields[k].(string); ok && s == module {
-			return true
+		if s, ok := e.Fields[k].(string); ok && s == mod.path {
+			named = true
+			break
 		}
 	}
-	return false
+	if !named || mod.version == "" {
+		return named
+	}
+	for _, k := range ledgerVersionKeys {
+		if s, ok := e.Fields[k].(string); ok && s != "" {
+			return s == mod.version
+		}
+	}
+	return true
+}
+
+// ledgerEventTypeNames is the accepted --event-type set, read from the audit
+// vocabulary rather than restated here: every emitter passes Event.Validate,
+// which admits exactly these, so the set a reader is offered cannot fall behind
+// the set a writer can produce.
+func ledgerEventTypeNames() []string {
+	known := audit.KnownEventTypes()
+	names := make([]string, 0, len(known))
+	for _, t := range known {
+		names = append(names, string(t))
+	}
+	return names
+}
+
+// ledgerEventTypeHelp renders that set for --help, two per line.
+func ledgerEventTypeHelp() string {
+	names := ledgerEventTypeNames()
+	var b strings.Builder
+	for i, n := range names {
+		if i%2 == 0 {
+			b.WriteString("  ")
+		}
+		b.WriteString(n)
+		switch {
+		case i == len(names)-1:
+			b.WriteString("\n")
+		case i%2 == 1:
+			b.WriteString(",\n")
+		default:
+			b.WriteString(", ")
+		}
+	}
+	return b.String()
+}
+
+// validateLedgerEventType refuses a value no event in this log can carry, and
+// names the set that can.
+//
+// Without it an unrecognised name is indistinguishable from a recognised one
+// with no events: both return the same well-qualified zero, and the zero is the
+// convincing kind — it states its coverage window and volunteers what the log
+// does not witness. --since and --until already refuse a value they cannot use;
+// this is the same refusal for the same reason.
+//
+// The log in hand is consulted as well as the vocabulary. A type this build no
+// longer declares can still stand in a log written by one that did, and
+// refusing it would strand the history it names — the opposite of what an
+// append-only ledger is for.
+func validateLedgerEventType(value string, led factsqlite.Ledger) error {
+	if value == "" || audit.EventType(value).Known() {
+		return nil
+	}
+	for _, e := range led.Entries {
+		if string(e.Type) == value {
+			return nil
+		}
+	}
+	return &exitError{code: ExitConfig, msg: fmt.Sprintf(
+		"--event-type %q is not an event type this build emits or this ledger holds; accepted values: %s",
+		value, strings.Join(ledgerEventTypeNames(), ", "))}
+}
+
+// ledgerZeroReasons names what emptied a reading that matched nothing.
+//
+// Each active filter is re-applied on its own, so the answer can say which one
+// did it rather than leaving the caller to bisect their own flags. When every
+// filter matches events by itself, that is said too: the reading is empty
+// because no single event satisfies them together, which is a different fact
+// with a different remedy.
+func ledgerZeroReasons(led factsqlite.Ledger, mod ledgerModuleFilter, eventType string, since, until time.Time) []string {
+	if len(led.Entries) == 0 {
+		// The coverage line already states that the ledger holds no readable
+		// event; repeating it per filter would explain a zero that has one cause.
+		return nil
+	}
+	first, last := led.Coverage()
+	windowed := !since.IsZero() || !until.IsZero()
+
+	// Per-filter counts over the whole log: how many events each filter would
+	// have matched had it been the only one.
+	var windowAlone, moduleAlone, pathAlone, typeAlone int
+	for _, e := range led.Entries {
+		if ledgerEntryMatches(e, since, until, ledgerModuleFilter{}, "") {
+			windowAlone++
+		}
+		if ledgerEntryNamesModule(e, mod) {
+			moduleAlone++
+		}
+		if ledgerEntryNamesModule(e, ledgerModuleFilter{path: mod.path}) {
+			pathAlone++
+		}
+		if string(e.Type) == eventType {
+			typeAlone++
+		}
+	}
+
+	var reasons []string
+	if windowed && windowAlone == 0 {
+		if disjoint := ledgerWindowOutsideCoverage(since, until, first, last); disjoint != "" {
+			reasons = append(reasons, disjoint)
+		} else {
+			reasons = append(reasons, fmt.Sprintf(
+				"no event falls in the window asked for, though the ledger's coverage (%s .. %s) spans it",
+				formatLedgerTime(first), formatLedgerTime(last)))
+		}
+	}
+	if mod.active() && moduleAlone == 0 {
+		switch {
+		case mod.version != "" && pathAlone > 0:
+			reasons = append(reasons, fmt.Sprintf(
+				"--module %q: %d event(s) name the path %s, none of them at version %s — the version is compared against the %s payload keys, for the events that carry one",
+				mod.String(), pathAlone, mod.path, mod.version, strings.Join(ledgerVersionKeys, " and ")))
+		default:
+			reasons = append(reasons, fmt.Sprintf(
+				"--module %q: no event names the path %s — the path is compared for exact equality against the %s payload keys of all %d event(s) the ledger holds",
+				mod.String(), mod.path, strings.Join(ledgerModuleKeys, ", "), len(led.Entries)))
+		}
+	}
+	if eventType != "" && typeAlone == 0 {
+		reasons = append(reasons, fmt.Sprintf(
+			"--event-type %q: the ledger holds no event of that type at all", eventType))
+	}
+	if len(reasons) == 0 {
+		reasons = append(reasons, "each filter matches events on its own; no single event satisfies all of them together")
+	}
+	return reasons
+}
+
+// ledgerWindowOutsideCoverage states a window that cannot hold an event because
+// it lies wholly before or wholly after everything the ledger recorded. It is
+// the --since/--until member of the same class as a coordinate compared to a
+// path: a value that cannot match by construction, rather than one that matched
+// nothing.
+func ledgerWindowOutsideCoverage(since, until, first, last time.Time) string {
+	if first.IsZero() || last.IsZero() {
+		return ""
+	}
+	if !since.IsZero() && since.After(last) {
+		return fmt.Sprintf("--since %s is after the last event the ledger holds (%s); no event can fall at or after it",
+			formatLedgerTime(since), formatLedgerTime(last))
+	}
+	if !until.IsZero() && until.Before(first) {
+		return fmt.Sprintf("--until %s is before the first event the ledger holds (%s); no event can fall at or before it",
+			formatLedgerTime(until), formatLedgerTime(first))
+	}
+	return ""
 }
 
 func parseLedgerTime(flag, value string) (time.Time, error) {
@@ -331,6 +570,16 @@ func writeLedgerText(w io.Writer, r ledgerResult) error {
 	}
 	if _, err := fmt.Fprintln(w); err != nil {
 		return fmt.Errorf("writing output: %w", err)
+	}
+	if len(r.ZeroReasons) > 0 {
+		if _, err := fmt.Fprintf(w, "why this reading is empty:\n"); err != nil {
+			return fmt.Errorf("writing output: %w", err)
+		}
+		for _, s := range r.ZeroReasons {
+			if _, err := fmt.Fprintf(w, "  - %s\n", s); err != nil {
+				return fmt.Errorf("writing output: %w", err)
+			}
+		}
 	}
 	if r.UnreadableInWindow > 0 {
 		if _, err := fmt.Fprintf(w,

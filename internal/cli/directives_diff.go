@@ -405,7 +405,11 @@ func directivesDiffWith(ctx context.Context, ctr *Container, scanA, scanB string
 	_, _ = fmt.Fprintf(stdout, "Diff:    %s → %s\n", diff.ScanA.ID, diff.ScanB.ID)
 	_, _ = fmt.Fprintf(stdout, "Project: %s\n\n", diff.ScanB.ProjectModulePath)
 	if !diff.HasChanges() {
-		_, _ = fmt.Fprintln(stdout, "No directive changes.")
+		// The population is stated with the zero: two scans that agree on eight
+		// directives and two scans that each found none are different findings,
+		// and "No directive changes." alone reads the same for both.
+		_, _ = fmt.Fprintf(stdout, "No directive changes: both scans carry the same %s\n",
+			countOf(len(diff.ScanB.Directives), "directives"))
 		return nil
 	}
 

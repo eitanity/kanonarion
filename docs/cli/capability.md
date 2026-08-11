@@ -106,6 +106,15 @@ capability diff github.com/spf13/cobra@v1.8.0 → github.com/spf13/cobra@v1.8.1:
   + NETWORK
 ```
 
+When neither set moved, the line names the set held in common — or says neither
+version witnesses any capability, which is a different finding from two
+identical non-empty sets:
+
+```
+capability diff github.com/spf13/cobra@v1.8.0 → github.com/spf13/cobra@v1.8.1:
+  no capability change: both versions witness the same 2 capabilities (EXEC, NETWORK)
+```
+
 The diff is only valid when neither side is `Partial`; otherwise it is flagged
 with a caveat and the added/removed sets are provisional. JSON output adds
 `parity_ok`, `added`, `removed`, `common`, and the full `from`/`to` reports.

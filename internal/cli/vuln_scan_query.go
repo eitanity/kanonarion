@@ -713,7 +713,13 @@ func runScanDiff(
 
 	if len(diff.NewFindings) == 0 && len(diff.ResolvedFindings) == 0 && len(diff.WithdrawnFindings) == 0 &&
 		len(diff.ReachabilityChanges) == 0 && len(diff.UnresolvedFindings) == 0 {
-		_, _ = fmt.Fprintln(stdout, "No differences.")
+		// The populations are stated with the zero: two runs that agree on fifteen
+		// affected modules and two runs that each found nothing are different
+		// findings, and "No differences." alone reads the same for both.
+		_, _ = fmt.Fprintf(stdout,
+			"No differences: %s reports %d affected of %d module(s) analysed, %s reports %d of %d, and no finding, reachability or withdrawal moved between them\n",
+			runIDA, diff.RunA.Counts.Affected, diff.RunA.Counts.Analysed,
+			runIDB, diff.RunB.Counts.Affected, diff.RunB.Counts.Analysed)
 		return nil
 	}
 
