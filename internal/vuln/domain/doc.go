@@ -11,9 +11,14 @@
 //
 // Invariants enforced here (the –127 anemic-domain remediation):
 //
-// - Finding ordering is canonical and deterministic — findings are sorted by
-// a single domain comparator (ID, then a semantic-version tiebreak), so
-// two scans of the same inputs produce byte-identical records and hashes.
+// - Collection ordering is canonical and deterministic — SealedCollections
+// classifies every slice on the sealed record shape as a set or as an ordered
+// statement, and the seal step puts the sets into the one order each has, so
+// two scans of the same inputs produce records that differ only where the two
+// scans genuinely differ. It is not byte-identity: ScannedAt is on the wire,
+// so the content hash of a re-scanned record moves even when the verdict does
+// not. A route is the one collection whose order IS the fact, and it is never
+// sorted.
 // - WalkScanRun's verdict fields are never assembled ad hoc by callers. Its two
 // independent axes are derived solely via DetermineCoverageStatus and
 // DetermineFindingsStatus from the module counts, and OverallStatus — a stored

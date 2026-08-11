@@ -489,6 +489,45 @@ above, and re-extraction closes it.
 a caller, paths across a method value are one hop longer, and a method reachable
 only through a method value stops answering "no callers".
 
+## Vulnerability records: canonical collection order, no migration and no bump
+
+**No store migration, no schema-version bump, no pipeline bump.** A
+`VulnerabilityRecord` is now put into canonical order at the moment it is
+sealed: the collections whose order carries no meaning — `findings`, and inside
+each finding `affected_symbols`, `aliases`, `references` and
+`reachable.routes` — are sorted before the content hash is taken. The hops
+inside one route are NOT sorted; a route is a call stack and its order is the
+fact it states. `internal/vuln/domain.SealedCollections` carries the
+classification, and a reflection test fails when a slice is added to the sealed
+shape without being classified either way.
+
+**What it fixes.** Two `vuln-scan --force` runs of one walk against one advisory
+snapshot produced two different records for the same coordinate. Measured on the
+working store over walk `01KZMJBYXA5RJZZYJW2HQ31KE8` (128 modules), 6 of 128
+coordinates differed between the two passes with `content_hash`, `scanned_at`
+and `first_scanned_at` excluded, and every difference was a reordering of the
+same values — `affected_symbols` inside a finding, and the routes that arrive
+beside those symbols. After the change the same loop differs on 0 of 128.
+
+**Where the order is taken, and why that decides the bump.** The seal step, not
+the hash recipe. `VerifyContentHash` recomputes the hash from the record as it
+was read back, so canonicalising inside the recipe would rearrange a stored
+record on the way to checking it: 51 of the 2,006 vulnerability records in the
+working store hold an `affected_symbols` list, and 47 findings hold a route
+list, in an order sorting would change. Those records would have stopped
+verifying and been reported in the wording reserved for altered bytes, which
+would have owed a pipeline bump darkening all 2,006 until re-scan. They are not
+wrong about what they measured — they are arranged differently — so the bump
+would have bought nothing. Taking the order at the seal makes every record
+written from here on reproducible and leaves stored bytes verifiable exactly as
+they are.
+
+**What a reader sees.** A re-scan of unchanged inputs now yields a record that
+differs from the last one only in `scanned_at` and the `content_hash` that
+covers it. A record written before this change and one written after may list
+the same values in two orders; they are the same measurement, and the older one
+is not superseded by the arrangement alone.
+
 ## Purging a table other rows point at
 
 A migration that deletes rows must state what happens to the rows that reference

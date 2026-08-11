@@ -3,7 +3,6 @@ package domain
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -664,14 +663,6 @@ func (f VulnerabilityFinding) FixDisplay() string {
 		return "fixed in " + f.FixedIn
 	}
 	return "no fix available"
-}
-
-// SortFindings orders findings deterministically by ID so a record built from
-// the metadata path hashes and serialises identically across runs.
-func SortFindings(findings []VulnerabilityFinding) {
-	sort.Slice(findings, func(i, j int) bool {
-		return findings[i].ID < findings[j].ID
-	})
 }
 
 // VulnerabilityRecord is the aggregate root for a module's vulnerability scan.

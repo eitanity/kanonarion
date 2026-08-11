@@ -267,6 +267,16 @@ the stored run's coverage is complete — a partial or failed run is never serve
 `--force` re-measures. `--fresh` refreshes the advisory database and re-measures
 only when the refresh changes an advisory listed for a module in this walk.
 
+Two `--force` runs of one walk against one advisory snapshot write two records
+per module and both say the same thing. The lists inside a record — the findings,
+and a finding's affected symbols, aliases, references and reachability routes —
+are written in one fixed order, so the only fields that move between the two are
+`scanned_at` and the `content_hash` that covers it. A record written before this
+was fixed may list the same values in a different order; it is the same
+measurement, and `vuln-show --history` shows both generations rather than
+treating the rearranged one as a change. The hops WITHIN one reachability route
+are never reordered — a route is a call stack, printed entry point first.
+
 **Refreshing the advisory database (`--fresh`)**
 
 Two cheap checks stand between the flag and the multi-megabyte database body:
