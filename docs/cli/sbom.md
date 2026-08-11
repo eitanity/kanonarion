@@ -215,9 +215,36 @@ re-run when `--force` is passed.
 | `--stdlib-from-gomod` | `false` | Version the `stdlib` component from the `go.mod` directive, not the live toolchain. Applies when `sbom` builds a project walk (`--package` with no walk id); refused by name when a walk id is given, because that walk's `stdlib` node is already pinned. See [Standard-library version](walk.md#standard-library-version---stdlib-from-gomod). |
 | `--package <pattern>` | _(none)_ | Go package pattern (e.g. `./cmd/foo`); scopes `components` to modules in that binary's import closure |
 | `--from-modcache[=dir]` | _(off)_ | When `sbom` builds a project walk (e.g. `--package` on a cold store), source modules from an existing Go module cache instead of the network proxy and verify each against the local `go.sum`. Passed bare it uses `go env GOMODCACHE`; an optional value names the cache directory. A `go.sum` mismatch or missing entry fails the command (exit code `10`). See [`audit --from-modcache`](audit.md#sourcing-from-an-existing-module-cache---from-modcache) for the full semantics. |
+| `--allow-verification-downgrade` | `false` | Permit a weaker re-measurement of a module to be recorded alongside a stronger stored one. Without it the weaker measurement is refused, the stronger record is kept and answers, and the run warns. See [Re-measuring with a weaker anchor](fetch.md#re-measuring-with-a-weaker-anchor---allow-verification-downgrade) |
+| `--main-version <version>` | _(none)_ | Version to stamp on the SBOM subject (`metadata.component`) in place of the synthetic `local`. See [Naming the subject](#naming-the-subject---main-version-and---main-license) |
+| `--main-license <spdx>` | _(none)_ | SPDX id or expression to attach to the SBOM subject, which as a local main module has no fetched licence record of its own. See [Naming the subject](#naming-the-subject---main-version-and---main-license) |
 | `--policy` | _(auto-discover `.kanonarion/policy.yaml`)_ | Depth policy file; its fetch stage governs traversal and the `allowed_vcs_hosts` forge allowlist |
 | `--log-level` | `warn` | Log level (`debug`, `info`, `warn`, `error`) |
 | `--no-progress` | `false` | Suppress stderr progress output (the throttled heartbeat and any per-module progress lines); results and warnings are unaffected |
+
+### Naming the subject (`--main-version` and `--main-license`)
+
+The document's subject (`metadata.component`) is the thing being described, and
+on a project walk it is the local main module. It has no proxy artefact, so it
+is stamped with the synthetic version `local` and carries no fetched licence
+record. Both flags supply what the store cannot.
+
+- `--main-version v0.1.1` replaces `local` on the subject's version, `purl` and
+  `bom-ref`, so the subject is a resolvable coordinate. A release document
+  should carry it; without it the release SBOM describes the right bytes under
+  a placeholder name.
+- `--main-license Apache-2.0` attaches an SPDX id or expression to the subject.
+  Without it the subject counts as a component with no licence identity, which
+  is what sets the command's exit `1`.
+
+Both apply **only** when the subject is the local main module. A walk rooted at
+a published module carries that module's own version and licence record, and
+neither flag changes it.
+
+Neither flag is part of the SBOM cache key. A document already cached for the
+same walk, format and pipeline version is re-served as it was stored, so pass
+`--force` (or `--generated-at`, or a `--package` scope, each of which skips the
+cache) when generating a release document over a warm store.
 
 ### Examples
 

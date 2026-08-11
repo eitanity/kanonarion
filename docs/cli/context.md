@@ -448,9 +448,35 @@ fully-clean, complete walk adds no annotation to a clean module.
 | `--tool` | false | Scope to the tooling supply chain (the `go.mod` tool directives' closure). Mutually exclusive with `--project`. `--gomod` only: refused by name on the coordinate, `--walk-id` and local-path forms |
 | `--project` | false | Scope to the complete set: the project's code **and** tooling (the full Go build list). Mutually exclusive with `--tool`. `--gomod` only: refused by name on the coordinate, `--walk-id` and local-path forms |
 | `--walk-id <id>` | | Emit context for every module in the walk as NDJSON |
+| `--direct-only` | false | With `--walk-id`: emit context only for direct dependencies of the walk root |
+| `--affected-only` | false | With `--walk-id`: emit context only for modules the walk's most recent scan run found affected. See [Narrowing a walk](#narrowing-a-walk) |
+| `--modules <path>` | | With `--walk-id`: emit context only for the `module@version` coordinates listed in this file, one per line. See [Narrowing a walk](#narrowing-a-walk) |
 | `--stream` | false | With `--walk-id` or `--gomod`: emit NDJSON (one document per module) without `--json`. Refused on the coordinate and local-path forms, which emit one document |
 | `--store-root <path>` | `~/.kanonarion` | Root directory for blobs and SQLite |
 | `--log-level <level>` | `warn` | Log verbosity: `debug` \| `info` \| `warn` \| `error` |
+
+### Narrowing a walk
+
+`--walk-id` emits one document per module in the walk, which for a full project
+closure is more context than a question usually needs. Three filters cut it
+down, and they compose - a module must pass every filter that is set:
+
+| Filter | Keeps |
+|---|---|
+| `--direct-only` | Modules that are direct dependencies of the walk root |
+| `--affected-only` | Modules the walk's most recent scan run found affected |
+| `--modules <file>` | Modules whose `module@version` coordinate is listed in the file, one per line; blank lines are ignored |
+
+All three act **only** on the `--walk-id` form. Passed on a coordinate, a
+`--gomod` scope or a local path they are refused by name rather than silently
+ignored, and the message says which form does read them.
+
+`--affected-only` is read from the findings axis of the walk's latest scan run,
+in that walk's own frame: a module matched by an advisory is kept whether or not
+its source could be analysed, and another project's scan of a shared dependency
+does not decide it. A walk with no scan run yet yields nothing rather than
+everything - an empty result means "no affected module recorded for this walk",
+so run `vuln-scan` on the walk first.
 
 ## Exit codes
 

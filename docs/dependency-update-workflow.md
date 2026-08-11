@@ -62,41 +62,45 @@ failed/empty walk can never leak into `$WALK_ID`.
 
 ## 3. Signature diff - *how much* changed, and is it breaking?
 
-There is **no `interface-diff` command**. Extract each version's public API
-(deterministic JSON) and diff those. The candidate version must be fetched
-first - the tool tells you so if it isn't.
+`interface-diff` compares two stored interface records and reports what the
+exported surface added, removed and changed. Both records must be extracted
+first, and a version can only be extracted once it has been fetched - each
+command names the one before it when its input is missing.
 
 ```bash
 # Candidate not in the store yet? The error names the fix:
 #   error: ... module not fetched: run 'kanonarion fetch' first
 ./kanonarion fetch golang.org/x/mod@v0.37.0
 
-# Extract + persist the interface record for each version, then dump both.
+# Extract + persist the interface record for each version.
 for v in v0.36.0 v0.37.0; do
-  ./kanonarion interface     golang.org/x/mod@$v --json >/dev/null
-  ./kanonarion interface-show golang.org/x/mod@$v --json > iface-$v.json
+  ./kanonarion interface golang.org/x/mod@$v --json >/dev/null
 done
 
-# Compare exported symbol signatures.
-for v in v0.36.0 v0.37.0; do
-  jq -r '.. | objects | select(has("name") and has("signature"))
-         | "\(.name)\t\(.signature)"' iface-$v.json | sort -u > sig-$v.txt
-done
-diff sig-v0.36.0.txt sig-v0.37.0.txt
+./kanonarion interface-diff golang.org/x/mod@v0.36.0 golang.org/x/mod@v0.37.0
 ```
 
-Read the diff as: lines added = new API (safe to adopt), lines removed or
-changed = **breaking** (return/param changed) → the bump is a refactor, not a
-one-liner.
+Read it as: `removed` and `changed` are **breaking** - the bump is a refactor,
+not a one-liner - while `added` is new surface you can adopt at your own pace.
+Two categories are deliberately outside the breaking count: a signature that
+differs only in a spelling the language treats as identical (`interface{}`
+rewritten as `any`, a result that stopped being named) is reported as
+`spelling`; and across a major-version path pair (`example.com/lib` against
+`example.com/lib/v2`) a declaration that only moved import path is reported as
+`renamed-path`. `renamed-path` is not breaking but still obliges an import
+rewrite, which the output states on its own line.
 
-**Observed (`x/mod` v0.36.0 → v0.37.0):** one addition, nothing removed -
+A zero-breaking result is not a safety verdict. The comparison reads exported
+signatures, so a release that changes no signature at all can still change what
+your calls return; where the delta is non-empty the output says so where the
+zero is printed.
 
-```
-> SetRequireAtMostTwo	func (f *File) SetRequireAtMostTwo(req []*Require)
-```
+**Observed (`x/mod` v0.36.0 → v0.37.0):** one addition (`SetRequireAtMostTwo`),
+nothing removed or changed. Purely additive: adopting v0.37.0 cannot break
+existing call sites on signature grounds.
 
-Purely additive: adopting v0.37.0 cannot break existing call sites on
-signature grounds.
+See [interface-diff](cli/interface-diff.md) for the category table, the JSON
+shape and the exit codes.
 
 ---
 
@@ -109,10 +113,33 @@ walks down (what it reaches).
 ```bash
 ./kanonarion local .
 
-# Do we reach this dependency symbol at all, and from where?
+# Which of the breaking deltas from §3 does our own code call?
+./kanonarion interface-diff golang.org/x/mod@v0.36.0 golang.org/x/mod@v0.37.0 \
+  --used-by ./go.mod
+
+# Do we reach a particular dependency symbol at all, and from where?
 ./kanonarion callers 'golang.org/x/mod/modfile.Parse'
 ./kanonarion callees 'golang.org/x/mod/modfile.Parse'
 ```
+
+`--used-by ./go.mod` resolves the module that `go.mod` declares to its latest
+succeeded project walk and asks the **stored** call graph which of the breaking
+deltas your own code calls, so its answer cannot disagree with `callers` on the
+same symbol. Each breaking delta comes back reached (with the call sites and the
+functions that hold them), not reached, or unmeasured - types, constants and
+variables have no call-graph node, so the call graph cannot answer for them.
+Edges owned by other dependencies are excluded.
+
+Two nuances change how far that answer reaches. The join is measured over
+recorded **call edges**, so a method referenced as a value rather than called is
+not counted and a symbol shown as not reached may still be referenced that way.
+And where the project has no stored call graph the run says the reach could not
+be measured and names `kanonarion local .`, rather than reporting a count of
+zero.
+
+`interface-diff --used-by` exits `5` when a breaking change falls inside the
+used set - the gate to run in CI, distinct from `20` for a bad invocation and
+`4` for a record that is not in the store.
 
 **Observed:** `local .` ingested 2808 nodes / 19401 edges (CHA). `modfile.Parse`
 has **17 callers in our tree** across `internal/cli`, `walk`, `directive`,
@@ -198,33 +225,9 @@ action; version bumps for their own sake are not (see the note below).
 | Signal | Command | Read it as |
 |---|---|---|
 | Staleness | `latest --gomod` | how far behind, and how old |
-| Breaking-ness | `interface` + `jq`/`diff` | removed/changed signature = refactor |
-| Blast radius | `local .` + `callers`/`callees` | callers on the changed symbol = it matters |
+| Breaking-ness | `interface` + `interface-diff` | removed/changed signature = refactor; zero breaking is not safety |
+| Blast radius | `local .` + `interface-diff --used-by`, `callers`/`callees` | a breaking delta your own code calls = it matters |
 | Risk | `vuln-scan` + `reachability` | reachable advisory = act; `Partial` ≠ clean |
 
 Run reachability/callgraph against the **specific candidate version** you intend
 to adopt, not against "latest" as a default - the verdict is version-specific.
-
----
-
-## Road-test result (2026-07-05, pre-v0.1)
-
-Every command above ran clean against the live `./go.mod`:
-
-- `latest --gomod` - 20 code deps reported, 8 stale. ✅
-- `walk --gomod` - status 0, 21 nodes / 50 edges, not partial. ✅
-- `fetch` + `interface`/`interface-show` - v0.37.0 fetched (Verified) and
-  extracted; signature diff surfaced one additive symbol. ✅
-- `local .` - ~2.8k nodes / ~19.4k edges; `callers` found 17 real call sites. ✅
-- `vuln-scan --gomod` / `vuln-scan-show` - **`AllClean`** over 21 modules: the
-  project-rooted scan reads every in-build module `Clean` within the project's
-  real build, with no `version-not-in-project-build` rows and no exploitable
-  findings. ✅
-- `vuln-scan-rescan` - fresh-snapshot pre-release rescan (`vuln.go.dev@2026-06-26`,
-  pulled 2026-07-05): **0 affected**. ✅
-
-Pre-v0.1 decision: **freeze the pins.** No advisories at the current snapshot and
-no forcing function; the stale set is hygiene, deferred to a post-release sweep.
-
-One documentation correction folded in: the signature comparison uses
-`interface` + `jq`/`diff`; there is no `interface-diff` subcommand.

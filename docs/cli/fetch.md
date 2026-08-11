@@ -67,6 +67,7 @@ kanonarion fetch <module>@<version> [flags]
 | `--gomod` | _(search upward from cwd)_ | Path to a `go.mod` file; fetch its dependency scope instead of a positional module |
 | `--tool` | `false` | Fetch the tooling supply chain (the `go.mod` tool directives' closure) instead of a positional module. Mutually exclusive with `--project`; refused by name alongside a positional module |
 | `--project` | `false` | Fetch the complete set: the project's code **and** tooling (the full Go build list). Mutually exclusive with `--tool`; refused by name alongside a positional module |
+| `--allow-verification-downgrade` | `false` | Permit a weaker re-measurement of a coordinate to be recorded alongside a stronger stored one. Without it the weaker measurement is refused, the stronger record is kept and answers, and the run warns. See [Re-measuring with a weaker anchor](#re-measuring-with-a-weaker-anchor---allow-verification-downgrade) |
 | `--policy` | _(auto-discover `.kanonarion/policy.yaml`)_ | Depth policy file; its fetch stage's `allowed_vcs_hosts` selects which forges may be cross-verified |
 | `--json` | `false` | Emit the fact record as JSON |
 
@@ -162,6 +163,39 @@ which is what an air gap is. Reading the store is unaffected throughout.
 `GONOSUMCHECK=1` is honoured as the boolean it is - the checksum database is
 switched off for every module. A `GONOSUMCHECK` naming module prefixes keeps
 its pattern meaning.
+
+### Re-measuring with a weaker anchor (`--allow-verification-downgrade`)
+
+A stored record carries the strongest verification anchor the run that produced
+it could reach. A connected run reaches the checksum-database transparency log;
+an offline run - `--from-modcache`, or anything under `GOPROXY=off` - tops out
+at the local `go.sum`. Re-measuring a coordinate offline therefore produces a
+weaker record than a connected run already stored for it.
+
+By default that weaker measurement is **not recorded**. The run keeps the
+stronger stored record, answers from it, logs a warning naming both verification
+statuses and both acquisition modes, and appends an event to the assurance log.
+Two cases are not downgrades and always land: a re-measurement of equal or
+greater strength, and a full record following a `go.mod`-only one, which adds
+artefact coverage rather than weakening an anchor.
+
+`--allow-verification-downgrade` permits the weaker measurement to be recorded.
+The record ledger is append-only, so the stronger measurement is still held and
+a read composes a coordinate's records by anchor strength - the stronger anchor
+goes on answering. The permitted downgrade is recorded in the assurance log as
+an operator decision.
+
+`--force` is not a substitute: it means "measure this coordinate again now", not
+"accept a weaker anchor for it". An air-gapped or `--from-modcache` run produces
+the weakest measurements available, and is the run that should not pass this
+flag.
+
+One further case: where the kept record's artefacts cannot be read on this run,
+the store still keeps the stronger record and the run returns the bytes it just
+measured, unpersisted.
+
+Accepted by `fetch`, `walk`, `sbom` and `audit`, and it applies to every fetch
+the invocation performs.
 
 ### Staleness annotation
 
