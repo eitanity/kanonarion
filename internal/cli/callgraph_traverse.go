@@ -72,12 +72,9 @@ func runCallers(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 	if err := checkSymbolInScope(ctx, symbolID, uc, sc); err != nil {
 		return err
 	}
-	failedPkg, isPartial, failedList, err := rootPartialStatus(ctx, symbolID, uc, sc.modules)
+	pr, err := rootPartialStatus(ctx, symbolID, uc, sc.modules)
 	if err != nil {
 		return err
-	}
-	if failedPkg != "" {
-		return partialUnresolvedError("callers", symbolID, failedPkg)
 	}
 
 	refs, err := uc.FindCallers(ctx, symbolID, cgapp.PipelineVersion, sc.modules, opts)
@@ -85,7 +82,11 @@ func runCallers(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 		return fmt.Errorf("finding callers: %w", err)
 	}
 
-	if len(refs) == 0 {
+	// A dropped package produces no SSA and therefore no node, so the "not a node
+	// in the graph" classification below would blame the symbol for its module's
+	// build failure. The dropped-edges notice is the accurate reason, and it is
+	// printed instead.
+	if len(refs) == 0 && pr.failedPkg == "" {
 		if cerr := classifyEmptyEdgeResult(ctx, symbolID, uc, sc.modules); cerr != nil {
 			return cerr
 		}
@@ -96,9 +97,20 @@ func runCallers(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 			return err
 		}
 	}
-	if isPartial && !jsonOut {
-		if err := writePartialNotice(stdout, "callers", symbolID, failedList); err != nil {
-			return err
+	// The dropped-edges notice supersedes the generic Partial caveat when the
+	// queried symbol's OWN package is the one that failed: it says the same thing
+	// with the part that bears on this answer, and printing both would state the
+	// gap twice in two strengths.
+	if !jsonOut {
+		switch {
+		case pr.failedPkg != "":
+			if err := writeDroppedEdgesNotice(stdout, "callers", symbolID, pr); err != nil {
+				return err
+			}
+		case pr.isPartial:
+			if err := writePartialNotice(stdout, "callers", symbolID, pr.failedPkgs); err != nil {
+				return err
+			}
 		}
 	}
 	if !jsonOut {
@@ -114,7 +126,7 @@ func runCallers(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 		return err
 	}
 	if len(refs) == 0 && !jsonOut {
-		v, verr := negativeCallVerdict(ctx, symbolID, true, uc, sc.modules, opts)
+		v, verr := negativeCallVerdict(ctx, symbolID, true, uc, sc.modules, opts, pr.failedPkg)
 		if verr != nil {
 			return verr
 		}
@@ -169,12 +181,9 @@ func runCallees(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 	if err := checkSymbolInScope(ctx, symbolID, uc, sc); err != nil {
 		return err
 	}
-	failedPkg, isPartial, failedList, err := rootPartialStatus(ctx, symbolID, uc, sc.modules)
+	pr, err := rootPartialStatus(ctx, symbolID, uc, sc.modules)
 	if err != nil {
 		return err
-	}
-	if failedPkg != "" {
-		return partialUnresolvedError("callees", symbolID, failedPkg)
 	}
 
 	refs, err := uc.FindCallees(ctx, symbolID, cgapp.PipelineVersion, sc.modules, opts)
@@ -182,7 +191,11 @@ func runCallees(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 		return fmt.Errorf("finding callees: %w", err)
 	}
 
-	if len(refs) == 0 {
+	// A dropped package produces no SSA and therefore no node, so the "not a node
+	// in the graph" classification below would blame the symbol for its module's
+	// build failure. The dropped-edges notice is the accurate reason, and it is
+	// printed instead.
+	if len(refs) == 0 && pr.failedPkg == "" {
 		if cerr := classifyEmptyEdgeResult(ctx, symbolID, uc, sc.modules); cerr != nil {
 			return cerr
 		}
@@ -193,9 +206,20 @@ func runCallees(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 			return err
 		}
 	}
-	if isPartial && !jsonOut {
-		if err := writePartialNotice(stdout, "callees", symbolID, failedList); err != nil {
-			return err
+	// The dropped-edges notice supersedes the generic Partial caveat when the
+	// queried symbol's OWN package is the one that failed: it says the same thing
+	// with the part that bears on this answer, and printing both would state the
+	// gap twice in two strengths.
+	if !jsonOut {
+		switch {
+		case pr.failedPkg != "":
+			if err := writeDroppedEdgesNotice(stdout, "callees", symbolID, pr); err != nil {
+				return err
+			}
+		case pr.isPartial:
+			if err := writePartialNotice(stdout, "callees", symbolID, pr.failedPkgs); err != nil {
+				return err
+			}
 		}
 	}
 	if !jsonOut {
@@ -211,7 +235,7 @@ func runCallees(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 		return err
 	}
 	if len(refs) == 0 && !jsonOut {
-		v, verr := negativeCallVerdict(ctx, symbolID, false, uc, sc.modules, opts)
+		v, verr := negativeCallVerdict(ctx, symbolID, false, uc, sc.modules, opts, pr.failedPkg)
 		if verr != nil {
 			return verr
 		}
@@ -326,12 +350,9 @@ func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, js
 	if err := checkSymbolInScope(ctx, symbolID, uc, sc); err != nil {
 		return err
 	}
-	failedPkg, isPartial, failedList, err := rootPartialStatus(ctx, symbolID, uc, sc.modules)
+	pr, err := rootPartialStatus(ctx, symbolID, uc, sc.modules)
 	if err != nil {
 		return err
-	}
-	if failedPkg != "" {
-		return partialUnresolvedError("transitive callers", symbolID, failedPkg)
 	}
 	edges, nodes, err := uc.TraverseCallers(ctx, symbolID, cgapp.PipelineVersion, maxDepth, sc.modules, opts)
 	if err != nil {
@@ -342,7 +363,7 @@ func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, js
 	// a module never analysed, a symbol that is not a node, a module served by
 	// nothing at this pipeline version — and an empty walk that names none of
 	// them reads as a measured absence.
-	if len(edges) == 0 {
+	if len(edges) == 0 && pr.failedPkg == "" {
 		if cerr := classifyEmptyEdgeResult(ctx, symbolID, uc, sc.modules); cerr != nil {
 			return cerr
 		}
@@ -352,9 +373,20 @@ func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, js
 			return err
 		}
 	}
-	if isPartial && !jsonOut {
-		if err := writePartialNotice(stdout, "transitive callers", symbolID, failedList); err != nil {
-			return err
+	// The dropped-edges notice supersedes the generic Partial caveat when the
+	// queried symbol's OWN package is the one that failed: it says the same thing
+	// with the part that bears on this answer, and printing both would state the
+	// gap twice in two strengths.
+	if !jsonOut {
+		switch {
+		case pr.failedPkg != "":
+			if err := writeDroppedEdgesNotice(stdout, "transitive callers", symbolID, pr); err != nil {
+				return err
+			}
+		case pr.isPartial:
+			if err := writePartialNotice(stdout, "transitive callers", symbolID, pr.failedPkgs); err != nil {
+				return err
+			}
 		}
 	}
 	if !jsonOut {
@@ -369,7 +401,7 @@ func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, js
 		return err
 	}
 	if len(nodes) == 0 && !jsonOut {
-		v, verr := negativeCallVerdict(ctx, symbolID, true, uc, sc.modules, opts)
+		v, verr := negativeCallVerdict(ctx, symbolID, true, uc, sc.modules, opts, pr.failedPkg)
 		if verr != nil {
 			return verr
 		}
@@ -382,12 +414,9 @@ func runCalleesTransitive(ctx context.Context, symbolID string, maxDepth int, js
 	if err := checkSymbolInScope(ctx, symbolID, uc, sc); err != nil {
 		return err
 	}
-	failedPkg, isPartial, failedList, err := rootPartialStatus(ctx, symbolID, uc, sc.modules)
+	pr, err := rootPartialStatus(ctx, symbolID, uc, sc.modules)
 	if err != nil {
 		return err
-	}
-	if failedPkg != "" {
-		return partialUnresolvedError("transitive callees", symbolID, failedPkg)
 	}
 	edges, nodes, err := uc.TraverseCallees(ctx, symbolID, cgapp.PipelineVersion, maxDepth, sc.modules, opts)
 	if err != nil {
@@ -398,7 +427,7 @@ func runCalleesTransitive(ctx context.Context, symbolID string, maxDepth int, js
 	// a module never analysed, a symbol that is not a node, a module served by
 	// nothing at this pipeline version — and an empty walk that names none of
 	// them reads as a measured absence.
-	if len(edges) == 0 {
+	if len(edges) == 0 && pr.failedPkg == "" {
 		if cerr := classifyEmptyEdgeResult(ctx, symbolID, uc, sc.modules); cerr != nil {
 			return cerr
 		}
@@ -408,9 +437,20 @@ func runCalleesTransitive(ctx context.Context, symbolID string, maxDepth int, js
 			return err
 		}
 	}
-	if isPartial && !jsonOut {
-		if err := writePartialNotice(stdout, "transitive callees", symbolID, failedList); err != nil {
-			return err
+	// The dropped-edges notice supersedes the generic Partial caveat when the
+	// queried symbol's OWN package is the one that failed: it says the same thing
+	// with the part that bears on this answer, and printing both would state the
+	// gap twice in two strengths.
+	if !jsonOut {
+		switch {
+		case pr.failedPkg != "":
+			if err := writeDroppedEdgesNotice(stdout, "transitive callees", symbolID, pr); err != nil {
+				return err
+			}
+		case pr.isPartial:
+			if err := writePartialNotice(stdout, "transitive callees", symbolID, pr.failedPkgs); err != nil {
+				return err
+			}
 		}
 	}
 	if !jsonOut {
@@ -425,7 +465,7 @@ func runCalleesTransitive(ctx context.Context, symbolID string, maxDepth int, js
 		return err
 	}
 	if len(nodes) == 0 && !jsonOut {
-		v, verr := negativeCallVerdict(ctx, symbolID, false, uc, sc.modules, opts)
+		v, verr := negativeCallVerdict(ctx, symbolID, false, uc, sc.modules, opts, pr.failedPkg)
 		if verr != nil {
 			return verr
 		}

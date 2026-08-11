@@ -278,7 +278,7 @@ func walkTargetMiss(ctx context.Context, uc QueryWalksUseCase, target coordinate
 	scope, serr := walkSelectorZeroScope(ctx, uc, "target module", target.String(), "target coordinate",
 		func(s walkports.WalkSummary) string { return s.Target.String() })
 	if serr == nil {
-		scope.produce = "kanonarion walk " + target.String()
+		scope.produce = walkInvocation(target)
 		scope.keepProduce = true
 	}
 	return walkSelectorMiss(scope, serr, stderr)

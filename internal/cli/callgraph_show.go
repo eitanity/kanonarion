@@ -108,10 +108,11 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 		}
 		if note != "" {
 			return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
-				"no callgraph record for %s at pipeline %s — %s. Re-analyse it:\n  kanonarion callgraph %s",
-				coord, cgapp.PipelineVersion, note, coord)}
+				"no callgraph record for %s at pipeline %s — %s. Re-analyse it:\n  %s",
+				coord, cgapp.PipelineVersion, note, domain.ReanalysisCommand(coord, ""))}
 		}
-		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("no callgraph record for %s — run 'kanonarion callgraph' first", coord)}
+		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
+			"no callgraph record for %s — analyse it first:\n  %s", coord, domain.ReanalysisCommand(coord, ""))}
 	}
 	nodeFilter, limitNodes, limitEdges := f.nodeFilter, f.limitNodes, f.limitEdges
 
@@ -162,7 +163,7 @@ func runCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 		}
 		line := fmt.Sprintf("no callgraph records for %s at pipeline %s", coord, cgapp.PipelineVersion)
 		if note != "" {
-			line += " — " + note + ".\n  re-analyse it: kanonarion callgraph " + coord.String()
+			line += " — " + note + ".\n  re-analyse it: " + domain.ReanalysisCommand(coord, "")
 		}
 		if _, werr := fmt.Fprintln(stdout, line); werr != nil {
 			return fmt.Errorf("writing output: %w", werr)

@@ -235,6 +235,15 @@ type usedByResult struct {
 	// at all — in which case every "not reached" below is an absence of
 	// evidence, not evidence of absence, and the command says so.
 	CallGraphFound bool
+	// DroppedPackages are the consumer's own packages that failed to typecheck,
+	// whose edges were therefore dropped.
+	//
+	// It is disclosed for the same reason 'callers' discloses it: the reach
+	// counts here are a join against the consumer's graph, and a call site in a
+	// package that produced no SSA cannot appear in it. Without this line the two
+	// commands disagree in the worst direction — one states the gap and the other
+	// prints a bare "not reached" over the same missing edges.
+	DroppedPackages []string
 }
 
 // Reached returns the symbols the consumer's own code actually calls.
@@ -288,11 +297,12 @@ func joinUsedBy(ctx context.Context, ctr *Container, diff ifacedomain.InterfaceD
 		ScopeSize: scope.Len(),
 	}
 
-	positions, found, err := consumerNodePositions(ctx, ctr.QueryCallGraph, rec.Target)
+	positions, dropped, found, err := consumerNodePositions(ctx, ctr.QueryCallGraph, rec.Target)
 	if err != nil {
 		return nil, err
 	}
 	res.CallGraphFound = found
+	res.DroppedPackages = dropped
 
 	join := func(sym breakingDelta) (usedSymbol, error) {
 		entry := usedSymbol{Symbol: sym.Symbol, Removed: sym.Removed}
@@ -397,22 +407,50 @@ func callGraphNodeID(id ifacedomain.SymbolID, ptrReceiver bool) (string, bool) {
 	return "", false
 }
 
+// writeUsedByDroppedPackages discloses that some of the consumer's own packages
+// failed to typecheck, so the reach counts joined against its graph cannot see
+// call sites declared in them.
+//
+// It exists so this command and 'callers' say the same thing about the same
+// condition. A silent "not reached" over a package that produced no SSA is the
+// same false negative the edge queries refuse to print bare.
+func writeUsedByDroppedPackages(stdout io.Writer, used *usedByResult) error {
+	if len(used.DroppedPackages) == 0 {
+		return nil
+	}
+	if _, err := fmt.Fprintf(stdout,
+		"  %d of %s own package(s) did not typecheck when it was analysed, so their edges were "+
+			"dropped: %s. A call site declared in one of them cannot appear in any count above — "+
+			"those declarations are unmeasured, not unreached.\n",
+		len(used.DroppedPackages), used.Consumer.Path(), strings.Join(used.DroppedPackages, ", ")); err != nil {
+		return fmt.Errorf("writing used-by dropped packages: %w", err)
+	}
+	return nil
+}
+
 // consumerNodePositions loads the consumer module's own call graph and indexes
 // its nodes by ID, so a caller can be reported with the file and line it is
-// declared at. Returns found=false when the project has no stored graph.
-func consumerNodePositions(ctx context.Context, uc QueryCallGraphUseCase, consumer coordinate.ModuleCoordinate) (map[string]cgdomain.SourcePosition, bool, error) {
+// declared at. It also returns the consumer's own packages whose typecheck
+// failed, because a call site in one of them produced no SSA and so cannot join.
+// Returns found=false when the project has no stored graph.
+func consumerNodePositions(ctx context.Context, uc QueryCallGraphUseCase, consumer coordinate.ModuleCoordinate) (map[string]cgdomain.SourcePosition, []string, bool, error) {
 	rec, found, err := uc.GetCallGraphRecord(ctx, consumer, cgapp.PipelineVersion)
 	if err != nil {
-		return nil, false, fmt.Errorf("loading call graph for %s: %w", consumer, err)
+		return nil, nil, false, fmt.Errorf("loading call graph for %s: %w", consumer, err)
 	}
 	if !found {
-		return nil, false, nil
+		return nil, nil, false, nil
 	}
 	positions := make(map[string]cgdomain.SourcePosition, len(rec.Nodes))
 	for _, n := range rec.Nodes {
 		positions[n.ID] = n.Position
 	}
-	return positions, true, nil
+	var dropped []string
+	if rec.OverallStatus == cgdomain.CallGraphStatusPartial {
+		dropped = append(dropped, rec.FailedPackages...)
+		sort.Strings(dropped)
+	}
+	return positions, dropped, found, nil
 }
 
 // consumerCallers keeps the edges owned by the consumer's own module and
@@ -754,6 +792,9 @@ func printUsedBySection(used *usedByResult, stdout io.Writer) error {
 			return fmt.Errorf("writing used-by absence: %w", err)
 		}
 	}
+	if err := writeUsedByDroppedPackages(stdout, used); err != nil {
+		return err
+	}
 	if len(used.Symbols) == 0 {
 		if _, err := fmt.Fprintln(stdout, "  no breaking change to join."); err != nil {
 			return fmt.Errorf("writing used-by empty: %w", err)
@@ -870,12 +911,15 @@ type usedByJSON struct {
 	WalkID string `json:"walk_id"`
 	// WalkFrame is the GOOS/GOARCH the answering walk resolved for, or
 	// "unrecorded" for a walk written before the frame was projected.
-	WalkFrame      string           `json:"walk_frame"`
-	Consumer       string           `json:"consumer"`
-	ScopeSize      int              `json:"scope_size"`
-	CallGraphFound bool             `json:"call_graph_found"`
-	ReachedCount   int              `json:"reached_count"`
-	Symbols        []usedSymbolJSON `json:"symbols"`
+	WalkFrame      string `json:"walk_frame"`
+	Consumer       string `json:"consumer"`
+	ScopeSize      int    `json:"scope_size"`
+	CallGraphFound bool   `json:"call_graph_found"`
+	// DroppedPackages are the consumer's own packages that failed to typecheck,
+	// so a call site declared in one of them cannot appear in any count here.
+	DroppedPackages []string         `json:"dropped_packages,omitempty"`
+	ReachedCount    int              `json:"reached_count"`
+	Symbols         []usedSymbolJSON `json:"symbols"`
 	// Touched is the non-breaking declarations this bump moved — respellings and
 	// path renames — joined only when the zero-breaking statement is printed, and
 	// never part of the gate.
@@ -1011,6 +1055,7 @@ func toUsedByJSON(used *usedByResult) *usedByJSON {
 		Consumer:            used.Consumer.Path() + "@" + used.Consumer.Version(),
 		ScopeSize:           used.ScopeSize,
 		CallGraphFound:      used.CallGraphFound,
+		DroppedPackages:     used.DroppedPackages,
 		ReachedCount:        len(used.Reached()),
 		Symbols:             toUsedSymbolsJSON(used.Symbols, ""),
 		Touched:             toUsedSymbolsJSON(used.Touched, "touched"),

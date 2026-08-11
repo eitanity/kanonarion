@@ -952,47 +952,46 @@ func setupPartialStore(t *testing.T, callers []cgports.CallEdgeRef) *testfakes.F
 	return uc
 }
 
-func TestRunCallers_RootInFailedPackage_Unresolved(t *testing.T) {
-	// The query root lives in a package that did not typecheck, so its edges
-	// were dropped. A bare "no callers" would be a false negative; the command
-	// must downgrade to a directing unresolved error instead.
+// The query root lives in a package that did not typecheck, so its edges were
+// dropped. That is a gap in the analysis, not a property of the symbol, and it
+// is reported as one: the answer is served with the gap stated on it and its
+// verdict downgraded. It used to be a hard error, which suppressed the call
+// sites a consumer's own complete graph had recorded.
+func TestRunCallers_RootInFailedPackage_Unmeasured(t *testing.T) {
 	uc := setupPartialStore(t, nil)
 	var buf bytes.Buffer
-	err := runCallers(context.Background(), "example.com/app/broken.Broken", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
-	if err == nil {
-		t.Fatal("expected unresolved error for a root in a failed package, got nil")
+	if err := runCallers(context.Background(), "example.com/app/broken.Broken", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
+		t.Fatalf("a dropped-edge package was refused rather than reported: %v", err)
 	}
-	if !strings.Contains(err.Error(), "unresolved") ||
-		!strings.Contains(err.Error(), "example.com/app/broken") ||
-		!strings.Contains(err.Error(), "did not typecheck") {
-		t.Errorf("expected unresolved-partial diagnostic naming the package, got: %v", err)
+	out := buf.String()
+	if !strings.Contains(out, "example.com/app/broken") || !strings.Contains(out, "did not typecheck") {
+		t.Errorf("expected the dropped package named, got: %q", out)
 	}
-	if buf.Len() != 0 {
-		t.Errorf("expected no result output on unresolved, got: %q", buf.String())
+	if !strings.Contains(out, "verdict: UNRESOLVED") {
+		t.Errorf("expected the empty answer downgraded, got: %q", out)
 	}
 }
 
-func TestRunCallees_RootInFailedPackage_Unresolved(t *testing.T) {
+func TestRunCallees_RootInFailedPackage_Unmeasured(t *testing.T) {
 	uc := setupPartialStore(t, nil)
 	var buf bytes.Buffer
-	err := runCallees(context.Background(), "example.com/app/broken.Broken", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
-	if err == nil {
-		t.Fatal("expected unresolved error for a root in a failed package, got nil")
+	if err := runCallees(context.Background(), "example.com/app/broken.Broken", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
+		t.Fatalf("a dropped-edge package was refused rather than reported: %v", err)
 	}
-	if !strings.Contains(err.Error(), "unresolved") || !strings.Contains(err.Error(), "example.com/app/broken") {
-		t.Errorf("expected unresolved-partial diagnostic, got: %v", err)
+	if !strings.Contains(buf.String(), "example.com/app/broken") {
+		t.Errorf("expected the dropped package named, got: %q", buf.String())
 	}
 }
 
-func TestRunCallersTransitive_RootInFailedPackage_Unresolved(t *testing.T) {
+func TestRunCallersTransitive_RootInFailedPackage_Unmeasured(t *testing.T) {
 	uc := setupPartialStore(t, nil)
 	var buf bytes.Buffer
-	err := runCallersTransitive(context.Background(), "example.com/app/broken.Broken", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
-	if err == nil {
-		t.Fatal("expected unresolved error for a transitive root in a failed package, got nil")
+	if err := runCallersTransitive(context.Background(), "example.com/app/broken.Broken", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
+		t.Fatalf("a dropped-edge package was refused rather than reported: %v", err)
 	}
-	if !strings.Contains(err.Error(), "unresolved") || !strings.Contains(err.Error(), "transitive callers") {
-		t.Errorf("expected unresolved transitive diagnostic, got: %v", err)
+	out := buf.String()
+	if !strings.Contains(out, "transitive callers") || !strings.Contains(out, "example.com/app/broken") {
+		t.Errorf("expected the transitive answer to state its gap, got: %q", out)
 	}
 }
 

@@ -137,22 +137,44 @@ func (c CallGraphConflict) Remedy() Remedy {
 	coord := c.Coordinate.String()
 	switch c.Field {
 	case ConflictFieldAnalysisSource:
+		// The source to fall back to is decided by the coordinate: a project
+		// coordinate's records are read off a working tree, never a module zip, so
+		// naming --source zip for one directs the reader at a record that cannot
+		// exist.
+		readable := AnalysisSourceModuleZip
+		if !IsReFetchable(c.Coordinate) {
+			readable = AnalysisSourceWorktree
+		}
 		return Remedy{
 			Lead: "A record names a kind of source this build cannot read, so it was written by a newer kanonarion. " +
 				"Upgrade, or read only the sources this build names",
 			Lines: []string{
 				"kanonarion callgraph-show " + coord + " --history",
-				"kanonarion callgraph-show " + coord + " --source zip",
+				"kanonarion callgraph-show " + coord + " --source " + string(readable),
 			},
 		}
 	case ConflictFieldArtefactIdentity:
+		if !IsReFetchable(c.Coordinate) {
+			// A project coordinate names a working tree, not published bytes. There
+			// is nothing to fetch, and two identities for it mean two trees were
+			// analysed under one name — which only re-analysing the tree in hand
+			// settles.
+			return Remedy{
+				Lead: "Two records read different bytes for one project coordinate, so two working trees were analysed under one name. " +
+					"Inspect the generations, then analyse the tree you mean",
+				Lines: []string{
+					"kanonarion callgraph-show " + coord + " --history",
+					ReanalysisCommand(c.Coordinate, ""),
+				},
+			}
+		}
 		return Remedy{
 			Lead: "Two records read different bytes for one pinned version, so no re-analysis of the stored bytes settles it. " +
 				"Inspect the generations, then fetch the module again and analyse what that fetch pins",
 			Lines: []string{
 				"kanonarion callgraph-show " + coord + " --history",
 				"kanonarion fetch " + coord,
-				"kanonarion callgraph " + coord + " --force",
+				ForcedReanalysisCommand(c.Coordinate, ""),
 			},
 		}
 	default:
@@ -166,7 +188,7 @@ func (c CallGraphConflict) Remedy() Remedy {
 				"Inspect the generations, then measure again",
 			Lines: []string{
 				"kanonarion callgraph-show " + coord + " --history",
-				"kanonarion callgraph " + coord + " --force",
+				ForcedReanalysisCommand(c.Coordinate, ""),
 			},
 		}
 	}

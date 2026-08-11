@@ -89,6 +89,16 @@ const (
 	// unreached. It is named rather than hidden: the entry point is real, and so
 	// is the fact that its caller is outside the graph.
 	SinkTestHarnessEntry SinkKind = "test-harness-entry"
+	// SinkDroppedPackageEdges is the queried symbol's own package failing to
+	// typecheck, so the analyser built no SSA for it and every edge with an end
+	// in that package was dropped.
+	//
+	// It is its own kind rather than a flavour of type-only, because it is a
+	// different gap with a different owner: a type-only module was analysed at a
+	// level someone chose, while a dropped package is a build failure inside the
+	// analysed artefact — often a dependency's, which the reader of the answer
+	// has no tree to fix.
+	SinkDroppedPackageEdges SinkKind = "dropped-package-edges"
 	// SinkTestScopeUnmeasured is a module whose _test.go declarations were not
 	// part of the analysis. Test fakes and table-driven callers are a systematic
 	// part of what calls a port, so an empty answer over such a module measures
@@ -187,6 +197,11 @@ type NegativeVerdictInputs struct {
 	// Analysed means the answer covers call edges only, which cannot see a
 	// symbol reached by having its value registered somewhere.
 	ReferenceScope ReferenceScope
+	// DroppedEdgePackage names the package owning the queried symbol whose
+	// typecheck failed, when one did: its edges were dropped wholesale, so an
+	// empty answer over it is unmeasured rather than absent. Empty when the
+	// symbol's own package typechecked.
+	DroppedEdgePackage string
 	// TestsExcludedByRequest is set when the caller asked for the test surface
 	// to be dropped. It is not a soundness sink — the scope was chosen, not
 	// missed — but it still narrows what an empty answer means, so it is named
@@ -211,6 +226,20 @@ func ClassifyNegativeVerdict(in NegativeVerdictInputs) Verdict {
 			Kind:   SinkTypeOnlyCallee,
 			Site:   site,
 			Detail: "module completeness " + in.ModuleLevel.String(),
+		})
+	}
+
+	// The queried symbol's own package never produced SSA, so no edge with an end
+	// in it survived. Nothing about an empty answer here is a measurement.
+	if in.DroppedEdgePackage != "" {
+		site := in.QueriedNode.ID
+		if site == "" {
+			site = in.MethodName
+		}
+		sinks = append(sinks, SoundnessSink{
+			Kind:   SinkDroppedPackageEdges,
+			Site:   site,
+			Detail: "package " + in.DroppedEdgePackage + " did not typecheck, so its edges were dropped",
 		})
 	}
 

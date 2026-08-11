@@ -112,15 +112,18 @@ func TestPrintTransitiveResult_JSONNeverEncodesNull(t *testing.T) {
 	}
 }
 
-// TestRunCallers_PartialRootIsAHardError: a root in a package that did not
-// typecheck cannot be answered at all — its edges were dropped, so any "none"
-// would be a false negative.
-func TestRunCallers_PartialRootIsAHardError(t *testing.T) {
+// TestRunCallers_PartialRootIsStatedNotRefused: a root in a package that did not
+// typecheck is answered with the gap on the answer. Refusing it withheld edges
+// the store held — the callers of a dependency's symbol live in the consumer's
+// own graph, which the dependency's build failure does not touch.
+func TestRunCallers_PartialRootIsStatedNotRefused(t *testing.T) {
 	uc := traverseFake(t, true)
 	var buf bytes.Buffer
-	err := runCallers(context.Background(), "example.com/m/broken.Fn", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
-	if err == nil || !strings.Contains(err.Error(), "did not typecheck") {
-		t.Fatalf("want an unresolved-partial error, got %v", err)
+	if err := runCallers(context.Background(), "example.com/m/broken.Fn", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
+		t.Fatalf("want an answer carrying its gap, got error %v", err)
+	}
+	if !strings.Contains(buf.String(), "did not typecheck") {
+		t.Fatalf("the gap is not stated on the answer: %q", buf.String())
 	}
 }
 

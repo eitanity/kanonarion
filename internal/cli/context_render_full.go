@@ -64,7 +64,7 @@ func printFullProvenance(w *errWriter, p contextProvenance) {
 func printFullDependencies(w *errWriter, d contextDependencies, mod string) {
 	switch d.Status {
 	case sectionStatusNotRun:
-		w.printf("(not run — run: kanonarion walk %s)\n", mod)
+		w.printf("(not run — run: %s)\n", walkInvocationForRendered(mod))
 	case sectionStatusReadError:
 		w.printf("(failed: %s)\n", d.Error)
 	default:

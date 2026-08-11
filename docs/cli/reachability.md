@@ -210,7 +210,7 @@ over — the test axis, the exported-API flag, and the edges into the node.
 | `exported-api` | The root is exported by the analysed module and called by nothing in it. A consumer could drive it; this project does not. |
 | `internal` | The root has in-project callers and is not itself an entry point — the route begins where the analyser stopped, not where execution starts. The `remedy` names the `kanonarion callers` query that walks the hops above it. |
 | `test` | The root is a test-scope declaration. This is printed **on the same line as the verdict**, so a test-only reach is never read as a production one. |
-| `unrooted` | The graph could not say, with the reason named — no call graph stored for the module, a graph analysed at a fidelity that holds no nodes, or an entry point that is not a node in it. |
+| `unrooted` | The graph could not say, with the reason named — no call graph stored for the module, a graph analysed at a fidelity that holds no nodes, or an entry point that is not a node in it. The `remedy` is the command that re-derives *that* module's graph: `kanonarion local <dir>` when the route starts in the project's own module (which carries the synthetic `@local` version and cannot be fetched), `kanonarion callgraph <module>@<version>` when it starts in a dependency. |
 
 Two rules keep this honest:
 

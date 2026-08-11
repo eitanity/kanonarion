@@ -338,3 +338,77 @@ func TestClassify_EmptyRouteIsNotClassified(t *testing.T) {
 		t.Errorf("store read %d time(s) for an empty route", graphs.reads)
 	}
 }
+
+// A remedy is only a remedy if the coordinate it names can be handed to the
+// command it names. A project module carries the synthetic "local" version, and
+// "kanonarion callgraph <path>@local" exits non-zero — the coordinate names no
+// published artefact, so no fetch can ever satisfy it and the operator's next
+// step is a second dead end. Every unavailable branch is covered because they
+// built the string independently and fixing one left the others impossible.
+func TestClassify_RemedyNamesACommandTheCoordinateCanRun(t *testing.T) {
+	depCoord := coordinatetest.MustNew("example.com/dep", "v1.2.0")
+	depRoute := vuldomain.ReachabilityRoute{
+		{ModulePath: "example.com/dep", ModuleVersion: "v1.2.0", Package: "example.com/dep", Symbol: "Parse"},
+		{ModulePath: "example.com/other", ModuleVersion: "v0.1.0", Package: "example.com/other", Symbol: "Read"},
+	}
+	otherNode := []cgdomain.CallNode{node("example.com/app/handlers.other", "", "other")}
+
+	// gap names the three ways a graph can be unavailable, keyed by the record
+	// the store serves for the coordinate under test.
+	gaps := map[string]func(coord string) map[string]cgdomain.CallGraphRecord{
+		"no record for the module": func(string) map[string]cgdomain.CallGraphRecord {
+			return map[string]cgdomain.CallGraphRecord{}
+		},
+		"a record that holds no nodes": func(coord string) map[string]cgdomain.CallGraphRecord {
+			return map[string]cgdomain.CallGraphRecord{coord: {Completeness: cgdomain.CompletenessMetadataOnly}}
+		},
+		"the entry point is not a node": func(coord string) map[string]cgdomain.CallGraphRecord {
+			return map[string]cgdomain.CallGraphRecord{coord: appRecord(otherNode, nil)}
+		},
+	}
+
+	kinds := []struct {
+		name       string
+		coordKey   string
+		rooting    vuldomain.Rooting
+		record     coordinate.ModuleCoordinate
+		route      vuldomain.ReachabilityRoute
+		wantPrefix string
+	}{
+		{
+			name:       "a project coordinate is re-derived by 'local'",
+			coordKey:   "example.com/app@local",
+			rooting:    vuldomain.TargetRootedAt(coordinatetest.MustNew("example.com/app", "local")),
+			record:     coordinatetest.MustNew("example.com/app", "local"),
+			route:      routeFrom(handlerFrame("ServeHTTP", "*Server")),
+			wantPrefix: "kanonarion local ",
+		},
+		{
+			name:       "a published coordinate is re-derived by 'callgraph'",
+			coordKey:   "example.com/dep@v1.2.0",
+			rooting:    vuldomain.RootingIsolated,
+			record:     depCoord,
+			route:      depRoute,
+			wantPrefix: "kanonarion callgraph example.com/dep@v1.2.0",
+		},
+	}
+
+	for _, k := range kinds {
+		for gapName, build := range gaps {
+			t.Run(k.name+"/"+gapName, func(t *testing.T) {
+				graphs := &fakeGraphs{records: build(k.coordKey)}
+				got := rootclass.New(graphs, pipelineVersion).
+					Classify(context.Background(), k.rooting, k.record, k.route)
+				if got.Kind != vuldomain.RootUnrooted {
+					t.Fatalf("Kind = %q (reason %q), want unrooted", got.Kind, got.Reason)
+				}
+				if !strings.HasPrefix(got.Remedy, k.wantPrefix) {
+					t.Fatalf("Remedy = %q, want it to begin %q", got.Remedy, k.wantPrefix)
+				}
+				if strings.Contains(got.Remedy, "callgraph") && strings.Contains(got.Remedy, "@local") {
+					t.Errorf("Remedy = %q hands a project coordinate to a command that fetches", got.Remedy)
+				}
+			})
+		}
+	}
+}

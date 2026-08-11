@@ -173,7 +173,8 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 
 	switch out.Dependencies.Status {
 	case sectionStatusNotRun:
-		w.printf("  Dependencies:    (not run — run: kanonarion walk %s@%s)\n", out.Module.Path, out.Module.Version)
+		w.printf("  Dependencies:    (not run — run: %s)\n",
+			walkInvocationForRendered(out.Module.Path+"@"+out.Module.Version))
 	case sectionStatusReadError:
 		w.printf("  Dependencies:    (failed: %s)\n", out.Dependencies.Error)
 	default:

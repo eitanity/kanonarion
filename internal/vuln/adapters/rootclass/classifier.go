@@ -65,7 +65,11 @@ func New(graphs GraphReader, pipelineVersion string) *Classifier {
 type graph struct {
 	// unavailable is why this graph cannot classify anything, empty when it can.
 	unavailable string
-	// remedy is the command that would make it available.
+	// remedy is the command that would make it available. It is decided by the
+	// coordinate rather than written here, because which command re-derives a
+	// graph is a property of what the coordinate names: a project module carries
+	// the synthetic "local" version, and "callgraph <path>@local" is an
+	// instruction that cannot succeed.
 	remedy string
 	// nodes is keyed by (package, receiver, symbol) — what a route frame carries.
 	// A node ID would be the obvious key, but the frame does not hold one and
@@ -137,7 +141,7 @@ func (c *Classifier) facts(ctx context.Context, coord coordinate.ModuleCoordinat
 			Unavailable: fmt.Sprintf(
 				"the route's entry point %s is not a node in %s's call graph, so the graph cannot say what enters it",
 				frame, coord),
-			UnavailableRemedy: "kanonarion callgraph " + coord.String() + ", to re-analyse the module the route starts in",
+			UnavailableRemedy: callgraphdomain.ReanalysisCommand(coord, "") + ", to re-analyse the module the route starts in",
 		}
 	}
 	return vuldomain.RootFacts{
@@ -217,7 +221,7 @@ func (c *Classifier) read(ctx context.Context, coord coordinate.ModuleCoordinate
 	case !found:
 		return &graph{
 			unavailable: fmt.Sprintf("no call graph is stored for %s, so nothing can be said about what enters the route", coord),
-			remedy:      "kanonarion callgraph " + coord.String(),
+			remedy:      callgraphdomain.ReanalysisCommand(coord, ""),
 		}
 	case len(rec.Nodes) == 0:
 		// A record with no nodes is not an empty module. It is a module analysed at
@@ -228,7 +232,7 @@ func (c *Classifier) read(ctx context.Context, coord coordinate.ModuleCoordinate
 			unavailable: fmt.Sprintf(
 				"%s's call graph was analysed at %s and holds no nodes, so it cannot say what enters the route",
 				coord, rec.Completeness),
-			remedy: "kanonarion callgraph " + coord.String(),
+			remedy: callgraphdomain.ReanalysisCommand(coord, ""),
 		}
 	}
 

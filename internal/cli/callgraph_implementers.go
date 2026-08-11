@@ -181,10 +181,14 @@ func (l implementerLookup) verdict(present bool, opts ports.EdgeQueryOptions) do
 	}
 	var sinks []domain.SoundnessSink
 	if l.partialPkg != "" {
+		// Its own kind, matching what callers/callees now report for the same
+		// condition: a dropped package is a build failure inside the analysed
+		// artefact, not a module analysed at a level someone chose, and the two
+		// were indistinguishable while they shared a kind.
 		sinks = append(sinks, domain.SoundnessSink{
-			Kind:   domain.SinkTypeOnlyCallee,
+			Kind:   domain.SinkDroppedPackageEdges,
 			Site:   l.iface.ID,
-			Detail: "package " + l.partialPkg + " did not typecheck",
+			Detail: "package " + l.partialPkg + " did not typecheck, so its edges were dropped",
 		})
 	}
 	if l.belowFull != domain.CompletenessUnknown && !l.belowFull.IsBuiltWithBodies() {

@@ -637,9 +637,23 @@ calls only when every hop is `Direct` **and** no hop is a reference.
 | `Cancelled` | Context cancelled before or during extraction |
 | `ExcludedByConfig` | Module skipped because it matches a `callgraph.exclude` policy entry |
 
-A query whose root symbol lies in a failed package is refused outright rather
-than answered: that package's edges were dropped, so any "none" would be a false
-negative.
+A query whose root symbol lies in a failed package still answers, and says what
+it could not measure. That package produced no SSA, so edges with an end inside
+it were dropped and the symbol is not a node in its own module's graph — but
+edges INTO it recorded in a consumer's complete graph are unaffected, and those
+are what the answer lists. The output carries a `notice: unmeasured on one
+side …` line naming the package, and an empty answer is `verdict: UNRESOLVED`
+with a `dropped-package-edges` sink rather than a confident absence.
+
+The remedy the notice names depends on whose module failed. A project
+coordinate's package is yours to fix, so it names `local`; a fetched
+dependency's failure is in that dependency's own sources, which the notice says
+plainly before naming `callgraph-show` to see it and `callgraph … --force` to
+measure it again.
+
+`interface-diff --used-by` discloses the same condition for the *consumer's*
+own packages, because its reach counts are a join against the consumer's graph
+and a call site in a package that never compiled cannot appear in one.
 
 ## Storage
 

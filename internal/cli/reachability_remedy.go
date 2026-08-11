@@ -4,6 +4,7 @@ import (
 	"path/filepath"
 	"strings"
 
+	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 )
 
@@ -41,6 +42,25 @@ func (r reachabilityRemedy) String() string {
 	return b.String()
 }
 
+// walkInvocation names the command that produces a walk of coord.
+//
+// A project module carries the synthetic "local" version, which the walk command
+// cannot take positionally: there is no published artefact to resolve, and the
+// form that walks a tree is --gomod. Everything that prints "walk <coordinate>"
+// as advice goes through here so the two forms are not chosen per site.
+func walkInvocation(coord coordinate.ModuleCoordinate) string {
+	return walkInvocationForRendered(coord.String())
+}
+
+// walkInvocationForRendered is walkInvocation for a coordinate a caller already
+// holds as "<path>@<version>" text rather than as a value.
+func walkInvocationForRendered(coord string) string {
+	if strings.HasSuffix(coord, "@"+coordinate.LocalVersion) {
+		return "kanonarion walk --gomod ./go.mod"
+	}
+	return "kanonarion walk " + coord
+}
+
 // remedyScanModule is the remedy for a coordinate the store holds no usable
 // reachability answer for and has no walk of: walk it, then scan that walk.
 //
@@ -52,7 +72,7 @@ func remedyScanModule(coord coordinate.ModuleCoordinate) reachabilityRemedy {
 	return reachabilityRemedy{
 		lead: "Run",
 		lines: []string{
-			"kanonarion walk " + coord.String(),
+			walkInvocation(coord),
 			"kanonarion vuln-scan --module " + coord.String() + " --reachability",
 		},
 	}
@@ -79,7 +99,7 @@ func remedyRebuildGraphThenRescan(coord coordinate.ModuleCoordinate) reachabilit
 	return reachabilityRemedy{
 		lead: "Run",
 		lines: []string{
-			"kanonarion callgraph " + coord.String(),
+			cgdomain.ReanalysisCommand(coord, ""),
 			"kanonarion vuln-scan --module " + coord.String() + " --reachability --force",
 		},
 	}
