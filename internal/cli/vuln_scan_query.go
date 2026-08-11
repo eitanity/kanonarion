@@ -244,9 +244,13 @@ func newVulnScanShowCmd(stdout, stderr io.Writer) *cobra.Command {
 }
 
 type scanAffectedModule struct {
-	Coordinate string                           `json:"coordinate"`
-	Status     string                           `json:"status"`
-	Findings   []vuldomain.VulnerabilityFinding `json:"findings,omitempty"`
+	Coordinate string `json:"coordinate"`
+	Status     string `json:"status"`
+	// Findings carry the rung behind each reachability answer. This command's
+	// text surface prints finding IDs only, so --json is the sole place a
+	// consumer reads a verdict from a scan run, and a negative published without
+	// the rung is a negative published without what was searched to reach it.
+	Findings []vulnFindingJSON `json:"findings,omitempty"`
 }
 
 type scanShowJSON struct {
@@ -469,7 +473,7 @@ func buildScanAffectedModules(ctx context.Context, run vuldomain.WalkScanRun, uc
 		module := scanAffectedModule{
 			Coordinate: coord.String(),
 			Status:     string(rec.OverallStatus),
-			Findings:   rec.Findings,
+			Findings:   toVulnFindingsJSON(rec.Findings),
 		}
 		// The findings axis has three values and each owes its own section. A
 		// withdrawn module is not affected, so it must not appear in the affected
@@ -694,7 +698,7 @@ func runScanDiff(
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(diff); err != nil {
+		if err := enc.Encode(toScanDiffJSON(diff)); err != nil {
 			return fmt.Errorf("encoding scan diff: %w", err)
 		}
 		return nil
@@ -753,7 +757,13 @@ func runScanDiff(
 			now := "not reachable"
 			if c.IsReachable {
 				now = "reachable"
-			} else if c.Finding.AdvisoryNamesNoSymbols {
+			} else if soundness, _ := vuldomain.NegativeSoundness(c.Finding); soundness != vuldomain.SoundnessNotStated {
+				// The transition an operator acts on is the one INTO a negative, and
+				// the rung says how thorough the search behind that negative was. A
+				// bare "not reachable" here reads as a resolution.
+				now = "not reachable — " + soundness.String()
+			}
+			if !c.IsReachable && c.Finding.AdvisoryNamesNoSymbols {
 				// The later run did not search and fail; there was no symbol for it to
 				// search for. Rendering this as "not reachable" would read as a
 				// resolution and invite the operator to stand down on a module that is

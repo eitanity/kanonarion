@@ -67,6 +67,17 @@ type reachabilityFinding struct {
 	// matched symbols — which of a multi-binary build's artefacts ships the
 	// vulnerable code.
 	MatchedBinaries []string `json:"matched_binaries,omitempty"`
+	// Soundness states how thorough the search behind a NEGATIVE verdict was, and
+	// SoundnessReason names its basis. They are emitted on every finding: on a
+	// verdict with no negative to qualify Soundness reads "not stated", which is a
+	// statement, and is not the same as the key being absent.
+	//
+	// The probe publishes two kinds of negative and they do not earn the same
+	// rung. One it measured — the symbol is not in the table of the binary this
+	// build links — and one it carried from a stored scan, which earns whatever
+	// that scan's own analyser and fidelity earn. Each states its own.
+	Soundness       string `json:"soundness"`
+	SoundnessReason string `json:"soundness_reason,omitempty"`
 }
 
 type reachabilityModule struct {
@@ -391,7 +402,13 @@ type isolatedAside struct {
 	Confidence string `json:"confidence,omitempty"`
 	Method     string `json:"method,omitempty"`
 	Fidelity   string `json:"fidelity,omitempty"`
-	ScannedAt  string `json:"scanned_at,omitempty"`
+	// Soundness and SoundnessReason qualify the aside's own negative. It is a
+	// verdict like any other and it is published like any other, so it owes the
+	// same statement of what was searched to reach it — the more so here, where a
+	// reader is being shown two answers and asked to weigh them.
+	Soundness       vuldomain.ReachabilitySoundness `json:"soundness"`
+	SoundnessReason string                          `json:"soundness_reason,omitempty"`
+	ScannedAt       string                          `json:"scanned_at,omitempty"`
 }
 
 // isolatedAsideFor renders what the isolated-frame record says about vulnID, or
@@ -410,12 +427,15 @@ func isolatedAsideFor(rec vuldomain.VulnerabilityRecord, has bool, vulnID string
 	if f.Reachable.IsReachable {
 		verdict = verdictReachable
 	}
+	soundness, soundnessReason := vuldomain.NegativeSoundness(f)
 	return &isolatedAside{
-		Verdict:    verdict,
-		Confidence: string(f.Reachable.Confidence),
-		Method:     f.Reachable.DerivedBy.Analyser.String(),
-		Fidelity:   f.Reachable.DerivedBy.Fidelity,
-		ScannedAt:  rec.ScannedAt.UTC().Format(time.RFC3339),
+		Verdict:         verdict,
+		Confidence:      string(f.Reachable.Confidence),
+		Method:          f.Reachable.DerivedBy.Analyser.String(),
+		Fidelity:        f.Reachable.DerivedBy.Fidelity,
+		Soundness:       soundness,
+		SoundnessReason: soundnessReason,
+		ScannedAt:       rec.ScannedAt.UTC().Format(time.RFC3339),
 	}
 }
 
@@ -448,8 +468,14 @@ type vulnReachabilityQuery struct {
 	// They are derived from the stored answer rather than read off a field a scan
 	// wrote, so every record already in a store carries them — see
 	// vuldomain.NegativeSoundness.
-	Soundness       string `json:"soundness,omitempty"`
-	SoundnessReason string `json:"soundness_reason,omitempty"`
+	//
+	// Soundness is never omitted. Its zero value is the empty string, so omitting
+	// it made a positive verdict — which HAS no rung, and says so — look identical
+	// on the wire to a reply that never derived one. Now that every surface
+	// publishing a verdict derives the rung, that is the distinction a consumer
+	// comparing two surfaces needs, and it only exists if the key is always there.
+	Soundness       vuldomain.ReachabilitySoundness `json:"soundness"`
+	SoundnessReason string                          `json:"soundness_reason,omitempty"`
 	// Routes are the paths that reach the vulnerable symbol, entry point first,
 	// each hop naming its module and version where the analyser knew them.
 	Routes []reachabilityRouteOutput `json:"routes,omitempty"`
@@ -733,7 +759,7 @@ func vulnReachabilityAnswer(coord coordinate.ModuleCoordinate, rec vuldomain.Vul
 			Method:          f.Reachable.DerivedBy.Analyser.String(),
 			Fidelity:        f.Reachable.DerivedBy.Fidelity,
 			Rooting:         f.Reachable.DerivedBy.Rooting.String(),
-			Soundness:       string(soundness),
+			Soundness:       soundness,
 			SoundnessReason: soundnessReason,
 			Routes:          routes,
 			RouteRoot:       firstRouteRoot(routes),
@@ -766,7 +792,7 @@ func vulnReachabilityAnswer(coord coordinate.ModuleCoordinate, rec vuldomain.Vul
 		Method:          f.Reachable.DerivedBy.Analyser.String(),
 		Fidelity:        f.Reachable.DerivedBy.Fidelity,
 		Rooting:         f.Reachable.DerivedBy.Rooting.String(),
-		Soundness:       string(soundness),
+		Soundness:       soundness,
 		SoundnessReason: soundnessReason,
 		Routes:          routes,
 		RouteRoot:       firstRouteRoot(routes),
@@ -847,8 +873,8 @@ func derivationLine(res vulnReachabilityQuery) string {
 	// the answer may be acted on at all. Confidence says how sure the verdict is;
 	// soundness says what was searched, and an operator who is about to NOT
 	// upgrade is asking the second question.
-	if res.Soundness != "" {
-		parts = append(parts, "soundness: "+res.Soundness)
+	if res.Soundness != vuldomain.SoundnessNotStated {
+		parts = append(parts, "soundness: "+res.Soundness.String())
 	}
 	parts = append(parts, "by: "+res.Method)
 	if res.Fidelity != "" {
@@ -916,7 +942,7 @@ func printRouteRoot(stdout io.Writer, root *routeRootOutput) {
 // there, and an operator reading a route does not need to be told the route was
 // found by finding it.
 func printSoundness(stdout io.Writer, res vulnReachabilityQuery) {
-	if res.Soundness == "" || res.SoundnessReason == "" {
+	if res.Soundness == vuldomain.SoundnessNotStated || res.SoundnessReason == "" {
 		return
 	}
 	_, _ = fmt.Fprintf(stdout, "  soundness: %s — %s\n", res.Soundness, res.SoundnessReason)
@@ -959,8 +985,8 @@ func printIsolatedAside(stdout io.Writer, aside *isolatedAside) {
 		return
 	}
 	_, _ = fmt.Fprintf(stdout,
-		"  isolated frame (a different question — the module built alone, not the build that consumes it): %s [confidence: %s, by: %s]\n",
-		aside.Verdict, aside.Confidence, aside.Method)
+		"  isolated frame (a different question — the module built alone, not the build that consumes it): %s [confidence: %s, soundness: %s, by: %s]\n",
+		aside.Verdict, aside.Confidence, aside.Soundness, aside.Method)
 }
 
 func printVulnReachability(stdout io.Writer, res vulnReachabilityQuery) {
@@ -1006,6 +1032,20 @@ func runLocalReachability(ctx context.Context, dir string, stdout, stderr io.Wri
 	if err != nil {
 		return err
 	}
+	return renderLocalReachability(stdout, out, jsonOut)
+}
+
+// renderLocalReachability writes the local probe in the format the caller asked
+// for: text unless --json, like every sibling invocation of this command.
+//
+// It used to write JSON either way, so an operator following the documented
+// 'kanonarion reachability --local .' example got a document where the
+// stored-query mode prints prose — and the rung behind each verdict, which the
+// prose states in full, had nowhere to be read.
+func renderLocalReachability(stdout io.Writer, out reachabilityOutput, asJSON bool) error {
+	if !asJSON {
+		return printLocalReachability(stdout, out)
+	}
 	raw, err := json.MarshalIndent(out, "", "  ")
 	if err != nil {
 		return fmt.Errorf("encoding reachability result: %w", err)
@@ -1014,6 +1054,102 @@ func runLocalReachability(ctx context.Context, dir string, stdout, stderr io.Wri
 		return fmt.Errorf("writing reachability result: %w", err)
 	}
 	return nil
+}
+
+// localVerdictLabel renders a local probe verdict with the rung behind it.
+//
+// The rung is on the verdict itself rather than a line below, because the
+// verdict is what a reader acts on and a negative without it reads as an
+// all-clear. Nothing is appended where no rung is stated: a present symbol is
+// its own evidence and an undetermined verdict has no absence to qualify.
+func localVerdictLabel(f reachabilityFinding) string {
+	if f.Soundness == "" || f.Soundness == vuldomain.SoundnessNotStated.String() {
+		return f.Verdict
+	}
+	return f.Verdict + " — " + f.Soundness
+}
+
+// printLocalReachability renders the local probe as prose.
+//
+// It leads with what the answer was drawn from, because the probe's coverage is
+// the part a reader cannot reconstruct from the findings: a module absent from
+// the list below was either cleared or never looked at, and only the coverage
+// block tells the two apart.
+func printLocalReachability(stdout io.Writer, r reachabilityOutput) error {
+	w := &errWriter{w: stdout}
+	w.printf("local reachability probe of %s\n", r.Root)
+	w.printf("  module:    %s\n", r.ModulePath)
+	w.printf("  snapshot:  %s taken %s\n", r.VersionID, r.Coverage.SnapshotTakenAt)
+	if r.ProbeKind != "" {
+		w.printf("  probe:     %s\n", r.ProbeKind)
+	}
+	if r.SeedRestriction != "" {
+		w.printf("  seed:      %s\n", r.SeedRestriction)
+	}
+	if r.Notice != "" {
+		w.printf("  notice:    %s\n", r.Notice)
+	}
+	c := r.Coverage
+	w.printf("\ncoverage: %d build module(s), %d queried, %d covered, %d with findings\n",
+		c.BuildModules, c.QueriedModules, c.CoveredModules, c.ModulesWithFindings)
+	for _, b := range c.ProbedBinaries {
+		if b.BuildError != "" {
+			w.printf("  binary not probed: %s — %s\n", b.ImportPath, b.BuildError)
+			continue
+		}
+		w.printf("  binary probed:     %s\n", b.ImportPath)
+	}
+	if len(c.UncoveredModules) > 0 {
+		w.printf("  uncovered (%d) — this answer does not speak about them:\n", len(c.UncoveredModules))
+		for _, u := range c.UncoveredModules {
+			w.printf("    %s@%s — %s\n", u.Path, u.Version, u.Reason)
+		}
+	}
+	if c.UncoveredRemedy != "" {
+		w.printf("  to widen the answer: %s\n", c.UncoveredRemedy)
+	}
+	if len(r.Modules) == 0 {
+		w.printf("\nno affected modules in the analysed build\n")
+		return w.err
+	}
+	w.printf("\nfindings:\n")
+	for _, m := range r.Modules {
+		w.printf("  %s@%s\n", m.Path, m.Version)
+		for _, f := range m.Findings {
+			aliases := ""
+			if len(f.Aliases) > 0 {
+				aliases = " (" + strings.Join(f.Aliases, ", ") + ")"
+			}
+			w.printf("    %s%s [%s, by: %s]: %s\n",
+				f.CVEID, aliases, localVerdictLabel(f), verdictSourceLabel(f.VerdictSource), f.Summary)
+			// The reason under the rung, for the reason printSoundness gives on the
+			// stored-query surface: a rung alone is a label, and a label is what
+			// turns a measurement into a verdict.
+			if f.SoundnessReason != "" {
+				w.printf("      soundness: %s — %s\n", f.Soundness, f.SoundnessReason)
+			}
+			if f.Reason != "" {
+				w.printf("      basis:     %s\n", f.Reason)
+			}
+			if len(f.MatchedSymbols) > 0 {
+				w.printf("      symbols:   %s\n", strings.Join(f.MatchedSymbols, ", "))
+			}
+			if len(f.MatchedBinaries) > 0 {
+				w.printf("      binaries:  %s\n", strings.Join(f.MatchedBinaries, ", "))
+			}
+		}
+	}
+	return w.err
+}
+
+// verdictSourceLabel names the instrument behind a local verdict, and says so
+// when there was none. An empty source is what an undetermined verdict carries,
+// and printing it blank would read as an instrument whose name was lost.
+func verdictSourceLabel(src string) string {
+	if src == "" {
+		return "no signal available"
+	}
+	return src
 }
 
 // runLocalReachabilityInner opens the store and runs the reachability use case,
@@ -1063,6 +1199,8 @@ func reachabilityResultToOutput(r localdomain.LocalReachabilityResult) reachabil
 				Reason:          f.Reason,
 				MatchedSymbols:  f.MatchedSymbols,
 				MatchedBinaries: f.MatchedBinaries,
+				Soundness:       vuldomain.ReachabilitySoundness(f.Soundness).String(),
+				SoundnessReason: f.SoundnessReason,
 			})
 		}
 		mods = append(mods, reachabilityModule{

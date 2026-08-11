@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
@@ -227,6 +228,17 @@ type contextCVE struct {
 	// the upstream summary, which is what the field exists to stop being the signal.
 	WithdrawnAt string `json:"withdrawn_at,omitempty"`
 	Reachable   *bool  `json:"reachable,omitempty"`
+	// Soundness states how thorough the search behind a NEGATIVE reachability
+	// answer was, and SoundnessReason names the basis for that rung in the
+	// producing analyser's own terms. Both are derived from the served record by
+	// vuldomain.NegativeSoundness; neither is stored.
+	//
+	// Soundness is emitted on every finding and never omitted. On a positive, and
+	// on a finding carrying no reachability answer at all, it reads "not stated" —
+	// there is no absence to qualify — and that is a different statement from the
+	// key being missing, which says the producer does not derive the rung.
+	Soundness       vuldomain.ReachabilitySoundness `json:"soundness"`
+	SoundnessReason string                          `json:"soundness_reason,omitempty"`
 }
 
 type contextVulnerabilities struct {

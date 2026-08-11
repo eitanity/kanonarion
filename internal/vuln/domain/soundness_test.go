@@ -1,6 +1,7 @@
 package domain_test
 
 import (
+	"encoding/json"
 	"testing"
 
 	callgraphdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
@@ -193,5 +194,50 @@ func TestReachabilitySoundnessLevels_IsExhaustiveAndOrdered(t *testing.T) {
 	}
 	if future.IsConfirmed() {
 		t.Error("an unrecognised rung reports itself confirmed")
+	}
+}
+
+// TestSoundnessMarshalsTheNamedZero pins the wire form of the zero rung.
+//
+// SoundnessNotStated is the empty string, so a surface emitting the raw value
+// left a positive verdict — which HAS no rung, and says so — serialising
+// identically to a reply that never derived one. Naming the zero value on the
+// wire is what separates "there is no absence here to qualify" from "this
+// producer does not state a rung at all", which is the whole distinction the
+// ladder exists to make visible.
+func TestSoundnessMarshalsTheNamedZero(t *testing.T) {
+	for _, tc := range []struct {
+		rung domain.ReachabilitySoundness
+		want string
+	}{
+		{domain.SoundnessNotStated, `"not stated"`},
+		{domain.SoundnessConfirmed, `"confirmed"`},
+		{domain.SoundnessInferred, `"inferred"`},
+		{domain.SoundnessUnconfirmed, `"unconfirmed"`},
+		{domain.SoundnessUnsearchable, `"unsearchable"`},
+	} {
+		raw, err := json.Marshal(tc.rung)
+		if err != nil {
+			t.Fatalf("marshalling %q: %v", tc.rung, err)
+		}
+		if string(raw) != tc.want {
+			t.Errorf("marshalling %q gave %s, want %s", tc.rung, raw, tc.want)
+		}
+	}
+}
+
+// TestEveryLadderRungMarshals guards the pin above against the ladder growing a
+// rung nothing renders. The levels list is the one place the ladder is stated;
+// a rung added there must marshal as the word it is named by, not as an empty
+// field a consumer reads as "no rung".
+func TestEveryLadderRungMarshals(t *testing.T) {
+	for _, rung := range domain.ReachabilitySoundnessLevels() {
+		raw, err := json.Marshal(rung)
+		if err != nil {
+			t.Fatalf("marshalling %q: %v", rung, err)
+		}
+		if string(raw) == `""` {
+			t.Errorf("rung %q marshals to an empty string", rung)
+		}
 	}
 }

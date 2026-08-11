@@ -163,15 +163,21 @@ func runVulnShow(
 	}
 
 	if jsonOut {
-		// The JSON body stays a bare VulnerabilityRecord: that shape is this
-		// command's published contract, and wrapping it to carry the aside would
-		// break every consumer parsing it. The served record is the consumer-frame
-		// one either way, so --json now agrees with reachability --json on the
-		// verdict; the declined isolated answer is reported on the text surface and
-		// by 'reachability --json', whose result type has a field for it.
+		// The JSON body stays record-shaped: that shape is this command's published
+		// contract, and wrapping it to carry the aside would break every consumer
+		// parsing it. The served record is the consumer-frame one either way, so
+		// --json agrees with reachability --json on the verdict; the declined
+		// isolated answer is reported on the text surface and by
+		// 'reachability --json', whose result type has a field for it.
+		//
+		// The findings are rendered through vulnRecordJSON so each carries the rung
+		// behind its reachability answer. The text surface has printed that rung
+		// beside every negative for some time; --json did not, which left the one
+		// consumer that cannot read it out of prose — a machine — with the negative
+		// and no statement of what was searched to reach it.
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(rec); err != nil {
+		if err := enc.Encode(toVulnRecordJSON(rec)); err != nil {
 			return fmt.Errorf("encoding vulnerability record: %w", err)
 		}
 		return nil
@@ -239,8 +245,8 @@ func printDeclinedIsolatedFrame(stdout io.Writer, rec vuldomain.VulnerabilityRec
 	var lines []string
 	for _, f := range rec.Findings {
 		if aside := isolatedAsideFor(rec, true, f.ID); aside != nil {
-			lines = append(lines, fmt.Sprintf("    %s: %s [confidence: %s, by: %s]",
-				f.ID, aside.Verdict, aside.Confidence, aside.Method))
+			lines = append(lines, fmt.Sprintf("    %s: %s [confidence: %s, soundness: %s, by: %s]",
+				f.ID, aside.Verdict, aside.Confidence, aside.Soundness, aside.Method))
 		}
 	}
 	if len(lines) == 0 {
@@ -401,7 +407,7 @@ func runVulnShowHistory(ctx context.Context, coord coordinate.ModuleCoordinate, 
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(recs); err != nil {
+		if err := enc.Encode(toVulnRecordsJSON(recs)); err != nil {
 			return fmt.Errorf("encoding vulnerability history: %w", err)
 		}
 		return nil
@@ -474,13 +480,13 @@ func runVulnByID(ctx context.Context, findingID, walkID string, jsonOut bool, uc
 		return fmt.Errorf("vuln-by-id: %w", err)
 	}
 	if jsonOut {
-		// emit a JSON array ("[]" when empty), never plain text.
-		if records == nil {
-			records = []vuldomain.VulnerabilityRecord{}
-		}
+		// emit a JSON array ("[]" when empty), never plain text. Every finding
+		// carries its derived reachability rung: this command's text surface prints
+		// no verdict at all, so --json is the only place a consumer reads one, and
+		// an unqualified negative here is the whole failure mode.
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(records); err != nil {
+		if err := enc.Encode(toVulnRecordsJSON(records)); err != nil {
 			return fmt.Errorf("encoding vulnerability records: %w", err)
 		}
 		return nil

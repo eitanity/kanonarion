@@ -660,6 +660,13 @@ on the line it is rendered on, and `--json` gains an `inputs_unresolvable` field
 Walk ID:     01KQDBVW092ER1HNXZ60X27CMD (inputs unresolvable: walk absent from this store)
 ```
 
+The text form lists finding ids per module and publishes no reachability
+verdict. `--json` does: each finding carries `reachable`, and beside it the
+derived `soundness` and `soundness_reason` that say how thorough the search
+behind a negative was. See
+[reachability](reachability.md#a-negative-states-how-sound-the-search-behind-it-was)
+for the rungs.
+
 A run id that is not there exits `4` and the message says how many runs were
 searched, so a mistyped id over a stocked store cannot be read as an unscanned
 one. The corpus is every run in the store: a run id is not keyed on a walk, so
@@ -728,8 +735,17 @@ is itself information:
 
 ```
   Isolated frame (a different question — the module built alone, not the build that consumes it), scanned 2026-07-31T17:49:28Z:
-    GO-2025-3553: not_reachable [confidence: High, by: govulncheck]
+    GO-2025-3553: not_reachable [confidence: High, soundness: inferred, by: govulncheck]
 ```
+
+Every negative carries the rung behind it on both surfaces. In text it is
+appended to the finding's label — `[not reachable — inferred]`. In `--json` each
+finding carries `soundness` and `soundness_reason` beside `reachable`; the same
+two keys appear on `--history`, on `vuln-by-id --json` and on
+`vuln-scan-show --json`, so an answer can be compared across surfaces. Both are
+derived at read time from the analyser the stored answer names and that
+analyser's own fidelity — nothing is stored, and no record's content hash
+changes.
 
 `Analysis frame:` on the record itself always names the frame the served answer
 was reached in. The same selection backs the `vulnerabilities` section of
@@ -1066,6 +1082,11 @@ $ kanonarion vuln-by-id GO-2020-0001 --walk-id 01KQDBVW092ER1HNXZ60X27CMD
 notice: results restricted to the modules scanned under walk "01KQDBVW092ER1HNXZ60X27CMD"
 github.com/gin-gonic/gin@v1.7.0       Affected     vuln-db=2026-07-23T18:46:07Z   scanned=2026-07-24T11:07:36Z
 ```
+
+The text rows carry a status, not a reachability verdict. `--json` emits the
+whole record for each row, so it does carry one — and with it the derived
+`soundness` and `soundness_reason` on every finding, which is the only place
+this command's answer states how thorough the search behind a negative was.
 
 ---
 

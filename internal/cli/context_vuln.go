@@ -496,6 +496,10 @@ func vulnRecordToContext(rec *vuldomain.VulnerabilityRecord, walkStatus, walkCov
 			r := f.Reachable.IsReachable
 			cve.Reachable = &r
 		}
+		// Derived, never read off a stored field: NegativeSoundness classifies the
+		// answer from the analyser that produced it and that analyser's own
+		// fidelity, so every record already in the store carries a rung here.
+		cve.Soundness, cve.SoundnessReason = vuldomain.NegativeSoundness(f)
 		out.Findings = append(out.Findings, cve)
 	}
 	return out

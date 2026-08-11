@@ -27,6 +27,7 @@ import (
 	"sort"
 	"strings"
 
+	localdomain "github.com/eitanity/kanonarion/internal/local/domain"
 	"github.com/eitanity/kanonarion/internal/local/ports"
 )
 
@@ -115,7 +116,7 @@ func (p *Prober) probeBinaries(ctx context.Context, root, outDir string, mainPkg
 		return ports.SymbolProbeResult{}, fmt.Errorf("building probe binary: no main package of %d could be probed: %w", len(sorted), firstErr)
 	}
 
-	return ports.SymbolProbeResult{BinarySymbols: union, Kind: "binary", Binaries: binaries}, nil
+	return ports.SymbolProbeResult{BinarySymbols: union, Kind: localdomain.ProbeKindBinary, Binaries: binaries}, nil
 }
 
 // buildAndRead builds one main package and reads the resulting symbol table.
@@ -143,7 +144,7 @@ func (p *Prober) probeLibrary(ctx context.Context, root, outBin string) (ports.S
 	if err != nil {
 		return ports.SymbolProbeResult{}, fmt.Errorf("reading symbol table: %w", err)
 	}
-	return ports.SymbolProbeResult{BinarySymbols: symbols, Kind: "library"}, nil
+	return ports.SymbolProbeResult{BinarySymbols: symbols, Kind: localdomain.ProbeKindLibrary}, nil
 }
 
 // goListPackage mirrors the fields we need from `go list -json`.

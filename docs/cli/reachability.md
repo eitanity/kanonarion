@@ -153,20 +153,44 @@ Two consequences worth knowing before you read a negative:
   Source mode is the strongest form of that silence and reports `inferred`; binary
   mode inspected a symbol table with no call graph behind it and reports
   `unconfirmed`.
-- **A reachable answer states no soundness.** A route is its own evidence, and the
-  field is absent from both the text and the JSON for a positive.
+- **A reachable answer states no soundness.** A route is its own evidence, so the
+  text prints no rung for a positive. The JSON still carries the `soundness` key,
+  with the value `"not stated"`: the key being present says this producer derived
+  the rung and found no absence to qualify, and the key being absent says the
+  producer does not state a rung at all. Those are different facts, and an omitted
+  key rendered them identically.
 
 The rung is derived from the answer you already have — the analyser it names and
 that analyser's own fidelity — so it appears on records that were scanned long
 before it existed, and it improves whenever the analysis behind them does.
 
 The same rung is appended to the per-finding label in `vuln-show` and
-`vuln-scan-show`, where a bare `[not reachable]` used to read the same whether a
+`vuln-scan`, where a bare `[not reachable]` used to read the same whether a
 call graph had been searched or nothing had looked at all:
 
 ```
 GO-2025-3487 (CVE-2025-22869) [not reachable — inferred]: Potential denial of service in golang.org/x/crypto
 ```
+
+### Every surface that publishes a verdict carries the rung
+
+The rung is not a feature of this command. Every surface that publishes a
+reachability verdict states it, in text and in JSON, under the same two keys:
+
+| Surface | Where the rung appears |
+|---|---|
+| `reachability <mod> --vuln <id>` | verdict line and `soundness` / `soundness_reason`; the isolated-frame aside carries its own |
+| `reachability --local <dir>` | on the verdict, and in each finding's `soundness` / `soundness_reason` |
+| `vuln-show`, `vuln-show --history` | the `[not reachable — …]` label, and per finding in `--json` |
+| `vuln-by-id --json` | per finding (this command's text form publishes no verdict) |
+| `vuln-scan-show --json` | per finding (its text form lists finding ids only) |
+| `vuln-scan-diff` | on the transition's later side, in text and per finding in `--json` |
+| `vuln-scan` | the per-finding label in the run summary |
+| `context`, `context --local --reachability` | `soundness` / `soundness_reason` in `--json`, and a `Soundness:` line under `--full` |
+
+`audit` and the SBOM commands publish no reachability verdict and carry no rung.
+`audit` reports a module's vulnerability status and directs you to `vuln-show`;
+an SBOM asserts what is in the build and never what is reachable in it.
 | `… has not been vuln-scanned` | non-zero | No record. Walk the module, then scan that walk. |
 | `… ScanFailed` / `… is unscannable` | non-zero | Module could not be scanned; reachability is unknown. |
 | `… scanned without --reachability` | non-zero | Findings exist and the scan was rooted elsewhere, so the flag was genuinely not passed. |
@@ -319,8 +343,9 @@ JSON shape:
 }
 ```
 
-The example above is a positive, so it carries no `soundness`. A negative adds two
-fields and drops `routes`:
+The example above is a positive, so its `soundness` reads `"not stated"` and it
+carries no `soundness_reason`. A negative names its rung and its basis, and drops
+`routes`:
 
 ```json
 {
@@ -474,7 +499,11 @@ or `--local <dir>`.
 
 ## Output
 
-JSON shape (text rendering follows the same fields):
+Without `--json` the probe prints prose: what the answer was drawn from, then
+the coverage block, then one line per finding with its verdict, the rung behind
+it and the instrument that produced it. `--json` emits the document below.
+
+JSON shape:
 
 ```json
 {
@@ -519,13 +548,32 @@ JSON shape (text rendering follows the same fields):
           "verdict_source": "callgraph",
           "reason": "<why>",
           "matched_symbols": ["pkg.Symbol"],
-          "matched_binaries": ["github.com/example/app/cmd/server"]
+          "matched_binaries": ["github.com/example/app/cmd/server"],
+          "soundness": "not stated"
         }
       ]
     }
   ]
 }
 ```
+
+### What rung the probe's own negatives earn
+
+The probe publishes two kinds of negative and they are not the same claim, so
+they do not carry the same rung.
+
+| Verdict | `verdict_source` | `soundness` |
+|---|---|---|
+| `absent` | `symbol-table` | `unconfirmed` - the affected symbols are not in the symbol table of the binaries this build links, so the linker did not keep them. Real evidence, and not a search: no call graph was built, so nothing could have found a route whether or not one exists. |
+| `unreachable` | `govulncheck` | whatever the stored scan's own analyser and fidelity earn, usually `inferred`. This verdict was not measured here; it was carried from the store, and it states the rung of the search it actually came from. |
+| `present`, `reachable`, `unknown` | - | `not stated`. There is no absence to qualify. |
+
+An `absent` verdict never reads `confirmed`, whatever the probe managed to build.
+`confirmed` means a call-graph search ran over a graph built with function bodies;
+this probe reads a linker's output. Where the probe could not read every main
+package, or where the workspace declares no main and a synthetic harness was
+compiled instead, `soundness_reason` says so - an absence from tables that do not
+cover the product is a weaker claim than one from tables that do.
 
 `notice` is set when the store has no findings for the analysed dependency
 modules - typically because they have not been scanned yet. Because absence is
@@ -535,11 +583,19 @@ never presented as an answer, an empty `modules` array with `notice` populated i
 ## Examples
 
 ```bash
-# Analyse the current workspace
+# Analyse the current workspace, as prose
+kanonarion reachability --local .
+
+# The same answer as a document
 kanonarion reachability --local . --json
 
 # Analyse a project elsewhere on disk
 kanonarion reachability --local /path/to/workspace --json | jq '.modules[]'
+
+# Every negative in the tree, with the rung behind it
+kanonarion reachability --local . --json | jq '.modules[].findings[]
+  | select(.verdict=="absent" or .verdict=="unreachable")
+  | {cve_id, verdict, soundness}'
 ```
 
 ## See also

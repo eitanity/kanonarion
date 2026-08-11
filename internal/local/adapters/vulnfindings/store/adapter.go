@@ -93,6 +93,12 @@ func (a *VulnStoreAdapter) LoadFindings(
 				// later: it is what says the verdict came from a stored scan, and which
 				// build that scan was rooted at.
 				vf.ReachableBasis = f.Reachable.DerivedBy.String()
+				// The rung behind a negative is derived here, where the whole finding is
+				// in hand. Below this seam the analyser and its fidelity are gone, so a
+				// probe that carried the verdict on and derived the rung later would be
+				// deriving it from nothing.
+				soundness, reason := vulndomain.NegativeSoundness(f)
+				vf.ReachableSoundness, vf.ReachableSoundnessReason = string(soundness), reason
 			}
 			findings = append(findings, vf)
 		}

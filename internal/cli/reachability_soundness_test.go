@@ -44,13 +44,13 @@ func TestNotReachableStatesItsSoundness(t *testing.T) {
 		name       string
 		analyser   vuldomain.ReachabilityAnalyser
 		fidelity   string
-		wantSound  string
+		wantSound  vuldomain.ReachabilitySoundness
 		wantReason string
 	}{
-		{"govulncheck source", vuldomain.AnalyserGovulncheck, "source", "inferred", "silence"},
-		{"govulncheck binary", vuldomain.AnalyserGovulncheck, "binary", "unconfirmed", "symbol table"},
-		{"built call graph", vuldomain.AnalyserCallGraphBFS, "BUILT_WITH_BODIES", "confirmed", "found no path"},
-		{"metadata-only graph", vuldomain.AnalyserCallGraphBFS, "METADATA_ONLY", "unconfirmed", "METADATA_ONLY"},
+		{"govulncheck source", vuldomain.AnalyserGovulncheck, "source", vuldomain.SoundnessInferred, "silence"},
+		{"govulncheck binary", vuldomain.AnalyserGovulncheck, "binary", vuldomain.SoundnessUnconfirmed, "symbol table"},
+		{"built call graph", vuldomain.AnalyserCallGraphBFS, "BUILT_WITH_BODIES", vuldomain.SoundnessConfirmed, "found no path"},
+		{"metadata-only graph", vuldomain.AnalyserCallGraphBFS, "METADATA_ONLY", vuldomain.SoundnessUnconfirmed, "METADATA_ONLY"},
 	}
 
 	rendered := map[string]string{}
@@ -74,7 +74,7 @@ func TestNotReachableStatesItsSoundness(t *testing.T) {
 		printVulnReachability(&out, res)
 		got := out.String()
 		verdict := findLineWith(t, got, "NOT reachable")
-		if !strings.Contains(verdict, "soundness: "+tc.wantSound) {
+		if !strings.Contains(verdict, "soundness: "+tc.wantSound.String()) {
 			t.Errorf("%s: verdict line = %q, want the soundness on the line an operator acts on", tc.name, verdict)
 		}
 		if !strings.Contains(got, res.SoundnessReason) {

@@ -40,6 +40,19 @@ type VulnFinding struct {
 	// it is about. A verdict seeded from a stored scan is reported with its basis
 	// so a reader can tell it from one this probe measured.
 	ReachableBasis string
+	// ReachableSoundness and ReachableSoundnessReason state how thorough the
+	// search behind a stored NEGATIVE was, and why that rung. They are carried as
+	// strings for the same reason ReachableBasis is: the loader that reads the
+	// stored finding is the only place that holds the producing analyser and its
+	// fidelity, so the rung is derived there and travels with the verdict rather
+	// than being guessed at further down.
+	//
+	// Empty when the stored answer states no rung — a positive, or no answer at
+	// all. A probe that carries a stored negative through to its own output must
+	// carry these with it, or it republishes someone else's negative stripped of
+	// what was searched to reach it.
+	ReachableSoundness       string
+	ReachableSoundnessReason string
 }
 
 // Clock supplies the current time. The local probe stamps when its answer was
