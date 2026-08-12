@@ -208,18 +208,21 @@ func (s *Scanner) processMessage(raw []byte, msg *Message, osvs map[string]*OSV,
 		msg.SBOM = nil
 
 		if err := json.Unmarshal(raw, &msg); err == nil && msg.OSV != nil {
-			// Optimization: only keep what we need from OSV to save memory
-			details := msg.OSV.Details
-			if len(details) > 512 {
-				details = details[:512] + "... (truncated)"
-			}
+			// The advisory's description is carried whole. It used to be clipped
+			// to 512 bytes here to save memory, which made this route describe an
+			// advisory differently from the coordinate-match route, in a field
+			// that is sealed and content-hashed — the same route asymmetry as the
+			// affected range. The saving it bought is not worth a second shape:
+			// measured over a working store, the longest description any advisory
+			// carries is 2334 bytes, and a stream holds one entry per advisory
+			// relevant to the build.
 			// Ensure strings are copied and interned
 			id := intern(msg.OSV.ID)
 			osvs[id] = &OSV{
 				ID:                 id,
 				Aliases:            internStrings(msg.OSV.Aliases, intern),
 				Summary:            intern(msg.OSV.Summary),
-				Details:            intern(details),
+				Details:            intern(msg.OSV.Details),
 				Published:          msg.OSV.Published,
 				Modified:           msg.OSV.Modified,
 				Withdrawn:          msg.OSV.Withdrawn,

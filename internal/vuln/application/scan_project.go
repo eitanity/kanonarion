@@ -151,10 +151,17 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 // analysis contributes reachability to the findings rather than deciding whether
 // they are looked for at all.
 //
-// A finding the analysis reported wins: it carries the call path and symbols
-// that whole-build analysis alone can establish. A coordinate match the analysis
-// did not report is handled per reachabilityAnswerable. When true — the analysis
-// examined this module at its real version from real entry points, as it does for
+// An advisory both sources report is merged FIELD BY FIELD, per the authority
+// table on domain.MergeCoordinateMatches. The analysis keeps the call path, the
+// symbols and the reachability answer that whole-build analysis alone can
+// establish, and the match contributes the advisory's affected range, which the
+// analysis route never sets. Taking the analysis finding whole instead — which
+// is what this did — meant one advisory was stored in two shapes depending on
+// which route reached it, in fields that are sealed and content-hashed.
+//
+// A coordinate match the analysis did not report is handled per
+// reachabilityAnswerable. When true — the analysis examined this module at its
+// real version from real entry points, as it does for
 // every dependency — its silence about a symbol is an answer, so the match is
 // added as not-reachable with high confidence. When false, the analysis could not
 // have reported this advisory at all, so reachability was not computed and the
@@ -173,44 +180,36 @@ func (uc *ScanWalkUseCase) mergeCoordinateFindings(
 	if err != nil {
 		return nil, fmt.Errorf("coordinate advisory match for %s: %w", coord, err)
 	}
-	seen := make(map[string]struct{}, len(reported))
-	for _, f := range reported {
-		seen[f.ID] = struct{}{}
-	}
-	added := 0
-	for _, f := range matched {
-		if _, ok := seen[f.ID]; ok {
-			continue
+	analysed := len(reported)
+	merged, added := domain.MergeCoordinateMatches(reported, matched, func(f *domain.VulnerabilityFinding) {
+		if !reachabilityAnswerable {
+			return
 		}
-		if reachabilityAnswerable {
-			// The derivation is stated even though this answer has no route, and
-			// having none is the point: it is govulncheck's SILENCE about the
-			// module, not a path it traced. The instrument and its fidelity are
-			// what make that silence an answer — the analysis examined this module
-			// at its real version from real entry points — so an answer that did
-			// not name them would be indistinguishable from one no analyser
-			// produced at all.
-			f.Reachable = &domain.ReachabilityResult{
-				IsReachable: false,
-				Confidence:  domain.ConfidenceHigh,
-				DerivedBy: domain.ReachabilityDerivation{
-					Analyser: domain.AnalyserGovulncheck,
-					Fidelity: string(domain.ScanModeSource),
-				},
-			}
+		// The derivation is stated even though this answer has no route, and
+		// having none is the point: it is govulncheck's SILENCE about the
+		// module, not a path it traced. The instrument and its fidelity are
+		// what make that silence an answer — the analysis examined this module
+		// at its real version from real entry points — so an answer that did
+		// not name them would be indistinguishable from one no analyser
+		// produced at all.
+		//
+		// It reaches only an advisory the analysis never reported. Where the
+		// analysis did report one, its own reachability answer stands and this
+		// derived-from-silence verdict must never displace it.
+		f.Reachable = &domain.ReachabilityResult{
+			IsReachable: false,
+			Confidence:  domain.ConfidenceHigh,
+			DerivedBy: domain.ReachabilityDerivation{
+				Analyser: domain.AnalyserGovulncheck,
+				Fidelity: string(domain.ScanModeSource),
+			},
 		}
-		reported = append(reported, f)
-		added++
-	}
+	})
 	if added > 0 {
 		uc.logger.Info("project-rooted scan: advisories matched by coordinate the build analysis did not reach",
-			"coordinate", coord, "matched", added, "reported_by_analysis", len(seen))
-		// Record identity hashes over the findings, so a merged set must be
-		// ordered rather than left as "whatever the analysis reported, then
-		// whatever the coordinate match added".
-		domain.SortFindings(reported)
+			"coordinate", coord, "matched", added, "reported_by_analysis", analysed)
 	}
-	return reported, nil
+	return merged, nil
 }
 
 // projectFindingsFor returns the findings a project scan attributed to coord.

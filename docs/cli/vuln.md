@@ -1050,6 +1050,14 @@ requires the call-graph that source analysis would have produced. An empty
 `fixed_in` on an enriched finding is the actionable "no fix exists yet" state,
 not missing data.
 
+An analysed record shows the same advisory fields. Where source analysis and
+coordinate matching both report one advisory, the finding carries the
+`affected_symbols` the analysis saw and its `reachable` answer, plus the
+advisory's `affected_range` and `references` — one shape, whichever route
+reached it. Records scanned by an earlier build may show `affected_range` empty
+on an analysed finding; `fixed_in` on those records still states the remedy, and
+a re-scan fills the range.
+
 Coordinate matching on this path evaluates the advisory's **full multi-range
 affected set**, not the single collapsed fixed version from the database's
 `index/modules.json`. That coarse index lists one (highest) fixed version per

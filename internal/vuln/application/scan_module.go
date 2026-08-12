@@ -250,7 +250,32 @@ import (
 // the pipeline version, so the v19 rows are already unreachable for a v20
 // question, and the references live inside the serialised record rather than in
 // a column.
-const PipelineVersion = "v20"
+//
+// v21 merges the two producing routes field by field instead of picking a whole
+// finding, and stops clipping the advisory's description on the analysis route.
+//
+// The bump is owed because both change what a re-derived record CONTAINS. An
+// advisory reported by both routes now keeps the analysis's symbols and
+// reachability AND the coordinate match's affected range, where before the
+// whole-finding merge stored one shape or the other depending on which route
+// reached it; and a description over 512 bytes is now carried whole on both
+// routes rather than clipped on one. Measured on a working store, 350 of 879
+// stored findings carry no affected range and 1 carries the truncation marker,
+// so those records re-derive to different sealed bytes.
+//
+// What it is NOT is a recovery of lost data. Of those 350 rows, 269 carry
+// fixed_in because the advisory names a fix, and the other 81 name none because
+// no fix exists; none lacks a remediation fact the tool could have stated. The
+// defect this closes is one advisory having two shapes, not a missing answer.
+//
+// The cost is the same shape as the v20 bump and this is the cheapest moment to
+// spend it: the store is already dark. Measured before the change, the store
+// held 2548 records at v19 and 1 at v20, so bumping now darkens ONE record that
+// was not already awaiting the v20 re-scan. No migration is owed — reads are
+// keyed on the pipeline version, so the older rows are already unreachable for a
+// v21 question, and both changes live inside the serialised record rather than
+// in a column.
+const PipelineVersion = "v21"
 
 // ScanModuleUseCase orchestrates a single module's vulnerability scan.
 type ScanModuleUseCase struct {
@@ -1021,12 +1046,18 @@ func modulePaths(known map[coordinate.ModuleCoordinate]struct{}) map[string]stru
 // build-incompatibility paths already route through scanMetadataOnly, which
 // performs the same coordinate match.
 //
-// A finding the source analysis already reported wins, because it carries
-// call-graph reachability the coordinate match cannot know. A coordinate match
-// the source analysis did not report is added with a nil Reachable: the advisory
-// applies to this version, and whether it is reachable is decided by the
-// reachability step that follows, or left undetermined. Findings are never
-// dropped in either direction.
+// An advisory both sources report is merged FIELD BY FIELD, per the authority
+// table on domain.MergeCoordinateMatches. The source analysis keeps the symbols
+// and the call-graph reachability the coordinate match cannot know, and the
+// match contributes the advisory's affected range, which the analysis route
+// never sets. Taking the analysis finding whole instead — which is what this
+// did — meant one advisory was stored in two shapes depending on which route
+// reached it, in fields that are sealed and content-hashed.
+//
+// A coordinate match the source analysis did not report is added with a nil
+// Reachable: the advisory applies to this version, and whether it is reachable
+// is decided by the reachability step that follows, or left undetermined.
+// Findings are never dropped in either direction.
 func (uc *ScanModuleUseCase) attributeCoordinateFindings(ctx context.Context, record *domain.VulnerabilityRecord, coord coordinate.ModuleCoordinate) error {
 	// "Did an analysis produce this record" is the coverage axis's question, and
 	// the two-word test was an open-coded projection of it. The Unscannable and
@@ -1039,25 +1070,12 @@ func (uc *ScanModuleUseCase) attributeCoordinateFindings(ctx context.Context, re
 	if err != nil {
 		return fmt.Errorf("coordinate advisory match for %s: %w", coord, err)
 	}
-	reported := make(map[string]struct{}, len(record.Findings))
-	for _, f := range record.Findings {
-		reported[f.ID] = struct{}{}
-	}
-	added := 0
-	for _, f := range matched {
-		if _, ok := reported[f.ID]; ok {
-			continue
-		}
-		record.Findings = append(record.Findings, f)
-		added++
-	}
+	reported := len(record.Findings)
+	merged, added := domain.MergeCoordinateMatches(record.Findings, matched, nil)
+	record.Findings = merged
 	if added > 0 {
 		uc.logger.Info("vuln-scan: advisories matched by coordinate that source analysis cannot report",
-			"coordinate", coord, "matched", added, "reported_by_source", len(reported))
-		// Record identity hashes over the findings, so a merged set must be
-		// ordered rather than left as "whatever the source reported, then
-		// whatever the coordinate match added".
-		domain.SortFindings(record.Findings)
+			"coordinate", coord, "matched", added, "reported_by_source", reported)
 	}
 	if len(record.Findings) > 0 {
 		// This is a verdict decision, so it states the axis it decided and lets the
