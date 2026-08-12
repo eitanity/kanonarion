@@ -41,6 +41,19 @@ type GenerateSBOMUseCase struct {
 	// audit appends the assurance-log events a generation and a serving leave.
 	// Optional; nil disables emission.
 	audit ports.AuditSink
+	// origins reads what the fetch ledger recorded about where each module's
+	// bytes came from, which is the only thing a component's external
+	// references are built from. Optional: nil means no origin is asserted for
+	// any component, which is what a document with nothing to read should say.
+	origins ports.ModuleOriginReader
+}
+
+// WithModuleOrigins wires the reader that lets a component carry a reference to
+// the repository its bytes were cross-verified against. Nil (the default) leaves
+// every component asserting no origin. Returns the use case for chaining.
+func (uc *GenerateSBOMUseCase) WithModuleOrigins(r ports.ModuleOriginReader) *GenerateSBOMUseCase {
+	uc.origins = r
+	return uc
 }
 
 // WithAudit wires an audit sink so a persisted document appends one
@@ -220,6 +233,13 @@ func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (d
 		// Missing licence is allowed; the generator will flag LicensesIncomplete.
 	}
 
+	// 2b. Load recorded origins. A module with none recorded is absent from the
+	// map, and its component then asserts no external reference at all.
+	origins, err := uc.moduleOrigins(ctx, walk)
+	if err != nil {
+		return domain.SBOMRecord{}, err
+	}
+
 	// 3. Generate. The document is an inventory of components and their identity,
 	// hashes and licences; it carries no vulnerability list, so no scan run is
 	// read here and none can be attached.
@@ -231,6 +251,7 @@ func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (d
 		MainComponentVersion: req.MainComponentVersion,
 		MainComponentLicense: req.MainComponentLicense,
 		VendorScope:          uc.vendorScope(ctx, walk),
+		ModuleOrigins:        origins,
 		// A package-scoped run has already filtered walk.Graph above, so the
 		// scope arithmetic is measured against the components this document
 		// actually carries. Flagging it lets the statement say why so much of
@@ -266,6 +287,32 @@ func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (d
 		"licenses_incomplete", record.LicensesIncomplete,
 	)
 	return record, nil
+}
+
+// moduleOrigins reads the recorded origin of every module in the walk.
+//
+// A read failure is returned rather than skipped. The fetch ledger disagreeing
+// with itself about an artefact is a contradiction in the evidence this
+// document is assembled from, and a document that quietly drops the modules it
+// could not read is indistinguishable from one where nothing was recorded.
+func (uc *GenerateSBOMUseCase) moduleOrigins(
+	ctx context.Context,
+	walk walkdomain.WalkRecord,
+) (map[coordinate.ModuleCoordinate]ports.ModuleOrigin, error) {
+	if uc.origins == nil {
+		return nil, nil
+	}
+	out := make(map[coordinate.ModuleCoordinate]ports.ModuleOrigin, len(walk.Graph.Nodes))
+	for _, node := range walk.Graph.Nodes {
+		origin, ok, err := uc.origins.ModuleOrigin(ctx, node.Coordinate)
+		if err != nil {
+			return nil, fmt.Errorf("loading recorded origin for %s: %w", node.Coordinate, err)
+		}
+		if ok {
+			out[node.Coordinate] = origin
+		}
+	}
+	return out, nil
 }
 
 // vendorScope states this document's coverage of the vendored tree the walk was

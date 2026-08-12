@@ -569,6 +569,47 @@ covers it. A record written before this change and one written after may list
 the same values in two orders; they are the same measurement, and the older one
 is not superseded by the arrangement alone.
 
+## SBOM: pipeline `0.8.0` → `0.9.0`
+
+**Document bytes change; no store migration.** Same mechanism as the bump below:
+SBOM records are cached on `(walk id, scan run id, format, pipeline version)` and
+hashed over the document bytes, so the bump makes stored `0.8.0` documents
+unreachable and a request regenerates. Nothing is purged. Six stored records —
+five at `0.7.0`, one at `0.8.0` — go dark at once.
+
+Two behaviours forced it.
+
+**Every component's external references were assembled from the module path.**
+Each carried `{vcs: "https://" + path}` and
+`{distribution: "https://proxy.golang.org/" + path + "/@v/" + version + ".zip"}`,
+unconditionally, with no branch for a local coordinate, a replace directive, a
+vendored tree or a private path. Neither was read from anything measured. In the
+one artefact shipped from this tool, all 18 components carried both: the subject
+asserted a proxy download for `@v/local.zip`, a version the proxy does not serve
+for a module it does not hold, and `github.com/oklog/ulid/v2` asserted a
+repository URL whose `/v2` is a module-path element GitHub answers `404` for. A
+component now carries a `vcs` reference only where the fetch ledger holds a
+positively cross-verified record naming the repository, ref and commit, and no
+library component carries a `distribution` reference at all — the ledger records
+the route bytes arrived by and the blob handle they were filed under, never a
+public download address. Components with nothing recorded carry no
+`externalReferences` block.
+
+**A stamped subject was described twice at two versions.** `--main-version` and
+`--main-license` reached `metadata.component` only. The subject's own entry in
+the component list kept the synthetic `local` version and no licence, so one
+document asserted two `purl`s for one module, the `dependencies` array carried
+two entries for it each repeating the whole dependency set, and the
+undetermined-licence count read the copy the stamp never reached — the run
+exited `1` naming the operator's own module while `--main-license` sat on the
+other copy. The stamp now decides the subject once, and both descriptions read
+that decision.
+
+**Stored `0.8.0` and earlier documents carry the constructed references.** The
+bump makes them unreachable through the cache; it does not correct copies
+already shipped. A document already handed to a consumer points at a download
+location that may not exist, and re-issuing it is the only fix for that copy.
+
 ## SBOM: pipeline `0.7.0` → `0.8.0`
 
 **Document bytes change; no store migration.** SBOM records are cached on

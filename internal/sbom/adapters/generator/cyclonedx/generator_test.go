@@ -554,9 +554,9 @@ func TestProjectWalkSubjectIsLocalModule(t *testing.T) {
 }
 
 // TestMainComponentOverrides verifies that MainComponentVersion and
-// MainComponentLicense stamp a resolvable version (version, PURL, distribution
-// URL) and a licence onto the local main-module subject, which otherwise ships
-// at the synthetic "local" version with no licence record.
+// MainComponentLicense stamp a resolvable version (version, PURL) and a licence
+// onto the local main-module subject, which otherwise ships at the synthetic
+// "local" version with no licence record.
 func TestMainComponentOverrides(t *testing.T) {
 	mainModule := mustCoord(t, "example.com/project", coordinate.LocalVersion)
 	walk := makeWalk(t, []coordinate.ModuleCoordinate{mainModule})
@@ -590,17 +590,10 @@ func TestMainComponentOverrides(t *testing.T) {
 	if primary["type"] != "application" {
 		t.Errorf("type = %v, want application", primary["type"])
 	}
-	// distribution externalReference must name the overridden version, not "local".
-	refs, _ := primary["externalReferences"].([]any)
-	var distURL string
-	for _, r := range refs {
-		rm, _ := r.(map[string]any)
-		if rm["type"] == "distribution" {
-			distURL, _ = rm["url"].(string)
-		}
-	}
-	if distURL != "https://proxy.golang.org/example.com/project/@v/v1.2.3.zip" {
-		t.Errorf("distribution url = %q, want .../@v/v1.2.3.zip", distURL)
+	// The local main module is never fetched, so nothing was recorded about
+	// where its bytes came from and the subject asserts no external reference.
+	if refs, present := primary["externalReferences"]; present {
+		t.Errorf("subject externalReferences = %v, want none (no origin is recorded for a local main module)", refs)
 	}
 	// licence attached from the override.
 	lics, _ := primary["licenses"].([]any)

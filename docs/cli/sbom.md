@@ -33,6 +33,18 @@ in addition to the flat component list, carries:
   source tarball rather than a module zip (see below). Only the local main
   component (the SBOM subject) carries no hashes; a missing hash block is never an
   error.
+- **External references, only where a fetch record supports them.** A library
+  component carries one `vcs` reference — the repository its module zip was
+  cross-verified against — when the fetch ledger holds a positively
+  cross-verified record for that coordinate, and its comment names the ref and
+  commit the cross-verification read. A component with no such record carries
+  no `externalReferences` block at all: a local main module, a module fetched
+  offline or with `--skip-vcs-verify`, and a module whose VCS check could not
+  reach the repository are all in that state. **No library component carries a
+  `distribution` reference**; the ledger records the route the bytes arrived by
+  and the blob handle they were filed under, not a public download address. The
+  `stdlib` component is the exception and carries both (see below), because it
+  has a recorded source URL.
 - **A licence-completeness statement**, whenever any component carries no licence
   identity. See below.
 - **A vendor scope statement**, whenever the walk was rooted at a project that
@@ -236,6 +248,12 @@ record. Both flags supply what the store cannot.
 - `--main-license Apache-2.0` attaches an SPDX id or expression to the subject.
   Without it the subject counts as a component with no licence identity, which
   is what sets the command's exit `1`.
+
+Either stamp reaches **both** places the document describes the subject:
+`metadata.component` and the subject's own entry in the `components` list, which
+is also the entry the `dependencies` graph names. The stamped module therefore
+appears under one `purl` throughout, and `--main-license` is what stops the
+exit `1` naming your own module.
 
 Both apply **only** when the subject is the local main module. A walk rooted at
 a published module carries that module's own version and licence record, and

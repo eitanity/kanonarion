@@ -528,3 +528,76 @@ func TestGenerateSBOM_NoSubjectStampStillCachesAndPersists(t *testing.T) {
 		t.Error("an unstamped request must still persist its record")
 	}
 }
+
+// fakeOriginReader answers from a fixed table, or fails.
+type fakeOriginReader struct {
+	origins map[coordinate.ModuleCoordinate]ports.ModuleOrigin
+	err     error
+	asked   []coordinate.ModuleCoordinate
+}
+
+func (f *fakeOriginReader) ModuleOrigin(
+	_ context.Context, coord coordinate.ModuleCoordinate,
+) (ports.ModuleOrigin, bool, error) {
+	f.asked = append(f.asked, coord)
+	if f.err != nil {
+		return ports.ModuleOrigin{}, false, f.err
+	}
+	o, ok := f.origins[coord]
+	return o, ok, nil
+}
+
+// TestGenerateSBOM_PassesRecordedOriginsForEveryNode verifies every module in the
+// walk is asked about, and only the ones with something recorded reach the
+// generator. A component's external references are built from this map and from
+// nothing else, so a module missing from it asserts no origin.
+func TestGenerateSBOM_PassesRecordedOriginsForEveryNode(t *testing.T) {
+	withOrigin, _ := coordinate.NewModuleCoordinate("example.com/withorigin", "v1.0.0")
+	without, _ := coordinate.NewModuleCoordinate("example.com/without", "v2.0.0")
+	walk := makeMultiNodeWalk("walk-origins", []coordinate.ModuleCoordinate{withOrigin, without})
+	ws := &fakeWalkStore{walk: walk}
+	gen := &fakeSBOMGenerator{record: domain.SBOMRecord{ID: "sbom-1", WalkID: "walk-origins"}}
+	origins := &fakeOriginReader{origins: map[coordinate.ModuleCoordinate]ports.ModuleOrigin{
+		withOrigin: {VCSURL: "https://example.com/repo", VCSCommit: "abc"},
+	}}
+	uc := makeUC(ws, &fakeSBOMStore{}, gen).WithModuleOrigins(origins)
+
+	if _, err := uc.Generate(t.Context(), application.SBOMRequest{
+		WalkID: "walk-origins", Format: domain.CycloneDX16,
+	}); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	if len(origins.asked) != 2 {
+		t.Errorf("asked about %d coordinates, want 2 (every node)", len(origins.asked))
+	}
+	got := gen.capturedReq.ModuleOrigins
+	if len(got) != 1 {
+		t.Fatalf("ModuleOrigins = %v, want exactly the one with a recorded origin", got)
+	}
+	if got[withOrigin].VCSURL != "https://example.com/repo" {
+		t.Errorf("ModuleOrigins[%s] = %+v", withOrigin, got[withOrigin])
+	}
+}
+
+// TestGenerateSBOM_OriginReadFailureFailsGeneration verifies a ledger that
+// cannot answer stops the document rather than being read as "nothing recorded".
+// A document that silently drops the modules it could not read is
+// indistinguishable from one where nothing was ever measured.
+func TestGenerateSBOM_OriginReadFailureFailsGeneration(t *testing.T) {
+	walk := makeWalk("walk-origin-fail")
+	ws := &fakeWalkStore{walk: walk}
+	gen := &fakeSBOMGenerator{record: domain.SBOMRecord{ID: "sbom-1", WalkID: "walk-origin-fail"}}
+	uc := makeUC(ws, &fakeSBOMStore{}, gen).
+		WithModuleOrigins(&fakeOriginReader{err: errors.New("ledger disagrees with itself")})
+
+	_, err := uc.Generate(t.Context(), application.SBOMRequest{
+		WalkID: "walk-origin-fail", Format: domain.CycloneDX16,
+	})
+	if err == nil {
+		t.Fatal("Generate succeeded; want the read failure reported")
+	}
+	if !strings.Contains(err.Error(), "ledger disagrees with itself") {
+		t.Errorf("err = %v, want it to name the store failure", err)
+	}
+}

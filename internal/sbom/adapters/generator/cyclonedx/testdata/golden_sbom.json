@@ -24,12 +24,9 @@
       "bom-ref": "pkg:golang/github.com/example/aaa@v0.4.0",
       "externalReferences": [
         {
+          "comment": "the module zip was cross-verified against refs/tags/v0.4.0 at commit aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "type": "vcs",
           "url": "https://github.com/example/aaa"
-        },
-        {
-          "type": "distribution",
-          "url": "https://proxy.golang.org/github.com/example/aaa/@v/v0.4.0.zip"
         }
       ],
       "hashes": [
@@ -63,16 +60,6 @@
     },
     {
       "bom-ref": "pkg:golang/github.com/example/app@v1.2.0",
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/example/app"
-        },
-        {
-          "type": "distribution",
-          "url": "https://proxy.golang.org/github.com/example/app/@v/v1.2.0.zip"
-        }
-      ],
       "licenses": [
         {
           "license": {
@@ -97,16 +84,6 @@
     },
     {
       "bom-ref": "pkg:golang/github.com/example/zzz@v2.0.0",
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/example/zzz"
-        },
-        {
-          "type": "distribution",
-          "url": "https://proxy.golang.org/github.com/example/zzz/@v/v2.0.0.zip"
-        }
-      ],
       "hashes": [
         {
           "alg": "SHA-256",
@@ -158,16 +135,6 @@
   "metadata": {
     "component": {
       "bom-ref": "pkg:golang/github.com/example/app@v1.2.0",
-      "externalReferences": [
-        {
-          "type": "vcs",
-          "url": "https://github.com/example/app"
-        },
-        {
-          "type": "distribution",
-          "url": "https://proxy.golang.org/github.com/example/app/@v/v1.2.0.zip"
-        }
-      ],
       "licenses": [
         {
           "license": {
