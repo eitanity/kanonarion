@@ -2,6 +2,7 @@ package cli
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"reflect"
@@ -138,11 +139,116 @@ func assertStructCovered(t *testing.T, src, dst reflect.Type, path string) {
 	}
 }
 
-func TestRunStoreConfigShow_Text_MissingFile(t *testing.T) {
+// An absent config file is an ordinary state: a store that has never had one
+// written is running a full built-in policy, and the text view must report it
+// rather than refuse. It also has to say the file is absent, or a reader cannot
+// tell a built-in default from a value somebody chose.
+func TestRunStoreConfigShow_Text_MissingFileReportsDefaults(t *testing.T) {
+	prev := activeConfig
+	defer func() { activeConfig = prev }()
+	activeConfig = domain.DefaultConfig()
+
+	dir := t.TempDir()
 	var buf bytes.Buffer
-	err := runStoreConfigShow(t.TempDir(), false, &buf)
-	if err == nil {
-		t.Fatal("expected error when config.yaml absent")
+	if err := runStoreConfigShow(dir, false, &buf); err != nil {
+		t.Fatalf("unexpected error with no config file: %v", err)
+	}
+	got := buf.String()
+	for _, want := range []string{
+		"no config file at " + filepath.Join(dir, "config.yaml"),
+		"built-in default",
+		"kanonarion config init",
+		"# effective configuration",
+		"license_policy.rules[production].unknown_license",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("text output missing %q, got:\n%s", want, got)
+		}
+	}
+}
+
+// A file that exists but cannot be read is a different case from one that is
+// absent, and stays a refusal on both channels: an all-defaults answer for
+// bytes nobody has seen is a guess about the policy in force.
+func TestRunStoreConfigShow_UnreadableFileIsRefused(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("running as root: file mode does not deny a read")
+	}
+	prev := activeConfig
+	defer func() { activeConfig = prev }()
+	activeConfig = domain.DefaultConfig()
+
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.yaml")
+	if err := os.WriteFile(path, []byte("version: \"1\"\n"), 0o600); err != nil {
+		t.Fatalf("WriteFile: %v", err)
+	}
+	if err := os.Chmod(path, 0o000); err != nil {
+		t.Fatalf("Chmod: %v", err)
+	}
+	t.Cleanup(func() { _ = os.Chmod(path, 0o600) })
+
+	for _, asJSON := range []bool{false, true} {
+		var buf bytes.Buffer
+		err := runStoreConfigShow(dir, asJSON, &buf)
+		if err == nil {
+			t.Fatalf("asJSON=%v: expected a refusal for an unreadable config file, got:\n%s", asJSON, buf.String())
+		}
+		if strings.Contains(err.Error(), "no such file") {
+			t.Errorf("asJSON=%v: unreadable file reported as absent: %v", asJSON, err)
+		}
+	}
+}
+
+// The two channels may present the answer differently; they must not disagree
+// about whether a config file exists.
+func TestRunStoreConfigShow_ChannelsAgreeOnFilePresence(t *testing.T) {
+	prev := activeConfig
+	defer func() { activeConfig = prev }()
+	activeConfig = domain.DefaultConfig()
+
+	for _, tc := range []struct {
+		name    string
+		write   bool
+		present bool
+	}{
+		{name: "absent", write: false, present: false},
+		{name: "present", write: true, present: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			path := filepath.Join(dir, "config.yaml")
+			if tc.write {
+				if err := os.WriteFile(path, []byte("version: \"1\"\n"), 0o600); err != nil {
+					t.Fatalf("WriteFile: %v", err)
+				}
+			}
+
+			var text bytes.Buffer
+			if err := runStoreConfigShow(dir, false, &text); err != nil {
+				t.Fatalf("text: unexpected error: %v", err)
+			}
+			var jsonBuf bytes.Buffer
+			if err := runStoreConfigShow(dir, true, &jsonBuf); err != nil {
+				t.Fatalf("json: unexpected error: %v", err)
+			}
+
+			var got configShowResult
+			if err := json.Unmarshal(jsonBuf.Bytes(), &got); err != nil {
+				t.Fatalf("decoding JSON view: %v", err)
+			}
+			if got.ConfigFile.Present != tc.present {
+				t.Errorf("JSON config_file.present = %v, want %v", got.ConfigFile.Present, tc.present)
+			}
+			if got.ConfigFile.Path != path {
+				t.Errorf("JSON config_file.path = %q, want %q", got.ConfigFile.Path, path)
+			}
+			textSaysAbsent := strings.Contains(text.String(), "no config file at")
+			if textSaysAbsent == tc.present {
+				t.Errorf("text channel says absent=%v while the file present=%v; the channels disagree:\n%s",
+					textSaysAbsent, tc.present, text.String())
+			}
+		})
 	}
 }
 

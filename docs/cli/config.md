@@ -53,9 +53,28 @@ The file alone does not answer "what is in force" - a key you never wrote is
 absent from it and still resolves to a built-in default at runtime. The block
 below the file is the answer.
 
+**No `config.yaml` in the store is a normal state, not an error.** The command
+exits `0` and prints the effective configuration, with a line in place of the
+file saying which path was looked for:
+
+```
+# no config file at /home/you/.kanonarion/config.yaml - nothing is set in this store, so every value below is a built-in default
+#   to write a commented template: kanonarion config init
+
+# effective configuration (resolved; (default) = not set in this file)
+...
+```
+
+Every key in that case carries `(default)`. A file that *exists* but cannot be
+read (permissions) or cannot be parsed is still a refusal, exit `20`, and the
+message names the file rather than reporting an all-defaults posture.
+
 When `--json` is given, the resolved config is emitted as JSON. Each licence
 rule carries `unknown_license` (the value in force) and
-`unknown_license_is_default` (whether it came from the built-in default).
+`unknown_license_is_default` (whether it came from the built-in default). The
+document opens with `config_file`, giving the `path` looked for and whether it
+is `present`; `"present": false` means every value below it is a built-in
+default.
 
 ---
 

@@ -2,8 +2,10 @@ package cli
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
+	"io/fs"
 	"os"
 	"path/filepath"
 	"strings"
@@ -128,6 +130,12 @@ func newStoreConfigCmd(stdout io.Writer) *cobra.Command {
 }
 
 type configShowResult struct {
+	// ConfigFile says which file the view was resolved against and whether it
+	// exists. It comes first because it qualifies everything below it: with no
+	// file, every value in the document is a built-in default, and a consumer
+	// reading only the values cannot tell that from an operator who wrote them.
+	ConfigFile configFileResult `json:"config_file"`
+
 	Version          string                `json:"version"`
 	Preferences      configPrefsResult     `json:"preferences"`
 	LicensePolicy    configPolicyResult    `json:"license_policy"`
@@ -208,6 +216,12 @@ type configRuleResult struct {
 	UnknownLicenseIsDefault bool   `json:"unknown_license_is_default"`
 }
 
+// configFileResult reports the config file the view was resolved against.
+type configFileResult struct {
+	Path    string `json:"path"`
+	Present bool   `json:"present"`
+}
+
 type configCGResult struct {
 	Exclude []string `json:"exclude"`
 }
@@ -236,10 +250,10 @@ func newStoreConfigShowCmd(stdout io.Writer) *cobra.Command {
 func runStoreConfigShow(root string, asJSON bool, stdout io.Writer) error {
 	if asJSON {
 		cfg := activeConfig
-		// Best-effort: an absent file means nothing is set, which is exactly
-		// what the default markers should then say. A present but unparseable
-		// file cannot happen here — the typed load already refused it.
-		rawData, _ := os.ReadFile(filepath.Join(root, "config.yaml")) // #nosec G304 -- operator-supplied store-root path
+		path, rawData, present, err := readConfigFile(root)
+		if err != nil {
+			return err
+		}
 		raw, err := parseRawConfigDoc(rawData)
 		if err != nil {
 			return err
@@ -258,7 +272,8 @@ func runStoreConfigShow(root string, asJSON bool, stdout io.Writer) error {
 			})
 		}
 		result := configShowResult{
-			Version: cfg.Version,
+			ConfigFile: configFileResult{Path: path, Present: present},
+			Version:    cfg.Version,
 			Preferences: configPrefsResult{
 				JSON:     cfg.Preferences.JSON,
 				LogLevel: cfg.Preferences.LogLevel,
@@ -306,12 +321,16 @@ func runStoreConfigShow(root string, asJSON bool, stdout io.Writer) error {
 		return nil
 	}
 
-	data, err := os.ReadFile(filepath.Join(root, "config.yaml")) // #nosec G304 -- operator-supplied store-root path
+	path, data, present, err := readConfigFile(root)
 	if err != nil {
-		return fmt.Errorf("reading config file: %w", err)
+		return err
 	}
-	if _, err := fmt.Fprint(stdout, string(data)); err != nil {
-		return fmt.Errorf("writing config: %w", err)
+	if present {
+		if _, werr := fmt.Fprint(stdout, string(data)); werr != nil {
+			return fmt.Errorf("writing config: %w", werr)
+		}
+	} else if nerr := writeNoConfigFileNotice(stdout, path); nerr != nil {
+		return nerr
 	}
 	// The file alone is not the configuration in force: every key it leaves
 	// commented or absent still resolves to a built-in default, and the licence
@@ -322,6 +341,44 @@ func runStoreConfigShow(root string, asJSON bool, stdout io.Writer) error {
 		return err
 	}
 	return writeEffectiveConfig(stdout, activeConfig, raw)
+}
+
+// readConfigFile reads <root>/config.yaml for the two config-show channels.
+//
+// An absent file is an ordinary state rather than a failure: nothing has been
+// set, so every value resolves to a built-in default and the view can still
+// answer. present is what lets both channels say the same thing about the same
+// file. A file that exists but cannot be read — permissions, an unreadable
+// mount — stays a refusal: reporting an all-defaults posture for a file whose
+// contents were never seen would answer a policy question with a guess. The
+// two cases are separated on the error value, not on its text.
+func readConfigFile(root string) (path string, data []byte, present bool, err error) {
+	path = filepath.Join(root, "config.yaml")
+	data, err = os.ReadFile(path) // #nosec G304 -- operator-supplied store-root path
+	switch {
+	case err == nil:
+		return path, data, true, nil
+	case errors.Is(err, fs.ErrNotExist):
+		return path, nil, false, nil
+	default:
+		// The wrapped *PathError already names the file; naming it twice reads
+		// as two different files to a reader skimming the line.
+		return path, nil, false, fmt.Errorf("reading config file: %w", err)
+	}
+}
+
+// writeNoConfigFileNotice states the absent-file case where the file's own
+// contents would otherwise have been echoed: which path was looked for, what
+// that means for the values printed below it, and the invocation that creates
+// one. It is written as YAML comments so the text output stays a document the
+// same reader can paste back.
+func writeNoConfigFileNotice(w io.Writer, path string) error {
+	if _, err := fmt.Fprintf(w,
+		"# no config file at %s — nothing is set in this store, so every value below is a built-in default\n"+
+			"#   to write a commented template: kanonarion config init\n", path); err != nil {
+		return fmt.Errorf("writing no-config notice: %w", err)
+	}
+	return nil
 }
 
 type storeInfoResult struct {

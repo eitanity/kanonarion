@@ -121,6 +121,11 @@ CLI will use for the given `--store-root`).
 kanonarion store config show [--store-root <dir>] [--json]
 ```
 
+Same output as [`kanonarion config show`](config.md#kanonarion-config-show),
+including on a store with no `config.yaml`: absent is reported (exit `0`, every
+value marked `(default)`, `"config_file": {"present": false}` under `--json`),
+while a file that exists but cannot be read or parsed is refused with exit `20`.
+
 ## Flags
 
 Only `ledger` takes command-specific flags (listed above). The global flags
