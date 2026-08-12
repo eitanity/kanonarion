@@ -321,7 +321,7 @@ func TestRefreshSnapshot_UnchangedDatabaseLeavesTheStoredRunReusable(t *testing.
 	if _, err := uc.RefreshSnapshot(context.Background(), "walk-1"); err != nil {
 		t.Fatalf("RefreshSnapshot: %v", err)
 	}
-	got, ok, err := uc.ReusableRun(context.Background(), "walk-1")
+	got, ok, err := uc.ReusableRun(context.Background(), "walk-1", "")
 	if err != nil {
 		t.Fatalf("ReusableRun: %v", err)
 	}
@@ -362,7 +362,7 @@ func TestRefreshSnapshot_IrrelevantlyAdvancedDatabaseLeavesTheStoredRunReusable(
 	if refresh.Outcome != application.RefreshIndexUnchanged {
 		t.Fatalf("Outcome = %q, want %q", refresh.Outcome, application.RefreshIndexUnchanged)
 	}
-	got, ok, err := uc.ReusableRun(context.Background(), "walk-1")
+	got, ok, err := uc.ReusableRun(context.Background(), "walk-1", "")
 	if err != nil {
 		t.Fatalf("ReusableRun: %v", err)
 	}
@@ -402,7 +402,7 @@ func TestRefreshSnapshot_RelevantlyAdvancedDatabaseMakesTheStoredRunUnreusable(t
 	if _, err := uc.RefreshSnapshot(context.Background(), "walk-1"); err != nil {
 		t.Fatalf("RefreshSnapshot: %v", err)
 	}
-	if _, ok, err := uc.ReusableRun(context.Background(), "walk-1"); err != nil {
+	if _, ok, err := uc.ReusableRun(context.Background(), "walk-1", ""); err != nil {
 		t.Fatalf("ReusableRun: %v", err)
 	} else if ok {
 		t.Error("a run judged against the superseded database was served after the refresh")

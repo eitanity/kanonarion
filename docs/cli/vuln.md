@@ -263,10 +263,21 @@ findings, roll-ups, exit code and `--json` document are the ones **that run**
 produced, rebuilt from the records it wrote.
 
 A stored run is served only when the walk, the advisory snapshot (source,
-version, retrieval time and seal) and the scan pipeline version all match, **and**
-the stored run's coverage is complete — a partial or failed run is never served.
-`--force` re-measures. `--fresh` refreshes the advisory database and re-measures
+version and seal) and the scan pipeline version all match, **and** the stored
+run's coverage is complete — a partial or failed run is never served. The
+snapshot's retrieval time is not compared: two downloads of one generation with
+one seal are one advisory database. `--force` re-measures. `--fresh` refreshes the advisory database and re-measures
 only when the refresh changes an advisory listed for a module in this walk.
+
+For a walk of a project, one further condition applies: the project directory
+must still require the module versions the walk resolved. A stored run of a
+project walk is an analysis of that directory, so once the directory has moved it
+is not served, and the command re-derives — reaching the metadata-only
+degradation described under "no longer builds the walk" below. The answer to a
+diverged directory is therefore the same whether or not a stored run exists,
+which is the point: it does not depend on what the store happens to hold. The
+comparison is one `go.mod` read (measured at 0.2–0.3 ms on manifests of 130–260
+require lines), and an agreeing directory still reuses.
 
 Two `--force` runs of one walk against one advisory snapshot write two records
 per module and both say the same thing. The lists inside a record — the findings,
@@ -428,8 +439,8 @@ coverage is `Partial` and it exits non-zero. Re-run it from the checkout
 
 **If the directory is still there but no longer builds the walk, the run records
 no reachability.** Before attributing an analysis of the directory to the walk's
-coordinates, the scan compares the directory's `go.mod` requirements against the
-versions the walk resolved. If any module both name is required at a different
+coordinates — and before serving a stored run of it — the scan compares the
+directory's `go.mod` requirements against the versions the walk resolved. If any module both name is required at a different
 version, that directory is a different build and its analysis is not evidence
 about this walk, so the run does not analyse it. It still matches every
 coordinate against the advisory database — you keep the "this walk is pinned to a

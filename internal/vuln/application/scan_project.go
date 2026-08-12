@@ -362,23 +362,42 @@ func absentFromVendor(
 // checkout must not make a stored walk unscannable, and must not be silently
 // replaced by some other tree either.
 func (uc *ScanWalkUseCase) effectiveProjectDir(params ScanWalkParams, walk walkdomain.WalkRecord) string {
-	if params.ProjectDir != "" {
-		return params.ProjectDir
+	dir, adopted, err := projectDirForRun(params.ProjectDir, walk)
+	switch {
+	case err != nil:
+		uc.logger.Warn("vuln-scan: the directory this walk was taken from is no longer readable, so this run cannot be rooted at the project's build; scanning each module in isolation instead, which leaves the standard library and any module the isolated build re-resolves unanalysed",
+			"walk_id", params.WalkID, "project_dir", walk.ProjectDir, "error", err)
+	case adopted:
+		uc.logger.Info("vuln-scan: rooting this run at the project the walk was taken from",
+			"walk_id", params.WalkID, "project_dir", dir)
 	}
-	dir := walk.ProjectDir
-	if dir == "" {
+	return dir
+}
+
+// projectDirForRun resolves which working tree a run of this walk is about,
+// without narrating it. It is the shared half of effectiveProjectDir, split out
+// because the reuse decision asks the same question and must get the same
+// answer: a stored run may only be served for the directory a fresh scan of the
+// same walk would have analysed, and that is decided here rather than twice.
+//
+// adopted reports that the answer came from the walk's own record rather than
+// from the caller. err reports a recorded directory that is no longer readable —
+// there is then no tree to analyse and no tree to compare against, which is a
+// degradation both callers already handle and neither may convert into a
+// verdict.
+func projectDirForRun(requested string, walk walkdomain.WalkRecord) (dir string, adopted bool, err error) {
+	if requested != "" {
+		return requested, false, nil
+	}
+	if walk.ProjectDir == "" {
 		// A walk of a published coordinate, or one taken before walks recorded
 		// their root. Neither has a project tree to reach; nothing to say.
-		return ""
+		return "", false, nil
 	}
-	if _, err := os.Stat(dir); err != nil {
-		uc.logger.Warn("vuln-scan: the directory this walk was taken from is no longer readable, so this run cannot be rooted at the project's build; scanning each module in isolation instead, which leaves the standard library and any module the isolated build re-resolves unanalysed",
-			"walk_id", params.WalkID, "project_dir", dir, "error", err)
-		return ""
+	if _, serr := os.Stat(walk.ProjectDir); serr != nil {
+		return "", false, fmt.Errorf("reading the project directory %q this walk was taken from: %w", walk.ProjectDir, serr)
 	}
-	uc.logger.Info("vuln-scan: rooting this run at the project the walk was taken from",
-		"walk_id", params.WalkID, "project_dir", dir)
-	return dir
+	return walk.ProjectDir, true, nil
 }
 
 // resolveVendoredClosure asks the project's working tree whether it is vendored

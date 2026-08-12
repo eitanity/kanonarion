@@ -399,8 +399,14 @@ func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachab
 	// --force is the way to insist on measuring; a --fresh that downloaded a new
 	// database re-scans on its own, because the stored run no longer answers
 	// against it.
+	//
+	// The project directory goes with the question. Whether a stored run may be
+	// served depends on whether that directory still builds what the walk
+	// resolved, and that judgement belongs to the use case that owns the reuse
+	// decision — this call site only has to ask about the tree it would have
+	// scanned.
 	if !force {
-		if prior, ok, rerr := ctr.ScanWalk.ReusableRun(ctx, walkID); rerr != nil {
+		if prior, ok, rerr := ctr.ScanWalk.ReusableRun(ctx, walkID, projectDir); rerr != nil {
 			return fmt.Errorf("checking for a reusable scan run: %w", rerr)
 		} else if ok {
 			return serveStoredScanRun(ctx, prior, ctr, jsonOut, narrateRun, surface, stdout, stderr)

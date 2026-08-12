@@ -560,7 +560,7 @@ func auditScope(
 	// run that answered, and answered with the same lookup the scan itself makes:
 	// audit narrates the whole derivation in one place, so runVulnScan is told not
 	// to announce the reuse a second time.
-	if prior, ok, rerr := ctr.ScanWalk.ReusableRun(ctx, walkID); rerr != nil {
+	if prior, ok, rerr := ctr.ScanWalk.ReusableRun(ctx, walkID, filepath.Dir(f.gomodPath)); rerr != nil {
 		_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", rerr)
 	} else if ok && !f.force {
 		derivation.scanReused = true

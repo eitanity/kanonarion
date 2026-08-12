@@ -1033,6 +1033,15 @@ type FakeScanWalk struct {
 	// so a test can prove the reuse question was asked about the walk the run
 	// executed rather than some other walk of the same target.
 	ReusableRunWalkID string
+	// ReusableRunProjectDir records the project directory the last ReusableRun
+	// call was told about. Whether a stored run may be served depends on that
+	// directory still building what the walk resolved, so a caller that asks the
+	// reuse question without naming the tree it would have scanned bypasses the
+	// check; this records what was named.
+	ReusableRunProjectDir string
+	// ReusableRunProjectDirSet reports that ReusableRun was called at all, so a
+	// test can tell "asked with no directory" from "never asked".
+	ReusableRunProjectDirSet bool
 	// ServedRuns records every (run id, surface) pair ServeReusableRun was told
 	// about, so a test can prove a served answer was witnessed exactly once and
 	// attributed to the surface that asked. ServeReusableRunErr fails the append.
@@ -1072,8 +1081,10 @@ type FakeScanWalkProgress struct {
 }
 
 // ReusableRun reports the seeded reusable run, if any.
-func (f *FakeScanWalk) ReusableRun(_ context.Context, walkID string) (vulndomain.WalkScanRun, bool, error) {
+func (f *FakeScanWalk) ReusableRun(_ context.Context, walkID, projectDir string) (vulndomain.WalkScanRun, bool, error) {
 	f.ReusableRunWalkID = walkID
+	f.ReusableRunProjectDir = projectDir
+	f.ReusableRunProjectDirSet = true
 	if f.ReusableRunErr != nil {
 		return vulndomain.WalkScanRun{}, false, f.ReusableRunErr
 	}

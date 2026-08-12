@@ -31,7 +31,7 @@ func TestServeReusableRun_AppendsOneServedEvent(t *testing.T) {
 	// Control: asking whether a run is reusable is not serving it, and must
 	// append nothing. An event emitted from the question would date a serving
 	// that may never happen, and would date two for the surfaces that ask twice.
-	if _, ok, err := uc.ReusableRun(context.Background(), reuseWalkID); err != nil || !ok {
+	if _, ok, err := uc.ReusableRun(context.Background(), reuseWalkID, ""); err != nil || !ok {
 		t.Fatalf("control: ReusableRun = (%v, %v), want a reusable run", ok, err)
 	}
 	if len(sink.events) != 0 {

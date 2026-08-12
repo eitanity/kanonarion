@@ -203,7 +203,14 @@ type ScanWalkUseCase interface {
 	// ReusableRun reports a completed stored run that already answers what a new
 	// Scan of this walk against the current snapshot would ask. The caller
 	// decides whether to serve it; Scan itself always measures.
-	ReusableRun(ctx context.Context, walkID string) (vulndomain.WalkScanRun, bool, error)
+	//
+	// projectDir is the working tree this invocation would scan, exactly as it
+	// is passed to Scan — empty when the caller names none, in which case the
+	// walk's own record of where it was taken from is used. It is an input to
+	// the decision, not to the answer: a stored run may only be served while
+	// that directory still requires the module versions the walk resolved, so
+	// the caller must hand over the same directory it would have scanned.
+	ReusableRun(ctx context.Context, walkID, projectDir string) (vulndomain.WalkScanRun, bool, error)
 
 	// ServeReusableRun witnesses in the assurance log that a stored run was
 	// handed back instead of measured. It is separate from ReusableRun because
