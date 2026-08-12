@@ -47,6 +47,7 @@ type fakeVulnLoader struct {
 	// otherFrameOnly is the set of coordinates the store holds records for that
 	// were all measured in another build's frame.
 	otherFrameOnly []coordinate.ModuleCoordinate
+	supersededOnly []coordinate.ModuleCoordinate
 	// gotConsumer records the module path the use case anchored the seed to, so
 	// a test can assert the probe named the tree it is measuring.
 	gotConsumer string
@@ -69,6 +70,7 @@ func (f *fakeVulnLoader) LoadFindings(_ context.Context, coords []coordinate.Mod
 		Findings:       make(map[coordinate.ModuleCoordinate][]ports.VulnFinding),
 		Scanned:        make(map[coordinate.ModuleCoordinate]struct{}),
 		OtherFrameOnly: make(map[coordinate.ModuleCoordinate]struct{}),
+		SupersededOnly: make(map[coordinate.ModuleCoordinate]struct{}),
 		Restriction:    "seed restricted to " + consumerModulePath,
 	}
 	for _, c := range f.otherFrameOnly {
@@ -76,6 +78,12 @@ func (f *fakeVulnLoader) LoadFindings(_ context.Context, coords []coordinate.Mod
 			continue
 		}
 		set.OtherFrameOnly[c] = struct{}{}
+	}
+	for _, c := range f.supersededOnly {
+		if _, ok := asked[c]; !ok {
+			continue
+		}
+		set.SupersededOnly[c] = struct{}{}
 	}
 	for c, fs := range f.findings {
 		if _, ok := asked[c]; !ok {
@@ -970,5 +978,37 @@ func TestLocalReachability_LibraryProbe_NoBinariesNamed(t *testing.T) {
 	}
 	if len(result.Coverage.Binaries) != 0 {
 		t.Errorf("Coverage.Binaries = %v, want none for a library probe", result.Coverage.Binaries)
+	}
+}
+
+// A coordinate held only at a superseded pipeline version is uncovered because
+// the analysis logic moved on, not because nobody looked. The remedy is a
+// re-scan, and a reader told "it has never been vuln-scanned" is being told the
+// dependency is unexamined when it is not.
+func TestLocalReachability_SupersededOnlyModuleNamesItsOwnReason(t *testing.T) {
+	coord := mustCoord(t, "example.com/dep", "v1.0.0")
+	uc := makeUC(
+		&fakeSnapshotBuilder{snap: makeSnap("example.com/app")},
+		&fakeBuildLister{modules: []domain.BuildModule{
+			{Path: "example.com/dep", Version: "v1.0.0"},
+			{Path: "example.com/unknown", Version: "v1.0.0"},
+		}},
+		&fakeVulnLoader{supersededOnly: []coordinate.ModuleCoordinate{coord}},
+		&fakeProber{},
+	)
+
+	result, err := uc.Execute(context.Background(), "/ws")
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	reasons := map[string]string{}
+	for _, u := range result.Coverage.Uncovered {
+		reasons[u.Path] = u.Reason
+	}
+	if got := reasons["example.com/dep"]; got != domain.UncoveredSupersededPipeline {
+		t.Errorf("reason for the superseded module = %q, want UncoveredSupersededPipeline", got)
+	}
+	if got := reasons["example.com/unknown"]; got != domain.UncoveredNoStoredRecord {
+		t.Errorf("reason for the unknown module = %q, want UncoveredNoStoredRecord", got)
 	}
 }

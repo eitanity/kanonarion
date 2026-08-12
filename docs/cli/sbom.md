@@ -33,6 +33,18 @@ in addition to the flat component list, carries:
   source tarball rather than a module zip (see below). Only the local main
   component (the SBOM subject) carries no hashes; a missing hash block is never an
   error.
+- **External references, only where a fetch record supports them.** A library
+  component carries one `vcs` reference — the repository its module zip was
+  cross-verified against — when the fetch ledger holds a positively
+  cross-verified record for that coordinate, and its comment names the ref and
+  commit the cross-verification read. A component with no such record carries
+  no `externalReferences` block at all: a local main module, a module fetched
+  offline or with `--skip-vcs-verify`, and a module whose VCS check could not
+  reach the repository are all in that state. **No library component carries a
+  `distribution` reference**; the ledger records the route the bytes arrived by
+  and the blob handle they were filed under, not a public download address. The
+  `stdlib` component is the exception and carries both (see below), because it
+  has a recorded source URL.
 - **A licence-completeness statement**, whenever any component carries no licence
   identity. See below.
 - **A vendor scope statement**, whenever the walk was rooted at a project that
@@ -154,17 +166,30 @@ equivalent, necessarily different-anchored chain and emits it on the component:
   checksum), `kanonarion:stdlib:verification_detail`,
   `kanonarion:stdlib:published_sha256`, and `kanonarion:stdlib:anchor_limitation`.
 
-The `anchor_limitation` property states the honest ceiling: this anchor is a
-**published checksum plus a source-repo tag/commit**, weaker than a module's
-sumdb transparency-log entry, and it never appears in the project's `go.sum`. The
-verification status is deliberately distinct from the module sumdb statuses so
-the two are never read as equivalent.
+`anchor_limitation` states what this component's integrity actually rests on. It
+is **derived from the verification status the measurement reached**, not a fixed
+sentence: it names the anchor that was established, says separately whether the
+`go.googlesource.com/go` tag/commit anchor was established, and ends with the
+ceiling that holds on every route — weaker than a module's sumdb
+transparency-log entry, and never present in the project's `go.sum`. So a
+document generated offline says integrity rests on the locally-held toolchain
+source with the published checksum not consulted, and a connected one names the
+published checksum it matched. A status this build does not recognise names no
+anchor at all. The verification status is deliberately distinct from the module
+sumdb statuses so the two are never read as equivalent.
 
 The tarball is acquired once per Go version and cached; `--force` re-acquires and
-re-verifies it. On a fully offline run (`--from-modcache`) the acquirer is not
-wired and the `stdlib` component is emitted without the custody chain (a
-best-effort coverage gap, never a failure). Skipping VCS cross-verification
-(`--skip-vcs-verify`) omits the commit anchor but keeps the checksum verification.
+re-verifies it. On a fully offline run (`--from-modcache`) the offline acquirer
+runs instead: it anchors to the installed toolchain's `$GOROOT/src` and
+`$GOROOT/LICENSE`, records `VerifiedLocalToolchain`, and consults neither
+go.dev/dl nor googlesource. Skipping VCS cross-verification (`--skip-vcs-verify`)
+omits the commit anchor but keeps the checksum verification, and the limitation
+property says so.
+
+Both anchors are recorded per measurement, and a read composes them by strength
+rather than recency: once a connected run has recorded `VerifiedGoDevChecksum`
+for a toolchain version, a later offline run does not downgrade what a
+connected-side document serves.
 
 ---
 
@@ -202,9 +227,55 @@ re-run when `--force` is passed.
 | `--stdlib-from-gomod` | `false` | Version the `stdlib` component from the `go.mod` directive, not the live toolchain. Applies when `sbom` builds a project walk (`--package` with no walk id); refused by name when a walk id is given, because that walk's `stdlib` node is already pinned. See [Standard-library version](walk.md#standard-library-version---stdlib-from-gomod). |
 | `--package <pattern>` | _(none)_ | Go package pattern (e.g. `./cmd/foo`); scopes `components` to modules in that binary's import closure |
 | `--from-modcache[=dir]` | _(off)_ | When `sbom` builds a project walk (e.g. `--package` on a cold store), source modules from an existing Go module cache instead of the network proxy and verify each against the local `go.sum`. Passed bare it uses `go env GOMODCACHE`; an optional value names the cache directory. A `go.sum` mismatch or missing entry fails the command (exit code `10`). See [`audit --from-modcache`](audit.md#sourcing-from-an-existing-module-cache---from-modcache) for the full semantics. |
+| `--allow-verification-downgrade` | `false` | Permit a weaker re-measurement of a module to be recorded alongside a stronger stored one. Without it the weaker measurement is refused, the stronger record is kept and answers, and the run warns. See [Re-measuring with a weaker anchor](fetch.md#re-measuring-with-a-weaker-anchor---allow-verification-downgrade) |
+| `--main-version <version>` | _(none)_ | Version to stamp on the SBOM subject (`metadata.component`) in place of the synthetic `local`. Supplying it bypasses the cache, and the document is not stored. See [Naming the subject](#naming-the-subject---main-version-and---main-license) |
+| `--main-license <spdx>` | _(none)_ | SPDX id or expression to attach to the SBOM subject, which as a local main module has no fetched licence record of its own. Supplying it bypasses the cache, and the document is not stored. See [Naming the subject](#naming-the-subject---main-version-and---main-license) |
 | `--policy` | _(auto-discover `.kanonarion/policy.yaml`)_ | Depth policy file; its fetch stage governs traversal and the `allowed_vcs_hosts` forge allowlist |
 | `--log-level` | `warn` | Log level (`debug`, `info`, `warn`, `error`) |
 | `--no-progress` | `false` | Suppress stderr progress output (the throttled heartbeat and any per-module progress lines); results and warnings are unaffected |
+
+### Naming the subject (`--main-version` and `--main-license`)
+
+The document's subject (`metadata.component`) is the thing being described, and
+on a project walk it is the local main module. It has no proxy artefact, so it
+is stamped with the synthetic version `local` and carries no fetched licence
+record. Both flags supply what the store cannot.
+
+- `--main-version v0.1.1` replaces `local` on the subject's version, `purl` and
+  `bom-ref`, so the subject is a resolvable coordinate. A release document
+  should carry it; without it the release SBOM describes the right bytes under
+  a placeholder name.
+- `--main-license Apache-2.0` attaches an SPDX id or expression to the subject.
+  Without it the subject counts as a component with no licence identity, which
+  is what sets the command's exit `1`.
+
+Either stamp reaches **both** places the document describes the subject:
+`metadata.component` and the subject's own entry in the `components` list, which
+is also the entry the `dependencies` graph names. The stamped module therefore
+appears under one `purl` throughout, and `--main-license` is what stops the
+exit `1` naming your own module.
+
+Both apply **only** when the subject is the local main module. A walk rooted at
+a published module carries that module's own version and licence record, and
+neither flag changes it.
+
+Neither flag is part of the SBOM cache key, so a run that passes either is
+never answered from the cache and never writes to it. The document is generated
+on the spot — no `--force` needed over a warm store — and is not stored. The
+stored SBOM for the walk keeps the subject the walk itself resolved, so a later
+run that passes neither flag is never handed a release stamp somebody else's run
+put there.
+
+Because nothing is stored, the `ID:` and `Content-Hash:` lines printed under
+`--output` name a document the store does not hold, and `sbom-show` of that id
+answers with the stored one instead. The run says so on stderr:
+
+```
+note: --main-version/--main-license name this document's subject, so it was
+generated now and not stored; the stored SBOM for walk <walk-id> is unchanged
+```
+
+Keep the release document from `--output`; it is the artefact.
 
 ### Examples
 
@@ -264,8 +335,12 @@ tool dependencies in `go.mod` should be excluded from the SBOM.
 Generation is cached by `(walkID, format, pipelineVersion)`.
 A second call with the same inputs is served from the store — a record read,
 measured at **48 ms** for a 128-module walk, rather than a regeneration.
-Use `--force` to bypass the cache. `--generated-at` also bypasses it. Scoped
-(`--package`) results are never cached.
+Use `--force` to bypass the cache. `--generated-at`, `--main-version` and
+`--main-license` also bypass it: none of the three is part of the key, so a
+stored document would answer under a timestamp or a subject the caller did not
+ask for. Scoped (`--package`) results, and results with a `--main-version` or
+`--main-license` subject stamp, are never cached — they are generated on the
+spot and not written back.
 
 ### Assurance log
 
@@ -291,10 +366,11 @@ reaches them, and repeating them in the log would leave an unsealed second copy
 of the artefact.
 
 A `--package` run appends nothing: the result is ephemeral (no cache lookup, no
-record persisted), and the events state that a record exists. `--force` and
-`--generated-at` skip the cache, so they append `sbom_generated` rather than
-`sbom_served`. `sbom-show` and `sbom-list` read stored records and append
-nothing.
+record persisted), and the events state that a record exists. A run with
+`--main-version` or `--main-license` is ephemeral for the same reason and
+likewise appends nothing. `--force` and `--generated-at` skip the cache but
+still persist, so they append `sbom_generated` rather than `sbom_served`.
+`sbom-show` and `sbom-list` read stored records and append nothing.
 
 ### Licence completeness
 

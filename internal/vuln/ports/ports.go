@@ -339,15 +339,49 @@ type VulnerabilityStore interface {
 	ListVulnerabilityRecords(ctx context.Context, walkScanRunID string) ([]domain.VulnerabilityRecord, error)
 
 	// ListVulnerabilityRecordsForModule returns every generation the ledger holds
-	// for a coordinate and pipeline version, across all walks, snapshots and
-	// analysis frames, ordered by scanned_at descending (most recent first). It
-	// is the history read: the superseded records are still here, each stating
-	// the evidence it rested on.
+	// for a coordinate AT ONE PIPELINE VERSION, across all walks, snapshots and
+	// analysis frames, ordered by scanned_at descending (most recent first).
+	// Within that generation it is the history read: the superseded snapshots and
+	// frames are still here, each stating the evidence it rested on.
+	//
+	// The pipeline version is part of the key, so this read cannot see the
+	// generations a bump left behind, and an empty answer from it means "nothing
+	// at this generation" — never "nothing at all". A caller turning that empty
+	// answer into a statement about the store asks
+	// ListVulnerabilityRecordGenerationsForModule which generations exist.
 	ListVulnerabilityRecordsForModule(
 		ctx context.Context,
 		coord coordinate.ModuleCoordinate,
 		pipelineVersion string,
 	) ([]domain.VulnerabilityRecord, error)
+
+	// ListVulnerabilityRecordGenerationsForModule reports which pipeline
+	// versions the ledger holds records for a coordinate at, and how much it
+	// holds at each. It takes no pipeline version: answering "what does the
+	// store hold for this module" is the one question the keyed reads above
+	// cannot ask, and it is the question every empty answer needs before it can
+	// name its own cause.
+	//
+	// It returns a census, never an answer. Counts come from the index columns,
+	// so a generation this build cannot decode is still counted — which is what
+	// a diagnostic needs, and is exactly why nothing may be served from it.
+	// Ordered by pipeline version.
+	ListVulnerabilityRecordGenerationsForModule(
+		ctx context.Context,
+		coord coordinate.ModuleCoordinate,
+	) ([]VulnerabilityRecordGeneration, error)
+}
+
+// VulnerabilityRecordGeneration is one pipeline version the ledger holds
+// records for a coordinate at, with what it holds there.
+//
+// Findings is the number of finding rows across those records, not a count of
+// distinct advisories: one advisory measured in four scans is four rows. It
+// sizes what a generation holds; it does not claim how many things are wrong.
+type VulnerabilityRecordGeneration struct {
+	PipelineVersion string
+	Records         int
+	Findings        int
 }
 
 // ScanRequest carries the inputs for one isolated per-module scan.

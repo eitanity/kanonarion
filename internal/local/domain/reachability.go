@@ -48,6 +48,16 @@ const (
 	// vuln-scanned" for a coordinate the store HAS scanned — for someone else —
 	// sends a reader looking for a scan that already ran.
 	UncoveredOtherFrameOnly = "the store holds a vulnerability record for this coordinate, but only from another build's frame; this build has not been vuln-scanned"
+	// UncoveredSupersededPipeline means the store holds records for the
+	// coordinate, but only at pipeline versions this build has superseded, so
+	// none of them may be served.
+	//
+	// It is distinct from UncoveredNoStoredRecord for the same reason
+	// UncoveredOtherFrameOnly is, and more sharply: the scan ran, it ran for
+	// this build, and only the analysis logic behind it has moved on. The
+	// remedy is a re-scan, not a first scan, and the module is not an
+	// unexamined dependency.
+	UncoveredSupersededPipeline = "the store holds vulnerability records for this coordinate only at superseded pipeline versions; it has been vuln-scanned and must be scanned again"
 )
 
 // UncoveredModule is one module in the local build the probe holds no answer
@@ -151,6 +161,65 @@ const (
 	SymbolProbeUnreachable SymbolProbeVerdict = "unreachable"
 )
 
+// The probe kinds a local reachability answer can rest on. They name what was
+// built to read a symbol table from, which is what decides how much an absence
+// from that table is worth.
+const (
+	// ProbeKindBinary means every main package the build declares was built
+	// directly and its symbol table read.
+	ProbeKindBinary = "binary"
+	// ProbeKindLibrary means the workspace declares no main, so a synthetic
+	// harness referencing its exported API was compiled instead.
+	ProbeKindLibrary = "library"
+	// ProbeKindSkipped means no matched finding carried affected symbols, so no
+	// probe binary was built at all.
+	ProbeKindSkipped = "skipped"
+)
+
+// The soundness rungs this probe's own measurements earn, spelled exactly as
+// the vulnerability domain's ReachabilitySoundness ladder spells them. They are
+// restated here rather than imported because the local context does not depend
+// on the vulnerability context; the spelling is pinned against the ladder by a
+// test in the adapter that bridges the two.
+const (
+	// ProbeSoundnessNotStated is the zero value: there is no negative here to
+	// qualify. A symbol found in the binary is its own evidence, and a verdict
+	// that determined nothing has no absence to state a rung for.
+	ProbeSoundnessNotStated = ""
+	// ProbeSoundnessUnconfirmed is what a symbol-table absence earns.
+	//
+	// It is deliberately NOT "confirmed". Confirmed means a search ran over a call
+	// graph built with function bodies and found no path; this probe built no call
+	// graph at all. It read the linker's output and observed that a name is not in
+	// it, which is the same class of evidence as a binary-mode analyser's symbol
+	// table — and that is classified unconfirmed for exactly this reason. Absence
+	// from the table is real evidence and it is not a search.
+	ProbeSoundnessUnconfirmed = "unconfirmed"
+)
+
+// The reasons behind ProbeSoundnessUnconfirmed. A bare rung is a label; the
+// reason names what was actually looked at, in the instrument's own terms.
+const (
+	// ProbeAbsentReason is the reason for a symbol-table absence over a probe that
+	// read every main package the build declares.
+	ProbeAbsentReason = "the affected symbols are not in the symbol table of the binaries this build links, " +
+		"so the linker did not keep them; no call graph was built, so this is an absence from the artefact " +
+		"and not a search that ran over call edges and came back empty"
+	// ProbeAbsentPartialReason is the same absence over a probe that could not
+	// read every main. The answer rests on the binaries that built, so the reader
+	// is told which claim it is: a symbol absent from the tables read may still be
+	// linked into a main that did not build.
+	ProbeAbsentPartialReason = ProbeAbsentReason +
+		"; at least one main package of this build could not be probed, so the tables read do not cover the whole product"
+	// ProbeAbsentLibraryReason is the same absence over a library workspace, which
+	// declares no main. The probe compiled a synthetic harness that references the
+	// workspace's exported API, so the symbol set belongs to that harness and not
+	// to any artefact the project ships.
+	ProbeAbsentLibraryReason = "the affected symbols are not in the symbol table of the synthetic harness built for this " +
+		"library workspace; the workspace declares no main package, so this is an absence from a harness over its " +
+		"exported API rather than from a binary the project ships, and no call graph was built"
+)
+
 // VerdictSource identifies which signal produced a SymbolProbeFinding.Verdict.
 type VerdictSource string
 
@@ -190,6 +259,17 @@ type SymbolProbeFinding struct {
 	// build does not say which artefact ships the vulnerable code; this does.
 	// Empty for a library probe, which has no main to attribute the symbol to.
 	MatchedBinaries []string
+	// Soundness states how thorough the search behind a NEGATIVE verdict was, and
+	// SoundnessReason names its basis. Both are ProbeSoundnessNotStated / empty on
+	// a verdict that publishes no negative.
+	//
+	// A negative from this probe and a negative carried from a stored scan are not
+	// the same claim and do not earn the same rung: one is an absence from a
+	// symbol table this run read, the other is an analyser's silence recorded
+	// elsewhere. Each verdict therefore states the rung its own instrument earns,
+	// rather than one being copied onto the other.
+	Soundness       string
+	SoundnessReason string
 }
 
 // ModuleProbeResult is the reachability verdict for one dependency module.

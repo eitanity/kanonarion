@@ -57,6 +57,44 @@ const (
 // it must never read as a go.dev/dl checksum match.
 func (s VerificationStatus) Verified() bool { return s == VerifiedGoDevChecksum }
 
+// AnchorLimitation states what a standard-library component's integrity rests
+// on: the anchor the measurement actually reached, then — separately — whether
+// the go.googlesource.com/go tag/commit anchor was established, then the ceiling
+// that applies whatever the status.
+//
+// It lives here, beside the statuses, because it is a reading of the status set
+// rather than a presentation choice. An SBOM emitting a fixed sentence about the
+// anchor is the defect this replaces: an offline run records
+// VerifiedLocalToolchain with the published checksum not consulted and the
+// commit anchor skipped, and a fixed sentence asserted both of them three lines
+// below the detail that said neither happened. That error runs in the unsafe
+// direction — it is the stronger claim — inside an artefact written to be read
+// where the store is not, so the wording is derived from the evidence.
+//
+// A status this build does not recognise, or none at all, names no anchor rather
+// than falling through to the strongest one.
+func AnchorLimitation(status VerificationStatus, vcsCommitResolved bool) string {
+	var anchor string
+	switch status {
+	case VerifiedGoDevChecksum:
+		anchor = "integrity anchored to the source-tarball checksum go.dev/dl publishes, which the acquired bytes matched"
+	case GoDevChecksumMismatch:
+		anchor = "integrity NOT anchored: the acquired source tarball did not match the checksum go.dev/dl publishes for it, so these bytes are unverified and the mismatch is retained as evidence"
+	case UnverifiedGoDevUnavailable:
+		anchor = "integrity not anchored to a published checksum: the go.dev/dl release manifest could not be consulted, so nothing was matched against it"
+	case VerifiedLocalToolchain:
+		anchor = "integrity rests on the locally-held toolchain source these digests were computed over; the checksum go.dev/dl publishes was not consulted"
+	default:
+		anchor = "integrity anchor not recorded: no standard-library verification status accompanies these bytes, so no anchor is claimed for them"
+	}
+	vcs := "no go.googlesource.com/go tag/commit anchor was established"
+	if vcsCommitResolved {
+		vcs = "cross-checked against a go.googlesource.com/go release tag and the commit it resolves to"
+	}
+	return anchor + "; " + vcs +
+		"; on any of these routes the anchor is weaker than a module sumdb transparency-log entry and is never present in go.sum"
+}
+
 // Facts is the persisted chain-of-custody evidence for one Go standard-library
 // version.
 //

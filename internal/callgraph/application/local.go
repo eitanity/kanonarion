@@ -2,6 +2,7 @@ package application
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log/slog"
 
@@ -67,6 +68,11 @@ func (uc *ExtractLocalCallGraphUseCase) WithAudit(sink ports.AuditSink) *Extract
 type LocalExtractRequest struct {
 	// Dir is the module working-tree root (contains go.mod).
 	Dir string
+	// Force re-analyses even when the ledger already holds a record of this tree
+	// in this state. It is how a caller re-measures after something OUTSIDE the
+	// tree changed — a different toolchain, a repopulated module cache — which the
+	// tree's own digest cannot see.
+	Force bool
 	// Coordinate.Path must be the module path declared in Dir/go.mod;
 	// Coordinate.Version is coordinate.LocalVersion — nothing published the tree,
 	// so there is no version to name. Which tree it was is carried by the record's
@@ -76,11 +82,26 @@ type LocalExtractRequest struct {
 
 // Execute runs local call graph extraction and persists the record.
 //
-// A working tree mutates between runs, so a stored record for the local
-// coordinate is never a valid cache: Execute always re-analyses and
-// overwrites the persisted record (mirroring the local-coordinate handling in
-// ExtractCallGraphUseCase). Persisting keeps callers/callees readable; it is
-// never served back as a cache hit.
+// A working tree mutates between runs, so a stored record is only a valid answer
+// while the tree it was taken of is still the tree in front of the run. That is
+// a question about the tree rather than about the clock, and it is answerable:
+// the tree is scanned first, and a held record that states the same scan digest
+// at the same root is served instead of being re-derived. Nothing is written on
+// that path — the ledger already holds the identical measurement, and appending
+// a second copy of it costs a full edge set per run and makes the ledger's own
+// history unreadable.
+//
+// The scan happens BEFORE the analysis, and the digest stamped on a new record
+// is the one taken then. A tree edited while the analysis runs then differs from
+// what the next run scans, and that run re-derives; stamping the tree as it was
+// afterwards would let the next run reuse a graph taken of a state that never
+// existed.
+//
+// What the digest cannot see is everything outside the tree: the toolchain, the
+// module cache, the build environment. Those change what an analysis of an
+// unchanged tree produces, and Force is how a caller re-measures for that reason.
+// A record that failed for an environment reason is never served back either —
+// see domain.WorktreeRecordAnswersFor.
 //
 // Analysis failures are recorded in the CallGraphRecord's status — they do
 // not make Execute return an error. Only infrastructure errors (store
@@ -100,10 +121,35 @@ func (uc *ExtractLocalCallGraphUseCase) Execute(ctx context.Context, req LocalEx
 		)
 	}()
 
+	identity, err := uc.analyser.TreeIdentity(ctx, req.Dir)
+	if err != nil {
+		return ExtractResult{}, fmt.Errorf("identifying working tree: %w", err)
+	}
+
+	if !req.Force {
+		existing, found, rerr := uc.heldRecord(ctx, req.Coordinate, identity)
+		if rerr != nil {
+			return ExtractResult{}, rerr
+		}
+		if found && domain2.WorktreeRecordAnswersFor(existing, identity) {
+			log.InfoContext(ctx, "callgraph_local_tree_unchanged",
+				slog.String("worktree_scan_digest", identity.ScanDigest),
+				slog.String("analysis_root", identity.Root),
+				slog.String("content_hash", existing.ContentHash),
+			)
+			return ExtractResult{Record: existing, FromCache: true}, nil
+		}
+	}
+
 	record, err := uc.analyser.AnalyseDir(ctx, req.Dir, req.Coordinate)
 	if err != nil {
 		return ExtractResult{}, fmt.Errorf("running local call graph analyser: %w", err)
 	}
+	// Which tree this analysis was HANDED, as it was when the run started. The
+	// digest AnalyseDir stamps says which files the loader read; this one is what
+	// the next run can compare against before doing any work. They are different
+	// claims and carry different scheme prefixes.
+	record.WorktreeScanDigest = identity.ScanDigest
 
 	record.ExtractedAt = uc.clock.Now().UTC()
 	record.PipelineVersion = uc.pipelineVersion
@@ -131,13 +177,43 @@ func (uc *ExtractLocalCallGraphUseCase) Execute(ctx context.Context, req LocalEx
 		slog.String("content_hash", record.ContentHash),
 	)
 
-	// Assurance log: one callgraph_extracted event per persisted generation. The
-	// working-tree route writes on every invocation — the tree mutates, so it is
-	// never served from cache — which is exactly the traffic a reader watching
-	// the stream for store activity needs to see.
+	// Assurance log: one callgraph_extracted event per persisted generation, and
+	// only per persisted generation. A run served from a held record wrote
+	// nothing, so it appends nothing: an event stating an extraction that did not
+	// happen is a claim about store activity that a reader watching the stream
+	// would have no way to check.
 	if err := emitCallGraphExtracted(uc.audit, record); err != nil {
 		return ExtractResult{}, err
 	}
 
 	return ExtractResult{Record: record, FromCache: false}, nil
+}
+
+// heldRecord asks the ledger for the generation it holds of this working tree.
+//
+// The store is asked about the ROOT this run was pointed at, not about whichever
+// tree a reader is standing in. A store that cannot answer that question reports
+// nothing held, and the run analyses — which is what every run did before reuse
+// existed, so a store without the capability loses time rather than correctness.
+func (uc *ExtractLocalCallGraphUseCase) heldRecord(
+	ctx context.Context,
+	coord coordinate.ModuleCoordinate,
+	identity domain2.WorktreeIdentity,
+) (domain2.CallGraphRecord, bool, error) {
+	reader, ok := uc.store.(ports.WorktreeGenerationReader)
+	if !ok {
+		return domain2.CallGraphRecord{}, false, nil
+	}
+	rec, found, err := reader.WorktreeGeneration(ctx, coord, uc.pipelineVersion, identity.Root, identity.ScanDigest)
+	if err != nil {
+		// A record that cannot be read is not a reason to refuse to measure: the
+		// run holds the tree and can answer from it. It is a reason not to be
+		// silent about the ledger's state, which the integrity error already is
+		// when a reader asks for it directly.
+		if errors.Is(err, ports.ErrCallGraphIntegrity) || errors.Is(err, ports.ErrCallGraphConflict) {
+			return domain2.CallGraphRecord{}, false, nil
+		}
+		return domain2.CallGraphRecord{}, false, fmt.Errorf("checking callgraph store: %w", err)
+	}
+	return rec, found, nil
 }

@@ -66,7 +66,7 @@ func TestBuildDependencies(t *testing.T) {
 	}
 	root := &cdx.Component{BOMRef: modulePURL(moduleRef(target))}
 
-	deps := buildDependencies(components, root, graph)
+	deps := buildDependencies(components, root, graph, subject{target: target, ref: moduleRef(target)})
 
 	if len(deps) != 2 {
 		t.Fatalf("got %d dependency entries, want 2 (deduped root+target)", len(deps))
@@ -80,7 +80,7 @@ func TestBuildDependencies(t *testing.T) {
 	}
 
 	// A nil root is tolerated (defensive): entries come from the components only.
-	if got := buildDependencies(components, nil, graph); len(got) != 2 {
+	if got := buildDependencies(components, nil, graph, subject{target: target, ref: moduleRef(target)}); len(got) != 2 {
 		t.Errorf("buildDependencies(nil root) = %d entries, want 2", len(got))
 	}
 }

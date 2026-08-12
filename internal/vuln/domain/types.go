@@ -3,7 +3,6 @@ package domain
 import (
 	"encoding/json"
 	"fmt"
-	"sort"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
@@ -425,6 +424,20 @@ const (
 	// a reader who cannot tell this from an ordinary per-module build failure
 	// cannot tell a degraded run from a complete one.
 	UnscanReasonTargetLoadFailed UnscanReason = "target-load-failed"
+	// UnscanReasonProjectBuildDiverged indicates the project directory a walk was
+	// taken from no longer requires the module versions that walk resolved, so no
+	// analysis of that directory is evidence about this walk's build.
+	//
+	// The scan still matches every coordinate against the advisory database — the
+	// operator keeps the "you are pinned to a vulnerable version" answer — and
+	// records no reachability at all, because the only analysis available is of a
+	// different build. Silence from an analysis of one build is not evidence
+	// about another, and recording it as one is a false negative on the question
+	// this tool exists to answer.
+	//
+	// The remedy is an operator action: walk the directory again so a walk and a
+	// build list describe the same tree, then scan that walk.
+	UnscanReasonProjectBuildDiverged UnscanReason = "project-build-diverged"
 )
 
 // AnalysisSurface names which copy of a module's source a scan measured.
@@ -498,6 +511,7 @@ func AllUnscanReasons() []UnscanReason {
 		UnscanReasonLocalProjectSource,
 		UnscanReasonSourceNotInStore,
 		UnscanReasonTargetLoadFailed,
+		UnscanReasonProjectBuildDiverged,
 	}
 }
 
@@ -619,10 +633,27 @@ type VulnerabilityFinding struct {
 	//
 	// Empty means either that reachability was not requested, or that it was
 	// requested and answered — Reachable says which.
-	ReachabilityNote string    `json:"reachability_note,omitzero"`
-	References       []string  `json:"references,omitzero"`
-	PublishedAt      time.Time `json:"published_at"`
-	ModifiedAt       time.Time `json:"modified_at"`
+	ReachabilityNote string `json:"reachability_note,omitzero"`
+	// References are the advisory's own links: the pair of a reference TYPE and a
+	// URL, exactly as the OSV document carries them.
+	//
+	// The type is the half that makes the field worth recording. A FIX reference
+	// is the commit or CL that remediates the vulnerability — remediation
+	// evidence a reader can apply — and a WEB reference is a mention. Flattened
+	// to bare URLs the two are indistinguishable, so the pair is carried.
+	//
+	// Empty means no advisory was read for this finding, not that the advisory
+	// lists none. Both producing routes read the advisory they have in hand — the
+	// OSV database adapter from the ID/<ID>.json document it already fetches, the
+	// govulncheck parse from the OSV message the stream already carries — so an
+	// empty list means the enrichment did not happen: the advisory fetch failed
+	// and the finding degraded to its bare ID, or the stream carried findings for
+	// an advisory whose OSV message never arrived. Measured on the pinned
+	// snapshot, 4130 of 4134 advisories carry at least one reference, so an empty
+	// list is far more often a fact about the route than about the advisory.
+	References  []AdvisoryReference `json:"references,omitzero"`
+	PublishedAt time.Time           `json:"published_at"`
+	ModifiedAt  time.Time           `json:"modified_at"`
 	// WithdrawnAt is the OSV top-level "withdrawn" timestamp: the moment the
 	// advisory was retracted upstream. Zero means the advisory is live, or that the
 	// lookup never read an advisory to ask — an enrichment fetch that failed leaves
@@ -634,6 +665,19 @@ type VulnerabilityFinding struct {
 	// Affected verdict or vanished into Clean, and the two were indistinguishable
 	// from a real finding and a real all-clear respectively.
 	WithdrawnAt time.Time `json:"withdrawn_at,omitzero"`
+}
+
+// AdvisoryReference is one link an advisory publishes about itself: the OSV
+// {type, url} pair, carried whole.
+//
+// Type is the OSV reference type as the document states it — ADVISORY, WEB,
+// FIX, REPORT, ARTICLE and the rest of the schema's set — and is never
+// normalised or filtered here. A record states what the advisory said; deciding
+// which kinds of link matter is the reader's, and a type this tool does not
+// recognise still reaches them.
+type AdvisoryReference struct {
+	Type string `json:"type,omitzero"`
+	URL  string `json:"url"`
 }
 
 // ReachabilityAttemptFailed reports whether reachability was requested for this
@@ -664,14 +708,6 @@ func (f VulnerabilityFinding) FixDisplay() string {
 		return "fixed in " + f.FixedIn
 	}
 	return "no fix available"
-}
-
-// SortFindings orders findings deterministically by ID so a record built from
-// the metadata path hashes and serialises identically across runs.
-func SortFindings(findings []VulnerabilityFinding) {
-	sort.Slice(findings, func(i, j int) bool {
-		return findings[i].ID < findings[j].ID
-	})
 }
 
 // VulnerabilityRecord is the aggregate root for a module's vulnerability scan.

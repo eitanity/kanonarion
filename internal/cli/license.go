@@ -25,6 +25,9 @@ type licenseFlags struct {
 	all       bool
 	perFile   bool
 	history   bool
+	// walkID pins the walk --recursive reports the closure of. Empty leaves the
+	// choice to the default rule, which states the walk it picked.
+	walkID string
 }
 
 // -- license extract command --
@@ -40,7 +43,8 @@ func newLicenseCmd(stdout, stderr io.Writer) *cobra.Command {
 		Short:   "Extract and persist license information for a Go module",
 		Example: `  kanonarion license github.com/spf13/cobra@v1.8.1
   kanonarion license github.com/spf13/cobra@v1.8.1 --json
-  kanonarion license github.com/spf13/cobra@v1.8.1 --force`,
+  kanonarion license github.com/spf13/cobra@v1.8.1 --force
+  kanonarion license example.com/project@local --recursive --walk-id 01KZ42BGN0T95D932JMC1GXX3C`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return usageErr(cmd)
@@ -57,6 +61,7 @@ func newLicenseCmd(stdout, stderr io.Writer) *cobra.Command {
 	cmd.Flags().BoolVar(&f.all, "all", false, "show all dependencies and their licenses")
 	cmd.Flags().BoolVar(&f.perFile, "per-file", false, "scan root-level .go files for SPDX headers when no license file is found")
 	cmd.Flags().BoolVar(&f.history, "history", false, "show every stored generation for the module instead of extracting")
+	cmd.Flags().StringVar(&f.walkID, "walk-id", "", "with --recursive: report the closure of this walk instead of the one the default rule picks")
 
 	return cmd
 }
@@ -170,12 +175,26 @@ func printLicenseRecursive(
 	f licenseFlags,
 	stdout, stderr io.Writer,
 ) error {
-	summaries, err := walksUC.ListWalks(ctx, walkports.WalkFilter{Target: &target, Limit: 1})
-	if err != nil {
-		return fmt.Errorf("listing walks: %w", err)
-	}
-	if len(summaries) == 0 {
-		return walkTargetMiss(ctx, walksUC, target, stderr)
+	// Which walk's closure is being listed. --recursive reports a build's
+	// dependency set, and a store holding several walks of one project holds
+	// several different ones; the caller either names the walk or is told which
+	// was named for them.
+	var choice walkChoice
+	if f.walkID != "" {
+		rec, perr := resolvePinnedWalk(ctx, walksUC, f.walkID, target)
+		if perr != nil {
+			return perr
+		}
+		choice = pinnedWalkChoice(rec)
+	} else {
+		summaries, lerr := walksUC.ListWalks(ctx, walkports.WalkFilter{Target: &target})
+		if lerr != nil {
+			return fmt.Errorf("listing walks: %w", lerr)
+		}
+		if len(summaries) == 0 {
+			return walkTargetMiss(ctx, walksUC, target, stderr)
+		}
+		choice = chooseWalk(ctx, walksUC, summaries, "")
 	}
 
 	extractFn := func(ctx context.Context, coord coordinate.ModuleCoordinate) (domain.LicenseRecord, error) {
@@ -186,7 +205,7 @@ func printLicenseRecursive(
 		return res.Record, nil
 	}
 
-	depResults, err := queryUC.ResolveForWalk(ctx, summaries[0].ID, target, extractFn)
+	depResults, err := queryUC.ResolveForWalk(ctx, choice.summary.ID, target, extractFn)
 	if err != nil {
 		return fmt.Errorf("resolving walk licenses: %w", err)
 	}
@@ -203,12 +222,17 @@ func printLicenseRecursive(
 		}
 	}
 
-	// Which walk answered, and in which frame. The lookup takes the newest walk
-	// of the target and cannot tell two platforms apart, so a closure listed here
-	// is the closure of one platform's build — and GOOS gates which files, and so
-	// which modules, that build selects.
-	if _, err := fmt.Fprintf(stdout, "\nAnswered from walk %s (frame %s)\n", summaries[0].ID, summaries[0].BuildFrame()); err != nil {
+	// Which walk answered, and in which frame. A closure listed here is the
+	// closure of one platform's build — GOOS gates which files, and so which
+	// modules, that build selects — and the choice between the store's walks of
+	// this target is stated on the line below when there was a choice to make.
+	if _, err := fmt.Fprintf(stdout, "\nAnswered from walk %s (frame %s)\n", choice.summary.ID, choice.summary.BuildFrame()); err != nil {
 		return fmt.Errorf("writing walk frame: %w", err)
+	}
+	if note := choice.statement(); note != "" {
+		if _, err := fmt.Fprint(stdout, note); err != nil {
+			return fmt.Errorf("writing walk selection notice: %w", err)
+		}
 	}
 
 	if f.all {

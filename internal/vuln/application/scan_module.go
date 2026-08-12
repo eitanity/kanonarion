@@ -228,7 +228,88 @@ import (
 // would cost every store an irreversible schema bump to delete rows nothing can
 // read. The cost that IS owed is a full re-scan before a store can answer at
 // v19, which is the price of no longer serving a verdict about the wrong bytes.
-const PipelineVersion = "v19"
+// v20 records the advisory's own references — the OSV {type, url} pairs — on
+// every finding, from both producing routes.
+//
+// The bump is owed because the field goes from never populated to populated on
+// essentially every finding. Measured on the pinned snapshot, 4130 of 4134
+// advisories carry at least one reference and 15132 URLs in total, so a re-scan
+// of unchanged inputs produces different sealed bytes for almost every record
+// that holds a finding. That is a content change to a hashed field, and reads
+// pin to this constant, so without the bump a v19 row would keep answering a
+// question the v20 shape can now answer more completely.
+//
+// The affected_symbols ordering fix is NOT the precedent here. That one changed
+// only the arrangement within a field already populated, and every stored record
+// still recomputed its hash under the new generation. This one changes what the
+// record says, and the 2548 v19 records in the store recompute to different
+// bytes the moment they are re-derived.
+//
+// The cost is stated plainly: every stored vulnerability record goes dark for a
+// v20 question until it is re-scanned. No migration is owed — reads are keyed on
+// the pipeline version, so the v19 rows are already unreachable for a v20
+// question, and the references live inside the serialised record rather than in
+// a column.
+//
+// v21 merges the two producing routes field by field instead of picking a whole
+// finding, and stops clipping the advisory's description on the analysis route.
+//
+// The bump is owed because both change what a re-derived record CONTAINS. An
+// advisory reported by both routes now keeps the analysis's symbols and
+// reachability AND the coordinate match's affected range, where before the
+// whole-finding merge stored one shape or the other depending on which route
+// reached it; and a description over 512 bytes is now carried whole on both
+// routes rather than clipped on one. Measured on a working store, 350 of 879
+// stored findings carry no affected range and 1 carries the truncation marker,
+// so those records re-derive to different sealed bytes.
+//
+// What it is NOT is a recovery of lost data. Of those 350 rows, 269 carry
+// fixed_in because the advisory names a fix, and the other 81 name none because
+// no fix exists; none lacks a remediation fact the tool could have stated. The
+// defect this closes is one advisory having two shapes, not a missing answer.
+//
+// The cost is the same shape as the v20 bump and this is the cheapest moment to
+// spend it: the store is already dark. Measured before the change, the store
+// held 2548 records at v19 and 1 at v20, so bumping now darkens ONE record that
+// was not already awaiting the v20 re-scan. No migration is owed — reads are
+// keyed on the pipeline version, so the older rows are already unreachable for a
+// v21 question, and both changes live inside the serialised record rather than
+// in a column.
+// v22 stops a project-rooted scan attributing an analysis of the project
+// directory to a walk the directory no longer builds, and records no
+// reachability at all when it has moved on.
+//
+// The bump is owed because it changes what a re-derived record CONTAINS. A v21
+// scan of such a walk ran govulncheck over the directory as it stands now,
+// attributed its silence to the versions the WALK pinned, and stored a
+// not-reachable verdict at high confidence for a coordinate no analysis had
+// examined. The same inputs now produce a record whose findings carry a nil
+// Reachable and whose coverage axis is Unscannable with the divergence named, so
+// the bytes differ for every record the defect touched.
+//
+// It has to be the pipeline version and cannot be a migration, because the
+// affected rows are not identifiable from the store. Whether a v21 record was
+// produced against an agreeing directory or a moved one depends on the state of
+// a directory at the moment of the scan, and that was never recorded — the only
+// visible tell was a symbol spelling, since a coordinate match writes the
+// advisory's form ("Parser.ParseUnverified") where govulncheck writes the
+// receiver's ("*Parser.ParseUnverified"). Reads pin to this constant, so under
+// the bump the v21 rows stop being served and a re-scan states what it did and
+// did not establish; the rows remain readable in the ledger as what the earlier
+// generation concluded.
+//
+// Measured: one project walk in a working store carried two records for
+// github.com/golang-jwt/jwt/v4@v4.5.1 seventeen seconds apart, one reachable and
+// one not, with a dependency upgrade to the FIXED v4.5.2 landing between them —
+// and eight of eight forced re-scans since have reported the false negative.
+//
+// The cost is the same shape as the v20 and v21 bumps: every stored
+// vulnerability record goes dark for a v22 question until it is re-scanned. No
+// migration is owed — reads are keyed on the pipeline version, so the v21 rows
+// are already unreachable for a v22 question, and the change lives inside the
+// serialised record (an existing reason code field, an existing nullable
+// reachability field) rather than in a column.
+const PipelineVersion = "v22"
 
 // ScanModuleUseCase orchestrates a single module's vulnerability scan.
 type ScanModuleUseCase struct {
@@ -999,12 +1080,18 @@ func modulePaths(known map[coordinate.ModuleCoordinate]struct{}) map[string]stru
 // build-incompatibility paths already route through scanMetadataOnly, which
 // performs the same coordinate match.
 //
-// A finding the source analysis already reported wins, because it carries
-// call-graph reachability the coordinate match cannot know. A coordinate match
-// the source analysis did not report is added with a nil Reachable: the advisory
-// applies to this version, and whether it is reachable is decided by the
-// reachability step that follows, or left undetermined. Findings are never
-// dropped in either direction.
+// An advisory both sources report is merged FIELD BY FIELD, per the authority
+// table on domain.MergeCoordinateMatches. The source analysis keeps the symbols
+// and the call-graph reachability the coordinate match cannot know, and the
+// match contributes the advisory's affected range, which the analysis route
+// never sets. Taking the analysis finding whole instead — which is what this
+// did — meant one advisory was stored in two shapes depending on which route
+// reached it, in fields that are sealed and content-hashed.
+//
+// A coordinate match the source analysis did not report is added with a nil
+// Reachable: the advisory applies to this version, and whether it is reachable
+// is decided by the reachability step that follows, or left undetermined.
+// Findings are never dropped in either direction.
 func (uc *ScanModuleUseCase) attributeCoordinateFindings(ctx context.Context, record *domain.VulnerabilityRecord, coord coordinate.ModuleCoordinate) error {
 	// "Did an analysis produce this record" is the coverage axis's question, and
 	// the two-word test was an open-coded projection of it. The Unscannable and
@@ -1017,25 +1104,12 @@ func (uc *ScanModuleUseCase) attributeCoordinateFindings(ctx context.Context, re
 	if err != nil {
 		return fmt.Errorf("coordinate advisory match for %s: %w", coord, err)
 	}
-	reported := make(map[string]struct{}, len(record.Findings))
-	for _, f := range record.Findings {
-		reported[f.ID] = struct{}{}
-	}
-	added := 0
-	for _, f := range matched {
-		if _, ok := reported[f.ID]; ok {
-			continue
-		}
-		record.Findings = append(record.Findings, f)
-		added++
-	}
+	reported := len(record.Findings)
+	merged, added := domain.MergeCoordinateMatches(record.Findings, matched, nil)
+	record.Findings = merged
 	if added > 0 {
 		uc.logger.Info("vuln-scan: advisories matched by coordinate that source analysis cannot report",
-			"coordinate", coord, "matched", added, "reported_by_source", len(reported))
-		// Record identity hashes over the findings, so a merged set must be
-		// ordered rather than left as "whatever the source reported, then
-		// whatever the coordinate match added".
-		domain.SortFindings(record.Findings)
+			"coordinate", coord, "matched", added, "reported_by_source", reported)
 	}
 	if len(record.Findings) > 0 {
 		// This is a verdict decision, so it states the axis it decided and lets the

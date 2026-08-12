@@ -185,9 +185,10 @@ func runWalkCmdModule(ctx context.Context, arg string, f walkFlags, progress wal
 	}
 	// No local source context, so no local-replace base: a positional walk
 	// resolves replace targets from the proxy or not at all.
-	return runWalk(ctx, arg, commonWalkFlags{goproxy: f.goproxy}, f.force, f.allowPartial, f.workerCount,
+	_, err := runWalk(ctx, arg, commonWalkFlags{goproxy: f.goproxy}, f.force, f.allowPartial, f.workerCount,
 		f.operator, f.policyPath, f.skipVCSVerify, domain.WalkScopeCode, depth, "", progress, uc, records,
 		stdout, stderr)
+	return err
 }
 
 // runWalkProject runs a single project-rooted walk: the local main module is
@@ -315,37 +316,45 @@ func runWalkProject(ctx context.Context, gomodPath string, force, allowPartial b
 	return result, nil
 }
 
-func runWalk(ctx context.Context, arg string, f commonWalkFlags, force, allowPartial bool, workerCount int, operator, policyPath string, skipVCSVerify bool, scope domain.WalkScope, depth domain.WalkDepth, localReplaceBase string, progress walkports.ProgressReporter, uc ExecuteWalkUseCase, records fetchRecordReader, stdout, stderr io.Writer) error {
+// runWalk walks one published coordinate and returns the walk it produced.
+//
+// The result is returned rather than only the error so a caller that walks and
+// then reads what it walked names the record this run resolved to, instead of
+// asking the store for "the newest walk of that coordinate" afterwards. Those
+// are not the same walk: identity reuse serves an existing record when the
+// resolution is unchanged, and reuse keeps that record's original started_at, so
+// the walk a run produced can be older than another walk of the same target.
+func runWalk(ctx context.Context, arg string, f commonWalkFlags, force, allowPartial bool, workerCount int, operator, policyPath string, skipVCSVerify bool, scope domain.WalkScope, depth domain.WalkDepth, localReplaceBase string, progress walkports.ProgressReporter, uc ExecuteWalkUseCase, records fetchRecordReader, stdout, stderr io.Writer) (application.ExecuteWalkResult, error) {
 	logger := buildLogger(logLevel, stderr)
 
 	path, version, err := parseModuleArg(arg)
 	if err != nil {
-		return fmt.Errorf("invalid argument %q: %w", arg, err)
+		return application.ExecuteWalkResult{}, fmt.Errorf("invalid argument %q: %w", arg, err)
 	}
 	if version == "" {
-		return fmt.Errorf("version required: use %s@<version> or %s@latest", path, path)
+		return application.ExecuteWalkResult{}, fmt.Errorf("version required: use %s@<version> or %s@latest", path, path)
 	}
 
 	var coord coordinate.ModuleCoordinate
 	if version == "latest" {
 		proxy, proxyErr := fetchadapterproxy.New(f.goproxy, false)
 		if proxyErr != nil {
-			return proxyAdapterError(proxyErr)
+			return application.ExecuteWalkResult{}, proxyAdapterError(proxyErr)
 		}
 		coord, err = resolveLatest(ctx, path, proxy, stderr)
 		if err != nil {
-			return err
+			return application.ExecuteWalkResult{}, err
 		}
 	} else {
 		coord, err = coordinate.NewModuleCoordinate(path, version)
 		if err != nil {
-			return fmt.Errorf("invalid coordinate %q: %w", arg, err)
+			return application.ExecuteWalkResult{}, fmt.Errorf("invalid coordinate %q: %w", arg, err)
 		}
 	}
 
 	policy, policyHash, err := loadPolicy(ctx, policyPath, logger)
 	if err != nil {
-		return fmt.Errorf("loading policy: %w", err)
+		return application.ExecuteWalkResult{}, fmt.Errorf("loading policy: %w", err)
 	}
 
 	result, err := uc.Execute(ctx, application.WalkRequest{
@@ -362,18 +371,18 @@ func runWalk(ctx context.Context, arg string, f commonWalkFlags, force, allowPar
 		Progress:         progress,
 	})
 	if err != nil {
-		return fmt.Errorf("executing walk: %w", err)
+		return application.ExecuteWalkResult{}, fmt.Errorf("executing walk: %w", err)
 	}
 
 	rec := result.Record
 	// The aggregate goes to stderr, never stdout: the walk record on stdout is
 	// the content-hashed artefact, and a report about the run is not part of it.
 	if cerr := reportGraphVerificationCoverage(ctx, rec.Graph.Nodes, records, stderr); cerr != nil {
-		return cerr
+		return result, cerr
 	}
 	if jsonOut {
 		if encErr := writeWalkRecordJSON(stdout, rec); encErr != nil {
-			return fmt.Errorf("encoding JSON: %w", encErr)
+			return result, fmt.Errorf("encoding JSON: %w", encErr)
 		}
 	} else {
 		if _, pErr := fmt.Fprintf(stdout, "walk %s: %s depth=%s (%d nodes, %d failed)\n",
@@ -381,21 +390,21 @@ func runWalk(ctx context.Context, arg string, f commonWalkFlags, force, allowPar
 			len(rec.Graph.Nodes),
 			countFailures(rec),
 		); pErr != nil {
-			return fmt.Errorf("writing output: %w", pErr)
+			return result, fmt.Errorf("writing output: %w", pErr)
 		}
 	}
 
 	switch rec.OverallStatus {
 	case domain.WalkFailed:
-		return &exitError{code: ExitFailed, msg: "walk failed: target module could not be fetched"}
+		return result, &exitError{code: ExitFailed, msg: "walk failed: target module could not be fetched"}
 	case domain.WalkCancelled:
-		return &exitError{code: ExitCancelled, msg: "walk cancelled"}
+		return result, &exitError{code: ExitCancelled, msg: "walk cancelled"}
 	case domain.WalkPartial:
 		if !allowPartial {
-			return &exitError{code: ExitPartial, msg: "walk partial: some dependencies could not be fetched"}
+			return result, &exitError{code: ExitPartial, msg: "walk partial: some dependencies could not be fetched"}
 		}
 	}
-	return nil
+	return result, nil
 }
 
 // ---- walk-list command ----

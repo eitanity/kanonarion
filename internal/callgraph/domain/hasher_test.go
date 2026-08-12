@@ -334,38 +334,57 @@ func TestHasherMarshalRoundTrip_ManyNodes(t *testing.T) {
 	}
 }
 
-func TestSortEdgeTieBreaking(t *testing.T) {
+func TestCanonicalEdgeTieBreaking(t *testing.T) {
 	coord, _ := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
 	r := domain2.CallGraphRecord{
-		Coordinate: coord,
+		SchemaVersion: domain2.CallGraphSchemaVersion,
+		Ecosystem:     fetchdomain.EcosystemGo,
+		Coordinate:    coord,
 		Edges: []domain2.CallEdge{
 			{FromID: "A", ToID: "B", CallSite: domain2.SourcePosition{File: "z.go", Line: 1}},
 			{FromID: "A", ToID: "B", CallSite: domain2.SourcePosition{File: "a.go", Line: 5}},
 			{FromID: "A", ToID: "B", CallSite: domain2.SourcePosition{File: "a.go", Line: 2}},
 		},
 	}
-	r.Sort()
-	if r.Edges[0].CallSite.File != "a.go" || r.Edges[0].CallSite.Line != 2 {
-		t.Errorf("first edge after sort = %+v, want a.go:2", r.Edges[0])
+	got := canonicalEdgesOf(t, r)
+	if got[0].CallSite.File != "a.go" || got[0].CallSite.Line != 2 {
+		t.Errorf("first canonical edge = %+v, want a.go:2", got[0])
 	}
-	if r.Edges[2].CallSite.File != "z.go" {
-		t.Errorf("last edge after sort = %+v, want z.go:1", r.Edges[2])
+	if got[2].CallSite.File != "z.go" {
+		t.Errorf("last canonical edge = %+v, want z.go:1", got[2])
 	}
 }
 
-func TestSortEdgeSameFromDifferentTo(t *testing.T) {
+func TestCanonicalEdgeSameFromDifferentTo(t *testing.T) {
 	coord, _ := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
 	r := domain2.CallGraphRecord{
-		Coordinate: coord,
+		SchemaVersion: domain2.CallGraphSchemaVersion,
+		Ecosystem:     fetchdomain.EcosystemGo,
+		Coordinate:    coord,
 		Edges: []domain2.CallEdge{
 			{FromID: "A", ToID: "Z", CallSite: domain2.SourcePosition{File: "a.go", Line: 1}},
 			{FromID: "A", ToID: "B", CallSite: domain2.SourcePosition{File: "a.go", Line: 2}},
 		},
 	}
-	r.Sort()
-	if r.Edges[0].ToID != "B" {
-		t.Errorf("first edge ToID = %q, want B", r.Edges[0].ToID)
+	if got := canonicalEdgesOf(t, r); got[0].ToID != "B" {
+		t.Errorf("first canonical edge ToID = %q, want B", got[0].ToID)
 	}
+}
+
+// canonicalEdgesOf returns the edges in the order the canonical bytes carry
+// them, which is where the ordering is decided.
+func canonicalEdgesOf(t *testing.T, r domain2.CallGraphRecord) []domain2.CallEdge {
+	t.Helper()
+	var h domain2.CallGraphRecordHasher
+	raw, err := h.Marshal(r)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	back, err := h.Unmarshal(raw)
+	if err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	return back.Edges
 }
 
 // TestMarshalCanonical_AllEdgeSortBranches exercises all four comparison

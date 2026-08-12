@@ -1,5 +1,10 @@
 package domain
 
+import (
+	"encoding/json"
+	"fmt"
+)
+
 // ReachabilitySoundness states how thorough the search behind a NEGATIVE
 // reachability answer was.
 //
@@ -85,6 +90,24 @@ func (s ReachabilitySoundness) String() string {
 		return "not stated"
 	}
 	return string(s)
+}
+
+// MarshalJSON emits the rung as the word String renders, so the zero value
+// travels as "not stated" rather than as an empty string.
+//
+// It is what makes an unqualified answer legible to a machine consumer. The zero
+// value is the empty string, so a surface that emitted the raw value left a
+// positive verdict — which HAS no rung to state — indistinguishable from a
+// surface that never derived one. Both serialised to nothing. Naming the zero
+// value moves that distinction onto the wire: the key present with "not stated"
+// says this answer has no absence to qualify, and the key absent says the
+// producer does not derive the rung at all.
+func (s ReachabilitySoundness) MarshalJSON() ([]byte, error) {
+	b, err := json.Marshal(s.String())
+	if err != nil {
+		return nil, fmt.Errorf("marshalling reachability soundness: %w", err)
+	}
+	return b, nil
 }
 
 // Rank orders the ladder, higher being more sound. The zero value ranks below

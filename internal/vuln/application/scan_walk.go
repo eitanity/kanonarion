@@ -256,6 +256,13 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	// asked for the scan.
 	params.ProjectDir = uc.effectiveProjectDir(params, walk)
 
+	// The project-rooted branch attributes ONE analysis of the live directory to
+	// the versions the walk pinned. That is only the same build while the
+	// directory still requires what the walk resolved, so it is checked before
+	// anything is attributed rather than assumed. Empty means agreement, or that
+	// there was nothing to compare — see projectBuildDivergence, which says which.
+	projectDivergence := uc.projectBuildDivergence(walk, params.ProjectDir)
+
 	run := domain.WalkScanRun{
 		ID:               fmt.Sprintf("vscan-%s-%d", params.WalkID, uc.clock.Now().Unix()),
 		WalkID:           params.WalkID,
@@ -366,6 +373,16 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	}
 
 	switch {
+	case walk.Target.IsLocal() && params.ProjectDir != "" && len(projectDivergence) > 0:
+		// The directory moved on from the walk. The coordinate answer is still
+		// this walk's to give and is still given; the reachability answer belongs
+		// to a build nothing here measured, so it is left unrecorded instead of
+		// being filled in from an analysis of the wrong versions.
+		uc.logger.Warn("vuln-scan: the project directory no longer requires the module versions this walk resolved, so no analysis of it is attributed to this walk; matching advisories by coordinate and recording no reachability",
+			"walk_id", params.WalkID, "project_dir", params.ProjectDir, "disagreements", strings.Join(projectDivergence, ", "))
+		if derr := uc.scanProjectDiverged(ctx, walk, allCoords, params, snapshot, closure, projectDivergence, finalResults); derr != nil {
+			return domain.WalkScanRun{}, derr
+		}
 	case walk.Target.IsLocal() && params.ProjectDir != "":
 		// A project walk is rooted at the local main module. Its verdict is the
 		// project's resolved, pruned build — derive it from a single
@@ -386,34 +403,7 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	case targetRooted:
 		// Verdicts already derived from the target-rooted analysis.
 	case params.BinaryModePrePass:
-		// Pass 1: fast binary-mode scan across all modules.
-		uc.logger.Info("binary pre-pass: scanning all modules in binary mode", "count", total)
-		pass1 := scanPool(allCoords, domain.ScanModeBinary)
-
-		// Modules flagged Affected by binary mode need source-mode re-scan for call-graph precision.
-		var needSourceScan []coordinate.ModuleCoordinate
-		for _, r := range pass1 {
-			// Which modules earn a source-mode re-scan is a findings question — the
-			// re-scan exists to add call-graph precision to a match — so it is asked
-			// of the findings axis. A binary-mode record that matched by coordinate
-			// under a coverage gap reports its finding there, and reading the
-			// collapsed word skipped the re-scan for exactly the module whose
-			// reachability was never computed.
-			_, findings := domain.RecordAxes(r.record)
-			if r.err == nil && findings == domain.FindingsRecordAffected {
-				needSourceScan = append(needSourceScan, r.coord)
-			} else {
-				finalResults[r.coord] = r
-			}
-		}
-
-		if len(needSourceScan) > 0 {
-			uc.logger.Info("binary pre-pass: re-scanning affected modules in source mode", "count", len(needSourceScan))
-			pass2 := scanPool(needSourceScan, domain.ScanModeSource)
-			for _, r := range pass2 {
-				finalResults[r.coord] = r
-			}
-		}
+		uc.binaryModePrePass(allCoords, total, scanPool, finalResults)
 	default:
 		for _, r := range scanPool(allCoords, domain.ScanModeSource) {
 			finalResults[r.coord] = r
@@ -490,6 +480,45 @@ func (uc *ScanWalkUseCase) Scan(ctx context.Context, params ScanWalkParams) (dom
 	}
 
 	return run, nil
+}
+
+// binaryModePrePass runs the two-pass scan: a fast binary-mode sweep over every
+// coordinate, then a source-mode re-scan of only those it flagged Affected,
+// where the call-graph precision is worth the cost. Verdicts land in out.
+func (uc *ScanWalkUseCase) binaryModePrePass(
+	allCoords []coordinate.ModuleCoordinate,
+	total int,
+	scanPool func([]coordinate.ModuleCoordinate, domain.ScanMode) []moduleResult,
+	out map[coordinate.ModuleCoordinate]moduleResult,
+) {
+	// Pass 1: fast binary-mode scan across all modules.
+	uc.logger.Info("binary pre-pass: scanning all modules in binary mode", "count", total)
+	pass1 := scanPool(allCoords, domain.ScanModeBinary)
+
+	// Modules flagged Affected by binary mode need source-mode re-scan for call-graph precision.
+	var needSourceScan []coordinate.ModuleCoordinate
+	for _, r := range pass1 {
+		// Which modules earn a source-mode re-scan is a findings question — the
+		// re-scan exists to add call-graph precision to a match — so it is asked
+		// of the findings axis. A binary-mode record that matched by coordinate
+		// under a coverage gap reports its finding there, and reading the
+		// collapsed word skipped the re-scan for exactly the module whose
+		// reachability was never computed.
+		_, findings := domain.RecordAxes(r.record)
+		if r.err == nil && findings == domain.FindingsRecordAffected {
+			needSourceScan = append(needSourceScan, r.coord)
+		} else {
+			out[r.coord] = r
+		}
+	}
+
+	if len(needSourceScan) > 0 {
+		uc.logger.Info("binary pre-pass: re-scanning affected modules in source mode", "count", len(needSourceScan))
+		pass2 := scanPool(needSourceScan, domain.ScanModeSource)
+		for _, r := range pass2 {
+			out[r.coord] = r
+		}
+	}
 }
 
 // missingRecordLogLimit bounds how many coordinates a persistence-gap error

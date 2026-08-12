@@ -68,13 +68,17 @@ type GenerateRequest struct {
 	// (metadata.component) of a project SBOM. The subject's graph target is the
 	// local main module at the synthetic version "local", which is not a
 	// resolvable coordinate; a release passes its tag here (e.g. "v0.1.1") so the
-	// subject's version, PURL and distribution URL name the published artifact.
-	// Ignored unless the subject is the local main module; empty leaves "local".
+	// subject's version and PURL name the published artifact. The stamp reaches
+	// the subject's own entry in the component list too, so one module has one
+	// identity in the document. Ignored unless the subject is the local main
+	// module; empty leaves "local".
 	MainComponentVersion string
 	// MainComponentLicense is the SPDX id/expression attached to the subject when
 	// it carries no fetched licence record (the local main module is never
-	// proxy-fetched, so it has none). Ignored unless the subject is the local
-	// main module and has no existing licence; empty leaves it unlicensed.
+	// proxy-fetched, so it has none). It reaches the subject's own entry in the
+	// component list too, which is the copy the undetermined-licence count reads.
+	// Ignored unless the subject is the local main module and has no existing
+	// licence; empty leaves it unlicensed.
 	MainComponentLicense string
 	// VendorScope states how much of the project's vendored tree this document
 	// describes. It is nil when the walk was not rooted at a project, or the
@@ -83,6 +87,18 @@ type GenerateRequest struct {
 	// there. Non-nil, it is always rendered, full coverage included: a reader
 	// cannot tell a complete document from a narrowed one that stays silent.
 	VendorScope *vendordomain.VendorScope
+	// ModuleOrigins carries, per module coordinate, what the fetch ledger
+	// recorded about where that module's bytes came from. A coordinate absent
+	// from the map has no recorded origin, and the document then asserts none
+	// for it.
+	//
+	// It exists because an externalReference is an assertion about the world.
+	// A URL assembled from a module path is a guess: "https://" + the path of
+	// github.com/oklog/ulid/v2 names a repository GitHub does not have, and a
+	// proxy zip URL for a module that was never published there names a
+	// download that cannot happen. This document leaves the building and is
+	// read by people who cannot re-run it, so it states only what was measured.
+	ModuleOrigins map[coordinate.ModuleCoordinate]ModuleOrigin
 	// ComponentsScopedToBinary reports that the component list was restricted
 	// to one binary's import closure (sbom --package). It changes no scope
 	// arithmetic — the uncovered set is measured against the components the
@@ -90,6 +106,41 @@ type GenerateRequest struct {
 	// falls outside such a document: it was asked for a narrower subject, not
 	// that anything went missing from it.
 	ComponentsScopedToBinary bool
+}
+
+// ModuleOrigin is what the fetch ledger measured about where one module's
+// bytes came from.
+//
+// It carries only the VCS leg, and only when that leg confirmed: the repository
+// the module zip was cross-verified against, plus the ref and commit the
+// cross-verification used. There is deliberately no download field. The ledger
+// records the ROUTE bytes arrived by (proxy, module cache, local path) and the
+// blob-store handle they were filed under; it records no public download
+// address, and the proxy a run used is not part of a fact record. A
+// distribution reference would therefore have to be constructed, which is the
+// thing this type exists to stop.
+type ModuleOrigin struct {
+	// VCSURL is the repository the module zip was cross-verified against.
+	VCSURL string
+	// VCSRef is the ref the cross-verification resolved, e.g.
+	// "refs/tags/v1.8.1". Empty for a pseudo-version, where only the commit is
+	// known.
+	VCSRef string
+	// VCSCommit is the commit the cross-verification read.
+	VCSCommit string
+}
+
+// IsZero reports whether no origin was recorded.
+func (o ModuleOrigin) IsZero() bool { return o == ModuleOrigin{} }
+
+// ModuleOriginReader answers what the fetch ledger recorded about a module's
+// origin. Implementations return (zero, false, nil) when nothing is recorded,
+// or when what is recorded does not positively support the claim — an absent
+// answer, not an error: a module nobody cross-verified is an ordinary outcome
+// (a local main module, an offline run, a --skip-vcs-verify run), and it means
+// the document says nothing about that module's origin rather than guessing.
+type ModuleOriginReader interface {
+	ModuleOrigin(ctx context.Context, coord coordinate.ModuleCoordinate) (ModuleOrigin, bool, error)
 }
 
 // VendorTreeReader reads the module entries of a project's vendor/modules.txt.

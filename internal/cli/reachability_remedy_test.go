@@ -111,23 +111,29 @@ func (e *remedyGrammarError) Error() string {
 // "kanonarion vuln-scan <module>@<version> --reachability" was: vuln-scan takes
 // a walk id positionally, so following it failed with "walk record not found".
 func TestReachabilityRemedies_EveryLineIsAcceptedByTheParser(t *testing.T) {
-	coord, err := coordinate.NewModuleCoordinate("github.com/golang-jwt/jwt/v4", "v4.5.1")
-	if err != nil {
-		t.Fatalf("NewModuleCoordinate: %v", err)
-	}
-	remedies := reachabilityRemedies(coord)
-	if len(remedies) == 0 {
-		t.Fatal("no remedies enumerated")
-	}
-	for _, r := range remedies {
-		if len(r.lines) == 0 {
-			t.Errorf("remedy %q prints no invocation", r.lead)
-		}
-		for _, line := range r.lines {
-			if err := parseInvocation(t, line); err != nil {
-				t.Errorf("remedy line %q is rejected by the CLI's own parser: %v", line, err)
+	// Both coordinate kinds, because a project's own module carries the synthetic
+	// "local" version and the store holds vulnerability records for one: a remedy
+	// built by concatenating that coordinate onto "kanonarion walk " or
+	// "kanonarion callgraph " names an invocation that cannot resolve, and the
+	// published-only fixture this test started with could never see it.
+	for _, coord := range []coordinate.ModuleCoordinate{
+		mustCoord(t, "github.com/golang-jwt/jwt/v4", "v4.5.1"),
+		mustCoord(t, "github.com/cortezaproject/corteza/server", coordinate.LocalVersion),
+	} {
+		t.Run(coord.String(), func(t *testing.T) {
+			remedies := reachabilityRemedies(coord)
+			if len(remedies) == 0 {
+				t.Fatal("no remedies enumerated")
 			}
-		}
+			for _, r := range remedies {
+				if len(r.lines) == 0 {
+					t.Errorf("remedy %q prints no invocation", r.lead)
+				}
+				for _, line := range r.lines {
+					assertRunnableFor(t, coord, line)
+				}
+			}
+		})
 	}
 }
 

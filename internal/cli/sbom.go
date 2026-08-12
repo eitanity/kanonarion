@@ -92,8 +92,8 @@ Exit codes:
 	cmd.Flags().StringVar(&f.operator, "operator", "", "operator identifier (defaults to $USER)")
 	cmd.Flags().StringVar(&f.packagePattern, "package", "", "Go package pattern (e.g. ./cmd/kanonarion); scopes components to that binary's import closure")
 	cmd.Flags().StringVar(&f.policyPath, "policy", "", "path to depth policy YAML (default: search for .kanonarion/policy.yaml)")
-	cmd.Flags().StringVar(&f.mainVersion, "main-version", "", "version to stamp on the SBOM subject (metadata.component) instead of the synthetic \"local\"; use a release tag (e.g. v0.1.1) so the subject is a resolvable coordinate")
-	cmd.Flags().StringVar(&f.mainLicense, "main-license", "", "SPDX id/expression (e.g. Apache-2.0) to attach to the SBOM subject, which has no fetched licence record of its own")
+	cmd.Flags().StringVar(&f.mainVersion, "main-version", "", "version to stamp on the SBOM subject instead of the synthetic \"local\"; use a release tag (e.g. v0.1.1) so the subject is a resolvable coordinate. It stamps both places the document describes the subject: metadata.component and the subject's own entry in the component list")
+	cmd.Flags().StringVar(&f.mainLicense, "main-license", "", "SPDX id/expression (e.g. Apache-2.0) to attach to the SBOM subject, which has no fetched licence record of its own. It reaches the subject's entry in the component list too, which is the copy the undetermined-licence exit reads")
 	cmd.Flags().StringVar(&f.generatedAt, "generated-at", "", "RFC3339 time this document is being created (e.g. 2026-01-31T09:00:00Z); becomes metadata.timestamp. Omitted, the document is stamped with the newest licence extraction time among its inputs and says so")
 	registerStdlibFromGoModFlag(cmd, &f.stdlibFromGoMod)
 	registerFromModcacheFlag(cmd, &f.fromModcache)
@@ -239,6 +239,17 @@ func sbomGenerateWith(
 		_, _ = fmt.Fprintf(stdout, "Content-Hash: %s\n", record.ContentHash)
 	} else if _, err := stdout.Write(record.Content); err != nil {
 		return fmt.Errorf("writing sbom to stdout: %w", err)
+	}
+
+	// A subject stamp names this document rather than the walk, so it was
+	// generated fresh and left unstored — the walk's stored SBOM still carries
+	// the subject the walk itself resolved. Say so: the operator is handed a
+	// content hash and an ID for a document the store does not hold, and a
+	// later 'sbom-show' of that ID would answer with a different document.
+	if f.mainVersion != "" || f.mainLicense != "" {
+		_, _ = fmt.Fprintf(stderr,
+			"note: --main-version/--main-license name this document's subject, so it was generated now and not stored; the stored SBOM for walk %s is unchanged\n",
+			record.WalkID)
 	}
 
 	// On stderr, never in the document: an SBOM is an inventory, and a caveat

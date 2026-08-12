@@ -24,7 +24,6 @@ func sealedFailure(t *testing.T, cause domain2.FailureCause) domain2.CallGraphRe
 		ExtractedAt:      testTime,
 		PipelineVersion:  testPipeline,
 	}
-	r.Sort()
 	var h domain2.CallGraphRecordHasher
 	sealed, err := h.SetContentHash(r)
 	if err != nil {

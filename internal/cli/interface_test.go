@@ -264,7 +264,7 @@ func TestPrintRecordText_Full(t *testing.T) {
 	}
 
 	var buf bytes.Buffer
-	if err := printRecordText(r, &buf); err != nil {
+	if err := printRecordText(r, newPromotionIndex(r), &buf); err != nil {
 		t.Fatalf("printRecordText: %v", err)
 	}
 	out := buf.String()

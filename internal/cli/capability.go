@@ -220,7 +220,15 @@ func printCapabilityDiff(stdout io.Writer, from, to coordinate.ModuleCoordinate,
 		}
 	}
 	if len(diff.Added) == 0 && len(diff.Removed) == 0 {
-		if _, err := fmt.Fprintln(stdout, "  no capability change"); err != nil {
+		// The set held in common is stated with the zero, because "no capability
+		// change" over two empty sets and over two identical non-empty sets are
+		// different findings that otherwise print the same line.
+		line := "  no capability change: neither version witnesses any capability"
+		if len(diff.Common) > 0 {
+			line = fmt.Sprintf("  no capability change: both versions witness the same %s (%s)",
+				countOf(len(diff.Common), "capabilities"), strings.Join(capsToStrings(diff.Common), ", "))
+		}
+		if _, err := fmt.Fprintln(stdout, line); err != nil {
 			return fmt.Errorf("writing no-change: %w", err)
 		}
 		return nil

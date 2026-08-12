@@ -59,8 +59,10 @@ A stored verdict is a verdict about one build. Name the build:
 
 - `--walk-id <id>` answers in the frame of that walk's scans, restricted to the
   records that walk covered.
-- `--gomod <path>` does the same for the newest succeeded project walk of that
-  `go.mod`. The path is required and may be written either way round
+- `--gomod <path>` does the same for the succeeded project walk of that `go.mod`
+  that the [default-frame rule](conventions.md#the-default-walk) picks — the
+  most recent one whose recorded resolution still agrees with the manifest,
+  else the most recent. The path is required and may be written either way round
   (`--gomod ./go.mod` or `--gomod=./go.mod`). Mutually exclusive with
   `--walk-id`, and rejected alongside `--local`, which measures the tree it is
   given.
@@ -151,21 +153,46 @@ Two consequences worth knowing before you read a negative:
   Source mode is the strongest form of that silence and reports `inferred`; binary
   mode inspected a symbol table with no call graph behind it and reports
   `unconfirmed`.
-- **A reachable answer states no soundness.** A route is its own evidence, and the
-  field is absent from both the text and the JSON for a positive.
+- **A reachable answer states no soundness.** A route is its own evidence, so the
+  text prints no rung for a positive. The JSON still carries the `soundness` key,
+  with the value `"not stated"`: the key being present says this producer derived
+  the rung and found no absence to qualify, and the key being absent says the
+  producer does not state a rung at all. Those are different facts, and an omitted
+  key rendered them identically.
 
 The rung is derived from the answer you already have — the analyser it names and
 that analyser's own fidelity — so it appears on records that were scanned long
 before it existed, and it improves whenever the analysis behind them does.
 
 The same rung is appended to the per-finding label in `vuln-show` and
-`vuln-scan-show`, where a bare `[not reachable]` used to read the same whether a
+`vuln-scan`, where a bare `[not reachable]` used to read the same whether a
 call graph had been searched or nothing had looked at all:
 
 ```
 GO-2025-3487 (CVE-2025-22869) [not reachable — inferred]: Potential denial of service in golang.org/x/crypto
 ```
-| `… has not been vuln-scanned` | non-zero | No record. Walk the module, then scan that walk. |
+
+### Every surface that publishes a verdict carries the rung
+
+The rung is not a feature of this command. Every surface that publishes a
+reachability verdict states it, in text and in JSON, under the same two keys:
+
+| Surface | Where the rung appears |
+|---|---|
+| `reachability <mod> --vuln <id>` | verdict line and `soundness` / `soundness_reason`; the isolated-frame aside carries its own |
+| `reachability --local <dir>` | on the verdict, and in each finding's `soundness` / `soundness_reason` |
+| `vuln-show`, `vuln-show --history` | the `[not reachable — …]` label, and per finding in `--json` |
+| `vuln-by-id --json` | per finding (this command's text form publishes no verdict) |
+| `vuln-scan-show --json` | per finding (its text form lists finding ids only) |
+| `vuln-scan-diff` | on the transition's later side, in text and per finding in `--json` |
+| `vuln-scan` | the per-finding label in the run summary |
+| `context`, `context --local --reachability` | `soundness` / `soundness_reason` in `--json`, and a `Soundness:` line under `--full` |
+
+`audit` and the SBOM commands publish no reachability verdict and carry no rung.
+`audit` reports a module's vulnerability status and directs you to `vuln-show`;
+an SBOM asserts what is in the build and never what is reachable in it.
+| `… has not been vuln-scanned` | non-zero | No record at any pipeline version. Walk the module, then scan that walk. |
+| `… that this build serves: it reads pipeline <v> and the store holds this coordinate at pipeline <v>` | non-zero | The module has been scanned, under scan logic this build supersedes. The message names each generation held and how many records and findings sit in it. Re-scan the coordinate. |
 | `… ScanFailed` / `… is unscannable` | non-zero | Module could not be scanned; reachability is unknown. |
 | `… scanned without --reachability` | non-zero | Findings exist and the scan was rooted elsewhere, so the flag was genuinely not passed. |
 | `no reachability route … it was rooted at <coord>` | non-zero | The scan **did** run with reachability, but the module was its own root. See below. |
@@ -210,7 +237,7 @@ over — the test axis, the exported-API flag, and the edges into the node.
 | `exported-api` | The root is exported by the analysed module and called by nothing in it. A consumer could drive it; this project does not. |
 | `internal` | The root has in-project callers and is not itself an entry point — the route begins where the analyser stopped, not where execution starts. The `remedy` names the `kanonarion callers` query that walks the hops above it. |
 | `test` | The root is a test-scope declaration. This is printed **on the same line as the verdict**, so a test-only reach is never read as a production one. |
-| `unrooted` | The graph could not say, with the reason named — no call graph stored for the module, a graph analysed at a fidelity that holds no nodes, or an entry point that is not a node in it. |
+| `unrooted` | The graph could not say, with the reason named — no call graph stored for the module, a graph analysed at a fidelity that holds no nodes, or an entry point that is not a node in it. The `remedy` is the command that re-derives *that* module's graph: `kanonarion local <dir>` when the route starts in the project's own module (which carries the synthetic `@local` version and cannot be fetched), `kanonarion callgraph <module>@<version>` when it starts in a dependency. |
 
 Two rules keep this honest:
 
@@ -317,8 +344,9 @@ JSON shape:
 }
 ```
 
-The example above is a positive, so it carries no `soundness`. A negative adds two
-fields and drops `routes`:
+The example above is a positive, so its `soundness` reads `"not stated"` and it
+carries no `soundness_reason`. A negative names its rung and its basis, and drops
+`routes`:
 
 ```json
 {
@@ -397,6 +425,7 @@ examined eleven and cleared one.
 | `no stored vulnerability record for this coordinate; it has never been vuln-scanned` | Nothing is known about it either way. This is **not** "no known vulnerabilities" — a record with no findings is an answer and counts as covered. |
 | `the local build resolves this module without a version (a directory replacement), so it names no coordinate to look up` | Nothing asked the store about it. |
 | `the store holds a vulnerability record for this coordinate, but only from another build's frame; this build has not been vuln-scanned` | The module has been scanned — for a different project. Nothing measured this build, so nothing seeded the probe. Scan this build to cover it. |
+| `the store holds vulnerability records for this coordinate only at superseded pipeline versions; it has been vuln-scanned and must be scanned again` | The module has been scanned for this build, under scan logic this build supersedes. Re-scan it to cover it. |
 
 ### Which records seeded the probe
 
@@ -472,7 +501,11 @@ or `--local <dir>`.
 
 ## Output
 
-JSON shape (text rendering follows the same fields):
+Without `--json` the probe prints prose: what the answer was drawn from, then
+the coverage block, then one line per finding with its verdict, the rung behind
+it and the instrument that produced it. `--json` emits the document below.
+
+JSON shape:
 
 ```json
 {
@@ -517,13 +550,32 @@ JSON shape (text rendering follows the same fields):
           "verdict_source": "callgraph",
           "reason": "<why>",
           "matched_symbols": ["pkg.Symbol"],
-          "matched_binaries": ["github.com/example/app/cmd/server"]
+          "matched_binaries": ["github.com/example/app/cmd/server"],
+          "soundness": "not stated"
         }
       ]
     }
   ]
 }
 ```
+
+### What rung the probe's own negatives earn
+
+The probe publishes two kinds of negative and they are not the same claim, so
+they do not carry the same rung.
+
+| Verdict | `verdict_source` | `soundness` |
+|---|---|---|
+| `absent` | `symbol-table` | `unconfirmed` - the affected symbols are not in the symbol table of the binaries this build links, so the linker did not keep them. Real evidence, and not a search: no call graph was built, so nothing could have found a route whether or not one exists. |
+| `unreachable` | `govulncheck` | whatever the stored scan's own analyser and fidelity earn, usually `inferred`. This verdict was not measured here; it was carried from the store, and it states the rung of the search it actually came from. |
+| `present`, `reachable`, `unknown` | - | `not stated`. There is no absence to qualify. |
+
+An `absent` verdict never reads `confirmed`, whatever the probe managed to build.
+`confirmed` means a call-graph search ran over a graph built with function bodies;
+this probe reads a linker's output. Where the probe could not read every main
+package, or where the workspace declares no main and a synthetic harness was
+compiled instead, `soundness_reason` says so - an absence from tables that do not
+cover the product is a weaker claim than one from tables that do.
 
 `notice` is set when the store has no findings for the analysed dependency
 modules - typically because they have not been scanned yet. Because absence is
@@ -533,11 +585,19 @@ never presented as an answer, an empty `modules` array with `notice` populated i
 ## Examples
 
 ```bash
-# Analyse the current workspace
+# Analyse the current workspace, as prose
+kanonarion reachability --local .
+
+# The same answer as a document
 kanonarion reachability --local . --json
 
 # Analyse a project elsewhere on disk
 kanonarion reachability --local /path/to/workspace --json | jq '.modules[]'
+
+# Every negative in the tree, with the rung behind it
+kanonarion reachability --local . --json | jq '.modules[].findings[]
+  | select(.verdict=="absent" or .verdict=="unreachable")
+  | {cve_id, verdict, soundness}'
 ```
 
 ## See also

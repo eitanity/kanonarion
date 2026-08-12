@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"time"
 
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
+	"github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/spf13/cobra"
 )
@@ -100,7 +102,17 @@ func runCallGraphShow(ctx context.Context, moduleArg string, f callGraphShowFlag
 				"no %s-sourced callgraph record for %s — the ledger may hold one from another source; try --history",
 				source, coord)}
 		}
-		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("no callgraph record for %s — run 'kanonarion callgraph' first", coord)}
+		note, nerr := supersededGenerationsNote(ctx, coord, uc)
+		if nerr != nil {
+			return nerr
+		}
+		if note != "" {
+			return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
+				"no callgraph record for %s at pipeline %s — %s. Re-analyse it:\n  %s",
+				coord, cgapp.PipelineVersion, note, domain.ReanalysisCommand(coord, ""))}
+		}
+		return &exitError{code: ExitNotFound, msg: fmt.Sprintf(
+			"no callgraph record for %s — analyse it first:\n  %s", coord, domain.ReanalysisCommand(coord, ""))}
 	}
 	nodeFilter, limitNodes, limitEdges := f.nodeFilter, f.limitNodes, f.limitEdges
 
@@ -142,7 +154,18 @@ func runCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 		return fmt.Errorf("reading callgraph history: %w", err)
 	}
 	if len(recs) == 0 {
-		if _, werr := fmt.Fprintf(stdout, "no callgraph records for %s\n", coord); werr != nil {
+		// The history view is where an operator lands after a bump, so it must
+		// distinguish a coordinate the store has never held from one whose every
+		// generation this build has stopped serving.
+		note, nerr := supersededGenerationsNote(ctx, coord, uc)
+		if nerr != nil {
+			return nerr
+		}
+		line := fmt.Sprintf("no callgraph records for %s at pipeline %s", coord, cgapp.PipelineVersion)
+		if note != "" {
+			line += " — " + note + ".\n  re-analyse it: " + domain.ReanalysisCommand(coord, "")
+		}
+		if _, werr := fmt.Fprintln(stdout, line); werr != nil {
 			return fmt.Errorf("writing output: %w", werr)
 		}
 		return nil
@@ -171,10 +194,10 @@ func runCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 			marker = "*"
 		}
 		if _, werr := fmt.Fprintf(stdout,
-			"%s %s  %-16s %-17s %d node(s) / %d edge(s)\n    source:   %s\n    from:     %s\n    graph:    %s\n    record:   %s\n",
+			"%s %s  %-16s %-17s %d node(s) / %d edge(s)\n    source:   %s\n    from:     %s\n%s    graph:    %s\n    record:   %s\n",
 			marker, r.ExtractedAt.UTC().Format(time.RFC3339), r.OverallStatus.String(),
 			r.Completeness.String(), r.NodeCount, r.EdgeCount,
-			r.AnalysisSource.String(), historyOrigin(r), domain.GraphDigest(r), r.ContentHash); werr != nil {
+			r.AnalysisSource.String(), historyOrigin(r), historyFailure(r), domain.GraphDigest(r), r.ContentHash); werr != nil {
 			return fmt.Errorf("writing output: %w", werr)
 		}
 	}
@@ -183,6 +206,30 @@ func runCallGraphHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 		return fmt.Errorf("writing output: %w", werr)
 	}
 	return nil
+}
+
+// historyFailure renders how a generation's analysis failed, as its own line,
+// or nothing when it did not.
+//
+// It is here because composition deliberately does NOT report two generations
+// that recorded different failures as a conflict — their graphs agree, so no
+// answer depends on the difference, and refusing over it left coordinates
+// permanently unreadable. Dropping the refusal must not drop the signal too:
+// "these two analyses of one artefact failed for different reasons" is worth
+// knowing, and the history view is where an operator goes to see the
+// generations side by side. Silent everywhere would be the wrong trade.
+func historyFailure(r domain.CallGraphRecord) string {
+	if r.FailureDetail == "" && r.FailureCause == domain.FailureCauseUnrecorded {
+		return ""
+	}
+	detail := r.FailureDetail
+	if detail == "" {
+		detail = "(no detail recorded)"
+	}
+	if r.FailureCause == domain.FailureCauseUnrecorded {
+		return "    failure:  " + detail + "\n"
+	}
+	return "    failure:  " + r.FailureCause.String() + ": " + detail + "\n"
 }
 
 // historyOrigin renders what a generation was computed from: the artefact for a
@@ -271,6 +318,12 @@ type callGraphRecordJSON struct {
 	Completeness   string `json:"completeness"`
 	AnalysisSource string `json:"analysis_source"`
 	WorktreeDigest string `json:"worktree_digest,omitempty"`
+	// WorktreeScanDigest names the tree state this record was taken of, which is
+	// the key a later run reuses it by. It is here so a reader can check a reuse
+	// claim against the record rather than taking the run's word for it; absent on
+	// every record written before the field existed, which is why those are always
+	// re-derived.
+	WorktreeScanDigest string `json:"worktree_scan_digest,omitempty"`
 	// SynthesisedGoMod is present only when kanonarion wrote a go.mod into the
 	// extracted tree, which is the case in which the graph does not describe the
 	// published bytes alone. Absent means the tree was analysed as published.
@@ -404,12 +457,13 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 		}
 	}
 	return callGraphRecordJSON{
-		SchemaVersion:  r.SchemaVersion,
-		Coordinate:     coordinateJSON{Path: r.Coordinate.Path(), Version: r.Coordinate.Version()},
-		Algorithm:      string(r.Algorithm),
-		Completeness:   string(r.Completeness),
-		AnalysisSource: string(r.AnalysisSource),
-		WorktreeDigest: r.WorktreeDigest,
+		SchemaVersion:      r.SchemaVersion,
+		Coordinate:         coordinateJSON{Path: r.Coordinate.Path(), Version: r.Coordinate.Version()},
+		Algorithm:          string(r.Algorithm),
+		Completeness:       string(r.Completeness),
+		AnalysisSource:     string(r.AnalysisSource),
+		WorktreeDigest:     r.WorktreeDigest,
+		WorktreeScanDigest: r.WorktreeScanDigest,
 
 		SynthesisedGoMod: synthesisedGoModToJSON(r.SynthesisedGoMod, r.BuildListSource),
 
@@ -780,4 +834,33 @@ func printCallGraphRecord(r domain.CallGraphRecord, limitNodes, limitEdges int, 
 		}
 	}
 	return nil
+}
+
+// supersededGenerationsNote describes the generations the store holds for a
+// coordinate under pipeline versions this build no longer serves, or "" when it
+// holds none. It is the difference between "this was never analysed" and "this
+// was analysed by logic that has since been superseded", which are different
+// facts with different remedies.
+func supersededGenerationsNote(ctx context.Context, coord coordinate.ModuleCoordinate, uc QueryCallGraphUseCase) (string, error) {
+	sums, err := uc.ListCallGraphRecords(ctx, ports.CallGraphFilter{ModulePath: coord.Path()})
+	if err != nil {
+		return "", fmt.Errorf("listing stored generations for %s: %w", coord, err)
+	}
+	seen := make(map[string]bool)
+	var versions []string
+	for _, s := range sums {
+		if s.ModuleVersion != coord.Version() || s.PipelineVersion == cgapp.PipelineVersion {
+			continue
+		}
+		if !seen[s.PipelineVersion] {
+			seen[s.PipelineVersion] = true
+			versions = append(versions, s.PipelineVersion)
+		}
+	}
+	if len(versions) == 0 {
+		return "", nil
+	}
+	sort.Strings(versions)
+	return fmt.Sprintf("the store holds it at superseded pipeline %s, which this build does not serve",
+		strings.Join(versions, ", ")), nil
 }

@@ -37,10 +37,11 @@ type vulnFrameAnchor struct {
 // resolveVulnFrameAnchor turns --walk-id / --gomod into the frame a read is
 // answered in. ok is false when neither was passed.
 //
-// --gomod resolves to the newest succeeded project walk for that go.mod, which
-// is the same resolution the six build-scoped query commands already perform;
-// both routes end at a walk, and the frame is read off the walk record so the
-// two say the same thing.
+// --gomod resolves to the succeeded project walk for that go.mod that the shared
+// default rule picks — the most recent whose recorded resolution still agrees
+// with the manifest, else the most recent — which is the same resolution the
+// build-scoped query commands perform; both routes end at a walk, and the frame
+// is read off the walk record so the two say the same thing.
 func resolveVulnFrameAnchor(
 	ctx context.Context,
 	walks QueryWalksUseCase,
@@ -61,12 +62,12 @@ func resolveVulnFrameAnchor(
 
 	var staleness string
 	if gomodSet {
-		resolved, gomodPath, err := latestWalkForGoMod(ctx, walks, gomod)
+		choice, err := latestWalkForGoMod(ctx, walks, gomod)
 		if err != nil {
 			return vulnFrameAnchor{}, false, err
 		}
-		walkID = resolved.ID
-		staleness = manifestStalenessNote(gomodPath)
+		walkID = choice.summary.ID
+		staleness = choice.stalenessNote() + choice.statementClause()
 	}
 
 	rec, err := walks.GetWalk(ctx, walkID)

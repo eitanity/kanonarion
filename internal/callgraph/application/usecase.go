@@ -36,6 +36,16 @@ import (
 // Records written by the previous logic can be right or wrong and there is no
 // way to tell from the record, so they are re-derived rather than served.
 //
+// Bumped to "0.5.0" when the analyser stopped taking its function set from the
+// SSA library's own enumeration. That enumeration answers differently on
+// successive calls to one unchanged program — it de-duplicates types by
+// identity while walking them under two spellings, so an alias can consume the
+// entry its named twin needed and a pointer-receiver method wrapper is then
+// never materialised. A record written before this says the analysis found no
+// call to a method it simply never enumerated, and two records of one artefact
+// disagree with no cause recorded. Neither can be told apart from a real answer
+// once written, so they are re-derived rather than served.
+//
 // NOT bumped when the exported-API rule stopped mis-reading a synthetic method
 // wrapper on a package-main type as library API. A bump is owed when a change
 // makes a stored record say something FALSE, and every record this version
@@ -45,7 +55,7 @@ import (
 // what they say, correctly. Re-extraction under the fixed rule is what corrects
 // an older record, and a bump would have stranded every served graph to correct
 // nothing.
-const PipelineVersion = "0.4.1"
+const PipelineVersion = "0.5.0"
 
 // ExtractCallGraphUseCase extracts the call graph of a module and persists a
 // CallGraphRecord.
@@ -218,7 +228,6 @@ func (uc *ExtractCallGraphUseCase) Execute(ctx context.Context, req ExtractReque
 		record := domain2.NewExcludedRecord(req.Coordinate, uc.analyser.AnalyserMetadata().Algorithm, uc.exclusions)
 		record.ExtractedAt = uc.clock.Now().UTC()
 		record.PipelineVersion = uc.pipelineVersion
-		record.Sort()
 		// An excluded module is still a decision about a specific artefact: the
 		// record says these bytes were not analysed, which is only checkable if it
 		// says which bytes.

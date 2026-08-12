@@ -18,6 +18,7 @@ import (
 	vendports "github.com/eitanity/kanonarion/internal/vendortree/ports"
 	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
 	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	"github.com/eitanity/kanonarion/internal/walk/application"
 	domain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
@@ -141,27 +142,31 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 		return fmt.Errorf("writing output: %w", err)
 	}
 	progress := newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
-	if err := runWalk(ctx, arg, wf, f.force, true, 0, "", f.policyPath, f.skipVCS, domain.WalkScopeCode, domain.WalkDepthFull, "", progress, ctr.ExecuteWalk, nil, io.Discard, stderr); err != nil {
+	walkResult, err := runWalk(ctx, arg, wf, f.force, true, 0, "", f.policyPath, f.skipVCS, domain.WalkScopeCode, domain.WalkDepthFull, "", progress, ctr.ExecuteWalk, nil, io.Discard, stderr)
+	if err != nil {
 		return fmt.Errorf("walk: %w", err)
 	}
 
-	// Resolve the coordinate (handles @latest) to look up the walk ID.
+	// Resolve the coordinate (handles @latest) so the context step names the
+	// coordinate the walk actually ran against.
 	coord, err := resolveCoordForInspect(ctx, arg, storeRoot, f.goproxy, stderr)
 	if err != nil {
 		return err
 	}
 
-	// Step 2: find the walk ID for this coordinate.
-	walkSum, err := latestWalkIDForCoord(ctx, ctr.QueryWalks, coord)
-	if err != nil {
-		return fmt.Errorf("finding walk ID: %w", err)
-	}
-	walkID := walkSum.ID
+	// Step 2: the walk this run produced. No walk is selected here — the record
+	// comes back from the walk above, so nothing has to guess which of the
+	// store's walks of this coordinate the following steps mean. Asking the store
+	// for the newest one instead was wrong in two ways at once: identity reuse
+	// serves an existing record when the resolution is unchanged and keeps its
+	// original started_at, so this run's walk need not be the newest; and the
+	// lookup had no scope or build-environment axis, so another scope's or
+	// another platform's walk of the same coordinate could answer for it.
+	walkRec := walkResult.Record
+	walkID := walkRec.ID
 
-	// Step 3: extract. The banner names the frame the walk was resolved in:
-	// this lookup takes the newest walk of the coordinate, and on a store
-	// holding several platforms' walks that need not be this platform's.
-	if _, err := fmt.Fprintf(stderr, "==> inspect: extracting walk %s (frame %s)\n", walkID, walkSum.BuildFrame()); err != nil {
+	// Step 3: extract. The banner names the frame the walk was resolved in.
+	if _, err := fmt.Fprintf(stderr, "==> inspect: extracting walk %s (frame %s)\n", walkID, walkRec.Graph.BuildEnv.Frame()); err != nil {
 		return fmt.Errorf("writing output: %w", err)
 	}
 	ef := extractFlags{
@@ -175,7 +180,7 @@ func runInspect(ctx context.Context, arg string, f inspectFlags, stdout, stderr 
 	}
 
 	// Step 4: vuln-scan
-	if _, err := fmt.Fprintf(stderr, "==> inspect: scanning vulnerabilities for walk %s (frame %s)\n", walkID, walkSum.BuildFrame()); err != nil {
+	if _, err := fmt.Fprintf(stderr, "==> inspect: scanning vulnerabilities for walk %s (frame %s)\n", walkID, walkRec.Graph.BuildEnv.Frame()); err != nil {
 		return fmt.Errorf("writing output: %w", err)
 	}
 	// The scan's result channel goes to stderr, not io.Discard: it carries the
@@ -373,14 +378,14 @@ func runInspectGoMod(ctx context.Context, f inspectFlags, scope depScope, stdout
 
 	var nodeFails int
 	progress := newWalkProgressReporter(stderr, f.noProgress, activeConfig, logLevel)
-	if _, werr := runWalkProject(ctx, f.gomodPath, f.force, true, 0, "", f.policyPath, f.skipVCS, scope,
-		domain.WalkDepthFull, "", false, f.stdlibFromGoMod, progress, ctr.ExecuteWalk, nil, io.Discard, stderr); werr != nil {
+	walkResult, werr := runWalkProject(ctx, f.gomodPath, f.force, true, 0, "", f.policyPath, f.skipVCS, scope,
+		domain.WalkDepthFull, "", false, f.stdlibFromGoMod, progress, ctr.ExecuteWalk, nil, io.Discard, stderr)
+	if werr != nil {
 		_, _ = fmt.Fprintf(stderr, "walk: %v\n", werr)
 		nodeFails = 1
 	}
 
-	// Look up the project walk record for its ID and node counts.
-	projectWalk, qerr := latestProjectWalkSummary(ctx, ctr.QueryWalks, modulePath, scope)
+	projectWalk, qerr := inspectProjectWalk(ctx, ctr, walkResult, modulePath, scope)
 	if qerr != nil {
 		return qerr
 	}
@@ -535,33 +540,42 @@ func printReachabilityClosureBanner(w io.Writer, gomodPath string) {
 	_, _ = fmt.Fprintf(w, "    To root reachability at the application, run: kanonarion local %s\n", projectDir)
 }
 
-// latestWalkIDForCoord returns the most recent walk for the given coordinate.
-// The whole summary is returned, not just the ID, because every line that names
-// the walk has to be able to name the platform it was resolved for: this lookup
-// has no build-environment axis, so on a store holding several platforms'
-// walks of one target it answers with whichever is newest.
-func latestWalkIDForCoord(ctx context.Context, uc QueryWalksUseCase, coord coordinate.ModuleCoordinate) (walkports.WalkSummary, error) {
-	walks, err := uc.ListWalks(ctx, walkports.WalkFilter{Target: &coord, Limit: 1})
-	if err != nil {
-		return walkports.WalkSummary{}, fmt.Errorf("listing walks for %s: %w", coord, err)
+// inspectProjectWalk is the walk the following steps report on.
+//
+// It is the record the walk above produced, not a fresh "newest walk of this
+// project at this scope" lookup: identity reuse serves an existing record when
+// the resolution is unchanged and keeps its original started_at, so the walk a
+// run produced can be older than another walk of the same target and scope. The
+// store lookup remains only for the case where the walk failed before producing
+// a record, where reporting on what the store already holds is all that is left.
+func inspectProjectWalk(ctx context.Context, ctr *Container, result application.ExecuteWalkResult,
+	modulePath string, scope depScope,
+) (walkports.WalkSummary, error) {
+	if sum := walkSummaryOf(result.Record); sum.ID != "" {
+		return sum, nil
 	}
-	if len(walks) == 0 {
-		return walkports.WalkSummary{}, fmt.Errorf("no walk found for %s after walk step", coord)
-	}
-	return walks[0], nil
+	return latestProjectWalkSummary(ctx, ctr.QueryWalks, modulePath, scope)
 }
 
-// latestWalkIDForCoordScope returns the most recent walk for the given
-// coordinate and scope.
-func latestWalkIDForCoordScope(ctx context.Context, uc QueryWalksUseCase, coord coordinate.ModuleCoordinate, scope domain.WalkScope) (walkports.WalkSummary, error) {
-	walks, err := uc.ListWalks(ctx, walkports.WalkFilter{Target: &coord, Scope: &scope, Limit: 1})
-	if err != nil {
-		return walkports.WalkSummary{}, fmt.Errorf("listing walks for %s: %w", coord, err)
+// walkSummaryOf projects the record a walk run returned into the summary shape
+// the reporting below reads, so a caller that has the record in hand does not
+// re-derive it from a store lookup that could land on a different walk. The zero
+// summary means the run produced no record.
+func walkSummaryOf(rec domain.WalkRecord) walkports.WalkSummary {
+	if rec.ID == "" {
+		return walkports.WalkSummary{}
 	}
-	if len(walks) == 0 {
-		return walkports.WalkSummary{}, fmt.Errorf("no walk found for %s after walk step", coord)
+	return walkports.WalkSummary{
+		ID:            rec.ID,
+		Target:        rec.Target,
+		Scope:         rec.Scope,
+		Depth:         rec.Depth,
+		OverallStatus: rec.OverallStatus,
+		NodeCount:     len(rec.Graph.Nodes),
+		FailureCount:  countFailures(rec),
+		GOOS:          rec.Graph.BuildEnv.GOOS,
+		GOARCH:        rec.Graph.BuildEnv.GOARCH,
 	}
-	return walks[0], nil
 }
 
 // latestProjectWalkSummary returns the most recent walk rooted at the local main

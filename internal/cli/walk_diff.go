@@ -47,6 +47,14 @@ func runWalkDiff(ctx context.Context, idA, idB string, uc DiffWalksUseCase, walk
 	}
 
 	if jsonOut {
+		// The statement goes to stderr and stdout keeps the diff document
+		// unchanged: the data channel must not gain a field because the answer
+		// happened to be empty, or every consumer has to branch on it.
+		if walkDiffIsEmpty(diff) {
+			if werr := writeWalkDiffEmptyJSON(stderr, idA, idB, diff); werr != nil {
+				return werr
+			}
+		}
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
 		if encErr := enc.Encode(toWalkDiffJSON(diff)); encErr != nil {
@@ -82,6 +90,86 @@ func runWalkDiff(ctx context.Context, idA, idB string, uc DiffWalksUseCase, walk
 		if _, pErr := fmt.Fprintf(stdout, "! %s: %s -> %s\n", sc.Coordinate.String(), sc.StatusA.String(), sc.StatusB.String()); pErr != nil {
 			return fmt.Errorf("writing output: %w", pErr)
 		}
+	}
+	if walkDiffIsEmpty(diff) {
+		return writeWalkDiffEmpty(stdout, idA, idB, diff)
+	}
+	return nil
+}
+
+// walkDiffIsEmpty reports the diff with nothing to print under its header: no
+// module added, none removed, no version moved and no per-node status changed.
+func walkDiffIsEmpty(d application.WalkDiff) bool {
+	return len(d.Added) == 0 && len(d.Removed) == 0 &&
+		len(d.VersionChanged) == 0 && len(d.StatusChanged) == 0
+}
+
+// writeWalkDiffEmpty states an empty diff.
+//
+// The header alone was the whole output for two walks that agree, which is the
+// one reading of this command a caller acts on directly: an empty diff is the
+// evidence for "the dependency set did not move between these two builds", and
+// a bare header is indistinguishable from a command that compared nothing. The
+// statement therefore names both sides, the frame each was resolved in, and how
+// many nodes were on each — the population the zero was measured over.
+func writeWalkDiffEmpty(stdout io.Writer, idA, idB string, d application.WalkDiff) error {
+	if idA == idB {
+		if _, err := fmt.Fprintf(stdout,
+			"no difference: both arguments name the same walk (%s, frame %s, %d node(s)), so this compared it with itself\n",
+			idA, d.FrameA, d.NodesA); err != nil {
+			return fmt.Errorf("writing output: %w", err)
+		}
+		return nil
+	}
+	if _, err := fmt.Fprintf(stdout,
+		"no difference: %s (frame %s, %d node(s)) and %s (frame %s, %d node(s)) name the same modules at the same versions, and no node status changed\n",
+		idA, d.FrameA, d.NodesA, idB, d.FrameB, d.NodesB); err != nil {
+		return fmt.Errorf("writing output: %w", err)
+	}
+	if d.CompletenessMismatch != "" {
+		// The UNRESOLVED line above already named the axis; what it cannot say on
+		// its own is that a zero delta under an asymmetric comparison is not the
+		// same claim as two walks agreeing.
+		if _, err := fmt.Fprintf(stdout,
+			"  the two walks were resolved at unequal completeness, so this is not a confident \"identical\"\n"); err != nil {
+			return fmt.Errorf("writing output: %w", err)
+		}
+	}
+	return nil
+}
+
+// walkDiffEmptyJSON is the machine-readable form of that statement. It is
+// written to stderr, beside the unchanged document on stdout.
+type walkDiffEmptyJSON struct {
+	Statement  string `json:"statement"`
+	WalkA      string `json:"walk_a"`
+	WalkB      string `json:"walk_b"`
+	FrameA     string `json:"frame_a"`
+	FrameB     string `json:"frame_b"`
+	NodesA     int    `json:"nodes_a"`
+	NodesB     int    `json:"nodes_b"`
+	SameWalk   bool   `json:"same_walk"`
+	Unresolved string `json:"unresolved,omitempty"`
+}
+
+func writeWalkDiffEmptyJSON(stderr io.Writer, idA, idB string, d application.WalkDiff) error {
+	statement := "no difference: the two walks name the same modules at the same versions, and no node status changed"
+	if idA == idB {
+		statement = "no difference: both arguments name the same walk, so this compared it with itself"
+	}
+	out := walkDiffEmptyJSON{
+		Statement:  statement,
+		WalkA:      idA,
+		WalkB:      idB,
+		FrameA:     d.FrameA,
+		FrameB:     d.FrameB,
+		NodesA:     d.NodesA,
+		NodesB:     d.NodesB,
+		SameWalk:   idA == idB,
+		Unresolved: d.CompletenessMismatch,
+	}
+	if err := json.NewEncoder(stderr).Encode(out); err != nil {
+		return fmt.Errorf("encoding the empty-diff statement: %w", err)
 	}
 	return nil
 }

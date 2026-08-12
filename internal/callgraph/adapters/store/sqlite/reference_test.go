@@ -49,7 +49,6 @@ func TestEdgeKindSurvivesTheStore(t *testing.T) {
 		PipelineVersion:  "0.3.0",
 		ArtefactIdentity: "zip:h1:" + testCoord.Path() + "@" + testCoord.Version(),
 	}
-	rec.Sort()
 	rec, err := h.SetContentHash(rec)
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)

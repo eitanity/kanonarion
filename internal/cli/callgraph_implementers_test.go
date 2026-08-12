@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 	"strings"
 	"testing"
 
@@ -11,11 +12,14 @@ import (
 )
 
 const (
-	implPortID   = "example.com/m/ports.Store"
-	implAdapter  = "example.com/m/adapter.(*Store)"
-	implFake     = "example.com/m/app_test.(*fakeStore)"
-	implModule   = "example.com/m"
-	implPipeline = "0.3.0"
+	implPortID  = "example.com/m/ports.Store"
+	implAdapter = "example.com/m/adapter.(*Store)"
+	implFake    = "example.com/m/app_test.(*fakeStore)"
+	implModule  = "example.com/m"
+	// The fixtures describe records this build serves: a query answers from the
+	// serving pipeline version, so a fixture pinned to a literal would stop
+	// exercising the path it was written for the next time that version moves.
+	implPipeline = cgapp.PipelineVersion
 )
 
 // implRecord is an analysed record declaring one port with a production

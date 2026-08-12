@@ -3,7 +3,7 @@
 ## Synopsis
 
 ```
-kanonarion local [dir] [--go-binary <path>] [--json]
+kanonarion local [dir] [--force] [--go-binary <path>] [--json]
 ```
 
 ## Description
@@ -29,15 +29,62 @@ before resolving any files and the tree had to be scanned instead, and a bare
 `sha256:` on records written before the schemes existed. The three are not
 comparable and nothing compares them.
 
+A second digest, taken by scanning the tree before the analysis runs, records
+which tree the run was handed. It is what makes reuse possible - see
+[Unchanged trees](#unchanged-trees) - and it is `scanned-sha256:` always.
+
 The directory is what a query routes on. A `callers` query run inside a checkout
 is answered from the generation analysed in THAT directory rather than from
 whichever checkout ran `local` most recently - see
 [`callgraph`](callgraph.md#which-working-tree-answered).
 
-This record carries **no freshness meaning**: a tree mutates between runs, so
-`local` always re-analyses and never serves a cached result. (This is the same
-"local source is never cached" rule the `reachability --local` probe relies
-on.)
+## Unchanged trees
+
+A tree that has not changed since the last run is not analysed again. `local`
+scans the tree first, and when the scan matches the tree a stored record was
+taken of - the same directory, the same contents - that record is served and
+nothing is appended.
+
+The run says which happened, on **stderr**, in both text and `--json` mode -
+the same stream and the same `derivation:` block [`audit`](audit.md) uses:
+
+```
+derivation:
+  call graph: derived by this run
+```
+```
+derivation:
+  call graph: re-read the working tree and found it identical to the tree
+  analysed 2026-08-12T00:48:14Z; that record was reused (--force to re-measure)
+```
+
+stdout carries the result only: the summary line, or under `--json` the record
+document alone. To capture the answer and keep the statement, redirect them
+separately (`kanonarion local . --json > graph.json 2> derivation.txt`); to
+discard the statement, `2>/dev/null`.
+
+The `(cached)` marker on the summary line is on stdout with the rest of the
+result - it is a property of the answer, not a statement about where it came
+from.
+
+What the scan sees: every `.go` file under the directory plus `go.mod` and
+`go.sum`, following symlinks to source files. `.git` is ignored, so committing,
+fetching or switching the index does not by itself force a re-analysis.
+
+What it does **not** see, and when to use `--force`:
+
+- a different Go toolchain
+- a module cache that has gained or lost dependencies (the graph's
+  devirtualisation depends on how much of the closure could be built)
+- source reached through a symlinked **directory**
+
+A record that failed for an environment reason - no usable toolchain, a
+cancelled run - is never served back, so a bad run does not become permanent and
+`--force` is not needed to clear it.
+
+Records written before this digest existed state nothing about the tree they
+were handed, so the first `local` run after upgrading re-analyses and every run
+after that reuses.
 
 ## Output
 
@@ -66,18 +113,20 @@ kanonarion implementers 'example.com/mod/internal/vuln/ports.VulnerabilityStore'
 | Flag | Default | Description |
 |---|---|---|
 | `[dir]` | `.` | Directory of the Go module to analyse (must contain `go.mod`) |
+| `--force` | false | Re-analyse even when the tree is unchanged since the stored record |
 | `--go-binary <path>` | _(PATH)_ | Path to the `go` binary if it is not on `PATH` |
 | `--json` | false | Emit the call-graph record as JSON |
 | `--store-root <path>` | `~/.kanonarion` | Root directory for blobs and SQLite |
 
 ## Assurance log
 
-Every run appends one `callgraph_extracted` event to the append-only audit log
+Every run that analyses the tree appends one `callgraph_extracted` event to
+the append-only audit log
 (`{store-root}/audit.jsonl`): module, version, pipeline version, completeness
 level, overall status, `analysis_source` (`worktree`), node and edge counts, the
-record's content hash, and the worktree digest. Because `local` never serves a
-cached result, every invocation appends a line - so a run of `local` is visible
-in the log as well as in the call-graph ledger.
+record's content hash, and the worktree digest. A run that served a stored
+record appends nothing, to either the log or the ledger: it wrote no generation,
+and an event stating an extraction that did not happen is not checkable.
 
 ## Relationship to other commands
 
@@ -90,6 +139,9 @@ in the log as well as in the call-graph ledger.
 
 - Requires a `go.mod` at `[dir]`; the declared module path becomes the record's
   coordinate path.
-- Re-run after editing source - the record is intentionally never cached.
+- Re-run after editing source; an edited tree is always re-analysed.
+- Several generations of one tree state - which `--force` is how you get - are
+  ordered by completeness before recency, so a re-analysis that came back with
+  less than an earlier one does not become the answer.
 
 See also: [`callgraph`](callgraph.md), [`reachability`](reachability.md).

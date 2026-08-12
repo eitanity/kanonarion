@@ -44,16 +44,21 @@ kanonarion licence github.com/spf13/cobra@v1.8.1 --per-file
 | `--per-file` | false | Scan root-level `.go` files for SPDX headers when no licence file is found |
 | `--recursive` | false | Also report licences for the module's dependency closure |
 | `--all` | false | With `--recursive`, list every dependency instead of a summary |
+| `--walk-id` | (chosen) | With `--recursive`, read the closure from this walk |
 | `--json` | false | Emit the full `LicenceRecord` as JSON |
 | `--log-level` | `warn` | Log verbosity: `debug`, `info`, `warn`, `error` |
 
-`--recursive` and `--all` read the closure from the most recent walk of the
-module, whatever platform it resolved for, and print which walk answered before
-the listing:
+`--recursive` and `--all` read the closure from one walk of the module and print
+which walk answered before the listing:
 
 ```
 Answered from walk 01KQDBVW092ER1HNXZ60X27CMD (frame linux/amd64)
 ```
+
+`--walk-id <id>` names the walk. Without it the walk is chosen by the shared
+default-frame rule (see [conventions](conventions.md#the-default-walk)), and the
+choice is stated on the line below whenever the store held more than one walk of
+the module.
 
 The frame reads `unrecorded` for a walk taken before it was recorded. It
 matters because `GOOS` gates which files build, and so which modules the

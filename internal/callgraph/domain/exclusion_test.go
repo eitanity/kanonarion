@@ -74,7 +74,6 @@ func TestExcludedRecord_HashRoundTrip(t *testing.T) {
 	coord := coordinatetest.MustNew("example.com/x", "v1.0.0")
 	r := NewExcludedRecord(coord, AlgorithmCHA, []string{"example.com/x", "a/m"})
 	r.PipelineVersion = "0.1.0"
-	r.Sort()
 	r, err := h.SetContentHash(r)
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)

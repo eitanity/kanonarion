@@ -274,9 +274,37 @@ func buildVulnerabilitiesFromBatch(ctx context.Context, coord coordinate.ModuleC
 		return contextVulnerabilities{Status: sectionStatusReadError, Error: err.Error()}
 	}
 	if batch.anchored {
-		return batch.anchoredVulnerabilities(ctx, coord, recs, vulnUC)
+		return supersededOr(ctx, coord, vulnUC, batch.anchoredVulnerabilities(ctx, coord, recs, vulnUC))
 	}
-	return batch.recordFirstVulnerabilities(ctx, coord, recs, vulnUC)
+	return supersededOr(ctx, coord, vulnUC, batch.recordFirstVulnerabilities(ctx, coord, recs, vulnUC))
+}
+
+// supersededOr replaces a not_run section with the superseded one when that is
+// what the emptiness was.
+//
+// not_run is a claim that nobody has looked. For a coordinate the store holds
+// only at a generation this build has superseded it is false, and it is the
+// claim a consumer counts as a coverage gap — the section carries the remedy
+// either way, so the only thing at stake is whether the reader is told the scan
+// already ran. Every other status is left exactly as it was, including
+// read_error: a section that could not read the store may not then describe it.
+func supersededOr(
+	ctx context.Context,
+	coord coordinate.ModuleCoordinate,
+	vulnUC QueryVulnUseCase,
+	section contextVulnerabilities,
+) contextVulnerabilities {
+	if section.Status != sectionStatusNotRun {
+		return section
+	}
+	gens, superseded := supersededVulnGenerations(ctx, vulnUC, coord)
+	if !superseded {
+		return section
+	}
+	return contextVulnerabilities{
+		Status: sectionStatusSuperseded,
+		Error:  supersededVulnLine(coord, gens),
+	}
 }
 
 // anchoredVulnerabilities answers for the build the caller named. It looks at
@@ -496,6 +524,10 @@ func vulnRecordToContext(rec *vuldomain.VulnerabilityRecord, walkStatus, walkCov
 			r := f.Reachable.IsReachable
 			cve.Reachable = &r
 		}
+		// Derived, never read off a stored field: NegativeSoundness classifies the
+		// answer from the analyser that produced it and that analyser's own
+		// fidelity, so every record already in the store carries a rung here.
+		cve.Soundness, cve.SoundnessReason = vuldomain.NegativeSoundness(f)
 		out.Findings = append(out.Findings, cve)
 	}
 	return out

@@ -47,6 +47,25 @@ type VulnerabilityRecordHasher struct{}
 // axes would not have produced; the axes are the fact, and the summary is the
 // compatibility word the writer chose to keep the finding visible in.
 func (h VulnerabilityRecordHasher) SetContentHash(r VulnerabilityRecord) (VulnerabilityRecord, error) {
+	// The record is put into canonical order BEFORE it is sealed, and is handed
+	// back in the order it was sealed in. A record whose collections were
+	// arranged differently from its own bytes would describe itself twice and
+	// disagree, and every reader downstream of the seal — the store, a JSON
+	// rendering, a diff — would be reading an arrangement the hash does not
+	// stand behind. See SealedCollections for which collections have a canonical
+	// order and why each does.
+	//
+	// This is deliberately here and NOT in hash, which is the recipe both the
+	// seal and VerifyContentHash run. Canonicalising inside the recipe would
+	// re-order a STORED record on the way to verifying it, and every record
+	// already in a store whose collections are not in the new order would then
+	// fail to reproduce its own seal: measured on the working store, 52 of the
+	// 2,006 vulnerability records. Those records are not wrong about what they
+	// measured — they are arranged differently — so making them unverifiable,
+	// and owing a PipelineVersion bump that darkens all 2,006 until re-scan, buys
+	// nothing. Sealing in canonical order makes every record written from here on
+	// reproducible while leaving stored bytes verifiable exactly as they are.
+	r = canonicalOrder(r)
 	if r.CoverageStatus == "" {
 		r.CoverageStatus = DetermineRecordCoverage(r)
 	}

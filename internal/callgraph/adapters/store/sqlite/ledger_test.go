@@ -22,6 +22,7 @@ type ledgerSpec struct {
 	completeness domain2.CompletenessLevel
 	artefact     string
 	worktree     string
+	scanDigest   string
 	root         string
 	at           time.Time
 	// callee varies the edge set, which is what makes two generations hold
@@ -66,14 +67,15 @@ func ledgerRecord(t *testing.T, spec ledgerSpec) domain2.CallGraphRecord {
 				Confidence: domain2.ConfidenceDirect,
 			},
 		},
-		OverallStatus:    status,
-		NodeCount:        1,
-		EdgeCount:        1,
-		ExtractedAt:      at,
-		PipelineVersion:  testPipeline,
-		ArtefactIdentity: spec.artefact,
-		WorktreeDigest:   spec.worktree,
-		AnalysisRoot:     spec.root,
+		OverallStatus:      status,
+		NodeCount:          1,
+		EdgeCount:          1,
+		ExtractedAt:        at,
+		PipelineVersion:    testPipeline,
+		ArtefactIdentity:   spec.artefact,
+		WorktreeDigest:     spec.worktree,
+		WorktreeScanDigest: spec.scanDigest,
+		AnalysisRoot:       spec.root,
 	}
 	if r.AnalysisSource == domain2.AnalysisSourceWorktree && r.AnalysisRoot == "" {
 		// A worktree record must say where its tree was. Defaulting from the digest
@@ -81,7 +83,6 @@ func ledgerRecord(t *testing.T, spec ledgerSpec) domain2.CallGraphRecord {
 		// digest, which is what those tests mean by two trees.
 		r.AnalysisRoot = "/trees/" + spec.worktree
 	}
-	r.Sort()
 	var h domain2.CallGraphRecordHasher
 	sealed, err := h.SetContentHash(r)
 	if err != nil {
@@ -894,6 +895,151 @@ func TestLedger_WorktreeReadServesTheNewestWithoutLoadingTheRest(t *testing.T) {
 	}
 	if len(gens) != generations {
 		t.Fatalf("history returned %d generations, want %d", len(gens), generations)
+	}
+}
+
+// TestLedger_DegradedReanalysisOfOneTreeDoesNotBecomeTheAnswer is the
+// wrong-answer case the fast path could otherwise serve.
+//
+// Both generations state the SAME scan digest at the same root, so both were
+// handed the same tree. The later one came back with no graph at all, which is a
+// measurement of the analysis environment rather than of the tree; serving it
+// would answer "no callers" for every symbol the built graph holds, with nothing
+// to say the route was never looked for.
+func TestLedger_DegradedReanalysisOfOneTreeDoesNotBecomeTheAnswer(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	local, err := coordinate.NewLocalCoordinate("example.com/mod")
+	if err != nil {
+		t.Fatalf("NewLocalCoordinate: %v", err)
+	}
+	const root = "/work/tree"
+	built := ledgerRecord(t, ledgerSpec{
+		coord: local, source: domain2.AnalysisSourceWorktree,
+		worktree: "analysed-sha256:tree", scanDigest: "scanned-sha256:tree", root: root,
+		completeness: domain2.CompletenessBuiltWithBodies,
+		at:           testTime, callee: "example.com/mod.Built",
+	})
+	failed := ledgerRecord(t, ledgerSpec{
+		coord: local, source: domain2.AnalysisSourceWorktree,
+		worktree: "scanned-sha256:tree", scanDigest: "scanned-sha256:tree", root: root,
+		completeness: domain2.CompletenessFailed, status: domain2.CallGraphStatusLoadFailed,
+		at: testTime.Add(time.Hour), callee: "example.com/mod.Failed",
+	})
+	for _, r := range []domain2.CallGraphRecord{built, failed} {
+		if perr := s.PutCallGraphRecord(ctx, r); perr != nil {
+			t.Fatalf("PutCallGraphRecord: %v", perr)
+		}
+	}
+
+	got, found, err := s.GetCallGraphRecord(ctx, local, testPipeline)
+	if err != nil || !found {
+		t.Fatalf("GetCallGraphRecord: found=%v err=%v", found, err)
+	}
+	if got.ContentHash != built.ContentHash {
+		t.Fatal("a failed re-analysis of an unchanged tree became the answer")
+	}
+	// The edge read resolves through the same choice, or a query would answer from
+	// a generation the record read does not serve.
+	edges, err := s.FindCallers(ctx, "example.com/mod.Built", testPipeline, coordinate.ModuleSet{}, ports.EdgeQueryOptions{})
+	if err != nil {
+		t.Fatalf("FindCallers: %v", err)
+	}
+	if len(edges) != 1 {
+		t.Fatalf("callers of the built graph's symbol = %d, want 1", len(edges))
+	}
+}
+
+// TestLedger_WorktreeGenerationAnswersForTheNamedTree: the tree-scoped read takes
+// its root as an argument, so a run told which directory to analyse is not
+// answered from whichever tree the process happens to be standing in.
+func TestLedger_WorktreeGenerationAnswersForTheNamedTree(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	local, err := coordinate.NewLocalCoordinate("example.com/mod")
+	if err != nil {
+		t.Fatalf("NewLocalCoordinate: %v", err)
+	}
+	a := ledgerRecord(t, ledgerSpec{
+		coord: local, source: domain2.AnalysisSourceWorktree,
+		worktree: "analysed-sha256:a", scanDigest: "scanned-sha256:a", root: "/src/a",
+		completeness: domain2.CompletenessBuiltWithBodies, at: testTime, callee: "example.com/mod.A",
+	})
+	b := ledgerRecord(t, ledgerSpec{
+		coord: local, source: domain2.AnalysisSourceWorktree,
+		worktree: "analysed-sha256:b", scanDigest: "scanned-sha256:b", root: "/src/b",
+		completeness: domain2.CompletenessBuiltWithBodies,
+		at:           testTime.Add(time.Hour), callee: "example.com/mod.B",
+	})
+	for _, r := range []domain2.CallGraphRecord{a, b} {
+		if perr := s.PutCallGraphRecord(ctx, r); perr != nil {
+			t.Fatalf("PutCallGraphRecord: %v", perr)
+		}
+	}
+
+	got, found, err := s.WorktreeGeneration(ctx, local, testPipeline, "/src/a", "scanned-sha256:a")
+	if err != nil || !found {
+		t.Fatalf("WorktreeGeneration: found=%v err=%v", found, err)
+	}
+	if got.ContentHash != a.ContentHash {
+		t.Fatal("the tree-scoped read answered from the other checkout")
+	}
+	if got.WorktreeScanDigest != "scanned-sha256:a" {
+		t.Fatalf("scan digest = %q, want the one written", got.WorktreeScanDigest)
+	}
+	// The other checkout holds that same state under a different root, and does
+	// not answer for this one.
+	if _, found, err = s.WorktreeGeneration(ctx, local, testPipeline, "/src/b", "scanned-sha256:a"); err != nil || found {
+		t.Fatalf("another checkout answered for this tree state: found=%v err=%v", found, err)
+	}
+	if _, found, err = s.WorktreeGeneration(ctx, local, testPipeline, "/src/never-analysed", "scanned-sha256:a"); err != nil || found {
+		t.Fatalf("a tree the ledger has never seen reported found=%v err=%v", found, err)
+	}
+	// A generation that names no state matches nothing, however it is asked for.
+	if _, found, err = s.WorktreeGeneration(ctx, local, testPipeline, "/src/a", ""); err != nil || found {
+		t.Fatalf("an empty digest matched a stored generation: found=%v err=%v", found, err)
+	}
+}
+
+// TestLedger_AnEarlierTreeStateStillAnswersForItself: the ledger holds the tree's
+// whole history, and the newest generation is not the only one that can answer.
+// A branch switched away from and back, an edit made and reverted — the tree is
+// once again a state a graph was taken of, and measuring it again would derive
+// what is already held.
+func TestLedger_AnEarlierTreeStateStillAnswersForItself(t *testing.T) {
+	s := openTestStore(t)
+	ctx := context.Background()
+
+	local, err := coordinate.NewLocalCoordinate("example.com/mod")
+	if err != nil {
+		t.Fatalf("NewLocalCoordinate: %v", err)
+	}
+	const root = "/work/tree"
+	before := ledgerRecord(t, ledgerSpec{
+		coord: local, source: domain2.AnalysisSourceWorktree,
+		worktree: "analysed-sha256:before", scanDigest: "scanned-sha256:before", root: root,
+		completeness: domain2.CompletenessBuiltWithBodies, at: testTime, callee: "example.com/mod.Before",
+	})
+	edited := ledgerRecord(t, ledgerSpec{
+		coord: local, source: domain2.AnalysisSourceWorktree,
+		worktree: "analysed-sha256:edited", scanDigest: "scanned-sha256:edited", root: root,
+		completeness: domain2.CompletenessBuiltWithBodies,
+		at:           testTime.Add(time.Hour), callee: "example.com/mod.Edited",
+	})
+	for _, r := range []domain2.CallGraphRecord{before, edited} {
+		if perr := s.PutCallGraphRecord(ctx, r); perr != nil {
+			t.Fatalf("PutCallGraphRecord: %v", perr)
+		}
+	}
+
+	got, found, err := s.WorktreeGeneration(ctx, local, testPipeline, root, "scanned-sha256:before")
+	if err != nil || !found {
+		t.Fatalf("the reverted-to state has a graph in the ledger but did not answer: found=%v err=%v", found, err)
+	}
+	if got.ContentHash != before.ContentHash {
+		t.Fatal("a state the tree returned to was answered from a different generation")
 	}
 }
 

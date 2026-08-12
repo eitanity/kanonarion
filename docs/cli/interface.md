@@ -60,9 +60,16 @@ $ kanonarion interface github.com/spf13/cobra@v1.8.1 --json
   "packages": [ ... ],
   "pipeline_version": "...",
   "content_hash": "sha256:...",
-  "extracted_at": "..."
+  "extracted_at": "...",
+  "artefact_identity": "zip:h1:...",
+  "source_content_hash": "sha256:..."
 }
 ```
+
+`artefact_identity` names the bytes the extraction read and `source_content_hash`
+the fetch record that supplied them. Both are absent together on a record that
+names no artefact, which reads as "not recorded", never as "derived from
+nothing".
 
 ### `interface-show`
 
@@ -88,12 +95,69 @@ $ kanonarion interface-show github.com/spf13/cobra@v1.8.1 --package github.com/s
 
 package cobra // github.com/spf13/cobra
   type Command (struct)
+    embeds *ParentCommand
+    field Use string
+    field Args PositionalArgs
     func (c *Command) AddCommand(cmds ...*Command)
     func (c *Command) Execute() error
+    promoted func (p *ParentCommand) Name() string  // via *ParentCommand
     ...
   func New() *Command
+  const MaxDepth uint32
+  var Default (no declared type)
   ...
 ```
+
+A type prints everything the record holds about it:
+
+- `field` - an exported struct field, with its type and its struct tag.
+- `embeds` - an embedded type, struct or interface.
+- an unprefixed `func` line - a method **declared on this type**.
+- `promoted` - a method or field **callable on this type** only because of an
+  embedding, with the chain of embeddings it arrives through. Declared and
+  promoted are different facts about a type and are never merged: a method
+  promoted today can move or disappear when the embedded type changes.
+  Go's own rules apply - a name the type redeclares shadows the promoted one,
+  and a name two embeddings offer at the same depth promotes neither.
+- `[promotions from X not shown]` - the type embeds `X`, and this record
+  describes no such type, so what `X` promotes cannot be listed. Common for a
+  type embedded from the standard library or from a dependency; an interface
+  record covers one module.
+- `(no declared type)` on a `const` or `var` - the source declared no type for
+  it. It is a statement about the declaration, not a gap in the reading.
+
+`--package` and `--symbol` narrow what is printed, not what a printed type is
+said to offer: promotion is resolved against the whole record, so a type shown
+alone still reports what its embeddings make callable on it.
+
+`symbol-find` and `symbol-context` index types, funcs, methods, consts and vars.
+Struct fields are in the record and in `interface-show`, but are not searchable
+by name.
+
+### A record this build does not serve
+
+A record is served only at the pipeline version this build produces. After a
+pipeline bump the store's earlier records stay where they are and answer
+nothing, which reads at a query as an absent record. The two are told apart
+wherever a record can go missing:
+
+```
+$ kanonarion interface-show github.com/golang-jwt/jwt/v4@v4.5.1
+error: the interface record for github.com/golang-jwt/jwt/v4@v4.5.1 was produced by
+superseded extraction logic: this build serves pipeline 0.4.0 and the store holds this
+coordinate at pipeline 0.3.0. A superseded record is not served, so this answer is empty
+for want of a measurement of this module, not because the coordinate is wrong.
+Re-extract it:
+  kanonarion interface github.com/golang-jwt/jwt/v4@v4.5.1
+```
+
+A coordinate the store has never held keeps the other statement — the one that
+names the corpus the coordinate was compared against and points at
+`interface-list`. `interface-show`, `interface-list <module>`,
+`interface --history`, `interface-diff`, `symbol-find`, `symbol-context` and the
+`context` interface section all draw the same distinction; `interface-list`
+marks each superseded row and counts them in a footer. Exit code is `4` in
+either case: no record was served.
 
 ### `interface-list`
 
@@ -119,8 +183,15 @@ invocation that lifts it, per [Truncated listings](conventions.md#truncated-list
 ```
 $ kanonarion interface-list
 github.com/spf13/cobra@v1.8.1               Extracted    1 package(s)
-github.com/spf13/pflag@v1.0.5               Extracted    1 package(s)
+github.com/spf13/pflag@v1.0.5               Extracted    1 package(s)  [superseded pipeline 0.3.0]
+1 of 2 listed record(s) were produced by superseded extraction logic; this build serves
+pipeline 0.4.0 and answers no query from them. Re-extract one:
+  kanonarion interface <module>@<version>
 ```
+
+The listing shows every stored record whatever produced it, so a marked row is
+still a row: it says the record is there and that no query will be answered
+from it. `--json` carries the same as `pipeline_version` and `superseded`.
 
 ### `symbol-find`
 

@@ -23,7 +23,9 @@ import (
 // future drift. Scenario exercises: multi-module ordering, mixed license states
 // (licensed / empty-SPDX / absent), the licence-completeness statement over the
 // two components with no licence identity, a caller-supplied document timestamp,
-// and the absence of any vulnerability list.
+// and the absence of any vulnerability list. It also locks the external
+// references: depA has a recorded origin and carries a VCS reference naming it,
+// depB and the subject have none recorded and carry no references at all.
 func TestGoldenByteLock(t *testing.T) {
 	mc := func(p, v string) coordinate.ModuleCoordinate {
 		c, err := coordinate.NewModuleCoordinate(p, v)
@@ -75,6 +77,13 @@ func TestGoldenByteLock(t *testing.T) {
 		PipelineVersion:   "0.3.0-test",
 		Operator:          "golden",
 		DocumentTimestamp: time.Date(2026, 3, 3, 9, 15, 0, 0, time.UTC),
+		ModuleOrigins: map[coordinate.ModuleCoordinate]ports.ModuleOrigin{
+			depA: {
+				VCSURL:    "https://github.com/example/aaa",
+				VCSRef:    "refs/tags/v0.4.0",
+				VCSCommit: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+			},
+		},
 	})
 	if err != nil {
 		t.Fatalf("Generate: %v", err)

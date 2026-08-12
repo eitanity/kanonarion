@@ -286,10 +286,12 @@ the coverage it saw, never a confident SPDX it cannot stand behind.
 
 | Field | Type | Description |
 |---|---|---|
-| `status` | string | `not_run` / `read_error` / extractor status |
+| `status` | string | `not_run` / `superseded` / `read_error` / extractor status |
+| | | `superseded`: a record exists for this module but every stored generation predates this build's extraction logic, so none is served. `error` carries the statement and the re-extraction to run. |
 | `packages` | array | Public packages (internal and `main` packages excluded) |
 | `packages[].import_path` | string | Package import path |
 | `packages[].types` | array | Exported type signatures (doc comment included only with `--full`) |
+| `packages[].methods` | array | Signatures of the methods declared on those types (doc comment included only with `--full`) |
 | `packages[].funcs` | array | Exported function signatures |
 | `packages[].consts` | array | Exported constant names (with type if present) |
 | `packages[].vars` | array | Exported variable names (with type if present) |
@@ -383,7 +385,8 @@ peer annotation appears. To ask about a specific build, pass `--walk-id` or
 
 | Field | Type | Description |
 |---|---|---|
-| `status` | string | `not_run` / `read_error` / scan status (`Clean`, `Affected`, `Withdrawn`, `Unscannable`, `ScanFailed`) |
+| `status` | string | `not_run` / `superseded` / `read_error` / scan status (`Clean`, `Affected`, `Withdrawn`, `Unscannable`, `ScanFailed`) |
+| | | `superseded`: the store holds records for this module only at pipeline versions this build no longer serves. `error` carries the statement, the generations held, and the re-scan to run. It is not `not_run`: the scan ran. |
 | `findings` | array | CVE findings |
 | `findings[].id` | string | Primary CVE / GHSA identifier |
 | `findings[].aliases` | array | Alternative identifiers |
@@ -392,6 +395,8 @@ peer annotation appears. To ask about a specific build, pass `--walk-id` or
 | `findings[].score` | float | CVSS score |
 | `findings[].withdrawn_at` | string | Retraction timestamp, present **only** on an advisory retracted upstream. Absent means live — the retraction is a fact on the finding, never something to infer from the `WITHDRAWN: ` prefix upstream puts on the summary |
 | `findings[].reachable` | bool | Reachability verdict (null if not analysed) |
+| `findings[].soundness` | string | How thorough the search behind a **negative** was: `confirmed`, `inferred`, `unconfirmed`, `unsearchable`, or `not stated` where there is no absence to qualify. Always present. Derived at read time from the analyser the stored answer names, so it is on records scanned long before the field existed. See [reachability](reachability.md#a-negative-states-how-sound-the-search-behind-it-was) |
+| `findings[].soundness_reason` | string | The basis for that rung in the producing analyser's own terms. Absent where no rung is stated |
 
 A retracted advisory stays in `findings` as the historical fact, so a module whose
 every advisory was withdrawn reports `status: Withdrawn` with its findings intact
@@ -444,9 +449,35 @@ fully-clean, complete walk adds no annotation to a clean module.
 | `--tool` | false | Scope to the tooling supply chain (the `go.mod` tool directives' closure). Mutually exclusive with `--project`. `--gomod` only: refused by name on the coordinate, `--walk-id` and local-path forms |
 | `--project` | false | Scope to the complete set: the project's code **and** tooling (the full Go build list). Mutually exclusive with `--tool`. `--gomod` only: refused by name on the coordinate, `--walk-id` and local-path forms |
 | `--walk-id <id>` | | Emit context for every module in the walk as NDJSON |
+| `--direct-only` | false | With `--walk-id`: emit context only for direct dependencies of the walk root |
+| `--affected-only` | false | With `--walk-id`: emit context only for modules the walk's most recent scan run found affected. See [Narrowing a walk](#narrowing-a-walk) |
+| `--modules <path>` | | With `--walk-id`: emit context only for the `module@version` coordinates listed in this file, one per line. See [Narrowing a walk](#narrowing-a-walk) |
 | `--stream` | false | With `--walk-id` or `--gomod`: emit NDJSON (one document per module) without `--json`. Refused on the coordinate and local-path forms, which emit one document |
 | `--store-root <path>` | `~/.kanonarion` | Root directory for blobs and SQLite |
 | `--log-level <level>` | `warn` | Log verbosity: `debug` \| `info` \| `warn` \| `error` |
+
+### Narrowing a walk
+
+`--walk-id` emits one document per module in the walk, which for a full project
+closure is more context than a question usually needs. Three filters cut it
+down, and they compose - a module must pass every filter that is set:
+
+| Filter | Keeps |
+|---|---|
+| `--direct-only` | Modules that are direct dependencies of the walk root |
+| `--affected-only` | Modules the walk's most recent scan run found affected |
+| `--modules <file>` | Modules whose `module@version` coordinate is listed in the file, one per line; blank lines are ignored |
+
+All three act **only** on the `--walk-id` form. Passed on a coordinate, a
+`--gomod` scope or a local path they are refused by name rather than silently
+ignored, and the message says which form does read them.
+
+`--affected-only` is read from the findings axis of the walk's latest scan run,
+in that walk's own frame: a module matched by an advisory is kept whether or not
+its source could be analysed, and another project's scan of a shared dependency
+does not decide it. A walk with no scan run yet yields nothing rather than
+everything - an empty result means "no affected module recorded for this walk",
+so run `vuln-scan` on the walk first.
 
 ## Exit codes
 

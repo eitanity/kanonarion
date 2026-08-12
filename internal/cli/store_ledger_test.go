@@ -3,10 +3,14 @@ package cli
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
+	"io"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/eitanity/kanonarion/internal/audit"
 )
 
 // ledgerFixture writes a store root holding the given ledger lines verbatim and
@@ -342,5 +346,199 @@ func TestStoreLedger_NeverWritesToTheLedger(t *testing.T) {
 	}
 	if len(entries) != 1 {
 		t.Errorf("reading the ledger created %d extra entr(ies) in the store root", len(entries)-1)
+	}
+}
+
+// ledgerVendorProject is an event that names a module under the project key and
+// carries no version at all — the shape a coordinate filter must not drop.
+const ledgerVendorProject = `{"event_type":"vendor_tree_generated","timestamp":"2026-07-21T09:00:00Z",` +
+	`"payload":{"project":"github.com/spf13/cobra","module_count":12,"status":"clean"}}`
+
+// TestStoreLedger_ModuleFilterTakesACoordinate pins the filter form the ledger's
+// headline question is asked in.
+//
+// "When did we first learn about this module@version" is a coordinate question,
+// and every payload key the filter compares against holds a bare path. The
+// coordinate was therefore compared with something that is never a coordinate,
+// and the command answered a confident zero for a module it holds events for.
+func TestStoreLedger_ModuleFilterTakesACoordinate(t *testing.T) {
+	root := ledgerFixture(t, ledgerFactWritten, ledgerVendorProject, ledgerFindingJWT)
+
+	// The path alone still matches everything naming it.
+	byPath := decodeLedger(t, runLedger(t, root, storeLedgerFlags{module: "github.com/spf13/cobra"}, true))
+	if byPath.Matched != 2 {
+		t.Errorf("--module <path> matched %d event(s), want 2", byPath.Matched)
+	}
+
+	// The coordinate matches the versioned event, and keeps the event that names
+	// the module with no version: it is still an event about that module.
+	byCoord := decodeLedger(t, runLedger(t, root, storeLedgerFlags{module: "github.com/spf13/cobra@v1.8.1"}, true))
+	if byCoord.Matched != 2 {
+		t.Errorf("--module <path>@<version> matched %d event(s), want 2", byCoord.Matched)
+	}
+
+	// A version the log does not hold drops the versioned event and no more.
+	wrongVersion := decodeLedger(t, runLedger(t, root, storeLedgerFlags{module: "github.com/spf13/cobra@v9.9.9"}, true))
+	if wrongVersion.Matched != 1 {
+		t.Errorf("--module <path>@<absent version> matched %d event(s), want 1 (the unversioned event)", wrongVersion.Matched)
+	}
+	if len(wrongVersion.ZeroReasons) != 0 {
+		t.Errorf("a reading that matched something must not explain a zero: %v", wrongVersion.ZeroReasons)
+	}
+}
+
+// TestStoreLedger_RefusesAModuleFilterItCannotUse asserts a --module value that
+// is neither a path nor a coordinate is refused rather than filtered on, on the
+// model --since and --until already set.
+func TestStoreLedger_RefusesAModuleFilterItCannotUse(t *testing.T) {
+	root := ledgerFixture(t, ledgerFactWritten)
+	for _, value := range []string{"@v1.2.3", "github.com/spf13/cobra@"} {
+		var out bytes.Buffer
+		err := runStoreLedger(root, storeLedgerFlags{module: value}, false, &out)
+		if err == nil {
+			t.Fatalf("--module %q was accepted; want a refusal", value)
+		}
+		if !strings.Contains(err.Error(), "want a module path") {
+			t.Errorf("--module %q: refusal does not name the accepted form: %v", value, err)
+		}
+	}
+}
+
+// TestStoreLedger_RefusesAnUnknownEventType asserts a type no event can carry is
+// refused and the accepted set is named.
+//
+// Without it an unrecognised name returns the same well-qualified zero as a
+// recognised name with no events — and the ledger's zero is the convincing kind,
+// stating its coverage window and volunteering what it does not witness.
+func TestStoreLedger_RefusesAnUnknownEventType(t *testing.T) {
+	root := ledgerFixture(t, ledgerFactWritten, ledgerFindingJWT)
+
+	var out bytes.Buffer
+	err := runStoreLedger(root, storeLedgerFlags{eventType: "definitely_not_a_real_event"}, false, &out)
+	if err == nil {
+		t.Fatal("an unknown --event-type was accepted; want a refusal")
+	}
+	var exitErr *exitError
+	if !errors.As(err, &exitErr) {
+		t.Fatalf("expected an exitError, got %T", err)
+	}
+	if exitErr.code != ExitConfig {
+		t.Errorf("exit code = %d, want ExitConfig (%d)", exitErr.code, ExitConfig)
+	}
+	for _, want := range []string{"accepted values", string(audit.EventVulnScanServed), string(audit.EventFactRecordWritten)} {
+		if !strings.Contains(err.Error(), want) {
+			t.Errorf("refusal does not name %q: %v", want, err)
+		}
+	}
+
+	// A recognised type with no events is a legitimate zero, not a refusal.
+	got := decodeLedger(t, runLedger(t, root, storeLedgerFlags{eventType: string(audit.EventSBOMServed)}, true))
+	if got.Matched != 0 {
+		t.Fatalf("matched = %d, want 0", got.Matched)
+	}
+	if len(got.ZeroReasons) == 0 {
+		t.Fatal("a recognised type with no events must say so")
+	}
+}
+
+// TestStoreLedger_AcceptsATypeOnlyTheLogStillHolds asserts a type this build no
+// longer declares is queryable in a log written by one that did. Refusing it
+// would strand the history it names, which is the opposite of what an
+// append-only ledger is for.
+func TestStoreLedger_AcceptsATypeOnlyTheLogStillHolds(t *testing.T) {
+	retired := `{"event_type":"retired_event_kind","timestamp":"2026-07-22T09:00:00Z","payload":{"module":"example.com/mod"}}`
+	root := ledgerFixture(t, ledgerFactWritten, retired)
+	got := decodeLedger(t, runLedger(t, root, storeLedgerFlags{eventType: "retired_event_kind"}, true))
+	if got.Matched != 1 {
+		t.Fatalf("matched = %d, want the one retired-type event", got.Matched)
+	}
+}
+
+// TestStoreLedger_StatesWhyTheReadingIsEmpty asserts an empty reading names the
+// filter that emptied it, per filter and for the combination.
+func TestStoreLedger_StatesWhyTheReadingIsEmpty(t *testing.T) {
+	root := ledgerFixture(t, ledgerFactWritten, ledgerVendorProject, ledgerFindingJWT, ledgerScanServed)
+
+	cases := []struct {
+		name  string
+		flags storeLedgerFlags
+		want  string
+	}{
+		{
+			name:  "module path absent from the log",
+			flags: storeLedgerFlags{module: "example.com/never-seen"},
+			want:  "no event names the path example.com/never-seen",
+		},
+		{
+			name:  "path present, version absent",
+			flags: storeLedgerFlags{module: "github.com/golang-jwt/jwt/v4@v4.0.0"},
+			want:  "none of them at version v4.0.0",
+		},
+		{
+			name:  "window after everything the log holds",
+			flags: storeLedgerFlags{since: "2027-01-01T00:00:00Z"},
+			want:  "is after the last event the ledger holds",
+		},
+		{
+			name:  "window before everything the log holds",
+			flags: storeLedgerFlags{until: "2020-01-01T00:00:00Z"},
+			want:  "is before the first event the ledger holds",
+		},
+		{
+			name:  "each filter matches, none together",
+			flags: storeLedgerFlags{module: "github.com/spf13/cobra", eventType: string(audit.EventVulnFindingObserved)},
+			want:  "no single event satisfies all of them together",
+		},
+		{
+			name:  "recognised type the log has no event of",
+			flags: storeLedgerFlags{eventType: string(audit.EventSBOMGenerated)},
+			want:  "the ledger holds no event of that type at all",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			text := runLedger(t, root, tc.flags, false)
+			if !strings.Contains(text, "matched: 0 event(s)") {
+				t.Fatalf("expected an empty reading, got:\n%s", text)
+			}
+			if !strings.Contains(text, "why this reading is empty:") {
+				t.Fatalf("empty reading does not say why:\n%s", text)
+			}
+			if !strings.Contains(text, tc.want) {
+				t.Errorf("statement does not contain %q, got:\n%s", tc.want, text)
+			}
+			got := decodeLedger(t, runLedger(t, root, tc.flags, true))
+			if len(got.ZeroReasons) == 0 {
+				t.Fatal("zero_reasons is absent from the JSON reading")
+			}
+			if !strings.Contains(strings.Join(got.ZeroReasons, "\n"), tc.want) {
+				t.Errorf("zero_reasons does not contain %q: %v", tc.want, got.ZeroReasons)
+			}
+		})
+	}
+}
+
+// TestStoreLedger_EmptyLedgerExplainsItselfOnce asserts a ledger holding nothing
+// readable does not additionally blame each filter: the coverage line already
+// states the one cause.
+func TestStoreLedger_EmptyLedgerExplainsItselfOnce(t *testing.T) {
+	root := ledgerFixture(t)
+	got := decodeLedger(t, runLedger(t, root, storeLedgerFlags{module: "example.com/mod"}, true))
+	if len(got.ZeroReasons) != 0 {
+		t.Errorf("an empty ledger blamed the filter as well: %v", got.ZeroReasons)
+	}
+}
+
+// TestStoreLedger_HelpEnumeratesTheEventTypes asserts --help names the accepted
+// --event-type values, read from the audit vocabulary rather than restated.
+func TestStoreLedger_HelpEnumeratesTheEventTypes(t *testing.T) {
+	long := newStoreLedgerCmd(io.Discard).Long
+	for _, et := range audit.KnownEventTypes() {
+		if !strings.Contains(long, string(et)) {
+			t.Errorf("--help does not name event type %q", et)
+		}
+	}
+	if !strings.Contains(long, "example.com/mod@v1.2.3") {
+		t.Error("--help does not name the coordinate form of --module")
 	}
 }

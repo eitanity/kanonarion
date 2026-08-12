@@ -409,6 +409,31 @@ ALTER TABLE callgraph_edges ADD COLUMN kind TEXT NOT NULL DEFAULT ''`},
 		// silently dropped for that — the read falls back to it and says so.
 		{Module: "callgraph", Version: 13, SQL: `
 ALTER TABLE callgraph_records ADD COLUMN analysis_root TEXT NOT NULL DEFAULT ''`},
+		// Migration v14: add the worktree_scan_digest column, so a run can ask
+		// whether the tree in front of it is the tree a stored generation was
+		// computed from, and a read can tell two generations of ONE tree state from
+		// two observations of a changing one.
+		//
+		// It lives inside the serialised record like every other fact; this column
+		// is the denormalised copy, on the same terms analysis_root is, so a
+		// generation can be ruled in or out from columns rather than by decoding a
+		// blob and reconstructing its entire edge set.
+		//
+		// NO BACK-FILL. '' is the true value for every existing row: no record
+		// written before this stated the tree it was handed, and the decoded record
+		// carries exactly the same empty value. There is nothing to derive it from
+		// — the tree that produced a record two months ago is not on this disk in
+		// that state — and an invented value would make a run reuse a graph of a
+		// tree it never saw.
+		//
+		// NO PURGE. The record shape did not move: the field is omitted from the
+		// canonical encoding when empty, so every stored record marshals to the
+		// bytes it was sealed over and verifies against the hash it was written
+		// with. An empty digest matches nothing, so every existing generation
+		// behaves exactly as it did — it is re-derived rather than reused, and it
+		// composes by sequence position rather than by ladder.
+		{Module: "callgraph", Version: 14, SQL: `
+ALTER TABLE callgraph_records ADD COLUMN worktree_scan_digest TEXT NOT NULL DEFAULT ''`},
 	}
 }
 
@@ -646,11 +671,11 @@ func (s *Store) PutCallGraphRecord(ctx context.Context, r domain2.CallGraphRecor
 INSERT INTO callgraph_records (
     module_path, module_version, pipeline_version,
     algorithm, overall_status, completeness, analysis_source, worktree_digest,
-    analysis_root,
+    analysis_root, worktree_scan_digest,
     failure_cause,
     node_count, edge_count,
     extracted_at, content_hash, serialised
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (module_path, module_version, pipeline_version, extracted_at, content_hash)
 DO NOTHING`
 
@@ -658,7 +683,7 @@ DO NOTHING`
 		r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion,
 		string(r.Algorithm), int(r.OverallStatus),
 		string(r.Completeness), string(r.AnalysisSource), r.WorktreeDigest,
-		r.AnalysisRoot,
+		r.AnalysisRoot, r.WorktreeScanDigest,
 		string(r.FailureCause),
 		r.NodeCount, r.EdgeCount,
 		r.ExtractedAt.UTC().Format(time.RFC3339),
@@ -832,14 +857,22 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 		}
 	}
 
-	blob, storedHash, found, qerr := s.latestGenerationRow(ctx, coord, pipelineVersion)
+	row, found, qerr := s.latestGenerationRow(ctx, coord, pipelineVersion)
 	if qerr != nil {
 		return domain2.CallGraphRecord{}, false, qerr
 	}
 	if !found {
 		return domain2.CallGraphRecord{}, false, nil
 	}
-	rec, ok, derr := s.decodeRecord(ctx, blob, storedHash)
+	// The newest row decides which TREE STATE answers; within that state the
+	// completeness ladder decides which measurement of it does. See
+	// domain.LatestObservation, which is the same rule stated over whole records
+	// for the composing read.
+	row, qerr = s.bestGenerationOfTreeState(ctx, coord, pipelineVersion, row)
+	if qerr != nil {
+		return domain2.CallGraphRecord{}, false, qerr
+	}
+	rec, ok, derr := s.decodeRecord(ctx, row.blob, row.hash)
 	if derr != nil {
 		return domain2.CallGraphRecord{}, false, derr
 	}
@@ -865,37 +898,208 @@ WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
 // its CONTENT, so a caller with one uncommitted edit is standing in a tree no
 // stored generation matches; the root is what survives the edit, and it is what
 // this filters on.
-func (s *Store) latestGenerationRow(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]byte, string, bool, error) {
-	const qLatest = `SELECT serialised, content_hash FROM callgraph_records
-WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
-	const order = `
+func (s *Store) latestGenerationRow(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) (generationRow, bool, error) {
+	if root, ok := s.preferredRoot(coord); ok {
+		row, found, err := s.newestRow(ctx, coord, pipelineVersion, root)
+		if err != nil || found {
+			return row, found, err
+		}
+	}
+	return s.newestRow(ctx, coord, pipelineVersion, "")
+}
+
+// generationRow is one stored generation as the COLUMNS describe it: the blob
+// and its seal, plus the two facts that say which tree state it belongs to.
+//
+// It exists so the choice between generations can be made without decoding any
+// of them. A decode reconstructs the record's entire edge set, so deciding among
+// three generations by decoding three of them costs two full reconstructions
+// that are then discarded.
+type generationRow struct {
+	blob       []byte
+	hash       string
+	root       string
+	scanDigest string
+	// rank is what the ladder orders on, read from columns. It carries no
+	// completeness the record does not state — it IS the record's own columns.
+	rank domain2.GenerationRank
+}
+
+// newestRow returns the newest generation for a coordinate, optionally
+// restricted to one analysis root. An empty root imposes no restriction, which
+// is what a read that names no tree means.
+//
+// "Newest" is by insertion order, because extracted_at persists at second
+// precision — the precision the canonical hash covers — and two runs within one
+// second share it.
+func (s *Store) newestRow(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion, root string) (generationRow, bool, error) {
+	q := `SELECT serialised, content_hash, analysis_root, worktree_scan_digest,
+                 completeness, extracted_at
+          FROM callgraph_records
+          WHERE module_path = ? AND module_version = ? AND pipeline_version = ?`
+	args := []any{coord.Path(), coord.Version(), pipelineVersion}
+	if root != "" {
+		q += " AND analysis_root = ?"
+		args = append(args, root)
+	}
+	q += `
 ORDER BY extracted_at DESC, rowid DESC
 LIMIT 1`
 
-	if root, ok := s.preferredRoot(coord); ok {
-		var blob []byte
-		var hash string
-		serr := s.db.DB().QueryRowContext(ctx, qLatest+" AND analysis_root = ?"+order,
-			coord.Path(), coord.Version(), pipelineVersion, root).Scan(&blob, &hash)
-		switch {
-		case serr == nil:
-			return blob, hash, true, nil
-		case !errors.Is(serr, sql.ErrNoRows):
-			return nil, "", false, fmt.Errorf("querying latest generation of %s at %s: %w", coord, root, serr)
-		}
-	}
-
-	var blob []byte
-	var hash string
-	serr := s.db.DB().QueryRowContext(ctx, qLatest+order,
-		coord.Path(), coord.Version(), pipelineVersion).Scan(&blob, &hash)
+	var row generationRow
+	var completeness, extractedAt string
+	serr := s.db.DB().QueryRowContext(ctx, q, args...).Scan(
+		&row.blob, &row.hash, &row.root, &row.scanDigest, &completeness, &extractedAt)
 	switch {
 	case errors.Is(serr, sql.ErrNoRows):
-		return nil, "", false, nil
+		return generationRow{}, false, nil
 	case serr != nil:
-		return nil, "", false, fmt.Errorf("querying latest generation for %s: %w", coord, serr)
+		return generationRow{}, false, fmt.Errorf("querying latest generation for %s: %w", coord, serr)
 	}
-	return blob, hash, true, nil
+	rank, perr := rankOfColumns(completeness, extractedAt)
+	if perr != nil {
+		return generationRow{}, false, perr
+	}
+	rank.ContentHash = row.hash
+	row.rank = rank
+	return row, true, nil
+}
+
+// bestGenerationOfTreeState returns the generation that serves for the tree
+// state newest belongs to.
+//
+// Generations carrying the same scan digest at the same root were handed the
+// same tree, so they are competing measurements of one thing and the completeness
+// ladder orders them. Generations carrying a different digest observed a
+// different state of a changing tree, and the sequence has already chosen among
+// those by taking the newest.
+//
+// A row stating no scan digest is returned untouched: every generation written
+// before the field existed carries none, an absent digest cannot show that two
+// runs were handed the same tree, and one extra query per read to discover that
+// is a cost paid on every query for nothing.
+func (s *Store) bestGenerationOfTreeState(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, newest generationRow) (generationRow, error) {
+	if newest.scanDigest == "" {
+		return newest, nil
+	}
+	const q = `SELECT serialised, content_hash, completeness, extracted_at
+FROM callgraph_records
+WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
+  AND analysis_root = ? AND worktree_scan_digest = ?`
+	rows, err := s.db.DB().QueryContext(ctx, q,
+		coord.Path(), coord.Version(), pipelineVersion, newest.root, newest.scanDigest)
+	if err != nil {
+		return generationRow{}, fmt.Errorf("querying generations of %s at %s: %w", coord, newest.root, err)
+	}
+	best := newest
+	for rows.Next() {
+		candidate := generationRow{root: newest.root, scanDigest: newest.scanDigest}
+		var completeness, extractedAt string
+		if serr := rows.Scan(&candidate.blob, &candidate.hash, &completeness, &extractedAt); serr != nil {
+			_ = rows.Close() //nolint:errcheck // returning the scan error
+			return generationRow{}, fmt.Errorf("scanning generation of %s: %w", coord, serr)
+		}
+		rank, perr := rankOfColumns(completeness, extractedAt)
+		if perr != nil {
+			_ = rows.Close() //nolint:errcheck // returning the parse error
+			return generationRow{}, perr
+		}
+		rank.ContentHash = candidate.hash
+		candidate.rank = rank
+		if candidate.rank.ServesBefore(best.rank) {
+			best = candidate
+		}
+	}
+	if cerr := rows.Err(); cerr != nil {
+		_ = rows.Close() //nolint:errcheck // returning the iteration error
+		return generationRow{}, fmt.Errorf("iterating generations of %s: %w", coord, cerr)
+	}
+	if cerr := rows.Close(); cerr != nil {
+		return generationRow{}, fmt.Errorf("closing generation rows: %w", cerr)
+	}
+	return best, nil
+}
+
+// rankOfColumns builds a generation's ordering key from the two columns that
+// carry it. An unparsable timestamp stops the read: a generation whose time
+// cannot be read cannot be ordered, and defaulting it to the zero time would
+// silently sort it last.
+func rankOfColumns(completeness, extractedAt string) (domain2.GenerationRank, error) {
+	t, err := time.Parse(time.RFC3339, extractedAt)
+	if err != nil {
+		return domain2.GenerationRank{}, fmt.Errorf("parsing extracted_at %q: %w", extractedAt, err)
+	}
+	return domain2.GenerationRank{
+		Completeness: domain2.CompletenessLevel(completeness),
+		ExtractedAt:  t.UTC(),
+	}, nil
+}
+
+// WorktreeGeneration returns the record the ledger holds of one STATE of the
+// working tree at root. See ports.WorktreeGenerationReader for why both the root
+// and the state are arguments rather than things the caller checks afterwards.
+//
+// It is restricted to worktree records: a local coordinate can also hold a
+// zip-sourced record (a walk over a local-path replace target fetches and
+// analyses one), and that describes different bytes.
+func (s *Store) WorktreeGeneration(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion, root, scanDigest string) (domain2.CallGraphRecord, bool, error) {
+	if coord.IsZero() {
+		return domain2.CallGraphRecord{}, false, coordinate.ErrZeroCoordinate
+	}
+	if root == "" || scanDigest == "" {
+		return domain2.CallGraphRecord{}, false, nil
+	}
+	const q = `SELECT serialised, content_hash, completeness, extracted_at
+FROM callgraph_records
+WHERE module_path = ? AND module_version = ? AND pipeline_version = ?
+  AND analysis_root = ? AND worktree_scan_digest = ? AND analysis_source = ?`
+	rows, err := s.db.DB().QueryContext(ctx, q,
+		coord.Path(), coord.Version(), pipelineVersion, root, scanDigest,
+		string(domain2.AnalysisSourceWorktree))
+	if err != nil {
+		return domain2.CallGraphRecord{}, false, fmt.Errorf("querying worktree generation of %s at %s: %w", coord, root, err)
+	}
+	var best generationRow
+	found := false
+	for rows.Next() {
+		candidate := generationRow{root: root, scanDigest: scanDigest}
+		var completeness, extractedAt string
+		if serr := rows.Scan(&candidate.blob, &candidate.hash, &completeness, &extractedAt); serr != nil {
+			_ = rows.Close() //nolint:errcheck // returning the scan error
+			return domain2.CallGraphRecord{}, false, fmt.Errorf("scanning generation of %s: %w", coord, serr)
+		}
+		rank, perr := rankOfColumns(completeness, extractedAt)
+		if perr != nil {
+			_ = rows.Close() //nolint:errcheck // returning the parse error
+			return domain2.CallGraphRecord{}, false, perr
+		}
+		rank.ContentHash = candidate.hash
+		candidate.rank = rank
+		if !found || candidate.rank.ServesBefore(best.rank) {
+			best, found = candidate, true
+		}
+	}
+	if cerr := rows.Err(); cerr != nil {
+		_ = rows.Close() //nolint:errcheck // returning the iteration error
+		return domain2.CallGraphRecord{}, false, fmt.Errorf("iterating generations of %s: %w", coord, cerr)
+	}
+	if cerr := rows.Close(); cerr != nil {
+		return domain2.CallGraphRecord{}, false, fmt.Errorf("closing generation rows: %w", cerr)
+	}
+	if !found {
+		return domain2.CallGraphRecord{}, false, nil
+	}
+	rec, ok, derr := s.decodeRecord(ctx, best.blob, best.hash)
+	if derr != nil {
+		return domain2.CallGraphRecord{}, false, derr
+	}
+	if !ok {
+		// Written at an older canonical shape, so it cannot be verified and is not
+		// served. Re-deriving is the right outcome: the run that asked holds the
+		// tree and can measure it again.
+		return domain2.CallGraphRecord{}, false, nil
+	}
+	return rec, true, nil
 }
 
 // WorktreeRouting reports which tree answered for a local coordinate, and how

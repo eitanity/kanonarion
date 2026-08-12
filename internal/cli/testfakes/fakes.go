@@ -33,6 +33,7 @@ import (
 	sbomdomain "github.com/eitanity/kanonarion/internal/sbom/domain"
 	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
 	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
 	walkapp "github.com/eitanity/kanonarion/internal/walk/application"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -407,10 +408,20 @@ func (f *FakeQueryLicense) ResolveForWalk(_ context.Context, _ string, _ coordin
 // FakeCheckCompatibility implements cli.CheckCompatibilityUseCase.
 type FakeCheckCompatibility struct {
 	Report licensedomain.ClosureCompatibilityReport
-	Err    error
+	// ReportByWalk answers per walk id, so a test can give two walks of one
+	// target genuinely different licence positions — which is the whole point of
+	// being able to pin one. A walk id absent from the map falls back to Report.
+	ReportByWalk map[string]licensedomain.ClosureCompatibilityReport
+	Err          error
+	// AskedWalkIDs records, in order, the walks the command asked about.
+	AskedWalkIDs []string
 }
 
-func (f *FakeCheckCompatibility) CheckCompatibilityForWalk(_ context.Context, _ string, _ coordinate.ModuleCoordinate, _ string, _ licensedomain.LicenseOverrideSet) (licensedomain.ClosureCompatibilityReport, error) {
+func (f *FakeCheckCompatibility) CheckCompatibilityForWalk(_ context.Context, walkID string, _ coordinate.ModuleCoordinate, _ string, _ licensedomain.LicenseOverrideSet) (licensedomain.ClosureCompatibilityReport, error) {
+	f.AskedWalkIDs = append(f.AskedWalkIDs, walkID)
+	if rep, ok := f.ReportByWalk[walkID]; ok {
+		return rep, f.Err
+	}
 	return f.Report, f.Err
 }
 
@@ -1022,6 +1033,15 @@ type FakeScanWalk struct {
 	// so a test can prove the reuse question was asked about the walk the run
 	// executed rather than some other walk of the same target.
 	ReusableRunWalkID string
+	// ReusableRunProjectDir records the project directory the last ReusableRun
+	// call was told about. Whether a stored run may be served depends on that
+	// directory still building what the walk resolved, so a caller that asks the
+	// reuse question without naming the tree it would have scanned bypasses the
+	// check; this records what was named.
+	ReusableRunProjectDir string
+	// ReusableRunProjectDirSet reports that ReusableRun was called at all, so a
+	// test can tell "asked with no directory" from "never asked".
+	ReusableRunProjectDirSet bool
 	// ServedRuns records every (run id, surface) pair ServeReusableRun was told
 	// about, so a test can prove a served answer was witnessed exactly once and
 	// attributed to the surface that asked. ServeReusableRunErr fails the append.
@@ -1061,8 +1081,10 @@ type FakeScanWalkProgress struct {
 }
 
 // ReusableRun reports the seeded reusable run, if any.
-func (f *FakeScanWalk) ReusableRun(_ context.Context, walkID string) (vulndomain.WalkScanRun, bool, error) {
+func (f *FakeScanWalk) ReusableRun(_ context.Context, walkID, projectDir string) (vulndomain.WalkScanRun, bool, error) {
 	f.ReusableRunWalkID = walkID
+	f.ReusableRunProjectDir = projectDir
+	f.ReusableRunProjectDirSet = true
 	if f.ReusableRunErr != nil {
 		return vulndomain.WalkScanRun{}, false, f.ReusableRunErr
 	}
@@ -1154,6 +1176,32 @@ type FakeQueryVuln struct {
 	// regardless of the records map. Use this to exercise the fallback path that
 	// checks GetLatestRecord for a ScanFailed status.
 	ForceLatestRecordForWalkNotFound bool
+	// generations is the store census: which pipeline versions this coordinate
+	// is held at, whatever version a read asks for. It is seeded independently
+	// of the records maps because the condition it exists to reproduce is
+	// exactly a coordinate whose records no read returns.
+	generations map[string][]vulnports.VulnerabilityRecordGeneration
+}
+
+// SetRecordGenerations seeds the store census for a coordinate.
+func (f *FakeQueryVuln) SetRecordGenerations(coord coordinate.ModuleCoordinate, gens []vulnports.VulnerabilityRecordGeneration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.generations == nil {
+		f.generations = make(map[string][]vulnports.VulnerabilityRecordGeneration)
+	}
+	f.generations[coord.String()] = gens
+}
+
+// ListRecordGenerationsForModule answers the census. An unseeded coordinate
+// holds nothing, which is the "never scanned" case.
+func (f *FakeQueryVuln) ListRecordGenerationsForModule(_ context.Context, coord coordinate.ModuleCoordinate) ([]vulnports.VulnerabilityRecordGeneration, error) {
+	if f.Err != nil {
+		return nil, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.generations[coord.String()], nil
 }
 
 func NewFakeQueryVuln() *FakeQueryVuln {

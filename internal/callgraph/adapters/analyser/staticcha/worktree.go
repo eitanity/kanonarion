@@ -20,10 +20,13 @@ import (
 //   - analysedDigestScheme covers the files the LOADER resolved: symlinks
 //     already followed, build tags already applied, testdata and nested modules
 //     already excluded. It describes the bytes that were analysed.
-//   - scannedDigestScheme covers every .go file under the root, and is used only
-//     when the load produced no file list at all — a failed analysis still has to
-//     identify the tree it failed on. It is a proxy, and it is inaccurate in both
-//     directions, which is why it is never the primary.
+//   - scannedDigestScheme covers every .go file under the root, following a
+//     symlink to one. It has two jobs. It identifies the tree a failed load could
+//     not describe — a failed analysis still has to say which tree it failed on —
+//     and it is the only identity computable BEFORE an analysis, which is what
+//     lets a run ask whether it has already answered for this tree. It is a
+//     proxy for what will be analysed, and it is inaccurate in both directions,
+//     which is why it is never the primary claim about what a record read.
 //
 // Records written before these schemes existed carry a bare "sha256:" digest
 // computed by the scan. It is a truthful identity of that tree under the rule it
@@ -116,11 +119,12 @@ func relativeUnderRoot(root string, files []string) ([]string, error) {
 // no digest is one that silently merges with every other checkout of the same
 // module path.
 //
-// It covers every .go file under root plus go.mod and go.sum. As a description
-// of what was analysed it is wrong in both directions — it includes files the
-// loader ignores and excludes source the loader follows out of the tree through
-// a symlink — which is why it carries its own scheme prefix and why nothing
-// compares it with an analysed digest.
+// It covers every .go file under root plus go.mod and go.sum, including files
+// reached through a symlink, which are hashed by the in-tree path that reaches
+// them and by the target's current contents. As a description of what was
+// analysed it is still wrong in both directions — it includes files the loader
+// ignores, and a symlinked DIRECTORY is not descended — which is why it carries
+// its own scheme prefix and why nothing compares it with an analysed digest.
 func worktreeDigest(root string) (string, error) {
 	files, err := worktreeFiles(root)
 	if err != nil {
@@ -188,12 +192,29 @@ func worktreeFiles(root string) ([]string, error) {
 			}
 			return nil
 		}
-		if !d.Type().IsRegular() {
-			return nil
-		}
 		name := d.Name()
 		if !strings.HasSuffix(name, ".go") && name != "go.mod" && name != "go.sum" {
 			return nil
+		}
+		if !d.Type().IsRegular() {
+			// A symlink to a source file IS source: the loader follows it and
+			// analyses the target, so a tree that differs only in what a link points
+			// at is a different tree. Hashing it under the in-tree path that reached
+			// it is what lets the digest see an edit to a target outside the root,
+			// which a walk of regular files alone cannot.
+			//
+			// Anything that does not resolve to a regular file is skipped rather than
+			// reported: a dangling link and a link to a directory both contribute no
+			// source the loader can read through this path, and failing on one would
+			// make a tree that analyses perfectly well impossible to identify.
+			info, serr := os.Stat(path)
+			if serr != nil {
+				//nolint:nilerr // a link that resolves to nothing carries no source
+				return nil
+			}
+			if !info.Mode().IsRegular() {
+				return nil
+			}
 		}
 		rel, rerr := filepath.Rel(root, path)
 		if rerr != nil {

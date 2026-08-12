@@ -66,11 +66,13 @@ Copyright removed (1):
   - Copyright 2020 Original Author
 ```
 
-When nothing changed:
+When nothing changed, the line names what was compared, so two records that
+agree are distinguishable from two records with nothing in them to disagree
+about:
 
 ```
 Diff:  github.com/example/lib@v1.0.0 → github.com/example/lib@v1.0.1
-No license changes.
+No license changes: both sides declare MIT at status Detected, over 1 license file and 2 copyright statements
 ```
 
 ## JSON output

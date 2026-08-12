@@ -33,6 +33,8 @@ With `--used-by` the second line is replaced by the measurement: how many of the
 declarations this bump moved the project's own code calls, and at how many
 recorded call sites. `zero breaking, 2 reached call sites` and `zero breaking,
 none reached` are different answers and the command already knows which it has.
+When the project has no stored call graph, that line says the reach could not be
+measured and names `kanonarion local .` rather than reporting a count of zero.
 
 A **genuinely empty** delta - nothing added, changed, respelt or renamed - keeps
 the terse two-line output. The statement is for the result that looks like

@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"path/filepath"
+	"time"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -15,6 +16,7 @@ import (
 
 type localFlags struct {
 	goBinary string
+	force    bool
 }
 
 func newLocalCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -27,6 +29,11 @@ func newLocalCmd(stdout, stderr io.Writer) *cobra.Command {
 call graph into the store. Unlike 'callgraph <module@version>', which only
 sees fetched external modules, 'local' ingests the project's own internal
 packages so 'callers'/'callees' can answer questions about them.
+
+A tree that has not changed since the last run is not analysed again: the
+record already held is served, and the derivation line says so. --force
+re-measures anyway, which is what to use when something outside the tree
+changed — a different toolchain, a repopulated module cache.
 
 After running 'local', query internal symbols directly, e.g.:
   kanonarion callers '<module-path>/internal/cli.runScanRescan'`,
@@ -45,6 +52,7 @@ After running 'local', query internal symbols directly, e.g.:
 	}
 
 	cmd.Flags().StringVar(&f.goBinary, "go-binary", "", "path to 'go' binary if not in PATH")
+	cmd.Flags().BoolVar(&f.force, "force", false, "re-analyse even if the tree is unchanged since the stored record")
 
 	return cmd
 }
@@ -84,6 +92,7 @@ func runLocalCallGraph(ctx context.Context, dir string, f localFlags, stdout, st
 	result, err := ctr.ExtractLocalCallGraph.Execute(ctx, cgapp.LocalExtractRequest{
 		Dir:        abs,
 		Coordinate: coord,
+		Force:      f.force,
 	})
 	if err != nil {
 		return fmt.Errorf("extracting local call graph: %w", err)
@@ -92,5 +101,40 @@ func runLocalCallGraph(ctx context.Context, dir string, f localFlags, stdout, st
 	if err := printCallGraphSummary(result.Record, result.FromCache, jsonOut, stdout); err != nil {
 		return err
 	}
+	// The derivation goes to stderr, in both modes and for the same reason.
+	//
+	// It is a statement ABOUT the answer rather than part of it, which is where
+	// every other command puts one — 'audit' writes its walk and scan derivation
+	// to stderr — and one concept arriving on two streams depending on which
+	// command produced it is a contract a reader cannot learn once.
+	//
+	// Under --json it matters more, not less. stdout is a document a consumer
+	// parses, so the statement cannot go there without either corrupting the
+	// stream or being folded into the record — and folding it in would change the
+	// record's shape for a narration change, which is a pipeline bump owed for
+	// nothing. On stderr it costs the document nothing and stays stated: without
+	// it a JSON consumer has no way at all to tell a served graph from a fresh
+	// measurement, which is the one distinction this line exists to preserve.
+	if err := writeDerivation(stderr, localDerivationLine(result)); err != nil {
+		return err
+	}
 	return callGraphExtractionExit(result.Record)
+}
+
+// localDerivationLine states where this run's answer came from: the tree it read,
+// or a record it found it had already taken of that same tree.
+//
+// A reader cannot otherwise tell a fresh measurement from a stored one, and the
+// two carry different weight in exactly the cases the distinction matters —
+// deciding whether a query is answering about the code in front of you. The
+// reuse line names the record's date so the statement is checkable, and names
+// --force because a reader who wants the measurement taken again needs to be
+// told how, in the place they learn it was not.
+func localDerivationLine(result cgapp.ExtractResult) string {
+	if !result.FromCache {
+		return "call graph: derived by this run"
+	}
+	return fmt.Sprintf(
+		"call graph: re-read the working tree and found it identical to the tree analysed %s; that record was reused (--force to re-measure)",
+		result.Record.ExtractedAt.UTC().Format(time.RFC3339))
 }

@@ -28,6 +28,7 @@ import (
 	sbomdomain "github.com/eitanity/kanonarion/internal/sbom/domain"
 	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
 	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
 	walkapp "github.com/eitanity/kanonarion/internal/walk/application"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -202,7 +203,14 @@ type ScanWalkUseCase interface {
 	// ReusableRun reports a completed stored run that already answers what a new
 	// Scan of this walk against the current snapshot would ask. The caller
 	// decides whether to serve it; Scan itself always measures.
-	ReusableRun(ctx context.Context, walkID string) (vulndomain.WalkScanRun, bool, error)
+	//
+	// projectDir is the working tree this invocation would scan, exactly as it
+	// is passed to Scan — empty when the caller names none, in which case the
+	// walk's own record of where it was taken from is used. It is an input to
+	// the decision, not to the answer: a stored run may only be served while
+	// that directory still requires the module versions the walk resolved, so
+	// the caller must hand over the same directory it would have scanned.
+	ReusableRun(ctx context.Context, walkID, projectDir string) (vulndomain.WalkScanRun, bool, error)
 
 	// ServeReusableRun witnesses in the assurance log that a stored run was
 	// handed back instead of measured. It is separate from ReusableRun because
@@ -238,6 +246,12 @@ type QueryVulnUseCase interface {
 	ListRecordsForModule(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]vulndomain.VulnerabilityRecord, error)
 	ListRecordsByFindingID(ctx context.Context, findingID, walkID string) ([]vulndomain.VulnerabilityRecord, error)
 	ListRecordsForRun(ctx context.Context, runID string) ([]vulndomain.VulnerabilityRecord, error)
+	// ListRecordGenerationsForModule is the census behind every empty answer:
+	// which pipeline versions the store holds this coordinate at, whatever
+	// version this build serves. The reads above all key on the version, so an
+	// empty result from them cannot tell "never scanned" from "scanned under
+	// logic this build has superseded". Nothing is answered from it.
+	ListRecordGenerationsForModule(ctx context.Context, coord coordinate.ModuleCoordinate) ([]vulnports.VulnerabilityRecordGeneration, error)
 }
 
 // QueryScanRunsUseCase is the interface for querying scan runs and snapshots.

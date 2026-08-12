@@ -88,12 +88,12 @@ func (f buildScopeFlags) resolve(ctx context.Context, walks QueryWalksUseCase) (
 	walkID := f.walkID
 	var staleness string
 	if f.gomodSet {
-		resolved, gomodPath, err := latestWalkForGoMod(ctx, walks, f.gomod)
+		choice, err := latestWalkForGoMod(ctx, walks, f.gomod)
 		if err != nil {
 			return buildScope{}, err
 		}
-		walkID = resolved.ID
-		staleness = manifestStalenessNote(gomodPath)
+		walkID = choice.summary.ID
+		staleness = choice.stalenessNote() + choice.statementClause()
 	}
 
 	rec, err := walks.GetWalk(ctx, walkID)
@@ -129,48 +129,49 @@ func writeScopeNotice(stdout io.Writer, sc buildScope) error {
 	return nil
 }
 
-// latestWalkForGoMod returns the most recent succeeded project walk rooted at
+// latestWalkForGoMod returns the succeeded project walk a read defaults to for
 // the module declared in gomod (or ./go.mod when gomod is empty), together with
-// the manifest path it resolved.
+// the manifest path it resolved and the rule that picked the walk.
 //
-// The whole summary is returned rather than the ID alone because a scope
-// derived from this walk has to be able to say which platform's build it pins:
-// the lookup has no build-environment axis, so on a store holding several
-// platforms' walks of one project it answers with whichever is newest.
+// The whole choice is returned rather than the ID alone because a scope derived
+// from this walk has to be able to say which platform's build it pins — the
+// lookup has no build-environment axis — and, where the store held more than
+// one candidate, which of them answered and why.
 //
-// The lookup keys on the module path and nothing else, so it answers for the
-// go.mod's NAME, never for its content: the walk it returns may have been taken
-// against a manifest that has since been edited. Every caller therefore either
-// proves the walk still describes the manifest — `vuln-scan --gomod` re-resolves
-// and re-walks on drift — or states, where it names the walk, that it did not.
-// The resolved manifest path is returned so those statements can name the file
-// the reader would have to look at.
-func latestWalkForGoMod(ctx context.Context, walks QueryWalksUseCase, gomod string) (walkports.WalkSummary, string, error) {
+// The lookup keys on the module path, so it finds walks by the go.mod's NAME.
+// Among those it prefers one whose recorded resolution still agrees with the
+// manifest's require directives, because recency alone answered from a walk of a
+// manifest that had since been restored — and, since walk identity reuses a
+// record rather than re-dating it, re-walking the restored tree could not undo
+// that. The comparison is a file parse, not a re-resolution through the
+// toolchain, so it is bounded and the caller still states what it did not check;
+// `vuln-scan --gomod`, which measures rather than reads, pays the full
+// re-resolution instead.
+func latestWalkForGoMod(ctx context.Context, walks QueryWalksUseCase, gomod string) (walkChoice, error) {
 	gomodPath, err := resolveGoModPath(gomod)
 	if err != nil {
-		return walkports.WalkSummary{}, "", err
+		return walkChoice{}, err
 	}
 	modulePath, err := readGoModulePath(gomodPath)
 	if err != nil {
-		return walkports.WalkSummary{}, gomodPath, err
+		return walkChoice{manifestPath: gomodPath}, err
 	}
 	coord, err := coordinate.NewLocalCoordinate(modulePath)
 	if err != nil {
-		return walkports.WalkSummary{}, gomodPath, fmt.Errorf("building project coordinate for %s: %w", modulePath, err)
+		return walkChoice{manifestPath: gomodPath}, fmt.Errorf("building project coordinate for %s: %w", modulePath, err)
 	}
 	succeeded := walkdomain.WalkSucceeded
 	summaries, err := walks.ListWalks(ctx, walkports.WalkFilter{
 		Target:        &coord,
 		OverallStatus: &succeeded,
-		Limit:         1,
 	})
 	if err != nil {
-		return walkports.WalkSummary{}, gomodPath, fmt.Errorf("listing project walks for %s: %w", modulePath, err)
+		return walkChoice{manifestPath: gomodPath}, fmt.Errorf("listing project walks for %s: %w", modulePath, err)
 	}
 	if len(summaries) == 0 {
-		return walkports.WalkSummary{}, gomodPath, fmt.Errorf("no succeeded project walk for %s — run: kanonarion walk --gomod %s", modulePath, gomodPath)
+		return walkChoice{manifestPath: gomodPath}, fmt.Errorf("no succeeded project walk for %s — run: kanonarion walk --gomod %s", modulePath, gomodPath)
 	}
-	return summaries[0], gomodPath, nil
+	return chooseWalk(ctx, walks, summaries, gomodPath), nil
 }
 
 // walkModuleSet is the version set of the build a walk recorded: every module in

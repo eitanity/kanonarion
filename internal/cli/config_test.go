@@ -17,7 +17,10 @@ import (
 // an empty store. The built-in defaults still resolve for every key.
 func TestLoadStoreConfig_DoesNotCreateConfigFile(t *testing.T) {
 	root := t.TempDir()
-	cfg := loadStoreConfig(root)
+	cfg, err := loadStoreConfig(root)
+	if err != nil {
+		t.Fatalf("an absent config file is not a rejection, got: %v", err)
+	}
 	want := configdomain.DefaultConfig().Preferences.LogLevel
 	if cfg.Preferences.LogLevel != want {
 		t.Errorf("log_level = %q, want built-in default %q", cfg.Preferences.LogLevel, want)
@@ -37,7 +40,10 @@ func TestLoadStoreConfig_BuiltInDefaultPropagates(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "config.yaml"), existing, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg := loadStoreConfig(root)
+	cfg, err := loadStoreConfig(root)
+	if err != nil {
+		t.Fatalf("loadStoreConfig: %v", err)
+	}
 	want := configdomain.DefaultConfig().Preferences.LogLevel
 	if cfg.Preferences.LogLevel != want {
 		t.Errorf("log_level = %q, want live built-in default %q (must not be frozen)", cfg.Preferences.LogLevel, want)
@@ -55,7 +61,10 @@ func TestLoadStoreConfig_UserSetLogLevelWins(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(root, "config.yaml"), existing, 0o600); err != nil {
 		t.Fatal(err)
 	}
-	cfg := loadStoreConfig(root)
+	cfg, err := loadStoreConfig(root)
+	if err != nil {
+		t.Fatalf("loadStoreConfig: %v", err)
+	}
 	if cfg.Preferences.LogLevel != "debug" {
 		t.Errorf("log_level = %q, want user-set debug", cfg.Preferences.LogLevel)
 	}

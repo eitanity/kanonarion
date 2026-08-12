@@ -1995,6 +1995,57 @@ ORDER BY scanned_at DESC, rowid DESC`
 		coord.Path(), coord.Version(), pipelineVersion)
 }
 
+// ListVulnerabilityRecordGenerationsForModule counts what the ledger holds for
+// a coordinate at each pipeline version it holds anything at.
+//
+// It is the read that makes "superseded" askable. Every other per-coordinate
+// read takes the pipeline version as part of its key, so after a bump they all
+// answer empty for a coordinate whose whole history is sitting in the table,
+// and none of them can tell that from a coordinate nobody has ever scanned.
+//
+// The counts come from the index columns and the blobs are never decoded, so no
+// seal is verified here: a record this build can no longer decode is still one
+// the store holds, and a census that dropped it would understate exactly the
+// generation it exists to report. Nothing may be served from these counts —
+// they say how much is there, not what it says.
+func (s *Store) ListVulnerabilityRecordGenerationsForModule(
+	ctx context.Context,
+	coord coordinate.ModuleCoordinate,
+) ([]ports.VulnerabilityRecordGeneration, error) {
+	// The zero coordinate names no module, so this is a question about nothing —
+	// the same refusal the keyed reads make, for the same reason.
+	if coord.IsZero() {
+		return nil, coordinate.ErrZeroCoordinate
+	}
+	const q = `
+SELECT pipeline_version, COUNT(*), COALESCE(SUM(finding_count), 0)
+FROM vulnerability_records
+WHERE module_path = ? AND module_version = ?
+GROUP BY pipeline_version
+ORDER BY pipeline_version`
+
+	rows, err := s.db.DB().QueryContext(ctx, q, coord.Path(), coord.Version())
+	if err != nil {
+		return nil, fmt.Errorf("querying vulnerability record generations: %w", err)
+	}
+	defer func() {
+		_ = rows.Close() //nolint:errcheck // rows.Err() checked below
+	}()
+
+	var out []ports.VulnerabilityRecordGeneration
+	for rows.Next() {
+		var g ports.VulnerabilityRecordGeneration
+		if serr := rows.Scan(&g.PipelineVersion, &g.Records, &g.Findings); serr != nil {
+			return nil, fmt.Errorf("scanning vulnerability record generations: %w", serr)
+		}
+		out = append(out, g)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterating vulnerability record generations: %w", err)
+	}
+	return out, nil
+}
+
 // decodeRecord parses a stored record and checks the seal it carries. Every
 // read path goes through it, not only the snapshot-keyed one: a guarantee that
 // holds on one query and not the next has a hole the size of the rest of the

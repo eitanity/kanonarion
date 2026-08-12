@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
+
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
@@ -148,7 +150,7 @@ func TestPrintEdgeRefs_ReportsEveryFailedWrite(t *testing.T) {
 // TestCallGraphShow_JSONWriteError covers the encode guard on the record dump.
 func TestCallGraphShow_JSONWriteError(t *testing.T) {
 	rec := builtRecord([]cgdomain.CallNode{{ID: "example.com/m.Root", Symbol: "Root"}}, nil)
-	uc := fakeWithRecord("example.com/m", "v1.0.0", "0.2.0", rec)
+	uc := fakeWithRecord("example.com/m", "v1.0.0", cgapp.PipelineVersion, rec)
 	err := runCallGraphShow(context.Background(), "example.com/m@v1.0.0", callGraphShowFlags{nodeFilter: "", limitNodes: 10, limitEdges: 10}, true, uc, &stallingWriter{})
 	if err == nil {
 		t.Fatal("a failed JSON write was swallowed")

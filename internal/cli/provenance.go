@@ -39,7 +39,10 @@ type provenanceCopyrightSignal struct {
 	// evidence can be checked against a specific record rather than "the store".
 	Source string `json:"source,omitempty"`
 	// Detail explains a not_analysed status — which is never a negative result.
-	Detail     string                             `json:"detail,omitempty"`
+	Detail string `json:"detail,omitempty"`
+	// Coverage states what the signal did not read, so a "no indicators" answer
+	// says how thorough the search behind it was. Empty when nothing was missed.
+	Coverage   string                             `json:"coverage,omitempty"`
 	Indicators []provenanceRepublicationIndicator `json:"indicators,omitempty"`
 }
 
@@ -47,8 +50,11 @@ type provenanceCopyrightSignal struct {
 // the context section's fork-heuristic shape so consumers see one vocabulary
 // across both surfaces.
 type provenanceOutput struct {
-	Module          string                    `json:"module"`
-	Version         string                    `json:"version,omitempty"`
+	Module  string `json:"module"`
+	Version string `json:"version,omitempty"`
+	// Selection names the licence record the copyright signal answered from and
+	// the rule that picked it.
+	Selection       provenanceSelection       `json:"selection"`
 	ForkHeuristic   contextForkHeuristic      `json:"fork_heuristic"`
 	CopyrightSignal provenanceCopyrightSignal `json:"copyright_signal"`
 }
@@ -66,10 +72,16 @@ fork inference. It is a pure function of the path.
 Copyright-attribution signal: read the module's stored licence record and
 report a caveated republication inference when the licence text attributes
 copyright to more than one distinct holder, or when a holder names the owner of
-a differently-owned module of the same name held in this store. This is the
+a related module — one of the same name held in this store, or the module this
+one replaces under a go.mod replace directive recorded in a walk. This is the
 tier that can see a republication, which the name-path heuristic cannot: a
 republication changes the path, so nothing about the new path collides with the
 old one.
+
+Without @version the copyright signal reads the record for the NEWEST version
+the store holds, and where it holds several the output says a choice was made
+and how to pin one. Where the versions disagree about the signal, the
+disagreement is reported rather than resolved by picking.
 
 Both results are inferences, never verdicts — "path suggests a fork of
 <canonical> — verify". Confirming or refuting one requires comparing the
@@ -92,14 +104,15 @@ nothing to report either way.`,
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runProvenance(cmd.Context(), path, version, ctr.QueryLicense, stdout)
+			return runProvenance(cmd.Context(), path, version, ctr.QueryLicense, ctr.QueryWalks, stdout)
 		},
 	}
 	return cmd
 }
 
-func runProvenance(ctx context.Context, path, version string, uc QueryLicenseUseCase, stdout io.Writer) error {
+func runProvenance(ctx context.Context, path, version string, uc QueryLicenseUseCase, walks QueryWalksUseCase, stdout io.Writer) error {
 	fp := fetchdomain.InferForkProvenance(path)
+	signal, selection := copyrightProvenance(ctx, path, version, uc, walks)
 	out := provenanceOutput{
 		Module:  path,
 		Version: version,
@@ -107,7 +120,8 @@ func runProvenance(ctx context.Context, path, version string, uc QueryLicenseUse
 			Status:           fp.Status.String(),
 			CatalogueVersion: fp.CatalogueVersion,
 		},
-		CopyrightSignal: copyrightProvenance(ctx, path, version, uc),
+		Selection:       selection,
+		CopyrightSignal: signal,
 	}
 	for _, ind := range fp.Indicators {
 		out.ForkHeuristic.ForkIndicators = append(out.ForkHeuristic.ForkIndicators, contextForkIndicator{
@@ -128,6 +142,12 @@ func runProvenance(ctx context.Context, path, version string, uc QueryLicenseUse
 	}
 
 	w := &errWriter{w: stdout}
+	// The notice goes above the answer, not after it: it says which of several
+	// versions the lines below describe, and a reader who has already read them
+	// has already decided what they were about.
+	if out.Selection.Statement != "" {
+		w.printf("%s", out.Selection.Statement)
+	}
 	header := out.Module
 	if out.Version != "" {
 		header += "@" + out.Version
@@ -165,6 +185,9 @@ func printCopyrightSignal(w *errWriter, cs provenanceCopyrightSignal) {
 		}
 	case fetchdomain.CopyrightSignalNone.String():
 		w.printf("  Copyright Signal:  no indicators (licence copyright lines, record %s)\n", cs.Source)
+		if cs.Coverage != "" {
+			w.printf("    not covered: %s\n", cs.Coverage)
+		}
 	default:
 		w.printf("  Copyright Signal:  not analysed — %s\n", cs.Detail)
 	}
@@ -177,39 +200,55 @@ func printCopyrightSignal(w *errWriter, cs provenanceCopyrightSignal) {
 // them is evidence about the module, and reporting a store that could not be
 // read as a module with no indicators would be the tier asserting a negative it
 // never measured.
-func copyrightProvenance(ctx context.Context, path, version string, uc QueryLicenseUseCase) provenanceCopyrightSignal {
+func copyrightProvenance(ctx context.Context, path, version string, uc QueryLicenseUseCase, walks QueryWalksUseCase,
+) (provenanceCopyrightSignal, provenanceSelection) {
 	if uc == nil {
 		return provenanceCopyrightSignal{
 			Status: fetchdomain.CopyrightSignalNotAnalysed.String(),
 			Detail: "no licence store available to this command",
-		}
+		}, provenanceSelection{}
 	}
 	// One listing serves both the record lookup and the cross-path rule, so the
 	// two read the same generation of the ledger. Two listings could disagree if
 	// a scan wrote between them, and the evidence would then quote one and the
 	// candidate set come from the other.
 	summaries, listErr := uc.ListLicenseRecords(ctx, licports.LicenseFilter{})
-	rec, source, ok, detail := latestLicenceRecord(ctx, path, version, uc, summaries, listErr)
+	replaced, coverage := replacedModulePaths(ctx, walks, path)
+	related := append(
+		fetchdomain.LedgerModules(storeModulePaths(summaries, listErr)),
+		fetchdomain.ReplacedModules(replaced)...)
+
+	basis, ok, detail := resolveLicenceBasis(ctx, path, version, uc, summaries, listErr)
 	if !ok {
 		return provenanceCopyrightSignal{
-			Status: fetchdomain.CopyrightSignalNotAnalysed.String(),
-			Detail: detail,
-		}
+			Status:   fetchdomain.CopyrightSignalNotAnalysed.String(),
+			Detail:   detail,
+			Coverage: coverage,
+		}, provenanceSelection{}
 	}
 
+	signal := copyrightSignalFor(path, basis.rec, related)
+	signal.Source = basis.coord.String()
+	if signal.Status == fetchdomain.CopyrightSignalNotAnalysed.String() {
+		signal.Detail = fmt.Sprintf("the licence record for %s %s", signal.Source, signal.Detail)
+	}
+	signal.Coverage = coverage
+	return signal, provenanceSelectionFor(ctx, path, basis, uc, related)
+}
+
+// copyrightSignalFor runs the tier over one record's copyright lines. The
+// caller names the record; this decides only what the lines say.
+func copyrightSignalFor(path string, rec licdomain.LicenseRecord, related []fetchdomain.RelatedModule) provenanceCopyrightSignal {
 	attributions := licenceAttributions(rec)
 	if len(attributions) == 0 {
 		return provenanceCopyrightSignal{
 			Status: fetchdomain.CopyrightSignalNotAnalysed.String(),
-			Source: source,
-			Detail: fmt.Sprintf("the licence record for %s carries no copyright lines (%s), so there was nothing to compare",
-				source, rec.CopyrightStatus.String()),
+			Detail: fmt.Sprintf("carries no copyright lines (%s), so there was nothing to compare",
+				rec.CopyrightStatus.String()),
 		}
 	}
-
-	indicators := fetchdomain.InferRepublication(path, attributions, storeModulePaths(summaries, listErr))
-	out := provenanceCopyrightSignal{Status: fetchdomain.CopyrightSignalNone.String(), Source: source}
-	for _, ind := range indicators {
+	out := provenanceCopyrightSignal{Status: fetchdomain.CopyrightSignalNone.String()}
+	for _, ind := range fetchdomain.InferRepublication(path, attributions, related) {
 		out.Status = fetchdomain.CopyrightSignalRepublication.String()
 		out.Indicators = append(out.Indicators, provenanceRepublicationIndicator{
 			Signal:    ind.Signal.String(),
@@ -222,51 +261,73 @@ func copyrightProvenance(ctx context.Context, path, version string, uc QueryLice
 	return out
 }
 
-// latestLicenceRecord resolves the licence record to read copyright lines off.
-// With a version it is the record for that coordinate; without one it is the
-// most recently extracted record the store holds for the path, whose coordinate
-// is returned so the evidence names the version it came from.
-func latestLicenceRecord(ctx context.Context, path, version string, uc QueryLicenseUseCase, summaries []licports.LicenseSummary, listErr error) (licdomain.LicenseRecord, string, bool, string) {
-	if version != "" {
-		coord, cerr := coordinate.NewModuleCoordinate(path, version)
+// provenanceSelectionFor describes the choice of basis, and — where the store
+// holds several versions — whether their records agree about it.
+//
+// The other versions are read only when the caller pinned none and there is more
+// than one, which is the only case where anything was chosen. Where they
+// disagree, the disagreement IS the answer to a module-level question: one
+// version's republication signal is not a fact about the module, and resolving
+// it by picking a version would hide that the module has two answers.
+func provenanceSelectionFor(
+	ctx context.Context,
+	path string,
+	basis licenceBasis,
+	uc QueryLicenseUseCase,
+	related []fetchdomain.RelatedModule,
+) provenanceSelection {
+	sel := provenanceSelection{Rule: provenanceSelectionNewest, Basis: basis.coord.String(), Candidates: basis.candidates}
+	if basis.pinned {
+		sel.Rule, sel.Candidates = provenanceSelectionPinned, nil
+		return sel
+	}
+	if len(basis.candidates) > 1 {
+		sel.Disagreement = copyrightSignalDisagreement(ctx, path, basis, uc, related)
+	}
+	sel.Statement = sel.statement(path)
+	return sel
+}
+
+// copyrightSignalDisagreement returns one "version status" entry per candidate
+// when the candidates do not all report the same copyright signal, and nothing
+// when they agree or when a candidate could not be read — an unread record is
+// not a disagreeing one.
+//
+// Only the versions that produced a signal are compared. A record carrying no
+// copyright lines measured nothing, and counting its silence as the opposite
+// answer would raise a disagreement out of two versions that never disagreed —
+// the same conflation between "did not run" and "ran and found nothing" the tier
+// exists to keep apart. Once a real disagreement is found every candidate is
+// listed, including those, because a reader deciding which version to pin needs
+// to know which ones have nothing to say.
+func copyrightSignalDisagreement(
+	ctx context.Context,
+	path string,
+	basis licenceBasis,
+	uc QueryLicenseUseCase,
+	related []fetchdomain.RelatedModule,
+) []string {
+	entries := make([]string, 0, len(basis.candidates))
+	measured := make(map[string]struct{}, len(basis.candidates))
+	for _, v := range basis.candidates {
+		coord, cerr := coordinate.NewModuleCoordinate(path, v)
 		if cerr != nil {
-			return licdomain.LicenseRecord{}, "", false, fmt.Sprintf("%s@%s is not a module coordinate: %v", path, version, cerr)
+			return nil
 		}
 		rec, found, gerr := uc.GetLicenseRecord(ctx, coord, licapp.PipelineVersion)
-		switch {
-		case gerr != nil:
-			return licdomain.LicenseRecord{}, "", false, fmt.Sprintf("reading the licence record for %s: %v", coord, gerr)
-		case !found:
-			return licdomain.LicenseRecord{}, "", false, fmt.Sprintf("no licence record for %s; run: kanonarion license %s", coord, coord)
+		if gerr != nil || !found {
+			return nil
 		}
-		return rec, coord.String(), true, ""
-	}
-
-	if listErr != nil {
-		return licdomain.LicenseRecord{}, "", false, fmt.Sprintf("listing licence records: %v", listErr)
-	}
-	var best licports.LicenseSummary
-	for _, s := range summaries {
-		if s.ModulePath != path {
-			continue
+		status := copyrightSignalFor(path, rec, related).Status
+		if status != fetchdomain.CopyrightSignalNotAnalysed.String() {
+			measured[status] = struct{}{}
 		}
-		if best.ModulePath == "" || s.ExtractedAt.After(best.ExtractedAt) {
-			best = s
-		}
+		entries = append(entries, fmt.Sprintf("%s %s", v, status))
 	}
-	if best.ModulePath == "" {
-		return licdomain.LicenseRecord{}, "", false, fmt.Sprintf(
-			"no licence record for %s at any version; give a version or run: kanonarion license %s@<version>", path, path)
+	if len(measured) <= 1 {
+		return nil
 	}
-	coord, cerr := coordinate.NewModuleCoordinate(best.ModulePath, best.ModuleVersion)
-	if cerr != nil {
-		return licdomain.LicenseRecord{}, "", false, fmt.Sprintf("the stored licence summary for %s names no usable coordinate: %v", path, cerr)
-	}
-	rec, found, gerr := uc.GetLicenseRecord(ctx, coord, licapp.PipelineVersion)
-	if gerr != nil || !found {
-		return licdomain.LicenseRecord{}, "", false, fmt.Sprintf("reading the licence record for %s: not readable", coord)
-	}
-	return rec, coord.String(), true, ""
+	return entries
 }
 
 // licenceAttributions projects a licence record's copyright statements onto the

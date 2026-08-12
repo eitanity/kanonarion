@@ -291,6 +291,10 @@ type fakeVulnStore struct {
 	content string
 }
 
+func (f *fakeVulnStore) ListVulnerabilityRecordGenerationsForModule(_ context.Context, _ coordinate.ModuleCoordinate) ([]ports.VulnerabilityRecordGeneration, error) {
+	return nil, nil
+}
+
 func (f *fakeVulnStore) PutVulnerabilityRecord(_ context.Context, _ domain.VulnerabilityRecord) error {
 	return nil
 }

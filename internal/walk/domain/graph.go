@@ -69,6 +69,47 @@ const (
 	ResolutionStdlib ResolutionSource = "stdlib"
 )
 
+// HasFetchedArtefact reports whether a node resolved this way names a module
+// the fetch pipeline could ever have acquired bytes for.
+//
+// Three resolution sources never do. A project walk's local main module is the
+// caller's own checkout; a local replace redirects a require at a directory on
+// disk, so the node keeps the original require coordinate that nothing
+// published; and the standard library ships with the toolchain. None of the
+// three has a module zip in the blob store, none ever will, and a fetch-record
+// lookup for one can only miss. A consumer that treats that miss as a failure
+// reports an absence that is there by construction as something that went
+// wrong, and cannot then tell it from bytes that should be in the store and are
+// not.
+//
+// A source this build does not recognise answers true: an unknown resolution is
+// assumed to owe an artefact, so a genuine miss is reported rather than hidden.
+func (s ResolutionSource) HasFetchedArtefact() bool {
+	switch s {
+	case ResolutionLocalMainModule, ResolutionLocalReplace, ResolutionStdlib:
+		return false
+	default:
+		return true
+	}
+}
+
+// ArtefactAbsenceNoun names, in a few words, what kind of thing a node with no
+// fetched artefact is, for output that states how many of a selection had
+// nothing to copy and what they were. It returns "" for a source that does own
+// an artefact.
+func (s ResolutionSource) ArtefactAbsenceNoun() string {
+	switch s {
+	case ResolutionLocalMainModule:
+		return "local main module"
+	case ResolutionLocalReplace:
+		return "local replace"
+	case ResolutionStdlib:
+		return "Go standard library"
+	default:
+		return ""
+	}
+}
+
 // StdlibModulePath is the module path used for the synthetic standard-library
 // node. It matches govulncheck's / the Go vulnerability database's pseudo-module
 // path for standard-library advisories, so an OSV coordinate lookup for this path

@@ -148,6 +148,45 @@ func TestAuditScope_UsesTheWalkItExecutedNotTheLatestForTheTarget(t *testing.T) 
 	}
 }
 
+// TestAuditScope_AsksTheReuseQuestionAboutTheTreeItAudits pins the other half of
+// that question. Whether a stored run may be served depends on the project
+// directory still requiring the module versions the walk resolved, and that
+// judgement belongs to the use case — but the use case can only make it about a
+// directory it was told. A caller that asks the reuse question without naming
+// the tree it is auditing gets a cache hit the guard never saw, which is how a
+// diverged directory came to be answered from the cache in the first place.
+func TestAuditScope_AsksTheReuseQuestionAboutTheTreeItAudits(t *testing.T) {
+	const modulePath = "example.com/myapp"
+	wanted, newerOther, _ := crossPlatformWalks(t, modulePath)
+
+	prevStore := storeRoot
+	t.Cleanup(func() { storeRoot = prevStore })
+	storeRoot = t.TempDir()
+
+	scanWalk := &testfakes.FakeScanWalk{}
+	ctr := &Container{
+		ExecuteWalk:      &testfakes.FakeExecuteWalk{Result: walkapp.ExecuteWalkResult{Record: wanted, Reused: true}},
+		QueryWalks:       walkStoreWithNewerOtherPlatform(wanted, newerOther),
+		ScanWalk:         scanWalk,
+		LicenseOverrides: fakeLicenseOverrides{},
+	}
+
+	var stderr strings.Builder
+	gomodPath := projectGoMod(t, modulePath)
+	f := auditFlags{gomodPath: gomodPath}
+	if _, _, err := auditScope(context.Background(), nil, scopeCode, f, nil, ctr, &stderr); err != nil {
+		t.Fatalf("auditScope: %v", err)
+	}
+
+	if !scanWalk.ReusableRunProjectDirSet {
+		t.Fatal("the reuse question was never asked, so nothing checked the tree against the walk")
+	}
+	if want := filepath.Dir(gomodPath); scanWalk.ReusableRunProjectDir != want {
+		t.Errorf("the reuse question named project directory %q, want the audited tree %q",
+			scanWalk.ReusableRunProjectDir, want)
+	}
+}
+
 // TestAuditScope_RestrictsTheAdvisoryRefreshToTheWalkItExecuted: the refresh
 // compares advisories over the walk's module set, so it has to be handed the
 // same walk as every other leg.

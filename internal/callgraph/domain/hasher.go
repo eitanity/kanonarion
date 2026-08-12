@@ -20,6 +20,12 @@ type CallGraphRecordHasher struct{}
 // SetContentHash computes the canonical hash of r (with ContentHash zeroed),
 // sets r.ContentHash, and returns the updated record.
 func (CallGraphRecordHasher) SetContentHash(r CallGraphRecord) (CallGraphRecord, error) {
+	// The sealed record is handed back in the order it was sealed in. A record
+	// whose collections were arranged differently from its own bytes would
+	// describe itself twice and disagree, and every reader downstream of the seal
+	// — the store, a JSON rendering, a diff — would be reading an arrangement the
+	// hash does not stand behind.
+	r = canonicalOrder(r)
 	r.ContentHash = ""
 	data, err := marshalCanonical(r)
 	if err != nil {
@@ -28,6 +34,42 @@ func (CallGraphRecordHasher) SetContentHash(r CallGraphRecord) (CallGraphRecord,
 	sum := sha256.Sum256(data)
 	r.ContentHash = "sha256:" + hex.EncodeToString(sum[:])
 	return r, nil
+}
+
+// canonicalOrder returns r with every collection in the order the canonical
+// bytes carry, on copies: hashing a record never rearranges the caller's.
+func canonicalOrder(r CallGraphRecord) CallGraphRecord {
+	r.Nodes = append([]CallNode(nil), r.Nodes...)
+	sort.Slice(r.Nodes, func(i, j int) bool { return CallNodeLess(r.Nodes[i], r.Nodes[j]) })
+
+	r.Edges = append([]CallEdge(nil), r.Edges...)
+	sort.Slice(r.Edges, func(i, j int) bool { return CallEdgeLess(r.Edges[i], r.Edges[j]) })
+
+	r.Interfaces = append([]InterfaceType(nil), r.Interfaces...)
+	for i := range r.Interfaces {
+		methods := append([]string(nil), r.Interfaces[i].Methods...)
+		sort.Strings(methods)
+		r.Interfaces[i].Methods = methods
+	}
+	sort.Slice(r.Interfaces, func(i, j int) bool { return InterfaceTypeLess(r.Interfaces[i], r.Interfaces[j]) })
+
+	r.Implementations = append([]InterfaceImplementation(nil), r.Implementations...)
+	for i := range r.Implementations {
+		methods := append([]ImplementedMethod(nil), r.Implementations[i].Methods...)
+		sort.Slice(methods, func(a, b int) bool { return ImplementedMethodLess(methods[a], methods[b]) })
+		r.Implementations[i].Methods = methods
+	}
+	sort.Slice(r.Implementations, func(i, j int) bool {
+		return InterfaceImplementationLess(r.Implementations[i], r.Implementations[j])
+	})
+
+	r.ExclusionList = append([]string(nil), r.ExclusionList...)
+	sort.Strings(r.ExclusionList)
+	r.FailedPackages = append([]string(nil), r.FailedPackages...)
+	sort.Strings(r.FailedPackages)
+	r.PrefixAttributedPackages = append([]string(nil), r.PrefixAttributedPackages...)
+	sort.Strings(r.PrefixAttributedPackages)
+	return r
 }
 
 // VerifyContentHash re-computes the canonical hash and checks it matches
@@ -163,6 +205,7 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 		SourceContentHash:        c.SourceContentHash,
 		AnalysisSource:           AnalysisSource(c.AnalysisSource),
 		WorktreeDigest:           c.WorktreeDigest,
+		WorktreeScanDigest:       c.WorktreeScanDigest,
 		AnalysisRoot:             c.AnalysisRoot,
 		BuildListSource:          c.BuildListSource,
 		SynthesisedGoMod: SynthesisedGoMod{
@@ -330,6 +373,17 @@ type canonicalRecord struct {
 	TestScope       string `json:"test_scope,omitempty"`
 	TestScopeDetail string `json:"test_scope_detail,omitempty"`
 	WorktreeDigest  string `json:"worktree_digest,omitempty"`
+	// WorktreeScanDigest is omitted when empty, on the terms every additive field
+	// on this shape has used: no record written before it stated the tree it was
+	// handed, so absent is the truth about one rather than an unrecorded third
+	// state, and every stored record re-marshals to the bytes it was sealed over.
+	//
+	// It is inside the sealed shape because it is a claim the record makes about
+	// what it was asked to analyse, and a later run decides whether to re-derive
+	// by reading it. A value outside the seal could be edited without breaking the
+	// record's own integrity check, and the run that trusted it would serve a
+	// graph of another tree.
+	WorktreeScanDigest string `json:"worktree_scan_digest,omitempty"`
 	// AnalysisRoot is omitted when empty, on the terms every additive field on
 	// this shape has used: no record written before it stated where its tree was,
 	// so absent is the truth about one rather than an unrecorded third state, and
@@ -364,24 +418,16 @@ type canonicalRequire struct {
 }
 
 func marshalCanonical(r CallGraphRecord) ([]byte, error) {
+	// marshalCanonical owns the canonical ordering. It sorts copies, so hashing
+	// never mutates the caller's record, and no caller has to remember to put a
+	// record in order before it is sealed.
 	nodes := make([]CallNode, len(r.Nodes))
 	copy(nodes, r.Nodes)
-	sort.Slice(nodes, func(i, j int) bool { return nodes[i].ID < nodes[j].ID })
+	sort.Slice(nodes, func(i, j int) bool { return CallNodeLess(nodes[i], nodes[j]) })
 
 	edges := make([]CallEdge, len(r.Edges))
 	copy(edges, r.Edges)
-	sort.Slice(edges, func(i, j int) bool {
-		if edges[i].FromID != edges[j].FromID {
-			return edges[i].FromID < edges[j].FromID
-		}
-		if edges[i].ToID != edges[j].ToID {
-			return edges[i].ToID < edges[j].ToID
-		}
-		if edges[i].CallSite.File != edges[j].CallSite.File {
-			return edges[i].CallSite.File < edges[j].CallSite.File
-		}
-		return edges[i].CallSite.Line < edges[j].CallSite.Line
-	})
+	sort.Slice(edges, func(i, j int) bool { return CallEdgeLess(edges[i], edges[j]) })
 
 	cNodes := make([]canonicalNode, len(nodes))
 	for i, n := range nodes {
@@ -416,12 +462,16 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 	if len(r.Interfaces) > 0 {
 		ifaces := make([]InterfaceType, len(r.Interfaces))
 		copy(ifaces, r.Interfaces)
-		sort.Slice(ifaces, func(i, j int) bool { return ifaces[i].ID < ifaces[j].ID })
+		for i := range ifaces {
+			methods := make([]string, len(ifaces[i].Methods))
+			copy(methods, ifaces[i].Methods)
+			sort.Strings(methods)
+			ifaces[i].Methods = methods
+		}
+		sort.Slice(ifaces, func(i, j int) bool { return InterfaceTypeLess(ifaces[i], ifaces[j]) })
 		cIfaces = make([]canonicalInterface, len(ifaces))
 		for i, it := range ifaces {
-			methods := make([]string, len(it.Methods))
-			copy(methods, it.Methods)
-			sort.Strings(methods)
+			methods := it.Methods
 			cIfaces[i] = canonicalInterface{
 				ID:       it.ID,
 				IsTest:   it.IsTest,
@@ -437,17 +487,16 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 	if len(r.Implementations) > 0 {
 		impls := make([]InterfaceImplementation, len(r.Implementations))
 		copy(impls, r.Implementations)
-		sort.Slice(impls, func(i, j int) bool {
-			if impls[i].InterfaceID != impls[j].InterfaceID {
-				return impls[i].InterfaceID < impls[j].InterfaceID
-			}
-			return impls[i].TypeID < impls[j].TypeID
-		})
+		for i := range impls {
+			methods := make([]ImplementedMethod, len(impls[i].Methods))
+			copy(methods, impls[i].Methods)
+			sort.Slice(methods, func(a, b int) bool { return ImplementedMethodLess(methods[a], methods[b]) })
+			impls[i].Methods = methods
+		}
+		sort.Slice(impls, func(i, j int) bool { return InterfaceImplementationLess(impls[i], impls[j]) })
 		cImpls = make([]canonicalImplementation, len(impls))
 		for i, im := range impls {
-			methods := make([]ImplementedMethod, len(im.Methods))
-			copy(methods, im.Methods)
-			sort.Slice(methods, func(a, b int) bool { return methods[a].Method < methods[b].Method })
+			methods := im.Methods
 			cm := make([]canonicalImplMethod, len(methods))
 			for j, m := range methods {
 				cm[j] = canonicalImplMethod(m)
@@ -517,11 +566,12 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 			Requires:          canonicalRequires(r.SynthesisedGoMod.Requires),
 			VendorTreePresent: r.SynthesisedGoMod.VendorTreePresent,
 		},
-		ReferenceScope:  string(r.ReferenceScope),
-		TestScope:       string(r.TestScope),
-		TestScopeDetail: r.TestScopeDetail,
-		WorktreeDigest:  r.WorktreeDigest,
-		AnalysisRoot:    r.AnalysisRoot,
+		ReferenceScope:     string(r.ReferenceScope),
+		TestScope:          string(r.TestScope),
+		TestScopeDetail:    r.TestScopeDetail,
+		WorktreeDigest:     r.WorktreeDigest,
+		WorktreeScanDigest: r.WorktreeScanDigest,
+		AnalysisRoot:       r.AnalysisRoot,
 	}
 	b, err := canonicalMarshal(c)
 	if err != nil {

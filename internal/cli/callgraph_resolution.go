@@ -16,17 +16,40 @@ import (
 	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
 )
 
-// listScopedSummaries lists the analysed call graph records, keeping only those
-// whose module@version is in scope.
+// listScopedSummaries lists the call graph records this binary serves, keeping
+// only those whose module@version is in scope.
 //
-// Every verdict helper below reasons over the records owning the queried symbol,
-// and a module the store holds at four versions contributes four of them. Left
-// unscoped they would read completeness, Partial status and dispatch evidence
-// out of versions the build does not contain — so a query restricted to one
-// build would still be answered, in part, by another. The filter belongs here
-// rather than at the call sites so no helper can forget it.
+// Two filters, and both are about answering from the right records.
+//
+// The pipeline version is the first. A record produced by superseded extraction
+// logic is not served — that is what a pipeline bump means — so a helper that
+// reasoned over one would describe an answer the query itself refused to draw
+// on. That is not hypothetical: read unfiltered, an empty answer would take its
+// soundness axes from a generation the edge query never consulted and report a
+// cause that belongs to a record nobody is being served. A coordinate with no
+// record at this version is a distinct condition with its own diagnostic; see
+// supersededPipelineError.
+//
+// The build scope is the second. Every verdict helper below reasons over the
+// records owning the queried symbol, and a module the store holds at four
+// versions contributes four of them. Left unscoped they would read
+// completeness, Partial status and dispatch evidence out of versions the build
+// does not contain — so a query restricted to one build would still be
+// answered, in part, by another. Both filters belong here rather than at the
+// call sites so no helper can forget either.
 func listScopedSummaries(ctx context.Context, uc QueryCallGraphUseCase, scope coordinate.ModuleSet) ([]ports.CallGraphSummary, error) {
-	sums, err := uc.ListCallGraphRecords(ctx, ports.CallGraphFilter{})
+	return listSummaries(ctx, uc, scope, ports.CallGraphFilter{PipelineVersion: cgapp.PipelineVersion})
+}
+
+// listStoredSummaries lists every record in scope whatever pipeline version
+// produced it. It answers "what does the store hold for this module", which is
+// what a diagnostic needs; nothing may answer a query from what it returns.
+func listStoredSummaries(ctx context.Context, uc QueryCallGraphUseCase, scope coordinate.ModuleSet) ([]ports.CallGraphSummary, error) {
+	return listSummaries(ctx, uc, scope, ports.CallGraphFilter{})
+}
+
+func listSummaries(ctx context.Context, uc QueryCallGraphUseCase, scope coordinate.ModuleSet, filter ports.CallGraphFilter) ([]ports.CallGraphSummary, error) {
+	sums, err := uc.ListCallGraphRecords(ctx, filter)
 	if err != nil {
 		return nil, fmt.Errorf("listing analysed modules: %w", err)
 	}
@@ -40,6 +63,81 @@ func listScopedSummaries(ctx context.Context, uc QueryCallGraphUseCase, scope co
 		}
 	}
 	return out, nil
+}
+
+// supersededPipelineError is the diagnostic for a module the store has analysed
+// only under superseded extraction logic. It is a false-negative case exactly
+// like a module that was never analysed: the query found nothing because there
+// is nothing here it is allowed to serve, and every other cause an empty answer
+// could name — no callers, references unmeasured, a package that failed to
+// typecheck — would send a reader after the wrong thing.
+//
+// It names the versions the store does hold, because "re-analyse" is only
+// actionable against a coordinate, and the store's generations are the only
+// place those coordinates are written down.
+func supersededPipelineError(symbolID, modulePath string, stored []ports.CallGraphSummary) error {
+	versions := make([]string, 0, len(stored))
+	pipelines := make(map[string]bool)
+	seen := make(map[string]bool)
+	local := false
+	for _, s := range stored {
+		if s.ModulePath != modulePath {
+			continue
+		}
+		pipelines[s.PipelineVersion] = true
+		if s.ModuleVersion == coordinate.LocalVersion {
+			local = true
+		}
+		if !seen[s.ModuleVersion] {
+			seen[s.ModuleVersion] = true
+			versions = append(versions, s.ModuleVersion)
+		}
+	}
+	sort.Strings(versions)
+	was := make([]string, 0, len(pipelines))
+	for p := range pipelines {
+		was = append(was, p)
+	}
+	sort.Strings(was)
+
+	// The remedy is built from a coordinate, not from the path and version as
+	// text: which command re-derives a graph is decided by what the coordinate
+	// names, and a local one cannot be fetched.
+	if len(versions) == 0 {
+		// No stored version for this module path: there is no coordinate to name a
+		// re-analysis of, and inventing one would print an invocation that resolves
+		// to nothing.
+		return fmt.Errorf(
+			"symbol %q belongs to module %q, whose stored call graphs were produced by "+
+				"superseded extraction logic and name no version this build can re-analyse",
+			symbolID, modulePath)
+	}
+	remedyCoord, cErr := coordinate.NewModuleCoordinate(modulePath, versions[0])
+	if local {
+		remedyCoord, cErr = coordinate.NewLocalCoordinate(modulePath)
+	}
+	if cErr != nil {
+		return fmt.Errorf("naming the re-analysis of module %q: %w", modulePath, cErr)
+	}
+	remedy := "  " + domain.ReanalysisCommand(remedyCoord, "")
+	return fmt.Errorf(
+		"symbol %q belongs to module %q, whose every stored call graph was produced by "+
+			"superseded extraction logic: this build serves pipeline %s and the store holds "+
+			"%s at pipeline %s. A superseded record is not served, so this answer is empty for want "+
+			"of a measurement of this module, not because the code holds nothing. Re-analyse it:\n%s",
+		symbolID, modulePath, cgapp.PipelineVersion,
+		strings.Join(versions, ", "), strings.Join(was, ", "), remedy)
+}
+
+// moduleServedAtThisPipeline reports whether any served record covers
+// modulePath. It reads summaries already filtered to the serving version.
+func moduleServedAtThisPipeline(modulePath string, served []ports.CallGraphSummary) bool {
+	for _, s := range served {
+		if s.ModulePath == modulePath {
+			return true
+		}
+	}
+	return false
 }
 
 // checkSymbolInScope refuses a scoped query whose symbol belongs to a module the
@@ -113,17 +211,28 @@ func checkSymbolInScope(ctx context.Context, symbolID string, uc QueryCallGraphU
 // - the module was analysed but the symbol is not a node in its graph
 // (a typo, or unexported/unreachable code).
 func classifyEmptyEdgeResult(ctx context.Context, symbolID string, uc QueryCallGraphUseCase, scope coordinate.ModuleSet) error {
-	sums, err := listScopedSummaries(ctx, uc, scope)
+	// The module is resolved against everything the store holds, not only what
+	// is served: a module analysed solely under superseded logic still owns its
+	// symbol, and reporting it as never analysed would name the wrong remedy.
+	stored, err := listStoredSummaries(ctx, uc, scope)
 	if err != nil {
 		return err
 	}
-	paths := make([]string, 0, len(sums))
-	for _, s := range sums {
+	paths := make([]string, 0, len(stored))
+	for _, s := range stored {
 		paths = append(paths, s.ModulePath)
 	}
 	modulePath, ok := domain.ResolveSymbolModule(symbolID, paths)
 	if !ok {
 		return unresolvedSymbolError(symbolID) // module never analysed
+	}
+
+	sums, err := listScopedSummaries(ctx, uc, scope)
+	if err != nil {
+		return err
+	}
+	if !moduleServedAtThisPipeline(modulePath, sums) {
+		return supersededPipelineError(symbolID, modulePath, stored)
 	}
 	// The module was analysed. Zero edges is only a genuine answer if the
 	// symbol is actually a vertex in the graph; otherwise "no callers/callees"
@@ -138,23 +247,40 @@ func classifyEmptyEdgeResult(ctx context.Context, symbolID string, uc QueryCallG
 	return errors.New(unknownNodeMessage(symbolID, modulePath))
 }
 
+// partialRoot is how a Partial call graph bears on a query rooted at one symbol.
+//
+// It is a struct rather than a tuple because the dropped-package case needs the
+// coordinate as well as the package name: which command re-derives that graph is
+// decided by the coordinate, and a caller handed only the package name would
+// have to guess.
+type partialRoot struct {
+	// failedPkg is the failed-typecheck package the queried symbol itself belongs
+	// to, empty when its own package typechecked. When set, every edge with an
+	// end in that package was dropped, so the answer is unmeasured about the
+	// symbol's own side of the graph.
+	failedPkg string
+	// coord is the record that dropped failedPkg — the module whose analysis
+	// failed, which is not always one the reader owns.
+	coord coordinate.ModuleCoordinate
+	// isPartial reports whether the owning module's graph is Partial at all:
+	// edges may be missing elsewhere in the module even when the symbol's own
+	// package typechecked.
+	isPartial bool
+	// failedPkgs is the union of the owning module's failed packages, for
+	// messaging.
+	failedPkgs []string
+}
+
 // rootPartialStatus loads the call graph record(s) owning symbolID and reports
-// how a Partial graph affects a verdict rooted at that symbol. It returns:
-//   - symbolFailedPkg: the failed-typecheck package the symbol itself belongs
-//     to, if any. When non-empty, any callers/callees/reachability answer for
-//     symbolID is unsound (the package's edges were dropped) and must be
-//     downgraded to unresolved rather than rendered as a confident result.
-//   - isPartial: whether the owning module's graph is Partial at all (edges may
-//     be missing elsewhere in the module, so results are reported with a
-//     caveat even when the symbol's own package typechecked).
-//   - failedPkgs: the union of the owning module's failed packages, for messaging.
+// how a Partial graph affects a query rooted at that symbol.
 //
 // A module with no analysed record (symbol's module never analysed) yields the
 // zero value; that case is classified separately by classifyEmptyEdgeResult.
-func rootPartialStatus(ctx context.Context, symbolID string, uc QueryCallGraphUseCase, scope coordinate.ModuleSet) (symbolFailedPkg string, isPartial bool, failedPkgs []string, err error) {
+func rootPartialStatus(ctx context.Context, symbolID string, uc QueryCallGraphUseCase, scope coordinate.ModuleSet) (partialRoot, error) {
+	var out partialRoot
 	sums, err := listScopedSummaries(ctx, uc, scope)
 	if err != nil {
-		return "", false, nil, err
+		return partialRoot{}, err
 	}
 	paths := make([]string, 0, len(sums))
 	for _, s := range sums {
@@ -162,7 +288,7 @@ func rootPartialStatus(ctx context.Context, symbolID string, uc QueryCallGraphUs
 	}
 	modulePath, ok := domain.ResolveSymbolModule(symbolID, paths)
 	if !ok {
-		return "", false, nil, nil
+		return partialRoot{}, nil
 	}
 
 	failedSet := make(map[string]bool)
@@ -172,31 +298,32 @@ func rootPartialStatus(ctx context.Context, symbolID string, uc QueryCallGraphUs
 		}
 		coord, cErr := coordinate.NewModuleCoordinate(s.ModulePath, s.ModuleVersion)
 		if cErr != nil {
-			return "", false, nil, fmt.Errorf("call graph record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
+			return partialRoot{}, fmt.Errorf("call graph record %s@%s names no module: %w", s.ModulePath, s.ModuleVersion, cErr)
 		}
 		rec, found, gerr := uc.GetCallGraphRecord(ctx, coord, s.PipelineVersion)
 		if gerr != nil {
-			return "", false, nil, fmt.Errorf("loading call graph for %s: %w", coord, gerr)
+			return partialRoot{}, fmt.Errorf("loading call graph for %s: %w", coord, gerr)
 		}
 		if !found || rec.OverallStatus != domain.CallGraphStatusPartial {
 			continue
 		}
-		isPartial = true
+		out.isPartial = true
 		for _, p := range rec.FailedPackages {
 			failedSet[p] = true
 		}
-		if fp, hit := symbolFailedPackage(symbolID, rec.FailedPackages); hit && symbolFailedPkg == "" {
-			symbolFailedPkg = fp
+		if fp, hit := symbolFailedPackage(symbolID, rec.FailedPackages); hit && out.failedPkg == "" {
+			out.failedPkg = fp
+			out.coord = coord
 		}
 	}
 	if len(failedSet) > 0 {
-		failedPkgs = make([]string, 0, len(failedSet))
+		out.failedPkgs = make([]string, 0, len(failedSet))
 		for p := range failedSet {
-			failedPkgs = append(failedPkgs, p)
+			out.failedPkgs = append(out.failedPkgs, p)
 		}
-		sort.Strings(failedPkgs)
+		sort.Strings(out.failedPkgs)
 	}
-	return symbolFailedPkg, isPartial, failedPkgs, nil
+	return out, nil
 }
 
 // rootCompletenessCaveat returns a phase-appropriate caveat when the module
@@ -254,8 +381,11 @@ func rootCompletenessCaveat(ctx context.Context, symbolID string, uc QueryCallGr
 //
 // It is only meaningful once classifyEmptyEdgeResult has confirmed the symbol is
 // a known node in an analysed module; a symbol whose module was never analysed is
-// reported as an error there, not downgraded here.
-func negativeCallVerdict(ctx context.Context, symbolID string, scanDispatch bool, uc QueryCallGraphUseCase, scope coordinate.ModuleSet, opts ports.EdgeQueryOptions) (domain.Verdict, error) {
+// reported as an error there, not downgraded here. The one exception is
+// droppedPkg: a symbol whose own package failed to typecheck is not a node in any
+// graph, so classifyEmptyEdgeResult is deliberately skipped for it and the
+// dropped package carried here is what keeps the verdict off ABSENT.
+func negativeCallVerdict(ctx context.Context, symbolID string, scanDispatch bool, uc QueryCallGraphUseCase, scope coordinate.ModuleSet, opts ports.EdgeQueryOptions, droppedPkg string) (domain.Verdict, error) {
 	sums, err := listScopedSummaries(ctx, uc, scope)
 	if err != nil {
 		return domain.Verdict{}, err
@@ -283,6 +413,7 @@ func negativeCallVerdict(ctx context.Context, symbolID string, scanDispatch bool
 		MethodName:             domain.SymbolMethodName(symbolID),
 		NodesByID:              map[string]domain.CallNode{},
 		ScanDispatch:           scanDispatch,
+		DroppedEdgePackage:     droppedPkg,
 		TestsExcludedByRequest: opts.ExcludeTests,
 		// Start from Analysed and weaken on the first record that says otherwise:
 		// a symbol answered from several analysed versions is only as measured as
@@ -392,18 +523,46 @@ func symbolFailedPackage(symbolID string, failedPkgs []string) (string, bool) {
 	return "", false
 }
 
-// partialUnresolvedError is the directing diagnostic for a callers/callees/
-// reachability query whose root belongs to a package that failed to typecheck.
-// The call graph is Partial and that package's edges were dropped, so any
-// "none"/empty answer would be a false negative. kind is "callers", "callees",
-// or "transitive callers"/"transitive callees".
-func partialUnresolvedError(kind, symbolID, failedPkg string) error {
-	return fmt.Errorf(
-		"unresolved — package %q did not typecheck, so the call graph is Partial "+
-			"and %s of %q cannot be determined (the package's edges were dropped). "+
-			"Fix the package so it compiles, then re-run analysis:\n"+
-			"  kanonarion local <dir>",
-		failedPkg, kind, symbolID)
+// droppedEdgesNotice states that the queried symbol's own package failed to
+// typecheck, so every edge with an end inside it was dropped.
+//
+// It is a notice and not a refusal. The refusal it replaces treated the gap as a
+// property of the SYMBOL and returned exit 20, which suppressed answers the store
+// held: a callee's package dropping its edges says nothing about the edges INTO
+// it recorded in a consumer's own, complete graph, and interface-diff --used-by
+// was answering that same question off those edges while this path refused it.
+// One binary cannot hold two opinions about whether a question is answerable, so
+// this path now answers and states what its answer does not cover.
+//
+// kind is "callers", "callees", or the transitive variants.
+func droppedEdgesNotice(kind, symbolID string, pr partialRoot) string {
+	line := fmt.Sprintf(
+		"notice: unmeasured on one side — package %q did not typecheck when %s was analysed, so edges "+
+			"with an end inside it were dropped; the %s of %s listed below are what the store does hold "+
+			"(chiefly edges recorded in other modules' graphs), and an edge inside %s that is not listed "+
+			"is unmeasured rather than known to be absent",
+		pr.failedPkg, pr.coord, kind, symbolID, pr.failedPkg)
+	if pr.coord.IsLocal() {
+		return line + ".\n  Fix the package so it compiles, then re-analyse:\n  " +
+			domain.ReanalysisCommand(pr.coord, "")
+	}
+	// A published dependency's build failure is not the reader's to fix, and
+	// telling them to repair a working tree they do not have is the same defect
+	// as naming a command that cannot run. Say whose it is, and name the read
+	// that shows the failure.
+	return line + fmt.Sprintf(
+		".\n  %s is a fetched dependency, so the failure is in its own sources, not in your tree.\n"+
+			"  See it: kanonarion callgraph-show %s\n"+
+			"  Re-measure it: %s",
+		pr.coord, pr.coord, domain.ForcedReanalysisCommand(pr.coord, ""))
+}
+
+// writeDroppedEdgesNotice prints droppedEdgesNotice, in text mode only.
+func writeDroppedEdgesNotice(stdout io.Writer, kind, symbolID string, pr partialRoot) error {
+	if _, err := fmt.Fprintln(stdout, droppedEdgesNotice(kind, symbolID, pr)); err != nil {
+		return fmt.Errorf("writing dropped-edges notice: %w", err)
+	}
+	return nil
 }
 
 // writePartialNotice prints, in text mode only, a caveat that the result was

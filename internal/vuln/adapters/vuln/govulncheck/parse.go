@@ -39,6 +39,18 @@ type OSV struct {
 	// and a stream-derived finding for a retracted advisory therefore reached a
 	// verdict as though the advisory still stood.
 	Withdrawn *time.Time `json:"withdrawn,omitempty"`
+	// References are the advisory's own links, each an OSV {type, url} pair.
+	// govulncheck emits the whole advisory entry in its OSV message, so these
+	// were on the wire for the same reason the retraction timestamp was, and were
+	// discarded at decode in the same way. Measured on a govulncheck -format json
+	// run: 233 of 233 OSV messages carried a non-empty references array.
+	//
+	// Reading them here is what keeps the two producing routes saying the same
+	// thing about one advisory. A finding reported by the source analysis wins
+	// over the coordinate match that would otherwise have supplied its references,
+	// so without this the same advisory carried its links on a metadata-only
+	// record and none on an analysed one.
+	References []Reference `json:"references,omitempty"`
 	// Affected is the advisory's per-module-path block, read only on decode. It
 	// is projected onto NamesSymbolsByPath and then dropped, because the retained
 	// copy of an OSV message is deliberately minimal.
@@ -52,6 +64,13 @@ type OSV struct {
 	// the same as naming it with no symbols; the two are kept distinct so a
 	// finding never records an advisory fact that was not read.
 	NamesSymbolsByPath map[string]bool `json:"-"`
+}
+
+// Reference is one entry of an advisory's references array, kept whole: the
+// type is what separates a FIX commit from a WEB mention.
+type Reference struct {
+	Type string `json:"type"`
+	URL  string `json:"url"`
 }
 
 // Affected is one OSV affected-package block, reduced to the two things a
@@ -189,21 +208,25 @@ func (s *Scanner) processMessage(raw []byte, msg *Message, osvs map[string]*OSV,
 		msg.SBOM = nil
 
 		if err := json.Unmarshal(raw, &msg); err == nil && msg.OSV != nil {
-			// Optimization: only keep what we need from OSV to save memory
-			details := msg.OSV.Details
-			if len(details) > 512 {
-				details = details[:512] + "... (truncated)"
-			}
+			// The advisory's description is carried whole. It used to be clipped
+			// to 512 bytes here to save memory, which made this route describe an
+			// advisory differently from the coordinate-match route, in a field
+			// that is sealed and content-hashed — the same route asymmetry as the
+			// affected range. The saving it bought is not worth a second shape:
+			// measured over a working store, the longest description any advisory
+			// carries is 2334 bytes, and a stream holds one entry per advisory
+			// relevant to the build.
 			// Ensure strings are copied and interned
 			id := intern(msg.OSV.ID)
 			osvs[id] = &OSV{
 				ID:                 id,
 				Aliases:            internStrings(msg.OSV.Aliases, intern),
 				Summary:            intern(msg.OSV.Summary),
-				Details:            intern(details),
+				Details:            intern(msg.OSV.Details),
 				Published:          msg.OSV.Published,
 				Modified:           msg.OSV.Modified,
 				Withdrawn:          msg.OSV.Withdrawn,
+				References:         internReferences(msg.OSV.References, intern),
 				NamesSymbolsByPath: namesSymbolsByPath(msg.OSV.Affected, intern),
 			}
 			msg.OSV = nil
@@ -702,6 +725,7 @@ func applyOSV(f *domain.VulnerabilityFinding, entry *OSV, modulePath string) {
 		f.AdvisoryNamesNoSymbols = true
 	}
 	f.Aliases = entry.Aliases
+	f.References = advisoryReferences(entry.References)
 	f.Summary = entry.Summary
 	f.Details = entry.Details
 	f.PublishedAt = entry.Published
@@ -709,6 +733,36 @@ func applyOSV(f *domain.VulnerabilityFinding, entry *OSV, modulePath string) {
 	if entry.Withdrawn != nil {
 		f.WithdrawnAt = *entry.Withdrawn
 	}
+}
+
+// advisoryReferences projects the stream's references onto the domain pair,
+// preserving a nil as nil so a finding for an advisory that published none does
+// not put an empty array on the sealed wire.
+//
+// Nothing is filtered by type: a reference type this build does not recognise is
+// still what the advisory published.
+func advisoryReferences(refs []Reference) []domain.AdvisoryReference {
+	if refs == nil {
+		return nil
+	}
+	out := make([]domain.AdvisoryReference, 0, len(refs))
+	for _, r := range refs {
+		out = append(out, domain.AdvisoryReference{Type: r.Type, URL: r.URL})
+	}
+	return out
+}
+
+// internReferences interns both halves of every reference. A large stream
+// carries hundreds of advisories and reference types repeat across all of them.
+func internReferences(refs []Reference, intern func(string) string) []Reference {
+	if refs == nil {
+		return nil
+	}
+	out := make([]Reference, len(refs))
+	for i, r := range refs {
+		out[i] = Reference{Type: intern(r.Type), URL: intern(r.URL)}
+	}
+	return out
 }
 
 func internStrings(s []string, intern func(string) string) []string {

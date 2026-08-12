@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
+
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
@@ -131,9 +133,9 @@ func TestRunCallers_ScopeFiltersOutOfBuildVersions(t *testing.T) {
 	sums := make([]cgports.CallGraphSummary, 0, 3)
 	for _, v := range []string{"v0.21.0", "v0.33.0", "v0.55.0"} {
 		sums = append(sums, cgports.CallGraphSummary{
-			ModulePath: "golang.org/x/net", ModuleVersion: v, PipelineVersion: "0.2.0",
+			ModulePath: "golang.org/x/net", ModuleVersion: v, PipelineVersion: cgapp.PipelineVersion,
 		})
-		uc.AddRecord(coordinatetest.MustNew("golang.org/x/net", v), "0.2.0",
+		uc.AddRecord(coordinatetest.MustNew("golang.org/x/net", v), cgapp.PipelineVersion,
 			builtRecord([]cgdomain.CallNode{{ID: "golang.org/x/net/idna.normalize", Symbol: "normalize"}}, nil))
 	}
 	uc.SetList(sums)
@@ -171,7 +173,7 @@ func TestRunCallers_ScopeFiltersOutOfBuildVersions(t *testing.T) {
 // TestRunCallers_UnscopedKeepsEveryVersion is the control: without a scope flag
 // the command keeps answering across every stored version, so the fix is opt-in.
 func TestRunCallers_UnscopedKeepsEveryVersion(t *testing.T) {
-	uc := fakeWithRecord("golang.org/x/net", "v0.33.0", "0.2.0",
+	uc := fakeWithRecord("golang.org/x/net", "v0.33.0", cgapp.PipelineVersion,
 		builtRecord([]cgdomain.CallNode{{ID: "golang.org/x/net/idna.normalize", Symbol: "normalize"}}, nil))
 	uc.SetCallers([]cgports.CallEdgeRef{
 		{ModulePath: "golang.org/x/net", ModuleVersion: "v0.21.0", FromID: "golang.org/x/net/idna.a", ToID: "golang.org/x/net/idna.normalize"},
@@ -196,7 +198,7 @@ func TestRunCallers_UnscopedKeepsEveryVersion(t *testing.T) {
 // TestCheckSymbolInScope_ModuleNotInBuild pins the diagnostic that keeps an
 // out-of-build symbol from being answered with a confident empty result.
 func TestCheckSymbolInScope_ModuleNotInBuild(t *testing.T) {
-	uc := fakeWithRecord("example.com/dep", "v1.0.0", "0.2.0",
+	uc := fakeWithRecord("example.com/dep", "v1.0.0", cgapp.PipelineVersion,
 		builtRecord([]cgdomain.CallNode{{ID: "example.com/dep.Foo", Symbol: "Foo"}}, nil))
 
 	sc := buildScope{
@@ -219,7 +221,7 @@ func TestCheckSymbolInScope_ModuleNotInBuild(t *testing.T) {
 // the build does contain the module, at a version nothing has analysed. That is
 // an instruction to analyse, not a claim about reachability.
 func TestCheckSymbolInScope_VersionNotAnalysed(t *testing.T) {
-	uc := fakeWithRecord("example.com/dep", "v1.0.0", "0.2.0",
+	uc := fakeWithRecord("example.com/dep", "v1.0.0", cgapp.PipelineVersion,
 		builtRecord([]cgdomain.CallNode{{ID: "example.com/dep.Foo", Symbol: "Foo"}}, nil))
 
 	sc := buildScope{
@@ -239,7 +241,7 @@ func TestCheckSymbolInScope_VersionNotAnalysed(t *testing.T) {
 }
 
 func TestCheckSymbolInScope_UnrestrictedIsSilent(t *testing.T) {
-	uc := fakeWithRecord("example.com/dep", "v1.0.0", "0.2.0",
+	uc := fakeWithRecord("example.com/dep", "v1.0.0", cgapp.PipelineVersion,
 		builtRecord([]cgdomain.CallNode{{ID: "example.com/dep.Foo", Symbol: "Foo"}}, nil))
 	if err := checkSymbolInScope(context.Background(), "example.com/dep.Foo", uc, buildScope{}); err != nil {
 		t.Errorf("unrestricted scope raised a diagnostic: %v", err)

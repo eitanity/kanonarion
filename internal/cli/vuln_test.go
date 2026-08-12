@@ -1187,6 +1187,9 @@ func TestRunScanDiff_Success(t *testing.T) {
 		Operator:         "test",
 	}
 
+	run.Counts = vuldomain.WalkScanCounts{Total: 12, Analysed: 12, Affected: 3}
+	run2.Counts = vuldomain.WalkScanCounts{Total: 12, Analysed: 12, Affected: 3}
+
 	ucDiff := &testfakes.FakeDiffScanRuns{
 		Result: vuldomain.ScanRunDiff{RunA: run, RunB: run2},
 	}
@@ -1201,6 +1204,13 @@ func TestRunScanDiff_Success(t *testing.T) {
 	}
 	if !strings.Contains(out, "Walk:") {
 		t.Errorf("expected 'Walk:' in output, got: %q", out)
+	}
+	// Two runs that agree on three affected modules and two runs that each found
+	// nothing are different findings; the no-difference line states which.
+	for _, want := range []string{"No differences:", "reports 3 affected of 12 module(s) analysed"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q in output, got: %q", want, out)
+		}
 	}
 }
 

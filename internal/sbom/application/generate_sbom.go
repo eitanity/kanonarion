@@ -41,6 +41,19 @@ type GenerateSBOMUseCase struct {
 	// audit appends the assurance-log events a generation and a serving leave.
 	// Optional; nil disables emission.
 	audit ports.AuditSink
+	// origins reads what the fetch ledger recorded about where each module's
+	// bytes came from, which is the only thing a component's external
+	// references are built from. Optional: nil means no origin is asserted for
+	// any component, which is what a document with nothing to read should say.
+	origins ports.ModuleOriginReader
+}
+
+// WithModuleOrigins wires the reader that lets a component carry a reference to
+// the repository its bytes were cross-verified against. Nil (the default) leaves
+// every component asserting no origin. Returns the use case for chaining.
+func (uc *GenerateSBOMUseCase) WithModuleOrigins(r ports.ModuleOriginReader) *GenerateSBOMUseCase {
+	uc.origins = r
+	return uc
 }
 
 // WithAudit wires an audit sink so a persisted document appends one
@@ -113,12 +126,34 @@ type SBOMRequest struct {
 	MainComponentLicense string
 }
 
+// namesSubject reports whether the caller supplied a subject stamp — a version
+// or a licence for the document's metadata.component.
+//
+// Neither is part of the cache key, so a request that names the subject is
+// answered by generating rather than by serving what is stored, and what it
+// generates is not stored. Both halves are needed, and each answers one
+// direction of the same defect:
+//
+//   - Serving a stored document under such a request would answer with another
+//     run's subject, silently discarding the stamp the caller supplied. This is
+//     the GeneratedAt argument above, applied to the subject's identity.
+//   - Storing the result would put one caller's stamp in the slot every later
+//     caller reads, so a caller who names no subject at all would be handed a
+//     version that is not theirs — a plausible one, in a distributed artefact.
+//     A stamped document belongs to the run that asked for it, not to the walk.
+func (r SBOMRequest) namesSubject() bool {
+	return r.MainComponentVersion != "" || r.MainComponentLicense != ""
+}
+
 // Generate produces and persists an SBOM for the given walk.
-// If a cached record exists for the same (walkID, format, pipelineVersion)
-// and neither Force nor GeneratedAt is set, the cached record is returned
-// without re-generation.
+// If a cached record exists for the same (walkID, format, pipelineVersion) and
+// none of Force, GeneratedAt or a subject stamp (MainComponentVersion,
+// MainComponentLicense) is set, the cached record is returned without
+// re-generation.
 // When req.AllowList is non-empty the SBOM is scoped to only those modules;
-// the result is ephemeral (cache skipped, not persisted).
+// the result is ephemeral (cache skipped, not persisted). A request that names
+// the subject is ephemeral for the same reason: the stored document answers for
+// the walk, and a stamped one answers only for the run that asked for it.
 func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (domain.SBOMRecord, error) {
 	format := req.Format
 	if format == "" {
@@ -128,9 +163,13 @@ func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (d
 	// Package-scoped requests are ephemeral: skip cache entirely.
 	scoped := len(req.AllowList) > 0
 
+	// A named subject is generated, never served, and never stored: see
+	// SBOMRequest.namesSubject.
+	stamped := req.namesSubject()
+
 	// Cache lookup. A caller-supplied creation time is not part of the key, so
 	// serving a cached document under one would date it to another generation.
-	if !req.Force && !scoped && req.GeneratedAt.IsZero() {
+	if !req.Force && !scoped && !stamped && req.GeneratedAt.IsZero() {
 		if cached, ok, err := uc.sbomStore.FindSBOMRecord(ctx, req.WalkID, format, uc.pipelineVersion); err != nil {
 			return domain.SBOMRecord{}, fmt.Errorf("checking sbom cache: %w", err)
 		} else if ok {
@@ -194,6 +233,13 @@ func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (d
 		// Missing licence is allowed; the generator will flag LicensesIncomplete.
 	}
 
+	// 2b. Load recorded origins. A module with none recorded is absent from the
+	// map, and its component then asserts no external reference at all.
+	origins, err := uc.moduleOrigins(ctx, walk)
+	if err != nil {
+		return domain.SBOMRecord{}, err
+	}
+
 	// 3. Generate. The document is an inventory of components and their identity,
 	// hashes and licences; it carries no vulnerability list, so no scan run is
 	// read here and none can be attached.
@@ -205,6 +251,7 @@ func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (d
 		MainComponentVersion: req.MainComponentVersion,
 		MainComponentLicense: req.MainComponentLicense,
 		VendorScope:          uc.vendorScope(ctx, walk),
+		ModuleOrigins:        origins,
 		// A package-scoped run has already filtered walk.Graph above, so the
 		// scope arithmetic is measured against the components this document
 		// actually carries. Flagging it lets the statement say why so much of
@@ -216,8 +263,10 @@ func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (d
 		return domain.SBOMRecord{}, fmt.Errorf("generating sbom: %w", err)
 	}
 
-	// 4. Persist — skipped for scoped (package-filtered) requests.
-	if !scoped {
+	// 4. Persist — skipped for scoped (package-filtered) requests, and for a
+	// request that named the subject, whose document describes that request
+	// rather than the walk.
+	if !scoped && !stamped {
 		if err := uc.sbomStore.PutSBOMRecord(ctx, record); err != nil {
 			return domain.SBOMRecord{}, fmt.Errorf("persisting sbom record: %w", err)
 		}
@@ -238,6 +287,32 @@ func (uc *GenerateSBOMUseCase) Generate(ctx context.Context, req SBOMRequest) (d
 		"licenses_incomplete", record.LicensesIncomplete,
 	)
 	return record, nil
+}
+
+// moduleOrigins reads the recorded origin of every module in the walk.
+//
+// A read failure is returned rather than skipped. The fetch ledger disagreeing
+// with itself about an artefact is a contradiction in the evidence this
+// document is assembled from, and a document that quietly drops the modules it
+// could not read is indistinguishable from one where nothing was recorded.
+func (uc *GenerateSBOMUseCase) moduleOrigins(
+	ctx context.Context,
+	walk walkdomain.WalkRecord,
+) (map[coordinate.ModuleCoordinate]ports.ModuleOrigin, error) {
+	if uc.origins == nil {
+		return nil, nil
+	}
+	out := make(map[coordinate.ModuleCoordinate]ports.ModuleOrigin, len(walk.Graph.Nodes))
+	for _, node := range walk.Graph.Nodes {
+		origin, ok, err := uc.origins.ModuleOrigin(ctx, node.Coordinate)
+		if err != nil {
+			return nil, fmt.Errorf("loading recorded origin for %s: %w", node.Coordinate, err)
+		}
+		if ok {
+			out[node.Coordinate] = origin
+		}
+	}
+	return out, nil
 }
 
 // vendorScope states this document's coverage of the vendored tree the walk was

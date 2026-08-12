@@ -304,10 +304,10 @@ kanonarion callers '<module-path>/internal/server.New'
 ```
 
 **Duration:** ~15 s to analyse this codebase (8,598 nodes / 97,246 call
-edges, of which 4,481 nodes are `_test.go` declarations). Working-tree analysis
-is recomputed fresh on every run - it is intentionally never cached, because the
-tree changes between runs and a stale graph would be worse than a recomputed
-one.
+edges, of which 4,481 nodes are `_test.go` declarations). An unchanged tree is
+not analysed again - the stored record is served in well under a second, and the
+run says which it did. Any edit to the source, `go.mod` or `go.sum` re-analyses;
+`--force` re-analyses regardless.
 
 Test files are part of the graph, because test fakes and table-driven callers
 are most of what a signature change has to touch. Test-scope results carry a
@@ -412,7 +412,8 @@ Then answer questions from these (all local reads, warm timings for an
     kanonarion implementers '<pkg/path.Interface>' --json  # concrete types satisfying an interface;
                                                    # also accepts '<pkg/path.(Interface).Method>'
     kanonarion local . --json                      # ingest working tree so the three queries above resolve
-                                                   # internal symbols (~15s; recomputed fresh each run, never cached)
+                                                   # internal symbols (~15s; an unchanged tree is served
+                                                   # from the stored record instead, --force to re-measure)
     kanonarion context . --symbol --json           # which dep symbols the working tree uses, seconds
     kanonarion context . --reachability --json     # are stored CVE findings reachable (~30s when probing;
                                                    # instant + notice when no findings are stored)

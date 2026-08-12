@@ -10,7 +10,6 @@ import (
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 
 	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
 )
 
 // devirtualizeSingleImplementer recovers interface-dispatch edges that CHA
@@ -41,6 +40,7 @@ import (
 func (a *Analyser) devirtualizeSingleImplementer(
 	ctx context.Context,
 	prog *ssa.Program,
+	funcs []*ssa.Function,
 	mem moduleMembership,
 	fset *token.FileSet,
 	tempDir string,
@@ -69,7 +69,7 @@ func (a *Analyser) devirtualizeSingleImplementer(
 
 	var addedEdges, addedNodes, leafNodes int
 
-	for fn := range ssautil.AllFunctions(prog) {
+	for _, fn := range funcs {
 		if ctx.Err() != nil {
 			break
 		}
