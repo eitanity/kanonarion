@@ -120,6 +120,16 @@ func walkWireShape(t *testing.T, typ reflect.Type, path string, found map[string
 	}
 }
 
+// orderRefs arranges advisory references forward or reversed, as order does for
+// the string collections.
+func orderRefs(refs []AdvisoryReference, reversed bool) []AdvisoryReference {
+	out := slices.Clone(refs)
+	if reversed {
+		slices.Reverse(out)
+	}
+	return out
+}
+
 // permutedRecord is one module's record built with every unordered collection
 // in the arrangement the caller asks for: forward, or reversed.
 func permutedRecord(t *testing.T, reversed bool) VulnerabilityRecord {
@@ -153,8 +163,15 @@ func permutedRecord(t *testing.T, reversed bool) VulnerabilityRecord {
 			AffectedRange:   "< v0.38.0",
 			AffectedSymbols: order([]string{"Parse", "*Tokenizer.Next"}),
 			Aliases:         order([]string{"CVE-2025-22872", "GHSA-vvgc-356p-c3xw"}),
-			References:      order([]string{"https://example.com/a", "https://example.com/b"}),
-			Reachable:       &ReachabilityResult{IsReachable: true, Confidence: ConfidenceHigh, Routes: routes},
+			// Two references sharing a URL prefix but differing in type, so an
+			// arrangement that survives to the seal shows up as a different hash:
+			// the pair is what is ordered, not the URL alone.
+			References: orderRefs([]AdvisoryReference{
+				{Type: "FIX", URL: "https://example.com/commit"},
+				{Type: "WEB", URL: "https://example.com/a"},
+				{Type: "ADVISORY", URL: "https://example.com/commit"},
+			}, reversed),
+			Reachable: &ReachabilityResult{IsReachable: true, Confidence: ConfidenceHigh, Routes: routes},
 		},
 		{ID: "GO-2024-2687", AffectedRange: "< v0.23.0"},
 	}
@@ -328,7 +345,11 @@ func TestCompareFinding_IsKeyedOnEveryWireField(t *testing.T) {
 		{"severity vector", VulnerabilityFinding{Severity: &Severity{Vector: "a"}}, VulnerabilityFinding{Severity: &Severity{Vector: "b"}}},
 		{"affected_symbols", VulnerabilityFinding{AffectedSymbols: []string{"a"}}, VulnerabilityFinding{AffectedSymbols: []string{"b"}}},
 		{"aliases", VulnerabilityFinding{Aliases: []string{"a"}}, VulnerabilityFinding{Aliases: []string{"b"}}},
-		{"references", VulnerabilityFinding{References: []string{"a"}}, VulnerabilityFinding{References: []string{"b"}}},
+		{"references url", VulnerabilityFinding{References: []AdvisoryReference{{Type: "FIX", URL: "a"}}}, VulnerabilityFinding{References: []AdvisoryReference{{Type: "FIX", URL: "b"}}}},
+		// The type is keyed as well as the URL. Without it two references to one
+		// URL under different types compare equal, and the pair the field exists to
+		// carry stops deciding anything.
+		{"references type", VulnerabilityFinding{References: []AdvisoryReference{{Type: "ADVISORY", URL: "a"}}}, VulnerabilityFinding{References: []AdvisoryReference{{Type: "FIX", URL: "a"}}}},
 		{"advisory_names_no_symbols", VulnerabilityFinding{}, VulnerabilityFinding{AdvisoryNamesNoSymbols: true}},
 		{"reachability_note", VulnerabilityFinding{ReachabilityNote: "a"}, VulnerabilityFinding{ReachabilityNote: "b"}},
 		{"published_at", VulnerabilityFinding{PublishedAt: early}, VulnerabilityFinding{PublishedAt: late}},

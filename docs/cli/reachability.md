@@ -191,7 +191,8 @@ reachability verdict states it, in text and in JSON, under the same two keys:
 `audit` and the SBOM commands publish no reachability verdict and carry no rung.
 `audit` reports a module's vulnerability status and directs you to `vuln-show`;
 an SBOM asserts what is in the build and never what is reachable in it.
-| `… has not been vuln-scanned` | non-zero | No record. Walk the module, then scan that walk. |
+| `… has not been vuln-scanned` | non-zero | No record at any pipeline version. Walk the module, then scan that walk. |
+| `… that this build serves: it reads pipeline <v> and the store holds this coordinate at pipeline <v>` | non-zero | The module has been scanned, under scan logic this build supersedes. The message names each generation held and how many records and findings sit in it. Re-scan the coordinate. |
 | `… ScanFailed` / `… is unscannable` | non-zero | Module could not be scanned; reachability is unknown. |
 | `… scanned without --reachability` | non-zero | Findings exist and the scan was rooted elsewhere, so the flag was genuinely not passed. |
 | `no reachability route … it was rooted at <coord>` | non-zero | The scan **did** run with reachability, but the module was its own root. See below. |
@@ -424,6 +425,7 @@ examined eleven and cleared one.
 | `no stored vulnerability record for this coordinate; it has never been vuln-scanned` | Nothing is known about it either way. This is **not** "no known vulnerabilities" — a record with no findings is an answer and counts as covered. |
 | `the local build resolves this module without a version (a directory replacement), so it names no coordinate to look up` | Nothing asked the store about it. |
 | `the store holds a vulnerability record for this coordinate, but only from another build's frame; this build has not been vuln-scanned` | The module has been scanned — for a different project. Nothing measured this build, so nothing seeded the probe. Scan this build to cover it. |
+| `the store holds vulnerability records for this coordinate only at superseded pipeline versions; it has been vuln-scanned and must be scanned again` | The module has been scanned for this build, under scan logic this build supersedes. Re-scan it to cover it. |
 
 ### Which records seeded the probe
 

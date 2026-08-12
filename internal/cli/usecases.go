@@ -28,6 +28,7 @@ import (
 	sbomdomain "github.com/eitanity/kanonarion/internal/sbom/domain"
 	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
 	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
 	walkapp "github.com/eitanity/kanonarion/internal/walk/application"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -238,6 +239,12 @@ type QueryVulnUseCase interface {
 	ListRecordsForModule(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]vulndomain.VulnerabilityRecord, error)
 	ListRecordsByFindingID(ctx context.Context, findingID, walkID string) ([]vulndomain.VulnerabilityRecord, error)
 	ListRecordsForRun(ctx context.Context, runID string) ([]vulndomain.VulnerabilityRecord, error)
+	// ListRecordGenerationsForModule is the census behind every empty answer:
+	// which pipeline versions the store holds this coordinate at, whatever
+	// version this build serves. The reads above all key on the version, so an
+	// empty result from them cannot tell "never scanned" from "scanned under
+	// logic this build has superseded". Nothing is answered from it.
+	ListRecordGenerationsForModule(ctx context.Context, coord coordinate.ModuleCoordinate) ([]vulnports.VulnerabilityRecordGeneration, error)
 }
 
 // QueryScanRunsUseCase is the interface for querying scan runs and snapshots.

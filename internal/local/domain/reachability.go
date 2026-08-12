@@ -48,6 +48,16 @@ const (
 	// vuln-scanned" for a coordinate the store HAS scanned — for someone else —
 	// sends a reader looking for a scan that already ran.
 	UncoveredOtherFrameOnly = "the store holds a vulnerability record for this coordinate, but only from another build's frame; this build has not been vuln-scanned"
+	// UncoveredSupersededPipeline means the store holds records for the
+	// coordinate, but only at pipeline versions this build has superseded, so
+	// none of them may be served.
+	//
+	// It is distinct from UncoveredNoStoredRecord for the same reason
+	// UncoveredOtherFrameOnly is, and more sharply: the scan ran, it ran for
+	// this build, and only the analysis logic behind it has moved on. The
+	// remedy is a re-scan, not a first scan, and the module is not an
+	// unexamined dependency.
+	UncoveredSupersededPipeline = "the store holds vulnerability records for this coordinate only at superseded pipeline versions; it has been vuln-scanned and must be scanned again"
 )
 
 // UncoveredModule is one module in the local build the probe holds no answer

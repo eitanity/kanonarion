@@ -33,7 +33,10 @@ For each module in the scope, `audit` emits a single line containing:
 - **Staleness** - `current` when the pinned version is the latest published, or
   `latest: vX.Y.Z (N days ago)` when a newer version exists
 - **Vuln status** - `Clean`, `Affected (N findings)`, `Withdrawn (N retracted)`,
-  `ScanFailed`, or `(not scanned)` when no record exists yet. A module whose every
+  `ScanFailed`, `(not scanned)` when no record exists at any pipeline version, or
+  `(superseded)` when the store holds records for the module only at pipeline
+  versions this build no longer reads — the module has been scanned, and the row's
+  reason names the generations held and says to re-scan. A module whose every
   matched advisory was retracted upstream reads `Withdrawn`, and its count is
   reported as *retracted* rather than as findings — the two must not read alike,
   since only one of them is something to act on. A module carrying both reads

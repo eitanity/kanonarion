@@ -618,10 +618,27 @@ type VulnerabilityFinding struct {
 	//
 	// Empty means either that reachability was not requested, or that it was
 	// requested and answered — Reachable says which.
-	ReachabilityNote string    `json:"reachability_note,omitzero"`
-	References       []string  `json:"references,omitzero"`
-	PublishedAt      time.Time `json:"published_at"`
-	ModifiedAt       time.Time `json:"modified_at"`
+	ReachabilityNote string `json:"reachability_note,omitzero"`
+	// References are the advisory's own links: the pair of a reference TYPE and a
+	// URL, exactly as the OSV document carries them.
+	//
+	// The type is the half that makes the field worth recording. A FIX reference
+	// is the commit or CL that remediates the vulnerability — remediation
+	// evidence a reader can apply — and a WEB reference is a mention. Flattened
+	// to bare URLs the two are indistinguishable, so the pair is carried.
+	//
+	// Empty means no advisory was read for this finding, not that the advisory
+	// lists none. Both producing routes read the advisory they have in hand — the
+	// OSV database adapter from the ID/<ID>.json document it already fetches, the
+	// govulncheck parse from the OSV message the stream already carries — so an
+	// empty list means the enrichment did not happen: the advisory fetch failed
+	// and the finding degraded to its bare ID, or the stream carried findings for
+	// an advisory whose OSV message never arrived. Measured on the pinned
+	// snapshot, 4130 of 4134 advisories carry at least one reference, so an empty
+	// list is far more often a fact about the route than about the advisory.
+	References  []AdvisoryReference `json:"references,omitzero"`
+	PublishedAt time.Time           `json:"published_at"`
+	ModifiedAt  time.Time           `json:"modified_at"`
 	// WithdrawnAt is the OSV top-level "withdrawn" timestamp: the moment the
 	// advisory was retracted upstream. Zero means the advisory is live, or that the
 	// lookup never read an advisory to ask — an enrichment fetch that failed leaves
@@ -633,6 +650,19 @@ type VulnerabilityFinding struct {
 	// Affected verdict or vanished into Clean, and the two were indistinguishable
 	// from a real finding and a real all-clear respectively.
 	WithdrawnAt time.Time `json:"withdrawn_at,omitzero"`
+}
+
+// AdvisoryReference is one link an advisory publishes about itself: the OSV
+// {type, url} pair, carried whole.
+//
+// Type is the OSV reference type as the document states it — ADVISORY, WEB,
+// FIX, REPORT, ARTICLE and the rest of the schema's set — and is never
+// normalised or filtered here. A record states what the advisory said; deciding
+// which kinds of link matter is the reader's, and a type this tool does not
+// recognise still reaches them.
+type AdvisoryReference struct {
+	Type string `json:"type,omitzero"`
+	URL  string `json:"url"`
 }
 
 // ReachabilityAttemptFailed reports whether reachability was requested for this

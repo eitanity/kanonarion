@@ -33,6 +33,7 @@ import (
 	sbomdomain "github.com/eitanity/kanonarion/internal/sbom/domain"
 	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
 	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
+	vulnports "github.com/eitanity/kanonarion/internal/vuln/ports"
 	walkapp "github.com/eitanity/kanonarion/internal/walk/application"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -1164,6 +1165,32 @@ type FakeQueryVuln struct {
 	// regardless of the records map. Use this to exercise the fallback path that
 	// checks GetLatestRecord for a ScanFailed status.
 	ForceLatestRecordForWalkNotFound bool
+	// generations is the store census: which pipeline versions this coordinate
+	// is held at, whatever version a read asks for. It is seeded independently
+	// of the records maps because the condition it exists to reproduce is
+	// exactly a coordinate whose records no read returns.
+	generations map[string][]vulnports.VulnerabilityRecordGeneration
+}
+
+// SetRecordGenerations seeds the store census for a coordinate.
+func (f *FakeQueryVuln) SetRecordGenerations(coord coordinate.ModuleCoordinate, gens []vulnports.VulnerabilityRecordGeneration) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.generations == nil {
+		f.generations = make(map[string][]vulnports.VulnerabilityRecordGeneration)
+	}
+	f.generations[coord.String()] = gens
+}
+
+// ListRecordGenerationsForModule answers the census. An unseeded coordinate
+// holds nothing, which is the "never scanned" case.
+func (f *FakeQueryVuln) ListRecordGenerationsForModule(_ context.Context, coord coordinate.ModuleCoordinate) ([]vulnports.VulnerabilityRecordGeneration, error) {
+	if f.Err != nil {
+		return nil, f.Err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.generations[coord.String()], nil
 }
 
 func NewFakeQueryVuln() *FakeQueryVuln {

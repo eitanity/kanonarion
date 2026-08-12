@@ -256,7 +256,18 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 			statusWithReason(out.Examples.Status, out.Examples.Error))
 	}
 
+	printVulnerabilitiesSummary(w, out)
+
+	return w.err
+}
+
+// printVulnerabilitiesSummary is the vulnerabilities line of the summary, split
+// out because the section has four states and the summary as a whole has a
+// complexity ceiling.
+func printVulnerabilitiesSummary(w *errWriter, out contextOutput) {
 	switch out.Vulnerabilities.Status {
+	case sectionStatusSuperseded:
+		w.printf("  Vulnerabilities: (superseded — %s)\n", out.Vulnerabilities.Error)
 	case sectionStatusNotRun:
 		if out.Commands.Vulnerabilities != "" {
 			w.printf("  Vulnerabilities: (not run — run: %s)\n", out.Commands.Vulnerabilities)
@@ -274,8 +285,6 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 		printWalkBasis(w, "  Walk basis:      %s\n", out.Vulnerabilities)
 		printScanProvenance(w, out.Vulnerabilities)
 	}
-
-	return w.err
 }
 
 // printScanProvenance names the advisory snapshot and the vuln-scan pipeline

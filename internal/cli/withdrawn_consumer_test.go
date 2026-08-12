@@ -67,7 +67,7 @@ func TestContextFindingCount_SeparatesRetractedFromLive(t *testing.T) {
 // different fact. The retraction is carried by a new field instead, and live is the
 // difference.
 func TestVulnAuditStatus_CountsRetractionsWithoutRedefiningTheFindingCount(t *testing.T) {
-	status, _, findings, withdrawn := vulnAuditStatus(withdrawnBboltRecord(), true, nil)
+	status, _, findings, withdrawn := vulnAuditStatus(withdrawnBboltRecord(), true, nil, "")
 
 	if status != string(vulndomain.StatusWithdrawn) {
 		t.Errorf("status = %q, want %q", status, vulndomain.StatusWithdrawn)
@@ -95,7 +95,7 @@ func TestVulnAuditStatus_MixedSetKeepsBothCounts(t *testing.T) {
 		Summary: "a live advisory beside the retracted one",
 	})
 
-	_, _, findings, withdrawn := vulnAuditStatus(rec, true, nil)
+	_, _, findings, withdrawn := vulnAuditStatus(rec, true, nil, "")
 
 	if findings != 2 {
 		t.Errorf("findings = %d, want both advisories in the total", findings)

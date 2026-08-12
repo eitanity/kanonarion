@@ -25,6 +25,7 @@ type queryVulnFakeStore struct {
 	walkRecords    []domain.VulnerabilityRecord
 	moduleRecords  []domain.VulnerabilityRecord
 	findingRecords []domain.VulnerabilityRecord
+	generations    []vulnports.VulnerabilityRecordGeneration
 	scanRun        domain.WalkScanRun
 	scanRunFound   bool
 	walkRuns       []domain.WalkScanRun
@@ -103,6 +104,10 @@ func (s *queryVulnFakeStore) ListVulnerabilityRecords(_ context.Context, _ strin
 
 func (s *queryVulnFakeStore) ListVulnerabilityRecordsForModule(_ context.Context, _ coordinate.ModuleCoordinate, _ string) ([]domain.VulnerabilityRecord, error) {
 	return s.moduleRecords, s.storeErr
+}
+
+func (s *queryVulnFakeStore) ListVulnerabilityRecordGenerationsForModule(_ context.Context, _ coordinate.ModuleCoordinate) ([]vulnports.VulnerabilityRecordGeneration, error) {
+	return s.generations, s.storeErr
 }
 
 var _ vulnports.VulnerabilityStore = (*queryVulnFakeStore)(nil)

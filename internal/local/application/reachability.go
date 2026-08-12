@@ -101,8 +101,11 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 			continue
 		}
 		reason := domain.UncoveredNoStoredRecord
-		if _, other := set.OtherFrameOnly[coord]; other {
+		switch {
+		case setContains(set.OtherFrameOnly, coord):
 			reason = domain.UncoveredOtherFrameOnly
+		case setContains(set.SupersededOnly, coord):
+			reason = domain.UncoveredSupersededPipeline
 		}
 		uncovered = append(uncovered, domain.UncoveredModule{
 			Path: coord.Path(), Version: coord.Version(), Reason: reason,
@@ -397,4 +400,11 @@ func normalizeReceiver(sym string) string {
 		return rest
 	}
 	return sym
+}
+
+// setContains is membership in one of the loader's coordinate sets, tolerating
+// a nil map — a loader that predates a set still answers, and answers "no".
+func setContains(m map[coordinate.ModuleCoordinate]struct{}, coord coordinate.ModuleCoordinate) bool {
+	_, ok := m[coord]
+	return ok
 }

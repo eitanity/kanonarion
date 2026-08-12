@@ -33,7 +33,18 @@ const (
 // that pre-composed would answer the question the adapter is supposed to ask.
 type fakeVulnStore struct {
 	records map[string][]vulndomain.VulnerabilityRecord // keyed by coord.Path
-	err     error
+	// generations is the store census, keyed by coord.Path, seeded independently
+	// of records: the case it reproduces is a coordinate held only at a pipeline
+	// version the reads do not return.
+	generations map[string][]vulnports.VulnerabilityRecordGeneration
+	err         error
+}
+
+func (s *fakeVulnStore) ListVulnerabilityRecordGenerationsForModule(_ context.Context, coord coordinate.ModuleCoordinate) ([]vulnports.VulnerabilityRecordGeneration, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.generations[coord.Path()], nil
 }
 
 func (s *fakeVulnStore) ListVulnerabilityRecordsForModule(_ context.Context, coord coordinate.ModuleCoordinate, _ string) ([]vulndomain.VulnerabilityRecord, error) {
@@ -483,4 +494,43 @@ func (s *fakeVulnStore) GetVulnerabilityRecordAt(_ context.Context, _ coordinate
 
 func (s *fakeVulnStore) HasVulnerabilityRecord(_ context.Context, _ coordinate.ModuleCoordinate, _ string, _ vulndomain.DatabaseSnapshot, _ string) (bool, error) {
 	panic("unexpected call: HasVulnerabilityRecord")
+}
+
+// -- superseded generations --
+
+// A coordinate the store holds only at a pipeline version this loader does not
+// read is not an unscanned dependency. The keyed read returns nothing for it,
+// exactly as it does for a module nobody has ever looked at, and the coverage
+// block used to call both "never vuln-scanned".
+func TestLoadFindings_SupersededOnlyIsNotAnUnscannedCoordinate(t *testing.T) {
+	coord := mustCoord(t, "example.com/dep", "v1.0.0")
+	s := &fakeVulnStore{
+		// No records at the version the adapter reads: the bump left them behind.
+		records: map[string][]vulndomain.VulnerabilityRecord{},
+		generations: map[string][]vulnports.VulnerabilityRecordGeneration{
+			coord.Path(): {{PipelineVersion: "v0", Records: 16, Findings: 252}},
+		},
+	}
+
+	set := loadOne(t, s, coord)
+
+	if _, ok := set.Scanned[coord]; ok {
+		t.Error("a superseded record must not count as scanned for this build")
+	}
+	if _, ok := set.SupersededOnly[coord]; !ok {
+		t.Errorf("coordinate not recorded as superseded-only: %+v", set.SupersededOnly)
+	}
+}
+
+// The control: a coordinate the store holds nothing for at any generation stays
+// in the plain uncovered bucket.
+func TestLoadFindings_NeverScannedIsNotSupersededOnly(t *testing.T) {
+	coord := mustCoord(t, "example.com/dep", "v1.0.0")
+	s := &fakeVulnStore{records: map[string][]vulndomain.VulnerabilityRecord{}}
+
+	set := loadOne(t, s, coord)
+
+	if _, ok := set.SupersededOnly[coord]; ok {
+		t.Error("a coordinate the store has never held was reported as superseded")
+	}
 }

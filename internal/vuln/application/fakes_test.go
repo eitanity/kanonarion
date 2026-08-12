@@ -4,6 +4,7 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"sort"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -340,6 +341,35 @@ func (f *fakeVulnStore) composeMatching(keep func(domain.VulnerabilityRecord) bo
 	}
 	rec, err := domain.Compose(matched)
 	return rec, err == nil, err //nolint:wrapcheck // test fake
+}
+
+// ListVulnerabilityRecordGenerationsForModule is derived from the records the
+// fake holds rather than seeded separately: the census and the reads must not
+// be able to disagree about what is in the store.
+func (f *fakeVulnStore) ListVulnerabilityRecordGenerationsForModule(_ context.Context, coord coordinate.ModuleCoordinate) ([]ports.VulnerabilityRecordGeneration, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	byPipeline := make(map[string]*ports.VulnerabilityRecordGeneration)
+	for _, gens := range f.records {
+		for _, rec := range gens {
+			if rec.Coordinate != coord {
+				continue
+			}
+			g, ok := byPipeline[rec.PipelineVersion]
+			if !ok {
+				g = &ports.VulnerabilityRecordGeneration{PipelineVersion: rec.PipelineVersion}
+				byPipeline[rec.PipelineVersion] = g
+			}
+			g.Records++
+			g.Findings += len(rec.Findings)
+		}
+	}
+	out := make([]ports.VulnerabilityRecordGeneration, 0, len(byPipeline))
+	for _, g := range byPipeline {
+		out = append(out, *g)
+	}
+	sort.Slice(out, func(i, j int) bool { return out[i].PipelineVersion < out[j].PipelineVersion })
+	return out, nil
 }
 
 func (f *fakeVulnStore) ListVulnerabilityRecordsForModule(_ context.Context, coord coordinate.ModuleCoordinate, pv string) ([]domain.VulnerabilityRecord, error) {

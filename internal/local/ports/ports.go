@@ -84,6 +84,13 @@ type FindingSet struct {
 	// measured THIS build — but they are not unknown to the store either, and
 	// the two absences take different remedies.
 	OtherFrameOnly map[coordinate.ModuleCoordinate]struct{}
+	// SupersededOnly is every coordinate the store holds records for at some
+	// other pipeline version only. The loader reads at one version, so a bump
+	// empties it for them; they are not scanned for this build's purposes, and
+	// they are emphatically not unscanned. Reporting a superseded record as a
+	// coverage gap is how a stale cache comes to read as a dependency nobody
+	// has ever checked.
+	SupersededOnly map[coordinate.ModuleCoordinate]struct{}
 	// Restriction states, in one line, which records the loader was willing to
 	// draw this seed from. It is reported with the answer: a store holding
 	// several projects' scans holds several answers per coordinate, and which of

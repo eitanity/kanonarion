@@ -83,6 +83,24 @@ func (uc *QueryVulnUseCase) ListRecordsForModule(
 	return recs, nil
 }
 
+// ListRecordGenerationsForModule reports which pipeline versions the store
+// holds records for a coordinate at, and how much it holds at each.
+//
+// It is a diagnostic read, not an answer: it exists so a caller whose keyed read
+// came back empty can say whether the store holds nothing for the coordinate or
+// holds it only at generations this build no longer serves. Those are different
+// facts with different remedies, and the keyed reads cannot tell them apart.
+func (uc *QueryVulnUseCase) ListRecordGenerationsForModule(
+	ctx context.Context,
+	coord coordinate.ModuleCoordinate,
+) ([]ports.VulnerabilityRecordGeneration, error) {
+	gens, err := uc.store.ListVulnerabilityRecordGenerationsForModule(ctx, coord)
+	if err != nil {
+		return nil, fmt.Errorf("listing vulnerability record generations for %s: %w", coord, err)
+	}
+	return gens, nil
+}
+
 // ListRecordsForRun returns the vulnerability records one scan run wrote — the
 // per-module verdicts that run established, not the latest verdict each module
 // has since acquired. It is the read a caller serving a stored run needs: a

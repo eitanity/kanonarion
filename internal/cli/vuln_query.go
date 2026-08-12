@@ -127,6 +127,13 @@ func runVulnShow(
 		}
 		r, aside, has, ok := selectConsumerRecord(recs, coord)
 		if !ok {
+			// The read above keys on the pipeline version, so an empty result may
+			// be a coordinate this build has superseded rather than one nobody has
+			// scanned. Asked before the miss is reported, because the two absences
+			// carry opposite instructions.
+			if err := supersededVulnRefusal(ctx, uc, coord); err != nil {
+				return err
+			}
 			// No walk was named, so there is no "newer than what you passed" to
 			// compute — but a succeeded walk of this module may already exist,
 			// and naming it turns the placeholder <walk-id> into a command the
@@ -401,6 +408,12 @@ func runVulnShowHistory(ctx context.Context, coord coordinate.ModuleCoordinate, 
 		return fmt.Errorf("listing vulnerability history: %w", err)
 	}
 	if len(recs) == 0 {
+		// --history is the read that most owes this branch: it advertises itself
+		// as every stored scan record for the module, and a bump makes it print
+		// "no records" over a history it is standing on.
+		if err := supersededVulnRefusal(ctx, uc, coord); err != nil {
+			return err
+		}
 		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("no vulnerability records for %s — run 'kanonarion vuln-scan' first", coord)}
 	}
 
@@ -517,12 +530,51 @@ func runVulnByID(ctx context.Context, findingID, walkID string, jsonOut bool, uc
 	// generation of the advisory database the verdict was reached against — a
 	// Clean from a database that predates the advisory is not evidence of
 	// anything. scanned is when this tool last looked.
+	// The generation is on every row because this read spans them by design —
+	// that is its documented contract — and a row from a generation this build
+	// will not serve anywhere else is not a row a reader may quote as the current
+	// answer. Serving them silently while vuln-show denied they existed was one
+	// inconsistency with two halves; the rows stay, and now they say what they
+	// are. --json needs no such marking: it emits the record, pipeline_version
+	// and all.
 	for _, rec := range records {
-		_, _ = fmt.Fprintf(stdout, "%-60s %-12s vuln-db=%-24s scanned=%s\n",
+		generation := "pipeline=" + rec.PipelineVersion
+		if rec.PipelineVersion != vulnPipelineVersion {
+			generation += " [superseded]"
+		}
+		_, _ = fmt.Fprintf(stdout, "%-60s %-12s vuln-db=%-24s scanned=%-20s %s\n",
 			rec.Coordinate.Path()+"@"+rec.Coordinate.Version(),
 			rec.OverallStatus,
 			rec.DatabaseSnapshot.Version(),
-			rec.ScannedAt.UTC().Format(time.RFC3339))
+			rec.ScannedAt.UTC().Format(time.RFC3339),
+			generation)
+	}
+	if note := supersededByIDNote(records); note != "" {
+		_, _ = fmt.Fprint(stdout, note)
 	}
 	return nil
+}
+
+// supersededByIDNote states, once under the listing, that some of the rows above
+// come from generations this build serves nowhere else — so a reader who takes
+// one to vuln-show and is told the record is superseded has already been told
+// why, here.
+//
+// Silent when every row is current, which is the ordinary case and where a
+// standing caveat would only teach the reader to skip it.
+func supersededByIDNote(records []vuldomain.VulnerabilityRecord) string {
+	n := 0
+	for _, rec := range records {
+		if rec.PipelineVersion != vulnPipelineVersion {
+			n++
+		}
+	}
+	if n == 0 {
+		return ""
+	}
+	return fmt.Sprintf(
+		"\nnotice: %d of %d row(s) were produced by superseded scan logic (this build reads pipeline %s).\n"+
+			"        They are the newest evidence the store holds for those coordinates, and they are not\n"+
+			"        what a current scan would answer. Re-scan a coordinate to replace one.\n",
+		n, len(records), vulnPipelineVersion)
 }

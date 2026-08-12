@@ -63,11 +63,14 @@ const (
 //     here on its own evidence rather than by following the symbols: 47 of the
 //     59 multi-route findings in the store are in an order sorting would change.
 //   - findings[].aliases and findings[].references — copied out of the matched
-//     OSV entry's own arrays. They are sets of identifiers and URLs; the OSV
-//     document happens to present them sorted today (146 multi-alias findings in
-//     the store, none out of order, and no finding carries references at all),
-//     so sorting them changes nothing now and pins them if an upstream document
-//     ever presents them otherwise.
+//     OSV entry's own arrays. They are sets of identifiers and of {type, url}
+//     pairs; the OSV document presents aliases sorted today (146 multi-alias
+//     findings in the store, none out of order), but does NOT present references
+//     in any order a record can depend on. Measured on the pinned snapshot —
+//     4134 advisories, 4130 with references, 15132 URLs — 253 of the 3748
+//     advisories carrying more than one reference arrive in an order sorting
+//     changes, so this is the arrangement affected_symbols already proved a seal
+//     must not depend on rather than a hypothetical one.
 //   - findings[].reachable.routes[] — a single ReachabilityRoute, which is a
 //     CALL STACK: entry point first, vulnerable symbol last. Its order is the
 //     one thing it says. ReachabilityRoute's own doc records that the two
@@ -114,7 +117,7 @@ func canonicalOrder(r VulnerabilityRecord) VulnerabilityRecord {
 func canonicalFinding(f VulnerabilityFinding) VulnerabilityFinding {
 	f.AffectedSymbols = sortedStrings(f.AffectedSymbols)
 	f.Aliases = sortedStrings(f.Aliases)
-	f.References = sortedStrings(f.References)
+	f.References = sortedReferences(f.References)
 	if f.Reachable != nil {
 		reachable := *f.Reachable
 		// The routes are reordered; no route is. A route is a call stack, and its
@@ -127,6 +130,22 @@ func canonicalFinding(f VulnerabilityFinding) VulnerabilityFinding {
 	return f
 }
 
+// sortedReferences returns a sorted copy of refs, preserving a nil as nil for
+// the same reason sortedStrings does.
+//
+// Advisory references arrive as a JSON array off a document nothing controls,
+// so their arrangement is an input to the seal unless it is pinned here. That
+// is the defect affected_symbols already produced: two forced scans of one walk
+// disagreed on six records out of 128 on arrangement alone.
+func sortedReferences(refs []AdvisoryReference) []AdvisoryReference {
+	if refs == nil {
+		return nil
+	}
+	out := slices.Clone(refs)
+	slices.SortFunc(out, CompareAdvisoryReference)
+	return out
+}
+
 // sortedStrings returns a sorted copy of s, preserving a nil as nil so an empty
 // collection does not start appearing on the wire as [].
 func sortedStrings(s []string) []string {
@@ -136,6 +155,17 @@ func sortedStrings(s []string) []string {
 	out := slices.Clone(s)
 	slices.Sort(out)
 	return out
+}
+
+// CompareAdvisoryReference is the canonical total order on advisory references:
+// type first, so a reader's FIX links sit together, then URL. Both fields are
+// keyed so two distinct references never compare equal and the sorted order is
+// a function of the set alone.
+func CompareAdvisoryReference(a, b AdvisoryReference) int {
+	if c := cmp.Compare(a.Type, b.Type); c != 0 {
+		return c
+	}
+	return cmp.Compare(a.URL, b.URL)
 }
 
 // SortFindings orders findings by the canonical total order below, so a record
@@ -179,7 +209,7 @@ func CompareFinding(a, b VulnerabilityFinding) int {
 	if c := slices.Compare(a.Aliases, b.Aliases); c != 0 {
 		return c
 	}
-	if c := slices.Compare(a.References, b.References); c != 0 {
+	if c := slices.CompareFunc(a.References, b.References, CompareAdvisoryReference); c != 0 {
 		return c
 	}
 	if c := compareBool(a.AdvisoryNamesNoSymbols, b.AdvisoryNamesNoSymbols); c != 0 {

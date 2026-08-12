@@ -158,6 +158,7 @@ github.com/gin-gonic/gin@v1.6.2 - Affected
   GO-2020-0001 (CVE-2020-28483): HTTP request smuggling
       affected: < v1.7.7
       fix:      fixed in v1.7.7
+      fix refs: https://github.com/gin-gonic/gin/pull/2237, https://github.com/gin-gonic/gin/commit/a71af9c144f9579f6dbe945341c1df37aaf09c0d
 ```
 
 ---
@@ -720,6 +721,23 @@ refused too (exit 4), naming the frames its records were measured in. It never
 answers from a neighbouring frame, and the walk named in the answer is always
 the walk you pinned.
 
+A coordinate the store holds **only at a superseded pipeline version** is
+refused with its own message (exit 4), naming each generation held and how many
+records and findings sit in it:
+
+```
+$ kanonarion vuln-show golang.org/x/crypto@v0.31.0
+error: no vulnerability record for golang.org/x/crypto@v0.31.0 that this build serves: it reads pipeline v20 and the store holds this coordinate at pipeline v19 (16 record(s), 252 finding(s)). A superseded record is not served, so this answer is empty for want of a scan at this generation — the module has been vuln-scanned, and this is a stale cache, not a coverage gap. Re-scan it:
+  kanonarion vuln-scan --module golang.org/x/crypto@v0.31.0 --reachability
+```
+
+This is a different statement from `no vulnerability record for <coord> — run:
+kanonarion vuln-scan <walk-id>`, which means the store holds the coordinate at
+no pipeline version at all. A pipeline bump darkens every record written before
+it until a re-scan, so after one the first message is the ordinary answer and
+the second is the exception. `--history` refuses the same way, for the same
+reason: it lists one generation's scan records, not every generation's.
+
 That selection is not "newest wins", and the difference is load-bearing. An
 isolated scan builds the module as its own main module, so it records call-graph
 completeness `BUILT_WITH_BODIES`; an analysis rooted at a consuming project
@@ -775,6 +793,29 @@ version bump fix it?* and *which symbol is at risk?* - directly in the output:
 | `affected:` | The version range the advisory applies to (e.g. `>= v1.7.3`) |
 | `fix:` | `fixed in <version>` when a patch exists, or **`no fix available`** when none does - the no-fix state is rendered explicitly, never left blank |
 | `symbols:` | The at-risk symbols named by the advisory, surfaced even for metadata-only (Unscannable) modules where reachability could not be computed |
+| `fix refs:` | The advisory's own `FIX` links - the commit or CL that remediates the vulnerability. Printed only when the advisory publishes one |
+
+**Advisory references**
+
+A finding carries every reference the advisory publishes, as a `{type, url}`
+pair: `ADVISORY`, `WEB`, `FIX`, `REPORT`, `ARTICLE` and any other type the
+upstream document uses. The type is kept because it is what separates a `FIX`
+commit - remediation you can apply - from a page that merely discusses the
+vulnerability.
+
+The text output prints only the `FIX` links, on the `fix refs:` line. `--json`
+emits the whole list under `references` on each finding.
+
+An **empty** `references` list means no advisory was read for that finding, not
+that the advisory publishes none. Two circumstances produce it:
+
+- the advisory fetch failed and the finding degraded to its bare ID and fixed
+  version (the run logs `advisory enrichment failed`);
+- the scan stream carried findings for an advisory whose own advisory message
+  never arrived.
+
+Records written before references were recorded also carry none; they answer at
+an older pipeline version and are replaced by a re-scan.
 
 **Examples:**
 
@@ -1068,12 +1109,24 @@ never found, not a state a finding may decay into without a stated reason. Each
 row carries the snapshot and scan time it came from, so a stale answer is
 visible as one. Use `vuln-show --history` to see every generation.
 
+**Every row names the pipeline version that produced it**, marked
+`[superseded]` when it is not the version this build serves. Those rows are
+served — they are the newest evidence the store holds for those coordinates —
+but `vuln-show` and `reachability` will not answer from them, so a row marked
+this way is not what a current scan would say. A `notice:` under the listing
+counts them. `--json` needs no marking: it emits the record, `pipeline_version`
+and all.
+
 **Example:**
 
 ```
 $ kanonarion vuln-by-id GO-2020-0001
-github.com/gin-gonic/gin@v1.6.2       Affected     vuln-db=2026-07-24T18:35:55Z   scanned=2026-07-26T06:37:10Z
-github.com/gin-gonic/gin@v1.7.0       Affected     vuln-db=2026-07-23T18:46:07Z   scanned=2026-07-24T11:07:36Z
+github.com/gin-gonic/gin@v1.6.2       Affected     vuln-db=2026-07-24T18:35:55Z   scanned=2026-07-26T06:37:10Z   pipeline=v20
+github.com/gin-gonic/gin@v1.7.0       Affected     vuln-db=2026-07-23T18:46:07Z   scanned=2026-07-24T11:07:36Z   pipeline=v19 [superseded]
+
+notice: 1 of 2 row(s) were produced by superseded scan logic (this build reads pipeline v20).
+        They are the newest evidence the store holds for those coordinates, and they are not
+        what a current scan would answer. Re-scan a coordinate to replace one.
 
 $ kanonarion vuln-by-id CVE-2020-28483
 github.com/gin-gonic/gin@v1.6.2       Affected     vuln-db=2026-07-24T18:35:55Z   scanned=2026-07-26T06:37:10Z

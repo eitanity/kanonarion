@@ -84,6 +84,50 @@ gives `kanonarion interface <coord>` as the remedy: `interface-show`,
 wording is the call graph's `supersededPipelineError`, which answers the same
 condition on the other side of the binary.
 
+## Vulnerability record: pipeline `v19` → `v20`
+
+**Additive in shape, not hash-transparent.** `VulnerabilityFinding.references`
+was on the sealed wire shape from the start, entered the content hash, and no
+producer ever wrote it: across the 2,548 stored records the count carrying a
+reference was 0. It is now populated with the advisory's own links, each an OSV
+`{type, url}` pair.
+
+The shape changed with it. The field was `[]string` and is now a list of
+objects: `[{"type": "FIX", "url": "https://..."}]`. The type is carried because
+it is what separates a `FIX` commit — remediation a reader can apply — from a
+`WEB` mention, and a flattened URL list destroys that distinction.
+
+Both producing routes populate it, from an advisory each already had in hand, so
+no scan does extra work:
+
+- the OSV database adapter, from the `ID/<ID>.json` document it already fetches
+  to enrich a finding;
+- the govulncheck parse, from the OSV message the stream already carries (a
+  measured `govulncheck -format json` run: 233 of 233 OSV messages carried a
+  non-empty `references` array).
+
+The list is sorted at the seal, type then URL, for the reason
+`affected_symbols` is: measured on the pinned snapshot, 253 of the 3,748
+advisories carrying more than one reference present them in an order sorting
+changes, and an arrangement that reaches the seal makes the seal describe the
+arrangement.
+
+An **empty** list means no advisory was read for that finding — a failed
+advisory fetch, or a stream whose OSV message never arrived — not that the
+advisory publishes none. Measured on the pinned snapshot, 4,130 of 4,134
+advisories carry at least one reference (15,132 URLs; 3,160 of them `FIX`).
+
+Migration for existing stores: **none, and no purge.** Reads are keyed on the
+pipeline version, so the `v19` rows are already unreachable for a `v20` question
+and the references live inside the serialised record rather than in a column.
+The cost that IS owed is a full re-scan: **all 2,548 stored records go dark for
+a `v20` question until re-scanned.**
+
+Consumer impact: `vuln` / `vuln-show` gain a `fix refs:` line carrying the
+`FIX` references only, and `--json` emits the whole list under
+`findings[].references`. `context` is unchanged — it is a token-budgeted
+document and a dozen URLs per finding is bulk without a decision attached.
+
 ## Vulnerability record: pipeline `v14` → `v15`
 
 **Additive.** Two changes to `VulnerabilityRecord`'s stored shape, both of which

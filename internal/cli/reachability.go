@@ -351,6 +351,16 @@ func runVulnReachability(
 				fmt.Sprintf("kanonarion reachability %s --vuln %s", coord, vulnID), coord, frames)
 		}
 		rec, aside, hasAside, found = selectConsumerRecord(recs, coord)
+		if !found {
+			// "The module has not been vuln-scanned" is the strongest of this
+			// command's absences, and the read above cannot see past its own
+			// pipeline version — so it said that about coordinates the store had
+			// scanned sixteen times. Asked here rather than in the classifier,
+			// which is pure and holds no store.
+			if serr := supersededVulnRefusal(ctx, uc, coord); serr != nil {
+				return serr
+			}
+		}
 	}
 
 	res, verr := vulnReachabilityVerdict(coord, rec, found, vulnID, newRouteRootFunc(ctx, graphs, rec), isolatedAsideFor(aside, hasAside, vulnID))

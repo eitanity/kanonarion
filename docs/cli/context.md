@@ -385,7 +385,8 @@ peer annotation appears. To ask about a specific build, pass `--walk-id` or
 
 | Field | Type | Description |
 |---|---|---|
-| `status` | string | `not_run` / `read_error` / scan status (`Clean`, `Affected`, `Withdrawn`, `Unscannable`, `ScanFailed`) |
+| `status` | string | `not_run` / `superseded` / `read_error` / scan status (`Clean`, `Affected`, `Withdrawn`, `Unscannable`, `ScanFailed`) |
+| | | `superseded`: the store holds records for this module only at pipeline versions this build no longer serves. `error` carries the statement, the generations held, and the re-scan to run. It is not `not_run`: the scan ran. |
 | `findings` | array | CVE findings |
 | `findings[].id` | string | Primary CVE / GHSA identifier |
 | `findings[].aliases` | array | Alternative identifiers |

@@ -228,7 +228,29 @@ import (
 // would cost every store an irreversible schema bump to delete rows nothing can
 // read. The cost that IS owed is a full re-scan before a store can answer at
 // v19, which is the price of no longer serving a verdict about the wrong bytes.
-const PipelineVersion = "v19"
+// v20 records the advisory's own references — the OSV {type, url} pairs — on
+// every finding, from both producing routes.
+//
+// The bump is owed because the field goes from never populated to populated on
+// essentially every finding. Measured on the pinned snapshot, 4130 of 4134
+// advisories carry at least one reference and 15132 URLs in total, so a re-scan
+// of unchanged inputs produces different sealed bytes for almost every record
+// that holds a finding. That is a content change to a hashed field, and reads
+// pin to this constant, so without the bump a v19 row would keep answering a
+// question the v20 shape can now answer more completely.
+//
+// The affected_symbols ordering fix is NOT the precedent here. That one changed
+// only the arrangement within a field already populated, and every stored record
+// still recomputed its hash under the new generation. This one changes what the
+// record says, and the 2548 v19 records in the store recompute to different
+// bytes the moment they are re-derived.
+//
+// The cost is stated plainly: every stored vulnerability record goes dark for a
+// v20 question until it is re-scanned. No migration is owed — reads are keyed on
+// the pipeline version, so the v19 rows are already unreachable for a v20
+// question, and the references live inside the serialised record rather than in
+// a column.
+const PipelineVersion = "v20"
 
 // ScanModuleUseCase orchestrates a single module's vulnerability scan.
 type ScanModuleUseCase struct {
