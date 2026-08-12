@@ -49,10 +49,45 @@ recent one that does not, and recency is the fallback. `kanonarion walk-list
 Copied github.com/google/uuid@v1.6.0 to local cache
 ```
 
-One line per successfully copied module on stdout. The walk that supplied the
-bytes is named on stderr before the first copy. A module that cannot be copied
-(no fact record, checksum mismatch) is logged as a warning to stderr and
-skipped; other modules still proceed.
+One line per successfully copied module on stdout, and nothing else - stdout is
+the data channel. The walk that supplied the bytes is named on stderr before the
+first copy, and the run ends with a summary line there:
+
+```
+==> use: copied 126 of 126 modules with a stored artefact; 2 of 128 selected have no artefact to copy (1 local main module, 1 Go standard library)
+```
+
+A module that cannot be copied (missing blob, checksum mismatch) is named on
+stderr as it happens and the rest of the selection still proceeds; the summary
+then reads `copied 124 of 126`, and the exit code is non-zero.
+
+## Modules with no artefact to copy
+
+A `--recursive` run over a project walk selects modules that have no artefact
+anywhere in the store, and never will:
+
+| Selected node | Why there is nothing to copy | Does the build need it? |
+|---|---|---|
+| the project's own root at `@local` | it is your checkout; nothing published it | no - `go` reads it from the working tree |
+| `stdlib@v<toolchain>` | ships with the toolchain, not as a module | no - `go` reads it from `GOROOT` |
+| a require redirected by a local `replace` | the coordinate names the original require, which was never fetched | no - `go` reads the replacement from disk |
+
+These are counted separately, named in the summary line, and do **not** make the
+run report a loss or change the exit code. A cache missing only these is
+complete for a `go build`.
+
+## Exit codes
+
+The code says whether the cache received everything the store could give it, not
+whether every selected node landed.
+
+| Code | Meaning |
+|---|---|
+| 0 | Every module with a stored artefact reached the cache (including when there was nothing to copy) |
+| 1 | Some, but not all, reached it - the cache is incomplete, and the message says how many of how many |
+| 2 | Nothing reached the cache, though at least one module had an artefact to copy |
+| 4 | The named walk id, or the target coordinate, is not in the store |
+| 20 | The walk id is rooted at a different target, or the invocation is malformed |
 
 ## Flags
 
