@@ -424,6 +424,20 @@ const (
 	// a reader who cannot tell this from an ordinary per-module build failure
 	// cannot tell a degraded run from a complete one.
 	UnscanReasonTargetLoadFailed UnscanReason = "target-load-failed"
+	// UnscanReasonProjectBuildDiverged indicates the project directory a walk was
+	// taken from no longer requires the module versions that walk resolved, so no
+	// analysis of that directory is evidence about this walk's build.
+	//
+	// The scan still matches every coordinate against the advisory database — the
+	// operator keeps the "you are pinned to a vulnerable version" answer — and
+	// records no reachability at all, because the only analysis available is of a
+	// different build. Silence from an analysis of one build is not evidence
+	// about another, and recording it as one is a false negative on the question
+	// this tool exists to answer.
+	//
+	// The remedy is an operator action: walk the directory again so a walk and a
+	// build list describe the same tree, then scan that walk.
+	UnscanReasonProjectBuildDiverged UnscanReason = "project-build-diverged"
 )
 
 // AnalysisSurface names which copy of a module's source a scan measured.
@@ -497,6 +511,7 @@ func AllUnscanReasons() []UnscanReason {
 		UnscanReasonLocalProjectSource,
 		UnscanReasonSourceNotInStore,
 		UnscanReasonTargetLoadFailed,
+		UnscanReasonProjectBuildDiverged,
 	}
 }
 

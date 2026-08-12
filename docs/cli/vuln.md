@@ -426,6 +426,28 @@ whose isolated build re-resolves a version the project never selected — so its
 coverage is `Partial` and it exits non-zero. Re-run it from the checkout
 (`--gomod`) or re-walk to record the current directory.
 
+**If the directory is still there but no longer builds the walk, the run records
+no reachability.** Before attributing an analysis of the directory to the walk's
+coordinates, the scan compares the directory's `go.mod` requirements against the
+versions the walk resolved. If any module both name is required at a different
+version, that directory is a different build and its analysis is not evidence
+about this walk, so the run does not analyse it. It still matches every
+coordinate against the advisory database — you keep the "this walk is pinned to a
+vulnerable version" answer, at the versions the walk pinned — and records **no
+reachability verdict at all**: those findings carry no reachable/not-reachable
+answer, the module's coverage is `Unscannable` with reason
+`project-build-diverged`, and the reason names the directory and every module
+version the two disagree on (`path walked -> required`). The run's coverage is
+therefore `Partial` and it exits non-zero.
+
+A module the directory requires and the walk does not carry is not a divergence
+(that is a narrower walk of the same tree). A module the walk carries that the
+`go.mod` does not require is not compared; in a pruned module (`go >= 1.17`)
+those are the modules contributing no imported package.
+
+The remedy is one command: `kanonarion walk --gomod <project-dir>/go.mod` records
+the current resolution, and scanning that walk gives a reachability answer again.
+
 **Flags:**
 
 | Flag | Default | Description |
@@ -891,6 +913,7 @@ field with a machine-readable cause code alongside the human-readable `unscannab
 | `no-go-mod` | Fetched module zip does not contain a `go.mod` file and none could be synthesised — a property of the published artefact |
 | `project-no-go-mod` | The project directory supplied for a project-rooted scan contains no `go.mod`, so there is no main module to root the analysis at — an operator-side input fault, not a property of any artefact |
 | `project-dir-unavailable` | The project directory supplied for a project-rooted scan could not be stat'ed (missing or unreadable) — an operator-side input fault; the scan never got far enough to check for a `go.mod` |
+| `project-build-diverged` | The project directory the walk was taken from is still readable but requires different versions of modules the walk resolved, so no analysis of it was attributed to this walk. Advisories were matched by coordinate against the versions the walk pinned; reachability was not established. `unscannable_reason` names the directory and each disagreement as `path walked -> required` |
 | `local-replace` | Node is a local filesystem replacement (a `replace` pointing at a working-tree path), not a fetched version, so there is no fetched source to scan; `unscannable_reason` retains the local path |
 
 On the **coordinate-keyed path** (`--module`, and a positional walk-id whose walk

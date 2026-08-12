@@ -133,7 +133,7 @@ func manifestDriftAgainstWalk(
 // directive as drift on every run, and a check that always fires is a check that
 // gets ignored.
 func driftAgainstWalk(resolved []string, rec walkdomain.WalkRecord) manifestDrift {
-	walked := walkNamedVersions(rec)
+	walked := walkdomain.NamedVersions(rec)
 
 	d := manifestDrift{resolved: len(resolved), walked: len(walked)}
 	seen := make(map[string]struct{}, len(resolved))
@@ -179,32 +179,6 @@ func manifestStalenessNote(gomodPath string) string {
 		gomodPath, gomodPath)
 }
 
-// walkNamedVersions maps each module a walk resolved to the version it resolved
-// it at, under the name the MANIFEST uses for it.
-//
-// Two node classes are dropped because no require line names them: the synthetic
-// standard-library node, and any local coordinate — the main module itself and
-// local-path replace targets, which carry no version. A replaced node is keyed
-// on the require entry the replace acted on rather than on the replacement that
-// was fetched, so a replace directive is not read as a disagreement.
-func walkNamedVersions(rec walkdomain.WalkRecord) map[string]string {
-	walked := make(map[string]string, len(rec.Graph.Nodes))
-	for _, n := range rec.Graph.Nodes {
-		if n.ResolutionSource == walkdomain.ResolutionStdlib || n.Coordinate.IsLocal() {
-			continue
-		}
-		named := n.Coordinate
-		if !n.OriginalCoordinate.IsZero() {
-			named = n.OriginalCoordinate
-		}
-		if named.IsLocal() {
-			continue
-		}
-		walked[named.Path()] = named.Version()
-	}
-	return walked
-}
-
 // manifestRequireDisagreement compares the require directives of the go.mod at
 // path against what a walk recorded, and returns the versions the two disagree
 // on ("path walked -> required"). An empty result means the manifest and the
@@ -233,25 +207,23 @@ func manifestRequireDisagreement(path string, rec walkdomain.WalkRecord) ([]stri
 	if err != nil {
 		return nil, fmt.Errorf("parsing %s to compare it against walk %s: %w", path, rec.ID, err)
 	}
-	walked := walkNamedVersions(rec)
-	compared := 0
-	var disagreements []string
+	disagreements, cerr := walkdomain.RequireDisagreement(manifestRequiredVersions(f), rec)
+	if cerr != nil {
+		return nil, fmt.Errorf("comparing %s against walk %s: %w", path, rec.ID, cerr)
+	}
+	return disagreements, nil
+}
+
+// manifestRequiredVersions reduces a parsed go.mod to the module path/version
+// pairs its require directives name, which is the whole of what the agreement
+// comparison reads from a manifest.
+func manifestRequiredVersions(f *modfile.File) map[string]string {
+	required := make(map[string]string, len(f.Require))
 	for _, r := range f.Require {
 		if r == nil {
 			continue
 		}
-		walkedVersion, ok := walked[r.Mod.Path]
-		if !ok {
-			continue
-		}
-		compared++
-		if walkedVersion != r.Mod.Version {
-			disagreements = append(disagreements, fmt.Sprintf("%s %s -> %s", r.Mod.Path, walkedVersion, r.Mod.Version))
-		}
+		required[r.Mod.Path] = r.Mod.Version
 	}
-	if compared == 0 {
-		return nil, fmt.Errorf("%s requires no module walk %s resolved, so the two cannot be compared", path, rec.ID)
-	}
-	sort.Strings(disagreements)
-	return disagreements, nil
+	return required
 }

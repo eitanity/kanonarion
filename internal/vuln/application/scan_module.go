@@ -275,7 +275,41 @@ import (
 // keyed on the pipeline version, so the older rows are already unreachable for a
 // v21 question, and both changes live inside the serialised record rather than
 // in a column.
-const PipelineVersion = "v21"
+// v22 stops a project-rooted scan attributing an analysis of the project
+// directory to a walk the directory no longer builds, and records no
+// reachability at all when it has moved on.
+//
+// The bump is owed because it changes what a re-derived record CONTAINS. A v21
+// scan of such a walk ran govulncheck over the directory as it stands now,
+// attributed its silence to the versions the WALK pinned, and stored a
+// not-reachable verdict at high confidence for a coordinate no analysis had
+// examined. The same inputs now produce a record whose findings carry a nil
+// Reachable and whose coverage axis is Unscannable with the divergence named, so
+// the bytes differ for every record the defect touched.
+//
+// It has to be the pipeline version and cannot be a migration, because the
+// affected rows are not identifiable from the store. Whether a v21 record was
+// produced against an agreeing directory or a moved one depends on the state of
+// a directory at the moment of the scan, and that was never recorded — the only
+// visible tell was a symbol spelling, since a coordinate match writes the
+// advisory's form ("Parser.ParseUnverified") where govulncheck writes the
+// receiver's ("*Parser.ParseUnverified"). Reads pin to this constant, so under
+// the bump the v21 rows stop being served and a re-scan states what it did and
+// did not establish; the rows remain readable in the ledger as what the earlier
+// generation concluded.
+//
+// Measured: one project walk in a working store carried two records for
+// github.com/golang-jwt/jwt/v4@v4.5.1 seventeen seconds apart, one reachable and
+// one not, with a dependency upgrade to the FIXED v4.5.2 landing between them —
+// and eight of eight forced re-scans since have reported the false negative.
+//
+// The cost is the same shape as the v20 and v21 bumps: every stored
+// vulnerability record goes dark for a v22 question until it is re-scanned. No
+// migration is owed — reads are keyed on the pipeline version, so the v21 rows
+// are already unreachable for a v22 question, and the change lives inside the
+// serialised record (an existing reason code field, an existing nullable
+// reachability field) rather than in a column.
+const PipelineVersion = "v22"
 
 // ScanModuleUseCase orchestrates a single module's vulnerability scan.
 type ScanModuleUseCase struct {
