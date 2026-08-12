@@ -31,8 +31,17 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 				}
 			}
 
-			// 2. Load config from store root; errors fall back to defaults.
-			activeConfig = loadStoreConfig(storeRoot)
+			// 2. Load config from store root. A store with no config file
+			// resolves to the built-in defaults and is not an error. A file
+			// that exists and cannot be loaded is a refusal: running on
+			// built-in defaults would evaluate every later answer against a
+			// policy the operator did not write, and say nothing about it.
+			// Commands that exist to show or repair the file are exempt, or
+			// one typo would make the file unfixable by the tool that wrote it.
+			activeConfig, activeConfigErr = loadStoreConfig(storeRoot)
+			if activeConfigErr != nil && !usableWithRejectedConfig(cmd) {
+				return &exitError{code: ExitConfig, msg: activeConfigErr.Error()}
+			}
 
 			// 3. Apply config defaults for flags not explicitly set (flag > config > default).
 			if !cmd.Flags().Changed("log-level") {
@@ -47,6 +56,18 @@ func newRootCmd(stdout, stderr io.Writer) *cobra.Command {
 			// vulnerability scanner and OSV client — emit the same single format
 			// on stderr as every injected logger.
 			slog.SetDefault(buildLogger(logLevel, stderr))
+
+			// 5. An exempted command still says what happened. Reaching here
+			// with a rejection means this command is part of the repair path,
+			// and its answers describe the built-in defaults rather than the
+			// file. It goes to stderr so a --json document on stdout stays
+			// parseable; a command whose stdout is a standalone document
+			// (config show) also renders it there.
+			if activeConfigErr != nil {
+				if _, err := fmt.Fprintf(stderr, "warning: %v\n", activeConfigErr); err != nil {
+					return fmt.Errorf("writing config rejection notice: %w", err)
+				}
+			}
 			return nil
 		},
 	}

@@ -65,16 +65,41 @@ file saying which path was looked for:
 ...
 ```
 
-Every key in that case carries `(default)`. A file that *exists* but cannot be
-read (permissions) or cannot be parsed is still a refusal, exit `20`, and the
-message names the file rather than reporting an all-defaults posture.
+Every key in that case carries `(default)`.
+
+**A file that exists but is rejected still prints** — this is the command that
+answers "what is in force" when the answer is "not what your file says". The
+file is echoed, followed by a notice naming the rejection, and then the
+effective block in which *every* key carries `(default)`, because a rejected
+file sets nothing:
+
+```
+version: "2"
+preferences:
+  log_level: debug
+...
+      default: block
+
+# ^ the file above (/home/you/.kanonarion/config.yaml) was REJECTED and is NOT in force: rule 0 (scope "production"): unknown policy outcome "block": must be allow, notify, or warn
+#   no key from it applies; every value below is a built-in default
+#   fix the named value, or rewrite one key: kanonarion config set <key> <value>
+
+# effective configuration (resolved; (default) = not set in this file)
+preferences.log_level                             warn  (default)
+...
+```
+
+The same notice goes to stderr, so it is visible when stdout is redirected or
+`--json` is used. `config show` itself exits `0` — it answered.
 
 When `--json` is given, the resolved config is emitted as JSON. Each licence
 rule carries `unknown_license` (the value in force) and
 `unknown_license_is_default` (whether it came from the built-in default). The
-document opens with `config_file`, giving the `path` looked for and whether it
-is `present`; `"present": false` means every value below it is a built-in
-default.
+document opens with `config_file`, giving the `path` looked for, whether it is
+`present`, whether it was `rejected`, and `rejection_reason` when it was.
+`"present": false` and `"rejected": true` both mean every value below is a
+built-in default, and they are different states: nothing was written versus
+something was written and refused.
 
 ---
 
@@ -125,6 +150,41 @@ Read-only commands (`config get`, `config show`, `walk-list`, and every other
 query) never create or modify `config.yaml`. The file is materialised only by
 `config init` or `config set`. An empty store with no `config.yaml` resolves
 entirely to built-in defaults.
+
+## When the config file is rejected
+
+A `config.yaml` that exists and cannot be loaded — unreadable, unparseable
+YAML, or valid YAML carrying a value the schema does not accept — is a refusal,
+not a fallback. **Every command exits `20`** and names the file and the value
+the loader objected to:
+
+```
+$ kanonarion audit --gomod ./go.mod
+error: config file /home/you/.kanonarion/config.yaml was rejected: rule 0 (scope "production"): unknown policy outcome "block": must be allow, notify, or warn
+  nothing in that file is in force; the built-in defaults would apply instead
+  fix the named value, then re-run. To see the file and this rejection: kanonarion config show
+  To rewrite one key: kanonarion config set <key> <value>
+```
+
+Nothing in a rejected file applies, including the parts that parsed. A rejected
+`license_policy` means the built-in policy would be the one gating `audit`, so
+the run is refused rather than answered under a policy you did not write.
+
+These commands keep working, because they are how you see the problem and fix
+it. Each states the rejection on stderr:
+
+| Command | Why it is exempt |
+|---------|------------------|
+| `config show`, `store config show` | Report the file and what is actually in force |
+| `config get <key>` | Reports one value in force (the built-in, while the file is rejected) |
+| `config set <key> <value>` | Repairs the file; edits the YAML directly and never reads the loaded config |
+| `config init` | Writes the commented template, where the legal values are listed |
+
+`--help` and `--version` answer on any store; they are resolved before the
+config file is read.
+
+**No config file is not a rejection.** A store without `config.yaml` runs the
+full built-in policy at exit `0`, unchanged.
 
 ### License policy is a sparse overlay
 
@@ -215,7 +275,7 @@ whether it is the default.
 | Code | Meaning |
 |------|---------|
 | `0` | Success |
-| `20` | Unknown key, read-only key, wrong value type, or I/O error |
+| `20` | Unknown key, read-only key, wrong value type, I/O error, or a `config.yaml` the loader rejected (every command except those listed under [When the config file is rejected](#when-the-config-file-is-rejected)) |
 
 ## Examples
 

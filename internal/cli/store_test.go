@@ -320,16 +320,27 @@ func TestRunStoreClean_LeavesForeignEntries(t *testing.T) {
 	}
 }
 
-func TestLoadStoreConfig_FallsBackOnInvalidYAML(t *testing.T) {
+// TestLoadStoreConfig_ReturnsTheRejectionForAnUnloadableFile replaces a test
+// that asserted the opposite — that an unloadable file falls back to
+// DefaultConfig and says nothing. That fallback is what let a rejected file run
+// as a silent no-op, so the assertion is inverted here rather than dropped.
+//
+// The built-in defaults are still returned beside the rejection: they are what
+// would be in force, and the commands allowed to carry on report them.
+func TestLoadStoreConfig_ReturnsTheRejectionForAnUnloadableFile(t *testing.T) {
 	dir := t.TempDir()
-	// Write a file that EnsureConfig will leave untouched (unparseable) but
-	// LoadConfig will fail on — triggering the DefaultConfig fallback.
 	if err := os.WriteFile(filepath.Join(dir, "config.yaml"), []byte("{invalid yaml"), 0o600); err != nil {
 		t.Fatalf("WriteFile: %v", err)
 	}
-	cfg := loadStoreConfig(dir)
+	cfg, err := loadStoreConfig(dir)
+	if err == nil {
+		t.Fatal("unloadable config.yaml returned no error; the file was discarded in silence")
+	}
+	if !strings.Contains(err.Error(), filepath.Join(dir, "config.yaml")) {
+		t.Errorf("rejection does not name the file: %v", err)
+	}
 	def := domain.DefaultConfig()
 	if cfg.Version != def.Version {
-		t.Errorf("version: got %q, want %q", cfg.Version, def.Version)
+		t.Errorf("version: got %q, want the built-in default %q alongside the rejection", cfg.Version, def.Version)
 	}
 }

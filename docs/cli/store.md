@@ -123,8 +123,13 @@ kanonarion store config show [--store-root <dir>] [--json]
 
 Same output as [`kanonarion config show`](config.md#kanonarion-config-show),
 including on a store with no `config.yaml`: absent is reported (exit `0`, every
-value marked `(default)`, `"config_file": {"present": false}` under `--json`),
-while a file that exists but cannot be read or parsed is refused with exit `20`.
+value marked `(default)`, `"config_file": {"present": false}` under `--json`).
+
+A `config.yaml` that exists and the loader rejects is also reported here rather
+than refused (exit `0`, `"rejected": true`, every value marked `(default)`); it
+is one of the few commands that keeps running in that state, because it is how
+the problem is seen. Every other `store` subcommand exits `20` — see
+[When the config file is rejected](config.md#when-the-config-file-is-rejected).
 
 ## Flags
 

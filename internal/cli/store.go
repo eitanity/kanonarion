@@ -217,9 +217,16 @@ type configRuleResult struct {
 }
 
 // configFileResult reports the config file the view was resolved against.
+//
+// rejected is a third state, distinct from absent: the file is there and was
+// read, and nothing in it is in force. A consumer that branches only on
+// present would read a rejected file's defaults as the operator's settings,
+// which is the mistake this field exists to make impossible.
 type configFileResult struct {
-	Path    string `json:"path"`
-	Present bool   `json:"present"`
+	Path            string `json:"path"`
+	Present         bool   `json:"present"`
+	Rejected        bool   `json:"rejected"`
+	RejectionReason string `json:"rejection_reason,omitempty"`
 }
 
 type configCGResult struct {
@@ -240,7 +247,11 @@ func newStoreConfigShowCmd(stdout io.Writer) *cobra.Command {
 		Short: "Show the effective configuration for this store",
 		Example: `  kanonarion store config show
   kanonarion store config show --json`,
-		Args: cobra.NoArgs,
+		// Exempt from the rejected-config refusal for the same reason as
+		// `config show`, which it is an alias for: it is the command that
+		// answers what is in force, and it states the rejection itself.
+		Annotations: map[string]string{annotationUsableWithRejectedConfig: "reports the file and what is actually in force"},
+		Args:        cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runStoreConfigShow(storeRoot, jsonOut, stdout)
 		},
@@ -258,6 +269,7 @@ func runStoreConfigShow(root string, asJSON bool, stdout io.Writer) error {
 		if err != nil {
 			return err
 		}
+		raw = rawIfInForce(raw)
 		rules := make([]configRuleResult, 0, len(cfg.LicensePolicy.Rules))
 		for _, r := range cfg.LicensePolicy.Rules {
 			unknown, explicit := effectiveUnknownLicense(r, raw)
@@ -272,8 +284,13 @@ func runStoreConfigShow(root string, asJSON bool, stdout io.Writer) error {
 			})
 		}
 		result := configShowResult{
-			ConfigFile: configFileResult{Path: path, Present: present},
-			Version:    cfg.Version,
+			ConfigFile: configFileResult{
+				Path:            path,
+				Present:         present,
+				Rejected:        activeConfigErr != nil,
+				RejectionReason: configRejectionReason(),
+			},
+			Version: cfg.Version,
 			Preferences: configPrefsResult{
 				JSON:     cfg.Preferences.JSON,
 				LogLevel: cfg.Preferences.LogLevel,
@@ -329,6 +346,11 @@ func runStoreConfigShow(root string, asJSON bool, stdout io.Writer) error {
 		if _, werr := fmt.Fprint(stdout, string(data)); werr != nil {
 			return fmt.Errorf("writing config: %w", werr)
 		}
+		if activeConfigErr != nil {
+			if nerr := writeRejectedConfigNotice(stdout, path); nerr != nil {
+				return nerr
+			}
+		}
 	} else if nerr := writeNoConfigFileNotice(stdout, path); nerr != nil {
 		return nerr
 	}
@@ -340,7 +362,38 @@ func runStoreConfigShow(root string, asJSON bool, stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	return writeEffectiveConfig(stdout, activeConfig, raw)
+	return writeEffectiveConfig(stdout, activeConfig, rawIfInForce(raw))
+}
+
+// rawIfInForce returns the parsed file document, or an empty one when the file
+// was rejected.
+//
+// The raw document exists to answer "did the operator set this key", which
+// decides the (default) marker. A rejected file set nothing: the loader
+// discarded all of it. Reporting a key from that file as set would attach the
+// operator's authority to a value that is not running — and it is precisely
+// the missing (default) marker that told an operator their typo had taken
+// effect.
+func rawIfInForce(raw rawConfigDoc) rawConfigDoc {
+	if activeConfigErr != nil {
+		return rawConfigDoc{}
+	}
+	return raw
+}
+
+// writeRejectedConfigNotice states, inside the document config show prints,
+// that the file above it was rejected and none of it is running. config show's
+// stdout is written to be read on its own — saved, pasted into a ticket — so
+// the rejection has to travel with it and not only on stderr.
+func writeRejectedConfigNotice(w io.Writer, path string) error {
+	if _, err := fmt.Fprintf(w,
+		"\n# ^ the file above (%s) was REJECTED and is NOT in force: %s\n"+
+			"#   no key from it applies; every value below is a built-in default\n"+
+			"#   fix the named value, or rewrite one key: kanonarion config set <key> <value>\n",
+		path, configRejectionReason()); err != nil {
+		return fmt.Errorf("writing rejected-config notice: %w", err)
+	}
+	return nil
 }
 
 // readConfigFile reads <root>/config.yaml for the two config-show channels.

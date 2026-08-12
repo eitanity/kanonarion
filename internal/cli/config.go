@@ -47,7 +47,11 @@ func newConfigInitCmd(stdout io.Writer) *cobra.Command {
 			"appended).",
 		Example: `  kanonarion config init
   kanonarion config init --store-root /tmp/store`,
-		Args: cobra.NoArgs,
+		// Exempt from the rejected-config refusal: it writes the commented
+		// template, which is where an operator reads the legal values for the
+		// key that was rejected. It never consults the loaded configuration.
+		Annotations: map[string]string{annotationUsableWithRejectedConfig: "creates or completes the config file"},
+		Args:        cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runConfigInit(storeRoot, stdout)
 		},
@@ -81,7 +85,12 @@ func newConfigShowCmd(stdout io.Writer) *cobra.Command {
 		Short: "Print the full effective configuration",
 		Example: `  kanonarion config show
   kanonarion config show --json`,
-		Args: cobra.NoArgs,
+		// Exempt from the rejected-config refusal: this is the command whose
+		// whole job is answering "what is in force", so it is the one that must
+		// keep working when the answer is "not what your file says". It states
+		// the rejection in its own output.
+		Annotations: map[string]string{annotationUsableWithRejectedConfig: "reports the file and what is actually in force"},
+		Args:        cobra.NoArgs,
 		RunE: func(_ *cobra.Command, _ []string) error {
 			return runStoreConfigShow(storeRoot, jsonOut, stdout)
 		},
@@ -99,7 +108,12 @@ func newConfigGetCmd(stdout io.Writer) *cobra.Command {
   kanonarion config get license_policy.categories.permissive
   kanonarion config get callgraph.exclude
   kanonarion config get staleness.ttl`,
-		Args: cobra.ExactArgs(1),
+		// Exempt from the rejected-config refusal: it reports a single value in
+		// force, which with a rejected file is the built-in default. That is a
+		// true answer, and the rejection is stated on stderr beside it, so an
+		// operator can read the value the rejection left them with.
+		Annotations: map[string]string{annotationUsableWithRejectedConfig: "reports one value in force"},
+		Args:        cobra.ExactArgs(1),
 		RunE: func(_ *cobra.Command, args []string) error {
 			return runConfigGet(activeConfig, args[0], stdout)
 		},
@@ -183,7 +197,12 @@ func newConfigSetCmd(stdout io.Writer) *cobra.Command {
   kanonarion config set license_overrides.golang.org/x/mod MIT
   kanonarion config set callgraph.exclude '[]'
   kanonarion config set staleness.ttl 6h`,
-		Args: cobra.ExactArgs(2),
+		// Exempt from the rejected-config refusal: it is the repair. It edits
+		// the YAML document directly and never consults the loaded
+		// configuration, so refusing it would make a rejected file unfixable by
+		// the tool that wrote it.
+		Annotations: map[string]string{annotationUsableWithRejectedConfig: "repairs the config file"},
+		Args:        cobra.ExactArgs(2),
 		RunE: func(_ *cobra.Command, args []string) error {
 			return runConfigSet(storeRoot, args[0], args[1], stdout)
 		},

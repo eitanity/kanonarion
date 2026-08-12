@@ -400,7 +400,7 @@ and repeated in that command's `--help`.
 | 4 | NotFound | A record requested by ID or coordinate does not exist. The message names the command that produces it |
 | 5 | Policy | A governance or publication gate fired on real findings. The scan succeeded and the finding is genuine |
 | 10 | Integrity | Recorded evidence is in doubt: a record failed its content-hash check, or two records for one coordinate diverge |
-| 20 | Config | The command never got as far as an answer: malformed argument, unparseable coordinate, missing toolchain, absent policy *file*, or a store whose schema is newer than this binary |
+| 20 | Config | The command never got as far as an answer: malformed argument, unparseable coordinate, missing toolchain, absent policy *file*, a `config.yaml` the loader rejected, or a store whose schema is newer than this binary |
 
 The distinction that matters to an automation caller is **4 vs 5 vs 20**. A 4
 means the request was well-formed and the named remedy command fixes it. A 5
@@ -417,7 +417,7 @@ the invocation itself was wrong.
 | 4 | `walk-show`, `walk-list --walk-id`, `walk-diff`, `dependents`, `context --walk-id`, `verification-coverage`, `vuln-show`, `vuln --history`, `scan-show`, `snapshot-show`, `vuln-scan --snapshot`, `reachability --vuln`, `callgraph-show`, `interface-show`, `interface-list`, `examples-show`, `examples-list`, `license`, `license-compat`, `license-diff`, `directives-show`, `directives-diff`, `use` |
 | 5 | `audit` (unknown licence blocked by policy), `directives`, `godebug`, `vendor`, `fips`, `notice` (modules require human review) |
 | 10 | any command consuming a walk whose node failed integrity, or that meets a divergence |
-| 20 | every command, for a malformed invocation |
+| 20 | every command, for a malformed invocation, or for a `config.yaml` the loader rejected (except `config init`/`show`/`get`/`set` and `store config show`, which are how the file is seen and repaired — see [`config`](config.md#when-the-config-file-is-rejected)) |
 
 A policy gate is only a 5 when it *fired on findings*. A policy **file** that
 cannot be found or parsed is a 20 — that is a broken invocation, not a verdict.

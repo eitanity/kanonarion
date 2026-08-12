@@ -563,6 +563,74 @@ var jsonOut bool
 // Flag values override the corresponding config fields (flag > config > default).
 var activeConfig domain.Config
 
+// activeConfigErr holds the rejection when the store has a config file that
+// could not be loaded. It is nil in the two ordinary cases — no file, or a file
+// that loaded — so it is never a stand-in for "these are the built-in
+// defaults". A store with no config file loads DefaultConfig with no error and
+// runs the full built-in policy, exactly as before.
+//
+// It is set alongside activeConfig so a command exempted from the refusal (see
+// annotationUsableWithRejectedConfig) can state the rejection instead of
+// pretending the file is in force.
+var activeConfigErr error
+
+// annotationUsableWithRejectedConfig marks a command that must keep running
+// when the store's config file has been rejected, because that command is part
+// of seeing or repairing the file. Every other command refuses, so the tool
+// never produces evidence under a policy the operator did not write.
+//
+// It is a cobra annotation rather than a name list in the root command so the
+// exemption is declared where the command is defined, next to the reason it
+// qualifies, and a new config-repair command carries it without editing a
+// second file.
+//
+// A command qualifies on one test: with the file rejected, would refusing it
+// leave the operator unable to see the problem or fix it? `--help` and
+// `--version` need no annotation — cobra answers both before any PersistentPreRunE
+// runs, so they were never gated in the first place.
+const annotationUsableWithRejectedConfig = "kanonarion/usable-with-rejected-config"
+
+// usableWithRejectedConfig reports whether cmd carries the exemption.
+func usableWithRejectedConfig(cmd *cobra.Command) bool {
+	if cmd == nil {
+		return false
+	}
+	_, ok := cmd.Annotations[annotationUsableWithRejectedConfig]
+	return ok
+}
+
+// rejectedConfigError is a config file that exists but cannot be turned into a
+// configuration. It names the file, the loader's own rejection, and the repair
+// path, because the operator's next action is to edit one line of that file.
+type rejectedConfigError struct {
+	path  string
+	cause error
+}
+
+func (e *rejectedConfigError) Error() string {
+	return fmt.Sprintf("config file %s was rejected: %v\n"+
+		"  nothing in that file is in force; the built-in defaults would apply instead\n"+
+		"  fix the named value, then re-run. To see the file and this rejection: kanonarion config show\n"+
+		"  To rewrite one key: kanonarion config set <key> <value>",
+		e.path, e.cause)
+}
+
+func (e *rejectedConfigError) Unwrap() error { return e.cause }
+
+// configRejectionReason returns the loader's own rejection sentence for this
+// invocation, or "" when the config file loaded (or there is none). It is the
+// cause alone, without the repair advice the refusal message carries, because
+// its callers are views that surround it with their own framing.
+func configRejectionReason() string {
+	if activeConfigErr == nil {
+		return ""
+	}
+	if rej, ok := errors.AsType[*rejectedConfigError](activeConfigErr); ok {
+		return rej.cause.Error()
+	}
+	return activeConfigErr.Error()
+}
+
 // modcacheMode, modcacheDir, and goSumPath carry --from-modcache state across
 // the audit/sbom orchestration. They are process-wide because a single audit
 // or sbom invocation builds several Containers (walk, extract, vuln-scan), each
@@ -765,16 +833,22 @@ func goEnvGOMODCACHE() (string, error) {
 // written resolves to its live built-in default at parse time. This keeps
 // read-only commands side-effect-free and ensures built-in default changes
 // propagate to existing stores rather than being frozen to disk on first
-// touch. The config file is materialised only by `config set`. Falls back to
-// DefaultConfig on any load error.
-func loadStoreConfig(root string) domain.Config {
+// touch. The config file is materialised only by `config set`.
+//
+// A file that exists and cannot be loaded is returned as a rejection, not
+// absorbed. The configuration that would be in force in that case — the
+// built-in defaults — is returned alongside it, so a command entitled to carry
+// on can report what is actually in force rather than what the file says. An
+// absent file is not a rejection: the store adapter resolves it to
+// DefaultConfig with no error, and that path is unchanged.
+func loadStoreConfig(root string) (domain.Config, error) {
 	configPath := filepath.Join(root, "config.yaml")
 	store := configstore.New(configPath)
 	cfg, err := store.LoadConfig(context.Background())
 	if err != nil {
-		return domain.DefaultConfig()
+		return domain.DefaultConfig(), &rejectedConfigError{path: configPath, cause: err}
 	}
-	return cfg
+	return cfg, nil
 }
 
 // defaultStoreRoot returns the default store root path (~/.kanonarion).
