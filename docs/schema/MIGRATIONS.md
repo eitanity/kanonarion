@@ -494,6 +494,54 @@ symbol with no edges over a pre-existing record answers `UNRESOLVED` where it
 previously answered `RESOLVED-ABSENT`. That is the correction, not a regression.
 Re-extract the module to get the measured answer back.
 
+
+## Call graph store: module `callgraph`, migration 14
+
+**Additive; one new column, no back-fill, no purge, no schema-version bump and no
+pipeline bump.** `callgraph_records` gains `worktree_scan_digest`: a digest of
+the working tree a run was HANDED, taken by scanning it before the analysis ran.
+The whole store's migration count goes `v77` -> `v78`.
+
+**Why a second digest.** `worktree_digest` covers the files the loader resolved,
+so it is only knowable once the load has happened. That makes it an exact
+identity of what was analysed and useless as a key for deciding whether to
+analyse at all. This one is a directory walk — every `.go` file under the root
+plus `go.mod` and `go.sum`, following symlinks to source files — so a run can ask
+"is this the tree the record I hold was taken of?" before spending the analysis.
+The two carry different scheme prefixes and nothing compares them: this one is
+`scanned-sha256:` always.
+
+**It is taken before the analysis, not after.** A tree edited while an analysis
+is running produces a graph of neither state. A digest of the tree as it was at
+the start then differs from what the next run scans, and that run re-derives;
+stamping the end state would let the next run reuse a graph of a tree that never
+existed.
+
+**No back-fill.** `''` is the true value for every existing row: no record
+written before this stated the tree it was handed, and there is nothing to derive
+it from — the tree that produced a record two months ago is not on this disk in
+that state. An empty digest matches nothing, so every existing generation behaves
+exactly as it did: re-derived rather than reused, and composed by sequence
+position rather than by ladder.
+
+**No purge, and no bump.** `worktree_scan_digest` is `omitempty` on the canonical
+record, so every stored record marshals to the bytes it was sealed over and still
+verifies against its stored hash. It is inside the sealed shape because a later
+run decides whether to re-derive by reading it: a value outside the seal could be
+edited without breaking the record's own integrity check, and the run that
+trusted it would serve a graph of another tree.
+
+**What it changes for a read.** Two generations carrying the same scan digest at
+the same root were handed the same tree, so they are two measurements of one
+thing rather than two observations of a changing one, and the completeness ladder
+orders them. A re-analysis that came back with less than an earlier one measured
+the analysis environment, not the tree. Generations with different digests are
+still a sequence, and the newest still wins — a tree that genuinely changed is a
+new question.
+
+**Cost.** `ALTER TABLE ... ADD COLUMN` with a constant default is a metadata-only
+operation in SQLite: no row is rewritten, whatever the table holds.
+
 ## Call graph records: the wrapper hop, no migration and no bump
 
 **No store migration, no schema-version bump, no pipeline bump.** The analyser

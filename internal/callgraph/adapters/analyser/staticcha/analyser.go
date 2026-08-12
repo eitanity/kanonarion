@@ -247,6 +247,30 @@ func (a *Analyser) AnalyseDir(ctx context.Context, dir string, coord coordinate.
 	return rec, nil
 }
 
+// TreeIdentity establishes which tree dir currently is without analysing it: the
+// root the analysis would run in, and a scan digest of the tree's contents.
+//
+// The digest is the SCANNED one — every .go file under the root plus go.mod and
+// go.sum — because that is the only kind computable before a load has happened.
+// It carries its own scheme prefix, and nothing compares it against the analysed
+// digest AnalyseDir stamps; see worktree.go for why the two are different claims.
+//
+// ctx is accepted so the signature does not have to change when a tree large
+// enough to want cancellation turns up; the walk itself is filesystem-bound and
+// short, and honouring cancellation halfway through would produce a digest of
+// part of a tree, which is worse than finishing.
+func (a *Analyser) TreeIdentity(_ context.Context, dir string) (domain.WorktreeIdentity, error) {
+	root, err := analysisRoot(dir)
+	if err != nil {
+		return domain.WorktreeIdentity{}, fmt.Errorf("locating working tree %s: %w", dir, err)
+	}
+	digest, err := worktreeDigest(root)
+	if err != nil {
+		return domain.WorktreeIdentity{}, fmt.Errorf("identifying working tree %s: %w", dir, err)
+	}
+	return domain.WorktreeIdentity{Root: root, ScanDigest: digest}, nil
+}
+
 // analysisRoot resolves dir to the absolute, symlink-free path the record states
 // it analysed.
 //

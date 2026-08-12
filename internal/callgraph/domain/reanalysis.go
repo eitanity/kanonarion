@@ -43,16 +43,12 @@ func ReanalysisCommand(coord coordinate.ModuleCoordinate, dir string) string {
 // record: without bypassing the cache the run is served the very record the
 // refusal was about, and reads as the remedy having been tried and failed.
 //
-// 'local' takes no --force because it holds no analysis cache to bypass — it
-// analyses the tree it is pointed at every time — so the forced form of a
-// project coordinate is the plain one. Appending a flag the command does not
-// declare would produce an invocation cobra rejects outright.
+// Both forms take --force, and 'local' has one for the same reason 'callgraph'
+// does: it no longer analyses the tree it is pointed at every time. It serves
+// the record it already holds of an unchanged tree, so a remedy that omitted the
+// flag would hand back the record the refusal was raised about.
 func ForcedReanalysisCommand(coord coordinate.ModuleCoordinate, dir string) string {
-	cmd := ReanalysisCommand(coord, dir)
-	if coord.IsLocal() {
-		return cmd
-	}
-	return cmd + " --force"
+	return ReanalysisCommand(coord, dir) + " --force"
 }
 
 // IsReFetchable reports whether coord names bytes 'kanonarion fetch' can go and

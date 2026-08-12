@@ -18,6 +18,8 @@ type composeSpec struct {
 	completeness domain.CompletenessLevel
 	artefact     string
 	worktree     string
+	scanDigest   string
+	root         string
 	extractedAt  time.Time
 	// symbol varies the graph, so two records can be made to disagree about what
 	// the module contains without differing on anything else.
@@ -55,21 +57,23 @@ func composeRecord(t *testing.T, spec composeSpec) domain.CallGraphRecord {
 		status = domain.CallGraphStatusExtracted
 	}
 	r := domain.CallGraphRecord{
-		SchemaVersion:    domain.CallGraphSchemaVersion,
-		Ecosystem:        fetchdomain.EcosystemGo,
-		Coordinate:       coord,
-		Algorithm:        domain.AlgorithmCHA,
-		Completeness:     spec.completeness,
-		AnalysisSource:   spec.source,
-		ArtefactIdentity: spec.artefact,
-		WorktreeDigest:   spec.worktree,
-		Nodes:            []domain.CallNode{{ID: "example.com/mod." + symbol, Symbol: symbol}},
-		OverallStatus:    status,
-		NodeCount:        1,
-		ExtractedAt:      at,
-		PipelineVersion:  "0.3.0",
-		FailureCause:     spec.cause,
-		FailureDetail:    spec.detail,
+		SchemaVersion:      domain.CallGraphSchemaVersion,
+		Ecosystem:          fetchdomain.EcosystemGo,
+		Coordinate:         coord,
+		Algorithm:          domain.AlgorithmCHA,
+		Completeness:       spec.completeness,
+		AnalysisSource:     spec.source,
+		ArtefactIdentity:   spec.artefact,
+		WorktreeDigest:     spec.worktree,
+		WorktreeScanDigest: spec.scanDigest,
+		AnalysisRoot:       spec.root,
+		Nodes:              []domain.CallNode{{ID: "example.com/mod." + symbol, Symbol: symbol}},
+		OverallStatus:      status,
+		NodeCount:          1,
+		ExtractedAt:        at,
+		PipelineVersion:    "0.3.0",
+		FailureCause:       spec.cause,
+		FailureDetail:      spec.detail,
 	}
 	if spec.nodeless {
 		r.Nodes = []domain.CallNode{}
@@ -229,6 +233,76 @@ func TestCompose_WorktreeIsASequenceNotALadder(t *testing.T) {
 	}
 	if got.ContentHash != newer.ContentHash {
 		t.Fatal("composition served an earlier observation of a mutating tree; the ledger must serve the last one")
+	}
+}
+
+// TestCompose_WorktreeSequenceDoesNotServeAWorseReanalysisOfOneTree is the
+// second half of the sequence rule, and the one recency alone gets wrong.
+//
+// Two generations carrying the same scan digest were handed the SAME tree, so
+// they are not observations of a changing thing — they are two measurements of
+// one thing, and the later one coming back with less measured the analysis
+// environment rather than the tree. A call graph that silently loses its bodies
+// turns "no callers" into an answer with no route behind it.
+func TestCompose_WorktreeSequenceDoesNotServeAWorseReanalysisOfOneTree(t *testing.T) {
+	t.Parallel()
+	built := composeRecord(t, composeSpec{
+		version: coordinate.LocalVersion,
+		source:  domain.AnalysisSourceWorktree, worktree: "analysed-sha256:tree",
+		scanDigest: "scanned-sha256:tree", root: "/work/tree",
+		completeness: domain.CompletenessBuiltWithBodies, symbol: "Built",
+		extractedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	})
+	// The same tree, analysed again later under a broken environment.
+	failed := composeRecord(t, composeSpec{
+		version: coordinate.LocalVersion,
+		source:  domain.AnalysisSourceWorktree, worktree: "scanned-sha256:tree",
+		scanDigest: "scanned-sha256:tree", root: "/work/tree",
+		completeness: domain.CompletenessFailed, nodeless: true,
+		status:      domain.CallGraphStatusLoadFailed,
+		extractedAt: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+	})
+
+	got, err := domain.Compose([]domain.CallGraphRecord{built, failed},
+		domain.ComposeRequest{Source: domain.AnalysisSourceWorktree})
+	if err != nil {
+		t.Fatalf("Compose: %v", err)
+	}
+	if got.ContentHash != built.ContentHash {
+		t.Fatal("a failed re-analysis of an UNCHANGED tree became the answer; the built graph of that same tree is in the ledger")
+	}
+}
+
+// TestCompose_WorktreeChangeStillOutranksAnEarlierBetterRun: the rule above must
+// not swallow the rule it sits beside. A tree that genuinely changed is a new
+// question, and the newest observation of it answers however complete an earlier
+// observation of the PREVIOUS tree was.
+func TestCompose_WorktreeChangeStillOutranksAnEarlierBetterRun(t *testing.T) {
+	t.Parallel()
+	built := composeRecord(t, composeSpec{
+		version: coordinate.LocalVersion,
+		source:  domain.AnalysisSourceWorktree, worktree: "analysed-sha256:a",
+		scanDigest: "scanned-sha256:a", root: "/work/tree",
+		completeness: domain.CompletenessBuiltWithBodies, symbol: "Old",
+		extractedAt: time.Date(2026, 1, 1, 0, 0, 0, 0, time.UTC),
+	})
+	// The tree was edited and now fails to build. That is the truth about it.
+	brokenNow := composeRecord(t, composeSpec{
+		version: coordinate.LocalVersion,
+		source:  domain.AnalysisSourceWorktree, worktree: "scanned-sha256:b",
+		scanDigest: "scanned-sha256:b", root: "/work/tree",
+		completeness: domain.CompletenessFailed, nodeless: true,
+		status:      domain.CallGraphStatusLoadFailed,
+		extractedAt: time.Date(2026, 6, 1, 0, 0, 0, 0, time.UTC),
+	})
+
+	got, err := domain.Compose([]domain.CallGraphRecord{built, brokenNow},
+		domain.ComposeRequest{Source: domain.AnalysisSourceWorktree})
+	if err != nil {
+		t.Fatalf("Compose: %v", err)
+	}
+	if got.ContentHash != brokenNow.ContentHash {
+		t.Fatal("served a graph of the tree as it was before it was edited")
 	}
 }
 

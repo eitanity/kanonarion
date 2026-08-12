@@ -162,6 +162,20 @@ type LocalCallGraphAnalyser interface {
 	// return a non-nil error.
 	AnalyseDir(ctx context.Context, dir string, coord coordinate.ModuleCoordinate) (domain.CallGraphRecord, error)
 
+	// TreeIdentity establishes which tree dir currently is, WITHOUT analysing it:
+	// the root the analysis would run in, and a digest of the tree's contents.
+	//
+	// It is separate from AnalyseDir because it is what a caller needs BEFORE
+	// deciding to call it. The digest AnalyseDir stamps on its record covers the
+	// files the loader resolved, which cannot be known without doing the work;
+	// this one is a directory walk, and it is what makes "have I already answered
+	// this?" a question a run can afford to ask.
+	//
+	// A tree that cannot be read at all is an infrastructure error: a run that
+	// cannot identify its input must not silently proceed as though it had no
+	// record to compare against.
+	TreeIdentity(ctx context.Context, dir string) (domain.WorktreeIdentity, error)
+
 	// AnalyserMetadata returns the algorithm and version of this implementation.
 	AnalyserMetadata() AnalyserMetadata
 }
@@ -254,6 +268,40 @@ type CallGraphRecordLister interface {
 // other one.
 type CallGraphSourceReader interface {
 	GetCallGraphRecordFrom(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, source domain.AnalysisSource) (domain.CallGraphRecord, bool, error)
+}
+
+// WorktreeGenerationReader is the optional tree-scoped read: the generation the
+// ledger holds for ONE working tree, named by the root it was analysed in.
+//
+// It is separate from CallGraphStore because it answers a question only the
+// working-tree route asks. GetCallGraphRecord answers "what is this module's
+// graph", and routes a local coordinate to whichever tree the READER is standing
+// in — a process-wide preference, which is the right rule for a query and the
+// wrong one for a run that has been told which directory to analyse. This takes
+// the root as an argument so the answer cannot depend on where a shell happens
+// to be.
+//
+// A store that does not offer it re-derives every run, which is what every store
+// did before it existed.
+type WorktreeGenerationReader interface {
+	// WorktreeGeneration returns the record the ledger holds of ONE STATE of the
+	// working tree at root — the state named by scanDigest — or (zero, false, nil)
+	// when it holds none.
+	//
+	// The state is part of the key rather than something the caller checks
+	// afterwards, because the ledger holds the tree's whole history and the newest
+	// generation is not the only one that can answer. A branch switched away from
+	// and back, an edit made and reverted: the tree is once again a state the
+	// ledger has a graph of, and re-deriving it would measure again what is
+	// already held.
+	//
+	// An empty scanDigest names no state and matches nothing. Every generation
+	// written before the digest existed carries none, and absence cannot show that
+	// two runs were handed the same tree.
+	//
+	// Several generations of one state are ordered by the completeness ladder, so
+	// a re-analysis that came back with less than an earlier one does not answer.
+	WorktreeGeneration(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion, root, scanDigest string) (domain.CallGraphRecord, bool, error)
 }
 
 // CallGraphFilter constrains ListCallGraphRecords results.

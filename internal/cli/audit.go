@@ -412,10 +412,7 @@ func writeAuditDerivation(w io.Writer, d auditDerivation) error {
 	}
 	lines = append(lines, scanLine)
 
-	if _, err := fmt.Fprintf(w, "derivation:\n  %s\n", strings.Join(lines, "\n  ")); err != nil {
-		return fmt.Errorf("writing output: %w", err)
-	}
-	return nil
+	return writeDerivation(w, lines...)
 }
 
 // walkScopeFor maps a CLI depScope to the walk-record WalkScope tag. The string

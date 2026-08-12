@@ -1,0 +1,47 @@
+# 'local' states where its answer came from, and states it on stderr.
+#
+# The derivation is a statement ABOUT the answer, not part of it. stdout carries
+# the result — the summary line, or the JSON document — so a consumer parsing
+# stdout is never handed narration, and a reader learns one stream for the
+# statement across every command that makes one.
+
+# First run: nothing is held, so the tree is analysed and the run says so.
+kanonarion local $WORK/proj --store-root=$WORK/store
+stdout 'Extracted'
+stderr 'derivation:'
+stderr 'derived by this run'
+! stdout 'derivation:'
+
+# Second run: the tree has not changed, so the held record answers. The result
+# line carries the (cached) marker — that is a property of the answer and stays
+# on stdout — and the basis for it is stated on stderr.
+kanonarion local $WORK/proj --store-root=$WORK/store
+stdout '\(cached\)'
+stderr 'that record was reused'
+stderr '--force to re-measure'
+! stdout 'derivation:'
+! stdout 'reused'
+
+# --json must not be silent about it. The document stays clean on stdout and the
+# basis is still stated, or a JSON consumer cannot tell a served graph from a
+# fresh measurement.
+kanonarion local $WORK/proj --store-root=$WORK/store --json
+stdout '"overall_status"'
+stderr 'that record was reused'
+! stdout 'derivation:'
+
+# --force re-measures, and says that it did.
+kanonarion local $WORK/proj --store-root=$WORK/store --force
+stderr 'derived by this run'
+! stderr 'reused'
+
+-- proj/go.mod --
+module example.test/proj
+
+go 1.22
+-- proj/lib.go --
+// Package proj is a dependency-free project root.
+package proj
+
+// Answer returns 42.
+func Answer() int { return 42 }

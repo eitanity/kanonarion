@@ -318,6 +318,12 @@ type callGraphRecordJSON struct {
 	Completeness   string `json:"completeness"`
 	AnalysisSource string `json:"analysis_source"`
 	WorktreeDigest string `json:"worktree_digest,omitempty"`
+	// WorktreeScanDigest names the tree state this record was taken of, which is
+	// the key a later run reuses it by. It is here so a reader can check a reuse
+	// claim against the record rather than taking the run's word for it; absent on
+	// every record written before the field existed, which is why those are always
+	// re-derived.
+	WorktreeScanDigest string `json:"worktree_scan_digest,omitempty"`
 	// SynthesisedGoMod is present only when kanonarion wrote a go.mod into the
 	// extracted tree, which is the case in which the graph does not describe the
 	// published bytes alone. Absent means the tree was analysed as published.
@@ -451,12 +457,13 @@ func toCallGraphJSON(r domain.CallGraphRecord) callGraphRecordJSON {
 		}
 	}
 	return callGraphRecordJSON{
-		SchemaVersion:  r.SchemaVersion,
-		Coordinate:     coordinateJSON{Path: r.Coordinate.Path(), Version: r.Coordinate.Version()},
-		Algorithm:      string(r.Algorithm),
-		Completeness:   string(r.Completeness),
-		AnalysisSource: string(r.AnalysisSource),
-		WorktreeDigest: r.WorktreeDigest,
+		SchemaVersion:      r.SchemaVersion,
+		Coordinate:         coordinateJSON{Path: r.Coordinate.Path(), Version: r.Coordinate.Version()},
+		Algorithm:          string(r.Algorithm),
+		Completeness:       string(r.Completeness),
+		AnalysisSource:     string(r.AnalysisSource),
+		WorktreeDigest:     r.WorktreeDigest,
+		WorktreeScanDigest: r.WorktreeScanDigest,
 
 		SynthesisedGoMod: synthesisedGoModToJSON(r.SynthesisedGoMod, r.BuildListSource),
 

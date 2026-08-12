@@ -292,18 +292,7 @@ func Compose(records []CallGraphRecord, req ComposeRequest) (CallGraphRecord, er
 	}
 
 	if isWorktreeSequence(candidates) {
-		// A working tree pins no content — it is deliberately re-read on every run
-		// — so its records are a SEQUENCE of observations of a changing tree, not
-		// competing claims about one pinned artefact. The last one is the only
-		// correct answer: serving a higher-completeness earlier record would hand
-		// back a graph the tree no longer has, so deleting a function would
-		// silently fail to register.
-		//
-		// "Last" is by position, not by timestamp. extracted_at persists at second
-		// precision, so two runs within one second carry the same time and a
-		// timestamp comparison cannot order them. The ledger is append-only and the
-		// store lists in insertion order, which is the sequence.
-		return candidates[len(candidates)-1], nil
+		return LatestObservation(candidates), nil
 	}
 
 	candidates = identifiedOrAll(candidates)
@@ -315,6 +304,98 @@ func Compose(records []CallGraphRecord, req ComposeRequest) (CallGraphRecord, er
 	copy(ordered, candidates)
 	sort.SliceStable(ordered, func(i, j int) bool { return servesBefore(ordered[i], ordered[j]) })
 	return ordered[0], nil
+}
+
+// LatestObservation returns the record that describes a working tree as it is
+// NOW, given every generation of it in the order they were appended.
+//
+// A working tree pins no content — it is deliberately re-read on every run — so
+// its records are a SEQUENCE of observations of a changing tree, not competing
+// claims about one pinned artefact. Serving an earlier, higher-completeness
+// generation of a tree that has since changed would hand back a graph the tree
+// no longer has, and deleting a function would silently fail to register. So the
+// sequence position decides which TREE STATE answers, and the last one wins.
+//
+// Within one tree state it does not decide anything, and that is the whole of
+// the rule here. Two generations carrying the same scan digest were handed the
+// same tree, so they are not two observations of a changing thing — they are two
+// measurements of one thing, and the completeness ladder orders them exactly as
+// it orders two analyses of one published artefact. A re-analysis that came back
+// with less than the one before it measured the analysis environment, not the
+// tree: a toolchain that went missing, a cancelled run, a machine out of memory.
+// Letting it answer is how a graph silently loses its bodies, which turns "no
+// callers" and "not reachable" into answers with no route behind them.
+//
+// A generation that states no scan digest takes no part in that: every record
+// written before the field existed carries none, and an absent digest cannot
+// show that two runs were handed the same tree. Those compose exactly as they
+// did before — last one wins — so nothing already in a ledger changes its answer.
+//
+// "Last" is by position, not by timestamp. extracted_at persists at second
+// precision, so two runs within one second carry the same time and a timestamp
+// comparison cannot order them. The ledger is append-only and the store lists in
+// insertion order, which is the sequence.
+func LatestObservation(records []CallGraphRecord) CallGraphRecord {
+	last := records[len(records)-1]
+	if last.WorktreeScanDigest == "" {
+		return last
+	}
+	best := last
+	for _, r := range records {
+		if r.WorktreeScanDigest != last.WorktreeScanDigest {
+			continue
+		}
+		// Two roots holding byte-identical trees are still two checkouts, and a
+		// reader standing in one of them asked about that one. The digest says the
+		// code is the same; it does not say the caller wanted the other tree's
+		// record. See CallGraphRecord.AnalysisRoot.
+		if r.AnalysisRoot != last.AnalysisRoot {
+			continue
+		}
+		if RankOf(r).ServesBefore(RankOf(best)) {
+			best = r
+		}
+	}
+	return best
+}
+
+// GenerationRank is the ordering key of one generation: completeness first, then
+// recency, then the record's own seal.
+//
+// It is a value rather than a method on the record because a store holds every
+// one of these fields in COLUMNS and the record itself in a blob. Deciding which
+// of several generations to serve by decoding all of them, when the decision
+// only ever reads three fields, costs a full edge reconstruction per generation
+// to discard all but one of them. A store reads the columns, ranks, and decodes
+// the winner — against the same ladder composition uses, not a second one
+// written in SQL that would drift from it.
+type GenerationRank struct {
+	Completeness CompletenessLevel
+	ExtractedAt  time.Time
+	// ContentHash is the last resort. It is not authority and is not claimed to be
+	// — it is here so the served record does not depend on the order rows happen
+	// to come back in.
+	ContentHash string
+}
+
+// RankOf projects a record onto its ordering key.
+func RankOf(r CallGraphRecord) GenerationRank {
+	return GenerationRank{
+		Completeness: r.Completeness,
+		ExtractedAt:  r.ExtractedAt,
+		ContentHash:  r.ContentHash,
+	}
+}
+
+// ServesBefore reports whether g should be served in preference to o.
+func (g GenerationRank) ServesBefore(o GenerationRank) bool {
+	if rg, ro := completenessRung(g.Completeness), completenessRung(o.Completeness); rg != ro {
+		return rg > ro
+	}
+	if !g.ExtractedAt.Equal(o.ExtractedAt) {
+		return g.ExtractedAt.After(o.ExtractedAt)
+	}
+	return g.ContentHash < o.ContentHash
 }
 
 // withSource keeps the records built from one kind of source.
@@ -473,9 +554,9 @@ func findConflict(records []CallGraphRecord) *CallGraphConflict {
 	// METADATA_ONLY graph disagreeing with a BUILT_WITH_BODIES one is the
 	// refinement case the ladder exists to resolve; two records at the SAME
 	// completeness disagreeing about the graph is non-determinism in the analyser.
-	top := completenessRung(records[0])
+	top := completenessRung(records[0].Completeness)
 	for _, r := range records[1:] {
-		if rung := completenessRung(r); rung > top {
+		if rung := completenessRung(r.Completeness); rung > top {
 			top = rung
 		}
 	}
@@ -484,7 +565,7 @@ func findConflict(records []CallGraphRecord) *CallGraphConflict {
 		// A failed, cancelled or excluded extraction makes no claim about the graph
 		// at all, so it cannot contradict one that does. Letting it take part would
 		// report every "load failed, then extracted" pair as non-determinism.
-		if completenessRung(r) == top && statesAGraph(r) {
+		if completenessRung(r.Completeness) == top && statesAGraph(r) {
 			tied = append(tied, r)
 		}
 	}
@@ -855,8 +936,8 @@ func forGraphComparison(r CallGraphRecord) CallGraphRecord {
 // while an unrecorded one says nothing at all, and the first is better evidence
 // than silence. It is the same ordering the vulnerability domain applies to the
 // same strings.
-func completenessRung(r CallGraphRecord) int {
-	switch r.Completeness {
+func completenessRung(l CompletenessLevel) int {
+	switch l {
 	case CompletenessBuiltWithBodies:
 		return 4
 	case CompletenessTypeOnly:
@@ -892,14 +973,5 @@ func statesAGraph(r CallGraphRecord) bool {
 
 // servesBefore orders two records by which should be served first.
 func servesBefore(a, b CallGraphRecord) bool {
-	if ra, rb := completenessRung(a), completenessRung(b); ra != rb {
-		return ra > rb
-	}
-	if !a.ExtractedAt.Equal(b.ExtractedAt) {
-		return a.ExtractedAt.After(b.ExtractedAt)
-	}
-	// Neither the ladder nor the clock separates these. The content hash is not
-	// authority and is not claimed to be — it is here so the served record does
-	// not depend on the order rows happen to come back in.
-	return a.ContentHash < b.ContentHash
+	return RankOf(a).ServesBefore(RankOf(b))
 }

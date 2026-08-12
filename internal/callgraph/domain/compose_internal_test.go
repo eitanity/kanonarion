@@ -76,11 +76,11 @@ func TestDisagreement_UnstatedValueIsNotAThirdAnswer(t *testing.T) {
 // the ladder rather than be guessed into the middle of it.
 func TestCompletenessRung_UnknownLevelOutranksNothing(t *testing.T) {
 	t.Parallel()
-	future := CallGraphRecord{Completeness: CompletenessLevel("BUILT_WITH_EVERYTHING")}
+	future := CompletenessLevel("BUILT_WITH_EVERYTHING")
 	if got := completenessRung(future); got != 0 {
 		t.Errorf("completenessRung(unrecognised level) = %d, want 0", got)
 	}
-	if completenessRung(future) >= completenessRung(CallGraphRecord{Completeness: CompletenessFailed}) {
+	if completenessRung(future) >= completenessRung(CompletenessFailed) {
 		t.Error("an unrecognised level outranks a stated FAILED, which is better evidence than silence")
 	}
 }
@@ -193,6 +193,7 @@ func TestGraphClaimFields_ClassifiesEveryCanonicalField(t *testing.T) {
 		"test_scope":                 "whether tests were analysed, which shows up in the nodes",
 		"test_scope_detail":          "how the test scope was decided",
 		"worktree_digest":            "what the tree contained: identity, not graph",
+		"worktree_scan_digest":       "which tree the analysis was handed: the reuse key, not graph",
 	}
 	claim := map[string]bool{}
 	for _, name := range GraphClaimFields() {

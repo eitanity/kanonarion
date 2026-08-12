@@ -132,8 +132,12 @@ func (s *fakeBlobStore) GetPath(_ context.Context, identity fetchports.BlobIdent
 
 type fakeCallGraphStore struct {
 	records map[cgKey]domain.CallGraphRecord
-	putErr  error
-	getErr  error
+	// puts counts every append, so a test can assert that a run which served a
+	// held record wrote nothing — which the records map alone cannot show, since
+	// an identical re-append leaves it looking the same.
+	puts   []domain.CallGraphRecord
+	putErr error
+	getErr error
 }
 
 type cgKey struct{ path, version, pipeline string }
@@ -146,6 +150,7 @@ func (s *fakeCallGraphStore) PutCallGraphRecord(_ context.Context, r domain.Call
 		s.records = make(map[cgKey]domain.CallGraphRecord)
 	}
 	s.records[cgKey{r.Coordinate.Path(), r.Coordinate.Version(), r.PipelineVersion}] = r
+	s.puts = append(s.puts, r)
 	return nil
 }
 
@@ -158,6 +163,19 @@ func (s *fakeCallGraphStore) GetCallGraphRecord(_ context.Context, coord coordin
 	}
 	r, ok := s.records[cgKey{coord.Path(), coord.Version(), pv}]
 	return r, ok, nil
+}
+
+// WorktreeGeneration lets fakeCallGraphStore answer the tree-scoped read the
+// working-tree route uses to decide whether it already holds this measurement.
+func (s *fakeCallGraphStore) WorktreeGeneration(_ context.Context, coord coordinate.ModuleCoordinate, pv, root, scanDigest string) (domain.CallGraphRecord, bool, error) {
+	if s.getErr != nil {
+		return domain.CallGraphRecord{}, false, s.getErr
+	}
+	r, ok := s.records[cgKey{coord.Path(), coord.Version(), pv}]
+	if !ok || r.AnalysisRoot != root || r.WorktreeScanDigest != scanDigest || scanDigest == "" {
+		return domain.CallGraphRecord{}, false, nil
+	}
+	return r, true, nil
 }
 
 func (s *fakeCallGraphStore) ListCallGraphRecords(_ context.Context, _ ports.CallGraphFilter) ([]ports.CallGraphSummary, error) {
@@ -178,6 +196,11 @@ type fakeAnalyser struct {
 	lastDir    string
 	calls      int
 	lastInputs domain.AnalysisInputs
+	// identity is what TreeIdentity reports, and identityCalls how often it was
+	// asked. A test that wants reuse sets it to match the stored record.
+	identity      domain.WorktreeIdentity
+	identityErr   error
+	identityCalls int
 }
 
 func (f *fakeAnalyser) AnalyserMetadata() ports.AnalyserMetadata {
@@ -209,9 +232,23 @@ func (f *fakeAnalyser) AnalyseDir(_ context.Context, dir string, coord coordinat
 	return r, nil
 }
 
+// TreeIdentity lets fakeAnalyser answer the pre-analysis question: which tree is
+// this, without analysing it.
+func (f *fakeAnalyser) TreeIdentity(_ context.Context, dir string) (domain.WorktreeIdentity, error) {
+	f.identityCalls++
+	if f.identityErr != nil {
+		return domain.WorktreeIdentity{}, f.identityErr
+	}
+	if f.identity.Root == "" {
+		return domain.WorktreeIdentity{Root: dir, ScanDigest: "scanned-sha256:fake"}, nil
+	}
+	return f.identity, nil
+}
+
 // Compile-time interface checks.
 var _ fetchports.FactStore = (*fakeFactStore)(nil)
 var _ fetchports.BlobStore = (*fakeBlobStore)(nil)
 var _ ports.CallGraphStore = (*fakeCallGraphStore)(nil)
+var _ ports.WorktreeGenerationReader = (*fakeCallGraphStore)(nil)
 var _ ports.CallGraphAnalyser = (*fakeAnalyser)(nil)
 var _ ports.LocalCallGraphAnalyser = (*fakeAnalyser)(nil)

@@ -205,6 +205,7 @@ func (CallGraphRecordHasher) Unmarshal(data []byte) (CallGraphRecord, error) {
 		SourceContentHash:        c.SourceContentHash,
 		AnalysisSource:           AnalysisSource(c.AnalysisSource),
 		WorktreeDigest:           c.WorktreeDigest,
+		WorktreeScanDigest:       c.WorktreeScanDigest,
 		AnalysisRoot:             c.AnalysisRoot,
 		BuildListSource:          c.BuildListSource,
 		SynthesisedGoMod: SynthesisedGoMod{
@@ -372,6 +373,17 @@ type canonicalRecord struct {
 	TestScope       string `json:"test_scope,omitempty"`
 	TestScopeDetail string `json:"test_scope_detail,omitempty"`
 	WorktreeDigest  string `json:"worktree_digest,omitempty"`
+	// WorktreeScanDigest is omitted when empty, on the terms every additive field
+	// on this shape has used: no record written before it stated the tree it was
+	// handed, so absent is the truth about one rather than an unrecorded third
+	// state, and every stored record re-marshals to the bytes it was sealed over.
+	//
+	// It is inside the sealed shape because it is a claim the record makes about
+	// what it was asked to analyse, and a later run decides whether to re-derive
+	// by reading it. A value outside the seal could be edited without breaking the
+	// record's own integrity check, and the run that trusted it would serve a
+	// graph of another tree.
+	WorktreeScanDigest string `json:"worktree_scan_digest,omitempty"`
 	// AnalysisRoot is omitted when empty, on the terms every additive field on
 	// this shape has used: no record written before it stated where its tree was,
 	// so absent is the truth about one rather than an unrecorded third state, and
@@ -554,11 +566,12 @@ func marshalCanonical(r CallGraphRecord) ([]byte, error) {
 			Requires:          canonicalRequires(r.SynthesisedGoMod.Requires),
 			VendorTreePresent: r.SynthesisedGoMod.VendorTreePresent,
 		},
-		ReferenceScope:  string(r.ReferenceScope),
-		TestScope:       string(r.TestScope),
-		TestScopeDetail: r.TestScopeDetail,
-		WorktreeDigest:  r.WorktreeDigest,
-		AnalysisRoot:    r.AnalysisRoot,
+		ReferenceScope:     string(r.ReferenceScope),
+		TestScope:          string(r.TestScope),
+		TestScopeDetail:    r.TestScopeDetail,
+		WorktreeDigest:     r.WorktreeDigest,
+		WorktreeScanDigest: r.WorktreeScanDigest,
+		AnalysisRoot:       r.AnalysisRoot,
 	}
 	b, err := canonicalMarshal(c)
 	if err != nil {
