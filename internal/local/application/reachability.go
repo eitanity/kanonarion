@@ -101,8 +101,11 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 			continue
 		}
 		reason := domain.UncoveredNoStoredRecord
-		if _, other := set.OtherFrameOnly[coord]; other {
+		switch {
+		case setContains(set.OtherFrameOnly, coord):
 			reason = domain.UncoveredOtherFrameOnly
+		case setContains(set.SupersededOnly, coord):
+			reason = domain.UncoveredSupersededPipeline
 		}
 		uncovered = append(uncovered, domain.UncoveredModule{
 			Path: coord.Path(), Version: coord.Version(), Reason: reason,
@@ -153,7 +156,7 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 	var (
 		binarySymbols map[string]struct{}
 		binaries      []ports.ProbedBinary
-		probeKind     = "skipped"
+		probeKind     = domain.ProbeKindSkipped
 		notice        string
 	)
 	if anySymbols {
@@ -177,7 +180,7 @@ func (uc *LocalReachabilityUseCase) Execute(ctx context.Context, root string) (d
 			Version: coord.Version(),
 		}
 		for _, f := range cveFindings {
-			finding := probeOneFinding(f, coord.Path(), binarySymbols, binaries)
+			finding := probeOneFinding(f, coord.Path(), probeKind, binarySymbols, binaries)
 			modResult.Findings = append(modResult.Findings, finding)
 		}
 		modResults = append(modResults, modResult)
@@ -218,7 +221,7 @@ func coverageBinaries(binaries []ports.ProbedBinary) []domain.ProbedBinary {
 // verdict: a vulnerable symbol shipping in any one of a project's binaries
 // ships in the product. binaries carries the same tables per main package and
 // settles the attribution — which artefact to look in.
-func probeOneFinding(f ports.VulnFinding, modPath string, binarySymbols map[string]struct{}, binaries []ports.ProbedBinary) domain.SymbolProbeFinding {
+func probeOneFinding(f ports.VulnFinding, modPath, probeKind string, binarySymbols map[string]struct{}, binaries []ports.ProbedBinary) domain.SymbolProbeFinding {
 	result := domain.SymbolProbeFinding{
 		CVEID:   f.ID,
 		Aliases: f.Aliases,
@@ -248,6 +251,12 @@ func probeOneFinding(f ports.VulnFinding, modPath string, binarySymbols map[stri
 			result.Verdict = domain.SymbolProbeUnreachable
 			result.VerdictSource = domain.VerdictSourceGovulncheck
 			result.Reason = seededReason(f.ReachableBasis)
+			// The negative was not measured here, so the rung is the one the stored
+			// scan's own answer earns, carried across with it. Deriving a rung for
+			// this probe's instrument would state the soundness of a search this
+			// verdict did not come from.
+			result.Soundness = f.ReachableSoundness
+			result.SoundnessReason = f.ReachableSoundnessReason
 		}
 		return result
 	}
@@ -264,8 +273,32 @@ func probeOneFinding(f ports.VulnFinding, modPath string, binarySymbols map[stri
 		result.MatchedBinaries = matchingBinaries(result.MatchedSymbols, binaries)
 	} else {
 		result.Verdict = domain.SymbolProbeAbsent
+		// A negative this probe measured itself, so it states the rung its own
+		// instrument earns rather than the stored scan's.
+		result.Soundness = domain.ProbeSoundnessUnconfirmed
+		result.SoundnessReason = absentReason(probeKind, binaries)
 	}
 	return result
+}
+
+// absentReason names what the symbol-table absence was read from, and says so
+// when what was read does not cover the whole product.
+//
+// The three cases are different claims. A binary probe that read every main
+// declares an absence from the artefacts the project ships; one that lost a main
+// to a build failure declares an absence from the ones that built; a library
+// workspace declares an absence from a harness that ships nowhere. Collapsing
+// them into one sentence would let the weakest read as the strongest.
+func absentReason(probeKind string, binaries []ports.ProbedBinary) string {
+	if probeKind == domain.ProbeKindLibrary {
+		return domain.ProbeAbsentLibraryReason
+	}
+	for _, b := range binaries {
+		if b.BuildError != "" {
+			return domain.ProbeAbsentPartialReason
+		}
+	}
+	return domain.ProbeAbsentReason
 }
 
 // seededReason states that a verdict was carried from a stored scan rather than
@@ -302,10 +335,18 @@ func matchingBinaries(syms []string, binaries []ports.ProbedBinary) []string {
 // findInBinary looks for an nm symbol belonging to modPath whose unqualified
 // name matches affSym (govulncheck-style: "FuncName" or "(*Type).Method").
 // Returns the full nm symbol name if found, or "".
+//
+// Several symbols can match: a module and its own /vN major-version line share a
+// path prefix, so both are candidates for a name declared in both. The smallest
+// is returned rather than whichever the map handed over first, because map
+// iteration order is random and the first-match form made two probes of one
+// unchanged tree report different matched_symbols. A probe whose answer moves
+// without its input moving is not a measurement.
 func findInBinary(affSym, modPath string, binarySymbols map[string]struct{}) string {
 	rootPrefix := modPath + "."
 	subPrefix := modPath + "/"
 
+	best := ""
 	for sym := range binarySymbols {
 		var unqualified string
 		switch {
@@ -332,10 +373,12 @@ func findInBinary(affSym, modPath string, binarySymbols map[string]struct{}) str
 		}
 
 		if normalizeReceiver(unqualified) == normalizeReceiver(affSym) {
-			return sym
+			if best == "" || sym < best {
+				best = sym
+			}
 		}
 	}
-	return ""
+	return best
 }
 
 // normalizeReceiver rewrites a method symbol's pointer-receiver spelling to the
@@ -357,4 +400,11 @@ func normalizeReceiver(sym string) string {
 		return rest
 	}
 	return sym
+}
+
+// setContains is membership in one of the loader's coordinate sets, tolerating
+// a nil map — a loader that predates a set still answers, and answers "no".
+func setContains(m map[coordinate.ModuleCoordinate]struct{}, coord coordinate.ModuleCoordinate) bool {
+	_, ok := m[coord]
+	return ok
 }

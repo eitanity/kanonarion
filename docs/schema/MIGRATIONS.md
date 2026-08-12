@@ -43,6 +43,91 @@ pinned to the prior shape are unaffected (unknown-section rule above):
 | `vendor`     | reserved              |
 | `fips`       | reserved              |
 
+## Interface record: pipeline `0.3.0` → `0.4.0`
+
+**Record shape change; no store migration.** Interface records are keyed
+`(module_path, module_version, pipeline_version)` and `GetInterfaceRecord`
+selects on the current one, so the bump is the migration: `0.3.0` rows stay
+where they are and are never served for a `0.4.0` request. The cost is one
+re-extraction per module on its next `interface` run — 472 stored records at the
+time of the bump, each of which answers `interface-show`, `interface-diff` and
+`symbol-find` as a not-found until it is re-extracted, naming the command that
+produces it.
+
+Two extraction reads changed, and both change what the record says a module
+exports.
+
+A **constant group carries its declared type to every member.** A spec with no
+expression list repeats the previous spec's type and expression — that is what
+makes an `iota` enumeration work. Reading each spec on its own left every member
+but the first with no type at all: on `github.com/golang-jwt/jwt/v4@v4.5.1`, 9 of
+11 constants. A constant's type is also the whole of its signature in
+`interface-diff`, so a `0.3.0` record cannot see a grouped constant's type change
+and a `0.4.0` record can. That is not less than the old record said, it is a
+different answer, so the two must not be served for one another.
+
+An **embedded type from another package is recorded as a field.** Exportedness
+belongs to the embedded type's own identifier, not to the lower-case package
+qualifier in front of it: an embedded `time.Time` publishes `x.Time`. A `0.3.0`
+record dropped every such embedding, and with it the promotions it explains.
+
+The content hash covers both, so an unchanged module hashes differently from its
+`0.3.0` record.
+
+Because the bump darkens records that are still in the ledger, every reader that
+can come up empty tells "never extracted" from "extracted under superseded
+logic", names the pipeline versions held against the one this build serves, and
+gives `kanonarion interface <coord>` as the remedy: `interface-show`,
+`interface-list <module>`, `interface --history`, `interface-diff`,
+`symbol-find`, `symbol-context` and the `context` interface section (status
+`superseded`). `interface-list` marks each superseded row and counts them. The
+wording is the call graph's `supersededPipelineError`, which answers the same
+condition on the other side of the binary.
+
+## Vulnerability record: pipeline `v19` → `v20`
+
+**Additive in shape, not hash-transparent.** `VulnerabilityFinding.references`
+was on the sealed wire shape from the start, entered the content hash, and no
+producer ever wrote it: across the 2,548 stored records the count carrying a
+reference was 0. It is now populated with the advisory's own links, each an OSV
+`{type, url}` pair.
+
+The shape changed with it. The field was `[]string` and is now a list of
+objects: `[{"type": "FIX", "url": "https://..."}]`. The type is carried because
+it is what separates a `FIX` commit — remediation a reader can apply — from a
+`WEB` mention, and a flattened URL list destroys that distinction.
+
+Both producing routes populate it, from an advisory each already had in hand, so
+no scan does extra work:
+
+- the OSV database adapter, from the `ID/<ID>.json` document it already fetches
+  to enrich a finding;
+- the govulncheck parse, from the OSV message the stream already carries (a
+  measured `govulncheck -format json` run: 233 of 233 OSV messages carried a
+  non-empty `references` array).
+
+The list is sorted at the seal, type then URL, for the reason
+`affected_symbols` is: measured on the pinned snapshot, 253 of the 3,748
+advisories carrying more than one reference present them in an order sorting
+changes, and an arrangement that reaches the seal makes the seal describe the
+arrangement.
+
+An **empty** list means no advisory was read for that finding — a failed
+advisory fetch, or a stream whose OSV message never arrived — not that the
+advisory publishes none. Measured on the pinned snapshot, 4,130 of 4,134
+advisories carry at least one reference (15,132 URLs; 3,160 of them `FIX`).
+
+Migration for existing stores: **none, and no purge.** Reads are keyed on the
+pipeline version, so the `v19` rows are already unreachable for a `v20` question
+and the references live inside the serialised record rather than in a column.
+The cost that IS owed is a full re-scan: **all 2,548 stored records go dark for
+a `v20` question until re-scanned.**
+
+Consumer impact: `vuln` / `vuln-show` gain a `fix refs:` line carrying the
+`FIX` references only, and `--json` emits the whole list under
+`findings[].references`. `context` is unchanged — it is a token-budgeted
+document and a dozen URLs per finding is bulk without a decision attached.
+
 ## Vulnerability record: pipeline `v14` → `v15`
 
 **Additive.** Two changes to `VulnerabilityRecord`'s stored shape, both of which
@@ -202,6 +287,45 @@ rehashing every stored walk during a migration to save one re-walk per project.
 Nothing verifies `identity_hash` on read and no stored hash is ever compared
 across the old and new styles: an old-style walk has no identity at all, so the
 comparison cannot arise. Reads of existing walks are unchanged in every respect.
+
+## Call graph record: pipeline `0.4.1` → `0.5.0`
+
+**Behaviour change in what gets analysed; no record shape change, no schema
+bump, no store migration.** Call graph records are keyed
+`(module, version, pipeline_version)`, so the bump is the migration: `0.4.1`
+rows stay where they are, become unreachable, and are never served for a
+`0.5.0` request. The cost is one re-extraction per coordinate on its next
+`callgraph` run.
+
+The analyser no longer takes its function set from the SSA library's
+`AllFunctions`, and builds the class-hierarchy graph over a set it closes
+itself. The library derives most of that set by enumerating the program's
+runtime types, and that enumeration is not reproducible: it de-duplicates types
+by identity while walking them under two spellings, so meeting an alias first
+consumes the entry its named twin needed and the pointer type — and with it the
+pointer-receiver method wrapper — is never derived. Measured on one unchanged
+tree, five consecutive enumerations of one program returned five different sets.
+
+The effect on a record is small and always in one direction: a graph could be
+missing a wrapper and the interface call sites the class hierarchy would have
+resolved to it. Ten consecutive analyses of one unchanged working tree produced
+three different graphs before this change and one after it, and that one graph
+is set-identical to the most complete of the three — same nodes, same edges,
+same interfaces, same implementations. Nothing is added that the analysis did
+not already find on a good run; what changes is that every run is now that run.
+
+Until a coordinate is re-analysed, every query for it refuses rather than
+answering empty: `callers`, `callees`, their transitive forms, `implementers`
+and `callgraph-show` name the superseded versions the store holds and the
+command that re-derives them. An empty answer would otherwise be read as a fact
+about the code, and its stated cause would be read off a generation the query
+never consulted.
+
+A `0.4.1` record can therefore say that nothing calls a method that was simply
+never enumerated, and nothing in the record distinguishes that from a measured
+absence. Two `0.4.1` records of one artefact can also disagree with no cause
+recorded, which is the conflicting-generations condition composition already
+refuses on. Both are why the old rows are re-derived rather than served.
 
 ## Call graph record: pipeline `0.3.0` → `0.4.1`
 
@@ -414,6 +538,54 @@ symbol with no edges over a pre-existing record answers `UNRESOLVED` where it
 previously answered `RESOLVED-ABSENT`. That is the correction, not a regression.
 Re-extract the module to get the measured answer back.
 
+
+## Call graph store: module `callgraph`, migration 14
+
+**Additive; one new column, no back-fill, no purge, no schema-version bump and no
+pipeline bump.** `callgraph_records` gains `worktree_scan_digest`: a digest of
+the working tree a run was HANDED, taken by scanning it before the analysis ran.
+The whole store's migration count goes `v77` -> `v78`.
+
+**Why a second digest.** `worktree_digest` covers the files the loader resolved,
+so it is only knowable once the load has happened. That makes it an exact
+identity of what was analysed and useless as a key for deciding whether to
+analyse at all. This one is a directory walk — every `.go` file under the root
+plus `go.mod` and `go.sum`, following symlinks to source files — so a run can ask
+"is this the tree the record I hold was taken of?" before spending the analysis.
+The two carry different scheme prefixes and nothing compares them: this one is
+`scanned-sha256:` always.
+
+**It is taken before the analysis, not after.** A tree edited while an analysis
+is running produces a graph of neither state. A digest of the tree as it was at
+the start then differs from what the next run scans, and that run re-derives;
+stamping the end state would let the next run reuse a graph of a tree that never
+existed.
+
+**No back-fill.** `''` is the true value for every existing row: no record
+written before this stated the tree it was handed, and there is nothing to derive
+it from — the tree that produced a record two months ago is not on this disk in
+that state. An empty digest matches nothing, so every existing generation behaves
+exactly as it did: re-derived rather than reused, and composed by sequence
+position rather than by ladder.
+
+**No purge, and no bump.** `worktree_scan_digest` is `omitempty` on the canonical
+record, so every stored record marshals to the bytes it was sealed over and still
+verifies against its stored hash. It is inside the sealed shape because a later
+run decides whether to re-derive by reading it: a value outside the seal could be
+edited without breaking the record's own integrity check, and the run that
+trusted it would serve a graph of another tree.
+
+**What it changes for a read.** Two generations carrying the same scan digest at
+the same root were handed the same tree, so they are two measurements of one
+thing rather than two observations of a changing one, and the completeness ladder
+orders them. A re-analysis that came back with less than an earlier one measured
+the analysis environment, not the tree. Generations with different digests are
+still a sequence, and the newest still wins — a tree that genuinely changed is a
+new question.
+
+**Cost.** `ALTER TABLE ... ADD COLUMN` with a constant default is a metadata-only
+operation in SQLite: no row is rewritten, whatever the table holds.
+
 ## Call graph records: the wrapper hop, no migration and no bump
 
 **No store migration, no schema-version bump, no pipeline bump.** The analyser
@@ -449,6 +621,112 @@ above, and re-extraction closes it.
 **What a reader sees change after re-extracting:** a `$bound` wrapper appears as
 a caller, paths across a method value are one hop longer, and a method reachable
 only through a method value stops answering "no callers".
+
+## Vulnerability records: canonical collection order, no migration and no bump
+
+**No store migration, no schema-version bump, no pipeline bump.** A
+`VulnerabilityRecord` is now put into canonical order at the moment it is
+sealed: the collections whose order carries no meaning — `findings`, and inside
+each finding `affected_symbols`, `aliases`, `references` and
+`reachable.routes` — are sorted before the content hash is taken. The hops
+inside one route are NOT sorted; a route is a call stack and its order is the
+fact it states. `internal/vuln/domain.SealedCollections` carries the
+classification, and a reflection test fails when a slice is added to the sealed
+shape without being classified either way.
+
+**What it fixes.** Two `vuln-scan --force` runs of one walk against one advisory
+snapshot produced two different records for the same coordinate. Measured on the
+working store over walk `01KZMJBYXA5RJZZYJW2HQ31KE8` (128 modules), 6 of 128
+coordinates differed between the two passes with `content_hash`, `scanned_at`
+and `first_scanned_at` excluded, and every difference was a reordering of the
+same values — `affected_symbols` inside a finding, and the routes that arrive
+beside those symbols. After the change the same loop differs on 0 of 128.
+
+**Where the order is taken, and why that decides the bump.** The seal step, not
+the hash recipe. `VerifyContentHash` recomputes the hash from the record as it
+was read back, so canonicalising inside the recipe would rearrange a stored
+record on the way to checking it: 51 of the 2,006 vulnerability records in the
+working store hold an `affected_symbols` list, and 47 findings hold a route
+list, in an order sorting would change. Those records would have stopped
+verifying and been reported in the wording reserved for altered bytes, which
+would have owed a pipeline bump darkening all 2,006 until re-scan. They are not
+wrong about what they measured — they are arranged differently — so the bump
+would have bought nothing. Taking the order at the seal makes every record
+written from here on reproducible and leaves stored bytes verifiable exactly as
+they are.
+
+**What a reader sees.** A re-scan of unchanged inputs now yields a record that
+differs from the last one only in `scanned_at` and the `content_hash` that
+covers it. A record written before this change and one written after may list
+the same values in two orders; they are the same measurement, and the older one
+is not superseded by the arrangement alone.
+
+## SBOM: pipeline `0.8.0` → `0.9.0`
+
+**Document bytes change; no store migration.** Same mechanism as the bump below:
+SBOM records are cached on `(walk id, scan run id, format, pipeline version)` and
+hashed over the document bytes, so the bump makes stored `0.8.0` documents
+unreachable and a request regenerates. Nothing is purged. Six stored records —
+five at `0.7.0`, one at `0.8.0` — go dark at once.
+
+Two behaviours forced it.
+
+**Every component's external references were assembled from the module path.**
+Each carried `{vcs: "https://" + path}` and
+`{distribution: "https://proxy.golang.org/" + path + "/@v/" + version + ".zip"}`,
+unconditionally, with no branch for a local coordinate, a replace directive, a
+vendored tree or a private path. Neither was read from anything measured. In the
+one artefact shipped from this tool, all 18 components carried both: the subject
+asserted a proxy download for `@v/local.zip`, a version the proxy does not serve
+for a module it does not hold, and `github.com/oklog/ulid/v2` asserted a
+repository URL whose `/v2` is a module-path element GitHub answers `404` for. A
+component now carries a `vcs` reference only where the fetch ledger holds a
+positively cross-verified record naming the repository, ref and commit, and no
+library component carries a `distribution` reference at all — the ledger records
+the route bytes arrived by and the blob handle they were filed under, never a
+public download address. Components with nothing recorded carry no
+`externalReferences` block.
+
+**A stamped subject was described twice at two versions.** `--main-version` and
+`--main-license` reached `metadata.component` only. The subject's own entry in
+the component list kept the synthetic `local` version and no licence, so one
+document asserted two `purl`s for one module, the `dependencies` array carried
+two entries for it each repeating the whole dependency set, and the
+undetermined-licence count read the copy the stamp never reached — the run
+exited `1` naming the operator's own module while `--main-license` sat on the
+other copy. The stamp now decides the subject once, and both descriptions read
+that decision.
+
+**Stored `0.8.0` and earlier documents carry the constructed references.** The
+bump makes them unreachable through the cache; it does not correct copies
+already shipped. A document already handed to a consumer points at a download
+location that may not exist, and re-issuing it is the only fix for that copy.
+
+## SBOM: pipeline `0.7.0` → `0.8.0`
+
+**Document bytes change; no store migration.** SBOM records are cached on
+`(walk id, scan run id, format, pipeline version)`, so the bump is what stops a
+`0.7.0` document being served for a `0.8.0` request. The SBOM record is hashed
+over the document bytes, not over a canonical struct, so there is no sealed
+shape to migrate and nothing is purged: the stored `0.7.0` documents stay
+readable and simply stop being reachable, and a request regenerates.
+
+The behaviour that forced the bump: the standard-library component's
+`kanonarion:stdlib:anchor_limitation` property was one fixed sentence — anchored
+to the go.dev/dl published checksum and the googlesource tag/commit — emitted
+whatever the measurement had reached. An offline run records
+`VerifiedLocalToolchain`, whose detail says the published checksum was not
+consulted and the commit anchor was skipped, and the fixed sentence asserted both
+of them three lines later. The property is now derived from the verification
+status and from whether a commit anchor was resolved, so it names the anchors
+reached and, separately, those that were not. Every stdlib-bearing document
+changes bytes, including the connected-side ones, because the wording changed on
+all routes.
+
+**The stored `0.7.0` documents are wrong where they were generated offline.** The
+bump makes them unreachable through the cache; it does not correct copies already
+shipped. A document already handed to a consumer states an anchor its own
+verification detail denies, and re-issuing it is the only fix for that copy.
 
 ## Purging a table other rows point at
 

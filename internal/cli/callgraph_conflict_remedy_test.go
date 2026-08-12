@@ -44,3 +44,52 @@ func TestCallGraphConflictRemedies_EveryLineIsAcceptedByTheParser(t *testing.T) 
 		}
 	}
 }
+
+// TestHistoryFailure_KeepsTheSignalTheConflictCheckDropped.
+//
+// Composition no longer refuses when two generations of one artefact recorded
+// different failures — their graphs agree, so no answer depends on the
+// difference. That is the right call only if the difference stays visible: "two
+// analyses of one module failed for different reasons" is worth knowing, and the
+// history view is where the generations are read side by side. If this line goes
+// away, dropping the refusal becomes dropping the signal.
+func TestHistoryFailure_KeepsTheSignalTheConflictCheckDropped(t *testing.T) {
+	t.Parallel()
+	tests := []struct {
+		name   string
+		record cgdomain.CallGraphRecord
+		want   string
+	}{
+		{
+			name:   "a clean generation says nothing about failing",
+			record: cgdomain.CallGraphRecord{},
+			want:   "",
+		},
+		{
+			name: "cause and detail are both printed",
+			record: cgdomain.CallGraphRecord{
+				FailureCause:  cgdomain.FailureCauseEnvironment,
+				FailureDetail: "go: module lookup disabled",
+			},
+			want: "    failure:  " + cgdomain.FailureCauseEnvironment.String() + ": go: module lookup disabled\n",
+		},
+		{
+			name:   "a generation predating the cause axis still shows its detail",
+			record: cgdomain.CallGraphRecord{FailureDetail: "no packages successfully loaded"},
+			want:   "    failure:  no packages successfully loaded\n",
+		},
+		{
+			name:   "a stated cause with no detail is not silent",
+			record: cgdomain.CallGraphRecord{FailureCause: cgdomain.FailureCauseModule},
+			want:   "    failure:  " + cgdomain.FailureCauseModule.String() + ": (no detail recorded)\n",
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			t.Parallel()
+			if got := historyFailure(tc.record); got != tc.want {
+				t.Errorf("historyFailure = %q, want %q", got, tc.want)
+			}
+		})
+	}
+}

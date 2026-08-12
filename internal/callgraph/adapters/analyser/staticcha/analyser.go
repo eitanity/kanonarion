@@ -15,7 +15,6 @@ import (
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
-	"golang.org/x/tools/go/callgraph/cha"
 	"golang.org/x/tools/go/packages"
 	"golang.org/x/tools/go/ssa"
 )
@@ -248,6 +247,30 @@ func (a *Analyser) AnalyseDir(ctx context.Context, dir string, coord coordinate.
 	return rec, nil
 }
 
+// TreeIdentity establishes which tree dir currently is without analysing it: the
+// root the analysis would run in, and a scan digest of the tree's contents.
+//
+// The digest is the SCANNED one — every .go file under the root plus go.mod and
+// go.sum — because that is the only kind computable before a load has happened.
+// It carries its own scheme prefix, and nothing compares it against the analysed
+// digest AnalyseDir stamps; see worktree.go for why the two are different claims.
+//
+// ctx is accepted so the signature does not have to change when a tree large
+// enough to want cancellation turns up; the walk itself is filesystem-bound and
+// short, and honouring cancellation halfway through would produce a digest of
+// part of a tree, which is worse than finishing.
+func (a *Analyser) TreeIdentity(_ context.Context, dir string) (domain.WorktreeIdentity, error) {
+	root, err := analysisRoot(dir)
+	if err != nil {
+		return domain.WorktreeIdentity{}, fmt.Errorf("locating working tree %s: %w", dir, err)
+	}
+	digest, err := worktreeDigest(root)
+	if err != nil {
+		return domain.WorktreeIdentity{}, fmt.Errorf("identifying working tree %s: %w", dir, err)
+	}
+	return domain.WorktreeIdentity{Root: root, ScanDigest: digest}, nil
+}
+
 // analysisRoot resolves dir to the absolute, symlink-free path the record states
 // it analysed.
 //
@@ -472,8 +495,17 @@ func (a *Analyser) analyseDir(
 	)
 
 	// Step 3: Call Graph Construction (CHA)
+	//
+	// The function set is computed once, here, and every later pass reads that
+	// same set. It is not an optimisation: the SSA library's own enumeration
+	// answers differently on successive calls to one unchanged program, so a
+	// pass that enumerates for itself analyses a different program from the one
+	// before it. See functionset.go.
 	a.logMem(ctx, "pre_cha")
-	cg := cha.CallGraph(prog)
+	funcs := closedFunctionSet(prog)
+	ordered := orderedFunctions(funcs)
+	a.logger.InfoContext(ctx, "callgraph_function_set_closed", slog.Int("function_count", len(ordered)))
+	cg := chaCallGraph(funcs)
 	a.logMem(ctx, "post_cha")
 
 	// Ensure GC can reclaim memory before starting walk
@@ -500,14 +532,14 @@ func (a *Analyser) analyseDir(
 	// implementer's body was never built into SSA (type-only dep / unbuilt
 	// package). Runs after body facts so those only scan built module bodies;
 	// devirtualized leaf targets carry no onward edges.
-	nodes, edges = a.devirtualizeSingleImplementer(ctx, prog, mem, fset, tempDir, nodes, edges)
+	nodes, edges = a.devirtualizeSingleImplementer(ctx, prog, ordered, mem, fset, tempDir, nodes, edges)
 
 	// Record the function values the code takes but does not call. A method
 	// registered with a router is passed, never called, so CHA sees nothing —
 	// and a handler an HTTP request drives on every hit ends up with no in-edge.
 	// Runs after devirtualisation so an edge a call already witnesses keeps the
 	// call's key rather than being recorded twice under two kinds.
-	nodes, edges = a.collectReferenceEdges(ctx, prog, mem, fset, tempDir, nodes, edges)
+	nodes, edges = a.collectReferenceEdges(ctx, prog, ordered, mem, fset, tempDir, nodes, edges)
 
 	// Record the type-level relation: which of the module's concrete types
 	// satisfy which of its interfaces. An interface method has no callers — calls
@@ -568,7 +600,6 @@ func (a *Analyser) analyseDir(
 	// says the loader named every in-module package itself; non-empty is the
 	// reconstruction, stated rather than hidden inside the membership answer.
 	rec.PrefixAttributedPackages = mem.prefixAttributed()
-	rec.Sort()
 	return rec, nil
 }
 

@@ -261,7 +261,7 @@ func TestRunCallGraphList_WithRecords(t *testing.T) {
 		{
 			ModulePath:      "example.com/app",
 			ModuleVersion:   "v1.0.0",
-			PipelineVersion: "0.2.0",
+			PipelineVersion: cgapp.PipelineVersion,
 			OverallStatus:   cgdomain.CallGraphStatusExtracted,
 			NodeCount:       5,
 			EdgeCount:       8,
@@ -296,7 +296,7 @@ func TestRunCallGraphList_NoMatchingPipelineVersion(t *testing.T) {
 func TestRunCallGraphList_WithModuleFilter(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
 	uc.SetList([]cgports.CallGraphSummary{
-		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: "0.2.0"},
+		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: cgapp.PipelineVersion},
 	})
 	var buf bytes.Buffer
 	err := runCallGraphList(context.Background(), "example.com/app", 20, 0, uc, &buf, io.Discard)
@@ -345,9 +345,9 @@ func TestRunCallers_GenuineZero(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
 	coord := coordinatetest.MustNew("example.com/app", "v1.0.0")
 	uc.SetList([]cgports.CallGraphSummary{
-		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: "0.2.0"},
+		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: cgapp.PipelineVersion},
 	})
-	uc.AddRecord(coord, "0.2.0", cgdomain.CallGraphRecord{
+	uc.AddRecord(coord, cgapp.PipelineVersion, cgdomain.CallGraphRecord{
 		Nodes: []cgdomain.CallNode{{ID: "example.com/app.Root"}},
 	})
 	var buf bytes.Buffer
@@ -365,9 +365,9 @@ func TestRunCallers_UnknownSymbolInAnalysedModule(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
 	coord := coordinatetest.MustNew("example.com/app", "v1.0.0")
 	uc.SetList([]cgports.CallGraphSummary{
-		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: "0.2.0"},
+		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: cgapp.PipelineVersion},
 	})
-	uc.AddRecord(coord, "0.2.0", cgdomain.CallGraphRecord{
+	uc.AddRecord(coord, cgapp.PipelineVersion, cgdomain.CallGraphRecord{
 		Nodes: []cgdomain.CallNode{{ID: "example.com/app.Real"}},
 	})
 	var buf bytes.Buffer
@@ -405,9 +405,9 @@ func TestRunCallees_GenuineZero(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
 	coord := coordinatetest.MustNew("example.com/app", "v1.0.0")
 	uc.SetList([]cgports.CallGraphSummary{
-		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: "0.2.0"},
+		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: cgapp.PipelineVersion},
 	})
-	uc.AddRecord(coord, "0.2.0", cgdomain.CallGraphRecord{
+	uc.AddRecord(coord, cgapp.PipelineVersion, cgdomain.CallGraphRecord{
 		Nodes: []cgdomain.CallNode{{ID: "example.com/app.Leaf"}},
 	})
 	var buf bytes.Buffer
@@ -425,9 +425,9 @@ func TestRunCallees_UnknownSymbolInAnalysedModule(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
 	coord := coordinatetest.MustNew("example.com/app", "v1.0.0")
 	uc.SetList([]cgports.CallGraphSummary{
-		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: "0.2.0"},
+		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: cgapp.PipelineVersion},
 	})
-	uc.AddRecord(coord, "0.2.0", cgdomain.CallGraphRecord{
+	uc.AddRecord(coord, cgapp.PipelineVersion, cgdomain.CallGraphRecord{
 		Nodes: []cgdomain.CallNode{{ID: "example.com/app.Real"}},
 	})
 	var buf bytes.Buffer
@@ -489,7 +489,16 @@ func TestRunCallersTransitive_DepthLimit(t *testing.T) {
 }
 
 func TestRunCallersTransitive_NoResults(t *testing.T) {
+	// A genuine zero: the symbol IS a node in a module served at this pipeline
+	// version, and the walk reaches nothing.
 	uc := testfakes.NewFakeQueryCallGraph()
+	coord := coordinatetest.MustNew("example.com/app", "v1.0.0")
+	uc.SetList([]cgports.CallGraphSummary{
+		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: cgapp.PipelineVersion},
+	})
+	uc.AddRecord(coord, cgapp.PipelineVersion, cgdomain.CallGraphRecord{
+		Nodes: []cgdomain.CallNode{{ID: "example.com/app.Main"}},
+	})
 	var buf bytes.Buffer
 	err := runCallersTransitive(context.Background(), "example.com/app.Main", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
 	if err != nil {
@@ -497,6 +506,22 @@ func TestRunCallersTransitive_NoResults(t *testing.T) {
 	}
 	if !strings.Contains(buf.String(), "No transitive callers found for example.com/app.Main") {
 		t.Errorf("expected empty message, got: %q", buf.String())
+	}
+}
+
+// TestRunCallersTransitive_NeverAnalysedIsAnError: a transitive walk over a store
+// that has never seen the symbol's module is emptied by the absence of a
+// measurement, and saying "no transitive callers" would report that as a fact
+// about the code. The single-hop query has always refused this; so does this one.
+func TestRunCallersTransitive_NeverAnalysedIsAnError(t *testing.T) {
+	uc := testfakes.NewFakeQueryCallGraph()
+	var buf bytes.Buffer
+	err := runCallersTransitive(context.Background(), "example.com/app.Main", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
+	if err == nil {
+		t.Fatalf("expected an error, got output: %q", buf.String())
+	}
+	if !strings.Contains(err.Error(), "has not been analysed") {
+		t.Errorf("expected the never-analysed diagnostic, got: %v", err)
 	}
 }
 
@@ -571,14 +596,39 @@ func TestRunCalleesTransitive_DepthLimit(t *testing.T) {
 }
 
 func TestRunCalleesTransitive_NoResults(t *testing.T) {
+	// A genuine zero: the symbol IS a node in a module served at this pipeline
+	// version, and the walk reaches nothing.
 	uc := testfakes.NewFakeQueryCallGraph()
+	coord := coordinatetest.MustNew("example.com/app", "v1.0.0")
+	uc.SetList([]cgports.CallGraphSummary{
+		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: cgapp.PipelineVersion},
+	})
+	uc.AddRecord(coord, cgapp.PipelineVersion, cgdomain.CallGraphRecord{
+		Nodes: []cgdomain.CallNode{{ID: "example.com/app.Main"}},
+	})
 	var buf bytes.Buffer
-	err := runCalleesTransitive(context.Background(), "fmt.Println", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
+	err := runCalleesTransitive(context.Background(), "example.com/app.Main", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	if !strings.Contains(buf.String(), "No transitive callees found for fmt.Println") {
+	if !strings.Contains(buf.String(), "No transitive callees found for example.com/app.Main") {
 		t.Errorf("expected empty message, got: %q", buf.String())
+	}
+}
+
+// TestRunCalleesTransitive_NeverAnalysedIsAnError: a transitive walk over a store
+// that has never seen the symbol's module is emptied by the absence of a
+// measurement, and saying "no transitive callees" would report that as a fact
+// about the code. The single-hop query has always refused this; so does this one.
+func TestRunCalleesTransitive_NeverAnalysedIsAnError(t *testing.T) {
+	uc := testfakes.NewFakeQueryCallGraph()
+	var buf bytes.Buffer
+	err := runCalleesTransitive(context.Background(), "example.com/app.Main", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
+	if err == nil {
+		t.Fatalf("expected an error, got output: %q", buf.String())
+	}
+	if !strings.Contains(err.Error(), "has not been analysed") {
+		t.Errorf("expected the never-analysed diagnostic, got: %v", err)
 	}
 }
 
@@ -807,10 +857,10 @@ func TestRunCallers_AnalysedButZeroEdges_IsNotError(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
 	coord := coordinatetest.MustNew("example.com/app", "v1.0.0")
 	uc.SetList([]cgports.CallGraphSummary{
-		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: "0.2.0"},
+		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: cgapp.PipelineVersion},
 	})
 	// Module is analysed and the symbol is a real node; it simply has no callers.
-	uc.AddRecord(coord, "0.2.0", cgdomain.CallGraphRecord{
+	uc.AddRecord(coord, cgapp.PipelineVersion, cgdomain.CallGraphRecord{
 		Nodes: []cgdomain.CallNode{{ID: "example.com/app/pkg.Orphan"}},
 	})
 	var buf bytes.Buffer
@@ -842,9 +892,9 @@ func TestRunCallers_GenuineZeroJSON_IsEmptyArrayNotNull(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
 	coord := coordinatetest.MustNew("example.com/app", "v1.0.0")
 	uc.SetList([]cgports.CallGraphSummary{
-		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: "0.2.0"},
+		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: cgapp.PipelineVersion},
 	})
-	uc.AddRecord(coord, "0.2.0", cgdomain.CallGraphRecord{
+	uc.AddRecord(coord, cgapp.PipelineVersion, cgdomain.CallGraphRecord{
 		Nodes: []cgdomain.CallNode{{ID: "example.com/app.Orphan"}},
 	})
 	var buf bytes.Buffer
@@ -888,9 +938,9 @@ func setupPartialStore(t *testing.T, callers []cgports.CallEdgeRef) *testfakes.F
 	uc := testfakes.NewFakeQueryCallGraph()
 	coord := coordinatetest.MustNew("example.com/app", "v1.0.0")
 	uc.SetList([]cgports.CallGraphSummary{
-		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: "0.2.0"},
+		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: cgapp.PipelineVersion},
 	})
-	uc.AddRecord(coord, "0.2.0", cgdomain.CallGraphRecord{
+	uc.AddRecord(coord, cgapp.PipelineVersion, cgdomain.CallGraphRecord{
 		OverallStatus:  cgdomain.CallGraphStatusPartial,
 		FailedPackages: []string{"example.com/app/broken"},
 		// The clean helper is a node; the broken package produced none.
@@ -902,47 +952,46 @@ func setupPartialStore(t *testing.T, callers []cgports.CallEdgeRef) *testfakes.F
 	return uc
 }
 
-func TestRunCallers_RootInFailedPackage_Unresolved(t *testing.T) {
-	// The query root lives in a package that did not typecheck, so its edges
-	// were dropped. A bare "no callers" would be a false negative; the command
-	// must downgrade to a directing unresolved error instead.
+// The query root lives in a package that did not typecheck, so its edges were
+// dropped. That is a gap in the analysis, not a property of the symbol, and it
+// is reported as one: the answer is served with the gap stated on it and its
+// verdict downgraded. It used to be a hard error, which suppressed the call
+// sites a consumer's own complete graph had recorded.
+func TestRunCallers_RootInFailedPackage_Unmeasured(t *testing.T) {
 	uc := setupPartialStore(t, nil)
 	var buf bytes.Buffer
-	err := runCallers(context.Background(), "example.com/app/broken.Broken", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
-	if err == nil {
-		t.Fatal("expected unresolved error for a root in a failed package, got nil")
+	if err := runCallers(context.Background(), "example.com/app/broken.Broken", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
+		t.Fatalf("a dropped-edge package was refused rather than reported: %v", err)
 	}
-	if !strings.Contains(err.Error(), "unresolved") ||
-		!strings.Contains(err.Error(), "example.com/app/broken") ||
-		!strings.Contains(err.Error(), "did not typecheck") {
-		t.Errorf("expected unresolved-partial diagnostic naming the package, got: %v", err)
+	out := buf.String()
+	if !strings.Contains(out, "example.com/app/broken") || !strings.Contains(out, "did not typecheck") {
+		t.Errorf("expected the dropped package named, got: %q", out)
 	}
-	if buf.Len() != 0 {
-		t.Errorf("expected no result output on unresolved, got: %q", buf.String())
+	if !strings.Contains(out, "verdict: UNRESOLVED") {
+		t.Errorf("expected the empty answer downgraded, got: %q", out)
 	}
 }
 
-func TestRunCallees_RootInFailedPackage_Unresolved(t *testing.T) {
+func TestRunCallees_RootInFailedPackage_Unmeasured(t *testing.T) {
 	uc := setupPartialStore(t, nil)
 	var buf bytes.Buffer
-	err := runCallees(context.Background(), "example.com/app/broken.Broken", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
-	if err == nil {
-		t.Fatal("expected unresolved error for a root in a failed package, got nil")
+	if err := runCallees(context.Background(), "example.com/app/broken.Broken", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
+		t.Fatalf("a dropped-edge package was refused rather than reported: %v", err)
 	}
-	if !strings.Contains(err.Error(), "unresolved") || !strings.Contains(err.Error(), "example.com/app/broken") {
-		t.Errorf("expected unresolved-partial diagnostic, got: %v", err)
+	if !strings.Contains(buf.String(), "example.com/app/broken") {
+		t.Errorf("expected the dropped package named, got: %q", buf.String())
 	}
 }
 
-func TestRunCallersTransitive_RootInFailedPackage_Unresolved(t *testing.T) {
+func TestRunCallersTransitive_RootInFailedPackage_Unmeasured(t *testing.T) {
 	uc := setupPartialStore(t, nil)
 	var buf bytes.Buffer
-	err := runCallersTransitive(context.Background(), "example.com/app/broken.Broken", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
-	if err == nil {
-		t.Fatal("expected unresolved error for a transitive root in a failed package, got nil")
+	if err := runCallersTransitive(context.Background(), "example.com/app/broken.Broken", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
+		t.Fatalf("a dropped-edge package was refused rather than reported: %v", err)
 	}
-	if !strings.Contains(err.Error(), "unresolved") || !strings.Contains(err.Error(), "transitive callers") {
-		t.Errorf("expected unresolved transitive diagnostic, got: %v", err)
+	out := buf.String()
+	if !strings.Contains(out, "transitive callers") || !strings.Contains(out, "example.com/app/broken") {
+		t.Errorf("expected the transitive answer to state its gap, got: %q", out)
 	}
 }
 
@@ -990,9 +1039,9 @@ func TestRunCallers_ExtractedGraph_NoCaveat(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
 	coord := coordinatetest.MustNew("example.com/app", "v1.0.0")
 	uc.SetList([]cgports.CallGraphSummary{
-		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: "0.2.0"},
+		{ModulePath: "example.com/app", ModuleVersion: "v1.0.0", PipelineVersion: cgapp.PipelineVersion},
 	})
-	uc.AddRecord(coord, "0.2.0", cgdomain.CallGraphRecord{
+	uc.AddRecord(coord, cgapp.PipelineVersion, cgdomain.CallGraphRecord{
 		OverallStatus: cgdomain.CallGraphStatusExtracted,
 		Nodes:         []cgdomain.CallNode{{ID: "example.com/app.Helper", Package: "example.com/app"}},
 	})

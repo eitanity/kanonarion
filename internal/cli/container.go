@@ -73,6 +73,7 @@ import (
 	licports "github.com/eitanity/kanonarion/internal/license/ports"
 
 	sbomcdx "github.com/eitanity/kanonarion/internal/sbom/adapters/generator/cyclonedx"
+	sbomorigin "github.com/eitanity/kanonarion/internal/sbom/adapters/origin/fetchfacts"
 	sbomstore "github.com/eitanity/kanonarion/internal/sbom/adapters/store/sqlite"
 	sbomvendortree "github.com/eitanity/kanonarion/internal/sbom/adapters/vendortree"
 	sbomapp "github.com/eitanity/kanonarion/internal/sbom/application"
@@ -548,19 +549,34 @@ func NewContainer(storeRoot, goproxy, goBinary string, skipVCSVerify bool, cfg d
 	diffScanRunsUC := vulnapp.NewDiffScanRunsUseCase(vulnStore)
 
 	// ---- sbom use cases ----
-	// 0.7.0 drops the vulnerability list and its scope annotation, adds the
-	// licence-completeness annotation and the metadata properties stating what
-	// the document's timestamp is derived from. The document bytes change on
-	// every one of those, so a 0.6.0 record must not be served for a 0.7.0
-	// request. The version bump is the whole migration: SBOM records are a cache
-	// keyed on it, so every stored document of the previous shape simply stops
-	// being reachable and is regenerated on demand.
-	const sbomPipelineVersion = "0.7.0"
+	// The version bump is the whole migration every time. SBOM records are a
+	// cache keyed on it, so every stored document of a previous shape simply
+	// stops being reachable and is regenerated on demand.
+	//
+	// 0.9.0 changes two things about the document's assertions. A component's
+	// external references are now built only from what the fetch ledger
+	// recorded — the repository the module zip was cross-verified against —
+	// instead of being assembled from the module path, so a 0.8.0 document
+	// carries a VCS URL that may name no repository and a proxy download URL
+	// for bytes the proxy may never have served. And the subject's --main-version
+	// and --main-license stamp now reaches the subject's own entry in the
+	// component list, so a stamped 0.8.0 document describes one module twice at
+	// two versions with the licence on only one of them. Neither shape may be
+	// served for a 0.9.0 request.
+	//
+	// The preceding bump, for the record: 0.8.0 derived the stdlib component's
+	// anchor_limitation property from the verification status the measurement
+	// reached, instead of stating one fixed sentence naming the go.dev/dl
+	// checksum and the googlesource commit.
+	const sbomPipelineVersion = "0.9.0"
 	generateSBOMUC := sbomapp.NewGenerateSBOMUseCase(
 		walkStore, licStore, sbomStore,
 		sbomcdx.New(sbomPipelineVersion),
 		clk, sbomPipelineVersion, licapp.PipelineVersion, logger,
 	).WithVendorTree(sbomvendortree.New(venlocalfs.New(nil))).
+		// What a component's external references may assert. Without it a
+		// document states no origin for anything rather than guessing one.
+		WithModuleOrigins(sbomorigin.New(factStore)).
 		// The SBOM is the artefact that leaves the building, so both producing one
 		// and handing a stored one back are appended to the assurance log.
 		WithAudit(factStore)

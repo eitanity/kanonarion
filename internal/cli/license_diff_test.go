@@ -61,8 +61,13 @@ func TestPrintLicenseDiff_NoChanges(t *testing.T) {
 		t.Fatalf("printLicenseDiff: %v", err)
 	}
 	got := buf.String()
-	if !strings.Contains(got, "No license changes") {
-		t.Errorf("expected 'No license changes' in output, got: %q", got)
+	// The no-change line names the population it was measured over: two records
+	// that agree and two records with nothing in them to disagree about would
+	// otherwise print the same sentence.
+	for _, want := range []string{"No license changes", "both sides declare MIT", "license file", "copyright statement"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("expected %q in the no-change output, got: %q", want, got)
+		}
 	}
 	if strings.Contains(got, "ESCALATION") {
 		t.Errorf("unexpected ESCALATION in no-change output")

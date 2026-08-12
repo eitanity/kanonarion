@@ -1,7 +1,6 @@
 package domain
 
 import (
-	"sort"
 	"strings"
 	"time"
 
@@ -553,6 +552,33 @@ type CallGraphRecord struct {
 	// provenance, and two different trees at one path (a branch switch, a
 	// rebuild) would share it while two copies of one tree would not.
 	WorktreeDigest string
+	// WorktreeScanDigest identifies the tree a worktree analysis was ASKED to
+	// analyse, taken before the analysis ran, by scanning every .go file under the
+	// root plus go.mod and go.sum. Empty for every other source, and on worktree
+	// records written before the field existed.
+	//
+	// It exists because WorktreeDigest cannot be computed without doing the work.
+	// That digest covers the files the loader resolved, so it is only knowable
+	// once the load has happened — which makes it a perfect identity of what was
+	// analysed and useless as a key for deciding whether to analyse at all. This
+	// one is computable from the tree alone, in the time a directory walk takes,
+	// so a run can ask "is this the tree the record I hold was computed from?"
+	// before spending the analysis.
+	//
+	// The two are not comparable and nothing compares them: they carry different
+	// scheme prefixes for that reason. This one is wrong in both directions as a
+	// description of what was ANALYSED — it covers files the loader ignores, and
+	// misses source the loader follows out of the tree through a symlink — and it
+	// is never used to make a claim about the graph. It is used only to decide
+	// whether two runs were handed the same tree, where being wrong in the first
+	// direction costs a re-analysis and nothing else.
+	//
+	// It is taken BEFORE the analysis rather than after, deliberately. A tree
+	// edited while an analysis is running produces a graph of neither state; a
+	// digest of the tree as it was at the start then differs from what the next
+	// run scans, and that run re-derives. Stamping the end state instead would let
+	// the next run reuse a graph that was taken of a tree that never existed.
+	WorktreeScanDigest string
 	// AnalysisRoot is the absolute, symlink-free directory a worktree analysis
 	// ran in. Empty for every other source, and on worktree records written
 	// before the field existed.
@@ -614,48 +640,6 @@ type CallGraphRecord struct {
 	// "none happened". Nothing may infer from an empty list that a record's
 	// membership was measured.
 	PrefixAttributedPackages []string
-}
-
-// Sort puts all collections into a canonical, deterministic order.
-// Must be called before hashing.
-func (r *CallGraphRecord) Sort() {
-	sort.Strings(r.ExclusionList)
-	sort.Strings(r.FailedPackages)
-	sort.Strings(r.PrefixAttributedPackages)
-	sort.Slice(r.Nodes, func(i, j int) bool {
-		return r.Nodes[i].ID < r.Nodes[j].ID
-	})
-	sort.Slice(r.Edges, func(i, j int) bool {
-		if r.Edges[i].FromID != r.Edges[j].FromID {
-			return r.Edges[i].FromID < r.Edges[j].FromID
-		}
-		if r.Edges[i].ToID != r.Edges[j].ToID {
-			return r.Edges[i].ToID < r.Edges[j].ToID
-		}
-		if r.Edges[i].CallSite.File != r.Edges[j].CallSite.File {
-			return r.Edges[i].CallSite.File < r.Edges[j].CallSite.File
-		}
-		if r.Edges[i].CallSite.Line != r.Edges[j].CallSite.Line {
-			return r.Edges[i].CallSite.Line < r.Edges[j].CallSite.Line
-		}
-		return r.Edges[i].Kind < r.Edges[j].Kind
-	})
-	sort.Slice(r.Interfaces, func(i, j int) bool {
-		return r.Interfaces[i].ID < r.Interfaces[j].ID
-	})
-	for i := range r.Interfaces {
-		sort.Strings(r.Interfaces[i].Methods)
-	}
-	sort.Slice(r.Implementations, func(i, j int) bool {
-		if r.Implementations[i].InterfaceID != r.Implementations[j].InterfaceID {
-			return r.Implementations[i].InterfaceID < r.Implementations[j].InterfaceID
-		}
-		return r.Implementations[i].TypeID < r.Implementations[j].TypeID
-	})
-	for i := range r.Implementations {
-		ms := r.Implementations[i].Methods
-		sort.Slice(ms, func(a, b int) bool { return ms[a].Method < ms[b].Method })
-	}
 }
 
 // ImplementersOf returns the implementations of interfaceID recorded in rec,

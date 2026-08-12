@@ -158,6 +158,7 @@ github.com/gin-gonic/gin@v1.6.2 - Affected
   GO-2020-0001 (CVE-2020-28483): HTTP request smuggling
       affected: < v1.7.7
       fix:      fixed in v1.7.7
+      fix refs: https://github.com/gin-gonic/gin/pull/2237, https://github.com/gin-gonic/gin/commit/a71af9c144f9579f6dbe945341c1df37aaf09c0d
 ```
 
 ---
@@ -262,10 +263,31 @@ findings, roll-ups, exit code and `--json` document are the ones **that run**
 produced, rebuilt from the records it wrote.
 
 A stored run is served only when the walk, the advisory snapshot (source,
-version, retrieval time and seal) and the scan pipeline version all match, **and**
-the stored run's coverage is complete — a partial or failed run is never served.
-`--force` re-measures. `--fresh` refreshes the advisory database and re-measures
+version and seal) and the scan pipeline version all match, **and** the stored
+run's coverage is complete — a partial or failed run is never served. The
+snapshot's retrieval time is not compared: two downloads of one generation with
+one seal are one advisory database. `--force` re-measures. `--fresh` refreshes the advisory database and re-measures
 only when the refresh changes an advisory listed for a module in this walk.
+
+For a walk of a project, one further condition applies: the project directory
+must still require the module versions the walk resolved. A stored run of a
+project walk is an analysis of that directory, so once the directory has moved it
+is not served, and the command re-derives — reaching the metadata-only
+degradation described under "no longer builds the walk" below. The answer to a
+diverged directory is therefore the same whether or not a stored run exists,
+which is the point: it does not depend on what the store happens to hold. The
+comparison is one `go.mod` read (measured at 0.2–0.3 ms on manifests of 130–260
+require lines), and an agreeing directory still reuses.
+
+Two `--force` runs of one walk against one advisory snapshot write two records
+per module and both say the same thing. The lists inside a record — the findings,
+and a finding's affected symbols, aliases, references and reachability routes —
+are written in one fixed order, so the only fields that move between the two are
+`scanned_at` and the `content_hash` that covers it. A record written before this
+was fixed may list the same values in a different order; it is the same
+measurement, and `vuln-show --history` shows both generations rather than
+treating the rearranged one as a change. The hops WITHIN one reachability route
+are never reordered — a route is a call stack, printed entry point first.
 
 **Refreshing the advisory database (`--fresh`)**
 
@@ -414,6 +436,28 @@ coverage that route leaves — the standard library metadata-only, plus any modu
 whose isolated build re-resolves a version the project never selected — so its
 coverage is `Partial` and it exits non-zero. Re-run it from the checkout
 (`--gomod`) or re-walk to record the current directory.
+
+**If the directory is still there but no longer builds the walk, the run records
+no reachability.** Before attributing an analysis of the directory to the walk's
+coordinates — and before serving a stored run of it — the scan compares the
+directory's `go.mod` requirements against the versions the walk resolved. If any module both name is required at a different
+version, that directory is a different build and its analysis is not evidence
+about this walk, so the run does not analyse it. It still matches every
+coordinate against the advisory database — you keep the "this walk is pinned to a
+vulnerable version" answer, at the versions the walk pinned — and records **no
+reachability verdict at all**: those findings carry no reachable/not-reachable
+answer, the module's coverage is `Unscannable` with reason
+`project-build-diverged`, and the reason names the directory and every module
+version the two disagree on (`path walked -> required`). The run's coverage is
+therefore `Partial` and it exits non-zero.
+
+A module the directory requires and the walk does not carry is not a divergence
+(that is a narrower walk of the same tree). A module the walk carries that the
+`go.mod` does not require is not compared; in a pruned module (`go >= 1.17`)
+those are the modules contributing no imported package.
+
+The remedy is one command: `kanonarion walk --gomod <project-dir>/go.mod` records
+the current resolution, and scanning that walk gives a reachability answer again.
 
 **Flags:**
 
@@ -650,6 +694,13 @@ on the line it is rendered on, and `--json` gains an `inputs_unresolvable` field
 Walk ID:     01KQDBVW092ER1HNXZ60X27CMD (inputs unresolvable: walk absent from this store)
 ```
 
+The text form lists finding ids per module and publishes no reachability
+verdict. `--json` does: each finding carries `reachable`, and beside it the
+derived `soundness` and `soundness_reason` that say how thorough the search
+behind a negative was. See
+[reachability](reachability.md#a-negative-states-how-sound-the-search-behind-it-was)
+for the rungs.
+
 A run id that is not there exits `4` and the message says how many runs were
 searched, so a mistyped id over a stocked store cannot be read as an unscanned
 one. The corpus is every run in the store: a run id is not keyed on a walk, so
@@ -703,6 +754,23 @@ refused too (exit 4), naming the frames its records were measured in. It never
 answers from a neighbouring frame, and the walk named in the answer is always
 the walk you pinned.
 
+A coordinate the store holds **only at a superseded pipeline version** is
+refused with its own message (exit 4), naming each generation held and how many
+records and findings sit in it:
+
+```
+$ kanonarion vuln-show golang.org/x/crypto@v0.31.0
+error: no vulnerability record for golang.org/x/crypto@v0.31.0 that this build serves: it reads pipeline v20 and the store holds this coordinate at pipeline v19 (16 record(s), 252 finding(s)). A superseded record is not served, so this answer is empty for want of a scan at this generation — the module has been vuln-scanned, and this is a stale cache, not a coverage gap. Re-scan it:
+  kanonarion vuln-scan --module golang.org/x/crypto@v0.31.0 --reachability
+```
+
+This is a different statement from `no vulnerability record for <coord> — run:
+kanonarion vuln-scan <walk-id>`, which means the store holds the coordinate at
+no pipeline version at all. A pipeline bump darkens every record written before
+it until a re-scan, so after one the first message is the ordinary answer and
+the second is the exception. `--history` refuses the same way, for the same
+reason: it lists one generation's scan records, not every generation's.
+
 That selection is not "newest wins", and the difference is load-bearing. An
 isolated scan builds the module as its own main module, so it records call-graph
 completeness `BUILT_WITH_BODIES`; an analysis rooted at a consuming project
@@ -718,8 +786,17 @@ is itself information:
 
 ```
   Isolated frame (a different question — the module built alone, not the build that consumes it), scanned 2026-07-31T17:49:28Z:
-    GO-2025-3553: not_reachable [confidence: High, by: govulncheck]
+    GO-2025-3553: not_reachable [confidence: High, soundness: inferred, by: govulncheck]
 ```
+
+Every negative carries the rung behind it on both surfaces. In text it is
+appended to the finding's label — `[not reachable — inferred]`. In `--json` each
+finding carries `soundness` and `soundness_reason` beside `reachable`; the same
+two keys appear on `--history`, on `vuln-by-id --json` and on
+`vuln-scan-show --json`, so an answer can be compared across surfaces. Both are
+derived at read time from the analyser the stored answer names and that
+analyser's own fidelity — nothing is stored, and no record's content hash
+changes.
 
 `Analysis frame:` on the record itself always names the frame the served answer
 was reached in. The same selection backs the `vulnerabilities` section of
@@ -749,6 +826,29 @@ version bump fix it?* and *which symbol is at risk?* - directly in the output:
 | `affected:` | The version range the advisory applies to (e.g. `>= v1.7.3`) |
 | `fix:` | `fixed in <version>` when a patch exists, or **`no fix available`** when none does - the no-fix state is rendered explicitly, never left blank |
 | `symbols:` | The at-risk symbols named by the advisory, surfaced even for metadata-only (Unscannable) modules where reachability could not be computed |
+| `fix refs:` | The advisory's own `FIX` links - the commit or CL that remediates the vulnerability. Printed only when the advisory publishes one |
+
+**Advisory references**
+
+A finding carries every reference the advisory publishes, as a `{type, url}`
+pair: `ADVISORY`, `WEB`, `FIX`, `REPORT`, `ARTICLE` and any other type the
+upstream document uses. The type is kept because it is what separates a `FIX`
+commit - remediation you can apply - from a page that merely discusses the
+vulnerability.
+
+The text output prints only the `FIX` links, on the `fix refs:` line. `--json`
+emits the whole list under `references` on each finding.
+
+An **empty** `references` list means no advisory was read for that finding, not
+that the advisory publishes none. Two circumstances produce it:
+
+- the advisory fetch failed and the finding degraded to its bare ID and fixed
+  version (the run logs `advisory enrichment failed`);
+- the scan stream carried findings for an advisory whose own advisory message
+  never arrived.
+
+Records written before references were recorded also carry none; they answer at
+an older pipeline version and are replaced by a re-scan.
 
 **Examples:**
 
@@ -824,6 +924,7 @@ field with a machine-readable cause code alongside the human-readable `unscannab
 | `no-go-mod` | Fetched module zip does not contain a `go.mod` file and none could be synthesised — a property of the published artefact |
 | `project-no-go-mod` | The project directory supplied for a project-rooted scan contains no `go.mod`, so there is no main module to root the analysis at — an operator-side input fault, not a property of any artefact |
 | `project-dir-unavailable` | The project directory supplied for a project-rooted scan could not be stat'ed (missing or unreadable) — an operator-side input fault; the scan never got far enough to check for a `go.mod` |
+| `project-build-diverged` | The project directory the walk was taken from is still readable but requires different versions of modules the walk resolved, so no analysis of it was attributed to this walk. Advisories were matched by coordinate against the versions the walk pinned; reachability was not established. `unscannable_reason` names the directory and each disagreement as `path walked -> required` |
 | `local-replace` | Node is a local filesystem replacement (a `replace` pointing at a working-tree path), not a fetched version, so there is no fetched source to scan; `unscannable_reason` retains the local path |
 
 On the **coordinate-keyed path** (`--module`, and a positional walk-id whose walk
@@ -983,6 +1084,14 @@ requires the call-graph that source analysis would have produced. An empty
 `fixed_in` on an enriched finding is the actionable "no fix exists yet" state,
 not missing data.
 
+An analysed record shows the same advisory fields. Where source analysis and
+coordinate matching both report one advisory, the finding carries the
+`affected_symbols` the analysis saw and its `reachable` answer, plus the
+advisory's `affected_range` and `references` — one shape, whichever route
+reached it. Records scanned by an earlier build may show `affected_range` empty
+on an analysed finding; `fixed_in` on those records still states the remedy, and
+a re-scan fills the range.
+
 Coordinate matching on this path evaluates the advisory's **full multi-range
 affected set**, not the single collapsed fixed version from the database's
 `index/modules.json`. That coarse index lists one (highest) fixed version per
@@ -1042,12 +1151,24 @@ never found, not a state a finding may decay into without a stated reason. Each
 row carries the snapshot and scan time it came from, so a stale answer is
 visible as one. Use `vuln-show --history` to see every generation.
 
+**Every row names the pipeline version that produced it**, marked
+`[superseded]` when it is not the version this build serves. Those rows are
+served — they are the newest evidence the store holds for those coordinates —
+but `vuln-show` and `reachability` will not answer from them, so a row marked
+this way is not what a current scan would say. A `notice:` under the listing
+counts them. `--json` needs no marking: it emits the record, `pipeline_version`
+and all.
+
 **Example:**
 
 ```
 $ kanonarion vuln-by-id GO-2020-0001
-github.com/gin-gonic/gin@v1.6.2       Affected     vuln-db=2026-07-24T18:35:55Z   scanned=2026-07-26T06:37:10Z
-github.com/gin-gonic/gin@v1.7.0       Affected     vuln-db=2026-07-23T18:46:07Z   scanned=2026-07-24T11:07:36Z
+github.com/gin-gonic/gin@v1.6.2       Affected     vuln-db=2026-07-24T18:35:55Z   scanned=2026-07-26T06:37:10Z   pipeline=v20
+github.com/gin-gonic/gin@v1.7.0       Affected     vuln-db=2026-07-23T18:46:07Z   scanned=2026-07-24T11:07:36Z   pipeline=v19 [superseded]
+
+notice: 1 of 2 row(s) were produced by superseded scan logic (this build reads pipeline v20).
+        They are the newest evidence the store holds for those coordinates, and they are not
+        what a current scan would answer. Re-scan a coordinate to replace one.
 
 $ kanonarion vuln-by-id CVE-2020-28483
 github.com/gin-gonic/gin@v1.6.2       Affected     vuln-db=2026-07-24T18:35:55Z   scanned=2026-07-26T06:37:10Z
@@ -1056,6 +1177,11 @@ $ kanonarion vuln-by-id GO-2020-0001 --walk-id 01KQDBVW092ER1HNXZ60X27CMD
 notice: results restricted to the modules scanned under walk "01KQDBVW092ER1HNXZ60X27CMD"
 github.com/gin-gonic/gin@v1.7.0       Affected     vuln-db=2026-07-23T18:46:07Z   scanned=2026-07-24T11:07:36Z
 ```
+
+The text rows carry a status, not a reachability verdict. `--json` emits the
+whole record for each row, so it does carry one — and with it the derived
+`soundness` and `soundness_reason` on every finding, which is the only place
+this command's answer states how thorough the search behind a negative was.
 
 ---
 

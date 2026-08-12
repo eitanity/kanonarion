@@ -64,10 +64,23 @@ inference when either rule fires:
   module) attributes copyright to more than one distinct holder. A project that
   has always lived at one path normally carries one.
 - **`holder_matches_other_module_path`** - a copyright holder's name names the
-  owner of a *different* module path the store holds, **and** the two module
-  names overlap. Both conditions are required: the owner match alone fires on
-  every module a large copyright holder appears in, and the name overlap alone
-  fires on any unrelated project sharing a word.
+  owner of a *different* module path this store knows of. The other path comes
+  from one of two places, and the rule reads them differently:
+  - **the licence ledger** - any module the store holds a licence record for.
+    Here the two module names must also overlap: the owner match alone fires on
+    every module a large copyright holder appears in, and the name overlap alone
+    fires on any unrelated project sharing a word.
+  - **a `go.mod` replace directive** recorded in a walk - the module the
+    subject replaces. No name comparison is applied: the directive already says
+    the two modules stand in for each other, and a fork is free to rename
+    itself. This is what catches the commonest fork shape, a republication that
+    keeps the upstream copyright line and adds none of its own - a single
+    holder, which the `multiple_copyright_holders` rule can never see, at a path
+    whose upstream may never have been licence-analysed here.
+
+  Replace directives are read from the 50 most recent walks. Where the store
+  holds more, or where the walks could not be read, a `none` answer states what
+  it did not cover rather than presenting a bounded search as an exhausted one.
 
 Every indicator **quotes the copyright lines it rests on** as `evidence`, so
 the reader being asked to verify has something to verify against. An unfilled
@@ -77,6 +90,31 @@ counts as a holder.
 This signal needs a stored licence record. A module without one reports
 `not_analysed` with the reason and the command that produces one - never
 `none`, which would assert a negative nothing measured.
+
+### Which record answers
+
+With `@<version>` the record is that coordinate's, and nothing is chosen.
+
+Without one, the answer comes from the record for the **newest version** the
+store holds - not the most recently extracted one, which is a fact about when
+this store was busy and moves the stated basis whenever an unrelated walk lands.
+Where the store holds records for more than one version, the output says so, out
+of which versions, and how to pin one:
+
+```
+notice: no version was named and the store holds licence records for 3 versions of github.com/golang-jwt/jwt/v4 (v4.5.2, v4.5.1, v4.5.0), so one was chosen: github.com/golang-jwt/jwt/v4@v4.5.2, the newest version; pin one with: kanonarion provenance github.com/golang-jwt/jwt/v4@<version>
+```
+
+Where the candidate versions **disagree** about the copyright signal, the
+disagreement is reported instead of being resolved by picking:
+
+```
+notice: no version was named and the store holds licence records for 2 versions of github.com/minio/md5-simd whose copyright signals disagree (v1.1.2 none; v1.1.0 republication) - the answer below is github.com/minio/md5-simd@v1.1.2, the newest version; pin one with: kanonarion provenance github.com/minio/md5-simd@<version>
+```
+
+Only versions that produced a signal are compared. A record carrying no
+copyright lines measured nothing, and its silence is not the opposite answer; it
+is still listed among the candidates when a real disagreement is reported.
 
 **Base rate.** Measured over a working store of 2,454 licence records, 219
 (8.9%) name two or more distinct copyright holders. This is an indicator to
@@ -117,6 +155,10 @@ example.com/some/app
 {
   "module": "github.com/someuser/cobra",
   "version": "v1.0.0",
+  "selection": {
+    "rule": "pinned",
+    "basis": "github.com/someuser/cobra@v1.0.0"
+  },
   "fork_heuristic": {
     "status": "path_match",
     "catalogue_version": "1.0.0",
@@ -151,6 +193,18 @@ example.com/some/app
 | `none` | The licence record's copyright lines were read; neither rule fired. |
 | `not_analysed` | No licence record was read - absent, unreadable, or carrying no copyright lines. `detail` says which, and names the remedy. Never a negative result. |
 
+`copyright_signal.coverage` is present only when the search behind the answer
+was bounded - no walk store, walks that could not be listed, or more walks than
+the replace-directive search reads.
+
+| `selection` field | Meaning |
+|---|---|
+| `rule` | `pinned` when the caller named the version, `newest_version` otherwise. |
+| `basis` | The coordinate whose licence record answered. Always the same as `copyright_signal.source` when a record was read. |
+| `candidates` | The versions the store holds records for, newest first. Absent for a pinned read, which chose nothing. |
+| `disagreement` | One `"<version> <status>"` entry per candidate, present only when the candidates that produced a signal do not agree. |
+| `statement` | The human-readable notice, absent when nothing was chosen. |
+
 | `status` | Meaning |
 |---|---|
 | `path_match` | The path shares a trailing name element with one or more catalogued canonicals under a different owner/host. `fork_indicators` is non-empty, sorted by canonical path. |
@@ -167,8 +221,8 @@ example.com/some/app
 ## Examples
 
 ```bash
-# Bare module path: the copyright signal uses the newest licence record
-# the store holds for that path, and names the version it used.
+# Bare module path: the copyright signal reads the record for the newest
+# version the store holds, names it, and says a choice was made.
 kanonarion provenance github.com/someuser/cobra
 
 # Pin the record the evidence comes from

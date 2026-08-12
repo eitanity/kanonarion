@@ -80,10 +80,10 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 	// the build it pinned to — so without this line the pin is invisible, and an
 	// invisible pin to a walk taken before the last go.mod edit reads as a
 	// statement about the tree in front of the reader.
-	if projectWalk, gomodPath, werr := latestWalkForGoMod(ctx, ctr.QueryWalks, f.gomodPath); werr == nil {
-		vulnBatch.anchorTo(ctx, projectWalk.ID)
-		_, _ = fmt.Fprintf(stderr, "notice: vulnerability verdicts read in walk %q (frame %s)%s\n",
-			projectWalk.ID, projectWalk.BuildFrame(), manifestStalenessNote(gomodPath))
+	if choice, werr := latestWalkForGoMod(ctx, ctr.QueryWalks, f.gomodPath); werr == nil {
+		vulnBatch.anchorTo(ctx, choice.summary.ID)
+		_, _ = fmt.Fprintf(stderr, "notice: vulnerability verdicts read in walk %q (frame %s)%s%s\n",
+			choice.summary.ID, choice.summary.BuildFrame(), choice.stalenessNote(), choice.statementClause())
 	}
 
 	compact := f.compact && !f.full
@@ -109,6 +109,10 @@ func runContextGoMod(ctx context.Context, f contextFlags, scope depScope, stdout
 		vulns := buildVulnerabilitiesFromBatch(ctx, coord, ctr.QueryVuln, vulnBatch)
 		var cmdWalkID string
 		if vulns.Status == sectionStatusNotRun {
+			// The id only fills in a suggested `vuln-scan <walk-id>` command line,
+			// exactly as in the single-coordinate path; no answer is read from this
+			// walk, so no selection rule applies to it. See the same lookup in
+			// runContext for why.
 			if walks, werr := ctr.QueryWalks.ListWalks(ctx, walkports.WalkFilter{Target: &coord, Limit: 1}); werr == nil && len(walks) > 0 {
 				cmdWalkID = walks[0].ID
 			}

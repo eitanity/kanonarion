@@ -11,6 +11,7 @@ import (
 	"github.com/spf13/cobra"
 
 	fetchdomain "github.com/eitanity/kanonarion/internal/fetch/domain"
+	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 )
 
@@ -94,6 +95,11 @@ const (
 	sectionStatusNotFetched = "not_fetched" // verification: module not yet fetched
 	sectionStatusNotRun     = "not_run"     // extraction pipeline has not run for this section
 	sectionStatusReadError  = "read_error"  // store returned an error when reading the record
+	// sectionStatusSuperseded: a record exists for this coordinate, but every
+	// stored generation was produced by superseded pipeline logic, so this
+	// build serves none of them. Distinct from not_run: the work was done and
+	// must be done again, which is a different instruction to the reader.
+	sectionStatusSuperseded = "superseded"
 )
 
 // Fork-heuristic status strings, mirrored from the domain status names so the
@@ -174,9 +180,14 @@ type contextLicense struct {
 type contextPackage struct {
 	ImportPath string   `json:"import_path"`
 	Types      []string `json:"types,omitempty"`
-	Funcs      []string `json:"funcs,omitempty"`
-	Consts     []string `json:"consts,omitempty"`
-	Vars       []string `json:"vars,omitempty"`
+	// Methods are the methods declared on those types. A struct's type
+	// signature names its fields and nothing else, so without these the
+	// section describes a package as having no methods at all — and the
+	// symbol count beside it would say so too.
+	Methods []string `json:"methods,omitempty"`
+	Funcs   []string `json:"funcs,omitempty"`
+	Consts  []string `json:"consts,omitempty"`
+	Vars    []string `json:"vars,omitempty"`
 }
 
 type contextInterface struct {
@@ -227,6 +238,17 @@ type contextCVE struct {
 	// the upstream summary, which is what the field exists to stop being the signal.
 	WithdrawnAt string `json:"withdrawn_at,omitempty"`
 	Reachable   *bool  `json:"reachable,omitempty"`
+	// Soundness states how thorough the search behind a NEGATIVE reachability
+	// answer was, and SoundnessReason names the basis for that rung in the
+	// producing analyser's own terms. Both are derived from the served record by
+	// vuldomain.NegativeSoundness; neither is stored.
+	//
+	// Soundness is emitted on every finding and never omitted. On a positive, and
+	// on a finding carrying no reachability answer at all, it reads "not stated" —
+	// there is no absence to qualify — and that is a different statement from the
+	// key being missing, which says the producer does not derive the rung.
+	Soundness       vuldomain.ReachabilitySoundness `json:"soundness"`
+	SoundnessReason string                          `json:"soundness_reason,omitempty"`
 }
 
 type contextVulnerabilities struct {
@@ -391,8 +413,16 @@ func runContext(ctx context.Context, arg string, f contextFlags, stdout, stderr 
 	vulns := buildVulnerabilitiesFromBatch(ctx, coord, ctr.QueryVuln, vulnBatch)
 	var cmdWalkID string
 	if vulns.Status == sectionStatusNotRun {
-		// No scan result found; surface the most recent walk so the agent can
-		// run vuln-scan <walk-id> directly.
+		// No scan result found; surface a walk so the agent can run
+		// vuln-scan <walk-id> directly.
+		//
+		// This is the one walk lookup in the command that is not a frame choice
+		// and does not run the default selection rule. Nothing is read out of the
+		// walk: its id is substituted into a suggested command line, and the
+		// suggestion is to go and MEASURE the coordinate, not to report anything
+		// about it. Any walk of this target makes that command runnable, so the
+		// cheapest one does, and if the reader wants a different frame scanned
+		// they name it on the vuln-scan they are being pointed at.
 		if walks, err := ctr.QueryWalks.ListWalks(ctx, walkports.WalkFilter{Target: &coord, Limit: 1}); err == nil && len(walks) > 0 {
 			cmdWalkID = walks[0].ID
 		}

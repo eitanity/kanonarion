@@ -196,7 +196,7 @@ func printLocalReachabilityText(w *errWriter, r *reachabilityOutput) {
 	for _, m := range r.Modules {
 		w.printf("    %s@%s\n", m.Path, m.Version)
 		for _, f := range m.Findings {
-			w.printf("      %s  %s\n", f.CVEID, f.Verdict)
+			w.printf("      %s  %s\n", f.CVEID, localVerdictLabel(f))
 		}
 	}
 }

@@ -147,12 +147,15 @@ var allowedResultMethods = map[string][]string{
 	// behaviour one: it reads the version string the coordinate already holds
 	// and reports how the module system resolves it, exactly as
 	// IsPseudoVersion and IsLocal do. Nothing is measured, fetched or hashed.
-	"ModuleCoordinate":    {"ExtractCommitPrefix", "GitTagVersion", "HasVersion", "IsLocal", "IsPreModulesIncompatible", "IsPseudoVersion", "IsZero", "MarshalJSON", "MarshalText", "Path", "String", "UnmarshalJSON", "UnmarshalText", "Version"},
-	"FactRecord":          {"Coordinate", "IsGoModOnly"},
-	"WalkRecord":          {},
-	"LicenseRecord":       {"SortFiles"},
-	"InterfaceRecord":     {"Sort"},
-	"CallGraphRecord":     {"Sort"},
+	"ModuleCoordinate": {"ExtractCommitPrefix", "GitTagVersion", "HasVersion", "IsLocal", "IsPreModulesIncompatible", "IsPseudoVersion", "IsZero", "MarshalJSON", "MarshalText", "Path", "String", "UnmarshalJSON", "UnmarshalText", "Version"},
+	"FactRecord":       {"Coordinate", "IsGoModOnly"},
+	"WalkRecord":       {},
+	"LicenseRecord":    {"SortFiles"},
+	"InterfaceRecord":  {"Sort"},
+	// CallGraphRecord has no Sort: the canonical order lives in the marshalling
+	// the content hash is taken over, so there is no ordering step a caller can
+	// skip and no mutator on a value documented immutable once sealed.
+	"CallGraphRecord":     {},
 	"ExampleRecord":       {"SortExamples"},
 	"ExtractionRun":       {"MarshalJSON", "UnmarshalJSON"},
 	"VulnerabilityRecord": {"UnmarshalJSON"},

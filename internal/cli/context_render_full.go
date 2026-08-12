@@ -4,6 +4,8 @@ import (
 	"io"
 	"sort"
 	"strings"
+
+	vuldomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 )
 
 func printContextFull(out contextOutput, stdout io.Writer) error {
@@ -64,7 +66,7 @@ func printFullProvenance(w *errWriter, p contextProvenance) {
 func printFullDependencies(w *errWriter, d contextDependencies, mod string) {
 	switch d.Status {
 	case sectionStatusNotRun:
-		w.printf("(not run — run: kanonarion walk %s)\n", mod)
+		w.printf("(not run — run: %s)\n", walkInvocationForRendered(mod))
 	case sectionStatusReadError:
 		w.printf("(failed: %s)\n", d.Error)
 	default:
@@ -316,5 +318,11 @@ func printFullCVE(w *errWriter, cve contextCVE) {
 	}
 	if cve.Reachable != nil {
 		w.printf("    Reachable: %v\n", *cve.Reachable)
+	}
+	// The rung rides under the verdict it qualifies. It is printed only where
+	// there is one: a positive and an unanswered finding both state no rung, and
+	// a "not stated" line beside a route would be noise.
+	if cve.Soundness != vuldomain.SoundnessNotStated {
+		w.printf("    Soundness: %s — %s\n", cve.Soundness, cve.SoundnessReason)
 	}
 }

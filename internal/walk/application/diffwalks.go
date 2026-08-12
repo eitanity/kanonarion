@@ -36,6 +36,15 @@ type WalkDiff struct {
 	// gone, so the delta must be read as UNRESOLVED, not a confident resolution.
 	// It names the differing axis for the operator.
 	CompletenessMismatch string
+	// NodesA and NodesB are the module-node counts the two sides were compared
+	// over, and FrameA and FrameB the build frames they were resolved in. They
+	// carry no delta of their own: they are what a diff with no delta has to
+	// state, so an empty result can say what was compared rather than leaving a
+	// reader to infer that nothing was.
+	NodesA int
+	NodesB int
+	FrameA string
+	FrameB string
 }
 
 // VersionChange records a module whose MVS-selected version changed.
@@ -124,6 +133,10 @@ func diffRecords(a, b domain.WalkRecord) WalkDiff {
 		VersionChanged:       versionChanged,
 		StatusChanged:        statusChanged,
 		CompletenessMismatch: walkCompletenessMismatch(a, b),
+		NodesA:               len(a.Graph.Nodes),
+		NodesB:               len(b.Graph.Nodes),
+		FrameA:               a.Graph.BuildEnv.Frame(),
+		FrameB:               b.Graph.BuildEnv.Frame(),
 	}
 }
 

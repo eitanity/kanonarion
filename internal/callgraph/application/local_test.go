@@ -50,14 +50,13 @@ func TestLocalExecute_PersistsAndForwardsDir(t *testing.T) {
 	}
 }
 
-// TestLocalExecute_AlwaysReanalyses guards the core freshness invariant: a
-// working tree mutates between runs, so a stored record for the local
-// coordinate must never short-circuit analysis. Even with a record already in
-// the store, every Execute re-runs the analyser and overwrites the record —
-// otherwise an edited working tree would resolve against a stale snapshot.
-func TestLocalExecute_AlwaysReanalyses(t *testing.T) {
+// TestLocalExecute_ReanalysesARecordThatNamesNoTree: a generation written before
+// the scan digest existed states nothing about which tree it was handed, and
+// absence cannot show that this run would be asking the same question. It is
+// re-derived, which is what every run did before reuse existed.
+func TestLocalExecute_ReanalysesARecordThatNamesNoTree(t *testing.T) {
 	store := &fakeCallGraphStore{}
-	// A stale record from a previous run, distinguishable by node count.
+	// A record from a previous run, distinguishable by node count, naming no tree.
 	stale := domain.CallGraphRecord{Coordinate: testCoord, PipelineVersion: testPipelineV, NodeCount: 99}
 	if err := store.PutCallGraphRecord(context.Background(), stale); err != nil {
 		t.Fatalf("seed: %v", err)
@@ -67,7 +66,6 @@ func TestLocalExecute_AlwaysReanalyses(t *testing.T) {
 	}}
 	uc := buildLocalUseCase(store, analyser)
 
-	// Two runs, both with the stale record present in the store.
 	for i := 1; i <= 2; i++ {
 		res, err := uc.Execute(context.Background(), application.LocalExtractRequest{
 			Dir:        "/work/tree",
@@ -80,11 +78,155 @@ func TestLocalExecute_AlwaysReanalyses(t *testing.T) {
 			t.Errorf("run %d: FromCache=true, want a fresh re-analysis", i)
 		}
 		if res.Record.NodeCount == 99 {
-			t.Errorf("run %d: returned the stale cached record, want fresh analysis", i)
+			t.Errorf("run %d: returned the record that named no tree, want fresh analysis", i)
 		}
 	}
 	if analyser.calls != 2 {
-		t.Errorf("analyser invoked %d times across two runs, want 2 (never served from cache)", analyser.calls)
+		t.Errorf("analyser invoked %d times across two runs, want 2", analyser.calls)
+	}
+}
+
+// seededTree returns a store already holding one worktree generation of the tree
+// at root, and the analyser that reports that tree.
+func seededTree(t *testing.T, root, digest string, held domain.CallGraphRecord) (*fakeCallGraphStore, *fakeAnalyser) {
+	t.Helper()
+	held.Coordinate = testCoord
+	held.PipelineVersion = testPipelineV
+	held.AnalysisSource = domain.AnalysisSourceWorktree
+	held.AnalysisRoot = root
+	held.WorktreeScanDigest = digest
+	store := &fakeCallGraphStore{}
+	if err := store.PutCallGraphRecord(context.Background(), held); err != nil {
+		t.Fatalf("seed: %v", err)
+	}
+	store.puts = nil // the seed is the previous run, not a write under test
+	analyser := &fakeAnalyser{
+		record:   domain.CallGraphRecord{OverallStatus: domain.CallGraphStatusExtracted, NodeCount: 7},
+		identity: domain.WorktreeIdentity{Root: root, ScanDigest: digest},
+	}
+	return store, analyser
+}
+
+// TestLocalExecute_ReusesTheRecordOfAnUnchangedTree: the tree in front of the run
+// is the tree the held record was taken of, so the analysis is not run again and
+// nothing is appended. Re-deriving it would cost a full analysis and a second
+// copy of an identical graph, per run, forever.
+func TestLocalExecute_ReusesTheRecordOfAnUnchangedTree(t *testing.T) {
+	store, analyser := seededTree(t, "/work/tree", "scanned-sha256:aaa",
+		domain.CallGraphRecord{OverallStatus: domain.CallGraphStatusExtracted, NodeCount: 42})
+	uc := buildLocalUseCase(store, analyser)
+
+	res, err := uc.Execute(context.Background(), application.LocalExtractRequest{
+		Dir:        "/work/tree",
+		Coordinate: testCoord,
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if !res.FromCache {
+		t.Error("FromCache=false: an unchanged tree was analysed again")
+	}
+	if res.Record.NodeCount != 42 {
+		t.Errorf("node count = %d, want the held record's 42", res.Record.NodeCount)
+	}
+	if analyser.calls != 0 {
+		t.Errorf("analyser invoked %d times, want 0", analyser.calls)
+	}
+	if len(store.puts) != 0 {
+		t.Errorf("%d record(s) appended on a reuse, want 0", len(store.puts))
+	}
+}
+
+// TestLocalExecute_ReanalysesAChangedTree: the digest is the whole of the reuse
+// key, so an edited tree is a different question and is measured again.
+func TestLocalExecute_ReanalysesAChangedTree(t *testing.T) {
+	store, analyser := seededTree(t, "/work/tree", "scanned-sha256:aaa",
+		domain.CallGraphRecord{OverallStatus: domain.CallGraphStatusExtracted, NodeCount: 42})
+	analyser.identity.ScanDigest = "scanned-sha256:bbb"
+	uc := buildLocalUseCase(store, analyser)
+
+	res, err := uc.Execute(context.Background(), application.LocalExtractRequest{
+		Dir:        "/work/tree",
+		Coordinate: testCoord,
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.FromCache {
+		t.Error("FromCache=true: an edited tree was answered from the record of the tree before the edit")
+	}
+	if res.Record.WorktreeScanDigest != "scanned-sha256:bbb" {
+		t.Errorf("stamped digest = %q, want the tree as it was when the run started",
+			res.Record.WorktreeScanDigest)
+	}
+}
+
+// TestLocalExecute_AnotherTreeDoesNotAnswer: two checkouts of one module path are
+// two trees. Identical contents do not make one of them the other, and a run
+// pointed at a directory asked about that directory.
+func TestLocalExecute_AnotherTreeDoesNotAnswer(t *testing.T) {
+	store, analyser := seededTree(t, "/other/checkout", "scanned-sha256:aaa",
+		domain.CallGraphRecord{OverallStatus: domain.CallGraphStatusExtracted, NodeCount: 42})
+	analyser.identity.Root = "/work/tree"
+	uc := buildLocalUseCase(store, analyser)
+
+	res, err := uc.Execute(context.Background(), application.LocalExtractRequest{
+		Dir:        "/work/tree",
+		Coordinate: testCoord,
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.FromCache {
+		t.Error("FromCache=true: another checkout's record answered for this tree")
+	}
+}
+
+// TestLocalExecute_ForceReanalysesAnUnchangedTree: what the tree's digest cannot
+// see — a different toolchain, a repopulated module cache — is exactly what
+// --force is for.
+func TestLocalExecute_ForceReanalysesAnUnchangedTree(t *testing.T) {
+	store, analyser := seededTree(t, "/work/tree", "scanned-sha256:aaa",
+		domain.CallGraphRecord{OverallStatus: domain.CallGraphStatusExtracted, NodeCount: 42})
+	uc := buildLocalUseCase(store, analyser)
+
+	res, err := uc.Execute(context.Background(), application.LocalExtractRequest{
+		Dir:        "/work/tree",
+		Coordinate: testCoord,
+		Force:      true,
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.FromCache {
+		t.Error("FromCache=true under --force: the flag did not bypass reuse")
+	}
+	if analyser.calls != 1 {
+		t.Errorf("analyser invoked %d times under --force, want 1", analyser.calls)
+	}
+}
+
+// TestLocalExecute_DoesNotReuseAnEnvironmentFailure: a run that failed because
+// the analysis environment failed measured nothing about the tree. Serving it
+// back would make one bad run permanent, with only --force ever clearing it.
+func TestLocalExecute_DoesNotReuseAnEnvironmentFailure(t *testing.T) {
+	store, analyser := seededTree(t, "/work/tree", "scanned-sha256:aaa",
+		domain.CallGraphRecord{
+			OverallStatus: domain.CallGraphStatusLoadFailed,
+			Completeness:  domain.CompletenessFailed,
+			FailureCause:  domain.FailureCauseEnvironment,
+		})
+	uc := buildLocalUseCase(store, analyser)
+
+	res, err := uc.Execute(context.Background(), application.LocalExtractRequest{
+		Dir:        "/work/tree",
+		Coordinate: testCoord,
+	})
+	if err != nil {
+		t.Fatalf("Execute: %v", err)
+	}
+	if res.FromCache {
+		t.Error("FromCache=true: an environment failure was served back as this tree's graph")
 	}
 }
 

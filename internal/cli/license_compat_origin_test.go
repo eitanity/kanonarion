@@ -96,7 +96,7 @@ func runCompat(t *testing.T, ctr *Container, root coordinate.ModuleCoordinate, t
 	jsonOut = asJSON
 	defer func() { jsonOut = prev }()
 	var out bytes.Buffer
-	err := licenseCompatWith(context.Background(), ctr, root, target, &out, io.Discard)
+	err := licenseCompatWith(context.Background(), ctr, root, target, "", &out, io.Discard)
 	return out.String(), err
 }
 

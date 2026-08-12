@@ -32,7 +32,7 @@ func TestRunProvenance_JSONForkShapedPath(t *testing.T) {
 	setJSONOut(t, true)
 
 	var buf strings.Builder
-	if err := runProvenance(context.Background(), "github.com/someuser/cobra", "v1.0.0", noLicenceStore(), &buf); err != nil {
+	if err := runProvenance(context.Background(), "github.com/someuser/cobra", "v1.0.0", noLicenceStore(), nil, &buf); err != nil {
 		t.Fatal(err)
 	}
 
@@ -59,7 +59,7 @@ func TestRunProvenance_JSONUnrelatedPathIsAnalysedNone(t *testing.T) {
 	setJSONOut(t, true)
 
 	var buf strings.Builder
-	if err := runProvenance(context.Background(), "example.com/some/app", "", noLicenceStore(), &buf); err != nil {
+	if err := runProvenance(context.Background(), "example.com/some/app", "", noLicenceStore(), nil, &buf); err != nil {
 		t.Fatal(err)
 	}
 
@@ -85,7 +85,7 @@ func TestRunProvenance_TextForkShapedPath(t *testing.T) {
 	setJSONOut(t, false)
 
 	var buf strings.Builder
-	if err := runProvenance(context.Background(), "gitlab.com/mirrors/logrus", "", noLicenceStore(), &buf); err != nil {
+	if err := runProvenance(context.Background(), "gitlab.com/mirrors/logrus", "", noLicenceStore(), nil, &buf); err != nil {
 		t.Fatal(err)
 	}
 	got := buf.String()
@@ -106,7 +106,7 @@ func TestRunProvenance_TextUnrelatedPath(t *testing.T) {
 	setJSONOut(t, false)
 
 	var buf strings.Builder
-	if err := runProvenance(context.Background(), "example.com/some/app", "v2.3.4", noLicenceStore(), &buf); err != nil {
+	if err := runProvenance(context.Background(), "example.com/some/app", "v2.3.4", noLicenceStore(), nil, &buf); err != nil {
 		t.Fatal(err)
 	}
 	got := buf.String()
@@ -181,7 +181,7 @@ func TestRunProvenance_JWTRepublicationFromCopyrightLines(t *testing.T) {
 	setJSONOut(t, true)
 
 	var buf strings.Builder
-	if err := runProvenance(context.Background(), "github.com/golang-jwt/jwt/v4", "v4.5.1", jwtLicenceStore(t), &buf); err != nil {
+	if err := runProvenance(context.Background(), "github.com/golang-jwt/jwt/v4", "v4.5.1", jwtLicenceStore(t), nil, &buf); err != nil {
 		t.Fatal(err)
 	}
 	var out provenanceOutput
@@ -242,7 +242,7 @@ func TestRunProvenance_SingleHolderYieldsNoneNotSilence(t *testing.T) {
 	})
 
 	var buf strings.Builder
-	if err := runProvenance(context.Background(), "example.com/mod", "v1.0.0", f, &buf); err != nil {
+	if err := runProvenance(context.Background(), "example.com/mod", "v1.0.0", f, nil, &buf); err != nil {
 		t.Fatal(err)
 	}
 	var out provenanceOutput
@@ -262,7 +262,7 @@ func TestRunProvenance_SingleHolderYieldsNoneNotSilence(t *testing.T) {
 func TestRunProvenance_NoLicenceRecordIsNotAnalysed(t *testing.T) {
 	setJSONOut(t, true)
 	var buf strings.Builder
-	if err := runProvenance(context.Background(), "example.com/mod", "v1.0.0", noLicenceStore(), &buf); err != nil {
+	if err := runProvenance(context.Background(), "example.com/mod", "v1.0.0", noLicenceStore(), nil, &buf); err != nil {
 		t.Fatal(err)
 	}
 	var out provenanceOutput
@@ -308,7 +308,7 @@ func TestRunProvenance_NoVersionUsesNewestRecordForThePath(t *testing.T) {
 	})
 
 	var buf strings.Builder
-	if err := runProvenance(context.Background(), "example.com/mod", "", f, &buf); err != nil {
+	if err := runProvenance(context.Background(), "example.com/mod", "", f, nil, &buf); err != nil {
 		t.Fatal(err)
 	}
 	var out provenanceOutput
@@ -335,7 +335,7 @@ func TestRunProvenance_RecordWithoutCopyrightLinesIsNotAnalysed(t *testing.T) {
 	})
 
 	var buf strings.Builder
-	if err := runProvenance(context.Background(), "example.com/mod", "v1.0.0", f, &buf); err != nil {
+	if err := runProvenance(context.Background(), "example.com/mod", "v1.0.0", f, nil, &buf); err != nil {
 		t.Fatal(err)
 	}
 	var out provenanceOutput
@@ -372,7 +372,7 @@ func TestRunProvenance_VendoredCopyrightLinesAreExcluded(t *testing.T) {
 	})
 
 	var buf strings.Builder
-	if err := runProvenance(context.Background(), "example.com/mod", "v1.0.0", f, &buf); err != nil {
+	if err := runProvenance(context.Background(), "example.com/mod", "v1.0.0", f, nil, &buf); err != nil {
 		t.Fatal(err)
 	}
 	var out provenanceOutput
@@ -391,7 +391,7 @@ func TestRunProvenance_StoreErrorIsNotAnalysed(t *testing.T) {
 	f.Err = errors.New("store unavailable")
 
 	var buf strings.Builder
-	if err := runProvenance(context.Background(), "example.com/mod", "v1.0.0", f, &buf); err != nil {
+	if err := runProvenance(context.Background(), "example.com/mod", "v1.0.0", f, nil, &buf); err != nil {
 		t.Fatal(err)
 	}
 	var out provenanceOutput
@@ -410,7 +410,7 @@ func TestRunProvenance_StoreErrorIsNotAnalysed(t *testing.T) {
 func TestRunProvenance_NilUseCaseIsNotAnalysed(t *testing.T) {
 	setJSONOut(t, true)
 	var buf strings.Builder
-	if err := runProvenance(context.Background(), "example.com/mod", "v1.0.0", nil, &buf); err != nil {
+	if err := runProvenance(context.Background(), "example.com/mod", "v1.0.0", nil, nil, &buf); err != nil {
 		t.Fatal(err)
 	}
 	var out provenanceOutput
@@ -426,7 +426,7 @@ func TestRunProvenance_NilUseCaseIsNotAnalysed(t *testing.T) {
 func TestRunProvenance_UnparseableVersionIsNotAnalysed(t *testing.T) {
 	setJSONOut(t, true)
 	var buf strings.Builder
-	if err := runProvenance(context.Background(), "example.com/mod", "not-a-version", noLicenceStore(), &buf); err != nil {
+	if err := runProvenance(context.Background(), "example.com/mod", "not-a-version", noLicenceStore(), nil, &buf); err != nil {
 		t.Fatal(err)
 	}
 	var out provenanceOutput
@@ -443,7 +443,7 @@ func TestRunProvenance_UnparseableVersionIsNotAnalysed(t *testing.T) {
 func TestRunProvenance_NoVersionNoRecordForPath(t *testing.T) {
 	setJSONOut(t, true)
 	var buf strings.Builder
-	if err := runProvenance(context.Background(), "example.com/mod", "", noLicenceStore(), &buf); err != nil {
+	if err := runProvenance(context.Background(), "example.com/mod", "", noLicenceStore(), nil, &buf); err != nil {
 		t.Fatal(err)
 	}
 	var out provenanceOutput
@@ -460,7 +460,7 @@ func TestRunProvenance_NoVersionNoRecordForPath(t *testing.T) {
 func TestRunProvenance_TextRendersCopyrightTier(t *testing.T) {
 	setJSONOut(t, false)
 	var buf strings.Builder
-	if err := runProvenance(context.Background(), "github.com/golang-jwt/jwt/v4", "v4.5.1", jwtLicenceStore(t), &buf); err != nil {
+	if err := runProvenance(context.Background(), "github.com/golang-jwt/jwt/v4", "v4.5.1", jwtLicenceStore(t), nil, &buf); err != nil {
 		t.Fatal(err)
 	}
 	got := buf.String()
@@ -495,11 +495,11 @@ func TestRunProvenance_TextDistinguishesNoneFromNotAnalysed(t *testing.T) {
 	})
 
 	var analysed strings.Builder
-	if err := runProvenance(context.Background(), "example.com/mod", "v1.0.0", f, &analysed); err != nil {
+	if err := runProvenance(context.Background(), "example.com/mod", "v1.0.0", f, nil, &analysed); err != nil {
 		t.Fatal(err)
 	}
 	var absent strings.Builder
-	if err := runProvenance(context.Background(), "example.com/mod", "v1.0.0", noLicenceStore(), &absent); err != nil {
+	if err := runProvenance(context.Background(), "example.com/mod", "v1.0.0", noLicenceStore(), nil, &absent); err != nil {
 		t.Fatal(err)
 	}
 	if !strings.Contains(analysed.String(), "Copyright Signal:  no indicators") {

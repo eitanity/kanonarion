@@ -97,7 +97,15 @@ func printLicenseDiff(diff domain.LicenseDiff, stdout io.Writer) error {
 	}
 
 	if !diff.HasChanges() && diff.Escalation == nil {
-		if _, err := fmt.Fprintln(stdout, "No license changes."); err != nil {
+		// Not a bare "No license changes.": the population the zero was measured
+		// over is what separates two records that agree from two records with
+		// nothing in them to disagree about. Both read as no change today.
+		if _, err := fmt.Fprintf(stdout,
+			"No license changes: both sides declare %s at status %s, over %s and %s\n",
+			licenseDiffSPDXLabel(diff.RecordA.PrimarySPDX),
+			diff.RecordA.OverallStatus.String(),
+			countOf(len(diff.RecordA.LicenseFiles), "license files"),
+			countOf(licenseDiffCopyrightCount(diff.RecordA), "copyright statements")); err != nil {
 			return fmt.Errorf("writing output: %w", err)
 		}
 		return nil
@@ -254,4 +262,24 @@ func toLicenseDiffJSON(diff domain.LicenseDiff) licenseDiffJSON {
 	}
 
 	return out
+}
+
+// licenseDiffSPDXLabel names an unset primary expression rather than printing an
+// empty string, so "both sides declare" cannot read as "both sides declare
+// nothing in particular".
+func licenseDiffSPDXLabel(spdx string) string {
+	if spdx == "" {
+		return "no primary SPDX expression"
+	}
+	return spdx
+}
+
+// licenseDiffCopyrightCount counts the copyright statements on one side, which
+// is the second population the no-change statement was measured over.
+func licenseDiffCopyrightCount(rec domain.LicenseRecord) int {
+	n := 0
+	for _, f := range rec.LicenseFiles {
+		n += len(f.CopyrightStatements)
+	}
+	return n
 }

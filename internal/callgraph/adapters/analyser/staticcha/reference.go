@@ -8,7 +8,6 @@ import (
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 
 	"golang.org/x/tools/go/ssa"
-	"golang.org/x/tools/go/ssa/ssautil"
 )
 
 // collectReferenceEdges records an edge for every function value TAKEN in the
@@ -47,6 +46,7 @@ import (
 func (a *Analyser) collectReferenceEdges(
 	ctx context.Context,
 	prog *ssa.Program,
+	funcs []*ssa.Function,
 	mem moduleMembership,
 	fset *token.FileSet,
 	tempDir string,
@@ -80,7 +80,7 @@ func (a *Analyser) collectReferenceEdges(
 	}
 
 	added := 0
-	for fn := range ssautil.AllFunctions(prog) {
+	for _, fn := range funcs {
 		if ctx.Err() != nil {
 			break
 		}

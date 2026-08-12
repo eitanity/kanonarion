@@ -21,6 +21,7 @@ import (
 	licensedomain "github.com/eitanity/kanonarion/internal/license/domain"
 	"github.com/eitanity/kanonarion/internal/sbom/domain"
 	"github.com/eitanity/kanonarion/internal/sbom/ports"
+	stdlibdomain "github.com/eitanity/kanonarion/internal/stdlib/domain"
 	vendordomain "github.com/eitanity/kanonarion/internal/vendortree/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
@@ -95,6 +96,13 @@ func (g *Generator) buildBOM(
 	licenses map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord,
 	req ports.GenerateRequest,
 ) (*cdx.BOM, []string, error) {
+	// The document's subject is decided once, here, and both places that
+	// describe it read that decision: metadata.component and the subject's own
+	// entry in the component list. Deriving them separately is what let a stamped
+	// document carry two purls for one module, and put the operator's licence on
+	// only one of them.
+	subj := resolveSubject(walk.Graph.Target, licenses, req)
+
 	bom := &cdx.BOM{
 		BOMFormat:    "CycloneDX",
 		SpecVersion:  cdx.SpecVersion1_6,
@@ -116,7 +124,7 @@ func (g *Generator) buildBOM(
 				},
 			},
 		},
-		Component: moduleComponent(walk.Graph.Target, licenses, req.PipelineVersion, mainComponentOptionsFor(walk.Graph.Target, req)),
+		Component: subj.metadataComponent(req.PipelineVersion),
 	}
 	// Record the build environment the graph was resolved for. GOOS/GOARCH gate
 	// build-constraint file selection, so the component set is only valid for this
@@ -133,7 +141,12 @@ func (g *Generator) buildBOM(
 	// failed fetches) simply have no entry and emit no hashes.
 	digestsByRef := make(map[domain.ModuleRef]fetchdomain.ArtifactDigests, len(walk.Graph.Nodes))
 	stdlibFactsByRef := make(map[domain.ModuleRef]*walkdomain.StdlibFacts, 1)
+	// The assembly policy speaks in ModuleRefs; the recorded origins are keyed by
+	// the coordinate the fetch ledger measured. This carries one back to the
+	// other so a component can be matched to its own origin fact.
+	coordByRef := make(map[domain.ModuleRef]coordinate.ModuleCoordinate, len(walk.Graph.Nodes))
 	for _, node := range walk.Graph.Nodes {
+		coordByRef[moduleRef(node.Coordinate)] = node.Coordinate
 		if !node.Digests.IsZero() {
 			digestsByRef[moduleRef(node.Coordinate)] = node.Digests
 		}
@@ -162,18 +175,33 @@ func (g *Generator) buildBOM(
 			continue
 		}
 		lic, hasLic := licenses[node.Coordinate]
-		inputs = append(inputs, domain.ComponentInput{
+		input := domain.ComponentInput{
 			Module:      moduleRef(node.Coordinate),
 			HasLicense:  hasLic,
 			PrimarySPDX: lic.PrimarySPDX,
 			Expression:  lic.Expression,
 			Copyright:   copyrightString(lic),
-		})
+		}
+		// The subject's own component entry carries the licence the caller
+		// stamped on the subject. Without this the assembly policy counts the
+		// stamped module as having no licence identity, and the run exits
+		// partial naming the operator's own module — the exact gap
+		// --main-license is documented to close.
+		if subj.is(node.Coordinate) && !hasLic && subj.licenseSPDX != "" {
+			input.HasLicense = true
+			input.PrimarySPDX = subj.licenseSPDX
+			input.Expression = ""
+		}
+		inputs = append(inputs, input)
 	}
 	assembled, undeterminedRefs := domain.AssembleComponents(inputs)
 	components := make([]cdx.Component, 0, len(assembled))
 	for _, c := range assembled {
-		comp := buildComponent(c.Module, c.License, c.Copyright, req.PipelineVersion, digestsByRef[c.Module], stdlibFactsByRef[c.Module])
+		comp := buildComponent(subj.rewrite(c.Module), c.License, c.Copyright, req.PipelineVersion,
+			digestsByRef[c.Module], stdlibFactsByRef[c.Module], originFor(req, coordByRef[c.Module]))
+		if subj.isRef(c.Module) && subj.isApplication {
+			comp.Type = cdx.ComponentTypeApplication
+		}
 		if !strings.HasPrefix(comp.PackageURL, "pkg:"+purlTypeGolang+"/") {
 			return nil, nil, fmt.Errorf("%w: %q", domain.ErrNonGoComponent, comp.PackageURL)
 		}
@@ -184,7 +212,7 @@ func (g *Generator) buildBOM(
 	// Dependency graph — an entry per component with the root at the metadata
 	// component. Edges come from the resolved walk graph (From → To), already
 	// deterministic. bom-refs are the component purls.
-	deps := buildDependencies(components, bom.Metadata.Component, walk.Graph)
+	deps := buildDependencies(components, bom.Metadata.Component, walk.Graph, subj)
 	bom.Dependencies = &deps
 
 	// The document's subject is the artefact being shipped, so it is judged by
@@ -208,7 +236,7 @@ func (g *Generator) buildBOM(
 		addUndetermined(bom.Metadata.Component.BOMRef)
 	}
 	for _, m := range undeterminedRefs {
-		addUndetermined(modulePURL(m))
+		addUndetermined(modulePURL(subj.rewrite(m)))
 	}
 
 	// Scope statements. Vendor coverage is emitted whenever a tree was read, full
@@ -353,8 +381,15 @@ func moduleRef(coord coordinate.ModuleCoordinate) domain.ModuleRef {
 // buildComponent maps an assembled domain Component to a CycloneDX Component.
 // digests, when present, are emitted as the component's <hashes>; a zero value
 // (local main, legacy or failed fetch) yields no hashes rather than fabricated
-// ones.
-func buildComponent(mod domain.ModuleRef, spdx, copyright, pipelineVersion string, digests fetchdomain.ArtifactDigests, stdlib *walkdomain.StdlibFacts) cdx.Component {
+// ones. origin, when present, is the module's recorded provenance and is the
+// only thing that produces an externalReference.
+func buildComponent(
+	mod domain.ModuleRef,
+	spdx, copyright, pipelineVersion string,
+	digests fetchdomain.ArtifactDigests,
+	stdlib *walkdomain.StdlibFacts,
+	origin ports.ModuleOrigin,
+) cdx.Component {
 	if mod.Path == walkdomain.StdlibModulePath {
 		return buildStdlibComponent(mod, spdx, pipelineVersion, digests, stdlib)
 	}
@@ -365,20 +400,13 @@ func buildComponent(mod domain.ModuleRef, spdx, copyright, pipelineVersion strin
 		Name:       mod.Path,
 		Version:    mod.Version,
 		PackageURL: purl,
-		ExternalReferences: &[]cdx.ExternalReference{
-			{
-				Type: cdx.ERTypeVCS,
-				URL:  "https://" + mod.Path,
-			},
-			{
-				Type: cdx.ERTypeDistribution,
-				URL:  "https://proxy.golang.org/" + mod.Path + "/@v/" + mod.Version + ".zip",
-			},
-		},
 		Properties: &[]cdx.Property{
 			{Name: "kanonarion:ecosystem", Value: domain.EcosystemGo},
 			{Name: "kanonarion:pipeline_version", Value: pipelineVersion},
 		},
+	}
+	if refs := moduleExternalReferences(origin); refs != nil {
+		comp.ExternalReferences = refs
 	}
 
 	if hashes := digestHashes(digests); hashes != nil {
@@ -398,6 +426,44 @@ func buildComponent(mod domain.ModuleRef, spdx, copyright, pipelineVersion strin
 	}
 
 	return comp
+}
+
+// moduleExternalReferences builds a module component's external references from
+// what the fetch ledger recorded, and returns nil when it recorded nothing.
+//
+// Nothing here is derived from the module path. A path is an import identity,
+// not an address: github.com/oklog/ulid/v2 names no repository GitHub serves
+// (the major-version suffix is a module-path element), golang.org/x/mod is not
+// a forge URL, and a proxy zip URL for a module the proxy never carried names a
+// download that cannot happen. Every such reference in a shipped document is an
+// assertion nobody measured, in an artefact whose reader cannot re-run the
+// tool.
+//
+// There is no distribution reference. The ledger records the route the bytes
+// arrived by and the blob handle they were filed under, not a public download
+// address, so nothing here can support one. The standard-library component is
+// the exception and keeps its own: it has a recorded source URL to emit.
+func moduleExternalReferences(origin ports.ModuleOrigin) *[]cdx.ExternalReference {
+	if origin.VCSURL == "" {
+		return nil
+	}
+	ref := cdx.ExternalReference{Type: cdx.ERTypeVCS, URL: origin.VCSURL}
+	switch {
+	case origin.VCSRef != "" && origin.VCSCommit != "":
+		ref.Comment = "the module zip was cross-verified against " + origin.VCSRef + " at commit " + origin.VCSCommit
+	case origin.VCSCommit != "":
+		ref.Comment = "the module zip was cross-verified against commit " + origin.VCSCommit
+	}
+	return &[]cdx.ExternalReference{ref}
+}
+
+// originFor returns the recorded origin for a coordinate, or the zero value when
+// the caller supplied none for it.
+func originFor(req ports.GenerateRequest, coord coordinate.ModuleCoordinate) ports.ModuleOrigin {
+	if req.ModuleOrigins == nil {
+		return ports.ModuleOrigin{}
+	}
+	return req.ModuleOrigins[coord]
 }
 
 // digestHashes renders artefact digests as CycloneDX hashes in fixed algorithm
@@ -427,14 +493,21 @@ func digestHashes(d fetchdomain.ArtifactDigests) *[]cdx.Hash {
 // buildDependencies emits a CycloneDX dependencies array: one entry per
 // component plus the metadata (root) component, with dependsOn populated from
 // the resolved graph edges. Every entry carries a (possibly empty) dependsOn —
-// an allowed CDX pattern — and entries are sorted by ref for determinism. The
-// root's edges are those leaving the walk target coordinate, which may differ
-// from the metadata component's own bom-ref when a version override is applied.
-func buildDependencies(components []cdx.Component, root *cdx.Component, graph walkdomain.Graph) []cdx.Dependency {
+// an allowed CDX pattern — and entries are sorted by ref for determinism.
+//
+// Graph coordinates are projected through the subject, so a stamped subject
+// appears here under the one identity the rest of the document gives it. Left
+// unprojected, the array carried two entries for the subject — its stamped
+// bom-ref and its graph coordinate — each repeating the whole dependency set,
+// and a consumer resolving the document saw two artefacts where there is one.
+func buildDependencies(components []cdx.Component, root *cdx.Component, graph walkdomain.Graph, subj subject) []cdx.Dependency {
+	purlOf := func(c coordinate.ModuleCoordinate) string {
+		return modulePURL(subj.rewrite(moduleRef(c)))
+	}
 	adjacency := make(map[string]map[string]struct{})
 	for _, e := range graph.Edges {
-		from := modulePURL(moduleRef(e.From))
-		to := modulePURL(moduleRef(e.To))
+		from := purlOf(e.From)
+		to := purlOf(e.To)
 		if adjacency[from] == nil {
 			adjacency[from] = make(map[string]struct{})
 		}
@@ -463,7 +536,7 @@ func buildDependencies(components []cdx.Component, root *cdx.Component, graph wa
 	}
 
 	if root != nil {
-		add(root.BOMRef, modulePURL(moduleRef(graph.Target)))
+		add(root.BOMRef, purlOf(graph.Target))
 	}
 	for _, c := range components {
 		add(c.BOMRef, c.BOMRef)
@@ -478,11 +551,12 @@ func buildDependencies(components []cdx.Component, root *cdx.Component, graph wa
 // its VCS reference and no proxy-zip distribution URL (which would 404).
 //
 // When chain-of-custody facts are present it emits the source-tarball digests as
-// <hashes>, the go.dev/dl source tarball as a distribution reference, the
+// <hashes>, the acquired source tarball as a distribution reference, the
 // googlesource commit as a VCS reference, and properties recording the
-// verification status and the honest limitation — the stdlib anchor is a
-// published checksum plus a source-repo tag, weaker than a module's sumdb
-// transparency-log entry, and it never appears in the project's go.sum.
+// verification status and the anchor limitation — which anchors that particular
+// measurement reached, which it did not, and the ceiling that holds on every
+// route: weaker than a module's sumdb transparency-log entry, and never present
+// in the project's go.sum.
 func buildStdlibComponent(mod domain.ModuleRef, spdx, pipelineVersion string, digests fetchdomain.ArtifactDigests, facts *walkdomain.StdlibFacts) cdx.Component {
 	purl := modulePURL(mod)
 	if spdx == "" {
@@ -537,7 +611,9 @@ func stdlibExternalReferences(facts *walkdomain.StdlibFacts) *[]cdx.ExternalRefe
 // stdlibProperties builds the stdlib component's properties. Beyond the base
 // ecosystem/pipeline/stdlib markers it records, when facts are present, the
 // go.dev/dl verification status and detail, the published tarball checksum, and
-// an explicit note that this anchor is weaker than sumdb and absent from go.sum.
+// the anchor limitation — what this component's integrity actually rests on,
+// derived from the status that was reached rather than stated as a fixed
+// sentence about the route a connected run happens to take.
 func stdlibProperties(pipelineVersion string, facts *walkdomain.StdlibFacts) *[]cdx.Property {
 	props := []cdx.Property{
 		{Name: "kanonarion:ecosystem", Value: domain.EcosystemGo},
@@ -556,7 +632,7 @@ func stdlibProperties(pipelineVersion string, facts *walkdomain.StdlibFacts) *[]
 		}
 		props = append(props, cdx.Property{
 			Name:  "kanonarion:stdlib:anchor_limitation",
-			Value: "integrity anchored to go.dev/dl published checksum and googlesource tag/commit; weaker than a module sumdb transparency-log entry and never present in go.sum",
+			Value: stdlibdomain.AnchorLimitation(stdlibdomain.VerificationStatus(facts.VerificationStatus), facts.VCSCommit != ""),
 		})
 	}
 	return &props
@@ -580,61 +656,93 @@ func buildEnvProperties(env walkdomain.BuildEnv) []cdx.Property {
 	return props
 }
 
-// mainComponentOptions carries the subject-specific overrides applied to the
-// SBOM's primary component (metadata.component). They are meaningful only for a
-// project SBOM whose subject is the local main module — a compiled binary at the
-// synthetic version "local" with no fetched licence record.
-type mainComponentOptions struct {
-	// versionOverride replaces the subject's "local" version (and the PURL and
-	// distribution URL derived from it) with a resolvable coordinate, e.g. a
-	// release tag. Empty leaves the graph version untouched.
-	versionOverride string
-	// licenseSPDX is attached to the subject when it has no fetched licence
-	// record. Empty leaves the subject unlicensed.
+// subject is the document's subject, decided once from the walk target and the
+// caller's stamp.
+//
+// It exists because the subject is described in two places — metadata.component
+// and its own entry in the component list — and those two descriptions must be
+// the same description. Derived separately, they were not: a stamped run put
+// the release version and the operator's licence on metadata.component while
+// the component list still carried the module at the synthetic version "local"
+// with no licence, so one document asserted two purls for one module, and the
+// undetermined-licence count read the copy the stamp never reached.
+//
+// The stamp applies only to a project SBOM, whose subject is the local main
+// module. The synthetic "local" version is the reliable signal: a walk rooted at
+// a published module carries a real semver target, is a library at its own
+// version, and is left alone.
+type subject struct {
+	// target is the walk target coordinate: the graph node the subject is.
+	target coordinate.ModuleCoordinate
+	// ref is the subject's identity in the document, after any version stamp.
+	ref domain.ModuleRef
+	// licenseSPDX is the licence clause the subject carries, whether extracted
+	// or stamped. Empty means the subject is unlicensed.
 	licenseSPDX string
+	// copyright is the copyright statement from the subject's licence record.
+	copyright string
 	// isApplication marks the subject as a compiled application rather than a
 	// library — CycloneDX's expected type for a top-level binary.
 	isApplication bool
+	// stamped reports that a version stamp was applied, so the subject's
+	// identity differs from its graph coordinate and references to it need
+	// projecting.
+	stamped bool
 }
 
-// mainComponentOptionsFor derives the subject overrides for a walk. Overrides
-// apply only when the subject is the local main module (a project SBOM): its
-// synthetic "local" version is the reliable signal, since a walk rooted at a
-// published module carries a real semver target and is left as a library at its
-// own version. A subject that is the local main module is always an application;
-// version and licence overrides are applied only when the caller supplied them.
-func mainComponentOptionsFor(target coordinate.ModuleCoordinate, req ports.GenerateRequest) mainComponentOptions {
-	if target.Version() != coordinate.LocalVersion {
-		return mainComponentOptions{}
-	}
-	return mainComponentOptions{
-		versionOverride: req.MainComponentVersion,
-		licenseSPDX:     req.MainComponentLicense,
-		isApplication:   true,
-	}
-}
-
-// moduleComponent builds the metadata primary component for the walk target,
-// applying any subject-specific overrides (version, licence, application type).
-func moduleComponent(
-	coord coordinate.ModuleCoordinate,
+// resolveSubject derives the document's subject from the walk target, the
+// licence records and the caller's stamp.
+func resolveSubject(
+	target coordinate.ModuleCoordinate,
 	licenses map[coordinate.ModuleCoordinate]licensedomain.LicenseRecord,
-	pipelineVersion string,
-	opts mainComponentOptions,
-) *cdx.Component {
-	lic, hasLic := licenses[coord]
-	ref := moduleRef(coord)
-	if opts.versionOverride != "" {
-		ref.Version = opts.versionOverride
+	req ports.GenerateRequest,
+) subject {
+	lic, hasLic := licenses[target]
+	s := subject{
+		target:      target,
+		ref:         moduleRef(target),
+		licenseSPDX: domain.LicenseClause(hasLic, lic.PrimarySPDX, lic.Expression),
+		copyright:   copyrightString(lic),
 	}
-	spdx := domain.LicenseClause(hasLic, lic.PrimarySPDX, lic.Expression)
-	if spdx == "" {
-		spdx = opts.licenseSPDX
+	if target.Version() != coordinate.LocalVersion {
+		return s
 	}
-	// The metadata (root) component is the compiled subject, not a fetched
-	// artefact, so it carries no zip digests.
-	comp := buildComponent(ref, spdx, copyrightString(lic), pipelineVersion, fetchdomain.ArtifactDigests{}, nil)
-	if opts.isApplication {
+	s.isApplication = true
+	if req.MainComponentVersion != "" {
+		s.ref.Version = req.MainComponentVersion
+		s.stamped = true
+	}
+	if s.licenseSPDX == "" {
+		s.licenseSPDX = req.MainComponentLicense
+	}
+	return s
+}
+
+// is reports whether a coordinate is the document's subject.
+func (s subject) is(c coordinate.ModuleCoordinate) bool { return c == s.target }
+
+// isRef reports whether a module ref is the subject's graph identity.
+func (s subject) isRef(m domain.ModuleRef) bool { return m == moduleRef(s.target) }
+
+// rewrite projects a module ref onto the identity the document gives it: the
+// subject's graph coordinate becomes its stamped identity, everything else
+// passes through. It is what keeps purls, bom-refs, dependency entries and the
+// undetermined-licence list naming one module once.
+func (s subject) rewrite(m domain.ModuleRef) domain.ModuleRef {
+	if s.stamped && s.isRef(m) {
+		return s.ref
+	}
+	return m
+}
+
+// metadataComponent builds the document's primary component from the subject.
+// The root component is the compiled subject, not a fetched artefact, so it
+// carries no zip digests; and it asserts no origin, because the fetch ledger
+// holds no measurement of a module nobody fetched.
+func (s subject) metadataComponent(pipelineVersion string) *cdx.Component {
+	comp := buildComponent(s.ref, s.licenseSPDX, s.copyright, pipelineVersion,
+		fetchdomain.ArtifactDigests{}, nil, ports.ModuleOrigin{})
+	if s.isApplication {
 		comp.Type = cdx.ComponentTypeApplication
 	}
 	return &comp

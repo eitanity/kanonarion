@@ -211,6 +211,19 @@ var unscanDisplays = map[vuldomain.UnscanReason]unscanDisplay{
 			"so no call graph was built and this module has no verdict in the run's own frame; " +
 			"any per-module verdicts this run reports come from isolated scans, which answer a weaker question",
 	},
+	// One fault, fanned out: the directory the walk was taken from moved on, and
+	// that is a single fact about the run, not N module problems. Every
+	// coordinate still carries its advisory match, so the label says
+	// metadata-only rather than not-scanned — what is missing is reachability,
+	// not the advisory answer.
+	vuldomain.UnscanReasonProjectBuildDiverged: {
+		label:   metadataOnlyNote + " (the project directory no longer builds this walk)",
+		heading: metadataOnlyNote + " — one project-level fault: the project directory no longer resolves to this walk's module versions",
+		explanation: "the directory this walk was taken from now requires different versions of modules the walk pinned, " +
+			"so an analysis of it would be evidence about a different build; advisories matched, reachability not established",
+		hint:     "walk the project again so a walk describes the tree as it stands, then scan that walk: kanonarion walk --gomod <project-dir>/go.mod",
+		oneFault: true,
+	},
 }
 
 // unscanDisplayFor returns the display treatment for reason.

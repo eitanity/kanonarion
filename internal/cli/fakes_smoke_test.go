@@ -67,7 +67,7 @@ func TestFakeQueryFetch_GetFetchRecord(t *testing.T) {
 	if err != nil || !ok || rec.ModulePath != c.Path() {
 		t.Fatalf("expected record, got ok=%v err=%v", ok, err)
 	}
-	_, ok2, _ := f.GetFetchRecord(context.Background(), c, "0.2.0")
+	_, ok2, _ := f.GetFetchRecord(context.Background(), c, cgapp.PipelineVersion)
 	if ok2 {
 		t.Fatal("expected not found for wrong version")
 	}

@@ -15,7 +15,7 @@ import (
 // and it is false in the direction that closes the question rather than raising
 // it. A read failure must name itself.
 func TestVulnAuditStatus_ReadErrorIsNotReportedAsNotScanned(t *testing.T) {
-	status, reason, findings, _ := vulnAuditStatus(vulndomain.VulnerabilityRecord{}, false, errors.New("database is locked"))
+	status, reason, findings, _ := vulnAuditStatus(vulndomain.VulnerabilityRecord{}, false, errors.New("database is locked"), "")
 
 	if status == "(not scanned)" {
 		t.Errorf("a store read error must not render as %q: the module may well have been scanned", status)
@@ -36,7 +36,7 @@ func TestVulnAuditStatus_ReadErrorIsNotReportedAsNotScanned(t *testing.T) {
 // status unset entirely, so the row rendered empty with nothing said about why.
 func TestVulnAuditStatus_ReadErrorWithFoundRecordIsStillAnError(t *testing.T) {
 	rec := vulndomain.VulnerabilityRecord{OverallStatus: vulndomain.StatusAffected}
-	status, _, _, _ := vulnAuditStatus(rec, true, errors.New("decode failed"))
+	status, _, _, _ := vulnAuditStatus(rec, true, errors.New("decode failed"), "")
 
 	if status == "" {
 		t.Errorf("an errored lookup must not leave the status blank")
@@ -49,7 +49,7 @@ func TestVulnAuditStatus_ReadErrorWithFoundRecordIsStillAnError(t *testing.T) {
 // TestVulnAuditStatus_AbsentAndPresent covers the two honest outcomes either
 // side of the error case.
 func TestVulnAuditStatus_AbsentAndPresent(t *testing.T) {
-	status, _, _, _ := vulnAuditStatus(vulndomain.VulnerabilityRecord{}, false, nil)
+	status, _, _, _ := vulnAuditStatus(vulndomain.VulnerabilityRecord{}, false, nil, "")
 	if status != "(not scanned)" {
 		t.Errorf("a clean lookup that found nothing = %q, want %q", status, "(not scanned)")
 	}
@@ -59,7 +59,7 @@ func TestVulnAuditStatus_AbsentAndPresent(t *testing.T) {
 		UnscannableReason: "no buildable files",
 		Findings:          []vulndomain.VulnerabilityFinding{{ID: "GO-2026-0001"}},
 	}
-	status, reason, findings, _ := vulnAuditStatus(rec, true, nil)
+	status, reason, findings, _ := vulnAuditStatus(rec, true, nil, "")
 	if status != string(vulndomain.StatusUnscannable) {
 		t.Errorf("status = %q, want %q", status, vulndomain.StatusUnscannable)
 	}
@@ -74,7 +74,22 @@ func TestVulnAuditStatus_AbsentAndPresent(t *testing.T) {
 		OverallStatus: vulndomain.StatusScanFailed,
 		ErrorDetail:   "govulncheck: exit status 1",
 	}
-	if _, reason, _, _ := vulnAuditStatus(failed, true, nil); reason != "govulncheck: exit status 1" {
+	if _, reason, _, _ := vulnAuditStatus(failed, true, nil, ""); reason != "govulncheck: exit status 1" {
 		t.Errorf("reason = %q, want the scan-failed error detail", reason)
+	}
+}
+
+// A row the walk-frame read found nothing for because a pipeline bump darkened
+// its records is not an unscanned dependency, and "(not scanned)" is the
+// sentence an operator reads as one.
+func TestVulnAuditStatus_SupersededIsNotNotScanned(t *testing.T) {
+	status, reason, _, _ := vulnAuditStatus(vulndomain.VulnerabilityRecord{}, false, nil,
+		"scanned at pipeline v19 (16 record(s), 252 finding(s)); this build reads pipeline v20, so no record is served — re-scan")
+
+	if status != "(superseded)" {
+		t.Errorf("status = %q, want %q", status, "(superseded)")
+	}
+	if !strings.Contains(reason, "v19") {
+		t.Errorf("reason does not name the generation held: %q", reason)
 	}
 }

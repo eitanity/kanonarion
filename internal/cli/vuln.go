@@ -175,6 +175,21 @@ func reachabilityLabel(f vuldomain.VulnerabilityFinding, notReachable string) st
 	return notReachable
 }
 
+// fixReferenceURLs returns the URLs of a finding's FIX references, in the
+// record's own canonical order.
+//
+// The type comparison is case-insensitive because the type is upstream's string
+// and a record states it as it was published rather than normalising it.
+func fixReferenceURLs(f vuldomain.VulnerabilityFinding) []string {
+	var out []string
+	for _, ref := range f.References {
+		if strings.EqualFold(ref.Type, "FIX") {
+			out = append(out, ref.URL)
+		}
+	}
+	return out
+}
+
 func printFindingLines(stdout io.Writer, rec vuldomain.VulnerabilityRecord, classify routeRootFunc) {
 	if classify == nil {
 		classify = unclassifiedRoutes
@@ -210,6 +225,15 @@ func printFindingLines(stdout io.Writer, rec vuldomain.VulnerabilityRecord, clas
 		_, _ = fmt.Fprintf(stdout, "      fix:      %s\n", f.FixDisplay())
 		if len(f.AffectedSymbols) > 0 {
 			_, _ = fmt.Fprintf(stdout, "      symbols:  %s\n", strings.Join(f.AffectedSymbols, ", "))
+		}
+		// Only the FIX references are printed, and they are printed under the fix
+		// line they belong to. An advisory publishes up to a dozen links and most
+		// of them are places the vulnerability is discussed; the FIX ones are the
+		// commit or CL that remediates it, which is the only kind a reader acts on
+		// here. The record carries every reference with its type, and --json emits
+		// them all, so nothing is lost by the text view choosing.
+		if fixes := fixReferenceURLs(f); len(fixes) > 0 {
+			_, _ = fmt.Fprintf(stdout, "      fix refs: %s\n", strings.Join(fixes, ", "))
 		}
 		// Printed where the symbols would have been, because the empty symbol list
 		// is the thing being explained: a reader must not take it for a symbol list

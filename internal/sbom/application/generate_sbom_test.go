@@ -434,3 +434,170 @@ func TestGenerateSBOM_PersistError(t *testing.T) {
 		t.Fatalf("want persist error, got: %v", err)
 	}
 }
+
+// ---- subject stamp (MainComponentVersion / MainComponentLicense) ----
+
+// A request that names the document's subject is never answered from the
+// cache. Serving the stored document would hand back another run's subject
+// while silently discarding the one the caller supplied.
+func TestGenerateSBOM_SubjectStampBypassesCache(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		req  application.SBOMRequest
+	}{
+		{"version", application.SBOMRequest{WalkID: "walk-1", MainComponentVersion: "v1.2.3"}},
+		{"licence", application.SBOMRequest{WalkID: "walk-1", MainComponentLicense: "Apache-2.0"}},
+		{"both", application.SBOMRequest{WalkID: "walk-1", MainComponentVersion: "v1.2.3", MainComponentLicense: "Apache-2.0"}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			cached := domain.SBOMRecord{ID: "sbom-cached", WalkID: "walk-1"}
+			ss := &fakeSBOMStore{cached: cached, cachedOK: true}
+			fresh := domain.SBOMRecord{ID: "sbom-fresh", WalkID: "walk-1", Content: []byte(`{}`)}
+			gen := &fakeSBOMGenerator{record: fresh}
+			uc := makeUC(&fakeWalkStore{walk: makeWalk("walk-1")}, ss, gen)
+
+			got, err := uc.Generate(t.Context(), tc.req)
+			if err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if got.ID != "sbom-fresh" {
+				t.Errorf("a named subject must be generated, not served from cache: got %q", got.ID)
+			}
+			if gen.capturedReq.MainComponentVersion != tc.req.MainComponentVersion {
+				t.Errorf("MainComponentVersion reaching the generator = %q, want %q",
+					gen.capturedReq.MainComponentVersion, tc.req.MainComponentVersion)
+			}
+			if gen.capturedReq.MainComponentLicense != tc.req.MainComponentLicense {
+				t.Errorf("MainComponentLicense reaching the generator = %q, want %q",
+					gen.capturedReq.MainComponentLicense, tc.req.MainComponentLicense)
+			}
+		})
+	}
+}
+
+// The other direction, and the dangerous one: a stamped document must never be
+// written to the slot later callers read. If it were, a caller who names no
+// subject at all would be handed the stamp of whoever generated last — a
+// plausible version that is not theirs, in a distributed artefact.
+func TestGenerateSBOM_SubjectStampIsNotPersisted(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		req  application.SBOMRequest
+	}{
+		{"version", application.SBOMRequest{WalkID: "walk-1", MainComponentVersion: "v1.2.3"}},
+		{"licence", application.SBOMRequest{WalkID: "walk-1", MainComponentLicense: "Apache-2.0"}},
+		{"version with force", application.SBOMRequest{WalkID: "walk-1", MainComponentVersion: "v1.2.3", Force: true}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			ss := &fakeSBOMStore{}
+			gen := &fakeSBOMGenerator{record: domain.SBOMRecord{ID: "sbom-stamped", WalkID: "walk-1", Content: []byte(`{}`)}}
+			uc := makeUC(&fakeWalkStore{walk: makeWalk("walk-1")}, ss, gen)
+
+			if _, err := uc.Generate(t.Context(), tc.req); err != nil {
+				t.Fatalf("unexpected error: %v", err)
+			}
+			if ss.stored != nil {
+				t.Errorf("a stamped document must not be stored, got record %q in the store", ss.stored.ID)
+			}
+		})
+	}
+}
+
+// The guard is on the stamp, not on the command: a request that names no
+// subject still uses the cache and still persists. Without this, closing the
+// leak by never caching would go unnoticed.
+func TestGenerateSBOM_NoSubjectStampStillCachesAndPersists(t *testing.T) {
+	cached := domain.SBOMRecord{ID: "sbom-cached", WalkID: "walk-1"}
+	ss := &fakeSBOMStore{cached: cached, cachedOK: true}
+	uc := makeUC(&fakeWalkStore{walk: makeWalk("walk-1")}, ss, &fakeSBOMGenerator{})
+	got, err := uc.Generate(t.Context(), application.SBOMRequest{WalkID: "walk-1"})
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if got.ID != "sbom-cached" {
+		t.Errorf("an unstamped request must still be served from cache, got %q", got.ID)
+	}
+
+	ss2 := &fakeSBOMStore{}
+	gen := &fakeSBOMGenerator{record: domain.SBOMRecord{ID: "sbom-plain", WalkID: "walk-1", Content: []byte(`{}`)}}
+	uc2 := makeUC(&fakeWalkStore{walk: makeWalk("walk-1")}, ss2, gen)
+	if _, err := uc2.Generate(t.Context(), application.SBOMRequest{WalkID: "walk-1"}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if ss2.stored == nil {
+		t.Error("an unstamped request must still persist its record")
+	}
+}
+
+// fakeOriginReader answers from a fixed table, or fails.
+type fakeOriginReader struct {
+	origins map[coordinate.ModuleCoordinate]ports.ModuleOrigin
+	err     error
+	asked   []coordinate.ModuleCoordinate
+}
+
+func (f *fakeOriginReader) ModuleOrigin(
+	_ context.Context, coord coordinate.ModuleCoordinate,
+) (ports.ModuleOrigin, bool, error) {
+	f.asked = append(f.asked, coord)
+	if f.err != nil {
+		return ports.ModuleOrigin{}, false, f.err
+	}
+	o, ok := f.origins[coord]
+	return o, ok, nil
+}
+
+// TestGenerateSBOM_PassesRecordedOriginsForEveryNode verifies every module in the
+// walk is asked about, and only the ones with something recorded reach the
+// generator. A component's external references are built from this map and from
+// nothing else, so a module missing from it asserts no origin.
+func TestGenerateSBOM_PassesRecordedOriginsForEveryNode(t *testing.T) {
+	withOrigin, _ := coordinate.NewModuleCoordinate("example.com/withorigin", "v1.0.0")
+	without, _ := coordinate.NewModuleCoordinate("example.com/without", "v2.0.0")
+	walk := makeMultiNodeWalk("walk-origins", []coordinate.ModuleCoordinate{withOrigin, without})
+	ws := &fakeWalkStore{walk: walk}
+	gen := &fakeSBOMGenerator{record: domain.SBOMRecord{ID: "sbom-1", WalkID: "walk-origins"}}
+	origins := &fakeOriginReader{origins: map[coordinate.ModuleCoordinate]ports.ModuleOrigin{
+		withOrigin: {VCSURL: "https://example.com/repo", VCSCommit: "abc"},
+	}}
+	uc := makeUC(ws, &fakeSBOMStore{}, gen).WithModuleOrigins(origins)
+
+	if _, err := uc.Generate(t.Context(), application.SBOMRequest{
+		WalkID: "walk-origins", Format: domain.CycloneDX16,
+	}); err != nil {
+		t.Fatalf("Generate: %v", err)
+	}
+
+	if len(origins.asked) != 2 {
+		t.Errorf("asked about %d coordinates, want 2 (every node)", len(origins.asked))
+	}
+	got := gen.capturedReq.ModuleOrigins
+	if len(got) != 1 {
+		t.Fatalf("ModuleOrigins = %v, want exactly the one with a recorded origin", got)
+	}
+	if got[withOrigin].VCSURL != "https://example.com/repo" {
+		t.Errorf("ModuleOrigins[%s] = %+v", withOrigin, got[withOrigin])
+	}
+}
+
+// TestGenerateSBOM_OriginReadFailureFailsGeneration verifies a ledger that
+// cannot answer stops the document rather than being read as "nothing recorded".
+// A document that silently drops the modules it could not read is
+// indistinguishable from one where nothing was ever measured.
+func TestGenerateSBOM_OriginReadFailureFailsGeneration(t *testing.T) {
+	walk := makeWalk("walk-origin-fail")
+	ws := &fakeWalkStore{walk: walk}
+	gen := &fakeSBOMGenerator{record: domain.SBOMRecord{ID: "sbom-1", WalkID: "walk-origin-fail"}}
+	uc := makeUC(ws, &fakeSBOMStore{}, gen).
+		WithModuleOrigins(&fakeOriginReader{err: errors.New("ledger disagrees with itself")})
+
+	_, err := uc.Generate(t.Context(), application.SBOMRequest{
+		WalkID: "walk-origin-fail", Format: domain.CycloneDX16,
+	})
+	if err == nil {
+		t.Fatal("Generate succeeded; want the read failure reported")
+	}
+	if !strings.Contains(err.Error(), "ledger disagrees with itself") {
+		t.Errorf("err = %v, want it to name the store failure", err)
+	}
+}

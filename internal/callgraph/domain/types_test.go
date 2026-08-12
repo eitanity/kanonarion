@@ -58,10 +58,16 @@ func TestMigrateConfidence(t *testing.T) {
 	}
 }
 
-func TestCallGraphRecordSort(t *testing.T) {
+// TestCanonicalOrderOfNodesAndEdges checks the order the canonical bytes carry,
+// which is the only ordering that matters: a record is put in order where it is
+// marshalled, not by a step a caller has to remember.
+func TestCanonicalOrderOfNodesAndEdges(t *testing.T) {
+	var h domain.CallGraphRecordHasher
 	coord, _ := coordinate.NewModuleCoordinate("example.com/mod", "v1.0.0")
 	r := domain.CallGraphRecord{
-		Coordinate: coord,
+		SchemaVersion: domain.CallGraphSchemaVersion,
+		Ecosystem:     fetchdomain.EcosystemGo,
+		Coordinate:    coord,
 		Nodes: []domain.CallNode{
 			{ID: "example.com/mod.Gamma"},
 			{ID: "example.com/mod.Alpha"},
@@ -73,20 +79,28 @@ func TestCallGraphRecordSort(t *testing.T) {
 			{FromID: "example.com/mod.Alpha", ToID: "example.com/mod.Beta", CallSite: domain.SourcePosition{File: "a.go", Line: 3}},
 		},
 	}
-	r.Sort()
 
-	if r.Nodes[0].ID != "example.com/mod.Alpha" {
-		t.Errorf("first node after sort = %q, want Alpha", r.Nodes[0].ID)
+	raw, err := h.Marshal(r)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
 	}
-	if r.Nodes[2].ID != "example.com/mod.Gamma" {
-		t.Errorf("last node after sort = %q, want Gamma", r.Nodes[2].ID)
+	back, err := h.Unmarshal(raw)
+	if err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+
+	if back.Nodes[0].ID != "example.com/mod.Alpha" {
+		t.Errorf("first node = %q, want Alpha", back.Nodes[0].ID)
+	}
+	if back.Nodes[2].ID != "example.com/mod.Gamma" {
+		t.Errorf("last node = %q, want Gamma", back.Nodes[2].ID)
 	}
 	// Edges: Alpha→Beta@3, Alpha→Beta@5, Beta→Gamma@10
-	if r.Edges[0].FromID != "example.com/mod.Alpha" || r.Edges[0].CallSite.Line != 3 {
-		t.Errorf("first edge after sort = %+v", r.Edges[0])
+	if back.Edges[0].FromID != "example.com/mod.Alpha" || back.Edges[0].CallSite.Line != 3 {
+		t.Errorf("first edge = %+v", back.Edges[0])
 	}
-	if r.Edges[2].FromID != "example.com/mod.Beta" {
-		t.Errorf("last edge after sort = %+v", r.Edges[2])
+	if back.Edges[2].FromID != "example.com/mod.Beta" {
+		t.Errorf("last edge = %+v", back.Edges[2])
 	}
 }
 

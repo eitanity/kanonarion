@@ -417,6 +417,15 @@ measurement time and the fetch provenance blanked. It is there because the
 that produced the identical graph carry different record hashes, so a comparison
 on those would report every re-analysis as a disagreement.
 
+A generation whose analysis failed carries a `failure:` line between `from:` and
+`graph:`, naming the recorded cause and detail:
+
+```
+    failure:  environment: go: module lookup disabled by GOFLAGS=-mod=vendor
+```
+
+Generations that did not record a failure print no such line.
+
 #### Composition
 
 A read returns one answer composed from the generations, on a stated ordering:
@@ -444,16 +453,32 @@ own row in `callgraph-list` rather than failing the whole listing. Every such
 refusal prints the commands that address it — a refusal the append-only ledger
 makes permanent and that names no route out is a dead end.
 
+The graph comparison is over the **graph** and nothing else: the node, edge,
+interface and implementation collections and the counts stated with them. Two
+generations that recorded the same graph and described their run differently —
+different `failure_cause`, different `failure_detail`, a different set of failed
+packages — are **not** in conflict, because no answer the tool serves depends on
+the difference. That difference is not thrown away: `--history` prints each
+generation's failure on its own line, so two analyses that failed for different
+reasons are still visible side by side.
+
 A generation that says **nothing** about a field has not disagreed with one that
 does. Records are compared over the fields they all state, so a generation
 written before a field existed — and a generation whose value for an optional
 field is simply absent — is superseded by the newer one rather than reported as
-in conflict with it, and the newest generation answers. The comparison is over
-field presence rather than over any particular field name, so a field added in a
-later release behaves the same way without further work. What it does not relax
-is a disagreement between two generations that both state a field: node and edge
-sets are stated by every generation, as empty when there are none, so a graph
-against an empty one is still a conflict.
+in conflict with it, and the newest generation answers. What it does not relax
+is a disagreement between two generations that both state a graph field: node
+and edge sets are stated by every generation, as empty when there are none, so a
+graph against an empty one is still a conflict.
+
+Re-analysis clears a graph conflict only by getting **further** than the
+disagreeing generations did. Composition compares every generation at the highest
+completeness present, and the ledger is append-only, so an analysis that lands at
+the same completeness adds a third generation and the disagreement stands. The
+refusal names `kanonarion callgraph <module> --force` where a higher completeness
+is still available, and where the disagreeing generations are already
+`BUILT_WITH_BODIES` it says instead that nothing clears the conflict from the
+outside and sends you to `--history` to decide which measurement to trust.
 
 ### `callgraph-list`
 
@@ -637,9 +662,23 @@ calls only when every hop is `Direct` **and** no hop is a reference.
 | `Cancelled` | Context cancelled before or during extraction |
 | `ExcludedByConfig` | Module skipped because it matches a `callgraph.exclude` policy entry |
 
-A query whose root symbol lies in a failed package is refused outright rather
-than answered: that package's edges were dropped, so any "none" would be a false
-negative.
+A query whose root symbol lies in a failed package still answers, and says what
+it could not measure. That package produced no SSA, so edges with an end inside
+it were dropped and the symbol is not a node in its own module's graph — but
+edges INTO it recorded in a consumer's complete graph are unaffected, and those
+are what the answer lists. The output carries a `notice: unmeasured on one
+side …` line naming the package, and an empty answer is `verdict: UNRESOLVED`
+with a `dropped-package-edges` sink rather than a confident absence.
+
+The remedy the notice names depends on whose module failed. A project
+coordinate's package is yours to fix, so it names `local`; a fetched
+dependency's failure is in that dependency's own sources, which the notice says
+plainly before naming `callgraph-show` to see it and `callgraph … --force` to
+measure it again.
+
+`interface-diff --used-by` discloses the same condition for the *consumer's*
+own packages, because its reach counts are a join against the consumer's graph
+and a call site in a package that never compiled cannot appear in one.
 
 ## Storage
 
@@ -663,6 +702,28 @@ Edges are keyed on the parent rather than the coordinate because a coordinate no
 names every generation at once. `callers` and `callees` resolve the served
 generation first and answer from its edges alone, so a superseded generation's
 edges stay in the table as history and answer nothing.
+
+### After a pipeline-version bump
+
+A record is served only at the pipeline version the binary was built with. When
+the extraction pipeline is bumped, every stored record for a coordinate becomes
+unreachable until it is re-analysed, and a query for one does not answer empty —
+`callers`, `callees`, their `--transitive` forms and `implementers` refuse with
+exit 20, naming the versions the store holds and the command that re-derives
+them:
+
+```
+$ kanonarion callers 'github.com/golang-jwt/jwt/v4.(*Parser).ParseUnverified'
+error: symbol "…ParseUnverified" belongs to module "github.com/golang-jwt/jwt/v4",
+whose every stored call graph was produced by superseded extraction logic: this
+build serves pipeline 0.5.0 and the store holds v4.5.0, v4.5.1, v4.5.2 at
+pipeline 0.3.0, 0.4.1. …
+  kanonarion callgraph github.com/golang-jwt/jwt/v4@v4.5.0
+```
+
+`callgraph-show` and `callgraph-show --history` say the same thing for the
+coordinate they were asked about. A module the store holds at both a superseded
+and the serving version is answered normally from the served generation.
 
 The callgraph schema is tracked in the shared `schema_migrations` table under
 module key `callgraph` (current version: 13). A record whose `schema_version`

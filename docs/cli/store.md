@@ -59,6 +59,7 @@ Every reading states three things besides the events themselves:
 | **coverage** — the ledger's first and last event | Distinguishes "no event in this window" from "the ledger never spanned this window". Only the first supports a claim that nothing happened. An empty ledger reports `coverage: none` |
 | **unreadable** — the count and line numbers of lines that could not be read | A torn line is reported and skipped, never dropped silently and never fatal. When one falls inside the window queried, the matched count is additionally flagged as a lower bound for that window |
 | **not witnessed** — the persisted record kinds that append no event at all | Silence in the log is not proof that nothing happened; see below |
+| **why this reading is empty** — stated only when nothing matched | Names the filter that emptied it: a module path no event names, a version no event carries for a path several events do, a window outside the ledger's coverage, an event type the log holds none of, or filters that each match events but never the same one |
 
 The command is read-only: it opens no database, applies no migration, and never
 writes to the ledger.
@@ -98,8 +99,8 @@ evidence they did not happen:
 | Flag | Effect |
 |---|---|
 | `--since` / `--until` | Restrict to a time window (RFC3339, inclusive). An unparseable or inverted bound is refused |
-| `--module` | Restrict to events naming this module path. Matches the `module`, `module_path` (the flat fact-record layout) and `project` (directive/GODEBUG/FIPS/vendor) fields |
-| `--event-type` | Restrict to one event type, e.g. `vuln_finding_observed` |
+| `--module` | Restrict to events naming this module. Takes a path (`example.com/mod`) or a coordinate (`example.com/mod@v1.2.3`). The path is matched against the `module`, `module_path` (the flat fact-record layout) and `project` (directive/GODEBUG/FIPS/vendor) fields; a coordinate additionally requires the version, matched against `module_version` and `version` for the events that carry one. An event that names the module and no version still matches. A value that is neither form (`@v1.2.3`, `example.com/mod@`) is refused |
+| `--event-type` | Restrict to one event type, e.g. `vuln_finding_observed`. A name that is neither an event type this build emits nor one the ledger in hand holds is refused, and the accepted set is named; `--help` lists it |
 | `--limit` | List at most N events (0 = unlimited). The matched count is still the full total, and the output says it was truncated |
 | `--offset` | Skip this many **matched** events before listing, so paging composes with the filters rather than re-scoping them. The output states how many were stepped over |
 
@@ -119,6 +120,16 @@ CLI will use for the given `--store-root`).
 ```
 kanonarion store config show [--store-root <dir>] [--json]
 ```
+
+Same output as [`kanonarion config show`](config.md#kanonarion-config-show),
+including on a store with no `config.yaml`: absent is reported (exit `0`, every
+value marked `(default)`, `"config_file": {"present": false}` under `--json`).
+
+A `config.yaml` that exists and the loader rejects is also reported here rather
+than refused (exit `0`, `"rejected": true`, every value marked `(default)`); it
+is one of the few commands that keeps running in that state, because it is how
+the problem is seen. Every other `store` subcommand exits `20` — see
+[When the config file is rejected](config.md#when-the-config-file-is-rejected).
 
 ## Flags
 

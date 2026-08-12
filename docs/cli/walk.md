@@ -55,6 +55,7 @@ kanonarion walk --gomod ./go.mod [flags]
 | `--project` | `false` | Scope the project walk to the **complete** set: the project's code **and** tooling (the full Go build list, `go list -m all`, scope `complete`). Mutually exclusive with `--tool`. See [Scopes](#scopes-code-tool-complete). |
 | `--shallow` | `false` | Fetch only the target; list its `go.mod` requires without recursing (positional module walk only) |
 | `--skip-vcs-verify` | `false` | Skip git cross-verification (checksum still runs) |
+| `--allow-verification-downgrade` | `false` | Permit a weaker re-measurement of a module to be recorded alongside a stronger stored one. Without it the weaker measurement is refused, the stronger record is kept and answers, and the run warns. See [Re-measuring with a weaker anchor](fetch.md#re-measuring-with-a-weaker-anchor---allow-verification-downgrade) |
 | `--analyse-local` | `false` | Ingest `replace` targets that point to local directories so callgraph/iface/license can analyse them. Requires `--gomod`; refused by name on a positional module walk, which has no local source context |
 | `--analyse-root` | `false` | Ingest the project's own working tree so all extraction stages analyse the project's own packages. Re-reads the tree fresh on every run. Requires a `go.mod` walk; incompatible with `--tool` (a tool walk does not cover the project's own packages). See [Analysing the project root](#analysing-the-project-root---analyse-root). |
 | `--stdlib-from-gomod` | `false` | Version the `stdlib` node from the `go.mod` directive, not the live toolchain. Requires a `go.mod` walk; refused by name on a positional module walk, which has no project `go.mod` to read the directive from. See [Standard-library version](#standard-library-version---stdlib-from-gomod). |
@@ -116,6 +117,22 @@ version-changed modules).
 ```
 kanonarion walk-diff <walk-id-a> <walk-id-b> [--json]
 ```
+
+When the two walks do not differ, the command says so and names what it
+compared — both ids, the build frame each walk was resolved in, and the node
+count on each side:
+
+```
+diff 01KZ...A..01KZ...B
+no difference: 01KZ...A (frame linux/amd64, 128 node(s)) and 01KZ...B (frame linux/amd64, 128 node(s))
+name the same modules at the same versions, and no node status changed
+```
+
+Passing the same id twice says that instead, since nothing was compared with
+anything. When the two walks were resolved at unequal completeness the empty
+result is additionally flagged as not a confident "identical". Under `--json`
+the statement is an object on **stderr**; stdout keeps the diff document
+unchanged.
 
 If either ID is not in the store the command exits `4` and names **which** of
 the two was missing — or both when both are — followed by how many walk records

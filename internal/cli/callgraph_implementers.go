@@ -181,10 +181,14 @@ func (l implementerLookup) verdict(present bool, opts ports.EdgeQueryOptions) do
 	}
 	var sinks []domain.SoundnessSink
 	if l.partialPkg != "" {
+		// Its own kind, matching what callers/callees now report for the same
+		// condition: a dropped package is a build failure inside the analysed
+		// artefact, not a module analysed at a level someone chose, and the two
+		// were indistinguishable while they shared a kind.
 		sinks = append(sinks, domain.SoundnessSink{
-			Kind:   domain.SinkTypeOnlyCallee,
+			Kind:   domain.SinkDroppedPackageEdges,
 			Site:   l.iface.ID,
-			Detail: "package " + l.partialPkg + " did not typecheck",
+			Detail: "package " + l.partialPkg + " did not typecheck, so its edges were dropped",
 		})
 	}
 	if l.belowFull != domain.CompletenessUnknown && !l.belowFull.IsBuiltWithBodies() {
@@ -219,17 +223,29 @@ func gatherImplementers(ctx context.Context, interfaceID string, uc QueryCallGra
 	var out implementerLookup
 	out.testScope = domain.TestScopeAnalysed
 
+	// Resolution reads everything the store holds so a module analysed only
+	// under superseded logic is still recognised as owning the interface; the
+	// answer itself is drawn only from what this binary serves.
+	stored, err := listStoredSummaries(ctx, uc, scope)
+	if err != nil {
+		return out, err
+	}
 	sums, err := listScopedSummaries(ctx, uc, scope)
 	if err != nil {
 		return out, err
 	}
-	paths := make([]string, 0, len(sums))
-	for _, s := range sums {
+	paths := make([]string, 0, len(stored))
+	for _, s := range stored {
 		paths = append(paths, s.ModulePath)
 	}
 	modulePath, ok := domain.ResolveSymbolModule(interfaceID, paths)
 	if !ok {
 		return out, nil
+	}
+	if !moduleServedAtThisPipeline(modulePath, sums) {
+		// Empty here would read as "nothing implements this interface", which is
+		// a claim about the code rather than about what has been measured.
+		return out, supersededPipelineError(interfaceID, modulePath, stored)
 	}
 	out.modulePath = modulePath
 	out.moduleAnalysed = true

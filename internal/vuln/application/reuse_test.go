@@ -56,13 +56,13 @@ func TestReusableRun_RefusesARunWhoseWalkIsGone(t *testing.T) {
 
 	// Sanity: this run is reusable while its walk is in the store, so the refusal
 	// below is attributable to the purge and to nothing else.
-	if _, ok, err := uc.ReusableRun(context.Background(), reuseWalkID); err != nil || !ok {
+	if _, ok, err := uc.ReusableRun(context.Background(), reuseWalkID, ""); err != nil || !ok {
 		t.Fatalf("control: ReusableRun = (%v, %v), want a reusable run", ok, err)
 	}
 
 	walks.forget(reuseWalkID)
 
-	run, ok, err := uc.ReusableRun(context.Background(), reuseWalkID)
+	run, ok, err := uc.ReusableRun(context.Background(), reuseWalkID, "")
 	if err != nil {
 		t.Fatalf("ReusableRun: %v", err)
 	}
@@ -81,7 +81,7 @@ func TestReusableRun_RefusesAnUnreadableWalk(t *testing.T) {
 
 	walks.errOnGet = errors.New("walk record integrity check failed")
 
-	if _, ok, err := uc.ReusableRun(context.Background(), reuseWalkID); err != nil || ok {
+	if _, ok, err := uc.ReusableRun(context.Background(), reuseWalkID, ""); err != nil || ok {
 		t.Fatalf("ReusableRun = (%v, %v), want no reuse and no error", ok, err)
 	}
 }
@@ -130,7 +130,7 @@ func TestReusableRun_ServesACompletedRunAgainstTheSameSnapshot(t *testing.T) {
 	seedSnapshot(t, store, snap)
 	want := seedRun(t, store, "vscan-1", reuseWalkID, snap, "v1", domain.CoverageComplete)
 
-	got, ok, err := uc.ReusableRun(context.Background(), reuseWalkID)
+	got, ok, err := uc.ReusableRun(context.Background(), reuseWalkID, "")
 	if err != nil {
 		t.Fatalf("ReusableRun: %v", err)
 	}
@@ -150,7 +150,7 @@ func TestReusableRun_RefusesADifferentSnapshot(t *testing.T) {
 	seedRun(t, store, "vscan-1", reuseWalkID, vulntest.MustNew("vuln.go.dev", "2026-07-27T16:28:49Z"), "v1", domain.CoverageComplete)
 	seedSnapshot(t, store, vulntest.MustNew("vuln.go.dev", "2026-08-01T00:00:00Z"))
 
-	if _, ok, err := uc.ReusableRun(context.Background(), reuseWalkID); err != nil {
+	if _, ok, err := uc.ReusableRun(context.Background(), reuseWalkID, ""); err != nil {
 		t.Fatalf("ReusableRun: %v", err)
 	} else if ok {
 		t.Error("a run judged against an older advisory snapshot was served for a newer one")
@@ -169,7 +169,7 @@ func TestReusableRun_RefusesAnIncompleteRun(t *testing.T) {
 			seedSnapshot(t, store, snap)
 			seedRun(t, store, "vscan-1", reuseWalkID, snap, "v1", coverage)
 
-			if _, ok, err := uc.ReusableRun(context.Background(), reuseWalkID); err != nil {
+			if _, ok, err := uc.ReusableRun(context.Background(), reuseWalkID, ""); err != nil {
 				t.Fatalf("ReusableRun: %v", err)
 			} else if ok {
 				t.Errorf("a %s run was offered for reuse", coverage)
@@ -188,7 +188,7 @@ func TestReusableRun_RefusesASupersededPipeline(t *testing.T) {
 	seedSnapshot(t, store, snap)
 	seedRun(t, store, "vscan-1", reuseWalkID, snap, "v1", domain.CoverageComplete)
 
-	if _, ok, err := uc.ReusableRun(context.Background(), reuseWalkID); err != nil {
+	if _, ok, err := uc.ReusableRun(context.Background(), reuseWalkID, ""); err != nil {
 		t.Fatalf("ReusableRun: %v", err)
 	} else if ok {
 		t.Error("a run from a superseded pipeline version was served")
@@ -221,7 +221,7 @@ func TestReusableRun_ServesARunAcrossARefetchOfTheSameDatabase(t *testing.T) {
 	// The store hands back the same generation at second precision.
 	seedSnapshot(t, store, sealed)
 
-	if _, ok, rerr := uc.ReusableRun(context.Background(), reuseWalkID); rerr != nil {
+	if _, ok, rerr := uc.ReusableRun(context.Background(), reuseWalkID, ""); rerr != nil {
 		t.Fatalf("ReusableRun: %v", rerr)
 	} else if !ok {
 		t.Error("a run judged against this very advisory database was not reused because its download time differed")
@@ -236,7 +236,7 @@ func TestReusableRun_RefusesAnotherWalksRun(t *testing.T) {
 	seedSnapshot(t, store, snap)
 	seedRun(t, store, "vscan-1", reuseWalkID, snap, "v1", domain.CoverageComplete)
 
-	if _, ok, err := uc.ReusableRun(context.Background(), "walk-2"); err != nil {
+	if _, ok, err := uc.ReusableRun(context.Background(), "walk-2", ""); err != nil {
 		t.Fatalf("ReusableRun: %v", err)
 	} else if ok {
 		t.Error("one walk's scan run was offered as another walk's")

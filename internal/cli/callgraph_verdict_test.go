@@ -7,6 +7,8 @@ import (
 	"strings"
 	"testing"
 
+	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
+
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
@@ -41,7 +43,7 @@ func fakeWithRecord(path, version, pipeline string, rec cgdomain.CallGraphRecord
 // TestRunCallers_ResolvedAbsent: a known node in a fully-built module with no
 // unresolved dispatch reports a confident RESOLVED-ABSENT.
 func TestRunCallers_ResolvedAbsent(t *testing.T) {
-	uc := fakeWithRecord("example.com/m", "v1.0.0", "0.2.0",
+	uc := fakeWithRecord("example.com/m", "v1.0.0", cgapp.PipelineVersion,
 		builtRecord([]cgdomain.CallNode{{ID: "example.com/m.Root", Symbol: "Root"}}, nil))
 	var buf bytes.Buffer
 	if err := runCallers(context.Background(), "example.com/m.Root", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
@@ -65,7 +67,7 @@ func TestRunCallers_UnresolvedInterfaceDispatch(t *testing.T) {
 			{FromID: "example.com/m.Client", ToID: "example.com/m.(*OtherImpl).Do", Confidence: cgdomain.ConfidenceCHAOverapprox},
 		},
 	)
-	uc := fakeWithRecord("example.com/m", "v1.0.0", "0.2.0", rec)
+	uc := fakeWithRecord("example.com/m", "v1.0.0", cgapp.PipelineVersion, rec)
 	var buf bytes.Buffer
 	if err := runCallers(context.Background(), "example.com/m.(*Target).Do", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -86,7 +88,7 @@ func TestRunCallees_TypeOnlyModuleUnresolved(t *testing.T) {
 		Completeness: cgdomain.CompletenessTypeOnly,
 		Nodes:        []cgdomain.CallNode{{ID: "example.com/m.Leaf", Symbol: "Leaf"}},
 	}
-	uc := fakeWithRecord("example.com/m", "v1.0.0", "0.2.0", rec)
+	uc := fakeWithRecord("example.com/m", "v1.0.0", cgapp.PipelineVersion, rec)
 	var buf bytes.Buffer
 	if err := runCallees(context.Background(), "example.com/m.Leaf", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -99,7 +101,7 @@ func TestRunCallees_TypeOnlyModuleUnresolved(t *testing.T) {
 // TestRunCallees_JSONOmitsVerdict: JSON output for an empty answer stays the bare
 // edge array (verdict is a text-mode signal), preserving the existing shape.
 func TestRunCallees_JSONOmitsVerdict(t *testing.T) {
-	uc := fakeWithRecord("example.com/m", "v1.0.0", "0.2.0",
+	uc := fakeWithRecord("example.com/m", "v1.0.0", cgapp.PipelineVersion,
 		builtRecord([]cgdomain.CallNode{{ID: "example.com/m.Leaf", Symbol: "Leaf"}}, nil))
 	var buf bytes.Buffer
 	if err := runCallees(context.Background(), "example.com/m.Leaf", true, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
@@ -125,7 +127,7 @@ func TestRunCallersTransitive_UnresolvedInterfaceDispatch(t *testing.T) {
 			{FromID: "example.com/m.Client", ToID: "example.com/m.(*OtherImpl).Do", Confidence: cgdomain.ConfidenceUnknown},
 		},
 	)
-	uc := fakeWithRecord("example.com/m", "v1.0.0", "0.2.0", rec)
+	uc := fakeWithRecord("example.com/m", "v1.0.0", cgapp.PipelineVersion, rec)
 	var buf bytes.Buffer
 	if err := runCallersTransitive(context.Background(), "example.com/m.(*Target).Do", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
 		t.Fatalf("unexpected error: %v", err)
@@ -138,7 +140,7 @@ func TestRunCallersTransitive_UnresolvedInterfaceDispatch(t *testing.T) {
 // TestRunCalleesTransitive_ResolvedAbsent: an empty transitive callees answer over
 // a fully-built leaf is a confident absence.
 func TestRunCalleesTransitive_ResolvedAbsent(t *testing.T) {
-	uc := fakeWithRecord("example.com/m", "v1.0.0", "0.2.0",
+	uc := fakeWithRecord("example.com/m", "v1.0.0", cgapp.PipelineVersion,
 		builtRecord([]cgdomain.CallNode{{ID: "example.com/m.Leaf", Symbol: "Leaf"}}, nil))
 	var buf bytes.Buffer
 	if err := runCalleesTransitive(context.Background(), "example.com/m.Leaf", 0, false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
@@ -153,7 +155,7 @@ func TestRunCalleesTransitive_ResolvedAbsent(t *testing.T) {
 // store yields a RESOLVED-ABSENT default (the caller has already errored on it).
 func TestNegativeCallVerdict_ModuleNotResolved(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph() // no summaries
-	v, err := negativeCallVerdict(context.Background(), "example.com/x.Fn", true, uc, coordinate.ModuleSet{}, cgports.EdgeQueryOptions{})
+	v, err := negativeCallVerdict(context.Background(), "example.com/x.Fn", true, uc, coordinate.ModuleSet{}, cgports.EdgeQueryOptions{}, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -166,8 +168,8 @@ func TestNegativeCallVerdict_ModuleNotResolved(t *testing.T) {
 // (its package was type-only), so the below-full level still downgrades it.
 func TestNegativeCallVerdict_NodeAbsentBelowFull(t *testing.T) {
 	rec := cgdomain.CallGraphRecord{Completeness: cgdomain.CompletenessMetadataOnly}
-	uc := fakeWithRecord("example.com/m", "v1.0.0", "0.2.0", rec)
-	v, err := negativeCallVerdict(context.Background(), "example.com/m.Ghost", false, uc, coordinate.ModuleSet{}, cgports.EdgeQueryOptions{})
+	uc := fakeWithRecord("example.com/m", "v1.0.0", cgapp.PipelineVersion, rec)
+	v, err := negativeCallVerdict(context.Background(), "example.com/m.Ghost", false, uc, coordinate.ModuleSet{}, cgports.EdgeQueryOptions{}, "")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -183,7 +185,7 @@ func TestNegativeCallVerdict_NodeAbsentBelowFull(t *testing.T) {
 func TestNegativeCallVerdict_ListError(t *testing.T) {
 	uc := testfakes.NewFakeQueryCallGraph()
 	uc.Err = errors.New("boom")
-	if _, err := negativeCallVerdict(context.Background(), "example.com/m.Fn", true, uc, coordinate.ModuleSet{}, cgports.EdgeQueryOptions{}); err == nil {
+	if _, err := negativeCallVerdict(context.Background(), "example.com/m.Fn", true, uc, coordinate.ModuleSet{}, cgports.EdgeQueryOptions{}, ""); err == nil {
 		t.Fatal("expected error from list failure")
 	}
 }

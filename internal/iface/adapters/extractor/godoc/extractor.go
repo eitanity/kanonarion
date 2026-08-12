@@ -359,14 +359,28 @@ func extractValues(fset *token.FileSet, groups []*doc.Value, generated map[strin
 		}
 		pos := fset.Position(g.Decl.Pos())
 		isGen := generated[pos.Filename]
+		// A constant spec with no expression list repeats the previous spec's
+		// type and expression — that is what makes an iota group work, and it
+		// is the only way most enumerations declare their type. Reading each
+		// spec on its own leaves every member but the first with no type at
+		// all, which is not what the source says. Carried forward per
+		// declaration; a spec that does bring its own expressions starts the
+		// carry again, typed or not.
+		carried := ""
 		for _, spec := range g.Decl.Specs {
 			vs, ok := spec.(*ast.ValueSpec)
 			if !ok {
 				continue
 			}
 			typeStr := ""
-			if vs.Type != nil {
+			switch {
+			case vs.Type != nil:
 				typeStr = formatNode(fset, vs.Type)
+				carried = typeStr
+			case len(vs.Values) == 0:
+				typeStr = carried
+			default:
+				carried = ""
 			}
 			for _, ident := range vs.Names {
 				if !ident.IsExported() {
@@ -468,7 +482,7 @@ func extractFields(fset *token.FileSet, spec *ast.TypeSpec, isGenerated bool) []
 			// embedded field
 			pos := fset.Position(field.Pos())
 			name := typeExprString(field.Type)
-			if ast.IsExported(strings.TrimPrefix(strings.TrimPrefix(name, "*"), "~")) {
+			if isExportedEmbedded(name) {
 				out = append(out, domain.FieldDecl{
 					Name:     name,
 					Type:     typeStr,
@@ -528,6 +542,21 @@ func formatFuncSignature(fset *token.FileSet, decl *ast.FuncDecl) string {
 		return ""
 	}
 	return strings.TrimSpace(buf.String())
+}
+
+// isExportedEmbedded reports whether an embedded field's spelling names a
+// selector callers can write. Exportedness belongs to the type's own
+// identifier, not to the package qualifier in front of it: an embedded
+// bytes.Buffer publishes x.Buffer just as an embedded local Buffer does.
+func isExportedEmbedded(name string) bool {
+	name = strings.TrimPrefix(strings.TrimPrefix(name, "*"), "~")
+	if i := strings.LastIndexByte(name, '.'); i >= 0 {
+		name = name[i+1:]
+	}
+	if i := strings.IndexByte(name, '['); i >= 0 { // generic instantiation
+		name = name[:i]
+	}
+	return ast.IsExported(name)
 }
 
 func typeExprString(expr ast.Expr) string {

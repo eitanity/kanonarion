@@ -50,6 +50,7 @@ func (a *VulnStoreAdapter) LoadFindings(
 		Findings:       make(map[coordinate.ModuleCoordinate][]ports.VulnFinding),
 		Scanned:        make(map[coordinate.ModuleCoordinate]struct{}),
 		OtherFrameOnly: make(map[coordinate.ModuleCoordinate]struct{}),
+		SupersededOnly: make(map[coordinate.ModuleCoordinate]struct{}),
 		Restriction:    seedRestriction(consumerModulePath),
 	}
 	for _, coord := range coords {
@@ -58,6 +59,13 @@ func (a *VulnStoreAdapter) LoadFindings(
 			return ports.FindingSet{}, fmt.Errorf("loading vuln records for %s: %w", coord, err)
 		}
 		if len(candidates) == 0 {
+			// The read above keys on the pipeline version. An empty answer is
+			// therefore silent about every other generation, and a coordinate the
+			// store holds only at one of those is not an unscanned dependency —
+			// which is what the coverage block would otherwise call it.
+			if a.supersededOnly(ctx, coord) {
+				result.SupersededOnly[coord] = struct{}{}
+			}
 			continue
 		}
 		rec, found, err := vulndomain.ComposeForTree(candidates, consumerModulePath)
@@ -93,6 +101,12 @@ func (a *VulnStoreAdapter) LoadFindings(
 				// later: it is what says the verdict came from a stored scan, and which
 				// build that scan was rooted at.
 				vf.ReachableBasis = f.Reachable.DerivedBy.String()
+				// The rung behind a negative is derived here, where the whole finding is
+				// in hand. Below this seam the analyser and its fidelity are gone, so a
+				// probe that carried the verdict on and derived the rung later would be
+				// deriving it from nothing.
+				soundness, reason := vulndomain.NegativeSoundness(f)
+				vf.ReachableSoundness, vf.ReachableSoundnessReason = string(soundness), reason
 			}
 			findings = append(findings, vf)
 		}
@@ -119,3 +133,22 @@ func seedRestriction(consumerModulePath string) string {
 
 // Ensure VulnStoreAdapter implements ports.VulnFindingLoader at compile time.
 var _ ports.VulnFindingLoader = (*VulnStoreAdapter)(nil)
+
+// supersededOnly reports whether the store holds this coordinate only at
+// pipeline versions this loader does not read.
+//
+// It runs on the empty path only, and it is advisory: a census that fails to
+// read leaves the coordinate in the plain uncovered bucket, which is less
+// precise and never wrong. A coverage note may not become a load failure.
+func (a *VulnStoreAdapter) supersededOnly(ctx context.Context, coord coordinate.ModuleCoordinate) bool {
+	gens, err := a.store.ListVulnerabilityRecordGenerationsForModule(ctx, coord)
+	if err != nil || len(gens) == 0 {
+		return false
+	}
+	for _, g := range gens {
+		if g.PipelineVersion == a.pipelineVersion {
+			return false
+		}
+	}
+	return true
+}

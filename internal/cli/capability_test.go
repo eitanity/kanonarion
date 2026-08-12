@@ -150,8 +150,34 @@ func TestRunCapabilityDiffNoChangeAndCaveat(t *testing.T) {
 	if !strings.Contains(out, "not valid") {
 		t.Errorf("caveat missing: %q", out)
 	}
-	if !strings.Contains(out, "no capability change") {
-		t.Errorf("no-change message missing: %q", out)
+	// Two empty sets and two identical non-empty sets are different findings; the
+	// no-change line says which one it is.
+	for _, want := range []string{"no capability change", "neither version witnesses any capability"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q in the no-change output: %q", want, out)
+		}
+	}
+}
+
+// TestRunCapabilityDiffNoChangeNamesTheCommonSet asserts an unchanged non-empty
+// capability set is stated rather than collapsed into the same line an empty one
+// prints.
+func TestRunCapabilityDiffNoChangeNamesTheCommonSet(t *testing.T) {
+	var buf bytes.Buffer
+	uc := fakeCapAnalyser{
+		diff: capdomain.CapabilityDiff{
+			ParityOK: true,
+			Common:   []capdomain.Capability{capdomain.CapabilityNetwork, capdomain.CapabilityExec},
+		},
+	}
+	if err := runCapabilityDiff(context.Background(), "m@v1.0.0", "m@v1.1.0", uc, false, &buf); err != nil {
+		t.Fatal(err)
+	}
+	out := buf.String()
+	for _, want := range []string{"no capability change", "both versions witness the same 2 capabilities", "NETWORK", "EXEC"} {
+		if !strings.Contains(out, want) {
+			t.Errorf("expected %q in the no-change output: %q", want, out)
+		}
 	}
 }
 

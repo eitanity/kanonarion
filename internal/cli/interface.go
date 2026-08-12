@@ -90,7 +90,16 @@ func runInterfaceHistory(ctx context.Context, coord coordinate.ModuleCoordinate,
 		return fmt.Errorf("reading interface history: %w", err)
 	}
 	if len(recs) == 0 {
-		if _, werr := fmt.Fprintf(stdout, "no interface records for %s\n", coord); werr != nil {
+		// The history is read at the serving pipeline version, so a coordinate
+		// whose generations are all superseded has an empty history and a full
+		// ledger. Saying "no records" would deny records that are still here.
+		line := fmt.Sprintf("no interface records for %s", coord)
+		if all, lerr := uc.ListInterfaceRecords(ctx, ports.InterfaceFilter{}); lerr == nil {
+			if pipelines, superseded := supersededInterfacePipelines(coord, all); superseded {
+				line = supersededInterfaceLine(coord, pipelines)
+			}
+		}
+		if _, werr := fmt.Fprintf(stdout, "%s\n", line); werr != nil {
 			return fmt.Errorf("writing output: %w", werr)
 		}
 		return nil
@@ -218,6 +227,10 @@ func runInterfaceShow(ctx context.Context, moduleArg, pkgFilter, symbolFilter st
 		return interfaceRecordMiss(ctx, ctr.QueryInterface, coord, jsonOut, stderr)
 	}
 
+	// Promotion is resolved against the whole record, before any filter: a type
+	// printed alone still reports what its embeddings make callable on it.
+	idx := newPromotionIndex(r)
+
 	// Apply filters.
 	if pkgFilter != "" || symbolFilter != "" {
 		r = filterRecord(r, pkgFilter, symbolFilter)
@@ -232,7 +245,7 @@ func runInterfaceShow(ctx context.Context, moduleArg, pkgFilter, symbolFilter st
 		return nil
 	}
 
-	return printRecordText(r, stdout)
+	return printRecordText(r, idx, stdout)
 }
 
 func filterRecord(r domain.InterfaceRecord, pkgFilter, symbolFilter string) domain.InterfaceRecord {
@@ -280,45 +293,6 @@ func filterPackageSymbol(pkg domain.PackageInterface, sym string) domain.Package
 	pkg.Consts = consts
 	pkg.Vars = vars
 	return pkg
-}
-
-func printRecordText(r domain.InterfaceRecord, stdout io.Writer) error {
-	for _, pkg := range r.Packages {
-		if _, err := fmt.Fprintf(stdout, "\npackage %s // %s\n", pkg.Name, pkg.ImportPath); err != nil {
-			return fmt.Errorf("writing package header: %w", err)
-		}
-		for _, t := range pkg.Types {
-			if _, err := fmt.Fprintf(stdout, "  type %s (%s)\n", t.Name, t.Kind.String()); err != nil {
-				return fmt.Errorf("writing type: %w", err)
-			}
-			for _, m := range t.Methods {
-				if _, err := fmt.Fprintf(stdout, "    func %s\n", m.Signature); err != nil {
-					return fmt.Errorf("writing method: %w", err)
-				}
-			}
-		}
-		for _, f := range pkg.Funcs {
-			if _, err := fmt.Fprintf(stdout, "  %s\n", f.Signature); err != nil {
-				return fmt.Errorf("writing func: %w", err)
-			}
-		}
-		for _, c := range pkg.Consts {
-			if _, err := fmt.Fprintf(stdout, "  const %s %s\n", c.Name, c.Type); err != nil {
-				return fmt.Errorf("writing const: %w", err)
-			}
-		}
-		for _, v := range pkg.Vars {
-			if _, err := fmt.Fprintf(stdout, "  var %s %s\n", v.Name, v.Type); err != nil {
-				return fmt.Errorf("writing var: %w", err)
-			}
-		}
-		for _, pf := range pkg.ParseFailures {
-			if _, err := fmt.Fprintf(stdout, "  [parse failure] %s: %s\n", pf.File, pf.Error); err != nil {
-				return fmt.Errorf("writing parse failure: %w", err)
-			}
-		}
-	}
-	return nil
 }
 
 // -- symbol-find command --
@@ -389,6 +363,12 @@ func runSymbolFind(ctx context.Context, symbolName string, scopeFlags buildScope
 					"  kanonarion interface <module>@<version>\n"+
 					"  kanonarion local .   # for this project's own symbols",
 				symbolName)
+		}
+		// A store full of records this build refuses to serve is not a store
+		// that answers "no such export". The index is keyed on the pipeline
+		// version, so the lookup read nothing at all.
+		if line, superseded := supersededInterfaceStoreLine(recs); superseded {
+			return fmt.Errorf("symbol %q cannot be resolved: %s", symbolName, line)
 		}
 		// Under a scope, "no exports" is also reachable because every module that
 		// exports the symbol sits outside the named build. That is a statement
@@ -619,6 +599,12 @@ func interfaceRecordMiss(ctx context.Context, uc QueryInterfaceUseCase, coord co
 	if err != nil {
 		return fmt.Errorf("counting interface records for the not-found notice: %w", err)
 	}
+	// The listing is unfiltered by pipeline version, so it can tell a
+	// coordinate that was never extracted from one whose every record this
+	// build refuses to serve. The second is not a coordinate to check.
+	if pipelines, superseded := supersededInterfacePipelines(coord, all); superseded {
+		return &exitError{code: ExitNotFound, msg: supersededInterfaceLine(coord, pipelines)}
+	}
 	scope := listZeroScope{
 		subject:     "interface record",
 		filterName:  "module coordinate",
@@ -652,11 +638,17 @@ func printInterfaceList(sums []ports.InterfaceSummary, jsonOut bool, limit, offs
 	trunc := listTruncation{limit: limit, subject: "interface records", truncated: truncated, offset: offset}
 	if jsonOut {
 		type interfaceListEntry struct {
-			Module       string `json:"module"`
-			Version      string `json:"version"`
-			Status       string `json:"status"`
-			PackageCount int    `json:"package_count"`
-			Conflict     string `json:"conflict,omitempty"`
+			Module  string `json:"module"`
+			Version string `json:"version"`
+			Status  string `json:"status"`
+			// PipelineVersion is the extraction logic that produced the record,
+			// and Superseded says this build does not serve it. Without the
+			// pair a consumer reads a listed record as an available one and
+			// finds every query about it empty.
+			PipelineVersion string `json:"pipeline_version"`
+			Superseded      bool   `json:"superseded,omitempty"`
+			PackageCount    int    `json:"package_count"`
+			Conflict        string `json:"conflict,omitempty"`
 		}
 		entries := make([]interfaceListEntry, 0, len(sums))
 		var jsonConflicts []error
@@ -666,14 +658,18 @@ func printInterfaceList(sums []ports.InterfaceSummary, jsonOut bool, limit, offs
 				entries = append(entries, interfaceListEntry{
 					Module: s.ModulePath, Version: s.ModuleVersion,
 					Status: "Conflict", Conflict: s.Conflict.Error(),
+					PipelineVersion: s.PipelineVersion,
+					Superseded:      s.PipelineVersion != ifaceapp.PipelineVersion,
 				})
 				continue
 			}
 			entries = append(entries, interfaceListEntry{
-				Module:       s.ModulePath,
-				Version:      s.ModuleVersion,
-				Status:       s.OverallStatus.String(),
-				PackageCount: s.PackageCount,
+				Module:          s.ModulePath,
+				Version:         s.ModuleVersion,
+				Status:          s.OverallStatus.String(),
+				PipelineVersion: s.PipelineVersion,
+				Superseded:      s.PipelineVersion != ifaceapp.PipelineVersion,
+				PackageCount:    s.PackageCount,
 			})
 		}
 		enc := json.NewEncoder(stdout)
@@ -698,6 +694,7 @@ func printInterfaceList(sums []ports.InterfaceSummary, jsonOut bool, limit, offs
 		return writeListZeroNotice(stdout, zero)
 	}
 	var conflicts []error
+	supersededRows := 0
 	for _, s := range sums {
 		if s.Conflict != nil {
 			conflicts = append(conflicts, s.Conflict)
@@ -708,12 +705,30 @@ func printInterfaceList(sums []ports.InterfaceSummary, jsonOut bool, limit, offs
 			}
 			continue
 		}
-		if _, err := fmt.Fprintf(stdout, "%-50s %-12s %d package(s)\n",
+		superseded := ""
+		if s.PipelineVersion != ifaceapp.PipelineVersion {
+			superseded = "  [superseded pipeline " + s.PipelineVersion + "]"
+			supersededRows++
+		}
+		if _, err := fmt.Fprintf(stdout, "%-50s %-12s %d package(s)%s\n",
 			s.ModulePath+"@"+s.ModuleVersion,
 			s.OverallStatus.String(),
 			s.PackageCount,
+			superseded,
 		); err != nil {
 			return fmt.Errorf("writing output: %w", err)
+		}
+	}
+	// A listed record this build will not serve is still a listed record; the
+	// row says so, and the footer says how many and what to do, so an operator
+	// does not read the listing as an inventory of answerable modules.
+	if supersededRows > 0 {
+		if _, err := fmt.Fprintf(stdout,
+			"%d of %d listed record(s) were produced by superseded extraction logic; this build "+
+				"serves pipeline %s and answers no query from them. Re-extract one:\n"+
+				"  kanonarion interface <module>@<version>\n",
+			supersededRows, len(sums), ifaceapp.PipelineVersion); err != nil {
+			return fmt.Errorf("writing superseded notice: %w", err)
 		}
 	}
 	if terr := writeListTruncationNotice(stdout, trunc); terr != nil {

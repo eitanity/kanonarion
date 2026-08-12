@@ -164,7 +164,14 @@ func runSymbolContext(ctx context.Context, symbolName string, f symbolContextFla
 		// Distinguish "module not in store" from "symbol not found": an
 		// empty result is ambiguous unless we know the module was indexed.
 		if _, found, gerr := ctr.QueryInterface.GetInterfaceRecord(ctx, coord, ifaceapp.PipelineVersion); gerr == nil && !found {
-			_, _ = fmt.Fprintf(stderr, "no interface record for %s in the store; run 'kanonarion interface %s' first\n", f.module, f.module)
+			// "Never extracted" and "extracted under superseded logic" both
+			// arrive here as an absent record, and only one of them is a
+			// coordinate to check.
+			line := fmt.Sprintf("no interface record for %s in the store; run 'kanonarion interface %s' first", f.module, f.module)
+			if pipelines, superseded := supersededInterfacePipelines(coord, storedInterfaceSummaries(ctx, ctr.QueryInterface)); superseded {
+				line = supersededInterfaceLine(coord, pipelines)
+			}
+			_, _ = fmt.Fprintf(stderr, "%s\n", line)
 			if jsonOut {
 				_, _ = fmt.Fprintln(stdout, "[]")
 				return nil
@@ -185,6 +192,12 @@ func runSymbolContext(ctx context.Context, symbolName string, f symbolContextFla
 	refs = filterImportableRefs(refs)
 
 	if len(refs) == 0 {
+		// An empty lookup over a store whose every record is superseded says
+		// nothing about the symbol: the index is keyed on the pipeline version,
+		// so there was nothing here to read.
+		if line, superseded := supersededInterfaceStoreLine(storedInterfaceSummaries(ctx, ctr.QueryInterface)); superseded {
+			_, _ = fmt.Fprintf(stderr, "%s\n", line)
+		}
 		if jsonOut {
 			_, _ = fmt.Fprintln(stdout, "[]")
 			return conflictErr

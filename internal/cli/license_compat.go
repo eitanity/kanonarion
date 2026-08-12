@@ -10,6 +10,8 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
+	"github.com/oklog/ulid/v2"
+
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	"github.com/eitanity/kanonarion/internal/license/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
@@ -21,6 +23,7 @@ import (
 // compatibility engine.
 func newLicenseCompatCmd(stdout, stderr io.Writer) *cobra.Command {
 	var targetSPDX string
+	var walkID string
 
 	cmd := &cobra.Command{
 		Use:     "license-compat <module>@<version>",
@@ -37,10 +40,18 @@ Exit codes:
      (requires human review; these are never silently "compatible")
   4  no walk record, or no licence record for the root — the diagnostic names
      the command that produces the missing record
-  20 bad invocation (unparseable coordinate, wrong argument count)`,
+  20 bad invocation (unparseable coordinate, wrong argument count, or a
+     --walk-id the store does not hold or that is rooted elsewhere)
+
+Without --walk-id the answer comes from the most recent walk of the coordinate
+whose recorded resolution still agrees with the go.mod in the directory that
+walk was taken from, falling back to the most recent walk when none agrees or
+when there is no manifest to compare against. Whenever the store holds more than
+one walk of the coordinate, the answer states which walk it used and why.`,
 		Example: `  kanonarion license-compat github.com/spf13/cobra@v1.8.1 --target Apache-2.0
   kanonarion license-compat github.com/spf13/cobra@v1.8.1 --target Apache-2.0 --json
-  kanonarion license-compat example.com/project@local`,
+  kanonarion license-compat example.com/project@local
+  kanonarion license-compat example.com/project@local --walk-id 01KZ42BGN0T95D932JMC1GXX3C`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			if len(args) == 0 {
 				return usageErr(cmd)
@@ -48,20 +59,32 @@ Exit codes:
 			if len(args) > 1 {
 				return fmt.Errorf("accepts 1 arg, received %d", len(args))
 			}
-			return runLicenseCompat(cmd.Context(), args[0], targetSPDX, stdout, stderr)
+			return runLicenseCompat(cmd.Context(), args[0], targetSPDX, walkID, stdout, stderr)
 		},
 	}
 
 	cmd.Flags().StringVar(&targetSPDX, "target", "", "target distribution license SPDX id (e.g. Apache-2.0); omitted: use the root's own analysed licence record as the target")
+	cmd.Flags().StringVar(&walkID, "walk-id", "", "answer in the frame of this walk instead of the one the default rule picks")
 
 	return cmd
 }
 
-func runLicenseCompat(ctx context.Context, arg, targetSPDX string, stdout, stderr io.Writer) error {
+func runLicenseCompat(ctx context.Context, arg, targetSPDX, walkID string, stdout, stderr io.Writer) error {
 	logger := buildLogger(logLevel, stderr)
 
 	coord, err := parseCoordinate(arg)
 	if err != nil {
+		// The positional slot takes a coordinate and the walk goes on --walk-id.
+		// A caller who typed the walk id positionally asked the right question
+		// with the wrong grammar, and "expected module@version" does not tell
+		// them that; every sibling command that takes a walk id takes it
+		// positionally, so the mistake is the natural one.
+		if _, uerr := ulid.ParseStrict(arg); uerr == nil {
+			return &exitError{
+				code: ExitConfig,
+				msg:  fmt.Sprintf("%q is a walk id, and license-compat takes a coordinate here: kanonarion license-compat <module>@<version> --walk-id %s", arg, arg),
+			}
+		}
 		return fmt.Errorf("invalid coordinate %q: %w", arg, err)
 	}
 
@@ -71,7 +94,7 @@ func runLicenseCompat(ctx context.Context, arg, targetSPDX string, stdout, stder
 	}
 	defer func() { _ = cleanup() }()
 
-	return licenseCompatWith(ctx, ctr, coord, targetSPDX, stdout, stderr)
+	return licenseCompatWith(ctx, ctr, coord, targetSPDX, walkID, stdout, stderr)
 }
 
 // licenseCompatWith holds the license-compat logic over an injected Container:
@@ -80,26 +103,41 @@ func runLicenseCompat(ctx context.Context, arg, targetSPDX string, stdout, stder
 // clean/conflict/unknown verdict to exit codes, and renders the report. Split
 // from runLicenseCompat so the exit-code and diagnostic decisions are testable
 // without a live store.
-func licenseCompatWith(ctx context.Context, ctr *Container, coord coordinate.ModuleCoordinate, targetSPDX string,
+func licenseCompatWith(ctx context.Context, ctr *Container, coord coordinate.ModuleCoordinate, targetSPDX, walkID string,
 	stdout, stderr io.Writer,
 ) error {
 	// Require an existing walk record for the root module.
 	target := coord
-	summaries, err := ctr.QueryWalks.ListWalks(ctx, walkports.WalkFilter{Target: &target, Limit: 1})
-	if err != nil {
-		return fmt.Errorf("listing walks: %w", err)
+
+	// The frame the verdict was measured in. A licence position is a property of
+	// one build: the same project walked at code scope and at complete scope
+	// carries different module sets and therefore different conflicts, and GOOS
+	// gates which files, and so which modules, a build selects. So the walk is
+	// either the one the caller pinned, or one picked here by a stated rule — and
+	// the verdict names it either way.
+	var choice walkChoice
+	var selection selectionJSON
+	if walkID != "" {
+		rec, err := resolvePinnedWalk(ctx, ctr.QueryWalks, walkID, target)
+		if err != nil {
+			return err
+		}
+		choice, selection = pinnedWalkChoice(rec), pinnedSelection()
+	} else {
+		summaries, err := ctr.QueryWalks.ListWalks(ctx, walkports.WalkFilter{Target: &target})
+		if err != nil {
+			return fmt.Errorf("listing walks: %w", err)
+		}
+		if len(summaries) == 0 {
+			// The answer travels on the error, once: main prints it, and no
+			// fmt.Fprintf here puts a second copy on the data channel.
+			return walkTargetMiss(ctx, ctr.QueryWalks, target, stderr)
+		}
+		choice = chooseWalk(ctx, ctr.QueryWalks, summaries, "")
+		selection = choice.selection()
 	}
-	if len(summaries) == 0 {
-		// The answer travels on the error, once: main prints it, and no
-		// fmt.Fprintf here puts a second copy on the data channel.
-		return walkTargetMiss(ctx, ctr.QueryWalks, target, stderr)
-	}
-	walkID := summaries[0].ID
-	// The frame the verdict was measured in. The lookup takes the newest walk of
-	// the root and has no build-environment axis, so a closure judged here is one
-	// platform's build list; a verdict that did not say which would read as a
-	// statement about the module rather than about a build of it.
-	walkFrame := summaries[0].BuildFrame()
+	walkID = choice.summary.ID
+	walkFrame := choice.summary.BuildFrame()
 
 	// license_overrides entries are the operator's recorded decisions —
 	// corrections and dual-licence elections — and must reach the engine so a
@@ -107,9 +145,10 @@ func licenseCompatWith(ctx context.Context, ctr *Container, coord coordinate.Mod
 	// without the override store (seam tests) carries no decisions.
 	var overrides domain.LicenseOverrideSet
 	if ctr.LicenseOverrides != nil {
-		overrides, err = ctr.LicenseOverrides.LoadOverrides(ctx)
-		if err != nil {
-			return fmt.Errorf("loading license overrides: %w", err)
+		var oerr error
+		overrides, oerr = ctr.LicenseOverrides.LoadOverrides(ctx)
+		if oerr != nil {
+			return fmt.Errorf("loading license overrides: %w", oerr)
 		}
 	}
 
@@ -141,7 +180,7 @@ func licenseCompatWith(ctx context.Context, ctr *Container, coord coordinate.Mod
 	// raised no conflict still contributed none of its own dependencies to the
 	// closure the verdict covers.
 	var preModules []coordinate.ModuleCoordinate
-	if rec, gerr := ctr.QueryWalks.GetWalk(ctx, walkID); gerr == nil {
+	if rec, gerr := choice.walkRecord(ctx, ctr.QueryWalks); gerr == nil {
 		preModules = preModulesNodesIn(rec.Graph)
 	}
 
@@ -150,10 +189,18 @@ func licenseCompatWith(ctx context.Context, ctr *Container, coord coordinate.Mod
 		// after it: appended prose breaks every parser, and a consumer that
 		// recovers by reading stdout as JSON would lose the one statement that
 		// says what the licence answer does not cover.
-		if err := printCompatReportJSON(report, walkID, walkFrame, preModulesCaveatFor(preModules...), stdout); err != nil {
+		if err := printCompatReportJSON(report, walkID, walkFrame, selection, preModulesCaveatFor(preModules...), stdout); err != nil {
 			return err
 		}
 	} else {
+		// The statement goes above the report, not after it: it says which of
+		// several builds the rows below describe, and a reader who has already
+		// read the rows has already decided what they are about.
+		if note := choice.statement(); note != "" {
+			if _, werr := fmt.Fprint(stdout, note); werr != nil {
+				return fmt.Errorf("writing walk selection notice: %w", werr)
+			}
+		}
 		printCompatReportText(report, coord, walkID, walkFrame, stdout)
 		if werr := writePreModulesCaveatForSet(stdout, preModules); werr != nil {
 			return werr
@@ -163,7 +210,7 @@ func licenseCompatWith(ctx context.Context, ctr *Container, coord coordinate.Mod
 	return compatExitCode(report)
 }
 
-func printCompatReportJSON(report domain.ClosureCompatibilityReport, walkID, walkFrame string, caveat *preModulesCaveatJSON, stdout io.Writer) error {
+func printCompatReportJSON(report domain.ClosureCompatibilityReport, walkID, walkFrame string, selection selectionJSON, caveat *preModulesCaveatJSON, stdout io.Writer) error {
 	type conflictJSON struct {
 		Module  string `json:"module"`
 		Version string `json:"version"`
@@ -214,6 +261,11 @@ func printCompatReportJSON(report domain.ClosureCompatibilityReport, walkID, wal
 		// and a build has a platform.
 		WalkID    string `json:"walk_id"`
 		WalkFrame string `json:"walk_frame"`
+		// WalkSelection says how walk_id was arrived at: "pinned" when the caller
+		// named it, otherwise the rule that picked it and what that rule had to
+		// work with. A consumer reading walk_id has to be able to tell an id it
+		// asked for from one the tool chose on its behalf.
+		WalkSelection selectionJSON `json:"walk_selection"`
 		// TargetModelled false means the TARGET identifier is the one the
 		// dataset does not model, so every conflict row below follows from that
 		// single fact rather than from N independent findings.
@@ -237,6 +289,7 @@ func printCompatReportJSON(report domain.ClosureCompatibilityReport, walkID, wal
 		DataVersion:      report.DataVersion,
 		WalkID:           walkID,
 		WalkFrame:        walkFrame,
+		WalkSelection:    selection,
 		TargetModelled:   report.TargetModelled,
 		Clean:            report.Clean,
 		Conflicts:        make([]conflictJSON, 0, len(report.Conflicts)),

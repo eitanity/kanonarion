@@ -6,6 +6,8 @@ import (
 	"strings"
 	"testing"
 
+	cgapp "github.com/eitanity/kanonarion/internal/callgraph/application"
+
 	cgdomain "github.com/eitanity/kanonarion/internal/callgraph/domain"
 	cgports "github.com/eitanity/kanonarion/internal/callgraph/ports"
 	"github.com/eitanity/kanonarion/internal/cli/testfakes"
@@ -32,9 +34,9 @@ func traverseFake(t *testing.T, partial bool) *testfakes.FakeQueryCallGraph {
 	}
 	uc := testfakes.NewFakeQueryCallGraph()
 	uc.SetList([]cgports.CallGraphSummary{
-		{ModulePath: "example.com/m", ModuleVersion: "v1.0.0", PipelineVersion: "0.2.0"},
+		{ModulePath: "example.com/m", ModuleVersion: "v1.0.0", PipelineVersion: cgapp.PipelineVersion},
 	})
-	uc.AddRecord(coordinatetest.MustNew("example.com/m", "v1.0.0"), "0.2.0", rec)
+	uc.AddRecord(coordinatetest.MustNew("example.com/m", "v1.0.0"), cgapp.PipelineVersion, rec)
 	uc.SetCallers([]cgports.CallEdgeRef{
 		{ModulePath: "example.com/m", ModuleVersion: "v1.0.0", FromID: "example.com/m.Caller", ToID: "example.com/m.Target", Confidence: cgdomain.ConfidenceDirect},
 		{ModulePath: "example.com/m", ModuleVersion: "v1.0.0", FromID: "example.com/m_test.TestCaller", ToID: "example.com/m.Target", Confidence: cgdomain.ConfidenceDirect, IsTest: true},
@@ -110,15 +112,18 @@ func TestPrintTransitiveResult_JSONNeverEncodesNull(t *testing.T) {
 	}
 }
 
-// TestRunCallers_PartialRootIsAHardError: a root in a package that did not
-// typecheck cannot be answered at all — its edges were dropped, so any "none"
-// would be a false negative.
-func TestRunCallers_PartialRootIsAHardError(t *testing.T) {
+// TestRunCallers_PartialRootIsStatedNotRefused: a root in a package that did not
+// typecheck is answered with the gap on the answer. Refusing it withheld edges
+// the store held — the callers of a dependency's symbol live in the consumer's
+// own graph, which the dependency's build failure does not touch.
+func TestRunCallers_PartialRootIsStatedNotRefused(t *testing.T) {
 	uc := traverseFake(t, true)
 	var buf bytes.Buffer
-	err := runCallers(context.Background(), "example.com/m/broken.Fn", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{})
-	if err == nil || !strings.Contains(err.Error(), "did not typecheck") {
-		t.Fatalf("want an unresolved-partial error, got %v", err)
+	if err := runCallers(context.Background(), "example.com/m/broken.Fn", false, uc, &buf, buildScope{}, cgports.EdgeQueryOptions{}); err != nil {
+		t.Fatalf("want an answer carrying its gap, got error %v", err)
+	}
+	if !strings.Contains(buf.String(), "did not typecheck") {
+		t.Fatalf("the gap is not stated on the answer: %q", buf.String())
 	}
 }
 

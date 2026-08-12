@@ -3,8 +3,12 @@ package cli
 import (
 	"context"
 	"fmt"
+	"os"
+	"path/filepath"
 	"sort"
 	"strings"
+
+	"golang.org/x/mod/modfile"
 
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 )
@@ -129,20 +133,7 @@ func manifestDriftAgainstWalk(
 // directive as drift on every run, and a check that always fires is a check that
 // gets ignored.
 func driftAgainstWalk(resolved []string, rec walkdomain.WalkRecord) manifestDrift {
-	walked := make(map[string]string, len(rec.Graph.Nodes))
-	for _, n := range rec.Graph.Nodes {
-		if n.ResolutionSource == walkdomain.ResolutionStdlib || n.Coordinate.IsLocal() {
-			continue
-		}
-		named := n.Coordinate
-		if !n.OriginalCoordinate.IsZero() {
-			named = n.OriginalCoordinate
-		}
-		if named.IsLocal() {
-			continue
-		}
-		walked[named.Path()] = named.Version()
-	}
+	walked := walkdomain.NamedVersions(rec)
 
 	d := manifestDrift{resolved: len(resolved), walked: len(walked)}
 	seen := make(map[string]struct{}, len(resolved))
@@ -186,4 +177,53 @@ func driftAgainstWalk(resolved []string, rec walkdomain.WalkRecord) manifestDrif
 func manifestStalenessNote(gomodPath string) string {
 	return fmt.Sprintf("; %s was not re-resolved for this read, so an edit made to it since that walk is not reflected — kanonarion walk --gomod %s records the current resolution",
 		gomodPath, gomodPath)
+}
+
+// manifestRequireDisagreement compares the require directives of the go.mod at
+// path against what a walk recorded, and returns the versions the two disagree
+// on ("path walked -> required"). An empty result means the manifest and the
+// walk agree on every module both name.
+//
+// It is deliberately weaker than manifestDriftAgainstWalk, and cheaper by the
+// same amount: that one re-resolves the manifest through the toolchain, which
+// costs about a second on a 320-module project, and is paid by the surfaces that
+// MEASURE. This one parses one file and is paid by the surfaces that READ, on
+// every default frame choice — so it has to cost nothing a reader would notice.
+//
+// A module the manifest requires but the walk does not carry is NOT a
+// disagreement. That is the difference between a code-scope walk and a
+// complete-scope one of the same tree, and reading it as drift would declare
+// every narrower walk stale against the manifest it was taken from.
+//
+// A manifest naming no module the walk resolved cannot settle anything, so it is
+// an error rather than an agreement: an empty comparison and a clean one are the
+// same value and not the same fact.
+func manifestRequireDisagreement(path string, rec walkdomain.WalkRecord) ([]string, error) {
+	data, err := os.ReadFile(filepath.Clean(path)) // #nosec G304 — the path comes from --gomod or from the walk's own recorded project directory
+	if err != nil {
+		return nil, fmt.Errorf("reading %s to compare it against walk %s: %w", path, rec.ID, err)
+	}
+	f, err := modfile.Parse(path, data, nil)
+	if err != nil {
+		return nil, fmt.Errorf("parsing %s to compare it against walk %s: %w", path, rec.ID, err)
+	}
+	disagreements, cerr := walkdomain.RequireDisagreement(manifestRequiredVersions(f), rec)
+	if cerr != nil {
+		return nil, fmt.Errorf("comparing %s against walk %s: %w", path, rec.ID, cerr)
+	}
+	return disagreements, nil
+}
+
+// manifestRequiredVersions reduces a parsed go.mod to the module path/version
+// pairs its require directives name, which is the whole of what the agreement
+// comparison reads from a manifest.
+func manifestRequiredVersions(f *modfile.File) map[string]string {
+	required := make(map[string]string, len(f.Require))
+	for _, r := range f.Require {
+		if r == nil {
+			continue
+		}
+		required[r.Mod.Path] = r.Mod.Version
+	}
+	return required
 }

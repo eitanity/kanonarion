@@ -6,12 +6,13 @@
 //
 // Invariants:
 //
-// - Determinism: CallGraphRecord.Sort establishes a canonical ordering of
-// Nodes and Edges. Sort MUST be called before the content hash is
-// computed (CallGraphRecordHasher hashes the canonical JSON with
-// ContentHash zeroed), so two analyses of the same module produce
-// byte-identical records and the same hash regardless of the order the
-// analyser emitted nodes/edges.
+// - Determinism: the canonical marshalling owns the ordering of every
+// collection. It sorts copies with the comparators in ordering.go, each
+// keyed on every field its collection puts on the wire, so two analyses of
+// the same module produce byte-identical records and the same hash
+// regardless of the order the analyser emitted nodes/edges. Nothing has to
+// be called first for that to hold; CallGraphRecord.Sort applies the same
+// order in place, for callers that want it in memory.
 // - Integrity: a record read back from storage is rejected unless its
 // recomputed canonical hash matches the stored ContentHash.
 //

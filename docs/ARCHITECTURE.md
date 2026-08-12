@@ -197,9 +197,9 @@ and cgo-crypto usage (`adapters/scanner/gosrc`).
 **local** - ingests the local working tree so `callers`/`callees` resolve
 internal symbols and reachability can be probed against uncommitted code. Its
 adapters wrap the Go tooling directly (`importer/golist`, `symbols/gopackages`,
-`probe/builder`, `snapshot/walkdir`). Local source
-analysis is intentionally **never cached** - the working tree mutates, so each
-run recomputes fresh.
+`probe/builder`, `snapshot/walkdir`). A working tree mutates, so a stored graph
+of it is only an answer while the tree is unchanged: the tree is scanned first
+and the held record is served when it matches, and re-analysed otherwise.
 
 ### Config
 

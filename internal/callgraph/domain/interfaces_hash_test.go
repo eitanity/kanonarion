@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"maps"
 	"reflect"
+	"sort"
 	"strings"
 	"testing"
 	"time"
@@ -72,16 +73,19 @@ func interfaceRecord(t *testing.T) domain.CallGraphRecord {
 	}
 }
 
-// TestSort_OrdersTheV13Collections: the hash is taken over the canonical order,
-// so a record whose interfaces, their methods, its implementations, or their
-// methods arrive in a different order must still sort to the same shape.
-func TestSort_OrdersTheV13Collections(t *testing.T) {
-	rec := interfaceRecord(t)
+// TestCanonicalOrder_OrdersTheV13Collections: the hash is taken over the
+// canonical order, so a record whose interfaces, their methods, its
+// implementations, or their methods arrive in a different order still reaches
+// the same shape on the wire.
+func TestCanonicalOrder_OrdersTheV13Collections(t *testing.T) {
+	var h domain.CallGraphRecordHasher
+	built := interfaceRecord(t)
+	rec := built
 	rec.Interfaces = append(rec.Interfaces, domain.InterfaceType{
 		ID: "example.com/m/ports.Alpha", Package: "example.com/m/ports", Name: "Alpha",
 		Methods: []string{"Zed", "Abel"},
 	})
-	rec.Sort()
+	rec = roundTrip(t, h, rec)
 
 	if got := []string{rec.Interfaces[0].ID, rec.Interfaces[1].ID}; got[0] >= got[1] {
 		t.Errorf("interfaces not sorted by ID: %v", got)
@@ -105,7 +109,6 @@ func TestSort_OrdersTheV13Collections(t *testing.T) {
 func TestHash_RoundTripsTheV13Axes(t *testing.T) {
 	var h domain.CallGraphRecordHasher
 	rec := interfaceRecord(t)
-	rec.Sort()
 
 	hashed, err := h.SetContentHash(rec)
 	if err != nil {
@@ -120,11 +123,17 @@ func TestHash_RoundTripsTheV13Axes(t *testing.T) {
 		t.Fatalf("Unmarshal: %v", err)
 	}
 
-	if !reflect.DeepEqual(back.Interfaces, hashed.Interfaces) {
-		t.Errorf("interfaces did not round trip:\n got %+v\nwant %+v", back.Interfaces, hashed.Interfaces)
+	// The record is compared against its own canonical order rather than the
+	// order it was built in: marshalling is what puts a record in order, so the
+	// bytes are entitled to differ from the arrangement handed to them.
+	want := hashed
+	want.Interfaces = canonicalInterfaces(hashed.Interfaces)
+	want.Implementations = canonicalImplementations(hashed.Implementations)
+	if !reflect.DeepEqual(back.Interfaces, want.Interfaces) {
+		t.Errorf("interfaces did not round trip:\n got %+v\nwant %+v", back.Interfaces, want.Interfaces)
 	}
-	if !reflect.DeepEqual(back.Implementations, hashed.Implementations) {
-		t.Errorf("implementations did not round trip:\n got %+v\nwant %+v", back.Implementations, hashed.Implementations)
+	if !reflect.DeepEqual(back.Implementations, want.Implementations) {
+		t.Errorf("implementations did not round trip:\n got %+v\nwant %+v", back.Implementations, want.Implementations)
 	}
 	if back.TestScope != domain.TestScopeAnalysed {
 		t.Errorf("TestScope = %q, want Analysed", back.TestScope)
@@ -145,7 +154,6 @@ func TestHash_TestScopeDetailRoundTrips(t *testing.T) {
 	rec := interfaceRecord(t)
 	rec.TestScope = domain.TestScopeExcluded
 	rec.TestScopeDetail = "loading the module with test files failed: boom"
-	rec.Sort()
 
 	hashed, err := h.SetContentHash(rec)
 	if err != nil {
@@ -170,7 +178,6 @@ func TestHash_TestScopeDetailRoundTrips(t *testing.T) {
 func TestHash_InterfaceRelationIsCovered(t *testing.T) {
 	var h domain.CallGraphRecordHasher
 	base := interfaceRecord(t)
-	base.Sort()
 	hashedBase, err := h.SetContentHash(base)
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
@@ -190,7 +197,6 @@ func TestHash_InterfaceRelationIsCovered(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			mutated := interfaceRecord(t)
-			mutated.Sort()
 			tc.mutny(&mutated)
 			hashedMut, err := h.SetContentHash(mutated)
 			if err != nil {
@@ -209,7 +215,6 @@ func TestHash_InterfaceRelationIsCovered(t *testing.T) {
 func TestHash_MarshalSortsIndependently(t *testing.T) {
 	var h domain.CallGraphRecordHasher
 	sorted := interfaceRecord(t)
-	sorted.Sort()
 	unsorted := interfaceRecord(t)
 	unsorted.Interfaces[0].Methods = []string{"Put", "Get"}
 	unsorted.Implementations[0], unsorted.Implementations[1] = unsorted.Implementations[1], unsorted.Implementations[0]
@@ -236,7 +241,6 @@ func TestHash_OmitsEmptyV13Collections(t *testing.T) {
 	rec.Interfaces = nil
 	rec.Implementations = nil
 	rec.TestScope = domain.TestScopeUnknown
-	rec.Sort()
 
 	raw, err := h.Marshal(rec)
 	if err != nil {
@@ -275,7 +279,6 @@ func TestUnmarshal_RejectsMalformedJSON(t *testing.T) {
 func TestUnmarshal_BadCoordinateAndTime(t *testing.T) {
 	var h domain.CallGraphRecordHasher
 	rec := interfaceRecord(t)
-	rec.Sort()
 	hashed, err := h.SetContentHash(rec)
 	if err != nil {
 		t.Fatalf("SetContentHash: %v", err)
@@ -343,8 +346,7 @@ func TestSortAndMarshal_AcrossSeveralInterfaces(t *testing.T) {
 		return rec
 	}
 
-	sorted := build()
-	sorted.Sort()
+	sorted := roundTrip(t, h, build())
 	if sorted.Interfaces[0].ID != "example.com/m/ports.Alpha" {
 		t.Errorf("interfaces not sorted across declarations: %v", sorted.Interfaces)
 	}
@@ -408,4 +410,43 @@ func TestClassifyNegativeVerdict_TestScopeSinkWithoutANode(t *testing.T) {
 		}
 	}
 	t.Errorf("no test-scope sink among %v", v.Sinks)
+}
+
+// canonicalInterfaces and canonicalImplementations put a collection into the
+// order the canonical bytes carry, using the record's own comparators.
+func canonicalInterfaces(in []domain.InterfaceType) []domain.InterfaceType {
+	out := append([]domain.InterfaceType(nil), in...)
+	for i := range out {
+		methods := append([]string(nil), out[i].Methods...)
+		sort.Strings(methods)
+		out[i].Methods = methods
+	}
+	sort.Slice(out, func(i, j int) bool { return domain.InterfaceTypeLess(out[i], out[j]) })
+	return out
+}
+
+func canonicalImplementations(in []domain.InterfaceImplementation) []domain.InterfaceImplementation {
+	out := append([]domain.InterfaceImplementation(nil), in...)
+	for i := range out {
+		methods := append([]domain.ImplementedMethod(nil), out[i].Methods...)
+		sort.Slice(methods, func(a, b int) bool { return domain.ImplementedMethodLess(methods[a], methods[b]) })
+		out[i].Methods = methods
+	}
+	sort.Slice(out, func(i, j int) bool { return domain.InterfaceImplementationLess(out[i], out[j]) })
+	return out
+}
+
+// roundTrip marshals a record and reads it back, which is how a caller sees the
+// canonical order of a record it built in any order.
+func roundTrip(t *testing.T, h domain.CallGraphRecordHasher, rec domain.CallGraphRecord) domain.CallGraphRecord {
+	t.Helper()
+	raw, err := h.Marshal(rec)
+	if err != nil {
+		t.Fatalf("Marshal: %v", err)
+	}
+	back, err := h.Unmarshal(raw)
+	if err != nil {
+		t.Fatalf("Unmarshal: %v", err)
+	}
+	return back
 }

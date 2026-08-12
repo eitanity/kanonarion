@@ -173,7 +173,8 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 
 	switch out.Dependencies.Status {
 	case sectionStatusNotRun:
-		w.printf("  Dependencies:    (not run — run: kanonarion walk %s@%s)\n", out.Module.Path, out.Module.Version)
+		w.printf("  Dependencies:    (not run — run: %s)\n",
+			walkInvocationForRendered(out.Module.Path+"@"+out.Module.Version))
 	case sectionStatusReadError:
 		w.printf("  Dependencies:    (failed: %s)\n", out.Dependencies.Error)
 	default:
@@ -214,10 +215,12 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 		}
 	case sectionStatusReadError:
 		w.printf("  Interface:       (failed: %s)\n", out.Interface.Error)
+	case sectionStatusSuperseded:
+		w.printf("  Interface:       (superseded — %s)\n", out.Interface.Error)
 	default:
 		total := 0
 		for _, p := range out.Interface.Packages {
-			total += len(p.Types) + len(p.Funcs) + len(p.Consts) + len(p.Vars)
+			total += len(p.Types) + len(p.Methods) + len(p.Funcs) + len(p.Consts) + len(p.Vars)
 		}
 		w.printf("  Interface:       %d package(s), %d symbol(s) (%s)\n",
 			len(out.Interface.Packages), total,
@@ -253,7 +256,18 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 			statusWithReason(out.Examples.Status, out.Examples.Error))
 	}
 
+	printVulnerabilitiesSummary(w, out)
+
+	return w.err
+}
+
+// printVulnerabilitiesSummary is the vulnerabilities line of the summary, split
+// out because the section has four states and the summary as a whole has a
+// complexity ceiling.
+func printVulnerabilitiesSummary(w *errWriter, out contextOutput) {
 	switch out.Vulnerabilities.Status {
+	case sectionStatusSuperseded:
+		w.printf("  Vulnerabilities: (superseded — %s)\n", out.Vulnerabilities.Error)
 	case sectionStatusNotRun:
 		if out.Commands.Vulnerabilities != "" {
 			w.printf("  Vulnerabilities: (not run — run: %s)\n", out.Commands.Vulnerabilities)
@@ -271,8 +285,6 @@ func printContextSummary(out contextOutput, stdout io.Writer) error {
 		printWalkBasis(w, "  Walk basis:      %s\n", out.Vulnerabilities)
 		printScanProvenance(w, out.Vulnerabilities)
 	}
-
-	return w.err
 }
 
 // printScanProvenance names the advisory snapshot and the vuln-scan pipeline

@@ -19,7 +19,7 @@ func (noHostScan) Scan(context.Context, vulnapp.ScanWalkParams) (vulndomain.Walk
 	return vulndomain.WalkScanRun{}, nil
 }
 
-func (noHostScan) ReusableRun(context.Context, string) (vulndomain.WalkScanRun, bool, error) {
+func (noHostScan) ReusableRun(context.Context, string, string) (vulndomain.WalkScanRun, bool, error) {
 	return vulndomain.WalkScanRun{}, false, nil
 }
 

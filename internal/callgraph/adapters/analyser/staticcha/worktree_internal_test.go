@@ -275,3 +275,96 @@ func TestAnalysedDigest_FallsBackWhenTheLoadResolvedNothing(t *testing.T) {
 		t.Fatalf("a load that resolved nothing produced %q, want the %q scheme", got, scannedDigestScheme)
 	}
 }
+
+// TestTreeIdentity_AnswersWithoutAnalysing is what makes reuse affordable: the
+// question "is this the tree that record was taken of" has to be answerable in
+// the time a directory walk takes, or asking it costs what the analysis it saves
+// would have.
+func TestTreeIdentity_AnswersWithoutAnalysing(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "go.mod"), "module example.com/m\n\ngo 1.24\n")
+	write(t, filepath.Join(dir, "a.go"), "package m\n\nfunc A() {}\n")
+
+	a := &Analyser{}
+	first, err := a.TreeIdentity(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("TreeIdentity: %v", err)
+	}
+	if first.IsZero() {
+		t.Fatal("TreeIdentity established neither a root nor a digest")
+	}
+	if !strings.HasPrefix(first.ScanDigest, scannedDigestScheme) {
+		t.Fatalf("digest %q does not carry the scheme that says how it was taken", first.ScanDigest)
+	}
+	// The scheme is not decoration: this digest must never be compared against one
+	// taken over what a loader read, and the prefix is what keeps that visible.
+	if strings.HasPrefix(first.ScanDigest, analysedDigestScheme) {
+		t.Fatal("a scanned digest is claiming to describe what was analysed")
+	}
+
+	again, err := a.TreeIdentity(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("TreeIdentity second call: %v", err)
+	}
+	if again != first {
+		t.Fatalf("an unchanged tree identified differently on a second call: %+v vs %+v", again, first)
+	}
+
+	write(t, filepath.Join(dir, "a.go"), "package m\n\nfunc A() {}\n\nfunc B() {}\n")
+	edited, err := a.TreeIdentity(context.Background(), dir)
+	if err != nil {
+		t.Fatalf("TreeIdentity after edit: %v", err)
+	}
+	if edited.ScanDigest == first.ScanDigest {
+		t.Fatal("an edited tree identified as the tree before the edit; a run would reuse a graph of code that is gone")
+	}
+	if edited.Root != first.Root {
+		t.Fatalf("root moved on an edit: %q then %q", first.Root, edited.Root)
+	}
+}
+
+// TestWorktreeDigest_MovesWhenASymlinkedSourceFileChanges closes the hole the
+// scanned digest would otherwise leave in the reuse decision.
+//
+// Source reached through a symlink is read and analysed, so a tree that differs
+// only in the target's contents is a different tree. A run deciding whether to
+// re-analyse from this digest would otherwise serve back a graph of code that has
+// since been edited — the one outcome reuse must never produce.
+func TestWorktreeDigest_MovesWhenASymlinkedSourceFileChanges(t *testing.T) {
+	t.Parallel()
+	outside := t.TempDir()
+	target := filepath.Join(outside, "shared.go")
+	write(t, target, "package pkg\n\nfunc Shared() string { return \"a\" }\n")
+
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "go.mod"), "module example.com/m\n")
+	write(t, filepath.Join(dir, "pkg", "keep.go"), "package pkg\n")
+	if err := os.Symlink(target, filepath.Join(dir, "pkg", "shared.go")); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+	before := digest(t, dir)
+
+	write(t, target, "package pkg\n\nfunc Shared() string { return \"b\" }\n")
+	if after := digest(t, dir); after == before {
+		t.Fatal("editing the target of an in-tree symlink did not move the digest; a run would reuse a graph of the code before the edit")
+	}
+}
+
+// TestWorktreeDigest_SurvivesALinkItCannotFollow: a dangling symlink and a link
+// to a directory carry no source the loader can read through that path, and a
+// tree containing one must still be identifiable — a digest that failed here
+// would make an ordinary tree impossible to analyse rather than merely hard to
+// hash.
+func TestWorktreeDigest_SurvivesALinkItCannotFollow(t *testing.T) {
+	t.Parallel()
+	dir := t.TempDir()
+	write(t, filepath.Join(dir, "go.mod"), "module example.com/m\n")
+	write(t, filepath.Join(dir, "a.go"), "package m\n")
+	if err := os.Symlink(filepath.Join(dir, "gone.go"), filepath.Join(dir, "dangling.go")); err != nil {
+		t.Fatalf("Symlink: %v", err)
+	}
+	if _, err := worktreeDigest(dir); err != nil {
+		t.Fatalf("a dangling symlink made the tree unidentifiable: %v", err)
+	}
+}

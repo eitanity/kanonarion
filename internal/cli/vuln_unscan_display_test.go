@@ -38,17 +38,21 @@ func TestUnscanDisplays_CoversEveryReason(t *testing.T) {
 	}
 }
 
-// TestUnscanDisplays_OnlyOutOfToolchainCarriesADirection pins the reasons that
-// get a next-step line. The reachability --local direction answers a
-// project-rooted question for a module whose isolated build re-resolved versions
-// — both the confirmed out-of-toolchain case and its unverified sibling, which
-// is the same isolated-resolution class with the version unrecovered. It is the
-// wrong remedy for a toolchain or host limitation, where no operator action on
-// this host changes the outcome.
-func TestUnscanDisplays_OnlyOutOfToolchainCarriesADirection(t *testing.T) {
+// TestUnscanDisplays_OnlyActionableReasonsCarryADirection pins the reasons that
+// get a next-step line: exactly those an operator action on this host resolves.
+// The reachability --local direction answers a project-rooted question for a
+// module whose isolated build re-resolved versions — both the confirmed
+// out-of-toolchain case and its unverified sibling, which is the same
+// isolated-resolution class with the version unrecovered. The re-walk direction
+// answers the one other reason with a remedy: a project directory that has moved
+// away from its walk is made scannable again by walking it. Every other reason
+// is a toolchain or host limitation, where no operator action changes the
+// outcome and a direction would read as an instruction that cannot help.
+func TestUnscanDisplays_OnlyActionableReasonsCarryADirection(t *testing.T) {
 	directionReasons := map[vuldomain.UnscanReason]bool{
 		vuldomain.UnscanReasonVersionNotInToolchain:           true,
 		vuldomain.UnscanReasonVersionNotInToolchainUnverified: true,
+		vuldomain.UnscanReasonProjectBuildDiverged:            true,
 	}
 	for reason, d := range unscanDisplays {
 		wantHint := directionReasons[reason]
@@ -68,6 +72,7 @@ func TestUnscanDisplays_ProjectFaultsReadAsOneFault(t *testing.T) {
 	for _, reason := range []vuldomain.UnscanReason{
 		vuldomain.UnscanReasonProjectNoGoMod,
 		vuldomain.UnscanReasonProjectDirUnavailable,
+		vuldomain.UnscanReasonProjectBuildDiverged,
 	} {
 		heading := unscanDisplayFor(reason).heading
 		if !strings.Contains(heading, "one project-level fault") {

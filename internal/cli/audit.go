@@ -412,10 +412,7 @@ func writeAuditDerivation(w io.Writer, d auditDerivation) error {
 	}
 	lines = append(lines, scanLine)
 
-	if _, err := fmt.Fprintf(w, "derivation:\n  %s\n", strings.Join(lines, "\n  ")); err != nil {
-		return fmt.Errorf("writing output: %w", err)
-	}
-	return nil
+	return writeDerivation(w, lines...)
 }
 
 // walkScopeFor maps a CLI depScope to the walk-record WalkScope tag. The string
@@ -563,7 +560,7 @@ func auditScope(
 	// run that answered, and answered with the same lookup the scan itself makes:
 	// audit narrates the whole derivation in one place, so runVulnScan is told not
 	// to announce the reuse a second time.
-	if prior, ok, rerr := ctr.ScanWalk.ReusableRun(ctx, walkID); rerr != nil {
+	if prior, ok, rerr := ctr.ScanWalk.ReusableRun(ctx, walkID, filepath.Dir(f.gomodPath)); rerr != nil {
 		_, _ = fmt.Fprintf(stderr, "vuln-scan: %v\n", rerr)
 	} else if ok && !f.force {
 		derivation.scanReused = true
@@ -697,9 +694,30 @@ func buildAuditResult(ctx context.Context, node walkdomain.GraphNode, anchor vul
 	// measured in against each other, so a store holding a second project's scans
 	// could put that project's verdict in this project's audit row.
 	vrec, found, verr := recordInWalkFrame(ctx, ctr.QueryVuln, coord, anchor)
-	res.VulnStatus, res.VulnReason, res.VulnFindings, res.VulnWithdrawn = vulnAuditStatus(vrec, found, verr)
+	res.VulnStatus, res.VulnReason, res.VulnFindings, res.VulnWithdrawn =
+		vulnAuditStatus(vrec, found, verr, auditSupersededReason(ctx, ctr.QueryVuln, coord, found, verr))
 
 	return res, nil
+}
+
+// auditSupersededReason is the row's explanation when the walk-frame read found
+// nothing because the records it would have served belong to a generation this
+// build no longer reads.
+//
+// It is a store read, so it is asked only for a row that has nothing else to
+// say: a covered module pays for it never, and an uncovered one pays one
+// indexed lookup. Empty when the emptiness has some other cause, and the row
+// keeps "(not scanned)", which is then true.
+func auditSupersededReason(ctx context.Context, uc QueryVulnUseCase, coord coordinate.ModuleCoordinate, found bool, verr error) string {
+	if found || verr != nil {
+		return ""
+	}
+	gens, superseded := supersededVulnGenerations(ctx, uc, coord)
+	if !superseded {
+		return ""
+	}
+	return fmt.Sprintf("scanned at pipeline %s; this build reads pipeline %s, so no record is served — re-scan",
+		supersededVulnHeld(gens), vulnPipelineVersion)
 }
 
 // The staleness column's provenance vocabulary. Every audit row carries one of
@@ -883,11 +901,18 @@ func applyPolicyEvaluation(res *auditModuleResult, eval configdomain.PolicyEvalu
 // the row read "Withdrawn (1 findings)" — a finding asserted and denied in one
 // line — while narrowing the total instead would have changed what an existing
 // field means without saying so.
-func vulnAuditStatus(rec vulndomain.VulnerabilityRecord, found bool, err error) (status, reason string, findings, withdrawn int) {
+func vulnAuditStatus(rec vulndomain.VulnerabilityRecord, found bool, err error, supersededReason string) (status, reason string, findings, withdrawn int) {
 	if err != nil {
 		return "(scan record unreadable)", "reading vulnerability record: " + err.Error(), 0, 0
 	}
 	if !found {
+		// A coordinate whose records were superseded by a pipeline bump has been
+		// scanned, and "(not scanned)" is the sentence an operator reads as a
+		// dependency nobody has checked. The two absences carry opposite
+		// instructions, so the column keeps them apart.
+		if supersededReason != "" {
+			return "(superseded)", supersededReason, 0, 0
+		}
 		return "(not scanned)", "", 0, 0
 	}
 	// Which diagnostic explains the row is a coverage question, so it is asked of
@@ -958,7 +983,8 @@ func buildStdlibAuditResult(ctx context.Context, coord coordinate.ModuleCoordina
 	applyPolicyEvaluation(&res, eval, "")
 
 	vrec, found, verr := recordInWalkFrame(ctx, ctr.QueryVuln, coord, anchor)
-	res.VulnStatus, res.VulnReason, res.VulnFindings, res.VulnWithdrawn = vulnAuditStatus(vrec, found, verr)
+	res.VulnStatus, res.VulnReason, res.VulnFindings, res.VulnWithdrawn =
+		vulnAuditStatus(vrec, found, verr, auditSupersededReason(ctx, ctr.QueryVuln, coord, found, verr))
 	return res
 }
 

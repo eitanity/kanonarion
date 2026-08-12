@@ -64,6 +64,18 @@ type CallGraphConflict struct {
 	// Field names what the records disagree on: one of ConflictFields.
 	Field string
 
+	// Completeness is the level every conflicting record was analysed to, when
+	// the conflict is one only records at a shared level can raise. It is empty
+	// for the conflicts that are not about the graph.
+	//
+	// It is here because the remedy depends on it. Composition compares only the
+	// records at the HIGHEST completeness present, so an analysis that reaches a
+	// higher level than the disagreeing generations leaves them out of the
+	// comparison and the read serves again; one that lands at the same level adds
+	// a third generation to the disagreement instead. The remedy cannot tell those
+	// apart without knowing which level the conflict sits at.
+	Completeness CompletenessLevel
+
 	// Values are the distinct values recorded for Field, sorted, so the report is
 	// stable across runs.
 	Values []string
@@ -84,7 +96,10 @@ const (
 	// ConflictFieldArtefactIdentity is two sets of bytes for one pinned version.
 	ConflictFieldArtefactIdentity = "artefact_identity"
 	// ConflictFieldCallGraph is two analyses of the same artefact, at the same
-	// completeness, disagreeing about the graph.
+	// completeness, disagreeing about the graph — the nodes, edges, interfaces or
+	// implementations they recorded, and nothing else. Two analyses that produced
+	// the same graph and described their run differently are not this: see
+	// GraphClaimFields.
 	ConflictFieldCallGraph = "call_graph"
 )
 
@@ -131,42 +146,88 @@ func (r Remedy) String() string {
 // Each field gets its own, because the routes out are genuinely different: an
 // unreadable source is a build that is too old, two artefact identities are two
 // sets of bytes, and two graphs at one completeness are a measurement to take
-// again. None of them is --force on its own, which is why none of them says only
-// that.
+// again ONLY when there is a further one to take. None of them is --force on its
+// own, which is why none of them says only that.
 func (c CallGraphConflict) Remedy() Remedy {
 	coord := c.Coordinate.String()
 	switch c.Field {
 	case ConflictFieldAnalysisSource:
+		// The source to fall back to is decided by the coordinate: a project
+		// coordinate's records are read off a working tree, never a module zip, so
+		// naming --source zip for one directs the reader at a record that cannot
+		// exist.
+		readable := AnalysisSourceModuleZip
+		if !IsReFetchable(c.Coordinate) {
+			readable = AnalysisSourceWorktree
+		}
 		return Remedy{
 			Lead: "A record names a kind of source this build cannot read, so it was written by a newer kanonarion. " +
 				"Upgrade, or read only the sources this build names",
 			Lines: []string{
 				"kanonarion callgraph-show " + coord + " --history",
-				"kanonarion callgraph-show " + coord + " --source zip",
+				"kanonarion callgraph-show " + coord + " --source " + string(readable),
 			},
 		}
 	case ConflictFieldArtefactIdentity:
+		if !IsReFetchable(c.Coordinate) {
+			// A project coordinate names a working tree, not published bytes. There
+			// is nothing to fetch, and two identities for it mean two trees were
+			// analysed under one name — which only re-analysing the tree in hand
+			// settles.
+			return Remedy{
+				Lead: "Two records read different bytes for one project coordinate, so two working trees were analysed under one name. " +
+					"Inspect the generations, then analyse the tree you mean",
+				Lines: []string{
+					"kanonarion callgraph-show " + coord + " --history",
+					ReanalysisCommand(c.Coordinate, ""),
+				},
+			}
+		}
 		return Remedy{
 			Lead: "Two records read different bytes for one pinned version, so no re-analysis of the stored bytes settles it. " +
 				"Inspect the generations, then fetch the module again and analyse what that fetch pins",
 			Lines: []string{
 				"kanonarion callgraph-show " + coord + " --history",
 				"kanonarion fetch " + coord,
-				"kanonarion callgraph " + coord + " --force",
+				ForcedReanalysisCommand(c.Coordinate, ""),
 			},
 		}
 	default:
-		// ConflictFieldCallGraph, and any field a later generation adds: the
-		// generations are what a reader has to see, and a fresh measurement is what
-		// can separate them. --force is on the analysis because a stored answer
-		// already exists, so without it the run is served from cache and reads as
-		// the remedy having been tried and failed.
+		// ConflictFieldCallGraph, and any field a later generation adds.
+		//
+		// A fresh analysis is NOT unconditionally the way out, and naming it as one
+		// was a defect: the ledger is append-only, composition compares every
+		// generation at the top completeness present, so a re-analysis that lands at
+		// the SAME level as the disagreeing pair adds a third record to the
+		// disagreement rather than settling it. For a module that keeps failing to
+		// build, that is the ordinary outcome, and the remedy then feeds the
+		// condition it is named for.
+		//
+		// What does clear it is an analysis that reaches a HIGHER completeness: the
+		// disagreeing generations then fall out of the comparison entirely and the
+		// read serves again. So the remedy names re-analysis exactly when there is a
+		// rung above the one the conflict sits at, and says plainly that there is no
+		// route when there is not.
+		if c.Completeness == CompletenessBuiltWithBodies {
+			return Remedy{
+				Lead: "Two analyses of the same artefact disagree about the graph, and both built it as fully as this " +
+					"analyser can. Re-analysing appends a generation and retires neither, so nothing clears this from " +
+					"the outside — read the generations and decide which measurement to trust",
+				Lines: []string{
+					"kanonarion callgraph-show " + coord + " --history",
+				},
+			}
+		}
 		return Remedy{
 			Lead: "Two analyses of the same artefact at the same completeness disagree about the graph. " +
-				"Inspect the generations, then measure again",
+				"Only an analysis that gets FURTHER than they did settles it — one that fails the same way appends " +
+				"a third generation and the disagreement stands. Inspect the generations, then measure again",
 			Lines: []string{
 				"kanonarion callgraph-show " + coord + " --history",
-				"kanonarion callgraph " + coord + " --force",
+				// --force is on the analysis because a stored answer already exists, so
+				// without it the run is served from cache and reads as the remedy having
+				// been tried and failed.
+				ForcedReanalysisCommand(c.Coordinate, ""),
 			},
 		}
 	}
@@ -231,18 +292,7 @@ func Compose(records []CallGraphRecord, req ComposeRequest) (CallGraphRecord, er
 	}
 
 	if isWorktreeSequence(candidates) {
-		// A working tree pins no content — it is deliberately re-read on every run
-		// — so its records are a SEQUENCE of observations of a changing tree, not
-		// competing claims about one pinned artefact. The last one is the only
-		// correct answer: serving a higher-completeness earlier record would hand
-		// back a graph the tree no longer has, so deleting a function would
-		// silently fail to register.
-		//
-		// "Last" is by position, not by timestamp. extracted_at persists at second
-		// precision, so two runs within one second carry the same time and a
-		// timestamp comparison cannot order them. The ledger is append-only and the
-		// store lists in insertion order, which is the sequence.
-		return candidates[len(candidates)-1], nil
+		return LatestObservation(candidates), nil
 	}
 
 	candidates = identifiedOrAll(candidates)
@@ -254,6 +304,98 @@ func Compose(records []CallGraphRecord, req ComposeRequest) (CallGraphRecord, er
 	copy(ordered, candidates)
 	sort.SliceStable(ordered, func(i, j int) bool { return servesBefore(ordered[i], ordered[j]) })
 	return ordered[0], nil
+}
+
+// LatestObservation returns the record that describes a working tree as it is
+// NOW, given every generation of it in the order they were appended.
+//
+// A working tree pins no content — it is deliberately re-read on every run — so
+// its records are a SEQUENCE of observations of a changing tree, not competing
+// claims about one pinned artefact. Serving an earlier, higher-completeness
+// generation of a tree that has since changed would hand back a graph the tree
+// no longer has, and deleting a function would silently fail to register. So the
+// sequence position decides which TREE STATE answers, and the last one wins.
+//
+// Within one tree state it does not decide anything, and that is the whole of
+// the rule here. Two generations carrying the same scan digest were handed the
+// same tree, so they are not two observations of a changing thing — they are two
+// measurements of one thing, and the completeness ladder orders them exactly as
+// it orders two analyses of one published artefact. A re-analysis that came back
+// with less than the one before it measured the analysis environment, not the
+// tree: a toolchain that went missing, a cancelled run, a machine out of memory.
+// Letting it answer is how a graph silently loses its bodies, which turns "no
+// callers" and "not reachable" into answers with no route behind them.
+//
+// A generation that states no scan digest takes no part in that: every record
+// written before the field existed carries none, and an absent digest cannot
+// show that two runs were handed the same tree. Those compose exactly as they
+// did before — last one wins — so nothing already in a ledger changes its answer.
+//
+// "Last" is by position, not by timestamp. extracted_at persists at second
+// precision, so two runs within one second carry the same time and a timestamp
+// comparison cannot order them. The ledger is append-only and the store lists in
+// insertion order, which is the sequence.
+func LatestObservation(records []CallGraphRecord) CallGraphRecord {
+	last := records[len(records)-1]
+	if last.WorktreeScanDigest == "" {
+		return last
+	}
+	best := last
+	for _, r := range records {
+		if r.WorktreeScanDigest != last.WorktreeScanDigest {
+			continue
+		}
+		// Two roots holding byte-identical trees are still two checkouts, and a
+		// reader standing in one of them asked about that one. The digest says the
+		// code is the same; it does not say the caller wanted the other tree's
+		// record. See CallGraphRecord.AnalysisRoot.
+		if r.AnalysisRoot != last.AnalysisRoot {
+			continue
+		}
+		if RankOf(r).ServesBefore(RankOf(best)) {
+			best = r
+		}
+	}
+	return best
+}
+
+// GenerationRank is the ordering key of one generation: completeness first, then
+// recency, then the record's own seal.
+//
+// It is a value rather than a method on the record because a store holds every
+// one of these fields in COLUMNS and the record itself in a blob. Deciding which
+// of several generations to serve by decoding all of them, when the decision
+// only ever reads three fields, costs a full edge reconstruction per generation
+// to discard all but one of them. A store reads the columns, ranks, and decodes
+// the winner — against the same ladder composition uses, not a second one
+// written in SQL that would drift from it.
+type GenerationRank struct {
+	Completeness CompletenessLevel
+	ExtractedAt  time.Time
+	// ContentHash is the last resort. It is not authority and is not claimed to be
+	// — it is here so the served record does not depend on the order rows happen
+	// to come back in.
+	ContentHash string
+}
+
+// RankOf projects a record onto its ordering key.
+func RankOf(r CallGraphRecord) GenerationRank {
+	return GenerationRank{
+		Completeness: r.Completeness,
+		ExtractedAt:  r.ExtractedAt,
+		ContentHash:  r.ContentHash,
+	}
+}
+
+// ServesBefore reports whether g should be served in preference to o.
+func (g GenerationRank) ServesBefore(o GenerationRank) bool {
+	if rg, ro := completenessRung(g.Completeness), completenessRung(o.Completeness); rg != ro {
+		return rg > ro
+	}
+	if !g.ExtractedAt.Equal(o.ExtractedAt) {
+		return g.ExtractedAt.After(o.ExtractedAt)
+	}
+	return g.ContentHash < o.ContentHash
 }
 
 // withSource keeps the records built from one kind of source.
@@ -412,9 +554,9 @@ func findConflict(records []CallGraphRecord) *CallGraphConflict {
 	// METADATA_ONLY graph disagreeing with a BUILT_WITH_BODIES one is the
 	// refinement case the ladder exists to resolve; two records at the SAME
 	// completeness disagreeing about the graph is non-determinism in the analyser.
-	top := completenessRung(records[0])
+	top := completenessRung(records[0].Completeness)
 	for _, r := range records[1:] {
-		if rung := completenessRung(r); rung > top {
+		if rung := completenessRung(r.Completeness); rung > top {
 			top = rung
 		}
 	}
@@ -423,7 +565,7 @@ func findConflict(records []CallGraphRecord) *CallGraphConflict {
 		// A failed, cancelled or excluded extraction makes no claim about the graph
 		// at all, so it cannot contradict one that does. Letting it take part would
 		// report every "load failed, then extracted" pair as non-determinism.
-		if completenessRung(r) == top && statesAGraph(r) {
+		if completenessRung(r.Completeness) == top && statesAGraph(r) {
 			tied = append(tied, r)
 		}
 	}
@@ -475,7 +617,7 @@ func graphDisagreement(records []CallGraphRecord) *CallGraphConflict {
 		stated[i] = fields
 	}
 
-	shared := sharedFields(stated)
+	shared := sharedFieldsAmong(stated, GraphClaimFields())
 	values := make([]string, len(records))
 	for i := range records {
 		values[i] = digestOfFields(stated[i], shared)
@@ -484,7 +626,45 @@ func graphDisagreement(records []CallGraphRecord) *CallGraphConflict {
 	if c == nil {
 		return nil
 	}
+	c.Completeness = records[0].Completeness
 	return reportedAsWholeDigests(c, records)
+}
+
+// GraphClaimFields names the canonical fields that ARE the call graph, sorted.
+//
+// The comparison that decides a call_graph conflict is over these and nothing
+// else. It used to be over every field the records shared, which is a different
+// question: it asked "are these two records the same" and reported the answer as
+// "these two graphs disagree". Measured on the real store, that reported a graph
+// disagreement between generations of one module that held zero nodes and zero
+// edges each — byte-identical graphs — because two analyses had failed on
+// different days and recorded different failure_detail text. A caller cannot act
+// on that, and no answer the tool would have served depends on it.
+//
+// The list is a classification of the canonical record shape, not a subset
+// picked by hand: a canonical field is here when it carries part of the graph
+// itself — the node, edge, interface and implementation collections, and the
+// counts stated alongside them — and is absent when it is provenance (already
+// blanked by forGraphComparison), keying, a scope the analysis ran under, or a
+// diagnostic describing the run. TestGraphClaimFields_ClassifiesEveryCanonicalField
+// enumerates the canonical shape by reflection and fails when a field is added
+// to it without being classified either way, so a collection added tomorrow
+// cannot slip out of the comparison unnoticed.
+//
+// A scope that differs cannot hide a graph difference by being left out: two
+// analyses run over different scopes produce different nodes or edges, and those
+// are compared. What leaving it out prevents is the reverse — two runs that
+// produced the identical graph being reported as disagreeing about it because
+// one of them recorded, say, a different set of failed packages on the way.
+func GraphClaimFields() []string {
+	return []string{
+		"edge_count",
+		"edges",
+		"implementations",
+		"interfaces",
+		"node_count",
+		"nodes",
+	}
 }
 
 // reportedAsWholeDigests restates a graph conflict in the digests
@@ -531,6 +711,7 @@ func unmeasurableGraphs(records []CallGraphRecord, err error) *CallGraphConflict
 		Coordinate:      records[0].Coordinate,
 		PipelineVersion: records[0].PipelineVersion,
 		Field:           ConflictFieldCallGraph,
+		Completeness:    records[0].Completeness,
 		Values:          values,
 		ContentHashes:   hashes,
 	}
@@ -554,14 +735,18 @@ func graphFields(r CallGraphRecord) (map[string]json.RawMessage, error) {
 	return fields, nil
 }
 
-// sharedFields names the fields every record states, sorted, so a digest over
-// them is stable.
-func sharedFields(stated []map[string]json.RawMessage) []string {
-	shared := make([]string, 0, len(stated[0]))
-	for name := range stated[0] {
+// sharedFieldsAmong names which of candidates every record states, sorted, so a
+// digest over them is stable.
+//
+// The candidate list is what scopes the digest to one question. Passing every
+// field name that appears would make the digest answer "are these records the
+// same", which is not what any caller of it asks.
+func sharedFieldsAmong(stated []map[string]json.RawMessage, candidates []string) []string {
+	shared := make([]string, 0, len(candidates))
+	for _, name := range candidates {
 		inAll := true
-		for _, other := range stated[1:] {
-			if _, ok := other[name]; !ok {
+		for _, fields := range stated {
+			if _, ok := fields[name]; !ok {
 				inAll = false
 				break
 			}
@@ -682,6 +867,14 @@ func hashesForSources(records []CallGraphRecord) []string {
 // so two runs of the analyser that produced the identical graph a second apart
 // carry different content hashes. Blanking those fields leaves the claim.
 //
+// It is BROADER than GraphClaimFields, and deliberately: it also covers how far
+// the analysis got and what the build was pinned against, because a graph
+// measured to METADATA_ONLY and one built with bodies are different claims even
+// when their nodes match, and so are two graphs built against different require
+// directives. That breadth is right for a digest a reader compares generations
+// by, and wrong for the one that decides a refusal — which is why the conflict
+// check has its own, over GraphClaimFields alone.
+//
 // It is NOT a second seal and is never persisted. It reuses the canonical
 // marshal, so it changes only when the hashed shape does, and no stored record's
 // own hash depends on it.
@@ -743,8 +936,8 @@ func forGraphComparison(r CallGraphRecord) CallGraphRecord {
 // while an unrecorded one says nothing at all, and the first is better evidence
 // than silence. It is the same ordering the vulnerability domain applies to the
 // same strings.
-func completenessRung(r CallGraphRecord) int {
-	switch r.Completeness {
+func completenessRung(l CompletenessLevel) int {
+	switch l {
 	case CompletenessBuiltWithBodies:
 		return 4
 	case CompletenessTypeOnly:
@@ -780,14 +973,5 @@ func statesAGraph(r CallGraphRecord) bool {
 
 // servesBefore orders two records by which should be served first.
 func servesBefore(a, b CallGraphRecord) bool {
-	if ra, rb := completenessRung(a), completenessRung(b); ra != rb {
-		return ra > rb
-	}
-	if !a.ExtractedAt.Equal(b.ExtractedAt) {
-		return a.ExtractedAt.After(b.ExtractedAt)
-	}
-	// Neither the ladder nor the clock separates these. The content hash is not
-	// authority and is not claimed to be — it is here so the served record does
-	// not depend on the order rows happen to come back in.
-	return a.ContentHash < b.ContentHash
+	return RankOf(a).ServesBefore(RankOf(b))
 }
