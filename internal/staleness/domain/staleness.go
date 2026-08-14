@@ -190,3 +190,58 @@ func majorOf(version string) int {
 	}
 	return n
 }
+
+// PinPosition is where a pinned version sits relative to the newest version
+// published at the module's own path.
+//
+// It exists because "is the pin the latest" was answered by string equality,
+// which has only two outcomes and therefore reports the third — a pin that
+// sorts ABOVE @latest — as "behind". A pin can be ahead for ordinary reasons:
+// a pseudo-version taken after the last tag, or a pre-modules +incompatible
+// major published above the newest version the proxy will serve from the
+// unsuffixed path. In both cases the version @latest names is a DOWNGRADE, and
+// offering it as an upgrade target drives the decision backwards.
+type PinPosition int
+
+const (
+	// PinBehind: @latest names a newer version than the pin. This is the only
+	// position that has an upgrade target, and the only one an age figure means
+	// anything for — the age is how long the project has been behind.
+	PinBehind PinPosition = iota - 1
+	// PinLevel: the pin is the newest version at this path.
+	PinLevel
+	// PinAhead: the pin sorts above @latest. There is nothing at this path to
+	// move to. It is NOT the same as PinLevel — the pin is not the newest
+	// PUBLISHED version, it is simply above it — and it is not "current" either,
+	// because a newer major line may still exist at another path. That second
+	// fact is NewerMajor's, stated beside this one and never folded into it.
+	PinAhead
+)
+
+// ComparePin places pinned against the path's @latest answer.
+//
+// Ordering is semver's, not the string's, so v10.0.0 sorts above v9.0.0 and a
+// pseudo-version sorts above the tag it was taken after. Build metadata is not
+// ordering information in semver, so a +incompatible pin and the same version
+// without the tag are level — which is the honest answer, and one string
+// equality got wrong in the other direction.
+//
+// A version either side cannot read as semver yields PinBehind when the two
+// differ: the comparison could not be made, and the pre-existing reading — the
+// proxy's answer is what is newest — is kept rather than upgraded into a claim
+// that the pin is ahead. Nothing here can order two strings semver cannot read.
+func ComparePin(pinned, latest string) PinPosition {
+	if pinned == latest {
+		return PinLevel
+	}
+	if !semver.IsValid(pinned) || !semver.IsValid(latest) {
+		return PinBehind
+	}
+	switch c := semver.Compare(pinned, latest); {
+	case c < 0:
+		return PinBehind
+	case c > 0:
+		return PinAhead
+	}
+	return PinLevel
+}

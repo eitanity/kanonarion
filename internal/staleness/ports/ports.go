@@ -17,6 +17,18 @@ import (
 // failures, and a failure is never written to the ledger.
 var ErrPathAbsent = errors.New("module path not published")
 
+// ErrLookupFailed reports that the proxy could not be asked, or answered in a
+// way that settles nothing: a timeout, a 5xx, a 429, an empty body.
+//
+// It is the OTHER half of the same distinction ErrPathAbsent draws, and it is a
+// named error rather than "any error that is not ErrPathAbsent" so that the
+// message an operator sees says the lookup failed. A probe of a /vN path that
+// does not exist is the ordinary case for most modules and must never surface
+// as a failure; a probe that could not be made is the one an operator can act
+// on, and the two used to be told apart only by which error text happened to
+// come back from the transport or the decoder.
+var ErrLookupFailed = errors.New("module proxy lookup failed")
+
 // LatestInfo is the proxy's @latest answer for one path.
 type LatestInfo struct {
 	Version string

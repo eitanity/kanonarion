@@ -11,6 +11,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"unicode/utf8"
 
 	"github.com/eitanity/kanonarion/internal/coordinate"
 
@@ -22,6 +23,7 @@ import (
 
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
+	staledomain "github.com/eitanity/kanonarion/internal/staleness/domain"
 	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
 	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -161,6 +163,25 @@ type auditModuleResult struct {
 	// says why. It previously defaulted to true, which rendered an unasked
 	// question as the affirmative claim "current" on every offline row.
 	IsLatest *bool `json:"is_latest"`
+	// PinAheadOfLatest is true when the pin sorts ABOVE the newest version
+	// published at this path — a pseudo-version taken after the last tag, or a
+	// pre-modules +incompatible major above the newest version @latest serves
+	// from the unsuffixed path.
+	//
+	// It is emitted on every row, false included, so "measured, and not in that
+	// state" is distinguishable from "this build does not derive the field at
+	// all". It is a POINTER for the same reason IsLatest is: on an unmeasured
+	// row no comparison was made, and a bare false there is the claim "the pin
+	// is not ahead" about a question nobody put. Null and false are different
+	// answers and only one of them is one.
+	//
+	// IsLatest and this field together are the three-valued answer: false/false
+	// is behind, true/false is level, false/true is ahead. IsLatest stays the
+	// literal answer to "is the pin the newest version of this module path",
+	// which on an ahead row is genuinely false — the pin is not any version
+	// @latest names. What made that reading misleading was the age travelling
+	// beside it; see LatestReleaseAgeDays.
+	PinAheadOfLatest *bool `json:"pin_ahead_of_latest"`
 	// StalenessSource names where this row's staleness column came from:
 	// "proxy" (this run asked upstream), "ledger" (a recorded lookup inside the
 	// staleness TTL, dated by StalenessLookedUpAt), or "unmeasured". A reader
@@ -179,7 +200,14 @@ type auditModuleResult struct {
 	// smaller figure than a current pin on a quiet one. See latestResult in
 	// latest.go for why the genuine pin-to-latest distance is not emitted at all
 	// rather than approximated.
-	LatestReleaseAgeDays int `json:"latest_release_age_days,omitempty"`
+	//
+	// A POINTER, always emitted, because ZERO IS A REAL ANSWER: a release that
+	// shipped today is nought days old, and as a bare int under `omitempty` that
+	// row was erased — "the fix landed today" and "the publication date is
+	// unknown" collapsed into the same absence. Null now means no age, in
+	// exactly two cases told apart by PinAheadOfLatest: no publication date was
+	// supplied (false), or the pin is ahead and no distance is offered (true).
+	LatestReleaseAgeDays *int `json:"latest_release_age_days"`
 	// NewerMajorModule/NewerMajorLatest are the SEPARATE major-line fact: a
 	// module's next major version lives at a different path, so IsLatest — which
 	// is about this path — can be true while a whole major line is available.
@@ -775,13 +803,26 @@ func applyAuditStaleness(ctx context.Context, res *auditModuleResult, coord coor
 			res.stalenessLedgerAge = time.Since(ans.LookedUpAt)
 		}
 	}
-	isLatest := ans.LatestVersion == coord.Version()
+	// Placed with semver, not string equality: a pin can sort ABOVE @latest, and
+	// string equality has no third outcome to put that in, so it landed in
+	// "behind" and named a downgrade as the upgrade target.
+	pos := staledomain.ComparePin(coord.Version(), ans.LatestVersion)
+	isLatest := pos == staledomain.PinLevel
+	ahead := pos == staledomain.PinAhead
 	res.IsLatest = &isLatest
+	res.PinAheadOfLatest = &ahead
 	res.StalenessLookedUpAt = ans.LookedUpAt
-	// The release age is a fact about the release, so it is recorded
-	// whether or not the pin is current; only LatestVersion, which names a
-	// version the project is not on, is gated on the pin being behind.
-	res.LatestReleaseAgeDays = latestReleaseAgeDays(ans.LatestPublishedAt)
+	// The release age is a fact about the release, so it is recorded whether or
+	// not the pin is current — but NOT when the pin is ahead. On a current row
+	// the age travels beside is_latest true, which no consumer reads as a
+	// distance behind. On an ahead row it would travel beside is_latest FALSE,
+	// and false-plus-an-age is exactly the sentence "you are 3868 days behind"
+	// — the original wrong answer, surviving on the surface most likely to be
+	// read by a machine. The text output drops it here for the same reason, and
+	// the two surfaces must not disagree.
+	if !ahead {
+		res.LatestReleaseAgeDays = latestReleaseAgeDays(ans.LatestPublishedAt)
+	}
 	if !isLatest {
 		res.LatestVersion = ans.LatestVersion
 	}
@@ -795,6 +836,7 @@ func applyAuditStaleness(ctx context.Context, res *auditModuleResult, coord coor
 // value of a bool is a claim.
 func (r *auditModuleResult) markStalenessUnmeasured(reason string) {
 	r.IsLatest = nil
+	r.PinAheadOfLatest = nil
 	r.StalenessSource = stalenessSourceUnmeasured
 	r.StalenessUnmeasured = reason
 }
@@ -1131,41 +1173,71 @@ func auditBlockingErr(results []auditModuleResult) error {
 	return &exitError{code: ExitPolicy, msg: strings.Join(msgs, "\n")}
 }
 
-// auditStalenessColumn renders one row's staleness cell.
+// auditStalenessCell renders one row's staleness column.
 //
 // An unmeasured row says so in words, with the reason in the same cell: the
 // column is read left to right beside a verification and a vulnerability status,
 // and a blank or a bare "current" there is read as an answer.
-func auditStalenessColumn(r auditModuleResult) string {
+//
+// The newer-major fact is NOT here. It is a second fact about a different module
+// path, it is routinely wider than the rest of the row put together, and the
+// table states it on a continuation line beneath the row — see printAuditTable
+// and auditNewerMajorNote.
+func auditStalenessCell(r auditModuleResult) string {
+	return auditStalenessAnswer(r) + auditLedgerAgeNote(r)
+}
+
+// auditStalenessAnswer is the same-major answer: what this module path's own
+// newest version says about the pin, and nothing else.
+func auditStalenessAnswer(r auditModuleResult) string {
 	// The absent comparison is what makes a row unmeasured — not the source
 	// label, which is a detail about a measurement that exists.
 	if r.IsLatest == nil {
 		return stalenessUnmeasuredLabel(r.StalenessUnmeasured)
 	}
 	switch {
-	case !*r.IsLatest && r.LatestReleaseAgeDays == 0:
-		return withStalenessNotes(fmt.Sprintf("latest: %s (today)", r.LatestVersion), r)
+	case r.PinAheadOfLatest != nil && *r.PinAheadOfLatest:
+		// No target and no age. The age would be the age of a release the
+		// project is already past, printed in a column whose other rows mean
+		// "this is how long you have been behind"; the tag is named because a
+		// reader comparing this row against the proxy needs to see the same
+		// answer the proxy gave, not a blank.
+		return fmt.Sprintf("ahead of latest tag: %s", r.LatestVersion)
+	case !*r.IsLatest && r.LatestReleaseAgeDays == nil:
+		// A newer version with no publication date. The target is stated and no
+		// age is invented for it; a missing date used to reach this line as 0
+		// and print "(today)" about a release nothing is known about.
+		return fmt.Sprintf("latest: %s", r.LatestVersion)
+	case !*r.IsLatest && *r.LatestReleaseAgeDays == 0:
+		return fmt.Sprintf("latest: %s (today)", r.LatestVersion)
 	case !*r.IsLatest:
-		return withStalenessNotes(fmt.Sprintf("latest: %s (%d days ago)", r.LatestVersion, r.LatestReleaseAgeDays), r)
+		return fmt.Sprintf("latest: %s (%d days ago)", r.LatestVersion, *r.LatestReleaseAgeDays)
 	}
-	return withStalenessNotes("current", r)
+	return "current"
 }
 
-// withStalenessNotes appends the facts that stand beside a measured answer
-// rather than replacing it: the newer major line, and — offline — the age of the
-// recorded lookup the answer came from.
+// auditNewerMajorNote is the newer-major clause: the fact that stops a module
+// several majors behind from reading as up to date.
 //
-// Appended, not substituted. "current" remains true of this module path; the
-// newer major line is a second fact stated beside it, so a module several majors
-// behind no longer reads as up to date.
-func withStalenessNotes(s string, r auditModuleResult) string {
-	if r.MajorProbed && r.NewerMajorModule != "" {
-		s += fmt.Sprintf("; newer major: %s@%s", r.NewerMajorModule, r.NewerMajorLatest)
+// It is stated beside the staleness answer, never folded into it. "current" and
+// "a newer major line exists" are both true at once for a module pinned behind a
+// major bump, and a rendering that merged them would report the module the way
+// this whole context exists to stop reporting it.
+func auditNewerMajorNote(r auditModuleResult) string {
+	if !r.MajorProbed || r.NewerMajorModule == "" {
+		return ""
 	}
-	if r.stalenessLedgerAge > 0 {
-		s += fmt.Sprintf(" [from ledger, %s old]", roundedAge(r.stalenessLedgerAge))
+	return fmt.Sprintf("newer major: %s@%s", r.NewerMajorModule, r.NewerMajorLatest)
+}
+
+// auditLedgerAgeNote states how old the recorded lookup this row was answered
+// from is. Offline only: on the network path the table's dated footer carries
+// that statement for the run as a whole.
+func auditLedgerAgeNote(r auditModuleResult) string {
+	if r.stalenessLedgerAge <= 0 {
+		return ""
 	}
-	return s
+	return fmt.Sprintf(" [from ledger, %s old]", roundedAge(r.stalenessLedgerAge))
 }
 
 // roundedAge renders a ledger age at a resolution a reader can use: minutes
@@ -1183,8 +1255,82 @@ func roundedAge(d time.Duration) string {
 	return d.Round(time.Hour).String()
 }
 
+// auditRowCells renders one result as the table's cells, left to right. The
+// staleness cell deliberately excludes the newer-major clause; see
+// auditStalenessCell.
+func auditRowCells(r auditModuleResult, showScope bool) []string {
+	cells := []string{r.Coordinate}
+	if showScope {
+		cells = append(cells, r.Scope)
+	}
+	return append(cells, r.Verification, auditLicenseCell(r), auditStalenessCell(r), auditVulnCell(r), auditPolicyCell(r))
+}
+
+// auditVulnCell renders the vulnerability status with its counts.
+func auditVulnCell(r auditModuleResult) string {
+	// live is the difference, because VulnFindings counts the retracted ones too.
+	live := r.VulnFindings - r.VulnWithdrawn
+	switch {
+	case live > 0 && r.VulnWithdrawn > 0:
+		return fmt.Sprintf("%s (%d findings, %d retracted)", r.VulnStatus, live, r.VulnWithdrawn)
+	case live > 0:
+		return fmt.Sprintf("%s (%d findings)", r.VulnStatus, live)
+	case r.VulnWithdrawn > 0:
+		// Named as retracted, never as findings: the count column sits beside a
+		// Withdrawn status word, and "1 findings" there contradicts it.
+		return fmt.Sprintf("%s (%d retracted)", r.VulnStatus, r.VulnWithdrawn)
+	case r.VulnReason != "":
+		// The reason (govulncheck stderr) is multi-line and too wide for
+		// the table; direct the reader to vuln-show, which renders it.
+		return fmt.Sprintf("%s (see vuln-show)", r.VulnStatus)
+	}
+	return r.VulnStatus
+}
+
+// auditLicenseCell renders the licence identifier with its status annotation.
+func auditLicenseCell(r auditModuleResult) string {
+	switch {
+	case r.LicenseSource == "override":
+		return fmt.Sprintf("%s (override)", r.License)
+	case r.LicenseStatus != "(not run)" && r.LicenseStatus != "Detected":
+		return fmt.Sprintf("%s [%s]", r.License, r.LicenseStatus)
+	}
+	return r.License
+}
+
+// auditPolicyCell renders the policy outcome and everything that qualifies it.
+func auditPolicyCell(r auditModuleResult) string {
+	// An unevaluated gate measured nothing: name the scope gap in the row
+	// so the table never shows a bare word that could read as a verdict.
+	if r.PolicyUnevaluated {
+		return fmt.Sprintf("unevaluated [no rule for scope %s]", r.policyScope)
+	}
+	// Never let an undetermined license read as a clean verdict: make
+	// the uncertainty (and any hard block) explicit in the table.
+	if !r.LicenseResolved {
+		marker := "UNCERTAIN"
+		if r.PolicyBlocking {
+			marker = "BLOCKED"
+		}
+		return fmt.Sprintf("%s [%s: %s]", r.PolicyOutcome, marker, r.LicenseUncertainty)
+	}
+	policy := r.PolicyOutcome
+	if r.LicenseCategory != "" {
+		policy = fmt.Sprintf("%s [%s]", r.PolicyOutcome, r.LicenseCategory)
+	}
+	// A disjunction states which licences carry the outcome, so the reader
+	// can see the row was decided on an arm rather than on one identity.
+	if len(r.LicenseElectableArms) > 0 {
+		policy = fmt.Sprintf("%s [electable: %s]", policy, strings.Join(r.LicenseElectableArms, " or "))
+	}
+	return policy
+}
+
 func printAuditTable(stdout io.Writer, results []auditModuleResult) error {
-	const colWidth = 55
+	// minCoordWidth keeps a table of short coordinates from collapsing into a
+	// ragged left edge. It is a FLOOR, never a ceiling: a longer coordinate
+	// widens the column rather than overflowing it.
+	const minCoordWidth = 55
 	showScope := false
 	for _, r := range results {
 		if r.Scope != "" {
@@ -1192,70 +1338,77 @@ func printAuditTable(stdout io.Writer, results []auditModuleResult) error {
 			break
 		}
 	}
+
+	// Every cell is built before anything is printed, because a column can only
+	// be sized from the widest value the run actually produced. The previous
+	// pass printed as it went against constant widths, so any cell wider than
+	// its constant — a two-fact staleness answer, a long licence expression —
+	// pushed every column to its right out of line on that row alone.
+	type row struct {
+		cells []string
+		// note is the newer-major clause, printed beneath the row. See
+		// auditStalenessCell for why it is not in the column.
+		note string
+	}
+	rows := make([]row, 0, len(results))
 	for _, r := range results {
-		vuln := r.VulnStatus
-		// live is the difference, because VulnFindings counts the retracted ones too.
-		live := r.VulnFindings - r.VulnWithdrawn
-		switch {
-		case live > 0 && r.VulnWithdrawn > 0:
-			vuln = fmt.Sprintf("%s (%d findings, %d retracted)", r.VulnStatus, live, r.VulnWithdrawn)
-		case live > 0:
-			vuln = fmt.Sprintf("%s (%d findings)", r.VulnStatus, live)
-		case r.VulnWithdrawn > 0:
-			// Named as retracted, never as findings: the count column sits beside a
-			// Withdrawn status word, and "1 findings" there contradicts it.
-			vuln = fmt.Sprintf("%s (%d retracted)", r.VulnStatus, r.VulnWithdrawn)
-		case r.VulnReason != "":
-			// The reason (govulncheck stderr) is multi-line and too wide for
-			// the table; direct the reader to vuln-show, which renders it.
-			vuln = fmt.Sprintf("%s (see vuln-show)", r.VulnStatus)
-		}
-		license := r.License
-		if r.LicenseSource == "override" {
-			license = fmt.Sprintf("%s (override)", r.License)
-		} else if r.LicenseStatus != "(not run)" && r.LicenseStatus != "Detected" {
-			license = fmt.Sprintf("%s [%s]", r.License, r.LicenseStatus)
-		}
-		coord := r.Coordinate
-		if len(coord) < colWidth {
-			coord = fmt.Sprintf("%-*s", colWidth, coord)
-		}
-		staleness := auditStalenessColumn(r)
-		policy := r.PolicyOutcome
-		if r.LicenseCategory != "" {
-			policy = fmt.Sprintf("%s [%s]", r.PolicyOutcome, r.LicenseCategory)
-		}
-		// A disjunction states which licences carry the outcome, so the reader
-		// can see the row was decided on an arm rather than on one identity.
-		if len(r.LicenseElectableArms) > 0 {
-			policy = fmt.Sprintf("%s [electable: %s]", policy, strings.Join(r.LicenseElectableArms, " or "))
-		}
-		// Never let an undetermined license read as a clean verdict: make
-		// the uncertainty (and any hard block) explicit in the table.
-		if !r.LicenseResolved {
-			marker := "UNCERTAIN"
-			if r.PolicyBlocking {
-				marker = "BLOCKED"
+		rows = append(rows, row{cells: auditRowCells(r, showScope), note: auditNewerMajorNote(r)})
+	}
+
+	var widths []int
+	for _, rw := range rows {
+		for i, c := range rw.cells {
+			for len(widths) <= i {
+				widths = append(widths, 0)
 			}
-			policy = fmt.Sprintf("%s [%s: %s]", r.PolicyOutcome, marker, r.LicenseUncertainty)
+			// Width is counted in runes, not bytes: a licence expression or a
+			// reason carrying a non-ASCII character is one column per rune, and
+			// counting bytes over-pads exactly those rows.
+			if n := utf8.RuneCountInString(c); n > widths[i] {
+				widths[i] = n
+			}
 		}
-		// An unevaluated gate measured nothing: name the scope gap in the row
-		// so the table never shows a bare word that could read as a verdict.
-		if r.PolicyUnevaluated {
-			policy = fmt.Sprintf("unevaluated [no rule for scope %s]", r.policyScope)
+	}
+	if len(widths) > 0 && widths[0] < minCoordWidth {
+		widths[0] = minCoordWidth
+	}
+
+	// noteIndent lines the continuation up under the staleness column it
+	// belongs to, so the clause reads as that row's second staleness fact
+	// rather than as a new row.
+	noteIndent := 0
+	stalenessCol := 3
+	if showScope {
+		stalenessCol = 4
+	}
+	for i := 0; i < stalenessCol && i < len(widths); i++ {
+		noteIndent += widths[i] + 2
+	}
+
+	for _, rw := range rows {
+		var b strings.Builder
+		for i, c := range rw.cells {
+			if i > 0 {
+				b.WriteString("  ")
+			}
+			// The last column is never padded: trailing whitespace is not
+			// alignment, and it is what a reader's diff notices.
+			if i == len(rw.cells)-1 {
+				b.WriteString(c)
+				continue
+			}
+			fmt.Fprintf(&b, "%-*s", widths[i], c)
 		}
-		var err error
-		if showScope {
-			_, err = fmt.Fprintf(stdout, "%s  %-10s  %-22s  %-30s  %-20s  %-22s  %s\n",
-				coord, r.Scope, r.Verification, license, staleness, vuln, policy,
-			)
-		} else {
-			_, err = fmt.Fprintf(stdout, "%s  %-22s  %-30s  %-20s  %-22s  %s\n",
-				coord, r.Verification, license, staleness, vuln, policy,
-			)
-		}
-		if err != nil {
+		if _, err := fmt.Fprintln(stdout, b.String()); err != nil {
 			return fmt.Errorf("writing output: %w", err)
+		}
+		if rw.note != "" {
+			// Reported in full and never truncated. It is on its own line
+			// because it carries a module path and a version, which is wider
+			// than the rest of the row put together.
+			if _, err := fmt.Fprintf(stdout, "%*s%s\n", noteIndent, "", rw.note); err != nil {
+				return fmt.Errorf("writing output: %w", err)
+			}
 		}
 	}
 	// The staleness column is dated by its OLDEST lookup: a table where most

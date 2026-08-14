@@ -6,7 +6,6 @@ import (
 	"fmt"
 	"io"
 	"os"
-	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/blobstore/localfs"
 	"github.com/eitanity/kanonarion/internal/adapters/clock"
@@ -19,6 +18,7 @@ import (
 	"github.com/eitanity/kanonarion/internal/coordinate"
 	"github.com/eitanity/kanonarion/internal/fetch/application"
 	"github.com/eitanity/kanonarion/internal/fetch/domain"
+	staledomain "github.com/eitanity/kanonarion/internal/staleness/domain"
 	"github.com/spf13/cobra"
 )
 
@@ -293,12 +293,34 @@ type stalenessInfo struct {
 	// to be behind. It used to default to true through both, so a failed lookup
 	// and an unasked question both reported the module as current.
 	IsLatest *bool `json:"is_latest"`
+	// PinAheadOfLatest is true when the requested version sorts ABOVE the
+	// newest version published at this path, which is not an upgrade to offer
+	// and carries no DaysSince.
+	//
+	// Emitted on every block, false included, so "measured, and not in that
+	// state" is distinguishable from "this build does not derive the field"; a
+	// POINTER, and null wherever IsLatest is null, because an unmeasured block
+	// made no comparison and a bare false there would be an answer to a
+	// question nobody put.
+	PinAheadOfLatest *bool `json:"pin_ahead_of_latest"`
 	// Unmeasured names why IsLatest is null, from the vocabulary shared with
 	// `audit` and `latest` (see staleness.go). Absent on a measured row, which
 	// keeps a measured block byte-identical to what it has always emitted.
 	Unmeasured    string `json:"staleness_unmeasured,omitempty"`
 	LatestVersion string `json:"latest_version,omitempty"`
-	DaysSince     int    `json:"days_since_latest,omitempty"`
+	// DaysSince is the age of LatestVersion, and shares LatestReleaseAgeDays'
+	// shape for the same reason: zero is a real answer — a release that shipped
+	// today — and under `omitempty` it was erased, so "released today" and "no
+	// publication date" were the same absence. It is emitted on every block,
+	// 0 included.
+	//
+	// Null means there is no age here, which on this surface has three causes,
+	// each of them read off the two fields above rather than off this one: the
+	// pin is current (IsLatest true, and `fetch` has never reported an age for a
+	// coordinate that is not behind), the pin is ahead (PinAheadOfLatest true,
+	// no distance to offer), or the proxy supplied no publication date (both
+	// false). Null is never a fabricated "released today".
+	DaysSince *int `json:"days_since_latest"`
 }
 
 // latestInfoLookup asks the proxy for a module path's newest version. The proxy
@@ -326,12 +348,19 @@ func fetchStalenessFor(ctx context.Context, proxy latestInfoLookup, coord coordi
 		}
 		return stalenessInfo{Unmeasured: stalenessLookupFailed}
 	}
-	isLatest := info.Version == coord.Version()
-	out := stalenessInfo{IsLatest: &isLatest}
+	// Placed with semver, not string equality, for the same reason the audit and
+	// latest rows are: a pin can sort ABOVE @latest, and string equality has no
+	// third outcome to put that in.
+	pos := staledomain.ComparePin(coord.Version(), info.Version)
+	isLatest := pos == staledomain.PinLevel
+	ahead := pos == staledomain.PinAhead
+	out := stalenessInfo{IsLatest: &isLatest, PinAheadOfLatest: &ahead}
 	if !isLatest {
 		out.LatestVersion = info.Version
-		if !info.Time.IsZero() {
-			out.DaysSince = int(time.Since(info.Time).Hours() / 24)
+		// The age is only recorded where it means "how long you have been
+		// behind"; a pin ahead of the latest tag is behind nothing.
+		if pos == staledomain.PinBehind {
+			out.DaysSince = latestReleaseAgeDays(info.Time)
 		}
 	}
 	return out
@@ -348,10 +377,18 @@ func fetchStalenessNote(stale stalenessInfo) string {
 	if *stale.IsLatest {
 		return ""
 	}
-	if stale.DaysSince == 0 {
+	if stale.PinAheadOfLatest != nil && *stale.PinAheadOfLatest {
+		return fmt.Sprintf(" [ahead of latest tag: %s]", stale.LatestVersion)
+	}
+	if stale.DaysSince == nil {
+		// A newer version with no publication date: named without an invented
+		// age, where it used to read "released today".
+		return fmt.Sprintf(" [latest: %s]", stale.LatestVersion)
+	}
+	if *stale.DaysSince == 0 {
 		return fmt.Sprintf(" [latest: %s, released today]", stale.LatestVersion)
 	}
-	return fmt.Sprintf(" [latest: %s, %d days ago]", stale.LatestVersion, stale.DaysSince)
+	return fmt.Sprintf(" [latest: %s, %d days ago]", stale.LatestVersion, *stale.DaysSince)
 }
 
 // latestResolver resolves a module path's @latest to a pinned coordinate. The

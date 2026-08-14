@@ -331,3 +331,60 @@ func TestResolve_UnpinnedUsesTheResolvedLatestToPlaceTheProbe(t *testing.T) {
 		t.Errorf("NewerMajor.Path = %q, want example.com/mod/v3", ans.NewerMajor.Path)
 	}
 }
+
+// TestResolve_ZeroTTLAndFreshAgreeOnTheAnswerAndDifferOnTheRead
+//
+// There are two ways to ask for a live lookup and they are not the same
+// mechanism. --fresh suppresses the ledger READ. A zero staleness.ttl leaves
+// the read in place and makes every row fail FreshAt. Both produce a live
+// answer and both still write, so the answer never depends on which was used;
+// what differs is whether the ledger is touched at all, which is visible when
+// the ledger itself is broken — a zero TTL surfaces that read failure, --fresh
+// cannot. Pinned here because "two ways to ask the same question" is exactly
+// the shape that drifts apart unmeasured.
+func TestResolve_ZeroTTLAndFreshAgreeOnTheAnswerAndDifferOnTheRead(t *testing.T) {
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	stored := domain.Record{
+		ModulePath:    "example.com/mod",
+		LatestVersion: "v1.0.0",
+		NewerMajor:    domain.NewerMajor{Probed: true, FromMajor: 2},
+		LookedUpAt:    now,
+	}
+
+	tests := []struct {
+		name      string
+		ttl       time.Duration
+		fresh     bool
+		wantReads int
+	}{
+		{name: "fresh bypasses the read", ttl: time.Hour, fresh: true, wantReads: 0},
+		{name: "a zero TTL reads and rejects", ttl: 0, fresh: false, wantReads: 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			ledger := newFakeLedger()
+			ledger.rows["example.com/mod"] = stored
+			proxy := &fakeProxy{versions: map[string]string{"example.com/mod": "v1.9.0"}}
+			r := application.NewResolver(proxy, ledger, &fixedClock{t: now}, tt.ttl, tt.fresh)
+
+			ans, err := r.Resolve(context.Background(), "example.com/mod", "v1.0.0")
+			if err != nil {
+				t.Fatalf("Resolve: %v", err)
+			}
+			// The answer is the same either way: live, and recorded.
+			if ans.LatestVersion != "v1.9.0" {
+				t.Errorf("LatestVersion = %q, want the live v1.9.0", ans.LatestVersion)
+			}
+			if ans.Served {
+				t.Error("a live answer must not report itself as served from the ledger")
+			}
+			if ledger.writes != 1 {
+				t.Errorf("writes = %d, want 1 — a live lookup is what the next run should be served", ledger.writes)
+			}
+			// The mechanism is not the same.
+			if ledger.reads != tt.wantReads {
+				t.Errorf("ledger reads = %d, want %d", ledger.reads, tt.wantReads)
+			}
+		})
+	}
+}

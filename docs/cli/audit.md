@@ -30,8 +30,26 @@ For each module in the scope, `audit` emits a single line containing:
   [Local `go.sum` verification](#local-gosum-verification) for `VerifiedByGoSum`.
 - **License** - primary SPDX identifier; annotated with status when ambiguous
   (e.g. `Apache-2.0 [Multiple]`)
-- **Staleness** - `current` when the pinned version is the latest published, or
-  `latest: vX.Y.Z (N days ago)` when a newer version exists
+- **Staleness** - `current` when the pinned version is the latest published,
+  `latest: vX.Y.Z (N days ago)` when a newer version exists, or
+  `ahead of latest tag: vX.Y.Z` when the pin sorts *above* what the proxy
+  answers `@latest` with. The last is ordinary: a pseudo-version taken after
+  the last tag, or a pre-modules `+incompatible` major published above the
+  newest version the unsuffixed path serves. No upgrade target and no age are
+  offered there — there is nothing at that path to move to, and the age figure
+  in this column means "how long you have been behind". A newer major line, if
+  one exists, is still reported (see below), because that is a separate fact
+  and it lives at a different path. In `--json` the same three positions are
+  `is_latest` plus `pin_ahead_of_latest` (both emitted on every measured row,
+  `false` included; both `null` together where nothing was measured), and
+  `latest_release_age_days` is null on an ahead row so the two surfaces cannot
+  disagree — beside `is_latest: false` an age reads as "you are this far
+  behind", which is exactly what an ahead pin is not. The field is emitted on
+  every row and **zero is a value**: a release that shipped today is `0` days
+  old. Null means there is no age — either the pin is ahead, or the proxy
+  supplied no publication date, told apart by `pin_ahead_of_latest`. The text
+  column matches: `latest: vX (today)` for a zero age, and a bare `latest: vX`
+  where the date is unknown rather than an invented "today".
 - **Vuln status** - `Clean`, `Affected (N findings)`, `Withdrawn (N retracted)`,
   `ScanFailed`, `(not scanned)` when no record exists at any pipeline version, or
   `(superseded)` when the store holds records for the module only at pipeline
@@ -145,14 +163,23 @@ kanonarion audit --gomod ./go.mod
 ```
 
 ```
-github.com/CycloneDX/cyclonedx-go@v0.9.2    Verified              Apache-2.0              latest: v0.11.0 (today)       Clean
-github.com/google/licensecheck@v0.3.1        Verified              BSD-3-Clause            current                       Clean
-github.com/spf13/cobra@v1.10.2               Verified              Apache-2.0              current                       Clean
-gopkg.in/yaml.v3@v3.0.1                      VerifiedBySumDBOnly   Apache-2.0 [Multiple]   current                       Clean
-golang.org/x/mod@v0.35.0                     Verified              BSD-3-Clause            latest: v0.36.0 (6 days ago)  Clean
-golang.org/x/vuln@v1.3.0                     Verified              BSD-3-Clause            current                       Clean
-modernc.org/sqlite@v1.50.0                   Verified              BSD-3-Clause            latest: v1.50.1 (3 days ago)  Clean
+github.com/CycloneDX/cyclonedx-go@v0.9.2                 Verified             Apache-2.0             latest: v0.11.0 (today)       Clean
+github.com/google/licensecheck@v0.3.1                    Verified             BSD-3-Clause           current                       Clean
+github.com/spf13/cobra@v1.10.2                           Verified             Apache-2.0             current                       Clean
+gopkg.in/yaml.v3@v3.0.1                                  VerifiedBySumDBOnly  Apache-2.0 [Multiple]  current                       Clean
+golang.org/x/mod@v0.35.0                                 Verified             BSD-3-Clause           latest: v0.36.0 (6 days ago)  Clean
+golang.org/x/vuln@v1.3.0                                 Verified             BSD-3-Clause           current                       Clean
+modernc.org/libc@v1.73.5                                 Verified             BSD-3-Clause           latest: v1.75.3 (5 days ago)  Clean
+                                                                                                     newer major: modernc.org/libc/v2@v2.1.30
+modernc.org/sqlite@v1.50.0                               Verified             BSD-3-Clause           latest: v1.50.1 (3 days ago)  Clean
 ```
+
+Every column is sized from the widest value the run produced, so the columns
+line up on every row. The newer-major fact is the one value routinely wider than
+the rest of the row put together — it carries a whole module path and a version
+— so it is stated in full on a continuation line under the staleness column it
+belongs to, rather than setting that column's width for the run. `--json` is
+unaffected: it carries `newer_major_module` and `newer_major_latest` as fields.
 
 ## Example - complete set (code + tooling)
 
@@ -161,10 +188,10 @@ kanonarion audit --gomod ./go.mod --project
 ```
 
 ```
-github.com/spf13/cobra@v1.10.2               Verified   Apache-2.0     current   Clean
-golang.org/x/mod@v0.35.0                     Verified   BSD-3-Clause   current   Clean
-github.com/golangci/golangci-lint/v2@v2.12.2 Verified   MIT            current   Clean
-golang.org/x/vuln@v1.3.0                     Verified   BSD-3-Clause   current   Clean
+github.com/spf13/cobra@v1.10.2                           Verified  Apache-2.0    current  Clean
+golang.org/x/mod@v0.35.0                                 Verified  BSD-3-Clause  current  Clean
+github.com/golangci/golangci-lint/v2@v2.12.2             Verified  MIT           current  Clean
+golang.org/x/vuln@v1.3.0                                 Verified  BSD-3-Clause  current  Clean
 ```
 
 ## Example - tool dependencies (Go 1.24+)

@@ -102,12 +102,26 @@ type latestResult struct {
 	// unavailable to an offline run. So the field is not emitted at all rather
 	// than approximated under a name that promises precision.
 	//
-	// Absent (omitempty) when the proxy supplied no publication date for the
-	// latest version, which is the same condition that leaves LatestDate absent.
-	// It is populated whether or not the pin is current: the age of a release is
-	// a fact about the release, and suppressing it for an up-to-date pin would
-	// make the field mean something different on different rows.
-	LatestReleaseAgeDays int `json:"latest_release_age_days,omitempty"`
+	// It is a POINTER, and always emitted, because ZERO IS A REAL ANSWER: a
+	// release that shipped today is nought days old. As a bare int under
+	// `omitempty` that row was erased, so "the fix landed today" and "we do not
+	// know when it was published" were the same absence — on a row that is
+	// behind and offering a target, which is where the figure carries its
+	// meaning. Null now means only one thing, and it is never a fabricated age.
+	//
+	// Null in exactly two cases, told apart by PinAheadOfLatest:
+	//   - the proxy supplied no publication date (PinAheadOfLatest false), the
+	//     same condition that leaves LatestDate absent;
+	//   - the pin is AHEAD (PinAheadOfLatest true), where no distance is
+	//     reported at all. There the age would travel beside `is_latest: false`
+	//     and read as "you are this far behind" — the wrong answer that state
+	//     exists to withhold. On a current row it travels beside
+	//     `is_latest: true`, which no consumer reads that way, and it is kept:
+	//     the age of a release is a fact about the release.
+	// LatestDate is unaffected either way — a publication date is a fact about a
+	// named release, while this figure is a distance, and only the distance is
+	// meaningless when nothing is being offered.
+	LatestReleaseAgeDays *int `json:"latest_release_age_days"`
 	// IsLatest answers "is the pin the newest version of this module path".
 	//
 	// It is a POINTER because the question is not always answered. A lookup that
@@ -116,6 +130,17 @@ type latestResult struct {
 	// a failed lookup is the claim "your pin is behind" about a row nothing was
 	// established for. Unanswered is null, with StalenessUnmeasured naming why.
 	IsLatest *bool `json:"is_latest"`
+	// PinAheadOfLatest is true when the pin sorts ABOVE the newest version
+	// published at this path. Latest still names what the proxy answered — it
+	// is a fact about the path — but it is not an upgrade target, and no age is
+	// emitted beside it.
+	//
+	// Emitted on every row, false included, so "measured, and not in that state"
+	// is distinguishable from "this build does not derive the field". A POINTER
+	// for the same reason IsLatest is: on an unmeasured row, and on a bare
+	// module path with no pin to compare, no comparison was made, and a bare
+	// false there answers a question nobody put.
+	PinAheadOfLatest *bool `json:"pin_ahead_of_latest"`
 	// StalenessUnmeasured is the machine-readable reason IsLatest is null, from
 	// the vocabulary shared with `audit` and `fetch` (see staleness.go). Absent on
 	// a measured row.
@@ -195,7 +220,7 @@ func runLatest(ctx context.Context, args []string, f latestFlags, stdout, stderr
 		return runLatestGomod(ctx, gomodPath, scope, resolver, stdout, stderr)
 	}
 
-	return runLatestModules(ctx, args, resolver, stdout)
+	return runLatestModules(ctx, args, resolver, stdout, stderr)
 }
 
 // runLatestModules resolves one or more module coordinates from positional
@@ -203,7 +228,7 @@ func runLatest(ctx context.Context, args []string, f latestFlags, stdout, stderr
 // every module is queried and the output mode is determined by jsonOut and
 // arity: a single module renders as a one-line text string or a JSON object,
 // multiple modules render as one text line each or a JSON array.
-func runLatestModules(ctx context.Context, modules []string, resolver *staleapp.Resolver, stdout io.Writer) error {
+func runLatestModules(ctx context.Context, modules []string, resolver *staleapp.Resolver, stdout, stderr io.Writer) error {
 	results := make([]latestResult, 0, len(modules))
 	for _, modulePath := range modules {
 		if cerr := ctx.Err(); cerr != nil {
@@ -213,8 +238,18 @@ func runLatestModules(ctx context.Context, modules []string, resolver *staleapp.
 		// latest places the probe's starting major, so a bare path whose newest
 		// release is a +incompatible v2 still probes from /v3.
 		ans, err := resolver.Resolve(ctx, modulePath, "")
-		if err != nil {
+		if err != nil && ans.LatestVersion == "" {
+			// Nothing resolved at all: there is no answer to print.
 			return fmt.Errorf("querying latest for %s: %w", modulePath, err)
+		}
+		if err != nil {
+			// The same-major answer resolved and only the newer-major probe
+			// failed. That half is reported with MajorProbed false, exactly as
+			// the --gomod rows do it; failing the command here would discard a
+			// measurement that succeeded — and, with several modules named,
+			// every module after this one — because a second question about a
+			// different path could not be put.
+			_, _ = fmt.Fprintf(stderr, "latest %s: %v\n", modulePath, err)
 		}
 		// No pin was named, so there is no comparison to report: is_latest is null
 		// with the reason "not asked", never true. `latest <module>` answers "what
@@ -282,14 +317,22 @@ func writeLatestSingleLine(stdout io.Writer, r latestResult) error {
 	return nil
 }
 
-// latestReleaseAgeDays is how many whole days ago publishedAt was. A zero
-// publication time yields zero: the proxy supplied no date, so there is no age
-// to report and the field is omitted rather than filled with one.
-func latestReleaseAgeDays(publishedAt time.Time) int {
+// latestReleaseAgeDays is how many whole days ago publishedAt was, or nil when
+// the proxy supplied no publication date.
+//
+// It returns a POINTER because zero is a real answer here — a release that
+// shipped today is nought days old — and it used to be indistinguishable from
+// "no date was supplied": both produced 0, and an `omitempty` tag then erased
+// both from the JSON. On a row that is behind and IS offering a target, that
+// is the field's most meaningful value going missing precisely where it means
+// most. A fabricated age is not the alternative: an absent date yields nil,
+// which every renderer states as no age rather than as "today".
+func latestReleaseAgeDays(publishedAt time.Time) *int {
 	if publishedAt.IsZero() {
-		return 0
+		return nil
 	}
-	return int(time.Since(publishedAt).Hours() / 24)
+	days := int(time.Since(publishedAt).Hours() / 24)
+	return &days
 }
 
 // latestRowFor resolves one pinned dependency into an output row.
@@ -322,13 +365,25 @@ func latestRowFor(ctx context.Context, lookup stalenessLookup, path, pinned stri
 		_, _ = fmt.Fprintf(stderr, "latest %s: %v\n", path, lerr)
 	}
 
-	isLatest := ans.LatestVersion == pinned
+	// Placed with semver, not string equality: string equality has only two
+	// outcomes, so a pin that sorts ABOVE @latest landed in "behind" and the
+	// row named a downgrade as its upgrade target.
+	pos := staledomain.ComparePin(pinned, ans.LatestVersion)
+	isLatest := pos == staledomain.PinLevel
+	ahead := pos == staledomain.PinAhead
 	res := latestResult{
-		Module:   path,
-		Pinned:   pinned,
-		IsLatest: &isLatest,
+		Module:           path,
+		Pinned:           pinned,
+		IsLatest:         &isLatest,
+		PinAheadOfLatest: &ahead,
 	}
 	res.applyStaleness(ans)
+	if ahead {
+		// See LatestReleaseAgeDays: a distance is not reported where nothing is
+		// being offered to close it. applyStaleness sets it unconditionally
+		// because it also serves the unpinned row, which has no position at all.
+		res.LatestReleaseAgeDays = nil
+	}
 	return res
 }
 
@@ -403,10 +458,21 @@ func printLatestTable(stdout io.Writer, results []latestResult) error {
 			status = stalenessUnmeasuredLabel(r.StalenessUnmeasured)
 		case *r.IsLatest:
 			status = "current"
-		case r.LatestReleaseAgeDays == 0:
+		case r.PinAheadOfLatest != nil && *r.PinAheadOfLatest:
+			// No target and no age: there is nothing at this path to move to,
+			// and the age of a release the pin is already past is not a
+			// distance behind.
+			status = fmt.Sprintf("ahead of latest tag: %s", r.Latest)
+		case r.LatestReleaseAgeDays == nil:
+			// The proxy named a newer version and no date for it. The target is
+			// still worth stating; an age is not invented for it, and it used to
+			// be — a missing date reached this line as 0 and printed
+			// "released today" about a release nothing is known about.
+			status = fmt.Sprintf("latest: %s", r.Latest)
+		case *r.LatestReleaseAgeDays == 0:
 			status = fmt.Sprintf("latest: %s (released today)", r.Latest)
 		default:
-			status = fmt.Sprintf("latest: %s (%d days ago)", r.Latest, r.LatestReleaseAgeDays)
+			status = fmt.Sprintf("latest: %s (%d days ago)", r.Latest, *r.LatestReleaseAgeDays)
 		}
 		// The newer-major clause is appended, never substituted: "current" stays
 		// true of the module's own path and the major line is stated beside it.

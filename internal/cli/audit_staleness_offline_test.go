@@ -364,7 +364,7 @@ func TestAuditStalenessColumn_RendersEveryUnmeasuredReason(t *testing.T) {
 	for reason, want := range cases {
 		var row auditModuleResult
 		row.markStalenessUnmeasured(reason)
-		if got := auditStalenessColumn(row); got != want {
+		if got := auditStalenessCell(row); got != want {
 			t.Errorf("reason %q renders as %q, want %q", reason, got, want)
 		}
 	}
@@ -376,7 +376,7 @@ func TestAuditStalenessColumn_RendersEveryUnmeasuredReason(t *testing.T) {
 func TestAuditStalenessColumn_StatesASubMinuteLedgerAgeInWords(t *testing.T) {
 	measured := true
 	row := auditModuleResult{IsLatest: &measured, stalenessLedgerAge: 12 * time.Second}
-	if got, want := auditStalenessColumn(row), "current [from ledger, under a minute old]"; got != want {
+	if got, want := auditStalenessCell(row), "current [from ledger, under a minute old]"; got != want {
 		t.Errorf("column = %q, want %q", got, want)
 	}
 }
@@ -387,7 +387,7 @@ func TestAuditStalenessColumn_StatesASubMinuteLedgerAgeInWords(t *testing.T) {
 func TestAuditStalenessColumn_StatesALedgerAgeInHours(t *testing.T) {
 	measured := true
 	row := auditModuleResult{IsLatest: &measured, stalenessLedgerAge: 5*time.Hour + 4*time.Minute}
-	if got, want := auditStalenessColumn(row), "current [from ledger, 5h0m0s old]"; got != want {
+	if got, want := auditStalenessCell(row), "current [from ledger, 5h0m0s old]"; got != want {
 		t.Errorf("column = %q, want %q", got, want)
 	}
 }

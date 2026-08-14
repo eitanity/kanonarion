@@ -147,3 +147,106 @@ func TestNewerMajor_Exists(t *testing.T) {
 		t.Error("a probed record with a path must report the newer major")
 	}
 }
+
+// TestComparePin_PlacesAPinAheadOfLatestAsAhead covers the three shapes a pin
+// ahead of @latest actually takes in a real store, measured across 541
+// comparable coordinates: a pre-modules +incompatible major above the newest
+// version the unsuffixed path serves, a pseudo-version taken after the last
+// tag, and a plain tag above the newest one the proxy will answer with.
+//
+// String equality could only say "different", which the callers read as
+// "behind", so each of these named a DOWNGRADE as the upgrade target.
+func TestComparePin_PlacesAPinAheadOfLatestAsAhead(t *testing.T) {
+	tests := []struct {
+		name   string
+		pinned string
+		latest string
+		want   domain.PinPosition
+	}{
+		{
+			name:   "incompatible major above a vN-less latest",
+			pinned: "v3.3.4+incompatible",
+			latest: "v1.5.5",
+			want:   domain.PinAhead,
+		},
+		{
+			name:   "incompatible major above an incompatible latest",
+			pinned: "v3.1.2+incompatible",
+			latest: "v2.4.0+incompatible",
+			want:   domain.PinAhead,
+		},
+		{
+			name:   "pseudo-version taken after the last tag",
+			pinned: "v1.0.1-0.20181226105442-5d4384ee4fb2",
+			latest: "v1.0.0",
+			want:   domain.PinAhead,
+		},
+		{
+			name:   "pseudo-version after the last tag, both incompatible",
+			pinned: "v2.0.3-0.20180322193309-b565731e1464+incompatible",
+			latest: "v2.0.2+incompatible",
+			want:   domain.PinAhead,
+		},
+		{
+			name:   "a plain tag above the latest one published",
+			pinned: "v1.1.5",
+			latest: "v0.5.5",
+			want:   domain.PinAhead,
+		},
+		{
+			name:   "an incompatible major above a pseudo-version latest",
+			pinned: "v3.12.0+incompatible",
+			latest: "v0.0.0-20231103204413-ee089084f347",
+			want:   domain.PinAhead,
+		},
+		{
+			name:   "genuinely behind",
+			pinned: "v1.19.0",
+			latest: "v1.19.2",
+			want:   domain.PinBehind,
+		},
+		{
+			name:   "behind across a digit-count boundary, where string order disagrees",
+			pinned: "v1.9.0",
+			latest: "v1.10.0",
+			want:   domain.PinBehind,
+		},
+		{
+			name:   "level",
+			pinned: "v1.6.0",
+			latest: "v1.6.0",
+			want:   domain.PinLevel,
+		},
+		{
+			name:   "build metadata is not ordering information, so these are level",
+			pinned: "v2.0.0+incompatible",
+			latest: "v2.0.0",
+			want:   domain.PinLevel,
+		},
+		{
+			name:   "an unreadable pin cannot be claimed to be ahead",
+			pinned: "not-a-version",
+			latest: "v1.0.0",
+			want:   domain.PinBehind,
+		},
+		{
+			name:   "an unreadable latest cannot be claimed to be behind or ahead, so the proxy's answer stands",
+			pinned: "v1.0.0",
+			latest: "whatever-the-proxy-said",
+			want:   domain.PinBehind,
+		},
+		{
+			name:   "two identical unreadable strings are still level",
+			pinned: "not-a-version",
+			latest: "not-a-version",
+			want:   domain.PinLevel,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := domain.ComparePin(tt.pinned, tt.latest); got != tt.want {
+				t.Errorf("ComparePin(%q, %q) = %d, want %d", tt.pinned, tt.latest, got, tt.want)
+			}
+		})
+	}
+}

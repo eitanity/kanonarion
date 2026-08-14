@@ -283,6 +283,14 @@ func (p *Proxy) LatestInfo(ctx context.Context, path string) (_ LatestVersionInf
 		Time    time.Time `json:"Time"`
 	}
 	if err := json.NewDecoder(body).Decode(&raw); err != nil {
+		// An empty body is reported as an empty response, not as a decode
+		// error naming EOF. It is the shape a proxy answers with when it has
+		// accepted the request and has nothing to say, and "EOF" describes the
+		// decoder's position rather than what happened to the lookup — which
+		// is what the reader of the message has to act on.
+		if errors.Is(err, io.EOF) {
+			return LatestVersionInfo{}, fmt.Errorf("proxy returned an empty response for %s@latest", path)
+		}
 		return LatestVersionInfo{}, fmt.Errorf("decoding latest response for %s: %w", path, err)
 	}
 	if raw.Version == "" {
