@@ -5,8 +5,8 @@ import (
 	"go/ast"
 	"go/token"
 	"log/slog"
-	"os"
 	"runtime"
+	"strings"
 
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
 	"golang.org/x/tools/go/packages"
@@ -67,12 +67,14 @@ func (a *Analyser) attachBodyFacts(ctx context.Context, nodes []domain.CallNode,
 	)
 }
 
-// distinctNodePackages returns the sorted set of package import paths that
-// appear across nodes, skipping nodes with an empty package.
+// distinctNodePackages returns the set of package import paths that appear
+// across nodes and that the loader can actually open, skipping nodes with an
+// empty package and nodes whose package is a name go/packages synthesised
+// rather than a path on disk.
 func distinctNodePackages(nodes []domain.CallNode) []string {
 	seen := make(map[string]struct{}, len(nodes))
 	for _, n := range nodes {
-		if n.Package != "" {
+		if n.Package != "" && !isSyntheticPackagePath(n.Package) {
 			seen[n.Package] = struct{}{}
 		}
 	}
@@ -81,6 +83,26 @@ func distinctNodePackages(nodes []domain.CallNode) []string {
 		paths = append(paths, p)
 	}
 	return paths
+}
+
+// isSyntheticPackagePath reports whether an import path is one go/packages
+// invents for a test build rather than one the loader can resolve: the test
+// binary main ("<path>.test") and the external test package ("<path>_test").
+// Both appear as node packages because the graph is built from the test-scoped
+// load, and neither names a directory the go command can list.
+//
+// Handing one to packages.Load buys nothing and is not free: having failed to
+// find a package, the go command falls back to resolving the argument as a
+// MODULE, which is a proxy round trip per name. On this repo that was 226 of
+// 518 names, and the facts they could contribute is empty either way — a
+// synthetic main has no source of the module's own, and an external test
+// package's declarations carry no body facts the sink map is asked about.
+//
+// The internal test variant is not affected: go/packages keeps the production
+// import path for it, so it is loaded here as the production package, exactly
+// as before.
+func isSyntheticPackagePath(pkgPath string) bool {
+	return strings.HasSuffix(pkgPath, ".test") || strings.HasSuffix(pkgPath, "_test")
 }
 
 // scanBodyFacts parses the syntax of the given packages and records body-level
@@ -115,10 +137,7 @@ func scanBodyFacts(ctx context.Context, dir string, pkgPaths []string, env []str
 			Tests:   false,
 		}
 
-		oldGOGC := os.Getenv("GOGC")
-		_ = os.Setenv("GOGC", "30")
 		pkgs, err := packages.Load(cfg, pkgPaths[i:end]...)
-		_ = os.Setenv("GOGC", oldGOGC)
 		if err != nil {
 			continue
 		}

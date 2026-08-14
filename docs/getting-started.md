@@ -303,8 +303,8 @@ kanonarion local .
 kanonarion callers '<module-path>/internal/server.New'
 ```
 
-**Duration:** ~15 s to analyse this codebase (8,598 nodes / 97,246 call
-edges, of which 4,481 nodes are `_test.go` declarations). An unchanged tree is
+**Duration:** ~20 s to analyse this codebase (13,339 nodes / 174,337 call
+edges, of which 7,524 nodes are `_test.go` declarations). An unchanged tree is
 not analysed again - the stored record is served in well under a second, and the
 run says which it did. Any edit to the source, `go.mod` or `go.sum` re-analyses;
 `--force` re-analyses regardless.
