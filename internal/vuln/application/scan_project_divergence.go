@@ -157,7 +157,7 @@ func (uc *ScanWalkUseCase) scanProjectDiverged(
 		// so every matched advisory is added with a nil Reachable. That parameter
 		// already exists for the one other case where the analysis could not have
 		// reported an advisory at all, and it means the same thing here.
-		findings, err := uc.mergeCoordinateFindings(ctx, coord, nil, false)
+		findings, err := uc.mergeCoordinateFindings(ctx, coord, nil, false, *snapshot)
 		if err != nil {
 			uc.logger.Error("diverged project scan: advisory match by coordinate failed", "coordinate", coord, "error", err)
 			rec, perr := uc.persistProjectRecord(ctx, root, coord, nil, domain.StatusScanFailed, "", "", err.Error(), surface, params, snapshot)

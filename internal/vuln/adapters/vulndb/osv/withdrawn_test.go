@@ -1,12 +1,10 @@
 package osv_test
 
 import (
-	"net/http/httptest"
 	"testing"
 	"time"
 
 	coordinatetest "github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	"github.com/eitanity/kanonarion/internal/vuln/adapters/vulndb/osv"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 )
 
@@ -37,15 +35,11 @@ const bboltWithdrawnAdvisory = `{
 // The retraction was on the wire all along; osvAdvisory simply did not have a
 // field for it, so nothing downstream could know the advisory had been retracted.
 func TestLookupFindings_ParsesTheWithdrawalTimestamp(t *testing.T) {
-	mux := advisoryMux(t,
+	db := advisorySnapshotDB(t,
 		[]map[string]any{{"path": "go.etcd.io/bbolt", "vulns": []map[string]any{{"id": "GO-2026-4923"}}}},
 		map[string]string{"GO-2026-4923": bboltWithdrawnAdvisory},
 	)
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
-	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
-	findings, err := db.LookupFindings(t.Context(), coordinatetest.MustNew("go.etcd.io/bbolt", "v1.4.3"))
+	findings, err := db.LookupFindings(t.Context(), coordinatetest.MustNew("go.etcd.io/bbolt", "v1.4.3"), pinnedSnapshot(t))
 	if err != nil {
 		t.Fatalf("LookupFindings: %v", err)
 	}
@@ -86,15 +80,11 @@ func TestLookupFindings_LiveAdvisoryCarriesNoWithdrawal(t *testing.T) {
 			"ranges": [{"type": "SEMVER", "events": [{"introduced": "0.1.0"}]}]
 		}]
 	}`
-	mux := advisoryMux(t,
+	db := advisorySnapshotDB(t,
 		[]map[string]any{{"path": "golang.org/x/text", "vulns": []map[string]any{{"id": "GO-2026-5970"}}}},
 		map[string]string{"GO-2026-5970": advisory},
 	)
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
-	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
-	findings, err := db.LookupFindings(t.Context(), coordinatetest.MustNew("golang.org/x/text", "v0.37.0"))
+	findings, err := db.LookupFindings(t.Context(), coordinatetest.MustNew("golang.org/x/text", "v0.37.0"), pinnedSnapshot(t))
 	if err != nil {
 		t.Fatalf("LookupFindings: %v", err)
 	}

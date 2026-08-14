@@ -1,11 +1,9 @@
 package osv_test
 
 import (
-	"net/http/httptest"
 	"testing"
 
 	coordinatetest "github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	"github.com/eitanity/kanonarion/internal/vuln/adapters/vulndb/osv"
 )
 
 // threeBranchAdvisory is the shape a backported advisory has: one
@@ -52,15 +50,11 @@ const moduleThreeBranchAdvisory = `{
 // returns the single finding it produced.
 func lookupOne(t *testing.T, path, indexFixed, id, advisory, version string) (fixedIn, affectedRange string) {
 	t.Helper()
-	mux := advisoryMux(t,
+	db := advisorySnapshotDB(t,
 		[]map[string]any{{"path": path, "vulns": []map[string]any{{"id": id, "fixed": indexFixed}}}},
 		map[string]string{id: advisory},
 	)
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
-	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
-	findings, err := db.LookupFindings(t.Context(), coordinatetest.MustNew(path, version))
+	findings, err := db.LookupFindings(t.Context(), coordinatetest.MustNew(path, version), pinnedSnapshot(t))
 	if err != nil {
 		t.Fatalf("LookupFindings: %v", err)
 	}

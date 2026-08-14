@@ -7,12 +7,14 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"reflect"
+	"sort"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -343,14 +345,18 @@ func (f *fakeVulnStore) ListVulnerabilityRecordsForModuleAllGenerations(_ contex
 	return nil, nil
 }
 
-func TestCheckVulnerable_LazilyLoadsIndex(t *testing.T) {
-	srv, _ := buildFakeServer(t)
-	defer srv.Close()
-
-	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
+// TestCheckVulnerable_ReadsTheStoredSnapshot: the cheap metadata check decides
+// whether a module is analysed from source at all, so it reads the generation
+// the record will name — over a nil HTTP client, which is what makes "it did not
+// consult the live service" a measurement rather than a claim.
+func TestCheckVulnerable_ReadsTheStoredSnapshot(t *testing.T) {
+	db := advisorySnapshotDB(t,
+		[]map[string]any{{"path": "github.com/foo/bar", "vulns": []map[string]any{{"id": "GO-2024-0001"}}}},
+		map[string]string{"GO-2024-0001": `{"id":"GO-2024-0001"}`},
+	)
 	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
-	vulns, err := db.CheckVulnerable(t.Context(), []coordinate.ModuleCoordinate{coord})
+	vulns, err := db.CheckVulnerable(t.Context(), []coordinate.ModuleCoordinate{coord}, pinnedSnapshot(t))
 	if err != nil {
 		t.Fatalf("CheckVulnerable: %v", err)
 	}
@@ -364,25 +370,23 @@ func TestCheckVulnerable_LazilyLoadsIndex(t *testing.T) {
 }
 
 func TestCheckVulnerable_VersionRangeFiltering(t *testing.T) {
-	// Serve a modules index with two entries:
+	// A stored snapshot with two index entries:
 	// github.com/foo/bar: fixed at 2.0.0 (GO-2024-0001)
 	// github.com/foo/baz: no fixed version (GO-2024-0002)
-	mux := http.NewServeMux()
-	mux.HandleFunc("/index/modules.json.gz", func(w http.ResponseWriter, _ *http.Request) {
-		modules := []map[string]any{
+	db := advisorySnapshotDB(t,
+		[]map[string]any{
 			{"path": "github.com/foo/bar", "vulns": []map[string]any{
 				{"id": "GO-2024-0001", "fixed": "2.0.0"},
 			}},
 			{"path": "github.com/foo/baz", "vulns": []map[string]any{
 				{"id": "GO-2024-0002"},
 			}},
-		}
-		_, _ = w.Write(gzipJSON(t, modules))
-	})
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
-	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
+		},
+		map[string]string{
+			"GO-2024-0001": `{"id":"GO-2024-0001"}`,
+			"GO-2024-0002": `{"id":"GO-2024-0002"}`,
+		},
+	)
 	ctx := t.Context()
 
 	cases := []struct {
@@ -400,7 +404,7 @@ func TestCheckVulnerable_VersionRangeFiltering(t *testing.T) {
 
 	for _, tc := range cases {
 		coord := coordinatetest.MustNew(tc.path, tc.version)
-		vulns, err := db.CheckVulnerable(ctx, []coordinate.ModuleCoordinate{coord})
+		vulns, err := db.CheckVulnerable(ctx, []coordinate.ModuleCoordinate{coord}, pinnedSnapshot(t))
 		if err != nil {
 			t.Fatalf("%s@%s: CheckVulnerable: %v", tc.path, tc.version, err)
 		}
@@ -472,20 +476,51 @@ func TestSnapshot_LogsByteProgress(t *testing.T) {
 	}
 }
 
-// advisoryMux serves a modules index plus per-advisory ID/<id>.json records,
-// modelling the subset of vuln.go.dev that LookupFindings consumes.
-func advisoryMux(t *testing.T, modules []map[string]any, advisories map[string]string) *http.ServeMux {
+// pinnedSnapshot is the generation every coordinate-match test in this package
+// judges against. It is a fixed identity rather than a fresh one per test
+// because these lookups now name the database they read, and a test that let
+// that name drift would be asserting less than the production path guarantees.
+func pinnedSnapshot(t *testing.T) domain.DatabaseSnapshot {
 	t.Helper()
-	mux := http.NewServeMux()
-	mux.HandleFunc("/index/modules.json.gz", func(w http.ResponseWriter, _ *http.Request) {
-		_, _ = w.Write(gzipJSON(t, modules))
-	})
-	for id, body := range advisories {
-		mux.HandleFunc("/ID/"+id+".json", func(w http.ResponseWriter, _ *http.Request) {
-			_, _ = io.WriteString(w, body)
-		})
+	return vulntest.MustNew("vuln.go.dev", pinnedSnapshotVersion)
+}
+
+const pinnedSnapshotVersion = "2026-07-27T20:14:16Z"
+
+// advisorySnapshotDB returns a Database whose ONLY advisory source is a stored
+// snapshot holding the given modules index and per-advisory records.
+//
+// The HTTP client is nil, which is the assertion: a lookup that reached the
+// network could not have completed at all, so a test passing here has proved the
+// answer came out of the stored generation and not out of whatever the live
+// service happens to publish today.
+func advisorySnapshotDB(t *testing.T, modules []map[string]any, advisories map[string]string) *osv.Database {
+	t.Helper()
+	return osv.New(nil, &fakeVulnStore{content: string(advisorySnapshotZip(t, modules, advisories))})
+}
+
+// advisorySnapshotZip builds a stored snapshot in the published layout: the
+// modules index the coarse match reads, and one ID/<id>.json per advisory the
+// enrichment reads.
+func advisorySnapshotZip(t *testing.T, modules []map[string]any, advisories map[string]string) []byte {
+	t.Helper()
+	index, err := json.Marshal(modules)
+	if err != nil {
+		t.Fatalf("marshal modules index: %v", err)
 	}
-	return mux
+	entries := []zipEntry{
+		{name: "index/db.json", content: []byte(`{"modified":"` + pinnedSnapshotVersion + `"}`)},
+		{name: "index/modules.json", content: index},
+	}
+	ids := make([]string, 0, len(advisories))
+	for id := range advisories {
+		ids = append(ids, id)
+	}
+	sort.Strings(ids)
+	for _, id := range ids {
+		entries = append(entries, zipEntry{name: "ID/" + id + ".json", content: []byte(advisories[id])})
+	}
+	return buildVulnDBZip(t, entries)
 }
 
 // TestLookupFindings_EnrichesFromAdvisory is the road-test exemplar: a
@@ -504,17 +539,13 @@ func TestLookupFindings_EnrichesFromAdvisory(t *testing.T) {
 			"ecosystem_specific": {"imports": [{"path": "github.com/gorilla/csrf", "symbols": ["TrustedOrigins"]}]}
 		}]
 	}`
-	mux := advisoryMux(t,
+	db := advisorySnapshotDB(t,
 		[]map[string]any{{"path": "github.com/gorilla/csrf", "vulns": []map[string]any{{"id": "GO-2025-3884"}}}},
 		map[string]string{"GO-2025-3884": advisory},
 	)
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
-	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
 	coord := coordinatetest.MustNew("github.com/gorilla/csrf", "v1.7.3")
 
-	findings, err := db.LookupFindings(t.Context(), coord)
+	findings, err := db.LookupFindings(t.Context(), coord, pinnedSnapshot(t))
 	if err != nil {
 		t.Fatalf("LookupFindings: %v", err)
 	}
@@ -554,17 +585,13 @@ func TestLookupFindings_PatchedAdvisory(t *testing.T) {
 			"ecosystem_specific": {"imports": [{"path": "github.com/foo/bar", "symbols": ["Vuln", "AlsoVuln"]}]}
 		}]
 	}`
-	mux := advisoryMux(t,
+	db := advisorySnapshotDB(t,
 		[]map[string]any{{"path": "github.com/foo/bar", "vulns": []map[string]any{{"id": "GO-2024-0042", "fixed": "1.2.0"}}}},
 		map[string]string{"GO-2024-0042": advisory},
 	)
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
-	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
 	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
-	findings, err := db.LookupFindings(t.Context(), coord)
+	findings, err := db.LookupFindings(t.Context(), coord, pinnedSnapshot(t))
 	if err != nil {
 		t.Fatalf("LookupFindings: %v", err)
 	}
@@ -588,17 +615,13 @@ func TestLookupFindings_PatchedAdvisory(t *testing.T) {
 // as a bare ID + known fixed version when its advisory cannot be fetched, rather
 // than vanishing (the module is still known-affected).
 func TestLookupFindings_DegradesOnAdvisoryFetchFailure(t *testing.T) {
-	mux := advisoryMux(t,
+	db := advisorySnapshotDB(t,
 		[]map[string]any{{"path": "github.com/foo/bar", "vulns": []map[string]any{{"id": "GO-2024-0042", "fixed": "1.2.0"}}}},
 		nil, // no advisory handler -> 404 on ID fetch
 	)
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
-	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
 	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
-	findings, err := db.LookupFindings(t.Context(), coord)
+	findings, err := db.LookupFindings(t.Context(), coord, pinnedSnapshot(t))
 	if err != nil {
 		t.Fatalf("LookupFindings: %v", err)
 	}
@@ -617,17 +640,13 @@ func TestLookupFindings_DegradesOnAdvisoryFetchFailure(t *testing.T) {
 // TestLookupFindings_PatchedVersionNotAffected confirms a version at or past the
 // fix yields no findings.
 func TestLookupFindings_PatchedVersionNotAffected(t *testing.T) {
-	mux := advisoryMux(t,
+	db := advisorySnapshotDB(t,
 		[]map[string]any{{"path": "github.com/foo/bar", "vulns": []map[string]any{{"id": "GO-2024-0042", "fixed": "1.2.0"}}}},
 		nil,
 	)
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
-	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
 	coord := coordinatetest.MustNew("github.com/foo/bar", "v2.0.0")
 
-	findings, err := db.LookupFindings(t.Context(), coord)
+	findings, err := db.LookupFindings(t.Context(), coord, pinnedSnapshot(t))
 	if err != nil {
 		t.Fatalf("LookupFindings: %v", err)
 	}
@@ -636,20 +655,75 @@ func TestLookupFindings_PatchedVersionNotAffected(t *testing.T) {
 	}
 }
 
-// TestLookupFindings_IndexFetchFailure surfaces an error when the modules index
-// cannot be loaded (the lazy ensureIndex load fails).
-func TestLookupFindings_IndexFetchFailure(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		w.WriteHeader(http.StatusInternalServerError)
-	}))
-	defer srv.Close()
-
-	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
+// TestLookupFindings_UnreadableSnapshotIsRefused covers the three ways the
+// pinned database can fail to answer. Each must be an error, and specifically
+// must NOT be an empty finding list: a coordinate whose advisory set could not
+// be read has not been checked, and reporting no findings would be a clean
+// verdict nothing established.
+func TestLookupFindings_UnreadableSnapshotIsRefused(t *testing.T) {
 	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
 
-	if _, err := db.LookupFindings(t.Context(), coord); err == nil {
-		t.Fatal("expected error when modules index fetch fails, got nil")
+	cases := []struct {
+		name     string
+		db       *osv.Database
+		identity domain.DatabaseSnapshot
+	}{
+		{
+			name:     "the store will not produce the snapshot",
+			db:       osv.New(nil, &failingSnapshotStore{err: errors.New("blob missing")}),
+			identity: pinnedSnapshot(t),
+		},
+		{
+			name:     "the stored bytes are not an archive",
+			db:       osv.New(nil, &fakeVulnStore{content: "not a zip"}),
+			identity: pinnedSnapshot(t),
+		},
+		{
+			name: "the archive carries no modules index",
+			db: osv.New(nil, &fakeVulnStore{content: string(buildVulnDBZip(t, []zipEntry{
+				{name: "index/db.json", content: []byte(`{"modified":"` + pinnedSnapshotVersion + `"}`)},
+			}))}),
+			identity: pinnedSnapshot(t),
+		},
 	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			findings, err := tc.db.LookupFindings(t.Context(), coord, tc.identity)
+			if err == nil {
+				t.Fatalf("expected a refusal, got %d findings and no error", len(findings))
+			}
+		})
+	}
+}
+
+// TestLookupFindings_RefusesAnUnnamedSnapshot is the value-object guard. There
+// is no "current" advisory database on this route: a caller that did not name a
+// generation has not decided which database its record will state, and defaulting
+// to one on its behalf is how the two routes came to read different databases.
+func TestLookupFindings_RefusesAnUnnamedSnapshot(t *testing.T) {
+	db := advisorySnapshotDB(t,
+		[]map[string]any{{"path": "github.com/foo/bar", "vulns": []map[string]any{{"id": "GO-2024-0001"}}}},
+		map[string]string{"GO-2024-0001": `{"id":"GO-2024-0001"}`},
+	)
+	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.0.0")
+
+	if _, err := db.LookupFindings(t.Context(), coord, domain.DatabaseSnapshot{}); !errors.Is(err, domain.ErrZeroSnapshot) {
+		t.Fatalf("LookupFindings with no snapshot: got %v, want ErrZeroSnapshot", err)
+	}
+	if _, err := db.CheckVulnerable(t.Context(), []coordinate.ModuleCoordinate{coord}, domain.DatabaseSnapshot{}); !errors.Is(err, domain.ErrZeroSnapshot) {
+		t.Fatalf("CheckVulnerable with no snapshot: got %v, want ErrZeroSnapshot", err)
+	}
+}
+
+// failingSnapshotStore refuses the snapshot read, standing for a store whose
+// blob is gone.
+type failingSnapshotStore struct {
+	fakeVulnStore
+	err error
+}
+
+func (f *failingSnapshotStore) GetDatabaseSnapshot(context.Context, domain.DatabaseSnapshot) (io.ReadCloser, error) {
+	return nil, f.err
 }
 
 // TestLookupFindings_PreVPrefixedVersions confirms advisory ranges already
@@ -663,17 +737,13 @@ func TestLookupFindings_PreVPrefixedVersions(t *testing.T) {
 			"ranges": [{"type": "SEMVER", "events": [{"introduced": "v1.0.0"}, {"fixed": "v1.5.0"}]}]
 		}]
 	}`
-	mux := advisoryMux(t,
+	db := advisorySnapshotDB(t,
 		[]map[string]any{{"path": "github.com/foo/bar", "vulns": []map[string]any{{"id": "GO-2024-0099", "fixed": "v1.5.0"}}}},
 		map[string]string{"GO-2024-0099": advisory},
 	)
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
-	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
 	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.2.0")
 
-	findings, err := db.LookupFindings(t.Context(), coord)
+	findings, err := db.LookupFindings(t.Context(), coord, pinnedSnapshot(t))
 	if err != nil {
 		t.Fatalf("LookupFindings: %v", err)
 	}
@@ -713,14 +783,10 @@ func TestLookupFindings_MultiRangeBackport(t *testing.T) {
 			"ecosystem_specific": {"imports": [{"path": "crypto/tls", "symbols": ["Conn.Handshake"]}]}
 		}]
 	}`
-	mux := advisoryMux(t,
+	db := advisorySnapshotDB(t,
 		[]map[string]any{{"path": "stdlib", "vulns": []map[string]any{{"id": "GO-2026-5856", "fixed": "1.27.0-rc.2"}}}},
 		map[string]string{"GO-2026-5856": advisory},
 	)
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
-	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
 
 	cases := []struct {
 		version  string
@@ -740,7 +806,7 @@ func TestLookupFindings_MultiRangeBackport(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.version, func(t *testing.T) {
 			coord := coordinatetest.MustNew("stdlib", tc.version)
-			findings, err := db.LookupFindings(t.Context(), coord)
+			findings, err := db.LookupFindings(t.Context(), coord, pinnedSnapshot(t))
 			if err != nil {
 				t.Fatalf("LookupFindings: %v", err)
 			}
@@ -770,17 +836,13 @@ func TestLookupFindings_MultiRangeConservativeOnPackageMismatch(t *testing.T) {
 			"ranges": [{"type": "SEMVER", "events": [{"introduced": "0"}, {"fixed": "1.0.0"}]}]
 		}]
 	}`
-	mux := advisoryMux(t,
+	db := advisorySnapshotDB(t,
 		[]map[string]any{{"path": "github.com/foo/bar", "vulns": []map[string]any{{"id": "GO-2026-4970", "fixed": "2.0.0"}}}},
 		map[string]string{"GO-2026-4970": advisory},
 	)
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
-	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
 	coord := coordinatetest.MustNew("github.com/foo/bar", "v1.5.0")
 
-	findings, err := db.LookupFindings(t.Context(), coord)
+	findings, err := db.LookupFindings(t.Context(), coord, pinnedSnapshot(t))
 	if err != nil {
 		t.Fatalf("LookupFindings: %v", err)
 	}
@@ -825,20 +887,16 @@ func TestLookupFindings_ConservativeWhenUnrefinable(t *testing.T) {
 			}`, tc.ranges)
 			// Empty fixed in the index => the coarse pre-filter treats every version
 			// as affected, so the request reaches the full-range refinement.
-			mux := advisoryMux(t,
+			db := advisorySnapshotDB(t,
 				[]map[string]any{{"path": "github.com/foo/bar", "vulns": []map[string]any{{"id": "GO-2026-0001"}}}},
 				map[string]string{"GO-2026-0001": advisory},
 			)
-			srv := httptest.NewServer(mux)
-			defer srv.Close()
-
-			db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
 			coord := coordinatetest.PathOnly("github.com/foo/bar")
 			if tc.version != "" {
 				coord = coordinatetest.MustNew("github.com/foo/bar", tc.version)
 			}
 
-			findings, err := db.LookupFindings(t.Context(), coord)
+			findings, err := db.LookupFindings(t.Context(), coord, pinnedSnapshot(t))
 			if err != nil {
 				t.Fatalf("LookupFindings: %v", err)
 			}

@@ -1384,8 +1384,13 @@ func firstSnapshotIntegrityFailure(
 // A snapshot integrity failure is returned rather than logged. Every finding in
 // the run is derived from this snapshot, and the run's records name it, so a run
 // that cannot vouch for the snapshot must not produce findings that claim it.
-// The other failures — absent, unreadable, no temp dir — leave the per-module
-// extraction path to answer, which is what the fallback was written for.
+// The other failures — absent, unreadable, no temp dir — hand back an empty
+// directory and leave the per-module extraction path to answer.
+//
+// That is a deferral, not a fallback. The per-module path has no live database
+// to reach any more: it prepares the pinned snapshot or refuses. So a run that
+// gets here on one of those three failures still ends in a refusal, one module
+// later, and no record is ever sealed against a database that was not read.
 //
 // The extracted database is then counted, and the count decides two things.
 //

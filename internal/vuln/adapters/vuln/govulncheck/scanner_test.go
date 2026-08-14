@@ -19,6 +19,7 @@ import (
 
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 	"github.com/eitanity/kanonarion/internal/vuln/ports"
+	"github.com/eitanity/kanonarion/internal/vuln/vulntest"
 )
 
 func TestPreflight_AbsentReturnsActionableError(t *testing.T) {
@@ -352,9 +353,31 @@ func shellQuote(s string) string { return "'" + strings.ReplaceAll(s, "'", `'\''
 
 // capturingScanner returns a Scanner whose logger writes records at or above
 // level into buf, so a test can assert which error-path messages were emitted.
-func capturingScanner(buf *bytes.Buffer, level slog.Level) *Scanner {
+func capturingScanner(t *testing.T, buf *bytes.Buffer, level slog.Level) *Scanner {
+	t.Helper()
 	handler := slog.NewTextHandler(buf, &slog.HandlerOptions{Level: level})
-	return New("test", nil).WithLogger(slog.New(handler))
+	return New("test", fixtureSnapshotStore(t)).WithLogger(slog.New(handler))
+}
+
+// fixtureSnapshotVersion is the generation vulnDBZip stamps into index/db.json,
+// and therefore the one a scan against fixtureSnapshotStore is pinned to.
+const fixtureSnapshotVersion = "2026-07-30T00:00:00Z"
+
+// fixtureSnapshot is the pinned identity these scans name. A scan is no longer
+// allowed to proceed without one — the database it was judged against is the
+// thing its record states — so a zero snapshot here would be a test asserting
+// behaviour the product refuses to have.
+func fixtureSnapshot(t *testing.T) domain.DatabaseSnapshot {
+	t.Helper()
+	return vulntest.MustNew("vuln.go.dev", fixtureSnapshotVersion)
+}
+
+// fixtureSnapshotStore holds one small, layout-complete advisory database at
+// fixtureSnapshotVersion, so the scans below prepare a real pinned database
+// rather than reaching for the live one.
+func fixtureSnapshotStore(t *testing.T) *snapshotBlobStore {
+	t.Helper()
+	return &snapshotBlobStore{blob: vulnDBZip(t, "GO-2026-0001")}
 }
 
 // TestScan_GovulncheckExitErrorLogsAtDebugNotWarn is the regression guard for
@@ -380,8 +403,8 @@ func TestScan_GovulncheckExitErrorLogsAtDebugNotWarn(t *testing.T) {
 
 	t.Run("default warn level omits the error-path message", func(t *testing.T) {
 		var buf bytes.Buffer
-		s := capturingScanner(&buf, slog.LevelWarn)
-		rec, err := s.Scan(t.Context(), ports.ScanRequest{Coordinate: coord, ModuleSource: bytes.NewReader(zipBytes), Snapshot: domain.DatabaseSnapshot{}, GoModCache: "", DBDir: "", ScanMode: ""})
+		s := capturingScanner(t, &buf, slog.LevelWarn)
+		rec, err := s.Scan(t.Context(), ports.ScanRequest{Coordinate: coord, ModuleSource: bytes.NewReader(zipBytes), Snapshot: fixtureSnapshot(t), GoModCache: "", DBDir: "", ScanMode: ""})
 		if err != nil {
 			t.Fatalf("Scan returned a hard error: %v", err)
 		}
@@ -395,8 +418,8 @@ func TestScan_GovulncheckExitErrorLogsAtDebugNotWarn(t *testing.T) {
 
 	t.Run("debug level still carries the error-path message and stderr", func(t *testing.T) {
 		var buf bytes.Buffer
-		s := capturingScanner(&buf, slog.LevelDebug)
-		if _, err := s.Scan(t.Context(), ports.ScanRequest{Coordinate: coord, ModuleSource: bytes.NewReader(zipBytes), Snapshot: domain.DatabaseSnapshot{}, GoModCache: "", DBDir: "", ScanMode: ""}); err != nil {
+		s := capturingScanner(t, &buf, slog.LevelDebug)
+		if _, err := s.Scan(t.Context(), ports.ScanRequest{Coordinate: coord, ModuleSource: bytes.NewReader(zipBytes), Snapshot: fixtureSnapshot(t), GoModCache: "", DBDir: "", ScanMode: ""}); err != nil {
 			t.Fatalf("Scan returned a hard error: %v", err)
 		}
 		if !strings.Contains(buf.String(), msg) {
@@ -431,8 +454,8 @@ func TestScan_GoModDownloadFailureLogsAtDebugNotWarn(t *testing.T) {
 
 	t.Run("default warn level omits the download-failure message", func(t *testing.T) {
 		var buf bytes.Buffer
-		s := capturingScanner(&buf, slog.LevelWarn)
-		if _, err := s.Scan(t.Context(), ports.ScanRequest{Coordinate: coord, ModuleSource: bytes.NewReader(zipBytes), Snapshot: domain.DatabaseSnapshot{}, GoModCache: emptyCache, DBDir: "", ScanMode: ""}); err != nil {
+		s := capturingScanner(t, &buf, slog.LevelWarn)
+		if _, err := s.Scan(t.Context(), ports.ScanRequest{Coordinate: coord, ModuleSource: bytes.NewReader(zipBytes), Snapshot: fixtureSnapshot(t), GoModCache: emptyCache, DBDir: "", ScanMode: ""}); err != nil {
 			t.Fatalf("Scan returned a hard error: %v", err)
 		}
 		if strings.Contains(buf.String(), msg) {
@@ -442,8 +465,8 @@ func TestScan_GoModDownloadFailureLogsAtDebugNotWarn(t *testing.T) {
 
 	t.Run("debug level still carries the download-failure message", func(t *testing.T) {
 		var buf bytes.Buffer
-		s := capturingScanner(&buf, slog.LevelDebug)
-		if _, err := s.Scan(t.Context(), ports.ScanRequest{Coordinate: coord, ModuleSource: bytes.NewReader(zipBytes), Snapshot: domain.DatabaseSnapshot{}, GoModCache: emptyCache, DBDir: "", ScanMode: ""}); err != nil {
+		s := capturingScanner(t, &buf, slog.LevelDebug)
+		if _, err := s.Scan(t.Context(), ports.ScanRequest{Coordinate: coord, ModuleSource: bytes.NewReader(zipBytes), Snapshot: fixtureSnapshot(t), GoModCache: emptyCache, DBDir: "", ScanMode: ""}); err != nil {
 			t.Fatalf("Scan returned a hard error: %v", err)
 		}
 		if !strings.Contains(buf.String(), msg) {
@@ -513,11 +536,11 @@ func TestScan_NoGoModInZipIsSynthesisedNotAbandoned(t *testing.T) {
 	coord := coordinatetest.MustNew("github.com/boltdb/bolt", "v1.3.1")
 
 	var buf bytes.Buffer
-	s := capturingScanner(&buf, slog.LevelInfo)
+	s := capturingScanner(t, &buf, slog.LevelInfo)
 	rec, err := s.Scan(t.Context(), ports.ScanRequest{
 		Coordinate:   coord,
 		ModuleSource: bytes.NewReader(zipBytes),
-		Snapshot:     domain.DatabaseSnapshot{},
+		Snapshot:     fixtureSnapshot(t),
 		BuildList: map[coordinate.ModuleCoordinate]struct{}{
 			coordinatetest.MustNew("example.com/dep", "v0.3.0"): {},
 		},
@@ -551,11 +574,11 @@ func TestScan_ExistingGoModIsNotReplacedBySynthesis(t *testing.T) {
 	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
 
 	var buf bytes.Buffer
-	s := capturingScanner(&buf, slog.LevelInfo)
+	s := capturingScanner(t, &buf, slog.LevelInfo)
 	if _, err := s.Scan(t.Context(), ports.ScanRequest{
 		Coordinate:   coord,
 		ModuleSource: bytes.NewReader(zipBytes),
-		Snapshot:     domain.DatabaseSnapshot{},
+		Snapshot:     fixtureSnapshot(t),
 		BuildList: map[coordinate.ModuleCoordinate]struct{}{
 			coordinatetest.MustNew("example.com/dep", "v0.3.0"): {},
 		},

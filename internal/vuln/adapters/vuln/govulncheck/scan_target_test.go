@@ -29,11 +29,11 @@ func TestScanTargetModule_AnalysesTheExtractedTarget(t *testing.T) {
 	coord := coordinatetest.MustNew("github.com/example/engine", "v1.4.0")
 
 	var buf bytes.Buffer
-	s := capturingScanner(&buf, slog.LevelInfo)
+	s := capturingScanner(t, &buf, slog.LevelInfo)
 	res, err := s.ScanTargetModule(t.Context(), ports.TargetScanRequest{
 		Coordinate:   coord,
 		ModuleSource: bytes.NewReader(zipBytes),
-		Snapshot:     domain.DatabaseSnapshot{},
+		Snapshot:     fixtureSnapshot(t),
 	})
 	if err != nil {
 		t.Fatalf("ScanTargetModule returned a hard error: %v", err)
@@ -60,11 +60,11 @@ func TestScanTargetModule_UnanalysableTargetIsAFaultNotACleanVerdict(t *testing.
 		"example.com/mod@v1.0.0/m.go":   "package mod\n",
 	})
 
-	s := capturingScanner(&bytes.Buffer{}, slog.LevelWarn)
+	s := capturingScanner(t, &bytes.Buffer{}, slog.LevelWarn)
 	res, err := s.ScanTargetModule(t.Context(), ports.TargetScanRequest{
 		Coordinate:   coordinatetest.MustNew("example.com/mod", "v1.0.0"),
 		ModuleSource: bytes.NewReader(zipBytes),
-		Snapshot:     domain.DatabaseSnapshot{},
+		Snapshot:     fixtureSnapshot(t),
 	})
 	if err != nil {
 		t.Fatalf("ScanTargetModule returned a hard error: %v", err)
@@ -97,11 +97,11 @@ func TestScanTargetModule_SharesGoModSynthesisWithTheIsolatedPath(t *testing.T) 
 	})
 
 	var buf bytes.Buffer
-	s := capturingScanner(&buf, slog.LevelInfo)
+	s := capturingScanner(t, &buf, slog.LevelInfo)
 	res, err := s.ScanTargetModule(t.Context(), ports.TargetScanRequest{
 		Coordinate:   coordinatetest.MustNew("github.com/boltdb/bolt", "v1.3.1"),
 		ModuleSource: bytes.NewReader(zipBytes),
-		Snapshot:     domain.DatabaseSnapshot{},
+		Snapshot:     fixtureSnapshot(t),
 	})
 	if err != nil {
 		t.Fatalf("ScanTargetModule returned a hard error: %v", err)

@@ -111,7 +111,7 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 		// examined it at its real version, so its silence is a reachability
 		// answer. The project's own main module is versioned "(devel)" and never
 		// coordinate-matches an advisory, so it does not reach the false case.
-		findings, err := uc.mergeCoordinateFindings(ctx, coord, findings, true)
+		findings, err := uc.mergeCoordinateFindings(ctx, coord, findings, true, *snapshot)
 		if err != nil {
 			// A coordinate whose advisory set could not be read has not been
 			// checked. Reporting it Clean would be the exact false negative this
@@ -170,13 +170,19 @@ func (uc *ScanWalkUseCase) scanProjectRooted(
 // no version, so version-range OSV matching never fires on it and its silence is
 // structural inability, not a reachability answer. Findings are never dropped in
 // either direction.
+//
+// snapshot is the advisory database this run is judged against, and it is the
+// database the match is made in. It is passed rather than left to the adapter
+// because the derived-from-silence verdict below is only sound while the two
+// routes read one database, and nothing else enforces that.
 func (uc *ScanWalkUseCase) mergeCoordinateFindings(
 	ctx context.Context,
 	coord coordinate.ModuleCoordinate,
 	reported []domain.VulnerabilityFinding,
 	reachabilityAnswerable bool,
+	snapshot domain.DatabaseSnapshot,
 ) ([]domain.VulnerabilityFinding, error) {
-	matched, err := uc.moduleScanner.database.LookupFindings(ctx, coord)
+	matched, err := uc.moduleScanner.database.LookupFindings(ctx, coord, snapshot)
 	if err != nil {
 		return nil, fmt.Errorf("coordinate advisory match for %s: %w", coord, err)
 	}
@@ -192,6 +198,17 @@ func (uc *ScanWalkUseCase) mergeCoordinateFindings(
 		// at its real version from real entry points — so an answer that did
 		// not name them would be indistinguishable from one no analyser
 		// produced at all.
+		//
+		// THE SILENCE IS ONLY EVIDENCE ABOUT AN ADVISORY THE ANALYSER WAS
+		// GIVEN. An advisory absent from the database govulncheck read is one
+		// it could not have reported whatever the code does, so its silence
+		// says nothing and a not-reachable derived from it is manufactured.
+		// That premise used to rest on nothing: the analysis was handed the
+		// pinned snapshot while the match above read the live service, so on
+		// any host whose snapshot had fallen behind, every advisory published
+		// since arrived here and was stamped not-reachable at high confidence.
+		// It now rests on the snapshot parameter — one database, named by the
+		// record, read by both routes — which is why that parameter exists.
 		//
 		// It reaches only an advisory the analysis never reported. Where the
 		// analysis did report one, its own reachability answer stands and this

@@ -7,6 +7,8 @@ import (
 	"errors"
 	"io"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -50,6 +52,22 @@ func vulnDBZip(t *testing.T, advisoryIDs ...string) []byte {
 		t.Fatalf("closing the archive: %v", err)
 	}
 	return buf.Bytes()
+}
+
+// preExtractedDirAt writes the one file a pre-extracted advisory database is
+// asked to show for itself: the index/db.json stating which generation it is.
+// A directory that cannot answer that question is refused, so a test that wants
+// the shared-extraction path taken has to build one that can.
+func preExtractedDirAt(t *testing.T, version string) string {
+	t.Helper()
+	dir := t.TempDir()
+	if err := os.MkdirAll(filepath.Join(dir, "index"), 0o750); err != nil {
+		t.Fatalf("creating the index dir: %v", err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "index", "db.json"), []byte(`{"modified":"`+version+`"}`), 0o600); err != nil {
+		t.Fatalf("writing index/db.json: %v", err)
+	}
+	return dir
 }
 
 // This path extracts a database of its own, so it owes the same refusal the
@@ -156,7 +174,7 @@ func TestPrepareDBArg_ReportsTheAdvisoryCountItMeasured(t *testing.T) {
 
 	t.Run("a pre-extracted directory reports no count of its own", func(t *testing.T) {
 		s := &Scanner{logger: logger, vulnStore: &snapshotBlobStore{blob: vulnDBZip(t, "GO-2026-0001")}}
-		_, count, cleanup, err := s.prepareDBArg(context.Background(), snapshot, t.TempDir())
+		_, count, cleanup, err := s.prepareDBArg(context.Background(), snapshot, preExtractedDirAt(t, snapshot.Version()))
 		if cleanup != nil {
 			cleanup()
 		}
@@ -177,20 +195,27 @@ func TestPrepareDBArg_ReportsTheAdvisoryCountItMeasured(t *testing.T) {
 		}
 	})
 
-	t.Run("the live-database fallback reports no count", func(t *testing.T) {
+	// There is no third outcome. A scanner with no store cannot read the pinned
+	// database, and the answer to that is a refusal rather than the live service:
+	// the count it would report is zero either way, but the record it would let be
+	// written names a snapshot nothing opened.
+	t.Run("a scanner with no store refuses rather than going live", func(t *testing.T) {
 		s := &Scanner{logger: logger}
 		arg, count, cleanup, err := s.prepareDBArg(context.Background(), snapshot, "")
 		if cleanup != nil {
 			cleanup()
 		}
-		if err != nil {
-			t.Fatalf("the fallback must stand, got: %v", err)
+		if err == nil {
+			t.Fatal("a scan that cannot reach its pinned database must refuse, not answer from another one")
 		}
-		if arg != "https://vuln.go.dev" {
-			t.Fatalf("expected the live database, got %q", arg)
+		if !errors.Is(err, ports.ErrSnapshotUnavailable) {
+			t.Errorf("the sentinel must survive wrapping, got: %v", err)
+		}
+		if arg != "" {
+			t.Errorf("no database argument may be returned after a refusal, got %q", arg)
 		}
 		if count != 0 {
-			t.Errorf("advisory count = %d, want 0: the live database is unmeasurable from here", count)
+			t.Errorf("advisory count = %d, want 0: nothing was opened", count)
 		}
 	})
 }

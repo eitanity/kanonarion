@@ -84,6 +84,66 @@ gives `kanonarion interface <coord>` as the remedy: `interface-show`,
 wording is the call graph's `supersededPipelineError`, which answers the same
 condition on the other side of the binary.
 
+## Vulnerability record: pipeline `v23` → `v24`
+
+**No shape change; not hash-transparent.** One record was built from two advisory
+databases and named only one.
+
+A vulnerability record has two producing routes. `govulncheck` was handed the
+pinned snapshot; the coordinate-match route (`LookupFindings`, and the cheap
+`CheckVulnerable` pre-check beside it) queried `https://vuln.go.dev` live,
+because neither carried a snapshot parameter and the OSV adapter reached a
+package constant. The record stated the snapshot.
+
+An advisory published after the pinned snapshot therefore entered the record
+having never been seen by the analyser — and was then stamped `IsReachable:
+false`, `High` confidence, derived by `govulncheck`, on the strength of that
+analyser's silence. Silence is only evidence about an advisory the analyser was
+given.
+
+Both routes now read the snapshot the record names. `LookupFindings` and
+`CheckVulnerable` take the snapshot identity, read `index/modules.json` and each
+`ID/<id>.json` out of the stored archive, and have no path to the network: a
+snapshot the store cannot produce is a refusal, not a live read.
+
+The third member of the class was the same defect inverted. `prepareDBArg` fell
+back to the live database on three failures — the store would not produce the
+snapshot, no scratch directory could be created, the archive would not extract —
+each announced by a log warning while the record went on naming the snapshot: an
+entirely live scan sealed under a pinned generation. All three refuse now, under
+`ports.ErrSnapshotUnavailable`, kept distinct from `ErrSnapshotIntegrity` so a
+caller preserving evidence of a tamper can still tell an absent snapshot from an
+altered one. A pre-extracted database supplied by the walk is checked against the
+snapshot's generation rather than trusted.
+
+Migration for existing stores: **none, and no purge.** Reads are keyed on the
+pipeline version, so the `v23` rows are already unreachable for a `v24` question,
+and the change lives inside the serialised record — which findings it carries,
+and the reachability verdict on each — rather than in a column. It cannot be a
+migration in any case: which findings in a stored record came from the live
+service was never recorded, and the correct reachability verdict for one depends
+on an analysis that never ran.
+
+The re-scan cost is the smallest a vuln bump has carried. Measured before the
+change: 2,548 records at `v19`, 1 at `v20`, 158 at `v21`, 650 at `v22` and
+**0 at `v23`**. Nothing had been re-scanned since the `v23` bump, so this darkens
+nothing that was not already awaiting one.
+
+Measured on the divergence itself, 2026-08-14, against the store's only snapshot
+`vuln.go.dev@2026-07-27T20:14:16Z` (18 days old, 4,134 advisory records). Live
+`vuln.go.dev` listed eight advisories against `stdlib` that the snapshot does
+not — GO-2026-5026, 5942, 5972, 6088, 6089, 6090, 6091, 6218 — and all eight
+affect the host toolchain go1.26.5. `govulncheck` over this repository against
+the extracted snapshot: 168 messages, **0 findings**. The same tree and toolchain
+against the live database: 207 messages, 29 finding messages, 10 advisories. Under
+`v23` a scan at that snapshot produced a stdlib record carrying eight findings the
+analysis could not have seen, each with a high-confidence not-reachable verdict.
+
+Consumer impact: a scan whose snapshot lags the live database reports fewer
+findings, and the ones it reports are the ones its stated database can produce. A
+scan whose snapshot agrees with live is unchanged. A scan that cannot read its
+pinned database now fails instead of quietly answering from another one.
+
 ## Vulnerability record: pipeline `v22` → `v23`
 
 **No shape change; not hash-transparent.** Two producers of a finding's fixed

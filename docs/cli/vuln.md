@@ -120,6 +120,8 @@ means in practice:
 - A store that already holds a snapshot **scans normally**. Snapshot resolution
   prefers the stored generation, so nothing changes: the run is judged against
   the snapshot the store carries, and the scan-run record names it as always.
+  Both routes into a record read that stored snapshot — the `govulncheck`
+  analysis and the advisory match by coordinate — so neither needs the network.
 - `--fresh` refuses. Refreshing means reading the published generation from
   `vuln.go.dev`, which is the network.
 - A store with **no** snapshot refuses, naming the remedy: drop `--fresh`, pin

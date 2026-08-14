@@ -1,11 +1,9 @@
 package osv_test
 
 import (
-	"net/http/httptest"
 	"testing"
 
 	coordinatetest "github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
-	"github.com/eitanity/kanonarion/internal/vuln/adapters/vulndb/osv"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
 )
 
@@ -86,16 +84,12 @@ func TestLookupFindings_ReferenceTypesSurviveTheParse(t *testing.T) {
 // index fix, and the reference list is nil — an empty list is the truth there,
 // and nothing may invent one.
 func TestLookupFindings_EnrichmentFailureCarriesNoReferences(t *testing.T) {
-	mux := advisoryMux(t,
+	db := advisorySnapshotDB(t,
 		[]map[string]any{{"path": "github.com/gin-gonic/gin", "vulns": []map[string]any{{"id": "GO-2020-0001", "fixed": "1.7.7"}}}},
 		// No advisory body: the ID/<ID>.json fetch 404s and enrichment fails.
 		map[string]string{},
 	)
-	srv := httptest.NewServer(mux)
-	defer srv.Close()
-
-	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
-	findings, err := db.LookupFindings(t.Context(), coordinatetest.MustNew("github.com/gin-gonic/gin", "v1.6.2"))
+	findings, err := db.LookupFindings(t.Context(), coordinatetest.MustNew("github.com/gin-gonic/gin", "v1.6.2"), pinnedSnapshot(t))
 	if err != nil {
 		t.Fatalf("LookupFindings: %v", err)
 	}
@@ -111,15 +105,11 @@ func TestLookupFindings_EnrichmentFailureCarriesNoReferences(t *testing.T) {
 func lookupGinFinding(t *testing.T) domain.VulnerabilityFinding {
 	t.Helper()
 
-	mux := advisoryMux(t,
+	db := advisorySnapshotDB(t,
 		[]map[string]any{{"path": "github.com/gin-gonic/gin", "vulns": []map[string]any{{"id": "GO-2020-0001", "fixed": "1.7.7"}}}},
 		map[string]string{"GO-2020-0001": ginAdvisoryWithReferences},
 	)
-	srv := httptest.NewServer(mux)
-	t.Cleanup(srv.Close)
-
-	db := osv.New(clientRewritingTo(t, srv), &fakeVulnStore{})
-	findings, err := db.LookupFindings(t.Context(), coordinatetest.MustNew("github.com/gin-gonic/gin", "v1.6.2"))
+	findings, err := db.LookupFindings(t.Context(), coordinatetest.MustNew("github.com/gin-gonic/gin", "v1.6.2"), pinnedSnapshot(t))
 	if err != nil {
 		t.Fatalf("LookupFindings: %v", err)
 	}
