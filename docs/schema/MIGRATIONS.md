@@ -84,6 +84,68 @@ gives `kanonarion interface <coord>` as the remedy: `interface-show`,
 wording is the call graph's `supersededPipelineError`, which answers the same
 condition on the other side of the binary.
 
+## Vulnerability record: pipeline `v22` → `v23`
+
+**No shape change; not hash-transparent.** Two producers of a finding's fixed
+version disagreed, and the coarser one won.
+
+`govulncheck` emits one finding message **per level** for the same advisory:
+module, package, and a symbol level when it can trace a call into the vulnerable
+code. The parse kept only the symbol level and discarded the other two, so an
+advisory govulncheck could not trace to a symbol was ingested as though it had
+never been mentioned. That advisory then reached the record by coordinate match
+instead, carrying the coordinate route's fixed version — the advisory's single
+highest, taken from `index/modules.json`, whose own comment calls it that.
+
+An advisory backported across maintained release branches states one
+`introduced`/`fixed` pair per branch. For a Go standard-library advisory the
+highest pair is usually the next major's release candidate, so a project on a
+supported stable branch was told to move to an unreleased toolchain when a point
+release already carried the fix. `fixedForVersion` now selects the fixed bound of
+the interval containing the version in hand and overrides the index value. A
+version inside an interval with no fixed bound reports no fix rather than
+borrowing another branch's, and a range in a vocabulary other than SEMVER selects
+nothing.
+
+The selection runs inside the affected block for the module path being asked
+about, so a **dual-module advisory** — one listed under both `stdlib` and
+`golang.org/x/net` with different ranges and different fixes — answers each
+coordinate from its own block. Measured on one project stream, `GO-2026-5942`
+arrives twice, `trace[0].module=stdlib` with `fixed_version=v1.26.6` and
+`trace[0].module=golang.org/x/net` with `v0.56.0`, and is stored as two records
+under two coordinates. They are not merged.
+
+Reading the other levels also turns the negative from an inference into a
+statement. A module- or package-level message **is** the analyser reporting that
+the build carries the affected code and that its call graph found no route into
+the vulnerable symbol; that answer now rests on something it said rather than on
+its silence. Package initialisation is still not such a report: a trace of
+nothing but init frames stays undetermined at symbol level, because linkage says
+the package is in the build and nothing about whether its code runs.
+
+An advisory now has one shape whichever route produced it. Where the analysis
+reached no symbols, the advisory's own at-risk list is the only answer there is,
+and the OSV message already on the wire carries it — read on decode, one entry
+per module path, deduplicated and sorted, the same rule the coordinate route
+applies. It never overwrites a reached symbol: the two lists say different things.
+
+Migration for existing stores: **none, and no purge.** Reads are keyed on the
+pipeline version, so the `v22` rows are already unreachable for a `v23` question,
+and the fixed version, symbol list and reachability verdict all live inside the
+serialised record rather than in a column. The cost that IS owed is a re-scan:
+**650 stored records at `v22` go dark for a `v23` question until re-scanned**, on
+top of 2,548 already dark at `v19`, 1 at `v20` and 158 at `v21`.
+
+Measured across the change on one project walk — same walk, same snapshot, same
+coordinate — the stdlib record's seal moved from `sha256:548def0a` to
+`sha256:1c23a321`, with exactly one field changed: the advisory carrying no
+symbol-level message moved from `v1.27.0-rc.3` to `v1.26.6`. Findings (13),
+reachable verdicts (9), routes (45) and symbol lists were identical either side.
+
+Consumer impact: `vuln` / `vuln-show` name the branch-correct fix on the `fix:`
+line, and a finding whose advisory was reported at module or package level
+carries a negative resting on that report rather than on silence.
+
 ## Vulnerability record: pipeline `v19` → `v20`
 
 **Additive in shape, not hash-transparent.** `VulnerabilityFinding.references`

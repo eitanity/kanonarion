@@ -266,8 +266,8 @@ func TestApplyOSV_UnnamedPathRecordsNothing(t *testing.T) {
 	t.Parallel()
 
 	entry := &OSV{
-		ID:                 "GO-2026-9003",
-		NamesSymbolsByPath: map[string]bool{"example.com/named": false},
+		ID:            "GO-2026-9003",
+		SymbolsByPath: map[string][]string{"example.com/named": {}},
 	}
 
 	var stated domain.VulnerabilityFinding

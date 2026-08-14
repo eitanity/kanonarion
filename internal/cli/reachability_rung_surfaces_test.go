@@ -130,6 +130,23 @@ func TestRecordJSONCarriesTheRung(t *testing.T) {
 	}
 }
 
+// derivedRecordKeys are the keys the projection adds that no stored field
+// carries. Each is a fact about this build's reading of the record rather than
+// about the record, so writing it into the domain type would re-hash every
+// stored record to say something a comparison already settles — the reason the
+// projections wrap the domain types at all.
+//
+// The list is explicit so that adding a key is a decision. Anything not named
+// here still fails the check below, which is the invention this guard exists to
+// catch.
+var derivedRecordKeys = map[string]struct{}{
+	// True when the record was written under a pipeline version this build no
+	// longer serves. It reaches the wire only through --history and vuln-by-id,
+	// the two reads that span generations, and it is emitted false elsewhere so
+	// a consumer can tell "current" from "not derived".
+	"superseded": {},
+}
+
 // TestRecordJSONKeepsEveryDomainField guards the projection against the failure
 // its shape exists to prevent: a hand-copied field list would go silently short
 // the first time the domain record grew a field, and the surface would lose it
@@ -158,9 +175,13 @@ func TestRecordJSONKeepsEveryDomainField(t *testing.T) {
 		}
 	}
 	for k := range projDoc {
-		if _, ok := bareDoc[k]; !ok {
-			t.Errorf("projection invented record key %q", k)
+		if _, ok := bareDoc[k]; ok {
+			continue
 		}
+		if _, derived := derivedRecordKeys[k]; derived {
+			continue
+		}
+		t.Errorf("projection invented record key %q", k)
 	}
 
 	// Only the findings are re-rendered; every other value must be byte-identical

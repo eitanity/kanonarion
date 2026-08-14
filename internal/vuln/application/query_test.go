@@ -24,6 +24,7 @@ type queryVulnFakeStore struct {
 	latestFound    bool
 	walkRecords    []domain.VulnerabilityRecord
 	moduleRecords  []domain.VulnerabilityRecord
+	allGenRecords  []domain.VulnerabilityRecord
 	findingRecords []domain.VulnerabilityRecord
 	generations    []vulnports.VulnerabilityRecordGeneration
 	scanRun        domain.WalkScanRun
@@ -106,6 +107,10 @@ func (s *queryVulnFakeStore) ListVulnerabilityRecordsForModule(_ context.Context
 	return s.moduleRecords, s.storeErr
 }
 
+func (s *queryVulnFakeStore) ListVulnerabilityRecordsForModuleAllGenerations(_ context.Context, _ coordinate.ModuleCoordinate) ([]domain.VulnerabilityRecord, error) {
+	return s.allGenRecords, s.storeErr
+}
+
 func (s *queryVulnFakeStore) ListVulnerabilityRecordGenerationsForModule(_ context.Context, _ coordinate.ModuleCoordinate) ([]vulnports.VulnerabilityRecordGeneration, error) {
 	return s.generations, s.storeErr
 }
@@ -175,6 +180,35 @@ func TestQueryVulnUseCase_ListRecordsForModuleInWalk(t *testing.T) {
 	}
 	if len(got) != len(want) {
 		t.Fatalf("got %d candidate(s), want %d — the read must not rank or drop any", len(got), len(want))
+	}
+}
+
+func TestQueryVulnUseCase_ListRecordsForModuleAllGenerations(t *testing.T) {
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
+	recs := []domain.VulnerabilityRecord{
+		{Coordinate: coord, PipelineVersion: "v20"},
+		{Coordinate: coord, PipelineVersion: "v19"},
+	}
+	uc := application.NewQueryVulnUseCase(&queryVulnFakeStore{allGenRecords: recs})
+
+	got, err := uc.ListRecordsForModuleAllGenerations(context.Background(), coord)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if len(got) != 2 {
+		t.Fatalf("got %d records, want 2", len(got))
+	}
+	if got[0].PipelineVersion != "v20" || got[1].PipelineVersion != "v19" {
+		t.Errorf("order not preserved: %s, %s", got[0].PipelineVersion, got[1].PipelineVersion)
+	}
+}
+
+func TestQueryVulnUseCase_ListRecordsForModuleAllGenerations_StoreError(t *testing.T) {
+	coord := coordinatetest.MustNew("example.com/mod", "v1.0.0")
+	uc := application.NewQueryVulnUseCase(&queryVulnFakeStore{storeErr: errors.New("boom")})
+
+	if _, err := uc.ListRecordsForModuleAllGenerations(context.Background(), coord); err == nil {
+		t.Fatal("expected the store error to surface")
 	}
 }
 

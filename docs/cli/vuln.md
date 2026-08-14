@@ -768,8 +768,14 @@ This is a different statement from `no vulnerability record for <coord> — run:
 kanonarion vuln-scan <walk-id>`, which means the store holds the coordinate at
 no pipeline version at all. A pipeline bump darkens every record written before
 it until a re-scan, so after one the first message is the ordinary answer and
-the second is the exception. `--history` refuses the same way, for the same
-reason: it lists one generation's scan records, not every generation's.
+the second is the exception.
+
+`--history` does not refuse here. It reads across generations by design and
+lists the darkened records, marking each `[superseded]` and stating under the
+listing how many of the rows a current scan would not produce. The point-in-time
+reads and the history listing ask different questions: one is *what holds now*,
+which a superseded record may not answer, and the other is *what has ever been
+recorded*, which the bump does not change.
 
 That selection is not "newest wins", and the difference is load-bearing. An
 isolated scan builds the module as its own main module, so it records call-graph
@@ -802,10 +808,17 @@ changes.
 was reached in. The same selection backs the `vulnerabilities` section of
 `context` and `inspect`, which report it as `frame`.
 
-Use `--history` to list every stored scan record across all walks and
-snapshots, ordered newest first. This is the primary way to determine
-whether a finding was present in an earlier scan or absent because the
-vulnerability database snapshot predated it.
+Use `--history` to list every stored scan record across all walks, snapshots
+and pipeline generations, ordered newest first. This is the primary way to
+determine whether a finding was present in an earlier scan or absent because
+the vulnerability database snapshot predated it.
+
+Each row names the generation that wrote it. A row from a pipeline version this
+build no longer serves is marked `[superseded]`, and a notice under the listing
+counts them: those rows are history, not the answer a scan would give today. In
+`--json` the same state is the `superseded` boolean on each record, beside the
+`pipeline_version` it was written under. The same field appears on
+`vuln-by-id --json`, the other read that spans generations.
 
 **Flags:**
 
@@ -814,7 +827,7 @@ vulnerability database snapshot predated it.
 | `--store-root` | `~/.kanonarion` | Path to fact store root |
 | `--walk-id` | _(none)_ | Answer in the frame of this walk's scans |
 | `--gomod <path>` | _(none)_ | Answer in the frame of the latest project walk for this go.mod. Takes a path, e.g. `--gomod ./go.mod`. The notice states that the go.mod was not re-resolved for the read, so an edit made since that walk is not reflected |
-| `--history` | `false` | List all scan records across walks and snapshots |
+| `--history` | `false` | List all scan records across walks, snapshots and pipeline generations, marking superseded rows |
 | `--json` | `false` | Emit record as JSON |
 
 Each finding answers the two questions a finding exists to answer - *will a
@@ -824,7 +837,7 @@ version bump fix it?* and *which symbol is at risk?* - directly in the output:
 |---|---|
 | `WITHDRAWN:` | The advisory was retracted upstream on the date given, and is **not a finding against this module**. Printed ahead of the range and the fix, because it changes what the rest of the entry means |
 | `affected:` | The version range the advisory applies to (e.g. `>= v1.7.3`) |
-| `fix:` | `fixed in <version>` when a patch exists, or **`no fix available`** when none does - the no-fix state is rendered explicitly, never left blank |
+| `fix:` | `fixed in <version>` when a patch exists, or **`no fix available`** when none does - the no-fix state is rendered explicitly, never left blank. An advisory backported across several release branches states one fix per branch; the version named is the fix for the branch the module's own version is on, not the newest of them, so a module on a supported older branch is not pointed at a release candidate |
 | `symbols:` | The at-risk symbols named by the advisory, surfaced even for metadata-only (Unscannable) modules where reachability could not be computed |
 | `fix refs:` | The advisory's own `FIX` links - the commit or CL that remediates the vulnerability. Printed only when the advisory publishes one |
 
@@ -895,9 +908,14 @@ www.velocidex.com/golang/velociraptor@v0.76.6 - Unscannable (generated-assets-mi
 $ kanonarion vuln-show github.com/gin-gonic/gin@v1.6.2 --history
 github.com/gin-gonic/gin@v1.6.2 - 3 scan record(s)
 
-  2024-03-01T08:00:00Z  walk=01KQDBVW092ER1HNXZ60X27CMD  snap=20240301000000  Affected  GO-2020-0001  GO-2024-0042
-  2024-02-01T08:00:00Z  walk=01KQABC123...               snap=20240201000000  Affected  GO-2020-0001
-  2024-01-01T08:00:00Z  walk=01KQXYZ789...               snap=20240101000000  Clean     no findings
+  2024-03-01T08:00:00Z  walk=01KQDBVW092ER1HNXZ60X27CMD  snap=20240301000000  frame=target-rooted  pipeline=v23                 Affected  GO-2020-0001  GO-2024-0042
+  2024-02-01T08:00:00Z  walk=01KQABC123...               snap=20240201000000  frame=target-rooted  pipeline=v22 [superseded]    Affected  GO-2020-0001
+  2024-01-01T08:00:00Z  walk=01KQXYZ789...               snap=20240101000000  frame=target-rooted  pipeline=v22 [superseded]    Clean     no findings
+
+notice: 2 of 3 record(s) were produced by superseded scan logic (this build reads pipeline v23).
+        They are the history this coordinate has, and they are not what a current scan would
+        answer — the point-in-time reads serve none of them. Re-scan to add a current record:
+          kanonarion vuln-scan --module github.com/gin-gonic/gin@v1.6.2 --reachability
 ```
 
 The last row above shows the module was clean on 2024-01-01 because

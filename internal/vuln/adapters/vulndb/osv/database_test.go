@@ -339,6 +339,10 @@ func (f *fakeVulnStore) ListVulnerabilityRecordsForModule(_ context.Context, _ c
 	return nil, nil
 }
 
+func (f *fakeVulnStore) ListVulnerabilityRecordsForModuleAllGenerations(_ context.Context, _ coordinate.ModuleCoordinate) ([]domain.VulnerabilityRecord, error) {
+	return nil, nil
+}
+
 func TestCheckVulnerable_LazilyLoadsIndex(t *testing.T) {
 	srv, _ := buildFakeServer(t)
 	defer srv.Close()

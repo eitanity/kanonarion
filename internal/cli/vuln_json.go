@@ -63,14 +63,28 @@ func toVulnFindingsJSON(fs []vuldomain.VulnerabilityFinding) []vulnFindingJSON {
 // encoding/json resolves a name collision in favour of the shallower field, so
 // the record's every other field is emitted by the domain type itself and only
 // the findings are re-rendered.
+// Superseded is the second derived field, and it is derived for the same reason
+// soundness is: whether a record is superseded is a fact about this build's
+// reading of it, not about the record, and writing it into the domain type would
+// re-hash every stored record to say something a comparison already settles.
+// PipelineVersion is on the wire beside it, but only a consumer that already
+// knows which generation this binary serves can compare the two — and a machine
+// reading a history listing is exactly the consumer that does not. It is emitted
+// on every record, false included: absent would be indistinguishable from a
+// producer that does not derive it.
 type vulnRecordJSON struct {
 	vuldomain.VulnerabilityRecord
-	Findings []vulnFindingJSON `json:"findings,omitzero"`
+	Findings   []vulnFindingJSON `json:"findings,omitzero"`
+	Superseded bool              `json:"superseded"`
 }
 
 // toVulnRecordJSON projects one record.
 func toVulnRecordJSON(rec vuldomain.VulnerabilityRecord) vulnRecordJSON {
-	return vulnRecordJSON{VulnerabilityRecord: rec, Findings: toVulnFindingsJSON(rec.Findings)}
+	return vulnRecordJSON{
+		VulnerabilityRecord: rec,
+		Findings:            toVulnFindingsJSON(rec.Findings),
+		Superseded:          rec.PipelineVersion != vulnPipelineVersion,
+	}
 }
 
 // toVulnRecordsJSON projects a record list, preserving order. An empty input

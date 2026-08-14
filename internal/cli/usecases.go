@@ -244,6 +244,13 @@ type QueryVulnUseCase interface {
 	// coordinate was measured in, including other projects' builds.
 	ListRecordsForModuleInWalk(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string, walkID string) ([]vulndomain.VulnerabilityRecord, error)
 	ListRecordsForModule(ctx context.Context, coord coordinate.ModuleCoordinate, pipelineVersion string) ([]vulndomain.VulnerabilityRecord, error)
+	// ListRecordsForModuleAllGenerations is the same listing with the generation
+	// lifted out of the key: every record the store holds for the coordinate,
+	// whatever pipeline version wrote it. It serves the history listing, which
+	// asks what has ever been recorded rather than what this build would answer,
+	// and it is the only read here a superseded record may reach a reader
+	// through — marked as superseded where it does.
+	ListRecordsForModuleAllGenerations(ctx context.Context, coord coordinate.ModuleCoordinate) ([]vulndomain.VulnerabilityRecord, error)
 	ListRecordsByFindingID(ctx context.Context, findingID, walkID string) ([]vulndomain.VulnerabilityRecord, error)
 	ListRecordsForRun(ctx context.Context, runID string) ([]vulndomain.VulnerabilityRecord, error)
 	// ListRecordGenerationsForModule is the census behind every empty answer:

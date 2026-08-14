@@ -722,7 +722,7 @@ func (d *Database) LookupFindings(ctx context.Context, coord coordinate.ModuleCo
 				"advisory", e.id, "coordinate", coord)
 			continue
 		}
-		enrichFinding(&finding, coord.Path(), adv)
+		enrichFinding(&finding, coord, adv)
 		findings = append(findings, finding)
 	}
 	domain.SortFindings(findings)
@@ -768,12 +768,28 @@ func advisoryReferences(refs []osvReference) []domain.AdvisoryReference {
 
 // enrichFinding populates summary/details/aliases/timestamps — including the
 // retraction timestamp, which decides whether the match counts as a finding at
-// all — from the advisory,
-// then derives the affected-range string and at-risk symbols from the affected
-// block whose package matches modulePath. A FixedIn already set from the index
-// is preserved; only when the index carried no fixed version does the advisory's
-// own range supply one.
-func enrichFinding(f *domain.VulnerabilityFinding, modulePath string, adv *osvAdvisory) {
+// all — from the advisory, then derives the affected-range string, the fixed
+// version and the at-risk symbols from the affected block whose package matches
+// coord's path.
+//
+// THE FIXED VERSION IS THE ONE FOR THE BRANCH IN HAND. An advisory backported
+// across maintained release branches states one introduced/fixed pair per
+// branch, and index/modules.json collapses them to the single highest — which
+// for a Go standard-library advisory is usually the next major's release
+// candidate. Reporting that told a reader on a supported stable branch to move
+// to an unreleased toolchain when a point release already carried the fix, and
+// it is the worst direction to be wrong in: a one-command upgrade reads as a
+// wait-for-the-next-major. The pair whose interval contains coord's version is
+// the answer, and it overrides the index's coarse value rather than deferring to
+// it.
+//
+// Where no interval contains the version there is nothing to select from, and
+// the coarse index value stands. On this path that combination is unreachable:
+// LookupFindings has already dropped a finding whose module path is named with
+// no containing range, so a block reaching here either contains the version or
+// declares no comparable SEMVER range at all.
+func enrichFinding(f *domain.VulnerabilityFinding, coord coordinate.ModuleCoordinate, adv *osvAdvisory) {
+	modulePath := coord.Path()
 	f.Summary = adv.Summary
 	f.Details = adv.Details
 	f.Aliases = adv.Aliases
@@ -792,7 +808,9 @@ func enrichFinding(f *domain.VulnerabilityFinding, modulePath string, adv *osvAd
 		if rangeStr != "" {
 			f.AffectedRange = rangeStr
 		}
-		if f.FixedIn == "" {
+		if branchFix, ok := fixedForVersion(coord.Version(), a.Ranges); ok {
+			f.FixedIn = branchFix
+		} else if f.FixedIn == "" {
 			f.FixedIn = fixed
 		}
 		f.AffectedSymbols = collectSymbols(a.EcosystemSpecific.Imports)
@@ -825,6 +843,47 @@ func formatAffected(ranges []osvRange) (rangeStr, fixed string) {
 		}
 	}
 	return strings.Join(parts, ", "), fixed
+}
+
+// fixedForVersion returns the fixed bound of the affected interval that contains
+// version — the fix for the release branch the module in hand is on — and
+// reports whether any interval contained it.
+//
+// The events of one range are a flat sequence of introduced and fixed
+// boundaries forming half-open intervals [introduced, fixed). An interval with
+// no fixed bound is affected with no fix yet, which is a containing interval
+// carrying no answer: it returns "" and true, so a caller does not fall back to
+// another branch's fix for a version nothing has fixed.
+//
+// An unparseable version, or a range in a vocabulary other than SEMVER, is not
+// comparable and selects nothing.
+func fixedForVersion(version string, ranges []osvRange) (string, bool) {
+	v := vPrefix(version)
+	if !semver.IsValid(v) {
+		return "", false
+	}
+	for _, r := range ranges {
+		if r.Type != "" && r.Type != "SEMVER" {
+			continue
+		}
+		open, lowOK := false, false
+		for _, ev := range r.Events {
+			switch {
+			case ev.Introduced != "":
+				open = true
+				lowOK = ev.Introduced == "0" || semver.Compare(v, vPrefix(ev.Introduced)) >= 0
+			case ev.Fixed != "":
+				if open && lowOK && semver.Compare(v, vPrefix(ev.Fixed)) < 0 {
+					return vPrefix(ev.Fixed), true
+				}
+				open = false
+			}
+		}
+		if open && lowOK {
+			return "", true
+		}
+	}
+	return "", false
 }
 
 // collectSymbols flattens, de-duplicates and sorts the imported symbols across

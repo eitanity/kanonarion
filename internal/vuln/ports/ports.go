@@ -341,8 +341,10 @@ type VulnerabilityStore interface {
 	// ListVulnerabilityRecordsForModule returns every generation the ledger holds
 	// for a coordinate AT ONE PIPELINE VERSION, across all walks, snapshots and
 	// analysis frames, ordered by scanned_at descending (most recent first).
-	// Within that generation it is the history read: the superseded snapshots and
-	// frames are still here, each stating the evidence it rested on.
+	// Within that generation the superseded snapshots and frames are still here,
+	// each stating the evidence it rested on. It is not the history read: a
+	// history spanning generations comes from
+	// ListVulnerabilityRecordsForModuleAllGenerations.
 	//
 	// The pipeline version is part of the key, so this read cannot see the
 	// generations a bump left behind, and an empty answer from it means "nothing
@@ -353,6 +355,25 @@ type VulnerabilityStore interface {
 		ctx context.Context,
 		coord coordinate.ModuleCoordinate,
 		pipelineVersion string,
+	) ([]domain.VulnerabilityRecord, error)
+
+	// ListVulnerabilityRecordsForModuleAllGenerations returns every record the
+	// ledger holds for a coordinate, at every pipeline version, across all walks,
+	// snapshots and analysis frames, ordered by scanned_at descending.
+	//
+	// It takes no pipeline version, for the reason
+	// ListVulnerabilityRecordsByFindingID takes no walk: spanning generations is
+	// the question, not a relaxation of it. This is the read behind a history
+	// listing, where the whole point is what the ledger has ever held — including
+	// the generations a bump left behind, which the keyed read cannot see and
+	// which the census can only count.
+	//
+	// Nothing point-in-time may be served from it. A record from a superseded
+	// generation is not what a current scan would answer, so a caller that
+	// renders these rows states which generation each came from.
+	ListVulnerabilityRecordsForModuleAllGenerations(
+		ctx context.Context,
+		coord coordinate.ModuleCoordinate,
 	) ([]domain.VulnerabilityRecord, error)
 
 	// ListVulnerabilityRecordGenerationsForModule reports which pipeline

@@ -386,6 +386,20 @@ func (f *fakeVulnStore) ListVulnerabilityRecordsForModule(_ context.Context, coo
 	return out, nil
 }
 
+func (f *fakeVulnStore) ListVulnerabilityRecordsForModuleAllGenerations(_ context.Context, coord coordinate.ModuleCoordinate) ([]domain.VulnerabilityRecord, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []domain.VulnerabilityRecord
+	for _, gens := range f.records {
+		for _, rec := range gens {
+			if rec.Coordinate == coord {
+				out = append(out, rec)
+			}
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeVulnStore) recordKey(coord coordinate.ModuleCoordinate, pv string, snapshot domain.DatabaseSnapshot) string {
 	return coord.String() + "|" + pv + "|" + snapshot.Source() + "@" + snapshot.Version()
 }

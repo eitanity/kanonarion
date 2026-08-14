@@ -54,6 +54,13 @@ func (s *fakeVulnStore) ListVulnerabilityRecordsForModule(_ context.Context, coo
 	return s.records[coord.Path()], nil
 }
 
+func (s *fakeVulnStore) ListVulnerabilityRecordsForModuleAllGenerations(_ context.Context, coord coordinate.ModuleCoordinate) ([]vulndomain.VulnerabilityRecord, error) {
+	if s.err != nil {
+		return nil, s.err
+	}
+	return s.records[coord.Path()], nil
+}
+
 // Unused methods — panic so test failures are obvious if they're accidentally called.
 func (s *fakeVulnStore) PutVulnerabilityRecord(_ context.Context, _ vulndomain.VulnerabilityRecord) error {
 	panic("unexpected call: PutVulnerabilityRecord")
