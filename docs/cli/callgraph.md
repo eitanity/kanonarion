@@ -138,12 +138,25 @@ every test-only consumer.
   `UNRESOLVED` naming `test-scope-unmeasured`, rather than reported as an
   absence it cannot substantiate.
 
-When you pass `--exclude-tests`, the verdict line says so, so a narrowed answer
-is never read as a wider one:
+When you pass `--exclude-tests`, the answer says so, so a narrowed answer is
+never read as a wider one. An empty answer says it on the verdict line:
 
 ```
 verdict: RESOLVED-ABSENT — no callers of pkg.(*T).Do across a fully-built path (production only; --exclude-tests was given)
 ```
+
+A non-empty answer says it on a `scope:` line under the list — "1 caller" is
+otherwise indistinguishable from an unnarrowed query that found one caller:
+
+```
+scope: test callers omitted (--exclude-tests was given)
+```
+
+`--transitive --json` carries the same statement in its `scope` field, which is
+always present and empty when you did not narrow the query. The single-hop
+`callers`/`callees` `--json` output is a bare array of edges with nowhere to put
+it: pass `--transitive` (with `--depth 1` for the single hop) when a consumer
+needs the narrowing in machine-readable form.
 
 A **test entry point** — `TestX`, `BenchmarkX`, `FuzzX`, `ExampleX`, `TestMain`
 — never has a caller in the graph, because the `go test` harness invokes it
@@ -530,6 +543,7 @@ $ kanonarion callers 'github.com/org/repo/internal/license/adapters/store/sqlite
 $ kanonarion callers '...sqlite.(*Store).PutLicenseRecord' --exclude-tests
 1 caller of ...:
   github.com/org/repo/internal/license/application.(*ExtractLicenseUseCase).Execute  [CHA-overapprox]  (github.com/org/repo@v0.0.0)
+scope: test callers omitted (--exclude-tests was given)
 ```
 
 ### `callees`

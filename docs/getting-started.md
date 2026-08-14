@@ -312,7 +312,8 @@ run says which it did. Any edit to the source, `go.mod` or `go.sum` re-analyses;
 Test files are part of the graph, because test fakes and table-driven callers
 are most of what a signature change has to touch. Test-scope results carry a
 `[test]` tag; add `--exclude-tests` for the production-only view, which is
-stated on the verdict line so a narrowed answer is never read as a wider one:
+stated on the answer - on a `scope:` line under the list, or on the verdict line
+when the list is empty - so a narrowed answer is never read as a wider one:
 
 ```bash
 kanonarion callers '<module-path>/internal/server.New' --exclude-tests
