@@ -699,7 +699,9 @@ Walk ID:     01KQDBVW092ER1HNXZ60X27CMD (inputs unresolvable: walk absent from t
 The text form lists finding ids per module and publishes no reachability
 verdict. `--json` does: each finding carries `reachable`, and beside it the
 derived `soundness` and `soundness_reason` that say how thorough the search
-behind a negative was. See
+behind a negative was, and `route_root` — null where the finding records no
+route — saying where the route begins and how far below an entry point that is.
+See
 [reachability](reachability.md#a-negative-states-how-sound-the-search-behind-it-was)
 for the rungs.
 
@@ -805,6 +807,25 @@ two keys appear on `--history`, on `vuln-by-id --json` and on
 derived at read time from the analyser the stored answer names and that
 analyser's own fidelity — nothing is stored, and no record's content hash
 changes.
+
+A routed finding also carries `route_root` in `--json`, beside `soundness`: the
+same object, with the same field names, that
+[`reachability --json`](reachability.md#root-classification) publishes — `kind`,
+`reason`, `node_id`, `remedy`, `closure_rooted` where it applies, and the
+`entry_point_ancestry` block that says how far below the nearest entry point the
+route begins, how weak the weakest edge on that path is, and whether a hop was a
+registration rather than a call. The text form has printed all of it under
+`root:` since the classification existed; `--json` states it under one key so a
+consumer need not parse prose.
+
+`route_root` is **null**, never absent, on a finding that records no route:
+there is no root to classify, and an advisory that names no symbols for the
+module path explains that absence already. The key missing entirely is a
+different statement — that the producer does not derive the root at all — and it
+is what `vuln-scan-diff --json` emits, because a diff delta carries a coordinate
+and no analysis frame, and the frame is what decides whether a route is
+closure-rooted. The classification is derived at read time from the call-graph
+ledger, so it improves as the graph does and no re-scan is owed for it.
 
 `Analysis frame:` on the record itself always names the frame the served answer
 was reached in. The same selection backs the `vulnerabilities` section of
@@ -1201,7 +1222,11 @@ github.com/gin-gonic/gin@v1.7.0       Affected     vuln-db=2026-07-23T18:46:07Z 
 The text rows carry a status, not a reachability verdict. `--json` emits the
 whole record for each row, so it does carry one — and with it the derived
 `soundness` and `soundness_reason` on every finding, which is the only place
-this command's answer states how thorough the search behind a negative was.
+this command's answer states how thorough the search behind a negative was. A
+routed finding carries `route_root` here too, on the same terms as
+[`vuln-show --json`](#vuln-show): each row is classified in its own record's
+frame, so two projects' scans of one module are never read against each other's
+rooting.
 
 ---
 

@@ -93,7 +93,7 @@ func decodeFindings(t *testing.T, raw []byte) map[string]map[string]any {
 // record, and every finding on it must state the rung behind its reachability
 // answer.
 func TestRecordJSONCarriesTheRung(t *testing.T) {
-	raw, err := json.Marshal(toVulnRecordJSON(rungRecord()))
+	raw, err := json.Marshal(toVulnRecordJSON(rungRecord(), nil))
 	if err != nil {
 		t.Fatalf("marshalling projected record: %v", err)
 	}
@@ -157,7 +157,7 @@ func TestRecordJSONKeepsEveryDomainField(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshalling bare record: %v", err)
 	}
-	projected, err := json.Marshal(toVulnRecordJSON(rec))
+	projected, err := json.Marshal(toVulnRecordJSON(rec, nil))
 	if err != nil {
 		t.Fatalf("marshalling projected record: %v", err)
 	}
@@ -212,7 +212,7 @@ func TestScanShowFindingsCarryTheRung(t *testing.T) {
 	mod := scanAffectedModule{
 		Coordinate: "golang.org/x/crypto@v0.31.0",
 		Status:     string(vuldomain.StatusAffected),
-		Findings:   toVulnFindingsJSON(rungRecord().Findings),
+		Findings:   toVulnFindingsJSON(rungRecord().Findings, nil),
 	}
 	raw, err := json.Marshal(mod)
 	if err != nil {

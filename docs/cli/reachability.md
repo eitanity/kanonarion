@@ -188,6 +188,16 @@ reachability verdict states it, in text and in JSON, under the same two keys:
 | `vuln-scan` | the per-finding label in the run summary |
 | `context`, `context --local --reachability` | `soundness` / `soundness_reason` in `--json`, and a `Soundness:` line under `--full` |
 
+The same three record-shaped surfaces — `vuln-show`, `vuln-show --history`,
+`vuln-by-id --json` and `vuln-scan-show --json` — also publish the route's
+[root classification](#root-classification) per finding, under `route_root`,
+built from the same two derivations this command uses. They emit it as `null`
+where the finding records no route, rather than dropping the key: a document
+holding many findings needs "no route here" and "this producer does not derive
+the root" to look different, and the second is what `vuln-scan-diff --json`
+means by leaving the key off — a diff delta states no analysis frame, and the
+frame is what decides `closure_rooted`.
+
 `audit` and the SBOM commands publish no reachability verdict and carry no rung.
 `audit` reports a module's vulnerability status and directs you to `vuln-show`;
 an SBOM asserts what is in the build and never what is reachable in it.

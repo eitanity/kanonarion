@@ -226,14 +226,14 @@ func missSurfaces() []missSurface {
 			miss: func(t *testing.T) (string, error) {
 				var stdout, stderr bytes.Buffer
 				err := runScanShow(context.Background(), "vscan-NOPE", jsonOut, scanRunsFixture(),
-					testfakes.NewFakeQueryVuln(), &stdout, &stderr)
+					testfakes.NewFakeQueryVuln(), nil, &stdout, &stderr)
 				return stderr.String(), err
 			},
 			found: func(t *testing.T) (string, int, error) {
 				uc := scanRunsFixture()
 				var stdout, stderr bytes.Buffer
 				err := runScanShow(context.Background(), "vscan-real", jsonOut, uc,
-					testfakes.NewFakeQueryVuln(), &stdout, &stderr)
+					testfakes.NewFakeQueryVuln(), nil, &stdout, &stderr)
 				return stderr.String(), uc.ListCalls, err
 			},
 			wantFragments: []string{
@@ -669,7 +669,7 @@ func TestRunScanShow_MissIsMeasuredAgainstEveryRun(t *testing.T) {
 	uc.AddRun(vulndomain.WalkScanRun{ID: "vscan-other", WalkID: "walk-1"})
 	var stdout, stderr bytes.Buffer
 	err := runScanShow(context.Background(), "vscan-NOPE", false, uc,
-		testfakes.NewFakeQueryVuln(), &stdout, &stderr)
+		testfakes.NewFakeQueryVuln(), nil, &stdout, &stderr)
 	if err == nil {
 		t.Fatal("a missing run returned a nil error")
 	}

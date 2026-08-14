@@ -134,7 +134,7 @@ func TestVulnShowHistory_SupersededGenerationIsListedNotRefused(t *testing.T) {
 	coord := darkCoord(t, uc, 16, 252)
 
 	var buf bytes.Buffer
-	if err := runVulnShowHistory(context.Background(), coord, false, uc, &buf); err != nil {
+	if err := runVulnShowHistory(context.Background(), coord, false, uc, nil, &buf); err != nil {
 		t.Fatalf("history refused a coordinate the store holds 16 records for: %v", err)
 	}
 	out := buf.String()
@@ -159,7 +159,7 @@ func TestVulnShowHistoryJSON_MarksSupersededRecords(t *testing.T) {
 	coord := darkCoord(t, uc, 3, 3)
 
 	var buf bytes.Buffer
-	if err := runVulnShowHistory(context.Background(), coord, true, uc, &buf); err != nil {
+	if err := runVulnShowHistory(context.Background(), coord, true, uc, nil, &buf); err != nil {
 		t.Fatalf("history --json refused a coordinate the store holds records for: %v", err)
 	}
 	var got []struct {
@@ -188,7 +188,7 @@ func TestVulnShowHistory_NeverScannedStillReadsAsAbsent(t *testing.T) {
 	uc := testfakes.NewFakeQueryVuln()
 	coord := coordinatetest.MustNew("example.com/never-scanned", "v1.0.0")
 
-	err := runVulnShowHistory(context.Background(), coord, false, uc, io.Discard)
+	err := runVulnShowHistory(context.Background(), coord, false, uc, nil, io.Discard)
 	if err == nil {
 		t.Fatal("expected a refusal for a coordinate the store holds nothing for")
 	}
@@ -298,7 +298,7 @@ func TestVulnByID_MarksSupersededRows(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	if err := runVulnByID(context.Background(), "GO-2025-3553", "", false, uc, &buf); err != nil {
+	if err := runVulnByID(context.Background(), "GO-2025-3553", "", false, uc, nil, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -339,7 +339,7 @@ func TestVulnByID_AllCurrentRowsCarryNoNotice(t *testing.T) {
 	}})
 
 	var buf bytes.Buffer
-	if err := runVulnByID(context.Background(), "GO-2025-3553", "", false, uc, &buf); err != nil {
+	if err := runVulnByID(context.Background(), "GO-2025-3553", "", false, uc, nil, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if strings.Contains(buf.String(), "superseded") {

@@ -100,7 +100,7 @@ func runVulnShow(
 	}
 
 	if history {
-		return runVulnShowHistory(ctx, coord, jsonOut, uc, stdout)
+		return runVulnShowHistory(ctx, coord, jsonOut, uc, graphs, stdout)
 	}
 
 	anchor, anchored, err := resolveVulnFrameAnchor(ctx, walks, walkID, gomod, gomodSet)
@@ -190,7 +190,7 @@ func runVulnShow(
 		// and no statement of what was searched to reach it.
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(toVulnRecordJSON(rec)); err != nil {
+		if err := enc.Encode(toVulnRecordJSON(rec, newRecordRootFunc(ctx, graphs))); err != nil {
 			return fmt.Errorf("encoding vulnerability record: %w", err)
 		}
 		return nil
@@ -421,7 +421,7 @@ func walkAge(t time.Time) string {
 // The rows a superseded generation wrote are marked, in vuln-by-id's words: they
 // reach a reader here and nowhere else, and an unmarked one would be quoted as
 // the current answer.
-func runVulnShowHistory(ctx context.Context, coord coordinate.ModuleCoordinate, jsonOut bool, uc QueryVulnUseCase, stdout io.Writer) error {
+func runVulnShowHistory(ctx context.Context, coord coordinate.ModuleCoordinate, jsonOut bool, uc QueryVulnUseCase, graphs QueryCallGraphUseCase, stdout io.Writer) error {
 	recs, err := uc.ListRecordsForModuleAllGenerations(ctx, coord)
 	if err != nil {
 		return fmt.Errorf("listing vulnerability history: %w", err)
@@ -437,7 +437,7 @@ func runVulnShowHistory(ctx context.Context, coord coordinate.ModuleCoordinate, 
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(toVulnRecordsJSON(recs)); err != nil {
+		if err := enc.Encode(toVulnRecordsJSON(recs, newRecordRootFunc(ctx, graphs))); err != nil {
 			return fmt.Errorf("encoding vulnerability history: %w", err)
 		}
 		return nil
@@ -548,7 +548,7 @@ which is what "which of my modules is hit by this CVE" usually means.`,
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runVulnByID(cmd.Context(), args[0], walkID, jsonOut, ctr.QueryVuln, stdout)
+			return runVulnByID(cmd.Context(), args[0], walkID, jsonOut, ctr.QueryVuln, ctr.QueryCallGraph, stdout)
 		},
 	}
 
@@ -557,7 +557,7 @@ which is what "which of my modules is hit by this CVE" usually means.`,
 	return cmd
 }
 
-func runVulnByID(ctx context.Context, findingID, walkID string, jsonOut bool, uc QueryVulnUseCase, stdout io.Writer) error {
+func runVulnByID(ctx context.Context, findingID, walkID string, jsonOut bool, uc QueryVulnUseCase, graphs QueryCallGraphUseCase, stdout io.Writer) error {
 	// Wrapped with the command name rather than a second description of the
 	// operation: the use case already says "listing vulnerability records by
 	// finding ID", and repeating that here tells the reader nothing new.
@@ -572,7 +572,7 @@ func runVulnByID(ctx context.Context, findingID, walkID string, jsonOut bool, uc
 		// an unqualified negative here is the whole failure mode.
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(toVulnRecordsJSON(records)); err != nil {
+		if err := enc.Encode(toVulnRecordsJSON(records, newRecordRootFunc(ctx, graphs))); err != nil {
 			return fmt.Errorf("encoding vulnerability records: %w", err)
 		}
 		return nil
