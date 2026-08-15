@@ -24,7 +24,22 @@ import (
 // PipelineVersion identifies this release of the license extraction pipeline.
 // Bump this constant whenever extraction logic changes to ensure old records
 // are not confused with new ones.
-const PipelineVersion = "1.2.0"
+//
+// 1.3.0 reads the licence file's prose to decide how several grants in one file
+// relate, where 1.2.0 inferred it from the confidence delta between two text
+// matches. The bump is owed because it changes what a re-derived record
+// CONTAINS: Expression and PrimarySPDX are both inside canonicalLicenseRecord
+// and therefore sealed, and 21 of the store's expressions change — a per-file
+// split reads as a conjunction rather than an election, and a third party's
+// grant bundled into the file leaves the expression entirely. Two modules'
+// PrimarySPDX changes with it, because the bundled text was the larger one and
+// the detector's most-covered match was naming the wrong licence.
+//
+// The cost is a full re-extraction: the prose lives only in the module zip, so
+// no stored record can be re-read into the new answer. Records are keyed
+// (module, version, pipeline_version), so the 1.2.0 rows stay readable as what
+// the earlier generation concluded rather than being replaced.
+const PipelineVersion = "1.3.0"
 
 // ExtractLicenseUseCase extracts and persists license information for a
 // single Go module at a pinned version.

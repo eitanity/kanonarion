@@ -228,6 +228,51 @@ jobs:
             exit 1
           fi
 
+      - name: Attribution drift gate (THIRD-PARTY-LICENSES reproduces)
+        run: |
+          set -euo pipefail
+          # The committed THIRD-PARTY-LICENSES is the attribution artefact that
+          # ships with the release. It is generated, so it can drift: an
+          # extraction fix, a dependency bump or a corrected licence changes
+          # what the tool says while the committed file keeps stating the old
+          # answer. This step regenerates it and fails the release on any
+          # difference, so the file that ships is the file the tool produces.
+          #
+          # It runs HERE, not in the CI workflow, because regenerating needs a
+          # populated store: a licence record and the module zip for every
+          # linked module. The pull-request runners have neither, and building
+          # one there would mean fetching the whole module graph on every push.
+          # This job already has one — the self-audit and self-SBOM steps above
+          # fetched and extracted exactly the './cmd/kanonarion' closure this
+          # command reads, and the linux/amd64 SBOM pass covers the same module
+          # set on the same host platform. A check that silently skips is worse
+          # than no check, so it is placed where the store exists.
+          #
+          # 'notice' reads stored records and shells out to 'go list -deps'
+          # against the build-populated module cache; it contacts no network.
+          # Its scope line goes to stderr, the document to stdout.
+          #
+          # The regenerated copy goes to the runner temp dir, not dist/: the
+          # release upload is 'gh release create ... dist/*', so anything left
+          # in dist/ becomes a published asset.
+          ./dist/kanonarion_linux_amd64 notice \
+            --package ./cmd/kanonarion \
+            > "${RUNNER_TEMP}/THIRD-PARTY-LICENSES.regenerated"
+          # -F labels each hunk with the nearest preceding 'Module:' line, so a
+          # failure log points at a module rather than at a line number. The
+          # document repeats whole licence texts verbatim, so diff's heuristics
+          # can report a larger edit script than the difference really is — read
+          # the hunk bodies, not the line counts.
+          if ! diff -u -F '^Module:  ' \
+            THIRD-PARTY-LICENSES \
+            "${RUNNER_TEMP}/THIRD-PARTY-LICENSES.regenerated"; then
+            echo >&2
+            echo "THIRD-PARTY-LICENSES does not match what kanonarion generates." >&2
+            echo "Regenerate it and commit the result:" >&2
+            echo "    kanonarion notice --package ./cmd/kanonarion > THIRD-PARTY-LICENSES" >&2
+            exit 1
+          fi
+
       # Attestations run BEFORE signing so the kanonarion_* glob resolves to
       # binaries only (no .sigstore.json bundles present yet).
       - name: Attest build provenance

@@ -44,6 +44,10 @@ func newNoticeCmd(stdout, stderr io.Writer) *cobra.Command {
 The document includes per-module: module coordinate, SPDX identifier, verbatim
 license text, and verbatim copyright notices.
 
+The 'License:' line names the module's primary identifier. A module governed by
+more than one grant carries a second 'License expression:' line with the full
+SPDX expression, emitted only where it says something the primary does not.
+
 Each licence block is headed by what the detector identified in THAT FILE, not
 by the module's identifier. A file the detector could not classify is recorded
 — path, size, hash, and any low-confidence fragment — and its content is not
@@ -528,6 +532,16 @@ func writeNoticeDocument(
 			}
 		}
 		ew.printf("License: %s\n", e.SPDX)
+		// The primary alone understates a module governed by several grants.
+		// The extra line is emitted only where the expression says something
+		// the primary does not: this document is read by a person building an
+		// obligations list, and "License: MIT / Expression: MIT" on every
+		// single-licence module trains that reader to skip the line that
+		// matters. Additive by design — the License: line keeps its meaning
+		// for anything already parsing it.
+		if e.Expression != "" && e.Expression != e.SPDX {
+			ew.printf("License expression: %s\n", e.Expression)
+		}
 		if len(e.Copyrights) > 0 {
 			ew.printf("\nCopyright notices:\n")
 			for _, c := range e.Copyrights {

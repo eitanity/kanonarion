@@ -145,6 +145,7 @@ func (uc *GenerateNoticeUseCase) processModule(
 	return &licensedomain.NoticeEntry{
 		Coordinate:         coord,
 		SPDX:               rec.PrimarySPDX,
+		Expression:         rec.Expression,
 		LicenseTexts:       licenseTexts,
 		Copyrights:         copyrights,
 		EmbeddedComponents: embeddedComps,
