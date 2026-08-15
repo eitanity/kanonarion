@@ -260,7 +260,9 @@ Two rules keep this honest:
   application — an isolated scan, or a `--gomod` walk that roots at the dependency
   closure — the answer carries `closure_rooted` and the command that would root it
   at the application, instead of presenting a dependency's own entry point as the
-  project's.
+  project's. The flag is on every classification, `false` included: a route that
+  does begin in the rooted module has been measured to, and the reader needs that
+  stated rather than inferred from a missing key.
 
 The classification is **derived at read time**, not stored: the facts it reads
 live in the call-graph ledger, so an answer improves as the graph does and no
@@ -287,7 +289,7 @@ nearest entry point:
 | `hops` | Edges from the nearest entry-point ancestor down to the root. `0` with `found` means the root **is** the entry point. A method value costs one hop more than the source reads, because the path goes through the synthetic wrapper (see [callgraph](callgraph.md#the-wrapper-hop)). |
 | `entry_point_id` / `entry_point_reason` | Which ancestor, and what made it one — the same reason string the `ingress` kind carries, so a package initialiser is never mistaken for a request handler. |
 | `weakest_confidence` | The weakest edge on that path. It is what stops a distance being read as a certainty: four hops of CHA over-approximation are not four hops of resolved calls. |
-| `via_reference` | At least one hop is a **registration rather than a call** (see [callgraph](callgraph.md#calls-and-references)). Carried apart from the confidence because a reference resolves exactly and would otherwise report `Direct`. |
+| `via_reference` | At least one hop is a **registration rather than a call** (see [callgraph](callgraph.md#calls-and-references)). Carried apart from the confidence because a reference resolves exactly and would otherwise report `Direct`. Always present: `false` says every hop on this path is a call, which is the caveat's absence and not its non-derivation. |
 | `search_bound` | The hop limit used. `0` is unbounded, which is what the search uses, so `found: false` means "nothing enters this code" and not "not within N hops". |
 
 The kind is **not** made transitive, and the distance is not a kind. On the same

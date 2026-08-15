@@ -191,7 +191,10 @@ pipeline 0.4.0 and answers no query from them. Re-extract one:
 
 The listing shows every stored record whatever produced it, so a marked row is
 still a row: it says the record is there and that no query will be answered
-from it. `--json` carries the same as `pipeline_version` and `superseded`.
+from it. `--json` carries the same as `pipeline_version` and `superseded`, and
+both are on every row: `superseded: false` is what says a record IS servable,
+and a consumer reading only the marked rows would otherwise have no key to read
+that from.
 
 ### `symbol-find`
 

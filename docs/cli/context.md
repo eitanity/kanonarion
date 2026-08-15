@@ -215,8 +215,8 @@ selection). The list is sorted lexicographically by module path.
 | `status` | string | `not_run` / `read_error` / walk status (`succeeded`, `partial`, `failed`, `cancelled`) |
 | `walk_id` | string | ID of the walk record this was drawn from |
 | `frame` | string | `GOOS/GOARCH` that walk resolved for, or `unrecorded` for a walk taken before the frame was recorded |
-| `count` | int | Number of direct dependencies |
-| `partial` | bool | True when the walk graph was partial - some transitive deps could not be resolved, so the direct dep list may be incomplete |
+| `count` | int | Number of direct dependencies. Always present; `0` is the measurement that the module has none |
+| `partial` | bool | True when the walk graph was partial - some transitive deps could not be resolved, so the direct dep list may be incomplete. Always present; `false` is the measurement that the graph resolved completely |
 | `dependencies` | array | Direct dependencies sorted by path |
 | `dependencies[].path` | string | Module import path |
 | `dependencies[].version` | string | MVS-selected version |
@@ -238,7 +238,7 @@ relationships within that walk.
 | `status` | string | `not_fetched` / `read_error` / verification status (e.g. `Verified`) |
 | `extracted_at` | string | RFC3339 fetch timestamp |
 | `git_url` | string | Resolved VCS URL |
-| `retracted` | bool | True when the version is retracted |
+| `retracted` | bool | True when the version is retracted. Always present; `false` is the measurement that the author has not withdrawn it |
 | `error` | string | Set when `status` is `read_error` |
 
 ### `provenance`
@@ -265,7 +265,7 @@ suggests a fork of `<canonical>` - verify"* - never a verdict.
 | `status` | string | `not_run` / `read_error` / detector status (e.g. `Detected`, `Unclassified`) |
 | `spdx` | string | Primary SPDX identifier; empty when `status` is `Unclassified` |
 | `low_confidence_spdx` | string | A recognisable but sub-threshold licence fragment, set only when `spdx` is empty. Present when a root licence file was found and a known licence was partially matched but coverage fell below the substantive floor - e.g. a truncated AGPL-3.0 whose only matching span is the "how to apply" appendix |
-| `low_confidence_coverage` | float | Coverage fraction (0.0-1.0) of the `low_confidence_spdx` match |
+| `low_confidence_coverage` | float\|null | Coverage fraction (0.0-1.0) of the `low_confidence_spdx` match. Always present; `null` when no sub-threshold fragment was matched, which is every confidently classified module |
 | `extracted_at` | string | RFC3339 extraction timestamp |
 | `error` | string | Set when `status` is `read_error` or extraction detail |
 
@@ -304,11 +304,11 @@ the coverage it saw, never a confident SPDX it cannot stand behind.
 |---|---|---|
 | `status` | string | `not_run` / `read_error` / extractor status |
 | `algorithm` | string | Analysis algorithm used (e.g. `CHA`) |
-| `node_count` | int | Total call graph nodes |
-| `edge_count` | int | Total call graph edges |
+| `node_count` | int | Total call graph nodes. Always present; `0` is a real extraction result — a module analysed at a fidelity that records no nodes |
+| `edge_count` | int | Total call graph edges. Always present at `0` for the same reason as `node_count` |
 | `entry_points_by_package` | object | Count of exported API entry points per package |
 | `entry_points` | array | Flat list of entry point IDs (only with `--entry-points-full`) |
-| `entry_point_count` | int | Total entry points (only with `--package` filter) |
+| `entry_point_count` | int\|null | Entry points in the package `--package` named. Always present; `null` without that flag, where no single-package count is derived and `entry_points_by_package` carries the breakdown |
 | `extracted_at` | string | RFC3339 extraction timestamp |
 | `error` | string | Set when `status` is `read_error` |
 
@@ -317,7 +317,7 @@ the coverage it saw, never a confident SPDX it cannot stand behind.
 | Field | Type | Description |
 |---|---|---|
 | `status` | string | `not_run` / `read_error` / `Found` / `None` |
-| `count` | int | Number of examples (after any `--package` filter) |
+| `count` | int | Number of examples (after any `--package` filter). Always present; `0` is the measurement that the module has none |
 | `examples` | array | Example entries |
 | `examples[].name` | string | Example function name |
 | `examples[].symbol` | string | Associated symbol (if any) |
@@ -392,9 +392,9 @@ peer annotation appears. To ask about a specific build, pass `--walk-id` or
 | `findings[].aliases` | array | Alternative identifiers |
 | `findings[].summary` | string | One-line description |
 | `findings[].fixed_in` | string | Earliest version with a fix |
-| `findings[].score` | float | CVSS score |
+| `findings[].score` | float\|null | CVSS base score. Always present; `null` when the advisory publishes no severity, which is different from a published `0.0` |
 | `findings[].withdrawn_at` | string | Retraction timestamp, present **only** on an advisory retracted upstream. Absent means live — the retraction is a fact on the finding, never something to infer from the `WITHDRAWN: ` prefix upstream puts on the summary |
-| `findings[].reachable` | bool | Reachability verdict (null if not analysed) |
+| `findings[].reachable` | bool\|null | Reachability verdict. Always present; `null` when no reachability analysis answered for this finding — `soundness` cannot stand in for it, since it reads `not stated` for a positive verdict too |
 | `findings[].soundness` | string | How thorough the search behind a **negative** was: `confirmed`, `inferred`, `unconfirmed`, `unsearchable`, or `not stated` where there is no absence to qualify. Always present. Derived at read time from the analyser the stored answer names, so it is on records scanned long before the field existed. See [reachability](reachability.md#a-negative-states-how-sound-the-search-behind-it-was) |
 | `findings[].soundness_reason` | string | The basis for that rung in the producing analyser's own terms. Absent where no rung is stated |
 
@@ -413,6 +413,8 @@ or `Affected (2 finding(s), 1 retracted)` for a mixture.
 | `walk_basis_frame` | string | The frame that walk was rooted at (e.g. `target-rooted:example.com/app@v1.0.0`). Omitted when the walk record is no longer in the store, which loses the frame but not the walk's identity |
 | `walk_window_note` | string | Why this section carries no run context: the record's walk falls outside the 10-walk recency window the report loaded runs for. Omitted whenever the window covered every walk in the store |
 | `snapshot_version` | string | Vulnerability database snapshot date |
+| `snapshot_retrieved_at` | string | When that snapshot was fetched. Absent when the record's snapshot carries no retrieval time |
+| `snapshot_age_days` | int\|null | How old the snapshot was when the verdict was validated. Always present; `0` is the freshest answer the field has — validated against a snapshot pulled the same day — and `null` means the snapshot carries no retrieval time to measure from |
 | `extracted_at` | string | RFC3339 scan timestamp |
 | `error` | string | Set when `status` is `read_error` |
 

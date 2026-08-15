@@ -533,8 +533,10 @@ type routeRootOutput struct {
 	Reason string `json:"reason,omitempty"`
 	// ClosureRooted says the route does not begin in the module the analysis was
 	// rooted at: the application's own entry points were never analysed, so the
-	// hop above this root is missing rather than absent.
-	ClosureRooted bool `json:"closure_rooted,omitempty"`
+	// hop above this root is missing rather than absent. Emitted on every
+	// classification, false included — this object exists only when a root WAS
+	// classified, so the flag was always derived and false is its answer.
+	ClosureRooted bool `json:"closure_rooted"`
 	// NodeID is the call-graph node the classification was read off, so a reader
 	// can re-run the measurement.
 	NodeID string `json:"node_id,omitempty"`
@@ -563,7 +565,12 @@ type rootAncestryOutput struct {
 	// distance carries. A distance read without it is a claim.
 	Weakest string `json:"weakest_confidence,omitempty"`
 	// ViaReference says at least one hop is a registration rather than a call.
-	ViaReference bool `json:"via_reference,omitempty"`
+	// It is emitted on every ancestry, false included: this object is built only
+	// when the search ran, so false is the measurement "every hop on the path is
+	// a call" — the caveat's absence, not the caveat's non-derivation. It is the
+	// strongest qualifier a "reachable" verdict carries, and a consumer that
+	// cannot see it stated cannot tell a clean chain from an unexamined one.
+	ViaReference bool `json:"via_reference"`
 	// SearchBound is the hop limit the search used; 0 means unbounded, so
 	// found:false is "nothing enters this code" rather than "not within N hops".
 	SearchBound int `json:"search_bound"`

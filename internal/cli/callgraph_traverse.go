@@ -374,9 +374,12 @@ func countOf(n int, kind string) string {
 
 // transitiveResult is the JSON shape for --transitive output.
 type transitiveResult struct {
-	Root      string            `json:"root"`
-	Direction string            `json:"direction"`
-	MaxDepth  int               `json:"max_depth,omitempty"`
+	Root      string `json:"root"`
+	Direction string `json:"direction"`
+	// MaxDepth is the depth limit the traversal ran under, and 0 is the answer
+	// "unlimited" rather than the absence of one — the caller always set it, by
+	// flag or by default, so there is no unmeasured state to encode.
+	MaxDepth  int               `json:"max_depth"`
 	NodeCount int               `json:"node_count"`
 	EdgeCount int               `json:"edge_count"`
 	Nodes     []string          `json:"nodes"`

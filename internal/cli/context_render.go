@@ -24,9 +24,20 @@ func licenseSummaryLine(l contextLicense) string {
 	}
 	if l.LowConfidenceSPDX != "" {
 		return fmt.Sprintf("%s — license file present; low-confidence %s match (~%d%% coverage)",
-			l.Status, l.LowConfidenceSPDX, coveragePercent(l.LowConfidenceCoverage))
+			l.Status, l.LowConfidenceSPDX, coveragePercent(lowConfidenceCoverageOf(l)))
 	}
 	return fmt.Sprintf("%s (license file present, could not classify)", l.Status)
+}
+
+// lowConfidenceCoverageOf reads the coverage of a sub-threshold licence match,
+// which is absent whenever no such match was found. The text form prints it
+// only under a non-empty LowConfidenceSPDX, so the fallback is never reached in
+// practice and is here so a nil can never panic a renderer.
+func lowConfidenceCoverageOf(l contextLicense) float64 {
+	if l.LowConfidenceCoverage == nil {
+		return 0
+	}
+	return *l.LowConfidenceCoverage
 }
 
 // coveragePercent converts a 0.0–1.0 coverage fraction to a whole-number

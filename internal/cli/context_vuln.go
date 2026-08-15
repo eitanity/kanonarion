@@ -505,7 +505,8 @@ func vulnRecordToContext(rec *vuldomain.VulnerabilityRecord, walkStatus, walkCov
 	}
 	if !rec.DatabaseSnapshot.RetrievedAt().IsZero() {
 		out.SnapshotRetrievedAt = isoTime(rec.DatabaseSnapshot.RetrievedAt())
-		out.SnapshotAgeDays = vuldomain.SnapshotAgeDays(rec.ScannedAt, rec.DatabaseSnapshot.RetrievedAt())
+		age := vuldomain.SnapshotAgeDays(rec.ScannedAt, rec.DatabaseSnapshot.RetrievedAt())
+		out.SnapshotAgeDays = &age
 	}
 	for _, f := range rec.Findings {
 		cve := contextCVE{
@@ -515,7 +516,8 @@ func vulnRecordToContext(rec *vuldomain.VulnerabilityRecord, walkStatus, walkCov
 			FixedIn: f.FixedIn,
 		}
 		if f.Severity != nil {
-			cve.Score = f.Severity.Score
+			score := f.Severity.Score
+			cve.Score = &score
 		}
 		if f.IsWithdrawn() {
 			cve.WithdrawnAt = isoTime(f.WithdrawnAt)

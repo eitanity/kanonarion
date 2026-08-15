@@ -122,7 +122,15 @@ type auditModuleResult struct {
 	// the difference. It is a new field, so a consumer that has never heard of it
 	// reads exactly what it read before, and one that has can tell a retraction from
 	// a finding — which the single tally could not express.
-	VulnWithdrawn int `json:"vuln_withdrawn,omitempty"`
+	//
+	// Emitted on every row, zero included, and a plain int rather than a pointer.
+	// It is derived by the same call, from the same record, as VulnFindings: a row
+	// with no scan gets nought for both, and WHICH absence that is — not scanned,
+	// superseded, record unreadable — is stated by VulnStatus and VulnReason, not
+	// by a missing key. Under `omitempty` "no advisory was retracted" and "this
+	// build does not report retractions" were the same document, and the count sat
+	// on a different convention from the sibling it is a subset of.
+	VulnWithdrawn int `json:"vuln_withdrawn"`
 	// VulnReason carries the diagnostic for a non-clean, non-affected status
 	// (ScanFailed → ErrorDetail, Unscannable → UnscannableReason). Absent for
 	// Clean/Affected. Without it a ScanFailed row is an "absence-as-answer".
@@ -150,11 +158,25 @@ type auditModuleResult struct {
 	// an uncertain licence under scope unknown_license = block, or a policy
 	// scope no rule covers (unevaluated); `audit` exits non-zero when any
 	// result is blocking.
-	PolicyBlocking bool `json:"policy_blocking,omitempty"`
+	//
+	// Emitted on every row, false included, and a plain bool: both row builders
+	// evaluate the licence policy before they return, so there is no row on which
+	// the gate was not run and no state a null would name. The other CLI surfaces
+	// that carry this fact — directives, fips, godebug, vendor — already emit it
+	// unconditionally.
+	PolicyBlocking bool `json:"policy_blocking"`
 	// PolicyUnevaluated is true when the policy scope in force matched no
 	// license_policy rule: the gate evaluated nothing for this row, which is
 	// reported and blocking — never an implicit allow.
-	PolicyUnevaluated bool `json:"policy_unevaluated,omitempty"`
+	//
+	// Emitted on every row, false included. It is the field that says the gate ran
+	// and matched nothing, so omitting it at false destroyed the one distinction it
+	// exists to draw: with this and PolicyBlocking both absent, "policy evaluated,
+	// nothing blocks" and "no policy evaluated" were the same document. Plain, not
+	// a pointer — a null would be a second encoding of "the gate did not decide",
+	// competing with the false/true this field already carries, and nothing
+	// produces it.
+	PolicyUnevaluated bool `json:"policy_unevaluated"`
 	// IsLatest answers "is the pin the newest version of this module path".
 	//
 	// It is a pointer because the question is not always asked. A fully offline
