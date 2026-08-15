@@ -779,6 +779,11 @@ func TestRunScanShow_ReadErrorReported(t *testing.T) {
 // A coordinate in PerModuleResults with no backing record is a coverage gap: it
 // is reported under its own heading, not silently dropped, so the module count
 // in the header stays accounted for.
+//
+// It is also not a success. The run's header asserts a verdict; a module the run
+// counted and this build cannot serve means part of the body behind that verdict
+// is not there, and a caller branching on the exit status alone must not read
+// that as a clean report.
 func TestRunScanShow_MissingRecordReported(t *testing.T) {
 	run, _ := fixtureRunAndRec(t)
 
@@ -789,8 +794,13 @@ func TestRunScanShow_MissingRecordReported(t *testing.T) {
 	ucVuln := testfakes.NewFakeQueryVuln()
 
 	var buf bytes.Buffer
-	if err := runScanShow(context.Background(), fixtureScanID, false, ucRuns, ucVuln, nil, &buf, io.Discard); err != nil {
-		t.Fatalf("unexpected error: %v", err)
+	err := runScanShow(context.Background(), fixtureScanID, false, ucRuns, ucVuln, nil, &buf, io.Discard)
+	if err == nil {
+		t.Fatalf("runScanShow() = nil, want exit %d for a module the run counted and no record backs", ExitNotFound)
+	}
+	code, ok := ExitCodeFromError(err)
+	if !ok || code != ExitNotFound {
+		t.Errorf("exit code = %d (carried %v), want %d", code, ok, ExitNotFound)
 	}
 	out := buf.String()
 	if !strings.Contains(out, "No scan record (1)") {

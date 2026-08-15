@@ -273,6 +273,21 @@ type scanShowJSON struct {
 	ScanFailures     []scanRecordFault    `json:"scan_failures,omitempty"`
 	ReadErrors       []scanRecordFault    `json:"read_errors,omitempty"`
 	MissingRecords   []string             `json:"missing_records,omitempty"`
+	// Superseded says whether this run's records were written by a pipeline
+	// generation this build does not read. It is derived — a comparison against
+	// the version this binary serves, which is a fact about the reader and not
+	// about the run — and it is emitted on every run, false included: absent
+	// would be indistinguishable from a producer that does not derive it.
+	// ReadsPipelineVersion is the other half of the comparison, beside the run's
+	// own pipeline_version, because a consumer cannot make it otherwise.
+	Superseded           bool   `json:"superseded"`
+	ReadsPipelineVersion string `json:"reads_pipeline_version"`
+	// SupersededRecords are the modules the run named whose records the store
+	// still holds, at that superseded generation. They are not missing_records
+	// and must not be reported as such: missing_records says nothing backs the
+	// verdict, and for these something does — it is held, identified, and
+	// declined.
+	SupersededRecords []supersededRunRecord `json:"superseded_records,omitempty"`
 	// InputsUnresolvable states, when present, that the walk this run names is
 	// gone: the findings below stand, but what was scanned cannot be recovered
 	// from this store. Absent on a run whose walk resolves.
@@ -303,6 +318,7 @@ type scanShowSummary struct {
 	unscannable *unscannableRollup
 	readErrors  []scanRecordFault
 	missing     []string
+	superseded  []supersededRunRecord
 	scanFailed  []scanRecordFault
 }
 
@@ -358,6 +374,10 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 			ScanFailures:     summary.scanFailed,
 			ReadErrors:       summary.readErrors,
 			MissingRecords:   summary.missing,
+
+			Superseded:           run.PipelineVersion != vulnPipelineVersion,
+			ReadsPipelineVersion: vulnPipelineVersion,
+			SupersededRecords:    summary.superseded,
 		}
 		if !walkPresent {
 			out.InputsUnresolvable = unresolvableInputsNote(run.WalkID)
@@ -367,7 +387,11 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 		if err := enc.Encode(out); err != nil {
 			return fmt.Errorf("encoding scan run: %w", err)
 		}
-		return nil
+		// The same gate as the text surface. A caller reading JSON branches on the
+		// exit status for the same reason a caller reading prose does, and the two
+		// surfaces answering one question with two numbers is the drift this change
+		// exists to remove.
+		return scanShowServedExit(summary.superseded, summary.missing, len(run.PerModuleResults))
 	}
 
 	_, _ = fmt.Fprintf(stdout, "ID:          %s\n", run.ID)
@@ -401,6 +425,7 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 	// skip, so the module count over the header is always accounted for.
 	writeScanFailures(summary.scanFailed, stdout)
 	writeScanRecordFaults(summary.readErrors, stdout)
+	writeSupersededScanRecords(summary.superseded, run.PipelineVersion, stdout)
 	writeMissingScanRecords(summary.missing, stdout)
 	writeScanModuleFindings(stdout, "Affected modules", affected)
 	// Printed after the affected list and separately from it: a reader scanning for
@@ -408,7 +433,17 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 	// stopped being listed finds it named here with the retraction date rather than
 	// having to notice its absence.
 	writeScanModuleFindings(stdout, "Withdrawn advisories, not counted as findings", summary.withdrawn)
-	return nil
+	// Last, under the whole report, because it explains the shape of everything
+	// above it rather than one section of it — the same place vuln-show's history
+	// listing puts the same statement.
+	walkRef := run.WalkID
+	if !walkPresent {
+		walkRef = ""
+	}
+	if note := supersededRunNote(summary.superseded, len(run.PerModuleResults), run.PipelineVersion, walkRef); note != "" {
+		_, _ = fmt.Fprint(stdout, note)
+	}
+	return scanShowServedExit(summary.superseded, summary.missing, len(run.PerModuleResults))
 }
 
 // writeScanModuleFindings prints one findings section: a heading with the module
@@ -472,6 +507,15 @@ func buildScanAffectedModules(ctx context.Context, run vuldomain.WalkScanRun, uc
 			continue
 		}
 		if !found {
+			// Two different statements, and the store settles which. A record the
+			// run named that is still held, at the generation the run ran under, is
+			// present and declined — saying no record backs the verdict would be
+			// false. Only a coordinate the store does not hold at that generation is
+			// the coverage gap the missing list describes.
+			if sup, superseded := supersededRunGeneration(ctx, uc, coord, run.PipelineVersion); superseded {
+				summary.superseded = append(summary.superseded, sup)
+				continue
+			}
 			summary.missing = append(summary.missing, coord.String())
 			continue
 		}
@@ -555,6 +599,21 @@ func writeScanRecordFaults(faults []scanRecordFault, w io.Writer) {
 	_, _ = fmt.Fprintf(w, "Read errors (%d): the vulnerability store could not be read for these modules — neither scanned nor absent\n", len(faults))
 	for _, f := range faults {
 		_, _ = fmt.Fprintf(w, "  %s: %s\n", f.Coordinate, f.Error)
+	}
+}
+
+// writeSupersededScanRecords prints the modules the run named whose records the
+// store holds under a generation this build does not read. Same section shape as
+// the read-error and coverage-gap sections it sits between, and each line carries
+// the size of what is behind that module's gap.
+func writeSupersededScanRecords(recs []supersededRunRecord, runPipeline string, w io.Writer) {
+	if len(recs) == 0 {
+		return
+	}
+	_, _ = fmt.Fprintf(w, "%s\n", supersededRunHeading(len(recs), runPipeline))
+	for _, r := range recs {
+		_, _ = fmt.Fprintf(w, "  %s (%d record(s), %d finding(s) at pipeline %s)\n",
+			r.Coordinate, r.Records, r.Findings, r.PipelineVersion)
 	}
 }
 

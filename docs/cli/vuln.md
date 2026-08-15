@@ -696,6 +696,60 @@ on the line it is rendered on, and `--json` gains an `inputs_unresolvable` field
 Walk ID:     01KQDBVW092ER1HNXZ60X27CMD (inputs unresolvable: walk absent from this store)
 ```
 
+#### A run this build cannot read in full
+
+A scan run stores the identities of the records it was built from, so a run
+recorded under an older scan pipeline names records this build does not serve.
+Those modules are listed under their own heading, with what the store still
+holds behind each, and a notice under the report names both generations:
+
+```
+Modules:     283
+Superseded scan records (279): the store holds these modules at pipeline v19 and this build reads pipeline v24, so none of them is served
+  cel.dev/expr@v0.25.1 (1 record(s), 0 finding(s) at pipeline v19)
+  ...
+
+notice: 279 of 283 module(s) this run names are recorded at pipeline v19, holding 366
+        record(s) and 57 finding(s) this build does not serve: it reads pipeline v24 and
+        the store holds them at pipeline v19. A superseded record is not served, so this
+        answer is empty for want of a scan at this generation — they have been
+        vuln-scanned, and this is a stale cache, not a coverage gap. Re-scanning does
+        not repair this run: a run names the records it was built from, so a new scan
+        writes new records beside these and leaves this run reading as it does.
+        Scan the walk again for a current answer:
+          kanonarion vuln-scan 01KZ6TG0NS1B8TYTV5YXCC6T3W --reachability
+```
+
+Re-scanning the walk does not change how this run renders. It produces a **new**
+run, at the current generation; the old one keeps naming the records it named.
+
+The exit code is `4` whenever any module the run counted produced no record this
+build serves — including the plain coverage gap below, whose modules the store
+does not hold at the run's generation either:
+
+```
+No scan record (1): the run reports a verdict for these modules but no record backs it
+```
+
+The report is printed in full before the refusal; the header, the module count,
+the `Withdrawn advisories` section and every other section are unaffected. A run
+recorded under an older pipeline whose modules have since been scanned against
+the same advisory snapshot renders in full and exits `0` — the code follows what
+could not be served, not the run's age.
+
+`--json` carries the same facts as fields:
+
+| Field | Meaning |
+|---|---|
+| `pipeline_version` | the generation the run was recorded under |
+| `reads_pipeline_version` | the generation this build serves |
+| `superseded` | whether the two differ; emitted on every run, `false` included |
+| `superseded_records` | per module: `coordinate`, `pipeline_version`, and the `records` and `findings` the store holds there. Absent when there are none |
+| `missing_records` | modules the store holds at no generation at all |
+
+A module is in `superseded_records` or in `missing_records`, never both: the
+first is held and declined, the second is not there.
+
 The text form lists finding ids per module and publishes no reachability
 verdict. `--json` does: each finding carries `reachable`, and beside it the
 derived `soundness` and `soundness_reason` that say how thorough the search
