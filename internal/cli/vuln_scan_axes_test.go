@@ -32,12 +32,17 @@ func TestBuildScanAffectedModules_ReportsAFindingAndItsCoverageGap(t *testing.T)
 		UnscannableReason: "metadata-only",
 		Findings:          []vuldomain.VulnerabilityFinding{{ID: "GO-2024-0001"}},
 		ScannedAt:         time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC),
+		// The run below names this record by its hash, and the report is read by
+		// that identity. A fixture whose record answers to no name is not a run
+		// this command can render.
+		ContentHash: "h1",
 	})
 	uc.AddRecord(analysed, vuldomain.VulnerabilityRecord{
 		Coordinate:     analysed,
 		OverallStatus:  vuldomain.StatusClean,
 		CoverageStatus: vuldomain.CoverageAnalysed,
 		FindingsStatus: vuldomain.FindingsRecordClean,
+		ContentHash:    "h2",
 	})
 	uc.AddRecord(failed, vuldomain.VulnerabilityRecord{
 		Coordinate:     failed,
@@ -45,6 +50,7 @@ func TestBuildScanAffectedModules_ReportsAFindingAndItsCoverageGap(t *testing.T)
 		CoverageStatus: vuldomain.CoverageFailedScan,
 		FindingsStatus: vuldomain.FindingsRecordClean,
 		ErrorDetail:    "govulncheck exited 1",
+		ContentHash:    "h3",
 	})
 
 	run := vuldomain.WalkScanRun{

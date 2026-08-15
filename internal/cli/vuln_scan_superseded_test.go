@@ -294,6 +294,8 @@ func TestScanShow_WithdrawnSectionAndModuleCountSurvive(t *testing.T) {
 
 	withdrawn := rec
 	withdrawn.Coordinate = other
+	// The hash the run pins for this module, because that is what the report reads.
+	withdrawn.ContentHash = "sha256:other"
 	withdrawn.OverallStatus = vuldomain.StatusAffected
 	f := withdrawn.Findings[0]
 	f.WithdrawnAt = f.PublishedAt

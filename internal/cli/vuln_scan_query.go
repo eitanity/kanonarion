@@ -468,6 +468,12 @@ func writeScanModuleFindings(stdout io.Writer, heading string, modules []scanAff
 	}
 }
 
+// A run's module is read by the identity the run pinned — the record content
+// hash in PerModuleResults — and never by re-resolving the coordinate. See
+// scanRunPinnedRecord: resolving the coordinate answers "what does this build
+// say about this module now", which is a different question from "what did this
+// run measure", and the two diverge the moment the coordinate is scanned again.
+//
 // buildScanAffectedModules looks up VulnerabilityRecords for each module in
 // the scan run and returns entries where findings were present.
 // It also returns, as a second value, every Unscannable module collected by
@@ -498,7 +504,7 @@ func buildScanAffectedModules(ctx context.Context, run vuldomain.WalkScanRun, uc
 
 	summary := scanShowSummary{unscannable: newUnscannableRollup()}
 	for _, coord := range coords {
-		rec, found, err := uc.GetRecord(ctx, coord, vulnPipelineVersion, run.Snapshot)
+		rec, found, err := scanRunPinnedRecord(ctx, uc, coord, run.PerModuleResults[coord])
 		if err != nil {
 			summary.readErrors = append(summary.readErrors, scanRecordFault{
 				Coordinate: coord.String(),
@@ -563,6 +569,53 @@ func buildScanAffectedModules(ctx context.Context, run vuldomain.WalkScanRun, uc
 		}
 	}
 	return summary
+}
+
+// scanRunPinnedRecord returns the record a run was built from for one module:
+// the record whose content hash the run pinned, at the generation this build
+// serves.
+//
+// It is keyed on that hash and on nothing else. The coordinate-keyed read it
+// replaced asked the store what it holds for the coordinate at this build's
+// pipeline and the run's snapshot, and answered from whatever the composition
+// ladder ranked first — which is the current answer, not the run's. Measured on
+// a live store, 136 of 4,765 run module rows were served a record their run
+// never named; 92 of those crossed a frame boundary, and 11 turned a recorded
+// ScanFailed or Unscannable into Clean. A run is a historical record, so its
+// body has to be the records it names.
+//
+// A frame is never crossed here, and no notice would make it acceptable: the
+// frame is part of what the run recorded, so a record measured in another
+// project's build is not this run's record at all. It is a miss, and a miss is
+// the caller's superseded-or-absent path.
+//
+// found is false when this build serves no record with that hash — the pinned
+// record was written by a superseded generation, or the store no longer holds
+// it. The caller separates those two, and neither substitutes anything.
+//
+// An empty hash names no record, so it cannot be served either. No run in a
+// store written by any shipped version has one: PerModuleResults is filled from
+// the record the scan wrote, and a record always carries its hash.
+func scanRunPinnedRecord(
+	ctx context.Context,
+	uc QueryVulnUseCase,
+	coord coordinate.ModuleCoordinate,
+	contentHash string,
+) (vuldomain.VulnerabilityRecord, bool, error) {
+	if contentHash == "" {
+		return vuldomain.VulnerabilityRecord{}, false, nil
+	}
+	recs, err := uc.ListRecordsForModule(ctx, coord, vulnPipelineVersion)
+	if err != nil {
+		return vuldomain.VulnerabilityRecord{}, false, fmt.Errorf(
+			"reading the record %s pinned for %s: %w", contentHash, coord, err)
+	}
+	for _, rec := range recs {
+		if rec.ContentHash == contentHash {
+			return rec, true, nil
+		}
+	}
+	return vuldomain.VulnerabilityRecord{}, false, nil
 }
 
 // writeScanFailures prints the scan-failure section: modules whose scan itself

@@ -732,10 +732,14 @@ No scan record (1): the run reports a verdict for these modules but no record ba
 ```
 
 The report is printed in full before the refusal; the header, the module count,
-the `Withdrawn advisories` section and every other section are unaffected. A run
-recorded under an older pipeline whose modules have since been scanned against
-the same advisory snapshot renders in full and exits `0` — the code follows what
-could not be served, not the run's age.
+the `Withdrawn advisories` section and every other section are unaffected.
+
+Every module line is the record the run itself named, looked up by the content
+hash the run pinned. A later scan of the same module — under a newer pipeline,
+against a newer snapshot, or rooted at another project — is a different record
+and is never shown in this run's body, so a run recorded under an older pipeline
+reports all of its modules as superseded and exits `4` even where the coordinate
+has since been scanned again.
 
 `--json` carries the same facts as fields:
 
