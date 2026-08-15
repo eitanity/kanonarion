@@ -1,0 +1,9 @@
+# error-shaped: an empty store answers not-found rather than an empty list.
+$ kanonarion vuln-show example.com/mod@v1.2.0 --history --json
+exit 4
+--- error ---
+execute root command: no vulnerability records for example.com/mod@v1.2.0 — run 'kanonarion vuln-scan' first
+--- stdout ---
+(empty)
+--- stderr ---
+(empty)

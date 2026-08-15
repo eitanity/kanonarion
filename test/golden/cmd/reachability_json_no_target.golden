@@ -1,0 +1,9 @@
+# error-shaped: a query with no coordinate to answer about.
+$ kanonarion reachability --vuln GO-2026-0001 --json
+exit 20
+--- error ---
+execute root command: reachability --vuln requires a <module>@<version> argument
+--- stdout ---
+(empty)
+--- stderr ---
+(empty)

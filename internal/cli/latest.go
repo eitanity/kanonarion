@@ -335,7 +335,7 @@ func runLatestModules(ctx context.Context, modules []string, resolver *staleapp.
 func writeLatestSingleLine(stdout io.Writer, r latestResult) error {
 	days := 0
 	if !r.LatestDate.IsZero() {
-		days = int(time.Since(r.LatestDate).Hours() / 24)
+		days = int(cliSince(r.LatestDate).Hours() / 24)
 	}
 	var line string
 	switch {
@@ -373,7 +373,7 @@ func latestReleaseAgeDays(publishedAt time.Time) *int {
 	if publishedAt.IsZero() {
 		return nil
 	}
-	days := int(time.Since(publishedAt).Hours() / 24)
+	days := int(cliSince(publishedAt).Hours() / 24)
 	return &days
 }
 

@@ -1,0 +1,11 @@
+# error-shaped: nothing is stored, so no verdict can be served.
+$ kanonarion reachability example.com/mod@v1.2.0 --vuln GO-2026-0001 --json
+exit 4
+--- error ---
+execute root command: no vulnerability record for example.com/mod@v1.2.0: the module has not been vuln-scanned. Run:
+  kanonarion walk example.com/mod@v1.2.0
+  kanonarion vuln-scan --module example.com/mod@v1.2.0 --reachability
+--- stdout ---
+(empty)
+--- stderr ---
+(empty)

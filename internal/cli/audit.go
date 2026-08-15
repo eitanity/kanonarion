@@ -832,7 +832,7 @@ func applyAuditStaleness(ctx context.Context, res *auditModuleResult, coord coor
 			// Offline, so this row's whole answer is the recorded one: it states
 			// its own age. On the network path the table's dated footer already
 			// carries that statement for the run as a whole.
-			res.stalenessLedgerAge = time.Since(ans.LookedUpAt)
+			res.stalenessLedgerAge = cliSince(ans.LookedUpAt)
 		}
 	}
 	// Placed with semver, not string equality: a pin can sort ABOVE @latest, and

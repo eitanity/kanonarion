@@ -8,7 +8,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/eitanity/kanonarion/internal/adapters/clock"
 	proxyadapter "github.com/eitanity/kanonarion/internal/adapters/proxy/direct"
 	staleproxy "github.com/eitanity/kanonarion/internal/staleness/adapters/proxy"
 	stalesqlite "github.com/eitanity/kanonarion/internal/staleness/adapters/store/sqlite"
@@ -24,7 +23,7 @@ import (
 // be tested for the one thing that distinguishes them: whether the ledger is
 // read at all.
 func newStalenessResolver(latest staleports.LatestResolver, ledger staleports.Ledger, ttl time.Duration, fresh bool) *staleapp.Resolver {
-	return staleapp.NewResolver(latest, ledger, clock.System{}, ttl, fresh)
+	return staleapp.NewResolver(latest, ledger, cliClock, ttl, fresh)
 }
 
 // newProxyLatestResolver wraps the module proxy as the port the staleness
@@ -119,7 +118,7 @@ type offlineStalenessLookup struct {
 }
 
 func newOfflineStalenessLookup(ledger staleports.Ledger, ttl time.Duration) *offlineStalenessLookup {
-	return &offlineStalenessLookup{ledger: ledger, clk: clock.System{}, ttl: ttl}
+	return &offlineStalenessLookup{ledger: ledger, clk: cliClock, ttl: ttl}
 }
 
 // Resolve serves path's ledger row when it is inside the TTL.

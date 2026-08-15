@@ -1,0 +1,9 @@
+# error-shaped: the store read fails because there is no store.
+$ kanonarion context example.com/mod@v1.2.0 --json
+exit 20
+--- error ---
+execute root command: store not found at $EMPTY_STORE/mirror.db: run a kanonarion command to initialise it
+--- stdout ---
+(empty)
+--- stderr ---
+(empty)

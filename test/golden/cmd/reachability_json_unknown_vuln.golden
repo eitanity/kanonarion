@@ -1,0 +1,15 @@
+# empty: the coordinate was scanned and this advisory is not among its findings.
+$ kanonarion reachability example.com/mod@v1.2.0 --vuln GO-2099-9999 --json
+exit 0
+--- stdout ---
+{
+  "module": "example.com/mod",
+  "version": "v1.2.0",
+  "vuln_id": "GO-2099-9999",
+  "verdict": "not_affected",
+  "method": "none",
+  "soundness": "not stated",
+  "scanned_at": "2026-02-20T09:00:00Z"
+}
+--- stderr ---
+(empty)

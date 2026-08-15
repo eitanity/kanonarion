@@ -1,0 +1,9 @@
+# error-shaped: nothing recorded for this module and the environment forbids the network.
+$ kanonarion latest example.com/unknown --json
+exit 20
+--- error ---
+execute root command: GOPROXY=off: the environment declares no module fetching; run offline instead: --from-modcache reads the bytes already in $GOMODCACHE, and `kanonarion use --recursive` reconstitutes a module from the store
+--- stdout ---
+(empty)
+--- stderr ---
+(empty)
