@@ -471,9 +471,9 @@ this walk's modules has changed).
   working tree is always picked up. When the resolution matches a walk already
   stored, that walk's record is reused rather than a new one recorded. See
   [Reuse and re-derivation](#reuse-and-re-derivation).
-- **Project-rooted vuln scan** - `govulncheck` runs over the live working tree
-  when the walk or the advisory snapshot has changed, and is served from the
-  stored run when neither has.
+- **Project-rooted vuln scan** - served from the stored run unless one of the
+  [reuse conditions](#reuse-and-re-derivation) fails; `govulncheck` then runs
+  over the live working tree.
 
 ## Reuse and re-derivation
 
@@ -517,11 +517,11 @@ A stored scan is reused only when **all** of these hold:
 | same advisory snapshot (source, version, retrieval time and seal) | a newer advisory database re-scans |
 | same scan pipeline version | a newer kanonarion re-scans |
 | the stored run's coverage is **complete** | a partial or failed run is never served |
+| the project directory still requires the versions the walk resolved | a moved `go.mod` re-derives |
 
 To force a fresh measurement:
 
-- `--force` — re-fetches the modules, records a new walk and re-scans. This is
-  the flag for release evidence that must be measured now.
+- `--force` — re-fetches the modules, records a new walk and re-scans.
 - `--fresh` — refreshes the advisory database. It re-scans only when the refresh
   changes an advisory listed for a module in this walk; a database that moved for
   anything else leaves the stored run serving.

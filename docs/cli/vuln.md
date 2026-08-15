@@ -343,6 +343,7 @@ found the stored generation still current: nothing was transferred, so nothing
 is appended.
 
 ```
+kanonarion vuln-scan [flags]
 kanonarion vuln-scan [walk-id] [flags]
 kanonarion vuln-scan --module <module>@<version> [flags]
 kanonarion vuln-scan --gomod ./go.mod [flags]
@@ -350,13 +351,13 @@ kanonarion vuln-scan --tool [--gomod ./go.mod] [flags]
 kanonarion vuln-scan --project [--gomod ./go.mod] [flags]
 ```
 
-`--gomod`, `--tool`, and `--project` select the project's dependency **scope**
-and scan the latest succeeded project walk for that scope (one record produced
-by `walk --gomod [--tool|--project]`). The scope is consistent with every other
+`--gomod`, `--tool`, and `--project` select the project's dependency **scope** and
+scan the latest succeeded project walk for that scope (one record produced by
+`walk --gomod [--tool|--project]`). The scope is consistent with every other
 go.mod command - default `code`, `--tool` the tooling supply chain, `--project`
-the complete set; see [`walk` Scopes](walk.md#scopes-code-tool-complete). The
-matching walk must exist first (run `walk --gomod` with the same scope). A scope
-scan is mutually exclusive with a positional walk-id and with `--module`.
+the complete set; see [`walk` Scopes](walk.md#scopes-code-tool-complete). With no
+walk-id and no `--module`, `--gomod` defaults to `./go.mod`. A scope scan is
+mutually exclusive with a positional walk-id and with `--module`.
 
 **The walk must match this platform.** Selection filters on the current
 environment's `go env GOOS`/`GOARCH`, because build constraints select which
@@ -467,7 +468,7 @@ the current resolution, and scanning that walk gives a reachability answer again
 |------|---------|-------------|
 | `--store-root` | `~/.kanonarion` | Path to fact store root (or `KANONARION_STORE` env var) |
 | `--module` | _(none)_ | Look up the latest walk for `<module@version>` and scan it (not platform-filtered; such walks record no platform) |
-| `--gomod` | _(search upward from cwd)_ | Scan the latest project walk for this `go.mod`'s scope (default scope `code`) on this platform |
+| `--gomod` | `./go.mod` | Scan the latest project walk for this `go.mod`'s scope (default scope `code`) on this platform |
 | `--tool` | `false` | Scan the tooling supply chain (the latest tool-scoped project walk). Mutually exclusive with `--project` |
 | `--project` | `false` | Scan the complete set (the latest complete-scope project walk). Mutually exclusive with `--tool` |
 | `--force` | `false` | Force re-scan even if results exist; also re-runs on-demand callgraph extraction |

@@ -47,7 +47,7 @@ func newVulnScanCmd(stdout, stderr io.Writer) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "vuln-scan [walk-id]",
-		Short: "Scan all modules in a walk for vulnerabilities",
+		Short: "Scan all modules in a walk for vulnerabilities (no args: code deps of ./go.mod)",
 		Long: `Scan every module in a walk against the advisory database.
 
 Beside the result, on stderr, vuln-scan states the toolchain axis: the Go
@@ -56,14 +56,18 @@ against, and either that no toolchain advisory covers it or the ones that do.
 The advisory database keys the toolchain (cmd/go, the compiler, the linker)
 separately from stdlib and no project imports it, so no module scan can reach
 it. It is reported on its own and counted in no roll-up.`,
-		Example: `  kanonarion vuln-scan 01KQDBVW092ER1HNXZ60X27CMD
+		Example: `  kanonarion vuln-scan
+  kanonarion vuln-scan 01KQDBVW092ER1HNXZ60X27CMD
   kanonarion vuln-scan --module github.com/gin-gonic/gin@v1.6.2
   kanonarion vuln-scan --binary-pre-pass 01KQDBVW092ER1HNXZ60X27CMD
   kanonarion vuln-scan --tool
   kanonarion vuln-scan --tool --gomod ./go.mod`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			goModScope := f.gomod != "" || f.tool || f.project
+			// With neither a walk-id nor --module the scan is the project in
+			// the current directory, as it is for inspect, context and audit.
+			bare := f.moduleCoord == "" && len(args) == 0
+			goModScope := f.gomod != "" || f.tool || f.project || bare
 			if goModScope {
 				if len(args) > 0 {
 					return fmt.Errorf("a go.mod scope scan (--gomod/--tool/--project) and a positional walk-id are mutually exclusive")
@@ -72,9 +76,6 @@ it. It is reported on its own and counted in no roll-up.`,
 			}
 			if f.moduleCoord != "" && len(args) > 0 {
 				return fmt.Errorf("--module and a positional walk-id are mutually exclusive")
-			}
-			if f.moduleCoord == "" && len(args) == 0 {
-				return fmt.Errorf("provide either a walk-id argument, --module <module@version>, --gomod, --tool, or --project")
 			}
 			if f.moduleCoord != "" {
 				return runVulnScanByModule(cmd.Context(), f, stdout, stderr)
@@ -93,7 +94,7 @@ it. It is reported on its own and counted in no roll-up.`,
 	cmd.Flags().StringVar(&f.moduleCoord, "module", "", "look up the latest walk ROOTED AT <module@version> (its own target, not a walk that merely contains it as a dependency) and scan it; such a walk records no target platform, and the scan says so")
 	cmd.Flags().BoolVar(&f.tool, "tool", false, "scan the tooling supply chain: the latest tool-scoped project walk for this GOOS/GOARCH (requires prior walk --tool)")
 	cmd.Flags().BoolVar(&f.project, "project", false, "scan the complete set: the latest complete-scope project walk for this GOOS/GOARCH (requires prior walk --project)")
-	cmd.Flags().StringVar(&f.gomod, "gomod", "", "scan the latest project walk for this go.mod's scope and this GOOS/GOARCH (default: search upward from cwd); default scope is code")
+	cmd.Flags().StringVar(&f.gomod, "gomod", "", "scan the latest project walk for this go.mod's scope and this GOOS/GOARCH (default: ./go.mod); default scope is code")
 	cmd.Flags().StringVar(&f.policyPath, "policy", "", "path to depth policy YAML (default: search upward for .kanonarion/policy.yaml)")
 	cmd.Flags().BoolVar(&f.noVendor, "no-vendor", false,
 		"analyse the fetched artefacts even when the project is vendored (default: analyse vendor/, the source the project compiles)")

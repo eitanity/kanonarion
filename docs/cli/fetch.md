@@ -64,7 +64,7 @@ kanonarion fetch <module>@<version> [flags]
 | `--skip-vcs-verify` | `false` | Skip git cross-verification (requires `git` on `PATH`); checksum verification still runs |
 | `--goproxy` | `$GOPROXY` or `proxy.golang.org` | Override the module proxy. `off` and `direct` mean the same here as in `$GOPROXY` - see [`GOPROXY=off` and `direct`](#goproxyoff-and-direct) |
 | `--list-versions` | `false` | List available versions from the proxy and exit without fetching |
-| `--gomod` | _(search upward from cwd)_ | Path to a `go.mod` file; fetch its dependency scope instead of a positional module |
+| `--gomod` | `./go.mod` | Path to a `go.mod` file; fetch its dependency scope instead of a positional module |
 | `--tool` | `false` | Fetch the tooling supply chain (the `go.mod` tool directives' closure) instead of a positional module. Mutually exclusive with `--project`; refused by name alongside a positional module |
 | `--project` | `false` | Fetch the complete set: the project's code **and** tooling (the full Go build list). Mutually exclusive with `--tool`; refused by name alongside a positional module |
 | `--allow-verification-downgrade` | `false` | Permit a weaker re-measurement of a coordinate to be recorded alongside a stronger stored one. Without it the weaker measurement is refused, the stronger record is kept and answers, and the run warns. See [Re-measuring with a weaker anchor](#re-measuring-with-a-weaker-anchor---allow-verification-downgrade) |

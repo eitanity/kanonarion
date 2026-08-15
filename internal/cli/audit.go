@@ -48,7 +48,7 @@ func newAuditCmd(stdout, stderr io.Writer) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "audit",
-		Short: "Audit direct dependencies from a go.mod file",
+		Short: "Audit every dependency in a go.mod's scope",
 		Long: `Audit fetches, scans, and reports on every dependency in a go.mod's scope.
 
 For each module, audit shows:

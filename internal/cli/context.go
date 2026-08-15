@@ -343,13 +343,13 @@ func newContextCmd(stdout, stderr io.Writer) *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "context [<module>@<version>]",
-		Short: "Aggregate stored records into AI-ready context (no args: direct deps of ./go.mod)",
+		Short: "Aggregate stored records into AI-ready context (no args: code deps of ./go.mod)",
 		Long: `Aggregate all stored records for a module — verification, dependencies,
 license, interface, call graph, examples, vulnerabilities — into AI-ready
 context.
 
-With no arguments, context defaults to --gomod ./go.mod and emits one
-context entry per direct (non-indirect) dependency. This is the same module
+With no arguments, context defaults to --gomod ./go.mod and emits one context
+entry per module in the project's code-scope build list. This is the same module
 set a bare 'kanonarion inspect' walks, extracts, and vuln-scans, so the
 no-arg pair composes: run 'kanonarion inspect', then 'kanonarion context'.`,
 		Example: `  kanonarion context golang.org/x/mod@v0.35.0

@@ -38,7 +38,7 @@ walk  →  extract  →  query commands
 ```
 
 1. **`walk <module@version>`** - resolves the full transitive dependency graph and persists a `WalkRecord` to the local SQLite store.
-2. **`extract [walk-id]`** - runs all extraction stages (licence, interface, call graph, examples, vulnerabilities) for every module in the walk.
+2. **`extract [walk-id]`** - runs the licence, interface and examples stages for every module in the walk. The call graph is opt-in (`--stages callgraph`) because it can exhaust RAM on a large walk; `inspect` runs it. Vulnerabilities are `vuln-scan`'s.
 3. **Query commands** - fast, offline reads from the local store. No network required.
 
 The store lives at `~/.kanonarion` by default. All metadata is in a single SQLite database; module ZIPs are content-addressed blobs. Every fetch is verified against the Go checksum database.
@@ -105,10 +105,7 @@ by its walk id.)
 
 A module whose every matched advisory was **retracted upstream** reads `Withdrawn`,
 not `Clean`, and is reported in its own section with the retraction date. `Clean`
-says no advisory ever applied; `Withdrawn` says one did and was withdrawn. Folding
-the two together is what let a retracted advisory read exactly like an advisory that
-never existed — and, on the other side of the same gap, let one be reported as a live
-finding for a module nothing was wrong with.
+says no advisory ever applied; `Withdrawn` says one did and was withdrawn.
 
 **Drive the pipeline stage by stage.** `walk`, `extract`, and `vuln-scan` all
 key off a **walk id**. `walk` prints it, and you can always resolve the most
@@ -208,7 +205,7 @@ Example policies are in [`docs/examples/policies/`](docs/examples/policies/).
 
 ### Observability
 
-By default, `kanonarion` emits progress information at the `INFO` level. For large-scale module analysis (e.g., Envoy), high-frequency memory telemetry can be enabled for troubleshooting via `--log-level debug`.
+Logging defaults to `--log-level warn`. Long runs narrate on stderr with a throttled progress heartbeat, silenced by `--no-progress`. `--log-level info` adds per-module detail; `debug` adds memory telemetry for troubleshooting large closures.
 
 ---
 
@@ -236,14 +233,14 @@ tools. Have these on `PATH`:
 Network access is needed for the **first** run of a given module set only
 (module downloads, checksum database, VCS cross-verification, vulnerability
 database snapshot). Every query afterwards is served from the local store at
-`~/.kanonarion` with no network calls. Note that project rooted commands
-(audit, inspect, vuln-scan --gomod) still re-run the vulnerability scan over
-your live working tree using the cached modules and vulnerability database.
-`audit` also resolves each module's latest version live from the module proxy on
-every run (the staleness column), so it always makes those outbound calls even on
-a warm store.
-The flag --fresh re-downloads the vulnerability database snapshot and --force
-forces a re-fetch of the module set. 
+`~/.kanonarion` with no network calls. Project-rooted commands (`audit`,
+`inspect`, `vuln-scan`) serve a stored scan run rather than re-scanning, and name
+the run they reused; the conditions are in
+[reuse and re-derivation](docs/cli/audit.md#reuse-and-re-derivation).
+`audit`'s staleness column asks the module proxy for each module's latest
+version, but serves a recorded lookup younger than `staleness.ttl` (default
+`1h`), so a warm run costs nothing outbound. `--fresh` refreshes the advisory
+database; `--force` re-fetches the module set and re-measures.
 
 ## Building from source
 

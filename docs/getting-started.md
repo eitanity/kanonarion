@@ -100,11 +100,10 @@ How to read it: `Status` is the coverage roll-up
 modules have findings — two independent facts, so a run left `Partial` by an
 unscannable module still reports its real `Affected` count rather than hiding it.
 
-A module can also read `Withdrawn`: an advisory matched it and was later retracted
-upstream. That is not the same as `Clean` — `Clean` means no advisory ever applied —
-so such a module is listed in its own section with the retraction date and is kept
-out of the `Affected` count. Nothing to act on, but the history is stated rather
-than left as an unexplained absence.
+A module can also read `Withdrawn`: an advisory matched it and was later
+retracted upstream. That is not the same as `Clean` — `Clean` means no advisory
+ever applied — so such a module is listed in its own section with the
+retraction date and is kept out of the `Affected` count.
 `Snapshot` dates the vulnerability database the scan used (pass `--fresh`
 to pull a current snapshot), and the walk ID is the stored dependency
 walk you can feed to `walk-show`, `sbom`, or `context --walk-id`. With
@@ -120,17 +119,16 @@ reference project:
 | Run | Measured | What dominates |
 |---|---|---|
 | First run (empty store) | ~16 min | resolving the require graph (~470 module metadata fetches) and downloading + verifying the 21 build-list zips and extracting; fetching the vulnerability DB snapshot and scanning. Scales with dependency count and bandwidth. |
-| Re-run (warm store) | walk ~3 s **+ vuln scan** | The walk/extract stages are cache checks only (every walk logs `cached successful walk exists`), but `inspect` is project-rooted, so the vulnerability scan re-runs `govulncheck` over the live working tree every time - it is never cached (see the `audit` section below for the same behaviour and its ~2 min reference cost). |
+| Re-run (warm store) | ~3 s | The walk/extract stages are cache checks only (every walk logs `cached successful walk exists`), and the scan is served from the stored run under the conditions in the `audit` section below. A run that does re-scan costs the ~2 min reference figure. |
 
 These are for the 21-module reference project. Cost scales with closure size,
 and not gently. A **large project** measured end-to-end (velociraptor,
 **594 modules**): the cold walk took **~7 min** - all 594 modules fetched and
-verified concurrently under the default 16 workers (down from ~53 min when the
-fetch phase ran sequentially) - and extract → vuln-scan → context another
-~36 min, so roughly **45 min** for the first full run, now dominated by the
-scan rather than the walk. Tune `walk --workers` for proxy throughput on very
-large closures. Plan the first run against your *own* closure size, not the
-reference figure.
+verified concurrently under the default 16 workers - and extract → vuln-scan →
+context another ~36 min, so roughly **45 min** for the first full run, now
+dominated by the scan rather than the walk. Tune `walk --workers` for proxy
+throughput on very large closures. Plan the first run against your *own*
+closure size, not the reference figure.
 
 **Memory.** The first run is memory-intensive: peak resident set was ~2.5 GB on
 the reference project. The vulnerability scan dominates - `govulncheck` runs
@@ -146,21 +144,19 @@ figure; under-budgeting does not fail the run, it silently turns scans into
 
 **Progress output.** During the (long) walk and extract phases, `inspect`
 prints a throttled **progress heartbeat** to stderr - about one line every
-20 s, e.g. `walk progress: 142 modules fetched (3m20s elapsed)` during the
-walk and `extract progress: 89 modules processed (1m40s elapsed)` during
-extraction - so you can tell a healthy run from a hang without drowning in
-per-module output. (The vuln-scan phase already prints its own `[n/total]`
-line per module, so it needs no separate heartbeat.) The heartbeat goes to
-stderr only; stdout (and `--json`) is never touched. Suppress it with
-`--no-progress` (or `kanonarion config set preferences.progress false`); a warm
-re-run shorter than the interval prints nothing at all. `--no-progress` is
-accepted by every command that narrates progress - `walk`, `inspect`, `extract`,
-`vuln-scan`, `vuln-scan-rescan`, `audit` and `sbom` - and on the scanning commands it also silences
-the per-module `[n/total]` stream, which is the bulk of a long run's stderr. For full per-module
-detail (`fetch_start`, `fetch_end`, `cache_hit`, extraction lines, and the
+20 s, e.g. `walk progress: 142 modules fetched (3m20s elapsed)` during the walk
+and `extract progress: 89 modules processed (1m40s elapsed)` during extraction.
+(The vuln-scan phase already prints its own `[n/total]` line per module, so it
+needs no separate heartbeat.) The heartbeat goes to stderr only; stdout (and
+`--json`) is never touched. Suppress it with `--no-progress` (or `kanonarion
+config set preferences.progress false`); a warm re-run shorter than the
+interval prints nothing at all. `--no-progress` is accepted by every command
+that narrates progress - `walk`, `inspect`, `extract`, `vuln-scan`,
+`vuln-scan-rescan`, `audit` and `sbom` - and on the scanning commands it also
+silences the per-module `[n/total]` stream. For full per-module detail
+(`fetch_start`, `fetch_end`, `cache_hit`, extraction lines, and the
 vulnerability-snapshot byte-progress line) pass `--log-level info` instead.
-Set a generous timeout (e.g. 30 min) and let it finish. Every subsequent
-command in this guide is a local SQLite read.
+Every subsequent command in this guide is a local SQLite read.
 
 ### 3. Per-module context: `context`
 
@@ -233,31 +229,35 @@ Its version defaults to the live toolchain (`go env GOVERSION`);
 and `sbom` reproducible in CI. The release pipeline sets it on both.
 
 **Duration:** dominated by the vuln leg. The vulnerability verdict is
-**project-rooted** - one `govulncheck` over the project's live working tree - and
-is recomputed fresh every run (the working tree mutates, so it is never served
-from a cache), which took ~2 min on the reference project. Walk, licence and
-staleness columns are cached. The staleness column is backed by a store-side
-ledger: every successful `@latest` resolution is recorded against the module
-path, and any command that reports staleness serves a recording younger than
-`staleness.ttl` (default `1h`) instead of re-querying. A cold column still costs
-one `@latest` request per module; a warm one costs nothing outbound. The table
-always states the lookup time it used (`latest as of ...`) so a served answer is
-never mistaken for a live one, and `--fresh` bypasses the ledger.
+**project-rooted** - one `govulncheck` over the project's live working tree -
+and a measured one costs ~2 min on the reference project. It is not measured
+every run: a stored run is served when the walk, advisory snapshot and pipeline
+version match, its coverage is complete, and the directory still requires the
+versions the walk resolved - a source-only edit meets all five and does not
+re-scan. `audit` names the run it reused; `--force` re-measures. Conditions:
+[reuse and re-derivation](cli/audit.md#reuse-and-re-derivation).
 
-The staleness column reports **two** facts per module, never merged. The latest
-version at the module path itself, and - because a Go module's next major
-version lives at a *different* path - the newest major path that resolves
-(`newer major: .../v5@v5.3.1`). For a `+incompatible` pin that second fact
-includes its own major republished at `/vN`, which is usually the migration
-target. A dependency pinned several majors
-behind is at the latest version of its own path and is still a whole major line
-behind; reporting only the first would call it `current`.
+Walk, licence and staleness columns are cached. The staleness column is backed
+by a store-side ledger: every successful `@latest` resolution is recorded
+against the module path, and any command that reports staleness serves a
+recording younger than `staleness.ttl` (default `1h`) instead of re-querying. A
+cold column still costs one `@latest` request per module; a warm one costs
+nothing outbound. The table always states the lookup time it used (`latest as of
+...`) so a served answer is never mistaken for a live one, and `latest --fresh`
+bypasses the ledger.
+
+The staleness column reports **three** facts per module, never merged: the
+latest version at the module path itself; the pinned major's own `/vN`
+publication (`same major republished: .../v3@v3.3.5`), usually the migration
+target for a `+incompatible` pin; and - because a Go module's next major lives
+at a *different* path - the newest major path above the pinned one (`newer
+major: .../v5@v5.3.1`). A dependency several majors behind is at the latest
+version of its own path, so reporting only the first would call it `current`.
 
 ### 5. Drill-downs
 
-All of these are warm-store reads - nothing below re-analyses anything. They
-are not all the same cost, and the difference is a **record read** versus a
-**graph computation**:
+All of these are warm-store reads - nothing below re-analyses anything - but
+they are not all the same cost:
 
 - **Record reads** (`license-compat`, `vuln-show`, `interface-show`) return in
   **tens of milliseconds** - the store holds the answer and hands it over.
