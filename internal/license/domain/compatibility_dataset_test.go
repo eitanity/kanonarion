@@ -208,10 +208,10 @@ func TestCheckClosureCompatibility_UnmodelledTargetIsNamedAsSuch(t *testing.T) {
 	}
 }
 
-// TestIsTestCorpusPath covers the segment-exact rule the compatibility
-// consumer applies: "testdata" at any depth is a corpus, a longer name that
-// merely starts with it is not.
-func TestIsTestCorpusPath(t *testing.T) {
+// TestIsUnbuiltPath covers the segment-exact rule the artefact consumers
+// apply: "testdata", "_"-prefixed and "."-prefixed segments at any depth are
+// never compiled; a longer name that merely starts with one of them is.
+func TestIsUnbuiltPath(t *testing.T) {
 	t.Parallel()
 	for path, want := range map[string]bool{
 		"testdata":                           true,
@@ -223,9 +223,17 @@ func TestIsTestCorpusPath(t *testing.T) {
 		"internal/mytestdata":                false,
 		"testdata-fixtures":                  false,
 		"graph/formats/cytoscapejs/testdata": true,
+		"_examples":                          true,
+		"a/_build/c":                         true,
+		".github/workflows":                  true,
+		"examples":                           false,
+		"examples/basic":                     false,
+		"vendor/github.com/x/y":              false,
+		"a_b/c":                              false,
+		"a.b/c":                              false,
 	} {
-		if got := domain.IsTestCorpusPath(path); got != want {
-			t.Errorf("IsTestCorpusPath(%q) = %v, want %v", path, got, want)
+		if got := domain.IsUnbuiltPath(path); got != want {
+			t.Errorf("IsUnbuiltPath(%q) = %v, want %v", path, got, want)
 		}
 	}
 }

@@ -192,17 +192,14 @@ func (uc *GenerateNoticeUseCase) readLicenseTexts(
 		if f.IsVendored || !isRootLevel(f.Path) {
 			continue
 		}
-		content, found, rerr := archive.ReadFile(zipPrefix + f.Path)
+		nf, ok, rerr := noticeFileFor(archive, zipPrefix, f)
 		if rerr != nil {
-			return nil, nil, fmt.Errorf("reading %s from zip: %w", f.Path, rerr)
+			return nil, nil, rerr
 		}
-		if !found {
+		if !ok {
 			continue
 		}
-		texts = append(texts, licensedomain.NoticeLicenseFile{
-			Path:    f.Path,
-			Content: strings.TrimRight(string(content), "\n"),
-		})
+		texts = append(texts, nf)
 	}
 
 	// Embedded component texts grouped by prefix.
@@ -229,6 +226,9 @@ func collectEmbeddedComponentTexts(
 	}
 	compMap := make(map[string]*compEntry, len(rec.EffectiveSet.Components))
 	for _, c := range rec.EffectiveSet.Components {
+		if licensedomain.IsUnbuiltPath(c.PathPrefix) {
+			continue
+		}
 		cc := c // copy for map reference
 		compMap[cc.PathPrefix] = &compEntry{spdxs: cc.SPDXs}
 	}
@@ -247,16 +247,20 @@ func collectEmbeddedComponentTexts(
 			continue
 		}
 		comp.texts = append(comp.texts, licensedomain.NoticeLicenseFile{
-			Path:    f.Path,
-			Content: strings.TrimRight(string(content), "\n"),
+			Path:           f.Path,
+			Content:        strings.TrimRight(string(content), "\n"),
+			SPDX:           f.SPDX,
+			Classification: licensedomain.ClassificationLicence,
+			FileSize:       f.FileSize,
+			FileHash:       f.FileHash,
 		})
 	}
 
 	// Assemble in prefix order (Components is already sorted).
 	var result []licensedomain.NoticeEmbeddedComponent
 	for _, c := range rec.EffectiveSet.Components {
-		comp := compMap[c.PathPrefix]
-		if len(comp.texts) == 0 {
+		comp, kept := compMap[c.PathPrefix]
+		if !kept || len(comp.texts) == 0 {
 			continue
 		}
 		sort.Slice(comp.texts, func(i, j int) bool {
@@ -269,6 +273,61 @@ func collectEmbeddedComponentTexts(
 		})
 	}
 	return result
+}
+
+// noticeFileFor turns one root-level licence-named file into its attribution
+// block, saying what the pipeline identified in it rather than borrowing the
+// module's identifier.
+//
+// Three outcomes, and the difference between them is the point:
+//
+//   - the detector identified a licence: the file's OWN identifier labels the
+//     block and the text is reproduced verbatim;
+//   - the file is a NOTICE-style attribution document: reproduced verbatim,
+//     labelled as a notice, never as a licence — it declares no grant, and
+//     Apache-2.0 section 4(d) requires it to travel with the work;
+//   - the detector identified nothing: the file is RECORDED — path, size,
+//     hash, and any sub-threshold fragment — and its bytes are NOT reproduced.
+//     Unidentified bytes are not a grant, and printing them under a licence
+//     heading is what put scanner-fixture markup into the document.
+//
+// The second return is false when the file is absent from the archive.
+func noticeFileFor(
+	archive *ziparchive.Archive,
+	zipPrefix string,
+	f licensedomain.LicenseFileEntry,
+) (licensedomain.NoticeLicenseFile, bool, error) {
+	out := licensedomain.NoticeLicenseFile{
+		Path:                  f.Path,
+		SPDX:                  f.SPDX,
+		FileSize:              f.FileSize,
+		FileHash:              f.FileHash,
+		LowConfidenceSPDX:     f.LowConfidenceSPDX,
+		LowConfidenceCoverage: f.LowConfidenceCoverage,
+	}
+
+	switch {
+	case f.SPDX != "":
+		out.Classification = licensedomain.ClassificationLicence
+	case licensedomain.IsNoticeFileName(f.Path):
+		out.Classification = licensedomain.ClassificationNotice
+	default:
+		// Recorded, not reproduced. The archive is not read at all: there is
+		// nothing this document is entitled to say about those bytes beyond
+		// that they are there.
+		out.Classification = licensedomain.ClassificationUnclassified
+		return out, true, nil
+	}
+
+	content, found, err := archive.ReadFile(zipPrefix + f.Path)
+	if err != nil {
+		return licensedomain.NoticeLicenseFile{}, false, fmt.Errorf("reading %s from zip: %w", f.Path, err)
+	}
+	if !found {
+		return licensedomain.NoticeLicenseFile{}, false, nil
+	}
+	out.Content = strings.TrimRight(string(content), "\n")
+	return out, true, nil
 }
 
 // embeddedComponentPrefix returns the directory portion of a vendored file path.

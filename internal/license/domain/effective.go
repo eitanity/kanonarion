@@ -94,21 +94,35 @@ func embeddedComponentPrefix(relPath string) string {
 	return relPath
 }
 
-// IsTestCorpusPath reports whether a component path prefix names a Go test
-// corpus directory — a "testdata" segment at any depth.
+// IsUnbuiltPath reports whether a path prefix names a directory the Go
+// toolchain never compiles, at any depth:
 //
-// The go tool ignores "testdata" directories at every level: their contents are
-// never built and never linked into a distributed binary. A licence file found
-// there governs a fixture — a sample graph, a captured document — and the
-// attribution is correct as attribution: the bytes are in the module zip and a
-// redistributor of the zip carries the notice. What it is not is a constraint
-// on code that links the module, which is the question compatibility asks. So
-// this predicate is applied where the compatibility engine consumes the
-// effective set, not where the set is derived: NOTICE generation and the SBOM
-// still see the component, because they are about what is shipped.
-func IsTestCorpusPath(prefix string) bool {
+//   - a "testdata" segment,
+//   - a segment beginning with "_",
+//   - a segment beginning with "." (other than "." itself).
+//
+// These are the go tool's own ignore rules, not a guess about what a
+// distributor ships. Nothing under such a directory is built, imported or
+// linked into any binary, so a licence file found there governs a fixture — a
+// sample graph, a captured document, a scanner test corpus — and not a
+// component of the artefact.
+//
+// Two neighbouring cases are deliberately NOT covered, because the toolchain
+// does build them: an "examples" directory is an ordinary package that can be
+// imported and linked, and a nested "vendor" directory holds exactly the code
+// that IS linked. Excluding either would be a judgement about distribution
+// rather than a fact about the artefact.
+//
+// The predicate is applied where a consumer asks about the artefact — NOTICE
+// generation and the compatibility engine — rather than in
+// DeriveEffectiveLicenseSet, so the derived set stays a faithful account of
+// what the module zip contains and each consumer states its own scope.
+func IsUnbuiltPath(prefix string) bool {
 	for _, seg := range strings.Split(prefix, "/") {
 		if seg == "testdata" {
+			return true
+		}
+		if len(seg) > 1 && (seg[0] == '_' || seg[0] == '.') {
 			return true
 		}
 	}

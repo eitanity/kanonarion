@@ -209,6 +209,55 @@ func TestWriteNoticeDocument_FullEntry(t *testing.T) {
 	}
 }
 
+// TestWriteNoticeDocument_FileLabelsAreTheFilesOwn pins that a licence block is
+// headed by what the detector found IN THAT FILE, never by the module's primary
+// identifier. The module here is MIT and its NOTICE carries an Apache-2.0
+// grant: heading that block "MIT" would state, in a legal document, that
+// Apache-2.0 text is an MIT licence.
+func TestWriteNoticeDocument_FileLabelsAreTheFilesOwn(t *testing.T) {
+	entries := []licensedomain.NoticeEntry{{
+		Coordinate: coordinatetest.MustNew("example.com/x", "v1.0.0"),
+		SPDX:       "MIT",
+		LicenseTexts: []licensedomain.NoticeLicenseFile{
+			{Path: "LICENSE", SPDX: "MIT", Content: "MIT license body",
+				Classification: licensedomain.ClassificationLicence},
+			{Path: "NOTICE-APACHE", SPDX: "Apache-2.0", Content: "Apache license body",
+				Classification: licensedomain.ClassificationLicence},
+			{Path: "NOTICE", Content: "attribution body",
+				Classification: licensedomain.ClassificationNotice},
+			{Path: "LICENSE-LOGO", Content: "", FileSize: 62, FileHash: "sha256:abc",
+				Classification: licensedomain.ClassificationUnclassified},
+			{Path: "LICENSE-PARTIAL", Content: "", FileSize: 45, FileHash: "sha256:def",
+				Classification:    licensedomain.ClassificationUnclassified,
+				LowConfidenceSPDX: "AGPL-3.0", LowConfidenceCoverage: 0.11},
+		},
+	}}
+	var buf bytes.Buffer
+	if err := writeNoticeDocument(entries, nil, &buf); err != nil {
+		t.Fatalf("writeNoticeDocument: %v", err)
+	}
+	got := buf.String()
+	for _, want := range []string{
+		"MIT (LICENSE):",
+		"Apache-2.0 (NOTICE-APACHE):",
+		"Notice file (NOTICE):",
+		"attribution body",
+		"Unclassified (LICENSE-LOGO):",
+		"62 bytes, sha256:abc",
+		"the licence detector identified no licence in this file",
+		"Unclassified (LICENSE-PARTIAL):",
+		"low-confidence match: AGPL-3.0 (11% coverage)",
+	} {
+		if !strings.Contains(got, want) {
+			t.Errorf("notice output missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "MIT (NOTICE-APACHE)") || strings.Contains(got, "MIT (NOTICE)") ||
+		strings.Contains(got, "MIT (LICENSE-LOGO)") {
+		t.Errorf("a file was labelled with the module's identifier rather than its own:\n%s", got)
+	}
+}
+
 func TestWriteNoticeDocument_Empty(t *testing.T) {
 	var buf bytes.Buffer
 	if err := writeNoticeDocument(nil, nil, &buf); err != nil {
