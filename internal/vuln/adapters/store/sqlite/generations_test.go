@@ -103,3 +103,54 @@ func TestListVulnerabilityRecordGenerationsForModule_RefusesZeroCoordinate(t *te
 		t.Fatal("zero coordinate names no module; the census must refuse it rather than answer absence")
 	}
 }
+
+// The census counts what a bump left behind; this read returns it. A history
+// listing needs the rows themselves, and taking them one generation at a time
+// through the keyed read would put them in the caller's order rather than the
+// ledger's.
+func TestListVulnerabilityRecordsForModuleAllGenerations_SpansTheBump(t *testing.T) {
+	ctx := t.Context()
+	store := newTestStore(t)
+
+	base := time.Date(2026, 7, 17, 20, 0, 0, 0, time.UTC)
+	recs := []domain.VulnerabilityRecord{
+		generationRecord(t, "v19", base, 2),
+		generationRecord(t, "v19", base.Add(time.Hour), 1),
+		generationRecord(t, "v20", base.Add(2*time.Hour), 0),
+	}
+	for _, rec := range recs {
+		if err := store.PutVulnerabilityRecord(ctx, rec); err != nil {
+			t.Fatalf("PutVulnerabilityRecord: %v", err)
+		}
+	}
+
+	all, err := store.ListVulnerabilityRecordsForModuleAllGenerations(ctx, recs[0].Coordinate)
+	if err != nil {
+		t.Fatalf("ListVulnerabilityRecordsForModuleAllGenerations: %v", err)
+	}
+	if len(all) != 3 {
+		t.Fatalf("read across generations returned %d records, want 3", len(all))
+	}
+	wantOrder := []string{"v20", "v19", "v19"}
+	for i, want := range wantOrder {
+		if all[i].PipelineVersion != want {
+			t.Errorf("record %d is at %s, want %s — newest first across generations", i, all[i].PipelineVersion, want)
+		}
+	}
+	if !all[0].ScannedAt.Equal(base.Add(2 * time.Hour)) {
+		t.Errorf("newest record scanned at %s, want %s", all[0].ScannedAt, base.Add(2*time.Hour))
+	}
+}
+
+func TestListVulnerabilityRecordsForModuleAllGenerations_UnknownCoordinateHoldsNothing(t *testing.T) {
+	ctx := t.Context()
+	store := newTestStore(t)
+
+	all, err := store.ListVulnerabilityRecordsForModuleAllGenerations(ctx, coord("github.com/foo/never", "v0.1.0"))
+	if err != nil {
+		t.Fatalf("ListVulnerabilityRecordsForModuleAllGenerations: %v", err)
+	}
+	if len(all) != 0 {
+		t.Fatalf("unscanned coordinate returned %d records, want 0", len(all))
+	}
+}

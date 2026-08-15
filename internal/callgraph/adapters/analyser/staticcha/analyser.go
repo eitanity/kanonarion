@@ -337,7 +337,7 @@ func (a *Analyser) analyseDir(
 	read *[]string,
 ) (domain.CallGraphRecord, error) {
 	fset := token.NewFileSet()
-	env := analysisEnv(synth)
+	env := analysisEnv()
 
 	// classifyLoad names the cause of a load failure raised below. The directory
 	// is bound once, here, rather than passed at each call site: every load in
@@ -591,6 +591,21 @@ func (a *Analyser) analyseDir(
 	if len(allLoadErrs) > 0 {
 		rec.FailureDetail = joinFirst(allLoadErrs, 3)
 	}
+	// A dependency the local module cache does not hold is the one incompleteness
+	// whose cause is not visible in the errors recorded above. Every load runs
+	// offline, so the packages importing it fail to type-check and the type errors
+	// they produce name the import — "could not import x" — and never the reason.
+	// The reason is in the metadata load's own errors, in the go command's own
+	// sentence about its offline posture, and it is the only thing that tells a
+	// reader to warm the cache rather than go looking for a fault in the module.
+	// The cause stays unset because the record still carries a graph, and a
+	// partial graph is not a failed one.
+	if overallStatus == domain.CallGraphStatusPartial {
+		if miss := firstOfflineCacheMiss(metaErrs); miss != "" {
+			rec.FailureDetail = strings.TrimPrefix(rec.FailureDetail+"; ", "; ") +
+				"the loader reported: " + miss
+		}
+	}
 	// FailedPackages scopes the incompleteness to the exact packages that did
 	// not typecheck, so callers/callees/reachability verdicts over this Partial
 	// graph can be caveated per package rather than by node/edge totals.
@@ -667,6 +682,19 @@ func (a *Analyser) failRecord(
 		FailureDetail:   detail,
 		PipelineVersion: a.pipelineVersion,
 	}
+}
+
+// firstOfflineCacheMiss returns the first of details that is the go command
+// saying a module it needed was absent from the local cache and it was not
+// permitted to fetch one, or "" if none is. It exists so the reason can be
+// carried onto a record whose own errors describe only the consequence.
+func firstOfflineCacheMiss(details []string) string {
+	for _, d := range details {
+		if isOfflineCacheMiss(d) {
+			return d
+		}
+	}
+	return ""
 }
 
 func joinFirst(ss []string, n int) string {

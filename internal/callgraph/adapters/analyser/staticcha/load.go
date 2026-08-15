@@ -83,12 +83,7 @@ func (a *Analyser) loadAndBuildSSA(ctx context.Context, fset *token.FileSet, tem
 			Fset:    fset,
 			Tests:   withTests,
 		}
-		// Aggressive GC tuning: the ASTs of the whole target module are live at
-		// once between the load returning and the last package being built.
-		oldGOGC := os.Getenv("GOGC")
-		_ = os.Setenv("GOGC", "30")
 		pkgs, lErr := packages.Load(cfg, targetPkgPaths...)
-		_ = os.Setenv("GOGC", oldGOGC)
 		if lErr != nil {
 			return nil, fmt.Errorf("syntax load: %w", lErr)
 		}

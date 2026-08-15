@@ -3,6 +3,7 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -121,6 +122,133 @@ func TestCallGraphShow_ReportsTestScope(t *testing.T) {
 			}
 			if !strings.Contains(buf.String(), tc.want) {
 				t.Errorf("output missing %q:\n%s", tc.want, buf.String())
+			}
+		})
+	}
+}
+
+// TestRunCallers_NonEmptyAnswerStatesTheNarrowing is the case the empty-result
+// path already covered and the populated one did not: a list of one production
+// caller is indistinguishable from an unnarrowed query that found one caller,
+// so a narrowed answer has to name its own scope. The second half is the
+// non-zero control — an unnarrowed answer must claim no narrowing.
+func TestRunCallers_NonEmptyAnswerStatesTheNarrowing(t *testing.T) {
+	uc := fakeWithRecord("example.com/m", "v1.0.0", cgapp.PipelineVersion,
+		builtRecord([]cgdomain.CallNode{{ID: "example.com/m.Target", Symbol: "Target"}}, nil))
+	uc.SetCallers([]cgports.CallEdgeRef{{
+		ModulePath: "example.com/m", ModuleVersion: "v1.0.0",
+		FromID: "example.com/m.Prod", ToID: "example.com/m.Target",
+		Confidence: cgdomain.ConfidenceDirect,
+	}})
+
+	var narrowed bytes.Buffer
+	if err := runCallers(context.Background(), "example.com/m.Target", false, uc, &narrowed, buildScope{},
+		cgports.EdgeQueryOptions{ExcludeTests: true}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(narrowed.String(), "test callers omitted (--"+testScopeFlagName+" was given)") {
+		t.Errorf("a narrowed non-empty answer does not state its scope: %q", narrowed.String())
+	}
+
+	var wide bytes.Buffer
+	if err := runCallers(context.Background(), "example.com/m.Target", false, uc, &wide, buildScope{},
+		cgports.EdgeQueryOptions{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(wide.String(), "omitted") {
+		t.Errorf("an unnarrowed answer claims a narrowing: %q", wide.String())
+	}
+}
+
+// TestRunCallees_NonEmptyAnswerStatesTheNarrowing: the callees direction is not
+// the callers one with the arrow reversed as far as output goes, so it is
+// asserted separately rather than assumed.
+func TestRunCallees_NonEmptyAnswerStatesTheNarrowing(t *testing.T) {
+	uc := fakeWithRecord("example.com/m", "v1.0.0", cgapp.PipelineVersion,
+		builtRecord([]cgdomain.CallNode{{ID: "example.com/m.Root", Symbol: "Root"}}, nil))
+	uc.SetCallees([]cgports.CallEdgeRef{{
+		ModulePath: "example.com/m", ModuleVersion: "v1.0.0",
+		FromID: "example.com/m.Root", ToID: "example.com/m.Leaf",
+		Confidence: cgdomain.ConfidenceDirect,
+	}})
+
+	var narrowed bytes.Buffer
+	if err := runCallees(context.Background(), "example.com/m.Root", false, uc, &narrowed, buildScope{},
+		cgports.EdgeQueryOptions{ExcludeTests: true}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if !strings.Contains(narrowed.String(), "test callees omitted (--"+testScopeFlagName+" was given)") {
+		t.Errorf("a narrowed non-empty answer does not state its scope: %q", narrowed.String())
+	}
+
+	var wide bytes.Buffer
+	if err := runCallees(context.Background(), "example.com/m.Root", false, uc, &wide, buildScope{},
+		cgports.EdgeQueryOptions{}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	if strings.Contains(wide.String(), "omitted") {
+		t.Errorf("an unnarrowed answer claims a narrowing: %q", wide.String())
+	}
+}
+
+// TestRunCallers_NarrowedAnswerStatesItOnceOnly: the empty path carries the
+// narrowing on its verdict line already. The scope line must not double it up,
+// or the same fact is stated twice in two phrasings.
+func TestRunCallers_NarrowedAnswerStatesItOnceOnly(t *testing.T) {
+	uc := fakeWithRecord("example.com/m", "v1.0.0", cgapp.PipelineVersion,
+		builtRecord([]cgdomain.CallNode{{ID: "example.com/m.Target", Symbol: "Target"}}, nil))
+
+	var buf bytes.Buffer
+	if err := runCallers(context.Background(), "example.com/m.Target", false, uc, &buf, buildScope{},
+		cgports.EdgeQueryOptions{ExcludeTests: true}); err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+	out := buf.String()
+	if !strings.Contains(out, "production only") {
+		t.Fatalf("the empty path lost its verdict-line narrowing: %q", out)
+	}
+	if strings.Contains(out, "test callers omitted") {
+		t.Errorf("the narrowing is stated twice on an empty answer: %q", out)
+	}
+}
+
+// TestTransitiveResultJSON_CarriesTheScope: the transitive surface already
+// returns an envelope, so the narrowing has somewhere machine-readable to live.
+// The field is always present — a consumer must never read an absent field as
+// "nothing was excluded".
+func TestTransitiveResultJSON_CarriesTheScope(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		opts cgports.EdgeQueryOptions
+		want string
+	}{
+		{"narrowed", cgports.EdgeQueryOptions{ExcludeTests: true},
+			"test callers omitted (--" + testScopeFlagName + " was given)"},
+		{"wide", cgports.EdgeQueryOptions{}, ""},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var buf bytes.Buffer
+			if err := printTransitiveResult("callers", "example.com/m.Target", 0,
+				[]string{"example.com/m.Prod"}, nil, true, &buf, tc.opts); err != nil {
+				t.Fatalf("printTransitiveResult: %v", err)
+			}
+			var got struct {
+				Scope *string `json:"scope"`
+			}
+			if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+				t.Fatalf("decoding: %v", err)
+			}
+			if got.Scope == nil {
+				t.Fatalf("scope absent from the envelope: %q", buf.String())
+			}
+			if tc.want == "" {
+				if *got.Scope != "" {
+					t.Errorf("an unnarrowed traversal claims a narrowing: %q", *got.Scope)
+				}
+				return
+			}
+			if !strings.Contains(*got.Scope, tc.want) {
+				t.Errorf("scope %q does not state %q", *got.Scope, tc.want)
 			}
 		})
 	}

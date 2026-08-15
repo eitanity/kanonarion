@@ -236,7 +236,7 @@ func newVulnScanShowCmd(stdout, stderr io.Writer) *cobra.Command {
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runScanShow(cmd.Context(), args[0], jsonOut, ctr.QueryScanRuns, ctr.QueryVuln, stdout, stderr)
+			return runScanShow(cmd.Context(), args[0], jsonOut, ctr.QueryScanRuns, ctr.QueryVuln, ctr.QueryCallGraph, stdout, stderr)
 		},
 	}
 
@@ -306,7 +306,7 @@ type scanShowSummary struct {
 	scanFailed  []scanRecordFault
 }
 
-func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QueryScanRunsUseCase, ucVuln QueryVulnUseCase, stdout, stderr io.Writer) error {
+func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QueryScanRunsUseCase, ucVuln QueryVulnUseCase, graphs QueryCallGraphUseCase, stdout, stderr io.Writer) error {
 	run, found, err := ucRuns.GetRun(ctx, runID)
 	// vuln-scan-list names the rows it could not verify, and this is the command
 	// an operator runs next against one of those names. Refusing here would send
@@ -327,7 +327,17 @@ func runScanShow(ctx context.Context, runID string, jsonOut bool, ucRuns QuerySc
 		return fmt.Errorf("getting scan run: %w", perr)
 	}
 
-	summary := buildScanAffectedModules(ctx, run, ucVuln)
+	// The route root is derived for the JSON surface only. It is a read-time
+	// classification over the stored call graphs — never a computation, but a
+	// decode of one graph per module the routes start in — and this command's TEXT
+	// form prints no root at all, so deriving it there would buy a reader nothing
+	// and cost every text run the decode. Measured on a 176-module run: 0.08s text,
+	// 1.5s with the classification.
+	bind := unclassifiedRecords
+	if jsonOut {
+		bind = newRecordRootFunc(ctx, graphs)
+	}
+	summary := buildScanAffectedModules(ctx, run, ucVuln, bind)
 	affected := summary.affected
 	unscannable := summary.unscannable
 
@@ -436,7 +446,10 @@ func writeScanModuleFindings(stdout io.Writer, heading string, modules []scanAff
 // not-found record is a coverage gap (the run claims a verdict no record
 // backs). Both were dropped before, leaving the header's module count higher
 // than the summary explained.
-func buildScanAffectedModules(ctx context.Context, run vuldomain.WalkScanRun, uc QueryVulnUseCase) scanShowSummary {
+func buildScanAffectedModules(ctx context.Context, run vuldomain.WalkScanRun, uc QueryVulnUseCase, bind recordRootFunc) scanShowSummary {
+	if bind == nil {
+		bind = unclassifiedRecords
+	}
 	coords := make([]coordinate.ModuleCoordinate, 0, len(run.PerModuleResults))
 	for coord := range run.PerModuleResults {
 		coords = append(coords, coord)
@@ -473,7 +486,7 @@ func buildScanAffectedModules(ctx context.Context, run vuldomain.WalkScanRun, uc
 		module := scanAffectedModule{
 			Coordinate: coord.String(),
 			Status:     string(rec.OverallStatus),
-			Findings:   toVulnFindingsJSON(rec.Findings),
+			Findings:   toVulnFindingsJSON(rec.Findings, bind(rec)),
 		}
 		// The findings axis has three values and each owes its own section. A
 		// withdrawn module is not affected, so it must not appear in the affected

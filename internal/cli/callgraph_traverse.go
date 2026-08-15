@@ -25,6 +25,37 @@ func registerEdgeScopeFlag(cmd *cobra.Command, excludeTests *bool) {
 		"omit callers and callees declared in _test.go files and external test packages")
 }
 
+// edgeScopeLine states what an edge query measured when the reader narrowed it,
+// reusing the clause the implementers query already prints rather than adding a
+// second phrasing for the same narrowing.
+//
+// It is printed on a NON-EMPTY answer, which is the case that had no way to say
+// it: a list of one production caller is otherwise indistinguishable from an
+// unnarrowed query that found one caller. An empty answer already carries the
+// narrowing on its verdict line, so this is not printed there and the statement
+// is never made twice.
+//
+// kind is a plural noun ("callers", "callees").
+func edgeScopeLine(kind string, opts ports.EdgeQueryOptions) string {
+	if !opts.ExcludeTests {
+		return ""
+	}
+	return "scope: test " + kind + " omitted (--" + testScopeFlagName + " was given)"
+}
+
+// writeEdgeScopeLine prints edgeScopeLine, in text mode only, and writes
+// nothing when the query was not narrowed.
+func writeEdgeScopeLine(stdout io.Writer, kind string, opts ports.EdgeQueryOptions) error {
+	line := edgeScopeLine(kind, opts)
+	if line == "" {
+		return nil
+	}
+	if _, err := fmt.Fprintln(stdout, line); err != nil {
+		return fmt.Errorf("writing scope: %w", err)
+	}
+	return nil
+}
+
 func newCallersCmd(stdout, stderr io.Writer) *cobra.Command {
 	var transitive bool
 	var depth int
@@ -124,6 +155,9 @@ func runCallers(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 
 	if err := printEdgeRefs("callers", symbolID, refs, jsonOut, stdout); err != nil {
 		return err
+	}
+	if len(refs) > 0 && !jsonOut {
+		return writeEdgeScopeLine(stdout, "callers", opts)
 	}
 	if len(refs) == 0 && !jsonOut {
 		v, verr := negativeCallVerdict(ctx, symbolID, true, uc, sc.modules, opts, pr.failedPkg)
@@ -234,6 +268,9 @@ func runCallees(ctx context.Context, symbolID string, jsonOut bool, uc QueryCall
 	if err := printEdgeRefs("callees", symbolID, refs, jsonOut, stdout); err != nil {
 		return err
 	}
+	if len(refs) > 0 && !jsonOut {
+		return writeEdgeScopeLine(stdout, "callees", opts)
+	}
 	if len(refs) == 0 && !jsonOut {
 		v, verr := negativeCallVerdict(ctx, symbolID, false, uc, sc.modules, opts, pr.failedPkg)
 		if verr != nil {
@@ -337,13 +374,21 @@ func countOf(n int, kind string) string {
 
 // transitiveResult is the JSON shape for --transitive output.
 type transitiveResult struct {
-	Root      string            `json:"root"`
-	Direction string            `json:"direction"`
-	MaxDepth  int               `json:"max_depth,omitempty"`
+	Root      string `json:"root"`
+	Direction string `json:"direction"`
+	// MaxDepth is the depth limit the traversal ran under, and 0 is the answer
+	// "unlimited" rather than the absence of one — the caller always set it, by
+	// flag or by default, so there is no unmeasured state to encode.
+	MaxDepth  int               `json:"max_depth"`
 	NodeCount int               `json:"node_count"`
 	EdgeCount int               `json:"edge_count"`
 	Nodes     []string          `json:"nodes"`
 	Edges     []callEdgeRefJSON `json:"edges"`
+	// Scope names the narrowing the reader asked for, empty when they asked for
+	// none. Always present, so a consumer never has to read an absent field as
+	// "nothing was excluded" — the rows carry is_test, which describes the rows
+	// PRESENT and says nothing about the rows removed.
+	Scope string `json:"scope"`
 }
 
 func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, jsonOut bool, uc QueryCallGraphUseCase, stdout io.Writer, sc buildScope, opts ports.EdgeQueryOptions) error {
@@ -397,8 +442,11 @@ func runCallersTransitive(ctx context.Context, symbolID string, maxDepth int, js
 			return err
 		}
 	}
-	if err := printTransitiveResult("callers", symbolID, maxDepth, nodes, edges, jsonOut, stdout); err != nil {
+	if err := printTransitiveResult("callers", symbolID, maxDepth, nodes, edges, jsonOut, stdout, opts); err != nil {
 		return err
+	}
+	if len(nodes) > 0 && !jsonOut {
+		return writeEdgeScopeLine(stdout, "callers", opts)
 	}
 	if len(nodes) == 0 && !jsonOut {
 		v, verr := negativeCallVerdict(ctx, symbolID, true, uc, sc.modules, opts, pr.failedPkg)
@@ -461,8 +509,11 @@ func runCalleesTransitive(ctx context.Context, symbolID string, maxDepth int, js
 			return err
 		}
 	}
-	if err := printTransitiveResult("callees", symbolID, maxDepth, nodes, edges, jsonOut, stdout); err != nil {
+	if err := printTransitiveResult("callees", symbolID, maxDepth, nodes, edges, jsonOut, stdout, opts); err != nil {
 		return err
+	}
+	if len(nodes) > 0 && !jsonOut {
+		return writeEdgeScopeLine(stdout, "callees", opts)
 	}
 	if len(nodes) == 0 && !jsonOut {
 		v, verr := negativeCallVerdict(ctx, symbolID, false, uc, sc.modules, opts, pr.failedPkg)
@@ -474,7 +525,7 @@ func runCalleesTransitive(ctx context.Context, symbolID string, maxDepth int, js
 	return nil
 }
 
-func printTransitiveResult(direction, root string, maxDepth int, nodes []string, edges []ports.CallEdgeRef, jsonOut bool, stdout io.Writer) error {
+func printTransitiveResult(direction, root string, maxDepth int, nodes []string, edges []ports.CallEdgeRef, jsonOut bool, stdout io.Writer, opts ports.EdgeQueryOptions) error {
 	if jsonOut {
 		if nodes == nil {
 			nodes = []string{}
@@ -487,6 +538,7 @@ func printTransitiveResult(direction, root string, maxDepth int, nodes []string,
 			EdgeCount: len(edges),
 			Nodes:     nodes,
 			Edges:     toEdgeRefsJSON(edges),
+			Scope:     edgeScopeLine(direction, opts),
 		}
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")

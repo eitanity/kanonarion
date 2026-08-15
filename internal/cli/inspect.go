@@ -227,10 +227,14 @@ func resolveCoordForInspect(ctx context.Context, arg, _, goproxy string, stderr 
 
 // inspectSummary is the aggregate result of an inspect --gomod run.
 type inspectSummary struct {
-	ModuleCount     int      `json:"module_count"`
-	NodeFails       int      `json:"node_fails,omitempty"`
-	ExtractFails    int      `json:"extract_fails,omitempty"`
-	ScanFails       int      `json:"scan_fails,omitempty"`
+	ModuleCount int `json:"module_count"`
+	// The three failure tallies are counted by every run and emitted at zero. A
+	// run in which nothing failed is the result a reader most needs stated, and
+	// omitting the zeros made a clean run's summary the same document as one
+	// from a build that does not count failures at all.
+	NodeFails       int      `json:"node_fails"`
+	ExtractFails    int      `json:"extract_fails"`
+	ScanFails       int      `json:"scan_fails"`
 	OverallStatus   string   `json:"overall_status"`
 	AffectedCount   int      `json:"affected_count"`
 	SnapshotVersion string   `json:"snapshot_version,omitempty"`

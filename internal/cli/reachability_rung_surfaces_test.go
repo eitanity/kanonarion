@@ -93,7 +93,7 @@ func decodeFindings(t *testing.T, raw []byte) map[string]map[string]any {
 // record, and every finding on it must state the rung behind its reachability
 // answer.
 func TestRecordJSONCarriesTheRung(t *testing.T) {
-	raw, err := json.Marshal(toVulnRecordJSON(rungRecord()))
+	raw, err := json.Marshal(toVulnRecordJSON(rungRecord(), nil))
 	if err != nil {
 		t.Fatalf("marshalling projected record: %v", err)
 	}
@@ -130,6 +130,23 @@ func TestRecordJSONCarriesTheRung(t *testing.T) {
 	}
 }
 
+// derivedRecordKeys are the keys the projection adds that no stored field
+// carries. Each is a fact about this build's reading of the record rather than
+// about the record, so writing it into the domain type would re-hash every
+// stored record to say something a comparison already settles — the reason the
+// projections wrap the domain types at all.
+//
+// The list is explicit so that adding a key is a decision. Anything not named
+// here still fails the check below, which is the invention this guard exists to
+// catch.
+var derivedRecordKeys = map[string]struct{}{
+	// True when the record was written under a pipeline version this build no
+	// longer serves. It reaches the wire only through --history and vuln-by-id,
+	// the two reads that span generations, and it is emitted false elsewhere so
+	// a consumer can tell "current" from "not derived".
+	"superseded": {},
+}
+
 // TestRecordJSONKeepsEveryDomainField guards the projection against the failure
 // its shape exists to prevent: a hand-copied field list would go silently short
 // the first time the domain record grew a field, and the surface would lose it
@@ -140,7 +157,7 @@ func TestRecordJSONKeepsEveryDomainField(t *testing.T) {
 	if err != nil {
 		t.Fatalf("marshalling bare record: %v", err)
 	}
-	projected, err := json.Marshal(toVulnRecordJSON(rec))
+	projected, err := json.Marshal(toVulnRecordJSON(rec, nil))
 	if err != nil {
 		t.Fatalf("marshalling projected record: %v", err)
 	}
@@ -158,9 +175,13 @@ func TestRecordJSONKeepsEveryDomainField(t *testing.T) {
 		}
 	}
 	for k := range projDoc {
-		if _, ok := bareDoc[k]; !ok {
-			t.Errorf("projection invented record key %q", k)
+		if _, ok := bareDoc[k]; ok {
+			continue
 		}
+		if _, derived := derivedRecordKeys[k]; derived {
+			continue
+		}
+		t.Errorf("projection invented record key %q", k)
 	}
 
 	// Only the findings are re-rendered; every other value must be byte-identical
@@ -191,7 +212,7 @@ func TestScanShowFindingsCarryTheRung(t *testing.T) {
 	mod := scanAffectedModule{
 		Coordinate: "golang.org/x/crypto@v0.31.0",
 		Status:     string(vuldomain.StatusAffected),
-		Findings:   toVulnFindingsJSON(rungRecord().Findings),
+		Findings:   toVulnFindingsJSON(rungRecord().Findings, nil),
 	}
 	raw, err := json.Marshal(mod)
 	if err != nil {

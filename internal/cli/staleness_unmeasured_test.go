@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
 	"strings"
 	"testing"
 	"time"
@@ -157,7 +158,7 @@ func TestLatestModules_NoPinIsNotAsked(t *testing.T) {
 
 	var stdout bytes.Buffer
 	if err := runLatestModules(context.Background(),
-		[]string{"github.com/spf13/cobra"}, latestResolverFor(t, srv), &stdout); err != nil {
+		[]string{"github.com/spf13/cobra"}, latestResolverFor(t, srv), &stdout, io.Discard); err != nil {
 		t.Fatalf("runLatestModules: %v", err)
 	}
 	var decoded map[string]any
@@ -223,7 +224,9 @@ func TestFetchStaleness_UnmeasuredLegs(t *testing.T) {
 			if merr != nil {
 				t.Fatalf("marshalling: %v", merr)
 			}
-			want := `{"is_latest":null,"staleness_unmeasured":"` + tc.reason + `"}`
+			// pin_ahead_of_latest is null alongside is_latest: an unmeasured
+			// block made no comparison, so neither question has an answer.
+			want := `{"is_latest":null,"pin_ahead_of_latest":null,"staleness_unmeasured":"` + tc.reason + `","days_since_latest":null}`
 			if string(data) != want {
 				t.Errorf("staleness block = %s, want %s", data, want)
 			}
@@ -254,8 +257,10 @@ func TestFetchStaleness_MeasuredLegs(t *testing.T) {
 		if merr != nil {
 			t.Fatalf("marshalling: %v", merr)
 		}
-		if string(data) != `{"is_latest":true}` {
-			t.Errorf("staleness block = %s, want {\"is_latest\":true}", data)
+		// pin_ahead_of_latest is emitted false, not omitted: "measured, and not
+		// ahead" must be distinguishable from "this build does not derive it".
+		if want := `{"is_latest":true,"pin_ahead_of_latest":false,"days_since_latest":null}`; string(data) != want {
+			t.Errorf("staleness block = %s, want %s", data, want)
 		}
 		if note := fetchStalenessNote(stale); note != "" {
 			t.Errorf("text note = %q, want none for a current pin", note)
@@ -275,10 +280,37 @@ func TestFetchStaleness_MeasuredLegs(t *testing.T) {
 		if merr != nil {
 			t.Fatalf("marshalling: %v", merr)
 		}
-		if string(data) != `{"is_latest":false,"latest_version":"v1.2.0","days_since_latest":3}` {
-			t.Errorf("staleness block = %s, want the measured behind-pin block", data)
+		// The behind pin keeps its age: that is the row the figure means
+		// something on, and it is the non-zero control for the ahead row, which
+		// carries no days_since_latest at all.
+		if want := `{"is_latest":false,"pin_ahead_of_latest":false,"latest_version":"v1.2.0","days_since_latest":3}`; string(data) != want {
+			t.Errorf("staleness block = %s, want %s", data, want)
 		}
 		if note := fetchStalenessNote(stale); note != " [latest: v1.2.0, 3 days ago]" {
+			t.Errorf("text note = %q", note)
+		}
+	})
+
+	t.Run("pin sorts above the latest tag", func(t *testing.T) {
+		var stderr bytes.Buffer
+		stale := fetchStalenessFor(context.Background(),
+			stubLatestInfo{info: proxyadapter.LatestVersionInfo{
+				Version: "v0.5.5",
+				Time:    time.Now().Add(-2660 * 24 * time.Hour),
+			}},
+			coord, "v1.0.0", &stderr)
+
+		data, merr := json.Marshal(stale)
+		if merr != nil {
+			t.Fatalf("marshalling: %v", merr)
+		}
+		// No days_since_latest. Beside is_latest:false an age reads as "you are
+		// this far behind", which is the answer this state exists to withhold —
+		// and the text clause beside it offers no age either.
+		if want := `{"is_latest":false,"pin_ahead_of_latest":true,"latest_version":"v0.5.5","days_since_latest":null}`; string(data) != want {
+			t.Errorf("staleness block = %s, want %s", data, want)
+		}
+		if note := fetchStalenessNote(stale); note != " [ahead of latest tag: v0.5.5]" {
 			t.Errorf("text note = %q", note)
 		}
 	})

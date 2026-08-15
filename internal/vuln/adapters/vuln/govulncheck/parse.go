@@ -52,18 +52,24 @@ type OSV struct {
 	// record and none on an analysed one.
 	References []Reference `json:"references,omitempty"`
 	// Affected is the advisory's per-module-path block, read only on decode. It
-	// is projected onto NamesSymbolsByPath and then dropped, because the retained
-	// copy of an OSV message is deliberately minimal.
+	// is projected onto SymbolsByPath and then dropped, because the retained copy
+	// of an OSV message is deliberately minimal.
 	Affected []Affected `json:"affected,omitempty"`
-	// NamesSymbolsByPath answers, for each module path this advisory names,
-	// whether that entry carries a symbol list. It is derived on decode rather
-	// than kept as the raw block: a finding needs one boolean per path, and a
-	// large stream carries hundreds of advisories.
+	// SymbolsByPath is, for each module path this advisory names, the at-risk
+	// symbols its entry lists for that path — deduplicated, sorted and interned.
 	//
 	// Absence of a path means the advisory said nothing about it, which is not
-	// the same as naming it with no symbols; the two are kept distinct so a
+	// the same as naming it with an empty list; the two are kept distinct so a
 	// finding never records an advisory fact that was not read.
-	NamesSymbolsByPath map[string]bool `json:"-"`
+	//
+	// It used to be one boolean per path. The list itself is what a finding
+	// REPORTED WITHOUT A ROUTE has to say about which symbols are at risk: the
+	// analysis names the symbols it reached, and where it reached none the
+	// advisory's own list is the only answer there is. Keeping only the boolean
+	// meant the same advisory carried that list when the coordinate match
+	// produced the finding and carried nothing when the analysis did — one
+	// advisory in two shapes, in a field that is sealed and content-hashed.
+	SymbolsByPath map[string][]string `json:"-"`
 }
 
 // Reference is one entry of an advisory's references array, kept whole: the
@@ -87,33 +93,42 @@ type Affected struct {
 	} `json:"ecosystem_specific"`
 }
 
-// NamesSymbols reports whether this affected block names at least one symbol.
+// symbolsByPath projects the affected blocks onto the at-risk symbols each
+// module path names. A path named by several blocks accumulates all of them.
+//
 // An entry with import blocks but no symbols in them names none: govulncheck
 // treats such a path as vulnerable in its entirety, which is exactly the case
-// that has no symbol for a route to reach.
-func (a Affected) NamesSymbols() bool {
-	for _, imp := range a.EcosystemSpecific.Imports {
-		if len(imp.Symbols) > 0 {
-			return true
-		}
-	}
-	return false
-}
-
-// namesSymbolsByPath projects the affected blocks onto one boolean per module
-// path. A path named by several blocks counts as naming symbols when any of
-// them does.
-func namesSymbolsByPath(affected []Affected, intern func(string) string) map[string]bool {
+// that has no symbol for a route to reach. Such a path maps to an empty list,
+// which is a different fact from the path being absent.
+//
+// The result is sorted and deduplicated so it does not depend on the order the
+// advisory happened to list its imports — the same rule the coordinate-match
+// route applies, so one advisory reaches a record with one symbol list whichever
+// route produced the finding.
+func symbolsByPath(affected []Affected, intern func(string) string) map[string][]string {
 	if len(affected) == 0 {
 		return nil
 	}
-	out := make(map[string]bool, len(affected))
+	out := make(map[string][]string, len(affected))
 	for _, a := range affected {
 		if a.Package.Name == "" {
 			continue
 		}
 		p := intern(a.Package.Name)
-		out[p] = out[p] || a.NamesSymbols()
+		syms := out[p]
+		if syms == nil {
+			syms = []string{}
+		}
+		for _, imp := range a.EcosystemSpecific.Imports {
+			for _, sym := range imp.Symbols {
+				s := intern(sym)
+				if !slices.Contains(syms, s) {
+					syms = append(syms, s)
+				}
+			}
+		}
+		slices.Sort(syms)
+		out[p] = syms
 	}
 	return out
 }
@@ -219,15 +234,15 @@ func (s *Scanner) processMessage(raw []byte, msg *Message, osvs map[string]*OSV,
 			// Ensure strings are copied and interned
 			id := intern(msg.OSV.ID)
 			osvs[id] = &OSV{
-				ID:                 id,
-				Aliases:            internStrings(msg.OSV.Aliases, intern),
-				Summary:            intern(msg.OSV.Summary),
-				Details:            intern(msg.OSV.Details),
-				Published:          msg.OSV.Published,
-				Modified:           msg.OSV.Modified,
-				Withdrawn:          msg.OSV.Withdrawn,
-				References:         internReferences(msg.OSV.References, intern),
-				NamesSymbolsByPath: namesSymbolsByPath(msg.OSV.Affected, intern),
+				ID:            id,
+				Aliases:       internStrings(msg.OSV.Aliases, intern),
+				Summary:       intern(msg.OSV.Summary),
+				Details:       intern(msg.OSV.Details),
+				Published:     msg.OSV.Published,
+				Modified:      msg.OSV.Modified,
+				Withdrawn:     msg.OSV.Withdrawn,
+				References:    internReferences(msg.OSV.References, intern),
+				SymbolsByPath: symbolsByPath(msg.OSV.Affected, intern),
 			}
 			msg.OSV = nil
 		}
@@ -343,6 +358,25 @@ type findingMeta struct {
 	// package-initialisation frame. On its own it means the vulnerable package is
 	// in the build and nothing more.
 	packageInitOnly bool
+	// nonSymbolicReported is true once govulncheck reported this advisory at
+	// module or package level: a one-frame trace naming the affected module, and
+	// optionally the imported package, with no function.
+	//
+	// The analysis emits one finding message PER LEVEL for the same advisory, so
+	// an advisory it can trace to a called symbol arrives three times and one it
+	// cannot arrives twice. Reading only the symbol-level message threw away every
+	// word the analyser said about the other kind, and the advisory then reached
+	// the record through the coordinate-match route instead — where its fixed
+	// version is the advisory's own highest, which for a multi-branch stdlib
+	// advisory is a release candidate rather than the stable point release
+	// govulncheck named on the message that was discarded.
+	//
+	// It is also what turns the negative from an inference into a statement. A
+	// module- or package-level message IS govulncheck reporting that the build
+	// carries the affected code and that its call-graph analysis found no route
+	// into the vulnerable symbol. Recording it here means the not-reachable answer
+	// rests on something the analyser said, rather than on its silence.
+	nonSymbolicReported bool
 	// vulnModule is the module path owning the vulnerable frame, which is the
 	// path whose advisory entry decides whether any symbol was ever named. It is
 	// not always the scanned module: a stdlib advisory is kept under the stdlib
@@ -350,15 +384,33 @@ type findingMeta struct {
 	vulnModule string
 }
 
+// findingConfidence renders the weight of the reachability answer the parse
+// accumulated for one advisory.
+//
+// Three states, not two. A symbol route is High and is its own evidence. A
+// module- or package-level report with no symbol route is also High: the
+// analyser loaded the build from source, examined this module at its resolved
+// version, and said so — that is an answer, and it is the one the soundness
+// ladder reads as "inferred". Everything else is Unknown, which is the store's
+// "not determined": package initialisation alone says the vulnerable package is
+// linked and nothing about whether its code runs, and reporting it at High would
+// carry a linkage observation at the weight of a call path.
+func findingConfidence(m *findingMeta) domain.ReachabilityConfidence {
+	switch {
+	case m.symbolReached, !m.packageInitOnly && m.nonSymbolicReported:
+		return domain.ConfidenceHigh
+	default:
+		return domain.ConfidenceUnknown
+	}
+}
+
 func (s *Scanner) processFinding(raw []byte, findings *[]domain.VulnerabilityFinding, findingIndex map[string]int, meta map[string]*findingMeta, routes map[string][]domain.ReachabilityRoute, intern func(string) string, scannedModule string) {
 	if !bytes.Contains(raw, []byte("\"finding\":")) {
 		return
 	}
-	// Reachability pre-check: only process findings with a non-empty trace
-	// containing "function" or "symbol" (legacy/mock)
-	if !bytes.Contains(raw, []byte("\"function\"")) && !bytes.Contains(raw, []byte("\"symbol\"")) {
-		return
-	}
+	// Every level is read, not just the symbol-level one. See findingMeta's
+	// nonSymbolicReported for what the other levels carry and why discarding them
+	// sent the advisory round by the coordinate-match route.
 	// Find osv ID without full unmarshal
 	var osvID string
 	osvStart := bytes.Index(raw, []byte("\"osv\":"))
@@ -416,11 +468,15 @@ func (s *Scanner) processFinding(raw []byte, findings *[]domain.VulnerabilityFin
 		return
 	}
 
-	isReachable := vuln.Function != ""
-	if !isReachable && bytes.Contains(partial.Finding.Trace, []byte("\"symbol\"")) {
-		isReachable = true
-	}
-	if !isReachable {
+	// A trace naming a function — or a legacy/mock stream's "symbol" — is the
+	// symbol level. Anything else is the module or package level: govulncheck
+	// stating that the affected code is in the build and that it traced no call
+	// into the vulnerable symbol.
+	symbolic := vuln.Function != "" || bytes.Contains(partial.Finding.Trace, []byte("\"symbol\""))
+	if !symbolic && vuln.Module == "" {
+		// A frame that names neither a module nor a symbol states nothing this
+		// parse can attribute. Only a legacy or malformed stream produces one; the
+		// grouped path refuses the same shape when the coordinate fails to build.
 		return
 	}
 
@@ -428,16 +484,19 @@ func (s *Scanner) processFinding(raw []byte, findings *[]domain.VulnerabilityFin
 	// a route: the finding is kept — the module is still affected — but no route is
 	// recorded, no symbol is taken from it, and the reachability answer stays
 	// undetermined at symbol level rather than claiming the vulnerable code ran.
-	initOnly := traceIsPackageInitOnly(trace)
+	initOnly := symbolic && traceIsPackageInitOnly(trace)
 
 	m := meta[osvID]
 	if m == nil {
 		m = &findingMeta{vulnModule: intern(vuln.Module)}
 		meta[osvID] = m
 	}
-	if initOnly {
+	switch {
+	case !symbolic:
+		m.nonSymbolicReported = true
+	case initOnly:
 		m.packageInitOnly = true
-	} else {
+	default:
 		m.symbolReached = true
 		// The route this finding was reached by. Accumulated per advisory because
 		// govulncheck emits one finding message per reached symbol, so an OSV
@@ -452,6 +511,10 @@ func (s *Scanner) processFinding(raw []byte, findings *[]domain.VulnerabilityFin
 		})
 		idx = len(*findings) - 1
 		findingIndex[osvID] = idx
+	} else if (*findings)[idx].FixedIn == "" {
+		// Every level carries the same fixed version, so this only fills a finding
+		// whose first message stated none.
+		(*findings)[idx].FixedIn = intern(partial.Finding.FixedVersion)
 	}
 
 	// record the vulnerable symbol from the vulnerable frame only.
@@ -514,17 +577,9 @@ func (s *Scanner) parseResults(ctx context.Context, r io.Reader, scannedModule s
 			m = &findingMeta{}
 		}
 		applyOSV(f, osvs[f.ID], m.vulnModule)
-		// A verdict reached without a symbol route says so. Confidence Unknown is
-		// the store's existing "not determined" value, and it is what the read side
-		// already distinguishes from a searched negative; reporting High here would
-		// carry a package-linkage observation at the same weight as a call path.
-		confidence := domain.ConfidenceHigh
-		if !m.symbolReached {
-			confidence = domain.ConfidenceUnknown
-		}
 		f.Reachable = &domain.ReachabilityResult{
 			IsReachable: m.symbolReached,
-			Confidence:  confidence,
+			Confidence:  findingConfidence(m),
 			Routes:      routes[f.ID],
 			// Stamped on every answer, reachable or not: a binary-mode "not
 			// reachable" is a symbol-table result and a source-mode one is a call
@@ -546,6 +601,11 @@ func (s *Scanner) parseResults(ctx context.Context, r io.Reader, scannedModule s
 type moduleFindings struct {
 	findings []domain.VulnerabilityFinding
 	index    map[string]int // osv ID -> index in findings
+	// meta is the same per-advisory accumulation the single-module parse keeps,
+	// so the two paths weigh a negative the same way. The verdict is settled once
+	// the whole stream has been read, because the levels arrive in no guaranteed
+	// order.
+	meta map[string]*findingMeta
 }
 
 // processFindingGrouped is the project-rooted counterpart to processFinding: it
@@ -556,9 +616,6 @@ type moduleFindings struct {
 // can attribute them to the project root deterministically.
 func (s *Scanner) processFindingGrouped(raw []byte, byModule map[coordinate.ModuleCoordinate]*moduleFindings, intern func(string) string, mode domain.ScanMode) {
 	if !bytes.Contains(raw, []byte("\"finding\":")) {
-		return
-	}
-	if !bytes.Contains(raw, []byte("\"function\"")) && !bytes.Contains(raw, []byte("\"symbol\"")) {
 		return
 	}
 
@@ -579,14 +636,13 @@ func (s *Scanner) processFindingGrouped(raw []byte, byModule map[coordinate.Modu
 	}
 
 	// Trace[0] is the vulnerable symbol; the module that owns it is where the
-	// finding attributes. A frame with no function is a module/package-level
-	// finding, not a reached symbol — govulncheck source mode surfaces those
-	// separately, so a grouped verdict counts only reachable findings, matching
-	// the single-module parse.
+	// finding attributes. A frame with no function is the module- or
+	// package-level report for the same advisory, which is kept: it names the
+	// module, it carries the fixed version govulncheck selected for the branch in
+	// hand, and it is the analyser stating that it traced no call into the
+	// vulnerable symbol.
 	vuln := trace[0]
-	if vuln.Function == "" && !bytes.Contains(partial.Finding.Trace, []byte("\"symbol\"")) {
-		return
-	}
+	symbolic := vuln.Function != "" || bytes.Contains(partial.Finding.Trace, []byte("\"symbol\""))
 
 	var key coordinate.ModuleCoordinate
 	if intern(vuln.Module) == domain.StdlibModulePath {
@@ -606,14 +662,28 @@ func (s *Scanner) processFindingGrouped(raw []byte, byModule map[coordinate.Modu
 	osvID := intern(partial.Finding.OSV)
 	mf, ok := byModule[key]
 	if !ok {
-		mf = &moduleFindings{index: make(map[string]int)}
+		mf = &moduleFindings{index: make(map[string]int), meta: make(map[string]*findingMeta)}
 		byModule[key] = mf
 	}
 
 	// A trace of nothing but package-initialisation frames is package linkage, not
 	// a route. The finding is still filed against the module — the coordinate match
 	// stands — but it carries no route and no reachable claim.
-	initOnly := traceIsPackageInitOnly(trace)
+	initOnly := symbolic && traceIsPackageInitOnly(trace)
+
+	m := mf.meta[osvID]
+	if m == nil {
+		m = &findingMeta{vulnModule: intern(vuln.Module)}
+		mf.meta[osvID] = m
+	}
+	switch {
+	case !symbolic:
+		m.nonSymbolicReported = true
+	case initOnly:
+		m.packageInitOnly = true
+	default:
+		m.symbolReached = true
+	}
 
 	idx, exists := mf.index[osvID]
 	if !exists {
@@ -636,9 +706,13 @@ func (s *Scanner) processFindingGrouped(raw []byte, byModule map[coordinate.Modu
 		})
 		idx = len(mf.findings) - 1
 		mf.index[osvID] = idx
+	} else if mf.findings[idx].FixedIn == "" {
+		// Every level carries the same fixed version, so this only fills a finding
+		// whose first message stated none.
+		mf.findings[idx].FixedIn = intern(partial.Finding.FixedVersion)
 	}
 
-	if initOnly {
+	if !symbolic || initOnly {
 		return
 	}
 
@@ -654,7 +728,6 @@ func (s *Scanner) processFindingGrouped(raw []byte, byModule map[coordinate.Modu
 	// showed the package being initialised.
 	res := mf.findings[idx].Reachable
 	res.IsReachable = true
-	res.Confidence = domain.ConfidenceHigh
 	res.Routes = append(res.Routes, routeFromTrace(trace, intern))
 
 	if vuln.Function == "" {
@@ -696,6 +769,14 @@ func (s *Scanner) parseResultsByModule(ctx context.Context, r io.Reader, mode do
 	for coord, mf := range byModule {
 		for i := range mf.findings {
 			applyOSV(&mf.findings[i], osvs[mf.findings[i].ID], coord.Path())
+			// Settled here rather than as the levels arrive: they arrive in no
+			// guaranteed order, and the weight of a negative depends on every level
+			// the stream carried for that advisory, not on the last one seen.
+			m := mf.meta[mf.findings[i].ID]
+			if m == nil {
+				m = &findingMeta{}
+			}
+			mf.findings[i].Reachable.Confidence = findingConfidence(m)
 		}
 		domain.SortFindings(mf.findings)
 		out[coord] = mf.findings
@@ -721,8 +802,18 @@ func applyOSV(f *domain.VulnerabilityFinding, entry *OSV, modulePath string) {
 	// Only an entry that actually names this path says anything about it. A path
 	// the advisory never mentions leaves the field false, so "no symbols named"
 	// is never recorded from silence.
-	if named, ok := entry.NamesSymbolsByPath[modulePath]; ok && !named {
-		f.AdvisoryNamesNoSymbols = true
+	if syms, ok := entry.SymbolsByPath[modulePath]; ok {
+		if len(syms) == 0 {
+			f.AdvisoryNamesNoSymbols = true
+		} else if len(f.AffectedSymbols) == 0 {
+			// The analysis reached no symbol of this advisory, so it has none of its
+			// own to state and the advisory's own at-risk list is the answer. It can
+			// never overwrite a reached list: a finding the analysis traced to a
+			// symbol already carries that symbol, and the two lists must never be
+			// conflated — one says what the build reaches, the other what the
+			// advisory considers at risk.
+			f.AffectedSymbols = slices.Clone(syms)
+		}
 	}
 	f.Aliases = entry.Aliases
 	f.References = advisoryReferences(entry.References)

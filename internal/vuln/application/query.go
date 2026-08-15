@@ -83,6 +83,25 @@ func (uc *QueryVulnUseCase) ListRecordsForModule(
 	return recs, nil
 }
 
+// ListRecordsForModuleAllGenerations returns every stored scan record for a
+// coordinate, at every pipeline version the store holds it at, newest first.
+//
+// It is the read behind a history listing. ListRecordsForModule above keys on
+// the pipeline version and so goes empty for a coordinate whose whole history
+// predates a bump; a history that disappeared at a bump was never a history.
+// Nothing point-in-time is answered from it: a caller rendering these rows says
+// which generation each came from.
+func (uc *QueryVulnUseCase) ListRecordsForModuleAllGenerations(
+	ctx context.Context,
+	coord coordinate.ModuleCoordinate,
+) ([]domain.VulnerabilityRecord, error) {
+	recs, err := uc.store.ListVulnerabilityRecordsForModuleAllGenerations(ctx, coord)
+	if err != nil {
+		return nil, fmt.Errorf("listing vulnerability records across generations for %s: %w", coord, err)
+	}
+	return recs, nil
+}
+
 // ListRecordGenerationsForModule reports which pipeline versions the store
 // holds records for a coordinate at, and how much it holds at each.
 //

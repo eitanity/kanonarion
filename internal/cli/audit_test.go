@@ -233,7 +233,7 @@ func TestPrintAuditTable(t *testing.T) {
 					VulnStatus:           "Clean",
 					IsLatest:             measuredIsLatest(false),
 					LatestVersion:        "v1.5.0",
-					LatestReleaseAgeDays: 45,
+					LatestReleaseAgeDays: measuredAgeDays(45),
 				},
 			},
 			checks: []string{"latest: v1.5.0", "45 days ago"},
@@ -250,7 +250,7 @@ func TestPrintAuditTable(t *testing.T) {
 					VulnStatus:           "Clean",
 					IsLatest:             measuredIsLatest(false),
 					LatestVersion:        "v1.1.0",
-					LatestReleaseAgeDays: 0,
+					LatestReleaseAgeDays: measuredAgeDays(0),
 				},
 			},
 			checks: []string{"latest: v1.1.0", "today"},
@@ -457,3 +457,8 @@ func TestAuditCmd_EmptyCodeScopeJSON(t *testing.T) {
 // field is a pointer precisely so a row nobody asked about carries no answer, so
 // a hand-built row that means "measured, and current" has to say so.
 func measuredIsLatest(b bool) *bool { return &b }
+
+// measuredAgeDays is a release age that WAS computed. Zero is a real value
+// here — a release that shipped today — so the tests must be able to state it
+// as distinct from "no publication date", which is nil.
+func measuredAgeDays(n int) *int { return &n }

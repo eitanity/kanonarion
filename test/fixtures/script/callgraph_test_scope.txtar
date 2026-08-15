@@ -10,11 +10,37 @@ stdout 'example.com/app.Main'
 stdout 'example.com/app_test.TestHelper'
 stdout '\[test\]'
 
-# --exclude-tests narrows the answer to production code.
+# --exclude-tests narrows the answer to production code, and a NON-EMPTY
+# narrowed answer says so: "1 caller" is otherwise indistinguishable from an
+# unnarrowed query that found one caller.
 kanonarion callers 'example.com/app.Helper' --store-root=$WORK/stores --exclude-tests
 stdout '1 caller of'
 stdout 'example.com/app.Main'
 ! stdout 'TestHelper'
+stdout 'scope: test callers omitted \(--exclude-tests was given\)'
+
+# The non-zero control: the same answer without the flag states no narrowing.
+kanonarion callers 'example.com/app.Helper' --store-root=$WORK/stores
+! stdout 'scope: test callers omitted'
+
+# callees says it on the same terms.
+kanonarion callees 'example.com/app.Main' --store-root=$WORK/stores --exclude-tests
+stdout '1 callee of'
+stdout 'scope: test callees omitted \(--exclude-tests was given\)'
+
+kanonarion callees 'example.com/app.Main' --store-root=$WORK/stores
+! stdout 'scope: test callees omitted'
+
+# A transitive answer carries the narrowing in text and, because it already has
+# a JSON envelope, in JSON too.
+kanonarion callers 'example.com/app.Helper' --store-root=$WORK/stores --transitive --exclude-tests
+stdout 'scope: test callers omitted \(--exclude-tests was given\)'
+
+kanonarion callers 'example.com/app.Helper' --store-root=$WORK/stores --transitive --exclude-tests --json
+stdout '"scope": "scope: test callers omitted \(--exclude-tests was given\)"'
+
+kanonarion callers 'example.com/app.Helper' --store-root=$WORK/stores --transitive --json
+stdout '"scope": ""'
 
 # The narrowing is stated on the verdict line, so an empty production-only
 # answer is never read as wider than it is.

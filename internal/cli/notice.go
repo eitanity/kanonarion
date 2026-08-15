@@ -44,6 +44,18 @@ func newNoticeCmd(stdout, stderr io.Writer) *cobra.Command {
 The document includes per-module: module coordinate, SPDX identifier, verbatim
 license text, and verbatim copyright notices.
 
+Each licence block is headed by what the detector identified in THAT FILE, not
+by the module's identifier. A file the detector could not classify is recorded
+— path, size, hash, and any low-confidence fragment — and its content is not
+reproduced: bytes with no identified grant are not a grant. A NOTICE file is
+reproduced regardless, labelled as a notice, because Apache-2.0 section 4(d)
+requires it to travel with the work.
+
+Bundled components under directories the Go toolchain never compiles —
+testdata, and "_"- or "."-prefixed directories, at any depth — are not
+components of the artefact and are excluded. An examples directory and a nested
+vendor directory ARE compiled, and stay.
+
 Third-party code copied into first-party source is covered too. Such code has
 no go.mod entry, so it is invisible to module license extraction; notice scans
 first-party Go source for SPDX snippet tags (SPDX-SnippetBegin..SnippetEnd) and
@@ -441,6 +453,50 @@ func parseNoticeModuleRecords(out []byte) ([]noticeModule, error) {
 	return mods, nil
 }
 
+// writeNoticeLicenseFile renders one file's attribution block, headed by what
+// the pipeline identified IN THAT FILE. It is never headed by the module's
+// primary identifier: a file the detector could not classify carries no
+// identifier, and labelling it with the module's asserts a grant the bytes do
+// not make.
+//
+// prefix is the embedded component's path prefix, or "" for a root-level file.
+func writeNoticeLicenseFile(ew *errWriter, prefix string, lf licensedomain.NoticeLicenseFile) {
+	indent := ""
+	label := lf.SPDX
+	if prefix != "" {
+		indent = "  "
+		label = prefix
+	}
+
+	switch lf.Classification {
+	case licensedomain.ClassificationNotice:
+		ew.printf("\n%sNotice file (%s):\n\n", indent, lf.Path)
+		ew.printf("%s\n", lf.Content)
+
+	case licensedomain.ClassificationUnclassified:
+		// Recorded, not reproduced: enough for a reader to fetch the bytes
+		// from the module archive and judge them, without this document
+		// presenting them as a licence it cannot name.
+		ew.printf("\n%sUnclassified (%s):\n\n", indent, lf.Path)
+		ew.printf("%s  the licence detector identified no licence in this file; its content is not reproduced here\n", indent)
+		ew.printf("%s  %d bytes, %s\n", indent, lf.FileSize, lf.FileHash)
+		if lf.LowConfidenceSPDX != "" {
+			ew.printf("%s  low-confidence match: %s (%.0f%% coverage)\n",
+				indent, lf.LowConfidenceSPDX, lf.LowConfidenceCoverage*100)
+		}
+
+	case licensedomain.ClassificationLicence:
+		fallthrough
+	default:
+		if lf.Path == "" {
+			ew.printf("\n%s%s:\n\n", indent, label)
+		} else {
+			ew.printf("\n%s%s (%s):\n\n", indent, label, lf.Path)
+		}
+		ew.printf("%s\n", lf.Content)
+	}
+}
+
 const noticeDiv = "================================================================================"
 
 func writeNoticeDocument(
@@ -479,12 +535,7 @@ func writeNoticeDocument(
 			}
 		}
 		for _, lf := range e.LicenseTexts {
-			if lf.Path == "" {
-				ew.printf("\n%s:\n\n", e.SPDX)
-			} else {
-				ew.printf("\n%s (%s):\n\n", e.SPDX, lf.Path)
-			}
-			ew.printf("%s\n", lf.Content)
+			writeNoticeLicenseFile(ew, "", lf)
 		}
 		for _, comp := range e.EmbeddedComponents {
 			ew.printf("\nEmbedded component: %s\n", comp.PathPrefix)
@@ -492,8 +543,7 @@ func writeNoticeDocument(
 				ew.printf("  License: %s\n", spdx)
 			}
 			for _, lf := range comp.LicenseTexts {
-				ew.printf("\n  %s (%s):\n\n", comp.PathPrefix, lf.Path)
-				ew.printf("%s\n", lf.Content)
+				writeNoticeLicenseFile(ew, comp.PathPrefix, lf)
 			}
 		}
 		ew.printf("\n")

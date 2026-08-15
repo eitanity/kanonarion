@@ -196,9 +196,9 @@ func (uc *CheckCompatibilityUseCase) resolveRootTarget(
 // other surface fills with the module's own, and a reader cannot tell the two
 // apart.
 //
-// Components under a testdata directory are excluded here rather than in
-// DeriveEffectiveLicenseSet: see domain.IsTestCorpusPath for why the exclusion
-// belongs to this consumer and not to the derivation.
+// Components under a directory the Go toolchain never compiles are excluded
+// here rather than in DeriveEffectiveLicenseSet: see domain.IsUnbuiltPath for
+// why the exclusion belongs to this consumer and not to the derivation.
 func compatibilityInputsFor(ctx context.Context, store licenseStoreReader, coord coordinate.ModuleCoordinate) []domain.CompatibilityInput {
 	// No record, or a record that could not be read: nothing has been measured
 	// for this module, so extraction is still the action that can change the
@@ -295,13 +295,13 @@ type componentAttribution struct {
 
 // componentSPDXs returns the distinct identifiers contributed by the module's
 // bundled components, each naming every prefix it was found under, in sorted
-// identifier order. Test-corpus components are dropped: they are shipped bytes
-// but never linked code.
+// identifier order. Components under a directory the toolchain never compiles
+// are dropped: they are shipped bytes but never linked code.
 func componentSPDXs(rec domain.LicenseRecord) []componentAttribution {
 	prefixes := make(map[string][]string)
 	var order []string
 	for _, comp := range rec.EffectiveSet.Components {
-		if domain.IsTestCorpusPath(comp.PathPrefix) {
+		if domain.IsUnbuiltPath(comp.PathPrefix) {
 			continue
 		}
 		for _, spdx := range comp.SPDXs {

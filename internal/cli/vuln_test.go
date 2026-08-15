@@ -723,7 +723,7 @@ func TestRunScanShow_TextOutput(t *testing.T) {
 	ucVuln.AddRecord(app, vulnRec)
 
 	var buf bytes.Buffer
-	if err := runScanShow(context.Background(), fixtureScanID, false, ucRuns, ucVuln, &buf, io.Discard); err != nil {
+	if err := runScanShow(context.Background(), fixtureScanID, false, ucRuns, ucVuln, nil, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -739,7 +739,7 @@ func TestRunScanShow_NotFound(t *testing.T) {
 	ucVuln := testfakes.NewFakeQueryVuln()
 
 	var buf bytes.Buffer
-	err := runScanShow(context.Background(), "DOESNOTEXIST", false, ucRuns, ucVuln, &buf, io.Discard)
+	err := runScanShow(context.Background(), "DOESNOTEXIST", false, ucRuns, ucVuln, nil, &buf, io.Discard)
 	if err == nil {
 		t.Fatal("expected error, got nil")
 	}
@@ -761,7 +761,7 @@ func TestRunScanShow_ReadErrorReported(t *testing.T) {
 	ucVuln.Err = errors.New("store unavailable")
 
 	var buf bytes.Buffer
-	if err := runScanShow(context.Background(), fixtureScanID, false, ucRuns, ucVuln, &buf, io.Discard); err != nil {
+	if err := runScanShow(context.Background(), fixtureScanID, false, ucRuns, ucVuln, nil, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -789,7 +789,7 @@ func TestRunScanShow_MissingRecordReported(t *testing.T) {
 	ucVuln := testfakes.NewFakeQueryVuln()
 
 	var buf bytes.Buffer
-	if err := runScanShow(context.Background(), fixtureScanID, false, ucRuns, ucVuln, &buf, io.Discard); err != nil {
+	if err := runScanShow(context.Background(), fixtureScanID, false, ucRuns, ucVuln, nil, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -821,7 +821,7 @@ func TestRunScanShow_ScanFailedReported(t *testing.T) {
 	ucVuln.AddRecord(app, rec)
 
 	var buf bytes.Buffer
-	if err := runScanShow(context.Background(), fixtureScanID, false, ucRuns, ucVuln, &buf, io.Discard); err != nil {
+	if err := runScanShow(context.Background(), fixtureScanID, false, ucRuns, ucVuln, nil, &buf, io.Discard); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -972,7 +972,7 @@ func TestRunVulnByID_WithResults(t *testing.T) {
 	uc.SetByID([]vuldomain.VulnerabilityRecord{rec})
 
 	var buf bytes.Buffer
-	if err := runVulnByID(context.Background(), "GO-2025-0001", "", false, uc, &buf); err != nil {
+	if err := runVulnByID(context.Background(), "GO-2025-0001", "", false, uc, nil, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "example.com/app@v1.0.0") {
@@ -984,7 +984,7 @@ func TestRunVulnByID_NoResults(t *testing.T) {
 	uc := testfakes.NewFakeQueryVuln()
 
 	var buf bytes.Buffer
-	if err := runVulnByID(context.Background(), "GO-9999-9999", "", false, uc, &buf); err != nil {
+	if err := runVulnByID(context.Background(), "GO-9999-9999", "", false, uc, nil, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if !strings.Contains(buf.String(), "no modules affected") {
@@ -1018,7 +1018,7 @@ func TestRunVulnByID_WalkScopedRestrictsAndSaysSo(t *testing.T) {
 	uc.SetByIDForWalk("W-CURRENT", []vuldomain.VulnerabilityRecord{record(current)})
 
 	var buf bytes.Buffer
-	if err := runVulnByID(context.Background(), "GO-2025-0001", "W-CURRENT", false, uc, &buf); err != nil {
+	if err := runVulnByID(context.Background(), "GO-2025-0001", "W-CURRENT", false, uc, nil, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -1041,7 +1041,7 @@ func TestRunVulnByID_UnknownWalkErrors(t *testing.T) {
 	uc := testfakes.NewFakeQueryVuln()
 
 	var buf bytes.Buffer
-	err := runVulnByID(context.Background(), "GO-2025-0001", "W-NEVER-SCANNED", false, uc, &buf)
+	err := runVulnByID(context.Background(), "GO-2025-0001", "W-NEVER-SCANNED", false, uc, nil, &buf)
 	if err == nil {
 		t.Fatalf("expected an error for an unscanned walk, got output: %q", buf.String())
 	}
@@ -1335,7 +1335,7 @@ func TestRunVulnShowHistory_Empty(t *testing.T) {
 	uc := testfakes.NewFakeQueryVuln()
 	coord := mustVulnCoord(t, "example.com/mod", "v1.0.0")
 	var buf bytes.Buffer
-	err := runVulnShowHistory(context.Background(), coord, false, uc, &buf)
+	err := runVulnShowHistory(context.Background(), coord, false, uc, nil, &buf)
 	if err == nil {
 		t.Fatal("expected error for empty history")
 	}
@@ -1349,7 +1349,7 @@ func TestRunVulnShowHistory_WithRecord_Text(t *testing.T) {
 	uc := testfakes.NewFakeQueryVuln()
 	uc.AddRecord(vulnRec.Coordinate, vulnRec)
 	var buf bytes.Buffer
-	err := runVulnShowHistory(context.Background(), vulnRec.Coordinate, false, uc, &buf)
+	err := runVulnShowHistory(context.Background(), vulnRec.Coordinate, false, uc, nil, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -1367,7 +1367,7 @@ func TestRunVulnShowHistory_JSON(t *testing.T) {
 	uc := testfakes.NewFakeQueryVuln()
 	uc.AddRecord(vulnRec.Coordinate, vulnRec)
 	var buf bytes.Buffer
-	err := runVulnShowHistory(context.Background(), vulnRec.Coordinate, true, uc, &buf)
+	err := runVulnShowHistory(context.Background(), vulnRec.Coordinate, true, uc, nil, &buf)
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}

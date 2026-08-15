@@ -53,7 +53,7 @@ func TestBuildScanAffectedModules_ReportsAFindingAndItsCoverageGap(t *testing.T)
 		},
 	}
 
-	summary := buildScanAffectedModules(t.Context(), run, uc)
+	summary := buildScanAffectedModules(t.Context(), run, uc, nil)
 
 	if len(summary.affected) != 1 || summary.affected[0].Coordinate != gap.String() {
 		t.Fatalf("affected = %+v, want the coordinate-matched module %s reported", summary.affected, gap)

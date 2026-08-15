@@ -79,7 +79,7 @@ func TestBuildScanAffectedModules_WithdrawnIsItsOwnSection(t *testing.T) {
 	run := vuldomain.WalkScanRun{
 		PerModuleResults: map[coordinate.ModuleCoordinate]string{rec.Coordinate: "h1"},
 	}
-	summary := buildScanAffectedModules(t.Context(), run, uc)
+	summary := buildScanAffectedModules(t.Context(), run, uc, nil)
 
 	if len(summary.affected) != 0 {
 		t.Errorf("affected = %+v, want empty: a retracted advisory is not an affected verdict", summary.affected)

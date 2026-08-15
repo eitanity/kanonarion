@@ -144,7 +144,7 @@ func (uc *ScanWalkUseCase) scanTargetRooted(
 		// not reached. The target itself was the versionless main module, which
 		// OSV matching structurally cannot reach a verdict on, so its coordinate
 		// matches carry no reachability rather than a fabricated not-reachable.
-		findings, err := uc.mergeCoordinateFindings(ctx, coord, findings, coord != target)
+		findings, err := uc.mergeCoordinateFindings(ctx, coord, findings, coord != target, *snapshot)
 		if err != nil {
 			// A coordinate whose advisory set could not be read has not been
 			// checked. Recording it Clean would be a false negative, so it carries

@@ -203,6 +203,12 @@ func exprIsRootLevel(relPath string) bool {
 	return !strings.Contains(relPath, "/")
 }
 
+// IsNoticeFileName reports whether the path's base name is a NOTICE file.
+// A NOTICE file is an attribution document, not a licence grant: it carries no
+// identifier of its own, and Apache-2.0 section 4(d) requires it to travel with
+// the work, so a consumer reproduces it verbatim without labelling it a licence.
+func IsNoticeFileName(relPath string) bool { return exprIsNoticeName(relPath) }
+
 // exprIsNoticeName reports whether the path's base name is a NOTICE file.
 func exprIsNoticeName(relPath string) bool {
 	base := relPath

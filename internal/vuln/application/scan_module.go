@@ -275,41 +275,80 @@ import (
 // keyed on the pipeline version, so the older rows are already unreachable for a
 // v21 question, and both changes live inside the serialised record rather than
 // in a column.
-// v22 stops a project-rooted scan attributing an analysis of the project
-// directory to a walk the directory no longer builds, and records no
-// reachability at all when it has moved on.
+// v23 reads every level of the govulncheck stream, and reports the fix for the
+// release branch the module in hand is on rather than the newest branch's.
 //
-// The bump is owed because it changes what a re-derived record CONTAINS. A v21
-// scan of such a walk ran govulncheck over the directory as it stands now,
-// attributed its silence to the versions the WALK pinned, and stored a
-// not-reachable verdict at high confidence for a coordinate no analysis had
-// examined. The same inputs now produce a record whose findings carry a nil
-// Reachable and whose coverage axis is Unscannable with the divergence named, so
-// the bytes differ for every record the defect touched.
+// The bump is owed because it changes what a re-derived record CONTAINS.
+// govulncheck emits one finding message per level for the same advisory — module,
+// package, and a symbol level when it can trace a call — and the v22 parse kept
+// only the symbol level. An advisory it could not trace to a symbol was ingested
+// as though govulncheck had never mentioned it, so the advisory reached the
+// record by coordinate match instead, carrying that route's fixed version: the
+// advisory's single highest, which for a backported standard-library advisory is
+// the next major's release candidate rather than the stable point release the
+// analysis itself named.
+//
+// Measured on one project walk, same walk and same snapshot, across the change:
+// the stdlib record's seal moved from sha256:548def0a to sha256:1c23a321, and the
+// advisory with no symbol-level message moved from v1.27.0-rc.3 to v1.26.6. The
+// findings, routes and symbol lists beside it were identical, so the bytes differ
+// for exactly the records the defect touched.
 //
 // It has to be the pipeline version and cannot be a migration, because the
-// affected rows are not identifiable from the store. Whether a v21 record was
-// produced against an agreeing directory or a moved one depends on the state of
-// a directory at the moment of the scan, and that was never recorded — the only
-// visible tell was a symbol spelling, since a coordinate match writes the
-// advisory's form ("Parser.ParseUnverified") where govulncheck writes the
-// receiver's ("*Parser.ParseUnverified"). Reads pin to this constant, so under
-// the bump the v21 rows stop being served and a re-scan states what it did and
-// did not establish; the rows remain readable in the ledger as what the earlier
-// generation concluded.
+// affected rows are not identifiable from the store. Whether a v22 record took
+// its fixed version from the analysis or from a coordinate match depends on
+// whether govulncheck traced that advisory to a symbol during that scan, and that
+// was never recorded. Reads pin to this constant, so under the bump the v22 rows
+// stop being served and a re-scan states the branch-correct fix; the rows remain
+// readable in the ledger as what the earlier generation concluded.
 //
-// Measured: one project walk in a working store carried two records for
-// github.com/golang-jwt/jwt/v4@v4.5.1 seventeen seconds apart, one reachable and
-// one not, with a dependency upgrade to the FIXED v4.5.2 landing between them —
-// and eight of eight forced re-scans since have reported the false negative.
+// The cost is the same shape as the v20, v21 and v22 bumps: every stored
+// vulnerability record goes dark for a v23 question until it is re-scanned. No
+// migration is owed — reads are keyed on the pipeline version, so the v22 rows
+// are already unreachable for a v23 question, and the change lives inside the
+// serialised record (the fixed version, the at-risk symbol list and the
+// reachability verdict are all sealed within it) rather than in a column.
+// v24 makes the coordinate-match route read the advisory database the analysis
+// read, and stops a scan that could not use its pinned snapshot from writing a
+// record naming it.
 //
-// The cost is the same shape as the v20 and v21 bumps: every stored
-// vulnerability record goes dark for a v22 question until it is re-scanned. No
-// migration is owed — reads are keyed on the pipeline version, so the v21 rows
-// are already unreachable for a v22 question, and the change lives inside the
-// serialised record (an existing reason code field, an existing nullable
-// reachability field) rather than in a column.
-const PipelineVersion = "v22"
+// The bump is owed because it changes what a re-derived record CONTAINS, in both
+// directions. Under v23 the match route queried the live service while
+// govulncheck was handed the pinned snapshot, so on a host whose snapshot had
+// fallen behind, every advisory published since arrived in the record as an
+// extra finding — and carried IsReachable false at High confidence, derived by
+// govulncheck, from the silence of an analyser that was never given the
+// advisory. Under v24 those findings are absent, because the database the record
+// names does not contain them; where the snapshot does contain them, the record
+// is byte-identical to v23's.
+//
+// Measured on this host, 2026-08-14. The store held one snapshot,
+// vuln.go.dev@2026-07-27T20:14:16Z, and live vuln.go.dev listed eight advisories
+// against stdlib that it does not: GO-2026-5026, 5942, 5972, 6088, 6089, 6090,
+// 6091 and 6218. All eight affect the host toolchain go1.26.5. govulncheck run
+// over this repository against that snapshot reported 0 findings from 168
+// messages; run against the live database, 29 finding messages naming 10
+// advisories. So a scan at that snapshot produced a stdlib record whose eight
+// findings the analysis could not have seen, each stamped not-reachable.
+//
+// It has to be the pipeline version and cannot be a migration. Which findings in
+// a stored record came from the live service and which from the snapshot was
+// never recorded, so the affected rows are not identifiable from the store — and
+// the reachability verdict beside them is not repairable in place, because the
+// correct value depends on an analysis that was never run. Reads pin to this
+// constant, so under the bump the v23 rows stop being served and a re-scan states
+// a verdict from one database; the rows remain readable in the ledger as what the
+// earlier generation concluded.
+//
+// The cost is the same shape as the v20, v21, v22 and v23 bumps, and this is the
+// cheapest moment it has ever been: measured before the change, the store held
+// 2548 records at v19, 1 at v20, 158 at v21, 650 at v22 and ZERO at v23. Nothing
+// has been re-scanned since the v23 bump, so this darkens nothing that was not
+// already awaiting a re-scan. No migration is owed — reads are keyed on the
+// pipeline version, and the change lives inside the serialised record (which
+// findings it carries, and the reachability verdict on each) rather than in a
+// column.
+const PipelineVersion = "v24"
 
 // ScanModuleUseCase orchestrates a single module's vulnerability scan.
 type ScanModuleUseCase struct {
@@ -584,7 +623,7 @@ func (uc *ScanModuleUseCase) Scan(ctx context.Context, params ScanModuleParams) 
 	// 3.5 Metadata-based Filtering (Optimization)
 	// Check if this module or any of its dependencies have known vulnerabilities.
 	if !params.Force {
-		isVulnerable, err := uc.checkVulnerabilities(ctx, params.Coordinate, params.WalkID)
+		isVulnerable, err := uc.checkVulnerabilities(ctx, params.Coordinate, params.WalkID, snapshot)
 		switch {
 		case err == nil && !isVulnerable:
 			uc.logger.Info("metadata check: no known vulnerabilities in module or dependencies, skipping heavy scan", "coordinate", params.Coordinate)
@@ -1100,7 +1139,12 @@ func (uc *ScanModuleUseCase) attributeCoordinateFindings(ctx context.Context, re
 	if coverage, _ := domain.RecordAxes(*record); coverage != domain.CoverageAnalysed {
 		return nil
 	}
-	matched, err := uc.database.LookupFindings(ctx, coord)
+	// The database the match is made in is the one the record names, read off the
+	// record rather than passed alongside it. The record is what states this
+	// scan's basis, so taking the snapshot from anywhere else would let the two
+	// drift apart again — and this route's findings sit in the same sealed set as
+	// the analysis's.
+	matched, err := uc.database.LookupFindings(ctx, coord, record.DatabaseSnapshot)
 	if err != nil {
 		return fmt.Errorf("coordinate advisory match for %s: %w", coord, err)
 	}
@@ -1143,7 +1187,7 @@ func (uc *ScanModuleUseCase) attributeCoordinateFindings(ctx context.Context, re
 // could not be analysed from source (a coverage gap, not a clean).
 func (uc *ScanModuleUseCase) scanMetadataOnly(ctx context.Context, params ScanModuleParams, snapshot domain.DatabaseSnapshot, derived derivedFrom, note string, unscanReason domain.UnscanReason, errorDetail string, emptyStatus domain.VulnerabilityStatus) (domain.VulnerabilityRecord, error) {
 	uc.logger.Info("vuln-scan: metadata-only", "coordinate", params.Coordinate, "reason", note)
-	findings, err := uc.database.LookupFindings(ctx, params.Coordinate)
+	findings, err := uc.database.LookupFindings(ctx, params.Coordinate, snapshot)
 	if err != nil {
 		return domain.VulnerabilityRecord{}, fmt.Errorf("metadata check for %s: %w", params.Coordinate, err)
 	}
@@ -1369,11 +1413,18 @@ func buildSymbolRefs(module string, affectedSymbols []string) []ports.SymbolRefe
 	return refs
 }
 
-func (uc *ScanModuleUseCase) checkVulnerabilities(ctx context.Context, coord coordinate.ModuleCoordinate, walkID string) (bool, error) {
+// checkVulnerabilities reports whether coord or anything it reaches in the walk
+// graph is named by an advisory in snapshot.
+//
+// The snapshot is a parameter because this answer decides whether the module is
+// analysed from source at all. Reading a different generation here would let the
+// cheap skip be taken — or refused — on the strength of an advisory set the
+// record's own verdict was never judged against.
+func (uc *ScanModuleUseCase) checkVulnerabilities(ctx context.Context, coord coordinate.ModuleCoordinate, walkID string, snapshot domain.DatabaseSnapshot) (bool, error) {
 	// If walkID is empty, we can't look up dependencies in a walk graph.
 	// This might happen during direct module scans outside a walk context.
 	if walkID == "" || uc.walkStore == nil {
-		vulns, err := uc.database.CheckVulnerable(ctx, []coordinate.ModuleCoordinate{coord})
+		vulns, err := uc.database.CheckVulnerable(ctx, []coordinate.ModuleCoordinate{coord}, snapshot)
 		if err != nil {
 			return true, fmt.Errorf("checking vulnerabilities: %w", err)
 		}
@@ -1405,7 +1456,7 @@ func (uc *ScanModuleUseCase) checkVulnerabilities(ctx context.Context, coord coo
 		deps = append(deps, c)
 	}
 
-	vulns, err := uc.database.CheckVulnerable(ctx, deps)
+	vulns, err := uc.database.CheckVulnerable(ctx, deps, snapshot)
 	if err != nil {
 		return true, fmt.Errorf("checking vulnerabilities: %w", err)
 	}

@@ -1995,6 +1995,37 @@ ORDER BY scanned_at DESC, rowid DESC`
 		coord.Path(), coord.Version(), pipelineVersion)
 }
 
+// ListVulnerabilityRecordsForModuleAllGenerations returns every record the
+// ledger holds for a coordinate, at every pipeline version, newest first.
+//
+// It is ListVulnerabilityRecordsForModule with the generation lifted out of the
+// key. The keyed read answers "what does this build serve for this module"; this
+// one answers "what has ever been recorded about this module", and after a
+// pipeline bump those are different questions with different answers — the
+// second is the one a history listing asks.
+//
+// Ordering and its tie-break are the keyed read's, for its reasons: scanned_at
+// persists at second precision, so the row id carries the sequence the
+// append-only ledger actually has. Across generations that matters more, not
+// less: a re-scan under new logic lands after the record it supersedes.
+func (s *Store) ListVulnerabilityRecordsForModuleAllGenerations(
+	ctx context.Context,
+	coord coordinate.ModuleCoordinate,
+) ([]domain.VulnerabilityRecord, error) {
+	// The zero coordinate names no module — the same refusal the keyed reads
+	// make, for the same reason.
+	if coord.IsZero() {
+		return nil, coordinate.ErrZeroCoordinate
+	}
+	const q = `
+SELECT serialised FROM vulnerability_records
+WHERE module_path = ? AND module_version = ?
+ORDER BY scanned_at DESC, rowid DESC`
+
+	return s.queryRecords(ctx, "vulnerability records for module across generations", q,
+		coord.Path(), coord.Version())
+}
+
 // ListVulnerabilityRecordGenerationsForModule counts what the ledger holds for
 // a coordinate at each pipeline version it holds anything at.
 //

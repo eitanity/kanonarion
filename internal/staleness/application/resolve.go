@@ -55,7 +55,8 @@ func NewResolver(proxy ports.LatestResolver, ledger ports.Ledger, clk ports.Cloc
 //
 // pinnedVersion may be empty (no pin, as in `latest <module>`); the resolved
 // latest is then used to place the probe's starting major, so a bare path whose
-// newest release is a +incompatible v2 still probes from /v3.
+// newest release is a +incompatible v2 is planned the same way an explicit
+// +incompatible pin is: /v2 asked about first, then the walk from /v3.
 func (r *Resolver) Resolve(ctx context.Context, path, pinnedVersion string) (Answer, error) {
 	now := r.clk.Now()
 
@@ -93,16 +94,16 @@ func (r *Resolver) Resolve(ctx context.Context, path, pinnedVersion string) (Ans
 	if pin == "" {
 		pin = out.LatestVersion
 	}
-	start := domain.ProbeStartMajor(path, pin)
+	plan := domain.PlanProbe(path, pin)
 
 	// The cached probe is reusable only when it started at the same major; see
 	// NewerMajor.FromMajor.
-	if haveFresh && stored.NewerMajor.Probed && stored.NewerMajor.FromMajor == start {
+	if haveFresh && stored.NewerMajor.Probed && stored.NewerMajor.FromMajor == plan.Start() {
 		out.NewerMajor = stored.NewerMajor
 		return Answer{Record: out, Served: true}, nil
 	}
 
-	nm, probeErr := r.probe(ctx, path, start)
+	nm, probeErr := r.probe(ctx, path, plan)
 	out.NewerMajor = nm
 
 	// LookedUpAt is deliberately NOT restamped when only the probe ran live: the
@@ -123,13 +124,39 @@ func (r *Resolver) Resolve(ctx context.Context, path, pinnedVersion string) (Ans
 	return Answer{Record: out}, probeErr
 }
 
-// probe walks major suffixes upward from start, stopping at the first absent
-// one. An absent major is a definitive answer and yields a recorded negative;
-// any other error leaves the probe unrecorded (Probed false), which reads as
-// "not asked" rather than "none exists".
-func (r *Resolver) probe(ctx context.Context, path string, start int) (domain.NewerMajor, error) {
+// probe answers the plan: the same-major question first, when there is one,
+// then the upward walk, stopping at the first absent major. An absent major in
+// the walk is a definitive answer and yields a recorded negative; any other
+// error leaves the probe unrecorded (Probed false), which reads as "not asked"
+// rather than "none exists".
+//
+// The same-major question is not a step of the walk and its absence never ends
+// one — see domain.ProbePlan. It costs one extra request, and only for a
+// +incompatible pin: every other module's probe is unchanged.
+//
+// The last path that resolved wins, so a +incompatible pin whose own major is
+// republished AND which has a genuine next major reports the next major.
+func (r *Resolver) probe(ctx context.Context, path string, plan domain.ProbePlan) (domain.NewerMajor, error) {
 	fam := domain.ParseFamily(path)
+	start := plan.Start()
 	nm := domain.NewerMajor{Probed: true, FromMajor: start}
+
+	if m, ok := plan.SameMajor(); ok {
+		candidate := fam.PathForMajor(m)
+		info, err := r.proxy.LatestInfo(ctx, candidate)
+		switch {
+		case errors.Is(err, ports.ErrPathAbsent):
+			// The ordinary case for a module that never adopted /vN. It says
+			// nothing about the majors above, so the walk still runs.
+		case err != nil:
+			return domain.NewerMajor{}, fmt.Errorf("probing %s for a newer major: %w", path, err)
+		default:
+			nm.Path = candidate
+			nm.Version = info.Version
+			nm.PublishedAt = info.Time
+		}
+	}
+
 	for n := start; n < start+maxProbeDepth; n++ {
 		candidate := fam.PathForMajor(n)
 		info, err := r.proxy.LatestInfo(ctx, candidate)

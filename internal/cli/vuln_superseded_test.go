@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"fmt"
 	"io"
 	"strings"
 	"testing"
@@ -25,15 +27,56 @@ import (
 
 const supersededVulnPipeline = "0.0.1-superseded"
 
-// darkCoord is a coordinate the store holds only at a superseded generation:
-// no read returns a record, and the census says why.
+// darkCoord is a coordinate the store holds only at a superseded generation: the
+// keyed reads return nothing, the census says why, and the rows themselves are
+// still there for the one read that spans generations. The three are seeded
+// together because they are one condition — a fixture where the census counts
+// rows the store does not hold would let a history listing pass by reporting an
+// absence.
 func darkCoord(t *testing.T, uc *testfakes.FakeQueryVuln, records, findings int) coordinate.ModuleCoordinate {
 	t.Helper()
 	coord := coordinatetest.MustNew("example.com/dark", "v1.0.0")
 	uc.SetRecordGenerations(coord, []vulnports.VulnerabilityRecordGeneration{
 		{PipelineVersion: supersededVulnPipeline, Records: records, Findings: findings},
 	})
+	uc.AddSupersededRecords(coord, darkRecords(coord, records, findings)...)
 	return coord
+}
+
+// darkRecords builds the rows the census counts, newest first, spreading the
+// findings across them.
+func darkRecords(coord coordinate.ModuleCoordinate, records, findings int) []vuldomain.VulnerabilityRecord {
+	out := make([]vuldomain.VulnerabilityRecord, 0, records)
+	scannedAt := time.Date(2026, 8, 4, 0, 0, 0, 0, time.UTC)
+	for i := range records {
+		n := findings / records
+		if i < findings%records {
+			n++
+		}
+		fs := make([]vuldomain.VulnerabilityFinding, 0, n)
+		for j := range n {
+			fs = append(fs, vuldomain.VulnerabilityFinding{
+				ID:          fmt.Sprintf("GO-2026-%04d", i*100+j),
+				Summary:     "example vulnerability",
+				PublishedAt: scannedAt,
+				ModifiedAt:  scannedAt,
+			})
+		}
+		status := vuldomain.StatusClean
+		if n > 0 {
+			status = vuldomain.StatusAffected
+		}
+		out = append(out, vuldomain.VulnerabilityRecord{
+			Ecosystem:        fetchdomain.EcosystemGo,
+			Coordinate:       coord,
+			OverallStatus:    status,
+			DatabaseSnapshot: fixtureSnap,
+			ScannedAt:        scannedAt.Add(-time.Duration(i) * time.Hour),
+			PipelineVersion:  supersededVulnPipeline,
+			Findings:         fs,
+		})
+	}
+	return out
 }
 
 // currentRecord is a coordinate answered normally, at the version this build
@@ -81,16 +124,79 @@ func TestVulnShow_SupersededGenerationIsNamedNotReportedAbsent(t *testing.T) {
 	}
 }
 
-func TestVulnShowHistory_SupersededGenerationIsNamed(t *testing.T) {
+// A history is what the store has ever recorded, so a pipeline bump may not
+// empty it. Every other read on this coordinate refuses, and refusing is right
+// for them: they answer "what holds now". This one answers "what was recorded",
+// and the bump that superseded the rows is the moment its reader most needs
+// them.
+func TestVulnShowHistory_SupersededGenerationIsListedNotRefused(t *testing.T) {
 	uc := testfakes.NewFakeQueryVuln()
 	coord := darkCoord(t, uc, 16, 252)
 
-	err := runVulnShowHistory(context.Background(), coord, false, uc, io.Discard)
-	if err == nil {
-		t.Fatal("expected a refusal, got nil")
+	var buf bytes.Buffer
+	if err := runVulnShowHistory(context.Background(), coord, false, uc, nil, &buf); err != nil {
+		t.Fatalf("history refused a coordinate the store holds 16 records for: %v", err)
 	}
-	if !strings.Contains(err.Error(), supersededVulnPipeline) {
-		t.Errorf("history does not name the generation it is standing on: %s", err)
+	out := buf.String()
+	if !strings.Contains(out, "16 scan record(s)") {
+		t.Errorf("history did not list the 16 records the census counts:\n%s", out)
+	}
+	if got := strings.Count(out, "[superseded]"); got != 16 {
+		t.Errorf("marked %d of 16 rows superseded:\n%s", got, out)
+	}
+	if !strings.Contains(out, "pipeline="+supersededVulnPipeline) {
+		t.Errorf("history does not name the generation it is standing on:\n%s", out)
+	}
+	if !strings.Contains(out, "16 of 16 record(s) were produced by superseded scan logic") {
+		t.Errorf("no notice sizing the superseded part of the listing:\n%s", out)
+	}
+}
+
+// The same listing as JSON goes through the same read, so it spans generations
+// too — and a machine cannot read the prose marking, so the state is a field.
+func TestVulnShowHistoryJSON_MarksSupersededRecords(t *testing.T) {
+	uc := testfakes.NewFakeQueryVuln()
+	coord := darkCoord(t, uc, 3, 3)
+
+	var buf bytes.Buffer
+	if err := runVulnShowHistory(context.Background(), coord, true, uc, nil, &buf); err != nil {
+		t.Fatalf("history --json refused a coordinate the store holds records for: %v", err)
+	}
+	var got []struct {
+		PipelineVersion string `json:"pipeline_version"`
+		Superseded      bool   `json:"superseded"`
+	}
+	if err := json.Unmarshal(buf.Bytes(), &got); err != nil {
+		t.Fatalf("decoding history JSON: %v\n%s", err, buf.String())
+	}
+	if len(got) != 3 {
+		t.Fatalf("expected 3 records, got %d:\n%s", len(got), buf.String())
+	}
+	for i, r := range got {
+		if r.PipelineVersion != supersededVulnPipeline {
+			t.Errorf("record %d: pipeline_version %q", i, r.PipelineVersion)
+		}
+		if !r.Superseded {
+			t.Errorf("record %d: superseded field is false for a superseded record:\n%s", i, buf.String())
+		}
+	}
+}
+
+// A coordinate nobody has scanned still reads as one: nothing at any generation,
+// and no supersession to report.
+func TestVulnShowHistory_NeverScannedStillReadsAsAbsent(t *testing.T) {
+	uc := testfakes.NewFakeQueryVuln()
+	coord := coordinatetest.MustNew("example.com/never-scanned", "v1.0.0")
+
+	err := runVulnShowHistory(context.Background(), coord, false, uc, nil, io.Discard)
+	if err == nil {
+		t.Fatal("expected a refusal for a coordinate the store holds nothing for")
+	}
+	if !strings.Contains(err.Error(), "no vulnerability records") {
+		t.Errorf("absence does not read as absence: %v", err)
+	}
+	if strings.Contains(err.Error(), "superseded") {
+		t.Errorf("reports supersession for a coordinate with no records at all: %v", err)
 	}
 }
 
@@ -192,7 +298,7 @@ func TestVulnByID_MarksSupersededRows(t *testing.T) {
 	})
 
 	var buf bytes.Buffer
-	if err := runVulnByID(context.Background(), "GO-2025-3553", "", false, uc, &buf); err != nil {
+	if err := runVulnByID(context.Background(), "GO-2025-3553", "", false, uc, nil, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	out := buf.String()
@@ -233,7 +339,7 @@ func TestVulnByID_AllCurrentRowsCarryNoNotice(t *testing.T) {
 	}})
 
 	var buf bytes.Buffer
-	if err := runVulnByID(context.Background(), "GO-2025-3553", "", false, uc, &buf); err != nil {
+	if err := runVulnByID(context.Background(), "GO-2025-3553", "", false, uc, nil, &buf); err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
 	if strings.Contains(buf.String(), "superseded") {

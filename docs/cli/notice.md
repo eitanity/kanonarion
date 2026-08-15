@@ -106,6 +106,42 @@ Apache-2.0 (LICENSE.txt):
 Copyright notices are deduplicated and sorted lexically. Each licence text is
 reproduced verbatim from the file in the module zip.
 
+### Each block is headed by that file's own classification
+
+The heading on a licence block names what the detector found **in that file**,
+never the module's primary identifier. A module can carry files under different
+licences, and labelling them all with the module's identifier states something
+untrue: `gopkg.in/yaml.v3` is MIT and its `NOTICE` carries an Apache-2.0 grant,
+which now reads `Apache-2.0 (NOTICE):` rather than `MIT (NOTICE):`.
+
+Three block shapes follow from that:
+
+| Detector result | Heading | Content |
+|---|---|---|
+| a licence was identified | `<SPDX> (<path>):` | reproduced verbatim |
+| the file is a `NOTICE` / `NOTICE.txt` / `NOTICE.md` | `Notice file (<path>):` | reproduced verbatim |
+| nothing was identified | `Unclassified (<path>):` | **not** reproduced |
+
+An unclassified file is **recorded, not printed**:
+
+```
+Unclassified (SQLITE-LICENSE):
+
+  the licence detector identified no licence in this file; its content is not reproduced here
+  1506 bytes, sha256:8438c9c89b849131ead81d5435cb97fcf052df5b0b286dda8a2d4c29e6cb3fd0
+  low-confidence match: AGPL-3.0 (11% coverage)
+```
+
+Bytes with no identified grant are not a grant, and printing them under a
+licence heading is how scanner-fixture markup and unrelated content reached the
+document. The path, size and hash are enough to fetch the file from the module
+zip and judge it. The `low-confidence match` line appears only when the detector
+recognised a sub-threshold fragment.
+
+A `NOTICE` file is the deliberate exception: it declares no licence of its own,
+but Apache-2.0 section 4(d) requires it to be redistributed with the work, so it
+is reproduced in full and labelled as a notice rather than as a licence.
+
 ## Embedded component attribution
 
 Modules that bundle third-party source code under a different licence - either
@@ -159,6 +195,34 @@ Only components with a classified SPDX identifier and a readable licence file
 are included. Components whose licence is unclassified appear in the extraction
 record but are not reproduced in the NOTICE document - add a licence override in
 `config.yaml` if manual classification is needed.
+
+### Directories the Go toolchain never compiles are not components
+
+A component under a directory the go tool ignores is dropped, at any depth:
+
+- a `testdata` segment,
+- a segment beginning with `_`,
+- a segment beginning with `.`.
+
+These are the toolchain's own ignore rules, not a guess about what a distributor
+ships. Nothing under such a directory is built, imported or linked, so a licence
+file found there governs a fixture - a sample graph, a captured document, a
+scanner test corpus - and not a component of the artefact this document
+attributes. `github.com/google/licensecheck` ships its scanner corpus under
+`testdata/`, which put `BSD-3-Clause-No-Nuclear-License` and the fixtures'
+match-percentage markup into the document; `modernc.org/libc` ships
+`libc-test` under `testdata/`, which put `GPL-2.0` there.
+
+Two neighbouring cases are **not** excluded, because the toolchain does build
+them: an `examples` directory is an ordinary package that can be imported and
+linked, and a nested `vendor` directory holds exactly the code that is linked.
+Excluding either would be a judgement about distribution rather than a fact
+about the artefact.
+
+The exclusion is applied where the document is generated, not in the derivation:
+`EffectiveSet` stays a faithful account of what the module zip contains, and
+each consumer states its own scope. `license-compat` applies the same rule for
+the same reason.
 
 **No new extraction step is required.** `EffectiveSet` is derived from the
 existing `LicenseFiles` on every record load, so modules extracted before the

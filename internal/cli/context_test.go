@@ -420,7 +420,7 @@ func TestLicenseSummaryLine_NeverBlank(t *testing.T) {
 			l: contextLicense{
 				Status:                "Unclassified",
 				LowConfidenceSPDX:     "AGPL-3.0-or-later",
-				LowConfidenceCoverage: 0.0279,
+				LowConfidenceCoverage: float64Ptr(0.0279),
 			},
 			want: "Unclassified — license file present; low-confidence AGPL-3.0-or-later match (~3% coverage)",
 		},
@@ -469,7 +469,7 @@ func TestPrintFullLicense_Populated(t *testing.T) {
 			l: contextLicense{
 				Status:                "Unclassified",
 				LowConfidenceSPDX:     "AGPL-3.0-or-later",
-				LowConfidenceCoverage: 0.0279,
+				LowConfidenceCoverage: float64Ptr(0.0279),
 			},
 			wants: []string{"Unclassified", "Low-confidence match: AGPL-3.0-or-later", "~3% coverage"},
 		},
@@ -603,7 +603,7 @@ func TestPrintFullVulnerabilities_Populated(t *testing.T) {
 						Aliases:   []string{"CVE-2024-1234"},
 						Summary:   "heap overflow",
 						FixedIn:   "v1.2.3",
-						Score:     9.8,
+						Score:     float64Ptr(9.8),
 						Reachable: &reachable,
 					},
 				},
@@ -762,8 +762,8 @@ func TestBuildLicense_LowConfidenceFromUnclassifiedRoot(t *testing.T) {
 	if l.LowConfidenceSPDX != "AGPL-3.0-or-later" {
 		t.Errorf("LowConfidenceSPDX = %q, want AGPL-3.0-or-later (vendored match must be ignored)", l.LowConfidenceSPDX)
 	}
-	if l.LowConfidenceCoverage != 0.0279 {
-		t.Errorf("LowConfidenceCoverage = %f, want 0.0279", l.LowConfidenceCoverage)
+	if l.LowConfidenceCoverage == nil || *l.LowConfidenceCoverage != 0.0279 {
+		t.Errorf("LowConfidenceCoverage = %v, want 0.0279", l.LowConfidenceCoverage)
 	}
 }
 
@@ -1031,3 +1031,8 @@ func TestStatusWithReason_CollapsesLines(t *testing.T) {
 		t.Errorf("a record with no detail must render the bare status word, got %q", statusWithReason("Extracted", ""))
 	}
 }
+
+// float64Ptr is the constructor for the curated shapes' optional numeric
+// fields, which are pointers so that "no answer" and a measured zero are
+// different documents.
+func float64Ptr(v float64) *float64 { return &v }

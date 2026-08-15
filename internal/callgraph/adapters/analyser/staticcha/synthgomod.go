@@ -293,30 +293,36 @@ func hasVendorTree(dir string) (bool, error) {
 // analysisEnv is the process environment every packages.Load for one analysis
 // runs under.
 //
-// It disables vendor mode when a go.mod was synthesised beside a vendor tree.
+// It disables vendor mode on every load, which is what a go.mod synthesised
+// beside a vendor tree needs.
 // Automatic vendoring would make the graph describe the vendored copies rather
 // than the module's own dependency set — and a synthesised go.mod requires
 // nothing, so vendor/modules.txt cannot be consistent with it and the load fails
 // on that instead. Neither outcome is the analysis that was asked for, so the
 // choice is made here and recorded on the record rather than left to the
 // toolchain's default.
-// It also pins the load offline whenever require directives were synthesised.
-// Those versions came from a build that already resolved them, and the module
-// cache the analyser documents as its precondition is where they live; letting
-// the toolchain reach a proxy would let it substitute something the walk never
-// selected, and would put a network call on a path that had none. GOSUMDB is
-// disabled with it because a synthesised module has no go.sum and no published
-// checksum line to check one against — the artefact's own integrity was already
-// established by the fetch that stored it.
-func analysisEnv(synth domain.SynthesisedGoMod) []string {
-	env := isolatedModuleEnv()
-	if len(synth.Requires) > 0 {
-		// GOPROXY=off is the whole point: the versions are already chosen, so the
-		// only legitimate source for them is the local module cache. GOSUMDB=off
-		// keeps the checksum database — a network service — out of a load that must
-		// not make one, for a go.mod that no published go.sum corresponds to.
-		env = append(env, "GOPROXY=off", "GOSUMDB=off")
-	}
+// It also pins every load offline. The versions are already chosen in every
+// case this function serves — by the walk for a fetched module, by the tree's
+// own go.mod and go.sum for a working tree, by the synthesis for a module that
+// had no usable go.mod of its own — so the only legitimate source for them is
+// the local module cache the analyser documents as its precondition. Letting the
+// toolchain reach a proxy would let it substitute something nobody selected, and
+// would put a network call on a path that is not measuring the network. It was
+// conditional on synthesised requires, which left the two commonest paths — a
+// working tree, and a module whose own go.mod was usable — reaching the proxy
+// for names that cannot resolve there anyway. GOSUMDB is disabled with it
+// because it is the same network service by another name, and because a
+// synthesised module has no go.sum and no published checksum line to check one
+// against — the artefact's own integrity was already established by the fetch
+// that stored it.
+//
+// A dependency genuinely absent from the module cache now fails the load
+// offline. That failure is the host's, not the module's, and it is classified
+// as such: isOfflineCacheMiss matches the go command's own sentence and the
+// analyser files the record under FailureCauseEnvironment, so a warm cache
+// tomorrow still gets its chance to answer.
+func analysisEnv() []string {
+	env := append(isolatedModuleEnv(), "GOPROXY=off", "GOSUMDB=off")
 	// -mod=mod on every load, not only the synthesised ones. Two reasons, and the
 	// second is why it moved out of the synthesis branch.
 	//

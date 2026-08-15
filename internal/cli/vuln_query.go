@@ -47,9 +47,15 @@ newest scan of a shared dependency belongs to whichever project was scanned
 last.
 
 Use --history to list every stored scan record for the module across all
-walks and snapshots, newest first — including the frame each was measured
-in. This shows when a finding first appeared or was absent because the
-vulnerability database snapshot predated it.`,
+walks, snapshots and pipeline generations, newest first — including the
+frame each was measured in. This shows when a finding first appeared or was
+absent because the vulnerability database snapshot predated it.
+
+--history is the one read that spans pipeline generations. The others serve
+only records this build's scan logic would still produce, and refuse when
+the store holds a coordinate at superseded generations alone; a history is
+what was recorded rather than what holds now, so it lists those records and
+marks them superseded.`,
 		Example: `  kanonarion vuln-show github.com/gin-gonic/gin@v1.6.2
   kanonarion vuln-show github.com/gin-gonic/gin@v1.6.2 --json
   kanonarion vuln-show github.com/gin-gonic/gin@v1.6.2 --history
@@ -94,7 +100,7 @@ func runVulnShow(
 	}
 
 	if history {
-		return runVulnShowHistory(ctx, coord, jsonOut, uc, stdout)
+		return runVulnShowHistory(ctx, coord, jsonOut, uc, graphs, stdout)
 	}
 
 	anchor, anchored, err := resolveVulnFrameAnchor(ctx, walks, walkID, gomod, gomodSet)
@@ -184,7 +190,7 @@ func runVulnShow(
 		// and no statement of what was searched to reach it.
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(toVulnRecordJSON(rec)); err != nil {
+		if err := enc.Encode(toVulnRecordJSON(rec, newRecordRootFunc(ctx, graphs))); err != nil {
 			return fmt.Errorf("encoding vulnerability record: %w", err)
 		}
 		return nil
@@ -402,25 +408,36 @@ func walkAge(t time.Time) string {
 	}
 }
 
-func runVulnShowHistory(ctx context.Context, coord coordinate.ModuleCoordinate, jsonOut bool, uc QueryVulnUseCase, stdout io.Writer) error {
-	recs, err := uc.ListRecordsForModule(ctx, coord, vulnPipelineVersion)
+// runVulnShowHistory lists what the store has ever recorded about a coordinate.
+//
+// It reads across generations deliberately, and it is the only vulnerability
+// read that does. The point-in-time reads key on the pipeline version and refuse
+// when the store holds the coordinate only at superseded ones, which is right: a
+// verdict served today must be one this build's logic would reach. A history is
+// a different question — it asks what was recorded, not what holds now — and the
+// keyed read answered it by making the history vanish at the bump that produced
+// it, which is the one moment the reader most needs to see the earlier rows.
+//
+// The rows a superseded generation wrote are marked, in vuln-by-id's words: they
+// reach a reader here and nowhere else, and an unmarked one would be quoted as
+// the current answer.
+func runVulnShowHistory(ctx context.Context, coord coordinate.ModuleCoordinate, jsonOut bool, uc QueryVulnUseCase, graphs QueryCallGraphUseCase, stdout io.Writer) error {
+	recs, err := uc.ListRecordsForModuleAllGenerations(ctx, coord)
 	if err != nil {
 		return fmt.Errorf("listing vulnerability history: %w", err)
 	}
 	if len(recs) == 0 {
-		// --history is the read that most owes this branch: it advertises itself
-		// as every stored scan record for the module, and a bump makes it print
-		// "no records" over a history it is standing on.
-		if err := supersededVulnRefusal(ctx, uc, coord); err != nil {
-			return err
-		}
+		// Nothing at any generation, so there is no supersession to report and
+		// this is the genuine absence it reads as. The superseded branch the keyed
+		// reads carry is unreachable from here by construction — the read above
+		// sees every generation the census would have counted.
 		return &exitError{code: ExitNotFound, msg: fmt.Sprintf("no vulnerability records for %s — run 'kanonarion vuln-scan' first", coord)}
 	}
 
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(toVulnRecordsJSON(recs)); err != nil {
+		if err := enc.Encode(toVulnRecordsJSON(recs, newRecordRootFunc(ctx, graphs))); err != nil {
 			return fmt.Errorf("encoding vulnerability history: %w", err)
 		}
 		return nil
@@ -439,16 +456,72 @@ func runVulnShowHistory(ctx context.Context, coord coordinate.ModuleCoordinate, 
 		// The frame is on every line because two generations for one coordinate
 		// and snapshot may be answers to two different questions rather than a
 		// revision of one, and the dates alone cannot say which.
-		_, _ = fmt.Fprintf(stdout, "  %s  walk=%-26s  snap=%-24s  frame=%-13s  %-8s  %s\n",
+		_, _ = fmt.Fprintf(stdout, "  %s  walk=%-26s  snap=%-24s  frame=%-13s  %-26s  %-8s  %s\n",
 			rec.ScannedAt.UTC().Format(time.RFC3339),
 			rec.WalkID,
 			rec.DatabaseSnapshot.Version(),
 			vuldomain.RecordRooting(rec),
+			vulnGenerationLabel(rec),
 			rec.OverallStatus,
 			findingSummary,
 		)
 	}
+	if note := supersededHistoryNote(recs); note != "" {
+		_, _ = fmt.Fprint(stdout, note)
+	}
 	return nil
+}
+
+// vulnGenerationLabel names the generation one row was written under, marking it
+// when this build serves nothing from that generation anywhere else.
+func vulnGenerationLabel(rec vuldomain.VulnerabilityRecord) string {
+	if rec.PipelineVersion != vulnPipelineVersion {
+		return "pipeline=" + rec.PipelineVersion + " [superseded]"
+	}
+	return "pipeline=" + rec.PipelineVersion
+}
+
+// supersededVulnRowCount counts the rows of a listing that a generation this
+// build no longer serves produced.
+func supersededVulnRowCount(records []vuldomain.VulnerabilityRecord) int {
+	n := 0
+	for _, rec := range records {
+		if rec.PipelineVersion != vulnPipelineVersion {
+			n++
+		}
+	}
+	return n
+}
+
+// supersededHistoryNote states, once under a history listing, how much of it
+// this build would not serve as an answer.
+//
+// It is supersededByIDNote's statement for a different listing, and it stops
+// short of that one's second sentence: the rows here are a coordinate's whole
+// history, so most of them are not "the newest evidence the store holds" and
+// saying so would be false. What both notes must carry is the same: how many
+// rows, out of how many, and which pipeline this build reads.
+func supersededHistoryNote(records []vuldomain.VulnerabilityRecord) string {
+	n := supersededVulnRowCount(records)
+	if n == 0 {
+		return ""
+	}
+	return fmt.Sprintf(
+		"\nnotice: %d of %d record(s) were produced by superseded scan logic (this build reads pipeline %s).\n"+
+			"        They are the history this coordinate has, and they are not what a current scan would\n"+
+			"        answer — the point-in-time reads serve none of them. Re-scan to add a current record:\n"+
+			"          kanonarion vuln-scan --module %s --reachability\n",
+		n, len(records), vulnPipelineVersion, coordOf(records))
+}
+
+// coordOf names the coordinate a single-coordinate listing is about, taken from
+// the rows themselves so the remedy line cannot name a different module from the
+// one the rows describe.
+func coordOf(records []vuldomain.VulnerabilityRecord) string {
+	if len(records) == 0 {
+		return ""
+	}
+	return records[0].Coordinate.String()
 }
 
 func newVulnByIDCmd(stdout, stderr io.Writer) *cobra.Command {
@@ -475,7 +548,7 @@ which is what "which of my modules is hit by this CVE" usually means.`,
 				return fmt.Errorf("initialising store: %w", err)
 			}
 			defer func() { _ = cleanup() }()
-			return runVulnByID(cmd.Context(), args[0], walkID, jsonOut, ctr.QueryVuln, stdout)
+			return runVulnByID(cmd.Context(), args[0], walkID, jsonOut, ctr.QueryVuln, ctr.QueryCallGraph, stdout)
 		},
 	}
 
@@ -484,7 +557,7 @@ which is what "which of my modules is hit by this CVE" usually means.`,
 	return cmd
 }
 
-func runVulnByID(ctx context.Context, findingID, walkID string, jsonOut bool, uc QueryVulnUseCase, stdout io.Writer) error {
+func runVulnByID(ctx context.Context, findingID, walkID string, jsonOut bool, uc QueryVulnUseCase, graphs QueryCallGraphUseCase, stdout io.Writer) error {
 	// Wrapped with the command name rather than a second description of the
 	// operation: the use case already says "listing vulnerability records by
 	// finding ID", and repeating that here tells the reader nothing new.
@@ -499,7 +572,7 @@ func runVulnByID(ctx context.Context, findingID, walkID string, jsonOut bool, uc
 		// an unqualified negative here is the whole failure mode.
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(toVulnRecordsJSON(records)); err != nil {
+		if err := enc.Encode(toVulnRecordsJSON(records, newRecordRootFunc(ctx, graphs))); err != nil {
 			return fmt.Errorf("encoding vulnerability records: %w", err)
 		}
 		return nil
@@ -563,12 +636,7 @@ func runVulnByID(ctx context.Context, findingID, walkID string, jsonOut bool, uc
 // Silent when every row is current, which is the ordinary case and where a
 // standing caveat would only teach the reader to skip it.
 func supersededByIDNote(records []vuldomain.VulnerabilityRecord) string {
-	n := 0
-	for _, rec := range records {
-		if rec.PipelineVersion != vulnPipelineVersion {
-			n++
-		}
-	}
+	n := supersededVulnRowCount(records)
 	if n == 0 {
 		return ""
 	}

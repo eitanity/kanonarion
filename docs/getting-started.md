@@ -246,8 +246,10 @@ never mistaken for a live one, and `--fresh` bypasses the ledger.
 
 The staleness column reports **two** facts per module, never merged. The latest
 version at the module path itself, and - because a Go module's next major
-version lives at a *different* path - the newest major path above the pinned one
-that resolves (`newer major: .../v5@v5.3.1`). A dependency pinned several majors
+version lives at a *different* path - the newest major path that resolves
+(`newer major: .../v5@v5.3.1`). For a `+incompatible` pin that second fact
+includes its own major republished at `/vN`, which is usually the migration
+target. A dependency pinned several majors
 behind is at the latest version of its own path and is still a whole major line
 behind; reporting only the first would call it `current`.
 
@@ -303,8 +305,8 @@ kanonarion local .
 kanonarion callers '<module-path>/internal/server.New'
 ```
 
-**Duration:** ~15 s to analyse this codebase (8,598 nodes / 97,246 call
-edges, of which 4,481 nodes are `_test.go` declarations). An unchanged tree is
+**Duration:** ~20 s to analyse this codebase (13,339 nodes / 174,337 call
+edges, of which 7,524 nodes are `_test.go` declarations). An unchanged tree is
 not analysed again - the stored record is served in well under a second, and the
 run says which it did. Any edit to the source, `go.mod` or `go.sum` re-analyses;
 `--force` re-analyses regardless.
@@ -312,7 +314,8 @@ run says which it did. Any edit to the source, `go.mod` or `go.sum` re-analyses;
 Test files are part of the graph, because test fakes and table-driven callers
 are most of what a signature change has to touch. Test-scope results carry a
 `[test]` tag; add `--exclude-tests` for the production-only view, which is
-stated on the verdict line so a narrowed answer is never read as a wider one:
+stated on the answer - on a `scope:` line under the list, or on the verdict line
+when the list is empty - so a narrowed answer is never read as a wider one:
 
 ```bash
 kanonarion callers '<module-path>/internal/server.New' --exclude-tests

@@ -27,24 +27,49 @@ func unclassifiedRoutes(vuldomain.ReachabilityRoute) vuldomain.RouteRoot {
 	return vuldomain.RouteRoot{}
 }
 
-// newRouteRootFunc binds a record to a classifier reading the stored call
-// graphs, so the presenters can ask what sits at the root of each of its routes.
+// recordRootFunc binds one record to the classifier for its own routes.
+//
+// It exists because the classification is a question about a RECORD's routes,
+// not about a route alone: only the record states the frame the analysis was
+// rooted in. A presenter holding one record asks for its classifier once; a
+// presenter walking a list asks per record, and every classifier it gets shares
+// one loaded-graph cache, because a list of forty records of one project asks
+// the same module for the same graph forty times.
+type recordRootFunc func(vuldomain.VulnerabilityRecord) routeRootFunc
+
+// unclassifiedRecords is the binder for a caller with no call-graph reader: it
+// hands every record the classifier that answers nothing.
+func unclassifiedRecords(vuldomain.VulnerabilityRecord) routeRootFunc {
+	return unclassifiedRoutes
+}
+
+// newRecordRootFunc returns the binder above, reading the stored call graphs.
 //
 // The record supplies both halves of the question the route cannot answer
 // alone: its analysis frame says what the analysis was rooted at, and its
 // coordinate is the fallback for a route whose first frame carries no version —
 // which is every route into a main module, since a main module has none in a Go
-// build.
-func newRouteRootFunc(ctx context.Context, graphs QueryCallGraphUseCase, rec vuldomain.VulnerabilityRecord) routeRootFunc {
+// build. A caller that cannot supply a record must not classify at all: the
+// frame decides whether a route is closure-rooted, so a fabricated one would
+// make two surfaces disagree about a route they read from the same store.
+func newRecordRootFunc(ctx context.Context, graphs QueryCallGraphUseCase) recordRootFunc {
 	if graphs == nil {
-		return unclassifiedRoutes
+		return unclassifiedRecords
 	}
 	classifier := rootclass.New(graphs, cgapp.PipelineVersion)
-	rooting := vuldomain.RecordRooting(rec)
-	coord := rec.Coordinate
-	return func(route vuldomain.ReachabilityRoute) vuldomain.RouteRoot {
-		return classifier.Classify(ctx, rooting, coord, route)
+	return func(rec vuldomain.VulnerabilityRecord) routeRootFunc {
+		rooting := vuldomain.RecordRooting(rec)
+		coord := rec.Coordinate
+		return func(route vuldomain.ReachabilityRoute) vuldomain.RouteRoot {
+			return classifier.Classify(ctx, rooting, coord, route)
+		}
 	}
+}
+
+// newRouteRootFunc binds a record to a classifier reading the stored call
+// graphs, so the presenters can ask what sits at the root of each of its routes.
+func newRouteRootFunc(ctx context.Context, graphs QueryCallGraphUseCase, rec vuldomain.VulnerabilityRecord) routeRootFunc {
+	return newRecordRootFunc(ctx, graphs)(rec)
 }
 
 // firstRouteRootOf classifies the first route a finding records, or answers the

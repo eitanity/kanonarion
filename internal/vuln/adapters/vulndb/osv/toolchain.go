@@ -96,17 +96,9 @@ func toolchainAdvisoryIDs(data []byte) (ids []string, present bool, err error) {
 // affected block states, and the retraction stamp that decides whether a match
 // against them still stands.
 func readSnapshotAdvisory(files map[string]*zip.File, id string) (domain.ToolchainAdvisory, error) {
-	f, ok := files["ID/"+id+".json"]
-	if !ok {
-		return domain.ToolchainAdvisory{}, fmt.Errorf("no ID/%s.json in the snapshot", id)
-	}
-	data, err := readZipFile(f, maxAdvisoryBytes)
+	raw, err := readSnapshotOSV(files, id)
 	if err != nil {
 		return domain.ToolchainAdvisory{}, err
-	}
-	var raw osvAdvisory
-	if err := json.Unmarshal(data, &raw); err != nil {
-		return domain.ToolchainAdvisory{}, fmt.Errorf("unmarshal advisory %s: %w", id, err)
 	}
 
 	adv := domain.ToolchainAdvisory{ID: id, Summary: raw.Summary}

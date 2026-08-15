@@ -113,8 +113,12 @@ type contextVerification struct {
 	ExtractedAt string `json:"extracted_at,omitempty"` // ISO-8601; set when record exists
 	Status      string `json:"status"`
 	GitURL      string `json:"git_url,omitempty"`
-	Retracted   bool   `json:"retracted,omitempty"`
-	Error       string `json:"error,omitempty"` // set when status is read_error
+	// Retracted is the module author's own withdrawal of this version, read off
+	// the fetched record. It is emitted on every section, false included: the
+	// record either states a retraction or states there is none, and Status
+	// names the sections where no record was read at all.
+	Retracted bool   `json:"retracted"`
+	Error     string `json:"error,omitempty"` // set when status is read_error
 }
 
 type contextDependency struct {
@@ -129,9 +133,13 @@ type contextDependencies struct {
 	// for a walk written before the frame was projected. Present whenever a walk
 	// answered: GOOS gates which files build, so a dependency list is a list for
 	// one platform.
-	Frame        string              `json:"frame,omitempty"`
-	Count        int                 `json:"count,omitempty"`
-	Partial      bool                `json:"partial,omitempty"`
+	Frame string `json:"frame,omitempty"`
+	// Count and Partial are emitted whenever this section is rendered, zero and
+	// false included. A module with no direct dependencies is a measurement, and
+	// so is a walk that resolved every node; Status carries the cases where no
+	// walk answered, so neither needs a second way to say "unmeasured".
+	Count        int                 `json:"count"`
+	Partial      bool                `json:"partial"`
 	Dependencies []contextDependency `json:"dependencies,omitempty"`
 	Error        string              `json:"error,omitempty"`
 	// PreModulesCaveat is present only when the module itself, or a module in the
@@ -169,8 +177,13 @@ type contextLicense struct {
 	// matching span is the apply-appendix). Set only when the file is
 	// Unclassified, so absence-of-classification is surfaced as a caveat
 	// rather than rendered as absence-of-licence.
+	// LowConfidenceCoverage is a pointer emitted always: unlike the fields
+	// beside it there is a genuine third state here, because the fragment search
+	// runs only when the root licence could not be classified. Null says no
+	// sub-threshold fragment was measured; a number is the coverage of the one
+	// that was, and 0 would claim a match covering none of the file.
 	LowConfidenceSPDX     string                      `json:"low_confidence_spdx,omitempty"`
-	LowConfidenceCoverage float64                     `json:"low_confidence_coverage,omitempty"`
+	LowConfidenceCoverage *float64                    `json:"low_confidence_coverage"`
 	CopyrightStatus       string                      `json:"copyright_status,omitempty"`
 	CopyrightStatements   []contextCopyrightStatement `json:"copyright_statements,omitempty"`
 	Obligations           *contextLicenseObligations  `json:"obligations,omitempty"`
@@ -198,12 +211,19 @@ type contextInterface struct {
 }
 
 type contextCallGraph struct {
-	ExtractedAt          string         `json:"extracted_at,omitempty"`
-	Status               string         `json:"status"`
-	Algorithm            string         `json:"algorithm,omitempty"`
-	NodeCount            int            `json:"node_count,omitempty"`
-	EdgeCount            int            `json:"edge_count,omitempty"`
-	EntryPointCount      int            `json:"entry_point_count,omitempty"`
+	ExtractedAt string `json:"extracted_at,omitempty"`
+	Status      string `json:"status"`
+	Algorithm   string `json:"algorithm,omitempty"`
+	// NodeCount and EdgeCount describe the graph that was extracted, and a graph
+	// with no nodes is a real extraction result — Status says whether one ran.
+	NodeCount int `json:"node_count"`
+	EdgeCount int `json:"edge_count"`
+	// EntryPointCount is a pointer emitted always because it answers a narrower
+	// question than the counts above: how many exported entry points the ONE
+	// package --package named has. Without that flag no single count is derived
+	// at all — the breakdown in EntryPointsByPackage is — so null says "this run
+	// counted no single package" and 0 says "the package named has none".
+	EntryPointCount      *int           `json:"entry_point_count"`
 	EntryPointsByPackage map[string]int `json:"entry_points_by_package,omitempty"`
 	EntryPoints          []string       `json:"entry_points,omitempty"`
 	Error                string         `json:"error,omitempty"`
@@ -218,11 +238,13 @@ type contextExample struct {
 }
 
 type contextExamples struct {
-	ExtractedAt string           `json:"extracted_at,omitempty"`
-	Status      string           `json:"status"`
-	Count       int              `json:"count,omitempty"`
-	Examples    []contextExample `json:"examples,omitempty"`
-	Error       string           `json:"error,omitempty"`
+	ExtractedAt string `json:"extracted_at,omitempty"`
+	Status      string `json:"status"`
+	// Count is emitted at zero: a harvested module with no Example functions is
+	// a measured fact about that module, and Status says when nothing harvested.
+	Count    int              `json:"count"`
+	Examples []contextExample `json:"examples,omitempty"`
+	Error    string           `json:"error,omitempty"`
 }
 
 type contextCVE struct {
@@ -230,14 +252,23 @@ type contextCVE struct {
 	Aliases []string `json:"aliases,omitempty"`
 	Summary string   `json:"summary"`
 	FixedIn string   `json:"fixed_in,omitempty"`
-	Score   float64  `json:"score,omitempty"`
+	// Score is the advisory's CVSS base score, a pointer emitted always. Many
+	// advisories publish no severity at all, and 0.0 is a severity — the lowest
+	// one — so the two states cannot share an encoding. Null means the advisory
+	// carried no score.
+	Score *float64 `json:"score"`
 	// WithdrawnAt is the retraction timestamp, present only on a withdrawn
 	// advisory. Without it this projection carried the retraction no further than
 	// the module's status word, so a consumer reading a finding here saw an entry
 	// shaped exactly like a live one — with the withdrawal legible only as prose in
 	// the upstream summary, which is what the field exists to stop being the signal.
 	WithdrawnAt string `json:"withdrawn_at,omitempty"`
-	Reachable   *bool  `json:"reachable,omitempty"`
+	// Reachable is three-valued and emitted always: true, false, or null for a
+	// finding no reachability analysis answered. Omitting the null put the
+	// unanswered finding and a build that does not derive reachability into the
+	// same document; Soundness cannot separate them, because it reads
+	// "not stated" for a positive verdict too.
+	Reachable *bool `json:"reachable"`
 	// Soundness states how thorough the search behind a NEGATIVE reachability
 	// answer was, and SoundnessReason names the basis for that rung in the
 	// producing analyser's own terms. Both are derived from the served record by
@@ -294,9 +325,14 @@ type contextVulnerabilities struct {
 	// It bounds the verdict as much as the snapshot does: a "Clean" from a
 	// pipeline whose parse reported no source findings is a different claim
 	// from a "Clean" from one that analysed sources.
-	PipelineVersion     string `json:"pipeline_version,omitempty"`
+	PipelineVersion string `json:"pipeline_version,omitempty"`
+	// SnapshotAgeDays is how old the advisory snapshot was when the verdict was
+	// validated. It is a pointer emitted always: a snapshot with no recorded
+	// retrieval time yields no age, and a plain 0 would report that record as
+	// validated against a snapshot pulled the same day. Zero is emitted as 0,
+	// which is what a snapshot pulled the same day genuinely measures.
 	SnapshotRetrievedAt string `json:"snapshot_retrieved_at,omitempty"`
-	SnapshotAgeDays     int    `json:"snapshot_age_days,omitempty"`
+	SnapshotAgeDays     *int   `json:"snapshot_age_days"`
 	Error               string `json:"error,omitempty"`
 }
 

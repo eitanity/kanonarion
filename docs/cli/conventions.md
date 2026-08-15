@@ -304,6 +304,29 @@ the offset stepped over.
 
 ---
 
+## Measured zeros in JSON
+
+A scalar field whose value was measured is always present in the JSON, zero and
+false included. `0`, `0.0` and `false` are answers — no direct dependencies,
+no entry points in the package named, a snapshot pulled today, a route with no
+registration hop on it — and a key that vanishes at those values leaves a
+consumer unable to tell them from a build that does not derive the field.
+
+Where a row can genuinely carry no answer, and no sibling field already says so,
+the field is a pointer and the key is still always present, carrying `null`:
+
+- `null` means the value was not measured for this row.
+- `0` / `false` means it was measured and this is the answer.
+
+Both statements are readable without knowing which fields a given build emits,
+which is what an agentic consumer needs and prose cannot give it.
+
+This applies to numbers and booleans only. Strings and arrays keep `omitempty`:
+an empty string there means "does not apply", and the field beside it names the
+state the row is in.
+
+---
+
 ## Truncated listings
 
 Every listing that applies a `--limit` states when the limit bit. On the text

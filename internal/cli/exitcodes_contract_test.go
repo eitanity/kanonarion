@@ -113,7 +113,7 @@ func TestExitCodeContract_MissingRecordIsNotFound(t *testing.T) {
 		}},
 		{"scan-show", ExitNotFound, func(t *testing.T) error {
 			return runScanShow(context.Background(), "vscan-missing", false,
-				testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryVuln(), &bytes.Buffer{}, io.Discard)
+				testfakes.NewFakeQueryScanRuns(), testfakes.NewFakeQueryVuln(), nil, &bytes.Buffer{}, io.Discard)
 		}},
 		{"license-compat (no walk record)", ExitNotFound, func(t *testing.T) error {
 			return licenseCompatWith(context.Background(),

@@ -164,9 +164,10 @@ func buildLicense(ctx context.Context, coord coordinate.ModuleCoordinate, uc Que
 			if f.IsVendored || f.LowConfidenceSPDX == "" {
 				continue
 			}
-			if f.LowConfidenceCoverage > l.LowConfidenceCoverage {
+			if l.LowConfidenceCoverage == nil || f.LowConfidenceCoverage > *l.LowConfidenceCoverage {
+				coverage := f.LowConfidenceCoverage
 				l.LowConfidenceSPDX = f.LowConfidenceSPDX
-				l.LowConfidenceCoverage = f.LowConfidenceCoverage
+				l.LowConfidenceCoverage = &coverage
 			}
 		}
 	}
@@ -326,7 +327,8 @@ func buildCallGraph(ctx context.Context, coord coordinate.ModuleCoordinate, uc Q
 		}
 	}
 	if pkgFilter != "" {
-		out.EntryPointCount = byPkg[pkgFilter]
+		count := byPkg[pkgFilter]
+		out.EntryPointCount = &count
 	} else if len(byPkg) > 0 {
 		out.EntryPointsByPackage = byPkg
 	}

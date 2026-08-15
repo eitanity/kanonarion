@@ -76,13 +76,21 @@ func TestProbeStartMajor(t *testing.T) {
 		{"bare path at v0", "example.com/mod", "v0.3.0", 2},
 		{
 			// The case a suffix-derived probe gets wrong: the major is carried by
-			// the VERSION, not the path. Starting at /v2 would find nothing (v2
-			// was never published under a suffixed path), stop on that gap, and
-			// never reach the /v3 that exists.
+			// the VERSION, not the path. Starting the walk at /v2 would find
+			// nothing (v2 was never published under a suffixed path), stop on
+			// that gap, and never reach the /v3 that exists. The republished /v2
+			// is asked about separately, off the walk — see PlanProbe.
 			name:    "incompatible pin on a bare path starts above the version major",
 			path:    "github.com/Masterminds/sprig",
 			version: "v2.22.0+incompatible",
 			want:    3,
+		},
+		{
+			// A +incompatible v10 is not special-cased by digit count.
+			name:    "incompatible pin at a double-digit major",
+			path:    "example.com/mod",
+			version: "v10.1.0+incompatible",
+			want:    11,
 		},
 		{"no pin falls back to the path", "github.com/foo/bar/v6", "", 7},
 		{"no pin on a bare path probes v2", "github.com/foo/bar", "", 2},
@@ -110,6 +118,11 @@ func TestProbeStartMajor_NeverBelowPinned(t *testing.T) {
 			start := domain.ProbeStartMajor(path, version)
 			if start <= fam.Major() {
 				t.Errorf("%s@%s: start %d is not above the path major %d", path, version, start, fam.Major())
+			}
+			// A suffixed path never re-probes its own major: the module the
+			// caller is already using is not its own upgrade target.
+			if _, asks := domain.PlanProbe(path, version).SameMajor(); asks && fam.Major() > 0 {
+				t.Errorf("%s@%s: a suffixed path must not ask about its own major", path, version)
 			}
 			if start < 2 {
 				t.Errorf("%s@%s: start %d is below v2, which is not a suffixed path", path, version, start)
@@ -145,5 +158,190 @@ func TestNewerMajor_Exists(t *testing.T) {
 	}
 	if !(domain.NewerMajor{Probed: true, Path: "example.com/mod/v2"}).Exists() {
 		t.Error("a probed record with a path must report the newer major")
+	}
+}
+
+// TestComparePin_PlacesAPinAheadOfLatestAsAhead covers the three shapes a pin
+// ahead of @latest actually takes in a real store, measured across 541
+// comparable coordinates: a pre-modules +incompatible major above the newest
+// version the unsuffixed path serves, a pseudo-version taken after the last
+// tag, and a plain tag above the newest one the proxy will answer with.
+//
+// String equality could only say "different", which the callers read as
+// "behind", so each of these named a DOWNGRADE as the upgrade target.
+func TestComparePin_PlacesAPinAheadOfLatestAsAhead(t *testing.T) {
+	tests := []struct {
+		name   string
+		pinned string
+		latest string
+		want   domain.PinPosition
+	}{
+		{
+			name:   "incompatible major above a vN-less latest",
+			pinned: "v3.3.4+incompatible",
+			latest: "v1.5.5",
+			want:   domain.PinAhead,
+		},
+		{
+			name:   "incompatible major above an incompatible latest",
+			pinned: "v3.1.2+incompatible",
+			latest: "v2.4.0+incompatible",
+			want:   domain.PinAhead,
+		},
+		{
+			name:   "pseudo-version taken after the last tag",
+			pinned: "v1.0.1-0.20181226105442-5d4384ee4fb2",
+			latest: "v1.0.0",
+			want:   domain.PinAhead,
+		},
+		{
+			name:   "pseudo-version after the last tag, both incompatible",
+			pinned: "v2.0.3-0.20180322193309-b565731e1464+incompatible",
+			latest: "v2.0.2+incompatible",
+			want:   domain.PinAhead,
+		},
+		{
+			name:   "a plain tag above the latest one published",
+			pinned: "v1.1.5",
+			latest: "v0.5.5",
+			want:   domain.PinAhead,
+		},
+		{
+			name:   "an incompatible major above a pseudo-version latest",
+			pinned: "v3.12.0+incompatible",
+			latest: "v0.0.0-20231103204413-ee089084f347",
+			want:   domain.PinAhead,
+		},
+		{
+			name:   "genuinely behind",
+			pinned: "v1.19.0",
+			latest: "v1.19.2",
+			want:   domain.PinBehind,
+		},
+		{
+			name:   "behind across a digit-count boundary, where string order disagrees",
+			pinned: "v1.9.0",
+			latest: "v1.10.0",
+			want:   domain.PinBehind,
+		},
+		{
+			name:   "level",
+			pinned: "v1.6.0",
+			latest: "v1.6.0",
+			want:   domain.PinLevel,
+		},
+		{
+			name:   "build metadata is not ordering information, so these are level",
+			pinned: "v2.0.0+incompatible",
+			latest: "v2.0.0",
+			want:   domain.PinLevel,
+		},
+		{
+			name:   "an unreadable pin cannot be claimed to be ahead",
+			pinned: "not-a-version",
+			latest: "v1.0.0",
+			want:   domain.PinBehind,
+		},
+		{
+			name:   "an unreadable latest cannot be claimed to be behind or ahead, so the proxy's answer stands",
+			pinned: "v1.0.0",
+			latest: "whatever-the-proxy-said",
+			want:   domain.PinBehind,
+		},
+		{
+			name:   "two identical unreadable strings are still level",
+			pinned: "not-a-version",
+			latest: "not-a-version",
+			want:   domain.PinLevel,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if got := domain.ComparePin(tt.pinned, tt.latest); got != tt.want {
+				t.Errorf("ComparePin(%q, %q) = %d, want %d", tt.pinned, tt.latest, got, tt.want)
+			}
+		})
+	}
+}
+
+// TestPlanProbe_SameMajorQuestion pins the one asymmetry in the probe: a
+// +incompatible pin also asks whether its OWN major has been republished at a
+// suffixed path. Nothing else does, and the upward walk is unchanged for
+// everything.
+func TestPlanProbe_SameMajorQuestion(t *testing.T) {
+	tests := []struct {
+		name          string
+		path          string
+		version       string
+		wantStart     int
+		wantSameMajor int
+	}{
+		{
+			// The case the probe used to miss: /v2 is published and IS the
+			// target, /v3 does not exist.
+			name:          "incompatible pin asks about its own major",
+			path:          "github.com/gavv/httpexpect",
+			version:       "v2.0.0+incompatible",
+			wantStart:     3,
+			wantSameMajor: 2,
+		},
+		{
+			name:      "suffixed path never re-probes its own major",
+			path:      "github.com/gavv/httpexpect/v2",
+			version:   "v2.16.0",
+			wantStart: 3,
+		},
+		{
+			name:      "ordinary bare path at v1",
+			path:      "example.com/mod",
+			version:   "v1.4.0",
+			wantStart: 2,
+		},
+		{
+			// +incompatible below v2 is not a shape Go can produce, and it is
+			// not treated as one: v1 lives at the bare path already, so there is
+			// no suffixed publication of it to ask about.
+			name:      "incompatible below v2 asks nothing extra",
+			path:      "example.com/mod",
+			version:   "v1.0.0+incompatible",
+			wantStart: 2,
+		},
+		{
+			// gopkg.in carries its major as ".vN"; a bare gopkg.in path with an
+			// +incompatible pin is planned the same way, and PathForMajor
+			// rebuilds the question with the right separator.
+			name:          "gopkg.in bare path with an incompatible pin",
+			path:          "gopkg.in/example",
+			version:       "v3.1.0+incompatible",
+			wantStart:     4,
+			wantSameMajor: 3,
+		},
+		{
+			// Build metadata that is not +incompatible is not the marker.
+			name:      "other build metadata is not incompatible",
+			path:      "example.com/mod",
+			version:   "v2.0.0+meta",
+			wantStart: 3,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			plan := domain.PlanProbe(tc.path, tc.version)
+			if plan.Start() != tc.wantStart {
+				t.Errorf("Start() = %d, want %d", plan.Start(), tc.wantStart)
+			}
+			m, asks := plan.SameMajor()
+			if asks != (tc.wantSameMajor != 0) {
+				t.Errorf("SameMajor() asks = %v, want %v", asks, tc.wantSameMajor != 0)
+			}
+			if asks && m != tc.wantSameMajor {
+				t.Errorf("SameMajor() = %d, want %d", m, tc.wantSameMajor)
+			}
+			// The same-major question is never a step of the walk: asking it
+			// again from the walk would re-probe a path already answered.
+			if asks && m >= plan.Start() {
+				t.Errorf("same major %d is not below the walk start %d", m, plan.Start())
+			}
+		})
 	}
 }

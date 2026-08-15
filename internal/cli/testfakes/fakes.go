@@ -1176,6 +1176,11 @@ type FakeQueryVuln struct {
 	// regardless of the records map. Use this to exercise the fallback path that
 	// checks GetLatestRecord for a ScanFailed status.
 	ForceLatestRecordForWalkNotFound bool
+	// supersededLedger holds records the store has at a generation this build's
+	// keyed reads cannot see. They are returned only by the all-generations read,
+	// which is the shape of the real store after a pipeline bump: the keyed reads
+	// go empty while the rows are still there.
+	supersededLedger map[string][]vulndomain.VulnerabilityRecord
 	// generations is the store census: which pipeline versions this coordinate
 	// is held at, whatever version a read asks for. It is seeded independently
 	// of the records maps because the condition it exists to reproduce is
@@ -1285,6 +1290,34 @@ func (f *FakeQueryVuln) ListRecordsForModule(_ context.Context, coord coordinate
 		return []vulndomain.VulnerabilityRecord{rec}, nil
 	}
 	return nil, nil
+}
+
+// ListRecordsForModuleAllGenerations returns what the keyed read returns plus
+// the rows seeded through AddSupersededRecords, which no other read here sees.
+// The superseded rows come last: the fake seeds no timestamps of its own, and a
+// listing that puts them first would pass a test the real newest-first ordering
+// would fail.
+func (f *FakeQueryVuln) ListRecordsForModuleAllGenerations(ctx context.Context, coord coordinate.ModuleCoordinate) ([]vulndomain.VulnerabilityRecord, error) {
+	served, err := f.ListRecordsForModule(ctx, coord, "")
+	if err != nil {
+		return nil, err
+	}
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return append(served, f.supersededLedger[coord.String()]...), nil
+}
+
+// AddSupersededRecords seeds records the store holds at a generation this build
+// does not serve. Only ListRecordsForModuleAllGenerations returns them, so a
+// test can reproduce a coordinate whose whole history is dark to the keyed
+// reads while the rows are still in the store.
+func (f *FakeQueryVuln) AddSupersededRecords(coord coordinate.ModuleCoordinate, recs ...vulndomain.VulnerabilityRecord) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.supersededLedger == nil {
+		f.supersededLedger = make(map[string][]vulndomain.VulnerabilityRecord)
+	}
+	f.supersededLedger[coord.String()] = recs
 }
 
 // SetRunRecords seeds the records one scan run wrote, which is what a served

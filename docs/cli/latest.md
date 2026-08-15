@@ -42,17 +42,61 @@ answer the column has - while being the most stale kind of dependency there is.
 `latest` reports both, as separate fields:
 
 - **latest** - the newest version at the module path itself (`latest`,
-  `latest_date`, `is_latest`). Unchanged.
-- **newer major** - the newest major-suffixed path above the pinned major that
-  resolves, with its version and date (`newer_major_module`,
-  `newer_major_latest`, `newer_major_date`).
+  `latest_date`, `is_latest`, `pin_ahead_of_latest`). The pin is placed against
+  it with `semver`, so all three positions are reported: behind (`latest: vX
+  (N days ago)`), level (`current`), and **ahead** (`ahead of latest tag: vX`,
+  `pin_ahead_of_latest: true`). A pin sorts ahead for ordinary reasons — a
+  pseudo-version taken after the last tag, a pre-modules `+incompatible` major
+  above the newest version the unsuffixed path serves — and there is nothing at
+  that path to move to, so no target and no age are offered, in the text and in
+  `--json` alike.
 
-The probe starts one major above the **pinned version's** major - not above the
-path suffix, because a `+incompatible` pin carries its major in the version
-while living at the unsuffixed path - and stops at the first major that does not
-resolve. `major_probed` distinguishes "probed, nothing newer" from "not probed"
-(an offline run, or a probe whose request failed); a question that was never
-asked is never rendered as a clean answer.
+  `is_latest` and `pin_ahead_of_latest` are the three-valued answer between
+  them: `false`/`false` behind, `true`/`false` level, `false`/`true` ahead. Both
+  are emitted on every measured row, `false` included, so "measured, and not in
+  that state" is distinguishable from "this build does not derive the field";
+  both are `null` together where no comparison was made (a failed lookup, or a
+  bare module path with no pin).
+
+  `latest_release_age_days` is emitted on every row and is **null on an ahead
+  row**. Beside `is_latest: false` an age reads as "you are this far behind",
+  which is the answer the ahead state exists to stop giving; beside
+  `is_latest: true` it is the age of a release you are already on, and it is
+  kept. `latest_date` is unaffected either way — a publication date is a fact
+  about a named release, while the age is a distance, and only the distance is
+  meaningless when nothing is being offered.
+
+  **Zero is a value, not an absence.** A release that shipped today is `0` days
+  old, and the field says `0`. Null means there is no age, in two cases told
+  apart by `pin_ahead_of_latest`: the proxy supplied no publication date
+  (`false`, and `latest_date` is absent too), or the pin is ahead (`true`). The
+  text surface matches — `latest: vX (released today)` for a zero age, and
+  `latest: vX` with no clause where the date is unknown, never a fabricated
+  "released today".
+- **newer major** - the newest major-suffixed path that resolves, with its
+  version and date (`newer_major_module`, `newer_major_latest`,
+  `newer_major_date`).
+
+The probe walks upward from one major above the **pinned version's** major - not
+above the path suffix, because a `+incompatible` pin carries its major in the
+version while living at the unsuffixed path - and stops at the first major that
+does not resolve. `major_probed` distinguishes "probed, nothing newer" from "not
+probed" (an offline run, or a probe whose request failed); a question that was
+never asked is never rendered as a clean answer.
+
+A `+incompatible` pin is asked one extra question first: whether its **own**
+major is now published at the suffixed path. `+incompatible` is what a module
+looks like before it adopts `/vN`, so that republication is usually the
+migration the pin needs to hear about, and it lives at a path the same-major
+`latest` question can never see - `github.com/gavv/httpexpect@v2.0.0+incompatible`
+has `github.com/gavv/httpexpect/v2` published and no `/v3` at all. An absent
+`/vN` there is the ordinary case and does not stop the walk, because a module
+can go from `+incompatible` straight to `/v3`. When both a republished own major
+and a genuine next major exist, the **higher** one is reported. A pin already on
+a `/vN` path is asked nothing extra: it is not its own upgrade target.
+
+That extra question is one additional proxy request, and only for
+`+incompatible` pins.
 
 Whether the newer major is *adoptable* is a different question - a new major is
 expected to be breaking. This only stops a several-majors-behind module reading
@@ -121,6 +165,7 @@ github.com/google/licensecheck@v0.3.1          current
 github.com/golang-jwt/jwt/v4@v4.5.1            latest: v4.5.2 (33 days ago); newer major: github.com/golang-jwt/jwt/v5@v5.3.1 (2025-11-04)
 github.com/minio/minio-go/v6@v6.0.57           current; newer major: github.com/minio/minio-go/v7@v7.2.1 (2026-01-19)
 golang.org/x/mod@v0.35.0                       latest: v0.36.0 (6 days ago)
+github.com/pmezard/go-difflib@v1.0.1-0.20181226105442-5d4384ee4fb2  ahead of latest tag: v1.0.0
 modernc.org/sqlite@v1.50.0                     latest: v1.50.1 (3 days ago)
 
 latest as of 2026-07-31 09:14 UTC (staleness.ttl 1h0m0s; --fresh to re-query)
@@ -128,6 +173,10 @@ latest as of 2026-07-31 09:14 UTC (staleness.ttl 1h0m0s; --fresh to re-query)
 
 `minio-go/v6` is the case this exists for: `current` is true of its own path and
 a whole major line is available. The clause is appended, never substituted.
+
+`go-difflib` is the other one: the pin is a pseudo-version taken after v1.0.0,
+so it sorts *above* what the proxy answers `@latest` with. Reporting
+`latest: v1.0.0` there named a downgrade as the upgrade target.
 
 ## JSON output
 

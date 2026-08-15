@@ -386,6 +386,20 @@ func (f *fakeVulnStore) ListVulnerabilityRecordsForModule(_ context.Context, coo
 	return out, nil
 }
 
+func (f *fakeVulnStore) ListVulnerabilityRecordsForModuleAllGenerations(_ context.Context, coord coordinate.ModuleCoordinate) ([]domain.VulnerabilityRecord, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	var out []domain.VulnerabilityRecord
+	for _, gens := range f.records {
+		for _, rec := range gens {
+			if rec.Coordinate == coord {
+				out = append(out, rec)
+			}
+		}
+	}
+	return out, nil
+}
+
 func (f *fakeVulnStore) recordKey(coord coordinate.ModuleCoordinate, pv string, snapshot domain.DatabaseSnapshot) string {
 	return coord.String() + "|" + pv + "|" + snapshot.Source() + "@" + snapshot.Version()
 }
@@ -733,6 +747,21 @@ type fakeDatabase struct {
 	// indexCalls counts index reads, so a test can prove the comparison was made
 	// — or, on the unchanged-generation path, that it never had to be.
 	indexCalls atomic.Int64
+
+	// lookupSnapshots records the snapshot identity every coordinate-match read
+	// was asked for. The defect it exists to catch is invisible to a findings
+	// assertion: the route answered correctly for whatever database it happened
+	// to read, and the fault was that it read a different one from the analysis.
+	lookupMu        sync.Mutex
+	lookupSnapshots []domain.DatabaseSnapshot
+}
+
+// lookupsSaw returns the snapshot identities the coordinate-match route was
+// asked for, in call order.
+func (f *fakeDatabase) lookupsSaw() []domain.DatabaseSnapshot {
+	f.lookupMu.Lock()
+	defer f.lookupMu.Unlock()
+	return append([]domain.DatabaseSnapshot(nil), f.lookupSnapshots...)
 }
 
 func (f *fakeDatabase) Snapshot(_ context.Context) (domain.DatabaseSnapshot, io.ReadCloser, error) {
@@ -788,7 +817,10 @@ func (f *fakeDatabase) GetSnapshot(_ context.Context, identity domain.DatabaseSn
 	return nil, io.EOF
 }
 
-func (f *fakeDatabase) CheckVulnerable(_ context.Context, modules []coordinate.ModuleCoordinate) (map[coordinate.ModuleCoordinate][]string, error) {
+func (f *fakeDatabase) CheckVulnerable(_ context.Context, modules []coordinate.ModuleCoordinate, identity domain.DatabaseSnapshot) (map[coordinate.ModuleCoordinate][]string, error) {
+	f.lookupMu.Lock()
+	f.lookupSnapshots = append(f.lookupSnapshots, identity)
+	f.lookupMu.Unlock()
 	if f.err != nil {
 		return nil, f.err
 	}
@@ -801,7 +833,10 @@ func (f *fakeDatabase) CheckVulnerable(_ context.Context, modules []coordinate.M
 	return res, nil
 }
 
-func (f *fakeDatabase) LookupFindings(_ context.Context, coord coordinate.ModuleCoordinate) ([]domain.VulnerabilityFinding, error) {
+func (f *fakeDatabase) LookupFindings(_ context.Context, coord coordinate.ModuleCoordinate, identity domain.DatabaseSnapshot) ([]domain.VulnerabilityFinding, error) {
+	f.lookupMu.Lock()
+	f.lookupSnapshots = append(f.lookupSnapshots, identity)
+	f.lookupMu.Unlock()
 	if f.errOnLookup != nil {
 		return nil, f.errOnLookup
 	}

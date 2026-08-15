@@ -2,6 +2,7 @@ package govulncheck
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -303,16 +304,27 @@ func locateGoMod(root string) (string, bool) {
 }
 
 // prepareDBArg resolves the govulncheck -db argument for a snapshot. It prefers
-// the pre-extracted dir shared across a walk's scans, falls back to extracting
-// the snapshot from the store into a temp dir, and finally to the live database.
-// The returned cleanup removes any temp dir it created (a no-op otherwise) and
-// must be deferred by the caller.
+// the pre-extracted dir shared across a walk's scans and otherwise extracts the
+// snapshot from the store into a temp dir. The returned cleanup removes any temp
+// dir it created (a no-op otherwise) and must be deferred by the caller.
 //
-// A snapshot integrity failure is fatal rather than a fallback. The live
-// database is a DIFFERENT advisory set from the one the record about to be
-// written names, so answering from it produces a finding that cites a snapshot
-// whose bytes were never consulted. Absent and unreadable snapshots keep the
-// fallback, which is the case it was written for.
+// EVERY OUTCOME IS THE PINNED SNAPSHOT OR A REFUSAL. There is no live-database
+// fallback, because the live database is a DIFFERENT advisory set from the one
+// the record about to be written names: answering from it produces findings that
+// cite a snapshot whose bytes were never consulted, and the coordinate-match
+// route beside it then treats the analyser's silence about advisories it was
+// never given as a reachability answer. That fallback was reached on a snapshot
+// the store would not produce, on a scratch directory that could not be created,
+// and on an archive that would not extract — each announced by a log warning
+// while the record went on naming the snapshot. A log line is not a record
+// annotation, so the three are refusals now, on the terms a snapshot integrity
+// failure was already refused on.
+//
+// A pre-extracted directory is checked against the snapshot rather than trusted.
+// It is the one input here that arrives already opened by someone else, and the
+// guarantee this whole seam exists to give — the analysis and the record name
+// one database — would rest on nothing if a directory extracted from another
+// generation could be handed straight to govulncheck.
 //
 // A snapshot that extracts to a database holding no advisories is fatal for a
 // related reason: govulncheck clears every module against it at exit 0, so the
@@ -331,19 +343,23 @@ func (s *Scanner) prepareDBArg(ctx context.Context, snapshot domain.DatabaseSnap
 	noop := func() {}
 	s.logger.Info("vuln-scan: preparing vulnerability database", "snapshot", snapshot.Version())
 	if dbDir != "" {
+		if err := verifyExtractedGeneration(dbDir, snapshot); err != nil {
+			return "", 0, noop, fmt.Errorf("preparing the advisory database: %w", err)
+		}
 		s.logger.Info("vuln-scan: using pre-extracted local database", "path", dbDir)
 		return "file://" + dbDir, 0, noop, nil
 	}
 	if s.vulnStore == nil {
-		return "https://vuln.go.dev", 0, noop, nil
+		return "", 0, noop, fmt.Errorf("preparing the advisory database: %w",
+			ports.UnavailableSnapshotAbort(snapshot, "this scanner was built with no vulnerability store to read", errNoVulnStore))
 	}
 	snapshotContent, err := s.vulnStore.GetDatabaseSnapshot(ctx, snapshot)
 	if err != nil {
 		if errors.Is(err, ports.ErrSnapshotIntegrity) {
 			return "", 0, noop, fmt.Errorf("preparing the advisory database: %w", ports.SnapshotIntegrityAbort(snapshot, err))
 		}
-		s.logger.Warn("vuln-scan: failed to retrieve snapshot, falling back to live DB", "error", err)
-		return "https://vuln.go.dev", 0, noop, nil
+		return "", 0, noop, fmt.Errorf("preparing the advisory database: %w",
+			ports.UnavailableSnapshotAbort(snapshot, "the store would not produce the snapshot", err))
 	}
 	defer func() {
 		if cerr := snapshotContent.Close(); cerr != nil {
@@ -352,13 +368,13 @@ func (s *Scanner) prepareDBArg(ctx context.Context, snapshot domain.DatabaseSnap
 	}()
 	extractedDir, err := os.MkdirTemp("", "kanonarion-vulndb-*")
 	if err != nil {
-		s.logger.Warn("vuln-scan: failed to create temp dir for snapshot, falling back to live DB", "error", err)
-		return "https://vuln.go.dev", 0, noop, nil
+		return "", 0, noop, fmt.Errorf("preparing the advisory database: %w",
+			ports.UnavailableSnapshotAbort(snapshot, "no scratch directory could be created to unpack the snapshot into", err))
 	}
 	if err := s.extractZip(ctx, snapshotContent, extractedDir); err != nil {
-		s.logger.Warn("vuln-scan: failed to extract snapshot, falling back to live DB", "error", err)
 		_ = os.RemoveAll(extractedDir)
-		return "https://vuln.go.dev", 0, noop, nil
+		return "", 0, noop, fmt.Errorf("preparing the advisory database: %w",
+			ports.UnavailableSnapshotAbort(snapshot, "the snapshot archive would not extract", err))
 	}
 	count, err := vulndbdir.CountAdvisories(extractedDir)
 	if err != nil {
@@ -372,6 +388,43 @@ func (s *Scanner) prepareDBArg(ctx context.Context, snapshot domain.DatabaseSnap
 	s.logger.Info("vuln-scan: using pinned local database", "path", extractedDir, "advisories", count)
 	s.logMem(ctx, "db_extracted")
 	return "file://" + extractedDir, count, func() { _ = os.RemoveAll(extractedDir) }, nil
+}
+
+// errNoVulnStore states the one way this seam can be asked for a pinned database
+// it was never wired to reach. It is a construction fault rather than a runtime
+// one, and it is named so the refusal reads the same as the others.
+var errNoVulnStore = errors.New("no vulnerability store is configured")
+
+// verifyExtractedGeneration checks that a pre-extracted advisory database is the
+// generation the scan is pinned to, by reading the index/db.json the extraction
+// carried over from the archive.
+//
+// The directory is prepared by the walk once and shared by every scan in it, so
+// this is a read of one small file per scan and not a re-measurement of the
+// database. What it buys is that "the analysis read the snapshot the record
+// names" is asserted from the bytes govulncheck is about to be pointed at,
+// rather than from the fact that the same variable was passed to both.
+//
+// An unreadable or unparsable db.json is refused for the same reason a mismatch
+// is: the answer to "which generation is this" is then unknown, and a scan may
+// not seal a verdict against a database it cannot name.
+func verifyExtractedGeneration(dbDir string, snapshot domain.DatabaseSnapshot) error {
+	data, err := os.ReadFile(filepath.Join(filepath.Clean(dbDir), "index", "db.json"))
+	if err != nil {
+		return fmt.Errorf("checking the pre-extracted advisory database: %w", ports.UnavailableSnapshotAbort(snapshot, "the pre-extracted database does not state its generation", err))
+	}
+	var meta struct {
+		Modified string `json:"modified"`
+	}
+	if err := json.Unmarshal(data, &meta); err != nil {
+		return fmt.Errorf("checking the pre-extracted advisory database: %w", ports.UnavailableSnapshotAbort(snapshot, "the pre-extracted database's index/db.json could not be read", err))
+	}
+	if meta.Modified != snapshot.Version() {
+		return fmt.Errorf("checking the pre-extracted advisory database: %w",
+			ports.UnavailableSnapshotAbort(snapshot, "the pre-extracted database is a different generation",
+				fmt.Errorf("the directory holds %q", meta.Modified)))
+	}
+	return nil
 }
 
 // snapshotCountingAdvisories returns snapshot carrying the advisory count a

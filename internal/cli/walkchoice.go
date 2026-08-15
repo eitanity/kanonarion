@@ -257,9 +257,11 @@ type selectionJSON struct {
 	// Rule is "pinned", "sole", "manifest-match", "recency-no-match" or
 	// "recency-unchecked".
 	Rule string `json:"rule"`
-	// Candidates is how many walks of this target the store holds; 0 when the
-	// caller pinned one and no candidate set was enumerated.
-	Candidates int `json:"candidates,omitempty"`
+	// Candidates is how many walks of this target the store holds. It is a
+	// pointer emitted always, and null is the answer for a caller-pinned walk:
+	// nothing was enumerated, and 0 would state a count that is never true of a
+	// document carrying a walk id — the store holds at least the walk it names.
+	Candidates *int `json:"candidates"`
 	// ManifestPath is the go.mod the recorded resolutions were compared against.
 	ManifestPath string `json:"manifest_path,omitempty"`
 	// Disagreements are the versions the chosen walk and the manifest differ on,
@@ -273,7 +275,8 @@ type selectionJSON struct {
 
 // selection renders the choice for a JSON document.
 func (c walkChoice) selection() selectionJSON {
-	out := selectionJSON{Candidates: c.candidates, ManifestPath: c.manifestPath}
+	candidates := c.candidates
+	out := selectionJSON{Candidates: &candidates, ManifestPath: c.manifestPath}
 	switch c.rule {
 	case walkChosenSole:
 		out.Rule = "sole"

@@ -90,12 +90,12 @@ func TestRunCalleesTransitive_ReportsFailedWrites(t *testing.T) {
 func TestPrintTransitiveResult_ReportsFailedWrites(t *testing.T) {
 	edges := []cgports.CallEdgeRef{{ModulePath: "example.com/m", ModuleVersion: "v1.0.0", FromID: "a", ToID: "b"}}
 	assertEveryWriteGuardFires(t, func(w *stallingWriter) error {
-		return printTransitiveResult("callers", "b", 3, []string{"a"}, edges, false, w)
+		return printTransitiveResult("callers", "b", 3, []string{"a"}, edges, false, w, cgports.EdgeQueryOptions{})
 	})
 	assertEveryWriteGuardFires(t, func(w *stallingWriter) error {
-		return printTransitiveResult("callers", "b", 0, nil, nil, false, w)
+		return printTransitiveResult("callers", "b", 0, nil, nil, false, w, cgports.EdgeQueryOptions{})
 	})
-	if err := printTransitiveResult("callers", "b", 0, nil, nil, true, &stallingWriter{}); err == nil {
+	if err := printTransitiveResult("callers", "b", 0, nil, nil, true, &stallingWriter{}, cgports.EdgeQueryOptions{}); err == nil {
 		t.Error("a failed JSON write was swallowed")
 	}
 }
@@ -104,7 +104,7 @@ func TestPrintTransitiveResult_ReportsFailedWrites(t *testing.T) {
 // serialise as [], because null reads as "not measured" to a consumer.
 func TestPrintTransitiveResult_JSONNeverEncodesNull(t *testing.T) {
 	var buf bytes.Buffer
-	if err := printTransitiveResult("callers", "b", 0, nil, nil, true, &buf); err != nil {
+	if err := printTransitiveResult("callers", "b", 0, nil, nil, true, &buf, cgports.EdgeQueryOptions{}); err != nil {
 		t.Fatalf("printTransitiveResult: %v", err)
 	}
 	if strings.Contains(buf.String(), "null") {

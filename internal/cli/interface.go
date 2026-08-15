@@ -644,9 +644,12 @@ func printInterfaceList(sums []ports.InterfaceSummary, jsonOut bool, limit, offs
 			// PipelineVersion is the extraction logic that produced the record,
 			// and Superseded says this build does not serve it. Without the
 			// pair a consumer reads a listed record as an available one and
-			// finds every query about it empty.
+			// finds every query about it empty. Both halves are emitted on
+			// every row: the half that says "this one IS servable" is false,
+			// and omitting it left the servable rows looking like rows the
+			// pair was never computed for.
 			PipelineVersion string `json:"pipeline_version"`
-			Superseded      bool   `json:"superseded,omitempty"`
+			Superseded      bool   `json:"superseded"`
 			PackageCount    int    `json:"package_count"`
 			Conflict        string `json:"conflict,omitempty"`
 		}

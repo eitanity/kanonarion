@@ -12,6 +12,7 @@ import (
 	"testing"
 	"time"
 
+	coordinatetest "github.com/eitanity/kanonarion/internal/coordinate/coordinatetest"
 	"github.com/eitanity/kanonarion/internal/goenv"
 	"github.com/eitanity/kanonarion/internal/vuln/adapters/vulndb/osv"
 	"github.com/eitanity/kanonarion/internal/vuln/domain"
@@ -150,5 +151,18 @@ func TestStoredSnapshot_StillAnswersUnderAirGap(t *testing.T) {
 	}
 	if len(index) == 0 {
 		t.Error("stored snapshot answered with an empty index")
+	}
+
+	// The coordinate-match route is the same claim, and it did not hold: it read
+	// the live service, so under GOPROXY=off it refused before any I/O and every
+	// module in the scan recorded an advisory-match failure — while the store held
+	// the advisory set the whole time. It reads the stored snapshot now, so an
+	// air-gapped scan answers from the generation it names.
+	findings, err := db.LookupFindings(context.Background(), coordinatetest.MustNew("github.com/foo/bar", "v1.0.0"), identity)
+	if err != nil {
+		t.Fatalf("matching a coordinate against the stored snapshot under GOPROXY=off: %v", err)
+	}
+	if len(findings) != 1 || findings[0].ID != "GO-2024-0001" {
+		t.Errorf("findings = %+v, want the snapshot's own advisory", findings)
 	}
 }

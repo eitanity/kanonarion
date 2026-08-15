@@ -220,12 +220,31 @@ The question is not always asked, and is not always answerable. `is_latest` is
 then **null** with `staleness_unmeasured` naming why, and the text line says so
 rather than staying silent - silence there means "measured, and current":
 
-| Situation | Text clause | `is_latest` | `staleness_unmeasured` |
-|---|---|---|---|
-| Pin is the newest version | _(none)_ | `true` | absent |
-| Pin is behind | `[latest: v1.2.0, 3 days ago]` | `false` | absent |
-| Proxy lookup failed | `[staleness unmeasured (lookup failed)]` | `null` | `lookup_failed` |
-| `@latest` was requested | `[staleness unmeasured (not asked)]` | `null` | `not_asked` |
+| Situation | Text clause | `is_latest` | `pin_ahead_of_latest` | `days_since_latest` | `staleness_unmeasured` |
+|---|---|---|---|---|---|
+| Pin is the newest version | _(none)_ | `true` | `false` | `null` | absent |
+| Pin is behind | `[latest: v1.2.0, 3 days ago]` | `false` | `false` | `3` | absent |
+| Pin is behind, released today | `[latest: v1.2.0, released today]` | `false` | `false` | `0` | absent |
+| Pin is behind, no publication date | `[latest: v1.2.0]` | `false` | `false` | `null` | absent |
+| Pin sorts above `@latest` | `[ahead of latest tag: v1.0.0]` | `false` | `true` | `null` | absent |
+| Proxy lookup failed | `[staleness unmeasured (lookup failed)]` | `null` | `null` | `null` | `lookup_failed` |
+| `@latest` was requested | `[staleness unmeasured (not asked)]` | `null` | `null` | `null` | `not_asked` |
+
+`days_since_latest` is emitted on every block and **zero is a value** — a
+release that shipped today is `0` days old, and it used to be erased, which made
+it indistinguishable from a release whose publication date is unknown. Null
+means there is no age, and the two fields to its left say why.
+
+`is_latest` and `pin_ahead_of_latest` are the three-valued answer between them,
+and both are emitted on every measured block — `false` included, so "measured,
+and not in that state" is never confused with "this build does not derive the
+field". Both are `null` together where no comparison was made.
+
+`is_latest: false` on an ahead pin is literally true: the pin is not the version
+`@latest` names. What made it read as "behind" was the age travelling beside it,
+so no age is emitted there. On a *current* pin the age is kept — it sits beside
+`is_latest: true`, where it is the age of a release you are already on rather
+than a distance.
 
 `@latest` resolves the newest version and fetches **that**, so there is no pin
 to be behind and no comparison was made; a failed lookup measured nothing. Both

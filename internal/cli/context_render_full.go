@@ -105,7 +105,7 @@ func printFullLicense(w *errWriter, l contextLicense, cmd string) {
 		w.printf("Status:       %s\n", l.Status)
 		if l.SPDX == "" && l.LowConfidenceSPDX != "" {
 			w.printf("Low-confidence match: %s (~%d%% coverage)\n",
-				l.LowConfidenceSPDX, coveragePercent(l.LowConfidenceCoverage))
+				l.LowConfidenceSPDX, coveragePercent(lowConfidenceCoverageOf(l)))
 		}
 		if l.ExtractedAt != "" {
 			w.printf("Extracted At: %s\n", l.ExtractedAt)
@@ -186,8 +186,8 @@ func printFullCallGraph(w *errWriter, cg contextCallGraph, cmd string) {
 		if cg.Error != "" {
 			w.printf("Detail:       %s\n", cg.Error)
 		}
-		if cg.EntryPointCount > 0 {
-			w.printf("Entry Points: %d\n", cg.EntryPointCount)
+		if cg.EntryPointCount != nil && *cg.EntryPointCount > 0 {
+			w.printf("Entry Points: %d\n", *cg.EntryPointCount)
 		} else if len(cg.EntryPointsByPackage) > 0 {
 			w.printf("Entry Points by Package:\n")
 			pkgs := make([]string, 0, len(cg.EntryPointsByPackage))
@@ -293,7 +293,11 @@ func printFullVulnerabilities(w *errWriter, v contextVulnerabilities, cmd contex
 			w.printf("Pipeline:     %s\n", v.PipelineVersion)
 		}
 		if v.SnapshotRetrievedAt != "" {
-			w.printf("Snapshot Age: retrieved %s (%d day(s) old at validation)\n", v.SnapshotRetrievedAt, v.SnapshotAgeDays)
+			age := 0
+			if v.SnapshotAgeDays != nil {
+				age = *v.SnapshotAgeDays
+			}
+			w.printf("Snapshot Age: retrieved %s (%d day(s) old at validation)\n", v.SnapshotRetrievedAt, age)
 		}
 		for _, cve := range v.Findings {
 			printFullCVE(w, cve)
@@ -313,8 +317,8 @@ func printFullCVE(w *errWriter, cve contextCVE) {
 	if cve.FixedIn != "" {
 		w.printf("    Fixed In:  %s\n", cve.FixedIn)
 	}
-	if cve.Score != 0 {
-		w.printf("    Score:     %.1f\n", cve.Score)
+	if cve.Score != nil && *cve.Score != 0 {
+		w.printf("    Score:     %.1f\n", *cve.Score)
 	}
 	if cve.Reachable != nil {
 		w.printf("    Reachable: %v\n", *cve.Reachable)

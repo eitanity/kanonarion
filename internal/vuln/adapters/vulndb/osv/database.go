@@ -62,14 +62,33 @@ type modulevuln struct {
 	fixed string // semver without 'v' prefix; empty = not yet fixed
 }
 
-// Database implements ports.VulnerabilityDatabase fetching from vuln.go.dev.
+// snapshotDatabase is one stored snapshot opened for reading: its module index
+// and its per-advisory records, both out of the same zip.
+//
+// It is what makes "the database this scan was judged against" a thing that can
+// be read rather than a label. The index answers which advisories name a module
+// path, and files answers what each of those advisories says — and because both
+// come from one archive, an advisory the index lists and the record cannot
+// explain is a property of that snapshot rather than of when the read happened.
+type snapshotDatabase struct {
+	index map[string][]modulevuln // module path -> advisory entries
+	files map[string]*zip.File    // zip entry name -> entry
+}
+
+// Database implements ports.VulnerabilityDatabase.
+//
+// Acquisition reaches vuln.go.dev — Snapshot, LatestVersion and
+// PublishedAdvisoryIndex are how a generation arrives and how two generations
+// are compared. Judging a coordinate does not: CheckVulnerable and
+// LookupFindings read a stored snapshot, so a scan consults exactly the
+// advisory set its record names.
 type Database struct {
 	client    *http.Client
 	vulnStore ports.VulnerabilityStore
 	logger    *slog.Logger
 
-	mu          sync.RWMutex
-	moduleIndex map[string][]modulevuln // map module path -> vulnerability entries
+	mu        sync.RWMutex
+	snapshots map[string]*snapshotDatabase // source@version -> opened snapshot
 }
 
 // New returns a new Database.
@@ -462,41 +481,93 @@ func (d *Database) GetSnapshot(ctx context.Context, identity domain.DatabaseSnap
 	return rc, nil
 }
 
-// ensureIndex lazily loads the modules index (module path -> advisory entries)
-// once, guarding the load with the write lock so concurrent callers cannot race
-// to fetch it twice.
-func (d *Database) ensureIndex(ctx context.Context) error {
+// snapshotKey names a stored snapshot for the open-snapshot cache. Source and
+// version are the identity the store is keyed on; the advisory count and the
+// retrieval stamp are readings ABOUT that generation and must not split it into
+// two cache entries.
+func snapshotKey(identity domain.DatabaseSnapshot) string {
+	return identity.Source() + "@" + identity.Version()
+}
+
+// openSnapshot opens the stored snapshot named by identity and caches it, so a
+// walk's worth of coordinate lookups costs one local read rather than one per
+// module. The write lock is held across the read for the same reason the live
+// index load held it: concurrent scan workers must not each open the archive.
+//
+// A zero identity is refused rather than defaulted. There is no such thing as
+// "the current advisory database" on this path — the whole point is that the
+// caller names the generation it is judging against — so an unnamed snapshot is
+// a caller that has not decided, not a request for the newest.
+//
+// There is no network fallback. A snapshot the store cannot produce is an
+// unanswerable question, and answering it from the live database is what put a
+// finding the analyser never saw into a record naming a generation that does not
+// contain it.
+func (d *Database) openSnapshot(ctx context.Context, identity domain.DatabaseSnapshot) (*snapshotDatabase, error) {
+	if identity.IsZero() {
+		return nil, fmt.Errorf("reading the advisory database: %w", domain.ErrZeroSnapshot)
+	}
+	key := snapshotKey(identity)
+
+	d.mu.RLock()
+	cached := d.snapshots[key]
+	d.mu.RUnlock()
+	if cached != nil {
+		return cached, nil
+	}
+
 	d.mu.Lock()
 	defer d.mu.Unlock()
-	if d.moduleIndex != nil {
-		return nil
+	if cached := d.snapshots[key]; cached != nil {
+		return cached, nil
 	}
-	data, err := d.fetchRawGZ(ctx, vulnGoDevBase+"/index/modules.json.gz")
+	zr, err := d.openStoredSnapshot(ctx, identity)
 	if err != nil {
-		return fmt.Errorf("fetch modules index: %w", err)
+		return nil, err
 	}
-	moduleIndex, err := decodeModulesIndex(data)
+	files := make(map[string]*zip.File, len(zr.File))
+	for _, f := range zr.File {
+		files[f.Name] = f
+	}
+	indexFile, ok := files["index/modules.json"]
+	if !ok {
+		return nil, fmt.Errorf("stored snapshot %s@%s has no index/modules.json", identity.Source(), identity.Version())
+	}
+	indexData, err := readZipFile(indexFile, maxModulesIndexBytes)
 	if err != nil {
-		return err
+		return nil, err
 	}
-	d.moduleIndex = moduleIndex
-	return nil
+	index, err := decodeModulesIndex(indexData)
+	if err != nil {
+		return nil, err
+	}
+	opened := &snapshotDatabase{index: index, files: files}
+	if d.snapshots == nil {
+		d.snapshots = make(map[string]*snapshotDatabase, 1)
+	}
+	d.snapshots[key] = opened
+	return opened, nil
 }
 
 // CheckVulnerable checks if the given modules at specific versions have any known
-// vulnerabilities in the database. This is a lightweight metadata check that
-// uses the modules index fixed-version field to exclude already-patched versions.
-func (d *Database) CheckVulnerable(ctx context.Context, modules []coordinate.ModuleCoordinate) (map[coordinate.ModuleCoordinate][]string, error) {
-	if err := d.ensureIndex(ctx); err != nil {
+// vulnerabilities in the snapshot named by identity. This is a lightweight
+// metadata check that uses the modules index fixed-version field to exclude
+// already-patched versions.
+//
+// It reads the stored snapshot for the same reason LookupFindings does: its
+// answer decides whether a module is scanned from source at all, so reading a
+// generation the scan is not judged against would let an advisory outside the
+// pinned set trigger — or, in the other direction, fail to trigger — an analysis
+// whose verdict then names that pinned set.
+func (d *Database) CheckVulnerable(ctx context.Context, modules []coordinate.ModuleCoordinate, identity domain.DatabaseSnapshot) (map[coordinate.ModuleCoordinate][]string, error) {
+	snapshot, err := d.openSnapshot(ctx, identity)
+	if err != nil {
 		return nil, err
 	}
 
-	d.mu.RLock()
-	defer d.mu.RUnlock()
-
 	res := make(map[coordinate.ModuleCoordinate][]string)
 	for _, m := range modules {
-		entries, ok := d.moduleIndex[m.Path()]
+		entries, ok := snapshot.index[m.Path()]
 		if !ok {
 			continue
 		}
@@ -678,20 +749,26 @@ type osvImport struct {
 }
 
 // LookupFindings returns enriched findings for every advisory affecting coord.
-// It loads the modules index, filters to advisories that affect coord's version
-// (reusing the same fixed-version logic as CheckVulnerable), then fetches each
-// matching ID/<ID>.json advisory to populate the human summary, affected range,
-// fixed version and at-risk symbols. When a single advisory's enrichment fetch
-// fails the finding degrades to its bare ID and known fixed version rather than
-// disappearing — the module is still known-affected — and the failure is logged.
-func (d *Database) LookupFindings(ctx context.Context, coord coordinate.ModuleCoordinate) ([]domain.VulnerabilityFinding, error) {
-	if err := d.ensureIndex(ctx); err != nil {
+// It reads the modules index OUT OF THE STORED SNAPSHOT named by identity,
+// filters to advisories that affect coord's version (reusing the same
+// fixed-version logic as CheckVulnerable), then reads each matching
+// ID/<ID>.json record out of that same snapshot to populate the human summary,
+// affected range, fixed version and at-risk symbols. When a single advisory's
+// record cannot be read the finding degrades to its bare ID and known fixed
+// version rather than disappearing — the index still lists the module as
+// affected — and the failure is logged.
+//
+// Both halves come from one archive, so this route answers from exactly the
+// database the source analysis was handed. It previously read the live service:
+// on a host whose pinned snapshot was days old, every advisory published since
+// entered the record here, was never seen by the analyser, and was then stamped
+// not-reachable on the strength of that analyser's silence.
+func (d *Database) LookupFindings(ctx context.Context, coord coordinate.ModuleCoordinate, identity domain.DatabaseSnapshot) ([]domain.VulnerabilityFinding, error) {
+	snapshot, err := d.openSnapshot(ctx, identity)
+	if err != nil {
 		return nil, err
 	}
-
-	d.mu.RLock()
-	entries := append([]modulevuln(nil), d.moduleIndex[coord.Path()]...)
-	d.mu.RUnlock()
+	entries := snapshot.index[coord.Path()]
 
 	var findings []domain.VulnerabilityFinding
 	for _, e := range entries {
@@ -703,13 +780,13 @@ func (d *Database) LookupFindings(ctx context.Context, coord coordinate.ModuleCo
 			continue
 		}
 		finding := domain.VulnerabilityFinding{ID: e.id, FixedIn: normaliseFixed(e.fixed)}
-		adv, err := d.fetchAdvisory(ctx, e.id)
+		adv, err := readSnapshotOSV(snapshot.files, e.id)
 		if err != nil {
 			// Enrichment failed: we cannot refine against the full ranges, so keep
 			// the conservative coarse-index verdict rather than dropping a
 			// known-affected hit. The finding degrades to its bare ID + index fix.
 			d.logger.Warn("vuln metadata: advisory enrichment failed",
-				"advisory", e.id, "coordinate", coord, "error", err)
+				"advisory", e.id, "coordinate", coord, "snapshot", identity.String(), "error", err)
 			findings = append(findings, finding)
 			continue
 		}
@@ -722,28 +799,29 @@ func (d *Database) LookupFindings(ctx context.Context, coord coordinate.ModuleCo
 				"advisory", e.id, "coordinate", coord)
 			continue
 		}
-		enrichFinding(&finding, coord.Path(), adv)
+		enrichFinding(&finding, coord, adv)
 		findings = append(findings, finding)
 	}
 	domain.SortFindings(findings)
 	return findings, nil
 }
 
-// fetchAdvisory retrieves and decodes a single ID/<ID>.json OSV advisory.
-func (d *Database) fetchAdvisory(ctx context.Context, id string) (*osvAdvisory, error) {
-	url := vulnGoDevBase + "/ID/" + id + ".json"
-	resp, err := d.request(ctx, url)
+// readSnapshotOSV decodes a single ID/<id>.json record out of an opened
+// snapshot's entries. It is the only way an advisory body is read during a scan:
+// the bytes are the ones the store holds under the generation the record names,
+// so no reading here can be newer than the database the analysis consulted.
+func readSnapshotOSV(files map[string]*zip.File, id string) (*osvAdvisory, error) {
+	f, ok := files["ID/"+id+".json"]
+	if !ok {
+		return nil, fmt.Errorf("no ID/%s.json in the snapshot", id)
+	}
+	data, err := readZipFile(f, maxAdvisoryBytes)
 	if err != nil {
 		return nil, err
 	}
-	defer func() { _ = resp.Body.Close() }()
-	data, err := io.ReadAll(io.LimitReader(resp.Body, maxAdvisoryBytes))
-	if err != nil {
-		return nil, fmt.Errorf("read advisory %s: %w", url, err)
-	}
 	var adv osvAdvisory
 	if err := json.Unmarshal(data, &adv); err != nil {
-		return nil, fmt.Errorf("unmarshal advisory %s: %w", url, err)
+		return nil, fmt.Errorf("unmarshal advisory %s: %w", id, err)
 	}
 	return &adv, nil
 }
@@ -768,12 +846,28 @@ func advisoryReferences(refs []osvReference) []domain.AdvisoryReference {
 
 // enrichFinding populates summary/details/aliases/timestamps — including the
 // retraction timestamp, which decides whether the match counts as a finding at
-// all — from the advisory,
-// then derives the affected-range string and at-risk symbols from the affected
-// block whose package matches modulePath. A FixedIn already set from the index
-// is preserved; only when the index carried no fixed version does the advisory's
-// own range supply one.
-func enrichFinding(f *domain.VulnerabilityFinding, modulePath string, adv *osvAdvisory) {
+// all — from the advisory, then derives the affected-range string, the fixed
+// version and the at-risk symbols from the affected block whose package matches
+// coord's path.
+//
+// THE FIXED VERSION IS THE ONE FOR THE BRANCH IN HAND. An advisory backported
+// across maintained release branches states one introduced/fixed pair per
+// branch, and index/modules.json collapses them to the single highest — which
+// for a Go standard-library advisory is usually the next major's release
+// candidate. Reporting that told a reader on a supported stable branch to move
+// to an unreleased toolchain when a point release already carried the fix, and
+// it is the worst direction to be wrong in: a one-command upgrade reads as a
+// wait-for-the-next-major. The pair whose interval contains coord's version is
+// the answer, and it overrides the index's coarse value rather than deferring to
+// it.
+//
+// Where no interval contains the version there is nothing to select from, and
+// the coarse index value stands. On this path that combination is unreachable:
+// LookupFindings has already dropped a finding whose module path is named with
+// no containing range, so a block reaching here either contains the version or
+// declares no comparable SEMVER range at all.
+func enrichFinding(f *domain.VulnerabilityFinding, coord coordinate.ModuleCoordinate, adv *osvAdvisory) {
+	modulePath := coord.Path()
 	f.Summary = adv.Summary
 	f.Details = adv.Details
 	f.Aliases = adv.Aliases
@@ -792,7 +886,9 @@ func enrichFinding(f *domain.VulnerabilityFinding, modulePath string, adv *osvAd
 		if rangeStr != "" {
 			f.AffectedRange = rangeStr
 		}
-		if f.FixedIn == "" {
+		if branchFix, ok := fixedForVersion(coord.Version(), a.Ranges); ok {
+			f.FixedIn = branchFix
+		} else if f.FixedIn == "" {
 			f.FixedIn = fixed
 		}
 		f.AffectedSymbols = collectSymbols(a.EcosystemSpecific.Imports)
@@ -825,6 +921,47 @@ func formatAffected(ranges []osvRange) (rangeStr, fixed string) {
 		}
 	}
 	return strings.Join(parts, ", "), fixed
+}
+
+// fixedForVersion returns the fixed bound of the affected interval that contains
+// version — the fix for the release branch the module in hand is on — and
+// reports whether any interval contained it.
+//
+// The events of one range are a flat sequence of introduced and fixed
+// boundaries forming half-open intervals [introduced, fixed). An interval with
+// no fixed bound is affected with no fix yet, which is a containing interval
+// carrying no answer: it returns "" and true, so a caller does not fall back to
+// another branch's fix for a version nothing has fixed.
+//
+// An unparseable version, or a range in a vocabulary other than SEMVER, is not
+// comparable and selects nothing.
+func fixedForVersion(version string, ranges []osvRange) (string, bool) {
+	v := vPrefix(version)
+	if !semver.IsValid(v) {
+		return "", false
+	}
+	for _, r := range ranges {
+		if r.Type != "" && r.Type != "SEMVER" {
+			continue
+		}
+		open, lowOK := false, false
+		for _, ev := range r.Events {
+			switch {
+			case ev.Introduced != "":
+				open = true
+				lowOK = ev.Introduced == "0" || semver.Compare(v, vPrefix(ev.Introduced)) >= 0
+			case ev.Fixed != "":
+				if open && lowOK && semver.Compare(v, vPrefix(ev.Fixed)) < 0 {
+					return vPrefix(ev.Fixed), true
+				}
+				open = false
+			}
+		}
+		if open && lowOK {
+			return "", true
+		}
+	}
+	return "", false
 }
 
 // collectSymbols flattens, de-duplicates and sorts the imported symbols across

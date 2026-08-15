@@ -75,3 +75,86 @@ func TestLatestInfo_ResolvesAVersion(t *testing.T) {
 		t.Error("expected the publication time to survive")
 	}
 }
+
+// TestLatestInfo_ProbeOutcomesAreThreeWay pins the split the major probe rests
+// on, from the caller's side rather than the transport's.
+//
+// The probe has three outcomes, not two. A /vN path that does not exist is the
+// ORDINARY case for most modules and is a measured negative; a lookup that
+// could not be made is the one an operator can act on. They used to be told
+// apart only by which error text came back, so an empty proxy response surfaced
+// as "decoding latest response for <mod>/v2: EOF" — a decoder's position stated
+// where the reason the question went unanswered belonged.
+func TestLatestInfo_ProbeOutcomesAreThreeWay(t *testing.T) {
+	tests := []struct {
+		name    string
+		handler http.HandlerFunc
+		// exactly one of these is expected
+		wantAbsent bool
+		wantFailed bool
+		wantOK     bool
+	}{
+		{
+			name: "a resolving path is an answer",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				_ = json.NewEncoder(w).Encode(map[string]any{"Version": "v2.1.30"})
+			},
+			wantOK: true,
+		},
+		{
+			name: "a path that does not exist is a measured negative",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				http.Error(w, "not found: module example.com/mod/v2: no matching versions", http.StatusNotFound)
+			},
+			wantAbsent: true,
+		},
+		{
+			name: "an empty response settles nothing and is a failed lookup",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusOK)
+			},
+			wantFailed: true,
+		},
+		{
+			name: "a proxy error is a failed lookup",
+			handler: func(w http.ResponseWriter, _ *http.Request) {
+				w.WriteHeader(http.StatusBadGateway)
+			},
+			wantFailed: true,
+		},
+	}
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			b := bridgeFor(t, tc.handler)
+			_, err := b.LatestInfo(context.Background(), "example.com/mod/v2")
+			switch {
+			case tc.wantOK:
+				if err != nil {
+					t.Fatalf("LatestInfo: %v", err)
+				}
+				return
+			case err == nil:
+				t.Fatal("expected an error")
+			}
+			absent := errors.Is(err, ports.ErrPathAbsent)
+			failed := errors.Is(err, ports.ErrLookupFailed)
+			if absent == failed {
+				t.Fatalf("outcome is %v/%v — absence and failure must be told apart (err: %v)", absent, failed, err)
+			}
+			if absent != tc.wantAbsent || failed != tc.wantFailed {
+				t.Fatalf("absent=%v failed=%v, want absent=%v failed=%v (err: %v)", absent, failed, tc.wantAbsent, tc.wantFailed, err)
+			}
+			if !failed {
+				return
+			}
+			// The message an operator reads says the lookup failed, and does
+			// not lead with a decoder's position.
+			if !strings.Contains(err.Error(), "module proxy lookup failed") {
+				t.Errorf("message does not say the lookup failed: %v", err)
+			}
+			if strings.Contains(err.Error(), "EOF") {
+				t.Errorf("message names EOF rather than what happened to the lookup: %v", err)
+			}
+		})
+	}
+}

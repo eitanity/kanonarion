@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -223,7 +224,7 @@ func TestRunLatestModules_MultipleArgs(t *testing.T) {
 		var stdout bytes.Buffer
 		err := runLatestModules(context.Background(),
 			[]string{"github.com/spf13/cobra", "github.com/stretchr/testify"},
-			resolver, &stdout)
+			resolver, &stdout, io.Discard)
 		if err != nil {
 			t.Fatalf("runLatestModules: %v", err)
 		}
@@ -250,7 +251,7 @@ func TestRunLatestModules_MultipleArgs(t *testing.T) {
 		var stdout bytes.Buffer
 		err := runLatestModules(context.Background(),
 			[]string{"github.com/spf13/cobra", "github.com/stretchr/testify"},
-			resolver, &stdout)
+			resolver, &stdout, io.Discard)
 		if err != nil {
 			t.Fatalf("runLatestModules: %v", err)
 		}
@@ -278,7 +279,7 @@ func TestRunLatestModules_MultipleArgs(t *testing.T) {
 		var stdout bytes.Buffer
 		err := runLatestModules(context.Background(),
 			[]string{"github.com/spf13/cobra"},
-			resolver, &stdout)
+			resolver, &stdout, io.Discard)
 		if err != nil {
 			t.Fatalf("runLatestModules: %v", err)
 		}
@@ -320,7 +321,7 @@ func TestPrintLatestTable(t *testing.T) {
 					Pinned:               "v1.0.0",
 					Latest:               "v1.2.0",
 					IsLatest:             measuredIsLatest(false),
-					LatestReleaseAgeDays: 30,
+					LatestReleaseAgeDays: measuredAgeDays(30),
 				},
 			},
 			checks: []string{"github.com/foo/bar@v1.0.0", "latest: v1.2.0", "30 days ago"},
@@ -333,7 +334,7 @@ func TestPrintLatestTable(t *testing.T) {
 					Pinned:               "v1.0.0",
 					Latest:               "v1.1.0",
 					IsLatest:             measuredIsLatest(false),
-					LatestReleaseAgeDays: 0,
+					LatestReleaseAgeDays: measuredAgeDays(0),
 				},
 			},
 			checks: []string{"latest: v1.1.0", "released today"},

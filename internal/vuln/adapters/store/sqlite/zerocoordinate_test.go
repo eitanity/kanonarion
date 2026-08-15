@@ -31,4 +31,11 @@ func TestRefusesZeroCoordinate(t *testing.T) {
 		}
 		return nil
 	})
+	coordinatetest.AssertRefusesZeroCoordinate(t, "ListVulnerabilityRecordsForModuleAllGenerations", func() error {
+		_, err := s.ListVulnerabilityRecordsForModuleAllGenerations(ctx, zeroCoordinate())
+		if err != nil {
+			return fmt.Errorf("ListVulnerabilityRecordsForModuleAllGenerations: %w", err)
+		}
+		return nil
+	})
 }

@@ -137,6 +137,37 @@ func EmptySnapshotAbort(snapshot domain.DatabaseSnapshot, count int) error {
 		ErrSnapshotEmpty, snapshot.Source(), snapshot.Version(), count)
 }
 
+// ErrSnapshotUnavailable is returned when the advisory database snapshot a scan
+// was pinned to could not be put in front of the analyser: the store would not
+// produce it, or it could not be unpacked where the analyser can read it.
+//
+// It is separate from the integrity and empty sentinels because it describes the
+// snapshot's availability rather than its contents. The bytes may be perfectly
+// good and simply out of reach — a full disk, a store that has lost the blob, a
+// permissions failure on the scratch directory.
+//
+// It is a refusal rather than a fallback, and that is the whole point of naming
+// it. The three paths that raise it used to log a warning and hand the analyser
+// the live database instead, while the record went on naming the snapshot: an
+// entirely live scan sealed under a pinned generation, announced only in a log
+// line nothing downstream reads. A record states the database it was judged
+// against, so a scan that cannot read that database has no verdict to state.
+var ErrSnapshotUnavailable = errors.New("vulnerability database snapshot could not be made available to the analyser")
+
+// UnavailableSnapshotAbort wraps a snapshot-availability failure into the error
+// that ends the scan, naming the snapshot and what went wrong reaching it.
+//
+// It lives beside the sentinel on the terms SnapshotIntegrityAbort set, so every
+// seam that cannot deliver the pinned database refuses in the same sentence
+// rather than each inventing one — or, as three of them did, inventing none.
+func UnavailableSnapshotAbort(snapshot domain.DatabaseSnapshot, stage string, err error) error {
+	return fmt.Errorf(
+		"%w: %s for the advisory database snapshot %s@%s: %v; the record this scan would write names that "+
+			"snapshot, and answering from the live database instead would seal a verdict against an advisory "+
+			"set the record does not state — fix the store or re-fetch the database (--fresh) and re-run",
+		ErrSnapshotUnavailable, stage, snapshot.Source(), snapshot.Version(), err)
+}
+
 // UnreadableRun names one stored scan run a listing could not verify, together
 // with the failure the read path reported.
 type UnreadableRun struct {
@@ -341,8 +372,10 @@ type VulnerabilityStore interface {
 	// ListVulnerabilityRecordsForModule returns every generation the ledger holds
 	// for a coordinate AT ONE PIPELINE VERSION, across all walks, snapshots and
 	// analysis frames, ordered by scanned_at descending (most recent first).
-	// Within that generation it is the history read: the superseded snapshots and
-	// frames are still here, each stating the evidence it rested on.
+	// Within that generation the superseded snapshots and frames are still here,
+	// each stating the evidence it rested on. It is not the history read: a
+	// history spanning generations comes from
+	// ListVulnerabilityRecordsForModuleAllGenerations.
 	//
 	// The pipeline version is part of the key, so this read cannot see the
 	// generations a bump left behind, and an empty answer from it means "nothing
@@ -353,6 +386,25 @@ type VulnerabilityStore interface {
 		ctx context.Context,
 		coord coordinate.ModuleCoordinate,
 		pipelineVersion string,
+	) ([]domain.VulnerabilityRecord, error)
+
+	// ListVulnerabilityRecordsForModuleAllGenerations returns every record the
+	// ledger holds for a coordinate, at every pipeline version, across all walks,
+	// snapshots and analysis frames, ordered by scanned_at descending.
+	//
+	// It takes no pipeline version, for the reason
+	// ListVulnerabilityRecordsByFindingID takes no walk: spanning generations is
+	// the question, not a relaxation of it. This is the read behind a history
+	// listing, where the whole point is what the ledger has ever held — including
+	// the generations a bump left behind, which the keyed read cannot see and
+	// which the census can only count.
+	//
+	// Nothing point-in-time may be served from it. A record from a superseded
+	// generation is not what a current scan would answer, so a caller that
+	// renders these rows states which generation each came from.
+	ListVulnerabilityRecordsForModuleAllGenerations(
+		ctx context.Context,
+		coord coordinate.ModuleCoordinate,
 	) ([]domain.VulnerabilityRecord, error)
 
 	// ListVulnerabilityRecordGenerationsForModule reports which pipeline
@@ -584,9 +636,11 @@ type VulnerabilityDatabase interface {
 	// for replay or re-scanning.
 	GetSnapshot(ctx context.Context, identity domain.DatabaseSnapshot) (io.ReadCloser, error)
 
-	// CheckVulnerable checks if the given modules at specific versions have any known
-	// vulnerabilities in the database. This is a lightweight metadata check.
-	CheckVulnerable(ctx context.Context, modules []coordinate.ModuleCoordinate) (map[coordinate.ModuleCoordinate][]string, error)
+	// CheckVulnerable checks if the given modules at specific versions have any
+	// known vulnerabilities in the snapshot named by identity. This is a
+	// lightweight metadata check, and like LookupFindings it reads the stored
+	// snapshot rather than the live database.
+	CheckVulnerable(ctx context.Context, modules []coordinate.ModuleCoordinate, identity domain.DatabaseSnapshot) (map[coordinate.ModuleCoordinate][]string, error)
 
 	// LookupFindings returns enriched advisory metadata for every known
 	// vulnerability affecting coord, sourced from the per-advisory OSV records:
@@ -595,7 +649,20 @@ type VulnerabilityDatabase interface {
 	// module cannot be scanned from source so each finding still answers "will a
 	// version bump fix it?" and "which symbol is at risk?" without the user
 	// leaving the tool to query the advisory database directly.
-	LookupFindings(ctx context.Context, coord coordinate.ModuleCoordinate) ([]domain.VulnerabilityFinding, error)
+	//
+	// IT READS THE SNAPSHOT NAMED BY IDENTITY, AND ONLY THAT. The snapshot is a
+	// parameter rather than an implicit "whatever the database serves now"
+	// because this route runs beside the source analysis and both go into one
+	// record. When it read the live database instead, a record could report an
+	// advisory published after the pinned generation — an advisory the analyser
+	// was never given — and the caller then attributed the analysis's silence
+	// about it as a reachability answer. A record states one advisory database,
+	// so both routes must read that one.
+	//
+	// The identity must name a snapshot the store holds; there is no fallback to
+	// the network, because a fallback is exactly how the two routes came to read
+	// different databases.
+	LookupFindings(ctx context.Context, coord coordinate.ModuleCoordinate, identity domain.DatabaseSnapshot) ([]domain.VulnerabilityFinding, error)
 }
 
 // ModuleFetcher is a narrow port used by ScanWalkUseCase to pre-fetch modules

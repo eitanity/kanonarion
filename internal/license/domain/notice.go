@@ -35,11 +35,52 @@ type NoticeEntry struct {
 	EmbeddedComponents []NoticeEmbeddedComponent // vendored/embedded third-party components
 }
 
-// NoticeLicenseFile holds the verbatim content of one license file.
+// NoticeLicenseFile holds one license file's attribution, and says what the
+// pipeline was able to identify in it. The document must never present bytes
+// under an identifier they do not carry, so every field a renderer needs to
+// label the block honestly lives here rather than being taken from the
+// module's primary identifier.
 type NoticeLicenseFile struct {
-	Path    string
+	Path string
+	// Content is the verbatim file content, reproduced when the file
+	// classified as a licence or is a NOTICE-style attribution file. It is
+	// empty when Classification is ClassificationUnclassified: bytes the
+	// pipeline could not identify are recorded, not printed.
 	Content string
+	// SPDX is THIS FILE'S own identifier, not the module's. Empty when the
+	// file did not classify.
+	SPDX           string
+	Classification NoticeClassification
+	FileSize       int64
+	FileHash       string // "sha256:<hex>"
+	// LowConfidenceSPDX and LowConfidenceCoverage carry a recognisable but
+	// sub-threshold licence fragment, so an unclassified file reads as
+	// "licence-like, not identified" rather than as bare absence.
+	LowConfidenceSPDX     string
+	LowConfidenceCoverage float64
 }
+
+// NoticeClassification says what the licence detector made of a file, so the
+// document can label the block with the truth rather than with the module's
+// identifier.
+type NoticeClassification int
+
+const (
+	// ClassificationLicence means the detector identified a licence in the
+	// file; SPDX names it and the text is reproduced verbatim.
+	ClassificationLicence NoticeClassification = iota
+	// ClassificationNotice means the file is a NOTICE-style attribution
+	// document rather than a licence grant. It carries no identifier of its
+	// own and is reproduced verbatim regardless, because Apache-2.0 section
+	// 4(d) requires a NOTICE file to be redistributed with the work.
+	ClassificationNotice
+	// ClassificationUnclassified means the detector identified no licence in
+	// the file. The document records the file — path, size, hash, and any
+	// low-confidence fragment — and does NOT reproduce its content: bytes with
+	// no identified grant are not a grant, and printing them under a licence
+	// heading is how scanner fixture markup reached the document.
+	ClassificationUnclassified
+)
 
 // NoticeEmbeddedComponent holds attribution data for a vendored/embedded
 // third-party component within a module.
@@ -103,8 +144,12 @@ func NoticeEntriesFromSnippets(atts []SnippetAttribution) ([]NoticeEntry, error)
 			SPDX:        a.SPDX,
 			// No Path: the text comes from the embedded SPDX table, not from a
 			// file in a module archive, so there is no path to cite.
-			LicenseTexts: []NoticeLicenseFile{{Content: text}},
-			Copyrights:   []string{a.Copyright},
+			LicenseTexts: []NoticeLicenseFile{{
+				Content:        text,
+				SPDX:           a.SPDX,
+				Classification: ClassificationLicence,
+			}},
+			Copyrights: []string{a.Copyright},
 		})
 	}
 	return out, nil

@@ -35,7 +35,12 @@ func (b *Bridge) LatestInfo(ctx context.Context, path string) (ports.LatestInfo,
 		if isAbsent(err) {
 			return ports.LatestInfo{}, fmt.Errorf("%w: %s", ports.ErrPathAbsent, path)
 		}
-		return ports.LatestInfo{}, fmt.Errorf("resolving %s@latest: %w", path, err)
+		// Marked as a failed lookup rather than passed through. The underlying
+		// error is kept in the chain, but what leads the message is that the
+		// lookup did not happen — the caller's own wrapper already names the
+		// path, and a bare transport or decoder error under it read as a
+		// property of the module rather than of the request.
+		return ports.LatestInfo{}, fmt.Errorf("%w: %w", ports.ErrLookupFailed, err)
 	}
 	return ports.LatestInfo{Version: info.Version, Time: info.Time}, nil
 }

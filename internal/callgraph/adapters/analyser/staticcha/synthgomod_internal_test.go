@@ -1,6 +1,7 @@
 package staticcha
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"os"
@@ -218,18 +219,14 @@ func TestSynthesiseGoMod_DetectsVendorTree(t *testing.T) {
 func TestAnalysisEnv_PinsModuleModeOnEveryLoad(t *testing.T) {
 	t.Parallel()
 
-	plain := analysisEnv(domain.SynthesisedGoMod{})
+	plain := analysisEnv()
 	if idx := slices.Index(plain, "GOFLAGS=-mod=mod"); idx != len(plain)-1 {
 		t.Errorf("GOFLAGS at position %d of %d on a load that synthesised nothing: "+
 			"a published zip carrying no go.sum for its own module graph fails the load without it",
 			idx, len(plain))
 	}
 
-	vendored := analysisEnv(domain.SynthesisedGoMod{
-		ModulePath:        "example.com/vendored",
-		GoDirective:       synthesisedGoDirective,
-		VendorTreePresent: true,
-	})
+	vendored := analysisEnv()
 	if !slices.Contains(vendored, "GOFLAGS=-mod=mod") {
 		t.Error("analysisEnv left vendor mode selectable beside a synthesised go.mod")
 	}
@@ -309,29 +306,70 @@ func TestSynthesiseGoMod_RefusesWhenTheBuildListMissesOneImport(t *testing.T) {
 	}
 }
 
-// TestAnalysisEnv_PinnedRequiresLoadOffline pins the posture the pinning rests
-// on: the versions are already chosen, so the only legitimate source for them is
-// the local module cache, and a load that could reach a proxy could substitute
-// something the walk never selected.
-func TestAnalysisEnv_PinnedRequiresLoadOffline(t *testing.T) {
+// TestAnalysisEnv_LoadsOffline pins the posture every analysis rests on: the
+// versions are already chosen — by the walk for a fetched module, by the tree's
+// own go.mod and go.sum for a working tree, by the synthesis for a module with
+// no usable go.mod — so the only legitimate source for them is the local module
+// cache, and a load that could reach a proxy could substitute something nobody
+// selected. It was once conditional on a synthesised require list, which left
+// the two commonest paths reaching the proxy for names that cannot resolve
+// there.
+func TestAnalysisEnv_LoadsOffline(t *testing.T) {
 	t.Parallel()
-	pinned := analysisEnv(domain.SynthesisedGoMod{
-		ModulePath:  "example.com/premod",
-		GoDirective: "1.16",
-		Requires:    []domain.SynthesisedRequire{{Path: "github.com/example/dep", Version: "v1.4.2"}},
-	})
+	env := analysisEnv()
 	for _, want := range []string{"GOPROXY=off", "GOSUMDB=off", "GOFLAGS=-mod=mod"} {
-		if !slices.Contains(pinned, want) {
-			t.Errorf("analysisEnv for a pinned synthesis does not set %s", want)
+		if !slices.Contains(env, want) {
+			t.Errorf("analysisEnv does not set %s: a load that can reach a proxy can substitute "+
+				"a version nobody chose, and pays a round trip per unresolvable name", want)
 		}
 	}
-	// The control that must be absent: an analysis that pinned nothing keeps the
-	// ambient posture it always had, so this change adds no offline constraint to
-	// any path that did not gain a require list.
-	plain := analysisEnv(domain.SynthesisedGoMod{ModulePath: "example.com/premod", GoDirective: "1.16"})
-	if slices.Contains(plain, "GOPROXY=off") {
-		t.Error("an unpinned analysis was forced offline; that is a behaviour change on a path " +
-			"this feature does not touch")
+	// The control that must hold: GOFLAGS stays last, so os/exec's keep-the-last
+	// dedupe cannot have the offline pins displace it.
+	if idx := slices.Index(env, "GOFLAGS=-mod=mod"); idx != len(env)-1 {
+		t.Errorf("GOFLAGS at position %d of %d", idx, len(env))
+	}
+}
+
+// TestAnalyseDir_AbsentDependencyNamesTheColdCache is the behaviour change the
+// offline default owes an account of. A working tree used to be loaded with
+// whatever GOPROXY the environment offered, so a dependency missing from the
+// module cache was fetched; it is now loaded offline and the packages importing
+// it do not type-check.
+//
+// What the user then sees must not be a bare loader error. The type errors that
+// reach the record name the import — "could not import x" — and never the
+// reason, because the reason is the go command's sentence about its own offline
+// posture and that is reported by the metadata load. Without it a cold cache
+// reads as unexplained breakage in the module, and the remedy — warm the cache —
+// is nowhere on the record.
+func TestAnalyseDir_AbsentDependencyNamesTheColdCache(t *testing.T) {
+	dir := t.TempDir()
+	// An empty module cache, so the requirement below cannot be satisfied locally
+	// however warm this host's real cache is.
+	t.Setenv("GOMODCACHE", filepath.Join(t.TempDir(), "cold"))
+	write := func(name, content string) {
+		t.Helper()
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+			t.Fatalf("writing %s: %v", name, err)
+		}
+	}
+	write("go.mod", "module example.com/needsdep\n\ngo 1.21\n\nrequire gopkg.in/yaml.v3 v3.0.1\n")
+	write("a.go", "package needsdep\n\nimport _ \"gopkg.in/yaml.v3\"\n\nfunc F() {}\n")
+
+	coord, err := coordinate.NewModuleCoordinate("example.com/needsdep", coordinate.LocalVersion)
+	if err != nil {
+		t.Fatalf("coordinate: %v", err)
+	}
+	rec, err := quietAnalyser().AnalyseDir(context.Background(), dir, coord)
+	if err != nil {
+		t.Fatalf("AnalyseDir: %v", err)
+	}
+	if rec.OverallStatus == domain.CallGraphStatusExtracted {
+		t.Fatalf("a tree whose dependency is not in the cache was recorded as fully extracted")
+	}
+	if !isOfflineCacheMiss(rec.FailureDetail) {
+		t.Errorf("the record does not say the module cache was cold, so the remedy is not on it: %q",
+			rec.FailureDetail)
 	}
 }
 
