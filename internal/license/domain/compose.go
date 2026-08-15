@@ -155,8 +155,8 @@ func findConflict(records []LicenseRecord) *LicenceConflict {
 	// "The top" is a BAND, not an exact value, and the width is the one this
 	// domain already uses for the same judgement: DeriveExpression treats two
 	// candidates within exprCompoundDelta as near-equal coverage where neither
-	// dominates, which is why it emits an OR expression rather than picking. The
-	// same reasoning applies here.
+	// dominates, which is why it reads the file's prose rather than picking on
+	// the margin. The same reasoning applies here.
 	//
 	// Exact equality would make this rule very nearly unfireable, and that was
 	// measured rather than reasoned. Two detections of one real module in the

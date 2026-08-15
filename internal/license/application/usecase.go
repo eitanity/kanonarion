@@ -328,6 +328,7 @@ func (uc *ExtractLicenseUseCase) extractFromZip(
 
 	modulePrefix := coord.Path() + "@" + coord.Version() + "/"
 	var entries []domain2.LicenseFileEntry
+	var texts map[string]string
 
 	for _, name := range archive.Names() {
 		if !strings.HasPrefix(name, modulePrefix) {
@@ -341,7 +342,7 @@ func (uc *ExtractLicenseUseCase) extractFromZip(
 			return domain2.LicenseRecord{}, fmt.Errorf("license extraction cancelled: %w", ctxErr)
 		}
 
-		entry, entryErr := uc.processFile(ctx, archive, name, relPath)
+		entry, content, entryErr := uc.processFile(ctx, archive, name, relPath)
 		if entryErr != nil {
 			log.InfoContext(ctx, "licence_file_skipped",
 				slog.String("path", relPath),
@@ -354,6 +355,17 @@ func (uc *ExtractLicenseUseCase) extractFromZip(
 			continue
 		}
 		entries = append(entries, entry)
+		// Keep the verbatim text of root-level licence files. A compound file
+		// says in its own prose how the grants it carries relate to each
+		// other, and that prose is the only thing that does; without it the
+		// expression would be inferred from a confidence delta, which measures
+		// something else entirely.
+		if !entry.IsVendored && isRootLevel(relPath) {
+			if texts == nil {
+				texts = make(map[string]string, 4)
+			}
+			texts[relPath] = string(content)
+		}
 	}
 
 	// Pass 2: if no license files were found and per-file mode is enabled,
@@ -384,7 +396,14 @@ func (uc *ExtractLicenseUseCase) extractFromZip(
 	}
 
 	primarySPDX, primaryConf, status := deriveStatus(entries)
-	expression := domain2.DeriveExpression(entries)
+	expr := domain2.DeriveExpressionResult(entries, texts)
+	// A licence file can carry a third party's grant that covers more of the
+	// file than the module's own grant does, in which case the most-covered
+	// match is not the module's licence. Where the reading of the file
+	// establishes which grant the module itself makes, that is the primary.
+	if expr.PrimarySPDX != "" {
+		primarySPDX = expr.PrimarySPDX
+	}
 	copyrightStatus := deriveCopyrightStatus(entries)
 
 	provenance := domain2.ExtractProvenance(modulePrefix, archive.Names(), func(name string) ([]byte, bool, error) {
@@ -397,7 +416,9 @@ func (uc *ExtractLicenseUseCase) extractFromZip(
 		Ecosystem:         domain.EcosystemGo,
 		Coordinate:        coord,
 		PrimarySPDX:       primarySPDX,
-		Expression:        expression,
+		Expression:        expr.Expression,
+		ExpressionBasis:   expr.Basis,
+		BundledSPDXs:      expr.BundledSPDXs,
 		PrimaryConfidence: primaryConf,
 		LicenseFiles:      entries,
 		EffectiveSet:      domain2.DeriveEffectiveLicenseSet(entries),
@@ -415,13 +436,13 @@ func (uc *ExtractLicenseUseCase) processFile(
 	ctx context.Context,
 	archive *ziparchive.Archive,
 	name, relPath string,
-) (domain2.LicenseFileEntry, error) {
+) (domain2.LicenseFileEntry, []byte, error) {
 	content, found, err := archive.ReadFile(name)
 	if err != nil {
-		return domain2.LicenseFileEntry{}, fmt.Errorf("reading zip entry: %w", err)
+		return domain2.LicenseFileEntry{}, nil, fmt.Errorf("reading zip entry: %w", err)
 	}
 	if !found {
-		return domain2.LicenseFileEntry{}, fmt.Errorf("zip entry %q not found", name)
+		return domain2.LicenseFileEntry{}, nil, fmt.Errorf("zip entry %q not found", name)
 	}
 
 	sum := sha256.Sum256(content)
@@ -429,7 +450,7 @@ func (uc *ExtractLicenseUseCase) processFile(
 
 	match, err := uc.detector.Detect(ctx, content)
 	if err != nil {
-		return domain2.LicenseFileEntry{}, fmt.Errorf("detecting license: %w", err)
+		return domain2.LicenseFileEntry{}, nil, fmt.Errorf("detecting license: %w", err)
 	}
 
 	var alts []domain2.AltMatch
@@ -456,7 +477,7 @@ func (uc *ExtractLicenseUseCase) processFile(
 		CopyrightStatements:   stmts,
 		LowConfidenceSPDX:     match.LowConfidenceSPDX,
 		LowConfidenceCoverage: match.LowConfidenceCoverage,
-	}, nil
+	}, content, nil
 }
 
 // compoundConfDelta is the maximum confidence difference that identifies a

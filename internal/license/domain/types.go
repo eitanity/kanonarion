@@ -148,9 +148,23 @@ type LicenseRecord struct {
 	// Empty for a dependency (inbound obligations);
 	// LicenseRoleRootDeclaration for the project-walk root (outbound
 	// declaration).
-	Role              string
-	PrimarySPDX       string // kept for backward compatibility; Expression is the canonical representation
-	Expression        string // SPDX license expression (e.g. "MIT", "MIT OR Apache-2.0", "BSD-3-Clause AND MIT")
+	Role        string
+	PrimarySPDX string // kept for backward compatibility; Expression is the canonical representation
+	Expression  string // SPDX license expression (e.g. "MIT", "MIT OR Apache-2.0", "BSD-3-Clause AND MIT")
+	// ExpressionBasis says how the expression's operator was chosen: the shape
+	// read from the licence file and the verbatim phrase that decided it, or a
+	// stated reason where nothing decided it ("conservative: ..."). An OR and
+	// an AND are different legal claims, and a record that carries one without
+	// saying what settled it invites a reader to assume the pipeline knew.
+	// Empty on records written before the field existed and on records with
+	// nothing to decide.
+	ExpressionBasis string
+	// BundledSPDXs lists grants carried inside the module's licence file that
+	// cover third-party code the module ships rather than the module's own
+	// code. They are deliberately absent from Expression — a consumer must not
+	// read them as this module's licence in either direction — and recorded
+	// here so the fact is not lost.
+	BundledSPDXs      []string
 	PrimaryConfidence float64
 	LicenseFiles      []LicenseFileEntry  // sorted by Path
 	EffectiveSet      EffectiveLicenseSet // derived from LicenseFiles; not hashed

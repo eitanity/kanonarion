@@ -1,13 +1,14 @@
 package domain_test
 
 import (
+	"strings"
 	"testing"
 
 	"github.com/eitanity/kanonarion/internal/license/domain"
 )
 
 func TestDeriveExpression_NoEntries(t *testing.T) {
-	if got := domain.DeriveExpression(nil); got != "" {
+	if got := domain.DeriveExpression(nil, nil); got != "" {
 		t.Errorf("DeriveExpression(nil) = %q, want empty", got)
 	}
 }
@@ -16,7 +17,7 @@ func TestDeriveExpression_SingleLicense(t *testing.T) {
 	entries := []domain.LicenseFileEntry{
 		{Path: "LICENSE", SPDX: "MIT", Confidence: 0.99},
 	}
-	if got := domain.DeriveExpression(entries); got != "MIT" {
+	if got := domain.DeriveExpression(entries, nil); got != "MIT" {
 		t.Errorf("single license = %q, want MIT", got)
 	}
 }
@@ -33,13 +34,17 @@ func TestDeriveExpression_AmbiguousNoCompound(t *testing.T) {
 			},
 		},
 	}
-	if got := domain.DeriveExpression(entries); got != "MIT" {
+	if got := domain.DeriveExpression(entries, nil); got != "MIT" {
 		t.Errorf("ambiguous (non-compound) = %q, want MIT", got)
 	}
 }
 
-func TestDeriveExpression_CompoundFile_OR(t *testing.T) {
-	// yaml.v3 scenario: one file, two licenses at near-equal coverage (delta ≤ 0.005).
+// TestDeriveExpression_CompoundFile_TextUnavailable pins what happens when a
+// file carries two grants and its text was not supplied: the relationship
+// cannot be read, so the expression takes the conservative reading and the
+// basis says why. It must never be an election — a choice the file was never
+// consulted about is a claim nobody made.
+func TestDeriveExpression_CompoundFile_TextUnavailable(t *testing.T) {
 	entries := []domain.LicenseFileEntry{
 		{
 			Path:       "LICENSE",
@@ -50,9 +55,12 @@ func TestDeriveExpression_CompoundFile_OR(t *testing.T) {
 			},
 		},
 	}
-	got := domain.DeriveExpression(entries)
-	if got != "Apache-2.0 OR MIT" {
-		t.Errorf("compound file = %q, want Apache-2.0 OR MIT", got)
+	res := domain.DeriveExpressionResult(entries, nil)
+	if res.Expression != "Apache-2.0 AND MIT" {
+		t.Errorf("compound file, no text = %q, want Apache-2.0 AND MIT", res.Expression)
+	}
+	if !strings.Contains(res.Basis, "unavailable") {
+		t.Errorf("basis = %q, want it to state the text was unavailable", res.Basis)
 	}
 }
 
@@ -62,15 +70,17 @@ func TestDeriveExpression_MultipleFilesSameSPDX(t *testing.T) {
 		{Path: "LICENSE", SPDX: "MIT", Confidence: 0.99},
 		{Path: "LICENSE.txt", SPDX: "MIT", Confidence: 0.98},
 	}
-	if got := domain.DeriveExpression(entries); got != "MIT" {
+	if got := domain.DeriveExpression(entries, nil); got != "MIT" {
 		t.Errorf("same license twice = %q, want MIT", got)
 	}
 }
 
-func TestDeriveExpression_OmnibusFile_TwoAlts(t *testing.T) {
-	// klauspost/compress pattern: root LICENSE bundles Apache-2.0 primary plus
-	// BSD-3-Clause and MIT texts for vendored sub-packages. 2 alts at identical
-	// confidence → omnibus attribution file, not dual-licensing. Return primary only.
+// TestDeriveExpression_OmnibusFile_ComponentScoped pins the klauspost/compress
+// shape: the module's own grant first, then further grants each scoped by a
+// "Files:" stanza to a bundled sub-directory. The module is licensed under its
+// own grant alone; the scoped grants are recorded beside the expression, never
+// inside it.
+func TestDeriveExpression_OmnibusFile_ComponentScoped(t *testing.T) {
 	entries := []domain.LicenseFileEntry{
 		{
 			Path:       "LICENSE",
@@ -82,14 +92,25 @@ func TestDeriveExpression_OmnibusFile_TwoAlts(t *testing.T) {
 			},
 		},
 	}
-	if got := domain.DeriveExpression(entries); got != "Apache-2.0" {
-		t.Errorf("omnibus 2-alt = %q, want Apache-2.0", got)
+	res := domain.DeriveExpressionResult(entries, map[string]string{"LICENSE": omnibusText})
+	if res.Expression != "BSD-3-Clause" {
+		t.Errorf("component-scoped omnibus = %q, want BSD-3-Clause", res.Expression)
+	}
+	// The most-covered text is the bundled Apache-2.0; the module's own grant
+	// is the unscoped one, so the primary follows the reading, not the span.
+	if res.PrimarySPDX != "BSD-3-Clause" {
+		t.Errorf("primary = %q, want BSD-3-Clause", res.PrimarySPDX)
+	}
+	if len(res.BundledSPDXs) != 2 || res.BundledSPDXs[0] != "Apache-2.0" || res.BundledSPDXs[1] != "MIT" {
+		t.Errorf("bundled = %v, want [Apache-2.0 MIT]", res.BundledSPDXs)
 	}
 }
 
-func TestDeriveExpression_OmnibusFile_ManyAlts(t *testing.T) {
-	// apache/arrow pattern: root LICENSE.txt bundles 8 third-party license texts.
-	// All 9 identifiers at identical confidence → omnibus attribution, return primary.
+// TestDeriveExpression_OmnibusFile_UnanchoredIdentifiers pins the residual
+// case: a file bundling licences whose texts cannot be located in it cannot be
+// put in order, so no grant can be shown to be somebody else's. The reading is
+// conservative and says so.
+func TestDeriveExpression_OmnibusFile_UnanchoredIdentifiers(t *testing.T) {
 	entries := []domain.LicenseFileEntry{
 		{
 			Path:       "LICENSE.txt",
@@ -97,18 +118,16 @@ func TestDeriveExpression_OmnibusFile_ManyAlts(t *testing.T) {
 			Confidence: 0.844,
 			AltMatches: []domain.AltMatch{
 				{SPDX: "OpenSSL", Confidence: 0.844},
-				{SPDX: "BSD-3-Clause", Confidence: 0.844},
 				{SPDX: "NCSA", Confidence: 0.844},
-				{SPDX: "BSD-2-Clause", Confidence: 0.844},
-				{SPDX: "MIT", Confidence: 0.844},
-				{SPDX: "BSL-1.0", Confidence: 0.844},
-				{SPDX: "Zlib", Confidence: 0.844},
-				{SPDX: "HPND", Confidence: 0.844},
 			},
 		},
 	}
-	if got := domain.DeriveExpression(entries); got != "Apache-2.0" {
-		t.Errorf("omnibus 8-alt = %q, want Apache-2.0", got)
+	res := domain.DeriveExpressionResult(entries, map[string]string{"LICENSE.txt": omnibusText})
+	if res.Expression != "Apache-2.0 AND NCSA AND OpenSSL" {
+		t.Errorf("unanchored omnibus = %q, want the conservative conjunction", res.Expression)
+	}
+	if !strings.HasPrefix(res.Basis, "conservative:") {
+		t.Errorf("basis = %q, want it to state the reading was conservative", res.Basis)
 	}
 }
 
@@ -118,7 +137,7 @@ func TestDeriveExpression_DualLicenseNaming_OR(t *testing.T) {
 		{Path: "LICENSE-MIT", SPDX: "MIT", Confidence: 0.99},
 		{Path: "LICENSE-APACHE", SPDX: "Apache-2.0", Confidence: 0.99},
 	}
-	got := domain.DeriveExpression(entries)
+	got := domain.DeriveExpression(entries, nil)
 	if got != "Apache-2.0 OR MIT" {
 		t.Errorf("dual-license naming = %q, want Apache-2.0 OR MIT", got)
 	}
@@ -130,7 +149,7 @@ func TestDeriveExpression_MixedFiles_AND(t *testing.T) {
 		{Path: "LICENSE", SPDX: "Apache-2.0", Confidence: 0.99},
 		{Path: "COPYING", SPDX: "GPL-2.0-only", Confidence: 0.98},
 	}
-	got := domain.DeriveExpression(entries)
+	got := domain.DeriveExpression(entries, nil)
 	if got != "Apache-2.0 AND GPL-2.0-only" {
 		t.Errorf("mixed files = %q, want Apache-2.0 AND GPL-2.0-only", got)
 	}
@@ -142,7 +161,7 @@ func TestDeriveExpression_IgnoresVendored(t *testing.T) {
 		{Path: "LICENSE", SPDX: "MIT", Confidence: 0.99},
 		{Path: "vendor/github.com/foo/bar/LICENSE", SPDX: "Apache-2.0", Confidence: 0.99, IsVendored: true},
 	}
-	if got := domain.DeriveExpression(entries); got != "MIT" {
+	if got := domain.DeriveExpression(entries, nil); got != "MIT" {
 		t.Errorf("ignores vendored = %q, want MIT", got)
 	}
 }
@@ -153,7 +172,7 @@ func TestDeriveExpression_IgnoresNotice(t *testing.T) {
 		{Path: "LICENSE", SPDX: "Apache-2.0", Confidence: 0.99},
 		{Path: "NOTICE", SPDX: "MIT", Confidence: 0.50},
 	}
-	if got := domain.DeriveExpression(entries); got != "Apache-2.0" {
+	if got := domain.DeriveExpression(entries, nil); got != "Apache-2.0" {
 		t.Errorf("ignores NOTICE = %q, want Apache-2.0", got)
 	}
 }
@@ -164,7 +183,7 @@ func TestDeriveExpression_IgnoresSubdirectory(t *testing.T) {
 		{Path: "LICENSE", SPDX: "MIT", Confidence: 0.99},
 		{Path: "subpkg/LICENSE", SPDX: "BSD-3-Clause", Confidence: 0.98},
 	}
-	if got := domain.DeriveExpression(entries); got != "MIT" {
+	if got := domain.DeriveExpression(entries, nil); got != "MIT" {
 		t.Errorf("ignores subdirectory = %q, want MIT", got)
 	}
 }
@@ -174,7 +193,7 @@ func TestDeriveExpression_NoSPDX(t *testing.T) {
 	entries := []domain.LicenseFileEntry{
 		{Path: "LICENSE", SPDX: "", Confidence: 0},
 	}
-	if got := domain.DeriveExpression(entries); got != "" {
+	if got := domain.DeriveExpression(entries, nil); got != "" {
 		t.Errorf("no SPDX = %q, want empty", got)
 	}
 }
@@ -193,7 +212,7 @@ func TestDeriveExpression_FiltersPseudoIdentifier(t *testing.T) {
 			},
 		},
 	}
-	if got := domain.DeriveExpression(entries); got != "BSD-3-Clause" {
+	if got := domain.DeriveExpression(entries, nil); got != "BSD-3-Clause" {
 		t.Errorf("pseudo-id filtered = %q, want BSD-3-Clause", got)
 	}
 }
@@ -205,7 +224,7 @@ func TestDeriveExpression_BareNameDualLicence_OR(t *testing.T) {
 		{Path: "APLv2", SPDX: "Apache-2.0", Confidence: 0.99},
 		{Path: "GPLv3", SPDX: "GPL-3.0", Confidence: 0.95},
 	}
-	got := domain.DeriveExpression(entries)
+	got := domain.DeriveExpression(entries, nil)
 	if got != "Apache-2.0 OR GPL-3.0" {
 		t.Errorf("bare-name dual licence = %q, want Apache-2.0 OR GPL-3.0", got)
 	}
@@ -218,7 +237,7 @@ func TestDeriveExpression_ReversedNameBesidePlainLicence_OR(t *testing.T) {
 		{Path: "LICENSE", SPDX: "MIT", Confidence: 0.99},
 		{Path: "APACHE-LICENSE-2.0", SPDX: "Apache-2.0", Confidence: 0.99},
 	}
-	got := domain.DeriveExpression(entries)
+	got := domain.DeriveExpression(entries, nil)
 	if got != "Apache-2.0 OR MIT" {
 		t.Errorf("reversed-name dual licence = %q, want Apache-2.0 OR MIT", got)
 	}

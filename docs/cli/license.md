@@ -87,6 +87,27 @@ github.com/gorhill/cronexpr@v0.0.0-…: Multiple — Apache-2.0 OR GPL-3.0
     …
 ```
 
+A module is reported as dual-licensed only when its licence file says so — an
+`SPDX-License-Identifier` line naming a choice, or wording such as "under the
+terms of either licence". Where one file carries several licence texts, the
+output states what the file was read to say and, where a grant covers
+third-party code the module carries rather than the module's own code, names
+that grant separately. It is deliberately absent from the expression: it is
+neither an arm anyone may elect nor an obligation the module imposes.
+
+```
+go.opentelemetry.io/otel@v1.44.0: Multiple — Apache-2.0
+  basis: bundled-grant: copyright 2009 the go authors. — bundled: BSD-3-Clause
+  bundled in the licence file, not a licence of this module: BSD-3-Clause
+  LICENSE: Apache-2.0 (100%)
+```
+
+Where the file carries several grants and says nothing about how they relate,
+every grant is reported as applying (`A AND B`) and the `basis` line reads
+`conservative:`. The same is true when the licence text could not be read.
+
+`--json` carries the same two facts as `ExpressionBasis` and `BundledSPDXs`.
+
 To settle the election, record the chosen arm as a `license_overrides` entry
 (see [`config`](config.md)); `audit` and `license-compat` treat the module as
 an open item until one exists.
