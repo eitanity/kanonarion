@@ -246,8 +246,10 @@ never mistaken for a live one, and `--fresh` bypasses the ledger.
 
 The staleness column reports **two** facts per module, never merged. The latest
 version at the module path itself, and - because a Go module's next major
-version lives at a *different* path - the newest major path above the pinned one
-that resolves (`newer major: .../v5@v5.3.1`). A dependency pinned several majors
+version lives at a *different* path - the newest major path that resolves
+(`newer major: .../v5@v5.3.1`). For a `+incompatible` pin that second fact
+includes its own major republished at `/vN`, which is usually the migration
+target. A dependency pinned several majors
 behind is at the latest version of its own path and is still a whole major line
 behind; reporting only the first would call it `current`.
 

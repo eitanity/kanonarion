@@ -37,9 +37,12 @@ available for every direct dependency, letting you see staleness at a glance.
 
 Two separate facts are reported for each module. The latest version at the
 module path itself, and — because a Go module's next MAJOR version lives at a
-different path — the newest major path above the pinned one that resolves. A
-module pinned several majors behind is current at its own path and still behind;
-both are stated, never merged.
+different path — the newest major path that resolves. A module pinned several
+majors behind is current at its own path and still behind; both are stated,
+never merged.
+
+For a +incompatible pin the second fact includes its own major republished at
+/vN, which is usually the migration target and is invisible to the first.
 
 Successful lookups are recorded in the store and served back while they are
 younger than staleness.ttl (default 1h). Every answer states the lookup time it

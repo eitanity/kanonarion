@@ -73,16 +73,30 @@ answer the column has - while being the most stale kind of dependency there is.
   text surface matches — `latest: vX (released today)` for a zero age, and
   `latest: vX` with no clause where the date is unknown, never a fabricated
   "released today".
-- **newer major** - the newest major-suffixed path above the pinned major that
-  resolves, with its version and date (`newer_major_module`,
-  `newer_major_latest`, `newer_major_date`).
+- **newer major** - the newest major-suffixed path that resolves, with its
+  version and date (`newer_major_module`, `newer_major_latest`,
+  `newer_major_date`).
 
-The probe starts one major above the **pinned version's** major - not above the
-path suffix, because a `+incompatible` pin carries its major in the version
-while living at the unsuffixed path - and stops at the first major that does not
-resolve. `major_probed` distinguishes "probed, nothing newer" from "not probed"
-(an offline run, or a probe whose request failed); a question that was never
-asked is never rendered as a clean answer.
+The probe walks upward from one major above the **pinned version's** major - not
+above the path suffix, because a `+incompatible` pin carries its major in the
+version while living at the unsuffixed path - and stops at the first major that
+does not resolve. `major_probed` distinguishes "probed, nothing newer" from "not
+probed" (an offline run, or a probe whose request failed); a question that was
+never asked is never rendered as a clean answer.
+
+A `+incompatible` pin is asked one extra question first: whether its **own**
+major is now published at the suffixed path. `+incompatible` is what a module
+looks like before it adopts `/vN`, so that republication is usually the
+migration the pin needs to hear about, and it lives at a path the same-major
+`latest` question can never see - `github.com/gavv/httpexpect@v2.0.0+incompatible`
+has `github.com/gavv/httpexpect/v2` published and no `/v3` at all. An absent
+`/vN` there is the ordinary case and does not stop the walk, because a module
+can go from `+incompatible` straight to `/v3`. When both a republished own major
+and a genuine next major exist, the **higher** one is reported. A pin already on
+a `/vN` path is asked nothing extra: it is not its own upgrade target.
+
+That extra question is one additional proxy request, and only for
+`+incompatible` pins.
 
 Whether the newer major is *adoptable* is a different question - a new major is
 expected to be breaking. This only stops a several-majors-behind module reading

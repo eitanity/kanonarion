@@ -55,10 +55,16 @@ type NewerMajor struct {
 	// Probed is true when the probe ran to completion. When false every other
 	// field is meaningless.
 	Probed bool
-	// FromMajor is the major the probe started at (pinned major + 1). A cached
-	// probe is only reusable for a request that would start at the same major:
-	// the same bare path pinned at v1 and at v2+incompatible start at /v2 and
-	// /v3, and the first stops on a gap the second steps over.
+	// FromMajor is the major the upward walk started at (pinned major + 1); see
+	// PlanProbe, which is the only place that decides it. A cached probe is only
+	// reusable for a request that would start at the same major: the same bare
+	// path pinned at v1 and at v2+incompatible start at /v2 and /v3, and the
+	// first stops on a gap the second steps over.
+	//
+	// A +incompatible pin also asks about its own major before the walk, and
+	// that question rides on the same start: it is asked by exactly the pins
+	// whose walk starts above a bare path's major, so a row carrying its answer
+	// can never be served to a pin that did not ask it.
 	FromMajor int
 	// Path is the newest major path that resolved. Empty when Probed and none
 	// resolved — a recorded negative, which is a real answer and is cacheable.
@@ -147,28 +153,100 @@ func splitSuffix(path, sep string) (string, int, bool) {
 	return path[:i], n, true
 }
 
-// ProbeStartMajor returns the first major to probe for a module pinned at
-// pinnedVersion.
+// ProbePlan is the set of module paths a newer-major probe visits for one
+// pinned module: the ordinary upward walk, and — for a +incompatible pin — the
+// suffixed publication of the module's OWN major, asked first.
 //
-// It is derived from the pinned version's own major and not from the path
-// suffix alone. A +incompatible pin carries its major in the version while
-// living at the unsuffixed path — Masterminds/sprig v2.22.0+incompatible is the
-// case — so a suffix-derived probe would start at /v2, find nothing (v2 was
-// never published under a suffixed path), stop on that gap and never see /v3.
-// Taking the larger of the two majors starts above whichever carries it.
+// The two are separate because only one of them can be settled by absence.
+// Walking upward from N+1 asks "is there a major line above this one", and an
+// absent N+1 settles it: majors are published in sequence, so a gap is the end.
+// Asking about /vN asks something else — "has this major been republished at a
+// versioned path" — and an absent /vN settles nothing about N+1, which is why
+// it is not a step of the walk and never ends it.
+type ProbePlan struct {
+	// start is the first major of the upward walk. It is what NewerMajor.FromMajor
+	// records, and its meaning has not changed: the walk never looks at or below
+	// the major already in use.
+	start int
+	// sameMajor is the module's own major, to be asked about before the walk, or
+	// 0 when there is nothing to ask. Non-zero only for a +incompatible pin on a
+	// bare path.
+	sameMajor int
+}
+
+// Start returns the first major of the upward walk.
+func (p ProbePlan) Start() int { return p.start }
+
+// SameMajor returns the module's own major to probe before the walk, and
+// whether there is one. An absence there is the expected case and must not end
+// the walk.
+func (p ProbePlan) SameMajor() (int, bool) { return p.sameMajor, p.sameMajor != 0 }
+
+// PlanProbe returns the probe plan for a module pinned at pinnedVersion.
+//
+// The walk's start is derived from the pinned version's own major and not from
+// the path suffix alone. A +incompatible pin carries its major in the VERSION
+// while living at the unsuffixed path — Masterminds/sprig v2.22.0+incompatible
+// is the case — so a suffix-derived walk would start at /v2, find nothing (v2
+// was never published under a suffixed path), stop on that gap and never see
+// /v3. Taking the larger of the two majors starts above whichever carries it.
+//
+// That same shape is why a +incompatible pin gets the extra same-major
+// question. +incompatible is what a module looks like BEFORE it adopts the /vN
+// path, so "this major is now published properly at /vN" is the migration the
+// pin most needs to hear about, and it lives at a path the same-major latest
+// question can never see: gavv/httpexpect v2.0.0+incompatible has /v2 published
+// and no /v3 at all, and the walk alone reports it as having nowhere to go.
+//
+// When both exist — a republished /vN and a genuine next major — the walk still
+// runs and the higher one is what the row reports. The republished same-major
+// is the answer only when there is nothing above it.
+//
+// A module already pinned to a /vN path is asked nothing extra. Its own major
+// is the path it is already on, so probing it would ask whether the module the
+// caller is using exists, and the answer would name the pin as its own upgrade.
 //
 // pinnedVersion may be empty, which reads as major 1: the caller has no pin and
-// the probe starts at /v2, per the bare-path rule.
-func ProbeStartMajor(path, pinnedVersion string) int {
+// the walk starts at /v2, per the bare-path rule.
+func PlanProbe(path, pinnedVersion string) ProbePlan {
 	fam := ParseFamily(path)
+	pinned := majorOf(pinnedVersion)
+
 	base := fam.Major()
-	if m := majorOf(pinnedVersion); m > base {
-		base = m
+	if pinned > base {
+		base = pinned
 	}
 	if base < 1 {
 		base = 1
 	}
-	return base + 1
+	plan := ProbePlan{start: base + 1}
+
+	// Only a bare path can carry its major in the version, and only a major at
+	// or above 2 has a suffixed path to be republished at. A /vN path names its
+	// own major and must never re-probe it.
+	if fam.Major() == 0 && pinned >= 2 && isIncompatible(pinnedVersion) {
+		plan.sameMajor = pinned
+	}
+	return plan
+}
+
+// ProbeStartMajor returns the first major of the upward walk. It is the value
+// stored in NewerMajor.FromMajor, and comparing it against a stored row is how
+// a reusable cached probe is told from one that started somewhere else.
+func ProbeStartMajor(path, pinnedVersion string) int {
+	return PlanProbe(path, pinnedVersion).Start()
+}
+
+// isIncompatible reports whether version carries the +incompatible build tag —
+// the marker that the major is the version's and not the path's.
+func isIncompatible(version string) bool {
+	if version == "" {
+		return false
+	}
+	if !strings.HasPrefix(version, "v") {
+		version = "v" + version
+	}
+	return semver.Build(version) == "+incompatible"
 }
 
 // majorOf reads the semver major of a version string, ignoring any

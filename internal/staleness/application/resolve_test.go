@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"slices"
 	"testing"
 	"time"
 
@@ -387,4 +388,212 @@ func TestResolve_ZeroTTLAndFreshAgreeOnTheAnswerAndDifferOnTheRead(t *testing.T)
 			}
 		})
 	}
+}
+
+// A +incompatible pin lives at the bare path while carrying its major in the
+// version, so the properly-versioned publication of THAT major is a different
+// module path and is the migration target. gavv/httpexpect is the measured
+// case: /v2 is published, /v3 does not exist.
+func TestResolve_IncompatiblePinFindsItsOwnMajorRepublished(t *testing.T) {
+	proxy := &fakeProxy{versions: map[string]string{
+		"github.com/gavv/httpexpect":    "v2.0.0+incompatible",
+		"github.com/gavv/httpexpect/v2": "v2.16.0",
+	}}
+	r := application.NewResolver(proxy, nil, &fixedClock{t: time.Now()}, time.Hour, false)
+
+	ans, err := r.Resolve(context.Background(), "github.com/gavv/httpexpect", "v2.0.0+incompatible")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if !ans.NewerMajor.Exists() {
+		t.Fatal("the republished /v2 must be reported, not a recorded negative")
+	}
+	if ans.NewerMajor.Path != "github.com/gavv/httpexpect/v2" {
+		t.Errorf("NewerMajor.Path = %q, want github.com/gavv/httpexpect/v2", ans.NewerMajor.Path)
+	}
+	if ans.NewerMajor.Version != "v2.16.0" {
+		t.Errorf("NewerMajor.Version = %q, want v2.16.0", ans.NewerMajor.Version)
+	}
+	// FromMajor still names the WALK's start. The same-major question is not a
+	// step of the walk, and the stored start keeps its meaning.
+	if ans.NewerMajor.FromMajor != 3 {
+		t.Errorf("FromMajor = %d, want 3", ans.NewerMajor.FromMajor)
+	}
+	// The same-major question is asked first, and the walk still runs: a hit at
+	// /v2 does not establish that there is nothing above it.
+	wantCalls := []string{
+		"github.com/gavv/httpexpect",
+		"github.com/gavv/httpexpect/v2",
+		"github.com/gavv/httpexpect/v3",
+	}
+	if !slices.Equal(proxy.calls, wantCalls) {
+		t.Errorf("proxy calls = %v, want %v", proxy.calls, wantCalls)
+	}
+}
+
+// The non-zero control. A +incompatible pin whose major was never republished
+// under a suffixed path still reports no newer major — the extra step changes
+// what is asked, not what is answered.
+func TestResolve_IncompatiblePinWithNoRepublicationStillReportsNone(t *testing.T) {
+	proxy := &fakeProxy{versions: map[string]string{
+		"example.com/mod": "v2.22.0+incompatible",
+	}}
+	r := application.NewResolver(proxy, nil, &fixedClock{t: time.Now()}, time.Hour, false)
+
+	ans, err := r.Resolve(context.Background(), "example.com/mod", "v2.22.0+incompatible")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if !ans.NewerMajor.Probed {
+		t.Fatal("the probe ran; the row must record it")
+	}
+	if ans.NewerMajor.Exists() {
+		t.Errorf("NewerMajor.Path = %q, want a recorded negative", ans.NewerMajor.Path)
+	}
+	// Two probe requests, not one: the absent /v2 is stepped over, and the
+	// absent /v3 is what ends the walk.
+	wantCalls := []string{"example.com/mod", "example.com/mod/v2", "example.com/mod/v3"}
+	if !slices.Equal(proxy.calls, wantCalls) {
+		t.Errorf("proxy calls = %v, want %v", proxy.calls, wantCalls)
+	}
+}
+
+// The Masterminds/sprig shape, which is why the same-major absence is stepped
+// over instead of stopped on: /v2 was never published, /v3 was.
+func TestResolve_IncompatiblePinStepsOverItsAbsentOwnMajor(t *testing.T) {
+	proxy := &fakeProxy{versions: map[string]string{
+		"github.com/Masterminds/sprig":    "v2.22.0+incompatible",
+		"github.com/Masterminds/sprig/v3": "v3.3.0",
+	}}
+	r := application.NewResolver(proxy, nil, &fixedClock{t: time.Now()}, time.Hour, false)
+
+	ans, err := r.Resolve(context.Background(), "github.com/Masterminds/sprig", "v2.22.0+incompatible")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if ans.NewerMajor.Path != "github.com/Masterminds/sprig/v3" {
+		t.Errorf("NewerMajor.Path = %q, want github.com/Masterminds/sprig/v3", ans.NewerMajor.Path)
+	}
+}
+
+// When both exist the row reports the HIGHEST major found. The republished
+// same-major is the answer only when there is nothing above it.
+func TestResolve_IncompatiblePinReportsTheHighestMajorWhenBothExist(t *testing.T) {
+	proxy := &fakeProxy{versions: map[string]string{
+		"example.com/mod":    "v2.22.0+incompatible",
+		"example.com/mod/v2": "v2.30.0",
+		"example.com/mod/v3": "v3.1.0",
+	}}
+	r := application.NewResolver(proxy, nil, &fixedClock{t: time.Now()}, time.Hour, false)
+
+	ans, err := r.Resolve(context.Background(), "example.com/mod", "v2.22.0+incompatible")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if ans.NewerMajor.Path != "example.com/mod/v3" {
+		t.Errorf("NewerMajor.Path = %q, want example.com/mod/v3", ans.NewerMajor.Path)
+	}
+	if ans.NewerMajor.Version != "v3.1.0" {
+		t.Errorf("NewerMajor.Version = %q, want v3.1.0", ans.NewerMajor.Version)
+	}
+}
+
+// A module already on a /vN path must not probe its own major: the module the
+// caller is using is not its own upgrade target, and a proxy that answers /v2
+// would otherwise report the pin back as a migration.
+func TestResolve_SuffixedPinDoesNotReprobeItsOwnMajor(t *testing.T) {
+	proxy := &fakeProxy{versions: map[string]string{
+		"example.com/mod/v2": "v2.16.0",
+	}}
+	r := application.NewResolver(proxy, nil, &fixedClock{t: time.Now()}, time.Hour, false)
+
+	ans, err := r.Resolve(context.Background(), "example.com/mod/v2", "v2.16.0")
+	if err != nil {
+		t.Fatalf("Resolve: %v", err)
+	}
+	if ans.NewerMajor.Exists() {
+		t.Errorf("NewerMajor.Path = %q, want a recorded negative", ans.NewerMajor.Path)
+	}
+	// The @latest call is on the pinned path itself; the probe starts at /v3.
+	wantCalls := []string{"example.com/mod/v2", "example.com/mod/v3"}
+	if !slices.Equal(proxy.calls, wantCalls) {
+		t.Errorf("proxy calls = %v, want %v", proxy.calls, wantCalls)
+	}
+}
+
+// The change alters what a probe RECORDS, not how a row is keyed, so no stored
+// row is invalidated by it and none is re-probed on account of it. A row
+// written before the change stays servable until its lookup time falls outside
+// the TTL — which is the only thing that qualifies this ledger, and the only
+// way a stale row is told from a current one.
+func TestResolve_RowFromBeforeTheChangeExpiresRatherThanBeingInvalidated(t *testing.T) {
+	now := time.Date(2026, 8, 14, 12, 0, 0, 0, time.UTC)
+	// The recorded negative the probe produced before it asked about /v2.
+	before := domain.Record{
+		ModulePath:    "github.com/gavv/httpexpect",
+		LatestVersion: "v2.0.0+incompatible",
+		NewerMajor:    domain.NewerMajor{Probed: true, FromMajor: 3},
+		LookedUpAt:    now.Add(-30 * time.Minute),
+	}
+	proxy := func() *fakeProxy {
+		return &fakeProxy{versions: map[string]string{
+			"github.com/gavv/httpexpect":    "v2.0.0+incompatible",
+			"github.com/gavv/httpexpect/v2": "v2.16.0",
+		}}
+	}
+
+	t.Run("inside the TTL it is served unchanged", func(t *testing.T) {
+		ledger := newFakeLedger()
+		ledger.rows[before.ModulePath] = before
+		px := proxy()
+		r := application.NewResolver(px, ledger, &fixedClock{t: now}, time.Hour, false)
+
+		ans, err := r.Resolve(context.Background(), before.ModulePath, "v2.0.0+incompatible")
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		if !ans.Served {
+			t.Error("a row inside the TTL is served; nothing about the change invalidates it")
+		}
+		if len(px.calls) != 0 {
+			t.Errorf("proxy calls = %v, want none", px.calls)
+		}
+	})
+
+	t.Run("outside the TTL it is re-probed and picks up the republished major", func(t *testing.T) {
+		ledger := newFakeLedger()
+		ledger.rows[before.ModulePath] = before
+		px := proxy()
+		r := application.NewResolver(px, ledger, &fixedClock{t: now}, 10*time.Minute, false)
+
+		ans, err := r.Resolve(context.Background(), before.ModulePath, "v2.0.0+incompatible")
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		if ans.Served {
+			t.Error("a row outside the TTL must not be served")
+		}
+		if ans.NewerMajor.Path != "github.com/gavv/httpexpect/v2" {
+			t.Errorf("NewerMajor.Path = %q, want github.com/gavv/httpexpect/v2", ans.NewerMajor.Path)
+		}
+	})
+
+	// --fresh is the way to get the new answer without waiting the TTL out.
+	t.Run("fresh bypasses the row entirely", func(t *testing.T) {
+		ledger := newFakeLedger()
+		ledger.rows[before.ModulePath] = before
+		px := proxy()
+		r := application.NewResolver(px, ledger, &fixedClock{t: now}, time.Hour, true)
+
+		ans, err := r.Resolve(context.Background(), before.ModulePath, "v2.0.0+incompatible")
+		if err != nil {
+			t.Fatalf("Resolve: %v", err)
+		}
+		if ans.NewerMajor.Path != "github.com/gavv/httpexpect/v2" {
+			t.Errorf("NewerMajor.Path = %q, want github.com/gavv/httpexpect/v2", ans.NewerMajor.Path)
+		}
+		if stored := ledger.rows[before.ModulePath]; stored.NewerMajor.Path != "github.com/gavv/httpexpect/v2" {
+			t.Errorf("stored NewerMajor.Path = %q, want the freshly measured one", stored.NewerMajor.Path)
+		}
+	})
 }
