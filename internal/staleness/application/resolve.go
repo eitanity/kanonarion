@@ -97,14 +97,21 @@ func (r *Resolver) Resolve(ctx context.Context, path, pinnedVersion string) (Ans
 	plan := domain.PlanProbe(path, pin)
 
 	// The cached probe is reusable only when it started at the same major; see
-	// NewerMajor.FromMajor.
+	// NewerMajor.FromMajor. A plan that asks the same-major question additionally
+	// needs a row that ASKED it: a row written before that question existed
+	// carries Asked false, which says "not asked", and serving it would answer a
+	// question the caller put with a row that never put it.
 	if haveFresh && stored.NewerMajor.Probed && stored.NewerMajor.FromMajor == plan.Start() {
-		out.NewerMajor = stored.NewerMajor
-		return Answer{Record: out, Served: true}, nil
+		if _, asks := plan.SameMajor(); !asks || stored.Republication.Asked {
+			out.NewerMajor = stored.NewerMajor
+			out.Republication = stored.Republication
+			return Answer{Record: out, Served: true}, nil
+		}
 	}
 
-	nm, probeErr := r.probe(ctx, path, plan)
+	nm, rep, probeErr := r.probe(ctx, path, plan)
 	out.NewerMajor = nm
+	out.Republication = rep
 
 	// LookedUpAt is deliberately NOT restamped when only the probe ran live: the
 	// answer as a whole is no fresher than its oldest half, and a cached latest
@@ -134,14 +141,21 @@ func (r *Resolver) Resolve(ctx context.Context, path, pinnedVersion string) (Ans
 // one — see domain.ProbePlan. It costs one extra request, and only for a
 // +incompatible pin: every other module's probe is unchanged.
 //
-// The last path that resolved wins, so a +incompatible pin whose own major is
-// republished AND which has a genuine next major reports the next major.
-func (r *Resolver) probe(ctx context.Context, path string, plan domain.ProbePlan) (domain.NewerMajor, error) {
+// The two answers are returned SEPARATELY and neither overwrites the other. The
+// same-major answer used to be seeded into the walk's variable, so a pin whose
+// own major was republished and which also had a genuine next major kept only
+// the last path that resolved — the higher one — and the nearer, cheaper move
+// never reached the output. It also meant a pin with no next major reported its
+// own republished major under the newer-major label, claiming a major number
+// change that had not happened.
+func (r *Resolver) probe(ctx context.Context, path string, plan domain.ProbePlan) (domain.NewerMajor, domain.Republication, error) {
 	fam := domain.ParseFamily(path)
 	start := plan.Start()
 	nm := domain.NewerMajor{Probed: true, FromMajor: start}
+	var rep domain.Republication
 
 	if m, ok := plan.SameMajor(); ok {
+		rep.Asked = true
 		candidate := fam.PathForMajor(m)
 		info, err := r.proxy.LatestInfo(ctx, candidate)
 		switch {
@@ -149,11 +163,11 @@ func (r *Resolver) probe(ctx context.Context, path string, plan domain.ProbePlan
 			// The ordinary case for a module that never adopted /vN. It says
 			// nothing about the majors above, so the walk still runs.
 		case err != nil:
-			return domain.NewerMajor{}, fmt.Errorf("probing %s for a newer major: %w", path, err)
+			return domain.NewerMajor{}, domain.Republication{}, fmt.Errorf("probing %s for a republished major: %w", path, err)
 		default:
-			nm.Path = candidate
-			nm.Version = info.Version
-			nm.PublishedAt = info.Time
+			rep.Path = candidate
+			rep.Version = info.Version
+			rep.PublishedAt = info.Time
 		}
 	}
 
@@ -161,16 +175,16 @@ func (r *Resolver) probe(ctx context.Context, path string, plan domain.ProbePlan
 		candidate := fam.PathForMajor(n)
 		info, err := r.proxy.LatestInfo(ctx, candidate)
 		if errors.Is(err, ports.ErrPathAbsent) {
-			return nm, nil
+			return nm, rep, nil
 		}
 		if err != nil {
-			return domain.NewerMajor{}, fmt.Errorf("probing %s for a newer major: %w", path, err)
+			return domain.NewerMajor{}, domain.Republication{}, fmt.Errorf("probing %s for a newer major: %w", path, err)
 		}
 		nm.Path = candidate
 		nm.Version = info.Version
 		nm.PublishedAt = info.Time
 	}
-	return nm, nil
+	return nm, rep, nil
 }
 
 func (r *Resolver) write(ctx context.Context, rec domain.Record) error {

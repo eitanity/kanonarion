@@ -35,14 +35,15 @@ more modules.
 With --gomod, it reports the pinned version from go.mod against the latest
 available for every direct dependency, letting you see staleness at a glance.
 
-Two separate facts are reported for each module. The latest version at the
-module path itself, and — because a Go module's next MAJOR version lives at a
-different path — the newest major path that resolves. A module pinned several
-majors behind is current at its own path and still behind; both are stated,
-never merged.
+Separate facts are reported for each module, never merged. The latest version at
+the module path itself, and — because a Go module's next MAJOR version lives at
+a different path — the newest major path above the pinned major that resolves. A
+module pinned several majors behind is current at its own path and still behind.
 
-For a +incompatible pin the second fact includes its own major republished at
-/vN, which is usually the migration target and is invisible to the first.
+A +incompatible pin gets a third: its OWN major republished at /vN. The major
+number is unchanged there and only the path moved, so it reads as "same major
+republished" rather than "newer major" — usually the cheaper move, and invisible
+to the first fact. Where a pin has both, both are reported, that one first.
 
 Successful lookups are recorded in the store and served back while they are
 younger than staleness.ttl (default 1h). Every answer states the lookup time it
@@ -161,6 +162,28 @@ type latestResult struct {
 	// MajorProbed distinguishes "probed, no newer major" from "not probed".
 	MajorProbed bool `json:"major_probed"`
 
+	// Republished* is the module's OWN major published at its /vN path, which is
+	// a SIBLING fact to NewerMajor and not a variant of it. A +incompatible pin
+	// carries its major in the version while living at the unsuffixed path, so
+	// /vN is the same major number at the path the toolchain expects for it — a
+	// path migration, not a major upgrade. It reached these keys as
+	// newer_major_module until the two were separated, which told a consumer to
+	// budget a breaking change for what can be a patch-level move.
+	//
+	// Both sets are populated when both hold, and neither is derived from the
+	// other: a consumer wanting the cheap move reads these keys, one wanting the
+	// next major line reads newer_major_*, and neither has to parse a major
+	// number out of a path to tell which it has.
+	RepublishedModule string    `json:"republished_module,omitempty"`
+	RepublishedLatest string    `json:"republished_latest,omitempty"`
+	RepublishedDate   time.Time `json:"republished_date,omitzero"`
+	// RepublishedProbed distinguishes "asked, this major is not republished" from
+	// "not asked" — the question is only put for a +incompatible pin on a bare
+	// path. Emitted always, false included: false is an answer here, and erasing
+	// it would make a module that was asked indistinguishable from a build that
+	// does not derive the field at all.
+	RepublishedProbed bool `json:"republished_probed"`
+
 	// LookedUpAt is when the proxy was asked for this answer. A served answer
 	// carries the original lookup time, not the time of this run.
 	LookedUpAt time.Time `json:"looked_up_at,omitzero"`
@@ -177,6 +200,10 @@ func (r *latestResult) applyStaleness(ans staleapp.Answer) {
 	r.NewerMajorLatest = ans.NewerMajor.Version
 	r.NewerMajorDate = ans.NewerMajor.PublishedAt
 	r.MajorProbed = ans.NewerMajor.Probed
+	r.RepublishedModule = ans.Republication.Path
+	r.RepublishedLatest = ans.Republication.Version
+	r.RepublishedDate = ans.Republication.PublishedAt
+	r.RepublishedProbed = ans.Republication.Asked
 	r.LookedUpAt = ans.LookedUpAt
 	r.Served = ans.Served
 }
@@ -189,6 +216,18 @@ func (r latestResult) newerMajor() staledomain.NewerMajor {
 		Path:        r.NewerMajorModule,
 		Version:     r.NewerMajorLatest,
 		PublishedAt: r.NewerMajorDate,
+	}
+}
+
+// republication rebuilds the sibling fact from an output row, for the same
+// reason: the text line and the JSON must not disagree about which of the two
+// facts a row holds.
+func (r latestResult) republication() staledomain.Republication {
+	return staledomain.Republication{
+		Asked:       r.RepublishedProbed,
+		Path:        r.RepublishedModule,
+		Version:     r.RepublishedLatest,
+		PublishedAt: r.RepublishedDate,
 	}
 }
 
@@ -308,7 +347,7 @@ func writeLatestSingleLine(stdout io.Writer, r latestResult) error {
 		line = fmt.Sprintf("%s@%s (released %d days ago, %s)",
 			r.Module, r.Latest, days, r.LatestDate.UTC().Format("2006-01-02"))
 	}
-	if note := newerMajorNote(r.newerMajor()); note != "" {
+	if note := majorNotes(r.republication(), r.newerMajor()); note != "" {
 		line += "; " + note
 	}
 	if asOf := stalenessAsOf(r.LookedUpAt); asOf != "" {
@@ -477,9 +516,9 @@ func printLatestTable(stdout io.Writer, results []latestResult) error {
 		default:
 			status = fmt.Sprintf("latest: %s (%d days ago)", r.Latest, *r.LatestReleaseAgeDays)
 		}
-		// The newer-major clause is appended, never substituted: "current" stays
-		// true of the module's own path and the major line is stated beside it.
-		if note := newerMajorNote(r.newerMajor()); note != "" {
+		// The major-line clauses are appended, never substituted: "current" stays
+		// true of the module's own path and the other paths are stated beside it.
+		if note := majorNotes(r.republication(), r.newerMajor()); note != "" {
 			status += "; " + note
 		}
 		if _, err := fmt.Fprintf(stdout, "%s  %s\n", coord, status); err != nil {

@@ -73,9 +73,12 @@ answer the column has - while being the most stale kind of dependency there is.
   text surface matches — `latest: vX (released today)` for a zero age, and
   `latest: vX` with no clause where the date is unknown, never a fabricated
   "released today".
-- **newer major** - the newest major-suffixed path that resolves, with its
-  version and date (`newer_major_module`, `newer_major_latest`,
-  `newer_major_date`).
+- **newer major** - the newest major-suffixed path ABOVE the pinned major that
+  resolves, with its version and date (`newer_major_module`,
+  `newer_major_latest`, `newer_major_date`).
+- **same major republished** - the pinned major's OWN `/vN` publication, with its
+  version and date (`republished_module`, `republished_latest`,
+  `republished_date`). Only a `+incompatible` pin can have one.
 
 The probe walks upward from one major above the **pinned version's** major - not
 above the path suffix, because a `+incompatible` pin carries its major in the
@@ -91,9 +94,20 @@ migration the pin needs to hear about, and it lives at a path the same-major
 `latest` question can never see - `github.com/gavv/httpexpect@v2.0.0+incompatible`
 has `github.com/gavv/httpexpect/v2` published and no `/v3` at all. An absent
 `/vN` there is the ordinary case and does not stop the walk, because a module
-can go from `+incompatible` straight to `/v3`. When both a republished own major
-and a genuine next major exist, the **higher** one is reported. A pin already on
-a `/vN` path is asked nothing extra: it is not its own upgrade target.
+can go from `+incompatible` straight to `/v3`. A pin already on a `/vN` path is
+asked nothing extra: it is not its own upgrade target.
+
+The answer is reported **separately from the newer major**, because the major
+NUMBER is unchanged there and only the path moved - a path migration, not a
+major upgrade, and usually much cheaper. It renders as `same major republished:`
+and reaches the JSON under `republished_*`. `republished_probed` distinguishes
+"asked, this major is not republished" from "not asked".
+
+When both hold, **both are reported, the republication first**:
+
+```
+github.com/go-chi/chi@v3.3.4+incompatible  ahead of latest tag: v1.5.5; same major republished: github.com/go-chi/chi/v3@v3.3.5 (2023-09-07); newer major: github.com/go-chi/chi/v5@v5.3.1 (2026-07-05)
+```
 
 That extra question is one additional proxy request, and only for
 `+incompatible` pins.
@@ -227,8 +241,23 @@ answered.
     "newer_major_latest": "v7.2.1",
     "newer_major_date": "2026-01-19T...",
     "major_probed": true,
+    "republished_probed": false,
     "looked_up_at": "2026-07-31T09:14:02Z",
     "served_from_store": true
+  },
+  {
+    "module": "github.com/gavv/httpexpect",
+    "pinned": "v2.0.0+incompatible",
+    "latest": "v1.1.3",
+    "is_latest": false,
+    "pin_ahead_of_latest": true,
+    "major_probed": true,
+    "republished_module": "github.com/gavv/httpexpect/v2",
+    "republished_latest": "v2.17.0",
+    "republished_date": "2025-03-04T...",
+    "republished_probed": true,
+    "looked_up_at": "2026-07-31T09:14:02Z",
+    "served_from_store": false
   },
   {
     "module": "example.com/mod",
@@ -276,7 +305,7 @@ release cadence differs from your upgrade cadence:
 A badly-stale pin on an actively released module reports a **small** number; a
 perfectly current pin on a quiet module reports a **large** one. Do not sort by
 this field to rank upgrade urgency — use the version distance (`pinned` vs
-`latest`, and `newer_major_module`).
+`latest`, `newer_major_module` and `republished_module`).
 
 There is no `days_behind` field. The pin's own publication date is not available
 offline or from the store, so the distance from the pin to the latest release is
@@ -308,7 +337,8 @@ kanonarion fetch github.com/foo/bar@v1.5.0 --json
 `audit` resolves staleness for every module in scope through the same ledger
 `latest` writes, so running both back to back pays the proxy sweep once. Note
 that `is_latest: true` is about the module *path*: check `newer_major_module`
-as well, or a dependency a whole major line behind will read as up to date. A
+and `republished_module` as well, or a dependency a whole major line behind — or
+a `+incompatible` pin whose major now lives at `/vN` — will read as up to date. A
 `null` there is not an answer at all — see
 [When the column was not measured](#when-the-column-was-not-measured).
 
@@ -345,6 +375,9 @@ kanonarion latest --gomod ./go.mod --fresh
 
 # Every dependency with a newer major line available
 kanonarion latest --gomod ./go.mod --json | jq '.[] | select(.newer_major_module != null)'
+
+# Every +incompatible pin whose own major now lives at /vN — usually the cheapest move
+kanonarion latest --gomod ./go.mod --json | jq '.[] | select(.republished_module != null)'
 ```
 
 ## See also

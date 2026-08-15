@@ -175,11 +175,12 @@ modernc.org/sqlite@v1.50.0                               Verified             BS
 ```
 
 Every column is sized from the widest value the run produced, so the columns
-line up on every row. The newer-major fact is the one value routinely wider than
-the rest of the row put together — it carries a whole module path and a version
-— so it is stated in full on a continuation line under the staleness column it
-belongs to, rather than setting that column's width for the run. `--json` is
-unaffected: it carries `newer_major_module` and `newer_major_latest` as fields.
+line up on every row. The major-line facts are the values routinely wider than
+the rest of the row put together — each carries a whole module path and a
+version — so they are stated in full on a continuation line under the staleness
+column they belong to, rather than setting that column's width for the run.
+`--json` is unaffected: it carries `newer_major_module`/`newer_major_latest` and
+`republished_module`/`republished_latest` as fields.
 
 ## Example - complete set (code + tooling)
 
@@ -269,7 +270,8 @@ still emitted - `vuln_findings: 0`, `vuln_withdrawn: 0`, `policy_blocking:
 false`, `policy_unevaluated: false`, `pin_ahead_of_latest: false`,
 `latest_release_age_days: null`. A key is absent only where it names something
 that does not apply to the row at all: the string and list keys
-(`latest_version`, `newer_major_module`, `vuln_reason`, `staleness_unmeasured`,
+(`latest_version`, `newer_major_module`, `republished_module`, `vuln_reason`,
+`staleness_unmeasured`,
 `license_uncertainty`, `license_electable_arms`, `scope`).
 
 `vuln_findings` counts **every** advisory on the record, retracted ones
@@ -312,12 +314,19 @@ sweep once between them rather than once each. The table states the lookup time
 it used (`latest as of ...`, dated by its oldest row) so a served answer is
 never mistaken for a live one, and a **failed** lookup is never recorded.
 
-The column reports two facts per module, never merged: `is_latest` is about the
-module **path**, and `newer_major_module` names the newest major-suffixed path
+The column reports separate facts per module, never merged. `is_latest` is about
+the module **path**. `newer_major_module` names the newest major-suffixed path
 above the pinned major - a dependency pinned a whole major line behind is at the
 latest version of its own path and is still behind. `major_probed` separates
 "probed, nothing newer" from "not probed" (a `--from-modcache` run, or a probe
 whose request failed).
+
+`republished_module` is a third fact and only a `+incompatible` pin can have one:
+the pinned major's own `/vN` publication. The major **number** is unchanged
+there, so it renders as `same major republished:` rather than `newer major:` -
+a path migration, not a major upgrade, and usually the cheaper move.
+`republished_probed` separates "asked, this major is not republished" from "not
+asked". Where a module has both, both are printed, the republication first.
 
 ### When the column was not measured
 

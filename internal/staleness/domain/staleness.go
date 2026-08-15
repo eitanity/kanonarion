@@ -39,13 +39,22 @@ type Record struct {
 	// NewerMajor is the separate major-line fact. See NewerMajor.
 	NewerMajor NewerMajor
 
+	// Republication is the module's OWN major published at its /vN path. It is a
+	// third fact, not a variant of the second. See Republication.
+	Republication Republication
+
 	// LookedUpAt is when the proxy was asked. It is what the TTL is measured
 	// against and what the output must state.
 	LookedUpAt time.Time
 }
 
-// NewerMajor is the result of probing major-suffixed paths above the pinned
+// NewerMajor is the result of probing major-suffixed paths ABOVE the pinned
 // major.
+//
+// It carries the upward walk's answer and nothing else. A +incompatible pin's
+// own major republished at /vN is NOT one of these: the major number is
+// unchanged there and only the path moved, which is a different piece of work
+// with a different risk, and it lives in Republication.
 //
 // Probed separates "nobody has asked" from "asked, and there is none". Without
 // it a row written by a same-major-only resolution would read as a negative
@@ -77,6 +86,35 @@ type NewerMajor struct {
 
 // Exists reports whether a newer major line was found.
 func (n NewerMajor) Exists() bool { return n.Probed && n.Path != "" }
+
+// Republication is the module's own major published at its /vN path — the
+// answer to the extra question a +incompatible pin asks before the upward walk.
+//
+// It is a separate type from NewerMajor because it is a separate fact. +incompatible
+// is what a module looks like BEFORE it adopts the /vN path, so /vN carries the
+// SAME major number the project is already on: moving to it is a path migration,
+// not a major upgrade. Reported as a newer major it told a reader to budget for
+// a breaking change where chi v3.3.4+incompatible -> chi/v3@v3.3.5 is a patch.
+//
+// The two facts can both hold at once, and both are then reported, this one
+// first — it is the nearer move and the likelier action for a stuck pin.
+type Republication struct {
+	// Asked is true when the probe put the question. It is put only for a
+	// +incompatible pin on a bare path; see ProbePlan. False means the question
+	// does not apply to this module, NOT that the answer was no — the same
+	// distinction NewerMajor.Probed draws for the walk.
+	Asked bool
+	// Path is the /vN path that resolved. Empty when Asked and none did — a
+	// recorded negative, which is a real answer and is cacheable.
+	Path string
+	// Version is the newest version at Path.
+	Version string
+	// PublishedAt is that version's publication time; zero when unsupplied.
+	PublishedAt time.Time
+}
+
+// Exists reports whether the module's own major was found republished at /vN.
+func (p Republication) Exists() bool { return p.Asked && p.Path != "" }
 
 // FreshAt reports whether the record may be served instead of re-querying the
 // proxy. A zero or negative ttl means never serve.
@@ -199,8 +237,10 @@ func (p ProbePlan) SameMajor() (int, bool) { return p.sameMajor, p.sameMajor != 
 // and no /v3 at all, and the walk alone reports it as having nowhere to go.
 //
 // When both exist — a republished /vN and a genuine next major — the walk still
-// runs and the higher one is what the row reports. The republished same-major
-// is the answer only when there is nothing above it.
+// runs and BOTH are reported, in separate fields, the republication first.
+// go-chi/chi v3.3.4+incompatible is the case: /v3@v3.3.5 is a patch-level move
+// to the correctly-published path and /v5@v5.3.1 is a two-major migration, and a
+// row that reported only the higher dropped the cheaper answer entirely.
 //
 // A module already pinned to a /vN path is asked nothing extra. Its own major
 // is the path it is already on, so probing it would ask whether the module the

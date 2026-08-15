@@ -239,6 +239,16 @@ type auditModuleResult struct {
 	// MajorProbed separates "probed, none newer" from "not probed" (offline
 	// runs, or a probe whose request failed).
 	MajorProbed bool `json:"major_probed"`
+	// Republished* is the module's OWN major published at its /vN path — a
+	// SIBLING fact to NewerMajor, carried in its own keys because the major
+	// NUMBER is unchanged there and only the path moved. A +incompatible pin can
+	// hold both at once, and `latest` emits the same pair of key sets.
+	RepublishedModule string `json:"republished_module,omitempty"`
+	RepublishedLatest string `json:"republished_latest,omitempty"`
+	// RepublishedProbed separates "asked, this major is not republished" from
+	// "not asked": the question is only put for a +incompatible pin on a bare
+	// path. Emitted always, false included.
+	RepublishedProbed bool `json:"republished_probed"`
 	// StalenessLookedUpAt is when the proxy was asked for this row's staleness.
 	// A row served from the ledger carries the original lookup time.
 	StalenessLookedUpAt time.Time `json:"staleness_looked_up_at,omitzero"`
@@ -851,6 +861,9 @@ func applyAuditStaleness(ctx context.Context, res *auditModuleResult, coord coor
 	res.MajorProbed = ans.NewerMajor.Probed
 	res.NewerMajorModule = ans.NewerMajor.Path
 	res.NewerMajorLatest = ans.NewerMajor.Version
+	res.RepublishedProbed = ans.Republication.Asked
+	res.RepublishedModule = ans.Republication.Path
+	res.RepublishedLatest = ans.Republication.Version
 }
 
 // markStalenessUnmeasured records that the column was not answered, and why. It
@@ -1238,18 +1251,27 @@ func auditStalenessAnswer(r auditModuleResult) string {
 	return "current"
 }
 
-// auditNewerMajorNote is the newer-major clause: the fact that stops a module
-// several majors behind from reading as up to date.
+// auditNewerMajorNote is the major-line clause: the facts that stop a module
+// several majors behind, or stuck on a +incompatible pin, from reading as up to
+// date.
 //
 // It is stated beside the staleness answer, never folded into it. "current" and
 // "a newer major line exists" are both true at once for a module pinned behind a
 // major bump, and a rendering that merged them would report the module the way
 // this whole context exists to stop reporting it.
+//
+// It goes through majorNotes rather than formatting its own string so this
+// surface and `latest` cannot end up labelling or ordering the same two facts
+// differently. Neither date is carried on an audit row, so neither clause states
+// one here; the labels and the order are the shared part.
 func auditNewerMajorNote(r auditModuleResult) string {
-	if !r.MajorProbed || r.NewerMajorModule == "" {
+	if !r.MajorProbed {
 		return ""
 	}
-	return fmt.Sprintf("newer major: %s@%s", r.NewerMajorModule, r.NewerMajorLatest)
+	return majorNotes(
+		staledomain.Republication{Asked: r.RepublishedProbed, Path: r.RepublishedModule, Version: r.RepublishedLatest},
+		staledomain.NewerMajor{Probed: true, Path: r.NewerMajorModule, Version: r.NewerMajorLatest},
+	)
 }
 
 // auditLedgerAgeNote states how old the recorded lookup this row was answered
@@ -1368,7 +1390,7 @@ func printAuditTable(stdout io.Writer, results []auditModuleResult) error {
 	// pushed every column to its right out of line on that row alone.
 	type row struct {
 		cells []string
-		// note is the newer-major clause, printed beneath the row. See
+		// note is the major-line clause, printed beneath the row. See
 		// auditStalenessCell for why it is not in the column.
 		note string
 	}

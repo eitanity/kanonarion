@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/eitanity/kanonarion/internal/adapters/clock"
@@ -140,16 +141,25 @@ func (o *offlineStalenessLookup) Resolve(ctx context.Context, path, pinnedVersio
 		LatestPublishedAt: rec.LatestPublishedAt,
 		LookedUpAt:        rec.LookedUpAt,
 	}
-	// The stored probe is reusable only when it started at the same major, by the
-	// same rule the online resolver applies (see domain.NewerMajor.FromMajor).
-	// Otherwise it stays unprobed here: MajorProbed false says "not asked", which
-	// is what an offline run that cannot probe has to say.
+	// The stored probe is reusable only when it started at the same major AND, for
+	// a pin that asks the republication question, only when the stored row asked
+	// it too — the same pair of rules the online resolver applies (see
+	// domain.NewerMajor.FromMajor and domain.Republication.Asked). Otherwise it
+	// stays unprobed here: MajorProbed false says "not asked", which is what an
+	// offline run that cannot probe has to say. A row written before the
+	// republication was a separate fact carries the module's own major under
+	// newer_major_path, and serving it offline would keep printing the label this
+	// change exists to remove.
 	pin := pinnedVersion
 	if pin == "" {
 		pin = out.LatestVersion
 	}
-	if rec.NewerMajor.Probed && rec.NewerMajor.FromMajor == staledomain.ProbeStartMajor(path, pin) {
-		out.NewerMajor = rec.NewerMajor
+	plan := staledomain.PlanProbe(path, pin)
+	if rec.NewerMajor.Probed && rec.NewerMajor.FromMajor == plan.Start() {
+		if _, asks := plan.SameMajor(); !asks || rec.Republication.Asked {
+			out.NewerMajor = rec.NewerMajor
+			out.Republication = rec.Republication
+		}
 	}
 	return staleapp.Answer{Record: out, Served: true}, nil
 }
@@ -186,18 +196,49 @@ func stalenessAsOf(lookedUpAt time.Time) string {
 	return lookedUpAt.UTC().Format("2006-01-02 15:04 MST")
 }
 
-// newerMajorNote renders the newer-major fact as its own clause.
+// The labels the two major-line facts render under.
 //
-// It is never folded into the same-major status. "current" and "a newer major
-// line exists" are both true at once for a module pinned behind a major bump,
-// and a rendering that merged them would report the module the way this whole
-// change exists to stop reporting it.
-func newerMajorNote(nm staledomain.NewerMajor) string {
-	if !nm.Exists() {
+// They are constants shared by every command that prints them because the
+// distinction between them is the whole point: a build where `latest` says
+// "same major republished" and `audit` says "newer major" about the same module
+// has contradicted itself, and two copies of a label string is how that starts.
+const (
+	newerMajorLabel = "newer major"
+	// republicationLabel deliberately does not contain the word "major" on its
+	// own. The major NUMBER is unchanged here; only the path moved.
+	republicationLabel = "same major republished"
+)
+
+// majorClause renders one labelled path@version, with the publication date when
+// there is one. A zero date prints no date rather than a fabricated one.
+func majorClause(label, path, version string, publishedAt time.Time) string {
+	if path == "" {
 		return ""
 	}
-	if nm.PublishedAt.IsZero() {
-		return fmt.Sprintf("newer major: %s@%s", nm.Path, nm.Version)
+	if publishedAt.IsZero() {
+		return fmt.Sprintf("%s: %s@%s", label, path, version)
 	}
-	return fmt.Sprintf("newer major: %s@%s (%s)", nm.Path, nm.Version, nm.PublishedAt.UTC().Format("2006-01-02"))
+	return fmt.Sprintf("%s: %s@%s (%s)", label, path, version, publishedAt.UTC().Format("2006-01-02"))
+}
+
+// majorNotes renders the major-line facts as their own clauses.
+//
+// Neither is ever folded into the same-major status: "current" and "a newer
+// major line exists" are both true at once for a module pinned behind a major
+// bump, and merging them reports the module the way this context exists to stop
+// reporting it.
+//
+// The republication comes FIRST when both hold. It is the nearer move — the
+// same major number at the path the toolchain expects for it — and for a stuck
+// +incompatible pin it is the likelier action; ordering the two-major migration
+// ahead of it buries the cheaper answer behind the more alarming one.
+func majorNotes(rep staledomain.Republication, nm staledomain.NewerMajor) string {
+	var parts []string
+	if rep.Exists() {
+		parts = append(parts, majorClause(republicationLabel, rep.Path, rep.Version, rep.PublishedAt))
+	}
+	if nm.Exists() {
+		parts = append(parts, majorClause(newerMajorLabel, nm.Path, nm.Version, nm.PublishedAt))
+	}
+	return strings.Join(parts, "; ")
 }

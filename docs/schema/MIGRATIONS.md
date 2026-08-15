@@ -380,6 +380,40 @@ none" and is never rendered as one.
 Serving is governed by the `staleness.ttl` config key (default `1h`; `0`
 disables). `--fresh` on `latest`/`audit` bypasses the read and still records.
 
+## Staleness ledger: module `staleness`, migration 2
+
+**Additive; four new columns on `staleness_records`, no record shape change and
+no pipeline bump — this table carries neither a content hash nor a pipeline
+version.** The whole store's migration count goes `v78` -> `v79`.
+
+A `+incompatible` pin's OWN major republished at `/vN` is a different fact from
+a newer major line: the major NUMBER is unchanged there and only the path moved.
+It shared the `newer_major_*` columns and so was reported as a major upgrade,
+and where a pin had both — `github.com/go-chi/chi@v3.3.4+incompatible` has both
+`/v3@v3.3.5` and `/v5@v5.3.1` — one set of columns could hold only the higher
+and the nearer move was dropped. The new columns are:
+
+| Column | Meaning |
+|---|---|
+| `republication_asked` | `1` when the probe put the question. It is put only for a `+incompatible` pin on a bare path, so `0` means "does not apply", NOT "asked, no". |
+| `republication_path` | The `/vN` path that resolved. Empty with `republication_asked = 1` is a recorded negative. |
+| `republication_version` | The newest version at that path. |
+| `republication_published_at` | Its publication time; empty when the proxy supplied none. |
+
+Migration for existing stores: the columns are added with defaults, and one
+`UPDATE` moves a same-major answer written by the previous shape out of
+`newer_major_*` into them. The move is keyed on the walk's start: the walk begins
+at `major_probe_from`, so any path it found names that major or above, and only
+the same-major question can have written the major immediately BELOW it. Both
+suffix conventions are matched (`/vN` and gopkg.in's `.vN`). On the live store
+that moved 3 rows of 397 and left every genuine newer major untouched.
+
+Rows the `UPDATE` does not touch keep `republication_asked = 0`. They are not
+lost answers: the resolver will not serve a stored probe to a pin that asks the
+republication question unless the row asked it too, so such a row is re-probed
+the next time it is used — and a pin that never asks the question is still
+served from it unchanged.
+
 ## Walk store: module `walk`, migration 6
 
 **Additive; a new column, no record shape change and no pipeline bump.** `walks`

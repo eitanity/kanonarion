@@ -1,6 +1,6 @@
 // Package sqlite implements ports.Ledger using the shared SQLite database.
 //
-// The staleness ledger owns its own migration series ("staleness", version 1)
+// The staleness ledger owns its own migration series ("staleness")
 // rather than joining the fetch series. A fetch record is a sealed, hashed
 // custody fact about a specific version that was acquired; a staleness row is a
 // mutable, expiring cache of what a proxy currently says about a module PATH.
@@ -50,6 +50,42 @@ func Migrations() []sqlitestore.Migration {
             newer_major_published_at TEXT NOT NULL DEFAULT '',
             looked_up_at             TEXT NOT NULL
         )`},
+		// The republication is the module's OWN major published at /vN. It gets
+		// its own columns rather than sharing newer_major_*: the two are
+		// different facts about different majors, a +incompatible pin can carry
+		// both at once, and one set of columns could only hold one of them.
+		//
+		// republication_asked is separate from major_probe_from for the reason
+		// major_probe_from is separate from newer_major_path: the question is
+		// only put for a +incompatible pin on a bare path, so "not asked" and
+		// "asked, not republished" are different answers and only the second may
+		// be reported.
+		//
+		// The UPDATE moves a same-major answer written by the previous shape out
+		// of the newer_major_* columns, where it was rendered as a major-number
+		// change that had not happened. It is exact: the walk starts at
+		// major_probe_from, so a path it found always names that major or above,
+		// and only the same-major question can have written the major BELOW the
+		// start. Rows the move does not touch keep republication_asked 0 and are
+		// re-probed the next time a pin asks the question — see Resolver.Resolve.
+		{Module: "staleness", Version: 2, SQL: `
+ALTER TABLE staleness_records ADD COLUMN republication_asked        INTEGER NOT NULL DEFAULT 0;
+ALTER TABLE staleness_records ADD COLUMN republication_path         TEXT NOT NULL DEFAULT '';
+ALTER TABLE staleness_records ADD COLUMN republication_version      TEXT NOT NULL DEFAULT '';
+ALTER TABLE staleness_records ADD COLUMN republication_published_at TEXT NOT NULL DEFAULT '';
+
+UPDATE staleness_records SET
+    republication_asked        = 1,
+    republication_path         = newer_major_path,
+    republication_version      = newer_major_version,
+    republication_published_at = newer_major_published_at,
+    newer_major_path           = '',
+    newer_major_version        = '',
+    newer_major_published_at   = ''
+WHERE major_probe_from > 1
+  AND newer_major_path <> ''
+  AND (newer_major_path LIKE '%/v' || (major_probe_from - 1)
+    OR newer_major_path LIKE '%.v' || (major_probe_from - 1));`},
 	}
 }
 
@@ -69,24 +105,34 @@ func (s *Store) PutStaleness(ctx context.Context, rec domain.Record) error {
 INSERT INTO staleness_records (
     module_path, latest_version, latest_published_at,
     major_probe_from, newer_major_path, newer_major_version, newer_major_published_at,
+    republication_asked, republication_path, republication_version, republication_published_at,
     looked_up_at
-) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 ON CONFLICT (module_path) DO UPDATE SET
-    latest_version           = excluded.latest_version,
-    latest_published_at      = excluded.latest_published_at,
-    major_probe_from         = excluded.major_probe_from,
-    newer_major_path         = excluded.newer_major_path,
-    newer_major_version      = excluded.newer_major_version,
-    newer_major_published_at = excluded.newer_major_published_at,
-    looked_up_at             = excluded.looked_up_at`
+    latest_version             = excluded.latest_version,
+    latest_published_at        = excluded.latest_published_at,
+    major_probe_from           = excluded.major_probe_from,
+    newer_major_path           = excluded.newer_major_path,
+    newer_major_version        = excluded.newer_major_version,
+    newer_major_published_at   = excluded.newer_major_published_at,
+    republication_asked        = excluded.republication_asked,
+    republication_path         = excluded.republication_path,
+    republication_version      = excluded.republication_version,
+    republication_published_at = excluded.republication_published_at,
+    looked_up_at               = excluded.looked_up_at`
 
 	probeFrom := 0
 	if rec.NewerMajor.Probed {
 		probeFrom = rec.NewerMajor.FromMajor
 	}
+	repAsked := 0
+	if rec.Republication.Asked {
+		repAsked = 1
+	}
 	if _, err := s.db.DB().ExecContext(ctx, q,
 		rec.ModulePath, rec.LatestVersion, formatTime(rec.LatestPublishedAt),
 		probeFrom, rec.NewerMajor.Path, rec.NewerMajor.Version, formatTime(rec.NewerMajor.PublishedAt),
+		repAsked, rec.Republication.Path, rec.Republication.Version, formatTime(rec.Republication.PublishedAt),
 		rec.LookedUpAt.UTC().Format(time.RFC3339),
 	); err != nil {
 		return fmt.Errorf("inserting staleness record for %s: %w", rec.ModulePath, err)
@@ -99,14 +145,17 @@ ON CONFLICT (module_path) DO UPDATE SET
 func (s *Store) GetStaleness(ctx context.Context, path string) (domain.Record, bool, error) {
 	const q = `SELECT latest_version, latest_published_at,
        major_probe_from, newer_major_path, newer_major_version, newer_major_published_at,
+       republication_asked, republication_path, republication_version, republication_published_at,
        looked_up_at
 FROM staleness_records WHERE module_path = ?`
 
 	var latestVersion, latestPublished, majorPath, majorVersion, majorPublished, lookedUp string
-	var probeFrom int
+	var repPath, repVersion, repPublished string
+	var probeFrom, repAsked int
 	row := s.db.DB().QueryRowContext(ctx, q, path)
 	if err := row.Scan(&latestVersion, &latestPublished, &probeFrom,
-		&majorPath, &majorVersion, &majorPublished, &lookedUp); errors.Is(err, sql.ErrNoRows) {
+		&majorPath, &majorVersion, &majorPublished,
+		&repAsked, &repPath, &repVersion, &repPublished, &lookedUp); errors.Is(err, sql.ErrNoRows) {
 		return domain.Record{}, false, nil
 	} else if err != nil {
 		return domain.Record{}, false, fmt.Errorf("querying staleness record for %s: %w", path, err)
@@ -124,6 +173,10 @@ FROM staleness_records WHERE module_path = ?`
 	if err != nil {
 		return domain.Record{}, false, fmt.Errorf("staleness record for %s has an unreadable major publication time: %w", path, err)
 	}
+	repAt, err := parseTime(repPublished)
+	if err != nil {
+		return domain.Record{}, false, fmt.Errorf("staleness record for %s has an unreadable republication time: %w", path, err)
+	}
 
 	return domain.Record{
 		ModulePath:        path,
@@ -135,6 +188,12 @@ FROM staleness_records WHERE module_path = ?`
 			Path:        majorPath,
 			Version:     majorVersion,
 			PublishedAt: majorAt,
+		},
+		Republication: domain.Republication{
+			Asked:       repAsked != 0,
+			Path:        repPath,
+			Version:     repVersion,
+			PublishedAt: repAt,
 		},
 		LookedUpAt: lookedUpAt,
 	}, true, nil
