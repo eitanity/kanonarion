@@ -2,9 +2,14 @@ package staticcha_test
 
 import (
 	"context"
+	"fmt"
 	"log/slog"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
+
+	"golang.org/x/mod/modfile"
 
 	"github.com/eitanity/kanonarion/internal/callgraph/adapters/analyser/staticcha"
 	"github.com/eitanity/kanonarion/internal/callgraph/domain"
@@ -72,6 +77,73 @@ func TestAnalyse_RepublishedForkAnalysesUnderTheDeclaredModulePath(t *testing.T)
 	}
 }
 
+// repoRequirement returns a go.mod require line naming modulePath at the version
+// THIS repository requires.
+//
+// A fixture must never name a version whose presence it does not control. This
+// one used to hardcode the x/mod version the repository happened to require,
+// which put that version in every developer and CI module cache for free — a
+// dependency the fixture never declared and could not keep. The moment the
+// repository moved off it, a runner with a cold cache had no copy, the analyser
+// loads offline by default and cannot fetch one, and the fixture failed for a
+// reason several commits away from the change that caused it.
+//
+// Reading the repository's own go.mod is the tie that holds: whatever the build
+// list requires is in the cache wherever this suite can build at all, and a
+// version bump carries the fixture with it. A module the repository does not
+// require carries no such guarantee and is refused rather than named.
+//
+// The module named must have NO requirements of its own. An unpruned graph walks
+// every version every go.mod in the closure names, including versions MVS has
+// superseded and this repository therefore never downloads: requiring x/mod
+// reaches x/tools, which names an older x/mod, and the load fails offline for
+// want of a go.mod nobody here has. A leaf ends the walk in one step.
+func repoRequirement(t *testing.T, modulePath string) string {
+	t.Helper()
+
+	gomod, data := findRepoGoMod(t)
+	f, err := modfile.Parse(gomod, data, nil)
+	if err != nil {
+		t.Fatalf("parsing %s: %v", gomod, err)
+	}
+	for _, req := range f.Require {
+		if req.Mod.Path == modulePath {
+			return fmt.Sprintf("require %s %s\n", req.Mod.Path, req.Mod.Version)
+		}
+	}
+	t.Fatalf("%s is not required by %s, so nothing guarantees it is in the module cache; "+
+		"name a module this repository actually depends on", modulePath, gomod)
+	return ""
+}
+
+// findRepoGoMod walks up from the test's working directory — the package source
+// directory — to this repository's go.mod, and checks the module path so a
+// stray go.mod above the tree cannot answer for it.
+func findRepoGoMod(t *testing.T) (string, []byte) {
+	t.Helper()
+
+	dir, err := os.Getwd()
+	if err != nil {
+		t.Fatalf("working directory: %v", err)
+	}
+	for {
+		candidate := filepath.Join(dir, "go.mod")
+		if data, err := os.ReadFile(candidate); err == nil { //nolint:gosec // a path this test walked to itself
+			if path := modfile.ModulePath(data); path == repoModulePath {
+				return candidate, data
+			}
+		}
+		parent := filepath.Dir(dir)
+		if parent == dir {
+			t.Fatalf("no go.mod declaring %s above the working directory", repoModulePath)
+		}
+		dir = parent
+	}
+}
+
+// repoModulePath is this repository's own module path.
+const repoModulePath = "github.com/eitanity/kanonarion"
+
 // incompleteGoSumFiles is a module that ships a go.mod naming a dependency and
 // no go.sum line covering it, which is what gopkg.in/yaml.v2 and
 // github.com/kr/text both do. go.sum is a MAIN-module obligation, and neither
@@ -80,9 +152,16 @@ func TestAnalyse_RepublishedForkAnalysesUnderTheDeclaredModulePath(t *testing.T)
 // The go directive is below 1.17 on purpose: that is what makes the toolchain
 // load the unpruned module graph, so it reads the required module's go.mod and
 // refuses for want of the go.sum line. Both real modules declare go 1.15.
-var incompleteGoSumFiles = map[string]string{
-	"go.mod": "module example.com/nosum\n\ngo 1.15\n\nrequire golang.org/x/mod v0.37.0\n",
-	"nosum.go": `package nosum
+//
+// The requirement must be a REAL module: the go.sum line the loader demands is
+// the one covering that module's go.mod, so a stdlib-only fixture would have
+// nothing to demand and would pass however the loader was configured. It must
+// also be a leaf — see repoRequirement.
+func incompleteGoSumFiles(t *testing.T) map[string]string {
+	t.Helper()
+	return map[string]string{
+		"go.mod": "module example.com/nosum\n\ngo 1.15\n\n" + repoRequirement(t, "golang.org/x/sync"),
+		"nosum.go": `package nosum
 
 import "strings"
 
@@ -91,6 +170,7 @@ func Fold(s string) string {
 	return strings.ToLower(s)
 }
 `,
+	}
 }
 
 // TestAnalyse_ModuleShippingNoGoSumForItsOwnGraphStillLoads is the regression
@@ -98,15 +178,15 @@ func Fold(s string) string {
 // go.sum covering its own module graph used to fail the load before a single
 // package was type-checked.
 //
-// The required version is one this repository itself depends on, so it is in the
-// module cache wherever this suite can build at all; nothing here reaches a
-// network.
+// The requirement is read out of this binary's build info, so it names a version
+// the build list guarantees is in the module cache; nothing here reaches a
+// network, and the analyser could not if it tried — it loads with GOPROXY=off.
 func TestAnalyse_ModuleShippingNoGoSumForItsOwnGraphStillLoads(t *testing.T) {
 	coord := mustTestCoord(t, "example.com/nosum", "v2.4.0")
 	a := staticcha.New("0.1.0", "", slog.Default())
 
 	rec, err := a.Analyse(context.Background(),
-		writeZipToTemp(t, makeZip(t, coord, incompleteGoSumFiles)), coord, domain.AnalysisInputs{})
+		writeZipToTemp(t, makeZip(t, coord, incompleteGoSumFiles(t))), coord, domain.AnalysisInputs{})
 	if err != nil {
 		t.Fatalf("Analyse returned error: %v", err)
 	}
