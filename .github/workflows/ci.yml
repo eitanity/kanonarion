@@ -26,11 +26,12 @@ jobs:
     strategy:
       matrix:
         # Pinned to the exact patch the go.mod 'go' directive requires
-        # (bumped to 1.26.5 for GO-2026-4970). A floating '1.26.x' can resolve
-        # setup-go to an older manifest patch, which then triggers an in-CI
-        # GOTOOLCHAIN download to satisfy the directive — needless and fragile
-        # under the hardened egress allowlist. Bump this in lockstep with go.mod.
-        go: ["1.26.5"]
+        # (bumped to 1.26.6 for GO-2026-5026, GO-2026-5972, GO-2026-6090 and
+        # GO-2026-6218). A floating '1.26.x' can resolve setup-go to an older
+        # manifest patch, which then triggers an in-CI GOTOOLCHAIN download to
+        # satisfy the directive — needless and fragile under the hardened egress
+        # allowlist. Bump this in lockstep with go.mod.
+        go: ["1.26.6"]
     steps:
       - name: Harden the runner
         uses: step-security/harden-runner@b09bb98e06d4d774595224525879c09bc6e98c40 # v2
