@@ -1,0 +1,10 @@
+# error-shaped: there is no store to read a generation from.
+$ kanonarion callgraph-show example.com/mod@v1.2.0 --json
+exit 4
+--- error ---
+execute root command: no callgraph record for example.com/mod@v1.2.0 — analyse it first:
+  kanonarion callgraph example.com/mod@v1.2.0
+--- stdout ---
+(empty)
+--- stderr ---
+(empty)

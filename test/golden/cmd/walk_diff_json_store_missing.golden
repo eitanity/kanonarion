@@ -1,0 +1,9 @@
+# error-shaped: neither walk can be read.
+$ kanonarion walk-diff 01ARZ3NDEKTSV4RRFFQ69G5FAV 01ARZ3NDEKTSV4RRFFQ69G5FAW --json
+exit 4
+--- error ---
+execute root command: both arguments named a walk the store does not hold; the store holds no walk record at all, so walk id "01ARZ3NDEKTSV4RRFFQ69G5FAV, 01ARZ3NDEKTSV4RRFFQ69G5FAW" is not what made this empty; to produce one: kanonarion walk <module>@<version>
+--- stdout ---
+(empty)
+--- stderr ---
+{"subject":"walk record","filter":{"name":"walk id","value":"01ARZ3NDEKTSV4RRFFQ69G5FAV, 01ARZ3NDEKTSV4RRFFQ69G5FAW","compared_against":"walk id","match":"for exact equality"},"records_considered":0,"store_empty":true,"paged_past":false,"remedy":["kanonarion walk \u003cmodule\u003e@\u003cversion\u003e"]}

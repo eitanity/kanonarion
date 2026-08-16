@@ -1,0 +1,18 @@
+# populated, text: the composed record with its fidelity line.
+$ kanonarion callgraph-show example.com/mod@v1.2.0
+exit 0
+--- stdout ---
+example.com/mod@v1.2.0  [CHA]  Extracted
+  fidelity: BUILT_WITH_BODIES   source: zip
+  test scope: analysed — 0 of 2 nodes are test declarations
+  reference scope: analysed — 0 of 1 edges record a function value being taken, not called
+Legend: [api] exported symbol  [external] outside this module  [test] declared in a _test.go file  (no tag) unexported
+
+Nodes (2 total, showing 2):
+  example.com/mod.Handle [api]
+  example.com/mod.Parse [api]
+
+Edges (1 total, showing 1):
+  example.com/mod.Handle → example.com/mod.Parse  [Direct]
+--- stderr ---
+(empty)

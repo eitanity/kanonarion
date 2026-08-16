@@ -1,0 +1,9 @@
+# empty, scoped: the ledger holds generations for this coordinate but none from the worktree. The refusal must name the source rather than report the module unknown.
+$ kanonarion callgraph-show example.com/mod@v1.2.0 --source worktree --json
+exit 4
+--- error ---
+execute root command: no worktree-sourced callgraph record for example.com/mod@v1.2.0 — the ledger may hold one from another source; try --history
+--- stdout ---
+(empty)
+--- stderr ---
+(empty)

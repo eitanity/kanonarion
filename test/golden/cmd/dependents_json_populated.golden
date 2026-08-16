@@ -1,0 +1,19 @@
+# populated: which modules in a stored walk depend on this one, read off the graph edges.
+$ kanonarion dependents example.com/shallow@v1.0.0 --json
+exit 0
+--- stdout ---
+{
+  "walk_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "walk_frame": "unrecorded",
+  "target": "example.com/shallow@v1.0.0",
+  "dependents": [
+    {
+      "module": "example.com/mod",
+      "version": "v1.2.0",
+      "direct": true,
+      "root": false
+    }
+  ]
+}
+--- stderr ---
+(empty)

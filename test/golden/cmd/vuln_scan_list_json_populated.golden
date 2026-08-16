@@ -1,0 +1,20 @@
+# populated: the runs the store holds, across walks.
+$ kanonarion vuln-scan-list --json
+exit 0
+--- stdout ---
+[
+  {
+    "id": "01JSCANRUN0GOLDEN00000002",
+    "walk_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "status": "Affected",
+    "completed_at": "2026-02-20T09:00:01Z"
+  },
+  {
+    "id": "01JSCANRUN0GOLDEN00000001",
+    "walk_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "status": "Affected",
+    "completed_at": "2026-01-15T09:00:01Z"
+  }
+]
+--- stderr ---
+{"truncated":false,"limit":20,"subject":"scan runs","remedy":"--limit 0","offset":0,"next_offset":20}

@@ -1,0 +1,16 @@
+# populated, text: the same closure on the human channel.
+$ kanonarion license-compat example.com/app@v1.0.0 --walk-id 01ARZ3NDEKTSV4RRFFQ69G5FAV
+exit 2
+--- error ---
+execute root command: closure has unmodelled license pairs requiring review
+--- stdout ---
+example.com/app@v1.0.0 vs MIT (data v1.1.0, walk 01ARZ3NDEKTSV4RRFFQ69G5FAV, frame unrecorded):
+
+Requires review — unmodelled license pair (1):
+  example.com/shallow@v1.0.0                              (no licence record)
+      nothing to attribute — no licence record exists for this module
+
+Tip: 1 dep(s) have no licence record. Run 'kanonarion extract <walk-id>' to
+     populate them, then re-run license-compat.
+--- stderr ---
+(empty)

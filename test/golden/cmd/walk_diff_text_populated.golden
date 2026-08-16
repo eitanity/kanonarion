@@ -1,0 +1,9 @@
+# populated, text: the same comparison on the human channel.
+$ kanonarion walk-diff 01ARZ3NDEKTSV4RRFFQ69G5FAV 01ARZ3NDEKTSV4RRFFQ69G5FAW
+exit 0
+--- stdout ---
+diff 01ARZ3NDEKTSV4RRFFQ69G5FAV..01ARZ3NDEKTSV4RRFFQ69G5FAW
+- example.com/mod@v1.2.0
+~ example.com/shallow: v1.0.0 -> v1.1.0
+--- stderr ---
+(empty)

@@ -34,7 +34,7 @@ exit 0
   },
   "license": {
     "extracted_at": "2026-01-15T08:00:00Z",
-    "spdx": "MIT",
+    "spdx": "Apache-2.0",
     "status": "Detected",
     "low_confidence_coverage": null,
     "copyright_status": "not_analysed",
@@ -42,12 +42,12 @@ exit 0
       "status": "known",
       "include_notice": true,
       "include_license_text": true,
-      "state_changes": false,
+      "state_changes": true,
       "disclose_source": false,
       "same_license": "none",
       "network_use_trigger": false,
-      "no_trademark_use": false,
-      "explicit_patent_grant": false,
+      "no_trademark_use": true,
+      "explicit_patent_grant": true,
       "catalogue_version": "1.2.0"
     }
   },

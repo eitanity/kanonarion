@@ -1,0 +1,58 @@
+# populated, --json: the COMPOSED answer, carrying completeness and analysis_source unconditionally — an absent value is itself the answer and has to be visible as one.
+$ kanonarion callgraph-show example.com/mod@v1.2.0 --json
+exit 0
+--- stdout ---
+{
+  "schema_version": "13",
+  "coordinate": {
+    "path": "example.com/mod",
+    "version": "v1.2.0"
+  },
+  "algorithm": "CHA",
+  "completeness": "BUILT_WITH_BODIES",
+  "analysis_source": "zip",
+  "nodes": [
+    {
+      "id": "example.com/mod.Handle",
+      "module": "",
+      "package": "example.com/mod",
+      "symbol": "Handle",
+      "is_external": false,
+      "is_exported_api": true,
+      "is_test": false,
+      "role": "api"
+    },
+    {
+      "id": "example.com/mod.Parse",
+      "module": "",
+      "package": "example.com/mod",
+      "symbol": "Parse",
+      "is_external": false,
+      "is_exported_api": true,
+      "is_test": false,
+      "role": "api"
+    }
+  ],
+  "edges": [
+    {
+      "from_id": "example.com/mod.Handle",
+      "to_id": "example.com/mod.Parse",
+      "confidence": "Direct",
+      "kind": "Call"
+    }
+  ],
+  "overall_status": "Extracted",
+  "node_count": 2,
+  "edge_count": 1,
+  "extracted_at": "2026-01-15T08:00:00Z",
+  "pipeline_version": "0.5.0",
+  "content_hash": "sha256:ad4ca72b29f7e12a73d8d5dabb4e8eda7e30a3a6074744a98f7d08dce0762941",
+  "test_scope": "Analysed",
+  "test_node_count": 0,
+  "reference_scope": "Analysed",
+  "reference_edge_count": 0,
+  "interface_count": 0,
+  "implementation_count": 0
+}
+--- stderr ---
+(empty)

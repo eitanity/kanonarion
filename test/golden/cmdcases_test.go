@@ -2,39 +2,69 @@ package golden_test
 
 // The recorded surfaces, and what each case exists to detect.
 //
-// Coverage here is deliberately partial, and the gaps are NAMED rather than
-// left to be discovered. A detector whose coverage is unstated is one whose
-// silence gets read as an all-clear.
+// Coverage here is partial, and the gaps are NAMED rather than left to be
+// discovered. A detector whose coverage is unstated is one whose silence gets
+// read as an all-clear.
 //
 // COVERED, by command:
 //
-//	latest              --json and text; populated, the no-publication-date zero,
-//	                    an empty scope, and the GOPROXY=off refusal.
-//	context             --json and text; populated (divergent), populated (clean),
-//	                    go.mod-only, absent coordinate, missing store, bad coordinate.
-//	reachability        --json and text; a stored reachable verdict, an advisory the
-//	                    scan never saw, an empty store, a query with no target.
-//	vuln-show --history --json and text; two snapshots of one coordinate, the
-//	                    go.mod-only module, an absent coordinate, an empty store.
-//	audit               the EMPTY and ERROR paths only — see below.
+//	audit                 --json and text; POPULATED (the whole derivation, run
+//	                      offline against a fixture module cache and a fixture
+//	                      advisory database), empty scope, missing go.mod.
+//	latest                --json and text; populated, the no-publication-date
+//	                      zero, an empty scope, the GOPROXY=off refusal.
+//	context               --json and text; populated (divergent), populated
+//	                      (clean), go.mod-only, absent coordinate, missing store,
+//	                      bad coordinate.
+//	reachability          --json and text; a stored reachable verdict, an advisory
+//	                      the scan never saw, an empty store, a query with no target.
+//	vuln-show --history   --json and text; two snapshots of one coordinate, the
+//	                      go.mod-only module, an absent coordinate, an empty store.
+//	callgraph-show        --history text, composed --json and text, an absent
+//	                      coordinate, a source-scoped refusal, an empty store.
+//	vuln-scan-show        --json and text; both fixture runs, an absent run, an
+//	                      empty store.
+//	vuln-scan-diff        --json and text; two runs, and a run against itself.
+//	vuln-scan-history     --json.
+//	vuln-scan-list        --json.
+//	walk-diff             --json and text; two walks, a walk against itself, an
+//	                      empty store.
+//	walk-show             --json.
+//	walk-list             --json.
+//	license-compat        --json and text; a pinned closure, the unpinned read
+//	                      that must state which walk it chose, an absent target.
+//	vuln-by-id            --json; an advisory, a RETRACTED advisory, an absent one.
+//	verification-coverage --json.
+//	dependents            --json.
 //
-// NOT COVERED, and why:
+// NOT COVERED, and named rather than implied:
 //
-//	audit (populated)   audit derives a live walk and a live vulnerability scan
-//	                    before it prints a row. Its output carries generated
-//	                    ULIDs, the operator's username, wall-clock durations and
-//	                    a toolchain-dependent judgment, none of which a fixture
-//	                    store can supply. Measured: an added field on the audit
-//	                    row struct moves NO golden in this package today.
-//	every other command every remaining --json surface, and the text surfaces of
-//	                    vuln-scan, inspect and vuln. They are repetition against
-//	                    this harness rather than new design, and they are the
-//	                    next piece of work, not an accident.
+//	interface-show / interface-diff / interface-list
+//	examples-* / symbol-* / implementers / callers / callees
+//	sbom / sbom-show / sbom-list / notice
+//	inspect / vuln-scan / vuln / fetch / walk / extract / license / callgraph
+//	capability / fips / godebug / directives / vendor / provenance / use
+//	store / config / policy / local / vuln-snapshot-list / vuln-snapshot-show
+//	callgraph-list / license-list / license-diff / callgraph traversal reads
 //
-// Each surface carries a POPULATED, an EMPTY and an ERROR-SHAPED case. The last
-// two are not padding: an output regression on a not-found or a store-read
-// failure is the one nobody notices by hand, because nobody runs those paths on
-// purpose.
+//	interface-diff in particular is a composed read of the same class as the ones
+//	covered here, and it is absent for one reason: the fixture store holds no
+//	interface records, so covering it means seeding that domain rather than
+//	writing another case. It is the next one to add.
+//
+// Each surface carries a POPULATED, an EMPTY and an ERROR-SHAPED case wherever
+// the command has all three. The last two are not padding: an output regression
+// on a not-found or a store-read failure is the one nobody notices by hand,
+// because nobody runs those paths on purpose.
+//
+// The populated cases were chosen by what they COMPOSE. A read that answers from
+// one record changes shape only when that record's struct changes; a read that
+// combines several changes when the rule for combining them changes, and that
+// rule can move with no struct moving at all. Hence two artefact measurements of
+// one version, two advisory snapshots, two call-graph generations, two scan runs
+// and two walks — each paired with the zero (a run diffed against itself, a walk
+// diffed against itself, a coordinate with nothing stored) so that "no change" is
+// recorded as an answer and not only assumed.
 
 import (
 	"os"
@@ -55,12 +85,21 @@ func TestCommandGolden(t *testing.T) {
 	project := buildFixtureProject(t)
 	home := t.TempDir()
 
-	norm := &normaliser{replacements: [][2]string{
+	audit := buildAuditFixture(t)
+
+	base := [][2]string{
 		{storeRoot, "$STORE"},
 		{emptyStore, "$EMPTY_STORE"},
 		{project, "$PROJECT"},
+		{audit.project, "$AUDIT_PROJECT"},
+		{audit.modcache, "$MODCACHE"},
 		{home, "$HOME"},
-	}}
+	}
+	norm := &normaliser{replacements: base}
+	// The second normaliser additionally generalises the values a run mints —
+	// walk and scan-run identifiers, and the host's Go toolchain version. Only
+	// the audit cases use it; see cmdCase.mintedValues for why it is not global.
+	mintedNorm := &normaliser{replacements: base, patterns: mintedValuePatterns()}
 
 	// The whole run is offline and homeless: no case may reach the operator's
 	// store, and a case that tries to reach the network fails rather than
@@ -68,14 +107,18 @@ func TestCommandGolden(t *testing.T) {
 	t.Setenv("HOME", home)
 	t.Setenv("GOTOOLCHAIN", "local")
 
-	for _, c := range commandCases(emptyStore, project) {
+	for _, c := range commandCases(t, emptyStore, project, audit) {
 		t.Run(c.name, func(t *testing.T) {
 			root := c.storeRoot
 			if root == "" {
 				root = storeRoot
 			}
+			n := norm
+			if c.mintedValues {
+				n = mintedNorm
+			}
 			res := runCommand(t, c, root)
-			recorded := record(c, res, norm)
+			recorded := record(c, res, n)
 			assertNoTempPaths(t, c.name, recorded)
 			checkGolden(t, c, recorded)
 		})
@@ -83,7 +126,8 @@ func TestCommandGolden(t *testing.T) {
 }
 
 // commandCases is the whole recorded set.
-func commandCases(emptyStore, project string) []cmdCase {
+func commandCases(t *testing.T, emptyStore, project string, audit *auditFixture) []cmdCase {
+	t.Helper()
 	gomod := filepath.Join(project, "go.mod")
 	// Two offline postures, and the difference between them is deliberate.
 	//
@@ -105,7 +149,9 @@ func commandCases(emptyStore, project string) []cmdCase {
 	cases = append(cases, contextCases(emptyStore)...)
 	cases = append(cases, reachabilityCases(emptyStore)...)
 	cases = append(cases, vulnShowHistoryCases(emptyStore)...)
-	cases = append(cases, auditCases(gomod, project, unroutable)...)
+	cases = append(cases, callGraphShowCases(emptyStore)...)
+	cases = append(cases, composedReadCases(emptyStore)...)
+	cases = append(cases, auditCases(t, gomod, project, unroutable, audit)...)
 	return cases
 }
 
@@ -269,12 +315,254 @@ func vulnShowHistoryCases(emptyStore string) []cmdCase {
 	}
 }
 
-// auditCases cover the two audit paths that are answerable without deriving a
-// walk and a scan. The populated path is NOT recorded — it runs a live walk and
-// a live vulnerability scan, and its output carries generated ULIDs, the
-// operator's username and wall-clock durations. See COVERAGE.md.
-func auditCases(gomod, project string, unroutable map[string]string) []cmdCase {
+// callGraphShowCases cover the read where MULTI-GENERATION composition is
+// visible. The fixture coordinate holds two generations at different
+// completeness levels, and the weaker one was written last: composition serves
+// the highest completeness before the most recent, so the served marker in the
+// history listing is what a change to that ladder moves.
+//
+// The graph digest on each history row is derived from the record's hashed
+// shape with the measurement time blanked. That makes it deterministic under
+// the pinned clock, and it also means a change to the call-graph record's shape
+// moves these files. That is correct: it is a change to what the answer is. Do
+// not read a moved digest as timestamp noise.
+func callGraphShowCases(emptyStore string) []cmdCase {
 	return []cmdCase{
+		{
+			name: "callgraph_show_history_text_populated",
+			args: []string{"callgraph-show", "example.com/mod@v1.2.0", "--history"},
+			why: "populated: TWO generations of one coordinate at different completeness levels, the " +
+				"weaker written last. The * marks the generation the composed read serves, which must be " +
+				"the built graph and not the newest one.",
+		},
+		{
+			name: "callgraph_show_json_populated",
+			args: []string{"callgraph-show", "example.com/mod@v1.2.0", "--json"},
+			why: "populated, --json: the COMPOSED answer, carrying completeness and analysis_source " +
+				"unconditionally — an absent value is itself the answer and has to be visible as one.",
+		},
+		{
+			name: "callgraph_show_text_populated",
+			args: []string{"callgraph-show", "example.com/mod@v1.2.0"},
+			why:  "populated, text: the composed record with its fidelity line.",
+		},
+		{
+			name: "callgraph_show_history_text_absent",
+			args: []string{"callgraph-show", "example.com/absent@v9.9.9", "--history"},
+			why:  "empty: no generation at any completeness for this coordinate.",
+		},
+		{
+			name: "callgraph_show_json_source_scoped_empty",
+			args: []string{"callgraph-show", "example.com/mod@v1.2.0", "--source", "worktree", "--json"},
+			why: "empty, scoped: the ledger holds generations for this coordinate but none from the " +
+				"worktree. The refusal must name the source rather than report the module unknown.",
+		},
+		{
+			name:      "callgraph_show_json_store_missing",
+			args:      []string{"callgraph-show", "example.com/mod@v1.2.0", "--json"},
+			storeRoot: emptyStore,
+			why:       "error-shaped: there is no store to read a generation from.",
+		},
+	}
+}
+
+// composedReadCases cover the reads that build one answer out of SEVERAL stored
+// records. They are grouped because that is what they have in common and why
+// they were chosen ahead of easier surfaces: a single-record read changes shape
+// only when its own struct changes, whereas a composed read changes when the
+// rule for combining records changes — and that rule can move without any
+// struct moving, which is the change a golden is uniquely able to see.
+func composedReadCases(emptyStore string) []cmdCase {
+	return []cmdCase{
+		// vuln-scan-show renders a run from the records it PINNED, not from
+		// whatever the coordinate holds now. The two fixture runs differ in
+		// snapshot and in module set, so a change to that resolution moves one
+		// of these files rather than both.
+		{
+			name: "vuln_scan_show_json_populated",
+			args: []string{"vuln-scan-show", fixtureScanRunID2, "--json"},
+			why: "populated: the later run, which pinned three modules against the second snapshot — " +
+				"one affected, one clean, one unscannable.",
+		},
+		{
+			name: "vuln_scan_show_text_populated",
+			args: []string{"vuln-scan-show", fixtureScanRunID2},
+			why:  "populated, text: the same run on the human channel.",
+		},
+		{
+			name: "vuln_scan_show_json_earlier_run",
+			args: []string{"vuln-scan-show", fixtureScanRunID, "--json"},
+			why: "the CONTROL for the run above: the earlier run pinned ONE module against the first " +
+				"snapshot. A composition that served the coordinate's current records instead of the " +
+				"ones this run pinned would make the two runs agree.",
+		},
+		{
+			name: "vuln_scan_show_json_absent",
+			args: []string{"vuln-scan-show", "01JSCANRUN0ABSENT00000001", "--json"},
+			why:  "empty: no run with this identifier.",
+		},
+		{
+			name:      "vuln_scan_show_json_store_missing",
+			args:      []string{"vuln-scan-show", fixtureScanRunID2, "--json"},
+			storeRoot: emptyStore,
+			why:       "error-shaped: there is no store to resolve the run in.",
+		},
+
+		// vuln-scan-diff composes TWO runs. A fixture with one run per walk can
+		// express no diff at all.
+		{
+			name: "vuln_scan_diff_json_populated",
+			args: []string{"vuln-scan-diff", fixtureScanRunID, fixtureScanRunID2, "--json"},
+			why: "populated: two runs of one walk against two snapshots. Modules enter the scanned set " +
+				"and an advisory appears, so both axes of the diff carry a value.",
+		},
+		{
+			name: "vuln_scan_diff_text_populated",
+			args: []string{"vuln-scan-diff", fixtureScanRunID, fixtureScanRunID2},
+			why:  "populated, text: the same comparison on the human channel.",
+		},
+		{
+			name: "vuln_scan_diff_json_same_run",
+			args: []string{"vuln-scan-diff", fixtureScanRunID2, fixtureScanRunID2, "--json"},
+			why: "the ZERO paired with the populated diff above: a run compared with itself must report " +
+				"no change. Without it a diff that reported everything as changed would still look right.",
+		},
+		{
+			name: "vuln_scan_history_json_populated",
+			args: []string{"vuln-scan-history", fixtureWalkID, "--json"},
+			why:  "populated: every run of one walk, in order, which is where the snapshot axis is visible.",
+		},
+		{
+			name: "vuln_scan_list_json_populated",
+			args: []string{"vuln-scan-list", "--json"},
+			why:  "populated: the runs the store holds, across walks.",
+		},
+
+		// walk-diff composes two walk records. The second fixture walk drops a
+		// module and moves another, so the diff has both a removal and a change.
+		{
+			name: "walk_diff_json_populated",
+			args: []string{"walk-diff", fixtureWalkID, fixtureWalkID2, "--json"},
+			why: "populated: two walks of one target. One module leaves the graph and another moves " +
+				"version, so the added/removed/changed axes are not all empty.",
+		},
+		{
+			name: "walk_diff_text_populated",
+			args: []string{"walk-diff", fixtureWalkID, fixtureWalkID2},
+			why:  "populated, text: the same comparison on the human channel.",
+		},
+		{
+			name: "walk_diff_json_same_walk",
+			args: []string{"walk-diff", fixtureWalkID, fixtureWalkID, "--json"},
+			why:  "the ZERO for walk-diff: a walk compared with itself reports nothing changed.",
+		},
+		{
+			name:      "walk_diff_json_store_missing",
+			args:      []string{"walk-diff", fixtureWalkID, fixtureWalkID2, "--json"},
+			storeRoot: emptyStore,
+			why:       "error-shaped: neither walk can be read.",
+		},
+		{
+			name: "walk_show_json_populated",
+			args: []string{"walk-show", fixtureWalkID, "--json"},
+			why:  "populated: the whole sealed walk record, which every composed read above is scoped by.",
+		},
+		{
+			name: "walk_list_json_populated",
+			args: []string{"walk-list", "--json"},
+			why:  "populated: both walks, which is what makes the diff above addressable.",
+		},
+
+		// license-compat composes a licence per module across a walk's closure.
+		// One module in the closure has no licence record at all, so the
+		// unresolved half of that answer is exercised rather than avoided.
+		{
+			name: "license_compat_json_populated",
+			args: []string{"license-compat", "example.com/app@v1.0.0", "--walk-id", fixtureWalkID, "--json"},
+			why: "populated: a closure holding TWO DIFFERENT detected licences plus a module with no " +
+				"licence record at all, so the compatible pair and the undetermined module are both " +
+				"judged. A closure of one licence repeated composes to the same answer under any rule.",
+		},
+		{
+			name: "license_compat_text_populated",
+			args: []string{"license-compat", "example.com/app@v1.0.0", "--walk-id", fixtureWalkID},
+			why:  "populated, text: the same closure on the human channel.",
+		},
+		{
+			name: "license_compat_text_ambiguous_walk",
+			args: []string{"license-compat", "example.com/app@v1.0.0"},
+			why: "the UNPINNED read: the store holds two walks of this target, so the command must say " +
+				"which one it chose and why before it answers. Naming no walk is what an operator does.",
+		},
+		{
+			name: "license_compat_json_absent",
+			args: []string{"license-compat", "example.com/absent@v9.9.9", "--json"},
+			why:  "empty: no walk is stored for this coordinate, so there is no closure to judge.",
+		},
+
+		// vuln-by-id composes across coordinates rather than within one.
+		{
+			name: "vuln_by_id_json_populated",
+			args: []string{"vuln-by-id", "GO-2026-0001", "--json"},
+			why:  "populated: every coordinate a single advisory reaches, ranked by finding.",
+		},
+		{
+			name: "vuln_by_id_json_withdrawn",
+			args: []string{"vuln-by-id", "GO-2026-0002", "--json"},
+			why: "the RETRACTED advisory: it is carried by a record and must still be answerable, with " +
+				"its retraction stated rather than the coordinate reported clean.",
+		},
+		{
+			name: "vuln_by_id_json_absent",
+			args: []string{"vuln-by-id", "GO-2099-9999", "--json"},
+			why:  "empty: no stored record carries this advisory.",
+		},
+
+		{
+			name: "verification_coverage_json_populated",
+			args: []string{"verification-coverage", fixtureWalkID, "--json"},
+			why: "populated: the walk's verification aggregate, composed from one fetch record per node " +
+				"— including the go.mod-only module, which has no zip to verify.",
+		},
+		{
+			name: "dependents_json_populated",
+			args: []string{"dependents", "example.com/shallow@v1.0.0", "--json"},
+			why:  "populated: which modules in a stored walk depend on this one, read off the graph edges.",
+		},
+	}
+}
+
+// auditCases cover audit: the surface this whole detector exists for, and the
+// one phase one could not record.
+//
+// The populated cases run the WHOLE derivation — a real walk, a real licence
+// extraction, a real vulnerability scan — against the fixture module cache and
+// the fixture advisory database, with GOPROXY=off. Nothing is projected: every
+// key audit emits is in the golden, so a field added to the audit row moves one
+// of these files. See auditfixture_test.go for how that is made hermetic.
+func auditCases(t *testing.T, gomod, project string, unroutable map[string]string, audit *auditFixture) []cmdCase {
+	t.Helper()
+	populated := func(name, why string, args ...string) cmdCase {
+		return cmdCase{
+			name:         name,
+			args:         args,
+			env:          audit.env(),
+			storeRoot:    audit.newStore(t),
+			mintedValues: true,
+			why:          why,
+		}
+	}
+	return []cmdCase{
+		populated("audit_json_populated",
+			"POPULATED: the whole derivation, offline. Two dependencies plus the standard library, "+
+				"one affected by the fixture advisory and one clean, one staleness row served from the "+
+				"ledger and one unmeasured. Every key the audit row emits is recorded here, so adding a "+
+				"field to that row moves this file.",
+			"audit", "--gomod", audit.gomod(), "--from-modcache="+audit.modcache, "--json"),
+		populated("audit_text_populated",
+			"populated, text: the same audit on the human channel, where the table and the stderr "+
+				"basis lines are the interface rather than the array.",
+			"audit", "--gomod", audit.gomod(), "--from-modcache="+audit.modcache),
 		{
 			name: "audit_json_empty_scope",
 			args: []string{"audit", "--gomod", gomod, "--json"},

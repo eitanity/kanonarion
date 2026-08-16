@@ -1,0 +1,30 @@
+# populated: both walks, which is what makes the diff above addressable.
+$ kanonarion walk-list --json
+exit 0
+--- stdout ---
+[
+  {
+    "id": "01ARZ3NDEKTSV4RRFFQ69G5FAW",
+    "target": "example.com/app@v1.0.0",
+    "scope": "code",
+    "depth": "full",
+    "started_at": "2026-01-17T08:00:00Z",
+    "completed_at": "2026-01-17T08:00:01Z",
+    "overall_status": "succeeded",
+    "node_count": 3,
+    "failure_count": 0
+  },
+  {
+    "id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+    "target": "example.com/app@v1.0.0",
+    "scope": "code",
+    "depth": "full",
+    "started_at": "2026-01-15T08:00:00Z",
+    "completed_at": "2026-01-15T08:00:01Z",
+    "overall_status": "succeeded",
+    "node_count": 4,
+    "failure_count": 0
+  }
+]
+--- stderr ---
+{"truncated":false,"limit":20,"subject":"walk records","remedy":"--limit 0","offset":0,"next_offset":20}

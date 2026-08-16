@@ -29,6 +29,11 @@ package golden_test
 //   5. example.com/quiet@v0.9.0 has NO publication date in the staleness
 //      ledger. That is the exact shape that regressed unseen, and the fixture
 //      exercises the zero rather than avoiding it.
+//   6. example.com/mod@v1.2.0 holds TWO call-graph generations at DIFFERENT
+//      completeness levels, the weaker one written last. The composed read must
+//      serve the built graph rather than the newest one, and a store with one
+//      generation per coordinate composes to the same answer before and after a
+//      change to that ladder.
 
 import (
 	"archive/zip"
@@ -83,7 +88,12 @@ var (
 )
 
 const (
-	fixtureWalkID     = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+	fixtureWalkID = "01ARZ3NDEKTSV4RRFFQ69G5FAV"
+	// fixtureWalkID2 names a SECOND walk of the same target: one module dropped
+	// out of the graph and another moved version. It exists so walk-diff has two
+	// records to compose rather than one record compared with itself, which is
+	// the only comparison a single-walk fixture can express.
+	fixtureWalkID2    = "01ARZ3NDEKTSV4RRFFQ69G5FAW"
 	fixtureScanRunID  = "01JSCANRUN0GOLDEN00000001"
 	fixtureScanRunID2 = "01JSCANRUN0GOLDEN00000002"
 	// fixtureSnapshotBody stands in for the advisory database bytes. It is
@@ -262,7 +272,7 @@ func buildFixtureStore(t *testing.T) string {
 	shallow := fixtureShallow(t)
 	clean := fixtureClean(t)
 
-	seedFetch(t, facts, blobs, app, "app", fixtureWalkAt)
+	appIdentity := seedFetch(t, facts, blobs, app, "app", fixtureWalkAt)
 	cleanIdentity := seedFetch(t, facts, blobs, clean, "clean", fixtureWalkAt)
 	// TWO measurements of one version, re-fetched to different bytes.
 	firstIdentity := seedFetch(t, facts, blobs, mod, "first", fixtureWalkAt)
@@ -270,9 +280,29 @@ func buildFixtureStore(t *testing.T) string {
 	seedGoModOnly(t, facts, shallow)
 
 	seedFixtureWalk(t, walksqlite.New(db), app, mod, shallow, clean)
-	seedFixtureLicense(t, licsqlite.New(db), mod, firstIdentity)
-	seedFixtureLicense(t, licsqlite.New(db), clean, cleanIdentity)
-	seedFixtureCallGraph(t, cgsqlite.New(db), mod, firstIdentity)
+	seedFixtureWalk2(t, walksqlite.New(db), app, clean)
+	// The ROOT carries a licence too. license-compat judges a closure against
+	// the root's own licence and refuses without one, so a fixture that licensed
+	// only the dependencies could record that refusal and nothing else.
+	seedFixtureLicense(t, licsqlite.New(db), app, appIdentity, "MIT")
+	seedFixtureLicense(t, licsqlite.New(db), mod, firstIdentity, "MIT")
+	seedFixtureLicense(t, licsqlite.New(db), clean, cleanIdentity, "Apache-2.0")
+	// TWO call-graph generations of one coordinate, at DIFFERENT completeness
+	// levels, and the weaker one is written LAST. Composition serves the highest
+	// completeness before the most recent, so a store where the newest record is
+	// also the best one cannot tell the two rules apart — this ordering is what
+	// makes `callgraph-show --history` mark the built graph rather than the
+	// latest one, and what makes a change to that ladder show as a diff.
+	//
+	// Both generations pin the SAME artefact deliberately. Two generations of
+	// one version that read different bytes are a divergence, and composition
+	// refuses to pick between them rather than ranking them — so pinning the
+	// re-fetched identity here would have recorded that refusal and left the
+	// completeness ladder, which is what this fixture exists for, untested.
+	seedFixtureCallGraph(t, cgsqlite.New(db), mod, firstIdentity,
+		cgdomain.CompletenessBuiltWithBodies, fixtureWalkAt, true)
+	seedFixtureCallGraph(t, cgsqlite.New(db), mod, firstIdentity,
+		cgdomain.CompletenessMetadataOnly, fixtureWalkAt.Add(24*time.Hour), false)
 	seedFixtureVuln(t, vulnsqlite.New(db), mod, shallow, clean)
 	seedFixtureStaleness(t, stalesqlite.New(db))
 
@@ -321,17 +351,65 @@ func seedFixtureWalk(t *testing.T, store *walksqlite.Store, app, mod, shallow, c
 	}
 }
 
-func seedFixtureLicense(t *testing.T, store *licsqlite.Store, mod coordinate.ModuleCoordinate, identity fetchports.BlobIdentity) {
+// seedFixtureWalk2 files the second walk of the same target: example.com/mod is
+// gone from the graph and example.com/shallow has moved to v1.1.0. It gives
+// walk-diff a real pair — a removal and a version change — instead of a record
+// diffed against itself.
+func seedFixtureWalk2(t *testing.T, store *walksqlite.Store, app, clean coordinate.ModuleCoordinate) {
+	t.Helper()
+	shallowNext := fixtureCoord(t, "example.com/shallow", "v1.1.0")
+	graph := walkdomain.Graph{
+		Target: app,
+		Nodes: []walkdomain.GraphNode{
+			{Coordinate: app, ResolutionSource: walkdomain.ResolutionTarget},
+			{Coordinate: shallowNext, DirectDependency: true, ResolutionSource: walkdomain.ResolutionMVS},
+			{Coordinate: clean, DirectDependency: true, ResolutionSource: walkdomain.ResolutionMVS},
+		},
+		Edges: []walkdomain.GraphEdge{
+			{From: app, To: shallowNext, ConstraintVersion: "v1.1.0"},
+			{From: app, To: clean, ConstraintVersion: "v1.0.0"},
+		},
+		ResolvedAt:      fixtureWalkAt.Add(48 * time.Hour),
+		PipelineVersion: "1.0.0",
+	}
+	outcome := walkdomain.WalkOutcome{
+		Target: app,
+		Graph:  graph,
+		PerNodeResults: map[coordinate.ModuleCoordinate]walkdomain.NodeResult{
+			app:         {Coordinate: app, Status: walkdomain.NodeSucceeded, DurationMs: 10},
+			shallowNext: {Coordinate: shallowNext, Status: walkdomain.NodeSucceeded, DurationMs: 3},
+			clean:       {Coordinate: clean, Status: walkdomain.NodeSucceeded, DurationMs: 4},
+		},
+		StartedAt:     fixtureWalkAt.Add(48 * time.Hour),
+		CompletedAt:   fixtureWalkAt.Add(48*time.Hour + time.Second),
+		OverallStatus: walkdomain.WalkSucceeded,
+	}
+	rec := walkdomain.NewWalkRecord(fixtureWalkID2, "fixture", "1.0.0",
+		walkdomain.WalkScopeCode, walkdomain.WalkDepthFull, outcome, walkdomain.DefaultDepthPolicy(), "")
+	rec, err := walkdomain.WalkRecordHasher{}.SetContentHash(rec)
+	if err != nil {
+		t.Fatalf("sealing the second fixture walk: %v", err)
+	}
+	if err := store.PutWalk(context.Background(), rec); err != nil {
+		t.Fatalf("filing the second fixture walk: %v", err)
+	}
+}
+
+// seedFixtureLicense files one licence record. spdx is a parameter because a
+// closure in which every module carries the same licence cannot express a
+// compatibility judgment: the pairs a compatibility read composes are all
+// identical, so a change to how it composes them moves nothing.
+func seedFixtureLicense(t *testing.T, store *licsqlite.Store, mod coordinate.ModuleCoordinate, identity fetchports.BlobIdentity, spdx string) {
 	t.Helper()
 	rec := licdomain.LicenseRecord{
 		SchemaVersion:     licdomain.LicenseSchemaVersion,
 		Ecosystem:         fetchdomain.EcosystemGo,
 		Coordinate:        mod,
-		PrimarySPDX:       "MIT",
+		PrimarySPDX:       spdx,
 		PrimaryConfidence: 1.0,
 		OverallStatus:     licdomain.LicenseStatusDetected,
 		LicenseFiles: []licdomain.LicenseFileEntry{
-			{Path: "LICENSE", SPDX: "MIT", Confidence: 1.0, FileHash: "sha256:" + strings.Repeat("a", 64), FileSize: 1024},
+			{Path: "LICENSE", SPDX: spdx, Confidence: 1.0, FileHash: "sha256:" + strings.Repeat("a", 64), FileSize: 1024},
 		},
 		ExtractedAt:      fixtureWalkAt,
 		PipelineVersion:  licapp.PipelineVersion,
@@ -347,7 +425,19 @@ func seedFixtureLicense(t *testing.T, store *licsqlite.Store, mod coordinate.Mod
 	}
 }
 
-func seedFixtureCallGraph(t *testing.T, store *cgsqlite.Store, mod coordinate.ModuleCoordinate, identity fetchports.BlobIdentity) {
+// seedFixtureCallGraph files one call-graph generation for mod. completeness and
+// extractedAt make each generation distinguishable; withEdges is false for the
+// metadata-only generation, which records the symbols a module declares without
+// having read a function body, so it has nodes and no edges.
+func seedFixtureCallGraph(
+	t *testing.T,
+	store *cgsqlite.Store,
+	mod coordinate.ModuleCoordinate,
+	identity fetchports.BlobIdentity,
+	completeness cgdomain.CompletenessLevel,
+	extractedAt time.Time,
+	withEdges bool,
+) {
 	t.Helper()
 	rec := cgdomain.CallGraphRecord{
 		SchemaVersion:  cgdomain.CallGraphSchemaVersion,
@@ -361,16 +451,18 @@ func seedFixtureCallGraph(t *testing.T, store *cgsqlite.Store, mod coordinate.Mo
 			{ID: "example.com/mod.Handle", Package: "example.com/mod", Symbol: "Handle", IsExportedAPI: true},
 			{ID: "example.com/mod.Parse", Package: "example.com/mod", Symbol: "Parse", IsExportedAPI: true},
 		},
-		Edges: []cgdomain.CallEdge{
-			{FromID: "example.com/mod.Handle", ToID: "example.com/mod.Parse", Confidence: cgdomain.ConfidenceDirect},
-		},
 		NodeCount:        2,
-		EdgeCount:        1,
-		ExtractedAt:      fixtureWalkAt,
+		ExtractedAt:      extractedAt,
 		PipelineVersion:  cgapp.PipelineVersion,
-		Completeness:     cgdomain.CompletenessBuiltWithBodies,
+		Completeness:     completeness,
 		AnalysisSource:   cgdomain.AnalysisSourceModuleZip,
 		ArtefactIdentity: identity.String(),
+	}
+	if withEdges {
+		rec.Edges = []cgdomain.CallEdge{
+			{FromID: "example.com/mod.Handle", ToID: "example.com/mod.Parse", Confidence: cgdomain.ConfidenceDirect},
+		}
+		rec.EdgeCount = 1
 	}
 	sealed, err := cgdomain.CallGraphRecordHasher{}.SetContentHash(rec)
 	if err != nil {

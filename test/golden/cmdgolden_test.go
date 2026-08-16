@@ -30,6 +30,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 
@@ -63,6 +64,12 @@ type cmdCase struct {
 	// so the next reader knows what a diff here means before they reach for
 	// UPDATE_GOLDEN.
 	why string
+	// mintedValues opts this case into the pattern normalisation described by
+	// mintedValuePatterns. It is opt-in rather than global because the fixture
+	// store's own identifiers are FIXED — a case served from records must record
+	// them literally, so that a change to which record answers shows as a diff
+	// rather than being generalised away.
+	mintedValues bool
 }
 
 // runResult is everything one invocation produced.
@@ -129,13 +136,72 @@ func section(s string) string {
 // unread.
 type normaliser struct {
 	replacements [][2]string
+	patterns     []patternReplacement
+}
+
+// patternReplacement replaces a value a run MINTS — an identifier, a version the
+// host supplies — with a stable token.
+//
+// A pattern replaces the value; it never removes the key or the line. That
+// distinction is the whole design: dropping a volatile field from the recording
+// hides the field most likely to change, and a golden that cannot see a field
+// cannot report that it moved. A token keeps the field's presence, its position
+// and its absence all visible, and only the value nobody can pin is generalised.
+type patternReplacement struct {
+	re *regexp.Regexp
+	// stable is what the matched text is replaced with. The field is not called
+	// `token`: gosec's credential heuristic reads a struct field of that name
+	// holding a literal as a hardcoded secret, and a suppression comment would
+	// leave the next reader wondering which of these is the secret.
+	stable string
 }
 
 func (n *normaliser) apply(s string) string {
 	for _, r := range n.replacements {
 		s = strings.ReplaceAll(s, r[0], r[1])
 	}
+	for _, p := range n.patterns {
+		s = p.re.ReplaceAllString(s, p.stable)
+	}
 	return s
+}
+
+// mintedValuePatterns are the values a recorded run produces that no fixture can
+// fix: the identifiers a walk and a scan run are named by, and the Go toolchain
+// the machine happens to hold.
+func mintedValuePatterns() []patternReplacement {
+	return []patternReplacement{
+		{
+			// A ULID: 26 characters of Crockford base32. Walk ids and scan-run
+			// ids are minted per run, so they are the one part of audit's
+			// derivation statement that cannot be a fixture.
+			re:     regexp.MustCompile(`\b[0-7][0-9A-HJKMNP-TV-Z]{25}\b`),
+			stable: "$$ULID",
+		},
+		{
+			// The stdlib coordinate carries the toolchain's own version, which
+			// is a property of the machine and not of the fixture.
+			re:     regexp.MustCompile(`stdlib@v\d+\.\d+(\.\d+)?`),
+			stable: "stdlib@$$GOVERSION",
+		},
+		{
+			re:     regexp.MustCompile(`\bgo1\.\d+(\.\d+)?\b`),
+			stable: "$$GOVERSION",
+		},
+		// A log line's own timestamp, on either handler. The two patterns are
+		// anchored to the handlers' key syntax rather than matching bare
+		// RFC3339, because the recorded payloads carry timestamps of their own
+		// — staleness_looked_up_at among them — and those are answers the
+		// fixture fixes, not values the run mints.
+		{
+			re:     regexp.MustCompile(`"time":"[^"]*"`),
+			stable: `"time":"$$TIME"`,
+		},
+		{
+			re:     regexp.MustCompile(`(^|\s)time=\S+`),
+			stable: "$${1}time=$$TIME",
+		},
+	}
 }
 
 // assertNoTempPaths fails when a recorded output still names a temp directory.

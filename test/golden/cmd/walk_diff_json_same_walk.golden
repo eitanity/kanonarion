@@ -1,0 +1,15 @@
+# the ZERO for walk-diff: a walk compared with itself reports nothing changed.
+$ kanonarion walk-diff 01ARZ3NDEKTSV4RRFFQ69G5FAV 01ARZ3NDEKTSV4RRFFQ69G5FAV --json
+exit 0
+--- stdout ---
+{
+  "walk_a": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "walk_b": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
+  "added": [],
+  "removed": [],
+  "upgraded": [],
+  "license_regressions": [],
+  "new_reachable_cves": []
+}
+--- stderr ---
+{"statement":"no difference: both arguments name the same walk, so this compared it with itself","walk_a":"01ARZ3NDEKTSV4RRFFQ69G5FAV","walk_b":"01ARZ3NDEKTSV4RRFFQ69G5FAV","frame_a":"unrecorded","frame_b":"unrecorded","nodes_a":4,"nodes_b":4,"same_walk":true}
