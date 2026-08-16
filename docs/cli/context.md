@@ -214,7 +214,7 @@ selection). The list is sorted lexicographically by module path.
 |---|---|---|
 | `status` | string | `not_run` / `read_error` / walk status (`succeeded`, `partial`, `failed`, `cancelled`) |
 | `walk_id` | string | ID of the walk record this was drawn from |
-| `frame` | string | `GOOS/GOARCH` that walk resolved for, or `unrecorded` for a walk taken before the frame was recorded |
+| `frame` | string | `GOOS/GOARCH` that walk resolved for, or `unrecorded` for a module-rooted walk, which resolves none |
 | `count` | int | Number of direct dependencies. Always present; `0` is the measurement that the module has none |
 | `partial` | bool | True when the walk graph was partial - some transitive deps could not be resolved, so the direct dep list may be incomplete. Always present; `false` is the measurement that the graph resolved completely |
 | `dependencies` | array | Direct dependencies sorted by path |

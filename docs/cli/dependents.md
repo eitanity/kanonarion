@@ -36,7 +36,7 @@ N module(s) in walk <id> (frame linux/amd64) depend on <target>:
 ```
 
 `frame` is the `GOOS/GOARCH` the answering walk resolved for, or `unrecorded`
-for a walk taken before the frame was recorded. Without `--walk-id` the answer
+for a module-rooted walk, which resolves no platform. Without `--walk-id` the answer
 comes from the most recent walk containing the target, whatever its platform.
 JSON output carries it as `walk_frame`.
 

@@ -153,7 +153,7 @@ To get module context: kanonarion context --gomod ./go.mod
 ```
 
 `Frame` is the `GOOS/GOARCH` the answering walk resolved for, or `unrecorded`
-for a walk taken before the frame was recorded. `inspect` answers from the most
+for a module-rooted walk, which resolves no platform. `inspect` answers from the most
 recent walk of the target regardless of platform, so on a store holding walks
 for several platforms this line says which one answered. JSON output carries it
 as `walk_frame`.

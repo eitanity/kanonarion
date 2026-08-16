@@ -256,9 +256,10 @@ func printCompatReportJSON(report domain.ClosureCompatibilityReport, walkID, wal
 		TargetSPDX  string `json:"target_spdx"`
 		DataVersion string `json:"data_version"`
 		// WalkID and WalkFrame name the walk this verdict was measured over and
-		// the GOOS/GOARCH it resolved for ("unrecorded" for a walk written before
-		// the frame was projected). Always present: the verdict is about a build,
-		// and a build has a platform.
+		// the GOOS/GOARCH it resolved for ("unrecorded" for a module-rooted walk,
+		// which resolves no platform). Always present: a project walk's verdict is
+		// about one platform's build, and the field states which — or states that
+		// the walk was not platform-scoped.
 		WalkID    string `json:"walk_id"`
 		WalkFrame string `json:"walk_frame"`
 		// WalkSelection says how walk_id was arrived at: "pinned" when the caller

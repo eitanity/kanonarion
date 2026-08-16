@@ -240,7 +240,7 @@ type inspectSummary struct {
 	SnapshotVersion string   `json:"snapshot_version,omitempty"`
 	WalkIDs         []string `json:"walk_ids"`
 	// WalkFrame is the GOOS/GOARCH the answering project walk resolved for, or
-	// "unrecorded" for a walk written before the frame was projected. It is
+	// "unrecorded" for a module-rooted walk, which resolves no platform. It is
 	// always present: a reader cannot tell an unstated frame from a missing one.
 	WalkFrame  string             `json:"walk_frame"`
 	Directives *directivesSection `json:"directives,omitempty"`

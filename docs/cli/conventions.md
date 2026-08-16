@@ -119,7 +119,7 @@ Walk ID:  01KQDBVW092ER1HNXZ60X27CMD
 Frame:    linux/amd64
 ```
 
-A walk taken before the frame was recorded reads `unrecorded`. JSON output
+A module-rooted walk resolves no platform and reads `unrecorded`. JSON output
 carries the same value in a `frame` / `walk_frame` field.
 
 ---

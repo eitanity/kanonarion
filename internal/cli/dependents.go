@@ -211,7 +211,7 @@ func walkDependents(rec walkdomain.WalkRecord, coord coordinate.ModuleCoordinate
 type dependentsJSON struct {
 	WalkID string `json:"walk_id"`
 	// WalkFrame is the GOOS/GOARCH the answering walk resolved for, or
-	// "unrecorded" for a walk written before the frame was projected.
+	// "unrecorded" for a module-rooted walk, which resolves no platform.
 	WalkFrame  string               `json:"walk_frame"`
 	Target     string               `json:"target"`
 	Dependents []dependentEntryJSON `json:"dependents"`

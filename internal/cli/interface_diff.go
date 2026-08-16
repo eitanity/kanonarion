@@ -230,9 +230,9 @@ type usedByResult struct {
 	// and the choice is always stated, on both surfaces.
 	choice walkChoice
 	// WalkFrame is the GOOS/GOARCH the answering walk resolved for, or
-	// "unrecorded" for a walk written before the frame was projected. GOOS gates
-	// which files build, so the scope this answer is filtered against is one
-	// platform's build list.
+	// "unrecorded" for a module-rooted walk, which resolves no platform. Where a
+	// platform IS resolved, GOOS gates which files build, so the scope this
+	// answer is filtered against is that one platform's build list.
 	WalkFrame string
 	Consumer  coordinate.ModuleCoordinate
 	// ScopeSize is how many module versions the walk pins.
@@ -930,7 +930,7 @@ type usedByJSON struct {
 	GoMod  string `json:"gomod"`
 	WalkID string `json:"walk_id"`
 	// WalkFrame is the GOOS/GOARCH the answering walk resolved for, or
-	// "unrecorded" for a walk written before the frame was projected.
+	// "unrecorded" for a module-rooted walk, which resolves no platform.
 	WalkFrame string `json:"walk_frame"`
 	// WalkSelection says how walk_id was arrived at. --used-by names a manifest,
 	// never a walk, so the walk is always chosen for the caller: a consumer

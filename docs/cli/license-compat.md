@@ -36,7 +36,7 @@ example.com/myapp@local vs Apache-2.0 (data v1.1.0, walk 01KQDBVW092ER1HNXZ60X27
 ```
 
 JSON output carries the same two values as `walk_id` and `walk_frame`. The
-frame reads `unrecorded` for a walk taken before it was recorded.
+frame reads `unrecorded` for a module-rooted walk, which resolves none.
 
 ### Choosing it
 

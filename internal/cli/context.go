@@ -130,7 +130,7 @@ type contextDependencies struct {
 	Status string `json:"status"`
 	WalkID string `json:"walk_id,omitempty"`
 	// Frame is the GOOS/GOARCH the answering walk resolved for, or "unrecorded"
-	// for a walk written before the frame was projected. Present whenever a walk
+	// for a module-rooted walk, which resolves none. Present whenever a walk
 	// answered: GOOS gates which files build, so a dependency list is a list for
 	// one platform.
 	Frame string `json:"frame,omitempty"`
