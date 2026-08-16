@@ -4,11 +4,11 @@ seedwalk $WORK/stores
 # Walk A has one edge: app (root) -> dep@v1.0.0
 # Without --include-root the walk root is excluded, so no results
 kanonarion dependents example.com/dep@v1.0.0 --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FAV --store-root=$WORK/stores
-stdout 'No modules in walk 01ARZ3NDEKTSV4RRFFQ69G5FAV \(frame unrecorded\) depend on example.com/dep@v1.0.0'
+stdout 'No modules in walk 01ARZ3NDEKTSV4RRFFQ69G5FAV \(frame not-platform-scoped\) depend on example.com/dep@v1.0.0'
 
 # With --include-root the walk root appears annotated as [root]
 kanonarion dependents example.com/dep@v1.0.0 --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FAV --store-root=$WORK/stores --include-root
-stdout '1 module\(s\) in walk 01ARZ3NDEKTSV4RRFFQ69G5FAV \(frame unrecorded\) depend on example.com/dep@v1.0.0'
+stdout '1 module\(s\) in walk 01ARZ3NDEKTSV4RRFFQ69G5FAV \(frame not-platform-scoped\) depend on example.com/dep@v1.0.0'
 stdout 'example.com/app@v1.0.0.*\[root\]'
 
 # JSON includes root and direct fields
@@ -21,20 +21,20 @@ stdout '"direct": false'
 
 # --direct-only without --include-root: root excluded, no results
 kanonarion dependents example.com/dep@v1.0.0 --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FAV --store-root=$WORK/stores --direct-only
-stdout 'No direct modules in walk 01ARZ3NDEKTSV4RRFFQ69G5FAV \(frame unrecorded\) depend on example.com/dep@v1.0.0'
+stdout 'No direct modules in walk 01ARZ3NDEKTSV4RRFFQ69G5FAV \(frame not-platform-scoped\) depend on example.com/dep@v1.0.0'
 
 # --direct-only --include-root: root passes the direct filter and shows as [root]
 kanonarion dependents example.com/dep@v1.0.0 --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FAV --store-root=$WORK/stores --direct-only --include-root
-stdout '1 direct module\(s\) in walk 01ARZ3NDEKTSV4RRFFQ69G5FAV \(frame unrecorded\) depend on example.com/dep@v1.0.0'
+stdout '1 direct module\(s\) in walk 01ARZ3NDEKTSV4RRFFQ69G5FAV \(frame not-platform-scoped\) depend on example.com/dep@v1.0.0'
 stdout 'example.com/app@v1.0.0.*\[root\]'
 
 # Walk B: dep upgraded to v1.1.0; dep@v1.0.0 has no dependents in walk B
 kanonarion dependents example.com/dep@v1.0.0 --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FBB --store-root=$WORK/stores --include-root
-stdout 'No modules in walk 01ARZ3NDEKTSV4RRFFQ69G5FBB \(frame unrecorded\) depend on example.com/dep@v1.0.0'
+stdout 'No modules in walk 01ARZ3NDEKTSV4RRFFQ69G5FBB \(frame not-platform-scoped\) depend on example.com/dep@v1.0.0'
 
 # Walk B: dep@v1.1.0 is depended on by the root (app)
 kanonarion dependents example.com/dep@v1.1.0 --walk-id=01ARZ3NDEKTSV4RRFFQ69G5FBB --store-root=$WORK/stores --include-root
-stdout '1 module\(s\) in walk 01ARZ3NDEKTSV4RRFFQ69G5FBB \(frame unrecorded\) depend on example.com/dep@v1.1.0'
+stdout '1 module\(s\) in walk 01ARZ3NDEKTSV4RRFFQ69G5FBB \(frame not-platform-scoped\) depend on example.com/dep@v1.1.0'
 stdout 'example.com/app@v1.0.0.*\[root\]'
 
 # Missing walk ID errors

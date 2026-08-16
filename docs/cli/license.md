@@ -60,9 +60,9 @@ default-frame rule (see [conventions](conventions.md#the-default-walk)), and the
 choice is stated on the line below whenever the store held more than one walk of
 the module.
 
-The frame reads `unrecorded` for a module-rooted walk, which has none. It
-matters because `GOOS` gates which files build, and so which modules the
-closure contains.
+The frame reads `not-platform-scoped` for a module-rooted walk, which has
+none. It matters because `GOOS` gates which files build, and so which modules
+the closure contains.
 
 **Output (default):**
 

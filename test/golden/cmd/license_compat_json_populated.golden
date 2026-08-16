@@ -8,7 +8,8 @@ execute root command: closure has unmodelled license pairs requiring review
   "target_spdx": "MIT",
   "data_version": "1.1.0",
   "walk_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
-  "walk_frame": "unrecorded",
+  "walk_frame": "not-platform-scoped",
+  "walk_frame_basis": "not_platform_scoped",
   "walk_selection": {
     "rule": "pinned",
     "candidates": null

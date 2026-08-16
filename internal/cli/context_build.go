@@ -133,7 +133,8 @@ func buildDependencies(ctx context.Context, coord coordinate.ModuleCoordinate, w
 	return contextDependencies{
 		Status:           rec.OverallStatus.String(),
 		WalkID:           rec.ID,
-		Frame:            rec.Graph.BuildEnv.Frame(),
+		Frame:            rec.Graph.Frame().Text,
+		FrameBasis:       string(rec.Graph.Frame().Basis),
 		Count:            len(deps),
 		Partial:          rec.Graph.Partial,
 		Dependencies:     deps,

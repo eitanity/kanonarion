@@ -4,7 +4,8 @@ exit 0
 --- stdout ---
 {
   "walk_id": "01ARZ3NDEKTSV4RRFFQ69G5FAV",
-  "walk_frame": "unrecorded",
+  "walk_frame": "not-platform-scoped",
+  "walk_frame_basis": "not_platform_scoped",
   "target": "example.com/shallow@v1.0.0",
   "dependents": [
     {

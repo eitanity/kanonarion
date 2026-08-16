@@ -938,10 +938,10 @@ func runVulnScanByModule(ctx context.Context, f vulnScanFlags, stdout, stderr io
 	}
 
 	walkID := summaries[0].ID
-	// A module-rooted walk carries no frame, so this is "unrecorded" in practice.
-	// It is stated anyway: the reader must be able to tell an unstated frame from
-	// a missing one, and a scan of a frameless walk is a real caveat on its
-	// reachability answer.
+	// A module-rooted walk carries no frame, so this reads
+	// "not-platform-scoped" in practice. It is stated anyway: the reader must be
+	// able to tell a frame that does not apply from one that is missing, and a
+	// scan of a frameless walk is a real caveat on its reachability answer.
 	_, _ = fmt.Fprintf(progressWriter(stderr, f.noProgress), "scanning walk %s rooted at %s (frame %s)\n",
 		walkID, f.moduleCoord, summaries[0].BuildFrame())
 	logger.Debug("vuln-scan: resolved module to walk", "module", f.moduleCoord, "walk_id", walkID, "build_frame", summaries[0].BuildFrame())

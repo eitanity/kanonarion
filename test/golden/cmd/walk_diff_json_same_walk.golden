@@ -12,4 +12,4 @@ exit 0
   "new_reachable_cves": []
 }
 --- stderr ---
-{"statement":"no difference: both arguments name the same walk, so this compared it with itself","walk_a":"01ARZ3NDEKTSV4RRFFQ69G5FAV","walk_b":"01ARZ3NDEKTSV4RRFFQ69G5FAV","frame_a":"unrecorded","frame_b":"unrecorded","nodes_a":4,"nodes_b":4,"same_walk":true}
+{"statement":"no difference: both arguments name the same walk, so this compared it with itself","walk_a":"01ARZ3NDEKTSV4RRFFQ69G5FAV","walk_b":"01ARZ3NDEKTSV4RRFFQ69G5FAV","frame_a":"not-platform-scoped","frame_a_basis":"not_platform_scoped","frame_b":"not-platform-scoped","frame_b_basis":"not_platform_scoped","nodes_a":4,"nodes_b":4,"same_walk":true}

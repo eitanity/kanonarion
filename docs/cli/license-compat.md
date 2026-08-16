@@ -35,8 +35,9 @@ abstract:
 example.com/myapp@local vs Apache-2.0 (data v1.1.0, walk 01KQDBVW092ER1HNXZ60X27CMD, frame linux/amd64):
 ```
 
-JSON output carries the same two values as `walk_id` and `walk_frame`. The
-frame reads `unrecorded` for a module-rooted walk, which resolves none.
+JSON carries the same values as `walk_id`, `walk_frame` and
+`walk_frame_basis`. The frame reads `not-platform-scoped` for a module-rooted
+walk, which resolves none.
 
 ### Choosing it
 

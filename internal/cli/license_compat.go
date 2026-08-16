@@ -14,6 +14,7 @@ import (
 
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	"github.com/eitanity/kanonarion/internal/license/domain"
+	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
 	walkports "github.com/eitanity/kanonarion/internal/walk/ports"
 	"github.com/spf13/cobra"
 )
@@ -137,7 +138,7 @@ func licenseCompatWith(ctx context.Context, ctr *Container, coord coordinate.Mod
 		selection = choice.selection()
 	}
 	walkID = choice.summary.ID
-	walkFrame := choice.summary.BuildFrame()
+	walkFrame := choice.summary.Frame()
 
 	// license_overrides entries are the operator's recorded decisions —
 	// corrections and dual-licence elections — and must reach the engine so a
@@ -210,7 +211,7 @@ func licenseCompatWith(ctx context.Context, ctr *Container, coord coordinate.Mod
 	return compatExitCode(report)
 }
 
-func printCompatReportJSON(report domain.ClosureCompatibilityReport, walkID, walkFrame string, selection selectionJSON, caveat *preModulesCaveatJSON, stdout io.Writer) error {
+func printCompatReportJSON(report domain.ClosureCompatibilityReport, walkID string, walkFrame walkdomain.WalkFrame, selection selectionJSON, caveat *preModulesCaveatJSON, stdout io.Writer) error {
 	type conflictJSON struct {
 		Module  string `json:"module"`
 		Version string `json:"version"`
@@ -256,12 +257,14 @@ func printCompatReportJSON(report domain.ClosureCompatibilityReport, walkID, wal
 		TargetSPDX  string `json:"target_spdx"`
 		DataVersion string `json:"data_version"`
 		// WalkID and WalkFrame name the walk this verdict was measured over and
-		// the GOOS/GOARCH it resolved for ("unrecorded" for a module-rooted walk,
-		// which resolves no platform). Always present: a project walk's verdict is
-		// about one platform's build, and the field states which — or states that
-		// the walk was not platform-scoped.
-		WalkID    string `json:"walk_id"`
-		WalkFrame string `json:"walk_frame"`
+		// the GOOS/GOARCH it resolved for, with WalkFrameBasis the same fact as
+		// data: "platform", "not_platform_scoped" for a module-rooted walk (no
+		// platform applies), or "unrecorded" (the platform is not known). Always
+		// present: a project walk's verdict is about one platform's build, and the
+		// fields state which — or state that the walk was not platform-scoped.
+		WalkID         string `json:"walk_id"`
+		WalkFrame      string `json:"walk_frame"`
+		WalkFrameBasis string `json:"walk_frame_basis"`
 		// WalkSelection says how walk_id was arrived at: "pinned" when the caller
 		// named it, otherwise the rule that picked it and what that rule had to
 		// work with. A consumer reading walk_id has to be able to tell an id it
@@ -289,7 +292,8 @@ func printCompatReportJSON(report domain.ClosureCompatibilityReport, walkID, wal
 		TargetSPDX:       report.TargetSPDX,
 		DataVersion:      report.DataVersion,
 		WalkID:           walkID,
-		WalkFrame:        walkFrame,
+		WalkFrame:        walkFrame.Text,
+		WalkFrameBasis:   string(walkFrame.Basis),
 		WalkSelection:    selection,
 		TargetModelled:   report.TargetModelled,
 		Clean:            report.Clean,
@@ -401,7 +405,7 @@ func printCompatCoverage(report domain.ClosureCompatibilityReport, stdout io.Wri
 	}
 }
 
-func printCompatReportText(report domain.ClosureCompatibilityReport, root coordinate.ModuleCoordinate, walkID, walkFrame string, stdout io.Writer) {
+func printCompatReportText(report domain.ClosureCompatibilityReport, root coordinate.ModuleCoordinate, walkID string, walkFrame walkdomain.WalkFrame, stdout io.Writer) {
 	if report.Clean {
 		_, _ = fmt.Fprintf(stdout, "%s: closure is compatible with %s (data v%s, walk %s, frame %s)\n",
 			root, report.TargetSPDX, report.DataVersion, walkID, walkFrame)

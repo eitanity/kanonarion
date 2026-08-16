@@ -4,8 +4,8 @@ exit 2
 --- error ---
 execute root command: closure has unmodelled license pairs requiring review
 --- stdout ---
-notice: no walk was named and the store holds 2 for this target, so one was chosen: walk "01ARZ3NDEKTSV4RRFFQ69G5FAW" (frame unrecorded), the most recent — their recorded resolutions could not be compared against a manifest (walk 01ARZ3NDEKTSV4RRFFQ69G5FAW records no project directory, so it names no manifest to compare against); pin one with --walk-id (kanonarion walk-list --target example.com/app@v1.0.0 lists them)
-example.com/app@v1.0.0 vs MIT (data v1.1.0, walk 01ARZ3NDEKTSV4RRFFQ69G5FAW, frame unrecorded):
+notice: no walk was named and the store holds 2 for this target, so one was chosen: walk "01ARZ3NDEKTSV4RRFFQ69G5FAW" (frame not-platform-scoped), the most recent — their recorded resolutions could not be compared against a manifest (walk 01ARZ3NDEKTSV4RRFFQ69G5FAW records no project directory, so it names no manifest to compare against); pin one with --walk-id (kanonarion walk-list --target example.com/app@v1.0.0 lists them)
+example.com/app@v1.0.0 vs MIT (data v1.1.0, walk 01ARZ3NDEKTSV4RRFFQ69G5FAW, frame not-platform-scoped):
 
 Requires review — unmodelled license pair (1):
   example.com/shallow@v1.1.0                              (no licence record)

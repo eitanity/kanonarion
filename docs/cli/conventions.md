@@ -119,8 +119,10 @@ Walk ID:  01KQDBVW092ER1HNXZ60X27CMD
 Frame:    linux/amd64
 ```
 
-A module-rooted walk resolves no platform and reads `unrecorded`. JSON output
-carries the same value in a `frame` / `walk_frame` field.
+A module-rooted walk resolves no platform and reads `not-platform-scoped`; an
+unknown platform reads `unrecorded`. JSON carries the token in `frame` /
+`walk_frame` and the basis (`platform`, `not_platform_scoped`, `unrecorded`)
+in `frame_basis` / `walk_frame_basis`.
 
 ---
 

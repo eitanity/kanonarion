@@ -4,7 +4,7 @@ exit 2
 --- error ---
 execute root command: closure has unmodelled license pairs requiring review
 --- stdout ---
-example.com/app@v1.0.0 vs MIT (data v1.1.0, walk 01ARZ3NDEKTSV4RRFFQ69G5FAV, frame unrecorded):
+example.com/app@v1.0.0 vs MIT (data v1.1.0, walk 01ARZ3NDEKTSV4RRFFQ69G5FAV, frame not-platform-scoped):
 
 Requires review — unmodelled license pair (1):
   example.com/shallow@v1.0.0                              (no licence record)

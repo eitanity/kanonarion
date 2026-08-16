@@ -129,11 +129,14 @@ type contextDependency struct {
 type contextDependencies struct {
 	Status string `json:"status"`
 	WalkID string `json:"walk_id,omitempty"`
-	// Frame is the GOOS/GOARCH the answering walk resolved for, or "unrecorded"
-	// for a module-rooted walk, which resolves none. Present whenever a walk
-	// answered: GOOS gates which files build, so a dependency list is a list for
-	// one platform.
-	Frame string `json:"frame,omitempty"`
+	// Frame is the GOOS/GOARCH the answering walk resolved for, or a token
+	// standing for the reason there is none, and FrameBasis is that reason as
+	// data: "platform", "not_platform_scoped" for a module-rooted walk (no
+	// platform applies), or "unrecorded" (the platform is not known). Both are
+	// present whenever a walk answered: GOOS gates which files build, so a
+	// dependency list for a project is a list for one platform.
+	Frame      string `json:"frame,omitempty"`
+	FrameBasis string `json:"frame_basis,omitempty"`
 	// Count and Partial are emitted whenever this section is rendered, zero and
 	// false included. A module with no direct dependencies is a measurement, and
 	// so is a walk that resolved every node; Status carries the cases where no

@@ -141,15 +141,21 @@ func writeWalkDiffEmpty(stdout io.Writer, idA, idB string, d application.WalkDif
 // walkDiffEmptyJSON is the machine-readable form of that statement. It is
 // written to stderr, beside the unchanged document on stdout.
 type walkDiffEmptyJSON struct {
-	Statement  string `json:"statement"`
-	WalkA      string `json:"walk_a"`
-	WalkB      string `json:"walk_b"`
-	FrameA     string `json:"frame_a"`
-	FrameB     string `json:"frame_b"`
-	NodesA     int    `json:"nodes_a"`
-	NodesB     int    `json:"nodes_b"`
-	SameWalk   bool   `json:"same_walk"`
-	Unresolved string `json:"unresolved,omitempty"`
+	Statement string `json:"statement"`
+	WalkA     string `json:"walk_a"`
+	WalkB     string `json:"walk_b"`
+	// FrameA and FrameB are the frames the two sides answer in, each with the
+	// basis that says whether a platform applies at all. Two walks that resolve
+	// no platform share a token because neither has a frame, not because their
+	// frames matched — the basis is what a consumer keys on.
+	FrameA      string `json:"frame_a"`
+	FrameABasis string `json:"frame_a_basis"`
+	FrameB      string `json:"frame_b"`
+	FrameBBasis string `json:"frame_b_basis"`
+	NodesA      int    `json:"nodes_a"`
+	NodesB      int    `json:"nodes_b"`
+	SameWalk    bool   `json:"same_walk"`
+	Unresolved  string `json:"unresolved,omitempty"`
 }
 
 func writeWalkDiffEmptyJSON(stderr io.Writer, idA, idB string, d application.WalkDiff) error {
@@ -158,15 +164,17 @@ func writeWalkDiffEmptyJSON(stderr io.Writer, idA, idB string, d application.Wal
 		statement = "no difference: both arguments name the same walk, so this compared it with itself"
 	}
 	out := walkDiffEmptyJSON{
-		Statement:  statement,
-		WalkA:      idA,
-		WalkB:      idB,
-		FrameA:     d.FrameA,
-		FrameB:     d.FrameB,
-		NodesA:     d.NodesA,
-		NodesB:     d.NodesB,
-		SameWalk:   idA == idB,
-		Unresolved: d.CompletenessMismatch,
+		Statement:   statement,
+		WalkA:       idA,
+		WalkB:       idB,
+		FrameA:      d.FrameA.Text,
+		FrameABasis: string(d.FrameA.Basis),
+		FrameB:      d.FrameB.Text,
+		FrameBBasis: string(d.FrameB.Basis),
+		NodesA:      d.NodesA,
+		NodesB:      d.NodesB,
+		SameWalk:    idA == idB,
+		Unresolved:  d.CompletenessMismatch,
 	}
 	if err := json.NewEncoder(stderr).Encode(out); err != nil {
 		return fmt.Errorf("encoding the empty-diff statement: %w", err)

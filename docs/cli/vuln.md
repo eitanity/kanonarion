@@ -406,10 +406,10 @@ their notice that the manifest was not re-resolved for the read.
 `--module` is **not** filtered this way. A walk rooted at a published
 coordinate records no target platform at all — only project walks (`--gomod`)
 do — so there is nothing to filter on, and the scan states the frame as
-`unrecorded` instead:
+`not-platform-scoped` instead:
 
 ```
-scanning walk 01KQDBVW092ER1HNXZ60X27CMD rooted at github.com/spf13/cobra@v1.8.1 (frame unrecorded)
+scanning walk 01KQDBVW092ER1HNXZ60X27CMD rooted at github.com/spf13/cobra@v1.8.1 (frame not-platform-scoped)
 ```
 
 **The project-scoped views are project-rooted.** A `--gomod`/`--tool`/`--project`
