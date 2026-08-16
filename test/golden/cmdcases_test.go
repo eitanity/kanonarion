@@ -10,9 +10,12 @@ package golden_test
 //
 //	audit                 --json and text; POPULATED (the whole derivation, run
 //	                      offline against a fixture module cache and a fixture
-//	                      advisory database), empty scope, missing go.mod.
+//	                      advisory database), the same run under GOPROXY=off with
+//	                      no --from-modcache, empty scope, missing go.mod.
 //	latest                --json and text; populated, the no-publication-date
-//	                      zero, an empty scope, the GOPROXY=off refusal.
+//	                      zero, an empty scope, the GOPROXY=off answer served
+//	                      from the ledger, and the GOPROXY=off refusal for a
+//	                      module the ledger has nothing for.
 //	context               --json and text; populated (divergent), populated
 //	                      (clean), go.mod-only, absent coordinate, missing store,
 //	                      bad coordinate.
@@ -133,9 +136,10 @@ func commandCases(t *testing.T, emptyStore, project string, audit *auditFixture)
 	// Two offline postures, and the difference between them is deliberate.
 	//
 	// `off` is an operator's declaration that this environment does no module
-	// fetching. Commands that construct a proxy adapter REFUSE under it, before
-	// they consult anything recorded, so it can only be used for a case whose
-	// subject is that refusal.
+	// fetching. Most commands that construct a proxy adapter REFUSE under it
+	// before consulting anything recorded. `latest` and `audit` do not: they
+	// answer the staleness column from the ledger, so `off` carries an answer
+	// case and a refusal case here rather than refusals alone.
 	//
 	// unroutable is a proxy address that resolves to nothing: the adapter
 	// constructs, and any request made through it fails immediately without
@@ -198,7 +202,24 @@ func latestCases(gomod string, unroutable, refusesNetwork map[string]string) []c
 			name: "latest_json_no_network",
 			args: []string{"latest", "example.com/unknown", "--json"},
 			env:  refusesNetwork,
-			why:  "error-shaped: nothing recorded for this module and the environment forbids the network.",
+			why: "error-shaped: nothing recorded for this module and the environment forbids the network. " +
+				"The refusal must name THAT — no recorded lookup inside the TTL — and not offer " +
+				"--from-modcache or `use --recursive`, which supply module bytes and cannot answer @latest.",
+		},
+		{
+			name: "latest_json_offline_served",
+			args: []string{"latest", "example.com/mod", "--json"},
+			env:  refusesNetwork,
+			why: "THE OFFLINE ANSWER: GOPROXY=off with a ledger row inside the TTL. The module is answered " +
+				"from the store, served_from_store is true and looked_up_at is the ORIGINAL lookup, not this run. " +
+				"It must match latest_json_populated byte for byte: a declared air gap changes where the answer " +
+				"comes from, never what it says.",
+		},
+		{
+			name: "latest_text_offline_served",
+			args: []string{"latest", "example.com/mod"},
+			env:  refusesNetwork,
+			why:  "the offline answer on the human channel: the same line, with the as-of date that dates it.",
 		},
 	}
 }
@@ -587,6 +608,15 @@ func auditCases(t *testing.T, gomod, project string, unroutable map[string]strin
 				"answers moves this file. Its control is audit_text_populated, which must keep reading " +
 				"`derived by this run`.",
 		},
+		populated("audit_text_no_network",
+			"GOPROXY=off WITHOUT --from-modcache: the run no longer refuses at proxy construction for the "+
+				"sake of one column. It proceeds, and the staleness column reports what the ledger holds "+
+				"and `unmeasured (offline)` for what it does not — which is the whole point, because it "+
+				"is measured here on a run that then FAILS. The bytes are not in this store, so the walk "+
+				"cannot fetch them, no licence is determined, and the licence policy blocks with exit 5. "+
+				"That is a different obstacle from the one that used to stop the command, and it names "+
+				"itself. Its control is audit_text_populated, the same audit under --from-modcache.",
+			"audit", "--gomod", audit.gomod()),
 		{
 			name: "audit_json_empty_scope",
 			args: []string{"audit", "--gomod", gomod, "--json"},

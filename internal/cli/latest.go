@@ -3,6 +3,7 @@ package cli
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"strings"
@@ -46,8 +47,9 @@ republished" rather than "newer major" — usually the cheaper move, and invisib
 to the first fact. Where a pin has both, both are reported, that one first.
 
 Successful lookups are recorded in the store and served back while they are
-younger than staleness.ttl (default 1h). Every answer states the lookup time it
-used; pass --fresh to bypass the ledger and re-query the proxy.
+younger than staleness.ttl (default 1h) — including under GOPROXY=off, where a
+module with no such lookup is refused rather than answered. Every answer states
+the lookup time it used; pass --fresh to bypass the ledger and re-query.
 
 Without --gomod, one or more module paths may be passed as positional
 arguments; with multiple modules, --json emits an array.`,
@@ -232,23 +234,63 @@ func (r latestResult) republication() staledomain.Republication {
 }
 
 func runLatest(ctx context.Context, args []string, f latestFlags, stdout, stderr io.Writer) error {
-	proxy, err := proxyadapter.New(f.goproxy, false)
-	if err != nil {
-		return proxyAdapterError(err)
+	// An environment that declares no module fetching is no longer refused at
+	// adapter construction. GOPROXY=off says the network may not be asked; it
+	// does not say the answer is unknown, and the staleness ledger exists
+	// precisely so a recorded lookup can be served without going out. The
+	// refusal that used to fire here also offered --from-modcache and
+	// `use --recursive`, which are about module BYTES — neither can produce an
+	// @latest version, so it named remedies this command has no use for.
+	//
+	// --fresh is the exception and is deliberately untouched: it means "bypass
+	// the ledger and re-query the proxy", which an environment that forbids
+	// fetching cannot do, so it keeps the refusal it has today.
+	//
+	// The gate is ErrProxyOff specifically, NOT every construction refusal.
+	// GOPROXY=direct is a different statement: the operator asked for VCS-origin
+	// fetching, a route this adapter has not got, and serving a recorded answer
+	// there would answer a request that was never refused on network grounds. It
+	// keeps refusing, with the message that names the mode.
+	proxy, perr := proxyadapter.New(f.goproxy, false)
+	offline := perr != nil && errors.Is(perr, proxyadapter.ErrProxyOff) && !f.fresh
+	if perr != nil && !offline {
+		return proxyAdapterError(perr)
 	}
 
 	// The ledger is the only reason this command opens the store. A store that
 	// cannot be opened is reported and the run continues live rather than
-	// failing: the answer is still obtainable, it is just paid for again.
+	// failing: the answer is still obtainable, it is just paid for again. When
+	// the network is forbidden there is nothing to fall back to, and the
+	// per-module refusal below states that rather than a live retry that will
+	// not happen.
 	ledger, closeLedger, lerr := openStalenessLedger(storeRoot)
 	if lerr != nil {
-		_, _ = fmt.Fprintf(stderr, "staleness ledger unavailable, resolving live: %v\n", lerr)
+		if offline {
+			_, _ = fmt.Fprintf(stderr, "staleness ledger unavailable and the environment forbids fetching: %v\n", lerr)
+		} else {
+			_, _ = fmt.Fprintf(stderr, "staleness ledger unavailable, resolving live: %v\n", lerr)
+		}
 	} else {
 		defer func() { _ = closeLedger() }()
 	}
 	// --fresh belongs here: the subject of this command IS the latest answer, so
 	// asking for a fresh one is asking for the ledger to be bypassed.
-	resolver := newStalenessResolver(newProxyLatestResolver(proxy), ledger, activeConfig.Staleness.TTL, f.fresh)
+	//
+	// Offline the lookup is the ledger alone — the same one `audit` uses under
+	// --from-modcache, with the same rule: a row inside the TTL is a
+	// measurement and is served, anything else refuses. Serving a stale row
+	// because the network is unavailable would present an old answer as
+	// current, which is worse than refusing, and it never writes, because an
+	// offline run learns no new upstream fact.
+	var lookup stalenessLookup
+	if offline {
+		// proxy is nil here — construction refused — so the live resolver is not
+		// built at all rather than being built around an adapter that cannot be
+		// asked.
+		lookup = newOfflineStalenessLookup(ledger, activeConfig.Staleness.TTL)
+	} else {
+		lookup = newStalenessResolver(newProxyLatestResolver(proxy), ledger, activeConfig.Staleness.TTL, f.fresh)
+	}
 
 	if len(args) == 0 {
 		gomodPath, err := resolveGoModPath(f.gomodPath)
@@ -259,10 +301,10 @@ func runLatest(ctx context.Context, args []string, f latestFlags, stdout, stderr
 		if serr != nil {
 			return serr
 		}
-		return runLatestGomod(ctx, gomodPath, scope, resolver, stdout, stderr)
+		return runLatestGomod(ctx, gomodPath, scope, lookup, stdout, stderr)
 	}
 
-	return runLatestModules(ctx, args, resolver, stdout, stderr)
+	return runLatestModules(ctx, args, lookup, stdout, stderr)
 }
 
 // runLatestModules resolves one or more module coordinates from positional
@@ -270,7 +312,7 @@ func runLatest(ctx context.Context, args []string, f latestFlags, stdout, stderr
 // every module is queried and the output mode is determined by jsonOut and
 // arity: a single module renders as a one-line text string or a JSON object,
 // multiple modules render as one text line each or a JSON array.
-func runLatestModules(ctx context.Context, modules []string, resolver *staleapp.Resolver, stdout, stderr io.Writer) error {
+func runLatestModules(ctx context.Context, modules []string, lookup stalenessLookup, stdout, stderr io.Writer) error {
 	results := make([]latestResult, 0, len(modules))
 	for _, modulePath := range modules {
 		if cerr := ctx.Err(); cerr != nil {
@@ -279,8 +321,11 @@ func runLatestModules(ctx context.Context, modules []string, resolver *staleapp.
 		// No pin is passed: with nothing named on the command line the resolved
 		// latest places the probe's starting major, so a bare path whose newest
 		// release is a +incompatible v2 still probes from /v3.
-		ans, err := resolver.Resolve(ctx, modulePath, "")
+		ans, err := lookup.Resolve(ctx, modulePath, "")
 		if err != nil && ans.LatestVersion == "" {
+			if errors.Is(err, errStalenessOffline) {
+				return latestOfflineRefusal(modulePath)
+			}
 			// Nothing resolved at all: there is no answer to print.
 			return fmt.Errorf("querying latest for %s: %w", modulePath, err)
 		}
@@ -329,6 +374,27 @@ func runLatestModules(ctx context.Context, modules []string, resolver *staleapp.
 		}
 	}
 	return nil
+}
+
+// latestOfflineRefusal is what a named module gets when the environment forbids
+// fetching and the ledger cannot answer for it.
+//
+// It names the actual obstacle — no recorded lookup inside the staleness TTL —
+// rather than the module-bytes remedies the proxy adapter's own refusal carries.
+// `--from-modcache` reads bytes already downloaded and `use --recursive`
+// reconstitutes a module from the store; neither yields an @latest version, so
+// offering them here sent the reader after two things that cannot work.
+//
+// It carries ExitConfig because the run was stopped by a precondition, which is
+// the code the adapter refusal it replaces already used.
+func latestOfflineRefusal(modulePath string) error {
+	return &exitError{
+		code: ExitConfig,
+		msg: fmt.Sprintf(
+			"cannot resolve latest for %s: this environment does no proxy fetching, and the store holds no lookup "+
+				"for it inside staleness.ttl (%s); offline, latest serves only a lookup recorded earlier",
+			modulePath, activeConfig.Staleness.TTL),
+	}
 }
 
 // writeLatestSingleLine prints one human-readable line for a resolved module.
@@ -387,6 +453,18 @@ func latestReleaseAgeDays(publishedAt time.Time) *int {
 func latestRowFor(ctx context.Context, lookup stalenessLookup, path, pinned string, stderr io.Writer) latestResult {
 	ans, lerr := lookup.Resolve(ctx, path, pinned)
 	if ans.LatestVersion == "" {
+		if errors.Is(lerr, errStalenessOffline) {
+			// Not a failure: the environment forbids asking and nothing recorded
+			// was inside the TTL. It gets the offline reason and no error line,
+			// exactly as the audit column does, so the table says "unmeasured
+			// (offline)" instead of "(error resolving latest)" — which would
+			// report a working mode as a fault.
+			return latestResult{
+				Module:              path,
+				Pinned:              pinned,
+				StalenessUnmeasured: stalenessOfflineNoEntry,
+			}
+		}
 		if lerr != nil {
 			_, _ = fmt.Fprintf(stderr, "latest %s: %v\n", path, lerr)
 		}

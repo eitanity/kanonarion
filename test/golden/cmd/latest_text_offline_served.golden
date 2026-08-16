@@ -1,0 +1,7 @@
+# the offline answer on the human channel: the same line, with the as-of date that dates it.
+$ kanonarion latest example.com/mod
+exit 0
+--- stdout ---
+example.com/mod@v1.3.0 (released 273 days ago, 2025-06-01)  [as of 2026-02-28 23:50 UTC]
+--- stderr ---
+(empty)

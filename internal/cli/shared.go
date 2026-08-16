@@ -718,7 +718,15 @@ func registerFromModcacheFlag(cmd *cobra.Command, target *string) {
 // hash verification. It is idempotent and safe to call once per invocation.
 func resolveModcacheMode(flagVal, gomodPath string) error {
 	if flagVal == "" {
-		return nil // flag absent — keep the network + blob-store path
+		// Flag absent — the network + blob-store path, and it is CLEARED rather
+		// than left alone. These are process-wide, and one process runs one
+		// command in production, so the difference never showed there; in a test
+		// binary that runs several commands it meant a later invocation silently
+		// inherited --from-modcache from an earlier one and reported module
+		// bytes it had not been asked to read. "Mode stays off" is what the
+		// caller is entitled to assume, so make it true.
+		modcacheMode, modcacheDir, goSumPath = false, "", ""
+		return nil
 	}
 	dir := flagVal
 	if dir == modcacheFlagSentinel {

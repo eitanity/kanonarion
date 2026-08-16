@@ -159,7 +159,7 @@ need the `--json` output for a structured pipeline.
 | `--gomod` | `./go.mod` | Path to `go.mod`; report latest vs pinned for the project's code dependencies |
 | `--tool` | false | Scope to the tooling supply chain (the `go.mod` tool directives' closure). Mutually exclusive with `--project` |
 | `--project` | false | Scope to the complete set: the project's code **and** tooling (the full Go build list). Mutually exclusive with `--tool` |
-| `--goproxy` | `$GOPROXY` or `proxy.golang.org` | Override the Go module proxy. `off` and `direct` are honoured, not rewritten: `latest` is a network probe, so it refuses before any network I/O and exits `20`. See [`fetch`: `GOPROXY=off` and `direct`](fetch.md#goproxyoff-and-direct) |
+| `--goproxy` | `$GOPROXY` or `proxy.golang.org` | Override the Go module proxy, honoured not rewritten. Under `off`, a lookup younger than `staleness.ttl` is served and nothing is written; without one, exit `20`. `direct` and `--fresh` refuse. See [`fetch`: `GOPROXY=off` and `direct`](fetch.md#goproxyoff-and-direct) |
 | `--fresh` | false | Re-query the proxy instead of serving recorded lookups from the store |
 | `--json` | false | Emit output as JSON (global flag) |
 

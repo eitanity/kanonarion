@@ -1,8 +1,8 @@
-# error-shaped: nothing recorded for this module and the environment forbids the network.
+# error-shaped: nothing recorded for this module and the environment forbids the network. The refusal must name THAT — no recorded lookup inside the TTL — and not offer --from-modcache or `use --recursive`, which supply module bytes and cannot answer @latest.
 $ kanonarion latest example.com/unknown --json
 exit 20
 --- error ---
-execute root command: GOPROXY=off: the environment declares no module fetching; run offline instead: --from-modcache reads the bytes already in $GOMODCACHE, and `kanonarion use --recursive` reconstitutes a module from the store
+execute root command: cannot resolve latest for example.com/unknown: this environment does no proxy fetching, and the store holds no lookup for it inside staleness.ttl (1h0m0s); offline, latest serves only a lookup recorded earlier
 --- stdout ---
 (empty)
 --- stderr ---

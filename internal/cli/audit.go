@@ -24,6 +24,7 @@ import (
 	licapp "github.com/eitanity/kanonarion/internal/license/application"
 	licdomain "github.com/eitanity/kanonarion/internal/license/domain"
 	staledomain "github.com/eitanity/kanonarion/internal/staleness/domain"
+	staleports "github.com/eitanity/kanonarion/internal/staleness/ports"
 	vulnapp "github.com/eitanity/kanonarion/internal/vuln/application"
 	vulndomain "github.com/eitanity/kanonarion/internal/vuln/domain"
 	walkdomain "github.com/eitanity/kanonarion/internal/walk/domain"
@@ -329,23 +330,11 @@ func runAudit(ctx context.Context, f auditFlags, stdout, stderr io.Writer) error
 	}
 	defer func() { _ = cleanup() }()
 
-	// The staleness column consults the network proxy for each module's latest
-	// version. In --from-modcache mode the run is fully offline, so the column is
-	// answered from the staleness ledger alone: a lookup recorded inside the TTL
-	// is a measurement and is served with its age stated, and a module with no
-	// such lookup is reported unmeasured. No probe is added to the offline path —
-	// that would break the mode's whole contract — and nothing is written.
-	var staleness stalenessLookup = newOfflineStalenessLookup(ctr.StalenessLedger, activeConfig.Staleness.TTL)
-	if !modcacheMode {
-		proxy, perr := proxyadapter.New(f.goproxy, false)
-		if perr != nil {
-			return proxyAdapterError(perr)
-		}
-		// The same ledger `latest` writes. Every successful lookup either
-		// command makes is served to the other inside the TTL, which is the
-		// whole point: the two commands were re-paying the same sweep minutes
-		// apart.
-		staleness = newAuditStalenessResolver(newProxyLatestResolver(proxy), ctr.StalenessLedger, activeConfig.Staleness.TTL)
+	// Which lookup answers the staleness column, and why, is decided in one
+	// place so the offline and online wirings cannot drift apart.
+	staleness, serr := auditStalenessLookup(f.goproxy, ctr.StalenessLedger)
+	if serr != nil {
+		return serr
 	}
 
 	results, derivation, err := auditScope(ctx, coords, scope, f, staleness, ctr, stderr)
@@ -804,6 +793,47 @@ const (
 	stalenessSourceLedger     = "ledger"
 	stalenessSourceUnmeasured = "unmeasured"
 )
+
+// auditStalenessLookup decides what answers audit's staleness column.
+//
+// The proxy this builds is wanted for ONE column and nothing else in the run.
+// Refusing at construction therefore killed the whole command — the walk, the
+// licences, the advisories, every stored answer an air-gapped operator has
+// already paid for — because one column could not be measured. Under a declared
+// air gap the ledger-only lookup answers instead: a row inside the TTL is
+// served, a module without one is reported unmeasured (offline), and nothing is
+// written. It is the same lookup and the same rule --from-modcache has always
+// used, and the same rule `latest` applies.
+//
+// The gate is ErrProxyOff, not every construction refusal. GOPROXY=direct asks
+// for a fetch route this adapter has not got, which is not a statement that the
+// network is forbidden, so it still refuses and names the mode.
+//
+// --fresh is deliberately absent from the decision. On audit its subject is the
+// ADVISORY database, not the latest answer, and that download carries its own
+// refusal which the run reports as a failed refresh rather than as a reason not
+// to audit at all.
+//
+// What this does NOT promise is that the rest of the run succeeds. A walk that
+// has to fetch module bytes it has not got still fails — with its own error,
+// naming that obstacle, which is the one the operator can act on.
+func auditStalenessLookup(goproxy string, ledger staleports.Ledger) (stalenessLookup, error) {
+	offline := newOfflineStalenessLookup(ledger, activeConfig.Staleness.TTL)
+	if modcacheMode {
+		return offline, nil
+	}
+	proxy, perr := proxyadapter.New(goproxy, false)
+	switch {
+	case errors.Is(perr, proxyadapter.ErrProxyOff):
+		return offline, nil
+	case perr != nil:
+		return nil, proxyAdapterError(perr)
+	}
+	// The same ledger `latest` writes. Every successful lookup either command
+	// makes is served to the other inside the TTL, which is the whole point: the
+	// two commands were re-paying the same sweep minutes apart.
+	return newAuditStalenessResolver(newProxyLatestResolver(proxy), ledger, activeConfig.Staleness.TTL), nil
+}
 
 // applyAuditStaleness fills a row's staleness columns from one lookup.
 //
