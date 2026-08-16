@@ -417,6 +417,10 @@ func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachab
 	_, _ = fmt.Fprintf(progressOut, "Scanning walk %s...\n", walkID)
 
 	rollups := newVulnScanRollups()
+	// Counted off the same per-module feed the roll-ups are built from, so the
+	// figure covers every record this run wrote rather than the subset that
+	// reached a roll-up.
+	reach := vulnScanReachability{SourceReadByThisRun: true}
 
 	run, err := ctr.ScanWalk.Scan(ctx, application2.ScanWalkParams{
 		WalkID: walkID,
@@ -436,6 +440,7 @@ func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachab
 			// the roll-ups it feeds are the result, printed to stdout.
 			writeVulnScanProgress(record, coord, current, total, progressOut)
 			rollups.add(coord, record)
+			reach.Verdicts += recordReachabilityVerdicts(record)
 		},
 	})
 	if err != nil {
@@ -451,7 +456,7 @@ func runVulnScan(ctx context.Context, walkID string, force, fresh, enableReachab
 		}
 	}
 
-	if perr := printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.failed, rollups.unscannable, jsonOut, stdout); perr != nil {
+	if perr := printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.failed, rollups.unscannable, reach, jsonOut, stdout); perr != nil {
 		return perr
 	}
 	return vulnScanCoverageExit(run)
@@ -575,12 +580,13 @@ func serveStoredScanRun(ctx context.Context, run vuldomain.WalkScanRun, ctr *Con
 		rollups.add(rec.Coordinate, rec)
 	}
 
+	// How much of this answer is a function of the project's own source, counted
+	// from the records the run wrote — the same count the statement and the JSON
+	// field both report, taken once.
+	reach := vulnScanReachability{Verdicts: reachabilityVerdicts(recs)}
+
 	if announce {
-		if _, werr := fmt.Fprintf(stderr,
-			"reusing scan run %s of %s against snapshot %s@%s; nothing was re-scanned (--force to re-measure)\n",
-			run.ID, run.CompletedAt.UTC().Format(time.RFC3339),
-			run.Snapshot.Source(), run.Snapshot.Version(),
-		); werr != nil {
+		if _, werr := fmt.Fprintf(stderr, "%s\n", reusedScanLine(run, reach.Verdicts)); werr != nil {
 			return fmt.Errorf("writing output: %w", werr)
 		}
 	}
@@ -594,7 +600,7 @@ func serveStoredScanRun(ctx context.Context, run vuldomain.WalkScanRun, ctr *Con
 		}
 	}
 
-	if perr := printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.failed, rollups.unscannable, jsonOut, stdout); perr != nil {
+	if perr := printVulnScanResult(run, rollups.affected, rollups.withdrawn, rollups.failed, rollups.unscannable, reach, jsonOut, stdout); perr != nil {
 		return perr
 	}
 	return vulnScanCoverageExit(run)
@@ -734,11 +740,15 @@ func scanCompletionSummary(run vuldomain.WalkScanRun) string {
 // already been written to stderr by the Progress callback. This function owns
 // only the final result channel: JSON under --json, or a findings summary
 // followed by the status line in text mode.
-func printVulnScanResult(run vuldomain.WalkScanRun, affected, withdrawn []vulnScanAffected, failedCoords []string, unscannable *unscannableRollup, jsonOut bool, stdout io.Writer) error {
+//
+// Under --json the document is the run record plus reach: the run's stored shape
+// is unchanged and one key is added beside it, so a consumer that cannot read
+// the stderr statement still learns what the reachability verdicts rest on.
+func printVulnScanResult(run vuldomain.WalkScanRun, affected, withdrawn []vulnScanAffected, failedCoords []string, unscannable *unscannableRollup, reach vulnScanReachability, jsonOut bool, stdout io.Writer) error {
 	if jsonOut {
 		enc := json.NewEncoder(stdout)
 		enc.SetIndent("", "  ")
-		if err := enc.Encode(run); err != nil {
+		if err := enc.Encode(vulnScanDocument{WalkScanRun: run, Reachability: reach}); err != nil {
 			return fmt.Errorf("encoding JSON output: %w", err)
 		}
 		return nil

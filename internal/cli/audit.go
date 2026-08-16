@@ -428,6 +428,13 @@ type auditDerivation struct {
 	walkRecord walkdomain.WalkRecord
 	scanReused bool
 	scanRun    vulndomain.WalkScanRun
+	// scanReachabilityVerdicts is how many findings in the reused run carry a
+	// reachability answer. It is what decides whether the reuse statement says
+	// anything about source at all: reachability is the half of a scan computed
+	// from the project's own source, and a run that answered no reachability
+	// question has nothing for that statement to qualify. Zero on a run this
+	// invocation derived, where the line says so instead.
+	scanReachabilityVerdicts int
 	// refreshed is set when --fresh made this run check the advisory database;
 	// refresh is what that check established. Without the flag the run reads the
 	// stored database and the derivation says nothing about a check it never made.
@@ -461,9 +468,7 @@ func writeAuditDerivation(w io.Writer, d auditDerivation) error {
 
 	scanLine := "vulnerability scan: derived by this run"
 	if d.scanReused {
-		scanLine = fmt.Sprintf("vulnerability scan: reused run %s of %s against snapshot %s@%s; nothing was re-scanned (--force to re-measure)",
-			d.scanRun.ID, d.scanRun.CompletedAt.UTC().Format(time.RFC3339),
-			d.scanRun.Snapshot.Source(), d.scanRun.Snapshot.Version())
+		scanLine = reusedScanLine(d.scanRun, d.scanReachabilityVerdicts)
 	}
 
 	lines := []string{walkLine}
@@ -625,6 +630,16 @@ func auditScope(
 	} else if ok && !f.force {
 		derivation.scanReused = true
 		derivation.scanRun = prior
+		// How much of the served answer is a function of source, counted from the
+		// records that run wrote. Asked on the reuse path only: a run that measures
+		// for itself pays nothing for it. A read that fails is reported rather than
+		// silently collapsing the count to nought, because nought is also the
+		// answer that removes the statement.
+		if recs, lerr := ctr.QueryVuln.ListRecordsForRun(ctx, prior.ID); lerr != nil {
+			_, _ = fmt.Fprintf(stderr, "vuln-scan: reading the reused run's records: %v\n", lerr)
+		} else {
+			derivation.scanReachabilityVerdicts = reachabilityVerdicts(recs)
+		}
 	}
 
 	// fresh=false: the refresh above already happened, and the snapshot it

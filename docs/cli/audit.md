@@ -300,11 +300,9 @@ dependency:
 4. Staleness check - query the proxy for the latest version of each module (offline under `--from-modcache`: the ledger alone, see [When the column was not measured](#when-the-column-was-not-measured))
 5. Query and report - iterate the walk's dependency nodes (every graph node bar the local root) and join fetch, license, vuln, and staleness into one line each
 
-Walk, licence and staleness use cached results on subsequent runs unless
-`--force` is passed. One stage always
-does work on every run, warm store or not: the project-rooted vuln scan is
-**always recomputed fresh** (the working tree mutates between runs, so its
-verdict is live and never served from a coordinate cache).
+Walk, licence, staleness and the vuln scan all use stored results on subsequent
+runs unless `--force` is passed; see
+[Reuse and re-derivation](#reuse-and-re-derivation).
 
 The staleness column reads a **store-side ledger** keyed on module path. Every
 successful `@latest` resolution any command makes is recorded there, and a
@@ -459,9 +457,7 @@ An unvendored project states nothing - its answer was never ambiguous.
 
 `audit` is safe to re-run, but a warm re-run is **not** fully offline. The walk,
 licence, and vulnerability-database stages are cached and do no network I/O on a
-warm store (`--force` re-fetches the modules and re-runs the scan; `--fresh`
-checks the advisory database and re-downloads it only if an advisory for one of
-this walk's modules has changed).
+warm store.
 
 - **Staleness** - `audit` queries the module proxy for each module's latest
   version (`@latest`). Answers are served from the staleness ledger inside
@@ -482,7 +478,7 @@ Every run reports, on **stderr**, where its two expensive answers came from:
 ```
 derivation:
   walk 01KZ0DJEV5XKAV1PSN1JM47D37: re-resolved and found identical to the walk taken 2026-08-02T05:01:29Z; that record was reused
-  vulnerability scan: reused run vscan-01KZ0DJEV5XKAV1PSN1JM47D37-1785646889 of 2026-08-02T05:01:35Z against snapshot vuln.go.dev@2026-07-27T20:14:16Z; nothing was re-scanned (--force to re-measure)
+  vulnerability scan: reused run vscan-01KZ0DJEV5XKAV1PSN1JM47D37-1785646889 of 2026-08-02T05:01:35Z against snapshot vuln.go.dev@2026-07-27T20:14:16Z; nothing was re-scanned, and its 4 reachability verdicts came from the source that run read, which this run did not re-read (--force to re-measure)
 ```
 
 or, when the run measured for itself:
@@ -503,11 +499,15 @@ Reading the scan line: **"reused run … of &lt;date&gt;"** names the scan run w
 verdicts you are reading and when it was made; `govulncheck` did not run. The
 findings, roll-ups and exit code are the ones that run produced.
 
+Which advisories apply is fixed by the resolved module versions, so reuse is
+sound there. Reachability is not: `govulncheck` reads source, and source is not
+a reuse condition below. The reachability clause therefore appears whenever the
+run answered any, and it states what those verdicts rest on rather than claiming
+your tree is unchanged — nothing re-read it.
+
 A new walk is recorded whenever the target, scope, depth, policy, build
 environment, resolved graph (every module at every selected version, every edge,
-every artefact hash) or per-node outcome differs — so editing `go.mod`, bumping a
-dependency, switching scope or changing the policy all produce a new walk and a
-new scan.
+every artefact hash) or per-node outcome differs.
 
 A stored scan is reused only when **all** of these hold:
 

@@ -205,9 +205,8 @@ toolchain:
 ```
 
 The database keys the toolchain (`cmd/go`, the compiler, the linker) separately
-from `stdlib`, and the two sets are disjoint. No project imports `cmd/*`, so no
-module scan reaches a toolchain advisory; this line is the only place they
-appear. The fix named is the one on **this toolchain's own release branch** — an
+from `stdlib`, and the two sets are disjoint; this line is the only place a
+toolchain advisory appears. The fix named is the one on **this toolchain's own release branch** — an
 advisory backported to two release lines has two fixes, and only one of them is
 a move forward.
 
@@ -257,12 +256,19 @@ When a scan run of the same walk against the same advisory snapshot already
 exists, its result is served and `govulncheck` does not run:
 
 ```
-reusing scan run vscan-01KZ0DJEV5XKAV1PSN1JM47D37-1785646889 of 2026-08-02T05:01:35Z against snapshot vuln.go.dev@2026-07-27T20:14:16Z; nothing was re-scanned (--force to re-measure)
+vulnerability scan: reused run vscan-01KZ0DJEV5XKAV1PSN1JM47D37-1785646889 of 2026-08-02T05:01:35Z against snapshot vuln.go.dev@2026-07-27T20:14:16Z; nothing was re-scanned, and its 4 reachability verdicts came from the source that run read, which this run did not re-read (--force to re-measure)
 ```
 
 The line names the run whose verdicts you are reading and when it was made. The
 findings, roll-ups, exit code and `--json` document are the ones **that run**
-produced, rebuilt from the records it wrote.
+produced, rebuilt from the records it wrote, and `audit` states the same line.
+
+Which advisories apply is fixed by the resolved module versions, so reuse is
+sound there. Reachability is computed from source, which is not a condition
+below, so the line states what those verdicts rest on and does not claim the
+source is unchanged — nothing re-read it. Absent when none were answered. Under
+`--json` the same fact is `reachability_basis`: the verdict count, and
+`source_read_by_this_run`.
 
 A stored run is served only when the walk, the advisory snapshot (source,
 version and seal) and the scan pipeline version all match, **and** the stored
@@ -275,20 +281,14 @@ For a walk of a project, one further condition applies: the project directory
 must still require the module versions the walk resolved. A stored run of a
 project walk is an analysis of that directory, so once the directory has moved it
 is not served, and the command re-derives — reaching the metadata-only
-degradation described under "no longer builds the walk" below. The answer to a
-diverged directory is therefore the same whether or not a stored run exists,
-which is the point: it does not depend on what the store happens to hold. The
-comparison is one `go.mod` read (measured at 0.2–0.3 ms on manifests of 130–260
-require lines), and an agreeing directory still reuses.
+degradation described under "no longer builds the walk" below.  The
+comparison is one `go.mod` read, and an agreeing directory still reuses.
 
 Two `--force` runs of one walk against one advisory snapshot write two records
 per module and both say the same thing. The lists inside a record — the findings,
 and a finding's affected symbols, aliases, references and reachability routes —
 are written in one fixed order, so the only fields that move between the two are
-`scanned_at` and the `content_hash` that covers it. A record written before this
-was fixed may list the same values in a different order; it is the same
-measurement, and `vuln-show --history` shows both generations rather than
-treating the rearranged one as a change. The hops WITHIN one reachability route
+`scanned_at` and the `content_hash` that covers it. The hops WITHIN one reachability route
 are never reordered — a route is a call stack, printed entry point first.
 
 **Refreshing the advisory database (`--fresh`)**
