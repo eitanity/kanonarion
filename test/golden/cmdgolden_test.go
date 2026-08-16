@@ -55,6 +55,21 @@ type cmdCase struct {
 	// args is the command line, exactly as a caller would type it after
 	// `kanonarion`.
 	args []string
+	// prime is the command lines run against this case's store BEFORE the
+	// recorded one, with their output discarded.
+	//
+	// It exists because some output is only produced by a command that finds
+	// work already done — a scan served from a stored run rather than measured.
+	// A case cannot record that without a populated store, and the alternative
+	// was to let a second case read the store a first case wrote, which makes
+	// each case's output depend on which case ran before it. Priming keeps the
+	// dependency inside one case, where it is stated rather than inferred from
+	// declaration order.
+	//
+	// A priming command that fails FAILS the case. A prime that silently did
+	// not populate the store would leave the recorded run measuring for itself,
+	// and the golden would then be a recording of the wrong run.
+	prime [][]string
 	// env is set for this case only and restored afterwards.
 	env map[string]string
 	// storeRoot overrides the fixture store. The empty string means the fixture
@@ -96,6 +111,25 @@ func runCommand(t *testing.T, c cmdCase, storeRoot string) runResult {
 	var stdout, stderr bytes.Buffer
 	err := cli.Run(c.args, &stdout, &stderr)
 	return runResult{stdout: stdout.String(), stderr: stderr.String(), err: err}
+}
+
+// runPriming runs a case's priming command lines against its store, discarding
+// what they print and failing the case if any of them errors.
+//
+// The output is discarded rather than recorded because it is not the subject:
+// what the prime leaves behind is the store the recorded run reads. It is still
+// checked — a prime whose exit code is non-zero has not populated anything, and
+// the run that follows would quietly record a first measurement instead of a
+// served one.
+func runPriming(t *testing.T, c cmdCase, storeRoot string) {
+	t.Helper()
+	for i, args := range c.prime {
+		res := runCommand(t, cmdCase{args: args, env: c.env}, storeRoot)
+		if res.err != nil {
+			t.Fatalf("priming command %d for %s (`kanonarion %s`) failed: %v\nstderr:\n%s",
+				i+1, c.name, strings.Join(args, " "), res.err, res.stderr)
+		}
+	}
 }
 
 // record renders one invocation as the text a golden holds.
@@ -172,6 +206,14 @@ func (n *normaliser) apply(s string) string {
 func mintedValuePatterns() []patternReplacement {
 	return []patternReplacement{
 		{
+			// A scan run's identifier: the walk's ULID with the run's own start
+			// time appended. It is matched BEFORE the bare ULID pattern below,
+			// because that one would replace the ULID half and leave the seconds
+			// behind as a number that changes on every run.
+			re:     regexp.MustCompile(`\bvscan-[0-7][0-9A-HJKMNP-TV-Z]{25}-\d+\b`),
+			stable: "vscan-$$RUNID",
+		},
+		{
 			// A ULID: 26 characters of Crockford base32. Walk ids and scan-run
 			// ids are minted per run, so they are the one part of audit's
 			// derivation statement that cannot be a fixture.
@@ -193,13 +235,35 @@ func mintedValuePatterns() []patternReplacement {
 		// RFC3339, because the recorded payloads carry timestamps of their own
 		// — staleness_looked_up_at among them — and those are answers the
 		// fixture fixes, not values the run mints.
+		// The dates a REUSED run names: when the walk it matched was taken, and
+		// when the scan run it was served by completed. Those records are written
+		// by the run that primed the store, and they carry the wall clock rather
+		// than the clock this package pins on the CLI — so they move every run
+		// while everything around them holds still.
+		//
+		// Anchored to the surrounding words rather than matching bare RFC3339,
+		// for the reason the log-timestamp patterns below give: the recorded
+		// payloads carry dates the fixture FIXES — the staleness lookup among
+		// them — and generalising those away would hide the answers.
+		{
+			re:     regexp.MustCompile(`the walk taken \S+;`),
+			stable: "the walk taken $$TIME;",
+		},
+		{
+			re:     regexp.MustCompile(` of \S+ against snapshot`),
+			stable: " of $$TIME against snapshot",
+		},
 		{
 			re:     regexp.MustCompile(`"time":"[^"]*"`),
 			stable: `"time":"$$TIME"`,
 		},
 		{
-			re:     regexp.MustCompile(`(^|\s)time=\S+`),
-			stable: "$${1}time=$$TIME",
+			re: regexp.MustCompile(`(^|\s)time=\S+`),
+			// ${1} keeps the leading space or line start the pattern had to
+			// match to anchor on a key. It is NOT $${1}: $$ is the escape for a
+			// literal dollar, so that form emitted the four characters ${1} and
+			// swallowed the separator rather than putting it back.
+			stable: "${1}time=$$TIME",
 		},
 	}
 }

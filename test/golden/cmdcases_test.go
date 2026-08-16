@@ -117,6 +117,7 @@ func TestCommandGolden(t *testing.T) {
 			if c.mintedValues {
 				n = mintedNorm
 			}
+			runPriming(t, c, root)
 			res := runCommand(t, c, root)
 			recorded := record(c, res, n)
 			assertNoTempPaths(t, c.name, recorded)
@@ -552,6 +553,11 @@ func auditCases(t *testing.T, gomod, project string, unroutable map[string]strin
 			why:          why,
 		}
 	}
+	// The command every populated audit case runs. The reused case names it twice
+	// — once to prime the store and once to be recorded — so the two runs cannot
+	// drift apart into a comparison of different command lines.
+	auditArgs := []string{"audit", "--gomod", audit.gomod(), "--from-modcache=" + audit.modcache}
+
 	return []cmdCase{
 		populated("audit_json_populated",
 			"POPULATED: the whole derivation, offline. Two dependencies plus the standard library, "+
@@ -563,6 +569,22 @@ func auditCases(t *testing.T, gomod, project string, unroutable map[string]strin
 			"populated, text: the same audit on the human channel, where the table and the stderr "+
 				"basis lines are the interface rather than the array.",
 			"audit", "--gomod", audit.gomod(), "--from-modcache="+audit.modcache),
+		{
+			name: "audit_text_reused_scan",
+			args: auditArgs,
+			// PRIMED: the same command, run first against this case's own empty
+			// store and discarded. What it leaves behind — a walk, licences and a
+			// completed scan run against the fixture snapshot — is what makes the
+			// recorded run a SERVED one.
+			prime:        [][]string{auditArgs},
+			env:          audit.env(),
+			storeRoot:    audit.newStore(t),
+			mintedValues: true,
+			why: "REUSED: the same audit run a second time against the store the first one wrote. It is the " +
+				"only recording of what the tool says about work it did NOT do — the walk re-resolved and found " +
+				"identical, the scan served from a stored run, and what that run's reachability verdicts rest on. " +
+				"Its control is audit_text_populated, which must keep reading `derived by this run`.",
+		},
 		{
 			name: "audit_json_empty_scope",
 			args: []string{"audit", "--gomod", gomod, "--json"},
