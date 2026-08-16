@@ -690,14 +690,24 @@ func registerAllowVerificationDowngradeFlag(cmd *cobra.Command) {
 // modcacheFlagSentinel is the NoOptDefVal for --from-modcache: it distinguishes
 // "flag passed with no value" (use `go env GOMODCACHE`) from "flag absent"
 // (empty string, mode off) and from an explicit directory value.
-const modcacheFlagSentinel = "\x00from-modcache-default"
+//
+// pflag prints NoOptDefVal into help output verbatim, so the value has to be
+// ordinary text. It also uses a NUL of its own to mark where a flag's usage
+// column starts, so a NUL here both broke every text pipeline over help output
+// and split the rendered line in the wrong place. The text is what a bare
+// --from-modcache actually runs, which is why `--from-modcache dir[="go env
+// GOMODCACHE"]` reads as documentation rather than as an internal token.
+//
+// A directory can be named anything, this string included, so resolveModcacheMode
+// refuses rather than guesses when one exists under this exact name.
+const modcacheFlagSentinel = "go env GOMODCACHE"
 
 // registerFromModcacheFlag adds --from-modcache[=dir] to cmd, binding it to
 // target. Passed bare it resolves the cache dir from `go env GOMODCACHE`; passed
 // a value it names the directory. Absent, the flag leaves target empty.
 func registerFromModcacheFlag(cmd *cobra.Command, target *string) {
 	cmd.Flags().StringVar(target, "from-modcache", "",
-		"source modules from an existing Go module cache instead of the network: verify against local go.sum and bypass the blob store (optional dir; defaults to `go env GOMODCACHE`)")
+		"source modules from an existing Go module cache instead of the network: verify against local go.sum and bypass the blob store (optional `dir`; defaults to the go env GOMODCACHE path)")
 	cmd.Flags().Lookup("from-modcache").NoOptDefVal = modcacheFlagSentinel
 }
 
@@ -712,6 +722,16 @@ func resolveModcacheMode(flagVal, gomodPath string) error {
 	}
 	dir := flagVal
 	if dir == modcacheFlagSentinel {
+		// The bare flag and an explicit --from-modcache="go env GOMODCACHE"
+		// reach here as the same string. They differ only when a directory of
+		// that literal name exists, and then the run stops rather than picking
+		// one reading: no path becomes unreachable, since the same directory
+		// can be named as "./go env GOMODCACHE" or absolutely.
+		if info, serr := os.Stat(modcacheFlagSentinel); serr == nil && info.IsDir() {
+			return fmt.Errorf("--from-modcache: %q names both this flag's bare default and a directory here; "+
+				"pass %q or an absolute path to mean the directory",
+				modcacheFlagSentinel, "."+string(os.PathSeparator)+modcacheFlagSentinel)
+		}
 		resolved, err := goEnvGOMODCACHE()
 		if err != nil {
 			return fmt.Errorf("--from-modcache: %w", err)
